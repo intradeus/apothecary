@@ -97,6 +97,13 @@ func TestCreateFromSourceCopiesEverything(t *testing.T) {
 		tk.SourceURL != "https://tracker.test/browse/PROJ-7" {
 		t.Errorf("provenance = %+v", tk)
 	}
+	// No branch given: named from the issue — its type, key and title.
+	if tk.BaseBranch != "feat/proj-7-add-a-farewell-function" {
+		t.Errorf("base branch = %q", tk.BaseBranch)
+	}
+	if tk.ChangeType != ports.ChangeFeat || tk.SourceType != "Story" {
+		t.Errorf("type = %q from %q, want feat from Story", tk.ChangeType, tk.SourceType)
+	}
 	atts := ticketAttachments(t, att, tk.ID)
 	if len(atts) != 1 || atts[0].Filename != "spec.md" || atts[0].RunID != "" {
 		t.Fatalf("attachments = %+v, want spec.md claimed for the ticket", atts)
@@ -107,6 +114,53 @@ func TestCreateFromSourceCopiesEverything(t *testing.T) {
 	data, _, err := att.Bytes(context.Background(), atts[0].ID)
 	if err != nil || string(data) != "hello" {
 		t.Errorf("imported bytes = %q (%v)", data, err)
+	}
+}
+
+// The issue's type comes across as the ticket's change type — the
+// integration's mapping first, else read from the type's name — and names the
+// branch; a type the operator picked on the form wins over both.
+func TestCreateFromSourceCarriesTheType(t *testing.T) {
+	src := devSource()
+	src.Tickets[0].Type = "Bug"
+	f, _ := newFactory(t, src)
+	ctx := context.Background()
+	tk, _, err := f.CreateFromSource(ctx, "int-1", "PROJ-7", confstore.Ticket{ProjectID: testProject}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk.ChangeType != ports.ChangeFix || tk.SourceType != "Bug" || tk.BaseBranch != "fix/proj-7-add-a-farewell-function" {
+		t.Errorf("guessed = %q from %q, branch %q", tk.ChangeType, tk.SourceType, tk.BaseBranch)
+	}
+	got, err := f.Conf.GetTicket(ctx, tk.ID)
+	if err != nil || got.ChangeType != ports.ChangeFix || got.SourceType != "Bug" {
+		t.Errorf("stored = %+v (%v)", got, err)
+	}
+
+	src2 := devSource()
+	src2.Tickets[0].Type, src2.Tickets[0].ChangeType = "Bug", ports.ChangeChore
+	f2, _ := newFactory(t, src2)
+	if tk, _, err := f2.CreateFromSource(ctx, "int-1", "PROJ-7", confstore.Ticket{ProjectID: testProject}, nil); err != nil || tk.ChangeType != ports.ChangeChore {
+		t.Errorf("mapped = %q (%v), want the integration's chore", tk.ChangeType, err)
+	}
+
+	f3, _ := newFactory(t, src)
+	tk, _, err = f3.CreateFromSource(ctx, "int-1", "PROJ-7", confstore.Ticket{ProjectID: testProject, ChangeType: ports.ChangeFeat}, nil)
+	if err != nil || tk.ChangeType != ports.ChangeFeat || tk.BaseBranch != "feat/proj-7-add-a-farewell-function" {
+		t.Errorf("picked = %q, branch %q (%v)", tk.ChangeType, tk.BaseBranch, err)
+	}
+}
+
+// A change type is one of the three, or the write is refused.
+func TestChangeTypeIsValidated(t *testing.T) {
+	f, _ := newFactory(t, nil)
+	_, err := f.Create(context.Background(), confstore.Ticket{ProjectID: testProject, Title: "T", Goal: "g", ChangeType: "bugfix"}, nil)
+	if !errors.Is(err, confstore.ErrInvalid) {
+		t.Errorf("err = %v, want invalid", err)
+	}
+	tk, err := f.Create(context.Background(), confstore.Ticket{ProjectID: testProject, Title: "Crash", Goal: "g", ChangeType: "FIX"}, nil)
+	if err != nil || tk.ChangeType != ports.ChangeFix || tk.BaseBranch != "fix/crash" {
+		t.Errorf("ticket = %+v (%v)", tk, err)
 	}
 }
 
@@ -201,6 +255,9 @@ func TestCreateRaw(t *testing.T) {
 	}
 	if tk.SourceKey != "" || tk.SourceID != "" {
 		t.Errorf("hand-written ticket carries provenance: %+v", tk)
+	}
+	if tk.BaseBranch != "feat/t" {
+		t.Errorf("base branch = %q, want one named from the title", tk.BaseBranch)
 	}
 	if got, _ := att.Get(context.Background(), up.ID); got.TicketID != tk.ID || got.RunID != "" {
 		t.Errorf("upload = %+v, want claimed for the ticket", got)

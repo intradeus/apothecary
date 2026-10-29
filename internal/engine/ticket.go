@@ -2,8 +2,9 @@ package engine
 
 // Tracker actions (FLOWLANG §2 action, ticket_*): the run writes back to the
 // issue its ticket was imported from — moves it, comments on it, fills a
-// field, attaches the merge request. The tracker is the TICKET's (the
-// ticketsource integration recorded at import), never the project's, and a
+// field, attaches the merge request or the branch. The tracker is the
+// TICKET's (the ticketsource integration recorded at import), never the
+// project's, and a
 // ticket written by hand has none: those stages complete as SKIPPED, visibly
 // (stage_completed{skipped, note}), and the run goes on down on_success.
 //
@@ -288,5 +289,56 @@ func (x *exec) actionTicketLink(st *flow.Stage) (bool, error) {
 		}
 	}
 	x.e.log.Info("ticket linked to merge request(s)", "run", rs.runID, "stage", st.ID, "ticket", tg.key, "count", len(mrs))
+	return false, nil
+}
+
+// actionTicketLinkBranch attaches the run's branch to the issue — every
+// checkout's that is on its repository host, or the subject's when the chain
+// acts on one — linking the host's own page for it, so the link always
+// resolves. An extra repo the run left alone was never pushed and is passed
+// over; the primary (or the subject) not being there means the flow links
+// before it pushes, which input_missing says. Idempotent like ticket_link.
+func (x *exec) actionTicketLinkBranch(st *flow.Stage) (bool, error) {
+	rs := x.rs
+	tg, routed, err := x.tracker(st)
+	if routed {
+		return true, err
+	}
+	checkouts := rs.checkouts
+	if co := x.subjectCheckout(); co != nil {
+		checkouts = []event.Checkout{*co}
+	}
+	linked := 0
+	for _, co := range checkouts {
+		repoHost := x.res.repoHostFor(co.Name)
+		if repoHost == nil {
+			continue // context-only extra repo: nowhere to link to
+		}
+		url, ok, err := repoHost.BranchURL(x.ctx, x.repoRefFor(co), co.Branch)
+		if err != nil {
+			if x.ctx.Err() != nil {
+				return true, context.Cause(x.ctx)
+			}
+			return x.actionFail(st, event.ReasonInfra, fmt.Sprintf("reading branch %s on the repository host: %v", co.Branch, err))
+		}
+		if !ok {
+			if co.Primary || len(checkouts) == 1 {
+				return x.actionFail(st, event.ReasonInputMissing, fmt.Sprintf("branch %s is not on the repository host yet: ticket_link_branch runs after push_branch", co.Branch))
+			}
+			continue
+		}
+		title := "Branch: " + co.Branch
+		if !co.Primary {
+			title = fmt.Sprintf("Branch (%s): %s", co.Name, co.Branch)
+		}
+		if err := tg.w.AddLink(x.ctx, tg.key, ports.TicketLink{Title: title, URL: url}); err != nil {
+			return x.trackerFail(st, err)
+		}
+		linked++
+	}
+	if linked == 0 {
+		return x.actionSkip(st, "no checkout of this run has a repository host to link a branch from")
+	}
+	x.e.log.Info("ticket linked to branch(es)", "run", rs.runID, "stage", st.ID, "ticket", tg.key, "count", linked)
 	return false, nil
 }

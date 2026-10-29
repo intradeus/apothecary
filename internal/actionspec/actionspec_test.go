@@ -166,7 +166,7 @@ func TestJSONShape(t *testing.T) {
 // tracker — remote (no workspace), per-ticket prerequisite, and
 // ticket_set_field's "value or text" pair that the parser enforces.
 func TestTrackerActions(t *testing.T) {
-	for _, slug := range []string{TicketTransition, TicketComment, TicketSetField, TicketLink} {
+	for _, slug := range []string{TicketTransition, TicketComment, TicketSetField, TicketLink, TicketLinkBranch} {
 		a := Get(slug)
 		if a == nil {
 			t.Fatalf("%s is not registered", slug)
@@ -217,6 +217,11 @@ func TestTrackerActions(t *testing.T) {
 	}
 	if l := Get(TicketLink); l.Needs != NeedsMR || len(l.Inputs) != 0 || len(l.Settings) != 0 {
 		t.Errorf("ticket_link = %+v: wants needs=%s and no ports or settings", l, NeedsMR)
+	}
+	// The branch link needs no merge request: it is what a ticket shows
+	// before one exists.
+	if l := Get(TicketLinkBranch); l.Needs != "" || len(l.Inputs) != 0 || len(l.Settings) != 0 {
+		t.Errorf("ticket_link_branch = %+v: wants no needs, ports or settings", l)
 	}
 	b, err := json.Marshal(Get(TicketSetField))
 	if err != nil {

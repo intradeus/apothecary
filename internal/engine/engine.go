@@ -5,6 +5,7 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -40,6 +41,9 @@ type Ticket struct {
 	TicketID string
 	Title    string
 	Goal     string
+	// ChangeType is the ticket's kind of change (ports.ChangeType: feat, fix,
+	// chore), which `run_if: run.ticket.change_type == fix` reads; "" is feat.
+	ChangeType string
 	// Branch is the base branch when TicketID is set, else the run's branch
 	// override ("" = the default apothecary/<run-id>-<title-slug>). Names git
 	// check-ref-format would refuse are rejected.
@@ -1171,6 +1175,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 	if err := e.appendAndEmit(ctx, runID, &event.RunCreated{
 		TicketTitle:         t.Title,
 		TicketGoal:          t.Goal,
+		TicketChangeType:    cmp.Or(t.ChangeType, string(ports.ChangeFeat)),
 		RunGoal:             t.RunGoal,
 		FlowName:            fl.Name,
 		FlowHash:            fl.Hash,
@@ -1470,6 +1475,7 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in RunInput) (string, 
 	if v.TicketID != "" {
 		return e.CreateRunWith(ctx, Ticket{
 			TicketID: v.TicketID, Title: v.TicketTitle, Goal: v.TicketGoal, Branch: v.BranchBase,
+			ChangeType:   v.TicketChangeType,
 			SourceBranch: sourceBranch,
 			RunGoal:      in.Goal, AttachmentIDs: in.AttachmentIDs,
 			// The ticket's own attachments carry over to every attempt, and so

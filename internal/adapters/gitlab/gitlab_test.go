@@ -557,3 +557,27 @@ func TestAddMRLabels(t *testing.T) {
 		t.Errorf("sent %v", got)
 	}
 }
+
+// A branch's page is GitLab's web_url; a branch not pushed is ok=false, not
+// an error.
+func TestBranchURL(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v4/projects/7/repository/branches/{branch}", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("branch") != "fix/dev-2-y" {
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"message":"404 Branch Not Found"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"name":"fix/dev-2-y","web_url":"http://gl.local/root/greeter/-/tree/fix/dev-2-y"}`))
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	a, repo := testAdapter(ts)
+	ctx := context.Background()
+	if u, ok, err := a.BranchURL(ctx, repo, "fix/dev-2-y"); err != nil || !ok || u != "http://gl.local/root/greeter/-/tree/fix/dev-2-y" {
+		t.Errorf("pushed = %q, %v, %v", u, ok, err)
+	}
+	if u, ok, err := a.BranchURL(ctx, repo, "fix/nope"); err != nil || ok || u != "" {
+		t.Errorf("unpushed = %q, %v, %v", u, ok, err)
+	}
+}

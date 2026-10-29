@@ -162,7 +162,7 @@ func TestSequenceErrors(t *testing.T) {
 		{"fail with max", header + seq("      - { id: s, type: command, run: x, on_fail: { to: fail, max: 1 } }\n") + use, `max and then do not apply when to is "fail"`},
 		{"on_success fail", header + seq("      - { id: s, type: command, run: x, on_success: fail }\n") + use, `on_success cannot be "fail"`},
 		{"sequence stage with a type", header + seq("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, sequence: b, type: command, on_success: done }\n", "a sequence stage has no type"},
-		{"sequence stage with run_if", header + seq("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, sequence: b, run_if: tracker, on_success: done }\n", `field "run_if" does not apply to a sequence stage`},
+		{"sequence stage with run_if", header + seq("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, sequence: b, run_if: run.ticket.tracker, on_success: done }\n", `field "run_if" does not apply to a sequence stage`},
 		{"sequence stage with on_reject", header + seq("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, sequence: b, on_reject: abort, on_success: done }\n", `field "on_reject" does not apply to a sequence stage`},
 		{"route into a sequence stage", header + seq("      - { id: s, type: command, run: x }\n      - { id: t, type: command, run: x }\n") + "main:\n  - { id: a, type: command, run: x, on_success: inc.t }\n  - { id: inc, sequence: b, on_success: done }\n", `"inc.t" is inside a sequence`},
 		{"sequence stage id taken", header + seq("      - { id: s, type: command, run: x }\n") + "main:\n  - { id: inc, type: command, run: x }\n  - { id: inc, sequence: b, on_success: done }\n", "duplicate id"},

@@ -158,7 +158,7 @@ func (f *Flow) UsesBuiltin(b string) bool {
 func (f *Flow) liveStages() []*Stage {
 	var out []*Stage
 	for i := range f.Stages {
-		if w := f.Stages[i].RunIf; w != nil && w.Term == CondNever {
+		if w := f.Stages[i].RunIf; w != nil && w.Fact == CondNever {
 			continue
 		}
 		out = append(out, &f.Stages[i])

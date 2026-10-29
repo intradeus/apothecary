@@ -11,6 +11,7 @@
 import type * as Wire from './generated/types.gen';
 import type { AskMessage, AskState, AuthStatus, Limits, Me, Token, User } from '$lib/domain';
 import type { Credential, ProviderInfo, SignInPending } from '$lib/domain';
+import { asChangeType } from '$lib/domain';
 import type {
 	Skill,
 	SkillDetail,
@@ -494,13 +495,15 @@ export function toTicket(w: Wire.Ticket | Wire.TicketDetail): Ticket {
 		title: w.title ?? '',
 		goal: w.goal ?? '',
 		baseBranch: w.base_branch ?? '',
+		changeType: asChangeType(w.change_type),
 		attachmentIds: list(detail.attachment_ids),
 		source: w.source_id
 			? {
 					integrationId: w.source_id,
 					kind: w.source_kind ?? '',
 					key: w.source_key ?? '',
-					url: w.source_url
+					url: w.source_url,
+					type: w.source_type || undefined
 				}
 			: undefined,
 		warnings: list(detail.warnings),
@@ -523,7 +526,9 @@ export function toSourceTicket(w: Wire.SourceTicket): SourceTicket {
 			filename: a.filename ?? '',
 			mime: a.mime,
 			size: a.size
-		}))
+		})),
+		changeType: asChangeType(w.change_type),
+		branch: w.branch ?? ''
 	};
 }
 

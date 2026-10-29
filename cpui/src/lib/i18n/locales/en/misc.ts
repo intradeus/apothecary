@@ -277,9 +277,13 @@ export default {
 		'Add a GET /farewell endpoint that returns “goodbye”. Done = the handler, a test, and the route wired up.',
 	'form.ticket.baseBranch': 'Base branch',
 	'form.ticket.edited': 'edited',
-	'form.ticket.autoTitle': 'Go back to the branch derived from the title',
+	'form.ticket.autoTitle': 'Go back to the branch named from the type, the issue key and the title',
 	'form.ticket.auto': 'auto',
-	'form.ticket.branchHelp': 'Each run appends a short unique suffix, so runs never share a branch.',
+	'form.ticket.changeType': 'Change type',
+	'form.ticket.changeTypeTitle':
+		'What the ticket is — a feature, a fix or a chore. The branch name starts with it, and a flow can run stages only for one kind.',
+	'form.ticket.branchHelp':
+		'Named {type}/{issue key}-{title}; the key in the name is what links the branch to the Jira issue. Each run appends a short unique suffix, so runs never share a branch.',
 	'form.ticket.attachments': 'Attachments',
 	'form.ticket.alreadyAttached': "Already attached — delivered into every run's workspace",
 	'form.ticket.dropLabel': 'Drop documents or images for the agent, or browse',
@@ -764,8 +768,10 @@ export default {
 	'flow.insp.runIf.notTracker': 'the ticket has no tracker issue',
 	'flow.insp.runIf.subject': 'the chain acts on a merge request',
 	'flow.insp.runIf.notSubject': 'the chain acts on no merge request',
+	'flow.insp.runIf.change': 'the ticket is a {type}',
+	'flow.insp.runIf.notChange': 'the ticket is not a {type}',
 	'flow.insp.runIfHelp':
-		'A stage whose condition does not hold completes as skipped and the chain goes on. A bool $parameter lets a workshop switch the stage off.',
+		'A stage whose condition does not hold completes as skipped and the chain goes on. The ticket’s change type (feat, fix, chore) picks stages per kind of work; a bool $parameter lets a workshop switch the stage off.',
 	'flow.insp.numberOrParam': 'A number, or an int $parameter.',
 	'flow.insp.durationOrParam': 'A duration (30m, 2h), or a string $parameter.',
 	'flow.insp.phaseHelp': "Its routes stay inside it; the chain's last stage ends it.",

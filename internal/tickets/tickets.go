@@ -56,9 +56,17 @@ func (f *Factory) log() *slog.Logger {
 	return slog.Default()
 }
 
-// Create writes a ticket exactly as given (the hand-written path) and claims
-// its uploads for the TICKET rather than any run.
+// Create writes a ticket as given (the hand-written path) and claims its
+// uploads for the TICKET rather than any run. A base branch not given is
+// named from its change type (a feature by default) and title (BranchName).
 func (f *Factory) Create(ctx context.Context, in confstore.Ticket, attachmentIDs []string) (confstore.Ticket, error) {
+	in.ChangeType = normalType(in.ChangeType)
+	if in.ChangeType == "" {
+		in.ChangeType = ports.ChangeFeat
+	}
+	if strings.TrimSpace(in.BaseBranch) == "" {
+		in.BaseBranch = BranchName(in.ChangeType, "", in.Title)
+	}
 	t, err := f.Conf.CreateTicket(ctx, in)
 	if err != nil {
 		return confstore.Ticket{}, err
@@ -94,6 +102,9 @@ func (f *Factory) Delete(ctx context.Context, id string) error {
 // CreateFromSource copies an external issue into a ticket. Fields set on
 // `in` win over the tracker's (the operator may have edited the prefilled
 // form); everything else — and every attachment — comes from the source.
+// The issue's type comes across as the ticket's change type (the
+// integration's mapping, else a guess), and a base branch not given is named
+// from it, the key and the title (BranchName).
 //
 // Attachments are best-effort: one that is too large or of a type the
 // upload policy refuses is skipped and named in the returned warnings, since
@@ -121,8 +132,16 @@ func (f *Factory) CreateFromSource(ctx context.Context, sourceID, key string, in
 	if strings.TrimSpace(t.Goal) == "" {
 		t.Goal = remote.Body
 	}
+	t.ChangeType = normalType(t.ChangeType)
+	if t.ChangeType == "" {
+		t.ChangeType = SourceChangeType(remote)
+	}
+	if strings.TrimSpace(t.BaseBranch) == "" {
+		t.BaseBranch = BranchName(t.ChangeType, remote.Key, t.Title)
+	}
 	t.SourceID, t.SourceKind = sourceID, kind
 	t.SourceKey, t.SourceURL = remote.Key, remote.URL
+	t.SourceType = remote.Type
 
 	// The copied files belong to the project's owner, like the ticket.
 	owner := t.UserID

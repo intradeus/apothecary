@@ -1,6 +1,9 @@
 export default {
 	// --- tickets table
 	'tickets.col.title': 'Title',
+	'tickets.col.type': 'Type',
+	'tickets.changeType': 'Change type: {type}',
+	'tickets.changeTypeFrom': 'Change type: {type} — the tracker calls it “{source}”',
 	'tickets.col.source': 'Source',
 	'tickets.col.workshop': 'Workshop',
 	'tickets.col.branch': 'Base branch',

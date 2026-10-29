@@ -9,6 +9,7 @@ import (
 
 	"apothecary/internal/confstore"
 	"apothecary/internal/event"
+	"apothecary/internal/ports"
 	"apothecary/internal/providers"
 	"apothecary/internal/secrets"
 )
@@ -79,11 +80,12 @@ func TestAutomationRoundtripAndCascade(t *testing.T) {
 	if err := s.UpsertProject(ctx, p); err != nil {
 		t.Fatal(err)
 	}
-	tk := confstore.Ticket{ID: "tk1", ProjectID: p.ID, Title: "T", AutomationID: "au1", CreatedAt: now, UpdatedAt: now}
+	tk := confstore.Ticket{ID: "tk1", ProjectID: p.ID, Title: "T", AutomationID: "au1", CreatedAt: now, UpdatedAt: now,
+		ChangeType: ports.ChangeFix, SourceType: "Bug"}
 	if err := s.UpsertTicket(ctx, tk); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.GetTicket(ctx, "tk1"); err != nil || got.AutomationID != "au1" {
+	if got, err := s.GetTicket(ctx, "tk1"); err != nil || got.AutomationID != "au1" || got.ChangeType != ports.ChangeFix || got.SourceType != "Bug" {
 		t.Fatalf("ticket automation_id = %q, %v", got.AutomationID, err)
 	}
 	a := confstore.Automation{ID: "au1", ProjectID: p.ID, Name: "nightly", Kind: confstore.AutomationCron,

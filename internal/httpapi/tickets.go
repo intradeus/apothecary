@@ -24,10 +24,13 @@ import (
 // may have edited the prefilled form). They are create-only — provenance never
 // changes on update.
 type ticketBody struct {
-	ProjectID     string   `json:"project_id"`
-	Title         string   `json:"title"`
-	Goal          string   `json:"goal"`
-	Branch        string   `json:"branch"`
+	ProjectID string `json:"project_id"`
+	Title     string `json:"title"`
+	Goal      string `json:"goal"`
+	Branch    string `json:"branch"`
+	// ChangeType is feat, fix or chore; empty on a create is the source
+	// issue's (an import) or feat, on an update feat.
+	ChangeType    string   `json:"change_type"`
 	AttachmentIDs []string `json:"attachment_ids"`
 	SourceID      string   `json:"source_id"`
 	SourceKey     string   `json:"source_key"`
@@ -36,7 +39,7 @@ type ticketBody struct {
 func (b ticketBody) toTicket() confstore.Ticket {
 	return confstore.Ticket{
 		ProjectID: b.ProjectID, Title: b.Title, Goal: b.Goal,
-		BaseBranch: b.Branch,
+		BaseBranch: b.Branch, ChangeType: ports.ChangeType(b.ChangeType),
 	}
 }
 
@@ -169,6 +172,11 @@ type sourceTicketJSON struct {
 	Assignee    string                 `json:"assignee,omitempty"`
 	Updated     string                 `json:"updated,omitempty"`
 	Attachments []sourceAttachmentJSON `json:"attachments,omitempty"`
+	// ChangeType and Branch are what an import makes of this issue — the
+	// ticket's change type and base branch (tickets.BranchName) — for the
+	// form to prefill.
+	ChangeType ports.ChangeType `json:"change_type"`
+	Branch     string           `json:"branch"`
 }
 
 type sourceAttachmentJSON struct {
@@ -181,7 +189,9 @@ func toSourceTicketJSON(t ports.SourceTicket) sourceTicketJSON {
 	out := sourceTicketJSON{
 		Key: t.Key, Title: t.Title, Body: t.Body, URL: t.URL,
 		Status: t.Status, Type: t.Type, Assignee: t.Assignee,
+		ChangeType: tickets.SourceChangeType(t),
 	}
+	out.Branch = tickets.BranchName(out.ChangeType, t.Key, t.Title)
 	if !t.Updated.IsZero() {
 		out.Updated = t.Updated.UTC().Format(time.RFC3339)
 	}
@@ -318,6 +328,7 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 		TicketID:     t.ID,
 		Title:        t.Title,
 		Goal:         t.Goal,
+		ChangeType:   string(t.ChangeType),
 		Branch:       t.BaseBranch,
 		SourceBranch: body.SourceBranch,
 		RunGoal:      body.Goal,

@@ -533,6 +533,49 @@ main:
 	}
 }
 
+// The branch link needs no merge request — only the branch on the
+// repository host, whose own page for it is what the issue gets.
+func TestTicketLinkBranchAttachesTheBranch(t *testing.T) {
+	doc := `name: lb
+version: 2
+parameters: { harness: fake, model: fake/model }
+main:
+  - { id: link, type: action, action: ticket_link_branch }
+`
+	if fl := mustFlow(t, doc); len(fl.Warnings) != 0 {
+		t.Errorf("a branch link warned: %v", fl.Warnings)
+	}
+	h, tracker := trackerHarness(t, doc)
+	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "lb", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	v := h.view(t, runID)
+	if v.State != run.Completed {
+		t.Fatalf("state = %s: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	links := tracker.Linked["DEV-1"]
+	if len(links) != 1 || links[0].URL != "https://gitlab.local/tree/"+v.Branch || links[0].Title != "Branch: "+v.Branch {
+		t.Errorf("links = %+v (branch %s)", links, v.Branch)
+	}
+
+	// Not pushed yet: input_missing, and nothing is linked.
+	h1, tracker1 := trackerHarness(t, doc)
+	h1.repoHost.Unpushed = true
+	runID1, err := h1.e.CreateRun(context.Background(), linkedTicket, "lb", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h1.e.Wait(runID1)
+	if sf, ok := findPayload[*event.StageFailed](h1.events(t, runID1)); !ok || sf.Reason != event.ReasonInputMissing || !strings.Contains(sf.Error, "push_branch") {
+		t.Errorf("stage_failed = %+v", sf)
+	}
+	if n := len(tracker1.Linked["DEV-1"]); n != 0 {
+		t.Errorf("linked %d before the push", n)
+	}
+}
+
 // "Done once the merge request is accepted" is a stage after the final
 // gate. By then the workspace may be gone — and the move needs none, so
 // nothing is re-provisioned for it.

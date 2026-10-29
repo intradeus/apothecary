@@ -72,7 +72,7 @@
 	<Skeleton pane lines={4} />
 {:else if shown.length}
 	<section class="c pane">
-		<TicketTable tickets={shown} cols={['title', 'source', 'branch', 'runs', 'created']} />
+		<TicketTable tickets={shown} cols={['title', 'type', 'source', 'branch', 'runs', 'created']} />
 	</section>
 {:else if q || filter !== 'all'}
 	<EmptyState

@@ -213,7 +213,22 @@
 				: ph.then === ABORT
 					? 'ros'
 					: 'grn';
-	const RUN_IF_TERMS = ['tracker', 'not tracker', 'subject', 'not subject'];
+	// The run facts a condition names by path (flow.CondTracker, CondSubject,
+	// CondChangeType compared with a flow.CondChangeTypes entry).
+	const CHANGE_TYPES = ['feat', 'fix', 'chore'];
+	const RUN_IF_FACTS = () => [
+		{ value: 'run.ticket.tracker', label: t('flow.insp.runIf.tracker') },
+		{ value: 'not run.ticket.tracker', label: t('flow.insp.runIf.notTracker') },
+		{ value: 'run.subject', label: t('flow.insp.runIf.subject') },
+		{ value: 'not run.subject', label: t('flow.insp.runIf.notSubject') },
+		...CHANGE_TYPES.flatMap((c) => [
+			{ value: 'run.ticket.change_type == ' + c, label: t('flow.insp.runIf.change', { type: c }) },
+			{
+				value: 'run.ticket.change_type != ' + c,
+				label: t('flow.insp.runIf.notChange', { type: c })
+			}
+		])
+	];
 
 	const phaseSel = $derived(
 		selection?.kind === 'phase' ? doc.phases?.find((p) => p.id === selection.id) : undefined
@@ -913,16 +928,13 @@
 							value={s.run_if ?? ''}
 							options={[
 								{ value: '', label: t('flow.insp.runIf.none') },
-								{ value: 'tracker', label: t('flow.insp.runIf.tracker') },
-								{ value: 'not tracker', label: t('flow.insp.runIf.notTracker') },
-								{ value: 'subject', label: t('flow.insp.runIf.subject') },
-								{ value: 'not subject', label: t('flow.insp.runIf.notSubject') },
+								...RUN_IF_FACTS(),
 								...boolParams(doc).flatMap((p) => [
 									{ value: '$' + p, label: '$' + p },
 									{ value: 'not $' + p, label: 'not $' + p }
 								]),
 								...(s.run_if &&
-								!RUN_IF_TERMS.includes(s.run_if) &&
+								!RUN_IF_FACTS().some((o) => o.value === s.run_if) &&
 								!boolParams(doc).some((p) => s.run_if === '$' + p || s.run_if === 'not $' + p)
 									? [{ value: s.run_if, label: s.run_if }]
 									: [])

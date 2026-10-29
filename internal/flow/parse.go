@@ -1715,15 +1715,30 @@ func (p *parser) lookupDuration(raw string, site paramSite) (time.Duration, stri
 	return t, via, nil
 }
 
-// buildRunIf parses a stage condition: one of the run facts, or a bool
-// parameter — which folds right here, so the engine never sees it.
+// buildRunIf parses a stage condition: a run fact by its path, the ticket's
+// change type compared with a value, or a bool parameter — which folds right
+// here, so the engine never sees it.
 func (p *parser) buildRunIf(raw string, site paramSite) (*Cond, error) {
+	if l, r, neq := cutCompare(raw); l != "" {
+		if l != CondChangeType {
+			return nil, fmt.Errorf("%q is not a condition: only %s compares (== or !=), with one of %s",
+				raw, CondChangeType, strings.Join(CondChangeTypes, ", "))
+		}
+		if !slices.Contains(CondChangeTypes, r) {
+			return nil, fmt.Errorf("%q is not a condition: %q is not a change type (%s)",
+				raw, r, strings.Join(CondChangeTypes, ", "))
+		}
+		return &Cond{Fact: l, Value: r, Not: neq}, nil
+	}
 	// Negation is spelled `not x`: a leading `!` would be a YAML tag.
 	term, not := strings.CutPrefix(raw, "not ")
 	term = strings.TrimSpace(term)
 	switch {
 	case term == CondTracker || term == CondSubject:
-		return &Cond{Term: term, Not: not}, nil
+		return &Cond{Fact: term, Not: not}, nil
+	case term == CondChangeType:
+		return nil, fmt.Errorf("%q is not a condition: %s compares, as `%s == fix` or `%s != chore`",
+			raw, CondChangeType, CondChangeType, CondChangeType)
 	case strings.HasPrefix(term, "$"):
 		v, _, err := p.lookup(term, site)
 		if err != nil {
@@ -1733,9 +1748,25 @@ func (p *parser) buildRunIf(raw string, site paramSite) (*Cond, error) {
 		if b != not {
 			return nil, nil // holds: no condition to carry
 		}
-		return &Cond{Term: CondNever}, nil
+		return &Cond{Fact: CondNever}, nil
 	}
-	return nil, fmt.Errorf("%q is not a condition: %s, %s or a $bool parameter, each optionally negated as `not x`", raw, CondTracker, CondSubject)
+	return nil, fmt.Errorf("%q is not a condition: %s, %s or a $bool parameter, each optionally negated as `not x`, or %s == (or !=) one of %s",
+		raw, CondTracker, CondSubject, CondChangeType, strings.Join(CondChangeTypes, ", "))
+}
+
+// cutCompare splits `left == right` or `left != right`, trimmed; left is ""
+// when raw is no comparison. `not` does not combine with one: `!=` says it.
+func cutCompare(raw string) (left, right string, neq bool) {
+	for _, op := range []string{"!=", "=="} {
+		if l, r, ok := strings.Cut(raw, op); ok {
+			l = strings.TrimSpace(l)
+			if l == "" {
+				l = op // never a fact: the caller reports the whole of raw
+			}
+			return l, strings.TrimSpace(r), op == "!="
+		}
+	}
+	return "", "", false
 }
 
 func (p *parser) paramNames() string {

@@ -9,7 +9,7 @@
 	import { fleet } from '$lib/fleet.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { stateTab } from '$lib/format';
-	import type { Ticket } from '$lib/domain';
+	import { CHANGE_TYPES, type Ticket } from '$lib/domain';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import SearchInput from '$lib/ui/SearchInput.svelte';
 	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
@@ -27,6 +27,7 @@
 
 	let q = $state('');
 	let source = $state(''); // '' all · 'manual' · a tracker kind
+	let changeType = $state(''); // '' all · feat · fix · chore
 	let activeOnly = $state(false);
 	const projectFilter = $derived(page.url.searchParams.get('project') ?? '');
 
@@ -62,11 +63,17 @@
 		...kinds.map((k) => ({ value: k, label: t('page.tickets.imported', { kind: k }) }))
 	]);
 
+	const typeOptions: SelectOption[] = [
+		{ value: '', label: t('page.tickets.anyType') },
+		...CHANGE_TYPES.map((c) => ({ value: c, label: c }))
+	];
+
 	const shown = $derived.by(() => {
 		const s = q.trim().toLowerCase();
 		return tickets
 			.filter((t) => !projectFilter || t.projectId === projectFilter)
 			.filter((t) => (!source ? true : source === 'manual' ? !t.source : t.source?.kind === source))
+			.filter((t) => !changeType || t.changeType === changeType)
 			.filter((t) => !activeOnly || hasActive(t))
 			.filter(
 				(t) =>
@@ -111,6 +118,9 @@
 		<WorkshopFilter value={projectFilter} onchange={setProject} />
 		<span class="sel">
 			<Select label={t('page.tickets.filterSource')} options={sourceOptions} bind:value={source} />
+		</span>
+		<span class="sel">
+			<Select label={t('page.tickets.filterType')} options={typeOptions} bind:value={changeType} />
 		</span>
 		<Toggle bind:checked={activeOnly} label={t('page.tickets.hasActive')} />
 	</div>

@@ -23,6 +23,9 @@ Write-back happens ONLY when a flow runs a tracker action on a ticket imported f
 • ticket_comment — posts a markdown artifact as a comment, ending with a short apothecary trailer (run + stage).
 • ticket_set_field — writes one field by its DISPLAY NAME ("Feature flags"): text, paragraph, number, select, labels, components, versions, priority. Replace or append (comma-separated items merged).
 • ticket_link — attaches the run's merge request(s) as remote issue links.
+• ticket_link_branch — attaches the run's pushed branch as a remote issue link. (Jira's own Development panel needs no write: it lists a branch whose name carries the issue key — feat/proj-123-… is how an imported ticket's branch is named — once your GitHub/GitLab is connected to Jira.)
+
+Each imported issue's type becomes the ticket's change type — feat, fix or chore — which its branch is named after: through the type map below, else read from the type's name (Bug, Defect, Incident → fix; Chore, Maintenance, Tech Debt → chore; anything else → feat).
 A flow with none of these never writes. A token without write permissions still imports fine; a run of a flow WITH tracker actions on such a ticket fails at creation with the integration named.
 
 Which Jira is this?
@@ -44,7 +47,7 @@ And the writes, each only when a flow runs the named tracker action:
 5. ticket_transition: GET /issue/{KEY}?fields=status, GET /issue/{KEY}/transitions, POST /issue/{KEY}/transitions.
 6. ticket_comment: POST /issue/{KEY}/comment (GET /issue/{KEY}/comment only to reconcile after a crash); with attachments, POST /issue/{KEY}/attachments for each file first.
 7. ticket_set_field: GET /field (name → id, once per run), GET /issue/{KEY}?fields=… (append mode), PUT /issue/{KEY}.
-8. ticket_link: POST /issue/{KEY}/remotelink.
+8. ticket_link, ticket_link_branch: POST /issue/{KEY}/remotelink.
 
 CLOUD — create the API token:
 1. Sign in as the account whose issues you want to see, then open https://id.atlassian.com/manage-profile/security/api-tokens
@@ -108,12 +111,20 @@ func (Jira) Descriptor() Descriptor {
 				Name: "status_map", Label: "Status map (optional)", Placeholder: "done=Ready for prod, blocked=On hold",
 				Help: "Which workflow status each canonical status a flow names (todo, in_progress, in_review, done, blocked) means on this site, as canonical=status pairs. Unlisted ones keep the stock words — To Do, In Progress, In Review, Done; blocked has none. An empty value (in_review=) removes one, and a flow's \"to: in_review\" then skips here.",
 			},
+			{
+				Name: "type_map", Label: "Type map (optional)", Placeholder: "Bug=fix, Task=chore, Spike=chore",
+				Help: "Which change type (feat, fix, chore) each of your issue types is, as type=change pairs — what an imported ticket becomes, and the prefix of its branch (fix/proj-123-…). Unlisted types are read from their name: Bug, Defect, Incident → fix; Chore, Maintenance, Tech Debt → chore; anything else → feat.",
+			},
 		},
 	}
 }
 
 func (Jira) New(cfg Config) (ports.TicketSource, error) {
 	statuses, err := jiraadapter.ParseStatusMap(cfg.Str("status_map", ""))
+	if err != nil {
+		return nil, err
+	}
+	types, err := jiraadapter.ParseTypeMap(cfg.Str("type_map", ""))
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +135,7 @@ func (Jira) New(cfg Config) (ports.TicketSource, error) {
 		JQL:        cfg.Str("jql", ""),
 		APIVersion: cfg.Str("api_version", "3"),
 		StatusMap:  statuses,
+		TypeMap:    types,
 	}), nil
 }
 

@@ -1146,6 +1146,7 @@ export type RunView = {
 	source_branch?: string;
 	started_by?: string;
 	state: string;
+	ticket_change_type?: string;
 	ticket_id?: string;
 	ticket_key?: string;
 	ticket_title: string;
@@ -1353,6 +1354,8 @@ export type SourceTicket = {
 	assignee?: string;
 	attachments?: Array<SourceAttachmentJson>;
 	body?: string;
+	branch: string;
+	change_type: string;
 	key: string;
 	status?: string;
 	title: string;
@@ -1397,6 +1400,7 @@ export type TestResult = {
 export type Ticket = {
 	automation_id?: string;
 	base_branch: string;
+	change_type: string;
 	created_at: string;
 	goal: string;
 	id: string;
@@ -1404,6 +1408,7 @@ export type Ticket = {
 	source_id?: string;
 	source_key?: string;
 	source_kind?: string;
+	source_type?: string;
 	source_url?: string;
 	title: string;
 	updated_at: string;
@@ -1414,6 +1419,7 @@ export type TicketDetail = {
 	attachment_ids: Array<string> | null;
 	automation_id?: string;
 	base_branch?: string;
+	change_type?: string;
 	created_at?: string;
 	goal?: string;
 	id?: string;
@@ -1421,6 +1427,7 @@ export type TicketDetail = {
 	source_id?: string;
 	source_key?: string;
 	source_kind?: string;
+	source_type?: string;
 	source_url?: string;
 	title?: string;
 	updated_at?: string;
@@ -1431,6 +1438,7 @@ export type TicketDetail = {
 export type TicketRequest = {
 	attachment_ids: Array<string> | null;
 	branch: string;
+	change_type: string;
 	goal: string;
 	project_id: string;
 	source_id: string;

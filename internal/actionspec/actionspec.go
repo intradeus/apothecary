@@ -140,6 +140,7 @@ const (
 	TicketComment    = "ticket_comment"
 	TicketSetField   = "ticket_set_field"
 	TicketLink       = "ticket_link"
+	TicketLinkBranch = "ticket_link_branch"
 
 	// Field write modes (ticket_set_field's mode input).
 	ModeReplace = "replace"
@@ -339,6 +340,12 @@ var registry = []Action{{
 	Requires:    RequiresTracker,
 	Remote:      true,
 	Needs:       NeedsMR,
+}, {
+	Slug:        TicketLinkBranch,
+	Title:       "Link the branch on the ticket",
+	Description: "Attaches the run's branch — every checkout's that is on its repository host, or the subject's when the chain acts on one merge request — to the ticket's tracker issue: a remote link on Jira, a comment on GitHub, titled with the branch. The link is the repository host's own page for the branch, so the branch must be pushed first (push_branch); the primary's, or the subject's, not being there fails the stage with input_missing. Idempotent: re-entering never attaches twice. Jira's Development panel is a different thing — it lists a branch whose NAME carries the issue key, once the repository host is connected to Jira. A ticket written by hand skips the stage.",
+	Requires:    RequiresTracker,
+	Remote:      true,
 }, {
 	Slug:        MRMerge,
 	Title:       "Merge the merge request",

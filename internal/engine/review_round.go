@@ -82,7 +82,7 @@ var errNoSubject = errors.New("no merge request subject")
 // run: the phase was opened for no merge request (started by hand with none
 // open, or the main chain of a run on a ticket), so there is nothing for it to act on.
 func noSubjectMsg(st *flow.Stage) string {
-	return fmt.Sprintf("%s: %s acts on the merge request a phase is opened for, and this phase run has none — guard the stage with `run_if: subject`, or start the phase on a merge request", errNoSubject, st.Action)
+	return fmt.Sprintf("%s: %s acts on the merge request a phase is opened for, and this phase run has none — guard the stage with `run_if: run.subject`, or start the phase on a merge request", errNoSubject, st.Action)
 }
 
 // subjectRepoHost is the repository host and merge request a subject action

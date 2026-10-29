@@ -155,6 +155,8 @@ export default {
 	'page.tickets.search': 'Search title, key, goal…',
 	'page.tickets.filterSource': 'Filter by source',
 	'page.tickets.anySource': 'Any source',
+	'page.tickets.filterType': 'Filter by change type',
+	'page.tickets.anyType': 'Any type',
 	'page.tickets.writtenHere': 'Written here',
 	'page.tickets.imported': 'Imported · {kind}',
 	'page.tickets.hasActive': 'Has an active run',

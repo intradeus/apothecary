@@ -84,7 +84,7 @@ func (p *parser) validateContracts(f *Flow) ([]string, error) {
 			// A subject action outside a phase opened for a merge request has
 			// one only when the phase was started on one by hand.
 			if act := actionspec.Get(st.Action); act != nil && act.Subject && !inSubjectPhase(f, st) {
-				warnf("%q acts on the merge request a phase is opened for, and phase %q is not (it opens on %s) — it has one only when started on one by hand; guard the stage with `run_if: subject` or route on_fail",
+				warnf("%q acts on the merge request a phase is opened for, and phase %q is not (it opens on %s) — it has one only when started on one by hand; guard the stage with `run_if: run.subject` or route on_fail",
 					st.Action, st.Phase, f.Phase(st.Phase).OpensOn())
 			}
 		}

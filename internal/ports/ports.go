@@ -1099,6 +1099,11 @@ type RepoHost interface {
 	// per run, so it is a natural idempotency key and needs no stored token.
 	// ok=false means "no such MR", which is distinct from an error.
 	FindMR(ctx context.Context, repo RepoRef, branch, target string) (ref MRRef, ok bool, err error)
+	// BranchURL is the branch's browser page on the repository host, read
+	// from the host itself — so it is only ever a link that resolves.
+	// ok=false means the branch is not there (not pushed yet), which is
+	// distinct from an error.
+	BranchURL(ctx context.Context, repo RepoRef, branch string) (url string, ok bool, err error)
 	// MRStatus is the merge request's state plus what the repository host
 	// knows about merging it: whether it conflicts with its target, its head
 	// commit and its target branch. One call on every repository host.

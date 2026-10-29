@@ -9,7 +9,15 @@
 	// submit — title/goal are whatever the fields say by then, and the issue's
 	// attachments come across as ticket attachments.
 	import { api } from '$lib/api';
-	import type { Attachment, Integration, Project, SourceTicket, Ticket } from '$lib/domain';
+	import type {
+		Attachment,
+		ChangeType,
+		Integration,
+		Project,
+		SourceTicket,
+		Ticket
+	} from '$lib/domain';
+	import { CHANGE_TYPES } from '$lib/domain';
 	import FileChips from '$lib/FileChips.svelte';
 	import AttachFiles from '$lib/AttachFiles.svelte';
 	import Callout from '$lib/ui/Callout.svelte';
@@ -114,7 +122,7 @@
 		}
 		title = picked.title ?? '';
 		goal = picked.body ?? '';
-		if (!branchEdited) branch = `${picked.key.toLowerCase()}-${slugify(picked.title ?? '')}`;
+		changeType = picked.changeType || 'feat';
 		results = [];
 		query = '';
 	}
@@ -135,8 +143,16 @@
 		...sources.map((s) => ({ value: s.id, label: `${s.name} (${s.kind})` }))
 	]);
 
-	// Prefill the branch from a slug of the title until the user edits it.
+	// The ticket's change type — what it is — names its branch:
+	// {type}/{key}-{title} (feat/proj-123-add-footnotes), prefilled until the
+	// user edits it. An imported issue's type and name are the engine's
+	// (tickets.BranchName — the same an automation's import gets: the
+	// integration's type map, else read from the type's name); a hand-written
+	// ticket has no key. Changing the type later swaps the branch's prefix in
+	// the field — runs already started keep theirs.
 	let branchEdited = $state(init != null);
+	let changeType = $state<ChangeType>(init?.changeType ?? 'feat');
+	const typeOptions: SelectOption<ChangeType>[] = CHANGE_TYPES.map((c) => ({ value: c, label: c }));
 	// The WHOLE title: a git branch has no meaningful length limit, and the one
 	// thing that does — the run's container name — is derived and truncated
 	// separately by the engine (engine.workspaceName), so nothing is gained by
@@ -146,8 +162,18 @@
 			.toLowerCase()
 			.replace(/[^a-z0-9]+/g, '-')
 			.replace(/^-+|-+$/g, '');
+	// Swap a branch's leading change type; any other name is left alone.
+	function withType(b: string, type: string) {
+		const [head, ...rest] = b.split('/');
+		return rest.length && CHANGE_TYPES.includes(head as ChangeType) ? [type, ...rest].join('/') : b;
+	}
+	function autoBranch() {
+		if (picked) return withType(picked.branch, changeType);
+		const s = slugify(title);
+		return s ? `${changeType}/${s}` : '';
+	}
 	$effect(() => {
-		if (!branchEdited && !picked) branch = slugify(title);
+		if (!branchEdited) branch = autoBranch();
 	});
 
 	let submitting = $state(false);
@@ -175,6 +201,7 @@
 				goal: goal.trim(),
 				projectId,
 				branch: branch.trim() || undefined,
+				changeType,
 				attachmentIds,
 				...(picked ? { sourceIntegrationId: sourceId, sourceKey: picked.key } : {})
 			};
@@ -250,22 +277,33 @@
 						title={t('form.ticket.autoTitle')}
 						onclick={() => {
 							branchEdited = false;
-							branch = picked
-								? `${picked.key.toLowerCase()}-${slugify(picked.title ?? '')}`
-								: slugify(title);
+							branch = autoBranch();
 						}}>{I.retry} {t('form.ticket.auto')}</button
 					>
 				{:else if !init}
 					<span class="pill sm t-mut">{t('form.ticket.auto')}</span>
 				{/if}
 			</div>
-			<input
-				id="t-branch"
-				bind:value={branch}
-				oninput={() => (branchEdited = true)}
-				placeholder="feat/PROJ-123-short-description"
-				class="mono"
-			/>
+			<div class="brow">
+				<Select
+					options={typeOptions}
+					bind:value={changeType}
+					onchange={(v) => {
+						if (branchEdited) branch = withType(branch, v);
+					}}
+					inline
+					mono
+					label={t('form.ticket.changeType')}
+					title={t('form.ticket.changeTypeTitle')}
+				/>
+				<input
+					id="t-branch"
+					bind:value={branch}
+					oninput={() => (branchEdited = true)}
+					placeholder="feat/proj-123-short-description"
+					class="mono"
+				/>
+			</div>
 			<span class="help">{t('form.ticket.branchHelp')}</span>
 		</div>
 
@@ -454,6 +492,15 @@
 	}
 	.form-actions {
 		padding-top: 4px;
+	}
+	.brow {
+		display: flex;
+		gap: 6px;
+		min-width: 0;
+	}
+	.brow input {
+		flex: 1;
+		min-width: 0;
 	}
 	ul {
 		margin: 4px 0 0;

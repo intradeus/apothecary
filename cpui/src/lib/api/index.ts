@@ -143,6 +143,7 @@ const ticketBody = (t: TicketDraft): Wire.TicketRequest => ({
 	goal: t.goal,
 	project_id: t.projectId,
 	branch: t.branch ?? '',
+	change_type: t.changeType ?? '',
 	attachment_ids: t.attachmentIds ?? [],
 	source_id: t.sourceIntegrationId ?? '',
 	source_key: t.sourceKey ?? ''

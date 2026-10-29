@@ -618,3 +618,27 @@ func TestAddMRLabels(t *testing.T) {
 		t.Errorf("no labels is no call: %v", err)
 	}
 }
+
+// A branch's page is the one GitHub names; a branch not pushed is ok=false,
+// not an error. The slash in the name travels escaped, as one segment.
+func TestBranchURL(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/lu/greeter/branches/{branch}", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("branch") != "feat/dev-1-x" {
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"message":"Branch not found"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"name":"feat/dev-1-x","_links":{"html":"https://github.com/lu/greeter/tree/feat/dev-1-x"}}`))
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	a, repo := testAdapter(ts)
+	ctx := context.Background()
+	if u, ok, err := a.BranchURL(ctx, repo, "feat/dev-1-x"); err != nil || !ok || u != "https://github.com/lu/greeter/tree/feat/dev-1-x" {
+		t.Errorf("pushed = %q, %v, %v", u, ok, err)
+	}
+	if u, ok, err := a.BranchURL(ctx, repo, "feat/nope"); err != nil || ok || u != "" {
+		t.Errorf("unpushed = %q, %v, %v", u, ok, err)
+	}
+}

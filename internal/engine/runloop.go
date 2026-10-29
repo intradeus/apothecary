@@ -2213,6 +2213,8 @@ func (x *exec) stageAction(st *flow.Stage) error {
 		routed, err = x.actionTicketSetField(st)
 	case actionspec.TicketLink:
 		routed, err = x.actionTicketLink(st)
+	case actionspec.TicketLinkBranch:
+		routed, err = x.actionTicketLinkBranch(st)
 	default:
 		// Unreachable: the parser validates the slug against the registry.
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInfra,

@@ -4,8 +4,8 @@ package engine
 // completes as skipped — visibly, the way a tracker action on a ticket
 // written by hand always did — and the chain follows on_success. The facts
 // a condition reads are the run's: whether its ticket has a tracker issue,
-// and whether this phase run acts on one merge request. Parameters folded at
-// parse time, so the engine never sees them.
+// whether this phase run acts on one merge request, and the ticket's change
+// type. Parameters folded at parse time, so the engine never sees them.
 
 import (
 	"apothecary/internal/actionspec"
@@ -20,7 +20,8 @@ func (x *exec) stageCondition(st *flow.Stage) (skip bool, note string) {
 	rs := x.rs
 	tracker := rs.view.TicketSourceID != "" && rs.view.TicketKey != ""
 	subject := rs.subject != "" && x.subjectMR() != nil
-	if !st.RunIf.Holds(tracker, subject) {
+	facts := flow.CondFacts{Tracker: tracker, Subject: subject, Change: rs.view.TicketChangeType}
+	if !st.RunIf.Holds(facts) {
 		return true, "skipped: run_if " + st.RunIf.String() + " does not hold for this run"
 	}
 	if st.Type == flow.StageAction && !tracker {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -59,6 +60,14 @@ func TestFetchMapsIssueAndAttachments(t *testing.T) {
 	}
 	if tk.Title != "Add a Farewell function" || tk.Status != "To Do" || tk.Type != "Story" {
 		t.Errorf("mapped ticket = %+v", tk)
+	}
+	if tk.ChangeType != "" {
+		t.Errorf("change type = %q with no type map, want it left to the importer", tk.ChangeType)
+	}
+	mapped, err := New(Config{BaseURL: srv.URL, Email: "you@acme.com", Token: "tok",
+		TypeMap: map[string]ports.ChangeType{"story": ports.ChangeChore}}).Fetch(context.Background(), "PROJ-7")
+	if err != nil || mapped.ChangeType != ports.ChangeChore {
+		t.Errorf("mapped change type = %q (%v), want the type map's chore", mapped.ChangeType, err)
 	}
 	if tk.Body != "The greeter only says hello." {
 		t.Errorf("body = %q, want the ADF rendered to markdown", tk.Body)
@@ -369,5 +378,24 @@ func TestErrorsCarryJiraMessage(t *testing.T) {
 	err := New(Config{BaseURL: srv.URL, Email: "a@b.c", Token: "tok"}).Test(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "Client must be authenticated") {
 		t.Fatalf("err = %v, want Jira's own message", err)
+	}
+}
+
+func TestParseTypeMap(t *testing.T) {
+	m, err := ParseTypeMap("Bug=fix, Task = chore\nSpike=CHORE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]ports.ChangeType{"bug": ports.ChangeFix, "task": ports.ChangeChore, "spike": ports.ChangeChore}
+	if !reflect.DeepEqual(m, want) {
+		t.Errorf("type map = %v, want %v", m, want)
+	}
+	if m, err := ParseTypeMap(""); err != nil || len(m) != 0 {
+		t.Errorf("empty = %v, %v", m, err)
+	}
+	for _, bad := range []string{"Bug", "Bug=bugfix", "=fix"} {
+		if _, err := ParseTypeMap(bad); err == nil {
+			t.Errorf("ParseTypeMap(%q) accepted it", bad)
+		}
 	}
 }

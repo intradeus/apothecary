@@ -230,6 +230,23 @@ func (a *Adapter) FindMR(ctx context.Context, repo ports.RepoRef, branch, target
 	return ref, ref.IID != 0, nil
 }
 
+// BranchURL reads the branch's html link; a 404 is a branch not pushed yet.
+func (a *Adapter) BranchURL(ctx context.Context, _ ports.RepoRef, branch string) (string, bool, error) {
+	var br struct {
+		Links struct {
+			HTML string `json:"html"`
+		} `json:"_links"`
+	}
+	status, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/branches/%s", a.repoPath(), url.PathEscape(branch)), nil, &br)
+	if status == http.StatusNotFound {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return br.Links.HTML, br.Links.HTML != "", nil
+}
+
 // findOpenPR returns the open PR from branch onto base, or a zero MRRef if
 // none is found. The head filter is scoped to the bound repo's owner.
 func (a *Adapter) findOpenPR(ctx context.Context, branch, base string) (ports.MRRef, error) {

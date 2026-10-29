@@ -518,6 +518,10 @@ type RepoHost struct {
 	MRStateErr error
 	// FindErr fails FindMR when set (reconciliation failure paths).
 	FindErr error
+	// Unpushed makes BranchURL report every branch as not on the host
+	// (default: every branch is there); BranchErr fails it.
+	Unpushed  bool
+	BranchErr error
 	// ThreadsErr / ReplyErr fail MRThreads / ReplyThread when set.
 	ThreadsErr error
 	ReplyErr   error
@@ -707,6 +711,19 @@ func (f *RepoHost) FindMR(_ context.Context, repo ports.RepoRef, branch, target 
 		}
 	}
 	return ports.MRRef{}, false, nil
+}
+
+// BranchURL is the branch's page at a deterministic URL, unless Unpushed.
+func (f *RepoHost) BranchURL(_ context.Context, _ ports.RepoRef, branch string) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.BranchErr != nil {
+		return "", false, f.BranchErr
+	}
+	if f.Unpushed {
+		return "", false, nil
+	}
+	return "https://gitlab.local/tree/" + branch, true, nil
 }
 
 // SnapshotMRs returns a locked copy of the merge requests opened so far.

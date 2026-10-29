@@ -22,7 +22,7 @@ func skipped(evs []event.Event, stage string) (bool, string) {
 	return false, ""
 }
 
-// run_if: tracker on a ticket written by hand: the agent never runs and no
+// run_if: run.ticket.tracker on a ticket written by hand: the agent never runs and no
 // workspace is provisioned for it; the command after it gets the workspace.
 func TestWhenTrackerSkipsWithoutASource(t *testing.T) {
 	doc := `name: cond
@@ -31,7 +31,7 @@ parameters: { harness: fake, model: fake/model }
 agents:
   - { name: b, prompt: build it }
 main:
-  - { id: note, type: agent, harness: $harness, model: $model, agent: b, run_if: tracker }
+  - { id: note, type: agent, harness: $harness, model: $model, agent: b, run_if: run.ticket.tracker }
   - { id: test, type: command, run: "true" }
 `
 	h := newHarness(t, mustFlow(t, doc))
@@ -41,7 +41,7 @@ main:
 	}
 	h.e.Wait(id)
 	evs := h.events(t, id)
-	if ok, note := skipped(evs, "note"); !ok || !strings.Contains(note, "run_if tracker") {
+	if ok, note := skipped(evs, "note"); !ok || !strings.Contains(note, "run_if run.ticket.tracker") {
 		t.Fatalf("note not skipped: %v", eventTypes(evs))
 	}
 	if n := len(h.runner.SnapshotRunCalls()); n != 0 {
@@ -76,7 +76,45 @@ main:
 	}
 }
 
-// run_if: subject in a phase started by hand with no merge request skips;
+// run_if: run.ticket.change_type == fix runs only on a ticket that is a fix; a ticket of no stated
+// type is a feature. The agent's TASK says which.
+func TestWhenChangeType(t *testing.T) {
+	doc := `name: cond
+version: 5
+parameters: { harness: fake, model: fake/model }
+agents:
+  - { name: b, prompt: build it, inputs: [ { name: ticket, type: ticket } ] }
+main:
+  - { id: repro, type: agent, harness: $harness, model: $model, agent: b, run_if: run.ticket.change_type == fix, input: { ticket: { from: run.ticket, type: ticket } } }
+  - { id: test, type: command, run: "true" }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	id, err := h.e.CreateRun(context.Background(), Ticket{Title: "no type"}, "cond", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(id)
+	if ok, note := skipped(h.events(t, id), "repro"); !ok || !strings.Contains(note, "run_if run.ticket.change_type == fix") {
+		t.Fatalf("repro ran on a feature: %v", eventTypes(h.events(t, id)))
+	}
+	if v := h.view(t, id); v.TicketChangeType != "feat" {
+		t.Errorf("change type = %q, want feat by default", v.TicketChangeType)
+	}
+	id2, err := h.e.CreateRun(context.Background(), Ticket{Title: "crash", ChangeType: "fix"}, "cond", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(id2)
+	calls := h.runner.SnapshotRunCalls()
+	if ok, _ := skipped(h.events(t, id2), "repro"); ok || len(calls) != 1 {
+		t.Fatalf("on a fix the agent must run (skipped %v, runs %d)", ok, len(calls))
+	}
+	if !strings.Contains(calls[0].In.Prompt, "Change type: fix") {
+		t.Errorf("the TASK does not name the change type:\n%s", calls[0].In.Prompt)
+	}
+}
+
+// run_if: run.subject in a phase started by hand with no merge request skips;
 // a subject action without the guard fails routably instead.
 func TestWhenSubjectSkipsInASubjectlessPhaseRun(t *testing.T) {
 	doc := `name: subj
@@ -88,7 +126,7 @@ watchers:
   - id: polish
     on: manual
     stages:
-      - { id: sync, type: action, action: sync_target, run_if: subject }
+      - { id: sync, type: action, action: sync_target, run_if: run.subject }
       - { id: load, type: action, action: load_review_comments, output: { review: { to: artifacts/review.md, type: file } }, on_fail: end }
       - { id: shine, type: command, run: "./shine.sh" }
 outcomes:
@@ -120,7 +158,7 @@ outcomes:
 	}
 	ph2.waitPhaseCompleted(t, runID2, "polish", 1)
 	evs := ph2.events(t, runID2)
-	if ok, note := skipped(evs, "sync"); !ok || !strings.Contains(note, "run_if subject") {
+	if ok, note := skipped(evs, "sync"); !ok || !strings.Contains(note, "run_if run.subject") {
 		t.Errorf("sync not skipped: %v", eventTypes(evs))
 	}
 	failed := false

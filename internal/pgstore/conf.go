@@ -351,13 +351,14 @@ func (s *Store) DeleteProjectSecret(ctx context.Context, projectID, name string)
 // --- tickets ----------------------------------------------------------------
 
 const ticketCols = `id, project_id, title, goal, base_branch, ` +
-	`source_id, source_kind, source_key, source_url, automation_id, created_at, updated_at, user_id`
+	`source_id, source_kind, source_key, source_url, automation_id, created_at, updated_at, user_id, ` +
+	`change_type, source_type`
 
 func scanTicket(row pgx.Row) (confstore.Ticket, error) {
 	var t confstore.Ticket
 	err := row.Scan(&t.ID, &t.ProjectID, &t.Title, &t.Goal, &t.BaseBranch,
 		&t.SourceID, &t.SourceKind, &t.SourceKey, &t.SourceURL, &t.AutomationID,
-		&t.CreatedAt, &t.UpdatedAt, &t.UserID)
+		&t.CreatedAt, &t.UpdatedAt, &t.UserID, &t.ChangeType, &t.SourceType)
 	return t, err
 }
 
@@ -366,13 +367,16 @@ func (s *Store) UpsertTicket(ctx context.Context, t confstore.Ticket) error {
 	// written on update too, so a ticket moved between projects follows.
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO tickets (id, project_id, title, goal, base_branch,
-			source_id, source_kind, source_key, source_url, automation_id, created_at, updated_at, user_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			source_id, source_kind, source_key, source_url, automation_id, created_at, updated_at, user_id,
+			change_type, source_type)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		ON CONFLICT (id) DO UPDATE SET
 			project_id=$2, title=$3, goal=$4, base_branch=$5,
-			source_id=$6, source_kind=$7, source_key=$8, source_url=$9, automation_id=$10, updated_at=$12, user_id=$13`,
+			source_id=$6, source_kind=$7, source_key=$8, source_url=$9, automation_id=$10, updated_at=$12, user_id=$13,
+			change_type=$14, source_type=$15`,
 		t.ID, t.ProjectID, t.Title, t.Goal, t.BaseBranch,
-		t.SourceID, t.SourceKind, t.SourceKey, t.SourceURL, t.AutomationID, t.CreatedAt, t.UpdatedAt, t.UserID)
+		t.SourceID, t.SourceKind, t.SourceKey, t.SourceURL, t.AutomationID, t.CreatedAt, t.UpdatedAt, t.UserID,
+		t.ChangeType, t.SourceType)
 	if isFK(err) {
 		// FK backstop: the referenced project vanished between service-layer
 		// validation and this write.

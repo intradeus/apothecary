@@ -402,43 +402,64 @@ type Stage struct {
 // gate, which stops the phase for something outside the run.
 func (s *Stage) Parks() bool { return s.Type == StageWait || s.Type == StageHumanGate }
 
-// Cond is a stage's condition (run_if): one term, optionally negated. A $bool
+// Cond is a stage's condition (run_if): a run fact named by its path, or the
+// ticket's change type compared with a value, optionally negated. A $bool
 // parameter folds at parse time into nil (true) or CondNever (false), so the
-// engine only ever sees the two run facts.
+// engine only ever sees the run facts.
 type Cond struct {
-	Term string // CondTracker | CondSubject | CondNever
-	Not  bool
+	Fact  string // CondTracker | CondSubject | CondChangeType | CondNever
+	Value string // CondChangeType's: the change type it is compared with
+	Not   bool   // `not x`, or `!=` for a comparison
 }
 
 const (
-	CondTracker = "tracker" // the run's ticket has a tracker issue to write to
-	CondSubject = "subject" // the phase run acts on one merge request
-	CondNever   = "never"   // a parameter said no
+	CondTracker    = "run.ticket.tracker"     // the run's ticket has a tracker issue to write to
+	CondSubject    = "run.subject"            // the phase run acts on one merge request
+	CondChangeType = "run.ticket.change_type" // the kind of change the run's ticket is: == / != a CondChangeTypes entry
+	CondNever      = "never"                  // a parameter said no
 )
 
+// CondChangeTypes are the values run.ticket.change_type compares with
+// (ports.ChangeType: a test holds them equal) — `run_if:
+// run.ticket.change_type == fix`.
+var CondChangeTypes = []string{"feat", "fix", "chore"}
+
+// CondFacts are the run facts a condition reads.
+type CondFacts struct {
+	Tracker bool   // the ticket has a tracker issue
+	Subject bool   // the phase run acts on one merge request
+	Change  string // the ticket's change type
+}
+
 // Holds evaluates the condition against the run's facts; a nil Cond holds.
-func (w *Cond) Holds(tracker, subject bool) bool {
+func (w *Cond) Holds(f CondFacts) bool {
 	if w == nil {
 		return true
 	}
 	var v bool
-	switch w.Term {
+	switch w.Fact {
 	case CondTracker:
-		v = tracker
+		v = f.Tracker
 	case CondSubject:
-		v = subject
+		v = f.Subject
+	case CondChangeType:
+		v = f.Change == w.Value
 	}
 	return v != w.Not
 }
 
 func (w *Cond) String() string {
-	if w == nil {
+	switch {
+	case w == nil:
 		return ""
+	case w.Value != "" && w.Not:
+		return w.Fact + " != " + w.Value
+	case w.Value != "":
+		return w.Fact + " == " + w.Value
+	case w.Not:
+		return "not " + w.Fact
 	}
-	if w.Not {
-		return "not " + w.Term
-	}
-	return w.Term
+	return w.Fact
 }
 
 // ParamType is what a parameter declares it holds (`type:`), and so what its

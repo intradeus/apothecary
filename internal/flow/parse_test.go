@@ -3,9 +3,12 @@ package flow
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"apothecary/internal/ports"
 )
 
 // header is a minimal valid preamble; tests append stages to it.
@@ -965,7 +968,7 @@ func TestPhaseValidationErrors(t *testing.T) {
 		{"main runs itself", header + "main:\n  - { id: s, type: command, run: x }\n  - { id: again, sequence: main }\n", "runs itself"},
 		{"blocks is retired", header + "blocks:\n  - { id: b, " + cmd + " }\nmain:\n  - { id: s, type: command, run: x }\n", "blocks: is now sequences:"},
 		{"include is retired", header + "sequences:\n  - { id: b, " + cmd + " }\nmain:\n  - { id: s, include: b }\n", `"include" is retired: a stage runs a sequence with "sequence" (sequence: b)`},
-		{"when is run_if", header + "main:\n  - { id: s, type: command, run: x, when: tracker }\n", `"when" is now "run_if" (run_if: tracker)`},
+		{"when is run_if", header + "main:\n  - { id: s, type: command, run: x, when: run.ticket.tracker }\n", `"when" is now "run_if" (run_if: run.ticket.tracker)`},
 		{"duplicate stage across chains", w("  - { id: m, on: mr_conflicts, stages: [{ id: build, type: command, run: x }] }\n"), "one namespace"},
 		{"route leaves its chain", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_success: build }] }\n"), "stay inside it"},
 		{"edge leaves its chain", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: command, run: x, on_fail: { to: build, max: 1 } }] }\n"), "stay inside it"},
@@ -1640,7 +1643,7 @@ outcomes:
 		t.Fatal(err)
 	}
 	if r.Defaults.Harness != "codex" || r.Budget.MaxCostUSD != 9 || r.Stage("t").RunRef != "check" || r.Stage("a").MaxTurns != 7 ||
-		r.Stage("a").RunIf == nil || r.Stage("a").RunIf.Term != CondNever || r.Phase("c").On.Start != StartManual || r.Hash != f.Hash || r.Bindings["mode"] != "manual" {
+		r.Stage("a").RunIf == nil || r.Stage("a").RunIf.Fact != CondNever || r.Phase("c").On.Start != StartManual || r.Hash != f.Hash || r.Bindings["mode"] != "manual" {
 		t.Errorf("resolved: defaults %+v budget %+v t %+v a %+v c %+v hash %v", r.Defaults, r.Budget, r.Stage("t"), r.Stage("a"), r.Phase("c").On, r.Hash == f.Hash)
 	}
 	if f.Stage("t").RunRef != "verify" || f.Bindings != nil || f.Defaults.Harness != "fake" {
@@ -1670,44 +1673,62 @@ outcomes:
 	}
 }
 
-// run_if: a run fact or a bool parameter (which folds), optionally negated as
-// `not x`; a conditional writer is no longer a definite one.
+// run_if: a run fact by its path or a bool parameter (which folds), optionally
+// negated as `not x`, or the change type compared with == / !=; a
+// conditional writer is no longer a definite one.
 func TestWhen(t *testing.T) {
 	head := "name: t\nversion: 5\nparameters: { harness: fake, model: a/b, yes: { type: bool, default: true }, no: { type: bool, default: false }, s: { type: string, default: x } }\n"
 	f, err := Parse("t.yaml", []byte(head+"main:\n"+
-		"  - { id: a, type: command, run: x, run_if: tracker }\n"+
-		"  - { id: b, type: command, run: x, run_if: not subject }\n"+
+		"  - { id: a, type: command, run: x, run_if: run.ticket.tracker }\n"+
+		"  - { id: b, type: command, run: x, run_if: not run.subject }\n"+
 		"  - { id: c, type: command, run: x, run_if: $yes }\n"+
 		"  - { id: d, type: command, run: x, run_if: $no }\n"+
 		"  - { id: e, type: command, run: x, run_if: not $no }\n"+
-		"  - { id: g, type: command, run: x, run_if: not $yes }\n"))
+		"  - { id: g, type: command, run: x, run_if: not $yes }\n"+
+		"  - { id: h, type: command, run: x, run_if: run.ticket.change_type == fix }\n"+
+		"  - { id: i, type: command, run: x, run_if: 'run.ticket.change_type!=chore' }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	tracker, subject := CondFacts{Tracker: true, Change: "feat"}, CondFacts{Subject: true, Change: "feat"}
 	a, b := f.Stage("a").RunIf, f.Stage("b").RunIf
-	if a == nil || a.Term != CondTracker || a.Not || !a.Holds(true, false) || a.Holds(false, true) || a.String() != "tracker" {
+	if a == nil || a.Fact != CondTracker || a.Not || !a.Holds(tracker) || a.Holds(subject) || a.String() != "run.ticket.tracker" {
 		t.Errorf("a = %+v", a)
 	}
-	if b == nil || b.Term != CondSubject || !b.Not || b.Holds(false, true) || !b.Holds(true, false) || b.String() != "not subject" {
+	if b == nil || b.Fact != CondSubject || !b.Not || b.Holds(subject) || !b.Holds(tracker) || b.String() != "not run.subject" {
 		t.Errorf("b = %+v", b)
+	}
+	// The ticket's change type.
+	h, i := f.Stage("h").RunIf, f.Stage("i").RunIf
+	if h == nil || !h.Holds(CondFacts{Change: "fix"}) || h.Holds(CondFacts{Tracker: true, Subject: true, Change: "feat"}) || h.Fact != CondChangeType || h.Value != "fix" || h.Not || h.String() != "run.ticket.change_type == fix" {
+		t.Errorf("h = %+v", h)
+	}
+	if i == nil || i.Holds(CondFacts{Change: "chore"}) || !i.Holds(CondFacts{Change: "fix"}) || !i.Not || i.String() != "run.ticket.change_type != chore" {
+		t.Errorf("i = %+v", i)
 	}
 	if f.Stage("c").RunIf != nil || f.Stage("e").RunIf != nil {
 		t.Errorf("true folds to no condition: c %+v e %+v", f.Stage("c").RunIf, f.Stage("e").RunIf)
 	}
 	for _, id := range []string{"d", "g"} {
-		if w := f.Stage(id).RunIf; w == nil || w.Term != CondNever || w.Holds(true, true) {
+		if w := f.Stage(id).RunIf; w == nil || w.Fact != CondNever || w.Holds(CondFacts{Tracker: true, Subject: true, Change: "never"}) {
 			t.Errorf("%s = %+v, want never", id, w)
 		}
 	}
 	for _, tc := range []struct{ doc, substr string }{
 		{head + "main:\n  - { id: a, type: command, run: x, run_if: maybe }\n", "is not a condition"},
+		{head + "main:\n  - { id: a, type: command, run: x, run_if: tracker }\n", "is not a condition"},
+		{head + "main:\n  - { id: a, type: command, run: x, run_if: fix }\n", "is not a condition"},
+		{head + "main:\n  - { id: a, type: command, run: x, run_if: run.ticket.change_type }\n", "compares, as"},
+		{head + "main:\n  - { id: a, type: command, run: x, run_if: run.ticket.change_type == bug }\n", `"bug" is not a change type`},
+		{head + "main:\n  - { id: a, type: command, run: x, run_if: not run.ticket.change_type == fix }\n", "only run.ticket.change_type compares"},
+		{head + "main:\n  - { id: a, type: command, run: x, run_if: run.subject == fix }\n", "only run.ticket.change_type compares"},
 		{head + "main:\n  - { id: a, type: command, run: x, run_if: $s }\n", "is a string, and this field takes a bool"},
 	} {
 		if _, err := Parse("t.yaml", []byte(tc.doc)); err == nil || !strings.Contains(err.Error(), tc.substr) {
 			t.Errorf("err = %v, want %q", err, tc.substr)
 		}
 	}
-	cond := header + commonAgents + "main:\n  - { id: p, type: agent, harness: $harness, model: $model, agent: builder, run_if: tracker, output: { patch: { to: artifacts/patch.md, type: file } } }\n" +
+	cond := header + commonAgents + "main:\n  - { id: p, type: agent, harness: $harness, model: $model, agent: builder, run_if: run.ticket.tracker, output: { patch: { to: artifacts/patch.md, type: file } } }\n" +
 		"  - { id: c, type: command, run: x, input: { patch: { from: artifacts/patch.md, type: file } } }\n"
 	if _, err := Parse("t.yaml", []byte(cond)); err == nil || !strings.Contains(err.Error(), `"artifacts/patch.md" is not written on every route reaching this stage`) {
 		t.Errorf("a conditional writer should not count: %v", err)
@@ -1792,5 +1813,16 @@ func TestAskSection(t *testing.T) {
 	// Without ask:, an agent may be called ask.
 	if _, err := Parse("t.yaml", []byte(header+"agents:\n  - { name: ask, description: d, prompt: p }\n"+cmd)); err != nil {
 		t.Errorf("agent named ask without an ask section: %v", err)
+	}
+}
+
+// The values run.ticket.change_type compares with are the canonical change types.
+func TestCondChangeTypesAreCanonical(t *testing.T) {
+	var want []string
+	for _, c := range ports.ChangeTypes() {
+		want = append(want, string(c))
+	}
+	if !slices.Equal(CondChangeTypes, want) {
+		t.Errorf("CondChangeTypes = %v, want ports.ChangeTypes %v", CondChangeTypes, want)
 	}
 }

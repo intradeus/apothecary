@@ -47,6 +47,9 @@ type View struct {
 	State       State  `json:"state"`
 	TicketTitle string `json:"ticket_title"`
 	TicketGoal  string `json:"-"` // not a read-model column; carried for prompt assembly on recovery
+	// TicketChangeType is the ticket's kind of change (feat, fix, chore) as
+	// the run started; "" on runs older than change types.
+	TicketChangeType string `json:"ticket_change_type,omitempty"`
 	// RunGoal is this attempt's extra direction (additive to TicketGoal).
 	RunGoal string `json:"run_goal,omitempty"`
 	// TicketAttachmentIDs are the parent ticket's attachments, snapshotted at
@@ -173,6 +176,7 @@ func Apply(v *View, e *event.Event) {
 		v.TicketID = p.TicketID
 		v.TicketTitle = p.TicketTitle
 		v.TicketGoal = p.TicketGoal
+		v.TicketChangeType = p.TicketChangeType
 		v.RunGoal = p.RunGoal
 		v.TicketAttachmentIDs = p.TicketAttachmentIDs
 		v.TicketSourceID = p.TicketSourceID

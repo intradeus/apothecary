@@ -1,8 +1,6 @@
 - 7) redo everything in clean architecture
 - 23) new run on observability (full flow data + resource stats)
 - 36) Resquash migrations
-- 39) code-server extensions for harnesses > if we use claude, it should also install the claude extension, codex > codex extension. omp has none. And those should be connected right ? Since we're already logged into the cli tool. 
-- 40) Add a new flow to builder : connect git branch to jira ticket. So jira gets the branch context, we already have jira ticket field writes setup, not sure if a git branch connect is the same. As well as automatic branch naming, from parameters (remote ticket, bug type etc.)
 - 43) SECURITY
 - 44) egress improvements : block by default but add a mark as reviewed for blocks, so it doesnt ask a 2nd time. - maybe keep it as (refused) in orange, in between allow and block.
 - 45) AI reviewer should pull existing comments threads to avoid duplicates.

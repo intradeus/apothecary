@@ -32,6 +32,55 @@ type SourceTicket struct {
 	Assignee    string
 	Updated     time.Time
 	Attachments []SourceAttachment
+	// ChangeType is the adapter's reading of Type as a canonical change type,
+	// set when its integration maps that type (Jira's type map); empty, the
+	// importer guesses from Type (GuessChangeType).
+	ChangeType ChangeType
+}
+
+// ChangeType is a CANONICAL kind of change — what a ticket is: a feature, a
+// fix, a chore. A ticket carries one, and its base branch is named after it
+// (feat/proj-123-…). The set is fixed, like TicketStatus, so a flow can rely
+// on it whatever the tracker; each tracker's own issue types ("Bug",
+// "Story", "Spike") are mapped onto it — by the integration's type map where
+// it has one, else by GuessChangeType.
+type ChangeType string
+
+const (
+	ChangeFeat  ChangeType = "feat"
+	ChangeFix   ChangeType = "fix"
+	ChangeChore ChangeType = "chore"
+)
+
+// ChangeTypes lists every ChangeType; the first is the default.
+func ChangeTypes() []ChangeType { return []ChangeType{ChangeFeat, ChangeFix, ChangeChore} }
+
+// ParseChangeType reads a canonical change type; ok is false for anything
+// else.
+func ParseChangeType(s string) (ChangeType, bool) {
+	for _, c := range ChangeTypes() {
+		if string(c) == strings.ToLower(strings.TrimSpace(s)) {
+			return c, true
+		}
+	}
+	return "", false
+}
+
+// GuessChangeType reads a tracker's issue type with no mapping for it: a
+// defect is a fix, upkeep a chore, anything else a feature.
+func GuessChangeType(issueType string) ChangeType {
+	t := strings.ToLower(strings.TrimSpace(issueType))
+	for _, w := range []string{"bug", "defect", "incident", "hotfix", "problem"} {
+		if strings.Contains(t, w) {
+			return ChangeFix
+		}
+	}
+	for _, w := range []string{"chore", "maintenance", "debt"} {
+		if strings.Contains(t, w) {
+			return ChangeChore
+		}
+	}
+	return ChangeFeat
 }
 
 // SourceAttachment is one file hanging off a source ticket. URL is the
@@ -121,10 +170,11 @@ type TicketLink struct {
 
 // TicketWriter is an OPTIONAL TicketSource capability: the write surface a
 // flow's tracker actions use (FLOWLANG §2 action: ticket_transition,
-// ticket_comment, ticket_set_field, ticket_link). Discovered by type
-// assertion on the source adapter, so one integration — one credential —
-// serves both the import and the write-back; an adapter without it simply
-// cannot be the target of a tracker action, and run creation says so.
+// ticket_comment, ticket_set_field, ticket_link, ticket_link_branch).
+// Discovered by type assertion on the source adapter, so one integration —
+// one credential — serves both the import and the write-back; an adapter
+// without it simply cannot be the target of a tracker action, and run
+// creation says so.
 //
 // Everything here speaks the tracker's OWN vocabulary (a status name, a
 // field's display name, markdown that the adapter renders to vendor markup)

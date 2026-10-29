@@ -440,7 +440,7 @@ one namespace, and `main` is taken.
   repository keeps for the head (`refs/pull/<n>/head`,
   `refs/merge-requests/<iid>/head` — a fork's too, on a local `mr-<iid>`
   there is no pushing to). The merge request is the run's from the start: the
-  main chain acts on it as its subject (no `create_mr`, no `run_if: subject`
+  main chain acts on it as its subject (no `create_mr`, no `run_if: run.subject`
   needed), `run.git.diff_target` is what it merges, each later chain on it first
   fast-forwards to its current head, and the outcomes follow its fate. A
   rerun stays on the merge request. The built-in `reviewer` is this shape: one
@@ -520,7 +520,7 @@ prompt section saying which checkout to edit (the others are read-only
 context). `each_repo` does not apply there (the parser warns). A *subject
 action* — `sync_target`, `load_review_comments`, `reply_review_comments`,
 `mr_merge`, `post_review` — in a chain run that has no subject fails
-routably with `input_missing`: guard it with `run_if: subject` (§2) or route
+routably with `input_missing`: guard it with `run_if: run.subject` (§2) or route
 `on_fail`; the parser warns where that can happen. Each chain run's edges
 start with fresh counters (`max` is per run of the chain); the budget is the
 whole life's. A dead end in a watcher — a failure with nowhere to go, a
@@ -890,6 +890,7 @@ the project must have — a repository (GitLab, GitHub) or a tracker:
 | `ticket_comment` | `tracker` | `body` (`file`, required), `attachments` (`files`) | — | — | attaches each file to the issue and links it where the body names its path (the rest listed after it), then posts the markdown artifact as a comment, ending with a short trailer naming the run, the chain run and the stage — also how a crash between posting and recording is reconciled, so nothing is posted twice |
 | `ticket_set_field` | `tracker` | `value` (`file`) — exactly one of `value` / `text` | `field` (text, required); `text` (text); `mode` (`replace` \| `append`, default `replace`) | — | writes one field by its display name (`"Feature flags"`, `labels`). `append` merges comma-separated items into the current value (a union: re-applying changes nothing). A field the tracker has no name for, or cannot write from text, fails the stage with `input_invalid` |
 | `ticket_link` | `tracker` | — | — | — | attaches every merge request the run opened (the subject's on a subject) to the issue — a remote link on Jira, a comment on GitHub — titled with the branch; an upsert, so a re-entry attaches nothing twice. Needs a merge request: `input_missing` without one, and the validator warns when no `create_mr` precedes it |
+| `ticket_link_branch` | `tracker` | — | — | — | attaches the run's branch to the issue — every checkout's that is on its repository host (the subject's on a subject) — as the host's own page for it, titled with the branch; an upsert, like `ticket_link`. Needs no merge request, only the branch pushed: the primary's (or the subject's) not being on the repository host yet fails with `input_missing`, so it goes after a `push_branch`. This is a link on the issue, not Jira's *Development* panel — that panel lists a branch whose **name** carries the issue key (`feat/proj-123-…`, what an imported ticket's branch is named by default), once the repository host is connected to Jira |
 
 An action's enum setting may read an enum parameter whose values all sit within
 the setting's (`to: $final_status`); a text setting may read a string parameter.
@@ -1119,20 +1120,31 @@ service the project does not declare.
 
 ```yaml
 - { id: plan_gate,   type: human_gate, run_if: $plan_gate, … }       # a bool parameter
-- { id: in_progress, type: action, action: ticket_transition, run_if: tracker, … }
-- { id: sync,        type: action, action: sync_target, run_if: subject, … }
-- { id: note,        type: agent, harness: $harness, model: $model, agent: writer, run_if: not tracker, … }
+- { id: in_progress, type: action, action: ticket_transition, run_if: run.ticket.tracker, … }
+- { id: sync,        type: action, action: sync_target, run_if: run.subject, … }
+- { id: note,        type: agent, harness: $harness, model: $model, agent: writer, run_if: not run.ticket.tracker, … }
+- { id: repro,       type: agent, harness: $harness, model: $model, agent: reproducer, run_if: run.ticket.change_type == fix, … }
+- { id: plan,        type: agent, harness: $harness, model: $model, agent: planner, run_if: run.ticket.change_type != chore, … }
 ```
 
-`run_if:` names one condition: `tracker` (the ticket has a tracker issue),
-`subject` (this chain run acts on a merge request), or a bool parameter — each
-negatable as `not x`. When it does not hold, the stage completes as
+`run_if:` states one condition, naming a run fact by its path like a
+source (§4):
+
+| condition | holds when |
+|---|---|
+| `run.ticket.tracker` | the run's ticket has a tracker issue |
+| `run.subject` | this chain run acts on a merge request — its *subject* (§3) |
+| `run.ticket.change_type == fix` | the ticket is that kind of change — `feat`, `fix` or `chore`, set on the ticket or read from an imported issue's type through the integration's type map; `!=` for the opposite |
+| `$name` | a bool parameter is true |
+
+Each but the comparison negates as `not x`; only `run.ticket.change_type`
+compares, and only with `==` or `!=`. When it does not hold, the stage completes as
 **skipped** (`stage_completed{skipped, note}` on the timeline) and `on_success`
 follows, so the chain reads the same whether or not the project has a tracker
 or the knob is on. The validator counts what a conditional stage produces as
 produced only on some routes, and a skipped agent stage never silences the
 model check a later one needs. Tracker actions skip without a tracker on
-their own; `run_if: tracker` says it in the graph.
+their own; `run_if: run.ticket.tracker` says it in the graph.
 
 ### Timeouts
 
@@ -1327,7 +1339,7 @@ What the names are checked against follows from the stage type:
 |---|---|---|
 | `artifacts/plan.md` | a path some stage of the flow writes (`to:`); nothing writing it is a parse error | the writer's |
 | `repo:docs/spec.md` | a file of the repository nothing in the flow writes | any file type |
-| `run.ticket` | the run's ticket — title, goal, the person's direction for this attempt, the files attached to it; an agent reading it gets the `# TASK` section | `ticket` |
+| `run.ticket` | the run's ticket — title, change type, goal, the person's direction for this attempt, the files attached to it; an agent reading it gets the `# TASK` section | `ticket` |
 | `run.git.diff_target` | `git diff --name-status <target>...HEAD` — what the branch changes against **its target**, the branch it forked from and its merge request merges into: the changed-file list, never the full diff. On a multi-repo run one section per checkout, on a subject the subject's only | `changeset` |
 | `run.git.diff_phase` | `git diff --name-status <chain start>...HEAD` — what **this chain run** committed since the head it began on: a review round's fixes, not the whole branch. A chain run that began on no recorded head counts from the target | `changeset` |
 | `run.git.status` | `git status --short` — staged, unstaged and untracked files, what a commit would record right now (the diffs compare commits, so they cannot see this); scoped per checkout like the diffs | `changeset` |
@@ -1672,7 +1684,8 @@ duration that does not parse, a ceiling at or below zero), an enum on a
 non-string or a default outside it, a reference to an undeclared parameter,
 one of the wrong type or at a site that takes none (a prompt, a path, a
 `run:` script), an enum parameter wider than its site; `run_if` naming anything
-but `tracker`, `subject` or a bool parameter. And every **contract**
+but `run.ticket.tracker`, `run.subject`, `run.ticket.change_type` compared
+with a change type, or a bool parameter. And every **contract**
 violation: an agent a stage names but the flow does not declare; a port the
 agent or the action does not declare, a required input or any output of the
 agent's or the action's left unstated, a port whose shape does not satisfy its

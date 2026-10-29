@@ -1,6 +1,6 @@
 <script lang="ts" module>
 	import { t } from '$lib/i18n/index.svelte';
-	export type TicketCol = 'title' | 'source' | 'workshop' | 'branch' | 'runs' | 'created';
+	export type TicketCol = 'title' | 'type' | 'source' | 'workshop' | 'branch' | 'runs' | 'created';
 </script>
 
 <script lang="ts">
@@ -13,14 +13,16 @@
 	import { ago, fmtAbs } from '$lib/format';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import WorkshopName from '$lib/workshop/WorkshopName.svelte';
+	import ChangeTypeTag from './ChangeTypeTag.svelte';
 
 	let {
 		tickets,
-		cols = ['title', 'source', 'workshop', 'branch', 'runs', 'created']
+		cols = ['title', 'type', 'source', 'workshop', 'branch', 'runs', 'created']
 	}: { tickets: Ticket[]; cols?: TicketCol[] } = $props();
 
 	const WIDTH: Record<TicketCol, string> = {
 		title: 'minmax(0, 2fr)',
+		type: '56px',
 		source: '110px',
 		workshop: 'minmax(0, 1fr)',
 		branch: 'minmax(0, 1.2fr)',
@@ -38,6 +40,7 @@
 	const label = (c: TicketCol) =>
 		({
 			title: t('tickets.col.title'),
+			type: t('tickets.col.type'),
 			source: t('tickets.col.source'),
 			workshop: t('tickets.col.workshop'),
 			branch: t('tickets.col.branch'),
@@ -58,6 +61,8 @@
 			{#each cols as c (c)}
 				{#if c === 'title'}
 					<a class="title ell stretch" href={to.ticket(tk.id)}>{tk.title}</a>
+				{:else if c === 'type'}
+					<span><ChangeTypeTag type={tk.changeType} sourceType={tk.source?.type} /></span>
 				{:else if c === 'source'}
 					<span class="hide-sm">
 						{#if tk.source?.key}<span

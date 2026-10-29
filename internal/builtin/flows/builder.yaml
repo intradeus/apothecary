@@ -60,8 +60,9 @@ parameters:
 # integration through its status map ("done = Ready for prod" for a team
 # whose Done is a deploy away), GitHub Issues by closing the issue. A status
 # the tracker has no word for skips the stage, and a ticket written by hand
-# has no issue at all, so those stages skip too. All three are best effort:
-# bookkeeping never blocks the work.
+# has no issue at all, so those stages skip too. The issue also gets the
+# branch as a link once it is pushed. All of it is best effort: bookkeeping
+# never blocks the work.
 #
 # Failure philosophy: every agent/command stage first retries itself with its
 # error fed back, then escalates to the debug leaf (`then: debug`) — a human
@@ -544,8 +545,18 @@ main:
   - id: push
     type: action
     action: push_branch
-    on_success: mr
+    on_success: link_branch
     on_fail: debug
+
+  # The issue gets the pushed branch as a link — best effort, like every
+  # tracker move. (Jira's Development panel finds the branch by itself when
+  # its name carries the issue key, which an imported ticket's does.)
+  - id: link_branch
+    type: action
+    action: ticket_link_branch
+    description: "link the pushed branch on the ticket's tracker issue"
+    on_success: mr
+    on_fail: { to: mr, max: 1 }
 
   # The merge request opens, and the issue moves to its in-review status
   # right after. A tracker hiccup is not worth stopping for: best effort.

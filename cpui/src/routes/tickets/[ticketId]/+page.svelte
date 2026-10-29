@@ -11,6 +11,7 @@
 	import { t, th } from '$lib/i18n/index.svelte';
 	import FlowSelect from '$lib/FlowSelect.svelte';
 	import TicketForm from '$lib/TicketForm.svelte';
+	import ChangeTypeTag from '$lib/tickets/ChangeTypeTag.svelte';
 	import FileChips from '$lib/FileChips.svelte';
 	import AttachFiles from '$lib/AttachFiles.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
@@ -181,6 +182,7 @@
 			{#if runs.length}<StatusChip state={runs[0].state} suffix />{/if}
 		{/snippet}
 		{#snippet meta()}
+			<ChangeTypeTag type={ticket!.changeType} sourceType={ticket!.source?.type} />
 			{#if ticket!.source?.key}
 				<!-- Provenance: a copy taken once. Nothing here is written back. -->
 				<span class="src">

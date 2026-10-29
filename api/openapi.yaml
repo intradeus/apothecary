@@ -2551,6 +2551,8 @@ components:
           type: string
         state:
           type: string
+        ticket_change_type:
+          type: string
         ticket_id:
           type: string
         ticket_key:
@@ -3028,6 +3030,10 @@ components:
           type: array
         body:
           type: string
+        branch:
+          type: string
+        change_type:
+          type: string
         key:
           type: string
         status:
@@ -3041,6 +3047,8 @@ components:
         url:
           type: string
       required:
+        - branch
+        - change_type
         - key
         - title
       type: object
@@ -3119,6 +3127,8 @@ components:
           type: string
         base_branch:
           type: string
+        change_type:
+          type: string
         created_at:
           format: date-time
           type: string
@@ -3134,6 +3144,8 @@ components:
           type: string
         source_kind:
           type: string
+        source_type:
+          type: string
         source_url:
           type: string
         title:
@@ -3145,6 +3157,7 @@ components:
           type: string
       required:
         - base_branch
+        - change_type
         - created_at
         - goal
         - id
@@ -3164,6 +3177,8 @@ components:
           type: string
         base_branch:
           type: string
+        change_type:
+          type: string
         created_at:
           format: date-time
           type: string
@@ -3178,6 +3193,8 @@ components:
         source_key:
           type: string
         source_kind:
+          type: string
+        source_type:
           type: string
         source_url:
           type: string
@@ -3204,6 +3221,8 @@ components:
           type: array
         branch:
           type: string
+        change_type:
+          type: string
         goal:
           type: string
         project_id:
@@ -3217,6 +3236,7 @@ components:
       required:
         - attachment_ids
         - branch
+        - change_type
         - goal
         - project_id
         - source_id

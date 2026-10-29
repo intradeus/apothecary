@@ -213,7 +213,11 @@ func humanSize(n int64) string {
 // the human's direction for this attempt and the files attached to it.
 func (x *exec) ticketSection(b *strings.Builder) {
 	rs := x.rs
-	fmt.Fprintf(b, "# TASK\n%s\n\n%s\n", rs.view.TicketTitle, rs.view.TicketGoal)
+	fmt.Fprintf(b, "# TASK\n%s\n", rs.view.TicketTitle)
+	if rs.view.TicketChangeType != "" {
+		fmt.Fprintf(b, "Change type: %s\n", rs.view.TicketChangeType)
+	}
+	fmt.Fprintf(b, "\n%s\n", rs.view.TicketGoal)
 	// Per-attempt direction from the human (ticket goal stays the spec; this
 	// is additive — "last try broke the router, use the middleware instead").
 	if rs.view.RunGoal != "" {

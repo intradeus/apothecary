@@ -176,7 +176,7 @@ func (s *Server) startMRRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	runID, err := s.Engine.CreateRunWith(ctx, engine.Ticket{
-		TicketID: t.ID, Title: t.Title, Goal: t.Goal,
+		TicketID: t.ID, Title: t.Title, Goal: t.Goal, ChangeType: string(t.ChangeType),
 		SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,
 	}, flowName, projectID, engine.RunInput{Params: body.Params, MR: &engine.RunMR{Repo: body.Repo, IID: iid}, Skillsets: body.Skillsets})
 	switch {

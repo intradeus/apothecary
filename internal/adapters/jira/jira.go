@@ -48,6 +48,11 @@ type Config struct {
 	// status missing from the map is one this Jira has no word for
 	// (ErrStatusUnsupported). Nil = DefaultStatusMap.
 	StatusMap map[ports.TicketStatus]string
+	// TypeMap is the change type each of this site's issue types is, keyed
+	// by the lowercased type name ("bug" → fix) — what an imported ticket
+	// becomes. A type missing from it is left for the importer to guess
+	// (ports.GuessChangeType).
+	TypeMap map[string]ports.ChangeType
 }
 
 type Client struct {
@@ -247,6 +252,7 @@ func (c *Client) toTicket(in issueJSON) ports.SourceTicket {
 		Type:     in.Fields.IssueType.Name,
 		Assignee: in.Fields.Assignee.DisplayName,
 	}
+	t.ChangeType = c.cfg.TypeMap[strings.ToLower(strings.TrimSpace(t.Type))]
 	// Jira stamps "2026-07-31T10:04:00.000+0200" — RFC3339 with no colon in
 	// the offset, so it needs its own layout.
 	if ts, err := time.Parse("2006-01-02T15:04:05.999-0700", in.Fields.Updated); err == nil {
@@ -599,3 +605,28 @@ func itoa(v any) string {
 }
 
 var _ ports.TicketSource = (*Client)(nil)
+
+// ParseTypeMap reads the integration's type map text — issue type=change
+// type pairs separated by commas or newlines ("Bug=fix, Task=chore, Spike=
+// chore"); several types may share a change type. Type names match
+// case-insensitively. Empty text is no mapping: every type is guessed.
+func ParseTypeMap(text string) (map[string]ports.ChangeType, error) {
+	m := map[string]ports.ChangeType{}
+	for part := range strings.SplitSeq(strings.ReplaceAll(text, "\n", ","), ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		name, value, ok := strings.Cut(part, "=")
+		name = strings.ToLower(strings.TrimSpace(name))
+		if !ok || name == "" {
+			return nil, fmt.Errorf("jira: type map entry %q is not issue type=change type", part)
+		}
+		ct, known := ports.ParseChangeType(value)
+		if !known {
+			return nil, fmt.Errorf("jira: type map gives %q the change type %q; the change types are feat, fix, chore", strings.TrimSpace(name), strings.TrimSpace(value))
+		}
+		m[name] = ct
+	}
+	return m, nil
+}

@@ -1,6 +1,13 @@
 // A ticket: a unit of work that owns many runs. The flow is NOT here — it is
 // chosen per run.
 
+/** What a ticket is (ports.ChangeType); its base branch is named after it,
+ *  and a flow's `run_if: run.ticket.change_type == fix` reads it. */
+export type ChangeType = 'feat' | 'fix' | 'chore';
+export const CHANGE_TYPES: ChangeType[] = ['feat', 'fix', 'chore'];
+export const asChangeType = (s: string | undefined): ChangeType =>
+	CHANGE_TYPES.includes(s as ChangeType) ? (s as ChangeType) : 'feat';
+
 export interface Ticket {
 	id: string;
 	projectId: string;
@@ -8,6 +15,7 @@ export interface Ticket {
 	goal: string;
 	/** Branch stem; each run gets baseBranch + a per-run suffix. */
 	baseBranch: string;
+	changeType: ChangeType;
 	attachmentIds: string[];
 	/** Provenance of an imported ticket (absent when typed in by hand). A
 	 *  record of the copy, not a live link: nothing is written back. */
@@ -24,6 +32,8 @@ export interface TicketSource {
 	kind: string; // 'jira'
 	key: string; // 'PROJ-123'
 	url?: string;
+	/** The tracker's own word for the issue's type ('Bug'). */
+	type?: string;
 }
 
 /** What creating or updating a ticket needs. Supplying source turns a create
@@ -34,6 +44,7 @@ export interface TicketDraft {
 	goal: string;
 	projectId: string;
 	branch?: string;
+	changeType?: ChangeType;
 	attachmentIds?: string[];
 	sourceIntegrationId?: string;
 	sourceKey?: string;
@@ -51,6 +62,10 @@ export interface SourceTicket {
 	assignee?: string;
 	updated?: string;
 	attachments: SourceAttachment[];
+	/** What an import makes of the issue's type. */
+	changeType: ChangeType;
+	/** The base branch an import names from it: {changeType}/{key}-{title}. */
+	branch: string;
 }
 
 export interface SourceAttachment {
