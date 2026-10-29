@@ -13,6 +13,7 @@ export * from './files';
 export * from './flow';
 export * from './automation';
 export * from './integration';
+export * from './credential';
 export * from './egress';
 export * from './settings';
 export * from './workspace';

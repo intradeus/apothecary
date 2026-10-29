@@ -18,10 +18,8 @@ package omp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"path"
-	"strings"
 
 	"apothecary/internal/adapters/acpagent"
 	"apothecary/internal/agentspec"
@@ -80,71 +78,12 @@ func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agen
 	return nil
 }
 
-// AuthFilePath is the credential store SeedOAuth imports into, exposed so the
+// AuthFilePath is omp's credential store (agent.db), exposed so the
 // engine can remove it when a run ends (the workspace outlives the run for
-// inspection; the logins — refreshed by omp in place — should not).
+// inspection; nothing in it should outlive the run).
 func (a *Adapter) AuthFilePath(ctx context.Context, env ports.EnvID) string {
 	return path.Join(a.agentDir(ctx, env), "agent.db")
 }
-
-// SeedOAuth imports subscription logins (CLIProxyAPI credential JSON, one
-// document per login) into omp's agent.db: staged as files, imported by omp
-// itself as the workspace user, then the staging directory is removed. A
-// login omp skips (unknown type, unparseable expiry) fails the seed with
-// omp's own reason rather than a run that later finds no provider.
-func (a *Adapter) SeedOAuth(ctx context.Context, env ports.EnvID, creds [][]byte) error {
-	if len(creds) == 0 {
-		return nil
-	}
-	dir := path.Join(a.agentDir(ctx, env), "import")
-	for i, c := range creds {
-		if err := a.envp.WriteFile(ctx, env, path.Join(dir, fmt.Sprintf("%d.json", i)), c, 0o600); err != nil {
-			return fmt.Errorf("stage login %d: %w", i, err)
-		}
-	}
-	q := shellQuote(dir)
-	res, err := a.envp.Exec(ctx, env, ports.Command{
-		Script: "trap 'rm -rf " + q + "' EXIT; omp auth-broker import " + q + " --json",
-	})
-	if err != nil {
-		return fmt.Errorf("import logins: %w", err)
-	}
-	if res.ExitCode != 0 {
-		return fmt.Errorf("import logins: omp auth-broker import exited %d: %s", res.ExitCode, strings.TrimSpace(res.Output))
-	}
-	return importErrors(res.Output, len(creds))
-}
-
-// importErrors reads `omp auth-broker import --json`: a summary object
-// naming the imported and skipped credentials. Every staged login must have
-// been imported.
-func importErrors(out string, want int) error {
-	var sum struct {
-		Imported []json.RawMessage `json:"imported"`
-		Skipped  []struct {
-			File   string `json:"file"`
-			Reason string `json:"reason"`
-		} `json:"skipped"`
-	}
-	for _, line := range strings.Split(out, "\n") {
-		if line = strings.TrimSpace(line); strings.HasPrefix(line, "{") && json.Unmarshal([]byte(line), &sum) == nil {
-			break
-		}
-	}
-	if len(sum.Skipped) > 0 {
-		var why []string
-		for _, s := range sum.Skipped {
-			why = append(why, path.Base(s.File)+": "+s.Reason)
-		}
-		return fmt.Errorf("import logins: omp skipped %s", strings.Join(why, "; "))
-	}
-	if len(sum.Imported) != want {
-		return fmt.Errorf("import logins: omp imported %d of %d: %s", len(sum.Imported), want, strings.TrimSpace(out))
-	}
-	return nil
-}
-
-func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // --- running it ----------------------------------------------------------------
 

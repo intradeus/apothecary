@@ -1,7 +1,8 @@
 # Model providers, logins and the keeper — plan
 
-Status: agreed design, not yet built (2026-10-28). Supersedes the ad-hoc
-`auth_json` / `oauth_json` / `env` secrets on harness integrations.
+Status: built (2026-10-29). Supersedes the ad-hoc `auth_json` / `oauth_json` /
+`env` secrets on harness integrations. Where the build differs from this plan,
+and why, is in IMPLEMENTATION_NOTES ("Model providers, logins and the keeper").
 
 ## Why
 

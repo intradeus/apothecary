@@ -402,6 +402,65 @@ components:
         - name
         - yaml
       type: object
+    CredentialImportRequest:
+      properties:
+        text:
+          type: string
+      required:
+        - text
+      type: object
+    CredentialImportResult:
+      properties:
+        created:
+          items:
+            $ref: '#/components/schemas/ProviderCredential'
+          nullable: true
+          type: array
+        rejected:
+          items:
+            type: string
+          nullable: true
+          type: array
+      required:
+        - created
+        - rejected
+      type: object
+    CredentialMeta:
+      properties:
+        account:
+          type: string
+        error:
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        last_refresh:
+          format: date-time
+          type: string
+        status:
+          type: string
+      required:
+        - status
+      type: object
+    CredentialRename:
+      properties:
+        name:
+          type: string
+      required:
+        - name
+      type: object
+    CredentialRequest:
+      properties:
+        key:
+          type: string
+        name:
+          type: string
+        provider:
+          type: string
+      required:
+        - key
+        - provider
+      type: object
     DocAsk:
       properties:
         harness:
@@ -938,6 +997,8 @@ components:
           type: boolean
         secret:
           type: boolean
+        type:
+          type: string
       required:
         - label
         - name
@@ -1595,6 +1656,30 @@ components:
       required:
         - password
       type: object
+    Pending:
+      properties:
+        expires_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        interval_seconds:
+          type: integer
+        paste:
+          type: boolean
+        provider:
+          type: string
+        url:
+          type: string
+        user_code:
+          type: string
+      required:
+        - expires_at
+        - id
+        - paste
+        - provider
+        - url
+      type: object
     PhaseInfo:
       properties:
         confirm:
@@ -2023,6 +2108,61 @@ components:
           type: string
       required:
         - value
+      type: object
+    ProviderCredential:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        meta:
+          $ref: '#/components/schemas/CredentialMeta'
+        name:
+          type: string
+        provider:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        user_id:
+          type: string
+      required:
+        - created_at
+        - id
+        - kind
+        - meta
+        - name
+        - provider
+        - updated_at
+        - user_id
+      type: object
+    ProviderInfo:
+      properties:
+        harnesses:
+          items:
+            type: string
+          nullable: true
+          type: array
+        id:
+          type: string
+        key:
+          type: boolean
+        login:
+          type: boolean
+        name:
+          type: string
+        sign_in:
+          type: boolean
+      required:
+        - harnesses
+        - id
+        - key
+        - login
+        - name
+        - sign_in
       type: object
     RaisePingRequest:
       properties:
@@ -2546,6 +2686,29 @@ components:
         - email
         - handle
         - password
+      type: object
+    SignInComplete:
+      properties:
+        name:
+          type: string
+        pasted:
+          type: string
+      type: object
+    SignInRequest:
+      properties:
+        provider:
+          type: string
+      required:
+        - provider
+      type: object
+    SignInResult:
+      properties:
+        credential:
+          $ref: '#/components/schemas/ProviderCredential'
+        pending:
+          type: boolean
+      required:
+        - pending
       type: object
     Signal:
       properties:
@@ -3150,6 +3313,10 @@ components:
         - filename
       type: object
   securitySchemes:
+    brokerToken:
+      description: Per-run auth-broker token, issued to omp in the run's workspace. Not a user credential.
+      scheme: bearer
+      type: http
     personalToken:
       description: A personal API token (POST /api/me/tokens), sent as a bearer token.
       scheme: bearer
@@ -3535,6 +3702,365 @@ paths:
       summary: Remove a notification channel
       tags:
         - channels
+  /api/credentials:
+    get:
+      operationId: listCredentials
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/ProviderCredential'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One's model provider credentials (metadata only, never a key or a token)
+      tags:
+        - integrations
+    post:
+      operationId: createCredential
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CredentialRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderCredential'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Add an API key for a provider
+      tags:
+        - integrations
+  /api/credentials/{id}:
+    delete:
+      operationId: deleteCredential
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Delete a credential no harness integration uses
+      tags:
+        - integrations
+    get:
+      operationId: getCredential
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderCredential'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One credential (metadata only)
+      tags:
+        - integrations
+    put:
+      operationId: renameCredential
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CredentialRename'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderCredential'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Rename a credential
+      tags:
+        - integrations
+  /api/credentials/{id}/test:
+    post:
+      operationId: testCredential
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestResult'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Check a credential against its provider, without spending tokens
+      tags:
+        - integrations
+  /api/credentials/import:
+    post:
+      description: codex's or opencode's auth.json, CLIProxyAPI login JSON, or KEY=VALUE lines. Every entry that is not a provider apothecary manages is refused and listed.
+      operationId: importCredentials
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CredentialImportRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialImportResult'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Import a credential file a harness CLI wrote
+      tags:
+        - integrations
+  /api/credentials/signin:
+    post:
+      description: Returns the provider page to open and, for a device sign-in, the code to type there. The tokens come back to the engine, never to a laptop CLI.
+      operationId: startSignIn
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignInRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pending'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Start signing in to a provider from apothecary
+      tags:
+        - integrations
+  /api/credentials/signin/{sid}/complete:
+    post:
+      description: 'A device sign-in answers 202 {pending: true} until the person approves; a paste sign-in exchanges what was pasted. 201 with the new credential when done.'
+      operationId: completeSignIn
+      parameters:
+        - in: path
+          name: sid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignInComplete'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignInResult'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Finish a sign-in
+      tags:
+        - integrations
   /api/egress-defaults:
     get:
       operationId: getEgressDefaults
@@ -6255,6 +6781,44 @@ paths:
       summary: Set one project secret
       tags:
         - projects
+  /api/providers:
+    get:
+      description: 'The closed set: what each takes (an API key, a login) and which harnesses use it. harness narrows it to one harness kind.'
+      operationId: listProviders
+      parameters:
+        - description: only the providers this harness kind uses
+          in: query
+          name: harness
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/ProviderInfo'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: The model providers apothecary manages credentials for
+      tags:
+        - integrations
   /api/runs:
     get:
       operationId: listRuns
@@ -6586,6 +7150,112 @@ paths:
       summary: Server-sent event stream of the Ask pane
       tags:
         - runs
+  /api/runs/{id}/auth-broker/{rest...}:
+    delete:
+      operationId: authBrokerDelete
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - brokerToken: []
+      summary: 'omp''s auth broker for a run: acknowledgements'
+      tags:
+        - pings
+    get:
+      description: 'omp''s auth-broker protocol, served per run (docs/model-providers-plan.md): access tokens only, the refresh sentinel in place of every refresh token.'
+      operationId: authBrokerGet
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - brokerToken: []
+      summary: 'omp''s auth broker for a run: snapshot, health'
+      tags:
+        - pings
+    post:
+      operationId: authBrokerPost
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - brokerToken: []
+      summary: 'omp''s auth broker for a run: refresh, acknowledgements'
+      tags:
+        - pings
   /api/runs/{id}/egress-allow:
     post:
       operationId: allowEgressHost

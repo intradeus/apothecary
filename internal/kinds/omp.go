@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +14,7 @@ import (
 	ompadapter "apothecary/internal/adapters/omp"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/providers"
 )
 
 // OmpVersion is the pinned omp release: the tools bundle ships exactly this
@@ -24,37 +24,27 @@ import (
 const OmpVersion = "18.13.1"
 
 // Omp is the harness/omp kind: oh-my-pi (github.com/can1357/oh-my-pi), driven
-// as an ACP agent. Harness-owned auth in two shapes: provider API keys as
-// env-var lines (ride provider.env — omp reads them natively) and/or
-// subscription logins as CLIProxyAPI credential JSON, imported into omp's
-// agent.db at bootstrap.
+// as an ACP agent. Its credentials are provider API keys, rendered as the env
+// vars omp reads natively (provider.env), and logins, which never enter the
+// workspace as files: omp runs in auth-broker mode against the engine, which
+// serves it access tokens and refreshes them itself (ompbroker.go).
 type Omp struct{}
 
 func (Omp) Descriptor() Descriptor {
 	return Descriptor{
 		Port: "harness", Kind: "omp", Label: "omp (oh-my-pi)",
-		Help: "oh-my-pi coding agent " + OmpVersion + " (the version pinned by this apothecary release). Give it provider API keys, " +
-			"subscription logins, or both — omp holds no other credential.",
-		Fields: []Field{
-			{Name: "env", Label: "Provider API keys — one KEY=VALUE per line", Secret: true, Multiline: true,
-				Placeholder: "ANTHROPIC_API_KEY=sk-ant-…\nOPENROUTER_API_KEY=sk-or-…",
-				Help:        "Read natively by omp: " + strings.Join(ompEnvKeyNames(), ", ") + "."},
-			{Name: "oauth_json", Label: "Subscription logins — CLIProxyAPI credential JSON, one object or an array (optional)",
-				Secret:      true,
-				Placeholder: `[{"type":"claude","access_token":"…","refresh_token":"…","expired":"2026-11-01T00:00:00Z","email":"…"}]`,
-				Help: "type is claude (Claude Pro/Max), codex (ChatGPT), gemini or antigravity; " +
-					"imported with `omp auth-broker import`. omp refreshes the tokens itself."},
-		},
+		Help:   "oh-my-pi coding agent " + OmpVersion + " (the version pinned by this apothecary release).",
+		Fields: []Field{credentialsField(providers.Omp)},
 	}
 }
 
 func (Omp) New(cfg Config, envp ports.EnvProvisioner) (Harness, error) {
 	adapter := ompadapter.New(envp, ompadapter.Config{})
 	return &ompHarness{
-		Runner:    acpagent.New(envp, adapter.Profile()),
-		adapter:   adapter,
-		env:       cfg.Secrets["env"],
-		oauthJSON: cfg.Secrets["oauth_json"],
+		Runner:  acpagent.New(envp, adapter.Profile()),
+		adapter: adapter,
+		creds:   cfg.Credentials,
+		held:    bind(providers.Omp, cfg.Credentials.Snapshot),
 	}, nil
 }
 
@@ -62,250 +52,67 @@ func (Omp) New(cfg Config, envp ports.EnvProvisioner) (Harness, error) {
 // sidecar; the embedded runner is the AgentRunner, the adapter its config.
 type ompHarness struct {
 	*acpagent.Runner
-	adapter   *ompadapter.Adapter
-	env       string
-	oauthJSON string
-}
-
-// ompProvider is one omp provider: its id (the model prefix flows use, the
-// key of omp's catalog) and its models.dev id — the key of the tables shared
-// with opencode (providerDomains, providerAuthProbe); mostly the same,
-// except where omp spells a provider its own way.
-type ompProvider struct {
-	id, devID string
-}
-
-// ompEnvProviders maps the env vars omp reads natively (its catalog's
-// providers/<id>.kdl `env`) to the providers they unlock. One key can unlock
-// two: OPENCODE_API_KEY serves both OpenCode gateways.
-var ompEnvProviders = map[string][]ompProvider{
-	"ANTHROPIC_API_KEY":  {{"anthropic", "anthropic"}},
-	"OPENAI_API_KEY":     {{"openai", "openai"}},
-	"OPENROUTER_API_KEY": {{"openrouter", "openrouter"}},
-	"GEMINI_API_KEY":     {{"google", "google"}},
-	"XAI_API_KEY":        {{"xai", "xai"}},
-	"GROQ_API_KEY":       {{"groq", "groq"}},
-	"MISTRAL_API_KEY":    {{"mistral", "mistral"}},
-	"DEEPSEEK_API_KEY":   {{"deepseek", "deepseek"}},
-	"CEREBRAS_API_KEY":   {{"cerebras", "cerebras"}},
-	"TOGETHER_API_KEY":   {{"together", "togetherai"}},
-	"FIREWORKS_API_KEY":  {{"fireworks", "fireworks-ai"}},
-	"OPENCODE_API_KEY":   {{"opencode-go", "opencode-go"}, {"opencode-zen", "opencode"}},
-}
-
-// ompLogin is what a CLIProxyAPI credential `type` imports as (omp's
-// CLIPROXY_TYPE_TO_PROVIDER) and the hosts its traffic and token refresh
-// reach — a subscription has no API-key provider entry to derive them from.
-type ompLogin struct {
-	provider ompProvider
-	domains  []string
-}
-
-var ompLogins = map[string]ompLogin{
-	"claude": {ompProvider{"anthropic", "anthropic"},
-		[]string{"api.anthropic.com", "console.anthropic.com", "platform.claude.com"}},
-	"codex": {ompProvider{"openai-codex", "openai"},
-		[]string{"chatgpt.com", "auth.openai.com", "api.openai.com"}},
-	"gemini": {ompProvider{"google-gemini-cli", "google"},
-		[]string{"cloudcode-pa.googleapis.com", "oauth2.googleapis.com"}},
-	"gemini-cli": {ompProvider{"google-gemini-cli", "google"},
-		[]string{"cloudcode-pa.googleapis.com", "oauth2.googleapis.com"}},
-	"antigravity": {ompProvider{"google-antigravity", "google"},
-		[]string{"daily-cloudcode-pa.googleapis.com", "cloudcode-pa.googleapis.com", "oauth2.googleapis.com"}},
+	adapter *ompadapter.Adapter
+	creds   Credentials
+	held    []bound
 }
 
 // ompInfra are omp's own runtime endpoints, needed whatever the provider: its
 // model catalog refresh. Always allowed.
 var ompInfra = []string{"catalog.stencil.so"}
 
-func ompEnvKeyNames() []string {
-	names := make([]string, 0, len(ompEnvProviders))
-	for k := range ompEnvProviders {
-		names = append(names, k)
-	}
-	sort.Strings(names)
-	return names
-}
-
-var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
-// parseEnvLines reads dotenv-style KEY=VALUE lines: blank lines and #
-// comments skipped, an `export ` prefix and surrounding quotes tolerated.
-func parseEnvLines(raw string) (map[string]string, error) {
-	out := map[string]string{}
-	for i, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimPrefix(line, "export ")
-		k, v, ok := strings.Cut(line, "=")
-		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
-		if !ok || !envName.MatchString(k) {
-			return nil, fmt.Errorf("line %d: want KEY=VALUE", i+1)
-		}
-		if len(v) >= 2 && (v[0] == '"' || v[0] == '\'') && v[len(v)-1] == v[0] {
-			v = v[1 : len(v)-1]
-		}
-		out[k] = v
-	}
-	return out, nil
-}
-
-// oauthLogin is the slice of a CLIProxyAPI credential omp's importer needs
-// (it skips a document missing any of these).
-type oauthLogin struct {
-	Type         string `json:"type"`
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	Expired      string `json:"expired"`
-}
-
-// parseLogins reads oauth_json — one credential object or an array — and
-// returns each document verbatim (what gets imported) with its decoded form.
-func parseLogins(raw string) ([]json.RawMessage, []oauthLogin, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, nil, nil
-	}
-	var docs []json.RawMessage
-	if strings.HasPrefix(raw, "[") {
-		if err := json.Unmarshal([]byte(raw), &docs); err != nil {
-			return nil, nil, fmt.Errorf("oauth_json: %w", err)
-		}
-	} else {
-		docs = []json.RawMessage{json.RawMessage(raw)}
-	}
-	logins := make([]oauthLogin, len(docs))
-	for i, d := range docs {
-		if err := json.Unmarshal(d, &logins[i]); err != nil {
-			return nil, nil, fmt.Errorf("oauth_json[%d]: %w", i, err)
-		}
-		l := logins[i]
-		if _, ok := ompLogins[strings.ToLower(l.Type)]; !ok {
-			return nil, nil, fmt.Errorf("oauth_json[%d]: type %q is not one omp imports (claude, codex, gemini, antigravity)", i, l.Type)
-		}
-		if l.AccessToken == "" || l.RefreshToken == "" || l.Expired == "" {
-			return nil, nil, fmt.Errorf("oauth_json[%d]: needs access_token, refresh_token and expired", i)
-		}
-	}
-	return docs, logins, nil
-}
-
-// heldProvider is a provider the configured auth unlocks; key is its API
-// key, empty for a subscription login.
-type heldProvider struct {
-	ompProvider
-	key     string
-	domains []string
-}
-
-// held lists the providers env and oauth_json unlock, by omp id. A provider
-// with both keeps the key (the probeable credential); omp itself prefers the
-// login.
-func (h *ompHarness) held() []heldProvider {
-	byID := map[string]*heldProvider{}
-	var order []string
-	add := func(p ompProvider, key string, domains []string) {
-		if hp, ok := byID[p.id]; ok {
-			if hp.key == "" {
-				hp.key = key
-			}
-			hp.domains = append(hp.domains, domains...)
-			return
-		}
-		byID[p.id] = &heldProvider{ompProvider: p, key: key, domains: domains}
-		order = append(order, p.id)
-	}
-	env, _ := parseEnvLines(h.env)
-	for name, v := range env {
-		for _, p := range ompEnvProviders[name] {
-			if v != "" {
-				add(p, v, providerDomains[p.devID])
-			}
-		}
-	}
-	_, logins, _ := parseLogins(h.oauthJSON)
-	for _, l := range logins {
-		lg := ompLogins[strings.ToLower(l.Type)]
-		add(lg.provider, "", lg.domains)
-	}
-	sort.Strings(order)
-	out := make([]heldProvider, len(order))
-	for i, id := range order {
-		out[i] = *byID[id]
-	}
-	return out
-}
-
-// Test statically validates the auth material (no remote to probe).
+// Test checks the harness has something to run on.
 func (h *ompHarness) Test(_ context.Context) error {
-	if strings.TrimSpace(h.env) == "" && strings.TrimSpace(h.oauthJSON) == "" {
-		return fmt.Errorf("omp: configure env (provider API keys) or oauth_json — the harness owns model auth")
-	}
-	if _, err := parseEnvLines(h.env); err != nil {
-		return fmt.Errorf("omp: env: %w", err)
-	}
-	if _, _, err := parseLogins(h.oauthJSON); err != nil {
-		return fmt.Errorf("omp: %w", err)
+	if len(h.held) == 0 {
+		return fmt.Errorf("omp: no model provider credentials — add one under System → Model providers and pick it here")
 	}
 	return nil
 }
 
 func (h *ompHarness) Binary() string { return "omp" }
 
-// EgressDomains derives the allowlist from the same auth the models come
-// from — whatever omp can route to must not be blocked by the firewall that
-// ships with it — plus omp's own infrastructure.
+// EgressDomains derives the allowlist from the same credentials the models
+// come from, plus omp's own infrastructure.
 func (h *ompHarness) EgressDomains() []string {
-	seen := map[string]bool{}
-	var out []string
-	add := func(ds ...string) {
-		for _, d := range ds {
-			if d != "" && !seen[d] {
-				seen[d] = true
-				out = append(out, d)
-			}
-		}
-	}
-	add(ompInfra...)
-	held := h.held()
-	if len(held) == 0 {
-		add(egressBaseline...)
-	}
-	for _, p := range held {
-		add(p.domains...)
-	}
-	sort.Strings(out)
-	return out
+	return uniqueSorted(append(append([]string(nil), ompInfra...), domains(h.held)...))
 }
 
-// Models lists `provider/model` for exactly the providers the auth unlocks,
-// from omp's own bundled catalog at the pinned version — the list its ACP
-// `model` option offers, in its provider ids. A subscription serves its own
+// HasLogins (kinds.AuthBrokered): omp needs the engine's auth broker when it
+// holds at least one login.
+func (h *ompHarness) HasLogins() bool {
+	for _, b := range h.held {
+		if b.Kind == providers.KindOAuth {
+			return true
+		}
+	}
+	return false
+}
+
+// Models lists `provider/model` for exactly the providers the credentials
+// unlock, from omp's own bundled catalog at the pinned version — the list its
+// ACP `model` option offers, in its provider ids. A login serves its own
 // models (a ChatGPT login: openai-codex's handful, not the API's catalog),
 // which only omp's catalog knows.
 func (h *ompHarness) Models(ctx context.Context) ([]ModelInfo, error) {
-	held := h.held()
-	if len(held) == 0 {
-		return nil, fmt.Errorf("omp: no providers configured — set env or oauth_json on the integration first")
+	if len(h.held) == 0 {
+		return nil, fmt.Errorf("omp: no model provider credentials — pick some on the integration first")
 	}
 	catalog, err := fetchOmpCatalog(ctx, OmpVersion)
 	if err != nil {
 		return nil, err
 	}
 	var out []ModelInfo
-	for _, hp := range held {
-		label := hp.id
-		if hp.key == "" {
-			label += " (subscription)"
+	for _, b := range h.held {
+		label := b.native.ID
+		if b.Kind == providers.KindOAuth {
+			label += " (login)"
 		}
-		for modelID, m := range catalog[hp.id] {
+		for modelID, m := range catalog[b.native.ID] {
 			name := m.Name
 			if name == "" {
 				name = modelID
 			}
-			out = append(out, ModelInfo{ID: hp.id + "/" + modelID, Name: label + " · " + name})
+			out = append(out, ModelInfo{ID: b.native.ID + "/" + modelID, Name: label + " · " + name})
 		}
 	}
 	sortModels(out)
@@ -360,7 +167,8 @@ func fetchOmpCatalog(ctx context.Context, version string) (map[string]map[string
 }
 
 // CheckAuth (kinds.AuthChecker) probes the API key of every provider the
-// flow's models route through. A subscription login has no zero-token probe.
+// flow's models route through. A login needs no probe: the keeper just
+// proved its refresh token.
 func (h *ompHarness) CheckAuth(ctx context.Context, models []string) AuthResult {
 	want := map[string]string{}
 	for _, m := range models {
@@ -374,28 +182,27 @@ func (h *ompHarness) CheckAuth(ctx context.Context, models []string) AuthResult 
 // CheckCredentials (kinds.AuthChecker) probes every configured credential.
 func (h *ompHarness) CheckCredentials(ctx context.Context) AuthResult {
 	want := map[string]string{}
-	for _, hp := range h.held() {
-		want[hp.id] = ""
+	for _, b := range h.held {
+		want[b.native.ID] = ""
 	}
 	return h.checkAuth(ctx, want, true)
 }
 
-// checkAuth probes the held providers in want (omp id → the model routed
-// through it, "" to borrow one from the catalog); credentialOnly reports a
-// "model refused" verdict as unverified — the model was borrowed.
+// checkAuth probes the held keys in want (omp id → the model routed through
+// it, "" to borrow one from the catalog); credentialOnly reports a "model
+// refused" verdict as unverified — the model was borrowed.
 func (h *ompHarness) checkAuth(ctx context.Context, want map[string]string, credentialOnly bool) AuthResult {
 	var out AuthResult
+	for _, msg := range sortedProblems(h.creds.Problems) {
+		out.Rejected = append(out.Rejected, "omp: "+msg)
+	}
 	var catalog map[string]map[string]ompModel
-	for _, hp := range h.held() {
-		model, ok := want[hp.id]
-		if !ok {
+	for _, b := range h.held {
+		model, ok := want[b.native.ID]
+		if !ok || b.Kind != providers.KindAPIKey {
 			continue
 		}
-		label := "omp provider " + hp.id
-		if hp.key == "" {
-			out.Unverified = append(out.Unverified, label+": subscription login — no zero-token probe")
-			continue
-		}
+		label := "omp provider " + b.native.ID
 		if catalog == nil {
 			c, err := fetchOmpCatalog(ctx, OmpVersion)
 			if err != nil {
@@ -404,7 +211,7 @@ func (h *ompHarness) checkAuth(ctx context.Context, want map[string]string, cred
 			}
 			catalog = c
 		}
-		models := catalog[hp.id]
+		models := catalog[b.native.ID]
 		if model == "" {
 			ids := make([]string, 0, len(models))
 			for id := range models {
@@ -415,19 +222,19 @@ func (h *ompHarness) checkAuth(ctx context.Context, want map[string]string, cred
 				model = ids[0]
 			}
 		}
-		pr, probeable := providerAuthProbe(hp.devID, catalogProvider{Name: hp.id, API: ompAPIBase(models)}, hp.key, model)
+		pr, probeable := providerAuthProbe(b.provider.Catalog, catalogProvider{Name: b.native.ID, API: ompAPIBase(models)}, b.Key, model)
 		if !probeable {
 			out.Unverified = append(out.Unverified, label+": no zero-token probe for this provider")
 			continue
 		}
-		rejected, reason, err := pr.run(ctx, hp.key)
+		rejected, reason, err := pr.run(ctx, b.Key)
 		switch {
 		case err != nil:
 			out.Unverified = append(out.Unverified, fmt.Sprintf("%s: %v", label, err))
 		case rejected && credentialOnly && strings.HasPrefix(reason, "model"):
 			out.Unverified = append(out.Unverified, fmt.Sprintf("%s: probe model %s %s", label, model, reason))
 		case rejected:
-			fix := "fix env on the omp integration"
+			fix := "fix the " + b.provider.Name + " API key under System → Model providers"
 			if strings.HasPrefix(reason, "model") {
 				fix = "pick another model in the flow"
 			}
@@ -462,36 +269,33 @@ func ompAPIBase(models map[string]ompModel) string {
 }
 
 // EnvVars: the API keys ride provider.env, where omp reads them natively.
+// The broker's address and token are per run, so the engine adds them.
 func (h *ompHarness) EnvVars() map[string]string {
-	env, err := parseEnvLines(h.env)
-	if err != nil || len(env) == 0 {
+	env := map[string]string{}
+	for _, b := range h.held {
+		if b.Kind == providers.KindAPIKey && b.native.Env != "" {
+			env[b.native.Env] = b.Key
+		}
+	}
+	if len(env) == 0 {
 		return nil
 	}
 	return env
 }
 
-// AuthFiles (kinds.AuthLocator): agent.db, which holds the imported logins
-// (and omp's refreshed tokens), removed when the run ends.
+// AuthFiles (kinds.AuthLocator): agent.db, omp's credential store (in broker
+// mode it holds no login, but an older workspace may), removed when the run
+// ends.
 func (h *ompHarness) AuthFiles(ctx context.Context, env ports.EnvID) []string {
 	return []string{h.adapter.AuthFilePath(ctx, env)}
 }
 
-// SecretValues (kinds.SecretHolder): the logins never pass through
-// provider.env. The API keys need no mention — they ride EnvVars.
-func (h *ompHarness) SecretValues() []string { return []string{h.oauthJSON} }
+// SecretValues (kinds.SecretHolder): the logins' access tokens as of the
+// snapshot; the broker registers every token it serves before serving it.
+func (h *ompHarness) SecretValues() []string { return secretValues(h.held) }
 
-// SeedAuth imports the subscription logins into omp's agent.db.
-func (h *ompHarness) SeedAuth(ctx context.Context, env ports.EnvID) error {
-	docs, _, err := parseLogins(h.oauthJSON)
-	if err != nil {
-		return fmt.Errorf("omp: %w", err)
-	}
-	creds := make([][]byte, len(docs))
-	for i, d := range docs {
-		creds[i] = d
-	}
-	return h.adapter.SeedOAuth(ctx, env, creds)
-}
+// SeedAuth: nothing to write — keys ride provider.env and logins the broker.
+func (h *ompHarness) SeedAuth(context.Context, ports.EnvID, func(string)) error { return nil }
 
 func (h *ompHarness) Prepare(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
 	return h.adapter.PrepareEnv(ctx, env, specs)

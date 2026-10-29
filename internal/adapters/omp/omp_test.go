@@ -83,37 +83,3 @@ func TestPrepareEnvWritesConfigInWorkspaceHome(t *testing.T) {
 
 // Logins are staged as files and imported by omp itself; a login omp skips
 // fails the seed with omp's reason.
-func TestSeedOAuthImports(t *testing.T) {
-	envp, id := envWith(t)
-	var script string
-	envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
-		if strings.Contains(cmd.Script, "auth-broker import") {
-			script = cmd.Script
-			return ports.ExecResult{Output: `{"dryRun":false,"imported":[{"provider":"anthropic","file":"/x/0.json"}],"plan":[],"skipped":[]}` + "\n"}, nil
-		}
-		return ports.ExecResult{}, nil
-	}
-	a := New(envp, Config{})
-	ctx := context.Background()
-	if err := a.SeedOAuth(ctx, id, [][]byte{[]byte(`{"type":"claude"}`)}); err != nil {
-		t.Fatal(err)
-	}
-	staged, err := envp.ReadFile(ctx, id, "/home/apothecary/.omp/agent/import/0.json")
-	if err != nil || string(staged) != `{"type":"claude"}` {
-		t.Errorf("staged = %q, %v", staged, err)
-	}
-	if !strings.Contains(script, "omp auth-broker import '/home/apothecary/.omp/agent/import' --json") ||
-		!strings.Contains(script, "rm -rf '/home/apothecary/.omp/agent/import'") {
-		t.Errorf("script = %q", script)
-	}
-
-	envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
-		if strings.Contains(cmd.Script, "auth-broker import") {
-			return ports.ExecResult{Output: `{"imported":[],"skipped":[{"file":"/x/0.json","reason":"cannot parse expired=?"}]}`}, nil
-		}
-		return ports.ExecResult{}, nil
-	}
-	if err := a.SeedOAuth(ctx, id, [][]byte{[]byte(`{}`)}); err == nil || !strings.Contains(err.Error(), "0.json: cannot parse expired") {
-		t.Errorf("err = %v, want omp's skip reason", err)
-	}
-}

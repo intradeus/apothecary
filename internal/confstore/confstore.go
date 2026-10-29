@@ -316,6 +316,14 @@ type DB interface {
 	// Settings are per user: key -> raw JSON value.
 	GetSettings(ctx Ctx, userID string) (map[string]string, error)
 	PutSetting(ctx Ctx, userID, key, value string) error
+
+	// Provider credentials are a user's; the Service seals them and refuses
+	// to delete one a harness integration still references.
+	UpsertCredential(ctx Ctx, c ProviderCredential) error
+	GetCredential(ctx Ctx, id string) (ProviderCredential, error)
+	// ListCredentials returns one user's ("" = everyone's).
+	ListCredentials(ctx Ctx, userID string) ([]ProviderCredential, error)
+	DeleteCredential(ctx Ctx, id string) error
 }
 
 // Ctx aliases context.Context (brevity in the wide DB interface).

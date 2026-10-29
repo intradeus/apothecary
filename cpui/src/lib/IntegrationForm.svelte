@@ -3,10 +3,14 @@
 	// (DESIGN 4.14, 7.10): adding a backend kind needs no frontend change.
 	// Secrets are write-only: on edit a set secret shows "•••• set" and a
 	// Replace button; leaving it alone keeps the stored value.
-	import { untrack } from 'svelte';
+	// A "credentials" field (a harness) is a pick of the owner's model
+	// provider credentials this kind takes — the harness holds none of its own.
+	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api';
-	import type { Integration, KindDescriptor, KindField } from '$lib/domain';
+	import type { Credential, Integration, KindDescriptor, KindField } from '$lib/domain';
+	import Checkbox from '$lib/ui/Checkbox.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
+	import { to } from '$lib/urls';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let {
@@ -24,14 +28,49 @@
 	// Read once: the form mounts fresh per integration and kind.
 	const init = untrack(() => ({ d: descriptor, e: existing }));
 	const fields = init.d.fields ?? [];
+	const isPick = (f: KindField) => f.type === 'credentials';
 	let name = $state(init.e?.name ?? init.d.label);
 	let values = $state<Record<string, string>>(
 		Object.fromEntries(
 			fields
-				.filter((f) => !f.secret)
+				.filter((f) => !f.secret && !isPick(f))
 				.map((f) => [f.name, String(init.e?.config?.[f.name] ?? f.default ?? '')])
 		)
 	);
+	/** Picked credential ids, per credentials field. */
+	let picked = $state<Record<string, string[]>>(
+		Object.fromEntries(
+			fields.filter(isPick).map((f) => {
+				const v = init.e?.config?.[f.name];
+				return [f.name, Array.isArray(v) ? v.map(String) : []];
+			})
+		)
+	);
+	/** The owner's credentials this harness kind can use. */
+	let usable = $state<Credential[]>([]);
+	let usableLoaded = $state(false);
+	onMount(async () => {
+		if (!fields.some(isPick)) return;
+		try {
+			const [ps, cs] = await Promise.all([
+				api.credentials.providers(init.d.kind),
+				api.credentials.list()
+			]);
+			const ok = new Set(ps.map((p) => p.id));
+			usable = cs.filter((c) => ok.has(c.provider));
+		} catch (err) {
+			error = err instanceof Error ? err.message : String(err);
+		} finally {
+			usableLoaded = true;
+		}
+	});
+	const toggle = (field: string, id: string, on: boolean) => {
+		const cur = picked[field] ?? [];
+		picked = {
+			...picked,
+			[field]: on ? [...cur.filter((x) => x !== id), id] : cur.filter((x) => x !== id)
+		};
+	};
 	let secretValues = $state<Record<string, string>>(
 		Object.fromEntries(fields.filter((f) => f.secret).map((f) => [f.name, '']))
 	);
@@ -64,14 +103,20 @@
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
+		const empty = fields.find((f) => isPick(f) && f.required && !(picked[f.name] ?? []).length);
+		if (empty) {
+			error = t('form.int.credsRequired', { field: empty.label });
+			return;
+		}
 		busy = true;
 		error = '';
 		try {
 			const config: Record<string, unknown> = {};
-			for (const f of fields.filter((f) => !f.secret)) {
+			for (const f of fields.filter((f) => !f.secret && !isPick(f))) {
 				const v = values[f.name]?.trim() ?? '';
 				if (v !== '') config[f.name] = v;
 			}
+			for (const f of fields.filter(isPick)) config[f.name] = picked[f.name] ?? [];
 			// Only send secret keys the user actually typed — absent keys keep
 			// their stored value (§3 merge semantics).
 			const secrets: Record<string, string> = {};
@@ -123,7 +168,43 @@
 			<input id="if-{uid}-name" bind:value={name} required />
 			<div class="help">{t('form.int.nameHelp')}</div>
 		</div>
-		{#each fields as f (f.name)}
+		{#each fields.filter(isPick) as f (f.name)}
+			<div class="field wide">
+				<span class="lbl"
+					>{f.label}{#if f.required}<span class="req"> *</span>{/if}</span
+				>
+				{#if !usableLoaded}
+					<div class="help">…</div>
+				{:else if usable.length === 0}
+					<div class="help">
+						{t('form.int.credsNone')}
+						<a class="link" href={to.system('providers')}>{t('form.int.credsAdd')}</a>
+					</div>
+				{:else}
+					<div class="picks">
+						{#each usable as c (c.id)}
+							<Checkbox
+								checked={(picked[f.name] ?? []).includes(c.id)}
+								onchange={(on) => toggle(f.name, c.id, on)}
+							>
+								<span>{c.name}</span>
+								<span class="fnt small"
+									>{c.kind === 'oauth'
+										? t('form.int.credsLogin')
+										: t('form.int.credsKey')}{#if c.status === 'disabled'}
+										· <span class="hue-bad">{t('form.int.credsDisabled')}</span>{/if}</span
+								>
+							</Checkbox>
+						{/each}
+					</div>
+					<div class="help">
+						{#if f.help}{f.help}{/if}
+						<a class="link" href={to.system('providers')}>{t('form.int.credsManage')}</a>
+					</div>
+				{/if}
+			</div>
+		{/each}
+		{#each fields.filter((f) => !isPick(f)) as f (f.name)}
 			<div class="field" class:wide={f.secret && isMultiline(f)}>
 				<label for="if-{uid}-{f.name}"
 					>{f.label}{#if f.required && !(f.secret && storedMask(f.name))}<span class="req">
@@ -243,5 +324,10 @@
 		color: var(--grn);
 		font-size: var(--fs-help);
 		flex: none;
+	}
+	.picks {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
 	}
 </style>

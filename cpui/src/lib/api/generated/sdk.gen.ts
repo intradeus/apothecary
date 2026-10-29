@@ -29,6 +29,15 @@ import type {
 	AskRunData,
 	AskRunErrors,
 	AskRunResponses,
+	AuthBrokerDeleteData,
+	AuthBrokerDeleteErrors,
+	AuthBrokerDeleteResponses,
+	AuthBrokerGetData,
+	AuthBrokerGetErrors,
+	AuthBrokerGetResponses,
+	AuthBrokerPostData,
+	AuthBrokerPostErrors,
+	AuthBrokerPostResponses,
 	CancelEnvCheckData,
 	CancelEnvCheckErrors,
 	CancelEnvCheckResponses,
@@ -38,6 +47,9 @@ import type {
 	ClearBuildCacheData,
 	ClearBuildCacheErrors,
 	ClearBuildCacheResponses,
+	CompleteSignInData,
+	CompleteSignInErrors,
+	CompleteSignInResponses,
 	CopyFlowData,
 	CopyFlowErrors,
 	CopyFlowResponses,
@@ -47,6 +59,9 @@ import type {
 	CreateAutomationData,
 	CreateAutomationErrors,
 	CreateAutomationResponses,
+	CreateCredentialData,
+	CreateCredentialErrors,
+	CreateCredentialResponses,
 	CreateFlowData,
 	CreateFlowErrors,
 	CreateFlowResponses,
@@ -71,6 +86,9 @@ import type {
 	DeleteChannelData,
 	DeleteChannelErrors,
 	DeleteChannelResponses,
+	DeleteCredentialData,
+	DeleteCredentialErrors,
+	DeleteCredentialResponses,
 	DeleteFlowBindingData,
 	DeleteFlowBindingErrors,
 	DeleteFlowBindingResponses,
@@ -116,6 +134,9 @@ import type {
 	GetBuildCacheData,
 	GetBuildCacheErrors,
 	GetBuildCacheResponses,
+	GetCredentialData,
+	GetCredentialErrors,
+	GetCredentialResponses,
 	GetEgressDefaultsData,
 	GetEgressDefaultsErrors,
 	GetEgressDefaultsResponses,
@@ -224,6 +245,9 @@ import type {
 	GetWorkspaceTreeData,
 	GetWorkspaceTreeErrors,
 	GetWorkspaceTreeResponses,
+	ImportCredentialsData,
+	ImportCredentialsErrors,
+	ImportCredentialsResponses,
 	ListActionsData,
 	ListActionsErrors,
 	ListActionsResponses,
@@ -236,6 +260,9 @@ import type {
 	ListChannelsData,
 	ListChannelsErrors,
 	ListChannelsResponses,
+	ListCredentialsData,
+	ListCredentialsErrors,
+	ListCredentialsResponses,
 	ListEgressDenialsData,
 	ListEgressDenialsErrors,
 	ListEgressDenialsResponses,
@@ -281,6 +308,9 @@ import type {
 	ListProjectSecretsResponses,
 	ListProjectsErrors,
 	ListProjectsResponses,
+	ListProvidersData,
+	ListProvidersErrors,
+	ListProvidersResponses,
 	ListRunsData,
 	ListRunsErrors,
 	ListRunsResponses,
@@ -323,6 +353,9 @@ import type {
 	ReleaseRunData,
 	ReleaseRunErrors,
 	ReleaseRunResponses,
+	RenameCredentialData,
+	RenameCredentialErrors,
+	RenameCredentialResponses,
 	RepollPingData,
 	RepollPingErrors,
 	RepollPingResponses,
@@ -374,6 +407,9 @@ import type {
 	StartRunServiceData,
 	StartRunServiceErrors,
 	StartRunServiceResponses,
+	StartSignInData,
+	StartSignInErrors,
+	StartSignInResponses,
 	StartTicketRunData,
 	StartTicketRunErrors,
 	StartTicketRunResponses,
@@ -391,6 +427,9 @@ import type {
 	TakeOverRunData,
 	TakeOverRunErrors,
 	TakeOverRunResponses,
+	TestCredentialData,
+	TestCredentialErrors,
+	TestCredentialResponses,
 	TestIntegrationData,
 	TestIntegrationErrors,
 	TestIntegrationResponses,
@@ -692,6 +731,247 @@ export const deleteChannel = <ThrowOnError extends boolean = false>(
 		],
 		url: '/api/channels/{id}',
 		...options
+	});
+
+/**
+ * One's model provider credentials (metadata only, never a key or a token)
+ */
+export const listCredentials = <ThrowOnError extends boolean = false>(
+	options?: Options<ListCredentialsData, ThrowOnError>
+): RequestResult<ListCredentialsResponses, ListCredentialsErrors, ThrowOnError> =>
+	(options?.client ?? client).get<ListCredentialsResponses, ListCredentialsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/credentials',
+		...options
+	});
+
+/**
+ * Add an API key for a provider
+ */
+export const createCredential = <ThrowOnError extends boolean = false>(
+	options: Options<CreateCredentialData, ThrowOnError>
+): RequestResult<CreateCredentialResponses, CreateCredentialErrors, ThrowOnError> =>
+	(options.client ?? client).post<CreateCredentialResponses, CreateCredentialErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/credentials',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Delete a credential no harness integration uses
+ */
+export const deleteCredential = <ThrowOnError extends boolean = false>(
+	options: Options<DeleteCredentialData, ThrowOnError>
+): RequestResult<DeleteCredentialResponses, DeleteCredentialErrors, ThrowOnError> =>
+	(options.client ?? client).delete<
+		DeleteCredentialResponses,
+		DeleteCredentialErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/credentials/{id}',
+		...options
+	});
+
+/**
+ * One credential (metadata only)
+ */
+export const getCredential = <ThrowOnError extends boolean = false>(
+	options: Options<GetCredentialData, ThrowOnError>
+): RequestResult<GetCredentialResponses, GetCredentialErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetCredentialResponses, GetCredentialErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/credentials/{id}',
+		...options
+	});
+
+/**
+ * Rename a credential
+ */
+export const renameCredential = <ThrowOnError extends boolean = false>(
+	options: Options<RenameCredentialData, ThrowOnError>
+): RequestResult<RenameCredentialResponses, RenameCredentialErrors, ThrowOnError> =>
+	(options.client ?? client).put<RenameCredentialResponses, RenameCredentialErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/credentials/{id}',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Check a credential against its provider, without spending tokens
+ */
+export const testCredential = <ThrowOnError extends boolean = false>(
+	options: Options<TestCredentialData, ThrowOnError>
+): RequestResult<TestCredentialResponses, TestCredentialErrors, ThrowOnError> =>
+	(options.client ?? client).post<TestCredentialResponses, TestCredentialErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/credentials/{id}/test',
+		...options
+	});
+
+/**
+ * Import a credential file a harness CLI wrote
+ *
+ * codex's or opencode's auth.json, CLIProxyAPI login JSON, or KEY=VALUE lines. Every entry that is not a provider apothecary manages is refused and listed.
+ */
+export const importCredentials = <ThrowOnError extends boolean = false>(
+	options: Options<ImportCredentialsData, ThrowOnError>
+): RequestResult<ImportCredentialsResponses, ImportCredentialsErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		ImportCredentialsResponses,
+		ImportCredentialsErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/credentials/import',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Start signing in to a provider from apothecary
+ *
+ * Returns the provider page to open and, for a device sign-in, the code to type there. The tokens come back to the engine, never to a laptop CLI.
+ */
+export const startSignIn = <ThrowOnError extends boolean = false>(
+	options: Options<StartSignInData, ThrowOnError>
+): RequestResult<StartSignInResponses, StartSignInErrors, ThrowOnError> =>
+	(options.client ?? client).post<StartSignInResponses, StartSignInErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/credentials/signin',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Finish a sign-in
+ *
+ * A device sign-in answers 202 {pending: true} until the person approves; a paste sign-in exchanges what was pasted. 201 with the new credential when done.
+ */
+export const completeSignIn = <ThrowOnError extends boolean = false>(
+	options: Options<CompleteSignInData, ThrowOnError>
+): RequestResult<CompleteSignInResponses, CompleteSignInErrors, ThrowOnError> =>
+	(options.client ?? client).post<CompleteSignInResponses, CompleteSignInErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/credentials/signin/{sid}/complete',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
 	});
 
 /**
@@ -2393,6 +2673,31 @@ export const setProjectSecret = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * The model providers apothecary manages credentials for
+ *
+ * The closed set: what each takes (an API key, a login) and which harnesses use it. harness narrows it to one harness kind.
+ */
+export const listProviders = <ThrowOnError extends boolean = false>(
+	options?: Options<ListProvidersData, ThrowOnError>
+): RequestResult<ListProvidersResponses, ListProvidersErrors, ThrowOnError> =>
+	(options?.client ?? client).get<ListProvidersResponses, ListProvidersErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/providers',
+		...options
+	});
+
+/**
  * List one's runs, newest first
  */
 export const listRuns = <ThrowOnError extends boolean = false>(
@@ -2587,6 +2892,66 @@ export const streamAsk = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/runs/{id}/ask/stream',
+		...options
+	});
+
+/**
+ * omp's auth broker for a run: acknowledgements
+ */
+export const authBrokerDelete = <ThrowOnError extends boolean = false>(
+	options: Options<AuthBrokerDeleteData, ThrowOnError>
+): RequestResult<AuthBrokerDeleteResponses, AuthBrokerDeleteErrors, ThrowOnError> =>
+	(options.client ?? client).delete<
+		AuthBrokerDeleteResponses,
+		AuthBrokerDeleteErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				key: 'brokerToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/auth-broker/{rest...}',
+		...options
+	});
+
+/**
+ * omp's auth broker for a run: snapshot, health
+ *
+ * omp's auth-broker protocol, served per run (docs/model-providers-plan.md): access tokens only, the refresh sentinel in place of every refresh token.
+ */
+export const authBrokerGet = <ThrowOnError extends boolean = false>(
+	options: Options<AuthBrokerGetData, ThrowOnError>
+): RequestResult<AuthBrokerGetResponses, AuthBrokerGetErrors, ThrowOnError> =>
+	(options.client ?? client).get<AuthBrokerGetResponses, AuthBrokerGetErrors, ThrowOnError>({
+		security: [
+			{
+				key: 'brokerToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/auth-broker/{rest...}',
+		...options
+	});
+
+/**
+ * omp's auth broker for a run: refresh, acknowledgements
+ */
+export const authBrokerPost = <ThrowOnError extends boolean = false>(
+	options: Options<AuthBrokerPostData, ThrowOnError>
+): RequestResult<AuthBrokerPostResponses, AuthBrokerPostErrors, ThrowOnError> =>
+	(options.client ?? client).post<AuthBrokerPostResponses, AuthBrokerPostErrors, ThrowOnError>({
+		security: [
+			{
+				key: 'brokerToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/auth-broker/{rest...}',
 		...options
 	});
 

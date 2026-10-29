@@ -16,10 +16,13 @@
 		integration: i,
 		descriptor,
 		usedBy = [],
+		credentialNames = {},
 		onchanged
 	}: {
 		integration: Integration;
 		descriptor?: KindDescriptor;
+		/** Provider credential names by id, for a harness's picks. */
+		credentialNames?: Record<string, string>;
 		/** Workshops that reference it, by name. */
 		usedBy?: string[];
 		onchanged: () => void;
@@ -39,8 +42,12 @@
 	});
 
 	const fieldLabel = (k: string) => descriptor?.fields.find((f) => f.name === k)?.label ?? k;
+	const shown = (k: string, v: unknown) =>
+		descriptor?.fields.find((f) => f.name === k)?.type === 'credentials' && Array.isArray(v)
+			? v.map((id) => credentialNames[String(id)] ?? String(id)).join(', ') || '—'
+			: String(v);
 	const summary = $derived([
-		...Object.entries(i.config).map(([k, v]) => ({ k: fieldLabel(k), v: String(v) })),
+		...Object.entries(i.config).map(([k, v]) => ({ k: fieldLabel(k), v: shown(k, v) })),
 		...Object.entries(i.secrets).map(([k, v]) => ({ k: fieldLabel(k), v, secret: true }))
 	]);
 

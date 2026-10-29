@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"apothecary/internal/actionspec"
 	"apothecary/internal/agentspec"
@@ -132,13 +133,23 @@ type Resolution struct {
 	// the integration, so run creation can say so.
 	TicketWriter func(ctx context.Context, integrationID string) (ports.TicketWriter, error)
 
+	// CredentialIDs are the provider credentials the project's harness
+	// integrations reference: a refresh of one of them is pushed into this
+	// resolution's live workspaces (PushCredential), and only them.
+	CredentialIDs []string
+	// AuthBroker serves the harness logins over omp's auth-broker protocol
+	// for one run (register: the run's redactor); nil when no harness reads
+	// its logins from the broker.
+	AuthBroker func(register func(secret string)) http.Handler
+
 	// AuthFiles lists where the harnesses' auth material lives in a workspace,
 	// so the engine can delete it when the run ends (kinds.AuthLocator). nil
 	// when no configured harness reports any.
 	AuthFiles func(ctx context.Context, env ports.EnvID) []string
-	// SeedAuth writes harness-native auth material at bootstrap step 2;
-	// nil = nothing to seed.
-	SeedAuth func(ctx context.Context, env ports.EnvID) error
+	// SeedAuth writes harness-native auth material at bootstrap step 2, and
+	// again when a login it uses is refreshed; register is told each secret
+	// before it is written. nil = nothing to seed.
+	SeedAuth func(ctx context.Context, env ports.EnvID, register func(secret string)) error
 	// Prepare generates harness-native config at bootstrap step 4 from the
 	// agents the RUN's flow declares (FLOWLANG §1, v3) — the caller passes
 	// them, because agents are a property of the flow and not of the project.

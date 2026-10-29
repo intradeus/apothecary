@@ -71,11 +71,11 @@ type Provider struct {
 	// Catalog is the provider's models.dev id: the key of the shared probe
 	// and catalog tables (kinds.providerAuthProbe, fetchCatalog).
 	Catalog string `json:"-"`
-	// Domains are the egress hosts its traffic reaches; LoginDomains the
-	// extra hosts a login's own requests reach from inside the workspace
-	// (none for most: the keeper refreshes engine-side).
-	Domains      []string `json:"-"`
-	LoginDomains []string `json:"-"`
+	// Domains are the egress hosts a workspace reaches with its credential.
+	// A login's token endpoints are not among them: the keeper refreshes
+	// engine-side, and a workspace holding no refresh token has no use for
+	// them.
+	Domains []string `json:"-"`
 	// Harnesses maps a harness kind to how it consumes this provider.
 	Harnesses map[string]Native `json:"-"`
 }

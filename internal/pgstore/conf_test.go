@@ -9,6 +9,8 @@ import (
 
 	"apothecary/internal/confstore"
 	"apothecary/internal/event"
+	"apothecary/internal/providers"
+	"apothecary/internal/secrets"
 )
 
 // A project may reference a BUILT-IN flow — compiled into the binary, no
@@ -51,7 +53,7 @@ func openConf(t *testing.T) *Store {
 	if _, err := s.pool.Exec(context.Background(),
 		// CASCADE: tickets (and through them attachments) FK projects, so a
 		// plain TRUNCATE of the subset errors.
-		`TRUNCATE projects, integrations, flows, flow_versions, flow_bindings, automations, settings CASCADE`); err != nil {
+		`TRUNCATE projects, integrations, flows, flow_versions, flow_bindings, automations, settings, provider_credentials CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -371,5 +373,61 @@ func TestRunsProjectionCarriesProjectID(t *testing.T) {
 	views, _ = s.RunViews(ctx)
 	if len(views) != 1 || views[0].ProjectID != "prjX" {
 		t.Fatalf("rebuilt views = %+v", views)
+	}
+}
+
+// Provider credentials round-trip, scoped by owner; an update cannot change
+// owner, provider or kind.
+func TestCredentialRoundtrip(t *testing.T) {
+	s := openConf(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	c := confstore.ProviderCredential{ID: "c1", UserID: "u1", Provider: "anthropic", Kind: providers.KindOAuth, Name: "Anthropic",
+		Sealed: []byte("sealed"), Meta: confstore.CredentialMeta{Account: "me@x", ExpiresAt: now.Add(time.Hour), Status: confstore.CredentialOK},
+		CreatedAt: now, UpdatedAt: now}
+	if err := s.UpsertCredential(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	c.UserID, c.Provider, c.Name, c.Sealed = "u2", "openai", "Renamed", []byte("sealed-2")
+	if err := s.UpsertCredential(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetCredential(ctx, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UserID != "u1" || got.Provider != "anthropic" || got.Name != "Renamed" || string(got.Sealed) != "sealed-2" ||
+		got.Meta.Account != "me@x" || !got.Meta.ExpiresAt.Equal(now.Add(time.Hour)) || got.Kind != providers.KindOAuth {
+		t.Errorf("got %+v", got)
+	}
+	if mine, _ := s.ListCredentials(ctx, "u1"); len(mine) != 1 {
+		t.Errorf("u1 lists %d", len(mine))
+	}
+	if theirs, _ := s.ListCredentials(ctx, "u2"); len(theirs) != 0 {
+		t.Errorf("u2 lists %d of u1's", len(theirs))
+	}
+	if err := s.DeleteCredential(ctx, "c1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetCredential(ctx, "c1"); !errors.Is(err, confstore.ErrNotFound) {
+		t.Errorf("after delete: %v", err)
+	}
+}
+
+// The instance secret lives in the settings table, whose values are JSON:
+// it must be stored as one, and read back the same across a restart.
+func TestInstanceSecretRoundtrip(t *testing.T) {
+	s := openConf(t)
+	key, err := secrets.ParseKey(secrets.GenerateKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := confstore.New(s, key).InstanceSecret(context.Background(), "auth-broker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := confstore.New(s, key).InstanceSecret(context.Background(), "auth-broker")
+	if err != nil || string(a) != string(b) || len(a) != 32 {
+		t.Errorf("second read = %x, %v; first %x", b, err, a)
 	}
 }

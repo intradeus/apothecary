@@ -44,7 +44,7 @@ func seedProject(t *testing.T, svc *Service) Project {
 	}
 	repoHost := mk(PortRepository, "gitlab", "gl", map[string]string{"token": "glpat-supersecret99"})
 	prov := mk(PortProvisioner, "devcontainer", "dc", map[string]string{"token": "prov-tok"})
-	harness := mk(PortHarness, "opencode", "oc", map[string]string{"auth_json": `{"openrouter":{"type":"api","key":"sk-or-abc"}}`})
+	harness := mk(PortHarness, "opencode", "oc", nil)
 	p, err := svc.CreateProject(ctx, Project{
 		Name: "p1", RepoAccountID: repoHost.ID, ProvisionerID: prov.ID, HarnessIDs: []string{harness.ID},
 		Repo:      RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42"},

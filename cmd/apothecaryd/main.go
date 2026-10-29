@@ -43,6 +43,7 @@ import (
 	"apothecary/internal/httpapi"
 	"apothecary/internal/kinds"
 	"apothecary/internal/kube"
+	"apothecary/internal/logins"
 	"apothecary/internal/pgstore"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
@@ -225,6 +226,11 @@ func cmdServe(args []string) error {
 	// provisioner brings up (internal/egressgw) — no engine-side proxy.
 	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort, boot.SandboxRuntime)
 	defer resolver.Close()
+	// The keeper is the one party that redeems provider refresh tokens
+	// (docs/model-providers-plan.md): harness credentials are opened through
+	// it, so what a workspace is seeded with is always fresh.
+	keeper := logins.New(conf, log)
+	resolver.SetLogins(keeper)
 	if boot.K8s.Namespace == "" {
 		// A docker host builds the tools bundle itself; start now rather
 		// than inside the first provision after an upgrade.
@@ -248,6 +254,15 @@ func cmdServe(args []string) error {
 	e.SetFlowBindings(conf)
 	// The Ask panes' conversations live beside the run log.
 	e.SetAskStore(store)
+	// A refreshed login reaches the live workspaces that hold it; omp's
+	// per-run broker tokens derive from an instance secret, so they survive
+	// restarts.
+	keeper.OnRefresh = e.PushCredential
+	brokerKey, err := conf.InstanceSecret(ctx, "auth-broker")
+	if err != nil {
+		return fmt.Errorf("auth broker key: %w", err)
+	}
+	e.SetAuthBrokerKey(brokerKey)
 	if boot.OtelEndpoint != "" {
 		tel, err := telemetry.New(ctx, boot.OtelEndpoint)
 		if err != nil {
@@ -344,6 +359,8 @@ func cmdServe(args []string) error {
 	api.Pings = store      // durable request/response projection (PLAN4 M15)
 	api.Attachments = attachments
 	api.Snapshots = snapshots
+	api.Keeper = keeper
+	api.SignIns = logins.NewSignIns()
 	api.CPUIDir = boot.CPUIDir
 	if boot.AppsDomain != "" {
 		api.Apps = httpapi.NewApps(portRelay, boot.PublicURL)
@@ -422,6 +439,10 @@ func cmdServe(args []string) error {
 			}
 		}
 	}()
+
+	// The login keeper: renews every provider login before it expires, idle
+	// or not, and pushes each renewal into the live workspaces using it.
+	go keeper.Run(reaperCtx, logins.DefaultEvery)
 
 	// Live-workspace reconciler: refreshes each run's real container status
 	// (running/stopped/removed) so the workspace badge reflects reality, not

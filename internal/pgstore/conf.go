@@ -12,6 +12,7 @@ import (
 
 	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
+	"apothecary/internal/providers"
 )
 
 // Config-plane persistence (DESIGN2 §2): pgstore implements confstore.DB.
@@ -782,3 +783,76 @@ func (s *Store) SettingsOwners(ctx context.Context) ([]string, error) {
 const agentCols = `project_id, name, description, read_only, allow_bash, prompt, inputs, outputs, hash, updated_at`
 
 var _ confstore.DB = (*Store)(nil)
+
+// --- provider credentials ---------------------------------------------------
+
+const credentialCols = `id, user_id, provider, kind, name, secrets, meta, created_at, updated_at`
+
+func (s *Store) UpsertCredential(ctx context.Context, c confstore.ProviderCredential) error {
+	meta, err := json.Marshal(c.Meta)
+	if err != nil {
+		return err
+	}
+	sealed := c.Sealed
+	if sealed == nil {
+		sealed = []byte{}
+	}
+	// Owner, provider and kind are set at insert and never by an update.
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO provider_credentials (`+credentialCols+`)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		ON CONFLICT (id) DO UPDATE SET name=$5, secrets=$6, meta=$7, updated_at=$9`,
+		c.ID, c.UserID, c.Provider, string(c.Kind), c.Name, sealed, meta, c.CreatedAt, c.UpdatedAt)
+	return err
+}
+
+func scanCredential(row interface{ Scan(...any) error }) (confstore.ProviderCredential, error) {
+	var c confstore.ProviderCredential
+	var kind string
+	var meta []byte
+	if err := row.Scan(&c.ID, &c.UserID, &c.Provider, &kind, &c.Name, &c.Sealed, &meta, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		return c, err
+	}
+	c.Kind = providers.Kind(kind)
+	if err := json.Unmarshal(meta, &c.Meta); err != nil {
+		return c, fmt.Errorf("credential %s: meta: %w", c.ID, err)
+	}
+	return c, nil
+}
+
+func (s *Store) GetCredential(ctx context.Context, id string) (confstore.ProviderCredential, error) {
+	c, err := scanCredential(s.pool.QueryRow(ctx, `SELECT `+credentialCols+` FROM provider_credentials WHERE id=$1`, id))
+	if err == pgx.ErrNoRows {
+		return c, fmt.Errorf("credential %s: %w", id, confstore.ErrNotFound)
+	}
+	return c, err
+}
+
+func (s *Store) ListCredentials(ctx context.Context, userID string) ([]confstore.ProviderCredential, error) {
+	where, args := ownerClause(userID, 1)
+	rows, err := s.pool.Query(ctx, `SELECT `+credentialCols+` FROM provider_credentials`+where+` ORDER BY created_at`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []confstore.ProviderCredential
+	for rows.Next() {
+		c, err := scanCredential(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteCredential(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM provider_credentials WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("credential %s: %w", id, confstore.ErrNotFound)
+	}
+	return nil
+}

@@ -25,6 +25,7 @@ import type {
 	Token,
 	User
 } from '$lib/domain';
+import type { Credential, CredentialImport, ProviderInfo, SignInPending } from '$lib/domain';
 import type {
 	OpenMergeRequest,
 	MergeRequestRow,
@@ -629,6 +630,54 @@ export const projects = {
 		map.toBrowserStatus(await unwrap(gen.getProjectBrowser({ path: { id } })))
 };
 
+// --- model provider credentials ---------------------------------------------
+
+export const credentials = {
+	/** The providers apothecary manages, narrowed to one harness kind. */
+	providers: async (harness?: string): Promise<ProviderInfo[]> =>
+		many(
+			await unwrap(gen.listProviders({ query: harness ? { harness } : {} })),
+			map.toProviderInfo
+		),
+
+	list: async (): Promise<Credential[]> =>
+		many(await unwrap(gen.listCredentials()), map.toCredential),
+
+	/** Add an API key. */
+	addKey: async (provider: string, key: string, name?: string): Promise<Credential> =>
+		map.toCredential(await unwrap(gen.createCredential({ body: { provider, key, name } }))),
+
+	/** Import a credential file a harness CLI wrote. */
+	importFile: async (text: string): Promise<CredentialImport> => {
+		const r = await unwrap(gen.importCredentials({ body: { text } }));
+		return { created: many(r.created, map.toCredential), rejected: r.rejected ?? [] };
+	},
+
+	rename: async (id: string, name: string): Promise<Credential> =>
+		map.toCredential(await unwrap(gen.renameCredential({ path: { id }, body: { name } }))),
+
+	remove: (id: string) => unwrapVoid(gen.deleteCredential({ path: { id } })),
+
+	test: async (id: string): Promise<{ ok: boolean; error?: string; warnings: string[] }> => {
+		const r = await unwrap(gen.testCredential({ path: { id } }));
+		return { ok: r.ok, error: r.error, warnings: r.warnings ?? [] };
+	},
+
+	/** Start signing in to a provider from the engine. */
+	signIn: async (provider: string): Promise<SignInPending> =>
+		map.toSignInPending(await unwrap(gen.startSignIn({ body: { provider } }))),
+
+	/** Finish a sign-in: null while a device sign-in waits for approval. */
+	completeSignIn: async (
+		id: string,
+		pasted?: string,
+		name?: string
+	): Promise<Credential | null> => {
+		const r = await unwrap(gen.completeSignIn({ path: { sid: id }, body: { pasted, name } }));
+		return r.pending || !r.credential ? null : map.toCredential(r.credential);
+	}
+};
+
 // --- integrations ------------------------------------------------------------
 
 export const integrations = {
@@ -988,6 +1037,7 @@ export const api = {
 	tickets,
 	projects,
 	integrations,
+	credentials,
 	flows,
 	automations,
 	files,

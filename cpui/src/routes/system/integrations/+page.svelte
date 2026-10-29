@@ -18,8 +18,8 @@
 	import { materialize, ms, spring } from '$lib/ui/motion';
 	import { flip } from 'svelte/animate';
 
-	// Model auth is harness-owned (the harness's auth_json carries model
-	// credentials), so there is no "model provider" group.
+	// Model credentials are the person's own (System → Model providers); a
+	// harness integration picks which of them it uses.
 	const GROUPS: { port: Port; title: string; sub: string }[] = $derived([
 		{
 			port: 'repository',
@@ -45,6 +45,7 @@
 
 	let descriptors = $state<KindDescriptor[]>([]);
 	let integrations = $state<Integration[]>([]);
+	let credentialNames = $state<Record<string, string>>({});
 	let loaded = $state(false);
 	let error = $state('');
 	/** port → kind being added */
@@ -52,10 +53,13 @@
 
 	const refresh = async () => {
 		try {
-			[descriptors, integrations] = await Promise.all([
+			let creds;
+			[descriptors, integrations, creds] = await Promise.all([
 				api.system.kinds(),
-				api.integrations.list()
+				api.integrations.list(),
+				api.credentials.list().catch(() => [])
 			]);
+			credentialNames = Object.fromEntries(creds.map((c) => [c.id, c.name]));
 			loaded = true;
 			error = '';
 		} catch (e) {
@@ -152,6 +156,7 @@
 								integration={i}
 								descriptor={descriptorOf(i)}
 								usedBy={usedBy(i)}
+								{credentialNames}
 								onchanged={() => {
 									void refresh();
 									void fleet.refresh();

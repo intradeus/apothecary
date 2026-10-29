@@ -14,6 +14,7 @@ import (
 	opencodeadapter "apothecary/internal/adapters/opencode"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/providers"
 )
 
 // OpencodeVersion is the pinned opencode release: the tools bundle mounted
@@ -27,24 +28,17 @@ type Opencode struct{}
 func (Opencode) Descriptor() Descriptor {
 	return Descriptor{
 		Port: "harness", Kind: "opencode", Label: "opencode",
-		Help: "Runs opencode " + OpencodeVersion + ", the version pinned by this apothecary release.",
-		Fields: []Field{
-			// Harness-owned auth (user decision, post-M8): this one field
-			// carries ALL model credentials — API keys and/or subscription
-			// logins — in opencode's native format. The separate provider
-			// port remains an API-level option, off the UI paved road.
-			{Name: "auth_json", Label: "auth.json — model auth (API keys and/or subscription logins), e.g. contents of ~/.local/share/opencode/auth.json",
-				Secret: true, Required: true,
-				Placeholder: `{"openrouter":{"type":"api","key":"sk-or-…"}}`},
-		},
+		Help:   "Runs opencode " + OpencodeVersion + ", the version pinned by this apothecary release.",
+		Fields: []Field{credentialsField(providers.Opencode)},
 	}
 }
 
 func (Opencode) New(cfg Config, envp ports.EnvProvisioner) (Harness, error) {
 	return &opencodeHarness{
-		Runner:   acpagent.New(envp, opencodeadapter.Profile()),
-		adapter:  opencodeadapter.New(envp, opencodeadapter.Config{}),
-		authJSON: cfg.Secrets["auth_json"],
+		Runner:  acpagent.New(envp, opencodeadapter.Profile()),
+		adapter: opencodeadapter.New(envp, opencodeadapter.Config{}),
+		creds:   cfg.Credentials,
+		held:    bind(providers.Opencode, cfg.Credentials.Snapshot),
 	}, nil
 }
 
@@ -53,44 +47,21 @@ func (Opencode) New(cfg Config, envp ports.EnvProvisioner) (Harness, error) {
 // and stop), the adapter generates its config.
 type opencodeHarness struct {
 	*acpagent.Runner
-	adapter  *opencodeadapter.Adapter
-	authJSON string
+	adapter *opencodeadapter.Adapter
+	creds   Credentials
+	// held is the snapshot, bound: what the static parts read.
+	held []bound
 }
 
-// Test statically validates the auth material (§4: no remote to probe).
+// Test checks the harness has something to run on.
 func (h *opencodeHarness) Test(_ context.Context) error {
-	if h.authJSON == "" {
-		// The field is Required — failing here beats failing at the first
-		// model listing or run.
-		return fmt.Errorf("opencode: auth_json is required (harness-owned model auth)")
-	}
-	if !json.Valid([]byte(h.authJSON)) {
-		return fmt.Errorf("opencode: auth_json is not valid JSON")
+	if len(h.held) == 0 {
+		return fmt.Errorf("opencode: no model provider credentials — add one under System → Model providers and pick it here")
 	}
 	return nil
 }
 
 func (h *opencodeHarness) Binary() string { return "opencode" }
-
-// providerDomains maps opencode/models.dev provider ids (auth_json top-level
-// keys — the same ids Models() filters by) to their API hosts. Providers
-// absent here (regional clouds like bedrock/vertex) need
-// workspace.extra_domains.
-var providerDomains = map[string][]string{
-	"anthropic":    {"api.anthropic.com"},
-	"openai":       {"api.openai.com"},
-	"openrouter":   {"openrouter.ai"},
-	"google":       {"generativelanguage.googleapis.com"},
-	"xai":          {"api.x.ai"},
-	"mistral":      {"api.mistral.ai"},
-	"groq":         {"api.groq.com"},
-	"deepseek":     {"api.deepseek.com"},
-	"togetherai":   {"api.together.xyz"},
-	"fireworks-ai": {"api.fireworks.ai"},
-	"cerebras":     {"api.cerebras.ai"},
-	"opencode":     {"opencode.ai"}, // OpenCode Zen gateway
-	"opencode-go":  {"opencode.ai"},
-}
 
 // opencodeInfra are the opencode CLI's own runtime endpoints, needed
 // regardless of model provider: models.dev (its model catalog) and the npm
@@ -98,40 +69,22 @@ var providerDomains = map[string][]string{
 // found live as egress denials in a Go project). Always allowed.
 var opencodeInfra = []string{"models.dev", "registry.npmjs.org"}
 
-// egressBaseline is the provider fallback when auth_json is absent or
-// unparseable at resolution time.
-var egressBaseline = []string{"api.anthropic.com", "api.openai.com", "openrouter.ai"}
-
 func (h *opencodeHarness) EgressDomains() []string {
-	// Harness-owned auth: whatever auth.json can route to must not be
-	// blocked by the very firewall that ships with it (the M3 openrouter
-	// lesson, generalized) — so the provider allowlist is DERIVED from the
-	// same auth_json keys Models() advertises. The harness's own infra is
-	// always allowed on top.
+	// Whatever the credentials route to must not be blocked by the firewall
+	// that ships with them; the harness's own infra is always allowed.
+	return uniqueSorted(append(append([]string(nil), opencodeInfra...), domains(h.held)...))
+}
+
+// uniqueSorted dedupes and sorts host names.
+func uniqueSorted(in []string) []string {
 	seen := map[string]bool{}
 	var out []string
-	add := func(ds ...string) {
-		for _, d := range ds {
-			if d != "" && !seen[d] {
-				seen[d] = true
-				out = append(out, d)
-			}
+	for _, d := range in {
+		if d != "" && !seen[d] {
+			seen[d] = true
+			out = append(out, d)
 		}
 	}
-	add(opencodeInfra...)
-
-	auth := map[string]json.RawMessage{}
-	if h.authJSON == "" || json.Unmarshal([]byte(h.authJSON), &auth) != nil || len(auth) == 0 {
-		add(egressBaseline...)
-	} else {
-		for providerID := range auth {
-			add(providerDomains[providerID]...)
-		}
-	}
-	// M18: a missing provider domain is no longer a silent block — the
-	// egress proxy records it as a visible denial the user fixes via the
-	// project's extra_domains. So the static map plus extra_domains is
-	// enough; no catalog fetch on the resolution path.
 	sort.Strings(out)
 	return out
 }
@@ -158,13 +111,19 @@ type catalogProvider struct {
 	Models map[string]catalogModel `json:"models"`
 }
 
-// authEntry is the slice of one opencode auth.json value we need: an
-// api-key entry carries a bearer we can use to query the provider's live
-// model list; subscription/oauth entries carry no static key and fall back
-// to the catalog.
+// authEntry is what a live model listing or a probe needs of a credential:
+// an API key is a bearer we can query the provider with; a login lists from
+// the catalog.
 type authEntry struct {
 	Type string `json:"type"`
 	Key  string `json:"key"`
+}
+
+func entryOf(b bound) authEntry {
+	if b.Kind == providers.KindAPIKey {
+		return authEntry{Type: "api", Key: b.Key}
+	}
+	return authEntry{Type: "oauth"}
 }
 
 type catalogModel struct {
@@ -200,39 +159,28 @@ func fetchCatalog(ctx context.Context) (map[string]catalogProvider, error) {
 }
 
 // Models lists `provider/model` strings for exactly the providers the
-// harness is authenticated against — the top-level keys of auth_json are
-// opencode's provider ids, and the catalog is opencode's own (models.dev).
+// harness holds credentials for, under opencode's provider ids; the catalog
+// is opencode's own (models.dev).
 func (h *opencodeHarness) Models(ctx context.Context) ([]ModelInfo, error) {
-	auth := map[string]json.RawMessage{}
-	if h.authJSON != "" {
-		if err := json.Unmarshal([]byte(h.authJSON), &auth); err != nil {
-			return nil, fmt.Errorf("opencode: auth_json: %w", err)
-		}
-	}
-	if len(auth) == 0 {
-		return nil, fmt.Errorf("opencode: no providers configured — set auth_json on the integration first")
+	if len(h.held) == 0 {
+		return nil, fmt.Errorf("opencode: no model provider credentials — pick some on the integration first")
 	}
 	catalog, err := fetchCatalog(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var out []ModelInfo
-	for providerID, rawEntry := range auth {
-		p, ok := catalog[providerID]
+	for _, b := range h.held {
+		p, ok := catalog[b.provider.Catalog]
 		if !ok {
-			continue // provider unknown to the catalog (e.g. bespoke auth entries)
+			continue
 		}
-		var entry authEntry
-		_ = json.Unmarshal(rawEntry, &entry) // best-effort; oauth entries just yield an empty key
-		for _, modelID := range providerModelIDs(ctx, p, entry) {
+		for _, modelID := range providerModelIDs(ctx, p, entryOf(b)) {
 			name := modelID // catalog supplies a prettier name when it knows the model
 			if m, ok := p.Models[modelID]; ok && m.Name != "" {
 				name = m.Name
 			}
-			out = append(out, ModelInfo{
-				ID:   providerID + "/" + modelID,
-				Name: p.Name + " · " + name,
-			})
+			out = append(out, ModelInfo{ID: b.native.ID + "/" + modelID, Name: p.Name + " · " + name})
 		}
 	}
 	sortModels(out)
@@ -297,23 +245,23 @@ func liveModels(ctx context.Context, p catalogProvider, entry authEntry) ([]stri
 	return ids, nil
 }
 
-// CheckAuth (kinds.AuthChecker) probes every provider the flow's models
-// route through with its auth.json credential. The OpenCode gateways are
-// probed per model: their probe also says whether the model is still served,
-// which their catalog entry (they have no live list) cannot.
+// CheckAuth (kinds.AuthChecker) probes the credential of every provider the
+// flow's models route through. The OpenCode gateways are probed per model:
+// their probe also says whether the model is still served, which their
+// catalog entry (they have no live list) cannot.
 func (h *opencodeHarness) CheckAuth(ctx context.Context, models []string) AuthResult {
-	return h.checkAuth(ctx, func(map[string]json.RawMessage, map[string]catalogProvider) []string { return models }, false)
+	return h.checkAuth(ctx, func(map[string]catalogProvider) []string { return models }, false)
 }
 
-// CheckCredentials (kinds.AuthChecker) probes every provider auth.json
-// carries. A gateway's probe needs a model, so it borrows one from the
-// catalog; that model being retired leaves the key unverified.
+// CheckCredentials (kinds.AuthChecker) probes every credential held. A
+// gateway's probe needs a model, so it borrows one from the catalog; that
+// model being retired leaves the key unverified.
 func (h *opencodeHarness) CheckCredentials(ctx context.Context) AuthResult {
-	return h.checkAuth(ctx, func(auth map[string]json.RawMessage, catalog map[string]catalogProvider) []string {
-		models := make([]string, 0, len(auth))
-		for providerID := range auth {
-			ids := make([]string, 0, len(catalog[providerID].Models))
-			for id := range catalog[providerID].Models {
+	return h.checkAuth(ctx, func(catalog map[string]catalogProvider) []string {
+		var models []string
+		for _, b := range h.held {
+			ids := make([]string, 0, len(catalog[b.provider.Catalog].Models))
+			for id := range catalog[b.provider.Catalog].Models {
 				ids = append(ids, id)
 			}
 			sort.Strings(ids)
@@ -321,7 +269,7 @@ func (h *opencodeHarness) CheckCredentials(ctx context.Context) AuthResult {
 			if len(ids) > 0 {
 				model = ids[0]
 			}
-			models = append(models, providerID+"/"+model)
+			models = append(models, b.native.ID+"/"+model)
 		}
 		sort.Strings(models)
 		return models
@@ -329,31 +277,37 @@ func (h *opencodeHarness) CheckCredentials(ctx context.Context) AuthResult {
 }
 
 // checkAuth probes the models pick returns; credentialOnly reports a "model
-// refused" verdict as unverified — the model was borrowed, not chosen.
-func (h *opencodeHarness) checkAuth(ctx context.Context, pick func(map[string]json.RawMessage, map[string]catalogProvider) []string, credentialOnly bool) AuthResult {
+// refused" verdict as unverified — the model was borrowed, not chosen. A
+// login needs no probe: the keeper just proved its refresh token (a disabled
+// one is a Problem, refused at run creation).
+func (h *opencodeHarness) checkAuth(ctx context.Context, pick func(map[string]catalogProvider) []string, credentialOnly bool) AuthResult {
 	var out AuthResult
-	auth := map[string]json.RawMessage{}
-	if err := json.Unmarshal([]byte(h.authJSON), &auth); err != nil {
-		out.Unverified = append(out.Unverified, "opencode: auth_json: "+err.Error())
-		return out
+	for _, msg := range sortedProblems(h.creds.Problems) {
+		out.Rejected = append(out.Rejected, "opencode: "+msg)
+	}
+	byNative := map[string]bound{}
+	for _, b := range h.held {
+		if _, taken := byNative[b.native.ID]; !taken || b.Kind == providers.KindAPIKey {
+			byNative[b.native.ID] = b
+		}
 	}
 	catalog, err := fetchCatalog(ctx)
 	if err != nil {
 		out.Unverified = append(out.Unverified, "opencode: "+err.Error())
 		return out
 	}
-	models := pick(auth, catalog)
 	done := map[string]bool{}
-	for _, m := range models {
-		providerID, modelID, ok := strings.Cut(m, "/")
-		raw, known := auth[providerID]
-		if !ok || !known {
-			continue // the model check refuses a provider auth.json lacks
+	for _, m := range pick(catalog) {
+		nativeID, modelID, ok := strings.Cut(m, "/")
+		b, held := byNative[nativeID]
+		if !ok || !held {
+			continue // the model check refuses a provider the harness lacks
 		}
-		var entry authEntry
-		_ = json.Unmarshal(raw, &entry)
-		pr, probeable := providerAuthProbe(providerID, catalog[providerID], entry.Key, modelID)
-		label, once := "opencode provider "+providerID, providerID
+		if b.Kind == providers.KindOAuth {
+			continue
+		}
+		pr, probeable := providerAuthProbe(b.provider.Catalog, catalog[b.provider.Catalog], b.Key, modelID)
+		label, once := "opencode provider "+nativeID, nativeID
 		if pr.kind == probeEmptyChat && !credentialOnly {
 			label, once = "opencode model "+m, m
 		}
@@ -361,29 +315,36 @@ func (h *opencodeHarness) checkAuth(ctx context.Context, pick func(map[string]js
 			continue
 		}
 		done[once] = true
-		switch {
-		case entry.Type != "api" || entry.Key == "":
-			out.Unverified = append(out.Unverified, label+": not an API key (subscription login) — no zero-token probe")
-		case !probeable:
+		if !probeable {
 			out.Unverified = append(out.Unverified, label+": no zero-token probe for this provider")
-		default:
-			rejected, reason, err := pr.run(ctx, entry.Key)
-			switch {
-			case err != nil:
-				out.Unverified = append(out.Unverified, fmt.Sprintf("%s: %v", label, err))
-			case rejected && credentialOnly && strings.HasPrefix(reason, "model"):
-				// The gateway checks the model before the key: this says
-				// nothing about the credential.
-				out.Unverified = append(out.Unverified, fmt.Sprintf("%s: probe model %s %s", label, modelID, reason))
-			case rejected:
-				fix := "fix auth_json on the opencode integration"
-				if strings.HasPrefix(reason, "model") {
-					fix = "pick another model in the flow"
-				}
-				out.Rejected = append(out.Rejected, fmt.Sprintf("%s: %s — %s", label, reason, fix))
+			continue
+		}
+		rejected, reason, err := pr.run(ctx, b.Key)
+		switch {
+		case err != nil:
+			out.Unverified = append(out.Unverified, fmt.Sprintf("%s: %v", label, err))
+		case rejected && credentialOnly && strings.HasPrefix(reason, "model"):
+			// The gateway checks the model before the key: this says
+			// nothing about the credential.
+			out.Unverified = append(out.Unverified, fmt.Sprintf("%s: probe model %s %s", label, modelID, reason))
+		case rejected:
+			fix := "fix the " + b.provider.Name + " API key under System → Model providers"
+			if strings.HasPrefix(reason, "model") {
+				fix = "pick another model in the flow"
 			}
+			out.Rejected = append(out.Rejected, fmt.Sprintf("%s: %s — %s", label, reason, fix))
 		}
 	}
+	return out
+}
+
+// sortedProblems lists credential problems in a stable order.
+func sortedProblems(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for _, v := range m {
+		out = append(out, v)
+	}
+	sort.Strings(out)
 	return out
 }
 
@@ -400,21 +361,66 @@ func (h *opencodeHarness) AuthFiles(ctx context.Context, env ports.EnvID) []stri
 	return []string{h.adapter.AuthFilePath(ctx, env)}
 }
 
-// SecretValues (kinds.SecretHolder): auth.json is opencode's ONLY credential
-// artifact and never passes through provider.env, so the redactor learns about
-// its model keys from here or not at all.
-func (h *opencodeHarness) SecretValues() []string { return []string{h.authJSON} }
+// SecretValues (kinds.SecretHolder): auth.json never passes through
+// provider.env, so the redactor learns its keys and tokens from here.
+func (h *opencodeHarness) SecretValues() []string { return secretValues(h.held) }
 
-// SeedAuth writes the stored auth_json — THE model-auth artifact
-// (harness-owned auth) — into the workspace at bootstrap step 2.
-func (h *opencodeHarness) SeedAuth(ctx context.Context, env ports.EnvID) error {
-	if h.authJSON == "" {
-		return nil
+// SeedAuth renders auth.json from the current credentials and writes it.
+// opencode re-reads the file on every request (its Auth.all), so writing it
+// again after the keeper refreshed a login reaches the live agent.
+func (h *opencodeHarness) SeedAuth(ctx context.Context, env ports.EnvID, register func(string)) error {
+	creds, err := h.creds.current(ctx)
+	if err != nil {
+		return fmt.Errorf("opencode: %w", err)
 	}
-	if !json.Valid([]byte(h.authJSON)) {
-		return fmt.Errorf("opencode: auth_json is not valid JSON")
+	doc, secrets, err := renderOpencodeAuth(bind(providers.Opencode, creds))
+	if err != nil {
+		return err
 	}
-	return h.adapter.SeedAuthJSON(ctx, env, []byte(h.authJSON))
+	for _, s := range secrets {
+		register(s)
+	}
+	return h.adapter.SeedAuthJSON(ctx, env, doc)
+}
+
+// renderOpencodeAuth builds opencode's auth.json (its Auth.Info union): an
+// API key is {type: api, key}; a login is {type: oauth, access, expires,
+// refresh} with refresh EMPTY — the keeper holds it, and an empty string is
+// what opencode's schema accepts. A Copilot login is the exception that
+// proves the rule: opencode sends `refresh` as the Copilot bearer, and the
+// GitHub token is both — nothing rotates it, nothing is withheld.
+func renderOpencodeAuth(bs []bound) ([]byte, []string, error) {
+	doc := map[string]map[string]any{}
+	var secrets []string
+	for _, b := range bs {
+		switch b.Kind {
+		case providers.KindAPIKey:
+			doc[b.native.ID] = map[string]any{"type": "api", "key": b.Key}
+		case providers.KindOAuth:
+			e := map[string]any{"type": "oauth", "access": b.Access, "refresh": "", "expires": expiresMillis(b.Expires)}
+			if b.provider.Flow == providers.FlowCopilot {
+				e["refresh"], e["expires"] = b.Access, 0
+			}
+			if a := b.Get(providers.ExtraAccountID); a != "" {
+				e["accountId"] = a
+			}
+			if u := b.Get(providers.ExtraEnterprise); u != "" {
+				e["enterpriseUrl"] = u
+			}
+			doc[b.native.ID] = e
+		}
+		secrets = append(secrets, b.SecretValues()...)
+	}
+	out, err := json.Marshal(doc)
+	return out, secrets, err
+}
+
+// expiresMillis is an expiry in Unix milliseconds, 0 for none.
+func expiresMillis(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixMilli()
 }
 
 func (h *opencodeHarness) Prepare(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {

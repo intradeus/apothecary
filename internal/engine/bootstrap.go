@@ -34,9 +34,12 @@ type BootstrapSpec struct {
 
 	// ProviderEnv are the provider API keys (§11 step 2).
 	ProviderEnv map[string]string
+	// Register, when set, is told every secret SeedAuth is about to write
+	// (the run's redactor), before it is written.
+	Register func(secret string)
 	// SeedAuth, when set, writes harness-native auth material right after
 	// provider.env (DESIGN2 §6.2, still step 2).
-	SeedAuth func(ctx context.Context, env ports.EnvID) error
+	SeedAuth func(ctx context.Context, env ports.EnvID, register func(secret string)) error
 	// GitUser/GitPass form the credential-store entry for the repo host
 	// (§11 step 3: the token never lands in .git/config); host-kind
 	// specific (gitlab "oauth2", github "x-access-token"). Both empty =
@@ -110,7 +113,11 @@ func WriteWorkspaceSecrets(ctx context.Context, envp ports.EnvProvisioner, id po
 		return fmt.Errorf("write provider.env: %w", err)
 	}
 	if spec.SeedAuth != nil {
-		if err := spec.SeedAuth(ctx, id); err != nil {
+		register := spec.Register
+		if register == nil {
+			register = func(string) {}
+		}
+		if err := spec.SeedAuth(ctx, id, register); err != nil {
 			return fmt.Errorf("seed harness auth: %w", err)
 		}
 	}

@@ -57,7 +57,7 @@ func TestEveryRouteDeclaresItsAccess(t *testing.T) {
 			}
 		case AccessAdmin:
 			// Admin routes name users, not owned resources.
-		case AccessRunToken:
+		case AccessRunToken, AccessBrokerToken:
 			if !strings.HasPrefix(rt.Path, "/api/runs/{id}/") {
 				t.Errorf("%s takes a run token but is not under a run", where)
 			}

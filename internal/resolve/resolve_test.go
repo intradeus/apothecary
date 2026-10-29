@@ -189,7 +189,7 @@ func TestResolveFillsResolution(t *testing.T) {
 	if _, err := res.Runner.Run(context.Background(), env, ports.AgentSpec{Agent: "builder"}, ports.AgentInput{Prompt: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := res.SeedAuth(context.Background(), env); err != nil {
+	if err := res.SeedAuth(context.Background(), env, func(string) {}); err != nil {
 		t.Fatal(err)
 	}
 	// The harness's reachable models, as flows spell them (run-creation check).

@@ -31,6 +31,7 @@
 	});
 
 	const SECTIONS: Section[] = $derived([
+		section('providers', I.providers),
 		section('integrations', I.integrations),
 		section('channels', I.channels),
 		section('account', I.members),

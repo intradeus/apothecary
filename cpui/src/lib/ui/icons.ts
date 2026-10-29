@@ -66,6 +66,7 @@ export const I = {
 	light: '☀' + T,
 	// system sections
 	integrations: '⌁',
+	providers: '⚿',
 	channels: '✉' + T,
 	members: '☺' + T,
 	limits: '▤',

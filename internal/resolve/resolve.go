@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"apothecary/internal/engine"
 	"apothecary/internal/kinds"
 	"apothecary/internal/ports"
+	"apothecary/internal/providers"
 	"apothecary/internal/wsimage"
 )
 
@@ -40,6 +42,57 @@ type Resolver struct {
 
 	mu    sync.Mutex
 	cache map[string]*provEntry // provisioner integration id -> entry
+	// logins opens provider credentials refreshing them when due (the
+	// keeper); nil opens them as stored (tests).
+	logins CredentialOpener
+}
+
+// CredentialOpener opens a provider credential with an access token that
+// will outlive the keeper's margin (logins.Keeper).
+type CredentialOpener interface {
+	Fresh(ctx context.Context, id string) (providers.Credential, error)
+}
+
+// SetLogins wires the keeper.
+func (r *Resolver) SetLogins(o CredentialOpener) { r.logins = o }
+
+// openCredential is one credential, fresh when the keeper is wired.
+func (r *Resolver) openCredential(ctx context.Context, id string) (providers.Credential, error) {
+	if r.logins != nil {
+		return r.logins.Fresh(ctx, id)
+	}
+	c, _, err := r.conf.OpenCredential(ctx, id)
+	return c, err
+}
+
+// credentials opens a harness integration's referenced credentials: the
+// snapshot its static parts read, the ones that could not be used (a login
+// the keeper disabled, a credential deleted since), and Fresh for seeding —
+// which skips an unusable one rather than failing the whole workspace.
+func (r *Resolver) credentials(ctx context.Context, in confstore.Integration) kinds.Credentials {
+	ids := confstore.CredentialRefIDs(in.Config)
+	out := kinds.Credentials{Problems: map[string]string{}}
+	for _, id := range ids {
+		c, err := r.openCredential(ctx, id)
+		if err != nil {
+			out.Problems[id] = err.Error()
+			continue
+		}
+		out.Snapshot = append(out.Snapshot, c)
+	}
+	out.Fresh = func(ctx context.Context) ([]providers.Credential, error) {
+		var creds []providers.Credential
+		for _, id := range ids {
+			c, err := r.openCredential(ctx, id)
+			if err != nil {
+				slog.Warn("a harness credential is unusable; seeding without it", "integration", in.Name, "credential", id, "err", err)
+				continue
+			}
+			creds = append(creds, c)
+		}
+		return creds, nil
+	}
+	return out
 }
 
 type provEntry struct {
@@ -155,6 +208,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	// harness kind (defaults.harness) and a stage may override it. Each
 	// harness wraps the provisioner for exec.
 	byKind := map[string]kinds.Harness{}
+	var credentialIDs []string
 	firstKind := "" // the first-configured kind: the fallback default (below)
 	for _, hid := range p.HarnessIDs {
 		hi, err := r.integration(ctx, hid, confstore.PortHarness)
@@ -168,7 +222,10 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		if err != nil {
 			return nil, unresolvable(err)
 		}
-		h, err := hk.New(kindConfig(hi), prov)
+		cfg := kindConfig(hi)
+		cfg.Credentials = r.credentials(ctx, hi)
+		credentialIDs = append(credentialIDs, confstore.CredentialRefIDs(hi.Config)...)
+		h, err := hk.New(cfg, prov)
 		if err != nil {
 			return nil, unresolvable(fmt.Errorf("harness %s: %v", hi.Name, err))
 		}
@@ -297,14 +354,16 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		TicketWriter: r.TicketWriter,
 		// Seed and prepare EVERY harness in the set: a stage may run on any of
 		// them, so all their auth + native configs must be in the workspace.
-		SeedAuth: func(ctx context.Context, env ports.EnvID) error {
+		SeedAuth: func(ctx context.Context, env ports.EnvID, register func(string)) error {
 			for _, k := range kindList {
-				if err := byKind[k].SeedAuth(ctx, env); err != nil {
+				if err := byKind[k].SeedAuth(ctx, env, register); err != nil {
 					return fmt.Errorf("seed %s auth: %w", k, err)
 				}
 			}
 			return nil
 		},
+		CredentialIDs: credentialIDs,
+		AuthBroker:    authBroker(byKind),
 		// The mirror image of SeedAuth: every harness that can say where its
 		// auth lands, so the engine can wipe it when the run ends.
 		AuthFiles: func(ctx context.Context, env ports.EnvID) []string {
@@ -356,6 +415,17 @@ func (r *Resolver) integration(ctx context.Context, id, wantPort string) (confst
 		return in, unresolvable(fmt.Errorf("integration %s is port %s, expected %s", in.Name, in.Port, wantPort))
 	}
 	return in, nil
+}
+
+// authBroker is the run's auth broker: the harness that reads its logins
+// from one (omp), or nil.
+func authBroker(byKind map[string]kinds.Harness) func(register func(string)) http.Handler {
+	for _, h := range byKind {
+		if ab, ok := h.(kinds.AuthBrokered); ok && ab.HasLogins() {
+			return ab.Broker
+		}
+	}
+	return nil
 }
 
 func kindConfig(in confstore.Integration) kinds.Config {
@@ -486,7 +556,9 @@ func (r *Resolver) testHarness(ctx context.Context, in confstore.Integration) ([
 	if err != nil {
 		return nil, err
 	}
-	h, err := hk.New(kindConfig(in), nil) // probes run from the engine: the envp is never touched
+	cfg := kindConfig(in)
+	cfg.Credentials = r.credentials(ctx, in)
+	h, err := hk.New(cfg, nil) // probes run from the engine: the envp is never touched
 	if err != nil {
 		return nil, err
 	}
@@ -656,7 +728,9 @@ func (r *Resolver) ListModels(ctx context.Context, id string) ([]kinds.ModelInfo
 	if err != nil {
 		return nil, err
 	}
-	h, err := hk.New(kindConfig(in), nil)
+	cfg := kindConfig(in)
+	cfg.Credentials = r.credentials(ctx, in)
+	h, err := hk.New(cfg, nil)
 	if err != nil {
 		return nil, err
 	}

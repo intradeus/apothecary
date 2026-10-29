@@ -7,6 +7,7 @@
 - 40) Add a new flow to builder : connect git branch to jira ticket. So jira gets the branch context, we already have jira ticket field writes setup, not sure if a git branch connect is the same.
 - 41) performance check : how will this perform with 100 parallel runs ? 
 - 42) harness provider authentication management.
+- 43) SECURITY
 
 ------ 
 After 1.0.0 : 

@@ -58,7 +58,7 @@ const maskPrefix = "••••"
 // --- integrations -----------------------------------------------------------
 
 func (s *Service) CreateIntegration(ctx context.Context, in Integration) (Integration, error) {
-	if err := s.validateIntegration(&in); err != nil {
+	if err := s.validateIntegration(ctx, &in); err != nil {
 		return Integration{}, err
 	}
 	in.ID = s.newID()
@@ -99,7 +99,7 @@ func (s *Service) UpdateIntegration(ctx context.Context, id, name string, config
 			cur.Secrets[k] = v
 		}
 	}
-	if err := s.validateIntegration(&cur); err != nil {
+	if err := s.validateIntegration(ctx, &cur); err != nil {
 		return Integration{}, err
 	}
 	cur.UpdatedAt = s.now().UTC()
@@ -163,7 +163,7 @@ func (s *Service) open(r StoredIntegration) (Integration, error) {
 	}, nil
 }
 
-func (s *Service) validateIntegration(in *Integration) error {
+func (s *Service) validateIntegration(ctx context.Context, in *Integration) error {
 	if strings.TrimSpace(in.Name) == "" {
 		return invalidf("integration: name is required")
 	}
@@ -192,6 +192,14 @@ func (s *Service) validateIntegration(in *Integration) error {
 		if strings.HasPrefix(v, maskPrefix) {
 			return invalidf("integration: secret %q is a masked placeholder — send the real value, or omit the key to keep the stored one", k)
 		}
+	}
+	if in.Port == PortHarness {
+		// A harness holds no credential of its own: it references the
+		// owner's provider credentials (docs/model-providers-plan.md).
+		if len(in.Secrets) > 0 {
+			return invalidf("integration: a harness holds no secrets — reference provider credentials (credential_ids) instead")
+		}
+		return s.validateCredentialRefs(ctx, in)
 	}
 	return nil
 }

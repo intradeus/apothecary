@@ -287,11 +287,20 @@ tasks:
       - gofmt -w ./cmd ./internal ./workspace 2>/dev/null || gofmt -w .
       - cd cpui && npm run format
 
-  lint:models:
-    desc: 'Fail on a real model id anywhere in the tree — models live in a project’s flow binding, never in code, flows, tests or docs'
+  test:omp-broker:
+    desc: 'Run the pinned omp (from the tools image) against the engine''s auth broker face — omp''s wire schemas are strict'
     cmds:
       - |
-        hits="$(grep -rnE --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.svelte-kit --exclude-dir=build --exclude-dir=generated --exclude-dir=UX --exclude=IMPLEMENTATION_NOTES.md --exclude=TODO.md 'glm-[0-9]|gpt-[0-9]|claude-(sonnet|opus|haiku|[0-9])|qwen[0-9]|kimi-k[0-9]|gemini-[0-9]' cmd internal cpui/src docs examples workspace api README.md 2>/dev/null || true)"
+        dir="$(mktemp -d)"; trap 'rm -rf "$dir"; docker rm -f apo-omp-conformance >/dev/null 2>&1' EXIT
+        docker create --name apo-omp-conformance apothecary/tools:dev >/dev/null
+        docker cp apo-omp-conformance:/tools/gnu/. "$dir/gnu" >/dev/null
+        OMP_BIN="$dir/gnu/bin/omp" go test -tags ompconformance -count=1 -run TestOmpConformance -v ./internal/kinds/
+
+  lint:models:
+    desc: 'Fail on a real model id anywhere in the tree — models live in a project’s flow binding, never in code, flows, tests or docs (a wire fingerprint that must name one carries `lint:models-ok`)'
+    cmds:
+      - |
+        hits="$(grep -rnE --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.svelte-kit --exclude-dir=build --exclude-dir=generated --exclude-dir=UX --exclude=IMPLEMENTATION_NOTES.md --exclude=TODO.md 'glm-[0-9]|gpt-[0-9]|claude-(sonnet|opus|haiku|[0-9])|qwen[0-9]|kimi-k[0-9]|gemini-[0-9]' cmd internal cpui/src docs examples workspace api README.md 2>/dev/null | grep -v 'lint:models-ok' || true)"
         if [ -n "$hits" ]; then echo "$hits"; echo "a model id in the tree rots when the vendor renames it — bind models per project (Workshop → Flows → Configure); tests use fake/… or acme/… ids"; exit 1; fi
 
   verify:

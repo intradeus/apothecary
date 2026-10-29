@@ -20,7 +20,7 @@ func withHarnessAuth(h *harness) {
 	// about a file bootstrap actually writes (the base harness configures no
 	// git auth).
 	h.res.GitUser, h.res.GitPass = "oauth2", "glpat-SECRETVALUE"
-	h.res.SeedAuth = func(ctx context.Context, env ports.EnvID) error {
+	h.res.SeedAuth = func(ctx context.Context, env ports.EnvID, _ func(string)) error {
 		return h.envp.WriteFile(ctx, env, fakeAuthPath, []byte(`{"k":"sk-secret"}`), 0o600)
 	}
 	h.res.AuthFiles = func(context.Context, ports.EnvID) []string {
@@ -160,7 +160,7 @@ func TestAbortInactiveRunScrubsCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := h.res.SeedAuth(ctx, envID); err != nil {
+	if err := h.res.SeedAuth(ctx, envID, func(string) {}); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.envp.WriteFile(ctx, envID, "/apothecary/provider.env", []byte("K=v"), 0o600); err != nil {

@@ -177,11 +177,11 @@ func (h *fakeHarness) Resume(ctx context.Context, env ports.EnvID, s ports.Sessi
 	return h.runner.Resume(ctx, env, s, in)
 }
 
-func (h *fakeHarness) Test(context.Context) error                  { return nil }
-func (h *fakeHarness) EnvVars() map[string]string                  { return nil }
-func (h *fakeHarness) Binary() string                              { return "true" }
-func (h *fakeHarness) EgressDomains() []string                     { return nil }
-func (h *fakeHarness) SeedAuth(context.Context, ports.EnvID) error { return nil }
+func (h *fakeHarness) Test(context.Context) error                                { return nil }
+func (h *fakeHarness) EnvVars() map[string]string                                { return nil }
+func (h *fakeHarness) Binary() string                                            { return "true" }
+func (h *fakeHarness) EgressDomains() []string                                   { return nil }
+func (h *fakeHarness) SeedAuth(context.Context, ports.EnvID, func(string)) error { return nil }
 func (h *fakeHarness) Prepare(_ context.Context, _ ports.EnvID, specs []*agentspec.Spec) error {
 	h.runner.RecordPrepare(specs)
 	return nil

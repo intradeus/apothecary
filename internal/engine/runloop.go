@@ -100,7 +100,10 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	}
 	defer res.release()
 	x.res = res
-	x.redact = newRedactor(res, e.RunToken(runID))
+	x.redact = newRedactor(res, e.RunToken(runID), e.BrokerToken(runID))
+	// A run that stops (for good, or for a restart) holds no workspace a
+	// refreshed login should be pushed into; the next loop re-registers.
+	defer e.dropAuthSink(runID)
 
 	fl, err := e.runFlow(bg, view)
 	if err != nil {
@@ -2543,18 +2546,25 @@ func (x *exec) writeRunEnv(id ports.EnvID) error {
 // agent's commits are already there.
 func (x *exec) reseedSecrets(id ports.EnvID) error {
 	res := x.res
+	x.e.setAuthSink(x.rs.runID, res, id, x.redact)
 	return WriteWorkspaceSecrets(x.ctx, res.Envp, id, BootstrapSpec{
 		RepoURL:     res.RepoRef.URL,
-		ProviderEnv: res.ProviderEnv,
+		ProviderEnv: x.e.providerEnvFor(res, x.rs.runID, x.e.engineURLFor(res.Envp, id)),
 		GitUser:     res.GitUser,
 		GitPass:     res.GitPass,
 		SeedAuth:    res.SeedAuth,
+		Register:    x.registerSecret,
 		Extras:      x.extraCheckouts(),
 	})
 }
 
+// registerSecret teaches the run's redactor a credential the engine is about
+// to write into the workspace.
+func (x *exec) registerSecret(s string) { x.redact.add(s, "harness-auth") }
+
 func (x *exec) bootstrap(id ports.EnvID) error {
 	res := x.res
+	x.e.setAuthSink(x.rs.runID, res, id, x.redact)
 	err := RunBootstrap(x.ctx, res.Envp, id, BootstrapSpec{
 		RunID:        x.rs.runID,
 		Token:        x.e.RunToken(x.rs.runID),
@@ -2564,12 +2574,13 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 		Branch:       x.rs.branch,
 		Fetch:        x.primaryFetch(),
 		AgentsMDPath: res.AgentsMDPath,
-		ProviderEnv:  res.ProviderEnv,
+		ProviderEnv:  x.e.providerEnvFor(res, x.rs.runID, x.e.engineURLFor(res.Envp, id)),
 		GitUser:      res.GitUser,
 		GitPass:      res.GitPass,
 		GitName:      res.GitName,
 		GitEmail:     res.GitEmail,
 		SeedAuth:     res.SeedAuth,
+		Register:     x.registerSecret,
 		Prepare:      res.Prepare,
 		Agents:       agentsFor(x.rs.fl),
 		Timeout:      x.rs.fl.Defaults.Timeout,

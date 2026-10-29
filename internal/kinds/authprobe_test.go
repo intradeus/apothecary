@@ -1,6 +1,7 @@
 package kinds
 
 import (
+	"apothecary/internal/providers"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -68,16 +69,17 @@ func TestOpencodeCheckAuth(t *testing.T) {
 	stubCatalog(t, fmt.Sprintf(`{"opencode-go":{"name":"OpenCode Go","api":%q,"models":{"go-model-7":{}}},
 		"anthropic":{"name":"Anthropic","models":{}}}`, gw.URL))
 
-	check := func(auth string, models ...string) AuthResult {
-		h, _ := Opencode{}.New(Config{Secrets: map[string]string{"auth_json": auth}}, nil)
+	check := func(creds []providers.Credential, models ...string) AuthResult {
+		h, _ := Opencode{}.New(withCreds(creds...), nil)
 		return h.(AuthChecker).CheckAuth(context.Background(), models)
 	}
+	goKey := func(k string) []providers.Credential { return []providers.Credential{apiKey("opencode-go", k)} }
 
-	if r := check(`{"opencode-go":{"type":"api","key":"good"}}`, "opencode-go/go-model-7"); len(r.Rejected)+len(r.Unverified) != 0 {
+	if r := check(goKey("good"), "opencode-go/go-model-7"); len(r.Rejected)+len(r.Unverified) != 0 {
 		t.Errorf("good key: %+v", r)
 	}
 
-	r := check(`{"opencode-go":{"type":"api","key":"revoked-key"}}`, "opencode-go/go-model-7")
+	r := check(goKey("revoked-key"), "opencode-go/go-model-7")
 	if len(r.Rejected) != 1 || !strings.Contains(r.Rejected[0], "Invalid credential") || !strings.Contains(r.Rejected[0], "opencode-go/go-model-7") {
 		t.Fatalf("revoked key: %+v", r)
 	}
@@ -85,16 +87,21 @@ func TestOpencodeCheckAuth(t *testing.T) {
 		t.Errorf("the key leaked into the verdict: %q", r.Rejected[0])
 	}
 
-	r = check(`{"opencode-go":{"type":"api","key":"good"}}`, "opencode-go/go-model-5")
+	r = check(goKey("good"), "opencode-go/go-model-5")
 	if len(r.Rejected) != 1 || !strings.Contains(r.Rejected[0], "Model is unavailable") {
 		t.Errorf("retired model: %+v", r)
 	}
 
-	// A subscription login has nothing to probe: said, not failed. A
+	// A login needs no probe — the keeper proved its refresh token — and a
 	// provider the flow does not use is not probed at all.
-	r = check(`{"anthropic":{"type":"oauth","refresh":"x"},"opencode-go":{"type":"api","key":"revoked"}}`, "anthropic/alpha-5")
-	if len(r.Rejected) != 0 || len(r.Unverified) != 1 || !strings.Contains(r.Unverified[0], "anthropic") {
-		t.Errorf("oauth: %+v", r)
+	r = check([]providers.Credential{login("openai-chatgpt", "a", nil), apiKey("opencode-go", "revoked")}, "openai/alpha-5")
+	if len(r.Rejected) != 0 || len(r.Unverified) != 0 {
+		t.Errorf("login: %+v", r)
+	}
+	// A credential the keeper gave up on is a refusal.
+	h, _ := Opencode{}.New(Config{Credentials: Credentials{Problems: map[string]string{"c": `credential "ChatGPT" is disabled: invalid_grant`}}}, nil)
+	if r := h.(AuthChecker).CheckAuth(context.Background(), []string{"openai/x"}); len(r.Rejected) != 1 || !strings.Contains(r.Rejected[0], "disabled") {
+		t.Errorf("disabled: %+v", r)
 	}
 }
 
@@ -103,17 +110,17 @@ func TestOpencodeCheckAuth(t *testing.T) {
 func TestOpencodeCheckCredentials(t *testing.T) {
 	gw := fakeGoGateway(t)
 	defer gw.Close()
-	check := func(catalog, auth string) AuthResult {
+	check := func(catalog, key string) AuthResult {
 		stubCatalog(t, catalog)
-		h, _ := Opencode{}.New(Config{Secrets: map[string]string{"auth_json": auth}}, nil)
+		h, _ := Opencode{}.New(withCreds(apiKey("opencode-go", key)), nil)
 		return h.(AuthChecker).CheckCredentials(context.Background())
 	}
 	served := fmt.Sprintf(`{"opencode-go":{"name":"OpenCode Go","api":%q,"models":{"go-model-7":{}}}}`, gw.URL)
 
-	if r := check(served, `{"opencode-go":{"type":"api","key":"good"}}`); len(r.Rejected)+len(r.Unverified) != 0 {
+	if r := check(served, "good"); len(r.Rejected)+len(r.Unverified) != 0 {
 		t.Errorf("good key: %+v", r)
 	}
-	r := check(served, `{"opencode-go":{"type":"api","key":"revoked-key"}}`)
+	r := check(served, "revoked-key")
 	if len(r.Rejected) != 1 || !strings.Contains(r.Rejected[0], "opencode provider opencode-go") ||
 		strings.Contains(r.Rejected[0], "revoked-key") {
 		t.Errorf("revoked key: %+v", r)
@@ -122,7 +129,7 @@ func TestOpencodeCheckCredentials(t *testing.T) {
 	// The borrowed model is retired: the gateway refuses it before looking
 	// at the key, so the key is neither passed nor failed.
 	retired := fmt.Sprintf(`{"opencode-go":{"name":"OpenCode Go","api":%q,"models":{"go-model-5":{}}}}`, gw.URL)
-	r = check(retired, `{"opencode-go":{"type":"api","key":"revoked-key"}}`)
+	r = check(retired, "revoked-key")
 	if len(r.Rejected) != 0 || len(r.Unverified) != 1 || !strings.Contains(r.Unverified[0], "go-model-5") {
 		t.Errorf("retired probe model: %+v", r)
 	}

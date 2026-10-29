@@ -188,6 +188,33 @@ export type CreateFlowRequest = {
 	yaml: string;
 };
 
+export type CredentialImportRequest = {
+	text: string;
+};
+
+export type CredentialImportResult = {
+	created: Array<ProviderCredential> | null;
+	rejected: Array<string> | null;
+};
+
+export type CredentialMeta = {
+	account?: string;
+	error?: string;
+	expires_at?: string;
+	last_refresh?: string;
+	status: string;
+};
+
+export type CredentialRename = {
+	name: string;
+};
+
+export type CredentialRequest = {
+	key: string;
+	name?: string;
+	provider: string;
+};
+
 export type DocAsk = {
 	harness: string;
 };
@@ -436,6 +463,7 @@ export type Field = {
 	placeholder?: string;
 	required: boolean;
 	secret: boolean;
+	type?: string;
 };
 
 export type Flow = {
@@ -736,6 +764,16 @@ export type PasswordResetRequest = {
 	password: string;
 };
 
+export type Pending = {
+	expires_at: string;
+	id: string;
+	interval_seconds?: number;
+	paste: boolean;
+	provider: string;
+	url: string;
+	user_code?: string;
+};
+
 export type PhaseInfo = {
 	confirm?: boolean;
 	description?: string;
@@ -920,6 +958,26 @@ export type ProjectSecret = {
 
 export type ProjectSecretRequest = {
 	value: string;
+};
+
+export type ProviderCredential = {
+	created_at: string;
+	id: string;
+	kind: string;
+	meta: CredentialMeta;
+	name: string;
+	provider: string;
+	updated_at: string;
+	user_id: string;
+};
+
+export type ProviderInfo = {
+	harnesses: Array<string> | null;
+	id: string;
+	key: boolean;
+	login: boolean;
+	name: string;
+	sign_in: boolean;
 };
 
 export type RaisePingRequest = {
@@ -1150,6 +1208,20 @@ export type SetupRequest = {
 	handle: string;
 	name?: string;
 	password: string;
+};
+
+export type SignInComplete = {
+	name?: string;
+	pasted?: string;
+};
+
+export type SignInRequest = {
+	provider: string;
+};
+
+export type SignInResult = {
+	credential?: ProviderCredential;
+	pending: boolean;
 };
 
 export type Signal = {
@@ -1781,6 +1853,344 @@ export type DeleteChannelResponses = {
 };
 
 export type DeleteChannelResponse = DeleteChannelResponses[keyof DeleteChannelResponses];
+
+export type ListCredentialsData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/credentials';
+};
+
+export type ListCredentialsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListCredentialsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<ProviderCredential> | null;
+};
+
+export type ListCredentialsResponse = ListCredentialsResponses[keyof ListCredentialsResponses];
+
+export type CreateCredentialData = {
+	body: CredentialRequest;
+	path?: never;
+	query?: never;
+	url: '/api/credentials';
+};
+
+export type CreateCredentialErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type CreateCredentialResponses = {
+	/**
+	 * Created
+	 */
+	201: ProviderCredential;
+};
+
+export type CreateCredentialResponse = CreateCredentialResponses[keyof CreateCredentialResponses];
+
+export type DeleteCredentialData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/credentials/{id}';
+};
+
+export type DeleteCredentialErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DeleteCredentialResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type DeleteCredentialResponse = DeleteCredentialResponses[keyof DeleteCredentialResponses];
+
+export type GetCredentialData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/credentials/{id}';
+};
+
+export type GetCredentialErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetCredentialResponses = {
+	/**
+	 * OK
+	 */
+	200: ProviderCredential;
+};
+
+export type GetCredentialResponse = GetCredentialResponses[keyof GetCredentialResponses];
+
+export type RenameCredentialData = {
+	body: CredentialRename;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/credentials/{id}';
+};
+
+export type RenameCredentialErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type RenameCredentialResponses = {
+	/**
+	 * OK
+	 */
+	200: ProviderCredential;
+};
+
+export type RenameCredentialResponse = RenameCredentialResponses[keyof RenameCredentialResponses];
+
+export type TestCredentialData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/credentials/{id}/test';
+};
+
+export type TestCredentialErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type TestCredentialResponses = {
+	/**
+	 * OK
+	 */
+	200: TestResult;
+};
+
+export type TestCredentialResponse = TestCredentialResponses[keyof TestCredentialResponses];
+
+export type ImportCredentialsData = {
+	body: CredentialImportRequest;
+	path?: never;
+	query?: never;
+	url: '/api/credentials/import';
+};
+
+export type ImportCredentialsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ImportCredentialsResponses = {
+	/**
+	 * Created
+	 */
+	201: CredentialImportResult;
+};
+
+export type ImportCredentialsResponse =
+	ImportCredentialsResponses[keyof ImportCredentialsResponses];
+
+export type StartSignInData = {
+	body: SignInRequest;
+	path?: never;
+	query?: never;
+	url: '/api/credentials/signin';
+};
+
+export type StartSignInErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type StartSignInResponses = {
+	/**
+	 * OK
+	 */
+	200: Pending;
+};
+
+export type StartSignInResponse = StartSignInResponses[keyof StartSignInResponses];
+
+export type CompleteSignInData = {
+	body: SignInComplete;
+	path: {
+		sid: string;
+	};
+	query?: never;
+	url: '/api/credentials/signin/{sid}/complete';
+};
+
+export type CompleteSignInErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type CompleteSignInResponses = {
+	/**
+	 * Created
+	 */
+	201: SignInResult;
+};
+
+export type CompleteSignInResponse = CompleteSignInResponses[keyof CompleteSignInResponses];
 
 export type GetEgressDefaultsData = {
 	body?: never;
@@ -4313,6 +4723,42 @@ export type SetProjectSecretResponses = {
 
 export type SetProjectSecretResponse = SetProjectSecretResponses[keyof SetProjectSecretResponses];
 
+export type ListProvidersData = {
+	body?: never;
+	path?: never;
+	query?: {
+		/**
+		 * only the providers this harness kind uses
+		 */
+		harness?: string;
+	};
+	url: '/api/providers';
+};
+
+export type ListProvidersErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListProvidersResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<ProviderInfo> | null;
+};
+
+export type ListProvidersResponse = ListProvidersResponses[keyof ListProvidersResponses];
+
 export type ListRunsData = {
 	body?: never;
 	path?: never;
@@ -4628,6 +5074,125 @@ export type StreamAskResponses = {
 };
 
 export type StreamAskResponse = StreamAskResponses[keyof StreamAskResponses];
+
+export type AuthBrokerDeleteData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/auth-broker/{rest...}';
+};
+
+export type AuthBrokerDeleteErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type AuthBrokerDeleteResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type AuthBrokerDeleteResponse = AuthBrokerDeleteResponses[keyof AuthBrokerDeleteResponses];
+
+export type AuthBrokerGetData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/auth-broker/{rest...}';
+};
+
+export type AuthBrokerGetErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type AuthBrokerGetResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type AuthBrokerGetResponse = AuthBrokerGetResponses[keyof AuthBrokerGetResponses];
+
+export type AuthBrokerPostData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/auth-broker/{rest...}';
+};
+
+export type AuthBrokerPostErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type AuthBrokerPostResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type AuthBrokerPostResponse = AuthBrokerPostResponses[keyof AuthBrokerPostResponses];
 
 export type AllowEgressHostData = {
 	body: EgressHostRequest;

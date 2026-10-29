@@ -2,6 +2,7 @@ package confstore
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"sort"
@@ -23,6 +24,7 @@ type Mem struct {
 	automations  map[string]Automation
 	secrets      map[string]StoredProjectSecret // flowKey(project, name)
 	settings     map[string]string
+	credentials  map[string]ProviderCredential
 
 	// BlockingRuns lists non-archived runs of a project (blocks project
 	// deletion); nil = none.
@@ -43,6 +45,7 @@ func NewMem() *Mem {
 		automations:  map[string]Automation{},
 		secrets:      map[string]StoredProjectSecret{},
 		settings:     map[string]string{},
+		credentials:  map[string]ProviderCredential{},
 	}
 }
 
@@ -487,9 +490,60 @@ func (m *Mem) GetSettings(_ context.Context, userID string) (map[string]string, 
 }
 
 func (m *Mem) PutSetting(_ context.Context, userID, key, value string) error {
+	// Parity with the settings table's jsonb column.
+	if !json.Valid([]byte(value)) {
+		return fmt.Errorf("setting %s: value is not JSON", key)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.settings[userID+"\x00"+key] = value
+	return nil
+}
+
+func (m *Mem) UpsertCredential(_ context.Context, c ProviderCredential) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Parity with the pg upsert: owner, provider and kind never change.
+	if old, ok := m.credentials[c.ID]; ok {
+		c.UserID, c.Provider, c.Kind, c.CreatedAt = old.UserID, old.Provider, old.Kind, old.CreatedAt
+	}
+	c.Sealed = append([]byte(nil), c.Sealed...)
+	m.credentials[c.ID] = c
+	return nil
+}
+
+func (m *Mem) GetCredential(_ context.Context, id string) (ProviderCredential, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.credentials[id]
+	if !ok {
+		return ProviderCredential{}, notFound("credential", id)
+	}
+	c.Sealed = append([]byte(nil), c.Sealed...)
+	return c, nil
+}
+
+func (m *Mem) ListCredentials(_ context.Context, userID string) ([]ProviderCredential, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []ProviderCredential
+	for _, c := range m.credentials {
+		if userID == "" || c.UserID == userID {
+			c.Sealed = append([]byte(nil), c.Sealed...)
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (m *Mem) DeleteCredential(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.credentials[id]; !ok {
+		return notFound("credential", id)
+	}
+	delete(m.credentials, id)
 	return nil
 }
 

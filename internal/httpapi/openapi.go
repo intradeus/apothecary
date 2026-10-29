@@ -54,6 +54,11 @@ func Spec() (*openapi3.T, error) {
 			WithType("http").WithScheme("bearer").
 			WithDescription("Per-run token, issued to the in-workspace shim. Not a user credential."),
 	}
+	doc.Components.SecuritySchemes["brokerToken"] = &openapi3.SecuritySchemeRef{
+		Value: openapi3.NewSecurityScheme().
+			WithType("http").WithScheme("bearer").
+			WithDescription("Per-run auth-broker token, issued to omp in the run's workspace. Not a user credential."),
+	}
 	doc.Components.SecuritySchemes["session"] = &openapi3.SecuritySchemeRef{
 		Value: openapi3.NewSecurityScheme().
 			WithType("apiKey").WithIn("cookie").WithName(sessionCookie).
@@ -155,6 +160,8 @@ func addRoute(doc *openapi3.T, rt Route, schemaFor func(any) (*openapi3.SchemaRe
 	switch rt.Auth {
 	case AccessRunToken:
 		op.Security = openapi3.NewSecurityRequirements().With(openapi3.NewSecurityRequirement().Authenticate("runToken"))
+	case AccessBrokerToken:
+		op.Security = openapi3.NewSecurityRequirements().With(openapi3.NewSecurityRequirement().Authenticate("brokerToken"))
 	case AccessPublic:
 		op.Security = openapi3.NewSecurityRequirements() // explicitly none
 	default:

@@ -27,6 +27,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
 	"apothecary/internal/kinds"
+	"apothecary/internal/logins"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
@@ -73,6 +74,11 @@ type Server struct {
 	// Apps serves host-routed exposed ports (apps.go); nil = exposures are
 	// loopback listeners the engine binds itself.
 	Apps *Apps
+	// Keeper refreshes provider logins (a credential's Test refreshes a due
+	// one); SignIns runs sign-in flows. nil: tests open credentials as
+	// stored, and signing in answers 503.
+	Keeper  *logins.Keeper
+	SignIns *logins.SignIns
 
 	logins loginLimiter
 }

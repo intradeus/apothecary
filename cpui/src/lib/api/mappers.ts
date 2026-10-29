@@ -10,6 +10,7 @@
 
 import type * as Wire from './generated/types.gen';
 import type { AskMessage, AskState, AuthStatus, Limits, Me, Token, User } from '$lib/domain';
+import type { Credential, ProviderInfo, SignInPending } from '$lib/domain';
 import { normalizeDoc, PHASE_KINDS, OPERATES_ON, type OperatesOn } from '$lib/flowdoc';
 import { answerKindOf, toFormContent, toPingForm, toReviewComment } from '$lib/ping';
 import type {
@@ -871,7 +872,8 @@ function toKindField(w: Wire.Field): KindField {
 		secret: w.secret ?? false,
 		required: w.required ?? false,
 		multiline: w.multiline,
-		help: w.help
+		help: w.help,
+		type: w.type === 'credentials' ? 'credentials' : undefined
 	};
 }
 
@@ -1070,5 +1072,45 @@ export function toLiveDelta(raw: Record<string, unknown>): LiveDelta | null {
 		segment: (raw.segment as string | undefined) || undefined,
 		text: (raw.text as string | undefined) ?? undefined,
 		tool: raw.tool ? toAgentToolCall(raw.tool as Record<string, unknown>) : undefined
+	};
+}
+
+// --- model provider credentials ----------------------------------------------
+
+export function toProviderInfo(w: Wire.ProviderInfo): ProviderInfo {
+	return {
+		id: w.id,
+		name: w.name,
+		key: w.key,
+		login: w.login,
+		signIn: w.sign_in,
+		harnesses: list(w.harnesses)
+	};
+}
+
+export function toCredential(w: Wire.ProviderCredential): Credential {
+	return {
+		id: w.id,
+		provider: w.provider,
+		kind: w.kind === 'oauth' ? 'oauth' : 'api_key',
+		name: w.name,
+		account: w.meta?.account || undefined,
+		expiresAt: w.meta?.expires_at || undefined,
+		lastRefresh: w.meta?.last_refresh || undefined,
+		status: w.meta?.status === 'disabled' ? 'disabled' : 'ok',
+		error: w.meta?.error || undefined,
+		createdAt: w.created_at
+	};
+}
+
+export function toSignInPending(w: Wire.Pending): SignInPending {
+	return {
+		id: w.id,
+		provider: w.provider,
+		url: w.url,
+		userCode: w.user_code || undefined,
+		paste: w.paste,
+		intervalSeconds: w.interval_seconds || 5,
+		expiresAt: w.expires_at
 	};
 }

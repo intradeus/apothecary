@@ -16,7 +16,7 @@ const q = (params: Record<string, string | undefined>) => {
 export type WorkshopTab =
 	'overview' | 'runs' | 'tickets' | 'mrs' | 'flows' | 'automations' | 'health';
 export type SystemSection =
-	'integrations' | 'channels' | 'account' | 'users' | 'limits' | 'reaper' | 'storage';
+	'integrations' | 'providers' | 'channels' | 'account' | 'users' | 'limits' | 'reaper' | 'storage';
 
 /** Route builders. */
 export const to = {

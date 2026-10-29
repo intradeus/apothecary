@@ -233,6 +233,12 @@ type Engine struct {
 	pings  map[string]*Ping
 	tokens map[string]string // runID -> per-run bearer token (regenerated each boot, see notes)
 
+	// sinks are the live workspaces a refreshed login is pushed into
+	// (logins.go); brokerKey the instance secret broker tokens derive from.
+	sinkMu    sync.Mutex
+	sinks     map[string]*authSink
+	brokerKey []byte
+
 	// §9 envcheck jobs: in-memory, last 20 (diagnostics, not history).
 	envchecks     map[string]*envCheckState
 	envcheckOrder []string

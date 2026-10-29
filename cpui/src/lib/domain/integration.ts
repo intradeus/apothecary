@@ -37,6 +37,9 @@ export interface KindField {
 	multiline?: boolean;
 	/** One-line hint under the input; bare URLs are linkified by the form. */
 	help?: string;
+	/** "credentials": a pick of the owner's provider credentials this
+	 *  harness takes (the value is their ids). */
+	type?: 'credentials';
 }
 
 export interface KindDescriptor {

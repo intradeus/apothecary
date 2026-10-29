@@ -16,10 +16,12 @@ import (
 
 // Config is an integration's stored configuration: plain values plus
 // decrypted secrets (confstore opens them; they never travel further than
-// adapter construction).
+// adapter construction). A harness's model credentials arrive in
+// Credentials instead: it holds no secret of its own.
 type Config struct {
-	Values  map[string]any
-	Secrets map[string]string
+	Values      map[string]any
+	Secrets     map[string]string
+	Credentials Credentials
 }
 
 // Str reads a string value with a default.
@@ -61,6 +63,10 @@ type Field struct {
 	// Help is a one-line hint rendered under the input. Plain text; bare URLs
 	// in it are linkified by the form.
 	Help string `json:"help,omitempty"`
+	// Type is the input's shape when it is not a text: "credentials" is a
+	// pick of the owner's provider credentials this harness takes (the value
+	// is their ids).
+	Type string `json:"type,omitempty"`
 }
 
 // Descriptor identifies a kind and its form schema. Help is prose shown above
@@ -181,8 +187,12 @@ type Harness interface {
 	// nil/empty = nothing to write.
 	EnvVars() map[string]string
 	// SeedAuth writes the harness's auth material into the workspace at
-	// bootstrap step 2.
-	SeedAuth(ctx context.Context, env ports.EnvID) error
+	// bootstrap step 2, and again whenever the keeper refreshes a login it
+	// uses. It renders from current credentials (Credentials.Fresh) and
+	// calls register with every secret value it is about to write, BEFORE
+	// writing it: the run's redactor must know a token before the token can
+	// reach any output.
+	SeedAuth(ctx context.Context, env ports.EnvID, register func(secret string)) error
 	// Prepare generates harness-native config at bootstrap step 4 from the
 	// project's agent library specs (DESIGN3 §1: agents live in the DB, not
 	// the target repo). Implementations must write their base config (e.g.

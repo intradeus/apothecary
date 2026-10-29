@@ -115,7 +115,11 @@ func newHarness(t *testing.T) *harness {
 	conf := confstore.New(confstore.NewMem(), key)
 	ctx := context.Background()
 	mk := func(port, name string) confstore.Integration {
-		in, err := conf.CreateIntegration(ctx, confstore.Integration{Port: port, Kind: "fake", Name: name, Secrets: map[string]string{"token": "t"}})
+		var sec map[string]string
+		if port != confstore.PortHarness { // a harness holds no secret of its own
+			sec = map[string]string{"token": "t"}
+		}
+		in, err := conf.CreateIntegration(ctx, confstore.Integration{Port: port, Kind: "fake", Name: name, Secrets: sec})
 		if err != nil {
 			t.Fatal(err)
 		}

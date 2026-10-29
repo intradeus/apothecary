@@ -45,6 +45,9 @@ const (
 	AccessRunToken
 	// AccessPublic is reachable by anyone: the setup and sign-in flow.
 	AccessPublic
+	// AccessBrokerToken is omp's, in a run's workspace: the run's auth
+	// broker token (Engine.BrokerToken), scoped to that run.
+	AccessBrokerToken
 )
 
 // Scope is which resource a route's path names, and so whose it must be.
@@ -61,6 +64,7 @@ const (
 	ScopeAttachment
 	ScopeSnapshot
 	ScopeEnvCheck
+	ScopeCredential
 )
 
 // sessionCookie is the browser session's cookie.
@@ -80,6 +84,12 @@ func (s *Server) guard(rt Route) http.HandlerFunc {
 			return
 		case AccessRunToken:
 			if !s.authPing(w, r, r.PathValue("id")) {
+				return
+			}
+			rt.Handler(w, r)
+			return
+		case AccessBrokerToken:
+			if !s.authBrokerToken(w, r, r.PathValue("id")) {
 				return
 			}
 			rt.Handler(w, r)
@@ -126,6 +136,8 @@ func scopeName(sc Scope) string {
 		return "ping"
 	case ScopeIntegration:
 		return "integration"
+	case ScopeCredential:
+		return "credential"
 	case ScopeChannel:
 		return "channel"
 	case ScopeAttachment:
@@ -233,6 +245,15 @@ func (s *Server) ownerOf(ctx context.Context, sc Scope, id string) (string, erro
 			return "", err
 		}
 		return in.UserID, nil
+	case ScopeCredential:
+		if s.Conf == nil {
+			return "", errors.New("no config plane")
+		}
+		pc, err := s.Conf.GetCredential(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		return pc.UserID, nil
 	case ScopePing:
 		if s.Pings != nil {
 			v, err := s.Pings.GetPing(ctx, id)

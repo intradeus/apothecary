@@ -126,14 +126,17 @@ func (x *confEnv) wizard(t *testing.T) string {
 	}
 	repoAccountID := mk("repository", "f", map[string]string{"token": "glpat-PLANTED-repo-token"})
 	provID := mk("provisioner", "c", nil)
-	// Model auth is harness-owned: the second planted secret rides in
-	// auth_json, exercising the real credential path.
-	harnessID := mk("harness", "h", map[string]string{
-		"auth_json": `{"openrouter":{"type":"api","key":"sk-PLANTED-provider-key"}}`,
-	})
+	// Model auth is a provider credential the harness references: the second
+	// planted secret is one, created through its own API, exercising the
+	// real credential path (and its listing, which must never echo it).
+	resp, data := x.do(t, "POST", "/api/credentials", map[string]any{"provider": "openrouter", "key": "sk-PLANTED-provider-key"}, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create credential = %d: %s", resp.StatusCode, data)
+	}
+	harnessID := mk("harness", "h", nil)
 
 	// Repo picker.
-	resp, data := x.do(t, "GET", "/api/integrations/"+repoAccountID+"/repos", nil, nil)
+	resp, data = x.do(t, "GET", "/api/integrations/"+repoAccountID+"/repos", nil, nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("repos = %d: %s", resp.StatusCode, data)
 	}
@@ -324,7 +327,7 @@ func TestNoSecretLeaksAnywhere(t *testing.T) {
 
 	// Every read endpoint.
 	for _, path := range []string{
-		"/api/kinds", "/api/integrations", "/api/projects", "/api/projects/" + projectID,
+		"/api/kinds", "/api/integrations", "/api/credentials", "/api/providers", "/api/projects", "/api/projects/" + projectID,
 		"/api/flows", "/api/projects/" + projectID + "/flows/v1", "/api/settings", "/api/runs",
 		"/api/runs/" + runID, "/api/pings?status=pending",
 	} {
