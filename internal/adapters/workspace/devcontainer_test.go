@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"apothecary/internal/egressgw"
 	"apothecary/internal/ports"
 )
 
@@ -950,7 +951,7 @@ func TestSandboxRuntimeReplacesPrivileged(t *testing.T) {
 	a.cfg.SandboxRuntime = "sysbox-runc"
 	const name = "apothecary-run1"
 	armSandbox(t, a, name)
-	if err := a.ensureSandbox(context.Background(), name, ports.EnvSpec{Project: "Acme"}, "", "/tc"); err != nil {
+	if err := a.ensureSandbox(context.Background(), name, ports.EnvSpec{Project: "Acme"}, egressgw.Attachment{}, "/tc"); err != nil {
 		t.Fatal(err)
 	}
 	run := find(t, r.calls, "docker", "run")
@@ -980,7 +981,7 @@ func TestSandboxRuntimeMissingFailsEarly(t *testing.T) {
 	r := &scriptRunner{responses: []response{{stdout: `{"runc":{},"nvidia":{}}`}}}
 	a := newTestAdapter(t, r)
 	a.cfg.SandboxRuntime = "sysbox-runc"
-	err := a.ensureSandbox(context.Background(), "apothecary-run1", ports.EnvSpec{}, "", "/tc")
+	err := a.ensureSandbox(context.Background(), "apothecary-run1", ports.EnvSpec{}, egressgw.Attachment{}, "/tc")
 	if err == nil {
 		t.Fatal("expected a runtime-not-installed error")
 	}
@@ -1028,7 +1029,7 @@ func TestPreBundleSandboxIsRecreated(t *testing.T) {
 	const name = "apothecary-run1"
 	armSandbox(t, a, name)
 	tc := filepath.Join(a.cfg.RunsDir, "tools-cache")
-	if err := a.ensureSandbox(context.Background(), name, ports.EnvSpec{}, "", tc); err != nil {
+	if err := a.ensureSandbox(context.Background(), name, ports.EnvSpec{}, egressgw.Attachment{}, tc); err != nil {
 		t.Fatal(err)
 	}
 	rmAt, runAt := -1, -1
@@ -1067,7 +1068,7 @@ func TestCurrentShapeSandboxIsStarted(t *testing.T) {
 	a := newTestAdapter(t, r)
 	const name = "apothecary-run1"
 	armSandbox(t, a, name)
-	if err := a.ensureSandbox(context.Background(), name, ports.EnvSpec{}, "", "/tc"); err != nil {
+	if err := a.ensureSandbox(context.Background(), name, ports.EnvSpec{}, egressgw.Attachment{}, "/tc"); err != nil {
 		t.Fatal(err)
 	}
 	started := false
@@ -1153,7 +1154,7 @@ func TestSandboxGuardsRejectTmp(t *testing.T) {
 	a := newTestAdapter(t, &scriptRunner{})
 	a.noSandboxGuard = false
 	a.cfg.RunsDir = filepath.Join(os.TempDir(), "apothecary-runs")
-	err := a.ensureSandbox(context.Background(), "run1", ports.EnvSpec{}, "", "/tc")
+	err := a.ensureSandbox(context.Background(), "run1", ports.EnvSpec{}, egressgw.Attachment{}, "/tc")
 	if err == nil || !strings.Contains(err.Error(), "masks /tmp") {
 		t.Fatalf("want /tmp guard error, got %v", err)
 	}

@@ -10,17 +10,19 @@ import (
 	"strings"
 )
 
-// The WireGuard run link (Kubernetes). A pod has no docker network to be
-// multi-homed onto, so each run's sandbox pod brings up its own wg0 whose
-// default route is a peer of this gateway's wg0: everything the pod (and every
-// container inside it) sends arrives here on wg0 — "not EXT" — and meets the
-// exact same nft REDIRECT, filter, MASQUERADE and drop backstop as a docker
-// run network. The pod's network policy only lets it talk to this gateway's
-// WireGuard port (and the engine), so the tunnel is the only way out.
+// The WireGuard run link. Each run's sandbox brings up its own wg0 whose
+// default route is a peer of this gateway's wg0: everything the sandbox (and
+// every container inside it) sends arrives here on wg0 — "not EXT" — and
+// meets the nft REDIRECT, filter, MASQUERADE and drop backstop. On
+// Kubernetes a pod has no docker network to be multi-homed onto, and its
+// network policy only lets it talk to this gateway's WireGuard port (and the
+// engine), so the tunnel is the only way out. On docker the run's --internal
+// network still carries the tunnel itself, but the egress no longer crosses
+// the host's bridge addressed to the internet: a host with bridge netfilter
+// on (br_netfilter, loaded by a local k3s) drops that before it gets here.
 //
-// Each peer is allowed exactly its /32, which is also its routes.json subnet:
-// attribution is unchanged, and cryptokey routing makes it unforgeable — a
-// sandbox cannot send as another run.
+// Each peer is allowed exactly its /32 (attributed to its run), and cryptokey
+// routing makes it unforgeable — a sandbox cannot send as another run.
 
 const wgDev = "wg0"
 

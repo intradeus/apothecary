@@ -302,11 +302,15 @@ type fakeDocker struct {
 	running    string // running-sandbox probe output ("" = project idle)
 	netIPs     string // per-network address inspect output
 	ctlAddr    string // what `docker port` prints
+	fail       string // a call containing this exits 1
 }
 
 func (f *fakeDocker) run(_ context.Context, args []string) ([]byte, []byte, int, error) {
 	f.calls = append(f.calls, args)
 	joined := strings.Join(args, " ")
+	if f.fail != "" && strings.Contains(joined, f.fail) {
+		return nil, []byte("boom"), 1, nil
+	}
 	switch {
 	case args[0] == "ps" && strings.Contains(joined, "apothecary.sandbox=true"):
 		return []byte(f.running), nil, 0, nil
@@ -508,5 +512,86 @@ func TestDockerHostDetachRemovesTheRunNetwork(t *testing.T) {
 	fd.findCall(t, "network rm apo-egress-run1")
 	if fd.count("rm") != 0 {
 		t.Error("gateway removed on detach")
+	}
+}
+
+// Each run reaches its gateway through its own WireGuard peer: a stable,
+// distinct tunnel address, registered with the gateway, on a gateway that
+// runs wg0 under a key the engine keeps.
+func TestDockerHostGivesEachRunATunnel(t *testing.T) {
+	fd := &fakeDocker{}
+	h, gw := newDockerFixture(t, fd)
+	m := NewManager(h)
+	ctx := context.Background()
+	a1, err := m.EnsureRunEgress(ctx, "acme", "Acme", "run1", policyfile.File{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2, err := m.EnsureRunEgress(ctx, "acme", "Acme", "run2", policyfile.File{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a1.Peer == nil || a2.Peer == nil || a1.Peer.IP != "10.90.0.2" || a2.Peer.IP != "10.90.0.3" {
+		t.Fatalf("peers = %+v, %+v", a1.Peer, a2.Peer)
+	}
+	if a1.WGEndpoint != "172.20.0.2:51820" || a1.WGPrivateKey == "" || a1.WGPrivateKey == a2.WGPrivateKey {
+		t.Errorf("attachment = %+v", a1)
+	}
+	if a1.Subnet != "172.20.0.0/16" {
+		t.Errorf("subnet = %q: DNS and the caches still arrive over the run network", a1.Subnet)
+	}
+	if gw.routes.Peers["run1"].PublicKey != a1.Peer.PublicKey {
+		t.Errorf("gateway peers = %+v", gw.routes.Peers)
+	}
+	priv, pub, err := h.gatewayKey("acme")
+	if err != nil || a1.WGGatewayKey != pub {
+		t.Errorf("gateway key = %q, attachment carries %q (%v)", pub, a1.WGGatewayKey, err)
+	}
+	run := fd.findCall(t, "run -d")
+	for _, want := range []string{"-e APO_GW_WG_KEY=" + priv, "--wg-listen 51820", "--wg-addr 10.90.0.1/16"} {
+		if !strings.Contains(run, want) {
+			t.Errorf("gateway run args missing %q:\n%s", want, run)
+		}
+	}
+	// A re-provision keeps the identity; a torn-down run frees its address.
+	again, err := m.EnsureRunEgress(ctx, "acme", "Acme", "run1", policyfile.File{})
+	if err != nil || again.WGPrivateKey != a1.WGPrivateKey || again.Peer.IP != a1.Peer.IP {
+		t.Errorf("re-attach changed the identity: %+v (%v)", again.Peer, err)
+	}
+	if err := m.DestroyRunEgress(ctx, "acme", "run1"); err != nil {
+		t.Fatal(err)
+	}
+	a3, err := m.EnsureRunEgress(ctx, "acme", "Acme", "run3", policyfile.File{})
+	if err != nil || a3.Peer.IP != "10.90.0.2" {
+		t.Errorf("freed address not reused: %+v (%v)", a3.Peer, err)
+	}
+}
+
+func TestDockerHostLinksTheSandboxWithoutLeakingItsKey(t *testing.T) {
+	fd := &fakeDocker{}
+	h, _ := newDockerFixture(t, fd)
+	m := NewManager(h)
+	ctx := context.Background()
+	att, err := m.EnsureRunEgress(ctx, "acme", "Acme", "run1", policyfile.File{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.LinkSandbox(ctx, att, "apo-run1"); err != nil {
+		t.Fatal(err)
+	}
+	link := fd.findCall(t, "--network container:apo-run1")
+	for _, want := range []string{"run --rm", "--cap-add NET_ADMIN", "-e APO_WG_KEY=" + att.WGPrivateKey,
+		"-e APO_WG_ENDPOINT=172.20.0.2:51820", "-e APO_WG_IP=10.90.0.2", testGatewayImage} {
+		if !strings.Contains(link, want) {
+			t.Errorf("link args missing %q:\n%s", want, link)
+		}
+	}
+	fd.fail = "container:apo-run1"
+	err = m.LinkSandbox(ctx, att, "apo-run1")
+	if err == nil || strings.Contains(err.Error(), att.WGPrivateKey) {
+		t.Errorf("a failed link must fail without the key in its error: %v", err)
+	}
+	if err := m.LinkSandbox(ctx, Attachment{GatewayIP: "172.20.0.2"}, "apo-run1"); err != nil {
+		t.Errorf("an attachment with no peer (no tunnel host) is not linked: %v", err)
 	}
 }

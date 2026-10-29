@@ -1,9 +1,11 @@
 // Command apothecary-gateway is the per-project egress firewall daemon. It runs
 // as the apo-gw-<project> container (CAP_NET_ADMIN, not privileged) and every
-// run's sandbox egresses through it: on docker the gateway is multi-homed onto
-// each run's --internal network; on Kubernetes each run's pod reaches it over
-// its own WireGuard peer on wg0 (--wg-key). Either way the run links are "not
-// the uplink", and the same transparent filter applies: HTTPS by TLS SNI, HTTP
+// run's sandbox egresses through it over its own WireGuard peer on wg0
+// (--wg-key). On docker the gateway is also multi-homed onto each run's
+// --internal network, which carries the tunnel, DNS and the caches — the
+// tunnel keeps the egress itself off the host's bridge, where bridge
+// netfilter would judge (and drop) it. Either way the run links are "not the
+// uplink", and the same transparent filter applies: HTTPS by TLS SNI, HTTP
 // by Host header (no MITM), from a hot-reloaded per-project policy with two
 // modes (deny-all+allowlist / allow-all+denylist).
 //
@@ -97,7 +99,7 @@ func main() {
 	flag.StringVar(&galleryUpstream, "gallery-upstream", "https://open-vsx.org", "the marketplace the gallery proxies")
 	flag.StringVar(&controlListen, "control-listen", "", "control API address, e.g. :9041 (empty = no API)")
 	flag.StringVar(&controlTokenFile, "control-token-file", "", "file holding the control API bearer token (else $APO_GW_TOKEN)")
-	flag.StringVar(&wgKey, "wg-key", "", "WireGuard private key file: enables the wg0 run link (Kubernetes)")
+	flag.StringVar(&wgKey, "wg-key", "", "WireGuard private key file (else $APO_GW_WG_KEY): enables the wg0 run link")
 	flag.IntVar(&wgListen, "wg-listen", 51820, "WireGuard UDP port")
 	flag.StringVar(&wgAddr, "wg-addr", "10.90.0.1/16", "gateway address on wg0 (runs get /32s inside it)")
 	flag.IntVar(&wgMTU, "wg-mtu", 0, "wg0 MTU (0 = uplink MTU - 60)")
@@ -165,6 +167,13 @@ func main() {
 	g.ext.Store(&ext)
 	log.Printf("gateway: EXT=%s listen=:%d policy=%s", ext, g.listenPort, g.policyPath)
 
+	if wgKey == "" && os.Getenv("APO_GW_WG_KEY") != "" {
+		// wg reads the key from a file: one only this process can read.
+		wgKey = "/run/apo-gw-wg.key"
+		if err := os.WriteFile(wgKey, []byte(os.Getenv("APO_GW_WG_KEY")+"\n"), 0o600); err != nil {
+			log.Fatalf("gateway: wireguard key: %v", err)
+		}
+	}
 	if wgKey != "" {
 		link, err := setupWG(ext, wgKey, wgListen, wgAddr, wgMTU)
 		if err != nil {

@@ -4297,13 +4297,24 @@ markers either way.
   fails a fresh provision (publish the shim image of the engine's version);
   on Reattach it is only logged, since the next pod start reseeds it.
 
-### Egress: one gateway, two deliveries
+### Egress: one gateway, one tunnel
 
-The gateway daemon and image are the same on both hosts. What differs is how
-packets reach it:
+The gateway daemon and image are the same on both hosts, and on both a run's
+egress reaches it over a per-run **WireGuard** peer. What differs is the
+network the tunnel itself rides:
 
-- docker: the run's `--internal` network, as before;
-- Kubernetes: a per-run **WireGuard** peer. The pod's default route is `wg0`;
+- docker: the run's `--internal` network, which also carries DNS, the image
+  mirror and the build cache (addressed to the gateway, so the run's subnet
+  attributes them; the tunnel address is attributed too). The engine brings
+  `wg0` up in the sandbox with a throwaway gateway-image container sharing its
+  network namespace (`egressgw/wg_docker.go`: the dind image has no `wg`).
+  Identities are files under `<RunsDir>/gw/<project>/` (the gateway's key,
+  `peers/<run>.json`). It used to be a plain next hop across that bridge
+  (`default via <gateway>`), which put internet-bound frames on the host
+  bridge: once anything loaded `br_netfilter` (a local k3s's kube-router, via
+  its `-m physdev` rules), the host's iptables judged them and Docker's
+  internal-network rule dropped every one — all egress dead, DNS fine;
+- Kubernetes: a per-run peer. The pod's default route is `wg0`;
   the network policy allows only UDP 51820 to the project's gateway and TCP to
   the engine. Each peer is allowed exactly its `/32` (`10.90.0.0/16`), which
   is also its `routes.json` subnet, so attribution is the same lookup — and

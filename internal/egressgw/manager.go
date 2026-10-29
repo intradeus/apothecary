@@ -51,13 +51,16 @@ type Attachment struct {
 	GatewayIP string
 	// Subnet is the source range the run's traffic arrives from (attribution).
 	Subnet string
-	// Peer is the run's WireGuard identity (Kubernetes); nil on docker.
+	// Peer is the run's WireGuard identity: its public key and tunnel address.
 	Peer *policyfile.Peer
-	// WGEndpoint (host:port) is where the run's pod sends its WireGuard
-	// traffic and WGSecret the Secret holding its WireGuard identity
-	// (Kubernetes only).
-	WGEndpoint string
-	WGSecret   string
+	// WGEndpoint (host:port) is where the run's sandbox sends its WireGuard
+	// traffic. WGSecret is the Secret holding its WireGuard identity
+	// (Kubernetes); on docker the engine links the sandbox itself (LinkSandbox)
+	// with the private half and the gateway's public key.
+	WGEndpoint   string
+	WGSecret     string
+	WGPrivateKey string
+	WGGatewayKey string
 }
 
 // Host is where a project's gateway runs and how runs are linked to it.
@@ -72,6 +75,22 @@ type Host interface {
 	AttachRun(ctx context.Context, project, projectName, run string) (Attachment, error)
 	// DetachRun undoes AttachRun. Best-effort, idempotent.
 	DetachRun(ctx context.Context, project, run string) error
+}
+
+// SandboxLinker is a Host whose engine brings the run's tunnel up inside the
+// sandbox (docker). A Kubernetes pod does that itself (its wg sidecar).
+type SandboxLinker interface {
+	LinkSandbox(ctx context.Context, att Attachment, sandbox string) error
+}
+
+// LinkSandbox makes the run's WireGuard tunnel the running sandbox's default
+// route. A no-op on hosts whose sandboxes link themselves.
+func (m *Manager) LinkSandbox(ctx context.Context, att Attachment, sandbox string) error {
+	l, ok := m.host.(SandboxLinker)
+	if !ok || att.Peer == nil {
+		return nil
+	}
+	return l.LinkSandbox(ctx, att, sandbox)
 }
 
 // ErrNoGateway: the project has no gateway to ask.

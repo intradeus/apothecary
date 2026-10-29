@@ -55,6 +55,14 @@ func (g *gateway) applyRoutes(r Routes) {
 			attr = append(attr, subnetRun{net: n, run: run})
 		}
 	}
+	// A docker run reaches the gateway two ways: its tunnel (egress) and its
+	// network (DNS, mirror, build cache) — its subnet is the network's, so
+	// its tunnel address is attributed here. On Kubernetes the two coincide.
+	for run, p := range r.Peers {
+		if ip := net.ParseIP(p.IP).To4(); ip != nil {
+			attr = append(attr, subnetRun{net: &net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)}, run: run})
+		}
+	}
 	// longest-prefix first, so a more specific subnet wins.
 	sort.Slice(attr, func(i, j int) bool {
 		oi, _ := attr[i].net.Mask.Size()

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"apothecary/internal/egressgw"
 	"apothecary/internal/ports"
 )
 
@@ -46,13 +47,15 @@ func (h dockerHost) prepare(ctx context.Context, name string, spec ports.EnvSpec
 	// Egress firewall: the run's DinD sandbox routes ALL egress (the workspace
 	// AND every compose sibling) through the per-project gateway
 	// (internal/egressgw). Bring it up BEFORE the sandbox so the sandbox can join
-	// the run's --internal network and default-route to the gateway — which is
-	// also why a privileged sandbox can't bypass it (its only NIC has no external
-	// route).
+	// the run's --internal network and default-route into its tunnel to the
+	// gateway — which is also why a privileged sandbox can't bypass it (its only
+	// NIC has no external route).
 	plog("→ bringing up per-run sandbox + egress gateway\n")
+	var att egressgw.Attachment
 	var gwIP string
 	if a.gw != nil {
-		att, gerr := a.gw.EnsureRunEgress(ctx, spec.Project, spec.ProjectName, name, policyFor(spec))
+		var gerr error
+		att, gerr = a.gw.EnsureRunEgress(ctx, spec.Project, spec.ProjectName, name, policyFor(spec))
 		if gerr != nil {
 			return prep{}, gerr
 		}
@@ -66,7 +69,7 @@ func (h dockerHost) prepare(ctx context.Context, name string, spec ports.EnvSpec
 	// devcontainer up, exec, docker ps/inspect/rename — targets that inner
 	// daemon (via runInner), so the repo's compose runs verbatim with no
 	// host-daemon collisions and Destroy is total.
-	if err := a.ensureSandbox(ctx, name, spec, gwIP, filepath.Dir(toolsDir)); err != nil {
+	if err := a.ensureSandbox(ctx, name, spec, att, filepath.Dir(toolsDir)); err != nil {
 		return prep{}, err
 	}
 	return prep{src: src, shimDir: shimDir, toolsDir: toolsDir, gwIP: gwIP, def: def}, nil

@@ -143,7 +143,8 @@ func (a *Adapter) checkRuntime(ctx context.Context) error {
 // (a gateway is active), the sandbox joins the run's --internal network and is
 // default-routed to the gateway, so no inner container can bypass egress
 // filtering; gwIP=="" keeps the legacy default-bridge behaviour.
-func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec ports.EnvSpec, gwIP, toolsCache string) error {
+func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec ports.EnvSpec, att egressgw.Attachment, toolsCache string) error {
+	gwIP := att.GatewayIP
 	runRoot := a.folderFor(name)
 	sock := a.sockPath(name)
 	// Guard the two externally-imposed limits the spike surfaced:
@@ -200,19 +201,20 @@ func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec ports.Env
 		return err
 	}
 	if gwIP != "" {
-		return a.wireSandboxEgress(ctx, name, gwIP)
+		return a.wireSandboxEgress(ctx, name, att)
 	}
 	return nil
 }
 
-// wireSandboxEgress points the sandbox's default route at the gateway and
-// disables IPv6, so every inner container's egress exits via the gateway (the
-// --internal network gives the sandbox no other route). Best-effort ipv6 off.
-func (a *Adapter) wireSandboxEgress(ctx context.Context, name, gwIP string) error {
-	if _, stderr, code, err := a.hostRun(ctx, []string{"exec", name, "ip", "route", "replace", "default", "via", gwIP}); err != nil {
+// wireSandboxEgress makes the run's WireGuard tunnel to the gateway the
+// sandbox's default route and disables IPv6, so every inner container's
+// egress exits via the gateway (the --internal network gives the sandbox no
+// other route). The tunnel, not a next hop across the bridge: a host with
+// bridge netfilter on drops bridged traffic bound outside the subnet
+// (egressgw/wg_docker.go). Best-effort ipv6 off.
+func (a *Adapter) wireSandboxEgress(ctx context.Context, name string, att egressgw.Attachment) error {
+	if err := a.gw.LinkSandbox(ctx, att, name); err != nil {
 		return err
-	} else if code != 0 {
-		return fmt.Errorf("sandbox %s: set default route via %s: %s", name, gwIP, tail(string(stderr), 256))
 	}
 	_, _, _, _ = a.hostRun(ctx, []string{"exec", name, "sysctl", "-w", "net.ipv6.conf.all.disable_ipv6=1"})
 	return nil

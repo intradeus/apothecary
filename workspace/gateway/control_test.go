@@ -95,6 +95,14 @@ func TestControlRunsAttachDetach(t *testing.T) {
 	if got := g.attributeIP(net.ParseIP("172.20.0.5")); got != "r2" {
 		t.Fatalf("attribution r2 = %q", got)
 	}
+	// A docker run: its network's subnet AND its tunnel address are its own.
+	if rec := do(t, h, "PUT", "/runs/r4", "t", `{"subnet":"172.21.0.0/16","peer":{"public_key":"K4","ip":"10.90.0.3"}}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("attach r4: %d", rec.Code)
+	}
+	if a, b := g.attributeIP(net.ParseIP("172.21.0.3")), g.attributeIP(net.ParseIP("10.90.0.3")); a != "r4" || b != "r4" {
+		t.Fatalf("docker run attribution = %q (network), %q (tunnel)", a, b)
+	}
+	do(t, h, "DELETE", "/runs/r4", "t", "")
 	var rt Routes
 	_ = json.Unmarshal(do(t, h, "GET", "/routes", "t", "").Body.Bytes(), &rt)
 	if rt.Peers["r1"].PublicKey != "K1" || len(rt.RunSubnets) != 2 {

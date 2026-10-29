@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,8 +20,9 @@ import (
 // docker daemon (apo-gw-<project key>, CAP_NET_ADMIN, not privileged). Each run
 // gets its own --internal network (apo-egress-<run>) that the gateway is
 // connected to: the run's sandbox has that network as its ONLY interface and
-// default-routes to the gateway, so it cannot bypass it. The control API is
-// published on the engine host's loopback only.
+// default-routes into a WireGuard tunnel to the gateway (wg_docker.go), so it
+// cannot bypass it. The control API is published on the engine host's
+// loopback only.
 type DockerHost struct {
 	runsDir     string
 	run         HostRun
@@ -39,7 +41,7 @@ type cachedControl struct {
 // gwShape versions the gateway CONTAINER's shape (flags, mounts, published
 // ports). A gateway of an older shape is recreated even while runs use it: the
 // engine could not drive it at all otherwise.
-const gwShape = "2"
+const gwShape = "3"
 
 const (
 	controlPort   = "9041"
@@ -95,9 +97,23 @@ func (h *DockerHost) docker(ctx context.Context, args ...string) (string, error)
 		return "", err
 	}
 	if code != 0 {
-		return "", fmt.Errorf("docker %s: exit %d: %s", strings.Join(args, " "), code, strings.TrimSpace(string(stderr)))
+		return "", fmt.Errorf("docker %s: exit %d: %s", strings.Join(redactEnv(args), " "), code, strings.TrimSpace(string(stderr)))
 	}
 	return strings.TrimSpace(string(stdout)), nil
+}
+
+// redactEnv blanks the values of `-e K=V` arguments (control token, WireGuard
+// keys): a failed command's error ends up in logs and run events.
+func redactEnv(args []string) []string {
+	out := append([]string(nil), args...)
+	for i := 1; i < len(out); i++ {
+		if out[i-1] == "-e" {
+			if k, _, ok := strings.Cut(out[i], "="); ok {
+				out[i] = k + "=…"
+			}
+		}
+	}
+	return out
 }
 
 // token is the project gateway's control token, generated once and kept next
@@ -131,6 +147,10 @@ func (h *DockerHost) EnsureGateway(ctx context.Context, project, projectName str
 	}
 	name := gwName(project)
 	tok, err := h.token(project, true)
+	if err != nil {
+		return Control{}, err
+	}
+	wgKey, _, err := h.gatewayKey(project)
 	if err != nil {
 		return Control{}, err
 	}
@@ -189,6 +209,7 @@ func (h *DockerHost) EnsureGateway(ctx context.Context, project, projectName str
 		// published ports work even where container→host traffic is dropped).
 		"-p", "127.0.0.1::"+controlPort,
 		"-e", "APO_GW_TOKEN="+tok,
+		"-e", "APO_GW_WG_KEY="+wgKey,
 		"-v", stateVolume(project)+":/state",
 		"-v", cacheVolume(project)+":/var/lib/registry",
 		"-v", buildCacheVolume(project)+":"+buildCacheDir,
@@ -198,6 +219,8 @@ func (h *DockerHost) EnsureGateway(ctx context.Context, project, projectName str
 		"--control-listen", ":"+controlPort,
 		"--listen-port", "9040",
 		"--dns-upstream", "1.1.1.1:53",
+		"--wg-listen", strconv.Itoa(wgPort),
+		"--wg-addr", wgGatewayIP+"/16",
 	)
 	if _, err = h.docker(ctx, args...); err != nil {
 		return Control{}, err
@@ -285,7 +308,8 @@ func (h *DockerHost) Control(ctx context.Context, project string) (Control, bool
 
 // AttachRun creates the run's --internal network (no external route → the
 // sandbox can't bypass the gateway), connects the gateway to it and reports
-// the gateway's address on it and the network's subnet.
+// the gateway's address on it, the network's subnet and the run's WireGuard
+// identity.
 func (h *DockerHost) AttachRun(ctx context.Context, project, projectName, run string) (Attachment, error) {
 	args := append([]string{"network", "create", "--driver", "bridge", "--internal",
 		"--label", "apothecary.env=" + run},
@@ -310,13 +334,15 @@ func (h *DockerHost) AttachRun(ctx context.Context, project, projectName, run st
 	if gwIP == "" {
 		return Attachment{}, fmt.Errorf("egressgw: gateway has no IP on %s", netName(run))
 	}
-	return Attachment{GatewayIP: gwIP, Subnet: subnet}, nil
+	return h.withPeer(project, run, Attachment{GatewayIP: gwIP, Subnet: subnet})
 }
 
-// DetachRun disconnects and removes the run's network.
+// DetachRun disconnects and removes the run's network and forgets its
+// WireGuard identity.
 func (h *DockerHost) DetachRun(ctx context.Context, project, run string) error {
 	_, _ = h.docker(ctx, "network", "disconnect", "-f", netName(run), gwName(project))
 	_, _ = h.docker(ctx, "network", "rm", netName(run))
+	_ = os.Remove(h.peerPath(project, run))
 	return nil
 }
 

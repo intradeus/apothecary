@@ -75,7 +75,6 @@ func probeEgress(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID,
 		why = fmt.Sprintf("exit %d", out.ExitCode)
 	}
 	return fmt.Errorf("egress check: the workspace cannot reach %s (%s), so no agent could reach its model provider "+
-		"or the repository. If the egress policy allows that host, the path to the egress gateway is broken: on a "+
-		"docker host, br_netfilter with net.bridge.bridge-nf-call-iptables=1 (a local k3s/k3d loads it) drops "+
-		"workspace traffic before the gateway", addr, why)
+		"or the repository. If the egress policy allows that host, the path to the project's egress gateway is "+
+		"broken: check the run's WireGuard tunnel (wg0 in the sandbox) and the gateway's log", addr, why)
 }
