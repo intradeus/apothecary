@@ -911,14 +911,25 @@ func (e *Engine) ClearBuildCache(ctx context.Context, projectID string) error {
 	return ctrl.ClearBuildCache(ctx, project)
 }
 
-// EgressDenials lists a run's gateway-blocked hosts (run page feedback).
+// EgressDenials lists a run's gateway-blocked hosts (run page feedback), each
+// classified against the policy in force now: held (nobody ruled on it yet —
+// the run page asks) or blocked (reviewed — it never asks again). Without a
+// readable policy every denial stays held: asking twice beats never asking.
 func (e *Engine) EgressDenials(ctx context.Context, runID string) []ports.EgressDenial {
 	ctrl, env, release, err := e.egressCtrl(ctx, runID)
 	if err != nil {
 		return nil
 	}
 	defer release()
-	return ctrl.EgressDenials(ctx, env)
+	dens := ctrl.EgressDenials(ctx, env)
+	pol, perr := ctrl.EgressPolicy(ctx, env)
+	for i := range dens {
+		dens[i].Status = ports.EgressHeld
+		if perr == nil {
+			dens[i].Status = pol.Status(dens[i].Host)
+		}
+	}
+	return dens
 }
 
 // AllowEgress adds a host to a run's project egress policy live — the gateway

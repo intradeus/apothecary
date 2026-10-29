@@ -3,7 +3,7 @@
 - 36) Resquash migrations
 - 43) SECURITY
 - 44) egress improvements : block by default but add a mark as reviewed for blocks, so it doesnt ask a 2nd time. - maybe keep it as (refused) in orange, in between allow and block.
-- 45) AI reviewer should pull existing comments threads to avoid duplicates.
+- 45) AI reviewer should remember which comments and threads were polled to avoid duplicates. Same at the time of reviewing. Same for replies, we shoudnt answer / fix an answered comment twice. Really not sure how to manage this one using only artifacts tho... Might need to change the review.yaml builtin schema. 
 - 46) remote vscode connection ("open in vscode" URL) by ssh.
 
 ------ 

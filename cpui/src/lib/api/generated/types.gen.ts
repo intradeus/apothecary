@@ -384,6 +384,7 @@ export type EgressDenial = {
 	count: number;
 	host: string;
 	last: string;
+	status: string;
 };
 
 export type EgressHostRequest = {

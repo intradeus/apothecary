@@ -912,7 +912,13 @@ export function toChannelEntry(w: Wire.ChannelEntry): ChannelEntry {
 // --- egress ------------------------------------------------------------------
 
 export function toEgressDenial(w: Wire.EgressDenial): EgressDenial {
-	return { host: w.host ?? '', count: w.count ?? 0, last: w.last ?? '' };
+	return {
+		host: w.host ?? '',
+		count: w.count ?? 0,
+		last: w.last ?? '',
+		// Unknown reads as held: asking twice beats never asking.
+		status: w.status === 'allowed' || w.status === 'blocked' ? w.status : 'held'
+	};
 }
 
 export function toEgressAuditRow(w: Wire.EgressAuditRow): EgressAuditRow {

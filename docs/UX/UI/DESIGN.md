@@ -30,7 +30,7 @@ The UI is professional and dense (an IDE-grade power tool). The lore appears onl
 | "Needs you" | Awaiting your hand |
 | Composer placeholder | Whisper to the builder… |
 | Empty window desk | "An empty bench" |
-| Egress blocked | "toxic hosts, kept off the shelf" |
+| Egress held | "kept off the shelf until you allow or block them" |
 | First account | "Claim this apothecary" |
 
 Rules:
@@ -101,7 +101,7 @@ All tokens are CSS custom properties set on the app root. They are swapped for l
 | Token | Dark | Light | Meaning |
 |---|---|---|---|
 | `--az` (azure) | `#7fb2ff` | `#2f6fe0` | active / running / provisioning / agent stage / read tool |
-| `--amb` (amber) | `#f5b54a` | `#b8780c` | needs a human: waiting_on_human, pings, gates, abandoned, edit tool |
+| `--amb` (amber) | `#f5b54a` | `#b8780c` | needs a human: waiting_on_human, pings, gates, abandoned, held egress, edit tool |
 | `--grn` (green) | `#7ee2a8` | `#1c8a55` | success: completed, workspace live, command stage, + lines, exec tool |
 | `--ros` (rose) | `#ff7a70` | `#d6403c` | failure / danger: failed, blocked egress, − lines, Stop |
 | `--vio` (violet) | `#c3a2ff` | `#7a52d6` | action stage, search tool, permission ping |
@@ -460,13 +460,13 @@ Naming fixes the old ambiguity. Use these names in the UI:
 - Control glass over a hue tint: bg `--rosBg`, border `--rosLn`, radius 12px, `padding:5px 5px 5px 7px`, margin 0 16px.
 - Contents, left to right:
   - an 18px round "!" badge (solid hue, glow)
-  - a bold hue title ("Egress blocked ×3")
+  - a bold hue title ("Egress held ×3")
   - an optional serif lore aside
   - a mono list with ellipsis and "+N more"
   - a spacer
-  - a solid danger CTA ("Review & allow", which focuses or opens the Egress window)
-  - a ghost "Dismiss"
-- Amber variant: workspace unknown, provisioner unreachable.
+  - a solid CTA ("Review", which focuses or opens the Egress window on its Held filter)
+  - a ghost "Dismiss" (a snooze: until the page reloads or another host is held)
+- Amber variant: held egress, workspace unknown, provisioner unreachable. Held egress names only hosts nobody ruled on yet: a host someone blocked is reviewed and never raises it again.
 
 ### 4.8 Popover / menu
 
@@ -728,7 +728,7 @@ The run page body is a **user-arrangeable tiling desk**, like an IDE.
 | Files | Repo picker, lazy tree (show ignored toggle, refresh), file viewer with line numbers, a 1 MB cap notice and a binary state. |
 | Terminal | Repo picker, connection status pill (connecting az pulse / connected grn / disconnected ros + Reconnect), xterm surface on `--code`. "Session ends when you leave". |
 | Logs | Source segmented control (Workspace / Provisioning / stage logs). Mono 11.5px log tail with colored sources (tunnel tea, firewall ros, harness az). |
-| Egress | Verdict filter (All 41 / Allowed / Denied 3) + host search. Table: host:port (mono), seen verdict chip, **rule now** toggle (allow/block, applies live, saved to the workshop policy), protocol, count, bytes out/in, last seen. Footer links to the workshop egress settings. |
+| Egress | Rule-now filter (All 41 / Allowed / Held 2 / Blocked 3) + host search. Table: host:port (mono), seen verdict chip, **rule now** toggle (allow / block, applies live, saved to the workshop policy; a held host — refused by default, not yet ruled on — shows an amber "held" between the two until someone picks one), protocol, count, bytes out/in, last seen. Footer links to the workshop egress settings. |
 | Ports | Detected ports as buttons (`:4000 beam.smp`), clicking exposes and opens. Manual "Expose port" input (1–65535, Enter submits). |
 | Resources | Process count, time window, and per-process breakdown. *The engine samples only sandbox totals today (`ResourceSample.pids`), so the breakdown waits on a per-process sampling API; until then the view shows totals.* |
 | Vitals | The three sparklines with a shared crosshair (4.16). |

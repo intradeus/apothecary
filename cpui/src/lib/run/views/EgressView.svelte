@@ -3,7 +3,8 @@
 	// Egress (DESIGN §6): every host this workspace reached or was refused,
 	// and the rule in force NOW per host — toggled live, saved to the
 	// workshop's policy. "Seen" is history and never changes; "rule now" is
-	// what the gateway does today.
+	// what the gateway does today: allowed, blocked, or held (refused by
+	// default and not yet ruled on — the run page asks until someone does).
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
 	import { to } from '$lib/urls';
@@ -14,7 +15,7 @@
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { I } from '$lib/ui/icons';
-	import type { EgressAuditRow, EgressPolicy } from '$lib/domain';
+	import type { EgressAuditRow, EgressPolicy, EgressStatus } from '$lib/domain';
 	import type { RunStore } from '../store.svelte';
 
 	let { rs, visible }: { rs: RunStore; visible: boolean } = $props();
@@ -55,25 +56,29 @@
 			return e.startsWith('*.') ? x.endsWith(e.slice(1)) : x === e;
 		});
 	}
-	/** The CURRENT rule, mirroring the gateway: a force-block wins in both
-	 *  modes, then mode + list membership decide. null = no live gateway. */
-	function ruleFor(h: string): 'allow' | 'deny' | null {
+	/** The CURRENT rule, mirroring the gateway (and ports.EgressPolicy.Status):
+	 *  a force-block wins in both modes, then mode + list membership decide;
+	 *  an allowlist miss nobody ruled on is held. null = no live gateway. */
+	function ruleFor(h: string): EgressStatus | null {
 		if (!policy) return null;
-		if (matchesList(h, policy.blockedDomains)) return 'deny';
+		if (matchesList(h, policy.blockedDomains)) return 'blocked';
 		const m = matchesList(h, policy.domains);
-		if (policy.mode === 'deny') return m ? 'deny' : 'allow';
-		return m ? 'allow' : 'deny';
+		if (policy.mode === 'deny') return m ? 'blocked' : 'allowed';
+		return m ? 'allowed' : 'held';
 	}
 
 	// The rule flips the moment it is clicked (optimistic); a refusal puts
 	// it back and says why.
-	let flipped = $state<Record<string, 'allow' | 'deny'>>({});
+	let flipped = $state<Record<string, EgressStatus>>({});
 	const shownRule = (h: string) => flipped[h] ?? ruleFor(h);
+	/** Without a live gateway the filter falls back to what was seen. */
+	const statusOf = (r: EgressAuditRow): EgressStatus =>
+		shownRule(r.host) ?? (r.verdict === 'allow' ? 'allowed' : 'blocked');
 
 	async function setRule(h: string, allow: boolean, undo = false) {
 		const prev = ruleFor(h);
 		toggling = { ...toggling, [h]: true };
-		flipped = { ...flipped, [h]: allow ? 'allow' : 'deny' };
+		flipped = { ...flipped, [h]: allow ? 'allowed' : 'blocked' };
 		error = '';
 		try {
 			await api.egress.setRule(rs.runId, h, allow);
@@ -92,11 +97,12 @@
 				),
 				{
 					tone: allow ? 'ok' : 'warn',
+					// Held is no rule to restore: undoing a first review has nothing to go back to.
 					action:
-						prev && !undo
+						prev && prev !== 'held' && !undo
 							? {
 									label: t('runview.egress.undo'),
-									run: () => void setRule(h, prev === 'allow', true)
+									run: () => void setRule(h, prev === 'allowed', true)
 								}
 							: undefined
 				}
@@ -115,12 +121,14 @@
 	const shown = $derived(
 		all.filter(
 			(r) =>
-				(!rs.egressVerdict || r.verdict === rs.egressVerdict) &&
+				(!rs.egressRule || statusOf(r) === rs.egressRule) &&
 				(!host.trim() || r.host.toLowerCase().includes(host.trim().toLowerCase()))
 		)
 	);
-	const nAllow = $derived(all.filter((r) => r.verdict === 'allow').length);
-	const nDeny = $derived(all.filter((r) => r.verdict === 'deny').length);
+	const count = (s: EgressStatus) => all.filter((r) => statusOf(r) === s).length;
+	const nAllowed = $derived(count('allowed'));
+	const nHeld = $derived(count('held'));
+	const nBlocked = $derived(count('blocked'));
 	const mode = $derived(
 		policy
 			? t('runview.egress.mode_paren', {
@@ -136,12 +144,13 @@
 		<Segmented
 			glass={false}
 			size="sm"
-			label={t('runview.egress.verdict')}
-			bind:value={rs.egressVerdict}
+			label={t('runview.egress.rule_filter')}
+			bind:value={rs.egressRule}
 			options={[
 				{ value: '', label: t('runview.egress.all'), count: all.length },
-				{ value: 'allow', label: t('runview.egress.allowed'), count: nAllow },
-				{ value: 'deny', label: t('runview.egress.denied'), count: nDeny }
+				{ value: 'allowed', label: t('runview.egress.allowed'), count: nAllowed },
+				{ value: 'held', label: t('runview.egress.held'), count: nHeld },
+				{ value: 'blocked', label: t('runview.egress.blocked'), count: nBlocked }
 			]}
 		/>
 		<span class="q"
@@ -208,10 +217,23 @@
 									size="sm"
 									label={t('runview.egress.rule_for', { host: r.host })}
 									value={rule}
-									onchange={(v) => v !== ruleFor(r.host) && setRule(r.host, v === 'allow')}
+									onchange={(v) =>
+										v !== 'held' && v !== ruleFor(r.host) && setRule(r.host, v === 'allowed')}
 									options={[
-										{ value: 'allow', label: t('runview.egress.rule_allow'), tone: 'grn' },
-										{ value: 'deny', label: t('runview.egress.rule_block'), tone: 'ros' }
+										{ value: 'allowed', label: t('runview.egress.rule_allow'), tone: 'grn' },
+										// Held sits between the two only while it holds: once
+										// ruled on, a host never goes back to it.
+										...(rule === 'held'
+											? [
+													{
+														value: 'held' as const,
+														label: t('runview.egress.rule_held'),
+														tone: 'amb' as const,
+														title: t('runview.egress.held_title')
+													}
+												]
+											: []),
+										{ value: 'blocked', label: t('runview.egress.rule_block'), tone: 'ros' }
 									]}
 								/>
 							</span>
@@ -262,7 +284,7 @@
 		flex: none;
 	}
 	.r {
-		grid-template-columns: minmax(0, 1fr) 58px 112px 40px 34px 92px 64px;
+		grid-template-columns: minmax(0, 1fr) 58px 148px 40px 34px 92px 64px;
 		gap: 0 6px;
 		padding: 4px 12px;
 	}
@@ -308,7 +330,7 @@
 	 * (not the viewport), sized to when the columns stop fitting. */
 	@container (max-width: 560px) {
 		.r {
-			grid-template-columns: minmax(0, 1fr) 54px 108px 34px;
+			grid-template-columns: minmax(0, 1fr) 54px 144px 34px;
 		}
 		.r > :nth-child(4),
 		.r > :nth-child(6),
@@ -318,7 +340,7 @@
 	}
 	@container (max-width: 380px) {
 		.r {
-			grid-template-columns: minmax(0, 1fr) 50px 100px;
+			grid-template-columns: minmax(0, 1fr) 50px 140px;
 		}
 		.r > :nth-child(5) {
 			display: none;

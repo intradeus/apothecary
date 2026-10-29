@@ -11,6 +11,7 @@ import { api } from '$lib/api';
 import type {
 	Attachment,
 	EgressDenial,
+	EgressStatus,
 	FormContent,
 	ObservedPort,
 	ResourceSample,
@@ -72,8 +73,8 @@ export class RunStore {
 	/** The Session's between-phases nudge was dismissed after this many
 	 *  phase completions: it shows again once another phase ends. */
 	phasesNudgeDismissedAt = $state(-1);
-	/** The Egress view's verdict filter (the banner opens it on denials). */
-	egressVerdict = $state<'' | 'allow' | 'deny'>('');
+	/** The Egress view's rule filter (the banner opens it on held hosts). */
+	egressRule = $state<'' | EgressStatus>('');
 
 	// Plain counters: polls read them, nothing renders them.
 	#portUsers = 0;
@@ -99,7 +100,11 @@ export class RunStore {
 	readonly current = $derived(currentStage(this.events));
 	readonly since = $derived(workingSince(this.events, this.current));
 	readonly links = $derived(envLinks(this.events, this.exposed, this.services?.services ?? []));
-	readonly newDenials = $derived(this.denials.filter((d) => !this.dismissed.has(d.host)));
+	/** Held hosts the banner still asks about: a blocked host was reviewed,
+	 *  a dismissed one is snoozed until the page reloads. */
+	readonly newDenials = $derived(
+		this.denials.filter((d) => d.status === 'held' && !this.dismissed.has(d.host))
+	);
 	/** When the workspace went away, for the "destroyed 2h ago" states. */
 	readonly destroyedAt = $derived(this.events.findLast((e) => e.type === 'env_destroyed')?.ts);
 
@@ -342,7 +347,8 @@ export class RunStore {
 		}
 	}
 
-	/** Dismiss the new-denial banner without changing any rule. */
+	/** Snooze the held-hosts banner without ruling on them: they stay held
+	 *  in the Egress view, and a newly held host raises it again. */
 	dismissDenials() {
 		this.dismissed = new Set(this.denials.map((d) => d.host));
 	}

@@ -288,7 +288,7 @@ func (p *EnvProvisioner) Destroy(_ context.Context, id ports.EnvID) error {
 func (p *EnvProvisioner) EgressDenials(_ context.Context, id ports.EnvID) []ports.EgressDenial {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.Denied[id]
+	return append([]ports.EgressDenial(nil), p.Denied[id]...)
 }
 
 func (p *EnvProvisioner) AllowEgress(_ context.Context, id ports.EnvID, host string) error {

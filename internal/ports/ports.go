@@ -764,7 +764,23 @@ type EgressDenial struct {
 	Host  string    `json:"host"`
 	Count int       `json:"count"`
 	Last  time.Time `json:"last"`
+	// Status is the host's rule now (EgressPolicy.Status): held until someone
+	// allows or blocks it — only held hosts ask for review.
+	Status EgressStatus `json:"status"`
 }
+
+// EgressStatus is a host's current rule, as a reviewer sees it.
+type EgressStatus string
+
+const (
+	EgressAllowed EgressStatus = "allowed"
+	// EgressHeld is denied by default (allowlist miss) and not yet reviewed:
+	// refused for now, still asking for a verdict.
+	EgressHeld EgressStatus = "held"
+	// EgressBlocked is denied by a rule someone wrote (force-block, or a
+	// denylist entry): reviewed, never asks again.
+	EgressBlocked EgressStatus = "blocked"
+)
 
 // EgressAuditRecord is one aggregated egress fact for a run (a (host, port,
 // verdict) tuple) with counts, byte totals and first/last timestamps.
@@ -824,6 +840,41 @@ type EgressPolicy struct {
 	Mode           string   // "allow" (deny-all + allowlist) or "deny" (allow-all + denylist)
 	Domains        []string // allowlist (mode=allow) or denylist (mode=deny); exact or "*.suffix"
 	BlockedDomains []string // force-deny overrides; win in both modes
+}
+
+// Status classifies host under the policy, mirroring the gateway's verdict
+// (workspace/gateway policy.verdict): a force-block wins in both modes, then
+// mode + list membership decide. The only denial nobody wrote a rule for is an
+// allowlist miss — that one is held.
+func (p EgressPolicy) Status(host string) EgressStatus {
+	if egressMatches(host, p.BlockedDomains) {
+		return EgressBlocked
+	}
+	m := egressMatches(host, p.Domains)
+	switch {
+	case p.Mode == "deny" && m:
+		return EgressBlocked
+	case p.Mode == "deny" || m:
+		return EgressAllowed
+	}
+	return EgressHeld
+}
+
+// egressMatches mirrors the gateway's hostMatches: an exact entry, or a
+// "*.suffix" wildcard matched by suffix (never the bare apex itself).
+func egressMatches(host string, list []string) bool {
+	h := strings.ToLower(strings.TrimSuffix(host, "."))
+	for _, d := range list {
+		d = strings.ToLower(strings.TrimSpace(d))
+		if rest, ok := strings.CutPrefix(d, "*."); ok {
+			if strings.HasSuffix(h, "."+rest) {
+				return true
+			}
+		} else if h == d {
+			return true
+		}
+	}
+	return false
 }
 
 // EgressController is an OPTIONAL EnvProvisioner capability: inspect and live-

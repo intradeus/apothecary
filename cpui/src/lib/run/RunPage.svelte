@@ -88,7 +88,7 @@
 				return { hint: rs.logSource === 'workspace' && !rs.terminal ? 'tail -f' : '' };
 			case 'egress':
 				return rs.newDenials.length
-					? { count: rs.newDenials.length, alert: 'ros', hint: t('run.page.rulesLive') }
+					? { count: rs.newDenials.length, alert: 'amb', hint: t('run.page.rulesLive') }
 					: { hint: t('run.page.rulesLive') };
 			case 'services': {
 				const svcs = rs.services?.services ?? [];
@@ -147,12 +147,13 @@
 		{#if showDenials}
 			<div class="bn">
 				<Banner
-					title={t('run.page.egressBlocked', { n: times(rs.newDenials.length) })}
+					tone="amb"
+					title={t('run.page.egressHeld', { n: times(rs.newDenials.length) })}
 					aside={t('run.page.egressAside')}
 					items={rs.newDenials.map((d) => d.host)}
-					action={t('run.page.reviewAllow')}
+					action={t('run.page.review')}
 					onaction={() => {
-						rs.egressVerdict = 'deny';
+						rs.egressRule = 'held';
 						desk.reveal('egress');
 					}}
 					ondismiss={() => rs.dismissDenials()}

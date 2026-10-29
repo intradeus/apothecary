@@ -1,11 +1,17 @@
 // What a workspace reached, what it was refused, and the rule in force now.
 
+/** A host's rule now. held = denied by default and nobody ruled on it yet:
+ *  refused for now, still asking. blocked = someone wrote the rule (a
+ *  force-block or a denylist entry): reviewed, it never asks again. */
+export type EgressStatus = 'allowed' | 'held' | 'blocked';
+
 /** A host the gateway blocked for a run — the visible diagnosis for "the
- *  firewall ate my model provider". */
+ *  firewall ate my model provider". Only held ones raise the banner. */
 export interface EgressDenial {
 	host: string;
 	count: number;
 	last: string;
+	status: EgressStatus;
 }
 
 export interface EgressAuditRow {
