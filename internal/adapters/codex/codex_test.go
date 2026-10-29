@@ -73,6 +73,7 @@ func TestPrepareEnvWritesRolesAndConfig(t *testing.T) {
 		!strings.Contains(string(cfg), `command = "/opt/apothecary/shim"`) ||
 		!strings.Contains(string(cfg), `args = ["ask-human"]`) ||
 		!strings.Contains(string(cfg), "tool_timeout_sec = 86400") ||
+		!strings.Contains(string(cfg), `env_vars = ["APOTHECARY_AGENT"]`) ||
 		!strings.Contains(string(cfg), `approval_policy = "never"`) {
 		t.Errorf("config.toml = %q, %v", cfg, err)
 	}

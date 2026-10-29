@@ -38,6 +38,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -368,7 +370,58 @@ func replyErr(id json.RawMessage, code int, message string) {
 	send(map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": code, "message": message}})
 }
 
-func runAskHuman() { serveMCP(os.Stdin) }
+func runAskHuman() { serveMCP(os.Stdin, underAgent(os.Getenv, os.Getppid())) }
+
+// agentEnv marks the agent processes the sidecar starts (acp.go). ask_human
+// is the agent's line to the human through the run; the harness configs that
+// register it (codex's config.toml, opencode.json) are the user's too, and
+// the human driving codex or opencode themselves — the editor extension, the
+// terminal — must not reach the run with it.
+const agentEnv = "APOTHECARY_AGENT"
+
+// procDir is procfs, a var for tests.
+var procDir = "/proc"
+
+// underAgent reports whether this server runs below an agent process: the
+// marker in its own environment, or in an ancestor's — codex hands its MCP
+// servers an allowlisted environment, so the marker stops at codex itself.
+// An ancestor whose environ cannot be read is passed over, not trusted.
+func underAgent(getenv func(string) string, ppid int) bool {
+	if getenv(agentEnv) != "" {
+		return true
+	}
+	pid := ppid
+	for range 64 {
+		if pid <= 1 {
+			return false
+		}
+		if env, err := os.ReadFile(filepath.Join(procDir, strconv.Itoa(pid), "environ")); err == nil {
+			for kv := range bytes.SplitSeq(env, []byte{0}) {
+				if bytes.HasPrefix(kv, []byte(agentEnv+"=")) && len(kv) > len(agentEnv)+1 {
+					return true
+				}
+			}
+		}
+		stat, err := os.ReadFile(filepath.Join(procDir, strconv.Itoa(pid), "stat"))
+		if err != nil {
+			return false
+		}
+		// pid (comm) state ppid …: comm may hold spaces and parens, so
+		// the fields start after its LAST ')'.
+		i := bytes.LastIndexByte(stat, ')')
+		if i < 0 {
+			return false
+		}
+		f := strings.Fields(string(stat[i+1:]))
+		if len(f) < 2 {
+			return false
+		}
+		if pid, err = strconv.Atoi(f[1]); err != nil {
+			return false
+		}
+	}
+	return false
+}
 
 // inflight tracks running tool calls by JSON-RPC id, so a cancellation can
 // stop the matching wait.
@@ -403,8 +456,10 @@ func (f *inflight) cancel(id string) {
 }
 
 // serveMCP handles line-delimited JSON-RPC from in until EOF; replies go
-// through send() (mcpOut).
-func serveMCP(in io.Reader) {
+// through send() (mcpOut). offered=false (not below an agent, underAgent)
+// serves a toolless server: the human's harness starts it without error and
+// sees nothing to call.
+func serveMCP(in io.Reader, offered bool) {
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 0, 64<<10), 16<<20) // agent prompts can be large
 	for sc.Scan() {
@@ -441,7 +496,11 @@ func serveMCP(in io.Reader) {
 				"serverInfo":      map[string]any{"name": "apothecary-ask-human", "version": "2.0.0"},
 			})
 		case "tools/list":
-			reply(msg.ID, map[string]any{"tools": []any{toolDef}})
+			tools := []any{}
+			if offered {
+				tools = append(tools, toolDef)
+			}
+			reply(msg.ID, map[string]any{"tools": tools})
 		case "tools/call":
 			var p struct {
 				Name      string  `json:"name"`
@@ -451,7 +510,7 @@ func serveMCP(in io.Reader) {
 				} `json:"_meta"`
 			}
 			_ = json.Unmarshal(msg.Params, &p)
-			if p.Name != "ask_human" {
+			if p.Name != "ask_human" || !offered {
 				replyErr(msg.ID, -32602, "unknown tool "+p.Name)
 				continue
 			}

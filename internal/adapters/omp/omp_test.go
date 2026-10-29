@@ -36,7 +36,8 @@ func TestProfile(t *testing.T) {
 		t.Errorf("profile = %+v", p)
 	}
 	if len(p.MCPServers) != 1 || p.MCPServers[0].Name != "ask_human" ||
-		strings.Join(p.MCPServers[0].Command, " ") != "/opt/apothecary/shim ask-human" {
+		strings.Join(p.MCPServers[0].Command, " ") != "/opt/apothecary/shim ask-human" ||
+		p.MCPServers[0].Env["APOTHECARY_AGENT"] != "1" {
 		t.Errorf("mcp servers = %+v", p.MCPServers)
 	}
 	// A read-only session is a second process that loads no mutating tool.

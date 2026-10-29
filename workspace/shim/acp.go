@@ -461,7 +461,10 @@ func (h *agentHost) start(req startReq) (*agentProc, error) {
 
 	cmd := exec.Command(req.Argv[0], req.Argv[1:]...)
 	cmd.Dir = req.Cwd
-	cmd.Env = os.Environ()
+	// The agent marker: ask-human offers its tool only below it, so the
+	// human's own codex/opencode (editor extension, terminal), which load
+	// the same MCP config, never ask the run.
+	cmd.Env = append(os.Environ(), agentEnv+"=1")
 	for k, v := range req.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}

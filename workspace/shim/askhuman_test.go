@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -291,7 +292,7 @@ func TestServeMCPFraming(t *testing.T) {
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ask_human","arguments":{"type":"blocker","question":"q"}}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"nope"}`,
 	}, "\n") + "\n"
-	serveMCP(strings.NewReader(in))
+	serveMCP(strings.NewReader(in), true)
 	// tools/call replies from its own goroutine (send() holds stdoutMu while
 	// writing mcpOut), so every read of the shared buffer must take the same
 	// lock — otherwise it races the in-flight write.
@@ -340,4 +341,64 @@ func TestServeMCPFraming(t *testing.T) {
 func mustJSON(v any) []byte {
 	data, _ := json.Marshal(v)
 	return data
+}
+
+// Not below an agent, the server starts but offers nothing, and a call by
+// name is refused without reaching the engine.
+func TestServeMCPToollessOutsideAnAgent(t *testing.T) {
+	var out bytes.Buffer
+	oldOut := mcpOut
+	mcpOut = &out
+	defer func() { mcpOut = oldOut }()
+	serveMCP(strings.NewReader(strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ask_human","arguments":{"type":"blocker","question":"q"}}}`,
+	}, "\n")+"\n"), false)
+	stdoutMu.Lock()
+	got := out.String()
+	stdoutMu.Unlock()
+	if !strings.Contains(got, `"tools":[]`) {
+		t.Errorf("tools/list outside an agent offers a tool: %s", got)
+	}
+	if !strings.Contains(got, `"error"`) {
+		t.Errorf("tools/call outside an agent was not refused: %s", got)
+	}
+}
+
+// underAgent finds the marker in its own environment or an ancestor's (codex
+// filters its MCP servers' environment), and nowhere else.
+func TestUnderAgent(t *testing.T) {
+	old := procDir
+	procDir = t.TempDir()
+	defer func() { procDir = old }()
+	proc := func(pid, ppid int, comm string, env ...string) {
+		d := filepath.Join(procDir, strconv.Itoa(pid))
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		stat := strconv.Itoa(pid) + " (" + comm + ") S " + strconv.Itoa(ppid) + " 1 1 0"
+		_ = os.WriteFile(filepath.Join(d, "stat"), []byte(stat), 0o644)
+		_ = os.WriteFile(filepath.Join(d, "environ"), []byte(strings.Join(env, "\x00")), 0o644)
+	}
+	// sidecar(10) → codex-acp(20, marked) → codex app-server(30) → [ask-human]
+	proc(10, 1, "apothecary-shim", "PATH=/bin")
+	proc(20, 10, "codex-acp", "PATH=/bin", agentEnv+"=1")
+	proc(30, 20, "codex (app) server", "HOME=/h")
+	// code-server(40) → extension host(50) → codex(60) → [ask-human]
+	proc(40, 1, "node", "PATH=/bin", agentEnv+"=")
+	proc(50, 40, "node", "PATH=/bin")
+	proc(60, 50, "codex", "HOME=/h")
+	none := func(string) string { return "" }
+	if !underAgent(none, 30) {
+		t.Error("the agent's codex: marker on an ancestor not found")
+	}
+	if underAgent(none, 60) {
+		t.Error("the human's codex (editor extension) is taken for an agent")
+	}
+	if !underAgent(func(k string) string { return map[string]string{agentEnv: "1"}[k] }, 60) {
+		t.Error("the marker in its own environment is not enough")
+	}
+	if underAgent(none, 999) {
+		t.Error("an unreadable ancestry is taken for an agent")
+	}
 }

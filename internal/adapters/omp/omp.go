@@ -118,7 +118,10 @@ func (a *Adapter) Profile() acpagent.Profile {
 		Command:  "env OMP_MCP_TIMEOUT_MS=0 OMP_SKIP_SETUP=1 omp acp --yolo",
 		Preamble: acpagent.RolePreamble(a.envp, "omp"),
 		MCPServers: []ports.MCPServer{
-			{Name: "ask_human", Command: []string{"/opt/apothecary/shim", "ask-human"}},
+			// The agent marker, explicitly: ask-human offers its tool only
+			// below an agent, and this does not hang on omp passing its
+			// own environment down (session-only, so no human's omp sees it).
+			{Name: "ask_human", Command: []string{"/opt/apothecary/shim", "ask-human"}, Env: map[string]string{"APOTHECARY_AGENT": "1"}},
 		},
 		ReadOnlyBy:      acpagent.ReadOnlyByProcess,
 		ReadOnlyCommand: "env OMP_MCP_TIMEOUT_MS=0 OMP_SKIP_SETUP=1 omp acp --tools=" + readOnlyTools + " --approval-mode=always-ask",
