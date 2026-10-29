@@ -1134,7 +1134,7 @@ source (§4):
 |---|---|
 | `run.ticket.tracker` | the run's ticket has a tracker issue |
 | `run.subject` | this chain run acts on a merge request — its *subject* (§3) |
-| `run.ticket.change_type == fix` | the ticket is that kind of change — `feat`, `fix` or `chore`, set on the ticket or read from an imported issue's type through the integration's type map; `!=` for the opposite |
+| `run.ticket.change_type == fix` | the ticket is that kind of change — `feat`, `fix`, `hotfix`, `perf`, `docs` or `chore`, set on the ticket or read from an imported issue's type through the integration's type map; `!=` for the opposite |
 | `$name` | a bool parameter is true |
 
 Each but the comparison negates as `not x`; only `run.ticket.change_type`

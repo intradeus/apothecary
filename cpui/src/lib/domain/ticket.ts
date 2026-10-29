@@ -3,8 +3,8 @@
 
 /** What a ticket is (ports.ChangeType); its base branch is named after it,
  *  and a flow's `run_if: run.ticket.change_type == fix` reads it. */
-export type ChangeType = 'feat' | 'fix' | 'chore';
-export const CHANGE_TYPES: ChangeType[] = ['feat', 'fix', 'chore'];
+export type ChangeType = 'feat' | 'fix' | 'hotfix' | 'perf' | 'docs' | 'chore';
+export const CHANGE_TYPES: ChangeType[] = ['feat', 'fix', 'hotfix', 'perf', 'docs', 'chore'];
 export const asChangeType = (s: string | undefined): ChangeType =>
 	CHANGE_TYPES.includes(s as ChangeType) ? (s as ChangeType) : 'feat';
 

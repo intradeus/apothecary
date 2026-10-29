@@ -624,7 +624,7 @@ func ParseTypeMap(text string) (map[string]ports.ChangeType, error) {
 		}
 		ct, known := ports.ParseChangeType(value)
 		if !known {
-			return nil, fmt.Errorf("jira: type map gives %q the change type %q; the change types are feat, fix, chore", strings.TrimSpace(name), strings.TrimSpace(value))
+			return nil, fmt.Errorf("jira: type map gives %q the change type %q; the change types are feat, fix, hotfix, perf, docs, chore", strings.TrimSpace(name), strings.TrimSpace(value))
 		}
 		m[name] = ct
 	}

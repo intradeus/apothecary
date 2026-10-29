@@ -28,7 +28,7 @@ type ticketBody struct {
 	Title     string `json:"title"`
 	Goal      string `json:"goal"`
 	Branch    string `json:"branch"`
-	// ChangeType is feat, fix or chore; empty on a create is the source
+	// ChangeType is a ports.ChangeType; empty on a create is the source
 	// issue's (an import) or feat, on an update feat.
 	ChangeType    string   `json:"change_type"`
 	AttachmentIDs []string `json:"attachment_ids"`

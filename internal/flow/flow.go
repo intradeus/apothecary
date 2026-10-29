@@ -422,7 +422,7 @@ const (
 // CondChangeTypes are the values run.ticket.change_type compares with
 // (ports.ChangeType: a test holds them equal) — `run_if:
 // run.ticket.change_type == fix`.
-var CondChangeTypes = []string{"feat", "fix", "chore"}
+var CondChangeTypes = []string{"feat", "fix", "hotfix", "perf", "docs", "chore"}
 
 // CondFacts are the run facts a condition reads.
 type CondFacts struct {

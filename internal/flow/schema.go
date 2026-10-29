@@ -101,7 +101,7 @@ func schema() obj {
 			"type":         stringsOf("what the stage is (a sequence stage has none: it names a sequence)", string(StageAgent), string(StageCommand), string(StageHumanGate), string(StageAction), string(StageWait), string(StageService)),
 			"sequence":     str("run this sequence in the stage's place (a stage that does has no type)"),
 			"description":  str("what the stage is for — documentation only"),
-			"run_if":       str("run only when this holds: run.ticket.tracker, run.subject or a bool $parameter — each may be negated, `not x` — or run.ticket.change_type == (or !=) feat, fix or chore"),
+			"run_if":       str("run only when this holds: run.ticket.tracker, run.subject or a bool $parameter — each may be negated, `not x` — or run.ticket.change_type == (or !=) feat, fix, hotfix, perf, docs or chore"),
 			"agent":        str("agent: the agent it runs, declared under agents"),
 			"model":        str("agent: required — the model, provider/model, or a $parameter ($model); stages sharing a model parameter share a harness"),
 			"harness":      str("agent: required — the harness kind, or a $parameter ($harness)"),

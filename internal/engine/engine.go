@@ -41,8 +41,7 @@ type Ticket struct {
 	TicketID string
 	Title    string
 	Goal     string
-	// ChangeType is the ticket's kind of change (ports.ChangeType: feat, fix,
-	// chore), which `run_if: run.ticket.change_type == fix` reads; "" is feat.
+	// ChangeType is the ticket's kind of change (ports.ChangeType), which `run_if: run.ticket.change_type == fix` reads; "" is feat.
 	ChangeType string
 	// Branch is the base branch when TicketID is set, else the run's branch
 	// override ("" = the default apothecary/<run-id>-<title-slug>). Names git

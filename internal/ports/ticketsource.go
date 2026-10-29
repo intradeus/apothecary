@@ -39,7 +39,8 @@ type SourceTicket struct {
 }
 
 // ChangeType is a CANONICAL kind of change — what a ticket is: a feature, a
-// fix, a chore. A ticket carries one, and its base branch is named after it
+// fix, an urgent fix to production, a performance change, documentation,
+// upkeep. A ticket carries one, and its base branch is named after it
 // (feat/proj-123-…). The set is fixed, like TicketStatus, so a flow can rely
 // on it whatever the tracker; each tracker's own issue types ("Bug",
 // "Story", "Spike") are mapped onto it — by the integration's type map where
@@ -47,13 +48,18 @@ type SourceTicket struct {
 type ChangeType string
 
 const (
-	ChangeFeat  ChangeType = "feat"
-	ChangeFix   ChangeType = "fix"
-	ChangeChore ChangeType = "chore"
+	ChangeFeat   ChangeType = "feat"
+	ChangeFix    ChangeType = "fix"
+	ChangeHotfix ChangeType = "hotfix"
+	ChangePerf   ChangeType = "perf"
+	ChangeDocs   ChangeType = "docs"
+	ChangeChore  ChangeType = "chore"
 )
 
 // ChangeTypes lists every ChangeType; the first is the default.
-func ChangeTypes() []ChangeType { return []ChangeType{ChangeFeat, ChangeFix, ChangeChore} }
+func ChangeTypes() []ChangeType {
+	return []ChangeType{ChangeFeat, ChangeFix, ChangeHotfix, ChangePerf, ChangeDocs, ChangeChore}
+}
 
 // ParseChangeType reads a canonical change type; ok is false for anything
 // else.
@@ -66,21 +72,31 @@ func ParseChangeType(s string) (ChangeType, bool) {
 	return "", false
 }
 
-// GuessChangeType reads a tracker's issue type with no mapping for it: a
-// defect is a fix, upkeep a chore, anything else a feature.
+// GuessChangeType reads a tracker's issue type with no mapping for it: an
+// incident is a hotfix, a defect a fix, performance perf, documentation docs,
+// upkeep a chore, anything else a feature. The first rule whose word the type
+// contains wins.
 func GuessChangeType(issueType string) ChangeType {
 	t := strings.ToLower(strings.TrimSpace(issueType))
-	for _, w := range []string{"bug", "defect", "incident", "hotfix", "problem"} {
-		if strings.Contains(t, w) {
-			return ChangeFix
-		}
-	}
-	for _, w := range []string{"chore", "maintenance", "debt"} {
-		if strings.Contains(t, w) {
-			return ChangeChore
+	for _, r := range guessRules {
+		for _, w := range r.words {
+			if strings.Contains(t, w) {
+				return r.ct
+			}
 		}
 	}
 	return ChangeFeat
+}
+
+var guessRules = []struct {
+	ct    ChangeType
+	words []string
+}{
+	{ChangeHotfix, []string{"hotfix", "incident"}},
+	{ChangeFix, []string{"bug", "defect", "problem"}},
+	{ChangePerf, []string{"perf"}},
+	{ChangeDocs, []string{"doc"}},
+	{ChangeChore, []string{"chore", "maintenance", "debt"}},
 }
 
 // SourceAttachment is one file hanging off a source ticket. URL is the

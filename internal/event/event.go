@@ -173,8 +173,8 @@ type Usage struct {
 type RunCreated struct {
 	TicketTitle string `json:"ticket_title"`
 	TicketGoal  string `json:"ticket_goal"`
-	// TicketChangeType snapshots the ticket's kind of change — feat, fix or
-	// chore — for run_if's run.ticket.change_type and the agents' TASK.
+	// TicketChangeType snapshots the ticket's kind of change
+	// (ports.ChangeType) for run_if's run.ticket.change_type and the agents' TASK.
 	// Absent on runs older than change types.
 	TicketChangeType string `json:"ticket_change_type,omitempty"`
 	FlowName         string `json:"flow_name"`

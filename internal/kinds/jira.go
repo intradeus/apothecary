@@ -25,7 +25,7 @@ Write-back happens ONLY when a flow runs a tracker action on a ticket imported f
 • ticket_link — attaches the run's merge request(s) as remote issue links.
 • ticket_link_branch — attaches the run's pushed branch as a remote issue link. (Jira's own Development panel needs no write: it lists a branch whose name carries the issue key — feat/proj-123-… is how an imported ticket's branch is named — once your GitHub/GitLab is connected to Jira.)
 
-Each imported issue's type becomes the ticket's change type — feat, fix or chore — which its branch is named after: through the type map below, else read from the type's name (Bug, Defect, Incident → fix; Chore, Maintenance, Tech Debt → chore; anything else → feat).
+Each imported issue's type becomes the ticket's change type — feat, fix, hotfix, perf, docs or chore — which its branch is named after: through the type map below, else read from the type's name (Hotfix, Incident → hotfix; Bug, Defect → fix; Performance → perf; Documentation → docs; Chore, Maintenance, Tech Debt → chore; anything else → feat).
 A flow with none of these never writes. A token without write permissions still imports fine; a run of a flow WITH tracker actions on such a ticket fails at creation with the integration named.
 
 Which Jira is this?
@@ -112,8 +112,8 @@ func (Jira) Descriptor() Descriptor {
 				Help: "Which workflow status each canonical status a flow names (todo, in_progress, in_review, done, blocked) means on this site, as canonical=status pairs. Unlisted ones keep the stock words — To Do, In Progress, In Review, Done; blocked has none. An empty value (in_review=) removes one, and a flow's \"to: in_review\" then skips here.",
 			},
 			{
-				Name: "type_map", Label: "Type map (optional)", Placeholder: "Bug=fix, Task=chore, Spike=chore",
-				Help: "Which change type (feat, fix, chore) each of your issue types is, as type=change pairs — what an imported ticket becomes, and the prefix of its branch (fix/proj-123-…). Unlisted types are read from their name: Bug, Defect, Incident → fix; Chore, Maintenance, Tech Debt → chore; anything else → feat.",
+				Name: "type_map", Label: "Type map (optional)", Placeholder: "Bug=fix, Outage=hotfix, Task=chore",
+				Help: "Which change type (feat, fix, hotfix, perf, docs, chore) each of your issue types is, as type=change pairs — what an imported ticket becomes, and the prefix of its branch (fix/proj-123-…). Unlisted types are read from their name: Hotfix, Incident → hotfix; Bug, Defect → fix; Performance → perf; Documentation → docs; Chore, Maintenance, Tech Debt → chore; anything else → feat.",
 			},
 		},
 	}

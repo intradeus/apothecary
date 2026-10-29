@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Selection } from '$lib/FlowGraph.svelte';
+	import { CHANGE_TYPES } from '$lib/domain';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import StageChip from '$lib/ui/StageChip.svelte';
 	import Select from '$lib/ui/Select.svelte';
@@ -215,7 +216,6 @@
 					: 'grn';
 	// The run facts a condition names by path (flow.CondTracker, CondSubject,
 	// CondChangeType compared with a flow.CondChangeTypes entry).
-	const CHANGE_TYPES = ['feat', 'fix', 'chore'];
 	const RUN_IF_FACTS = () => [
 		{ value: 'run.ticket.tracker', label: t('flow.insp.runIf.tracker') },
 		{ value: 'not run.ticket.tracker', label: t('flow.insp.runIf.notTracker') },

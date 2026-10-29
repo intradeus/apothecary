@@ -22,8 +22,8 @@ type Ticket struct {
 	Title      string `json:"title"`
 	Goal       string `json:"goal"`
 	BaseBranch string `json:"base_branch"` // "" = generated per run from the title
-	// ChangeType is what the ticket is — feat, fix or chore (ports.ChangeType;
-	// "" on a write means feat). The base branch is named after it at
+	// ChangeType is what the ticket is (ports.ChangeType: feat, fix, …; ""
+	// on a write means feat). The base branch is named after it at
 	// creation; changing it later renames nothing.
 	ChangeType ports.ChangeType `json:"change_type"`
 	// Source* record where an imported ticket came from (empty for one typed
@@ -123,7 +123,7 @@ func (s *Service) validateTicket(ctx context.Context, t *Ticket) error {
 	} else if ct, ok := ports.ParseChangeType(string(t.ChangeType)); ok {
 		t.ChangeType = ct
 	} else {
-		return invalidf("ticket: change type %q is not one of feat, fix, chore", t.ChangeType)
+		return invalidf("ticket: change type %q is not one of feat, fix, hotfix, perf, docs, chore", t.ChangeType)
 	}
 	return nil
 }
