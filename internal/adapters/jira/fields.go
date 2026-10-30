@@ -16,7 +16,7 @@ import (
 	"strconv"
 	"strings"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 )
 
 type fieldJSON struct {
@@ -77,13 +77,13 @@ func (c *Client) resolveField(ctx context.Context, key, name string) (fieldJSON,
 				near = append(near, f.Name)
 			}
 		}
-		return fieldJSON{}, &ports.ErrFieldUnknown{Key: key, Field: name, Candidates: near}
+		return fieldJSON{}, &trackerport.ErrFieldUnknown{Key: key, Field: name, Candidates: near}
 	default:
 		ids := make([]string, 0, len(matches))
 		for _, f := range matches {
 			ids = append(ids, f.Name+" ("+f.ID+")")
 		}
-		return fieldJSON{}, &ports.ErrFieldUnknown{Key: key, Field: name, Candidates: ids}
+		return fieldJSON{}, &trackerport.ErrFieldUnknown{Key: key, Field: name, Candidates: ids}
 	}
 }
 
@@ -102,7 +102,7 @@ func splitItems(value string) []string {
 // coerce turns a text value into the JSON value the field's schema wants.
 func (c *Client) coerce(key string, f fieldJSON, value string) (any, error) {
 	unsupported := func(typ string) error {
-		return &ports.ErrFieldUnsupported{Key: key, Field: f.Name, Type: typ}
+		return &trackerport.ErrFieldUnsupported{Key: key, Field: f.Name, Type: typ}
 	}
 	switch f.Schema.Type {
 	case "string":

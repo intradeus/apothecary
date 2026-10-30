@@ -2,7 +2,7 @@ package kinds
 
 import (
 	jiraadapter "apothecary/internal/adapters/jira"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 )
 
 // Jira is the ticketsource/jira kind: the tracker tickets are imported FROM
@@ -119,7 +119,7 @@ func (Jira) Descriptor() Descriptor {
 	}
 }
 
-func (Jira) New(cfg Config) (ports.TicketSource, error) {
+func (Jira) New(cfg Config) (trackerport.TicketSource, error) {
 	statuses, err := jiraadapter.ParseStatusMap(cfg.Str("status_map", ""))
 	if err != nil {
 		return nil, err

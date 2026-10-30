@@ -1,4 +1,9 @@
-package ports
+// Package trackerport is the issue-tracker port (Jira, GitHub Issues,
+// GitLab issues): the thin intersection of what every tracker serves when a
+// ticket is imported, the change type that names a ticket's branch, the
+// canonical statuses a run moves a ticket through, and writing back —
+// status, fields, comments, attachments.
+package trackerport
 
 import (
 	"context"

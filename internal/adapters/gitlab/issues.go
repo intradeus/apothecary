@@ -1,7 +1,7 @@
 package gitlab
 
 // Issues adapts the ticketsource port — read side for the import picker, write
-// side (ports.TicketWriter) for a flow's tracker actions — to GitLab issues,
+// side (trackerport.TicketWriter) for a flow's tracker actions — to GitLab issues,
 // reusing the repository host adapter's authenticated client. GitLab is moving
 // issues onto its "work items" framework, whose own API is GraphQL; the REST
 // issues API still serves every issue-type work item (issues, incidents,
@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 )
 
 type IssuesConfig struct {
@@ -142,8 +142,8 @@ func (s *Issues) projectOf(in issueJSON, fallback string) string {
 // project-relative markdown target, "/uploads/<secret>/<filename>".
 var uploadRe = regexp.MustCompile(`\]\((/uploads/([0-9a-f]{32})/([^)\s]+))\)`)
 
-func (s *Issues) toTicket(in issueJSON, project string) ports.SourceTicket {
-	t := ports.SourceTicket{
+func (s *Issues) toTicket(in issueJSON, project string) trackerport.SourceTicket {
+	t := trackerport.SourceTicket{
 		Key:    fmt.Sprintf("%s#%d", s.projectOf(in, project), in.IID),
 		Title:  in.Title,
 		Body:   strings.TrimSpace(in.Description),
@@ -169,8 +169,8 @@ func (s *Issues) toTicket(in issueJSON, project string) ports.SourceTicket {
 // uploads lists the files a description links and makes those links
 // absolute, since the body is read outside GitLab once imported. Each file
 // downloads through the project uploads API (OpenAttachment).
-func (s *Issues) uploads(body string, projectID int) (string, []ports.SourceAttachment) {
-	var out []ports.SourceAttachment
+func (s *Issues) uploads(body string, projectID int) (string, []trackerport.SourceAttachment) {
+	var out []trackerport.SourceAttachment
 	seen := map[string]bool{}
 	for _, m := range uploadRe.FindAllStringSubmatch(body, -1) {
 		secret, file := m[2], m[3]
@@ -182,7 +182,7 @@ func (s *Issues) uploads(body string, projectID int) (string, []ports.SourceAtta
 		if err != nil {
 			name = file
 		}
-		out = append(out, ports.SourceAttachment{
+		out = append(out, trackerport.SourceAttachment{
 			ID:       secret,
 			Filename: name,
 			URL:      fmt.Sprintf("%s/api/v4/projects/%d/uploads/%s/%s", s.a.cfg.BaseURL, projectID, secret, file),
@@ -196,14 +196,14 @@ func (s *Issues) uploads(body string, projectID int) (string, []ports.SourceAtta
 // looks the issue up directly, empty means "open and assigned to me",
 // anything else is a text search with a few GitLab-style filters lifted out
 // (searchParams).
-func (s *Issues) Search(ctx context.Context, query string, limit int) ([]ports.SourceTicket, error) {
+func (s *Issues) Search(ctx context.Context, query string, limit int) ([]trackerport.SourceTicket, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
 	query = strings.TrimSpace(query)
 	if issueKeyRe.MatchString(query) {
 		if t, err := s.Fetch(ctx, query); err == nil {
-			return []ports.SourceTicket{t}, nil
+			return []trackerport.SourceTicket{t}, nil
 		}
 	}
 	params := searchParams(query)
@@ -219,7 +219,7 @@ func (s *Issues) Search(ctx context.Context, query string, limit int) ([]ports.S
 		scopes = []string{"/issues"}
 	}
 	seen := map[string]bool{}
-	var tickets []ports.SourceTicket
+	var tickets []trackerport.SourceTicket
 	for _, scope := range scopes {
 		var rows []issueJSON
 		if _, err := s.a.api(ctx, http.MethodGet, scope+"?"+params.Encode(), nil, &rows); err != nil {
@@ -310,14 +310,14 @@ func (s *Issues) get(ctx context.Context, project string, iid int) (issueJSON, e
 }
 
 // Fetch returns one issue with the files its description links.
-func (s *Issues) Fetch(ctx context.Context, key string) (ports.SourceTicket, error) {
+func (s *Issues) Fetch(ctx context.Context, key string) (trackerport.SourceTicket, error) {
 	project, iid, err := s.parseKey(key)
 	if err != nil {
-		return ports.SourceTicket{}, err
+		return trackerport.SourceTicket{}, err
 	}
 	it, err := s.get(ctx, project, iid)
 	if err != nil {
-		return ports.SourceTicket{}, err
+		return trackerport.SourceTicket{}, err
 	}
 	return s.toTicket(it, project), nil
 }
@@ -325,7 +325,7 @@ func (s *Issues) Fetch(ctx context.Context, key string) (ports.SourceTicket, err
 // OpenAttachment downloads one uploaded file (GET
 // /projects/:id/uploads/:secret/:filename). The URL is re-checked against the
 // configured host before the token goes with it.
-func (s *Issues) OpenAttachment(ctx context.Context, att ports.SourceAttachment) (io.ReadCloser, error) {
+func (s *Issues) OpenAttachment(ctx context.Context, att trackerport.SourceAttachment) (io.ReadCloser, error) {
 	u, err := url.Parse(att.URL)
 	if err != nil {
 		return nil, fmt.Errorf("gitlab: attachment %s: %w", att.Filename, err)
@@ -355,21 +355,21 @@ func (s *Issues) OpenAttachment(ctx context.Context, att ports.SourceAttachment)
 	return resp.Body, nil
 }
 
-// --- write side (ports.TicketWriter) ------------------------------------------
+// --- write side (trackerport.TicketWriter) ------------------------------------------
 
 var issueStates = []string{"opened", "closed"}
 
 // issueStatusMap is what the canonical statuses mean for an issue: todo is
 // opened, done is closed, and nothing else has a word on the REST issue.
-var issueStatusMap = map[ports.TicketStatus]string{ports.StatusTodo: "opened", ports.StatusDone: "closed"}
+var issueStatusMap = map[trackerport.TicketStatus]string{trackerport.StatusTodo: "opened", trackerport.StatusDone: "closed"}
 
 // TransitionTo reopens (todo) or closes (done) the issue; every other
 // canonical status is unsupported — the engine skips the stage.
-func (s *Issues) TransitionTo(ctx context.Context, key string, to ports.TicketStatus) error {
+func (s *Issues) TransitionTo(ctx context.Context, key string, to trackerport.TicketStatus) error {
 	state, ok := issueStatusMap[to]
 	if !ok {
-		return &ports.ErrStatusUnsupported{Key: strings.TrimSpace(key), Status: to, Kind: "GitLab Issues",
-			Supported: []ports.TicketStatus{ports.StatusTodo, ports.StatusDone}}
+		return &trackerport.ErrStatusUnsupported{Key: strings.TrimSpace(key), Status: to, Kind: "GitLab Issues",
+			Supported: []trackerport.TicketStatus{trackerport.StatusTodo, trackerport.StatusDone}}
 	}
 	return s.Transition(ctx, key, state)
 }
@@ -393,7 +393,7 @@ func (s *Issues) Transition(ctx context.Context, key, status string) error {
 	case "closed":
 		want, event = "closed", "close"
 	default:
-		return &ports.ErrStatusUnreachable{Key: key, From: it.State, To: status, Reachable: issueStates}
+		return &trackerport.ErrStatusUnreachable{Key: key, From: it.State, To: status, Reachable: issueStates}
 	}
 	if it.State == want {
 		return nil
@@ -485,7 +485,7 @@ func (s *Issues) SetFields(ctx context.Context, key string, fields map[string]st
 			}
 			update["milestone_id"] = id
 		default:
-			return &ports.ErrFieldUnsupported{Key: key, Field: name, Supported: issueFields}
+			return &trackerport.ErrFieldUnsupported{Key: key, Field: name, Supported: issueFields}
 		}
 	}
 	if len(update) == 0 {
@@ -505,7 +505,7 @@ func (s *Issues) userID(ctx context.Context, key, username string) (int, error) 
 		return 0, err
 	}
 	if len(rows) == 0 {
-		return 0, &ports.ErrFieldUnknown{Key: key, Field: "assignee " + username}
+		return 0, &trackerport.ErrFieldUnknown{Key: key, Field: "assignee " + username}
 	}
 	return rows[0].ID, nil
 }
@@ -528,7 +528,7 @@ func (s *Issues) milestone(ctx context.Context, project, title string) (int, err
 		}
 		titles = append(titles, m.Title)
 	}
-	return 0, &ports.ErrFieldUnknown{Key: project, Field: "milestone " + title, Candidates: titles}
+	return 0, &trackerport.ErrFieldUnknown{Key: project, Field: "milestone " + title, Candidates: titles}
 }
 
 func (s *Issues) Fields(ctx context.Context, key string, names []string) (map[string]string, error) {
@@ -558,7 +558,7 @@ func (s *Issues) Fields(ctx context.Context, key string, names []string) (map[st
 				out[name] = ""
 			}
 		default:
-			return nil, &ports.ErrFieldUnsupported{Key: key, Field: name, Supported: issueFields}
+			return nil, &trackerport.ErrFieldUnsupported{Key: key, Field: name, Supported: issueFields}
 		}
 	}
 	return out, nil
@@ -570,7 +570,7 @@ func linkMarker(u string) string { return "<!-- apothecary link=" + u + " -->" }
 
 // AddLink posts the link as a note (GitLab autolinks merge requests), once:
 // an existing note carrying the marker is the link already attached.
-func (s *Issues) AddLink(ctx context.Context, key string, link ports.TicketLink) error {
+func (s *Issues) AddLink(ctx context.Context, key string, link trackerport.TicketLink) error {
 	if strings.TrimSpace(link.URL) == "" {
 		return fmt.Errorf("gitlab: a link needs a URL")
 	}
@@ -617,7 +617,7 @@ func splitItems(value string) []string {
 }
 
 var (
-	_ ports.TicketSource   = (*Issues)(nil)
-	_ ports.TicketWriter   = (*Issues)(nil)
-	_ ports.TicketAttacher = (*Issues)(nil)
+	_ trackerport.TicketSource   = (*Issues)(nil)
+	_ trackerport.TicketWriter   = (*Issues)(nil)
+	_ trackerport.TicketAttacher = (*Issues)(nil)
 )

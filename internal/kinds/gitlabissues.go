@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	gitlabadapter "apothecary/internal/adapters/gitlab"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 )
 
 // GitLabIssues is the ticketsource/gitlab kind: tickets imported from — and,
@@ -46,7 +46,7 @@ func (GitLabIssues) Descriptor() Descriptor {
 	}
 }
 
-func (GitLabIssues) New(cfg Config) (ports.TicketSource, error) {
+func (GitLabIssues) New(cfg Config) (trackerport.TicketSource, error) {
 	return gitlabadapter.NewIssues(gitlabadapter.IssuesConfig{
 		BaseURL:  cfg.Str("base_url", "https://gitlab.com"),
 		Token:    cfg.Secrets["token"],

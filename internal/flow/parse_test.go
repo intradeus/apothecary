@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 )
 
 // header is a minimal valid preamble; tests append stages to it.
@@ -1819,10 +1819,10 @@ func TestAskSection(t *testing.T) {
 // The values run.ticket.change_type compares with are the canonical change types.
 func TestCondChangeTypesAreCanonical(t *testing.T) {
 	var want []string
-	for _, c := range ports.ChangeTypes() {
+	for _, c := range trackerport.ChangeTypes() {
 		want = append(want, string(c))
 	}
 	if !slices.Equal(CondChangeTypes, want) {
-		t.Errorf("CondChangeTypes = %v, want ports.ChangeTypes %v", CondChangeTypes, want)
+		t.Errorf("CondChangeTypes = %v, want trackerport.ChangeTypes %v", CondChangeTypes, want)
 	}
 }

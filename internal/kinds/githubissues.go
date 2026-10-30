@@ -2,7 +2,7 @@ package kinds
 
 import (
 	githubadapter "apothecary/internal/adapters/github"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 )
 
 // GitHubIssues is the ticketsource/github kind: tickets imported from — and,
@@ -42,7 +42,7 @@ func (GitHubIssues) Descriptor() Descriptor {
 	}
 }
 
-func (GitHubIssues) New(cfg Config) (ports.TicketSource, error) {
+func (GitHubIssues) New(cfg Config) (trackerport.TicketSource, error) {
 	return githubadapter.NewIssues(githubadapter.IssuesConfig{
 		BaseURL: cfg.Str("base_url", "https://api.github.com"),
 		Token:   cfg.Secrets["token"],

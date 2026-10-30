@@ -24,10 +24,10 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/confstore"
 	"apothecary/internal/kinds"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/providers"
 	"apothecary/internal/resolution"
 	"apothecary/internal/wsimage"
@@ -681,7 +681,7 @@ func (r *Resolver) ListBranches(ctx context.Context, projectID string) ([]kinds.
 // integration (the ticket factory's import path). Unlike the ports a project
 // binds, this one is addressed directly by integration id: the tracker is
 // picked per import, not per project.
-func (r *Resolver) TicketSource(ctx context.Context, id string) (ports.TicketSource, error) {
+func (r *Resolver) TicketSource(ctx context.Context, id string) (trackerport.TicketSource, error) {
 	in, tk, err := r.ticketSourceKind(ctx, id)
 	if err != nil {
 		return nil, err
@@ -691,9 +691,9 @@ func (r *Resolver) TicketSource(ctx context.Context, id string) (ports.TicketSou
 
 // TicketWriter constructs the write side of a ticketsource integration for a
 // flow's tracker actions — the same adapter the import uses, asserted for its
-// optional ports.TicketWriter capability. An adapter without it is refused by
+// optional trackerport.TicketWriter capability. An adapter without it is refused by
 // name, so run creation can say which integration cannot write back.
-func (r *Resolver) TicketWriter(ctx context.Context, id string) (ports.TicketWriter, error) {
+func (r *Resolver) TicketWriter(ctx context.Context, id string) (trackerport.TicketWriter, error) {
 	in, tk, err := r.ticketSourceKind(ctx, id)
 	if err != nil {
 		return nil, err
@@ -702,7 +702,7 @@ func (r *Resolver) TicketWriter(ctx context.Context, id string) (ports.TicketWri
 	if err != nil {
 		return nil, err
 	}
-	w, ok := src.(ports.TicketWriter)
+	w, ok := src.(trackerport.TicketWriter)
 	if !ok {
 		return nil, fmt.Errorf("integration %s (%s) can only read its tracker, not write to it", in.Name, in.Kind)
 	}

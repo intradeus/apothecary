@@ -23,6 +23,7 @@ import (
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/runports"
@@ -225,7 +226,7 @@ func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, s
 		// ticket has a tracker to write to is the ticket's business (a
 		// ticket without one skips those stages). trackerHarness swaps in
 		// the tracker it asserts on.
-		TicketWriter: func(context.Context, string) (ports.TicketWriter, error) { return newTracker(), nil },
+		TicketWriter: func(context.Context, string) (trackerport.TicketWriter, error) { return newTracker(), nil },
 	}
 	h.settings = &varSettings{L: Limits{}.withDefaults()}
 	cfg := Config{MRPollInterval: 5 * time.Millisecond}

@@ -12,7 +12,7 @@ import (
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/filestore"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/tickets"
 )
@@ -29,7 +29,7 @@ type ticketBody struct {
 	Title     string `json:"title"`
 	Goal      string `json:"goal"`
 	Branch    string `json:"branch"`
-	// ChangeType is a ports.ChangeType; empty on a create is the source
+	// ChangeType is a trackerport.ChangeType; empty on a create is the source
 	// issue's (an import) or feat, on an update feat.
 	ChangeType    string   `json:"change_type"`
 	AttachmentIDs []string `json:"attachment_ids"`
@@ -40,7 +40,7 @@ type ticketBody struct {
 func (b ticketBody) toTicket() confstore.Ticket {
 	return confstore.Ticket{
 		ProjectID: b.ProjectID, Title: b.Title, Goal: b.Goal,
-		BaseBranch: b.Branch, ChangeType: ports.ChangeType(b.ChangeType),
+		BaseBranch: b.Branch, ChangeType: trackerport.ChangeType(b.ChangeType),
 	}
 }
 
@@ -176,8 +176,8 @@ type sourceTicketJSON struct {
 	// ChangeType and Branch are what an import makes of this issue — the
 	// ticket's change type and base branch (tickets.BranchName) — for the
 	// form to prefill.
-	ChangeType ports.ChangeType `json:"change_type"`
-	Branch     string           `json:"branch"`
+	ChangeType trackerport.ChangeType `json:"change_type"`
+	Branch     string                 `json:"branch"`
 }
 
 type sourceAttachmentJSON struct {
@@ -186,7 +186,7 @@ type sourceAttachmentJSON struct {
 	Size     int64  `json:"size,omitempty"`
 }
 
-func toSourceTicketJSON(t ports.SourceTicket) sourceTicketJSON {
+func toSourceTicketJSON(t trackerport.SourceTicket) sourceTicketJSON {
 	out := sourceTicketJSON{
 		Key: t.Key, Title: t.Title, Body: t.Body, URL: t.URL,
 		Status: t.Status, Type: t.Type, Assignee: t.Assignee,

@@ -11,10 +11,10 @@ import (
 	"sort"
 
 	"apothecary/internal/agentspec"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 )
 
 // Config is an integration's stored configuration: plain values plus
@@ -259,7 +259,7 @@ type HarnessKind interface {
 // factory reads from it at import time and nothing in a run ever touches it.
 type TicketSourceKind interface {
 	Descriptor() Descriptor
-	New(cfg Config) (ports.TicketSource, error)
+	New(cfg Config) (trackerport.TicketSource, error)
 }
 
 // --- registry ---------------------------------------------------------------

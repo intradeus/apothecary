@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 )
 
 type Config struct {
@@ -47,12 +47,12 @@ type Config struct {
 	// status means on this site — what TransitionTo moves to. A canonical
 	// status missing from the map is one this Jira has no word for
 	// (ErrStatusUnsupported). Nil = DefaultStatusMap.
-	StatusMap map[ports.TicketStatus]string
+	StatusMap map[trackerport.TicketStatus]string
 	// TypeMap is the change type each of this site's issue types is, keyed
 	// by the lowercased type name ("bug" → fix) — what an imported ticket
 	// becomes. A type missing from it is left for the importer to guess
-	// (ports.GuessChangeType).
-	TypeMap map[string]ports.ChangeType
+	// (trackerport.GuessChangeType).
+	TypeMap map[string]trackerport.ChangeType
 }
 
 type Client struct {
@@ -242,8 +242,8 @@ type issueJSON struct {
 	} `json:"fields"`
 }
 
-func (c *Client) toTicket(in issueJSON) ports.SourceTicket {
-	t := ports.SourceTicket{
+func (c *Client) toTicket(in issueJSON) trackerport.SourceTicket {
+	t := trackerport.SourceTicket{
 		Key:      in.Key,
 		Title:    in.Fields.Summary,
 		Body:     ToMarkdown(in.Fields.Description),
@@ -259,7 +259,7 @@ func (c *Client) toTicket(in issueJSON) ports.SourceTicket {
 		t.Updated = ts.UTC()
 	}
 	for _, a := range in.Fields.Attachment {
-		t.Attachments = append(t.Attachments, ports.SourceAttachment{
+		t.Attachments = append(t.Attachments, trackerport.SourceAttachment{
 			ID: itoa(a.ID), Filename: a.Filename, Mime: a.MimeType, Size: a.Size, URL: a.Content,
 		})
 	}
@@ -273,11 +273,11 @@ func (c *Client) toTicket(in issueJSON) ports.SourceTicket {
 // search does it: JQL has no way to match a key by its number half, so the
 // candidate keys are built from the project(s) in scope and looked up
 // directly. Whatever the text search also finds is appended after.
-func (c *Client) Search(ctx context.Context, query string, limit int) ([]ports.SourceTicket, error) {
+func (c *Client) Search(ctx context.Context, query string, limit int) ([]trackerport.SourceTicket, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
-	var tickets []ports.SourceTicket
+	var tickets []trackerport.SourceTicket
 	if n := issueNumber(query); n != "" {
 		tickets = c.byNumber(ctx, n)
 	}
@@ -354,12 +354,12 @@ func issueNumber(query string) string {
 // key that doesn't exist — so each candidate is fetched directly and a 404 is
 // simply "not that project". Best-effort: errors yield no hits rather than
 // failing the search the operator asked for.
-func (c *Client) byNumber(ctx context.Context, number string) []ports.SourceTicket {
+func (c *Client) byNumber(ctx context.Context, number string) []trackerport.SourceTicket {
 	projects := c.scopeProjects(ctx)
 	var (
 		mu   sync.Mutex
 		wg   sync.WaitGroup
-		hits = make([]ports.SourceTicket, len(projects))
+		hits = make([]trackerport.SourceTicket, len(projects))
 		sem  = make(chan struct{}, 4)
 	)
 	for i, p := range projects {
@@ -378,7 +378,7 @@ func (c *Client) byNumber(ctx context.Context, number string) []ports.SourceTick
 	wg.Wait()
 	// Keep the candidate order (configured filter first, then most recently
 	// active project) rather than whichever request finished first.
-	out := make([]ports.SourceTicket, 0, len(hits))
+	out := make([]trackerport.SourceTicket, 0, len(hits))
 	for _, t := range hits {
 		if t.Key != "" {
 			out = append(out, t)
@@ -459,15 +459,15 @@ func projectKeysFromJQL(jql string) []string {
 }
 
 // Fetch returns one issue with its attachment metadata.
-func (c *Client) Fetch(ctx context.Context, key string) (ports.SourceTicket, error) {
+func (c *Client) Fetch(ctx context.Context, key string) (trackerport.SourceTicket, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return ports.SourceTicket{}, fmt.Errorf("jira: no issue key given")
+		return trackerport.SourceTicket{}, fmt.Errorf("jira: no issue key given")
 	}
 	var issue issueJSON
 	p := fmt.Sprintf("%s/issue/%s?fields=%s,attachment", c.apiBase(), url.PathEscape(key), issueFields)
 	if _, err := c.api(ctx, http.MethodGet, p, nil, &issue); err != nil {
-		return ports.SourceTicket{}, err
+		return trackerport.SourceTicket{}, err
 	}
 	if issue.Key == "" {
 		issue.Key = key
@@ -479,7 +479,7 @@ func (c *Client) Fetch(ctx context.Context, key string) (ports.SourceTicket, err
 // response, but it is re-checked against the configured site before the
 // credential is attached — a tracker must not be able to aim an authenticated
 // engine request at an arbitrary host.
-func (c *Client) OpenAttachment(ctx context.Context, a ports.SourceAttachment) (io.ReadCloser, error) {
+func (c *Client) OpenAttachment(ctx context.Context, a trackerport.SourceAttachment) (io.ReadCloser, error) {
 	if a.URL == "" {
 		return nil, fmt.Errorf("jira: attachment %s has no content URL", a.Filename)
 	}
@@ -604,14 +604,14 @@ func itoa(v any) string {
 	return ""
 }
 
-var _ ports.TicketSource = (*Client)(nil)
+var _ trackerport.TicketSource = (*Client)(nil)
 
 // ParseTypeMap reads the integration's type map text — issue type=change
 // type pairs separated by commas or newlines ("Bug=fix, Task=chore, Spike=
 // chore"); several types may share a change type. Type names match
 // case-insensitively. Empty text is no mapping: every type is guessed.
-func ParseTypeMap(text string) (map[string]ports.ChangeType, error) {
-	m := map[string]ports.ChangeType{}
+func ParseTypeMap(text string) (map[string]trackerport.ChangeType, error) {
+	m := map[string]trackerport.ChangeType{}
 	for part := range strings.SplitSeq(strings.ReplaceAll(text, "\n", ","), ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
@@ -622,7 +622,7 @@ func ParseTypeMap(text string) (map[string]ports.ChangeType, error) {
 		if !ok || name == "" {
 			return nil, fmt.Errorf("jira: type map entry %q is not issue type=change type", part)
 		}
-		ct, known := ports.ParseChangeType(value)
+		ct, known := trackerport.ParseChangeType(value)
 		if !known {
 			return nil, fmt.Errorf("jira: type map gives %q the change type %q; the change types are feat, fix, hotfix, perf, docs, chore", strings.TrimSpace(name), strings.TrimSpace(value))
 		}

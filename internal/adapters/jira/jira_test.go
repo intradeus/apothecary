@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 )
 
 // issueBody is a v3 issue response with an ADF description and one attachment.
@@ -65,8 +65,8 @@ func TestFetchMapsIssueAndAttachments(t *testing.T) {
 		t.Errorf("change type = %q with no type map, want it left to the importer", tk.ChangeType)
 	}
 	mapped, err := New(Config{BaseURL: srv.URL, Email: "you@acme.com", Token: "tok",
-		TypeMap: map[string]ports.ChangeType{"story": ports.ChangeChore}}).Fetch(context.Background(), "PROJ-7")
-	if err != nil || mapped.ChangeType != ports.ChangeChore {
+		TypeMap: map[string]trackerport.ChangeType{"story": trackerport.ChangeChore}}).Fetch(context.Background(), "PROJ-7")
+	if err != nil || mapped.ChangeType != trackerport.ChangeChore {
 		t.Errorf("mapped change type = %q (%v), want the type map's chore", mapped.ChangeType, err)
 	}
 	if tk.Body != "The greeter only says hello." {
@@ -98,7 +98,7 @@ func TestFetchMapsIssueAndAttachments(t *testing.T) {
 func TestOpenAttachmentRefusesForeignHost(t *testing.T) {
 	c := New(Config{BaseURL: "https://acme.atlassian.net", Email: "a@b.c", Token: "tok"})
 	_, err := c.OpenAttachment(context.Background(),
-		ports.SourceAttachment{Filename: "evil.md", URL: "https://evil.example/steal"})
+		trackerport.SourceAttachment{Filename: "evil.md", URL: "https://evil.example/steal"})
 	if err == nil || !strings.Contains(err.Error(), "outside") {
 		t.Fatalf("err = %v, want a refusal naming the foreign host", err)
 	}
@@ -386,7 +386,7 @@ func TestParseTypeMap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]ports.ChangeType{"bug": ports.ChangeFix, "task": ports.ChangeChore, "spike": ports.ChangeChore}
+	want := map[string]trackerport.ChangeType{"bug": trackerport.ChangeFix, "task": trackerport.ChangeChore, "spike": trackerport.ChangeChore}
 	if !reflect.DeepEqual(m, want) {
 		t.Errorf("type map = %v, want %v", m, want)
 	}

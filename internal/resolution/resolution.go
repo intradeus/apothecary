@@ -17,10 +17,10 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/run"
 	"apothecary/internal/signalspec"
 )
@@ -141,7 +141,7 @@ type Resolution struct {
 	// import), not the project's. nil = this build cannot write back (fakes
 	// that don't wire it); an adapter without the capability errors, naming
 	// the integration, so run creation can say so.
-	TicketWriter func(ctx context.Context, integrationID string) (ports.TicketWriter, error)
+	TicketWriter func(ctx context.Context, integrationID string) (trackerport.TicketWriter, error)
 
 	// CredentialIDs are the provider credentials the project's harness
 	// integrations reference: a refresh of one of them is pushed into this

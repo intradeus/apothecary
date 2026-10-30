@@ -13,9 +13,9 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/run"
 )
 
@@ -30,13 +30,13 @@ func trackerHarness(t *testing.T, doc string) (*harness, *fake.TicketSource) {
 	t.Helper()
 	h := newHarness(t, mustFlow(t, doc))
 	tracker := newTracker()
-	h.res.TicketWriter = func(context.Context, string) (ports.TicketWriter, error) { return tracker, nil }
+	h.res.TicketWriter = func(context.Context, string) (trackerport.TicketWriter, error) { return tracker, nil }
 	return h, tracker
 }
 
 func newTracker() *fake.TicketSource {
 	return &fake.TicketSource{
-		Tickets:   []ports.SourceTicket{{Key: "DEV-1", Title: "T", Status: "To Do", URL: "https://tracker.local/browse/DEV-1"}},
+		Tickets:   []trackerport.SourceTicket{{Key: "DEV-1", Title: "T", Status: "To Do", URL: "https://tracker.local/browse/DEV-1"}},
 		Reachable: map[string][]string{"To Do": {"In Progress"}, "In Progress": {"In Review", "Done"}, "In Review": {"Done"}},
 	}
 }
@@ -188,7 +188,7 @@ func TestTrackerTransportErrorIsRoutable(t *testing.T) {
 // workflow that calls it "Doing" — so one flow fits workflows that differ.
 func TestCanonicalStatusIsMappedForTheTracker(t *testing.T) {
 	h, tracker := trackerHarness(t, transitionFirstDoc)
-	tracker.StatusMap = map[ports.TicketStatus]string{ports.StatusTodo: "To Do", ports.StatusInProgress: "Doing"}
+	tracker.StatusMap = map[trackerport.TicketStatus]string{trackerport.StatusTodo: "To Do", trackerport.StatusInProgress: "Doing"}
 	tracker.Reachable = map[string][]string{"To Do": {"Doing"}}
 	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
 	if err != nil {
@@ -210,7 +210,7 @@ func TestCanonicalStatusIsMappedForTheTracker(t *testing.T) {
 func TestUnsupportedCanonicalStatusSkipsTheStage(t *testing.T) {
 	h, tracker := trackerHarness(t, transitionFirstDoc)
 	tracker.Tickets[0].Status = "open"
-	tracker.StatusMap = map[ports.TicketStatus]string{ports.StatusTodo: "open", ports.StatusDone: "closed"}
+	tracker.StatusMap = map[trackerport.TicketStatus]string{trackerport.StatusTodo: "open", trackerport.StatusDone: "closed"}
 	tracker.Reachable = nil
 	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
 	if err != nil {
@@ -292,7 +292,7 @@ func TestTrackerActionSkipsATicketWrittenByHand(t *testing.T) {
 // a ticket with no tracker at all (those stages will skip).
 func TestCreateRunRefusesATrackerThatCannotWrite(t *testing.T) {
 	h, _ := trackerHarness(t, transitionFirstDoc)
-	h.res.TicketWriter = func(_ context.Context, id string) (ports.TicketWriter, error) {
+	h.res.TicketWriter = func(_ context.Context, id string) (trackerport.TicketWriter, error) {
 		return nil, fmt.Errorf("integration %s (jira) can only read its tracker, not write to it", id)
 	}
 	_, err := h.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
@@ -384,7 +384,7 @@ func TestTicketCommentReconcilesAfterCrashOrFailedAttempt(t *testing.T) {
 			h := newHarness(t, fl)
 			tracker := newTracker()
 			tracker.Posted = map[string][]string{"DEV-1": {"hello\n\n— apothecary · run r-cm/main-1 · stage post"}}
-			h.res.TicketWriter = func(context.Context, string) (ports.TicketWriter, error) { return tracker, nil }
+			h.res.TicketWriter = func(context.Context, string) (trackerport.TicketWriter, error) { return tracker, nil }
 			ctx := context.Background()
 			history := []event.Payload{
 				&event.RunCreated{TicketTitle: "T", FlowName: "cm", ProjectID: testProject, FlowHash: fl.Hash, Branch: "apothecary/r-cm",

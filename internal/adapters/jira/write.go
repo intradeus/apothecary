@@ -1,6 +1,6 @@
 package jira
 
-// The write side (ports.TicketWriter): what a flow's tracker actions call.
+// The write side (trackerport.TicketWriter): what a flow's tracker actions call.
 // Every call here is one of the "EXACTLY what this integration calls" lines
 // in the kind's help text — keep the two in step.
 
@@ -16,8 +16,8 @@ import (
 	"net/url"
 	"strings"
 
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 )
 
 // issuePath is the issue's API path with its key escaped.
@@ -79,7 +79,7 @@ func (c *Client) Transition(ctx context.Context, key, status string) error {
 		}
 	}
 	if id == "" {
-		return &ports.ErrStatusUnreachable{Key: key, From: cur, To: status, Reachable: reachable}
+		return &trackerport.ErrStatusUnreachable{Key: key, From: cur, To: status, Reachable: reachable}
 	}
 	_, err = c.api(ctx, http.MethodPost, c.issuePath(key)+"/transitions",
 		map[string]any{"transition": map[string]any{"id": id}}, nil)
@@ -90,12 +90,12 @@ func (c *Client) Transition(ctx context.Context, key, status string) error {
 // stock software workflow: To Do → In Progress → In Review → Done. There is
 // no stock "blocked" column, so blocked is unsupported until the
 // integration maps it.
-func DefaultStatusMap() map[ports.TicketStatus]string {
-	return map[ports.TicketStatus]string{
-		ports.StatusTodo:       "To Do",
-		ports.StatusInProgress: "In Progress",
-		ports.StatusInReview:   "In Review",
-		ports.StatusDone:       "Done",
+func DefaultStatusMap() map[trackerport.TicketStatus]string {
+	return map[trackerport.TicketStatus]string{
+		trackerport.StatusTodo:       "To Do",
+		trackerport.StatusInProgress: "In Progress",
+		trackerport.StatusInReview:   "In Review",
+		trackerport.StatusDone:       "Done",
 	}
 }
 
@@ -105,7 +105,7 @@ func DefaultStatusMap() map[ports.TicketStatus]string {
 // word for it, and an empty value ("in_review=") removes the default, so a
 // flow's `to: in_review` skips on a workflow that has no review column.
 // Empty text is the defaults.
-func ParseStatusMap(text string) (map[ports.TicketStatus]string, error) {
+func ParseStatusMap(text string) (map[trackerport.TicketStatus]string, error) {
 	m := DefaultStatusMap()
 	for part := range strings.SplitSeq(strings.ReplaceAll(text, "\n", ","), ",") {
 		part = strings.TrimSpace(part)
@@ -116,9 +116,9 @@ func ParseStatusMap(text string) (map[ports.TicketStatus]string, error) {
 		if !ok {
 			return nil, fmt.Errorf("jira: status map entry %q is not canonical=status", part)
 		}
-		st, known := ports.ParseTicketStatus(name)
+		st, known := trackerport.ParseTicketStatus(name)
 		if !known {
-			return nil, fmt.Errorf("jira: status map names %q; the canonical statuses are %s", strings.TrimSpace(name), ports.StatusNames(ports.CanonicalStatuses()))
+			return nil, fmt.Errorf("jira: status map names %q; the canonical statuses are %s", strings.TrimSpace(name), trackerport.StatusNames(trackerport.CanonicalStatuses()))
 		}
 		if value = strings.TrimSpace(value); value == "" {
 			delete(m, st)
@@ -131,9 +131,9 @@ func ParseStatusMap(text string) (map[ports.TicketStatus]string, error) {
 
 // supportedStatuses lists the canonical statuses the map has a word for,
 // in lifecycle order.
-func (c *Client) supportedStatuses() []ports.TicketStatus {
-	var out []ports.TicketStatus
-	for _, st := range ports.CanonicalStatuses() {
+func (c *Client) supportedStatuses() []trackerport.TicketStatus {
+	var out []trackerport.TicketStatus
+	for _, st := range trackerport.CanonicalStatuses() {
 		if c.cfg.StatusMap[st] != "" {
 			out = append(out, st)
 		}
@@ -144,10 +144,10 @@ func (c *Client) supportedStatuses() []ports.TicketStatus {
 // TransitionTo moves the issue to the workflow status the integration maps
 // the canonical one to (Config.StatusMap); a canonical status with no word
 // on this site is unsupported, which the engine skips rather than fails.
-func (c *Client) TransitionTo(ctx context.Context, key string, to ports.TicketStatus) error {
+func (c *Client) TransitionTo(ctx context.Context, key string, to trackerport.TicketStatus) error {
 	name := c.cfg.StatusMap[to]
 	if name == "" {
-		return &ports.ErrStatusUnsupported{Key: strings.TrimSpace(key), Status: to, Kind: "Jira", Supported: c.supportedStatuses()}
+		return &trackerport.ErrStatusUnsupported{Key: strings.TrimSpace(key), Status: to, Kind: "Jira", Supported: c.supportedStatuses()}
 	}
 	return c.Transition(ctx, key, name)
 }
@@ -206,7 +206,7 @@ func (c *Client) Comments(ctx context.Context, key string) ([]string, error) {
 // AddLink attaches a remote issue link. globalId is the URL, so Jira treats
 // a second call with the same link as an update of the first — idempotent by
 // construction, which is what a re-entered stage needs.
-func (c *Client) AddLink(ctx context.Context, key string, link ports.TicketLink) error {
+func (c *Client) AddLink(ctx context.Context, key string, link trackerport.TicketLink) error {
 	if strings.TrimSpace(link.URL) == "" {
 		return fmt.Errorf("jira: a link needs a URL")
 	}
@@ -285,6 +285,6 @@ func (c *Client) Attach(ctx context.Context, key, name, contentType string, data
 var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
 
 var (
-	_ ports.TicketWriter   = (*Client)(nil)
-	_ ports.TicketAttacher = (*Client)(nil)
+	_ trackerport.TicketWriter   = (*Client)(nil)
+	_ trackerport.TicketAttacher = (*Client)(nil)
 )

@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"apothecary/internal/agentspec"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 )
 
 // TestRegistryIntegrity: the registry is compiled-in data the flow parser
@@ -195,7 +195,7 @@ func TestTrackerActions(t *testing.T) {
 	}
 	// The registry's statuses ARE the port's: a flow's `to` is what every
 	// adapter's TransitionTo understands, in the same order.
-	canonical := ports.CanonicalStatuses()
+	canonical := trackerport.CanonicalStatuses()
 	if len(canonical) != len(Statuses) {
 		t.Fatalf("statuses = %v, ports = %v", Statuses, canonical)
 	}

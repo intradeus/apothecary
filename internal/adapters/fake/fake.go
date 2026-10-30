@@ -22,6 +22,7 @@ import (
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 )
 
 // --- EnvProvisioner ---------------------------------------------------------
@@ -1112,7 +1113,7 @@ func (c *Channel) Sent() []ports.Notification {
 // by a case-insensitive substring of key/title/body. Attachment bytes come
 // from Blobs, keyed by attachment id.
 //
-// It also implements the write side (ports.TicketWriter), so engine scenarios
+// It also implements the write side (trackerport.TicketWriter), so engine scenarios
 // can script a flow's tracker actions: Reachable says which statuses a
 // Transition may reach from each one (nil = any), StatusMap which of its
 // statuses each canonical one means (nil = the stock Jira words: To Do, In
@@ -1122,16 +1123,16 @@ func (c *Channel) Sent() []ports.Notification {
 // WriteErr fails every write when set; Err fails everything.
 type TicketSource struct {
 	mu      sync.Mutex
-	Tickets []ports.SourceTicket
+	Tickets []trackerport.SourceTicket
 	Blobs   map[string][]byte
 	Err     error // returned by every method when set
 
 	Reachable   map[string][]string
-	StatusMap   map[ports.TicketStatus]string
+	StatusMap   map[trackerport.TicketStatus]string
 	KnownFields []string
 	FieldValues map[string]map[string]string
 	Posted      map[string][]string
-	Linked      map[string][]ports.TicketLink
+	Linked      map[string][]trackerport.TicketLink
 	Calls       []string
 	WriteErr    error
 	// Attached are the files Attach hosted, in order.
@@ -1140,7 +1141,7 @@ type TicketSource struct {
 
 func (s *TicketSource) Test(context.Context) error { return s.Err }
 
-func (s *TicketSource) Search(_ context.Context, query string, limit int) ([]ports.SourceTicket, error) {
+func (s *TicketSource) Search(_ context.Context, query string, limit int) ([]trackerport.SourceTicket, error) {
 	if s.Err != nil {
 		return nil, s.Err
 	}
@@ -1150,7 +1151,7 @@ func (s *TicketSource) Search(_ context.Context, query string, limit int) ([]por
 		limit = 25
 	}
 	q := strings.ToLower(strings.TrimSpace(query))
-	var out []ports.SourceTicket
+	var out []trackerport.SourceTicket
 	for _, t := range s.Tickets {
 		hay := strings.ToLower(t.Key + " " + t.Title + " " + t.Body)
 		if q == "" || strings.Contains(hay, q) {
@@ -1166,9 +1167,9 @@ func (s *TicketSource) Search(_ context.Context, query string, limit int) ([]por
 	return out, nil
 }
 
-func (s *TicketSource) Fetch(_ context.Context, key string) (ports.SourceTicket, error) {
+func (s *TicketSource) Fetch(_ context.Context, key string) (trackerport.SourceTicket, error) {
 	if s.Err != nil {
-		return ports.SourceTicket{}, s.Err
+		return trackerport.SourceTicket{}, s.Err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1177,10 +1178,10 @@ func (s *TicketSource) Fetch(_ context.Context, key string) (ports.SourceTicket,
 			return t, nil
 		}
 	}
-	return ports.SourceTicket{}, fmt.Errorf("fake: no ticket %q", key)
+	return trackerport.SourceTicket{}, fmt.Errorf("fake: no ticket %q", key)
 }
 
-func (s *TicketSource) OpenAttachment(_ context.Context, a ports.SourceAttachment) (io.ReadCloser, error) {
+func (s *TicketSource) OpenAttachment(_ context.Context, a trackerport.SourceAttachment) (io.ReadCloser, error) {
 	if s.Err != nil {
 		return nil, s.Err
 	}
@@ -1193,9 +1194,9 @@ func (s *TicketSource) OpenAttachment(_ context.Context, a ports.SourceAttachmen
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
-// --- TicketSource write side (ports.TicketWriter) ----------------------------
+// --- TicketSource write side (trackerport.TicketWriter) ----------------------------
 
-func (s *TicketSource) ticket(key string) *ports.SourceTicket {
+func (s *TicketSource) ticket(key string) *trackerport.SourceTicket {
 	for i := range s.Tickets {
 		if strings.EqualFold(s.Tickets[i].Key, key) {
 			return &s.Tickets[i]
@@ -1242,7 +1243,7 @@ func (s *TicketSource) Transition(_ context.Context, key, status string) error {
 			}
 		}
 		if found == "" {
-			return &ports.ErrStatusUnreachable{Key: t.Key, From: t.Status, To: status, Reachable: reachable}
+			return &trackerport.ErrStatusUnreachable{Key: t.Key, From: t.Status, To: status, Reachable: reachable}
 		}
 		target = found
 	}
@@ -1252,29 +1253,29 @@ func (s *TicketSource) Transition(_ context.Context, key, status string) error {
 }
 
 // DefaultStatusMap is the fake's stock vocabulary (StatusMap nil).
-var DefaultStatusMap = map[ports.TicketStatus]string{
-	ports.StatusTodo:       "To Do",
-	ports.StatusInProgress: "In Progress",
-	ports.StatusInReview:   "In Review",
-	ports.StatusDone:       "Done",
+var DefaultStatusMap = map[trackerport.TicketStatus]string{
+	trackerport.StatusTodo:       "To Do",
+	trackerport.StatusInProgress: "In Progress",
+	trackerport.StatusInReview:   "In Review",
+	trackerport.StatusDone:       "Done",
 }
 
 // TransitionTo moves the ticket to the status StatusMap gives the canonical
 // one; unmapped is unsupported, like a tracker with no such column.
-func (s *TicketSource) TransitionTo(ctx context.Context, key string, to ports.TicketStatus) error {
+func (s *TicketSource) TransitionTo(ctx context.Context, key string, to trackerport.TicketStatus) error {
 	m := s.StatusMap
 	if m == nil {
 		m = DefaultStatusMap
 	}
 	name := m[to]
 	if name == "" {
-		var supported []ports.TicketStatus
-		for _, st := range ports.CanonicalStatuses() {
+		var supported []trackerport.TicketStatus
+		for _, st := range trackerport.CanonicalStatuses() {
 			if m[st] != "" {
 				supported = append(supported, st)
 			}
 		}
-		return &ports.ErrStatusUnsupported{Key: strings.TrimSpace(key), Status: to, Kind: "the fake tracker", Supported: supported}
+		return &trackerport.ErrStatusUnsupported{Key: strings.TrimSpace(key), Status: to, Kind: "the fake tracker", Supported: supported}
 	}
 	return s.Transition(ctx, key, name)
 }
@@ -1345,7 +1346,7 @@ func (s *TicketSource) SetFields(_ context.Context, key string, fields map[strin
 	sort.Strings(names)
 	for _, name := range names {
 		if !s.knows(name) {
-			return &ports.ErrFieldUnknown{Key: t.Key, Field: name, Candidates: s.KnownFields}
+			return &trackerport.ErrFieldUnknown{Key: t.Key, Field: name, Candidates: s.KnownFields}
 		}
 		s.FieldValues[t.Key][name] = fields[name]
 		s.record("set %s %s=%s", t.Key, name, fields[name])
@@ -1366,7 +1367,7 @@ func (s *TicketSource) Fields(_ context.Context, key string, names []string) (ma
 	out := map[string]string{}
 	for _, name := range names {
 		if !s.knows(name) {
-			return nil, &ports.ErrFieldUnknown{Key: t.Key, Field: name, Candidates: s.KnownFields}
+			return nil, &trackerport.ErrFieldUnknown{Key: t.Key, Field: name, Candidates: s.KnownFields}
 		}
 		out[name] = s.FieldValues[t.Key][name]
 	}
@@ -1374,7 +1375,7 @@ func (s *TicketSource) Fields(_ context.Context, key string, names []string) (ma
 }
 
 // AddLink upserts on URL, the way Jira's remote links do on globalId.
-func (s *TicketSource) AddLink(_ context.Context, key string, link ports.TicketLink) error {
+func (s *TicketSource) AddLink(_ context.Context, key string, link trackerport.TicketLink) error {
 	if err := s.writeErr(); err != nil {
 		return err
 	}
@@ -1385,7 +1386,7 @@ func (s *TicketSource) AddLink(_ context.Context, key string, link ports.TicketL
 		return fmt.Errorf("fake: no ticket %q", key)
 	}
 	if s.Linked == nil {
-		s.Linked = map[string][]ports.TicketLink{}
+		s.Linked = map[string][]trackerport.TicketLink{}
 	}
 	s.record("link %s %s", t.Key, link.URL)
 	for i, l := range s.Linked[t.Key] {
@@ -1417,29 +1418,29 @@ func (s *TicketSource) Attach(_ context.Context, key, name, contentType string, 
 }
 
 // ReadOnlyTicketSource is a tracker with no write side — what an adapter
-// that never implemented ports.TicketWriter looks like to the resolver (the
+// that never implemented trackerport.TicketWriter looks like to the resolver (the
 // "this integration cannot write back" path). It serves Src's corpus.
 type ReadOnlyTicketSource struct{ Src *TicketSource }
 
 func (r ReadOnlyTicketSource) Test(ctx context.Context) error { return r.Src.Test(ctx) }
-func (r ReadOnlyTicketSource) Search(ctx context.Context, q string, limit int) ([]ports.SourceTicket, error) {
+func (r ReadOnlyTicketSource) Search(ctx context.Context, q string, limit int) ([]trackerport.SourceTicket, error) {
 	return r.Src.Search(ctx, q, limit)
 }
-func (r ReadOnlyTicketSource) Fetch(ctx context.Context, key string) (ports.SourceTicket, error) {
+func (r ReadOnlyTicketSource) Fetch(ctx context.Context, key string) (trackerport.SourceTicket, error) {
 	return r.Src.Fetch(ctx, key)
 }
-func (r ReadOnlyTicketSource) OpenAttachment(ctx context.Context, a ports.SourceAttachment) (io.ReadCloser, error) {
+func (r ReadOnlyTicketSource) OpenAttachment(ctx context.Context, a trackerport.SourceAttachment) (io.ReadCloser, error) {
 	return r.Src.OpenAttachment(ctx, a)
 }
 
 // Compile-time port conformance.
 var (
-	_ envport.EnvProvisioner    = (*EnvProvisioner)(nil)
-	_ agentport.AgentRunner     = (*AgentRunner)(nil)
-	_ repoport.RepoHost         = (*RepoHost)(nil)
-	_ ports.NotificationChannel = (*Channel)(nil)
-	_ ports.TicketSource        = (*TicketSource)(nil)
-	_ ports.TicketWriter        = (*TicketSource)(nil)
-	_ ports.TicketAttacher      = (*TicketSource)(nil)
-	_ ports.TicketSource        = ReadOnlyTicketSource{}
+	_ envport.EnvProvisioner     = (*EnvProvisioner)(nil)
+	_ agentport.AgentRunner      = (*AgentRunner)(nil)
+	_ repoport.RepoHost          = (*RepoHost)(nil)
+	_ ports.NotificationChannel  = (*Channel)(nil)
+	_ trackerport.TicketSource   = (*TicketSource)(nil)
+	_ trackerport.TicketWriter   = (*TicketSource)(nil)
+	_ trackerport.TicketAttacher = (*TicketSource)(nil)
+	_ trackerport.TicketSource   = ReadOnlyTicketSource{}
 )

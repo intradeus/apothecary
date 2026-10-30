@@ -21,14 +21,14 @@ import (
 
 	"apothecary/internal/confstore"
 	"apothecary/internal/filestore"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 )
 
 // Sources resolves a ticketsource integration id to its adapter. Implemented
 // by resolve.Resolver; nil in a Factory means no tracker is wired and the
 // import paths report that instead of pretending.
 type Sources interface {
-	TicketSource(ctx context.Context, integrationID string) (ports.TicketSource, error)
+	TicketSource(ctx context.Context, integrationID string) (trackerport.TicketSource, error)
 	// TicketSourceKind names the integration's vendor ("jira"), recorded on
 	// the ticket as provenance that outlives the integration row.
 	TicketSourceKind(ctx context.Context, integrationID string) (string, error)
@@ -62,7 +62,7 @@ func (f *Factory) log() *slog.Logger {
 func (f *Factory) Create(ctx context.Context, in confstore.Ticket, attachmentIDs []string) (confstore.Ticket, error) {
 	in.ChangeType = normalType(in.ChangeType)
 	if in.ChangeType == "" {
-		in.ChangeType = ports.ChangeFeat
+		in.ChangeType = trackerport.ChangeFeat
 	}
 	if strings.TrimSpace(in.BaseBranch) == "" {
 		in.BaseBranch = BranchName(in.ChangeType, "", in.Title)
@@ -163,7 +163,7 @@ func (f *Factory) CreateFromSource(ctx context.Context, sourceID, key string, in
 }
 
 // Search serves the import picker.
-func (f *Factory) Search(ctx context.Context, sourceID, query string, limit int) ([]ports.SourceTicket, error) {
+func (f *Factory) Search(ctx context.Context, sourceID, query string, limit int) ([]trackerport.SourceTicket, error) {
 	src, _, err := f.source(ctx, sourceID)
 	if err != nil {
 		return nil, err
@@ -173,15 +173,15 @@ func (f *Factory) Search(ctx context.Context, sourceID, query string, limit int)
 
 // Fetch serves the picker's preview: one issue with its attachment list, so
 // the form can prefill and say what will be copied.
-func (f *Factory) Fetch(ctx context.Context, sourceID, key string) (ports.SourceTicket, error) {
+func (f *Factory) Fetch(ctx context.Context, sourceID, key string) (trackerport.SourceTicket, error) {
 	src, _, err := f.source(ctx, sourceID)
 	if err != nil {
-		return ports.SourceTicket{}, err
+		return trackerport.SourceTicket{}, err
 	}
 	return src.Fetch(ctx, key)
 }
 
-func (f *Factory) source(ctx context.Context, id string) (ports.TicketSource, string, error) {
+func (f *Factory) source(ctx context.Context, id string) (trackerport.TicketSource, string, error) {
 	if f.Sources == nil {
 		return nil, "", ErrNoSources
 	}
@@ -220,7 +220,7 @@ func (f *Factory) checkDuplicate(ctx context.Context, projectID, key string) err
 
 // importAttachments pulls each of the source's files through the upload
 // policy, returning the ids that landed and a warning per file that did not.
-func (f *Factory) importAttachments(ctx context.Context, owner string, src ports.TicketSource, remote ports.SourceTicket) ([]string, []string) {
+func (f *Factory) importAttachments(ctx context.Context, owner string, src trackerport.TicketSource, remote trackerport.SourceTicket) ([]string, []string) {
 	if len(remote.Attachments) == 0 {
 		return nil, nil
 	}
@@ -245,7 +245,7 @@ func (f *Factory) importAttachments(ctx context.Context, owner string, src ports
 	return ids, warnings
 }
 
-func (f *Factory) importOne(ctx context.Context, owner string, src ports.TicketSource, a ports.SourceAttachment) (string, error) {
+func (f *Factory) importOne(ctx context.Context, owner string, src trackerport.TicketSource, a trackerport.SourceAttachment) (string, error) {
 	rc, err := src.OpenAttachment(ctx, a)
 	if err != nil {
 		return "", err

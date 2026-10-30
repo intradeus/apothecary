@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/engine"
 	"apothecary/internal/ports"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/run"
 	"apothecary/internal/secrets"
 	"apothecary/internal/tickets"
@@ -79,7 +80,7 @@ func (f *fakeEngine) count() int {
 
 type fakeSources struct{ src *fake.TicketSource }
 
-func (s fakeSources) TicketSource(context.Context, string) (ports.TicketSource, error) {
+func (s fakeSources) TicketSource(context.Context, string) (trackerport.TicketSource, error) {
 	return s.src, nil
 }
 func (s fakeSources) TicketSourceKind(context.Context, string) (string, error) { return "fake", nil }
@@ -138,7 +139,7 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	src := &fake.TicketSource{Tickets: []ports.SourceTicket{
+	src := &fake.TicketSource{Tickets: []trackerport.SourceTicket{
 		{Key: "DEV-1", Title: "First", Body: "do one", URL: "https://tracker.local/DEV-1"},
 		{Key: "DEV-2", Title: "Second", Body: "do two", URL: "https://tracker.local/DEV-2"},
 	}}

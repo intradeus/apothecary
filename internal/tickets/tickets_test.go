@@ -9,7 +9,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/confstore"
 	"apothecary/internal/filestore"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/secrets"
 )
 
@@ -17,19 +17,19 @@ const testProject = "prj-1"
 
 // stubSources serves one ticket source under any id.
 type stubSources struct {
-	src  ports.TicketSource
+	src  trackerport.TicketSource
 	kind string
 	err  error
 }
 
-func (s stubSources) TicketSource(context.Context, string) (ports.TicketSource, error) {
+func (s stubSources) TicketSource(context.Context, string) (trackerport.TicketSource, error) {
 	return s.src, s.err
 }
 func (s stubSources) TicketSourceKind(context.Context, string) (string, error) {
 	return s.kind, s.err
 }
 
-func newFactory(t *testing.T, src ports.TicketSource) (*Factory, *filestore.Attachments) {
+func newFactory(t *testing.T, src trackerport.TicketSource) (*Factory, *filestore.Attachments) {
 	t.Helper()
 	mem := confstore.NewMem()
 	if err := mem.UpsertProject(context.Background(), confstore.Project{ID: testProject, Name: "p"}); err != nil {
@@ -53,11 +53,11 @@ func newFactory(t *testing.T, src ports.TicketSource) (*Factory, *filestore.Atta
 
 func devSource() *fake.TicketSource {
 	return &fake.TicketSource{
-		Tickets: []ports.SourceTicket{{
+		Tickets: []trackerport.SourceTicket{{
 			Key: "PROJ-7", Title: "Add a Farewell function",
 			Body: "The greeter only says hello.", URL: "https://tracker.test/browse/PROJ-7",
 			Status: "To Do", Type: "Story",
-			Attachments: []ports.SourceAttachment{
+			Attachments: []trackerport.SourceAttachment{
 				{ID: "a1", Filename: "spec.md", Mime: "text/markdown", Size: 5},
 			},
 		}},
@@ -101,7 +101,7 @@ func TestCreateFromSourceCopiesEverything(t *testing.T) {
 	if tk.BaseBranch != "feat/proj-7-add-a-farewell-function" {
 		t.Errorf("base branch = %q", tk.BaseBranch)
 	}
-	if tk.ChangeType != ports.ChangeFeat || tk.SourceType != "Story" {
+	if tk.ChangeType != trackerport.ChangeFeat || tk.SourceType != "Story" {
 		t.Errorf("type = %q from %q, want feat from Story", tk.ChangeType, tk.SourceType)
 	}
 	atts := ticketAttachments(t, att, tk.ID)
@@ -129,24 +129,24 @@ func TestCreateFromSourceCarriesTheType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tk.ChangeType != ports.ChangeFix || tk.SourceType != "Bug" || tk.BaseBranch != "fix/proj-7-add-a-farewell-function" {
+	if tk.ChangeType != trackerport.ChangeFix || tk.SourceType != "Bug" || tk.BaseBranch != "fix/proj-7-add-a-farewell-function" {
 		t.Errorf("guessed = %q from %q, branch %q", tk.ChangeType, tk.SourceType, tk.BaseBranch)
 	}
 	got, err := f.Conf.GetTicket(ctx, tk.ID)
-	if err != nil || got.ChangeType != ports.ChangeFix || got.SourceType != "Bug" {
+	if err != nil || got.ChangeType != trackerport.ChangeFix || got.SourceType != "Bug" {
 		t.Errorf("stored = %+v (%v)", got, err)
 	}
 
 	src2 := devSource()
-	src2.Tickets[0].Type, src2.Tickets[0].ChangeType = "Bug", ports.ChangeChore
+	src2.Tickets[0].Type, src2.Tickets[0].ChangeType = "Bug", trackerport.ChangeChore
 	f2, _ := newFactory(t, src2)
-	if tk, _, err := f2.CreateFromSource(ctx, "int-1", "PROJ-7", confstore.Ticket{ProjectID: testProject}, nil); err != nil || tk.ChangeType != ports.ChangeChore {
+	if tk, _, err := f2.CreateFromSource(ctx, "int-1", "PROJ-7", confstore.Ticket{ProjectID: testProject}, nil); err != nil || tk.ChangeType != trackerport.ChangeChore {
 		t.Errorf("mapped = %q (%v), want the integration's chore", tk.ChangeType, err)
 	}
 
 	f3, _ := newFactory(t, src)
-	tk, _, err = f3.CreateFromSource(ctx, "int-1", "PROJ-7", confstore.Ticket{ProjectID: testProject, ChangeType: ports.ChangeFeat}, nil)
-	if err != nil || tk.ChangeType != ports.ChangeFeat || tk.BaseBranch != "feat/proj-7-add-a-farewell-function" {
+	tk, _, err = f3.CreateFromSource(ctx, "int-1", "PROJ-7", confstore.Ticket{ProjectID: testProject, ChangeType: trackerport.ChangeFeat}, nil)
+	if err != nil || tk.ChangeType != trackerport.ChangeFeat || tk.BaseBranch != "feat/proj-7-add-a-farewell-function" {
 		t.Errorf("picked = %q, branch %q (%v)", tk.ChangeType, tk.BaseBranch, err)
 	}
 }
@@ -159,7 +159,7 @@ func TestChangeTypeIsValidated(t *testing.T) {
 		t.Errorf("err = %v, want invalid", err)
 	}
 	tk, err := f.Create(context.Background(), confstore.Ticket{ProjectID: testProject, Title: "Crash", Goal: "g", ChangeType: "FIX"}, nil)
-	if err != nil || tk.ChangeType != ports.ChangeFix || tk.BaseBranch != "fix/crash" {
+	if err != nil || tk.ChangeType != trackerport.ChangeFix || tk.BaseBranch != "fix/crash" {
 		t.Errorf("ticket = %+v (%v)", tk, err)
 	}
 }
@@ -208,7 +208,7 @@ func TestCreateFromSourceRefusesDuplicate(t *testing.T) {
 func TestCreateFromSourceWarnsOnSkippedAttachment(t *testing.T) {
 	src := devSource()
 	src.Tickets[0].Attachments = append(src.Tickets[0].Attachments,
-		ports.SourceAttachment{ID: "a2", Filename: "archive.zip", Mime: "application/zip", Size: 3})
+		trackerport.SourceAttachment{ID: "a2", Filename: "archive.zip", Mime: "application/zip", Size: 3})
 	src.Blobs["a2"] = []byte("zip")
 	f, att := newFactory(t, src)
 

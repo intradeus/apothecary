@@ -29,6 +29,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
@@ -45,7 +46,7 @@ type Ticket struct {
 	TicketID string
 	Title    string
 	Goal     string
-	// ChangeType is the ticket's kind of change (ports.ChangeType), which `run_if: run.ticket.change_type == fix` reads; "" is feat.
+	// ChangeType is the ticket's kind of change (trackerport.ChangeType), which `run_if: run.ticket.change_type == fix` reads; "" is feat.
 	ChangeType string
 	// Branch is the base branch when TicketID is set, else the run's branch
 	// override ("" = the default apothecary/<run-id>-<title-slug>). Names git
@@ -859,7 +860,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 	if err := e.AppendEvents(ctx, runID, &event.RunCreated{
 		TicketTitle:         t.Title,
 		TicketGoal:          t.Goal,
-		TicketChangeType:    cmp.Or(t.ChangeType, string(ports.ChangeFeat)),
+		TicketChangeType:    cmp.Or(t.ChangeType, string(trackerport.ChangeFeat)),
 		RunGoal:             t.RunGoal,
 		FlowName:            fl.Name,
 		FlowHash:            fl.Hash,

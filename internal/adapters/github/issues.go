@@ -1,7 +1,7 @@
 package github
 
 // Issues adapts the ticketsource port — read side for the import picker, write
-// side (ports.TicketWriter) for a flow's tracker actions — to GitHub Issues,
+// side (trackerport.TicketWriter) for a flow's tracker actions — to GitHub Issues,
 // reusing the repository host adapter's authenticated client. An issue's key
 // is "owner/repo#123": GitHub has no site-wide key, so the repository is part
 // of the identity. GitHub issues have two states and no custom fields; what
@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 )
 
 type IssuesConfig struct {
@@ -117,8 +117,8 @@ func repoOf(in issueJSON, fallback string) string {
 	return fallback
 }
 
-func toTicket(in issueJSON, repo string) ports.SourceTicket {
-	t := ports.SourceTicket{
+func toTicket(in issueJSON, repo string) trackerport.SourceTicket {
+	t := trackerport.SourceTicket{
 		Key:    fmt.Sprintf("%s#%d", repo, in.Number),
 		Title:  in.Title,
 		Body:   strings.TrimSpace(in.Body),
@@ -139,14 +139,14 @@ func toTicket(in issueJSON, repo string) ports.SourceTicket {
 // issue key looks the issue up directly, empty means "open and assigned to
 // me", anything else is a text search. Pull requests (which the issues API
 // also returns) are dropped.
-func (s *Issues) Search(ctx context.Context, query string, limit int) ([]ports.SourceTicket, error) {
+func (s *Issues) Search(ctx context.Context, query string, limit int) ([]trackerport.SourceTicket, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
 	query = strings.TrimSpace(query)
 	if issueKeyRe.MatchString(query) {
 		if t, err := s.Fetch(ctx, query); err == nil {
-			return []ports.SourceTicket{t}, nil
+			return []trackerport.SourceTicket{t}, nil
 		}
 	}
 	q := "is:issue"
@@ -165,7 +165,7 @@ func (s *Issues) Search(ctx context.Context, query string, limit int) ([]ports.S
 	if _, err := s.a.api(ctx, http.MethodGet, p, nil, &out); err != nil {
 		return nil, err
 	}
-	var tickets []ports.SourceTicket
+	var tickets []trackerport.SourceTicket
 	for _, it := range out.Items {
 		if it.PullRequest != nil {
 			continue
@@ -176,43 +176,43 @@ func (s *Issues) Search(ctx context.Context, query string, limit int) ([]ports.S
 }
 
 // Fetch returns one issue; a pull request behind the same number is refused.
-func (s *Issues) Fetch(ctx context.Context, key string) (ports.SourceTicket, error) {
+func (s *Issues) Fetch(ctx context.Context, key string) (trackerport.SourceTicket, error) {
 	repo, n, err := s.parseKey(key)
 	if err != nil {
-		return ports.SourceTicket{}, err
+		return trackerport.SourceTicket{}, err
 	}
 	var it issueJSON
 	if _, err := s.a.api(ctx, http.MethodGet, issuePath(repo, n), nil, &it); err != nil {
-		return ports.SourceTicket{}, err
+		return trackerport.SourceTicket{}, err
 	}
 	if it.PullRequest != nil {
-		return ports.SourceTicket{}, fmt.Errorf("github: %s#%d is a pull request, not an issue", repo, n)
+		return trackerport.SourceTicket{}, fmt.Errorf("github: %s#%d is a pull request, not an issue", repo, n)
 	}
 	return toTicket(it, repoOf(it, repo)), nil
 }
 
 // OpenAttachment: GitHub issues carry no attachments as such (files in a
 // body are plain URLs the agent can read), so there is never one to open.
-func (s *Issues) OpenAttachment(context.Context, ports.SourceAttachment) (io.ReadCloser, error) {
+func (s *Issues) OpenAttachment(context.Context, trackerport.SourceAttachment) (io.ReadCloser, error) {
 	return nil, fmt.Errorf("github: issues have no attachments")
 }
 
-// --- write side (ports.TicketWriter) ------------------------------------------
+// --- write side (trackerport.TicketWriter) ------------------------------------------
 
 var issueStates = []string{"open", "closed"}
 
 // issueStatusMap is what the canonical statuses mean for an issue: todo is
 // open, done is closed, and nothing else has a word (Projects v2 columns are
 // not reachable through the issue itself).
-var issueStatusMap = map[ports.TicketStatus]string{ports.StatusTodo: "open", ports.StatusDone: "closed"}
+var issueStatusMap = map[trackerport.TicketStatus]string{trackerport.StatusTodo: "open", trackerport.StatusDone: "closed"}
 
 // TransitionTo reopens (todo) or closes (done) the issue; every other
 // canonical status is unsupported — the engine skips the stage.
-func (s *Issues) TransitionTo(ctx context.Context, key string, to ports.TicketStatus) error {
+func (s *Issues) TransitionTo(ctx context.Context, key string, to trackerport.TicketStatus) error {
 	state, ok := issueStatusMap[to]
 	if !ok {
-		return &ports.ErrStatusUnsupported{Key: strings.TrimSpace(key), Status: to, Kind: "GitHub Issues",
-			Supported: []ports.TicketStatus{ports.StatusTodo, ports.StatusDone}}
+		return &trackerport.ErrStatusUnsupported{Key: strings.TrimSpace(key), Status: to, Kind: "GitHub Issues",
+			Supported: []trackerport.TicketStatus{trackerport.StatusTodo, trackerport.StatusDone}}
 	}
 	return s.Transition(ctx, key, state)
 }
@@ -230,7 +230,7 @@ func (s *Issues) Transition(ctx context.Context, key, status string) error {
 		return err
 	}
 	if want != "open" && want != "closed" {
-		return &ports.ErrStatusUnreachable{Key: key, From: it.State, To: status, Reachable: issueStates}
+		return &trackerport.ErrStatusUnreachable{Key: key, From: it.State, To: status, Reachable: issueStates}
 	}
 	if it.State == want {
 		return nil
@@ -318,7 +318,7 @@ func (s *Issues) SetFields(ctx context.Context, key string, fields map[string]st
 			}
 			patch["milestone"] = num
 		default:
-			return &ports.ErrFieldUnsupported{Key: key, Field: name, Supported: issueFields}
+			return &trackerport.ErrFieldUnsupported{Key: key, Field: name, Supported: issueFields}
 		}
 	}
 	if len(patch) == 0 {
@@ -344,7 +344,7 @@ func (s *Issues) milestone(ctx context.Context, repo, title string) (int, error)
 		}
 		titles = append(titles, m.Title)
 	}
-	return 0, &ports.ErrFieldUnknown{Key: repo, Field: "milestone " + title, Candidates: titles}
+	return 0, &trackerport.ErrFieldUnknown{Key: repo, Field: "milestone " + title, Candidates: titles}
 }
 
 func (s *Issues) Fields(ctx context.Context, key string, names []string) (map[string]string, error) {
@@ -378,7 +378,7 @@ func (s *Issues) Fields(ctx context.Context, key string, names []string) (map[st
 				out[name] = ""
 			}
 		default:
-			return nil, &ports.ErrFieldUnsupported{Key: key, Field: name, Supported: issueFields}
+			return nil, &trackerport.ErrFieldUnsupported{Key: key, Field: name, Supported: issueFields}
 		}
 	}
 	return out, nil
@@ -390,7 +390,7 @@ func linkMarker(u string) string { return "<!-- apothecary link=" + u + " -->" }
 
 // AddLink posts the link as a comment (GitHub autolinks pull requests), once:
 // an existing comment carrying the marker is the link already attached.
-func (s *Issues) AddLink(ctx context.Context, key string, link ports.TicketLink) error {
+func (s *Issues) AddLink(ctx context.Context, key string, link trackerport.TicketLink) error {
 	if strings.TrimSpace(link.URL) == "" {
 		return fmt.Errorf("github: a link needs a URL")
 	}
@@ -433,7 +433,7 @@ func splitItems(value string) []string {
 }
 
 var (
-	_ ports.TicketSource   = (*Issues)(nil)
-	_ ports.TicketWriter   = (*Issues)(nil)
-	_ ports.TicketAttacher = (*Issues)(nil)
+	_ trackerport.TicketSource   = (*Issues)(nil)
+	_ trackerport.TicketWriter   = (*Issues)(nil)
+	_ trackerport.TicketAttacher = (*Issues)(nil)
 )

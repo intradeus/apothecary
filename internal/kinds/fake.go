@@ -9,10 +9,10 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/agentspec"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/reviewfile"
 )
 
@@ -95,16 +95,16 @@ func (FakeTicketSource) Descriptor() Descriptor {
 
 // New serves a tiny fixed corpus so the import flow (search → pick → copy,
 // attachments included) is exercisable in -dev with no Jira.
-func (FakeTicketSource) New(Config) (ports.TicketSource, error) {
+func (FakeTicketSource) New(Config) (trackerport.TicketSource, error) {
 	return &fake.TicketSource{
-		Tickets: []ports.SourceTicket{
+		Tickets: []trackerport.SourceTicket{
 			{
 				Key: "DEV-1", Title: "Add a Farewell function",
 				Body:   "The greeter only says hello.\n\n- [ ] add `Farewell(name string) string`\n- [ ] cover it in the tests",
 				URL:    "https://tracker.local/browse/DEV-1",
 				Status: "To Do", Type: "Story", Assignee: "Dev User",
 				Updated: time.Now().Add(-2 * time.Hour),
-				Attachments: []ports.SourceAttachment{
+				Attachments: []trackerport.SourceAttachment{
 					{ID: "att-1", Filename: "spec.md", Mime: "text/markdown", Size: 42, URL: "https://tracker.local/att/1"},
 				},
 			},

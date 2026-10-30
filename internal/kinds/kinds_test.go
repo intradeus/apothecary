@@ -11,10 +11,10 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 )
 
 func TestRegistryValidAndDescriptors(t *testing.T) {
@@ -537,8 +537,8 @@ func TestGitHubIssuesKind(t *testing.T) {
 	}
 	// The write side rides on the same adapter: what a flow's tracker
 	// actions resolve through the integration.
-	if _, ok := src.(ports.TicketWriter); !ok {
-		t.Error("the GitHub Issues source does not implement ports.TicketWriter")
+	if _, ok := src.(trackerport.TicketWriter); !ok {
+		t.Error("the GitHub Issues source does not implement trackerport.TicketWriter")
 	}
 	reg := NewRegistry()
 	reg.RegisterTicketSource(gi)
@@ -546,11 +546,11 @@ func TestGitHubIssuesKind(t *testing.T) {
 	if !reg.Valid("ticketsource", "github") || !reg.Valid("ticketsource", "jira") {
 		t.Error("ticketsource kinds not valid in the registry")
 	}
-	if _, ok := must(Jira{}.New(Config{Values: map[string]any{"base_url": "https://acme.atlassian.net"}, Secrets: map[string]string{"api_token": "t"}})).(ports.TicketWriter); !ok {
-		t.Error("the Jira source does not implement ports.TicketWriter")
+	if _, ok := must(Jira{}.New(Config{Values: map[string]any{"base_url": "https://acme.atlassian.net"}, Secrets: map[string]string{"api_token": "t"}})).(trackerport.TicketWriter); !ok {
+		t.Error("the Jira source does not implement trackerport.TicketWriter")
 	}
-	if _, ok := must(FakeTicketSource{}.New(Config{})).(ports.TicketWriter); !ok {
-		t.Error("the fake source does not implement ports.TicketWriter (dev needs a writable tracker)")
+	if _, ok := must(FakeTicketSource{}.New(Config{})).(trackerport.TicketWriter); !ok {
+		t.Error("the fake source does not implement trackerport.TicketWriter (dev needs a writable tracker)")
 	}
 }
 
@@ -567,11 +567,11 @@ func TestGitLabIssuesKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := src.(ports.TicketWriter); !ok {
-		t.Error("the GitLab Issues source does not implement ports.TicketWriter")
+	if _, ok := src.(trackerport.TicketWriter); !ok {
+		t.Error("the GitLab Issues source does not implement trackerport.TicketWriter")
 	}
-	if _, ok := src.(ports.TicketAttacher); !ok {
-		t.Error("the GitLab Issues source does not implement ports.TicketAttacher")
+	if _, ok := src.(trackerport.TicketAttacher); !ok {
+		t.Error("the GitLab Issues source does not implement trackerport.TicketAttacher")
 	}
 	// The ticketsource kind shares its name with the repository kind.
 	reg := NewRegistry()

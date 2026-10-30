@@ -170,7 +170,7 @@ const (
 
 	// Canonical ticket statuses (ticket_transition's `to`): the flow's words
 	// for where the work is, which the ticket's tracker translates into its
-	// own. They mirror ports.CanonicalStatuses — the registry stays free of
+	// own. They mirror trackerport.CanonicalStatuses — the registry stays free of
 	// the ports package, and a test holds the two lists equal.
 	StatusTodo       = "todo"
 	StatusInProgress = "in_progress"
@@ -180,7 +180,7 @@ const (
 
 	RequiresRepository = "repository"
 	// RequiresTracker: the ticket's tracker must be writable — a ticketsource
-	// integration whose adapter implements ports.TicketWriter. Checked per
+	// integration whose adapter implements trackerport.TicketWriter. Checked per
 	// ticket at run creation (the integration is the ticket's, not the
 	// project's); a ticket with no tracker passes and the stage skips.
 	RequiresTracker = "tracker"

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 )
 
 // Ticket is a first-class unit of work that owns many runs (each run is one
@@ -22,10 +22,10 @@ type Ticket struct {
 	Title      string `json:"title"`
 	Goal       string `json:"goal"`
 	BaseBranch string `json:"base_branch"` // "" = generated per run from the title
-	// ChangeType is what the ticket is (ports.ChangeType: feat, fix, …; ""
+	// ChangeType is what the ticket is (trackerport.ChangeType: feat, fix, …; ""
 	// on a write means feat). The base branch is named after it at
 	// creation; changing it later renames nothing.
-	ChangeType ports.ChangeType `json:"change_type"`
+	ChangeType trackerport.ChangeType `json:"change_type"`
 	// Source* record where an imported ticket came from (empty for one typed
 	// in by hand). They are provenance, not a live link: the copy is taken
 	// once and edits here never travel back to the tracker, so a ticket keeps
@@ -119,8 +119,8 @@ func (s *Service) validateTicket(ctx context.Context, t *Ticket) error {
 	t.Title = strings.TrimSpace(t.Title)
 	t.BaseBranch = strings.TrimSpace(t.BaseBranch)
 	if t.ChangeType == "" {
-		t.ChangeType = ports.ChangeFeat
-	} else if ct, ok := ports.ParseChangeType(string(t.ChangeType)); ok {
+		t.ChangeType = trackerport.ChangeFeat
+	} else if ct, ok := trackerport.ParseChangeType(string(t.ChangeType)); ok {
 		t.ChangeType = ct
 	} else {
 		return invalidf("ticket: change type %q is not one of feat, fix, hotfix, perf, docs, chore", t.ChangeType)

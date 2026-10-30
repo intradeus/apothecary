@@ -14,7 +14,7 @@ package engine
 // the in-progress move lands seconds after the run starts, and the done move
 // after a parked wait never re-provisions a reaped workspace.
 //
-// A move names a CANONICAL status (`to: in_progress`, ports.TicketStatus)
+// A move names a CANONICAL status (`to: in_progress`, trackerport.TicketStatus)
 // that the ticket's tracker translates into its own vocabulary — the same
 // flow moves a Jira issue to "In Progress" and leaves a GitHub issue open —
 // or the tracker's literal status (`status: "Ready for prod"`). A canonical
@@ -35,8 +35,8 @@ import (
 	"apothecary/internal/actionspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 )
 
 // actionSkip records a completion that did no work — the stage had nothing
@@ -54,7 +54,7 @@ func (x *exec) actionSkip(st *flow.Stage, note string) (bool, error) {
 // trackerTarget is a resolved tracker action target: the writer and the
 // issue key it acts on.
 type trackerTarget struct {
-	w   ports.TicketWriter
+	w   trackerport.TicketWriter
 	key string
 }
 
@@ -89,14 +89,14 @@ func (x *exec) trackerFail(st *flow.Stage, err error) (bool, error) {
 	if x.ctx.Err() != nil {
 		return true, context.Cause(x.ctx)
 	}
-	var noWord *ports.ErrStatusUnsupported
+	var noWord *trackerport.ErrStatusUnsupported
 	if errors.As(err, &noWord) {
 		return x.actionSkip(st, st.Action+": "+err.Error())
 	}
 	reason := event.ReasonInfra
-	var unreachable *ports.ErrStatusUnreachable
-	var unknown *ports.ErrFieldUnknown
-	var unsupported *ports.ErrFieldUnsupported
+	var unreachable *trackerport.ErrStatusUnreachable
+	var unknown *trackerport.ErrFieldUnknown
+	var unsupported *trackerport.ErrFieldUnsupported
 	if errors.As(err, &unreachable) || errors.As(err, &unknown) || errors.As(err, &unsupported) {
 		reason = event.ReasonInputInvalid
 	}
@@ -114,7 +114,7 @@ func (x *exec) actionTicketTransition(st *flow.Stage) (bool, error) {
 	}
 	to := strings.TrimSpace(st.Setting("to", ""))
 	if to != "" {
-		err = tg.w.TransitionTo(x.ctx, tg.key, ports.TicketStatus(to))
+		err = tg.w.TransitionTo(x.ctx, tg.key, trackerport.TicketStatus(to))
 	} else {
 		to = strings.TrimSpace(st.Setting("status", ""))
 		err = tg.w.Transition(x.ctx, tg.key, to)
@@ -142,7 +142,7 @@ func (x *exec) ticketTrailer(st *flow.Stage) string {
 // a re-entry with the intent still pending asks the tracker whether the
 // comment is already there before posting again (PLAN5 M20, as create_mr).
 // The files of its attachments port go up to the tracker just before the
-// comment (ports.TicketAttacher), and the body links them (attach.go).
+// comment (trackerport.TicketAttacher), and the body links them (attach.go).
 func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 	rs := x.rs
 	tg, routed, err := x.tracker(st)
@@ -179,10 +179,10 @@ func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 	if routed || err != nil {
 		return true, err
 	}
-	var attacher ports.TicketAttacher
+	var attacher trackerport.TicketAttacher
 	if len(files) > 0 {
 		var ok bool
-		if attacher, ok = tg.w.(ports.TicketAttacher); !ok {
+		if attacher, ok = tg.w.(trackerport.TicketAttacher); !ok {
 			return x.actionFail(st, event.ReasonInfra, fmt.Sprintf("%s: ticket %s's tracker cannot host attachments", st.Action, tg.key))
 		}
 	}
@@ -285,7 +285,7 @@ func (x *exec) actionTicketLink(st *flow.Stage) (bool, error) {
 		if mr.Repo != "" && mr.Repo != event.PrimaryCheckoutName {
 			title = fmt.Sprintf("Merge request (%s): %s", mr.Repo, mr.Branch)
 		}
-		if err := tg.w.AddLink(x.ctx, tg.key, ports.TicketLink{Title: title, URL: mr.Ref.URL}); err != nil {
+		if err := tg.w.AddLink(x.ctx, tg.key, trackerport.TicketLink{Title: title, URL: mr.Ref.URL}); err != nil {
 			return x.trackerFail(st, err)
 		}
 	}
@@ -332,7 +332,7 @@ func (x *exec) actionTicketLinkBranch(st *flow.Stage) (bool, error) {
 		if !co.Primary {
 			title = fmt.Sprintf("Branch (%s): %s", co.Name, co.Branch)
 		}
-		if err := tg.w.AddLink(x.ctx, tg.key, ports.TicketLink{Title: title, URL: url}); err != nil {
+		if err := tg.w.AddLink(x.ctx, tg.key, trackerport.TicketLink{Title: title, URL: url}); err != nil {
 			return x.trackerFail(st, err)
 		}
 		linked++

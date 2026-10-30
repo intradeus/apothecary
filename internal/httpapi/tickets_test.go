@@ -11,7 +11,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/run"
 )
 
@@ -117,9 +117,9 @@ func TestTicketAttachmentsClaimedAndShared(t *testing.T) {
 // --- ticket sources ---------------------------------------------------------
 
 // stubSources serves one fake tracker under any integration id.
-type stubSources struct{ src ports.TicketSource }
+type stubSources struct{ src trackerport.TicketSource }
 
-func (s stubSources) TicketSource(context.Context, string) (ports.TicketSource, error) {
+func (s stubSources) TicketSource(context.Context, string) (trackerport.TicketSource, error) {
 	return s.src, nil
 }
 func (s stubSources) TicketSourceKind(context.Context, string) (string, error) {
@@ -137,11 +137,11 @@ func TestImportTicketFromSource(t *testing.T) {
 	files.serve(x)
 	att := files.att
 	x.srv.Sources = stubSources{src: &fake.TicketSource{
-		Tickets: []ports.SourceTicket{{
+		Tickets: []trackerport.SourceTicket{{
 			Key: "PROJ-7", Title: "Add a Farewell function",
 			Body: "The greeter only says hello.", URL: "https://tracker.test/browse/PROJ-7",
 			Status: "To Do", Type: "Story", Updated: time.Now(),
-			Attachments: []ports.SourceAttachment{
+			Attachments: []trackerport.SourceAttachment{
 				{ID: "a1", Filename: "spec.md", Mime: "text/markdown", Size: 5},
 			},
 		}},

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 )
 
 const uploadSecret = "0123456789abcdef0123456789abcdef"
@@ -157,7 +157,7 @@ func TestGitLabIssuesSearchAndFetch(t *testing.T) {
 	if string(data) != "png-bytes" {
 		t.Errorf("attachment = %q", data)
 	}
-	if _, err := s.OpenAttachment(ctx, ports.SourceAttachment{Filename: "x", URL: "https://evil.example/x"}); err == nil {
+	if _, err := s.OpenAttachment(ctx, trackerport.SourceAttachment{Filename: "x", URL: "https://evil.example/x"}); err == nil {
 		t.Error("an attachment on another host was opened with the token")
 	}
 	if _, err := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok"}).Fetch(ctx, "#5"); err == nil {
@@ -169,7 +169,7 @@ func TestGitLabIssuesTransition(t *testing.T) {
 	srv, writes, _ := glIssuesStub(t)
 	s := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok"})
 	ctx := context.Background()
-	if err := s.TransitionTo(ctx, "lu/greeter#5", ports.StatusDone); err != nil {
+	if err := s.TransitionTo(ctx, "lu/greeter#5", trackerport.StatusDone); err != nil {
 		t.Fatal(err)
 	}
 	puts := writes["PUT lu/greeter 5"]
@@ -177,7 +177,7 @@ func TestGitLabIssuesTransition(t *testing.T) {
 		t.Errorf("puts = %+v", puts)
 	}
 	// The stub's issue reads opened, so todo (and "open") are already there.
-	if err := s.TransitionTo(ctx, "lu/greeter#5", ports.StatusTodo); err != nil {
+	if err := s.TransitionTo(ctx, "lu/greeter#5", trackerport.StatusTodo); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Transition(ctx, "lu/greeter#5", "Open"); err != nil {
@@ -186,13 +186,13 @@ func TestGitLabIssuesTransition(t *testing.T) {
 	if len(writes["PUT lu/greeter 5"]) != 1 {
 		t.Error("an already-opened issue was updated")
 	}
-	var unreachable *ports.ErrStatusUnreachable
+	var unreachable *trackerport.ErrStatusUnreachable
 	if err := s.Transition(ctx, "lu/greeter#5", "In Progress"); !errors.As(err, &unreachable) || strings.Join(unreachable.Reachable, ",") != "opened,closed" {
 		t.Errorf("err = %v", err)
 	}
-	var unsupported *ports.ErrStatusUnsupported
-	err := s.TransitionTo(ctx, "lu/greeter#5", ports.StatusInReview)
-	if !errors.As(err, &unsupported) || ports.StatusNames(unsupported.Supported) != "todo, done" || !strings.Contains(err.Error(), "GitLab Issues has no status") {
+	var unsupported *trackerport.ErrStatusUnsupported
+	err := s.TransitionTo(ctx, "lu/greeter#5", trackerport.StatusInReview)
+	if !errors.As(err, &unsupported) || trackerport.StatusNames(unsupported.Supported) != "todo, done" || !strings.Contains(err.Error(), "GitLab Issues has no status") {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -211,11 +211,11 @@ func TestGitLabIssuesFieldsAndLink(t *testing.T) {
 	if ids, _ := p["assignee_ids"].([]any); len(ids) != 1 || ids[0] != float64(11) {
 		t.Errorf("assignee_ids = %v", p["assignee_ids"])
 	}
-	var unsupported *ports.ErrFieldUnsupported
+	var unsupported *trackerport.ErrFieldUnsupported
 	if err := s.SetFields(ctx, "lu/greeter#5", map[string]string{"Feature flags": "x"}); !errors.As(err, &unsupported) || len(unsupported.Supported) != 3 {
 		t.Errorf("custom field: err = %v", err)
 	}
-	var unknown *ports.ErrFieldUnknown
+	var unknown *trackerport.ErrFieldUnknown
 	if err := s.SetFields(ctx, "lu/greeter#5", map[string]string{"milestone": "v9"}); !errors.As(err, &unknown) {
 		t.Errorf("unknown milestone: err = %v", err)
 	}
@@ -236,14 +236,14 @@ func TestGitLabIssuesFieldsAndLink(t *testing.T) {
 	}
 	// The link already posted (its marker is in the notes) is not posted again.
 	mr7 := "https://gitlab.example.com/lu/greeter/-/merge_requests/7"
-	if err := s.AddLink(ctx, "lu/greeter#5", ports.TicketLink{Title: "Merge request: feat/x", URL: mr7}); err != nil {
+	if err := s.AddLink(ctx, "lu/greeter#5", trackerport.TicketLink{Title: "Merge request: feat/x", URL: mr7}); err != nil {
 		t.Fatal(err)
 	}
 	if len(writes["POST lu/greeter 5/notes"]) != 0 {
 		t.Error("an already-linked merge request was posted again")
 	}
 	mr8 := "https://gitlab.example.com/lu/greeter/-/merge_requests/8"
-	if err := s.AddLink(ctx, "lu/greeter#5", ports.TicketLink{Title: "Merge request: feat/y", URL: mr8}); err != nil {
+	if err := s.AddLink(ctx, "lu/greeter#5", trackerport.TicketLink{Title: "Merge request: feat/y", URL: mr8}); err != nil {
 		t.Fatal(err)
 	}
 	posts := writes["POST lu/greeter 5/notes"]

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 )
 
 // writeStub serves the issue endpoints the write side touches and records
@@ -113,7 +113,7 @@ func TestTransitionMatchesReachableStatus(t *testing.T) {
 	}
 	// Unreachable: the typed error lists what is, deduplicated.
 	err := c.Transition(ctx, "PROJ-7", "Blocked")
-	var unreachable *ports.ErrStatusUnreachable
+	var unreachable *trackerport.ErrStatusUnreachable
 	if !errors.As(err, &unreachable) {
 		t.Fatalf("err = %v, want ErrStatusUnreachable", err)
 	}
@@ -132,16 +132,16 @@ func TestTransitionToUsesTheStatusMap(t *testing.T) {
 	srv, writes := writeStub(t, "3")
 	ctx := context.Background()
 	c := New(Config{BaseURL: srv.URL, Email: "you@acme.com", Token: "tok"})
-	if err := c.TransitionTo(ctx, "PROJ-7", ports.StatusInProgress); err != nil {
+	if err := c.TransitionTo(ctx, "PROJ-7", trackerport.StatusInProgress); err != nil {
 		t.Fatal(err)
 	}
 	posts := writes["POST /rest/api/3/issue/PROJ-7/transitions"]
 	if len(posts) != 1 || posts[0]["transition"].(map[string]any)["id"] != "31" {
 		t.Fatalf("transition posts = %+v, want id 31", posts)
 	}
-	var unsupported *ports.ErrStatusUnsupported
-	err := c.TransitionTo(ctx, "PROJ-7", ports.StatusBlocked)
-	if !errors.As(err, &unsupported) || ports.StatusNames(unsupported.Supported) != "todo, in_progress, in_review, done" {
+	var unsupported *trackerport.ErrStatusUnsupported
+	err := c.TransitionTo(ctx, "PROJ-7", trackerport.StatusBlocked)
+	if !errors.As(err, &unsupported) || trackerport.StatusNames(unsupported.Supported) != "todo, in_progress, in_review, done" {
 		t.Fatalf("blocked: err = %v, want ErrStatusUnsupported listing the stock four", err)
 	}
 	if !strings.Contains(err.Error(), `PROJ-7: Jira has no status for "blocked"; it has: todo, in_progress, in_review, done`) {
@@ -154,13 +154,13 @@ func TestTransitionToUsesTheStatusMap(t *testing.T) {
 		t.Fatal(err)
 	}
 	c2 := New(Config{BaseURL: srv.URL, Email: "you@acme.com", Token: "tok", StatusMap: m})
-	if err := c2.TransitionTo(ctx, "PROJ-7", ports.StatusDone); err != nil {
+	if err := c2.TransitionTo(ctx, "PROJ-7", trackerport.StatusDone); err != nil {
 		t.Fatal(err)
 	}
 	if posts = writes["POST /rest/api/3/issue/PROJ-7/transitions"]; len(posts) != 2 || posts[1]["transition"].(map[string]any)["id"] != "42" {
 		t.Fatalf("transition posts = %+v, want id 42 second", posts)
 	}
-	if err := c2.TransitionTo(ctx, "PROJ-7", ports.StatusInReview); !errors.As(err, &unsupported) || ports.StatusNames(unsupported.Supported) != "todo, in_progress, done" {
+	if err := c2.TransitionTo(ctx, "PROJ-7", trackerport.StatusInReview); !errors.As(err, &unsupported) || trackerport.StatusNames(unsupported.Supported) != "todo, in_progress, done" {
 		t.Errorf("in_review on a map without it: err = %v", err)
 	}
 }
@@ -169,11 +169,11 @@ func TestTransitionToUsesTheStatusMap(t *testing.T) {
 // and anything that is not canonical=status is refused by name.
 func TestParseStatusMap(t *testing.T) {
 	m, err := ParseStatusMap("")
-	if err != nil || len(m) != 4 || m[ports.StatusTodo] != "To Do" || m[ports.StatusDone] != "Done" {
+	if err != nil || len(m) != 4 || m[trackerport.StatusTodo] != "To Do" || m[trackerport.StatusDone] != "Done" {
 		t.Fatalf("defaults = %v, %v", m, err)
 	}
 	m, err = ParseStatusMap(" done = Ready for prod , blocked=On hold")
-	if err != nil || m[ports.StatusDone] != "Ready for prod" || m[ports.StatusBlocked] != "On hold" || m[ports.StatusInProgress] != "In Progress" {
+	if err != nil || m[trackerport.StatusDone] != "Ready for prod" || m[trackerport.StatusBlocked] != "On hold" || m[trackerport.StatusInProgress] != "In Progress" {
 		t.Fatalf("overrides = %v, %v", m, err)
 	}
 	for text, want := range map[string]string{
@@ -262,14 +262,14 @@ func TestSetFieldsCoercesBySchema(t *testing.T) {
 	}
 
 	// Refusals are typed, so the engine can tell "fix the flow" from "tracker down".
-	var unsupported *ports.ErrFieldUnsupported
+	var unsupported *trackerport.ErrFieldUnsupported
 	if err := c.SetFields(ctx, "PROJ-7", map[string]string{"Assignee": "lu"}); !errors.As(err, &unsupported) || unsupported.Type != "user" {
 		t.Errorf("user field: err = %v", err)
 	}
 	if err := c.SetFields(ctx, "PROJ-7", map[string]string{"Estimate": "lots"}); !errors.As(err, &unsupported) {
 		t.Errorf("non-numeric number: err = %v", err)
 	}
-	var unknown *ports.ErrFieldUnknown
+	var unknown *trackerport.ErrFieldUnknown
 	if err := c.SetFields(ctx, "PROJ-7", map[string]string{"Feature": "x"}); !errors.As(err, &unknown) || len(unknown.Candidates) != 1 || unknown.Candidates[0] != "Feature flags" {
 		t.Errorf("unknown field: err = %v", err)
 	}
@@ -299,7 +299,7 @@ func TestFieldsReadsCurrentValuesAsText(t *testing.T) {
 func TestAddLinkUpsertsOnGlobalID(t *testing.T) {
 	srv, writes := writeStub(t, "3")
 	c := New(Config{BaseURL: srv.URL, Email: "you@acme.com", Token: "tok"})
-	link := ports.TicketLink{Title: "Merge request: feat/x", URL: "https://gitlab.local/mr/1"}
+	link := trackerport.TicketLink{Title: "Merge request: feat/x", URL: "https://gitlab.local/mr/1"}
 	if err := c.AddLink(context.Background(), "PROJ-7", link); err != nil {
 		t.Fatal(err)
 	}

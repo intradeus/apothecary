@@ -12,9 +12,9 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/confstore"
 	"apothecary/internal/kinds"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/secrets"
 )
@@ -359,6 +359,6 @@ func (readOnlyKind) Descriptor() kinds.Descriptor {
 	return kinds.Descriptor{Port: "ticketsource", Kind: "readonly", Label: "read-only"}
 }
 
-func (readOnlyKind) New(kinds.Config) (ports.TicketSource, error) {
+func (readOnlyKind) New(kinds.Config) (trackerport.TicketSource, error) {
 	return fake.ReadOnlyTicketSource{Src: &fake.TicketSource{}}, nil
 }

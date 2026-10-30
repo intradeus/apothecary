@@ -3,7 +3,7 @@ package tickets
 import (
 	"strings"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 )
 
 // A ticket's base branch is named {type}/{key}-{title}: its change type,
@@ -19,18 +19,18 @@ import (
 
 // SourceChangeType is what an imported issue's change type is: the
 // integration's mapping of its type, else a guess from the type's name.
-func SourceChangeType(st ports.SourceTicket) ports.ChangeType {
+func SourceChangeType(st trackerport.SourceTicket) trackerport.ChangeType {
 	if st.ChangeType != "" {
 		return st.ChangeType
 	}
-	return ports.GuessChangeType(st.Type)
+	return trackerport.GuessChangeType(st.Type)
 }
 
 // normalType spells a given change type canonically ("FIX" → fix) before a
 // branch is named after it; one that is no change type is left for the store
 // to refuse.
-func normalType(ct ports.ChangeType) ports.ChangeType {
-	if c, ok := ports.ParseChangeType(string(ct)); ok {
+func normalType(ct trackerport.ChangeType) trackerport.ChangeType {
+	if c, ok := trackerport.ParseChangeType(string(ct)); ok {
 		return c
 	}
 	return ct
@@ -39,7 +39,7 @@ func normalType(ct ports.ChangeType) ports.ChangeType {
 // BranchName is {type}/{key}-{title}, every part slugged; key may be empty.
 // A key carrying its repository ("lu/greeter#5", GitHub and GitLab issues)
 // keeps only its number.
-func BranchName(changeType ports.ChangeType, key, title string) string {
+func BranchName(changeType trackerport.ChangeType, key, title string) string {
 	if i := strings.LastIndex(key, "#"); i >= 0 {
 		key = key[i+1:]
 	}

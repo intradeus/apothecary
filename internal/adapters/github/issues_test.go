@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/trackerport"
 )
 
 const issueJSONBody = `{"number":5,"title":"Flaky router test","body":"It fails **sometimes**.","html_url":"https://github.com/lu/greeter/issues/5",
@@ -124,7 +124,7 @@ func TestIssuesTransitionOpenClosedOnly(t *testing.T) {
 	if len(writes["PATCH /repos/lu/greeter/issues/5"]) != 1 {
 		t.Error("an already-open issue was patched")
 	}
-	var unreachable *ports.ErrStatusUnreachable
+	var unreachable *trackerport.ErrStatusUnreachable
 	if err := s.Transition(ctx, "lu/greeter#5", "In Progress"); !errors.As(err, &unreachable) || strings.Join(unreachable.Reachable, ",") != "open,closed" {
 		t.Errorf("err = %v", err)
 	}
@@ -136,7 +136,7 @@ func TestIssuesTransitionToCanonical(t *testing.T) {
 	srv, writes, _ := issuesStub(t)
 	s := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok"})
 	ctx := context.Background()
-	if err := s.TransitionTo(ctx, "lu/greeter#5", ports.StatusDone); err != nil {
+	if err := s.TransitionTo(ctx, "lu/greeter#5", trackerport.StatusDone); err != nil {
 		t.Fatal(err)
 	}
 	patches := writes["PATCH /repos/lu/greeter/issues/5"]
@@ -144,15 +144,15 @@ func TestIssuesTransitionToCanonical(t *testing.T) {
 		t.Errorf("patches = %+v", patches)
 	}
 	// The stub's issue reads open, so todo is already there: no call.
-	if err := s.TransitionTo(ctx, "lu/greeter#5", ports.StatusTodo); err != nil {
+	if err := s.TransitionTo(ctx, "lu/greeter#5", trackerport.StatusTodo); err != nil {
 		t.Fatal(err)
 	}
 	if len(writes["PATCH /repos/lu/greeter/issues/5"]) != 1 {
 		t.Error("an already-open issue was patched")
 	}
-	var unsupported *ports.ErrStatusUnsupported
-	err := s.TransitionTo(ctx, "lu/greeter#5", ports.StatusInReview)
-	if !errors.As(err, &unsupported) || ports.StatusNames(unsupported.Supported) != "todo, done" || !strings.Contains(err.Error(), "GitHub Issues has no status") {
+	var unsupported *trackerport.ErrStatusUnsupported
+	err := s.TransitionTo(ctx, "lu/greeter#5", trackerport.StatusInReview)
+	if !errors.As(err, &unsupported) || trackerport.StatusNames(unsupported.Supported) != "todo, done" || !strings.Contains(err.Error(), "GitHub Issues has no status") {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -171,11 +171,11 @@ func TestIssuesFieldsAndLink(t *testing.T) {
 	if p["milestone"] != float64(3) {
 		t.Errorf("milestone = %v, want 3 (v2 by title)", p["milestone"])
 	}
-	var unsupported *ports.ErrFieldUnsupported
+	var unsupported *trackerport.ErrFieldUnsupported
 	if err := s.SetFields(ctx, "lu/greeter#5", map[string]string{"Feature flags": "x"}); !errors.As(err, &unsupported) || len(unsupported.Supported) != 3 {
 		t.Errorf("custom field: err = %v", err)
 	}
-	var unknown *ports.ErrFieldUnknown
+	var unknown *trackerport.ErrFieldUnknown
 	if err := s.SetFields(ctx, "lu/greeter#5", map[string]string{"milestone": "v9"}); !errors.As(err, &unknown) {
 		t.Errorf("unknown milestone: err = %v", err)
 	}
@@ -188,13 +188,13 @@ func TestIssuesFieldsAndLink(t *testing.T) {
 	}
 
 	// The link already posted (its marker is in the comments) is not posted again.
-	if err := s.AddLink(ctx, "lu/greeter#5", ports.TicketLink{Title: "Merge request: feat/x", URL: "https://github.com/lu/greeter/pull/7"}); err != nil {
+	if err := s.AddLink(ctx, "lu/greeter#5", trackerport.TicketLink{Title: "Merge request: feat/x", URL: "https://github.com/lu/greeter/pull/7"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(writes["POST /repos/lu/greeter/issues/5/comments"]) != 0 {
 		t.Error("an already-linked merge request was posted again")
 	}
-	if err := s.AddLink(ctx, "lu/greeter#5", ports.TicketLink{Title: "Merge request: feat/y", URL: "https://github.com/lu/greeter/pull/8"}); err != nil {
+	if err := s.AddLink(ctx, "lu/greeter#5", trackerport.TicketLink{Title: "Merge request: feat/y", URL: "https://github.com/lu/greeter/pull/8"}); err != nil {
 		t.Fatal(err)
 	}
 	posts := writes["POST /repos/lu/greeter/issues/5/comments"]
