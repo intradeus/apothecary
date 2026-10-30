@@ -14,6 +14,7 @@ import (
 
 	"apothecary/internal/filestore"
 	"apothecary/internal/ports"
+	"apothecary/internal/shell"
 )
 
 const attachmentDeliverTimeout = 30 * time.Second
@@ -65,11 +66,11 @@ func (x *exec) deliverAttachments(atts []filestore.Attachment) []string {
 	}
 	mk := make([]string, 0, len(dirs))
 	for d := range dirs {
-		mk = append(mk, shellQuote(d))
+		mk = append(mk, shell.Quote(d))
 	}
 	rm := make([]string, 0, len(paths))
 	for _, p := range paths {
-		rm = append(rm, shellQuote(p))
+		rm = append(rm, shell.Quote(p))
 	}
 	if _, err := x.res.Envp.Exec(x.ctx, x.rs.envID, ports.Command{
 		Script:  "mkdir -p " + strings.Join(mk, " ") + " && rm -f -- " + strings.Join(rm, " "),

@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
+	"apothecary/internal/shell"
 	"apothecary/internal/signalspec"
 )
 
@@ -440,7 +441,7 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 		if kind == flow.EdgeReject {
 			return capVerdict(s)
 		}
-		return tail(s, 8<<10)
+		return shell.Tail(s, 8<<10)
 	}
 	edge := st.Edge(kind)
 	if edge == nil {
@@ -451,7 +452,7 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 		if kind == flow.EdgeReject {
 			reason = fmt.Sprintf("stage %s was rejected and declares no %s", st.ID, kind)
 			if strings.TrimSpace(feedContent) != "" {
-				reason += ": " + tail(strings.TrimSpace(feedContent), 2<<10)
+				reason += ": " + shell.Tail(strings.TrimSpace(feedContent), 2<<10)
 			}
 		}
 		return x.deadEnd(st, "", reason)
@@ -473,7 +474,7 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 		if e.To == flow.TerminalAbort {
 			reason := fmt.Sprintf("aborted by flow: %s at stage %s", kind, st.ID)
 			if strings.TrimSpace(feedContent) != "" {
-				reason += ": " + tail(strings.TrimSpace(feedContent), 2<<10)
+				reason += ": " + shell.Tail(strings.TrimSpace(feedContent), 2<<10)
 			}
 			return x.abandon(st.ID, kind, reason)
 		}
@@ -1043,7 +1044,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		}
 		// Whatever the cancelled attempt printed rides along for edges that
 		// declare feed: output.
-		return x.takeEdge(st, failEdgeKind(st, event.ReasonTimeout), tail(res.r.Output, 8<<10))
+		return x.takeEdge(st, failEdgeKind(st, event.ReasonTimeout), shell.Tail(res.r.Output, 8<<10))
 	}
 	if res.err != nil {
 		// Run cancellation (abort/pause/shutdown) can surface as the harness
@@ -1055,7 +1056,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonHarnessError, Error: res.err.Error()}); err != nil {
 			return err
 		}
-		return x.takeEdge(st, flow.EdgeFail, tail(res.r.Output, 8<<10))
+		return x.takeEdge(st, flow.EdgeFail, shell.Tail(res.r.Output, 8<<10))
 	}
 
 	// Output contract (§3): every effective output (decl defaults overlaid
@@ -1815,10 +1816,10 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 		// The output tail rides in the event so recovery can route the
 		// failure without re-executing the command.
 		if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonExitNonzero,
-			ExitCode: &code, Error: tail(res.Output, 8<<10)}); err != nil {
+			ExitCode: &code, Error: shell.Tail(res.Output, 8<<10)}); err != nil {
 			return err
 		}
-		return x.takeEdge(st, flow.EdgeFail, tail(res.Output, 8<<10))
+		return x.takeEdge(st, flow.EdgeFail, shell.Tail(res.Output, 8<<10))
 	}
 	// A command that exits 0 without writing what it declared has not done its
 	// job — the same contract agent stages carry.
@@ -1827,7 +1828,7 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 			Error: fmt.Sprintf("declared output(s) not readable: %s", strings.Join(missing, ", "))}); aerr != nil {
 			return aerr
 		}
-		return x.takeEdge(st, flow.EdgeFail, tail(res.Output, 8<<10))
+		return x.takeEdge(st, flow.EdgeFail, shell.Tail(res.Output, 8<<10))
 	}
 	// And what it writes with a schema must hold it, before anything reads it.
 	if msg := x.checkStructuredOutputs(st); msg != "" {
@@ -1914,10 +1915,10 @@ func (x *exec) clearOutputs(bindings []flow.Port) {
 		if b.Type == agentspec.TypeFiles {
 			// Without its slash: a symlink planted where the directory goes
 			// is removed itself, never followed into what it points at.
-			dirs = append(dirs, shellQuote(strings.TrimSuffix(b.Value, "/")))
+			dirs = append(dirs, shell.Quote(strings.TrimSuffix(b.Value, "/")))
 			continue
 		}
-		paths = append(paths, shellQuote(b.Value))
+		paths = append(paths, shell.Quote(b.Value))
 	}
 	var scripts []string
 	if len(paths) > 0 {
@@ -2125,7 +2126,7 @@ func (x *exec) stageDebug(st *flow.Stage) error {
 		return x.routeDebug(st, PingAnswer{Answer: ans.Answer, Feedback: ans.Feedback})
 	}
 	if x.openYesNo(st, PingDebug) == nil {
-		p := &Ping{Type: PingDebug, Question: st.ID + " failed", Context: tail(rs.feed, 4<<10),
+		p := &Ping{Type: PingDebug, Question: st.ID + " failed", Context: shell.Tail(rs.feed, 4<<10),
 			Link: workspaceLink(rs.links), StageID: st.ID, AnswerKind: event.AnswerYesNo,
 			Phase: rs.phase, EndsPhase: !x.endsRunAtDeadEnd()}
 		if err := x.raiseYesNo(p); err != nil {
@@ -2153,7 +2154,7 @@ func (x *exec) routeDebug(st *flow.Stage, ans PingAnswer) error {
 	}
 	reason := fmt.Sprintf("debug rejected at stage %s", st.ID)
 	if fb := strings.TrimSpace(ans.Feedback); fb != "" {
-		reason += ": " + tail(fb, 2<<10)
+		reason += ": " + shell.Tail(fb, 2<<10)
 	}
 	return x.deadEnd(st, "", reason)
 }
@@ -2652,11 +2653,4 @@ func (x *exec) readVerdict(st *flow.Stage) (*ports.Verdict, error) {
 		return nil, err
 	}
 	return parseVerdict(path, data)
-}
-
-func tail(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[len(s)-n:]
 }

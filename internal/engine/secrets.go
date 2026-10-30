@@ -6,6 +6,7 @@ import (
 
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
+	"apothecary/internal/shell"
 )
 
 // Workspace credential lifecycle.
@@ -76,7 +77,7 @@ func (e *Engine) ScrubWorkspaceSecrets(ctx context.Context, v run.View) {
 	quoted := make([]string, 0, len(paths))
 	for _, p := range paths {
 		if p != "" {
-			quoted = append(quoted, shellQuote(p))
+			quoted = append(quoted, shell.Quote(p))
 		}
 	}
 	if len(quoted) == 0 {
@@ -91,7 +92,7 @@ func (e *Engine) ScrubWorkspaceSecrets(ctx context.Context, v run.View) {
 			"run", v.RunID, "env", v.EnvID, "err", err)
 	case out.ExitCode != 0:
 		e.log.Warn("workspace secret scrub failed; credentials remain in the workspace",
-			"run", v.RunID, "env", v.EnvID, "exit", out.ExitCode, "output", tail(out.Output, 512))
+			"run", v.RunID, "env", v.EnvID, "exit", out.ExitCode, "output", shell.Tail(out.Output, 512))
 	default:
 		e.log.Info("scrubbed workspace credentials of finished run",
 			"run", v.RunID, "env", v.EnvID, "files", len(quoted))

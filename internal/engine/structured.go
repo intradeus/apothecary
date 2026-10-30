@@ -17,6 +17,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/shell"
 )
 
 // structuredFile is one file a stage reads or writes, and the schemas it
@@ -164,14 +165,14 @@ func (x *exec) actionCommit(st *flow.Stage) (bool, error) {
 	if co := x.subjectCheckout(); co != nil {
 		cos = []event.Checkout{*co}
 	}
-	script := fmt.Sprintf(commitScript, shellQuote(msg.text()))
+	script := fmt.Sprintf(commitScript, shell.Quote(msg.text()))
 	for _, co := range cos {
 		res, err := x.gitIn(co.Dir, script)
 		if err != nil {
 			return x.infraFail(st, "commit: "+err.Error())
 		}
 		if res.ExitCode != 0 {
-			return x.actionFail(st, event.ReasonExitNonzero, fmt.Sprintf("committing in %s was refused: %s", co.Name, tail(res.Output, 2<<10)))
+			return x.actionFail(st, event.ReasonExitNonzero, fmt.Sprintf("committing in %s was refused: %s", co.Name, shell.Tail(res.Output, 2<<10)))
 		}
 	}
 	return false, nil

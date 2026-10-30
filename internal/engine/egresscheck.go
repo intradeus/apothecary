@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/shell"
 )
 
 // Post-provisioning egress check: a freshly provisioned workspace proves it
@@ -62,7 +63,7 @@ func probeEgress(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID,
 	if withTLS {
 		script += " --tls"
 	}
-	script += " " + shellQuote(addr)
+	script += " " + shell.Quote(addr)
 	out, err := envp.Exec(ctx, id, ports.Command{Script: script, Timeout: egressProbeWait + time.Minute})
 	if err != nil {
 		return fmt.Errorf("egress check: %w", err)
@@ -70,7 +71,7 @@ func probeEgress(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID,
 	if out.ExitCode == 0 {
 		return nil
 	}
-	why := strings.TrimSpace(tail(out.Output, 400))
+	why := strings.TrimSpace(shell.Tail(out.Output, 400))
 	if why == "" {
 		why = fmt.Sprintf("exit %d", out.ExitCode)
 	}

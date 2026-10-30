@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/actionspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/shell"
 )
 
 // actionFail records an outcome failure an agent or a retry can fix and
@@ -48,12 +49,12 @@ func (x *exec) actionSyncTarget(st *flow.Stage) (bool, error) {
 		res, err := x.gitIn(co.Dir, script)
 		return strings.TrimSpace(res.Output), res.ExitCode, err
 	}
-	if out, code, err := git("git fetch origin " + shellQuote(target)); err != nil {
+	if out, code, err := git("git fetch origin " + shell.Quote(target)); err != nil {
 		return x.infraFail(st, "sync: "+err.Error())
 	} else if code != 0 {
-		return x.actionFail(st, event.ReasonExitNonzero, "fetching "+target+" failed: "+tail(out, 1<<10))
+		return x.actionFail(st, event.ReasonExitNonzero, "fetching "+target+" failed: "+shell.Tail(out, 1<<10))
 	}
-	targetTip, _, err := git("git rev-parse " + shellQuote("origin/"+target))
+	targetTip, _, err := git("git rev-parse " + shell.Quote("origin/"+target))
 	if err != nil {
 		return x.infraFail(st, "sync: "+err.Error())
 	}
@@ -75,14 +76,14 @@ func (x *exec) actionSyncTarget(st *flow.Stage) (bool, error) {
 		}
 	}
 
-	if _, code, err := git(fmt.Sprintf("git merge-base --is-ancestor %s HEAD", shellQuote(targetTip))); err != nil {
+	if _, code, err := git(fmt.Sprintf("git merge-base --is-ancestor %s HEAD", shell.Quote(targetTip))); err != nil {
 		return x.infraFail(st, "sync: "+err.Error())
 	} else if code == 0 {
 		return false, nil // already contains the target: nothing to do
 	}
-	script := "git merge --no-edit " + shellQuote(targetTip)
+	script := "git merge --no-edit " + shell.Quote(targetTip)
 	if strategy == actionspec.StrategyRebase {
-		script = "git rebase " + shellQuote(targetTip)
+		script = "git rebase " + shell.Quote(targetTip)
 	}
 	out, code, err := git(script)
 	if err != nil {
@@ -135,7 +136,7 @@ func (x *exec) syncStopped(st *flow.Stage, op, target, output string, git func(s
 	}
 	// Not a conflict: restore the branch rather than leave it half-done.
 	_, _, _ = git("git " + op + " --abort")
-	return x.actionFail(st, event.ReasonExitNonzero, fmt.Sprintf("taking %s in (%s) failed: %s", target, op, tail(output, 1<<10)))
+	return x.actionFail(st, event.ReasonExitNonzero, fmt.Sprintf("taking %s in (%s) failed: %s", target, op, shell.Tail(output, 1<<10)))
 }
 
 func (x *exec) recordSync(st *flow.Stage, strategy, targetTip string, git func(string) (string, int, error)) (bool, error) {
@@ -182,10 +183,10 @@ func (x *exec) actionPushBranch(st *flow.Stage) (bool, error) {
 		if expected == tip {
 			continue // already there (a re-entry after the push landed)
 		}
-		script := "git push -u origin " + shellQuote("HEAD:refs/heads/"+co.Branch)
+		script := "git push -u origin " + shell.Quote("HEAD:refs/heads/"+co.Branch)
 		if expected != "" {
 			script = fmt.Sprintf("git push -u --force-with-lease=%s:%s origin %s",
-				shellQuote("refs/heads/"+co.Branch), shellQuote(expected), shellQuote("HEAD:refs/heads/"+co.Branch))
+				shell.Quote("refs/heads/"+co.Branch), shell.Quote(expected), shell.Quote("HEAD:refs/heads/"+co.Branch))
 		}
 		res, err := x.gitIn(co.Dir, script)
 		if err != nil {
@@ -194,7 +195,7 @@ func (x *exec) actionPushBranch(st *flow.Stage) (bool, error) {
 		if res.ExitCode != 0 {
 			return x.actionFail(st, event.ReasonExitNonzero, fmt.Sprintf(
 				"pushing %s (%s) was refused — the remote branch holds commits this run did not see, so nothing was overwritten: %s",
-				co.Branch, co.Name, tail(res.Output, 1<<10)))
+				co.Branch, co.Name, shell.Tail(res.Output, 1<<10)))
 		}
 		if err := x.append(&event.BranchPushed{StageID: st.ID, Repo: co.Name, Branch: co.Branch, Tip: tip}); err != nil {
 			return true, err

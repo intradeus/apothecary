@@ -12,6 +12,7 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/shell"
 )
 
 // Dynamic envcheck (DESIGN2 §9): the workspace compliance gate. The check
@@ -271,7 +272,7 @@ func runEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 	// loopback on docker (the in-container relay), the engine Service on
 	// Kubernetes — so the probe is that URL, whatever it is.
 	step("tunnel", execExpect(ctx, envp, env,
-		fmt.Sprintf("curl -m 10 -s -o /dev/null %s/", shellQuote(strings.TrimSuffix(engineURL, "/"))), "", true),
+		fmt.Sprintf("curl -m 10 -s -o /dev/null %s/", shell.Quote(strings.TrimSuffix(engineURL, "/"))), "", true),
 		"engine reachable from the workspace at "+engineURL)
 
 	blob := []byte("round-trip \x00\x01\xfe binary ok\n")
@@ -314,7 +315,7 @@ func execExpect(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID,
 		return err
 	}
 	if wantSuccess && res.ExitCode != 0 {
-		return fmt.Errorf("exit %d: %s", res.ExitCode, tail(res.Output, 400))
+		return fmt.Errorf("exit %d: %s", res.ExitCode, shell.Tail(res.Output, 400))
 	}
 	if !wantSuccess && res.ExitCode == 0 {
 		return fmt.Errorf("succeeded but should have been blocked")

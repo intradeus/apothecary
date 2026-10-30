@@ -12,6 +12,7 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/shell"
 	"apothecary/internal/skills"
 	"encoding/json"
 )
@@ -95,7 +96,7 @@ type ExtraCheckout struct {
 func branchScript(branch, source, fetch string) string {
 	if fetch != "" {
 		return fmt.Sprintf("git switch %q 2>/dev/null || { git fetch origin %s && git switch -c %q FETCH_HEAD; }",
-			branch, shellQuote(fetch), branch)
+			branch, shell.Quote(fetch), branch)
 	}
 	return fmt.Sprintf("git switch %q 2>/dev/null || git switch -c %q origin/%s", branch, branch, source)
 }
@@ -117,7 +118,7 @@ func WriteWorkspaceSecrets(ctx context.Context, envp ports.EnvProvisioner, id po
 		// The file is sourced (`set -a; . provider.env`): values must be
 		// shell-quoted or a key containing $, quotes or spaces breaks every
 		// agent invocation.
-		fmt.Fprintf(&providers, "%s=%s\n", k, shellQuote(spec.ProviderEnv[k]))
+		fmt.Fprintf(&providers, "%s=%s\n", k, shell.Quote(spec.ProviderEnv[k]))
 	}
 	if err := envp.WriteFile(ctx, id, "/apothecary/provider.env", []byte(providers.String()), 0o600); err != nil {
 		return fmt.Errorf("write provider.env: %w", err)
@@ -198,7 +199,7 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 	for _, x := range spec.Extras {
 		steps = append(steps,
 			step{"clone:" + x.Name, "", fmt.Sprintf("mkdir -p %s && { [ -e %s/.git ] || git clone %q %s; }",
-				shellQuote(filepath.Dir(x.Dir)), shellQuote(x.Dir), x.URL, shellQuote(x.Dir))},
+				shell.Quote(filepath.Dir(x.Dir)), shell.Quote(x.Dir), x.URL, shell.Quote(x.Dir))},
 			step{"branch:" + x.Name, x.Dir, branchScript(x.Branch, x.Source, x.Fetch)},
 			step{"git-config:" + x.Name, x.Dir, gitConfigScript(spec.GitName, spec.GitEmail)},
 		)
@@ -212,7 +213,7 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 			return fmt.Errorf("bootstrap %s: %w", s.name, err)
 		}
 		if res.ExitCode != 0 {
-			return fmt.Errorf("bootstrap %s: exit %d: %s", s.name, res.ExitCode, tail(res.Output, 8<<10))
+			return fmt.Errorf("bootstrap %s: exit %d: %s", s.name, res.ExitCode, shell.Tail(res.Output, 8<<10))
 		}
 	}
 
@@ -248,13 +249,13 @@ type skillsManifest struct {
 // starts from an empty directory (a re-bootstrap of the same container
 // must not keep a previous selection); with no skills that is all it does.
 func writeSkills(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID, spec BootstrapSpec) error {
-	q := shellQuote(skills.WorkspaceDir)
+	q := shell.Quote(skills.WorkspaceDir)
 	res, err := envp.Exec(ctx, id, ports.Command{Script: "rm -rf " + q + " && mkdir -p " + q, Timeout: spec.Timeout})
 	if err != nil {
 		return err
 	}
 	if res.ExitCode != 0 {
-		return fmt.Errorf("reset %s: exit %d: %s", skills.WorkspaceDir, res.ExitCode, tail(res.Output, 1<<10))
+		return fmt.Errorf("reset %s: exit %d: %s", skills.WorkspaceDir, res.ExitCode, shell.Tail(res.Output, 1<<10))
 	}
 	if len(spec.Skills) == 0 {
 		return nil
@@ -326,13 +327,7 @@ func gitConfigScript(name, email string) string {
 		email = "apothecary@local"
 	}
 	return fmt.Sprintf("git config user.name %s && git config user.email %s",
-		shellQuote(name), shellQuote(email))
-}
-
-// shellQuote single-quotes s for POSIX sh: safe against $, backticks,
-// spaces and embedded quotes.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+		shell.Quote(name), shell.Quote(email))
 }
 
 // encodeEnvFile renders a KEY=value env file (sorted keys, shell-quoted
@@ -346,7 +341,7 @@ func encodeEnvFile(env map[string]string) string {
 	sort.Strings(keys)
 	var b strings.Builder
 	for _, k := range keys {
-		fmt.Fprintf(&b, "%s=%s\n", k, shellQuote(env[k]))
+		fmt.Fprintf(&b, "%s=%s\n", k, shell.Quote(env[k]))
 	}
 	return b.String()
 }

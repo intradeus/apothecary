@@ -19,6 +19,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/shell"
 	"apothecary/internal/signalspec"
 )
 
@@ -111,10 +112,10 @@ func (x *exec) followAdopted() {
 		return
 	}
 	rs.followed = rs.phaseTip
-	res, err := x.gitIn(co.Dir, fmt.Sprintf("git fetch origin %s && git merge --ff-only FETCH_HEAD", shellQuote(co.Fetch)))
+	res, err := x.gitIn(co.Dir, fmt.Sprintf("git fetch origin %s && git merge --ff-only FETCH_HEAD", shell.Quote(co.Fetch)))
 	if err != nil || res.ExitCode != 0 {
 		x.e.log.Warn("could not bring the merge request's checkout to its head", "run", rs.runID, "repo", co.Name,
-			"head", rs.phaseTip, "err", err, "out", tail(res.Output, 512))
+			"head", rs.phaseTip, "err", err, "out", shell.Tail(res.Output, 512))
 	}
 }
 

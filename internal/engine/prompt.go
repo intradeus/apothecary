@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/shell"
 )
 
 // answerReply is what a paused stage resumes its agent with: the questions it
@@ -118,7 +119,7 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		}
 		content := "(file missing)"
 		if data, err := x.res.Envp.ReadFile(x.ctx, rs.envID, path); err == nil {
-			content = tail(string(data), 16<<10)
+			content = shell.Tail(string(data), 16<<10)
 		}
 		fmt.Fprintf(&b, "# INPUT: %s%s (file: %s)\n%s\n", in.Name, inputDesc(spec, in.Name), path, content)
 	}

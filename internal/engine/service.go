@@ -26,6 +26,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
+	"apothecary/internal/shell"
 	"apothecary/internal/sidecar"
 )
 
@@ -205,7 +206,7 @@ func shimService(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID
 	}
 	var st sidecar.ServiceState
 	if res.ExitCode != 0 || !lastJSON(res.Output, &st) {
-		return sidecar.ServiceState{}, fmt.Errorf("service %s %s: exit %d: %s", verb, req.Name, res.ExitCode, tail(strings.TrimSpace(res.Output), 1<<10))
+		return sidecar.ServiceState{}, fmt.Errorf("service %s %s: exit %d: %s", verb, req.Name, res.ExitCode, shell.Tail(strings.TrimSpace(res.Output), 1<<10))
 	}
 	return st, nil
 }
@@ -242,7 +243,7 @@ func serviceStates(ctx context.Context, envp ports.EnvProvisioner, env ports.Env
 	}
 	var out []sidecar.ServiceState
 	if res.ExitCode != 0 || !lastJSON(res.Output, &out) {
-		return nil, fmt.Errorf("service status: exit %d: %s", res.ExitCode, tail(strings.TrimSpace(res.Output), 1<<10))
+		return nil, fmt.Errorf("service status: exit %d: %s", res.ExitCode, shell.Tail(strings.TrimSpace(res.Output), 1<<10))
 	}
 	return out, nil
 }
@@ -282,7 +283,7 @@ func serviceLog(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID,
 		return "", err
 	}
 	if res.ExitCode != 0 {
-		return "", fmt.Errorf("service logs %s: exit %d: %s", name, res.ExitCode, tail(res.Output, 1<<10))
+		return "", fmt.Errorf("service logs %s: exit %d: %s", name, res.ExitCode, shell.Tail(res.Output, 1<<10))
 	}
 	return res.Output, nil
 }
@@ -384,7 +385,7 @@ func (x *exec) stageService(st *flow.Stage) error {
 		logTail = "(its log could not be read: " + lerr.Error() + ")"
 	}
 	x.publishLog(st.ID, rs.iters[st.ID], logTail)
-	feed := tail(fmt.Sprintf("service %s did not come up: %s\n--- its output ---\n%s", svc.Name, why, logTail), 8<<10)
+	feed := shell.Tail(fmt.Sprintf("service %s did not come up: %s\n--- its output ---\n%s", svc.Name, why, logTail), 8<<10)
 	if aerr := x.append(&event.ServiceFailed{Service: svc.Name, StageID: st.ID, Reason: why, ExitCode: code}); aerr != nil {
 		return aerr
 	}

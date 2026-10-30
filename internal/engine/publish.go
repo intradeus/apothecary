@@ -9,6 +9,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/shell"
 )
 
 // actionCreateMR opens the run's draft merge requests: one per checkout that
@@ -200,11 +201,11 @@ func (x *exec) checkoutAhead(co event.Checkout) (bool, error) {
 		return false, err
 	}
 	if res.ExitCode != 0 {
-		return false, fmt.Errorf("git rev-list: %s", tail(res.Output, 512))
+		return false, fmt.Errorf("git rev-list: %s", shell.Tail(res.Output, 512))
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(res.Output))
 	if err != nil {
-		return false, fmt.Errorf("git rev-list: unexpected output %q", tail(res.Output, 128))
+		return false, fmt.Errorf("git rev-list: unexpected output %q", shell.Tail(res.Output, 128))
 	}
 	return n > 0, nil
 }
