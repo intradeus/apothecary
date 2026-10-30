@@ -813,12 +813,12 @@ func (io *invIO) input(prompt string) agentport.AgentInput {
 	}
 }
 
-// drain records whatever events are already queued.
-func (io *invIO) drain() error {
+// drain records whatever events are already queued, through record.
+func (io *invIO) drain(record func(agentport.AgentEvent) (bool, error)) error {
 	for {
 		select {
 		case ev := <-io.events:
-			if err := io.tr.handle(ev); err != nil {
+			if _, err := record(ev); err != nil {
 				return err
 			}
 		default:
@@ -1304,6 +1304,21 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		return event.HoldSpend{}
 	}
 	turnOpen := false
+	// record files one agent event: a new harness session is recorded the
+	// moment it exists, so a crash mid-invocation resumes (or reattaches
+	// to) it, not a new one — whichever path meets the event, the loop's
+	// select, a drain after the result, or a wind-down; everything else
+	// goes to the transcript. session says it was a new session.
+	record := func(ev agentport.AgentEvent) (session bool, err error) {
+		if ev.Kind == agentport.AgentEvSession && ev.Text != "" && x.rs.sessions[st.ID] != agentport.SessionID(ev.Text) {
+			if err := x.append(&event.AgentSession{StageID: st.ID, Iteration: io.tr.iter, SessionID: ev.Text}); err != nil {
+				return false, err
+			}
+			x.rs.sessions[st.ID] = agentport.SessionID(ev.Text)
+			return true, nil
+		}
+		return false, io.tr.handle(ev)
+	}
 
 	suspend := func() {
 		if !timer.Stop() {
@@ -1397,12 +1412,12 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		for {
 			select {
 			case res := <-resCh:
-				if err := io.drain(); err != nil {
+				if err := io.drain(record); err != nil {
 					return invocation{}, err
 				}
 				return invocation{res: res, outcome: out, open: open, left: left(), holdSpend: holdLeg()}, nil
 			case ev := <-io.events:
-				if err := io.tr.handle(ev); err != nil {
+				if _, err := record(ev); err != nil {
 					return invocation{}, err
 				}
 			case <-grace.C:
@@ -1415,7 +1430,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 	for {
 		select {
 		case res := <-resCh:
-			if err := io.drain(); err != nil {
+			if err := io.drain(record); err != nil {
 				return invocation{}, err
 			}
 			out := outcomeReturned
@@ -1428,17 +1443,10 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			}
 			return invocation{res: res, outcome: out, open: open, left: left(), holdSpend: holdLeg()}, nil
 		case ev := <-io.events:
-			if ev.Kind == agentport.AgentEvSession && ev.Text != "" && x.rs.sessions[st.ID] != agentport.SessionID(ev.Text) {
-				// Recorded the moment it exists, so a crash mid-invocation
-				// resumes (or reattaches to) this session, not a new one.
-				if err := x.append(&event.AgentSession{StageID: st.ID, Iteration: io.tr.iter, SessionID: ev.Text}); err != nil {
-					return invocation{}, err
-				}
-				x.rs.sessions[st.ID] = agentport.SessionID(ev.Text)
-				continue
-			}
-			if err := io.tr.handle(ev); err != nil {
+			if session, err := record(ev); err != nil {
 				return invocation{}, err
+			} else if session {
+				continue
 			}
 			switch ev.Kind {
 			case agentport.AgentEvUserMessage:
