@@ -153,6 +153,7 @@ outcomes:
 	}
 	ph2.waitPing(t, event.PingGate)
 	ph2.waitState(t, runID2, run.WaitingOnHuman)
+	ph2.waitIdle(t, runID2)
 	if err := ph2.e.StartPhase(runID2, "polish", ""); err != nil {
 		t.Fatal(err)
 	}

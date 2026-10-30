@@ -177,6 +177,7 @@ func TestDiffSourcesMeasureTheirOwnRange(t *testing.T) {
 	}
 	runID := ph.start(t)
 	ph.repoHost.SetHead(1, "h1")
+	ph.waitIdle(t, runID)
 	if err := ph.e.StartPhase(runID, "answer", ""); err != nil {
 		t.Fatal(err)
 	}

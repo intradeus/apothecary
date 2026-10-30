@@ -97,6 +97,7 @@ func TestPostReviewFromAReviewOutput(t *testing.T) {
 		return inner(ctx, call)
 	}
 	runID := ph.start(t)
+	ph.waitIdle(t, runID)
 	if err := ph.e.StartPhase(runID, "look", ""); err != nil {
 		t.Fatal(err)
 	}

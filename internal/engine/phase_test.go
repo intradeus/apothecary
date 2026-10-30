@@ -430,6 +430,7 @@ func TestManualStartPolicySurfacesTheHoldWithoutStarting(t *testing.T) {
 	if n := len(phaseStarts(ph.events(t, runID))); n != 1 {
 		t.Fatalf("a manual phase started by itself (%d starts)", n)
 	}
+	ph.waitIdle(t, runID)
 	if err := ph.e.StartPhase(runID, "conflicts", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -684,6 +685,7 @@ func TestStartPhaseByHand(t *testing.T) {
 	if err := ph.e.StartPhase(runID, "conflicts", "ghost"); !errors.Is(err, ErrPhaseNotStartable) {
 		t.Errorf("unknown repo: %v", err)
 	}
+	ph.waitIdle(t, runID)
 	if err := ph.e.StartPhase(runID, "conflicts", ""); err != nil {
 		t.Fatal(err)
 	}

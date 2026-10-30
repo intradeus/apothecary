@@ -267,6 +267,7 @@ func TestWaitForMergeableInAWatcher(t *testing.T) {
 	ph := newPhasedHarness(t, observeFlowDoc("  - id: ship\n    on: manual\n    stages:\n"+
 		"      - { id: ready, type: wait, for: mr_mergeable, on_fail: end }\n      - { id: land, type: command, run: \"./land.sh\" }\n"))
 	runID := ph.start(t)
+	ph.waitIdle(t, runID)
 	if err := ph.e.StartPhase(runID, "ship", ""); err != nil {
 		t.Fatal(err)
 	}
