@@ -680,6 +680,15 @@ func TestStartPhaseByHand(t *testing.T) {
 	if last := starts[len(starts)-1]; last.By != "human" || last.Phase != "conflicts" || last.Subject != "repo" {
 		t.Errorf("start = %+v", last)
 	}
+	// "Runs once" is the answer of an idle run: wait for the watcher's round
+	// to end and the loop to be between phases again.
+	ph.waitPhaseCompleted(t, runID, "conflicts", 1)
+	waitUntil(t, "the run to be idle", func() bool {
+		ph.e.mu.Lock()
+		defer ph.e.mu.Unlock()
+		h := ph.e.handles[runID]
+		return h != nil && h.idle.Load()
+	})
 	if err := ph.e.StartPhase(runID, flow.MainPhase, ""); !errors.Is(err, ErrPhaseNotStartable) || !strings.Contains(err.Error(), "runs once") {
 		t.Errorf("the main chain by hand: %v", err)
 	}
