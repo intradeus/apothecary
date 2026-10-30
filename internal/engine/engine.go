@@ -35,9 +35,6 @@ import (
 	"apothecary/internal/wsname"
 )
 
-// ErrEgressOff marks an allow request when proxy mode is disabled.
-var ErrEgressOff = errors.New("egress proxy mode is off")
-
 type Ticket struct {
 	// TicketID is the parent ticket this run belongs to. When set, Branch is
 	// treated as the ticket's BASE branch and the run gets its own unique
@@ -234,8 +231,7 @@ type Engine struct {
 	// wakeMu serializes the dormant answer path: two humans answering the
 	// two questions of one parked run must not both decide they were the
 	// last, append, and wake it twice.
-	wakeMu      sync.Mutex
-	egressAudit EgressAuditStore
+	wakeMu sync.Mutex
 	// projectSecrets re-reads a project's secrets when an agent stage opens
 	// its MCP servers; browser is the project browser and browserPorts the
 	// workspace ports it reaches (mcp.go). nil = off.
@@ -274,6 +270,8 @@ type Engine struct {
 
 	// envState is the workspace op gate and reconciled container statuses.
 	envState *envstate.Store
+	// teardown is told about every env destroy, in registration order.
+	teardown []EnvTeardown
 
 	// appendLocks holds one mutex per run serializing its appends (see
 	// appendLock): runID -> *sync.Mutex.
@@ -698,17 +696,6 @@ func (e *Engine) skillTrees(ctx context.Context, pins []event.SkillsetPin) ([]sk
 	return e.skillLib.SkillTrees(ctx, pins)
 }
 
-// EgressAuditStore persists and queries the durable egress audit trail (what
-// each workspace reached / was blocked from). nil = audit off. Implemented by
-// *pgstore.Store.
-type EgressAuditStore interface {
-	UpsertEgressAudit(ctx context.Context, rows []ports.EgressAuditRow) error
-	QueryEgressAudit(ctx context.Context, f ports.EgressAuditFilter) ([]ports.EgressAuditRow, error)
-}
-
-// SetEgressAudit installs the audit store; call before Recover. nil disables.
-func (e *Engine) SetEgressAudit(s EgressAuditStore) { e.egressAudit = s }
-
 // ErrPortsOff marks an expose request when no port relay is configured.
 var ErrPortsOff = errors.New("port exposure is not configured")
 
@@ -754,167 +741,6 @@ func (e *Engine) RunPorts(runID string) []portrelay.Exposure {
 		return nil
 	}
 	return e.portRelay.List(runID)
-}
-
-// egressCtrl resolves a run to its provisioner's egress controller (the
-// per-project gateway), or ErrEgressOff when the run isn't live or the
-// provisioner has no gateway.
-func (e *Engine) egressCtrl(ctx context.Context, runID string) (ports.EgressController, ports.EnvID, func(), error) {
-	v, err := e.runs.View(ctx, runID)
-	if err != nil {
-		return nil, "", nil, err
-	}
-	if v.ProjectID == "" {
-		return nil, "", nil, fmt.Errorf("run %s: %w", runID, ErrEgressOff)
-	}
-	res, err := e.resolver.Resolve(ctx, v.ProjectID)
-	if err != nil {
-		return nil, "", nil, err
-	}
-	ctrl, ok := res.Envp.(ports.EgressController)
-	if !ok {
-		res.Close()
-		return nil, "", nil, ErrEgressOff
-	}
-	// Works during provisioning too (EnvID not yet set): the most important time
-	// to "add to egress" is when the build is blocked on a denied domain.
-	return ctrl, ports.EnvID(wsname.ForRun(v, runID)), res.Close, nil
-}
-
-// EgressDenials lists a run's gateway-blocked hosts (run page feedback), each
-// classified against the policy in force now: held (nobody ruled on it yet —
-// the run page asks) or blocked (reviewed — it never asks again). Without a
-// readable policy every denial stays held: asking twice beats never asking.
-func (e *Engine) EgressDenials(ctx context.Context, runID string) []ports.EgressDenial {
-	ctrl, env, release, err := e.egressCtrl(ctx, runID)
-	if err != nil {
-		return nil
-	}
-	defer release()
-	dens := ctrl.EgressDenials(ctx, env)
-	pol, perr := ctrl.EgressPolicy(ctx, env)
-	for i := range dens {
-		dens[i].Status = ports.EgressHeld
-		if perr == nil {
-			dens[i].Status = pol.Status(dens[i].Host)
-		}
-	}
-	return dens
-}
-
-// AllowEgress adds a host to a run's project egress policy live — the gateway
-// hot-reloads it, so the next request succeeds with no restart. Project-wide by
-// design. Returns ErrEgressOff when the run isn't live / has no gateway.
-// Persistence to the project (future runs) is the caller's job.
-func (e *Engine) AllowEgress(ctx context.Context, runID, host string) error {
-	ctrl, env, release, err := e.egressCtrl(ctx, runID)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return ctrl.AllowEgress(ctx, env, host)
-}
-
-// SetEgressRule live-toggles a host's egress rule for a run (allow or force-deny),
-// project-wide via the gateway, no restart. Returns ErrEgressOff when the run has
-// no gateway. Persistence to the project is the caller's job.
-func (e *Engine) SetEgressRule(ctx context.Context, runID, host string, allow bool) error {
-	ctrl, env, release, err := e.egressCtrl(ctx, runID)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return ctrl.SetEgressRule(ctx, env, host, allow)
-}
-
-// RunEgressPolicy returns the egress policy the gateway enforces for a run
-// RIGHT NOW — the run page renders each host's current rule from it (the
-// audit trail only records past verdicts, which never change when the rule
-// does). Returns ErrEgressOff when the run has no live gateway.
-func (e *Engine) RunEgressPolicy(ctx context.Context, runID string) (ports.EgressPolicy, error) {
-	ctrl, env, release, err := e.egressCtrl(ctx, runID)
-	if err != nil {
-		return ports.EgressPolicy{}, err
-	}
-	defer release()
-	return ctrl.EgressPolicy(ctx, env)
-}
-
-// auditRows converts a run's provisioner audit records into durable rows tagged
-// with the project + engine run id. Empty when the provisioner has no auditor.
-// Uses wsname.ForRun so it works DURING provisioning too (EnvID not yet set).
-func (e *Engine) auditRows(ctx context.Context, v run.View, envp ports.EnvProvisioner) []ports.EgressAuditRow {
-	auditor, ok := envp.(ports.EgressAuditor)
-	if !ok {
-		return nil
-	}
-	recs := auditor.EgressAudit(ctx, ports.EnvID(wsname.ForRun(v, v.RunID)))
-	rows := make([]ports.EgressAuditRow, 0, len(recs))
-	for _, r := range recs {
-		rows = append(rows, ports.EgressAuditRow{
-			Project: v.ProjectID, Run: v.RunID, Host: r.Host, DstIP: r.DstIP, Port: r.Port,
-			Proto: r.Proto, Verdict: r.Verdict, Count: r.Count, BytesOut: r.BytesOut,
-			BytesIn: r.BytesIn, First: r.First, Last: r.Last,
-		})
-	}
-	return rows
-}
-
-// IngestEgressAuditOnce pulls the aggregated egress audit of every ACTIVE run
-// (from the in-memory handle set — cheap, no full-history scan) and upserts it
-// into durable storage. This is the SINGLE audit path: the gateway writes a file
-// (the only channel out of the container), the engine ingests it to the DB, and
-// the UI reads the DB — so every audit fact is PERSISTED before it is delivered.
-// Run on a fast ticker for near-live freshness, and once more before env destroy.
-func (e *Engine) IngestEgressAuditOnce(ctx context.Context) error {
-	if e.egressAudit == nil {
-		return nil
-	}
-	e.mu.Lock()
-	ids := make([]string, 0, len(e.handles))
-	for id := range e.handles {
-		ids = append(ids, id)
-	}
-	e.mu.Unlock()
-
-	var rows []ports.EgressAuditRow
-	for _, id := range ids {
-		evs, err := e.store.Events(ctx, id, 0)
-		if err != nil {
-			continue
-		}
-		v := run.Reduce(evs)
-		if v.ProjectID == "" {
-			continue
-		}
-		res, err := e.resolver.Resolve(ctx, v.ProjectID)
-		if err != nil {
-			continue
-		}
-		rows = append(rows, e.auditRows(ctx, v, res.Envp)...)
-		res.Close()
-	}
-	if len(rows) == 0 {
-		return nil
-	}
-	return e.egressAudit.UpsertEgressAudit(ctx, rows)
-}
-
-// RunEgressAudit returns a run's egress audit from the durable store — the
-// single source of truth, kept near-live by IngestEgressAuditOnce. Filterable.
-func (e *Engine) RunEgressAudit(ctx context.Context, runID, verdict, host string, limit int) ([]ports.EgressAuditRow, error) {
-	if e.egressAudit == nil {
-		return nil, nil
-	}
-	return e.egressAudit.QueryEgressAudit(ctx, ports.EgressAuditFilter{Run: runID, Verdict: verdict, Host: host, Limit: limit})
-}
-
-// ProjectEgressAudit returns the durable audit rows for a whole project (filterable).
-func (e *Engine) ProjectEgressAudit(ctx context.Context, projectID, verdict, host string, limit int) ([]ports.EgressAuditRow, error) {
-	if e.egressAudit == nil {
-		return nil, nil
-	}
-	return e.egressAudit.QueryEgressAudit(ctx, ports.EgressAuditFilter{Project: projectID, Verdict: verdict, Host: host, Limit: limit})
 }
 
 // emit fans freshly appended events to the sink (nil-safe).
@@ -1371,6 +1197,34 @@ func (e *Engine) RetryRun(ctx context.Context, runID string) error {
 	return nil
 }
 
+// EnvTeardown is told when a run's workspace is destroyed, so the services
+// that keep per-run state about it (exposed ports, browser sessions, the
+// egress audit) can drop it or flush it first.
+type EnvTeardown interface {
+	// Forget drops per-run state; called right after the env-op gate opens,
+	// before the project check, so it also runs for pre-v2 runs and when
+	// resolution fails.
+	Forget(runID string)
+	// BeforeDestroy runs after the run resolved, immediately before the
+	// provisioner destroys the workspace.
+	BeforeDestroy(ctx context.Context, v run.View, res *resolution.Resolution)
+}
+
+// AddEnvTeardown registers a teardown hook; call before Recover. Hooks run
+// in registration order.
+func (e *Engine) AddEnvTeardown(h EnvTeardown) { e.teardown = append(e.teardown, h) }
+
+// ActiveRunIDs is a snapshot of the runs that have a live loop.
+func (e *Engine) ActiveRunIDs() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	ids := make([]string, 0, len(e.handles))
+	for id := range e.handles {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // destroyEnv resolves the run's project to reach its provisioner (§6.1:
 // no global envp anymore). Pre-v2 runs with no project cannot be destroyed
 // through the engine — their envs outlived the config that owned them.
@@ -1391,6 +1245,9 @@ func (e *Engine) destroyEnv(ctx context.Context, v run.View) (derr error) {
 	}
 	e.browserPorts.forget(v.RunID) // and so do the browser's
 	e.forgetObserved(v.RunID)      // discovered-port snapshot dies with the env
+	for _, h := range e.teardown {
+		h.Forget(v.RunID)
+	}
 	if v.ProjectID == "" {
 		return fmt.Errorf("run %s has no project (pre-v2); destroy its environment manually", v.RunID)
 	}
@@ -1399,12 +1256,8 @@ func (e *Engine) destroyEnv(ctx context.Context, v run.View) (derr error) {
 		return err
 	}
 	defer res.Close()
-	// Final audit flush before the env (and possibly the project gateway) is
-	// torn down, so the trail is durable even for the last activity.
-	if e.egressAudit != nil {
-		if rows := e.auditRows(ctx, v, res.Envp); len(rows) > 0 {
-			_ = e.egressAudit.UpsertEgressAudit(ctx, rows)
-		}
+	for _, h := range e.teardown {
+		h.BeforeDestroy(ctx, v, res)
 	}
 	return res.Envp.Destroy(ctx, ports.EnvID(v.EnvID))
 }

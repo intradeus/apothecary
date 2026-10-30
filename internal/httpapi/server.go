@@ -23,6 +23,7 @@ import (
 	"apothecary/internal/builtin"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
+	"apothecary/internal/egress"
 	"apothecary/internal/engine"
 	"apothecary/internal/envcheck"
 	"apothecary/internal/envstate"
@@ -105,6 +106,8 @@ type Server struct {
 	Workspaces *wsinfo.Service
 	// EnvCheck runs workspace compliance checks for projects.
 	EnvCheck *envcheck.Registry
+	// Egress is the live egress controls and the audit trail.
+	Egress *egress.Service
 
 	logins loginLimiter
 }
@@ -600,7 +603,7 @@ func (s *Server) getEgressDefaults(w http.ResponseWriter, r *http.Request) {
 // the visible diagnosis for "the firewall ate my model provider". Empty list
 // when the run has no gateway or nothing was blocked.
 func (s *Server) getEgressDenials(w http.ResponseWriter, r *http.Request) {
-	dens := s.Engine.EgressDenials(r.Context(), r.PathValue("id"))
+	dens := s.Egress.Denials(r.Context(), r.PathValue("id"))
 	if dens == nil {
 		dens = []ports.EgressDenial{}
 	}
@@ -611,10 +614,10 @@ func (s *Server) getEgressDenials(w http.ResponseWriter, r *http.Request) {
 // right now — the "current rule" side of the firewall UI. The audit rows only
 // carry historical verdicts, so the rule toggles render from this instead.
 func (s *Server) getRunEgressPolicy(w http.ResponseWriter, r *http.Request) {
-	pol, err := s.Engine.RunEgressPolicy(r.Context(), r.PathValue("id"))
+	pol, err := s.Egress.Policy(r.Context(), r.PathValue("id"))
 	if err != nil {
 		status := http.StatusBadGateway
-		if errors.Is(err, engine.ErrEgressOff) {
+		if errors.Is(err, egress.ErrOff) {
 			status = http.StatusServiceUnavailable
 		}
 		writeErr(w, status, err.Error())
@@ -636,7 +639,7 @@ func (s *Server) getRunEgressPolicy(w http.ResponseWriter, r *http.Request) {
 // timestamps. Filterable via ?verdict=allow|deny, ?host=<substring>, ?limit=N.
 func (s *Server) getRunEgressAudit(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	rows, err := s.Engine.RunEgressAudit(r.Context(), r.PathValue("id"),
+	rows, err := s.Egress.RunAudit(r.Context(), r.PathValue("id"),
 		r.URL.Query().Get("verdict"), r.URL.Query().Get("host"), limit)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
@@ -652,7 +655,7 @@ func (s *Server) getRunEgressAudit(w http.ResponseWriter, r *http.Request) {
 // project's runs. Same filters as the run-level endpoint.
 func (s *Server) getProjectEgressAudit(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	rows, err := s.Engine.ProjectEgressAudit(r.Context(), r.PathValue("id"),
+	rows, err := s.Egress.ProjectAudit(r.Context(), r.PathValue("id"),
 		r.URL.Query().Get("verdict"), r.URL.Query().Get("host"), limit)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
@@ -700,9 +703,9 @@ func (s *Server) postEgressAllow(w http.ResponseWriter, r *http.Request) {
 	runID := r.PathValue("id")
 
 	// Instant: unblock the live run.
-	if err := s.Engine.AllowEgress(r.Context(), runID, host); err != nil {
+	if err := s.Egress.Allow(r.Context(), runID, host); err != nil {
 		status := http.StatusConflict
-		if errors.Is(err, engine.ErrEgressOff) {
+		if errors.Is(err, egress.ErrOff) {
 			status = http.StatusServiceUnavailable
 		}
 		writeErr(w, status, err.Error())
@@ -746,9 +749,9 @@ func (s *Server) postEgressRule(w http.ResponseWriter, r *http.Request) {
 	}
 	runID := r.PathValue("id")
 
-	if err := s.Engine.SetEgressRule(r.Context(), runID, host, body.Allow); err != nil {
+	if err := s.Egress.SetRule(r.Context(), runID, host, body.Allow); err != nil {
 		status := http.StatusConflict
-		if errors.Is(err, engine.ErrEgressOff) {
+		if errors.Is(err, egress.ErrOff) {
 			status = http.StatusServiceUnavailable
 		}
 		writeErr(w, status, err.Error())

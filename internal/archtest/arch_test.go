@@ -71,6 +71,7 @@ var rules = []rule{
 		"internal/agentspec", "internal/bootstrap", "internal/flow", "internal/modelcheck",
 		"internal/ports", "internal/resolution", "internal/shell", "internal/wsname",
 	}},
+	{pkg: "internal/egress", mayImport: []string{"internal/ports", "internal/resolution", "internal/run", "internal/wsname"}},
 	{pkg: "internal/resolution", mayImport: []string{
 		"internal/actionspec", "internal/agentspec", "internal/event", "internal/flow",
 		"internal/run", "internal/signalspec", "internal/ports",

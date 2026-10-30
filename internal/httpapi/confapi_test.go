@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/actionspec"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
+	"apothecary/internal/egress"
 	"apothecary/internal/engine"
 	"apothecary/internal/envcheck"
 	"apothecary/internal/envstate"
@@ -86,6 +87,7 @@ func newConfEnv(t *testing.T) *confEnv {
 	e.SetEnvState(srv.EnvState)
 	srv.Workspaces = wsinfo.New(&run.Reader{Store: store}, resolver, srv.EnvState)
 	srv.EnvCheck = envcheck.NewRegistry(resolver, e, "")
+	srv.Egress = egress.New(&run.Reader{Store: store}, resolver, nil)
 	srv.Conf = conf
 	srv.Kinds = reg
 	srv.Ops = resolver

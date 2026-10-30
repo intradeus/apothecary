@@ -37,6 +37,7 @@ import (
 	"apothecary/internal/channels"
 	"apothecary/internal/config"
 	"apothecary/internal/confstore"
+	"apothecary/internal/egress"
 	"apothecary/internal/engine"
 	"apothecary/internal/envcheck"
 	"apothecary/internal/envstate"
@@ -264,6 +265,10 @@ func cmdServe(args []string) error {
 	e.SetEnvState(envSt)
 	wsSvc := wsinfo.New(runs, resolver, envSt)
 	checks := envcheck.NewRegistry(resolver, e, ecfg.EngineURL)
+	egressSvc := egress.New(runs, resolver, store) // durable egress audit trail (pgstore)
+	egressSvc.ActiveRuns = e.ActiveRunIDs
+	egressSvc.Log = log
+	e.AddEnvTeardown(egressSvc)
 	// A project's parameter bindings are laid over a flow's defaults at run
 	// creation; the config store holds them beside the flow.
 	e.SetFlowBindings(conf)
@@ -321,7 +326,6 @@ func cmdServe(args []string) error {
 	e.SetFiles(attachments, snapshots)
 	skillLib := skillstore.New(store, blobs)
 	e.SetSkills(skillLib)
-	e.SetEgressAudit(store) // durable egress audit trail (pgstore)
 	// The durable ping projection. A run parked on a human has no loop and no
 	// in-memory ping, so this is what makes its question listable and
 	// answerable — the SQL view, rather than the engine folding every run's
@@ -373,6 +377,7 @@ func cmdServe(args []string) error {
 	api.EnvState = envSt
 	api.Workspaces = wsSvc
 	api.EnvCheck = checks
+	api.Egress = egressSvc
 	// The SSH door (TODO 46): one listener people ssh to over their VPN —
 	// desktop VS Code included — routed by username to the run's workspace.
 	// Both of its keys derive from instance secrets: the host key so a person
@@ -529,20 +534,7 @@ func cmdServe(args []string) error {
 	// per-project gateway) into the DB near-live, so the trail is durable BEFORE
 	// the UI reads it (the single audit path: gateway file → engine → DB → UI).
 	// Cheap — only active runs, not full history — so it can run often.
-	go func() {
-		t := time.NewTicker(5 * time.Second)
-		defer t.Stop()
-		for {
-			select {
-			case <-t.C:
-				if err := e.IngestEgressAuditOnce(reaperCtx); err != nil {
-					log.Error("egress audit ingest failed", "err", err)
-				}
-			case <-reaperCtx.Done():
-				return
-			}
-		}
-	}()
+	go egressSvc.Run(reaperCtx, 5*time.Second)
 
 	// Automations: tracker queries polled into tickets and runs, schedules
 	// firing runs — the ways a run begins without a person (flow v4). A
