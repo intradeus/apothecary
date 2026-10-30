@@ -1,4 +1,4 @@
-package engine
+package runports
 
 import (
 	"context"
@@ -17,18 +17,18 @@ import (
 //
 // No op-gate: it neither recreates the container nor races the reaper/rebuild;
 // it is safe to open the editor alongside a live run.
-func (e *Engine) OpenEditor(ctx context.Context, runID string) (string, error) {
-	if e.portRelay == nil {
+func (s *Service) OpenEditor(ctx context.Context, runID string) (string, error) {
+	if s.Relay == nil {
 		return "", ErrPortsOff
 	}
-	v, err := e.runs.View(ctx, runID)
+	v, err := s.Runs.View(ctx, runID)
 	if err != nil {
 		return "", err
 	}
 	if v.EnvID == "" || v.ProjectID == "" {
 		return "", fmt.Errorf("run %s has no environment", runID)
 	}
-	res, err := e.resolver.Resolve(ctx, v.ProjectID)
+	res, err := s.Resolver.Resolve(ctx, v.ProjectID)
 	if err != nil {
 		return "", err
 	}
@@ -48,12 +48,12 @@ func (e *Engine) OpenEditor(ctx context.Context, runID string) (string, error) {
 	if err := starter.StartEditor(ctx, ports.EnvID(v.EnvID), ports.CodeServerPort, res.EditorSettings); err != nil {
 		return "", err
 	}
-	if url := e.portRelay.Existing(runID, ports.CodeServerPort); url != "" {
+	if url := s.Relay.Existing(runID, ports.CodeServerPort); url != "" {
 		return url, nil
 	}
 	pc, err := exposer.ExposePort(ctx, ports.EnvID(v.EnvID), ports.CodeServerPort)
 	if err != nil {
 		return "", err
 	}
-	return e.portRelay.Expose(runID, ports.CodeServerPort, pc)
+	return s.Relay.Expose(runID, ports.CodeServerPort, pc)
 }

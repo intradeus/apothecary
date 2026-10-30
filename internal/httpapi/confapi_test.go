@@ -25,6 +25,7 @@ import (
 	"apothecary/internal/resolve"
 	"apothecary/internal/resources"
 	"apothecary/internal/run"
+	"apothecary/internal/runports"
 	"apothecary/internal/secrets"
 	"apothecary/internal/wsinfo"
 )
@@ -93,6 +94,9 @@ func newConfEnv(t *testing.T) *confEnv {
 	srv.Ask = ask.New(&run.Reader{Store: store}, resolver, e, ask.NewMemStore())
 	srv.AuthSink = authsink.New(&run.Reader{Store: store}, resolver, nil, nil)
 	e.SetAuthSink(srv.AuthSink)
+	srv.Ports = runports.New(&run.Reader{Store: store}, resolver, nil, runports.Config{}, nil)
+	e.SetRunPorts(srv.Ports)
+	e.AddEnvTeardown(srv.Ports)
 	srv.Conf = conf
 	srv.Kinds = reg
 	srv.Ops = resolver

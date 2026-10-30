@@ -26,11 +26,11 @@ import (
 	"apothecary/internal/filestore"
 	"apothecary/internal/flow"
 	"apothecary/internal/modelcheck"
-	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
 	"apothecary/internal/resolution"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
+	"apothecary/internal/runports"
 	"apothecary/internal/skills"
 	"apothecary/internal/wsname"
 )
@@ -128,13 +128,6 @@ type Config struct {
 	// empty disables log files.
 	RunsDir string
 
-	// PortDiscoveryAutoExpose, when set, auto-exposes newly discovered
-	// listening ports (up to PortDiscoveryMaxAuto per run) instead of only
-	// listing them for click-to-expose. Default off (list-only).
-	PortDiscoveryAutoExpose bool
-	// PortDiscoveryMaxAuto caps auto-exposures per run; default 5.
-	PortDiscoveryMaxAuto int
-
 	// AskHumanHold is how long an agent's turn stays live, blocked in
 	// ask_human, before the engine parks the run: it cancels the turn,
 	// gives the concurrency slot back, and resumes the same session with
@@ -186,9 +179,6 @@ func (c *Config) withDefaults() Config {
 	if out.ThreadPollInterval == 0 {
 		out.ThreadPollInterval = 4 * out.MRPollInterval
 	}
-	if out.PortDiscoveryMaxAuto == 0 {
-		out.PortDiscoveryMaxAuto = 5
-	}
 	if out.AskHumanHold == 0 {
 		out.AskHumanHold = 30 * time.Minute
 	}
@@ -223,7 +213,7 @@ type Engine struct {
 	newID       func() string
 	log         *slog.Logger
 	sink        EventSink
-	portRelay   *portrelay.Manager
+	runPorts    RunPorts
 	attachments AttachmentStore
 	snapshots   SnapshotStore
 	skillLib    SkillStore
@@ -251,15 +241,6 @@ type Engine struct {
 	// authSink is the live workspaces a refreshed login is pushed into, and
 	// the per-run auth brokers.
 	authSink *authsink.Sink
-
-	// observed is the per-run set of listening ports discovered at runtime
-	// (the in-workspace shim scanner + engine-side sibling scans), surfaced on
-	// the run page with click-to-expose. Memory-only and TTL-aged, like
-	// envStatus: a discovered listener is external state, not a run-authored
-	// transition, so it never enters the event log. Empty/stale means "no
-	// live scanner" — the read path returns nothing rather than a stale lie.
-	observedMu sync.Mutex
-	observed   map[string]*observedRun
 
 	// envState is the workspace op gate and reconciled container statuses.
 	envState *envstate.Store
@@ -513,15 +494,29 @@ func New(cfg Config, store event.Store, resolver resolution.Resolver, flows flow
 		handles:  map[string]*runHandle{},
 		pings:    map[string]*Ping{},
 		tokens:   map[string]string{},
-		observed: map[string]*observedRun{},
 	}
 	// The engine's own until main shares one with the API (SetEnvState); its
 	// clock follows the engine's, which tests replace.
 	e.envState = envstate.New(e.runs, resolver, func() time.Time { return e.clock() }, e.log)
 	// Without an instance key (SetAuthSink) omp's broker logins are off.
 	e.authSink = authsink.New(e.runs, resolver, nil, e.log)
+	// Without a relay (SetRunPorts) port exposure is off.
+	e.runPorts = runports.New(e.runs, resolver, nil, runports.Config{}, e.log)
 	return e
 }
+
+// RunPorts is what the engine asks of port exposure: publish a workspace's
+// ports when it comes up, bring them back after a rebuild, and expose one
+// port (a service's) on demand.
+type RunPorts interface {
+	AutoExpose(ctx context.Context, runID string, envp ports.EnvProvisioner, id ports.EnvID) []event.Link
+	ReopenAfterRebuild(ctx context.Context, runID string, envp ports.EnvProvisioner, id ports.EnvID, editor ports.EditorSettings)
+	Expose(ctx context.Context, runID string, port int) (string, error)
+}
+
+// SetRunPorts installs port exposure (the relay-backed service the API
+// shares); call before Recover.
+func (e *Engine) SetRunPorts(p RunPorts) { e.runPorts = p }
 
 // SetAuthSink shares the login sink (with the instance broker key) with the
 // keeper and the API; call before Recover.
@@ -565,10 +560,6 @@ type EventSink interface {
 
 // SetSink installs the telemetry sink; call before Recover. nil disables.
 func (e *Engine) SetSink(s EventSink) { e.sink = s }
-
-// SetPortRelay installs the workspace-port publisher; call before Recover.
-// nil = port exposure off.
-func (e *Engine) SetPortRelay(m *portrelay.Manager) { e.portRelay = m }
 
 // AttachmentStore is the engine's delivery+claims port over human-given
 // files (DESIGN-FILES §5.2). nil = attachments off (delivery a no-op).
@@ -691,53 +682,6 @@ func (e *Engine) skillTrees(ctx context.Context, pins []event.SkillsetPin) ([]sk
 		return nil, nil
 	}
 	return e.skillLib.SkillTrees(ctx, pins)
-}
-
-// ErrPortsOff marks an expose request when no port relay is configured.
-var ErrPortsOff = errors.New("port exposure is not configured")
-
-// ExposeRunPort publishes a workspace port of a live run and returns the
-// browser URL (the run-page "open the app" path). Idempotent per
-// (run, port). The live listener is engine-process-scoped and never
-// event-recorded; only the host-port ALLOCATION is persisted (portrelay's
-// Store), so the same URL comes back after a restart. See portrelay's
-// package comment.
-func (e *Engine) ExposeRunPort(ctx context.Context, runID string, port int) (string, error) {
-	if e.portRelay == nil {
-		return "", ErrPortsOff
-	}
-	if url := e.portRelay.Existing(runID, port); url != "" {
-		return url, nil
-	}
-	v, err := e.runs.View(ctx, runID)
-	if err != nil {
-		return "", err
-	}
-	if v.EnvID == "" || v.ProjectID == "" {
-		return "", fmt.Errorf("run %s has no environment", runID)
-	}
-	res, err := e.resolver.Resolve(ctx, v.ProjectID)
-	if err != nil {
-		return "", err
-	}
-	defer res.Close()
-	exposer, ok := res.Envp.(ports.WorkspacePortExposer)
-	if !ok {
-		return "", fmt.Errorf("run %s: provisioner does not support port exposure", runID)
-	}
-	pc, err := exposer.ExposePort(ctx, ports.EnvID(v.EnvID), port)
-	if err != nil {
-		return "", err
-	}
-	return e.portRelay.Expose(runID, port, pc)
-}
-
-// RunPorts lists a run's live exposures (the run-page ports panel).
-func (e *Engine) RunPorts(runID string) []portrelay.Exposure {
-	if e.portRelay == nil {
-		return nil
-	}
-	return e.portRelay.List(runID)
 }
 
 // emit fans freshly appended events to the sink (nil-safe).
@@ -1237,11 +1181,7 @@ func (e *Engine) destroyEnv(ctx context.Context, v run.View) (derr error) {
 	}
 	defer func() { rel(derr) }()
 
-	if e.portRelay != nil {
-		e.portRelay.CloseRun(v.RunID) // exposures die with the env
-	}
-	e.browserPorts.forget(v.RunID) // and so do the browser's
-	e.forgetObserved(v.RunID)      // discovered-port snapshot dies with the env
+	e.browserPorts.forget(v.RunID) // the browser's ports die with the env
 	for _, h := range e.teardown {
 		h.Forget(v.RunID)
 	}

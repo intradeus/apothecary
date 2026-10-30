@@ -38,6 +38,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/resources"
 	"apothecary/internal/run"
+	"apothecary/internal/runports"
 	"apothecary/internal/secrets"
 	"apothecary/internal/skillstore"
 	"apothecary/internal/tickets"
@@ -115,6 +116,8 @@ type Server struct {
 	// AuthSink serves the per-run auth brokers (the same sink the engine
 	// registers live workspaces with).
 	AuthSink *authsink.Sink
+	// Ports exposes run ports and lists the discovered ones.
+	Ports *runports.Service
 
 	logins loginLimiter
 }
@@ -804,10 +807,10 @@ func (s *Server) postExposePort(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "port must be 1-65535")
 		return
 	}
-	url, err := s.Engine.ExposeRunPort(r.Context(), r.PathValue("id"), body.Port)
+	url, err := s.Ports.Expose(r.Context(), r.PathValue("id"), body.Port)
 	if err != nil {
 		status := http.StatusConflict
-		if errors.Is(err, engine.ErrPortsOff) {
+		if errors.Is(err, runports.ErrPortsOff) {
 			status = http.StatusServiceUnavailable
 		}
 		writeErr(w, status, err.Error())
@@ -820,12 +823,12 @@ func (s *Server) postExposePort(w http.ResponseWriter, r *http.Request) {
 // its browser URL (the run-page "Open editor" path). Blocks while code-server
 // boots on first open; idempotent thereafter.
 func (s *Server) postOpenEditor(w http.ResponseWriter, r *http.Request) {
-	url, err := s.Engine.OpenEditor(r.Context(), r.PathValue("id"))
+	url, err := s.Ports.OpenEditor(r.Context(), r.PathValue("id"))
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusConflict
 		switch {
-		case errors.Is(err, engine.ErrPortsOff), strings.Contains(msg, "does not support"):
+		case errors.Is(err, runports.ErrPortsOff), strings.Contains(msg, "does not support"):
 			status = http.StatusServiceUnavailable
 		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
@@ -860,7 +863,7 @@ func (s *Server) postObservedPorts(w http.ResponseWriter, r *http.Request) {
 		p.Process, p.Service = truncate(p.Process, 64), truncate(p.Service, 64)
 		clean = append(clean, p)
 	}
-	s.Engine.ReportObservedPorts(runID, clean)
+	s.Ports.ReportObservedPorts(runID, clean)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -876,7 +879,7 @@ func truncate(s string, n int) string {
 // engine-process-scoped).
 func (s *Server) getRunPorts(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	exposed := s.Engine.RunPorts(id)
+	exposed := s.Ports.List(id)
 	if exposed == nil {
 		exposed = []portrelay.Exposure{}
 	}
@@ -885,7 +888,7 @@ func (s *Server) getRunPorts(w http.ResponseWriter, r *http.Request) {
 		live[e.Port] = true
 	}
 	observed := []ports.ObservedPort{}
-	for _, p := range s.Engine.ObservedPorts(id) {
+	for _, p := range s.Ports.ObservedPorts(id) {
 		if !live[p.Port] { // an exposed port graduates out of the discovered list
 			observed = append(observed, p)
 		}

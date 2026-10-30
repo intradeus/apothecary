@@ -1,4 +1,4 @@
-package engine
+package runports
 
 import (
 	"context"
@@ -43,13 +43,16 @@ type observedRun struct {
 // scan (throttled) and, in auto-expose mode, exposes newly discovered ports
 // up to the configured cap. Both side effects run asynchronously so the
 // shim's POST never blocks on a docker exec or an expose.
-func (e *Engine) ReportObservedPorts(runID string, obs []ports.ObservedPort) {
-	now := e.clock()
-	e.observedMu.Lock()
-	r := e.observed[runID]
+func (s *Service) ReportObservedPorts(runID string, obs []ports.ObservedPort) {
+	now := s.now()
+	s.mu.Lock()
+	if s.observed == nil {
+		s.observed = map[string]*observedRun{}
+	}
+	r := s.observed[runID]
 	if r == nil {
 		r = &observedRun{autoExposed: map[int]bool{}}
-		e.observed[runID] = r
+		s.observed[runID] = r
 	}
 	r.shim = obs
 	r.at = now
@@ -57,13 +60,13 @@ func (e *Engine) ReportObservedPorts(runID string, obs []ports.ObservedPort) {
 	if dueSiblings {
 		r.sibBusy = true
 	}
-	e.observedMu.Unlock()
+	s.mu.Unlock()
 
 	if dueSiblings {
-		go e.refreshSiblingPorts(runID)
+		go s.refreshSiblingPorts(runID)
 	}
-	if e.cfg.PortDiscoveryAutoExpose {
-		go e.autoExposeObserved(runID)
+	if s.Config.AutoExpose {
+		go s.autoExposeObserved(runID)
 	}
 }
 
@@ -71,11 +74,11 @@ func (e *Engine) ReportObservedPorts(runID string, obs []ports.ObservedPort) {
 // (shim ∪ siblings), or nil once the snapshot goes stale. Ports already
 // live in the port relay are filtered out by the caller (getRunPorts) since
 // only it knows the exposure registry.
-func (e *Engine) ObservedPorts(runID string) []ports.ObservedPort {
-	e.observedMu.Lock()
-	defer e.observedMu.Unlock()
-	r := e.observed[runID]
-	if r == nil || e.clock().Sub(r.at) > observedTTL {
+func (s *Service) ObservedPorts(runID string) []ports.ObservedPort {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.observed[runID]
+	if r == nil || s.now().Sub(r.at) > observedTTL {
 		return nil
 	}
 	seen := map[int]bool{}
@@ -96,54 +99,54 @@ func (e *Engine) ObservedPorts(runID string) []ports.ObservedPort {
 	return out
 }
 
-// forgetObserved drops a run's snapshot (called when its env is destroyed).
-func (e *Engine) forgetObserved(runID string) {
-	e.observedMu.Lock()
-	delete(e.observed, runID)
-	e.observedMu.Unlock()
+// forgetObserved drops a run's snapshot (its env is destroyed).
+func (s *Service) forgetObserved(runID string) {
+	s.mu.Lock()
+	delete(s.observed, runID)
+	s.mu.Unlock()
 }
 
 // refreshSiblingPorts resolves the run's provisioner and, if it supports
 // sibling scanning, refreshes the compose-sibling listener set. Runs in its
 // own goroutine; failures are silent (best-effort discovery).
-func (e *Engine) refreshSiblingPorts(runID string) {
+func (s *Service) refreshSiblingPorts(runID string) {
 	defer func() {
-		e.observedMu.Lock()
-		if r := e.observed[runID]; r != nil {
+		s.mu.Lock()
+		if r := s.observed[runID]; r != nil {
 			r.sibBusy = false
 		}
-		e.observedMu.Unlock()
+		s.mu.Unlock()
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	envID, scanner, release, ok := e.resolveScanner(ctx, runID)
+	envID, scanner, release, ok := s.resolveScanner(ctx, runID)
 	if !ok {
 		return
 	}
 	defer release()
 	sibs := scanner.ScanSiblingPorts(ctx, envID)
 
-	e.observedMu.Lock()
-	if r := e.observed[runID]; r != nil {
+	s.mu.Lock()
+	if r := s.observed[runID]; r != nil {
 		r.siblings = sibs
-		r.sibAt = e.clock()
+		r.sibAt = s.now()
 	}
-	e.observedMu.Unlock()
+	s.mu.Unlock()
 }
 
 // resolveScanner resolves a run to its EnvID and sibling-port scanner, or
 // ok=false when the run has no env or the provisioner lacks the capability.
-func (e *Engine) resolveScanner(ctx context.Context, runID string) (ports.EnvID, ports.SiblingPortScanner, func(), bool) {
-	v, err := e.runs.View(ctx, runID)
+func (s *Service) resolveScanner(ctx context.Context, runID string) (ports.EnvID, ports.SiblingPortScanner, func(), bool) {
+	v, err := s.Runs.View(ctx, runID)
 	if err != nil {
 		return "", nil, nil, false
 	}
 	if v.EnvID == "" || v.ProjectID == "" {
 		return "", nil, nil, false
 	}
-	res, err := e.resolver.Resolve(ctx, v.ProjectID)
+	res, err := s.Resolver.Resolve(ctx, v.ProjectID)
 	if err != nil {
 		return "", nil, nil, false
 	}
@@ -157,38 +160,38 @@ func (e *Engine) resolveScanner(ctx context.Context, runID string) (ports.EnvID,
 
 // autoExposeObserved exposes discovered ports not yet exposed, up to the
 // per-run cap. Mark-once (no retry storms): a failed expose stays clickable
-// in the UI. Only invoked when PortDiscoveryAutoExpose is set.
-func (e *Engine) autoExposeObserved(runID string) {
-	obs := e.ObservedPorts(runID)
+// in the UI. Only invoked when Config.AutoExpose is set.
+func (s *Service) autoExposeObserved(runID string) {
+	obs := s.ObservedPorts(runID)
 	if len(obs) == 0 {
 		return
 	}
-	e.observedMu.Lock()
-	r := e.observed[runID]
+	s.mu.Lock()
+	r := s.observed[runID]
 	if r == nil {
-		e.observedMu.Unlock()
+		s.mu.Unlock()
 		return
 	}
 	var todo []int
 	for _, p := range obs {
-		if len(r.autoExposed) >= e.cfg.PortDiscoveryMaxAuto {
+		if len(r.autoExposed) >= s.Config.maxAuto() {
 			break
 		}
 		if r.autoExposed[p.Port] {
 			continue
 		}
-		if e.portRelay != nil && e.portRelay.Existing(runID, p.Port) != "" {
+		if s.Relay != nil && s.Relay.Existing(runID, p.Port) != "" {
 			continue // already exposed (manual, or a prior auto pass)
 		}
 		r.autoExposed[p.Port] = true
 		todo = append(todo, p.Port)
 	}
-	e.observedMu.Unlock()
+	s.mu.Unlock()
 
 	for _, port := range todo {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		if _, err := e.ExposeRunPort(ctx, runID, port); err != nil {
-			e.log.Warn("auto-expose of discovered port failed", "run", runID, "port", port, "err", err)
+		if _, err := s.Expose(ctx, runID, port); err != nil {
+			s.log().Warn("auto-expose of discovered port failed", "run", runID, "port", port, "err", err)
 		}
 		cancel()
 	}

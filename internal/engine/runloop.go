@@ -2431,7 +2431,7 @@ func (x *exec) ensureEnv() error {
 			// Exposures also died with the previous process; re-create them
 			// (fresh ports — the live registry, not the old env_ready event,
 			// is what the UI trusts).
-			x.autoExpose(rs.envID)
+			x.e.runPorts.AutoExpose(x.ctx, rs.runID, x.res.Envp, rs.envID)
 			// Re-materialize goal + answer artifacts into the recovered
 			// workspace (idempotent; the associations are durable).
 			x.deliverRunAttachments()
@@ -2522,48 +2522,9 @@ func (x *exec) ensureEnv() error {
 	// match the pre-restart ones (best-effort). Getting INTO the workspace
 	// is not a link the log records: the run page has its terminal and
 	// editor, the SSH door its ssh/VS Code route (GET /runs/{id}/ssh).
-	evLinks := x.autoExpose(id)
+	evLinks := x.e.runPorts.AutoExpose(x.ctx, x.rs.runID, x.res.Envp, id)
 	rs.links = evLinks // live counterpart of replay's env_ready capture
 	return x.append(&event.EnvReady{EnvID: string(id), Links: evLinks})
-}
-
-// autoExpose publishes the union of the ports the environment DECLARES
-// (devcontainer forwardPorts) and the ports this run had exposed before a
-// restart (portRelay.SavedPorts — includes MANUAL exposures, which would
-// otherwise be lost on recovery). Each re-binds its persisted host port so
-// the URL survives. Best-effort — a failed exposure is a warning, never a
-// failed run.
-func (x *exec) autoExpose(id ports.EnvID) []event.Link {
-	exposer, ok := x.res.Envp.(ports.WorkspacePortExposer)
-	if !ok || x.e.portRelay == nil {
-		return nil
-	}
-	seen := map[int]bool{}
-	wsPorts := exposer.AppPorts(x.ctx, id)
-	wsPorts = append(wsPorts, x.e.portRelay.SavedPorts(x.rs.runID)...)
-	var out []event.Link
-	for _, port := range wsPorts {
-		if seen[port] {
-			continue
-		}
-		seen[port] = true
-		if url := x.e.portRelay.Existing(x.rs.runID, port); url != "" {
-			out = append(out, event.Link{Kind: "app", URL: url})
-			continue
-		}
-		pc, err := exposer.ExposePort(x.ctx, id, port)
-		if err != nil {
-			x.e.log.Warn("auto-expose failed", "run", x.rs.runID, "port", port, "err", err)
-			continue
-		}
-		url, err := x.e.portRelay.Expose(x.rs.runID, port, pc)
-		if err != nil {
-			x.e.log.Warn("auto-expose failed", "run", x.rs.runID, "port", port, "err", err)
-			continue
-		}
-		out = append(out, event.Link{Kind: "app", URL: url})
-	}
-	return out
 }
 
 // bootstrap runs the §11 ordered steps. A setup failure is a deterministic

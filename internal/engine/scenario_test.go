@@ -4,6 +4,8 @@ package engine
 
 import (
 	askstore "apothecary/internal/ask"
+	"apothecary/internal/portrelay"
+	"apothecary/internal/runports"
 	"context"
 	"fmt"
 	"sort"
@@ -230,6 +232,21 @@ func (h *harness) askPane() *askstore.Service {
 		h.askSvc = askstore.New(&run.Reader{Store: h.store}, resolution.StaticResolver{R: h.res}, h.e, askstore.NewMemStore())
 	}
 	return h.askSvc
+}
+
+// ports is a port-exposure service over the harness's store and resolution,
+// through relay (nil: exposure off).
+func (h *harness) ports(relay *portrelay.Manager) *runports.Service {
+	return runports.New(&run.Reader{Store: h.store}, resolution.StaticResolver{R: h.res}, relay, runports.Config{}, nil)
+}
+
+// setRelay turns port exposure on through relay, the way the daemon wires
+// it: the service installed on the engine and as its teardown hook.
+func (h *harness) setRelay(relay *portrelay.Manager) *runports.Service {
+	rp := h.ports(relay)
+	h.e.SetRunPorts(rp)
+	h.e.AddEnvTeardown(rp)
+	return rp
 }
 
 // writeFile writes into a fake env through the port (lock-safe).

@@ -187,7 +187,7 @@ func TestChainEndStopsStageServicesOnly(t *testing.T) {
 	h.res.Envp = &exposerEnvp{EnvProvisioner: h.envp, target: app.Addr().String()}
 	relay := portrelay.New("127.0.0.1")
 	defer relay.CloseAll()
-	h.e.SetPortRelay(relay)
+	h.setRelay(relay)
 	every := serviceWatchEvery
 	serviceWatchEvery = time.Millisecond
 	t.Cleanup(func() { serviceWatchEvery = every })

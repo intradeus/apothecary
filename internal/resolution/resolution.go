@@ -142,7 +142,7 @@ type Resolution struct {
 
 	// CredentialIDs are the provider credentials the project's harness
 	// integrations reference: a refresh of one of them is pushed into this
-	// resolution's live workspaces (PushCredential), and only them.
+	// resolution's live workspaces (authsink.Sink.Push), and only them.
 	CredentialIDs []string
 	// AuthBroker serves the harness logins over omp's auth-broker protocol
 	// for one run (register: the run's redactor); nil when no harness reads

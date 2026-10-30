@@ -26,6 +26,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/runports"
 	"apothecary/internal/shell"
 	"apothecary/internal/sidecar"
 	"apothecary/internal/wsinfo"
@@ -417,11 +418,11 @@ func (x *exec) serviceLink(name string) string {
 // included). Best effort: no port relay, no links.
 func (e *Engine) exposeService(ctx context.Context, runID string, svc *resolution.Service) map[int]string {
 	out := map[int]string{}
-	if e.portRelay == nil {
-		return out
-	}
 	for _, p := range svc.Ports {
-		url, err := e.ExposeRunPort(ctx, runID, p.Port)
+		url, err := e.runPorts.Expose(ctx, runID, p.Port)
+		if errors.Is(err, runports.ErrPortsOff) {
+			return out
+		}
 		if err != nil {
 			// Read on every look at the pane: a provisioner that cannot
 			// expose says so each time, which is not news.

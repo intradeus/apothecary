@@ -56,6 +56,7 @@ import (
 	"apothecary/internal/resolve"
 	"apothecary/internal/resources"
 	"apothecary/internal/run"
+	"apothecary/internal/runports"
 	"apothecary/internal/secrets"
 	"apothecary/internal/skillstore"
 	"apothecary/internal/sshdoor"
@@ -249,9 +250,8 @@ func cmdServe(args []string) error {
 	}
 
 	ecfg := engine.Config{
-		EngineURL:               engineURL(boot.Listen),
-		RunsDir:                 boot.RunsDir,
-		PortDiscoveryAutoExpose: boot.PortAutoExpose,
+		EngineURL: engineURL(boot.Listen),
+		RunsDir:   boot.RunsDir,
 	}
 	// The capacity caps are an admin's setting (System → Limits), stored in
 	// the database and read on every admission: a change applies to the next
@@ -270,7 +270,6 @@ func cmdServe(args []string) error {
 	egressSvc := egress.New(runs, resolver, store) // durable egress audit trail (pgstore)
 	egressSvc.ActiveRuns = e.ActiveRunIDs
 	egressSvc.Log = log
-	e.AddEnvTeardown(egressSvc)
 	askSvc := ask.New(runs, resolver, e, store)
 	askSvc.Log = log
 	// A project's parameter bindings are laid over a flow's defaults at run
@@ -318,7 +317,12 @@ func cmdServe(args []string) error {
 	if err := portRelay.Persist(store); err != nil {
 		return fmt.Errorf("load persisted port exposures: %w", err)
 	}
-	e.SetPortRelay(portRelay)
+	portsSvc := runports.New(runs, resolver, portRelay, runports.Config{AutoExpose: boot.PortAutoExpose}, log)
+	e.SetRunPorts(portsSvc)
+	// What a destroyed workspace takes with it, in this order: its exposures
+	// and discovered ports, then a last flush of its egress audit.
+	e.AddEnvTeardown(portsSvc)
+	e.AddEnvTeardown(egressSvc)
 
 	// File stores (DESIGN-FILES): one content-addressed blob store, two typed
 	// stores over it — attachments (upload policy) and snapshots (capture
@@ -383,6 +387,7 @@ func cmdServe(args []string) error {
 	api.Egress = egressSvc
 	api.Ask = askSvc
 	api.AuthSink = sink
+	api.Ports = portsSvc
 	// The SSH door (TODO 46): one listener people ssh to over their VPN —
 	// desktop VS Code included — routed by username to the run's workspace.
 	// Both of its keys derive from instance secrets: the host key so a person

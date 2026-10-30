@@ -10,10 +10,32 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
+	"apothecary/internal/runports"
 )
+
+// exposerEnvp adds the WorkspacePortExposer capability to the fake.
+type exposerEnvp struct {
+	*fake.EnvProvisioner
+	appPorts []int
+	target   string // engine-side echo listener standing in for the workspace app
+}
+
+func (x *exposerEnvp) AppPorts(context.Context, ports.EnvID) []int { return x.appPorts }
+func (x *exposerEnvp) ExposePort(context.Context, ports.EnvID, int) (ports.PortConn, error) {
+	return tcpPortConn{addr: x.target}, nil
+}
+
+type tcpPortConn struct{ addr string }
+
+func (t tcpPortConn) Dial(ctx context.Context) (net.Conn, error) {
+	var d net.Dialer
+	return d.DialContext(ctx, "tcp", t.addr)
+}
+func (t tcpPortConn) Close() error { return nil }
 
 // editorEnvp adds the EditorStarter capability on top of exposerEnvp, so
 // OpenEditor's start-then-expose path can be driven end to end.
@@ -63,14 +85,14 @@ func TestOpenEditor(t *testing.T) {
 	}
 
 	// No relay → honest 503-shaped error.
-	if _, err := h.e.OpenEditor(ctx, "r1"); !errors.Is(err, ErrPortsOff) {
+	if _, err := h.ports(nil).OpenEditor(ctx, "r1"); !errors.Is(err, runports.ErrPortsOff) {
 		t.Fatalf("want ErrPortsOff, got %v", err)
 	}
 	relay := portrelay.New("127.0.0.1")
 	defer relay.CloseAll()
-	h.e.SetPortRelay(relay)
+	rp := h.setRelay(relay)
 
-	u, err := h.e.OpenEditor(ctx, "r1")
+	u, err := rp.OpenEditor(ctx, "r1")
 	if err != nil || u == "" {
 		t.Fatalf("OpenEditor = %q, %v", u, err)
 	}
@@ -78,20 +100,20 @@ func TestOpenEditor(t *testing.T) {
 		t.Errorf("StartEditor called %d times, want 1", ed.starts)
 	}
 	// The editor rode the code-server port.
-	if l := h.e.RunPorts("r1"); len(l) != 1 || l[0].Port != ports.CodeServerPort {
+	if l := rp.List("r1"); len(l) != 1 || l[0].Port != ports.CodeServerPort {
 		t.Errorf("exposed ports = %v, want [%d]", l, ports.CodeServerPort)
 	}
 
 	// Idempotent: same URL — and code-server is started again if it is not
 	// listening (StartEditor is the adapter's idempotent probe-then-start),
 	// since an exposure can outlive the code-server behind it.
-	if u2, err := h.e.OpenEditor(ctx, "r1"); err != nil || u2 != u {
+	if u2, err := rp.OpenEditor(ctx, "r1"); err != nil || u2 != u {
 		t.Errorf("second OpenEditor = %q, %v (want %q)", u2, err, u)
 	}
 	if ed.starts != 2 {
 		t.Errorf("StartEditor called %d times over two opens, want 2", ed.starts)
 	}
-	if l := h.e.RunPorts("r1"); len(l) != 1 {
+	if l := rp.List("r1"); len(l) != 1 {
 		t.Errorf("second open exposed again: %v", l)
 	}
 	// The run page's SSH facts carry the editor's extension list, so a
@@ -124,11 +146,11 @@ func TestRebuildRestoresExposuresAndEditor(t *testing.T) {
 	ctx := context.Background()
 	relay := portrelay.New("127.0.0.1")
 	defer relay.CloseAll()
-	h.e.SetPortRelay(relay)
+	rp := h.setRelay(relay)
 	env := &rebuildEditorEnvp{editorEnvp: &editorEnvp{exposerEnvp: &exposerEnvp{EnvProvisioner: h.envp, target: "127.0.0.1:1"}}}
 	h.res.Envp = env
 
-	u, err := h.e.OpenEditor(ctx, id)
+	u, err := rp.OpenEditor(ctx, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +171,7 @@ func TestRebuildRestoresExposuresAndEditor(t *testing.T) {
 func TestOpenEditorUnsupported(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()
-	h.e.SetPortRelay(portrelay.New("127.0.0.1"))
+	rp := h.setRelay(portrelay.New("127.0.0.1"))
 	if _, err := h.store.Append(ctx, "r1",
 		&event.RunCreated{ProjectID: testProject, FlowName: "loop"},
 		&event.EnvReady{EnvID: "env1"},
@@ -157,7 +179,7 @@ func TestOpenEditorUnsupported(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Plain fake implements neither EditorStarter nor WorkspacePortExposer.
-	_, err := h.e.OpenEditor(ctx, "r1")
+	_, err := rp.OpenEditor(ctx, "r1")
 	if err == nil || !strings.Contains(err.Error(), "does not support") {
 		t.Fatalf("want unsupported error, got %v", err)
 	}
