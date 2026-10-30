@@ -128,7 +128,7 @@ func (e *Engine) providerEnvFor(res *resolution.Resolution, runID, engineURL str
 // be called when the request is done. A run that has ended gets none — its
 // workspace has no business with live credentials.
 func (e *Engine) RunAuthBroker(ctx context.Context, runID string) (http.Handler, func(), error) {
-	v, err := e.runView(ctx, runID)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return nil, nil, err
 	}

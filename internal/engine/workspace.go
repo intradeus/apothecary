@@ -85,20 +85,9 @@ type Checkout struct {
 	Base string
 }
 
-func (e *Engine) runView(ctx context.Context, runID string) (run.View, error) {
-	evs, err := e.store.Events(ctx, runID, 0)
-	if err != nil {
-		return run.View{}, err
-	}
-	if len(evs) == 0 {
-		return run.View{}, fmt.Errorf("run %s not found", runID)
-	}
-	return run.Reduce(evs), nil
-}
-
 // Checkouts lists the run's repositories (the primary first).
 func (e *Engine) Checkouts(ctx context.Context, runID string) ([]event.Checkout, error) {
-	v, err := e.runView(ctx, runID)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +97,7 @@ func (e *Engine) Checkouts(ctx context.Context, runID string) ([]event.Checkout,
 // Workspace returns a client for the run's workspace sidecar (starting it
 // when nothing serves yet) and the checkout named by repo ("" = the primary).
 func (e *Engine) Workspace(ctx context.Context, runID, repo string) (*sidecar.Client, Checkout, error) {
-	v, err := e.runView(ctx, runID)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return nil, Checkout{}, err
 	}

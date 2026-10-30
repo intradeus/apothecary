@@ -498,7 +498,7 @@ type RunServices struct {
 // serviceRun is what a human's service action needs: the run's workspace
 // and the resolved project (release it).
 func (e *Engine) serviceRun(ctx context.Context, runID string) (run.View, *resolution.Resolution, error) {
-	v, err := e.runView(ctx, runID)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return v, nil, err
 	}

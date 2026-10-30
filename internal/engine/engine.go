@@ -208,8 +208,10 @@ func (l Limits) withDefaults() Limits {
 }
 
 type Engine struct {
-	cfg      Config
-	store    event.Store
+	cfg   Config
+	store event.Store
+	// runs reads run views from store (the read side the services share).
+	runs     *run.Reader
 	resolver resolution.Resolver
 	flows    flow.Source
 	bindings FlowBindings // nil = no project bindings
@@ -598,6 +600,7 @@ func New(cfg Config, store event.Store, resolver resolution.Resolver, flows flow
 	return &Engine{
 		cfg:       cfg.withDefaults(),
 		store:     store,
+		runs:      &run.Reader{Store: store},
 		resolver:  resolver,
 		flows:     flows,
 		settings:  settings,
@@ -808,14 +811,10 @@ func (e *Engine) ExposeRunPort(ctx context.Context, runID string, port int) (str
 	if url := e.portRelay.Existing(runID, port); url != "" {
 		return url, nil
 	}
-	evs, err := e.store.Events(ctx, runID, 0)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return "", err
 	}
-	if len(evs) == 0 {
-		return "", fmt.Errorf("run %s not found", runID)
-	}
-	v := run.Reduce(evs)
 	if v.EnvID == "" || v.ProjectID == "" {
 		return "", fmt.Errorf("run %s has no environment", runID)
 	}
@@ -847,14 +846,10 @@ func (e *Engine) RunPorts(runID string) []portrelay.Exposure {
 // per-project gateway), or ErrEgressOff when the run isn't live or the
 // provisioner has no gateway.
 func (e *Engine) egressCtrl(ctx context.Context, runID string) (ports.EgressController, ports.EnvID, func(), error) {
-	evs, err := e.store.Events(ctx, runID, 0)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return nil, "", nil, err
 	}
-	if len(evs) == 0 {
-		return nil, "", nil, fmt.Errorf("run %s not found", runID)
-	}
-	v := run.Reduce(evs)
 	if v.ProjectID == "" {
 		return nil, "", nil, fmt.Errorf("run %s: %w", runID, ErrEgressOff)
 	}
@@ -1380,14 +1375,10 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 	if active {
 		return fmt.Errorf("run %s is still active; abort it first", runID)
 	}
-	evs, err := e.store.Events(ctx, runID, 0)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return err
 	}
-	if len(evs) == 0 {
-		return fmt.Errorf("run %s not found", runID)
-	}
-	v := run.Reduce(evs)
 	if v.State == run.Archived {
 		return fmt.Errorf("run %s is already archived", runID)
 	}
@@ -1430,14 +1421,10 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in RunInput) (string, 
 	if active {
 		return "", fmt.Errorf("run %s is still active; abort it first", runID)
 	}
-	evs, err := e.store.Events(ctx, runID, 0)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return "", err
 	}
-	if len(evs) == 0 {
-		return "", fmt.Errorf("run %s not found", runID)
-	}
-	v := run.Reduce(evs)
 	if !v.State.Terminal() {
 		return "", fmt.Errorf("run %s is %s; only terminal runs can be restarted", runID, v.State)
 	}
@@ -1523,14 +1510,10 @@ func (e *Engine) RetryRun(ctx context.Context, runID string) error {
 	if active {
 		return fmt.Errorf("run %s is still active", runID)
 	}
-	evs, err := e.store.Events(ctx, runID, 0)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return err
 	}
-	if len(evs) == 0 {
-		return fmt.Errorf("run %s not found", runID)
-	}
-	v := run.Reduce(evs)
 	if v.State != run.Abandoned && v.State != run.Failed {
 		return fmt.Errorf("run %s is %s; only abandoned or failed runs can be retried (completed runs have nothing to retry)", runID, v.State)
 	}
@@ -1733,7 +1716,7 @@ func (e *Engine) preflight(ctx context.Context, res *resolution.Resolution, fl *
 // RunsOfTicket lists the runs created for a ticket, newest last — what an
 // automation asks before starting a run for a ticket it imported earlier.
 func (e *Engine) RunsOfTicket(ctx context.Context, ticketID string) ([]run.View, error) {
-	all, err := e.views(ctx)
+	all, err := e.runs.All(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1746,38 +1729,13 @@ func (e *Engine) RunsOfTicket(ctx context.Context, ticketID string) ([]run.View,
 	return out, nil
 }
 
-// views is every run's read-model row: one query when the store keeps the
-// projection (run.ViewSource), else each run's log reduced — the in-memory
-// store's path, and the reference the projection is checked against.
-func (e *Engine) views(ctx context.Context) ([]run.View, error) {
-	if vs, ok := e.store.(run.ViewSource); ok {
-		return vs.RunViews(ctx)
-	}
-	ids, err := e.store.RunIDs(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]run.View, 0, len(ids))
-	for _, id := range ids {
-		evs, err := e.store.Events(ctx, id, 0)
-		if err != nil {
-			return nil, err
-		}
-		if len(evs) == 0 {
-			continue
-		}
-		out = append(out, run.Reduce(evs))
-	}
-	return out, nil
-}
-
 // Recover replays events on boot (§2) and restarts every non-terminal run.
 // Runs that already hold resources (provisioning and beyond) restart
 // unconditionally; still-pending runs re-queue FIFO by creation order and
 // start as §14 slots allow. A workspace rebuild the previous process never
 // finished is closed as failed first: nothing is rebuilding it anymore.
 func (e *Engine) Recover(ctx context.Context) error {
-	views, err := e.views(ctx)
+	views, err := e.runs.All(ctx)
 	if err != nil {
 		return err
 	}
@@ -1908,14 +1866,10 @@ func (e *Engine) Abort(runID string) error {
 	e.mu.Unlock()
 
 	ctx := context.Background()
-	evs, err := e.store.Events(ctx, runID, 0)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return err
 	}
-	if len(evs) == 0 {
-		return fmt.Errorf("run %s not found", runID)
-	}
-	v := run.Reduce(evs)
 	if v.State.Terminal() {
 		return fmt.Errorf("run %s is already %s: %w", runID, v.State, ErrRunNotActive)
 	}
@@ -2401,14 +2355,10 @@ func lastPendingPing(evs []event.Event, pingID string) bool {
 // via the provisioner's OPTIONAL ExecLogTailer capability — the run-page
 // "is it actually doing something" feedback.
 func (e *Engine) WorkspaceLogTail(ctx context.Context, runID string, n int) ([]byte, error) {
-	evs, err := e.store.Events(ctx, runID, 0)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
-	if len(evs) == 0 {
-		return nil, fmt.Errorf("run %s not found", runID)
-	}
-	v := run.Reduce(evs)
 	if v.ProjectID == "" {
 		return nil, fmt.Errorf("run %s: %w", runID, ErrNoLiveLog)
 	}
@@ -2475,7 +2425,7 @@ func Window(d time.Duration) func(string) time.Duration {
 }
 
 func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter func(userID string) time.Duration) error {
-	views, err := e.views(ctx)
+	views, err := e.runs.All(ctx)
 	if err != nil {
 		return err
 	}
@@ -2515,7 +2465,7 @@ func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter func(userID
 // credentials expired would stay green "live" forever. Honest "unknown" beats a
 // stale "live"; a genuinely transient blip self-heals on the next 30s pass.
 func (e *Engine) ReconcileEnvsOnce(ctx context.Context) error {
-	views, err := e.views(ctx)
+	views, err := e.runs.All(ctx)
 	if err != nil {
 		return err
 	}
@@ -2621,7 +2571,7 @@ const resourceWindow = 360
 // workspace may outlive the run for inspection, but the graphs are working
 // feedback, not history.
 func (e *Engine) SampleResourcesOnce(ctx context.Context) error {
-	views, err := e.views(ctx)
+	views, err := e.runs.All(ctx)
 	if err != nil {
 		return err
 	}

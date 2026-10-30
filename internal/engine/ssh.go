@@ -92,7 +92,7 @@ func (e *Engine) runByEnv(ctx context.Context, envID string) (run.View, bool, er
 	if el, ok := e.store.(run.EnvLookup); ok {
 		return el.RunByEnv(ctx, envID)
 	}
-	views, err := e.views(ctx)
+	views, err := e.runs.All(ctx)
 	if err != nil {
 		return run.View{}, false, err
 	}
@@ -117,7 +117,7 @@ type SSHInfo struct {
 }
 
 func (e *Engine) SSHInfo(ctx context.Context, runID string) (SSHInfo, error) {
-	v, err := e.runView(ctx, runID)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return SSHInfo{}, err
 	}

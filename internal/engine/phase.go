@@ -893,7 +893,7 @@ func (e *Engine) RunPhases(ctx context.Context, runID string) ([]PhaseInfo, erro
 	if len(evs) == 0 {
 		return nil, fmt.Errorf("run %s not found", runID)
 	}
-	v, err := e.runView(ctx, runID)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return nil, err
 	}

@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"apothecary/internal/ports"
-	"apothecary/internal/run"
 )
 
 // OpenEditor lazily starts code-server (VS Code in the browser) in the run's
@@ -22,14 +21,10 @@ func (e *Engine) OpenEditor(ctx context.Context, runID string) (string, error) {
 	if e.portRelay == nil {
 		return "", ErrPortsOff
 	}
-	evs, err := e.store.Events(ctx, runID, 0)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return "", err
 	}
-	if len(evs) == 0 {
-		return "", fmt.Errorf("run %s not found", runID)
-	}
-	v := run.Reduce(evs)
 	if v.EnvID == "" || v.ProjectID == "" {
 		return "", fmt.Errorf("run %s has no environment", runID)
 	}

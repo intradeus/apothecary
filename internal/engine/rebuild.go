@@ -32,14 +32,10 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 	if active {
 		return fmt.Errorf("run %s: %w", runID, ErrRunActive)
 	}
-	evs, err := e.store.Events(ctx, runID, 0)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return err
 	}
-	if len(evs) == 0 {
-		return fmt.Errorf("run %s not found", runID)
-	}
-	v := run.Reduce(evs)
 	if v.EnvID == "" {
 		return fmt.Errorf("run %s has no workspace to rebuild", runID)
 	}

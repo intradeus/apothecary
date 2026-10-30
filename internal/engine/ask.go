@@ -132,7 +132,7 @@ func (s *askSetup) release() {
 }
 
 func (e *Engine) askSetup(ctx context.Context, runID string) (*askSetup, error) {
-	v, err := e.runView(ctx, runID)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +262,7 @@ func (e *Engine) AskState(ctx context.Context, runID string) (AskState, error) {
 
 // AskMessages lists the conversation after seq (the stream's replay).
 func (e *Engine) AskMessages(ctx context.Context, runID string, afterSeq int64) ([]askstore.Message, error) {
-	if _, err := e.runView(ctx, runID); err != nil {
+	if _, err := e.runs.View(ctx, runID); err != nil {
 		return nil, err
 	}
 	return e.askStore.AskMessages(ctx, runID, afterSeq)

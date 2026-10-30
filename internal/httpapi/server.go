@@ -254,28 +254,10 @@ func toPingJSON(p *engine.Ping) pingJSON {
 
 // --- tickets & runs ---------------------------------------------------------
 
-// runViews is every run's read-model row: the store's projection when it keeps
-// one (one query), else every log reduced — the engine's own rule (engine.views).
+// runViews is every run's read-model row (run.Reader.All: the store's
+// projection when it keeps one, else every log reduced).
 func (s *Server) runViews(ctx context.Context) ([]run.View, error) {
-	if vs, ok := s.Store.(run.ViewSource); ok {
-		return vs.RunViews(ctx)
-	}
-	ids, err := s.Store.RunIDs(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]run.View, 0, len(ids))
-	for _, id := range ids {
-		evs, err := s.Store.Events(ctx, id, 0)
-		if err != nil {
-			return nil, err
-		}
-		if len(evs) == 0 {
-			continue
-		}
-		out = append(out, run.Reduce(evs))
-	}
-	return out, nil
+	return (&run.Reader{Store: s.Store}).All(ctx)
 }
 
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {

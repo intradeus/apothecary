@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"apothecary/internal/ports"
-	"apothecary/internal/run"
 )
 
 // Runtime port discovery: the in-workspace shim reports its listeners via
@@ -137,11 +136,10 @@ func (e *Engine) refreshSiblingPorts(runID string) {
 // resolveScanner resolves a run to its EnvID and sibling-port scanner, or
 // ok=false when the run has no env or the provisioner lacks the capability.
 func (e *Engine) resolveScanner(ctx context.Context, runID string) (ports.EnvID, ports.SiblingPortScanner, func(), bool) {
-	evs, err := e.store.Events(ctx, runID, 0)
-	if err != nil || len(evs) == 0 {
+	v, err := e.runs.View(ctx, runID)
+	if err != nil {
 		return "", nil, nil, false
 	}
-	v := run.Reduce(evs)
 	if v.EnvID == "" || v.ProjectID == "" {
 		return "", nil, nil, false
 	}

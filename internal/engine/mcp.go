@@ -15,7 +15,6 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 	"apothecary/internal/resolution"
-	"apothecary/internal/run"
 )
 
 // MCP servers (FLOWLANG §1 mcp_servers): the tools an agent may call beyond
@@ -155,14 +154,10 @@ func (e *Engine) OpenBrowserMCP(ctx context.Context, runID string) (*BrowserMCPS
 	if e.browser == nil {
 		return nil, ErrBrowserOff
 	}
-	evs, err := e.store.Events(ctx, runID, 0)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
-	if len(evs) == 0 {
-		return nil, fmt.Errorf("run %s not found", runID)
-	}
-	v := run.Reduce(evs)
 	if v.EnvID == "" || v.ProjectID == "" {
 		return nil, fmt.Errorf("run %s has no environment", runID)
 	}

@@ -75,7 +75,7 @@ type MRLive struct {
 // MRStatuses asks the repository host about each of the run's merge requests.
 // It is an observation for display, not run history: nothing is recorded.
 func (e *Engine) MRStatuses(ctx context.Context, runID string) ([]MRLive, error) {
-	v, err := e.runView(ctx, runID)
+	v, err := e.runs.View(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
