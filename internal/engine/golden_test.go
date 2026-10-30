@@ -32,6 +32,11 @@ var golden = struct {
 // harness registers its engine's Shutdown, so that (cleanups being LIFO) the
 // log is rendered after every engine of the test has stopped appending.
 func registerGolden(t *testing.T, h *harness) {
+	// A log per crash point, none of them worth keeping: that test holds
+	// every one of them to the clean run instead.
+	if strings.HasPrefix(t.Name(), "TestCrashAtEveryEvent") {
+		return
+	}
 	golden.mu.Lock()
 	defer golden.mu.Unlock()
 	first := len(golden.harnesses[t]) == 0

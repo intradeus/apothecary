@@ -38,6 +38,10 @@ func checkFoldInvariant(x *exec) {
 	if x.rs.Flow == nil || x.rs.RunID == "" {
 		return
 	}
+	// A dead process held whatever it held: only its log survives it.
+	if cs, ok := x.e.store.(*crashStore); ok && cs.isDead() {
+		return
+	}
 	evs, err := x.e.store.Events(context.Background(), x.rs.RunID, 0)
 	if err != nil || len(evs) == 0 {
 		return
