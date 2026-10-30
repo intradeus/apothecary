@@ -73,7 +73,7 @@ func (x *exec) attachmentFiles(st *flow.Stage) (files []envport.FileEntry, route
 func (x *exec) attach(body string, files []envport.FileEntry, upload func(name, contentType string, data []byte) (repoport.Attachment, error)) (string, error) {
 	linked := make([]linkedFile, 0, len(files))
 	for _, f := range files {
-		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, f.Path)
+		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.EnvID, f.Path)
 		if err != nil {
 			return "", fmt.Errorf("reading attachment %s: %w", f.Path, err)
 		}

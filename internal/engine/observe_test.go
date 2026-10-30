@@ -188,29 +188,6 @@ func TestHeadMovedIsSomeoneElsesPush(t *testing.T) {
 	}
 }
 
-// Replay knows the same heads: pushed tips, the merge request's opening
-// head, a phase run's tip — per checkout.
-func TestReplayKnowsTheRunsHeads(t *testing.T) {
-	fl := mustFlow(t, parkFlowDoc)
-	ev := func(p event.Payload) event.Event { return event.Event{RunID: "r", Type: p.EventType(), Payload: p} }
-	rs := replay([]event.Event{
-		ev(&event.RunCreated{TicketTitle: "t", FlowName: "park", By: "human"}),
-		ev(&event.PhaseStarted{Phase: flow.MainPhase, By: "human"}),
-		ev(&event.BranchPushed{Repo: "repo", Branch: "b", Tip: "p1"}),
-		ev(&event.MRCreated{Repo: "repo", Branch: "b", MRURL: "https://x/1", MRIID: 1, Head: "m1"}),
-		ev(&event.PhaseCompleted{Phase: flow.MainPhase}),
-		ev(&event.PhaseStarted{Phase: "conflicts", Subject: "repo", Key: "k", By: "signal", Tip: "t1"}),
-	}, fl)
-	for _, sha := range []string{"p1", "m1", "t1"} {
-		if !rs.knownHead("repo", sha) {
-			t.Errorf("%s unknown after replay", sha)
-		}
-	}
-	if rs.knownHead("repo", "other") || rs.knownHead("api", "p1") {
-		t.Error("a head is known per checkout, and only the run's own")
-	}
-}
-
 // mr_approved as an outcome: the run is done once every merge request is
 // approved — read only because the flow has a signal on it.
 func TestApprovedOutcomeEndsTheRun(t *testing.T) {

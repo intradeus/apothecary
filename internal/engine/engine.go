@@ -34,6 +34,7 @@ import (
 	"apothecary/internal/resolution"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
+	"apothecary/internal/runcore"
 	"apothecary/internal/runports"
 	"apothecary/internal/skills"
 	"apothecary/internal/wsname"
@@ -275,6 +276,13 @@ type runHandle struct {
 	phaseStarts chan phaseStartReq
 	done        chan struct{}
 }
+
+// PingGate and PingDebug are re-exported for the engine's callers (the HTTP
+// layer and tests); the vocabulary itself belongs to the event catalog.
+const (
+	PingGate  = event.PingGate
+	PingDebug = event.PingDebug
+)
 
 // Ping is an open (or answered) human interaction. Gate pings are raised by
 // the engine at human_gate stages; agent pings arrive via RaisePing (§10).
@@ -1423,7 +1431,7 @@ func (e *Engine) Recover(ctx context.Context) error {
 			}
 			// Parked on the holder of a take-over: only their word (a
 			// message, a release — wakeHeld) wakes it, never a restart.
-			if len(replay(evs, nil).pausedHold) > 0 {
+			if len(runcore.Replay(evs, nil).PausedHold) > 0 {
 				continue
 			}
 		}

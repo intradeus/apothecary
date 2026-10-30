@@ -10,10 +10,10 @@ import (
 // Harnesses that cannot be asked are logged, not failed: their stage
 // surfaces any problem itself.
 func (x *exec) checkAgentModels() []string {
-	missing, unasked := modelcheck.AgentModels(x.ctx, x.res, x.rs.envID, x.rs.fl.Stages)
+	missing, unasked := modelcheck.AgentModels(x.ctx, x.res, x.rs.EnvID, x.rs.Flow.Stages)
 	if len(unasked) > 0 {
 		x.e.log.Warn("could not ask the workspace agent for its models",
-			"run", x.rs.runID, "harnesses", strings.Join(unasked, "; "))
+			"run", x.rs.RunID, "harnesses", strings.Join(unasked, "; "))
 	}
 	return missing
 }

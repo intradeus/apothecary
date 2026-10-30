@@ -32,7 +32,7 @@ func (x *exec) answerReply(asks []ask, written []string) string {
 			kind := ""
 			var form *event.Form
 			var shown []string
-			if r := x.rs.raisedPings[a.id]; r != nil {
+			if r := x.rs.RaisedPings[a.id]; r != nil {
 				kind, form, shown = r.Kind(), r.Form, r.Files
 			}
 			ans := PingAnswer{Answer: a.answer.Answer, Feedback: a.answer.Feedback, Content: a.answer.Content, Review: a.answer.Review}
@@ -67,19 +67,19 @@ func (x *exec) answerReply(asks []ask, written []string) string {
 func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 	rs := x.rs
 	var b strings.Builder
-	spec := rs.fl.Agent(st.Agent)
+	spec := rs.Flow.Agent(st.Agent)
 	for _, in := range st.Inputs {
 		if flow.IsEdgeSource(in.Value) {
 			// The content of the edge that re-entered this stage. Only one of
 			// $DECISION / $FAILURE can be filled at a time (the edge kind
 			// decides which), and neither on a first attempt.
-			if in.Value != rs.feedSentinel || rs.feed == "" {
+			if in.Value != rs.FeedSentinel || rs.Feed == "" {
 				continue
 			}
 			// Both were capped where they were taken: a failure to its tail,
 			// a verdict to its head.
 			fmt.Fprintf(&b, "# INPUT: %s%s (%s)\n%s\n",
-				in.Name, inputDesc(spec, in.Name), attemptOf(iter, rs.feedAttempts), strings.TrimRight(rs.feed, "\n"))
+				in.Name, inputDesc(spec, in.Name), attemptOf(iter, rs.FeedAttempts), strings.TrimRight(rs.Feed, "\n"))
 			continue
 		}
 		if name := flow.SourceService(in.Value); name != "" {
@@ -91,7 +91,7 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 			x.ticketSection(&b)
 			continue
 		case flow.SourceCIFailure:
-			fmt.Fprintf(&b, "# INPUT: %s%s (what failed in CI)\n%s", in.Name, inputDesc(spec, in.Name), ciFailureText(rs.ci))
+			fmt.Fprintf(&b, "# INPUT: %s%s (what failed in CI)\n%s", in.Name, inputDesc(spec, in.Name), ciFailureText(rs.CI))
 			continue
 		case flow.SourceMRURL, flow.SourceWorkspace:
 			if link := x.sourceLink(in.Value); link != "" {
@@ -119,7 +119,7 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 			continue
 		}
 		content := "(file missing)"
-		if data, err := x.res.Envp.ReadFile(x.ctx, rs.envID, path); err == nil {
+		if data, err := x.res.Envp.ReadFile(x.ctx, rs.EnvID, path); err == nil {
 			content = shell.Tail(string(data), 16<<10)
 		}
 		fmt.Fprintf(&b, "# INPUT: %s%s (file: %s)\n%s\n", in.Name, inputDesc(spec, in.Name), path, content)
@@ -128,9 +128,9 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 	if sec := x.subjectSection(); sec != "" {
 		b.WriteString(sec)
 	}
-	if len(rs.checkouts) > 1 {
+	if len(rs.Checkouts) > 1 {
 		b.WriteString("# REPOSITORIES\nThis run works in several repositories, each checked out on its own run branch:\n")
-		for _, co := range rs.checkouts {
+		for _, co := range rs.Checkouts {
 			role := ""
 			if co.Primary {
 				role = " (primary — relative paths in this prompt are here)"
@@ -171,7 +171,7 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		// So is every output with a structure: the agent sees exactly what the
 		// engine checks the file against when the stage ends.
 		for _, o := range outs {
-			for _, s := range rs.fl.PortSchemas(o) {
+			for _, s := range rs.Flow.PortSchemas(o) {
 				format := "JSON"
 				if !strings.HasSuffix(o.Value, ".json") {
 					format = "YAML"
@@ -220,15 +220,15 @@ func humanSize(n int64) string {
 // the human's direction for this attempt and the files attached to it.
 func (x *exec) ticketSection(b *strings.Builder) {
 	rs := x.rs
-	fmt.Fprintf(b, "# TASK\n%s\n", rs.view.TicketTitle)
-	if rs.view.TicketChangeType != "" {
-		fmt.Fprintf(b, "Change type: %s\n", rs.view.TicketChangeType)
+	fmt.Fprintf(b, "# TASK\n%s\n", rs.View.TicketTitle)
+	if rs.View.TicketChangeType != "" {
+		fmt.Fprintf(b, "Change type: %s\n", rs.View.TicketChangeType)
 	}
-	fmt.Fprintf(b, "\n%s\n", rs.view.TicketGoal)
+	fmt.Fprintf(b, "\n%s\n", rs.View.TicketGoal)
 	// Per-attempt direction from the human (ticket goal stays the spec; this
 	// is additive — "last try broke the router, use the middleware instead").
-	if rs.view.RunGoal != "" {
-		fmt.Fprintf(b, "\n# ADDITIONAL DIRECTION FOR THIS ATTEMPT\n%s\n", rs.view.RunGoal)
+	if rs.View.RunGoal != "" {
+		fmt.Fprintf(b, "\n# ADDITIONAL DIRECTION FOR THIS ATTEMPT\n%s\n", rs.View.RunGoal)
 	}
 	if goals := x.goalAttachments(); len(goals) > 0 {
 		b.WriteString("# ATTACHED FILES\nThe human attached these files to the task; read them with your tools:\n")
@@ -356,10 +356,10 @@ func parseVerdict(path string, data []byte) (*Verdict, error) {
 // agent reads the files itself, so churn counts are noise in the prompt.
 func (x *exec) gitDiff(dir, base string) string {
 	rs := x.rs
-	res, err := x.res.Envp.Exec(x.ctx, rs.envID, envport.Command{
+	res, err := x.res.Envp.Exec(x.ctx, rs.EnvID, envport.Command{
 		Script:  fmt.Sprintf("git diff --name-status %s...HEAD", base),
 		Dir:     dir,
-		Timeout: rs.fl.Defaults.Timeout,
+		Timeout: rs.Flow.Defaults.Timeout,
 	})
 	if err != nil || res.ExitCode != 0 {
 		return "(no diff available)"
@@ -377,11 +377,11 @@ func (x *exec) diffTarget() string {
 	target := func(co event.Checkout) string {
 		return "origin/" + bootstrap.SourceBranchOr(co.Source, x.res.RepoRef.DefaultBranch)
 	}
-	if co := x.rs.subjectCheckout(); co != nil {
+	if co := x.rs.SubjectCheckout(); co != nil {
 		return x.gitDiff(co.Dir, target(*co))
 	}
-	if len(rs.checkouts) <= 1 {
-		return x.gitDiff(event.PrimaryCheckoutDir, "origin/"+bootstrap.SourceBranchOr(rs.sourceBranch, x.res.RepoRef.DefaultBranch))
+	if len(rs.Checkouts) <= 1 {
+		return x.gitDiff(event.PrimaryCheckoutDir, "origin/"+bootstrap.SourceBranchOr(rs.SourceBranch, x.res.RepoRef.DefaultBranch))
 	}
 	return x.checkoutSections(func(co event.Checkout) string { return x.gitDiff(co.Dir, target(co)) })
 }
@@ -391,8 +391,8 @@ func (x *exec) diffTarget() string {
 // phase run that began on no recorded commit (the delivery, which forked
 // the branch) counts from the target, which is the same thing there.
 func (x *exec) diffPhase() string {
-	if co := x.rs.subjectCheckout(); co != nil && x.rs.phaseTip != "" {
-		return x.gitDiff(co.Dir, x.rs.phaseTip)
+	if co := x.rs.SubjectCheckout(); co != nil && x.rs.PhaseTip != "" {
+		return x.gitDiff(co.Dir, x.rs.PhaseTip)
 	}
 	return x.diffTarget()
 }
@@ -404,10 +404,10 @@ func (x *exec) diffPhase() string {
 func (x *exec) statusFiles() string {
 	rs := x.rs
 	status := func(dir string) string {
-		res, err := x.res.Envp.Exec(x.ctx, rs.envID, envport.Command{
+		res, err := x.res.Envp.Exec(x.ctx, rs.EnvID, envport.Command{
 			Script:  "git status --short --untracked-files=all",
 			Dir:     dir,
-			Timeout: rs.fl.Defaults.Timeout,
+			Timeout: rs.Flow.Defaults.Timeout,
 		})
 		if err != nil || res.ExitCode != 0 {
 			return "(no status available)"
@@ -417,10 +417,10 @@ func (x *exec) statusFiles() string {
 		}
 		return res.Output
 	}
-	if co := x.rs.subjectCheckout(); co != nil {
+	if co := x.rs.SubjectCheckout(); co != nil {
 		return status(co.Dir)
 	}
-	if len(rs.checkouts) <= 1 {
+	if len(rs.Checkouts) <= 1 {
 		return status(event.PrimaryCheckoutDir)
 	}
 	return x.checkoutSections(func(co event.Checkout) string { return status(co.Dir) })
@@ -430,7 +430,7 @@ func (x *exec) statusFiles() string {
 // section per repository, headed by its name and path.
 func (x *exec) checkoutSections(render func(co event.Checkout) string) string {
 	var b strings.Builder
-	for _, co := range x.rs.checkouts {
+	for _, co := range x.rs.Checkouts {
 		fmt.Fprintf(&b, "## %s (~/%s)\n%s", co.Name, co.Dir, strings.TrimRight(render(co), "\n"))
 		b.WriteString("\n")
 	}

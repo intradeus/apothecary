@@ -9,6 +9,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
+	"apothecary/internal/runcore"
 	"apothecary/internal/wsname"
 )
 
@@ -140,7 +141,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 
 	// Re-deliver artifacts + re-expose ports into the fresh container, reusing
 	// the run-loop helpers via a minimal exec (these append no events).
-	x := &exec{e: e, rs: &runState{runID: runID, view: v, fl: fl, envID: id}, res: res, ctx: ctx, bg: ctx}
+	x := &exec{e: e, rs: &runcore.State{RunID: runID, View: v, Flow: fl, EnvID: id}, res: res, ctx: ctx, bg: ctx}
 	x.deliverRunAttachments()
 	e.runPorts.ReopenAfterRebuild(ctx, runID, res.Envp, id, res.EditorSettings)
 

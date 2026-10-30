@@ -28,10 +28,10 @@ func (x *exec) capture(snap filestore.Snapshot, data []byte) {
 	if x.e.snapshots == nil {
 		return
 	}
-	snap.RunID = x.rs.runID
+	snap.RunID = x.rs.RunID
 	stored, err := x.e.snapshots.Capture(x.bg, snap, x.redact.Scrub, data)
 	if err != nil {
-		x.e.log.Warn("capturing snapshot", "run", x.rs.runID, "stage", snap.StageID, "kind", snap.Kind, "err", err)
+		x.e.log.Warn("capturing snapshot", "run", x.rs.RunID, "stage", snap.StageID, "kind", snap.Kind, "err", err)
 		return
 	}
 	if err := x.append(&event.SnapshotCaptured{
@@ -48,7 +48,7 @@ func (x *exec) capture(snap filestore.Snapshot, data []byte) {
 		Size:       stored.Size,
 		Truncated:  stored.Truncated,
 	}); err != nil {
-		x.e.log.Warn("recording snapshot", "run", x.rs.runID, "stage", snap.StageID, "err", err)
+		x.e.log.Warn("recording snapshot", "run", x.rs.RunID, "stage", snap.StageID, "err", err)
 	}
 }
 
@@ -68,7 +68,7 @@ func (x *exec) publishOutputs(st *flow.Stage, iter int, bindings []flow.Port) {
 			x.publishDir(st, iter, b)
 			continue
 		}
-		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, b.Value)
+		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.EnvID, b.Value)
 		if err != nil {
 			continue // never written: the output contract reports it
 		}
@@ -87,19 +87,19 @@ func (x *exec) publishOutputs(st *flow.Stage, iter int, bindings []flow.Port) {
 func (x *exec) publishDir(st *flow.Stage, iter int, b flow.Port) {
 	files, err := x.dirFiles(b.Value)
 	if err != nil {
-		x.e.log.Warn("listing a files output", "run", x.rs.runID, "stage", st.ID, "path", b.Value, "err", err)
+		x.e.log.Warn("listing a files output", "run", x.rs.RunID, "stage", st.ID, "path", b.Value, "err", err)
 	}
 	for i, f := range files {
 		if i == attachmentMaxFiles {
-			x.e.log.Warn("files output holds more files than are captured", "run", x.rs.runID, "stage", st.ID,
+			x.e.log.Warn("files output holds more files than are captured", "run", x.rs.RunID, "stage", st.ID,
 				"path", b.Value, "files", len(files), "captured", attachmentMaxFiles)
 			break
 		}
 		if f.Size > attachmentMaxBytes {
-			x.e.log.Warn("file too large to capture", "run", x.rs.runID, "stage", st.ID, "path", f.Path, "size", f.Size)
+			x.e.log.Warn("file too large to capture", "run", x.rs.RunID, "stage", st.ID, "path", f.Path, "size", f.Size)
 			continue
 		}
-		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, f.Path)
+		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.EnvID, f.Path)
 		if err != nil {
 			continue
 		}
@@ -148,7 +148,7 @@ func (x *exec) publishProvisionLog(envName string) {
 	if !ok {
 		return
 	}
-	env := x.rs.envID
+	env := x.rs.EnvID
 	if env == "" {
 		env = envport.EnvID(envName)
 	}
@@ -158,7 +158,7 @@ func (x *exec) publishProvisionLog(envName string) {
 	}
 	// The next provisioning log's number; its snapshot_captured records it
 	// (the fold keeps the pseudo-stage's counter from there).
-	x.publishLog(provisionLogStage, x.rs.iters[provisionLogStage]+1, string(out))
+	x.publishLog(provisionLogStage, x.rs.Iters[provisionLogStage]+1, string(out))
 }
 
 // publishPingFiles snapshots the workspace files attached to a ping, at the
@@ -168,13 +168,13 @@ func (x *exec) publishProvisionLog(envName string) {
 // ping is answered and must not retroactively change the document a decision
 // was recorded against.
 func (x *exec) publishPingFiles(p *Ping, stageID string) {
-	if x.e.snapshots == nil || x.rs.envID == "" {
+	if x.e.snapshots == nil || x.rs.EnvID == "" {
 		return
 	}
 	for _, ref := range p.Files {
-		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, ref)
+		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.EnvID, ref)
 		if err != nil {
-			x.e.log.Warn("snapshotting ping file", "run", x.rs.runID, "ping", p.ID, "ref", ref, "err", err)
+			x.e.log.Warn("snapshotting ping file", "run", x.rs.RunID, "ping", p.ID, "ref", ref, "err", err)
 			continue
 		}
 		x.capture(filestore.Snapshot{

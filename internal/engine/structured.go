@@ -42,7 +42,7 @@ func (x *exec) checkFiles(files []structuredFile) (missing, invalid []string) {
 			}
 			continue
 		}
-		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, f.path)
+		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.EnvID, f.path)
 		if err != nil {
 			if !f.optional {
 				missing = append(missing, f.path)
@@ -66,7 +66,7 @@ func (x *exec) portFiles(ports []flow.Port) []structuredFile {
 		if flow.IsEngineSource(p.Value) {
 			continue
 		}
-		out = append(out, structuredFile{flow.FilePath(p.Value), p.Optional, p.Type == agentspec.TypeFiles, x.rs.fl.PortSchemas(p)})
+		out = append(out, structuredFile{flow.FilePath(p.Value), p.Optional, p.Type == agentspec.TypeFiles, x.rs.Flow.PortSchemas(p)})
 	}
 	return out
 }
@@ -75,7 +75,7 @@ func (x *exec) portFiles(ports []flow.Port) []structuredFile {
 // there holds nothing; one that cannot be listed (it resolves outside the
 // checkout) is an error, and holds nothing either.
 func (x *exec) dirFiles(dir string) ([]envport.FileEntry, error) {
-	files, err := x.res.Envp.ListFiles(x.ctx, x.rs.envID, dir)
+	files, err := x.res.Envp.ListFiles(x.ctx, x.rs.EnvID, dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -150,7 +150,7 @@ const commitScript = `git add -A && if git diff --cached --quiet; then echo "not
 // where the agent that wrote it works.
 func (x *exec) actionCommit(st *flow.Stage) (bool, error) {
 	path := inputPath(st, "message")
-	data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, path)
+	data, err := x.res.Envp.ReadFile(x.ctx, x.rs.EnvID, path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return x.actionFail(st, event.ReasonInputMissing, "declared input(s) not readable: "+path)
@@ -161,8 +161,8 @@ func (x *exec) actionCommit(st *flow.Stage) (bool, error) {
 	if err != nil {
 		return x.actionFail(st, event.ReasonInputInvalid, err.Error())
 	}
-	cos := x.rs.checkouts
-	if co := x.rs.subjectCheckout(); co != nil {
+	cos := x.rs.Checkouts
+	if co := x.rs.SubjectCheckout(); co != nil {
 		cos = []event.Checkout{*co}
 	}
 	script := fmt.Sprintf(commitScript, shell.Quote(msg.text()))

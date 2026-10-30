@@ -20,6 +20,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/runcore"
 	"apothecary/internal/shell"
 	"apothecary/internal/signalspec"
 )
@@ -68,20 +69,20 @@ func (e *Engine) StartPhase(runID, phase, subject string) error {
 // a phase_started has begun.
 func (x *exec) beginRun() error {
 	rs := x.rs
-	if rs.phase != "" || rs.idle || rs.done {
+	if rs.Phase != "" || rs.Idle || rs.Done {
 		return nil
 	}
-	main := rs.fl.Main()
+	main := rs.Flow.Main()
 	if main == nil {
-		rs.idle = true
+		rs.Idle = true
 		return nil
 	}
 	begin := main.ID
-	by := rs.view.StartedBy
+	by := rs.View.StartedBy
 	if by == "" {
 		by = "human"
 	}
-	if rs.anyStarted {
+	if rs.AnyStarted {
 		// Stage events but no phase start (a log written by an older build,
 		// or by hand): record the start without moving the cursor replay
 		// placed — the run is already mid-phase.
@@ -89,7 +90,7 @@ func (x *exec) beginRun() error {
 	}
 	// A run started on someone's merge request begins on it: the merge
 	// request is the main chain's subject, at the head it was started at.
-	if m := rs.adopted; m != nil && main.OnMR() {
+	if m := rs.Adopted; m != nil && main.OnMR() {
 		return x.beginPhase(begin, m.Repo, "", by, m.Head)
 	}
 	return x.beginPhase(begin, "", "", by, "")
@@ -102,15 +103,15 @@ func (x *exec) beginRun() error {
 // head; best effort (the stage sees whatever the checkout holds).
 func (x *exec) followAdopted() {
 	rs := x.rs
-	co := x.rs.subjectCheckout()
-	if co == nil || co.Fetch == "" || rs.phaseTip == "" || x.followed == rs.phaseTip {
+	co := x.rs.SubjectCheckout()
+	if co == nil || co.Fetch == "" || rs.PhaseTip == "" || x.followed == rs.PhaseTip {
 		return
 	}
-	x.followed = rs.phaseTip
+	x.followed = rs.PhaseTip
 	res, err := x.gitIn(co.Dir, fmt.Sprintf("git fetch origin %s && git merge --ff-only FETCH_HEAD", shell.Quote(co.Fetch)))
 	if err != nil || res.ExitCode != 0 {
-		x.e.log.Warn("could not bring the merge request's checkout to its head", "run", rs.runID, "repo", co.Name,
-			"head", rs.phaseTip, "err", err, "out", shell.Tail(res.Output, 512))
+		x.e.log.Warn("could not bring the merge request's checkout to its head", "run", rs.RunID, "repo", co.Name,
+			"head", rs.PhaseTip, "err", err, "out", shell.Tail(res.Output, 512))
 	}
 }
 
@@ -120,7 +121,7 @@ func (x *exec) followAdopted() {
 // ended at a dead end says why.
 func (x *exec) phaseDone() error {
 	rs := x.rs
-	if err := x.append(&event.PhaseCompleted{Phase: rs.phase, Subject: rs.subject, Reason: rs.endReason}); err != nil {
+	if err := x.append(&event.PhaseCompleted{Phase: rs.Phase, Subject: rs.Subject, Reason: rs.EndReason}); err != nil {
 		return err
 	}
 	return nil
@@ -131,7 +132,7 @@ func (x *exec) phaseDone() error {
 // their open questions are withdrawn with the run.
 func (x *exec) runDone() error {
 	rs := x.rs
-	if err := x.append(&event.PhaseCompleted{Phase: rs.phase, Subject: rs.subject}); err != nil {
+	if err := x.append(&event.PhaseCompleted{Phase: rs.Phase, Subject: rs.Subject}); err != nil {
 		return err
 	}
 	return x.complete()
@@ -141,10 +142,10 @@ func (x *exec) runDone() error {
 // `then: abort`, or `on_success: abort` (FLOWLANG §3).
 func (x *exec) runAbort() error {
 	rs := x.rs
-	if err := x.append(&event.PhaseCompleted{Phase: rs.phase, Subject: rs.subject}); err != nil {
+	if err := x.append(&event.PhaseCompleted{Phase: rs.Phase, Subject: rs.Subject}); err != nil {
 		return err
 	}
-	return x.abandon(rs.abortAt, "", rs.abortReason)
+	return x.abandon(rs.AbortAt, "", rs.AbortReason)
 }
 
 // deadEnd is where a failure has nowhere left to go: no edge for it, its
@@ -158,16 +159,16 @@ func (x *exec) deadEnd(st *flow.Stage, edgeKind, reason string) error {
 		return x.abandon(st.ID, edgeKind, reason)
 	}
 	x.e.log.Info("phase ended at a dead end; the run goes back to waiting",
-		"run", x.rs.runID, "phase", x.rs.phase, "stage", st.ID, "reason", reason)
-	x.rs.endPhase()
-	x.rs.endReason = reason
+		"run", x.rs.RunID, "phase", x.rs.Phase, "stage", st.ID, "reason", reason)
+	x.rs.EndPhase()
+	x.rs.EndReason = reason
 	return nil
 }
 
 // endsRunAtDeadEnd reports whether the phase in progress is one whose dead
 // end ends the run rather than the round: the main chain or an outcome.
 func (x *exec) endsRunAtDeadEnd() bool {
-	ph := x.rs.fl.Phase(x.rs.phase)
+	ph := x.rs.Flow.Phase(x.rs.Phase)
 	return ph == nil || ph.Kind != flow.PhaseWatcher
 }
 
@@ -175,7 +176,7 @@ func (x *exec) endsRunAtDeadEnd() bool {
 // approval are read only when the flow has a signal that needs them (nil
 // otherwise); headSince is when this poll's head was first seen.
 type mrObservation struct {
-	mr        *mrRecord
+	mr        *runcore.MRRecord
 	status    repoport.MRStatus
 	threads   []repoport.ReviewThread
 	checks    *repoport.Checks
@@ -249,7 +250,7 @@ func (x *exec) idle() error {
 	x.e.mu.Unlock()
 
 	st := newIdler()
-	if err := x.evaluateIdle(st); err != nil || !rs.idle || rs.done {
+	if err := x.evaluateIdle(st); err != nil || !rs.Idle || rs.Done {
 		return err
 	}
 	t := time.NewTicker(x.e.cfg.MRPollInterval)
@@ -266,7 +267,7 @@ func (x *exec) idle() error {
 		case <-x.ctx.Done():
 			return context.Cause(x.ctx)
 		}
-		if err := x.evaluateIdle(st); err != nil || !rs.idle || rs.done {
+		if err := x.evaluateIdle(st); err != nil || !rs.Idle || rs.Done {
 			return err
 		}
 	}
@@ -288,9 +289,9 @@ func (x *exec) evaluateIdle(st *idler) error {
 			return context.Cause(x.ctx)
 		}
 		st.failures++
-		x.e.log.Warn("idle: repository poll failed", "run", rs.runID, "err", err, "streak", st.failures)
+		x.e.log.Warn("idle: repository poll failed", "run", rs.RunID, "err", err, "streak", st.failures)
 		if st.failures == 3 {
-			x.e.notify(x.bg, notifyport.Notification{RunID: rs.runID, Type: event.PingBlocker,
+			x.e.notify(x.bg, notifyport.Notification{RunID: rs.RunID, Type: event.PingBlocker,
 				Title: "Cannot reach the repository to watch this run's merge requests", Body: err.Error()})
 		}
 		return nil
@@ -299,8 +300,8 @@ func (x *exec) evaluateIdle(st *idler) error {
 
 	// Parked phase runs first, in document order: a wait point that settled
 	// resumes its phase before any other phase opens.
-	for i := range rs.fl.Phases {
-		pr := rs.parked[rs.fl.Phases[i].ID]
+	for i := range rs.Flow.Phases {
+		pr := rs.Parked[rs.Flow.Phases[i].ID]
 		if pr == nil {
 			continue
 		}
@@ -311,9 +312,9 @@ func (x *exec) evaluateIdle(st *idler) error {
 
 	// A confirmation answered (here, or while another phase ran): approve
 	// starts it now, reject records the decline (R5, R6).
-	for _, cp := range rs.confirms {
-		ans := rs.answeredPings[cp.PingID]
-		if ans == nil || rs.triggerSeen[triggerKey(cp.Phase, cp.Subject, cp.TriggerKey)] {
+	for _, cp := range rs.Confirms {
+		ans := rs.AnsweredPings[cp.PingID]
+		if ans == nil || rs.TriggerSeen[runcore.TriggerKey(cp.Phase, cp.Subject, cp.TriggerKey)] {
 			continue
 		}
 		if ans.Answer != "approve" {
@@ -332,20 +333,20 @@ func (x *exec) evaluateIdle(st *idler) error {
 	}
 
 	holds := map[string][]TriggerHold{}
-	defer x.e.holds.set(rs.runID, holds)
+	defer x.e.holds.set(rs.RunID, holds)
 
 	// Outcomes first: an end that holds beats any watcher. Each fires once
 	// (FLOWLANG §1).
-	for i := range rs.fl.Phases {
-		ph := &rs.fl.Phases[i]
-		if !ph.IsOutcome() || rs.parked[ph.ID] != nil {
+	for i := range rs.Flow.Phases {
+		ph := &rs.Flow.Phases[i]
+		if !ph.IsOutcome() || rs.Parked[ph.ID] != nil {
 			continue
 		}
 		held, subject, link, key, why := x.outcomeHolds(ph.On.Signal, obs)
 		if !held {
 			continue
 		}
-		seen := rs.triggerSeen[triggerKey(ph.ID, subject, key)]
+		seen := rs.TriggerSeen[runcore.TriggerKey(ph.ID, subject, key)]
 		holds[ph.ID] = append(holds[ph.ID], TriggerHold{Subject: subject, Key: key, Why: why, Seen: seen, At: x.e.clock()})
 		if seen {
 			continue
@@ -365,9 +366,9 @@ func (x *exec) evaluateIdle(st *idler) error {
 	// Watchers, per merge request: each new occurrence of the signal on one
 	// is a round of the watcher on it.
 	for _, o := range obs {
-		for i := range rs.fl.Phases {
-			ph := &rs.fl.Phases[i]
-			if !ph.Fires() || rs.parked[ph.ID] != nil {
+		for i := range rs.Flow.Phases {
+			ph := &rs.Flow.Phases[i]
+			if !ph.Fires() || rs.Parked[ph.ID] != nil {
 				continue
 			}
 			s := x.signalOn(ph.On.Signal, ph.On.QuietFor, o)
@@ -375,8 +376,8 @@ func (x *exec) evaluateIdle(st *idler) error {
 				continue
 			}
 			key, why := s.key, s.why
-			spent := ph.On.Max != flow.UnlimitedMax && rs.phaseRuns[phaseRunKey(ph.ID, o.mr.Repo)] >= ph.On.Max
-			seen := spent || rs.triggerSeen[triggerKey(ph.ID, o.mr.Repo, key)]
+			spent := ph.On.Max != flow.UnlimitedMax && rs.PhaseRuns[runcore.PhaseRunKey(ph.ID, o.mr.Repo)] >= ph.On.Max
+			seen := spent || rs.TriggerSeen[runcore.TriggerKey(ph.ID, o.mr.Repo, key)]
 			holds[ph.ID] = append(holds[ph.ID], TriggerHold{Subject: o.mr.Repo, Key: key, Why: why, Seen: seen, At: x.e.clock()})
 			if seen {
 				continue
@@ -430,15 +431,15 @@ func (x *exec) outcomeHolds(slug string, obs []mrObservation) (held bool, subjec
 // debounced trigger needs them and they are due.
 func (x *exec) observe(st *idler) ([]mrObservation, error) {
 	rs := x.rs
-	reads := readsOf(rs.fl)
+	reads := readsOf(rs.Flow)
 	every := x.e.cfg.ThreadPollInterval
 	if every <= 0 {
 		every = time.Minute
 	}
 	now := x.e.clock()
-	out := make([]mrObservation, 0, len(rs.mrs))
-	for i := range rs.mrs {
-		mr := &rs.mrs[i]
+	out := make([]mrObservation, 0, len(rs.MRs))
+	for i := range rs.MRs {
+		mr := &rs.MRs[i]
 		repoHost := x.res.RepoHostFor(mr.Repo)
 		if repoHost == nil {
 			continue
@@ -573,7 +574,7 @@ func (x *exec) signalOn(slug string, quiet time.Duration, o mrObservation) mrSig
 		return mrSignal{holds: true, key: o.status.HeadSHA, why: fmt.Sprintf("The repository says %s can be merged now.", url)}
 	case signalspec.MRHeadMoved:
 		head := o.status.HeadSHA
-		if head == "" || x.rs.knownHead(o.mr.Repo, head) {
+		if head == "" || x.rs.KnownHead(o.mr.Repo, head) {
 			return mrSignal{}
 		}
 		if quiet > 0 && x.e.clock().Sub(o.headSince) < quiet {
@@ -595,8 +596,8 @@ func shortSHA(sha string) string {
 // askToStart raises a phase_confirm ping, once per (phase, subject, key).
 func (x *exec) askToStart(ph *flow.Phase, subject, link, key, why string) error {
 	rs := x.rs
-	for _, cp := range rs.confirms {
-		if cp.Phase == ph.ID && cp.Subject == subject && (cp.TriggerKey == key || rs.answeredPings[cp.PingID] == nil) {
+	for _, cp := range rs.Confirms {
+		if cp.Phase == ph.ID && cp.Subject == subject && (cp.TriggerKey == key || rs.AnsweredPings[cp.PingID] == nil) {
 			return nil // already asked (or a question about it is still open)
 		}
 	}
@@ -607,7 +608,7 @@ func (x *exec) askToStart(ph *flow.Phase, subject, link, key, why string) error 
 	if ph.Description != "" {
 		q += " (" + ph.Description + ")"
 	}
-	p := &Ping{ID: x.e.newID(), RunID: rs.runID, Type: event.PingPhaseConfirm, Question: q,
+	p := &Ping{ID: x.e.newID(), RunID: rs.RunID, Type: event.PingPhaseConfirm, Question: q,
 		Link: link, RaisedAt: x.e.clock(), AnswerKind: event.AnswerYesNo, Phase: ph.ID,
 		done: make(chan struct{})}
 	x.e.mu.Lock()
@@ -618,14 +619,14 @@ func (x *exec) askToStart(ph *flow.Phase, subject, link, key, why string) error 
 	if err := x.append(raised); err != nil {
 		return err
 	}
-	x.e.notify(x.bg, notifyport.Notification{RunID: rs.runID, PingID: p.ID, Type: p.Type, Title: q, Body: p.Link})
+	x.e.notify(x.bg, notifyport.Notification{RunID: rs.RunID, PingID: p.ID, Type: p.Type, Title: q, Body: p.Link})
 	return nil
 }
 
 // beginPhase records a phase start and moves the cursor to its first stage.
 func (x *exec) beginPhase(phase, subject, key, by, tip string) error {
 	p := &event.PhaseStarted{Phase: phase, Subject: subject, Key: key, By: by, Tip: tip}
-	if ph := x.rs.fl.Phase(phase); ph != nil && x.rs.fl.ReadsCIFailure(ph) {
+	if ph := x.rs.Flow.Phase(phase); ph != nil && x.rs.Flow.ReadsCIFailure(ph) {
 		p.CI = x.readCI(subject, tip)
 	}
 	return x.append(p)
@@ -637,10 +638,10 @@ func (x *exec) beginPhase(phase, subject, key, by, tip string) error {
 // still run the project's checks itself.
 func (x *exec) readCI(subject, head string) *event.CIReport {
 	rep := &event.CIReport{Head: head}
-	co := x.rs.checkout(subject)
-	var mr *mrRecord
+	co := x.rs.Checkout(subject)
+	var mr *runcore.MRRecord
 	if co != nil {
-		mr = x.rs.mrFor(co.Name, co.Branch)
+		mr = x.rs.MRFor(co.Name, co.Branch)
 	}
 	repoHost := x.res.RepoHostFor(subject)
 	if mr == nil || repoHost == nil {
@@ -734,28 +735,28 @@ func quoteAll(ss []string) []string {
 // runs once, when the run is started.
 func (x *exec) manualStart(req phaseStartReq) error {
 	rs := x.rs
-	ph := rs.fl.Phase(req.phase)
+	ph := rs.Flow.Phase(req.phase)
 	if ph == nil {
 		return fmt.Errorf("%w: no phase %q in this flow", ErrPhaseNotStartable, req.phase)
 	}
-	if pr := rs.parked[ph.ID]; pr != nil {
-		return fmt.Errorf("%w: phase %q is parked at %s", ErrPhaseNotStartable, ph.ID, pr.parkedAt)
+	if pr := rs.Parked[ph.ID]; pr != nil {
+		return fmt.Errorf("%w: phase %q is parked at %s", ErrPhaseNotStartable, ph.ID, pr.ParkedAt)
 	}
 	if ph.Kind == flow.PhaseMain {
 		return fmt.Errorf("%w: the main chain runs once, when the run is started — rerun the run to run it again", ErrPhaseNotStartable)
 	}
 	var subject string
-	var mr *mrRecord
+	var mr *runcore.MRRecord
 	if req.subject != "" {
-		co := rs.checkout(req.subject)
-		if co == nil || rs.mrFor(co.Name, co.Branch) == nil {
+		co := rs.Checkout(req.subject)
+		if co == nil || rs.MRFor(co.Name, co.Branch) == nil {
 			return fmt.Errorf("%w: no merge request for repository %q", ErrPhaseNotStartable, req.subject)
 		}
-		subject, mr = co.Name, rs.mrFor(co.Name, co.Branch)
+		subject, mr = co.Name, rs.MRFor(co.Name, co.Branch)
 	} else if open := x.openMRs(); len(open) == 1 {
 		subject, mr = open[0].Repo, open[0]
 	}
-	if ph.On.Max != flow.UnlimitedMax && rs.phaseRuns[phaseRunKey(ph.ID, subject)] >= ph.On.Max {
+	if ph.On.Max != flow.UnlimitedMax && rs.PhaseRuns[runcore.PhaseRunKey(ph.ID, subject)] >= ph.On.Max {
 		on := "with no merge request"
 		if subject != "" {
 			on = "on " + subject
@@ -777,15 +778,15 @@ func (x *exec) manualStart(req phaseStartReq) error {
 
 // openMRs lists the run's merge requests the last poll saw open — every
 // recorded one before the first poll.
-func (x *exec) openMRs() []*mrRecord {
+func (x *exec) openMRs() []*runcore.MRRecord {
 	if x.lastObs == nil {
-		out := make([]*mrRecord, 0, len(x.rs.mrs))
-		for i := range x.rs.mrs {
-			out = append(out, &x.rs.mrs[i])
+		out := make([]*runcore.MRRecord, 0, len(x.rs.MRs))
+		for i := range x.rs.MRs {
+			out = append(out, &x.rs.MRs[i])
 		}
 		return out
 	}
-	var out []*mrRecord
+	var out []*runcore.MRRecord
 	for _, o := range x.lastObs {
 		if o.status.State == repoport.MROpen {
 			out = append(out, o.mr)
@@ -798,17 +799,17 @@ func (x *exec) openMRs() []*mrRecord {
 // request it is
 // working on, and that every other checkout is context only (R12).
 func (x *exec) subjectSection() string {
-	co := x.rs.subjectCheckout()
+	co := x.rs.SubjectCheckout()
 	if co == nil {
 		return ""
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# SUBJECT\nThis phase (%s) works on the merge request of %s: ~/%s, branch %s, merging into %s.\n",
-		x.rs.phase, co.Name, co.Dir, co.Branch, co.Source)
-	if mr := x.rs.subjectMR(); mr != nil {
+		x.rs.Phase, co.Name, co.Dir, co.Branch, co.Source)
+	if mr := x.rs.SubjectMR(); mr != nil {
 		fmt.Fprintf(&b, "Merge request: %s\n", mr.Ref.URL)
 	}
-	if len(x.rs.checkouts) > 1 {
+	if len(x.rs.Checkouts) > 1 {
 		b.WriteString("Edit files in that checkout only; the other repositories are read-only context here.\n")
 	}
 	return b.String()
@@ -871,7 +872,7 @@ func (e *Engine) RunPhases(ctx context.Context, runID string) ([]PhaseInfo, erro
 	if err != nil {
 		return nil, err
 	}
-	rs := replay(evs, fl)
+	rs := runcore.Replay(evs, fl)
 	runs := map[string]map[string]int{}
 	for _, ev := range evs {
 		if p, ok := ev.Payload.(*event.PhaseStarted); ok {
@@ -897,10 +898,10 @@ func (e *Engine) RunPhases(ctx context.Context, runID string) ([]PhaseInfo, erro
 			QuietFor: int(ph.On.QuietFor.Seconds()), Max: ph.On.Max, Runs: r, Total: total,
 			Holds: e.holds.of(runID, ph.ID)}
 		switch {
-		case rs.parked[ph.ID] != nil:
-			info.Live = &PhaseLive{Subject: rs.parked[ph.ID].subject, ParkedAt: rs.parked[ph.ID].parkedAt}
-		case !rs.done && !rs.idle && rs.phase == ph.ID:
-			info.Live = &PhaseLive{Subject: rs.subject}
+		case rs.Parked[ph.ID] != nil:
+			info.Live = &PhaseLive{Subject: rs.Parked[ph.ID].Subject, ParkedAt: rs.Parked[ph.ID].ParkedAt}
+		case !rs.Done && !rs.Idle && rs.Phase == ph.ID:
+			info.Live = &PhaseLive{Subject: rs.Subject}
 		}
 		out = append(out, info)
 	}

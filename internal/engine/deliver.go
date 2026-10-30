@@ -48,7 +48,7 @@ func attachmentPaths(atts []filestore.Attachment) []string {
 // deliverAttachments writes each attachment into the live workspace
 // (best-effort) and returns their repo-relative paths. Paths are
 // deterministic from the ids, so they are safe to reference even before the
-// workspace exists (envID == ""): ensureEnv re-delivers on the
+// workspace exists (EnvID == ""): ensureEnv re-delivers on the
 // ready/recovery path.
 //
 // Files land 0444 read-only: the human's words must not be rewritten in
@@ -57,7 +57,7 @@ func attachmentPaths(atts []filestore.Attachment) []string {
 // read-only file.
 func (x *exec) deliverAttachments(atts []filestore.Attachment) []string {
 	paths := attachmentPaths(atts)
-	if x.e.attachments == nil || x.rs.envID == "" || len(atts) == 0 {
+	if x.e.attachments == nil || x.rs.EnvID == "" || len(atts) == 0 {
 		return paths
 	}
 	dirs := map[string]struct{}{}
@@ -72,22 +72,22 @@ func (x *exec) deliverAttachments(atts []filestore.Attachment) []string {
 	for _, p := range paths {
 		rm = append(rm, shell.Quote(p))
 	}
-	if _, err := x.res.Envp.Exec(x.ctx, x.rs.envID, envport.Command{
+	if _, err := x.res.Envp.Exec(x.ctx, x.rs.EnvID, envport.Command{
 		Script:  "mkdir -p " + strings.Join(mk, " ") + " && rm -f -- " + strings.Join(rm, " "),
 		Dir:     "repo",
 		Timeout: attachmentDeliverTimeout,
 	}); err != nil {
-		x.e.log.Warn("attachment mkdir", "run", x.rs.runID, "err", err)
+		x.e.log.Warn("attachment mkdir", "run", x.rs.RunID, "err", err)
 		return paths
 	}
 	for i, a := range atts {
 		data, _, err := x.e.attachments.Bytes(x.ctx, a.ID)
 		if err != nil {
-			x.e.log.Warn("attachment read", "run", x.rs.runID, "attachment", a.ID, "err", err)
+			x.e.log.Warn("attachment read", "run", x.rs.RunID, "attachment", a.ID, "err", err)
 			continue
 		}
-		if err := x.res.Envp.WriteFile(x.ctx, x.rs.envID, paths[i], data, 0o444); err != nil {
-			x.e.log.Warn("attachment write", "run", x.rs.runID, "attachment", a.ID, "err", err)
+		if err := x.res.Envp.WriteFile(x.ctx, x.rs.EnvID, paths[i], data, 0o444); err != nil {
+			x.e.log.Warn("attachment write", "run", x.rs.RunID, "attachment", a.ID, "err", err)
 		}
 	}
 	return paths
@@ -101,10 +101,10 @@ func (x *exec) ticketAttachments() []filestore.Attachment {
 		return nil
 	}
 	var out []filestore.Attachment
-	for _, id := range x.rs.view.TicketAttachmentIDs {
+	for _, id := range x.rs.View.TicketAttachmentIDs {
 		a, err := x.e.attachments.Get(x.ctx, id)
 		if err != nil {
-			x.e.log.Warn("ticket attachment missing", "run", x.rs.runID, "attachment", id, "err", err)
+			x.e.log.Warn("ticket attachment missing", "run", x.rs.RunID, "attachment", id, "err", err)
 			continue
 		}
 		out = append(out, a)
@@ -118,9 +118,9 @@ func (x *exec) runAndTicketAttachments() []filestore.Attachment {
 	if x.e.attachments == nil {
 		return nil
 	}
-	atts, err := x.e.attachments.ForRun(x.ctx, x.rs.runID)
+	atts, err := x.e.attachments.ForRun(x.ctx, x.rs.RunID)
 	if err != nil {
-		x.e.log.Warn("attachment list", "run", x.rs.runID, "err", err)
+		x.e.log.Warn("attachment list", "run", x.rs.RunID, "err", err)
 		atts = nil
 	}
 	seen := make(map[string]struct{}, len(atts))
@@ -141,7 +141,7 @@ func (x *exec) runAndTicketAttachments() []filestore.Attachment {
 // + answer files, plus the ticket's shared ones) into the workspace —
 // idempotent, called from ensureEnv so a restart re-materializes them.
 func (x *exec) deliverRunAttachments() {
-	if x.e.attachments == nil || x.rs.envID == "" {
+	if x.e.attachments == nil || x.rs.EnvID == "" {
 		return
 	}
 	x.deliverAttachments(x.runAndTicketAttachments())
@@ -182,7 +182,7 @@ func (x *exec) pingAnswerAttachments(pingID string) []filestore.Attachment {
 	}
 	atts, err := x.e.attachments.ForPing(x.ctx, pingID)
 	if err != nil {
-		x.e.log.Warn("answer attachments", "run", x.rs.runID, "ping", pingID, "err", err)
+		x.e.log.Warn("answer attachments", "run", x.rs.RunID, "ping", pingID, "err", err)
 		return nil
 	}
 	return atts

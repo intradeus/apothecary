@@ -19,6 +19,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/runcore"
 	"apothecary/internal/signalspec"
 )
 
@@ -69,7 +70,7 @@ func (r *holdsRegistry) clear(runID string) {
 // point settles (tryResume).
 func (x *exec) parkAt(st *flow.Stage, pingID string) error {
 	rs := x.rs
-	return x.append(&event.PhaseParked{Phase: rs.phase, Subject: rs.subject, StageID: st.ID, PingID: pingID})
+	return x.append(&event.PhaseParked{Phase: rs.Phase, Subject: rs.Subject, StageID: st.ID, PingID: pingID})
 }
 
 // tryResume checks one parked phase run's wait point against the latest
@@ -78,27 +79,27 @@ func (x *exec) parkAt(st *flow.Stage, pingID string) error {
 // or that timed out fails (on_fail / on_timeout), a gate routes its answer —
 // the human's, or the one a signal supplied (auto_approve / auto_reject).
 // Reports whether the phase resumed.
-func (x *exec) tryResume(pr *phaseRun, obs []mrObservation) (bool, error) {
+func (x *exec) tryResume(pr *runcore.PhaseRun, obs []mrObservation) (bool, error) {
 	rs := x.rs
-	if pr.pos < 0 || pr.pos >= len(rs.fl.Stages) {
+	if pr.Pos < 0 || pr.Pos >= len(rs.Flow.Stages) {
 		return false, nil
 	}
-	st := &rs.fl.Stages[pr.pos]
+	st := &rs.Flow.Stages[pr.Pos]
 	resume := func() error {
-		if err := x.append(&event.PhaseResumed{Phase: pr.phase, Subject: pr.subject, StageID: st.ID}); err != nil {
+		if err := x.append(&event.PhaseResumed{Phase: pr.Phase, Subject: pr.Subject, StageID: st.ID}); err != nil {
 			return err
 		}
 		return nil
 	}
 	switch st.Type {
 	case flow.StageWait:
-		holds, impossible, why := x.waitState(st.WaitFor, pr.subject, obs)
+		holds, impossible, why := x.waitState(st.WaitFor, pr.Subject, obs)
 		switch {
 		case holds:
 			if err := resume(); err != nil {
 				return true, err
 			}
-			return true, x.completeWait(st, pr.since)
+			return true, x.completeWait(st, pr.Since)
 		case impossible:
 			if err := resume(); err != nil {
 				return true, err
@@ -108,7 +109,7 @@ func (x *exec) tryResume(pr *phaseRun, obs []mrObservation) (bool, error) {
 				return true, err
 			}
 			return true, x.takeEdge(st, flow.EdgeFail, msg)
-		case st.Timeout > 0 && !x.e.clock().Before(pr.since.Add(st.Timeout)):
+		case st.Timeout > 0 && !x.e.clock().Before(pr.Since.Add(st.Timeout)):
 			if err := resume(); err != nil {
 				return true, err
 			}
@@ -119,7 +120,7 @@ func (x *exec) tryResume(pr *phaseRun, obs []mrObservation) (bool, error) {
 			return true, x.takeEdge(st, failEdgeKind(st, event.ReasonTimeout), "")
 		}
 	case flow.StageHumanGate:
-		ans := rs.answeredPings[pr.ping]
+		ans := rs.AnsweredPings[pr.Ping]
 		if ans == nil {
 			// A signal answers the gate on the human's behalf: "they merged
 			// it instead of clicking approve", "they closed it, which is a
@@ -128,8 +129,8 @@ func (x *exec) tryResume(pr *phaseRun, obs []mrObservation) (bool, error) {
 				if a.slug == "" {
 					continue
 				}
-				if holds, _, _ := x.waitState(a.slug, pr.subject, obs); holds {
-					rec, err := x.answerFromEngine(pr.ping, PingAnswer{Answer: a.answer, Feedback: "auto: " + a.slug})
+				if holds, _, _ := x.waitState(a.slug, pr.Subject, obs); holds {
+					rec, err := x.answerFromEngine(pr.Ping, PingAnswer{Answer: a.answer, Feedback: "auto: " + a.slug})
 					if err != nil {
 						return true, err
 					}
@@ -144,7 +145,7 @@ func (x *exec) tryResume(pr *phaseRun, obs []mrObservation) (bool, error) {
 		if err := resume(); err != nil {
 			return true, err
 		}
-		return true, x.routeGate(st, ans, pr.since)
+		return true, x.routeGate(st, ans, pr.Since)
 	}
 	return false, nil
 }
@@ -160,7 +161,7 @@ func (x *exec) tryResume(pr *phaseRun, obs []mrObservation) (bool, error) {
 func (x *exec) waitState(slug, subject string, obs []mrObservation) (holds, impossible bool, why string) {
 	rs := x.rs
 	sig := signalspec.Get(slug)
-	if sig != nil && sig.Needs == signalspec.NeedsMR && len(rs.mrs) == 0 {
+	if sig != nil && sig.Needs == signalspec.NeedsMR && len(rs.MRs) == 0 {
 		return false, true, "this run has opened no merge request"
 	}
 	if !sig.Observed() {
@@ -211,7 +212,7 @@ func (x *exec) answerFromEngine(pingID string, ans PingAnswer) (*event.PingAnswe
 	p := x.e.pings[pingID]
 	if p != nil && p.answered {
 		x.e.mu.Unlock()
-		return x.rs.answeredPings[pingID], nil
+		return x.rs.AnsweredPings[pingID], nil
 	}
 	if p != nil {
 		p.answered = true
@@ -244,18 +245,18 @@ func (x *exec) anyArmed(obs []mrObservation) bool {
 	for _, o := range obs {
 		anyOpen = anyOpen || o.status.State == repoport.MROpen
 	}
-	for i := range rs.fl.Phases {
-		ph := &rs.fl.Phases[i]
-		if !ph.Observed() || ph.On.Start == flow.StartManual || rs.parked[ph.ID] != nil {
+	for i := range rs.Flow.Phases {
+		ph := &rs.Flow.Phases[i]
+		if !ph.Observed() || ph.On.Start == flow.StartManual || rs.Parked[ph.ID] != nil {
 			continue
 		}
-		for _, cp := range rs.confirms {
-			if cp.Phase == ph.ID && rs.answeredPings[cp.PingID] == nil {
+		for _, cp := range rs.Confirms {
+			if cp.Phase == ph.ID && rs.AnsweredPings[cp.PingID] == nil {
 				return true
 			}
 		}
 		if ph.IsOutcome() {
-			if anyOpen && !rs.phaseEverRan(ph.ID) {
+			if anyOpen && !rs.PhaseEverRan(ph.ID) {
 				return true
 			}
 			continue
@@ -264,7 +265,7 @@ func (x *exec) anyArmed(obs []mrObservation) bool {
 			if o.status.State != repoport.MROpen {
 				continue
 			}
-			if ph.On.Max == flow.UnlimitedMax || rs.phaseRuns[phaseRunKey(ph.ID, o.mr.Repo)] < ph.On.Max {
+			if ph.On.Max == flow.UnlimitedMax || rs.PhaseRuns[runcore.PhaseRunKey(ph.ID, o.mr.Repo)] < ph.On.Max {
 				return true
 			}
 		}
@@ -278,7 +279,7 @@ func (x *exec) anyArmed(obs []mrObservation) bool {
 // — a wait on mr_merged routes a close through on_fail; a flow that never
 // waits completes as soon as nothing reacts.
 func (x *exec) endCheck(obs []mrObservation) error {
-	if x.rs.anyParked() || x.anyArmed(obs) {
+	if x.rs.AnyParked() || x.anyArmed(obs) {
 		return nil
 	}
 	return x.complete()

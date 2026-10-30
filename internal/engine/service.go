@@ -22,6 +22,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
+	"apothecary/internal/runcore"
 	"apothecary/internal/services"
 	"apothecary/internal/shell"
 	"apothecary/internal/sidecar"
@@ -48,9 +49,9 @@ func usesServiceStages(fl *flow.Flow) bool {
 // stage started belongs to its chain: when the chain ends, it is stopped.
 func (x *exec) stageService(st *flow.Stage) error {
 	rs := x.rs
-	fresh := rs.ph != phIn
+	fresh := rs.Ph != runcore.PhIn
 	if fresh {
-		iter := rs.iters[st.ID] + 1
+		iter := rs.Iters[st.ID] + 1
 		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
 			return err
 		}
@@ -76,7 +77,7 @@ func (x *exec) stageService(st *flow.Stage) error {
 	}
 
 	if st.Do == flow.ServiceStop {
-		if _, err := services.Shim(x.ctx, x.res.Envp, rs.envID, "stop", nil, services.Request(svc, 0), services.StopBudget); err != nil {
+		if _, err := services.Shim(x.ctx, x.res.Envp, rs.EnvID, "stop", nil, services.Request(svc, 0), services.StopBudget); err != nil {
 			return infra(err)
 		}
 		if err := x.append(&event.ServiceStopped{Service: svc.Name, StageID: st.ID, By: event.ServiceByStage}); err != nil {
@@ -96,19 +97,19 @@ func (x *exec) stageService(st *flow.Stage) error {
 		flags = append(flags, "--restart")
 	}
 	req := services.Request(svc, timeout)
-	req.By, req.Owner, req.StageID = event.ServiceByStage, rs.phase, st.ID
-	state, err := services.Shim(x.ctx, x.res.Envp, rs.envID, "start", flags, req, timeout+services.StopBudget+30*time.Second)
+	req.By, req.Owner, req.StageID = event.ServiceByStage, rs.Phase, st.ID
+	state, err := services.Shim(x.ctx, x.res.Envp, rs.EnvID, "start", flags, req, timeout+services.StopBudget+30*time.Second)
 	if err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		return infra(err)
 	}
 	if state.Launched {
-		if aerr := x.append(&event.ServiceStarted{Service: svc.Name, StageID: st.ID, Phase: rs.phase,
+		if aerr := x.append(&event.ServiceStarted{Service: svc.Name, StageID: st.ID, Phase: rs.Phase,
 			By: event.ServiceByStage, Restart: restart}); aerr != nil {
 			return aerr
 		}
 	}
 	if err == nil && state.Phase == services.PhaseHealthy {
-		services.Expose(x.ctx, x.e.runPorts, rs.runID, svc, x.e.log)
+		services.Expose(x.ctx, x.e.runPorts, rs.RunID, svc, x.e.log)
 		if aerr := x.append(&event.ServiceReady{Service: svc.Name, StageID: st.ID, URL: svc.Address()}); aerr != nil {
 			return aerr
 		}
@@ -128,11 +129,11 @@ func (x *exec) stageService(st *flow.Stage) error {
 	default:
 		why = "it was " + state.Phase + " before it came up"
 	}
-	logTail, lerr := services.Log(x.ctx, x.res.Envp, rs.envID, svc.Name, 200)
+	logTail, lerr := services.Log(x.ctx, x.res.Envp, rs.EnvID, svc.Name, 200)
 	if lerr != nil {
 		logTail = "(its log could not be read: " + lerr.Error() + ")"
 	}
-	x.publishLog(st.ID, rs.iters[st.ID], logTail)
+	x.publishLog(st.ID, rs.Iters[st.ID], logTail)
 	feed := shell.Tail(fmt.Sprintf("service %s did not come up: %s\n--- its output ---\n%s", svc.Name, why, logTail), 8<<10)
 	if aerr := x.append(&event.ServiceFailed{Service: svc.Name, StageID: st.ID, Reason: why, ExitCode: code}); aerr != nil {
 		return aerr
@@ -147,7 +148,7 @@ func (x *exec) completeService(st *flow.Stage, started time.Time) error {
 	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 		return err
 	}
-	x.rs.routeSuccess(st, "")
+	x.rs.RouteSuccess(st, "")
 	return nil
 }
 
@@ -156,31 +157,31 @@ func (x *exec) completeService(st *flow.Stage, started time.Time) error {
 // are left alone — they stay up until a human stops them or the workspace
 // goes.
 func (x *exec) stopChainServices(phase string, all bool) {
-	if x.res == nil || x.rs.fl == nil || x.rs.envID == "" || !usesServiceStages(x.rs.fl) {
+	if x.res == nil || x.rs.Flow == nil || x.rs.EnvID == "" || !usesServiceStages(x.rs.Flow) {
 		return
 	}
 	reason := "its chain ended"
 	if all {
 		reason = "the run ended"
 	}
-	x.e.stopStageServices(x.ctx, x.res, x.rs.envID, x.rs.runID, reason, func(st sidecar.ServiceState) bool {
+	x.e.stopStageServices(x.ctx, x.res, x.rs.EnvID, x.rs.RunID, reason, func(st sidecar.ServiceState) bool {
 		return all || st.Owner == phase
 	}, func(p event.Payload) error { return x.append(p) })
 }
 
 // stopRunServices is stopChainServices for a run that ended any other way
 // (failed, abandoned, aborted): after its loop, on a resolution of its own.
-func (e *Engine) stopRunServices(ctx context.Context, rs *runState) {
-	if rs == nil || rs.fl == nil || rs.envID == "" || !usesServiceStages(rs.fl) {
+func (e *Engine) stopRunServices(ctx context.Context, rs *runcore.State) {
+	if rs == nil || rs.Flow == nil || rs.EnvID == "" || !usesServiceStages(rs.Flow) {
 		return
 	}
-	res, err := e.resolveForRun(ctx, rs.view)
+	res, err := e.resolveForRun(ctx, rs.View)
 	if err != nil {
 		return
 	}
 	defer res.Close()
-	e.stopStageServices(ctx, res, rs.envID, rs.runID, "the run ended", func(sidecar.ServiceState) bool { return true },
-		func(p event.Payload) error { return e.AppendEvents(ctx, rs.runID, p) })
+	e.stopStageServices(ctx, res, rs.EnvID, rs.RunID, "the run ended", func(sidecar.ServiceState) bool { return true },
+		func(p event.Payload) error { return e.AppendEvents(ctx, rs.RunID, p) })
 }
 
 // stopStageServices stops every live service a stage started that pick
@@ -215,7 +216,7 @@ func (x *exec) serviceInput(name string) string {
 	if svc == nil {
 		return fmt.Sprintf("(the project has no service %q)", name)
 	}
-	st, err := services.State(x.ctx, x.res.Envp, x.rs.envID, name)
+	st, err := services.State(x.ctx, x.res.Envp, x.rs.EnvID, name)
 	switch {
 	case err != nil:
 		return fmt.Sprintf("(the service %q could not be checked: %v)", name, err)
@@ -238,9 +239,9 @@ func (x *exec) serviceLink(name string) string {
 	if svc == nil || len(svc.Ports) == 0 {
 		return ""
 	}
-	if st, err := services.State(x.ctx, x.res.Envp, x.rs.envID, name); err != nil || st.Phase != services.PhaseHealthy {
+	if st, err := services.State(x.ctx, x.res.Envp, x.rs.EnvID, name); err != nil || st.Phase != services.PhaseHealthy {
 		return ""
 	}
-	urls := services.Expose(x.ctx, x.e.runPorts, x.rs.runID, svc, x.e.log)
+	urls := services.Expose(x.ctx, x.e.runPorts, x.rs.RunID, svc, x.e.log)
 	return urls[svc.Ports[0].Port]
 }

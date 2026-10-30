@@ -217,7 +217,7 @@ func (x *exec) newTranscript(stageID string, iter int) *transcript {
 
 func (t *transcript) publish(d LiveDelta) {
 	d.StageID, d.Iteration = t.st, t.iter
-	t.x.e.live.publish(t.x.rs.runID, d)
+	t.x.e.live.publish(t.x.rs.RunID, d)
 }
 
 // handle folds one event in, appending whatever it completes.

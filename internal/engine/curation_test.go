@@ -21,6 +21,7 @@ import (
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
+	"apothecary/internal/runcore"
 )
 
 // curatedReviewerDoc is the reviewer template's shape, small: poll the
@@ -428,22 +429,22 @@ func TestCurationReplays(t *testing.T) {
 		{Payload: &event.ReviewCurated{StageID: "review.gate", PingID: "g1", Path: "artifacts/review.yaml", Type: agentspec.TypeReviewThreads,
 			Approved: true, Review: kept, Dropped: []reviewfile.Note{{Path: "b.go", Line: 9, Kind: "nit", Body: "and that", Rationale: "y"}}}},
 	}
-	rs := replay(evs, fl)
-	if !rs.curatedSeen["g1"] || rs.curated["artifacts/review.yaml"] == nil || len(rs.dropped) != 1 || rs.dropped[0].Path != "b.go" {
-		t.Fatalf("after the curation: seen %v curated %v dropped %v", rs.curatedSeen, rs.curated, rs.dropped)
+	rs := runcore.Replay(evs, fl)
+	if !rs.CuratedSeen["g1"] || rs.Curated["artifacts/review.yaml"] == nil || len(rs.Dropped) != 1 || rs.Dropped[0].Path != "b.go" {
+		t.Fatalf("after the curation: seen %v curated %v dropped %v", rs.CuratedSeen, rs.Curated, rs.Dropped)
 	}
 	// A reader starting keeps it waiting; a writer starting drops it.
-	if rs := replay(append(evs, event.Event{Payload: &event.StageStarted{StageID: "review.post", Iteration: 1}}), fl); rs.curated["artifacts/review.yaml"] == nil {
+	if rs := runcore.Replay(append(evs, event.Event{Payload: &event.StageStarted{StageID: "review.post", Iteration: 1}}), fl); rs.Curated["artifacts/review.yaml"] == nil {
 		t.Error("the stage that reads the path forgot the curation")
 	}
-	if rs := replay(append(evs, event.Event{Payload: &event.StageStarted{StageID: "review.read", Iteration: 2}}), fl); rs.curated["artifacts/review.yaml"] != nil || len(rs.dropped) != 1 {
+	if rs := runcore.Replay(append(evs, event.Event{Payload: &event.StageStarted{StageID: "review.read", Iteration: 2}}), fl); rs.Curated["artifacts/review.yaml"] != nil || len(rs.Dropped) != 1 {
 		t.Error("the stage that writes the path kept the curation, or the drop was forgotten")
 	}
 	// A rejection's curation records the drop and nothing to write.
 	rejected := append(evs[:4:4], event.Event{Payload: &event.ReviewCurated{StageID: "review.gate", PingID: "g1", Path: "artifacts/review.yaml",
 		Type: agentspec.TypeReviewThreads, Dropped: []reviewfile.Note{{Path: "b.go", Line: 9, Kind: "nit", Body: "and that"}}}})
-	if rs := replay(rejected, fl); len(rs.curated) != 0 || len(rs.dropped) != 1 {
-		t.Errorf("a rejected curation: curated %v dropped %v", rs.curated, rs.dropped)
+	if rs := runcore.Replay(rejected, fl); len(rs.Curated) != 0 || len(rs.Dropped) != 1 {
+		t.Errorf("a rejected curation: curated %v dropped %v", rs.Curated, rs.Dropped)
 	}
 }
 

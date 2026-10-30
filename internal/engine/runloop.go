@@ -19,6 +19,7 @@ import (
 	"apothecary/internal/redact"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/runcore"
 	"apothecary/internal/shell"
 	"apothecary/internal/signalspec"
 	"apothecary/internal/wsname"
@@ -49,7 +50,7 @@ const handbackPrompt = "The operator has handed the task back to you. " +
 // config edits apply to new runs only.
 type exec struct {
 	e   *Engine
-	rs  *runState
+	rs  *runcore.State
 	h   *runHandle
 	res *resolution.Resolution
 	ctx context.Context
@@ -88,8 +89,8 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	// a failed env are all covered (see secrets.go). bg, not ctx: an abort has
 	// already cancelled ctx by the time we get here.
 	defer func() {
-		if x.rs != nil && x.rs.view.State.Terminal() {
-			e.ScrubWorkspaceSecrets(bg, x.rs.view)
+		if x.rs != nil && x.rs.View.State.Terminal() {
+			e.ScrubWorkspaceSecrets(bg, x.rs.View)
 			e.stopRunServices(bg, x.rs)
 		}
 	}()
@@ -98,12 +99,12 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	// pre-v2 run without one) is terminal and honest; anything else is
 	// treated as transient — the run stays non-terminal for the next boot.
 	if view.State.Terminal() {
-		x.rs = replay(evs, nil)
+		x.rs = runcore.Replay(evs, nil)
 		return
 	}
 	res, err := e.resolveForRun(bg, view)
 	if err != nil {
-		x.rs = &runState{runID: runID, view: view}
+		x.rs = &runcore.State{RunID: runID, View: view}
 		if errors.Is(err, resolution.ErrUnresolvable) {
 			_ = x.append(&event.RunFailed{Reason: err.Error()})
 		} else {
@@ -120,7 +121,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 
 	fl, err := e.RunFlow(bg, view)
 	if err != nil {
-		x.rs = &runState{runID: runID, view: view}
+		x.rs = &runcore.State{RunID: runID, View: view}
 		var perr *flow.Error
 		switch {
 		case errors.Is(err, flow.ErrNotFound):
@@ -144,12 +145,12 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		e.log.Warn("running a flow version other than the one pinned at run creation",
 			"run", runID, "flow", fl.Name, "pinned", view.FlowHash, "using", fl.Hash)
 	}
-	rs := replay(evs, fl)
+	rs := runcore.Replay(evs, fl)
 	x.rs = rs
-	if rs.done {
+	if rs.Done {
 		return
 	}
-	if rs.pos < 0 {
+	if rs.Pos < 0 {
 		// The recorded current stage no longer exists in the (drifted) flow
 		// document. Failing honestly beats reporting a half-finished run
 		// completed, which is what falling through would do.
@@ -161,7 +162,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	e.mu.Lock()
 	e.tokens[runID] = e.newID()
 	// Re-register open pings so answers can still be delivered after a restart.
-	for _, op := range rs.openPings {
+	for _, op := range rs.OpenPings {
 		if _, ok := e.pings[op.PingID]; !ok {
 			e.pings[op.PingID] = &Ping{
 				ID: op.PingID, RunID: runID, Type: op.Type, Question: op.Question,
@@ -178,16 +179,16 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		x.exit(err)
 		return
 	}
-	for !rs.done {
+	for !rs.Done {
 		x.checkFold()
 		if cause := context.Cause(ctx); cause != nil {
 			x.exit(cause)
 			return
 		}
-		step, st, note := rs.nextStep()
+		step, st, note := rs.NextStep()
 		var err error
 		switch step {
-		case stepIdle:
+		case runcore.StepIdle:
 			// Between phases (PLAN6): watch the merge requests until a
 			// phase starts or the run ends.
 			if err := x.idle(); err != nil {
@@ -195,41 +196,41 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 				return
 			}
 			continue
-		case stepGone:
+		case runcore.StepGone:
 			_ = x.fail(fmt.Sprintf("flow %q changed: the run's current phase no longer exists in it", fl.Name))
 			return
-		case stepChainOver:
+		case runcore.StepChainOver:
 			// The chain is over. After `done` the run completes, whatever
 			// else is parked or armed; otherwise only the phase ends, and the
 			// idle loop decides what follows — a parked phase resuming,
 			// another phase opening, or the run's end (endCheck).
 			end := x.phaseDone
 			switch {
-			case rs.abortsRun:
+			case rs.AbortsRun:
 				end = x.runAbort
-			case rs.endsRun:
+			case rs.EndsRun:
 				end = x.runDone
 			}
 			// What its stages started ends with the chain.
-			x.stopChainServices(rs.phase, rs.endsRun || rs.abortsRun)
+			x.stopChainServices(rs.Phase, rs.EndsRun || rs.AbortsRun)
 			if err := end(); err != nil {
 				x.exit(err)
 				return
 			}
 			continue
-		case stepDebug:
+		case runcore.StepDebug:
 			// Parked on the debug leaf: a human has the workspace. Like a
 			// gate this never provisions; continuing re-enters st below.
 			err = x.stageDebug(st)
-		case stepRouteComplete:
+		case runcore.StepRouteComplete:
 			err = x.routeAfterComplete(st)
-		case stepRouteFail:
+		case runcore.StepRouteFail:
 			err = x.routeAfterFail(st)
-		case stepSkip:
+		case runcore.StepSkip:
 			// A condition that does not hold: the stage completes as
 			// skipped before anything is provisioned (FLOWLANG §2 run_if).
 			err = x.skipStage(st, note)
-		case stepRun:
+		case runcore.StepRun:
 			// Ensure the workspace lazily, right before a stage that uses it —
 			// and NEVER for a stage that only parks on something outside the
 			// run (a gate or a wait) or acts there (a remote tracker action
@@ -238,12 +239,12 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			// re-provision it before re-arming the gate, so answers were
 			// silently buffered and dropped (found live: rejecting a final_gate
 			// returned {"status":"answered"} but nothing happened).
-			if needsWorkspace(st) && !x.envEnsured {
+			if runcore.NeedsWorkspace(st) && !x.envEnsured {
 				if eerr := x.ensureEnv(); eerr != nil {
 					x.exit(eerr)
 					return
 				}
-				if rs.done { // env_failed is terminal
+				if rs.Done { // env_failed is terminal
 					return
 				}
 				x.envEnsured = true
@@ -251,7 +252,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 				// agent in the workspace accepts every model the flow pins. A
 				// gate, a wait or a remote action may have run already — none
 				// of them had a workspace to check in.
-				if !rs.anyWorkspaceStageStarted() {
+				if !rs.AnyWorkspaceStageStarted() {
 					if missing := x.checkAgentModels(); len(missing) > 0 {
 						_ = x.fail("the flow pins models the workspace's agent does not offer: " +
 							strings.Join(missing, "; "))
@@ -259,7 +260,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 					}
 				}
 			}
-			if needsWorkspace(st) {
+			if runcore.NeedsWorkspace(st) {
 				x.followAdopted()
 				// What a person approved at a gate reaches the file before
 				// the stage that reads it starts (the gate had no workspace).
@@ -301,22 +302,22 @@ func (x *exec) exit(cause error) {
 		// A deliberate stop is abandonment, not failure (PLAN5 M24) — the
 		// same terminal the flow's own `abort` edge reaches. A take-over in
 		// force ends with it, on the record.
-		for id, h := range x.rs.holds {
-			_ = x.append(&event.HoldReleased{StageID: id, Iteration: x.rs.iters[id], UserID: h.taken.UserID,
-				Reason: event.HoldEndedWithStage, DurationMS: max(x.e.clock().Sub(h.takenAt).Milliseconds(), 0), HoldSpend: h.banked})
+		for id, h := range x.rs.Holds {
+			_ = x.append(&event.HoldReleased{StageID: id, Iteration: x.rs.Iters[id], UserID: h.Taken.UserID,
+				Reason: event.HoldEndedWithStage, DurationMS: max(x.e.clock().Sub(h.TakenAt).Milliseconds(), 0), HoldSpend: h.Banked})
 		}
-		_ = x.append(&event.RunAbandoned{StalledAt: x.rs.view.CurrentStage, Reason: "aborted by user"})
+		_ = x.append(&event.RunAbandoned{StalledAt: x.rs.View.CurrentStage, Reason: "aborted by user"})
 	case errors.Is(cause, errPaused):
-		_ = x.append(&event.RunPaused{StageID: x.rs.view.CurrentStage, Reason: event.PauseUser})
+		_ = x.append(&event.RunPaused{StageID: x.rs.View.CurrentStage, Reason: event.PauseUser})
 	case errors.Is(cause, errWaitingOnHuman):
 		// Parked on a human, not stopped by one: the run keeps reading
 		// waiting_on_human, gives its concurrency slot back, and comes alive
 		// again when the answer lands (Engine.AnswerPing).
-		_ = x.append(&event.RunPaused{StageID: x.rs.view.CurrentStage, Reason: event.PauseWaiting})
+		_ = x.append(&event.RunPaused{StageID: x.rs.View.CurrentStage, Reason: event.PauseWaiting})
 	case errors.Is(cause, errShutdown), cause == nil:
 	default:
 		x.e.log.Error("run loop error; run left non-terminal for recovery",
-			"run", x.rs.runID, "err", cause)
+			"run", x.rs.RunID, "err", cause)
 	}
 }
 
@@ -383,14 +384,14 @@ func (x *exec) append(ps ...event.Payload) error {
 			v.Text = x.redact.Scrub(v.Text)
 		}
 	}
-	unlock := x.e.appendLock(x.rs.runID)
-	evs, err := x.e.store.Append(x.bg, x.rs.runID, ps...)
+	unlock := x.e.appendLock(x.rs.RunID)
+	evs, err := x.e.store.Append(x.bg, x.rs.RunID, ps...)
 	unlock()
 	if err != nil {
 		return fmt.Errorf("append: %w", err)
 	}
 	for i := range evs {
-		x.rs.apply(&evs[i])
+		x.rs.Apply(&evs[i])
 	}
 	x.e.emit(evs)
 	return nil
@@ -399,10 +400,10 @@ func (x *exec) append(ps ...event.Payload) error {
 func (x *exec) complete() error {
 	rs := x.rs
 	return x.append(&event.RunCompleted{
-		DurationMS:    x.e.clock().Sub(rs.view.CreatedAt).Milliseconds(),
-		TotalCostUSD:  rs.cost,
-		TotalTurns:    rs.turns,
-		UnwantedPings: rs.unwanted,
+		DurationMS:    x.e.clock().Sub(rs.View.CreatedAt).Milliseconds(),
+		TotalCostUSD:  rs.Cost,
+		TotalTurns:    rs.Turns,
+		UnwantedPings: rs.Unwanted,
 	})
 }
 
@@ -416,7 +417,7 @@ func (x *exec) fail(reason string) error {
 
 // takeEdge follows a recoverable edge of the given kind (on_fail,
 // on_reject, on_timeout — the registry lives in the flow package) to the
-// link chooseEdge picks, and records it. A link targeting end finishes the
+// link ChooseEdge picks, and records it. A link targeting end finishes the
 // phase, done the run, abort abandons the run; an absent edge or an
 // exhausted chain is a dead end (deadEnd: the run is abandoned in the main
 // chain or an outcome, a watcher's round ends — §3).
@@ -432,9 +433,9 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 		}
 		return shell.Tail(s, 8<<10)
 	}
-	ch := rs.chooseEdge(st, kind)
-	switch ch.kind {
-	case edgeNone:
+	ch := rs.ChooseEdge(st, kind)
+	switch ch.Kind {
+	case runcore.EdgeNone:
 		// A rejection is a verdict, not a breakage: saying "unrecoverable
 		// failure" about a human (or a signal) deliberately saying no would
 		// misreport the run's history.
@@ -446,33 +447,33 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 			}
 		}
 		return x.deadEnd(st, "", reason)
-	case edgeExhausted:
-		return x.deadEnd(st, kind, fmt.Sprintf("%s from %s exhausted (max %s)", kind, st.ID, chainMax(ch.edge)))
-	case edgeAbort:
+	case runcore.EdgeExhausted:
+		return x.deadEnd(st, kind, fmt.Sprintf("%s from %s exhausted (max %s)", kind, st.ID, chainMax(ch.Edge)))
+	case runcore.EdgeAbort:
 		reason := fmt.Sprintf("aborted by flow: %s at stage %s", kind, st.ID)
 		if strings.TrimSpace(feedContent) != "" {
 			reason += ": " + shell.Tail(strings.TrimSpace(feedContent), 2<<10)
 		}
 		return x.abandon(st.ID, kind, reason)
-	case edgeEnd:
+	case runcore.EdgeEnd:
 		// The phase ends here — a best-effort stage whose failure is not
 		// worth routing anywhere — or, with done, the run (FLOWLANG §3).
 		// Recorded like any link.
-		return x.append(&event.EdgeTaken{From: st.ID, To: ch.edge.To, Edge: kind, Depth: ch.depth,
+		return x.append(&event.EdgeTaken{From: st.ID, To: ch.Edge.To, Edge: kind, Depth: ch.Depth,
 			Feed: feedTail(feedContent)})
-	case edgeDebug:
+	case runcore.EdgeDebug:
 		// The debug leaf: park here, on this stage, for a human with the
 		// workspace (stageDebug). Counted like any link — the timeline
 		// shows n/∞ — but never exhausted: the human decides when to stop.
-		return x.append(&event.EdgeTaken{From: st.ID, To: flow.ReservedDebug, Edge: kind, Count: ch.count,
-			Max: flow.UnlimitedMax, Depth: ch.depth, Feed: feedTail(feedContent)})
+		return x.append(&event.EdgeTaken{From: st.ID, To: flow.ReservedDebug, Edge: kind, Count: ch.Count,
+			Max: flow.UnlimitedMax, Depth: ch.Depth, Feed: feedTail(feedContent)})
 	}
 	// The content always rides along; whether the target renders it is the
 	// target's choice (it binds edge.verdict or edge.failure, or it does not).
 	// Persisted in the event so a crash between edge_taken and the next
 	// stage_started loses nothing.
-	return x.append(&event.EdgeTaken{From: st.ID, To: ch.edge.To, Edge: kind, Count: ch.count, Max: ch.edge.Max,
-		Depth: ch.depth, Feed: feedTail(feedContent)})
+	return x.append(&event.EdgeTaken{From: st.ID, To: ch.Edge.To, Edge: kind, Count: ch.Count, Max: ch.Edge.Max,
+		Depth: ch.Depth, Feed: feedTail(feedContent)})
 }
 
 // chainMax renders a chain's budget for the abandon reason: "5" for a
@@ -503,7 +504,7 @@ func failEdgeKind(st *flow.Stage, reason string) string {
 // checkBudget abandons the run when §3 budget ceilings are exceeded.
 // Returns true when the run should stop.
 func (x *exec) checkBudget(st *flow.Stage) (bool, error) {
-	if over, reason := budgetExceeded(x.rs.fl.Budget, x.rs.cost, x.rs.turns); over {
+	if over, reason := runcore.BudgetExceeded(x.rs.Flow.Budget, x.rs.Cost, x.rs.Turns); over {
 		return true, x.abandon(st.ID, "", reason)
 	}
 	return false, nil
@@ -518,9 +519,9 @@ func (x *exec) checkBudget(st *flow.Stage) (bool, error) {
 func (x *exec) routeAfterFail(st *flow.Stage) error {
 	feed := ""
 	kind := flow.EdgeFail
-	if x.rs.lastFailure != nil {
-		feed = x.rs.lastFailure.Error
-		kind = failEdgeKind(st, x.rs.lastFailure.Reason)
+	if x.rs.LastFailure != nil {
+		feed = x.rs.LastFailure.Error
+		kind = failEdgeKind(st, x.rs.LastFailure.Reason)
 	}
 	return x.takeEdge(st, kind, feed)
 }
@@ -529,11 +530,11 @@ func (x *exec) routeAfterFail(st *flow.Stage) error {
 // stage_completed and its routing: no re-execution, only the decision.
 func (x *exec) routeAfterComplete(st *flow.Stage) error {
 	if x.emptyRound(st) {
-		x.rs.endPhase()
+		x.rs.EndPhase()
 		return nil
 	}
 	var v *Verdict
-	if st.Type == flow.StageAgent && x.verdictPath(st) != "" && !x.rs.elided[st.ID] {
+	if st.Type == flow.StageAgent && x.verdictPath(st) != "" && !x.rs.Elided[st.ID] {
 		var err error
 		if v, err = x.readVerdict(st); err != nil {
 			if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract, Error: err.Error()}); err != nil {
@@ -588,7 +589,7 @@ type invocation struct {
 // suspended then, as for a pending question), and a release waiting for the
 // turn in flight to end.
 type liveHold struct {
-	st        *heldState
+	st        *runcore.HeldState
 	spend     event.HoldSpend
 	heldTurns map[string]bool
 	idle      bool
@@ -597,7 +598,7 @@ type liveHold struct {
 }
 
 func (x *exec) liveHold(st *flow.Stage) *liveHold {
-	h := x.rs.holds[st.ID]
+	h := x.rs.Holds[st.ID]
 	if h == nil {
 		return nil
 	}
@@ -621,21 +622,21 @@ func (x *exec) takeHold(st *flow.Stage, iter int, userID string) error {
 // releaseHold closes a take-over with its account: every leg's spend, the
 // time since it was taken, and why it ended. A release by the holder owes
 // the session the handback prompt.
-func (x *exec) releaseHold(st *flow.Stage, iter int, h *heldState, by, reason string, leg event.HoldSpend) error {
-	total := h.banked
+func (x *exec) releaseHold(st *flow.Stage, iter int, h *runcore.HeldState, by, reason string, leg event.HoldSpend) error {
+	total := h.Banked
 	total.Add(leg)
-	if by == "" && h.taken != nil {
-		by = h.taken.UserID
+	if by == "" && h.Taken != nil {
+		by = h.Taken.UserID
 	}
 	rel := &event.HoldReleased{StageID: st.ID, Iteration: iter, UserID: by, Reason: reason,
-		DurationMS: max(x.e.clock().Sub(h.takenAt).Milliseconds(), 0), HoldSpend: total}
+		DurationMS: max(x.e.clock().Sub(h.TakenAt).Milliseconds(), 0), HoldSpend: total}
 	return x.append(rel)
 }
 
 // endHold closes a take-over the attempt ended underneath: the harness
 // returned, died or timed out while someone held it.
 func (x *exec) endHold(st *flow.Stage, iter int, leg event.HoldSpend) error {
-	h := x.rs.holds[st.ID]
+	h := x.rs.Holds[st.ID]
 	if h == nil {
 		return nil
 	}
@@ -657,22 +658,22 @@ type holdReentry struct {
 func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner agentport.AgentRunner, session agentport.SessionID) (holdReentry, error) {
 	rs := x.rs
 	switch {
-	case rs.handbackOwed[st.ID]:
+	case rs.HandbackOwed[st.ID]:
 		return holdReentry{reply: handbackPrompt, kind: event.PromptHandback, reason: event.ResumeReleased}, nil
-	case rs.holds[st.ID] == nil:
+	case rs.Holds[st.ID] == nil:
 		return holdReentry{}, nil
-	case len(rs.pendingMsgs) > 0:
-		n := len(rs.pendingMsgs)
+	case len(rs.PendingMsgs) > 0:
+		n := len(rs.PendingMsgs)
 		text, err := x.withPendingMessages(st, iter, "")
 		if err != nil {
 			return holdReentry{}, err
 		}
-		rs.holds[st.ID].banked.Messages += n // delivered on the hold's account
+		rs.Holds[st.ID].Banked.Messages += n // delivered on the hold's account
 		return holdReentry{reply: strings.TrimPrefix(text, "\n\n---\n\n"), kind: event.PromptMessages, reason: event.ResumeMessage}, nil
-	case rs.pausedHold[st.ID]:
+	case rs.PausedHold[st.ID]:
 		return holdReentry{park: true}, nil
 	case mayReattach:
-		if ra, ok := runner.(agentport.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.envID, session, rs.agentCursor[st.ID]) {
+		if ra, ok := runner.(agentport.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.EnvID, session, rs.AgentCursor[st.ID]) {
 			return holdReentry{}, nil // the crashed path follows the live turn
 		}
 		return holdReentry{park: true}, nil
@@ -685,7 +686,7 @@ func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner ag
 // no invocation is there to do the parking (a restart, a play, a loop
 // re-entry). The hold stays in force.
 func (x *exec) parkOnHold(st *flow.Stage, iter int, session agentport.SessionID) error {
-	if !x.rs.pausedHold[st.ID] {
+	if !x.rs.PausedHold[st.ID] {
 		if err := x.append(&event.StagePaused{StageID: st.ID, Iteration: iter, Reason: event.PauseHeld,
 			SessionID: string(session)}); err != nil {
 			return err
@@ -764,12 +765,12 @@ func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, init
 
 func (x *exec) stageAgent(st *flow.Stage) error {
 	rs := x.rs
-	reenter := rs.ph == phIn
-	iter := rs.iters[st.ID]
+	reenter := rs.Ph == runcore.PhIn
+	iter := rs.Iters[st.ID]
 	if !reenter {
 		iter++
 		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter, Harness: st.Harness, Model: st.Model,
-			Agent: st.Agent, AgentHash: x.rs.fl.AgentHash(st.Agent)}); err != nil {
+			Agent: st.Agent, AgentHash: x.rs.Flow.AgentHash(st.Agent)}); err != nil {
 			return err
 		}
 		// What the agent reads with a schema is a precondition, like a
@@ -828,7 +829,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 				// scheduling slot against a human's attention span.
 				return errWaitingOnHuman
 			}
-			if _, ok := rs.sessions[st.ID]; !ok {
+			if _, ok := rs.Sessions[st.ID]; !ok {
 				// An answer with nowhere to go. Re-running the agent from
 				// scratch would drop the human's words on the floor and let
 				// it guess again — the exact failure this path exists to
@@ -844,7 +845,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			// does need saying out loud, by name.
 			reply, replyKind = x.answerReply(asks, x.writtenOutputs(st)), event.PromptAnswer
 		}
-		session, haveSession := rs.sessions[st.ID]
+		session, haveSession := rs.Sessions[st.ID]
 
 		// A take-over in force (or its handback owed) decides what the
 		// session gets next, ahead of the restart reply: the holder's words,
@@ -869,7 +870,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			// the workspace and may have outlived it: follow the turn still
 			// running (or the one that finished while nobody listened)
 			// instead of starting another.
-			if ra, ok := runner.(agentport.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.envID, session, rs.agentCursor[st.ID]) {
+			if ra, ok := runner.(agentport.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.EnvID, session, rs.AgentCursor[st.ID]) {
 				if err := x.append(&event.StageResumed{StageID: st.ID, Iteration: iter, Reason: event.ResumeRestart,
 					SessionID: string(session)}); err != nil {
 					return err
@@ -878,7 +879,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 				inv, err = x.invoke(st, budget, tr, x.liveAsks(st), "",
 					func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
 						in.MCPServers = mcp
-						r, _, err := ra.Reattach(ctx, rs.envID, session, rs.agentCursor[st.ID], in)
+						r, _, err := ra.Reattach(ctx, rs.EnvID, session, rs.AgentCursor[st.ID], in)
 						return r, err
 					})
 				if err != nil {
@@ -938,9 +939,9 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
 				in.MCPServers = mcp
 				if resuming {
-					return runner.Resume(ctx, rs.envID, session, in)
+					return runner.Resume(ctx, rs.EnvID, session, in)
 				}
-				return runner.Run(ctx, rs.envID, spec, in)
+				return runner.Run(ctx, rs.EnvID, spec, in)
 			})
 		if err != nil {
 			return err // cancelled: caller inspects cause
@@ -1075,11 +1076,11 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 // on_success, carrying an approval's verdict. A skipped stage spent nothing
 // and judged nothing: it goes straight on.
 func (x *exec) afterComplete(st *flow.Stage, verdict *Verdict) error {
-	if x.rs.elided[st.ID] {
-		x.rs.routeSuccess(st, x.rs.completedFeed)
+	if x.rs.Elided[st.ID] {
+		x.rs.RouteSuccess(st, x.rs.CompletedFeed)
 		return nil
 	}
-	if verdict != nil && !x.rs.verdictRecorded {
+	if verdict != nil && !x.rs.VerdictRecorded {
 		if err := x.append(&event.VerdictReceived{StageID: st.ID, Approve: verdict.Approve, NComments: len(verdict.Comments)}); err != nil {
 			return err
 		}
@@ -1092,7 +1093,7 @@ func (x *exec) afterComplete(st *flow.Stage, verdict *Verdict) error {
 	if verdict != nil && !verdict.Approve {
 		return x.takeEdge(st, flow.EdgeReject, verdictText(st.ID, verdict))
 	}
-	x.rs.routeSuccess(st, x.rs.completedFeed)
+	x.rs.RouteSuccess(st, x.rs.CompletedFeed)
 	return nil
 }
 
@@ -1120,7 +1121,7 @@ func (x *exec) pauseAttempt(st *flow.Stage, iter int, inv invocation) (stop bool
 	}
 	// A take-over in force banks this leg's spend on the pause, whatever
 	// the pause is on: the release that closes it accounts for every leg.
-	if h := rs.holds[st.ID]; h != nil {
+	if h := rs.Holds[st.ID]; h != nil {
 		leg := inv.holdSpend
 		paused.Hold = &leg
 	}
@@ -1140,13 +1141,13 @@ func (x *exec) pauseAttempt(st *flow.Stage, iter int, inv invocation) (stop bool
 // loop started.
 func (x *exec) liveAsks(st *flow.Stage) []*Ping {
 	parked := map[string]bool{}
-	for _, id := range x.rs.pausedAsks[st.ID] {
+	for _, id := range x.rs.PausedAsks[st.ID] {
 		parked[id] = true
 	}
 	var out []*Ping
 	x.e.mu.Lock()
 	defer x.e.mu.Unlock()
-	for _, op := range x.rs.openAgentPings() {
+	for _, op := range x.rs.OpenAgentPings() {
 		if op.StageID != st.ID || parked[op.PingID] {
 			continue
 		}
@@ -1160,12 +1161,12 @@ func (x *exec) liveAsks(st *flow.Stage) []*Ping {
 // withPendingMessages appends the human messages nobody has delivered yet
 // (sent while no invocation could take them) to the next prompt.
 func (x *exec) withPendingMessages(st *flow.Stage, iter int, text string) (string, error) {
-	if len(x.rs.pendingMsgs) == 0 {
+	if len(x.rs.PendingMsgs) == 0 {
 		return text, nil
 	}
-	msgs := make([]agentport.UserMessage, 0, len(x.rs.pendingMsgs))
-	ids := make([]string, 0, len(x.rs.pendingMsgs))
-	for _, m := range x.rs.pendingMsgs {
+	msgs := make([]agentport.UserMessage, 0, len(x.rs.PendingMsgs))
+	ids := make([]string, 0, len(x.rs.PendingMsgs))
+	for _, m := range x.rs.PendingMsgs {
 		msgs = append(msgs, agentport.UserMessage{ID: m.MessageID, Text: m.Text})
 		ids = append(ids, m.MessageID)
 	}
@@ -1213,7 +1214,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 	// select, a drain after the result, or a wind-down; everything else
 	// goes to the transcript. session says it was a new session.
 	record := func(ev agentport.AgentEvent) (session bool, err error) {
-		if ev.Kind == agentport.AgentEvSession && ev.Text != "" && x.rs.sessions[st.ID] != agentport.SessionID(ev.Text) {
+		if ev.Kind == agentport.AgentEvSession && ev.Text != "" && x.rs.Sessions[st.ID] != agentport.SessionID(ev.Text) {
 			if err := x.append(&event.AgentSession{StageID: st.ID, Iteration: io.tr.iter, SessionID: ev.Text}); err != nil {
 				return false, err
 			}
@@ -1322,7 +1323,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					return invocation{}, err
 				}
 			case <-grace.C:
-				x.e.log.Warn("harness ignored cancellation; abandoning attempt", "run", x.rs.runID, "stage", st.ID)
+				x.e.log.Warn("harness ignored cancellation; abandoning attempt", "run", x.rs.RunID, "stage", st.ID)
 				return invocation{outcome: out, open: open, left: left(), holdSpend: holdLeg()}, nil
 			}
 		}
@@ -1453,8 +1454,8 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			// keep what the human was actually shown.
 			x.publishPingFiles(req.p, st.ID)
 			x.e.notify(x.bg, notifyport.Notification{
-				RunID: x.rs.runID, PingID: req.p.ID, Type: req.p.Type,
-				Title: fmt.Sprintf("%s: %s", req.p.Type, x.rs.view.TicketTitle),
+				RunID: x.rs.RunID, PingID: req.p.ID, Type: req.p.Type,
+				Title: fmt.Sprintf("%s: %s", req.p.Type, x.rs.View.TicketTitle),
 				Body:  req.p.Question,
 			})
 			if len(open) == 0 {
@@ -1471,7 +1472,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			// An answer the agent never saw does not close the question: once
 			// the turn was handed back (parked), the only way in is a resume,
 			// so the ping stays open and the attempt pauses on it below.
-			if handled && agentPingType(ar.p.Type) && !ar.p.handedBack.Load() {
+			if handled && runcore.AgentPingType(ar.p.Type) && !ar.p.handedBack.Load() {
 				open = dropPing(open, ar.p)
 				if len(open) == 0 {
 					resume()
@@ -1502,7 +1503,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			if hold != nil {
 				// Bank the leg for whoever closes the hold next (an abort's
 				// account; a pause re-reads the log and starts the leg over).
-				hold.st.banked.Add(hold.spend)
+				hold.st.Banked.Add(hold.spend)
 			}
 			cancelRun(context.Cause(x.ctx))
 			return invocation{}, context.Cause(x.ctx)
@@ -1520,17 +1521,17 @@ type ask struct {
 	answer   *event.PingAnswered // nil while still open
 }
 
-// pausedAsks re-collects the questions this stage parked on (stage_paused),
+// PausedAsks re-collects the questions this stage parked on (stage_paused),
 // with whatever answers the log has since recorded.
 func (x *exec) pausedAsks(st *flow.Stage) []ask {
-	ids := x.rs.pausedAsks[st.ID]
+	ids := x.rs.PausedAsks[st.ID]
 	if len(ids) == 0 {
 		return nil
 	}
 	out := make([]ask, 0, len(ids))
 	for _, id := range ids {
-		a := ask{id: id, answer: x.rs.answeredPings[id]}
-		if r := x.rs.raisedPings[id]; r != nil {
+		a := ask{id: id, answer: x.rs.AnsweredPings[id]}
+		if r := x.rs.RaisedPings[id]; r != nil {
 			a.question = r.Question
 		}
 		out = append(out, a)
@@ -1650,9 +1651,9 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 			return x.fail(fmt.Sprintf("stage %s: run_ref %q no longer exists in project.commands", st.ID, st.RunRef))
 		}
 	}
-	fresh := rs.ph != phIn
+	fresh := rs.Ph != runcore.PhIn
 	if fresh { // §2: on recovery, open command stages re-execute without a new attempt
-		iter := rs.iters[st.ID] + 1
+		iter := rs.Iters[st.ID] + 1
 		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
 			return err
 		}
@@ -1690,25 +1691,25 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	// default (FLOWLANG §2, PLAN5 M23).
 	timeout := st.Timeout
 	if timeout == 0 {
-		timeout = rs.fl.Defaults.Timeout
+		timeout = rs.Flow.Defaults.Timeout
 	}
 	// Once in the primary, or — each_repo — once per checkout, stopping at
 	// the first failure. Each checkout gets the full timeout.
 	// On a subject, in its checkout (PLAN6 R12): the phase acts on that
 	// merge request's branch only.
 	dirs := []string{event.PrimaryCheckoutDir}
-	if co := x.rs.subjectCheckout(); co != nil {
+	if co := x.rs.SubjectCheckout(); co != nil {
 		dirs = []string{co.Dir}
 	} else if st.EachRepo {
-		dirs = rs.checkoutDirs()
+		dirs = rs.CheckoutDirs()
 	}
 	var res envport.ExecResult
 	var err error
 	var combined strings.Builder
-	marker := commandMarker(rs.runID, st.ID)
+	marker := commandMarker(rs.RunID, st.ID)
 	for _, dir := range dirs {
 		cctx, cancel := context.WithTimeout(x.ctx, timeout)
-		res, err = x.res.Envp.Exec(cctx, rs.envID, envport.Command{Script: script, Dir: dir, Timeout: timeout, Marker: marker})
+		res, err = x.res.Envp.Exec(cctx, rs.EnvID, envport.Command{Script: script, Dir: dir, Timeout: timeout, Marker: marker})
 		cancel()
 		if err != nil {
 			break
@@ -1737,8 +1738,8 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 		}
 		return x.fail("infrastructure error: " + err.Error())
 	}
-	x.publishLog(st.ID, rs.iters[st.ID], res.Output)
-	x.publishOutputs(st, rs.iters[st.ID], st.Outputs)
+	x.publishLog(st.ID, rs.Iters[st.ID], res.Output)
+	x.publishOutputs(st, rs.Iters[st.ID], st.Outputs)
 	if res.ExitCode != 0 {
 		code := res.ExitCode
 		// The output tail rides in the event so recovery can route the
@@ -1768,7 +1769,7 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 		return err
 	}
-	x.rs.routeSuccess(st, "")
+	x.rs.RouteSuccess(st, "")
 	return nil
 }
 
@@ -1796,7 +1797,7 @@ func (x *exec) writtenOutputs(st *flow.Stage) []string {
 			}
 			continue
 		}
-		if _, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, b.Value); err == nil {
+		if _, err := x.res.Envp.ReadFile(x.ctx, x.rs.EnvID, b.Value); err == nil {
 			written = append(written, b.Value)
 		}
 	}
@@ -1818,7 +1819,7 @@ func (x *exec) missingPaths(ports []flow.Port) []string {
 			}
 			continue
 		}
-		if _, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, path); err != nil {
+		if _, err := x.res.Envp.ReadFile(x.ctx, x.rs.EnvID, path); err != nil {
 			missing = append(missing, path)
 		}
 	}
@@ -1861,12 +1862,12 @@ func (x *exec) clearOutputs(bindings []flow.Port) {
 	// Best-effort: a workspace that cannot delete is not a stage failure —
 	// the output contract still has the final say.
 	for _, script := range scripts {
-		if _, err := x.res.Envp.Exec(x.ctx, x.rs.envID, envport.Command{
+		if _, err := x.res.Envp.Exec(x.ctx, x.rs.EnvID, envport.Command{
 			Script:  script,
 			Dir:     "repo",
 			Timeout: time.Minute,
 		}); err != nil {
-			x.e.log.Warn("clearing declared outputs failed", "run", x.rs.runID, "err", err)
+			x.e.log.Warn("clearing declared outputs failed", "run", x.rs.RunID, "err", err)
 		}
 	}
 }
@@ -1877,16 +1878,16 @@ func (x *exec) stageGate(st *flow.Stage) error {
 	rs := x.rs
 
 	// Recovery: answered pre-crash but routing unrecorded.
-	if rs.ph == phIn && rs.gateAnswer != nil {
-		return x.routeGate(st, rs.gateAnswer, x.e.clock())
+	if rs.Ph == runcore.PhIn && rs.GateAnswer != nil {
+		return x.routeGate(st, rs.GateAnswer, x.e.clock())
 	}
 
 	var p *Ping
-	if rs.ph == phIn {
+	if rs.Ph == runcore.PhIn {
 		p = x.openYesNo(st, PingGate)
 	}
 	if p == nil {
-		iter := rs.iters[st.ID] + 1
+		iter := rs.Iters[st.ID] + 1
 		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
 			return err
 		}
@@ -1897,7 +1898,7 @@ func (x *exec) stageGate(st *flow.Stage) error {
 		files, types, link := x.gateFiles(st)
 		p = &Ping{
 			Type:     PingGate,
-			Question: gateQuestion(st, rs.view.TicketTitle),
+			Question: gateQuestion(st, rs.View.TicketTitle),
 			// A gate over several merge requests lists them all; the link
 			// stays the first (the primary repository's).
 			Context: x.mrListMarkdown(),
@@ -1910,7 +1911,7 @@ func (x *exec) stageGate(st *flow.Stage) error {
 		// the run — snapshot it as reviewed, not as the workspace has it later.
 		x.publishPingFiles(p, st.ID)
 		x.e.notify(x.bg, notifyport.Notification{
-			RunID: rs.runID, PingID: p.ID, Type: p.Type,
+			RunID: rs.RunID, PingID: p.ID, Type: p.Type,
 			Title: p.Question, Body: p.Primary(),
 		})
 	}
@@ -1949,18 +1950,18 @@ func (x *exec) gateFiles(st *flow.Stage) (files []string, types map[string]strin
 		dir := flow.FilePath(in.Value)
 		held, err := x.dirFiles(dir)
 		if err != nil {
-			x.e.log.Warn("listing a gate's folder", "run", x.rs.runID, "stage", st.ID, "path", dir, "err", err)
+			x.e.log.Warn("listing a gate's folder", "run", x.rs.RunID, "stage", st.ID, "path", dir, "err", err)
 		}
 		for _, f := range held {
 			if f.Size > attachmentMaxBytes {
-				x.e.log.Warn("file too large to review", "run", x.rs.runID, "stage", st.ID, "path", f.Path, "size", f.Size)
+				x.e.log.Warn("file too large to review", "run", x.rs.RunID, "stage", st.ID, "path", f.Path, "size", f.Size)
 				continue
 			}
 			files = append(files, f.Path)
 		}
 	}
 	if len(files) > attachmentMaxFiles {
-		x.e.log.Warn("a gate shows more files than are reviewed", "run", x.rs.runID, "stage", st.ID,
+		x.e.log.Warn("a gate shows more files than are reviewed", "run", x.rs.RunID, "stage", st.ID,
 			"files", len(files), "shown", attachmentMaxFiles)
 		files = files[:attachmentMaxFiles]
 	}
@@ -1982,13 +1983,13 @@ func (x *exec) sourceLink(v string) string {
 	switch v {
 	case flow.SourceMRURL:
 		// On a subject, the merge request the phase acts on.
-		if mr := x.rs.subjectMR(); mr != nil {
+		if mr := x.rs.SubjectMR(); mr != nil {
 			return mr.Ref.URL
 		}
-		return x.rs.view.MRURL
+		return x.rs.View.MRURL
 	case flow.SourceWorkspace:
 		// Workspace hand-off: the environment's app link, when it has one.
-		return workspaceLink(x.rs.links)
+		return workspaceLink(x.rs.Links)
 	}
 	if name := flow.SourceService(v); name != "" {
 		return x.serviceLink(name)
@@ -2000,7 +2001,7 @@ func (x *exec) sourceLink(v string) string {
 // and type — one runLoop re-registered from the log after a restart — or nil
 // when the stage has to raise one.
 func (x *exec) openYesNo(st *flow.Stage, ptype string) *Ping {
-	op := x.rs.openPing(st.ID, ptype)
+	op := x.rs.OpenPing(st.ID, ptype)
 	if op == nil {
 		return nil
 	}
@@ -2014,7 +2015,7 @@ func (x *exec) openYesNo(st *flow.Stage, ptype string) *Ping {
 // happens next (a snapshot of the reviewed file, the channels) is the
 // caller's.
 func (x *exec) raiseYesNo(p *Ping) error {
-	p.ID, p.RunID, p.RaisedAt, p.done = x.e.newID(), x.rs.runID, x.e.clock(), make(chan struct{})
+	p.ID, p.RunID, p.RaisedAt, p.done = x.e.newID(), x.rs.RunID, x.e.clock(), make(chan struct{})
 	x.e.mu.Lock()
 	x.e.pings[p.ID] = p
 	x.e.mu.Unlock()
@@ -2043,25 +2044,25 @@ func (x *exec) raiseYesNo(p *Ping) error {
 func (x *exec) stageDebug(st *flow.Stage) error {
 	rs := x.rs
 	// Recovery: answered pre-crash, routing unrecorded.
-	if rs.gateAnswer != nil {
-		ans := rs.gateAnswer
-		rs.gateAnswer = nil
+	if rs.GateAnswer != nil {
+		ans := rs.GateAnswer
+		rs.GateAnswer = nil
 		return x.routeDebug(st, PingAnswer{Answer: ans.Answer, Feedback: ans.Feedback})
 	}
 	if x.openYesNo(st, PingDebug) == nil {
-		p := &Ping{Type: PingDebug, Question: st.ID + " failed", Context: shell.Tail(rs.feed, 4<<10),
-			Link: workspaceLink(rs.links), StageID: st.ID, AnswerKind: event.AnswerYesNo,
-			Phase: rs.phase, EndsPhase: !x.endsRunAtDeadEnd()}
+		p := &Ping{Type: PingDebug, Question: st.ID + " failed", Context: shell.Tail(rs.Feed, 4<<10),
+			Link: workspaceLink(rs.Links), StageID: st.ID, AnswerKind: event.AnswerYesNo,
+			Phase: rs.Phase, EndsPhase: !x.endsRunAtDeadEnd()}
 		if err := x.raiseYesNo(p); err != nil {
 			return err
 		}
 		x.e.notify(x.bg, notifyport.Notification{
-			RunID: rs.runID, PingID: p.ID, Type: p.Type,
+			RunID: rs.RunID, PingID: p.ID, Type: p.Type,
 			Title: p.Question, Body: p.Primary(),
 		})
 	}
 	// Pure waiting: give the slot back. The answer wakes the run, and replay
-	// lands on gateAnswer above.
+	// lands on GateAnswer above.
 	return errWaitingOnHuman
 }
 
@@ -2071,8 +2072,8 @@ func (x *exec) routeDebug(st *flow.Stage, ans PingAnswer) error {
 	if ans.Answer == "approve" {
 		// Continue: back into st, fresh — pos never moved. What advance does
 		// after a gate's approval, by hand: no feed, no "attempt n of m".
-		rs.ph = phStart
-		rs.feed, rs.feedSentinel, rs.feedAttempts = "", "", 0
+		rs.Ph = runcore.PhStart
+		rs.Feed, rs.FeedSentinel, rs.FeedAttempts = "", "", 0
 		return nil
 	}
 	reason := fmt.Sprintf("debug rejected at stage %s", st.ID)
@@ -2090,7 +2091,7 @@ func (x *exec) routeDebug(st *flow.Stage, ans PingAnswer) error {
 // redo reads what they dropped.
 func (x *exec) routeGate(st *flow.Stage, rec *event.PingAnswered, started time.Time) error {
 	var shown []string
-	if r := x.rs.raisedPings[rec.PingID]; r != nil {
+	if r := x.rs.RaisedPings[rec.PingID]; r != nil {
 		shown = r.Files
 	}
 	curated, err := x.recordCuration(st, rec)
@@ -2106,7 +2107,7 @@ func (x *exec) routeGate(st *flow.Stage, rec *event.PingAnswered, started time.T
 		if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds(), Feed: verdict}); err != nil {
 			return err
 		}
-		x.rs.routeSuccess(st, verdict)
+		x.rs.RouteSuccess(st, verdict)
 		return nil
 	}
 	return x.takeEdge(st, flow.EdgeReject, verdict)
@@ -2120,8 +2121,8 @@ func (x *exec) routeGate(st *flow.Stage, rec *event.PingAnswered, started time.T
 // half-finished side effect on a real service cannot be replayed away.
 func (x *exec) stageAction(st *flow.Stage) error {
 	rs := x.rs
-	if rs.ph != phIn {
-		iter := rs.iters[st.ID] + 1
+	if rs.Ph != runcore.PhIn {
+		iter := rs.Iters[st.ID] + 1
 		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
 			return err
 		}
@@ -2129,7 +2130,7 @@ func (x *exec) stageAction(st *flow.Stage) error {
 		// an action handed a malformed file would act on it. Not while an
 		// effect is pending: the executor reconciles first, and an effect
 		// that already landed needs neither the file nor the workspace.
-		if reason, msg := x.checkStructuredInputs(st); reason != "" && !rs.actionPending[st.ID] {
+		if reason, msg := x.checkStructuredInputs(st); reason != "" && !rs.ActionPending[st.ID] {
 			if err := x.append(&event.StageFailed{StageID: st.ID, Reason: reason, Error: msg}); err != nil {
 				return err
 			}
@@ -2178,7 +2179,7 @@ func (x *exec) stageAction(st *flow.Stage) error {
 		}
 		return x.fail(fmt.Sprintf("stage %s: action %q has no executor", st.ID, st.Action))
 	}
-	if err != nil || rs.done || routed {
+	if err != nil || rs.Done || routed {
 		return err
 	}
 
@@ -2186,10 +2187,10 @@ func (x *exec) stageAction(st *flow.Stage) error {
 		return err
 	}
 	if x.emptyRound(st) {
-		x.rs.endPhase()
+		x.rs.EndPhase()
 		return nil
 	}
-	x.rs.routeSuccess(st, "")
+	x.rs.RouteSuccess(st, "")
 	return nil
 }
 
@@ -2202,13 +2203,13 @@ func (x *exec) stageAction(st *flow.Stage) error {
 // waiting forever; a timeout is counted from the park.
 func (x *exec) stageWait(st *flow.Stage) error {
 	rs := x.rs
-	if rs.ph != phIn {
-		iter := rs.iters[st.ID] + 1
+	if rs.Ph != runcore.PhIn {
+		iter := rs.Iters[st.ID] + 1
 		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
 			return err
 		}
 	}
-	if sig := signalspec.Get(st.WaitFor); sig != nil && sig.Needs == signalspec.NeedsMR && len(rs.mrs) == 0 {
+	if sig := signalspec.Get(st.WaitFor); sig != nil && sig.Needs == signalspec.NeedsMR && len(rs.MRs) == 0 {
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInputMissing,
 			Error: fmt.Sprintf("cannot wait for %s: %s", st.WaitFor, waitPrereq(st.WaitFor))}); aerr != nil {
 			return aerr
@@ -2222,7 +2223,7 @@ func (x *exec) completeWait(st *flow.Stage, started time.Time) error {
 	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 		return err
 	}
-	x.rs.routeSuccess(st, "")
+	x.rs.RouteSuccess(st, "")
 	return nil
 }
 
@@ -2286,8 +2287,8 @@ func (x *exec) ensureEnv() error {
 	// Egress policy is delivered to the per-project gateway by the provisioner
 	// at Provision time (from the EnvSpec egress fields), so there is nothing to
 	// prime here.
-	if rs.envID != "" {
-		status, err := x.res.Envp.Status(x.ctx, rs.envID)
+	if rs.EnvID != "" {
+		status, err := x.res.Envp.Status(x.ctx, rs.EnvID)
 		// A container caught mid-restart reads Starting/Stopped for a moment;
 		// re-probe once after a short pause before deciding to re-provision, so
 		// a transient blip doesn't nuke a workspace that's just coming back up.
@@ -2298,7 +2299,7 @@ func (x *exec) ensureEnv() error {
 			case <-x.ctx.Done():
 				return context.Cause(x.ctx)
 			}
-			status, err = x.res.Envp.Status(x.ctx, rs.envID)
+			status, err = x.res.Envp.Status(x.ctx, rs.EnvID)
 		}
 		if err != nil {
 			if x.ctx.Err() != nil {
@@ -2315,7 +2316,7 @@ func (x *exec) ensureEnv() error {
 			// forwards are gone (found live: git push to 127.0.0.1:<proxy>
 			// refused after an engine restart + resume).
 			if r, ok := x.res.Envp.(envport.WorkspaceReattacher); ok {
-				if err := r.Reattach(x.ctx, rs.envID); err != nil {
+				if err := r.Reattach(x.ctx, rs.EnvID); err != nil {
 					if x.ctx.Err() != nil {
 						return context.Cause(x.ctx)
 					}
@@ -2325,34 +2326,34 @@ func (x *exec) ensureEnv() error {
 			// Per-boot workspace state changes across restarts: the run token.
 			// Refresh it so the shim re-authenticates. Egress needs no refresh —
 			// the per-project gateway kept filtering across the restart.
-			if err := x.writeRunEnv(rs.envID); err != nil {
-				x.e.log.Warn("refreshing run.env on recovery failed", "run", rs.runID, "err", err)
+			if err := x.writeRunEnv(rs.EnvID); err != nil {
+				x.e.log.Warn("refreshing run.env on recovery failed", "run", rs.RunID, "err", err)
 			}
 			// Re-seed the credentials. A resumed run re-enters a workspace the
 			// terminal scrub emptied (secrets.go), so without this "try again"
 			// would run with no model auth and no git token. Idempotent, so the
 			// paths that never scrubbed (play, crash recovery) just rewrite the
 			// same bytes.
-			if err := x.reseedSecrets(rs.envID); err != nil {
+			if err := x.reseedSecrets(rs.EnvID); err != nil {
 				return fmt.Errorf("recovery: re-seed workspace credentials: %w", err)
 			}
 			// Exposures also died with the previous process; re-create them
 			// (fresh ports — the live registry, not the old env_ready event,
 			// is what the UI trusts).
-			x.e.runPorts.AutoExpose(x.ctx, rs.runID, x.res.Envp, rs.envID)
+			x.e.runPorts.AutoExpose(x.ctx, rs.RunID, x.res.Envp, rs.EnvID)
 			// Re-materialize goal + answer artifacts into the recovered
 			// workspace (idempotent; the associations are durable).
 			x.deliverRunAttachments()
 			return nil
 		}
 		x.e.log.Warn("environment not running; re-provisioning — whatever was changed by hand in the old container is gone with it",
-			"run", rs.runID, "env", rs.envID, "status", status)
+			"run", rs.RunID, "env", rs.EnvID, "status", status)
 	}
 	// The first provisioning announces itself (the timeline's "provisioning
 	// workspace…"); a re-provisioning after a reap does not. The run may
 	// already be past pending — a remote action first in the flow runs
 	// before any workspace — so the record of the request is what decides.
-	if !rs.envRequested {
+	if !rs.EnvRequested {
 		if err := x.append(&event.EnvRequested{}); err != nil {
 			return err
 		}
@@ -2361,15 +2362,15 @@ func (x *exec) ensureEnv() error {
 	// suffixed actual branch: base already ends where the run-id tail begins,
 	// so wsname.For re-appending the tail would double it (apo-…-h1-h1).
 	// Legacy runs have no base — fall back to the actual branch.
-	nameBranch := rs.view.BranchBase
+	nameBranch := rs.View.BranchBase
 	if nameBranch == "" {
-		nameBranch = rs.branch
+		nameBranch = rs.Branch
 	}
 	spec := envport.EnvSpec{
-		RunID:   rs.runID,
+		RunID:   rs.RunID,
 		RepoURL: x.res.RepoRef.URL,
-		Branch:  rs.branch,
-		Name:    wsname.For(nameBranch, rs.runID),
+		Branch:  rs.Branch,
+		Name:    wsname.For(nameBranch, rs.RunID),
 		Project: x.res.ProjectID,
 		// The name is a docker label only; the id keys the gateway and caches.
 		ProjectName:        x.res.ProjectName,
@@ -2401,11 +2402,11 @@ func (x *exec) ensureEnv() error {
 		}
 		return x.append(&event.EnvFailed{Error: err.Error()})
 	}
-	rs.envID = id
+	rs.EnvID = id
 	if err := x.bootstrap(id); err != nil {
 		return err
 	}
-	if rs.done {
+	if rs.Done {
 		return nil
 	}
 	if err := probeEgress(x.ctx, x.res.Envp, id, x.res); err != nil {
@@ -2427,7 +2428,7 @@ func (x *exec) ensureEnv() error {
 	// match the pre-restart ones (best-effort). Getting INTO the workspace
 	// is not a link the log records: the run page has its terminal and
 	// editor, the SSH door its ssh/VS Code route (GET /runs/{id}/ssh).
-	evLinks := x.e.runPorts.AutoExpose(x.ctx, x.rs.runID, x.res.Envp, id)
+	evLinks := x.e.runPorts.AutoExpose(x.ctx, x.rs.RunID, x.res.Envp, id)
 	return x.append(&event.EnvReady{EnvID: string(id), Links: evLinks})
 }
 
@@ -2436,7 +2437,7 @@ func (x *exec) ensureEnv() error {
 // environment.
 func (x *exec) writeRunEnv(id envport.EnvID) error {
 	runEnv := fmt.Sprintf("APOTHECARY_RUN_ID=%s\nAPOTHECARY_RUN_TOKEN=%s\nAPOTHECARY_ENGINE_URL=%s\n",
-		x.rs.runID, x.e.RunToken(x.rs.runID), x.e.engineURLFor(x.res.Envp, id))
+		x.rs.RunID, x.e.RunToken(x.rs.RunID), x.e.engineURLFor(x.res.Envp, id))
 	return x.res.Envp.WriteFile(x.ctx, id, "/apothecary/run.env", []byte(runEnv), 0o600)
 }
 
@@ -2447,10 +2448,10 @@ func (x *exec) writeRunEnv(id envport.EnvID) error {
 // agent's commits are already there.
 func (x *exec) reseedSecrets(id envport.EnvID) error {
 	res := x.res
-	x.e.authSink.Set(x.rs.runID, res, id, x.redact)
+	x.e.authSink.Set(x.rs.RunID, res, id, x.redact)
 	return bootstrap.WriteWorkspaceSecrets(x.ctx, res.Envp, id, bootstrap.BootstrapSpec{
 		RepoURL:     res.RepoRef.URL,
-		ProviderEnv: x.e.authSink.ProviderEnv(res, x.rs.runID, x.e.engineURLFor(res.Envp, id)),
+		ProviderEnv: x.e.authSink.ProviderEnv(res, x.rs.RunID, x.e.engineURLFor(res.Envp, id)),
 		GitUser:     res.GitUser,
 		GitPass:     res.GitPass,
 		SeedAuth:    res.SeedAuth,
@@ -2465,21 +2466,21 @@ func (x *exec) registerSecret(s string) { x.redact.Add(s, "harness-auth") }
 
 func (x *exec) bootstrap(id envport.EnvID) error {
 	res := x.res
-	x.e.authSink.Set(x.rs.runID, res, id, x.redact)
-	trees, err := x.e.skillTrees(x.ctx, x.rs.skillsets)
+	x.e.authSink.Set(x.rs.RunID, res, id, x.redact)
+	trees, err := x.e.skillTrees(x.ctx, x.rs.Skillsets)
 	if err != nil {
 		err = fmt.Errorf("bootstrap skills: %w", err)
 	} else {
 		err = bootstrap.RunBootstrap(x.ctx, res.Envp, id, bootstrap.BootstrapSpec{
-			RunID:         x.rs.runID,
-			Token:         x.e.RunToken(x.rs.runID),
+			RunID:         x.rs.RunID,
+			Token:         x.e.RunToken(x.rs.RunID),
 			EngineURL:     x.e.engineURLFor(res.Envp, id),
 			RepoURL:       res.RepoRef.URL,
-			SourceBranch:  bootstrap.SourceBranchOr(x.rs.sourceBranch, res.RepoRef.DefaultBranch),
-			Branch:        x.rs.branch,
+			SourceBranch:  bootstrap.SourceBranchOr(x.rs.SourceBranch, res.RepoRef.DefaultBranch),
+			Branch:        x.rs.Branch,
 			Fetch:         x.primaryFetch(),
 			AgentsMDPath:  res.AgentsMDPath,
-			ProviderEnv:   x.e.authSink.ProviderEnv(res, x.rs.runID, x.e.engineURLFor(res.Envp, id)),
+			ProviderEnv:   x.e.authSink.ProviderEnv(res, x.rs.RunID, x.e.engineURLFor(res.Envp, id)),
 			GitUser:       res.GitUser,
 			GitPass:       res.GitPass,
 			GitName:       res.GitName,
@@ -2487,11 +2488,11 @@ func (x *exec) bootstrap(id envport.EnvID) error {
 			SeedAuth:      res.SeedAuth,
 			Register:      x.registerSecret,
 			Prepare:       res.Prepare,
-			Agents:        x.rs.fl.WorkspaceAgents(),
-			Timeout:       x.rs.fl.Defaults.Timeout,
+			Agents:        x.rs.Flow.WorkspaceAgents(),
+			Timeout:       x.rs.Flow.Defaults.Timeout,
 			Extras:        x.extraCheckouts(),
 			Skills:        trees,
-			SkillPins:     x.rs.skillsets,
+			SkillPins:     x.rs.Skillsets,
 			InstallSkills: res.InstallSkills,
 		})
 	}
@@ -2513,7 +2514,7 @@ func (x *exec) readVerdict(st *flow.Stage) (*Verdict, error) {
 	if path == "" {
 		return nil, fmt.Errorf("stage %s: agent %q declares no verdict output", st.ID, st.Agent)
 	}
-	data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, path)
+	data, err := x.res.Envp.ReadFile(x.ctx, x.rs.EnvID, path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("stage %s: %s missing", st.ID, path)

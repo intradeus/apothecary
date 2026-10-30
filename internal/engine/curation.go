@@ -95,11 +95,11 @@ func (e *Engine) validateCuration(ctx context.Context, pingID string, files []st
 // even when the draft goes back.
 func (x *exec) recordCuration(st *flow.Stage, rec *event.PingAnswered) ([]*event.ReviewCurated, error) {
 	rs := x.rs
-	if len(rec.Curated) == 0 || rs.curatedSeen[rec.PingID] {
+	if len(rec.Curated) == 0 || rs.CuratedSeen[rec.PingID] {
 		return nil, nil
 	}
 	var types map[string]string
-	if raised := rs.raisedPings[rec.PingID]; raised != nil {
+	if raised := rs.RaisedPings[rec.PingID]; raised != nil {
 		types = raised.FileTypes
 	}
 	paths := make([]string, 0, len(rec.Curated))
@@ -137,7 +137,7 @@ func (x *exec) recordCuration(st *flow.Stage, rec *event.PingAnswered) ([]*event
 			if approved && len(ap.DroppedReplies) > 0 {
 				ev.Skipped = map[string]string{}
 				for _, id := range ap.DroppedReplies {
-					if lt := rs.roundThread(id); lt != nil && lt.Last != "" {
+					if lt := rs.RoundThread(id); lt != nil && lt.Last != "" {
 						ev.Skipped[id] = lt.Last
 					}
 				}
@@ -159,7 +159,7 @@ func (x *exec) recordCuration(st *flow.Stage, rec *event.PingAnswered) ([]*event
 // records anything writes the same bytes again.
 func (x *exec) materialiseCurated(st *flow.Stage) error {
 	rs := x.rs
-	if len(rs.curated) == 0 {
+	if len(rs.Curated) == 0 {
 		return nil
 	}
 	for _, in := range st.Inputs {
@@ -167,7 +167,7 @@ func (x *exec) materialiseCurated(st *flow.Stage) error {
 			continue
 		}
 		path := flow.FilePath(in.Value)
-		ev := rs.curated[path]
+		ev := rs.Curated[path]
 		if ev == nil || x.materialised[path] == ev {
 			continue
 		}
@@ -182,30 +182,16 @@ func (x *exec) materialiseCurated(st *flow.Stage) error {
 		if err != nil {
 			return fmt.Errorf("rendering the review a person approved at gate %s: %w", ev.StageID, err)
 		}
-		if err := x.res.Envp.WriteFile(x.ctx, rs.envID, path, data, 0o644); err != nil {
+		if err := x.res.Envp.WriteFile(x.ctx, rs.EnvID, path, data, 0o644); err != nil {
 			return fmt.Errorf("writing %s as approved at gate %s: %w", path, ev.StageID, err)
 		}
-		x.e.log.Info("curated review written", "run", rs.runID, "gate", ev.StageID, "path", path, "stage", st.ID)
+		x.e.log.Info("curated review written", "run", rs.RunID, "gate", ev.StageID, "path", path, "stage", st.ID)
 		if x.materialised == nil {
 			x.materialised = map[string]*event.ReviewCurated{}
 		}
 		x.materialised[path] = ev
 	}
 	return nil
-}
-
-// unskippedRound is the round's threads a reply is still owed to: the ones
-// a person did not hold a reply back from at the gate (skipped at their
-// last comment).
-func (rs *runState) unskippedRound() []string {
-	var out []string
-	for _, t := range rs.round {
-		if last, ok := rs.skipped[t.ID]; ok && last == t.Last {
-			continue
-		}
-		out = append(out, t.ID)
-	}
-	return out
 }
 
 // renderCuration says, for the agent that redoes a rejected review, what the

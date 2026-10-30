@@ -36,7 +36,7 @@ const markersScript = `files=$(git diff --name-only --diff-filter=U); if [ -n "$
 
 // actionSyncTarget brings the subject's target branch into it.
 func (x *exec) actionSyncTarget(st *flow.Stage) (bool, error) {
-	co := x.rs.subjectCheckout()
+	co := x.rs.SubjectCheckout()
 	if co == nil {
 		return x.actionFail(st, event.ReasonInputMissing, noSubjectMsg(st))
 	}
@@ -144,7 +144,7 @@ func (x *exec) recordSync(st *flow.Stage, strategy, targetTip string, git func(s
 	if err != nil {
 		return x.infraFail(st, "sync: "+err.Error())
 	}
-	if err := x.append(&event.TargetSynced{StageID: st.ID, Subject: x.rs.subject, Strategy: strategy, TargetTip: targetTip, ResultTip: head}); err != nil {
+	if err := x.append(&event.TargetSynced{StageID: st.ID, Subject: x.rs.Subject, Strategy: strategy, TargetTip: targetTip, ResultTip: head}); err != nil {
 		return true, err
 	}
 	return false, nil
@@ -158,8 +158,8 @@ func (x *exec) recordSync(st *flow.Stage, strategy, targetTip string, git func(s
 // the run did not see. A first push is a plain push.
 func (x *exec) actionPushBranch(st *flow.Stage) (bool, error) {
 	rs := x.rs
-	cos := rs.checkouts
-	if co := x.rs.subjectCheckout(); co != nil {
+	cos := rs.Checkouts
+	if co := x.rs.SubjectCheckout(); co != nil {
 		cos = []event.Checkout{*co}
 	}
 	for _, co := range cos {
@@ -176,9 +176,9 @@ func (x *exec) actionPushBranch(st *flow.Stage) (bool, error) {
 		if code != 0 {
 			return x.actionFail(st, event.ReasonExitNonzero, fmt.Sprintf("%s: cannot read HEAD: %s", co.Name, tip))
 		}
-		expected := rs.pushed[co.Name+"\x00"+co.Branch]
-		if expected == "" && x.rs.subjectCheckout() != nil {
-			expected = rs.phaseTip
+		expected := rs.Pushed[co.Name+"\x00"+co.Branch]
+		if expected == "" && x.rs.SubjectCheckout() != nil {
+			expected = rs.PhaseTip
 		}
 		if expected == tip {
 			continue // already there (a re-entry after the push landed)

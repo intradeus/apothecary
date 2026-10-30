@@ -91,6 +91,10 @@ var rules = []rule{
 		"internal/event", "internal/ports/", "internal/resolution", "internal/run",
 		"internal/shell", "internal/sidecar", "internal/wsinfo",
 	}},
+	{pkg: "internal/runcore", mayImport: []string{
+		"internal/actionspec", "internal/agentspec", "internal/event", "internal/flow",
+		"internal/reviewfile", "internal/run", "internal/signalspec", "internal/ports/",
+	}},
 	{pkg: "internal/resolution", mayImport: []string{
 		"internal/actionspec", "internal/agentspec", "internal/event", "internal/flow",
 		"internal/run", "internal/signalspec", "internal/ports/",
@@ -204,6 +208,31 @@ func TestImportGraph(t *testing.T) {
 				if matches(imp, r.pkg) {
 					t.Errorf("%s imports %s; only %v may", path, imp, r.importedOnlyBy)
 				}
+			}
+		}
+	}
+}
+
+// TestRunCoreReadsNoClock: the interpreter's core is a pure function of the
+// run's events — a time it needs comes from an event or a parameter, so
+// replay and the live loop see the same one.
+func TestRunCoreReadsNoClock(t *testing.T) {
+	dir := filepath.Join(moduleRoot(t), "internal", "runcore")
+	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, call := range []string{"time.Now(", "time.Since(", "time.Until("} {
+			if strings.Contains(string(src), call) {
+				t.Errorf("%s calls %s; runcore takes its times from events or parameters", filepath.Base(f), call)
 			}
 		}
 	}

@@ -16,6 +16,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
+	"apothecary/internal/runcore"
 )
 
 const reviewFlowDoc = `name: rv
@@ -225,8 +226,8 @@ func TestAnApprovalsDecisionSurvivesRecovery(t *testing.T) {
 		{Payload: &event.StageStarted{StageID: "write", Iteration: 2}},
 		{Payload: &event.StageCompleted{StageID: "write"}},
 	}
-	if rs := replay(evs, fl); rs.feed != "" {
-		t.Errorf("the rejection outlived the stage it entered: %q", rs.feed)
+	if rs := runcore.Replay(evs, fl); rs.Feed != "" {
+		t.Errorf("the rejection outlived the stage it entered: %q", rs.Feed)
 	}
 	evs = append(evs,
 		event.Event{Payload: &event.StageStarted{StageID: "gate", Iteration: 2}},
@@ -234,13 +235,13 @@ func TestAnApprovalsDecisionSurvivesRecovery(t *testing.T) {
 		event.Event{Payload: &event.PingAnswered{PingID: "g2", Answer: "approve", Feedback: "ship it"}},
 		event.Event{Payload: &event.StageCompleted{StageID: "gate", Feed: "APPROVED at gate gate.\n\nship it\n"}},
 	)
-	rs := replay(evs, fl)
-	if rs.ph != phAfterComplete || rs.completedFeed != "APPROVED at gate gate.\n\nship it\n" {
-		t.Fatalf("ph = %v, completedFeed = %q", rs.ph, rs.completedFeed)
+	rs := runcore.Replay(evs, fl)
+	if rs.Ph != runcore.PhAfterComplete || rs.CompletedFeed != "APPROVED at gate gate.\n\nship it\n" {
+		t.Fatalf("ph = %v, completedFeed = %q", rs.Ph, rs.CompletedFeed)
 	}
 	evs = append(evs, event.Event{Payload: &event.StageStarted{StageID: "build", Iteration: 1}})
-	if rs := replay(evs, fl); rs.feedSentinel != flow.SourceVerdict || !strings.Contains(rs.feed, "ship it") {
-		t.Errorf("build re-entered with feed %q (%s)", rs.feed, rs.feedSentinel)
+	if rs := runcore.Replay(evs, fl); rs.FeedSentinel != flow.SourceVerdict || !strings.Contains(rs.Feed, "ship it") {
+		t.Errorf("build re-entered with feed %q (%s)", rs.Feed, rs.FeedSentinel)
 	}
 }
 

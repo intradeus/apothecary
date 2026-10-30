@@ -40,7 +40,7 @@ func (e *Engine) warmBrowser(res *resolution.Resolution, fl *flow.Flow) {
 // re-read from the project when a source is set; each value is taught to
 // the redactor before anything can echo it.
 func (x *exec) stageMCP(st *flow.Stage) ([]agentport.MCPServer, error) {
-	sp := x.rs.fl.Agent(st.Agent)
+	sp := x.rs.Flow.Agent(st.Agent)
 	if sp == nil || len(sp.MCP) == 0 {
 		return nil, nil
 	}
@@ -54,7 +54,7 @@ func (x *exec) stageMCP(st *flow.Stage) ([]agentport.MCPServer, error) {
 	}
 	out := make([]agentport.MCPServer, 0, len(sp.MCP))
 	for _, name := range sp.MCP {
-		m := x.rs.fl.MCPServer(name)
+		m := x.rs.Flow.MCPServer(name)
 		if m == nil {
 			return nil, fmt.Errorf("mcp server %q is not declared in the flow", name)
 		}

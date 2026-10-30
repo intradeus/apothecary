@@ -18,7 +18,7 @@ import (
 // has a repository host port and changes to publish — the primary always, an
 // extra repo when its branch is ahead of its source. Each targets the branch
 // the checkout forked from, so a run started off another run's branch stacks
-// on it. Idempotent via rs.mrs, rehydrated from mr_created on replay:
+// on it. Idempotent via rs.MRs, rehydrated from mr_created on replay:
 // re-entering after a crash never opens a second MR for a branch. The files
 // of its attachments port are uploaded to each merge request's repository
 // host just before it opens, and the body links them (attach.go).
@@ -36,7 +36,7 @@ import (
 func (x *exec) mrHead(repoHost repoport.RepoHost, ref repoport.MRRef) string {
 	st, err := repoHost.MRStatus(x.ctx, ref)
 	if err != nil {
-		x.e.log.Warn("could not read the new merge request's head", "run", x.rs.runID, "mr", ref.URL, "err", err)
+		x.e.log.Warn("could not read the new merge request's head", "run", x.rs.RunID, "mr", ref.URL, "err", err)
 		return ""
 	}
 	return st.HeadSHA
@@ -49,8 +49,8 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 	// repository host may already have it.
 	// In a phase opened for one merge request, only its checkout; otherwise
 	// every checkout of the run.
-	checkouts := rs.checkouts
-	if co := x.rs.subjectCheckout(); co != nil {
+	checkouts := rs.Checkouts
+	if co := x.rs.SubjectCheckout(); co != nil {
 		checkouts = []event.Checkout{*co}
 	}
 	var todo []event.Checkout
@@ -59,7 +59,7 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 		if repoHost == nil {
 			continue // context-only extra repo
 		}
-		if rs.mrFor(co.Name, co.Branch) != nil {
+		if rs.MRFor(co.Name, co.Branch) != nil {
 			continue // already open
 		}
 		if !co.Primary {
@@ -68,7 +68,7 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 				return x.infraFail(st, fmt.Sprintf("repo %s: %v", co.Name, err))
 			}
 			if !ahead {
-				x.e.log.Info("no changes in extra repo; no merge request", "run", rs.runID, "repo", co.Name)
+				x.e.log.Info("no changes in extra repo; no merge request", "run", rs.RunID, "repo", co.Name)
 				continue
 			}
 		}
@@ -81,7 +81,7 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 				return x.infraFail(st, "cannot tell whether the merge request was already created: "+ferr.Error())
 			}
 			if found {
-				x.e.log.Info("adopted an existing merge request", "run", rs.runID, "stage", st.ID, "repo", co.Name, "mr", ref.URL)
+				x.e.log.Info("adopted an existing merge request", "run", rs.RunID, "stage", st.ID, "repo", co.Name, "mr", ref.URL)
 				created := &event.MRCreated{Repo: co.Name, Branch: co.Branch, Target: co.Source, MRURL: ref.URL, MRIID: ref.IID,
 					Head: x.mrHead(repoHost, ref)}
 				if err := x.append(created); err != nil {
@@ -97,7 +97,7 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 	}
 
 	bodyPath := inputPath(st, "body")
-	body, err := x.res.Envp.ReadFile(x.ctx, rs.envID, bodyPath)
+	body, err := x.res.Envp.ReadFile(x.ctx, rs.EnvID, bodyPath)
 	if err != nil {
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInputMissing,
 			Error: fmt.Sprintf("MR body %s not readable: %v", bodyPath, err)}); aerr != nil {
@@ -105,12 +105,12 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 		}
 		return true, x.abandon(st.ID, "", fmt.Sprintf("MR body artifact %s missing", bodyPath))
 	}
-	title := mrTitle(string(body), rs.view.TicketTitle)
+	title := mrTitle(string(body), rs.View.TicketTitle)
 	files, routed, err := x.attachmentFiles(st)
 	if routed || err != nil {
 		return true, err
 	}
-	if !rs.actionPending[st.ID] {
+	if !rs.ActionPending[st.ID] {
 		// Record the intent BEFORE the effect: if the process dies past this
 		// point the next boot knows an MR may exist and reconciles instead of
 		// creating a second one.
@@ -143,7 +143,7 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 		// one the host refuses is logged, and the merge request stands.
 		if labels := st.SettingList("labels"); len(labels) > 0 {
 			if err := repoHost.AddMRLabels(x.ctx, ref, labels); err != nil {
-				x.e.log.Warn("labelling the merge request", "run", rs.runID, "mr", ref.URL, "labels", labels, "err", err)
+				x.e.log.Warn("labelling the merge request", "run", rs.RunID, "mr", ref.URL, "labels", labels, "err", err)
 			}
 		}
 		// mr_created is what makes the $MR_URL sentinel and the merge signals
@@ -172,7 +172,7 @@ func (x *exec) infraFail(st *flow.Stage, msg string) (bool, error) {
 
 // gitIn runs one git script in a checkout directory of the workspace.
 func (x *exec) gitIn(dir, script string) (envport.ExecResult, error) {
-	return x.res.Envp.Exec(x.ctx, x.rs.envID, envport.Command{Script: script, Dir: dir, Timeout: x.rs.fl.Defaults.Timeout})
+	return x.res.Envp.Exec(x.ctx, x.rs.EnvID, envport.Command{Script: script, Dir: dir, Timeout: x.rs.Flow.Defaults.Timeout})
 }
 
 // repoRefFor is the repository host reference of a checkout: the project's for
@@ -211,12 +211,12 @@ func (x *exec) checkoutAhead(co event.Checkout) (bool, error) {
 // review order.
 func (x *exec) mrListMarkdown() string {
 	rs := x.rs
-	if len(rs.mrs) <= 1 {
+	if len(rs.MRs) <= 1 {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString("Merge requests to review, in order:\n")
-	for i, mr := range rs.mrs {
+	for i, mr := range rs.MRs {
 		label := mr.Branch
 		if mr.Repo != event.PrimaryCheckoutName {
 			label = mr.Repo + ": " + mr.Branch
@@ -229,7 +229,7 @@ func (x *exec) mrListMarkdown() string {
 // extraCheckouts is what bootstrap clones beside the primary.
 func (x *exec) extraCheckouts() []bootstrap.ExtraCheckout {
 	var out []bootstrap.ExtraCheckout
-	for _, co := range x.rs.checkouts {
+	for _, co := range x.rs.Checkouts {
 		if co.Primary {
 			continue
 		}
@@ -241,7 +241,7 @@ func (x *exec) extraCheckouts() []bootstrap.ExtraCheckout {
 // primaryFetch is the ref the primary's branch starts from when the run was
 // created on a merge request in it ("" = it forks its source).
 func (x *exec) primaryFetch() string {
-	for _, co := range x.rs.checkouts {
+	for _, co := range x.rs.Checkouts {
 		if co.Primary {
 			return co.Fetch
 		}

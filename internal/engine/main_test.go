@@ -11,10 +11,11 @@ import (
 	"testing"
 
 	"apothecary/internal/event"
+	"apothecary/internal/runcore"
 )
 
 // The fold invariant: at every point the run loop settles (the top of an
-// iteration, after an idle tick, on exit) its live runState must equal the
+// iteration, after an idle tick, on exit) its live runcore.State must equal the
 // fold of its own log. Every scenario test checks it — TestMain installs the
 // hook, the harness fails a test whose runs broke it.
 
@@ -23,7 +24,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// foldAllow lists the runState fields the live loop may disagree on with
+// foldAllow lists the runcore.State fields the live loop may disagree on with
 // the fold: none. view is never compared (run.Apply, inside the fold, keeps
 // it).
 var foldAllow = map[string]bool{}
@@ -34,32 +35,32 @@ var foldViolations = struct {
 }{runs: map[string][]string{}}
 
 func checkFoldInvariant(x *exec) {
-	if x.rs.fl == nil || x.rs.runID == "" {
+	if x.rs.Flow == nil || x.rs.RunID == "" {
 		return
 	}
-	evs, err := x.e.store.Events(context.Background(), x.rs.runID, 0)
+	evs, err := x.e.store.Events(context.Background(), x.rs.RunID, 0)
 	if err != nil || len(evs) == 0 {
 		return
 	}
-	rep := replay(evs, x.rs.fl)
-	if rep.ph == phAfterComplete && x.rs.ph != phAfterComplete && rep.pos >= 0 && rep.pos < len(rep.fl.Stages) {
+	rep := runcore.Replay(evs, x.rs.Flow)
+	if rep.Ph == runcore.PhAfterComplete && x.rs.Ph != runcore.PhAfterComplete && rep.Pos >= 0 && rep.Pos < len(rep.Flow.Stages) {
 		// The moves the next event records, not this one. One: a completed
 		// stage's on_success.
-		rep.routeSuccess(&rep.fl.Stages[rep.pos], rep.completedFeed)
+		rep.RouteSuccess(&rep.Flow.Stages[rep.Pos], rep.CompletedFeed)
 	}
-	if rep.ph == phDebug && x.rs.ph == phStart && x.rs.pos == rep.pos {
+	if rep.Ph == runcore.PhDebug && x.rs.Ph == runcore.PhStart && x.rs.Pos == rep.Pos {
 		// The third: continuing from the debug leaf (routeDebug), recorded
 		// by the stage's next stage_started.
-		rep.ph, rep.gateAnswer = phStart, nil
-		rep.feed, rep.feedSentinel, rep.feedAttempts = "", "", 0
+		rep.Ph, rep.GateAnswer = runcore.PhStart, nil
+		rep.Feed, rep.FeedSentinel, rep.FeedAttempts = "", "", 0
 	}
-	if x.rs.pos >= len(rep.fl.Stages) && !rep.idle && rep.pos >= 0 && rep.pos < len(rep.fl.Stages) {
-		// Another: a phase whose end was decided (endPhase — a watcher's
+	if x.rs.Pos >= len(rep.Flow.Stages) && !rep.Idle && rep.Pos >= 0 && rep.Pos < len(rep.Flow.Stages) {
+		// Another: a phase whose end was decided (EndPhase — a watcher's
 		// dead end, an empty round) and is recorded by the next step's
 		// phase_completed, which carries the reason.
-		rep.endPhase()
-		rep.endReason = x.rs.endReason
-		rep.gateAnswer = nil // a debug leaf's rejection ends the round
+		rep.EndPhase()
+		rep.EndReason = x.rs.EndReason
+		rep.GateAnswer = nil // a debug leaf's rejection ends the round
 	}
 	diffs := diffState(x.rs, rep)
 	if len(diffs) == 0 {
@@ -67,8 +68,8 @@ func checkFoldInvariant(x *exec) {
 	}
 	foldViolations.mu.Lock()
 	defer foldViolations.mu.Unlock()
-	if len(foldViolations.runs[x.rs.runID]) < 20 {
-		foldViolations.runs[x.rs.runID] = append(foldViolations.runs[x.rs.runID], diffs...)
+	if len(foldViolations.runs[x.rs.RunID]) < 20 {
+		foldViolations.runs[x.rs.RunID] = append(foldViolations.runs[x.rs.RunID], diffs...)
 	}
 }
 
@@ -92,78 +93,78 @@ func checkFoldAfter(t *testing.T, store *event.MemStore) {
 	}
 }
 
-// diffState compares every runState field but view, by name. Nil and empty
+// diffState compares every runcore.State field but view, by name. Nil and empty
 // maps and slices are equal.
-func diffState(live, rep *runState) []string {
+func diffState(live, rep *runcore.State) []string {
 	fields := []struct {
 		name string
 		a, b any
 	}{
-		{"runID", live.runID, rep.runID},
-		{"branch", live.branch, rep.branch},
-		{"sourceBranch", live.sourceBranch, rep.sourceBranch},
-		{"params", live.params, rep.params},
-		{"skillsets", live.skillsets, rep.skillsets},
-		{"envID", live.envID, rep.envID},
-		{"envRequested", live.envRequested, rep.envRequested},
-		{"pos", live.pos, rep.pos},
-		{"ph", live.ph, rep.ph},
-		{"endsRun", live.endsRun, rep.endsRun},
-		{"abortsRun", live.abortsRun, rep.abortsRun},
-		{"abortAt", live.abortAt, rep.abortAt},
-		{"abortReason", live.abortReason, rep.abortReason},
-		{"endReason", live.endReason, rep.endReason},
-		{"iters", live.iters, rep.iters},
-		{"edgeCounts", live.edgeCounts, rep.edgeCounts},
-		{"actionPending", live.actionPending, rep.actionPending},
-		{"sessions", live.sessions, rep.sessions},
-		{"links", live.links, rep.links},
-		{"cost", live.cost, rep.cost},
-		{"turns", live.turns, rep.turns},
-		{"unwanted", live.unwanted, rep.unwanted},
-		{"feed", live.feed, rep.feed},
-		{"feedSentinel", live.feedSentinel, rep.feedSentinel},
-		{"feedAttempts", live.feedAttempts, rep.feedAttempts},
-		{"completedFeed", live.completedFeed, rep.completedFeed},
-		{"verdictRecorded", live.verdictRecorded, rep.verdictRecorded},
-		{"ci", live.ci, rep.ci},
-		{"lastFailure", live.lastFailure, rep.lastFailure},
-		{"checkouts", live.checkouts, rep.checkouts},
-		{"mrs", live.mrs, rep.mrs},
-		{"phase", live.phase, rep.phase},
-		{"subject", live.subject, rep.subject},
-		{"idle", live.idle, rep.idle},
-		{"phaseTip", live.phaseTip, rep.phaseTip},
-		{"phaseHead", live.phaseHead, rep.phaseHead},
-		{"triggerSeen", live.triggerSeen, rep.triggerSeen},
-		{"phaseRuns", live.phaseRuns, rep.phaseRuns},
-		{"confirms", live.confirms, rep.confirms},
-		{"round", live.round, rep.round},
-		{"roundScope", live.roundScope, rep.roundScope},
-		{"roundLoaded", live.roundLoaded, rep.roundLoaded},
-		{"selectPing", live.selectPing, rep.selectPing},
-		{"skipped", live.skipped, rep.skipped},
-		{"dropped", live.dropped, rep.dropped},
-		{"curated", live.curated, rep.curated},
-		{"curatedSeen", live.curatedSeen, rep.curatedSeen},
-		{"pushed", live.pushed, rep.pushed},
-		{"adopted", live.adopted, rep.adopted},
-		{"heads", live.heads, rep.heads},
-		{"parked", live.parked, rep.parked},
-		{"parkSince", live.parkSince, rep.parkSince},
-		{"anyStarted", live.anyStarted, rep.anyStarted},
-		{"elided", live.elided, rep.elided},
-		{"openPings", live.openPings, rep.openPings},
-		{"gateAnswer", live.gateAnswer, rep.gateAnswer},
-		{"raisedPings", live.raisedPings, rep.raisedPings},
-		{"answeredPings", live.answeredPings, rep.answeredPings},
-		{"pausedAsks", live.pausedAsks, rep.pausedAsks},
-		{"agentCursor", live.agentCursor, rep.agentCursor},
-		{"pendingMsgs", live.pendingMsgs, rep.pendingMsgs},
-		{"holds", live.holds, rep.holds},
-		{"pausedHold", live.pausedHold, rep.pausedHold},
-		{"handbackOwed", live.handbackOwed, rep.handbackOwed},
-		{"done", live.done, rep.done},
+		{"runID", live.RunID, rep.RunID},
+		{"branch", live.Branch, rep.Branch},
+		{"sourceBranch", live.SourceBranch, rep.SourceBranch},
+		{"params", live.Params, rep.Params},
+		{"skillsets", live.Skillsets, rep.Skillsets},
+		{"envID", live.EnvID, rep.EnvID},
+		{"envRequested", live.EnvRequested, rep.EnvRequested},
+		{"pos", live.Pos, rep.Pos},
+		{"ph", live.Ph, rep.Ph},
+		{"endsRun", live.EndsRun, rep.EndsRun},
+		{"abortsRun", live.AbortsRun, rep.AbortsRun},
+		{"abortAt", live.AbortAt, rep.AbortAt},
+		{"abortReason", live.AbortReason, rep.AbortReason},
+		{"endReason", live.EndReason, rep.EndReason},
+		{"iters", live.Iters, rep.Iters},
+		{"edgeCounts", live.EdgeCounts, rep.EdgeCounts},
+		{"actionPending", live.ActionPending, rep.ActionPending},
+		{"sessions", live.Sessions, rep.Sessions},
+		{"links", live.Links, rep.Links},
+		{"cost", live.Cost, rep.Cost},
+		{"turns", live.Turns, rep.Turns},
+		{"unwanted", live.Unwanted, rep.Unwanted},
+		{"feed", live.Feed, rep.Feed},
+		{"feedSentinel", live.FeedSentinel, rep.FeedSentinel},
+		{"feedAttempts", live.FeedAttempts, rep.FeedAttempts},
+		{"completedFeed", live.CompletedFeed, rep.CompletedFeed},
+		{"verdictRecorded", live.VerdictRecorded, rep.VerdictRecorded},
+		{"ci", live.CI, rep.CI},
+		{"lastFailure", live.LastFailure, rep.LastFailure},
+		{"checkouts", live.Checkouts, rep.Checkouts},
+		{"mrs", live.MRs, rep.MRs},
+		{"phase", live.Phase, rep.Phase},
+		{"subject", live.Subject, rep.Subject},
+		{"idle", live.Idle, rep.Idle},
+		{"phaseTip", live.PhaseTip, rep.PhaseTip},
+		{"phaseHead", live.PhaseHead, rep.PhaseHead},
+		{"triggerSeen", live.TriggerSeen, rep.TriggerSeen},
+		{"phaseRuns", live.PhaseRuns, rep.PhaseRuns},
+		{"confirms", live.Confirms, rep.Confirms},
+		{"round", live.Round, rep.Round},
+		{"roundScope", live.RoundScope, rep.RoundScope},
+		{"roundLoaded", live.RoundLoaded, rep.RoundLoaded},
+		{"selectPing", live.SelectPing, rep.SelectPing},
+		{"skipped", live.Skipped, rep.Skipped},
+		{"dropped", live.Dropped, rep.Dropped},
+		{"curated", live.Curated, rep.Curated},
+		{"curatedSeen", live.CuratedSeen, rep.CuratedSeen},
+		{"pushed", live.Pushed, rep.Pushed},
+		{"adopted", live.Adopted, rep.Adopted},
+		{"heads", live.Heads, rep.Heads},
+		{"parked", live.Parked, rep.Parked},
+		{"parkSince", live.ParkSince, rep.ParkSince},
+		{"anyStarted", live.AnyStarted, rep.AnyStarted},
+		{"elided", live.Elided, rep.Elided},
+		{"openPings", live.OpenPings, rep.OpenPings},
+		{"gateAnswer", live.GateAnswer, rep.GateAnswer},
+		{"raisedPings", live.RaisedPings, rep.RaisedPings},
+		{"answeredPings", live.AnsweredPings, rep.AnsweredPings},
+		{"pausedAsks", live.PausedAsks, rep.PausedAsks},
+		{"agentCursor", live.AgentCursor, rep.AgentCursor},
+		{"pendingMsgs", live.PendingMsgs, rep.PendingMsgs},
+		{"holds", live.Holds, rep.Holds},
+		{"pausedHold", live.PausedHold, rep.PausedHold},
+		{"handbackOwed", live.HandbackOwed, rep.HandbackOwed},
+		{"done", live.Done, rep.Done},
 	}
 	var out []string
 	for _, f := range fields {

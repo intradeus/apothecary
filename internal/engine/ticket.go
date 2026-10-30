@@ -10,7 +10,7 @@ package engine
 //
 // Every call runs engine-side like the repository host's, so no tracker
 // credential ever reaches a workspace; and none of these needs the workspace
-// unless a file input is bound (actionspec.Action.Remote, needsWorkspace) —
+// unless a file input is bound (actionspec.Action.Remote, runcore.NeedsWorkspace) —
 // the in-progress move lands seconds after the run starts, and the done move
 // after a parked wait never re-provisions a reaped workspace.
 //
@@ -37,17 +37,18 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
+	"apothecary/internal/runcore"
 )
 
 // actionSkip records a completion that did no work — the stage had nothing
 // to act on — and follows on_success. The sibling of actionFail (and like
 // it, returns routed=true).
 func (x *exec) actionSkip(st *flow.Stage, note string) (bool, error) {
-	x.e.log.Info("stage skipped", "run", x.rs.runID, "stage", st.ID, "note", note)
+	x.e.log.Info("stage skipped", "run", x.rs.RunID, "stage", st.ID, "note", note)
 	if err := x.append(&event.StageCompleted{StageID: st.ID, Skipped: true, Note: note}); err != nil {
 		return true, err
 	}
-	x.rs.routeSuccess(st, "")
+	x.rs.RouteSuccess(st, "")
 	return true, nil
 }
 
@@ -63,7 +64,7 @@ type trackerTarget struct {
 // integration cannot write) — and the executor returns (true, err).
 func (x *exec) tracker(st *flow.Stage) (tg trackerTarget, routed bool, err error) {
 	rs := x.rs
-	if rs.view.TicketSourceID == "" || rs.view.TicketKey == "" {
+	if rs.View.TicketSourceID == "" || rs.View.TicketKey == "" {
 		routed, err = x.actionSkip(st, "the ticket has no tracker issue (it was written by hand); nothing to write to")
 		return tg, routed, err
 	}
@@ -71,12 +72,12 @@ func (x *exec) tracker(st *flow.Stage) (tg trackerTarget, routed bool, err error
 		routed, err = x.actionFail(st, event.ReasonInfra, st.Action+": this build cannot write to a ticket tracker")
 		return tg, routed, err
 	}
-	w, werr := x.res.TicketWriter(x.ctx, rs.view.TicketSourceID)
+	w, werr := x.res.TicketWriter(x.ctx, rs.View.TicketSourceID)
 	if werr != nil {
-		routed, err = x.actionFail(st, event.ReasonInfra, fmt.Sprintf("%s: ticket %s's tracker: %v", st.Action, rs.view.TicketKey, werr))
+		routed, err = x.actionFail(st, event.ReasonInfra, fmt.Sprintf("%s: ticket %s's tracker: %v", st.Action, rs.View.TicketKey, werr))
 		return tg, routed, err
 	}
-	return trackerTarget{w: w, key: rs.view.TicketKey}, false, nil
+	return trackerTarget{w: w, key: rs.View.TicketKey}, false, nil
 }
 
 // trackerFail routes a tracker error: a canonical status the tracker has no
@@ -122,7 +123,7 @@ func (x *exec) actionTicketTransition(st *flow.Stage) (bool, error) {
 	if err != nil {
 		return x.trackerFail(st, err)
 	}
-	x.e.log.Info("ticket moved", "run", x.rs.runID, "stage", st.ID, "ticket", tg.key, "to", to)
+	x.e.log.Info("ticket moved", "run", x.rs.RunID, "stage", st.ID, "ticket", tg.key, "to", to)
 	return false, nil
 }
 
@@ -150,7 +151,7 @@ func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 		return true, err
 	}
 	trailer := x.ticketTrailer(st)
-	if rs.actionPending[st.ID] {
+	if rs.ActionPending[st.ID] {
 		// Reconcile before reading anything: the comment may already be
 		// there, and then neither the body nor the workspace matters.
 		existing, cerr := tg.w.Comments(x.ctx, tg.key)
@@ -160,13 +161,13 @@ func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 		for _, c := range existing {
 			if strings.Contains(c, trailer) {
 				x.e.log.Info("adopted a comment posted before an interrupted record",
-					"run", rs.runID, "stage", st.ID, "ticket", tg.key)
+					"run", rs.RunID, "stage", st.ID, "ticket", tg.key)
 				return false, nil
 			}
 		}
 	}
 	path := inputPath(st, "body")
-	data, rerr := x.res.Envp.ReadFile(x.ctx, rs.envID, path)
+	data, rerr := x.res.Envp.ReadFile(x.ctx, rs.EnvID, path)
 	if rerr != nil {
 		return x.actionFail(st, event.ReasonInputMissing, fmt.Sprintf("comment body %s not readable: %v", path, rerr))
 	}
@@ -185,7 +186,7 @@ func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 			return x.actionFail(st, event.ReasonInfra, fmt.Sprintf("%s: ticket %s's tracker cannot host attachments", st.Action, tg.key))
 		}
 	}
-	if !rs.actionPending[st.ID] {
+	if !rs.ActionPending[st.ID] {
 		// Record the intent BEFORE the effect: a crash past this point makes
 		// the next boot reconcile instead of posting a second comment.
 		if err := x.append(&event.ActionStarted{StageID: st.ID, Action: st.Action}); err != nil {
@@ -220,7 +221,7 @@ func (x *exec) actionTicketSetField(st *flow.Stage) (bool, error) {
 	field := strings.TrimSpace(st.Setting("field", ""))
 	var value string
 	if path := inputPath(st, "value"); path != "" {
-		data, rerr := x.res.Envp.ReadFile(x.ctx, rs.envID, path)
+		data, rerr := x.res.Envp.ReadFile(x.ctx, rs.EnvID, path)
 		if rerr != nil {
 			return x.actionFail(st, event.ReasonInputMissing, fmt.Sprintf("field value %s not readable: %v", path, rerr))
 		}
@@ -238,7 +239,7 @@ func (x *exec) actionTicketSetField(st *flow.Stage) (bool, error) {
 	if err := tg.w.SetFields(x.ctx, tg.key, map[string]string{field: value}); err != nil {
 		return x.trackerFail(st, err)
 	}
-	x.e.log.Info("ticket field set", "run", rs.runID, "stage", st.ID, "ticket", tg.key, "field", field)
+	x.e.log.Info("ticket field set", "run", rs.RunID, "stage", st.ID, "ticket", tg.key, "field", field)
 	return false, nil
 }
 
@@ -267,11 +268,11 @@ func (x *exec) actionTicketLink(st *flow.Stage) (bool, error) {
 	if routed {
 		return true, err
 	}
-	mrs := rs.mrs
-	if co := x.rs.subjectCheckout(); co != nil {
+	mrs := rs.MRs
+	if co := x.rs.SubjectCheckout(); co != nil {
 		mrs = nil
-		if mr := rs.mrFor(co.Name, co.Branch); mr != nil {
-			mrs = []mrRecord{*mr}
+		if mr := rs.MRFor(co.Name, co.Branch); mr != nil {
+			mrs = []runcore.MRRecord{*mr}
 		}
 	}
 	if len(mrs) == 0 {
@@ -286,7 +287,7 @@ func (x *exec) actionTicketLink(st *flow.Stage) (bool, error) {
 			return x.trackerFail(st, err)
 		}
 	}
-	x.e.log.Info("ticket linked to merge request(s)", "run", rs.runID, "stage", st.ID, "ticket", tg.key, "count", len(mrs))
+	x.e.log.Info("ticket linked to merge request(s)", "run", rs.RunID, "stage", st.ID, "ticket", tg.key, "count", len(mrs))
 	return false, nil
 }
 
@@ -302,8 +303,8 @@ func (x *exec) actionTicketLinkBranch(st *flow.Stage) (bool, error) {
 	if routed {
 		return true, err
 	}
-	checkouts := rs.checkouts
-	if co := x.rs.subjectCheckout(); co != nil {
+	checkouts := rs.Checkouts
+	if co := x.rs.SubjectCheckout(); co != nil {
 		checkouts = []event.Checkout{*co}
 	}
 	linked := 0
@@ -337,6 +338,6 @@ func (x *exec) actionTicketLinkBranch(st *flow.Stage) (bool, error) {
 	if linked == 0 {
 		return x.actionSkip(st, "no checkout of this run has a repository host to link a branch from")
 	}
-	x.e.log.Info("ticket linked to branch(es)", "run", rs.runID, "stage", st.ID, "ticket", tg.key, "count", linked)
+	x.e.log.Info("ticket linked to branch(es)", "run", rs.RunID, "stage", st.ID, "ticket", tg.key, "count", linked)
 	return false, nil
 }

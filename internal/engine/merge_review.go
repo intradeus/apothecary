@@ -32,7 +32,7 @@ func (x *exec) checkReviewThreads(st *flow.Stage) string {
 	if p == "" {
 		return ""
 	}
-	data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, p)
+	data, err := x.res.Envp.ReadFile(x.ctx, x.rs.EnvID, p)
 	if err != nil {
 		return at(p, err)
 	}
@@ -57,12 +57,12 @@ func (x *exec) checkReviewThreads(st *flow.Stage) string {
 func (x *exec) reviewGuards(st *flow.Stage, rev *reviewfile.Review) string {
 	rs := x.rs
 	for i, c := range rev.Replies {
-		if !rs.roundLoaded {
+		if !rs.RoundLoaded {
 			return fmt.Sprintf("replies[%d]: no thread was loaded in this phase run, so there is none to reply in — a load_review_comments stage (with: { scope: all }) before this agent loads them; without one, write notes only", i)
 		}
-		lt := rs.roundThread(c.Thread)
+		lt := rs.RoundThread(c.Thread)
 		if lt == nil {
-			return fmt.Sprintf("replies[%d]: thread %q is not one of the threads loaded (%s)", i, c.Thread, strings.Join(rs.roundIDs(), ", "))
+			return fmt.Sprintf("replies[%d]: thread %q is not one of the threads loaded (%s)", i, c.Thread, strings.Join(rs.RoundIDs(), ", "))
 		}
 		if c.Resolve && !lt.Ours {
 			return fmt.Sprintf("replies[%d]: thread %q is someone else's — only a thread apothecary opened is resolved here; reply without resolve", i, c.Thread)
@@ -71,13 +71,13 @@ func (x *exec) reviewGuards(st *flow.Stage, rev *reviewfile.Review) string {
 	// The threads input, for the guard that reads words.
 	var shown *reviewfile.Threads
 	if tp := typedInput(st, agentspec.TypeMRThreads); tp != "" {
-		if data, err := x.res.Envp.ReadFile(x.ctx, rs.envID, tp); err == nil {
+		if data, err := x.res.Envp.ReadFile(x.ctx, rs.EnvID, tp); err == nil {
 			shown, _ = reviewfile.ParseThreads(tp, data)
 		}
 	}
 	for i, n := range rev.Notes {
 		body := reviewfile.NormalizeBody(n.Body)
-		for _, lt := range rs.round {
+		for _, lt := range rs.Round {
 			if !lt.Ours || lt.Resolved {
 				continue
 			}
@@ -88,7 +88,7 @@ func (x *exec) reviewGuards(st *flow.Stage, rev *reviewfile.Review) string {
 				return fmt.Sprintf("notes[%d]: says what apothecary's thread %s already says on %s — continue it under replies instead of opening another", i, lt.ID, n.Path)
 			}
 		}
-		for _, d := range rs.dropped {
+		for _, d := range rs.Dropped {
 			if d.Path == n.Path && reviewfile.NormalizeBody(d.Body) == body {
 				return fmt.Sprintf("notes[%d]: a person decided not to post this note (%s:%d) at a gate earlier in this run — do not propose it again", i, d.Path, d.Line)
 			}
@@ -112,7 +112,7 @@ func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 		return x.infraFail(st, err.Error())
 	}
 	path := inputPath(st, "review")
-	data, err := x.res.Envp.ReadFile(x.ctx, rs.envID, path)
+	data, err := x.res.Envp.ReadFile(x.ctx, rs.EnvID, path)
 	if err != nil {
 		return x.actionFail(st, event.ReasonInputMissing, fmt.Sprintf("review %s not readable: %v", path, err))
 	}
@@ -121,15 +121,15 @@ func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 		return x.actionFail(st, event.ReasonInputInvalid, at(path, err))
 	}
 	for i, c := range rev.Replies {
-		if rs.roundThread(c.Thread) == nil {
+		if rs.RoundThread(c.Thread) == nil {
 			return x.actionFail(st, event.ReasonInputInvalid, fmt.Sprintf("%s: replies[%d]: thread %q is not one of the threads loaded in this phase run", path, i, c.Thread))
 		}
 	}
 	if rev.Empty() {
-		x.e.log.Info("empty review: nothing to post", "run", rs.runID, "stage", st.ID)
+		x.e.log.Info("empty review: nothing to post", "run", rs.RunID, "stage", st.ID)
 		return false, nil
 	}
-	reentry := rs.actionPending[st.ID]
+	reentry := rs.ActionPending[st.ID]
 	if !reentry {
 		if err := x.append(&event.ActionStarted{StageID: st.ID, Action: st.Action}); err != nil {
 			return true, err
@@ -142,7 +142,7 @@ func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 		notes = append(notes, repoport.ReviewNote{Path: n.Path, Line: n.Line, Body: n.Posted(), Kind: n.Kind})
 	}
 	if rev.Summary != "" || len(notes) > 0 {
-		res, err := repoHost.PostReview(x.ctx, mr.Ref, repoport.Review{Head: rs.phaseHead, Summary: rev.Summary, Notes: notes, ID: reviewID})
+		res, err := repoHost.PostReview(x.ctx, mr.Ref, repoport.Review{Head: rs.PhaseHead, Summary: rev.Summary, Notes: notes, ID: reviewID})
 		if err != nil {
 			return x.infraFail(st, "posting the review: "+err.Error())
 		}
@@ -188,7 +188,7 @@ func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 }
 
 // actionMRMerge merges the subject merge request, pinned to the newest head
-// the phase run knows (phaseHead): what it pushed, else the head it began
+// the phase run knows (PhaseHead): what it pushed, else the head it began
 // on. A merge the repository host declines is the stage's failure, for
 // on_fail; after a crash, a merge request already merged is this merge.
 func (x *exec) actionMRMerge(st *flow.Stage) (bool, error) {
@@ -202,8 +202,8 @@ func (x *exec) actionMRMerge(st *flow.Stage) (bool, error) {
 	}
 	method := st.Setting("method", actionspec.MethodMerge)
 	deleteBranch := st.Setting("branch", actionspec.BranchKeep) == actionspec.BranchDelete
-	merged := &event.MRMerged{StageID: st.ID, Repo: mr.Repo, Method: method, Head: rs.phaseHead, BranchDeleted: deleteBranch}
-	if rs.actionPending[st.ID] {
+	merged := &event.MRMerged{StageID: st.ID, Repo: mr.Repo, Method: method, Head: rs.PhaseHead, BranchDeleted: deleteBranch}
+	if rs.ActionPending[st.ID] {
 		status, err := repoHost.MRStatus(x.ctx, mr.Ref)
 		if err != nil {
 			return x.infraFail(st, "cannot tell whether the merge already happened: "+err.Error())
@@ -219,7 +219,7 @@ func (x *exec) actionMRMerge(st *flow.Stage) (bool, error) {
 			return true, err
 		}
 	}
-	err = repoHost.MergeMR(x.ctx, mr.Ref, repoport.MergeOptions{Method: method, Head: rs.phaseHead, DeleteBranch: deleteBranch})
+	err = repoHost.MergeMR(x.ctx, mr.Ref, repoport.MergeOptions{Method: method, Head: rs.PhaseHead, DeleteBranch: deleteBranch})
 	var refused *repoport.ErrMergeRefused
 	if errors.As(err, &refused) {
 		return x.actionFail(st, event.ReasonInputInvalid, fmt.Sprintf("%s: %s", mr.Ref.URL, refused.Error()))

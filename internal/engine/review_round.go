@@ -22,6 +22,7 @@ import (
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/reviewfile"
+	"apothecary/internal/runcore"
 )
 
 // at prefixes what is wrong with the file it is wrong in, once.
@@ -52,13 +53,13 @@ func (x *exec) checkReviewReplies(st *flow.Stage) string {
 	if p == "" {
 		return ""
 	}
-	data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, p)
+	data, err := x.res.Envp.ReadFile(x.ctx, x.rs.EnvID, p)
 	if err != nil {
 		return at(p, err)
 	}
 	replies, err := reviewfile.ParseReplies(p, data)
 	if err == nil {
-		err = reviewfile.CheckReplies(replies, x.rs.roundIDs())
+		err = reviewfile.CheckReplies(replies, x.rs.RoundIDs())
 	}
 	if err != nil {
 		return at(p, err)
@@ -79,8 +80,8 @@ func noSubjectMsg(st *flow.Stage) string {
 
 // subjectRepoHost is the repository host and merge request a subject action
 // acts on.
-func (x *exec) subjectRepoHost(st *flow.Stage) (repoport.RepoHost, *mrRecord, error) {
-	mr := x.rs.subjectMR()
+func (x *exec) subjectRepoHost(st *flow.Stage) (repoport.RepoHost, *runcore.MRRecord, error) {
+	mr := x.rs.SubjectMR()
 	if mr == nil {
 		return nil, nil, fmt.Errorf("%w: %s", errNoSubject, noSubjectMsg(st))
 	}
@@ -114,8 +115,8 @@ func (x *exec) actionLoadReviewComments(st *flow.Stage) (bool, error) {
 	}
 	scope := st.Setting("scope", actionspec.ScopePending)
 	var round []repoport.ReviewThread
-	if rs.roundLoaded {
-		ids := rs.roundIDs()
+	if rs.RoundLoaded {
+		ids := rs.RoundIDs()
 		for _, t := range threads {
 			if slices.Contains(ids, t.ID) {
 				round = append(round, t)
@@ -158,11 +159,11 @@ func (x *exec) actionLoadReviewComments(st *flow.Stage) (bool, error) {
 	if o := st.Output("threads"); o != nil {
 		path = o.Value
 	}
-	data, err := reviewfile.Encode(path, threadsDocument(mr, round, rs.dropped))
+	data, err := reviewfile.Encode(path, threadsDocument(mr, round, rs.Dropped))
 	if err != nil {
 		return x.infraFail(st, "rendering "+path+": "+err.Error())
 	}
-	if err := x.res.Envp.WriteFile(x.ctx, rs.envID, path, data, 0o644); err != nil {
+	if err := x.res.Envp.WriteFile(x.ctx, rs.EnvID, path, data, 0o644); err != nil {
 		return x.infraFail(st, "writing "+path+": "+err.Error())
 	}
 	return false, nil
@@ -182,7 +183,7 @@ func inputPath(st *flow.Stage, name string) string {
 func (x *exec) unskipped(threads []repoport.ReviewThread) []repoport.ReviewThread {
 	var out []repoport.ReviewThread
 	for _, t := range threads {
-		if last, ok := x.rs.skipped[t.ID]; ok && len(t.Comments) > 0 && t.Comments[len(t.Comments)-1].ID == last {
+		if last, ok := x.rs.Skipped[t.ID]; ok && len(t.Comments) > 0 && t.Comments[len(t.Comments)-1].ID == last {
 			continue
 		}
 		out = append(out, t)
@@ -212,7 +213,7 @@ func loadedThread(t repoport.ReviewThread) event.LoadedThread {
 // comments — the factory's marked ours, what came after the factory's last
 // word marked new, what an earlier reply did read off its marker — plus the
 // notes a person dropped at a gate earlier in the run.
-func threadsDocument(mr *mrRecord, round []repoport.ReviewThread, dropped []reviewfile.Note) *reviewfile.Threads {
+func threadsDocument(mr *runcore.MRRecord, round []repoport.ReviewThread, dropped []reviewfile.Note) *reviewfile.Threads {
 	doc := &reviewfile.Threads{MergeRequest: mr.Ref.URL, Threads: make([]reviewfile.Thread, 0, len(round)), Dropped: dropped}
 	for _, t := range round {
 		th := reviewfile.Thread{ID: t.ID, Path: t.Path, Line: t.Line, Resolved: t.Resolved, Ours: threadOurs(t), Comments: []reviewfile.Comment{}}
@@ -266,9 +267,9 @@ func threadOption(t repoport.ReviewThread) event.Option {
 // selectThreads asks a human which pending threads this round fixes. It
 // raises the question once per round and parks the run until it is
 // answered (waiting=true); the answer is the chosen threads, possibly none.
-func (x *exec) selectThreads(st *flow.Stage, mr *mrRecord, pending []repoport.ReviewThread) (picked []repoport.ReviewThread, waiting bool, err error) {
+func (x *exec) selectThreads(st *flow.Stage, mr *runcore.MRRecord, pending []repoport.ReviewThread) (picked []repoport.ReviewThread, waiting bool, err error) {
 	rs := x.rs
-	if rs.selectPing == nil {
+	if rs.SelectPing == nil {
 		// One array field offering every pending thread, all of them picked
 		// to start with: unpicking is the deliberate act.
 		fd := event.Field{ID: event.SelectField, Type: event.FieldArray, Options: make([]event.Option, len(pending))}
@@ -280,7 +281,7 @@ func (x *exec) selectThreads(st *flow.Stage, mr *mrRecord, pending []repoport.Re
 		fd.Default = all
 		form := &event.Form{Fields: []event.Field{fd}}
 		q := fmt.Sprintf("Which review comments on %s should be fixed? Uncheck the ones that are wrong, already handled, or not worth changing — they are left alone until someone comments on them again. Selecting none ends this round.", mr.Ref.URL)
-		p := &Ping{ID: x.e.newID(), RunID: rs.runID, Type: event.PingSelect, Question: q, Link: mr.Ref.URL,
+		p := &Ping{ID: x.e.newID(), RunID: rs.RunID, Type: event.PingSelect, Question: q, Link: mr.Ref.URL,
 			StageID: st.ID, Form: form, AnswerKind: event.AnswerForm, RaisedAt: x.e.clock(), done: make(chan struct{})}
 		x.e.mu.Lock()
 		x.e.pings[p.ID] = p
@@ -289,10 +290,10 @@ func (x *exec) selectThreads(st *flow.Stage, mr *mrRecord, pending []repoport.Re
 		if err := x.append(raised); err != nil {
 			return nil, true, err
 		}
-		x.e.notify(x.bg, notifyport.Notification{RunID: rs.runID, PingID: p.ID, Type: p.Type, Title: q, Body: p.Link})
+		x.e.notify(x.bg, notifyport.Notification{RunID: rs.RunID, PingID: p.ID, Type: p.Type, Title: q, Body: p.Link})
 		return nil, true, errWaitingOnHuman
 	}
-	ans := rs.answeredPings[rs.selectPing.PingID]
+	ans := rs.AnsweredPings[rs.SelectPing.PingID]
 	if ans == nil {
 		return nil, true, errWaitingOnHuman
 	}
@@ -313,7 +314,7 @@ func (x *exec) selectThreads(st *flow.Stage, mr *mrRecord, pending []repoport.Re
 // all) ends nothing: a merge request with no thread yet is still reviewed.
 func (x *exec) emptyRound(st *flow.Stage) bool {
 	return st.Type == flow.StageAction && st.Action == actionspec.LoadReviewComments &&
-		x.rs.roundLoaded && x.rs.roundScope != actionspec.ScopeAll && len(x.rs.round) == 0
+		x.rs.RoundLoaded && x.rs.RoundScope != actionspec.ScopeAll && len(x.rs.Round) == 0
 }
 
 // actionReplyReviewComments posts the round's replies. Intent first; on a
@@ -329,7 +330,7 @@ func (x *exec) actionReplyReviewComments(st *flow.Stage) (bool, error) {
 		return x.infraFail(st, err.Error())
 	}
 	path := inputPath(st, "replies")
-	data, err := x.res.Envp.ReadFile(x.ctx, rs.envID, path)
+	data, err := x.res.Envp.ReadFile(x.ctx, rs.EnvID, path)
 	if err != nil {
 		return x.infraFail(st, fmt.Sprintf("replies %s not readable: %v", path, err))
 	}
@@ -338,13 +339,13 @@ func (x *exec) actionReplyReviewComments(st *flow.Stage) (bool, error) {
 	// writes there again.
 	replies, err := reviewfile.ParseReplies(path, data)
 	if err == nil {
-		err = reviewfile.CheckReplies(replies, rs.unskippedRound())
+		err = reviewfile.CheckReplies(replies, rs.UnskippedRound())
 	}
 	if err != nil {
 		return x.infraFail(st, at(path, err))
 	}
 	done := map[string]bool{}
-	if rs.actionPending[st.ID] {
+	if rs.ActionPending[st.ID] {
 		threads, err := repoHost.MRThreads(x.ctx, mr.Ref)
 		if err != nil {
 			return x.infraFail(st, "cannot tell which replies were already posted: "+err.Error())
@@ -391,5 +392,5 @@ func (x *exec) actionReplyReviewComments(st *flow.Stage) (bool, error) {
 // an earlier round's answer on the same thread.
 func (x *exec) roundID() string {
 	rs := x.rs
-	return fmt.Sprintf("%s/%s-%d", rs.runID, rs.phase, rs.phaseRuns[phaseRunKey(rs.phase, rs.subject)])
+	return fmt.Sprintf("%s/%s-%d", rs.RunID, rs.Phase, rs.PhaseRuns[runcore.PhaseRunKey(rs.Phase, rs.Subject)])
 }
