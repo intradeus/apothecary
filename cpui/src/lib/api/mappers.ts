@@ -25,7 +25,14 @@ import type {
 	SkillsetVersion
 } from '$lib/domain';
 import { normalizeDoc, PHASE_KINDS, OPERATES_ON, type OperatesOn } from '$lib/flowdoc';
-import { answerKindOf, toFormContent, toPingForm, toReviewComment } from '$lib/ping';
+import { answerKindOf, toCuratedMap, toFormContent, toPingForm, toReviewComment } from '$lib/ping';
+import type {
+	Curation,
+	CurationDocument,
+	CurationView,
+	ReviewNote,
+	ThreadsDocument
+} from '$lib/domain';
 import type {
 	ActionPort,
 	ActionSetting,
@@ -441,6 +448,7 @@ export function toPing(w: Wire.PingView): Ping {
 		question: w.question,
 		context: w.context,
 		files: list(w.files),
+		fileTypes: w.file_types ?? {},
 		link: w.link,
 		primaryRef: w.payload_ref,
 		answerKind: answerKindOf(w.answer_kind, w.type),
@@ -452,8 +460,95 @@ export function toPing(w: Wire.PingView): Ping {
 		content: toFormContent(w.content),
 		answerAttachmentIds: list(w.answer_attachment_ids),
 		review: list(w.review).map(toReviewComment),
+		curated: toCuratedMap(w.curated),
 		raisedAt: w.raised_at,
 		answeredAt: w.answered_at
+	};
+}
+
+/** A curation as the answer sends it: only what the person decided. */
+export function fromCuration(c: Curation): Wire.Curation {
+	return {
+		...(c.summary !== undefined ? { summary: c.summary } : {}),
+		items: c.items.map((it) => ({
+			item: it.item,
+			keep: it.keep,
+			...(it.body ? { body: it.body } : {}),
+			...(it.resolve !== undefined ? { resolve: it.resolve } : {})
+		}))
+	};
+}
+
+function toReviewNote(w: Wire.ReviewNote): ReviewNote {
+	return {
+		path: w.path,
+		line: w.line,
+		kind: w.kind,
+		body: w.body,
+		rationale: w.rationale || undefined,
+		evidence: w.evidence || undefined,
+		example: w.example || undefined
+	};
+}
+
+function toThreadsDocument(w: Wire.ThreadsDocument): ThreadsDocument {
+	return {
+		mergeRequest: w.merge_request || undefined,
+		threads: list(w.threads).map((th) => ({
+			id: th.id,
+			path: th.path || undefined,
+			line: th.line || undefined,
+			resolved: th.resolved,
+			ours: th.ours,
+			kind: th.kind || undefined,
+			hunk: th.hunk || undefined,
+			comments: list(th.comments).map((c) => ({
+				id: c.id,
+				author: c.author,
+				at: c.at || undefined,
+				ours: c.ours === true,
+				new: c.new === true,
+				did: c.did || undefined,
+				body: c.body
+			}))
+		})),
+		dropped: list(w.dropped).map(toReviewNote)
+	};
+}
+
+/** A question's review documents, decoded by the engine from what the gate
+ *  showed: the curation page lists them item by item. */
+export function toCurationView(w: Wire.CurationView): CurationView {
+	return {
+		documents: list(w.documents).map((d): CurationDocument => ({
+			path: d.path,
+			type: d.type,
+			captured: d.captured,
+			error: d.error || undefined,
+			review: d.review
+				? {
+						summary: d.review.summary ?? '',
+						notes: list(d.review.notes).map(toReviewNote),
+						replies: list(d.review.replies).map((r) => ({
+							thread: r.thread,
+							body: r.body,
+							resolve: r.resolve === true,
+							rationale: r.rationale || undefined
+						}))
+					}
+				: undefined,
+			replies: d.replies
+				? d.replies.map((r) => ({
+						thread: r.thread,
+						did: r.did,
+						reply: r.reply,
+						resolve: r.resolve === true,
+						rationale: r.rationale || undefined,
+						evidence: r.evidence || undefined
+					}))
+				: undefined
+		})),
+		threads: w.threads ? toThreadsDocument(w.threads) : undefined
 	};
 }
 
@@ -474,7 +569,8 @@ export function toPingFile(w: Wire.PingFile): PingFile {
 		captured: w.captured,
 		snapshotId: w.snapshot_id,
 		mime: w.mime,
-		size: w.size
+		size: w.size,
+		type: w.type || undefined
 	};
 }
 

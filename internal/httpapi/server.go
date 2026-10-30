@@ -214,27 +214,28 @@ func (e EventPingStore) GetPing(ctx context.Context, id string) (run.PingView, e
 // pingJSON is the registry-fallback shape (Pings == nil); the projection
 // path serves run.PingView directly.
 type pingJSON struct {
-	PingID     string      `json:"ping_id"`
-	RunID      string      `json:"run_id"`
-	Type       string      `json:"type"`
-	StageID    string      `json:"stage_id,omitempty"`
-	Question   string      `json:"question"`
-	Context    string      `json:"context,omitempty"`
-	Files      []string    `json:"files,omitempty"`
-	Link       string      `json:"link,omitempty"`
-	PayloadRef string      `json:"payload_ref,omitempty"`
-	Form       *event.Form `json:"form,omitempty"`
-	AnswerKind string      `json:"answer_kind"`
-	Phase      string      `json:"phase,omitempty"`
-	EndsPhase  bool        `json:"ends_phase,omitempty"`
-	Status     string      `json:"status"`
-	RaisedAt   time.Time   `json:"raised_at"`
+	PingID     string            `json:"ping_id"`
+	RunID      string            `json:"run_id"`
+	Type       string            `json:"type"`
+	StageID    string            `json:"stage_id,omitempty"`
+	Question   string            `json:"question"`
+	Context    string            `json:"context,omitempty"`
+	Files      []string          `json:"files,omitempty"`
+	FileTypes  map[string]string `json:"file_types,omitempty"`
+	Link       string            `json:"link,omitempty"`
+	PayloadRef string            `json:"payload_ref,omitempty"`
+	Form       *event.Form       `json:"form,omitempty"`
+	AnswerKind string            `json:"answer_kind"`
+	Phase      string            `json:"phase,omitempty"`
+	EndsPhase  bool              `json:"ends_phase,omitempty"`
+	Status     string            `json:"status"`
+	RaisedAt   time.Time         `json:"raised_at"`
 }
 
 func toPingJSON(p *engine.Ping) pingJSON {
 	return pingJSON{
 		PingID: p.ID, RunID: p.RunID, Type: p.Type, StageID: p.StageID, Question: p.Question,
-		Context: p.Context, Files: p.Files, Link: p.Link, PayloadRef: p.Primary(),
+		Context: p.Context, Files: p.Files, FileTypes: p.FileTypes, Link: p.Link, PayloadRef: p.Primary(),
 		Form: p.Form, AnswerKind: p.AnswerKind, Phase: p.Phase, EndsPhase: p.EndsPhase,
 		Status: "pending", RaisedAt: p.RaisedAt,
 	}
@@ -1069,7 +1070,7 @@ func (s *Server) answerPing(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	err := s.Engine.AnswerPing(pid, engine.PingAnswer{Answer: body.Answer, Feedback: body.Feedback,
-		Content: body.Content, AttachmentIDs: body.AttachmentIDs, Review: body.Review})
+		Content: body.Content, AttachmentIDs: body.AttachmentIDs, Review: body.Review, Curated: body.Curated})
 	switch {
 	case errors.Is(err, engine.ErrPingNotFound):
 		writeErr(w, http.StatusNotFound, err.Error())

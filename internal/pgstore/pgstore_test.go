@@ -12,6 +12,7 @@ import (
 	"apothecary/internal/confstore"
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
+	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 )
 
@@ -191,6 +192,51 @@ func TestPingsProjection(t *testing.T) {
 	if _, err := s.GetPing(ctx, "nope"); !errors.Is(err, ErrPingNotFound) {
 		t.Errorf("missing ping err = %v", err)
 	}
+}
+
+// A gate over a review document projects each shown file's type and, once
+// answered, what the person made of the document — listed, fetched, and
+// after a rebuild.
+func TestPingCurationProjection(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	types := map[string]string{"artifacts/review.yaml": "review_threads", "artifacts/threads.yaml": "mr_threads"}
+	short := "Two things."
+	curated := map[string]reviewfile.Curation{"artifacts/review.yaml": {Summary: &short, Items: []reviewfile.CuratedItem{
+		{Item: "notes/1", Keep: false}, {Item: "notes/2", Keep: true, Body: "Use a slice here."}}}}
+	if _, err := s.Append(ctx, "r1",
+		&event.RunCreated{TicketTitle: "T"},
+		&event.PingRaised{PingID: "g1", Type: event.PingGate, StageID: "gate", AnswerKind: event.AnswerYesNo,
+			Files: []string{"artifacts/review.yaml", "artifacts/threads.yaml"}, FileTypes: types},
+	); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := s.GetPing(ctx, "g1")
+	if err != nil || pending.FileTypes["artifacts/review.yaml"] != "review_threads" || pending.FileTypes["artifacts/threads.yaml"] != "mr_threads" || pending.Curated != nil {
+		t.Fatalf("pending = %+v, %v", pending, err)
+	}
+	if _, err := s.Append(ctx, "r1", &event.PingAnswered{PingID: "g1", Answer: "approve", Curated: curated}); err != nil {
+		t.Fatal(err)
+	}
+	check := func(when string) {
+		t.Helper()
+		got, err := s.GetPing(ctx, "g1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := got.Curated["artifacts/review.yaml"]
+		if got.Answer != "approve" || c.Summary == nil || *c.Summary != "Two things." || len(c.Items) != 2 || c.Items[0].Item != "notes/1" || c.Items[0].Keep || c.Items[1].Body != "Use a slice here." {
+			t.Errorf("%s: curated = %+v", when, got.Curated)
+		}
+		if got.FileTypes["artifacts/review.yaml"] != "review_threads" {
+			t.Errorf("%s: file_types = %v", when, got.FileTypes)
+		}
+	}
+	check("answered")
+	if _, err := s.RebuildProjections(ctx); err != nil {
+		t.Fatal(err)
+	}
+	check("rebuilt")
 }
 
 // A review's comments are projected one row each, with the file they are

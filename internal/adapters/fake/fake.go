@@ -833,6 +833,9 @@ func (f *RepoHost) MergeMR(_ context.Context, mr ports.MRRef, opts ports.MergeOp
 }
 
 // PostReview records the review, its notes split by DiffLines, once per ID.
+// As on a real host, a note posted on its line becomes a thread the next
+// MRThreads lists, opened by the factory (its body carries the note's
+// marker): what a re-review reads before it writes.
 func (f *RepoHost) PostReview(_ context.Context, mr ports.MRRef, rev ports.Review) (ports.ReviewPosted, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -849,9 +852,13 @@ func (f *RepoHost) PostReview(_ context.Context, mr ports.MRRef, rev ports.Revie
 		}
 	}
 	var out ports.ReviewPosted
-	for _, n := range rev.Notes {
+	now := time.Now()
+	for i, n := range rev.Notes {
 		if lines, ok := m.DiffLines[n.Path]; m.DiffLines == nil || (ok && slices.Contains(lines, n.Line)) {
 			out.Inline++
+			id := fmt.Sprintf("n%d", len(m.Threads)+1)
+			m.Threads = append(m.Threads, ports.ReviewThread{ID: id, Path: n.Path, Line: n.Line, Comments: []ports.ReviewComment{{
+				ID: id + "-0", Author: "factory", Body: strings.TrimSpace(n.Body) + "\n\n" + ports.NoteMarker(rev.ID, i, n.Kind), CreatedAt: now}}})
 		} else {
 			out.Folded++
 		}

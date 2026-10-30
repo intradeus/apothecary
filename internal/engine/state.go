@@ -9,6 +9,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 )
 
@@ -112,15 +113,27 @@ type runState struct {
 	// confirms are the phase_confirm pings raised, oldest first; their
 	// answers sit in answeredPings until the idle loop acts on them.
 	confirms []*event.PingRaised
-	// roundThreads are the review threads this phase run loaded (M31): a
-	// re-entry rewrites the same set, and replies may name only these.
-	roundThreads []string
-	roundLoaded  bool
+	// round are the review threads this phase run loaded (M31), in its scope
+	// (pending or all): a re-entry rewrites the same set, and replies and
+	// continuations may name only these.
+	round       []event.LoadedThread
+	roundScope  string
+	roundLoaded bool
 	// selectPing is the thread-selection question this phase run raised.
 	selectPing *event.PingRaised
 	// skipped are the threads a human chose not to fix: thread id → its last
 	// comment id at the time. Kept across rounds.
 	skipped map[string]string
+	// dropped are the review notes a person declined to post at a gate,
+	// kept for the whole run: a re-review never proposes them again.
+	dropped []reviewfile.Note
+	// curated are the review documents a person approved at a gate, by
+	// path, not yet written back: a gate has no workspace of its own, so the
+	// next stage that needs the workspace and reads the path writes them
+	// first. curatedSeen is every ping whose curation is on the record, so a
+	// gate routed again after a crash records it once.
+	curated     map[string]*event.ReviewCurated
+	curatedSeen map[string]bool
 	// pushed is the tip push_branch last pushed, per repo+branch.
 	pushed map[string]string
 	// adopted is the merge request the run was created on (nil when it
@@ -251,7 +264,8 @@ type phaseRun struct {
 	feedAttempts              int
 	lastFailure               *event.StageFailed
 	gateAnswer                *event.PingAnswered
-	roundThreads              []string
+	round                     []event.LoadedThread
+	roundScope                string
 	roundLoaded               bool
 	selectPing                *event.PingRaised
 	ci                        *event.CIReport
@@ -273,7 +287,7 @@ func (rs *runState) park(stage, ping string, since time.Time) {
 		phase: rs.phase, subject: rs.subject, tip: rs.phaseTip, head: rs.phaseHead, pos: rs.pos, ph: rs.ph,
 		feed: rs.feed, feedSentinel: rs.feedSentinel, feedAttempts: rs.feedAttempts,
 		lastFailure: rs.lastFailure, gateAnswer: rs.gateAnswer,
-		roundThreads: rs.roundThreads, roundLoaded: rs.roundLoaded, selectPing: rs.selectPing, ci: rs.ci,
+		round: rs.round, roundScope: rs.roundScope, roundLoaded: rs.roundLoaded, selectPing: rs.selectPing, ci: rs.ci,
 		parkedAt: stage, ping: ping, since: since,
 	}
 	rs.idle = true
@@ -290,7 +304,7 @@ func (rs *runState) unpark(phase string) bool {
 	rs.phase, rs.subject, rs.phaseTip, rs.phaseHead, rs.pos, rs.ph = pr.phase, pr.subject, pr.tip, pr.head, pr.pos, pr.ph
 	rs.feed, rs.feedSentinel, rs.feedAttempts = pr.feed, pr.feedSentinel, pr.feedAttempts
 	rs.lastFailure, rs.gateAnswer = pr.lastFailure, pr.gateAnswer
-	rs.roundThreads, rs.roundLoaded, rs.selectPing = pr.roundThreads, pr.roundLoaded, pr.selectPing
+	rs.round, rs.roundScope, rs.roundLoaded, rs.selectPing = pr.round, pr.roundScope, pr.roundLoaded, pr.selectPing
 	rs.ci = pr.ci
 	rs.endsRun, rs.abortsRun, rs.endReason = false, false, ""
 	rs.idle = false
@@ -300,13 +314,62 @@ func (rs *runState) unpark(phase string) bool {
 // anyParked reports whether some phase run waits at a wait point.
 func (rs *runState) anyParked() bool { return len(rs.parked) > 0 }
 
+// roundIDs lists the threads this phase run loaded, by id.
+func (rs *runState) roundIDs() []string {
+	out := make([]string, 0, len(rs.round))
+	for _, t := range rs.round {
+		out = append(out, t.ID)
+	}
+	return out
+}
+
+// roundThread is the loaded thread with that id, or nil.
+func (rs *runState) roundThread(id string) *event.LoadedThread {
+	for i := range rs.round {
+		if rs.round[i].ID == id {
+			return &rs.round[i]
+		}
+	}
+	return nil
+}
+
+// noteCurated folds a gate's curation into the run: what a person dropped
+// stays dropped for the run, the threads they held a reply back from are
+// left alone until someone writes there again, and an approved document
+// waits to be written back. Shared by replay and the live gate so they
+// cannot disagree.
+func (rs *runState) noteCurated(p *event.ReviewCurated) {
+	rs.curatedSeen[p.PingID] = true
+	rs.dropped = append(rs.dropped, p.Dropped...)
+	for id, last := range p.Skipped {
+		rs.skipped[id] = last
+	}
+	if p.Approved {
+		rs.curated[p.Path] = p
+	}
+}
+
+// forgetCurated drops the curated documents waiting on paths the starting
+// stage writes: what it writes is the new document, and a curation of the
+// old one must never be written over it.
+func (rs *runState) forgetCurated(fl *flow.Flow, stageID string) {
+	if fl == nil || len(rs.curated) == 0 {
+		return
+	}
+	if i := fl.Index(stageID); i >= 0 {
+		for _, o := range fl.Stages[i].Outputs {
+			delete(rs.curated, flow.FilePath(o.Value))
+		}
+	}
+}
+
 // startPhase moves the cursor to a phase's first stage, fresh: its edge
 // counters reset (R7 — a review round's retries are per round), the feed
 // cleared. Shared by replay and the live start so they cannot disagree.
 func (rs *runState) startPhase(p *event.PhaseStarted, fl *flow.Flow) {
 	rs.phase, rs.subject, rs.phaseTip, rs.phaseHead, rs.idle = p.Phase, p.Subject, p.Tip, p.Tip, false
 	rs.ci = p.CI
-	rs.roundThreads, rs.roundLoaded, rs.selectPing = nil, false, nil
+	rs.round, rs.roundScope, rs.roundLoaded, rs.selectPing = nil, "", false, nil
 	rs.endsRun, rs.abortsRun, rs.endReason = false, false, ""
 	rs.phaseRuns[phaseRunKey(p.Phase, p.Subject)]++
 	rs.noteHead(p.Subject, p.Tip)
@@ -360,6 +423,8 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		pushed:        map[string]string{},
 		heads:         map[string]bool{},
 		skipped:       map[string]string{},
+		curated:       map[string]*event.ReviewCurated{},
+		curatedSeen:   map[string]bool{},
 		holds:         map[string]*heldState{},
 		pausedHold:    map[string]bool{},
 		handbackOwed:  map[string]bool{},
@@ -403,6 +468,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		case *event.StageStarted:
 			rs.anyStarted = true
 			delete(rs.elided, p.StageID)
+			rs.forgetCurated(fl, p.StageID)
 			if fl != nil {
 				rs.pos = fl.Index(p.StageID)
 			}
@@ -524,10 +590,12 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		case *event.BranchPushed:
 			rs.notePush(p.Repo, p.Branch, p.Tip)
 		case *event.ReviewCommentsLoaded:
-			rs.roundThreads, rs.roundLoaded = append([]string(nil), p.ThreadIDs...), true
+			rs.round, rs.roundScope, rs.roundLoaded = append([]event.LoadedThread(nil), p.Threads...), p.Scope, true
 			for id, last := range p.Skipped {
 				rs.skipped[id] = last
 			}
+		case *event.ReviewCurated:
+			rs.noteCurated(p)
 		case *event.PhaseDeclined:
 			rs.triggerSeen[triggerKey(p.Phase, p.Subject, p.Key)] = true
 		case *event.PingRaised:

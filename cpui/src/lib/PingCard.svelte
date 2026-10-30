@@ -23,6 +23,7 @@
 	import {
 		answerMeta,
 		answerSummary,
+		curatable,
 		formContent,
 		formDefaults,
 		formMissing,
@@ -131,6 +132,9 @@
 
 	/** The debug leaf carries facts, not prose: the card is the wording. */
 	const debug = $derived(ping.type === 'debug');
+	/** A gate over a review document: the page curates it; inline, the card
+	 *  can only approve it as written. */
+	const cur = $derived(curatable(ping));
 	// Giving up at a watcher's debug leaf ends that round, not the run: the
 	// engine says which on the ping, and the buttons say what will happen.
 	const endsRound = $derived(debug && ping.endsPhase);
@@ -224,8 +228,8 @@
 							>{t('ping.moreFiles', { count: ping.files!.length - 1 })}</span
 						>{/if}
 					<span class="spacer"></span>
-					<a class="btn btn-sel btn-sm" href={to.ping(ping.id)}
-						>{t('ping.reviewComment')} {I.forward}</a
+					<a class="btn {cur ? 'btn-hot' : 'btn-sel'} btn-sm" href={to.ping(ping.id)}
+						>{cur ? t('ping.curate') : t('ping.reviewComment')} {I.forward}</a
 					>
 				</div>
 			{/if}
@@ -266,11 +270,15 @@
 				{/if}
 				<div class="acts">
 					<button
-						class="btn-hot btn-md"
+						class="{cur ? 'btn-hot-outline' : 'btn-hot'} btn-md"
 						disabled={off}
 						aria-busy={busyOn('approve')}
 						onclick={() => submit('approve')}
-						>{debug ? t('ping.continueRerun', { stage: stageId ?? '' }) : t('ping.approve')}</button
+						>{debug
+							? t('ping.continueRerun', { stage: stageId ?? '' })
+							: cur
+								? t('ping.approveAsWritten')
+								: t('ping.approve')}</button
 					>
 					{#if noteOpen}
 						<button

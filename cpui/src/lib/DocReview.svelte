@@ -304,14 +304,13 @@
 					perComment[i].map(() => up[k++].id)
 				)
 			);
-			await api.pings.answer(
-				ping.id,
+			await api.pings.answer(ping.id, {
 				answer,
-				feedback || undefined,
-				up.map((a) => a.id),
+				feedback: feedback || undefined,
+				attachmentIds: up.map((a) => a.id),
 				review,
 				content
-			);
+			});
 			clearDraft(ping.id);
 			onanswered();
 		} catch (e) {

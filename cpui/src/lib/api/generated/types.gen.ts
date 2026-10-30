@@ -39,6 +39,9 @@ export type AnswerPingRequest = {
 	content?: {
 		[key: string]: unknown;
 	};
+	curated?: {
+		[key: string]: Curation;
+	};
 	feedback?: string;
 	review?: Array<ReviewComment>;
 };
@@ -213,6 +216,32 @@ export type CredentialRequest = {
 	key: string;
 	name?: string;
 	provider: string;
+};
+
+export type CuratedItem = {
+	body?: string;
+	item: string;
+	keep: boolean;
+	resolve?: boolean | null;
+};
+
+export type Curation = {
+	items?: Array<CuratedItem>;
+	summary?: string | null;
+};
+
+export type CurationDocument = {
+	captured: boolean;
+	error?: string;
+	path: string;
+	replies?: Array<ReviewReply>;
+	review?: ReviewDocument;
+	type: string;
+};
+
+export type CurationView = {
+	documents: Array<CurationDocument> | null;
+	threads?: ThreadsDocument;
 };
 
 export type DocAsk = {
@@ -850,6 +879,7 @@ export type PingFile = {
 	path: string;
 	size?: number;
 	snapshot_id?: string;
+	type?: string;
 };
 
 export type PingFiles = {
@@ -887,8 +917,14 @@ export type PingView = {
 		[key: string]: unknown;
 	};
 	context?: string;
+	curated?: {
+		[key: string]: Curation;
+	};
 	ends_phase?: boolean;
 	feedback?: string;
+	file_types?: {
+		[key: string]: string;
+	};
 	files?: Array<string>;
 	form?: PingForm;
 	link?: string;
@@ -1061,6 +1097,49 @@ export type ReviewComment = {
 	path: string;
 	quote?: string;
 	start_line?: number;
+};
+
+export type ReviewContinuation = {
+	body: string;
+	rationale?: string;
+	resolve?: boolean;
+	thread: string;
+};
+
+export type ReviewDocument = {
+	notes?: Array<ReviewNote>;
+	replies?: Array<ReviewContinuation>;
+	summary?: string;
+};
+
+export type ReviewNote = {
+	body: string;
+	evidence?: string;
+	example?: string;
+	kind: string;
+	line: number;
+	path: string;
+	rationale?: string;
+};
+
+export type ReviewReply = {
+	did: string;
+	evidence?: string;
+	rationale?: string;
+	reply: string;
+	resolve?: boolean;
+	thread: string;
+};
+
+export type ReviewThread = {
+	comments: Array<ThreadComment> | null;
+	hunk?: string;
+	id: string;
+	kind?: string;
+	line?: number;
+	ours: boolean;
+	path?: string;
+	resolved: boolean;
 };
 
 export type RunCheckout = {
@@ -1396,6 +1475,22 @@ export type TestResult = {
 	error?: string;
 	ok: boolean;
 	warnings?: Array<string>;
+};
+
+export type ThreadComment = {
+	at?: string;
+	author: string;
+	body: string;
+	did?: string;
+	id: string;
+	new?: boolean;
+	ours?: boolean;
+};
+
+export type ThreadsDocument = {
+	dropped?: Array<ReviewNote>;
+	merge_request?: string;
+	threads: Array<ReviewThread> | null;
 };
 
 export type Ticket = {
@@ -3413,6 +3508,43 @@ export type AnswerPingResponses = {
 };
 
 export type AnswerPingResponse = AnswerPingResponses[keyof AnswerPingResponses];
+
+export type GetPingCurationData = {
+	body?: never;
+	path: {
+		pid: string;
+	};
+	query?: never;
+	url: '/api/pings/{pid}/curation';
+};
+
+export type GetPingCurationErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetPingCurationResponses = {
+	/**
+	 * OK
+	 */
+	200: CurationView;
+};
+
+export type GetPingCurationResponse = GetPingCurationResponses[keyof GetPingCurationResponses];
 
 export type GetPingFilesData = {
 	body?: never;

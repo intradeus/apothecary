@@ -16,6 +16,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 )
 
@@ -28,17 +29,20 @@ agents:
     prompt: review it
     inputs:
       - { name: changes, type: changeset }
+      - { name: threads, type: mr_threads }
     outputs:
       - { name: review, type: review_threads }
 main:
-  - { id: read, type: agent, harness: $harness, model: $model, agent: pr_reviewer, input: { changes: { from: run.git.diff_target, type: changeset } },
+  - { id: poll, type: action, action: load_review_comments, with: { scope: all }, output: { threads: { to: artifacts/threads.yaml, type: mr_threads } } }
+  - { id: read, type: agent, harness: $harness, model: $model, agent: pr_reviewer, input: { changes: { from: run.git.diff_target, type: changeset }, threads: { from: artifacts/threads.yaml, type: mr_threads } },
       output: { review: { to: artifacts/review.yaml, type: review_threads } } }
   - { id: post, type: action, action: post_review, input: { review: { from: artifacts/review.yaml, type: review_threads } } }
 watchers:
   - id: again
     on: mr_head_moved
     stages:
-      - { id: reread, type: agent, harness: $harness, model: $model, agent: pr_reviewer, input: { changes: { from: run.git.diff_target, type: changeset } },
+      - { id: repoll, type: action, action: load_review_comments, with: { scope: all }, output: { threads: { to: artifacts/threads.yaml, type: mr_threads } } }
+      - { id: reread, type: agent, harness: $harness, model: $model, agent: pr_reviewer, input: { changes: { from: run.git.diff_target, type: changeset }, threads: { from: artifacts/threads.yaml, type: mr_threads } },
           output: { review: { to: artifacts/review.yaml, type: review_threads } } }
       - { id: repost, type: action, action: post_review, input: { review: { from: artifacts/review.yaml, type: review_threads } } }
 outcomes:
@@ -46,15 +50,27 @@ outcomes:
   - { id: closed, on: mr_closed, then: done }
 `
 
-// newReviewerHarness: the reviewer agent writes a one-note review; every
-// command the workspace is asked to run is recorded.
+// newReviewerHarness: the reviewer agent writes a one-note review — and, on
+// a re-review that finds its note still open on the merge request, continues
+// that thread instead of repeating the note; every command the workspace is
+// asked to run is recorded.
 func newReviewerHarness(t *testing.T, doc string) (*phasedHarness, func() []string) {
 	t.Helper()
 	ph := newPhasedHarness(t, doc)
 	inner := ph.runner.RunFunc
 	ph.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
 		if call.Spec.Agent == "pr_reviewer" {
-			ph.writeFile(t, call.Env, "artifacts/review.yaml", "summary: Reads well.\nthreads:\n  - { path: a.go, line: 3, body: name it }\n")
+			review := "summary: Reads well.\nnotes:\n  - { path: a.go, line: 3, kind: nit, body: name it, rationale: style }\n"
+			if data, err := ph.envp.ReadFile(ctx, call.Env, "artifacts/threads.yaml"); err == nil {
+				if th, err := reviewfile.ParseThreads("artifacts/threads.yaml", data); err == nil {
+					for _, th := range th.Threads {
+						if th.Ours && !th.Resolved && th.Path == "a.go" {
+							review = "replies:\n  - { thread: " + th.ID + ", body: Addressed, resolve: true }\n"
+						}
+					}
+				}
+			}
+			ph.writeFile(t, call.Env, "artifacts/review.yaml", review)
 		}
 		return inner(ctx, call)
 	}
@@ -116,14 +132,29 @@ func TestRunOnSomeonesMergeRequest(t *testing.T) {
 
 	// The author pushes: the run reads the new head — fast-forwarded to it
 	// first — and reviews again. Its own adoption head was known: one
-	// re-review only.
+	// re-review only. The re-review read its earlier note on the merge
+	// request first and continued that thread — closing it — rather than
+	// posting the note again: still one review, one reply, one resolution.
 	ph.repoHost.SetHead(ref.IID, "a2")
 	ph.waitPhaseRuns(t, runID, "again", 1)
 	if !hasScript(scripts(), "git fetch origin 'refs/merge-requests/1/head' && git merge --ff-only FETCH_HEAD") {
 		t.Error("the re-review did not bring the checkout to the new head")
 	}
-	if rv := ph.repoHost.SnapshotMRs()[0].Reviews; len(rv) != 2 || rv[0].ID == rv[1].ID {
+	if rv := ph.repoHost.SnapshotMRs()[0].Reviews; len(rv) != 1 {
 		t.Fatalf("reviews after the push = %+v", rv)
+	}
+	threads := ph.repoHost.SnapshotThreads(ref.IID)
+	if len(threads) != 1 || !threads[0].Resolved || len(threads[0].Comments) != 2 || !ports.IsReplyTo(threads[0].Comments[1].Body, runID+"/again-1", threads[0].ID) {
+		t.Fatalf("threads after the re-review = %+v", threads)
+	}
+	var posts []*event.ReviewPosted
+	for _, e := range ph.events(t, runID) {
+		if p, ok := e.Payload.(*event.ReviewPosted); ok {
+			posts = append(posts, p)
+		}
+	}
+	if len(posts) != 2 || posts[0].Inline != 1 || len(posts[1].Replied) != 1 || len(posts[1].Resolved) != 1 || posts[1].Inline != 0 {
+		t.Errorf("review_posted events = %+v", posts)
 	}
 	ph.repoHost.SetMRState(ref.IID, ports.MRMerged)
 	ph.waitState(t, runID, run.Completed)
@@ -205,7 +236,7 @@ func TestBuiltinReviewerTemplateRuns(t *testing.T) {
 		}
 	}
 	// The gate is off by default: skipped, the review posted.
-	if got := strings.Join(stages, " "); got != "review.read review.gate review.post" {
+	if got := strings.Join(stages, " "); got != "review.poll review.read review.gate review.post" {
 		t.Errorf("stages completed: %s", got)
 	}
 	if rv := ph.repoHost.SnapshotMRs()[0].Reviews; len(rv) != 1 {

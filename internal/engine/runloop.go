@@ -249,6 +249,12 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			}
 			if needsWorkspace(st) {
 				x.followAdopted()
+				// What a person approved at a gate reaches the file before
+				// the stage that reads it starts (the gate had no workspace).
+				if merr := x.materialiseCurated(st); merr != nil {
+					x.exit(merr)
+					return
+				}
 			}
 			switch st.Type {
 			case flow.StageAgent:
@@ -311,6 +317,11 @@ func (x *exec) exit(cause error) {
 func (x *exec) append(ps ...event.Payload) error {
 	for _, p := range ps {
 		switch v := p.(type) {
+		case *event.StageStarted:
+			// A stage that writes a path makes the new document there: a
+			// curation of the old one, still waiting, is never written over
+			// it — the same rule replay applies.
+			x.rs.forgetCurated(x.rs.fl, v.StageID)
 		case *event.StageFailed:
 			v.Error = x.redact.scrub(v.Error)
 		case *event.EdgeTaken:
@@ -1058,8 +1069,19 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		}
 		return x.takeEdge(st, flow.EdgeFail, msg)
 	}
-	// A verdict-typed output had its existence checked with every other output
-	// above, so this read can now only fail on shape — one report per cause.
+	// Every output with a structure — a built-in type's schema, a flow schema
+	// — is checked first, all violations at once, in the words the agent
+	// read in its OUTPUT CONTRACT: a shape error is reported as one, never as
+	// a parser's complaint about a field it could not read.
+	if msg := x.checkStructuredOutputs(st); msg != "" {
+		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputInvalid, Error: msg}); aerr != nil {
+			return aerr
+		}
+		return x.takeEdge(st, flow.EdgeFail, msg)
+	}
+	// A verdict-typed output had its existence and shape checked above, so
+	// this read can now only fail on what a schema cannot say — one report
+	// per cause.
 	var verdict *ports.Verdict
 	if x.verdictPath(st) != "" {
 		v, err := x.readVerdict(st)
@@ -1074,24 +1096,18 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		verdict = v
 	}
 	// A review_replies output is checked against the threads this round
-	// loaded before anything is posted: a reply to an unknown thread is this
-	// stage's fault, retried with the reason as $FAILURE.
+	// loaded before anything is posted: a reply to an unknown thread, or a
+	// thread left without one, is this stage's fault, retried with the
+	// reason as $FAILURE.
 	if msg := x.checkReviewReplies(st); msg != "" {
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputInvalid, Error: msg}); aerr != nil {
 			return aerr
 		}
 		return x.takeEdge(st, flow.EdgeFail, msg)
 	}
-	// So is a review_threads output, before post_review reads it.
+	// So is a review_threads output, against what the round loaded and what
+	// a person dropped, before post_review reads it.
 	if msg := x.checkReviewThreads(st); msg != "" {
-		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputInvalid, Error: msg}); aerr != nil {
-			return aerr
-		}
-		return x.takeEdge(st, flow.EdgeFail, msg)
-	}
-	// And every output with a structure — a flow schema, a commit_message —
-	// before anything reads it.
-	if msg := x.checkStructuredOutputs(st); msg != "" {
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputInvalid, Error: msg}); aerr != nil {
 			return aerr
 		}
@@ -1663,7 +1679,7 @@ func (x *exec) processAnswer(ar answerReq) (handled bool, err error) {
 	x.e.mu.Unlock()
 
 	recorded := &event.PingAnswered{PingID: ar.p.ID, Answer: ar.ans.Answer, Feedback: ar.ans.Feedback,
-		Content: ar.ans.Content, AttachmentIDs: ar.ans.AttachmentIDs, Review: ar.ans.Review}
+		Content: ar.ans.Content, AttachmentIDs: ar.ans.AttachmentIDs, Review: ar.ans.Review, Curated: ar.ans.Curated}
 	if err := x.append(recorded); err != nil {
 		// Roll the in-memory claim back so a retried answer can succeed
 		// after recovery (the event log has no ping_answered).
@@ -1953,14 +1969,14 @@ func (x *exec) stageGate(st *flow.Stage) error {
 		// the engine resolves. TYPED HERE, at source resolution — this is
 		// the one place that knows which is which, so nothing downstream ever
 		// sniffs a string for "http" (DESIGN-FILES §4).
-		files, link := x.gateFiles(st)
+		files, types, link := x.gateFiles(st)
 		p = &Ping{
 			Type:     PingGate,
 			Question: gateQuestion(st, rs.view.TicketTitle),
 			// A gate over several merge requests lists them all; the link
 			// stays the first (the primary repository's).
 			Context: x.mrListMarkdown(),
-			Files:   files, Link: link, StageID: st.ID, AnswerKind: event.AnswerYesNo,
+			Files:   files, FileTypes: types, Link: link, StageID: st.ID, AnswerKind: event.AnswerYesNo,
 		}
 		if err := x.raiseYesNo(p); err != nil {
 			return err
@@ -1986,15 +2002,23 @@ func (x *exec) stageGate(st *flow.Stage) error {
 // gateFiles is what a gate shows: its files in port order — a folder's
 // (type files) each, as attachments are bounded: the first
 // attachmentMaxFiles in all, none past attachmentMaxBytes (a snapshot of it
-// would be cut) — and the link its link port resolves to.
-func (x *exec) gateFiles(st *flow.Stage) (files []string, link string) {
+// would be cut) — each structured file's port type by path (what offers
+// curation), and the link its link port resolves to.
+func (x *exec) gateFiles(st *flow.Stage) (files []string, types map[string]string, link string) {
 	for _, in := range st.Inputs {
 		switch {
 		case flow.IsEngineSource(in.Value):
 			link = x.resolveGateInput(in.Value)
 			continue
 		case in.Type != agentspec.TypeFiles:
-			files = append(files, flow.FilePath(in.Value))
+			path := flow.FilePath(in.Value)
+			files = append(files, path)
+			if agentspec.IsStructuredType(in.Type) {
+				if types == nil {
+					types = map[string]string{}
+				}
+				types[path] = in.Type
+			}
 			continue
 		}
 		dir := flow.FilePath(in.Value)
@@ -2015,7 +2039,7 @@ func (x *exec) gateFiles(st *flow.Stage) (files []string, link string) {
 			"files", len(files), "shown", attachmentMaxFiles)
 		files = files[:attachmentMaxFiles]
 	}
-	return files, link
+	return files, types, link
 }
 
 // resolveGateInput turns a gate's input into what the human is handed: the
@@ -2071,7 +2095,7 @@ func (x *exec) raiseYesNo(p *Ping) error {
 	x.e.pings[p.ID] = p
 	x.e.mu.Unlock()
 	raised := &event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, Context: p.Context,
-		Files: p.Files, Link: p.Link, StageID: p.StageID, AnswerKind: p.AnswerKind,
+		Files: p.Files, FileTypes: p.FileTypes, Link: p.Link, StageID: p.StageID, AnswerKind: p.AnswerKind,
 		Phase: p.Phase, EndsPhase: p.EndsPhase}
 	if err := x.append(raised); err != nil {
 		return err
@@ -2137,13 +2161,23 @@ func (x *exec) routeDebug(st *flow.Stage, ans PingAnswer) error {
 
 // routeGate follows a gate's answer, carrying the verdict — the person's
 // summary, their comments file by file, what they attached — to on_reject,
-// or to on_success when the approval said something.
+// or to on_success when the approval said something. What they made of a
+// review document the gate showed goes on the record first (recordCuration):
+// approved, it is written back before the next reader starts; rejected, the
+// redo reads what they dropped.
 func (x *exec) routeGate(st *flow.Stage, rec *event.PingAnswered, started time.Time) error {
 	var shown []string
 	if r := x.rs.raisedPings[rec.PingID]; r != nil {
 		shown = r.Files
 	}
+	curated, err := x.recordCuration(st, rec)
+	if err != nil {
+		return err
+	}
 	verdict := gateVerdict(st.ID, rec, shown, x.answerFileRefs(rec.PingID))
+	if note := renderCuration(curated); note != "" && rec.Answer != "approve" {
+		verdict = capVerdict(strings.TrimRight(verdict, "\n") + "\n" + note)
+	}
 	if rec.Answer == "approve" {
 		verdict = x.redact.scrub(verdict)
 		if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds(), Feed: verdict}); err != nil {
@@ -2630,7 +2664,7 @@ func (x *exec) readVerdict(st *flow.Stage) (*ports.Verdict, error) {
 		}
 		return nil, err
 	}
-	return parseVerdict(data)
+	return parseVerdict(path, data)
 }
 
 func tail(s string, n int) string {

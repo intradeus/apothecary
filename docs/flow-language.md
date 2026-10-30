@@ -444,9 +444,10 @@ one namespace, and `main` is taken.
   needed), `run.git.diff_target` is what it merges, each later chain on it first
   fast-forwards to its current head, and the outcomes follow its fate. A
   rerun stays on the merge request. The built-in `reviewer` is this shape: one
-  `review` sequence (read, an optional gate, `post_review`) run by its main chain
-  and again by the watcher `again` on `mr_head_moved`, and outcomes on
-  `mr_merged` and `mr_closed`. `conflict-resolver` is the same shape around a
+  `review` sequence (`load_review_comments` of every thread already there, read,
+  an optional curating gate, `post_review`) run by its main chain and again by
+  the watcher `again` on `mr_head_moved`, and outcomes on `mr_merged` and
+  `mr_closed`. `conflict-resolver` is the same shape around a
   `settle` sequence — `sync_target`, the `resolver` agent on a conflict, the
   project's tests, `push_branch` to the merge request's own branch, leased
   against the head the chain began on — run by its main chain and again by a
@@ -822,6 +823,25 @@ engine writes that structure, file by file, into the verdict the next stage read
 as `edge.verdict` (§4) — the page never writes the agent's prompt — and keeps it
 on the record, comment by comment. An approval that says nothing carries nothing.
 
+**A review document is curated.** A gate that shows a `review_threads` file (the
+reviewer's draft before `post_review`) or a `review_replies` file (a round's
+answers before `reply_review_comments`) opens the curation page instead: every
+note or reply as the agent wrote it — its kind, its posted text, and beside it
+what the agent wrote for the person alone (its rationale, evidence, example),
+with the thread it continues or answers when the gate also shows the
+`mr_threads` file. All of it is selected; the person unpicks what should not go
+out, rewords what should read differently, rewords the summary, and approves.
+The answer carries their decisions over the document as the gate showed it —
+never a rewritten file — and the engine rebuilds the document from the snapshot
+it pinned when it raised the question: the next stage that reads the path gets
+the curated document, so `post_review` and `reply_review_comments` post exactly
+what was kept, and need no port for it. The decisions go on the record
+(`review_curated`): a note dropped is never proposed again in the run — the
+re-review is handed it under `dropped` and refused if it proposes it anyway —
+and a reply held back leaves its thread alone until someone writes there again,
+exactly as unpicking it in the round's checklist would. A rejection carries the
+same decisions to the redo in its verdict, and writes nothing.
+
 **Answered automatically.** A gate is a decision point whose *default* answerer
 is a human. `auto_approve` and `auto_reject` name signals (§2 wait) that may
 supply the same two answers:
@@ -882,9 +902,9 @@ the project must have — a repository (GitLab, GitHub) or a tracker:
 | `commit` | — | `message` (`commit_message`, required) | — | — | commits everything uncommitted — staged, unstaged, untracked — with the message's subject and body, in every checkout (the subject's alone on a subject). A checkout with nothing to commit is left alone, so a re-entry after the commit landed does nothing. A message that is not a `commit_message` fails with `input_invalid` before git runs; a refused commit (a hook, the git identity) fails with git's words |
 | `push_branch` | — | — | — | — | pushes the run's branch (every checkout's, or the subject's on a subject). A branch it pushed before is force-pushed **leased** against the tip it recorded — on a subject, at worst the head when the chain started — never blind; a first push is plain. Refused = someone else wrote to the branch: `on_fail` |
 | `sync_target` | — | — | `strategy` (`merge` \| `rebase`, default `merge`) | — | a *subject action*. Takes the subject's target branch in, in the engine: a no-op when already contained; a conflict leaves the merge (or rebase) **paused** in the working tree and fails the stage with the files named. Whoever resolves it edits those files — no git — and the retried stage checks no marker is left and continues. `rebase` needs a `push_branch` in the same chain |
-| `load_review_comments` | repository | — | `select` (`human` \| `all`, default `human`) | `review` (`file`, conventionally `artifacts/review.md`) | a subject action. Writes the subject's **pending** threads (unresolved, last word a reviewer's — inline threads, review bodies, conversation comments; bot accounts excluded): file, line, diff hunk, comments, thread id. With `select: human` a person first picks which threads to fix (an inbox checklist; the chain parks); unpicked threads are skipped until someone comments on them again, and picking none ends the round without running anything else. A re-entry rewrites the same set |
-| `reply_review_comments` | repository | `replies` (`review_replies`, required) | — | — | a subject action. Posts one reply per entry of a `review_replies` file, resolving where it says so; each reply carries an invisible marker, so a crash between two posts is reconciled from the repository and nothing is posted twice |
-| `post_review` | repository | `review` (`review_threads`, required) | — | — | a subject action. Posts a `review_threads` file as a review: a note on each line it names, and its summary. A note on a line outside the change joins the summary, quoted with its place, rather than failing the review. Never approves nor requests changes — that stays a person's decision. Every part carries a marker, so a retry posts only what is missing, and a review's notes never count as a reviewer's comments (`mr_review_settled`). An empty review posts nothing. GitHub gets one review; GitLab a discussion per note and a note for the summary |
+| `load_review_comments` | repository | — | `scope` (`pending` \| `all`, default `pending`), `select` (`human` \| `all`, default `human`) | `threads` (`mr_threads`, conventionally `artifacts/threads.yaml`) | a subject action. Writes the subject's threads as an `mr_threads` file: file, line, diff hunk, thread id, the comments in order — the factory's own marked `ours`, the ones newer than its last word marked `new`, what an earlier reply did read off its marker — and the notes a person dropped at a gate earlier in the run. `scope: pending` (a fixing round) loads the threads waiting on the factory (unresolved, last word a reviewer's — inline threads, review bodies, conversation comments; bot accounts excluded): with `select: human` a person first picks which to fix (an inbox checklist; the chain parks), unpicked threads are skipped until someone comments on them again, and picking none ends the round without running anything else. `scope: all` (a reviewer about to write) loads every thread, resolved and the factory's own included, picks nothing, and an empty list ends nothing. A re-entry rewrites the same set |
+| `reply_review_comments` | repository | `replies` (`review_replies`, required) | — | — | a subject action. Posts one reply per entry of a `review_replies` file — every thread the round loaded has one, minus those a person held back at a gate — resolving where it says so; each reply carries an invisible marker with what it did, so a crash between two posts is reconciled from the repository and nothing is posted twice |
+| `post_review` | repository | `review` (`review_threads`, required) | — | — | a subject action. Posts a `review_threads` file: its notes as a review — one on each line it names, its kind as a leading tag, the summary on top — and its replies in the threads they name, resolving where it says so. A note on a line outside the change joins the summary, quoted with its place, rather than failing the review. Never approves nor requests changes — that stays a person's decision. Every part carries a marker (a note's kind in it), so a retry posts only what is missing, a later poll knows the factory's threads, and a review's notes never count as a reviewer's comments (`mr_review_settled`). An empty review posts nothing. GitHub gets one review; GitLab a discussion per note and a note for the summary |
 | `mr_merge` | repository | — | `method` (`merge` \| `squash` \| `rebase`, default `merge`), `branch` (`keep` \| `delete`, default `keep`) | — | a subject action, needing no workspace. Merges the subject merge request at the newest head the chain knows: the tip it pushed, else the head it began on — a head someone else pushed is not merged. The repository's rules apply: a merge it declines (a draft, checks or approvals missing, the head moved) fails the stage with its reason, for `on_fail`. `rebase` is GitHub's; GitLab merges by the project's merge method (fast-forward for a linear history), so it refuses it. The merge is what the `merged` outcome then sees |
 | `ticket_transition` | `tracker` | — | `to` (`todo` \| `in_progress` \| `in_review` \| `done` \| `blocked`) **or** `status` (text), exactly one | — | moves the ticket's tracker issue. `to` is a **canonical** status the ticket's tracker translates into its own vocabulary — Jira through the integration's status map (the stock words by default; `done=Ready for prod` for a team whose Done is a deploy away), GitHub and GitLab Issues to open/closed — and a status the tracker has no word for **skips** the stage with a note. `status` is the tracker's own status or transition name, verbatim (case-insensitive). Already there: nothing happens. Not reachable from the current status: the stage fails with `input_invalid` naming the statuses that are |
 | `ticket_comment` | `tracker` | `body` (`file`, required), `attachments` (`files`) | — | — | attaches each file to the issue and links it where the body names its path (the rest listed after it), then posts the markdown artifact as a comment, ending with a short trailer naming the run, the chain run and the stage — also how a crash between posting and recording is reconciled, so nothing is posted twice |
@@ -1412,7 +1432,10 @@ When the run executes, before any stage — agent, command, action — every fil
 it reads must be there (`input_missing`, unless the port is optional) and hold
 its type or schema (`input_invalid`); after an agent or a command, every file
 it writes must be there (`output_contract`) and hold its shape
-(`output_invalid`, the violations handed to the retry as `edge.failure`).
+(`output_invalid`, the violations handed to the retry as `edge.failure`) — its
+schema first, then what only the round knows (a review's replies name loaded
+threads; its notes repeat neither an open thread of the factory's nor a note a
+person dropped; a round's replies answer every thread).
 Before every fresh attempt the engine deletes the stage's outputs, so the check
 after it cannot be satisfied by a file an earlier attempt left behind. (Crash
 recovery re-entering a live stage does *not* delete: a resumed harness session
@@ -1440,7 +1463,7 @@ A stage running it states each of those again as a port, with its source or
 destination, and the parser holds the two together — so a stage reads on its
 own, and the agent stays reusable: `builder` reads `plan` from
 `artifacts/plan.md` in the main chain and `comments` from
-`artifacts/review.md` in a watcher. An output with a `path:` is refused: the
+`artifacts/threads.yaml` in a watcher. An output with a `path:` is refused: the
 path is the stage's to say.
 
 The prompt is assembled, never templated, from the stage's ports: each input
@@ -1457,9 +1480,10 @@ only through a ticket port.
 | `file` | any file: only its existence is checked. Every file type satisfies it — but `files` | anything |
 | `files` | a directory of files — screenshots, a report's pages — its path ending in `/` (`artifacts/shots/`): written, it must hold at least one file. Never a schema | `create_mr`, `ticket_comment` (`attachments`), a `human_gate` (each file reviewed) |
 | `verdict` | `{"verdict":"APPROVE"\|"REJECT","summary"?,"comments":[…]}` — each comment a remark or `{path, line?, end_line?, quote?, body}` (below); a REJECT says why | the router: REJECT follows the stage's `on_reject`; an APPROVE with comments carries them on `on_success` |
-| `review_threads` | a review of the merge request (below) | `post_review` |
-| `review_replies` | a review round's answers: a YAML list of `{thread, reply, resolve}` | `reply_review_comments` |
-| `commit_message` | JSON `{"subject": "...", "body": "..."}` — a one-line subject (at most 100 characters), an optional body | `commit` |
+| `review_threads` | a review of the merge request (below): a summary, notes that open threads, replies in threads already there | `post_review`, a curating `human_gate` |
+| `review_replies` | a review round's answers (below): a list of `{thread, did, reply, resolve, rationale, evidence}` | `reply_review_comments`, a curating `human_gate` |
+| `mr_threads` | what is on the merge request, as `load_review_comments` read it (below): every thread with its comments, and the notes a person dropped at a gate | the reviewing and fixing agents, the curation page, the engine's own guards |
+| `commit_message` | `{"subject": "...", "body": "..."}` — a one-line subject (at most 100 characters), an optional body | `commit` |
 | `ticket`, `changeset`, `failure`, `link` | values the engine provides — and `verdict`, from `edge.verdict` | inputs only |
 
 **Why these, and nothing else.** A file type exists for a structure something
@@ -1470,26 +1494,57 @@ stages pass around is the author's to define: a schema.
 
 A **verdict** is what makes `on_reject` reachable: a stage whose ports write
 none cannot carry the edge (a parse error), and an agent declares at most one.
-A file that exists but does not hold a type's shape fails the stage with
-`output_invalid` — a different fault from never writing it. A
-**review_replies** file is also checked against the threads the round loaded —
-every `thread` one of the round's, none twice, every `reply` non-empty (an
-empty list is valid) — before anything reaches the repository. A
-**review_threads** file is
+Every structured type's shape is a JSON Schema the engine holds, shown verbatim
+in the agent's OUTPUT CONTRACT and checked like a flow schema, first; what a
+schema cannot say, the engine checks after it. A file that exists but does not
+hold a type's shape fails the stage with `output_invalid` — a different fault
+from never writing it. A **review_threads** file is
 
 ```yaml
-summary: "Reads well; two things before it merges."   # optional, markdown
-threads:                                              # optional, at most 50
-  - { path: internal/flow/parse.go, line: 412, body: "This error loses the line number." }
+summary: |                       # optional, markdown — POSTED as the review's body
+  Reads well; two things before it merges.
+notes:                           # new threads to open, at most 50 notes and replies in all
+  - path: internal/flow/parse.go # repository-relative
+    line: 412                    # in the NEW version of the file
+    kind: blocking               # blocking | suggestion | question | nit — the posted text's leading tag
+    body: This error loses the line number the caller formats into its message.   # POSTED
+    rationale: parse_test.go:88 asserts the position; without it the editor cannot jump there.   # never posted
+    evidence: "ran go test ./internal/flow/: TestParseErrors fails"                          # never posted, optional
+    example: 'return fmt.Errorf("%d: %w", n.Line, err)'                                       # never posted, optional
+replies:                         # in threads already on the merge request (ids from the mr_threads input)
+  - { thread: PRRT_kwDOabc, body: "Addressed in 3f2a1c, thanks.", resolve: true }
 ```
 
-checked the same way: every thread on a repository-relative path, a line from 1
-(in the changed file), a non-empty body. Whether a line is in the change is the
-repository's business at posting time, not a failure. A **commit_message**'s
-shape is a JSON Schema the engine holds, shown verbatim in the agent's OUTPUT
-CONTRACT and checked like a flow schema.
+checked, past its schema, against the round: a reply names a thread the phase
+run's `load_review_comments` loaded, once, and resolves only one the factory
+opened; a note does not sit on the place of an open thread of the factory's, nor
+say what one already says on the same file (the words come from the `mr_threads`
+input), nor repeat a note a person dropped at a gate in this run — each refusal
+says what to write instead, and the retry reads it. Whether a line is in the
+change is the repository's business at posting time, not a failure. A
+**review_replies** file is
 
-A **verdict** has one shape whoever gives it. An agent writes it as a file:
+```yaml
+- thread: d1                     # a thread the round loaded, verbatim
+  did: fixed                     # fixed | declined | answered
+  reply: Renamed fetchAll to listWidgets in api/widgets.go and its two callers.   # POSTED
+  rationale: the old name promised a full fetch the function never did           # never posted; required with declined
+  evidence: "commit 3f2a1c; api/widgets_test.go still passes"                     # never posted, optional
+- { thread: d2, did: declined, reply: "The test covers it already.", rationale: see widgets_test.go }
+```
+
+checked against the threads the round loaded: every one answered exactly once —
+a comment judged wrong gets `did: declined` and why, never silence — and a
+declined thread is not resolved (the reviewer closes a disagreement). An
+**mr_threads** file is what `load_review_comments` writes and nothing else
+produces: `{merge_request, threads: [{id, path, line, resolved, ours, kind, hunk,
+comments: [{id, author, at, ours, new, did, body}]}], dropped: [notes]}` — `ours`
+a thread the factory opened, `new` a comment after the factory's last word in
+its thread, `did` what an earlier reply of the factory's said it did, `dropped`
+the notes a person declined to post at a gate earlier in the run.
+
+A **verdict** has one shape whoever gives it. An agent writes it as a file —
+JSON or YAML, as its path says; the templates bind `artifacts/verdict.yaml`:
 
 ```json
 { "verdict": "REJECT",
@@ -1958,7 +2013,7 @@ main:
       changes: { from: run.git.diff_target, type: changeset }
       failure: { from: edge.failure, type: failure, optional: true }
     output:
-      verdict: { to: artifacts/verdict.json, type: verdict }
+      verdict: { to: artifacts/verdict.yaml, type: verdict }
     on_success: redact
     on_reject: { to: build, max: 3, then: debug }
     on_fail: { to: review, max: 1, then: debug }
@@ -1993,19 +2048,26 @@ watchers:
 
   # Reviewers commented, then nothing for an hour. You pick which threads to
   # fix (inbox); they are fixed in one batch, tested, pushed, and answered —
-  # as many rounds as the reviewers need.
+  # every one, the replies read by you first ($reply_gate) — as many rounds as
+  # the reviewers need.
   - id: review_fixes
     on: { signal: mr_review_settled, start: $review_start, quiet_for: 1h }
     stages:
       - { id: load, type: action, action: load_review_comments, with: { select: human },
-          output: { review: { to: artifacts/review.md, type: file } } }
+          output: { threads: { to: artifacts/threads.yaml, type: mr_threads } } }
       - { id: fix,  type: agent, harness: $harness, model: $model, agent: builder, max_turns: 60,
           input: { ticket:   { from: run.ticket, type: ticket },
                    plan:     { from: artifacts/plan.md, type: file },
-                   comments: { from: artifacts/review.md, type: file },
+                   comments: { from: artifacts/threads.yaml, type: mr_threads },
                    failure:  { from: edge.failure, type: failure, optional: true } },
           on_success: fix_test, on_fail: { to: fix, max: 2, then: debug } }
-      # … commit, test, push, reply, post — as in the full text.
+      # … commit, test, push, reply, then:
+      - { id: reply_gate, type: human_gate, run_if: $reply_gate, question: "Send these replies?",
+          input: { replies: { from: artifacts/replies.yaml, type: review_replies },
+                   threads: { from: artifacts/threads.yaml, type: mr_threads } },
+          on_reject: { to: reply, max: -1 } }
+      - { id: post, type: action, action: reply_review_comments,
+          input: { replies: { from: artifacts/replies.yaml, type: review_replies } }, on_success: end }
 
 # Outcomes: once, and the run is over. Merged, the ticket is done and so is
 # the run; closed unmerged, the ticket goes back and the run is abandoned —

@@ -6,6 +6,8 @@ package event
 import (
 	"encoding/json"
 	"time"
+
+	"apothecary/internal/reviewfile"
 )
 
 type Type string
@@ -63,17 +65,22 @@ const (
 	TypeReviewCommentsLoaded Type = "review_comments_loaded"
 	TypeReviewRepliesPosted  Type = "review_replies_posted"
 	TypeReviewPosted         Type = "review_posted"
-	TypeMRMerged             Type = "mr_merged"
-	TypeTargetSynced         Type = "target_synced"
-	TypeBranchPushed         Type = "branch_pushed"
-	TypeRunCompleted         Type = "run_completed"
-	TypeRunAbandoned         Type = "run_abandoned"
-	TypeRunFailed            Type = "run_failed"
-	TypeRunArchived          Type = "run_archived" // addition over §6 (see IMPLEMENTATION_NOTES): archived is a projected state, so it needs an event
-	TypeRunRetried           Type = "run_retried"  // "try again": re-enter a failed stage in the same workspace
-	TypeRunPaused            Type = "run_paused"   // user pressed pause: loop exited cleanly, run parked non-terminal
-	TypeRunUnpaused          Type = "run_unpaused" // user pressed play: loop restarts and re-enters via the recovery path
-	TypeEnvDestroyed         Type = "env_destroyed"
+	// TypeReviewCurated is what a person at a gate made of a review document
+	// — the notes and replies kept, dropped and rewritten — resolved from
+	// the file the gate showed, so replay needs no file to know what a
+	// re-review must never propose again and which threads were left alone.
+	TypeReviewCurated Type = "review_curated"
+	TypeMRMerged      Type = "mr_merged"
+	TypeTargetSynced  Type = "target_synced"
+	TypeBranchPushed  Type = "branch_pushed"
+	TypeRunCompleted  Type = "run_completed"
+	TypeRunAbandoned  Type = "run_abandoned"
+	TypeRunFailed     Type = "run_failed"
+	TypeRunArchived   Type = "run_archived" // addition over §6 (see IMPLEMENTATION_NOTES): archived is a projected state, so it needs an event
+	TypeRunRetried    Type = "run_retried"  // "try again": re-enter a failed stage in the same workspace
+	TypeRunPaused     Type = "run_paused"   // user pressed pause: loop exited cleanly, run parked non-terminal
+	TypeRunUnpaused   Type = "run_unpaused" // user pressed play: loop restarts and re-enters via the recovery path
+	TypeEnvDestroyed  Type = "env_destroyed"
 	// Rebuild recreates a run's container in place (keeps the run + checkout);
 	// orthogonal to the run's lifecycle State — these never change it.
 	TypeEnvRebuildStarted   Type = "env_rebuild_started"
@@ -453,6 +460,11 @@ type PingRaised struct {
 	// by sniffing the string for "http".
 	Files []string `json:"files,omitempty"`
 	Link  string   `json:"link,omitempty"`
+	// FileTypes is each shown file's port type, by path, for the files with
+	// a structured type (a review_threads, a review_replies, an mr_threads):
+	// what tells the page to offer curation, and the engine which parser
+	// checks the answer. A plain file is absent.
+	FileTypes map[string]string `json:"file_types,omitempty"`
 	// StageID is the flow stage in flight when the ping was raised
 	// (PLAN4 M15): the attribution key joining reviews to stages and,
 	// via stage_started.agent_hash, to prompt versions.
@@ -554,27 +566,80 @@ type PhaseDeclined struct {
 	Key     string `json:"key"`
 }
 
-// ReviewCommentsLoaded: a review round took these threads on; Newest is the
-// newest reviewer comment among them.
+// LoadedThread is one thread a phase run loaded from the merge request, as
+// much of it as the engine keeps: its place, whether the factory opened it,
+// whether it is resolved, and its last comment's id (what "left alone until
+// someone writes there again" is measured against).
+type LoadedThread struct {
+	ID       string `json:"id"`
+	Path     string `json:"path,omitempty"`
+	Line     int    `json:"line,omitempty"`
+	Ours     bool   `json:"ours,omitempty"`
+	Resolved bool   `json:"resolved,omitempty"`
+	Last     string `json:"last,omitempty"`
+}
+
+// ReviewCommentsLoaded: a phase run loaded these threads — Scope pending
+// (the ones waiting on the factory, for a fixing round) or all (every
+// thread, for a reviewer to read before it writes); Newest is the newest
+// reviewer comment among them.
 type ReviewCommentsLoaded struct {
-	StageID   string   `json:"stage_id,omitempty"`
-	Subject   string   `json:"subject,omitempty"`
-	ThreadIDs []string `json:"thread_ids"`
-	Newest    string   `json:"newest,omitempty"`
+	StageID string         `json:"stage_id,omitempty"`
+	Subject string         `json:"subject,omitempty"`
+	Scope   string         `json:"scope,omitempty"`
+	Threads []LoadedThread `json:"threads"`
+	Newest  string         `json:"newest,omitempty"`
 	// Skipped are the pending threads a human chose not to fix, each with
 	// its last comment's id: left alone until someone writes there again.
 	Skipped map[string]string `json:"skipped,omitempty"`
 }
 
+// IDs lists the loaded threads' ids, in order.
+func (p *ReviewCommentsLoaded) IDs() []string {
+	out := make([]string, 0, len(p.Threads))
+	for _, t := range p.Threads {
+		out = append(out, t.ID)
+	}
+	return out
+}
+
 // ReviewPosted: post_review put a review on the subject merge request —
 // Inline notes on their lines, Folded ones (lines outside the change) in
-// the summary; Already when a retry found it all posted.
+// the summary, Replied the threads it continued and Resolved the ones it
+// closed; Already when a retry found it all posted. ReviewID is the id its
+// markers carry.
 type ReviewPosted struct {
-	StageID string `json:"stage_id,omitempty"`
-	Subject string `json:"subject"`
-	Inline  int    `json:"inline"`
-	Folded  int    `json:"folded,omitempty"`
-	Already bool   `json:"already,omitempty"`
+	StageID  string   `json:"stage_id,omitempty"`
+	Subject  string   `json:"subject"`
+	ReviewID string   `json:"review_id,omitempty"`
+	Inline   int      `json:"inline"`
+	Folded   int      `json:"folded,omitempty"`
+	Replied  []string `json:"replied,omitempty"`
+	Resolved []string `json:"resolved,omitempty"`
+	Already  bool     `json:"already,omitempty"`
+}
+
+// ReviewCurated: a person at gate StageID decided what of the review
+// document at Path (a review_threads or review_replies file) is posted.
+// Review or Replies is the document as curated — what the next stage reads
+// once it is written back; Dropped the notes they did not post (a re-review
+// never proposes them again), DroppedReplies the threads whose reply they
+// held back, Skipped those threads with their last comment id (left alone
+// until someone writes there again), Rewritten the items whose text they
+// changed. Approved says whether the gate approved; a rejection's curation
+// is on the record and in the verdict the redo reads, never written back.
+type ReviewCurated struct {
+	StageID        string             `json:"stage_id"`
+	PingID         string             `json:"ping_id"`
+	Path           string             `json:"path"`
+	Type           string             `json:"type"`
+	Approved       bool               `json:"approved"`
+	Review         *reviewfile.Review `json:"review,omitempty"`
+	Replies        []reviewfile.Reply `json:"replies,omitempty"`
+	Dropped        []reviewfile.Note  `json:"dropped,omitempty"`
+	DroppedReplies []string           `json:"dropped_replies,omitempty"`
+	Rewritten      []string           `json:"rewritten,omitempty"`
+	Skipped        map[string]string  `json:"skipped,omitempty"`
 }
 
 // MRMerged: mr_merge merged the subject merge request at Head with Method. A
@@ -587,12 +652,15 @@ type MRMerged struct {
 	BranchDeleted bool   `json:"branch_deleted,omitempty"`
 }
 
-// ReviewRepliesPosted: the round's replies are on the repository host.
+// ReviewRepliesPosted: the round's replies are on the repository host —
+// Declined the threads answered with did: declined (the code left as it
+// is, with why).
 type ReviewRepliesPosted struct {
 	StageID   string   `json:"stage_id,omitempty"`
 	Subject   string   `json:"subject,omitempty"`
 	ThreadIDs []string `json:"thread_ids"`
 	Resolved  []string `json:"resolved,omitempty"`
+	Declined  []string `json:"declined,omitempty"`
 }
 
 // BranchPushed: push_branch pushed Branch of checkout Repo at Tip — what the
@@ -681,6 +749,12 @@ type PingAnswered struct {
 	// by comment; Feedback is then its summary. The engine renders it into
 	// the verdict (or the answer) the agent reads.
 	Review []ReviewComment `json:"review,omitempty"`
+	// Curated is what the person made of each review document the gate
+	// showed, by path: which notes and replies get posted, and how they
+	// read. Decisions over the document as shown, never a rewritten one —
+	// the engine rebuilds the file from the raise-time snapshot and these
+	// (ReviewCurated).
+	Curated map[string]reviewfile.Curation `json:"curated,omitempty"`
 }
 
 // ReviewComment is one comment of a review: on a file the ping showed, on a
@@ -867,6 +941,7 @@ func (*ReviewCommentsLoaded) EventType() Type {
 }
 func (*ReviewRepliesPosted) EventType() Type { return TypeReviewRepliesPosted }
 func (*ReviewPosted) EventType() Type        { return TypeReviewPosted }
+func (*ReviewCurated) EventType() Type       { return TypeReviewCurated }
 func (*MRMerged) EventType() Type            { return TypeMRMerged }
 func (*TargetSynced) EventType() Type        { return TypeTargetSynced }
 func (*BranchPushed) EventType() Type        { return TypeBranchPushed }

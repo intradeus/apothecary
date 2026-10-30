@@ -155,7 +155,7 @@ func TestJSONShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"outputs":[{"name":"review"`, `"settings":[{"name":"select"`, `"kind":"enum"`, `"values":["human","all"]`, `"default":"human"`} {
+	for _, want := range []string{`"outputs":[{"name":"threads"`, `"type":"mr_threads"`, `"settings":[{"name":"scope"`, `"values":["pending","all"]`, `{"name":"select"`, `"kind":"enum"`, `"values":["human","all"]`, `"default":"human"`} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("json missing %s:\n%s", want, b)
 		}

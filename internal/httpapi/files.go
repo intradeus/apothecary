@@ -15,8 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/agentspec"
 	"apothecary/internal/auth"
 	"apothecary/internal/filestore"
+	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 )
 
@@ -204,7 +206,7 @@ func (s *Server) pingView(r *http.Request, pid string) (run.PingView, error) {
 		return run.PingView{
 			PingID: p.ID, RunID: p.RunID, Type: p.Type, StageID: p.StageID,
 			Question: p.Question, Context: p.Context,
-			Files: p.Files, Link: p.Link, PayloadRef: p.Primary(),
+			Files: p.Files, FileTypes: p.FileTypes, Link: p.Link, PayloadRef: p.Primary(),
 			Form: p.Form, AnswerKind: p.AnswerKind, Status: "pending", RaisedAt: p.RaisedAt,
 		}, nil
 	}
@@ -237,7 +239,7 @@ func (s *Server) getPingFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	files := []PingFile{}
 	for _, ref := range view.Files {
-		item := PingFile{Path: ref, Mime: mimeByExt(ref)}
+		item := PingFile{Path: ref, Mime: mimeByExt(ref), Type: view.FileTypes[ref]}
 		if sn, ok := snaps[ref]; ok {
 			item.Captured = true
 			item.SnapshotID = sn.ID
@@ -247,4 +249,78 @@ func (s *Server) getPingFiles(w http.ResponseWriter, r *http.Request) {
 		files = append(files, item)
 	}
 	writeJSON(w, http.StatusOK, PingFiles{Files: files, Link: view.Link})
+}
+
+// getPingCuration decodes a question's review documents as the gate showed
+// them — each shown file of a review type from its raise-time snapshot —
+// for the curation page: the page never parses a review itself, the one
+// parser the engine posts with does. A file not captured, or not holding
+// what its type promises, lists with the reason: it can only be approved
+// as written.
+func (s *Server) getPingCuration(w http.ResponseWriter, r *http.Request) {
+	pid := r.PathValue("pid")
+	view, err := s.pingView(r, pid)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	snaps := map[string]filestore.Snapshot{}
+	if s.Snapshots != nil {
+		list, err := s.Snapshots.ForPing(r.Context(), pid)
+		if err != nil {
+			s.Log.Warn("ping snapshots", "ping", pid, "err", err)
+		}
+		for _, sn := range list {
+			if _, dup := snaps[sn.Path]; !dup && sn.Kind == filestore.KindPingFile {
+				snaps[sn.Path] = sn
+			}
+		}
+	}
+	out := CurationView{Documents: []CurationDocument{}}
+	for _, ref := range view.Files {
+		typ := view.FileTypes[ref]
+		switch typ {
+		case agentspec.TypeReviewThreads, agentspec.TypeReviewReplies, agentspec.TypeMRThreads:
+		default:
+			continue
+		}
+		doc := CurationDocument{Path: ref, Type: typ}
+		sn, ok := snaps[ref]
+		if !ok {
+			doc.Error = "not captured when the question was raised"
+			out.Documents = append(out.Documents, doc)
+			continue
+		}
+		data, _, err := s.Snapshots.Bytes(r.Context(), sn.ID)
+		if err != nil {
+			doc.Error = err.Error()
+			out.Documents = append(out.Documents, doc)
+			continue
+		}
+		doc.Captured = true
+		switch typ {
+		case agentspec.TypeReviewThreads:
+			if rev, err := reviewfile.ParseReview(ref, data); err != nil {
+				doc.Error = err.Error()
+			} else {
+				doc.Review = rev
+			}
+		case agentspec.TypeReviewReplies:
+			if list, err := reviewfile.ParseReplies(ref, data); err != nil {
+				doc.Error = err.Error()
+			} else if list == nil {
+				doc.Replies = []reviewfile.Reply{}
+			} else {
+				doc.Replies = list
+			}
+		case agentspec.TypeMRThreads:
+			if th, err := reviewfile.ParseThreads(ref, data); err != nil {
+				doc.Error = err.Error()
+			} else if out.Threads == nil {
+				out.Threads = th
+			}
+		}
+		out.Documents = append(out.Documents, doc)
+	}
+	writeJSON(w, http.StatusOK, out)
 }

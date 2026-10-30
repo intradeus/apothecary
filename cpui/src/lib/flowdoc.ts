@@ -137,15 +137,17 @@ export const FILE_TYPES = [
 	'verdict',
 	'review_threads',
 	'review_replies',
+	'mr_threads',
 	'commit_message',
 	'files'
 ];
 /** A verdict is also what edge.verdict gives: the one file type an engine
  *  source has too. */
 export const VALUE_TYPES = ['ticket', 'changeset', 'failure', 'link'];
-/** What a gate shows the person: files, and folders of them (a link is
- *  typed by its source). */
-export const GATE_TYPES = ['file', 'files'];
+/** What a gate shows the person: any file — a review to curate, the threads
+ *  beside it, a plain document — and folders of them (a link is typed by
+ *  its source). */
+export const GATE_TYPES = [...FILE_TYPES];
 /** The port types a schema never goes with: a plain file says nothing of
  *  its shape, a directory holds many, a value is the engine's. */
 export const takesSchema = (type?: string) =>

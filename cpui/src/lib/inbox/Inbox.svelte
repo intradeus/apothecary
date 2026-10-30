@@ -155,7 +155,12 @@
 		busy[p.id] = true;
 		error = '';
 		try {
-			await api.pings.answer(p.id, ans, note?.trim() || undefined, artifactIds, undefined, content);
+			await api.pings.answer(p.id, {
+				answer: ans,
+				feedback: note?.trim() || undefined,
+				attachmentIds: artifactIds,
+				content
+			});
 			// The deep link named the ping just answered: point it at the inbox.
 			if (location.pathname.endsWith(p.id) || location.search.includes(p.id)) {
 				try {

@@ -815,6 +815,12 @@ The same anatomy, scoped to one guild:
     - other pings: **Send review (N)**
     - A "Draft saved" caption (drafts persist locally; attachments must be re-picked, and the UI says so).
   - **Answered:** read-only, with the answer banner and the document "as reviewed".
+- **Curation (a gate over a review document):** when the primary file a gate shows is typed `review_threads` (the reviewer's draft) or `review_replies` (a round's answers) — the engine says so in `file_types`, the page never sniffs — the same three-column frame opens as the curation page instead of the document workbench. The documents come decoded from `/api/pings/:id/curation`, as the gate showed them.
+  - **Left:** the files shown; the `mr_threads` file beside the review opens read-only.
+  - **Center:** a toolbar — an indeterminate checkbox "{kept} of {total} posted", All / None / Drop nits — then one card per note or reply: its keep checkbox (everything starts kept; unpicking is the deliberate act), a kind pill (blocking / suggestion / question / nit, or fixed / declined / answered for a reply), the mono `path:line`, the posted text in a growing textarea with a "reworded" pill and "Restore as written", a "continues / answers a thread" pill that unfolds the thread's comments (new ones and apothecary's own marked), "Resolve the thread" for a reply, and a folded "Why the agent says so — never posted" holding the rationale, evidence and example. Dropped cards dim.
+  - **Right sidebar:** the ask, the summary editor (posted; reworded pill + restore), the notes a person dropped earlier in the run, the feedback box for the agent, attachments, and the actions: **Approve — post N** (disabled while a kept text is blank) / **Request changes** (needs feedback). A file not captured when the question was raised can only be approved as written, and the page says so.
+  - The answer carries decisions, not a rewritten file (`curated`: dropped items, reworded text, changed resolve flags, a reworded summary). The ping card's inline actions are "Curate & post →", "Approve as written" and "Request changes…".
+  - **Answered:** the tally ("posted 7 of 9 · 2 dropped · 1 reworded"), each item kept / dropped (struck through) / reworded with its as-written text, the summary as posted.
 
 ### 7.6 Tickets: `/g/:guild/tickets`, `/new`, `/:id`
 

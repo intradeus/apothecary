@@ -1,20 +1,26 @@
 name: reviewer
 version: 5
-description: "review a merge request someone opened: notes on its lines and a summary, again after every push, until it merges or closes"
+description: "review a merge request someone opened: notes on its lines and a summary, again after every push — reading what is already said first — until it merges or closes"
 operates_on: merge_request
 ask: { harness: $harness }  # a read-only Ask pane beside every run, on the flow's harness
 # A run of this flow is started on a merge request a person opened — from the
 # workshop's Repositories tab, or by a merge-request automation watching the
 # repository. It never builds and never pushes: it checks out
-# the merge request's head, reads the change, and posts a review — notes on
-# the lines they are about, a summary on top. It never approves nor requests
-# changes; that decision stays a person's.
+# the merge request's head, reads what is already said about it (every
+# thread, its own earlier notes included), reads the change, and posts a
+# review — notes on the lines they are about, a summary on top, replies in
+# its own earlier threads when the author addressed them. It never approves
+# nor requests changes; that decision stays a person's.
 #
 # The run then waits. Each time the author pushes and stops for a while
 # ($rereview_quiet), the `again` watcher reviews again, the checkout brought to the new head
-# first, with its earlier review in hand so it says what is new rather than
-# repeating itself. The merge request merging or closing ends the run: there
-# is nothing left to review.
+# first, the threads read again first, so it says what is new rather than
+# repeating itself: a note of its own that still stands is continued in its
+# thread, never posted twice; one the author addressed is closed with a
+# word. With $review_gate a person reads each review before it is posted —
+# picks the notes to post, rewords them — and what they drop is never
+# proposed again in this run. The merge request merging or closing ends the
+# run: there is nothing left to review.
 # model has no default on purpose: the project binds it (Workshop → Flows →
 # Configure), a run may override it, and the agent stage reads it as $model.
 parameters:
@@ -23,7 +29,7 @@ parameters:
   max_turns: 40
   max_cost_usd: 3.0
   max_total_turns: 160
-  review_gate:    { type: bool, default: false, description: "a person reads each review before it is posted" }
+  review_gate:    { type: bool, default: false, description: "a person reads each review before it is posted: picks the notes to post, rewords them" }
   rereview_quiet: { type: duration, default: 10m, description: "how long the author's pushes must stop before a re-review" }
 agents:
   - name: pr_reviewer
@@ -33,62 +39,97 @@ agents:
     inputs:
       - { name: ticket, type: ticket, optional: true, description: "what the merge request is for" }
       - { name: changes, type: changeset, description: "the files the merge request changes against its target branch" }
+      - { name: threads, type: mr_threads, description: "every review thread already on the merge request — yours and others', open and resolved — and the notes a person declined to post earlier in this run" }
       - { name: rejection, type: verdict, optional: true, description: "why a person sent the last draft of this review back" }
       - { name: failure, type: failure, optional: true, description: "why the last review file was refused" }
     outputs:
-      - { name: review, type: review_threads, description: "the review — a summary, and notes on lines of the changed files" }
+      - { name: review, type: review_threads, description: "the review — a summary, notes on lines of the changed files, replies in threads already there" }
     prompt: |
       You review a merge request someone else wrote. The TASK section is the
       merge request: its title and its author's description. The checkout is
       its branch at its current head; the changes input lists the files it
-      changes against its target branch.
+      changes against its target branch; the threads input is everything
+      already said about it.
 
       Method:
-      1. Read the description to learn what the change claims to do, then read
+      1. Read the threads input first. Each thread says who opened it
+         (ours: true is a note you posted on an earlier review), whether it
+         is resolved, and which comments are new since your last word. For
+         each open thread of yours decide: addressed by the author's pushes
+         (reply that it is, resolve: true), still open (reply only if the
+         author answered you — never repeat the note), or superseded by the
+         change (say so in the summary).
+      2. Read the description to learn what the change claims to do, then read
          every changed file — the whole function or block around each change,
          not only the changed lines — and AGENTS.md for the project's
          conventions.
-      2. Run the project's tests or linters with bash when they settle a
+      3. Run the project's tests or linters with bash when they settle a
          question (does this break anything, is this covered). Never modify,
          commit or push anything: you read and you write the review file.
-      3. Look for what matters, in this order: the change does not do what it
+      4. Look for what matters, in this order: the change does not do what it
          says, or breaks something that worked; unhandled errors, edge cases,
          concurrency and security problems; missing or weak tests for what
          changed; conventions of this codebase it ignores. Leave formatting to
          the linters.
-      4. If the file named in the OUTPUT CONTRACT section already exists, it is
-         your review of an earlier version of this merge request: read it first.
-         Do not repeat a note the author has addressed; say so in the summary
-         instead, and keep only the notes that still apply.
 
-      Write the review file as YAML:
+      Write the review file as the OUTPUT CONTRACT's schema says, e.g.:
 
         summary: |
           Two or three sentences: what the change does, whether it does it, and
-          the one or two things that most need the author's attention.
-        threads:
+          the one or two things that most need the author's attention. On a
+          re-review: what is new, and what the author addressed.
+        notes:
           - path: internal/flow/parse.go
             line: 412
-            body: "[blocking] This error drops the line number the caller needs: ..."
+            kind: blocking
+            body: |
+              This error drops the line number the caller formats into its
+              message; return it with the position.
+            rationale: |
+              The description says errors name their line, and parse_test.go:88
+              asserts it. Without the position that test fails and the editor
+              cannot jump to the error.
+            evidence: "ran `go test ./internal/flow/`: TestParseErrors fails"
+            example: "return fmt.Errorf(\"%d: %w\", n.Line, err)"
+        replies:
+          - thread: PRRT_kwDOabc123
+            body: Addressed in 3f2a1c, thanks.
+            resolve: true
 
-      Each thread is about one line of the NEW version of a changed file: path
-      relative to the repository root, line as numbered in that file now —
-      check it, a note on the wrong line is noise. Start each body with
-      [blocking], [suggestion], [question] or [nit], then say what is wrong and
-      what would fix it. At most fifteen threads: if there is more to say, say
-      it in the summary. A change with nothing worth a note gets a summary and
-      no threads — an empty review is a fine review.
+      A note opens a new thread on one line of the NEW version of a changed
+      file: path relative to the repository root, line as numbered in that
+      file now — check it, a note on the wrong line is noise. Its kind is
+      blocking, suggestion, question or nit. Its body is what the author
+      reads: what is wrong and what would fix it. Its rationale, evidence and
+      example are never posted: they are for the person who decides whether
+      to post the note — say what you read and why it matters, what you
+      checked, and sketch the fix when one is short.
 
-      If your prompt carries a rejection, a person read your last draft: do what
-      they asked. If it carries a failure, your last review file did not parse:
-      fix exactly what the failure names.
+      Open a note only for what no thread covers: a thread of yours on the
+      same place or the same point is continued under replies, never
+      duplicated. Never propose a note listed under dropped in the threads
+      input: a person decided against it. At most fifteen notes: if there is
+      more to say, say it in the summary. A change with nothing worth a note
+      gets a summary and no notes — an empty review is a fine review.
+
+      If your prompt carries a rejection, a person read your last draft: do
+      what they asked, and keep off what they dropped. If it carries a
+      failure, your last review file was refused: fix exactly what the
+      failure names.
 sequences:
-  # Read the change, let a person read the review when the workshop wants
-  # one, post it. The same chain reviews the merge request as it was opened
-  # and after every push.
+  # Read what is on the merge request, read the change, let a person curate
+  # the review when the workshop wants that, post it. The same chain reviews
+  # the merge request as it was opened and after every push.
   - id: review
-    description: "read the change, optionally let a person read the review, post it"
+    description: "read the threads already there and the change, optionally let a person curate the review, post it"
     stages:
+      - id: poll
+        type: action
+        action: load_review_comments
+        with: { scope: all }
+        output:
+          threads: { to: artifacts/threads.yaml, type: mr_threads }
+        on_fail: debug
       - id: read
         type: agent
         harness: $harness
@@ -97,6 +138,7 @@ sequences:
         input:
           ticket:    { from: run.ticket, type: ticket }
           changes:   { from: run.git.diff_target, type: changeset }
+          threads:   { from: artifacts/threads.yaml, type: mr_threads }
           rejection: { from: edge.verdict, type: verdict, optional: true }
           failure:   { from: edge.failure, type: failure, optional: true }
         output:
@@ -105,9 +147,10 @@ sequences:
       - id: gate
         type: human_gate
         run_if: $review_gate
-        question: "Post this review on the merge request? Rejecting sends it back with your feedback."
+        question: "Post this review on the merge request? Pick the notes to post and reword them as you like; rejecting sends the draft back with your feedback."
         input:
-          review: { from: artifacts/review.yaml, type: review_threads }
+          review:  { from: artifacts/review.yaml, type: review_threads }
+          threads: { from: artifacts/threads.yaml, type: mr_threads }
         on_reject: { to: read, max: -1 }
       - id: post
         type: action

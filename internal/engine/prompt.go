@@ -143,9 +143,14 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		b.WriteString("# OUTPUT CONTRACT\n")
 		b.WriteString("Before finishing you MUST write these files (relative to repo root):\n")
 		for _, o := range outs {
-			if o.Name == "" {
+			switch {
+			case o.Name == "":
 				fmt.Fprintf(&b, "- %s\n", o.Value)
-			} else {
+			case agentspec.IsStructuredType(o.Type):
+				// A structured file names its type beside its role: what its
+				// schema below is the shape of.
+				fmt.Fprintf(&b, "- %s — %s (%s)%s\n", o.Value, o.Name, o.Type, outputDesc(spec, o.Name))
+			default:
 				fmt.Fprintf(&b, "- %s — %s%s\n", o.Value, o.Name, outputDesc(spec, o.Name))
 			}
 		}
@@ -159,7 +164,7 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		// (its schema, below).
 		if vpath := flow.TypedPath(st, agentspec.TypeVerdict); vpath != "" {
 			fmt.Fprintf(&b, "%s is your verdict: APPROVE or REJECT; a REJECT says why — a summary, comments, or both. A comment is a remark on the whole change, or {path, line, end_line, quote, body} on a file (line and end_line optional: without them, the whole file).\n", vpath)
-			b.WriteString("Printing the JSON in your reply does NOT satisfy this contract; the file itself must exist on disk.\n")
+			b.WriteString("Printing it in your reply does NOT satisfy this contract; the file itself must exist on disk.\n")
 		}
 		// So is every output with a structure: the agent sees exactly what the
 		// engine checks the file against when the stage ends.
@@ -279,20 +284,27 @@ func declDesc(desc string) string {
 	return " — " + desc
 }
 
-// parseVerdict enforces the §3/§5.3 verdict contract:
-// {"verdict":"APPROVE"|"REJECT","comments":["..."]}, comments required on REJECT.
-// parseVerdict reads a verdict file: its shape is the type's JSON Schema
-// (flow.TypeSchema, checked with the outputs); here what a schema cannot
-// say — a rejection says why, a path stays in the repository, a range runs
-// forward.
-func parseVerdict(data []byte) (*ports.Verdict, error) {
+// parseVerdict reads a verdict file — JSON or YAML, as its path says, like
+// every structured file (flow.DecodeStructured). Its shape is the type's
+// JSON Schema (flow.TypeSchema, checked with the outputs); here what a
+// schema cannot say — a rejection says why, a path stays in the repository,
+// a range runs forward.
+func parseVerdict(path string, data []byte) (*ports.Verdict, error) {
+	decoded, err := flow.DecodeStructured(path, data)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(decoded)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	var v struct {
 		Verdict  string            `json:"verdict"`
 		Summary  string            `json:"summary"`
 		Comments []json.RawMessage `json:"comments"`
 	}
-	if err := json.Unmarshal(data, &v); err != nil {
-		return nil, fmt.Errorf("verdict.json unparsable: %w", err)
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, fmt.Errorf("%s is not a verdict: %w", path, err)
 	}
 	out := &ports.Verdict{Summary: strings.TrimSpace(v.Summary)}
 	switch v.Verdict {
@@ -300,13 +312,13 @@ func parseVerdict(data []byte) (*ports.Verdict, error) {
 		out.Approve = true
 	case "REJECT":
 	default:
-		return nil, fmt.Errorf("verdict.json: verdict must be APPROVE or REJECT, got %q", v.Verdict)
+		return nil, fmt.Errorf("%s: verdict must be APPROVE or REJECT, got %q", path, v.Verdict)
 	}
-	for i, raw := range v.Comments {
+	for i, rawC := range v.Comments {
 		var remark string
-		if json.Unmarshal(raw, &remark) == nil {
+		if json.Unmarshal(rawC, &remark) == nil {
 			if strings.TrimSpace(remark) == "" {
-				return nil, fmt.Errorf("verdict.json: comment %d is empty", i+1)
+				return nil, fmt.Errorf("%s: comment %d is empty", path, i+1)
 			}
 			out.Comments = append(out.Comments, ports.VerdictComment{Body: remark})
 			continue
@@ -318,21 +330,21 @@ func parseVerdict(data []byte) (*ports.Verdict, error) {
 			Quote   string `json:"quote"`
 			Body    string `json:"body"`
 		}
-		if err := json.Unmarshal(raw, &c); err != nil {
-			return nil, fmt.Errorf("verdict.json: comment %d is neither a remark nor {path, line, body}: %w", i+1, err)
+		if err := json.Unmarshal(rawC, &c); err != nil {
+			return nil, fmt.Errorf("%s: comment %d is neither a remark nor {path, line, body}: %w", path, i+1, err)
 		}
 		switch {
 		case strings.TrimSpace(c.Body) == "":
-			return nil, fmt.Errorf("verdict.json: comment %d is empty", i+1)
+			return nil, fmt.Errorf("%s: comment %d is empty", path, i+1)
 		case !filepath.IsLocal(c.Path):
-			return nil, fmt.Errorf("verdict.json: comment %d: path %q must be a file of the repository, relative to its root", i+1, c.Path)
+			return nil, fmt.Errorf("%s: comment %d: path %q must be a file of the repository, relative to its root", path, i+1, c.Path)
 		case c.Line < 0 || (c.EndLine != 0 && (c.Line == 0 || c.EndLine < c.Line)):
-			return nil, fmt.Errorf("verdict.json: comment %d: lines %d–%d are not a range", i+1, c.Line, c.EndLine)
+			return nil, fmt.Errorf("%s: comment %d: lines %d–%d are not a range", path, i+1, c.Line, c.EndLine)
 		}
 		out.Comments = append(out.Comments, ports.VerdictComment{Path: c.Path, Line: c.Line, EndLine: c.EndLine, Quote: c.Quote, Body: c.Body})
 	}
 	if !out.Approve && len(out.Comments) == 0 && out.Summary == "" {
-		return nil, fmt.Errorf("verdict.json: REJECT requires comments, or a summary saying why")
+		return nil, fmt.Errorf("%s: REJECT requires comments, or a summary saying why", path)
 	}
 	return out, nil
 }

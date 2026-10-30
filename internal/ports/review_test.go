@@ -34,6 +34,22 @@ func TestFoldedNotesAndMarkers(t *testing.T) {
 	if !IsFactoryReply("nit\n\n"+m) || !IsFactoryReply(ReplyMarker("r", "t")) || IsFactoryReply("a reviewer's words") {
 		t.Error("factory markers")
 	}
+	// Markers carry words: a note's kind, a reply's round, thread and did —
+	// each read back on its own, whatever else the marker says.
+	note := "name it\n\n" + NoteMarker("run/again-2/post", 3, "nit")
+	if id, part, ok := ReviewMarkerOf(note); !ok || id != "run/again-2/post" || part != "note-3" || MarkerAttr(note, "kind") != "nit" {
+		t.Errorf("review marker words: %q %q %v %q", id, part, ok, MarkerAttr(note, "kind"))
+	}
+	reply := "done\n\n" + ReplyMarker("run/review_fixes-1", "PRRT_kwDO", "did=fixed")
+	if MarkerRound(reply) != "run/review_fixes-1" || MarkerThread(reply) != "PRRT_kwDO" || MarkerAttr(reply, "did") != "fixed" {
+		t.Errorf("reply marker words: %q %q %q", MarkerRound(reply), MarkerThread(reply), MarkerAttr(reply, "did"))
+	}
+	if !IsReplyTo(reply, "run/review_fixes-1", "PRRT_kwDO") || IsReplyTo(reply, "run/review_fixes-2", "PRRT_kwDO") || IsReplyTo(reply, "run/review_fixes-1", "other") {
+		t.Error("IsReplyTo")
+	}
+	if MarkerThread(ReplyMarker("r", "t")) != "t" || MarkerThread("no marker") != "" || MarkerAttr(note, "did") != "" {
+		t.Error("bare markers and absent words")
+	}
 }
 
 // A merge request is stacked on the open one whose branch it targets — never

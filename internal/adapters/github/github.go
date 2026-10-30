@@ -1013,7 +1013,7 @@ func (a *Adapter) PostReview(ctx context.Context, mr ports.MRRef, rev ports.Revi
 			continue
 		}
 		comments = append(comments, map[string]any{"path": n.Path, "line": n.Line, "side": "RIGHT",
-			"body": strings.TrimSpace(n.Body) + "\n\n" + ports.ReviewMarker(rev.ID, fmt.Sprintf("note-%d", i))})
+			"body": strings.TrimSpace(n.Body) + "\n\n" + ports.NoteMarker(rev.ID, i, n.Kind)})
 	}
 	var parts []string
 	for _, p := range []string{strings.TrimSpace(rev.Summary), ports.FoldedNotes(folded)} {

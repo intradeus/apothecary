@@ -874,8 +874,8 @@ watchers:
   - id: review_fixes
     on: { signal: mr_review_settled, quiet_for: 1h, max: 3 }
     stages:
-      - { id: load, type: action, action: load_review_comments, output: { review: { to: artifacts/review.md, type: file } } }
-      - { id: fix, type: command, run: x, input: { comments: { from: artifacts/review.md, type: file } } }
+      - { id: load, type: action, action: load_review_comments, output: { threads: { to: artifacts/threads.yaml, type: mr_threads } } }
+      - { id: fix, type: command, run: x, input: { comments: { from: artifacts/threads.yaml, type: file } } }
 outcomes:
   - id: shipped
     on: mr_merged
@@ -912,12 +912,12 @@ func TestPhasedFlowParses(t *testing.T) {
 	if f.Stage("build").OnSuccess != "mr" || f.Stage("mr").OnSuccess != TerminalEnd || f.Stage("sync_test").OnSuccess != TerminalEnd {
 		t.Errorf("on_success: build→%s mr→%s sync_test→%s", f.Stage("build").OnSuccess, f.Stage("mr").OnSuccess, f.Stage("sync_test").OnSuccess)
 	}
-	if f.Stage("load").Phase != "review_fixes" || len(f.Stage("load").Outputs) != 1 || f.Stage("load").Outputs[0].Value != "artifacts/review.md" {
+	if f.Stage("load").Phase != "review_fixes" || len(f.Stage("load").Outputs) != 1 || f.Stage("load").Outputs[0].Value != "artifacts/threads.yaml" {
 		t.Errorf("load stage = %+v", f.Stage("load"))
 	}
 	for _, w := range f.Warnings {
-		if strings.Contains(w, "review.md") {
-			t.Errorf("warning %q: review.md is produced by load", w)
+		if strings.Contains(w, "threads.yaml") {
+			t.Errorf("warning %q: threads.yaml is produced by load", w)
 		}
 	}
 	if f.Stage("build").Line != 5 || f.Stage("load").Line != 16 {

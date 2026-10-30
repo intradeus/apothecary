@@ -306,13 +306,21 @@ func TestAnAnswerCarriesItsReview(t *testing.T) {
 // A verdict's comments are remarks or comments on a file — the shape a
 // person's review has — and render the same way.
 func TestARichVerdict(t *testing.T) {
-	v, err := parseVerdict([]byte(`{"verdict":"REJECT","summary":"Two problems.","comments":[
+	v, err := parseVerdict("artifacts/verdict.json", []byte(`{"verdict":"REJECT","summary":"Two problems.","comments":[
 		"the change has no test",
 		{"path":"internal/flow/parse.go","line":412,"body":"this error loses the line number"},
 		{"path":"docs/a.md","body":"out of date"},
 		{"path":"internal/flow/parse.go","line":20,"end_line":24,"quote":"if err != nil","body":"wrap it"}]}`))
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The same verdict in YAML, read by its path's extension.
+	y, err := parseVerdict("artifacts/verdict.yaml", []byte("verdict: REJECT\nsummary: Two problems.\ncomments:\n  - the change has no test\n  - { path: internal/flow/parse.go, line: 412, body: this error loses the line number }\n  - { path: docs/a.md, body: out of date }\n  - { path: internal/flow/parse.go, line: 20, end_line: 24, quote: if err != nil, body: wrap it }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdictText("review", y) != verdictText("review", v) {
+		t.Errorf("a YAML verdict reads differently:\n%s", verdictText("review", y))
 	}
 	got := verdictText("review", v)
 	want := "REJECTED by the review at stage review.\n\nTwo problems.\n\n4 comments, on 2 files:\n" +
@@ -329,11 +337,11 @@ func TestARichVerdict(t *testing.T) {
 		{`{"verdict":"REJECT","comments":[{"path":"a.go","body":" "}]}`, "comment 1 is empty"},
 		{`{"verdict":"MAYBE"}`, "must be APPROVE or REJECT"},
 	} {
-		if _, err := parseVerdict([]byte(bad.doc)); err == nil || !strings.Contains(err.Error(), bad.want) {
+		if _, err := parseVerdict("artifacts/verdict.json", []byte(bad.doc)); err == nil || !strings.Contains(err.Error(), bad.want) {
 			t.Errorf("%s: err = %v, want %q", bad.doc, err, bad.want)
 		}
 	}
-	if v, err := parseVerdict([]byte(`{"verdict":"REJECT","summary":"not this way"}`)); err != nil || v.Summary != "not this way" {
+	if v, err := parseVerdict("artifacts/verdict.json", []byte(`{"verdict":"REJECT","summary":"not this way"}`)); err != nil || v.Summary != "not this way" {
 		t.Errorf("a summary alone says why: %+v, %v", v, err)
 	}
 }

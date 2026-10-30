@@ -23,6 +23,7 @@ import (
 	"apothecary/internal/kinds"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
+	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 	"apothecary/internal/signalspec"
 	"apothecary/internal/skills"
@@ -255,6 +256,33 @@ type AnswerPingRequest struct {
 	// them (feedback is then the review's summary): on its lines, or on the
 	// whole file — always, on an image.
 	Review []event.ReviewComment `json:"review,omitempty"`
+	// Curated is what the person made of each review document the gate
+	// shows (a review_threads or review_replies file), by path: decisions
+	// over the document as shown — which items are posted (all, unless
+	// unpicked) and how they read. Approve posts the curated document;
+	// reject keeps the decisions on the record for the redo.
+	Curated map[string]reviewfile.Curation `json:"curated,omitempty"`
+}
+
+// CurationView is a question's review documents, decoded as the gate showed
+// them (their raise-time snapshots): what the curation page lists, item by
+// item, and the threads beside them when the gate showed an mr_threads file.
+type CurationView struct {
+	Documents []CurationDocument `json:"documents"`
+	// Threads is the first mr_threads file shown: the conversations the
+	// notes and replies refer to.
+	Threads *reviewfile.Threads `json:"threads,omitempty"`
+}
+
+// CurationDocument is one shown file of a review type, decoded. Captured
+// false, or Error, means it cannot be curated — only approved as written.
+type CurationDocument struct {
+	Path     string             `json:"path"`
+	Type     string             `json:"type"`
+	Captured bool               `json:"captured"`
+	Error    string             `json:"error,omitempty"`
+	Review   *reviewfile.Review `json:"review,omitempty"`
+	Replies  []reviewfile.Reply `json:"replies,omitempty"`
 }
 
 // AnswerAccepted confirms an answer was recorded.
@@ -270,6 +298,9 @@ type PingFile struct {
 	SnapshotID string `json:"snapshot_id,omitempty"`
 	Mime       string `json:"mime,omitempty"`
 	Size       int64  `json:"size,omitempty"`
+	// Type is the file's port type when it is a structured one (a review
+	// to curate, the threads beside it); absent for a plain document.
+	Type string `json:"type,omitempty"`
 }
 
 // PingFiles is a ping's payload: its files (first is the primary reviewed

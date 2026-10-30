@@ -11,10 +11,12 @@
 	import { fleet } from '$lib/fleet.svelte';
 	import { ago, fmtAbs, shortId } from '$lib/format';
 	import { t } from '$lib/i18n/index.svelte';
-	import { answerMeta, answerSummary, isDocumentPing, primaryFile } from '$lib/ping';
+	import { answerMeta, answerSummary, curatable, isDocumentPing, primaryFile } from '$lib/ping';
 	import type { Ping } from '$lib/domain';
 	import DocReview from '$lib/DocReview.svelte';
 	import ReviewHistory from '$lib/review/ReviewHistory.svelte';
+	import CurationPage from '$lib/curation/CurationPage.svelte';
+	import CurationHistory from '$lib/curation/CurationHistory.svelte';
 	import Inbox from '$lib/inbox/Inbox.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import PingPill from '$lib/ui/PingPill.svelte';
@@ -58,6 +60,9 @@
 				: (primaryFile(ping).split('/').pop() ?? '')
 	);
 	const showsFiles = $derived(!!ping && isDocumentPing(ping));
+	// A gate over a review document is curated, not read: the page keys on
+	// the shown file's port type alone.
+	const curated = $derived(ping ? curatable(ping) : undefined);
 </script>
 
 <svelte:head><title>{t('page.ping.docTitle')}</title></svelte:head>
@@ -97,7 +102,19 @@
 		{/snippet}
 	</PageHeader>
 
-	{#if ping.status === 'pending'}
+	{#if ping.status === 'pending' && curated}
+		<CurationPage
+			{ping}
+			onanswered={() => {
+				const runId = ping!.runId;
+				toast(t('page.ping.reviewSent'), {
+					action: { label: t('page.ping.openRun'), run: () => void goto(to.run(runId)) }
+				});
+				void fleet.refresh();
+				void goto(to.inbox());
+			}}
+		/>
+	{:else if ping.status === 'pending'}
 		<DocReview
 			{ping}
 			onanswered={() => {
@@ -110,7 +127,7 @@
 			}}
 		/>
 	{:else}
-		<div class="page ans" class:withfiles={showsFiles}>
+		<div class="page ans" class:withfiles={showsFiles && !curated}>
 			<section
 				class="c pane wash h-{verdict.hue} verdict"
 				style:border-color="var(--{verdict.hue}Ln, var(--cLn))"
@@ -130,7 +147,7 @@
 					{/if}
 				</div>
 				<Markdown src={ping.question} quiet />
-				{#if ping.feedback && !showsFiles}
+				{#if ping.feedback && (!showsFiles || curated)}
 					<div class="fb">
 						<div class="lbl">{t('page.ping.feedbackSent')}</div>
 						<Markdown src={ping.feedback} />
@@ -138,7 +155,9 @@
 				{/if}
 			</section>
 		</div>
-		{#if showsFiles}
+		{#if curated}
+			<CurationHistory {ping} />
+		{:else if showsFiles}
 			<ReviewHistory
 				pingId={ping.id}
 				runId={ping.runId}

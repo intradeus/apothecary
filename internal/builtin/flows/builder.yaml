@@ -21,6 +21,7 @@ parameters:
   plan_gate:       { type: bool, default: true, description: "stop for a human to approve the plan before building" }
   conflicts_start: { type: string, default: confirm, enum: [auto, confirm, manual], description: "how a conflict fix begins: by itself, after asking, or by hand from the run page" }
   review_start:    { type: string, default: auto, enum: [auto, confirm, manual], description: "how a review-fix round begins" }
+  reply_gate:      { type: bool, default: true, description: "a person reads each round's replies before they are posted: picks the ones to send, rewords them" }
   ci_start:        { type: string, default: confirm, enum: [auto, confirm, manual], description: "how a CI fix begins once a check fails on the merge request" }
   screenshots:     { type: bool, default: false, description: "bring the app up and attach screenshots of the change to the merge request (needs a project service and the project's browser)" }
   app:             { type: string, default: default, description: "the project service screenshots are taken of (Workshop → Settings → Services)" }
@@ -37,7 +38,9 @@ parameters:
 #                 itself, after asking, or only by hand: $conflicts_start
 #   review_fixes  reviewers commented, then went quiet for an hour — you pick
 #                 the threads worth fixing; those are fixed in one batch,
-#                 tested, pushed, and answered on their threads
+#                 tested, pushed, and answered on their threads — every one,
+#                 a comment judged wrong with why — each reply read by you
+#                 first ($reply_gate): pick the ones to send, reword them
 #   ci_fix        a CI check failed on the merge request's head — an agent is
 #                 told which job and step failed (never the log), runs that
 #                 job's script itself, fixes the code, and the fix is tested
@@ -133,15 +136,17 @@ agents:
       - { name: plan, type: file, description: "the approved implementation plan to execute" }
       - { name: rejection, type: verdict, optional: true, description: "why the last attempt was turned down — a reviewer's comments or a human's feedback" }
       - { name: failure, type: failure, optional: true, description: "what the failing stage printed (test output, a command's error)" }
-      - { name: comments, type: file, optional: true, description: "review comments on the open merge request, one section per thread — the change to make now" }
+      - { name: comments, type: mr_threads, optional: true, description: "the review threads on the open merge request this round fixes — each with its comments, the ones newer than the last reply marked new" }
     prompt: |
       You are the building agent of a software factory. You implement the
       approved plan provided in your prompt — nothing more, nothing less.
       When your prompt carries review comments instead, the merge request is
       already open: address every thread in them, in the checkout the SUBJECT
-      section names, keeping each fix as small as the comment asks. If you
-      deliberately do not follow a comment (it is wrong, or out of scope),
-      leave the code as it is — the reply stage explains why.
+      section names, keeping each fix as small as the comment asks. The
+      comments marked new are the ask; the earlier exchange — your own
+      earlier replies included — is context. If you deliberately do not
+      follow a comment (it is wrong, or out of scope), leave the code as it
+      is — the reply stage explains why.
 
       Rules:
       - Follow the plan's steps in order. If the plan turns out to be wrong or
@@ -302,26 +307,38 @@ agents:
     read_only: true
     allow_bash: true
     inputs:
-      - { name: comments, type: file, description: "the review threads this round took on, with their ids" }
+      - { name: comments, type: mr_threads, description: "the review threads this round took on, with their ids and comments — the ones newer than the last reply marked new" }
       - { name: changes, type: changeset, description: "the files this round changed" }
+      - { name: rejection, type: verdict, optional: true, description: "why a person sent the last replies back from the reply gate" }
       - { name: failure, type: failure, optional: true, description: "why the previous attempt's replies were refused" }
     outputs:
-      - { name: replies, type: review_replies, description: "one reply per thread: a YAML list of {thread, reply, resolve}" }
+      - { name: replies, type: review_replies, description: "one entry per thread: what was done about it (did), the reply to post, and the owner's rationale" }
     prompt: |
       You are the reply agent of a software factory. A round of review
       comments was just fixed and pushed; you answer each thread so the
       reviewer knows what happened without re-reading the diff.
 
-      Your only deliverable is the file named in the OUTPUT CONTRACT: a YAML
-      list with one entry per thread in your comments input, e.g.
+      Your only deliverable is the file named in the OUTPUT CONTRACT, in the
+      shape its schema says: one entry per thread in your comments input, e.g.
         - thread: <the thread id, exactly as given>
+          did: fixed
           reply: Renamed `fetchAll` to `listWidgets` in api/widgets.go and its two callers.
-          resolve: false
-      For every thread: say concretely what changed and where (inspect the
-      diff with `git diff` / `git log`), or — when the comment was not followed
-      — why, in one or two sentences. Never claim a change you cannot see in
-      the repository. Leave resolve false: the reviewer resolves their own
-      threads. Do not modify any repo file.
+          rationale: the old name promised a full fetch the function never did
+          evidence: "commit 3f2a1c; api/widgets_test.go still passes"
+      did says what happened: fixed (the code changed), declined (left as it
+      is on purpose), answered (the thread asked something and the reply
+      answers it). reply is what the reviewer reads: concretely what changed
+      and where (inspect the diff with `git diff` / `git log`), or — when the
+      comment was not followed — why, in one or two sentences; a comment
+      judged wrong still gets a reply saying so. rationale and evidence are
+      never posted: they are for the person who decides whether to send the
+      reply — required with declined. Answer the newest comments of each
+      thread (marked new); the earlier exchange is context. Never claim a
+      change you cannot see in the repository. Leave resolve false: the
+      reviewer resolves their own threads. Do not modify any repo file.
+      If your prompt carries a rejection, a person read your last replies and
+      sent them back: do what they asked, and keep off the replies they held
+      back.
   - name: ci_fixer
     description: makes a failed CI check pass by reproducing it in the workspace
     read_only: false
@@ -486,7 +503,7 @@ main:
       changes: { from: run.git.diff_target, type: changeset }
       failure: { from: edge.failure, type: failure, optional: true }
     output:
-      verdict: { to: artifacts/verdict.json, type: verdict }
+      verdict: { to: artifacts/verdict.yaml, type: verdict }
     on_success: app_up
     on_reject: { to: build, max: 3, then: debug }
     on_fail: { to: review, max: 1, then: debug }
@@ -636,7 +653,7 @@ watchers:
         action: load_review_comments
         with: { select: human }
         output:
-          review: { to: artifacts/review.md, type: file }
+          threads: { to: artifacts/threads.yaml, type: mr_threads }
 
       - id: fix
         type: agent
@@ -648,7 +665,7 @@ watchers:
         input:
           ticket:   { from: run.ticket, type: ticket }
           plan:     { from: artifacts/plan.md, type: file }
-          comments: { from: artifacts/review.md, type: file }
+          comments: { from: artifacts/threads.yaml, type: mr_threads }
           failure:  { from: edge.failure, type: failure, optional: true }
         on_success: fix_commit_msg
         on_fail: { to: fix, max: 2, then: debug }
@@ -698,13 +715,28 @@ watchers:
         max_turns: 15
         description: "answer each thread with what was done"
         input:
-          comments: { from: artifacts/review.md, type: file }
-          changes:  { from: run.git.diff_phase, type: changeset }
-          failure:  { from: edge.failure, type: failure, optional: true }
+          comments:  { from: artifacts/threads.yaml, type: mr_threads }
+          changes:   { from: run.git.diff_phase, type: changeset }
+          rejection: { from: edge.verdict, type: verdict, optional: true }
+          failure:   { from: edge.failure, type: failure, optional: true }
         output:
-          replies:  { to: artifacts/replies.yaml, type: review_replies }
-        on_success: post
+          replies:   { to: artifacts/replies.yaml, type: review_replies }
+        on_success: reply_gate
         on_fail: { to: reply, max: 1, then: debug }
+
+      # A person reads the replies before they are posted ($reply_gate): each
+      # beside the thread it answers, with the agent's rationale. They pick
+      # the ones to send and reword them; a reply held back leaves its
+      # thread alone until someone writes there again. Rejecting sends the
+      # replier back with their feedback.
+      - id: reply_gate
+        type: human_gate
+        run_if: $reply_gate
+        question: "Send these replies on the merge request? Pick the ones to send and reword them as you like; rejecting sends them back with your feedback."
+        input:
+          replies: { from: artifacts/replies.yaml, type: review_replies }
+          threads: { from: artifacts/threads.yaml, type: mr_threads }
+        on_reject: { to: reply, max: -1 }
 
       - id: post
         type: action

@@ -374,7 +374,7 @@ main:
         optional: true
     output:
       verdict:
-        to: artifacts/verdict.json
+        to: artifacts/verdict.yaml
         type: verdict
     on_success: redact
     on_fail:

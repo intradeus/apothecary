@@ -6,6 +6,7 @@
 	import Select from '$lib/ui/Select.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
+	import { CURATABLE_TYPES } from '$lib/ping';
 	import { portLabel } from '$lib/format';
 	import { EDGE_HUE, STAGE_HUE, STAGE_WORD } from '$lib/ui/hues';
 	import { I } from '$lib/ui/icons';
@@ -591,6 +592,18 @@
 			)
 		].sort()
 	);
+	// What each written path holds, by path: a row picking one takes its
+	// writer's type — so a gate shown a review curates it, rather than reading
+	// it as a plain file.
+	const writtenTypes = $derived(
+		Object.fromEntries(
+			allStages(doc).flatMap((x) =>
+				Object.values(x.output ?? {})
+					.filter((p) => p.to && p.type)
+					.map((p) => [p.to!, p.type!] as const)
+			)
+		) as Record<string, string>
+	);
 	const schemaNames = $derived((doc.schemas ?? []).map((q) => q.name));
 	// An action's settings (`with:`): read one, write it back preserving order.
 	function settingValue(s: DocStage, name: string): string {
@@ -1058,6 +1071,7 @@
 								declared={declInputs}
 								sources={sourcesFor('agent', services, phaseOf(doc, s)?.on.signal === 'ci_failed')}
 								paths={writtenPaths}
+								{writtenTypes}
 								schemas={schemaNames}
 								{onchange}
 							/>
@@ -1143,6 +1157,7 @@
 						stage={s}
 						field="input"
 						paths={writtenPaths}
+						{writtenTypes}
 						schemas={schemaNames}
 						valuePlaceholder="artifacts/thresholds.json"
 						{onchange}
@@ -1179,11 +1194,15 @@
 						field="input"
 						sources={sourcesFor('human_gate', services)}
 						paths={writtenPaths}
+						{writtenTypes}
 						schemas={schemaNames}
 						types={GATE_TYPES}
 						links={1}
 						{onchange}
 					/>
+					{#if Object.values(s.input ?? {}).some((p) => CURATABLE_TYPES.includes(p.type ?? ''))}
+						<div class="help">{t('flow.insp.curateHelp')}</div>
+					{/if}
 					<div class="grp">
 						<div class="lbl">{t('flow.insp.autoBy')}</div>
 						<div class="help">{t('flow.insp.autoByHelp')}</div>
@@ -1357,6 +1376,7 @@
 									field="input"
 									declared={actionSig.inputs}
 									paths={writtenPaths}
+									{writtenTypes}
 									schemas={schemaNames}
 									{onchange}
 								/>

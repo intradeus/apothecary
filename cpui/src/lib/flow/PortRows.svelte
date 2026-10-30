@@ -41,6 +41,7 @@
 		declared,
 		sources = [],
 		paths = [],
+		writtenTypes = {},
 		schemas = [],
 		types,
 		links,
@@ -55,6 +56,10 @@
 		sources?: string[];
 		/** Paths written elsewhere in the flow, offered as sources (inputs). */
 		paths?: string[];
+		/** What those paths hold, by path: picking one prefills its writer's
+		 *  type, so a gate shown a review curates it rather than reading it
+		 *  as a plain file. */
+		writtenTypes?: Record<string, string>;
 		/** The flow's schemas. */
 		schemas?: string[];
 		/** The types a row's file may be (default: every port type). */
@@ -102,17 +107,24 @@
 	}
 
 	// A value the engine provides is one type; a file falls back to what the
-	// contract declares, or a plain file.
+	// contract declares, else to what its writer declares, else a plain
+	// file. A free row still typed as a plain file takes its writer's type
+	// too — the type is the file's, not the row's.
 	function setValue(r: Row, value: string) {
 		r.value = value;
 		const engine = sourceType(value.trim());
+		const written = writtenTypes[value.trim()];
 		if (engine) {
 			r.type = engine;
 			r.schema = undefined;
 			if (isEdgeSource(value.trim())) r.optional = true;
-		} else if (!r.type || VALUE_TYPES.includes(r.type)) {
+		} else if (
+			!r.type ||
+			VALUE_TYPES.includes(r.type) ||
+			(r.type === 'file' && !r.decl && !!written && written !== 'file')
+		) {
 			const dir = value.trim().endsWith('/');
-			r.type = r.decl?.type ?? (r.decl?.schema ? undefined : dir ? 'files' : 'file');
+			r.type = r.decl?.type ?? (r.decl?.schema ? undefined : (written ?? (dir ? 'files' : 'file')));
 			r.schema = takesSchema(r.type) ? (r.schema ?? r.decl?.schema) : undefined;
 		}
 		write();

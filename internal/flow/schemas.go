@@ -22,6 +22,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"apothecary/internal/agentspec"
+	"apothecary/internal/reviewfile"
 )
 
 // DocSchema is one entry of `schemas:`: a name the agents' inputs and
@@ -147,10 +148,10 @@ func (f *Flow) Schema(name string) *DataSchema {
 }
 
 // PortSchemas are the structures a port's file must hold: its type's shape
-// (for the types checked with one: verdict, commit_message), then its flow
-// schema. Empty for a file the engine only checks exists — and for the
-// types whose shape the engine parses by hand (review_*), which it checks
-// first.
+// (every structured built-in type has one), then its flow schema. Empty for
+// a file the engine only checks exists. What a schema cannot say about a
+// type — a path inside the repository, a thread the round loaded — the
+// engine checks after it.
 func (f *Flow) PortSchemas(p Port) []*DataSchema {
 	var out []*DataSchema
 	if s := TypeSchema(p.Type); s != nil {
@@ -312,13 +313,18 @@ func describeViolations(err error) string {
 	return strings.Join(lines, "\n")
 }
 
-// builtinTypeSchemas are the shapes of the built-in types the engine checks
-// with a schema rather than by hand: commit_message, which the commit action
-// reads.
+// builtinTypeSchemas are the shapes of the structured built-in types, each
+// shown verbatim in the agent's OUTPUT CONTRACT and checked like a flow
+// schema: the verdict the router reads, the commit message the commit
+// action reads, and the three review documents (reviewfile), which the
+// review actions post and load.
 var builtinTypeSchemas = map[string]*DataSchema{}
 
 func init() {
 	for typ, src := range map[string]string{
+		agentspec.TypeReviewThreads: reviewfile.SchemaReviewThreads,
+		agentspec.TypeReviewReplies: reviewfile.SchemaReviewReplies,
+		agentspec.TypeMRThreads:     reviewfile.SchemaMRThreads,
 		agentspec.TypeVerdict: `{
   "type": "object",
   "properties": {

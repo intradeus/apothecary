@@ -65,8 +65,9 @@ import type {
 	MergeRequestLive,
 	Model,
 	Ping,
+	PingAnswerInput,
 	PingPayload,
-	ReviewComment,
+	CurationView,
 	FormContent,
 	Preflight,
 	Project,
@@ -515,27 +516,33 @@ export const pings = {
 	/** An answer: approve|reject, or a form's accept (with its `content`)
 	 *  or decline (the reason in `feedback`). With `review`, the person's
 	 *  comments on the files shown (feedback is then the review's summary);
-	 *  a comment's attachments are among `attachmentIds`. */
-	answer: (
-		pingId: string,
-		answer: string,
-		feedback?: string,
-		attachmentIds?: string[],
-		review?: ReviewComment[],
-		content?: FormContent
-	) =>
+	 *  a comment's attachments are among `attachmentIds`. With `curated`,
+	 *  what they made of each review document the gate showed. */
+	answer: (pingId: string, input: PingAnswerInput) =>
 		unwrapVoid(
 			gen.answerPing({
 				path: { pid: pingId },
 				body: {
-					answer,
-					...(feedback ? { feedback } : {}),
-					...(content ? { content } : {}),
-					...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}),
-					...(review?.length ? { review: review.map(map.fromReviewComment) } : {})
+					answer: input.answer,
+					...(input.feedback ? { feedback: input.feedback } : {}),
+					...(input.content ? { content: input.content } : {}),
+					...(input.attachmentIds?.length ? { attachment_ids: input.attachmentIds } : {}),
+					...(input.review?.length ? { review: input.review.map(map.fromReviewComment) } : {}),
+					...(input.curated && Object.keys(input.curated).length
+						? {
+								curated: Object.fromEntries(
+									Object.entries(input.curated).map(([p, c]) => [p, map.fromCuration(c)])
+								)
+							}
+						: {})
 				}
 			})
-		)
+		),
+
+	/** A question's review documents, decoded as the gate showed them: what
+	 *  the curation page lists item by item. */
+	curation: async (pingId: string): Promise<CurationView> =>
+		map.toCurationView(await unwrap(gen.getPingCuration({ path: { pid: pingId } })))
 };
 
 // --- tickets -----------------------------------------------------------------

@@ -9,6 +9,8 @@
 // kind; the type only colours the badge and tunes the wording.
 import type {
 	AnswerKind,
+	CuratedItem,
+	Curation,
 	FieldType,
 	FormContent,
 	FormValue,
@@ -112,6 +114,50 @@ export function toFormContent(o: unknown): FormContent | undefined {
 	return o && typeof o === 'object' && !Array.isArray(o) ? (o as FormContent) : undefined;
 }
 
+/** One document's curation as the wire or a ping_answered payload carries
+ *  it, in the frontend's shape. */
+export function toCuration(o: unknown): Curation {
+	const r = (o ?? {}) as { summary?: string | null; items?: unknown[] | null };
+	return {
+		summary: typeof r.summary === 'string' ? r.summary : undefined,
+		items: (r.items ?? []).map((raw): CuratedItem => {
+			const it = (raw ?? {}) as Record<string, unknown>;
+			return {
+				item: String(it.item ?? ''),
+				keep: it.keep !== false,
+				body: typeof it.body === 'string' && it.body !== '' ? it.body : undefined,
+				resolve: typeof it.resolve === 'boolean' ? it.resolve : undefined
+			};
+		})
+	};
+}
+
+/** An answer's curations by path, or undefined when it carried none. */
+export function toCuratedMap(o: unknown): Record<string, Curation> | undefined {
+	if (!o || typeof o !== 'object' || Array.isArray(o)) return undefined;
+	const out: Record<string, Curation> = {};
+	for (const [path, c] of Object.entries(o as Record<string, unknown>)) out[path] = toCuration(c);
+	return Object.keys(out).length ? out : undefined;
+}
+
+/** The port types of a shown file a person curates at the gate: a review to
+ *  post, a round's replies. The threads beside them (mr_threads) are context. */
+export const CURATABLE_TYPES = ['review_threads', 'review_replies'];
+export const THREADS_TYPE = 'mr_threads';
+
+/** The review document a ping shows for curation — the first shown file of a
+ *  curatable type — or undefined: the page keys on the port type alone,
+ *  never on the flow or the file's name. */
+export function curatable(
+	p: Pick<PingLike, 'files' | 'fileTypes'>
+): { path: string; type: string } | undefined {
+	for (const path of p.files ?? []) {
+		const type = p.fileTypes?.[path];
+		if (type && CURATABLE_TYPES.includes(type)) return { path, type };
+	}
+	return undefined;
+}
+
 /** How the card asks a form: `text` — one free-text field, the textarea is
  *  the answer; `pick` — one field to pick one option of, a button each;
  *  `fields` — anything else, every field drawn. */
@@ -198,6 +244,8 @@ export interface PingLike {
 	// Typed payload (DESIGN-FILES §4): files = attached workspace paths,
 	// link = a resolved URL; primaryRef = the derived primary for display.
 	files?: string[];
+	/** Each structured file's port type, by path (what offers curation). */
+	fileTypes?: Record<string, string>;
 	link?: string;
 	primaryRef?: string;
 	/** What a form ping asks. */
@@ -209,6 +257,8 @@ export interface PingLike {
 	content?: FormContent;
 	/** The answer's comments on the files shown. */
 	review?: ReviewComment[];
+	/** What the person made of each review document shown, by path. */
+	curated?: Record<string, Curation>;
 	answeredAt?: string;
 	// Optional: shown in the card head when present.
 	stageId?: string;
@@ -233,8 +283,10 @@ export const primaryFile = (p: Pick<PingLike, 'files' | 'link' | 'primaryRef'>) 
 /** The call to action a ping row offers (DESIGN 7.2): a file to review
  *  (named), a decision to make, or a question to answer. */
 export function pingCta(
-	p: Pick<PingLike, 'type' | 'answerKind' | 'files' | 'link' | 'primaryRef'>
+	p: Pick<PingLike, 'type' | 'answerKind' | 'files' | 'fileTypes' | 'link' | 'primaryRef'>
 ): string {
+	const cur = curatable(p);
+	if (cur) return t('ping.cta.curate', { name: cur.path.split('/').pop() ?? cur.path });
 	if (isDocumentPing(p)) {
 		if ((p.files?.length ?? 0) > 1) return t('ping.cta.reviewFiles', { count: p.files!.length });
 		const name = primaryFile(p).split('/').pop();

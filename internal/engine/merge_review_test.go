@@ -86,9 +86,9 @@ func TestPostReviewFromAReviewOutput(t *testing.T) {
 			mu.Lock()
 			prompts = append(prompts, call.In.Prompt)
 			mu.Unlock()
-			review := "summary: Fine overall.\nthreads:\n  - { path: a.go, line: 3, body: name it }\n"
+			review := "summary: Fine overall.\nnotes:\n  - { path: a.go, line: 3, kind: nit, body: name it, rationale: style }\n"
 			if reads.Add(1) == 1 {
-				review = "threads:\n  - { path: a.go, line: 0, body: nowhere }\n"
+				review = "notes:\n  - { path: a.go, line: 0, kind: nit, body: nowhere, rationale: r }\n"
 			}
 			ph.writeFile(t, call.Env, "artifacts/review.yaml", review)
 		}
@@ -101,12 +101,14 @@ func TestPostReviewFromAReviewOutput(t *testing.T) {
 	ph.waitPhaseRuns(t, runID, "look", 1)
 	evs := ph.events(t, runID)
 	failed, _ := findPayload[*event.StageFailed](evs)
-	if failed == nil || failed.StageID != "read" || failed.Reason != event.ReasonOutputInvalid || !strings.Contains(failed.Error, "line must be 1 or more") {
+	// The shape is checked by the type's schema first, in the words the
+	// agent read in its contract.
+	if failed == nil || failed.StageID != "read" || failed.Reason != event.ReasonOutputInvalid || !strings.Contains(failed.Error, "/notes/0/line: minimum: got 0, want 1") {
 		t.Fatalf("failed = %+v", failed)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(prompts) != 2 || !strings.Contains(prompts[1], "line must be 1 or more") {
+	if len(prompts) != 2 || !strings.Contains(prompts[1], "/notes/0/line: minimum: got 0, want 1") {
 		t.Errorf("the retry was not told why (%d prompts)", len(prompts))
 	}
 	reviews := ph.repoHost.SnapshotMRs()[0].Reviews

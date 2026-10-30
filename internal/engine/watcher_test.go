@@ -214,7 +214,7 @@ agents:
   - name: builder
     prompt: build it
     inputs:
-      - { name: comments, type: file, optional: true }
+      - { name: comments, type: mr_threads, optional: true }
       - { name: failure, type: failure, optional: true }
   - name: redactor
     prompt: describe it
@@ -227,7 +227,7 @@ agents:
   - name: replier
     prompt: reply
     inputs:
-      - { name: comments, type: file }
+      - { name: comments, type: mr_threads }
       - { name: failure, type: failure, optional: true }
     outputs:
       - { name: replies, type: review_replies }
@@ -249,11 +249,11 @@ watchers:
   - id: review_fixes
     on: { signal: mr_review_settled, quiet_for: 1m }
     stages:
-      - { id: load, type: action, action: load_review_comments, output: { review: { to: artifacts/review.md, type: file } } }
-      - { id: fix, type: agent, harness: $harness, model: $model, agent: builder, input: { comments: { from: artifacts/review.md, type: file } } }
+      - { id: load, type: action, action: load_review_comments, output: { threads: { to: artifacts/threads.yaml, type: mr_threads } } }
+      - { id: fix, type: agent, harness: $harness, model: $model, agent: builder, input: { comments: { from: artifacts/threads.yaml, type: mr_threads } } }
       - { id: fix_commit, type: command, run: "git add -A && git commit -m fix" }
       - { id: fix_push, type: action, action: push_branch }
-      - { id: reply, type: agent, harness: $harness, model: $model, agent: replier, input: { comments: { from: artifacts/review.md, type: file }, failure: { from: edge.failure, type: failure, optional: true } },
+      - { id: reply, type: agent, harness: $harness, model: $model, agent: replier, input: { comments: { from: artifacts/threads.yaml, type: mr_threads }, failure: { from: edge.failure, type: failure, optional: true } },
           output: { replies: { to: artifacts/replies.yaml, type: review_replies } }, on_fail: { to: reply, max: 1 } }
       - { id: post, type: action, action: reply_review_comments, input: { replies: { from: artifacts/replies.yaml, type: review_replies } } }
 outcomes:
@@ -270,12 +270,18 @@ type watcherHarness struct {
 	// replies is what the replier agent writes (YAML).
 	replies func() string
 	mu2     sync.Mutex
-	review  []string // the review.md the fixer was given
+	review  []string // the threads.yaml the fixer was given
 }
 
 func newWatcherHarness(t *testing.T, strategy string) *watcherHarness {
 	t.Helper()
-	ph := newPhasedHarness(t, strings.Replace(watcherFlowDoc, "STRATEGY", strategy, 1))
+	return newWatcherHarnessDoc(t, strings.Replace(watcherFlowDoc, "STRATEGY", strategy, 1))
+}
+
+// newWatcherHarnessDoc is newWatcherHarness over a variant of its flow.
+func newWatcherHarnessDoc(t *testing.T, doc string) *watcherHarness {
+	t.Helper()
+	ph := newPhasedHarness(t, doc)
 	rh := &watcherHarness{phasedHarness: ph, git: newMergeGit("main"), resolverClears: true}
 	ph.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
 		if cmd.Dir == "repo" {
@@ -293,7 +299,7 @@ func newWatcherHarness(t *testing.T, strategy string) *watcherHarness {
 				rh.git.mu.Unlock()
 			}
 		case "builder":
-			if data, err := ph.envp.ReadFile(ctx, call.Env, "artifacts/review.md"); err == nil && strings.Contains(call.In.Prompt, "# SUBJECT") {
+			if data, err := ph.envp.ReadFile(ctx, call.Env, "artifacts/threads.yaml"); err == nil && strings.Contains(call.In.Prompt, "# SUBJECT") {
 				rh.mu2.Lock()
 				rh.review = append(rh.review, string(data))
 				rh.mu2.Unlock()
@@ -495,7 +501,7 @@ func TestRebaseIsPushedLeased(t *testing.T) {
 func TestReviewRoundFixesAndReplies(t *testing.T) {
 	rh := newWatcherHarness(t, "merge")
 	rh.replies = func() string {
-		return "- { thread: d1, reply: \"Renamed in the latest commit.\" }\n- { thread: d2, reply: \"Added a test.\", resolve: true }\n"
+		return "- { thread: d1, did: fixed, reply: \"Renamed in the latest commit.\" }\n- { thread: d2, did: fixed, reply: \"Added a test.\", resolve: true }\n"
 	}
 	runID := rh.start(t)
 	t0 := rh.clock.Now()
@@ -507,7 +513,7 @@ func TestReviewRoundFixesAndReplies(t *testing.T) {
 	rh.mu2.Lock()
 	review := append([]string(nil), rh.review...)
 	rh.mu2.Unlock()
-	if len(review) != 1 || !strings.Contains(review[0], "Thread `d1`") || !strings.Contains(review[0], "needs a test") {
+	if len(review) != 1 || !strings.Contains(review[0], "id: d1") || !strings.Contains(review[0], "needs a test") {
 		t.Fatalf("the fixer was given: %q", review)
 	}
 	threads := rh.repoHost.SnapshotThreads(1)
@@ -539,9 +545,9 @@ func TestRepliesNamingAnUnknownThreadFailTheStage(t *testing.T) {
 	rh.replies = func() string {
 		calls++
 		if calls == 1 {
-			return "- { thread: ghost, reply: hi }\n"
+			return "- { thread: ghost, did: fixed, reply: hi }\n"
 		}
-		return "- { thread: d1, reply: done }\n"
+		return "- { thread: d1, did: fixed, reply: done }\n"
 	}
 	runID := rh.start(t)
 	rh.repoHost.AddComment(1, "d1", "a.go", "rev", "rename", rh.clock.Now())
@@ -568,7 +574,9 @@ func TestRepliesNamingAnUnknownThreadFailTheStage(t *testing.T) {
 // trying again posts only the reply that is missing.
 func TestReplyPostingReconcilesAfterAFailure(t *testing.T) {
 	rh := newWatcherHarness(t, "merge")
-	rh.replies = func() string { return "- { thread: d1, reply: one }\n- { thread: d2, reply: two }\n" }
+	rh.replies = func() string {
+		return "- { thread: d1, did: fixed, reply: one }\n- { thread: d2, did: fixed, reply: two }\n"
+	}
 	rh.repoHost.ReplyFailAfter = 1
 	runID := rh.start(t)
 	rh.repoHost.AddComment(1, "d1", "a.go", "rev", "a", rh.clock.Now())
@@ -599,7 +607,7 @@ func TestReplyPostingReconcilesAfterAFailure(t *testing.T) {
 // reviewer writes on it again.
 func TestReviewRoundFixesOnlyTheSelectedThreads(t *testing.T) {
 	rh := newWatcherHarness(t, "merge")
-	rh.replies = func() string { return "- { thread: d1, reply: done }\n" }
+	rh.replies = func() string { return "- { thread: d1, did: fixed, reply: done }\n" }
 	runID := rh.start(t)
 	t0 := rh.clock.Now()
 	rh.repoHost.AddComment(1, "d1", "a.go", "rev", "rename this", t0)
@@ -613,17 +621,17 @@ func TestReviewRoundFixesOnlyTheSelectedThreads(t *testing.T) {
 	rh.mu2.Lock()
 	review := append([]string(nil), rh.review...)
 	rh.mu2.Unlock()
-	if len(review) != 1 || !strings.Contains(review[0], "`d1`") || strings.Contains(review[0], "`d2`") {
+	if len(review) != 1 || !strings.Contains(review[0], "id: d1") || strings.Contains(review[0], "id: d2") {
 		t.Fatalf("the fixer was given: %q", review)
 	}
 	loaded, _ := findPayload[*event.ReviewCommentsLoaded](rh.events(t, runID))
-	if loaded == nil || len(loaded.ThreadIDs) != 1 || loaded.Skipped["d2"] == "" {
+	if loaded == nil || len(loaded.Threads) != 1 || loaded.Skipped["d2"] == "" {
 		t.Errorf("review_comments_loaded = %+v", loaded)
 	}
 	// A new comment elsewhere: the next round offers it, not the skipped d2.
 	rh.repoHost.AddComment(1, "d3", "c.go", "rev", "one more", rh.clock.Now())
 	rh.clock.Advance(2 * time.Minute)
-	rh.replies = func() string { return "- { thread: d3, reply: done }\n" }
+	rh.replies = func() string { return "- { thread: d3, did: fixed, reply: done }\n" }
 	offered = rh.pick(t, "d3")
 	if len(offered) != 1 || !strings.HasPrefix(offered[0], "d3 — ") {
 		t.Errorf("second round offered %q, want only d3", offered)

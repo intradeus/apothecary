@@ -612,11 +612,25 @@ type ErrMergeRefused struct{ Reason string }
 func (e *ErrMergeRefused) Error() string { return "the repository refused the merge: " + e.Reason }
 
 // ReviewNote is one comment of a review, on a line of the change: Path is
-// the file, Line its line in the new version.
+// the file, Line its line in the new version, Body the text as posted (its
+// kind already its leading tag), Kind the note's kind for the marker — so a
+// later poll knows what kind of thread the factory opened without reading
+// the body.
 type ReviewNote struct {
 	Path string `json:"path"`
 	Line int    `json:"line"`
 	Body string `json:"body"`
+	Kind string `json:"kind,omitempty"`
+}
+
+// NoteMarker is the marker of a review's i-th note: the review's, with the
+// note's kind as an attribute. Adapters post it and look for it with the
+// same call, so an attribute never breaks a retry's reconciliation.
+func NoteMarker(reviewID string, i int, kind string) string {
+	if kind == "" {
+		return ReviewMarker(reviewID, fmt.Sprintf("note-%d", i))
+	}
+	return ReviewMarker(reviewID, fmt.Sprintf("note-%d", i), "kind="+kind)
 }
 
 // Review is what PostReview posts: a summary and notes on lines of the
@@ -643,9 +657,50 @@ type ReviewPosted struct {
 // ReviewMarker is embedded (an HTML comment, invisible when rendered) in
 // every part of a review the factory posts — the summary, each note — so
 // the part is recognisable as the factory's and a retry posts nothing twice.
-func ReviewMarker(reviewID, part string) string {
-	return fmt.Sprintf("<!-- apothecary review=%s part=%s -->", reviewID, part)
+// attrs are further "key=value" words (a note's kind); a value holds no
+// space.
+func ReviewMarker(reviewID, part string, attrs ...string) string {
+	return marker(append([]string{"review=" + reviewID, "part=" + part}, attrs...))
 }
+
+// marker renders the factory's HTML-comment marker from its words.
+func marker(words []string) string {
+	return "<!-- apothecary " + strings.Join(words, " ") + " -->"
+}
+
+// markerWords reads the first factory marker of a body as its key=value
+// words; nil when there is none.
+func markerWords(body string) map[string]string {
+	_, rest, ok := strings.Cut(body, "<!-- apothecary ")
+	if !ok {
+		return nil
+	}
+	inner, _, ok := strings.Cut(rest, "-->")
+	if !ok {
+		return nil
+	}
+	words := map[string]string{}
+	for _, w := range strings.Fields(inner) {
+		if k, v, ok := strings.Cut(w, "="); ok {
+			words[k] = v
+		}
+	}
+	return words
+}
+
+// MarkerAttr is one word of a body's factory marker ("" when absent): the
+// review id, its part, a note's kind, a reply's round, thread or did.
+func MarkerAttr(body, key string) string { return markerWords(body)[key] }
+
+// ReviewMarkerOf reads the review id and part a factory review part's
+// marker names; ok=false when the body is not one.
+func ReviewMarkerOf(body string) (reviewID, part string, ok bool) {
+	w := markerWords(body)
+	return w["review"], w["part"], w["review"] != ""
+}
+
+// MarkerRound is the round a factory reply's marker names, or "".
+func MarkerRound(body string) string { return MarkerAttr(body, "run") }
 
 // DiffLines reads one file's unified diff and returns the lines a note may
 // anchor to, on the new side: new line → old line (0 for an added line, the
@@ -718,11 +773,12 @@ type ReviewComment struct {
 }
 
 // ReplyMarker is embedded (as an HTML comment, invisible when rendered) in
-// every reply the factory posts; runID may carry a round suffix. It is how a reply is recognised as the
-// factory's — independent of which account the token belongs to — and how
-// a reply posted before a crash is found instead of posted twice.
-func ReplyMarker(runID, threadID string) string {
-	return fmt.Sprintf("<!-- apothecary run=%s thread=%s -->", runID, threadID)
+// every reply the factory posts; runID may carry a round suffix. It is how a
+// reply is recognised as the factory's — independent of which account the
+// token belongs to — and how a reply posted before a crash is found instead
+// of posted twice. attrs are further "key=value" words (what the reply did).
+func ReplyMarker(runID, threadID string, attrs ...string) string {
+	return marker(append([]string{"run=" + runID, "thread=" + threadID}, attrs...))
 }
 
 // IsFactoryReply reports whether a comment body carries a ReplyMarker or a
@@ -731,22 +787,15 @@ func IsFactoryReply(body string) bool {
 	return strings.Contains(body, "<!-- apothecary run=") || strings.Contains(body, "<!-- apothecary review=")
 }
 
-// MarkerThread returns the thread id a factory reply's marker names, or "".
-func MarkerThread(body string) string {
-	_, rest, ok := strings.Cut(body, "<!-- apothecary run=")
-	if !ok {
-		return ""
-	}
-	_, rest, ok = strings.Cut(rest, " thread=")
-	if !ok {
-		return ""
-	}
-	id, _, ok := strings.Cut(rest, " -->")
-	if !ok {
-		return ""
-	}
-	return id
+// IsReplyTo reports whether a body is the factory's reply in thread
+// threadID from round roundID: how a retry tells a reply already posted
+// from one still to post.
+func IsReplyTo(body, roundID, threadID string) bool {
+	return MarkerRound(body) == roundID && MarkerThread(body) == threadID
 }
+
+// MarkerThread returns the thread id a factory reply's marker names, or "".
+func MarkerThread(body string) string { return MarkerAttr(body, "thread") }
 
 // WorkspaceReattacher is an OPTIONAL EnvProvisioner capability: after an
 // engine restart, re-establish any engine-side resources for a still-

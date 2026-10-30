@@ -5,7 +5,14 @@ import type { Run, RunEvent, ServiceStatus } from '$lib/domain';
 import { MAIN } from '$lib/flowdoc';
 import { fmtClockDuration, fmtCost, fmtDuration, isTerminal } from '$lib/format';
 import { t } from '$lib/i18n/index.svelte';
-import { answerKindOf, toFormContent, toPingForm, toReviewComment, type PingLike } from '$lib/ping';
+import {
+	answerKindOf,
+	toCuratedMap,
+	toFormContent,
+	toPingForm,
+	toReviewComment,
+	type PingLike
+} from '$lib/ping';
 import type { StageStatus } from '$lib/ui/StageFlask.svelte';
 
 /** The provisioning log (clone + build + bootstrap) is filed under a
@@ -48,6 +55,7 @@ export function pingsOf(events: RunEvent[], run: Run | null): RunPing[] {
 			const p = e.payload;
 			const a = answered.get(String(p.ping_id));
 			const files = p.files as string[] | undefined;
+			const fileTypes = p.file_types as Record<string, string> | undefined;
 			return {
 				id: String(p.ping_id),
 				type: String(p.type ?? ''),
@@ -55,6 +63,7 @@ export function pingsOf(events: RunEvent[], run: Run | null): RunPing[] {
 				question: String(p.question ?? ''),
 				context: p.context as string | undefined,
 				files,
+				fileTypes: fileTypes && typeof fileTypes === 'object' ? fileTypes : undefined,
 				link: p.link as string | undefined,
 				// The engine's derivation for the inbox projection: the link,
 				// else the first file. With files, PingCard offers review.
@@ -70,6 +79,7 @@ export function pingsOf(events: RunEvent[], run: Run | null): RunPing[] {
 				feedback: a ? (a.payload.feedback as string | undefined) : undefined,
 				content: a ? toFormContent(a.payload.content) : undefined,
 				review: ((a?.payload.review as unknown[] | undefined) ?? []).map(toReviewComment),
+				curated: a ? toCuratedMap(a.payload.curated) : undefined,
 				answeredAt: a?.ts,
 				attachmentIds: a ? (a.payload.attachment_ids as string[] | undefined) : undefined
 			} satisfies RunPing;
@@ -479,23 +489,64 @@ export function describe(e: RunEvent): Described {
 		case 'phase_declined':
 			return { text: t('run.event.phaseDeclined', { phase: String(p.phase) }), tone: 'warn' };
 		case 'review_comments_loaded': {
-			const n = Array.isArray(p.thread_ids) ? p.thread_ids.length : 0;
-			return { text: t('run.event.threadsLoaded', { count: n }), tone: 'info' };
+			// The threads a phase run loaded: the pending ones for a fixing
+			// round, every one for a reviewer reading before it writes.
+			const n = Array.isArray(p.threads) ? p.threads.length : 0;
+			return {
+				text:
+					p.scope === 'all'
+						? t('run.event.threadsRead', { count: n })
+						: t('run.event.threadsLoaded', { count: n }),
+				tone: 'info'
+			};
 		}
 		case 'review_replies_posted': {
 			const n = Array.isArray(p.thread_ids) ? p.thread_ids.length : 0;
-			return { text: t('run.event.threadsReplied', { count: n }), tone: 'ok' };
+			const declined = Array.isArray(p.declined) ? p.declined.length : 0;
+			return {
+				text:
+					t('run.event.threadsReplied', { count: n }) +
+					(declined ? ` · ${t('run.event.repliesDeclined', { count: declined })}` : ''),
+				tone: 'ok'
+			};
 		}
 		case 'review_posted': {
 			const inline = Number(p.inline ?? 0);
 			const folded = Number(p.folded ?? 0);
-			return {
-				text: p.already
-					? t('run.event.reviewAlready')
-					: t('run.event.reviewPosted', { count: inline + folded }) +
-						(folded ? ` · ${t('run.event.reviewFolded', { count: folded })}` : ''),
-				tone: 'ok'
-			};
+			const replied = Array.isArray(p.replied) ? p.replied.length : 0;
+			const resolved = Array.isArray(p.resolved) ? p.resolved.length : 0;
+			if (p.already) return { text: t('run.event.reviewAlready'), tone: 'ok' };
+			const parts: string[] = [];
+			if (inline + folded > 0) parts.push(t('run.event.reviewPosted', { count: inline + folded }));
+			if (folded) parts.push(t('run.event.reviewFolded', { count: folded }));
+			if (replied) parts.push(t('run.event.reviewContinued', { count: replied }));
+			if (resolved) parts.push(t('run.event.reviewResolved', { count: resolved }));
+			if (!parts.length) parts.push(t('run.event.reviewSummaryOnly'));
+			return { text: parts.join(' · '), tone: 'ok' };
+		}
+		case 'review_curated': {
+			// What a person made of a review document at a gate: kept, dropped,
+			// reworded — and whether the draft went back.
+			const notes = p.type === 'review_threads';
+			const review = p.review as { notes?: unknown[]; replies?: unknown[] } | undefined;
+			const kept = notes
+				? (review?.notes?.length ?? 0) + (review?.replies?.length ?? 0)
+				: Array.isArray(p.replies)
+					? p.replies.length
+					: 0;
+			const dropped =
+				(Array.isArray(p.dropped) ? p.dropped.length : 0) +
+				(Array.isArray(p.dropped_replies) ? p.dropped_replies.length : 0);
+			const reworded = Array.isArray(p.rewritten) ? p.rewritten.length : 0;
+			const parts = [
+				notes
+					? t('run.event.curatedNotes', { kept, total: kept + dropped })
+					: t('run.event.curatedReplies', { kept, total: kept + dropped })
+			];
+			if (dropped) parts.push(t('run.event.curatedDropped', { count: dropped }));
+			if (reworded) parts.push(t('run.event.curatedReworded', { count: reworded }));
+			if (!p.approved) parts.push(t('run.event.curatedRejected'));
+			return { text: parts.join(' · '), tone: p.approved ? 'info' : 'warn' };
 		}
 		case 'mr_merged':
 			return {

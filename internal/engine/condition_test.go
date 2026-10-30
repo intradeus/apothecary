@@ -127,7 +127,7 @@ watchers:
     on: manual
     stages:
       - { id: sync, type: action, action: sync_target, run_if: run.subject }
-      - { id: load, type: action, action: load_review_comments, output: { review: { to: artifacts/review.md, type: file } }, on_fail: end }
+      - { id: load, type: action, action: load_review_comments, output: { threads: { to: artifacts/threads.yaml, type: mr_threads } }, on_fail: end }
       - { id: shine, type: command, run: "./shine.sh" }
 outcomes:
   - { id: shipped, on: mr_merged, then: done }

@@ -741,7 +741,7 @@ func (a *Adapter) PostReview(ctx context.Context, mr ports.MRRef, rev ports.Revi
 	already := true
 	var folded []ports.ReviewNote
 	for i, n := range rev.Notes {
-		marker := ports.ReviewMarker(rev.ID, fmt.Sprintf("note-%d", i))
+		marker := ports.NoteMarker(rev.ID, i, n.Kind)
 		f, ok := files[n.Path]
 		old, inDiff := f.lines[n.Line]
 		if !ok || !inDiff {

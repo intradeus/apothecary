@@ -330,14 +330,12 @@ export class RunStore {
 		this.answering = true;
 		this.error = '';
 		try {
-			await api.pings.answer(
-				pingId,
-				ans,
-				note?.trim() || undefined,
+			await api.pings.answer(pingId, {
+				answer: ans,
+				feedback: note?.trim() || undefined,
 				attachmentIds,
-				undefined,
 				content
-			);
+			});
 			toast(t('run.store.answerSent'));
 			void fleet.refresh();
 		} catch (e) {

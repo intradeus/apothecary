@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/reviewfile"
 )
 
 // Fake kinds back `serve -dev` and tests: the whole config plane works against
@@ -144,21 +145,15 @@ func (FakeHarness) New(_ Config, envp ports.EnvProvisioner) (Harness, error) {
 		case <-ctx.Done():
 			return ports.AgentResult{}, ctx.Err()
 		}
-		// A verdict output has a shape contract, so it needs real JSON rather
-		// than the stub markdown every other declared file gets.
-		verdict := declaredVerdict(call.In.Prompt)
-		for _, path := range declaredOutputs(call.In.Prompt) {
-			if path == verdict {
-				continue
-			}
-			content := fmt.Sprintf("# Dev stub: %s\n\nWritten by the dev-mode agent %q.\n", path, call.Spec.Agent)
-			if err := envp.WriteFile(ctx, call.Env, path, []byte(content), 0o644); err != nil {
+		// An output with a shape contract gets a document that holds it —
+		// a verdict, an empty review, a reply per thread, a commit message —
+		// in the format its path says; every other declared file a stub.
+		for _, out := range declaredOutputs(call.In.Prompt) {
+			content, err := stubOutput(out, call)
+			if err != nil {
 				return ports.AgentResult{}, err
 			}
-		}
-		if verdict != "" {
-			v := []byte(`{"verdict":"APPROVE","comments":[]}`)
-			if err := envp.WriteFile(ctx, call.Env, verdict, v, 0o644); err != nil {
+			if err := envp.WriteFile(ctx, call.Env, out.path, content, 0o644); err != nil {
 				return ports.AgentResult{}, err
 			}
 		}
@@ -202,41 +197,84 @@ func (h *fakeHarness) Models(context.Context) ([]ModelInfo, error) {
 	}, nil
 }
 
-// declaredVerdict extracts the verdict output's path from the OUTPUT CONTRACT
-// (FLOWLANG §4), which names it rather than hardcoding one — so a stage that
-// rebinds the path still gets a valid verdict from the dev fake. "" when the
-// stage's agent declares no verdict.
-func declaredVerdict(prompt string) string {
-	before, _, ok := strings.Cut(prompt, ` must contain exactly {"verdict"`)
-	if !ok {
-		return ""
-	}
-	// The path is the last token before the sentence.
-	if i := strings.LastIndexAny(before, " \n"); i >= 0 {
-		return before[i+1:]
-	}
-	return before
-}
+// declaredOutput is one file the OUTPUT CONTRACT names: its path and, for a
+// structured one, its type.
+type declaredOutput struct{ path, typ string }
 
-// declaredOutputs extracts the artifact paths an agent must write, parsed from
-// the "# OUTPUT CONTRACT" bullet list (FLOWLANG §4). Each bullet is "- <path>"
-// optionally followed by " — <name>: <desc>". Empty when the stage declares no
+// declaredOutputs extracts the files an agent must write, parsed from the
+// "# OUTPUT CONTRACT" bullet list (FLOWLANG §4). Each bullet is "- <path>"
+// optionally followed by " — <name> (<type>): <desc>" — the type only for a
+// structured file, so the dev fake writes one that holds its shape wherever
+// a stage binds it, never a hardcoded path. Empty when the stage declares no
 // file outputs.
-func declaredOutputs(prompt string) []string {
+func declaredOutputs(prompt string) []declaredOutput {
 	_, rest, ok := strings.Cut(prompt, "you MUST write these files (relative to repo root):\n")
 	if !ok {
 		return nil
 	}
-	var paths []string
+	var outs []declaredOutput
 	for line := range strings.SplitSeq(rest, "\n") {
 		if !strings.HasPrefix(line, "- ") {
 			break // the bullet list ends at the first non-bullet line
 		}
-		// The path is the first whitespace-delimited token after "- ".
-		path, _, _ := strings.Cut(strings.TrimPrefix(line, "- "), " ")
-		if path != "" {
-			paths = append(paths, path)
+		// The path is the first whitespace-delimited token after "- "; the
+		// type the parenthesised word after the role.
+		path, after, _ := strings.Cut(strings.TrimPrefix(line, "- "), " ")
+		if path == "" {
+			continue
+		}
+		out := declaredOutput{path: path}
+		if _, paren, ok := strings.Cut(after, " ("); ok {
+			if typ, _, ok := strings.Cut(paren, ")"); ok && agentspec.IsStructuredType(typ) {
+				out.typ = typ
+			}
+		}
+		outs = append(outs, out)
+	}
+	return outs
+}
+
+// stubOutput is what the dev fake writes for one declared output: a
+// document holding the type's shape, in the format the path says.
+func stubOutput(out declaredOutput, call fake.RunCall) ([]byte, error) {
+	switch out.typ {
+	case agentspec.TypeVerdict:
+		return reviewfile.Encode(out.path, map[string]any{"verdict": "APPROVE", "comments": []string{}})
+	case agentspec.TypeReviewThreads:
+		return reviewfile.Encode(out.path, reviewfile.Review{Summary: "Dev stub review: nothing to note."})
+	case agentspec.TypeReviewReplies:
+		// One reply per thread of the mr_threads input the prompt inlines —
+		// the contract says every thread is answered.
+		replies := []reviewfile.Reply{}
+		for _, id := range promptThreadIDs(call.In.Prompt) {
+			replies = append(replies, reviewfile.Reply{Thread: id, Did: reviewfile.DidAnswered, Reply: "Dev stub reply."})
+		}
+		return reviewfile.Encode(out.path, replies)
+	case agentspec.TypeCommitMessage:
+		return reviewfile.Encode(out.path, map[string]any{"subject": "dev stub: " + call.Spec.Agent})
+	}
+	return []byte(fmt.Sprintf("# Dev stub: %s\n\nWritten by the dev-mode agent %q.\n", out.path, call.Spec.Agent)), nil
+}
+
+// promptThreadIDs reads the thread ids of every mr_threads file a prompt
+// inlines: each "# INPUT: … (file: <path>.yaml)" section is tried as one.
+func promptThreadIDs(prompt string) []string {
+	var ids []string
+	sections := strings.Split(prompt, "\n# ")
+	for _, sec := range sections {
+		head, body, ok := strings.Cut(sec, "\n")
+		head = strings.TrimPrefix(head, "# ") // the first section has no newline before it
+		if !ok || !strings.HasPrefix(head, "INPUT: ") {
+			continue
+		}
+		_, path, ok := strings.Cut(head, "(file: ")
+		if !ok {
+			continue
+		}
+		path = strings.TrimSuffix(path, ")")
+		if th, err := reviewfile.ParseThreads(path, []byte(body)); err == nil {
+			ids = append(ids, th.IDs()...)
 		}
 	}
-	return paths
+	return ids
 }

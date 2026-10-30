@@ -179,6 +179,9 @@ import type {
 	GetMeData,
 	GetMeErrors,
 	GetMeResponses,
+	GetPingCurationData,
+	GetPingCurationErrors,
+	GetPingCurationResponses,
 	GetPingData,
 	GetPingErrors,
 	GetPingFilesData,
@@ -1785,6 +1788,31 @@ export const answerPing = <ThrowOnError extends boolean = false>(
 			'Content-Type': 'application/json',
 			...options.headers
 		}
+	});
+
+/**
+ * A question's review documents, decoded as the gate showed them
+ *
+ * Each shown file of a review type (review_threads, review_replies, mr_threads) from its raise-time snapshot: what the curation page lists item by item. A file not captured lists with the reason and can only be approved as written.
+ */
+export const getPingCuration = <ThrowOnError extends boolean = false>(
+	options: Options<GetPingCurationData, ThrowOnError>
+): RequestResult<GetPingCurationResponses, GetPingCurationErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetPingCurationResponses, GetPingCurationErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/pings/{pid}/curation',
+		...options
 	});
 
 /**

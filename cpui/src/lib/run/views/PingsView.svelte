@@ -6,8 +6,9 @@
 	import PingCard from '$lib/PingCard.svelte';
 	import PingPill from '$lib/ui/PingPill.svelte';
 	import { ago, fmtAbs, fmtClock } from '$lib/format';
-	import { answerMeta, isAgentPing, isDocumentPing } from '$lib/ping';
+	import { answerMeta, curatable, isAgentPing, isDocumentPing } from '$lib/ping';
 	import ReviewHistory from '$lib/review/ReviewHistory.svelte';
+	import CurationHistory from '$lib/curation/CurationHistory.svelte';
 	import { to } from '$lib/urls';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import { I } from '$lib/ui/icons';
@@ -79,7 +80,13 @@
 				{#if open === p.id}
 					<div class="body">
 						<Markdown src={p.question} />
-						{#if p.status === 'answered' && isDocumentPing(p)}
+						{#if p.status === 'answered' && curatable(p)}
+							{#if p.feedback}<div class="fb">
+									<b>{t('runview.pings.you')}</b>
+									{p.feedback}
+								</div>{/if}
+							<CurationHistory ping={p} embedded />
+						{:else if p.status === 'answered' && isDocumentPing(p)}
 							<ReviewHistory
 								embedded
 								keys={false}

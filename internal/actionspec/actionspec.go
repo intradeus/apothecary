@@ -150,6 +150,12 @@ const (
 	SelectHuman = "human"
 	SelectAll   = "all"
 
+	// Which threads load_review_comments loads (its scope): the pending
+	// ones, for a round that fixes them; every one, for a reviewer to read
+	// before it writes.
+	ScopePending = "pending"
+	ScopeAll     = "all"
+
 	// Sync strategies (sync_target's strategy input).
 	StrategyMerge  = "merge"
 	StrategyRebase = "rebase"
@@ -213,21 +219,27 @@ var registry = []Action{{
 }, {
 	Slug:        LoadReviewComments,
 	Title:       "Load review comments",
-	Description: "Writes the merge request's pending review threads — unresolved, last word a reviewer's — to a file the fixing agent reads: file, line, diff hunk, the comments in order, and the thread id a reply names. With select: human (the default) a person first picks which threads to fix in the inbox; the others are skipped until someone comments on them again, and picking none ends the round. Re-entry rewrites the same set, so one phase run fixes what it started with.",
+	Description: "Writes the merge request's review threads to an mr_threads file the agents read: file, line, diff hunk, the comments in order — the factory's own marked, the ones newer than its last word marked new — and the thread id a reply names. With scope: pending (the default) it loads the threads waiting on the factory — unresolved, last word a reviewer's — for a round that fixes them: with select: human (the default) a person first picks which in the inbox, the others are skipped until someone comments on them again, and picking none ends the round. With scope: all it loads every thread, resolved and the factory's own included, for a reviewer to read before it writes — nothing is picked and an empty list ends nothing. Re-entry rewrites the same set, so one phase run works on what it started with.",
 	Requires:    RequiresRepository,
 	Subject:     true,
 	Settings: []SettingSig{{
+		Name:        "scope",
+		Description: "pending: the threads waiting on the factory, for a round that fixes them; all: every thread on the merge request, for a reviewer to read first",
+		Kind:        KindEnum,
+		Values:      []string{ScopePending, ScopeAll},
+		Default:     ScopePending,
+	}, {
 		Name:        "select",
-		Description: "human: a person picks the threads to fix (some may be wrong, or already handled); all: every pending thread",
+		Description: "with scope: pending — human: a person picks the threads to fix (some may be wrong, or already handled); all: every pending thread",
 		Kind:        KindEnum,
 		Values:      []string{SelectHuman, SelectAll},
 		Default:     SelectHuman,
 	}},
 	Outputs: []PortSig{{
-		Name:        "review",
-		Description: "the pending review threads, as markdown",
-		Type:        "file",
-		DefaultPath: "artifacts/review.md",
+		Name:        "threads",
+		Description: "what is on the merge request: the threads loaded with their comments, and the notes a person dropped at a gate earlier in the run",
+		Type:        "mr_threads",
+		DefaultPath: "artifacts/threads.yaml",
 	}},
 }, {
 	Slug:        ReplyReviewComments,

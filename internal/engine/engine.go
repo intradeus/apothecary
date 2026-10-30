@@ -26,6 +26,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
+	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 	"apothecary/internal/skills"
 )
@@ -387,10 +388,13 @@ type Ping struct {
 	// Files are the attached workspace paths (first = the primary reviewed
 	// document); Link is a resolved URL payload (a gate's mr_url/workspace
 	// sentinel). Typed at the source — never sniffed apart (DESIGN-FILES §4).
-	Files   []string
-	Link    string
-	StageID string      // flow stage in flight when raised (PLAN4 M15)
-	Form    *event.Form // what a question asks (AnswerKind form)
+	Files []string
+	Link  string
+	// FileTypes is each shown file's port type, by path, for the files with
+	// a structured type: what offers curation (event.PingRaised.FileTypes).
+	FileTypes map[string]string
+	StageID   string      // flow stage in flight when raised (PLAN4 M15)
+	Form      *event.Form // what a question asks (AnswerKind form)
 	// AnswerKind is the shape of the answer this ping takes (event.Answer*):
 	// what the UI renders and the one thing validation reads.
 	AnswerKind string
@@ -454,6 +458,10 @@ type PingAnswer struct {
 	// Review is the person's comments on the files the ping showed
 	// (validateReview); Feedback is then its summary.
 	Review []event.ReviewComment
+	// Curated is what the person made of each review document the gate
+	// showed, by path (validateCuration): decisions over the document as
+	// shown — which items are posted, how they read.
+	Curated map[string]reviewfile.Curation
 }
 
 // Await blocks until the ping is answered or ctx expires. It is safe to call
@@ -661,11 +669,15 @@ type AttachmentStore interface {
 	DeleteForRun(ctx context.Context, runID string) error
 }
 
-// SnapshotStore is the engine's capture port: the engine only ever WRITES
-// snapshots — reads live in the API against the concrete store. Implemented
-// by *filestore.Snapshots.
+// SnapshotStore is the engine's capture port. The engine writes snapshots
+// and reads back exactly one kind: what a gate showed (ping files), which a
+// curation is resolved against — never a workspace file, which may have
+// moved on. Every other read lives in the API against the concrete store.
+// Implemented by *filestore.Snapshots.
 type SnapshotStore interface {
 	Capture(ctx context.Context, s filestore.Snapshot, scrub func(string) string, data []byte) (filestore.Snapshot, error)
+	ForPing(ctx context.Context, pingID string) ([]filestore.Snapshot, error)
+	Bytes(ctx context.Context, id string) ([]byte, filestore.Snapshot, error)
 }
 
 // PingLookup reads the DURABLE ping projection. The engine needs it because a
@@ -2261,6 +2273,9 @@ func (e *Engine) answerLive(pingID string, ans PingAnswer) error {
 	if err := validateReview(p.Files, ans); err != nil {
 		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
+	if err := e.validateCuration(context.Background(), pingID, p.Files, p.FileTypes, &ans); err != nil {
+		return fmt.Errorf("ping %s: %w", pingID, err)
+	}
 	// The answers channel is drained only in agent stages and gates. Don't
 	// report success for an answer nobody will ever process, and don't wedge
 	// the HTTP handler if the buffer is full.
@@ -2320,6 +2335,9 @@ func (e *Engine) answerDormant(ctx context.Context, pingID string, ans PingAnswe
 	if err := validateReview(v.Files, ans); err != nil {
 		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
+	if err := e.validateCuration(ctx, pingID, v.Files, v.FileTypes, &ans); err != nil {
+		return fmt.Errorf("ping %s: %w", pingID, err)
+	}
 
 	e.mu.Lock()
 	_, active := e.handles[v.RunID]
@@ -2345,7 +2363,7 @@ func (e *Engine) answerDormant(ctx context.Context, pingID string, ans PingAnswe
 	}
 
 	payloads := []event.Payload{&event.PingAnswered{PingID: pingID, Answer: ans.Answer,
-		Feedback: ans.Feedback, Content: ans.Content, AttachmentIDs: ans.AttachmentIDs, Review: ans.Review}}
+		Feedback: ans.Feedback, Content: ans.Content, AttachmentIDs: ans.AttachmentIDs, Review: ans.Review, Curated: ans.Curated}}
 	// Wake only when this was the last thing the run was waiting for, and only
 	// if a human has not deliberately parked it: an agent may have asked two
 	// questions, and pause means pause.

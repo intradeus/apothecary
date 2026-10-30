@@ -276,7 +276,7 @@ func TestActionPorts(t *testing.T) {
 		{"a required input left out", "  - id: m\n    type: action\n    action: create_mr\n",
 			`action "create_mr" requires input "body"`},
 		{"an output left out", "  - id: l\n    type: action\n    action: load_review_comments\n",
-			`action "load_review_comments" writes "review" — state where: output: { review: { to: artifacts/review.md, type: file } }`},
+			`action "load_review_comments" writes "threads" — state where: output: { threads: { to: artifacts/threads.yaml, type: mr_threads } }`},
 		{"a typed input of another type", writeStage + "  - id: c\n    type: action\n    action: commit\n    input: { message: { from: artifacts/plan.md, type: file } }\n",
 			`input "message": action "commit" reads a commit_message, the port says a file`},
 		{"with on an agent", writeStage[:len(writeStage)-1] + "\n    with: { to: done }\n",

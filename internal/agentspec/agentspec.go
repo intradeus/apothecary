@@ -82,10 +82,16 @@ type OutputDecl struct {
 //     edge.verdict, what the last verdict (an agent's, or a person's at a
 //     gate) said, read as text.
 //   - TypeReviewThreads is a review of a merge request, which post_review
-//     reads: YAML {summary, threads: [{path, line, body}]}.
+//     reads: {summary, notes: [{path, line, kind, body, rationale, …}],
+//     replies: [{thread, body, resolve, …}]} (reviewfile.Review).
 //   - TypeReviewReplies is a review round's answers, which
-//     reply_review_comments reads: a YAML list of {thread, reply, resolve}.
-//   - TypeCommitMessage is a commit's message, which commit reads: JSON
+//     reply_review_comments reads: a list of {thread, did, reply, resolve,
+//     rationale, …} (reviewfile.Reply).
+//   - TypeMRThreads is what is on the merge request, which
+//     load_review_comments writes and the reviewing and fixing agents — and
+//     a gate's page — read: {merge_request, threads: [...], dropped: [...]}
+//     (reviewfile.Threads).
+//   - TypeCommitMessage is a commit's message, which commit reads:
 //     {subject, body?}.
 //   - TypeFiles is a directory of files (its path ends in "/"): screenshots,
 //     a report's pages. It holds at least one file; create_mr and
@@ -104,6 +110,7 @@ const (
 	TypeVerdict       = "verdict"
 	TypeReviewThreads = "review_threads"
 	TypeReviewReplies = "review_replies"
+	TypeMRThreads     = "mr_threads"
 	TypeCommitMessage = "commit_message"
 	TypeFiles         = "files"
 
@@ -115,7 +122,7 @@ const (
 
 // FileTypes and ValueTypes list the port types by kind.
 var (
-	FileTypes  = []string{TypeFile, TypeVerdict, TypeReviewThreads, TypeReviewReplies, TypeCommitMessage, TypeFiles}
+	FileTypes  = []string{TypeFile, TypeVerdict, TypeReviewThreads, TypeReviewReplies, TypeMRThreads, TypeCommitMessage, TypeFiles}
 	ValueTypes = []string{TypeTicket, TypeChangeset, TypeFailure, TypeLink}
 )
 

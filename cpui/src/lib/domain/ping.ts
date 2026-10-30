@@ -71,6 +71,10 @@ export interface Ping {
 	context?: string;
 	/** Attached workspace paths; the first is the primary reviewed document. */
 	files: string[];
+	/** Each shown file's port type, by path, for the files with a structured
+	 *  type (review_threads, review_replies, mr_threads): what the page keys
+	 *  on to offer curation. A plain document is absent. */
+	fileTypes: Record<string, string>;
 	/** A resolved URL payload (a gate's mr_url / workspace sentinel). */
 	link?: string;
 	/** The derived primary: the link, else the first file. */
@@ -95,8 +99,135 @@ export interface Ping {
 	answerAttachmentIds: string[];
 	/** What the person said about the files shown, comment by comment. */
 	review: ReviewComment[];
+	/** What the person made of each review document the gate showed, by
+	 *  path: which items are posted and how they read. */
+	curated?: Record<string, Curation>;
 	raisedAt: string;
 	answeredAt?: string;
+}
+
+/** One decision over a review document as the gate showed it: `item` is
+ *  "notes/<i>" or "replies/<i>", keep says whether it is posted, body the
+ *  text as rewritten (absent: as written), resolve a reply's flag. */
+export interface CuratedItem {
+	item: string;
+	keep: boolean;
+	body?: string;
+	resolve?: boolean;
+}
+
+/** A person's curation of one review document: a rewritten summary (a
+ *  review's) and the items decided; an item absent is posted as written. */
+export interface Curation {
+	summary?: string;
+	items: CuratedItem[];
+}
+
+/** What a gate's answer carries: the verdict, a note for the agent, files,
+ *  the review's comments, a form's values, and the curation of each review
+ *  document shown. */
+export interface PingAnswerInput {
+	answer: string;
+	feedback?: string;
+	attachmentIds?: string[];
+	review?: ReviewComment[];
+	content?: FormContent;
+	curated?: Record<string, Curation>;
+}
+
+/** The kinds of a review note, and what a reply did about its thread. */
+export const REVIEW_KINDS = ['blocking', 'suggestion', 'question', 'nit'] as const;
+export const REPLY_DIDS = ['fixed', 'declined', 'answered'] as const;
+
+/** One note of a review: a new thread on a line of a file. The body is
+ *  posted; rationale, evidence and example are for the person at the gate. */
+export interface ReviewNote {
+	path: string;
+	line: number;
+	kind: string;
+	body: string;
+	rationale?: string;
+	evidence?: string;
+	example?: string;
+}
+
+/** A reply the reviewer writes in a thread already on the merge request. */
+export interface ReviewContinuation {
+	thread: string;
+	body: string;
+	resolve: boolean;
+	rationale?: string;
+}
+
+/** A review_threads document as the gate showed it. */
+export interface ReviewDocument {
+	summary: string;
+	notes: ReviewNote[];
+	replies: ReviewContinuation[];
+}
+
+/** One entry of a review_replies document: what a round did about one
+ *  thread. The reply is posted; the rest is the owner's. */
+export interface ReviewReply {
+	thread: string;
+	did: string;
+	reply: string;
+	resolve: boolean;
+	rationale?: string;
+	evidence?: string;
+}
+
+/** One comment of a thread on the merge request. */
+export interface ThreadComment {
+	id: string;
+	author: string;
+	at?: string;
+	/** Apothecary wrote it. */
+	ours: boolean;
+	/** Written after apothecary's last word in the thread. */
+	new: boolean;
+	/** What an earlier reply of apothecary's said it did. */
+	did?: string;
+	body: string;
+}
+
+/** One review thread on the merge request, as the engine read it. */
+export interface ReviewThread {
+	id: string;
+	path?: string;
+	line?: number;
+	resolved: boolean;
+	/** Apothecary opened it (a review note). */
+	ours: boolean;
+	kind?: string;
+	hunk?: string;
+	comments: ThreadComment[];
+}
+
+/** An mr_threads document: the threads loaded, and the notes a person
+ *  declined to post earlier in the run. */
+export interface ThreadsDocument {
+	mergeRequest?: string;
+	threads: ReviewThread[];
+	dropped: ReviewNote[];
+}
+
+/** One shown file of a review type, decoded from its raise-time snapshot.
+ *  Not captured, or with an error, it can only be approved as written. */
+export interface CurationDocument {
+	path: string;
+	type: string;
+	captured: boolean;
+	error?: string;
+	review?: ReviewDocument;
+	replies?: ReviewReply[];
+}
+
+/** A question's review documents as the gate showed them, and the threads
+ *  beside them when the gate showed an mr_threads file. */
+export interface CurationView {
+	documents: CurationDocument[];
+	threads?: ThreadsDocument;
 }
 
 /** One comment of a review: on one of the files the ping showed — on a
@@ -126,6 +257,8 @@ export interface PingFile {
 	snapshotId?: string;
 	mime?: string;
 	size?: number;
+	/** The file's port type when it is a structured one. */
+	type?: string;
 }
 
 export interface PingPayload {

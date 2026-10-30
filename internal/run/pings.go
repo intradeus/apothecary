@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"apothecary/internal/event"
+	"apothecary/internal/reviewfile"
 )
 
 // PingView is the projected request/response pair (PLAN4 M15): one row per
@@ -22,10 +23,14 @@ type PingView struct {
 	// Files are attached workspace paths (first = the primary reviewed
 	// document), Link a resolved URL payload. PayloadRef is the DERIVED
 	// primary (Link, else Files[0]) kept for the current API shape.
-	Files      []string    `json:"files,omitempty"`
-	Link       string      `json:"link,omitempty"`
-	PayloadRef string      `json:"payload_ref,omitempty"`
-	Form       *event.Form `json:"form,omitempty"`
+	Files      []string `json:"files,omitempty"`
+	Link       string   `json:"link,omitempty"`
+	PayloadRef string   `json:"payload_ref,omitempty"`
+	// FileTypes is each shown file's port type, by path, for the files with
+	// a structured type: what the page renders keys on it (a review is
+	// curated, a document is read).
+	FileTypes map[string]string `json:"file_types,omitempty"`
+	Form      *event.Form       `json:"form,omitempty"`
 	// AnswerKind is the shape of the answer the ping takes (event.Answer*).
 	AnswerKind string `json:"answer_kind"`
 	// Phase is the phase the ping belongs to (a confirmation's phase to
@@ -43,9 +48,12 @@ type PingView struct {
 	// (projected from ping_answered).
 	AnswerAttachmentIDs []string `json:"answer_attachment_ids,omitempty"`
 	// Review is the answer's comments on the files shown (ping_answered).
-	Review     []event.ReviewComment `json:"review,omitempty"`
-	RaisedAt   time.Time             `json:"raised_at"`
-	AnsweredAt *time.Time            `json:"answered_at,omitempty"`
+	Review []event.ReviewComment `json:"review,omitempty"`
+	// Curated is what the person made of each review document shown, by
+	// path (ping_answered): decisions over the document as shown.
+	Curated    map[string]reviewfile.Curation `json:"curated,omitempty"`
+	RaisedAt   time.Time                      `json:"raised_at"`
+	AnsweredAt *time.Time                     `json:"answered_at,omitempty"`
 }
 
 // Primary is the ping's primary payload: the link, or the first file.
@@ -73,7 +81,7 @@ func ReducePings(evs []event.Event) []PingView {
 			out = append(out, PingView{
 				PingID: p.PingID, RunID: evs[i].RunID, UserID: owner, Type: p.Type, StageID: p.StageID,
 				Question: p.Question, Context: p.Context,
-				Files: p.Files, Link: p.Link, PayloadRef: Primary(p.Files, p.Link),
+				Files: p.Files, FileTypes: p.FileTypes, Link: p.Link, PayloadRef: Primary(p.Files, p.Link),
 				Form: p.Form, AnswerKind: p.Kind(), Phase: p.Phase, EndsPhase: p.EndsPhase,
 				Status: "pending", RaisedAt: evs[i].TS,
 			})
@@ -86,6 +94,7 @@ func ReducePings(evs []event.Event) []PingView {
 				out[j].Content = p.Content
 				out[j].AnswerAttachmentIDs = p.AttachmentIDs
 				out[j].Review = p.Review
+				out[j].Curated = p.Curated
 				out[j].AnsweredAt = &ts
 			}
 		case *event.RunAbandoned, *event.RunFailed, *event.RunArchived, *event.RunCompleted:

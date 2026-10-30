@@ -148,7 +148,7 @@ main:
     on_fail: { to: w, max: 1 }
   - { id: commit, type: action, action: commit, input: { message: { from: artifacts/c.json, type: commit_message } } }
   - { id: sync, type: action, action: sync_target, with: { strategy: rebase } }
-  - { id: load, type: action, action: load_review_comments, with: { select: all }, output: { review: { to: artifacts/review.md, type: file } } }
+  - { id: load, type: action, action: load_review_comments, with: { select: all }, output: { threads: { to: artifacts/threads.yaml, type: mr_threads } } }
   - { id: gate, type: human_gate, input: { mr: { from: run.mr.url, type: link } } }
 `
 	if err := s.Validate(asJSON(t, []byte(doc))); err != nil {

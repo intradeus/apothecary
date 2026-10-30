@@ -79,6 +79,10 @@ components:
         content:
           additionalProperties: {}
           type: object
+        curated:
+          additionalProperties:
+            $ref: '#/components/schemas/Curation'
+          type: object
         feedback:
           type: string
         review:
@@ -460,6 +464,64 @@ components:
       required:
         - key
         - provider
+      type: object
+    CuratedItem:
+      properties:
+        body:
+          type: string
+        item:
+          type: string
+        keep:
+          type: boolean
+        resolve:
+          nullable: true
+          type: boolean
+      required:
+        - item
+        - keep
+      type: object
+    Curation:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/CuratedItem'
+          type: array
+        summary:
+          nullable: true
+          type: string
+      type: object
+    CurationDocument:
+      properties:
+        captured:
+          type: boolean
+        error:
+          type: string
+        path:
+          type: string
+        replies:
+          items:
+            $ref: '#/components/schemas/ReviewReply'
+          type: array
+        review:
+          $ref: '#/components/schemas/ReviewDocument'
+        type:
+          type: string
+      required:
+        - captured
+        - path
+        - type
+      type: object
+    CurationView:
+      properties:
+        documents:
+          items:
+            $ref: '#/components/schemas/CurationDocument'
+          nullable: true
+          type: array
+        threads:
+          $ref: '#/components/schemas/ThreadsDocument'
+      required:
+        - documents
       type: object
     DocAsk:
       properties:
@@ -1858,6 +1920,8 @@ components:
           type: integer
         snapshot_id:
           type: string
+        type:
+          type: string
       required:
         - captured
         - path
@@ -1936,10 +2000,18 @@ components:
           type: object
         context:
           type: string
+        curated:
+          additionalProperties:
+            $ref: '#/components/schemas/Curation'
+          type: object
         ends_phase:
           type: boolean
         feedback:
           type: string
+        file_types:
+          additionalProperties:
+            type: string
+          type: object
         files:
           items:
             type: string
@@ -2355,6 +2427,101 @@ components:
       required:
         - body
         - path
+      type: object
+    ReviewContinuation:
+      properties:
+        body:
+          type: string
+        rationale:
+          type: string
+        resolve:
+          type: boolean
+        thread:
+          type: string
+      required:
+        - body
+        - thread
+      type: object
+    ReviewDocument:
+      properties:
+        notes:
+          items:
+            $ref: '#/components/schemas/ReviewNote'
+          type: array
+        replies:
+          items:
+            $ref: '#/components/schemas/ReviewContinuation'
+          type: array
+        summary:
+          type: string
+      type: object
+    ReviewNote:
+      properties:
+        body:
+          type: string
+        evidence:
+          type: string
+        example:
+          type: string
+        kind:
+          type: string
+        line:
+          type: integer
+        path:
+          type: string
+        rationale:
+          type: string
+      required:
+        - body
+        - kind
+        - line
+        - path
+      type: object
+    ReviewReply:
+      properties:
+        did:
+          type: string
+        evidence:
+          type: string
+        rationale:
+          type: string
+        reply:
+          type: string
+        resolve:
+          type: boolean
+        thread:
+          type: string
+      required:
+        - did
+        - reply
+        - thread
+      type: object
+    ReviewThread:
+      properties:
+        comments:
+          items:
+            $ref: '#/components/schemas/ThreadComment'
+          nullable: true
+          type: array
+        hunk:
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        line:
+          type: integer
+        ours:
+          type: boolean
+        path:
+          type: string
+        resolved:
+          type: boolean
+      required:
+        - comments
+        - id
+        - ours
+        - resolved
       type: object
     RunCheckout:
       properties:
@@ -3123,6 +3290,43 @@ components:
           type: array
       required:
         - ok
+      type: object
+    ThreadComment:
+      properties:
+        at:
+          type: string
+        author:
+          type: string
+        body:
+          type: string
+        did:
+          type: string
+        id:
+          type: string
+        new:
+          type: boolean
+        ours:
+          type: boolean
+      required:
+        - author
+        - body
+        - id
+      type: object
+    ThreadsDocument:
+      properties:
+        dropped:
+          items:
+            $ref: '#/components/schemas/ReviewNote'
+          type: array
+        merge_request:
+          type: string
+        threads:
+          items:
+            $ref: '#/components/schemas/ReviewThread'
+          nullable: true
+          type: array
+      required:
+        - threads
       type: object
     Ticket:
       properties:
@@ -5505,6 +5709,45 @@ paths:
         - session: []
         - personalToken: []
       summary: Answer a question
+      tags:
+        - pings
+  /api/pings/{pid}/curation:
+    get:
+      description: 'Each shown file of a review type (review_threads, review_replies, mr_threads) from its raise-time snapshot: what the curation page lists item by item. A file not captured lists with the reason and can only be approved as written.'
+      operationId: getPingCuration
+      parameters:
+        - in: path
+          name: pid
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurationView'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: A question's review documents, decoded as the gate showed them
       tags:
         - pings
   /api/pings/{pid}/files:
