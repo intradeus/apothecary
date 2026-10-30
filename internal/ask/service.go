@@ -435,6 +435,18 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 		}
 		svc.mu.Unlock()
 		res, err = runner.Resume(ctx, ports.EnvID(s.v.EnvID), ports.SessionID(th.SessionID), in)
+		mu.Lock()
+		silent := text.Len() == 0
+		mu.Unlock()
+		// A session the workspace no longer has (its agent restarted, the
+		// container was rebuilt) can never answer again: when the resume
+		// failed before saying anything, the question goes to a fresh
+		// session instead, once. One that failed mid-answer keeps its error.
+		if err != nil && ctx.Err() == nil && silent && res.TurnsUsed == 0 {
+			svc.log().Info("ask: the pane's session is gone; starting a fresh one", "run", runID, "session", th.SessionID, "err", err)
+			th.SessionID, in.Model = "", ""
+			res, err = runner.Run(ctx, ports.EnvID(s.v.EnvID), spec, in)
+		}
 	}
 
 	// What the answer is recorded with survives the answer's own context.

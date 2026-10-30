@@ -162,6 +162,87 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 	}
 }
 
+// A pane whose session the workspace no longer has (its agent restarted,
+// the container was rebuilt) answers on a fresh one instead of failing every
+// question from then on. A resume that already said something is not run
+// again: its error is the answer.
+func TestAskPaneStartsAFreshSessionWhenItsOldOneIsGone(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askPaneFlowDoc))
+	stageGate := make(chan struct{})
+	var mu sync.Mutex
+	var fresh int
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+		if call.Spec.Agent == agentspec.AskAgent {
+			mu.Lock()
+			fresh++
+			mu.Unlock()
+			call.In.Events(ports.AgentEvent{Kind: ports.AgentEvMessage, Text: "In main.go."})
+			return ports.AgentResult{Session: "new-sess", TurnsUsed: 1}, nil
+		}
+		select {
+		case <-stageGate:
+		case <-ctx.Done():
+			return ports.AgentResult{}, ctx.Err()
+		}
+		return ports.AgentResult{Session: "s", TurnsUsed: 1}, nil
+	}
+	h.runner.ResumeFunc = func(context.Context, fake.ResumeCall) (ports.AgentResult, error) {
+		return ports.AgentResult{}, errors.New("session/load gone-sess: ACP session not found")
+	}
+	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "askpane", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	waitUntil(t, "the pane to come on", func() bool {
+		st, err := h.askPane().State(ctx, runID)
+		return err == nil && st.Enabled
+	})
+	// The thread remembers a session from before the workspace's agent
+	// restarted.
+	if err := h.askPane().Store.SaveAskThread(ctx, askstore.Thread{RunID: runID, SessionID: "gone-sess"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.askPane().Ask(ctx, runID, "u1", "where?"); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the answer", func() bool {
+		st, _ := h.askPane().State(ctx, runID)
+		return len(st.Messages) == 2 && !st.Busy
+	})
+	st, _ := h.askPane().State(ctx, runID)
+	if a := st.Messages[1]; a.Text != "In main.go." || a.Error != "" {
+		t.Errorf("answer = %+v, want one from a fresh session", a)
+	}
+	th, _, _ := h.askPane().Store.AskThread(ctx, runID)
+	mu.Lock()
+	if th.SessionID != "new-sess" || fresh != 1 {
+		t.Errorf("thread session = %q after %d fresh sessions, want new-sess after 1", th.SessionID, fresh)
+	}
+	mu.Unlock()
+
+	// A resume that fails after it has spoken keeps its error.
+	h.runner.ResumeFunc = func(_ context.Context, call fake.ResumeCall) (ports.AgentResult, error) {
+		call.In.Events(ports.AgentEvent{Kind: ports.AgentEvMessage, Text: "Halfway"})
+		return ports.AgentResult{TurnsUsed: 1}, errors.New("the provider hung up")
+	}
+	if _, err := h.askPane().Ask(ctx, runID, "u1", "and?"); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the second answer", func() bool {
+		st, _ := h.askPane().State(ctx, runID)
+		return len(st.Messages) == 4 && !st.Busy
+	})
+	st, _ = h.askPane().State(ctx, runID)
+	mu.Lock()
+	if a := st.Messages[3]; !strings.Contains(a.Error, "hung up") || fresh != 1 {
+		t.Errorf("answer = %+v after %d fresh sessions, want the resume's error and no new session", a, fresh)
+	}
+	mu.Unlock()
+	close(stageGate)
+	h.e.Wait(runID)
+}
+
 func TestAskPaneIsOffWithoutASection(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	gate := make(chan struct{})
