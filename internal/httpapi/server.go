@@ -24,6 +24,7 @@ import (
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
+	"apothecary/internal/envstate"
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
 	"apothecary/internal/kinds"
@@ -94,6 +95,9 @@ type Server struct {
 	MRs *mrs.Service
 	// Resources serves the run-page resource graphs.
 	Resources *resources.Sampler
+	// EnvState is the workspace badges: reconciled container status and the
+	// engine's in-flight workspace ops (the same store the engine claims).
+	EnvState *envstate.Store
 
 	logins loginLimiter
 }
@@ -273,8 +277,8 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	// in-flight op) for the whole list — the workspace badge reads env_status
 	// to tell a live env from a stopped one, and to show rebuilding/destroying/
 	// error transitions (env_id alone can't, see run.View.EnvStatus).
-	envStatus := s.Engine.EnvBadges()
-	envDirty := s.Engine.EnvDirty()
+	envStatus := s.EnvState.Badges()
+	envDirty := s.EnvState.Dirty()
 	all, err := s.runViews(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -314,10 +318,10 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		last = last[len(last)-100:]
 	}
 	v := run.Reduce(evs)
-	if st, ok := s.Engine.EnvBadges()[v.RunID]; ok {
+	if st, ok := s.EnvState.Badges()[v.RunID]; ok {
 		v.EnvStatus = st
 	}
-	v.EnvDirty = s.Engine.EnvDirty()[v.RunID]
+	v.EnvDirty = s.EnvState.Dirty()[v.RunID]
 	writeJSON(w, http.StatusOK, RunDetail{Run: v, Events: last})
 }
 
@@ -470,7 +474,7 @@ func (s *Server) postRebuild(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
-		case errors.Is(err, engine.ErrEnvOpInFlight), errors.Is(err, engine.ErrRunActive),
+		case errors.Is(err, envstate.ErrInFlight), errors.Is(err, engine.ErrRunActive),
 			strings.Contains(msg, "does not support"), strings.Contains(msg, "no workspace"),
 			strings.Contains(msg, "no project"):
 			status = http.StatusConflict

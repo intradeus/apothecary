@@ -52,7 +52,7 @@ func (e *Engine) SSHTarget(ctx context.Context, workspace string) (SSHTarget, er
 	if !ok || v.ProjectID == "" || v.EnvID != workspace || v.State == run.Archived {
 		return SSHTarget{}, ErrNoWorkspace
 	}
-	if st, known := e.EnvStatuses()[v.RunID]; known && (st == ports.EnvStopped || st == ports.EnvAbsent) {
+	if st, known := e.envState.Statuses()[v.RunID]; known && (st == ports.EnvStopped || st == ports.EnvAbsent) {
 		return SSHTarget{}, ErrNoWorkspace
 	}
 	e.mu.Lock()

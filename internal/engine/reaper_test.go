@@ -94,23 +94,23 @@ func TestReconcileEnvsReflectsLiveContainerStatus(t *testing.T) {
 	}
 
 	// Before any pass the map is empty — the read path falls back to env_id.
-	if _, ok := h.e.EnvStatuses()[id]; ok {
+	if _, ok := h.e.envState.Statuses()[id]; ok {
 		t.Fatal("status present before first reconcile")
 	}
 
-	if err := h.e.ReconcileEnvsOnce(ctx); err != nil {
+	if err := h.e.envState.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.e.EnvStatuses()[id]; got != ports.EnvRunning {
+	if got := h.e.envState.Statuses()[id]; got != ports.EnvRunning {
 		t.Fatalf("after reconcile: got %q, want running", got)
 	}
 
 	// Stop the container out-of-band (no event) — the reconciler must catch it.
 	h.envp.Env(ports.EnvID(v.EnvID)).Status = ports.EnvStopped
-	if err := h.e.ReconcileEnvsOnce(ctx); err != nil {
+	if err := h.e.envState.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.e.EnvStatuses()[id]; got != ports.EnvStopped {
+	if got := h.e.envState.Statuses()[id]; got != ports.EnvStopped {
 		t.Fatalf("after out-of-band stop: got %q, want stopped", got)
 	}
 	// The event log is untouched: env_id still set, no phantom EnvDestroyed.
@@ -133,19 +133,19 @@ func TestReconcileEnvsUnknownWhenProbeFails(t *testing.T) {
 	h.e.Wait(id)
 
 	// First pass sees the container running.
-	if err := h.e.ReconcileEnvsOnce(ctx); err != nil {
+	if err := h.e.envState.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.e.EnvStatuses()[id]; got != ports.EnvRunning {
+	if got := h.e.envState.Statuses()[id]; got != ports.EnvRunning {
 		t.Fatalf("setup: got %q, want running", got)
 	}
 
 	// Provisioner becomes unreachable (expired session). Status now errors.
 	h.res.Envp = statusErrEnvp{h.envp}
-	if err := h.e.ReconcileEnvsOnce(ctx); err != nil {
+	if err := h.e.envState.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.e.EnvStatuses()[id]; got != ports.EnvUnknown {
+	if got := h.e.envState.Statuses()[id]; got != ports.EnvUnknown {
 		t.Fatalf("after probe failure: got %q, want unknown (must NOT carry stale running)", got)
 	}
 }

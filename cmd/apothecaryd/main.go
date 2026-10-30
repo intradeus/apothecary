@@ -38,6 +38,7 @@ import (
 	"apothecary/internal/config"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
+	"apothecary/internal/envstate"
 	"apothecary/internal/filestore"
 	"apothecary/internal/flow"
 	"apothecary/internal/httpapi"
@@ -257,6 +258,8 @@ func cmdServe(args []string) error {
 	runs := &run.Reader{Store: store}
 	mrSvc := mrs.New(resolver, runs)
 	sampler := resources.New(runs, resolver, nil, log)
+	envSt := envstate.New(runs, resolver, nil, log)
+	e.SetEnvState(envSt)
 	// A project's parameter bindings are laid over a flow's defaults at run
 	// creation; the config store holds them beside the flow.
 	e.SetFlowBindings(conf)
@@ -363,6 +366,7 @@ func cmdServe(args []string) error {
 	api.Auth = authsvc
 	api.MRs = mrSvc
 	api.Resources = sampler
+	api.EnvState = envSt
 	// The SSH door (TODO 46): one listener people ssh to over their VPN —
 	// desktop VS Code included — routed by username to the run's workspace.
 	// Both of its keys derive from instance secrets: the host key so a person
@@ -507,23 +511,7 @@ func cmdServe(args []string) error {
 	// just the event-sourced env_id. Runs far more often than the reaper —
 	// its whole job is catching out-of-band container changes promptly. An
 	// eager first pass populates the badge without waiting a full interval.
-	go func() {
-		if err := e.ReconcileEnvsOnce(reaperCtx); err != nil && reaperCtx.Err() == nil {
-			log.Error("env reconcile pass failed", "err", err)
-		}
-		t := time.NewTicker(30 * time.Second)
-		defer t.Stop()
-		for {
-			select {
-			case <-t.C:
-				if err := e.ReconcileEnvsOnce(reaperCtx); err != nil {
-					log.Error("env reconcile pass failed", "err", err)
-				}
-			case <-reaperCtx.Done():
-				return
-			}
-		}
-	}()
+	go envSt.Run(reaperCtx, 30*time.Second)
 
 	// Resource sampler: one docker-stats reading of every active run's sandbox
 	// per pass, feeding the run-page cpu/ram graphs. Same honesty rule as

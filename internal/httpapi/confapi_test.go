@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
+	"apothecary/internal/envstate"
 	"apothecary/internal/event"
 	"apothecary/internal/kinds"
 	"apothecary/internal/mrs"
@@ -79,6 +80,8 @@ func newConfEnv(t *testing.T) *confEnv {
 	srv.Pings = EventPingStore{Store: store}
 	srv.MRs = mrs.New(resolver, &run.Reader{Store: store})
 	srv.Resources = resources.New(&run.Reader{Store: store}, resolver, nil, nil)
+	srv.EnvState = envstate.New(&run.Reader{Store: store}, resolver, nil, nil)
+	e.SetEnvState(srv.EnvState)
 	srv.Conf = conf
 	srv.Kinds = reg
 	srv.Ops = resolver

@@ -187,7 +187,7 @@ func TestPollersReadTheProjection(t *testing.T) {
 		t.Fatalf("setup: %+v", h.view(t, id))
 	}
 	vs.logReads.Store(0)
-	if err := h.e.ReconcileEnvsOnce(ctx); err != nil {
+	if err := h.e.envState.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.e.ReapOnce(ctx, Window(48*time.Hour)); err != nil {
@@ -202,7 +202,7 @@ func TestPollersReadTheProjection(t *testing.T) {
 	if n := vs.logReads.Load(); n != 0 {
 		t.Errorf("%d event-log reads during reconcile/reap/sample/recover, want 0 (the projection answers them)", n)
 	}
-	if st := h.e.EnvStatuses()[id]; st != ports.EnvRunning {
+	if st := h.e.envState.Statuses()[id]; st != ports.EnvRunning {
 		t.Errorf("reconciled status = %q, want running — the projection must carry env_id and project_id", st)
 	}
 }
@@ -218,24 +218,24 @@ func TestReconcileRecordsConfigDirty(t *testing.T) {
 	}
 	h.e.Wait(id)
 	envID := ports.EnvID(h.view(t, id).EnvID)
-	if err := h.e.ReconcileEnvsOnce(ctx); err != nil {
+	if err := h.e.envState.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if h.e.EnvDirty()[id] {
+	if h.e.envState.Dirty()[id] {
 		t.Fatal("clean workspace reads dirty")
 	}
 	h.envp.Dirty = map[ports.EnvID]bool{envID: true}
-	if err := h.e.ReconcileEnvsOnce(ctx); err != nil {
+	if err := h.e.envState.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !h.e.EnvDirty()[id] {
+	if !h.e.envState.Dirty()[id] {
 		t.Fatal("changed config not reported after reconcile")
 	}
 	h.res.Envp = &rebuilderEnvp{EnvProvisioner: h.envp}
 	if err := h.e.RebuildEnv(ctx, id, false); err != nil {
 		t.Fatal(err)
 	}
-	if h.e.EnvDirty()[id] {
+	if h.e.envState.Dirty()[id] {
 		t.Error("a rebuild must clear the hint immediately")
 	}
 }

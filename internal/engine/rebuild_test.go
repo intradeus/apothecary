@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
+	"apothecary/internal/envstate"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
@@ -134,8 +135,8 @@ func TestRebuildOpGateMutualExclusion(t *testing.T) {
 	<-reb.started // first rebuild has claimed the gate and is blocking
 
 	// A second rebuild while the first holds the gate is refused.
-	if err := h.e.RebuildEnv(context.Background(), id, false); !errors.Is(err, ErrEnvOpInFlight) {
-		t.Fatalf("second rebuild: want ErrEnvOpInFlight, got %v", err)
+	if err := h.e.RebuildEnv(context.Background(), id, false); !errors.Is(err, envstate.ErrInFlight) {
+		t.Fatalf("second rebuild: want envstate.ErrInFlight, got %v", err)
 	}
 	close(reb.release)
 	if err := <-done; err != nil {
@@ -168,35 +169,6 @@ func TestReaperSkipsRebuildingEnv(t *testing.T) {
 	}
 	close(reb.release)
 	<-done
-}
-
-func TestEnvBadgesOverlayAndTTL(t *testing.T) {
-	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	clk := time.Unix(1000, 0)
-	h.e.clock = func() time.Time { return clk }
-
-	h.e.envStatusMu.Lock()
-	h.e.envStatus["r1"] = ports.EnvStopped
-	h.e.envStatusMu.Unlock()
-
-	// An in-flight op overlays the reconciled docker status.
-	rel, err := h.e.beginEnvOp("r1", "rebuilding")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := h.e.EnvBadges()["r1"]; got != "rebuilding" {
-		t.Errorf("badge = %q, want rebuilding", got)
-	}
-	// Failing the op leaves an "error" badge...
-	rel(errors.New("boom"))
-	if got := h.e.EnvBadges()["r1"]; got != "error" {
-		t.Errorf("badge = %q, want error", got)
-	}
-	// ...which ages out after the TTL, falling back to the docker status.
-	clk = clk.Add(envOpErrorTTL + time.Second)
-	if got := h.e.EnvBadges()["r1"]; got != "stopped" {
-		t.Errorf("badge after TTL = %q, want stopped (fallback)", got)
-	}
 }
 
 // "Rebuild without cache" has to reach the provisioner, and a plain rebuild

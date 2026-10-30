@@ -43,7 +43,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		return fmt.Errorf("run %s has no project (pre-v2); cannot rebuild", runID)
 	}
 
-	rel, err := e.beginEnvOp(runID, "rebuilding")
+	rel, err := e.envState.Begin(runID, "rebuilding")
 	if err != nil {
 		return err
 	}
@@ -164,10 +164,8 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 	// waiting up to 30s for the next reconcile pass — and the "config changed"
 	// hint goes with it: the container was just built from the current inputs.
 	if st, serr := res.Envp.Status(ctx, id); serr == nil {
-		e.envStatusMu.Lock()
-		e.envStatus[runID] = st
-		delete(e.envDirty, runID)
-		e.envStatusMu.Unlock()
+		e.envState.SetStatus(runID, st)
+		e.envState.ClearDirty(runID)
 	}
 	return e.finishRebuild(ctx, runID, v.EnvID, nil)
 }

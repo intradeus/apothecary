@@ -18,6 +18,7 @@ import (
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
+	"apothecary/internal/envstate"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/mrs"
@@ -153,6 +154,8 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	x.srv.Pings = EventPingStore{Store: x.store}
 	x.srv.MRs = mrs.New(resolution.StaticResolver{R: x.res}, &run.Reader{Store: x.store})
 	x.srv.Resources = resources.New(&run.Reader{Store: x.store}, resolution.StaticResolver{R: x.res}, nil, nil)
+	x.srv.EnvState = envstate.New(&run.Reader{Store: x.store}, resolution.StaticResolver{R: x.res}, nil, nil)
+	x.e.SetEnvState(x.srv.EnvState)
 	// Wire the config store so the ticket routes exist, seeded with the
 	// test project the static resolver already serves.
 	mem := confstore.NewMem()
@@ -1060,7 +1063,7 @@ func TestRunViewsCarryEnvDirty(t *testing.T) {
 		t.Fatalf("setup: %+v", detail.Run)
 	}
 	x.envp.Dirty = map[ports.EnvID]bool{ports.EnvID(detail.Run.EnvID): true}
-	if err := x.e.ReconcileEnvsOnce(context.Background()); err != nil {
+	if err := x.srv.EnvState.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	_, d = x.do(t, "GET", "/api/runs/"+runID, nil, nil)
