@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"apothecary/internal/kube"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // K8sHost runs each project's browser as a pod. A pod cannot share a unix
@@ -31,7 +31,7 @@ type K8sHost struct {
 
 const browserLabel = "apothecary.io/browser"
 
-func podName(project string) string { return "apo-browser-" + ports.ProjectHostKey(project) }
+func podName(project string) string { return "apo-browser-" + envport.ProjectHostKey(project) }
 
 func (h *K8sHost) Name(project string) string { return podName(project) }
 
@@ -55,7 +55,7 @@ func (h *K8sHost) Ensure(ctx context.Context, project, projectName, img string, 
 			return err
 		}
 	}
-	key := ports.ProjectHostKey(project)
+	key := envport.ProjectHostKey(project)
 	labels := map[string]string{"apothecary.io/managed": "true", "apothecary.io/project": key, browserLabel: key}
 	annotations := map[string]string{}
 	if projectName != "" {
@@ -86,7 +86,7 @@ func (h *K8sHost) Ensure(ctx context.Context, project, projectName, img string, 
 // networkPolicy: no ingress at all; egress only to the engine's session mux
 // (and the cluster DNS that names it).
 func (h *K8sHost) networkPolicy(project string) kube.NetworkPolicy {
-	key := ports.ProjectHostKey(project)
+	key := envport.ProjectHostKey(project)
 	engine := kube.NetworkPolicyPeer{PodSelector: &kube.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": "apothecaryd"}}}
 	if h.EngineNamespace != "" {
 		engine.NamespaceSelector = kube.NamespaceSelector(h.EngineNamespace)

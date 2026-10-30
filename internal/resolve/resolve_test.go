@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/confstore"
 	"apothecary/internal/kinds"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/secrets"
 )
@@ -91,7 +92,7 @@ type altHarnessKind struct{}
 func (altHarnessKind) Descriptor() kinds.Descriptor {
 	return kinds.Descriptor{Port: "harness", Kind: "alt", Label: "Alt harness"}
 }
-func (altHarnessKind) New(cfg kinds.Config, envp ports.EnvProvisioner) (kinds.Harness, error) {
+func (altHarnessKind) New(cfg kinds.Config, envp envport.EnvProvisioner) (kinds.Harness, error) {
 	inner, err := kinds.FakeHarness{}.New(cfg, envp)
 	if err != nil {
 		return nil, err
@@ -184,7 +185,7 @@ func TestResolveFillsResolution(t *testing.T) {
 		t.Error("adapters missing")
 	}
 	// The full port chain works: provision + run through the resolution.
-	env, err := res.Envp.Provision(context.Background(), ports.EnvSpec{RunID: "r1"})
+	env, err := res.Envp.Provision(context.Background(), envport.EnvSpec{RunID: "r1"})
 	if err != nil {
 		t.Fatal(err)
 	}

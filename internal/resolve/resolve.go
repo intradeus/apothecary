@@ -25,6 +25,7 @@ import (
 	"apothecary/internal/confstore"
 	"apothecary/internal/kinds"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/providers"
 	"apothecary/internal/resolution"
 	"apothecary/internal/wsimage"
@@ -309,7 +310,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 		EgressAllowedCIDRs:   p.Workspace.EgressAllowedCIDRs,
 		EgressAllowedPorts:   p.Workspace.EgressAllowedPorts,
 		CodeServerExtensions: p.Workspace.CodeServerExtensions,
-		EditorSettings: ports.EditorSettings{
+		EditorSettings: envport.EditorSettings{
 			Extensions:     editorExtensions,
 			Theme:          p.Workspace.Editor.Theme,
 			FontSize:       p.Workspace.Editor.FontSize,
@@ -361,7 +362,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 		TicketWriter: r.TicketWriter,
 		// Seed and prepare EVERY harness in the set: a stage may run on any of
 		// them, so all their auth + native configs must be in the workspace.
-		SeedAuth: func(ctx context.Context, env ports.EnvID, register func(string)) error {
+		SeedAuth: func(ctx context.Context, env envport.EnvID, register func(string)) error {
 			for _, k := range kindList {
 				if err := byKind[k].SeedAuth(ctx, env, register); err != nil {
 					return fmt.Errorf("seed %s auth: %w", k, err)
@@ -373,7 +374,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 		AuthBroker:    authBroker(byKind),
 		// The mirror image of SeedAuth: every harness that can say where its
 		// auth lands, so the engine can wipe it when the run ends.
-		AuthFiles: func(ctx context.Context, env ports.EnvID) []string {
+		AuthFiles: func(ctx context.Context, env envport.EnvID) []string {
 			var out []string
 			for _, k := range kindList {
 				if loc, ok := byKind[k].(kinds.AuthLocator); ok {
@@ -384,7 +385,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 		},
 		// The agents come from the RUN's flow (FLOWLANG §1, v3), so they are
 		// an argument here rather than something the project resolves.
-		Prepare: func(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
+		Prepare: func(ctx context.Context, env envport.EnvID, specs []*agentspec.Spec) error {
 			for _, k := range kindList {
 				if err := byKind[k].Prepare(ctx, env, specs); err != nil {
 					return fmt.Errorf("prepare %s config: %w", k, err)
@@ -392,7 +393,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 			}
 			return nil
 		},
-		InstallSkills: func(ctx context.Context, env ports.EnvID, names []string) error {
+		InstallSkills: func(ctx context.Context, env envport.EnvID, names []string) error {
 			for _, k := range kindList {
 				if err := byKind[k].InstallSkills(ctx, env, names); err != nil {
 					return fmt.Errorf("install %s skills: %w", k, err)

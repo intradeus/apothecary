@@ -1,6 +1,7 @@
 package portrelay
 
 import (
+	"apothecary/internal/ports/envport"
 	"context"
 	"io"
 	"net"
@@ -10,8 +11,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-
-	"apothecary/internal/ports"
 )
 
 // echoConn is a PortConn backed by a real TCP echo listener.
@@ -258,4 +257,4 @@ func TestCloseRunTearsDownListenersAndConns(t *testing.T) {
 	}
 }
 
-var _ ports.PortConn = (*echoConn)(nil)
+var _ envport.PortConn = (*echoConn)(nil)

@@ -12,6 +12,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
@@ -41,11 +42,11 @@ type exposer struct {
 	exposed atomic.Int32
 }
 
-func (x *exposer) ExposePort(context.Context, ports.EnvID, int) (ports.PortConn, error) {
+func (x *exposer) ExposePort(context.Context, envport.EnvID, int) (envport.PortConn, error) {
 	x.exposed.Add(1)
 	return pipeConn{}, nil
 }
-func (x *exposer) AppPorts(context.Context, ports.EnvID) []int { return nil }
+func (x *exposer) AppPorts(context.Context, envport.EnvID) []int { return nil }
 
 type pipeConn struct{}
 

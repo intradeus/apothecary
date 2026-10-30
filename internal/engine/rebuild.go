@@ -7,7 +7,7 @@ import (
 
 	"apothecary/internal/bootstrap"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 	"apothecary/internal/wsname"
 )
@@ -53,7 +53,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		return err
 	}
 	defer res.Close()
-	rebuilder, ok := res.Envp.(ports.WorkspaceRebuilder)
+	rebuilder, ok := res.Envp.(envport.WorkspaceRebuilder)
 	if !ok {
 		return fmt.Errorf("run %s: provisioner does not support rebuild", runID)
 	}
@@ -73,7 +73,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 	if nameBranch == "" {
 		nameBranch = v.Branch
 	}
-	spec := ports.EnvSpec{
+	spec := envport.EnvSpec{
 		RunID:              runID,
 		NoCache:            noCache,
 		RepoURL:            res.RepoRef.URL,
@@ -93,7 +93,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 	// Egress policy is delivered to the per-project gateway by the provisioner's
 	// Rebuild (from the EnvSpec egress fields) — nothing to prime here.
 
-	id := ports.EnvID(v.EnvID)
+	id := envport.EnvID(v.EnvID)
 	if rerr := rebuilder.Rebuild(ctx, spec); rerr != nil {
 		err = fmt.Errorf("rebuild %s: %w", runID, rerr)
 		return e.finishRebuild(ctx, runID, v.EnvID, err)

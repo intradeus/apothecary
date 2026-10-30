@@ -9,6 +9,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -109,11 +110,11 @@ func TestSchemaInputInvalidFailsBeforeTheAgentRuns(t *testing.T) {
   - { id: read, type: agent, harness: $harness, model: $model, agent: reader, input: { report: { from: repo:artifacts/report.json, schema: report } }, on_fail: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.envp.ExecFunc = func(e *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(e *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if cmd.Script == "make-report" {
 			e.Files["artifacts/report.json"] = []byte(`{"passed": "all"}`)
 		}
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 	ran := false
 	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
@@ -181,11 +182,11 @@ func TestCommitActionRefusesAMalformedMessage(t *testing.T) {
   - { id: commit, type: action, action: commit, input: { message: { from: repo:artifacts/commit.json, type: commit_message } }, on_fail: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.envp.ExecFunc = func(e *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(e *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if cmd.Script == "make-message" {
 			e.Files["artifacts/commit.json"] = []byte(`{"subject": "two\nlines"}`)
 		}
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
 	if err != nil {
@@ -216,11 +217,11 @@ func TestCommitActionRefusedByGit(t *testing.T) {
 			return ports.AgentResult{}, nil
 		},
 	})
-	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "git commit") {
-			return ports.ExecResult{ExitCode: 1, Output: "pre-commit hook: lint failed"}, nil
+			return envport.ExecResult{ExitCode: 1, Output: "pre-commit hook: lint failed"}, nil
 		}
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
 	if err != nil {
@@ -240,11 +241,11 @@ func TestCommandSchemaOutputInvalid(t *testing.T) {
   - { id: make, type: command, run: "make-report", output: { report: { to: artifacts/report.json, schema: report } }, on_fail: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.envp.ExecFunc = func(e *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(e *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if cmd.Script == "make-report" {
 			e.Files["artifacts/report.json"] = []byte(`{"passed": -1}`)
 		}
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
 	if err != nil {
@@ -266,14 +267,14 @@ func TestCommandSchemaInputInvalidFailsBeforeTheScript(t *testing.T) {
 `
 	h := newHarness(t, mustFlow(t, doc))
 	ran := false
-	h.envp.ExecFunc = func(e *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(e *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		switch cmd.Script {
 		case "seed":
 			e.Files["artifacts/report.json"] = []byte(`{"passed": "many"}`)
 		case "use-report":
 			ran = true
 		}
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
 	if err != nil {

@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"net"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -52,7 +52,7 @@ func (s *Service) SSHTarget(ctx context.Context, workspace string) (SSHTarget, e
 	if !ok || v.ProjectID == "" || v.EnvID != workspace || v.State == run.Archived {
 		return SSHTarget{}, ErrNoWorkspace
 	}
-	if st, known := s.EnvState.Statuses()[v.RunID]; known && (st == ports.EnvStopped || st == ports.EnvAbsent) {
+	if st, known := s.EnvState.Statuses()[v.RunID]; known && (st == envport.EnvStopped || st == envport.EnvAbsent) {
 		return SSHTarget{}, ErrNoWorkspace
 	}
 	s.mu.Lock()
@@ -68,11 +68,11 @@ func (s *Service) SSHTarget(ctx context.Context, workspace string) (SSHTarget, e
 			return nil, err
 		}
 		defer res.Close()
-		wss, ok := res.Envp.(ports.WorkspaceSSH)
+		wss, ok := res.Envp.(envport.WorkspaceSSH)
 		if !ok {
 			return nil, ErrNoSidecar
 		}
-		env := ports.EnvID(workspace)
+		env := envport.EnvID(workspace)
 		// The door's key goes in right before the dial: a rebuilt container
 		// starts without it, and this is the one moment it is needed.
 		if err := res.Envp.WriteFile(ctx, env, sshDoorKeyPath, []byte(doorKey), 0o600); err != nil {
@@ -126,8 +126,8 @@ func (s *Service) SSHInfo(ctx context.Context, runID string) (SSHInfo, error) {
 	}
 	info := SSHInfo{Workspace: v.EnvID}
 	if res, err := s.Resolver.Resolve(ctx, v.ProjectID); err == nil {
-		if starter, ok := res.Envp.(ports.EditorStarter); ok {
-			info.Extensions = starter.EditorExtensions(ctx, ports.EnvID(v.EnvID), res.EditorSettings)
+		if starter, ok := res.Envp.(envport.EditorStarter); ok {
+			info.Extensions = starter.EditorExtensions(ctx, envport.EnvID(v.EnvID), res.EditorSettings)
 		}
 		res.Close()
 	}

@@ -1,6 +1,7 @@
 package egressgw
 
 import (
+	"apothecary/internal/ports/envport"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -12,8 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"apothecary/internal/ports"
 )
 
 // DockerHost runs each project's gateway as a container on the engine host's
@@ -67,7 +66,7 @@ func NewDockerManager(runsDir string, run HostRun, ensureImage func(context.Cont
 func netName(run string) string { return "apo-egress-" + run }
 
 func (h *DockerHost) gwDir(project string) string {
-	return filepath.Join(h.runsDir, "gw", ports.ProjectHostKey(project))
+	return filepath.Join(h.runsDir, "gw", envport.ProjectHostKey(project))
 }
 func (h *DockerHost) tokenPath(project string) string {
 	return filepath.Join(h.gwDir(project), "token")

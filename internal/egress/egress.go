@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/wsname"
@@ -91,7 +92,7 @@ func (s *Service) BeforeDestroy(ctx context.Context, v run.View, res *resolution
 // ctrl resolves a run to its provisioner's egress controller (the
 // per-project gateway), or ErrOff when the run isn't live or the
 // provisioner has no gateway.
-func (s *Service) ctrl(ctx context.Context, runID string) (ports.EgressController, ports.EnvID, func(), error) {
+func (s *Service) ctrl(ctx context.Context, runID string) (ports.EgressController, envport.EnvID, func(), error) {
 	v, err := s.Runs.View(ctx, runID)
 	if err != nil {
 		return nil, "", nil, err
@@ -110,7 +111,7 @@ func (s *Service) ctrl(ctx context.Context, runID string) (ports.EgressControlle
 	}
 	// Works during provisioning too (EnvID not yet set): the most important time
 	// to "add to egress" is when the build is blocked on a denied domain.
-	return ctrl, ports.EnvID(wsname.ForRun(v, runID)), res.Close, nil
+	return ctrl, envport.EnvID(wsname.ForRun(v, runID)), res.Close, nil
 }
 
 // Denials lists a run's gateway-blocked hosts (run page feedback), each
@@ -175,12 +176,12 @@ func (s *Service) Policy(ctx context.Context, runID string) (ports.EgressPolicy,
 // auditRows converts a run's provisioner audit records into durable rows tagged
 // with the project + engine run id. Empty when the provisioner has no auditor.
 // Uses wsname.ForRun so it works DURING provisioning too (EnvID not yet set).
-func auditRows(ctx context.Context, v run.View, envp ports.EnvProvisioner) []ports.EgressAuditRow {
+func auditRows(ctx context.Context, v run.View, envp envport.EnvProvisioner) []ports.EgressAuditRow {
 	auditor, ok := envp.(ports.EgressAuditor)
 	if !ok {
 		return nil
 	}
-	recs := auditor.EgressAudit(ctx, ports.EnvID(wsname.ForRun(v, v.RunID)))
+	recs := auditor.EgressAudit(ctx, envport.EnvID(wsname.ForRun(v, v.RunID)))
 	rows := make([]ports.EgressAuditRow, 0, len(recs))
 	for _, r := range recs {
 		rows = append(rows, ports.EgressAuditRow{

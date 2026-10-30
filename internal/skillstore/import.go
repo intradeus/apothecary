@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"apothecary/internal/confstore"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/skills"
 )
 
@@ -257,19 +257,19 @@ func reason(err error) string {
 
 type childDir struct {
 	name  string
-	files []ports.TreeFile
+	files []envport.TreeFile
 }
 
 // childDirs groups files by first path segment, keeping the directories
 // that hold a SKILL.md directly, with paths re-rooted at the child.
-func childDirs(files []ports.TreeFile) []childDir {
-	byDir := map[string][]ports.TreeFile{}
+func childDirs(files []envport.TreeFile) []childDir {
+	byDir := map[string][]envport.TreeFile{}
 	for _, f := range files {
 		dir, rest, ok := strings.Cut(f.Path, "/")
 		if !ok {
 			continue
 		}
-		byDir[dir] = append(byDir[dir], ports.TreeFile{Path: rest, Mode: f.Mode, Data: f.Data})
+		byDir[dir] = append(byDir[dir], envport.TreeFile{Path: rest, Mode: f.Mode, Data: f.Data})
 	}
 	var out []childDir
 	for dir, fs := range byDir {
@@ -281,7 +281,7 @@ func childDirs(files []ports.TreeFile) []childDir {
 	return out
 }
 
-func fileAt(files []ports.TreeFile, p string) []byte {
+func fileAt(files []envport.TreeFile, p string) []byte {
 	for _, f := range files {
 		if f.Path == p {
 			return f.Data

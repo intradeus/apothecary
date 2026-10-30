@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -131,11 +132,11 @@ func TestDecliningAnOutcomeLeavesTheRunToEnd(t *testing.T) {
 func TestADeadEndInAnOutcomeAbandonsTheRun(t *testing.T) {
 	doc := strings.Replace(outcomeFlowDoc, `run: "./ticket_done.sh", on_fail: done }`, `run: "./ticket_done.sh" }`, 1)
 	ph := newPhasedHarness(t, doc)
-	ph.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	ph.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "./ticket_done.sh") {
-			return ports.ExecResult{ExitCode: 1, Output: "tracker refused the move"}, nil
+			return envport.ExecResult{ExitCode: 1, Output: "tracker refused the move"}, nil
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 	runID := ph.start(t)
 	ph.repoHost.SetMRState(1, ports.MRMerged)

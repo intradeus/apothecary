@@ -9,6 +9,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -17,7 +18,7 @@ import (
 func TestCrashAfterFailureRoutesWithoutReexec(t *testing.T) {
 	fl := mustFlow(t, loopFlowDoc)
 	h := newHarness(t, fl)
-	envID, _ := h.envp.Provision(context.Background(), ports.EnvSpec{RunID: "r-f"})
+	envID, _ := h.envp.Provision(context.Background(), envport.EnvSpec{RunID: "r-f"})
 	ctx := context.Background()
 	for _, p := range []event.Payload{
 		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
@@ -34,11 +35,11 @@ func TestCrashAfterFailureRoutesWithoutReexec(t *testing.T) {
 		}
 	}
 	verifyRuns := 0
-	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "make lint") {
 			verifyRuns++
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 	if err := h.e.Recover(ctx); err != nil {
 		t.Fatal(err)
@@ -70,7 +71,7 @@ func TestCrashAfterFailureRoutesWithoutReexec(t *testing.T) {
 func TestCrashAfterEdgeKeepsFeed(t *testing.T) {
 	fl := mustFlow(t, loopFlowDoc)
 	h := newHarness(t, fl)
-	envID, _ := h.envp.Provision(context.Background(), ports.EnvSpec{RunID: "r-e"})
+	envID, _ := h.envp.Provision(context.Background(), envport.EnvSpec{RunID: "r-e"})
 	ctx := context.Background()
 	for _, p := range []event.Payload{
 		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
@@ -111,7 +112,7 @@ func TestCrashAfterEdgeKeepsFeed(t *testing.T) {
 func TestRecoveryRefreshesRunEnvToken(t *testing.T) {
 	fl := mustFlow(t, loopFlowDoc)
 	h := newHarness(t, fl)
-	envID, _ := h.envp.Provision(context.Background(), ports.EnvSpec{RunID: "r-t"})
+	envID, _ := h.envp.Provision(context.Background(), envport.EnvSpec{RunID: "r-t"})
 	ctx := context.Background()
 	block := make(chan struct{})
 	h.runner.RunFunc = func(c context.Context, call fake.RunCall) (ports.AgentResult, error) {

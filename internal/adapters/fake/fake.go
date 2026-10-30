@@ -19,32 +19,33 @@ import (
 
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // --- EnvProvisioner ---------------------------------------------------------
 
 type Env struct {
-	ID     ports.EnvID
-	Spec   ports.EnvSpec
-	Status ports.EnvStatus
+	ID     envport.EnvID
+	Spec   envport.EnvSpec
+	Status envport.EnvStatus
 	Files  map[string][]byte
 	// Modes holds the permission bits WriteTree recorded per path (WriteFile
 	// records none: callers assert on Files alone there).
 	Modes map[string]fs.FileMode
-	// execLog is the live transcript (ports.ExecLogTailer): header + output
+	// execLog is the live transcript (envport.ExecLogTailer): header + output
 	// per Exec.
 	execLog []byte
 }
 
 type ExecCall struct {
-	Env ports.EnvID
-	Cmd ports.Command
+	Env envport.EnvID
+	Cmd envport.Command
 }
 
 type EnvProvisioner struct {
 	mu     sync.Mutex
 	nextID int
-	envs   map[ports.EnvID]*Env
+	envs   map[envport.EnvID]*Env
 
 	// ProvisionErrs fails the first len(ProvisionErrs) Provision calls in
 	// order (nil entries succeed) — for testing the 1-retry rule.
@@ -53,30 +54,30 @@ type EnvProvisioner struct {
 	// ExecFunc scripts command execution; nil means exit 0, empty output.
 	// It runs with the env's lock NOT held; use the env's Files freely —
 	// fakes are single-writer like the engine.
-	ExecFunc func(env *Env, cmd ports.Command) (ports.ExecResult, error)
+	ExecFunc func(env *Env, cmd envport.Command) (envport.ExecResult, error)
 
 	ExecCalls []ExecCall
-	Destroyed []ports.EnvID
+	Destroyed []envport.EnvID
 	// Trees records WriteTree calls in order (env, dir, file count).
 	Trees []TreeCall
 
 	// Allowed records AllowEgress calls per env; Rules records SetEgressRule
 	// calls ("host=allow|deny"); Denied seeds EgressDenials — for the run-page
 	// egress endpoint tests (ports.EgressController).
-	Allowed map[ports.EnvID][]string
-	Rules   map[ports.EnvID][]string
-	Denied  map[ports.EnvID][]ports.EgressDenial
-	// Dirty seeds ConfigDirty (ports.WorkspaceDirtyChecker): which envs
+	Allowed map[envport.EnvID][]string
+	Rules   map[envport.EnvID][]string
+	Denied  map[envport.EnvID][]ports.EgressDenial
+	// Dirty seeds ConfigDirty (envport.WorkspaceDirtyChecker): which envs
 	// report build inputs newer than their container.
-	Dirty map[ports.EnvID]bool
-	// SSHDial scripts the sidecar's SSH server (ports.WorkspaceSSH): what a
+	Dirty map[envport.EnvID]bool
+	// SSHDial scripts the sidecar's SSH server (envport.WorkspaceSSH): what a
 	// dial of an env's ssh.sock connects to. nil = the workspace serves no
 	// ssh.
-	SSHDial func(env ports.EnvID) (net.Conn, error)
+	SSHDial func(env envport.EnvID) (net.Conn, error)
 }
 
-// SSH implements ports.WorkspaceSSH over the SSHDial hook.
-func (f *EnvProvisioner) SSH(_ context.Context, env ports.EnvID) (ports.PortConn, error) {
+// SSH implements envport.WorkspaceSSH over the SSHDial hook.
+func (f *EnvProvisioner) SSH(_ context.Context, env envport.EnvID) (envport.PortConn, error) {
 	if f.SSHDial == nil {
 		return nil, fmt.Errorf("env %s: the fake workspace serves no ssh", env)
 	}
@@ -84,27 +85,27 @@ func (f *EnvProvisioner) SSH(_ context.Context, env ports.EnvID) (ports.PortConn
 }
 
 type sshPortConn struct {
-	env  ports.EnvID
-	dial func(env ports.EnvID) (net.Conn, error)
+	env  envport.EnvID
+	dial func(env envport.EnvID) (net.Conn, error)
 }
 
 func (c sshPortConn) Dial(context.Context) (net.Conn, error) { return c.dial(c.env) }
 func (c sshPortConn) Close() error                           { return nil }
 
-var _ ports.WorkspaceSSH = (*EnvProvisioner)(nil)
+var _ envport.WorkspaceSSH = (*EnvProvisioner)(nil)
 
-// ConfigDirty implements ports.WorkspaceDirtyChecker from the Dirty seed.
-func (p *EnvProvisioner) ConfigDirty(_ context.Context, id ports.EnvID) (bool, error) {
+// ConfigDirty implements envport.WorkspaceDirtyChecker from the Dirty seed.
+func (p *EnvProvisioner) ConfigDirty(_ context.Context, id envport.EnvID) (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.Dirty[id], nil
 }
 
 func NewEnvProvisioner() *EnvProvisioner {
-	return &EnvProvisioner{envs: map[ports.EnvID]*Env{}}
+	return &EnvProvisioner{envs: map[envport.EnvID]*Env{}}
 }
 
-func (p *EnvProvisioner) Provision(_ context.Context, spec ports.EnvSpec) (ports.EnvID, error) {
+func (p *EnvProvisioner) Provision(_ context.Context, spec envport.EnvSpec) (envport.EnvID, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.provisions < len(p.ProvisionErrs) {
@@ -117,19 +118,19 @@ func (p *EnvProvisioner) Provision(_ context.Context, spec ports.EnvSpec) (ports
 		p.provisions++
 	}
 	p.nextID++
-	id := ports.EnvID(fmt.Sprintf("env-%d", p.nextID))
-	p.envs[id] = &Env{ID: id, Spec: spec, Status: ports.EnvRunning, Files: map[string][]byte{}}
+	id := envport.EnvID(fmt.Sprintf("env-%d", p.nextID))
+	p.envs[id] = &Env{ID: id, Spec: spec, Status: envport.EnvRunning, Files: map[string][]byte{}}
 	return id, nil
 }
 
 // Env returns the fake environment for direct inspection/seeding in tests.
-func (p *EnvProvisioner) Env(id ports.EnvID) *Env {
+func (p *EnvProvisioner) Env(id envport.EnvID) *Env {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.envs[id]
 }
 
-func (p *EnvProvisioner) get(id ports.EnvID) (*Env, error) {
+func (p *EnvProvisioner) get(id envport.EnvID) (*Env, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	e, ok := p.envs[id]
@@ -146,10 +147,10 @@ func (p *EnvProvisioner) Execs() []ExecCall {
 	return append([]ExecCall(nil), p.ExecCalls...)
 }
 
-func (p *EnvProvisioner) Exec(_ context.Context, id ports.EnvID, cmd ports.Command) (ports.ExecResult, error) {
+func (p *EnvProvisioner) Exec(_ context.Context, id envport.EnvID, cmd envport.Command) (envport.ExecResult, error) {
 	e, err := p.get(id)
 	if err != nil {
-		return ports.ExecResult{}, err
+		return envport.ExecResult{}, err
 	}
 	p.mu.Lock()
 	p.ExecCalls = append(p.ExecCalls, ExecCall{Env: id, Cmd: cmd})
@@ -175,10 +176,10 @@ func (p *EnvProvisioner) Exec(_ context.Context, id ports.EnvID, cmd ports.Comma
 			}
 		}
 		p.mu.Unlock()
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 	if fn == nil {
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 	res, err := fn(e, cmd)
 	if err == nil && res.Output != "" {
@@ -208,8 +209,8 @@ func parseRemove(script string) (paths []string, recursive, ok bool) {
 	return out, fields[1] == "-rf", true
 }
 
-// TailExecLog implements the optional ports.ExecLogTailer capability.
-func (p *EnvProvisioner) TailExecLog(_ context.Context, id ports.EnvID, n int) ([]byte, error) {
+// TailExecLog implements the optional envport.ExecLogTailer capability.
+func (p *EnvProvisioner) TailExecLog(_ context.Context, id envport.EnvID, n int) ([]byte, error) {
 	e, err := p.get(id)
 	if err != nil {
 		return nil, err
@@ -226,7 +227,7 @@ func (p *EnvProvisioner) TailExecLog(_ context.Context, id ports.EnvID, n int) (
 	return append([]byte(nil), log...), nil
 }
 
-func (p *EnvProvisioner) ReadFile(_ context.Context, id ports.EnvID, path string) ([]byte, error) {
+func (p *EnvProvisioner) ReadFile(_ context.Context, id envport.EnvID, path string) ([]byte, error) {
 	e, err := p.get(id)
 	if err != nil {
 		return nil, err
@@ -242,7 +243,7 @@ func (p *EnvProvisioner) ReadFile(_ context.Context, id ports.EnvID, path string
 
 // ListFiles lists the Files under dir; a directory with none is not there
 // (the fake keeps files, not directories).
-func (p *EnvProvisioner) ListFiles(_ context.Context, id ports.EnvID, dir string) ([]ports.FileEntry, error) {
+func (p *EnvProvisioner) ListFiles(_ context.Context, id envport.EnvID, dir string) ([]envport.FileEntry, error) {
 	e, err := p.get(id)
 	if err != nil {
 		return nil, err
@@ -250,23 +251,23 @@ func (p *EnvProvisioner) ListFiles(_ context.Context, id ports.EnvID, dir string
 	prefix := strings.TrimSuffix(dir, "/") + "/"
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	var out []ports.FileEntry
+	var out []envport.FileEntry
 	for path, data := range e.Files {
 		if strings.HasPrefix(path, prefix) {
-			out = append(out, ports.FileEntry{Path: path, Size: int64(len(data))})
+			out = append(out, envport.FileEntry{Path: path, Size: int64(len(data))})
 		}
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("%s: %w", dir, fs.ErrNotExist)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	if len(out) > ports.ListFilesLimit {
-		out = out[:ports.ListFilesLimit]
+	if len(out) > envport.ListFilesLimit {
+		out = out[:envport.ListFilesLimit]
 	}
 	return out, nil
 }
 
-func (p *EnvProvisioner) WriteFile(_ context.Context, id ports.EnvID, path string, data []byte, _ fs.FileMode) error {
+func (p *EnvProvisioner) WriteFile(_ context.Context, id envport.EnvID, path string, data []byte, _ fs.FileMode) error {
 	e, err := p.get(id)
 	if err != nil {
 		return err
@@ -277,17 +278,17 @@ func (p *EnvProvisioner) WriteFile(_ context.Context, id ports.EnvID, path strin
 	return nil
 }
 
-func (p *EnvProvisioner) Status(_ context.Context, id ports.EnvID) (ports.EnvStatus, error) {
+func (p *EnvProvisioner) Status(_ context.Context, id envport.EnvID) (envport.EnvStatus, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	e, ok := p.envs[id]
 	if !ok {
-		return ports.EnvAbsent, nil
+		return envport.EnvAbsent, nil
 	}
 	return e.Status, nil
 }
 
-func (p *EnvProvisioner) Destroy(_ context.Context, id ports.EnvID) error {
+func (p *EnvProvisioner) Destroy(_ context.Context, id envport.EnvID) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.envs, id)
@@ -298,28 +299,28 @@ func (p *EnvProvisioner) Destroy(_ context.Context, id ports.EnvID) error {
 // --- EgressController (in-memory, for the allow/denials endpoint tests) ------
 
 // Allowed records AllowEgress calls per env; Denied seeds EgressDenials.
-func (p *EnvProvisioner) EgressDenials(_ context.Context, id ports.EnvID) []ports.EgressDenial {
+func (p *EnvProvisioner) EgressDenials(_ context.Context, id envport.EnvID) []ports.EgressDenial {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]ports.EgressDenial(nil), p.Denied[id]...)
 }
 
-func (p *EnvProvisioner) AllowEgress(_ context.Context, id ports.EnvID, host string) error {
+func (p *EnvProvisioner) AllowEgress(_ context.Context, id envport.EnvID, host string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.Allowed == nil {
-		p.Allowed = map[ports.EnvID][]string{}
+		p.Allowed = map[envport.EnvID][]string{}
 	}
 	p.Allowed[id] = append(p.Allowed[id], host)
 	return nil
 }
 
 // Rules records SetEgressRule calls per env as "host=allow|deny".
-func (p *EnvProvisioner) SetEgressRule(_ context.Context, id ports.EnvID, host string, allow bool) error {
+func (p *EnvProvisioner) SetEgressRule(_ context.Context, id envport.EnvID, host string, allow bool) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.Rules == nil {
-		p.Rules = map[ports.EnvID][]string{}
+		p.Rules = map[envport.EnvID][]string{}
 	}
 	verb := "deny"
 	if allow {
@@ -333,7 +334,7 @@ func (p *EnvProvisioner) SetEgressRule(_ context.Context, id ports.EnvID, host s
 // the real gateway folds them into its policy file: allow-mode, Allowed seeds
 // the allowlist, then Rules replay in order (allow → unblock + allowlist,
 // deny → block + drop from the allowlist).
-func (p *EnvProvisioner) EgressPolicy(_ context.Context, id ports.EnvID) (ports.EgressPolicy, error) {
+func (p *EnvProvisioner) EgressPolicy(_ context.Context, id envport.EnvID) (ports.EgressPolicy, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	pol := ports.EgressPolicy{Mode: "allow", Domains: append([]string(nil), p.Allowed[id]...)}
@@ -378,13 +379,13 @@ var _ ports.EgressController = (*EnvProvisioner)(nil)
 // --- AgentRunner ------------------------------------------------------------
 
 type RunCall struct {
-	Env  ports.EnvID
+	Env  envport.EnvID
 	Spec ports.AgentSpec
 	In   ports.AgentInput
 }
 
 type ResumeCall struct {
-	Env     ports.EnvID
+	Env     envport.EnvID
 	Session ports.SessionID
 	Reply   string
 	In      ports.AgentInput
@@ -440,7 +441,7 @@ func (r *AgentRunner) SnapshotRunCalls() []RunCall {
 	return append([]RunCall(nil), r.RunCalls...)
 }
 
-func (r *AgentRunner) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec, in ports.AgentInput) (ports.AgentResult, error) {
+func (r *AgentRunner) Run(ctx context.Context, env envport.EnvID, spec ports.AgentSpec, in ports.AgentInput) (ports.AgentResult, error) {
 	r.mu.Lock()
 	call := RunCall{Env: env, Spec: spec, In: in}
 	r.RunCalls = append(r.RunCalls, call)
@@ -458,7 +459,7 @@ func (r *AgentRunner) Run(ctx context.Context, env ports.EnvID, spec ports.Agent
 	return res, err
 }
 
-func (r *AgentRunner) Resume(ctx context.Context, env ports.EnvID, s ports.SessionID, in ports.AgentInput) (ports.AgentResult, error) {
+func (r *AgentRunner) Resume(ctx context.Context, env envport.EnvID, s ports.SessionID, in ports.AgentInput) (ports.AgentResult, error) {
 	r.mu.Lock()
 	call := ResumeCall{Env: env, Session: s, Reply: in.Prompt, In: in}
 	r.ResumeCalls = append(r.ResumeCalls, call)
@@ -1431,7 +1432,7 @@ func (r ReadOnlyTicketSource) OpenAttachment(ctx context.Context, a ports.Source
 
 // Compile-time port conformance.
 var (
-	_ ports.EnvProvisioner      = (*EnvProvisioner)(nil)
+	_ envport.EnvProvisioner    = (*EnvProvisioner)(nil)
 	_ ports.AgentRunner         = (*AgentRunner)(nil)
 	_ ports.RepoHost            = (*RepoHost)(nil)
 	_ ports.NotificationChannel = (*Channel)(nil)

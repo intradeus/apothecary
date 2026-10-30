@@ -14,7 +14,7 @@
 //     on every host.
 //
 // Every `project` argument in this package is the project's ID (projects.id).
-// ports.ProjectHostKey turns it into the token names use; the project's NAME is
+// envport.ProjectHostKey turns it into the token names use; the project's NAME is
 // a label and nothing more.
 package egressgw
 
@@ -32,7 +32,7 @@ import (
 	"time"
 
 	"apothecary/internal/egressgw/policyfile"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // HostRun runs one CLI invocation (docker against the HOST daemon, or kubectl).
@@ -135,7 +135,7 @@ func (m *Manager) projectMu(project string) *sync.Mutex {
 // gwName is the gateway's name on every host: apo-gw-<project key>. Never the
 // project's name — a rename must not move a project off its gateway and
 // caches, and two projects with the same name must not share them.
-func gwName(project string) string { return "apo-gw-" + ports.ProjectHostKey(project) }
+func gwName(project string) string { return "apo-gw-" + envport.ProjectHostKey(project) }
 
 // --- lifecycle ------------------------------------------------------------
 
@@ -352,11 +352,11 @@ func BuildCacheImageRef(gwIP, project string) string {
 	return buildCacheRepo(gwIP, project) + ":image"
 }
 
-// buildCacheRepo keys the repository by ports.ProjectHostKey(project) — the
+// buildCacheRepo keys the repository by envport.ProjectHostKey(project) — the
 // lowercased project id, which is also all the distribution spec allows in a
 // path component. Not the name: a rename must not orphan the cache.
 func buildCacheRepo(gwIP, project string) string {
-	return gwIP + ":" + BuildCachePort + "/" + ports.ProjectHostKey(project) + "/devcontainer"
+	return gwIP + ":" + BuildCachePort + "/" + envport.ProjectHostKey(project) + "/devcontainer"
 }
 
 // BuildCacheSize reports how many bytes the project's build cache occupies.

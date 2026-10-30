@@ -21,7 +21,7 @@ import (
 	"apothecary/internal/bootstrap"
 	"apothecary/internal/flow"
 	"apothecary/internal/modelcheck"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/shell"
 	"apothecary/internal/wsname"
@@ -129,7 +129,7 @@ func check(ctx context.Context, res *resolution.Resolution, runID string, opts O
 	branch := "apothecary/" + strings.ToLower(runID)
 
 	name := wsname.For(branch, runID)
-	env, err := envp.Provision(ctx, ports.EnvSpec{
+	env, err := envp.Provision(ctx, envport.EnvSpec{
 		RunID:   runID,
 		RepoURL: res.RepoRef.URL,
 		Branch:  branch,
@@ -154,7 +154,7 @@ func check(ctx context.Context, res *resolution.Resolution, runID string, opts O
 		// half a workspace (a sandbox, a volume, an egress network) under
 		// the name it was given — which is its identity. Remove by name.
 		if env == "" {
-			env = ports.EnvID(name)
+			env = envport.EnvID(name)
 		}
 		return failed, func() int { return teardown(envp, env, emit) }
 	}
@@ -167,7 +167,7 @@ func check(ctx context.Context, res *resolution.Resolution, runID string, opts O
 	}
 
 	engineURL := opts.EngineURL
-	if p, ok := envp.(ports.EngineURLProvider); ok {
+	if p, ok := envp.(envport.EngineURLProvider); ok {
 		engineURL = p.EngineURL(env)
 	}
 	step("bootstrap", bootstrap.RunBootstrap(ctx, envp, env, bootstrap.BootstrapSpec{
@@ -303,7 +303,7 @@ func envcheckExtras(res *resolution.Resolution, branch string) []bootstrap.Extra
 
 // teardown removes a check's workspace on a context of its own: a
 // cancelled check must still clean up after itself.
-func teardown(envp ports.EnvProvisioner, env ports.EnvID, emit func(CheckStep)) int {
+func teardown(envp envport.EnvProvisioner, env envport.EnvID, emit func(CheckStep)) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	s := CheckStep{ID: "destroy", Status: "pass"}
@@ -316,8 +316,8 @@ func teardown(envp ports.EnvProvisioner, env ports.EnvID, emit func(CheckStep)) 
 	return 0
 }
 
-func execExpect(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID, script, dir string, wantSuccess bool) error {
-	res, err := envp.Exec(ctx, env, ports.Command{Script: script, Dir: dir, Timeout: 3 * time.Minute})
+func execExpect(ctx context.Context, envp envport.EnvProvisioner, env envport.EnvID, script, dir string, wantSuccess bool) error {
+	res, err := envp.Exec(ctx, env, envport.Command{Script: script, Dir: dir, Timeout: 3 * time.Minute})
 	if err != nil {
 		return err
 	}
@@ -330,7 +330,7 @@ func execExpect(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID,
 	return nil
 }
 
-func rwRoundTrip(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID, path string, data []byte) error {
+func rwRoundTrip(ctx context.Context, envp envport.EnvProvisioner, env envport.EnvID, path string, data []byte) error {
 	if err := envp.WriteFile(ctx, env, path, data, 0o600); err != nil {
 		return err
 	}

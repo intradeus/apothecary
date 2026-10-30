@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/resources"
 	"apothecary/internal/run"
@@ -202,7 +203,7 @@ func TestPollersReadTheProjection(t *testing.T) {
 	if n := vs.logReads.Load(); n != 0 {
 		t.Errorf("%d event-log reads during reconcile/reap/sample/recover, want 0 (the projection answers them)", n)
 	}
-	if st := h.e.envState.Statuses()[id]; st != ports.EnvRunning {
+	if st := h.e.envState.Statuses()[id]; st != envport.EnvRunning {
 		t.Errorf("reconciled status = %q, want running — the projection must carry env_id and project_id", st)
 	}
 }
@@ -217,14 +218,14 @@ func TestReconcileRecordsConfigDirty(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.e.Wait(id)
-	envID := ports.EnvID(h.view(t, id).EnvID)
+	envID := envport.EnvID(h.view(t, id).EnvID)
 	if err := h.e.envState.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if h.e.envState.Dirty()[id] {
 		t.Fatal("clean workspace reads dirty")
 	}
-	h.envp.Dirty = map[ports.EnvID]bool{envID: true}
+	h.envp.Dirty = map[envport.EnvID]bool{envID: true}
 	if err := h.e.envState.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}

@@ -16,6 +16,7 @@ import (
 	"apothecary/internal/browsermcp"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
@@ -223,15 +224,15 @@ func TestBrowserSessionDialsTheRunsWorkspace(t *testing.T) {
 }
 
 type countingExposer struct {
-	ports.EnvProvisioner
+	envport.EnvProvisioner
 	exposed atomic.Int32
 }
 
-func (c *countingExposer) ExposePort(context.Context, ports.EnvID, int) (ports.PortConn, error) {
+func (c *countingExposer) ExposePort(context.Context, envport.EnvID, int) (envport.PortConn, error) {
 	c.exposed.Add(1)
 	return pipeConn{}, nil
 }
-func (c *countingExposer) AppPorts(context.Context, ports.EnvID) []int { return nil }
+func (c *countingExposer) AppPorts(context.Context, envport.EnvID) []int { return nil }
 
 type pipeConn struct{}
 

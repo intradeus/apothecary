@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/redact"
 	"apothecary/internal/resolution"
 )
@@ -20,14 +20,14 @@ import (
 func TestPushScopesAndRedactsFirst(t *testing.T) {
 	e := New(nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	type seeded struct {
-		env      ports.EnvID
+		env      envport.EnvID
 		redacted bool // the token was already known when the file was written
 	}
 	var writes []seeded
-	sink := func(ids []string, env ports.EnvID) (*resolution.Resolution, *redact.Redactor) {
+	sink := func(ids []string, env envport.EnvID) (*resolution.Resolution, *redact.Redactor) {
 		r := redact.New()
 		res := &resolution.Resolution{CredentialIDs: ids}
-		res.SeedAuth = func(_ context.Context, env ports.EnvID, register func(string)) error {
+		res.SeedAuth = func(_ context.Context, env envport.EnvID, register func(string)) error {
 			register("fresh-access-token-123")
 			writes = append(writes, seeded{env: env, redacted: r.Scrub("fresh-access-token-123") != "fresh-access-token-123"})
 			return nil

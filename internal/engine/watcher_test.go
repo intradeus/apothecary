@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -87,15 +88,15 @@ func (g *mergeGit) advanceTarget(target string) string {
 	return g.remote[target]
 }
 
-func (g *mergeGit) exec(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+func (g *mergeGit) exec(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	s := strings.TrimSpace(cmd.Script)
 	g.execs = append(g.execs, s)
 	f := strings.Fields(s)
-	ok := func(out string) (ports.ExecResult, error) { return ports.ExecResult{Output: out}, nil }
-	fail := func(out string) (ports.ExecResult, error) { return ports.ExecResult{ExitCode: 1, Output: out}, nil }
-	conflict := func(op, onto string) (ports.ExecResult, error) {
+	ok := func(out string) (envport.ExecResult, error) { return envport.ExecResult{Output: out}, nil }
+	fail := func(out string) (envport.ExecResult, error) { return envport.ExecResult{ExitCode: 1, Output: out}, nil }
+	conflict := func(op, onto string) (envport.ExecResult, error) {
 		g.conflicts--
 		g.paused, g.markers = op+" "+onto, []string{"conflict.go"}
 		return fail("CONFLICT (content): Merge conflict in conflict.go")
@@ -290,11 +291,11 @@ func newWatcherHarnessDocWith(t *testing.T, doc string, opt harnessOpt) *watcher
 	t.Helper()
 	ph := newPhasedHarnessWith(t, doc, opt)
 	rh := &watcherHarness{phasedHarness: ph, git: newMergeGit("main"), resolverClears: true}
-	ph.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	ph.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if cmd.Dir == "repo" {
 			return rh.git.exec(env, cmd)
 		}
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 	inner := ph.runner.RunFunc
 	ph.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {

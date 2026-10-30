@@ -28,6 +28,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/mrs"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/resources"
 	"apothecary/internal/run"
@@ -857,11 +858,11 @@ func TestLogsEndpoint(t *testing.T) {
 	files := newTestFiles(t, 1<<20, []string{"text/*"}) // logs serve from snapshots (DESIGN-FILES §5.4)
 	x := newEnvWith(t, engine.Config{RunsDir: dir}, files.deps)
 	files.serve(x)
-	x.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	x.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "make lint") {
-			return ports.ExecResult{ExitCode: 0, Output: "=== RUN TestAll\n--- PASS: all 42 tests"}, nil
+			return envport.ExecResult{ExitCode: 0, Output: "=== RUN TestAll\n--- PASS: all 42 tests"}, nil
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 	runID := x.createTicket(t, "T")
 	x.e.Wait(runID)
@@ -1109,7 +1110,7 @@ func TestRunViewsCarryEnvDirty(t *testing.T) {
 	if detail.Run.EnvID == "" || detail.Run.EnvDirty {
 		t.Fatalf("setup: %+v", detail.Run)
 	}
-	x.envp.Dirty = map[ports.EnvID]bool{ports.EnvID(detail.Run.EnvID): true}
+	x.envp.Dirty = map[envport.EnvID]bool{envport.EnvID(detail.Run.EnvID): true}
 	if err := x.srv.EnvState.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}

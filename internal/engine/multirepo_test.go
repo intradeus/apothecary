@@ -12,6 +12,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/mrs"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
@@ -75,13 +76,13 @@ func (g *fakeGit) chain(tip, base string) []string {
 	return out
 }
 
-func (g *fakeGit) exec(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+func (g *fakeGit) exec(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	s := strings.TrimSpace(cmd.Script)
 	f := strings.Fields(s)
-	ok := func(out string) (ports.ExecResult, error) { return ports.ExecResult{ExitCode: 0, Output: out}, nil }
-	fail := func(out string) (ports.ExecResult, error) { return ports.ExecResult{ExitCode: 1, Output: out}, nil }
+	ok := func(out string) (envport.ExecResult, error) { return envport.ExecResult{ExitCode: 0, Output: out}, nil }
+	fail := func(out string) (envport.ExecResult, error) { return envport.ExecResult{ExitCode: 1, Output: out}, nil }
 	switch {
 	case strings.HasPrefix(s, "git switch "):
 		// bootstrap: git switch "b" 2>/dev/null || git switch -c "b" origin/src
@@ -115,12 +116,12 @@ func (g *fakeGit) exec(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error)
 }
 
 // gitPerDir routes the fake provisioner's exec by checkout dir.
-func gitPerDir(gits map[string]*fakeGit) func(*fake.Env, ports.Command) (ports.ExecResult, error) {
-	return func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+func gitPerDir(gits map[string]*fakeGit) func(*fake.Env, envport.Command) (envport.ExecResult, error) {
+	return func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if g, ok := gits[cmd.Dir]; ok {
 			return g.exec(env, cmd)
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 }
 

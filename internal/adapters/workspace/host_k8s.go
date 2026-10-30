@@ -20,7 +20,7 @@ import (
 
 	"apothecary/internal/egressgw"
 	"apothecary/internal/kube"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	wsassets "apothecary/workspace"
 )
 
@@ -138,7 +138,7 @@ func (h *k8sHost) fs(name string) sandboxFS { return execFS{h: h, name: name} }
 
 // --- prepare -----------------------------------------------------------------
 
-func (h *k8sHost) prepare(ctx context.Context, name string, spec ports.EnvSpec, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error) {
+func (h *k8sHost) prepare(ctx context.Context, name string, spec envport.EnvSpec, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error) {
 	a := h.a
 	folder := a.folderFor(name)
 	if !a.noSandboxGuard && strings.HasPrefix(folder, "/tmp/") {
@@ -214,7 +214,7 @@ func (h *k8sHost) relayToken(ctx context.Context, name string, create bool, proj
 func (h *k8sHost) labels(name, project string) map[string]string {
 	l := map[string]string{k8sLabelManaged: "true", k8sLabelRun: name}
 	if project != "" {
-		l[k8sLabelProject] = ports.ProjectHostKey(project)
+		l[k8sLabelProject] = envport.ProjectHostKey(project)
 	}
 	return l
 }
@@ -223,7 +223,7 @@ func (h *k8sHost) labels(name, project string) map[string]string {
 // waits for the pod to be Ready (its dockerd answering). A pod that ended
 // (Failed/Succeeded) is replaced — the claim, and with it the checkout and the
 // inner daemon's images and containers, survives.
-func (h *k8sHost) ensurePod(ctx context.Context, name string, spec ports.EnvSpec, att egressgw.Attachment) error {
+func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSpec, att egressgw.Attachment) error {
 	k := h.cfg.Kube
 	if _, err := h.relayToken(ctx, name, true, spec.Project); err != nil {
 		return err
@@ -312,7 +312,7 @@ func (h *k8sHost) networkPolicy(name, project string) (kube.NetworkPolicy, error
 	if h.cfg.Firewall {
 		spec.PolicyTypes = append(spec.PolicyTypes, "Egress")
 		spec.Egress = []kube.NetworkPolicyRule{
-			{To: []kube.NetworkPolicyPeer{{PodSelector: &kube.LabelSelector{MatchLabels: map[string]string{k8sLabelGateway: ports.ProjectHostKey(project)}}}},
+			{To: []kube.NetworkPolicyPeer{{PodSelector: &kube.LabelSelector{MatchLabels: map[string]string{k8sLabelGateway: envport.ProjectHostKey(project)}}}},
 				Ports: []kube.NetworkPolicyPort{{Protocol: "UDP", Port: 51820}}},
 			{To: []kube.NetworkPolicyPeer{engine},
 				Ports: []kube.NetworkPolicyPort{{Protocol: "TCP", Port: enginePort}}},
@@ -341,7 +341,7 @@ func (h *k8sHost) engineIP(ctx context.Context) (string, error) {
 	return ips[0].String(), nil
 }
 
-func (h *k8sHost) podManifest(ctx context.Context, name string, spec ports.EnvSpec, att egressgw.Attachment) (kube.Pod, error) {
+func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.EnvSpec, att egressgw.Attachment) (kube.Pod, error) {
 	folder := h.a.folderFor(name)
 	labels := h.labels(name, spec.Project)
 	labels[k8sLabelSandbox] = "true"
@@ -454,7 +454,7 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec ports.EnvSp
 // ensureCheckout clones the repo inside the pod, once. The credential rides
 // stdin (never argv, never the environment) into a 0600 file the clone uses
 // and removes.
-func (h *k8sHost) ensureCheckout(ctx context.Context, name, src string, spec ports.EnvSpec, plog func(string, ...any)) error {
+func (h *k8sHost) ensureCheckout(ctx context.Context, name, src string, spec envport.EnvSpec, plog func(string, ...any)) error {
 	if _, _, code, err := h.runInner(ctx, name, "test", []string{"-d", filepath.Join(src, ".git")}, nil, nil); err == nil && code == 0 {
 		return nil
 	}
@@ -560,15 +560,15 @@ func (h *k8sHost) destroySandbox(ctx context.Context, name string) error {
 
 // --- the engine bridge: a Service, no relay ------------------------------------
 
-func (h *k8sHost) ensureBridge(ports.EnvID) error                         { return nil }
+func (h *k8sHost) ensureBridge(envport.EnvID) error                       { return nil }
 func (h *k8sHost) startBridgeRelay(context.Context, string, string) error { return nil }
-func (h *k8sHost) closeBridge(ports.EnvID)                                {}
+func (h *k8sHost) closeBridge(envport.EnvID)                              {}
 func (h *k8sHost) bridgePorts() []int                                     { return nil }
 func (h *k8sHost) engineURL() string                                      { return h.cfg.EngineURL }
 
 // --- dialing in ----------------------------------------------------------------
 
-func (h *k8sHost) dial(name, sock string) ports.PortConn {
+func (h *k8sHost) dial(name, sock string) envport.PortConn {
 	return podPortConn{h: h, name: name, sock: sock}
 }
 
@@ -785,17 +785,17 @@ func parseCgroupSample(out string) (cgroupSample, error) {
 	return s, nil
 }
 
-func (h *k8sHost) sample(ctx context.Context, name string) (ports.ResourceSample, error) {
+func (h *k8sHost) sample(ctx context.Context, name string) (envport.ResourceSample, error) {
 	out, _, code, err := h.podRunner(name).Run(ctx, "sh", []string{"-c", sampleScript}, nil, nil)
 	if err != nil {
-		return ports.ResourceSample{}, err
+		return envport.ResourceSample{}, err
 	}
 	if code != 0 {
-		return ports.ResourceSample{}, fmt.Errorf("sample %s: exit %d", name, code)
+		return envport.ResourceSample{}, fmt.Errorf("sample %s: exit %d", name, code)
 	}
 	cur, err := parseCgroupSample(string(out))
 	if err != nil {
-		return ports.ResourceSample{}, fmt.Errorf("sample %s: %w", name, err)
+		return envport.ResourceSample{}, fmt.Errorf("sample %s: %w", name, err)
 	}
 	cur.at = time.Now()
 	h.mu.Lock()
@@ -803,19 +803,19 @@ func (h *k8sHost) sample(ctx context.Context, name string) (ports.ResourceSample
 	h.stats[name] = cur
 	h.mu.Unlock()
 	if !ok || cur.usageUS < prev.usageUS {
-		return ports.ResourceSample{}, fmt.Errorf("sample %s: first reading (CPU needs two)", name)
+		return envport.ResourceSample{}, fmt.Errorf("sample %s: first reading (CPU needs two)", name)
 	}
 	return cpuSample(prev, cur), nil
 }
 
 // cpuSample is docker-stats-shaped: one core = 100%.
-func cpuSample(prev, cur cgroupSample) ports.ResourceSample {
+func cpuSample(prev, cur cgroupSample) envport.ResourceSample {
 	wall := cur.at.Sub(prev.at).Microseconds()
 	cpu := 0.0
 	if wall > 0 {
 		cpu = float64(cur.usageUS-prev.usageUS) / float64(wall) * 100
 	}
-	return ports.ResourceSample{CPUPerc: cpu, CPUs: cur.cpus, MemUsed: cur.memUsed, MemLimit: cur.memLimit,
+	return envport.ResourceSample{CPUPerc: cpu, CPUs: cur.cpus, MemUsed: cur.memUsed, MemLimit: cur.memLimit,
 		NetRx: cur.rx, NetTx: cur.tx, PIDs: cur.pids}
 }
 

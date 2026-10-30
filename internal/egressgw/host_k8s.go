@@ -17,7 +17,7 @@ import (
 
 	"apothecary/internal/egressgw/policyfile"
 	"apothecary/internal/kube"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // K8sHost runs each project's gateway as a Deployment on a Kubernetes cluster.
@@ -76,7 +76,7 @@ func (h *K8sHost) httpClient() *http.Client {
 func WGSecretName(run string) string { return "apo-wg-" + run }
 
 func gwLabels(project string) map[string]string {
-	key := ports.ProjectHostKey(project)
+	key := envport.ProjectHostKey(project)
 	return map[string]string{labelManaged: "true", labelGateway: key, labelProject: key}
 }
 
@@ -195,7 +195,7 @@ func (h *K8sHost) deployment(project string, labels, annotations map[string]stri
 			// Recreate: the PVC is ReadWriteOnce, and two gateways would race
 			// for the same peers anyway.
 			Strategy: &kube.DeploymentStrategy{Type: "Recreate"},
-			Selector: kube.LabelSelector{MatchLabels: map[string]string{labelGateway: ports.ProjectHostKey(project)}},
+			Selector: kube.LabelSelector{MatchLabels: map[string]string{labelGateway: envport.ProjectHostKey(project)}},
 			Template: kube.PodTemplateSpec{
 				Metadata: kube.ObjectMeta{Labels: podLabels},
 				Spec: kube.PodSpec{
@@ -238,7 +238,7 @@ func (h *K8sHost) service(project string, labels map[string]string) kube.Service
 	return kube.Service{TypeMeta: kube.ServiceType(),
 		Metadata: kube.ObjectMeta{Name: gwName(project), Labels: labels},
 		Spec: kube.ServiceSpec{
-			Selector: map[string]string{labelGateway: ports.ProjectHostKey(project)},
+			Selector: map[string]string{labelGateway: envport.ProjectHostKey(project)},
 			Ports: []kube.ServicePort{
 				{Name: "wg", Port: wgPort, Protocol: "UDP"},
 				{Name: "control", Port: 9041, Protocol: "TCP"},
@@ -259,7 +259,7 @@ func (h *K8sHost) enginePeer() kube.NetworkPolicyPeer {
 // only the engine the control API; the gateway itself may reach the cluster
 // DNS and anything outside the protected ranges.
 func (h *K8sHost) networkPolicy(project string, labels map[string]string) kube.NetworkPolicy {
-	key := ports.ProjectHostKey(project)
+	key := envport.ProjectHostKey(project)
 	return kube.NetworkPolicy{TypeMeta: kube.NetworkPolicyType(),
 		Metadata: kube.ObjectMeta{Name: gwName(project), Labels: labels},
 		Spec: kube.NetworkPolicySpec{
@@ -335,7 +335,7 @@ func (h *K8sHost) AttachRun(ctx context.Context, project, projectName, run strin
 	if found, err := h.Kube.Get(ctx, "service", gwName(project), &svc); err != nil || !found || svc.Spec.ClusterIP == "" {
 		return Attachment{}, fmt.Errorf("egressgw: gateway service %s has no cluster IP (found=%v): %v", gwName(project), found, err)
 	}
-	key := ports.ProjectHostKey(project)
+	key := envport.ProjectHostKey(project)
 	var list struct {
 		Items []kube.Secret `json:"items"`
 	}

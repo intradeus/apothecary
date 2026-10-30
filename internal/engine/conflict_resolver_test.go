@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -46,9 +47,9 @@ func TestBuiltinConflictResolverTemplateRuns(t *testing.T) {
 	ph.repoHost.SetMergeable(ref.IID, ports.MergeConflicts, "a1")
 	// A push lands on the merge request: the repository host sees the new
 	// head and recomputes — it merges cleanly now.
-	ph.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	ph.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if cmd.Dir != "repo" {
-			return ports.ExecResult{}, nil
+			return envport.ExecResult{}, nil
 		}
 		res, err := git.exec(env, cmd)
 		if strings.HasPrefix(strings.TrimSpace(cmd.Script), "git push") && res.ExitCode == 0 {

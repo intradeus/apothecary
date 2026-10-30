@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"apothecary/internal/egressgw"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 type call struct {
@@ -188,7 +188,7 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	seedDevcontainer(t, a, "apothecary-run1")
-	id, err := a.Provision(context.Background(), ports.EnvSpec{
+	id, err := a.Provision(context.Background(), envport.EnvSpec{
 		RunID: "RUN1", RepoURL: "https://g.local/grp/repo.git",
 		GitUser: "oauth2", GitPass: "sekret",
 	})
@@ -279,7 +279,7 @@ func TestProvisionStreamsToExecLog(t *testing.T) {
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	seedDevcontainer(t, a, "apothecary-run1")
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{
+	if _, err := a.Provision(context.Background(), envport.EnvSpec{
 		RunID: "RUN1", RepoURL: "https://g.local/grp/repo.git",
 	}); err != nil {
 		t.Fatal(err)
@@ -315,14 +315,14 @@ func TestProvisionUsesEngineSuppliedName(t *testing.T) {
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, name)
 	seedDevcontainer(t, a, name)
-	id, err := a.Provision(context.Background(), ports.EnvSpec{
+	id, err := a.Provision(context.Background(), envport.EnvSpec{
 		RunID: "RUN1", Name: name, Project: "01HACMEWEB", ProjectName: "Acme Web",
 		RepoURL: "https://g.local/r.git",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != ports.EnvID(name) {
+	if id != envport.EnvID(name) {
 		t.Errorf("env id = %s, want %s", id, name)
 	}
 	// The env is tracked under the engine name — both the id-label and the
@@ -380,7 +380,7 @@ func TestProvisionHonorsRepoDevcontainer(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(src, ".devcontainer", "devcontainer.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"}); err != nil {
+	if _, err := a.Provision(context.Background(), envport.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range r.calls {
@@ -431,7 +431,7 @@ func TestRepoDevcontainerMountsToolsNotFeatures(t *testing.T) {
 	armSandbox(t, a, "apothecary-run1")
 	src := seedRepoDevcontainer(t, a, "apothecary-run1")
 
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"}); err != nil {
+	if _, err := a.Provision(context.Background(), envport.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"}); err != nil {
 		t.Fatal(err)
 	}
 	up := find(t, r.calls, "devcontainer", "up")
@@ -467,7 +467,7 @@ func TestProvisionRejectsRepoWithoutDevcontainer(t *testing.T) {
 	r := &scriptRunner{responses: []response{{code: 0}}} // clone
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
-	_, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"})
+	_, err := a.Provision(context.Background(), envport.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"})
 	if err == nil || !strings.Contains(err.Error(), ".devcontainer/devcontainer.json") {
 		t.Fatalf("want no-devcontainer error, got %v", err)
 	}
@@ -482,7 +482,7 @@ func TestProvisionSurfacesUpFailure(t *testing.T) {
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	seedDevcontainer(t, a, "apothecary-run1")
-	_, err := a.Provision(context.Background(), ports.EnvSpec{RunID: "run1", RepoURL: "u"})
+	_, err := a.Provision(context.Background(), envport.EnvSpec{RunID: "run1", RepoURL: "u"})
 	if err == nil || !strings.Contains(err.Error(), "Dockerfile failed") {
 		t.Fatalf("want up failure with message, got %v", err)
 	}
@@ -493,7 +493,7 @@ func TestExecPropagatesExitAndCombinesOutput(t *testing.T) {
 		{stdout: "out\n", stderr: "err\n", code: 7},
 	}}
 	a := newTestAdapter(t, r)
-	res, err := a.Exec(context.Background(), "apothecary-run1", ports.Command{Script: "make test", Dir: "repo"})
+	res, err := a.Exec(context.Background(), "apothecary-run1", envport.Command{Script: "make test", Dir: "repo"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +524,7 @@ func TestExecPropagatesExitAndCombinesOutput(t *testing.T) {
 func TestExecStreamsToTailableLog(t *testing.T) {
 	r := &scriptRunner{responses: []response{{stdout: "live output\n"}}}
 	a := newTestAdapter(t, r)
-	if _, err := a.Exec(context.Background(), "ws1", ports.Command{Script: "echo live output"}); err != nil {
+	if _, err := a.Exec(context.Background(), "ws1", envport.Command{Script: "echo live output"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := a.TailExecLog(context.Background(), "ws1", 0)
@@ -573,25 +573,25 @@ func TestStatusMapping(t *testing.T) {
 		name string
 		arm  bool       // pre-create the inner socket (a DinD env exists)
 		resp []response // sandbox-state query, then (if running) inner workspace query
-		want ports.EnvStatus
+		want envport.EnvStatus
 	}{
 		{"sandbox running + workspace running", true,
-			[]response{{stdout: "running\n"}, {stdout: "running\n"}}, ports.EnvRunning},
+			[]response{{stdout: "running\n"}, {stdout: "running\n"}}, envport.EnvRunning},
 		{"sandbox running + workspace created", true,
-			[]response{{stdout: "running\n"}, {stdout: "created\n"}}, ports.EnvStarting},
+			[]response{{stdout: "running\n"}, {stdout: "created\n"}}, envport.EnvStarting},
 		{"sandbox running + workspace exited", true,
-			[]response{{stdout: "running\n"}, {stdout: "exited\n"}}, ports.EnvStopped},
+			[]response{{stdout: "running\n"}, {stdout: "exited\n"}}, envport.EnvStopped},
 		{"sandbox created", true,
-			[]response{{stdout: "created\n"}}, ports.EnvStarting},
+			[]response{{stdout: "created\n"}}, envport.EnvStarting},
 		{"sandbox exited", true,
-			[]response{{stdout: "exited\n"}}, ports.EnvStopped},
+			[]response{{stdout: "exited\n"}}, envport.EnvStopped},
 		{"DinD env, sandbox gone → absent", true,
-			[]response{{stdout: ""}}, ports.EnvAbsent},
+			[]response{{stdout: ""}}, envport.EnvAbsent},
 		// Legacy (pre-DinD) env: no sandbox, no socket → the old host-label query.
 		{"legacy running", false,
-			[]response{{stdout: ""}, {stdout: "running\n"}}, ports.EnvRunning},
+			[]response{{stdout: ""}, {stdout: "running\n"}}, envport.EnvRunning},
 		{"legacy absent", false,
-			[]response{{stdout: ""}, {stdout: ""}}, ports.EnvAbsent},
+			[]response{{stdout: ""}, {stdout: ""}}, envport.EnvAbsent},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -630,7 +630,7 @@ func TestRebuildNonComposeRemovesContainer(t *testing.T) {
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	seedDevcontainer(t, a, "apothecary-run1") // non-compose devcontainer
-	err := a.Rebuild(context.Background(), ports.EnvSpec{
+	err := a.Rebuild(context.Background(), envport.EnvSpec{
 		RunID: "run1", Name: "apothecary-run1",
 		RepoURL: "https://g.local/r.git",
 	})
@@ -679,7 +679,7 @@ func TestStartEditorInstallsExtensionUnion(t *testing.T) {
   "customizations": { "vscode": { "extensions": ["golang.go", "ms-python.python",] } } }`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort, ports.EditorSettings{
+	if err := a.StartEditor(context.Background(), "apothecary-run1", envport.CodeServerPort, envport.EditorSettings{
 		Extensions: []string{"ms-python.python", " esbenp.prettier-vscode "},
 	}); err != nil {
 		t.Fatal(err)
@@ -714,12 +714,12 @@ func TestEditorExtensionsIsTheInstalledUnion(t *testing.T) {
 		`{ "image": "debian", "customizations": { "vscode": { "extensions": ["golang.go"] } } }`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := a.EditorExtensions(context.Background(), "apothecary-run1", ports.EditorSettings{Extensions: []string{"golang.go", "esbenp.prettier-vscode"}})
+	got := a.EditorExtensions(context.Background(), "apothecary-run1", envport.EditorSettings{Extensions: []string{"golang.go", "esbenp.prettier-vscode"}})
 	if want := []string{"esbenp.prettier-vscode", "golang.go"}; !slices.Equal(got, want) {
 		t.Errorf("extensions = %v, want %v", got, want)
 	}
 	// No definition, no project list: nothing — never an error.
-	if got := a.EditorExtensions(context.Background(), "apothecary-run2", ports.EditorSettings{}); len(got) != 0 {
+	if got := a.EditorExtensions(context.Background(), "apothecary-run2", envport.EditorSettings{}); len(got) != 0 {
 		t.Errorf("extensions of nothing = %v", got)
 	}
 }
@@ -743,7 +743,7 @@ func TestStartEditor(t *testing.T) {
 	t.Run("script shape", func(t *testing.T) {
 		r := &scriptRunner{responses: []response{{code: 0}}}
 		a := newTestAdapter(t, r)
-		if err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort, ports.EditorSettings{Theme: "Monokai"}); err != nil {
+		if err := a.StartEditor(context.Background(), "apothecary-run1", envport.CodeServerPort, envport.EditorSettings{Theme: "Monokai"}); err != nil {
 			t.Fatal(err)
 		}
 		script := editorExec(t, r)
@@ -765,7 +765,7 @@ func TestStartEditor(t *testing.T) {
 	t.Run("no settings → settings.json untouched", func(t *testing.T) {
 		r := &scriptRunner{responses: []response{{code: 0}}}
 		a := newTestAdapter(t, r)
-		if err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort, ports.EditorSettings{}); err != nil {
+		if err := a.StartEditor(context.Background(), "apothecary-run1", envport.CodeServerPort, envport.EditorSettings{}); err != nil {
 			t.Fatal(err)
 		}
 		if script := editorExec(t, r); strings.Contains(script, "settings.json") {
@@ -776,7 +776,7 @@ func TestStartEditor(t *testing.T) {
 		r := &scriptRunner{responses: []response{{code: 0}}}
 		a := newTestAdapter(t, r)
 		a.recordGateway("apothecary-run1", "01HACME", "172.20.0.2")
-		if err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort, ports.EditorSettings{}); err != nil {
+		if err := a.StartEditor(context.Background(), "apothecary-run1", envport.CodeServerPort, envport.EditorSettings{}); err != nil {
 			t.Fatal(err)
 		}
 		script := editorExec(t, r)
@@ -791,7 +791,7 @@ func TestStartEditor(t *testing.T) {
 	t.Run("musl image → no code-server", func(t *testing.T) {
 		r := &scriptRunner{responses: []response{{code: codeServerMissingExit, stderr: "no code-server"}}}
 		a := newTestAdapter(t, r)
-		err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort, ports.EditorSettings{})
+		err := a.StartEditor(context.Background(), "apothecary-run1", envport.CodeServerPort, envport.EditorSettings{})
 		if err == nil || !strings.Contains(err.Error(), "glibc") {
 			t.Fatalf("err = %v, want the glibc explanation", err)
 		}
@@ -799,7 +799,7 @@ func TestStartEditor(t *testing.T) {
 	t.Run("other failure → reported", func(t *testing.T) {
 		r := &scriptRunner{responses: []response{{code: 1, stderr: "did not start listening"}}}
 		a := newTestAdapter(t, r)
-		err := a.StartEditor(context.Background(), "apothecary-run1", ports.CodeServerPort, ports.EditorSettings{})
+		err := a.StartEditor(context.Background(), "apothecary-run1", envport.CodeServerPort, envport.EditorSettings{})
 		if err == nil || !strings.Contains(err.Error(), "did not start listening") {
 			t.Fatalf("err = %v", err)
 		}
@@ -844,7 +844,7 @@ func TestStatusHostDaemonErrorPropagates(t *testing.T) {
 			if err == nil {
 				t.Fatalf("want error, got status %q", st)
 			}
-			if st == ports.EnvAbsent {
+			if st == envport.EnvAbsent {
 				t.Error("a daemon blip must not read as EnvAbsent")
 			}
 		})
@@ -887,7 +887,7 @@ func TestDestroyRemovesSandboxAndVolume(t *testing.T) {
 	a := newTestAdapter(t, r)
 	const name = "apothecary-run1"
 	armSandbox(t, a, name)
-	if err := a.Destroy(context.Background(), ports.EnvID(name)); err != nil {
+	if err := a.Destroy(context.Background(), envport.EnvID(name)); err != nil {
 		t.Fatal(err)
 	}
 	rm := find(t, r.calls, "docker", "rm")
@@ -913,7 +913,7 @@ func provisionRepoDinD(t *testing.T, rest []response) (*Adapter, *scriptRunner) 
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	seedRepoDevcontainer(t, a, "apothecary-run1")
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{
+	if _, err := a.Provision(context.Background(), envport.EnvSpec{
 		RunID: "run1", Project: "01HACME", ProjectName: "Acme", RepoURL: "https://g.local/r.git",
 	}); err != nil {
 		t.Fatal(err)
@@ -977,7 +977,7 @@ func TestSandboxRuntimeReplacesPrivileged(t *testing.T) {
 	a.cfg.SandboxRuntime = "sysbox-runc"
 	const name = "apothecary-run1"
 	armSandbox(t, a, name)
-	if err := a.ensureSandbox(context.Background(), name, ports.EnvSpec{Project: "Acme"}, egressgw.Attachment{}, "/tc"); err != nil {
+	if err := a.ensureSandbox(context.Background(), name, envport.EnvSpec{Project: "Acme"}, egressgw.Attachment{}, "/tc"); err != nil {
 		t.Fatal(err)
 	}
 	run := find(t, r.calls, "docker", "run")
@@ -1007,7 +1007,7 @@ func TestSandboxRuntimeMissingFailsEarly(t *testing.T) {
 	r := &scriptRunner{responses: []response{{stdout: `{"runc":{},"nvidia":{}}`}}}
 	a := newTestAdapter(t, r)
 	a.cfg.SandboxRuntime = "sysbox-runc"
-	err := a.ensureSandbox(context.Background(), "apothecary-run1", ports.EnvSpec{}, egressgw.Attachment{}, "/tc")
+	err := a.ensureSandbox(context.Background(), "apothecary-run1", envport.EnvSpec{}, egressgw.Attachment{}, "/tc")
 	if err == nil {
 		t.Fatal("expected a runtime-not-installed error")
 	}
@@ -1055,7 +1055,7 @@ func TestPreBundleSandboxIsRecreated(t *testing.T) {
 	const name = "apothecary-run1"
 	armSandbox(t, a, name)
 	tc := filepath.Join(a.cfg.RunsDir, "tools-cache")
-	if err := a.ensureSandbox(context.Background(), name, ports.EnvSpec{}, egressgw.Attachment{}, tc); err != nil {
+	if err := a.ensureSandbox(context.Background(), name, envport.EnvSpec{}, egressgw.Attachment{}, tc); err != nil {
 		t.Fatal(err)
 	}
 	rmAt, runAt := -1, -1
@@ -1094,7 +1094,7 @@ func TestCurrentShapeSandboxIsStarted(t *testing.T) {
 	a := newTestAdapter(t, r)
 	const name = "apothecary-run1"
 	armSandbox(t, a, name)
-	if err := a.ensureSandbox(context.Background(), name, ports.EnvSpec{}, egressgw.Attachment{}, "/tc"); err != nil {
+	if err := a.ensureSandbox(context.Background(), name, envport.EnvSpec{}, egressgw.Attachment{}, "/tc"); err != nil {
 		t.Fatal(err)
 	}
 	started := false
@@ -1117,7 +1117,7 @@ func TestCreateSandboxWiresGatewayMirror(t *testing.T) {
 	r := &scriptRunner{}
 	a := newTestAdapter(t, r)
 	const name = "apothecary-run1"
-	if err := a.createSandbox(context.Background(), name, ports.EnvSpec{Project: "Acme"}, "172.20.0.2", "/tc"); err != nil {
+	if err := a.createSandbox(context.Background(), name, envport.EnvSpec{Project: "Acme"}, "172.20.0.2", "/tc"); err != nil {
 		t.Fatal(err)
 	}
 	run := find(t, r.calls, "docker", "run")
@@ -1166,7 +1166,7 @@ func TestInnerCallsCarryDockerHost(t *testing.T) {
 func TestLegacyEnvFallsBackToHostDaemon(t *testing.T) {
 	r := &scriptRunner{responses: []response{{stdout: "out\n"}}}
 	a := newTestAdapter(t, r) // no armSandbox → no socket
-	if _, err := a.Exec(context.Background(), "legacy-run", ports.Command{Script: "true"}); err != nil {
+	if _, err := a.Exec(context.Background(), "legacy-run", envport.Command{Script: "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if envHas(r.calls[0], "DOCKER_HOST") {
@@ -1180,7 +1180,7 @@ func TestSandboxGuardsRejectTmp(t *testing.T) {
 	a := newTestAdapter(t, &scriptRunner{})
 	a.noSandboxGuard = false
 	a.cfg.RunsDir = filepath.Join(os.TempDir(), "apothecary-runs")
-	err := a.ensureSandbox(context.Background(), "run1", ports.EnvSpec{}, egressgw.Attachment{}, "/tc")
+	err := a.ensureSandbox(context.Background(), "run1", envport.EnvSpec{}, egressgw.Attachment{}, "/tc")
 	if err == nil || !strings.Contains(err.Error(), "masks /tmp") {
 		t.Fatalf("want /tmp guard error, got %v", err)
 	}
@@ -1535,7 +1535,7 @@ func TestSpawnFailureRetries(t *testing.T) {
 		{stdout: "ok\n"},
 	}}
 	a := newTestAdapter(t, r)
-	res, err := a.Exec(context.Background(), "ws", ports.Command{Script: "true"})
+	res, err := a.Exec(context.Background(), "ws", envport.Command{Script: "true"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1580,7 +1580,7 @@ func TestProvisionOmitsCacheFlagsWithoutGateway(t *testing.T) {
 	a := newTestAdapter(t, r) // no GatewayImage ⇒ a.gw == nil
 	armSandbox(t, a, "apothecary-run1")
 	seedDevcontainer(t, a, "apothecary-run1")
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{
+	if _, err := a.Provision(context.Background(), envport.EnvSpec{
 		RunID: "RUN1", RepoURL: "https://g.local/grp/repo.git", Project: "acme",
 	}); err != nil {
 		t.Fatal(err)
@@ -1611,7 +1611,7 @@ func TestRebuildWithoutCachePassesNoCache(t *testing.T) {
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	seedDevcontainer(t, a, "apothecary-run1")
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{
+	if _, err := a.Provision(context.Background(), envport.EnvSpec{
 		RunID: "RUN1", RepoURL: "https://g.local/grp/repo.git", NoCache: true,
 	}); err != nil {
 		t.Fatal(err)
@@ -1638,7 +1638,7 @@ func TestRebuildKeepsTheCacheByDefault(t *testing.T) {
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	seedDevcontainer(t, a, "apothecary-run1")
-	if _, err := a.Provision(context.Background(), ports.EnvSpec{
+	if _, err := a.Provision(context.Background(), envport.EnvSpec{
 		RunID: "RUN1", RepoURL: "https://g.local/grp/repo.git",
 	}); err != nil {
 		t.Fatal(err)
@@ -1661,7 +1661,7 @@ func TestListFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []ports.FileEntry{{Path: "artifacts/shots/b.png", Size: 5}, {Path: "artifacts/shots/nested/a.png", Size: 12}}
+	want := []envport.FileEntry{{Path: "artifacts/shots/b.png", Size: 5}, {Path: "artifacts/shots/nested/a.png", Size: 12}}
 	if !slices.Equal(files, want) {
 		t.Fatalf("files = %v, want %v", files, want)
 	}

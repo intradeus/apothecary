@@ -8,7 +8,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -30,11 +30,11 @@ main:
 `
 	h := newHarness(t, mustFlow(t, doc))
 	var tests atomic.Int32
-	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "./test.sh") && tests.Add(1) == 1 {
-			return ports.ExecResult{ExitCode: 1, Output: "one test fails"}, nil
+			return envport.ExecResult{ExitCode: 1, Output: "one test fails"}, nil
 		}
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 	id, err := h.e.CreateRun(context.Background(), Ticket{Title: "sequences"}, "seq", testProject)
 	if err != nil {

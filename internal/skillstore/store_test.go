@@ -8,7 +8,7 @@ import (
 	"apothecary/internal/confstore"
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/skills"
 )
 
@@ -25,8 +25,8 @@ func newStore(t *testing.T) (*Store, *Mem) {
 	return s, mem
 }
 
-func skillIn(name string, extra ...ports.TreeFile) SkillInput {
-	files := append([]ports.TreeFile{{Path: "SKILL.md", Data: md(name, "does "+name)}}, extra...)
+func skillIn(name string, extra ...envport.TreeFile) SkillInput {
+	files := append([]envport.TreeFile{{Path: "SKILL.md", Data: md(name, "does "+name)}}, extra...)
 	return SkillInput{Name: name, Files: files}
 }
 
@@ -37,7 +37,7 @@ func TestVersionPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := s.CreateSkill(ctx, "u1", skillIn("beta", ports.TreeFile{Path: "scripts/go.sh", Data: []byte("echo")}))
+	b, err := s.CreateSkill(ctx, "u1", skillIn("beta", envport.TreeFile{Path: "scripts/go.sh", Data: []byte("echo")}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestVersionPolicy(t *testing.T) {
 		t.Errorf("same-content edit cut a version: head=%d", got.HeadSeq)
 	}
 	// Member edit → one version per containing set.
-	if _, err := s.UpdateSkill(ctx, a.ID, skillIn("alpha", ports.TreeFile{Path: "references/x.md", Data: []byte("more")})); err != nil {
+	if _, err := s.UpdateSkill(ctx, a.ID, skillIn("alpha", envport.TreeFile{Path: "references/x.md", Data: []byte("more")})); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.GetSkillset(ctx, set.ID)
@@ -87,7 +87,7 @@ func TestVersionPolicy(t *testing.T) {
 	if got, _ := s.GetSkillset(ctx, set.ID); got.HeadSeq != 3 {
 		t.Errorf("membership change: head=%d, want 3", got.HeadSeq)
 	}
-	if _, err := s.UpdateSkill(ctx, b.ID, skillIn("gamma", ports.TreeFile{Path: "scripts/go.sh", Data: []byte("echo")})); err != nil {
+	if _, err := s.UpdateSkill(ctx, b.ID, skillIn("gamma", envport.TreeFile{Path: "scripts/go.sh", Data: []byte("echo")})); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := s.GetSkillset(ctx, set.ID); got.HeadSeq != 4 {
@@ -101,7 +101,7 @@ func TestVersionPolicy(t *testing.T) {
 	if err := s.DeleteSkill(ctx, b.ID); !errors.Is(err, confstore.ErrReferenced) {
 		t.Errorf("delete member = %v", err)
 	}
-	if _, err := s.CreateSkill(ctx, "u1", SkillInput{Name: "bad", Files: []ports.TreeFile{{Path: "SKILL.md", Data: []byte("no frontmatter")}}}); !errors.Is(err, confstore.ErrInvalid) {
+	if _, err := s.CreateSkill(ctx, "u1", SkillInput{Name: "bad", Files: []envport.TreeFile{{Path: "SKILL.md", Data: []byte("no frontmatter")}}}); !errors.Is(err, confstore.ErrInvalid) {
 		t.Errorf("bad skill = %v", err)
 	}
 	if _, err := s.CreateSkillset(ctx, "u2", SkillsetInput{Name: "Theirs", SkillIDs: []string{a.ID}}); !errors.Is(err, confstore.ErrInvalid) {
@@ -120,10 +120,10 @@ func TestResolveAndTrees(t *testing.T) {
 	s, mem := newStore(t)
 	ctx := context.Background()
 	a, _ := s.CreateSkill(ctx, "u1", skillIn("alpha"))
-	b, _ := s.CreateSkill(ctx, "u1", skillIn("beta", ports.TreeFile{Path: "scripts/go.sh", Data: []byte("echo")}))
+	b, _ := s.CreateSkill(ctx, "u1", skillIn("beta", envport.TreeFile{Path: "scripts/go.sh", Data: []byte("echo")}))
 	set1, _ := s.CreateSkillset(ctx, "u1", SkillsetInput{Name: "One", SkillIDs: []string{a.ID}})
 	set2, _ := s.CreateSkillset(ctx, "u1", SkillsetInput{Name: "Two", SkillIDs: []string{a.ID, b.ID}})
-	s.UpdateSkill(ctx, a.ID, skillIn("alpha", ports.TreeFile{Path: "x", Data: []byte("x")})) // set1 v2, set2 v2
+	s.UpdateSkill(ctx, a.ID, skillIn("alpha", envport.TreeFile{Path: "x", Data: []byte("x")})) // set1 v2, set2 v2
 
 	pins, err := s.ResolveSkillsets(ctx, "u1", []skills.Ref{{ID: set1.ID}, {ID: set2.ID, Seq: 1}, {ID: set1.ID}})
 	if err != nil {

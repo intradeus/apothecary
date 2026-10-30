@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"apothecary/internal/egressgw"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // dockerHost runs each sandbox as a Docker-in-Docker container on the engine's
@@ -23,7 +23,7 @@ import (
 // and the unit tests drive them directly); this type is the seam's view.
 type dockerHost struct{ a *Adapter }
 
-func (h dockerHost) prepare(ctx context.Context, name string, spec ports.EnvSpec, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error) {
+func (h dockerHost) prepare(ctx context.Context, name string, spec envport.EnvSpec, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error) {
 	a := h.a
 	src, err := a.ensureSrc(ctx, name, spec)
 	if err != nil {
@@ -97,8 +97,8 @@ func (h dockerHost) destroySandbox(ctx context.Context, name string) error {
 	return h.a.destroyDockerSandbox(ctx, name)
 }
 
-func (h dockerHost) ensureBridge(env ports.EnvID) error { return h.a.ensureBridge(env) }
-func (h dockerHost) closeBridge(env ports.EnvID)        { h.a.closeBridge(env) }
+func (h dockerHost) ensureBridge(env envport.EnvID) error { return h.a.ensureBridge(env) }
+func (h dockerHost) closeBridge(env envport.EnvID)        { h.a.closeBridge(env) }
 
 func (h dockerHost) bridgePorts() []int {
 	var out []int
@@ -129,7 +129,7 @@ func (h dockerHost) engineURL() string {
 	return "http://127.0.0.1:" + strconv.Itoa(h.a.cfg.EnginePort)
 }
 
-func (h dockerHost) dial(name, sock string) ports.PortConn {
+func (h dockerHost) dial(name, sock string) envport.PortConn {
 	return unixPortConn{path: filepath.Join(h.a.folderFor(name), "shim", sock)}
 }
 
@@ -155,7 +155,7 @@ func (h dockerHost) refreshShim(ctx context.Context, name string) error {
 	return err
 }
 
-func (h dockerHost) sample(ctx context.Context, name string) (ports.ResourceSample, error) {
+func (h dockerHost) sample(ctx context.Context, name string) (envport.ResourceSample, error) {
 	return h.a.dockerSample(ctx, name)
 }
 

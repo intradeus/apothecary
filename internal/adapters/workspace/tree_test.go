@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"apothecary/internal/ports/envport"
 	"archive/tar"
 	"bytes"
 	"context"
@@ -10,14 +11,12 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"apothecary/internal/ports"
 )
 
 func TestWriteTreeSendsScriptAndTar(t *testing.T) {
 	r := &scriptRunner{responses: []response{{code: 0}}}
 	a := newTestAdapter(t, r)
-	files := []ports.TreeFile{
+	files := []envport.TreeFile{
 		{Path: "scripts/run.sh", Mode: 0o755, Data: []byte("#!/bin/sh\necho hi\n")},
 		{Path: "SKILL.md", Data: []byte("---\nname: x\n---\nbody\n")},
 	}
@@ -63,11 +62,11 @@ func TestWriteTreeRejectsBadInput(t *testing.T) {
 		t.Error("relative dir accepted")
 	}
 	for _, p := range []string{"", "/abs", "../x", "a/../b", "a//b", "a/./b", "a\\b", "a\x01b"} {
-		if err := a.WriteTree(ctx, "ws", "/apothecary/skills/x", []ports.TreeFile{{Path: p}}); err == nil {
+		if err := a.WriteTree(ctx, "ws", "/apothecary/skills/x", []envport.TreeFile{{Path: p}}); err == nil {
 			t.Errorf("path %q accepted", p)
 		}
 	}
-	dup := []ports.TreeFile{{Path: "a"}, {Path: "a"}}
+	dup := []envport.TreeFile{{Path: "a"}, {Path: "a"}}
 	if err := a.WriteTree(ctx, "ws", "/apothecary/skills/x", dup); err == nil {
 		t.Error("duplicate path accepted")
 	}
@@ -79,7 +78,7 @@ func TestWriteTreeRejectsBadInput(t *testing.T) {
 func TestWriteTreeReportsExitCode(t *testing.T) {
 	r := &scriptRunner{responses: []response{{code: 2, stderr: "tar: not found"}}}
 	a := newTestAdapter(t, r)
-	err := a.WriteTree(context.Background(), "ws", "/apothecary/skills/x", []ports.TreeFile{{Path: "SKILL.md"}})
+	err := a.WriteTree(context.Background(), "ws", "/apothecary/skills/x", []envport.TreeFile{{Path: "SKILL.md"}})
 	if err == nil || !strings.Contains(err.Error(), "exit 2") || !strings.Contains(err.Error(), "tar: not found") {
 		t.Errorf("err = %v", err)
 	}

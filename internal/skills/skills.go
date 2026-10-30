@@ -6,6 +6,7 @@
 package skills
 
 import (
+	"apothecary/internal/ports/envport"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -16,8 +17,6 @@ import (
 	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
-
-	"apothecary/internal/ports"
 )
 
 const (
@@ -117,7 +116,7 @@ func Mode(path string, mode fs.FileMode) fs.FileMode {
 // by path. The spec's one structural rule — frontmatter name == directory
 // name — is enforced here, so a skill is always addressable by the name it
 // installs under.
-func Validate(dirName string, files []ports.TreeFile) (Frontmatter, []ports.TreeFile, error) {
+func Validate(dirName string, files []envport.TreeFile) (Frontmatter, []envport.TreeFile, error) {
 	if err := ValidName(dirName); err != nil {
 		return Frontmatter{}, nil, err
 	}
@@ -127,7 +126,7 @@ func Validate(dirName string, files []ports.TreeFile) (Frontmatter, []ports.Tree
 	if len(files) > MaxFiles {
 		return Frontmatter{}, nil, fmt.Errorf("too many files: %d (max %d)", len(files), MaxFiles)
 	}
-	out := make([]ports.TreeFile, 0, len(files))
+	out := make([]envport.TreeFile, 0, len(files))
 	seen := map[string]bool{}
 	var total int64
 	var md []byte
@@ -151,7 +150,7 @@ func Validate(dirName string, files []ports.TreeFile) (Frontmatter, []ports.Tree
 		if p == ManifestFile {
 			md, found = f.Data, true
 		}
-		out = append(out, ports.TreeFile{Path: p, Mode: Mode(p, f.Mode), Data: f.Data})
+		out = append(out, envport.TreeFile{Path: p, Mode: Mode(p, f.Mode), Data: f.Data})
 	}
 	if !found {
 		return Frontmatter{}, nil, fmt.Errorf("%s is missing", ManifestFile)
@@ -238,7 +237,7 @@ func scalar(v any) string {
 
 // Manifest hashes each file and returns the entries sorted by path. Files
 // are expected normalised (Validate); the mode recorded is Mode's.
-func Manifest(files []ports.TreeFile) []FileEntry {
+func Manifest(files []envport.TreeFile) []FileEntry {
 	out := make([]FileEntry, 0, len(files))
 	for _, f := range files {
 		sum := sha256.Sum256(f.Data)
@@ -288,5 +287,5 @@ type Ref struct {
 // and its normalised files.
 type Tree struct {
 	Name  string
-	Files []ports.TreeFile
+	Files []envport.TreeFile
 }

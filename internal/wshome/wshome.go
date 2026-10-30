@@ -12,18 +12,17 @@
 package wshome
 
 import (
+	"apothecary/internal/ports/envport"
 	"context"
 	"strings"
-
-	"apothecary/internal/ports"
 )
 
 // Resolve probes $HOME through the SAME exec path the harness itself runs
 // under, so the answer is the right user's home by construction. Anything
 // unexpected (probe error, non-absolute or whitespace-bearing path) falls
 // back to fallback, keeping the pipeline-image behavior unchanged.
-func Resolve(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID, fallback string) string {
-	res, err := envp.Exec(ctx, env, ports.Command{Script: `printf %s "$HOME"`})
+func Resolve(ctx context.Context, envp envport.EnvProvisioner, env envport.EnvID, fallback string) string {
+	res, err := envp.Exec(ctx, env, envport.Command{Script: `printf %s "$HOME"`})
 	if err != nil || res.ExitCode != 0 {
 		return fallback
 	}

@@ -27,6 +27,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/modelcheck"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
@@ -156,8 +157,8 @@ func (l Limits) EnvsCapped() bool { return l.MaxEnvironments >= 0 }
 // engineURLFor is the URL env's workspace reaches the engine at: the
 // provisioner's own when it supplies one (a Kubernetes pod reaches a Service,
 // not a loopback relay), the configured one otherwise.
-func (e *Engine) engineURLFor(envp ports.EnvProvisioner, env ports.EnvID) string {
-	if p, ok := envp.(ports.EngineURLProvider); ok {
+func (e *Engine) engineURLFor(envp envport.EnvProvisioner, env envport.EnvID) string {
+	if p, ok := envp.(envport.EngineURLProvider); ok {
 		if u := p.EngineURL(env); u != "" {
 			return u
 		}
@@ -572,8 +573,8 @@ func New(d Deps) *Engine {
 // ports when it comes up, bring them back after a rebuild, and expose one
 // port (a service's) on demand.
 type RunPorts interface {
-	AutoExpose(ctx context.Context, runID string, envp ports.EnvProvisioner, id ports.EnvID) []event.Link
-	ReopenAfterRebuild(ctx context.Context, runID string, envp ports.EnvProvisioner, id ports.EnvID, editor ports.EditorSettings)
+	AutoExpose(ctx context.Context, runID string, envp envport.EnvProvisioner, id envport.EnvID) []event.Link
+	ReopenAfterRebuild(ctx context.Context, runID string, envp envport.EnvProvisioner, id envport.EnvID, editor envport.EditorSettings)
 	Expose(ctx context.Context, runID string, port int) (string, error)
 }
 
@@ -1226,7 +1227,7 @@ func (e *Engine) destroyEnv(ctx context.Context, v run.View) (derr error) {
 	for _, h := range e.teardown {
 		h.BeforeDestroy(ctx, v, res)
 	}
-	return res.Envp.Destroy(ctx, ports.EnvID(v.EnvID))
+	return res.Envp.Destroy(ctx, envport.EnvID(v.EnvID))
 }
 
 // preflight refuses a run naming the exact missing item (§1, extended by

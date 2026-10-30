@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/shell"
 )
 
@@ -175,8 +176,8 @@ func (x *exec) infraFail(st *flow.Stage, msg string) (bool, error) {
 }
 
 // gitIn runs one git script in a checkout directory of the workspace.
-func (x *exec) gitIn(dir, script string) (ports.ExecResult, error) {
-	return x.res.Envp.Exec(x.ctx, x.rs.envID, ports.Command{Script: script, Dir: dir, Timeout: x.rs.fl.Defaults.Timeout})
+func (x *exec) gitIn(dir, script string) (envport.ExecResult, error) {
+	return x.res.Envp.Exec(x.ctx, x.rs.envID, envport.Command{Script: script, Dir: dir, Timeout: x.rs.fl.Defaults.Timeout})
 }
 
 // repoRefFor is the repository host reference of a checkout: the project's for

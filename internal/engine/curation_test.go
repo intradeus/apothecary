@@ -17,6 +17,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 )
@@ -223,7 +224,7 @@ func TestGateCurationPostsWhatThePersonKept(t *testing.T) {
 		}
 	}
 	ready, _ := findPayload[*event.EnvReady](evs)
-	data, err := ph.envp.ReadFile(context.Background(), ports.EnvID(ready.EnvID), "artifacts/review.yaml")
+	data, err := ph.envp.ReadFile(context.Background(), envport.EnvID(ready.EnvID), "artifacts/review.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +236,7 @@ func TestGateCurationPostsWhatThePersonKept(t *testing.T) {
 	// when it proposes it anyway; its retry posts a summary only.
 	ph.repoHost.SetHead(ref.IID, "a2")
 	g2 := ph.waitPing(t, event.PingGate, g.ID)
-	data, _ = ph.envp.ReadFile(context.Background(), ports.EnvID(ready.EnvID), "artifacts/threads.yaml")
+	data, _ = ph.envp.ReadFile(context.Background(), envport.EnvID(ready.EnvID), "artifacts/threads.yaml")
 	if th, err := reviewfile.ParseThreads("artifacts/threads.yaml", data); err != nil || len(th.Dropped) != 1 || th.Dropped[0].Path != "b.go" || len(th.Threads) != 2 {
 		t.Errorf("the re-review's threads file = %s (%v)", data, err)
 	}

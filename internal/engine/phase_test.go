@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
@@ -189,8 +190,8 @@ func phaseStarts(evs []event.Event) []*event.PhaseStarted {
 	return out
 }
 
-func (ph *phasedHarness) execsOf(script string) []ports.Command {
-	var out []ports.Command
+func (ph *phasedHarness) execsOf(script string) []envport.Command {
+	var out []envport.Command
 	for _, c := range ph.envp.Execs() {
 		if strings.Contains(c.Cmd.Script, script) {
 			out = append(out, c.Cmd)

@@ -13,7 +13,7 @@ import (
 	"apothecary/internal/adapters/acpagent"
 	ompadapter "apothecary/internal/adapters/omp"
 	"apothecary/internal/agentspec"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/providers"
 )
 
@@ -38,7 +38,7 @@ func (Omp) Descriptor() Descriptor {
 	}
 }
 
-func (Omp) New(cfg Config, envp ports.EnvProvisioner) (Harness, error) {
+func (Omp) New(cfg Config, envp envport.EnvProvisioner) (Harness, error) {
 	adapter := ompadapter.New(envp, ompadapter.Config{})
 	return &ompHarness{
 		Runner:  acpagent.New(envp, adapter.Profile()),
@@ -286,7 +286,7 @@ func (h *ompHarness) EnvVars() map[string]string {
 // AuthFiles (kinds.AuthLocator): agent.db, omp's credential store (in broker
 // mode it holds no login, but an older workspace may), removed when the run
 // ends.
-func (h *ompHarness) AuthFiles(ctx context.Context, env ports.EnvID) []string {
+func (h *ompHarness) AuthFiles(ctx context.Context, env envport.EnvID) []string {
 	return []string{h.adapter.AuthFilePath(ctx, env)}
 }
 
@@ -295,13 +295,13 @@ func (h *ompHarness) AuthFiles(ctx context.Context, env ports.EnvID) []string {
 func (h *ompHarness) SecretValues() []string { return secretValues(h.held) }
 
 // SeedAuth: nothing to write — keys ride provider.env and logins the broker.
-func (h *ompHarness) SeedAuth(context.Context, ports.EnvID, func(string)) error { return nil }
+func (h *ompHarness) SeedAuth(context.Context, envport.EnvID, func(string)) error { return nil }
 
-func (h *ompHarness) Prepare(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
+func (h *ompHarness) Prepare(ctx context.Context, env envport.EnvID, specs []*agentspec.Spec) error {
 	return h.adapter.PrepareEnv(ctx, env, specs)
 }
 
-func (h *ompHarness) InstallSkills(ctx context.Context, env ports.EnvID, names []string) error {
+func (h *ompHarness) InstallSkills(ctx context.Context, env envport.EnvID, names []string) error {
 	return h.adapter.InstallSkills(ctx, env, names)
 }
 

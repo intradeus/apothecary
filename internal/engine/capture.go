@@ -19,7 +19,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // capture is the one funnel: scrub → store → snapshot_captured. Both failure
@@ -144,13 +144,13 @@ const provisionLogTail = 1 << 20
 // deterministic workspace name, which is the exec-log key even when Provision
 // itself failed (rs.envID still empty).
 func (x *exec) publishProvisionLog(envName string) {
-	tailer, ok := x.res.Envp.(ports.ExecLogTailer)
+	tailer, ok := x.res.Envp.(envport.ExecLogTailer)
 	if !ok {
 		return
 	}
 	env := x.rs.envID
 	if env == "" {
-		env = ports.EnvID(envName)
+		env = envport.EnvID(envName)
 	}
 	out, err := tailer.TailExecLog(x.bg, env, provisionLogTail)
 	if err != nil || len(out) == 0 {

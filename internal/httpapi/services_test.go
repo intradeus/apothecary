@@ -10,7 +10,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/engine"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/services"
 )
@@ -26,7 +26,7 @@ func TestServiceEndpoints(t *testing.T) {
 	x.envp.ExecFunc = svcs.Exec(x.envp.ExecFunc)
 	ctx := context.Background()
 	// A run with a workspace, and one without.
-	env, err := x.envp.Provision(ctx, ports.EnvSpec{})
+	env, err := x.envp.Provision(ctx, envport.EnvSpec{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,6 +12,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 func TestRegistryValidAndDescriptors(t *testing.T) {
@@ -55,7 +56,7 @@ func TestRegistryValidAndDescriptors(t *testing.T) {
 
 func TestOpencodeHarnessCapabilities(t *testing.T) {
 	envp := fake.NewEnvProvisioner()
-	id, err := envp.Provision(context.Background(), ports.EnvSpec{RunID: "r"})
+	id, err := envp.Provision(context.Background(), envport.EnvSpec{RunID: "r"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +306,7 @@ func TestCodexKindCapabilities(t *testing.T) {
 // empty refresh token, last_refresh now — and nothing it can redeem.
 func TestCodexRendersTheLogin(t *testing.T) {
 	envp := fake.NewEnvProvisioner()
-	id, _ := envp.Provision(context.Background(), ports.EnvSpec{RunID: "r"})
+	id, _ := envp.Provision(context.Background(), envport.EnvSpec{RunID: "r"})
 	h, _ := Codex{}.New(withCreds(login("openai-chatgpt", "acc-tok", map[string]string{"id_token": "id-tok", "account_id": "acct-7"})), envp)
 	var registered []string
 	if err := h.SeedAuth(context.Background(), id, func(s string) { registered = append(registered, s) }); err != nil {
@@ -342,7 +343,7 @@ func TestCodexRendersTheLogin(t *testing.T) {
 
 func TestOmpKindCapabilities(t *testing.T) {
 	envp := fake.NewEnvProvisioner()
-	id, err := envp.Provision(context.Background(), ports.EnvSpec{RunID: "r"})
+	id, err := envp.Provision(context.Background(), envport.EnvSpec{RunID: "r"})
 	if err != nil {
 		t.Fatal(err)
 	}

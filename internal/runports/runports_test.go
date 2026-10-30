@@ -12,7 +12,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/portrelay"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
@@ -42,8 +42,8 @@ type exposerEnvp struct {
 	target   string // engine-side echo listener standing in for the workspace app
 }
 
-func (x *exposerEnvp) AppPorts(context.Context, ports.EnvID) []int { return x.appPorts }
-func (x *exposerEnvp) ExposePort(context.Context, ports.EnvID, int) (ports.PortConn, error) {
+func (x *exposerEnvp) AppPorts(context.Context, envport.EnvID) []int { return x.appPorts }
+func (x *exposerEnvp) ExposePort(context.Context, envport.EnvID, int) (envport.PortConn, error) {
 	return tcpPortConn{addr: x.target}, nil
 }
 
@@ -76,10 +76,10 @@ func (s engFakeStore) LoadExposedPorts(context.Context) (map[string]map[int]int,
 // scannerEnvp adds the SiblingPortScanner capability to the fake.
 type scannerEnvp struct {
 	*fake.EnvProvisioner
-	siblings []ports.ObservedPort
+	siblings []envport.ObservedPort
 }
 
-func (s *scannerEnvp) ScanSiblingPorts(context.Context, ports.EnvID) []ports.ObservedPort {
+func (s *scannerEnvp) ScanSiblingPorts(context.Context, envport.EnvID) []envport.ObservedPort {
 	return s.siblings
 }
 
@@ -88,7 +88,7 @@ func TestObservedPortsRoundTripAndTTL(t *testing.T) {
 	clk := time.Unix(1000, 0)
 	h.s.Clock = func() time.Time { return clk }
 
-	h.s.ReportObservedPorts("r1", []ports.ObservedPort{{Port: 3000, Process: "node"}})
+	h.s.ReportObservedPorts("r1", []envport.ObservedPort{{Port: 3000, Process: "node"}})
 	got := h.s.ObservedPorts("r1")
 	if len(got) != 1 || got[0].Port != 3000 || got[0].Process != "node" {
 		t.Fatalf("observed = %+v, want one {3000 node}", got)
@@ -102,7 +102,7 @@ func TestObservedPortsRoundTripAndTTL(t *testing.T) {
 
 	// forgetObserved drops it entirely (env destroyed).
 	clk = time.Unix(1000, 0)
-	h.s.ReportObservedPorts("r1", []ports.ObservedPort{{Port: 3000}})
+	h.s.ReportObservedPorts("r1", []envport.ObservedPort{{Port: 3000}})
 	h.s.forgetObserved("r1")
 	if got := h.s.ObservedPorts("r1"); got != nil {
 		t.Errorf("after forget, observed = %+v, want nil", got)
@@ -113,7 +113,7 @@ func TestObservedPortsMergesSiblingScan(t *testing.T) {
 	h := newFixture()
 	h.res.Envp = &scannerEnvp{
 		EnvProvisioner: h.envp,
-		siblings:       []ports.ObservedPort{{Port: 5432, Service: "db"}, {Port: 3000, Service: "db"}},
+		siblings:       []envport.ObservedPort{{Port: 5432, Service: "db"}, {Port: 3000, Service: "db"}},
 	}
 	ctx := context.Background()
 	if _, err := h.store.Append(ctx, "r1",
@@ -125,7 +125,7 @@ func TestObservedPortsMergesSiblingScan(t *testing.T) {
 
 	// A shim report establishes liveness (drives the TTL); the workspace's own
 	// :3000 must win over the sibling's :3000 on the merge.
-	h.s.ReportObservedPorts("r1", []ports.ObservedPort{{Port: 3000, Process: "vite"}})
+	h.s.ReportObservedPorts("r1", []envport.ObservedPort{{Port: 3000, Process: "vite"}})
 	h.s.refreshSiblingPorts("r1") // synchronous (bypass the async heartbeat trigger)
 
 	got := h.s.ObservedPorts("r1")
@@ -175,7 +175,7 @@ func TestAutoExposeObservedCapAndDedupe(t *testing.T) {
 
 	// Three discovered ports, cap of two.
 	h.s.observed["r1"] = &observedRun{
-		shim:        []ports.ObservedPort{{Port: 3000}, {Port: 3001}, {Port: 3002}},
+		shim:        []envport.ObservedPort{{Port: 3000}, {Port: 3001}, {Port: 3002}},
 		at:          h.s.now(),
 		autoExposed: map[int]bool{},
 	}

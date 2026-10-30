@@ -1,6 +1,6 @@
 // Package portrelay publishes exposed workspace ports to the human: one
 // engine-host TCP listener per (run, workspace port), each accepted
-// browser connection pumped through the provisioner's ports.PortConn.
+// browser connection pumped through the provisioner's envport.PortConn.
 // Listeners bind a host port on the CPUI's own interface — root-level URLs
 // (webapp asset paths work, unlike path-prefix proxying), any number of
 // concurrent runs.
@@ -27,6 +27,7 @@
 package portrelay
 
 import (
+	"apothecary/internal/ports/envport"
 	"context"
 	"fmt"
 	"io"
@@ -37,8 +38,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"apothecary/internal/ports"
 )
 
 // Store persists the (run → workspace port → host port) allocation so
@@ -62,7 +61,7 @@ type Exposure struct {
 
 type exposure struct {
 	ln  net.Listener // nil when host-routed
-	pc  ports.PortConn
+	pc  envport.PortConn
 	url string
 }
 
@@ -115,7 +114,7 @@ func RunLabel(runID string) string {
 // Lookup resolves a request's Host to the exposure it names: the run, the
 // workspace port and its dialer. ok=false for any host outside the apps
 // domain or naming nothing exposed.
-func (m *Manager) Lookup(host string) (runID string, port int, pc ports.PortConn, ok bool) {
+func (m *Manager) Lookup(host string) (runID string, port int, pc envport.PortConn, ok bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.domain == "" {
@@ -216,7 +215,7 @@ func (m *Manager) urlHost() string {
 // closes the redundant pc. The host port is the one this run+port had
 // before (persisted), falling back to a kernel-picked port if none is saved
 // or it is now taken.
-func (m *Manager) Expose(runID string, port int, pc ports.PortConn) (string, error) {
+func (m *Manager) Expose(runID string, port int, pc envport.PortConn) (string, error) {
 	m.mu.Lock()
 	if ex, ok := m.byRun[runID][port]; ok {
 		m.mu.Unlock()
@@ -369,7 +368,7 @@ func (m *Manager) CloseAll() {
 	}
 }
 
-func serve(ln net.Listener, pc ports.PortConn) {
+func serve(ln net.Listener, pc envport.PortConn) {
 	for {
 		c, err := ln.Accept()
 		if err != nil {

@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/redact"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
@@ -1778,13 +1779,13 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	} else if st.EachRepo {
 		dirs = rs.checkoutDirs()
 	}
-	var res ports.ExecResult
+	var res envport.ExecResult
 	var err error
 	var combined strings.Builder
 	marker := commandMarker(rs.runID, st.ID)
 	for _, dir := range dirs {
 		cctx, cancel := context.WithTimeout(x.ctx, timeout)
-		res, err = x.res.Envp.Exec(cctx, rs.envID, ports.Command{Script: script, Dir: dir, Timeout: timeout, Marker: marker})
+		res, err = x.res.Envp.Exec(cctx, rs.envID, envport.Command{Script: script, Dir: dir, Timeout: timeout, Marker: marker})
 		cancel()
 		if err != nil {
 			break
@@ -1848,11 +1849,11 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	return nil
 }
 
-// commandMarker is one command stage's ports.Command.Marker: the run and the
+// commandMarker is one command stage's envport.Command.Marker: the run and the
 // stage, since a workspace only ever hosts one run. An attempt's exec client
 // dies with its timeout or with the engine process; the adapter uses the
 // marker to kill what the previous attempt left running before this one
-// starts (see ports.Command.Marker).
+// starts (see envport.Command.Marker).
 func commandMarker(runID, stageID string) string { return runID + ":" + stageID }
 
 // missingPaths returns the bindings' paths that cannot be read in the
@@ -1937,7 +1938,7 @@ func (x *exec) clearOutputs(bindings []flow.Port) {
 	// Best-effort: a workspace that cannot delete is not a stage failure —
 	// the output contract still has the final say.
 	for _, script := range scripts {
-		if _, err := x.res.Envp.Exec(x.ctx, x.rs.envID, ports.Command{
+		if _, err := x.res.Envp.Exec(x.ctx, x.rs.envID, envport.Command{
 			Script:  script,
 			Dir:     "repo",
 			Timeout: time.Minute,
@@ -2384,7 +2385,7 @@ func (x *exec) ensureEnv() error {
 		// re-probe once after a short pause before deciding to re-provision, so
 		// a transient blip doesn't nuke a workspace that's just coming back up.
 		// EnvAbsent is skipped — a genuinely gone container won't reappear.
-		if err == nil && status != ports.EnvRunning && status != ports.EnvAbsent {
+		if err == nil && status != envport.EnvRunning && status != envport.EnvAbsent {
 			select {
 			case <-time.After(recoveryReprobeDelay):
 			case <-x.ctx.Done():
@@ -2401,12 +2402,12 @@ func (x *exec) ensureEnv() error {
 			// than waiting for the next boot.
 			return fmt.Errorf("recovery: env status: %w", err)
 		}
-		if status == ports.EnvRunning {
+		if status == envport.EnvRunning {
 			// Re-establish the reverse tunnel — it died with the previous
 			// engine process, so the workspace's engine/proxy loopback
 			// forwards are gone (found live: git push to 127.0.0.1:<proxy>
 			// refused after an engine restart + resume).
-			if r, ok := x.res.Envp.(ports.WorkspaceReattacher); ok {
+			if r, ok := x.res.Envp.(envport.WorkspaceReattacher); ok {
 				if err := r.Reattach(x.ctx, rs.envID); err != nil {
 					if x.ctx.Err() != nil {
 						return context.Cause(x.ctx)
@@ -2458,7 +2459,7 @@ func (x *exec) ensureEnv() error {
 	if nameBranch == "" {
 		nameBranch = rs.branch
 	}
-	spec := ports.EnvSpec{
+	spec := envport.EnvSpec{
 		RunID:   rs.runID,
 		RepoURL: x.res.RepoRef.URL,
 		Branch:  rs.branch,
@@ -2530,7 +2531,7 @@ func (x *exec) ensureEnv() error {
 // bootstrap runs the §11 ordered steps. A setup failure is a deterministic
 // env_failed with the command's output tail (§1) — agents never repair the
 // environment.
-func (x *exec) writeRunEnv(id ports.EnvID) error {
+func (x *exec) writeRunEnv(id envport.EnvID) error {
 	runEnv := fmt.Sprintf("APOTHECARY_RUN_ID=%s\nAPOTHECARY_RUN_TOKEN=%s\nAPOTHECARY_ENGINE_URL=%s\n",
 		x.rs.runID, x.e.RunToken(x.rs.runID), x.e.engineURLFor(x.res.Envp, id))
 	return x.res.Envp.WriteFile(x.ctx, id, "/apothecary/run.env", []byte(runEnv), 0o600)
@@ -2541,7 +2542,7 @@ func (x *exec) writeRunEnv(id ports.EnvID) error {
 // writes exactly what bootstrap step 2 writes — same function, so the two can
 // never drift — and touches nothing else: the checkout, the branch and the
 // agent's commits are already there.
-func (x *exec) reseedSecrets(id ports.EnvID) error {
+func (x *exec) reseedSecrets(id envport.EnvID) error {
 	res := x.res
 	x.e.authSink.Set(x.rs.runID, res, id, x.redact)
 	return bootstrap.WriteWorkspaceSecrets(x.ctx, res.Envp, id, bootstrap.BootstrapSpec{
@@ -2559,7 +2560,7 @@ func (x *exec) reseedSecrets(id ports.EnvID) error {
 // to write into the workspace.
 func (x *exec) registerSecret(s string) { x.redact.Add(s, "harness-auth") }
 
-func (x *exec) bootstrap(id ports.EnvID) error {
+func (x *exec) bootstrap(id envport.EnvID) error {
 	res := x.res
 	x.e.authSink.Set(x.rs.runID, res, id, x.redact)
 	trees, err := x.e.skillTrees(x.ctx, x.rs.skillsets)

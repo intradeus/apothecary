@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/sidecar"
@@ -163,7 +163,7 @@ func (c *Control) RunServices(ctx context.Context, runID string) (RunServices, e
 	states := map[string]sidecar.ServiceState{}
 	// A project with no services has nothing to ask the workspace about.
 	if out.Workspace && len(res.Services) > 0 {
-		all, err := States(ctx, res.Envp, ports.EnvID(v.EnvID))
+		all, err := States(ctx, res.Envp, envport.EnvID(v.EnvID))
 		if err != nil {
 			out.Error = err.Error()
 		}
@@ -219,7 +219,7 @@ func (c *Control) StartService(ctx context.Context, runID, name string, restart 
 	if !hasWorkspace(v) {
 		return ServiceInfo{}, fmt.Errorf("run %s: %w", runID, wsinfo.ErrNoWorkspace)
 	}
-	env := ports.EnvID(v.EnvID)
+	env := envport.EnvID(v.EnvID)
 	req := Request(svc, 0)
 	req.By = event.ServiceByHuman
 	var flags []string
@@ -242,7 +242,7 @@ func (c *Control) StartService(ctx context.Context, runID, name string, restart 
 // watchService follows a human's start until the service is up or failed,
 // then says so on the run's log and exposes its ports. It resolves the
 // project itself: the caller's resolution is released when it returns.
-func (c *Control) watchService(runID, projectID string, svc resolution.Service, env ports.EnvID) {
+func (c *Control) watchService(runID, projectID string, svc resolution.Service, env envport.EnvID) {
 	ctx, cancel := context.WithTimeout(context.Background(), svc.Health.Timeout+time.Minute)
 	defer cancel()
 	res, err := c.Resolver.Resolve(ctx, projectID)
@@ -301,8 +301,8 @@ func (c *Control) StopService(ctx context.Context, runID, name string) (ServiceI
 	if !hasWorkspace(v) {
 		return ServiceInfo{}, fmt.Errorf("run %s: %w", runID, wsinfo.ErrNoWorkspace)
 	}
-	before, _ := State(ctx, res.Envp, ports.EnvID(v.EnvID), name)
-	st, err := Shim(ctx, res.Envp, ports.EnvID(v.EnvID), "stop", nil, Request(svc, 0), StopBudget)
+	before, _ := State(ctx, res.Envp, envport.EnvID(v.EnvID), name)
+	st, err := Shim(ctx, res.Envp, envport.EnvID(v.EnvID), "stop", nil, Request(svc, 0), StopBudget)
 	if err != nil {
 		return ServiceInfo{}, err
 	}
@@ -328,5 +328,5 @@ func (c *Control) ServiceLog(ctx context.Context, runID, name string, n int) (st
 	if !hasWorkspace(v) {
 		return "", fmt.Errorf("run %s: %w", runID, wsinfo.ErrNoWorkspace)
 	}
-	return Log(ctx, res.Envp, ports.EnvID(v.EnvID), name, n)
+	return Log(ctx, res.Envp, envport.EnvID(v.EnvID), name, n)
 }

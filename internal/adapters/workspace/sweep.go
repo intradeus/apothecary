@@ -3,7 +3,7 @@ package workspace
 import "fmt"
 
 // markerVar is the environment variable a marked command's process tree
-// carries (ports.Command.Marker): what the next command with the same marker
+// carries (envport.Command.Marker): what the next command with the same marker
 // sweeps for before it starts.
 const markerVar = "APOTHECARY_CMD"
 

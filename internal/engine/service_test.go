@@ -11,7 +11,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/portrelay"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/services"
@@ -289,4 +289,4 @@ func indexOf(xs []string, x string) int {
 	return -1
 }
 
-var _ ports.EnvProvisioner = (*exposerEnvp)(nil)
+var _ envport.EnvProvisioner = (*exposerEnvp)(nil)

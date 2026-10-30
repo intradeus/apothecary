@@ -13,7 +13,7 @@ import (
 
 	"apothecary/internal/envstate"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/sidecar"
@@ -101,11 +101,11 @@ func (s *Service) Workspace(ctx context.Context, runID, repo string) (*sidecar.C
 		return nil, Checkout{}, err
 	}
 	defer res.Close()
-	sc, ok := res.Envp.(ports.Sidecar)
+	sc, ok := res.Envp.(envport.Sidecar)
 	if !ok {
 		return nil, Checkout{}, ErrNoSidecar
 	}
-	conn, err := sc.Sidecar(ctx, ports.EnvID(wsname.ForRun(v, runID)))
+	conn, err := sc.Sidecar(ctx, envport.EnvID(wsname.ForRun(v, runID)))
 	if err != nil {
 		return nil, Checkout{}, fmt.Errorf("workspace sidecar: %w", err)
 	}
@@ -136,9 +136,9 @@ func (s *Service) LogTail(ctx context.Context, runID string, n int) ([]byte, err
 		return nil, err
 	}
 	defer res.Close()
-	tailer, ok := res.Envp.(ports.ExecLogTailer)
+	tailer, ok := res.Envp.(envport.ExecLogTailer)
 	if !ok {
 		return nil, fmt.Errorf("run %s: provisioner has no live log: %w", runID, ErrNoLiveLog)
 	}
-	return tailer.TailExecLog(ctx, ports.EnvID(env), n)
+	return tailer.TailExecLog(ctx, envport.EnvID(env), n)
 }

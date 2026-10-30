@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/skills"
 )
 
@@ -22,7 +22,7 @@ const SkillsDir = skills.WorkspaceDir
 // undocumented there; a readdir that asks isDirectory() of a symlink gets
 // "no"), and skills are kilobytes. Zero names is a no-op: the harness's
 // directory is left as the image had it.
-func InstallSkills(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID, dir string, names []string) error {
+func InstallSkills(ctx context.Context, envp envport.EnvProvisioner, env envport.EnvID, dir string, names []string) error {
 	if len(names) == 0 {
 		return nil
 	}
@@ -39,7 +39,7 @@ func InstallSkills(ctx context.Context, envp ports.EnvProvisioner, env ports.Env
 		dst := shellQuote(path.Join(dir, n))
 		fmt.Fprintf(&b, " && rm -rf %s && cp -R %s %s", dst, src, dst)
 	}
-	res, err := envp.Exec(ctx, env, ports.Command{Script: b.String(), Timeout: 60 * time.Second})
+	res, err := envp.Exec(ctx, env, envport.Command{Script: b.String(), Timeout: 60 * time.Second})
 	if err != nil {
 		return fmt.Errorf("install skills into %s: %w", dir, err)
 	}

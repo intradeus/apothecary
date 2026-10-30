@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // newFiles wires REAL filestore stores over the in-package Mem — the engine's
@@ -77,7 +78,7 @@ func TestGoalAttachmentsDeliveredAndPrompted(t *testing.T) {
 	}
 	// The file was actually written into the workspace.
 	env := h.view(t, runID).EnvID
-	data, err := h.envp.ReadFile(context.Background(), ports.EnvID(env), wantPath)
+	data, err := h.envp.ReadFile(context.Background(), envport.EnvID(env), wantPath)
 	if err != nil || string(data) != "%PDF-1.4" {
 		t.Errorf("attachment not delivered into workspace: %q, %v", data, err)
 	}
@@ -117,11 +118,11 @@ func TestProvisionLogPublishedOnBootstrapFailure(t *testing.T) {
 	att, snaps, _ := newFiles(t)
 	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, loopFlowDoc))
 
-	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "git clone") {
-			return ports.ExecResult{ExitCode: 1, Output: "fatal: repository not found"}, nil
+			return envport.ExecResult{ExitCode: 1, Output: "fatal: repository not found"}, nil
 		}
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
@@ -168,15 +169,15 @@ main:
 	})
 	// The check fails once, so the planner runs twice and rewrites the file.
 	checks := 0
-	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if !strings.Contains(cmd.Script, "verify") {
-			return ports.ExecResult{}, nil
+			return envport.ExecResult{}, nil
 		}
 		checks++
 		if checks == 1 {
-			return ports.ExecResult{ExitCode: 1, Output: "boom"}, nil
+			return envport.ExecResult{ExitCode: 1, Output: "boom"}, nil
 		}
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "snap", testProject)
@@ -289,7 +290,7 @@ main:
 
 	// And it survives the workspace: destroying the env leaves the record
 	// intact (reads go through the store, never the env).
-	if err := h.envp.Destroy(context.Background(), ports.EnvID(h.view(t, runID).EnvID)); err != nil {
+	if err := h.envp.Destroy(context.Background(), envport.EnvID(h.view(t, runID).EnvID)); err != nil {
 		t.Fatal(err)
 	}
 	if got := snapshotBody(t, snaps, sn.ID); got != "as reviewed" {

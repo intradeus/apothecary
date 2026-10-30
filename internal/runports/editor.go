@@ -1,10 +1,9 @@
 package runports
 
 import (
+	"apothecary/internal/ports/envport"
 	"context"
 	"fmt"
-
-	"apothecary/internal/ports"
 )
 
 // OpenEditor lazily starts code-server (VS Code in the browser) in the run's
@@ -34,26 +33,26 @@ func (s *Service) OpenEditor(ctx context.Context, runID string) (string, error) 
 	}
 	defer res.Close()
 
-	starter, ok := res.Envp.(ports.EditorStarter)
+	starter, ok := res.Envp.(envport.EditorStarter)
 	if !ok {
 		return "", fmt.Errorf("run %s: provisioner does not support the editor", runID)
 	}
-	exposer, ok := res.Envp.(ports.WorkspacePortExposer)
+	exposer, ok := res.Envp.(envport.WorkspacePortExposer)
 	if !ok {
 		return "", fmt.Errorf("run %s: provisioner does not support port exposure", runID)
 	}
 
 	// Start code-server (no-op if already listening), then expose it exactly
 	// like a discovered app port.
-	if err := starter.StartEditor(ctx, ports.EnvID(v.EnvID), ports.CodeServerPort, res.EditorSettings); err != nil {
+	if err := starter.StartEditor(ctx, envport.EnvID(v.EnvID), envport.CodeServerPort, res.EditorSettings); err != nil {
 		return "", err
 	}
-	if url := s.Relay.Existing(runID, ports.CodeServerPort); url != "" {
+	if url := s.Relay.Existing(runID, envport.CodeServerPort); url != "" {
 		return url, nil
 	}
-	pc, err := exposer.ExposePort(ctx, ports.EnvID(v.EnvID), ports.CodeServerPort)
+	pc, err := exposer.ExposePort(ctx, envport.EnvID(v.EnvID), envport.CodeServerPort)
 	if err != nil {
 		return "", err
 	}
-	return s.Relay.Expose(runID, ports.CodeServerPort, pc)
+	return s.Relay.Expose(runID, envport.CodeServerPort, pc)
 }

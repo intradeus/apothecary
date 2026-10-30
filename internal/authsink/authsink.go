@@ -17,7 +17,7 @@ import (
 	"slices"
 	"sync"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/redact"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
@@ -65,13 +65,13 @@ func (s *Sink) log() *slog.Logger {
 // authSink is a live run's workspace, as a refreshed login reaches it.
 type authSink struct {
 	res    *resolution.Resolution
-	env    ports.EnvID
+	env    envport.EnvID
 	redact *redact.Redactor
 }
 
 // Set records that runID's workspace env holds its harnesses'
 // credentials (bootstrap, re-entry).
-func (s *Sink) Set(runID string, res *resolution.Resolution, env ports.EnvID, red *redact.Redactor) {
+func (s *Sink) Set(runID string, res *resolution.Resolution, env envport.EnvID, red *redact.Redactor) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.sinks == nil {

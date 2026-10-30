@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // opencode's ACP session modes are its agents: a stage runs as its agent.
@@ -20,10 +21,10 @@ func TestProfileSelectsTheAgentAsMode(t *testing.T) {
 	}
 }
 
-func envWith(t *testing.T, files map[string]string) (*fake.EnvProvisioner, ports.EnvID) {
+func envWith(t *testing.T, files map[string]string) (*fake.EnvProvisioner, envport.EnvID) {
 	t.Helper()
 	envp := fake.NewEnvProvisioner()
-	id, err := envp.Provision(context.Background(), ports.EnvSpec{RunID: "r1"})
+	id, err := envp.Provision(context.Background(), envport.EnvSpec{RunID: "r1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,11 +43,11 @@ func envWith(t *testing.T, files map[string]string) (*fake.EnvProvisioner, ports
 // "Model not found"). Config must follow the workspace's real $HOME.
 func TestConfigFollowsWorkspaceHome(t *testing.T) {
 	envp, id := envWith(t, nil)
-	envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "$HOME") {
-			return ports.ExecResult{Output: "/root\n"}, nil
+			return envport.ExecResult{Output: "/root\n"}, nil
 		}
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 	a := New(envp, Config{})
 	ctx := context.Background()
@@ -203,7 +204,7 @@ func TestAgentsTurnOffTheMCPServersTheyDoNotList(t *testing.T) {
 // Skills land in opencode's global skills directory under its config dir.
 func TestInstallSkillsTargetsConfigSkillsDir(t *testing.T) {
 	envp := fake.NewEnvProvisioner()
-	id, _ := envp.Provision(context.Background(), ports.EnvSpec{RunID: "r"})
+	id, _ := envp.Provision(context.Background(), envport.EnvSpec{RunID: "r"})
 	a := New(envp, Config{})
 	if err := a.InstallSkills(context.Background(), id, []string{"pdf"}); err != nil {
 		t.Fatal(err)

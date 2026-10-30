@@ -9,7 +9,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/modelcheck"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 const modelFlowDoc = `name: models
@@ -106,7 +106,7 @@ type listingRunner struct {
 	asked  int
 }
 
-func (r *listingRunner) AgentModels(context.Context, ports.EnvID) ([]string, error) {
+func (r *listingRunner) AgentModels(context.Context, envport.EnvID) ([]string, error) {
 	r.asked++
 	return r.models, r.err
 }

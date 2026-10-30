@@ -48,7 +48,7 @@ import (
 
 	"apothecary/internal/builtin"
 	"apothecary/internal/portrelay"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/wsimage"
 )
 
@@ -137,7 +137,7 @@ func TestLiveLifecycle(t *testing.T) {
 		// Nothing reaps a project's gateway (egressgw/manager.go); this test
 		// owns its project, so it removes the gateway + caches it created.
 		defer func() {
-			gw := "apo-gw-" + ports.ProjectHostKey(project)
+			gw := "apo-gw-" + envport.ProjectHostKey(project)
 			for _, args := range [][]string{
 				{"rm", "-f", gw},
 				{"volume", "rm", "-f", gw + "-cache", gw + "-buildcache", gw + "-state"},
@@ -154,7 +154,7 @@ func TestLiveLifecycle(t *testing.T) {
 	// The gateway filters the devcontainer BUILD too; the base image comes
 	// through the mirror and nothing else is installed into the image — the
 	// harnesses and code-server ride in as the tools bundle.
-	id, err := a.Provision(ctx, ports.EnvSpec{
+	id, err := a.Provision(ctx, envport.EnvSpec{
 		RunID: "LIVETEST1", RepoURL: "file://" + repo, Project: project,
 		EgressDomains: builtin.EgressDefaults(),
 	})
@@ -163,13 +163,13 @@ func TestLiveLifecycle(t *testing.T) {
 		if err := a.Destroy(context.WithoutCancel(ctx), id); err != nil {
 			t.Errorf("destroy: %v", err)
 		}
-		if st, err := a.Status(context.WithoutCancel(ctx), id); err != nil || st != ports.EnvAbsent {
+		if st, err := a.Status(context.WithoutCancel(ctx), id); err != nil || st != envport.EnvAbsent {
 			t.Errorf("post-destroy status = %s, %v", st, err)
 		}
 	}()
 	t.Logf("provisioned %s", id)
 
-	if st, err := a.Status(ctx, id); err != nil || st != ports.EnvRunning {
+	if st, err := a.Status(ctx, id); err != nil || st != envport.EnvRunning {
 		t.Fatalf("status = %s, %v", st, err)
 	}
 
@@ -189,14 +189,14 @@ func TestLiveLifecycle(t *testing.T) {
 	}
 
 	// Exec: containerEnv, lifecycle hook, and the $HOME/repo contract.
-	res, err := a.Exec(ctx, id, ports.Command{Script: "echo env=$SMOKE; ls /tmp/pc-ran; cat file.txt", Dir: "repo"})
+	res, err := a.Exec(ctx, id, envport.Command{Script: "echo env=$SMOKE; ls /tmp/pc-ran; cat file.txt", Dir: "repo"})
 	must(err)
 	for _, want := range []string{"env=live-42", "/tmp/pc-ran", "from-the-repo"} {
 		if !strings.Contains(res.Output, want) {
 			t.Errorf("exec output missing %q: %q (exit %d)", want, res.Output, res.ExitCode)
 		}
 	}
-	if res, err := a.Exec(ctx, id, ports.Command{Script: "exit 7"}); err != nil || res.ExitCode != 7 {
+	if res, err := a.Exec(ctx, id, envport.Command{Script: "exit 7"}); err != nil || res.ExitCode != 7 {
 		t.Errorf("exit propagation: %d, %v", res.ExitCode, err)
 	}
 
@@ -218,7 +218,7 @@ func TestLiveLifecycle(t *testing.T) {
 	// The tools bundle: every harness CLI and code-server, bind-mounted and
 	// linked into /opt/apothecary (on PATH through Exec's prelude) — nothing
 	// installed into the repo's image, which has neither node nor curl.
-	res, err = a.Exec(ctx, id, ports.Command{Script: `command -v opencode codex codex-acp omp code-server
+	res, err = a.Exec(ctx, id, envport.Command{Script: `command -v opencode codex codex-acp omp code-server
 opencode --version && omp --version && codex --version && code-server --version | head -1`})
 	must(err)
 	for _, want := range []string{"/opt/apothecary/opencode", "/opt/apothecary/codex", "/opt/apothecary/codex-acp", "/opt/apothecary/omp", "/opt/apothecary/code-server"} {
@@ -236,9 +236,9 @@ opencode --version && omp --version && codex --version && code-server --version 
 	// gallery cache when the run has a gateway, straight from Open VSX
 	// otherwise (egress is open then).
 	t0 = time.Now()
-	must(a.StartEditor(ctx, id, ports.CodeServerPort, ports.EditorSettings{Extensions: []string{"golang.go"}, Theme: "Default Dark Modern"}))
+	must(a.StartEditor(ctx, id, envport.CodeServerPort, envport.EditorSettings{Extensions: []string{"golang.go"}, Theme: "Default Dark Modern"}))
 	t.Logf("editor up in %s", time.Since(t0).Truncate(time.Second))
-	res, err = a.Exec(ctx, id, ports.Command{Script: `cat /apothecary/code-server/extensions.installed; echo; ls /apothecary/code-server/extensions; cat "$HOME/.local/share/code-server/User/settings.json"`})
+	res, err = a.Exec(ctx, id, envport.Command{Script: `cat /apothecary/code-server/extensions.installed; echo; ls /apothecary/code-server/extensions; cat "$HOME/.local/share/code-server/User/settings.json"`})
 	must(err)
 	for _, want := range []string{"golang.go", "Default Dark Modern"} {
 		if !strings.Contains(res.Output, want) {
@@ -246,7 +246,7 @@ opencode --version && omp --version && codex --version && code-server --version 
 		}
 	}
 	if os.Getenv("APOTHECARY_LIVE_GATEWAY") == "1" {
-		out, err := exec.CommandContext(ctx, "docker", "run", "--rm", "-v", "apo-gw-"+ports.ProjectHostKey(project)+"-state:/state",
+		out, err := exec.CommandContext(ctx, "docker", "run", "--rm", "-v", "apo-gw-"+envport.ProjectHostKey(project)+"-state:/state",
 			"alpine:3.21", "sh", "-c", "ls /state/gallery 2>/dev/null | wc -l").Output()
 		must(err)
 		if strings.TrimSpace(string(out)) == "0" {
@@ -260,7 +260,7 @@ opencode --version && omp --version && codex --version && code-server --version 
 	// (no curl in slim images: /dev/tcp).
 	probe := fmt.Sprintf(
 		`exec 3<>/dev/tcp/127.0.0.1/%d && printf 'GET / HTTP/1.0\r\n\r\n' >&3 && timeout 5 cat <&3`, enginePort)
-	res, err = a.Exec(ctx, id, ports.Command{Script: probe})
+	res, err = a.Exec(ctx, id, envport.Command{Script: probe})
 	must(err)
 	if !strings.Contains(res.Output, "live-pong") {
 		t.Errorf("loopback engine probe = %q (exit %d)", res.Output, res.ExitCode)

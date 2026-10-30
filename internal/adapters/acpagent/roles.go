@@ -8,6 +8,7 @@ import (
 
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // RolesDir holds one role file per agent spec, for harnesses with no
@@ -16,7 +17,7 @@ import (
 const RolesDir = "/apothecary/agents"
 
 // WriteRoles writes one role file per spec (bootstrap step 4).
-func WriteRoles(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID, specs []*agentspec.Spec) error {
+func WriteRoles(ctx context.Context, envp envport.EnvProvisioner, env envport.EnvID, specs []*agentspec.Spec) error {
 	for _, s := range specs {
 		if err := envp.WriteFile(ctx, env, path.Join(RolesDir, s.Name+".role"), []byte(RoleText(s)), 0o644); err != nil {
 			return fmt.Errorf("write role %s: %w", s.Name, err)
@@ -27,8 +28,8 @@ func WriteRoles(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID,
 
 // RolePreamble is a Profile.Preamble reading the stage agent's role file. An
 // agent with no role file fails rather than running role-less.
-func RolePreamble(envp ports.EnvProvisioner, harness string) func(context.Context, ports.EnvID, ports.AgentSpec) (string, error) {
-	return func(ctx context.Context, env ports.EnvID, spec ports.AgentSpec) (string, error) {
+func RolePreamble(envp envport.EnvProvisioner, harness string) func(context.Context, envport.EnvID, ports.AgentSpec) (string, error) {
+	return func(ctx context.Context, env envport.EnvID, spec ports.AgentSpec) (string, error) {
 		if spec.Agent == "" {
 			return "", nil
 		}

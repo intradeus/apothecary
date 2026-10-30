@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"apothecary/internal/egressgw"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // The engine bridge: engine loopback ports are exposed INSIDE the
@@ -50,7 +50,7 @@ func (a *Adapter) relayPairs() []string {
 
 // ensureBridge opens (once per env) the engine-side unix listeners in the
 // mounted shim dir and pumps them to the engine's loopback ports.
-func (a *Adapter) ensureBridge(env ports.EnvID) error {
+func (a *Adapter) ensureBridge(env envport.EnvID) error {
 	a.bridgeMu.Lock()
 	defer a.bridgeMu.Unlock()
 	if _, ok := a.bridges[env]; ok {
@@ -117,7 +117,7 @@ func halfClose(c net.Conn) {
 	}
 }
 
-func (a *Adapter) closeBridge(env ports.EnvID) {
+func (a *Adapter) closeBridge(env envport.EnvID) {
 	a.bridgeMu.Lock()
 	defer a.bridgeMu.Unlock()
 	for _, ln := range a.bridges[env] {
@@ -183,7 +183,7 @@ func (a *Adapter) relayTarget(ctx context.Context, name, cid string, port int) s
 		// No service DECLARES this port. It may still be a runtime listener a
 		// sibling scan discovered (an undeclared db, a service that binds a
 		// port it never exposed in its image) — route there if we saw it.
-		if svc := a.scannedSibling(ports.EnvID(name), port); svc != "" {
+		if svc := a.scannedSibling(envport.EnvID(name), port); svc != "" {
 			return svc
 		}
 		return loopback
@@ -201,20 +201,20 @@ func (a *Adapter) relayTarget(ctx context.Context, name, cid string, port int) s
 // scannedSibling returns the compose service a prior ScanSiblingPorts saw
 // listening on port, or "" — the expose-routing supplement for undeclared
 // sibling ports.
-func (a *Adapter) scannedSibling(env ports.EnvID, port int) string {
+func (a *Adapter) scannedSibling(env envport.EnvID, port int) string {
 	a.sibPortsMu.Lock()
 	defer a.sibPortsMu.Unlock()
 	return a.sibPorts[env][port]
 }
 
-// ScanSiblingPorts (ports.SiblingPortScanner) discovers listeners inside the
+// ScanSiblingPorts (envport.SiblingPortScanner) discovers listeners inside the
 // run's compose SIBLING containers — a database or cache the in-workspace
 // scanner cannot see. Only wildcard binds (0.0.0.0/::) are reported: a
 // loopback-only listener in a sibling is unreachable across containers, so
 // listing it would only offer an expose that connection-refuses. Results also
 // prime the expose-routing cache (see scannedSibling). Best-effort per
 // sibling: no shell, no cat, or no procfs just yields nothing.
-func (a *Adapter) ScanSiblingPorts(ctx context.Context, env ports.EnvID) []ports.ObservedPort {
+func (a *Adapter) ScanSiblingPorts(ctx context.Context, env envport.EnvID) []envport.ObservedPort {
 	name := string(env)
 	cid, err := a.containerID(ctx, name)
 	if err != nil {
@@ -233,7 +233,7 @@ func (a *Adapter) ScanSiblingPorts(ctx context.Context, env ports.EnvID) []ports
 	for _, p := range a.host.bridgePorts() {
 		exclude[p] = true
 	}
-	var observed []ports.ObservedPort
+	var observed []envport.ObservedPort
 	routes := map[int]string{}
 	for _, sib := range strings.Fields(string(out)) {
 		if strings.HasPrefix(cid, sib) || strings.HasPrefix(sib, cid) {
@@ -256,7 +256,7 @@ func (a *Adapter) ScanSiblingPorts(ctx context.Context, env ports.EnvID) []ports
 				continue // first sibling wins the port (deterministic via ps order)
 			}
 			routes[port] = svc
-			observed = append(observed, ports.ObservedPort{Port: port, Service: svc})
+			observed = append(observed, envport.ObservedPort{Port: port, Service: svc})
 		}
 	}
 	a.sibPortsMu.Lock()
@@ -340,7 +340,7 @@ func (a *Adapter) startPortScan(ctx context.Context, name, cid string) {
 	}
 	// code-server has its own "Open editor" affordance — don't also surface it
 	// as a discovered app port.
-	excl = append(excl, strconv.Itoa(ports.CodeServerPort))
+	excl = append(excl, strconv.Itoa(envport.CodeServerPort))
 	args := []string{"exec", "-d", cid, "/opt/apothecary/shim", "portscan", "--exclude", strings.Join(excl, ",")}
 	_, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin, args, nil, nil)
 	if err != nil || code != 0 {
@@ -366,7 +366,7 @@ const (
 	editorStartTimeout = 5 * time.Minute
 )
 
-// StartEditor (ports.EditorStarter) launches code-server in the workspace on
+// StartEditor (envport.EditorStarter) launches code-server in the workspace on
 // the given loopback port, ready to be exposed. Lazy + idempotent: the script
 // probes the port (image-agnostic, via the static shim) and leaves a listening
 // code-server alone; otherwise it starts it detached and waits for the
@@ -384,10 +384,10 @@ const (
 // is asked for (a marker holds the installed list; a Rebuild starts over),
 // through the project gateway's gallery cache when the run has one; then
 // the start, then the wait.
-func (a *Adapter) StartEditor(ctx context.Context, env ports.EnvID, port int, settings ports.EditorSettings) error {
+func (a *Adapter) StartEditor(ctx context.Context, env envport.EnvID, port int, settings envport.EditorSettings) error {
 	name := string(env)
 	script := editorScript(port, codeServerSettingsJSON(settings), a.EditorExtensions(ctx, env, settings), a.gatewayIPFor(name))
-	res, err := a.Exec(ctx, env, ports.Command{Script: script, Timeout: editorStartTimeout})
+	res, err := a.Exec(ctx, env, envport.Command{Script: script, Timeout: editorStartTimeout})
 	if err != nil {
 		return err
 	}
@@ -401,10 +401,10 @@ func (a *Adapter) StartEditor(ctx context.Context, env ports.EnvID, port int, se
 	}
 }
 
-// EditorExtensions (ports.EditorStarter) is the list StartEditor installs:
+// EditorExtensions (envport.EditorStarter) is the list StartEditor installs:
 // the definition's own ∪ the project's (settings.Extensions), deduplicated
 // and sorted — read from the checkout, no exec.
-func (a *Adapter) EditorExtensions(ctx context.Context, env ports.EnvID, settings ports.EditorSettings) []string {
+func (a *Adapter) EditorExtensions(ctx context.Context, env envport.EnvID, settings envport.EditorSettings) []string {
 	name := string(env)
 	return extensionUnion(a.defFor(name).EditorExtensions(ctx, a.defEnv(name, a.srcDir(name))), settings.Extensions)
 }
@@ -491,7 +491,7 @@ func extensionsGalleryJSON(base string) string {
 // codeServerSettingsJSON renders the neutral EditorSettings to a VS Code
 // settings.json object, emitting only the keys the project actually set. nil
 // when nothing is set (leave the user's own settings.json untouched).
-func codeServerSettingsJSON(s ports.EditorSettings) []byte {
+func codeServerSettingsJSON(s envport.EditorSettings) []byte {
 	m := map[string]any{}
 	if s.Theme != "" {
 		m["workbench.colorTheme"] = s.Theme
@@ -527,11 +527,11 @@ func codeServerSettingsJSON(s ports.EditorSettings) []byte {
 	return b
 }
 
-// --- ports.WorkspacePortExposer ---------------------------------------------
+// --- envport.WorkspacePortExposer ---------------------------------------------
 
 // AppPorts: the ports the repo's devcontainer declares (forwardPorts /
 // appPort) — auto-exposed by the engine at env_ready.
-func (a *Adapter) AppPorts(ctx context.Context, env ports.EnvID) []int {
+func (a *Adapter) AppPorts(ctx context.Context, env envport.EnvID) []int {
 	name := string(env)
 	return a.defFor(name).DeclaredPorts(ctx, a.defEnv(name, a.srcDir(name)))
 }
@@ -542,7 +542,7 @@ func (a *Adapter) AppPorts(ctx context.Context, env ports.EnvID) []int {
 // relayTarget); the engine dials the socket file host-side. Same channel as
 // the engine bridge, so it works on hosts that drop container→host IP traffic
 // in either direction.
-func (a *Adapter) ExposePort(ctx context.Context, env ports.EnvID, port int) (ports.PortConn, error) {
+func (a *Adapter) ExposePort(ctx context.Context, env envport.EnvID, port int) (envport.PortConn, error) {
 	name := string(env)
 	sock := fmt.Sprintf("app-%d.sock", port)
 	cid, err := a.containerID(ctx, name)
@@ -581,20 +581,20 @@ func (u unixPortConn) Dial(ctx context.Context) (net.Conn, error) {
 
 func (u unixPortConn) Close() error { return nil }
 
-// --- ports.Sidecar ----------------------------------------------------------
+// --- envport.Sidecar ----------------------------------------------------------
 
 // sidecarSock is the sidecar's socket in the bind-mounted shim dir: the
 // workspace sees /opt/apothecary/sidecar.sock, the engine the same file
 // under the env folder.
 const sidecarSock = "sidecar.sock"
 
-// Sidecar (ports.Sidecar) returns a dialer for the workspace's sidecar,
+// Sidecar (envport.Sidecar) returns a dialer for the workspace's sidecar,
 // starting it first when nothing is serving. It is started through Exec, so it
 // runs as the devcontainer's remote user with its full environment — the same
 // user and PATH the harness always ran with — and it detaches itself (no
 // setsid/nohup assumed in the repo's image). It lives as long as the
 // container; a rebuilt container simply gets a new one on first use.
-func (a *Adapter) Sidecar(ctx context.Context, env ports.EnvID) (ports.PortConn, error) {
+func (a *Adapter) Sidecar(ctx context.Context, env envport.EnvID) (envport.PortConn, error) {
 	conn := a.host.dial(string(env), sidecarSock)
 	if sidecarUp(ctx, conn) {
 		return conn, nil
@@ -604,7 +604,7 @@ func (a *Adapter) Sidecar(ctx context.Context, env ports.EnvID) (ports.PortConn,
 	if sidecarUp(ctx, conn) {
 		return conn, nil
 	}
-	res, err := a.Exec(ctx, env, ports.Command{
+	res, err := a.Exec(ctx, env, envport.Command{
 		Script: `exec /opt/apothecary/shim sidecar --daemon --listen /opt/apothecary/` + sidecarSock +
 			` --repo "$HOME/repo" --log /apothecary/sidecar.log`,
 		Timeout: time.Minute,
@@ -631,11 +631,11 @@ func (a *Adapter) Sidecar(ctx context.Context, env ports.EnvID) (ports.PortConn,
 // sshSock is the sidecar's SSH socket beside sidecarSock.
 const sshSock = "ssh.sock"
 
-// SSH (ports.WorkspaceSSH) returns a dialer for the sidecar's SSH server,
+// SSH (envport.WorkspaceSSH) returns a dialer for the sidecar's SSH server,
 // starting the sidecar first when nothing serves. A sidecar started by an
 // engine from before the SSH server serves none until the workspace is
 // rebuilt: it says so rather than hanging.
-func (a *Adapter) SSH(ctx context.Context, env ports.EnvID) (ports.PortConn, error) {
+func (a *Adapter) SSH(ctx context.Context, env envport.EnvID) (envport.PortConn, error) {
 	if _, err := a.Sidecar(ctx, env); err != nil {
 		return nil, err
 	}
@@ -645,9 +645,9 @@ func (a *Adapter) SSH(ctx context.Context, env ports.EnvID) (ports.PortConn, err
 	return a.host.dial(string(env), sshSock), nil
 }
 
-var _ ports.WorkspaceSSH = (*Adapter)(nil)
+var _ envport.WorkspaceSSH = (*Adapter)(nil)
 
-func sidecarUp(ctx context.Context, conn ports.PortConn) bool {
+func sidecarUp(ctx context.Context, conn envport.PortConn) bool {
 	dctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	c, err := conn.Dial(dctx)
@@ -658,4 +658,4 @@ func sidecarUp(ctx context.Context, conn ports.PortConn) bool {
 	return true
 }
 
-var _ ports.Sidecar = (*Adapter)(nil)
+var _ envport.Sidecar = (*Adapter)(nil)

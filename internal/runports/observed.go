@@ -1,11 +1,10 @@
 package runports
 
 import (
+	"apothecary/internal/ports/envport"
 	"context"
 	"sort"
 	"time"
-
-	"apothecary/internal/ports"
 )
 
 // Runtime port discovery: the in-workspace shim reports its listeners via
@@ -27,8 +26,8 @@ const (
 )
 
 type observedRun struct {
-	shim     []ports.ObservedPort
-	siblings []ports.ObservedPort
+	shim     []envport.ObservedPort
+	siblings []envport.ObservedPort
 	at       time.Time // last shim report (drives the TTL)
 	sibAt    time.Time // last sibling scan
 	sibBusy  bool      // a sibling refresh goroutine is in flight
@@ -43,7 +42,7 @@ type observedRun struct {
 // scan (throttled) and, in auto-expose mode, exposes newly discovered ports
 // up to the configured cap. Both side effects run asynchronously so the
 // shim's POST never blocks on a docker exec or an expose.
-func (s *Service) ReportObservedPorts(runID string, obs []ports.ObservedPort) {
+func (s *Service) ReportObservedPorts(runID string, obs []envport.ObservedPort) {
 	now := s.now()
 	s.mu.Lock()
 	if s.observed == nil {
@@ -74,7 +73,7 @@ func (s *Service) ReportObservedPorts(runID string, obs []ports.ObservedPort) {
 // (shim ∪ siblings), or nil once the snapshot goes stale. Ports already
 // live in the port relay are filtered out by the caller (getRunPorts) since
 // only it knows the exposure registry.
-func (s *Service) ObservedPorts(runID string) []ports.ObservedPort {
+func (s *Service) ObservedPorts(runID string) []envport.ObservedPort {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := s.observed[runID]
@@ -82,7 +81,7 @@ func (s *Service) ObservedPorts(runID string) []ports.ObservedPort {
 		return nil
 	}
 	seen := map[int]bool{}
-	var out []ports.ObservedPort
+	var out []envport.ObservedPort
 	for _, p := range r.shim { // workspace's own listeners win the port on a tie
 		if !seen[p.Port] {
 			seen[p.Port] = true
@@ -138,7 +137,7 @@ func (s *Service) refreshSiblingPorts(runID string) {
 
 // resolveScanner resolves a run to its EnvID and sibling-port scanner, or
 // ok=false when the run has no env or the provisioner lacks the capability.
-func (s *Service) resolveScanner(ctx context.Context, runID string) (ports.EnvID, ports.SiblingPortScanner, func(), bool) {
+func (s *Service) resolveScanner(ctx context.Context, runID string) (envport.EnvID, envport.SiblingPortScanner, func(), bool) {
 	v, err := s.Runs.View(ctx, runID)
 	if err != nil {
 		return "", nil, nil, false
@@ -150,12 +149,12 @@ func (s *Service) resolveScanner(ctx context.Context, runID string) (ports.EnvID
 	if err != nil {
 		return "", nil, nil, false
 	}
-	scanner, ok := res.Envp.(ports.SiblingPortScanner)
+	scanner, ok := res.Envp.(envport.SiblingPortScanner)
 	if !ok {
 		res.Close()
 		return "", nil, nil, false
 	}
-	return ports.EnvID(v.EnvID), scanner, res.Close, true
+	return envport.EnvID(v.EnvID), scanner, res.Close, true
 }
 
 // autoExposeObserved exposes discovered ports not yet exposed, up to the

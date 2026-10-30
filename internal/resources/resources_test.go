@@ -7,7 +7,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
@@ -19,11 +19,11 @@ type samplerEnvp struct {
 	fail bool
 }
 
-func (s samplerEnvp) SampleResources(context.Context, ports.EnvID) (ports.ResourceSample, error) {
+func (s samplerEnvp) SampleResources(context.Context, envport.EnvID) (envport.ResourceSample, error) {
 	if s.fail {
-		return ports.ResourceSample{}, errors.New("docker stats: container churning")
+		return envport.ResourceSample{}, errors.New("docker stats: container churning")
 	}
-	return ports.ResourceSample{CPUPerc: s.cpu, MemUsed: 100, MemLimit: 200}, nil
+	return envport.ResourceSample{CPUPerc: s.cpu, MemUsed: 100, MemLimit: 200}, nil
 }
 
 const fixtureProject = "p1"
@@ -49,7 +49,7 @@ func TestSampleOnce(t *testing.T) {
 	ctx := context.Background()
 
 	// An active (Running, non-terminal) run with a live env.
-	envID, _ := h.envp.Provision(ctx, ports.EnvSpec{RunID: "r-live"})
+	envID, _ := h.envp.Provision(ctx, envport.EnvSpec{RunID: "r-live"})
 	for _, p := range []event.Payload{
 		&event.RunCreated{TicketTitle: "live", FlowName: "loop", ProjectID: fixtureProject},
 		&event.EnvRequested{}, &event.EnvReady{EnvID: string(envID)},
@@ -103,7 +103,7 @@ func TestSampleOnceWithoutCapability(t *testing.T) {
 	h := newFixture()
 	ctx := context.Background()
 
-	envID, _ := h.envp.Provision(ctx, ports.EnvSpec{RunID: "r-nocap"})
+	envID, _ := h.envp.Provision(ctx, envport.EnvSpec{RunID: "r-nocap"})
 	for _, p := range []event.Payload{
 		&event.RunCreated{TicketTitle: "nocap", FlowName: "loop", ProjectID: fixtureProject},
 		&event.EnvRequested{}, &event.EnvReady{EnvID: string(envID)},

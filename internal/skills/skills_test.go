@@ -1,11 +1,10 @@
 package skills
 
 import (
+	"apothecary/internal/ports/envport"
 	"strings"
 	"testing"
 	"unicode/utf8"
-
-	"apothecary/internal/ports"
 )
 
 func md(name, desc string) []byte {
@@ -71,7 +70,7 @@ func TestParseFrontmatter(t *testing.T) {
 }
 
 func TestValidateNormalises(t *testing.T) {
-	files := []ports.TreeFile{
+	files := []envport.TreeFile{
 		{Path: "scripts/run.sh", Data: []byte("echo")},
 		{Path: "SKILL.md", Data: md("deploy", "Deploys things.")},
 		{Path: "references/x.md", Mode: 0o700, Data: []byte("x")},
@@ -95,7 +94,7 @@ func TestValidateNormalises(t *testing.T) {
 
 func TestValidateRejects(t *testing.T) {
 	big := make([]byte, MaxFileBytes+1)
-	cases := map[string][]ports.TreeFile{
+	cases := map[string][]envport.TreeFile{
 		"empty":          nil,
 		"no manifest":    {{Path: "README.md", Data: []byte("x")}},
 		"name mismatch":  {{Path: "SKILL.md", Data: md("other", "d")}},
@@ -108,30 +107,30 @@ func TestValidateRejects(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	many := []ports.TreeFile{{Path: "SKILL.md", Data: md("s", "d")}}
+	many := []envport.TreeFile{{Path: "SKILL.md", Data: md("s", "d")}}
 	for i := 0; i < MaxFiles; i++ {
-		many = append(many, ports.TreeFile{Path: "f" + strings.Repeat("x", i%5) + string(rune('a'+i%26)) + strings.Repeat("y", i/26), Data: []byte("x")})
+		many = append(many, envport.TreeFile{Path: "f" + strings.Repeat("x", i%5) + string(rune('a'+i%26)) + strings.Repeat("y", i/26), Data: []byte("x")})
 	}
 	if _, _, err := Validate("s", many); err == nil {
 		t.Error("too many files accepted")
 	}
-	if _, _, err := Validate("Bad", []ports.TreeFile{{Path: "SKILL.md", Data: md("Bad", "d")}}); err == nil {
+	if _, _, err := Validate("Bad", []envport.TreeFile{{Path: "SKILL.md", Data: md("Bad", "d")}}); err == nil {
 		t.Error("bad dir name accepted")
 	}
 }
 
 func TestHashes(t *testing.T) {
-	a := []ports.TreeFile{{Path: "SKILL.md", Data: []byte("1")}, {Path: "scripts/x", Data: []byte("2")}}
-	b := []ports.TreeFile{{Path: "scripts/x", Data: []byte("2")}, {Path: "SKILL.md", Data: []byte("1")}}
+	a := []envport.TreeFile{{Path: "SKILL.md", Data: []byte("1")}, {Path: "scripts/x", Data: []byte("2")}}
+	b := []envport.TreeFile{{Path: "scripts/x", Data: []byte("2")}, {Path: "SKILL.md", Data: []byte("1")}}
 	if Hash(Manifest(a)) != Hash(Manifest(b)) {
 		t.Error("hash depends on file order")
 	}
-	c := []ports.TreeFile{{Path: "SKILL.md", Data: []byte("1")}, {Path: "scripts/x", Mode: 0o644, Data: []byte("2")}}
+	c := []envport.TreeFile{{Path: "SKILL.md", Data: []byte("1")}, {Path: "scripts/x", Mode: 0o644, Data: []byte("2")}}
 	if Hash(Manifest(a)) != Hash(Manifest(c)) {
 		t.Error("scripts/ files should hash as executable regardless of the given mode")
 	}
-	d := []ports.TreeFile{{Path: "SKILL.md", Data: []byte("1")}, {Path: "other", Data: []byte("2")}}
-	e := []ports.TreeFile{{Path: "SKILL.md", Data: []byte("1")}, {Path: "other", Mode: 0o755, Data: []byte("2")}}
+	d := []envport.TreeFile{{Path: "SKILL.md", Data: []byte("1")}, {Path: "other", Data: []byte("2")}}
+	e := []envport.TreeFile{{Path: "SKILL.md", Data: []byte("1")}, {Path: "other", Mode: 0o755, Data: []byte("2")}}
 	if Hash(Manifest(d)) == Hash(Manifest(e)) {
 		t.Error("executable bit should change the hash")
 	}

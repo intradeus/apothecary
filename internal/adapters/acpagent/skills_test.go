@@ -6,12 +6,12 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 func TestInstallSkillsIsOneCopyingExec(t *testing.T) {
 	envp := fake.NewEnvProvisioner()
-	id, _ := envp.Provision(context.Background(), ports.EnvSpec{RunID: "r"})
+	id, _ := envp.Provision(context.Background(), envport.EnvSpec{RunID: "r"})
 	if err := InstallSkills(context.Background(), envp, id, "/home/u/.agents/skills", []string{"pdf", "code-review"}); err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestInstallSkillsIsOneCopyingExec(t *testing.T) {
 
 func TestInstallSkillsGuards(t *testing.T) {
 	envp := fake.NewEnvProvisioner()
-	id, _ := envp.Provision(context.Background(), ports.EnvSpec{RunID: "r"})
+	id, _ := envp.Provision(context.Background(), envport.EnvSpec{RunID: "r"})
 	if err := InstallSkills(context.Background(), envp, id, "/x", nil); err != nil || len(envp.Execs()) != 0 {
 		t.Errorf("zero names must be a silent no-op: %v / %d execs", err, len(envp.Execs()))
 	}
@@ -39,8 +39,8 @@ func TestInstallSkillsGuards(t *testing.T) {
 	if err := InstallSkills(context.Background(), envp, id, "relative", []string{"a"}); err == nil {
 		t.Error("a relative dir must be refused")
 	}
-	envp.ExecFunc = func(*fake.Env, ports.Command) (ports.ExecResult, error) {
-		return ports.ExecResult{ExitCode: 1, Output: "cp: cannot stat"}, nil
+	envp.ExecFunc = func(*fake.Env, envport.Command) (envport.ExecResult, error) {
+		return envport.ExecResult{ExitCode: 1, Output: "cp: cannot stat"}, nil
 	}
 	if err := InstallSkills(context.Background(), envp, id, "/x", []string{"a"}); err == nil || !strings.Contains(err.Error(), "cp: cannot stat") {
 		t.Errorf("exit code not reported: %v", err)

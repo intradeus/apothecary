@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -356,11 +357,11 @@ type reattachRunner struct {
 	result   ports.AgentResult
 }
 
-func (r *reattachRunner) Reattachable(_ context.Context, _ ports.EnvID, _ ports.SessionID, _ string) bool {
+func (r *reattachRunner) Reattachable(_ context.Context, _ envport.EnvID, _ ports.SessionID, _ string) bool {
 	return r.can
 }
 
-func (r *reattachRunner) Reattach(_ context.Context, _ ports.EnvID, s ports.SessionID, cursor string, in ports.AgentInput) (ports.AgentResult, bool, error) {
+func (r *reattachRunner) Reattach(_ context.Context, _ envport.EnvID, s ports.SessionID, cursor string, in ports.AgentInput) (ports.AgentResult, bool, error) {
 	r.mu.Lock()
 	r.attached = append(r.attached, string(s)+"@"+cursor)
 	r.mu.Unlock()
@@ -372,7 +373,7 @@ func seedLiveAttempt(t *testing.T, h *harness, runID string, extra ...event.Payl
 	t.Helper()
 	ctx := context.Background()
 	fl := h.flowOf(t, "ask")
-	envID, _ := h.envp.Provision(ctx, ports.EnvSpec{RunID: runID})
+	envID, _ := h.envp.Provision(ctx, envport.EnvSpec{RunID: runID})
 	base := []event.Payload{
 		&event.RunCreated{TicketTitle: "T", FlowName: "ask", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},

@@ -1,14 +1,13 @@
 package workspace
 
 import (
+	"apothecary/internal/ports/envport"
 	"context"
 	"errors"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-
-	"apothecary/internal/ports"
 )
 
 // A workspace has two independent axes:
@@ -33,7 +32,7 @@ type Host interface {
 	// detect picks the definition from the checkout; prepare calls it as soon
 	// as the checkout exists, so a repo without a definition fails before the
 	// (expensive) sandbox comes up wherever the host allows it.
-	prepare(ctx context.Context, name string, spec ports.EnvSpec, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error)
+	prepare(ctx context.Context, name string, spec envport.EnvSpec, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error)
 
 	// runInner runs one CLI invocation against the run's sandbox: its inner
 	// docker daemon, its checkout, its devcontainer CLI.
@@ -52,20 +51,20 @@ type Host interface {
 	// The engine bridge: what makes engineURL reachable from inside the
 	// workspace. bridgePorts are the workspace-loopback ports it occupies
 	// (excluded from port discovery).
-	ensureBridge(env ports.EnvID) error
+	ensureBridge(env envport.EnvID) error
 	startBridgeRelay(ctx context.Context, name, cid string) error
-	closeBridge(env ports.EnvID)
+	closeBridge(env envport.EnvID)
 	bridgePorts() []int
 	engineURL() string
 
 	// dial reaches a unix socket the workspace serves in its shim dir
 	// (/opt/apothecary/<sock>); waitSock blocks until it exists.
-	dial(name, sock string) ports.PortConn
+	dial(name, sock string) envport.PortConn
 	waitSock(ctx context.Context, name, sock string) error
 
 	// refreshShim makes the mounted shim current (Reattach).
 	refreshShim(ctx context.Context, name string) error
-	sample(ctx context.Context, name string) (ports.ResourceSample, error)
+	sample(ctx context.Context, name string) (envport.ResourceSample, error)
 	test(ctx context.Context) error
 	close()
 }

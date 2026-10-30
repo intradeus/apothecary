@@ -16,7 +16,7 @@ import (
 	"apothecary/internal/confstore"
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/skills"
 )
 
@@ -53,7 +53,7 @@ func invalidf(format string, args ...any) error {
 // every file (SKILL.md included).
 type SkillInput struct {
 	Name  string
-	Files []ports.TreeFile
+	Files []envport.TreeFile
 }
 
 // SkillsetInput is a skillset's editable surface.
@@ -84,7 +84,7 @@ func (s *Store) UpdateSkill(ctx context.Context, id string, in SkillInput) (Skil
 
 // writeSkill is writeSkillQuiet plus the version policy: a version in
 // every skillset that lists the skill, if its content hash moved.
-func (s *Store) writeSkill(ctx context.Context, cur Skill, name string, files []ports.TreeFile, src *Source) (Skill, error) {
+func (s *Store) writeSkill(ctx context.Context, cur Skill, name string, files []envport.TreeFile, src *Source) (Skill, error) {
 	out, err := s.writeSkillQuiet(ctx, cur, name, files, src)
 	if err != nil {
 		return Skill{}, err
@@ -99,7 +99,7 @@ func (s *Store) writeSkill(ctx context.Context, cur Skill, name string, files []
 // crash between the two leaves an unreferenced blob the sweep reclaims) and
 // writes the row with src when given. No version is cut: callers that
 // touch several skills at once (a skillset refresh) bump once at the end.
-func (s *Store) writeSkillQuiet(ctx context.Context, cur Skill, name string, files []ports.TreeFile, src *Source) (Skill, error) {
+func (s *Store) writeSkillQuiet(ctx context.Context, cur Skill, name string, files []envport.TreeFile, src *Source) (Skill, error) {
 	fm, norm, err := skills.Validate(name, files)
 	if err != nil {
 		return Skill{}, invalid(err)
@@ -135,7 +135,7 @@ func (s *Store) ListSkills(ctx context.Context, userID string) ([]Skill, error) 
 func (s *Store) DeleteSkill(ctx context.Context, id string) error { return s.db.DeleteSkill(ctx, id) }
 
 // SkillFiles reassembles a skill's current content from its manifest.
-func (s *Store) SkillFiles(ctx context.Context, id string) ([]ports.TreeFile, error) {
+func (s *Store) SkillFiles(ctx context.Context, id string) ([]envport.TreeFile, error) {
 	sk, err := s.db.GetSkill(ctx, id)
 	if err != nil {
 		return nil, err
@@ -143,14 +143,14 @@ func (s *Store) SkillFiles(ctx context.Context, id string) ([]ports.TreeFile, er
 	return s.files(sk.Name, sk.Files)
 }
 
-func (s *Store) files(name string, entries []skills.FileEntry) ([]ports.TreeFile, error) {
-	out := make([]ports.TreeFile, 0, len(entries))
+func (s *Store) files(name string, entries []skills.FileEntry) ([]envport.TreeFile, error) {
+	out := make([]envport.TreeFile, 0, len(entries))
 	for _, e := range entries {
 		data, err := s.blobs.Bytes(e.SHA256)
 		if err != nil {
 			return nil, fmt.Errorf("skill %s: %s: %w", name, e.Path, err)
 		}
-		out = append(out, ports.TreeFile{Path: e.Path, Mode: fs.FileMode(e.Mode), Data: data})
+		out = append(out, envport.TreeFile{Path: e.Path, Mode: fs.FileMode(e.Mode), Data: data})
 	}
 	return out, nil
 }

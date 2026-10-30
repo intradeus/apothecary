@@ -20,17 +20,18 @@ import (
 	"apothecary/internal/adapters/acpagent"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/wshome"
 )
 
 type Config struct{}
 
 type Adapter struct {
-	envp ports.EnvProvisioner
+	envp envport.EnvProvisioner
 	cfg  Config
 }
 
-func New(envp ports.EnvProvisioner, cfg Config) *Adapter {
+func New(envp envport.EnvProvisioner, cfg Config) *Adapter {
 	return &Adapter{envp: envp, cfg: cfg}
 }
 
@@ -43,14 +44,14 @@ const (
 
 // codexHome locates .codex in the home of the user codex actually runs as —
 // under a hardcoded home the config and auth are silently invisible to it.
-func (a *Adapter) codexHome(ctx context.Context, env ports.EnvID) string {
+func (a *Adapter) codexHome(ctx context.Context, env envport.EnvID) string {
 	return path.Join(wshome.Resolve(ctx, a.envp, env, defaultHome), ".codex")
 }
 
 // InstallSkills copies the run's skills into $HOME/.agents/skills, the
 // user-level directory codex discovers skills in (its project-level one is
 // the repo's own .agents/skills, which stays the repo's).
-func (a *Adapter) InstallSkills(ctx context.Context, env ports.EnvID, names []string) error {
+func (a *Adapter) InstallSkills(ctx context.Context, env envport.EnvID, names []string) error {
 	dir := path.Join(wshome.Resolve(ctx, a.envp, env, defaultHome), ".agents", "skills")
 	return acpagent.InstallSkills(ctx, a.envp, env, dir, names)
 }
@@ -62,7 +63,7 @@ func (a *Adapter) InstallSkills(ctx context.Context, env ports.EnvID, names []st
 // A flow's mcp_servers are not here: a stage's ride its ACP session
 // (acpagent), and codex-acp keeps a session's servers to that session, so
 // each agent sees only its own.
-func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
+func (a *Adapter) PrepareEnv(ctx context.Context, env envport.EnvID, specs []*agentspec.Spec) error {
 	if err := acpagent.WriteRoles(ctx, a.envp, env, specs); err != nil {
 		return err
 	}
@@ -92,13 +93,13 @@ tool_timeout_sec = 86400
 // AuthFilePath is where SeedAuthJSON puts the credential, exposed so the
 // engine can remove it when a run ends (the workspace outlives the run for
 // inspection; the ChatGPT-login tokens should not).
-func (a *Adapter) AuthFilePath(ctx context.Context, env ports.EnvID) string {
+func (a *Adapter) AuthFilePath(ctx context.Context, env envport.EnvID) string {
 	return path.Join(a.codexHome(ctx, env), "auth.json")
 }
 
 // SeedAuthJSON writes codex's auth.json (ChatGPT-login artifact) into
 // $CODEX_HOME; API-key auth rides OPENAI_API_KEY via provider.env instead.
-func (a *Adapter) SeedAuthJSON(ctx context.Context, env ports.EnvID, data []byte) error {
+func (a *Adapter) SeedAuthJSON(ctx context.Context, env envport.EnvID, data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}

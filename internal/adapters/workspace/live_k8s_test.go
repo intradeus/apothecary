@@ -37,6 +37,7 @@ import (
 	"apothecary/internal/kube"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 func liveKube(t *testing.T) (*kube.Client, string) {
@@ -168,7 +169,7 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	defer a.Close()
 
 	name := "apo-live-" + fmt.Sprint(time.Now().Unix()%100000)
-	spec := ports.EnvSpec{
+	spec := envport.EnvSpec{
 		RunID: "01LIVE" + name, Name: name, Project: "LIVEPROJ", ProjectName: "live",
 		RepoURL: "git://git." + ns + ".svc.cluster.local/repo",
 		// Docker Hub (the image; the harnesses and code-server ride in as the
@@ -180,7 +181,7 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	start := time.Now()
 	env, err := a.Provision(ctx, spec)
 	if err != nil {
-		if b, _ := a.TailExecLog(ctx, ports.EnvID(name), 8<<10); len(b) > 0 {
+		if b, _ := a.TailExecLog(ctx, envport.EnvID(name), 8<<10); len(b) > 0 {
 			t.Logf("exec.log tail:\n%s", b)
 		}
 		t.Fatalf("provision: %v", err)
@@ -201,15 +202,15 @@ func TestLiveK8sLifecycle(t *testing.T) {
 		}
 	}()
 
-	if st, err := a.Status(ctx, env); err != nil || st != ports.EnvRunning {
+	if st, err := a.Status(ctx, env); err != nil || st != envport.EnvRunning {
 		t.Fatalf("status = %s %v", st, err)
 	}
-	res, err := a.Exec(ctx, env, ports.Command{Script: `echo "$SMOKE"; cat "$HOME/repo/file.txt"; test -f /tmp/pc-ran && echo hooks-ran`})
+	res, err := a.Exec(ctx, env, envport.Command{Script: `echo "$SMOKE"; cat "$HOME/repo/file.txt"; test -f /tmp/pc-ran && echo hooks-ran`})
 	if err != nil || res.ExitCode != 0 || !strings.Contains(res.Output, "live-42") ||
 		!strings.Contains(res.Output, "from-the-repo") || !strings.Contains(res.Output, "hooks-ran") {
 		t.Fatalf("exec = %+v %v", res, err)
 	}
-	if res, err := a.Exec(ctx, env, ports.Command{Script: "exit 7"}); err != nil || res.ExitCode != 7 {
+	if res, err := a.Exec(ctx, env, envport.Command{Script: "exit 7"}); err != nil || res.ExitCode != 7 {
 		t.Fatalf("exit code = %+v %v", res, err)
 	}
 	blob := []byte("round-trip \x00\x01\xfe binary\n")
@@ -225,20 +226,20 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	// The tools bundle, seeded onto the run volume and linked into
 	// /opt/apothecary; the browser editor, started through Exec with the
 	// project's extension installed through the gateway's gallery.
-	if res, err := a.Exec(ctx, env, ports.Command{Script: `command -v opencode codex-acp omp code-server && opencode --version && codex --version`}); err != nil || res.ExitCode != 0 ||
+	if res, err := a.Exec(ctx, env, envport.Command{Script: `command -v opencode codex-acp omp code-server && opencode --version && codex --version`}); err != nil || res.ExitCode != 0 ||
 		!strings.Contains(res.Output, "/opt/apothecary/opencode") || !strings.Contains(res.Output, "/opt/apothecary/code-server") {
 		t.Fatalf("tools bundle: %+v %v", res, err)
 	} else {
 		t.Logf("tools: %s", strings.TrimSpace(res.Output))
 	}
-	if err := a.StartEditor(ctx, env, ports.CodeServerPort, ports.EditorSettings{Extensions: []string{"golang.go"}}); err != nil {
+	if err := a.StartEditor(ctx, env, envport.CodeServerPort, envport.EditorSettings{Extensions: []string{"golang.go"}}); err != nil {
 		t.Fatalf("editor: %v", err)
 	}
-	if res, err := a.Exec(ctx, env, ports.Command{Script: `cat /apothecary/code-server/extensions.installed; ls /apothecary/code-server/extensions`}); err != nil || !strings.Contains(res.Output, "golang.go") {
+	if res, err := a.Exec(ctx, env, envport.Command{Script: `cat /apothecary/code-server/extensions.installed; ls /apothecary/code-server/extensions`}); err != nil || !strings.Contains(res.Output, "golang.go") {
 		t.Errorf("editor extensions: %+v %v", res, err)
 	}
 	// The workspace reaches the engine at its Service.
-	if res, err := a.Exec(ctx, env, ports.Command{Script: fmt.Sprintf(`exec 3<>/dev/tcp/%s/8080; printf 'GET / HTTP/1.0\r\n\r\n' >&3; cat <&3`, engineIP)}); err != nil || !strings.Contains(res.Output, "live-pong") {
+	if res, err := a.Exec(ctx, env, envport.Command{Script: fmt.Sprintf(`exec 3<>/dev/tcp/%s/8080; printf 'GET / HTTP/1.0\r\n\r\n' >&3; cat <&3`, engineIP)}); err != nil || !strings.Contains(res.Output, "live-pong") {
 		t.Fatalf("engine from the workspace: %+v %v", res, err)
 	}
 
@@ -255,7 +256,7 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	}
 
 	// An exposed port: the "app" on 3000 is a relay to the sidecar's socket.
-	if res, err := a.Exec(ctx, env, ports.Command{Script: "(setsid /opt/apothecary/shim relay 3000:/opt/apothecary/sidecar.sock >/dev/null 2>&1 &) ; sleep 1"}); err != nil || res.ExitCode != 0 {
+	if res, err := a.Exec(ctx, env, envport.Command{Script: "(setsid /opt/apothecary/shim relay 3000:/opt/apothecary/sidecar.sock >/dev/null 2>&1 &) ; sleep 1"}); err != nil || res.ExitCode != 0 {
 		t.Fatalf("start app: %+v %v", res, err)
 	}
 	pc, err := a.ExposePort(ctx, env, 3000)
@@ -334,7 +335,7 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	if err := a.Reattach(ctx, env); err != nil {
 		t.Fatalf("reattach: %v", err)
 	}
-	if res, err := a.Exec(ctx, env, ports.Command{Script: "echo still-here"}); err != nil || !strings.Contains(res.Output, "still-here") {
+	if res, err := a.Exec(ctx, env, envport.Command{Script: "echo still-here"}); err != nil || !strings.Contains(res.Output, "still-here") {
 		t.Fatalf("exec after reattach: %+v %v", res, err)
 	}
 }

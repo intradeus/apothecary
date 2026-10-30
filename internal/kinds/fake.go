@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/reviewfile"
 )
 
@@ -137,7 +138,7 @@ func (FakeHarness) Descriptor() Descriptor {
 	return Descriptor{Port: "harness", Kind: "fake", Label: "Fake harness (dev)"}
 }
 
-func (FakeHarness) New(_ Config, envp ports.EnvProvisioner) (Harness, error) {
+func (FakeHarness) New(_ Config, envp envport.EnvProvisioner) (Harness, error) {
 	runner := &fake.AgentRunner{}
 	runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
 		select {
@@ -164,25 +165,25 @@ func (FakeHarness) New(_ Config, envp ports.EnvProvisioner) (Harness, error) {
 
 type fakeHarness struct{ runner *fake.AgentRunner }
 
-func (h *fakeHarness) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec, in ports.AgentInput) (ports.AgentResult, error) {
+func (h *fakeHarness) Run(ctx context.Context, env envport.EnvID, spec ports.AgentSpec, in ports.AgentInput) (ports.AgentResult, error) {
 	return h.runner.Run(ctx, env, spec, in)
 }
 
-func (h *fakeHarness) Resume(ctx context.Context, env ports.EnvID, s ports.SessionID, in ports.AgentInput) (ports.AgentResult, error) {
+func (h *fakeHarness) Resume(ctx context.Context, env envport.EnvID, s ports.SessionID, in ports.AgentInput) (ports.AgentResult, error) {
 	return h.runner.Resume(ctx, env, s, in)
 }
 
-func (h *fakeHarness) Test(context.Context) error                                { return nil }
-func (h *fakeHarness) EnvVars() map[string]string                                { return nil }
-func (h *fakeHarness) Binary() string                                            { return "true" }
-func (h *fakeHarness) EgressDomains() []string                                   { return nil }
-func (h *fakeHarness) SeedAuth(context.Context, ports.EnvID, func(string)) error { return nil }
-func (h *fakeHarness) Prepare(_ context.Context, _ ports.EnvID, specs []*agentspec.Spec) error {
+func (h *fakeHarness) Test(context.Context) error                                  { return nil }
+func (h *fakeHarness) EnvVars() map[string]string                                  { return nil }
+func (h *fakeHarness) Binary() string                                              { return "true" }
+func (h *fakeHarness) EgressDomains() []string                                     { return nil }
+func (h *fakeHarness) SeedAuth(context.Context, envport.EnvID, func(string)) error { return nil }
+func (h *fakeHarness) Prepare(_ context.Context, _ envport.EnvID, specs []*agentspec.Spec) error {
 	h.runner.RecordPrepare(specs)
 	return nil
 }
 
-func (h *fakeHarness) InstallSkills(_ context.Context, _ ports.EnvID, names []string) error {
+func (h *fakeHarness) InstallSkills(_ context.Context, _ envport.EnvID, names []string) error {
 	h.runner.RecordInstallSkills(names)
 	return nil
 }

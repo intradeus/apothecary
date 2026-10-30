@@ -1,7 +1,7 @@
 package envstate
 
 import (
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"errors"
 	"testing"
 	"time"
@@ -10,7 +10,7 @@ import (
 func TestBadgesOverlayAndTTL(t *testing.T) {
 	clk := time.Unix(1000, 0)
 	s := New(nil, nil, func() time.Time { return clk }, nil)
-	s.SetStatus("r1", ports.EnvStopped)
+	s.SetStatus("r1", envport.EnvStopped)
 
 	// An in-flight op overlays the reconciled docker status.
 	rel, err := s.Begin("r1", "rebuilding")

@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/shell"
 	"apothecary/internal/sidecar"
@@ -96,7 +96,7 @@ const StopBudget = 3 * time.Minute
 // Shim runs one `apothecary-shim service <verb>` in the primary
 // checkout, the request on stdin (one JSON line, so no line of it can end
 // the heredoc), and reads the state it prints.
-func Shim(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID, verb string, flags []string,
+func Shim(ctx context.Context, envp envport.EnvProvisioner, env envport.EnvID, verb string, flags []string,
 	req ShimRequest, timeout time.Duration) (sidecar.ServiceState, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -106,7 +106,7 @@ func Shim(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID, verb 
 		strings.Join(append([]string{verb}, flags...), " "), body)
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	res, err := envp.Exec(cctx, env, ports.Command{Script: script, Dir: event.PrimaryCheckoutDir, Timeout: timeout})
+	res, err := envp.Exec(cctx, env, envport.Command{Script: script, Dir: event.PrimaryCheckoutDir, Timeout: timeout})
 	if err != nil {
 		return sidecar.ServiceState{}, err
 	}
@@ -133,8 +133,8 @@ func lastJSON(output string, v any) bool {
 // States reads every service's state in the workspace: through the
 // sidecar when the provisioner has one, else (or when it predates the
 // services routes) through Exec.
-func States(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID) ([]sidecar.ServiceState, error) {
-	if sc, ok := envp.(ports.Sidecar); ok {
+func States(ctx context.Context, envp envport.EnvProvisioner, env envport.EnvID) ([]sidecar.ServiceState, error) {
+	if sc, ok := envp.(envport.Sidecar); ok {
 		if conn, err := sc.Sidecar(ctx, env); err == nil {
 			if out, err := sidecar.New(conn).Services(ctx); err == nil {
 				return out, nil
@@ -143,7 +143,7 @@ func States(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID) ([]
 	}
 	cctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	res, err := envp.Exec(cctx, env, ports.Command{Script: "apothecary-shim service status", Timeout: time.Minute})
+	res, err := envp.Exec(cctx, env, envport.Command{Script: "apothecary-shim service status", Timeout: time.Minute})
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +156,7 @@ func States(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID) ([]
 
 // State is one service's state; a service never started reads
 // stopped.
-func State(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID, name string) (sidecar.ServiceState, error) {
+func State(ctx context.Context, envp envport.EnvProvisioner, env envport.EnvID, name string) (sidecar.ServiceState, error) {
 	all, err := States(ctx, envp, env)
 	if err != nil {
 		return sidecar.ServiceState{}, err
@@ -170,11 +170,11 @@ func State(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID, name
 }
 
 // Log is the last n lines of a service's output.
-func Log(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID, name string, n int) (string, error) {
+func Log(ctx context.Context, envp envport.EnvProvisioner, env envport.EnvID, name string, n int) (string, error) {
 	if n <= 0 {
 		n = 200
 	}
-	if sc, ok := envp.(ports.Sidecar); ok {
+	if sc, ok := envp.(envport.Sidecar); ok {
 		if conn, err := sc.Sidecar(ctx, env); err == nil {
 			if out, err := sidecar.New(conn).ServiceLog(ctx, name, n); err == nil {
 				return out, nil
@@ -183,7 +183,7 @@ func Log(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID, name s
 	}
 	cctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	res, err := envp.Exec(cctx, env, ports.Command{
+	res, err := envp.Exec(cctx, env, envport.Command{
 		Script: fmt.Sprintf("apothecary-shim service logs --tail %d %s", n, name), Timeout: time.Minute})
 	if err != nil {
 		return "", err

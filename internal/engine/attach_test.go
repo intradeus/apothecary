@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -49,11 +50,11 @@ main:
 func TestFilesOutputLeftEmptyFailsTheStage(t *testing.T) {
 	att, snaps, _ := newFiles(t)
 	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, shotsDoc))
-	h.envp.ExecFunc = func(e *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(e *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if cmd.Script == "leave-a-stale-shot" {
 			e.Files["artifacts/shots/stale.png"] = []byte(png)
 		}
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 	var mu sync.Mutex
 	var shooter []string

@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"apothecary/internal/ports/envport"
 	"archive/tar"
 	"bytes"
 	"context"
@@ -9,8 +10,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"apothecary/internal/ports"
 )
 
 // WriteTree lays a whole directory down in ONE exec: a tar built here rides
@@ -19,7 +18,7 @@ import (
 // trip per tree instead of one per file is what makes a 50-file skill
 // affordable over `kubectl exec`. The archive is extracted as the remote
 // user with no ownership flags, so every entry is owned by that user.
-func (a *Adapter) WriteTree(ctx context.Context, env ports.EnvID, dir string, files []ports.TreeFile) error {
+func (a *Adapter) WriteTree(ctx context.Context, env envport.EnvID, dir string, files []envport.TreeFile) error {
 	if !strings.HasPrefix(dir, "/") {
 		return fmt.Errorf("write tree %s: directory must be absolute", dir)
 	}
@@ -44,8 +43,8 @@ func (a *Adapter) WriteTree(ctx context.Context, env ports.EnvID, dir string, fi
 // uid/gid 0 (ignored on extraction), modes as given (0 = 0644). Go picks the
 // simplest header format each entry fits (ustar first), which both GNU and
 // busybox tar read.
-func buildTar(files []ports.TreeFile) ([]byte, error) {
-	sorted := append([]ports.TreeFile(nil), files...)
+func buildTar(files []envport.TreeFile) ([]byte, error) {
+	sorted := append([]envport.TreeFile(nil), files...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Path < sorted[j].Path })
 	now := time.Now()
 	var buf bytes.Buffer

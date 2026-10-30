@@ -20,7 +20,7 @@ import (
 
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/services"
 	"apothecary/internal/shell"
@@ -187,7 +187,7 @@ func (e *Engine) stopRunServices(ctx context.Context, rs *runState) {
 
 // stopStageServices stops every live service a stage started that pick
 // keeps, recording each.
-func (e *Engine) stopStageServices(ctx context.Context, res *resolution.Resolution, env ports.EnvID, runID, reason string,
+func (e *Engine) stopStageServices(ctx context.Context, res *resolution.Resolution, env envport.EnvID, runID, reason string,
 	pick func(sidecar.ServiceState) bool, record func(event.Payload) error) {
 	states, err := services.States(ctx, res.Envp, env)
 	if err != nil {

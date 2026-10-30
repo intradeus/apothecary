@@ -13,7 +13,7 @@ import (
 	"apothecary/internal/auth"
 	"apothecary/internal/engine"
 	"apothecary/internal/filestore"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/skillstore"
 )
 
@@ -202,7 +202,7 @@ func TestStartRunWithSkillsets(t *testing.T) {
 			EnvID string `json:"env_id"`
 		} `json:"run"`
 	}](t, data).Run.EnvID
-	if md, err := x.envp.ReadFile(context.Background(), ports.EnvID(envID), "/apothecary/skills/pdf/SKILL.md"); err != nil || !strings.Contains(string(md), "name: pdf") {
+	if md, err := x.envp.ReadFile(context.Background(), envport.EnvID(envID), "/apothecary/skills/pdf/SKILL.md"); err != nil || !strings.Contains(string(md), "name: pdf") {
 		t.Errorf("tree in workspace: %q %v", md, err)
 	}
 	// An unknown skillset refuses the run.
@@ -215,10 +215,10 @@ func TestStartRunWithSkillsets(t *testing.T) {
 func TestSkillImportAndRefresh(t *testing.T) {
 	version := "1"
 	fetch := func(_ context.Context, src skillstore.Source) (skillstore.Fetched, error) {
-		md := func(n string) ports.TreeFile {
-			return ports.TreeFile{Path: n + "/SKILL.md", Data: []byte("---\nname: " + n + "\ndescription: v" + version + "\n---\n")}
+		md := func(n string) envport.TreeFile {
+			return envport.TreeFile{Path: n + "/SKILL.md", Data: []byte("---\nname: " + n + "\ndescription: v" + version + "\n---\n")}
 		}
-		return skillstore.Fetched{Commit: "abc" + version, Files: []ports.TreeFile{md("alpha"), md("beta"), {Path: "README.md", Data: []byte("x")}}}, nil
+		return skillstore.Fetched{Commit: "abc" + version, Files: []envport.TreeFile{md("alpha"), md("beta"), {Path: "README.md", Data: []byte("x")}}}, nil
 	}
 	skl := newTestSkills(t, fetch)
 	x := newEnvWith(t, engine.Config{}, skl.deps)

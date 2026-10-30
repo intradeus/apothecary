@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 	"apothecary/internal/skills"
 )
@@ -69,7 +69,7 @@ func (f *fakeSkillLib) SkillTrees(_ context.Context, pins []event.SkillsetPin) (
 
 func newSkillLib() *fakeSkillLib {
 	tree := func(name string) skills.Tree {
-		return skills.Tree{Name: name, Files: []ports.TreeFile{
+		return skills.Tree{Name: name, Files: []envport.TreeFile{
 			{Path: "SKILL.md", Data: []byte("---\nname: " + name + "\ndescription: d\n---\n")},
 			{Path: "scripts/run.sh", Mode: 0o755, Data: []byte("echo")},
 		}}
@@ -89,7 +89,7 @@ type installRecorder struct {
 	calls [][]string
 }
 
-func (r *installRecorder) fn(_ context.Context, _ ports.EnvID, names []string) error {
+func (r *installRecorder) fn(_ context.Context, _ envport.EnvID, names []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls = append(r.calls, append([]string(nil), names...))
@@ -138,7 +138,7 @@ func TestRunInstallsPinnedSkills(t *testing.T) {
 	if fmt.Sprint(v.Skillsets) != fmt.Sprint(want) {
 		t.Errorf("view pins = %+v, want %+v", v.Skillsets, want)
 	}
-	env := ports.EnvID(v.EnvID)
+	env := envport.EnvID(v.EnvID)
 	md, err := h.envp.ReadFile(ctx, env, "/apothecary/skills/alpha/SKILL.md")
 	if err != nil || !strings.Contains(string(md), "name: alpha") {
 		t.Errorf("alpha SKILL.md = %q, %v", md, err)

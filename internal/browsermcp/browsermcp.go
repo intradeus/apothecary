@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
@@ -37,7 +38,7 @@ type Service struct {
 }
 
 func New(runs *run.Reader, resolver resolution.Resolver, browser ports.Browser) *Service {
-	return &Service{Runs: runs, Resolver: resolver, Browser: browser, ports: &portCache{conns: map[string]ports.PortConn{}}}
+	return &Service{Runs: runs, Resolver: resolver, Browser: browser, ports: &portCache{conns: map[string]envport.PortConn{}}}
 }
 
 // Forget is the engine's teardown hook: the browser's exposures of a run's
@@ -77,14 +78,14 @@ func (s *Service) Open(ctx context.Context, runID string) (*Session, error) {
 		res.Close()
 		return nil, fmt.Errorf("the project's browser is off — turn it on in Workshop → Settings")
 	}
-	exposer, ok := res.Envp.(ports.WorkspacePortExposer)
+	exposer, ok := res.Envp.(envport.WorkspacePortExposer)
 	if !ok {
 		res.Close()
 		return nil, fmt.Errorf("run %s: its provisioner cannot reach the workspace's ports, so the browser has nothing to show", runID)
 	}
-	env := ports.EnvID(v.EnvID)
+	env := envport.EnvID(v.EnvID)
 	dial := func(ctx context.Context, port int) (net.Conn, error) {
-		return s.ports.dial(ctx, runID, port, func(ctx context.Context) (ports.PortConn, error) {
+		return s.ports.dial(ctx, runID, port, func(ctx context.Context) (envport.PortConn, error) {
 			return exposer.ExposePort(ctx, env, port)
 		})
 	}
@@ -131,10 +132,10 @@ func (s *Service) Status(ctx context.Context, project string) (ports.BrowserStat
 // rebuilt, taking its relays) is exposed again once.
 type portCache struct {
 	mu    sync.Mutex
-	conns map[string]ports.PortConn
+	conns map[string]envport.PortConn
 }
 
-func (c *portCache) dial(ctx context.Context, runID string, port int, expose func(context.Context) (ports.PortConn, error)) (net.Conn, error) {
+func (c *portCache) dial(ctx context.Context, runID string, port int, expose func(context.Context) (envport.PortConn, error)) (net.Conn, error) {
 	key := fmt.Sprintf("%s\x00%d", runID, port)
 	c.mu.Lock()
 	pc := c.conns[key]

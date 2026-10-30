@@ -9,7 +9,7 @@ import (
 	"strconv"
 
 	"apothecary/internal/auth"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/skills"
 	"apothecary/internal/skillstore"
 )
@@ -46,14 +46,14 @@ func (s *Server) listSkills(w http.ResponseWriter, r *http.Request) {
 // skillInput decodes a SkillRequest's files; a bad base64 is a 400 naming
 // the file.
 func skillInput(w http.ResponseWriter, body SkillRequest) (skillstore.SkillInput, bool) {
-	in := skillstore.SkillInput{Name: body.Name, Files: make([]ports.TreeFile, 0, len(body.Files))}
+	in := skillstore.SkillInput{Name: body.Name, Files: make([]envport.TreeFile, 0, len(body.Files))}
 	for _, f := range body.Files {
 		data, err := base64.StdEncoding.DecodeString(f.ContentB64)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, fmt.Sprintf("%s: content_b64 is not base64", f.Path))
 			return in, false
 		}
-		in.Files = append(in.Files, ports.TreeFile{Path: f.Path, Mode: fs.FileMode(f.Mode), Data: data})
+		in.Files = append(in.Files, envport.TreeFile{Path: f.Path, Mode: fs.FileMode(f.Mode), Data: data})
 	}
 	return in, true
 }

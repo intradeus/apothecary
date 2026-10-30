@@ -4,6 +4,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"context"
 	"errors"
@@ -83,23 +84,23 @@ type listingRunner struct {
 	models []string
 }
 
-func (r *listingRunner) AgentModels(context.Context, ports.EnvID) ([]string, error) {
+func (r *listingRunner) AgentModels(context.Context, envport.EnvID) ([]string, error) {
 	return r.models, nil
 }
 
 // firewallAwareExec scripts a compliant workspace: the egress-deny probe
 // (example.com) fails because the gateway blocks it, everything else succeeds.
-func firewallAwareExec(failDomains ...string) func(*fake.Env, ports.Command) (ports.ExecResult, error) {
-	return func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+func firewallAwareExec(failDomains ...string) func(*fake.Env, envport.Command) (envport.ExecResult, error) {
+	return func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "example.com") {
-			return ports.ExecResult{ExitCode: 1, Output: "blocked"}, nil
+			return envport.ExecResult{ExitCode: 1, Output: "blocked"}, nil
 		}
 		for _, d := range failDomains {
 			if strings.Contains(cmd.Script, d) {
-				return ports.ExecResult{ExitCode: 6, Output: "could not resolve host"}, nil
+				return envport.ExecResult{ExitCode: 6, Output: "could not resolve host"}, nil
 			}
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 }
 
@@ -248,7 +249,7 @@ func TestNewCheckSupersedesTheRunningOne(t *testing.T) {
 	inner := firewallAwareExec()
 	release := make(chan struct{})
 	var once sync.Once
-	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		blocked := false
 		once.Do(func() { blocked = true })
 		if blocked {
@@ -293,9 +294,9 @@ func TestCancel(t *testing.T) {
 	h := newFixture(t)
 	release := make(chan struct{})
 	defer close(release)
-	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		<-release
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 	id, _ := h.reg.Start(context.Background(), fixtureProject, false)
 	waitCheck(t, h, id, func(r CheckRun) bool { return hasStep(r, "provision") })

@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -598,7 +599,7 @@ main:
 	p := h.waitPing(t, PingGate)
 	// The workspace was reaped while the gate waited.
 	v := h.view(t, runID)
-	if err := h.envp.Destroy(ctx, ports.EnvID(v.EnvID)); err != nil {
+	if err := h.envp.Destroy(ctx, envport.EnvID(v.EnvID)); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err != nil {

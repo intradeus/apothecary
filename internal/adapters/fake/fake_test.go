@@ -7,17 +7,18 @@ import (
 	"testing"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 func TestEnvLifecycleAndFiles(t *testing.T) {
 	ctx := context.Background()
 	p := NewEnvProvisioner()
 
-	id, err := p.Provision(ctx, ports.EnvSpec{RunID: "r1", RepoURL: "u", Branch: "b"})
+	id, err := p.Provision(ctx, envport.EnvSpec{RunID: "r1", RepoURL: "u", Branch: "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := p.Status(ctx, id); st != ports.EnvRunning {
+	if st, _ := p.Status(ctx, id); st != envport.EnvRunning {
 		t.Errorf("status = %s", st)
 	}
 
@@ -32,7 +33,7 @@ func TestEnvLifecycleAndFiles(t *testing.T) {
 		t.Errorf("missing file err = %v, want fs.ErrNotExist", err)
 	}
 
-	res, err := p.Exec(ctx, id, ports.Command{Script: "make test"})
+	res, err := p.Exec(ctx, id, envport.Command{Script: "make test"})
 	if err != nil || res.ExitCode != 0 {
 		t.Errorf("exec = %+v, %v", res, err)
 	}
@@ -43,7 +44,7 @@ func TestEnvLifecycleAndFiles(t *testing.T) {
 	if err := p.Destroy(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := p.Status(ctx, id); st != ports.EnvAbsent {
+	if st, _ := p.Status(ctx, id); st != envport.EnvAbsent {
 		t.Errorf("status after destroy = %s", st)
 	}
 }
@@ -51,10 +52,10 @@ func TestEnvLifecycleAndFiles(t *testing.T) {
 func TestProvisionErrsScriptRetries(t *testing.T) {
 	p := NewEnvProvisioner()
 	p.ProvisionErrs = []error{errors.New("transient")}
-	if _, err := p.Provision(context.Background(), ports.EnvSpec{}); err == nil {
+	if _, err := p.Provision(context.Background(), envport.EnvSpec{}); err == nil {
 		t.Fatal("first provision should fail")
 	}
-	if _, err := p.Provision(context.Background(), ports.EnvSpec{}); err != nil {
+	if _, err := p.Provision(context.Background(), envport.EnvSpec{}); err != nil {
 		t.Fatalf("second provision should succeed: %v", err)
 	}
 }

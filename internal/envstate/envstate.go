@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
@@ -83,9 +83,9 @@ type Store struct {
 	// Empty for a run means "not yet reconciled" — the read path falls back
 	// to the env_id-based liveness guess.
 	statusMu sync.Mutex
-	status   map[string]ports.EnvStatus
+	status   map[string]envport.EnvStatus
 	// dirty is, per run, whether the workspace's build inputs changed
-	// since its container was built (ports.WorkspaceDirtyChecker), refreshed
+	// since its container was built (envport.WorkspaceDirtyChecker), refreshed
 	// with status. Same discipline: external state, memory only.
 	dirty map[string]bool
 
@@ -105,7 +105,7 @@ type Store struct {
 func New(runs *run.Reader, resolver resolution.Resolver, clock func() time.Time, log *slog.Logger) *Store {
 	return &Store{
 		Runs: runs, Resolver: resolver, Clock: clock, Log: log,
-		status: map[string]ports.EnvStatus{},
+		status: map[string]envport.EnvStatus{},
 		dirty:  map[string]bool{},
 		ops:    map[string]*op{},
 	}
@@ -148,7 +148,7 @@ func (s *Store) Run(ctx context.Context, every time.Duration) {
 
 // SetStatus records one run's status outside a reconcile pass (a targeted
 // probe right after a rebuild, so the badge does not wait for the next pass).
-func (s *Store) SetStatus(runID string, st ports.EnvStatus) {
+func (s *Store) SetStatus(runID string, st envport.EnvStatus) {
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
 	s.status[runID] = st
@@ -180,7 +180,7 @@ func (s *Store) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	next := map[string]ports.EnvStatus{}
+	next := map[string]envport.EnvStatus{}
 	dirty := map[string]bool{}
 	// Runs with an op in flight (rebuild/destroy) are skipped: their docker
 	// state is churning and the Badges overlay already covers the badge, so
@@ -216,22 +216,22 @@ func (s *Store) Reconcile(ctx context.Context) error {
 			res, err = s.Resolver.Resolve(ctx, v.ProjectID)
 			if err != nil {
 				s.log().Debug("env reconcile: resolve failed", "run", id, "project", v.ProjectID, "err", err)
-				next[id] = ports.EnvUnknown
+				next[id] = envport.EnvUnknown
 				continue
 			}
 			resolved[v.ProjectID] = res
 		}
-		st, err := res.Envp.Status(ctx, ports.EnvID(v.EnvID))
+		st, err := res.Envp.Status(ctx, envport.EnvID(v.EnvID))
 		if err != nil {
 			s.log().Debug("env reconcile: status probe failed", "run", id, "env", v.EnvID, "err", err)
-			next[id] = ports.EnvUnknown
+			next[id] = envport.EnvUnknown
 			continue
 		}
 		next[id] = st
 		// Same pass, same honesty: a failed check records nothing, so the
 		// hint disappears rather than carrying a stale "changed" forward.
-		if dc, ok := res.Envp.(ports.WorkspaceDirtyChecker); ok {
-			if d, derr := dc.ConfigDirty(ctx, ports.EnvID(v.EnvID)); derr == nil {
+		if dc, ok := res.Envp.(envport.WorkspaceDirtyChecker); ok {
+			if d, derr := dc.ConfigDirty(ctx, envport.EnvID(v.EnvID)); derr == nil {
 				dirty[id] = d
 			} else {
 				s.log().Debug("env reconcile: config dirty check failed", "run", id, "env", v.EnvID, "err", derr)
@@ -259,10 +259,10 @@ func (s *Store) Dirty() map[string]bool {
 // Statuses returns a snapshot copy of the reconciled per-run live
 // container status (keyed by run id). A run absent from the map has not been
 // reconciled yet; callers should fall back to the env_id-based guess.
-func (s *Store) Statuses() map[string]ports.EnvStatus {
+func (s *Store) Statuses() map[string]envport.EnvStatus {
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
-	out := make(map[string]ports.EnvStatus, len(s.status))
+	out := make(map[string]envport.EnvStatus, len(s.status))
 	maps.Copy(out, s.status)
 	return out
 }

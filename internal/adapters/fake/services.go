@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/sidecar"
 )
 
@@ -62,13 +62,13 @@ func (s *Services) Snapshot() []string {
 }
 
 // Exec answers the service scripts and hands everything else to next.
-func (s *Services) Exec(next func(*Env, ports.Command) (ports.ExecResult, error)) func(*Env, ports.Command) (ports.ExecResult, error) {
-	return func(env *Env, cmd ports.Command) (ports.ExecResult, error) {
+func (s *Services) Exec(next func(*Env, envport.Command) (envport.ExecResult, error)) func(*Env, envport.Command) (envport.ExecResult, error) {
+	return func(env *Env, cmd envport.Command) (envport.ExecResult, error) {
 		first, rest, _ := strings.Cut(cmd.Script, "\n")
 		args, ok := strings.CutPrefix(first, "apothecary-shim service ")
 		if !ok {
 			if next == nil {
-				return ports.ExecResult{}, nil
+				return envport.ExecResult{}, nil
 			}
 			return next(env, cmd)
 		}
@@ -100,7 +100,7 @@ func (s *Services) Exec(next func(*Env, ports.Command) (ports.ExecResult, error)
 		case "logs":
 			name := f[len(f)-1]
 			s.Calls = append(s.Calls, "logs "+name)
-			return ports.ExecResult{Output: s.Log[name]}, nil
+			return envport.ExecResult{Output: s.Log[name]}, nil
 		case "stop":
 			s.Calls = append(s.Calls, "stop "+req.Name)
 			st := s.states[req.Name]
@@ -140,7 +140,7 @@ func (s *Services) Exec(next func(*Env, ports.Command) (ports.ExecResult, error)
 			out.Launched = true
 			return jsonResult(out)
 		}
-		return ports.ExecResult{ExitCode: 2, Output: "usage"}, nil
+		return envport.ExecResult{ExitCode: 2, Output: "usage"}, nil
 	}
 }
 
@@ -173,10 +173,10 @@ func live(phase string) bool {
 	return phase == "starting" || phase == "healthy" || phase == "unhealthy" || phase == "stopping"
 }
 
-func jsonResult(v any) (ports.ExecResult, error) {
+func jsonResult(v any) (envport.ExecResult, error) {
 	data, err := json.Marshal(v)
 	if err != nil {
-		return ports.ExecResult{}, err
+		return envport.ExecResult{}, err
 	}
-	return ports.ExecResult{Output: string(data) + "\n"}, nil
+	return envport.ExecResult{Output: string(data) + "\n"}, nil
 }

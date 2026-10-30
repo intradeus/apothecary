@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 func TestResolve(t *testing.T) {
@@ -30,12 +30,12 @@ func TestResolve(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			envp := fake.NewEnvProvisioner()
-			id, err := envp.Provision(context.Background(), ports.EnvSpec{RunID: "r1"})
+			id, err := envp.Provision(context.Background(), envport.EnvSpec{RunID: "r1"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			envp.ExecFunc = func(*fake.Env, ports.Command) (ports.ExecResult, error) {
-				return ports.ExecResult{Output: tc.out, ExitCode: tc.code}, tc.err
+			envp.ExecFunc = func(*fake.Env, envport.Command) (envport.ExecResult, error) {
+				return envport.ExecResult{Output: tc.out, ExitCode: tc.code}, tc.err
 			}
 			if got := Resolve(context.Background(), envp, id, "/fallback"); got != tc.want {
 				t.Errorf("Resolve = %q, want %q", got, tc.want)

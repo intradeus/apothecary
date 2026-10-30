@@ -12,7 +12,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/envstate"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -20,7 +20,7 @@ import (
 // gate so a test can hold a rebuild in flight and observe concurrent ops.
 type rebuilderEnvp struct {
 	*fake.EnvProvisioner
-	lastSpec ports.EnvSpec
+	lastSpec envport.EnvSpec
 	calls    int32
 	started  chan struct{} // closed the first time Rebuild is entered
 	release  chan struct{} // Rebuild blocks until this is closed (nil = no block)
@@ -28,7 +28,7 @@ type rebuilderEnvp struct {
 	once     sync.Once
 }
 
-func (r *rebuilderEnvp) Rebuild(ctx context.Context, spec ports.EnvSpec) error {
+func (r *rebuilderEnvp) Rebuild(ctx context.Context, spec envport.EnvSpec) error {
 	r.lastSpec = spec
 	atomic.AddInt32(&r.calls, 1)
 	if r.started != nil {

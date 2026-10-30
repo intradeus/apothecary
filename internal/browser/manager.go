@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // HostRun runs one docker CLI invocation against the host daemon.
@@ -120,12 +121,12 @@ var _ ports.Browser = (*Manager)(nil)
 
 // --- naming ---------------------------------------------------------------
 
-// Everything per project is named by ports.ProjectHostKey(project): the
+// Everything per project is named by envport.ProjectHostKey(project): the
 // project's ID, lowercased — never its name (a rename must not strand a
 // browser, and two projects called "api" must not share one). Every
 // `project`/`name` argument in this file is that id.
 
-func containerName(project string) string { return "apo-browser-" + ports.ProjectHostKey(project) }
+func containerName(project string) string { return "apo-browser-" + envport.ProjectHostKey(project) }
 
 // playwrightArgs start one MCP server with its own in-memory Chromium. The
 // session adds --proxy-server (its relay's port, known only inside).

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/wsname"
@@ -33,7 +33,7 @@ type Sampler struct {
 	// failed sample appends NOTHING — a gap in the series is honest, a
 	// carried-forward value is the stale lie the reconciler comment warns
 	// against.
-	buf map[string][]ports.ResourceSample
+	buf map[string][]envport.ResourceSample
 }
 
 func New(runs *run.Reader, resolver resolution.Resolver, clock func() time.Time, log *slog.Logger) *Sampler {
@@ -119,11 +119,11 @@ func (s *Sampler) SampleOnce(ctx context.Context) error {
 			}
 			resolved[v.ProjectID] = res
 		}
-		sampler, ok := res.Envp.(ports.ResourceSampler)
+		sampler, ok := res.Envp.(envport.ResourceSampler)
 		if !ok {
 			continue
 		}
-		sample, err := sampler.SampleResources(ctx, ports.EnvID(wsname.ForRun(v, id)))
+		sample, err := sampler.SampleResources(ctx, envport.EnvID(wsname.ForRun(v, id)))
 		if err != nil {
 			s.log().Debug("resource sample failed", "run", id, "err", err)
 			continue
@@ -131,7 +131,7 @@ func (s *Sampler) SampleOnce(ctx context.Context) error {
 		sample.At = s.now()
 		s.mu.Lock()
 		if s.buf == nil {
-			s.buf = map[string][]ports.ResourceSample{}
+			s.buf = map[string][]envport.ResourceSample{}
 		}
 		buf := append(s.buf[id], sample)
 		if len(buf) > resourceWindow {
@@ -153,8 +153,8 @@ func (s *Sampler) SampleOnce(ctx context.Context) error {
 // Samples returns a snapshot copy of the run's resource-sample window
 // (the run-page graphs). Empty means "nothing sampled yet": no env, a
 // provisioner without the capability, or an engine restart.
-func (s *Sampler) Samples(runID string) []ports.ResourceSample {
+func (s *Sampler) Samples(runID string) []envport.ResourceSample {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]ports.ResourceSample(nil), s.buf[runID]...)
+	return append([]envport.ResourceSample(nil), s.buf[runID]...)
 }

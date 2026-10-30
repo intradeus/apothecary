@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -155,9 +156,9 @@ func TestMRMergeIsPinnedToTheHeadTheRoundPushed(t *testing.T) {
 	git.head = "a1"
 	git.advanceTarget("main")
 	ref := ph.repoHost.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
-	ph.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	ph.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if cmd.Dir != "repo" {
-			return ports.ExecResult{}, nil
+			return envport.ExecResult{}, nil
 		}
 		res, err := git.exec(env, cmd)
 		if strings.HasPrefix(strings.TrimSpace(cmd.Script), "git push") && res.ExitCode == 0 {

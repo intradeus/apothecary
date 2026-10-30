@@ -8,7 +8,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -16,7 +16,7 @@ import (
 // delegating everything else to the fake.
 type statusErrEnvp struct{ *fake.EnvProvisioner }
 
-func (statusErrEnvp) Status(context.Context, ports.EnvID) (ports.EnvStatus, error) {
+func (statusErrEnvp) Status(context.Context, envport.EnvID) (envport.EnvStatus, error) {
 	return "", errors.New("provisioner unreachable: signed out")
 }
 
@@ -35,7 +35,7 @@ func TestReapOnceDestroysOldCompletedOnly(t *testing.T) {
 	}
 
 	// Abandoned run with a live env (must never be reaped).
-	envID, _ := h.envp.Provision(ctx, ports.EnvSpec{RunID: "r-ab"})
+	envID, _ := h.envp.Provision(ctx, envport.EnvSpec{RunID: "r-ab"})
 	for _, p := range []event.Payload{
 		&event.RunCreated{TicketTitle: "ab", FlowName: "loop", ProjectID: testProject},
 		&event.EnvRequested{}, &event.EnvReady{EnvID: string(envID)},
@@ -101,16 +101,16 @@ func TestReconcileEnvsReflectsLiveContainerStatus(t *testing.T) {
 	if err := h.e.envState.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.e.envState.Statuses()[id]; got != ports.EnvRunning {
+	if got := h.e.envState.Statuses()[id]; got != envport.EnvRunning {
 		t.Fatalf("after reconcile: got %q, want running", got)
 	}
 
 	// Stop the container out-of-band (no event) — the reconciler must catch it.
-	h.envp.Env(ports.EnvID(v.EnvID)).Status = ports.EnvStopped
+	h.envp.Env(envport.EnvID(v.EnvID)).Status = envport.EnvStopped
 	if err := h.e.envState.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.e.envState.Statuses()[id]; got != ports.EnvStopped {
+	if got := h.e.envState.Statuses()[id]; got != envport.EnvStopped {
 		t.Fatalf("after out-of-band stop: got %q, want stopped", got)
 	}
 	// The event log is untouched: env_id still set, no phantom EnvDestroyed.
@@ -136,7 +136,7 @@ func TestReconcileEnvsUnknownWhenProbeFails(t *testing.T) {
 	if err := h.e.envState.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.e.envState.Statuses()[id]; got != ports.EnvRunning {
+	if got := h.e.envState.Statuses()[id]; got != envport.EnvRunning {
 		t.Fatalf("setup: got %q, want running", got)
 	}
 
@@ -145,7 +145,7 @@ func TestReconcileEnvsUnknownWhenProbeFails(t *testing.T) {
 	if err := h.e.envState.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.e.envState.Statuses()[id]; got != ports.EnvUnknown {
+	if got := h.e.envState.Statuses()[id]; got != envport.EnvUnknown {
 		t.Fatalf("after probe failure: got %q, want unknown (must NOT carry stale running)", got)
 	}
 }

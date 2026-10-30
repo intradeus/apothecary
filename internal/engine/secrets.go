@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 	"apothecary/internal/shell"
 )
@@ -53,7 +54,7 @@ func (e *Engine) ScrubWorkspaceSecrets(ctx context.Context, v run.View) {
 		return
 	}
 	defer res.Close()
-	id := ports.EnvID(v.EnvID)
+	id := envport.EnvID(v.EnvID)
 
 	// A live agent process holds the credentials in memory and would keep
 	// using them: stop it before removing the files.
@@ -83,7 +84,7 @@ func (e *Engine) ScrubWorkspaceSecrets(ctx context.Context, v run.View) {
 	if len(quoted) == 0 {
 		return
 	}
-	out, err := res.Envp.Exec(ctx, id, ports.Command{
+	out, err := res.Envp.Exec(ctx, id, envport.Command{
 		Script: "rm -f " + strings.Join(quoted, " "),
 	})
 	switch {

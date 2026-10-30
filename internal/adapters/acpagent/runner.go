@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/sidecar"
 )
 
@@ -44,7 +45,7 @@ type Profile struct {
 	Mode func(spec ports.AgentSpec) string
 	// Preamble, when set, is prepended to a NEW session's first prompt —
 	// the role prompt, for harnesses with nowhere else to put it.
-	Preamble func(ctx context.Context, env ports.EnvID, spec ports.AgentSpec) (string, error)
+	Preamble func(ctx context.Context, env envport.EnvID, spec ports.AgentSpec) (string, error)
 	// MCPServers ride EVERY session, ahead of the stage's own — for a
 	// harness that reads no MCP config file in ACP mode (omp), this is the
 	// only way ask_human reaches it.
@@ -75,14 +76,14 @@ const (
 func (r *Runner) CanReadOnly() bool { return r.p.ReadOnlyBy != "" }
 
 type Runner struct {
-	envp ports.EnvProvisioner
+	envp envport.EnvProvisioner
 	p    Profile
 	// cancelGrace bounds how long a cancelled turn may take to wind down
 	// before the runner gives up on it. A var for tests.
 	cancelGrace time.Duration
 }
 
-func New(envp ports.EnvProvisioner, p Profile) *Runner {
+func New(envp envport.EnvProvisioner, p Profile) *Runner {
 	return &Runner{envp: envp, p: p, cancelGrace: 30 * time.Second}
 }
 
@@ -91,8 +92,8 @@ func New(envp ports.EnvProvisioner, p Profile) *Runner {
 const envPrelude = `set -a; [ -f /apothecary/provider.env ] && . /apothecary/provider.env; ` +
 	`[ -s /apothecary/proxy.env ] && . /apothecary/proxy.env; set +a; `
 
-func (r *Runner) client(ctx context.Context, env ports.EnvID) (*sidecar.Client, error) {
-	sc, ok := r.envp.(ports.Sidecar)
+func (r *Runner) client(ctx context.Context, env envport.EnvID) (*sidecar.Client, error) {
+	sc, ok := r.envp.(envport.Sidecar)
 	if !ok {
 		return nil, fmt.Errorf("%s: this workspace provisioner cannot host the agent sidecar", r.p.Harness)
 	}
@@ -177,7 +178,7 @@ func pairs(m map[string]string) []sidecar.EnvVar {
 	return out
 }
 
-func (r *Runner) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec, in ports.AgentInput) (ports.AgentResult, error) {
+func (r *Runner) Run(ctx context.Context, env envport.EnvID, spec ports.AgentSpec, in ports.AgentInput) (ports.AgentResult, error) {
 	c, err := r.client(ctx, env)
 	if err != nil {
 		return ports.AgentResult{}, err
@@ -212,7 +213,7 @@ func (r *Runner) Run(ctx context.Context, env ports.EnvID, spec ports.AgentSpec,
 	return r.drive(ctx, c, st.Proc, sess.SessionID, sess.CostUSD, prompt, "", "", in)
 }
 
-func (r *Runner) Resume(ctx context.Context, env ports.EnvID, s ports.SessionID, in ports.AgentInput) (ports.AgentResult, error) {
+func (r *Runner) Resume(ctx context.Context, env envport.EnvID, s ports.SessionID, in ports.AgentInput) (ports.AgentResult, error) {
 	if s == "" {
 		return ports.AgentResult{}, fmt.Errorf("%s resume: no session recorded for this stage", r.p.Harness)
 	}
@@ -273,7 +274,7 @@ func (r *Runner) attachable(ctx context.Context, c *sidecar.Client, s, cursor st
 	return turn, st.Sessions[s], turn != ""
 }
 
-func (r *Runner) Reattachable(ctx context.Context, env ports.EnvID, s ports.SessionID, cursor string) bool {
+func (r *Runner) Reattachable(ctx context.Context, env envport.EnvID, s ports.SessionID, cursor string) bool {
 	if s == "" {
 		return false
 	}
@@ -285,7 +286,7 @@ func (r *Runner) Reattachable(ctx context.Context, env ports.EnvID, s ports.Sess
 	return ok
 }
 
-func (r *Runner) Reattach(ctx context.Context, env ports.EnvID, s ports.SessionID, cursor string, in ports.AgentInput) (ports.AgentResult, bool, error) {
+func (r *Runner) Reattach(ctx context.Context, env envport.EnvID, s ports.SessionID, cursor string, in ports.AgentInput) (ports.AgentResult, bool, error) {
 	if s == "" {
 		return ports.AgentResult{}, false, nil
 	}
@@ -313,7 +314,7 @@ func (r *Runner) Reattach(ctx context.Context, env ports.EnvID, s ports.SessionI
 // AgentModels opens a throwaway session and returns the models the agent
 // advertises for it. An agent that advertises none returns an empty list
 // with no error — callers treat that as "cannot check".
-func (r *Runner) AgentModels(ctx context.Context, env ports.EnvID) ([]string, error) {
+func (r *Runner) AgentModels(ctx context.Context, env envport.EnvID) ([]string, error) {
 	c, err := r.client(ctx, env)
 	if err != nil {
 		return nil, err
@@ -329,7 +330,7 @@ func (r *Runner) AgentModels(ctx context.Context, env ports.EnvID) ([]string, er
 	return sess.Models, nil
 }
 
-func (r *Runner) StopAgent(ctx context.Context, env ports.EnvID) error {
+func (r *Runner) StopAgent(ctx context.Context, env envport.EnvID) error {
 	c, err := r.client(ctx, env)
 	if err != nil {
 		return err

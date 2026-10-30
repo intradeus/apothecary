@@ -2,7 +2,7 @@ package httpapi
 
 import (
 	"apothecary/internal/portrelay"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/runports"
 	"errors"
 	"net/http"
@@ -71,7 +71,7 @@ func (s *Server) postObservedPorts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "too many ports (max 128)")
 		return
 	}
-	clean := make([]ports.ObservedPort, 0, len(body.Ports))
+	clean := make([]envport.ObservedPort, 0, len(body.Ports))
 	for _, p := range body.Ports {
 		if p.Port < 1 || p.Port > 65535 {
 			continue
@@ -96,7 +96,7 @@ func (s *Server) getRunPorts(w http.ResponseWriter, r *http.Request) {
 	for _, e := range exposed {
 		live[e.Port] = true
 	}
-	observed := []ports.ObservedPort{}
+	observed := []envport.ObservedPort{}
 	for _, p := range s.Ports.ObservedPorts(id) {
 		if !live[p.Port] { // an exposed port graduates out of the discovered list
 			observed = append(observed, p)
@@ -112,7 +112,7 @@ func (s *Server) getRunPorts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getRunResources(w http.ResponseWriter, r *http.Request) {
 	samples := s.Resources.Samples(r.PathValue("id"))
 	if samples == nil {
-		samples = []ports.ResourceSample{}
+		samples = []envport.ResourceSample{}
 	}
 	writeJSON(w, http.StatusOK, RunResources{Samples: samples})
 }

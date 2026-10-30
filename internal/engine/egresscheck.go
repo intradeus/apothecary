@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/shell"
 )
@@ -55,7 +55,7 @@ func portOr(p, def string) string {
 // probeEgress runs the check in the workspace through the shim (pure Go, so
 // it works whatever the image carries). A non-nil error is the run's
 // env_failed reason.
-func probeEgress(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID, res *resolution.Resolution) error {
+func probeEgress(ctx context.Context, envp envport.EnvProvisioner, id envport.EnvID, res *resolution.Resolution) error {
 	addr, withTLS := egressProbeTarget(res)
 	if addr == "" {
 		return nil
@@ -65,7 +65,7 @@ func probeEgress(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID,
 		script += " --tls"
 	}
 	script += " " + shell.Quote(addr)
-	out, err := envp.Exec(ctx, id, ports.Command{Script: script, Timeout: egressProbeWait + time.Minute})
+	out, err := envp.Exec(ctx, id, envport.Command{Script: script, Timeout: egressProbeWait + time.Minute})
 	if err != nil {
 		return fmt.Errorf("egress check: %w", err)
 	}

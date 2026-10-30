@@ -24,17 +24,18 @@ import (
 	"apothecary/internal/adapters/acpagent"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/wshome"
 )
 
 type Config struct{}
 
 type Adapter struct {
-	envp ports.EnvProvisioner
+	envp envport.EnvProvisioner
 	cfg  Config
 }
 
-func New(envp ports.EnvProvisioner, cfg Config) *Adapter {
+func New(envp envport.EnvProvisioner, cfg Config) *Adapter {
 	return &Adapter{envp: envp, cfg: cfg}
 }
 
@@ -47,7 +48,7 @@ const (
 
 // agentDir locates ~/.omp/agent in the home of the user omp actually runs
 // as — under a hardcoded home the config and logins are silently invisible.
-func (a *Adapter) agentDir(ctx context.Context, env ports.EnvID) string {
+func (a *Adapter) agentDir(ctx context.Context, env envport.EnvID) string {
 	return path.Join(wshome.Resolve(ctx, a.envp, env, defaultHome), ".omp", "agent")
 }
 
@@ -69,7 +70,7 @@ marketplace:
 // opencode compat directories, where the same skills may sit when those
 // harnesses share the project: same name, same bytes, and the native copy
 // shadows the rest.
-func (a *Adapter) InstallSkills(ctx context.Context, env ports.EnvID, names []string) error {
+func (a *Adapter) InstallSkills(ctx context.Context, env envport.EnvID, names []string) error {
 	return acpagent.InstallSkills(ctx, a.envp, env, path.Join(a.agentDir(ctx, env), "skills"), names)
 }
 
@@ -77,7 +78,7 @@ func (a *Adapter) InstallSkills(ctx context.Context, env ports.EnvID, names []st
 // agent spec (delivered in-band, see the package doc). A flow's mcp_servers
 // and ask_human are not here: omp reads no MCP config in ACP mode, so they
 // all ride the session (acpagent).
-func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
+func (a *Adapter) PrepareEnv(ctx context.Context, env envport.EnvID, specs []*agentspec.Spec) error {
 	if err := acpagent.WriteRoles(ctx, a.envp, env, specs); err != nil {
 		return err
 	}
@@ -90,7 +91,7 @@ func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agen
 // AuthFilePath is omp's credential store (agent.db), exposed so the
 // engine can remove it when a run ends (the workspace outlives the run for
 // inspection; nothing in it should outlive the run).
-func (a *Adapter) AuthFilePath(ctx context.Context, env ports.EnvID) string {
+func (a *Adapter) AuthFilePath(ctx context.Context, env envport.EnvID) string {
 	return path.Join(a.agentDir(ctx, env), "agent.db")
 }
 

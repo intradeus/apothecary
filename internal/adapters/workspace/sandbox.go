@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"apothecary/internal/egressgw"
+	"apothecary/internal/ports/envport"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,8 +11,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"apothecary/internal/ports"
 )
 
 // sandboxLabel marks the per-run Docker-in-Docker container on the HOST
@@ -143,7 +142,7 @@ func (a *Adapter) checkRuntime(ctx context.Context) error {
 // (a gateway is active), the sandbox joins the run's --internal network and is
 // default-routed to the gateway, so no inner container can bypass egress
 // filtering; gwIP=="" keeps the legacy default-bridge behaviour.
-func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec ports.EnvSpec, att egressgw.Attachment, toolsCache string) error {
+func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec envport.EnvSpec, att egressgw.Attachment, toolsCache string) error {
 	gwIP := att.GatewayIP
 	runRoot := a.folderFor(name)
 	sock := a.sockPath(name)
@@ -223,7 +222,7 @@ func (a *Adapter) wireSandboxEgress(ctx context.Context, name string, att egress
 // createSandbox runs the sandbox container. toolsCache is the engine-wide
 // tools-cache directory (every bundle version), mounted read-only at its own
 // path so a workspace can bind-mount the bundle its engine expects.
-func (a *Adapter) createSandbox(ctx context.Context, name string, spec ports.EnvSpec, gwIP, toolsCache string) error {
+func (a *Adapter) createSandbox(ctx context.Context, name string, spec envport.EnvSpec, gwIP, toolsCache string) error {
 	runRoot := a.folderFor(name)
 	// Named volume for the inner /var/lib/docker (idempotent create).
 	if _, stderr, code, err := a.hostRun(ctx, []string{"volume", "create",

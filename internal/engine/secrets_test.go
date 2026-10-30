@@ -7,7 +7,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -20,16 +20,16 @@ func withHarnessAuth(h *harness) {
 	// about a file bootstrap actually writes (the base harness configures no
 	// git auth).
 	h.res.GitUser, h.res.GitPass = "oauth2", "glpat-SECRETVALUE"
-	h.res.SeedAuth = func(ctx context.Context, env ports.EnvID, _ func(string)) error {
+	h.res.SeedAuth = func(ctx context.Context, env envport.EnvID, _ func(string)) error {
 		return h.envp.WriteFile(ctx, env, fakeAuthPath, []byte(`{"k":"sk-secret"}`), 0o600)
 	}
-	h.res.AuthFiles = func(context.Context, ports.EnvID) []string {
+	h.res.AuthFiles = func(context.Context, envport.EnvID) []string {
 		return []string{fakeAuthPath}
 	}
 }
 
 // files a run's workspace holds, for the assertions below.
-func workspaceHas(t *testing.T, h *harness, env ports.EnvID, path string) bool {
+func workspaceHas(t *testing.T, h *harness, env envport.EnvID, path string) bool {
 	t.Helper()
 	e := h.envp.Env(env)
 	if e == nil {
@@ -49,11 +49,11 @@ func TestTerminalRunScrubsWorkspaceCredentials(t *testing.T) {
 	// Watch the workspace while it works, so "absent at the end" can't pass
 	// just because the file was never written.
 	seenDuringWork := map[string]bool{}
-	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		for path := range env.Files {
 			seenDuringWork[path] = true
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
 	runID, err := h.e.CreateRun(ctx, Ticket{Title: "T"}, "loop", testProject)
@@ -71,7 +71,7 @@ func TestTerminalRunScrubsWorkspaceCredentials(t *testing.T) {
 	if v.State != run.Completed {
 		t.Fatalf("state = %s, want completed", v.State)
 	}
-	env := ports.EnvID(v.EnvID)
+	env := envport.EnvID(v.EnvID)
 	for _, path := range []string{"/apothecary/provider.env", "/apothecary/git-credentials", fakeAuthPath} {
 		if workspaceHas(t, h, env, path) {
 			t.Errorf("%s still in the workspace of a finished run", path)
@@ -100,14 +100,14 @@ func TestResumeReseedsScrubbedCredentials(t *testing.T) {
 	// inside the fake and never reaches this hook, so the scrub can't trip it.
 	var credsPresentDuringWork bool
 	failVerify := true
-	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if _, ok := env.Files["/apothecary/provider.env"]; ok {
 			credsPresentDuringWork = true
 		}
 		if failVerify && strings.Contains(cmd.Script, "make lint") {
-			return ports.ExecResult{ExitCode: 1, Output: "FAIL"}, nil
+			return envport.ExecResult{ExitCode: 1, Output: "FAIL"}, nil
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
 	// First attempt: the retry edge exhausts and the run ends resumable.
@@ -120,7 +120,7 @@ func TestResumeReseedsScrubbedCredentials(t *testing.T) {
 	if v.State != run.Abandoned && v.State != run.Failed {
 		t.Fatalf("setup: state = %s, want a resumable terminal state", v.State)
 	}
-	env := ports.EnvID(v.EnvID)
+	env := envport.EnvID(v.EnvID)
 	for _, path := range []string{"/apothecary/provider.env", fakeAuthPath} {
 		if workspaceHas(t, h, env, path) {
 			t.Fatalf("setup: %s was not scrubbed when the run ended", path)
@@ -156,7 +156,7 @@ func TestAbortInactiveRunScrubsCredentials(t *testing.T) {
 
 	// A run with a live workspace and no goroutine: append the events directly,
 	// which is what a paused/queued run looks like to Abort.
-	envID, err := h.envp.Provision(ctx, ports.EnvSpec{RunID: "r-paused"})
+	envID, err := h.envp.Provision(ctx, envport.EnvSpec{RunID: "r-paused"})
 	if err != nil {
 		t.Fatal(err)
 	}

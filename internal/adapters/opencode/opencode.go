@@ -23,6 +23,7 @@ import (
 	"apothecary/internal/adapters/acpagent"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/wshome"
 )
 
@@ -31,11 +32,11 @@ import (
 type Config struct{}
 
 type Adapter struct {
-	envp ports.EnvProvisioner
+	envp envport.EnvProvisioner
 	cfg  Config
 }
 
-func New(envp ports.EnvProvisioner, cfg Config) *Adapter {
+func New(envp envport.EnvProvisioner, cfg Config) *Adapter {
 	return &Adapter{envp: envp, cfg: cfg}
 }
 
@@ -55,11 +56,11 @@ const (
 // configDir/authFile locate opencode's config in the home of the user it
 // actually runs as — writing them under a hardcoded home makes opencode
 // start with no provider and no agents.
-func (a *Adapter) configDir(ctx context.Context, env ports.EnvID) string {
+func (a *Adapter) configDir(ctx context.Context, env envport.EnvID) string {
 	return path.Join(wshome.Resolve(ctx, a.envp, env, defaultHome), ".config", "opencode")
 }
 
-func (a *Adapter) authFile(ctx context.Context, env ports.EnvID) string {
+func (a *Adapter) authFile(ctx context.Context, env envport.EnvID) string {
 	return path.Join(wshome.Resolve(ctx, a.envp, env, defaultHome), ".local", "share", "opencode", "auth.json")
 }
 
@@ -67,7 +68,7 @@ func (a *Adapter) authFile(ctx context.Context, env ports.EnvID) string {
 // opencode's global skills directory. opencode also scans ~/.agents/skills
 // (codex's), so with both harnesses in a project it sees each skill twice
 // — same name, same bytes: it warns and keeps one.
-func (a *Adapter) InstallSkills(ctx context.Context, env ports.EnvID, names []string) error {
+func (a *Adapter) InstallSkills(ctx context.Context, env envport.EnvID, names []string) error {
 	return acpagent.InstallSkills(ctx, a.envp, env, path.Join(a.configDir(ctx, env), "skills"), names)
 }
 
@@ -76,7 +77,7 @@ func (a *Adapter) InstallSkills(ctx context.Context, env ports.EnvID, names []st
 // ask_human MCP registration (written even for zero specs). Config
 // lands in the workspace user's config dir — outside the repo, so nothing
 // needs git-excluding, regenerated every provision.
-func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
+func (a *Adapter) PrepareEnv(ctx context.Context, env envport.EnvID, specs []*agentspec.Spec) error {
 	cfgDir := a.configDir(ctx, env)
 	servers := mcpNames(specs)
 	for _, s := range specs {
@@ -116,7 +117,7 @@ func (a *Adapter) PrepareEnv(ctx context.Context, env ports.EnvID, specs []*agen
 // AuthFilePath is where SeedAuthJSON puts the credential, exposed so the
 // engine can remove it when a run ends (the workspace outlives the run for
 // inspection; the model keys should not).
-func (a *Adapter) AuthFilePath(ctx context.Context, env ports.EnvID) string {
+func (a *Adapter) AuthFilePath(ctx context.Context, env envport.EnvID) string {
 	return a.authFile(ctx, env)
 }
 
@@ -124,7 +125,7 @@ func (a *Adapter) AuthFilePath(ctx context.Context, env ports.EnvID) string {
 // bootstrap step 2). The caller (the opencode kind) composes the content
 // from the harness's stored auth_json secret and provider integrations;
 // empty data is a no-op.
-func (a *Adapter) SeedAuthJSON(ctx context.Context, env ports.EnvID, data []byte) error {
+func (a *Adapter) SeedAuthJSON(ctx context.Context, env envport.EnvID, data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}

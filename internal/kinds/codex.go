@@ -13,7 +13,7 @@ import (
 	"apothecary/internal/adapters/acpagent"
 	codexadapter "apothecary/internal/adapters/codex"
 	"apothecary/internal/agentspec"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/providers"
 )
 
@@ -48,7 +48,7 @@ func (Codex) Descriptor() Descriptor {
 	}
 }
 
-func (Codex) New(cfg Config, envp ports.EnvProvisioner) (Harness, error) {
+func (Codex) New(cfg Config, envp envport.EnvProvisioner) (Harness, error) {
 	adapter := codexadapter.New(envp, codexadapter.Config{})
 	h := &codexHarness{
 		Runner:  acpagent.New(envp, adapter.Profile()),
@@ -106,7 +106,7 @@ func (h *codexHarness) EditorExtensions() []string { return []string{CodexEditor
 
 // AuthFiles (kinds.AuthLocator): auth.json, removed when the run ends. The
 // API key needs no entry — it lives in provider.env, which the engine owns.
-func (h *codexHarness) AuthFiles(ctx context.Context, env ports.EnvID) []string {
+func (h *codexHarness) AuthFiles(ctx context.Context, env envport.EnvID) []string {
 	return []string{h.adapter.AuthFilePath(ctx, env)}
 }
 
@@ -125,7 +125,7 @@ func (h *codexHarness) SecretValues() []string {
 // so the keeper rewriting it ahead of codex's five-minute window means codex
 // never refreshes inside the workspace — and with no refresh token, it
 // could not.
-func (h *codexHarness) SeedAuth(ctx context.Context, env ports.EnvID, register func(string)) error {
+func (h *codexHarness) SeedAuth(ctx context.Context, env envport.EnvID, register func(string)) error {
 	if h.login == nil {
 		return nil
 	}
@@ -171,11 +171,11 @@ func renderCodexAuth(b bound, now time.Time) ([]byte, error) {
 	})
 }
 
-func (h *codexHarness) Prepare(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
+func (h *codexHarness) Prepare(ctx context.Context, env envport.EnvID, specs []*agentspec.Spec) error {
 	return h.adapter.PrepareEnv(ctx, env, specs)
 }
 
-func (h *codexHarness) InstallSkills(ctx context.Context, env ports.EnvID, names []string) error {
+func (h *codexHarness) InstallSkills(ctx context.Context, env envport.EnvID, names []string) error {
 	return h.adapter.InstallSkills(ctx, env, names)
 }
 

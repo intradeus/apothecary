@@ -22,7 +22,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/kinds"
 	"apothecary/internal/portrelay"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 	"apothecary/internal/signalspec"
@@ -177,13 +177,13 @@ type EgressRuleResult struct {
 // the relay, Observed are listeners the in-workspace scanner found and nobody
 // has exposed yet.
 type RunPorts struct {
-	Ports    []portrelay.Exposure `json:"ports"`
-	Observed []ports.ObservedPort `json:"observed"`
+	Ports    []portrelay.Exposure   `json:"ports"`
+	Observed []envport.ObservedPort `json:"observed"`
 }
 
 // ObservedPortsRequest is the in-workspace scanner's listener snapshot.
 type ObservedPortsRequest struct {
-	Ports []ports.ObservedPort `json:"ports"`
+	Ports []envport.ObservedPort `json:"ports"`
 }
 
 // ExposePortRequest publishes one workspace port through the relay.
@@ -205,7 +205,7 @@ type EditorURL struct {
 // RunResources is the rolling window of workspace samples behind the run
 // page's graphs.
 type RunResources struct {
-	Samples []ports.ResourceSample `json:"samples"`
+	Samples []envport.ResourceSample `json:"samples"`
 }
 
 // --- pings ------------------------------------------------------------------

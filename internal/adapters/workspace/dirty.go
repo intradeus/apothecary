@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"apothecary/internal/ports/envport"
 	"context"
 	"errors"
 	"fmt"
@@ -8,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"apothecary/internal/ports"
 )
 
 // A "dirty" workspace: its container was built from a
@@ -34,11 +33,11 @@ func (a *Adapter) recordConfigDigest(name, src string, plog func(string, ...any)
 	}
 }
 
-// ConfigDirty implements ports.WorkspaceDirtyChecker: the checkout's build
+// ConfigDirty implements envport.WorkspaceDirtyChecker: the checkout's build
 // inputs no longer match the digest recorded when the container was built.
 // A workspace with no recorded digest (built before this existed, or the
 // write failed) reports clean — unknown is not dirty.
-func (a *Adapter) ConfigDirty(ctx context.Context, env ports.EnvID) (bool, error) {
+func (a *Adapter) ConfigDirty(ctx context.Context, env envport.EnvID) (bool, error) {
 	name := string(env)
 	recorded, err := os.ReadFile(filepath.Join(a.folderFor(name), configSumFile))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -54,4 +53,4 @@ func (a *Adapter) ConfigDirty(ctx context.Context, env ports.EnvID) (bool, error
 	return current != strings.TrimSpace(string(recorded)), nil
 }
 
-var _ ports.WorkspaceDirtyChecker = (*Adapter)(nil)
+var _ envport.WorkspaceDirtyChecker = (*Adapter)(nil)

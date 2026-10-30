@@ -14,6 +14,7 @@ import (
 
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 )
 
@@ -181,7 +182,7 @@ const Timeout = 90 * time.Second
 // authoritative check: the provider may still serve a model the installed
 // harness version does not know. unasked lists harnesses whose agent could
 // not be asked (or said nothing); their stages are not judged.
-func AgentModels(ctx context.Context, res *resolution.Resolution, env ports.EnvID, stages []flow.Stage) (missing, unasked []string) {
+func AgentModels(ctx context.Context, res *resolution.Resolution, env envport.EnvID, stages []flow.Stage) (missing, unasked []string) {
 	asked := map[string][]string{}
 	skipped := map[string]bool{}
 	for i := range stages {

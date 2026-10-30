@@ -18,6 +18,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 	"apothecary/internal/signalspec"
 )
@@ -79,7 +80,7 @@ type Resolution struct {
 	// EditorSettings are the project's code-server UI defaults (theme + common
 	// prefs) and extensions (its own ∪ its harnesses'), applied to the browser editor at OpenEditor time
 	// (no rebuild).
-	EditorSettings ports.EditorSettings
+	EditorSettings envport.EditorSettings
 	// Secrets are the project's secrets, opened: what a flow's MCP servers
 	// read where they say ${secrets.<name>}. Checked at run creation, fed to
 	// the redactor, and re-read when an agent stage starts (the engine's
@@ -125,7 +126,7 @@ type Resolution struct {
 	ExtraRepos []ExtraRepo
 	RepoHosts  map[string]ports.RepoHost
 
-	Envp   ports.EnvProvisioner
+	Envp   envport.EnvProvisioner
 	Runner ports.AgentRunner
 	// Runners maps harness KIND → runner for the full set (per-step harness).
 	// A stage pinning `harness: <kind>` runs on Runners[kind]; unpinned stages
@@ -152,21 +153,21 @@ type Resolution struct {
 	// AuthFiles lists where the harnesses' auth material lives in a workspace,
 	// so the engine can delete it when the run ends (kinds.AuthLocator). nil
 	// when no configured harness reports any.
-	AuthFiles func(ctx context.Context, env ports.EnvID) []string
+	AuthFiles func(ctx context.Context, env envport.EnvID) []string
 	// SeedAuth writes harness-native auth material at bootstrap step 2, and
 	// again when a login it uses is refreshed; register is told each secret
 	// before it is written. nil = nothing to seed.
-	SeedAuth func(ctx context.Context, env ports.EnvID, register func(secret string)) error
+	SeedAuth func(ctx context.Context, env envport.EnvID, register func(secret string)) error
 	// Prepare generates harness-native config at bootstrap step 4 from the
 	// agents the RUN's flow declares (FLOWLANG §1, v3) — the caller passes
 	// them, because agents are a property of the flow and not of the project.
 	// nil = nothing to generate (fakes).
-	Prepare func(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error
+	Prepare func(ctx context.Context, env envport.EnvID, specs []*agentspec.Spec) error
 	// InstallSkills makes the run's skills (already at acpagent.SkillsDir)
 	// visible to every harness in the project's set, each in its own
 	// directory (bootstrap step 4, after Prepare). nil = nothing to install
 	// (fakes).
-	InstallSkills func(ctx context.Context, env ports.EnvID, names []string) error
+	InstallSkills func(ctx context.Context, env envport.EnvID, names []string) error
 	// Release decrements the resolver's provisioner refcount (§6.1 adapter
 	// cache); nil is fine.
 	Release func()

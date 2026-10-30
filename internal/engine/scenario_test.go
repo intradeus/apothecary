@@ -5,6 +5,7 @@ package engine
 import (
 	askstore "apothecary/internal/ask"
 	"apothecary/internal/portrelay"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/runports"
 	"apothecary/internal/services"
 	"context"
@@ -282,7 +283,7 @@ func (h *harness) services() *services.Control {
 }
 
 // writeFile writes into a fake env through the port (lock-safe).
-func (h *harness) writeFile(t *testing.T, env ports.EnvID, path, content string) {
+func (h *harness) writeFile(t *testing.T, env envport.EnvID, path, content string) {
 	t.Helper()
 	if err := h.envp.WriteFile(context.Background(), env, path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
@@ -519,14 +520,14 @@ main:
 	})
 	// verify fails the first time (feeds "BOOM" into build), then passes.
 	verifyRuns := 0
-	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "make lint") {
 			verifyRuns++
 			if verifyRuns == 1 {
-				return ports.ExecResult{ExitCode: 1, Output: "BOOM"}, nil
+				return envport.ExecResult{ExitCode: 1, Output: "BOOM"}, nil
 			}
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "declfb", testProject)
@@ -570,14 +571,14 @@ main:
 func TestTestFailBuildLoopThenPass(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	verifyRuns := 0
-	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "make lint") {
 			verifyRuns++
 			if verifyRuns <= 2 {
-				return ports.ExecResult{ExitCode: 1, Output: "FAIL: TestLogin assertion mismatch"}, nil
+				return envport.ExecResult{ExitCode: 1, Output: "FAIL: TestLogin assertion mismatch"}, nil
 			}
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
@@ -670,11 +671,11 @@ main:
 
 func TestEdgeExhaustionAbandons(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "make lint") {
-			return ports.ExecResult{ExitCode: 2, Output: "boom"}, nil
+			return envport.ExecResult{ExitCode: 2, Output: "boom"}, nil
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
@@ -775,7 +776,7 @@ main:
 	h := newHarness(t, fl)
 	ctx := context.Background()
 
-	envID, err := h.envp.Provision(ctx, ports.EnvSpec{RunID: "r-gate"})
+	envID, err := h.envp.Provision(ctx, envport.EnvSpec{RunID: "r-gate"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -886,11 +887,11 @@ main:
 	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
 		return ports.AgentResult{TurnsUsed: 5, Usage: ports.Usage{CostUSD: 0.60}}, nil
 	}
-	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "make lint") {
-			return ports.ExecResult{ExitCode: 1, Output: "fail"}, nil
+			return envport.ExecResult{ExitCode: 1, Output: "fail"}, nil
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "pricey", testProject)
@@ -918,7 +919,7 @@ func TestCrashRecoveryResumesViaResume(t *testing.T) {
 	fl := mustFlow(t, loopFlowDoc)
 	h := newHarness(t, fl)
 
-	envID, err := h.envp.Provision(context.Background(), ports.EnvSpec{RunID: "r-crash"})
+	envID, err := h.envp.Provision(context.Background(), envport.EnvSpec{RunID: "r-crash"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -982,7 +983,7 @@ func TestCrashRecoveryResumesViaResume(t *testing.T) {
 func TestCrashRecoveryWithoutSessionReRuns(t *testing.T) {
 	fl := mustFlow(t, loopFlowDoc)
 	h := newHarness(t, fl)
-	envID, _ := h.envp.Provision(context.Background(), ports.EnvSpec{RunID: "r-c2"})
+	envID, _ := h.envp.Provision(context.Background(), envport.EnvSpec{RunID: "r-c2"})
 	ctx := context.Background()
 	for _, p := range []event.Payload{
 		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
@@ -1216,11 +1217,11 @@ main:
       on_success: work, on_reject: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "make lint") {
-			return ports.ExecResult{ExitCode: 1, Output: "still broken"}, nil
+			return envport.ExecResult{ExitCode: 1, Output: "still broken"}, nil
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "unl", testProject)
@@ -1350,12 +1351,12 @@ main:
 `
 	h := newHarness(t, mustFlow(t, doc))
 	verifies := 0
-	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "make lint") {
 			verifies++
-			return ports.ExecResult{ExitCode: 1, Output: "FAIL: flaky"}, nil
+			return envport.ExecResult{ExitCode: 1, Output: "FAIL: flaky"}, nil
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "chain", testProject)
@@ -1496,14 +1497,14 @@ main:
 func TestDebugLeaf(t *testing.T) {
 	h := newHarness(t, mustFlow(t, debugLeafDoc))
 	verifies := 0
-	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "make lint") {
 			verifies++
 			if verifies <= 2 { // fails until a human "fixed" the workspace
-				return ports.ExecResult{ExitCode: 1, Output: "segfault"}, nil
+				return envport.ExecResult{ExitCode: 1, Output: "segfault"}, nil
 			}
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "dbg", testProject)
@@ -1577,7 +1578,7 @@ func TestDebugLeafSurvivesRestart(t *testing.T) {
 	parked := func(t *testing.T, h *harness, runID string, answered bool) {
 		t.Helper()
 		ctx := context.Background()
-		envID, err := h.envp.Provision(ctx, ports.EnvSpec{RunID: runID})
+		envID, err := h.envp.Provision(ctx, envport.EnvSpec{RunID: runID})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1661,11 +1662,11 @@ func TestEnvFailureAfterRetry(t *testing.T) {
 
 func TestBootstrapFailureIsEnvFailed(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "git clone") {
-			return ports.ExecResult{ExitCode: 1, Output: "fatal: could not write: ENOSPC"}, nil
+			return envport.ExecResult{ExitCode: 1, Output: "fatal: could not write: ENOSPC"}, nil
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
@@ -1691,12 +1692,12 @@ func TestBootstrapFailureIsEnvFailed(t *testing.T) {
 func TestEgressCheckFailureIsEnvFailed(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	var probe string
-	h.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "shim probe") {
 			probe = cmd.Script
-			return ports.ExecResult{ExitCode: 1, Output: "probe gitlab.local:443: dial tcp: i/o timeout"}, nil
+			return envport.ExecResult{ExitCode: 1, Output: "probe gitlab.local:443: dial tcp: i/o timeout"}, nil
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
@@ -1861,8 +1862,8 @@ main:
 `
 	// Happy path: probe succeeds -> finish runs, repair never does.
 	h := newHarness(t, mustFlow(t, branchDoc))
-	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
-		return ports.ExecResult{ExitCode: 0, Output: cmd.Script}, nil
+	h.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
+		return envport.ExecResult{ExitCode: 0, Output: cmd.Script}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "branch", testProject)
 	if err != nil {
@@ -1885,11 +1886,11 @@ main:
 	// Failure path: probe fails -> repair runs and completes the run early;
 	// finish never runs.
 	h2 := newHarness(t, mustFlow(t, branchDoc))
-	h2.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h2.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "probe.sh") {
-			return ports.ExecResult{ExitCode: 1, Output: "probe broke"}, nil
+			return envport.ExecResult{ExitCode: 1, Output: "probe broke"}, nil
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 	runID2, err := h2.e.CreateRun(context.Background(), Ticket{Title: "T"}, "branch", testProject)
 	if err != nil {
@@ -2037,11 +2038,11 @@ main:
 `
 	h := newHarness(t, mustFlow(t, doc))
 	fail := true
-	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "push.sh") && fail {
-			return ports.ExecResult{ExitCode: 1, Output: "connect timeout"}, nil
+			return envport.ExecResult{ExitCode: 1, Output: "connect timeout"}, nil
 		}
-		return ports.ExecResult{ExitCode: 0, Output: "pushed"}, nil
+		return envport.ExecResult{ExitCode: 0, Output: "pushed"}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "r", testProject)
 	if err != nil {
@@ -2103,7 +2104,7 @@ main:
 	h.e.Wait(runID)
 
 	envID := h.view(t, runID).EnvID
-	env := h.envp.Env(ports.EnvID(envID))
+	env := h.envp.Env(envport.EnvID(envID))
 	if env == nil {
 		t.Fatal("no env")
 	}
@@ -2135,11 +2136,11 @@ main:
 `
 	h := newHarness(t, mustFlow(t, doc))
 	var ran bool
-	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "git commit") {
 			ran = true
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "cmdio", testProject)
 	if err != nil {
@@ -2522,14 +2523,14 @@ main:
 `
 	h := newHarness(t, mustFlow(t, doc))
 	verifies, reviews := 0, 0
-	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "make lint") {
 			verifies++
 			if verifies == 1 {
-				return ports.ExecResult{ExitCode: 1, Output: "TESTS BLEW UP"}, nil
+				return envport.ExecResult{ExitCode: 1, Output: "TESTS BLEW UP"}, nil
 			}
 		}
-		return ports.ExecResult{ExitCode: 0}, nil
+		return envport.ExecResult{ExitCode: 0}, nil
 	}
 	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
 		"reviewer": func(c fake.RunCall) (ports.AgentResult, error) {

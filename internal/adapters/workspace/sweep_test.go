@@ -1,12 +1,11 @@
 package workspace
 
 import (
+	"apothecary/internal/ports/envport"
 	"context"
 	"slices"
 	"strings"
 	"testing"
-
-	"apothecary/internal/ports"
 )
 
 // A marked command gets the marker in its environment and the sweep ahead of
@@ -15,10 +14,10 @@ func TestExecMarkerSweepsAndTags(t *testing.T) {
 	r := &scriptRunner{}
 	a := newTestAdapter(t, r)
 	ctx := context.Background()
-	if _, err := a.Exec(ctx, "apo-x-1", ports.Command{Script: "make test", Dir: "repo", Marker: "run1:test"}); err != nil {
+	if _, err := a.Exec(ctx, "apo-x-1", envport.Command{Script: "make test", Dir: "repo", Marker: "run1:test"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Exec(ctx, "apo-x-1", ports.Command{Script: "git status", Dir: "repo"}); err != nil {
+	if _, err := a.Exec(ctx, "apo-x-1", envport.Command{Script: "git status", Dir: "repo"}); err != nil {
 		t.Fatal(err)
 	}
 	var execs []call

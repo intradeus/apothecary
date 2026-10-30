@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"apothecary/internal/filestore"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/shell"
 )
 
@@ -72,7 +72,7 @@ func (x *exec) deliverAttachments(atts []filestore.Attachment) []string {
 	for _, p := range paths {
 		rm = append(rm, shell.Quote(p))
 	}
-	if _, err := x.res.Envp.Exec(x.ctx, x.rs.envID, ports.Command{
+	if _, err := x.res.Envp.Exec(x.ctx, x.rs.envID, envport.Command{
 		Script:  "mkdir -p " + strings.Join(mk, " ") + " && rm -f -- " + strings.Join(rm, " "),
 		Dir:     "repo",
 		Timeout: attachmentDeliverTimeout,

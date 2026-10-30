@@ -17,6 +17,7 @@ import (
 	"apothecary/internal/auth"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/sshdoor"
 	"apothecary/internal/wsinfo"
 )
@@ -92,7 +93,7 @@ func newFakeSidecarSSH(t *testing.T, files fakeEnvFiles) *fakeSidecarSSH {
 // envDoorKey reads the door key the engine wrote into the fake env.
 type envDoorKey struct {
 	h   *harness
-	env ports.EnvID
+	env envport.EnvID
 }
 
 func (k envDoorKey) doorKey() []byte {
@@ -160,11 +161,11 @@ func TestSSHDoorReachesTheRunsWorkspace(t *testing.T) {
 	if v.EnvID == "" || v.UserID != alice.ID {
 		t.Fatalf("run view = %+v", v)
 	}
-	env := ports.EnvID(v.EnvID)
+	env := envport.EnvID(v.EnvID)
 
 	// The workspace's SSH server, reached through the fake provisioner.
 	sidecar := newFakeSidecarSSH(t, envDoorKey{h: h, env: env})
-	h.envp.SSHDial = func(got ports.EnvID) (net.Conn, error) {
+	h.envp.SSHDial = func(got envport.EnvID) (net.Conn, error) {
 		if got != env {
 			return nil, errors.New("wrong env")
 		}

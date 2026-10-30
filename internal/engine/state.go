@@ -9,6 +9,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 )
@@ -37,7 +38,7 @@ type runState struct {
 	params map[string]string
 	// skillsets are the skillset versions the run installs (run_created).
 	skillsets []event.SkillsetPin
-	envID     ports.EnvID
+	envID     envport.EnvID
 	// envRequested: the run asked for its workspace once (env_requested is
 	// on the log), whatever its state is now.
 	envRequested bool
@@ -450,12 +451,12 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		case *event.EnvRequested:
 			rs.envRequested = true
 		case *event.EnvReady:
-			rs.envID = ports.EnvID(p.EnvID)
+			rs.envID = envport.EnvID(p.EnvID)
 			rs.links = p.Links
 		case *event.EnvFailed:
 			rs.done = true
 			if p.EnvID != "" {
-				rs.envID = ports.EnvID(p.EnvID)
+				rs.envID = envport.EnvID(p.EnvID)
 			}
 		case *event.SnapshotCaptured:
 			// Keeps pseudo-stage counters monotonic across restarts: the

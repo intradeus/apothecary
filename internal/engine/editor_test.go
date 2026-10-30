@@ -13,7 +13,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/portrelay"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/runports"
 )
 
@@ -24,8 +24,8 @@ type exposerEnvp struct {
 	target   string // engine-side echo listener standing in for the workspace app
 }
 
-func (x *exposerEnvp) AppPorts(context.Context, ports.EnvID) []int { return x.appPorts }
-func (x *exposerEnvp) ExposePort(context.Context, ports.EnvID, int) (ports.PortConn, error) {
+func (x *exposerEnvp) AppPorts(context.Context, envport.EnvID) []int { return x.appPorts }
+func (x *exposerEnvp) ExposePort(context.Context, envport.EnvID, int) (envport.PortConn, error) {
 	return tcpPortConn{addr: x.target}, nil
 }
 
@@ -45,13 +45,13 @@ type editorEnvp struct {
 	startErr error
 }
 
-func (e *editorEnvp) StartEditor(_ context.Context, _ ports.EnvID, _ int, _ ports.EditorSettings) error {
+func (e *editorEnvp) StartEditor(_ context.Context, _ envport.EnvID, _ int, _ envport.EditorSettings) error {
 	atomic.AddInt32(&e.starts, 1)
 	return e.startErr
 }
 
 // EditorExtensions: the "definition" declares one id on top of the project's.
-func (e *editorEnvp) EditorExtensions(_ context.Context, _ ports.EnvID, settings ports.EditorSettings) []string {
+func (e *editorEnvp) EditorExtensions(_ context.Context, _ envport.EnvID, settings envport.EditorSettings) []string {
 	return append([]string{"def.ext"}, settings.Extensions...)
 }
 
@@ -100,8 +100,8 @@ func TestOpenEditor(t *testing.T) {
 		t.Errorf("StartEditor called %d times, want 1", ed.starts)
 	}
 	// The editor rode the code-server port.
-	if l := rp.List("r1"); len(l) != 1 || l[0].Port != ports.CodeServerPort {
-		t.Errorf("exposed ports = %v, want [%d]", l, ports.CodeServerPort)
+	if l := rp.List("r1"); len(l) != 1 || l[0].Port != envport.CodeServerPort {
+		t.Errorf("exposed ports = %v, want [%d]", l, envport.CodeServerPort)
 	}
 
 	// Idempotent: same URL — and code-server is started again if it is not
@@ -131,8 +131,8 @@ type rebuildEditorEnvp struct {
 	exposes int32
 }
 
-func (r *rebuildEditorEnvp) Rebuild(context.Context, ports.EnvSpec) error { return nil }
-func (r *rebuildEditorEnvp) ExposePort(ctx context.Context, id ports.EnvID, port int) (ports.PortConn, error) {
+func (r *rebuildEditorEnvp) Rebuild(context.Context, envport.EnvSpec) error { return nil }
+func (r *rebuildEditorEnvp) ExposePort(ctx context.Context, id envport.EnvID, port int) (envport.PortConn, error) {
 	atomic.AddInt32(&r.exposes, 1)
 	return r.editorEnvp.ExposePort(ctx, id, port)
 }
@@ -163,7 +163,7 @@ func TestRebuildRestoresExposuresAndEditor(t *testing.T) {
 	if env.starts != 2 {
 		t.Errorf("StartEditor called %d times, want 2 (the rebuild restarts it)", env.starts)
 	}
-	if got := relay.Existing(id, ports.CodeServerPort); got != u {
+	if got := relay.Existing(id, envport.CodeServerPort); got != u {
 		t.Errorf("editor URL after rebuild = %q, want the old %q", got, u)
 	}
 }

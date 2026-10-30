@@ -12,6 +12,7 @@ import (
 
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // Config is an integration's stored configuration: plain values plus
@@ -131,7 +132,7 @@ type RepoHostKind interface {
 
 // Provisioner is the EnvProvisioner port plus lifecycle/probe surface.
 type Provisioner interface {
-	ports.EnvProvisioner
+	envport.EnvProvisioner
 	Test(ctx context.Context) error
 	Close()
 }
@@ -192,18 +193,18 @@ type Harness interface {
 	// calls register with every secret value it is about to write, BEFORE
 	// writing it: the run's redactor must know a token before the token can
 	// reach any output.
-	SeedAuth(ctx context.Context, env ports.EnvID, register func(secret string)) error
+	SeedAuth(ctx context.Context, env envport.EnvID, register func(secret string)) error
 	// Prepare generates harness-native config at bootstrap step 4 from the
 	// project's agent library specs (DESIGN3 §1: agents live in the DB, not
 	// the target repo). Implementations must write their base config (e.g.
 	// the ask_human MCP registration) even for zero specs.
-	Prepare(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error
+	Prepare(ctx context.Context, env envport.EnvID, specs []*agentspec.Spec) error
 	// InstallSkills makes the run's skills — laid down by the engine at
 	// acpagent.SkillsDir/<name>, one directory per skill — visible to this
 	// harness, by copying them into the directory IT discovers skills in
 	// (bootstrap step 4, after Prepare). Each harness owns that location.
 	// Zero names = nothing to do.
-	InstallSkills(ctx context.Context, env ports.EnvID, names []string) error
+	InstallSkills(ctx context.Context, env envport.EnvID, names []string) error
 }
 
 // AnyModel is an OPTIONAL Harness capability: the harness runs whatever
@@ -233,7 +234,7 @@ type SecretHolder interface {
 // dead run has no business still holding live model credentials. Paths are
 // resolved per env because they hang off the workspace user's home.
 type AuthLocator interface {
-	AuthFiles(ctx context.Context, env ports.EnvID) []string
+	AuthFiles(ctx context.Context, env envport.EnvID) []string
 }
 
 // EditorExtender is an OPTIONAL Harness capability: the VS Code extensions
@@ -248,7 +249,7 @@ type EditorExtender interface {
 
 type HarnessKind interface {
 	Descriptor() Descriptor
-	New(cfg Config, envp ports.EnvProvisioner) (Harness, error)
+	New(cfg Config, envp envport.EnvProvisioner) (Harness, error)
 }
 
 // TicketSourceKind constructs the read-only ticket-tracker port (Jira). It

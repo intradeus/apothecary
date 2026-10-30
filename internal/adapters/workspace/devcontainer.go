@@ -72,6 +72,7 @@ import (
 	"apothecary/internal/egressgw"
 	"apothecary/internal/egressgw/policyfile"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // idLabel is the docker label key that ties a container to its apothecary
@@ -177,7 +178,7 @@ type Adapter struct {
 	noSandboxGuard bool
 
 	bridgeMu sync.Mutex
-	bridges  map[ports.EnvID][]net.Listener // engine-side unix listeners per env
+	bridges  map[envport.EnvID][]net.Listener // engine-side unix listeners per env
 
 	// gw is the per-project egress gateway manager (nil ⇒ gateway off). It owns
 	// the gateway container + per-run --internal networks and the policy/denials
@@ -188,7 +189,7 @@ type Adapter struct {
 	// service). Populated by ScanSiblingPorts and consulted by relayTarget so
 	// an EXPOSE of an undeclared sibling port routes to the right service.
 	sibPortsMu sync.Mutex
-	sibPorts   map[ports.EnvID]map[int]string
+	sibPorts   map[envport.EnvID]map[int]string
 
 	// sidecarMu serializes sidecar starts, so two callers racing on a cold
 	// workspace start one (the shim's own singleton guard backs this up).
@@ -208,7 +209,7 @@ type Adapter struct {
 
 // CmdRunner executes one CLI invocation (devcontainer, docker or git);
 // swapped in tests. tee, when non-nil, receives stdout+stderr AS THEY
-// ARRIVE (live exec log, ports.ExecLogTailer).
+// ARRIVE (live exec log, envport.ExecLogTailer).
 type CmdRunner interface {
 	Run(ctx context.Context, bin string, args []string, stdin []byte, tee io.Writer, env ...string) (stdout, stderr []byte, exitCode int, err error)
 }
@@ -234,8 +235,8 @@ func New(cfg Config) *Adapter {
 		runner:     &cliRunner{},
 		retryDelay: time.Second,
 		listen:     net.Listen,
-		bridges:    map[ports.EnvID][]net.Listener{},
-		sibPorts:   map[ports.EnvID]map[int]string{},
+		bridges:    map[envport.EnvID][]net.Listener{},
+		sibPorts:   map[envport.EnvID]map[int]string{},
 		defByEnv:   map[string]Definition{},
 	}
 	a.host = dockerHost{a}
@@ -418,7 +419,7 @@ func isCheckout(dir string) bool {
 // our id-label creates the container on first call and restarts/reuses it
 // on every later one (crash recovery), re-running the repo's lifecycle
 // hooks exactly as the devcontainer spec prescribes.
-func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvID, error) {
+func (a *Adapter) Provision(ctx context.Context, spec envport.EnvSpec) (envport.EnvID, error) {
 	return a.provision(ctx, spec, false, nil)
 }
 
@@ -427,7 +428,7 @@ func (a *Adapter) Provision(ctx context.Context, spec ports.EnvSpec) (ports.EnvI
 // `docker rm -f`s any container matching the id-labels first (a from-scratch
 // recreate — the Rebuild path). tee, when non-nil, receives the `up` build
 // output live (Rebuild streams it into exec.log so the run page shows it).
-func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExisting bool, tee io.Writer) (ports.EnvID, error) {
+func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExisting bool, tee io.Writer) (envport.EnvID, error) {
 	ctx, cancel := context.WithTimeout(ctx, a.cfg.ProvisionTimeout)
 	defer cancel()
 	// The engine supplies a human-friendly, slug-of-branch name (unique per
@@ -486,7 +487,7 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 	a.recordConfigDigest(name, p.src, plog)
 	// Engine bridge + in-container relay: the shim must reach the engine
 	// before anything runs in the workspace.
-	if err := a.host.ensureBridge(ports.EnvID(name)); err != nil {
+	if err := a.host.ensureBridge(envport.EnvID(name)); err != nil {
 		return "", err
 	}
 	if err := a.startRelay(ctx, name); err != nil {
@@ -504,7 +505,7 @@ func (a *Adapter) provision(ctx context.Context, spec ports.EnvSpec, removeExist
 	// docker name. Nothing above depends on the name (all lookups key off the
 	// container ID or the apothecary.env id-label), so it's safe to do last.
 	a.renameContainer(ctx, ws.ContainerID, name)
-	return ports.EnvID(name), nil
+	return envport.EnvID(name), nil
 }
 
 // errNoDefinition is what a repo without any workspace definition gets.
@@ -595,7 +596,7 @@ func (a *Adapter) renameContainer(ctx context.Context, containerID, name string)
 // ensureSrc materializes the engine-side checkout the workspace folder is
 // mounted from. An existing checkout is kept (crash recovery; it may hold
 // agent commits via the bind mount).
-func (a *Adapter) ensureSrc(ctx context.Context, name string, spec ports.EnvSpec) (string, error) {
+func (a *Adapter) ensureSrc(ctx context.Context, name string, spec envport.EnvSpec) (string, error) {
 	src := a.srcDir(name)
 	if isCheckout(src) {
 		return src, nil
@@ -643,7 +644,7 @@ func credentialLine(repoURL, user, pass string) (string, error) {
 
 // policyFor maps an EnvSpec's egress inputs to the gateway policy file. Allow
 // mode (the default) uses the derived allowlist; deny mode uses the denylist.
-func policyFor(spec ports.EnvSpec) policyfile.File {
+func policyFor(spec envport.EnvSpec) policyfile.File {
 	if spec.EgressMode == string(policyfile.ModeDeny) {
 		return policyfile.File{
 			Mode:           policyfile.ModeDeny,
@@ -836,7 +837,7 @@ func (a *Adapter) waitReady(ctx context.Context, name string) error {
 // is started through Exec, so its children (harness, terminals) inherit it.
 const shimPathPrelude = `export PATH="$PATH:/opt/apothecary"` + "\n"
 
-func (a *Adapter) Exec(ctx context.Context, env ports.EnvID, cmd ports.Command) (ports.ExecResult, error) {
+func (a *Adapter) Exec(ctx context.Context, env envport.EnvID, cmd envport.Command) (envport.ExecResult, error) {
 	if cmd.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, cmd.Timeout)
@@ -868,15 +869,15 @@ func (a *Adapter) Exec(ctx context.Context, env ports.EnvID, cmd ports.Command) 
 		[]string{"bash", "-eo", "pipefail", "-s"}, []byte(script), teeW)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ports.ExecResult{}, ctx.Err()
+			return envport.ExecResult{}, ctx.Err()
 		}
-		return ports.ExecResult{}, err
+		return envport.ExecResult{}, err
 	}
 	output := string(stdout)
 	if len(stderr) > 0 {
 		output += string(stderr)
 	}
-	return ports.ExecResult{ExitCode: code, Output: output}, nil
+	return envport.ExecResult{ExitCode: code, Output: output}, nil
 }
 
 // resolvePath applies the port's path convention: relative = repo-root.
@@ -917,7 +918,7 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-func (a *Adapter) ReadFile(ctx context.Context, env ports.EnvID, path string) ([]byte, error) {
+func (a *Adapter) ReadFile(ctx context.Context, env envport.EnvID, path string) ([]byte, error) {
 	p := resolvePath(path)
 	script := containmentGuard(path) + fmt.Sprintf(`if [ ! -f %s ]; then exit 44; fi; base64 < %s`, p, p)
 	stdout, stderr, code, err := a.inWorkspace(ctx, string(env), nil, []string{"bash", "-s"}, []byte(script), nil)
@@ -945,13 +946,13 @@ func (a *Adapter) ReadFile(ctx context.Context, env ports.EnvID, path string) ([
 // image too. find never follows a symlink, and the directory itself is
 // held inside the checkout like a read; a name with a newline in it cannot
 // be told apart and is dropped.
-func (a *Adapter) ListFiles(ctx context.Context, env ports.EnvID, dir string) ([]ports.FileEntry, error) {
+func (a *Adapter) ListFiles(ctx context.Context, env envport.EnvID, dir string) ([]envport.FileEntry, error) {
 	dir = strings.TrimSuffix(dir, "/")
 	p := resolvePath(dir)
 	script := containmentGuard(dir) + fmt.Sprintf(
 		`if [ ! -d %[1]s ]; then exit 44; fi; cd %[1]s && `+
 			`find . -type f -exec sh -c 'for f; do printf "%%s %%s\n" "$(wc -c < "$f" | tr -d " ")" "$f"; done' sh {} + | head -n %[2]d`,
-		p, ports.ListFilesLimit)
+		p, envport.ListFilesLimit)
 	stdout, stderr, code, err := a.inWorkspace(ctx, string(env), nil, []string{"bash", "-s"}, []byte(script), nil)
 	if err != nil {
 		return nil, err
@@ -970,21 +971,21 @@ func (a *Adapter) ListFiles(ctx context.Context, env ports.EnvID, dir string) ([
 
 // parseFileList reads ListFiles' "<size> ./<name>" lines into entries under
 // dir, sorted by path.
-func parseFileList(dir, out string) []ports.FileEntry {
-	var files []ports.FileEntry
+func parseFileList(dir, out string) []envport.FileEntry {
+	var files []envport.FileEntry
 	for line := range strings.SplitSeq(out, "\n") {
 		size, name, ok := strings.Cut(line, " ")
 		n, err := strconv.ParseInt(size, 10, 64)
 		if !ok || err != nil || !strings.HasPrefix(name, "./") {
 			continue
 		}
-		files = append(files, ports.FileEntry{Path: dir + "/" + strings.TrimPrefix(name, "./"), Size: n})
+		files = append(files, envport.FileEntry{Path: dir + "/" + strings.TrimPrefix(name, "./"), Size: n})
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return files
 }
 
-func (a *Adapter) WriteFile(ctx context.Context, env ports.EnvID, path string, data []byte, mode fs.FileMode) error {
+func (a *Adapter) WriteFile(ctx context.Context, env envport.EnvID, path string, data []byte, mode fs.FileMode) error {
 	p := resolvePath(path)
 	// One-line script + payload on the same stdin: bash consumes the first
 	// line, base64 -d consumes the rest.
@@ -1006,14 +1007,14 @@ func (a *Adapter) WriteFile(ctx context.Context, env ports.EnvID, path string, d
 
 // --- Status / Destroy / Links -----------------------------------------------
 
-func (a *Adapter) Status(ctx context.Context, env ports.EnvID) (ports.EnvStatus, error) {
+func (a *Adapter) Status(ctx context.Context, env envport.EnvID) (envport.EnvStatus, error) {
 	return a.status(ctx, string(env))
 }
 
 // status reports the env's liveness in two stages: the SANDBOX on the host
 // daemon gates the WORKSPACE on the inner daemon. A run with no sandbox is a
 // legacy (pre-DinD) env — it keeps the original host-label query — or absent.
-func (a *Adapter) status(ctx context.Context, name string) (ports.EnvStatus, error) {
+func (a *Adapter) status(ctx context.Context, name string) (envport.EnvStatus, error) {
 	sbx, legacy, err := a.host.sandboxState(ctx, name)
 	if err != nil {
 		// Host didn't answer — return the error so the reconciler
@@ -1028,20 +1029,20 @@ func (a *Adapter) status(ctx context.Context, name string) (ports.EnvStatus, err
 		if legacy {
 			return a.workspaceState(ctx, name, false)
 		}
-		return ports.EnvAbsent, nil
+		return envport.EnvAbsent, nil
 	case "running":
 		return a.workspaceState(ctx, name, true) // sandbox up → query the inner workspace
 	case "created", "restarting":
-		return ports.EnvStarting, nil
+		return envport.EnvStarting, nil
 	default: // exited, paused, dead, removing
-		return ports.EnvStopped, nil
+		return envport.EnvStopped, nil
 	}
 }
 
 // workspaceState maps the workspace container's `docker ps` state for our
 // id-label. inner selects the daemon: the inner one when the sandbox is up,
 // the host one for legacy envs.
-func (a *Adapter) workspaceState(ctx context.Context, name string, inner bool) (ports.EnvStatus, error) {
+func (a *Adapter) workspaceState(ctx context.Context, name string, inner bool) (envport.EnvStatus, error) {
 	q := a.run
 	if inner {
 		q = func(ctx context.Context, bin string, args []string, stdin []byte, tee io.Writer, env ...string) ([]byte, []byte, int, error) {
@@ -1059,17 +1060,17 @@ func (a *Adapter) workspaceState(ctx context.Context, name string, inner bool) (
 	state, _, _ := strings.Cut(strings.TrimSpace(string(stdout)), "\n")
 	switch state {
 	case "":
-		return ports.EnvAbsent, nil
+		return envport.EnvAbsent, nil
 	case "running":
-		return ports.EnvRunning, nil
+		return envport.EnvRunning, nil
 	case "created", "restarting":
-		return ports.EnvStarting, nil
+		return envport.EnvStarting, nil
 	default: // exited, paused, dead, removing
-		return ports.EnvStopped, nil
+		return envport.EnvStopped, nil
 	}
 }
 
-func (a *Adapter) Destroy(ctx context.Context, env ports.EnvID) error {
+func (a *Adapter) Destroy(ctx context.Context, env envport.EnvID) error {
 	name := string(env)
 	if err := a.host.destroySandbox(ctx, name); err != nil {
 		return err
@@ -1132,16 +1133,16 @@ func (a *Adapter) destroyDockerSandbox(ctx context.Context, name string) error {
 
 // --- optional capabilities --------------------------------------------------
 
-// Reattach (ports.WorkspaceReattacher): the bridge listeners and the
+// Reattach (envport.WorkspaceReattacher): the bridge listeners and the
 // in-container relay both died with the previous engine process — rebuild
 // them for the still-running workspace. Idempotent (ensureBridge is a
 // no-op for a live env; the relay exits quietly if one already serves).
-func (a *Adapter) Reattach(ctx context.Context, env ports.EnvID) error {
+func (a *Adapter) Reattach(ctx context.Context, env envport.EnvID) error {
 	st, err := a.status(ctx, string(env))
 	if err != nil {
 		return err
 	}
-	if st != ports.EnvRunning {
+	if st != envport.EnvRunning {
 		return fmt.Errorf("workspace %s is %s, not running", env, st)
 	}
 	// Refresh the mounted shim too: a workspace provisioned by an older
@@ -1162,7 +1163,7 @@ func (a *Adapter) Reattach(ctx context.Context, env ports.EnvID) error {
 
 // EgressDenials (ports.EgressController) returns this run's blocked hosts, read
 // from the per-project gateway's denials file.
-func (a *Adapter) EgressDenials(ctx context.Context, env ports.EnvID) []ports.EgressDenial {
+func (a *Adapter) EgressDenials(ctx context.Context, env envport.EnvID) []ports.EgressDenial {
 	if a.gw == nil {
 		return nil
 	}
@@ -1176,7 +1177,7 @@ func (a *Adapter) EgressDenials(ctx context.Context, env ports.EnvID) []ports.Eg
 
 // EgressAudit (ports.EgressAuditor) returns this run's aggregated egress trail
 // from the per-project gateway (filtered to the run).
-func (a *Adapter) EgressAudit(ctx context.Context, env ports.EnvID) []ports.EgressAuditRecord {
+func (a *Adapter) EgressAudit(ctx context.Context, env envport.EnvID) []ports.EgressAuditRecord {
 	if a.gw == nil {
 		return nil
 	}
@@ -1196,7 +1197,7 @@ func (a *Adapter) EgressAudit(ctx context.Context, env ports.EnvID) []ports.Egre
 // AllowEgress (ports.EgressController) adds a host to the run's project policy
 // live — the gateway hot-reloads it, so the next request succeeds with no
 // restart. Project-wide by design (the policy is per project).
-func (a *Adapter) AllowEgress(ctx context.Context, env ports.EnvID, host string) error {
+func (a *Adapter) AllowEgress(ctx context.Context, env envport.EnvID, host string) error {
 	if a.gw == nil {
 		return fmt.Errorf("egress gateway is off for this provisioner")
 	}
@@ -1204,7 +1205,7 @@ func (a *Adapter) AllowEgress(ctx context.Context, env ports.EnvID, host string)
 }
 
 // SetEgressRule (ports.EgressController) live-toggles a host allow/deny.
-func (a *Adapter) SetEgressRule(ctx context.Context, env ports.EnvID, host string, allow bool) error {
+func (a *Adapter) SetEgressRule(ctx context.Context, env envport.EnvID, host string, allow bool) error {
 	if a.gw == nil {
 		return fmt.Errorf("egress gateway is off for this provisioner")
 	}
@@ -1214,7 +1215,7 @@ func (a *Adapter) SetEgressRule(ctx context.Context, env ports.EnvID, host strin
 // EgressPolicy (ports.EgressController) reads back the project policy the
 // gateway is enforcing right now — the "current rule" side of the run page's
 // firewall UI.
-func (a *Adapter) EgressPolicy(ctx context.Context, env ports.EnvID) (ports.EgressPolicy, error) {
+func (a *Adapter) EgressPolicy(ctx context.Context, env envport.EnvID) (ports.EgressPolicy, error) {
 	if a.gw == nil {
 		return ports.EgressPolicy{}, fmt.Errorf("egress gateway is off for this provisioner")
 	}
@@ -1250,7 +1251,7 @@ func (a *Adapter) openProvisionLog(name string) *os.File {
 
 // openExecLog opens the env's live exec log and writes the entry header;
 // nil when RunsDir is unset or the open fails.
-func (a *Adapter) openExecLog(env ports.EnvID, cmd ports.Command) *os.File {
+func (a *Adapter) openExecLog(env envport.EnvID, cmd envport.Command) *os.File {
 	if a.cfg.RunsDir == "" {
 		return nil
 	}
@@ -1266,8 +1267,8 @@ func (a *Adapter) openExecLog(env ports.EnvID, cmd ports.Command) *os.File {
 	return f
 }
 
-// TailExecLog implements the optional ports.ExecLogTailer capability.
-func (a *Adapter) TailExecLog(_ context.Context, env ports.EnvID, n int) ([]byte, error) {
+// TailExecLog implements the optional envport.ExecLogTailer capability.
+func (a *Adapter) TailExecLog(_ context.Context, env envport.EnvID, n int) ([]byte, error) {
 	if a.cfg.RunsDir == "" {
 		return nil, fmt.Errorf("live exec log: runs dir is not configured")
 	}
@@ -1319,7 +1320,7 @@ func tail(s string, n int) string {
 	return s[len(s)-n:]
 }
 
-// Rebuild (ports.WorkspaceRebuilder) recreates the workspace container in
+// Rebuild (envport.WorkspaceRebuilder) recreates the workspace container in
 // place, keeping the engine-side checkout (agent commits survive — it's a
 // bind mount that Destroy never touches). Non-compose: `up
 // --remove-existing-container` recreates the single container while keeping
@@ -1327,17 +1328,17 @@ func tail(s string, n int) string {
 // DinD sandbox teardown + fresh provision (the flag's single-container scope
 // can't cleanly recreate a multi-service project). Build output streams into
 // exec.log so the run page's workspace-log poll shows it live.
-func (a *Adapter) Rebuild(ctx context.Context, spec ports.EnvSpec) error {
+func (a *Adapter) Rebuild(ctx context.Context, spec envport.EnvSpec) error {
 	name := spec.Name
 	if name == "" {
 		name = WorkspaceName(spec.RunID)
 	}
-	tee := a.openExecLog(ports.EnvID(name), ports.Command{Script: "# devcontainer rebuild"})
+	tee := a.openExecLog(envport.EnvID(name), envport.Command{Script: "# devcontainer rebuild"})
 	if tee != nil {
 		defer tee.Close()
 	}
 	if a.defFor(name).IsCompose(ctx, a.defEnv(name, a.srcDir(name))) {
-		if err := a.Destroy(ctx, ports.EnvID(name)); err != nil {
+		if err := a.Destroy(ctx, envport.EnvID(name)); err != nil {
 			return fmt.Errorf("rebuild %s: teardown: %w", name, err)
 		}
 		_, err := a.provision(ctx, spec, false, tee)
@@ -1347,30 +1348,30 @@ func (a *Adapter) Rebuild(ctx context.Context, spec ports.EnvSpec) error {
 	return err
 }
 
-var _ ports.EnvProvisioner = (*Adapter)(nil)
-var _ ports.WorkspaceReattacher = (*Adapter)(nil)
-var _ ports.ExecLogTailer = (*Adapter)(nil)
+var _ envport.EnvProvisioner = (*Adapter)(nil)
+var _ envport.WorkspaceReattacher = (*Adapter)(nil)
+var _ envport.ExecLogTailer = (*Adapter)(nil)
 var _ ports.EgressController = (*Adapter)(nil)
 var _ ports.EgressAuditor = (*Adapter)(nil)
-var _ ports.WorkspacePortExposer = (*Adapter)(nil)
-var _ ports.WorkspaceRebuilder = (*Adapter)(nil)
-var _ ports.EditorStarter = (*Adapter)(nil)
+var _ envport.WorkspacePortExposer = (*Adapter)(nil)
+var _ envport.WorkspaceRebuilder = (*Adapter)(nil)
+var _ envport.EditorStarter = (*Adapter)(nil)
 
-// --- build cache (ports.BuildCacheController) --------------------------------
+// --- build cache (envport.BuildCacheController) --------------------------------
 
 // BuildCache reports the size of the project's devcontainer build cache, held
 // by its gateway's writable registry.
-func (a *Adapter) BuildCache(ctx context.Context, project string) (ports.BuildCacheInfo, error) {
+func (a *Adapter) BuildCache(ctx context.Context, project string) (envport.BuildCacheInfo, error) {
 	if a.gw == nil || project == "" {
-		return ports.BuildCacheInfo{}, nil
+		return envport.BuildCacheInfo{}, nil
 	}
 	size, err := a.gw.BuildCacheSize(ctx, project)
 	if err != nil {
 		// No gateway up yet (a project that has never run) is not an error to
 		// show: there is simply nothing cached.
-		return ports.BuildCacheInfo{}, nil
+		return envport.BuildCacheInfo{}, nil
 	}
-	return ports.BuildCacheInfo{Available: true, Bytes: size}, nil
+	return envport.BuildCacheInfo{Available: true, Bytes: size}, nil
 }
 
 // ClearBuildCache empties it. The next build repopulates it, so the only cost
@@ -1436,8 +1437,8 @@ func engineHostPort(raw string) (string, string) {
 	return u.Hostname(), port
 }
 
-// EngineURL implements ports.EngineURLProvider: the address this env's
+// EngineURL implements envport.EngineURLProvider: the address this env's
 // workspace reaches the engine at.
-func (a *Adapter) EngineURL(ports.EnvID) string { return a.host.engineURL() }
+func (a *Adapter) EngineURL(envport.EnvID) string { return a.host.engineURL() }
 
-var _ ports.EngineURLProvider = (*Adapter)(nil)
+var _ envport.EngineURLProvider = (*Adapter)(nil)

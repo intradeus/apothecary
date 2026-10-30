@@ -16,6 +16,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 )
@@ -76,11 +77,11 @@ func newReviewerHarness(t *testing.T, doc string) (*phasedHarness, func() []stri
 	}
 	var mu sync.Mutex
 	var scripts []string
-	ph.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	ph.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		mu.Lock()
 		scripts = append(scripts, cmd.Script)
 		mu.Unlock()
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 	return ph, func() []string {
 		mu.Lock()

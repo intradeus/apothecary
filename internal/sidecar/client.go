@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-// Dialer opens one connection to the sidecar (ports.PortConn satisfies it).
+// Dialer opens one connection to the sidecar (envport.PortConn satisfies it).
 type Dialer interface {
 	Dial(ctx context.Context) (net.Conn, error)
 }

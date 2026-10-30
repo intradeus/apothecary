@@ -1,17 +1,16 @@
 package fake
 
 import (
+	"apothecary/internal/ports/envport"
 	"context"
 	"fmt"
 	"io/fs"
 	"strings"
-
-	"apothecary/internal/ports"
 )
 
 // TreeCall is one recorded WriteTree.
 type TreeCall struct {
-	Env   ports.EnvID
+	Env   envport.EnvID
 	Dir   string
 	Count int
 }
@@ -19,7 +18,7 @@ type TreeCall struct {
 // WriteTree replaces dir's subtree in Files (and Modes) with files, applying
 // the port's path rules so an engine bug that would escape the directory
 // fails here the way it would on a real workspace.
-func (p *EnvProvisioner) WriteTree(_ context.Context, id ports.EnvID, dir string, files []ports.TreeFile) error {
+func (p *EnvProvisioner) WriteTree(_ context.Context, id envport.EnvID, dir string, files []envport.TreeFile) error {
 	if !strings.HasPrefix(dir, "/") {
 		return fmt.Errorf("write tree %s: directory must be absolute", dir)
 	}

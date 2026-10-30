@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -170,7 +171,7 @@ func TestPausedAttemptResumesAfterRestart(t *testing.T) {
 	fl := mustFlow(t, askFlowDoc)
 	h := newHarness(t, fl)
 	ctx := context.Background()
-	envID, _ := h.envp.Provision(ctx, ports.EnvSpec{RunID: "r-p"})
+	envID, _ := h.envp.Provision(ctx, envport.EnvSpec{RunID: "r-p"})
 	for _, p := range []event.Payload{
 		&event.RunCreated{TicketTitle: "T", FlowName: "ask", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
@@ -237,7 +238,7 @@ func TestAnswerWithNoSessionToResumeFailsTheAttempt(t *testing.T) {
 	fl := mustFlow(t, askFlowDoc)
 	h := newHarness(t, fl)
 	ctx := context.Background()
-	envID, _ := h.envp.Provision(ctx, ports.EnvSpec{RunID: "r-n"})
+	envID, _ := h.envp.Provision(ctx, envport.EnvSpec{RunID: "r-n"})
 	for _, p := range []event.Payload{
 		&event.RunCreated{TicketTitle: "T", FlowName: "ask", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
@@ -528,7 +529,7 @@ func TestRecoverAdmitsAParkedRunWhoseAnswerLanded(t *testing.T) {
 	fl := mustFlow(t, askFlowDoc)
 	h := newHarness(t, fl)
 	ctx := context.Background()
-	envID, _ := h.envp.Provision(ctx, ports.EnvSpec{RunID: "r-w"})
+	envID, _ := h.envp.Provision(ctx, envport.EnvSpec{RunID: "r-w"})
 	for _, p := range []event.Payload{
 		&event.RunCreated{TicketTitle: "T", FlowName: "ask", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
@@ -571,7 +572,7 @@ func TestRecoverLeavesAnUnansweredParkedRunAlone(t *testing.T) {
 	fl := mustFlow(t, askFlowDoc)
 	h := newHarness(t, fl)
 	ctx := context.Background()
-	envID, _ := h.envp.Provision(ctx, ports.EnvSpec{RunID: "r-u"})
+	envID, _ := h.envp.Provision(ctx, envport.EnvSpec{RunID: "r-u"})
 	for _, p := range []event.Payload{
 		&event.RunCreated{TicketTitle: "T", FlowName: "ask", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},

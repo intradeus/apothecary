@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"apothecary/internal/confstore"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // folderFetch scripts a remote folder: skill name → description, plus a
@@ -17,10 +17,10 @@ func folderFetch(commit string, skills map[string]string) FetchFunc {
 		f := Fetched{Commit: commit}
 		for name, desc := range skills {
 			f.Files = append(f.Files,
-				ports.TreeFile{Path: name + "/SKILL.md", Data: []byte("---\nname: " + name + "\ndescription: " + desc + "\n---\n")},
-				ports.TreeFile{Path: name + "/scripts/go.sh", Data: []byte("echo " + name)})
+				envport.TreeFile{Path: name + "/SKILL.md", Data: []byte("---\nname: " + name + "\ndescription: " + desc + "\n---\n")},
+				envport.TreeFile{Path: name + "/scripts/go.sh", Data: []byte("echo " + name)})
 		}
-		f.Files = append(f.Files, ports.TreeFile{Path: "README.md", Data: []byte("x")})
+		f.Files = append(f.Files, envport.TreeFile{Path: "README.md", Data: []byte("x")})
 		return f, nil
 	}
 }
@@ -82,7 +82,7 @@ func TestImportSingleSkillAndAdoption(t *testing.T) {
 	s, _ := newStore(t)
 	ctx := context.Background()
 	single := func(_ context.Context, src Source) (Fetched, error) {
-		return Fetched{Commit: "s1", Files: []ports.TreeFile{{Path: "SKILL.md", Data: []byte("---\nname: pdf\ndescription: P\n---\n")}}}, nil
+		return Fetched{Commit: "s1", Files: []envport.TreeFile{{Path: "SKILL.md", Data: []byte("---\nname: pdf\ndescription: P\n---\n")}}}, nil
 	}
 	im := &Importer{Store: s, Fetch: single}
 	res, err := im.Import(ctx, "u1", "https://github.com/o/r/tree/main/skills/pdf", "")
@@ -123,7 +123,7 @@ func TestImportSingleSkillAndAdoption(t *testing.T) {
 		t.Errorf("refresh local = %v", err)
 	}
 	empty := func(context.Context, Source) (Fetched, error) {
-		return Fetched{Files: []ports.TreeFile{{Path: "README.md", Data: []byte("x")}}}, nil
+		return Fetched{Files: []envport.TreeFile{{Path: "README.md", Data: []byte("x")}}}, nil
 	}
 	im.Fetch = empty
 	if _, err := im.Import(ctx, "u1", "https://github.com/n/o", ""); !errors.Is(err, confstore.ErrInvalid) || !strings.Contains(err.Error(), "no skills found") {

@@ -15,6 +15,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/engine"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
 
@@ -184,7 +185,7 @@ func TestBrowserMCPStream(t *testing.T) {
 // exposingEnv is the fake provisioner with a port exposer.
 type exposingEnv struct{ *fake.EnvProvisioner }
 
-func (exposingEnv) ExposePort(context.Context, ports.EnvID, int) (ports.PortConn, error) {
+func (exposingEnv) ExposePort(context.Context, envport.EnvID, int) (envport.PortConn, error) {
 	return nil, errors.New("not in this test")
 }
-func (exposingEnv) AppPorts(context.Context, ports.EnvID) []int { return nil }
+func (exposingEnv) AppPorts(context.Context, envport.EnvID) []int { return nil }

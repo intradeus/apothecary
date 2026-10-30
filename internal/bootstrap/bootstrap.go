@@ -17,7 +17,7 @@ import (
 
 	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/shell"
 	"apothecary/internal/skills"
 )
@@ -48,7 +48,7 @@ type BootstrapSpec struct {
 	Register func(secret string)
 	// SeedAuth, when set, writes harness-native auth material right after
 	// provider.env (DESIGN2 §6.2, still step 2).
-	SeedAuth func(ctx context.Context, env ports.EnvID, register func(secret string)) error
+	SeedAuth func(ctx context.Context, env envport.EnvID, register func(secret string)) error
 	// GitUser/GitPass form the credential-store entry for the repo host
 	// (§11 step 3: the token never lands in .git/config); host-kind
 	// specific (gitlab "oauth2", github "x-access-token"). Both empty =
@@ -65,14 +65,14 @@ type BootstrapSpec struct {
 
 	// Prepare, when set, runs after the clone (§11 step 4): harness config
 	// generation for Agents (FLOWLANG §1, v3 — the flow carries them).
-	Prepare func(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error
+	Prepare func(ctx context.Context, env envport.EnvID, specs []*agentspec.Spec) error
 	// Skills are the run's skills (TODO 38), laid down at skills.WorkspaceDir
 	// one directory each, right before Prepare; SkillPins say which skillset
 	// versions they came from (the manifest beside them). InstallSkills,
 	// when set, then copies them into every harness's own directory.
 	Skills        []skills.Tree
 	SkillPins     []event.SkillsetPin
-	InstallSkills func(ctx context.Context, env ports.EnvID, names []string) error
+	InstallSkills func(ctx context.Context, env envport.EnvID, names []string) error
 	// Agents are the flow's agent definitions, materialized by Prepare.
 	Agents []*agentspec.Spec
 
@@ -112,7 +112,7 @@ func branchScript(branch, source, fetch string) string {
 // run reaches a terminal state (ScrubWorkspaceSecrets) and must put back when a
 // resumed run re-enters the same workspace — seeding and re-seeding have to
 // stay one implementation or they drift.
-func WriteWorkspaceSecrets(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID, spec BootstrapSpec) error {
+func WriteWorkspaceSecrets(ctx context.Context, envp envport.EnvProvisioner, id envport.EnvID, spec BootstrapSpec) error {
 	keys := make([]string, 0, len(spec.ProviderEnv))
 	for k := range spec.ProviderEnv {
 		keys = append(keys, k)
@@ -166,7 +166,7 @@ func WriteWorkspaceSecrets(ctx context.Context, envp ports.EnvProvisioner, id po
 // RunBootstrap executes the ordered §11 steps against a ready environment.
 // Errors carry the step name and the output tail — the caller decides what
 // they mean (the engine: env_failed).
-func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID, spec BootstrapSpec) error {
+func RunBootstrap(ctx context.Context, envp envport.EnvProvisioner, id envport.EnvID, spec BootstrapSpec) error {
 	runEnv := fmt.Sprintf("APOTHECARY_RUN_ID=%s\nAPOTHECARY_RUN_TOKEN=%s\nAPOTHECARY_ENGINE_URL=%s\n",
 		spec.RunID, spec.Token, spec.EngineURL)
 	if err := envp.WriteFile(ctx, id, "/apothecary/run.env", []byte(runEnv), 0o600); err != nil {
@@ -213,7 +213,7 @@ func RunBootstrap(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID
 	// steps need no proxy env — HTTP(S) just leaves and the gateway allows/denies
 	// by hostname.
 	for _, s := range steps {
-		res, err := envp.Exec(ctx, id, ports.Command{Script: s.script, Dir: s.dir, Timeout: spec.Timeout})
+		res, err := envp.Exec(ctx, id, envport.Command{Script: s.script, Dir: s.dir, Timeout: spec.Timeout})
 		if err != nil {
 			return fmt.Errorf("bootstrap %s: %w", s.name, err)
 		}
@@ -253,9 +253,9 @@ type skillsManifest struct {
 // neutral copy every harness installs from — plus a manifest. Always
 // starts from an empty directory (a re-bootstrap of the same container
 // must not keep a previous selection); with no skills that is all it does.
-func writeSkills(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID, spec BootstrapSpec) error {
+func writeSkills(ctx context.Context, envp envport.EnvProvisioner, id envport.EnvID, spec BootstrapSpec) error {
 	q := shell.Quote(skills.WorkspaceDir)
-	res, err := envp.Exec(ctx, id, ports.Command{Script: "rm -rf " + q + " && mkdir -p " + q, Timeout: spec.Timeout})
+	res, err := envp.Exec(ctx, id, envport.Command{Script: "rm -rf " + q + " && mkdir -p " + q, Timeout: spec.Timeout})
 	if err != nil {
 		return err
 	}

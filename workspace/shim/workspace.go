@@ -3,7 +3,7 @@ package main
 // The sidecar's workspace views: a file tree, file contents, and the run's
 // git changes. Read-only by design — the agent owns the checkout while a run
 // is live, and an editor writing underneath it would race its edits. The
-// human edits through code-server when they need to (ports.EditorStarter).
+// human edits through code-server when they need to (envport.EditorStarter).
 
 import (
 	"bytes"

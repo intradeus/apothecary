@@ -3,6 +3,7 @@
 package workspace
 
 import (
+	"apothecary/internal/ports/envport"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -11,8 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"apothecary/internal/ports"
 )
 
 // TestLiveWriteTreeScript runs WriteTree's exact stdin (one script line +
@@ -24,7 +23,7 @@ func TestLiveWriteTreeScript(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not on PATH")
 	}
-	files := []ports.TreeFile{
+	files := []envport.TreeFile{
 		{Path: "SKILL.md", Data: []byte("---\nname: x\ndescription: d\n---\nbody\n")},
 		{Path: "scripts/run.sh", Mode: 0o755, Data: []byte("#!/bin/sh\necho ok\n")},
 		{Path: "references/deep/a.md", Data: []byte("a")},

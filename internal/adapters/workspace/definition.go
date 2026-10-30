@@ -1,13 +1,12 @@
 package workspace
 
 import (
+	"apothecary/internal/ports/envport"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
 	"path/filepath"
-
-	"apothecary/internal/ports"
 )
 
 // Definition is how a repo describes its workspace, and how to build and enter
@@ -19,7 +18,7 @@ type Definition interface {
 	Name() string
 	Detect(ctx context.Context, fsys sandboxFS, src string) bool
 	// Up builds (or reuses) and starts the workspace container.
-	Up(ctx context.Context, e defEnv, spec ports.EnvSpec, o upOptions) (Workspace, error)
+	Up(ctx context.Context, e defEnv, spec envport.EnvSpec, o upOptions) (Workspace, error)
 	// ExecArgs is the command prefix that runs a program inside the workspace
 	// container as its remote user, with remoteEnv set; the caller appends the
 	// program and its arguments.

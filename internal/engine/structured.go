@@ -16,7 +16,7 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/shell"
 )
 
@@ -74,7 +74,7 @@ func (x *exec) portFiles(ports []flow.Port) []structuredFile {
 // dirFiles is what a files port's directory holds. A directory that is not
 // there holds nothing; one that cannot be listed (it resolves outside the
 // checkout) is an error, and holds nothing either.
-func (x *exec) dirFiles(dir string) ([]ports.FileEntry, error) {
+func (x *exec) dirFiles(dir string) ([]envport.FileEntry, error) {
 	files, err := x.res.Envp.ListFiles(x.ctx, x.rs.envID, dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil

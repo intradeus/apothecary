@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/sidecar"
 )
 
@@ -96,11 +97,11 @@ func (u unixConn) Close() error { return nil }
 
 // env is a provisioner with nothing but a sidecar.
 type env struct {
-	ports.EnvProvisioner
+	envport.EnvProvisioner
 	sock string
 }
 
-func (e env) Sidecar(context.Context, ports.EnvID) (ports.PortConn, error) {
+func (e env) Sidecar(context.Context, envport.EnvID) (envport.PortConn, error) {
 	return unixConn(e.sock), nil
 }
 

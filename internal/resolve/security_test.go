@@ -9,7 +9,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/confstore"
 	"apothecary/internal/kinds"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/providers"
 	"apothecary/internal/secrets"
 )
@@ -91,7 +91,7 @@ func TestNoRefreshTokenReachesAWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer res.Release()
-	env, err := res.Envp.Provision(ctx, ports.EnvSpec{RunID: "r1"})
+	env, err := res.Envp.Provision(ctx, envport.EnvSpec{RunID: "r1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestNoRefreshTokenReachesAWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	files := res.Envp.(interface{ Env(ports.EnvID) *fake.Env }).Env(env).Files
+	files := res.Envp.(interface{ Env(envport.EnvID) *fake.Env }).Env(env).Files
 	if len(files) < 2 {
 		t.Fatalf("seeded only %d files: the harnesses wrote nothing", len(files))
 	}

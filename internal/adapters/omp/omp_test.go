@@ -9,12 +9,13 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
-func envWith(t *testing.T) (*fake.EnvProvisioner, ports.EnvID) {
+func envWith(t *testing.T) (*fake.EnvProvisioner, envport.EnvID) {
 	t.Helper()
 	envp := fake.NewEnvProvisioner()
-	id, err := envp.Provision(context.Background(), ports.EnvSpec{RunID: "r"})
+	id, err := envp.Provision(context.Background(), envport.EnvSpec{RunID: "r"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,11 +63,11 @@ func TestProfile(t *testing.T) {
 // config.yml lands in the workspace user's real home, not a hardcoded one.
 func TestPrepareEnvWritesConfigInWorkspaceHome(t *testing.T) {
 	envp, id := envWith(t)
-	envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "$HOME") {
-			return ports.ExecResult{Output: "/home/vscode\n"}, nil
+			return envport.ExecResult{Output: "/home/vscode\n"}, nil
 		}
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 	a := New(envp, Config{})
 	ctx := context.Background()
@@ -88,7 +89,7 @@ func TestPrepareEnvWritesConfigInWorkspaceHome(t *testing.T) {
 // Skills land in omp's native user-level skills directory.
 func TestInstallSkillsTargetsAgentSkillsDir(t *testing.T) {
 	envp := fake.NewEnvProvisioner()
-	id, _ := envp.Provision(context.Background(), ports.EnvSpec{RunID: "r"})
+	id, _ := envp.Provision(context.Background(), envport.EnvSpec{RunID: "r"})
 	a := New(envp, Config{})
 	if err := a.InstallSkills(context.Background(), id, []string{"pdf"}); err != nil {
 		t.Fatal(err)

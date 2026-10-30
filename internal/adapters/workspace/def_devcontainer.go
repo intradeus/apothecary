@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"apothecary/internal/egressgw"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // devcontainerDef is the repo's own .devcontainer/devcontainer.json (or a root
@@ -57,7 +57,7 @@ type upResult struct {
 // id-label creates the container on first call and restarts/reuses it on every
 // later one (crash recovery), re-running the repo's lifecycle hooks exactly as
 // the devcontainer spec prescribes.
-func (d devcontainerDef) Up(ctx context.Context, e defEnv, spec ports.EnvSpec, o upOptions) (Workspace, error) {
+func (d devcontainerDef) Up(ctx context.Context, e defEnv, spec envport.EnvSpec, o upOptions) (Workspace, error) {
 	plog := o.plog
 	if plog == nil {
 		plog = func(string, ...any) {}

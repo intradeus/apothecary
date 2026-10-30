@@ -17,7 +17,7 @@ import (
 
 	"apothecary/internal/egressgw"
 	"apothecary/internal/kube"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	wsassets "apothecary/workspace"
 )
 
@@ -151,7 +151,7 @@ func TestK8sProvisionSequence(t *testing.T) {
 	var stdins [][]byte
 	k.exec = inPod(&seen, &stdins)
 	a := newK8sTestAdapter(t, k, false)
-	env, err := a.Provision(context.Background(), ports.EnvSpec{
+	env, err := a.Provision(context.Background(), envport.EnvSpec{
 		RunID: "01R", Name: "apo-x", Project: "P1", ProjectName: "Proj",
 		RepoURL: "https://git.example/r.git", GitUser: "u", GitPass: "s3cret",
 	})
@@ -243,7 +243,7 @@ func TestK8sPodWithGatewayIsTunnelled(t *testing.T) {
 	k := &kubeFake{secrets: map[string]string{}}
 	a := newK8sTestAdapter(t, k, true)
 	h := a.host.(*k8sHost)
-	pod, err := h.podManifest(context.Background(), "apo-x", ports.EnvSpec{Project: "P1"}, egressgw.Attachment{
+	pod, err := h.podManifest(context.Background(), "apo-x", envport.EnvSpec{Project: "P1"}, egressgw.Attachment{
 		GatewayIP: "10.90.0.1", Subnet: "10.90.0.5/32", WGEndpoint: "10.43.9.9:51820", WGSecret: "apo-wg-apo-x"})
 	if err != nil {
 		t.Fatal(err)
@@ -309,16 +309,16 @@ func TestK8sStatusMapping(t *testing.T) {
 	cases := []struct {
 		pod     string
 		inner   string
-		want    ports.EnvStatus
+		want    envport.EnvStatus
 		wantErr bool
 	}{
-		{"", "", ports.EnvAbsent, false},
-		{`{"status":{"phase":"Pending"}}`, "", ports.EnvStarting, false},
-		{`{"status":{"phase":"Running","conditions":[{"type":"Ready","status":"False"}]}}`, "", ports.EnvStarting, false},
-		{readyPod("10.42.0.9"), "running", ports.EnvRunning, false},
-		{readyPod("10.42.0.9"), "exited", ports.EnvStopped, false},
-		{readyPod("10.42.0.9"), "", ports.EnvAbsent, false},
-		{`{"status":{"phase":"Failed"}}`, "", ports.EnvStopped, false},
+		{"", "", envport.EnvAbsent, false},
+		{`{"status":{"phase":"Pending"}}`, "", envport.EnvStarting, false},
+		{`{"status":{"phase":"Running","conditions":[{"type":"Ready","status":"False"}]}}`, "", envport.EnvStarting, false},
+		{readyPod("10.42.0.9"), "running", envport.EnvRunning, false},
+		{readyPod("10.42.0.9"), "exited", envport.EnvStopped, false},
+		{readyPod("10.42.0.9"), "", envport.EnvAbsent, false},
+		{`{"status":{"phase":"Failed"}}`, "", envport.EnvStopped, false},
 	}
 	for _, c := range cases {
 		k := &kubeFake{pod: c.pod, exec: func(argv []string, _ []byte) (string, string, int) {

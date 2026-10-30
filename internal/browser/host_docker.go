@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"apothecary/internal/ports/envport"
 	"bytes"
 	"context"
 	"errors"
@@ -12,8 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"apothecary/internal/ports"
 )
 
 // dockerHost runs each project's browser as a container on the engine's
@@ -29,7 +28,7 @@ type dockerHost struct {
 // dir is the project's bind mount: the sessions' proxy sockets, at the same
 // path in the daemon and the container.
 func (h *dockerHost) dir(project string) string {
-	return filepath.Join(h.runsDir, "browser", ports.ProjectHostKey(project))
+	return filepath.Join(h.runsDir, "browser", envport.ProjectHostKey(project))
 }
 
 // maxSockPath is sun_path's limit, less the terminating NUL.

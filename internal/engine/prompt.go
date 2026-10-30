@@ -10,7 +10,7 @@ import (
 	"apothecary/internal/bootstrap"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/shell"
 )
 
@@ -356,7 +356,7 @@ func parseVerdict(path string, data []byte) (*Verdict, error) {
 // agent reads the files itself, so churn counts are noise in the prompt.
 func (x *exec) gitDiff(dir, base string) string {
 	rs := x.rs
-	res, err := x.res.Envp.Exec(x.ctx, rs.envID, ports.Command{
+	res, err := x.res.Envp.Exec(x.ctx, rs.envID, envport.Command{
 		Script:  fmt.Sprintf("git diff --name-status %s...HEAD", base),
 		Dir:     dir,
 		Timeout: rs.fl.Defaults.Timeout,
@@ -404,7 +404,7 @@ func (x *exec) diffPhase() string {
 func (x *exec) statusFiles() string {
 	rs := x.rs
 	status := func(dir string) string {
-		res, err := x.res.Envp.Exec(x.ctx, rs.envID, ports.Command{
+		res, err := x.res.Envp.Exec(x.ctx, rs.envID, envport.Command{
 			Script:  "git status --short --untracked-files=all",
 			Dir:     dir,
 			Timeout: rs.fl.Defaults.Timeout,

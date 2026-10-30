@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 )
 
 // lastPrompt returns the prompt of the most recent agent call.
@@ -87,7 +87,7 @@ func TestTicketAttachmentsReachEveryRun(t *testing.T) {
 			t.Errorf("attempt %d: prompt missing the ticket attachment:\n%s", attempt, p)
 		}
 		env := h.view(t, runID).EnvID
-		data, err := h.envp.ReadFile(context.Background(), ports.EnvID(env), wantPath)
+		data, err := h.envp.ReadFile(context.Background(), envport.EnvID(env), wantPath)
 		if err != nil || string(data) != "# Design" {
 			t.Errorf("attempt %d: ticket artifact not delivered: %q, %v", attempt, data, err)
 		}
@@ -139,11 +139,11 @@ agents:
 main:
   - { id: commit_msg, type: agent, harness: $harness, model: $model, agent: committer, input: { changes: { from: run.git.status, type: changeset } } }
 `))
-	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	h.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.HasPrefix(cmd.Script, "git status --short") {
-			return ports.ExecResult{Output: " M main.go\n?? health.go\n"}, nil
+			return envport.ExecResult{Output: " M main.go\n?? health.go\n"}, nil
 		}
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T", Goal: "g"}, "uncommitted", testProject)
 	if err != nil {
@@ -166,14 +166,14 @@ func TestDiffSourcesMeasureTheirOwnRange(t *testing.T) {
 	doc = strings.Replace(doc, "outcomes:\n",
 		"  - id: answer\n    on: manual\n    stages:\n      - { id: say, type: agent, harness: $harness, model: $model, agent: replier, input: { all: { from: run.git.diff_target, type: changeset }, round: { from: run.git.diff_phase, type: changeset } } }\noutcomes:\n", 1)
 	ph := newPhasedHarness(t, doc)
-	ph.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
+	ph.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		switch cmd.Script {
 		case "git diff --name-status origin/main...HEAD":
-			return ports.ExecResult{Output: "M\tbranch.go\n"}, nil
+			return envport.ExecResult{Output: "M\tbranch.go\n"}, nil
 		case "git diff --name-status h1...HEAD":
-			return ports.ExecResult{Output: "M\tround.go\n"}, nil
+			return envport.ExecResult{Output: "M\tround.go\n"}, nil
 		}
-		return ports.ExecResult{}, nil
+		return envport.ExecResult{}, nil
 	}
 	runID := ph.start(t)
 	ph.repoHost.SetHead(1, "h1")

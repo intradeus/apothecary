@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/modelcheck"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/redact"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
@@ -245,7 +246,7 @@ func (svc *Service) models(ctx context.Context, s *askSetup) []string {
 	if models == nil {
 		if lister, ok := s.res.RunnerFor(s.harness).(ports.AgentModelLister); ok {
 			actx, cancel := context.WithTimeout(ctx, modelcheck.Timeout)
-			got, err := lister.AgentModels(actx, ports.EnvID(s.v.EnvID))
+			got, err := lister.AgentModels(actx, envport.EnvID(s.v.EnvID))
 			cancel()
 			if err != nil {
 				return nil // asked again next time
@@ -427,14 +428,14 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 	var res ports.AgentResult
 	var err error
 	if th.SessionID == "" {
-		res, err = runner.Run(ctx, ports.EnvID(s.v.EnvID), spec, in)
+		res, err = runner.Run(ctx, envport.EnvID(s.v.EnvID), spec, in)
 	} else {
 		svc.mu.Lock()
 		if a.sessionModel != "" && a.sessionModel != model {
 			in.Model = model // switch the live session over first
 		}
 		svc.mu.Unlock()
-		res, err = runner.Resume(ctx, ports.EnvID(s.v.EnvID), ports.SessionID(th.SessionID), in)
+		res, err = runner.Resume(ctx, envport.EnvID(s.v.EnvID), ports.SessionID(th.SessionID), in)
 		mu.Lock()
 		silent := text.Len() == 0
 		mu.Unlock()
@@ -445,7 +446,7 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 		if err != nil && ctx.Err() == nil && silent && res.TurnsUsed == 0 {
 			svc.log().Info("ask: the pane's session is gone; starting a fresh one", "run", runID, "session", th.SessionID, "err", err)
 			th.SessionID, in.Model = "", ""
-			res, err = runner.Run(ctx, ports.EnvID(s.v.EnvID), spec, in)
+			res, err = runner.Run(ctx, envport.EnvID(s.v.EnvID), spec, in)
 		}
 	}
 

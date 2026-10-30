@@ -1,33 +1,32 @@
 package workspace
 
 import (
+	"apothecary/internal/ports/envport"
 	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
-
-	"apothecary/internal/ports"
 )
 
-// SampleResources implements ports.ResourceSampler: one `docker stats` reading
+// SampleResources implements envport.ResourceSampler: one `docker stats` reading
 // of the run's DinD sandbox on the HOST daemon (hostRun — the sandbox contains
 // the whole inner world: inner dockerd, workspace, compose siblings, builds).
 // For a legacy pre-DinD env the same name resolves to the host-daemon
 // workspace container, which is still the honest per-run footprint.
-func (a *Adapter) SampleResources(ctx context.Context, env ports.EnvID) (ports.ResourceSample, error) {
+func (a *Adapter) SampleResources(ctx context.Context, env envport.EnvID) (envport.ResourceSample, error) {
 	return a.host.sample(ctx, string(env))
 }
 
 // dockerSample is the docker host's SampleResources.
-func (a *Adapter) dockerSample(ctx context.Context, name string) (ports.ResourceSample, error) {
+func (a *Adapter) dockerSample(ctx context.Context, name string) (envport.ResourceSample, error) {
 	out, stderr, code, err := a.hostRun(ctx, []string{"stats", "--no-stream", "--format", "{{json .}}", name})
 	if err != nil {
-		return ports.ResourceSample{}, err
+		return envport.ResourceSample{}, err
 	}
 	if code != 0 {
-		return ports.ResourceSample{}, fmt.Errorf("docker stats %s: exit %d: %s", name, code, tail(string(stderr), 256))
+		return envport.ResourceSample{}, fmt.Errorf("docker stats %s: exit %d: %s", name, code, tail(string(stderr), 256))
 	}
 	var row struct {
 		CPUPerc  string
@@ -37,15 +36,15 @@ func (a *Adapter) dockerSample(ctx context.Context, name string) (ports.Resource
 	}
 	line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
 	if err := json.Unmarshal([]byte(line), &row); err != nil {
-		return ports.ResourceSample{}, fmt.Errorf("docker stats %s: unparseable row %q: %w", name, tail(line, 256), err)
+		return envport.ResourceSample{}, fmt.Errorf("docker stats %s: unparseable row %q: %w", name, tail(line, 256), err)
 	}
 	// CPUPerc gates the sample: docker prints "--" for a container that exists
 	// but isn't running, and "no sample" (a gap) is the honest answer then.
 	cpu, err := parsePercent(row.CPUPerc)
 	if err != nil {
-		return ports.ResourceSample{}, fmt.Errorf("docker stats %s: %w", name, err)
+		return envport.ResourceSample{}, fmt.Errorf("docker stats %s: %w", name, err)
 	}
-	s := ports.ResourceSample{CPUPerc: cpu}
+	s := envport.ResourceSample{CPUPerc: cpu}
 	s.MemUsed, s.MemLimit = parseSizePair(row.MemUsage)
 	s.NetRx, s.NetTx = parseSizePair(row.NetIO)
 	s.PIDs, _ = strconv.Atoi(strings.TrimSpace(row.PIDs))

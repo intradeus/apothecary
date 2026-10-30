@@ -17,7 +17,7 @@ import (
 
 	"apothecary/internal/event"
 	"apothecary/internal/portrelay"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
@@ -104,11 +104,11 @@ func (s *Service) Expose(ctx context.Context, runID string, port int) (string, e
 		return "", err
 	}
 	defer res.Close()
-	exposer, ok := res.Envp.(ports.WorkspacePortExposer)
+	exposer, ok := res.Envp.(envport.WorkspacePortExposer)
 	if !ok {
 		return "", fmt.Errorf("run %s: provisioner does not support port exposure", runID)
 	}
-	pc, err := exposer.ExposePort(ctx, ports.EnvID(v.EnvID), port)
+	pc, err := exposer.ExposePort(ctx, envport.EnvID(v.EnvID), port)
 	if err != nil {
 		return "", err
 	}
@@ -132,8 +132,8 @@ func (s *Service) List(runID string) []portrelay.Exposure {
 // otherwise be lost on recovery). Each re-binds its persisted host port so
 // the URL survives. Best-effort — a failed exposure is a warning, never a
 // failed run. Synchronous, and it never appends: the caller records the links.
-func (s *Service) AutoExpose(ctx context.Context, runID string, envp ports.EnvProvisioner, id ports.EnvID) []event.Link {
-	exposer, ok := envp.(ports.WorkspacePortExposer)
+func (s *Service) AutoExpose(ctx context.Context, runID string, envp envport.EnvProvisioner, id envport.EnvID) []event.Link {
+	exposer, ok := envp.(envport.WorkspacePortExposer)
 	if !ok || s.Relay == nil {
 		return nil
 	}
@@ -171,15 +171,15 @@ func (s *Service) AutoExpose(ctx context.Context, runID string, envp ports.EnvPr
 // stays, so every port comes back on its old URL. code-server died with the
 // old container too: bring it back, so an editor tab left open reconnects
 // instead of facing a dead port.
-func (s *Service) ReopenAfterRebuild(ctx context.Context, runID string, envp ports.EnvProvisioner, id ports.EnvID, editor ports.EditorSettings) {
+func (s *Service) ReopenAfterRebuild(ctx context.Context, runID string, envp envport.EnvProvisioner, id envport.EnvID, editor envport.EditorSettings) {
 	editorWasOpen := false
 	if s.Relay != nil {
-		editorWasOpen = slices.Contains(s.Relay.SavedPorts(runID), ports.CodeServerPort)
+		editorWasOpen = slices.Contains(s.Relay.SavedPorts(runID), envport.CodeServerPort)
 		s.Relay.Reset(runID)
 	}
 	s.AutoExpose(ctx, runID, envp, id)
-	if starter, ok := envp.(ports.EditorStarter); ok && editorWasOpen {
-		if serr := starter.StartEditor(ctx, id, ports.CodeServerPort, editor); serr != nil {
+	if starter, ok := envp.(envport.EditorStarter); ok && editorWasOpen {
+		if serr := starter.StartEditor(ctx, id, envport.CodeServerPort, editor); serr != nil {
 			s.log().Warn("rebuild: restart editor", "run", runID, "err", serr)
 		}
 	}

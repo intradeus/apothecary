@@ -17,7 +17,7 @@ import (
 	"net/http"
 	"slices"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/tickets"
 )
 
@@ -162,5 +162,5 @@ func (s *Server) Handler() http.Handler {
 // Compile-time anchors for types the table names only through helpers.
 var (
 	_ = tickets.Sources(nil)
-	_ = ports.ObservedPort{}
+	_ = envport.ObservedPort{}
 )

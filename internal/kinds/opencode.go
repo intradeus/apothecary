@@ -13,7 +13,7 @@ import (
 	"apothecary/internal/adapters/acpagent"
 	opencodeadapter "apothecary/internal/adapters/opencode"
 	"apothecary/internal/agentspec"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/providers"
 )
 
@@ -38,7 +38,7 @@ func (Opencode) Descriptor() Descriptor {
 	}
 }
 
-func (Opencode) New(cfg Config, envp ports.EnvProvisioner) (Harness, error) {
+func (Opencode) New(cfg Config, envp envport.EnvProvisioner) (Harness, error) {
 	return &opencodeHarness{
 		Runner:  acpagent.New(envp, opencodeadapter.Profile()),
 		adapter: opencodeadapter.New(envp, opencodeadapter.Config{}),
@@ -365,7 +365,7 @@ func (h *opencodeHarness) EnvVars() map[string]string { return nil }
 func (h *opencodeHarness) EditorExtensions() []string { return []string{OpencodeEditorExtension} }
 
 // AuthFiles (kinds.AuthLocator): auth.json, removed when the run ends.
-func (h *opencodeHarness) AuthFiles(ctx context.Context, env ports.EnvID) []string {
+func (h *opencodeHarness) AuthFiles(ctx context.Context, env envport.EnvID) []string {
 	return []string{h.adapter.AuthFilePath(ctx, env)}
 }
 
@@ -376,7 +376,7 @@ func (h *opencodeHarness) SecretValues() []string { return secretValues(h.held) 
 // SeedAuth renders auth.json from the current credentials and writes it.
 // opencode re-reads the file on every request (its Auth.all), so writing it
 // again after the keeper refreshed a login reaches the live agent.
-func (h *opencodeHarness) SeedAuth(ctx context.Context, env ports.EnvID, register func(string)) error {
+func (h *opencodeHarness) SeedAuth(ctx context.Context, env envport.EnvID, register func(string)) error {
 	creds, err := h.creds.current(ctx)
 	if err != nil {
 		return fmt.Errorf("opencode: %w", err)
@@ -431,11 +431,11 @@ func expiresMillis(t time.Time) int64 {
 	return t.UnixMilli()
 }
 
-func (h *opencodeHarness) Prepare(ctx context.Context, env ports.EnvID, specs []*agentspec.Spec) error {
+func (h *opencodeHarness) Prepare(ctx context.Context, env envport.EnvID, specs []*agentspec.Spec) error {
 	return h.adapter.PrepareEnv(ctx, env, specs)
 }
 
-func (h *opencodeHarness) InstallSkills(ctx context.Context, env ports.EnvID, names []string) error {
+func (h *opencodeHarness) InstallSkills(ctx context.Context, env envport.EnvID, names []string) error {
 	return h.adapter.InstallSkills(ctx, env, names)
 }
 

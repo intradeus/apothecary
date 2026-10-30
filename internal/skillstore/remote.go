@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/skills"
 )
 
@@ -41,7 +41,7 @@ const (
 // left out (symlinks, oversize files).
 type Fetched struct {
 	Commit string
-	Files  []ports.TreeFile
+	Files  []envport.TreeFile
 	Notes  []string
 }
 
@@ -430,7 +430,7 @@ func select_(entries []rawEntry, folder string) Fetched {
 			f.Notes = append(f.Notes, fmt.Sprintf("%s: skipped (unusable path)", rel))
 			continue
 		}
-		f.Files = append(f.Files, ports.TreeFile{Path: rel, Mode: e.mode, Data: e.data})
+		f.Files = append(f.Files, envport.TreeFile{Path: rel, Mode: e.mode, Data: e.data})
 	}
 	return f
 }
