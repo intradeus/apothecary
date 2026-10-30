@@ -5220,3 +5220,80 @@ have. Microsoft's server cannot be pointed at the gateway gallery (its
 gallery is baked into product.json), so the two editors keep separate
 extension dirs; pre-seeding `~/.vscode-server/extensions` from code-server's
 CLI is the follow-up to try, with a per-user extension list.
+
+## Clean architecture refactor (TODO 7, 2026-10-30)
+
+The backend was hexagonal in spirit already — ports and adapters, an
+acyclic graph, runs event-sourced as one short stream each — and its
+trouble was modularity, not paradigm: `internal/engine` was a god package
+(16.5k lines, 89 exported methods on `Engine`, of which run lifecycle was
+about a fifth, all under one mutex), `internal/ports` and `internal/httpapi`
+were hubs, and the interpreter kept a run's state two ways — `replay`
+folded events into it, the live loop mutated it by hand at ~40 sites — that
+disagreed in eleven places, four of them recovery bugs. The plan, its
+baselines and every deviation are in `docs/clean-architecture-plan.md`;
+this is the outcome.
+
+- **A modular monolith.** The engine is the run lifecycle and the
+  interpreter's shell (11.2k lines, 33 exported methods). Every other
+  concern is its own package behind an interface it declares, and never
+  imports the engine: `mrs`, `resources`, `envstate`, `wsinfo`, `envcheck`,
+  `egress`, `ask` (service beside its store), `authsink`, `runports`,
+  `browsermcp`, `services`, plus the leaves `shell`, `wsname`, `bootstrap`,
+  `modelcheck`, `redact`, `resolution`. `cmd/apothecaryd/wire.go` builds
+  them, asserts that `*engine.Engine` satisfies each consumer interface, and
+  hands them to `engine.New(Deps)` — no setters. httpapi holds one field per
+  service and is split into per-area route files; `Server.Drain` ends event
+  streams and ping holds on shutdown (a restart took the full 10 s before).
+- **`ports` split by capability** — `envport`, `agentport`, `repoport`,
+  `trackerport`, `egressport`, `browserport`, `notifyport` (the suffix keeps
+  them from shadowing `env`, `internal/browser`, …). Type names unchanged.
+  `ports/doc.go` maps them.
+- **One fold.** `runcore.State.Apply` is the fold; `Replay` is a new
+  state plus `Apply` over the log, and the engine's `append` applies it to
+  every event it writes. The live state equals the fold of the log at every
+  settling point — an engine test hook (`foldCheck`, nil in production)
+  replays each run at the top of every loop iteration, after each idle tick
+  and on exit, and fails the test on any field that differs. What the loop
+  still sets without an event is listed on `State`: three decisions the
+  next event records (a success's `on_success`, a phase end decided without
+  a terminal edge, a debug-leaf continue — each re-derived by recovery the
+  same way) and two facts no event carries (a caretaker begins idle; the
+  env id before `env_ready`).
+- **`internal/runcore`** is the interpreter's functional core: `State`, the
+  fold, and the pure decisions — `RouteSuccess`, `EndPhase`, `ChooseEdge`,
+  `StageCondition`, `NextStep`, `BudgetExceeded` — table-tested without a
+  harness. It imports only value packages and reads no clock (archtest).
+  The run loop, `awaitAgent`, the stage executors and the action executors
+  stay in the engine.
+- **Guard rails.** `internal/archtest` turns the package map into a test.
+  Golden event logs (`internal/engine/testdata/golden/`) record every
+  scenario's event types; a commit that changes one names the fix.
+
+Recovery bugs fixed (each with a crash test shown failing on its parent):
+
+- **D1** — a crash between an agent stage's `stage_completed` and its
+  routing: recovery skipped `verdict_received` and the budget check, so a
+  run over budget completed. Live and recovered completions share one path.
+- **D8** — a gate answered while its phase was parked lost the answer on
+  `phase_resumed`; recovery asked the question again.
+- **D9** — a wait recovered in its resume window started its timeout over.
+- **D10** — a run parked on a quiet take-over holder restarted (and
+  re-parked) on every boot.
+- Found by the fold check: an agent's `agent_session` could be dropped when
+  the harness's result arrived before its session event, so a crash would
+  start the agent over instead of resuming it.
+- Also found on the way: the SSH door's reply/close race, and an Ask pane
+  that never recovered from a lost session.
+
+Behaviour that changed on purpose: a refused merge stays pending, so the
+retry reads the merge request's status before merging again (one fewer
+`action_started`); a parked time and a hold's start are their events' own
+timestamps; an edge to `end`/`done` clears the feed live as replay did.
+
+Left as they were, recorded: an answer sent during a command or action
+stage waits up to 30 s and reports busy (R1); the Ask service's `cancel` is
+never called (R2); a crash between `mr_merged` and `stage_completed` can
+record a second `mr_merged` (R3); a take-over, message or release that
+lands between a run's log saying "parked" and its loop exiting reaches the
+exiting loop (the hold tests wait for the loop).

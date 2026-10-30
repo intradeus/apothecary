@@ -1,4 +1,3 @@
-- 7) redo everything in clean architecture
 - 37) frontend rewrite. full tested suite.
 - 23) new run on observability (full flow data + resource stats)
 - 36) Resquash migrations
