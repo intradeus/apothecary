@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"apothecary/internal/bootstrap"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
@@ -230,13 +231,13 @@ func (x *exec) mrListMarkdown() string {
 }
 
 // extraCheckouts is what bootstrap clones beside the primary.
-func (x *exec) extraCheckouts() []ExtraCheckout {
-	var out []ExtraCheckout
+func (x *exec) extraCheckouts() []bootstrap.ExtraCheckout {
+	var out []bootstrap.ExtraCheckout
 	for _, co := range x.rs.checkouts {
 		if co.Primary {
 			continue
 		}
-		out = append(out, ExtraCheckout{Name: co.Name, Dir: co.Dir, URL: co.URL, Branch: co.Branch, Source: co.Source, Fetch: co.Fetch})
+		out = append(out, bootstrap.ExtraCheckout{Name: co.Name, Dir: co.Dir, URL: co.URL, Branch: co.Branch, Source: co.Source, Fetch: co.Fetch})
 	}
 	return out
 }

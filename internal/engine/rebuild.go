@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 
+	"apothecary/internal/bootstrap"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
@@ -112,12 +113,12 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		err = fmt.Errorf("rebuild %s: skills: %w", runID, terr)
 		return e.finishRebuild(ctx, runID, v.EnvID, err)
 	}
-	if berr := RunBootstrap(ctx, res.Envp, id, BootstrapSpec{
+	if berr := bootstrap.RunBootstrap(ctx, res.Envp, id, bootstrap.BootstrapSpec{
 		RunID:         runID,
 		Token:         e.RunToken(runID),
 		EngineURL:     e.engineURLFor(res.Envp, id),
 		RepoURL:       res.RepoRef.URL,
-		SourceBranch:  sourceBranchOr(v.SourceBranch, res.RepoRef.DefaultBranch),
+		SourceBranch:  bootstrap.SourceBranchOr(v.SourceBranch, res.RepoRef.DefaultBranch),
 		Branch:        v.Branch,
 		AgentsMDPath:  res.AgentsMDPath,
 		ProviderEnv:   e.providerEnvFor(res, runID, e.engineURLFor(res.Envp, id)),
@@ -189,13 +190,13 @@ func (e *Engine) finishRebuild(ctx context.Context, runID, envID string, opErr e
 }
 
 // viewExtras is a run's extra checkouts as the view records them.
-func viewExtras(v run.View) []ExtraCheckout {
-	var out []ExtraCheckout
+func viewExtras(v run.View) []bootstrap.ExtraCheckout {
+	var out []bootstrap.ExtraCheckout
 	for _, co := range v.Checkouts {
 		if co.Primary {
 			continue
 		}
-		out = append(out, ExtraCheckout{Name: co.Name, Dir: co.Dir, URL: co.URL, Branch: co.Branch, Source: co.Source})
+		out = append(out, bootstrap.ExtraCheckout{Name: co.Name, Dir: co.Dir, URL: co.URL, Branch: co.Branch, Source: co.Source})
 	}
 	return out
 }

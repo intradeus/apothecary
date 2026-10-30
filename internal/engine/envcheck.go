@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"apothecary/internal/agentspec"
+	"apothecary/internal/bootstrap"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 	"apothecary/internal/resolution"
@@ -165,7 +166,7 @@ func runEnvCheck(ctx context.Context, res *resolution.Resolution, runID string, 
 	if p, ok := envp.(ports.EngineURLProvider); ok {
 		engineURL = p.EngineURL(env)
 	}
-	step("bootstrap", RunBootstrap(ctx, envp, env, BootstrapSpec{
+	step("bootstrap", bootstrap.RunBootstrap(ctx, envp, env, bootstrap.BootstrapSpec{
 		RunID:        runID,
 		Token:        "envcheck-token",
 		EngineURL:    engineURL,
@@ -288,10 +289,10 @@ func runEnvCheck(ctx context.Context, res *resolution.Resolution, runID string, 
 
 // envcheckExtras clones the project's extra repos too: a run would, and a
 // clone the token cannot reach is exactly what this check is for.
-func envcheckExtras(res *resolution.Resolution, branch string) []ExtraCheckout {
-	var out []ExtraCheckout
+func envcheckExtras(res *resolution.Resolution, branch string) []bootstrap.ExtraCheckout {
+	var out []bootstrap.ExtraCheckout
 	for _, x := range res.ExtraRepos {
-		out = append(out, ExtraCheckout{Name: x.Name, Dir: "repos/" + x.Name, URL: x.URL, Branch: branch, Source: x.DefaultBranch})
+		out = append(out, bootstrap.ExtraCheckout{Name: x.Name, Dir: "repos/" + x.Name, URL: x.URL, Branch: branch, Source: x.DefaultBranch})
 	}
 	return out
 }

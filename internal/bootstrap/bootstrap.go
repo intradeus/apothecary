@@ -1,7 +1,13 @@
-package engine
+// Package bootstrap prepares a fresh workspace for a run (§11): clone and
+// branch, git identity and credentials, provider and harness secrets, agent
+// definitions and skills. It is pure port calls and records no events, so the
+// run loop, a rebuild and the standalone `apothecaryd envcheck` all run the
+// same sequence; each caller maps a failure to its own outcome.
+package bootstrap
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -14,7 +20,6 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/shell"
 	"apothecary/internal/skills"
-	"encoding/json"
 )
 
 // BootstrapSpec parameterizes the §11 bootstrap sequence. It is pure port
@@ -280,9 +285,9 @@ func writeSkills(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID,
 	return nil
 }
 
-// sourceBranchOr returns the run's per-run source branch, or the repo default
+// SourceBranchOr returns the run's per-run source branch, or the repo default
 // when the run predates SourceBranch (pre-source runs project it as "").
-func sourceBranchOr(runSource, repoDefault string) string {
+func SourceBranchOr(runSource, repoDefault string) string {
 	if runSource != "" {
 		return runSource
 	}

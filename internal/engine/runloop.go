@@ -10,6 +10,7 @@ import (
 
 	"apothecary/internal/actionspec"
 	"apothecary/internal/agentspec"
+	"apothecary/internal/bootstrap"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
@@ -2581,7 +2582,7 @@ func (x *exec) writeRunEnv(id ports.EnvID) error {
 func (x *exec) reseedSecrets(id ports.EnvID) error {
 	res := x.res
 	x.e.setAuthSink(x.rs.runID, res, id, x.redact)
-	return WriteWorkspaceSecrets(x.ctx, res.Envp, id, BootstrapSpec{
+	return bootstrap.WriteWorkspaceSecrets(x.ctx, res.Envp, id, bootstrap.BootstrapSpec{
 		RepoURL:     res.RepoRef.URL,
 		ProviderEnv: x.e.providerEnvFor(res, x.rs.runID, x.e.engineURLFor(res.Envp, id)),
 		GitUser:     res.GitUser,
@@ -2603,12 +2604,12 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 	if err != nil {
 		err = fmt.Errorf("bootstrap skills: %w", err)
 	} else {
-		err = RunBootstrap(x.ctx, res.Envp, id, BootstrapSpec{
+		err = bootstrap.RunBootstrap(x.ctx, res.Envp, id, bootstrap.BootstrapSpec{
 			RunID:         x.rs.runID,
 			Token:         x.e.RunToken(x.rs.runID),
 			EngineURL:     x.e.engineURLFor(res.Envp, id),
 			RepoURL:       res.RepoRef.URL,
-			SourceBranch:  sourceBranchOr(x.rs.sourceBranch, res.RepoRef.DefaultBranch),
+			SourceBranch:  bootstrap.SourceBranchOr(x.rs.sourceBranch, res.RepoRef.DefaultBranch),
 			Branch:        x.rs.branch,
 			Fetch:         x.primaryFetch(),
 			AgentsMDPath:  res.AgentsMDPath,

@@ -55,6 +55,9 @@ var rules = []rule{
 	{pkg: "internal/flow", denyImport: outerLayers},
 	{pkg: "internal/shell", mayImport: []string{}},
 	{pkg: "internal/wsname", mayImport: []string{"internal/run"}},
+	{pkg: "internal/bootstrap", mayImport: []string{
+		"internal/agentspec", "internal/event", "internal/ports", "internal/shell", "internal/skills",
+	}},
 	{pkg: "internal/resolution", mayImport: []string{
 		"internal/actionspec", "internal/agentspec", "internal/event", "internal/flow",
 		"internal/run", "internal/signalspec", "internal/ports",

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"apothecary/internal/agentspec"
+	"apothecary/internal/bootstrap"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
@@ -374,13 +375,13 @@ func (x *exec) gitDiff(dir, base string) string {
 func (x *exec) diffTarget() string {
 	rs := x.rs
 	target := func(co event.Checkout) string {
-		return "origin/" + sourceBranchOr(co.Source, x.res.RepoRef.DefaultBranch)
+		return "origin/" + bootstrap.SourceBranchOr(co.Source, x.res.RepoRef.DefaultBranch)
 	}
 	if co := x.subjectCheckout(); co != nil {
 		return x.gitDiff(co.Dir, target(*co))
 	}
 	if len(rs.checkouts) <= 1 {
-		return x.gitDiff(event.PrimaryCheckoutDir, "origin/"+sourceBranchOr(rs.sourceBranch, x.res.RepoRef.DefaultBranch))
+		return x.gitDiff(event.PrimaryCheckoutDir, "origin/"+bootstrap.SourceBranchOr(rs.sourceBranch, x.res.RepoRef.DefaultBranch))
 	}
 	return x.checkoutSections(func(co event.Checkout) string { return x.gitDiff(co.Dir, target(co)) })
 }
