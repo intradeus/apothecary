@@ -3,6 +3,7 @@ package main
 import (
 	"apothecary/internal/ask"
 	"apothecary/internal/automation"
+	"apothecary/internal/browsermcp"
 	"apothecary/internal/egress"
 	"apothecary/internal/engine"
 	"apothecary/internal/envcheck"
@@ -21,6 +22,7 @@ var (
 	_ engine.EnvTeardown = (*egress.Service)(nil)
 	_ engine.EnvTeardown = (*runports.Service)(nil)
 	_ engine.RunPorts    = (*runports.Service)(nil)
+	_ engine.EnvTeardown = (*browsermcp.Service)(nil)
 	_ egress.AuditStore  = (*pgstore.Store)(nil)
 	_ ask.Engine         = (*engine.Engine)(nil)
 	_ ask.Store          = (*pgstore.Store)(nil)

@@ -35,6 +35,7 @@ import (
 	"apothecary/internal/authsink"
 	"apothecary/internal/automation"
 	"apothecary/internal/browser"
+	"apothecary/internal/browsermcp"
 	"apothecary/internal/builtin"
 	"apothecary/internal/channels"
 	"apothecary/internal/config"
@@ -319,10 +320,6 @@ func cmdServe(args []string) error {
 	}
 	portsSvc := runports.New(runs, resolver, portRelay, runports.Config{AutoExpose: boot.PortAutoExpose}, log)
 	e.SetRunPorts(portsSvc)
-	// What a destroyed workspace takes with it, in this order: its exposures
-	// and discovered ports, then a last flush of its egress audit.
-	e.AddEnvTeardown(portsSvc)
-	e.AddEnvTeardown(egressSvc)
 
 	// File stores (DESIGN-FILES): one content-addressed blob store, two typed
 	// stores over it — attachments (upload policy) and snapshots (capture
@@ -369,6 +366,13 @@ func cmdServe(args []string) error {
 	browsers.Start(ctx)
 	defer browsers.Close()
 	e.SetBrowser(browsers)
+	browserSvc := browsermcp.New(runs, resolver, browsers)
+	// What a destroyed workspace takes with it, in this order: its exposures
+	// and discovered ports, the browser's exposures, then a last flush of
+	// its egress audit.
+	e.AddEnvTeardown(portsSvc)
+	e.AddEnvTeardown(browserSvc)
+	e.AddEnvTeardown(egressSvc)
 
 	if err := e.Recover(ctx); err != nil {
 		return fmt.Errorf("crash recovery: %w", err)
@@ -388,6 +392,7 @@ func cmdServe(args []string) error {
 	api.Ask = askSvc
 	api.AuthSink = sink
 	api.Ports = portsSvc
+	api.Browser = browserSvc
 	// The SSH door (TODO 46): one listener people ssh to over their VPN —
 	// desktop VS Code included — routed by username to the run's workspace.
 	// Both of its keys derive from instance secrets: the host key so a person

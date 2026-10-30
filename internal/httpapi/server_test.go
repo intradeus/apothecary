@@ -17,6 +17,7 @@ import (
 	"apothecary/internal/ask"
 	"apothecary/internal/auth"
 	"apothecary/internal/authsink"
+	"apothecary/internal/browsermcp"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/egress"
@@ -171,6 +172,8 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	x.srv.Ports = runports.New(&run.Reader{Store: x.store}, resolution.StaticResolver{R: x.res}, nil, runports.Config{}, nil)
 	x.e.SetRunPorts(x.srv.Ports)
 	x.e.AddEnvTeardown(x.srv.Ports)
+	x.srv.Browser = browsermcp.New(&run.Reader{Store: x.store}, resolution.StaticResolver{R: x.res}, nil)
+	x.e.AddEnvTeardown(x.srv.Browser)
 	// Wire the config store so the ticket routes exist, seeded with the
 	// test project the static resolver already serves.
 	mem := confstore.NewMem()

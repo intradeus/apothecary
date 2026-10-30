@@ -1,14 +1,13 @@
 package httpapi
 
 import (
+	"apothecary/internal/browsermcp"
 	"bufio"
 	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
 	"strings"
-
-	"apothecary/internal/engine"
 )
 
 // --- project secrets ------------------------------------------------------------
@@ -77,9 +76,9 @@ func (s *Server) getProjectBrowser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	info := BrowserInfo{Enabled: p.Workspace.Browser.Enabled}
-	st, err := s.Engine.BrowserStatus(r.Context(), p.ID)
+	st, err := s.Browser.Status(r.Context(), p.ID)
 	switch {
-	case errors.Is(err, engine.ErrBrowserOff):
+	case errors.Is(err, browsermcp.ErrOff):
 	case err != nil:
 		info.Available, info.Error = true, err.Error()
 	default:
@@ -110,10 +109,10 @@ func (s *Server) serveBrowserMCP(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUpgradeRequired, "upgrade to "+browserMCPProtocol+" required")
 		return
 	}
-	sess, err := s.Engine.OpenBrowserMCP(r.Context(), id)
+	sess, err := s.Browser.Open(r.Context(), id)
 	if err != nil {
 		status := http.StatusConflict
-		if errors.Is(err, engine.ErrBrowserOff) {
+		if errors.Is(err, browsermcp.ErrOff) {
 			status = http.StatusServiceUnavailable
 		}
 		writeErr(w, status, err.Error())

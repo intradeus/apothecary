@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/actionspec"
 	"apothecary/internal/ask"
 	"apothecary/internal/authsink"
+	"apothecary/internal/browsermcp"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/egress"
@@ -97,6 +98,8 @@ func newConfEnv(t *testing.T) *confEnv {
 	srv.Ports = runports.New(&run.Reader{Store: store}, resolver, nil, runports.Config{}, nil)
 	e.SetRunPorts(srv.Ports)
 	e.AddEnvTeardown(srv.Ports)
+	srv.Browser = browsermcp.New(&run.Reader{Store: store}, resolver, nil)
+	e.AddEnvTeardown(srv.Browser)
 	srv.Conf = conf
 	srv.Kinds = reg
 	srv.Ops = resolver

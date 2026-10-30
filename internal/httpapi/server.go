@@ -22,6 +22,7 @@ import (
 	"apothecary/internal/ask"
 	"apothecary/internal/auth"
 	"apothecary/internal/authsink"
+	"apothecary/internal/browsermcp"
 	"apothecary/internal/builtin"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
@@ -118,6 +119,9 @@ type Server struct {
 	AuthSink *authsink.Sink
 	// Ports exposes run ports and lists the discovered ones.
 	Ports *runports.Service
+	// Browser opens the agents' browser sessions and reports the project
+	// browser's state.
+	Browser *browsermcp.Service
 
 	logins loginLimiter
 }

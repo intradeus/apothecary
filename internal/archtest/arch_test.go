@@ -78,6 +78,7 @@ var rules = []rule{
 	}},
 	{pkg: "internal/authsink", mayImport: []string{"internal/ports", "internal/redact", "internal/resolution", "internal/run"}},
 	{pkg: "internal/runports", mayImport: []string{"internal/event", "internal/portrelay", "internal/ports", "internal/resolution", "internal/run"}},
+	{pkg: "internal/browsermcp", mayImport: []string{"internal/ports", "internal/resolution", "internal/run"}},
 	{pkg: "internal/resolution", mayImport: []string{
 		"internal/actionspec", "internal/agentspec", "internal/event", "internal/flow",
 		"internal/run", "internal/signalspec", "internal/ports",

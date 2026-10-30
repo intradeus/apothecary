@@ -13,8 +13,10 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
+	"apothecary/internal/browsermcp"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
 
@@ -128,7 +130,7 @@ func TestAgentSessionsGetTheirMCPServersResolved(t *testing.T) {
 		t.Errorf("warmed = %v, want the project's browser warmed at creation", b.warmed)
 	}
 	shooter := got["shooter"]
-	if len(shooter) != 2 || shooter[0].Name != "browser" || !slices.Equal(shooter[0].Command, BrowserMCPCommand) ||
+	if len(shooter) != 2 || shooter[0].Name != "browser" || !slices.Equal(shooter[0].Command, browsermcp.Command) ||
 		shooter[1].URL != "https://mcp.figma.test/mcp" || shooter[1].Headers["Authorization"] != "Bearer figd_rotated_1" {
 		t.Errorf("shooter's servers = %+v", shooter)
 	}
@@ -199,7 +201,8 @@ func TestBrowserSessionDialsTheRunsWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.e.Wait(runID)
-	if err := h.e.BrowserMCP(context.Background(), runID, nil); err != nil {
+	sessions := browsermcp.New(&run.Reader{Store: h.store}, resolution.StaticResolver{R: h.res}, b)
+	if err := sessions.Serve(context.Background(), runID, nil); err != nil {
 		t.Fatal(err)
 	}
 	if b.session.Project != testProject || b.session.Run != runID {
@@ -209,7 +212,7 @@ func TestBrowserSessionDialsTheRunsWorkspace(t *testing.T) {
 		t.Errorf("port exposed %d times, want once", exp.exposed.Load())
 	}
 	h.res.Browser = false
-	if err := h.e.BrowserMCP(context.Background(), runID, nil); err == nil || !strings.Contains(err.Error(), "browser is off") {
+	if err := sessions.Serve(context.Background(), runID, nil); err == nil || !strings.Contains(err.Error(), "browser is off") {
 		t.Errorf("browser off: err = %v", err)
 	}
 	if v := h.view(t, runID); v.State != run.Completed {

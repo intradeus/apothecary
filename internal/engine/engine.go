@@ -223,11 +223,10 @@ type Engine struct {
 	// last, append, and wake it twice.
 	wakeMu sync.Mutex
 	// projectSecrets re-reads a project's secrets when an agent stage opens
-	// its MCP servers; browser is the project browser and browserPorts the
-	// workspace ports it reaches (mcp.go). nil = off.
+	// its MCP servers; browser is the project browser, warmed for a run that
+	// will use it (mcp.go). nil = off.
 	projectSecrets ProjectSecretSource
 	browser        ports.Browser
-	browserPorts   *portCache
 
 	mu      sync.Mutex
 	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
@@ -1181,7 +1180,6 @@ func (e *Engine) destroyEnv(ctx context.Context, v run.View) (derr error) {
 	}
 	defer func() { rel(derr) }()
 
-	e.browserPorts.forget(v.RunID) // the browser's ports die with the env
 	for _, h := range e.teardown {
 		h.Forget(v.RunID)
 	}

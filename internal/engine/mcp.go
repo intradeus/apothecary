@@ -2,15 +2,11 @@ package engine
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"maps"
-	"net"
 	"slices"
-	"strings"
-	"sync"
 
+	"apothecary/internal/browsermcp"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
@@ -26,11 +22,6 @@ import (
 // session (ports.AgentInput.MCPServers); they are never logged, never put in
 // an event, and every value they carry is known to the redactor.
 
-// BrowserMCPCommand is the workspace command the builtin browser server runs
-// as: the shim, bridging its stdio to the engine (BrowserMCP), which bridges
-// it on to a Chromium in the project's browser container.
-var BrowserMCPCommand = []string{"/opt/apothecary/shim", "browser-mcp"}
-
 // ProjectSecretSource opens a project's secrets (confstore.Service).
 type ProjectSecretSource interface {
 	ProjectSecrets(ctx context.Context, projectID string) (map[string]string, error)
@@ -40,15 +31,9 @@ type ProjectSecretSource interface {
 // project's secrets from; nil keeps the ones the run was created with.
 func (e *Engine) SetProjectSecrets(s ProjectSecretSource) { e.projectSecrets = s }
 
-// ErrBrowserOff marks a browser session where this engine has no browser.
-var ErrBrowserOff = errors.New("this apothecary has no project browser")
-
 // SetBrowser installs the project browser (internal/browser); nil disables
 // it, and a flow whose agents use it is refused at run creation.
-func (e *Engine) SetBrowser(b ports.Browser) {
-	e.browser = b
-	e.browserPorts = &portCache{conns: map[string]ports.PortConn{}}
-}
+func (e *Engine) SetBrowser(b ports.Browser) { e.browser = b }
 
 // warmBrowser starts bringing the project's browser up as a run that will
 // use it is created: building its image the first time takes minutes, and
@@ -100,7 +85,7 @@ func (x *exec) stageMCP(st *flow.Stage) ([]ports.MCPServer, error) {
 func resolveMCPServer(m *flow.MCPServer, secrets map[string]string) (ports.MCPServer, error) {
 	srv := ports.MCPServer{Name: m.Name, Command: slices.Clone(m.Command), URL: m.URL}
 	if m.Builtin == flow.MCPBrowser {
-		srv.Command = slices.Clone(BrowserMCPCommand)
+		srv.Command = slices.Clone(browsermcp.Command)
 		return srv, nil
 	}
 	fill := func(field string, in map[string]string) (map[string]string, error) {
@@ -135,131 +120,4 @@ func (x *exec) failStageMCP(st *flow.Stage, err error) error {
 		return aerr
 	}
 	return x.takeEdge(st, flow.EdgeFail, msg)
-}
-
-// --- the browser session ------------------------------------------------------
-
-// BrowserMCPSession is a run's browser session, checked and ready to serve.
-type BrowserMCPSession struct {
-	e       *Engine
-	s       ports.BrowserSession
-	release func()
-}
-
-// OpenBrowserMCP checks that a run's agent may have a browser session —
-// this engine has a browser, the run a live workspace whose ports it can
-// reach, the project its browser on — and returns it ready to serve. What
-// it refuses, it refuses before any stream is opened.
-func (e *Engine) OpenBrowserMCP(ctx context.Context, runID string) (*BrowserMCPSession, error) {
-	if e.browser == nil {
-		return nil, ErrBrowserOff
-	}
-	v, err := e.runs.View(ctx, runID)
-	if err != nil {
-		return nil, err
-	}
-	if v.EnvID == "" || v.ProjectID == "" {
-		return nil, fmt.Errorf("run %s has no environment", runID)
-	}
-	res, err := e.resolver.Resolve(ctx, v.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	if !res.Browser {
-		res.Close()
-		return nil, fmt.Errorf("the project's browser is off — turn it on in Workshop → Settings")
-	}
-	exposer, ok := res.Envp.(ports.WorkspacePortExposer)
-	if !ok {
-		res.Close()
-		return nil, fmt.Errorf("run %s: its provisioner cannot reach the workspace's ports, so the browser has nothing to show", runID)
-	}
-	env := ports.EnvID(v.EnvID)
-	dial := func(ctx context.Context, port int) (net.Conn, error) {
-		return e.browserPorts.dial(ctx, runID, port, func(ctx context.Context) (ports.PortConn, error) {
-			return exposer.ExposePort(ctx, env, port)
-		})
-	}
-	return &BrowserMCPSession{e: e, s: ports.BrowserSession{Project: res.ProjectID, ProjectName: res.ProjectName, Run: runID, Dial: dial}, release: res.Close}, nil
-}
-
-// Serve bridges the session's stdio — the workspace's `shim browser-mcp` —
-// to a Chromium in the project's browser container, until either side
-// closes.
-func (b *BrowserMCPSession) Serve(ctx context.Context, stdio io.ReadWriter) error {
-	defer b.Close()
-	return b.e.browser.Session(ctx, b.s, stdio)
-}
-
-// Close gives up a session that will not be served.
-func (b *BrowserMCPSession) Close() {
-	if b.release != nil {
-		b.release()
-		b.release = nil
-	}
-}
-
-// BrowserMCP opens and serves one browser session for a run's agent.
-func (e *Engine) BrowserMCP(ctx context.Context, runID string, stdio io.ReadWriter) error {
-	s, err := e.OpenBrowserMCP(ctx, runID)
-	if err != nil {
-		return err
-	}
-	return s.Serve(ctx, stdio)
-}
-
-// BrowserStatus is the project browser's state, for the settings page.
-// project is the project's id.
-func (e *Engine) BrowserStatus(ctx context.Context, project string) (ports.BrowserStatus, error) {
-	if e.browser == nil {
-		return ports.BrowserStatus{}, ErrBrowserOff
-	}
-	return e.browser.Status(ctx, project)
-}
-
-// portCache keeps one exposure per (run, port) for the browser: exposing a
-// port starts a relay in the workspace, so doing it per connection would
-// pile them up. A cached exposure that no longer dials (the container was
-// rebuilt, taking its relays) is exposed again once.
-type portCache struct {
-	mu    sync.Mutex
-	conns map[string]ports.PortConn
-}
-
-func (c *portCache) dial(ctx context.Context, runID string, port int, expose func(context.Context) (ports.PortConn, error)) (net.Conn, error) {
-	key := fmt.Sprintf("%s\x00%d", runID, port)
-	c.mu.Lock()
-	pc := c.conns[key]
-	c.mu.Unlock()
-	if pc != nil {
-		if conn, err := pc.Dial(ctx); err == nil {
-			return conn, nil
-		}
-	}
-	pc, err := expose(ctx)
-	if err != nil {
-		return nil, err
-	}
-	c.mu.Lock()
-	if old := c.conns[key]; old != nil && old != pc {
-		_ = old.Close()
-	}
-	c.conns[key] = pc
-	c.mu.Unlock()
-	return pc.Dial(ctx)
-}
-
-// forget drops a run's exposures (its environment is gone).
-func (c *portCache) forget(runID string) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for key, pc := range c.conns {
-		if strings.HasPrefix(key, runID+"\x00") {
-			_ = pc.Close()
-			delete(c.conns, key)
-		}
-	}
 }

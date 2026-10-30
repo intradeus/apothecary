@@ -67,6 +67,7 @@ func TestProjectBrowserStatus(t *testing.T) {
 		t.Fatalf("no browser = %d %s", resp.StatusCode, data)
 	}
 	x.e.SetBrowser(&echoBrowser{})
+	x.srv.Browser.Browser = &echoBrowser{}
 	_, data = x.do(t, "GET", "/api/projects/"+pid+"/browser", nil, nil)
 	var info BrowserInfo
 	if err := json.Unmarshal(data, &info); err != nil || !info.Available || info.State != "running" || info.Container != "apo-browser-"+pid || info.Sessions != 1 {
@@ -122,6 +123,7 @@ func TestBrowserMCPStream(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	b := &echoBrowser{}
 	x.e.SetBrowser(b)
+	x.srv.Browser.Browser = b
 	x.res.Browser = true
 	x.res.Envp = exposingEnv{x.envp}
 	release := make(chan struct{})
