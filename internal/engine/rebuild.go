@@ -67,7 +67,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		return err
 	}
 
-	// Same spec ensureEnv builds (runloop.go). The name derives from the
+	// Same spec ensureEnv builds (provision.go). The name derives from the
 	// branch STEM (BranchBase), not the suffixed branch, or the CLI doubles
 	// the run-id tail.
 	nameBranch := v.BranchBase

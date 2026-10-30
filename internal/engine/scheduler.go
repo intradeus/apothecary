@@ -44,7 +44,7 @@ func (r *holdsRegistry) clear(runID string) {
 // parkAt stops the active phase run at a wait point mid-chain — a wait stage
 // or a gate (pingID its decision) — and leaves the run idle: the workspace is
 // free for other phases, and the idle loop resumes this one when its wait
-// point settles (tryResume).
+// point settles (runcore.State.PlanResume).
 func (x *exec) parkAt(st *flow.Stage, pingID string) error {
 	rs := x.rs
 	return x.append(&event.PhaseParked{Phase: rs.Phase, Subject: rs.Subject, StageID: st.ID, PingID: pingID})

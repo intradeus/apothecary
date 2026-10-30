@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"apothecary/internal/event"
+	"apothecary/internal/flow"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
+	"apothecary/internal/runcore"
 )
 
 // A TAKE-OVER: a human holds the running agent's session. The whisper
@@ -163,4 +167,117 @@ func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View
 	e.scheduleLocked(lim)
 	e.mu.Unlock()
 	return nil
+}
+
+// liveHold is the engine's in-flight view of a take-over during one
+// invocation: what the holder's messages spent so far (leg), whether the agent sits idle waiting on the holder (the stage clock is
+// suspended then, as for a pending question), and a release waiting for the
+// turn in flight to end.
+type liveHold struct {
+	st        *runcore.HeldState
+	leg       runcore.HoldLeg
+	idle      bool
+	releasing bool
+	releaseBy string
+}
+
+func (x *exec) liveHold(st *flow.Stage) *liveHold {
+	h := x.rs.Holds[st.ID]
+	if h == nil {
+		return nil
+	}
+	l := &liveHold{st: h, leg: runcore.NewHoldLeg()}
+	l.leg.Spend.Messages, x.heldMessages = x.heldMessages, 0
+	return l
+}
+
+// holdReq is a take-over request on its way into the run loop: take, or
+// release (the handback follows).
+type holdReq struct {
+	take   bool
+	userID string
+	ack    chan error
+}
+
+// takeHold records a take-over of the stage's live session.
+func (x *exec) takeHold(st *flow.Stage, iter int, userID string) error {
+	taken := &event.HoldTaken{StageID: st.ID, Iteration: iter, UserID: userID}
+	return x.append(taken)
+}
+
+// releaseHold closes a take-over with its account: every leg's spend, the
+// time since it was taken, and why it ended. A release by the holder owes
+// the session the handback prompt.
+func (x *exec) releaseHold(st *flow.Stage, iter int, h *runcore.HeldState, by, reason string, leg event.HoldSpend) error {
+	total := h.Banked
+	total.Add(leg)
+	if by == "" && h.Taken != nil {
+		by = h.Taken.UserID
+	}
+	rel := &event.HoldReleased{StageID: st.ID, Iteration: iter, UserID: by, Reason: reason,
+		DurationMS: max(x.e.clock().Sub(h.TakenAt).Milliseconds(), 0), HoldSpend: total}
+	return x.append(rel)
+}
+
+// endHold closes a take-over the attempt ended underneath: the harness
+// returned, died or timed out while someone held it.
+func (x *exec) endHold(st *flow.Stage, iter int, leg event.HoldSpend) error {
+	h := x.rs.Holds[st.ID]
+	if h == nil {
+		return nil
+	}
+	return x.releaseHold(st, iter, h, "", event.HoldEndedWithStage, leg)
+}
+
+// holdReentry is what a session under a take-over is sent when the loop
+// (re-)enters its stage.
+type holdReentry struct {
+	reply, kind, reason string
+	// park: nothing to send — the attempt parks on its holder.
+	park bool
+}
+
+// holdReentry decides what a session under a take-over (or owed its
+// handback) gets next: the handback its release owes, the holder's pending
+// messages, or nothing yet — then the attempt parks on the holder, unless a
+// turn from before a restart is still live to be followed (mayReattach).
+func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner agentport.AgentRunner, session agentport.SessionID) (holdReentry, error) {
+	rs := x.rs
+	switch {
+	case rs.HandbackOwed[st.ID]:
+		return holdReentry{reply: handbackPrompt, kind: event.PromptHandback, reason: event.ResumeReleased}, nil
+	case rs.Holds[st.ID] == nil:
+		return holdReentry{}, nil
+	case len(rs.PendingMsgs) > 0:
+		n := len(rs.PendingMsgs)
+		text, err := x.withPendingMessages(st, iter, "")
+		if err != nil {
+			return holdReentry{}, err
+		}
+		x.heldMessages += n // on the hold's account, in the leg they start
+		return holdReentry{reply: strings.TrimPrefix(text, "\n\n---\n\n"), kind: event.PromptMessages, reason: event.ResumeMessage}, nil
+	case rs.PausedHold[st.ID]:
+		return holdReentry{park: true}, nil
+	case mayReattach:
+		if ra, ok := runner.(agentport.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.EnvID, session, rs.AgentCursor[st.ID]) {
+			return holdReentry{}, nil // the crashed path follows the live turn
+		}
+		return holdReentry{park: true}, nil
+	default:
+		return holdReentry{park: true}, nil
+	}
+}
+
+// parkOnHold parks an attempt whose holder has nothing queued for it when
+// no invocation is there to do the parking (a restart, a play, a loop
+// re-entry). The hold stays in force.
+func (x *exec) parkOnHold(st *flow.Stage, iter int, session agentport.SessionID) error {
+	x.h.parking.Store(true)
+	if !x.rs.PausedHold[st.ID] {
+		if err := x.append(&event.StagePaused{StageID: st.ID, Iteration: iter, Reason: event.PauseHeld,
+			SessionID: string(session)}); err != nil {
+			return err
+		}
+	}
+	return errWaitingOnHuman
 }

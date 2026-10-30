@@ -117,7 +117,7 @@ func (x *exec) followAdopted() {
 
 // phaseDone ends the phase in progress (FLOWLANG §3 end): the run goes
 // idle, and the next idle tick decides what follows — a parked phase
-// resuming, another phase opening, or the run's end (endCheck). A phase that
+// resuming, another phase opening, or the run's end (runcore.State.PlanIdle). A phase that
 // ended at a dead end says why.
 func (x *exec) phaseDone() error {
 	rs := x.rs
