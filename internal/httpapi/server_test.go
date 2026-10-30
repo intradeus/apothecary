@@ -18,6 +18,7 @@ import (
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
+	"apothecary/internal/envcheck"
 	"apothecary/internal/envstate"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
@@ -158,6 +159,7 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	x.srv.EnvState = envstate.New(&run.Reader{Store: x.store}, resolution.StaticResolver{R: x.res}, nil, nil)
 	x.e.SetEnvState(x.srv.EnvState)
 	x.srv.Workspaces = wsinfo.New(&run.Reader{Store: x.store}, resolution.StaticResolver{R: x.res}, x.srv.EnvState)
+	x.srv.EnvCheck = envcheck.NewRegistry(resolution.StaticResolver{R: x.res}, x.e, cfg.EngineURL)
 	// Wire the config store so the ticket routes exist, seeded with the
 	// test project the static resolver already serves.
 	mem := confstore.NewMem()

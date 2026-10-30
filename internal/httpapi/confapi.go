@@ -349,7 +349,7 @@ func (s *Server) startEnvCheck(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > 0 && !readJSON(w, r, &body) {
 		return
 	}
-	id, err := s.Engine.StartEnvCheck(r.Context(), r.PathValue("id"), body.Keep)
+	id, err := s.EnvCheck.Start(r.Context(), r.PathValue("id"), body.Keep)
 	if err != nil {
 		confErr(w, err)
 		return
@@ -358,7 +358,7 @@ func (s *Server) startEnvCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getEnvCheck(w http.ResponseWriter, r *http.Request) {
-	snap, ok := s.Engine.EnvCheck(r.PathValue("id"))
+	snap, ok := s.EnvCheck.Get(r.PathValue("id"))
 	if !ok {
 		writeErr(w, http.StatusNotFound, "envcheck not found (only the last 20 are kept)")
 		return
@@ -367,7 +367,7 @@ func (s *Server) getEnvCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getLatestEnvCheck(w http.ResponseWriter, r *http.Request) {
-	snap, ok := s.Engine.LatestEnvCheck(r.PathValue("id"))
+	snap, ok := s.EnvCheck.Latest(r.PathValue("id"))
 	if !ok {
 		writeErr(w, http.StatusNotFound, "no envcheck has run for this project since the engine started")
 		return
@@ -376,7 +376,7 @@ func (s *Server) getLatestEnvCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cancelEnvCheck(w http.ResponseWriter, r *http.Request) {
-	if !s.Engine.CancelEnvCheck(r.PathValue("id")) {
+	if !s.EnvCheck.Cancel(r.PathValue("id")) {
 		writeErr(w, http.StatusNotFound, "envcheck not found (only the last 20 are kept)")
 		return
 	}

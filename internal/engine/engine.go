@@ -263,10 +263,6 @@ type Engine struct {
 	sinks     map[string]*authSink
 	brokerKey []byte
 
-	// §9 envcheck jobs: in-memory, last 20 (diagnostics, not history).
-	envchecks     map[string]*envCheckState
-	envcheckOrder []string
-
 	// observed is the per-run set of listening ports discovered at runtime
 	// (the in-workspace shim scanner + engine-side sibling scans), surfaced on
 	// the run page with click-to-expose. Memory-only and TTL-aged, like
@@ -513,23 +509,22 @@ func New(cfg Config, store event.Store, resolver resolution.Resolver, flows flow
 		settings = StaticSettings{L: Limits{}.withDefaults()}
 	}
 	e := &Engine{
-		cfg:       cfg.withDefaults(),
-		store:     store,
-		runs:      &run.Reader{Store: store},
-		resolver:  resolver,
-		flows:     flows,
-		settings:  settings,
-		channels:  channels,
-		clock:     time.Now,
-		newID:     func() string { return ulid.Make().String() },
-		log:       slog.Default(),
-		handles:   map[string]*runHandle{},
-		pings:     map[string]*Ping{},
-		tokens:    map[string]string{},
-		envchecks: map[string]*envCheckState{},
-		observed:  map[string]*observedRun{},
-		askStore:  askstore.NewMemStore(),
-		asks:      map[string]*askRun{},
+		cfg:      cfg.withDefaults(),
+		store:    store,
+		runs:     &run.Reader{Store: store},
+		resolver: resolver,
+		flows:    flows,
+		settings: settings,
+		channels: channels,
+		clock:    time.Now,
+		newID:    func() string { return ulid.Make().String() },
+		log:      slog.Default(),
+		handles:  map[string]*runHandle{},
+		pings:    map[string]*Ping{},
+		tokens:   map[string]string{},
+		observed: map[string]*observedRun{},
+		askStore: askstore.NewMemStore(),
+		asks:     map[string]*askRun{},
 	}
 	// The engine's own until main shares one with the API (SetEnvState); its
 	// clock follows the engine's, which tests replace.

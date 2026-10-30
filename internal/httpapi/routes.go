@@ -15,6 +15,7 @@ package httpapi
 
 import (
 	"apothecary/internal/ask"
+	"apothecary/internal/envcheck"
 	"apothecary/internal/mrs"
 	"net/http"
 
@@ -624,7 +625,7 @@ func (s *Server) routes() []Route {
 			Handler: s.getProjectBrowser, Returns: BrowserInfo{}, Enabled: haveConf, Scope: ScopeProject},
 		{Method: "GET", Path: "/api/envchecks/{id}", ID: "getEnvCheck", Tag: tagProjects,
 			Summary: "Poll a workspace check",
-			Handler: s.getEnvCheck, Returns: engine.CheckRun{}, Enabled: haveConf, Scope: ScopeEnvCheck},
+			Handler: s.getEnvCheck, Returns: envcheck.CheckRun{}, Enabled: haveConf, Scope: ScopeEnvCheck},
 		{Method: "DELETE", Path: "/api/envchecks/{id}", ID: "cancelEnvCheck", Tag: tagProjects,
 			Summary: "Cancel a running workspace check",
 			Doc:     "The check stops at its next step and still destroys its workspace.",
@@ -632,7 +633,7 @@ func (s *Server) routes() []Route {
 		{Method: "GET", Path: "/api/projects/{id}/envcheck", ID: "getLatestEnvCheck", Tag: tagProjects,
 			Summary: "The project's most recent workspace check",
 			Doc:     "Running or finished — what a page opened mid-check follows.",
-			Handler: s.getLatestEnvCheck, Returns: engine.CheckRun{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.getLatestEnvCheck, Returns: envcheck.CheckRun{}, Enabled: haveConf, Scope: ScopeProject},
 
 		// --- tickets --------------------------------------------------------
 		{Method: "GET", Path: "/api/tickets", ID: "listTickets", Tag: tagTickets,

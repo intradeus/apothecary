@@ -24,6 +24,7 @@ import (
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
+	"apothecary/internal/envcheck"
 	"apothecary/internal/envstate"
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
@@ -102,6 +103,8 @@ type Server struct {
 	// Workspaces reaches run workspaces: checkouts and the sidecar, the live
 	// log, SSH facts, the build cache.
 	Workspaces *wsinfo.Service
+	// EnvCheck runs workspace compliance checks for projects.
+	EnvCheck *envcheck.Registry
 
 	logins loginLimiter
 }

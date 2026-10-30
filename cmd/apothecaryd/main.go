@@ -38,6 +38,7 @@ import (
 	"apothecary/internal/config"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
+	"apothecary/internal/envcheck"
 	"apothecary/internal/envstate"
 	"apothecary/internal/filestore"
 	"apothecary/internal/flow"
@@ -262,6 +263,7 @@ func cmdServe(args []string) error {
 	envSt := envstate.New(runs, resolver, nil, log)
 	e.SetEnvState(envSt)
 	wsSvc := wsinfo.New(runs, resolver, envSt)
+	checks := envcheck.NewRegistry(resolver, e, ecfg.EngineURL)
 	// A project's parameter bindings are laid over a flow's defaults at run
 	// creation; the config store holds them beside the flow.
 	e.SetFlowBindings(conf)
@@ -370,6 +372,7 @@ func cmdServe(args []string) error {
 	api.Resources = sampler
 	api.EnvState = envSt
 	api.Workspaces = wsSvc
+	api.EnvCheck = checks
 	// The SSH door (TODO 46): one listener people ssh to over their VPN —
 	// desktop VS Code included — routed by username to the run's workspace.
 	// Both of its keys derive from instance secrets: the host key so a person

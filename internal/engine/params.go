@@ -106,9 +106,9 @@ func (e *Engine) bindFlow(ctx context.Context, fl *flow.Flow, projectID string) 
 	return bound, nil
 }
 
-// boundFlow is the project's current document for name, resolved with its
+// BoundFlow is the project's current document for name, resolved with its
 // bindings.
-func (e *Engine) boundFlow(ctx context.Context, projectID, name string) (*flow.Flow, error) {
+func (e *Engine) BoundFlow(ctx context.Context, projectID, name string) (*flow.Flow, error) {
 	fl, err := e.flows.Get(ctx, projectID, name)
 	if err != nil {
 		return nil, err

@@ -1,4 +1,12 @@
-package engine
+// Package envcheck is the dynamic workspace compliance gate (DESIGN2 §9):
+// provision a throwaway workspace for a project, bootstrap it as a run
+// would, and prove the contract — egress, harness binary, models, the
+// sidecar — before any real run depends on it. The check list is DERIVED
+// from the project's resolution (adapters declare their egress domains, the
+// harness its binary), so whatever the user customizes, this proves it
+// deterministically. Run is standalone (`apothecaryd envcheck`); Registry
+// wraps it with an in-memory job list for the API.
+package envcheck
 
 import (
 	"bytes"
@@ -17,14 +25,9 @@ import (
 	"apothecary/internal/resolution"
 	"apothecary/internal/shell"
 	"apothecary/internal/wsname"
-)
 
-// Dynamic envcheck (DESIGN2 §9): the workspace compliance gate. The check
-// list is DERIVED from the project's resolution — adapters declare their
-// egress domains, the harness its binary — so whatever the user customizes,
-// this proves the contract deterministically.
-// RunEnvCheck is standalone (CLI reuse); the Engine wraps it with an
-// in-memory registry for the API.
+	"github.com/oklog/ulid/v2"
+)
 
 type CheckStep struct {
 	ID     string `json:"id"`
@@ -46,8 +49,8 @@ type CheckRun struct {
 	FinishedAt  *time.Time  `json:"finished_at,omitempty"`
 }
 
-// EnvCheckOptions parameterize a check pass.
-type EnvCheckOptions struct {
+// Options parameterize a check pass.
+type Options struct {
 	EngineURL string // written into run.env for the shim
 	Keep      bool   // keep the workspace for inspection
 	Timeout   time.Duration
@@ -60,24 +63,24 @@ type EnvCheckOptions struct {
 	Stages []flow.Stage
 }
 
-// RunEnvCheck provisions, bootstraps and verifies one throwaway
+// Run provisions, bootstraps and verifies one throwaway
 // environment, emitting steps as they complete, then tears it down. Returns
 // the failure count.
-func RunEnvCheck(ctx context.Context, res *resolution.Resolution, runID string, opts EnvCheckOptions, emit func(CheckStep)) int {
-	failed, teardown := runEnvCheck(ctx, res, runID, opts, emit)
+func Run(ctx context.Context, res *resolution.Resolution, runID string, opts Options, emit func(CheckStep)) int {
+	failed, teardown := check(ctx, res, runID, opts, emit)
 	return failed + teardown()
 }
 
-// envcheckProbes bounds the egress probes running at once: each is a curl
+// probes bounds the egress probes running at once: each is a curl
 // of up to 10 s in the workspace, and a derived allowlist runs to dozens.
-const envcheckProbes = 8
+const probes = 8
 
-// runEnvCheck runs every probe and returns their failure count together
+// check runs every probe and returns their failure count together
 // with the teardown still to do: the verdict does not wait on destroying
 // the workspace. A cancelled (or timed-out) ctx stops the remaining probes;
 // one step says why, and the rest are not reported. The teardown always
 // runs on its own context, so a cancelled check still cleans up.
-func runEnvCheck(ctx context.Context, res *resolution.Resolution, runID string, opts EnvCheckOptions, emit func(CheckStep)) (int, func() int) {
+func check(ctx context.Context, res *resolution.Resolution, runID string, opts Options, emit func(CheckStep)) (int, func() int) {
 	if opts.Timeout == 0 {
 		opts.Timeout = 30 * time.Minute
 	}
@@ -153,9 +156,9 @@ func runEnvCheck(ctx context.Context, res *resolution.Resolution, runID string, 
 		if env == "" {
 			env = ports.EnvID(name)
 		}
-		return failed, func() int { return destroyEnv(envp, env, emit) }
+		return failed, func() int { return teardown(envp, env, emit) }
 	}
-	teardown := func() int { return destroyEnv(envp, env, emit) }
+	teardown := func() int { return teardown(envp, env, emit) }
 	if opts.Keep {
 		teardown = func() int {
 			emit(CheckStep{ID: "destroy", Status: "skip", Detail: "kept for inspection"})
@@ -199,7 +202,7 @@ func runEnvCheck(ctx context.Context, res *resolution.Resolution, runID string, 
 
 	// Egress positives: one per derived allowlist entry. TCP+TLS connect is
 	// the criterion — any HTTP status counts; connectivity, not auth.
-	sem := make(chan struct{}, envcheckProbes)
+	sem := make(chan struct{}, probes)
 	var wg sync.WaitGroup
 	for _, domain := range res.EgressDomains {
 		if strings.HasPrefix(domain, "*.") {
@@ -298,9 +301,9 @@ func envcheckExtras(res *resolution.Resolution, branch string) []bootstrap.Extra
 	return out
 }
 
-// destroyEnv removes a check's workspace on a context of its own: a
+// teardown removes a check's workspace on a context of its own: a
 // cancelled check must still clean up after itself.
-func destroyEnv(envp ports.EnvProvisioner, env ports.EnvID, emit func(CheckStep)) int {
+func teardown(envp ports.EnvProvisioner, env ports.EnvID, emit func(CheckStep)) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	s := CheckStep{ID: "destroy", Status: "pass"}
@@ -341,20 +344,61 @@ func rwRoundTrip(ctx context.Context, envp ports.EnvProvisioner, env ports.EnvID
 	return nil
 }
 
-// --- engine-side job registry (API surface, §9) -----------------------------
+// --- job registry (API surface, §9) ------------------------------------------
 
-type envCheckState struct {
+// Flows is what the registry reads from the engine: a project's flow by
+// name, as its project binds it.
+type Flows interface {
+	BoundFlow(ctx context.Context, projectID, name string) (*flow.Flow, error)
+}
+
+// Registry runs checks for the API and keeps the last 20 finished ones.
+type Registry struct {
+	Resolver resolution.Resolver
+	Flows    Flows
+	// EngineURL is written into the workspace's run.env for the shim.
+	EngineURL string
+	// Clock is nil for time.Now; NewID nil for a ULID.
+	Clock func() time.Time
+	NewID func() string
+
+	// mu guards the job list AND every snapshot inside it: the check's
+	// goroutine appends steps while the API reads.
+	mu     sync.Mutex
+	checks map[string]*state
+	order  []string
+}
+
+func NewRegistry(resolver resolution.Resolver, flows Flows, engineURL string) *Registry {
+	return &Registry{Resolver: resolver, Flows: flows, EngineURL: engineURL, checks: map[string]*state{}}
+}
+
+func (r *Registry) now() time.Time {
+	if r.Clock != nil {
+		return r.Clock()
+	}
+	return time.Now()
+}
+
+func (r *Registry) newID() string {
+	if r.NewID != nil {
+		return r.NewID()
+	}
+	return ulid.Make().String()
+}
+
+type state struct {
 	snap   CheckRun
 	cancel context.CancelFunc
 }
 
-// StartEnvCheck launches an envcheck for the project. One runs at a time per
+// Start launches an envcheck for the project. One runs at a time per
 // project: starting another SUPERSEDES the one running (it is cancelled and
 // cleans up after itself) rather than making the caller wait it out — the
 // usual reason to start a check is that the project just changed. Returns
 // the check id immediately (202 semantics).
-func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool) (string, error) {
-	res, err := e.resolver.Resolve(ctx, projectID)
+func (r *Registry) Start(ctx context.Context, projectID string, keep bool) (string, error) {
+	res, err := r.Resolver.Resolve(ctx, projectID)
 	if err != nil {
 		return "", err
 	}
@@ -364,39 +408,39 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 	// environment, so fall through with no agents rather than refusing.
 	var agents []*agentspec.Spec
 	var stages []flow.Stage
-	if fl, ferr := e.boundFlow(ctx, res.ProjectID, res.DefaultFlow); ferr == nil {
+	if fl, ferr := r.Flows.BoundFlow(ctx, res.ProjectID, res.DefaultFlow); ferr == nil {
 		agents = fl.WorkspaceAgents()
 		stages = fl.Stages
 	}
-	id := e.newID()
-	st := &envCheckState{snap: CheckRun{
-		ID: id, ProjectID: projectID, Status: "running", Keep: keep, StartedAt: e.clock(),
+	id := r.newID()
+	st := &state{snap: CheckRun{
+		ID: id, ProjectID: projectID, Status: "running", Keep: keep, StartedAt: r.now(),
 	}}
 	ctx, cancel := context.WithCancel(context.Background())
 	st.cancel = cancel
 	// One lock section for supersede + insert: two concurrent calls must not
 	// both leave a running check behind.
-	e.mu.Lock()
-	for _, other := range e.envchecks {
+	r.mu.Lock()
+	for _, other := range r.checks {
 		if other.snap.ProjectID == projectID && other.snap.Status == "running" {
-			e.cancelEnvCheckLocked(other, "superseded by a newer check")
+			r.cancelLocked(other, "superseded by a newer check")
 		}
 	}
-	e.envchecks[id] = st
-	e.envcheckOrder = append(e.envcheckOrder, id)
+	r.checks[id] = st
+	r.order = append(r.order, id)
 	// Keep the last 20 finished (§9: diagnostics, not history) — never evict
 	// a running job: pollers would 404 mid-run and the duplicate guard above
 	// would stop seeing it.
-	for i := 0; len(e.envcheckOrder) > 20 && i < len(e.envcheckOrder); {
-		cand := e.envcheckOrder[i]
-		if e.envchecks[cand].snap.Status == "running" {
+	for i := 0; len(r.order) > 20 && i < len(r.order); {
+		cand := r.order[i]
+		if r.checks[cand].snap.Status == "running" {
 			i++
 			continue
 		}
-		delete(e.envchecks, cand)
-		e.envcheckOrder = append(e.envcheckOrder[:i], e.envcheckOrder[i+1:]...)
+		delete(r.checks, cand)
+		r.order = append(r.order[:i], r.order[i+1:]...)
 	}
-	e.mu.Unlock()
+	r.mu.Unlock()
 
 	checkRunID := "envck" + strings.ToLower(id[max(0, len(id)-11):])
 	// Egress is enforced by the per-project gateway the provisioner brings up at
@@ -405,16 +449,16 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 		defer res.Close()
 		defer cancel()
 		emit := func(s CheckStep) {
-			e.mu.Lock()
+			r.mu.Lock()
 			st.snap.Steps = append(st.snap.Steps, s)
-			e.mu.Unlock()
+			r.mu.Unlock()
 		}
-		failed, teardown := runEnvCheck(ctx, res, checkRunID,
-			EnvCheckOptions{EngineURL: e.cfg.EngineURL, Keep: keep, Agents: agents, Stages: stages}, emit)
+		failed, teardown := check(ctx, res, checkRunID,
+			Options{EngineURL: r.EngineURL, Keep: keep, Agents: agents, Stages: stages}, emit)
 		// The verdict is published now; destroying the workspace can take
 		// minutes and says nothing about the project.
-		now := e.clock()
-		e.mu.Lock()
+		now := r.now()
+		r.mu.Lock()
 		if st.snap.Status == "running" {
 			st.snap.FinishedAt = &now
 			if failed > 0 {
@@ -424,22 +468,22 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 			}
 		}
 		st.snap.TearingDown = true
-		e.mu.Unlock()
+		r.mu.Unlock()
 		teardown()
-		e.mu.Lock()
+		r.mu.Lock()
 		st.snap.TearingDown = false
-		e.mu.Unlock()
+		r.mu.Unlock()
 	}()
 	return id, nil
 }
 
-// cancelEnvCheckLocked stops a running check (e.mu held). Its goroutine
+// cancelLocked stops a running check (r.mu held). Its goroutine
 // winds down and still destroys its workspace.
-func (e *Engine) cancelEnvCheckLocked(st *envCheckState, why string) {
+func (r *Registry) cancelLocked(st *state, why string) {
 	if st.snap.Status != "running" {
 		return
 	}
-	now := e.clock()
+	now := r.now()
 	st.snap.Status = "cancelled"
 	st.snap.FinishedAt = &now
 	st.snap.Steps = append(st.snap.Steps, CheckStep{ID: "cancelled", Status: "skip", Detail: why})
@@ -448,41 +492,41 @@ func (e *Engine) cancelEnvCheckLocked(st *envCheckState, why string) {
 	}
 }
 
-// CancelEnvCheck stops a running check. ok=false: no such check.
-func (e *Engine) CancelEnvCheck(id string) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	st, ok := e.envchecks[id]
+// Cancel stops a running check. ok=false: no such check.
+func (r *Registry) Cancel(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.checks[id]
 	if !ok {
 		return false
 	}
-	e.cancelEnvCheckLocked(st, "cancelled")
+	r.cancelLocked(st, "cancelled")
 	return true
 }
 
-// LatestEnvCheck is the project's most recent check (running or not), so a
+// Latest is the project's most recent check (running or not), so a
 // page opened mid-check can follow it.
-func (e *Engine) LatestEnvCheck(projectID string) (CheckRun, bool) {
-	e.mu.Lock()
+func (r *Registry) Latest(projectID string) (CheckRun, bool) {
+	r.mu.Lock()
 	var id string
-	for i := len(e.envcheckOrder) - 1; i >= 0; i-- {
-		if st := e.envchecks[e.envcheckOrder[i]]; st != nil && st.snap.ProjectID == projectID {
-			id = e.envcheckOrder[i]
+	for i := len(r.order) - 1; i >= 0; i-- {
+		if st := r.checks[r.order[i]]; st != nil && st.snap.ProjectID == projectID {
+			id = r.order[i]
 			break
 		}
 	}
-	e.mu.Unlock()
+	r.mu.Unlock()
 	if id == "" {
 		return CheckRun{}, false
 	}
-	return e.EnvCheck(id)
+	return r.Get(id)
 }
 
-// EnvCheck returns a snapshot of a check run.
-func (e *Engine) EnvCheck(id string) (CheckRun, bool) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	st, ok := e.envchecks[id]
+// Get returns a snapshot of a check run.
+func (r *Registry) Get(id string) (CheckRun, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.checks[id]
 	if !ok {
 		return CheckRun{}, false
 	}

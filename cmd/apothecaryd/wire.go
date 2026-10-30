@@ -3,6 +3,7 @@ package main
 import (
 	"apothecary/internal/automation"
 	"apothecary/internal/engine"
+	"apothecary/internal/envcheck"
 	"apothecary/internal/mrs"
 )
 
@@ -12,4 +13,5 @@ import (
 var (
 	_ automation.Runs = (*engine.Engine)(nil)
 	_ automation.MRs  = (*mrs.Service)(nil)
+	_ envcheck.Flows  = (*engine.Engine)(nil)
 )

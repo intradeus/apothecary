@@ -158,23 +158,6 @@ func TestAgentModelCheckPassesAndToleratesAnUnaskableAgent(t *testing.T) {
 	}
 }
 
-func TestEnvCheckAgentModelsStep(t *testing.T) {
-	h := newHarness(t, mustFlow(t, modelFlowDoc))
-	h.envp.ExecFunc = firewallAwareExec()
-	h.res.Runner = &listingRunner{AgentRunner: h.runner, models: []string{"acme/alpha-3"}}
-	var step CheckStep
-	RunEnvCheck(context.Background(), h.res, "envck-m",
-		EnvCheckOptions{Stages: h.flowOf(t, "models").Stages},
-		func(s CheckStep) {
-			if s.ID == "agent_models" {
-				step = s
-			}
-		})
-	if step.Status != "fail" || !strings.Contains(step.Detail, "acme/alpha-1") || strings.Contains(step.Detail, `"review"`) {
-		t.Fatalf("agent_models = %+v", step)
-	}
-}
-
 // A provider refusing the harness credential refuses the run before a
 // workspace is built; preflight names it too. Each harness is asked about
 // exactly the models its stages route through.

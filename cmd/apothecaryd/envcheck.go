@@ -12,13 +12,13 @@ import (
 
 	"apothecary/internal/config"
 	"apothecary/internal/confstore"
-	"apothecary/internal/engine"
+	"apothecary/internal/envcheck"
 	"apothecary/internal/pgstore"
 	"apothecary/internal/resolve"
 )
 
 // cmdEnvcheck drives the §9 compliance gate from the CLI — the same
-// engine.RunEnvCheck the API uses, printing steps as they complete. The
+// envcheck.Run the API uses, printing steps as they complete. The
 // check list is derived from the project's resolved configuration.
 func cmdEnvcheck(args []string) error {
 	fs := flag.NewFlagSet("envcheck", flag.ExitOnError)
@@ -76,9 +76,9 @@ func cmdEnvcheck(args []string) error {
 
 	runID := "envck" + strings.ToLower(ulid.Make().String()[16:])
 	fmt.Printf("envcheck project %s, run id %s\n", project.Name, runID)
-	failed := engine.RunEnvCheck(ctx, res, runID,
-		engine.EnvCheckOptions{EngineURL: engineURL(boot.Listen), Keep: *keep},
-		func(s engine.CheckStep) {
+	failed := envcheck.Run(ctx, res, runID,
+		envcheck.Options{EngineURL: engineURL(boot.Listen), Keep: *keep},
+		func(s envcheck.CheckStep) {
 			mark := map[string]string{"pass": "ok  ", "fail": "FAIL", "skip": "skip"}[s.Status]
 			fmt.Printf("%s  %-28s %s\n", mark, s.ID, s.Detail)
 		})

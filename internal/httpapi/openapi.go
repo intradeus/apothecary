@@ -308,7 +308,7 @@ var typeNameOverrides = map[string]string{
 	"kinds.RepoInfo":           "RepoInfo",
 	"kinds.ModelInfo":          "ModelInfo",
 	"portrelay.Exposure":       "PortExposure",
-	"engine.CheckRun":          "EnvCheck",
+	"envcheck.CheckRun":        "EnvCheck",
 	"engine.PreflightStep":     "PreflightStep",
 	"httpapi.flowResp":         "Flow",
 	"httpapi.projectBody":      "ProjectRequest",

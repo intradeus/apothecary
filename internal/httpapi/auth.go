@@ -295,7 +295,7 @@ func (s *Server) ownerOf(ctx context.Context, sc Scope, id string) (string, erro
 		}
 		return s.runOwner(ctx, sn.RunID)
 	case ScopeEnvCheck:
-		cr, ok := s.Engine.EnvCheck(id)
+		cr, ok := s.EnvCheck.Get(id)
 		if !ok {
 			return "", errors.New("envcheck not found")
 		}
