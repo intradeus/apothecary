@@ -325,7 +325,7 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 	var body StartRunRequest
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
 
-	runID, err := s.Engine.CreateRunWith(r.Context(), engine.Ticket{
+	runID, err := s.Runs.CreateRunWith(r.Context(), engine.Ticket{
 		TicketID:     t.ID,
 		Title:        t.Title,
 		Goal:         t.Goal,
@@ -350,5 +350,33 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 	default:
 		writeJSON(w, http.StatusCreated, RunRef{RunID: runID})
+	}
+}
+
+// ticketRoutes is tickets.
+func (s *Server) ticketRoutes() []Route {
+	return []Route{
+		{Method: "GET", Path: "/api/tickets", ID: "listTickets", Tag: tagTickets,
+			Summary: "One's tickets",
+			Query:   []Param{{Name: "project", Doc: "only tickets of this project"}},
+			Handler: s.listTickets, Returns: []confstore.Ticket{}, Enabled: haveConf},
+		{Method: "POST", Path: "/api/tickets", ID: "createTicket", Tag: tagTickets,
+			Summary: "Create a ticket",
+			Handler: s.createTicket, Body: ticketBody{}, Returns: ticketResp{},
+			Status: http.StatusCreated, Enabled: haveConf},
+		{Method: "GET", Path: "/api/tickets/{id}", ID: "getTicket", Tag: tagTickets,
+			Summary: "One ticket", Handler: s.getTicket, Returns: ticketResp{}, Enabled: haveConf, Scope: ScopeTicket},
+		{Method: "PUT", Path: "/api/tickets/{id}", ID: "updateTicket", Tag: tagTickets,
+			Summary: "Replace a ticket",
+			Handler: s.updateTicket, Body: ticketBody{}, Returns: ticketResp{}, Enabled: haveConf, Scope: ScopeTicket},
+		{Method: "DELETE", Path: "/api/tickets/{id}", ID: "deleteTicket", Tag: tagTickets,
+			Summary: "Delete a ticket", Handler: s.deleteTicket, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeTicket},
+		{Method: "GET", Path: "/api/tickets/{id}/attachments", ID: "getTicketAttachments", Tag: tagTickets,
+			Summary: "Files attached to a ticket",
+			Handler: s.getTicketAttachments, Returns: AttachmentList{}, Enabled: haveConf, Scope: ScopeTicket},
+		{Method: "POST", Path: "/api/tickets/{id}/runs", ID: "startTicketRun", Tag: tagTickets,
+			Summary: "Start one attempt on a ticket",
+			Handler: s.startTicketRun, Body: StartRunRequest{}, Returns: RunRef{},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeTicket},
 	}
 }

@@ -247,3 +247,50 @@ func (s *Server) refreshSkillset(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, SkillsetRefreshResult{Skillset: set, Warnings: warnings})
 }
+
+// skillRoutes is the skill library (TODO 38).
+func (s *Server) skillRoutes() []Route {
+	return []Route{
+		{Method: "GET", Path: "/api/skills", ID: "listSkills", Tag: tagSkills,
+			Summary: "One's skills", Handler: s.listSkills, Returns: []skillstore.Skill{}, Enabled: haveSkills},
+		{Method: "POST", Path: "/api/skills", ID: "createSkill", Tag: tagSkills,
+			Summary: "Create a skill from its files",
+			Doc:     "A skill is a folder: SKILL.md (frontmatter name + description) plus any support files. The name must match the frontmatter.",
+			Handler: s.createSkill, Body: SkillRequest{}, Returns: skillstore.Skill{}, Status: http.StatusCreated, Enabled: haveSkills},
+		{Method: "POST", Path: "/api/skills/import", ID: "importSkills", Tag: tagSkills,
+			Summary: "Import a skill or a folder of skills from a public URL",
+			Doc:     "A folder holding SKILL.md becomes one skill; a folder of such folders becomes a skillset. Fetched over plain HTTP from the host's public archive — no tokens, public repositories only.",
+			Handler: s.importSkills, Body: SkillImportRequest{}, Returns: skillstore.ImportResult{}, Status: http.StatusCreated, Enabled: haveSkills},
+		{Method: "GET", Path: "/api/skills/{id}", ID: "getSkill", Tag: tagSkills,
+			Summary: "One skill, with its file contents", Handler: s.getSkill, Returns: SkillDetail{}, Enabled: haveSkills, Scope: ScopeSkill},
+		{Method: "PUT", Path: "/api/skills/{id}", ID: "updateSkill", Tag: tagSkills,
+			Summary: "Replace a skill's files (every skillset listing it gets a new version if its content changed)",
+			Handler: s.updateSkill, Body: SkillRequest{}, Returns: skillstore.Skill{}, Enabled: haveSkills, Scope: ScopeSkill},
+		{Method: "DELETE", Path: "/api/skills/{id}", ID: "deleteSkill", Tag: tagSkills,
+			Summary: "Delete a skill no skillset lists",
+			Handler: s.deleteSkill, Status: http.StatusNoContent, Enabled: haveSkills, Scope: ScopeSkill},
+		{Method: "POST", Path: "/api/skills/{id}/refresh", ID: "refreshSkill", Tag: tagSkills,
+			Summary: "Re-download an imported skill",
+			Handler: s.refreshSkill, Returns: skillstore.Skill{}, Enabled: haveSkills, Scope: ScopeSkill},
+		{Method: "GET", Path: "/api/skillsets", ID: "listSkillsets", Tag: tagSkills,
+			Summary: "One's skillsets", Handler: s.listSkillsets, Returns: []skillstore.Skillset{}, Enabled: haveSkills},
+		{Method: "POST", Path: "/api/skillsets", ID: "createSkillset", Tag: tagSkills,
+			Summary: "Create a skillset (cuts v1)",
+			Handler: s.createSkillset, Body: SkillsetRequest{}, Returns: skillstore.Skillset{}, Status: http.StatusCreated, Enabled: haveSkills},
+		{Method: "GET", Path: "/api/skillsets/{id}", ID: "getSkillset", Tag: tagSkills,
+			Summary: "One skillset", Handler: s.getSkillset, Returns: skillstore.Skillset{}, Enabled: haveSkills, Scope: ScopeSkillset},
+		{Method: "PUT", Path: "/api/skillsets/{id}", ID: "updateSkillset", Tag: tagSkills,
+			Summary: "Rename a skillset or change its members (a new version if the content changed)",
+			Handler: s.updateSkillset, Body: SkillsetRequest{}, Returns: skillstore.Skillset{}, Enabled: haveSkills, Scope: ScopeSkillset},
+		{Method: "DELETE", Path: "/api/skillsets/{id}", ID: "deleteSkillset", Tag: tagSkills,
+			Summary: "Delete a skillset no live run pins",
+			Handler: s.deleteSkillset, Status: http.StatusNoContent, Enabled: haveSkills, Scope: ScopeSkillset},
+		{Method: "GET", Path: "/api/skillsets/{id}/versions", ID: "listSkillsetVersions", Tag: tagSkills,
+			Summary: "A skillset's versions, newest first", Handler: s.listSkillsetVersions, Returns: []skillstore.Version{}, Enabled: haveSkills, Scope: ScopeSkillset},
+		{Method: "GET", Path: "/api/skillsets/{id}/versions/{seq}", ID: "getSkillsetVersion", Tag: tagSkills,
+			Summary: "One version of a skillset (seq 0 = latest)", Handler: s.getSkillsetVersion, Returns: skillstore.Version{}, Enabled: haveSkills, Scope: ScopeSkillset},
+		{Method: "POST", Path: "/api/skillsets/{id}/refresh", ID: "refreshSkillset", Tag: tagSkills,
+			Summary: "Re-download an imported skillset's folder and reconcile its members",
+			Handler: s.refreshSkillset, Returns: SkillsetRefreshResult{}, Enabled: haveSkills, Scope: ScopeSkillset},
+	}
+}

@@ -299,3 +299,62 @@ func (s *Server) authBrokerToken(w http.ResponseWriter, r *http.Request, runID s
 	}
 	return true
 }
+
+// authBrokerRoutes is the auth broker omp reads its logins from (kinds/ompbroker.go).
+func (s *Server) authBrokerRoutes() []Route {
+	return []Route{
+		{Method: "GET", Path: "/api/runs/{id}/auth-broker/{rest...}", ID: "authBrokerGet", Tag: tagPings,
+			Summary: "omp's auth broker for a run: snapshot, health",
+			Doc:     "omp's auth-broker protocol, served per run (docs/model-providers-plan.md): access tokens only, the refresh sentinel in place of every refresh token.",
+			Handler: s.authBroker, Auth: AccessBrokerToken},
+		{Method: "POST", Path: "/api/runs/{id}/auth-broker/{rest...}", ID: "authBrokerPost", Tag: tagPings,
+			Summary: "omp's auth broker for a run: refresh, acknowledgements",
+			Handler: s.authBroker, Auth: AccessBrokerToken},
+		{Method: "DELETE", Path: "/api/runs/{id}/auth-broker/{rest...}", ID: "authBrokerDelete", Tag: tagPings,
+			Summary: "omp's auth broker for a run: acknowledgements",
+			Handler: s.authBroker, Auth: AccessBrokerToken},
+	}
+}
+
+// credentialRoutes is model provider credentials and sign-ins.
+func (s *Server) credentialRoutes() []Route {
+	return []Route{
+		{Method: "GET", Path: "/api/providers", ID: "listProviders", Tag: tagIntegrations,
+			Summary: "The model providers apothecary manages credentials for",
+			Doc:     "The closed set: what each takes (an API key, a login) and which harnesses use it. harness narrows it to one harness kind.",
+			Query:   []Param{{Name: "harness", Doc: "only the providers this harness kind uses"}},
+			Handler: s.listProviders, Returns: []ProviderInfo{}, Enabled: haveConf},
+		{Method: "GET", Path: "/api/credentials", ID: "listCredentials", Tag: tagIntegrations,
+			Summary: "One's model provider credentials (metadata only, never a key or a token)",
+			Handler: s.listCredentials, Returns: []confstore.ProviderCredential{}, Enabled: haveConf},
+		{Method: "POST", Path: "/api/credentials", ID: "createCredential", Tag: tagIntegrations,
+			Summary: "Add an API key for a provider",
+			Handler: s.createCredential, Body: CredentialRequest{}, Returns: confstore.ProviderCredential{},
+			Status: http.StatusCreated, Enabled: haveConf},
+		{Method: "POST", Path: "/api/credentials/import", ID: "importCredentials", Tag: tagIntegrations,
+			Summary: "Import a credential file a harness CLI wrote",
+			Doc:     "codex's or opencode's auth.json, CLIProxyAPI login JSON, or KEY=VALUE lines. Every entry that is not a provider apothecary manages is refused and listed.",
+			Handler: s.importCredentials, Body: CredentialImportRequest{}, Returns: CredentialImportResult{},
+			Status: http.StatusCreated, Enabled: haveConf},
+		{Method: "POST", Path: "/api/credentials/signin", ID: "startSignIn", Tag: tagIntegrations,
+			Summary: "Start signing in to a provider from apothecary",
+			Doc:     "Returns the provider page to open and, for a device sign-in, the code to type there. The tokens come back to the engine, never to a laptop CLI.",
+			Handler: s.startSignIn, Body: SignInRequest{}, Returns: logins.Pending{}, Enabled: haveConf},
+		{Method: "POST", Path: "/api/credentials/signin/{sid}/complete", ID: "completeSignIn", Tag: tagIntegrations,
+			Summary: "Finish a sign-in",
+			Doc:     "A device sign-in answers 202 {pending: true} until the person approves; a paste sign-in exchanges what was pasted. 201 with the new credential when done.",
+			Handler: s.completeSignIn, Body: SignInComplete{}, Returns: SignInResult{}, Status: http.StatusCreated, Enabled: haveConf},
+		{Method: "GET", Path: "/api/credentials/{id}", ID: "getCredential", Tag: tagIntegrations,
+			Summary: "One credential (metadata only)",
+			Handler: s.getCredential, Returns: confstore.ProviderCredential{}, Enabled: haveConf, Scope: ScopeCredential},
+		{Method: "PUT", Path: "/api/credentials/{id}", ID: "renameCredential", Tag: tagIntegrations,
+			Summary: "Rename a credential",
+			Handler: s.renameCredential, Body: CredentialRename{}, Returns: confstore.ProviderCredential{}, Enabled: haveConf, Scope: ScopeCredential},
+		{Method: "DELETE", Path: "/api/credentials/{id}", ID: "deleteCredential", Tag: tagIntegrations,
+			Summary: "Delete a credential no harness integration uses",
+			Handler: s.deleteCredential, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeCredential},
+		{Method: "POST", Path: "/api/credentials/{id}/test", ID: "testCredential", Tag: tagIntegrations,
+			Summary: "Check a credential against its provider, without spending tokens",
+			Handler: s.testCredential, Returns: TestResult{}, Enabled: haveConf, Scope: ScopeCredential},
+	}
+}

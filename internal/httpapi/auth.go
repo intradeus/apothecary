@@ -267,7 +267,7 @@ func (s *Server) ownerOf(ctx context.Context, sc Scope, id string) (string, erro
 				return v.UserID, nil
 			}
 		}
-		if p := s.Engine.GetPing(id); p != nil {
+		if p := s.Runs.GetPing(id); p != nil {
 			return s.runOwner(ctx, p.RunID)
 		}
 		return "", errors.New("ping not found")
@@ -768,7 +768,7 @@ func (s *Server) standDown(ctx context.Context, userID string) {
 	if views, err := s.runViews(ctx); err == nil {
 		for _, v := range views {
 			if v.UserID == userID && !v.State.Terminal() {
-				if err := s.Engine.Abort(v.RunID); err != nil {
+				if err := s.Runs.Abort(v.RunID); err != nil {
 					s.Log.Warn("disable user: abort run", "user", userID, "run", v.RunID, "err", err)
 				}
 			}
@@ -859,3 +859,81 @@ func (s *Server) setLimits(w http.ResponseWriter, r *http.Request) {
 
 // Compile-time anchor: ownership lookups read config-plane rows.
 var _ = confstore.ErrNotFound
+
+// authRoutes is the account surface — instance setup, signing in, one's own profile, tokens and SSH keys — and the capacity caps.
+func (s *Server) authRoutes() []Route {
+	return []Route{
+		// Accounts (TODO 25): the one public surface is finding out whether the
+		// instance is set up, setting it up, and signing in.
+		{Method: "GET", Path: "/api/auth/status", ID: "getAuthStatus", Tag: tagAuth,
+			Summary: "Whether the instance needs its first account, and how one may sign in",
+			Handler: s.getAuthStatus, Returns: AuthStatus{}, Auth: AccessPublic},
+		{Method: "POST", Path: "/api/auth/setup", ID: "setupInstance", Tag: tagAuth,
+			Summary: "Claim a fresh instance: create its first account, an admin, and sign in",
+			Doc:     "Only while no account exists (409 after).",
+			Handler: s.postSetup, Body: SetupRequest{}, Returns: Me{}, Status: http.StatusCreated, Auth: AccessPublic},
+		{Method: "POST", Path: "/api/auth/login", ID: "login", Tag: tagAuth,
+			Summary: "Sign in and start a browser session",
+			Doc:     "method is password unless the instance offers another; login is a handle or an email; proof the password. Repeated failures for one account from one address are throttled (429).",
+			Handler: s.postLogin, Body: LoginRequest{}, Returns: Me{}, Auth: AccessPublic},
+		{Method: "POST", Path: "/api/auth/logout", ID: "logout", Tag: tagAuth,
+			Summary: "End the browser session",
+			Handler: s.postLogout, Status: http.StatusNoContent},
+		{Method: "GET", Path: "/api/me", ID: "getMe", Tag: tagAuth,
+			Summary: "The signed-in user",
+			Handler: s.getMe, Returns: Me{}},
+		{Method: "PUT", Path: "/api/me", ID: "updateMe", Tag: tagAuth,
+			Summary: "Change one's own handle, email or name",
+			Handler: s.putMe, Body: ProfileRequest{}, Returns: Me{}},
+		{Method: "PUT", Path: "/api/me/password", ID: "changeMyPassword", Tag: tagAuth,
+			Summary: "Change one's own password",
+			Doc:     "Every other session is signed out; this one continues.",
+			Handler: s.putMyPassword, Body: PasswordChangeRequest{}, Status: http.StatusNoContent},
+		{Method: "GET", Path: "/api/me/tokens", ID: "listMyTokens", Tag: tagAuth,
+			Summary: "One's personal API tokens (never their secrets)",
+			Handler: s.listMyTokens, Returns: []auth.Token{}},
+		{Method: "POST", Path: "/api/me/tokens", ID: "createMyToken", Tag: tagAuth,
+			Summary: "Mint a personal API token",
+			Doc:     "The secret is in this response and nowhere else: it is stored hashed. Send it as a bearer token.",
+			Handler: s.createMyToken, Body: TokenRequest{}, Returns: TokenCreated{}, Status: http.StatusCreated},
+		{Method: "DELETE", Path: "/api/me/tokens/{id}", ID: "deleteMyToken", Tag: tagAuth,
+			Summary: "Revoke a personal API token",
+			Handler: s.deleteMyToken, Status: http.StatusNoContent},
+		{Method: "GET", Path: "/api/me/ssh-keys", ID: "listMySshKeys", Tag: tagAuth,
+			Summary: "One's SSH public keys: what the SSH door lets into one's workspaces",
+			Handler: s.listMySSHKeys, Returns: []auth.SSHKey{}},
+		{Method: "POST", Path: "/api/me/ssh-keys", ID: "addMySshKey", Tag: tagAuth,
+			Summary: "Register an SSH public key",
+			Doc:     "The contents of a .pub file. A key registered on one account cannot be registered on another. Disabling the account keeps its keys and ends their sessions; re-enabling it restores access.",
+			Handler: s.addMySSHKey, Body: SSHKeyRequest{}, Returns: auth.SSHKey{}, Status: http.StatusCreated},
+		{Method: "DELETE", Path: "/api/me/ssh-keys/{id}", ID: "deleteMySshKey", Tag: tagAuth,
+			Summary: "Remove an SSH public key",
+			Handler: s.deleteMySSHKey, Status: http.StatusNoContent},
+		{Method: "GET", Path: "/api/limits", ID: "getLimits", Tag: tagSystem,
+			Summary: "The instance's capacity caps (-1: no cap)",
+			Handler: s.getLimits, Returns: LimitsInfo{}},
+		{Method: "PUT", Path: "/api/limits", ID: "setLimits", Tag: tagSystem,
+			Summary: "Set the instance's capacity caps (admin; -1: no cap)",
+			Handler: s.setLimits, Body: LimitsInfo{}, Returns: LimitsInfo{}, Auth: AccessAdmin},
+	}
+}
+
+// userRoutes is the admin's view of accounts.
+func (s *Server) userRoutes() []Route {
+	return []Route{
+		{Method: "GET", Path: "/api/users", ID: "listUsers", Tag: tagUsers,
+			Summary: "Every account",
+			Handler: s.listUsers, Returns: []auth.User{}, Auth: AccessAdmin},
+		{Method: "POST", Path: "/api/users", ID: "createUser", Tag: tagUsers,
+			Summary: "Create an account with a password",
+			Handler: s.createUser, Body: UserCreateRequest{}, Returns: auth.User{}, Status: http.StatusCreated, Auth: AccessAdmin},
+		{Method: "PUT", Path: "/api/users/{id}", ID: "updateUser", Tag: tagUsers,
+			Summary: "Change an account: its profile, whether it is an admin, whether it is disabled",
+			Doc:     "Disabling an account signs it out everywhere, revokes its tokens, aborts its active runs and switches its automations off; its history and workspaces stay.",
+			Handler: s.updateUser, Body: UserUpdateRequest{}, Returns: auth.User{}, Auth: AccessAdmin},
+		{Method: "POST", Path: "/api/users/{id}/password", ID: "resetUserPassword", Tag: tagUsers,
+			Summary: "Set an account's password",
+			Doc:     "Signs the account out everywhere.",
+			Handler: s.resetUserPassword, Body: PasswordResetRequest{}, Status: http.StatusNoContent, Auth: AccessAdmin},
+	}
+}

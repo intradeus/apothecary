@@ -202,7 +202,7 @@ func (s *Server) pingView(r *http.Request, pid string) (run.PingView, error) {
 	if s.Pings != nil {
 		return s.Pings.GetPing(r.Context(), pid)
 	}
-	if p := s.Engine.GetPing(pid); p != nil {
+	if p := s.Runs.GetPing(pid); p != nil {
 		return run.PingView{
 			PingID: p.ID, RunID: p.RunID, Type: p.Type, StageID: p.StageID,
 			Question: p.Question, Context: p.Context,
@@ -323,4 +323,26 @@ func (s *Server) getPingCuration(w http.ResponseWriter, r *http.Request) {
 		out.Documents = append(out.Documents, doc)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// fileRoutes is uploads and the captured record.
+func (s *Server) fileRoutes() []Route {
+	return []Route{
+		{Method: "POST", Path: "/api/attachments", ID: "uploadAttachments", Tag: tagFiles,
+			Summary: "Upload files to attach to a ticket, a goal or an answer",
+			Handler: s.postAttachments, Returns: Uploaded{}, Status: http.StatusCreated,
+			Accepts: "multipart/form-data"},
+		{Method: "GET", Path: "/api/attachments/limits", ID: "getAttachmentLimits", Tag: tagFiles,
+			Summary: "Upload policy: size cap and accepted types",
+			Handler: s.getAttachmentLimits, Returns: filestore.UploadLimits{}},
+		{Method: "GET", Path: "/api/attachments/{id}", ID: "downloadAttachment", Tag: tagFiles,
+			Summary: "Download one uploaded file",
+			Handler: s.getAttachment, Produces: "application/octet-stream", Scope: ScopeAttachment},
+		{Method: "GET", Path: "/api/snapshots/{id}", ID: "downloadSnapshot", Tag: tagFiles,
+			Summary: "Download one engine-captured record",
+			Handler: s.getSnapshot, Produces: "application/octet-stream", Scope: ScopeSnapshot},
+		{Method: "GET", Path: "/api/runs/{id}/files", ID: "getRunFiles", Tag: tagFiles,
+			Summary: "Everything filed under a run: human uploads and engine captures",
+			Handler: s.getRunFiles, Returns: RunFiles{}, Scope: ScopeRun},
+	}
 }

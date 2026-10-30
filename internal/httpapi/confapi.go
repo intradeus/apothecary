@@ -12,8 +12,10 @@ import (
 	"apothecary/internal/auth"
 	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
+	"apothecary/internal/envcheck"
 	"apothecary/internal/flow"
 	"apothecary/internal/kinds"
+	"apothecary/internal/ports"
 	"apothecary/internal/resolution"
 	"apothecary/internal/secrets"
 	"apothecary/internal/signalspec"
@@ -333,7 +335,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) preflightProject(w http.ResponseWriter, r *http.Request) {
-	steps := s.Engine.PreflightProject(r.Context(), r.PathValue("id"))
+	steps := s.Runs.PreflightProject(r.Context(), r.PathValue("id"))
 	ok := true
 	for _, st := range steps {
 		ok = ok && st.OK
@@ -760,4 +762,232 @@ func (s *Server) deleteBuildCache(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// registryRoutes is the kinds, actions and signals this build offers.
+func (s *Server) registryRoutes() []Route {
+	return []Route{
+		{Method: "GET", Path: "/api/kinds", ID: "listKinds", Tag: tagSystem,
+			Summary: "Every port kind this build carries, with its config fields",
+			Handler: s.listKinds, Returns: []kinds.Descriptor{}, Enabled: haveKinds},
+		{Method: "GET", Path: "/api/actions", ID: "listActions", Tag: tagSystem,
+			Summary: "Actions an `action` stage may name",
+			Handler: s.listActions, Returns: []actionspec.Action{}, Enabled: haveConf},
+		{Method: "GET", Path: "/api/signals", ID: "listSignals", Tag: tagSystem,
+			Summary: "Signals a `wait` stage or a gate's auto-answer may name",
+			Handler: s.listSignals, Returns: []signalspec.Signal{}, Enabled: haveConf},
+		{Method: "GET", Path: "/api/settings", ID: "getSettings", Tag: tagSystem,
+			Summary: "One's policy settings: the reaper and retention windows",
+			Handler: s.getSettings, Returns: confstore.Settings{}, Enabled: haveConf},
+		{Method: "PUT", Path: "/api/settings", ID: "updateSettings", Tag: tagSystem,
+			Summary: "Replace one's policy settings",
+			Handler: s.putSettings, Body: confstore.Settings{}, Returns: confstore.Settings{}, Enabled: haveConf},
+	}
+}
+
+// integrationRoutes is a user's integrations.
+func (s *Server) integrationRoutes() []Route {
+	return []Route{
+		{Method: "GET", Path: "/api/integrations", ID: "listIntegrations", Tag: tagIntegrations,
+			Summary: "One's integrations (secrets masked)",
+			Handler: s.listIntegrations, Returns: []integrationJSON{}, Enabled: haveConf},
+		{Method: "POST", Path: "/api/integrations", ID: "createIntegration", Tag: tagIntegrations,
+			Summary: "Configure an integration",
+			Handler: s.createIntegration, Body: IntegrationRequest{}, Returns: integrationJSON{},
+			Status: http.StatusCreated, Enabled: haveConf},
+		{Method: "GET", Path: "/api/integrations/{id}", ID: "getIntegration", Tag: tagIntegrations,
+			Summary: "One integration",
+			Handler: s.getIntegration, Returns: integrationJSON{}, Enabled: haveConf, Scope: ScopeIntegration},
+		{Method: "PUT", Path: "/api/integrations/{id}", ID: "updateIntegration", Tag: tagIntegrations,
+			Summary: "Change an integration (secrets merge: present replaces, \"\" deletes, absent keeps)",
+			Handler: s.updateIntegration, Body: IntegrationUpdate{}, Returns: integrationJSON{}, Enabled: haveConf, Scope: ScopeIntegration},
+		{Method: "DELETE", Path: "/api/integrations/{id}", ID: "deleteIntegration", Tag: tagIntegrations,
+			Summary: "Delete an integration",
+			Handler: s.deleteIntegration, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeIntegration},
+		{Method: "POST", Path: "/api/integrations/{id}/test", ID: "testIntegration", Tag: tagIntegrations,
+			Summary: "Check an integration's credentials against the real service",
+			Handler: s.testIntegration, Returns: TestResult{}, Enabled: haveConf, Scope: ScopeIntegration},
+		{Method: "GET", Path: "/api/integrations/{id}/repos", ID: "listIntegrationRepos", Tag: tagIntegrations,
+			Summary: "Repositories a repository integration (GitLab, GitHub) can see",
+			Handler: s.listIntegrationRepos, Returns: []kinds.RepoInfo{}, Enabled: haveConf, Scope: ScopeIntegration},
+		{Method: "GET", Path: "/api/integrations/{id}/models", ID: "listIntegrationModels", Tag: tagIntegrations,
+			Summary: "Models a harness integration's credentials can reach",
+			Handler: s.listIntegrationModels, Returns: []kinds.ModelInfo{}, Enabled: haveConf, Scope: ScopeIntegration},
+		{Method: "GET", Path: "/api/integrations/{id}/tickets", ID: "searchSourceTickets", Tag: tagTickets,
+			Summary: "Search a tracker for tickets to import (read-only)",
+			Query: []Param{
+				{Name: "q", Doc: "free-text query"},
+				{Name: "limit", Doc: "max results (default 25)", Type: "integer"},
+			},
+			Handler: s.searchSourceTickets, Returns: []sourceTicketJSON{}, Enabled: haveConf, Scope: ScopeIntegration},
+		{Method: "GET", Path: "/api/integrations/{id}/tickets/{key}", ID: "getSourceTicket", Tag: tagTickets,
+			Summary: "One tracker ticket by key",
+			Handler: s.getSourceTicket, Returns: sourceTicketJSON{}, Enabled: haveConf, Scope: ScopeIntegration},
+	}
+}
+
+// projectRoutes is projects (workshops).
+func (s *Server) projectRoutes() []Route {
+	return []Route{
+		{Method: "GET", Path: "/api/projects", ID: "listProjects", Tag: tagProjects,
+			Summary: "One's projects", Handler: s.listProjects, Returns: []confstore.Project{}, Enabled: haveConf},
+		{Method: "POST", Path: "/api/projects", ID: "createProject", Tag: tagProjects,
+			Summary: "Create a project",
+			Handler: s.createProject, Body: projectBody{}, Returns: confstore.Project{},
+			Status: http.StatusCreated, Enabled: haveConf},
+		{Method: "GET", Path: "/api/projects/{id}", ID: "getProject", Tag: tagProjects,
+			Summary: "One project", Handler: s.getProject, Returns: confstore.Project{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "PUT", Path: "/api/projects/{id}", ID: "updateProject", Tag: tagProjects,
+			Summary: "Replace a project",
+			Handler: s.updateProject, Body: projectBody{}, Returns: confstore.Project{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "DELETE", Path: "/api/projects/{id}", ID: "deleteProject", Tag: tagProjects,
+			Summary: "Delete a project", Handler: s.deleteProject, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: "/api/projects/{id}/branches", ID: "listProjectBranches", Tag: tagProjects,
+			Summary: "Branches of the project's repository",
+			Handler: s.listProjectBranches, Returns: []kinds.BranchInfo{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: "/api/projects/{id}/mrs", ID: "listProjectMRs", Tag: tagProjects,
+			Summary: "Open merge requests of a project's repository, with the runs on each",
+			Doc:     "The repository's open merge requests, newest first: each with its author and head, whether the factory itself opened it, and the runs done on it here — its ticket and that ticket's newest run. What a run of a flow started on merge requests (operates_on: merge_request) may be started on.",
+			Query:   []Param{{Name: "repo", Doc: "the repository: \"repo\" (the default) for the primary, an extra repository's name", Type: "string"}},
+			Handler: s.listProjectMRs, Returns: []MRRow{}, Scope: ScopeProject},
+		{Method: "POST", Path: "/api/projects/{id}/mrs/{iid}/runs", ID: "startMRRun", Tag: tagProjects,
+			Summary: "Start a run of a flow on a merge request",
+			Doc:     "Finds or makes the merge request's ticket and starts a run on the merge request of a flow whose runs are started on one (operates_on: merge_request; the project's default flow unless the body names another). 409 while a run of the same flow on it is going.",
+			Body:    MRRunRequest{}, Returns: MRRunStarted{}, Status: http.StatusCreated,
+			Handler: s.startMRRun, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: "/api/projects/{id}/egress-audit", ID: "getProjectEgressAudit", Tag: tagEgress,
+			Summary: "Everything this project's workspaces reached or were blocked from",
+			Query:   auditQuery, Handler: s.getProjectEgressAudit, Returns: []ports.EgressAuditRow{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "POST", Path: "/api/projects/{id}/preflight", ID: "preflightProject", Tag: tagProjects,
+			Summary: "Check a project is ready to run, step by step",
+			Handler: s.preflightProject, Returns: PreflightResult{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "POST", Path: "/api/projects/{id}/envcheck", ID: "startEnvCheck", Tag: tagProjects,
+			Summary: "Prove the project's workspace actually builds (throwaway provision)",
+			Doc:     "Starting a check cancels the project's running one, if any: the newest check is the one that matters.",
+			Handler: s.startEnvCheck, Body: EnvCheckRequest{}, Returns: EnvCheckRef{},
+			Status: http.StatusAccepted, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: "/api/projects/{id}/build-cache", ID: "getBuildCache", Tag: tagProjects,
+			Summary: "What the project's devcontainer build cache holds",
+			Doc:     "The cache is per project and outlives its runs — it is what stops every run rebuilding the image into its own throwaway daemon.",
+			Handler: s.getBuildCache, Returns: BuildCacheInfo{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "DELETE", Path: "/api/projects/{id}/build-cache", ID: "clearBuildCache", Tag: tagProjects,
+			Summary: "Empty the project's build cache",
+			Doc:     "Safe: the next build repopulates it, so the cost of clearing needlessly is one slow build.",
+			Handler: s.deleteBuildCache, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: "/api/projects/{id}/secrets", ID: "listProjectSecrets", Tag: tagProjects,
+			Summary: "The project's secrets, by name",
+			Doc:     "What a flow's MCP servers read where they say ${secrets.<name>}. Names and when each was last set — never a value.",
+			Handler: s.listProjectSecrets, Returns: []confstore.ProjectSecret{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "PUT", Path: "/api/projects/{id}/secrets/{name}", ID: "setProjectSecret", Tag: tagProjects,
+			Summary: "Set one project secret",
+			Doc:     "Creates or replaces it; sealed at rest. A name is a lowercase slug. The next agent stage that reads it gets the new value — no new run needed.",
+			Body:    ProjectSecretRequest{}, Handler: s.putProjectSecret, Returns: confstore.ProjectSecret{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "DELETE", Path: "/api/projects/{id}/secrets/{name}", ID: "deleteProjectSecret", Tag: tagProjects,
+			Summary: "Remove one project secret",
+			Doc:     "A flow that reads it is refused at its next run's creation.",
+			Handler: s.deleteProjectSecret, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: "/api/projects/{id}/browser", ID: "getProjectBrowser", Tag: tagProjects,
+			Summary: "The project's browser: its toggle and its container",
+			Doc:     "One container per project, a Chromium per agent session (the builtin browser MCP server). The toggle is the project's workspace.browser.enabled; this says whether the container runs, with what image, and how many sessions use it.",
+			Handler: s.getProjectBrowser, Returns: BrowserInfo{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: "/api/envchecks/{id}", ID: "getEnvCheck", Tag: tagProjects,
+			Summary: "Poll a workspace check",
+			Handler: s.getEnvCheck, Returns: envcheck.CheckRun{}, Enabled: haveConf, Scope: ScopeEnvCheck},
+		{Method: "DELETE", Path: "/api/envchecks/{id}", ID: "cancelEnvCheck", Tag: tagProjects,
+			Summary: "Cancel a running workspace check",
+			Doc:     "The check stops at its next step and still destroys its workspace.",
+			Handler: s.cancelEnvCheck, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeEnvCheck},
+		{Method: "GET", Path: "/api/projects/{id}/envcheck", ID: "getLatestEnvCheck", Tag: tagProjects,
+			Summary: "The project's most recent workspace check",
+			Doc:     "Running or finished — what a page opened mid-check follows.",
+			Handler: s.getLatestEnvCheck, Returns: envcheck.CheckRun{}, Enabled: haveConf, Scope: ScopeProject},
+	}
+}
+
+// flowRoutes is flows and automations.
+func (s *Server) flowRoutes() []Route {
+	return []Route{
+		// A flow belongs to a project: its stages name that project's commands
+		// and its agents know that repository. The built-ins stay global
+		// templates, and copying is how a good flow reaches another project.
+		{Method: "GET", Path: "/api/flows", ID: "listAllFlows", Tag: tagFlows,
+			Summary: "Every flow of one's projects, for the cross-project overview",
+			Handler: s.listFlows, Returns: []flowResp{}, Enabled: haveConf},
+		{Method: "GET", Path: "/api/flow-templates", ID: "listFlowTemplates", Tag: tagFlows,
+			Summary: "The compiled-in flow templates a project can adopt or copy",
+			Handler: s.listBuiltinFlows, Returns: []flowResp{}, Enabled: haveConf},
+		{Method: "POST", Path: "/api/flow-templates/{name}/copy", ID: "copyFlowTemplate", Tag: tagFlows,
+			Summary: "Copy a compiled-in template into a project",
+			Doc:     "A template belongs to no project, so it is copied from here rather than from under one. Copying it under its own name adopts it: the project gets its own editable document, which shadows the template from then on.",
+			Handler: s.copyFlowTemplate, Body: CopyFlowRequest{}, Returns: flowResp{},
+			Status: http.StatusCreated, Enabled: haveConf},
+		{Method: "GET", Path: "/api/flows/schema", ID: "getFlowSchema", Tag: tagFlows,
+			Summary: "The JSON Schema of a flow document as it is written",
+			Doc:     "The YAML with its shorthand, for an editor to validate, complete and document as a person types; its lists (stage types, signals, actions and their inputs) come from the registries. The parser stays the authority: validate a document for the rules a schema cannot say.",
+			Handler: s.getFlowSchema, Returns: map[string]any{}, Enabled: haveConf},
+		{Method: "POST", Path: "/api/flows/validate", ID: "validateFlow", Tag: tagFlows,
+			Summary: "Validate a flow document without saving it",
+			Doc:     "Project-independent: the parser checks the document itself, and a flow carries its own agents.",
+			Handler: s.validateFlow, Body: ValidateFlowRequest{}, Returns: FlowValidation{}, Enabled: haveConf},
+
+		{Method: "GET", Path: "/api/projects/{id}/flows", ID: "listFlows", Tag: tagFlows,
+			Summary: "A project's flows, with the templates it has not adopted",
+			Handler: s.listFlows, Returns: []flowResp{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "POST", Path: "/api/projects/{id}/flows", ID: "createFlow", Tag: tagFlows,
+			Summary: "Create a flow in a project",
+			Handler: s.createFlow, Body: CreateFlowRequest{}, Returns: flowResp{},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: "/api/projects/{id}/flows/{name}", ID: "getFlow", Tag: tagFlows,
+			Summary: "One of a project's flows",
+			Doc:     "Falls back to the built-in template of that name, marked builtin, when the project has not saved its own.",
+			Handler: s.getFlow, Returns: flowResp{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "PUT", Path: "/api/projects/{id}/flows/{name}", ID: "updateFlow", Tag: tagFlows,
+			Summary: "Replace one of a project's flows",
+			Doc:     "Saving a built-in template's name for the first time creates this project's own copy of it.",
+			Handler: s.putFlow, Body: UpdateFlowRequest{}, Returns: flowResp{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "DELETE", Path: "/api/projects/{id}/flows/{name}", ID: "deleteFlow", Tag: tagFlows,
+			Summary: "Delete a project's flow (resets to the template, when there is one)",
+			Handler: s.deleteFlow, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "POST", Path: "/api/projects/{id}/flows/{name}/copy", ID: "copyFlow", Tag: tagFlows,
+			Summary: "Copy a flow into another project",
+			Handler: s.copyFlow, Body: CopyFlowRequest{}, Returns: flowResp{},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: "/api/projects/{id}/automations", ID: "listAutomations", Tag: tagAutomations,
+			Summary: "The project's automations: how runs begin without a person",
+			Handler: s.listAutomations, Returns: []confstore.Automation{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "POST", Path: "/api/projects/{id}/automations", ID: "createAutomation", Tag: tagAutomations,
+			Summary: "Create an automation",
+			Doc:     "Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves and its operates_on fits the kind (merge_request for a merge_request automation, ticket otherwise), the params are ones it accepts.",
+			Handler: s.createAutomation, Body: AutomationRequest{}, Returns: confstore.Automation{},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: "/api/projects/{id}/automations/{aid}", ID: "getAutomation", Tag: tagAutomations,
+			Summary: "One automation, with what the watcher last did with it",
+			Handler: s.getAutomation, Returns: confstore.Automation{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "PUT", Path: "/api/projects/{id}/automations/{aid}", ID: "updateAutomation", Tag: tagAutomations,
+			Summary: "Replace an automation (its last poll, firing and error are kept)",
+			Handler: s.updateAutomation, Body: AutomationRequest{}, Returns: confstore.Automation{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "DELETE", Path: "/api/projects/{id}/automations/{aid}", ID: "deleteAutomation", Tag: tagAutomations,
+			Summary: "Delete an automation (the tickets it imported stay)",
+			Handler: s.deleteAutomation, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: "/api/projects/{id}/flow-bindings", ID: "listFlowBindings", Tag: tagFlows,
+			Summary: "The project's parameter bindings, one per configured flow",
+			Handler: s.listFlowBindings, Returns: []confstore.FlowBinding{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: "/api/projects/{id}/flows/{name}/binding", ID: "getFlowBinding", Tag: tagFlows,
+			Summary: "The project's values for a flow's parameters",
+			Doc:     "404 when the project bound nothing: the flow runs on its declared defaults. A template is configurable without being copied.",
+			Handler: s.getFlowBinding, Returns: confstore.FlowBinding{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "PUT", Path: "/api/projects/{id}/flows/{name}/binding", ID: "putFlowBinding", Tag: tagFlows,
+			Summary: "Bind values to a flow's parameters for this project",
+			Doc:     "Replaces the binding. Every key must be a parameter the flow declares (the engine-known names included) and every value one it accepts — checked the way a run checks them; an empty value unbinds. A binding left with no values is removed. The document itself is untouched.",
+			Handler: s.putFlowBinding, Body: FlowBindingRequest{}, Returns: confstore.FlowBinding{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "DELETE", Path: "/api/projects/{id}/flows/{name}/binding", ID: "deleteFlowBinding", Tag: tagFlows,
+			Summary: "Put the project back to the flow's declared defaults",
+			Handler: s.deleteFlowBinding, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: "/api/projects/{id}/flows/{name}/versions", ID: "listFlowVersions", Tag: tagFlows,
+			Summary: "A flow's version history within its project",
+			Handler: s.listFlowVersions, Returns: []confstore.FlowVersion{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: "/api/projects/{id}/flow-versions/{hash}", ID: "getFlowVersion", Tag: tagFlows,
+			Summary: "One flow version by content hash",
+			Handler: s.getFlowVersion, Returns: confstore.FlowVersion{}, Enabled: haveConf, Scope: ScopeProject},
+	}
 }

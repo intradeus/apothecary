@@ -16,6 +16,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"apothecary/internal/flow"
@@ -500,22 +501,17 @@ func paramDefaultSchema() *openapi3.Schema {
 
 // --- serving ----------------------------------------------------------------
 
-// specJSON renders the document once per process; it is derived from compiled
+// The served document is rendered once per process; it is derived from compiled
 // code and cannot change while the binary runs.
 var (
-	specDoc  *openapi3.T
-	specErr  error
-	specOnce = func() func() {
-		done := false
-		return func() {
-			if done {
-				return
-			}
-			done = true
-			specDoc, specErr = Spec()
-		}
-	}()
+	specDoc   *openapi3.T
+	specErr   error
+	specBuilt sync.Once
 )
+
+// specOnce builds the served spec on first use; concurrent first requests
+// wait for the one build instead of racing it.
+func specOnce() { specBuilt.Do(func() { specDoc, specErr = Spec() }) }
 
 func (s *Server) getOpenAPIJSON(w http.ResponseWriter, r *http.Request) {
 	specOnce()

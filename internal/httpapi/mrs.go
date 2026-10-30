@@ -97,7 +97,7 @@ func (s *Server) listProjectMRs(w http.ResponseWriter, r *http.Request) {
 		row := MRRow{MR: mr, Mine: me != "" && strings.EqualFold(mr.Author, me), TicketID: byKey[strings.ToLower(mr.Ref.URL)],
 			StackedOn: ports.StackedOn(mr.Target, mrs)}
 		if row.TicketID != "" {
-			runs, err := s.Engine.RunsOfTicket(ctx, row.TicketID)
+			runs, err := s.Runs.RunsOfTicket(ctx, row.TicketID)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, err.Error())
 				return
@@ -164,7 +164,7 @@ func (s *Server) startMRRun(w http.ResponseWriter, r *http.Request) {
 	}
 	// The same flow twice at once on one merge request is a double click, not
 	// a plan: refused while one of its runs is going. Other flows may run.
-	runs, err := s.Engine.RunsOfTicket(ctx, t.ID)
+	runs, err := s.Runs.RunsOfTicket(ctx, t.ID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -175,7 +175,7 @@ func (s *Server) startMRRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	runID, err := s.Engine.CreateRunWith(ctx, engine.Ticket{
+	runID, err := s.Runs.CreateRunWith(ctx, engine.Ticket{
 		TicketID: t.ID, Title: t.Title, Goal: t.Goal, ChangeType: string(t.ChangeType),
 		SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,
 	}, flowName, projectID, engine.RunInput{Params: body.Params, MR: &engine.RunMR{Repo: body.Repo, IID: iid}, Skillsets: body.Skillsets})
