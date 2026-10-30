@@ -26,6 +26,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 	"apothecary/internal/skills"
@@ -208,7 +209,7 @@ func (l Limits) withDefaults() Limits {
 type Engine struct {
 	cfg      Config
 	store    event.Store
-	resolver Resolver
+	resolver resolution.Resolver
 	flows    flow.Source
 	bindings FlowBindings // nil = no project bindings
 	// holds is the idle loop's latest observation of which phase signals
@@ -588,7 +589,7 @@ var (
 	ErrNoLiveLog = errors.New("no live workspace log")
 )
 
-func New(cfg Config, store event.Store, resolver Resolver, flows flow.Source,
+func New(cfg Config, store event.Store, resolver resolution.Resolver, flows flow.Source,
 	settings SettingsSource, channels []ports.NotificationChannel) *Engine {
 	if settings == nil {
 		settings = StaticSettings{L: Limits{}.withDefaults()}
@@ -821,7 +822,7 @@ func (e *Engine) ExposeRunPort(ctx context.Context, runID string, port int) (str
 	if err != nil {
 		return "", err
 	}
-	defer res.release()
+	defer res.Close()
 	exposer, ok := res.Envp.(ports.WorkspacePortExposer)
 	if !ok {
 		return "", fmt.Errorf("run %s: provisioner does not support port exposure", runID)
@@ -862,12 +863,12 @@ func (e *Engine) egressCtrl(ctx context.Context, runID string) (ports.EgressCont
 	}
 	ctrl, ok := res.Envp.(ports.EgressController)
 	if !ok {
-		res.release()
+		res.Close()
 		return nil, "", nil, ErrEgressOff
 	}
 	// Works during provisioning too (EnvID not yet set): the most important time
 	// to "add to egress" is when the build is blocked on a denied domain.
-	return ctrl, ports.EnvID(wsname.ForRun(v, runID)), res.release, nil
+	return ctrl, ports.EnvID(wsname.ForRun(v, runID)), res.Close, nil
 }
 
 // buildCacheCtrl resolves a project to its provisioner's build-cache
@@ -882,10 +883,10 @@ func (e *Engine) buildCacheCtrl(ctx context.Context, projectID string) (ports.Bu
 	}
 	ctrl, ok := res.Envp.(ports.BuildCacheController)
 	if !ok {
-		res.release()
+		res.Close()
 		return nil, "", nil, ErrBuildCacheOff
 	}
-	return ctrl, res.ProjectID, res.release, nil
+	return ctrl, res.ProjectID, res.Close, nil
 }
 
 // BuildCache reports what the project's devcontainer build cache holds. The
@@ -1022,7 +1023,7 @@ func (e *Engine) IngestEgressAuditOnce(ctx context.Context) error {
 			continue
 		}
 		rows = append(rows, e.auditRows(ctx, v, res.Envp)...)
-		res.release()
+		res.Close()
 	}
 	if len(rows) == 0 {
 		return nil
@@ -1096,7 +1097,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 	if err != nil {
 		return "", fmt.Errorf("preflight: %w", err)
 	}
-	defer res.release()
+	defer res.Close()
 	if flowName == "" {
 		flowName = res.DefaultFlow
 	}
@@ -1225,7 +1226,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 // runCheckouts is what a new run checks out: the primary on the branch it
 // forks from, and every extra repo on the same branch name forked from its
 // own default branch.
-func runCheckouts(res *Resolution, branch, sourceBranch string) []event.Checkout {
+func runCheckouts(res *resolution.Resolution, branch, sourceBranch string) []event.Checkout {
 	out := []event.Checkout{{Name: event.PrimaryCheckoutName, Dir: event.PrimaryCheckoutDir,
 		URL: res.RepoRef.URL, Locator: res.RepoRef.Locator, Branch: branch, Source: sourceBranch, Primary: true}}
 	for _, x := range res.ExtraRepos {
@@ -1239,7 +1240,7 @@ func runCheckouts(res *Resolution, branch, sourceBranch string) []event.Checkout
 // checkout at it: the branch is the merge request's own (a fork's, which has
 // none here, a local mr-<iid>), forked from nothing — its head is fetched from
 // the repository host's ref — and its target is what it merges into.
-func adoptMR(ctx context.Context, res *Resolution, checkouts []event.Checkout, want *RunMR) (*event.Checkout, *event.AdoptedMR, error) {
+func adoptMR(ctx context.Context, res *resolution.Resolution, checkouts []event.Checkout, want *RunMR) (*event.Checkout, *event.AdoptedMR, error) {
 	repo := want.Repo
 	if repo == "" {
 		repo = event.PrimaryCheckoutName
@@ -1253,7 +1254,7 @@ func adoptMR(ctx context.Context, res *Resolution, checkouts []event.Checkout, w
 	if co == nil {
 		return nil, nil, fmt.Errorf("merge request: the project has no repository %q", repo)
 	}
-	repoHost := res.repoHostFor(repo)
+	repoHost := res.RepoHostFor(repo)
 	if repoHost == nil {
 		return nil, nil, fmt.Errorf("merge request: no integration reaches repository %q", repo)
 	}
@@ -1278,11 +1279,11 @@ func (e *Engine) ListMRs(ctx context.Context, projectID, repo string) ([]ports.M
 	if err != nil {
 		return nil, err
 	}
-	defer res.release()
+	defer res.Close()
 	if repo == "" {
 		repo = event.PrimaryCheckoutName
 	}
-	repoHost := res.repoHostFor(repo)
+	repoHost := res.RepoHostFor(repo)
 	if repoHost == nil {
 		return nil, fmt.Errorf("no integration reaches repository %q", repo)
 	}
@@ -1295,11 +1296,11 @@ func (e *Engine) MR(ctx context.Context, projectID, repo string, iid int) (ports
 	if err != nil {
 		return ports.MRInfo{}, err
 	}
-	defer res.release()
+	defer res.Close()
 	if repo == "" {
 		repo = event.PrimaryCheckoutName
 	}
-	repoHost := res.repoHostFor(repo)
+	repoHost := res.RepoHostFor(repo)
 	if repoHost == nil {
 		return ports.MRInfo{}, fmt.Errorf("no integration reaches repository %q", repo)
 	}
@@ -1314,11 +1315,11 @@ func (e *Engine) RepoHostUser(ctx context.Context, projectID, repo string) (stri
 	if err != nil {
 		return "", err
 	}
-	defer res.release()
+	defer res.Close()
 	if repo == "" {
 		repo = event.PrimaryCheckoutName
 	}
-	repoHost := res.repoHostFor(repo)
+	repoHost := res.RepoHostFor(repo)
 	if repoHost == nil {
 		return "", fmt.Errorf("no integration reaches repository %q", repo)
 	}
@@ -1594,7 +1595,7 @@ func (e *Engine) destroyEnv(ctx context.Context, v run.View) (derr error) {
 	if err != nil {
 		return err
 	}
-	defer res.release()
+	defer res.Close()
 	// Final audit flush before the env (and possibly the project gateway) is
 	// torn down, so the trail is durable even for the last activity.
 	if e.egressAudit != nil {
@@ -1612,7 +1613,7 @@ func (e *Engine) destroyEnv(ctx context.Context, v run.View) (derr error) {
 // serves anthropic/*), so any check would false-negative. hasDevcontainer
 // reports whether the repo carries a devcontainer config at either standard
 // path — the workspace definition apothecary requires.
-func hasDevcontainer(ctx context.Context, res *Resolution) (bool, error) {
+func hasDevcontainer(ctx context.Context, res *resolution.Resolution) (bool, error) {
 	for _, p := range []string{".devcontainer/devcontainer.json", ".devcontainer.json"} {
 		ok, err := res.RepoHost.FileExists(ctx, res.RepoRef, p)
 		if err != nil {
@@ -1625,7 +1626,7 @@ func hasDevcontainer(ctx context.Context, res *Resolution) (bool, error) {
 	return false, nil
 }
 
-func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) error {
+func (e *Engine) preflight(ctx context.Context, res *resolution.Resolution, fl *flow.Flow) error {
 	if err := res.RepoHost.CheckAccess(ctx, res.RepoRef); err != nil {
 		return fmt.Errorf("preflight: repository access: %w", err)
 	}
@@ -1654,16 +1655,16 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 		return fmt.Errorf("preflight: repo has no .devcontainer/devcontainer.json — apothecary runs the repo's own devcontainer")
 	}
 	for i := range fl.Phases {
-		if err := res.phaseAvailable(&fl.Phases[i]); err != nil {
+		if err := res.PhaseAvailable(&fl.Phases[i]); err != nil {
 			return fmt.Errorf("preflight: %s: %w", fl.Phases[i].Label(), err)
 		}
 	}
-	if err := res.servicesAvailable(fl); err != nil {
+	if err := res.ServicesAvailable(fl); err != nil {
 		return fmt.Errorf("preflight: %w", err)
 	}
 	// The Ask pane's harness (FLOWLANG §1 ask) is checked like a stage's.
-	if fl.Ask != nil && !res.harnessInSet(fl.Ask.Harness) {
-		return fmt.Errorf("ask: harness %q is not in the project's harness set %v", fl.Ask.Harness, res.harnessSet())
+	if fl.Ask != nil && !res.HarnessInSet(fl.Ask.Harness) {
+		return fmt.Errorf("ask: harness %q is not in the project's harness set %v", fl.Ask.Harness, res.HarnessSet())
 	}
 	for i := range fl.Stages {
 		st := &fl.Stages[i]
@@ -1677,13 +1678,13 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 		// Per-step harness (§6.3): a stage may pin any harness KIND in the
 		// project's set; one outside it is refused here, not at parse time —
 		// flows are portable data.
-		if st.Type == flow.StageAgent && st.Harness != "" && !res.harnessInSet(st.Harness) {
-			return fmt.Errorf("preflight: stage %q pins harness %q, which is not in the project's harness set %v", st.ID, st.Harness, res.harnessSet())
+		if st.Type == flow.StageAgent && st.Harness != "" && !res.HarnessInSet(st.Harness) {
+			return fmt.Errorf("preflight: stage %q pins harness %q, which is not in the project's harness set %v", st.ID, st.Harness, res.HarnessSet())
 		}
 		// Actions and signals resolve like agents and run_refs: the flow names
 		// one, the project must have the integration it needs.
 		if st.Type == flow.StageAction {
-			if err := res.actionAvailable(st); err != nil {
+			if err := res.ActionAvailable(st); err != nil {
 				return fmt.Errorf("preflight: stage %q: %w", st.ID, err)
 			}
 		}
@@ -1691,12 +1692,12 @@ func (e *Engine) preflight(ctx context.Context, res *Resolution, fl *flow.Flow) 
 			if slug == "" {
 				continue
 			}
-			if err := res.signalAvailable(slug); err != nil {
+			if err := res.SignalAvailable(slug); err != nil {
 				return fmt.Errorf("preflight: stage %q: %w", st.ID, err)
 			}
 		}
 	}
-	if err := res.mcpAvailable(fl, e.browser != nil); err != nil {
+	if err := res.MCPAvailable(fl, e.browser != nil); err != nil {
 		return fmt.Errorf("preflight: %w", err)
 	}
 	// Every agent stage's model must be one its harness can reach — checked
@@ -2415,7 +2416,7 @@ func (e *Engine) WorkspaceLogTail(ctx context.Context, runID string, n int) ([]b
 	if err != nil {
 		return nil, err
 	}
-	defer res.release()
+	defer res.Close()
 	tailer, ok := res.Envp.(ports.ExecLogTailer)
 	if !ok {
 		return nil, fmt.Errorf("run %s: provisioner has no live log: %w", runID, ErrNoLiveLog)
@@ -2532,10 +2533,10 @@ func (e *Engine) ReconcileEnvsOnce(ctx context.Context) error {
 	e.opMu.Unlock()
 	// Resolutions are cached per project within the pass — many runs share
 	// one project, and Resolve is not free.
-	resolved := map[string]*Resolution{}
+	resolved := map[string]*resolution.Resolution{}
 	defer func() {
 		for _, res := range resolved {
-			res.release()
+			res.Close()
 		}
 	}()
 	for _, v := range views {
@@ -2625,10 +2626,10 @@ func (e *Engine) SampleResourcesOnce(ctx context.Context) error {
 	}
 	live := map[string]bool{}
 	// Resolutions are cached per project within the pass, as in ReconcileEnvsOnce.
-	resolved := map[string]*Resolution{}
+	resolved := map[string]*resolution.Resolution{}
 	defer func() {
 		for _, res := range resolved {
-			res.release()
+			res.Close()
 		}
 	}()
 	for _, v := range views {
@@ -2785,7 +2786,7 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 	if err != nil {
 		return []PreflightStep{step("resolve", err)}
 	}
-	defer res.release()
+	defer res.Close()
 	steps := []PreflightStep{step("resolve", nil)}
 
 	fl, err := e.flows.Get(ctx, res.ProjectID, res.DefaultFlow)
@@ -2840,21 +2841,21 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 	return steps
 }
 
-func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
+func (e *Engine) preflightFlowRefs(res *resolution.Resolution, fl *flow.Flow) error {
 	for i := range fl.Phases {
-		if err := res.phaseAvailable(&fl.Phases[i]); err != nil {
+		if err := res.PhaseAvailable(&fl.Phases[i]); err != nil {
 			return fmt.Errorf("%s: %w", fl.Phases[i].Label(), err)
 		}
 	}
-	if err := res.servicesAvailable(fl); err != nil {
+	if err := res.ServicesAvailable(fl); err != nil {
 		return err
 	}
-	if err := res.mcpAvailable(fl, e.browser != nil); err != nil {
+	if err := res.MCPAvailable(fl, e.browser != nil); err != nil {
 		return err
 	}
 	// The Ask pane's harness (FLOWLANG §1 ask) is checked like a stage's.
-	if fl.Ask != nil && !res.harnessInSet(fl.Ask.Harness) {
-		return fmt.Errorf("ask: harness %q is not in the project's harness set %v", fl.Ask.Harness, res.harnessSet())
+	if fl.Ask != nil && !res.HarnessInSet(fl.Ask.Harness) {
+		return fmt.Errorf("ask: harness %q is not in the project's harness set %v", fl.Ask.Harness, res.HarnessSet())
 	}
 	for i := range fl.Stages {
 		st := &fl.Stages[i]
@@ -2863,11 +2864,11 @@ func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
 				return fmt.Errorf("stage %q: run_ref %q not found in project.commands", st.ID, st.RunRef)
 			}
 		}
-		if st.Type == flow.StageAgent && st.Harness != "" && !res.harnessInSet(st.Harness) {
-			return fmt.Errorf("stage %q pins harness %q, which is not in the project's harness set %v", st.ID, st.Harness, res.harnessSet())
+		if st.Type == flow.StageAgent && st.Harness != "" && !res.HarnessInSet(st.Harness) {
+			return fmt.Errorf("stage %q pins harness %q, which is not in the project's harness set %v", st.ID, st.Harness, res.HarnessSet())
 		}
 		if st.Type == flow.StageAction {
-			if err := res.actionAvailable(st); err != nil {
+			if err := res.ActionAvailable(st); err != nil {
 				return fmt.Errorf("stage %q: %w", st.ID, err)
 			}
 		}
@@ -2875,7 +2876,7 @@ func (e *Engine) preflightFlowRefs(res *Resolution, fl *flow.Flow) error {
 			if slug == "" {
 				continue
 			}
-			if err := res.signalAvailable(slug); err != nil {
+			if err := res.SignalAvailable(slug); err != nil {
 				return fmt.Errorf("stage %q: %w", st.ID, err)
 			}
 		}

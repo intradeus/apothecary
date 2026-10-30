@@ -11,9 +11,9 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/confstore"
-	"apothecary/internal/engine"
 	"apothecary/internal/kinds"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/secrets"
 )
 
@@ -264,7 +264,7 @@ func TestProvisionerCacheGenerations(t *testing.T) {
 func TestUnresolvableMapping(t *testing.T) {
 	r, svc, _, _, _ := setup(t)
 	ctx := context.Background()
-	if _, err := r.Resolve(ctx, "no-such-project"); !errors.Is(err, engine.ErrUnresolvable) {
+	if _, err := r.Resolve(ctx, "no-such-project"); !errors.Is(err, resolution.ErrUnresolvable) {
 		t.Errorf("missing project err = %v", err)
 	}
 	// An unregistered kind never heals under the running process: seed an
@@ -294,7 +294,7 @@ func TestUnresolvableMapping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Resolve(ctx, p2.ID); !errors.Is(err, engine.ErrUnresolvable) {
+	if _, err := r.Resolve(ctx, p2.ID); !errors.Is(err, resolution.ErrUnresolvable) {
 		t.Errorf("unregistered kind err = %v", err)
 	}
 }
@@ -345,7 +345,7 @@ func TestTicketWriterResolvesTheWriteSide(t *testing.T) {
 	if _, err := r.TicketWriter(ctx, ro.ID); err == nil || !strings.Contains(err.Error(), "legacy (readonly)") {
 		t.Errorf("read-only tracker: err = %v, want the integration named", err)
 	}
-	if _, err := r.TicketWriter(ctx, "nope"); !errors.Is(err, engine.ErrUnresolvable) {
+	if _, err := r.TicketWriter(ctx, "nope"); !errors.Is(err, resolution.ErrUnresolvable) {
 		t.Errorf("missing integration: err = %v, want unresolvable", err)
 	}
 }

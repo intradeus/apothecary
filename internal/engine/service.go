@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,98 +24,11 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/shell"
 	"apothecary/internal/sidecar"
 )
-
-// Service is one project service as a run uses it (confstore's
-// ServiceConfig without the import, its durations defaulted).
-type Service struct {
-	Name        string
-	Description string
-	Start       string
-	Stop        string
-	Health      ServiceHealth
-	Ports       []ServicePort
-}
-
-// ServiceHealth is the service's probe — at most one of HTTP, TCP, Command
-// (none: up once started) — how long a start may take to pass it, and how
-// often a running one is probed.
-type ServiceHealth struct {
-	HTTP     string
-	TCP      int
-	Command  string
-	Timeout  time.Duration
-	Interval time.Duration
-}
-
-type ServicePort struct {
-	Port  int
-	Label string
-	Path  string
-}
-
-// address is where the port answers in the workspace: what an agent opens.
-func (p ServicePort) address() string {
-	path := p.Path
-	if path == "" {
-		path = "/"
-	}
-	return "http://localhost:" + strconv.Itoa(p.Port) + path
-}
-
-// address is the service's own: its first port's.
-func (s *Service) address() string {
-	if len(s.Ports) == 0 {
-		return ""
-	}
-	return s.Ports[0].address()
-}
-
-func (s *Service) probe() string {
-	switch {
-	case s.Health.HTTP != "":
-		return "GET " + s.Health.HTTP
-	case s.Health.TCP != 0:
-		return "tcp " + strconv.Itoa(s.Health.TCP)
-	case s.Health.Command != "":
-		return "command: " + s.Health.Command
-	}
-	return ""
-}
-
-// service is the project's service named name, or nil.
-func (r *Resolution) service(name string) *Service {
-	for i := range r.Services {
-		if r.Services[i].Name == name {
-			return &r.Services[i]
-		}
-	}
-	return nil
-}
-
-// servicesAvailable checks that every service the flow uses is one the
-// project declares — at run creation, like run_refs: flows are portable,
-// services the project's.
-func (r *Resolution) servicesAvailable(fl *flow.Flow) error {
-	for _, name := range fl.Services() {
-		if r.service(name) != nil {
-			continue
-		}
-		names := make([]string, 0, len(r.Services))
-		for _, s := range r.Services {
-			names = append(names, s.Name)
-		}
-		declared := "none — declare it in the project's workspace settings"
-		if len(names) > 0 {
-			declared = strings.Join(names, ", ")
-		}
-		return fmt.Errorf("service %q is not one of the project's services (%s)", name, declared)
-	}
-	return nil
-}
 
 // usesServiceStages: only a flow with service stages has services of its
 // own to stop.
@@ -168,7 +80,9 @@ type shimServiceHealth struct {
 	Command string `json:"command,omitempty"`
 }
 
-func (s *Service) request(timeout time.Duration) shimServiceRequest {
+// serviceRequest is the shim request that starts or stops s; timeout <= 0
+// uses the service's own start timeout.
+func serviceRequest(s *resolution.Service, timeout time.Duration) shimServiceRequest {
 	if timeout <= 0 {
 		timeout = s.Health.Timeout
 	}
@@ -308,7 +222,7 @@ func (x *exec) stageService(st *flow.Stage) error {
 	}
 	rs.ph = phIn
 	started := x.e.clock()
-	svc := x.res.service(st.Service)
+	svc := x.res.Service(st.Service)
 	if svc == nil {
 		// Removed from the project since run creation checked it.
 		msg := fmt.Sprintf("service %q no longer exists in the project's services", st.Service)
@@ -328,7 +242,7 @@ func (x *exec) stageService(st *flow.Stage) error {
 	}
 
 	if st.Do == flow.ServiceStop {
-		if _, err := shimService(x.ctx, x.res.Envp, rs.envID, "stop", nil, svc.request(0), serviceStopBudget); err != nil {
+		if _, err := shimService(x.ctx, x.res.Envp, rs.envID, "stop", nil, serviceRequest(svc, 0), serviceStopBudget); err != nil {
 			return infra(err)
 		}
 		if err := x.append(&event.ServiceStopped{Service: svc.Name, StageID: st.ID, By: event.ServiceByStage}); err != nil {
@@ -347,7 +261,7 @@ func (x *exec) stageService(st *flow.Stage) error {
 	if restart {
 		flags = append(flags, "--restart")
 	}
-	req := svc.request(timeout)
+	req := serviceRequest(svc, timeout)
 	req.By, req.Owner, req.StageID = event.ServiceByStage, rs.phase, st.ID
 	state, err := shimService(x.ctx, x.res.Envp, rs.envID, "start", flags, req, timeout+serviceStopBudget+30*time.Second)
 	if err != nil && !errors.Is(err, context.DeadlineExceeded) {
@@ -361,7 +275,7 @@ func (x *exec) stageService(st *flow.Stage) error {
 	}
 	if err == nil && state.Phase == svcHealthy {
 		x.e.exposeService(x.ctx, rs.runID, svc)
-		if aerr := x.append(&event.ServiceReady{Service: svc.Name, StageID: st.ID, URL: svc.address()}); aerr != nil {
+		if aerr := x.append(&event.ServiceReady{Service: svc.Name, StageID: st.ID, URL: svc.Address()}); aerr != nil {
 			return aerr
 		}
 		return x.completeService(st, started)
@@ -430,14 +344,14 @@ func (e *Engine) stopRunServices(ctx context.Context, rs *runState) {
 	if err != nil {
 		return
 	}
-	defer res.release()
+	defer res.Close()
 	e.stopStageServices(ctx, res, rs.envID, rs.runID, "the run ended", func(sidecar.ServiceState) bool { return true },
 		func(p event.Payload) error { return e.appendAndEmit(ctx, rs.runID, p) })
 }
 
 // stopStageServices stops every live service a stage started that pick
 // keeps, recording each.
-func (e *Engine) stopStageServices(ctx context.Context, res *Resolution, env ports.EnvID, runID, reason string,
+func (e *Engine) stopStageServices(ctx context.Context, res *resolution.Resolution, env ports.EnvID, runID, reason string,
 	pick func(sidecar.ServiceState) bool, record func(event.Payload) error) {
 	states, err := serviceStates(ctx, res.Envp, env)
 	if err != nil {
@@ -449,8 +363,8 @@ func (e *Engine) stopStageServices(ctx context.Context, res *Resolution, env por
 			continue
 		}
 		req := shimServiceRequest{Name: st.Name}
-		if svc := res.service(st.Name); svc != nil {
-			req = svc.request(0)
+		if svc := res.Service(st.Name); svc != nil {
+			req = serviceRequest(svc, 0)
 		}
 		if _, err := shimService(ctx, res.Envp, env, "stop", nil, req, serviceStopBudget); err != nil {
 			e.log.Warn("services: stop failed", "run", runID, "service", st.Name, "err", err)
@@ -463,7 +377,7 @@ func (e *Engine) stopStageServices(ctx context.Context, res *Resolution, env por
 // serviceInput renders a run.service.<name> input for an agent: its
 // address in the workspace while it is up, else plainly that it is not.
 func (x *exec) serviceInput(name string) string {
-	svc := x.res.service(name)
+	svc := x.res.Service(name)
 	if svc == nil {
 		return fmt.Sprintf("(the project has no service %q)", name)
 	}
@@ -477,16 +391,16 @@ func (x *exec) serviceInput(name string) string {
 			msg += " — " + st.LastError
 		}
 		return msg + ")"
-	case svc.address() == "":
+	case svc.Address() == "":
 		return fmt.Sprintf("(the service %q is running; it declares no port)", name)
 	}
-	return svc.address() + fmt.Sprintf("\nThe project's service %q is running and healthy at this address in your workspace.", name)
+	return svc.Address() + fmt.Sprintf("\nThe project's service %q is running and healthy at this address in your workspace.", name)
 }
 
 // serviceLink is a run.service.<name> source for a human: the preview link
 // of its first port while it is up, else "".
 func (x *exec) serviceLink(name string) string {
-	svc := x.res.service(name)
+	svc := x.res.Service(name)
 	if svc == nil || len(svc.Ports) == 0 {
 		return ""
 	}
@@ -500,7 +414,7 @@ func (x *exec) serviceLink(name string) string {
 // exposeService publishes the service's ports for humans, the way the Ports
 // view exposes any port, and returns each one's preview link (path
 // included). Best effort: no port relay, no links.
-func (e *Engine) exposeService(ctx context.Context, runID string, svc *Service) map[int]string {
+func (e *Engine) exposeService(ctx context.Context, runID string, svc *resolution.Service) map[int]string {
 	out := map[int]string{}
 	if e.portRelay == nil {
 		return out
@@ -583,7 +497,7 @@ type RunServices struct {
 
 // serviceRun is what a human's service action needs: the run's workspace
 // and the resolved project (release it).
-func (e *Engine) serviceRun(ctx context.Context, runID string) (run.View, *Resolution, error) {
+func (e *Engine) serviceRun(ctx context.Context, runID string) (run.View, *resolution.Resolution, error) {
 	v, err := e.runView(ctx, runID)
 	if err != nil {
 		return v, nil, err
@@ -605,7 +519,7 @@ func (e *Engine) RunServices(ctx context.Context, runID string) (RunServices, er
 	if err != nil {
 		return RunServices{}, err
 	}
-	defer res.release()
+	defer res.Close()
 	out := RunServices{Workspace: hasWorkspace(v), Services: []ServiceInfo{}}
 	states := map[string]sidecar.ServiceState{}
 	// A project with no services has nothing to ask the workspace about.
@@ -636,14 +550,14 @@ func (e *Engine) RunServices(ctx context.Context, runID string) (RunServices, er
 	return out, nil
 }
 
-func serviceInfo(svc *Service, st sidecar.ServiceState, urls map[int]string) ServiceInfo {
+func serviceInfo(svc *resolution.Service, st sidecar.ServiceState, urls map[int]string) ServiceInfo {
 	info := ServiceInfo{Name: svc.Name, Description: svc.Description, State: st.Phase, Healthy: st.Phase == svcHealthy,
 		By: st.By, StageID: st.StageID, FlowPhase: st.Owner, StartedAt: st.StartedAt, HealthyAt: st.HealthyAt,
-		EndedAt: st.EndedAt, ExitCode: st.ExitCode, Probe: svc.probe(), LastProbeAt: st.LastProbeAt,
+		EndedAt: st.EndedAt, ExitCode: st.ExitCode, Probe: svc.Probe(), LastProbeAt: st.LastProbeAt,
 		LastProbeOK: st.LastProbeOK, LastError: st.LastError, Ports: []ServicePortInfo{}}
 	for _, p := range svc.Ports {
 		info.Ports = append(info.Ports, ServicePortInfo{Port: p.Port, Label: p.Label, Path: p.Path,
-			Address: p.address(), URL: urls[p.Port]})
+			Address: p.Address(), URL: urls[p.Port]})
 	}
 	return info
 }
@@ -658,8 +572,8 @@ func (e *Engine) StartService(ctx context.Context, runID, name string, restart b
 	if err != nil {
 		return ServiceInfo{}, err
 	}
-	defer res.release()
-	svc := res.service(name)
+	defer res.Close()
+	svc := res.Service(name)
 	if svc == nil {
 		return ServiceInfo{}, fmt.Errorf("%w: %q", ErrNoSuchService, name)
 	}
@@ -667,7 +581,7 @@ func (e *Engine) StartService(ctx context.Context, runID, name string, restart b
 		return ServiceInfo{}, fmt.Errorf("run %s: %w", runID, ErrNoWorkspace)
 	}
 	env := ports.EnvID(v.EnvID)
-	req := svc.request(0)
+	req := serviceRequest(svc, 0)
 	req.By = event.ServiceByHuman
 	var flags []string
 	if restart {
@@ -689,7 +603,7 @@ func (e *Engine) StartService(ctx context.Context, runID, name string, restart b
 // watchService follows a human's start until the service is up or failed,
 // then says so on the run's log and exposes its ports. It resolves the
 // project itself: the caller's resolution is released when it returns.
-func (e *Engine) watchService(runID, projectID string, svc Service, env ports.EnvID) {
+func (e *Engine) watchService(runID, projectID string, svc resolution.Service, env ports.EnvID) {
 	ctx, cancel := context.WithTimeout(context.Background(), svc.Health.Timeout+time.Minute)
 	defer cancel()
 	res, err := e.resolver.Resolve(ctx, projectID)
@@ -697,14 +611,14 @@ func (e *Engine) watchService(runID, projectID string, svc Service, env ports.En
 		e.log.Warn("services: cannot watch a start", "run", runID, "service", svc.Name, "err", err)
 		return
 	}
-	defer res.release()
+	defer res.Close()
 	for {
 		st, err := serviceState(ctx, res.Envp, env, svc.Name)
 		switch {
 		case err != nil, st.Phase == svcStarting:
 		case st.Phase == svcHealthy:
 			e.exposeService(ctx, runID, &svc)
-			_ = e.appendAndEmit(context.WithoutCancel(ctx), runID, &event.ServiceReady{Service: svc.Name, URL: svc.address()})
+			_ = e.appendAndEmit(context.WithoutCancel(ctx), runID, &event.ServiceReady{Service: svc.Name, URL: svc.Address()})
 			return
 		case st.Phase == svcStopped, st.Phase == svcStopping:
 			return // stopped by someone while starting: nothing failed
@@ -740,8 +654,8 @@ func (e *Engine) StopService(ctx context.Context, runID, name string) (ServiceIn
 	if err != nil {
 		return ServiceInfo{}, err
 	}
-	defer res.release()
-	svc := res.service(name)
+	defer res.Close()
+	svc := res.Service(name)
 	if svc == nil {
 		return ServiceInfo{}, fmt.Errorf("%w: %q", ErrNoSuchService, name)
 	}
@@ -749,7 +663,7 @@ func (e *Engine) StopService(ctx context.Context, runID, name string) (ServiceIn
 		return ServiceInfo{}, fmt.Errorf("run %s: %w", runID, ErrNoWorkspace)
 	}
 	before, _ := serviceState(ctx, res.Envp, ports.EnvID(v.EnvID), name)
-	st, err := shimService(ctx, res.Envp, ports.EnvID(v.EnvID), "stop", nil, svc.request(0), serviceStopBudget)
+	st, err := shimService(ctx, res.Envp, ports.EnvID(v.EnvID), "stop", nil, serviceRequest(svc, 0), serviceStopBudget)
 	if err != nil {
 		return ServiceInfo{}, err
 	}
@@ -768,8 +682,8 @@ func (e *Engine) ServiceLog(ctx context.Context, runID, name string, n int) (str
 	if err != nil {
 		return "", err
 	}
-	defer res.release()
-	if res.service(name) == nil {
+	defer res.Close()
+	if res.Service(name) == nil {
 		return "", fmt.Errorf("%w: %q", ErrNoSuchService, name)
 	}
 	if !hasWorkspace(v) {

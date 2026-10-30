@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 )
 
 // A refreshed login is pushed only into the workspaces whose run uses that
@@ -22,9 +23,9 @@ func TestPushCredentialScopesAndRedactsFirst(t *testing.T) {
 		redacted bool // the token was already known when the file was written
 	}
 	var writes []seeded
-	sink := func(ids []string, env ports.EnvID) (*Resolution, *redactor) {
+	sink := func(ids []string, env ports.EnvID) (*resolution.Resolution, *redactor) {
 		r := &redactor{}
-		res := &Resolution{CredentialIDs: ids}
+		res := &resolution.Resolution{CredentialIDs: ids}
 		res.SeedAuth = func(_ context.Context, env ports.EnvID, register func(string)) error {
 			register("fresh-access-token-123")
 			writes = append(writes, seeded{env: env, redacted: r.scrub("fresh-access-token-123") != "fresh-access-token-123"})
@@ -77,7 +78,7 @@ func TestBrokerToken(t *testing.T) {
 	if again.BrokerToken("r1") != a {
 		t.Error("the token changed across a restart with the same instance key")
 	}
-	res := &Resolution{ProviderEnv: map[string]string{"K": "v"}, AuthBroker: func(func(string)) http.Handler { return nil }}
+	res := &resolution.Resolution{ProviderEnv: map[string]string{"K": "v"}, AuthBroker: func(func(string)) http.Handler { return nil }}
 	env := e.providerEnvFor(res, "r1", "http://engine:8080")
 	if env["OMP_AUTH_BROKER_URL"] != "http://engine:8080/api/runs/r1/auth-broker" || env["OMP_AUTH_BROKER_TOKEN"] != a || env["K"] != "v" {
 		t.Errorf("provider env = %v", env)

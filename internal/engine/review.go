@@ -86,12 +86,12 @@ func (e *Engine) MRStatuses(ctx context.Context, runID string) ([]MRLive, error)
 	if err != nil {
 		return nil, err
 	}
-	defer res.release()
+	defer res.Close()
 	out := make([]MRLive, len(v.MRs))
 	var wg sync.WaitGroup
 	for i, mr := range v.MRs {
 		out[i] = MRLive{Repo: mr.Repo, Branch: mr.Branch, URL: mr.URL, Target: mr.Target}
-		repoHost := res.repoHostFor(mr.Repo)
+		repoHost := res.RepoHostFor(mr.Repo)
 		if repoHost == nil {
 			out[i].Error = "no integration reaches this repository"
 			continue
@@ -148,7 +148,7 @@ func (e *Engine) MRStatuses(ctx context.Context, runID string) ([]MRLive, error)
 		}
 		mrs, ok := open[l.Repo]
 		if !ok {
-			mrs, _ = res.repoHostFor(l.Repo).ListMRs(ctx)
+			mrs, _ = res.RepoHostFor(l.Repo).ListMRs(ctx)
 			open[l.Repo] = mrs
 		}
 		l.StackedOn = ports.StackedOn(l.Target, mrs)

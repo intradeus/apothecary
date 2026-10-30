@@ -134,7 +134,7 @@ func (e *Engine) Workspace(ctx context.Context, runID, repo string) (*sidecar.Cl
 	if err != nil {
 		return nil, Checkout{}, err
 	}
-	defer res.release()
+	defer res.Close()
 	sc, ok := res.Envp.(ports.Sidecar)
 	if !ok {
 		return nil, Checkout{}, ErrNoSidecar

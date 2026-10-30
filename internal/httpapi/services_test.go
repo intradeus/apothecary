@@ -11,13 +11,14 @@ import (
 	"apothecary/internal/engine"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 )
 
 func TestServiceEndpoints(t *testing.T) {
 	x := newEnv(t, engine.Config{})
-	x.res.Services = []engine.Service{
-		{Name: "default", Start: "npm run dev", Health: engine.ServiceHealth{TCP: 3000, Timeout: time.Minute},
-			Ports: []engine.ServicePort{{Port: 3000}}},
+	x.res.Services = []resolution.Service{
+		{Name: "default", Start: "npm run dev", Health: resolution.ServiceHealth{TCP: 3000, Timeout: time.Minute},
+			Ports: []resolution.ServicePort{{Port: 3000}}},
 	}
 	svcs := fake.NewServices()
 	svcs.Log["default"] = "listening on 3000\n"

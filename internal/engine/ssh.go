@@ -67,7 +67,7 @@ func (e *Engine) SSHTarget(ctx context.Context, workspace string) (SSHTarget, er
 		if err != nil {
 			return nil, err
 		}
-		defer res.release()
+		defer res.Close()
 		wss, ok := res.Envp.(ports.WorkspaceSSH)
 		if !ok {
 			return nil, ErrNoSidecar
@@ -129,7 +129,7 @@ func (e *Engine) SSHInfo(ctx context.Context, runID string) (SSHInfo, error) {
 		if starter, ok := res.Envp.(ports.EditorStarter); ok {
 			info.Extensions = starter.EditorExtensions(ctx, ports.EnvID(v.EnvID), res.EditorSettings)
 		}
-		res.release()
+		res.Close()
 	}
 	// Starting the sidecar here is no waste: the connection needs it next.
 	client, _, err := e.Workspace(ctx, runID, "")

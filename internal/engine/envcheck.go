@@ -12,6 +12,7 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/shell"
 	"apothecary/internal/wsname"
 )
@@ -60,7 +61,7 @@ type EnvCheckOptions struct {
 // RunEnvCheck provisions, bootstraps and verifies one throwaway
 // environment, emitting steps as they complete, then tears it down. Returns
 // the failure count.
-func RunEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvCheckOptions, emit func(CheckStep)) int {
+func RunEnvCheck(ctx context.Context, res *resolution.Resolution, runID string, opts EnvCheckOptions, emit func(CheckStep)) int {
 	failed, teardown := runEnvCheck(ctx, res, runID, opts, emit)
 	return failed + teardown()
 }
@@ -74,7 +75,7 @@ const envcheckProbes = 8
 // the workspace. A cancelled (or timed-out) ctx stops the remaining probes;
 // one step says why, and the rest are not reported. The teardown always
 // runs on its own context, so a cancelled check still cleans up.
-func runEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvCheckOptions, emit func(CheckStep)) (int, func() int) {
+func runEnvCheck(ctx context.Context, res *resolution.Resolution, runID string, opts EnvCheckOptions, emit func(CheckStep)) (int, func() int) {
 	if opts.Timeout == 0 {
 		opts.Timeout = 30 * time.Minute
 	}
@@ -287,7 +288,7 @@ func runEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 
 // envcheckExtras clones the project's extra repos too: a run would, and a
 // clone the token cannot reach is exactly what this check is for.
-func envcheckExtras(res *Resolution, branch string) []ExtraCheckout {
+func envcheckExtras(res *resolution.Resolution, branch string) []ExtraCheckout {
 	var out []ExtraCheckout
 	for _, x := range res.ExtraRepos {
 		out = append(out, ExtraCheckout{Name: x.Name, Dir: "repos/" + x.Name, URL: x.URL, Branch: branch, Source: x.DefaultBranch})
@@ -399,7 +400,7 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 	// Egress is enforced by the per-project gateway the provisioner brings up at
 	// Provision time (from the EnvSpec egress fields) — nothing to prime here.
 	go func() {
-		defer res.release()
+		defer res.Close()
 		defer cancel()
 		emit := func(s CheckStep) {
 			e.mu.Lock()

@@ -83,7 +83,7 @@ func (x *exec) subjectRepoHost(st *flow.Stage) (ports.RepoHost, *mrRecord, error
 	if mr == nil {
 		return nil, nil, fmt.Errorf("%w: %s", errNoSubject, noSubjectMsg(st))
 	}
-	repoHost := x.res.repoHostFor(mr.Repo)
+	repoHost := x.res.RepoHostFor(mr.Repo)
 	if repoHost == nil {
 		return nil, nil, fmt.Errorf("stage %s: no integration reaches repository %s", st.ID, mr.Repo)
 	}

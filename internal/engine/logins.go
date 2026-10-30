@@ -11,6 +11,7 @@ import (
 	"slices"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 )
 
 // Provider logins, engine side (docs/model-providers-plan.md). The keeper
@@ -28,14 +29,14 @@ import (
 
 // authSink is a live run's workspace, as a refreshed login reaches it.
 type authSink struct {
-	res    *Resolution
+	res    *resolution.Resolution
 	env    ports.EnvID
 	redact *redactor
 }
 
 // setAuthSink records that runID's workspace env holds its harnesses'
 // credentials (bootstrap, re-entry).
-func (e *Engine) setAuthSink(runID string, res *Resolution, env ports.EnvID, redact *redactor) {
+func (e *Engine) setAuthSink(runID string, res *resolution.Resolution, env ports.EnvID, redact *redactor) {
 	e.sinkMu.Lock()
 	defer e.sinkMu.Unlock()
 	if e.sinks == nil {
@@ -108,7 +109,7 @@ func AuthBrokerPath(runID string) string { return "/api/runs/" + runID + "/auth-
 
 // providerEnvFor is res.ProviderEnv plus, when a harness reads its logins
 // from the broker, where that broker is and the token it takes.
-func (e *Engine) providerEnvFor(res *Resolution, runID, engineURL string) map[string]string {
+func (e *Engine) providerEnvFor(res *resolution.Resolution, runID, engineURL string) map[string]string {
 	if res.AuthBroker == nil || e.BrokerToken(runID) == "" {
 		return res.ProviderEnv
 	}
@@ -138,12 +139,12 @@ func (e *Engine) RunAuthBroker(ctx context.Context, runID string) (http.Handler,
 		return nil, nil, err
 	}
 	if res.AuthBroker == nil {
-		res.release()
+		res.Close()
 		return nil, nil, fmt.Errorf("run %s reads no login from the broker", runID)
 	}
 	register := func(string) {}
 	if s := e.authSink(runID); s != nil {
 		register = func(v string) { s.redact.add(v, "harness-auth") }
 	}
-	return res.AuthBroker(register), res.release, nil
+	return res.AuthBroker(register), res.Close, nil
 }

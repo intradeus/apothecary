@@ -9,6 +9,7 @@ import (
 
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 )
 
 // modelCheck is what checking a flow's models found.
@@ -29,7 +30,7 @@ const modelListTimeout = 15 * time.Second
 // reach with the project's credentials. Providers retire models (a flow
 // pinning yesterday's model fails mid-run, after the workspace was built and
 // earlier stages spent their budget) — this catches it before any of that.
-func checkModels(ctx context.Context, res *Resolution, fl *flow.Flow) modelCheck {
+func checkModels(ctx context.Context, res *resolution.Resolution, fl *flow.Flow) modelCheck {
 	var out modelCheck
 	if res.Models == nil || fl == nil {
 		return out
@@ -83,7 +84,7 @@ const authCheckTimeout = 30 * time.Second
 // stages' models route through — a revoked key otherwise passes every model
 // check (the catalog fallback needs none) and fails at the first stage, as
 // an agent that ends its turn without output.
-func checkAuth(ctx context.Context, res *Resolution, stages []flow.Stage) (rejected, unverified []string) {
+func checkAuth(ctx context.Context, res *resolution.Resolution, stages []flow.Stage) (rejected, unverified []string) {
 	if res.CheckAuth == nil {
 		return nil, nil
 	}
@@ -184,7 +185,7 @@ const agentModelTimeout = 90 * time.Second
 // authoritative check: the provider may still serve a model the installed
 // harness version does not know. unasked lists harnesses whose agent could
 // not be asked (or said nothing); their stages are not judged.
-func agentModelCheck(ctx context.Context, res *Resolution, env ports.EnvID, stages []flow.Stage) (missing, unasked []string) {
+func agentModelCheck(ctx context.Context, res *resolution.Resolution, env ports.EnvID, stages []flow.Stage) (missing, unasked []string) {
 	asked := map[string][]string{}
 	skipped := map[string]bool{}
 	for i := range stages {
@@ -201,7 +202,7 @@ func agentModelCheck(ctx context.Context, res *Resolution, env ports.EnvID, stag
 		}
 		models, ok := asked[kind]
 		if !ok {
-			lister, can := res.runnerFor(kind).(ports.AgentModelLister)
+			lister, can := res.RunnerFor(kind).(ports.AgentModelLister)
 			if !can {
 				skipped[kind] = true
 				continue

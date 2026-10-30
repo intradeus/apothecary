@@ -15,6 +15,7 @@ import (
 	"apothecary/internal/engine"
 	"apothecary/internal/flow"
 	"apothecary/internal/kinds"
+	"apothecary/internal/resolution"
 	"apothecary/internal/secrets"
 	"apothecary/internal/signalspec"
 )
@@ -93,7 +94,7 @@ func confErr(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, confstore.ErrConflict), errors.Is(err, confstore.ErrReferenced):
 		writeErr(w, http.StatusConflict, err.Error())
-	case errors.Is(err, confstore.ErrInvalid), errors.Is(err, engine.ErrUnresolvable):
+	case errors.Is(err, confstore.ErrInvalid), errors.Is(err, resolution.ErrUnresolvable):
 		writeErr(w, http.StatusBadRequest, err.Error())
 	default:
 		writeErr(w, http.StatusInternalServerError, err.Error())

@@ -2,7 +2,7 @@
 // integration kind declares a Descriptor (drives the generic CPUI form) and
 // constructs adapters from stored config+secrets. The engine itself stays
 // ports-only — the resolver (internal/resolve) is the sole consumer that
-// turns kinds into engine.Resolution fields.
+// turns kinds into resolution.Resolution fields.
 package kinds
 
 import (

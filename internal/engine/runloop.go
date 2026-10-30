@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/shell"
 	"apothecary/internal/signalspec"
@@ -46,7 +47,7 @@ type exec struct {
 	e   *Engine
 	rs  *runState
 	h   *runHandle
-	res *Resolution
+	res *resolution.Resolution
 	ctx context.Context
 	bg  context.Context
 	// envEnsured records that ensureEnv ran (and succeeded) once this loop
@@ -93,14 +94,14 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	res, err := e.resolveForRun(bg, view)
 	if err != nil {
 		x.rs = &runState{runID: runID, view: view}
-		if errors.Is(err, ErrUnresolvable) {
+		if errors.Is(err, resolution.ErrUnresolvable) {
 			_ = x.append(&event.RunFailed{Reason: err.Error()})
 		} else {
 			e.log.Error("run loop: resolution failed; run left non-terminal for recovery", "run", runID, "err", err)
 		}
 		return
 	}
-	defer res.release()
+	defer res.Close()
 	x.res = res
 	x.redact = newRedactor(res, e.RunToken(runID), e.BrokerToken(runID))
 	// A run that stops (for good, or for a restart) holds no workspace a
@@ -858,7 +859,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	started := x.e.clock()
 
 	prompt := x.assemblePrompt(st, iter)
-	runner := x.res.runnerFor(st.Harness) // per-step harness (default when unpinned)
+	runner := x.res.RunnerFor(st.Harness) // per-step harness (default when unpinned)
 	tr := x.newTranscript(st.ID, iter)
 	spec := ports.AgentSpec{Agent: st.Agent, Harness: st.Harness, Model: st.Model, MaxTurns: st.MaxTurns}
 	// The agent's MCP servers ride every session this attempt opens or

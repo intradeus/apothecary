@@ -6,6 +6,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 )
 
 // TestResolutionRunnerSelection covers the per-step-harness selection logic:
@@ -14,35 +15,35 @@ import (
 func TestResolutionRunnerSelection(t *testing.T) {
 	def := &fake.AgentRunner{}
 	alt := &fake.AgentRunner{}
-	res := &Resolution{
+	res := &resolution.Resolution{
 		HarnessKind:  "opencode",
 		HarnessKinds: []string{"codex", "opencode"},
 		Runner:       def,
 		Runners:      map[string]ports.AgentRunner{"opencode": def, "codex": alt},
 	}
-	if res.runnerFor("") != ports.AgentRunner(def) {
+	if res.RunnerFor("") != ports.AgentRunner(def) {
 		t.Error("unpinned stage should use the default runner")
 	}
-	if res.runnerFor("codex") != ports.AgentRunner(alt) {
+	if res.RunnerFor("codex") != ports.AgentRunner(alt) {
 		t.Error("codex stage should use the codex runner")
 	}
-	if res.runnerFor("opencode") != ports.AgentRunner(def) {
+	if res.RunnerFor("opencode") != ports.AgentRunner(def) {
 		t.Error("opencode stage should use the default runner")
 	}
-	if !res.harnessInSet("codex") || !res.harnessInSet("opencode") {
+	if !res.HarnessInSet("codex") || !res.HarnessInSet("opencode") {
 		t.Error("set members must report in-set")
 	}
-	if res.harnessInSet("claude") {
+	if res.HarnessInSet("claude") {
 		t.Error("a kind outside the set must report not-in-set")
 	}
 
 	// Single-harness setup (fakes): nil Runners ⇒ always the default; only the
 	// one kind is in the set.
-	solo := &Resolution{HarnessKind: "opencode", Runner: def}
-	if solo.runnerFor("opencode") != ports.AgentRunner(def) {
+	solo := &resolution.Resolution{HarnessKind: "opencode", Runner: def}
+	if solo.RunnerFor("opencode") != ports.AgentRunner(def) {
 		t.Error("solo resolution should fall back to Runner")
 	}
-	if !solo.harnessInSet("opencode") || solo.harnessInSet("codex") {
+	if !solo.HarnessInSet("opencode") || solo.HarnessInSet("codex") {
 		t.Error("solo set membership wrong")
 	}
 }

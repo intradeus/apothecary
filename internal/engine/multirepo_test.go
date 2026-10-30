@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
 
@@ -148,7 +149,7 @@ main:
 func TestMultiRepoRunPublishesOneMergeRequestPerChangedRepo(t *testing.T) {
 	h := newHarness(t, mustFlow(t, multiRepoFlowDoc))
 	apiRepoHost := &fake.RepoHost{}
-	h.res.ExtraRepos = []ExtraRepo{
+	h.res.ExtraRepos = []resolution.ExtraRepo{
 		{Name: "api", URL: "https://gitlab.local/g/api.git", Locator: "2", DefaultBranch: "develop"},
 		{Name: "docs", URL: "https://gitlab.local/g/docs.git", Locator: "3", DefaultBranch: "main"},
 		{Name: "vendor", URL: "https://gitlab.local/g/vendor.git", DefaultBranch: "main"}, // context only

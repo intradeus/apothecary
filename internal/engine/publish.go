@@ -53,7 +53,7 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 	}
 	var todo []event.Checkout
 	for _, co := range checkouts {
-		repoHost := x.res.repoHostFor(co.Name)
+		repoHost := x.res.RepoHostFor(co.Name)
 		if repoHost == nil {
 			continue // context-only extra repo
 		}
@@ -120,7 +120,7 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 		rs.actionPending[st.ID] = true
 	}
 	for _, co := range todo {
-		repoHost := x.res.repoHostFor(co.Name)
+		repoHost := x.res.RepoHostFor(co.Name)
 		// Uploaded to each merge request's own repository: an upload is
 		// hosted by, and shown in, the repository it went to.
 		mrBody := string(body)

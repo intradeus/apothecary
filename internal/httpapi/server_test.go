@@ -21,6 +21,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/secrets"
 )
@@ -57,7 +58,7 @@ type env struct {
 	repoHost *fake.RepoHost
 	reg      *channels.Registry
 	fakeCh   *fake.Channel
-	res      *engine.Resolution
+	res      *resolution.Resolution
 	settings *varSettings
 	srv      *Server
 	ts       *httptest.Server
@@ -127,7 +128,7 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 		}
 		flows[f.Name] = f
 	}
-	x.res = &engine.Resolution{
+	x.res = &resolution.Resolution{
 		ProjectID:    testProject,
 		ProjectName:  "test",
 		UserID:       testUser,
@@ -144,7 +145,7 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	if cfg.MRPollInterval == 0 {
 		cfg.MRPollInterval = 5 * time.Millisecond
 	}
-	x.e = engine.New(cfg, x.store, engine.StaticResolver{R: x.res}, flows, x.settings, []ports.NotificationChannel{x.reg})
+	x.e = engine.New(cfg, x.store, resolution.StaticResolver{R: x.res}, flows, x.settings, []ports.NotificationChannel{x.reg})
 	t.Cleanup(x.e.Shutdown)
 	x.srv = New(x.e, x.store, x.reg, cfg.RunsDir)
 	x.srv.Pings = EventPingStore{Store: x.store}

@@ -56,7 +56,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 	if err != nil {
 		return err
 	}
-	defer res.release()
+	defer res.Close()
 	rebuilder, ok := res.Envp.(ports.WorkspaceRebuilder)
 	if !ok {
 		return fmt.Errorf("run %s: provisioner does not support rebuild", runID)

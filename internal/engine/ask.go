@@ -12,6 +12,7 @@ import (
 	askstore "apothecary/internal/ask"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
 
@@ -116,14 +117,14 @@ func (e *Engine) SetAskStore(s askstore.Store) { e.askStore = s }
 type askSetup struct {
 	v       run.View
 	fl      *flow.Flow
-	res     *Resolution
+	res     *resolution.Resolution
 	harness string
 	reason  string
 }
 
 func (s *askSetup) release() {
 	if s != nil && s.res != nil {
-		s.res.release()
+		s.res.Close()
 	}
 }
 
@@ -151,11 +152,11 @@ func (e *Engine) askSetup(ctx context.Context, runID string) (*askSetup, error) 
 		return nil, err
 	}
 	s.res = res
-	if !res.harnessInSet(s.harness) {
-		s.reason = fmt.Sprintf("Ask runs on harness %q, which is not in the project's harness set %v.", s.harness, res.harnessSet())
+	if !res.HarnessInSet(s.harness) {
+		s.reason = fmt.Sprintf("Ask runs on harness %q, which is not in the project's harness set %v.", s.harness, res.HarnessSet())
 		return s, nil
 	}
-	if rc, ok := res.runnerFor(s.harness).(ports.ReadOnlyCapable); ok && !rc.CanReadOnly() {
+	if rc, ok := res.RunnerFor(s.harness).(ports.ReadOnlyCapable); ok && !rc.CanReadOnly() {
 		s.reason = fmt.Sprintf("Harness %q cannot run a read-only session, and Ask must not change the code. Name another harness in the flow's ask: section.", s.harness)
 		return s, nil
 	}
@@ -192,7 +193,7 @@ func (e *Engine) askModels(ctx context.Context, s *askSetup) []string {
 		}
 	}
 	if models == nil {
-		if lister, ok := s.res.runnerFor(s.harness).(ports.AgentModelLister); ok {
+		if lister, ok := s.res.RunnerFor(s.harness).(ports.AgentModelLister); ok {
 			actx, cancel := context.WithTimeout(ctx, agentModelTimeout)
 			got, err := lister.AgentModels(actx, ports.EnvID(s.v.EnvID))
 			cancel()
@@ -333,7 +334,7 @@ func (e *Engine) answerAsk(s *askSetup, a *askRun, th askstore.Thread, model, qu
 	e.mu.Unlock()
 
 	redact := newRedactor(s.res, e.RunToken(runID))
-	runner := s.res.runnerFor(s.harness)
+	runner := s.res.RunnerFor(s.harness)
 	var mu sync.Mutex
 	var text strings.Builder
 	var lastDelta time.Time

@@ -310,7 +310,7 @@ func (x *exec) actionTicketLinkBranch(st *flow.Stage) (bool, error) {
 	}
 	linked := 0
 	for _, co := range checkouts {
-		repoHost := x.res.repoHostFor(co.Name)
+		repoHost := x.res.RepoHostFor(co.Name)
 		if repoHost == nil {
 			continue // context-only extra repo: nowhere to link to
 		}

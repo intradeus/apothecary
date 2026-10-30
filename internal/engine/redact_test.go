@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"apothecary/internal/resolution"
 	"strings"
 	"testing"
 )
@@ -9,7 +10,7 @@ import (
 // and the on-disk stage log — so a token the engine itself injected must not
 // survive the trip (PLAN5 M21).
 func TestRedactorScrubsInjectedSecrets(t *testing.T) {
-	res := &Resolution{
+	res := &resolution.Resolution{
 		GitPass:     "glpat-SUPERSECRETVALUE",
 		ProviderEnv: map[string]string{"ANTHROPIC_API_KEY": "sk-ant-abcdefghij"},
 	}
@@ -42,7 +43,7 @@ func TestRedactorScrubsInjectedSecrets(t *testing.T) {
 func TestRedactorScrubsHarnessAuthJSON(t *testing.T) {
 	const authJSON = `{"openrouter":{"type":"api","key":"sk-or-v1-abcdefghijklmnop"},` +
 		`"anthropic":{"type":"oauth","refresh":"rt-zyxwvutsrqponml"}}`
-	r := newRedactor(&Resolution{HarnessSecrets: []string{authJSON}})
+	r := newRedactor(&resolution.Resolution{HarnessSecrets: []string{authJSON}})
 
 	out := r.scrub("opencode: 401 from provider using key sk-or-v1-abcdefghijklmnop\n" +
 		"refresh token rt-zyxwvutsrqponml rejected\n")
@@ -66,7 +67,7 @@ func TestRedactorScrubsHarnessAuthJSON(t *testing.T) {
 
 // A non-JSON secret is still scrubbed whole — jsonLeaves just adds nothing.
 func TestRedactorHandlesNonJSONHarnessSecret(t *testing.T) {
-	r := newRedactor(&Resolution{HarnessSecrets: []string{"plain-secret-value"}})
+	r := newRedactor(&resolution.Resolution{HarnessSecrets: []string{"plain-secret-value"}})
 	if got := r.scrub("token plain-secret-value here"); strings.Contains(got, "plain-secret-value") {
 		t.Errorf("non-JSON secret survived: %q", got)
 	}
@@ -75,7 +76,7 @@ func TestRedactorHandlesNonJSONHarnessSecret(t *testing.T) {
 // A short value is not a credential worth protecting, and redacting it would
 // shred ordinary output.
 func TestRedactorIgnoresTrivialValues(t *testing.T) {
-	r := newRedactor(&Resolution{ProviderEnv: map[string]string{"X": "ab"}}, "")
+	r := newRedactor(&resolution.Resolution{ProviderEnv: map[string]string{"X": "ab"}}, "")
 	if got := r.scrub("a rabbit ate ab"); got != "a rabbit ate ab" {
 		t.Errorf("scrub = %q, want it untouched", got)
 	}

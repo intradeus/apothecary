@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
 
@@ -50,33 +51,10 @@ func (e *Engine) SetBrowser(b ports.Browser) {
 	e.browserPorts = &portCache{conns: map[string]ports.PortConn{}}
 }
 
-// mcpAvailable is run creation's check of what the flow's MCP servers need
-// from the project: every secret they read, and the browser on when an agent
-// uses it. A command server's program cannot be checked before the
-// workspace exists; a missing one fails its stage.
-func (r *Resolution) mcpAvailable(fl *flow.Flow, haveBrowser bool) error {
-	for _, m := range fl.MCPServers {
-		for _, s := range m.Secrets {
-			if _, ok := r.Secrets[s]; !ok {
-				return fmt.Errorf("mcp server %q reads project secret %q, which the project does not have — add it in Workshop → Settings → Secrets", m.Name, s)
-			}
-		}
-	}
-	if fl.UsesBuiltin(flow.MCPBrowser) {
-		if !r.Browser {
-			return fmt.Errorf("an agent uses the builtin %q mcp server, and the project's browser is off — turn on the project's browser in Workshop → Settings", flow.MCPBrowser)
-		}
-		if !haveBrowser {
-			return fmt.Errorf("an agent uses the builtin %q mcp server, and this apothecary runs no project browser", flow.MCPBrowser)
-		}
-	}
-	return nil
-}
-
 // warmBrowser starts bringing the project's browser up as a run that will
 // use it is created: building its image the first time takes minutes, and
 // an agent's MCP client does not wait that long for its server.
-func (e *Engine) warmBrowser(res *Resolution, fl *flow.Flow) {
+func (e *Engine) warmBrowser(res *resolution.Resolution, fl *flow.Flow) {
 	if e.browser != nil && fl.UsesBuiltin(flow.MCPBrowser) {
 		e.browser.Warm(res.ProjectID, res.ProjectName)
 	}
@@ -193,12 +171,12 @@ func (e *Engine) OpenBrowserMCP(ctx context.Context, runID string) (*BrowserMCPS
 		return nil, err
 	}
 	if !res.Browser {
-		res.release()
+		res.Close()
 		return nil, fmt.Errorf("the project's browser is off — turn it on in Workshop → Settings")
 	}
 	exposer, ok := res.Envp.(ports.WorkspacePortExposer)
 	if !ok {
-		res.release()
+		res.Close()
 		return nil, fmt.Errorf("run %s: its provisioner cannot reach the workspace's ports, so the browser has nothing to show", runID)
 	}
 	env := ports.EnvID(v.EnvID)
@@ -207,7 +185,7 @@ func (e *Engine) OpenBrowserMCP(ctx context.Context, runID string) (*BrowserMCPS
 			return exposer.ExposePort(ctx, env, port)
 		})
 	}
-	return &BrowserMCPSession{e: e, s: ports.BrowserSession{Project: res.ProjectID, ProjectName: res.ProjectName, Run: runID, Dial: dial}, release: res.release}, nil
+	return &BrowserMCPSession{e: e, s: ports.BrowserSession{Project: res.ProjectID, ProjectName: res.ProjectName, Run: runID, Dial: dial}, release: res.Close}, nil
 }
 
 // Serve bridges the session's stdio — the workspace's `shim browser-mcp` —

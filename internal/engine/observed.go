@@ -151,10 +151,10 @@ func (e *Engine) resolveScanner(ctx context.Context, runID string) (ports.EnvID,
 	}
 	scanner, ok := res.Envp.(ports.SiblingPortScanner)
 	if !ok {
-		res.release()
+		res.Close()
 		return "", nil, nil, false
 	}
-	return ports.EnvID(v.EnvID), scanner, res.release, true
+	return ports.EnvID(v.EnvID), scanner, res.Close, true
 }
 
 // autoExposeObserved exposes discovered ports not yet exposed, up to the

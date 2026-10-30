@@ -37,7 +37,7 @@ func (e *Engine) OpenEditor(ctx context.Context, runID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer res.release()
+	defer res.Close()
 
 	starter, ok := res.Envp.(ports.EditorStarter)
 	if !ok {

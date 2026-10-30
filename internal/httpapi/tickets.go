@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/engine"
 	"apothecary/internal/filestore"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/tickets"
 )
 
@@ -145,7 +146,7 @@ func (s *Server) importTicket(w http.ResponseWriter, r *http.Request, body ticke
 	case errors.Is(err, tickets.ErrDuplicate):
 		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, confstore.ErrNotFound), errors.Is(err, confstore.ErrInvalid),
-		errors.Is(err, engine.ErrUnresolvable):
+		errors.Is(err, resolution.ErrUnresolvable):
 		confErr(w, err)
 	case err != nil:
 		// The tracker itself failed (unreachable, bad credentials, no such
@@ -240,7 +241,7 @@ func sourceErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, tickets.ErrNoSources):
 		writeErr(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, confstore.ErrNotFound), errors.Is(err, confstore.ErrInvalid),
-		errors.Is(err, engine.ErrUnresolvable):
+		errors.Is(err, resolution.ErrUnresolvable):
 		confErr(w, err)
 	default:
 		writeErr(w, http.StatusBadGateway, err.Error())

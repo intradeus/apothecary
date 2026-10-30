@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"apothecary/internal/resolution"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -42,7 +43,7 @@ const minSecretLen = 6
 
 // newRedactor builds the scrubber for a run from its resolved configuration
 // plus the run's bearer token. Empty and trivially short values are skipped.
-func newRedactor(res *Resolution, tokens ...string) *redactor {
+func newRedactor(res *resolution.Resolution, tokens ...string) *redactor {
 	r := &redactor{}
 	if res != nil {
 		r.add(res.GitPass, "git-token")

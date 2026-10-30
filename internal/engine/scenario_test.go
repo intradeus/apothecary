@@ -19,6 +19,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
 
@@ -35,7 +36,7 @@ type harness struct {
 	ch       *fake.Channel
 	// res is the resolution every run gets; tests mutate it (Commands,
 	// GitPass, …) the way v1 tests mutated engine.Config.
-	res *Resolution
+	res *resolution.Resolution
 	// settings is mutable so tests can shrink limits mid-test.
 	settings *varSettings
 }
@@ -181,7 +182,7 @@ func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, s
 		repoHost: &fake.RepoHost{},
 		ch:       &fake.Channel{},
 	}
-	h.res = &Resolution{
+	h.res = &resolution.Resolution{
 		ProjectID:    testProject,
 		ProjectName:  "test",
 		RepoRef:      ports.RepoRef{URL: "https://gitlab.local/g/p.git", DefaultBranch: "main", Locator: "1"},
@@ -205,7 +206,7 @@ func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, s
 	if store != nil {
 		es = store(h.store)
 	}
-	h.e = New(cfg, es, StaticResolver{R: h.res}, src, h.settings, []ports.NotificationChannel{h.ch})
+	h.e = New(cfg, es, resolution.StaticResolver{R: h.res}, src, h.settings, []ports.NotificationChannel{h.ch})
 	registerGolden(t, h)
 	t.Cleanup(h.e.Shutdown)
 	return h
@@ -1662,7 +1663,7 @@ func TestEgressProbeTarget(t *testing.T) {
 		{"git@github.com:o/r.git", []string{"*.npmjs.org", "github.com"}, "github.com:443", true},
 		{"/srv/repo.git", []string{"*.npmjs.org"}, "", false},
 	} {
-		addr, tls := egressProbeTarget(&Resolution{RepoRef: ports.RepoRef{URL: tc.url}, EgressDomains: tc.domains})
+		addr, tls := egressProbeTarget(&resolution.Resolution{RepoRef: ports.RepoRef{URL: tc.url}, EgressDomains: tc.domains})
 		if addr != tc.addr || tls != tc.tls {
 			t.Errorf("%s: got %q tls=%v, want %q tls=%v", tc.url, addr, tls, tc.addr, tc.tls)
 		}

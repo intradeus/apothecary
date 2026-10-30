@@ -49,12 +49,16 @@ var rules = []rule{
 	{pkg: "internal/ports", mayImport: []string{}},
 	{pkg: "internal/adapters/", importedOnlyBy: []string{"internal/kinds", "internal/adapters/", "cmd/"}},
 	{pkg: "internal/pgstore", importedOnlyBy: []string{"cmd/"}},
-	{pkg: "internal/engine", importedOnlyBy: []string{"cmd/", "internal/httpapi", "internal/automation", "internal/resolve"}},
+	{pkg: "internal/engine", importedOnlyBy: []string{"cmd/", "internal/httpapi", "internal/automation"}},
 	{pkg: "internal/event", denyImport: outerLayers},
 	{pkg: "internal/run", denyImport: outerLayers},
 	{pkg: "internal/flow", denyImport: outerLayers},
 	{pkg: "internal/shell", mayImport: []string{}},
 	{pkg: "internal/wsname", mayImport: []string{"internal/run"}},
+	{pkg: "internal/resolution", mayImport: []string{
+		"internal/actionspec", "internal/agentspec", "internal/event", "internal/flow",
+		"internal/run", "internal/signalspec", "internal/ports",
+	}},
 }
 
 // matches reports whether path is the package prefix names: "a/b" matches

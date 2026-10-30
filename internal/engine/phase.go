@@ -464,7 +464,7 @@ func (x *exec) observe(st *idler) ([]mrObservation, error) {
 	out := make([]mrObservation, 0, len(rs.mrs))
 	for i := range rs.mrs {
 		mr := &rs.mrs[i]
-		repoHost := x.res.repoHostFor(mr.Repo)
+		repoHost := x.res.RepoHostFor(mr.Repo)
 		if repoHost == nil {
 			continue
 		}
@@ -672,7 +672,7 @@ func (x *exec) readCI(subject, head string) *event.CIReport {
 	if co != nil {
 		mr = x.rs.mrFor(co.Name, co.Branch)
 	}
-	repoHost := x.res.repoHostFor(subject)
+	repoHost := x.res.RepoHostFor(subject)
 	if mr == nil || repoHost == nil {
 		rep.Error = "this chain has no merge request to read CI from"
 		return rep
@@ -794,7 +794,7 @@ func (x *exec) manualStart(req phaseStartReq) error {
 	}
 	var tip string
 	if mr != nil {
-		if repoHost := x.res.repoHostFor(subject); repoHost != nil {
+		if repoHost := x.res.RepoHostFor(subject); repoHost != nil {
 			if st, err := repoHost.MRStatus(x.ctx, mr.Ref); err == nil {
 				tip = st.HeadSHA
 			}

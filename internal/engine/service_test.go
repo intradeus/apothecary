@@ -12,6 +12,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
 
@@ -59,10 +60,10 @@ main:
 func serviceHarness(t *testing.T, doc string) (*harness, *fake.Services) {
 	t.Helper()
 	h := newHarness(t, mustFlow(t, doc))
-	h.res.Services = []Service{
-		{Name: "default", Start: "npm run dev", Health: ServiceHealth{HTTP: "http://localhost:3000/health", Timeout: 5 * time.Minute, Interval: 10 * time.Second},
-			Ports: []ServicePort{{Port: 3000, Label: "app"}}},
-		{Name: "db", Start: "docker compose up -d db", Stop: "docker compose stop db", Health: ServiceHealth{TCP: 5432, Timeout: time.Minute}},
+	h.res.Services = []resolution.Service{
+		{Name: "default", Start: "npm run dev", Health: resolution.ServiceHealth{HTTP: "http://localhost:3000/health", Timeout: 5 * time.Minute, Interval: 10 * time.Second},
+			Ports: []resolution.ServicePort{{Port: 3000, Label: "app"}}},
+		{Name: "db", Start: "docker compose up -d db", Stop: "docker compose stop db", Health: resolution.ServiceHealth{TCP: 5432, Timeout: time.Minute}},
 	}
 	svcs := fake.NewServices()
 	h.envp.ExecFunc = svcs.Exec(h.envp.ExecFunc)

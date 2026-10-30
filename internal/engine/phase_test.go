@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
 
@@ -446,7 +447,7 @@ func TestParkedStateSurvivesARestart(t *testing.T) {
 	h2.res.Envp, h2.res.RepoHost = ph.envp, ph.repoHost
 	h2.runner.RunFunc = ph.runner.RunFunc
 	h2.res.Runner = h2.runner
-	h2.e = New(Config{MRPollInterval: 5 * time.Millisecond}, ph.store, StaticResolver{R: h2.res}, ph.flows, h2.settings, nil)
+	h2.e = New(Config{MRPollInterval: 5 * time.Millisecond}, ph.store, resolution.StaticResolver{R: h2.res}, ph.flows, h2.settings, nil)
 	t.Cleanup(h2.e.Shutdown)
 	if err := h2.e.Recover(context.Background()); err != nil {
 		t.Fatal(err)
@@ -621,7 +622,7 @@ func TestPhasesActOnOneSubjectAtATime(t *testing.T) {
 		"  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }\n  - { id: commit, type: command, each_repo: true, run: \"git add -A && git commit -m x\" }\n", 1)
 	ph := newPhasedHarness(t, doc)
 	apiRepoHost := &fake.RepoHost{}
-	ph.res.ExtraRepos = []ExtraRepo{{Name: "api", URL: "https://gitlab.local/g/api.git", Locator: "2", DefaultBranch: "develop"}}
+	ph.res.ExtraRepos = []resolution.ExtraRepo{{Name: "api", URL: "https://gitlab.local/g/api.git", Locator: "2", DefaultBranch: "develop"}}
 	ph.res.RepoHosts = map[string]ports.RepoHost{"api": apiRepoHost}
 	ph.envp.ExecFunc = gitPerDir(map[string]*fakeGit{"repo": newFakeGit("main"), "repos/api": newFakeGit("develop")})
 	runID := ph.start(t)
@@ -710,7 +711,7 @@ func TestIdleRunSurvivesARestart(t *testing.T) {
 	h2.res.Envp, h2.res.RepoHost = ph.envp, ph.repoHost
 	h2.runner.RunFunc = ph.runner.RunFunc
 	h2.res.Runner = h2.runner
-	h2.e = New(Config{MRPollInterval: 5 * time.Millisecond}, ph.store, StaticResolver{R: h2.res}, ph.flows, h2.settings, nil)
+	h2.e = New(Config{MRPollInterval: 5 * time.Millisecond}, ph.store, resolution.StaticResolver{R: h2.res}, ph.flows, h2.settings, nil)
 	t.Cleanup(h2.e.Shutdown)
 	if err := h2.e.Recover(context.Background()); err != nil {
 		t.Fatal(err)

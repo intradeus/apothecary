@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/shell"
 )
 
@@ -27,7 +28,7 @@ const egressProbeWait = 15 * time.Second
 // the first concrete allowlisted domain. tls: an https endpoint, so the probe
 // completes a handshake and proves the gateway let the host through, not just
 // that the gateway accepted the connection. Empty: nothing to probe.
-func egressProbeTarget(res *Resolution) (addr string, tls bool) {
+func egressProbeTarget(res *resolution.Resolution) (addr string, tls bool) {
 	if u, err := url.Parse(res.RepoRef.URL); err == nil && u.Hostname() != "" {
 		switch u.Scheme {
 		case "https":
@@ -54,7 +55,7 @@ func portOr(p, def string) string {
 // probeEgress runs the check in the workspace through the shim (pure Go, so
 // it works whatever the image carries). A non-nil error is the run's
 // env_failed reason.
-func probeEgress(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID, res *Resolution) error {
+func probeEgress(ctx context.Context, envp ports.EnvProvisioner, id ports.EnvID, res *resolution.Resolution) error {
 	addr, withTLS := egressProbeTarget(res)
 	if addr == "" {
 		return nil

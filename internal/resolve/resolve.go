@@ -1,4 +1,4 @@
-// Package resolve implements engine.Resolver (DESIGN2 §6.1): project id →
+// Package resolve implements resolution.Resolver (DESIGN2 §6.1): project id →
 // adapter set. It is the only place kinds and confstore meet the engine —
 // harness capabilities are flattened into the port-typed Resolution.
 //
@@ -23,10 +23,10 @@ import (
 
 	"apothecary/internal/agentspec"
 	"apothecary/internal/confstore"
-	"apothecary/internal/engine"
 	"apothecary/internal/kinds"
 	"apothecary/internal/ports"
 	"apothecary/internal/providers"
+	"apothecary/internal/resolution"
 	"apothecary/internal/wsimage"
 )
 
@@ -139,10 +139,10 @@ func (r *Resolver) WarmImages(ctx context.Context) {
 // unresolvable wraps errors that no retry will heal (§6.1): missing
 // project/integration rows and unregistered kinds.
 func unresolvable(err error) error {
-	return fmt.Errorf("%w: %v", engine.ErrUnresolvable, err)
+	return fmt.Errorf("%w: %v", resolution.ErrUnresolvable, err)
 }
 
-func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resolution, error) {
+func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.Resolution, error) {
 	p, err := r.conf.GetProject(ctx, projectID)
 	if err != nil {
 		if errors.Is(err, confstore.ErrNotFound) {
@@ -173,10 +173,10 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	// Extra repos ride the same repository host account; each one with a
 	// locator gets its own bound port (that is what opens its merge requests).
 	// One without is context only: cloned, never published.
-	var extras []engine.ExtraRepo
+	var extras []resolution.ExtraRepo
 	repoHosts := map[string]ports.RepoHost{}
 	for _, x := range p.Repos {
-		extras = append(extras, engine.ExtraRepo{Name: x.Name, URL: x.URL, Locator: x.Locator, DefaultBranch: x.DefaultBranch})
+		extras = append(extras, resolution.ExtraRepo{Name: x.Name, URL: x.URL, Locator: x.Locator, DefaultBranch: x.DefaultBranch})
 		if x.Locator == "" {
 			continue
 		}
@@ -246,7 +246,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 	sort.Strings(kindList)
 	// The project has no default; each agent stage names its harness (a
 	// kind, or the parameter the project binds) and drives selection
-	// (runnerFor(stage.Harness)). The Resolution's default fields
+	// (RunnerFor(stage.Harness)). The Resolution's default fields
 	// (Runner/HarnessKind/HarnessBinary) are a FALLBACK — the first-configured
 	// harness — reached only by a stage with no harness kind, which run
 	// creation prevents (flow.Unbound); envcheck also probes it. Preflight
@@ -287,7 +287,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*engine.Resol
 		return nil, err
 	}
 
-	res := &engine.Resolution{
+	res := &resolution.Resolution{
 		ProjectID:            p.ID,
 		ProjectName:          p.Name,
 		UserID:               p.UserID,
@@ -752,18 +752,18 @@ func (r *Resolver) ListModels(ctx context.Context, id string) ([]kinds.ModelInfo
 	return h.Models(ctx)
 }
 
-var _ engine.Resolver = (*Resolver)(nil)
+var _ resolution.Resolver = (*Resolver)(nil)
 
 // services is the project's services as the engine runs them, health
 // durations defaulted.
-func services(in []confstore.ServiceConfig) []engine.Service {
-	out := make([]engine.Service, 0, len(in))
+func services(in []confstore.ServiceConfig) []resolution.Service {
+	out := make([]resolution.Service, 0, len(in))
 	for _, s := range in {
-		sv := engine.Service{Name: s.Name, Description: s.Description, Start: s.Start, Stop: s.Stop,
-			Health: engine.ServiceHealth{HTTP: s.Health.HTTP, TCP: s.Health.TCP, Command: s.Health.Command,
+		sv := resolution.Service{Name: s.Name, Description: s.Description, Start: s.Start, Stop: s.Stop,
+			Health: resolution.ServiceHealth{HTTP: s.Health.HTTP, TCP: s.Health.TCP, Command: s.Health.Command,
 				Timeout: s.Health.TimeoutOr(), Interval: s.Health.IntervalOr()}}
 		for _, p := range s.Ports {
-			sv.Ports = append(sv.Ports, engine.ServicePort{Port: p.Port, Label: p.Label, Path: p.Path})
+			sv.Ports = append(sv.Ports, resolution.ServicePort{Port: p.Port, Label: p.Label, Path: p.Path})
 		}
 		out = append(out, sv)
 	}
