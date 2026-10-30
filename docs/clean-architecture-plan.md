@@ -1,6 +1,6 @@
 # Clean architecture refactor (Go backend) — plan
 
-Status: approved 2026-10-30, in progress (Phase 0). Scope approved: interpreter core in its own package, recovery bugs fixed in scope, ports split by capability. Anything found while implementing that contradicts this plan is recorded under "Deviations" — never silently. Line numbers are from HEAD 8abd1a4 (branch `refactor/rewrite-cleanup`); re-locate by symbol name if they drift.
+Status: approved 2026-10-30, in progress — Phases 0–1 done. Scope approved: interpreter core in its own package, recovery bugs fixed in scope, ports split by capability. Anything found while implementing that contradicts this plan is recorded under "Deviations" — never silently. Line numbers are from HEAD 8abd1a4 (branch `refactor/rewrite-cleanup`); re-locate by symbol name if they drift.
 
 ## Context
 
@@ -282,3 +282,9 @@ Measured at 8abd1a4 on 2026-10-30 (go1.27.2, linux/amd64).
 ## Deviations
 
 - **0.3** Golden files are `testdata/golden/<test>.golden`, not `.log`: the repository's `.gitignore` ignores `*.log`. Failed or skipped tests are neither compared nor recorded. The repeat sweep used `-count=40` (plus `-race`) instead of `-count=3`, to catch rarer non-determinism.
+- **1.1** Only the engine's `shellQuote`/`tail` moved; the adapters (`acpagent`, `workspace`, `github`, `gitlab`, `wsimage`, …) keep their own private copies — consolidating them is outside this refactor.
+- **1.4** The shim request builder became the free engine function `serviceRequest(s *resolution.Service, timeout)` as planned; the merged signal/phase doc comment was split so `SignalAvailable` and `PhaseAvailable` each carry their own.
+- **1.5** `engine/bootstrap.go` had no tests of its own to move.
+- **1.6** Only `TestAgentAccepts` (pure) moved to `modelcheck`; the other model tests drive a harness and stay in the engine (rule (b)).
+- **1.8** The same load-and-reduce block was also inlined in `Archive`, `Rerun`, `RetryRun` and `Abort`; those use `run.Reader.View` too (identical behaviour). `Play` keeps its own load because it reads the events again for pings. httpapi's private copy of `views` (`Server.runViews`) now delegates to `run.Reader.All`. `run.Reader` gained a unit test.
+- **1.9** `ports.PendingThreads`/`NewestPending` gained a table test.
