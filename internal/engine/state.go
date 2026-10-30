@@ -161,6 +161,10 @@ type runState struct {
 	// someone else's push (mr_head_moved).
 	heads map[string]bool
 
+	// parkSince is, per stage, when its current attempt first parked: a
+	// re-park (recovery re-entering the stage after phase_resumed) keeps it,
+	// so a wait's timeout runs from the first park. Cleared by stage_started.
+	parkSince map[string]time.Time
 	// parked holds the phase runs stopped at a wait point mid-chain, by
 	// phase: everything scoped to the run (park / unpark), while another
 	// phase may hold runState's own fields. At most one live run per phase.
@@ -449,6 +453,7 @@ func newRunState(fl *flow.Flow) *runState {
 		holds:         map[string]*heldState{},
 		pausedHold:    map[string]bool{},
 		handbackOwed:  map[string]bool{},
+		parkSince:     map[string]time.Time{},
 	}
 }
 
@@ -506,6 +511,7 @@ func (rs *runState) apply(ev *event.Event) {
 			rs.feed, rs.feedSentinel, rs.feedAttempts = "", "", 0
 		}
 		rs.anyStarted = true
+		delete(rs.parkSince, p.StageID)
 		delete(rs.elided, p.StageID)
 		rs.forgetCurated(rs.fl, p.StageID)
 		if rs.fl != nil {
@@ -632,7 +638,12 @@ func (rs *runState) apply(ev *event.Event) {
 		rs.gateAnswer = nil
 		rs.endsRun, rs.abortsRun, rs.endReason = false, false, ""
 	case *event.PhaseParked:
-		rs.park(p.StageID, p.PingID, ev.TS)
+		since, ok := rs.parkSince[p.StageID]
+		if !ok {
+			since = ev.TS
+			rs.parkSince[p.StageID] = since
+		}
+		rs.park(p.StageID, p.PingID, since)
 	case *event.PhaseResumed:
 		rs.unpark(p.Phase)
 	case *event.BranchPushed:

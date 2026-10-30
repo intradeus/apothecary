@@ -170,6 +170,7 @@ func diffState(live, rep *runState) []string {
 		{"adopted", live.adopted, rep.adopted},
 		{"heads", live.heads, rep.heads},
 		{"parked", live.parked, rep.parked},
+		{"parkSince", live.parkSince, rep.parkSince},
 		{"anyStarted", live.anyStarted, rep.anyStarted},
 		{"elided", live.elided, rep.elided},
 		{"openPings", live.openPings, rep.openPings},

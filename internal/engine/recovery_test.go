@@ -2,11 +2,13 @@ package engine
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"apothecary/internal/event"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
 
@@ -112,5 +114,47 @@ func TestRecoveryLeavesARunParkedOnItsHolder(t *testing.T) {
 	}
 	if v := h.view(t, "r-d10"); v.State != run.WaitingOnHuman || !v.Dormant {
 		t.Errorf("state = %s dormant %v, want still parked on the holder", v.State, v.Dormant)
+	}
+}
+
+// D9: a wait's timeout runs from the park. A crash after phase_resumed and
+// before the wait's own result leaves recovery re-parking it — and the
+// timeout still runs from the first park, not the re-park.
+func TestRecoveredWaitKeepsItsTimeoutFromTheFirstPark(t *testing.T) {
+	doc := strings.Replace(waitFlowDoc, "type: wait, for: mr_merged, on_fail: abort", "type: wait, for: mr_merged, timeout: 1h, on_fail: abort", 1)
+	ph := newPhasedHarness(t, doc)
+	runID := ph.start(t) // parked at the merged wait, at T0
+	ph.e.Shutdown()
+	// The crash window: the phase resumed, the wait's result not yet recorded.
+	if _, err := ph.store.Append(context.Background(), runID, &event.PhaseResumed{Phase: "main", StageID: "merged"}); err != nil {
+		t.Fatal(err)
+	}
+	ph.clock.Advance(30 * time.Minute)
+
+	h2 := newHarnessSource(t, ph.flows, ph.flowOf(t, "phased"))
+	h2.store, h2.envp, h2.repoHost = ph.store, ph.envp, ph.repoHost
+	h2.res.Envp, h2.res.RepoHost = ph.envp, ph.repoHost
+	h2.runner.RunFunc = ph.runner.RunFunc
+	h2.res.Runner = h2.runner
+	h2.e = New(Deps{Config: Config{MRPollInterval: 5 * time.Millisecond}, Store: ph.store,
+		Resolver: resolution.StaticResolver{R: h2.res}, Flows: ph.flows, Settings: h2.settings, Clock: ph.clock.Now})
+	t.Cleanup(h2.e.Shutdown)
+	if err := h2.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the wait to park again", func() bool {
+		return countType(h2.events(t, runID), event.TypePhaseParked) == 2
+	})
+	// An hour and a minute after the first park: the timeout has run out.
+	ph.clock.Advance(31 * time.Minute)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && h2.view(t, runID).State != run.Abandoned {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if v := h2.view(t, runID); v.State != run.Abandoned {
+		t.Fatalf("state = %s an hour after the first park, want abandoned by the wait's timeout: %v", v.State, eventTypes(h2.events(t, runID)))
+	}
+	if failed, _ := findPayload[*event.StageFailed](h2.events(t, runID)); failed == nil || failed.StageID != "merged" || failed.Reason != event.ReasonTimeout {
+		t.Errorf("failed = %+v", failed)
 	}
 }
