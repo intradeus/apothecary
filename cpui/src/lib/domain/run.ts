@@ -320,6 +320,9 @@ export interface RunSsh {
 	command?: string;
 	/** The vscode:// link that opens the workspace in desktop VS Code (Remote-SSH). */
 	vscodeUrl?: string;
+	/** The extension ids the workspace's own editor runs — what the desktop
+	 *  can carry over (remote.defaultExtensionsIfInstalledLocally). */
+	extensions?: string[];
 	/** How many keys the signed-in user has registered; none means the door
 	 *  lets nobody in yet. */
 	keys: number;

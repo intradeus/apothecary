@@ -35,9 +35,10 @@ func (s *Server) getRunSSH(w http.ResponseWriter, r *http.Request) {
 	out := RunSSH{
 		Enabled: true, Host: host, Port: port, User: info.Workspace, Path: info.Path,
 		Fingerprint: s.SSH.Fingerprint(), HostKey: strings.TrimSpace(s.SSH.HostPublicKey()),
-		Command:   sshCommand(host, port, info.Workspace),
-		VSCodeURL: vscodeURL(host, port, info.Workspace, info.Path),
-		Keys:      len(keys),
+		Command:    sshCommand(host, port, info.Workspace),
+		VSCodeURL:  vscodeURL(host, port, info.Workspace, info.Path),
+		Extensions: info.Extensions,
+		Keys:       len(keys),
 	}
 	writeJSON(w, http.StatusOK, out)
 }

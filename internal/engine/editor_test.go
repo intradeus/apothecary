@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -25,6 +26,11 @@ type editorEnvp struct {
 func (e *editorEnvp) StartEditor(_ context.Context, _ ports.EnvID, _ int, _ ports.EditorSettings) error {
 	atomic.AddInt32(&e.starts, 1)
 	return e.startErr
+}
+
+// EditorExtensions: the "definition" declares one id on top of the project's.
+func (e *editorEnvp) EditorExtensions(_ context.Context, _ ports.EnvID, settings ports.EditorSettings) []string {
+	return append([]string{"def.ext"}, settings.Extensions...)
 }
 
 func TestOpenEditor(t *testing.T) {
@@ -87,6 +93,12 @@ func TestOpenEditor(t *testing.T) {
 	}
 	if l := h.e.RunPorts("r1"); len(l) != 1 {
 		t.Errorf("second open exposed again: %v", l)
+	}
+	// The run page's SSH facts carry the editor's extension list, so a
+	// desktop editor can take the same ones along.
+	info, err := h.e.SSHInfo(ctx, "r1")
+	if err != nil || info.Workspace != "env1" || !slices.Contains(info.Extensions, "def.ext") {
+		t.Errorf("SSHInfo = %+v, %v; want the workspace and def.ext among its extensions", info, err)
 	}
 }
 

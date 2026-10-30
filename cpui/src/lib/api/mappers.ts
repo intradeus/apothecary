@@ -396,6 +396,7 @@ export function toRunSsh(w: Wire.RunSsh): RunSsh {
 		hostKey: w.host_key || undefined,
 		command: w.command || undefined,
 		vscodeUrl: w.vscode_url || undefined,
+		extensions: w.extensions?.length ? w.extensions : undefined,
 		keys: w.keys
 	};
 }

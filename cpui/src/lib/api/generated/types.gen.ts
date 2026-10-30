@@ -1194,6 +1194,7 @@ export type RunResources = {
 export type RunSsh = {
 	command?: string;
 	enabled: boolean;
+	extensions?: Array<string>;
 	fingerprint?: string;
 	host?: string;
 	host_key?: string;

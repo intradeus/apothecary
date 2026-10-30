@@ -5190,3 +5190,33 @@ already reached.
   No run event per session (appending from outside the run loop is
   restricted); the door logs them. Per-address auth throttle (8 failures /
   15 min), key-only, identical refusals for unknown/foreign/gone/disabled.
+
+### The docker-exec "terminal" link is gone (2026-10-30)
+
+`Links()` left the provisioner port with it. The `terminal` access link was
+`DOCKER_HOST=unix://<RunsDir>/<workspace>/docker.sock docker exec -it <ctr>
+bash` (`kubectl exec … -- docker exec …` on Kubernetes): a copy-paste for an
+operator sitting on the engine host, unreachable from anyone's laptop, and
+the only link `Links()` still produced once app links moved to the port
+relay. The SSH door supersedes it on every axis (over the VPN, per-user keys
+and ownership, as the remote user, the same on both hosts), so the Env ▾
+popover now opens on the door's rows and lists app/service links under them.
+`env_ready.links` carries only the auto-exposed `app` links; `event.Link`
+lost its `Command`; `run.workspace` is the workspace's first app link — what
+it resolved to in production all along, the terminal link having no URL.
+The envcheck "links" step went with it (the "shim" step already proves a
+running container). The operator recipe lives in README's SSH section.
+
+The Env ▾ popover also hands out the two desktop `settings.json` lines that
+make a person's extensions follow them in — `remote.defaultExtensionsIfInstalledLocally`
+(VS Code's own, every remote, installs what the desktop has too) and
+`remote.downloadExtensionsLocally` (the desktop fetches the VSIX, so the
+workspace never needs Microsoft's marketplace through the gateway). The
+list is pre-filled from `GET /api/runs/{id}/ssh`'s `extensions`: what the
+workspace's own editor installs, `EditorStarter.EditorExtensions` (the
+definition's ∪ the project's), read without an exec. `remote.SSH.defaultExtensions`
+was not chosen: Remote-SSH-only, and it installs ids the desktop may not
+have. Microsoft's server cannot be pointed at the gateway gallery (its
+gallery is baked into product.json), so the two editors keep separate
+extension dirs; pre-seeding `~/.vscode-server/extensions` from code-server's
+CLI is the follow-up to try, with a per-user extension list.

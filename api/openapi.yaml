@@ -2647,6 +2647,10 @@ components:
           type: string
         enabled:
           type: boolean
+        extensions:
+          items:
+            type: string
+          type: array
         fingerprint:
           type: string
         host:

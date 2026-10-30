@@ -1076,6 +1076,13 @@ type EditorSettings struct {
 // (re)applied on each start.
 type EditorStarter interface {
 	StartEditor(ctx context.Context, env EnvID, port int, settings EditorSettings) error
+	// EditorExtensions is the list StartEditor installs for env: the
+	// definition's own ids (a devcontainer's customizations.vscode.extensions)
+	// ∪ settings.Extensions, deduplicated and sorted. The run page hands it
+	// to a desktop editor connecting over SSH, so the same extensions can
+	// follow a person there. Best effort: what the definition cannot say is
+	// left out, never an error.
+	EditorExtensions(ctx context.Context, env EnvID, settings EditorSettings) []string
 }
 
 // WorkspaceRebuilder is an OPTIONAL EnvProvisioner capability: recreate the

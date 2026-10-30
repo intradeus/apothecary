@@ -441,6 +441,28 @@ desktop. Not served in this version: the sftp subsystem (use `scp -O` or
 rsync) and remote forwards (`-R`). A session ends when the workspace does
 (a rebuild, the reaper); VS Code reconnects on its own.
 
+Desktop VS Code keeps its own extensions over SSH. The ones that run in
+the workspace — language servers, the harness extensions — install into
+the workspace's `~/.vscode-server`, a set apart from code-server's. Two
+desktop settings make that automatic:
+`remote.defaultExtensionsIfInstalledLocally` lists the extensions every
+remote gets when the desktop has them too, and
+`remote.downloadExtensionsLocally` set to `true` downloads them on the
+desktop and pushes them over the session instead of having the workspace
+reach Microsoft's marketplace. The Env ▾ menu copies both lines for the
+desktop's `settings.json`, the list pre-filled with the extensions the
+workspace's own editor runs. (`remote.SSH.defaultExtensions` is the
+Remote-SSH extension's own variant — SSH hosts only, installed whether or
+not the desktop has them — and shows up in the settings UI only once that
+extension is installed.) A harness extension signs in with the workspace's
+own credentials, the ones the engine seeded, never the desktop's.
+
+When the sidecar itself is broken and the door cannot dial, the operator's
+way in is the run's inner docker daemon, on the engine host:
+`DOCKER_HOST=unix://<RunsDir>/<workspace>/docker.sock docker exec -it <container> bash`
+— on Kubernetes `kubectl -n <namespace> exec -it <workspace> -c sandbox --
+docker exec -it <container> bash`.
+
 ## Development
 
 ```sh

@@ -748,7 +748,7 @@ Every page uses the shell (section 5). The page header pattern is: breadcrumb ro
      - h1 "Add idempotency keys to *payment webhooks*" + run state chip
      - meta row: ticket key tag + "ticket ↗"; flow name + mono @hash; mono branch "← main"; cost · turns
    - **Right:** three glass groups (Run / Workspace / Merge requests, 4.5).
-   - The Env ▾ popover lists environment links. URL links open in a new tab ↗. Command-only links are copy buttons that flip to "copied ✓" for 1.5s.
+   - The Env ▾ popover opens on the SSH door: *Open in VS Code*, then a copy row with the two desktop `settings.json` lines that make one's extensions follow (`remote.defaultExtensionsIfInstalledLocally`, pre-filled with the workspace editor's list, and `remote.downloadExtensionsLocally`), the ssh command and the known_hosts line as copy buttons that flip to "copied ✓" for 1.5s, the door fingerprint — or the one line that stands in the way (SSH off, no key registered). Under a divider, the workspace's app and service links open in a new tab ↗.
 2. **Alert banner** (egress blocked or workspace unknown), only when relevant.
 3. **Desk** (section 6) fills the rest.
 - **Paused:** the Flow view's current stage shows "paused — will re-enter build". The Run group shows ▶ Resume (primary) + Stop….

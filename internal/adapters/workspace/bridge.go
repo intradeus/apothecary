@@ -386,8 +386,7 @@ const (
 // the start, then the wait.
 func (a *Adapter) StartEditor(ctx context.Context, env ports.EnvID, port int, settings ports.EditorSettings) error {
 	name := string(env)
-	exts := extensionUnion(a.defFor(name).EditorExtensions(ctx, a.defEnv(name, a.srcDir(name))), settings.Extensions)
-	script := editorScript(port, codeServerSettingsJSON(settings), exts, a.gatewayIPFor(name))
+	script := editorScript(port, codeServerSettingsJSON(settings), a.EditorExtensions(ctx, env, settings), a.gatewayIPFor(name))
 	res, err := a.Exec(ctx, env, ports.Command{Script: script, Timeout: editorStartTimeout})
 	if err != nil {
 		return err
@@ -400,6 +399,14 @@ func (a *Adapter) StartEditor(ctx context.Context, env ports.EnvID, port int, se
 	default:
 		return fmt.Errorf("start code-server in %s: exit %d: %s", name, res.ExitCode, tail(res.Output, 1024))
 	}
+}
+
+// EditorExtensions (ports.EditorStarter) is the list StartEditor installs:
+// the definition's own ∪ the project's (settings.Extensions), deduplicated
+// and sorted — read from the checkout, no exec.
+func (a *Adapter) EditorExtensions(ctx context.Context, env ports.EnvID, settings ports.EditorSettings) []string {
+	name := string(env)
+	return extensionUnion(a.defFor(name).EditorExtensions(ctx, a.defEnv(name, a.srcDir(name))), settings.Extensions)
 }
 
 // editorScript is the one script StartEditor runs (Exec's `bash -e`: every

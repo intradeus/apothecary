@@ -701,6 +701,29 @@ func TestStartEditorInstallsExtensionUnion(t *testing.T) {
 	}
 }
 
+// EditorExtensions is the list StartEditor installs — the definition's ∪
+// the project's — read without an exec, so the run page can hand it to a
+// desktop editor connecting over SSH.
+func TestEditorExtensionsIsTheInstalledUnion(t *testing.T) {
+	a := newTestAdapter(t, &scriptRunner{})
+	dc := filepath.Join(a.srcDir("apothecary-run1"), ".devcontainer")
+	if err := os.MkdirAll(dc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dc, "devcontainer.json"), []byte(
+		`{ "image": "debian", "customizations": { "vscode": { "extensions": ["golang.go"] } } }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := a.EditorExtensions(context.Background(), "apothecary-run1", ports.EditorSettings{Extensions: []string{"golang.go", "esbenp.prettier-vscode"}})
+	if want := []string{"esbenp.prettier-vscode", "golang.go"}; !slices.Equal(got, want) {
+		t.Errorf("extensions = %v, want %v", got, want)
+	}
+	// No definition, no project list: nothing — never an error.
+	if got := a.EditorExtensions(context.Background(), "apothecary-run2", ports.EditorSettings{}); len(got) != 0 {
+		t.Errorf("extensions of nothing = %v", got)
+	}
+}
+
 func TestExtensionUnion(t *testing.T) {
 	got := extensionUnion([]string{"b.x", " a.y ", ""}, []string{"a.y", "c.z"}, nil)
 	if want := []string{"a.y", "b.x", "c.z"}; !slices.Equal(got, want) {

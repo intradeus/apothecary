@@ -105,12 +105,15 @@ func (e *Engine) runByEnv(ctx context.Context, envID string) (run.View, bool, er
 }
 
 // SSHInfo is what the run page tells a person about reaching a run's
-// workspace: the name to log in as, and the folder an editor opens — the
+// workspace: the name to log in as; the folder an editor opens — the
 // devcontainer's workspace folder as the sidecar reports it, "" when the
-// sidecar cannot say (the connection still works; the editor just asks).
+// sidecar cannot say (the connection still works; the editor just asks);
+// and the extensions the workspace's own editor runs, for a desktop editor
+// to carry over.
 type SSHInfo struct {
-	Workspace string
-	Path      string
+	Workspace  string
+	Path       string
+	Extensions []string
 }
 
 func (e *Engine) SSHInfo(ctx context.Context, runID string) (SSHInfo, error) {
@@ -122,6 +125,12 @@ func (e *Engine) SSHInfo(ctx context.Context, runID string) (SSHInfo, error) {
 		return SSHInfo{}, fmt.Errorf("run %s: %w", runID, ErrNoWorkspace)
 	}
 	info := SSHInfo{Workspace: v.EnvID}
+	if res, err := e.resolver.Resolve(ctx, v.ProjectID); err == nil {
+		if starter, ok := res.Envp.(ports.EditorStarter); ok {
+			info.Extensions = starter.EditorExtensions(ctx, ports.EnvID(v.EnvID), res.EditorSettings)
+		}
+		res.release()
+	}
 	// Starting the sidecar here is no waste: the connection needs it next.
 	client, _, err := e.Workspace(ctx, runID, "")
 	if err != nil {

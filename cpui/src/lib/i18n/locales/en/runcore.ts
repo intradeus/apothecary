@@ -99,6 +99,10 @@ export default {
 	// SSH into the workspace (TODO 46), through the engine's door.
 	'run.env.vscode': 'Open in VS Code',
 	'run.env.vscodeSub': 'Remote-SSH, through the engine’s door',
+	'run.env.vscodeExts': 'Your extensions, over there too',
+	'run.env.vscodeExtsSub':
+		'remote.defaultExtensionsIfInstalledLocally · remote.downloadExtensionsLocally',
+	'run.env.copiedVscodeSettings': 'Copied the settings.json lines for the desktop',
 	'run.env.sshCommand': 'SSH',
 	'run.env.sshKnownHosts': 'known_hosts line',
 	'run.env.copiedKnownHosts': 'Copied the known_hosts line',

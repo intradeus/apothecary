@@ -693,15 +693,17 @@ export function hasLog(e: RunEvent, stage: string | undefined, events: RunEvent[
 
 export interface EnvLink {
 	kind: string;
-	url?: string;
-	command?: string;
+	url: string;
 }
 
 /** code-server has its own Editor button: never list its port as an app. */
 export const CODE_SERVER_PORT = 8471;
 
-/** The workspace's links: env_ready's, with app ports from the LIVE
- *  registry (env_ready's copies go stale when the engine restarts). */
+/** The workspace's links — its app ports and a healthy service's previews.
+ *  The LIVE registry is the source for exposed ports; env_ready's copies
+ *  stand in only until it has any (they go stale when the engine restarts).
+ *  Getting into the workspace is no link here: the SSH door's rows and the
+ *  Editor button are live facts the header fetches on their own. */
 export function envLinks(
 	events: RunEvent[],
 	exposed: { port: number; url: string }[],
@@ -709,13 +711,13 @@ export function envLinks(
 ): EnvLink[] {
 	const fromEvent =
 		(events.findLast((e) => e.type === 'env_ready')?.payload.links as EnvLink[] | undefined) ?? [];
-	const base = exposed.length ? fromEvent.filter((l) => l.kind !== 'app') : fromEvent;
+	const base = exposed.length ? [] : fromEvent.filter((l) => !!l.url);
 	// A healthy service's preview links, named for it; its port may also be
 	// on the exposed list — the service's name wins.
 	const fromServices = services.flatMap((s) =>
-		s.ports
-			.filter((p) => p.url)
-			.map((p) => ({ kind: `${s.name}${p.label ? ` · ${p.label}` : ''} :${p.port}`, url: p.url }))
+		s.ports.flatMap((p) =>
+			p.url ? [{ kind: `${s.name}${p.label ? ` · ${p.label}` : ''} :${p.port}`, url: p.url }] : []
+		)
 	);
 	const taken = new Set(fromServices.map((l) => l.url));
 	return [
@@ -725,6 +727,18 @@ export function envLinks(
 			.filter((p) => p.port !== CODE_SERVER_PORT && !taken.has(p.url))
 			.map((p) => ({ kind: `app :${p.port}`, url: p.url }))
 	];
+}
+
+/** The settings.json lines that let a desktop's extensions follow it into
+ *  workspaces over SSH: VS Code installs on connection the listed ids it
+ *  also has locally, and downloading on the desktop spares the workspace a
+ *  trip to Microsoft's marketplace, which the project's egress may not
+ *  allow. The list is what the workspace's own editor runs. */
+export function vscodeRemoteSettings(extensions: string[] = []): string {
+	return [
+		`"remote.defaultExtensionsIfInstalledLocally": ${JSON.stringify(extensions)},`,
+		`"remote.downloadExtensionsLocally": true`
+	].join('\n');
 }
 
 /** Split a title into plain words and ONE serif accent phrase: the last two

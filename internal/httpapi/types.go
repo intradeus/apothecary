@@ -617,7 +617,11 @@ type RunSSH struct {
 	HostKey     string `json:"host_key,omitempty"`
 	Command     string `json:"command,omitempty"`
 	VSCodeURL   string `json:"vscode_url,omitempty"`
-	Keys        int    `json:"keys"`
+	// Extensions are the VS Code extension ids the workspace's own editor
+	// runs (the definition's ∪ the project's): what a desktop editor over
+	// SSH can carry over (remote.defaultExtensionsIfInstalledLocally).
+	Extensions []string `json:"extensions,omitempty"`
+	Keys       int      `json:"keys"`
 }
 
 // UserCreateRequest is an admin creating an account.

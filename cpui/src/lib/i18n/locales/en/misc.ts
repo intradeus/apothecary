@@ -903,7 +903,7 @@ export default {
 		'What the human is being asked; approve continues, reject follows on_reject.',
 	'flow.insp.shows': 'Shows',
 	'flow.insp.showsHelp':
-		'The files to review — a path ending in <span class="mono">/</span> is a folder, each of its files shown — and at most one link beside them: <span class="mono">run.workspace</span> hands over the terminal/IDE links; <span class="mono">run.mr.url</span> the merge request opened by a <span class="mono">create_mr</span> action.',
+		'The files to review — a path ending in <span class="mono">/</span> is a folder, each of its files shown — and at most one link beside them: <span class="mono">run.workspace</span> hands over the workspace’s app link (its first exposed port); <span class="mono">run.mr.url</span> the merge request opened by a <span class="mono">create_mr</span> action.',
 	'flow.insp.curateHelp':
 		'A review shown here opens the curation page: the person picks the notes or replies to post and rewords them, and the file is rewritten with their choices before the next stage reads it. Show the mr_threads file beside it, so each item sits next to its thread.',
 	'flow.insp.oneLink_one': 'A gate opens at most one link — show this one as a file, or remove it.',

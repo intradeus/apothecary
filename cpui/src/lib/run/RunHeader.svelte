@@ -31,7 +31,7 @@
 	import type { DeskState } from '$lib/desk/desk.svelte';
 	import MrStatus from './MrStatus.svelte';
 	import RerunModal from './RerunModal.svelte';
-	import { accentSplit } from './derive';
+	import { accentSplit, vscodeRemoteSettings } from './derive';
 	import type { RunStore } from './store.svelte';
 
 	let { rs, desk, onretried }: { rs: RunStore; desk: DeskState; onretried: () => void } = $props();
@@ -508,28 +508,8 @@
 	title={t('run.env.title')}
 	legend={rs.links.length ? t('run.env.legend', { count: rs.links.length }) : undefined}
 >
-	{#each rs.links as l (l.kind + (l.url ?? l.command ?? ''))}
-		{#if l.url}
-			<a class="mi" href={l.url} target="_blank" rel="noreferrer" title={l.url}>
-				<span class="col"><span>{l.kind}</span><span class="sub ell">{l.url}</span></span>
-				<span class="g">{I.external}</span>
-			</a>
-		{:else if l.command}
-			<button
-				class="mi"
-				title={t('run.env.copyTitle', { command: l.command })}
-				onclick={() => copy(l)}
-			>
-				<span class="col"><span>{l.kind}</span><span class="sub mono ell">{l.command}</span></span>
-				<span class="cp" class:hue-grn={copied === l.kind}
-					>{copied === l.kind ? `${t('run.env.copiedLabel')} ${I.ok}` : t('run.env.copy')}</span
-				>
-			</button>
-		{/if}
-	{/each}
-	<!-- SSH into the workspace (TODO 46): the VS Code link, the command, the
-	     door's host key — or what stands in the way. -->
-	{#if rs.links.length}<div class="menu-div"></div>{/if}
+	<!-- Into the workspace from a desktop (TODO 46): the VS Code link, the
+	     ssh command, the door's host key — or what stands in the way. -->
 	{#if ssh === null}
 		<div class="mi still" aria-busy={sshState === 'loading'}>
 			<span class="sub"
@@ -553,6 +533,7 @@
 	{:else}
 		{@const s = ssh}
 		{#if s.vscodeUrl}
+			{@const settingsLines = vscodeRemoteSettings(s.extensions)}
 			<a class="mi" href={s.vscodeUrl} title={s.vscodeUrl}>
 				<span class="col"
 					><span>{t('run.env.vscode')}</span><span class="sub ell"
@@ -561,6 +542,23 @@
 				>
 				<span class="g">{I.external}</span>
 			</a>
+			<!-- The desktop's extensions follow it in: two settings.json lines,
+			     the list pre-filled with what the workspace's editor runs. -->
+			<button
+				class="mi"
+				title={t('run.env.copyTitle', { command: settingsLines })}
+				onclick={() =>
+					copy({ kind: 'settings', command: settingsLines }, t('run.env.copiedVscodeSettings'))}
+			>
+				<span class="col"
+					><span>{t('run.env.vscodeExts')}</span><span class="sub mono ell"
+						>{t('run.env.vscodeExtsSub')}</span
+					></span
+				>
+				<span class="cp" class:hue-grn={copied === 'settings'}
+					>{copied === 'settings' ? `${t('run.env.copiedLabel')} ${I.ok}` : t('run.env.copy')}</span
+				>
+			</button>
 		{/if}
 		{#if s.command}
 			<button
@@ -601,6 +599,16 @@
 				>
 			</div>
 		{/if}
+	{/if}
+	<!-- What the workspace serves: its app ports and service previews. -->
+	{#if rs.links.length}
+		<div class="menu-div"></div>
+		{#each rs.links as l (l.kind + l.url)}
+			<a class="mi" href={l.url} target="_blank" rel="noreferrer" title={l.url}>
+				<span class="col"><span>{l.kind}</span><span class="sub ell">{l.url}</span></span>
+				<span class="g">{I.external}</span>
+			</a>
+		{/each}
 	{/if}
 </Popover>
 
