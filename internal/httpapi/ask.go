@@ -11,7 +11,6 @@ import (
 
 	"apothecary/internal/ask"
 	"apothecary/internal/auth"
-	"apothecary/internal/engine"
 )
 
 // The Ask pane: a run's read-only session beside its stages, answering
@@ -28,7 +27,7 @@ type AskModelRequest struct {
 }
 
 func (s *Server) getAsk(w http.ResponseWriter, r *http.Request) {
-	st, err := s.Engine.AskState(r.Context(), r.PathValue("id"))
+	st, err := s.Ask.State(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeErr(w, askStatus(err), err.Error())
 		return
@@ -42,7 +41,7 @@ func (s *Server) postAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	m, err := s.Engine.Ask(r.Context(), r.PathValue("id"), p.User.ID, body.Text)
+	m, err := s.Ask.Ask(r.Context(), r.PathValue("id"), p.User.ID, body.Text)
 	if err != nil {
 		writeErr(w, askStatus(err), err.Error())
 		return
@@ -55,7 +54,7 @@ func (s *Server) putAskModel(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if err := s.Engine.AskSetModel(r.Context(), r.PathValue("id"), body.Model); err != nil {
+	if err := s.Ask.SetModel(r.Context(), r.PathValue("id"), body.Model); err != nil {
 		writeErr(w, askStatus(err), err.Error())
 		return
 	}
@@ -64,7 +63,7 @@ func (s *Server) putAskModel(w http.ResponseWriter, r *http.Request) {
 
 func askStatus(err error) int {
 	switch {
-	case errors.Is(err, engine.ErrAskOff), errors.Is(err, engine.ErrAskBusy):
+	case errors.Is(err, ask.ErrOff), errors.Is(err, ask.ErrBusy):
 		return http.StatusConflict
 	case strings.Contains(err.Error(), "not found"):
 		return http.StatusNotFound
@@ -99,9 +98,9 @@ func (s *Server) streamAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	// Subscribe before the replay so nothing lands in between unseen; a
 	// message replayed and streamed both is harmless (same seq).
-	frames, stop := s.Engine.AskWatch(id)
+	frames, stop := s.Ask.Watch(id)
 	defer stop()
-	msgs, err := s.Engine.AskMessages(r.Context(), id, after)
+	msgs, err := s.Ask.Messages(r.Context(), id, after)
 	if err != nil {
 		writeErr(w, askStatus(err), err.Error())
 		return
@@ -110,7 +109,7 @@ func (s *Server) streamAsk(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
-	send := func(f engine.AskFrame) {
+	send := func(f ask.AskFrame) {
 		data, err := json.Marshal(f)
 		if err != nil {
 			return
@@ -125,7 +124,7 @@ func (s *Server) streamAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range msgs {
 		m := msgs[i]
-		send(engine.AskFrame{Kind: "message", Message: &m})
+		send(ask.AskFrame{Kind: "message", Message: &m})
 	}
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()

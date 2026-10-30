@@ -897,7 +897,7 @@ func (e *Engine) RunPhases(ctx context.Context, runID string) ([]PhaseInfo, erro
 	if err != nil {
 		return nil, err
 	}
-	fl, err := e.runFlow(ctx, v)
+	fl, err := e.RunFlow(ctx, v)
 	if err != nil {
 		return nil, err
 	}

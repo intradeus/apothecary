@@ -70,20 +70,20 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 	ctx := context.Background()
 	// Live once the workspace is up, while the stage is still working.
 	waitUntil(t, "the pane to come on", func() bool {
-		st, err := h.e.AskState(ctx, runID)
+		st, err := h.askPane().State(ctx, runID)
 		return err == nil && st.Enabled
 	})
-	st, err := h.e.AskState(ctx, runID)
+	st, err := h.askPane().State(ctx, runID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if st.Harness != "fake" || st.Model != "fake/model" || st.Busy || len(st.Messages) != 0 {
 		t.Fatalf("state = %+v", st)
 	}
-	frames, stop := h.e.AskWatch(runID)
+	frames, stop := h.askPane().Watch(runID)
 	defer stop()
 
-	q, err := h.e.Ask(ctx, runID, "u1", "  where is the entrypoint?  ")
+	q, err := h.askPane().Ask(ctx, runID, "u1", "  where is the entrypoint?  ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,18 +92,18 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 	}
 	// One at a time: a question while the answer is being written is refused.
 	waitUntil(t, "the pane to be busy", func() bool {
-		st, _ := h.e.AskState(ctx, runID)
+		st, _ := h.askPane().State(ctx, runID)
 		return st.Busy
 	})
-	if _, err := h.e.Ask(ctx, runID, "u1", "and again?"); !errors.Is(err, ErrAskBusy) {
-		t.Errorf("second question while answering = %v, want ErrAskBusy", err)
+	if _, err := h.askPane().Ask(ctx, runID, "u1", "and again?"); !errors.Is(err, askstore.ErrBusy) {
+		t.Errorf("second question while answering = %v, want askstore.ErrBusy", err)
 	}
 	close(askGate)
 	waitUntil(t, "the answer", func() bool {
-		st, _ := h.e.AskState(ctx, runID)
+		st, _ := h.askPane().State(ctx, runID)
 		return len(st.Messages) == 2 && !st.Busy
 	})
-	st, _ = h.e.AskState(ctx, runID)
+	st, _ = h.askPane().State(ctx, runID)
 	a := st.Messages[1]
 	if a.Role != askstore.RoleAnswer || a.Text != "It lives in main.go, line 12." || a.CostUSD != 0.05 || a.Turns != 1 || a.Model != "fake/model" || a.Error != "" {
 		t.Fatalf("answer = %+v", a)
@@ -130,14 +130,14 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 
 	// The next question continues the same session; a model picked in the
 	// pane switches it over first.
-	if err := h.e.AskSetModel(ctx, runID, "other/model"); err != nil {
+	if err := h.askPane().SetModel(ctx, runID, "other/model"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.e.Ask(ctx, runID, "u1", "sure?"); err != nil {
+	if _, err := h.askPane().Ask(ctx, runID, "u1", "sure?"); err != nil {
 		t.Fatal(err)
 	}
 	waitUntil(t, "the second answer", func() bool {
-		st, _ := h.e.AskState(ctx, runID)
+		st, _ := h.askPane().State(ctx, runID)
 		return len(st.Messages) == 4 && !st.Busy
 	})
 	mu.Lock()
@@ -145,7 +145,7 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 		t.Errorf("resume = %+v", resumes)
 	}
 	mu.Unlock()
-	st, _ = h.e.AskState(ctx, runID)
+	st, _ = h.askPane().State(ctx, runID)
 	if st.Model != "other/model" || st.Messages[3].Model != "other/model" || st.Messages[3].Text != "Still main.go." {
 		t.Errorf("state after the switch = %+v", st)
 	}
@@ -156,7 +156,7 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 	close(stageGate)
 	h.e.Wait(runID)
 	// The conversation outlives the run while the workspace does.
-	st, err = h.e.AskState(ctx, runID)
+	st, err = h.askPane().State(ctx, runID)
 	if err != nil || len(st.Messages) != 4 {
 		t.Errorf("after the run: %+v, %v", st, err)
 	}
@@ -174,18 +174,18 @@ func TestAskPaneIsOffWithoutASection(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	st, err := h.e.AskState(ctx, runID)
+	st, err := h.askPane().State(ctx, runID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if st.Enabled || !strings.Contains(st.Reason, "no Ask section") {
 		t.Errorf("state = %+v", st)
 	}
-	if _, err := h.e.Ask(ctx, runID, "u1", "hello?"); !errors.Is(err, ErrAskOff) {
-		t.Errorf("ask = %v, want ErrAskOff", err)
+	if _, err := h.askPane().Ask(ctx, runID, "u1", "hello?"); !errors.Is(err, askstore.ErrOff) {
+		t.Errorf("ask = %v, want askstore.ErrOff", err)
 	}
-	if err := h.e.AskSetModel(ctx, runID, "x/y"); !errors.Is(err, ErrAskOff) {
-		t.Errorf("set model = %v, want ErrAskOff", err)
+	if err := h.askPane().SetModel(ctx, runID, "x/y"); !errors.Is(err, askstore.ErrOff) {
+		t.Errorf("set model = %v, want askstore.ErrOff", err)
 	}
 	close(gate)
 	h.e.Wait(runID)
@@ -218,7 +218,7 @@ func TestAskPaneIsOffOnAHarnessThatCannotBeReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitUntil(t, "the workspace", func() bool { return h.view(t, runID).EnvID != "" })
-	st, err := h.e.AskState(context.Background(), runID)
+	st, err := h.askPane().State(context.Background(), runID)
 	if err != nil {
 		t.Fatal(err)
 	}

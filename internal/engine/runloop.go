@@ -110,7 +110,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	// refreshed login should be pushed into; the next loop re-registers.
 	defer e.dropAuthSink(runID)
 
-	fl, err := e.runFlow(bg, view)
+	fl, err := e.RunFlow(bg, view)
 	if err != nil {
 		x.rs = &runState{runID: runID, view: view}
 		var perr *flow.Error

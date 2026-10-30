@@ -20,7 +20,6 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	askstore "apothecary/internal/ask"
 	"apothecary/internal/envstate"
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
@@ -238,11 +237,6 @@ type Engine struct {
 	projectSecrets ProjectSecretSource
 	browser        ports.Browser
 	browserPorts   *portCache
-	// askStore keeps the Ask panes' conversations; asks is their in-flight
-	// state and askHub their viewers (ask.go).
-	askStore askstore.Store
-	asks     map[string]*askRun
-	askHub   askHub
 
 	mu      sync.Mutex
 	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
@@ -521,8 +515,6 @@ func New(cfg Config, store event.Store, resolver resolution.Resolver, flows flow
 		pings:    map[string]*Ping{},
 		tokens:   map[string]string{},
 		observed: map[string]*observedRun{},
-		askStore: askstore.NewMemStore(),
-		asks:     map[string]*askRun{},
 	}
 	// The engine's own until main shares one with the API (SetEnvState); its
 	// clock follows the engine's, which tests replace.

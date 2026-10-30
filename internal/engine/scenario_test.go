@@ -3,6 +3,7 @@
 package engine
 
 import (
+	askstore "apothecary/internal/ask"
 	"context"
 	"fmt"
 	"sort"
@@ -40,6 +41,8 @@ type harness struct {
 	res *resolution.Resolution
 	// settings is mutable so tests can shrink limits mid-test.
 	settings *varSettings
+	// askSvc is the run Ask panes, built on first use (askPane).
+	askSvc *askstore.Service
 }
 
 // varSettings is a mutable SettingsSource for tests.
@@ -218,6 +221,15 @@ func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, s
 // workspace).
 func (h *harness) workspaces() *wsinfo.Service {
 	return wsinfo.New(&run.Reader{Store: h.store}, resolution.StaticResolver{R: h.res}, h.e.envState)
+}
+
+// askPane is the Ask pane service over the harness's store, resolution and
+// engine — one per harness, so a pane's busy state carries across calls.
+func (h *harness) askPane() *askstore.Service {
+	if h.askSvc == nil {
+		h.askSvc = askstore.New(&run.Reader{Store: h.store}, resolution.StaticResolver{R: h.res}, h.e, askstore.NewMemStore())
+	}
+	return h.askSvc
 }
 
 // writeFile writes into a fake env through the port (lock-safe).

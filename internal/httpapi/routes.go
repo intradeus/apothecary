@@ -292,7 +292,7 @@ func (s *Server) routes() []Route {
 		{Method: "GET", Path: "/api/runs/{id}/ask", ID: "getAsk", Tag: tagRuns,
 			Summary: "The Ask pane: its conversation, model and whether it is on",
 			Doc:     "A flow with an ask: section gives the run a read-only session beside its stages that answers questions about the code. Off (with the reason) when the flow has none, the workspace is gone, or the harness cannot promise a read-only session.",
-			Handler: s.getAsk, Returns: engine.AskState{}, Scope: ScopeRun},
+			Handler: s.getAsk, Returns: ask.AskState{}, Scope: ScopeRun},
 		{Method: "POST", Path: "/api/runs/{id}/ask", ID: "askRun", Tag: tagRuns,
 			Summary: "Ask the run's read-only session a question",
 			Doc:     "The question is recorded and returned at once; the answer arrives on the pane's stream. 409 when the pane is off or an answer is being written.",

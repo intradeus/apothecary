@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/ask"
 	"apothecary/internal/auth"
 	"apothecary/internal/builtin"
 	"apothecary/internal/channels"
@@ -108,6 +109,8 @@ type Server struct {
 	EnvCheck *envcheck.Registry
 	// Egress is the live egress controls and the audit trail.
 	Egress *egress.Service
+	// Ask runs the runs' Ask panes.
+	Ask *ask.Service
 
 	logins loginLimiter
 }

@@ -116,10 +116,10 @@ func (e *Engine) BoundFlow(ctx context.Context, projectID, name string) (*flow.F
 	return e.bindFlow(ctx, fl, projectID)
 }
 
-// runFlow is the document a run executes: the version pinned at creation,
+// RunFlow is the document a run executes: the version pinned at creation,
 // resolved with the values recorded then. Every loader of a running run's
 // flow goes through here, so they all see the same resolved flow.
-func (e *Engine) runFlow(ctx context.Context, v run.View) (*flow.Flow, error) {
+func (e *Engine) RunFlow(ctx context.Context, v run.View) (*flow.Flow, error) {
 	fl, err := e.pinnedFlow(ctx, v.ProjectID, v.FlowName, v.FlowHash)
 	if err != nil {
 		return nil, err

@@ -30,6 +30,7 @@ import (
 	discordadapter "apothecary/internal/adapters/discord"
 	matrixadapter "apothecary/internal/adapters/matrix"
 	slackadapter "apothecary/internal/adapters/slack"
+	"apothecary/internal/ask"
 	"apothecary/internal/auth"
 	"apothecary/internal/automation"
 	"apothecary/internal/browser"
@@ -269,11 +270,12 @@ func cmdServe(args []string) error {
 	egressSvc.ActiveRuns = e.ActiveRunIDs
 	egressSvc.Log = log
 	e.AddEnvTeardown(egressSvc)
+	askSvc := ask.New(runs, resolver, e, store)
+	askSvc.Log = log
 	// A project's parameter bindings are laid over a flow's defaults at run
 	// creation; the config store holds them beside the flow.
 	e.SetFlowBindings(conf)
 	// The Ask panes' conversations live beside the run log.
-	e.SetAskStore(store)
 	// A refreshed login reaches the live workspaces that hold it; omp's
 	// per-run broker tokens derive from an instance secret, so they survive
 	// restarts.
@@ -378,6 +380,7 @@ func cmdServe(args []string) error {
 	api.Workspaces = wsSvc
 	api.EnvCheck = checks
 	api.Egress = egressSvc
+	api.Ask = askSvc
 	// The SSH door (TODO 46): one listener people ssh to over their VPN —
 	// desktop VS Code included — routed by username to the run's workspace.
 	// Both of its keys derive from instance secrets: the host key so a person

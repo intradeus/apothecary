@@ -1,6 +1,7 @@
 package main
 
 import (
+	"apothecary/internal/ask"
 	"apothecary/internal/automation"
 	"apothecary/internal/egress"
 	"apothecary/internal/engine"
@@ -18,4 +19,6 @@ var (
 	_ envcheck.Flows     = (*engine.Engine)(nil)
 	_ engine.EnvTeardown = (*egress.Service)(nil)
 	_ egress.AuditStore  = (*pgstore.Store)(nil)
+	_ ask.Engine         = (*engine.Engine)(nil)
+	_ ask.Store          = (*pgstore.Store)(nil)
 )

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"apothecary/internal/actionspec"
+	"apothecary/internal/ask"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/egress"
@@ -88,6 +89,7 @@ func newConfEnv(t *testing.T) *confEnv {
 	srv.Workspaces = wsinfo.New(&run.Reader{Store: store}, resolver, srv.EnvState)
 	srv.EnvCheck = envcheck.NewRegistry(resolver, e, "")
 	srv.Egress = egress.New(&run.Reader{Store: store}, resolver, nil)
+	srv.Ask = ask.New(&run.Reader{Store: store}, resolver, e, ask.NewMemStore())
 	srv.Conf = conf
 	srv.Kinds = reg
 	srv.Ops = resolver
