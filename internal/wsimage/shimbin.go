@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"apothecary/internal/shell"
 	"apothecary/workspace"
 )
 
@@ -100,13 +101,13 @@ func (b *Builder) EnsureShim(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if code != 0 {
-		return "", fmt.Errorf("docker create %s: exit %d: %s", tag, code, tail(out, 1024))
+		return "", fmt.Errorf("docker create %s: exit %d: %s", tag, code, shell.Tail(out, 1024))
 	}
 	cid := strings.TrimSpace(out)
 	defer func() { _, _, _ = b.docker.Run(ctx, "", "rm", cid) }()
 	tmp := dest + ".tmp"
 	if out, code, err := b.docker.Run(ctx, "", "cp", cid+":/apothecary-shim", tmp); err != nil || code != 0 {
-		return "", fmt.Errorf("docker cp shim: exit %d: %v: %s", code, err, tail(out, 1024))
+		return "", fmt.Errorf("docker cp shim: exit %d: %v: %s", code, err, shell.Tail(out, 1024))
 	}
 	if err := os.Chmod(tmp, 0o755); err != nil {
 		return "", err

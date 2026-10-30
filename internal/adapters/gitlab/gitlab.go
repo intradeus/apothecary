@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/shell"
 )
 
 type Config struct {
@@ -66,7 +67,7 @@ func (a *Adapter) api(ctx context.Context, method, path string, body, out any) (
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 400 {
-		return resp.StatusCode, fmt.Errorf("gitlab %s %s: %d: %s", method, path, resp.StatusCode, tail(string(data), 300))
+		return resp.StatusCode, fmt.Errorf("gitlab %s %s: %d: %s", method, path, resp.StatusCode, shell.Tail(string(data), 300))
 	}
 	if out != nil {
 		if err := json.Unmarshal(data, out); err != nil {
@@ -554,7 +555,7 @@ func (a *Adapter) UploadAttachment(ctx context.Context, _ repoport.RepoRef, name
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 400 {
-		return repoport.Attachment{}, fmt.Errorf("gitlab POST %s: %d: %s", path, resp.StatusCode, tail(string(body), 300))
+		return repoport.Attachment{}, fmt.Errorf("gitlab POST %s: %d: %s", path, resp.StatusCode, shell.Tail(string(body), 300))
 	}
 	var out struct {
 		URL      string `json:"url"`
@@ -576,13 +577,6 @@ func (a *Adapter) UploadAttachment(ctx context.Context, _ repoport.RepoRef, name
 
 // quoteEscaper escapes a multipart filename, as mime/multipart does.
 var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
-
-func tail(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[len(s)-n:]
-}
 
 var _ repoport.RepoHost = (*Adapter)(nil)
 

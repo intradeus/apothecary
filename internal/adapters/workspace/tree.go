@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/shell"
 )
 
 // WriteTree lays a whole directory down in ONE exec: a tar built here rides
@@ -27,7 +28,7 @@ func (a *Adapter) WriteTree(ctx context.Context, env envport.EnvID, dir string, 
 	if err != nil {
 		return fmt.Errorf("write tree %s: %w", dir, err)
 	}
-	q := shellQuote(dir)
+	q := shell.Quote(dir)
 	script := fmt.Sprintf(`rm -rf %s && mkdir -p %s && base64 -d | tar -xf - -C %s`, q, q, q)
 	stdin := script + "\n" + base64.StdEncoding.EncodeToString(archive) + "\n"
 	_, stderr, code, err := a.inWorkspace(ctx, string(env), nil, []string{"bash", "-eo", "pipefail", "-s"}, []byte(stdin), nil)
@@ -35,7 +36,7 @@ func (a *Adapter) WriteTree(ctx context.Context, env envport.EnvID, dir string, 
 		return err
 	}
 	if code != 0 {
-		return fmt.Errorf("write tree %s: exit %d: %s", dir, code, tail(string(stderr), 512))
+		return fmt.Errorf("write tree %s: exit %d: %s", dir, code, shell.Tail(string(stderr), 512))
 	}
 	return nil
 }

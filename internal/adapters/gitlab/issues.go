@@ -25,6 +25,7 @@ import (
 
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
+	"apothecary/internal/shell"
 )
 
 type IssuesConfig struct {
@@ -350,7 +351,7 @@ func (s *Issues) OpenAttachment(ctx context.Context, att trackerport.SourceAttac
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
 		resp.Body.Close()
-		return nil, fmt.Errorf("gitlab: attachment %s: %d: %s", att.Filename, resp.StatusCode, tail(string(data), 300))
+		return nil, fmt.Errorf("gitlab: attachment %s: %d: %s", att.Filename, resp.StatusCode, shell.Tail(string(data), 300))
 	}
 	return resp.Body, nil
 }

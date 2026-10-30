@@ -3,6 +3,7 @@ package workspace
 import (
 	"apothecary/internal/egressgw"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/shell"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -60,7 +61,7 @@ func (a *Adapter) sandboxIDsWith(ctx context.Context, name string, labels ...str
 		return nil, err
 	}
 	if code != 0 {
-		return nil, fmt.Errorf("docker ps: exit %d: %s", code, tail(string(stderr), 512))
+		return nil, fmt.Errorf("docker ps: exit %d: %s", code, shell.Tail(string(stderr), 512))
 	}
 	return strings.Fields(string(out)), nil
 }
@@ -118,7 +119,7 @@ func (a *Adapter) checkRuntime(ctx context.Context) error {
 		return fmt.Errorf("checking sandbox runtime %q: docker info: %w", rt, err)
 	}
 	if code != 0 {
-		return fmt.Errorf("checking sandbox runtime %q: docker info: exit %d: %s", rt, code, tail(string(stderr), 256))
+		return fmt.Errorf("checking sandbox runtime %q: docker info: exit %d: %s", rt, code, shell.Tail(string(stderr), 256))
 	}
 	var runtimes map[string]json.RawMessage
 	if err := json.Unmarshal(bytes.TrimSpace(out), &runtimes); err != nil {
@@ -180,7 +181,7 @@ func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec envport.E
 			if _, stderr, code, err := a.hostRun(ctx, append([]string{"rm", "-f"}, ids...)); err != nil {
 				return err
 			} else if code != 0 {
-				return fmt.Errorf("sandbox %s: remove the previous-shape sandbox: %s", name, tail(string(stderr), 512))
+				return fmt.Errorf("sandbox %s: remove the previous-shape sandbox: %s", name, shell.Tail(string(stderr), 512))
 			}
 			ids = nil
 		}
@@ -229,7 +230,7 @@ func (a *Adapter) createSandbox(ctx context.Context, name string, spec envport.E
 		"--label", managedLabel + "=true", "--label", label(name), a.sandboxVolume(name)}); err != nil {
 		return err
 	} else if code != 0 {
-		return fmt.Errorf("docker volume create %s: exit %d: %s", a.sandboxVolume(name), code, tail(string(stderr), 512))
+		return fmt.Errorf("docker volume create %s: exit %d: %s", a.sandboxVolume(name), code, shell.Tail(string(stderr), 512))
 	}
 
 	// A nested dockerd has to mount overlayfs, manage cgroups and program
@@ -297,7 +298,7 @@ func (a *Adapter) createSandbox(ctx context.Context, name string, spec envport.E
 	if _, stderr, code, err := a.hostRun(ctx, args); err != nil {
 		return err
 	} else if code != 0 {
-		return fmt.Errorf("sandbox run %s: exit %d: %s", name, code, tail(string(stderr), 512))
+		return fmt.Errorf("sandbox run %s: exit %d: %s", name, code, shell.Tail(string(stderr), 512))
 	}
 	return nil
 }

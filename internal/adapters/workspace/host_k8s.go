@@ -21,6 +21,7 @@ import (
 	"apothecary/internal/egressgw"
 	"apothecary/internal/kube"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/shell"
 	wsassets "apothecary/workspace"
 )
 
@@ -471,14 +472,14 @@ func (h *k8sHost) ensureCheckout(ctx context.Context, name, src string, spec env
 	script := fmt.Sprintf(`IFS= read -r CRED; mkdir -p %[1]s; f=%[1]s/git-credentials; umask 077; `+
 		`if [ -n "$CRED" ]; then printf '%%s\n' "$CRED" > "$f"; set -- -c "credential.helper=store --file=$f"; else set --; fi; `+
 		`git "$@" clone -- %[2]s %[3]s; rc=$?; rm -f "$f"; exit $rc`,
-		shellQuote(filepath.Dir(src)), shellQuote(spec.RepoURL), shellQuote(src))
+		shell.Quote(filepath.Dir(src)), shell.Quote(spec.RepoURL), shell.Quote(src))
 	stdin := []byte(script + "\n" + cred + "\n")
 	_, stderr, code, err := h.runInner(ctx, name, "bash", []string{"-s"}, stdin, nil)
 	if err != nil {
 		return err
 	}
 	if code != 0 {
-		return fmt.Errorf("clone %s: exit %d: %s", spec.RepoURL, code, tail(string(stderr), 2048))
+		return fmt.Errorf("clone %s: exit %d: %s", spec.RepoURL, code, shell.Tail(string(stderr), 2048))
 	}
 	return nil
 }

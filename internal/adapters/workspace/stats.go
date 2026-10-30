@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/shell"
 )
 
 // SampleResources implements envport.ResourceSampler: one `docker stats` reading
@@ -27,7 +28,7 @@ func (a *Adapter) dockerSample(ctx context.Context, name string) (envport.Resour
 		return envport.ResourceSample{}, err
 	}
 	if code != 0 {
-		return envport.ResourceSample{}, fmt.Errorf("docker stats %s: exit %d: %s", name, code, tail(string(stderr), 256))
+		return envport.ResourceSample{}, fmt.Errorf("docker stats %s: exit %d: %s", name, code, shell.Tail(string(stderr), 256))
 	}
 	var row struct {
 		CPUPerc  string
@@ -37,7 +38,7 @@ func (a *Adapter) dockerSample(ctx context.Context, name string) (envport.Resour
 	}
 	line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
 	if err := json.Unmarshal([]byte(line), &row); err != nil {
-		return envport.ResourceSample{}, fmt.Errorf("docker stats %s: unparseable row %q: %w", name, tail(line, 256), err)
+		return envport.ResourceSample{}, fmt.Errorf("docker stats %s: unparseable row %q: %w", name, shell.Tail(line, 256), err)
 	}
 	// CPUPerc gates the sample: docker prints "--" for a container that exists
 	// but isn't running, and "no sample" (a gap) is the honest answer then.

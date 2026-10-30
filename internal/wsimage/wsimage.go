@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"apothecary/internal/shell"
 )
 
 // Runner executes one docker CLI invocation in dir; swapped in tests.
@@ -109,7 +111,7 @@ func (b *Builder) build(ctx context.Context, dir, tag string, buildArgs ...strin
 		return fmt.Errorf("docker build %s: %w", tag, err)
 	}
 	if code != 0 {
-		return fmt.Errorf("docker build %s: exit %d: %s", tag, code, tail(out, 4096))
+		return fmt.Errorf("docker build %s: exit %d: %s", tag, code, shell.Tail(out, 4096))
 	}
 	return nil
 }
@@ -125,11 +127,4 @@ func (b *Builder) writeLog(tag, out string) {
 	name := strings.ReplaceAll(tag, "/", "-")
 	name = strings.ReplaceAll(name, ":", "-")
 	_ = os.WriteFile(filepath.Join(dir, name+".log"), []byte(out), 0o644)
-}
-
-func tail(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[len(s)-n:]
 }

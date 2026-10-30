@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"apothecary/internal/shell"
 	"apothecary/workspace"
 )
 
@@ -82,12 +83,12 @@ func (b *Builder) EnsureTools(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if code != 0 {
-		return "", fmt.Errorf("docker create %s: exit %d: %s", tag, code, tail(out, 1024))
+		return "", fmt.Errorf("docker create %s: exit %d: %s", tag, code, shell.Tail(out, 1024))
 	}
 	cid := strings.TrimSpace(out)
 	defer func() { _, _, _ = b.docker.Run(ctx, "", "rm", cid) }()
 	if out, code, err := b.docker.Run(ctx, "", "cp", cid+":/tools", tmp); err != nil || code != 0 {
-		return "", fmt.Errorf("docker cp tools bundle: exit %d: %v: %s", code, err, tail(out, 1024))
+		return "", fmt.Errorf("docker cp tools bundle: exit %d: %v: %s", code, err, shell.Tail(out, 1024))
 	}
 	// Atomic publish; a concurrent engine on the same RunsDir may have won
 	// the race, in which case its complete extraction is the one to use.

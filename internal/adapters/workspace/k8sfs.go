@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+
+	"apothecary/internal/shell"
 )
 
 // execFS is sandboxFS inside a sandbox pod: each call is one small script run
@@ -27,13 +29,13 @@ func (e execFS) sh(ctx context.Context, script string, stdin []byte) ([]byte, in
 	}
 	out, stderr, code, err := e.h.runInner(ctx, e.name, "bash", []string{"-s"}, full, nil)
 	if err == nil && code != 0 && code != 44 && code != 1 {
-		err = fmt.Errorf("sandbox %s: exit %d: %s", e.name, code, tail(string(stderr), 512))
+		err = fmt.Errorf("sandbox %s: exit %d: %s", e.name, code, shell.Tail(string(stderr), 512))
 	}
 	return out, code, err
 }
 
 func (e execFS) ReadFile(ctx context.Context, path string) ([]byte, error) {
-	p := shellQuote(path)
+	p := shell.Quote(path)
 	out, code, err := e.sh(ctx, fmt.Sprintf(`if [ ! -f %s ]; then exit 44; fi; base64 < %s`, p, p), nil)
 	if err != nil {
 		return nil, err
@@ -48,7 +50,7 @@ func (e execFS) ReadFile(ctx context.Context, path string) ([]byte, error) {
 }
 
 func (e execFS) WriteFile(ctx context.Context, path string, data []byte, mode fs.FileMode) error {
-	p := shellQuote(path)
+	p := shell.Quote(path)
 	script := fmt.Sprintf(`mkdir -p "$(dirname %s)" && base64 -d > %s && chmod %o %s`, p, p, mode.Perm(), p)
 	_, code, err := e.sh(ctx, script, []byte(base64.StdEncoding.EncodeToString(data)+"\n"))
 	if err == nil && code != 0 {
@@ -58,7 +60,7 @@ func (e execFS) WriteFile(ctx context.Context, path string, data []byte, mode fs
 }
 
 func (e execFS) MkdirAll(ctx context.Context, path string) error {
-	_, code, err := e.sh(ctx, "mkdir -p "+shellQuote(path), nil)
+	_, code, err := e.sh(ctx, "mkdir -p "+shell.Quote(path), nil)
 	if err == nil && code != 0 {
 		err = fmt.Errorf("mkdir %s: exit %d", path, code)
 	}
@@ -71,17 +73,17 @@ func (e execFS) test(ctx context.Context, expr string) bool {
 }
 
 func (e execFS) Exists(ctx context.Context, path string) bool {
-	p := shellQuote(path)
+	p := shell.Quote(path)
 	return e.test(ctx, fmt.Sprintf(`[ -e %s ] || [ -L %s ]`, p, p))
 }
 
 func (e execFS) IsRegular(ctx context.Context, path string) bool {
-	p := shellQuote(path)
+	p := shell.Quote(path)
 	return e.test(ctx, fmt.Sprintf(`[ -f %s ] && [ ! -L %s ]`, p, p))
 }
 
 func (e execFS) Walk(ctx context.Context, dir string) ([]string, error) {
-	p := shellQuote(dir)
+	p := shell.Quote(dir)
 	out, _, err := e.sh(ctx, fmt.Sprintf(`[ -d %s ] || exit 0; find %s -type f`, p, p), nil)
 	if err != nil {
 		return nil, err

@@ -16,6 +16,7 @@ import (
 
 	"apothecary/internal/egressgw"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/shell"
 )
 
 // The engine bridge: engine loopback ports are exposed INSIDE the
@@ -345,7 +346,7 @@ func (a *Adapter) startPortScan(ctx context.Context, name, cid string) {
 	_, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin, args, nil, nil)
 	if err != nil || code != 0 {
 		slog.Warn("devcontainer: port discovery scanner did not start",
-			"env", name, "exit", code, "err", err, "stderr", tail(string(stderr), 256))
+			"env", name, "exit", code, "err", err, "stderr", shell.Tail(string(stderr), 256))
 	}
 }
 
@@ -397,7 +398,7 @@ func (a *Adapter) StartEditor(ctx context.Context, env envport.EnvID, port int, 
 	case codeServerMissingExit:
 		return fmt.Errorf("open editor in %s: the browser editor needs a glibc-based workspace image (the tools bundle has no code-server build for musl)", name)
 	default:
-		return fmt.Errorf("start code-server in %s: exit %d: %s", name, res.ExitCode, tail(res.Output, 1024))
+		return fmt.Errorf("start code-server in %s: exit %d: %s", name, res.ExitCode, shell.Tail(res.Output, 1024))
 	}
 }
 
@@ -427,10 +428,10 @@ mkdir -p "$state/extensions"
 	if settings != nil {
 		fmt.Fprintf(&b, `mkdir -p "$HOME/.local/share/code-server/User"
 printf '%%s\n' %s > "$HOME/.local/share/code-server/User/settings.json"
-`, shellQuote(string(settings)))
+`, shell.Quote(string(settings)))
 	}
 	if gwIP != "" {
-		fmt.Fprintf(&b, "export EXTENSIONS_GALLERY=%s\n", shellQuote(extensionsGalleryJSON(egressgw.GalleryURL(gwIP))))
+		fmt.Fprintf(&b, "export EXTENSIONS_GALLERY=%s\n", shell.Quote(extensionsGalleryJSON(egressgw.GalleryURL(gwIP))))
 	}
 	fmt.Fprintf(&b, `want=%s
 if [ "$(cat "$state/extensions.installed" 2>/dev/null)" != "$want" ]; then
@@ -442,7 +443,7 @@ if [ "$(cat "$state/extensions.installed" 2>/dev/null)" != "$want" ]; then
   done
   printf '%%s' "$want" > "$state/extensions.installed"
 fi
-`, shellQuote(strings.Join(exts, "\n")))
+`, shell.Quote(strings.Join(exts, "\n")))
 	b.WriteString(`if ! apothecary-shim probe "$addr"; then
   echo "apothecary: starting code-server on $addr"
   ( exec "$cs" --auth none --disable-telemetry --bind-addr "$addr" --extensions-dir "$state/extensions" "$HOME/repo" ) </dev/null >>"$state/code-server.log" 2>&1 &
@@ -556,7 +557,7 @@ func (a *Adapter) ExposePort(ctx context.Context, env envport.EnvID, port int) (
 		return nil, err
 	}
 	if code != 0 {
-		return nil, fmt.Errorf("expose port %d in %s: exit %d: %s", port, name, code, tail(string(stderr), 512))
+		return nil, fmt.Errorf("expose port %d in %s: exit %d: %s", port, name, code, shell.Tail(string(stderr), 512))
 	}
 	// The relay creates the socket in-container; bounded wait for the host
 	// to see it, then hand out the dialer.
@@ -613,7 +614,7 @@ func (a *Adapter) Sidecar(ctx context.Context, env envport.EnvID) (envport.PortC
 		return nil, err
 	}
 	if res.ExitCode != 0 {
-		return nil, fmt.Errorf("start sidecar in %s: exit %d: %s", env, res.ExitCode, tail(res.Output, 512))
+		return nil, fmt.Errorf("start sidecar in %s: exit %d: %s", env, res.ExitCode, shell.Tail(res.Output, 512))
 	}
 	for range 50 {
 		if sidecarUp(ctx, conn) {

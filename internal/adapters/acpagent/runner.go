@@ -29,6 +29,7 @@ import (
 
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/shell"
 	"apothecary/internal/sidecar"
 )
 
@@ -549,7 +550,7 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 					}
 					msg := strings.TrimSpace(ev.Error)
 					if t := strings.TrimSpace(ev.Text); t != "" {
-						msg += "\n" + tail(t, 2000)
+						msg += "\n" + shell.Tail(t, 2000)
 					}
 					emit(agentport.AgentEvent{Kind: agentport.AgentEvNotice, Text: msg, Cursor: cur})
 				case "turn_end":
@@ -651,13 +652,6 @@ func toTool(t *sidecar.Tool) *agentport.AgentTool {
 		out.Diffs = append(out.Diffs, agentport.AgentDiff{Path: d.Path, OldText: d.OldText, NewText: d.NewText})
 	}
 	return out
-}
-
-func tail(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[len(s)-n:]
 }
 
 var (

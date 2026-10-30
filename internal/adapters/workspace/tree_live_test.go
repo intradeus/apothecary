@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/shell"
 )
 
 // TestLiveWriteTreeScript runs WriteTree's exact stdin (one script line +
@@ -33,7 +34,7 @@ func TestLiveWriteTreeScript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := shellQuote("/apothecary/skills/x")
+	q := shell.Quote("/apothecary/skills/x")
 	stdin := fmt.Sprintf(`rm -rf %s && mkdir -p %s && base64 -d | tar -xf - -C %s`, q, q, q) + "\n" + base64.StdEncoding.EncodeToString(archive) + "\n"
 	install := "mkdir -p '/home/u/.agents/skills' && rm -rf '/home/u/.agents/skills/x' && cp -R '/apothecary/skills/x' '/home/u/.agents/skills/x'"
 

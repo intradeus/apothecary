@@ -73,6 +73,7 @@ import (
 	"apothecary/internal/egressgw/policyfile"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/shell"
 )
 
 // idLabel is the docker label key that ties a container to its apothecary
@@ -589,7 +590,7 @@ func (a *Adapter) renameContainer(ctx context.Context, containerID, name string)
 		[]string{"rename", containerID, name}, nil, nil); err != nil || code != 0 {
 		slog.Debug("devcontainer container rename skipped",
 			"container", containerID, "name", name, "exit", code, "err", err,
-			"stderr", tail(string(stderr), 256))
+			"stderr", shell.Tail(string(stderr), 256))
 	}
 }
 
@@ -625,7 +626,7 @@ func (a *Adapter) ensureSrc(ctx context.Context, name string, spec envport.EnvSp
 		return "", err
 	}
 	if code != 0 {
-		return "", fmt.Errorf("clone %s: exit %d: %s", spec.RepoURL, code, tail(string(stderr), 2048))
+		return "", fmt.Errorf("clone %s: exit %d: %s", spec.RepoURL, code, shell.Tail(string(stderr), 2048))
 	}
 	return src, nil
 }
@@ -795,14 +796,14 @@ for f in /opt/apothecary/tools/$libc/bin/*; do
   printf '#!/bin/sh\nset -a\n[ -r /apothecary/provider.env ] && . /apothecary/provider.env\nset +a\nexec %%s "$@"\n' "$f" > "$b"
   chmod 0755 "$b"
 done
-true`, shellQuote(user), shellQuote(res.WorkspaceFolder), codeServerState)
+true`, shell.Quote(user), shell.Quote(res.WorkspaceFolder), codeServerState)
 	_, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
 		[]string{"exec", "-u", "root", res.ContainerID, "sh", "-c", script}, nil, nil)
 	if err != nil {
 		return err
 	}
 	if code != 0 {
-		return fmt.Errorf("workspace init: exit %d: %s", code, tail(string(stderr), 1024))
+		return fmt.Errorf("workspace init: exit %d: %s", code, shell.Tail(string(stderr), 1024))
 	}
 	return nil
 }
@@ -884,9 +885,9 @@ func (a *Adapter) Exec(ctx context.Context, env envport.EnvID, cmd envport.Comma
 // Shell-quoted — repo-controlled names must never be interpretable.
 func resolvePath(path string) string {
 	if strings.HasPrefix(path, "/") {
-		return shellQuote(path)
+		return shell.Quote(path)
 	}
-	return `"$HOME"/repo/` + shellQuote(path)
+	return `"$HOME"/repo/` + shell.Quote(path)
 }
 
 // escapeExit is the exit code the containment guard uses for a repo-relative
@@ -914,10 +915,6 @@ func containmentGuard(path string) string {
 		escapeExit, p)
 }
 
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
 func (a *Adapter) ReadFile(ctx context.Context, env envport.EnvID, path string) ([]byte, error) {
 	p := resolvePath(path)
 	script := containmentGuard(path) + fmt.Sprintf(`if [ ! -f %s ]; then exit 44; fi; base64 < %s`, p, p)
@@ -932,7 +929,7 @@ func (a *Adapter) ReadFile(ctx context.Context, env envport.EnvID, path string) 
 		return nil, fmt.Errorf("read %s: resolves outside the repository checkout (symlink escape)", path)
 	}
 	if code != 0 {
-		return nil, fmt.Errorf("read %s: exit %d: %s", path, code, tail(string(stderr), 512))
+		return nil, fmt.Errorf("read %s: exit %d: %s", path, code, shell.Tail(string(stderr), 512))
 	}
 	data, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(string(stdout), "\n", ""))
 	if err != nil {
@@ -964,7 +961,7 @@ func (a *Adapter) ListFiles(ctx context.Context, env envport.EnvID, dir string) 
 		return nil, fmt.Errorf("list %s: resolves outside the repository checkout (symlink escape)", dir)
 	}
 	if code != 0 {
-		return nil, fmt.Errorf("list %s: exit %d: %s", dir, code, tail(string(stderr), 512))
+		return nil, fmt.Errorf("list %s: exit %d: %s", dir, code, shell.Tail(string(stderr), 512))
 	}
 	return parseFileList(dir, string(stdout)), nil
 }
@@ -1000,7 +997,7 @@ func (a *Adapter) WriteFile(ctx context.Context, env envport.EnvID, path string,
 		return fmt.Errorf("write %s: resolves outside the repository checkout (symlink escape)", path)
 	}
 	if code != 0 {
-		return fmt.Errorf("write %s: exit %d: %s", path, code, tail(string(stderr), 512))
+		return fmt.Errorf("write %s: exit %d: %s", path, code, shell.Tail(string(stderr), 512))
 	}
 	return nil
 }
@@ -1055,7 +1052,7 @@ func (a *Adapter) workspaceState(ctx context.Context, name string, inner bool) (
 		return "", err
 	}
 	if code != 0 {
-		return "", fmt.Errorf("docker ps: exit %d: %s", code, tail(string(stderr), 512))
+		return "", fmt.Errorf("docker ps: exit %d: %s", code, shell.Tail(string(stderr), 512))
 	}
 	state, _, _ := strings.Cut(strings.TrimSpace(string(stdout)), "\n")
 	switch state {
@@ -1100,12 +1097,12 @@ func (a *Adapter) destroyDockerSandbox(ctx context.Context, name string) error {
 		if _, stderr, code, err := a.hostRun(ctx, append([]string{"rm", "-f"}, ids...)); err != nil {
 			return err
 		} else if code != 0 {
-			return fmt.Errorf("docker rm %s sandbox: exit %d: %s", name, code, tail(string(stderr), 512))
+			return fmt.Errorf("docker rm %s sandbox: exit %d: %s", name, code, shell.Tail(string(stderr), 512))
 		}
 		if _, stderr, code, err := a.hostRun(ctx, []string{"volume", "rm", "-f", a.sandboxVolume(name)}); err != nil {
 			return err
 		} else if code != 0 {
-			return fmt.Errorf("docker volume rm %s: exit %d: %s", a.sandboxVolume(name), code, tail(string(stderr), 512))
+			return fmt.Errorf("docker volume rm %s: exit %d: %s", a.sandboxVolume(name), code, shell.Tail(string(stderr), 512))
 		}
 	} else {
 		// Legacy (pre-DinD) env: the workspace container lives on the host
@@ -1117,14 +1114,14 @@ func (a *Adapter) destroyDockerSandbox(ctx context.Context, name string) error {
 			return err
 		}
 		if code != 0 {
-			return fmt.Errorf("docker ps: exit %d: %s", code, tail(string(stderr), 512))
+			return fmt.Errorf("docker ps: exit %d: %s", code, shell.Tail(string(stderr), 512))
 		}
 		if wids := strings.Fields(string(stdout)); len(wids) > 0 {
 			if _, stderr, code, err = a.run(ctx, a.cfg.DockerBin, append([]string{"rm", "-f"}, wids...), nil, nil); err != nil {
 				return err
 			}
 			if code != 0 {
-				return fmt.Errorf("docker rm %s: exit %d: %s", name, code, tail(string(stderr), 512))
+				return fmt.Errorf("docker rm %s: exit %d: %s", name, code, shell.Tail(string(stderr), 512))
 			}
 		}
 	}
@@ -1306,18 +1303,11 @@ func (a *Adapter) dockerTest(ctx context.Context) error {
 		return fmt.Errorf("docker CLI not runnable (%q): %v", a.cfg.DockerBin, err)
 	}
 	if code != 0 {
-		return fmt.Errorf("docker daemon unreachable: %s", tail(string(stderr), 512))
+		return fmt.Errorf("docker daemon unreachable: %s", shell.Tail(string(stderr), 512))
 	}
 	// An opted-in sandbox runtime is a host capability, so the "Test" button
 	// is the right place to find out it isn't installed — not the first run.
 	return a.ensureRuntime(ctx)
-}
-
-func tail(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[len(s)-n:]
 }
 
 // Rebuild (envport.WorkspaceRebuilder) recreates the workspace container in
@@ -1417,7 +1407,7 @@ func (a *Adapter) pushBuildCache(ctx context.Context, name, gwIP, project, conta
 	if _, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
 		[]string{"push", ref}, nil, logW); err != nil || code != 0 {
 		plog("→ build cache: push failed (%s); next build starts cold\n",
-			strings.TrimSpace(tail(string(stderr), 200)))
+			strings.TrimSpace(shell.Tail(string(stderr), 200)))
 	}
 }
 

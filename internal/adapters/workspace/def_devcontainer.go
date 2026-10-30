@@ -12,6 +12,7 @@ import (
 
 	"apothecary/internal/egressgw"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/shell"
 )
 
 // devcontainerDef is the repo's own .devcontainer/devcontainer.json (or a root
@@ -139,7 +140,7 @@ func (d devcontainerDef) Up(ctx context.Context, e defEnv, spec envport.EnvSpec,
 	res, perr := parseUpResult(stdout)
 	if code != 0 || perr != nil || res.Outcome != "success" {
 		return Workspace{}, fmt.Errorf("devcontainer up %s: exit %d: %s%s", e.name, code,
-			strings.TrimSpace(res.Message+" "+res.Description), tail("\n"+string(stderr), 2048))
+			strings.TrimSpace(res.Message+" "+res.Description), shell.Tail("\n"+string(stderr), 2048))
 	}
 	return Workspace{ContainerID: res.ContainerID, RemoteUser: res.RemoteUser, WorkspaceFolder: res.RemoteWorkspaceFolder}, nil
 }

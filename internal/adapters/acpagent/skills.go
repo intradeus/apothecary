@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/shell"
 	"apothecary/internal/skills"
 )
 
@@ -30,13 +31,13 @@ func InstallSkills(ctx context.Context, envp envport.EnvProvisioner, env envport
 		return fmt.Errorf("install skills: directory %q must be absolute", dir)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "mkdir -p %s", shellQuote(dir))
+	fmt.Fprintf(&b, "mkdir -p %s", shell.Quote(dir))
 	for _, n := range names {
 		if err := skills.ValidName(n); err != nil {
 			return fmt.Errorf("install skills: %w", err)
 		}
-		src := shellQuote(path.Join(SkillsDir, n))
-		dst := shellQuote(path.Join(dir, n))
+		src := shell.Quote(path.Join(SkillsDir, n))
+		dst := shell.Quote(path.Join(dir, n))
 		fmt.Fprintf(&b, " && rm -rf %s && cp -R %s %s", dst, src, dst)
 	}
 	res, err := envp.Exec(ctx, env, envport.Command{Script: b.String(), Timeout: 60 * time.Second})
@@ -51,8 +52,4 @@ func InstallSkills(ctx context.Context, envp envport.EnvProvisioner, env envport
 		return fmt.Errorf("install skills into %s: exit %d: %s", dir, res.ExitCode, out)
 	}
 	return nil
-}
-
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

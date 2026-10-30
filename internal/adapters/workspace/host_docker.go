@@ -11,6 +11,7 @@ import (
 
 	"apothecary/internal/egressgw"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/shell"
 )
 
 // dockerHost runs each sandbox as a Docker-in-Docker container on the engine's
@@ -118,7 +119,7 @@ func (h dockerHost) startBridgeRelay(ctx context.Context, name, cid string) erro
 		return err
 	}
 	if code != 0 {
-		return fmt.Errorf("start relay in %s: exit %d: %s", name, code, tail(string(stderr), 512))
+		return fmt.Errorf("start relay in %s: exit %d: %s", name, code, shell.Tail(string(stderr), 512))
 	}
 	return nil
 }

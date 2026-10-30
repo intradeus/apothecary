@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/shell"
 )
 
 type Config struct {
@@ -92,7 +93,7 @@ func (a *Adapter) api(ctx context.Context, method, path string, body, out any) (
 			method, path, resp.Header.Get("X-Ratelimit-Reset"))
 	}
 	if resp.StatusCode >= 400 {
-		return resp.StatusCode, fmt.Errorf("github %s %s: %d: %s", method, path, resp.StatusCode, tail(string(data), 300))
+		return resp.StatusCode, fmt.Errorf("github %s %s: %d: %s", method, path, resp.StatusCode, shell.Tail(string(data), 300))
 	}
 	if out != nil {
 		if err := json.Unmarshal(data, out); err != nil {
@@ -568,7 +569,7 @@ func (a *Adapter) graphql(ctx context.Context, query string, vars map[string]any
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("github graphql: %d: %s", resp.StatusCode, tail(string(body), 300))
+		return fmt.Errorf("github graphql: %d: %s", resp.StatusCode, shell.Tail(string(body), 300))
 	}
 	var env struct {
 		Data   json.RawMessage `json:"data"`
@@ -789,13 +790,13 @@ func (a *Adapter) uploadAttachment(ctx context.Context, repo, name, contentType 
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized:
 		return repoport.Attachment{}, fmt.Errorf("github: uploading %s to %s was refused (%d): uploads need a classic personal access token with the repo scope — a fine-grained token or an app's cannot upload", name, repo, resp.StatusCode)
 	case resp.StatusCode >= 400:
-		return repoport.Attachment{}, fmt.Errorf("github: uploading %s to %s: %d: %s", name, repo, resp.StatusCode, tail(string(body), 300))
+		return repoport.Attachment{}, fmt.Errorf("github: uploading %s to %s: %d: %s", name, repo, resp.StatusCode, shell.Tail(string(body), 300))
 	}
 	var out struct {
 		URL string `json:"url"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil || out.URL == "" {
-		return repoport.Attachment{}, fmt.Errorf("github: uploading %s to %s: the answer carries no url: %s", name, repo, tail(string(body), 300))
+		return repoport.Attachment{}, fmt.Errorf("github: uploading %s to %s: the answer carries no url: %s", name, repo, shell.Tail(string(body), 300))
 	}
 	md := "[" + name + "](" + out.URL + ")"
 	if strings.HasPrefix(contentType, "image/") {
@@ -825,13 +826,6 @@ func (a *Adapter) repoID(ctx context.Context, repo string) (int64, error) {
 	a.repoIDs[repo] = out.ID
 	a.idMu.Unlock()
 	return out.ID, nil
-}
-
-func tail(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[len(s)-n:]
 }
 
 var _ repoport.RepoHost = (*Adapter)(nil)
