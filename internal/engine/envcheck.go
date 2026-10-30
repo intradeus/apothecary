@@ -12,6 +12,7 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/bootstrap"
 	"apothecary/internal/flow"
+	"apothecary/internal/modelcheck"
 	"apothecary/internal/ports"
 	"apothecary/internal/resolution"
 	"apothecary/internal/shell"
@@ -243,7 +244,7 @@ func runEnvCheck(ctx context.Context, res *resolution.Resolution, runID string, 
 	if len(opts.Stages) == 0 {
 		skip("agent_models", "no flow stages to check")
 	} else {
-		missing, unasked := agentModelCheck(ctx, res, env, opts.Stages)
+		missing, unasked := modelcheck.AgentModels(ctx, res, env, opts.Stages)
 		var merr error
 		switch {
 		case len(missing) > 0:
@@ -258,7 +259,7 @@ func runEnvCheck(ctx context.Context, res *resolution.Resolution, runID string, 
 	if len(opts.Stages) == 0 {
 		skip("harness_auth", "no flow stages to check")
 	} else {
-		rejected, unverified := checkAuth(ctx, res, opts.Stages)
+		rejected, unverified := modelcheck.Auth(ctx, res, opts.Stages)
 		var aerr error
 		if len(rejected) > 0 {
 			aerr = errors.New(strings.Join(rejected, "; "))

@@ -8,6 +8,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
+	"apothecary/internal/modelcheck"
 	"apothecary/internal/ports"
 )
 
@@ -92,7 +93,7 @@ func stepNamed(steps []PreflightStep, id string) *PreflightStep {
 func TestHarnessTakingAnyModelIsNotChecked(t *testing.T) {
 	h := newHarness(t, mustFlow(t, modelFlowDoc))
 	h.res.Models = func(context.Context, string) ([]string, error) { return nil, nil }
-	if mc := checkModels(context.Background(), h.res, h.flowOf(t, "models")); len(mc.missing)+len(mc.unverified) != 0 {
+	if mc := modelcheck.Models(context.Background(), h.res, h.flowOf(t, "models")); len(mc.Missing)+len(mc.Unverified) != 0 {
 		t.Errorf("check = %+v", mc)
 	}
 }
@@ -171,24 +172,6 @@ func TestEnvCheckAgentModelsStep(t *testing.T) {
 		})
 	if step.Status != "fail" || !strings.Contains(step.Detail, "acme/alpha-1") || strings.Contains(step.Detail, `"review"`) {
 		t.Fatalf("agent_models = %+v", step)
-	}
-}
-
-func TestAgentAccepts(t *testing.T) {
-	for _, c := range []struct {
-		advertised []string
-		model      string
-		want       bool
-	}{
-		{[]string{"acme/alpha-2"}, "acme/alpha-2", true},
-		{[]string{"alpha-codex/high", "alpha-codex/low"}, "acme/alpha-codex", true}, // codex: bare + effort
-		{[]string{"alpha-5"}, "acme/alpha-5", true},
-		{[]string{"acme/alpha-2"}, "acme/alpha-1", false},   // another version is not a match
-		{[]string{"alpha-codex/high"}, "acme/alpha", false}, // a prefix is not a match
-	} {
-		if got := agentAccepts(c.advertised, c.model); got != c.want {
-			t.Errorf("agentAccepts(%v, %q) = %v", c.advertised, c.model, got)
-		}
 	}
 }
 

@@ -24,6 +24,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
 	"apothecary/internal/flow"
+	"apothecary/internal/modelcheck"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
 	"apothecary/internal/resolution"
@@ -1703,17 +1704,17 @@ func (e *Engine) preflight(ctx context.Context, res *resolution.Resolution, fl *
 	// Every agent stage's model must be one its harness can reach — checked
 	// now, before a workspace is built, not when the stage opens its session.
 	// A list that cannot be fetched is not a reason to refuse the run.
-	mc := checkModels(ctx, res, fl)
-	if len(mc.missing) > 0 {
-		return fmt.Errorf("preflight: %s", strings.Join(mc.missing, "; "))
+	mc := modelcheck.Models(ctx, res, fl)
+	if len(mc.Missing) > 0 {
+		return fmt.Errorf("preflight: %s", strings.Join(mc.Missing, "; "))
 	}
-	if len(mc.unverified) > 0 {
+	if len(mc.Unverified) > 0 {
 		e.log.Warn("preflight: could not verify the flow's models", "flow", fl.Name,
-			"harnesses", strings.Join(mc.unverified, "; "))
+			"harnesses", strings.Join(mc.Unverified, "; "))
 	}
 	// And the providers must accept the harness credentials — probed without
 	// spending tokens. A probe that says nothing is not a reason to refuse.
-	rejected, unverified := checkAuth(ctx, res, fl.Stages)
+	rejected, unverified := modelcheck.Auth(ctx, res, fl.Stages)
 	if len(rejected) > 0 {
 		return fmt.Errorf("preflight: %s", strings.Join(rejected, "; "))
 	}
@@ -2818,13 +2819,13 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 	if fl != nil {
 		steps = append(steps, step("flow_refs", e.preflightFlowRefs(res, fl)))
 		if res.Models != nil {
-			mc := checkModels(ctx, res, fl)
+			mc := modelcheck.Models(ctx, res, fl)
 			var merr error
 			switch {
-			case len(mc.missing) > 0:
-				merr = errors.New(strings.Join(mc.missing, "; "))
-			case len(mc.unverified) > 0:
-				merr = fmt.Errorf("could not list models to check against — %s", strings.Join(mc.unverified, "; "))
+			case len(mc.Missing) > 0:
+				merr = errors.New(strings.Join(mc.Missing, "; "))
+			case len(mc.Unverified) > 0:
+				merr = fmt.Errorf("could not list models to check against — %s", strings.Join(mc.Unverified, "; "))
 			}
 			steps = append(steps, step("models", merr))
 		}
@@ -2832,7 +2833,7 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 			// Only a refusal fails: a subscription login has no probe, and
 			// must not fail the project's preflight forever.
 			var aerr error
-			if rejected, _ := checkAuth(ctx, res, fl.Stages); len(rejected) > 0 {
+			if rejected, _ := modelcheck.Auth(ctx, res, fl.Stages); len(rejected) > 0 {
 				aerr = errors.New(strings.Join(rejected, "; "))
 			}
 			steps = append(steps, step("harness_auth", aerr))

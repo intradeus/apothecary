@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"apothecary/internal/agentspec"
 	askstore "apothecary/internal/ask"
 	"apothecary/internal/flow"
+	"apothecary/internal/modelcheck"
 	"apothecary/internal/ports"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
@@ -194,7 +196,7 @@ func (e *Engine) askModels(ctx context.Context, s *askSetup) []string {
 	}
 	if models == nil {
 		if lister, ok := s.res.RunnerFor(s.harness).(ports.AgentModelLister); ok {
-			actx, cancel := context.WithTimeout(ctx, agentModelTimeout)
+			actx, cancel := context.WithTimeout(ctx, modelcheck.Timeout)
 			got, err := lister.AgentModels(actx, ports.EnvID(s.v.EnvID))
 			cancel()
 			if err != nil {
@@ -217,7 +219,7 @@ func askModel(th askstore.Thread, fl *flow.Flow, models []string) string {
 		return th.Model
 	}
 	m := fl.Defaults.Model
-	if len(models) > 0 && !contains(models, m) && !agentAccepts(models, m) {
+	if len(models) > 0 && !slices.Contains(models, m) && !modelcheck.Accepts(models, m) {
 		return models[0]
 	}
 	return m
@@ -441,9 +443,9 @@ func (e *Engine) AskSetModel(ctx context.Context, runID, model string) error {
 	if s.reason != "" {
 		return fmt.Errorf("%w: %s", ErrAskOff, s.reason)
 	}
-	if models := e.askModels(ctx, s); len(models) > 0 && !contains(models, model) && !agentAccepts(models, model) {
+	if models := e.askModels(ctx, s); len(models) > 0 && !slices.Contains(models, model) && !modelcheck.Accepts(models, model) {
 		msg := fmt.Sprintf("model %q is not available to harness %s", model, s.harness)
-		if near := closestModels(model, models, 3); len(near) > 0 {
+		if near := modelcheck.Closest(model, models, 3); len(near) > 0 {
 			msg += " (closest: " + strings.Join(near, ", ") + ")"
 		}
 		return errors.New(msg)

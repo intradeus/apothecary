@@ -1,0 +1,229 @@
+// Package modelcheck answers "can this project's harnesses reach the models
+// its flow names?" before a run spends anything: the providers' model lists,
+// the credentials the harnesses hold, and what the workspace agent itself
+// offers. Run creation, preflight, envcheck and the Ask pane all ask it.
+package modelcheck
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"sort"
+	"strings"
+	"time"
+
+	"apothecary/internal/flow"
+	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
+)
+
+// Result is what checking a flow's models found.
+type Result struct {
+	// Missing: stages whose model their harness cannot reach — a run would
+	// fail when that stage opens its session.
+	Missing []string
+	// Unverified: harnesses whose model list could not be fetched (provider
+	// unreachable, no credentials yet). Not a verdict on the flow.
+	Unverified []string
+}
+
+// modelListTimeout bounds the lookups: they hit the providers' live model
+// endpoints, and run creation must not hang on a slow one.
+const modelListTimeout = 15 * time.Second
+
+// Models verifies that every agent stage's model is one its harness can
+// reach with the project's credentials. Providers retire models (a flow
+// pinning yesterday's model fails mid-run, after the workspace was built and
+// earlier stages spent their budget) — this catches it before any of that.
+func Models(ctx context.Context, res *resolution.Resolution, fl *flow.Flow) Result {
+	var out Result
+	if res.Models == nil || fl == nil {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(ctx, modelListTimeout)
+	defer cancel()
+	lists := map[string][]string{}
+	failed := map[string]bool{}
+	for i := range fl.Stages {
+		st := &fl.Stages[i]
+		if st.Type != flow.StageAgent || st.Model == "" {
+			continue
+		}
+		kind := st.Harness
+		if kind == "" {
+			kind = res.HarnessKind
+		}
+		if failed[kind] {
+			continue
+		}
+		models, ok := lists[kind]
+		if !ok {
+			var err error
+			models, err = res.Models(ctx, kind)
+			if err != nil {
+				failed[kind] = true
+				out.Unverified = append(out.Unverified, fmt.Sprintf("%s: %v", kind, err))
+				continue
+			}
+			lists[kind] = models
+		}
+		if models == nil {
+			continue // the harness takes any model
+		}
+		if !slices.Contains(models, st.Model) {
+			msg := fmt.Sprintf("stage %q: model %q is not available to harness %s", st.ID, st.Model, kind)
+			if near := Closest(st.Model, models, 3); len(near) > 0 {
+				msg += " (closest: " + strings.Join(near, ", ") + ")"
+			}
+			out.Missing = append(out.Missing, msg)
+		}
+	}
+	return out
+}
+
+// authCheckTimeout bounds probing every harness's credentials: one probe per
+// provider (per model on gateways), each up to 10 s.
+const authCheckTimeout = 30 * time.Second
+
+// Auth probes, per harness, the credentials of the providers the agent
+// stages' models route through — a revoked key otherwise passes every model
+// check (the catalog fallback needs none) and fails at the first stage, as
+// an agent that ends its turn without output.
+func Auth(ctx context.Context, res *resolution.Resolution, stages []flow.Stage) (rejected, unverified []string) {
+	if res.CheckAuth == nil {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, authCheckTimeout)
+	defer cancel()
+	var order []string
+	models := map[string][]string{}
+	for i := range stages {
+		st := &stages[i]
+		if st.Type != flow.StageAgent || st.Model == "" {
+			continue
+		}
+		kind := st.Harness
+		if kind == "" {
+			kind = res.HarnessKind
+		}
+		if _, seen := models[kind]; !seen {
+			order = append(order, kind)
+		}
+		if !slices.Contains(models[kind], st.Model) {
+			models[kind] = append(models[kind], st.Model)
+		}
+	}
+	for _, kind := range order {
+		r, u := res.CheckAuth(ctx, kind, models[kind])
+		rejected = append(rejected, r...)
+		unverified = append(unverified, u...)
+	}
+	return rejected, unverified
+}
+
+// Closest suggests replacements: the same provider first, ranked by how
+// long a prefix they share with the missing id (alpha-1 → alpha-2, alpha-3).
+func Closest(want string, models []string, n int) []string {
+	provider, _, _ := strings.Cut(want, "/")
+	type cand struct {
+		id    string
+		score int
+	}
+	var cs []cand
+	for _, m := range models {
+		p, _, _ := strings.Cut(m, "/")
+		if p != provider {
+			continue
+		}
+		score := 0
+		for score < len(m) && score < len(want) && m[score] == want[score] {
+			score++
+		}
+		if score > len(provider)+1 {
+			cs = append(cs, cand{m, score})
+		}
+	}
+	sort.SliceStable(cs, func(i, j int) bool {
+		if cs[i].score != cs[j].score {
+			return cs[i].score > cs[j].score
+		}
+		return cs[i].id < cs[j].id
+	})
+	var out []string
+	for i := 0; i < len(cs) && i < n; i++ {
+		out = append(out, cs[i].id)
+	}
+	return out
+}
+
+// Accepts reports whether an agent's advertised ids cover a flow model:
+// exactly, by its bare id (codex spells models without the provider), or as
+// a variant of it ("alpha/high").
+func Accepts(advertised []string, model string) bool {
+	bare := model
+	if _, rest, ok := strings.Cut(model, "/"); ok {
+		bare = rest
+	}
+	for _, a := range advertised {
+		if a == model || a == bare || strings.HasPrefix(a, model+"/") || strings.HasPrefix(a, bare+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// Timeout bounds asking the workspace's agent for its models (it
+// may have to start first).
+const Timeout = 90 * time.Second
+
+// AgentModels asks each harness's agent, IN the workspace, which models
+// it accepts, and reports what the stages pin that it does not — the
+// authoritative check: the provider may still serve a model the installed
+// harness version does not know. unasked lists harnesses whose agent could
+// not be asked (or said nothing); their stages are not judged.
+func AgentModels(ctx context.Context, res *resolution.Resolution, env ports.EnvID, stages []flow.Stage) (missing, unasked []string) {
+	asked := map[string][]string{}
+	skipped := map[string]bool{}
+	for i := range stages {
+		st := &stages[i]
+		if st.Type != flow.StageAgent || st.Model == "" {
+			continue
+		}
+		kind := st.Harness
+		if kind == "" {
+			kind = res.HarnessKind
+		}
+		if skipped[kind] {
+			continue
+		}
+		models, ok := asked[kind]
+		if !ok {
+			lister, can := res.RunnerFor(kind).(ports.AgentModelLister)
+			if !can {
+				skipped[kind] = true
+				continue
+			}
+			actx, cancel := context.WithTimeout(ctx, Timeout)
+			got, err := lister.AgentModels(actx, env)
+			cancel()
+			if err != nil || len(got) == 0 {
+				why := "it reports no model list"
+				if err != nil {
+					why = err.Error()
+				}
+				unasked = append(unasked, fmt.Sprintf("%s: %s", kind, why))
+				skipped[kind] = true
+				continue
+			}
+			asked[kind], models = got, got
+		}
+		if !Accepts(models, st.Model) {
+			msg := fmt.Sprintf("stage %q: model %q is not offered by the %s agent in the workspace", st.ID, st.Model, kind)
+			if near := Closest(st.Model, models, 3); len(near) > 0 {
+				msg += " (closest: " + strings.Join(near, ", ") + ")"
+			}
+			missing = append(missing, msg)
+		}
+	}
+	return missing, unasked
+}
