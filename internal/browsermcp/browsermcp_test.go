@@ -11,16 +11,16 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
 
 // dialer is a browser whose session dials the workspace's port 3000 thrice.
-type dialer struct{ session ports.BrowserSession }
+type dialer struct{ session browserport.BrowserSession }
 
-func (b *dialer) Session(ctx context.Context, s ports.BrowserSession, _ io.ReadWriter) error {
+func (b *dialer) Session(ctx context.Context, s browserport.BrowserSession, _ io.ReadWriter) error {
 	b.session = s
 	for range 3 {
 		c, err := s.Dial(ctx, 3000)
@@ -32,8 +32,8 @@ func (b *dialer) Session(ctx context.Context, s ports.BrowserSession, _ io.ReadW
 	return nil
 }
 func (b *dialer) Warm(string, string) {}
-func (b *dialer) Status(context.Context, string) (ports.BrowserStatus, error) {
-	return ports.BrowserStatus{}, nil
+func (b *dialer) Status(context.Context, string) (browserport.BrowserStatus, error) {
+	return browserport.BrowserStatus{}, nil
 }
 
 // exposer counts exposures; each one dials an in-memory pipe.

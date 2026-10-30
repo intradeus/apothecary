@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"apothecary/internal/ports/browserport"
 	"bufio"
 	"context"
 	"fmt"
@@ -17,8 +18,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"apothecary/internal/ports"
 )
 
 // runApp serves a tiny app on a loopback port and returns a Dial that
@@ -247,7 +246,7 @@ func TestSessionBringsTheBrowserUpAndRoutesTheRun(t *testing.T) {
 		io.Reader
 		io.Writer
 	}{strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}` + "\n"), &out}
-	if err := m.Session(context.Background(), ports.BrowserSession{Project: "01HWEBAPP", ProjectName: "Web App", Run: "r1", Dial: dial}, stdio); err != nil {
+	if err := m.Session(context.Background(), browserport.BrowserSession{Project: "01HWEBAPP", ProjectName: "Web App", Run: "r1", Dial: dial}, stdio); err != nil {
 		t.Fatal(err)
 	}
 	if want := "app GET /home host=localhost:3000\n" + `{"jsonrpc":"2.0","id":1,"method":"initialize"}` + "\n"; out.String() != want {
@@ -299,7 +298,7 @@ func TestStaleBrowserIsRecreatedOnlyWhenIdle(t *testing.T) {
 	sess := func() chan error {
 		ch := make(chan error, 1)
 		go func() {
-			ch <- m.Session(context.Background(), ports.BrowserSession{Project: "p", Run: "r",
+			ch <- m.Session(context.Background(), browserport.BrowserSession{Project: "p", Run: "r",
 				Dial: func(context.Context, int) (net.Conn, error) { return nil, io.EOF }}, struct {
 				io.Reader
 				io.Writer

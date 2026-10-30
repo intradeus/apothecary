@@ -14,7 +14,7 @@ import (
 	"strings"
 	"sync"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
@@ -32,12 +32,12 @@ var ErrOff = errors.New("this apothecary has no project browser")
 type Service struct {
 	Runs     *run.Reader
 	Resolver resolution.Resolver
-	Browser  ports.Browser
+	Browser  browserport.Browser
 
 	ports *portCache
 }
 
-func New(runs *run.Reader, resolver resolution.Resolver, browser ports.Browser) *Service {
+func New(runs *run.Reader, resolver resolution.Resolver, browser browserport.Browser) *Service {
 	return &Service{Runs: runs, Resolver: resolver, Browser: browser, ports: &portCache{conns: map[string]envport.PortConn{}}}
 }
 
@@ -50,8 +50,8 @@ func (s *Service) BeforeDestroy(context.Context, run.View, *resolution.Resolutio
 
 // Session is a run's browser session, checked and ready to serve.
 type Session struct {
-	browser ports.Browser
-	s       ports.BrowserSession
+	browser browserport.Browser
+	s       browserport.BrowserSession
 	release func()
 }
 
@@ -89,7 +89,7 @@ func (s *Service) Open(ctx context.Context, runID string) (*Session, error) {
 			return exposer.ExposePort(ctx, env, port)
 		})
 	}
-	return &Session{browser: s.Browser, s: ports.BrowserSession{Project: res.ProjectID, ProjectName: res.ProjectName, Run: runID, Dial: dial}, release: res.Close}, nil
+	return &Session{browser: s.Browser, s: browserport.BrowserSession{Project: res.ProjectID, ProjectName: res.ProjectName, Run: runID, Dial: dial}, release: res.Close}, nil
 }
 
 // Serve bridges the session's stdio — the workspace's `shim browser-mcp` —
@@ -119,9 +119,9 @@ func (s *Service) Serve(ctx context.Context, runID string, stdio io.ReadWriter) 
 
 // Status is the project browser's state, for the settings page.
 // project is the project's id.
-func (s *Service) Status(ctx context.Context, project string) (ports.BrowserStatus, error) {
+func (s *Service) Status(ctx context.Context, project string) (browserport.BrowserStatus, error) {
 	if s.Browser == nil {
-		return ports.BrowserStatus{}, ErrOff
+		return browserport.BrowserStatus{}, ErrOff
 	}
 	return s.Browser.Status(ctx, project)
 }

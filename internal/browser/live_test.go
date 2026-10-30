@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/browserport"
 	"apothecary/internal/wsimage"
 )
 
@@ -63,7 +63,7 @@ func TestLiveBrowserSession(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- m.Session(ctx, ports.BrowserSession{Project: project, Run: "r1", Dial: dial}, struct {
+		done <- m.Session(ctx, browserport.BrowserSession{Project: project, Run: "r1", Dial: dial}, struct {
 			io.Reader
 			io.Writer
 		}{toServer, toAgent})

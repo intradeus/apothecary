@@ -31,7 +31,7 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/envport"
 )
 
@@ -117,7 +117,7 @@ func New(cfg Config) *Manager {
 	return &Manager{cfg: cfg, projects: map[string]*project{}}
 }
 
-var _ ports.Browser = (*Manager)(nil)
+var _ browserport.Browser = (*Manager)(nil)
 
 // --- naming ---------------------------------------------------------------
 
@@ -279,7 +279,7 @@ func newSessionID() string {
 // Session serves one MCP session: the project's browser brought up, a
 // routing proxy for the run on a fresh socket, one exec of the session
 // runner — until either side closes.
-func (m *Manager) Session(ctx context.Context, s ports.BrowserSession, stdio io.ReadWriter) error {
+func (m *Manager) Session(ctx context.Context, s browserport.BrowserSession, stdio io.ReadWriter) error {
 	p := m.acquire(s.Project)
 	defer m.release(s.Project, p)
 	if err := m.ensure(ctx, s.Project, s.ProjectName, p); err != nil {
@@ -309,8 +309,8 @@ func (m *Manager) Session(ctx context.Context, s ports.BrowserSession, stdio io.
 
 // Status is the project's browser as the settings page shows it (name is
 // the project id).
-func (m *Manager) Status(ctx context.Context, name string) (ports.BrowserStatus, error) {
-	st := ports.BrowserStatus{Container: m.cfg.Host.Name(name), State: "absent"}
+func (m *Manager) Status(ctx context.Context, name string) (browserport.BrowserStatus, error) {
+	st := browserport.BrowserStatus{Container: m.cfg.Host.Name(name), State: "absent"}
 	if m.cfg.Tag != nil {
 		st.Current = m.cfg.Tag()
 	}

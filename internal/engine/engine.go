@@ -27,6 +27,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/modelcheck"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
@@ -229,7 +230,7 @@ type Engine struct {
 	// its MCP servers; browser is the project browser, warmed for a run that
 	// will use it (mcp.go). nil = off.
 	projectSecrets ProjectSecretSource
-	browser        ports.Browser
+	browser        browserport.Browser
 
 	mu      sync.Mutex
 	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
@@ -507,7 +508,7 @@ type Deps struct {
 	Skills         SkillStore
 	PingLookup     PingLookup
 	ProjectSecrets ProjectSecretSource
-	Browser        ports.Browser
+	Browser        browserport.Browser
 
 	RunPorts RunPorts
 	EnvState *envstate.Store

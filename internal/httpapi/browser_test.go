@@ -14,8 +14,8 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/engine"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
+	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
@@ -81,7 +81,7 @@ func TestProjectBrowserStatus(t *testing.T) {
 // echoBrowser answers each line with "echo: <line>", or fails.
 type echoBrowser struct{ fail error }
 
-func (b *echoBrowser) Session(_ context.Context, _ ports.BrowserSession, stdio io.ReadWriter) error {
+func (b *echoBrowser) Session(_ context.Context, _ browserport.BrowserSession, stdio io.ReadWriter) error {
 	if b.fail != nil {
 		return b.fail
 	}
@@ -94,8 +94,8 @@ func (b *echoBrowser) Session(_ context.Context, _ ports.BrowserSession, stdio i
 	return nil
 }
 func (b *echoBrowser) Warm(string, string) {}
-func (b *echoBrowser) Status(_ context.Context, project string) (ports.BrowserStatus, error) {
-	return ports.BrowserStatus{Container: "apo-browser-" + project, State: "running", Sessions: 1}, nil
+func (b *echoBrowser) Status(_ context.Context, project string) (browserport.BrowserStatus, error) {
+	return browserport.BrowserStatus{Container: "apo-browser-" + project, State: "running", Sessions: 1}, nil
 }
 
 // upgrade opens the browser stream as the workspace's shim does.

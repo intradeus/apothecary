@@ -15,8 +15,8 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/browsermcp"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
+	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
@@ -47,11 +47,11 @@ main:
 type fakeBrowser struct {
 	mu      sync.Mutex
 	warmed  []string
-	session ports.BrowserSession
-	serve   func(ports.BrowserSession, io.ReadWriter) error
+	session browserport.BrowserSession
+	serve   func(browserport.BrowserSession, io.ReadWriter) error
 }
 
-func (b *fakeBrowser) Session(_ context.Context, s ports.BrowserSession, stdio io.ReadWriter) error {
+func (b *fakeBrowser) Session(_ context.Context, s browserport.BrowserSession, stdio io.ReadWriter) error {
 	b.mu.Lock()
 	b.session = s
 	b.mu.Unlock()
@@ -65,8 +65,8 @@ func (b *fakeBrowser) Warm(project, _ string) {
 	b.warmed = append(b.warmed, project)
 	b.mu.Unlock()
 }
-func (b *fakeBrowser) Status(context.Context, string) (ports.BrowserStatus, error) {
-	return ports.BrowserStatus{State: "running"}, nil
+func (b *fakeBrowser) Status(context.Context, string) (browserport.BrowserStatus, error) {
+	return browserport.BrowserStatus{State: "running"}, nil
 }
 
 type secretMap map[string]string
@@ -188,7 +188,7 @@ func TestStageFailsOnASecretGoneSinceCreation(t *testing.T) {
 // provisioner's exposer, exposing each port once.
 func TestBrowserSessionDialsTheRunsWorkspace(t *testing.T) {
 	b := &fakeBrowser{}
-	b.serve = func(s ports.BrowserSession, _ io.ReadWriter) error {
+	b.serve = func(s browserport.BrowserSession, _ io.ReadWriter) error {
 		for range 3 {
 			c, err := s.Dial(context.Background(), 3000)
 			if err != nil {
