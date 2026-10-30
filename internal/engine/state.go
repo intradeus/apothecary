@@ -406,10 +406,9 @@ func (rs *runState) startPhase(p *event.PhaseStarted, fl *flow.Flow) {
 	}
 }
 
-// replay folds a run's event history into runState. fl may be nil when the
-// flow is unknown; callers must check.
-func replay(evs []event.Event, fl *flow.Flow) *runState {
-	rs := &runState{
+// newRunState is the state of a run with no history yet, on flow fl.
+func newRunState(fl *flow.Flow) *runState {
+	return &runState{
 		fl:            fl,
 		iters:         map[string]int{},
 		edgeCounts:    map[string]int{},
@@ -431,262 +430,272 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		pausedHold:    map[string]bool{},
 		handbackOwed:  map[string]bool{},
 	}
-	raised := map[string]*event.PingRaised{}
+}
+
+// replay folds a run's event history into runState. fl may be nil when the
+// flow is unknown; callers must check.
+func replay(evs []event.Event, fl *flow.Flow) *runState {
+	rs := newRunState(fl)
 	for i := range evs {
-		ev := &evs[i]
-		rs.runID = ev.RunID
-		run.Apply(&rs.view, ev)
-		switch p := ev.Payload.(type) {
-		case *event.RunCreated:
-			rs.branch = p.Branch
-			rs.sourceBranch = p.SourceBranch
-			rs.params = p.Params
-			rs.skillsets = p.Skillsets
-			rs.checkouts = checkoutsOf(p)
-			if m := p.MR; m != nil {
-				rs.adopted = m
-				if co := rs.checkout(m.Repo); co != nil {
-					rs.addMR(&event.MRCreated{Repo: m.Repo, Branch: co.Branch, Target: co.Source, MRURL: m.URL, MRIID: m.IID, Head: m.Head})
-				}
-			}
-		case *event.EnvRequested:
-			rs.envRequested = true
-		case *event.EnvReady:
-			rs.envID = envport.EnvID(p.EnvID)
-			rs.links = p.Links
-		case *event.EnvFailed:
-			rs.done = true
-			if p.EnvID != "" {
-				rs.envID = envport.EnvID(p.EnvID)
-			}
-		case *event.SnapshotCaptured:
-			// Keeps pseudo-stage counters monotonic across restarts: the
-			// provisioning log has no stage_started to replay its iteration
-			// from. A real stage's snapshots never exceed its started count,
-			// so this is a no-op for them.
-			if p.Iteration > rs.iters[p.StageID] {
-				rs.iters[p.StageID] = p.Iteration
-			}
-		case *event.StageStarted:
-			rs.anyStarted = true
-			delete(rs.elided, p.StageID)
-			rs.forgetCurated(fl, p.StageID)
-			if fl != nil {
-				rs.pos = fl.Index(p.StageID)
-			}
-			rs.ph = phIn
-			if p.Iteration > rs.iters[p.StageID] {
-				rs.iters[p.StageID] = p.Iteration
-			}
-			rs.gateAnswer = nil
-			rs.lastFailure = nil
-			delete(rs.pausedAsks, p.StageID)
-		case *event.StageCompleted:
-			rs.ph = phAfterComplete
-			// What the routing that follows (advance) sets: the verdict the
-			// approval carries, or nothing — a feed the stage was entered with
-			// is spent.
-			rs.completedFeed = p.Feed
-			rs.feed, rs.feedSentinel, rs.feedAttempts = p.Feed, "", 0
-			if p.Feed != "" {
-				rs.feedSentinel = flow.SourceVerdict
-			}
-			if p.Skipped {
-				rs.elided[p.StageID] = true
-			}
-			// A completed stage settled whatever intent it recorded: a later
-			// run of the same action (a second review round) starts clean.
-			delete(rs.actionPending, p.StageID)
-			if p.SessionID != "" {
-				rs.sessions[p.StageID] = agentport.SessionID(p.SessionID)
-			}
-			if p.Usage != nil {
-				rs.cost += p.Usage.CostUSD
-			}
-			rs.turns += p.TurnsUsed
-		case *event.StageFailed:
-			rs.ph = phAfterFail
-			rs.lastFailure = p
-		case *event.StagePaused:
-			rs.pausedAsks[p.StageID] = p.PingIDs
-			// The attempt is parked, not finished: ph stays phIn so recovery
-			// re-enters this stage. The session it recorded is what the
-			// re-entry resumes — without it a restart would have to start the
-			// agent over and lose everything it had done before the question.
-			// Cost and turns are banked here because the invocation that just
-			// ended really did spend them.
-			rs.ph = phIn
-			if p.SessionID != "" {
-				rs.sessions[p.StageID] = agentport.SessionID(p.SessionID)
-			}
-			if p.Usage != nil {
-				rs.cost += p.Usage.CostUSD
-			}
-			rs.turns += p.TurnsUsed
-			// A park on the holder of a take-over: re-entry waits for their
-			// word. Either park banks what the hold's leg spent.
-			if p.Reason == event.PauseHeld {
-				rs.pausedHold[p.StageID] = true
-			}
-			if h := rs.holds[p.StageID]; h != nil && p.Hold != nil {
-				h.banked.Add(*p.Hold)
-			}
-		case *event.StageResumed:
-			// The pause it answers is consumed: leaving it set would make a
-			// LATER attempt of the same stage re-enter as if it were still
-			// parked on those long-answered questions.
-			delete(rs.pausedAsks, p.StageID)
-			delete(rs.pausedHold, p.StageID)
-			// Bookkeeping only — the pause already set everything the
-			// re-entry needs, and the invocation this event opens reports its
-			// own spend when it ends (stage_paused again, or stage_completed).
-			rs.ph = phIn
-		case *event.EdgeTaken:
-			rs.edgeCounts[chainKey(p.From, p.Edge, p.Depth)] = p.Count
-			if p.To == flow.TerminalEnd || p.To == flow.TerminalDone {
-				// The edge ended the phase — or, with done, the run.
-				if fl != nil {
-					rs.pos = len(fl.Stages)
-				}
-				rs.endsRun = p.To == flow.TerminalDone
-				rs.ph = phStart
-				rs.feed, rs.feedSentinel, rs.feedAttempts = "", "", 0
-				break
-			}
-			if p.To == flow.ReservedDebug {
-				// The debug leaf: the cursor stays on the stage that took the
-				// link, parked for a human (runloop.stageDebug).
-				if fl != nil {
-					rs.pos = fl.Index(p.From)
-				}
-				rs.ph = phDebug
-				rs.feed = p.Feed
-				rs.feedSentinel = flow.FeedSource(p.Edge)
-				rs.feedAttempts = 0
-				break
-			}
-			if fl != nil {
-				rs.pos = fl.Index(p.To)
-			}
-			rs.ph = phStart
-			rs.feed = p.Feed
-			rs.feedSentinel = flow.FeedSource(p.Edge)
-			rs.feedAttempts = p.Max + 1
-		case *event.PhaseStarted:
-			if rs.phase == "" && rs.anyStarted {
-				// A start recorded after the fact (beginRun on a log that had
-				// stage events but no phase start): the cursor stays where the
-				// stage events put it.
-				rs.phase, rs.subject, rs.idle = p.Phase, p.Subject, false
-				rs.phaseRuns[phaseRunKey(p.Phase, p.Subject)]++
-				break
-			}
-			rs.startPhase(p, fl)
-		case *event.PhaseCompleted:
-			rs.idle = true
-			rs.endsRun, rs.abortsRun, rs.endReason = false, false, ""
-		case *event.PhaseParked:
-			rs.park(p.StageID, p.PingID, ev.TS)
-		case *event.PhaseResumed:
-			rs.unpark(p.Phase)
-		case *event.BranchPushed:
-			rs.notePush(p.Repo, p.Branch, p.Tip)
-		case *event.ReviewCommentsLoaded:
-			rs.round, rs.roundScope, rs.roundLoaded = append([]event.LoadedThread(nil), p.Threads...), p.Scope, true
-			for id, last := range p.Skipped {
-				rs.skipped[id] = last
-			}
-		case *event.ReviewCurated:
-			rs.noteCurated(p)
-		case *event.PhaseDeclined:
-			rs.triggerSeen[triggerKey(p.Phase, p.Subject, p.Key)] = true
-		case *event.PingRaised:
-			if p.Type == event.PingPhaseConfirm {
-				rs.confirms = append(rs.confirms, p)
-			}
-			if p.Type == event.PingSelect {
-				rs.selectPing = p
-			}
-			raised[p.PingID] = p
-			rs.raisedPings[p.PingID] = p
-			rs.openPings = append(rs.openPings, p)
-			if agentPingType(p.Type) {
-				rs.unwanted++
-			}
-		case *event.PingAnswered:
-			rs.answeredPings[p.PingID] = p
-			for j, op := range rs.openPings {
-				if op.PingID == p.PingID {
-					rs.openPings = append(rs.openPings[:j], rs.openPings[j+1:]...)
-					break
-				}
-			}
-			if r, ok := raised[p.PingID]; ok && rs.decidesHere(r) {
-				rs.gateAnswer = p
-			}
-		case *event.ActionStarted:
-			// Intent recorded, effect not yet confirmed. Cleared by the
-			// action's completion event below; anything still set after replay
-			// means a crash landed in that window, so the executor must
-			// reconcile with the repository host instead of re-running blind.
-			rs.actionPending[p.StageID] = true
-		case *event.MRCreated:
-			rs.addMR(p)
-			// The action's intent is settled only once every merge request it
-			// publishes exists; a partial publication keeps reconciling.
-		case *event.RunCompleted, *event.RunAbandoned, *event.RunFailed, *event.RunArchived:
-			rs.done = true
-			// The run ended with them open: withdrawn, as the projection reads
-			// them (run.ReducePings). A retry must not re-register a ping
-			// nothing can route anymore.
-			rs.openPings = nil
-		case *event.RunRetried:
-			// "Try again": un-terminal and re-enter the failed stage fresh.
-			// Clearing edgeCounts restores every stage's on_fail/on_reject
-			// retry budget from the resume point; feed/lastFailure reset so
-			// the stage runs clean, not as a routed recovery.
-			rs.done = false
-			rs.ph = phStart
-			rs.feed = ""
-			rs.feedSentinel = ""
-			rs.feedAttempts = 0
-			rs.lastFailure = nil
-			rs.gateAnswer = nil
-			rs.edgeCounts = map[string]int{}
-			if fl != nil {
-				rs.pos = fl.Index(p.StageID)
-			}
-		case *event.AgentSession:
-			rs.sessions[p.StageID] = agentport.SessionID(p.SessionID)
-		case *event.AgentMessage:
-			rs.noteCursor(p.StageID, p.Cursor)
-		case *event.AgentTool:
-			rs.noteCursor(p.StageID, p.Cursor)
-		case *event.AgentPlan:
-			rs.noteCursor(p.StageID, p.Cursor)
-		case *event.AgentNotice:
-			rs.noteCursor(p.StageID, p.Cursor)
-		case *event.MessageQueued:
-			rs.pendingMsgs = append(rs.pendingMsgs, p)
-		case *event.MessageDelivered:
-			rs.delivered(p.MessageIDs)
-		case *event.HoldTaken:
-			rs.holds[p.StageID] = &heldState{taken: p, takenAt: ev.TS}
-		case *event.HoldReleased:
-			delete(rs.holds, p.StageID)
-			if p.Reason == event.HoldReleasedByUser {
-				rs.handbackOwed[p.StageID] = true
-			}
-		case *event.AgentPrompted:
-			if p.Kind == event.PromptHandback {
-				delete(rs.handbackOwed, p.StageID)
-			}
-		case *event.RunPaused, *event.RunUnpaused:
-			// View-level only: ph/pos/counters stay exactly as the stage
-			// events left them, so play re-enters like crash recovery.
-		}
+		rs.apply(&evs[i])
 	}
 	return rs
+}
+
+// apply folds one event into the state: the only way a runState learns
+// what happened. Replay is apply over the log; the run loop applies each
+// event it appends.
+func (rs *runState) apply(ev *event.Event) {
+	rs.runID = ev.RunID
+	run.Apply(&rs.view, ev)
+	switch p := ev.Payload.(type) {
+	case *event.RunCreated:
+		rs.branch = p.Branch
+		rs.sourceBranch = p.SourceBranch
+		rs.params = p.Params
+		rs.skillsets = p.Skillsets
+		rs.checkouts = checkoutsOf(p)
+		if m := p.MR; m != nil {
+			rs.adopted = m
+			if co := rs.checkout(m.Repo); co != nil {
+				rs.addMR(&event.MRCreated{Repo: m.Repo, Branch: co.Branch, Target: co.Source, MRURL: m.URL, MRIID: m.IID, Head: m.Head})
+			}
+		}
+	case *event.EnvRequested:
+		rs.envRequested = true
+	case *event.EnvReady:
+		rs.envID = envport.EnvID(p.EnvID)
+		rs.links = p.Links
+	case *event.EnvFailed:
+		rs.done = true
+		if p.EnvID != "" {
+			rs.envID = envport.EnvID(p.EnvID)
+		}
+	case *event.SnapshotCaptured:
+		// Keeps pseudo-stage counters monotonic across restarts: the
+		// provisioning log has no stage_started to replay its iteration
+		// from. A real stage's snapshots never exceed its started count,
+		// so this is a no-op for them.
+		if p.Iteration > rs.iters[p.StageID] {
+			rs.iters[p.StageID] = p.Iteration
+		}
+	case *event.StageStarted:
+		rs.anyStarted = true
+		delete(rs.elided, p.StageID)
+		rs.forgetCurated(rs.fl, p.StageID)
+		if rs.fl != nil {
+			rs.pos = rs.fl.Index(p.StageID)
+		}
+		rs.ph = phIn
+		if p.Iteration > rs.iters[p.StageID] {
+			rs.iters[p.StageID] = p.Iteration
+		}
+		rs.gateAnswer = nil
+		rs.lastFailure = nil
+		delete(rs.pausedAsks, p.StageID)
+	case *event.StageCompleted:
+		rs.ph = phAfterComplete
+		// What the routing that follows (advance) sets: the verdict the
+		// approval carries, or nothing — a feed the stage was entered with
+		// is spent.
+		rs.completedFeed = p.Feed
+		rs.feed, rs.feedSentinel, rs.feedAttempts = p.Feed, "", 0
+		if p.Feed != "" {
+			rs.feedSentinel = flow.SourceVerdict
+		}
+		if p.Skipped {
+			rs.elided[p.StageID] = true
+		}
+		// A completed stage settled whatever intent it recorded: a later
+		// run of the same action (a second review round) starts clean.
+		delete(rs.actionPending, p.StageID)
+		if p.SessionID != "" {
+			rs.sessions[p.StageID] = agentport.SessionID(p.SessionID)
+		}
+		if p.Usage != nil {
+			rs.cost += p.Usage.CostUSD
+		}
+		rs.turns += p.TurnsUsed
+	case *event.StageFailed:
+		rs.ph = phAfterFail
+		rs.lastFailure = p
+	case *event.StagePaused:
+		rs.pausedAsks[p.StageID] = p.PingIDs
+		// The attempt is parked, not finished: ph stays phIn so recovery
+		// re-enters this stage. The session it recorded is what the
+		// re-entry resumes — without it a restart would have to start the
+		// agent over and lose everything it had done before the question.
+		// Cost and turns are banked here because the invocation that just
+		// ended really did spend them.
+		rs.ph = phIn
+		if p.SessionID != "" {
+			rs.sessions[p.StageID] = agentport.SessionID(p.SessionID)
+		}
+		if p.Usage != nil {
+			rs.cost += p.Usage.CostUSD
+		}
+		rs.turns += p.TurnsUsed
+		// A park on the holder of a take-over: re-entry waits for their
+		// word. Either park banks what the hold's leg spent.
+		if p.Reason == event.PauseHeld {
+			rs.pausedHold[p.StageID] = true
+		}
+		if h := rs.holds[p.StageID]; h != nil && p.Hold != nil {
+			h.banked.Add(*p.Hold)
+		}
+	case *event.StageResumed:
+		// The pause it answers is consumed: leaving it set would make a
+		// LATER attempt of the same stage re-enter as if it were still
+		// parked on those long-answered questions.
+		delete(rs.pausedAsks, p.StageID)
+		delete(rs.pausedHold, p.StageID)
+		// Bookkeeping only — the pause already set everything the
+		// re-entry needs, and the invocation this event opens reports its
+		// own spend when it ends (stage_paused again, or stage_completed).
+		rs.ph = phIn
+	case *event.EdgeTaken:
+		rs.edgeCounts[chainKey(p.From, p.Edge, p.Depth)] = p.Count
+		if p.To == flow.TerminalEnd || p.To == flow.TerminalDone {
+			// The edge ended the phase — or, with done, the run.
+			if rs.fl != nil {
+				rs.pos = len(rs.fl.Stages)
+			}
+			rs.endsRun = p.To == flow.TerminalDone
+			rs.ph = phStart
+			rs.feed, rs.feedSentinel, rs.feedAttempts = "", "", 0
+			break
+		}
+		if p.To == flow.ReservedDebug {
+			// The debug leaf: the cursor stays on the stage that took the
+			// link, parked for a human (runloop.stageDebug).
+			if rs.fl != nil {
+				rs.pos = rs.fl.Index(p.From)
+			}
+			rs.ph = phDebug
+			rs.feed = p.Feed
+			rs.feedSentinel = flow.FeedSource(p.Edge)
+			rs.feedAttempts = 0
+			break
+		}
+		if rs.fl != nil {
+			rs.pos = rs.fl.Index(p.To)
+		}
+		rs.ph = phStart
+		rs.feed = p.Feed
+		rs.feedSentinel = flow.FeedSource(p.Edge)
+		rs.feedAttempts = p.Max + 1
+	case *event.PhaseStarted:
+		if rs.phase == "" && rs.anyStarted {
+			// A start recorded after the fact (beginRun on a log that had
+			// stage events but no phase start): the cursor stays where the
+			// stage events put it.
+			rs.phase, rs.subject, rs.idle = p.Phase, p.Subject, false
+			rs.phaseRuns[phaseRunKey(p.Phase, p.Subject)]++
+			break
+		}
+		rs.startPhase(p, rs.fl)
+	case *event.PhaseCompleted:
+		rs.idle = true
+		rs.endsRun, rs.abortsRun, rs.endReason = false, false, ""
+	case *event.PhaseParked:
+		rs.park(p.StageID, p.PingID, ev.TS)
+	case *event.PhaseResumed:
+		rs.unpark(p.Phase)
+	case *event.BranchPushed:
+		rs.notePush(p.Repo, p.Branch, p.Tip)
+	case *event.ReviewCommentsLoaded:
+		rs.round, rs.roundScope, rs.roundLoaded = append([]event.LoadedThread(nil), p.Threads...), p.Scope, true
+		for id, last := range p.Skipped {
+			rs.skipped[id] = last
+		}
+	case *event.ReviewCurated:
+		rs.noteCurated(p)
+	case *event.PhaseDeclined:
+		rs.triggerSeen[triggerKey(p.Phase, p.Subject, p.Key)] = true
+	case *event.PingRaised:
+		if p.Type == event.PingPhaseConfirm {
+			rs.confirms = append(rs.confirms, p)
+		}
+		if p.Type == event.PingSelect {
+			rs.selectPing = p
+		}
+		rs.raisedPings[p.PingID] = p
+		rs.openPings = append(rs.openPings, p)
+		if agentPingType(p.Type) {
+			rs.unwanted++
+		}
+	case *event.PingAnswered:
+		rs.answeredPings[p.PingID] = p
+		for j, op := range rs.openPings {
+			if op.PingID == p.PingID {
+				rs.openPings = append(rs.openPings[:j], rs.openPings[j+1:]...)
+				break
+			}
+		}
+		if r, ok := rs.raisedPings[p.PingID]; ok && rs.decidesHere(r) {
+			rs.gateAnswer = p
+		}
+	case *event.ActionStarted:
+		// Intent recorded, effect not yet confirmed. Cleared by the
+		// action's completion event below; anything still set after replay
+		// means a crash landed in that window, so the executor must
+		// reconcile with the repository host instead of re-running blind.
+		rs.actionPending[p.StageID] = true
+	case *event.MRCreated:
+		rs.addMR(p)
+		// The action's intent is settled only once every merge request it
+		// publishes exists; a partial publication keeps reconciling.
+	case *event.RunCompleted, *event.RunAbandoned, *event.RunFailed, *event.RunArchived:
+		rs.done = true
+		// The run ended with them open: withdrawn, as the projection reads
+		// them (run.ReducePings). A retry must not re-register a ping
+		// nothing can route anymore.
+		rs.openPings = nil
+	case *event.RunRetried:
+		// "Try again": un-terminal and re-enter the failed stage fresh.
+		// Clearing edgeCounts restores every stage's on_fail/on_reject
+		// retry budget from the resume point; feed/lastFailure reset so
+		// the stage runs clean, not as a routed recovery.
+		rs.done = false
+		rs.ph = phStart
+		rs.feed = ""
+		rs.feedSentinel = ""
+		rs.feedAttempts = 0
+		rs.lastFailure = nil
+		rs.gateAnswer = nil
+		rs.edgeCounts = map[string]int{}
+		if rs.fl != nil {
+			rs.pos = rs.fl.Index(p.StageID)
+		}
+	case *event.AgentSession:
+		rs.sessions[p.StageID] = agentport.SessionID(p.SessionID)
+	case *event.AgentMessage:
+		rs.noteCursor(p.StageID, p.Cursor)
+	case *event.AgentTool:
+		rs.noteCursor(p.StageID, p.Cursor)
+	case *event.AgentPlan:
+		rs.noteCursor(p.StageID, p.Cursor)
+	case *event.AgentNotice:
+		rs.noteCursor(p.StageID, p.Cursor)
+	case *event.MessageQueued:
+		rs.pendingMsgs = append(rs.pendingMsgs, p)
+	case *event.MessageDelivered:
+		rs.delivered(p.MessageIDs)
+	case *event.HoldTaken:
+		rs.holds[p.StageID] = &heldState{taken: p, takenAt: ev.TS}
+	case *event.HoldReleased:
+		delete(rs.holds, p.StageID)
+		if p.Reason == event.HoldReleasedByUser {
+			rs.handbackOwed[p.StageID] = true
+		}
+	case *event.AgentPrompted:
+		if p.Kind == event.PromptHandback {
+			delete(rs.handbackOwed, p.StageID)
+		}
+	case *event.RunPaused, *event.RunUnpaused:
+		// View-level only: ph/pos/counters stay exactly as the stage
+		// events left them, so play re-enters like crash recovery.
+	}
 }
 
 // openPing returns the still-open ping of this type raised by (or for) the
