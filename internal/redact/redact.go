@@ -1,13 +1,18 @@
-package engine
+// Package redact scrubs the secrets the engine injected into a workspace out
+// of anything that leaves it. It is its own package because every service that
+// relays workspace output (the run loop, the Ask pane, the credential sink)
+// must scrub with the same rules.
+package redact
 
 import (
-	"apothecary/internal/resolution"
 	"encoding/json"
 	"strings"
 	"sync"
+
+	"apothecary/internal/resolution"
 )
 
-// redactor scrubs the secrets the engine itself injected into a workspace out
+// Redactor scrubs the secrets the engine itself injected into a workspace out
 // of anything that leaves it: a failing stage's output tail, the retry feed an
 // agent reads, and the persisted stage log (PLAN5 M21).
 //
@@ -20,7 +25,7 @@ import (
 // It cannot catch a secret the engine never supplied (one the repo's own
 // tooling prints). Pattern-based scrubbing would be a second, independent
 // layer; this one closes the hole the factory itself opens.
-type redactor struct {
+type Redactor struct {
 	// mu guards values: a project secret first read when an agent stage
 	// starts (it was rotated since the run began) is learned mid-run, while
 	// other goroutines scrub.
@@ -36,26 +41,29 @@ type redactValue struct {
 	label  string // what replaces it: [redacted:<label>]
 }
 
+// New returns an empty redactor; secrets are taught with Add.
+func New() *Redactor { return &Redactor{} }
+
 // minSecretLen guards against redacting something meaninglessly short. A
 // one- or two-character "secret" would turn ordinary output into confetti,
 // and anything that short is not a credential worth protecting.
 const minSecretLen = 6
 
-// newRedactor builds the scrubber for a run from its resolved configuration
+// ForResolution builds the scrubber for a run from its resolved configuration
 // plus the run's bearer token. Empty and trivially short values are skipped.
-func newRedactor(res *resolution.Resolution, tokens ...string) *redactor {
-	r := &redactor{}
+func ForResolution(res *resolution.Resolution, tokens ...string) *Redactor {
+	r := New()
 	if res != nil {
-		r.add(res.GitPass, "git-token")
+		r.Add(res.GitPass, "git-token")
 		for k, v := range res.ProviderEnv {
-			r.add(v, strings.ToLower(k))
+			r.Add(v, strings.ToLower(k))
 		}
 		for _, s := range res.HarnessSecrets {
 			// The blob itself (something cats auth.json) AND every string
 			// inside it: what actually leaks is the key, not the wrapper.
-			r.add(s, "harness-auth")
+			r.Add(s, "harness-auth")
 			for _, leaf := range jsonLeaves(s) {
-				r.add(leaf, "harness-auth")
+				r.Add(leaf, "harness-auth")
 			}
 		}
 	}
@@ -63,11 +71,11 @@ func newRedactor(res *resolution.Resolution, tokens ...string) *redactor {
 		// Every project secret, not only those this run's flow reads: what
 		// an MCP server was handed is what its tool output may echo.
 		for name, v := range res.Secrets {
-			r.add(v, "secret:"+name)
+			r.Add(v, "secret:"+name)
 		}
 	}
 	for _, t := range tokens {
-		r.add(t, "run-token")
+		r.Add(t, "run-token")
 	}
 	return r
 }
@@ -107,7 +115,9 @@ func jsonLeaves(doc string) []string {
 	return out
 }
 
-func (r *redactor) add(secret, label string) {
+// Add teaches the redactor one more secret, replaced by [redacted:<label>].
+// Values shorter than minSecretLen are ignored.
+func (r *Redactor) Add(secret, label string) {
 	if len(secret) < minSecretLen {
 		return
 	}
@@ -126,9 +136,9 @@ func (r *redactor) add(secret, label string) {
 	}
 }
 
-// scrub replaces every known secret in s. Safe on a nil receiver so callers
+// Scrub replaces every known secret in s. Safe on a nil receiver so callers
 // need no guard.
-func (r *redactor) scrub(s string) string {
+func (r *Redactor) Scrub(s string) string {
 	if r == nil || s == "" {
 		return s
 	}

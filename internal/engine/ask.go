@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/modelcheck"
 	"apothecary/internal/ports"
+	"apothecary/internal/redact"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
@@ -335,7 +336,7 @@ func (e *Engine) answerAsk(s *askSetup, a *askRun, th askstore.Thread, model, qu
 	a.cancel = cancel
 	e.mu.Unlock()
 
-	redact := newRedactor(s.res, e.RunToken(runID))
+	red := redact.ForResolution(s.res, e.RunToken(runID))
 	runner := s.res.RunnerFor(s.harness)
 	var mu sync.Mutex
 	var text strings.Builder
@@ -363,14 +364,14 @@ func (e *Engine) answerAsk(s *askSetup, a *askRun, th askstore.Thread, model, qu
 			soFar := text.String()
 			mu.Unlock()
 			if due {
-				e.askHub.publish(runID, AskFrame{Kind: "delta", Text: redact.scrub(soFar)})
+				e.askHub.publish(runID, AskFrame{Kind: "delta", Text: red.Scrub(soFar)})
 			}
 		case ports.AgentEvTool:
 			if ev.Tool != nil && ev.Tool.Title != "" && ev.Tool.Status != "completed" && ev.Tool.Status != "failed" {
 				mu.Lock()
 				soFar := text.String()
 				mu.Unlock()
-				e.askHub.publish(runID, AskFrame{Kind: "delta", Text: redact.scrub(soFar), Tool: redact.scrub(ev.Tool.Title)})
+				e.askHub.publish(runID, AskFrame{Kind: "delta", Text: red.Scrub(soFar), Tool: red.Scrub(ev.Tool.Title)})
 			}
 		}
 	}
@@ -402,15 +403,15 @@ func (e *Engine) answerAsk(s *askSetup, a *askRun, th askstore.Thread, model, qu
 	mu.Lock()
 	said := strings.TrimSpace(text.String())
 	mu.Unlock()
-	ans := askstore.Message{RunID: runID, ID: e.newID(), Role: askstore.RoleAnswer, Text: redact.scrub(said),
+	ans := askstore.Message{RunID: runID, ID: e.newID(), Role: askstore.RoleAnswer, Text: red.Scrub(said),
 		Model: model, CostUSD: res.Usage.CostUSD, Turns: res.TurnsUsed}
 	if err != nil {
-		ans.Error = redact.scrub(err.Error())
+		ans.Error = red.Scrub(err.Error())
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			ans.Error = fmt.Sprintf("no answer within %s", askAnswerTimeout)
 		}
 	} else if ans.Text == "" && res.Output != "" {
-		ans.Text = redact.scrub(strings.TrimSpace(res.Output))
+		ans.Text = red.Scrub(strings.TrimSpace(res.Output))
 	}
 	m, aerr := e.askStore.AppendAskMessage(sctx, ans)
 	if aerr != nil {

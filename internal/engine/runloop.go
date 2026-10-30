@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/redact"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/shell"
@@ -60,7 +61,7 @@ type exec struct {
 	lastObs []mrObservation
 	// redact scrubs engine-injected secrets out of everything that leaves the
 	// workspace (PLAN5 M21). Built once per loop from the resolution.
-	redact *redactor
+	redact *redact.Redactor
 }
 
 func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
@@ -104,7 +105,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	}
 	defer res.Close()
 	x.res = res
-	x.redact = newRedactor(res, e.RunToken(runID), e.BrokerToken(runID))
+	x.redact = redact.ForResolution(res, e.RunToken(runID), e.BrokerToken(runID))
 	// A run that stops (for good, or for a restart) holds no workspace a
 	// refreshed login should be pushed into; the next loop re-registers.
 	defer e.dropAuthSink(runID)
@@ -327,44 +328,44 @@ func (x *exec) append(ps ...event.Payload) error {
 			// it — the same rule replay applies.
 			x.rs.forgetCurated(x.rs.fl, v.StageID)
 		case *event.StageFailed:
-			v.Error = x.redact.scrub(v.Error)
+			v.Error = x.redact.Scrub(v.Error)
 		case *event.EdgeTaken:
-			v.Feed = x.redact.scrub(v.Feed)
+			v.Feed = x.redact.Scrub(v.Feed)
 		case *event.EnvFailed:
-			v.Error = x.redact.scrub(v.Error)
+			v.Error = x.redact.Scrub(v.Error)
 		case *event.ServiceFailed:
 			// A health command's output rides its reason.
-			v.Reason = x.redact.scrub(v.Reason)
+			v.Reason = x.redact.Scrub(v.Reason)
 		case *event.RunAbandoned:
-			v.Reason = x.redact.scrub(v.Reason)
+			v.Reason = x.redact.Scrub(v.Reason)
 		case *event.RunFailed:
-			v.Reason = x.redact.scrub(v.Reason)
+			v.Reason = x.redact.Scrub(v.Reason)
 		case *event.PingRaised:
 			// The debug leaf hands a human what the stage printed.
-			v.Question = x.redact.scrub(v.Question)
-			v.Context = x.redact.scrub(v.Context)
+			v.Question = x.redact.Scrub(v.Question)
+			v.Context = x.redact.Scrub(v.Context)
 		// The transcript is workspace output verbatim — an agent that cats
 		// .env or echoes a token puts it here first.
 		case *event.AgentPrompted:
-			v.Text = x.redact.scrub(v.Text)
+			v.Text = x.redact.Scrub(v.Text)
 		case *event.AgentMessage:
-			v.Text = x.redact.scrub(v.Text)
+			v.Text = x.redact.Scrub(v.Text)
 		case *event.AgentTool:
-			v.Title = x.redact.scrub(v.Title)
-			v.Input = x.redact.scrub(v.Input)
-			v.Output = x.redact.scrub(v.Output)
+			v.Title = x.redact.Scrub(v.Title)
+			v.Input = x.redact.Scrub(v.Input)
+			v.Output = x.redact.Scrub(v.Output)
 			for i := range v.Diffs {
-				v.Diffs[i].OldText = x.redact.scrub(v.Diffs[i].OldText)
-				v.Diffs[i].NewText = x.redact.scrub(v.Diffs[i].NewText)
+				v.Diffs[i].OldText = x.redact.Scrub(v.Diffs[i].OldText)
+				v.Diffs[i].NewText = x.redact.Scrub(v.Diffs[i].NewText)
 			}
 		case *event.AgentPlan:
 			for i := range v.Entries {
-				v.Entries[i].Content = x.redact.scrub(v.Entries[i].Content)
+				v.Entries[i].Content = x.redact.Scrub(v.Entries[i].Content)
 			}
 		case *event.AgentNotice:
-			v.Text = x.redact.scrub(v.Text)
+			v.Text = x.redact.Scrub(v.Text)
 		case *event.MessageQueued:
-			v.Text = x.redact.scrub(v.Text)
+			v.Text = x.redact.Scrub(v.Text)
 		}
 	}
 	unlock := x.e.appendLock(x.rs.runID)
@@ -439,7 +440,7 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 	// The feed becomes an abandon reason and rs.feed (which an agent reads as
 	// edge.failure/edge.verdict), neither of which passes through append's
 	// scrub. A failure keeps its tail, a verdict its head (capVerdict).
-	feedContent = x.redact.scrub(feedContent)
+	feedContent = x.redact.Scrub(feedContent)
 	feedTail := func(s string) string {
 		if kind == flow.EdgeReject {
 			return capVerdict(s)
@@ -1133,7 +1134,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	}
 	// An approval with comments carries them on (flow.GivesVerdict).
 	if verdict != nil && verdict.Approve {
-		completed.Feed = x.redact.scrub(verdictText(st.ID, verdict))
+		completed.Feed = x.redact.Scrub(verdictText(st.ID, verdict))
 	}
 	if err := x.append(completed); err != nil {
 		return err
@@ -2182,7 +2183,7 @@ func (x *exec) routeGate(st *flow.Stage, rec *event.PingAnswered, started time.T
 		verdict = capVerdict(strings.TrimRight(verdict, "\n") + "\n" + note)
 	}
 	if rec.Answer == "approve" {
-		verdict = x.redact.scrub(verdict)
+		verdict = x.redact.Scrub(verdict)
 		if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds(), Feed: verdict}); err != nil {
 			return err
 		}
@@ -2595,7 +2596,7 @@ func (x *exec) reseedSecrets(id ports.EnvID) error {
 
 // registerSecret teaches the run's redactor a credential the engine is about
 // to write into the workspace.
-func (x *exec) registerSecret(s string) { x.redact.add(s, "harness-auth") }
+func (x *exec) registerSecret(s string) { x.redact.Add(s, "harness-auth") }
 
 func (x *exec) bootstrap(id ports.EnvID) error {
 	res := x.res

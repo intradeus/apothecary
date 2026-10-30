@@ -1,4 +1,4 @@
-package engine
+package redact
 
 import (
 	"apothecary/internal/resolution"
@@ -14,9 +14,9 @@ func TestRedactorScrubsInjectedSecrets(t *testing.T) {
 		GitPass:     "glpat-SUPERSECRETVALUE",
 		ProviderEnv: map[string]string{"ANTHROPIC_API_KEY": "sk-ant-abcdefghij"},
 	}
-	r := newRedactor(res, "run-token-abcdef")
+	r := ForResolution(res, "run-token-abcdef")
 
-	out := r.scrub("fatal: authentication failed for " +
+	out := r.Scrub("fatal: authentication failed for " +
 		"https://oauth2:glpat-SUPERSECRETVALUE@git.local/g/p.git\n" +
 		"env ANTHROPIC_API_KEY=sk-ant-abcdefghij\nAuthorization: Bearer run-token-abcdef\n")
 
@@ -43,9 +43,9 @@ func TestRedactorScrubsInjectedSecrets(t *testing.T) {
 func TestRedactorScrubsHarnessAuthJSON(t *testing.T) {
 	const authJSON = `{"openrouter":{"type":"api","key":"sk-or-v1-abcdefghijklmnop"},` +
 		`"anthropic":{"type":"oauth","refresh":"rt-zyxwvutsrqponml"}}`
-	r := newRedactor(&resolution.Resolution{HarnessSecrets: []string{authJSON}})
+	r := ForResolution(&resolution.Resolution{HarnessSecrets: []string{authJSON}})
 
-	out := r.scrub("opencode: 401 from provider using key sk-or-v1-abcdefghijklmnop\n" +
+	out := r.Scrub("opencode: 401 from provider using key sk-or-v1-abcdefghijklmnop\n" +
 		"refresh token rt-zyxwvutsrqponml rejected\n")
 	for _, secret := range []string{"sk-or-v1-abcdefghijklmnop", "rt-zyxwvutsrqponml"} {
 		if strings.Contains(out, secret) {
@@ -56,19 +56,19 @@ func TestRedactorScrubsHarnessAuthJSON(t *testing.T) {
 		t.Errorf("missing redaction label:\n%s", out)
 	}
 	// The whole blob too (a `cat ~/.local/share/opencode/auth.json`).
-	if got := r.scrub("contents: " + authJSON); strings.Contains(got, "sk-or-v1") {
+	if got := r.Scrub("contents: " + authJSON); strings.Contains(got, "sk-or-v1") {
 		t.Errorf("whole blob survived:\n%s", got)
 	}
 	// Short structural values ("api", "type") must not become confetti.
-	if got := r.scrub("the api type is oauth"); got != "the api type is oauth" {
+	if got := r.Scrub("the api type is oauth"); got != "the api type is oauth" {
 		t.Errorf("structural JSON values were redacted: %q", got)
 	}
 }
 
 // A non-JSON secret is still scrubbed whole — jsonLeaves just adds nothing.
 func TestRedactorHandlesNonJSONHarnessSecret(t *testing.T) {
-	r := newRedactor(&resolution.Resolution{HarnessSecrets: []string{"plain-secret-value"}})
-	if got := r.scrub("token plain-secret-value here"); strings.Contains(got, "plain-secret-value") {
+	r := ForResolution(&resolution.Resolution{HarnessSecrets: []string{"plain-secret-value"}})
+	if got := r.Scrub("token plain-secret-value here"); strings.Contains(got, "plain-secret-value") {
 		t.Errorf("non-JSON secret survived: %q", got)
 	}
 }
@@ -76,16 +76,16 @@ func TestRedactorHandlesNonJSONHarnessSecret(t *testing.T) {
 // A short value is not a credential worth protecting, and redacting it would
 // shred ordinary output.
 func TestRedactorIgnoresTrivialValues(t *testing.T) {
-	r := newRedactor(&resolution.Resolution{ProviderEnv: map[string]string{"X": "ab"}}, "")
-	if got := r.scrub("a rabbit ate ab"); got != "a rabbit ate ab" {
+	r := ForResolution(&resolution.Resolution{ProviderEnv: map[string]string{"X": "ab"}}, "")
+	if got := r.Scrub("a rabbit ate ab"); got != "a rabbit ate ab" {
 		t.Errorf("scrub = %q, want it untouched", got)
 	}
 }
 
 // A nil redactor is safe: callers should need no guard.
 func TestNilRedactorPassesThrough(t *testing.T) {
-	var r *redactor
-	if got := r.scrub("hello"); got != "hello" {
+	var r *Redactor
+	if got := r.Scrub("hello"); got != "hello" {
 		t.Errorf("scrub = %q", got)
 	}
 }

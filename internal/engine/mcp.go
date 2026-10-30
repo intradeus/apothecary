@@ -84,7 +84,7 @@ func (x *exec) stageMCP(st *flow.Stage) ([]ports.MCPServer, error) {
 		}
 		for _, s := range m.Secrets {
 			if v, ok := secrets[s]; ok {
-				x.redact.add(v, "secret:"+s)
+				x.redact.Add(v, "secret:"+s)
 			}
 		}
 		srv, err := resolveMCPServer(m, secrets)
@@ -131,7 +131,7 @@ func resolveMCPServer(m *flow.MCPServer, secrets map[string]string) (ports.MCPSe
 // failStageMCP fails an agent stage whose servers could not be resolved —
 // a secret deleted since the run was created — before its session opens.
 func (x *exec) failStageMCP(st *flow.Stage, err error) error {
-	msg := x.redact.scrub(err.Error())
+	msg := x.redact.Scrub(err.Error())
 	if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonHarnessError, Error: msg}); aerr != nil {
 		return aerr
 	}

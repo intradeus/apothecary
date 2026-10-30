@@ -29,7 +29,7 @@ func (x *exec) capture(snap filestore.Snapshot, data []byte) {
 		return
 	}
 	snap.RunID = x.rs.runID
-	stored, err := x.e.snapshots.Capture(x.bg, snap, x.redact.scrub, data)
+	stored, err := x.e.snapshots.Capture(x.bg, snap, x.redact.Scrub, data)
 	if err != nil {
 		x.e.log.Warn("capturing snapshot", "run", x.rs.runID, "stage", snap.StageID, "kind", snap.Kind, "err", err)
 		return

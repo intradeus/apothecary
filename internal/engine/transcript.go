@@ -245,7 +245,7 @@ func (t *transcript) handle(ev ports.AgentEvent) error {
 			if thought {
 				kind = "thought"
 			}
-			t.publish(LiveDelta{Kind: kind, Turn: ev.Turn, Segment: t.seg, Text: t.x.redact.scrub(t.buf.String())})
+			t.publish(LiveDelta{Kind: kind, Turn: ev.Turn, Segment: t.seg, Text: t.x.redact.Scrub(t.buf.String())})
 		}
 		return nil
 	case ports.AgentEvTool:
@@ -264,7 +264,7 @@ func (t *transcript) handle(ev ports.AgentEvent) error {
 		mergeTool(cur, ev.Tool, ev.Turn)
 		cur.Cursor = t.cursor
 		snap := *cur
-		snap.Input, snap.Output = t.x.redact.scrub(snap.Input), t.x.redact.scrub(snap.Output)
+		snap.Input, snap.Output = t.x.redact.Scrub(snap.Input), t.x.redact.Scrub(snap.Output)
 		t.publish(LiveDelta{Kind: "tool", Turn: ev.Turn, Tool: &snap})
 		if cur.Status == "completed" || cur.Status == "failed" {
 			return t.flushTool(ev.Tool.ID)

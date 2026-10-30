@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/redact"
 	"apothecary/internal/resolution"
 )
 
@@ -23,12 +24,12 @@ func TestPushCredentialScopesAndRedactsFirst(t *testing.T) {
 		redacted bool // the token was already known when the file was written
 	}
 	var writes []seeded
-	sink := func(ids []string, env ports.EnvID) (*resolution.Resolution, *redactor) {
-		r := &redactor{}
+	sink := func(ids []string, env ports.EnvID) (*resolution.Resolution, *redact.Redactor) {
+		r := redact.New()
 		res := &resolution.Resolution{CredentialIDs: ids}
 		res.SeedAuth = func(_ context.Context, env ports.EnvID, register func(string)) error {
 			register("fresh-access-token-123")
-			writes = append(writes, seeded{env: env, redacted: r.scrub("fresh-access-token-123") != "fresh-access-token-123"})
+			writes = append(writes, seeded{env: env, redacted: r.Scrub("fresh-access-token-123") != "fresh-access-token-123"})
 			return nil
 		}
 		return res, r
@@ -46,10 +47,10 @@ func TestPushCredentialScopesAndRedactsFirst(t *testing.T) {
 	if !writes[0].redacted {
 		t.Error("the token was written before the run's redactor knew it")
 	}
-	if out := redA.scrub("log: fresh-access-token-123"); strings.Contains(out, "fresh-access-token-123") {
+	if out := redA.Scrub("log: fresh-access-token-123"); strings.Contains(out, "fresh-access-token-123") {
 		t.Errorf("run-a's output still shows the pushed token: %q", out)
 	}
-	if out := redB.scrub("fresh-access-token-123"); out != "fresh-access-token-123" {
+	if out := redB.Scrub("fresh-access-token-123"); out != "fresh-access-token-123" {
 		t.Error("run-b's redactor learned a token its workspace never received")
 	}
 

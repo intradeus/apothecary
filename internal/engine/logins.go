@@ -11,6 +11,7 @@ import (
 	"slices"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/redact"
 	"apothecary/internal/resolution"
 )
 
@@ -31,12 +32,12 @@ import (
 type authSink struct {
 	res    *resolution.Resolution
 	env    ports.EnvID
-	redact *redactor
+	redact *redact.Redactor
 }
 
 // setAuthSink records that runID's workspace env holds its harnesses'
 // credentials (bootstrap, re-entry).
-func (e *Engine) setAuthSink(runID string, res *resolution.Resolution, env ports.EnvID, redact *redactor) {
+func (e *Engine) setAuthSink(runID string, res *resolution.Resolution, env ports.EnvID, redact *redact.Redactor) {
 	e.sinkMu.Lock()
 	defer e.sinkMu.Unlock()
 	if e.sinks == nil {
@@ -81,7 +82,7 @@ func (e *Engine) PushCredential(ctx context.Context, credentialID string) {
 		if t.sink.res.SeedAuth == nil {
 			continue
 		}
-		if err := t.sink.res.SeedAuth(ctx, t.sink.env, func(s string) { t.sink.redact.add(s, "harness-auth") }); err != nil {
+		if err := t.sink.res.SeedAuth(ctx, t.sink.env, func(s string) { t.sink.redact.Add(s, "harness-auth") }); err != nil {
 			e.log.Warn("could not push a refreshed login into a live workspace", "run", t.runID, "env", t.sink.env, "credential", credentialID, "err", err)
 			continue
 		}
@@ -144,7 +145,7 @@ func (e *Engine) RunAuthBroker(ctx context.Context, runID string) (http.Handler,
 	}
 	register := func(string) {}
 	if s := e.authSink(runID); s != nil {
-		register = func(v string) { s.redact.add(v, "harness-auth") }
+		register = func(v string) { s.redact.Add(v, "harness-auth") }
 	}
 	return res.AuthBroker(register), res.Close, nil
 }
