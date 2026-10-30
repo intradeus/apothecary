@@ -8,7 +8,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
@@ -64,8 +64,8 @@ func TestSchemaOutputInvalidIsRetriedWithTheViolations(t *testing.T) {
 	h := newHarness(t, mustFlow(t, doc))
 	var mu sync.Mutex
 	var prompts []string
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"writer": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"writer": func(c fake.RunCall) (agentport.AgentResult, error) {
 			mu.Lock()
 			prompts = append(prompts, c.In.Prompt)
 			n := len(prompts)
@@ -75,7 +75,7 @@ func TestSchemaOutputInvalidIsRetriedWithTheViolations(t *testing.T) {
 			} else {
 				h.writeFile(t, c.Env, "artifacts/report.json", `{"passed": 2}`)
 			}
-			return ports.AgentResult{TurnsUsed: 1}, nil
+			return agentport.AgentResult{TurnsUsed: 1}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
@@ -117,8 +117,8 @@ func TestSchemaInputInvalidFailsBeforeTheAgentRuns(t *testing.T) {
 		return envport.ExecResult{}, nil
 	}
 	ran := false
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"reader": func(fake.RunCall) (ports.AgentResult, error) { ran = true; return ports.AgentResult{}, nil },
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"reader": func(fake.RunCall) (agentport.AgentResult, error) { ran = true; return agentport.AgentResult{}, nil },
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
 	if err != nil {
@@ -142,13 +142,13 @@ func TestCommitActionCommitsTheMessage(t *testing.T) {
   - { id: commit, type: action, action: commit, input: { message: { from: artifacts/commit.json, type: commit_message } } }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"committer": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"committer": func(c fake.RunCall) (agentport.AgentResult, error) {
 			if !strings.Contains(c.In.Prompt, `"subject"`) {
 				t.Errorf("the contract does not show the commit_message shape:\n%s", c.In.Prompt)
 			}
 			h.writeFile(t, c.Env, "artifacts/commit.json", `{"subject": "feat: it's done", "body": "Why it was needed."}`)
-			return ports.AgentResult{TurnsUsed: 1}, nil
+			return agentport.AgentResult{TurnsUsed: 1}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
@@ -211,10 +211,10 @@ func TestCommitActionRefusedByGit(t *testing.T) {
   - { id: commit, type: action, action: commit, input: { message: { from: artifacts/commit.json, type: commit_message } }, on_fail: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"committer": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"committer": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/commit.json", `{"subject": "fix: x"}`)
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	h.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
@@ -310,13 +310,13 @@ main:
   - { id: commit, type: action, action: commit, input: { message: { from: artifacts/commit.json, type: commit_message } } }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"committer": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"committer": func(c fake.RunCall) (agentport.AgentResult, error) {
 			if n := strings.Count(c.In.Prompt, "must be JSON satisfying this JSON Schema"); n != 2 {
 				t.Errorf("the contract shows %d shapes, want the type's and the flow's", n)
 			}
 			h.writeFile(t, c.Env, "artifacts/commit.json", `{"subject": "Add widgets"}`)
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
@@ -348,8 +348,8 @@ func TestMissingOutputIsFedToTheRetry(t *testing.T) {
 	h := newHarness(t, mustFlow(t, doc))
 	var mu sync.Mutex
 	var prompts []string
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"writer": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"writer": func(c fake.RunCall) (agentport.AgentResult, error) {
 			mu.Lock()
 			prompts = append(prompts, c.In.Prompt)
 			n := len(prompts)
@@ -357,7 +357,7 @@ func TestMissingOutputIsFedToTheRetry(t *testing.T) {
 			if n > 1 {
 				h.writeFile(t, c.Env, "artifacts/report.json", `{"passed": 1}`)
 			}
-			return ports.AgentResult{TurnsUsed: 1}, nil
+			return agentport.AgentResult{TurnsUsed: 1}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)

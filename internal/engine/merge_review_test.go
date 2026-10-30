@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
@@ -82,7 +83,7 @@ func TestPostReviewFromAReviewOutput(t *testing.T) {
 	var mu sync.Mutex
 	var prompts []string
 	inner := ph.runner.RunFunc
-	ph.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	ph.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		if call.Spec.Agent == "pr_reviewer" {
 			mu.Lock()
 			prompts = append(prompts, call.In.Prompt)

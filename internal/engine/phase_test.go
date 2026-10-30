@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
@@ -86,7 +87,7 @@ func newPhasedHarnessWith(t *testing.T, doc string, opt harnessOpt) *phasedHarne
 		}
 	}, mustFlow(t, doc))
 	ph := &phasedHarness{harness: h, clock: clock, prompts: map[string][]string{}}
-	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		// The fake carries no stage id: a watcher's prompt is the one
 		// with a SUBJECT section.
 		stage := call.Spec.Agent
@@ -101,9 +102,9 @@ func newPhasedHarnessWith(t *testing.T, doc string, opt harnessOpt) *phasedHarne
 		}
 		if stage == "fix" && ph.failFix.Load() > 0 {
 			ph.failFix.Add(-1)
-			return ports.AgentResult{}, errors.New("harness hiccup")
+			return agentport.AgentResult{}, errors.New("harness hiccup")
 		}
-		return ports.AgentResult{TurnsUsed: 1, Session: "s"}, nil
+		return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, nil
 	}
 	return ph
 }

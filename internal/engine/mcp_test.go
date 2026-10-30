@@ -16,6 +16,7 @@ import (
 	"apothecary/internal/browsermcp"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
@@ -113,16 +114,16 @@ func TestAgentSessionsGetTheirMCPServersResolved(t *testing.T) {
 	}, mustFlow(t, mcpFlowDoc))
 	h.res.Secrets = map[string]string{"figma": "figd_at_creation", "db_pass": "pass-at-creation"}
 	h.res.Browser = true
-	got := map[string][]ports.MCPServer{}
+	got := map[string][]agentport.MCPServer{}
 	var mu sync.Mutex
-	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		mu.Lock()
 		got[call.Spec.Agent] = call.In.MCPServers
 		mu.Unlock()
 		if call.Spec.Agent == "querier" {
-			return ports.AgentResult{Output: "connect pg://u:pass-rotated-1@db/app: refused"}, errors.New("db said pass-rotated-1 is wrong")
+			return agentport.AgentResult{Output: "connect pg://u:pass-rotated-1@db/app: refused"}, errors.New("db said pass-rotated-1 is wrong")
 		}
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "shots", testProject)
 	if err != nil {
@@ -163,8 +164,11 @@ func TestStageFailsOnASecretGoneSinceCreation(t *testing.T) {
 	h.res.Secrets = map[string]string{"figma": "f-123456", "db_pass": "p-123456"}
 	h.res.Browser = true
 	var ran atomic.Bool
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"shooter": func(fake.RunCall) (ports.AgentResult, error) { ran.Store(true); return ports.AgentResult{}, nil },
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"shooter": func(fake.RunCall) (agentport.AgentResult, error) {
+			ran.Store(true)
+			return agentport.AgentResult{}, nil
+		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "shots", testProject)
 	if err != nil {

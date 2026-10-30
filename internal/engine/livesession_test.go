@@ -10,7 +10,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
@@ -19,7 +19,7 @@ import (
 // happens, the human can message it mid-run, and a question blocks the turn
 // until the human answers — or parks the run when they take too long.
 
-func emitAll(in ports.AgentInput, evs ...ports.AgentEvent) {
+func emitAll(in agentport.AgentInput, evs ...agentport.AgentEvent) {
 	for _, ev := range evs {
 		in.Events(ev)
 	}
@@ -33,27 +33,27 @@ func TestTranscriptIsRecordedCoalescedAndRedacted(t *testing.T) {
 	// runs on the run's own goroutine, which may well reach it before this
 	// test has subscribed — so it waits for the subscription first.
 	subscribed := make(chan struct{})
-	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		<-subscribed
 		emitAll(call.In,
-			ports.AgentEvent{Kind: ports.AgentEvSession, Text: "sess-t"},
-			ports.AgentEvent{Kind: ports.AgentEvTurnStart, Turn: "T1", Cursor: "b:1"},
-			ports.AgentEvent{Kind: ports.AgentEvThought, Turn: "T1", Text: "let me look", Cursor: "b:2"},
-			ports.AgentEvent{Kind: ports.AgentEvMessage, Turn: "T1", Text: "The key is ", Cursor: "b:3"},
-			ports.AgentEvent{Kind: ports.AgentEvMessage, Turn: "T1", Text: "sk-test, reading.", Cursor: "b:4"},
-			ports.AgentEvent{Kind: ports.AgentEvTool, Turn: "T1", Cursor: "b:5",
-				Tool: &ports.AgentTool{ID: "c1", Title: "Read .env", Kind: "read", Status: "pending"}},
-			ports.AgentEvent{Kind: ports.AgentEvTool, Turn: "T1", Cursor: "b:6",
-				Tool: &ports.AgentTool{ID: "c1", Status: "completed", Output: "ANTHROPIC_API_KEY=sk-test"}},
-			ports.AgentEvent{Kind: ports.AgentEvPlan, Turn: "T1", Cursor: "b:7",
-				Plan: []ports.AgentPlanEntry{{Content: "add endpoint", Status: "in_progress"}}},
+			agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "sess-t"},
+			agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: "T1", Cursor: "b:1"},
+			agentport.AgentEvent{Kind: agentport.AgentEvThought, Turn: "T1", Text: "let me look", Cursor: "b:2"},
+			agentport.AgentEvent{Kind: agentport.AgentEvMessage, Turn: "T1", Text: "The key is ", Cursor: "b:3"},
+			agentport.AgentEvent{Kind: agentport.AgentEvMessage, Turn: "T1", Text: "sk-test, reading.", Cursor: "b:4"},
+			agentport.AgentEvent{Kind: agentport.AgentEvTool, Turn: "T1", Cursor: "b:5",
+				Tool: &agentport.AgentTool{ID: "c1", Title: "Read .env", Kind: "read", Status: "pending"}},
+			agentport.AgentEvent{Kind: agentport.AgentEvTool, Turn: "T1", Cursor: "b:6",
+				Tool: &agentport.AgentTool{ID: "c1", Status: "completed", Output: "ANTHROPIC_API_KEY=sk-test"}},
+			agentport.AgentEvent{Kind: agentport.AgentEvPlan, Turn: "T1", Cursor: "b:7",
+				Plan: []agentport.AgentPlanEntry{{Content: "add endpoint", Status: "in_progress"}}},
 			// An unchanged plan re-sent is not a new record.
-			ports.AgentEvent{Kind: ports.AgentEvPlan, Turn: "T1", Cursor: "b:8",
-				Plan: []ports.AgentPlanEntry{{Content: "add endpoint", Status: "in_progress"}}},
-			ports.AgentEvent{Kind: ports.AgentEvMessage, Turn: "T1", Text: "Done.", Cursor: "b:9"},
-			ports.AgentEvent{Kind: ports.AgentEvTurnEnd, Turn: "T1", StopReason: "end_turn", Cursor: "b:10"},
+			agentport.AgentEvent{Kind: agentport.AgentEvPlan, Turn: "T1", Cursor: "b:8",
+				Plan: []agentport.AgentPlanEntry{{Content: "add endpoint", Status: "in_progress"}}},
+			agentport.AgentEvent{Kind: agentport.AgentEvMessage, Turn: "T1", Text: "Done.", Cursor: "b:9"},
+			agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "T1", StopReason: "end_turn", Cursor: "b:10"},
 		)
-		return ports.AgentResult{Session: "sess-t", TurnsUsed: 1, Output: "Done."}, nil
+		return agentport.AgentResult{Session: "sess-t", TurnsUsed: 1, Output: "Done."}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
@@ -146,20 +146,20 @@ func sendWhenLive(t *testing.T, h *harness, runID, text string, interrupt bool) 
 
 func TestMessageIsDeliveredIntoTheRunningInvocation(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
-	got := make(chan []ports.UserMessage, 1)
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	got := make(chan []agentport.UserMessage, 1)
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		select {
 		case <-call.In.Inbox.Wake():
 		case <-ctx.Done():
-			return ports.AgentResult{}, ctx.Err()
+			return agentport.AgentResult{}, ctx.Err()
 		}
 		if !call.In.Inbox.Interrupting() {
 			t.Error("the message asked to interrupt")
 		}
 		msgs := call.In.Inbox.Take()
-		call.In.Events(ports.AgentEvent{Kind: ports.AgentEvUserMessage, Messages: msgs})
+		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvUserMessage, Messages: msgs})
 		got <- msgs
-		return ports.AgentResult{Session: "s", TurnsUsed: 2}, nil
+		return agentport.AgentResult{Session: "s", TurnsUsed: 2}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
@@ -200,7 +200,7 @@ func TestUndeliveredMessageRidesIntoTheNextPrompt(t *testing.T) {
 	h := newHarness(t, mustFlow(t, twoAgentFlowDoc))
 	var prompts []string
 	var pmu sync.Mutex
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		pmu.Lock()
 		prompts = append(prompts, call.In.Prompt)
 		first := len(prompts) == 1
@@ -212,7 +212,7 @@ func TestUndeliveredMessageRidesIntoTheNextPrompt(t *testing.T) {
 			case <-ctx.Done():
 			}
 		}
-		return ports.AgentResult{Session: "s", TurnsUsed: 1}, nil
+		return agentport.AgentResult{Session: "s", TurnsUsed: 1}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "two", testProject)
 	if err != nil {
@@ -242,18 +242,18 @@ func TestQuestionAnsweredDuringTheLiveHold(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	runIDCh := make(chan string, 1)
 	answer := make(chan string, 1)
-	h.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
 		id := <-runIDCh
 		p, err := h.e.RaisePingKeyed(id, "k1", "clarification", "which db?", "", nil, nil)
 		if err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
 		// The ask_human call blocks, as the shim's long-poll does.
 		if _, ok := p.Await(ctx); !ok {
-			return ports.AgentResult{}, ctx.Err()
+			return agentport.AgentResult{}, ctx.Err()
 		}
 		answer <- ComposeAnswer(p)
-		return ports.AgentResult{Session: "s", TurnsUsed: 3}, nil
+		return agentport.AgentResult{Session: "s", TurnsUsed: 3}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
@@ -300,17 +300,17 @@ func TestUnansweredQuestionParksAfterTheHold(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	h.e.cfg.AskHumanHold = 30 * time.Millisecond
 	runIDCh := make(chan string, 1)
-	h.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
 		id := <-runIDCh
 		p, err := h.e.RaisePing(id, "clarification", "one endpoint or two?", "", nil, nil)
 		if err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
 		p.Await(ctx) // blocks until the engine cancels the turn
-		return ports.AgentResult{Session: "sess-p", TurnsUsed: 1, Usage: ports.Usage{CostUSD: 0.1}}, ctx.Err()
+		return agentport.AgentResult{Session: "sess-p", TurnsUsed: 1, Usage: agentport.Usage{CostUSD: 0.1}}, ctx.Err()
 	}
-	h.runner.ResumeFunc = func(_ context.Context, call fake.ResumeCall) (ports.AgentResult, error) {
-		return ports.AgentResult{Session: "sess-p", TurnsUsed: 1}, nil
+	h.runner.ResumeFunc = func(_ context.Context, call fake.ResumeCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{Session: "sess-p", TurnsUsed: 1}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
@@ -354,18 +354,18 @@ type reattachRunner struct {
 	mu       sync.Mutex
 	can      bool
 	attached []string // "session@cursor"
-	result   ports.AgentResult
+	result   agentport.AgentResult
 }
 
-func (r *reattachRunner) Reattachable(_ context.Context, _ envport.EnvID, _ ports.SessionID, _ string) bool {
+func (r *reattachRunner) Reattachable(_ context.Context, _ envport.EnvID, _ agentport.SessionID, _ string) bool {
 	return r.can
 }
 
-func (r *reattachRunner) Reattach(_ context.Context, _ envport.EnvID, s ports.SessionID, cursor string, in ports.AgentInput) (ports.AgentResult, bool, error) {
+func (r *reattachRunner) Reattach(_ context.Context, _ envport.EnvID, s agentport.SessionID, cursor string, in agentport.AgentInput) (agentport.AgentResult, bool, error) {
 	r.mu.Lock()
 	r.attached = append(r.attached, string(s)+"@"+cursor)
 	r.mu.Unlock()
-	in.Events(ports.AgentEvent{Kind: ports.AgentEvMessage, Text: "finished while you were away", Cursor: "b:9"})
+	in.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "finished while you were away", Cursor: "b:9"})
 	return r.result, true, nil
 }
 
@@ -394,7 +394,7 @@ func seedLiveAttempt(t *testing.T, h *harness, runID string, extra ...event.Payl
 func TestRestartReattachesToTheTurnInFlight(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	rr := &reattachRunner{AgentRunner: h.runner, can: true,
-		result: ports.AgentResult{Session: "sess-r", TurnsUsed: 2, Output: "finished while you were away"}}
+		result: agentport.AgentResult{Session: "sess-r", TurnsUsed: 2, Output: "finished while you were away"}}
 	h.res.Runner = rr
 	seedLiveAttempt(t, h, "r-a")
 	if err := h.e.Recover(context.Background()); err != nil {
@@ -424,8 +424,8 @@ func TestRestartWithALiveQuestionButNoTurnParksOnIt(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	rr := &reattachRunner{AgentRunner: h.runner, can: false}
 	h.res.Runner = rr
-	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (ports.AgentResult, error) {
-		return ports.AgentResult{Session: "sess-r", TurnsUsed: 1}, nil
+	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{Session: "sess-r", TurnsUsed: 1}, nil
 	}
 	seedLiveAttempt(t, h, "r-q",
 		&event.PingRaised{PingID: "p-live", Type: "clarification", Question: "rename it?", StageID: "build", Form: textForm(), AnswerKind: event.AnswerForm})

@@ -9,7 +9,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 )
 
@@ -160,11 +160,11 @@ main:
 	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, doc))
 
 	attempt := 0
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"planner": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"planner": func(c fake.RunCall) (agentport.AgentResult, error) {
 			attempt++
 			h.writeFile(t, c.Env, "artifacts/plan.md", fmt.Sprintf("plan revision %d", attempt))
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	// The check fails once, so the planner runs twice and rewrites the file.
@@ -246,20 +246,20 @@ main:
 	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, doc))
 
 	runIDCh := make(chan string, 1)
-	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		id := <-runIDCh
 		h.writeFile(t, call.Env, "artifacts/dbs.md", "as reviewed")
 		p, err := h.e.RaisePing(id, "clarification", "which db?", "", nil, []string{"artifacts/dbs.md"})
 		if err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
 		if _, ok := p.Await(context.Background()); !ok {
-			return ports.AgentResult{}, fmt.Errorf("ping was not answered")
+			return agentport.AgentResult{}, fmt.Errorf("ping was not answered")
 		}
 		// The agent keeps working and rewrites the very file the human was
 		// shown. The record must not follow it.
 		h.writeFile(t, call.Env, "artifacts/dbs.md", "rewritten afterwards")
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping", testProject)
 	if err != nil {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 	"apothecary/internal/shell"
@@ -59,7 +59,7 @@ func (e *Engine) ScrubWorkspaceSecrets(ctx context.Context, v run.View) {
 	// A live agent process holds the credentials in memory and would keep
 	// using them: stop it before removing the files.
 	for _, kind := range append([]string{res.HarnessKind}, res.HarnessKinds...) {
-		if st, ok := res.RunnerFor(kind).(ports.AgentStopper); ok {
+		if st, ok := res.RunnerFor(kind).(agentport.AgentStopper); ok {
 			if err := st.StopAgent(ctx, id); err != nil {
 				e.log.Warn("could not stop the workspace agent of a finished run",
 					"run", v.RunID, "env", v.EnvID, "err", err)

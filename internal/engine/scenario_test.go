@@ -5,6 +5,7 @@ package engine
 import (
 	askstore "apothecary/internal/ask"
 	"apothecary/internal/portrelay"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/runports"
 	"apothecary/internal/services"
@@ -356,12 +357,12 @@ func findPayload[T event.Payload](evs []event.Event) (T, bool) {
 }
 
 // agentScript dispatches RunFunc by agent name.
-func (h *harness) agentScript(fns map[string]func(call fake.RunCall) (ports.AgentResult, error)) {
-	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+func (h *harness) agentScript(fns map[string]func(call fake.RunCall) (agentport.AgentResult, error)) {
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		if fn, ok := fns[call.Spec.Agent]; ok {
 			return fn(call)
 		}
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 }
 
@@ -385,28 +386,28 @@ func TestHappyPathFullV4Flow(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newHarness(t, v1)
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"planner": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"planner": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/plan.md", "## Plan\nsteps")
-			return ports.AgentResult{TurnsUsed: 5, Usage: ports.Usage{InputTokens: 10, OutputTokens: 5, CostUSD: 0.10}}, nil
+			return agentport.AgentResult{TurnsUsed: 5, Usage: agentport.Usage{InputTokens: 10, OutputTokens: 5, CostUSD: 0.10}}, nil
 		},
-		"builder": func(c fake.RunCall) (ports.AgentResult, error) {
-			return ports.AgentResult{TurnsUsed: 20, Usage: ports.Usage{CostUSD: 0.50}}, nil
+		"builder": func(c fake.RunCall) (agentport.AgentResult, error) {
+			return agentport.AgentResult{TurnsUsed: 20, Usage: agentport.Usage{CostUSD: 0.50}}, nil
 		},
-		"committer": func(c fake.RunCall) (ports.AgentResult, error) {
+		"committer": func(c fake.RunCall) (agentport.AgentResult, error) {
 			// The stage says where the committer's output goes.
 			h.writeFile(t, c.Env, "artifacts/commit-subject.md", "feat: add login form")
-			return ports.AgentResult{TurnsUsed: 2, Usage: ports.Usage{CostUSD: 0.02}}, nil
+			return agentport.AgentResult{TurnsUsed: 2, Usage: agentport.Usage{CostUSD: 0.02}}, nil
 		},
-		"reviewer": func(c fake.RunCall) (ports.AgentResult, error) {
+		"reviewer": func(c fake.RunCall) (agentport.AgentResult, error) {
 			// The verdict is an output like any other: the file must exist at
 			// the path the stage bound it to, not at a hardcoded one.
 			h.writeFile(t, c.Env, "artifacts/review/verdict.json", `{"verdict":"APPROVE","comments":[]}`)
-			return ports.AgentResult{TurnsUsed: 8, Usage: ports.Usage{CostUSD: 0.20}}, nil
+			return agentport.AgentResult{TurnsUsed: 8, Usage: agentport.Usage{CostUSD: 0.20}}, nil
 		},
-		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/mr.md", "# Add login form\n\nSummary of changes")
-			return ports.AgentResult{TurnsUsed: 3, Usage: ports.Usage{CostUSD: 0.05}}, nil
+			return agentport.AgentResult{TurnsUsed: 3, Usage: agentport.Usage{CostUSD: 0.05}}, nil
 		},
 	})
 
@@ -511,12 +512,12 @@ main:
 			{Name: "what_broke", Description: "what the failing stage printed", Type: agentspec.TypeFailure, Optional: true},
 		}},
 	}))
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"planner": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"planner": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/plan.md", "## Plan\nsteps")
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
-		"builder": func(fake.RunCall) (ports.AgentResult, error) { return ports.AgentResult{}, nil },
+		"builder": func(fake.RunCall) (agentport.AgentResult, error) { return agentport.AgentResult{}, nil },
 	})
 	// verify fails the first time (feeds "BOOM" into build), then passes.
 	verifyRuns := 0
@@ -627,18 +628,18 @@ main:
 `
 	h := newHarness(t, mustFlow(t, doc))
 	reviews := 0
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"reviewer": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"reviewer": func(c fake.RunCall) (agentport.AgentResult, error) {
 			reviews++
 			// The verdict is the stage's output file, at the path its port
 			// names — not something the harness reports out of band.
 			if reviews == 1 {
 				h.writeFile(t, c.Env, "artifacts/verdict.json",
 					`{"verdict":"REJECT","comments":["repository leaks into domain layer","missing test for empty cart"]}`)
-				return ports.AgentResult{}, nil
+				return agentport.AgentResult{}, nil
 			}
 			h.writeFile(t, c.Env, "artifacts/verdict.json", `{"verdict":"APPROVE","comments":[]}`)
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 
@@ -710,15 +711,15 @@ main:
 	h := newHarness(t, mustFlow(t, doc))
 	runIDCh := make(chan string, 1)
 	gotAnswer := make(chan string, 1)
-	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		id := <-runIDCh
 		p, err := h.e.RaisePing(id, "clarification", "which database?", "postgres or sqlite", nil, nil)
 		if err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
 		p.Await(context.Background())
 		gotAnswer <- ComposeAnswer(p)
-		return ports.AgentResult{TurnsUsed: 2}, nil
+		return agentport.AgentResult{TurnsUsed: 2}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping", testProject)
@@ -833,10 +834,10 @@ main:
       on_reject: { to: plan, max: 3 } }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"planner": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"planner": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/plan.md", "plan v?")
-			return ports.AgentResult{TurnsUsed: 1}, nil
+			return agentport.AgentResult{TurnsUsed: 1}, nil
 		},
 	})
 
@@ -884,8 +885,8 @@ main:
   - { id: test,  type: command, run_ref: verify, on_fail: { to: build, max: 10 } }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
-		return ports.AgentResult{TurnsUsed: 5, Usage: ports.Usage{CostUSD: 0.60}}, nil
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{TurnsUsed: 5, Usage: agentport.Usage{CostUSD: 0.60}}, nil
 	}
 	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "make lint") {
@@ -942,8 +943,8 @@ func TestCrashRecoveryResumesViaResume(t *testing.T) {
 		}
 	}
 
-	h.runner.ResumeFunc = func(_ context.Context, call fake.ResumeCall) (ports.AgentResult, error) {
-		return ports.AgentResult{Session: call.Session, TurnsUsed: 4, Usage: ports.Usage{CostUSD: 0.10}}, nil
+	h.runner.ResumeFunc = func(_ context.Context, call fake.ResumeCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{Session: call.Session, TurnsUsed: 4, Usage: agentport.Usage{CostUSD: 0.10}}, nil
 	}
 	if err := h.e.Recover(ctx); err != nil {
 		t.Fatal(err)
@@ -1018,12 +1019,12 @@ main:
   - { id: b, type: agent, harness: $harness, model: $model, agent: fallback }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		if call.Spec.Agent == "sleeper" {
 			<-ctx.Done() // emulate a harness hanging until killed
-			return ports.AgentResult{}, ctx.Err()
+			return agentport.AgentResult{}, ctx.Err()
 		}
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "slow", testProject)
@@ -1055,10 +1056,10 @@ main:
 `
 	h := newHarness(t, mustFlow(t, doc))
 	started := make(chan struct{})
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		close(started)
 		<-ctx.Done()
-		return ports.AgentResult{}, ctx.Err()
+		return agentport.AgentResult{}, ctx.Err()
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "hang", testProject)
@@ -1156,10 +1157,10 @@ main:
   - { id: gate, type: human_gate, question: "Merge when ready.", input: { mr: { from: run.mr.url, type: link } }, auto_approve: mr_merged }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"builder": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"builder": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/mr.md", "# T\n\nbody")
-			return ports.AgentResult{TurnsUsed: 1}, nil
+			return agentport.AgentResult{TurnsUsed: 1}, nil
 		},
 	})
 	h.repoHost.SetMRStateErr(fmt.Errorf("gitlab GET /projects/7/merge_requests/1: 401: token expired"))
@@ -1314,12 +1315,12 @@ main:
   - { id: c, type: agent, harness: $harness, model: $model, agent: fallback }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		if call.Spec.Agent == "sleeper" {
 			<-ctx.Done()
-			return ports.AgentResult{}, ctx.Err()
+			return agentport.AgentResult{}, ctx.Err()
 		}
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "tmo", testProject)
@@ -1409,14 +1410,14 @@ main:
 	h := newHarness(t, mustFlow(t, doc))
 	started := make(chan struct{})
 	attempt := 0
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		attempt++
 		if attempt == 1 {
 			close(started)
 			<-ctx.Done() // in flight when pause hits
-			return ports.AgentResult{}, ctx.Err()
+			return agentport.AgentResult{}, ctx.Err()
 		}
-		return ports.AgentResult{TurnsUsed: 2}, nil
+		return agentport.AgentResult{TurnsUsed: 2}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "pp", testProject)
@@ -1924,15 +1925,15 @@ main:
 	h := newHarness(t, mustFlow(t, doc))
 	runIDCh := make(chan string, 1)
 	gotAnswer := make(chan PingAnswer, 1)
-	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		id := <-runIDCh
 		p, err := h.e.RaisePing(id, "clarification", "which db?", "", []string{"postgres", "sqlite", "postgres"}, []string{"artifacts/dbs.md"})
 		if err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
 		ans, _ := p.Await(context.Background())
 		gotAnswer <- ans
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping", testProject)
 	if err != nil {
@@ -1975,7 +1976,7 @@ main:
 	// Invalid raises are refused up front.
 	h2 := newHarness(t, mustFlow(t, doc))
 	run2 := make(chan string, 1)
-	h2.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h2.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		id := <-run2
 		if _, err := h2.e.RaisePing(id, "clarification", "q", "", nil, []string{"/etc/passwd"}); err == nil {
 			t.Error("absolute artifact accepted")
@@ -1983,7 +1984,7 @@ main:
 		if _, err := h2.e.RaisePing(id, "clarification", "q", "", []string{""}, nil); err == nil {
 			t.Error("empty option accepted")
 		}
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	rid, err := h2.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping", testProject)
 	if err != nil {
@@ -1997,15 +1998,15 @@ main:
 	h3 := newHarness(t, mustFlow(t, doc))
 	run3 := make(chan string, 1)
 	got3 := make(chan PingAnswer, 1)
-	h3.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h3.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		id := <-run3
 		p, err := h3.e.RaisePing(id, "clarification", "pick one", "", []string{"a", "Other", "b"}, nil)
 		if err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
 		ans, _ := p.Await(context.Background())
 		got3 <- ans
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	rid3, err := h3.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping", testProject)
 	if err != nil {
@@ -2213,15 +2214,15 @@ main:
 `
 	h := newHarness(t, mustFlow(t, doc))
 	reviews := 0
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"reviewer": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"reviewer": func(c fake.RunCall) (agentport.AgentResult, error) {
 			reviews++
 			body := `{"verdict":"APPROVE","comments":[]}`
 			if reviews == 1 {
 				body = `{"verdict":"REJECT","comments":["rebound verdict was read"]}`
 			}
 			h.writeFile(t, c.Env, "artifacts/review/verdict.json", body)
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "vrebind", testProject)
@@ -2291,10 +2292,10 @@ main:
   - { id: gate,   type: human_gate, question: "Merge?", input: { mr: { from: run.mr.url, type: link } }, on_success: done, on_reject: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/mr.md", "# Add the login form\n\nSummary")
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "act", testProject)
@@ -2409,10 +2410,10 @@ main:
   - { id: merged, type: wait, for: mr_merged, on_success: done }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/mr.md", "# Ship it\n\nSummary")
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "waitflow", testProject)
@@ -2457,10 +2458,10 @@ main:
       on_reject: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/mr.md", "# Ship it")
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "waittimeout", testProject)
@@ -2532,15 +2533,15 @@ main:
 		}
 		return envport.ExecResult{ExitCode: 0}, nil
 	}
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"reviewer": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"reviewer": func(c fake.RunCall) (agentport.AgentResult, error) {
 			reviews++
 			body := `{"verdict":"APPROVE","comments":[]}`
 			if reviews == 1 {
 				body = `{"verdict":"REJECT","comments":["LAYERING IS WRONG"]}`
 			}
 			h.writeFile(t, c.Env, "artifacts/verdict.json", body)
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "twofeeds", testProject)
@@ -2595,10 +2596,10 @@ main:
       on_success: done, on_reject: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/mr.md", "# Ship it")
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "settle", testProject)
@@ -2633,10 +2634,10 @@ main:
       on_success: done, on_reject: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/mr.md", "# Ship it")
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "race", testProject)
@@ -2672,10 +2673,10 @@ main:
       on_reject: { to: plan, max: -1 } }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"planner": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"planner": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/plan.md", "plan")
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "unlim", testProject)

@@ -12,6 +12,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 )
 
@@ -281,7 +282,7 @@ func TestCodexKindCapabilities(t *testing.T) {
 	if h.Binary() != "codex-acp" {
 		t.Errorf("binary = %q", h.Binary())
 	}
-	if _, ok := h.(ports.AgentReattacher); !ok {
+	if _, ok := h.(agentport.AgentReattacher); !ok {
 		t.Error("codex harness cannot reattach after an engine restart")
 	}
 	// The API key rides provider.env as OPENAI_API_KEY.

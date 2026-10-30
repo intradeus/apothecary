@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
 )
 
@@ -34,10 +34,10 @@ main:
 func labelsRun(t *testing.T, labelErr error) (*harness, string) {
 	h := newHarness(t, mustFlow(t, labelsFlowDoc))
 	h.repoHost.LabelErr = labelErr
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/mr.md", "# Fix\n")
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "lb", testProject)

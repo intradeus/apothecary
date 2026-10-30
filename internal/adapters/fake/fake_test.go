@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 )
 
@@ -64,24 +65,24 @@ func TestAgentRunnerScripting(t *testing.T) {
 	ctx := context.Background()
 	r := &AgentRunner{}
 
-	res, err := r.Run(ctx, "env-1", ports.AgentSpec{Agent: "planner"}, ports.AgentInput{Prompt: "p"})
+	res, err := r.Run(ctx, "env-1", agentport.AgentSpec{Agent: "planner"}, agentport.AgentInput{Prompt: "p"})
 	if err != nil || res.Session == "" || res.TurnsUsed != 1 {
 		t.Errorf("default run = %+v, %v", res, err)
 	}
 
-	r.RunFunc = func(_ context.Context, call RunCall) (ports.AgentResult, error) {
-		return ports.AgentResult{
+	r.RunFunc = func(_ context.Context, call RunCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{
 			Output:    "reviewed",
 			TurnsUsed: 5,
-			Usage:     ports.Usage{CostUSD: 0.25},
+			Usage:     agentport.Usage{CostUSD: 0.25},
 		}, nil
 	}
-	res, _ = r.Run(ctx, "env-1", ports.AgentSpec{Agent: "reviewer"}, ports.AgentInput{})
+	res, _ = r.Run(ctx, "env-1", agentport.AgentSpec{Agent: "reviewer"}, agentport.AgentInput{})
 	if res.Output != "reviewed" || res.TurnsUsed != 5 || res.Session == "" {
 		t.Errorf("scripted run = %+v", res)
 	}
 
-	res, err = r.Resume(ctx, "env-1", res.Session, ports.AgentInput{Prompt: "answer"})
+	res, err = r.Resume(ctx, "env-1", res.Session, agentport.AgentInput{Prompt: "answer"})
 	if err != nil || res.Session == "" {
 		t.Errorf("resume = %+v, %v", res, err)
 	}

@@ -9,7 +9,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
@@ -47,17 +47,17 @@ func waitEvent[T event.Payload](t *testing.T, h *harness, runID string) T {
 func TestAgentEndingTurnOnOpenQuestionPausesAttempt(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	runIDCh := make(chan string, 1)
-	h.runner.RunFunc = func(_ context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(_ context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
 		id := <-runIDCh
 		if _, err := h.e.RaisePing(id, "clarification", "one endpoint or two?", "", nil, nil); err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
 		// Ends the turn without an answer, exactly as instructed.
-		return ports.AgentResult{TurnsUsed: 2, Session: "sess-1",
-			Usage: ports.Usage{CostUSD: 0.25}, Output: "asked, waiting"}, nil
+		return agentport.AgentResult{TurnsUsed: 2, Session: "sess-1",
+			Usage: agentport.Usage{CostUSD: 0.25}, Output: "asked, waiting"}, nil
 	}
-	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (ports.AgentResult, error) {
-		return ports.AgentResult{TurnsUsed: 3, Session: "sess-1", Usage: ports.Usage{CostUSD: 0.5}}, nil
+	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{TurnsUsed: 3, Session: "sess-1", Usage: agentport.Usage{CostUSD: 0.5}}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
@@ -139,12 +139,12 @@ func TestAgentEndingTurnOnOpenQuestionPausesAttempt(t *testing.T) {
 func TestHarnessErrorWithOpenQuestionFailsRatherThanPausing(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	runIDCh := make(chan string, 1)
-	h.runner.RunFunc = func(_ context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(_ context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
 		id := <-runIDCh
 		if _, err := h.e.RaisePing(id, "clarification", "which db?", "", nil, nil); err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
-		return ports.AgentResult{}, context.DeadlineExceeded
+		return agentport.AgentResult{}, context.DeadlineExceeded
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
@@ -186,8 +186,8 @@ func TestPausedAttemptResumesAfterRestart(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (ports.AgentResult, error) {
-		return ports.AgentResult{TurnsUsed: 1, Session: "sess-x"}, nil
+	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{TurnsUsed: 1, Session: "sess-x"}, nil
 	}
 	if err := h.e.Recover(ctx); err != nil {
 		t.Fatal(err)
@@ -295,19 +295,19 @@ main:
 `
 	h := newHarness(t, mustFlow(t, doc))
 	runIDCh := make(chan string, 1)
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		id := <-runIDCh
 		if _, err := h.e.RaisePing(id, "clarification", "one endpoint or two?", "", nil, nil); err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
 		// Ignores the notice: guesses, writes the artifact, ends its turn.
 		if err := h.envp.WriteFile(ctx, call.Env, "artifacts/plan.md", []byte("# Goal\nOne endpoint."), 0o644); err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
-		return ports.AgentResult{TurnsUsed: 4, Session: "sess-1"}, nil
+		return agentport.AgentResult{TurnsUsed: 4, Session: "sess-1"}, nil
 	}
-	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (ports.AgentResult, error) {
-		return ports.AgentResult{TurnsUsed: 2, Session: "sess-1"}, nil
+	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{TurnsUsed: 2, Session: "sess-1"}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "askout", testProject)
@@ -350,22 +350,22 @@ func TestParkedRunFreesItsSlotAndTheAnswerWakesIt(t *testing.T) {
 	runIDCh := make(chan string, 1)
 	var mu sync.Mutex
 	started := map[string]int{}
-	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		mu.Lock()
 		started[string(call.Env)]++
 		first := len(started) == 1
 		mu.Unlock()
 		if !first {
-			return ports.AgentResult{TurnsUsed: 1, Session: "sess-b"}, nil
+			return agentport.AgentResult{TurnsUsed: 1, Session: "sess-b"}, nil
 		}
 		id := <-runIDCh
 		if _, err := h.e.RaisePing(id, "clarification", "one endpoint or two?", "", nil, nil); err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
-		return ports.AgentResult{TurnsUsed: 1, Session: "sess-a"}, nil
+		return agentport.AgentResult{TurnsUsed: 1, Session: "sess-a"}, nil
 	}
-	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (ports.AgentResult, error) {
-		return ports.AgentResult{TurnsUsed: 1, Session: "sess-a"}, nil
+	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{TurnsUsed: 1, Session: "sess-a"}, nil
 	}
 
 	first, err := h.e.CreateRun(ctx, Ticket{Title: "A"}, "ask", testProject)
@@ -459,12 +459,12 @@ main:
 func TestPauseOnAParkedRunHoldsItThroughTheAnswer(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	runIDCh := make(chan string, 1)
-	h.runner.RunFunc = func(_ context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(_ context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
 		id := <-runIDCh
 		if _, err := h.e.RaisePing(id, "clarification", "which db?", "", nil, nil); err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
-		return ports.AgentResult{TurnsUsed: 1, Session: "sess-1"}, nil
+		return agentport.AgentResult{TurnsUsed: 1, Session: "sess-1"}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
@@ -501,12 +501,12 @@ func TestPauseOnAParkedRunHoldsItThroughTheAnswer(t *testing.T) {
 func TestPlayRefusesARunThatIsMerelyWaiting(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	runIDCh := make(chan string, 1)
-	h.runner.RunFunc = func(_ context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(_ context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
 		id := <-runIDCh
 		if _, err := h.e.RaisePing(id, "clarification", "which db?", "", nil, nil); err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
-		return ports.AgentResult{TurnsUsed: 1, Session: "s"}, nil
+		return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
@@ -546,8 +546,8 @@ func TestRecoverAdmitsAParkedRunWhoseAnswerLanded(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (ports.AgentResult, error) {
-		return ports.AgentResult{TurnsUsed: 1, Session: "sess-w"}, nil
+	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{TurnsUsed: 1, Session: "sess-w"}, nil
 	}
 	if err := h.e.Recover(ctx); err != nil {
 		t.Fatal(err)
@@ -587,8 +587,8 @@ func TestRecoverLeavesAnUnansweredParkedRunAlone(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (ports.AgentResult, error) {
-		return ports.AgentResult{TurnsUsed: 1, Session: "sess-u"}, nil
+	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{TurnsUsed: 1, Session: "sess-u"}, nil
 	}
 	if err := h.e.Recover(ctx); err != nil {
 		t.Fatal(err)
@@ -625,22 +625,22 @@ func TestRecoverLeavesAnUnansweredParkedRunAlone(t *testing.T) {
 func TestAnswerAfterTheTurnWasHandedBackStillPausesTheAttempt(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	runIDCh := make(chan string, 1)
-	h.runner.RunFunc = func(_ context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(_ context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
 		id := <-runIDCh
 		p, err := h.e.RaisePing(id, "clarification", "which db?", "", nil, nil)
 		if err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
 		// The grace hold expired: the agent was told to stop and wait.
 		p.HandOff(false)
 		// ...and the human answers while it is still ending its turn.
 		if err := h.e.AnswerPing(p.ID, textAnswer("postgres")); err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
-		return ports.AgentResult{TurnsUsed: 1, Session: "sess-1"}, nil
+		return agentport.AgentResult{TurnsUsed: 1, Session: "sess-1"}, nil
 	}
-	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (ports.AgentResult, error) {
-		return ports.AgentResult{TurnsUsed: 1, Session: "sess-1"}, nil
+	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{TurnsUsed: 1, Session: "sess-1"}, nil
 	}
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"apothecary/internal/agentspec"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 )
 
@@ -28,8 +28,8 @@ func WriteRoles(ctx context.Context, envp envport.EnvProvisioner, env envport.En
 
 // RolePreamble is a Profile.Preamble reading the stage agent's role file. An
 // agent with no role file fails rather than running role-less.
-func RolePreamble(envp envport.EnvProvisioner, harness string) func(context.Context, envport.EnvID, ports.AgentSpec) (string, error) {
-	return func(ctx context.Context, env envport.EnvID, spec ports.AgentSpec) (string, error) {
+func RolePreamble(envp envport.EnvProvisioner, harness string) func(context.Context, envport.EnvID, agentport.AgentSpec) (string, error) {
+	return func(ctx context.Context, env envport.EnvID, spec agentport.AgentSpec) (string, error) {
 		if spec.Agent == "" {
 			return "", nil
 		}

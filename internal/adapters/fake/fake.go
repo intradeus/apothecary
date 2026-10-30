@@ -19,6 +19,7 @@ import (
 
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 )
 
@@ -380,15 +381,15 @@ var _ ports.EgressController = (*EnvProvisioner)(nil)
 
 type RunCall struct {
 	Env  envport.EnvID
-	Spec ports.AgentSpec
-	In   ports.AgentInput
+	Spec agentport.AgentSpec
+	In   agentport.AgentInput
 }
 
 type ResumeCall struct {
 	Env     envport.EnvID
-	Session ports.SessionID
+	Session agentport.SessionID
 	Reply   string
-	In      ports.AgentInput
+	In      agentport.AgentInput
 }
 
 type AgentRunner struct {
@@ -396,8 +397,8 @@ type AgentRunner struct {
 	// RunFunc scripts agent execution; nil returns a bland success
 	// (1 turn, session "sess-<n>"). ctx is the engine's stage context —
 	// honor cancellation to emulate a real harness being killed.
-	RunFunc    func(ctx context.Context, call RunCall) (ports.AgentResult, error)
-	ResumeFunc func(ctx context.Context, call ResumeCall) (ports.AgentResult, error)
+	RunFunc    func(ctx context.Context, call RunCall) (agentport.AgentResult, error)
+	ResumeFunc func(ctx context.Context, call ResumeCall) (agentport.AgentResult, error)
 
 	RunCalls    []RunCall
 	ResumeCalls []ResumeCall
@@ -441,16 +442,16 @@ func (r *AgentRunner) SnapshotRunCalls() []RunCall {
 	return append([]RunCall(nil), r.RunCalls...)
 }
 
-func (r *AgentRunner) Run(ctx context.Context, env envport.EnvID, spec ports.AgentSpec, in ports.AgentInput) (ports.AgentResult, error) {
+func (r *AgentRunner) Run(ctx context.Context, env envport.EnvID, spec agentport.AgentSpec, in agentport.AgentInput) (agentport.AgentResult, error) {
 	r.mu.Lock()
 	call := RunCall{Env: env, Spec: spec, In: in}
 	r.RunCalls = append(r.RunCalls, call)
 	r.sessions++
-	session := ports.SessionID(fmt.Sprintf("sess-%d", r.sessions))
+	session := agentport.SessionID(fmt.Sprintf("sess-%d", r.sessions))
 	fn := r.RunFunc
 	r.mu.Unlock()
 	if fn == nil {
-		return ports.AgentResult{Session: session, TurnsUsed: 1}, nil
+		return agentport.AgentResult{Session: session, TurnsUsed: 1}, nil
 	}
 	res, err := fn(ctx, call)
 	if err == nil && res.Session == "" {
@@ -459,14 +460,14 @@ func (r *AgentRunner) Run(ctx context.Context, env envport.EnvID, spec ports.Age
 	return res, err
 }
 
-func (r *AgentRunner) Resume(ctx context.Context, env envport.EnvID, s ports.SessionID, in ports.AgentInput) (ports.AgentResult, error) {
+func (r *AgentRunner) Resume(ctx context.Context, env envport.EnvID, s agentport.SessionID, in agentport.AgentInput) (agentport.AgentResult, error) {
 	r.mu.Lock()
 	call := ResumeCall{Env: env, Session: s, Reply: in.Prompt, In: in}
 	r.ResumeCalls = append(r.ResumeCalls, call)
 	fn := r.ResumeFunc
 	r.mu.Unlock()
 	if fn == nil {
-		return ports.AgentResult{Session: s, TurnsUsed: 1}, nil
+		return agentport.AgentResult{Session: s, TurnsUsed: 1}, nil
 	}
 	res, err := fn(ctx, call)
 	if err == nil && res.Session == "" {
@@ -1433,7 +1434,7 @@ func (r ReadOnlyTicketSource) OpenAttachment(ctx context.Context, a ports.Source
 // Compile-time port conformance.
 var (
 	_ envport.EnvProvisioner    = (*EnvProvisioner)(nil)
-	_ ports.AgentRunner         = (*AgentRunner)(nil)
+	_ agentport.AgentRunner     = (*AgentRunner)(nil)
 	_ ports.RepoHost            = (*RepoHost)(nil)
 	_ ports.NotificationChannel = (*Channel)(nil)
 	_ ports.TicketSource        = (*TicketSource)(nil)

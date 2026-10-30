@@ -15,6 +15,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/engine"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
@@ -127,12 +128,12 @@ func TestBrowserMCPStream(t *testing.T) {
 	x.res.Browser = true
 	x.res.Envp = exposingEnv{x.envp}
 	release := make(chan struct{})
-	x.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+	x.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
 		select {
 		case <-release:
 		case <-ctx.Done():
 		}
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	defer close(release)
 	runID, err := x.e.CreateRun(context.Background(), engine.Ticket{Title: "T"}, "loop", testProject)

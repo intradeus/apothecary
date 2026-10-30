@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
@@ -298,7 +299,7 @@ func newWatcherHarnessDocWith(t *testing.T, doc string, opt harnessOpt) *watcher
 		return envport.ExecResult{}, nil
 	}
 	inner := ph.runner.RunFunc
-	ph.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	ph.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		switch call.Spec.Agent {
 		case "resolver":
 			if rh.resolverClears {

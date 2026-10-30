@@ -9,14 +9,14 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/agentspec"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 )
 
 // opencode's ACP session modes are its agents: a stage runs as its agent.
 func TestProfileSelectsTheAgentAsMode(t *testing.T) {
 	p := Profile()
-	if !strings.HasPrefix(p.Command, "opencode acp") || p.Mode(ports.AgentSpec{Agent: "planner"}) != "planner" || p.Preamble != nil {
+	if !strings.HasPrefix(p.Command, "opencode acp") || p.Mode(agentport.AgentSpec{Agent: "planner"}) != "planner" || p.Preamble != nil {
 		t.Errorf("profile = %+v", p)
 	}
 }

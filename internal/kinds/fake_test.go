@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/reviewfile"
 )
 
@@ -28,7 +28,7 @@ func TestDevFakeWritesWhatTheContractAsks(t *testing.T) {
 		outs[2].typ != "review_threads" || outs[3].typ != "review_replies" || outs[4] != (declaredOutput{path: "artifacts/commit.json", typ: "commit_message"}) {
 		t.Fatalf("declared = %+v", outs)
 	}
-	call := fake.RunCall{Spec: ports.AgentSpec{Agent: "dev"}, In: ports.AgentInput{Prompt: prompt}}
+	call := fake.RunCall{Spec: agentport.AgentSpec{Agent: "dev"}, In: agentport.AgentInput{Prompt: prompt}}
 	got := map[string]string{}
 	for _, out := range outs {
 		b, err := stubOutput(out, call)

@@ -7,23 +7,23 @@ import (
 	"time"
 
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 )
 
 // --- inbox ----------------------------------------------------------------------
 
-// inbox is one invocation's queue of human messages (ports.Inbox). The run
+// inbox is one invocation's queue of human messages (agentport.Inbox). The run
 // loop pushes; the runner takes from its own goroutine.
 type inbox struct {
 	mu   sync.Mutex
-	q    []ports.UserMessage
+	q    []agentport.UserMessage
 	held bool
 	wake chan struct{}
 }
 
 func newInbox() *inbox { return &inbox{wake: make(chan struct{}, 1)} }
 
-func (b *inbox) push(m ports.UserMessage) {
+func (b *inbox) push(m agentport.UserMessage) {
 	b.mu.Lock()
 	b.q = append(b.q, m)
 	b.mu.Unlock()
@@ -63,7 +63,7 @@ func (b *inbox) pending() bool {
 
 func (b *inbox) Wake() <-chan struct{} { return b.wake }
 
-func (b *inbox) Take() []ports.UserMessage {
+func (b *inbox) Take() []agentport.UserMessage {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	q := b.q
@@ -84,15 +84,15 @@ func (b *inbox) Interrupting() bool {
 
 // msgReq is a human message on its way into the run loop.
 type msgReq struct {
-	msg ports.UserMessage
+	msg agentport.UserMessage
 	ack chan error
 }
 
 // formatMessages renders human messages for the agent. Kept identical to
 // the ACP runner's rendering of messages it delivers mid-invocation. Text
 // the engine composed (Verbatim) follows the human's, as it is.
-func formatMessages(msgs []ports.UserMessage) string {
-	var human []ports.UserMessage
+func formatMessages(msgs []agentport.UserMessage) string {
+	var human []agentport.UserMessage
 	var verbatim []string
 	for _, m := range msgs {
 		if m.Verbatim {
@@ -221,13 +221,13 @@ func (t *transcript) publish(d LiveDelta) {
 }
 
 // handle folds one event in, appending whatever it completes.
-func (t *transcript) handle(ev ports.AgentEvent) error {
+func (t *transcript) handle(ev agentport.AgentEvent) error {
 	if ev.Cursor != "" {
 		t.cursor = ev.Cursor
 	}
 	switch ev.Kind {
-	case ports.AgentEvMessage, ports.AgentEvThought:
-		thought := ev.Kind == ports.AgentEvThought
+	case agentport.AgentEvMessage, agentport.AgentEvThought:
+		thought := ev.Kind == agentport.AgentEvThought
 		if t.seg != "" && (t.segThink != thought || t.segTurn != ev.Turn) {
 			if err := t.flushText(); err != nil {
 				return err
@@ -248,7 +248,7 @@ func (t *transcript) handle(ev ports.AgentEvent) error {
 			t.publish(LiveDelta{Kind: kind, Turn: ev.Turn, Segment: t.seg, Text: t.x.redact.Scrub(t.buf.String())})
 		}
 		return nil
-	case ports.AgentEvTool:
+	case agentport.AgentEvTool:
 		if err := t.flushText(); err != nil {
 			return err
 		}
@@ -270,7 +270,7 @@ func (t *transcript) handle(ev ports.AgentEvent) error {
 			return t.flushTool(ev.Tool.ID)
 		}
 		return nil
-	case ports.AgentEvPlan:
+	case agentport.AgentEvPlan:
 		if err := t.flushText(); err != nil {
 			return err
 		}
@@ -285,7 +285,7 @@ func (t *transcript) handle(ev ports.AgentEvent) error {
 		}
 		t.lastPln = sig.String()
 		return t.x.append(p)
-	case ports.AgentEvPermission:
+	case agentport.AgentEvPermission:
 		if err := t.flushText(); err != nil {
 			return err
 		}
@@ -295,10 +295,10 @@ func (t *transcript) handle(ev ports.AgentEvent) error {
 		}
 		return t.x.append(&event.AgentNotice{StageID: t.st, Iteration: t.iter, Cursor: t.cursor,
 			Text: fmt.Sprintf("Permission requested for %s: %s", title, ev.Text)})
-	case ports.AgentEvTurnStart:
+	case agentport.AgentEvTurnStart:
 		t.publish(LiveDelta{Kind: "turn_start", Turn: ev.Turn})
 		return nil
-	case ports.AgentEvTurnEnd:
+	case agentport.AgentEvTurnEnd:
 		if err := t.flushAll(); err != nil {
 			return err
 		}
@@ -308,7 +308,7 @@ func (t *transcript) handle(ev ports.AgentEvent) error {
 				Text: "The turn ended with an error: " + ev.Error})
 		}
 		return nil
-	case ports.AgentEvUserMessage:
+	case agentport.AgentEvUserMessage:
 		if err := t.flushAll(); err != nil {
 			return err
 		}
@@ -326,7 +326,7 @@ func (t *transcript) handle(ev ports.AgentEvent) error {
 		}
 		t.x.rs.delivered(ids)
 		return nil
-	case ports.AgentEvNotice:
+	case agentport.AgentEvNotice:
 		if err := t.flushAll(); err != nil {
 			return err
 		}
@@ -335,7 +335,7 @@ func (t *transcript) handle(ev ports.AgentEvent) error {
 	return nil
 }
 
-func mergeTool(cur *event.AgentTool, u *ports.AgentTool, turn string) {
+func mergeTool(cur *event.AgentTool, u *agentport.AgentTool, turn string) {
 	if turn != "" {
 		cur.Turn = turn
 	}

@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/sidecar"
 )
@@ -42,16 +42,16 @@ type Profile struct {
 	Command string
 	// Mode maps a stage's agent to the ACP session mode, "" for none
 	// (opencode's modes ARE its agents; codex has no named agents).
-	Mode func(spec ports.AgentSpec) string
+	Mode func(spec agentport.AgentSpec) string
 	// Preamble, when set, is prepended to a NEW session's first prompt —
 	// the role prompt, for harnesses with nowhere else to put it.
-	Preamble func(ctx context.Context, env envport.EnvID, spec ports.AgentSpec) (string, error)
+	Preamble func(ctx context.Context, env envport.EnvID, spec agentport.AgentSpec) (string, error)
 	// MCPServers ride EVERY session, ahead of the stage's own — for a
 	// harness that reads no MCP config file in ACP mode (omp), this is the
 	// only way ask_human reaches it.
-	MCPServers []ports.MCPServer
+	MCPServers []agentport.MCPServer
 	// ReadOnlyBy says how the harness honours a read-only session
-	// (ports.AgentInput.ReadOnly, the Ask pane's): ReadOnlyByMode puts the
+	// (agentport.AgentInput.ReadOnly, the Ask pane's): ReadOnlyByMode puts the
 	// session in ReadOnlyMode; ReadOnlyByAgent relies on the agent
 	// definition the engine prepared (its mutating tools denied);
 	// ReadOnlyByProcess runs the session in a SEPARATE agent process started
@@ -72,7 +72,7 @@ const (
 )
 
 // CanReadOnly reports whether the harness can run a session that cannot
-// change the workspace (ports.ReadOnlyCapable).
+// change the workspace (agentport.ReadOnlyCapable).
 func (r *Runner) CanReadOnly() bool { return r.p.ReadOnlyBy != "" }
 
 type Runner struct {
@@ -125,7 +125,7 @@ func (r *Runner) start(ctx context.Context, c *sidecar.Client, readOnly bool) (s
 // reads. A remote server needs the agent to say it takes one (initialize:
 // agentCapabilities.mcpCapabilities.http); one that does not is refused
 // here, before the session, rather than silently dropped by the agent.
-func (r *Runner) mcpServers(init json.RawMessage, stage []ports.MCPServer, readOnly bool) ([]sidecar.MCPServer, error) {
+func (r *Runner) mcpServers(init json.RawMessage, stage []agentport.MCPServer, readOnly bool) ([]sidecar.MCPServer, error) {
 	servers := stage
 	if !readOnly {
 		servers = append(slices.Clone(r.p.MCPServers), stage...)
@@ -178,18 +178,18 @@ func pairs(m map[string]string) []sidecar.EnvVar {
 	return out
 }
 
-func (r *Runner) Run(ctx context.Context, env envport.EnvID, spec ports.AgentSpec, in ports.AgentInput) (ports.AgentResult, error) {
+func (r *Runner) Run(ctx context.Context, env envport.EnvID, spec agentport.AgentSpec, in agentport.AgentInput) (agentport.AgentResult, error) {
 	c, err := r.client(ctx, env)
 	if err != nil {
-		return ports.AgentResult{}, err
+		return agentport.AgentResult{}, err
 	}
 	st, err := r.start(ctx, c, in.ReadOnly)
 	if err != nil {
-		return ports.AgentResult{}, err
+		return agentport.AgentResult{}, err
 	}
 	mcp, err := r.mcpServers(st.Init, in.MCPServers, in.ReadOnly)
 	if err != nil {
-		return ports.AgentResult{}, err
+		return agentport.AgentResult{}, err
 	}
 	mode := ""
 	if r.p.Mode != nil {
@@ -200,34 +200,34 @@ func (r *Runner) Run(ctx context.Context, env envport.EnvID, spec ports.AgentSpe
 	}
 	sess, err := c.Session(ctx, sidecar.SessionRequest{Proc: st.Proc, Mode: mode, Model: spec.Model, MCPServers: mcp, ReadOnly: in.ReadOnly})
 	if err != nil {
-		return ports.AgentResult{}, fmt.Errorf("%s: %w", r.p.Harness, err)
+		return agentport.AgentResult{}, fmt.Errorf("%s: %w", r.p.Harness, err)
 	}
 	prompt := in.Prompt
 	if r.p.Preamble != nil {
 		pre, err := r.p.Preamble(ctx, env, spec)
 		if err != nil {
-			return ports.AgentResult{Session: ports.SessionID(sess.SessionID)}, err
+			return agentport.AgentResult{Session: agentport.SessionID(sess.SessionID)}, err
 		}
 		prompt = pre + prompt
 	}
 	return r.drive(ctx, c, st.Proc, sess.SessionID, sess.CostUSD, prompt, "", "", in)
 }
 
-func (r *Runner) Resume(ctx context.Context, env envport.EnvID, s ports.SessionID, in ports.AgentInput) (ports.AgentResult, error) {
+func (r *Runner) Resume(ctx context.Context, env envport.EnvID, s agentport.SessionID, in agentport.AgentInput) (agentport.AgentResult, error) {
 	if s == "" {
-		return ports.AgentResult{}, fmt.Errorf("%s resume: no session recorded for this stage", r.p.Harness)
+		return agentport.AgentResult{}, fmt.Errorf("%s resume: no session recorded for this stage", r.p.Harness)
 	}
 	c, err := r.client(ctx, env)
 	if err != nil {
-		return ports.AgentResult{}, err
+		return agentport.AgentResult{}, err
 	}
 	st, err := r.start(ctx, c, in.ReadOnly)
 	if err != nil {
-		return ports.AgentResult{}, err
+		return agentport.AgentResult{}, err
 	}
 	mcp, err := r.mcpServers(st.Init, in.MCPServers, in.ReadOnly)
 	if err != nil {
-		return ports.AgentResult{Session: s}, err
+		return agentport.AgentResult{Session: s}, err
 	}
 	// Live in the process: a no-op (but for a model switch asked for).
 	// Otherwise (the container restarted, the harness was swapped) the agent
@@ -239,7 +239,7 @@ func (r *Runner) Resume(ctx context.Context, env envport.EnvID, s ports.SessionI
 	}
 	sess, err := c.Session(ctx, req)
 	if err != nil {
-		return ports.AgentResult{Session: s}, fmt.Errorf("%s: resume session: %w", r.p.Harness, err)
+		return agentport.AgentResult{Session: s}, fmt.Errorf("%s: resume session: %w", r.p.Harness, err)
 	}
 	return r.drive(ctx, c, st.Proc, sess.SessionID, sess.CostUSD, in.Prompt, "", "", in)
 }
@@ -274,7 +274,7 @@ func (r *Runner) attachable(ctx context.Context, c *sidecar.Client, s, cursor st
 	return turn, st.Sessions[s], turn != ""
 }
 
-func (r *Runner) Reattachable(ctx context.Context, env envport.EnvID, s ports.SessionID, cursor string) bool {
+func (r *Runner) Reattachable(ctx context.Context, env envport.EnvID, s agentport.SessionID, cursor string) bool {
 	if s == "" {
 		return false
 	}
@@ -286,23 +286,23 @@ func (r *Runner) Reattachable(ctx context.Context, env envport.EnvID, s ports.Se
 	return ok
 }
 
-func (r *Runner) Reattach(ctx context.Context, env envport.EnvID, s ports.SessionID, cursor string, in ports.AgentInput) (ports.AgentResult, bool, error) {
+func (r *Runner) Reattach(ctx context.Context, env envport.EnvID, s agentport.SessionID, cursor string, in agentport.AgentInput) (agentport.AgentResult, bool, error) {
 	if s == "" {
-		return ports.AgentResult{}, false, nil
+		return agentport.AgentResult{}, false, nil
 	}
 	c, err := r.client(ctx, env)
 	if err != nil {
-		return ports.AgentResult{}, false, nil
+		return agentport.AgentResult{}, false, nil
 	}
 	turn, cost, ok := r.attachable(ctx, c, string(s), cursor)
 	if !ok {
-		return ports.AgentResult{Session: s}, false, nil
+		return agentport.AgentResult{Session: s}, false, nil
 	}
 	// The process is the one the turn runs in (a reuse); its id keeps
 	// another harness's exit out of this session's transcript.
 	st, err := r.start(ctx, c, in.ReadOnly)
 	if err != nil {
-		return ports.AgentResult{Session: s}, false, nil
+		return agentport.AgentResult{Session: s}, false, nil
 	}
 	// Spend before the cursor was already banked by the engine; what the
 	// session cost meanwhile is not recoverable, so this undercounts by at
@@ -405,10 +405,10 @@ func (s *stream) pump(out chan<- sidecar.Event, errc chan<- error) {
 // the agent process the session runs in: another process's exit (a second
 // harness in the same workspace) is not this session's news.
 func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string, costBase float64,
-	text, attachTurn, cursor string, in ports.AgentInput) (ports.AgentResult, error) {
-	res := ports.AgentResult{Session: ports.SessionID(sid)}
+	text, attachTurn, cursor string, in agentport.AgentInput) (agentport.AgentResult, error) {
+	res := agentport.AgentResult{Session: agentport.SessionID(sid)}
 	cost := costBase
-	done := func(err error) (ports.AgentResult, error) {
+	done := func(err error) (agentport.AgentResult, error) {
 		res.Usage.CostUSD = cost - costBase
 		return res, err
 	}
@@ -438,12 +438,12 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 	if in.Inbox != nil {
 		wake = in.Inbox.Wake()
 	}
-	emit := func(ev ports.AgentEvent) {
+	emit := func(ev agentport.AgentEvent) {
 		if in.Events != nil {
 			in.Events(ev)
 		}
 	}
-	emit(ports.AgentEvent{Kind: ports.AgentEvSession, Text: sid})
+	emit(agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: sid})
 	// Output is what the agent SAID — its message text, turn by turn: the
 	// stage log and the on_fail feed, as the one-shot CLIs' text was.
 	var said []string
@@ -454,7 +454,7 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 		}
 		saying.Reset()
 	}
-	done = func(err error) (ports.AgentResult, error) {
+	done = func(err error) (agentport.AgentResult, error) {
 		flushSaid()
 		res.Usage.CostUSD = cost - costBase
 		res.Output = strings.Join(said, "\n\n")
@@ -487,7 +487,7 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 			select {
 			case err := <-perr:
 				if errors.Is(err, errSidecarRestarted) {
-					emit(ports.AgentEvent{Kind: ports.AgentEvNotice, Text: "The workspace sidecar restarted; the turn in flight was lost."})
+					emit(agentport.AgentEvent{Kind: agentport.AgentEvNotice, Text: "The workspace sidecar restarted; the turn in flight was lost."})
 				}
 				return done(fmt.Errorf("%s: %w", r.p.Harness, err))
 			case <-wake:
@@ -514,34 +514,34 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 						res.TurnsUsed++ // a new model step after tool results
 						lastWasTool = false
 					}
-					kind := ports.AgentEvMessage
+					kind := agentport.AgentEvMessage
 					if ev.Type == "thought" {
-						kind = ports.AgentEvThought
+						kind = agentport.AgentEvThought
 					} else {
 						saying.WriteString(ev.Text)
 					}
-					emit(ports.AgentEvent{Kind: kind, Turn: ev.Turn, Text: ev.Text, Cursor: cur})
+					emit(agentport.AgentEvent{Kind: kind, Turn: ev.Turn, Text: ev.Text, Cursor: cur})
 				case "tool_call", "tool_update":
 					if !lastWasTool {
 						flushSaid()
 					}
 					lastWasTool = true
-					emit(ports.AgentEvent{Kind: ports.AgentEvTool, Turn: ev.Turn, Tool: toTool(ev.Tool), Cursor: cur})
+					emit(agentport.AgentEvent{Kind: agentport.AgentEvTool, Turn: ev.Turn, Tool: toTool(ev.Tool), Cursor: cur})
 				case "permission":
-					emit(ports.AgentEvent{Kind: ports.AgentEvPermission, Turn: ev.Turn, Tool: toTool(ev.Tool), Text: ev.Text, Cursor: cur})
+					emit(agentport.AgentEvent{Kind: agentport.AgentEvPermission, Turn: ev.Turn, Tool: toTool(ev.Tool), Text: ev.Text, Cursor: cur})
 				case "plan":
-					var plan []ports.AgentPlanEntry
+					var plan []agentport.AgentPlanEntry
 					for _, p := range ev.Plan {
-						plan = append(plan, ports.AgentPlanEntry{Content: p.Content, Status: p.Status, Priority: p.Priority})
+						plan = append(plan, agentport.AgentPlanEntry{Content: p.Content, Status: p.Status, Priority: p.Priority})
 					}
-					emit(ports.AgentEvent{Kind: ports.AgentEvPlan, Turn: ev.Turn, Plan: plan, Cursor: cur})
+					emit(agentport.AgentEvent{Kind: agentport.AgentEvPlan, Turn: ev.Turn, Plan: plan, Cursor: cur})
 				case "usage":
 					if ev.CostUSD != nil {
 						cost = *ev.CostUSD
 					}
 				case "turn_start":
 					if ev.Turn == turn {
-						emit(ports.AgentEvent{Kind: ports.AgentEvTurnStart, Turn: turn, Cursor: cur})
+						emit(agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: turn, Cursor: cur})
 					}
 				case "agent_exit":
 					if ev.Proc != "" && proc != "" && ev.Proc != proc {
@@ -551,19 +551,19 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 					if t := strings.TrimSpace(ev.Text); t != "" {
 						msg += "\n" + tail(t, 2000)
 					}
-					emit(ports.AgentEvent{Kind: ports.AgentEvNotice, Text: msg, Cursor: cur})
+					emit(agentport.AgentEvent{Kind: agentport.AgentEvNotice, Text: msg, Cursor: cur})
 				case "turn_end":
 					if ev.Turn == turn {
 						e := ev
 						end = &e
 						// What this one turn spent, for the engine's account
 						// of the turns a take-over prompted.
-						spent := &ports.Usage{CostUSD: cost - turnCost}
+						spent := &agentport.Usage{CostUSD: cost - turnCost}
 						if u := ev.Usage; u != nil {
 							spent.InputTokens = int(u.InputTokens + u.CachedWriteTokens)
 							spent.OutputTokens = int(u.OutputTokens + u.ThoughtTokens)
 						}
-						emit(ports.AgentEvent{Kind: ports.AgentEvTurnEnd, Turn: turn, StopReason: ev.StopReason,
+						emit(agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: turn, StopReason: ev.StopReason,
 							Error: ev.Error, Cursor: cur, Usage: spent})
 					}
 				}
@@ -604,15 +604,15 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 			msgs = in.Inbox.Take()
 		}
 		text = FormatMessages(msgs)
-		emit(ports.AgentEvent{Kind: ports.AgentEvUserMessage, Messages: msgs, Text: text})
+		emit(agentport.AgentEvent{Kind: agentport.AgentEvUserMessage, Messages: msgs, Text: text})
 	}
 }
 
 // FormatMessages renders human messages as the agent's next prompt. Text
 // the engine composed (Verbatim — the handback that ends a take-over)
 // follows the human's, as it is.
-func FormatMessages(msgs []ports.UserMessage) string {
-	var human []ports.UserMessage
+func FormatMessages(msgs []agentport.UserMessage) string {
+	var human []agentport.UserMessage
 	var verbatim []string
 	for _, m := range msgs {
 		if m.Verbatim {
@@ -641,14 +641,14 @@ func FormatMessages(msgs []ports.UserMessage) string {
 	return b.String()
 }
 
-func toTool(t *sidecar.Tool) *ports.AgentTool {
+func toTool(t *sidecar.Tool) *agentport.AgentTool {
 	if t == nil {
 		return nil
 	}
-	out := &ports.AgentTool{ID: t.ID, Title: t.Title, Kind: t.Kind, Status: t.Status,
+	out := &agentport.AgentTool{ID: t.ID, Title: t.Title, Kind: t.Kind, Status: t.Status,
 		Input: t.Input, Output: t.Output, Locations: t.Locations}
 	for _, d := range t.Diffs {
-		out.Diffs = append(out.Diffs, ports.AgentDiff{Path: d.Path, OldText: d.OldText, NewText: d.NewText})
+		out.Diffs = append(out.Diffs, agentport.AgentDiff{Path: d.Path, OldText: d.OldText, NewText: d.NewText})
 	}
 	return out
 }
@@ -661,8 +661,8 @@ func tail(s string, n int) string {
 }
 
 var (
-	_ ports.AgentRunner      = (*Runner)(nil)
-	_ ports.AgentReattacher  = (*Runner)(nil)
-	_ ports.AgentStopper     = (*Runner)(nil)
-	_ ports.AgentModelLister = (*Runner)(nil)
+	_ agentport.AgentRunner      = (*Runner)(nil)
+	_ agentport.AgentReattacher  = (*Runner)(nil)
+	_ agentport.AgentStopper     = (*Runner)(nil)
+	_ agentport.AgentModelLister = (*Runner)(nil)
 )

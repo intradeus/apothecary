@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/reviewfile"
 )
@@ -140,11 +141,11 @@ func (FakeHarness) Descriptor() Descriptor {
 
 func (FakeHarness) New(_ Config, envp envport.EnvProvisioner) (Harness, error) {
 	runner := &fake.AgentRunner{}
-	runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		select {
 		case <-time.After(200 * time.Millisecond): // a little realism
 		case <-ctx.Done():
-			return ports.AgentResult{}, ctx.Err()
+			return agentport.AgentResult{}, ctx.Err()
 		}
 		// An output with a shape contract gets a document that holds it —
 		// a verdict, an empty review, a reply per thread, a commit message —
@@ -152,24 +153,24 @@ func (FakeHarness) New(_ Config, envp envport.EnvProvisioner) (Harness, error) {
 		for _, out := range declaredOutputs(call.In.Prompt) {
 			content, err := stubOutput(out, call)
 			if err != nil {
-				return ports.AgentResult{}, err
+				return agentport.AgentResult{}, err
 			}
 			if err := envp.WriteFile(ctx, call.Env, out.path, content, 0o644); err != nil {
-				return ports.AgentResult{}, err
+				return agentport.AgentResult{}, err
 			}
 		}
-		return ports.AgentResult{TurnsUsed: 3, Usage: ports.Usage{InputTokens: 1000, OutputTokens: 200, CostUSD: 0.01}}, nil
+		return agentport.AgentResult{TurnsUsed: 3, Usage: agentport.Usage{InputTokens: 1000, OutputTokens: 200, CostUSD: 0.01}}, nil
 	}
 	return &fakeHarness{runner: runner}, nil
 }
 
 type fakeHarness struct{ runner *fake.AgentRunner }
 
-func (h *fakeHarness) Run(ctx context.Context, env envport.EnvID, spec ports.AgentSpec, in ports.AgentInput) (ports.AgentResult, error) {
+func (h *fakeHarness) Run(ctx context.Context, env envport.EnvID, spec agentport.AgentSpec, in agentport.AgentInput) (agentport.AgentResult, error) {
 	return h.runner.Run(ctx, env, spec, in)
 }
 
-func (h *fakeHarness) Resume(ctx context.Context, env envport.EnvID, s ports.SessionID, in ports.AgentInput) (ports.AgentResult, error) {
+func (h *fakeHarness) Resume(ctx context.Context, env envport.EnvID, s agentport.SessionID, in agentport.AgentInput) (agentport.AgentResult, error) {
 	return h.runner.Resume(ctx, env, s, in)
 }
 

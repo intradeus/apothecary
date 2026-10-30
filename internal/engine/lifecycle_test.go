@@ -10,7 +10,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/resources"
@@ -28,7 +28,7 @@ func TestShutdownCancelsEveryLoopBeforeWaiting(t *testing.T) {
 	cancelled := 0
 	all := make(chan struct{})
 	started := make(chan struct{}, n)
-	h.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
 		started <- struct{}{}
 		<-ctx.Done()
 		mu.Lock()
@@ -38,7 +38,7 @@ func TestShutdownCancelsEveryLoopBeforeWaiting(t *testing.T) {
 		}
 		mu.Unlock()
 		<-all
-		return ports.AgentResult{}, ctx.Err()
+		return agentport.AgentResult{}, ctx.Err()
 	}
 	for i := 0; i < n; i++ {
 		if _, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject); err != nil {

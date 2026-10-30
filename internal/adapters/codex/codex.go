@@ -19,7 +19,7 @@ import (
 
 	"apothecary/internal/adapters/acpagent"
 	"apothecary/internal/agentspec"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/wshome"
 )
@@ -125,7 +125,7 @@ func (a *Adapter) Profile() acpagent.Profile {
 	return acpagent.Profile{
 		Harness:      "codex",
 		Command:      "codex-acp",
-		Mode:         func(ports.AgentSpec) string { return fullAccessMode },
+		Mode:         func(agentport.AgentSpec) string { return fullAccessMode },
 		Preamble:     acpagent.RolePreamble(a.envp, "codex"),
 		ReadOnlyBy:   acpagent.ReadOnlyByMode,
 		ReadOnlyMode: readOnlyMode,

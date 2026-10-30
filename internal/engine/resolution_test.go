@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/resolution"
 )
 
@@ -19,15 +19,15 @@ func TestResolutionRunnerSelection(t *testing.T) {
 		HarnessKind:  "opencode",
 		HarnessKinds: []string{"codex", "opencode"},
 		Runner:       def,
-		Runners:      map[string]ports.AgentRunner{"opencode": def, "codex": alt},
+		Runners:      map[string]agentport.AgentRunner{"opencode": def, "codex": alt},
 	}
-	if res.RunnerFor("") != ports.AgentRunner(def) {
+	if res.RunnerFor("") != agentport.AgentRunner(def) {
 		t.Error("unpinned stage should use the default runner")
 	}
-	if res.RunnerFor("codex") != ports.AgentRunner(alt) {
+	if res.RunnerFor("codex") != agentport.AgentRunner(alt) {
 		t.Error("codex stage should use the codex runner")
 	}
-	if res.RunnerFor("opencode") != ports.AgentRunner(def) {
+	if res.RunnerFor("opencode") != agentport.AgentRunner(def) {
 		t.Error("opencode stage should use the default runner")
 	}
 	if !res.HarnessInSet("codex") || !res.HarnessInSet("opencode") {
@@ -40,7 +40,7 @@ func TestResolutionRunnerSelection(t *testing.T) {
 	// Single-harness setup (fakes): nil Runners ⇒ always the default; only the
 	// one kind is in the set.
 	solo := &resolution.Resolution{HarnessKind: "opencode", Runner: def}
-	if solo.RunnerFor("opencode") != ports.AgentRunner(def) {
+	if solo.RunnerFor("opencode") != agentport.AgentRunner(def) {
 		t.Error("solo resolution should fall back to Runner")
 	}
 	if !solo.HarnessInSet("opencode") || solo.HarnessInSet("codex") {

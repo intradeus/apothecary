@@ -12,6 +12,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/mrs"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
@@ -161,14 +162,14 @@ func TestMultiRepoRunPublishesOneMergeRequestPerChangedRepo(t *testing.T) {
 		"repos/docs": newFakeGit("main"), "repos/vendor": newFakeGit("main")}
 	gits["repos/docs"].noChanges = true // the run touched nothing there
 	h.envp.ExecFunc = gitPerDir(gits)
-	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		if call.Spec.Agent == "redactor" {
 			h.writeFile(t, call.Env, "artifacts/mr.md", "# Across repos\n")
 		}
 		if call.Spec.Agent == "builder" && !strings.Contains(call.In.Prompt, "# REPOSITORIES") {
 			t.Errorf("builder prompt lacks the repositories section:\n%s", call.In.Prompt)
 		}
-		return ports.AgentResult{TurnsUsed: 1, Session: "s"}, nil
+		return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "multi", testProject)
 	if err != nil {
@@ -240,11 +241,11 @@ func failures(evs []event.Event) string {
 func TestMRStatusesReportMergeabilityAndPendingThreads(t *testing.T) {
 	h := newHarness(t, mustFlow(t, multiRepoFlowDoc))
 	h.envp.ExecFunc = gitPerDir(map[string]*fakeGit{"repo": newFakeGit("main")})
-	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		if call.Spec.Agent == "redactor" {
 			h.writeFile(t, call.Env, "artifacts/mr.md", "# T\n")
 		}
-		return ports.AgentResult{TurnsUsed: 1, Session: "s"}, nil
+		return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "multi", testProject)
 	if err != nil {

@@ -28,6 +28,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/mrs"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/resources"
@@ -476,9 +477,9 @@ func TestTicketRunsAndDetail(t *testing.T) {
 func TestSSEReplayAndLive(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	block := make(chan struct{})
-	x.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	x.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		<-block
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	runID := x.createTicket(t, "T")
 
@@ -578,12 +579,12 @@ main:
 	}
 	runIDCh := make(chan string, 1)
 	gotAnswer := make(chan string, 1)
-	fail := func(format string, args ...any) (ports.AgentResult, error) {
+	fail := func(format string, args ...any) (agentport.AgentResult, error) {
 		err := fmt.Errorf(format, args...)
 		gotAnswer <- "SHIM ERROR: " + err.Error()
-		return ports.AgentResult{}, err
+		return agentport.AgentResult{}, err
 	}
-	x.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	x.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		runID := <-runIDCh
 		token := x.e.RunToken(runID)
 
@@ -628,7 +629,7 @@ main:
 				return fail("composed text = %q, answer = %q, content = %v", out.Text, out.Answer, out.Content)
 			}
 			gotAnswer <- out.Text
-			return ports.AgentResult{TurnsUsed: 1}, nil
+			return agentport.AgentResult{TurnsUsed: 1}, nil
 		}
 	}
 
@@ -681,9 +682,9 @@ main:
 func TestPingAuthRequired(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	block := make(chan struct{})
-	x.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	x.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		<-block
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	runID := x.createTicket(t, "T")
 	defer close(block)
@@ -700,9 +701,9 @@ func TestPingAuthRequired(t *testing.T) {
 func TestObservedPortsEndpoint(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	block := make(chan struct{})
-	x.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	x.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		<-block
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	runID := x.createTicket(t, "T")
 	defer close(block)
@@ -792,10 +793,10 @@ func TestAbortAndArchiveAndCapacity(t *testing.T) {
 
 	// Abort an in-flight run via the API.
 	block := make(chan struct{})
-	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		close(block)
 		<-ctx.Done()
-		return ports.AgentResult{}, ctx.Err()
+		return agentport.AgentResult{}, ctx.Err()
 	}
 	// Second env still live → archive id2 first to stay under the cap.
 	if resp, _ := x.do(t, "POST", "/api/runs/"+id2+"/archive", nil, nil); resp.StatusCode != 202 {
@@ -904,11 +905,11 @@ main:
       on_reject: { to: plan, max: 2 } }
 `)
 	stores.serve(x)
-	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		if err := x.envp.WriteFile(ctx, call.Env, "artifacts/plan.md", []byte("# Plan\n\n## Steps\ndo things\n"), 0o644); err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	x.createTicketFlow(t, "T", "gated")
 
@@ -981,9 +982,9 @@ main:
   - { id: gate, type: human_gate, question: "Approve the plan?", input: { doc: { from: artifacts/plan.md, type: file } },
       on_reject: { to: plan, max: 2 } }
 `)
-	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		_ = x.envp.WriteFile(ctx, call.Env, "artifacts/plan.md", []byte("# P\n"), 0o644)
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	x.createTicketFlow(t, "T", "gated")
 
@@ -1046,15 +1047,15 @@ func TestOptionPingOverHTTP(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	runIDCh := make(chan string, 1)
 	done := make(chan struct{})
-	x.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	x.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		id := <-runIDCh
 		p, err := x.e.RaisePing(id, "clarification", "pick a db", "", []string{"postgres", "sqlite"}, []string{"artifacts/dbs.md"})
 		if err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
 		p.Await(context.Background())
 		close(done)
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	runID := x.createTicket(t, "T")
 	runIDCh <- runID
@@ -1157,12 +1158,12 @@ func TestRerunRun(t *testing.T) {
 
 	// Active runs refuse.
 	block := make(chan struct{})
-	x.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+	x.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
 		select {
 		case <-block:
 		case <-ctx.Done():
 		}
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	activeID := x.createTicket(t, "Busy")
 	resp, _ = x.do(t, "POST", "/api/runs/"+activeID+"/rerun", nil, nil)
@@ -1183,12 +1184,12 @@ func TestRerunRun(t *testing.T) {
 func TestWorkspaceLog(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	block := make(chan struct{})
-	x.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+	x.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
 		select {
 		case <-block:
 		case <-ctx.Done():
 		}
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	runID := x.createTicket(t, "T")
 
@@ -1281,11 +1282,11 @@ main:
 
 	runIDCh := make(chan string, 1)
 	statuses := make(chan []int, 1)
-	x.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+	x.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
 		runID := <-runIDCh
 		p, err := x.e.RaisePing(runID, "clarification", "which db?", "", nil, nil)
 		if err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
 		poll := func() int {
 			req, _ := http.NewRequest("GET", x.ts.URL+"/api/runs/"+runID+"/pings/"+p.ID, nil)
@@ -1306,7 +1307,7 @@ main:
 		<-ctx.Done() // the engine parks the run: it cancels this turn
 		seen = append(seen, poll())
 		statuses <- seen
-		return ports.AgentResult{TurnsUsed: 1, Session: "s"}, ctx.Err()
+		return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, ctx.Err()
 	}
 
 	runID := x.createTicketFlow(t, "T", "hold")
@@ -1334,16 +1335,16 @@ main:
   - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
 `)
 	got := make(chan string, 1)
-	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		select {
 		case <-call.In.Inbox.Wake():
 		case <-ctx.Done():
-			return ports.AgentResult{}, ctx.Err()
+			return agentport.AgentResult{}, ctx.Err()
 		}
 		msgs := call.In.Inbox.Take()
-		call.In.Events(ports.AgentEvent{Kind: ports.AgentEvUserMessage, Messages: msgs})
+		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvUserMessage, Messages: msgs})
 		got <- msgs[0].Text
-		return ports.AgentResult{TurnsUsed: 1, Session: "s"}, nil
+		return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, nil
 	}
 	runID := x.createTicketFlow(t, "T", "msg")
 	var status int

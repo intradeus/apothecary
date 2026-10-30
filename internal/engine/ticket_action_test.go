@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
@@ -341,10 +342,10 @@ main:
 
 func TestTicketCommentPostsTheArtifactWithATrailer(t *testing.T) {
 	h, tracker := trackerHarness(t, commentDoc)
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/ticket_comment.md", "Plan approved; building.\n")
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "cm", testProject)
@@ -429,10 +430,10 @@ main:
 func TestTicketSetFieldFromArtifactAndLiteral(t *testing.T) {
 	h, tracker := trackerHarness(t, setFieldDoc)
 	tracker.FieldValues = map[string]map[string]string{"DEV-1": {"Feature flags": "ff_a, ff_b"}}
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/feature_flags.txt", "ff_b, ff_c\n")
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "sf", testProject)
@@ -493,10 +494,10 @@ main:
 		t.Errorf("a link after create_mr warned: %v", fl.Warnings)
 	}
 	h, tracker := trackerHarness(t, doc)
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/mr.md", "# Add the thing\n\nbody")
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "lk", testProject)

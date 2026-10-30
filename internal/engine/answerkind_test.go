@@ -9,7 +9,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -163,7 +163,7 @@ func TestAskHumanMultiSelect(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	runIDCh := make(chan string, 1)
 	got := make(chan string, 1)
-	h.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
 		id := <-runIDCh
 		if _, err := h.e.RaiseQuestion(id, Question{Type: "clarification", Question: "?",
 			Fields: []event.Field{{ID: "tests", Type: event.FieldArray}}}); err == nil {
@@ -173,7 +173,7 @@ func TestAskHumanMultiSelect(t *testing.T) {
 			Fields: []event.Field{{ID: "tests", Type: event.FieldArray,
 				Options: []event.Option{{ID: "t1", Label: "TestOld", Detail: "flaky since March"}, {ID: "t2", Label: "TestLegacy"}}}}})
 		if err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
 		if p.AnswerKind != event.AnswerForm || len(p.Form.Fields[0].Options) != 2 || p.Form.Fields[0].Options[0].Detail != "flaky since March" {
 			t.Errorf("ping = kind %q form %+v", p.AnswerKind, p.Form)
@@ -181,7 +181,7 @@ func TestAskHumanMultiSelect(t *testing.T) {
 		if _, ok := p.Await(ctx); ok {
 			got <- ComposeAnswer(p)
 		}
-		return ports.AgentResult{TurnsUsed: 1, Session: "s"}, nil
+		return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
@@ -214,10 +214,10 @@ func TestAskHumanWithoutFieldsIsFreeText(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	runIDCh := make(chan string, 1)
 	got := make(chan string, 1)
-	h.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
 		p, err := h.e.RaiseQuestion(<-runIDCh, Question{Type: "clarification", Question: "Why?"})
 		if err != nil {
-			return ports.AgentResult{}, err
+			return agentport.AgentResult{}, err
 		}
 		if f := p.Form.Fields; len(f) != 1 || f[0].ID != AnswerField || f[0].Type != event.FieldString || !f[0].Required {
 			t.Errorf("form = %+v", p.Form)
@@ -225,7 +225,7 @@ func TestAskHumanWithoutFieldsIsFreeText(t *testing.T) {
 		if _, ok := p.Await(ctx); ok {
 			got <- ComposeAnswer(p)
 		}
-		return ports.AgentResult{TurnsUsed: 1, Session: "s"}, nil
+		return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {

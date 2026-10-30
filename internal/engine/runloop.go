@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/redact"
 	"apothecary/internal/resolution"
@@ -608,7 +609,7 @@ func (x *exec) routeAfterComplete(st *flow.Stage) error {
 // --- agent stages -----------------------------------------------------------
 
 type agentRes struct {
-	r   ports.AgentResult
+	r   agentport.AgentResult
 	err error
 }
 
@@ -723,7 +724,7 @@ type holdReentry struct {
 // handback) gets next: the handback its release owes, the holder's pending
 // messages, or nothing yet — then the attempt parks on the holder, unless a
 // turn from before a restart is still live to be followed (mayReattach).
-func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner ports.AgentRunner, session ports.SessionID) (holdReentry, error) {
+func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner agentport.AgentRunner, session agentport.SessionID) (holdReentry, error) {
 	rs := x.rs
 	switch {
 	case rs.handbackOwed[st.ID]:
@@ -741,7 +742,7 @@ func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner po
 	case rs.pausedHold[st.ID]:
 		return holdReentry{park: true}, nil
 	case mayReattach:
-		if ra, ok := runner.(ports.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.envID, session, rs.agentCursor[st.ID]) {
+		if ra, ok := runner.(agentport.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.envID, session, rs.agentCursor[st.ID]) {
 			return holdReentry{}, nil // the crashed path follows the live turn
 		}
 		return holdReentry{park: true}, nil
@@ -753,7 +754,7 @@ func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner po
 // parkOnHold parks an attempt whose holder has nothing queued for it when
 // no invocation is there to do the parking (a restart, a play, a loop
 // re-entry). The hold stays in force.
-func (x *exec) parkOnHold(st *flow.Stage, iter int, session ports.SessionID) error {
+func (x *exec) parkOnHold(st *flow.Stage, iter int, session agentport.SessionID) error {
 	if !x.rs.pausedHold[st.ID] {
 		if err := x.append(&event.StagePaused{StageID: st.ID, Iteration: iter, Reason: event.PauseHeld,
 			SessionID: string(session)}); err != nil {
@@ -768,23 +769,23 @@ func (x *exec) parkOnHold(st *flow.Stage, iter int, session ports.SessionID) err
 // agent's transcript events, the human's messages, and the transcript they
 // are recorded into.
 type invIO struct {
-	events chan ports.AgentEvent
+	events chan agentport.AgentEvent
 	done   chan struct{} // closed when the loop stops listening
 	inbox  *inbox
 	tr     *transcript
 }
 
 func newInvIO(tr *transcript) *invIO {
-	return &invIO{events: make(chan ports.AgentEvent, 256), done: make(chan struct{}), inbox: newInbox(), tr: tr}
+	return &invIO{events: make(chan agentport.AgentEvent, 256), done: make(chan struct{}), inbox: newInbox(), tr: tr}
 }
 
-func (io *invIO) input(prompt string) ports.AgentInput {
-	return ports.AgentInput{
+func (io *invIO) input(prompt string) agentport.AgentInput {
+	return agentport.AgentInput{
 		Prompt: prompt,
 		Inbox:  io.inbox,
 		// Blocks while the loop is listening (ordering: everything the
 		// runner emitted is queued before its result is), never after.
-		Events: func(ev ports.AgentEvent) {
+		Events: func(ev agentport.AgentEvent) {
 			select {
 			case io.events <- ev:
 			case <-io.done:
@@ -810,7 +811,7 @@ func (io *invIO) drain() error {
 // invoke runs one harness invocation to its end, servicing pings, messages
 // and the transcript while it runs.
 func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, initialOpen []*Ping, prompt string,
-	call func(ctx context.Context, in ports.AgentInput) (ports.AgentResult, error)) (invocation, error) {
+	call func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error)) (invocation, error) {
 	runCtx, cancelRun := context.WithCancelCause(x.ctx)
 	io := newInvIO(tr)
 	resCh := make(chan agentRes, 1)
@@ -864,7 +865,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	prompt := x.assemblePrompt(st, iter)
 	runner := x.res.RunnerFor(st.Harness) // per-step harness (default when unpinned)
 	tr := x.newTranscript(st.ID, iter)
-	spec := ports.AgentSpec{Agent: st.Agent, Harness: st.Harness, Model: st.Model, MaxTurns: st.MaxTurns}
+	spec := agentport.AgentSpec{Agent: st.Agent, Harness: st.Harness, Model: st.Model, MaxTurns: st.MaxTurns}
 	// The agent's MCP servers ride every session this attempt opens or
 	// loads, resolved now — with the project's secrets as they are today.
 	mcp, err := x.stageMCP(st)
@@ -942,14 +943,14 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			// the workspace and may have outlived it: follow the turn still
 			// running (or the one that finished while nobody listened)
 			// instead of starting another.
-			if ra, ok := runner.(ports.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.envID, session, rs.agentCursor[st.ID]) {
+			if ra, ok := runner.(agentport.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.envID, session, rs.agentCursor[st.ID]) {
 				if err := x.append(&event.StageResumed{StageID: st.ID, Iteration: iter, Reason: event.ResumeRestart,
 					SessionID: string(session)}); err != nil {
 					return err
 				}
 				var err error
 				inv, err = x.invoke(st, budget, tr, x.liveAsks(st), "",
-					func(ctx context.Context, in ports.AgentInput) (ports.AgentResult, error) {
+					func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
 						in.MCPServers = mcp
 						r, _, err := ra.Reattach(ctx, rs.envID, session, rs.agentCursor[st.ID], in)
 						return r, err
@@ -971,7 +972,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			// can still be answered — the session is resumed with them, as
 			// for any parked attempt.
 			if live := x.liveAsks(st); len(live) > 0 {
-				if stop, err := x.pauseAttempt(st, iter, invocation{open: live, res: agentRes{r: ports.AgentResult{Session: session}}}); stop || err != nil {
+				if stop, err := x.pauseAttempt(st, iter, invocation{open: live, res: agentRes{r: agentport.AgentResult{Session: session}}}); stop || err != nil {
 					return err
 				}
 				asks, reply = x.pausedAsks(st), ""
@@ -1010,7 +1011,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			return err
 		}
 		inv, err = x.invoke(st, budget, tr, nil, text,
-			func(ctx context.Context, in ports.AgentInput) (ports.AgentResult, error) {
+			func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
 				in.MCPServers = mcp
 				if resuming {
 					return runner.Resume(ctx, rs.envID, session, in)
@@ -1126,7 +1127,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		TurnsUsed:  res.r.TurnsUsed,
 		SessionID:  string(res.r.Session),
 	}
-	if res.r.Usage != (ports.Usage{}) {
+	if res.r.Usage != (agentport.Usage{}) {
 		completed.Usage = &event.Usage{
 			InputTokens:  res.r.Usage.InputTokens,
 			OutputTokens: res.r.Usage.OutputTokens,
@@ -1179,7 +1180,7 @@ func (x *exec) pauseAttempt(st *flow.Stage, iter int, inv invocation) (stop bool
 	}
 	paused := &event.StagePaused{StageID: st.ID, Iteration: iter, Reason: reason,
 		PingIDs: pingIDs(inv.open), TurnsUsed: inv.res.r.TurnsUsed, SessionID: string(inv.res.r.Session)}
-	if inv.res.r.Usage != (ports.Usage{}) {
+	if inv.res.r.Usage != (agentport.Usage{}) {
 		paused.Usage = &event.Usage{InputTokens: inv.res.r.Usage.InputTokens,
 			OutputTokens: inv.res.r.Usage.OutputTokens, CostUSD: inv.res.r.Usage.CostUSD}
 	}
@@ -1239,10 +1240,10 @@ func (x *exec) withPendingMessages(st *flow.Stage, iter int, text string) (strin
 	if len(x.rs.pendingMsgs) == 0 {
 		return text, nil
 	}
-	msgs := make([]ports.UserMessage, 0, len(x.rs.pendingMsgs))
+	msgs := make([]agentport.UserMessage, 0, len(x.rs.pendingMsgs))
 	ids := make([]string, 0, len(x.rs.pendingMsgs))
 	for _, m := range x.rs.pendingMsgs {
-		msgs = append(msgs, ports.UserMessage{ID: m.MessageID, Text: m.Text})
+		msgs = append(msgs, agentport.UserMessage{ID: m.MessageID, Text: m.Text})
 		ids = append(ids, m.MessageID)
 	}
 	if err := x.append(&event.MessageDelivered{MessageIDs: ids, StageID: st.ID, Iteration: iter}); err != nil {
@@ -1360,7 +1361,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			return err
 		}
 		delete(x.rs.handbackOwed, st.ID)
-		io.inbox.push(ports.UserMessage{Text: handbackPrompt, Verbatim: true})
+		io.inbox.push(agentport.UserMessage{Text: handbackPrompt, Verbatim: true})
 		busyAgain()
 		hold = nil
 		io.inbox.setHeld(false)
@@ -1408,20 +1409,20 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			}
 			return invocation{res: res, outcome: out, open: open, left: left(), holdSpend: holdLeg()}, nil
 		case ev := <-io.events:
-			if ev.Kind == ports.AgentEvSession && ev.Text != "" && x.rs.sessions[st.ID] != ports.SessionID(ev.Text) {
+			if ev.Kind == agentport.AgentEvSession && ev.Text != "" && x.rs.sessions[st.ID] != agentport.SessionID(ev.Text) {
 				// Recorded the moment it exists, so a crash mid-invocation
 				// resumes (or reattaches to) this session, not a new one.
 				if err := x.append(&event.AgentSession{StageID: st.ID, Iteration: io.tr.iter, SessionID: ev.Text}); err != nil {
 					return invocation{}, err
 				}
-				x.rs.sessions[st.ID] = ports.SessionID(ev.Text)
+				x.rs.sessions[st.ID] = agentport.SessionID(ev.Text)
 				continue
 			}
 			if err := io.tr.handle(ev); err != nil {
 				return invocation{}, err
 			}
 			switch ev.Kind {
-			case ports.AgentEvUserMessage:
+			case agentport.AgentEvUserMessage:
 				// The holder's words reaching the agent, on the hold's account.
 				if hold != nil {
 					for _, m := range ev.Messages {
@@ -1430,7 +1431,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 						}
 					}
 				}
-			case ports.AgentEvTurnStart:
+			case agentport.AgentEvTurnStart:
 				turnOpen = true
 				if hold != nil {
 					// A turn starting under the hold is the holder's: it is
@@ -1441,7 +1442,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 						hold.spend.Turns++
 					}
 				}
-			case ports.AgentEvTurnEnd:
+			case agentport.AgentEvTurnEnd:
 				turnOpen = false
 				if hold == nil {
 					break

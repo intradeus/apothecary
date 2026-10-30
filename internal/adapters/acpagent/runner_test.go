@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/sidecar"
 )
@@ -107,7 +107,7 @@ func (e env) Sidecar(context.Context, envport.EnvID) (envport.PortConn, error) {
 
 func (h *harness) runner() *Runner {
 	r := New(env{sock: h.sock}, Profile{Harness: "fake", Command: h.fakeACP,
-		Mode: func(s ports.AgentSpec) string { return s.Agent }})
+		Mode: func(s agentport.AgentSpec) string { return s.Agent }})
 	r.cancelGrace = 5 * time.Second
 	return r
 }
@@ -115,8 +115,8 @@ func (h *harness) runner() *Runner {
 // recorder collects events and serves as the inbox.
 type recorder struct {
 	mu     sync.Mutex
-	events []ports.AgentEvent
-	queue  []ports.UserMessage
+	events []agentport.AgentEvent
+	queue  []agentport.UserMessage
 	held   bool
 	wake   chan struct{}
 	onText func(string)
@@ -124,17 +124,17 @@ type recorder struct {
 
 func newRecorder() *recorder { return &recorder{wake: make(chan struct{}, 1)} }
 
-func (r *recorder) on(ev ports.AgentEvent) {
+func (r *recorder) on(ev agentport.AgentEvent) {
 	r.mu.Lock()
 	r.events = append(r.events, ev)
 	f := r.onText
 	r.mu.Unlock()
-	if f != nil && ev.Kind == ports.AgentEvMessage {
+	if f != nil && ev.Kind == agentport.AgentEvMessage {
 		f(ev.Text)
 	}
 }
 
-func (r *recorder) push(m ports.UserMessage) {
+func (r *recorder) push(m agentport.UserMessage) {
 	r.mu.Lock()
 	r.queue = append(r.queue, m)
 	r.mu.Unlock()
@@ -145,7 +145,7 @@ func (r *recorder) push(m ports.UserMessage) {
 }
 
 func (r *recorder) Wake() <-chan struct{} { return r.wake }
-func (r *recorder) Take() []ports.UserMessage {
+func (r *recorder) Take() []agentport.UserMessage {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	q := r.queue
@@ -196,7 +196,7 @@ func (r *recorder) text() string {
 	defer r.mu.Unlock()
 	var b strings.Builder
 	for _, e := range r.events {
-		if e.Kind == ports.AgentEvMessage {
+		if e.Kind == agentport.AgentEvMessage {
 			b.WriteString(e.Text)
 			b.WriteString("|")
 		}
@@ -207,8 +207,8 @@ func (r *recorder) text() string {
 func TestRunStreamsTheTranscript(t *testing.T) {
 	h := startSidecar(t)
 	rec := newRecorder()
-	res, err := h.runner().Run(context.Background(), "e", ports.AgentSpec{Agent: "planner", Model: "m/x"},
-		ports.AgentInput{Prompt: "hello", Events: rec.on, Inbox: rec})
+	res, err := h.runner().Run(context.Background(), "e", agentport.AgentSpec{Agent: "planner", Model: "m/x"},
+		agentport.AgentInput{Prompt: "hello", Events: rec.on, Inbox: rec})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestRunStreamsTheTranscript(t *testing.T) {
 		t.Errorf("output = %q", res.Output)
 	}
 	for _, e := range rec.events {
-		if e.Cursor == "" && e.Kind != ports.AgentEvSession {
+		if e.Cursor == "" && e.Kind != agentport.AgentEvSession {
 			t.Errorf("event %s has no cursor", e.Kind)
 		}
 	}
@@ -240,20 +240,20 @@ func TestQueuedMessageBecomesTheNextTurn(t *testing.T) {
 	var once sync.Once
 	rec.onText = func(s string) {
 		if s == "working slowly" {
-			once.Do(func() { rec.push(ports.UserMessage{ID: "m1", Text: "also add tests"}) })
+			once.Do(func() { rec.push(agentport.UserMessage{ID: "m1", Text: "also add tests"}) })
 		}
 	}
-	res, err := h.runner().Run(context.Background(), "e", ports.AgentSpec{Agent: "builder"},
-		ports.AgentInput{Prompt: "SLOW", Events: rec.on, Inbox: rec})
+	res, err := h.runner().Run(context.Background(), "e", agentport.AgentSpec{Agent: "builder"},
+		agentport.AgentInput{Prompt: "SLOW", Events: rec.on, Inbox: rec})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(rec.text(), "echo: Message from the human operator:\n\nalso add tests") {
 		t.Errorf("the queued message was not the next prompt: %q", rec.text())
 	}
-	var delivered []ports.UserMessage
+	var delivered []agentport.UserMessage
 	for _, e := range rec.events {
-		if e.Kind == ports.AgentEvUserMessage {
+		if e.Kind == agentport.AgentEvUserMessage {
 			delivered = append(delivered, e.Messages...)
 		}
 	}
@@ -272,12 +272,12 @@ func TestInterruptingMessage(t *testing.T) {
 	var once sync.Once
 	rec.onText = func(s string) {
 		if s == "waiting" {
-			once.Do(func() { rec.push(ports.UserMessage{ID: "m2", Text: "stop, use sqlite", Interrupt: true}) })
+			once.Do(func() { rec.push(agentport.UserMessage{ID: "m2", Text: "stop, use sqlite", Interrupt: true}) })
 		}
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := h.runner().Run(context.Background(), "e", ports.AgentSpec{}, ports.AgentInput{Prompt: "WAIT", Events: rec.on, Inbox: rec})
+		_, err := h.runner().Run(context.Background(), "e", agentport.AgentSpec{}, agentport.AgentInput{Prompt: "WAIT", Events: rec.on, Inbox: rec})
 		done <- err
 	}()
 	select {
@@ -293,7 +293,7 @@ func TestInterruptingMessage(t *testing.T) {
 	}
 	var stops []string
 	for _, e := range rec.events {
-		if e.Kind == ports.AgentEvTurnEnd {
+		if e.Kind == agentport.AgentEvTurnEnd {
 			stops = append(stops, e.StopReason)
 		}
 	}
@@ -311,7 +311,7 @@ func TestHeldSessionWaitsForTheNextMessage(t *testing.T) {
 	rec.hold(true)
 	done := make(chan error, 1)
 	go func() {
-		_, err := h.runner().Run(context.Background(), "e", ports.AgentSpec{}, ports.AgentInput{Prompt: "hello", Events: rec.on, Inbox: rec})
+		_, err := h.runner().Run(context.Background(), "e", agentport.AgentSpec{}, agentport.AgentInput{Prompt: "hello", Events: rec.on, Inbox: rec})
 		done <- err
 	}()
 	turnEnds := func() int {
@@ -319,7 +319,7 @@ func TestHeldSessionWaitsForTheNextMessage(t *testing.T) {
 		defer rec.mu.Unlock()
 		n := 0
 		for _, e := range rec.events {
-			if e.Kind == ports.AgentEvTurnEnd {
+			if e.Kind == agentport.AgentEvTurnEnd {
 				n++
 			}
 		}
@@ -335,7 +335,7 @@ func TestHeldSessionWaitsForTheNextMessage(t *testing.T) {
 		t.Fatalf("a held session returned at the end of its turn (err=%v)", err)
 	case <-time.After(150 * time.Millisecond):
 	}
-	rec.push(ports.UserMessage{ID: "m1", Text: "and again"})
+	rec.push(agentport.UserMessage{ID: "m1", Text: "and again"})
 	for turnEnds() < 2 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -344,7 +344,7 @@ func TestHeldSessionWaitsForTheNextMessage(t *testing.T) {
 	}
 	// Letting go with the handback queued: it is the last turn, then the
 	// runner returns.
-	rec.push(ports.UserMessage{Text: "FINISH", Verbatim: true})
+	rec.push(agentport.UserMessage{Text: "FINISH", Verbatim: true})
 	rec.hold(false)
 	select {
 	case err := <-done:
@@ -362,12 +362,12 @@ func TestHeldSessionWaitsForTheNextMessage(t *testing.T) {
 	}
 	// The handback went verbatim, not framed as the operator's words.
 	for _, e := range rec.events {
-		if e.Kind == ports.AgentEvUserMessage && len(e.Messages) == 1 && e.Messages[0].Verbatim && e.Text != "FINISH" {
+		if e.Kind == agentport.AgentEvUserMessage && len(e.Messages) == 1 && e.Messages[0].Verbatim && e.Text != "FINISH" {
 			t.Errorf("verbatim message rendered as %q", e.Text)
 		}
 	}
 	for _, e := range rec.events {
-		if e.Kind == ports.AgentEvTurnEnd && e.Usage == nil {
+		if e.Kind == agentport.AgentEvTurnEnd && e.Usage == nil {
 			t.Errorf("turn_end without its usage: %+v", e)
 		}
 	}
@@ -380,18 +380,18 @@ func TestReadOnlySessionRunsInItsOwnProcessWithoutProfileServers(t *testing.T) {
 	h := startSidecar(t)
 	r := New(env{sock: h.sock}, Profile{Harness: "fake", Command: h.fakeACP,
 		ReadOnlyBy: ReadOnlyByProcess, ReadOnlyCommand: h.fakeACP + " --read-only",
-		MCPServers: []ports.MCPServer{{Name: "ask_human", Command: []string{"/bin/true"}}}})
+		MCPServers: []agentport.MCPServer{{Name: "ask_human", Command: []string{"/bin/true"}}}})
 	r.cancelGrace = 5 * time.Second
 	ctx := context.Background()
 	normal := newRecorder()
-	if _, err := r.Run(ctx, "e", ports.AgentSpec{}, ports.AgentInput{Prompt: "MCP", Events: normal.on, Inbox: normal}); err != nil {
+	if _, err := r.Run(ctx, "e", agentport.AgentSpec{}, agentport.AgentInput{Prompt: "MCP", Events: normal.on, Inbox: normal}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(normal.text(), "ask_human") {
 		t.Errorf("a normal session has the profile's servers: %q", normal.text())
 	}
 	ro := newRecorder()
-	res, err := r.Run(ctx, "e", ports.AgentSpec{}, ports.AgentInput{Prompt: "MCP", Events: ro.on, Inbox: ro, ReadOnly: true})
+	res, err := r.Run(ctx, "e", agentport.AgentSpec{}, agentport.AgentInput{Prompt: "MCP", Events: ro.on, Inbox: ro, ReadOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +408,7 @@ func TestReadOnlySessionRunsInItsOwnProcessWithoutProfileServers(t *testing.T) {
 	}
 	// Continuing the read-only session stays read-only and server-less.
 	again := newRecorder()
-	if _, err := r.Resume(ctx, "e", res.Session, ports.AgentInput{Prompt: "MCP", Events: again.on, Inbox: again, ReadOnly: true}); err != nil {
+	if _, err := r.Resume(ctx, "e", res.Session, agentport.AgentInput{Prompt: "MCP", Events: again.on, Inbox: again, ReadOnly: true}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(again.text(), "ask_human") {
@@ -431,7 +431,7 @@ func TestContextCancelEndsTheTurn(t *testing.T) {
 		}
 	}
 	start := time.Now()
-	res, err := h.runner().Run(ctx, "e", ports.AgentSpec{}, ports.AgentInput{Prompt: "WAIT", Events: rec.on})
+	res, err := h.runner().Run(ctx, "e", agentport.AgentSpec{}, agentport.AgentInput{Prompt: "WAIT", Events: rec.on})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
@@ -445,7 +445,7 @@ func TestContextCancelEndsTheTurn(t *testing.T) {
 
 func TestPromptErrorFailsTheInvocation(t *testing.T) {
 	h := startSidecar(t)
-	_, err := h.runner().Run(context.Background(), "e", ports.AgentSpec{}, ports.AgentInput{Prompt: "FAIL"})
+	_, err := h.runner().Run(context.Background(), "e", agentport.AgentSpec{}, agentport.AgentInput{Prompt: "FAIL"})
 	if err == nil || !strings.Contains(err.Error(), "model exploded") {
 		t.Fatalf("err = %v", err)
 	}
@@ -473,24 +473,24 @@ func TestReattachFollowsTheTurnInFlight(t *testing.T) {
 	cursor := sidecar.Cursor(st.Boot, 0)
 
 	rec := newRecorder()
-	res, ok, err := r.Reattach(ctx, "e", ports.SessionID(sess.SessionID), cursor, ports.AgentInput{Events: rec.on})
+	res, ok, err := r.Reattach(ctx, "e", agentport.SessionID(sess.SessionID), cursor, agentport.AgentInput{Events: rec.on})
 	if err != nil || !ok {
 		t.Fatalf("reattach = %v %v", ok, err)
 	}
 	if !strings.Contains(rec.text(), "working slowly") || !strings.Contains(rec.kinds(), "turn_end") {
 		t.Errorf("reattached stream = %s / %q", rec.kinds(), rec.text())
 	}
-	if res.Session != ports.SessionID(sess.SessionID) {
+	if res.Session != agentport.SessionID(sess.SessionID) {
 		t.Errorf("session = %q", res.Session)
 	}
 	// Nothing in flight, and nothing after the last event recorded: the
 	// caller resumes normally.
 	st, _ = c.Status(ctx)
 	end := sidecar.Cursor(st.Boot, st.LastSeq)
-	if r.Reattachable(ctx, "e", ports.SessionID(sess.SessionID), end) {
+	if r.Reattachable(ctx, "e", agentport.SessionID(sess.SessionID), end) {
 		t.Error("reattachable with nothing new")
 	}
-	if _, ok, _ := r.Reattach(ctx, "e", ports.SessionID(sess.SessionID), end, ports.AgentInput{}); ok {
+	if _, ok, _ := r.Reattach(ctx, "e", agentport.SessionID(sess.SessionID), end, agentport.AgentInput{}); ok {
 		t.Error("reattached with nothing to follow")
 	}
 }
@@ -522,11 +522,11 @@ func TestReattachReplaysATurnThatFinishedMeanwhile(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if !r.Reattachable(ctx, "e", ports.SessionID(sess.SessionID), before) {
+	if !r.Reattachable(ctx, "e", agentport.SessionID(sess.SessionID), before) {
 		t.Fatal("a turn that finished after the cursor is reattachable")
 	}
 	rec := newRecorder()
-	res, ok, err := r.Reattach(ctx, "e", ports.SessionID(sess.SessionID), before, ports.AgentInput{Events: rec.on})
+	res, ok, err := r.Reattach(ctx, "e", agentport.SessionID(sess.SessionID), before, agentport.AgentInput{Events: rec.on})
 	if err != nil || !ok || !strings.Contains(res.Output, "echo: finished while away") {
 		t.Fatalf("reattach = %+v %v %v", res, ok, err)
 	}
@@ -535,12 +535,12 @@ func TestReattachReplaysATurnThatFinishedMeanwhile(t *testing.T) {
 func TestResumeContinuesTheSession(t *testing.T) {
 	h := startSidecar(t)
 	r := h.runner()
-	first, err := r.Run(context.Background(), "e", ports.AgentSpec{}, ports.AgentInput{Prompt: "one"})
+	first, err := r.Run(context.Background(), "e", agentport.AgentSpec{}, agentport.AgentInput{Prompt: "one"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := newRecorder()
-	again, err := r.Resume(context.Background(), "e", first.Session, ports.AgentInput{Prompt: "two", Events: rec.on})
+	again, err := r.Resume(context.Background(), "e", first.Session, agentport.AgentInput{Prompt: "two", Events: rec.on})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -559,13 +559,13 @@ func TestResumeContinuesTheSession(t *testing.T) {
 func TestMCPServersRideTheSession(t *testing.T) {
 	h := startSidecar(t)
 	rec := newRecorder()
-	servers := []ports.MCPServer{
+	servers := []agentport.MCPServer{
 		{Name: "browser", Command: []string{"/opt/apothecary/shim", "browser-mcp"}},
 		{Name: "figma", URL: "https://mcp.figma.test/mcp", Headers: map[string]string{"X-B": "2", "Authorization": "Bearer t"}},
 		{Name: "db", Command: []string{"dbmcp"}, Env: map[string]string{"DSN": "pg://x"}},
 	}
-	res, err := h.runner().Run(context.Background(), "e", ports.AgentSpec{Agent: "planner"},
-		ports.AgentInput{Prompt: "MCP", Events: rec.on, Inbox: rec, MCPServers: servers})
+	res, err := h.runner().Run(context.Background(), "e", agentport.AgentSpec{Agent: "planner"},
+		agentport.AgentInput{Prompt: "MCP", Events: rec.on, Inbox: rec, MCPServers: servers})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -583,7 +583,7 @@ func TestMCPServersRideTheSession(t *testing.T) {
 	}
 	rec2 := newRecorder()
 	if _, err := h.runner().Resume(context.Background(), "e", res.Session,
-		ports.AgentInput{Prompt: "MCP", Events: rec2.on, Inbox: rec2, MCPServers: servers[:1]}); err != nil {
+		agentport.AgentInput{Prompt: "MCP", Events: rec2.on, Inbox: rec2, MCPServers: servers[:1]}); err != nil {
 		t.Fatal(err)
 	}
 	if want := `mcp: [{"name":"browser","command":"/opt/apothecary/shim","args":["browser-mcp"],"env":[]}]|`; rec2.text() != want {
@@ -597,11 +597,11 @@ func TestMCPServersRideTheSession(t *testing.T) {
 func TestProfileMCPServersRideEverySession(t *testing.T) {
 	h := startSidecar(t)
 	r := h.runner()
-	r.p.MCPServers = []ports.MCPServer{{Name: "ask_human", Command: []string{"/opt/apothecary/shim", "ask-human"}}}
+	r.p.MCPServers = []agentport.MCPServer{{Name: "ask_human", Command: []string{"/opt/apothecary/shim", "ask-human"}}}
 	rec := newRecorder()
-	res, err := r.Run(context.Background(), "e", ports.AgentSpec{Agent: "planner"},
-		ports.AgentInput{Prompt: "MCP", Events: rec.on, Inbox: rec,
-			MCPServers: []ports.MCPServer{{Name: "db", Command: []string{"dbmcp"}}}})
+	res, err := r.Run(context.Background(), "e", agentport.AgentSpec{Agent: "planner"},
+		agentport.AgentInput{Prompt: "MCP", Events: rec.on, Inbox: rec,
+			MCPServers: []agentport.MCPServer{{Name: "db", Command: []string{"dbmcp"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -615,15 +615,15 @@ func TestProfileMCPServersRideEverySession(t *testing.T) {
 	}
 	rec2 := newRecorder()
 	if _, err := r.Resume(context.Background(), "e", res.Session,
-		ports.AgentInput{Prompt: "MCP", Events: rec2.on, Inbox: rec2}); err != nil {
+		agentport.AgentInput{Prompt: "MCP", Events: rec2.on, Inbox: rec2}); err != nil {
 		t.Fatal(err)
 	}
 	if want := `mcp: [{"name":"ask_human","command":"/opt/apothecary/shim","args":["ask-human"],"env":[]}]|`; rec2.text() != want {
 		t.Errorf("reloaded session saw %s, want %s", rec2.text(), want)
 	}
-	_, err = r.Run(context.Background(), "e", ports.AgentSpec{},
-		ports.AgentInput{Prompt: "MCP", Events: rec.on, Inbox: rec,
-			MCPServers: []ports.MCPServer{{Name: "ask_human", Command: []string{"other"}}}})
+	_, err = r.Run(context.Background(), "e", agentport.AgentSpec{},
+		agentport.AgentInput{Prompt: "MCP", Events: rec.on, Inbox: rec,
+			MCPServers: []agentport.MCPServer{{Name: "ask_human", Command: []string{"other"}}}})
 	if err == nil || !strings.Contains(err.Error(), `"ask_human" is the harness's own`) {
 		t.Errorf("err = %v, want the shadowing server refused", err)
 	}
@@ -635,9 +635,9 @@ func TestRemoteMCPServerRefusedWhereTheAgentTakesNone(t *testing.T) {
 	h := startSidecar(t)
 	r := New(env{sock: h.sock}, Profile{Harness: "fake", Command: "env FAKEACP_NO_HTTP_MCP=1 " + h.fakeACP})
 	rec := newRecorder()
-	_, err := r.Run(context.Background(), "e", ports.AgentSpec{},
-		ports.AgentInput{Prompt: "MCP", Events: rec.on, Inbox: rec,
-			MCPServers: []ports.MCPServer{{Name: "figma", URL: "https://mcp.figma.test/mcp"}}})
+	_, err := r.Run(context.Background(), "e", agentport.AgentSpec{},
+		agentport.AgentInput{Prompt: "MCP", Events: rec.on, Inbox: rec,
+			MCPServers: []agentport.MCPServer{{Name: "figma", URL: "https://mcp.figma.test/mcp"}}})
 	if err == nil || !strings.Contains(err.Error(), `mcp server "figma" is remote`) {
 		t.Fatalf("err = %v, want the remote server refused", err)
 	}

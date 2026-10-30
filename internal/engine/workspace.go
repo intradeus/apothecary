@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
 )
 
@@ -50,7 +50,7 @@ func (e *Engine) SendMessage(runID, text string, interrupt bool) (string, error)
 	if !h.agentLive.Load() {
 		return "", ErrNoAgentRunning
 	}
-	req := msgReq{msg: ports.UserMessage{ID: e.newID(), Text: text, Interrupt: interrupt}, ack: make(chan error, 1)}
+	req := msgReq{msg: agentport.UserMessage{ID: e.newID(), Text: text, Interrupt: interrupt}, ack: make(chan error, 1)}
 	t := time.NewTimer(5 * time.Second)
 	defer t.Stop()
 	select {

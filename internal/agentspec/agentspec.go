@@ -41,7 +41,7 @@ type Spec struct {
 	// MCP names the flow's `mcp_servers:` the agent may use (FLOWLANG §1):
 	// tools beyond its harness's own. Checked against the flow by the parser.
 	// Resolved for a run when a stage opens the agent's session (secrets
-	// filled then, never here): see ports.AgentInput.MCPServers.
+	// filled then, never here): see agentport.AgentInput.MCPServers.
 	MCP []string `yaml:"mcp" json:"mcp,omitempty"`
 }
 

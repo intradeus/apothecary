@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/confstore"
 	"apothecary/internal/kinds"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/secrets"
@@ -189,7 +190,7 @@ func TestResolveFillsResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := res.Runner.Run(context.Background(), env, ports.AgentSpec{Agent: "builder"}, ports.AgentInput{Prompt: "x"}); err != nil {
+	if _, err := res.Runner.Run(context.Background(), env, agentport.AgentSpec{Agent: "builder"}, agentport.AgentInput{Prompt: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := res.SeedAuth(context.Background(), env, func(string) {}); err != nil {

@@ -16,7 +16,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/auth"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/sshdoor"
 	"apothecary/internal/wsinfo"
@@ -144,11 +144,11 @@ func TestSSHDoorReachesTheRunsWorkspace(t *testing.T) {
 
 	// Alice's run, parked at its gate with a live workspace (the writer
 	// agent meets its contract so the gate is reached).
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"writer": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"writer": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/plan.md", "# Plan\n")
 			h.writeFile(t, c.Env, "artifacts/shots/home.png", png)
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	h.res.UserID = alice.ID

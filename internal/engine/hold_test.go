@@ -11,7 +11,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
 )
 
@@ -27,29 +27,29 @@ import (
 type heldRunner struct {
 	mu       sync.Mutex
 	turns    int
-	batches  [][]ports.UserMessage
+	batches  [][]agentport.UserMessage
 	firstEnd chan struct{} // the stage's own turn ends only once this is closed
 }
 
 const turnCost = 0.1
 
-func (r *heldRunner) turn(in ports.AgentInput, text string, gate <-chan struct{}) {
+func (r *heldRunner) turn(in agentport.AgentInput, text string, gate <-chan struct{}) {
 	r.mu.Lock()
 	r.turns++
 	id := fmt.Sprintf("T%d", r.turns)
 	r.mu.Unlock()
-	in.Events(ports.AgentEvent{Kind: ports.AgentEvTurnStart, Turn: id})
+	in.Events(agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: id})
 	if gate != nil {
 		<-gate
 	}
-	in.Events(ports.AgentEvent{Kind: ports.AgentEvMessage, Turn: id, Text: text})
-	in.Events(ports.AgentEvent{Kind: ports.AgentEvTurnEnd, Turn: id, StopReason: "end_turn",
-		Usage: &ports.Usage{InputTokens: 10, OutputTokens: 5, CostUSD: turnCost}})
+	in.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Turn: id, Text: text})
+	in.Events(agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: id, StopReason: "end_turn",
+		Usage: &agentport.Usage{InputTokens: 10, OutputTokens: 5, CostUSD: turnCost}})
 }
 
 // drive is the ACP runner's inbox loop: deliver what is queued, wait while
 // held, return once the hold is gone and nothing is queued.
-func (r *heldRunner) drive(ctx context.Context, in ports.AgentInput) (ports.AgentResult, error) {
+func (r *heldRunner) drive(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
 	for {
 		msgs := in.Inbox.Take()
 		for len(msgs) == 0 {
@@ -57,29 +57,29 @@ func (r *heldRunner) drive(ctx context.Context, in ports.AgentInput) (ports.Agen
 				if msgs = in.Inbox.Take(); len(msgs) == 0 {
 					r.mu.Lock()
 					defer r.mu.Unlock()
-					return ports.AgentResult{Session: "s", TurnsUsed: r.turns, Usage: ports.Usage{CostUSD: turnCost * float64(r.turns)}}, nil
+					return agentport.AgentResult{Session: "s", TurnsUsed: r.turns, Usage: agentport.Usage{CostUSD: turnCost * float64(r.turns)}}, nil
 				}
 				break
 			}
 			select {
 			case <-in.Inbox.Wake():
 			case <-ctx.Done():
-				return ports.AgentResult{Session: "s"}, ctx.Err()
+				return agentport.AgentResult{Session: "s"}, ctx.Err()
 			}
 			msgs = in.Inbox.Take()
 		}
 		r.mu.Lock()
 		r.batches = append(r.batches, msgs)
 		r.mu.Unlock()
-		in.Events(ports.AgentEvent{Kind: ports.AgentEvUserMessage, Messages: msgs})
+		in.Events(agentport.AgentEvent{Kind: agentport.AgentEvUserMessage, Messages: msgs})
 		r.turn(in, "answer: "+msgs[0].Text, nil)
 	}
 }
 
-func (r *heldRunner) delivered() [][]ports.UserMessage {
+func (r *heldRunner) delivered() [][]agentport.UserMessage {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([][]ports.UserMessage(nil), r.batches...)
+	return append([][]agentport.UserMessage(nil), r.batches...)
 }
 
 // takeOverWhenLive retries until the agent invocation is up to be taken.
@@ -112,7 +112,7 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 func TestTakeOverKeepsTheSessionOpenUntilReleased(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	r := &heldRunner{firstEnd: make(chan struct{})}
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		// The stage's own turn: in flight when the human takes over.
 		r.turn(call.In, "working on it", r.firstEnd)
 		return r.drive(ctx, call.In)
@@ -200,9 +200,9 @@ func TestTakeOverKeepsTheSessionOpenUntilReleased(t *testing.T) {
 func TestReleaseWithoutAHoldIsRefused(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	gate := make(chan struct{})
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		<-gate
-		return ports.AgentResult{Session: "s", TurnsUsed: 1}, nil
+		return agentport.AgentResult{Session: "s", TurnsUsed: 1}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
@@ -221,9 +221,9 @@ func TestReleaseWithoutAHoldIsRefused(t *testing.T) {
 func TestHoldEndsWithTheAttempt(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	taken := make(chan struct{})
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		<-taken
-		return ports.AgentResult{Session: "s", TurnsUsed: 1}, nil
+		return agentport.AgentResult{Session: "s", TurnsUsed: 1}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
@@ -252,13 +252,13 @@ func TestHoldParksOnAQuietHolderAndWakesOnTheirMessage(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	h.e.cfg.AskHumanHold = 30 * time.Millisecond
 	r := &heldRunner{firstEnd: make(chan struct{})}
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		r.turn(call.In, "working on it", r.firstEnd)
 		return r.drive(ctx, call.In)
 	}
 	var resumed []string
 	var rmu sync.Mutex
-	h.runner.ResumeFunc = func(ctx context.Context, call fake.ResumeCall) (ports.AgentResult, error) {
+	h.runner.ResumeFunc = func(ctx context.Context, call fake.ResumeCall) (agentport.AgentResult, error) {
 		rmu.Lock()
 		resumed = append(resumed, call.Reply)
 		rmu.Unlock()
@@ -344,13 +344,13 @@ func TestReleasingAParkedHoldResumesWithTheHandback(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	h.e.cfg.AskHumanHold = 30 * time.Millisecond
 	r := &heldRunner{firstEnd: make(chan struct{})}
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		r.turn(call.In, "working on it", r.firstEnd)
 		return r.drive(ctx, call.In)
 	}
 	var resumed []string
 	var rmu sync.Mutex
-	h.runner.ResumeFunc = func(ctx context.Context, call fake.ResumeCall) (ports.AgentResult, error) {
+	h.runner.ResumeFunc = func(ctx context.Context, call fake.ResumeCall) (agentport.AgentResult, error) {
 		rmu.Lock()
 		resumed = append(resumed, call.Reply)
 		rmu.Unlock()

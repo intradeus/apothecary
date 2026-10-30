@@ -7,7 +7,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/agentspec"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 )
 
@@ -30,14 +30,14 @@ func TestProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := a.Profile()
-	if p.Command != "codex-acp" || p.Mode(ports.AgentSpec{Agent: "planner"}) != "agent-full-access" {
+	if p.Command != "codex-acp" || p.Mode(agentport.AgentSpec{Agent: "planner"}) != "agent-full-access" {
 		t.Errorf("profile = %+v", p)
 	}
-	pre, err := p.Preamble(context.Background(), id, ports.AgentSpec{Agent: "planner"})
+	pre, err := p.Preamble(context.Background(), id, agentport.AgentSpec{Agent: "planner"})
 	if err != nil || !strings.Contains(pre, "Plan carefully.") {
 		t.Errorf("preamble = %q, %v", pre, err)
 	}
-	if _, err := p.Preamble(context.Background(), id, ports.AgentSpec{Agent: "ghost"}); err == nil {
+	if _, err := p.Preamble(context.Background(), id, agentport.AgentSpec{Agent: "ghost"}); err == nil {
 		t.Error("an unknown agent must fail, not run role-less")
 	}
 }

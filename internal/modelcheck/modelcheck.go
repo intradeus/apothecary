@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 )
@@ -199,7 +199,7 @@ func AgentModels(ctx context.Context, res *resolution.Resolution, env envport.En
 		}
 		models, ok := asked[kind]
 		if !ok {
-			lister, can := res.RunnerFor(kind).(ports.AgentModelLister)
+			lister, can := res.RunnerFor(kind).(agentport.AgentModelLister)
 			if !can {
 				skipped[kind] = true
 				continue

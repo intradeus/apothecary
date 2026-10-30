@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
@@ -59,8 +60,8 @@ func TestFilesOutputLeftEmptyFailsTheStage(t *testing.T) {
 	var mu sync.Mutex
 	var shooter []string
 	var viewer string
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"shooter": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"shooter": func(c fake.RunCall) (agentport.AgentResult, error) {
 			mu.Lock()
 			shooter = append(shooter, c.In.Prompt)
 			n := len(shooter)
@@ -68,13 +69,13 @@ func TestFilesOutputLeftEmptyFailsTheStage(t *testing.T) {
 			if n == 2 {
 				h.writeFile(t, c.Env, "artifacts/shots/home.png", png)
 			}
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
-		"viewer": func(c fake.RunCall) (ports.AgentResult, error) {
+		"viewer": func(c fake.RunCall) (agentport.AgentResult, error) {
 			mu.Lock()
 			viewer = c.In.Prompt
 			mu.Unlock()
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "shots", testProject)
@@ -117,8 +118,8 @@ func TestFilesOutputIsEmptiedBetweenPasses(t *testing.T) {
 	var mu sync.Mutex
 	var passes int
 	var viewer string
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"shooter": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"shooter": func(c fake.RunCall) (agentport.AgentResult, error) {
 			mu.Lock()
 			passes++
 			n := passes
@@ -126,17 +127,17 @@ func TestFilesOutputIsEmptiedBetweenPasses(t *testing.T) {
 			if n == 1 {
 				h.writeFile(t, c.Env, "artifacts/shots/sc1.png", png)
 				h.writeFile(t, c.Env, "artifacts/shots/sc2.png", png)
-				return ports.AgentResult{}, errors.New("the page did not load")
+				return agentport.AgentResult{}, errors.New("the page did not load")
 			}
 			h.writeFile(t, c.Env, "artifacts/shots/sc3.png", png)
 			h.writeFile(t, c.Env, "artifacts/shots/sc4.png", png)
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
-		"viewer": func(c fake.RunCall) (ports.AgentResult, error) {
+		"viewer": func(c fake.RunCall) (agentport.AgentResult, error) {
 			mu.Lock()
 			viewer = c.In.Prompt
 			mu.Unlock()
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "shots", testProject)
@@ -177,14 +178,14 @@ main:
 // listed after it.
 func TestCreateMRUploadsAndLinksAttachments(t *testing.T) {
 	h := newHarness(t, mustFlow(t, attachDoc))
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/mr.md", "# Add the home page\n\n![home](artifacts/shots/home.png)\n\nLogging in: `./artifacts/shots/login.png`.\n")
 			for _, f := range []string{"home.png", "login.png", "extra.png"} {
 				h.writeFile(t, c.Env, "artifacts/shots/"+f, png)
 			}
 			h.writeFile(t, c.Env, "artifacts/shots/notes.txt", "timings")
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "at", testProject)
@@ -223,10 +224,10 @@ func TestCreateMRUploadsAndLinksAttachments(t *testing.T) {
 // merge request opens with its body as written.
 func TestCreateMRWithoutAttachmentsKeepsTheBody(t *testing.T) {
 	h := newHarness(t, mustFlow(t, attachDoc))
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/mr.md", "# Fix\n\nNo screenshots.")
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "at", testProject)
@@ -249,13 +250,13 @@ func TestCreateMRWithoutAttachmentsKeepsTheBody(t *testing.T) {
 // on_fail to route.
 func TestCreateMRRefusesTooManyAttachments(t *testing.T) {
 	h := newHarness(t, mustFlow(t, attachDoc))
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/mr.md", "# Fix\n")
 			for i := range attachmentMaxFiles + 1 {
 				h.writeFile(t, c.Env, "artifacts/shots/"+string(rune('a'+i))+".png", png)
 			}
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "at", testProject)
@@ -284,11 +285,11 @@ main:
       attachments: { from: repo:artifacts/shots/, type: files } } }
 `
 	h, tracker := trackerHarness(t, doc)
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"redactor": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/ticket_comment.md", "Deployed: artifacts/shots/home.png\n")
 			h.writeFile(t, c.Env, "artifacts/shots/home.png", png)
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "cm", testProject)

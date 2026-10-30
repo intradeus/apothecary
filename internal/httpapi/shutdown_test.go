@@ -12,7 +12,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/engine"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 )
 
 // Shutting the server down ends its long-lived responses — a run's event
@@ -22,9 +22,9 @@ import (
 func TestShutdownEndsLongLivedResponses(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	block := make(chan struct{})
-	x.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	x.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		<-block
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	runID := x.createTicket(t, "T")
 	defer close(block)

@@ -17,6 +17,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
@@ -73,7 +74,7 @@ func curatedReviewer(t *testing.T, gate bool, script func(call int, threads *rev
 	ph := newPhasedHarnessWith(t, doc, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps })
 	var calls atomic.Int32
 	inner := ph.runner.RunFunc
-	ph.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	ph.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		if call.Spec.Agent == "pr_reviewer" {
 			var threads *reviewfile.Threads
 			if data, err := ph.envp.ReadFile(ctx, call.Env, "artifacts/threads.yaml"); err == nil {

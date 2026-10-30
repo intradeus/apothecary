@@ -25,6 +25,7 @@ import (
 	"apothecary/internal/confstore"
 	"apothecary/internal/kinds"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/providers"
 	"apothecary/internal/resolution"
@@ -253,7 +254,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 	// creation prevents (flow.Unbound); envcheck also probes it. Preflight
 	// refuses a flow harness kind that is not in this set.
 	defaultKind := firstKind
-	runners := make(map[string]ports.AgentRunner, len(byKind))
+	runners := make(map[string]agentport.AgentRunner, len(byKind))
 	providerEnv := map[string]string{}
 	var harnessSecrets []string
 	var harnessBinaries []string

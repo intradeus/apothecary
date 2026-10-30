@@ -12,6 +12,7 @@ import (
 
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 )
 
@@ -170,7 +171,7 @@ type ProvisionerKind interface {
 // config carries API keys and/or subscription logins in native format —
 // there is no separate provider port.
 type Harness interface {
-	ports.AgentRunner
+	agentport.AgentRunner
 	// Test statically validates config/auth material (no remote call — a
 	// harness has no server to probe).
 	Test(ctx context.Context) error

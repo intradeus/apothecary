@@ -14,7 +14,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
 )
 
@@ -59,17 +59,17 @@ func newReviewRun(t *testing.T) *reviewRun {
 		rr.prompts[agent] = append(rr.prompts[agent], c.In.Prompt)
 		rr.mu.Unlock()
 	}
-	rr.h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"writer": func(c fake.RunCall) (ports.AgentResult, error) {
+	rr.h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"writer": func(c fake.RunCall) (agentport.AgentResult, error) {
 			record("writer", c)
 			rr.h.writeFile(t, c.Env, "artifacts/plan.md", "# Plan\n\nStep one.\nStep two.\n")
 			rr.h.writeFile(t, c.Env, "artifacts/shots/home.png", png)
 			rr.h.writeFile(t, c.Env, "artifacts/shots/login.png", png)
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
-		"builder": func(c fake.RunCall) (ports.AgentResult, error) {
+		"builder": func(c fake.RunCall) (agentport.AgentResult, error) {
 			record("builder", c)
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	return rr
@@ -266,16 +266,16 @@ func TestAVerdictsApprovalCarriesItsComments(t *testing.T) {
 	h := newHarness(t, mustFlow(t, verdictApproveDoc))
 	var mu sync.Mutex
 	var built string
-	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
-		"reviewer": func(c fake.RunCall) (ports.AgentResult, error) {
+	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
+		"reviewer": func(c fake.RunCall) (agentport.AgentResult, error) {
 			h.writeFile(t, c.Env, "artifacts/verdict.json", `{"verdict":"APPROVE","comments":["rename the flag","add a test"]}`)
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
-		"builder": func(c fake.RunCall) (ports.AgentResult, error) {
+		"builder": func(c fake.RunCall) (agentport.AgentResult, error) {
 			mu.Lock()
 			built = c.In.Prompt
 			mu.Unlock()
-			return ports.AgentResult{}, nil
+			return agentport.AgentResult{}, nil
 		},
 	})
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "va", testProject)

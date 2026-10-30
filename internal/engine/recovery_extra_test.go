@@ -8,7 +8,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
@@ -115,9 +115,9 @@ func TestRecoveryRefreshesRunEnvToken(t *testing.T) {
 	envID, _ := h.envp.Provision(context.Background(), envport.EnvSpec{RunID: "r-t"})
 	ctx := context.Background()
 	block := make(chan struct{})
-	h.runner.RunFunc = func(c context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(c context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		<-block
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	for _, p := range []event.Payload{
 		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
@@ -155,9 +155,9 @@ func TestConcurrencyQueueFIFO(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	h.settings.L.MaxConcurrentRuns = 1
 	release := make(chan struct{})
-	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		<-release
-		return ports.AgentResult{TurnsUsed: 1}, nil
+		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 
 	id1, err := h.e.CreateRun(context.Background(), Ticket{Title: "first"}, "loop", testProject)

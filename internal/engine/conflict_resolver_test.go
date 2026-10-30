@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 )
@@ -34,7 +35,7 @@ func TestBuiltinConflictResolverTemplateRuns(t *testing.T) {
 	git.conflicts = 1
 	tip := git.advanceTarget("main")
 	inner := ph.runner.RunFunc
-	ph.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	ph.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		if call.Spec.Agent == "resolver" {
 			git.mu.Lock()
 			git.markers = nil // the resolver edits the markers away

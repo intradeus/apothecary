@@ -11,7 +11,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/agentspec"
 	askstore "apothecary/internal/ask"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
 )
 
@@ -36,32 +36,32 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 	var mu sync.Mutex
 	var askCalls []fake.RunCall
 	var resumes []fake.ResumeCall
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		if call.Spec.Agent == agentspec.AskAgent {
 			mu.Lock()
 			askCalls = append(askCalls, call)
 			mu.Unlock()
-			call.In.Events(ports.AgentEvent{Kind: ports.AgentEvSession, Text: "ask-sess"})
-			call.In.Events(ports.AgentEvent{Kind: ports.AgentEvTool, Tool: &ports.AgentTool{ID: "t1", Title: "Read main.go", Kind: "read", Status: "in_progress"}})
-			call.In.Events(ports.AgentEvent{Kind: ports.AgentEvMessage, Text: "It lives in "})
+			call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "ask-sess"})
+			call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvTool, Tool: &agentport.AgentTool{ID: "t1", Title: "Read main.go", Kind: "read", Status: "in_progress"}})
+			call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "It lives in "})
 			<-askGate
-			call.In.Events(ports.AgentEvent{Kind: ports.AgentEvMessage, Text: "main.go, line 12."})
-			return ports.AgentResult{Session: "ask-sess", TurnsUsed: 1, Usage: ports.Usage{CostUSD: 0.05}, Output: "It lives in main.go, line 12."}, nil
+			call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "main.go, line 12."})
+			return agentport.AgentResult{Session: "ask-sess", TurnsUsed: 1, Usage: agentport.Usage{CostUSD: 0.05}, Output: "It lives in main.go, line 12."}, nil
 		}
 		// The stage's agent works until the test lets it finish.
 		select {
 		case <-stageGate:
 		case <-ctx.Done():
-			return ports.AgentResult{}, ctx.Err()
+			return agentport.AgentResult{}, ctx.Err()
 		}
-		return ports.AgentResult{Session: "s", TurnsUsed: 1}, nil
+		return agentport.AgentResult{Session: "s", TurnsUsed: 1}, nil
 	}
-	h.runner.ResumeFunc = func(ctx context.Context, call fake.ResumeCall) (ports.AgentResult, error) {
+	h.runner.ResumeFunc = func(ctx context.Context, call fake.ResumeCall) (agentport.AgentResult, error) {
 		mu.Lock()
 		resumes = append(resumes, call)
 		mu.Unlock()
-		call.In.Events(ports.AgentEvent{Kind: ports.AgentEvMessage, Text: "Still main.go."})
-		return ports.AgentResult{Session: call.Session, TurnsUsed: 1, Usage: ports.Usage{CostUSD: 0.02}}, nil
+		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "Still main.go."})
+		return agentport.AgentResult{Session: call.Session, TurnsUsed: 1, Usage: agentport.Usage{CostUSD: 0.02}}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "askpane", testProject)
 	if err != nil {
@@ -171,23 +171,23 @@ func TestAskPaneStartsAFreshSessionWhenItsOldOneIsGone(t *testing.T) {
 	stageGate := make(chan struct{})
 	var mu sync.Mutex
 	var fresh int
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		if call.Spec.Agent == agentspec.AskAgent {
 			mu.Lock()
 			fresh++
 			mu.Unlock()
-			call.In.Events(ports.AgentEvent{Kind: ports.AgentEvMessage, Text: "In main.go."})
-			return ports.AgentResult{Session: "new-sess", TurnsUsed: 1}, nil
+			call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "In main.go."})
+			return agentport.AgentResult{Session: "new-sess", TurnsUsed: 1}, nil
 		}
 		select {
 		case <-stageGate:
 		case <-ctx.Done():
-			return ports.AgentResult{}, ctx.Err()
+			return agentport.AgentResult{}, ctx.Err()
 		}
-		return ports.AgentResult{Session: "s", TurnsUsed: 1}, nil
+		return agentport.AgentResult{Session: "s", TurnsUsed: 1}, nil
 	}
-	h.runner.ResumeFunc = func(context.Context, fake.ResumeCall) (ports.AgentResult, error) {
-		return ports.AgentResult{}, errors.New("session/load gone-sess: ACP session not found")
+	h.runner.ResumeFunc = func(context.Context, fake.ResumeCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{}, errors.New("session/load gone-sess: ACP session not found")
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "askpane", testProject)
 	if err != nil {
@@ -222,9 +222,9 @@ func TestAskPaneStartsAFreshSessionWhenItsOldOneIsGone(t *testing.T) {
 	mu.Unlock()
 
 	// A resume that fails after it has spoken keeps its error.
-	h.runner.ResumeFunc = func(_ context.Context, call fake.ResumeCall) (ports.AgentResult, error) {
-		call.In.Events(ports.AgentEvent{Kind: ports.AgentEvMessage, Text: "Halfway"})
-		return ports.AgentResult{TurnsUsed: 1}, errors.New("the provider hung up")
+	h.runner.ResumeFunc = func(_ context.Context, call fake.ResumeCall) (agentport.AgentResult, error) {
+		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "Halfway"})
+		return agentport.AgentResult{TurnsUsed: 1}, errors.New("the provider hung up")
 	}
 	if _, err := h.askPane().Ask(ctx, runID, "u1", "and?"); err != nil {
 		t.Fatal(err)
@@ -246,9 +246,9 @@ func TestAskPaneStartsAFreshSessionWhenItsOldOneIsGone(t *testing.T) {
 func TestAskPaneIsOffWithoutASection(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	gate := make(chan struct{})
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		<-gate
-		return ports.AgentResult{Session: "s", TurnsUsed: 1}, nil
+		return agentport.AgentResult{Session: "s", TurnsUsed: 1}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
@@ -288,11 +288,11 @@ func (noReadOnlyRunner) CanReadOnly() bool { return false }
 
 func TestAskPaneIsOffOnAHarnessThatCannotBeReadOnly(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askPaneFlowDoc))
-	h.res.Runners = map[string]ports.AgentRunner{"fake": noReadOnlyRunner{h.runner}}
+	h.res.Runners = map[string]agentport.AgentRunner{"fake": noReadOnlyRunner{h.runner}}
 	gate := make(chan struct{})
-	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		<-gate
-		return ports.AgentResult{Session: "s", TurnsUsed: 1}, nil
+		return agentport.AgentResult{Session: "s", TurnsUsed: 1}, nil
 	}
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "askpane", testProject)
 	if err != nil {

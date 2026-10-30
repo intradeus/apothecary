@@ -23,7 +23,7 @@ import (
 
 	"apothecary/internal/adapters/acpagent"
 	"apothecary/internal/agentspec"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/wshome"
 )
@@ -118,7 +118,7 @@ func (a *Adapter) Profile() acpagent.Profile {
 		Harness:  "omp",
 		Command:  "env OMP_MCP_TIMEOUT_MS=0 OMP_SKIP_SETUP=1 omp acp --yolo",
 		Preamble: acpagent.RolePreamble(a.envp, "omp"),
-		MCPServers: []ports.MCPServer{
+		MCPServers: []agentport.MCPServer{
 			// The agent marker, explicitly: ask-human offers its tool only
 			// below an agent, and this does not hang on omp passing its
 			// own environment down (session-only, so no human's omp sees it).

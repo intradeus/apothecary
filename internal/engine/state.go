@@ -9,6 +9,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
@@ -63,7 +64,7 @@ type runState struct {
 	// effect was never confirmed (PLAN5 M20) — the crash window between a
 	// repository host call returning and its event being appended.
 	actionPending map[string]bool
-	sessions      map[string]ports.SessionID // stage id -> last recorded harness session
+	sessions      map[string]agentport.SessionID // stage id -> last recorded harness session
 
 	// links are the workspace's app links from env_ready (ports exposed at
 	// provision), kept for a gate or debug ping that hands out run.workspace.
@@ -413,7 +414,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 		iters:         map[string]int{},
 		edgeCounts:    map[string]int{},
 		actionPending: map[string]bool{},
-		sessions:      map[string]ports.SessionID{},
+		sessions:      map[string]agentport.SessionID{},
 		raisedPings:   map[string]*event.PingRaised{},
 		answeredPings: map[string]*event.PingAnswered{},
 		pausedAsks:    map[string][]string{},
@@ -497,7 +498,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			// run of the same action (a second review round) starts clean.
 			delete(rs.actionPending, p.StageID)
 			if p.SessionID != "" {
-				rs.sessions[p.StageID] = ports.SessionID(p.SessionID)
+				rs.sessions[p.StageID] = agentport.SessionID(p.SessionID)
 			}
 			if p.Usage != nil {
 				rs.cost += p.Usage.CostUSD
@@ -516,7 +517,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 			// ended really did spend them.
 			rs.ph = phIn
 			if p.SessionID != "" {
-				rs.sessions[p.StageID] = ports.SessionID(p.SessionID)
+				rs.sessions[p.StageID] = agentport.SessionID(p.SessionID)
 			}
 			if p.Usage != nil {
 				rs.cost += p.Usage.CostUSD
@@ -656,7 +657,7 @@ func replay(evs []event.Event, fl *flow.Flow) *runState {
 				rs.pos = fl.Index(p.StageID)
 			}
 		case *event.AgentSession:
-			rs.sessions[p.StageID] = ports.SessionID(p.SessionID)
+			rs.sessions[p.StageID] = agentport.SessionID(p.SessionID)
 		case *event.AgentMessage:
 			rs.noteCursor(p.StageID, p.Cursor)
 		case *event.AgentTool:

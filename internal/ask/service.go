@@ -13,7 +13,7 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/flow"
 	"apothecary/internal/modelcheck"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/redact"
 	"apothecary/internal/resolution"
@@ -207,7 +207,7 @@ func (svc *Service) setup(ctx context.Context, runID string) (*askSetup, error) 
 		s.reason = fmt.Sprintf("Ask runs on harness %q, which is not in the project's harness set %v.", s.harness, res.HarnessSet())
 		return s, nil
 	}
-	if rc, ok := res.RunnerFor(s.harness).(ports.ReadOnlyCapable); ok && !rc.CanReadOnly() {
+	if rc, ok := res.RunnerFor(s.harness).(agentport.ReadOnlyCapable); ok && !rc.CanReadOnly() {
 		s.reason = fmt.Sprintf("Harness %q cannot run a read-only session, and Ask must not change the code. Name another harness in the flow's ask: section.", s.harness)
 		return s, nil
 	}
@@ -244,7 +244,7 @@ func (svc *Service) models(ctx context.Context, s *askSetup) []string {
 		}
 	}
 	if models == nil {
-		if lister, ok := s.res.RunnerFor(s.harness).(ports.AgentModelLister); ok {
+		if lister, ok := s.res.RunnerFor(s.harness).(agentport.AgentModelLister); ok {
 			actx, cancel := context.WithTimeout(ctx, modelcheck.Timeout)
 			got, err := lister.AgentModels(actx, envport.EnvID(s.v.EnvID))
 			cancel()
@@ -398,11 +398,11 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 			svc.log().Warn("ask: save thread", "run", runID, "err", err)
 		}
 	}
-	events := func(ev ports.AgentEvent) {
+	events := func(ev agentport.AgentEvent) {
 		switch ev.Kind {
-		case ports.AgentEvSession:
+		case agentport.AgentEvSession:
 			sessionSeen(ev.Text)
-		case ports.AgentEvMessage:
+		case agentport.AgentEvMessage:
 			mu.Lock()
 			text.WriteString(ev.Text)
 			due := time.Since(lastDelta) >= deltaEvery
@@ -414,7 +414,7 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 			if due {
 				svc.hub.publish(runID, AskFrame{Kind: "delta", Text: red.Scrub(soFar)})
 			}
-		case ports.AgentEvTool:
+		case agentport.AgentEvTool:
 			if ev.Tool != nil && ev.Tool.Title != "" && ev.Tool.Status != "completed" && ev.Tool.Status != "failed" {
 				mu.Lock()
 				soFar := text.String()
@@ -423,9 +423,9 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 			}
 		}
 	}
-	in := ports.AgentInput{Prompt: question, Events: events, ReadOnly: true}
-	spec := ports.AgentSpec{Agent: agentspec.AskAgent, Harness: s.harness, Model: model}
-	var res ports.AgentResult
+	in := agentport.AgentInput{Prompt: question, Events: events, ReadOnly: true}
+	spec := agentport.AgentSpec{Agent: agentspec.AskAgent, Harness: s.harness, Model: model}
+	var res agentport.AgentResult
 	var err error
 	if th.SessionID == "" {
 		res, err = runner.Run(ctx, envport.EnvID(s.v.EnvID), spec, in)
@@ -435,7 +435,7 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 			in.Model = model // switch the live session over first
 		}
 		svc.mu.Unlock()
-		res, err = runner.Resume(ctx, envport.EnvID(s.v.EnvID), ports.SessionID(th.SessionID), in)
+		res, err = runner.Resume(ctx, envport.EnvID(s.v.EnvID), agentport.SessionID(th.SessionID), in)
 		mu.Lock()
 		silent := text.Len() == 0
 		mu.Unlock()

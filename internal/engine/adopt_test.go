@@ -16,6 +16,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
@@ -59,7 +60,7 @@ func newReviewerHarness(t *testing.T, doc string) (*phasedHarness, func() []stri
 	t.Helper()
 	ph := newPhasedHarness(t, doc)
 	inner := ph.runner.RunFunc
-	ph.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
+	ph.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		if call.Spec.Agent == "pr_reviewer" {
 			review := "summary: Reads well.\nnotes:\n  - { path: a.go, line: 3, kind: nit, body: name it, rationale: style }\n"
 			if data, err := ph.envp.ReadFile(ctx, call.Env, "artifacts/threads.yaml"); err == nil {

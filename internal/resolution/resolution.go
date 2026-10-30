@@ -18,6 +18,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 	"apothecary/internal/signalspec"
@@ -127,12 +128,12 @@ type Resolution struct {
 	RepoHosts  map[string]ports.RepoHost
 
 	Envp   envport.EnvProvisioner
-	Runner ports.AgentRunner
+	Runner agentport.AgentRunner
 	// Runners maps harness KIND → runner for the full set (per-step harness).
 	// A stage pinning `harness: <kind>` runs on Runners[kind]; unpinned stages
 	// use Runner (the default). nil in single-harness setups (fakes) — the
 	// engine falls back to Runner.
-	Runners  map[string]ports.AgentRunner
+	Runners  map[string]agentport.AgentRunner
 	RepoHost ports.RepoHost
 	// TicketWriter resolves the write side of a ticketsource integration — a
 	// tracker action's target — by integration id: the TICKET's (recorded at
@@ -271,7 +272,7 @@ func (r *Resolution) SignalAvailable(slug string) error {
 // back to the default Runner when the stage pins nothing or the set isn't
 // populated (single-harness setups). Preflight guarantees a pinned kind is
 // in the set, so a miss here can only be the fallback.
-func (r *Resolution) RunnerFor(harnessKind string) ports.AgentRunner {
+func (r *Resolution) RunnerFor(harnessKind string) agentport.AgentRunner {
 	if harnessKind != "" && r.Runners != nil {
 		if run, ok := r.Runners[harnessKind]; ok {
 			return run

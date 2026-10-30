@@ -22,7 +22,7 @@ import (
 
 	"apothecary/internal/adapters/acpagent"
 	"apothecary/internal/agentspec"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/wshome"
 )
@@ -207,7 +207,7 @@ func Profile() acpagent.Profile {
 		// model call ONLY in its log and ends the turn as if it succeeded,
 		// so the sidecar reads them to tell a silent failure from a turn.
 		Command: "opencode acp --print-logs --log-level WARN",
-		Mode:    func(spec ports.AgentSpec) string { return spec.Agent },
+		Mode:    func(spec agentport.AgentSpec) string { return spec.Agent },
 		// A read-only session runs a read-only agent definition (its tools
 		// denied above): the engine prepares one for the Ask pane.
 		ReadOnlyBy: acpagent.ReadOnlyByAgent,
