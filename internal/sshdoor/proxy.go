@@ -63,16 +63,23 @@ func bridgeChannel(nc ssh.NewChannel, other ssh.Conn) {
 		_ = far.Close()
 		return
 	}
-	go pump(far, farReqs, near)
-	pump(near, nearReqs, far)
+	// answering[x] is held while a request x sent is forwarded and its
+	// reply carried back to x, and taken before x is closed: a command that
+	// exits the moment it starts closes its channel right behind its reply
+	// to exec, and the person must get that reply before the close.
+	var nearAnswering, farAnswering sync.Mutex
+	go pump(far, farReqs, &farAnswering, near, &nearAnswering)
+	pump(near, nearReqs, &nearAnswering, far, &farAnswering)
 }
 
 // pump carries one direction of a bridged channel: src's data and stderr
 // into dst, then the half-close — only once BOTH streams are drained, since
 // an SSH EOF ends the receiver's stderr too — then src's requests until src
-// closes, then dst's close. So an exit-status always lands after the bytes
-// before it and before the close that follows it.
-func pump(src ssh.Channel, srcReqs <-chan *ssh.Request, dst ssh.Channel) {
+// closes, then dst's close, once no reply owed to dst is still in flight
+// (dstAnswering). So an exit-status always lands after the bytes before it
+// and before the close that follows it, and so does the reply to the
+// request that started the command.
+func pump(src ssh.Channel, srcReqs <-chan *ssh.Request, srcAnswering *sync.Mutex, dst ssh.Channel, dstAnswering *sync.Mutex) {
 	var data sync.WaitGroup
 	data.Add(2)
 	go func() { defer data.Done(); _, _ = io.Copy(dst, src) }()
@@ -81,19 +88,25 @@ func pump(src ssh.Channel, srcReqs <-chan *ssh.Request, dst ssh.Channel) {
 		data.Wait()
 		_ = dst.CloseWrite()
 	}()
-	forwardRequests(srcReqs, dst)
+	forwardRequests(srcReqs, dst, srcAnswering)
 	data.Wait()
+	dstAnswering.Lock()
 	_ = dst.Close()
+	dstAnswering.Unlock()
 }
 
 // forwardRequests sends each request of a channel on to the other side
-// and answers with what it said.
-func forwardRequests(from <-chan *ssh.Request, to ssh.Channel) {
+// and answers with what it said, holding answering until it has. The other
+// side's reply cannot hang the closer waiting on answering: by then that
+// side has closed, and SendRequest returns with it.
+func forwardRequests(from <-chan *ssh.Request, to ssh.Channel, answering *sync.Mutex) {
 	for r := range from {
+		answering.Lock()
 		ok, err := to.SendRequest(r.Type, r.WantReply, r.Payload)
 		if r.WantReply {
 			_ = r.Reply(ok && err == nil, nil)
 		}
+		answering.Unlock()
 	}
 }
 

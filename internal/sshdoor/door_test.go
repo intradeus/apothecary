@@ -164,6 +164,13 @@ func (u *upstream) session(nc ssh.NewChannel) {
 			_ = ssh.Unmarshal(r.Payload, &e)
 			u.note("exec " + e.Command)
 			_ = r.Reply(true, nil)
+			if e.Command == "quick" {
+				// A command that is done before anyone could type: its
+				// output, its status and its close right behind the reply.
+				_, _ = ch.Write([]byte("quick"))
+				_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+				return
+			}
 			in, _ := io.ReadAll(ch) // the client's stdin, up to its EOF
 			_, _ = ch.Write([]byte("out:" + e.Command + ":" + string(in)))
 			_, _ = ch.Stderr().Write([]byte("err"))
@@ -313,6 +320,27 @@ func TestDoorProxiesASession(t *testing.T) {
 	keys, _ := rig.keys.svc.ListSSHKeys(context.Background(), rig.keys.alice.ID)
 	if len(keys) != 1 || keys[0].LastUsedAt == nil {
 		t.Errorf("last used not recorded: %+v", keys)
+	}
+}
+
+// A command that exits the moment it starts still reaches the person: the
+// reply to their exec arrives before the channel's close, never after it.
+func TestDoorDeliversAQuickCommand(t *testing.T) {
+	rig := newDoorRig(t)
+	client, err := rig.connect(t, "apo-alice-run", rig.alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 200 {
+		ses, err := client.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := ses.Output("quick")
+		ses.Close()
+		if err != nil || string(out) != "quick" {
+			t.Fatalf("run %d: exec = %q, %v", i, out, err)
+		}
 	}
 }
 
