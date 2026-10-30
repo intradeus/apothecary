@@ -474,6 +474,7 @@ func TestPauseOnAParkedRunHoldsItThroughTheAnswer(t *testing.T) {
 	runIDCh <- runID
 	p := h.waitPing(t, "clarification")
 	waitEvent[*event.StagePaused](t, h, runID)
+	h.e.Wait(runID)
 
 	if err := h.e.Pause(runID); err != nil {
 		t.Fatalf("pausing a parked run: %v", err)
@@ -516,6 +517,7 @@ func TestPlayRefusesARunThatIsMerelyWaiting(t *testing.T) {
 	runIDCh <- runID
 	h.waitPing(t, "clarification")
 	waitEvent[*event.StagePaused](t, h, runID)
+	h.e.Wait(runID)
 
 	err = h.e.Play(context.Background(), runID)
 	if err == nil || !strings.Contains(err.Error(), "waiting for an answer") {

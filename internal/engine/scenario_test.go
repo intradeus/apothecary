@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,7 +37,10 @@ import (
 const testProject = "prj-test"
 
 type harness struct {
-	e        *Engine
+	e *Engine
+	// live is e for what may outlast a crashed engine: an agent's goroutine
+	// keeps running after Shutdown, while the test swaps e.
+	live     atomic.Pointer[Engine]
 	flows    flow.MapSource
 	store    *event.MemStore
 	envp     *fake.EnvProvisioner

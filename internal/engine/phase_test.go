@@ -129,6 +129,7 @@ func (ph *phasedHarness) start(t *testing.T) string {
 		t.Fatal(err)
 	}
 	ph.waitState(t, runID, run.InReview)
+	ph.waitIdle(t, runID)
 	return runID
 }
 

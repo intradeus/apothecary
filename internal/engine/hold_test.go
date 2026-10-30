@@ -41,6 +41,10 @@ func (r *heldRunner) turn(in agentport.AgentInput, text string, gate <-chan stru
 	r.mu.Unlock()
 	in.Events(agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: id})
 	if gate != nil {
+		// Logged in order behind the turn's start, so a test can see the
+		// engine read it: a take-over ahead of that would count the turn as
+		// held.
+		in.Events(agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "s"})
 		<-gate
 	}
 	in.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Turn: id, Text: text})
@@ -123,6 +127,7 @@ func TestTakeOverKeepsTheSessionOpenUntilReleased(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Nothing to release yet; a second take is refused.
+	waitEvent[*event.AgentSession](t, h, runID) // the turn is open
 	takeOverWhenLive(t, h, runID, "u1")
 	if err := h.e.TakeOver(runID, "u2"); !errors.Is(err, ErrAlreadyHeld) {
 		t.Errorf("second take over = %v, want ErrAlreadyHeld", err)
@@ -271,6 +276,7 @@ func TestHoldParksOnAQuietHolderAndWakesOnTheirMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitEvent[*event.AgentSession](t, h, runID) // the turn is open
 	takeOverWhenLive(t, h, runID, "u1")
 	close(r.firstEnd)
 
@@ -362,6 +368,7 @@ func TestReleasingAParkedHoldResumesWithTheHandback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitEvent[*event.AgentSession](t, h, runID) // the turn is open
 	takeOverWhenLive(t, h, runID, "u1")
 	close(r.firstEnd)
 	waitEvent[*event.StagePaused](t, h, runID)

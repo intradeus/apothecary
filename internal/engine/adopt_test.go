@@ -197,6 +197,7 @@ func TestForkMergeRequestIsReadOnlyAndRerunStaysOnIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	ph.waitState(t, runID, run.Abandoned) // the push is a dead end of the main chain
+	ph.e.Wait(runID)
 	evs := ph.events(t, runID)
 	created, _ := findPayload[*event.RunCreated](evs)
 	if created.Branch != "mr-1" || !created.Checkouts[0].Fork {

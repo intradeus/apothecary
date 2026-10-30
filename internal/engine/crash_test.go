@@ -196,7 +196,7 @@ func askWorld(h *harness) {
 		if logHas(evs, func(*event.PingRaised) bool { return true }) {
 			return
 		}
-		_, _ = h.e.RaisePing(ids[0], event.PingClarification, "one endpoint or two?", "", nil, nil)
+		_, _ = h.live.Load().RaisePing(ids[0], event.PingClarification, "one endpoint or two?", "", nil, nil)
 	})
 }
 
@@ -451,6 +451,7 @@ func playCrash(t *testing.T, sc crashScenario, n int) crashOutcome {
 	fl := mustFlow(t, sc.doc)
 	h := newHarnessOnWith(t, store, nil, fl)
 	sc.world(h)
+	h.live.Store(h.e)
 	ctx := context.Background()
 
 	runID, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "Crash"}, fl.Name, testProject)
@@ -485,6 +486,7 @@ func playCrash(t *testing.T, sc crashScenario, n int) crashOutcome {
 			Resolver: resolution.StaticResolver{R: h.res}, Flows: h.flows, Settings: h.settings})
 		t.Cleanup(e2.Shutdown)
 		h.e = e2
+		h.live.Store(e2)
 		if err := e2.Recover(ctx); err != nil {
 			t.Fatal(err)
 		}

@@ -5,6 +5,7 @@ env_requested
 env_ready
 stage_started stage=build
 agent_prompted stage=build
+agent_session stage=build
 hold_taken stage=build
 agent_message stage=build
 stage_paused stage=build

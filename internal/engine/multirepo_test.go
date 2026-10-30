@@ -253,6 +253,7 @@ func TestMRStatusesReportMergeabilityAndPendingThreads(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.waitPing(t, PingGate)
+	waitEvent[*event.PhaseParked](t, h, runID)
 	before := len(h.events(t, runID))
 	t0 := time.Date(2026, 10, 18, 10, 0, 0, 0, time.UTC)
 	h.repoHost.SetMergeable(1, repoport.MergeConflicts, "abc")
