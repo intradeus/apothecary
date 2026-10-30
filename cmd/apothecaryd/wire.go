@@ -376,6 +376,9 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	}
 
 	srv := &http.Server{Addr: boot.Listen, Handler: api.Handler()}
+	// Shutting down ends the API's event streams and ask_human holds rather
+	// than waiting them out (a browser reconnects, the shim re-polls).
+	srv.RegisterOnShutdown(api.Drain)
 	return &app{
 		log: log, store: store, conf: conf, resolver: resolver, chreg: chreg, e: e, srv: srv,
 		keeper: keeper, attachments: attachments, blobs: blobs,

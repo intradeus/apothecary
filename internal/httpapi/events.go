@@ -84,6 +84,8 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
+		case <-s.draining():
+			return
 		}
 	}
 }

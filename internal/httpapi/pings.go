@@ -177,6 +177,14 @@ func (s *Server) holdForAnswer(w http.ResponseWriter, r *http.Request, p *engine
 	w.Header().Set("X-Ping-ID", p.ID)
 	ctx, cancel := context.WithTimeout(r.Context(), hold)
 	defer cancel()
+	// A shutdown ends the hold like an expired one: the shim re-polls.
+	go func() {
+		select {
+		case <-s.draining():
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 	if ans, ok := p.Await(ctx); ok {
 		// The agent gets the answer in-band: as far as it is concerned the
 		// question is closed, so the stage need not pause on it.

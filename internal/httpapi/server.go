@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"apothecary/internal/ask"
@@ -116,6 +117,26 @@ type Server struct {
 	Services *services.Control
 
 	logins loginLimiter
+
+	// drain is closed by Drain: the long-lived responses (event streams,
+	// ask_human holds) end on it.
+	drainInit, drainOnce sync.Once
+	drain                chan struct{}
+}
+
+// Drain ends the server's long-lived responses — run and Ask event streams
+// end (a browser reconnects and resumes from its last event id), ask_human
+// holds answer 204 (the shim re-polls) — so a graceful shutdown need not
+// wait them out. Register it with http.Server.RegisterOnShutdown.
+func (s *Server) Drain() {
+	s.draining()
+	s.drainOnce.Do(func() { close(s.drain) })
+}
+
+// draining is closed once the server starts shutting down.
+func (s *Server) draining() <-chan struct{} {
+	s.drainInit.Do(func() { s.drain = make(chan struct{}) })
+	return s.drain
 }
 
 func New(e *engine.Engine, store event.Store, reg *channels.Registry, runsDir string) *Server {
