@@ -85,3 +85,32 @@ func settled(t *testing.T, h *harness, runID string) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// D10: a run parked on the holder of a take-over is woken by the holder
+// (a message, a release), never by a restart: recovery leaves it parked,
+// boot after boot, without touching its log.
+func TestRecoveryLeavesARunParkedOnItsHolder(t *testing.T) {
+	fl := mustFlow(t, askFlowDoc)
+	h := newHarness(t, fl)
+	seedRun(t, h, "r-d10", "ask", fl.Hash,
+		&event.PhaseStarted{Phase: "main", By: "human"},
+		&event.StageStarted{StageID: "build", Iteration: 1},
+		&event.HoldTaken{StageID: "build", Iteration: 1, UserID: "u1"},
+		&event.StagePaused{StageID: "build", Iteration: 1, Reason: event.PauseHeld},
+		&event.RunPaused{StageID: "build", Reason: event.PauseWaiting},
+	)
+	before := len(h.events(t, "r-d10"))
+	for boot := range 2 {
+		if err := h.e.Recover(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(50 * time.Millisecond)
+		h.e.Wait("r-d10")
+		if n := len(h.events(t, "r-d10")); n != before {
+			t.Fatalf("boot %d appended %v", boot+1, eventTypes(h.events(t, "r-d10"))[before:])
+		}
+	}
+	if v := h.view(t, "r-d10"); v.State != run.WaitingOnHuman || !v.Dormant {
+		t.Errorf("state = %s dormant %v, want still parked on the holder", v.State, v.Dormant)
+	}
+}

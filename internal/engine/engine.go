@@ -1421,6 +1421,11 @@ func (e *Engine) Recover(ctx context.Context) error {
 			if !answersAllIn(evs) {
 				continue
 			}
+			// Parked on the holder of a take-over: only their word (a
+			// message, a release — wakeHeld) wakes it, never a restart.
+			if len(replay(evs, nil).pausedHold) > 0 {
+				continue
+			}
 		}
 		if v.State == run.Pending {
 			pending = append(pending, pend{id, v.CreatedAt})
