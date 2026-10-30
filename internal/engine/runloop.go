@@ -2619,7 +2619,7 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 			SeedAuth:      res.SeedAuth,
 			Register:      x.registerSecret,
 			Prepare:       res.Prepare,
-			Agents:        agentsFor(x.rs.fl),
+			Agents:        x.rs.fl.WorkspaceAgents(),
 			Timeout:       x.rs.fl.Defaults.Timeout,
 			Extras:        x.extraCheckouts(),
 			Skills:        trees,

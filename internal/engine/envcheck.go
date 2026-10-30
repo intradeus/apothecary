@@ -362,7 +362,7 @@ func (e *Engine) StartEnvCheck(ctx context.Context, projectID string, keep bool)
 	var agents []*agentspec.Spec
 	var stages []flow.Stage
 	if fl, ferr := e.boundFlow(ctx, res.ProjectID, res.DefaultFlow); ferr == nil {
-		agents = agentsFor(fl)
+		agents = fl.WorkspaceAgents()
 		stages = fl.Stages
 	}
 	id := e.newID()

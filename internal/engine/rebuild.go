@@ -127,7 +127,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		GitEmail:      res.GitEmail,
 		SeedAuth:      res.SeedAuth,
 		Prepare:       res.Prepare,
-		Agents:        agentsFor(fl),
+		Agents:        fl.WorkspaceAgents(),
 		Timeout:       fl.Defaults.Timeout,
 		Extras:        viewExtras(v),
 		Skills:        trees,

@@ -1032,6 +1032,16 @@ func (f *Flow) AgentSpecs() []*agentspec.Spec {
 	return out
 }
 
+// WorkspaceAgents lists the agents a workspace is prepared with: the flow's
+// own, plus the Ask pane's when the flow has one. Nil-safe.
+func (f *Flow) WorkspaceAgents() []*agentspec.Spec {
+	specs := f.AgentSpecs()
+	if f != nil && f.Ask != nil {
+		specs = append(specs, agentspec.Ask())
+	}
+	return specs
+}
+
 // OperatesOnMR reports whether the flow's runs are started on a merge request
 // someone opened.
 func (f *Flow) OperatesOnMR() bool { return f.OperatesOn == OperatesOnMR }
