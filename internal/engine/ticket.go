@@ -36,6 +36,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 )
 
 // actionSkip records a completion that did no work — the stage had nothing
@@ -194,7 +195,7 @@ func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 		rs.actionPending[st.ID] = true
 	}
 	if len(files) > 0 {
-		body, err = x.attach(body, files, func(name, ct string, data []byte) (ports.Attachment, error) {
+		body, err = x.attach(body, files, func(name, ct string, data []byte) (repoport.Attachment, error) {
 			return attacher.Attach(x.ctx, tg.key, name, ct, data)
 		})
 		if err != nil {

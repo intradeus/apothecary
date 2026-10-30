@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 )
 
 type Config struct {
@@ -107,7 +107,7 @@ func (a *Adapter) repoPath() string { return "/repos/" + a.cfg.Locator }
 // CheckAccess verifies the token authenticates and can push to the repo
 // (§1 preflight): classic PAT `repo` scope, or fine-grained with
 // Contents:RW + Pull requests:RW.
-func (a *Adapter) CheckAccess(ctx context.Context, _ ports.RepoRef) error {
+func (a *Adapter) CheckAccess(ctx context.Context, _ repoport.RepoRef) error {
 	if a.cfg.Token == "" {
 		return fmt.Errorf("github: no token configured")
 	}
@@ -128,7 +128,7 @@ func (a *Adapter) CheckAccess(ctx context.Context, _ ports.RepoRef) error {
 // FileExists checks a file — or, with a trailing slash, a non-empty
 // directory — at the default branch (§1 preflight). The contents endpoint
 // returns an array for directories.
-func (a *Adapter) FileExists(ctx context.Context, repo ports.RepoRef, path string) (bool, error) {
+func (a *Adapter) FileExists(ctx context.Context, repo repoport.RepoRef, path string) (bool, error) {
 	ref := repo.DefaultBranch
 	if ref == "" {
 		ref = "main"
@@ -161,7 +161,7 @@ func (a *Adapter) FileExists(ctx context.Context, repo ports.RepoRef, path strin
 }
 
 // baseOr is the PR base: the target asked for, else the repo's default.
-func baseOr(target string, repo ports.RepoRef) string {
+func baseOr(target string, repo repoport.RepoRef) string {
 	if target != "" {
 		return target
 	}
@@ -173,7 +173,7 @@ func baseOr(target string, repo ports.RepoRef) string {
 
 // CreateDraftMR opens a native draft pull request onto target (a stacked
 // change chains bases layer onto layer).
-func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch, target, title, body string) (ports.MRRef, error) {
+func (a *Adapter) CreateDraftMR(ctx context.Context, repo repoport.RepoRef, branch, target, title, body string) (repoport.MRRef, error) {
 	base := baseOr(target, repo)
 	var pr struct {
 		Number  int    `json:"number"`
@@ -205,14 +205,14 @@ func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch,
 		}
 	}
 	if err != nil {
-		return ports.MRRef{}, err
+		return repoport.MRRef{}, err
 	}
-	return ports.MRRef{IID: pr.Number, URL: pr.HTMLURL}, nil
+	return repoport.MRRef{IID: pr.Number, URL: pr.HTMLURL}, nil
 }
 
 // AddMRLabels adds labels through the pull request's issue: GitHub creates
 // a label the repository does not have yet, and adding one twice is a no-op.
-func (a *Adapter) AddMRLabels(ctx context.Context, mr ports.MRRef, labels []string) error {
+func (a *Adapter) AddMRLabels(ctx context.Context, mr repoport.MRRef, labels []string) error {
 	if len(labels) == 0 {
 		return nil
 	}
@@ -222,16 +222,16 @@ func (a *Adapter) AddMRLabels(ctx context.Context, mr ports.MRRef, labels []stri
 
 // FindMR implements the port's reconciliation lookup: the open PR whose head
 // is this branch, onto target.
-func (a *Adapter) FindMR(ctx context.Context, repo ports.RepoRef, branch, target string) (ports.MRRef, bool, error) {
+func (a *Adapter) FindMR(ctx context.Context, repo repoport.RepoRef, branch, target string) (repoport.MRRef, bool, error) {
 	ref, err := a.findOpenPR(ctx, branch, baseOr(target, repo))
 	if err != nil {
-		return ports.MRRef{}, false, err
+		return repoport.MRRef{}, false, err
 	}
 	return ref, ref.IID != 0, nil
 }
 
 // BranchURL reads the branch's html link; a 404 is a branch not pushed yet.
-func (a *Adapter) BranchURL(ctx context.Context, _ ports.RepoRef, branch string) (string, bool, error) {
+func (a *Adapter) BranchURL(ctx context.Context, _ repoport.RepoRef, branch string) (string, bool, error) {
 	var br struct {
 		Links struct {
 			HTML string `json:"html"`
@@ -249,7 +249,7 @@ func (a *Adapter) BranchURL(ctx context.Context, _ ports.RepoRef, branch string)
 
 // findOpenPR returns the open PR from branch onto base, or a zero MRRef if
 // none is found. The head filter is scoped to the bound repo's owner.
-func (a *Adapter) findOpenPR(ctx context.Context, branch, base string) (ports.MRRef, error) {
+func (a *Adapter) findOpenPR(ctx context.Context, branch, base string) (repoport.MRRef, error) {
 	head := branch
 	if owner, _, ok := strings.Cut(a.cfg.Locator, "/"); ok {
 		head = owner + ":" + branch
@@ -261,18 +261,18 @@ func (a *Adapter) findOpenPR(ctx context.Context, branch, base string) (ports.MR
 	p := fmt.Sprintf("%s/pulls?state=open&head=%s&base=%s",
 		a.repoPath(), url.QueryEscape(head), url.QueryEscape(base))
 	if _, err := a.api(ctx, http.MethodGet, p, nil, &prs); err != nil {
-		return ports.MRRef{}, err
+		return repoport.MRRef{}, err
 	}
 	if len(prs) == 0 {
-		return ports.MRRef{}, nil
+		return repoport.MRRef{}, nil
 	}
-	return ports.MRRef{IID: prs[0].Number, URL: prs[0].HTMLURL}, nil
+	return repoport.MRRef{IID: prs[0].Number, URL: prs[0].HTMLURL}, nil
 }
 
 // MRStatus maps the PR: merged_at wins over state (a merged PR reports
 // state "closed"); mergeable is null while GitHub is still computing it,
 // which is unknown, never a conflict.
-func (a *Adapter) MRStatus(ctx context.Context, mr ports.MRRef) (ports.MRStatus, error) {
+func (a *Adapter) MRStatus(ctx context.Context, mr repoport.MRRef) (repoport.MRStatus, error) {
 	var pr struct {
 		State          string  `json:"state"`
 		MergedAt       *string `json:"merged_at"`
@@ -288,35 +288,35 @@ func (a *Adapter) MRStatus(ctx context.Context, mr ports.MRRef) (ports.MRStatus,
 	}
 	if _, err := a.api(ctx, http.MethodGet,
 		fmt.Sprintf("%s/pulls/%d", a.repoPath(), mr.IID), nil, &pr); err != nil {
-		return ports.MRStatus{}, err
+		return repoport.MRStatus{}, err
 	}
-	st := ports.MRStatus{State: ports.MROpen, HeadSHA: pr.Head.SHA, Target: pr.Base.Ref, Mergeable: ports.MergeClean}
+	st := repoport.MRStatus{State: repoport.MROpen, HeadSHA: pr.Head.SHA, Target: pr.Base.Ref, Mergeable: repoport.MergeClean}
 	switch {
 	case pr.MergedAt != nil && *pr.MergedAt != "":
-		st.State = ports.MRMerged
+		st.State = repoport.MRMerged
 	case pr.State == "closed":
-		st.State = ports.MRClosed
+		st.State = repoport.MRClosed
 	}
 	switch {
 	case pr.Mergeable == nil || pr.MergeableState == "unknown":
-		st.Mergeable = ports.MergeUnknown
+		st.Mergeable = repoport.MergeUnknown
 	case pr.MergeableState == "dirty":
-		st.Mergeable = ports.MergeConflicts
+		st.Mergeable = repoport.MergeConflicts
 	}
 	// clean (and has_hooks, clean with pre-receive hooks) is GitHub saying
 	// every requirement is met; unstable merges too, but with checks red or
 	// running, which is not "ready".
 	st.Draft = pr.Draft
-	st.MergeableNow = st.State == ports.MROpen && !pr.Draft && pr.Mergeable != nil && *pr.Mergeable &&
+	st.MergeableNow = st.State == repoport.MROpen && !pr.Draft && pr.Mergeable != nil && *pr.Mergeable &&
 		(pr.MergeableState == "clean" || pr.MergeableState == "has_hooks")
-	if st.Mergeable == ports.MergeConflicts && pr.Base.Ref != "" {
+	if st.Mergeable == repoport.MergeConflicts && pr.Base.Ref != "" {
 		var br struct {
 			Commit struct {
 				SHA string `json:"sha"`
 			} `json:"commit"`
 		}
 		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/branches/%s", a.repoPath(), url.PathEscape(pr.Base.Ref)), nil, &br); err != nil {
-			return ports.MRStatus{}, err
+			return repoport.MRStatus{}, err
 		}
 		st.TargetSHA = br.Commit.SHA
 	}
@@ -326,8 +326,8 @@ func (a *Adapter) MRStatus(ctx context.Context, mr ports.MRRef) (ports.MRStatus,
 // MRChecks reads both kinds of CI result GitHub keeps on a commit: check
 // runs (Actions and apps) and commit statuses (older integrations). A check
 // re-run keeps its name; the newest run of a name is the one that counts.
-func (a *Adapter) MRChecks(ctx context.Context, mr ports.MRRef, head string) (ports.Checks, error) {
-	out := ports.Checks{Head: head}
+func (a *Adapter) MRChecks(ctx context.Context, mr repoport.MRRef, head string) (repoport.Checks, error) {
+	out := repoport.Checks{Head: head}
 	if head == "" {
 		return out, nil
 	}
@@ -345,18 +345,18 @@ func (a *Adapter) MRChecks(ctx context.Context, mr ports.MRRef, head string) (po
 	}
 	newest := map[string]int{}
 	for _, r := range runs.CheckRuns {
-		state := ports.CheckPending
+		state := repoport.CheckPending
 		if r.Status == "completed" {
 			switch r.Conclusion {
 			case "success":
-				state = ports.CheckSuccess
+				state = repoport.CheckSuccess
 			case "failure", "timed_out", "action_required":
-				state = ports.CheckFailure
+				state = repoport.CheckFailure
 			default: // neutral, cancelled, skipped, stale
-				state = ports.CheckNeutral
+				state = repoport.CheckNeutral
 			}
 		}
-		c := ports.Check{Name: r.Name, State: state, URL: r.HTMLURL}
+		c := repoport.Check{Name: r.Name, State: state, URL: r.HTMLURL}
 		if i, seen := newest[r.Name]; seen {
 			if r.ID > runs.CheckRuns[i].ID {
 				out.Items[i] = c
@@ -377,16 +377,16 @@ func (a *Adapter) MRChecks(ctx context.Context, mr ports.MRRef, head string) (po
 		return out, err
 	}
 	for _, s := range combined.Statuses {
-		state := ports.CheckPending
+		state := repoport.CheckPending
 		switch s.State {
 		case "success":
-			state = ports.CheckSuccess
+			state = repoport.CheckSuccess
 		case "failure", "error":
-			state = ports.CheckFailure
+			state = repoport.CheckFailure
 		}
-		out.Items = append(out.Items, ports.Check{Name: s.Context, State: state, URL: s.TargetURL})
+		out.Items = append(out.Items, repoport.Check{Name: s.Context, State: state, URL: s.TargetURL})
 	}
-	out.State = ports.AggregateChecks(out.Items)
+	out.State = repoport.AggregateChecks(out.Items)
 	return out, nil
 }
 
@@ -399,7 +399,7 @@ const ciDetailMax = 20
 // job (its id is the job's), so the job names its failed steps and its
 // workflow run the workflow file; an app's check run has its output's title;
 // a commit status its description.
-func (a *Adapter) CIFailures(ctx context.Context, mr ports.MRRef, head string) ([]ports.CIFailure, error) {
+func (a *Adapter) CIFailures(ctx context.Context, mr repoport.MRRef, head string) ([]repoport.CIFailure, error) {
 	if head == "" {
 		return nil, nil
 	}
@@ -427,7 +427,7 @@ func (a *Adapter) CIFailures(ctx context.Context, mr ports.MRRef, head string) (
 			newest[r.Name] = i
 		}
 	}
-	var out []ports.CIFailure
+	var out []repoport.CIFailure
 	workflows := map[int64]string{}
 	for i, r := range runs.CheckRuns {
 		if newest[r.Name] != i || r.Status != "completed" {
@@ -438,7 +438,7 @@ func (a *Adapter) CIFailures(ctx context.Context, mr ports.MRRef, head string) (
 		default:
 			continue
 		}
-		f := ports.CIFailure{Name: r.Name, URL: r.HTMLURL, Summary: r.Output.Title}
+		f := repoport.CIFailure{Name: r.Name, URL: r.HTMLURL, Summary: r.Output.Title}
 		if r.App.Slug == "github-actions" && len(out) < ciDetailMax {
 			a.actionsJob(ctx, r.ID, workflows, &f)
 		}
@@ -457,7 +457,7 @@ func (a *Adapter) CIFailures(ctx context.Context, mr ports.MRRef, head string) (
 	}
 	for _, s := range combined.Statuses {
 		if s.State == "failure" || s.State == "error" {
-			out = append(out, ports.CIFailure{Name: s.Context, URL: s.TargetURL, Summary: s.Description})
+			out = append(out, repoport.CIFailure{Name: s.Context, URL: s.TargetURL, Summary: s.Description})
 		}
 	}
 	return out, nil
@@ -465,7 +465,7 @@ func (a *Adapter) CIFailures(ctx context.Context, mr ports.MRRef, head string) (
 
 // actionsJob fills an Actions check run's job, failed steps and workflow
 // file. Best effort: what cannot be read leaves the check as its name says.
-func (a *Adapter) actionsJob(ctx context.Context, jobID int64, workflows map[int64]string, f *ports.CIFailure) {
+func (a *Adapter) actionsJob(ctx context.Context, jobID int64, workflows map[int64]string, f *repoport.CIFailure) {
 	var job struct {
 		Name  string `json:"name"`
 		RunID int64  `json:"run_id"`
@@ -500,7 +500,7 @@ func (a *Adapter) actionsJob(ctx context.Context, jobID int64, workflows map[int
 // MRApproval reads the pull request's reviews: each reviewer's latest
 // decision counts (a comment decides nothing, a dismissal undoes one). It is
 // approved when someone approves and nobody still requests changes.
-func (a *Adapter) MRApproval(ctx context.Context, mr ports.MRRef) (ports.Approval, error) {
+func (a *Adapter) MRApproval(ctx context.Context, mr repoport.MRRef) (repoport.Approval, error) {
 	latest := map[string]string{}
 	var order []string
 	for page := 1; page <= 10; page++ {
@@ -511,7 +511,7 @@ func (a *Adapter) MRApproval(ctx context.Context, mr ports.MRRef) (ports.Approva
 			} `json:"user"`
 		}
 		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pulls/%d/reviews?per_page=100&page=%d", a.repoPath(), mr.IID, page), nil, &reviews); err != nil {
-			return ports.Approval{}, err
+			return repoport.Approval{}, err
 		}
 		for _, r := range reviews {
 			switch r.State {
@@ -526,7 +526,7 @@ func (a *Adapter) MRApproval(ctx context.Context, mr ports.MRRef) (ports.Approva
 			break
 		}
 	}
-	var out ports.Approval
+	var out repoport.Approval
 	blocked := false
 	for _, who := range order {
 		switch latest[who] {
@@ -614,9 +614,9 @@ func conversationThread(id string) bool {
 // review's top-level body, and each conversation comment — the last two with
 // the factory's replies to them attached. Comments from bot accounts (CI,
 // dependency bots) are not review comments and are left out.
-func (a *Adapter) MRThreads(ctx context.Context, mr ports.MRRef) ([]ports.ReviewThread, error) {
+func (a *Adapter) MRThreads(ctx context.Context, mr repoport.MRRef) ([]repoport.ReviewThread, error) {
 	owner, name, _ := strings.Cut(a.cfg.Locator, "/")
-	var out []ports.ReviewThread
+	var out []repoport.ReviewThread
 	var after any
 	for page := 0; page < 20; page++ {
 		var res struct {
@@ -654,7 +654,7 @@ func (a *Adapter) MRThreads(ctx context.Context, mr ports.MRRef) ([]ports.Review
 		}
 		rt := res.Repository.PullRequest.ReviewThreads
 		for _, n := range rt.Nodes {
-			th := ports.ReviewThread{ID: n.ID, Path: n.Path, Resolved: n.IsResolved}
+			th := repoport.ReviewThread{ID: n.ID, Path: n.Path, Resolved: n.IsResolved}
 			if n.Line != nil {
 				th.Line = *n.Line
 			} else if n.OriginalLine != nil {
@@ -668,7 +668,7 @@ func (a *Adapter) MRThreads(ctx context.Context, mr ports.MRRef) ([]ports.Review
 				if c.Author != nil {
 					author = c.Author.Login
 				}
-				th.Comments = append(th.Comments, ports.ReviewComment{ID: fmt.Sprint(c.DatabaseID), Author: author, Body: c.Body, CreatedAt: c.CreatedAt})
+				th.Comments = append(th.Comments, repoport.ReviewComment{ID: fmt.Sprint(c.DatabaseID), Author: author, Body: c.Body, CreatedAt: c.CreatedAt})
 			}
 			if len(th.Comments) > 0 {
 				out = append(out, th)
@@ -705,10 +705,10 @@ func (a *Adapter) MRThreads(ctx context.Context, mr ports.MRRef) ([]ports.Review
 		return nil, err
 	}
 	// Factory replies to conversation threads, by the thread they answer.
-	replies := map[string][]ports.ReviewComment{}
+	replies := map[string][]repoport.ReviewComment{}
 	for _, c := range comments {
-		if id := ports.MarkerThread(c.Body); id != "" {
-			replies[id] = append(replies[id], ports.ReviewComment{ID: fmt.Sprint(c.ID), Author: c.User.Login, Body: c.Body, CreatedAt: c.CreatedAt})
+		if id := repoport.MarkerThread(c.Body); id != "" {
+			replies[id] = append(replies[id], repoport.ReviewComment{ID: fmt.Sprint(c.ID), Author: c.User.Login, Body: c.Body, CreatedAt: c.CreatedAt})
 		}
 	}
 	for _, r := range reviews {
@@ -716,16 +716,16 @@ func (a *Adapter) MRThreads(ctx context.Context, mr ports.MRRef) ([]ports.Review
 			continue
 		}
 		id := reviewThreadPrefix + fmt.Sprint(r.ID)
-		th := ports.ReviewThread{ID: id, Comments: []ports.ReviewComment{{ID: fmt.Sprint(r.ID), Author: r.User.Login, Body: r.Body, CreatedAt: r.SubmittedAt}}}
+		th := repoport.ReviewThread{ID: id, Comments: []repoport.ReviewComment{{ID: fmt.Sprint(r.ID), Author: r.User.Login, Body: r.Body, CreatedAt: r.SubmittedAt}}}
 		th.Comments = append(th.Comments, replies[id]...)
 		out = append(out, th)
 	}
 	for _, c := range comments {
-		if ports.IsFactoryReply(c.Body) || c.User.Type == "Bot" || strings.TrimSpace(c.Body) == "" {
+		if repoport.IsFactoryReply(c.Body) || c.User.Type == "Bot" || strings.TrimSpace(c.Body) == "" {
 			continue
 		}
 		id := issueThreadPrefix + fmt.Sprint(c.ID)
-		th := ports.ReviewThread{ID: id, Comments: []ports.ReviewComment{{ID: fmt.Sprint(c.ID), Author: c.User.Login, Body: c.Body, CreatedAt: c.CreatedAt}}}
+		th := repoport.ReviewThread{ID: id, Comments: []repoport.ReviewComment{{ID: fmt.Sprint(c.ID), Author: c.User.Login, Body: c.Body, CreatedAt: c.CreatedAt}}}
 		th.Comments = append(th.Comments, replies[id]...)
 		out = append(out, th)
 	}
@@ -734,7 +734,7 @@ func (a *Adapter) MRThreads(ctx context.Context, mr ports.MRRef) ([]ports.Review
 
 // ReplyThread replies in a review thread (GraphQL), or — for a review body,
 // which has no thread to reply in — posts a conversation comment.
-func (a *Adapter) ReplyThread(ctx context.Context, mr ports.MRRef, threadID, body string) error {
+func (a *Adapter) ReplyThread(ctx context.Context, mr repoport.MRRef, threadID, body string) error {
 	if conversationThread(threadID) {
 		_, err := a.api(ctx, http.MethodPost, fmt.Sprintf("%s/issues/%d/comments", a.repoPath(), mr.IID), map[string]any{"body": body}, nil)
 		return err
@@ -745,7 +745,7 @@ func (a *Adapter) ReplyThread(ctx context.Context, mr ports.MRRef, threadID, bod
 
 // ResolveThread resolves a review thread (GraphQL only). A review body has
 // nothing to resolve.
-func (a *Adapter) ResolveThread(ctx context.Context, mr ports.MRRef, threadID string) error {
+func (a *Adapter) ResolveThread(ctx context.Context, mr repoport.MRRef, threadID string) error {
 	if conversationThread(threadID) {
 		return nil // a conversation comment has nothing to resolve
 	}
@@ -754,7 +754,7 @@ func (a *Adapter) ResolveThread(ctx context.Context, mr ports.MRRef, threadID st
 
 // UploadAttachment uploads a file for the bound repository's pull requests
 // to show (uploadAttachment).
-func (a *Adapter) UploadAttachment(ctx context.Context, _ ports.RepoRef, name, contentType string, data []byte) (ports.Attachment, error) {
+func (a *Adapter) UploadAttachment(ctx context.Context, _ repoport.RepoRef, name, contentType string, data []byte) (repoport.Attachment, error) {
 	return a.uploadAttachment(ctx, a.cfg.Locator, name, contentType, data)
 }
 
@@ -763,45 +763,45 @@ func (a *Adapter) UploadAttachment(ctx context.Context, _ ports.RepoRef, name, c
 // which answers with the URL a body embeds. That endpoint takes a classic
 // personal access token with the repo scope; a fine-grained or an app's
 // token gets a 404, so a refusal says what token it needs.
-func (a *Adapter) uploadAttachment(ctx context.Context, repo, name, contentType string, data []byte) (ports.Attachment, error) {
+func (a *Adapter) uploadAttachment(ctx context.Context, repo, name, contentType string, data []byte) (repoport.Attachment, error) {
 	if a.uploads == "" {
-		return ports.Attachment{}, fmt.Errorf("github: attachments can only be uploaded to github.com, and this integration is %s (GitHub Enterprise Server is not supported)", a.cfg.BaseURL)
+		return repoport.Attachment{}, fmt.Errorf("github: attachments can only be uploaded to github.com, and this integration is %s (GitHub Enterprise Server is not supported)", a.cfg.BaseURL)
 	}
 	id, err := a.repoID(ctx, repo)
 	if err != nil {
-		return ports.Attachment{}, err
+		return repoport.Attachment{}, err
 	}
 	q := url.Values{"name": {name}, "content_type": {contentType}, "repository_id": {strconv.FormatInt(id, 10)}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.uploads+"/user-attachments/assets?"+q.Encode(), bytes.NewReader(data))
 	if err != nil {
-		return ports.Attachment{}, err
+		return repoport.Attachment{}, err
 	}
 	req.Header.Set("Authorization", "token "+a.cfg.Token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", contentType)
 	resp, err := a.http.Do(req)
 	if err != nil {
-		return ports.Attachment{}, err
+		return repoport.Attachment{}, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized:
-		return ports.Attachment{}, fmt.Errorf("github: uploading %s to %s was refused (%d): uploads need a classic personal access token with the repo scope — a fine-grained token or an app's cannot upload", name, repo, resp.StatusCode)
+		return repoport.Attachment{}, fmt.Errorf("github: uploading %s to %s was refused (%d): uploads need a classic personal access token with the repo scope — a fine-grained token or an app's cannot upload", name, repo, resp.StatusCode)
 	case resp.StatusCode >= 400:
-		return ports.Attachment{}, fmt.Errorf("github: uploading %s to %s: %d: %s", name, repo, resp.StatusCode, tail(string(body), 300))
+		return repoport.Attachment{}, fmt.Errorf("github: uploading %s to %s: %d: %s", name, repo, resp.StatusCode, tail(string(body), 300))
 	}
 	var out struct {
 		URL string `json:"url"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil || out.URL == "" {
-		return ports.Attachment{}, fmt.Errorf("github: uploading %s to %s: the answer carries no url: %s", name, repo, tail(string(body), 300))
+		return repoport.Attachment{}, fmt.Errorf("github: uploading %s to %s: the answer carries no url: %s", name, repo, tail(string(body), 300))
 	}
 	md := "[" + name + "](" + out.URL + ")"
 	if strings.HasPrefix(contentType, "image/") {
 		md = "!" + md
 	}
-	return ports.Attachment{URL: out.URL, Markdown: md}, nil
+	return repoport.Attachment{URL: out.URL, Markdown: md}, nil
 }
 
 // repoID is a repository's numeric id, asked once (GET /repos/{owner}/{repo}).
@@ -834,7 +834,7 @@ func tail(s string, n int) string {
 	return s[len(s)-n:]
 }
 
-var _ ports.RepoHost = (*Adapter)(nil)
+var _ repoport.RepoHost = (*Adapter)(nil)
 
 // ghPull is the pulls API's shape, as far as MRInfo needs it.
 type ghPull struct {
@@ -863,32 +863,32 @@ type ghPull struct {
 	} `json:"base"`
 }
 
-func (p *ghPull) info() ports.MRInfo {
-	st := ports.MROpen
+func (p *ghPull) info() repoport.MRInfo {
+	st := repoport.MROpen
 	switch {
 	case p.MergedAt != nil && *p.MergedAt != "":
-		st = ports.MRMerged
+		st = repoport.MRMerged
 	case p.State == "closed":
-		st = ports.MRClosed
+		st = repoport.MRClosed
 	}
-	return ports.MRInfo{Ref: ports.MRRef{IID: p.Number, URL: p.HTMLURL}, Title: p.Title, Body: p.Body, Author: p.User.Login,
+	return repoport.MRInfo{Ref: repoport.MRRef{IID: p.Number, URL: p.HTMLURL}, Title: p.Title, Body: p.Body, Author: p.User.Login,
 		State: st, Draft: p.Draft, Source: p.Head.Ref, Target: p.Base.Ref, Head: p.Head.SHA,
 		HeadRef: fmt.Sprintf("refs/pull/%d/head", p.Number),
 		Fork:    p.Head.Repo == nil || p.Head.Repo.FullName != p.Base.Repo.FullName}
 }
 
 // GetMR reads one pull request.
-func (a *Adapter) GetMR(ctx context.Context, iid int) (ports.MRInfo, error) {
+func (a *Adapter) GetMR(ctx context.Context, iid int) (repoport.MRInfo, error) {
 	var p ghPull
 	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pulls/%d", a.repoPath(), iid), nil, &p); err != nil {
-		return ports.MRInfo{}, err
+		return repoport.MRInfo{}, err
 	}
 	return p.info(), nil
 }
 
 // ListMRs lists the open pull requests, newest first, up to 300.
-func (a *Adapter) ListMRs(ctx context.Context) ([]ports.MRInfo, error) {
-	var out []ports.MRInfo
+func (a *Adapter) ListMRs(ctx context.Context) ([]repoport.MRInfo, error) {
+	var out []repoport.MRInfo
 	for page := 1; page <= 3; page++ {
 		var ps []ghPull
 		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pulls?state=open&sort=created&direction=desc&per_page=100&page=%d", a.repoPath(), page), nil, &ps); err != nil {
@@ -920,10 +920,10 @@ func (a *Adapter) Whoami(ctx context.Context) (string, error) {
 // reviews missing, a conflict), 409 for a head that moved, 422 for a method
 // the repository does not allow. Deleting the branch is a second call, and
 // one already gone (the repository deletes merged branches) is fine.
-func (a *Adapter) MergeMR(ctx context.Context, mr ports.MRRef, opts ports.MergeOptions) error {
+func (a *Adapter) MergeMR(ctx context.Context, mr repoport.MRRef, opts repoport.MergeOptions) error {
 	method := opts.Method
 	if method == "" {
-		method = ports.MergeMethodMerge
+		method = repoport.MergeMethodMerge
 	}
 	body := map[string]any{"merge_method": method}
 	if opts.Head != "" {
@@ -933,7 +933,7 @@ func (a *Adapter) MergeMR(ctx context.Context, mr ports.MRRef, opts ports.MergeO
 	if err != nil {
 		switch code {
 		case http.StatusMethodNotAllowed, http.StatusConflict, http.StatusUnprocessableEntity:
-			return &ports.ErrMergeRefused{Reason: err.Error()}
+			return &repoport.ErrMergeRefused{Reason: err.Error()}
 		}
 		return err
 	}
@@ -971,18 +971,18 @@ func (a *Adapter) MergeMR(ctx context.Context, mr ports.MRRef, opts ports.MergeO
 // pull request's reviews. A note goes on its line only when that line is in
 // the diff (GitHub refuses the whole review otherwise); the rest join the
 // body. Always a COMMENT review: approving is a person's call.
-func (a *Adapter) PostReview(ctx context.Context, mr ports.MRRef, rev ports.Review) (ports.ReviewPosted, error) {
-	marker := ports.ReviewMarker(rev.ID, "review")
+func (a *Adapter) PostReview(ctx context.Context, mr repoport.MRRef, rev repoport.Review) (repoport.ReviewPosted, error) {
+	marker := repoport.ReviewMarker(rev.ID, "review")
 	for page := 1; page <= 10; page++ {
 		var reviews []struct {
 			Body string `json:"body"`
 		}
 		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pulls/%d/reviews?per_page=100&page=%d", a.repoPath(), mr.IID, page), nil, &reviews); err != nil {
-			return ports.ReviewPosted{}, err
+			return repoport.ReviewPosted{}, err
 		}
 		for _, r := range reviews {
 			if strings.Contains(r.Body, marker) {
-				return ports.ReviewPosted{Already: true}, nil
+				return repoport.ReviewPosted{Already: true}, nil
 			}
 		}
 		if len(reviews) < 100 {
@@ -996,27 +996,27 @@ func (a *Adapter) PostReview(ctx context.Context, mr ports.MRRef, rev ports.Revi
 			Patch    string `json:"patch"`
 		}
 		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pulls/%d/files?per_page=100&page=%d", a.repoPath(), mr.IID, page), nil, &fs); err != nil {
-			return ports.ReviewPosted{}, err
+			return repoport.ReviewPosted{}, err
 		}
 		for _, f := range fs {
-			files[f.Filename] = ports.DiffLines(f.Patch)
+			files[f.Filename] = repoport.DiffLines(f.Patch)
 		}
 		if len(fs) < 100 {
 			break
 		}
 	}
 	comments := []map[string]any{}
-	var folded []ports.ReviewNote
+	var folded []repoport.ReviewNote
 	for i, n := range rev.Notes {
 		if _, ok := files[n.Path][n.Line]; !ok {
 			folded = append(folded, n)
 			continue
 		}
 		comments = append(comments, map[string]any{"path": n.Path, "line": n.Line, "side": "RIGHT",
-			"body": strings.TrimSpace(n.Body) + "\n\n" + ports.NoteMarker(rev.ID, i, n.Kind)})
+			"body": strings.TrimSpace(n.Body) + "\n\n" + repoport.NoteMarker(rev.ID, i, n.Kind)})
 	}
 	var parts []string
-	for _, p := range []string{strings.TrimSpace(rev.Summary), ports.FoldedNotes(folded)} {
+	for _, p := range []string{strings.TrimSpace(rev.Summary), repoport.FoldedNotes(folded)} {
 		if p != "" {
 			parts = append(parts, p)
 		}
@@ -1026,7 +1026,7 @@ func (a *Adapter) PostReview(ctx context.Context, mr ports.MRRef, rev ports.Revi
 		body["commit_id"] = rev.Head
 	}
 	if _, err := a.api(ctx, http.MethodPost, fmt.Sprintf("%s/pulls/%d/reviews", a.repoPath(), mr.IID), body, nil); err != nil {
-		return ports.ReviewPosted{}, err
+		return repoport.ReviewPosted{}, err
 	}
-	return ports.ReviewPosted{Inline: len(comments), Folded: len(folded)}, nil
+	return repoport.ReviewPosted{Inline: len(comments), Folded: len(folded)}, nil
 }

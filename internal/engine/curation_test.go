@@ -16,9 +16,9 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 )
@@ -67,7 +67,7 @@ outcomes:
 // curatedReviewer runs the doc with the reviewer scripted call by call (the
 // threads file it was given in hand) and a snapshot store, so gates pin what
 // they show.
-func curatedReviewer(t *testing.T, gate bool, script func(call int, threads *reviewfile.Threads) string) (*phasedHarness, ports.MRRef, string) {
+func curatedReviewer(t *testing.T, gate bool, script func(call int, threads *reviewfile.Threads) string) (*phasedHarness, repoport.MRRef, string) {
 	t.Helper()
 	doc := strings.Replace(curatedReviewerDoc, "GATE", map[bool]string{true: "true", false: "false"}[gate], 1)
 	att, snaps, _ := newFiles(t)
@@ -134,7 +134,7 @@ func TestReReviewContinuesItsThreadInsteadOfRepeatingIt(t *testing.T) {
 		return "replies:\n  - { thread: " + th.ID + ", body: Addressed in a2, resolve: true }\n"
 	})
 	ph.waitState(t, runID, run.InReview)
-	if th := ph.repoHost.SnapshotThreads(ref.IID); len(th) != 1 || !ports.IsFactoryReply(th[0].Comments[0].Body) || ports.MarkerAttr(th[0].Comments[0].Body, "kind") != "nit" {
+	if th := ph.repoHost.SnapshotThreads(ref.IID); len(th) != 1 || !repoport.IsFactoryReply(th[0].Comments[0].Body) || repoport.MarkerAttr(th[0].Comments[0].Body, "kind") != "nit" {
 		t.Fatalf("threads after the first review = %+v", th)
 	}
 	ph.repoHost.SetHead(ref.IID, "a2")
@@ -336,7 +336,7 @@ func TestReplyGateHoldsBackAReplyAndSkipsItsThread(t *testing.T) {
 		last := th.Comments[len(th.Comments)-1]
 		switch th.ID {
 		case "d1":
-			if len(th.Comments) != 2 || !strings.HasPrefix(last.Body, "one, really") || ports.MarkerAttr(last.Body, "did") != "fixed" {
+			if len(th.Comments) != 2 || !strings.HasPrefix(last.Body, "one, really") || repoport.MarkerAttr(last.Body, "did") != "fixed" {
 				t.Errorf("d1 = %+v", th.Comments)
 			}
 		case "d2":
@@ -399,7 +399,7 @@ func TestRepliesAnswerEveryThreadDeclinedIncluded(t *testing.T) {
 	for _, th := range rh.repoHost.SnapshotThreads(1) {
 		if th.ID == "d2" {
 			last := th.Comments[len(th.Comments)-1]
-			if !ports.IsFactoryReply(last.Body) || ports.MarkerAttr(last.Body, "did") != "declined" || th.Resolved {
+			if !repoport.IsFactoryReply(last.Body) || repoport.MarkerAttr(last.Body, "did") != "declined" || th.Resolved {
 				t.Errorf("d2 = %+v", th)
 			}
 		}

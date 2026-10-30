@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 )
 
 // Config is an integration's stored configuration: plain values plus
@@ -128,7 +129,7 @@ type RepoAccount interface {
 type RepoHostKind interface {
 	Descriptor() Descriptor
 	Account(cfg Config) (RepoAccount, error)
-	RepoHost(cfg Config, repo ports.RepoRef) (ports.RepoHost, error)
+	RepoHost(cfg Config, repo repoport.RepoRef) (repoport.RepoHost, error)
 }
 
 // Provisioner is the EnvProvisioner port plus lifecycle/probe surface.

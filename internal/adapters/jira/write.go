@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 )
 
 // issuePath is the issue's API path with its key escaped.
@@ -226,7 +227,7 @@ func (c *Client) AddLink(ctx context.Context, key string, link ports.TicketLink)
 // ADF is a media node, which needs the Media API's id, not the attachment's.
 // On v2 the link is wiki markup — the image itself (!name!) or an
 // attachment link ([^name]) — since that is what a v2 comment body is.
-func (c *Client) Attach(ctx context.Context, key, name, contentType string, data []byte) (ports.Attachment, error) {
+func (c *Client) Attach(ctx context.Context, key, name, contentType string, data []byte) (repoport.Attachment, error) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	h := textproto.MIMEHeader{}
@@ -240,12 +241,12 @@ func (c *Client) Attach(ctx context.Context, key, name, contentType string, data
 		err = mw.Close()
 	}
 	if err != nil {
-		return ports.Attachment{}, err
+		return repoport.Attachment{}, err
 	}
 	path := c.issuePath(key) + "/attachments"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.BaseURL+path, &buf)
 	if err != nil {
-		return ports.Attachment{}, err
+		return repoport.Attachment{}, err
 	}
 	c.authorize(req)
 	req.Header.Set("Accept", "application/json")
@@ -253,24 +254,24 @@ func (c *Client) Attach(ctx context.Context, key, name, contentType string, data
 	req.Header.Set("X-Atlassian-Token", "no-check")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return ports.Attachment{}, err
+		return repoport.Attachment{}, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 400 {
-		return ports.Attachment{}, fmt.Errorf("jira POST %s: %d: %s", path, resp.StatusCode, errText(body))
+		return repoport.Attachment{}, fmt.Errorf("jira POST %s: %d: %s", path, resp.StatusCode, errText(body))
 	}
 	var out []struct {
 		Filename string `json:"filename"`
 		Content  string `json:"content"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
-		return ports.Attachment{}, fmt.Errorf("jira POST %s: decode: %w", path, err)
+		return repoport.Attachment{}, fmt.Errorf("jira POST %s: decode: %w", path, err)
 	}
 	if len(out) == 0 || out[0].Content == "" {
-		return ports.Attachment{}, fmt.Errorf("jira POST %s: the attachment has no content URL", path)
+		return repoport.Attachment{}, fmt.Errorf("jira POST %s: the attachment has no content URL", path)
 	}
-	att := ports.Attachment{URL: out[0].Content, Markdown: "[" + name + "](" + out[0].Content + ")"}
+	att := repoport.Attachment{URL: out[0].Content, Markdown: "[" + name + "](" + out[0].Content + ")"}
 	if c.cfg.APIVersion == "2" {
 		att.Markdown = "[^" + out[0].Filename + "]"
 		if strings.HasPrefix(contentType, "image/") {

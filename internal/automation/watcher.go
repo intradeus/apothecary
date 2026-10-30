@@ -20,6 +20,7 @@ import (
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
 	"apothecary/internal/schedule"
 	"apothecary/internal/tickets"
@@ -38,7 +39,7 @@ type Runs interface {
 // MRs is what a merge_request automation reads: a repository's open merge
 // requests, and who the repository host integration is.
 type MRs interface {
-	ListMRs(ctx context.Context, projectID, repo string) ([]ports.MRInfo, error)
+	ListMRs(ctx context.Context, projectID, repo string) ([]repoport.MRInfo, error)
 	RepoHostUser(ctx context.Context, projectID, repo string) (string, error)
 }
 
@@ -207,7 +208,7 @@ func (w *Watcher) pollMRs(ctx context.Context, a confstore.Automation) (bool, er
 		if i >= w.limit() {
 			break
 		}
-		if mr.State != ports.MROpen || mr.Draft || strings.EqualFold(mr.Author, me) {
+		if mr.State != repoport.MROpen || mr.Draft || strings.EqualFold(mr.Author, me) {
 			continue
 		}
 		t, ok, err := w.ticketForMR(ctx, a, mr)
@@ -232,7 +233,7 @@ func (w *Watcher) pollMRs(ctx context.Context, a confstore.Automation) (bool, er
 
 // ticketForMR is the ticket a merge request's run belongs to: made now, or
 // this automation's earlier one still without a run.
-func (w *Watcher) ticketForMR(ctx context.Context, a confstore.Automation, mr ports.MRInfo) (confstore.Ticket, bool, error) {
+func (w *Watcher) ticketForMR(ctx context.Context, a confstore.Automation, mr repoport.MRInfo) (confstore.Ticket, bool, error) {
 	existing, found, err := w.Tickets.FindByKey(ctx, a.ProjectID, mr.Ref.URL)
 	if err != nil {
 		return confstore.Ticket{}, false, err
@@ -252,7 +253,7 @@ func (w *Watcher) ticketForMR(ctx context.Context, a confstore.Automation, mr po
 }
 
 // startOn creates the run of a merge request's ticket, on that merge request.
-func (w *Watcher) startOn(ctx context.Context, a confstore.Automation, t confstore.Ticket, mr ports.MRInfo) (string, error) {
+func (w *Watcher) startOn(ctx context.Context, a confstore.Automation, t confstore.Ticket, mr repoport.MRInfo) (string, error) {
 	id, err := w.Runs.CreateRunWith(ctx, engine.Ticket{
 		TicketID: t.ID, Title: t.Title, Goal: t.Goal, ChangeType: string(t.ChangeType),
 		SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,

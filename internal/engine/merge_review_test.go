@@ -10,9 +10,9 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
 )
 
@@ -29,7 +29,7 @@ func TestMRMergeMergesAtThePhasesHead(t *testing.T) {
 	ph.repoHost.SetMergeableNow(1, true)
 	ph.waitState(t, runID, run.Completed)
 	m := ph.repoHost.SnapshotMRs()[0]
-	if m.State != ports.MRMerged || m.MergedWith != ports.MergeMethodSquash || !m.BranchDeleted {
+	if m.State != repoport.MRMerged || m.MergedWith != repoport.MergeMethodSquash || !m.BranchDeleted {
 		t.Errorf("mr = %+v", m)
 	}
 	merged, _ := findPayload[*event.MRMerged](ph.events(t, runID))
@@ -212,7 +212,7 @@ func TestMRMergeIsPinnedToTheHeadTheRoundPushed(t *testing.T) {
 	if rounds != 1 {
 		t.Errorf("ship ran %d rounds, want the one that pushed to merge", rounds)
 	}
-	if m := ph.repoHost.SnapshotMRs()[0]; m.State != ports.MRMerged {
+	if m := ph.repoHost.SnapshotMRs()[0]; m.State != repoport.MRMerged {
 		t.Errorf("mr = %+v", m)
 	}
 }

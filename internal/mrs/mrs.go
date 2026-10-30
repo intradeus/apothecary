@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
@@ -30,7 +30,7 @@ func New(resolver resolution.Resolver, runs *run.Reader) *Service {
 
 // ListMRs is the open merge requests of a project's repository ("" = the
 // primary), for a person picking one to start a run on.
-func (s *Service) ListMRs(ctx context.Context, projectID, repo string) ([]ports.MRInfo, error) {
+func (s *Service) ListMRs(ctx context.Context, projectID, repo string) ([]repoport.MRInfo, error) {
 	res, err := s.Resolver.Resolve(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -47,10 +47,10 @@ func (s *Service) ListMRs(ctx context.Context, projectID, repo string) ([]ports.
 }
 
 // MR reads one merge request of a project's repository ("" = the primary).
-func (s *Service) MR(ctx context.Context, projectID, repo string, iid int) (ports.MRInfo, error) {
+func (s *Service) MR(ctx context.Context, projectID, repo string, iid int) (repoport.MRInfo, error) {
 	res, err := s.Resolver.Resolve(ctx, projectID)
 	if err != nil {
-		return ports.MRInfo{}, err
+		return repoport.MRInfo{}, err
 	}
 	defer res.Close()
 	if repo == "" {
@@ -58,7 +58,7 @@ func (s *Service) MR(ctx context.Context, projectID, repo string, iid int) (port
 	}
 	repoHost := res.RepoHostFor(repo)
 	if repoHost == nil {
-		return ports.MRInfo{}, fmt.Errorf("no integration reaches repository %q", repo)
+		return repoport.MRInfo{}, fmt.Errorf("no integration reaches repository %q", repo)
 	}
 	return repoHost.GetMR(ctx, iid)
 }
@@ -85,26 +85,26 @@ func (s *Service) RepoHostUser(ctx context.Context, projectID, repo string) (str
 // MRLive is a merge request as the repository host reports it right now: the
 // run page's view of mergeability and review activity.
 type MRLive struct {
-	Repo           string          `json:"repo"`
-	Branch         string          `json:"branch"`
-	URL            string          `json:"url"`
-	State          ports.MRState   `json:"state"`
-	Mergeable      ports.Mergeable `json:"mergeable"`
-	Target         string          `json:"target,omitempty"`
-	HeadSHA        string          `json:"head_sha,omitempty"`
-	PendingThreads int             `json:"pending_threads"`
+	Repo           string             `json:"repo"`
+	Branch         string             `json:"branch"`
+	URL            string             `json:"url"`
+	State          repoport.MRState   `json:"state"`
+	Mergeable      repoport.Mergeable `json:"mergeable"`
+	Target         string             `json:"target,omitempty"`
+	HeadSHA        string             `json:"head_sha,omitempty"`
+	PendingThreads int                `json:"pending_threads"`
 	// LastCommentAt is the newest pending reviewer comment (zero: none).
 	LastCommentAt *time.Time `json:"last_comment_at,omitempty"`
 	// MergeableNow is the repository host's verdict that it would merge now;
 	// Draft whether it is still a draft; Checks the head's CI; Approval its
 	// reviews' verdict. Checks and Approval are read for an open one only.
-	MergeableNow bool            `json:"mergeable_now,omitempty"`
-	Draft        bool            `json:"draft,omitempty"`
-	Checks       *ports.Checks   `json:"checks,omitempty"`
-	Approval     *ports.Approval `json:"approval,omitempty"`
+	MergeableNow bool               `json:"mergeable_now,omitempty"`
+	Draft        bool               `json:"draft,omitempty"`
+	Checks       *repoport.Checks   `json:"checks,omitempty"`
+	Approval     *repoport.Approval `json:"approval,omitempty"`
 	// StackedOn is the open merge request whose branch an open one targets:
 	// merging it lands there, not on the repository's main line.
-	StackedOn *ports.MRBase `json:"stacked_on,omitempty"`
+	StackedOn *repoport.MRBase `json:"stacked_on,omitempty"`
 	// Error is what the repository host said when it could not be asked.
 	Error string `json:"error,omitempty"`
 }
@@ -134,7 +134,7 @@ func (s *Service) MRStatuses(ctx context.Context, runID string) ([]MRLive, error
 			continue
 		}
 		wg.Add(1)
-		go func(l *MRLive, ref ports.MRRef) {
+		go func(l *MRLive, ref repoport.MRRef) {
 			defer wg.Done()
 			st, err := repoHost.MRStatus(ctx, ref)
 			if err != nil {
@@ -146,7 +146,7 @@ func (s *Service) MRStatuses(ctx context.Context, runID string) ([]MRLive, error
 			if st.Target != "" {
 				l.Target = st.Target
 			}
-			if st.State == ports.MROpen {
+			if st.State == repoport.MROpen {
 				checks, err := repoHost.MRChecks(ctx, ref, st.HeadSHA)
 				if err != nil {
 					l.Error = err.Error()
@@ -165,22 +165,22 @@ func (s *Service) MRStatuses(ctx context.Context, runID string) ([]MRLive, error
 				l.Error = err.Error()
 				return
 			}
-			pending := ports.PendingThreads(threads)
+			pending := repoport.PendingThreads(threads)
 			l.PendingThreads = len(pending)
-			if c, ok := ports.NewestPending(pending); ok {
+			if c, ok := repoport.NewestPending(pending); ok {
 				at := c.CreatedAt
 				l.LastCommentAt = &at
 			}
-		}(&out[i], ports.MRRef{IID: mr.IID, URL: mr.URL})
+		}(&out[i], repoport.MRRef{IID: mr.IID, URL: mr.URL})
 	}
 	wg.Wait()
 	// Stacking is read off the repository's open merge requests, listed once
 	// per repository. Best effort: a list that fails leaves no notice rather
 	// than an error over a status that was read.
-	open := map[string][]ports.MRInfo{}
+	open := map[string][]repoport.MRInfo{}
 	for i := range out {
 		l := &out[i]
-		if l.Error != "" || l.State != ports.MROpen || l.Target == "" {
+		if l.Error != "" || l.State != repoport.MROpen || l.Target == "" {
 			continue
 		}
 		mrs, ok := open[l.Repo]
@@ -188,7 +188,7 @@ func (s *Service) MRStatuses(ctx context.Context, runID string) ([]MRLive, error
 			mrs, _ = res.RepoHostFor(l.Repo).ListMRs(ctx)
 			open[l.Repo] = mrs
 		}
-		l.StackedOn = ports.StackedOn(l.Target, mrs)
+		l.StackedOn = repoport.StackedOn(l.Target, mrs)
 	}
 	return out, nil
 }

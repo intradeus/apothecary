@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	gitlabadapter "apothecary/internal/adapters/gitlab"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 )
 
 // GitLab is the repository host/gitlab kind (DESIGN2 §4.1): base_url + PAT,
@@ -90,7 +90,7 @@ func (a *gitlabAccount) EgressDomains() []string {
 	return nil
 }
 
-func (GitLab) RepoHost(cfg Config, repo ports.RepoRef) (ports.RepoHost, error) {
+func (GitLab) RepoHost(cfg Config, repo repoport.RepoRef) (repoport.RepoHost, error) {
 	id, err := strconv.Atoi(repo.Locator)
 	if err != nil {
 		return nil, fmt.Errorf("gitlab: repo locator must be the numeric project id, got %q", repo.Locator)

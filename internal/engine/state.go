@@ -8,9 +8,9 @@ import (
 	"apothecary/internal/actionspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 )
@@ -779,7 +779,7 @@ type mrRecord struct {
 	Repo   string
 	Branch string
 	Target string
-	Ref    ports.MRRef
+	Ref    repoport.MRRef
 }
 
 // checkoutsOf is the run's checkout list: as recorded, or — for runs older
@@ -850,12 +850,12 @@ func (rs *runState) addMR(p *event.MRCreated) {
 	rs.noteHead(repo, p.Head)
 	for i := range rs.mrs {
 		if rs.mrs[i].Repo == repo && rs.mrs[i].Branch == p.Branch {
-			rs.mrs[i].Ref = ports.MRRef{IID: p.MRIID, URL: p.MRURL}
+			rs.mrs[i].Ref = repoport.MRRef{IID: p.MRIID, URL: p.MRURL}
 			rs.mrs[i].Target = p.Target
 			return
 		}
 	}
-	rs.mrs = append(rs.mrs, mrRecord{Repo: repo, Branch: p.Branch, Target: p.Target, Ref: ports.MRRef{IID: p.MRIID, URL: p.MRURL}})
+	rs.mrs = append(rs.mrs, mrRecord{Repo: repo, Branch: p.Branch, Target: p.Target, Ref: repoport.MRRef{IID: p.MRIID, URL: p.MRURL}})
 }
 
 func (rs *runState) mrFor(repo, branch string) *mrRecord {
@@ -872,7 +872,7 @@ func (rs *runState) mrFor(repo, branch string) *mrRecord {
 
 // firstMR is the merge request a single-MR world would call "the" MR: the
 // first one opened (the primary repository's).
-func (rs *runState) firstMR() *ports.MRRef {
+func (rs *runState) firstMR() *repoport.MRRef {
 	if len(rs.mrs) == 0 {
 		return nil
 	}

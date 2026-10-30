@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 )
 
 // ghStub fakes the GitHub v3 endpoints the adapter touches and records
@@ -68,9 +68,9 @@ func ghStub(t *testing.T) (*httptest.Server, *[]map[string]any) {
 	return ts, &prs
 }
 
-func testAdapter(ts *httptest.Server) (*Adapter, ports.RepoRef) {
+func testAdapter(ts *httptest.Server) (*Adapter, repoport.RepoRef) {
 	return New(Config{BaseURL: ts.URL, Token: "tok", Locator: "lu/greeter"}),
-		ports.RepoRef{Locator: "lu/greeter", DefaultBranch: "main"}
+		repoport.RepoRef{Locator: "lu/greeter", DefaultBranch: "main"}
 }
 
 func TestCheckAccess(t *testing.T) {
@@ -80,7 +80,7 @@ func TestCheckAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	ro := New(Config{BaseURL: ts.URL, Token: "tok", Locator: "lu/readonly"})
-	err := ro.CheckAccess(context.Background(), ports.RepoRef{Locator: "lu/readonly"})
+	err := ro.CheckAccess(context.Background(), repoport.RepoRef{Locator: "lu/readonly"})
 	if err == nil || !strings.Contains(err.Error(), "cannot push") {
 		t.Errorf("read-only err = %v", err)
 	}
@@ -156,8 +156,8 @@ func TestMRStateMergedWinsOverClosed(t *testing.T) {
 	ts, _ := ghStub(t)
 	a, _ := testAdapter(ts)
 	ctx := context.Background()
-	for iid, want := range map[int]ports.MRState{7: ports.MRMerged, 8: ports.MRClosed, 9: ports.MROpen} {
-		st, err := a.MRStatus(ctx, ports.MRRef{IID: iid})
+	for iid, want := range map[int]repoport.MRState{7: repoport.MRMerged, 8: repoport.MRClosed, 9: repoport.MROpen} {
+		st, err := a.MRStatus(ctx, repoport.MRRef{IID: iid})
 		got := st.State
 		if err != nil || got != want {
 			t.Errorf("pr %d state = %v, %v (want %v)", iid, got, err, want)
@@ -217,24 +217,24 @@ func TestAccountListBranches(t *testing.T) {
 func TestMRStatusMergeability(t *testing.T) {
 	for _, tc := range []struct {
 		body string
-		want ports.Mergeable
+		want repoport.Mergeable
 	}{
-		{`{"state":"open","mergeable":true,"mergeable_state":"clean","head":{"sha":"h"},"base":{"ref":"main"}}`, ports.MergeClean},
-		{`{"state":"open","mergeable":false,"mergeable_state":"dirty","head":{"sha":"h"},"base":{"ref":"main"}}`, ports.MergeConflicts},
-		{`{"state":"open","mergeable":null,"mergeable_state":"unknown","head":{"sha":"h"},"base":{"ref":"main"}}`, ports.MergeUnknown},
-		{`{"state":"open","mergeable":false,"mergeable_state":"blocked","head":{"sha":"h"},"base":{"ref":"main"}}`, ports.MergeClean}, // blocked by checks, not conflicts
+		{`{"state":"open","mergeable":true,"mergeable_state":"clean","head":{"sha":"h"},"base":{"ref":"main"}}`, repoport.MergeClean},
+		{`{"state":"open","mergeable":false,"mergeable_state":"dirty","head":{"sha":"h"},"base":{"ref":"main"}}`, repoport.MergeConflicts},
+		{`{"state":"open","mergeable":null,"mergeable_state":"unknown","head":{"sha":"h"},"base":{"ref":"main"}}`, repoport.MergeUnknown},
+		{`{"state":"open","mergeable":false,"mergeable_state":"blocked","head":{"sha":"h"},"base":{"ref":"main"}}`, repoport.MergeClean}, // blocked by checks, not conflicts
 	} {
 		mux := http.NewServeMux()
 		mux.HandleFunc("GET /repos/lu/greeter/pulls/5", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(tc.body)) })
 		mux.HandleFunc("GET /repos/lu/greeter/branches/main", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"commit":{"sha":"t1"}}`)) })
 		ts := httptest.NewServer(mux)
 		a, _ := testAdapter(ts)
-		st, err := a.MRStatus(context.Background(), ports.MRRef{IID: 5})
+		st, err := a.MRStatus(context.Background(), repoport.MRRef{IID: 5})
 		ts.Close()
 		if err != nil || st.Mergeable != tc.want || st.HeadSHA != "h" || st.Target != "main" {
 			t.Errorf("%s: %+v, %v; want %s", tc.body, st, err, tc.want)
 		}
-		if (tc.want == ports.MergeConflicts) != (st.TargetSHA == "t1") {
+		if (tc.want == repoport.MergeConflicts) != (st.TargetSHA == "t1") {
 			t.Errorf("target sha %q is fetched only on conflicts", st.TargetSHA)
 		}
 	}
@@ -282,7 +282,7 @@ func TestMRThreadsRepliesAndResolve(t *testing.T) {
 	defer ts.Close()
 	a, _ := testAdapter(ts)
 	ctx := context.Background()
-	th, err := a.MRThreads(ctx, ports.MRRef{IID: 5})
+	th, err := a.MRThreads(ctx, repoport.MRRef{IID: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,26 +291,26 @@ func TestMRThreadsRepliesAndResolve(t *testing.T) {
 	}
 	// A conversation comment is a thread; the bot's is not; our reply to it
 	// is attached, not a thread of its own.
-	if th[3].ID != "issue:52" || len(th[3].Comments) != 2 || !ports.IsFactoryReply(th[3].Comments[1].Body) {
+	if th[3].ID != "issue:52" || len(th[3].Comments) != 2 || !repoport.IsFactoryReply(th[3].Comments[1].Body) {
 		t.Errorf("conversation thread = %+v", th[3])
 	}
-	if err := a.ReplyThread(ctx, ports.MRRef{IID: 5}, "issue:52", "readme updated"); err != nil || issueComment != "readme updated" {
+	if err := a.ReplyThread(ctx, repoport.MRRef{IID: 5}, "issue:52", "readme updated"); err != nil || issueComment != "readme updated" {
 		t.Errorf("conversation reply: %q, %v", issueComment, err)
 	}
-	if th[2].ID != "review:9" || len(th[2].Comments) != 2 || !ports.IsFactoryReply(th[2].Comments[1].Body) {
+	if th[2].ID != "review:9" || len(th[2].Comments) != 2 || !repoport.IsFactoryReply(th[2].Comments[1].Body) {
 		t.Errorf("review-body thread = %+v (approved empty review dropped, our reply attached)", th[2])
 	}
-	if err := a.ReplyThread(ctx, ports.MRRef{IID: 5}, "T1", "done"); err != nil || !strings.Contains(gql[len(gql)-1], "addPullRequestReviewThreadReply") {
+	if err := a.ReplyThread(ctx, repoport.MRRef{IID: 5}, "T1", "done"); err != nil || !strings.Contains(gql[len(gql)-1], "addPullRequestReviewThreadReply") {
 		t.Errorf("thread reply: %v, %v", err, gql)
 	}
-	if err := a.ReplyThread(ctx, ports.MRRef{IID: 5}, "review:9", "added"); err != nil || issueComment != "added" {
+	if err := a.ReplyThread(ctx, repoport.MRRef{IID: 5}, "review:9", "added"); err != nil || issueComment != "added" {
 		t.Errorf("review reply: %q, %v", issueComment, err)
 	}
 	n := len(gql)
-	if err := a.ResolveThread(ctx, ports.MRRef{IID: 5}, "T1"); err != nil || !strings.Contains(gql[len(gql)-1], "resolveReviewThread") {
+	if err := a.ResolveThread(ctx, repoport.MRRef{IID: 5}, "T1"); err != nil || !strings.Contains(gql[len(gql)-1], "resolveReviewThread") {
 		t.Errorf("resolve: %v", err)
 	}
-	if err := a.ResolveThread(ctx, ports.MRRef{IID: 5}, "review:9"); err != nil || len(gql) != n+1 {
+	if err := a.ResolveThread(ctx, repoport.MRRef{IID: 5}, "review:9"); err != nil || len(gql) != n+1 {
 		t.Errorf("a review body has nothing to resolve: %v", err)
 	}
 }
@@ -330,7 +330,7 @@ func TestMRStatusMergeableNowAndDraft(t *testing.T) {
 		mux.HandleFunc("GET /repos/lu/greeter/pulls/5", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(tc.body)) })
 		ts := httptest.NewServer(mux)
 		a, _ := testAdapter(ts)
-		st, err := a.MRStatus(context.Background(), ports.MRRef{IID: 5})
+		st, err := a.MRStatus(context.Background(), repoport.MRRef{IID: 5})
 		ts.Close()
 		if err != nil || st.MergeableNow != tc.now || st.Draft != tc.draft {
 			t.Errorf("%s: now %v draft %v, %v", tc.body, st.MergeableNow, st.Draft, err)
@@ -355,12 +355,12 @@ func TestMRChecks(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 	a, _ := testAdapter(ts)
-	c, err := a.MRChecks(context.Background(), ports.MRRef{IID: 5}, "h1")
+	c, err := a.MRChecks(context.Background(), repoport.MRRef{IID: 5}, "h1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]ports.CheckState{"test": ports.CheckSuccess, "lint": ports.CheckPending, "docs": ports.CheckNeutral, "ci/legacy": ports.CheckFailure}
-	if len(c.Items) != len(want) || c.State != ports.CheckFailure || c.Head != "h1" {
+	want := map[string]repoport.CheckState{"test": repoport.CheckSuccess, "lint": repoport.CheckPending, "docs": repoport.CheckNeutral, "ci/legacy": repoport.CheckFailure}
+	if len(c.Items) != len(want) || c.State != repoport.CheckFailure || c.Head != "h1" {
 		t.Fatalf("checks = %+v", c)
 	}
 	for _, it := range c.Items {
@@ -404,11 +404,11 @@ func TestCIFailures(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 	a, _ := testAdapter(ts)
-	got, err := a.CIFailures(context.Background(), ports.MRRef{IID: 5}, "h1")
+	got, err := a.CIFailures(context.Background(), repoport.MRRef{IID: 5}, "h1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []ports.CIFailure{
+	want := []repoport.CIFailure{
 		{Name: "test", URL: "https://gh/job/11", File: ".github/workflows/ci.yml", Job: "test (ubuntu)", Steps: []string{"Run go test ./..."}},
 		{Name: "lint", URL: "https://gh/job/12", File: ".github/workflows/ci.yml", Job: "lint", Steps: []string{"golangci-lint"}},
 		{Name: "codecov", URL: "https://cov/1", Summary: "coverage dropped 3%"},
@@ -440,7 +440,7 @@ func TestMRApproval(t *testing.T) {
 		mux.HandleFunc("GET /repos/lu/greeter/pulls/5/reviews", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(tc.reviews)) })
 		ts := httptest.NewServer(mux)
 		a, _ := testAdapter(ts)
-		ap, err := a.MRApproval(context.Background(), ports.MRRef{IID: 5})
+		ap, err := a.MRApproval(context.Background(), repoport.MRRef{IID: 5})
 		ts.Close()
 		if err != nil || ap.Approved != tc.ok || len(ap.By) != tc.by {
 			t.Errorf("%s: %+v, %v", tc.reviews, ap, err)
@@ -475,7 +475,7 @@ func TestMergeMR(t *testing.T) {
 	defer ts.Close()
 	a, _ := testAdapter(ts)
 	ctx := context.Background()
-	if err := a.MergeMR(ctx, ports.MRRef{IID: 5}, ports.MergeOptions{Method: ports.MergeMethodSquash, Head: "h1", DeleteBranch: true}); err != nil {
+	if err := a.MergeMR(ctx, repoport.MRRef{IID: 5}, repoport.MergeOptions{Method: repoport.MergeMethodSquash, Head: "h1", DeleteBranch: true}); err != nil {
 		t.Fatal(err)
 	}
 	if merged["merge_method"] != "squash" || merged["sha"] != "h1" || len(deleted) != 1 {
@@ -483,14 +483,14 @@ func TestMergeMR(t *testing.T) {
 	}
 	for _, code := range []int{405, 409, 422} {
 		refuse = code
-		var refused *ports.ErrMergeRefused
-		if err := a.MergeMR(ctx, ports.MRRef{IID: 5}, ports.MergeOptions{}); !errors.As(err, &refused) {
+		var refused *repoport.ErrMergeRefused
+		if err := a.MergeMR(ctx, repoport.MRRef{IID: 5}, repoport.MergeOptions{}); !errors.As(err, &refused) {
 			t.Errorf("%d: err = %v, want a refusal", code, err)
 		}
 	}
 	refuse = 500
-	var refused *ports.ErrMergeRefused
-	if err := a.MergeMR(ctx, ports.MRRef{IID: 5}, ports.MergeOptions{}); err == nil || errors.As(err, &refused) {
+	var refused *repoport.ErrMergeRefused
+	if err := a.MergeMR(ctx, repoport.MRRef{IID: 5}, repoport.MergeOptions{}); err == nil || errors.As(err, &refused) {
 		t.Errorf("500: err = %v, want the repository host failing, not a refusal", err)
 	}
 }
@@ -514,9 +514,9 @@ func TestPostReview(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 	a, _ := testAdapter(ts)
-	rev := ports.Review{ID: "run/p-1/post", Head: "h1", Summary: "Looks reasonable.", Notes: []ports.ReviewNote{
+	rev := repoport.Review{ID: "run/p-1/post", Head: "h1", Summary: "Looks reasonable.", Notes: []repoport.ReviewNote{
 		{Path: "a.go", Line: 2, Body: "name it"}, {Path: "a.go", Line: 40, Body: "far away"}, {Path: "b.go", Line: 1, Body: "untouched file"}}}
-	res, err := a.PostReview(context.Background(), ports.MRRef{IID: 5}, rev)
+	res, err := a.PostReview(context.Background(), repoport.MRRef{IID: 5}, rev)
 	if err != nil || res.Inline != 1 || res.Folded != 2 || len(posted) != 1 {
 		t.Fatalf("res %+v err %v posted %d", res, err, len(posted))
 	}
@@ -525,14 +525,14 @@ func TestPostReview(t *testing.T) {
 	comments, _ := b["comments"].([]any)
 	if b["event"] != "COMMENT" || b["commit_id"] != "h1" || len(comments) != 1 ||
 		!strings.Contains(body, "Looks reasonable.") || !strings.Contains(body, "`a.go:40` — far away") ||
-		!strings.Contains(body, ports.ReviewMarker(rev.ID, "review")) {
+		!strings.Contains(body, repoport.ReviewMarker(rev.ID, "review")) {
 		t.Errorf("review = %v", b)
 	}
-	if c := comments[0].(map[string]any); c["line"] != float64(2) || c["side"] != "RIGHT" || !strings.Contains(c["body"].(string), ports.ReviewMarker(rev.ID, "note-0")) {
+	if c := comments[0].(map[string]any); c["line"] != float64(2) || c["side"] != "RIGHT" || !strings.Contains(c["body"].(string), repoport.ReviewMarker(rev.ID, "note-0")) {
 		t.Errorf("comment = %v", c)
 	}
-	existing = `[{"body":"Looks reasonable.\n\n` + strings.ReplaceAll(ports.ReviewMarker(rev.ID, "review"), `"`, `\"`) + `"}]`
-	res, err = a.PostReview(context.Background(), ports.MRRef{IID: 5}, rev)
+	existing = `[{"body":"Looks reasonable.\n\n` + strings.ReplaceAll(repoport.ReviewMarker(rev.ID, "review"), `"`, `\"`) + `"}]`
+	res, err = a.PostReview(context.Background(), repoport.MRRef{IID: 5}, rev)
 	if err != nil || !res.Already || len(posted) != 1 {
 		t.Errorf("retry: res %+v err %v posted %d", res, err, len(posted))
 	}
@@ -568,19 +568,19 @@ func TestUploadAttachment(t *testing.T) {
 	a := New(Config{BaseURL: ts.URL, Token: "tok", Locator: "lu/greeter"})
 	a.uploads = ts.URL
 	ctx := context.Background()
-	att, err := a.UploadAttachment(ctx, ports.RepoRef{}, "home.png", "image/png", []byte("\x89PNG"))
+	att, err := a.UploadAttachment(ctx, repoport.RepoRef{}, "home.png", "image/png", []byte("\x89PNG"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if query != "content_type=image%2Fpng&name=home.png&repository_id=4242" || auth != "token tok" || ct != "image/png" || body != "\x89PNG" {
 		t.Errorf("query %q auth %q content type %q body %q", query, auth, ct, body)
 	}
-	want := ports.Attachment{URL: "https://github.com/user-attachments/assets/0f1e", Markdown: "![home.png](https://github.com/user-attachments/assets/0f1e)"}
+	want := repoport.Attachment{URL: "https://github.com/user-attachments/assets/0f1e", Markdown: "![home.png](https://github.com/user-attachments/assets/0f1e)"}
 	if att != want {
 		t.Errorf("attachment = %+v, want %+v", att, want)
 	}
 	refuse = true
-	_, err = a.UploadAttachment(ctx, ports.RepoRef{}, "notes.txt", "text/plain", []byte("x"))
+	_, err = a.UploadAttachment(ctx, repoport.RepoRef{}, "notes.txt", "text/plain", []byte("x"))
 	if err == nil || !strings.Contains(err.Error(), "classic personal access token with the repo scope") {
 		t.Errorf("refusal = %v", err)
 	}
@@ -589,7 +589,7 @@ func TestUploadAttachment(t *testing.T) {
 	}
 	// GitHub Enterprise Server has no uploads host a token can reach.
 	ghes := New(Config{BaseURL: "https://ghe.example/api/v3", Token: "tok", Locator: "lu/greeter"})
-	if _, err := ghes.UploadAttachment(ctx, ports.RepoRef{}, "home.png", "image/png", nil); err == nil || !strings.Contains(err.Error(), "github.com") {
+	if _, err := ghes.UploadAttachment(ctx, repoport.RepoRef{}, "home.png", "image/png", nil); err == nil || !strings.Contains(err.Error(), "github.com") {
 		t.Errorf("GHES upload = %v", err)
 	}
 	if New(Config{Token: "tok"}).uploads != "https://uploads.github.com" {
@@ -608,13 +608,13 @@ func TestAddMRLabels(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 	a, _ := testAdapter(ts)
-	if err := a.AddMRLabels(context.Background(), ports.MRRef{IID: 5}, []string{"apothecary", "bot"}); err != nil {
+	if err := a.AddMRLabels(context.Background(), repoport.MRRef{IID: 5}, []string{"apothecary", "bot"}); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(got["labels"], []string{"apothecary", "bot"}) {
 		t.Errorf("sent %v", got)
 	}
-	if err := a.AddMRLabels(context.Background(), ports.MRRef{IID: 5}, nil); err != nil {
+	if err := a.AddMRLabels(context.Background(), repoport.MRRef{IID: 5}, nil); err != nil {
 		t.Errorf("no labels is no call: %v", err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 )
 
 func TestEnvLifecycleAndFiles(t *testing.T) {
@@ -95,28 +96,28 @@ func TestRepoHost(t *testing.T) {
 	ctx := context.Background()
 	f := &RepoHost{}
 
-	if err := f.CheckAccess(ctx, ports.RepoRef{}); err != nil {
+	if err := f.CheckAccess(ctx, repoport.RepoRef{}); err != nil {
 		t.Fatal(err)
 	}
-	ok, _ := f.FileExists(ctx, ports.RepoRef{}, "AGENTS.md")
+	ok, _ := f.FileExists(ctx, repoport.RepoRef{}, "AGENTS.md")
 	if !ok {
 		t.Error("files exist by default")
 	}
 	f.MissingFiles = map[string]bool{".apothecary/agents/": true}
-	ok, _ = f.FileExists(ctx, ports.RepoRef{}, ".apothecary/agents/")
+	ok, _ = f.FileExists(ctx, repoport.RepoRef{}, ".apothecary/agents/")
 	if ok {
 		t.Error("missing file reported present")
 	}
 
-	ref, err := f.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/x", "", "Title", "body")
+	ref, err := f.CreateDraftMR(ctx, repoport.RepoRef{}, "apothecary/x", "", "Title", "body")
 	if err != nil || ref.IID != 1 || ref.URL == "" {
 		t.Fatalf("create MR = %+v, %v", ref, err)
 	}
-	if st, _ := f.MRStatus(ctx, ref); st.State != ports.MROpen {
+	if st, _ := f.MRStatus(ctx, ref); st.State != repoport.MROpen {
 		t.Errorf("state = %s", st.State)
 	}
-	f.SetMRState(ref.IID, ports.MRMerged)
-	if st, _ := f.MRStatus(ctx, ref); st.State != ports.MRMerged {
+	f.SetMRState(ref.IID, repoport.MRMerged)
+	if st, _ := f.MRStatus(ctx, ref); st.State != repoport.MRMerged {
 		t.Errorf("state after merge = %s", st.State)
 	}
 }

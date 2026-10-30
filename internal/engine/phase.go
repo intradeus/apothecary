@@ -19,6 +19,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/shell"
 	"apothecary/internal/signalspec"
 )
@@ -201,10 +202,10 @@ func (x *exec) subjectMR() *mrRecord {
 // otherwise); headSince is when this poll's head was first seen.
 type mrObservation struct {
 	mr        *mrRecord
-	status    ports.MRStatus
-	threads   []ports.ReviewThread
-	checks    *ports.Checks
-	approval  *ports.Approval
+	status    repoport.MRStatus
+	threads   []repoport.ReviewThread
+	checks    *repoport.Checks
+	approval  *repoport.Approval
 	headSince time.Time
 }
 
@@ -213,9 +214,9 @@ type mrObservation struct {
 // loop. Everything is per merge request (checkout + branch).
 type idler struct {
 	threadsAt map[string]time.Time
-	threads   map[string][]ports.ReviewThread
-	checks    map[string]polled[ports.Checks]
-	approvals map[string]polled[ports.Approval]
+	threads   map[string][]repoport.ReviewThread
+	checks    map[string]polled[repoport.Checks]
+	approvals map[string]polled[repoport.Approval]
 	heads     map[string]polled[string]
 	failures  int
 }
@@ -227,8 +228,8 @@ type polled[T any] struct {
 }
 
 func newIdler() *idler {
-	return &idler{threadsAt: map[string]time.Time{}, threads: map[string][]ports.ReviewThread{},
-		checks: map[string]polled[ports.Checks]{}, approvals: map[string]polled[ports.Approval]{}, heads: map[string]polled[string]{}}
+	return &idler{threadsAt: map[string]time.Time{}, threads: map[string][]repoport.ReviewThread{},
+		checks: map[string]polled[repoport.Checks]{}, approvals: map[string]polled[repoport.Approval]{}, heads: map[string]polled[string]{}}
 }
 
 // repoHostReads says which of a merge request's facts beyond its status the
@@ -477,34 +478,34 @@ func (x *exec) observe(st *idler) ([]mrObservation, error) {
 			st.heads[k] = polled[string]{status.HeadSHA, now}
 		}
 		o := mrObservation{mr: mr, status: status, headSince: st.heads[k].at}
-		if reads.checks && status.State == ports.MROpen {
+		if reads.checks && status.State == repoport.MROpen {
 			// A head's checks are asked for when the head is new, while they
 			// run, and otherwise at the thread cadence (a re-run turns them).
 			c, ok := st.checks[k]
-			stale := !ok || c.v.Head != status.HeadSHA || c.v.State == ports.CheckPending || now.Sub(c.at) >= every ||
-				(c.v.State == ports.ChecksNone && now.Sub(o.headSince) < every)
+			stale := !ok || c.v.Head != status.HeadSHA || c.v.State == repoport.CheckPending || now.Sub(c.at) >= every ||
+				(c.v.State == repoport.ChecksNone && now.Sub(o.headSince) < every)
 			if stale {
 				checks, err := repoHost.MRChecks(x.ctx, mr.Ref, status.HeadSHA)
 				if err != nil {
 					return nil, fmt.Errorf("%s checks: %w", mr.Ref.URL, err)
 				}
-				st.checks[k] = polled[ports.Checks]{checks, now}
+				st.checks[k] = polled[repoport.Checks]{checks, now}
 			}
 			v := st.checks[k].v
 			o.checks = &v
 		}
-		if reads.approval && status.State == ports.MROpen {
+		if reads.approval && status.State == repoport.MROpen {
 			if a, ok := st.approvals[k]; !ok || now.Sub(a.at) >= every {
 				ap, err := repoHost.MRApproval(x.ctx, mr.Ref)
 				if err != nil {
 					return nil, fmt.Errorf("%s approval: %w", mr.Ref.URL, err)
 				}
-				st.approvals[k] = polled[ports.Approval]{ap, now}
+				st.approvals[k] = polled[repoport.Approval]{ap, now}
 			}
 			v := st.approvals[k].v
 			o.approval = &v
 		}
-		if reads.threads && status.State == ports.MROpen {
+		if reads.threads && status.State == repoport.MROpen {
 			if last, ok := st.threadsAt[k]; !ok || x.e.clock().Sub(last) >= every {
 				threads, err := repoHost.MRThreads(x.ctx, mr.Ref)
 				if err != nil {
@@ -542,7 +543,7 @@ type mrSignal struct {
 func (x *exec) signalOn(slug string, quiet time.Duration, o mrObservation) mrSignal {
 	url := o.mr.Ref.URL
 	switch o.status.State {
-	case ports.MRMerged:
+	case repoport.MRMerged:
 		switch slug {
 		case signalspec.MRMerged:
 			return mrSignal{holds: true, key: "merged", why: fmt.Sprintf("The merge request %s merged.", url)}
@@ -550,7 +551,7 @@ func (x *exec) signalOn(slug string, quiet time.Duration, o mrObservation) mrSig
 			return mrSignal{passed: true}
 		}
 		return mrSignal{gone: true, why: "the merge request merged: " + url}
-	case ports.MRClosed:
+	case repoport.MRClosed:
 		if slug == signalspec.MRClosed {
 			return mrSignal{holds: true, key: "closed", why: fmt.Sprintf("The merge request %s was closed without being merged.", url)}
 		}
@@ -565,7 +566,7 @@ func (x *exec) signalOn(slug string, quiet time.Duration, o mrObservation) mrSig
 		}
 		return mrSignal{holds: true, key: o.status.HeadSHA, why: fmt.Sprintf("The merge request %s is approved.", url)}
 	case signalspec.MRConflicts:
-		if o.status.Mergeable != ports.MergeConflicts {
+		if o.status.Mergeable != repoport.MergeConflicts {
 			return mrSignal{}
 		}
 		target := o.status.Target
@@ -575,8 +576,8 @@ func (x *exec) signalOn(slug string, quiet time.Duration, o mrObservation) mrSig
 		return mrSignal{holds: true, key: o.status.TargetSHA + ".." + o.status.HeadSHA,
 			why: fmt.Sprintf("The merge request %s no longer merges cleanly into %s.", url, target)}
 	case signalspec.MRReviewSettled:
-		pending := x.unskipped(ports.PendingThreads(o.threads))
-		newest, ok := ports.NewestPending(pending)
+		pending := x.unskipped(repoport.PendingThreads(o.threads))
+		newest, ok := repoport.NewestPending(pending)
 		if !ok || x.e.clock().Sub(newest.CreatedAt) < quiet {
 			return mrSignal{}
 		}
@@ -585,7 +586,7 @@ func (x *exec) signalOn(slug string, quiet time.Duration, o mrObservation) mrSig
 	case signalspec.CIFailed:
 		// The checks of the head this poll saw, failed: one occurrence per
 		// head and set of failed checks.
-		if o.checks == nil || o.checks.Head != o.status.HeadSHA || o.checks.State != ports.CheckFailure {
+		if o.checks == nil || o.checks.Head != o.status.HeadSHA || o.checks.State != repoport.CheckFailure {
 			return mrSignal{}
 		}
 		failed := o.checks.Failed()
@@ -817,7 +818,7 @@ func (x *exec) openMRs() []*mrRecord {
 	}
 	var out []*mrRecord
 	for _, o := range x.lastObs {
-		if o.status.State == ports.MROpen {
+		if o.status.State == repoport.MROpen {
 			out = append(out, o.mr)
 		}
 	}

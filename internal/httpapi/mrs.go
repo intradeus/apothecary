@@ -19,7 +19,7 @@ import (
 
 	"apothecary/internal/auth"
 	"apothecary/internal/engine"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
 	"apothecary/internal/skills"
 )
@@ -28,13 +28,13 @@ import (
 // whether the factory itself opened it, what it is stacked on, and the runs
 // done on it here.
 type MRRow struct {
-	MR ports.MRInfo `json:"mr"`
+	MR repoport.MRInfo `json:"mr"`
 	// Mine: the repository host integration's own account opened it (the
 	// factory's own runs did).
 	Mine bool `json:"mine,omitempty"`
 	// StackedOn is the open merge request it targets the branch of: it
 	// merges into that branch, not the repository's main line.
-	StackedOn *ports.MRBase `json:"stacked_on,omitempty"`
+	StackedOn *repoport.MRBase `json:"stacked_on,omitempty"`
 	// TicketID is the merge request's ticket, once a run was started on it
 	// or an automation picked it; Run its newest run, Runs how many it has.
 	TicketID string `json:"ticket_id,omitempty"`
@@ -95,7 +95,7 @@ func (s *Server) listProjectMRs(w http.ResponseWriter, r *http.Request) {
 	out := make([]MRRow, 0, len(mrs))
 	for _, mr := range mrs {
 		row := MRRow{MR: mr, Mine: me != "" && strings.EqualFold(mr.Author, me), TicketID: byKey[strings.ToLower(mr.Ref.URL)],
-			StackedOn: ports.StackedOn(mr.Target, mrs)}
+			StackedOn: repoport.StackedOn(mr.Target, mrs)}
 		if row.TicketID != "" {
 			runs, err := s.Runs.RunsOfTicket(ctx, row.TicketID)
 			if err != nil {
@@ -134,7 +134,7 @@ func (s *Server) startMRRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if mr.State != ports.MROpen {
+	if mr.State != repoport.MROpen {
 		writeErr(w, http.StatusBadRequest, fmt.Sprintf("merge request %s is %s: a run starts on an open one", mr.Ref.URL, mr.State))
 		return
 	}

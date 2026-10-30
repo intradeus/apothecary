@@ -20,6 +20,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
 	"apothecary/internal/signalspec"
 )
@@ -35,7 +36,7 @@ type Resolution struct {
 	// UserID is the project's owner: what a run created on this resolution
 	// is owned by, and whose channels its notifications reach.
 	UserID       string
-	RepoRef      ports.RepoRef
+	RepoRef      repoport.RepoRef
 	AgentsMDPath string
 	DefaultFlow  string
 	// Commands is project.commands: named scripts, run only by a flow's
@@ -125,7 +126,7 @@ type Resolution struct {
 	// merge request when a run changes it. RepoHosts holds a RepoHost port per
 	// extra repo that has a locator, keyed by name.
 	ExtraRepos []ExtraRepo
-	RepoHosts  map[string]ports.RepoHost
+	RepoHosts  map[string]repoport.RepoHost
 
 	Envp   envport.EnvProvisioner
 	Runner agentport.AgentRunner
@@ -134,7 +135,7 @@ type Resolution struct {
 	// use Runner (the default). nil in single-harness setups (fakes) — the
 	// engine falls back to Runner.
 	Runners  map[string]agentport.AgentRunner
-	RepoHost ports.RepoHost
+	RepoHost repoport.RepoHost
 	// TicketWriter resolves the write side of a ticketsource integration — a
 	// tracker action's target — by integration id: the TICKET's (recorded at
 	// import), not the project's. nil = this build cannot write back (fakes
@@ -186,7 +187,7 @@ type ExtraRepo struct {
 // RepoHostFor returns the repository host port bound to a checkout: the
 // project's for the primary, the per-repo one for an extra that has a locator,
 // nil for an extra that is context only.
-func (r *Resolution) RepoHostFor(repo string) ports.RepoHost {
+func (r *Resolution) RepoHostFor(repo string) repoport.RepoHost {
 	if repo == "" || repo == event.PrimaryCheckoutName {
 		return r.RepoHost
 	}

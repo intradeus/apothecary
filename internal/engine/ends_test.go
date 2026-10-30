@@ -14,8 +14,8 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
 )
 
@@ -33,7 +33,7 @@ func failSync(ph *phasedHarness) {
 func conflictRound(t *testing.T, ph *phasedHarness) {
 	t.Helper()
 	ph.repoHost.SetTargetSHA(1, "t1")
-	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
+	ph.repoHost.SetMergeable(1, repoport.MergeConflicts, "h1")
 	ask := ph.waitPing(t, event.PingPhaseConfirm)
 	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
@@ -99,7 +99,7 @@ func TestADeadEndInAWatcherEndsTheRound(t *testing.T) {
 	if infos, err := ph.e.RunPhases(context.Background(), runID); err != nil || infos[0].Live == nil || infos[0].Live.ParkedAt != "merged" {
 		t.Fatalf("main after the failed round = %+v, %v; want it still parked on the merge", infos, err)
 	}
-	ph.repoHost.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, repoport.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 	if n := len(ph.execsOf("./after.sh")); n != 1 {
 		t.Errorf("after ran %d times, want once after the merge", n)
@@ -134,6 +134,6 @@ func TestGivingUpAtAWatchersDebugLeafEndsTheRound(t *testing.T) {
 	if _, abandoned := findPayload[*event.RunAbandoned](evs); abandoned {
 		t.Fatal("giving up in a watcher abandoned the run")
 	}
-	ph.repoHost.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, repoport.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 }

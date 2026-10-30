@@ -28,6 +28,7 @@ import (
 	"apothecary/internal/modelcheck"
 	"apothecary/internal/ports"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
@@ -934,7 +935,7 @@ func adoptMR(ctx context.Context, res *resolution.Resolution, checkouts []event.
 	if err != nil {
 		return nil, nil, fmt.Errorf("merge request !%d: %w", want.IID, err)
 	}
-	if info.State != ports.MROpen {
+	if info.State != repoport.MROpen {
 		return nil, nil, fmt.Errorf("merge request %s is %s: a run is created on an open one", info.Ref.URL, info.State)
 	}
 	co.Branch, co.Source, co.Fetch, co.Fork = info.Source, info.Target, info.HeadRef, info.Fork
@@ -1256,7 +1257,7 @@ func (e *Engine) preflight(ctx context.Context, res *resolution.Resolution, fl *
 	}
 	for _, x := range res.ExtraRepos {
 		if f := res.RepoHosts[x.Name]; f != nil {
-			if err := f.CheckAccess(ctx, ports.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator}); err != nil {
+			if err := f.CheckAccess(ctx, repoport.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator}); err != nil {
 				return fmt.Errorf("preflight: repository access to repo %s: %w", x.Name, err)
 			}
 		}
@@ -2149,7 +2150,7 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 	for _, x := range res.ExtraRepos {
 		if f := res.RepoHosts[x.Name]; f != nil {
 			steps = append(steps, step("repo_access:"+x.Name,
-				f.CheckAccess(ctx, ports.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator})))
+				f.CheckAccess(ctx, repoport.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator})))
 		}
 	}
 	ok, ferr := res.RepoHost.FileExists(ctx, res.RepoRef, res.AgentsMDPath)

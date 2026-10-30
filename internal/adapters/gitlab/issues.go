@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 )
 
 type IssuesConfig struct {
@@ -592,17 +593,17 @@ func (s *Issues) AddLink(ctx context.Context, key string, link ports.TicketLink)
 
 // Attach uploads a file to the issue's project for a note to show — the
 // same project upload a merge request's attachment is (UploadAttachment).
-func (s *Issues) Attach(ctx context.Context, key, name, contentType string, data []byte) (ports.Attachment, error) {
+func (s *Issues) Attach(ctx context.Context, key, name, contentType string, data []byte) (repoport.Attachment, error) {
 	project, iid, err := s.parseKey(key)
 	if err != nil {
-		return ports.Attachment{}, err
+		return repoport.Attachment{}, err
 	}
 	it, err := s.get(ctx, project, iid)
 	if err != nil {
-		return ports.Attachment{}, err
+		return repoport.Attachment{}, err
 	}
 	up := New(Config{BaseURL: s.a.cfg.BaseURL, Token: s.a.cfg.Token, ProjectID: it.ProjectID})
-	return up.UploadAttachment(ctx, ports.RepoRef{}, name, contentType, data)
+	return up.UploadAttachment(ctx, repoport.RepoRef{}, name, contentType, data)
 }
 
 func splitItems(value string) []string {

@@ -21,6 +21,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 )
 
 // --- EnvProvisioner ---------------------------------------------------------
@@ -479,15 +480,15 @@ func (r *AgentRunner) Resume(ctx context.Context, env envport.EnvID, s agentport
 // --- RepoHost ---------------------------------------------------------------
 
 type MR struct {
-	Ref    ports.MRRef
-	Repo   ports.RepoRef
+	Ref    repoport.MRRef
+	Repo   repoport.RepoRef
 	Branch string
 	Target string
 	Title  string
 	Body   string
-	State  ports.MRState
+	State  repoport.MRState
 	// Mergeable / HeadSHA are what MRStatus reports (default clean, "").
-	Mergeable ports.Mergeable
+	Mergeable repoport.Mergeable
 	HeadSHA   string
 	TargetSHA string
 	// MergeableNow and Draft are MRStatus's repository host verdict; Checks
@@ -495,10 +496,10 @@ type MR struct {
 	// (MRApproval).
 	MergeableNow bool
 	Draft        bool
-	Checks       []ports.Check
+	Checks       []repoport.Check
 	ApprovedBy   []string
 	// CIFailures, when set, is what CIFailures details for the head.
-	CIFailures []ports.CIFailure
+	CIFailures []repoport.CIFailure
 	// Labels are what AddMRLabels added.
 	Labels []string
 	// MergedWith is the method MergeMR merged with, BranchDeleted whether it
@@ -513,10 +514,10 @@ type MR struct {
 	// DiffLines, when set, are the lines of each file a review note may go
 	// on (nil: any line); Reviews what PostReview posted.
 	DiffLines map[string][]int
-	Reviews   []ports.Review
+	Reviews   []repoport.Review
 	// Threads are the review threads MRThreads reports; replies and
 	// resolutions land here.
-	Threads []ports.ReviewThread
+	Threads []repoport.ReviewThread
 }
 
 type RepoHost struct {
@@ -562,8 +563,8 @@ type RepoHost struct {
 
 // Upload is one file a fake repository host or tracker was given to host.
 type Upload struct {
-	Repo        ports.RepoRef // repository host uploads
-	Key         string        // tracker uploads: the issue
+	Repo        repoport.RepoRef // repository host uploads
+	Key         string           // tracker uploads: the issue
 	Name        string
 	ContentType string
 	Data        []byte
@@ -572,11 +573,11 @@ type Upload struct {
 
 // UploadAttachment hosts the file at a deterministic URL: the upload's
 // ordinal and its name.
-func (f *RepoHost) UploadAttachment(_ context.Context, repo ports.RepoRef, name, contentType string, data []byte) (ports.Attachment, error) {
+func (f *RepoHost) UploadAttachment(_ context.Context, repo repoport.RepoRef, name, contentType string, data []byte) (repoport.Attachment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.UploadErr != nil {
-		return ports.Attachment{}, f.UploadErr
+		return repoport.Attachment{}, f.UploadErr
 	}
 	url := fmt.Sprintf("https://gitlab.local/uploads/%d/%s", len(f.Uploads)+1, name)
 	f.Uploads = append(f.Uploads, Upload{Repo: repo, Name: name, ContentType: contentType, Data: append([]byte(nil), data...), URL: url})
@@ -584,7 +585,7 @@ func (f *RepoHost) UploadAttachment(_ context.Context, repo ports.RepoRef, name,
 	if strings.HasPrefix(contentType, "image/") {
 		md = "!" + md
 	}
-	return ports.Attachment{URL: url, Markdown: md}, nil
+	return repoport.Attachment{URL: url, Markdown: md}, nil
 }
 
 // SnapshotUploads returns a locked copy of the uploads so far.
@@ -605,21 +606,21 @@ func (f *RepoHost) Reset() {
 
 // AddOpenMR scripts a merge request someone else opened (test control): it
 // gets the next iid, a head and a fetchable ref.
-func (f *RepoHost) AddOpenMR(author, title, source, target, head string) ports.MRRef {
+func (f *RepoHost) AddOpenMR(author, title, source, target, head string) repoport.MRRef {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.nextID++
-	ref := ports.MRRef{IID: f.nextID, URL: fmt.Sprintf("https://gitlab.local/mr/%d", f.nextID)}
-	f.MRs = append(f.MRs, &MR{Ref: ref, Branch: source, Target: target, Title: title, Author: author, State: ports.MROpen, HeadSHA: head})
+	ref := repoport.MRRef{IID: f.nextID, URL: fmt.Sprintf("https://gitlab.local/mr/%d", f.nextID)}
+	f.MRs = append(f.MRs, &MR{Ref: ref, Branch: source, Target: target, Title: title, Author: author, State: repoport.MROpen, HeadSHA: head})
 	return ref
 }
 
-func (f *RepoHost) info(m *MR) ports.MRInfo {
+func (f *RepoHost) info(m *MR) repoport.MRInfo {
 	author := m.Author
 	if author == "" {
 		author = f.whoami()
 	}
-	return ports.MRInfo{Ref: m.Ref, Title: m.Title, Body: m.Body, Author: author, State: m.State, Draft: m.Draft,
+	return repoport.MRInfo{Ref: m.Ref, Title: m.Title, Body: m.Body, Author: author, State: m.State, Draft: m.Draft,
 		Source: m.Branch, Target: m.Target, Head: m.HeadSHA, HeadRef: fmt.Sprintf("refs/merge-requests/%d/head", m.Ref.IID), Fork: m.Fork}
 }
 
@@ -630,28 +631,28 @@ func (f *RepoHost) whoami() string {
 	return f.User
 }
 
-func (f *RepoHost) GetMR(_ context.Context, iid int) (ports.MRInfo, error) {
+func (f *RepoHost) GetMR(_ context.Context, iid int) (repoport.MRInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.MRStateErr != nil {
-		return ports.MRInfo{}, f.MRStateErr
+		return repoport.MRInfo{}, f.MRStateErr
 	}
 	m := f.mr(iid)
 	if m == nil {
-		return ports.MRInfo{}, fmt.Errorf("mr !%d not found", iid)
+		return repoport.MRInfo{}, fmt.Errorf("mr !%d not found", iid)
 	}
 	return f.info(m), nil
 }
 
-func (f *RepoHost) ListMRs(_ context.Context) ([]ports.MRInfo, error) {
+func (f *RepoHost) ListMRs(_ context.Context) ([]repoport.MRInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.MRStateErr != nil {
 		return nil, f.MRStateErr
 	}
-	var out []ports.MRInfo
+	var out []repoport.MRInfo
 	for i := len(f.MRs) - 1; i >= 0; i-- {
-		if m := f.MRs[i]; m.State == ports.MROpen {
+		if m := f.MRs[i]; m.State == repoport.MROpen {
 			out = append(out, f.info(m))
 		}
 	}
@@ -664,34 +665,34 @@ func (f *RepoHost) Whoami(context.Context) (string, error) {
 	return f.whoami(), nil
 }
 
-func (f *RepoHost) CheckAccess(_ context.Context, _ ports.RepoRef) error {
+func (f *RepoHost) CheckAccess(_ context.Context, _ repoport.RepoRef) error {
 	return f.AccessErr
 }
 
-func (f *RepoHost) FileExists(_ context.Context, _ ports.RepoRef, path string) (bool, error) {
+func (f *RepoHost) FileExists(_ context.Context, _ repoport.RepoRef, path string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return !f.MissingFiles[path], nil
 }
 
-func (f *RepoHost) CreateDraftMR(_ context.Context, repo ports.RepoRef, branch, target, title, body string) (ports.MRRef, error) {
+func (f *RepoHost) CreateDraftMR(_ context.Context, repo repoport.RepoRef, branch, target, title, body string) (repoport.MRRef, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.CreateErr != nil {
-		return ports.MRRef{}, f.CreateErr
+		return repoport.MRRef{}, f.CreateErr
 	}
 	if target == "" {
 		target = repo.DefaultBranch
 	}
 	f.nextID++
-	ref := ports.MRRef{IID: f.nextID, URL: fmt.Sprintf("https://gitlab.local/mr/%d", f.nextID)}
-	f.MRs = append(f.MRs, &MR{Ref: ref, Repo: repo, Branch: branch, Target: target, Title: title, Body: body, State: ports.MROpen, HeadSHA: f.NewHead})
+	ref := repoport.MRRef{IID: f.nextID, URL: fmt.Sprintf("https://gitlab.local/mr/%d", f.nextID)}
+	f.MRs = append(f.MRs, &MR{Ref: ref, Repo: repo, Branch: branch, Target: target, Title: title, Body: body, State: repoport.MROpen, HeadSHA: f.NewHead})
 	return ref, nil
 }
 
 // AddMRLabels adds the labels the merge request does not have yet;
 // LabelErr fails it.
-func (f *RepoHost) AddMRLabels(_ context.Context, mr ports.MRRef, labels []string) error {
+func (f *RepoHost) AddMRLabels(_ context.Context, mr repoport.MRRef, labels []string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.LabelErr != nil {
@@ -711,25 +712,25 @@ func (f *RepoHost) AddMRLabels(_ context.Context, mr ports.MRRef, labels []strin
 
 // FindMR reports the open MR for a branch, as the reconciliation path needs
 // after a crash between creating one and recording it.
-func (f *RepoHost) FindMR(_ context.Context, repo ports.RepoRef, branch, target string) (ports.MRRef, bool, error) {
+func (f *RepoHost) FindMR(_ context.Context, repo repoport.RepoRef, branch, target string) (repoport.MRRef, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.FindErr != nil {
-		return ports.MRRef{}, false, f.FindErr
+		return repoport.MRRef{}, false, f.FindErr
 	}
 	if target == "" {
 		target = repo.DefaultBranch
 	}
 	for _, mr := range f.MRs {
-		if mr.Branch == branch && mr.State == ports.MROpen && (mr.Target == target || mr.Target == "") {
+		if mr.Branch == branch && mr.State == repoport.MROpen && (mr.Target == target || mr.Target == "") {
 			return mr.Ref, true, nil
 		}
 	}
-	return ports.MRRef{}, false, nil
+	return repoport.MRRef{}, false, nil
 }
 
 // BranchURL is the branch's page at a deterministic URL, unless Unpushed.
-func (f *RepoHost) BranchURL(_ context.Context, _ ports.RepoRef, branch string) (string, bool, error) {
+func (f *RepoHost) BranchURL(_ context.Context, _ repoport.RepoRef, branch string) (string, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.BranchErr != nil {
@@ -761,47 +762,47 @@ func (f *RepoHost) mr(iid int) *MR {
 	return nil
 }
 
-func (f *RepoHost) MRStatus(_ context.Context, mr ports.MRRef) (ports.MRStatus, error) {
+func (f *RepoHost) MRStatus(_ context.Context, mr repoport.MRRef) (repoport.MRStatus, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.MRStateErr != nil {
-		return ports.MRStatus{}, f.MRStateErr
+		return repoport.MRStatus{}, f.MRStateErr
 	}
 	m := f.mr(mr.IID)
 	if m == nil {
-		return ports.MRStatus{}, fmt.Errorf("mr !%d not found", mr.IID)
+		return repoport.MRStatus{}, fmt.Errorf("mr !%d not found", mr.IID)
 	}
 	mg := m.Mergeable
 	if mg == "" {
-		mg = ports.MergeClean
+		mg = repoport.MergeClean
 	}
-	st := ports.MRStatus{State: m.State, Mergeable: mg, HeadSHA: m.HeadSHA, Target: m.Target,
-		MergeableNow: m.MergeableNow && m.State == ports.MROpen, Draft: m.Draft}
-	if mg == ports.MergeConflicts {
+	st := repoport.MRStatus{State: m.State, Mergeable: mg, HeadSHA: m.HeadSHA, Target: m.Target,
+		MergeableNow: m.MergeableNow && m.State == repoport.MROpen, Draft: m.Draft}
+	if mg == repoport.MergeConflicts {
 		st.TargetSHA = m.TargetSHA
 	}
 	return st, nil
 }
 
-func (f *RepoHost) MRChecks(_ context.Context, mr ports.MRRef, head string) (ports.Checks, error) {
+func (f *RepoHost) MRChecks(_ context.Context, mr repoport.MRRef, head string) (repoport.Checks, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.MRStateErr != nil {
-		return ports.Checks{}, f.MRStateErr
+		return repoport.Checks{}, f.MRStateErr
 	}
 	m := f.mr(mr.IID)
 	if m == nil {
-		return ports.Checks{}, fmt.Errorf("mr !%d not found", mr.IID)
+		return repoport.Checks{}, fmt.Errorf("mr !%d not found", mr.IID)
 	}
-	out := ports.Checks{Head: head, Items: append([]ports.Check(nil), m.Checks...)}
-	out.State = ports.AggregateChecks(out.Items)
+	out := repoport.Checks{Head: head, Items: append([]repoport.Check(nil), m.Checks...)}
+	out.State = repoport.AggregateChecks(out.Items)
 	f.ChecksCalls++
 	return out, nil
 }
 
 // CIFailures is what Failures holds for the merge request — the failed
 // checks' details a test sets — or, without it, its failed Checks by name.
-func (f *RepoHost) CIFailures(_ context.Context, mr ports.MRRef, _ string) ([]ports.CIFailure, error) {
+func (f *RepoHost) CIFailures(_ context.Context, mr repoport.MRRef, _ string) ([]repoport.CIFailure, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.MRStateErr != nil {
@@ -812,19 +813,19 @@ func (f *RepoHost) CIFailures(_ context.Context, mr ports.MRRef, _ string) ([]po
 		return nil, fmt.Errorf("mr !%d not found", mr.IID)
 	}
 	if m.CIFailures != nil {
-		return append([]ports.CIFailure(nil), m.CIFailures...), nil
+		return append([]repoport.CIFailure(nil), m.CIFailures...), nil
 	}
-	var out []ports.CIFailure
+	var out []repoport.CIFailure
 	for _, c := range m.Checks {
-		if c.State == ports.CheckFailure {
-			out = append(out, ports.CIFailure{Name: c.Name, URL: c.URL})
+		if c.State == repoport.CheckFailure {
+			out = append(out, repoport.CIFailure{Name: c.Name, URL: c.URL})
 		}
 	}
 	return out, nil
 }
 
 // MergeMR merges unless refused, a draft, or the head moved past the pin.
-func (f *RepoHost) MergeMR(_ context.Context, mr ports.MRRef, opts ports.MergeOptions) error {
+func (f *RepoHost) MergeMR(_ context.Context, mr repoport.MRRef, opts repoport.MergeOptions) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.MRStateErr != nil {
@@ -835,15 +836,15 @@ func (f *RepoHost) MergeMR(_ context.Context, mr ports.MRRef, opts ports.MergeOp
 	case m == nil:
 		return fmt.Errorf("mr !%d not found", mr.IID)
 	case m.MergeRefusal != "":
-		return &ports.ErrMergeRefused{Reason: m.MergeRefusal}
-	case m.State != ports.MROpen:
-		return &ports.ErrMergeRefused{Reason: "it is " + string(m.State)}
+		return &repoport.ErrMergeRefused{Reason: m.MergeRefusal}
+	case m.State != repoport.MROpen:
+		return &repoport.ErrMergeRefused{Reason: "it is " + string(m.State)}
 	case m.Draft:
-		return &ports.ErrMergeRefused{Reason: "it is a draft"}
+		return &repoport.ErrMergeRefused{Reason: "it is a draft"}
 	case opts.Head != "" && opts.Head != m.HeadSHA:
-		return &ports.ErrMergeRefused{Reason: "its head moved since " + opts.Head}
+		return &repoport.ErrMergeRefused{Reason: "its head moved since " + opts.Head}
 	}
-	m.State, m.MergedWith, m.BranchDeleted = ports.MRMerged, opts.Method, opts.DeleteBranch
+	m.State, m.MergedWith, m.BranchDeleted = repoport.MRMerged, opts.Method, opts.DeleteBranch
 	return nil
 }
 
@@ -851,29 +852,29 @@ func (f *RepoHost) MergeMR(_ context.Context, mr ports.MRRef, opts ports.MergeOp
 // As on a real host, a note posted on its line becomes a thread the next
 // MRThreads lists, opened by the factory (its body carries the note's
 // marker): what a re-review reads before it writes.
-func (f *RepoHost) PostReview(_ context.Context, mr ports.MRRef, rev ports.Review) (ports.ReviewPosted, error) {
+func (f *RepoHost) PostReview(_ context.Context, mr repoport.MRRef, rev repoport.Review) (repoport.ReviewPosted, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.ReplyErr != nil {
-		return ports.ReviewPosted{}, f.ReplyErr
+		return repoport.ReviewPosted{}, f.ReplyErr
 	}
 	m := f.mr(mr.IID)
 	if m == nil {
-		return ports.ReviewPosted{}, fmt.Errorf("mr !%d not found", mr.IID)
+		return repoport.ReviewPosted{}, fmt.Errorf("mr !%d not found", mr.IID)
 	}
 	for _, r := range m.Reviews {
 		if r.ID == rev.ID {
-			return ports.ReviewPosted{Already: true}, nil
+			return repoport.ReviewPosted{Already: true}, nil
 		}
 	}
-	var out ports.ReviewPosted
+	var out repoport.ReviewPosted
 	now := time.Now()
 	for i, n := range rev.Notes {
 		if lines, ok := m.DiffLines[n.Path]; m.DiffLines == nil || (ok && slices.Contains(lines, n.Line)) {
 			out.Inline++
 			id := fmt.Sprintf("n%d", len(m.Threads)+1)
-			m.Threads = append(m.Threads, ports.ReviewThread{ID: id, Path: n.Path, Line: n.Line, Comments: []ports.ReviewComment{{
-				ID: id + "-0", Author: "factory", Body: strings.TrimSpace(n.Body) + "\n\n" + ports.NoteMarker(rev.ID, i, n.Kind), CreatedAt: now}}})
+			m.Threads = append(m.Threads, repoport.ReviewThread{ID: id, Path: n.Path, Line: n.Line, Comments: []repoport.ReviewComment{{
+				ID: id + "-0", Author: "factory", Body: strings.TrimSpace(n.Body) + "\n\n" + repoport.NoteMarker(rev.ID, i, n.Kind), CreatedAt: now}}})
 		} else {
 			out.Folded++
 		}
@@ -882,20 +883,20 @@ func (f *RepoHost) PostReview(_ context.Context, mr ports.MRRef, rev ports.Revie
 	return out, nil
 }
 
-func (f *RepoHost) MRApproval(_ context.Context, mr ports.MRRef) (ports.Approval, error) {
+func (f *RepoHost) MRApproval(_ context.Context, mr repoport.MRRef) (repoport.Approval, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.MRStateErr != nil {
-		return ports.Approval{}, f.MRStateErr
+		return repoport.Approval{}, f.MRStateErr
 	}
 	m := f.mr(mr.IID)
 	if m == nil {
-		return ports.Approval{}, fmt.Errorf("mr !%d not found", mr.IID)
+		return repoport.Approval{}, fmt.Errorf("mr !%d not found", mr.IID)
 	}
-	return ports.Approval{Approved: len(m.ApprovedBy) > 0, By: append([]string(nil), m.ApprovedBy...)}, nil
+	return repoport.Approval{Approved: len(m.ApprovedBy) > 0, By: append([]string(nil), m.ApprovedBy...)}, nil
 }
 
-func (f *RepoHost) MRThreads(_ context.Context, mr ports.MRRef) ([]ports.ReviewThread, error) {
+func (f *RepoHost) MRThreads(_ context.Context, mr repoport.MRRef) ([]repoport.ReviewThread, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.ThreadsErr != nil {
@@ -905,15 +906,15 @@ func (f *RepoHost) MRThreads(_ context.Context, mr ports.MRRef) ([]ports.ReviewT
 	if m == nil {
 		return nil, fmt.Errorf("mr !%d not found", mr.IID)
 	}
-	out := make([]ports.ReviewThread, len(m.Threads))
+	out := make([]repoport.ReviewThread, len(m.Threads))
 	for i, t := range m.Threads {
-		t.Comments = append([]ports.ReviewComment(nil), t.Comments...)
+		t.Comments = append([]repoport.ReviewComment(nil), t.Comments...)
 		out[i] = t
 	}
 	return out, nil
 }
 
-func (f *RepoHost) ReplyThread(_ context.Context, mr ports.MRRef, threadID, body string) error {
+func (f *RepoHost) ReplyThread(_ context.Context, mr repoport.MRRef, threadID, body string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.ReplyErr != nil {
@@ -929,7 +930,7 @@ func (f *RepoHost) ReplyThread(_ context.Context, mr ports.MRRef, threadID, body
 	for i := range m.Threads {
 		if m.Threads[i].ID == threadID {
 			f.replies++
-			m.Threads[i].Comments = append(m.Threads[i].Comments, ports.ReviewComment{
+			m.Threads[i].Comments = append(m.Threads[i].Comments, repoport.ReviewComment{
 				ID: fmt.Sprintf("r%d", f.replies), Author: "factory", Body: body, CreatedAt: time.Now()})
 			return nil
 		}
@@ -937,7 +938,7 @@ func (f *RepoHost) ReplyThread(_ context.Context, mr ports.MRRef, threadID, body
 	return fmt.Errorf("thread %s not found", threadID)
 }
 
-func (f *RepoHost) ResolveThread(_ context.Context, mr ports.MRRef, threadID string) error {
+func (f *RepoHost) ResolveThread(_ context.Context, mr repoport.MRRef, threadID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	m := f.mr(mr.IID)
@@ -954,7 +955,7 @@ func (f *RepoHost) ResolveThread(_ context.Context, mr ports.MRRef, threadID str
 }
 
 // SetMergeable scripts what MRStatus reports about merging (test control).
-func (f *RepoHost) SetMergeable(iid int, mg ports.Mergeable, headSHA string) {
+func (f *RepoHost) SetMergeable(iid int, mg repoport.Mergeable, headSHA string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if m := f.mr(iid); m != nil {
@@ -972,7 +973,7 @@ func (f *RepoHost) SetHead(iid int, sha string) {
 }
 
 // SetChecks scripts the CI checks MRChecks reports.
-func (f *RepoHost) SetChecks(iid int, checks ...ports.Check) {
+func (f *RepoHost) SetChecks(iid int, checks ...repoport.Check) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if m := f.mr(iid); m != nil {
@@ -981,7 +982,7 @@ func (f *RepoHost) SetChecks(iid int, checks ...ports.Check) {
 }
 
 // SetCIFailures scripts what CIFailures details for the merge request.
-func (f *RepoHost) SetCIFailures(iid int, failures ...ports.CIFailure) {
+func (f *RepoHost) SetCIFailures(iid int, failures ...repoport.CIFailure) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if m := f.mr(iid); m != nil {
@@ -1034,7 +1035,7 @@ func (f *RepoHost) AddComment(iid int, threadID, path, author, body string, at t
 	if m == nil {
 		return
 	}
-	c := ports.ReviewComment{ID: fmt.Sprintf("%s-%d", threadID, at.UnixNano()), Author: author, Body: body, CreatedAt: at}
+	c := repoport.ReviewComment{ID: fmt.Sprintf("%s-%d", threadID, at.UnixNano()), Author: author, Body: body, CreatedAt: at}
 	for i := range m.Threads {
 		if m.Threads[i].ID == threadID {
 			m.Threads[i].Comments = append(m.Threads[i].Comments, c)
@@ -1042,20 +1043,20 @@ func (f *RepoHost) AddComment(iid int, threadID, path, author, body string, at t
 			return
 		}
 	}
-	m.Threads = append(m.Threads, ports.ReviewThread{ID: threadID, Path: path, Line: 1, Comments: []ports.ReviewComment{c}})
+	m.Threads = append(m.Threads, repoport.ReviewThread{ID: threadID, Path: path, Line: 1, Comments: []repoport.ReviewComment{c}})
 }
 
 // SnapshotThreads returns a copy of an MR's threads (assertions).
-func (f *RepoHost) SnapshotThreads(iid int) []ports.ReviewThread {
+func (f *RepoHost) SnapshotThreads(iid int) []repoport.ReviewThread {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	m := f.mr(iid)
 	if m == nil {
 		return nil
 	}
-	out := make([]ports.ReviewThread, len(m.Threads))
+	out := make([]repoport.ReviewThread, len(m.Threads))
 	for i, t := range m.Threads {
-		t.Comments = append([]ports.ReviewComment(nil), t.Comments...)
+		t.Comments = append([]repoport.ReviewComment(nil), t.Comments...)
 		out[i] = t
 	}
 	return out
@@ -1071,7 +1072,7 @@ func (f *RepoHost) SetMRStateErr(err error) {
 
 // SetMRState transitions an MR (test control, e.g. simulating a merge for
 // signal polling).
-func (f *RepoHost) SetMRState(iid int, s ports.MRState) {
+func (f *RepoHost) SetMRState(iid int, s repoport.MRState) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, m := range f.MRs {
@@ -1399,20 +1400,20 @@ func (s *TicketSource) AddLink(_ context.Context, key string, link ports.TicketL
 
 // Attach hosts a file for the issue at a deterministic URL and links it the
 // way Jira does: a link, never an embedded image.
-func (s *TicketSource) Attach(_ context.Context, key, name, contentType string, data []byte) (ports.Attachment, error) {
+func (s *TicketSource) Attach(_ context.Context, key, name, contentType string, data []byte) (repoport.Attachment, error) {
 	if err := s.writeErr(); err != nil {
-		return ports.Attachment{}, err
+		return repoport.Attachment{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t := s.ticket(key)
 	if t == nil {
-		return ports.Attachment{}, fmt.Errorf("fake: no ticket %q", key)
+		return repoport.Attachment{}, fmt.Errorf("fake: no ticket %q", key)
 	}
 	url := fmt.Sprintf("https://tracker.local/%s/attachments/%d/%s", t.Key, len(s.Attached)+1, name)
 	s.Attached = append(s.Attached, Upload{Key: t.Key, Name: name, ContentType: contentType, Data: append([]byte(nil), data...), URL: url})
 	s.record("attach %s %s", t.Key, name)
-	return ports.Attachment{URL: url, Markdown: "[" + name + "](" + url + ")"}, nil
+	return repoport.Attachment{URL: url, Markdown: "[" + name + "](" + url + ")"}, nil
 }
 
 // ReadOnlyTicketSource is a tracker with no write side — what an adapter
@@ -1435,7 +1436,7 @@ func (r ReadOnlyTicketSource) OpenAttachment(ctx context.Context, a ports.Source
 var (
 	_ envport.EnvProvisioner    = (*EnvProvisioner)(nil)
 	_ agentport.AgentRunner     = (*AgentRunner)(nil)
-	_ ports.RepoHost            = (*RepoHost)(nil)
+	_ repoport.RepoHost         = (*RepoHost)(nil)
 	_ ports.NotificationChannel = (*Channel)(nil)
 	_ ports.TicketSource        = (*TicketSource)(nil)
 	_ ports.TicketWriter        = (*TicketSource)(nil)

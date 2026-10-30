@@ -20,6 +20,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/reviewfile"
 )
 
@@ -78,7 +79,7 @@ func noSubjectMsg(st *flow.Stage) string {
 
 // subjectRepoHost is the repository host and merge request a subject action
 // acts on.
-func (x *exec) subjectRepoHost(st *flow.Stage) (ports.RepoHost, *mrRecord, error) {
+func (x *exec) subjectRepoHost(st *flow.Stage) (repoport.RepoHost, *mrRecord, error) {
 	mr := x.subjectMR()
 	if mr == nil {
 		return nil, nil, fmt.Errorf("%w: %s", errNoSubject, noSubjectMsg(st))
@@ -112,7 +113,7 @@ func (x *exec) actionLoadReviewComments(st *flow.Stage) (bool, error) {
 		return x.infraFail(st, "listing review threads: "+err.Error())
 	}
 	scope := st.Setting("scope", actionspec.ScopePending)
-	var round []ports.ReviewThread
+	var round []repoport.ReviewThread
 	if rs.roundLoaded {
 		ids := rs.roundIDs()
 		for _, t := range threads {
@@ -124,7 +125,7 @@ func (x *exec) actionLoadReviewComments(st *flow.Stage) (bool, error) {
 		chosen := threads
 		skipped := map[string]string{}
 		if scope == actionspec.ScopePending {
-			pending := x.unskipped(ports.PendingThreads(threads))
+			pending := x.unskipped(repoport.PendingThreads(threads))
 			chosen = pending
 			if mode := st.Setting("select", actionspec.SelectHuman); mode == actionspec.SelectHuman && len(pending) > 0 {
 				picked, waiting, err := x.selectThreads(st, mr, pending)
@@ -134,7 +135,7 @@ func (x *exec) actionLoadReviewComments(st *flow.Stage) (bool, error) {
 				chosen = picked
 			}
 			for _, t := range pending {
-				if !slices.ContainsFunc(chosen, func(c ports.ReviewThread) bool { return c.ID == t.ID }) {
+				if !slices.ContainsFunc(chosen, func(c repoport.ReviewThread) bool { return c.ID == t.ID }) {
 					skipped[t.ID] = t.Comments[len(t.Comments)-1].ID
 				}
 			}
@@ -144,7 +145,7 @@ func (x *exec) actionLoadReviewComments(st *flow.Stage) (bool, error) {
 			loaded = append(loaded, loadedThread(t))
 		}
 		newest := ""
-		if c, ok := ports.NewestPending(chosen); ok {
+		if c, ok := repoport.NewestPending(chosen); ok {
 			newest = c.ID
 		}
 		if err := x.append(&event.ReviewCommentsLoaded{StageID: st.ID, Subject: mr.Repo, Scope: scope, Threads: loaded, Newest: newest, Skipped: skipped}); err != nil {
@@ -182,8 +183,8 @@ func inputPath(st *flow.Stage, name string) string {
 
 // unskipped drops the threads a human skipped in an earlier round, unless
 // someone has written there since.
-func (x *exec) unskipped(threads []ports.ReviewThread) []ports.ReviewThread {
-	var out []ports.ReviewThread
+func (x *exec) unskipped(threads []repoport.ReviewThread) []repoport.ReviewThread {
+	var out []repoport.ReviewThread
 	for _, t := range threads {
 		if last, ok := x.rs.skipped[t.ID]; ok && len(t.Comments) > 0 && t.Comments[len(t.Comments)-1].ID == last {
 			continue
@@ -196,12 +197,12 @@ func (x *exec) unskipped(threads []ports.ReviewThread) []ports.ReviewThread {
 // threadOurs reports whether the factory opened a thread: its first comment
 // carries one of its markers (a review note, or a reply that became a
 // conversation of its own on the host).
-func threadOurs(t ports.ReviewThread) bool {
-	return len(t.Comments) > 0 && ports.IsFactoryReply(t.Comments[0].Body)
+func threadOurs(t repoport.ReviewThread) bool {
+	return len(t.Comments) > 0 && repoport.IsFactoryReply(t.Comments[0].Body)
 }
 
 // loadedThread is what the engine keeps of a loaded thread (the event).
-func loadedThread(t ports.ReviewThread) event.LoadedThread {
+func loadedThread(t repoport.ReviewThread) event.LoadedThread {
 	lt := event.LoadedThread{ID: t.ID, Path: t.Path, Line: t.Line, Ours: threadOurs(t), Resolved: t.Resolved}
 	if n := len(t.Comments); n > 0 {
 		lt.Last = t.Comments[n-1].ID
@@ -215,27 +216,27 @@ func loadedThread(t ports.ReviewThread) event.LoadedThread {
 // comments — the factory's marked ours, what came after the factory's last
 // word marked new, what an earlier reply did read off its marker — plus the
 // notes a person dropped at a gate earlier in the run.
-func threadsDocument(mr *mrRecord, round []ports.ReviewThread, dropped []reviewfile.Note) *reviewfile.Threads {
+func threadsDocument(mr *mrRecord, round []repoport.ReviewThread, dropped []reviewfile.Note) *reviewfile.Threads {
 	doc := &reviewfile.Threads{MergeRequest: mr.Ref.URL, Threads: make([]reviewfile.Thread, 0, len(round)), Dropped: dropped}
 	for _, t := range round {
 		th := reviewfile.Thread{ID: t.ID, Path: t.Path, Line: t.Line, Resolved: t.Resolved, Ours: threadOurs(t), Comments: []reviewfile.Comment{}}
 		if th.Ours {
-			th.Kind = ports.MarkerAttr(t.Comments[0].Body, "kind")
+			th.Kind = repoport.MarkerAttr(t.Comments[0].Body, "kind")
 		}
 		if !t.Resolved {
 			th.Hunk = strings.TrimRight(t.DiffHunk, "\n")
 		}
 		lastOurs := -1
 		for i, c := range t.Comments {
-			if ports.IsFactoryReply(c.Body) {
+			if repoport.IsFactoryReply(c.Body) {
 				lastOurs = i
 			}
 		}
 		for i, c := range t.Comments {
-			ours := ports.IsFactoryReply(c.Body)
+			ours := repoport.IsFactoryReply(c.Body)
 			cm := reviewfile.Comment{ID: c.ID, Author: c.Author, Ours: ours, New: i > lastOurs, Body: reviewfile.StripMarkers(c.Body)}
 			if ours {
-				cm.Did = ports.MarkerAttr(c.Body, "did")
+				cm.Did = repoport.MarkerAttr(c.Body, "did")
 			}
 			if !c.CreatedAt.IsZero() {
 				cm.At = c.CreatedAt.UTC().Format(time.RFC3339)
@@ -250,7 +251,7 @@ func threadsDocument(mr *mrRecord, round []ports.ReviewThread, dropped []reviewf
 // threadOption is how a thread is offered for selection: its id to answer
 // with, where it is and who started it as the label, its first words as
 // the detail.
-func threadOption(t ports.ReviewThread) event.Option {
+func threadOption(t repoport.ReviewThread) event.Option {
 	where := "conversation"
 	if t.Path != "" {
 		where = t.Path
@@ -269,7 +270,7 @@ func threadOption(t ports.ReviewThread) event.Option {
 // selectThreads asks a human which pending threads this round fixes. It
 // raises the question once per round and parks the run until it is
 // answered (waiting=true); the answer is the chosen threads, possibly none.
-func (x *exec) selectThreads(st *flow.Stage, mr *mrRecord, pending []ports.ReviewThread) (picked []ports.ReviewThread, waiting bool, err error) {
+func (x *exec) selectThreads(st *flow.Stage, mr *mrRecord, pending []repoport.ReviewThread) (picked []repoport.ReviewThread, waiting bool, err error) {
 	rs := x.rs
 	if rs.selectPing == nil {
 		// One array field offering every pending thread, all of them picked
@@ -355,7 +356,7 @@ func (x *exec) actionReplyReviewComments(st *flow.Stage) (bool, error) {
 		}
 		for _, t := range threads {
 			for _, c := range t.Comments {
-				if ports.IsReplyTo(c.Body, x.roundID(), t.ID) {
+				if repoport.IsReplyTo(c.Body, x.roundID(), t.ID) {
 					done[t.ID] = true
 				}
 			}
@@ -369,7 +370,7 @@ func (x *exec) actionReplyReviewComments(st *flow.Stage) (bool, error) {
 	var posted, resolved, declined []string
 	for _, r := range replies {
 		if !done[r.Thread] {
-			body := strings.TrimSpace(r.Reply) + "\n\n" + ports.ReplyMarker(x.roundID(), r.Thread, "did="+r.Did)
+			body := strings.TrimSpace(r.Reply) + "\n\n" + repoport.ReplyMarker(x.roundID(), r.Thread, "did="+r.Did)
 			if err := repoHost.ReplyThread(x.ctx, mr.Ref, r.Thread, body); err != nil {
 				return x.infraFail(st, fmt.Sprintf("replying to thread %s: %v", r.Thread, err))
 			}

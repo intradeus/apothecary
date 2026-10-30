@@ -1,12 +1,14 @@
 package actionspec
 
 import (
-	"apothecary/internal/agentspec"
-	"apothecary/internal/ports"
 	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
+
+	"apothecary/internal/agentspec"
+	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 )
 
 // TestRegistryIntegrity: the registry is compiled-in data the flow parser
@@ -244,7 +246,7 @@ func TestMergeMethodsMirrorThePort(t *testing.T) {
 	if act == nil || !act.Subject || !act.Remote || act.Requires != RequiresRepository {
 		t.Fatalf("mr_merge = %+v", act)
 	}
-	want := []string{ports.MergeMethodMerge, ports.MergeMethodSquash, ports.MergeMethodRebase}
+	want := []string{repoport.MergeMethodMerge, repoport.MergeMethodSquash, repoport.MergeMethodRebase}
 	if got := act.Setting("method").Values; !slices.Equal(got, want) {
 		t.Errorf("methods = %v, want %v", got, want)
 	}

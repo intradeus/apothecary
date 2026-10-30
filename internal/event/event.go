@@ -518,7 +518,7 @@ type CIReport struct {
 	Error  string    `json:"error,omitempty"`
 }
 
-// CICheck is one failed check (ports.CIFailure, as recorded).
+// CICheck is one failed check (repoport.CIFailure, as recorded).
 type CICheck struct {
 	Name    string   `json:"name"`
 	URL     string   `json:"url,omitempty"`

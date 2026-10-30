@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	githubadapter "apothecary/internal/adapters/github"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 )
 
 // GitHub is the repository host/github kind (DESIGN2 §12): Bearer PAT, Locator
@@ -82,7 +82,7 @@ func (a *githubAccount) EgressDomains() []string {
 	return []string{"github.com", "api.github.com", "codeload.github.com"}
 }
 
-func (GitHub) RepoHost(cfg Config, repo ports.RepoRef) (ports.RepoHost, error) {
+func (GitHub) RepoHost(cfg Config, repo repoport.RepoRef) (repoport.RepoHost, error) {
 	locator := strings.TrimSuffix(strings.TrimSpace(repo.Locator), ".git")
 	if strings.Contains(locator, "://") || strings.Count(locator, "/") != 1 ||
 		strings.HasPrefix(locator, "/") || strings.HasSuffix(locator, "/") {

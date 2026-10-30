@@ -9,8 +9,8 @@ import (
 	"apothecary/internal/bootstrap"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/shell"
 )
 
@@ -33,7 +33,7 @@ import (
 // retry. mrHead is the merge request's head commit as the repository host
 // reports it now, or "" when it cannot be asked (best effort: it only keeps
 // the run from taking its own commit for someone else's push).
-func (x *exec) mrHead(repoHost ports.RepoHost, ref ports.MRRef) string {
+func (x *exec) mrHead(repoHost repoport.RepoHost, ref repoport.MRRef) string {
 	st, err := repoHost.MRStatus(x.ctx, ref)
 	if err != nil {
 		x.e.log.Warn("could not read the new merge request's head", "run", x.rs.runID, "mr", ref.URL, "err", err)
@@ -128,7 +128,7 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 		mrBody := string(body)
 		if len(files) > 0 {
 			repo := x.repoRefFor(co)
-			mrBody, err = x.attach(mrBody, files, func(name, ct string, data []byte) (ports.Attachment, error) {
+			mrBody, err = x.attach(mrBody, files, func(name, ct string, data []byte) (repoport.Attachment, error) {
 				return repoHost.UploadAttachment(x.ctx, repo, name, ct, data)
 			})
 			if err != nil {
@@ -182,11 +182,11 @@ func (x *exec) gitIn(dir, script string) (envport.ExecResult, error) {
 
 // repoRefFor is the repository host reference of a checkout: the project's for
 // the primary, the extra repo's own for the rest.
-func (x *exec) repoRefFor(co event.Checkout) ports.RepoRef {
+func (x *exec) repoRefFor(co event.Checkout) repoport.RepoRef {
 	if co.Primary {
 		return x.res.RepoRef
 	}
-	ref := ports.RepoRef{URL: co.URL, Locator: co.Locator, DefaultBranch: co.Source}
+	ref := repoport.RepoRef{URL: co.URL, Locator: co.Locator, DefaultBranch: co.Source}
 	for _, xr := range x.res.ExtraRepos {
 		if xr.Name == co.Name {
 			ref.DefaultBranch = xr.DefaultBranch

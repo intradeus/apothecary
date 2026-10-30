@@ -22,6 +22,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/runports"
@@ -211,7 +212,7 @@ func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, s
 	h.res = &resolution.Resolution{
 		ProjectID:    testProject,
 		ProjectName:  "test",
-		RepoRef:      ports.RepoRef{URL: "https://gitlab.local/g/p.git", DefaultBranch: "main", Locator: "1"},
+		RepoRef:      repoport.RepoRef{URL: "https://gitlab.local/g/p.git", DefaultBranch: "main", Locator: "1"},
 		AgentsMDPath: "AGENTS.md",
 		DefaultFlow:  flows[0].Name,
 		Commands:     map[string]string{"verify": "make lint && make test"},
@@ -430,7 +431,7 @@ func TestHappyPathFullV4Flow(t *testing.T) {
 	if !strings.HasPrefix(fp.Link, "https://gitlab.local/mr/") || len(fp.Files) != 0 {
 		t.Errorf("final gate payload = link %q files %v, want MR URL link", fp.Link, fp.Files)
 	}
-	h.repoHost.SetMRState(1, ports.MRMerged)
+	h.repoHost.SetMRState(1, repoport.MRMerged)
 	h.e.Wait(runID)
 
 	v := h.view(t, runID)
@@ -1102,11 +1103,11 @@ main:
 	ctx := context.Background()
 
 	// The MR exists on the repository host and merged during the "downtime".
-	ref, err := h.repoHost.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/r-ac", "", "T", "body")
+	ref, err := h.repoHost.CreateDraftMR(ctx, repoport.RepoRef{}, "apothecary/r-ac", "", "T", "body")
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.repoHost.SetMRState(ref.IID, ports.MRMerged)
+	h.repoHost.SetMRState(ref.IID, repoport.MRMerged)
 
 	// Event log of a run parked at the gate with an open final_review ping.
 	for _, p := range []event.Payload{
@@ -1195,7 +1196,7 @@ main:
 
 	// RepoHost recovers and the MR is merged: the run completes on its own.
 	h.repoHost.SetMRStateErr(nil)
-	h.repoHost.SetMRState(1, ports.MRMerged)
+	h.repoHost.SetMRState(1, repoport.MRMerged)
 	h.e.Wait(runID)
 	if v := h.view(t, runID); v.State != run.Completed {
 		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
@@ -1733,7 +1734,7 @@ func TestEgressProbeTarget(t *testing.T) {
 		{"git@github.com:o/r.git", []string{"*.npmjs.org", "github.com"}, "github.com:443", true},
 		{"/srv/repo.git", []string{"*.npmjs.org"}, "", false},
 	} {
-		addr, tls := egressProbeTarget(&resolution.Resolution{RepoRef: ports.RepoRef{URL: tc.url}, EgressDomains: tc.domains})
+		addr, tls := egressProbeTarget(&resolution.Resolution{RepoRef: repoport.RepoRef{URL: tc.url}, EgressDomains: tc.domains})
 		if addr != tc.addr || tls != tc.tls {
 			t.Errorf("%s: got %q tls=%v, want %q tls=%v", tc.url, addr, tls, tc.addr, tc.tls)
 		}
@@ -2435,7 +2436,7 @@ main:
 	}
 
 	// The signal fires; the stage completes and the run finishes.
-	h.repoHost.SetMRState(1, ports.MRMerged)
+	h.repoHost.SetMRState(1, repoport.MRMerged)
 	h.e.Wait(runID)
 	if v := h.view(t, runID); v.State != run.Completed {
 		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, runID)))
@@ -2606,7 +2607,7 @@ main:
 		t.Fatal(err)
 	}
 	h.waitPing(t, PingGate)
-	h.repoHost.SetMRState(1, ports.MRClosed)
+	h.repoHost.SetMRState(1, repoport.MRClosed)
 	h.e.Wait(runID)
 
 	// Rejected, so on_reject: abort stops the run.
@@ -2720,7 +2721,7 @@ main:
 	ctx := context.Background()
 
 	// The MR the interrupted attempt already opened on the repository host.
-	ref, err := h.repoHost.CreateDraftMR(ctx, ports.RepoRef{}, "apothecary/r-rec", "", "T", "body")
+	ref, err := h.repoHost.CreateDraftMR(ctx, repoport.RepoRef{}, "apothecary/r-rec", "", "T", "body")
 	if err != nil {
 		t.Fatal(err)
 	}

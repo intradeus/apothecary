@@ -9,9 +9,9 @@ import (
 	"apothecary/internal/builtin"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
 )
 
@@ -45,7 +45,7 @@ func TestBuiltinConflictResolverTemplateRuns(t *testing.T) {
 	}
 	ref := ph.repoHost.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
 	ph.repoHost.SetTargetSHA(ref.IID, tip)
-	ph.repoHost.SetMergeable(ref.IID, ports.MergeConflicts, "a1")
+	ph.repoHost.SetMergeable(ref.IID, repoport.MergeConflicts, "a1")
 	// A push lands on the merge request: the repository host sees the new
 	// head and recomputes — it merges cleanly now.
 	ph.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
@@ -58,7 +58,7 @@ func TestBuiltinConflictResolverTemplateRuns(t *testing.T) {
 			head := git.remote["feature/cache"]
 			git.mu.Unlock()
 			ph.repoHost.SetHead(ref.IID, head)
-			ph.repoHost.SetMergeable(ref.IID, ports.MergeClean, head)
+			ph.repoHost.SetMergeable(ref.IID, repoport.MergeClean, head)
 		}
 		return res, err
 	}
@@ -90,7 +90,7 @@ func TestBuiltinConflictResolverTemplateRuns(t *testing.T) {
 	git.mu.Unlock()
 	tip = git.advanceTarget("main")
 	ph.repoHost.SetTargetSHA(ref.IID, tip)
-	ph.repoHost.SetMergeable(ref.IID, ports.MergeConflicts, head)
+	ph.repoHost.SetMergeable(ref.IID, repoport.MergeConflicts, head)
 	ask := ph.waitPing(t, event.PingPhaseConfirm)
 	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
@@ -100,6 +100,6 @@ func TestBuiltinConflictResolverTemplateRuns(t *testing.T) {
 		t.Fatalf("after the second conflict: merges %d pushes %v", merges, pushes)
 	}
 
-	ph.repoHost.SetMRState(ref.IID, ports.MRClosed)
+	ph.repoHost.SetMRState(ref.IID, repoport.MRClosed)
 	ph.waitState(t, runID, run.Completed)
 }

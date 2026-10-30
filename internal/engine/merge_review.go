@@ -16,7 +16,7 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/reviewfile"
 )
 
@@ -138,12 +138,12 @@ func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 	}
 	reviewID := x.roundID() + "/" + st.ID
 	posted := &event.ReviewPosted{StageID: st.ID, Subject: mr.Repo, ReviewID: reviewID}
-	notes := make([]ports.ReviewNote, 0, len(rev.Notes))
+	notes := make([]repoport.ReviewNote, 0, len(rev.Notes))
 	for _, n := range rev.Notes {
-		notes = append(notes, ports.ReviewNote{Path: n.Path, Line: n.Line, Body: n.Posted(), Kind: n.Kind})
+		notes = append(notes, repoport.ReviewNote{Path: n.Path, Line: n.Line, Body: n.Posted(), Kind: n.Kind})
 	}
 	if rev.Summary != "" || len(notes) > 0 {
-		res, err := repoHost.PostReview(x.ctx, mr.Ref, ports.Review{Head: rs.phaseHead, Summary: rev.Summary, Notes: notes, ID: reviewID})
+		res, err := repoHost.PostReview(x.ctx, mr.Ref, repoport.Review{Head: rs.phaseHead, Summary: rev.Summary, Notes: notes, ID: reviewID})
 		if err != nil {
 			return x.infraFail(st, "posting the review: "+err.Error())
 		}
@@ -160,7 +160,7 @@ func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 			}
 			for _, t := range threads {
 				for _, c := range t.Comments {
-					if ports.IsReplyTo(c.Body, x.roundID(), t.ID) {
+					if repoport.IsReplyTo(c.Body, x.roundID(), t.ID) {
 						done[t.ID] = true
 					}
 				}
@@ -168,7 +168,7 @@ func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 		}
 		for _, c := range rev.Replies {
 			if !done[c.Thread] {
-				body := strings.TrimSpace(c.Body) + "\n\n" + ports.ReplyMarker(x.roundID(), c.Thread)
+				body := strings.TrimSpace(c.Body) + "\n\n" + repoport.ReplyMarker(x.roundID(), c.Thread)
 				if err := repoHost.ReplyThread(x.ctx, mr.Ref, c.Thread, body); err != nil {
 					return x.infraFail(st, fmt.Sprintf("replying in thread %s: %v", c.Thread, err))
 				}
@@ -210,7 +210,7 @@ func (x *exec) actionMRMerge(st *flow.Stage) (bool, error) {
 		if err != nil {
 			return x.infraFail(st, "cannot tell whether the merge already happened: "+err.Error())
 		}
-		if status.State == ports.MRMerged {
+		if status.State == repoport.MRMerged {
 			if err := x.append(merged); err != nil {
 				return true, err
 			}
@@ -223,8 +223,8 @@ func (x *exec) actionMRMerge(st *flow.Stage) (bool, error) {
 		}
 		rs.actionPending[st.ID] = true
 	}
-	err = repoHost.MergeMR(x.ctx, mr.Ref, ports.MergeOptions{Method: method, Head: rs.phaseHead, DeleteBranch: deleteBranch})
-	var refused *ports.ErrMergeRefused
+	err = repoHost.MergeMR(x.ctx, mr.Ref, repoport.MergeOptions{Method: method, Head: rs.phaseHead, DeleteBranch: deleteBranch})
+	var refused *repoport.ErrMergeRefused
 	if errors.As(err, &refused) {
 		delete(rs.actionPending, st.ID)
 		return x.actionFail(st, event.ReasonInputInvalid, fmt.Sprintf("%s: %s", mr.Ref.URL, refused.Error()))

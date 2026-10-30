@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 )
 
 func TestRegistryValidAndDescriptors(t *testing.T) {
@@ -489,10 +490,10 @@ func TestGitHubRepoHostKind(t *testing.T) {
 	if d := acc.EgressDomains(); len(d) != 3 || d[0] != "github.com" {
 		t.Errorf("egress = %v", d)
 	}
-	if _, err := gh.RepoHost(Config{}, ports.RepoRef{Locator: "no-slash"}); err == nil {
+	if _, err := gh.RepoHost(Config{}, repoport.RepoRef{Locator: "no-slash"}); err == nil {
 		t.Error("bad github locator accepted")
 	}
-	if _, err := gh.RepoHost(Config{}, ports.RepoRef{Locator: "lu/greeter"}); err != nil {
+	if _, err := gh.RepoHost(Config{}, repoport.RepoRef{Locator: "lu/greeter"}); err != nil {
 		t.Errorf("owner/repo locator refused: %v", err)
 	}
 }
@@ -513,10 +514,10 @@ func TestGitLabRepoHostKind(t *testing.T) {
 	if d := acc.EgressDomains(); len(d) != 1 || d[0] != "gitlab.example.com" {
 		t.Errorf("egress = %v", d)
 	}
-	if _, err := gl.RepoHost(Config{}, ports.RepoRef{Locator: "not-a-number"}); err == nil {
+	if _, err := gl.RepoHost(Config{}, repoport.RepoRef{Locator: "not-a-number"}); err == nil {
 		t.Error("non-numeric gitlab locator accepted")
 	}
-	if _, err := gl.RepoHost(Config{}, ports.RepoRef{Locator: "42"}); err != nil {
+	if _, err := gl.RepoHost(Config{}, repoport.RepoRef{Locator: "42"}); err != nil {
 		t.Errorf("numeric locator refused: %v", err)
 	}
 }

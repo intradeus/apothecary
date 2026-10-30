@@ -13,9 +13,9 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
 )
 
@@ -311,7 +311,7 @@ main:
 
 func TestLinkAttachmentsRules(t *testing.T) {
 	img := func(p, url string) linkedFile {
-		return linkedFile{path: p, name: p[strings.LastIndex(p, "/")+1:], image: true, att: ports.Attachment{URL: url}}
+		return linkedFile{path: p, name: p[strings.LastIndex(p, "/")+1:], image: true, att: repoport.Attachment{URL: url}}
 	}
 	for _, tc := range []struct {
 		name, body, want string
@@ -335,7 +335,7 @@ func TestLinkAttachmentsRules(t *testing.T) {
 	// A host's own short link is what a target points at; its markdown is
 	// what a bare mention becomes.
 	f := linkedFile{path: "a/x.png", name: "x.png", image: true,
-		att: ports.Attachment{URL: "https://h/-/project/1/uploads/s/x.png", Link: "/uploads/s/x.png", Markdown: "![x](/uploads/s/x.png)"}}
+		att: repoport.Attachment{URL: "https://h/-/project/1/uploads/s/x.png", Link: "/uploads/s/x.png", Markdown: "![x](/uploads/s/x.png)"}}
 	if got := linkAttachments("![x](a/x.png) a/x.png", []linkedFile{f}); got != "![x](/uploads/s/x.png) ![x](/uploads/s/x.png)\n" {
 		t.Errorf("got %q", got)
 	}

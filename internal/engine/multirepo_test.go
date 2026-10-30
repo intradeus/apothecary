@@ -11,9 +11,9 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/mrs"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
@@ -157,7 +157,7 @@ func TestMultiRepoRunPublishesOneMergeRequestPerChangedRepo(t *testing.T) {
 		{Name: "docs", URL: "https://gitlab.local/g/docs.git", Locator: "3", DefaultBranch: "main"},
 		{Name: "vendor", URL: "https://gitlab.local/g/vendor.git", DefaultBranch: "main"}, // context only
 	}
-	h.res.RepoHosts = map[string]ports.RepoHost{"api": apiRepoHost, "docs": &fake.RepoHost{}}
+	h.res.RepoHosts = map[string]repoport.RepoHost{"api": apiRepoHost, "docs": &fake.RepoHost{}}
 	gits := map[string]*fakeGit{"repo": newFakeGit("main"), "repos/api": newFakeGit("develop"),
 		"repos/docs": newFakeGit("main"), "repos/vendor": newFakeGit("main")}
 	gits["repos/docs"].noChanges = true // the run touched nothing there
@@ -210,12 +210,12 @@ func TestMultiRepoRunPublishesOneMergeRequestPerChangedRepo(t *testing.T) {
 		t.Errorf("gate context = %q", gate.Context)
 	}
 	// Done only when BOTH merged.
-	h.repoHost.SetMRState(primary[0].Ref.IID, ports.MRMerged)
+	h.repoHost.SetMRState(primary[0].Ref.IID, repoport.MRMerged)
 	time.Sleep(30 * time.Millisecond)
 	if st := h.view(t, runID).State; st != run.WaitingOnHuman {
 		t.Fatalf("state after one merge = %s", st)
 	}
-	apiRepoHost.SetMRState(api[0].Ref.IID, ports.MRMerged)
+	apiRepoHost.SetMRState(api[0].Ref.IID, repoport.MRMerged)
 	h.e.Wait(runID)
 	if st := h.view(t, runID).State; st != run.Completed {
 		t.Errorf("final state = %s", st)
@@ -254,17 +254,17 @@ func TestMRStatusesReportMergeabilityAndPendingThreads(t *testing.T) {
 	h.waitPing(t, PingGate)
 	before := len(h.events(t, runID))
 	t0 := time.Date(2026, 10, 18, 10, 0, 0, 0, time.UTC)
-	h.repoHost.SetMergeable(1, ports.MergeConflicts, "abc")
+	h.repoHost.SetMergeable(1, repoport.MergeConflicts, "abc")
 	h.repoHost.AddComment(1, "d1", "a.go", "rev", "rename", t0)
 	h.repoHost.AddComment(1, "d2", "b.go", "rev", "add a test", t0.Add(time.Minute))
 	// d3 was answered by the factory: not pending.
 	h.repoHost.AddComment(1, "d3", "c.go", "rev", "typo", t0)
-	h.repoHost.AddComment(1, "d3", "c.go", "factory", "fixed "+ports.ReplyMarker(runID, "d3"), t0.Add(2*time.Minute))
+	h.repoHost.AddComment(1, "d3", "c.go", "factory", "fixed "+repoport.ReplyMarker(runID, "d3"), t0.Add(2*time.Minute))
 	got, err := mrs.New(resolution.StaticResolver{R: h.res}, &run.Reader{Store: h.store}).MRStatuses(context.Background(), runID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Mergeable != ports.MergeConflicts || got[0].HeadSHA != "abc" || got[0].PendingThreads != 2 ||
+	if len(got) != 1 || got[0].Mergeable != repoport.MergeConflicts || got[0].HeadSHA != "abc" || got[0].PendingThreads != 2 ||
 		got[0].LastCommentAt == nil || !got[0].LastCommentAt.Equal(t0.Add(time.Minute)) {
 		t.Fatalf("status = %+v", got)
 	}

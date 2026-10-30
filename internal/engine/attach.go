@@ -21,8 +21,8 @@ import (
 
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 )
 
 // What one attachments port may carry: enough for a page's worth of
@@ -70,7 +70,7 @@ func (x *exec) attachmentFiles(st *flow.Stage) (files []envport.FileEntry, route
 // attach reads each file from the workspace, uploads it, and links the
 // uploads in body (linkAttachments). One at a time: a file is held only
 // while it goes up.
-func (x *exec) attach(body string, files []envport.FileEntry, upload func(name, contentType string, data []byte) (ports.Attachment, error)) (string, error) {
+func (x *exec) attach(body string, files []envport.FileEntry, upload func(name, contentType string, data []byte) (repoport.Attachment, error)) (string, error) {
 	linked := make([]linkedFile, 0, len(files))
 	for _, f := range files {
 		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.envID, f.Path)
@@ -102,7 +102,7 @@ type linkedFile struct {
 	path  string
 	name  string
 	image bool
-	att   ports.Attachment
+	att   repoport.Attachment
 }
 
 // markdown is how the body shows the file: the host's own markdown, else an

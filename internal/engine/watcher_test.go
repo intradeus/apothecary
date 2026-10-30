@@ -10,9 +10,9 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
 )
 
@@ -328,7 +328,7 @@ func (rh *watcherHarness) conflict(t *testing.T) {
 	t.Helper()
 	tip := rh.git.advanceTarget("main")
 	rh.repoHost.SetTargetSHA(1, tip)
-	rh.repoHost.SetMergeable(1, ports.MergeConflicts, "head")
+	rh.repoHost.SetMergeable(1, repoport.MergeConflicts, "head")
 }
 
 // pick answers the round's thread selection with the given thread ids
@@ -410,7 +410,7 @@ func TestSyncWithNothingToTakeIn(t *testing.T) {
 	rh := newWatcherHarness(t, "merge")
 	runID := rh.start(t)
 	rh.repoHost.SetTargetSHA(1, "c0") // the repository host says conflict, but main has not moved
-	rh.repoHost.SetMergeable(1, ports.MergeConflicts, "head")
+	rh.repoHost.SetMergeable(1, repoport.MergeConflicts, "head")
 	rh.approveConflictFix(t)
 	rh.waitPhaseRuns(t, runID, "conflicts", 1)
 	merges, _, pushes, _ := rh.git.snapshot()
@@ -470,7 +470,7 @@ func TestRebaseIsPushedLeased(t *testing.T) {
 	rh.git.mu.Unlock()
 	tip := rh.git.advanceTarget("main")
 	rh.repoHost.SetTargetSHA(1, tip)
-	rh.repoHost.SetMergeable(1, ports.MergeConflicts, pushedTip)
+	rh.repoHost.SetMergeable(1, repoport.MergeConflicts, pushedTip)
 	rh.approveConflictFix(t)
 	rh.waitPhaseRuns(t, runID, "conflicts", 1)
 	_, rebases, pushes, _ := rh.git.snapshot()
@@ -488,7 +488,7 @@ func TestRebaseIsPushedLeased(t *testing.T) {
 	rh.repoHost.SetTargetSHA(1, tip2)
 	// The repository host's head is still the one the run pushed: the
 	// stranger's commit is exactly what the lease must protect.
-	rh.repoHost.SetMergeable(1, ports.MergeConflicts, pushedTip)
+	rh.repoHost.SetMergeable(1, repoport.MergeConflicts, pushedTip)
 	first := rh.waitPing(t, event.PingPhaseConfirm)
 	if err := rh.e.AnswerPing(first.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
@@ -528,7 +528,7 @@ func TestReviewRoundFixesAndReplies(t *testing.T) {
 	threads := rh.repoHost.SnapshotThreads(1)
 	for _, th := range threads {
 		last := th.Comments[len(th.Comments)-1]
-		if !ports.IsFactoryReply(last.Body) {
+		if !repoport.IsFactoryReply(last.Body) {
 			t.Errorf("thread %s has no reply: %+v", th.ID, th.Comments)
 		}
 		if th.ID == "d2" && !th.Resolved {
@@ -604,7 +604,7 @@ func TestReplyPostingReconcilesAfterAFailure(t *testing.T) {
 	for _, th := range rh.repoHost.SnapshotThreads(1) {
 		var replies int
 		for _, c := range th.Comments {
-			if ports.IsFactoryReply(c.Body) {
+			if repoport.IsFactoryReply(c.Body) {
 				replies++
 			}
 		}

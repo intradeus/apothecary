@@ -30,6 +30,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/resources"
 	"apothecary/internal/run"
@@ -151,7 +152,7 @@ func newEnvWith(t *testing.T, cfg engine.Config, opt func(*engine.Deps), docs ..
 		ProjectID:    testProject,
 		ProjectName:  "test",
 		UserID:       testUser,
-		RepoRef:      ports.RepoRef{URL: "https://gitlab.local/g/p.git", DefaultBranch: "main", Locator: "1"},
+		RepoRef:      repoport.RepoRef{URL: "https://gitlab.local/g/p.git", DefaultBranch: "main", Locator: "1"},
 		AgentsMDPath: "AGENTS.md",
 		DefaultFlow:  "loop",
 		Commands:     map[string]string{"verify": "make lint && make test"},

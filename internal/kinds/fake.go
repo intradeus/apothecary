@@ -12,6 +12,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/reviewfile"
 )
 
@@ -56,7 +57,7 @@ func (FakeRepoHost) Account(Config) (RepoAccount, error) { return fakeAccount{},
 // resolution asks — the way a real repository host would remember it.
 var fakeRepoHosts sync.Map // locator -> *fake.RepoHost
 
-func (FakeRepoHost) RepoHost(_ Config, repo ports.RepoRef) (ports.RepoHost, error) {
+func (FakeRepoHost) RepoHost(_ Config, repo repoport.RepoRef) (repoport.RepoHost, error) {
 	return FakeRepoHostOf(repo.Locator), nil
 }
 

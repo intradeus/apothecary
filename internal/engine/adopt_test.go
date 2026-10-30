@@ -15,9 +15,9 @@ import (
 	"apothecary/internal/builtin"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 )
@@ -146,7 +146,7 @@ func TestRunOnSomeonesMergeRequest(t *testing.T) {
 		t.Fatalf("reviews after the push = %+v", rv)
 	}
 	threads := ph.repoHost.SnapshotThreads(ref.IID)
-	if len(threads) != 1 || !threads[0].Resolved || len(threads[0].Comments) != 2 || !ports.IsReplyTo(threads[0].Comments[1].Body, runID+"/again-1", threads[0].ID) {
+	if len(threads) != 1 || !threads[0].Resolved || len(threads[0].Comments) != 2 || !repoport.IsReplyTo(threads[0].Comments[1].Body, runID+"/again-1", threads[0].ID) {
 		t.Fatalf("threads after the re-review = %+v", threads)
 	}
 	var posts []*event.ReviewPosted
@@ -158,7 +158,7 @@ func TestRunOnSomeonesMergeRequest(t *testing.T) {
 	if len(posts) != 2 || posts[0].Inline != 1 || len(posts[1].Replied) != 1 || len(posts[1].Resolved) != 1 || posts[1].Inline != 0 {
 		t.Errorf("review_posted events = %+v", posts)
 	}
-	ph.repoHost.SetMRState(ref.IID, ports.MRMerged)
+	ph.repoHost.SetMRState(ref.IID, repoport.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 }
 
@@ -171,7 +171,7 @@ func TestRunOnAMergeRequestRefusals(t *testing.T) {
 	if _, err := ph.e.CreateRunWith(ctx, Ticket{Title: "T"}, "rev", testProject, RunInput{}); err == nil || !strings.Contains(err.Error(), "starts its runs on a merge request (operates_on: merge_request): name the merge request") {
 		t.Errorf("no merge request: %v", err)
 	}
-	ph.repoHost.SetMRState(ref.IID, ports.MRClosed)
+	ph.repoHost.SetMRState(ref.IID, repoport.MRClosed)
 	if _, err := ph.e.CreateRunWith(ctx, Ticket{Title: "T"}, "rev", testProject, RunInput{MR: &RunMR{IID: ref.IID}}); err == nil || !strings.Contains(err.Error(), "is closed") {
 		t.Errorf("closed merge request: %v", err)
 	}
@@ -244,6 +244,6 @@ func TestBuiltinReviewerTemplateRuns(t *testing.T) {
 	if rv := ph.repoHost.SnapshotMRs()[0].Reviews; len(rv) != 1 {
 		t.Fatalf("reviews = %+v", rv)
 	}
-	ph.repoHost.SetMRState(ref.IID, ports.MRClosed)
+	ph.repoHost.SetMRState(ref.IID, repoport.MRClosed)
 	ph.waitState(t, runID, run.Completed)
 }

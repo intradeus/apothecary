@@ -12,9 +12,9 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
@@ -214,7 +214,7 @@ func TestPhasedRunWaitsInReviewAndCompletesOnMerge(t *testing.T) {
 	if len(starts) != 1 || starts[0].Phase != flow.MainPhase || starts[0].By != "human" {
 		t.Errorf("phase_started = %+v", starts)
 	}
-	ph.repoHost.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, repoport.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 }
 
@@ -223,7 +223,7 @@ func TestPhasedRunWaitsInReviewAndCompletesOnMerge(t *testing.T) {
 func TestParkedWaitFailsWhenTheMRIsClosed(t *testing.T) {
 	ph := newPhasedHarness(t, waitFlowDoc)
 	runID := ph.start(t)
-	ph.repoHost.SetMRState(1, ports.MRClosed)
+	ph.repoHost.SetMRState(1, repoport.MRClosed)
 	v := ph.waitState(t, runID, run.Abandoned)
 	ab, _ := findPayload[*event.RunAbandoned](ph.events(t, runID))
 	if ab == nil || !strings.Contains(ab.Reason, "closed unmerged") || !strings.Contains(ab.Reason, "aborted by flow") {
@@ -289,7 +289,7 @@ func TestWaitParksAndWatchersRunMeanwhile(t *testing.T) {
 		t.Fatalf("main = %+v", d)
 	}
 	ph.repoHost.SetTargetSHA(1, "t1")
-	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
+	ph.repoHost.SetMergeable(1, repoport.MergeConflicts, "h1")
 	ask := ph.waitPing(t, event.PingPhaseConfirm)
 	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
@@ -298,7 +298,7 @@ func TestWaitParksAndWatchersRunMeanwhile(t *testing.T) {
 	if n := len(ph.execsOf("./after.sh")); n != 0 {
 		t.Fatalf("the parked phase went on before the merge (%d runs of after)", n)
 	}
-	ph.repoHost.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, repoport.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 	if n := len(ph.execsOf("./after.sh")); n != 1 {
 		t.Errorf("after ran %d times, want once after the merge", n)
@@ -360,7 +360,7 @@ func TestGateParksAndAWatcherRunsMeanwhile(t *testing.T) {
 		t.Errorf("a parked gate leaves the run idle: %+v", v.State)
 	}
 	ph.repoHost.SetTargetSHA(1, "t1")
-	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
+	ph.repoHost.SetMergeable(1, repoport.MergeConflicts, "h1")
 	ask := ph.waitPing(t, event.PingPhaseConfirm, gate.ID)
 	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
@@ -372,7 +372,7 @@ func TestGateParksAndAWatcherRunsMeanwhile(t *testing.T) {
 	if v := ph.view(t, runID); v.State != run.WaitingOnHuman || !v.Idle {
 		t.Errorf("after the watcher, the open gate keeps the run waiting: %s idle %v", v.State, v.Idle)
 	}
-	ph.repoHost.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, repoport.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 	answered := false
 	for _, e := range ph.events(t, runID) {
@@ -392,7 +392,7 @@ func TestManualStartPolicySurfacesTheHoldWithoutStarting(t *testing.T) {
 	ph := newPhasedHarness(t, doc)
 	runID := ph.start(t)
 	ph.repoHost.SetTargetSHA(1, "t1")
-	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
+	ph.repoHost.SetMergeable(1, repoport.MergeConflicts, "h1")
 	deadline := time.Now().Add(2 * time.Second)
 	var holds []TriggerHold
 	for time.Now().Before(deadline) && len(holds) == 0 {
@@ -432,7 +432,7 @@ func TestStartPolicyFromAParam(t *testing.T) {
 	ph := newPhasedHarnessWith(t, doc, func(_ *harness, d *Deps) { d.Bindings = staticBindings{"rebase": "auto"} })
 	runID := ph.start(t)
 	ph.repoHost.SetTargetSHA(1, "t1")
-	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
+	ph.repoHost.SetMergeable(1, repoport.MergeConflicts, "h1")
 	ph.waitPhaseRuns(t, runID, "conflicts", 1)
 	for _, p := range ph.e.PendingPings() {
 		if p.Type == event.PingPhaseConfirm {
@@ -465,7 +465,7 @@ func TestParkedStateSurvivesARestart(t *testing.T) {
 	if err := h2.e.Recover(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	ph.repoHost.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, repoport.MRMerged)
 	deadline := time.Now().Add(5 * time.Second)
 	for h2.view(t, runID).State != run.Completed && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
@@ -515,7 +515,7 @@ func TestConflictPhaseIsConfirmedOncePerConflict(t *testing.T) {
 	ph := newPhasedHarness(t, phasedFlowDoc)
 	runID := ph.start(t)
 	ph.repoHost.SetTargetSHA(1, "t1")
-	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
+	ph.repoHost.SetMergeable(1, repoport.MergeConflicts, "h1")
 	ask := ph.waitPing(t, event.PingPhaseConfirm)
 	if !strings.Contains(ask.Question, "no longer merges cleanly") || ask.Link == "" {
 		t.Errorf("confirm ping = %+v", ask)
@@ -617,7 +617,7 @@ func TestSimultaneousTriggersRunInDocumentOrder(t *testing.T) {
 	}
 	// Both hold before the run even goes idle.
 	waitEvent[*event.MRCreated](t, ph.harness, runID)
-	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
+	ph.repoHost.SetMergeable(1, repoport.MergeConflicts, "h1")
 	ph.repoHost.AddComment(1, "d1", "a.go", "rev", "rename", ph.clock.Now())
 	ph.clock.Advance(2 * time.Hour)
 	ph.waitPhaseRuns(t, runID, "review_fixes", 1)
@@ -636,13 +636,13 @@ func TestPhasesActOnOneSubjectAtATime(t *testing.T) {
 	ph := newPhasedHarness(t, doc)
 	apiRepoHost := &fake.RepoHost{}
 	ph.res.ExtraRepos = []resolution.ExtraRepo{{Name: "api", URL: "https://gitlab.local/g/api.git", Locator: "2", DefaultBranch: "develop"}}
-	ph.res.RepoHosts = map[string]ports.RepoHost{"api": apiRepoHost}
+	ph.res.RepoHosts = map[string]repoport.RepoHost{"api": apiRepoHost}
 	ph.envp.ExecFunc = gitPerDir(map[string]*fakeGit{"repo": newFakeGit("main"), "repos/api": newFakeGit("develop")})
 	runID := ph.start(t)
 	if n := len(apiRepoHost.SnapshotMRs()); n != 1 {
 		t.Fatalf("api MRs = %d", n)
 	}
-	apiRepoHost.SetMergeable(1, ports.MergeConflicts, "a1")
+	apiRepoHost.SetMergeable(1, repoport.MergeConflicts, "a1")
 	ph.repoHost.AddComment(1, "d1", "a.go", "rev", "rename", ph.clock.Now())
 	ph.clock.Advance(2 * time.Hour)
 	ph.waitPhaseRuns(t, runID, "conflicts", 1)
@@ -729,7 +729,7 @@ func TestIdleRunSurvivesARestart(t *testing.T) {
 	if err := h2.e.Recover(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	ph.repoHost.SetMRState(1, ports.MRMerged)
+	ph.repoHost.SetMRState(1, repoport.MRMerged)
 	deadline := time.Now().Add(5 * time.Second)
 	for h2.view(t, runID).State != run.Completed && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)

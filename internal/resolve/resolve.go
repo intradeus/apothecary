@@ -27,6 +27,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/providers"
 	"apothecary/internal/resolution"
 	"apothecary/internal/wsimage"
@@ -153,7 +154,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 		return nil, err
 	}
 
-	repoRef := ports.RepoRef{
+	repoRef := repoport.RepoRef{
 		URL:           p.Repo.URL,
 		DefaultBranch: p.Repo.DefaultBranch,
 		Locator:       p.Repo.Locator,
@@ -176,13 +177,13 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 	// locator gets its own bound port (that is what opens its merge requests).
 	// One without is context only: cloned, never published.
 	var extras []resolution.ExtraRepo
-	repoHosts := map[string]ports.RepoHost{}
+	repoHosts := map[string]repoport.RepoHost{}
 	for _, x := range p.Repos {
 		extras = append(extras, resolution.ExtraRepo{Name: x.Name, URL: x.URL, Locator: x.Locator, DefaultBranch: x.DefaultBranch})
 		if x.Locator == "" {
 			continue
 		}
-		f, err := repoHostKind.RepoHost(kindConfig(repoHostInt), ports.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator})
+		f, err := repoHostKind.RepoHost(kindConfig(repoHostInt), repoport.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator})
 		if err != nil {
 			return nil, unresolvable(fmt.Errorf("repository integration %s, repo %s: %v", repoHostInt.Name, x.Name, err))
 		}

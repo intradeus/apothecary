@@ -18,7 +18,7 @@ import (
 
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/signalspec"
 )
 
@@ -248,7 +248,7 @@ func (x *exec) anyArmed(obs []mrObservation) bool {
 	rs := x.rs
 	anyOpen := false
 	for _, o := range obs {
-		anyOpen = anyOpen || o.status.State == ports.MROpen
+		anyOpen = anyOpen || o.status.State == repoport.MROpen
 	}
 	for i := range rs.fl.Phases {
 		ph := &rs.fl.Phases[i]
@@ -267,7 +267,7 @@ func (x *exec) anyArmed(obs []mrObservation) bool {
 			continue
 		}
 		for _, o := range obs {
-			if o.status.State != ports.MROpen {
+			if o.status.State != repoport.MROpen {
 				continue
 			}
 			if ph.On.Max == flow.UnlimitedMax || rs.phaseRuns[phaseRunKey(ph.ID, o.mr.Repo)] < ph.On.Max {

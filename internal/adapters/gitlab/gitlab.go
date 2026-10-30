@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 )
 
 type Config struct {
@@ -85,7 +85,7 @@ func (a *Adapter) path() string {
 
 // CheckAccess verifies the token is valid, the project reachable, and the
 // access level sufficient to push branches and open MRs (§1 preflight).
-func (a *Adapter) CheckAccess(ctx context.Context, repo ports.RepoRef) error {
+func (a *Adapter) CheckAccess(ctx context.Context, repo repoport.RepoRef) error {
 	if a.cfg.Token == "" {
 		return fmt.Errorf("gitlab: no token configured")
 	}
@@ -118,7 +118,7 @@ func (a *Adapter) CheckAccess(ctx context.Context, repo ports.RepoRef) error {
 
 // FileExists checks a file — or, with a trailing slash, a non-empty
 // directory — at the default branch (§1 preflight).
-func (a *Adapter) FileExists(ctx context.Context, repo ports.RepoRef, path string) (bool, error) {
+func (a *Adapter) FileExists(ctx context.Context, repo repoport.RepoRef, path string) (bool, error) {
 	ref := repo.DefaultBranch
 	if ref == "" {
 		ref = "main"
@@ -151,7 +151,7 @@ func (a *Adapter) FileExists(ctx context.Context, repo ports.RepoRef, path strin
 }
 
 // targetOr is the MR target: the one asked for, else the repo's default.
-func targetOr(target string, repo ports.RepoRef) string {
+func targetOr(target string, repo repoport.RepoRef) string {
 	if target != "" {
 		return target
 	}
@@ -163,7 +163,7 @@ func targetOr(target string, repo ports.RepoRef) string {
 
 // CreateDraftMR opens a draft merge request from branch onto target (§3.1 mr
 // stage); a stacked change chains targets layer onto layer.
-func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch, target, title, body string) (ports.MRRef, error) {
+func (a *Adapter) CreateDraftMR(ctx context.Context, repo repoport.RepoRef, branch, target, title, body string) (repoport.MRRef, error) {
 	target = targetOr(target, repo)
 	if !strings.HasPrefix(title, "Draft:") {
 		title = "Draft: " + title
@@ -187,14 +187,14 @@ func (a *Adapter) CreateDraftMR(ctx context.Context, repo ports.RepoRef, branch,
 		}
 	}
 	if err != nil {
-		return ports.MRRef{}, err
+		return repoport.MRRef{}, err
 	}
-	return ports.MRRef{IID: mr.IID, URL: mr.WebURL}, nil
+	return repoport.MRRef{IID: mr.IID, URL: mr.WebURL}, nil
 }
 
 // AddMRLabels adds labels with add_labels, which keeps the merge request's
 // others; GitLab creates a project label it does not have yet.
-func (a *Adapter) AddMRLabels(ctx context.Context, mr ports.MRRef, labels []string) error {
+func (a *Adapter) AddMRLabels(ctx context.Context, mr repoport.MRRef, labels []string) error {
 	if len(labels) == 0 {
 		return nil
 	}
@@ -205,16 +205,16 @@ func (a *Adapter) AddMRLabels(ctx context.Context, mr ports.MRRef, labels []stri
 
 // FindMR implements the port's reconciliation lookup: the open MR from this
 // source branch onto target.
-func (a *Adapter) FindMR(ctx context.Context, repo ports.RepoRef, branch, target string) (ports.MRRef, bool, error) {
+func (a *Adapter) FindMR(ctx context.Context, repo repoport.RepoRef, branch, target string) (repoport.MRRef, bool, error) {
 	ref, err := a.findOpenMR(ctx, branch, targetOr(target, repo))
 	if err != nil {
-		return ports.MRRef{}, false, err
+		return repoport.MRRef{}, false, err
 	}
 	return ref, ref.IID != 0, nil
 }
 
 // BranchURL reads the branch's web_url; a 404 is a branch not pushed yet.
-func (a *Adapter) BranchURL(ctx context.Context, _ ports.RepoRef, branch string) (string, bool, error) {
+func (a *Adapter) BranchURL(ctx context.Context, _ repoport.RepoRef, branch string) (string, bool, error) {
 	var br struct {
 		WebURL string `json:"web_url"`
 	}
@@ -230,7 +230,7 @@ func (a *Adapter) BranchURL(ctx context.Context, _ ports.RepoRef, branch string)
 
 // findOpenMR returns the open MR from branch onto target, or a zero MRRef if
 // none is found.
-func (a *Adapter) findOpenMR(ctx context.Context, branch, target string) (ports.MRRef, error) {
+func (a *Adapter) findOpenMR(ctx context.Context, branch, target string) (repoport.MRRef, error) {
 	var mrs []struct {
 		IID    int    `json:"iid"`
 		WebURL string `json:"web_url"`
@@ -238,18 +238,18 @@ func (a *Adapter) findOpenMR(ctx context.Context, branch, target string) (ports.
 	p := fmt.Sprintf("%s/merge_requests?state=opened&source_branch=%s&target_branch=%s",
 		a.path(), url.QueryEscape(branch), url.QueryEscape(target))
 	if _, err := a.api(ctx, http.MethodGet, p, nil, &mrs); err != nil {
-		return ports.MRRef{}, err
+		return repoport.MRRef{}, err
 	}
 	if len(mrs) == 0 {
-		return ports.MRRef{}, nil
+		return repoport.MRRef{}, nil
 	}
-	return ports.MRRef{IID: mrs[0].IID, URL: mrs[0].WebURL}, nil
+	return repoport.MRRef{IID: mrs[0].IID, URL: mrs[0].WebURL}, nil
 }
 
 // MRStatus maps GitLab's merge request to the port's status. The MRRef
 // alone must suffice (§4), so the project id rides in via RepoRef at
 // construction — the adapter is bound to one project.
-func (a *Adapter) MRStatus(ctx context.Context, mr ports.MRRef) (ports.MRStatus, error) {
+func (a *Adapter) MRStatus(ctx context.Context, mr repoport.MRRef) (repoport.MRStatus, error) {
 	var out struct {
 		State               string `json:"state"`
 		HasConflicts        bool   `json:"has_conflicts"`
@@ -259,27 +259,27 @@ func (a *Adapter) MRStatus(ctx context.Context, mr ports.MRRef) (ports.MRStatus,
 		Draft               bool   `json:"draft"`
 	}
 	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/merge_requests/%d", a.path(), mr.IID), nil, &out); err != nil {
-		return ports.MRStatus{}, err
+		return repoport.MRStatus{}, err
 	}
-	st := ports.MRStatus{State: ports.MROpen, HeadSHA: out.SHA, Target: out.TargetBranch, Mergeable: mergeableOf(out.DetailedMergeStatus, out.HasConflicts)}
+	st := repoport.MRStatus{State: repoport.MROpen, HeadSHA: out.SHA, Target: out.TargetBranch, Mergeable: mergeableOf(out.DetailedMergeStatus, out.HasConflicts)}
 	switch out.State {
 	case "merged":
-		st.State = ports.MRMerged
+		st.State = repoport.MRMerged
 	case "closed":
-		st.State = ports.MRClosed
+		st.State = repoport.MRClosed
 	}
 	// "mergeable" is GitLab saying every check it applies passed: approvals,
 	// pipeline, resolved discussions, not a draft, no conflict.
 	st.Draft = out.Draft
-	st.MergeableNow = st.State == ports.MROpen && out.DetailedMergeStatus == "mergeable"
-	if st.Mergeable == ports.MergeConflicts && out.TargetBranch != "" {
+	st.MergeableNow = st.State == repoport.MROpen && out.DetailedMergeStatus == "mergeable"
+	if st.Mergeable == repoport.MergeConflicts && out.TargetBranch != "" {
 		var br struct {
 			Commit struct {
 				ID string `json:"id"`
 			} `json:"commit"`
 		}
 		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/repository/branches/%s", a.path(), url.PathEscape(out.TargetBranch)), nil, &br); err != nil {
-			return ports.MRStatus{}, err
+			return repoport.MRStatus{}, err
 		}
 		st.TargetSHA = br.Commit.ID
 	}
@@ -290,8 +290,8 @@ func (a *Adapter) MRStatus(ctx context.Context, mr ports.MRRef) (ports.MRStatus,
 // its head commit — and, when it failed, which jobs did (a job allowed to
 // fail is not a failure). A head pipeline for an older commit means the new
 // head's has not been reported yet: pending.
-func (a *Adapter) MRChecks(ctx context.Context, mr ports.MRRef, head string) (ports.Checks, error) {
-	out := ports.Checks{Head: head}
+func (a *Adapter) MRChecks(ctx context.Context, mr repoport.MRRef, head string) (repoport.Checks, error) {
+	out := repoport.Checks{Head: head}
 	var m struct {
 		HeadPipeline *struct {
 			ID     int    `json:"id"`
@@ -307,12 +307,12 @@ func (a *Adapter) MRChecks(ctx context.Context, mr ports.MRRef, head string) (po
 	if p == nil {
 		return out, nil
 	}
-	pipe := ports.Check{Name: "pipeline", State: pipelineState(p.Status), URL: p.WebURL}
+	pipe := repoport.Check{Name: "pipeline", State: pipelineState(p.Status), URL: p.WebURL}
 	if head != "" && p.SHA != head {
-		pipe.State = ports.CheckPending
+		pipe.State = repoport.CheckPending
 	}
-	out.Items = []ports.Check{pipe}
-	if pipe.State == ports.CheckFailure {
+	out.Items = []repoport.Check{pipe}
+	if pipe.State == repoport.CheckFailure {
 		var jobs []struct {
 			Name         string `json:"name"`
 			WebURL       string `json:"web_url"`
@@ -321,17 +321,17 @@ func (a *Adapter) MRChecks(ctx context.Context, mr ports.MRRef, head string) (po
 		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pipelines/%d/jobs?scope[]=failed&per_page=100", a.path(), p.ID), nil, &jobs); err != nil {
 			return out, err
 		}
-		var failed []ports.Check
+		var failed []repoport.Check
 		for _, j := range jobs {
 			if !j.AllowFailure {
-				failed = append(failed, ports.Check{Name: j.Name, State: ports.CheckFailure, URL: j.WebURL})
+				failed = append(failed, repoport.Check{Name: j.Name, State: repoport.CheckFailure, URL: j.WebURL})
 			}
 		}
 		if len(failed) > 0 {
 			out.Items = failed
 		}
 	}
-	out.State = ports.AggregateChecks(out.Items)
+	out.State = repoport.AggregateChecks(out.Items)
 	return out, nil
 }
 
@@ -339,7 +339,7 @@ func (a *Adapter) MRChecks(ctx context.Context, mr ports.MRRef, head string) (po
 // is not a failure — each with its stage and the CI file that declares it
 // (the project's ci_config_path, .gitlab-ci.yml by default; a job from an
 // included file is still named there, by its job name).
-func (a *Adapter) CIFailures(ctx context.Context, mr ports.MRRef, head string) ([]ports.CIFailure, error) {
+func (a *Adapter) CIFailures(ctx context.Context, mr repoport.MRRef, head string) ([]repoport.CIFailure, error) {
 	var m struct {
 		HeadPipeline *struct {
 			ID     int    `json:"id"`
@@ -375,38 +375,38 @@ func (a *Adapter) CIFailures(ctx context.Context, mr ports.MRRef, head string) (
 	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pipelines/%d/jobs?scope[]=failed&per_page=100", a.path(), p.ID), nil, &jobs); err != nil {
 		return nil, err
 	}
-	var out []ports.CIFailure
+	var out []repoport.CIFailure
 	for _, j := range jobs {
 		if j.AllowFailure {
 			continue
 		}
-		out = append(out, ports.CIFailure{Name: j.Name, URL: j.WebURL, File: file, Job: j.Name, Stage: j.Stage,
+		out = append(out, repoport.CIFailure{Name: j.Name, URL: j.WebURL, File: file, Job: j.Name, Stage: j.Stage,
 			Summary: strings.ReplaceAll(j.FailureReason, "_", " ")})
 	}
 	if len(out) == 0 {
 		// Failed with no job of its own failing: a configuration error, say.
-		out = append(out, ports.CIFailure{Name: "pipeline", URL: p.WebURL, File: file})
+		out = append(out, repoport.CIFailure{Name: "pipeline", URL: p.WebURL, File: file})
 	}
 	return out, nil
 }
 
 // pipelineState maps a GitLab pipeline status onto a check state.
-func pipelineState(status string) ports.CheckState {
+func pipelineState(status string) repoport.CheckState {
 	switch status {
 	case "success":
-		return ports.CheckSuccess
+		return repoport.CheckSuccess
 	case "failed":
-		return ports.CheckFailure
+		return repoport.CheckFailure
 	case "canceled", "skipped", "manual":
-		return ports.CheckNeutral
+		return repoport.CheckNeutral
 	}
-	return ports.CheckPending // created, waiting_for_resource, preparing, pending, running, scheduled
+	return repoport.CheckPending // created, waiting_for_resource, preparing, pending, running, scheduled
 }
 
 // MRApproval reads the merge request's approval state. A project without
 // approval rules reports approved with nobody's approval; that is not an
 // approval, so at least one person must have given one.
-func (a *Adapter) MRApproval(ctx context.Context, mr ports.MRRef) (ports.Approval, error) {
+func (a *Adapter) MRApproval(ctx context.Context, mr repoport.MRRef) (repoport.Approval, error) {
 	var out struct {
 		Approved   bool `json:"approved"`
 		ApprovedBy []struct {
@@ -416,9 +416,9 @@ func (a *Adapter) MRApproval(ctx context.Context, mr ports.MRRef) (ports.Approva
 		} `json:"approved_by"`
 	}
 	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/merge_requests/%d/approvals", a.path(), mr.IID), nil, &out); err != nil {
-		return ports.Approval{}, err
+		return repoport.Approval{}, err
 	}
-	var ap ports.Approval
+	var ap repoport.Approval
 	for _, b := range out.ApprovedBy {
 		ap.By = append(ap.By, b.User.Username)
 	}
@@ -429,22 +429,22 @@ func (a *Adapter) MRApproval(ctx context.Context, mr ports.MRRef) (ports.Approva
 // mergeableOf reads GitLab's merge status. has_conflicts is only meaningful
 // once GitLab has checked: while it is checking it may still describe the
 // previous head, so those states are unknown rather than a guess.
-func mergeableOf(detailed string, hasConflicts bool) ports.Mergeable {
+func mergeableOf(detailed string, hasConflicts bool) repoport.Mergeable {
 	switch detailed {
 	case "checking", "unchecked", "preparing", "approvals_syncing":
-		return ports.MergeUnknown
+		return repoport.MergeUnknown
 	case "conflict":
-		return ports.MergeConflicts
+		return repoport.MergeConflicts
 	}
 	if hasConflicts {
-		return ports.MergeConflicts
+		return repoport.MergeConflicts
 	}
-	return ports.MergeClean
+	return repoport.MergeClean
 }
 
 // MRThreads lists the merge request's discussions: inline threads and
 // general comments, system notes (pushes, label changes) dropped.
-func (a *Adapter) MRThreads(ctx context.Context, mr ports.MRRef) ([]ports.ReviewThread, error) {
+func (a *Adapter) MRThreads(ctx context.Context, mr repoport.MRRef) ([]repoport.ReviewThread, error) {
 	type note struct {
 		ID     int    `json:"id"`
 		Body   string `json:"body"`
@@ -462,7 +462,7 @@ func (a *Adapter) MRThreads(ctx context.Context, mr ports.MRRef) ([]ports.Review
 			OldLine int    `json:"old_line"`
 		} `json:"position"`
 	}
-	var out []ports.ReviewThread
+	var out []repoport.ReviewThread
 	for page := 1; page <= 50; page++ {
 		var ds []struct {
 			ID    string `json:"id"`
@@ -473,7 +473,7 @@ func (a *Adapter) MRThreads(ctx context.Context, mr ports.MRRef) ([]ports.Review
 			return nil, err
 		}
 		for _, d := range ds {
-			th := ports.ReviewThread{ID: d.ID}
+			th := repoport.ReviewThread{ID: d.ID}
 			resolvable, resolved := false, true
 			for _, n := range d.Notes {
 				if n.System {
@@ -489,7 +489,7 @@ func (a *Adapter) MRThreads(ctx context.Context, mr ports.MRRef) ([]ports.Review
 					resolvable = true
 					resolved = resolved && n.Resolved
 				}
-				th.Comments = append(th.Comments, ports.ReviewComment{ID: fmt.Sprint(n.ID), Author: n.Author.Username, Body: n.Body, CreatedAt: n.CreatedAt})
+				th.Comments = append(th.Comments, repoport.ReviewComment{ID: fmt.Sprint(n.ID), Author: n.Author.Username, Body: n.Body, CreatedAt: n.CreatedAt})
 			}
 			if len(th.Comments) == 0 {
 				continue
@@ -505,7 +505,7 @@ func (a *Adapter) MRThreads(ctx context.Context, mr ports.MRRef) ([]ports.Review
 }
 
 // ReplyThread adds a note to a discussion.
-func (a *Adapter) ReplyThread(ctx context.Context, mr ports.MRRef, threadID, body string) error {
+func (a *Adapter) ReplyThread(ctx context.Context, mr repoport.MRRef, threadID, body string) error {
 	_, err := a.api(ctx, http.MethodPost,
 		fmt.Sprintf("%s/merge_requests/%d/discussions/%s/notes", a.path(), mr.IID, url.PathEscape(threadID)),
 		map[string]any{"body": body}, nil)
@@ -513,7 +513,7 @@ func (a *Adapter) ReplyThread(ctx context.Context, mr ports.MRRef, threadID, bod
 }
 
 // ResolveThread resolves a discussion.
-func (a *Adapter) ResolveThread(ctx context.Context, mr ports.MRRef, threadID string) error {
+func (a *Adapter) ResolveThread(ctx context.Context, mr repoport.MRRef, threadID string) error {
 	_, err := a.api(ctx, http.MethodPut,
 		fmt.Sprintf("%s/merge_requests/%d/discussions/%s?resolved=true", a.path(), mr.IID, url.PathEscape(threadID)), nil, nil)
 	return err
@@ -524,7 +524,7 @@ func (a *Adapter) ResolveThread(ctx context.Context, mr ports.MRRef, threadID st
 // project-relative url and the markdown for it — what its renderer resolves
 // inside that project, and so what the body uses — and, on recent versions,
 // a full_path; URL is the absolute address either way.
-func (a *Adapter) UploadAttachment(ctx context.Context, _ ports.RepoRef, name, contentType string, data []byte) (ports.Attachment, error) {
+func (a *Adapter) UploadAttachment(ctx context.Context, _ repoport.RepoRef, name, contentType string, data []byte) (repoport.Attachment, error) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	h := textproto.MIMEHeader{}
@@ -538,23 +538,23 @@ func (a *Adapter) UploadAttachment(ctx context.Context, _ ports.RepoRef, name, c
 		err = mw.Close()
 	}
 	if err != nil {
-		return ports.Attachment{}, err
+		return repoport.Attachment{}, err
 	}
 	path := a.path() + "/uploads"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.cfg.BaseURL+"/api/v4"+path, &buf)
 	if err != nil {
-		return ports.Attachment{}, err
+		return repoport.Attachment{}, err
 	}
 	req.Header.Set("PRIVATE-TOKEN", a.cfg.Token)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	resp, err := a.http.Do(req)
 	if err != nil {
-		return ports.Attachment{}, err
+		return repoport.Attachment{}, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 400 {
-		return ports.Attachment{}, fmt.Errorf("gitlab POST %s: %d: %s", path, resp.StatusCode, tail(string(body), 300))
+		return repoport.Attachment{}, fmt.Errorf("gitlab POST %s: %d: %s", path, resp.StatusCode, tail(string(body), 300))
 	}
 	var out struct {
 		URL      string `json:"url"`
@@ -562,16 +562,16 @@ func (a *Adapter) UploadAttachment(ctx context.Context, _ ports.RepoRef, name, c
 		Markdown string `json:"markdown"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
-		return ports.Attachment{}, fmt.Errorf("gitlab POST %s: decode: %w", path, err)
+		return repoport.Attachment{}, fmt.Errorf("gitlab POST %s: decode: %w", path, err)
 	}
 	if out.URL == "" {
-		return ports.Attachment{}, fmt.Errorf("gitlab POST %s: the upload has no url", path)
+		return repoport.Attachment{}, fmt.Errorf("gitlab POST %s: the upload has no url", path)
 	}
 	abs := out.FullPath
 	if abs == "" {
 		abs = fmt.Sprintf("/-/project/%d%s", a.projectID, out.URL)
 	}
-	return ports.Attachment{URL: a.cfg.BaseURL + abs, Link: out.URL, Markdown: out.Markdown}, nil
+	return repoport.Attachment{URL: a.cfg.BaseURL + abs, Link: out.URL, Markdown: out.Markdown}, nil
 }
 
 // quoteEscaper escapes a multipart filename, as mime/multipart does.
@@ -584,7 +584,7 @@ func tail(s string, n int) string {
 	return s[len(s)-n:]
 }
 
-var _ ports.RepoHost = (*Adapter)(nil)
+var _ repoport.RepoHost = (*Adapter)(nil)
 
 // glMR is the merge requests API's shape, as far as MRInfo needs it.
 type glMR struct {
@@ -604,32 +604,32 @@ type glMR struct {
 	} `json:"author"`
 }
 
-func (m *glMR) info() ports.MRInfo {
-	st := ports.MROpen
+func (m *glMR) info() repoport.MRInfo {
+	st := repoport.MROpen
 	switch m.State {
 	case "merged":
-		st = ports.MRMerged
+		st = repoport.MRMerged
 	case "closed":
-		st = ports.MRClosed
+		st = repoport.MRClosed
 	}
-	return ports.MRInfo{Ref: ports.MRRef{IID: m.IID, URL: m.WebURL}, Title: m.Title, Body: m.Description, Author: m.Author.Username,
+	return repoport.MRInfo{Ref: repoport.MRRef{IID: m.IID, URL: m.WebURL}, Title: m.Title, Body: m.Description, Author: m.Author.Username,
 		State: st, Draft: m.Draft, Source: m.SourceBranch, Target: m.TargetBranch, Head: m.SHA,
 		HeadRef: fmt.Sprintf("refs/merge-requests/%d/head", m.IID),
 		Fork:    m.SourceProjectID != 0 && m.SourceProjectID != m.TargetProjectID}
 }
 
 // GetMR reads one merge request.
-func (a *Adapter) GetMR(ctx context.Context, iid int) (ports.MRInfo, error) {
+func (a *Adapter) GetMR(ctx context.Context, iid int) (repoport.MRInfo, error) {
 	var m glMR
 	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/merge_requests/%d", a.path(), iid), nil, &m); err != nil {
-		return ports.MRInfo{}, err
+		return repoport.MRInfo{}, err
 	}
 	return m.info(), nil
 }
 
 // ListMRs lists the open merge requests, newest first, up to 300.
-func (a *Adapter) ListMRs(ctx context.Context) ([]ports.MRInfo, error) {
-	var out []ports.MRInfo
+func (a *Adapter) ListMRs(ctx context.Context) ([]repoport.MRInfo, error) {
+	var out []repoport.MRInfo
 	for page := 1; page <= 3; page++ {
 		var ms []glMR
 		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/merge_requests?state=opened&order_by=created_at&sort=desc&per_page=100&page=%d", a.path(), page), nil, &ms); err != nil {
@@ -663,11 +663,11 @@ func (a *Adapter) Whoami(ctx context.Context) (string, error) {
 // refused here rather than quietly merged another way. 405/406 are GitLab
 // declining (a draft, a pipeline or approvals missing, a conflict), 409 a
 // head that moved.
-func (a *Adapter) MergeMR(ctx context.Context, mr ports.MRRef, opts ports.MergeOptions) error {
-	if opts.Method == ports.MergeMethodRebase {
-		return &ports.ErrMergeRefused{Reason: "GitLab merges by the project's merge method — set it to fast-forward for a linear history, and merge with method merge or squash"}
+func (a *Adapter) MergeMR(ctx context.Context, mr repoport.MRRef, opts repoport.MergeOptions) error {
+	if opts.Method == repoport.MergeMethodRebase {
+		return &repoport.ErrMergeRefused{Reason: "GitLab merges by the project's merge method — set it to fast-forward for a linear history, and merge with method merge or squash"}
 	}
-	body := map[string]any{"squash": opts.Method == ports.MergeMethodSquash, "should_remove_source_branch": opts.DeleteBranch}
+	body := map[string]any{"squash": opts.Method == repoport.MergeMethodSquash, "should_remove_source_branch": opts.DeleteBranch}
 	if opts.Head != "" {
 		body["sha"] = opts.Head
 	}
@@ -675,7 +675,7 @@ func (a *Adapter) MergeMR(ctx context.Context, mr ports.MRRef, opts ports.MergeO
 	if err != nil {
 		switch code {
 		case http.StatusMethodNotAllowed, http.StatusNotAcceptable, http.StatusConflict, http.StatusUnprocessableEntity:
-			return &ports.ErrMergeRefused{Reason: err.Error()}
+			return &repoport.ErrMergeRefused{Reason: err.Error()}
 		}
 		return err
 	}
@@ -687,10 +687,10 @@ func (a *Adapter) MergeMR(ctx context.Context, mr ports.MRRef, opts ports.MergeO
 // is already on the merge request, so a retry posts only what is missing. A
 // note whose line is not in the diff, or that GitLab will not anchor, joins
 // the summary.
-func (a *Adapter) PostReview(ctx context.Context, mr ports.MRRef, rev ports.Review) (ports.ReviewPosted, error) {
+func (a *Adapter) PostReview(ctx context.Context, mr repoport.MRRef, rev repoport.Review) (repoport.ReviewPosted, error) {
 	threads, err := a.MRThreads(ctx, mr)
 	if err != nil {
-		return ports.ReviewPosted{}, err
+		return repoport.ReviewPosted{}, err
 	}
 	var existing []string
 	for _, t := range threads {
@@ -714,7 +714,7 @@ func (a *Adapter) PostReview(ctx context.Context, mr ports.MRRef, rev ports.Revi
 		} `json:"diff_refs"`
 	}
 	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/merge_requests/%d", a.path(), mr.IID), nil, &m); err != nil {
-		return ports.ReviewPosted{}, err
+		return repoport.ReviewPosted{}, err
 	}
 	type diffFile struct {
 		oldPath string
@@ -728,20 +728,20 @@ func (a *Adapter) PostReview(ctx context.Context, mr ports.MRRef, rev ports.Revi
 			Diff    string `json:"diff"`
 		}
 		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/merge_requests/%d/diffs?per_page=100&page=%d", a.path(), mr.IID, page), nil, &ds); err != nil {
-			return ports.ReviewPosted{}, err
+			return repoport.ReviewPosted{}, err
 		}
 		for _, d := range ds {
-			files[d.NewPath] = diffFile{oldPath: d.OldPath, lines: ports.DiffLines(d.Diff)}
+			files[d.NewPath] = diffFile{oldPath: d.OldPath, lines: repoport.DiffLines(d.Diff)}
 		}
 		if len(ds) < 100 {
 			break
 		}
 	}
-	var out ports.ReviewPosted
+	var out repoport.ReviewPosted
 	already := true
-	var folded []ports.ReviewNote
+	var folded []repoport.ReviewNote
 	for i, n := range rev.Notes {
-		marker := ports.NoteMarker(rev.ID, i, n.Kind)
+		marker := repoport.NoteMarker(rev.ID, i, n.Kind)
 		f, ok := files[n.Path]
 		old, inDiff := f.lines[n.Line]
 		if !ok || !inDiff {
@@ -765,22 +765,22 @@ func (a *Adapter) PostReview(ctx context.Context, mr ports.MRRef, rev ports.Revi
 				folded = append(folded, n) // GitLab would not anchor it there
 				continue
 			}
-			return ports.ReviewPosted{}, err
+			return repoport.ReviewPosted{}, err
 		}
 		out.Inline++
 	}
 	out.Folded = len(folded)
 	var parts []string
-	for _, p := range []string{strings.TrimSpace(rev.Summary), ports.FoldedNotes(folded)} {
+	for _, p := range []string{strings.TrimSpace(rev.Summary), repoport.FoldedNotes(folded)} {
 		if p != "" {
 			parts = append(parts, p)
 		}
 	}
-	if marker := ports.ReviewMarker(rev.ID, "summary"); len(parts) > 0 && !posted(marker) {
+	if marker := repoport.ReviewMarker(rev.ID, "summary"); len(parts) > 0 && !posted(marker) {
 		already = false
 		if _, err := a.api(ctx, http.MethodPost, fmt.Sprintf("%s/merge_requests/%d/notes", a.path(), mr.IID),
 			map[string]any{"body": strings.Join(append(parts, marker), "\n\n")}, nil); err != nil {
-			return ports.ReviewPosted{}, err
+			return repoport.ReviewPosted{}, err
 		}
 	}
 	out.Already = already

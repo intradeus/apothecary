@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 )
 
 type IssuesConfig struct {
@@ -413,10 +414,10 @@ func (s *Issues) AddLink(ctx context.Context, key string, link ports.TicketLink)
 // Attach uploads a file for a comment on the issue: GitHub keeps no files
 // on an issue, so it goes where a pasted screenshot does — user-attachments,
 // for the issue's repository (Adapter.uploadAttachment).
-func (s *Issues) Attach(ctx context.Context, key, name, contentType string, data []byte) (ports.Attachment, error) {
+func (s *Issues) Attach(ctx context.Context, key, name, contentType string, data []byte) (repoport.Attachment, error) {
 	repo, _, err := s.parseKey(key)
 	if err != nil {
-		return ports.Attachment{}, err
+		return repoport.Attachment{}, err
 	}
 	return s.a.uploadAttachment(ctx, repo, name, contentType, data)
 }

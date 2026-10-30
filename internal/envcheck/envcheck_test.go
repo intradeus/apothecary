@@ -10,8 +10,8 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
 )
 
@@ -66,7 +66,7 @@ func newFixture(t *testing.T) *fixture {
 	h.res = &resolution.Resolution{
 		ProjectID:    fixtureProject,
 		ProjectName:  "test",
-		RepoRef:      ports.RepoRef{URL: "https://gitlab.local/g/p.git", DefaultBranch: "main", Locator: "1"},
+		RepoRef:      repoport.RepoRef{URL: "https://gitlab.local/g/p.git", DefaultBranch: "main", Locator: "1"},
 		AgentsMDPath: "AGENTS.md",
 		DefaultFlow:  "loop",
 		Commands:     map[string]string{"verify": "make lint && make test"},

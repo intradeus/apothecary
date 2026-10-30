@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
 	"apothecary/internal/secrets"
 	"apothecary/internal/tickets"
@@ -31,7 +32,7 @@ type fakeEngine struct {
 	runs map[string][]run.View
 	next int
 	// MRs is what ListMRs reports (merge_request).
-	MRs []ports.MRInfo
+	MRs []repoport.MRInfo
 }
 
 func (f *fakeEngine) CreateRunWith(_ context.Context, t engine.Ticket, flowName, _ string, in engine.RunInput) (string, error) {
@@ -60,10 +61,10 @@ func (f *fakeEngine) RunsOfTicket(_ context.Context, ticketID string) ([]run.Vie
 	return f.runs[ticketID], nil
 }
 
-func (f *fakeEngine) ListMRs(context.Context, string, string) ([]ports.MRInfo, error) {
+func (f *fakeEngine) ListMRs(context.Context, string, string) ([]repoport.MRInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]ports.MRInfo(nil), f.MRs...), nil
+	return append([]repoport.MRInfo(nil), f.MRs...), nil
 }
 
 func (f *fakeEngine) RepoHostUser(context.Context, string, string) (string, error) {
@@ -375,11 +376,11 @@ func TestMergeRequestAutomationStartsOnOthersMergeRequestsOnce(t *testing.T) {
 	if _, err := h.conf.SaveFlow(ctx, h.project.ID, "rev", reviewerYAML, nil); err != nil {
 		t.Fatal(err)
 	}
-	mr := func(iid int, author string, draft bool) ports.MRInfo {
-		return ports.MRInfo{Ref: ports.MRRef{IID: iid, URL: fmt.Sprintf("https://gitlab.com/g/p/-/merge_requests/%d", iid)},
-			Title: fmt.Sprintf("change %d", iid), Author: author, State: ports.MROpen, Draft: draft, Source: "feature", Target: "main"}
+	mr := func(iid int, author string, draft bool) repoport.MRInfo {
+		return repoport.MRInfo{Ref: repoport.MRRef{IID: iid, URL: fmt.Sprintf("https://gitlab.com/g/p/-/merge_requests/%d", iid)},
+			Title: fmt.Sprintf("change %d", iid), Author: author, State: repoport.MROpen, Draft: draft, Source: "feature", Target: "main"}
 	}
-	h.eng.MRs = []ports.MRInfo{mr(5, "bob", true), mr(4, "alice", false), mr(3, "apothecary", false)}
+	h.eng.MRs = []repoport.MRInfo{mr(5, "bob", true), mr(4, "alice", false), mr(3, "apothecary", false)}
 	a := h.automation(t, confstore.Automation{Name: "review others", Kind: confstore.AutomationMergeRequest, Flow: "rev", Enabled: true})
 	h.pass(t)
 	if n := h.eng.count(); n != 1 {

@@ -6,6 +6,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"apothecary/internal/ports/repoport"
 )
 
 // SourceTicket is one unit of work as an EXTERNAL tracker reports it (Jira,
@@ -239,7 +241,7 @@ type TicketWriter interface {
 // fails saying so.
 type TicketAttacher interface {
 	// Attach uploads one file for the issue and says how a comment links it.
-	Attach(ctx context.Context, key, name, contentType string, data []byte) (Attachment, error)
+	Attach(ctx context.Context, key, name, contentType string, data []byte) (repoport.Attachment, error)
 }
 
 // ErrStatusUnreachable: the status a flow names is not one the issue can

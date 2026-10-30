@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	"apothecary/internal/confstore"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/repoport"
 )
 
 // FindByKey is the project's ticket whose source key is key (compared
@@ -35,7 +35,7 @@ func (f *Factory) FindByKey(ctx context.Context, projectID, key string) (confsto
 // CreateForMR makes the ticket of a merge request: titled with it and its
 // author, its description and a line naming it as the goal, its URL as the
 // key. automationID records the automation that made it ("" = a person).
-func (f *Factory) CreateForMR(ctx context.Context, projectID, automationID string, mr ports.MRInfo) (confstore.Ticket, error) {
+func (f *Factory) CreateForMR(ctx context.Context, projectID, automationID string, mr repoport.MRInfo) (confstore.Ticket, error) {
 	goal := strings.TrimSpace(mr.Body)
 	if goal != "" {
 		goal += "\n\n"
@@ -54,7 +54,7 @@ func (f *Factory) CreateForMR(ctx context.Context, projectID, automationID strin
 
 // ForMR is the merge request's ticket — whoever made it — or a new one;
 // created says which.
-func (f *Factory) ForMR(ctx context.Context, projectID string, mr ports.MRInfo) (t confstore.Ticket, created bool, err error) {
+func (f *Factory) ForMR(ctx context.Context, projectID string, mr repoport.MRInfo) (t confstore.Ticket, created bool, err error) {
 	t, found, err := f.FindByKey(ctx, projectID, mr.Ref.URL)
 	if err != nil || found {
 		return t, false, err
