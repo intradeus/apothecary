@@ -289,7 +289,6 @@ func (x *exec) selectThreads(st *flow.Stage, mr *mrRecord, pending []repoport.Re
 		if err := x.append(raised); err != nil {
 			return nil, true, err
 		}
-		rs.selectPing = raised
 		x.e.notify(x.bg, notifyport.Notification{RunID: rs.runID, PingID: p.ID, Type: p.Type, Title: q, Body: p.Link})
 		return nil, true, errWaitingOnHuman
 	}

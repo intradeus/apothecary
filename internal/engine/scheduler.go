@@ -88,7 +88,6 @@ func (x *exec) tryResume(pr *phaseRun, obs []mrObservation) (bool, error) {
 		if err := x.append(&event.PhaseResumed{Phase: pr.phase, Subject: pr.subject, StageID: st.ID}); err != nil {
 			return err
 		}
-		rs.unpark(pr.phase)
 		return nil
 	}
 	switch st.Type {
@@ -228,7 +227,6 @@ func (x *exec) answerFromEngine(pingID string, ans PingAnswer) (*event.PingAnswe
 		}
 		return nil, err
 	}
-	x.rs.answeredPings[pingID] = rec
 	if p != nil {
 		close(p.done)
 	}

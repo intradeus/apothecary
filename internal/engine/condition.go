@@ -37,14 +37,12 @@ func (x *exec) stageCondition(st *flow.Stage) (skip bool, note string) {
 func (x *exec) skipStage(st *flow.Stage, note string) error {
 	rs := x.rs
 	iter := rs.iters[st.ID] + 1
-	rs.iters[st.ID] = iter
 	if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
 		return err
 	}
 	if err := x.append(&event.StageCompleted{StageID: st.ID, Skipped: true, Note: note}); err != nil {
 		return err
 	}
-	rs.elided[st.ID] = true
 	x.e.log.Info("stage skipped", "run", rs.runID, "stage", st.ID, "note", note)
 	x.advance(st)
 	return nil

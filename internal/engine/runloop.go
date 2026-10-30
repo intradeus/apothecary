@@ -426,7 +426,6 @@ func (x *exec) advanceWith(st *flow.Stage, verdict string) {
 
 func (x *exec) complete() error {
 	rs := x.rs
-	rs.done = true
 	return x.append(&event.RunCompleted{
 		DurationMS:    x.e.clock().Sub(rs.view.CreatedAt).Milliseconds(),
 		TotalCostUSD:  rs.cost,
@@ -436,12 +435,10 @@ func (x *exec) complete() error {
 }
 
 func (x *exec) abandon(stalledAt, edgeKind, reason string) error {
-	x.rs.done = true
 	return x.append(&event.RunAbandoned{StalledAt: stalledAt, Edge: edgeKind, Reason: reason})
 }
 
 func (x *exec) fail(reason string) error {
-	x.rs.done = true
 	return x.append(&event.RunFailed{Reason: reason})
 }
 
@@ -488,8 +485,6 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 				Feed: feedTail(feedContent)}); err != nil {
 				return err
 			}
-			x.endPhase()
-			rs.endsRun = e.To == flow.TerminalDone
 			return nil
 		}
 		if e.To == flow.TerminalAbort {
@@ -510,11 +505,6 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 				Max: flow.UnlimitedMax, Depth: depth, Feed: feed}); err != nil {
 				return err
 			}
-			rs.edgeCounts[key] = count
-			rs.ph = phDebug
-			rs.feed = feed
-			rs.feedSentinel = flow.FeedSource(kind)
-			rs.feedAttempts = 0
 			return nil
 		}
 		if e.Max != flow.UnlimitedMax && count > e.Max {
@@ -528,14 +518,6 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 		if err := x.append(&event.EdgeTaken{From: st.ID, To: e.To, Edge: kind, Count: count, Max: e.Max, Depth: depth, Feed: feed}); err != nil {
 			return err
 		}
-		rs.edgeCounts[key] = count
-		rs.pos = rs.fl.Index(e.To)
-		rs.ph = phStart
-		rs.feed = feed
-		// Which sentinel the content fills follows from the edge kind, so
-		// replay derives it from the persisted event rather than storing it.
-		rs.feedSentinel = flow.FeedSource(kind)
-		rs.feedAttempts = e.Max + 1
 		return nil
 	}
 	return x.deadEnd(st, kind, fmt.Sprintf("%s from %s exhausted (max %s)", kind, st.ID, chainMax(edge)))
@@ -592,7 +574,6 @@ func (x *exec) routeAfterFail(st *flow.Stage) error {
 		feed = x.rs.lastFailure.Error
 		kind = failEdgeKind(st, x.rs.lastFailure.Reason)
 	}
-	x.rs.ph = phStart
 	return x.takeEdge(st, kind, feed)
 }
 
@@ -703,14 +684,7 @@ func (x *exec) releaseHold(st *flow.Stage, iter int, h *heldState, by, reason st
 	}
 	rel := &event.HoldReleased{StageID: st.ID, Iteration: iter, UserID: by, Reason: reason,
 		DurationMS: max(x.e.clock().Sub(h.takenAt).Milliseconds(), 0), HoldSpend: total}
-	if err := x.append(rel); err != nil {
-		return err
-	}
-	delete(x.rs.holds, st.ID)
-	if reason == event.HoldReleasedByUser {
-		x.rs.handbackOwed[st.ID] = true
-	}
-	return nil
+	return x.append(rel)
 }
 
 // endHold closes a take-over the attempt ended underneath: the harness
@@ -771,7 +745,6 @@ func (x *exec) parkOnHold(st *flow.Stage, iter int, session agentport.SessionID)
 			SessionID: string(session)}); err != nil {
 			return err
 		}
-		x.rs.pausedHold[st.ID] = true
 	}
 	return errWaitingOnHuman
 }
@@ -850,12 +823,10 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	iter := rs.iters[st.ID]
 	if !reenter {
 		iter++
-		rs.iters[st.ID] = iter
 		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter, Harness: st.Harness, Model: st.Model,
 			Agent: st.Agent, AgentHash: x.rs.fl.AgentHash(st.Agent)}); err != nil {
 			return err
 		}
-		delete(rs.pausedAsks, st.ID) // a fresh attempt is parked on nothing
 		// What the agent reads with a schema is a precondition, like a
 		// command's inputs: an agent handed a malformed file would build on
 		// it. Upstream wiring, not this stage's work. Checked before the
@@ -870,7 +841,6 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		// below cannot be satisfied by an earlier attempt's file (M18).
 		x.clearOutputs(st.Outputs)
 	}
-	rs.ph = phIn
 	started := x.e.clock()
 
 	prompt := x.assemblePrompt(st, iter)
@@ -1005,8 +975,6 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 				PingIDs: askIDs(asks), SessionID: string(session)}); err != nil {
 				return err
 			}
-			delete(rs.pausedAsks, st.ID) // consumed
-			delete(rs.pausedHold, st.ID)
 		}
 		asks, resumeReason = nil, ""
 
@@ -1152,9 +1120,6 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	if err := x.append(completed); err != nil {
 		return err
 	}
-	if res.r.Session != "" {
-		rs.sessions[st.ID] = res.r.Session
-	}
 
 	if verdict != nil {
 		if err := x.append(&event.VerdictReceived{StageID: st.ID, Approve: verdict.Approve, NComments: len(verdict.Comments)}); err != nil {
@@ -1202,18 +1167,10 @@ func (x *exec) pauseAttempt(st *flow.Stage, iter int, inv invocation) (stop bool
 	if err := x.append(paused); err != nil {
 		return false, err
 	}
-	if inv.res.r.Session != "" {
-		rs.sessions[st.ID] = inv.res.r.Session
-	}
 	// A question-per-turn loop would otherwise never meet a budget check:
 	// nothing else bounds an attempt that keeps asking.
 	if stop, err := x.checkBudget(st); stop || err != nil {
 		return true, err
-	}
-	if inv.holdPark {
-		rs.pausedHold[st.ID] = true
-	} else {
-		rs.pausedAsks[st.ID] = pingIDs(inv.open)
 	}
 	return false, nil
 }
@@ -1255,7 +1212,6 @@ func (x *exec) withPendingMessages(st *flow.Stage, iter int, text string) (strin
 	if err := x.append(&event.MessageDelivered{MessageIDs: ids, StageID: st.ID, Iteration: iter}); err != nil {
 		return text, err
 	}
-	x.rs.delivered(ids)
 	return text + "\n\n---\n\n" + formatMessages(msgs), nil
 }
 
@@ -1301,7 +1257,6 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			if err := x.append(&event.AgentSession{StageID: st.ID, Iteration: io.tr.iter, SessionID: ev.Text}); err != nil {
 				return false, err
 			}
-			x.rs.sessions[st.ID] = agentport.SessionID(ev.Text)
 			return true, nil
 		}
 		return false, io.tr.handle(ev)
@@ -1381,7 +1336,6 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		if err := x.prompted(st.ID, io.tr.iter, event.PromptHandback, handbackPrompt); err != nil {
 			return err
 		}
-		delete(x.rs.handbackOwed, st.ID)
 		io.inbox.push(agentport.UserMessage{Text: handbackPrompt, Verbatim: true})
 		busyAgain()
 		hold = nil
@@ -1534,7 +1488,6 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			// Keep the working state a mirror of what replay would build, so
 			// a resume reads the same whether the answer arrived in this
 			// process or was found in the log after a restart.
-			x.rs.raisedPings[raised.PingID] = raised
 			// Snapshot the attached files as they are RIGHT NOW: the agent
 			// resumes the moment this ping is answered, and the record must
 			// keep what the human was actually shown.
@@ -1708,7 +1661,6 @@ func (x *exec) processAnswer(ar answerReq) (handled bool, err error) {
 		x.e.mu.Unlock()
 		return false, err
 	}
-	x.rs.answeredPings[recorded.PingID] = recorded
 	// Deliver any files the human attached to this answer into the workspace,
 	// recording their paths so the ask_human tool-return (agent pings) and the
 	// gate feed (gate pings) can point the agent at them.
@@ -1741,12 +1693,10 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	fresh := rs.ph != phIn
 	if fresh { // §2: on recovery, open command stages re-execute without a new attempt
 		iter := rs.iters[st.ID] + 1
-		rs.iters[st.ID] = iter
 		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
 			return err
 		}
 	}
-	rs.ph = phIn
 	started := x.e.clock()
 
 	// Declared inputs are a precondition (FLOWLANG §4): a script whose input
@@ -1968,9 +1918,7 @@ func (x *exec) stageGate(st *flow.Stage) error {
 
 	// Recovery: answered pre-crash but routing unrecorded.
 	if rs.ph == phIn && rs.gateAnswer != nil {
-		ans := rs.gateAnswer
-		rs.gateAnswer = nil
-		return x.routeGate(st, ans, x.e.clock())
+		return x.routeGate(st, rs.gateAnswer, x.e.clock())
 	}
 
 	var p *Ping
@@ -1979,11 +1927,9 @@ func (x *exec) stageGate(st *flow.Stage) error {
 	}
 	if p == nil {
 		iter := rs.iters[st.ID] + 1
-		rs.iters[st.ID] = iter
 		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
 			return err
 		}
-		rs.ph = phIn
 		// The gate's inputs: files to review and at most one link source
 		// the engine resolves. TYPED HERE, at source resolution — this is
 		// the one place that knows which is which, so nothing downstream ever
@@ -2119,7 +2065,6 @@ func (x *exec) raiseYesNo(p *Ping) error {
 		return err
 	}
 	// As replay has it: what the ping showed, for the answer's review.
-	x.rs.raisedPings[raised.PingID] = raised
 	return nil
 }
 
@@ -2217,11 +2162,9 @@ func (x *exec) stageAction(st *flow.Stage) error {
 	rs := x.rs
 	if rs.ph != phIn {
 		iter := rs.iters[st.ID] + 1
-		rs.iters[st.ID] = iter
 		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
 			return err
 		}
-		rs.ph = phIn
 		// What it reads must be there and hold its shape, as for any stage:
 		// an action handed a malformed file would act on it. Not while an
 		// effect is pending: the executor reconciles first, and an effect
@@ -2308,11 +2251,9 @@ func (x *exec) stageWait(st *flow.Stage) error {
 	rs := x.rs
 	if rs.ph != phIn {
 		iter := rs.iters[st.ID] + 1
-		rs.iters[st.ID] = iter
 		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
 			return err
 		}
-		rs.ph = phIn
 	}
 	if sig := signalspec.Get(st.WaitFor); sig != nil && sig.Needs == signalspec.NeedsMR && len(rs.mrs) == 0 {
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInputMissing,
@@ -2462,7 +2403,6 @@ func (x *exec) ensureEnv() error {
 		if err := x.append(&event.EnvRequested{}); err != nil {
 			return err
 		}
-		rs.envRequested = true
 	}
 	// The container/workspace name derives from the branch STEM, not the
 	// suffixed actual branch: base already ends where the run-id tail begins,
@@ -2506,7 +2446,6 @@ func (x *exec) ensureEnv() error {
 		if x.ctx.Err() != nil {
 			return context.Cause(x.ctx)
 		}
-		rs.done = true
 		return x.append(&event.EnvFailed{Error: err.Error()})
 	}
 	rs.envID = id
@@ -2520,7 +2459,6 @@ func (x *exec) ensureEnv() error {
 		if x.ctx.Err() != nil {
 			return context.Cause(x.ctx)
 		}
-		rs.done = true
 		// Kept, like a failed bootstrap's: the workspace is the evidence.
 		return x.append(&event.EnvFailed{Error: err.Error(), EnvID: string(id)})
 	}
@@ -2537,7 +2475,6 @@ func (x *exec) ensureEnv() error {
 	// is not a link the log records: the run page has its terminal and
 	// editor, the SSH door its ssh/VS Code route (GET /runs/{id}/ssh).
 	evLinks := x.e.runPorts.AutoExpose(x.ctx, x.rs.runID, x.res.Envp, id)
-	rs.links = evLinks // live counterpart of replay's env_ready capture
 	return x.append(&event.EnvReady{EnvID: string(id), Links: evLinks})
 }
 
@@ -2609,7 +2546,6 @@ func (x *exec) bootstrap(id envport.EnvID) error {
 		if x.ctx.Err() != nil {
 			return context.Cause(x.ctx)
 		}
-		x.rs.done = true
 		// The workspace exists (Provision succeeded) — record its id so
 		// capacity counting, archive and the reaper can destroy it.
 		return x.append(&event.EnvFailed{Error: err.Error(), EnvID: string(id)})

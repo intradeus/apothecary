@@ -200,7 +200,6 @@ func (x *exec) actionPushBranch(st *flow.Stage) (bool, error) {
 		if err := x.append(&event.BranchPushed{StageID: st.ID, Repo: co.Name, Branch: co.Branch, Tip: tip}); err != nil {
 			return true, err
 		}
-		rs.notePush(co.Name, co.Branch, tip)
 	}
 	return false, nil
 }

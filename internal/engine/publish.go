@@ -87,7 +87,6 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 				if err := x.append(created); err != nil {
 					return true, err
 				}
-				rs.addMR(created)
 				continue
 			}
 		}
@@ -154,7 +153,6 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 		if err := x.append(created); err != nil {
 			return true, err
 		}
-		rs.addMR(created)
 	}
 	return false, nil
 }

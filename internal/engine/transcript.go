@@ -324,7 +324,6 @@ func (t *transcript) handle(ev agentport.AgentEvent) error {
 		if err := t.x.append(&event.MessageDelivered{MessageIDs: ids, StageID: t.st, Iteration: t.iter}); err != nil {
 			return err
 		}
-		t.x.rs.delivered(ids)
 		return nil
 	case agentport.AgentEvNotice:
 		if err := t.flushAll(); err != nil {

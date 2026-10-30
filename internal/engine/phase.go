@@ -123,8 +123,6 @@ func (x *exec) phaseDone() error {
 	if err := x.append(&event.PhaseCompleted{Phase: rs.phase, Subject: rs.subject, Reason: rs.endReason}); err != nil {
 		return err
 	}
-	rs.endReason = ""
-	rs.idle = true
 	return nil
 }
 
@@ -340,7 +338,6 @@ func (x *exec) evaluateIdle(st *idler) error {
 			if err := x.append(&event.PhaseDeclined{Phase: cp.Phase, Subject: cp.Subject, Key: cp.TriggerKey}); err != nil {
 				return err
 			}
-			rs.triggerSeen[triggerKey(cp.Phase, cp.Subject, cp.TriggerKey)] = true
 			continue
 		}
 		var tip string

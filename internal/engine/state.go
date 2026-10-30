@@ -28,7 +28,21 @@ const (
 
 // runState is the single-writer goroutine's working state. Everything here
 // is reconstructed from events (§2: counters and budgets are never stored
-// separately), so a kill -9 at any point is recoverable by replay.
+// separately), so a kill -9 at any point is recoverable by replay: the loop
+// folds every event it appends with the same apply replay uses.
+//
+// A few decisions are made in the state before the event that records them
+// is appended, by the next step — each re-derived by recovery through the
+// same code path:
+//   - a completed stage's on_success (advanceWith; recovery: routeAfterComplete),
+//   - a phase's end decided without a terminal edge (endPhase, a watcher's
+//     dead end and its endReason, an empty round; recorded by phase_completed),
+//   - continuing from the debug leaf (routeDebug; recorded by stage_started).
+//
+// Two more are set without any event: a caretaker flow (no main chain)
+// begins idle (beginRun, each loop), and envID is known as soon as the
+// workspace exists, before env_ready, so the run's attachments reach it
+// first.
 type runState struct {
 	runID        string
 	view         run.View

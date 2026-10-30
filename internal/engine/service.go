@@ -51,12 +51,10 @@ func (x *exec) stageService(st *flow.Stage) error {
 	fresh := rs.ph != phIn
 	if fresh {
 		iter := rs.iters[st.ID] + 1
-		rs.iters[st.ID] = iter
 		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
 			return err
 		}
 	}
-	rs.ph = phIn
 	started := x.e.clock()
 	svc := x.res.Service(st.Service)
 	if svc == nil {
