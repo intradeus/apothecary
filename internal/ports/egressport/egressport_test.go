@@ -1,6 +1,8 @@
-package ports
+package egressport
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestEgressPolicyStatus(t *testing.T) {
 	allow := EgressPolicy{Mode: "allow", Domains: []string{"github.com", "*.npmjs.org"}, BlockedDomains: []string{"evil.io", "*.ads.net"}}

@@ -47,7 +47,7 @@
 // in a separate container + the host bridge). This finally covers compose
 // devcontainers, which the old in-container firewall left wide open. The
 // per-project firewall=off switch (GatewayOff) is the escape hatch: the sandbox
-// then egresses directly on the host bridge, unfiltered. See ports.EgressController.
+// then egresses directly on the host bridge, unfiltered. See egressport.EgressController.
 package workspace
 
 import (
@@ -71,7 +71,7 @@ import (
 
 	"apothecary/internal/egressgw"
 	"apothecary/internal/egressgw/policyfile"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"
 )
 
@@ -1161,32 +1161,32 @@ func (a *Adapter) Reattach(ctx context.Context, env envport.EnvID) error {
 	return a.waitReady(ctx, string(env))
 }
 
-// EgressDenials (ports.EgressController) returns this run's blocked hosts, read
+// EgressDenials (egressport.EgressController) returns this run's blocked hosts, read
 // from the per-project gateway's denials file.
-func (a *Adapter) EgressDenials(ctx context.Context, env envport.EnvID) []ports.EgressDenial {
+func (a *Adapter) EgressDenials(ctx context.Context, env envport.EnvID) []egressport.EgressDenial {
 	if a.gw == nil {
 		return nil
 	}
 	project := a.projectFor(string(env))
-	out := []ports.EgressDenial{}
+	out := []egressport.EgressDenial{}
 	for _, d := range a.gw.Denials(ctx, project, string(env)) {
-		out = append(out, ports.EgressDenial{Host: d.Host, Count: d.Count, Last: d.Last})
+		out = append(out, egressport.EgressDenial{Host: d.Host, Count: d.Count, Last: d.Last})
 	}
 	return out
 }
 
-// EgressAudit (ports.EgressAuditor) returns this run's aggregated egress trail
+// EgressAudit (egressport.EgressAuditor) returns this run's aggregated egress trail
 // from the per-project gateway (filtered to the run).
-func (a *Adapter) EgressAudit(ctx context.Context, env envport.EnvID) []ports.EgressAuditRecord {
+func (a *Adapter) EgressAudit(ctx context.Context, env envport.EnvID) []egressport.EgressAuditRecord {
 	if a.gw == nil {
 		return nil
 	}
-	out := []ports.EgressAuditRecord{}
+	out := []egressport.EgressAuditRecord{}
 	for _, r := range a.gw.Audit(ctx, a.projectFor(string(env))) {
 		if r.Run != string(env) {
 			continue
 		}
-		out = append(out, ports.EgressAuditRecord{
+		out = append(out, egressport.EgressAuditRecord{
 			Host: r.Host, DstIP: r.DstIP, Port: r.Port, Proto: r.Proto, Verdict: r.Verdict,
 			Count: r.Count, BytesOut: r.BytesOut, BytesIn: r.BytesIn, First: r.First, Last: r.Last,
 		})
@@ -1194,7 +1194,7 @@ func (a *Adapter) EgressAudit(ctx context.Context, env envport.EnvID) []ports.Eg
 	return out
 }
 
-// AllowEgress (ports.EgressController) adds a host to the run's project policy
+// AllowEgress (egressport.EgressController) adds a host to the run's project policy
 // live — the gateway hot-reloads it, so the next request succeeds with no
 // restart. Project-wide by design (the policy is per project).
 func (a *Adapter) AllowEgress(ctx context.Context, env envport.EnvID, host string) error {
@@ -1204,7 +1204,7 @@ func (a *Adapter) AllowEgress(ctx context.Context, env envport.EnvID, host strin
 	return a.gw.Allow(ctx, a.projectFor(string(env)), host)
 }
 
-// SetEgressRule (ports.EgressController) live-toggles a host allow/deny.
+// SetEgressRule (egressport.EgressController) live-toggles a host allow/deny.
 func (a *Adapter) SetEgressRule(ctx context.Context, env envport.EnvID, host string, allow bool) error {
 	if a.gw == nil {
 		return fmt.Errorf("egress gateway is off for this provisioner")
@@ -1212,18 +1212,18 @@ func (a *Adapter) SetEgressRule(ctx context.Context, env envport.EnvID, host str
 	return a.gw.SetRule(ctx, a.projectFor(string(env)), host, allow)
 }
 
-// EgressPolicy (ports.EgressController) reads back the project policy the
+// EgressPolicy (egressport.EgressController) reads back the project policy the
 // gateway is enforcing right now — the "current rule" side of the run page's
 // firewall UI.
-func (a *Adapter) EgressPolicy(ctx context.Context, env envport.EnvID) (ports.EgressPolicy, error) {
+func (a *Adapter) EgressPolicy(ctx context.Context, env envport.EnvID) (egressport.EgressPolicy, error) {
 	if a.gw == nil {
-		return ports.EgressPolicy{}, fmt.Errorf("egress gateway is off for this provisioner")
+		return egressport.EgressPolicy{}, fmt.Errorf("egress gateway is off for this provisioner")
 	}
 	f, err := a.gw.Policy(ctx, a.projectFor(string(env)))
 	if err != nil {
-		return ports.EgressPolicy{}, err
+		return egressport.EgressPolicy{}, err
 	}
-	return ports.EgressPolicy{
+	return egressport.EgressPolicy{
 		Mode:           string(f.NormMode()),
 		Domains:        f.Domains,
 		BlockedDomains: f.BlockedDomains,
@@ -1351,8 +1351,8 @@ func (a *Adapter) Rebuild(ctx context.Context, spec envport.EnvSpec) error {
 var _ envport.EnvProvisioner = (*Adapter)(nil)
 var _ envport.WorkspaceReattacher = (*Adapter)(nil)
 var _ envport.ExecLogTailer = (*Adapter)(nil)
-var _ ports.EgressController = (*Adapter)(nil)
-var _ ports.EgressAuditor = (*Adapter)(nil)
+var _ egressport.EgressController = (*Adapter)(nil)
+var _ egressport.EgressAuditor = (*Adapter)(nil)
 var _ envport.WorkspacePortExposer = (*Adapter)(nil)
 var _ envport.WorkspaceRebuilder = (*Adapter)(nil)
 var _ envport.EditorStarter = (*Adapter)(nil)

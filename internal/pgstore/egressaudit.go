@@ -7,13 +7,13 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/egressport"
 )
 
 // UpsertEgressAudit persists aggregated audit rows. Counts/bytes are cumulative
 // within a gateway lifetime, so conflicts take GREATEST (monotonic) — a re-ingest
 // of the same live gateway never double-counts, and last/first seen widen.
-func (s *Store) UpsertEgressAudit(ctx context.Context, rows []ports.EgressAuditRow) error {
+func (s *Store) UpsertEgressAudit(ctx context.Context, rows []egressport.EgressAuditRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -46,7 +46,7 @@ func (s *Store) UpsertEgressAudit(ctx context.Context, rows []ports.EgressAuditR
 }
 
 // QueryEgressAudit returns audit rows matching the filter, newest activity first.
-func (s *Store) QueryEgressAudit(ctx context.Context, f ports.EgressAuditFilter) ([]ports.EgressAuditRow, error) {
+func (s *Store) QueryEgressAudit(ctx context.Context, f egressport.EgressAuditFilter) ([]egressport.EgressAuditRow, error) {
 	var where []string
 	var args []any
 	add := func(cond string, val any) {
@@ -81,9 +81,9 @@ func (s *Store) QueryEgressAudit(ctx context.Context, f ports.EgressAuditFilter)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ports.EgressAuditRow
+	var out []egressport.EgressAuditRow
 	for rows.Next() {
-		var r ports.EgressAuditRow
+		var r egressport.EgressAuditRow
 		if err := rows.Scan(&r.Project, &r.Run, &r.Host, &r.DstIP, &r.Port, &r.Proto, &r.Verdict,
 			&r.Count, &r.BytesOut, &r.BytesIn, &r.First, &r.Last); err != nil {
 			return nil, err

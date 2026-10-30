@@ -8,7 +8,7 @@ import (
 
 	"apothecary/internal/builtin"
 	"apothecary/internal/egress"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/egressport"
 	"apothecary/internal/run"
 )
 
@@ -29,7 +29,7 @@ func (s *Server) getEgressDefaults(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getEgressDenials(w http.ResponseWriter, r *http.Request) {
 	dens := s.Egress.Denials(r.Context(), r.PathValue("id"))
 	if dens == nil {
-		dens = []ports.EgressDenial{}
+		dens = []egressport.EgressDenial{}
 	}
 	writeJSON(w, http.StatusOK, dens)
 }
@@ -70,7 +70,7 @@ func (s *Server) getRunEgressAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rows == nil {
-		rows = []ports.EgressAuditRow{}
+		rows = []egressport.EgressAuditRow{}
 	}
 	writeJSON(w, http.StatusOK, rows)
 }
@@ -86,7 +86,7 @@ func (s *Server) getProjectEgressAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rows == nil {
-		rows = []ports.EgressAuditRow{}
+		rows = []egressport.EgressAuditRow{}
 	}
 	writeJSON(w, http.StatusOK, rows)
 }
@@ -218,7 +218,7 @@ func (s *Server) egressRoutes() []Route {
 			Handler: s.getEgressDefaults, Returns: EgressDefaults{}},
 		{Method: "GET", Path: "/api/runs/{id}/egress-denials", ID: "listEgressDenials", Tag: tagEgress,
 			Summary: "Hosts the gateway blocked for this run",
-			Handler: s.getEgressDenials, Returns: []ports.EgressDenial{}, Scope: ScopeRun},
+			Handler: s.getEgressDenials, Returns: []egressport.EgressDenial{}, Scope: ScopeRun},
 		{Method: "POST", Path: "/api/runs/{id}/egress-allow", ID: "allowEgressHost", Tag: tagEgress,
 			Summary: "Unblock a host for a live run and persist it to the project",
 			Handler: s.postEgressAllow, Body: EgressHostRequest{}, Returns: EgressAllowResult{}, Scope: ScopeRun},
@@ -227,7 +227,7 @@ func (s *Server) egressRoutes() []Route {
 			Handler: s.postEgressRule, Body: EgressRuleRequest{}, Returns: EgressRuleResult{}, Scope: ScopeRun},
 		{Method: "GET", Path: "/api/runs/{id}/egress-audit", ID: "getRunEgressAudit", Tag: tagEgress,
 			Summary: "Everything this run's workspace reached or was blocked from",
-			Query:   auditQuery, Handler: s.getRunEgressAudit, Returns: []ports.EgressAuditRow{}, Scope: ScopeRun},
+			Query:   auditQuery, Handler: s.getRunEgressAudit, Returns: []egressport.EgressAuditRow{}, Scope: ScopeRun},
 		{Method: "GET", Path: "/api/runs/{id}/egress-policy", ID: "getRunEgressPolicy", Tag: tagEgress,
 			Summary: "The firewall policy in force for a run right now",
 			Handler: s.getRunEgressPolicy, Returns: EgressPolicy{}, Scope: ScopeRun},

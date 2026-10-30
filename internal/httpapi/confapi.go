@@ -15,7 +15,7 @@ import (
 	"apothecary/internal/envcheck"
 	"apothecary/internal/flow"
 	"apothecary/internal/kinds"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/egressport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/secrets"
 	"apothecary/internal/signalspec"
@@ -857,7 +857,7 @@ func (s *Server) projectRoutes() []Route {
 			Handler: s.startMRRun, Enabled: haveConf, Scope: ScopeProject},
 		{Method: "GET", Path: "/api/projects/{id}/egress-audit", ID: "getProjectEgressAudit", Tag: tagEgress,
 			Summary: "Everything this project's workspaces reached or were blocked from",
-			Query:   auditQuery, Handler: s.getProjectEgressAudit, Returns: []ports.EgressAuditRow{}, Enabled: haveConf, Scope: ScopeProject},
+			Query:   auditQuery, Handler: s.getProjectEgressAudit, Returns: []egressport.EgressAuditRow{}, Enabled: haveConf, Scope: ScopeProject},
 		{Method: "POST", Path: "/api/projects/{id}/preflight", ID: "preflightProject", Tag: tagProjects,
 			Summary: "Check a project is ready to run, step by step",
 			Handler: s.preflightProject, Returns: PreflightResult{}, Enabled: haveConf, Scope: ScopeProject},

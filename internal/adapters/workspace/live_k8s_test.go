@@ -36,7 +36,7 @@ import (
 	"apothecary/internal/builtin"
 	"apothecary/internal/kube"
 	"apothecary/internal/portrelay"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"
 )
 
@@ -321,7 +321,7 @@ func TestLiveK8sLifecycle(t *testing.T) {
 		if _, _, code, _ := h.runInner(ctx, name, "sh", []string{"-c", "ip route replace 1.1.1.1/32 via $(cat /run/apo/orig-gw) dev eth0 && curl -sS -m 5 -o /dev/null https://1.1.1.1/"}, nil, nil); code == 0 {
 			t.Error("bypassing the tunnel reached the internet: the network policy is not enforced")
 		}
-		var audit []ports.EgressAuditRecord
+		var audit []egressport.EgressAuditRecord
 		for i := 0; i < 10 && len(audit) == 0; i++ {
 			time.Sleep(time.Second)
 			audit = a.EgressAudit(ctx, env)

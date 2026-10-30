@@ -12,7 +12,7 @@ import (
 	"log/slog"
 	"time"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
@@ -27,8 +27,8 @@ var ErrOff = errors.New("egress proxy mode is off")
 // each workspace reached / was blocked from). nil = audit off. Implemented by
 // *pgstore.Store.
 type AuditStore interface {
-	UpsertEgressAudit(ctx context.Context, rows []ports.EgressAuditRow) error
-	QueryEgressAudit(ctx context.Context, f ports.EgressAuditFilter) ([]ports.EgressAuditRow, error)
+	UpsertEgressAudit(ctx context.Context, rows []egressport.EgressAuditRow) error
+	QueryEgressAudit(ctx context.Context, f egressport.EgressAuditFilter) ([]egressport.EgressAuditRow, error)
 }
 
 // Service controls and audits egress through each project's resolved
@@ -92,7 +92,7 @@ func (s *Service) BeforeDestroy(ctx context.Context, v run.View, res *resolution
 // ctrl resolves a run to its provisioner's egress controller (the
 // per-project gateway), or ErrOff when the run isn't live or the
 // provisioner has no gateway.
-func (s *Service) ctrl(ctx context.Context, runID string) (ports.EgressController, envport.EnvID, func(), error) {
+func (s *Service) ctrl(ctx context.Context, runID string) (egressport.EgressController, envport.EnvID, func(), error) {
 	v, err := s.Runs.View(ctx, runID)
 	if err != nil {
 		return nil, "", nil, err
@@ -104,7 +104,7 @@ func (s *Service) ctrl(ctx context.Context, runID string) (ports.EgressControlle
 	if err != nil {
 		return nil, "", nil, err
 	}
-	ctrl, ok := res.Envp.(ports.EgressController)
+	ctrl, ok := res.Envp.(egressport.EgressController)
 	if !ok {
 		res.Close()
 		return nil, "", nil, ErrOff
@@ -118,7 +118,7 @@ func (s *Service) ctrl(ctx context.Context, runID string) (ports.EgressControlle
 // classified against the policy in force now: held (nobody ruled on it yet —
 // the run page asks) or blocked (reviewed — it never asks again). Without a
 // readable policy every denial stays held: asking twice beats never asking.
-func (s *Service) Denials(ctx context.Context, runID string) []ports.EgressDenial {
+func (s *Service) Denials(ctx context.Context, runID string) []egressport.EgressDenial {
 	ctrl, env, release, err := s.ctrl(ctx, runID)
 	if err != nil {
 		return nil
@@ -127,7 +127,7 @@ func (s *Service) Denials(ctx context.Context, runID string) []ports.EgressDenia
 	dens := ctrl.EgressDenials(ctx, env)
 	pol, perr := ctrl.EgressPolicy(ctx, env)
 	for i := range dens {
-		dens[i].Status = ports.EgressHeld
+		dens[i].Status = egressport.EgressHeld
 		if perr == nil {
 			dens[i].Status = pol.Status(dens[i].Host)
 		}
@@ -164,10 +164,10 @@ func (s *Service) SetRule(ctx context.Context, runID, host string, allow bool) e
 // RIGHT NOW — the run page renders each host's current rule from it (the
 // audit trail only records past verdicts, which never change when the rule
 // does). Returns ErrOff when the run has no live gateway.
-func (s *Service) Policy(ctx context.Context, runID string) (ports.EgressPolicy, error) {
+func (s *Service) Policy(ctx context.Context, runID string) (egressport.EgressPolicy, error) {
 	ctrl, env, release, err := s.ctrl(ctx, runID)
 	if err != nil {
-		return ports.EgressPolicy{}, err
+		return egressport.EgressPolicy{}, err
 	}
 	defer release()
 	return ctrl.EgressPolicy(ctx, env)
@@ -176,15 +176,15 @@ func (s *Service) Policy(ctx context.Context, runID string) (ports.EgressPolicy,
 // auditRows converts a run's provisioner audit records into durable rows tagged
 // with the project + engine run id. Empty when the provisioner has no auditor.
 // Uses wsname.ForRun so it works DURING provisioning too (EnvID not yet set).
-func auditRows(ctx context.Context, v run.View, envp envport.EnvProvisioner) []ports.EgressAuditRow {
-	auditor, ok := envp.(ports.EgressAuditor)
+func auditRows(ctx context.Context, v run.View, envp envport.EnvProvisioner) []egressport.EgressAuditRow {
+	auditor, ok := envp.(egressport.EgressAuditor)
 	if !ok {
 		return nil
 	}
 	recs := auditor.EgressAudit(ctx, envport.EnvID(wsname.ForRun(v, v.RunID)))
-	rows := make([]ports.EgressAuditRow, 0, len(recs))
+	rows := make([]egressport.EgressAuditRow, 0, len(recs))
 	for _, r := range recs {
-		rows = append(rows, ports.EgressAuditRow{
+		rows = append(rows, egressport.EgressAuditRow{
 			Project: v.ProjectID, Run: v.RunID, Host: r.Host, DstIP: r.DstIP, Port: r.Port,
 			Proto: r.Proto, Verdict: r.Verdict, Count: r.Count, BytesOut: r.BytesOut,
 			BytesIn: r.BytesIn, First: r.First, Last: r.Last,
@@ -208,7 +208,7 @@ func (s *Service) IngestOnce(ctx context.Context) error {
 		ids = s.ActiveRuns()
 	}
 
-	var rows []ports.EgressAuditRow
+	var rows []egressport.EgressAuditRow
 	for _, id := range ids {
 		v, err := s.Runs.View(ctx, id)
 		if err != nil {
@@ -232,17 +232,17 @@ func (s *Service) IngestOnce(ctx context.Context) error {
 
 // RunAudit returns a run's egress audit from the durable store — the
 // single source of truth, kept near-live by IngestOnce. Filterable.
-func (s *Service) RunAudit(ctx context.Context, runID, verdict, host string, limit int) ([]ports.EgressAuditRow, error) {
+func (s *Service) RunAudit(ctx context.Context, runID, verdict, host string, limit int) ([]egressport.EgressAuditRow, error) {
 	if s.Audit == nil {
 		return nil, nil
 	}
-	return s.Audit.QueryEgressAudit(ctx, ports.EgressAuditFilter{Run: runID, Verdict: verdict, Host: host, Limit: limit})
+	return s.Audit.QueryEgressAudit(ctx, egressport.EgressAuditFilter{Run: runID, Verdict: verdict, Host: host, Limit: limit})
 }
 
 // ProjectAudit returns the durable audit rows for a whole project (filterable).
-func (s *Service) ProjectAudit(ctx context.Context, projectID, verdict, host string, limit int) ([]ports.EgressAuditRow, error) {
+func (s *Service) ProjectAudit(ctx context.Context, projectID, verdict, host string, limit int) ([]egressport.EgressAuditRow, error) {
 	if s.Audit == nil {
 		return nil, nil
 	}
-	return s.Audit.QueryEgressAudit(ctx, ports.EgressAuditFilter{Project: projectID, Verdict: verdict, Host: host, Limit: limit})
+	return s.Audit.QueryEgressAudit(ctx, egressport.EgressAuditFilter{Project: projectID, Verdict: verdict, Host: host, Limit: limit})
 }

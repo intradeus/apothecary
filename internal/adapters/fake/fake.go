@@ -20,6 +20,7 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
+	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
@@ -66,10 +67,10 @@ type EnvProvisioner struct {
 
 	// Allowed records AllowEgress calls per env; Rules records SetEgressRule
 	// calls ("host=allow|deny"); Denied seeds EgressDenials — for the run-page
-	// egress endpoint tests (ports.EgressController).
+	// egress endpoint tests (egressport.EgressController).
 	Allowed map[envport.EnvID][]string
 	Rules   map[envport.EnvID][]string
-	Denied  map[envport.EnvID][]ports.EgressDenial
+	Denied  map[envport.EnvID][]egressport.EgressDenial
 	// Dirty seeds ConfigDirty (envport.WorkspaceDirtyChecker): which envs
 	// report build inputs newer than their container.
 	Dirty map[envport.EnvID]bool
@@ -302,10 +303,10 @@ func (p *EnvProvisioner) Destroy(_ context.Context, id envport.EnvID) error {
 // --- EgressController (in-memory, for the allow/denials endpoint tests) ------
 
 // Allowed records AllowEgress calls per env; Denied seeds EgressDenials.
-func (p *EnvProvisioner) EgressDenials(_ context.Context, id envport.EnvID) []ports.EgressDenial {
+func (p *EnvProvisioner) EgressDenials(_ context.Context, id envport.EnvID) []egressport.EgressDenial {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([]ports.EgressDenial(nil), p.Denied[id]...)
+	return append([]egressport.EgressDenial(nil), p.Denied[id]...)
 }
 
 func (p *EnvProvisioner) AllowEgress(_ context.Context, id envport.EnvID, host string) error {
@@ -337,10 +338,10 @@ func (p *EnvProvisioner) SetEgressRule(_ context.Context, id envport.EnvID, host
 // the real gateway folds them into its policy file: allow-mode, Allowed seeds
 // the allowlist, then Rules replay in order (allow → unblock + allowlist,
 // deny → block + drop from the allowlist).
-func (p *EnvProvisioner) EgressPolicy(_ context.Context, id envport.EnvID) (ports.EgressPolicy, error) {
+func (p *EnvProvisioner) EgressPolicy(_ context.Context, id envport.EnvID) (egressport.EgressPolicy, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	pol := ports.EgressPolicy{Mode: "allow", Domains: append([]string(nil), p.Allowed[id]...)}
+	pol := egressport.EgressPolicy{Mode: "allow", Domains: append([]string(nil), p.Allowed[id]...)}
 	for _, r := range p.Rules[id] {
 		host, verb, _ := strings.Cut(r, "=")
 		if verb == "allow" {
@@ -377,7 +378,7 @@ func withoutStr(xs []string, x string) []string {
 	return out
 }
 
-var _ ports.EgressController = (*EnvProvisioner)(nil)
+var _ egressport.EgressController = (*EnvProvisioner)(nil)
 
 // --- AgentRunner ------------------------------------------------------------
 
