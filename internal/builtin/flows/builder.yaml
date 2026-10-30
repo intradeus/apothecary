@@ -53,9 +53,10 @@ parameters:
 #                 the run (done)
 #   closed        a merge request closed unmerged — the ticket goes back to
 #                 its to-do, and the run is abandoned (abort)
-# Any watcher can also be started by hand from the run page while the run is
-# idle, and a gate parks its chain the way a wait does: the run stays alive
-# for whatever else needs doing meanwhile.
+# Any watcher can also be started by hand from the run page between chains.
+# A run has one cursor: one chain at a time, and a gate parks its chain with
+# the cursor, so a watcher starts only once that chain has ended. Only an
+# outcome takes the cursor from a parked chain.
 #
 # The ticket's tracker issue follows the work in CANONICAL statuses —
 # in_progress as the run starts, in_review once the merge request is open,

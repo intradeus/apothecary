@@ -260,7 +260,7 @@ export default {
 	'run.phases.spent': 'This watcher reached its max',
 	'run.phases.live': 'This watcher has a run in progress or parked',
 	'run.phases.startNow': 'Start it now, whether or not its signal holds',
-	'run.phases.otherRunning': 'Another chain is running',
+	'run.phases.otherRunning': 'Another chain holds the run',
 	'run.phases.runNow': 'Run now',
 	'run.phases.runOn': 'On which merge request?',
 

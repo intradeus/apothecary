@@ -239,7 +239,7 @@ func (rs *State) outcomeHolds(slug string, obs []MRObservation, now time.Time) (
 }
 
 // anyArmed reports whether some observed phase may still open on its own:
-// its policy is automatic (auto or confirm), it is not parked, and — a
+// its policy is automatic (auto or confirm), and — a
 // watcher — it has runs left on an open merge request, or — an outcome
 // that has not fired — a merge request is still open for its end to come;
 // or a confirmation for it is still open.
@@ -250,7 +250,7 @@ func (rs *State) anyArmed(obs []MRObservation) bool {
 	}
 	for i := range rs.Flow.Phases {
 		ph := &rs.Flow.Phases[i]
-		if !ph.Observed() || ph.On.Start == flow.StartManual || rs.Parked[ph.ID] != nil {
+		if !ph.Observed() || ph.On.Start == flow.StartManual {
 			continue
 		}
 		for _, cp := range rs.Confirms {
@@ -294,10 +294,9 @@ const (
 	ResumeGateAuto
 )
 
-// ResumePlan is one parked phase run's wait point, settled.
+// ResumePlan is the parked chain's wait point, settled.
 type ResumePlan struct {
 	Kind  ResumeKind
-	Run   *PhaseRun
 	Stage *flow.Stage
 	// Why is the failure a wait that will not hold reports.
 	Why string
@@ -307,32 +306,33 @@ type ResumePlan struct {
 	AutoAnswer, AutoFeedback string
 }
 
-// PlanResume checks one parked phase run's wait point against the latest
+// PlanResume checks the parked chain's wait point against the latest
 // observation: a wait whose signal holds completes, one whose signal can no
 // longer hold or that timed out fails (on_fail / on_timeout), a gate routes
 // its answer — the human's, or the one a signal supplies (auto_approve /
 // auto_reject).
-func (rs *State) PlanResume(pr *PhaseRun, obs []MRObservation, now time.Time) ResumePlan {
-	if pr.Pos < 0 || pr.Pos >= len(rs.Flow.Stages) {
+func (rs *State) PlanResume(obs []MRObservation, now time.Time) ResumePlan {
+	pr := rs.Parked
+	if pr == nil || rs.Pos < 0 || rs.Pos >= len(rs.Flow.Stages) {
 		return ResumePlan{}
 	}
-	st := &rs.Flow.Stages[pr.Pos]
+	st := &rs.Flow.Stages[rs.Pos]
 	switch st.Type {
 	case flow.StageWait:
-		holds, impossible, why := rs.WaitState(st.WaitFor, pr.Subject, obs, now)
+		holds, impossible, why := rs.WaitState(st.WaitFor, rs.Subject, obs, now)
 		switch {
 		case holds:
-			return ResumePlan{Kind: ResumeWaitHolds, Run: pr, Stage: st}
+			return ResumePlan{Kind: ResumeWaitHolds, Stage: st}
 		case impossible:
-			return ResumePlan{Kind: ResumeWaitImpossible, Run: pr, Stage: st,
+			return ResumePlan{Kind: ResumeWaitImpossible, Stage: st,
 				Why: fmt.Sprintf("%s can no longer happen: %s", st.WaitFor, why)}
 		case st.Timeout > 0 && !now.Before(pr.Since.Add(st.Timeout)):
-			return ResumePlan{Kind: ResumeWaitTimedOut, Run: pr, Stage: st,
+			return ResumePlan{Kind: ResumeWaitTimedOut, Stage: st,
 				Why: fmt.Sprintf("%s did not hold within %s", st.WaitFor, st.Timeout)}
 		}
 	case flow.StageHumanGate:
 		if ans := rs.AnsweredPings[pr.Ping]; ans != nil {
-			return ResumePlan{Kind: ResumeGateAnswered, Run: pr, Stage: st, Answer: ans}
+			return ResumePlan{Kind: ResumeGateAnswered, Stage: st, Answer: ans}
 		}
 		// A signal answers the gate on the human's behalf: "they merged
 		// it instead of clicking approve", "they closed it, which is a
@@ -341,8 +341,8 @@ func (rs *State) PlanResume(pr *PhaseRun, obs []MRObservation, now time.Time) Re
 			if a.slug == "" {
 				continue
 			}
-			if holds, _, _ := rs.WaitState(a.slug, pr.Subject, obs, now); holds {
-				return ResumePlan{Kind: ResumeGateAuto, Run: pr, Stage: st, AutoAnswer: a.answer, AutoFeedback: "auto: " + a.slug}
+			if holds, _, _ := rs.WaitState(a.slug, rs.Subject, obs, now); holds {
+				return ResumePlan{Kind: ResumeGateAuto, Stage: st, AutoAnswer: a.answer, AutoFeedback: "auto: " + a.slug}
 			}
 		}
 	}
@@ -353,7 +353,7 @@ func (rs *State) PlanResume(pr *PhaseRun, obs []MRObservation, now time.Time) Re
 type IdleActionKind int
 
 const (
-	// IdleResume resumes a parked phase run (Resume).
+	// IdleResume resumes the parked chain (Resume).
 	IdleResume IdleActionKind = iota
 	// IdleDecline records a confirmation answered no.
 	IdleDecline
@@ -431,23 +431,19 @@ func (t *idleTick) fire(ph *flow.Phase, subject, key, link, why, tip string) boo
 	return true
 }
 
-// PlanIdle is one idle tick over one observation: resume the first parked
-// phase run whose wait point settled, act on answered confirmations, open the
-// first firing phase whose signal holds under its start policy — subjects in
-// checkout order, phases in document order, one start per tick — record every
-// hold for the run page, and decide whether the run is over.
+// PlanIdle is one idle tick over one observation. The run has one cursor: a
+// parked chain holds it until its wait point settles, and only an outcome may
+// take it from there, since the run is over either way. At the hub the tick
+// acts on answered confirmations, opens the first firing phase whose signal
+// holds under its start policy — subjects in checkout order, phases in
+// document order, one start per tick — and decides whether the run is over.
+// Every hold is recorded for the run page.
 func (rs *State) PlanIdle(obs []MRObservation, now time.Time) IdlePlan {
-	// Parked phase runs first, in document order: a wait point that settled
-	// resumes its phase before any other phase opens.
-	for i := range rs.Flow.Phases {
-		pr := rs.Parked[rs.Flow.Phases[i].ID]
-		if pr == nil {
-			continue
-		}
-		if r := rs.PlanResume(pr, obs, now); r.Kind != ResumeNone {
-			return IdlePlan{Actions: []IdleAction{{Kind: IdleResume, Resume: r}}}
-		}
+	// A wait point that settled resumes its chain before anything else opens.
+	if r := rs.PlanResume(obs, now); r.Kind != ResumeNone {
+		return IdlePlan{Actions: []IdleAction{{Kind: IdleResume, Resume: r}}}
 	}
+	parked := rs.Parked != nil
 	t := &idleTick{rs: rs, seen: map[string]bool{}}
 
 	// A confirmation answered (here, or while another phase ran): approve
@@ -455,6 +451,9 @@ func (rs *State) PlanIdle(obs []MRObservation, now time.Time) IdlePlan {
 	for _, cp := range rs.Confirms {
 		ans := rs.AnsweredPings[cp.PingID]
 		if ans == nil || t.triggerSeen(cp.Phase, cp.Subject, cp.TriggerKey) {
+			continue
+		}
+		if parked && !rs.Flow.Phase(cp.Phase).IsOutcome() {
 			continue
 		}
 		if ans.Answer != "approve" {
@@ -478,7 +477,7 @@ func (rs *State) PlanIdle(obs []MRObservation, now time.Time) IdlePlan {
 	// (FLOWLANG §1).
 	for i := range rs.Flow.Phases {
 		ph := &rs.Flow.Phases[i]
-		if !ph.IsOutcome() || rs.Parked[ph.ID] != nil {
+		if !ph.IsOutcome() {
 			continue
 		}
 		held, ok := rs.outcomeHolds(ph.On.Signal, obs, now)
@@ -497,7 +496,7 @@ func (rs *State) PlanIdle(obs []MRObservation, now time.Time) IdlePlan {
 	for _, o := range obs {
 		for i := range rs.Flow.Phases {
 			ph := &rs.Flow.Phases[i]
-			if !ph.Fires() || rs.Parked[ph.ID] != nil {
+			if !ph.Fires() {
 				continue
 			}
 			s := rs.SignalOn(ph.On.Signal, ph.On.QuietFor, o, now)
@@ -507,14 +506,14 @@ func (rs *State) PlanIdle(obs []MRObservation, now time.Time) IdlePlan {
 			spent := ph.On.Max != flow.UnlimitedMax && rs.PhaseRuns[PhaseRunKey(ph.ID, o.MR.Repo)] >= ph.On.Max
 			seen := spent || t.triggerSeen(ph.ID, o.MR.Repo, s.Key)
 			t.plan.Holds[ph.ID] = append(t.plan.Holds[ph.ID], TriggerHold{Subject: o.MR.Repo, Key: s.Key, Why: s.Why, Seen: seen, At: now})
-			if !seen && t.fire(ph, o.MR.Repo, s.Key, o.MR.Ref.URL, s.Why, o.Status.HeadSHA) {
+			if !seen && !parked && t.fire(ph, o.MR.Repo, s.Key, o.MR.Ref.URL, s.Why, o.Status.HeadSHA) {
 				return t.plan
 			}
 		}
 	}
 
-	// The one rule for a run's end (FLOWLANG §1): an idle run with no phase
-	// run parked and no phase armed has nothing left to do, and completes.
+	// The one rule for a run's end (FLOWLANG §1): an idle run with no chain
+	// parked and no phase armed has nothing left to do, and completes.
 	// Whatever happened to its merge requests is the flow's business — a
 	// wait on mr_merged routes a close through on_fail; a flow that never
 	// waits completes as soon as nothing reacts. A question asked this tick
@@ -524,7 +523,7 @@ func (rs *State) PlanIdle(obs []MRObservation, now time.Time) IdlePlan {
 			return t.plan
 		}
 	}
-	if !rs.AnyParked() && !rs.anyArmed(obs) {
+	if !parked && !rs.anyArmed(obs) {
 		t.plan.Actions = append(t.plan.Actions, IdleAction{Kind: IdleComplete})
 	}
 	return t.plan

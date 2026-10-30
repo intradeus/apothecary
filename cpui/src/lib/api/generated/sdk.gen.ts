@@ -3548,7 +3548,7 @@ export const getRunPhases = <ThrowOnError extends boolean = false>(
 /**
  * Start a phase now, by hand
  *
- * Only while the run is idle (between phases, or parked at a wait point). Any phase without a live run: the phase's signal need not hold — a person's start is its own decision — and its max still applies. Acts on the named checkout's merge request, else the run's single open one, else on none.
+ * Only while the cursor is at the hub: no chain is running or parked at a wait point. The phase's signal need not hold — a person's start is its own decision — and its max still applies. Acts on the named checkout's merge request, else the run's single open one, else on none.
  */
 export const startPhase = <ThrowOnError extends boolean = false>(
 	options: Options<StartPhaseData, ThrowOnError>

@@ -1335,6 +1335,7 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 	for _, name := range p.unusedSequences(raw.Sequences) {
 		warns = append(warns, fmt.Sprintf("sequence %q is never run (nothing checks its stages until something does)", name))
 	}
+	warns = append(warns, waitWarnings(f)...)
 	f.Warnings = warns
 	return f, nil
 }

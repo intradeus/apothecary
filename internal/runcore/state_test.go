@@ -23,6 +23,8 @@ watchers:
     on: mr_conflicts
     stages:
       - { id: sync, type: action, action: sync_target }
+outcomes:
+  - { id: shipped, on: mr_merged, then: done }
 `
 
 func TestReplayParksAndResumes(t *testing.T) {
@@ -40,40 +42,40 @@ func TestReplayParksAndResumes(t *testing.T) {
 		ev(&event.PhaseParked{Phase: flow.MainPhase, StageID: "merged"}),
 	}
 	rs := Replay(evs, fl)
-	if !rs.Idle || rs.Parked[flow.MainPhase] == nil || rs.Parked[flow.MainPhase].ParkedAt != "merged" || rs.Parked[flow.MainPhase].Pos != fl.Index("merged") {
-		t.Fatalf("after park: idle %v parked %+v", rs.Idle, rs.Parked[flow.MainPhase])
+	if !rs.Idle || rs.Parked == nil || rs.Parked.Stage != "merged" || rs.Phase != flow.MainPhase || rs.Pos != fl.Index("merged") {
+		t.Fatalf("after park: idle %v parked %+v", rs.Idle, rs.Parked)
 	}
 
 	evs = append(evs,
-		ev(&event.PhaseStarted{Phase: "conflicts", Subject: "repo", Key: "k", By: "signal"}),
-		ev(&event.StageStarted{StageID: "sync", Iteration: 1}),
-	)
-	rs = Replay(evs, fl)
-	if rs.Idle || rs.Phase != "conflicts" || rs.Pos != fl.Index("sync") || rs.Ph != PhIn || rs.Parked[flow.MainPhase] == nil {
-		t.Fatalf("mid-watcher: idle %v phase %q pos %d ph %v parked %v", rs.Idle, rs.Phase, rs.Pos, rs.Ph, rs.Parked[flow.MainPhase] != nil)
-	}
-
-	evs = append(evs,
-		ev(&event.StageCompleted{StageID: "sync"}),
-		ev(&event.PhaseCompleted{Phase: "conflicts", Subject: "repo"}),
 		ev(&event.PhaseResumed{Phase: flow.MainPhase, StageID: "merged"}),
 		ev(&event.StageCompleted{StageID: "merged"}),
 	)
 	rs = Replay(evs, fl)
-	if rs.Idle || rs.Phase != flow.MainPhase || rs.Pos != fl.Index("merged") || rs.Ph != PhAfterComplete || len(rs.Parked) != 0 {
-		t.Fatalf("after resume: idle %v phase %q pos %d ph %v parked %d", rs.Idle, rs.Phase, rs.Pos, rs.Ph, len(rs.Parked))
+	if rs.Idle || rs.Phase != flow.MainPhase || rs.Pos != fl.Index("merged") || rs.Ph != PhAfterComplete || rs.Parked != nil {
+		t.Fatalf("after resume: idle %v phase %q pos %d ph %v parked %+v", rs.Idle, rs.Phase, rs.Pos, rs.Ph, rs.Parked)
 	}
-	if rs.PhaseRuns[PhaseRunKey(flow.MainPhase, "")] != 1 || rs.PhaseRuns[PhaseRunKey("conflicts", "repo")] != 1 || !rs.TriggerSeen[TriggerKey("conflicts", "repo", "k")] {
-		t.Errorf("phase runs %v seen %v", rs.PhaseRuns, rs.TriggerSeen)
-	}
-	if rs.AnyParked() || rs.Unpark("ghost") {
-		t.Error("unpark of an unknown phase must be a no-op")
+}
+
+// One cursor: an outcome taking it from a parked chain ends that chain, and
+// nothing is left to resume.
+func TestAnOutcomeTakesTheCursorFromAParkedChain(t *testing.T) {
+	fl := mustFlow(t, parkFlowDoc)
+	ev := func(p event.Payload) event.Event { return event.Event{RunID: "r", Type: p.EventType(), Payload: p} }
+	rs := Replay([]event.Event{
+		ev(&event.RunCreated{TicketTitle: "t", FlowName: "park", By: "human"}),
+		ev(&event.PhaseStarted{Phase: flow.MainPhase, By: "human"}),
+		ev(&event.StageStarted{StageID: "merged", Iteration: 1}),
+		ev(&event.PhaseParked{Phase: flow.MainPhase, StageID: "merged"}),
+		ev(&event.PhaseStarted{Phase: "shipped", Subject: "repo", Key: "k", By: "signal"}),
+	}, fl)
+	if rs.Parked != nil || rs.Idle || rs.Phase != "shipped" {
+		t.Fatalf("parked %+v idle %v phase %q", rs.Parked, rs.Idle, rs.Phase)
 	}
 }
 
 // The head a merge or a review is pinned to is the newest one the phase run
 // knows on its subject's branch: the tip it began on, then each tip it
-// pushed there — kept across a park, its own in every phase run.
+// pushed there — kept across a park.
 func TestReplayPinsThePhaseRunsNewestHead(t *testing.T) {
 	fl := mustFlow(t, parkFlowDoc)
 	ev := func(p event.Payload) event.Event { return event.Event{RunID: "r", Type: p.EventType(), Payload: p} }
@@ -82,8 +84,7 @@ func TestReplayPinsThePhaseRunsNewestHead(t *testing.T) {
 		ev(&event.PhaseStarted{Phase: flow.MainPhase, By: "human"}),
 		ev(&event.BranchPushed{Repo: "repo", Branch: "b", Tip: "p1"}),
 		ev(&event.MRCreated{Repo: "repo", Branch: "b", Target: "main", MRURL: "https://x/1", MRIID: 1, Head: "p1"}),
-		ev(&event.StageStarted{StageID: "merged", Iteration: 1}),
-		ev(&event.PhaseParked{Phase: flow.MainPhase, StageID: "merged"}),
+		ev(&event.PhaseCompleted{Phase: flow.MainPhase}),
 		ev(&event.PhaseStarted{Phase: "conflicts", Subject: "repo", Key: "k", By: "signal", Tip: "t1"}),
 	}
 	if rs := Replay(evs, fl); rs.PhaseTip != "t1" || rs.PhaseHead != "t1" {
@@ -94,11 +95,12 @@ func TestReplayPinsThePhaseRunsNewestHead(t *testing.T) {
 		t.Fatalf("after its push: tip %q head %q — run.git.diff_phase still counts from t1, a merge pins p2", rs.PhaseTip, rs.PhaseHead)
 	}
 	evs = append(evs,
-		ev(&event.PhaseCompleted{Phase: "conflicts", Subject: "repo"}),
-		ev(&event.PhaseResumed{Phase: flow.MainPhase, StageID: "merged"}),
+		ev(&event.StageStarted{StageID: "sync", Iteration: 1}),
+		ev(&event.PhaseParked{Phase: "conflicts", Subject: "repo", StageID: "sync"}),
+		ev(&event.PhaseResumed{Phase: "conflicts", Subject: "repo", StageID: "sync"}),
 	)
-	if rs := Replay(evs, fl); rs.Phase != flow.MainPhase || rs.PhaseHead != "" {
-		t.Errorf("the main chain resumed with head %q: it has no subject to pin", rs.PhaseHead)
+	if rs := Replay(evs, fl); rs.Phase != "conflicts" || rs.PhaseTip != "t1" || rs.PhaseHead != "p2" {
+		t.Errorf("across a park: phase %q tip %q head %q", rs.Phase, rs.PhaseTip, rs.PhaseHead)
 	}
 }
 

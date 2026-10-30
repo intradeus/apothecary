@@ -100,6 +100,22 @@ func (p *parser) validateContracts(f *Flow) ([]string, error) {
 // mentionRe finds what reads like a parameter inside text: $name or ${name}.
 var mentionRe = regexp.MustCompile(`\$\{?([a-z][a-z0-9_]*)\}?`)
 
+// waitWarnings: a wait in a flow with watchers. The chain keeps the cursor
+// while it waits, so the watchers it may have been written beside stay still.
+func waitWarnings(f *Flow) []string {
+	watches := false
+	for i := range f.Phases {
+		watches = watches || f.Phases[i].Fires()
+	}
+	var warns []string
+	for i := range f.Stages {
+		if st := &f.Stages[i]; watches && st.Type == StageWait {
+			warns = append(warns, fmt.Sprintf("stage %q: a wait keeps the run's one cursor, so no watcher runs until it settles — to react to the merge request while it is open, end the chain and let an outcome do what comes after", st.ID))
+		}
+	}
+	return warns
+}
+
 // untemplatedWarnings: a declared parameter named inside a command's script
 // or an agent's prompt. Neither is templated — the shell reads $name as its
 // own variable, the agent reads the text — so it looks like it passes the

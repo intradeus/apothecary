@@ -55,9 +55,9 @@ func (x *exec) stageGate(st *flow.Stage) error {
 		})
 	}
 
-	// A gate is a wait point (FLOWLANG §1): the phase parks on the decision
-	// and gives the workspace back, so other phases may run while a person
-	// thinks. The idle loop takes the answer — the human's, or the one a
+	// A gate is a wait point (FLOWLANG §1): the chain parks on the decision
+	// and keeps the cursor, so nothing else opens while a person thinks.
+	// The idle loop takes the answer — the human's, or the one a
 	// signal supplies through auto_approve / auto_reject (they merged it
 	// instead of clicking approve) — and routes it (runcore.State.PlanResume). Recovery
 	// re-registers the open ping from the log and lands here again.

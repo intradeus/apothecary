@@ -180,10 +180,10 @@ type State struct {
 	// re-park (recovery re-entering the stage after phase_resumed) keeps it,
 	// so a wait's timeout runs from the first park. Cleared by stage_started.
 	ParkSince map[string]time.Time
-	// Parked holds the phase runs stopped at a wait point mid-chain, by
-	// phase: everything scoped to the run (Park / Unpark), while another
-	// phase may hold State's own fields. At most one live run per phase.
-	Parked map[string]*PhaseRun
+	// Parked is the wait point the cursor stopped at mid-chain (Park /
+	// Unpark), nil when it is not stopped at one. The chain keeps the cursor
+	// and State's fields go on being its own.
+	Parked *ParkPoint
 	// AnyStarted: some stage has started (a stage_started is on the log).
 	AnyStarted bool
 	// Elided marks stages whose last start was a skip (a condition that did
@@ -291,74 +291,29 @@ func (rs *State) PhaseEverRan(phase string) bool {
 	return false
 }
 
-// PhaseRun is what is scoped to one phase run: where it stands and what it
-// carries. The active run's lives in State's own fields; a parked run's
-// is kept here until it resumes. Stage-keyed maps (iters, EdgeCounts,
-// sessions, …) stay shared: stage ids are one namespace across phases.
-type PhaseRun struct {
-	Phase, Subject, Tip, Head string
-	Pos                       int
-	Ph                        StagePhase
-	Feed, FeedSentinel        string
-	FeedAttempts              int
-	LastFailure               *event.StageFailed
-	GateAnswer                *event.PingAnswered
-	Round                     []event.LoadedThread
-	RoundScope                string
-	RoundLoaded               bool
-	SelectPing                *event.PingRaised
-	CI                        *event.CIReport
-	// ParkedAt is the stage the run waits at (a wait or a gate), ping the
-	// decision a gate waits on, since when it parked (a wait's timeout runs
-	// from there).
-	ParkedAt string
-	Ping     string
-	Since    time.Time
+// ParkPoint is the wait point the run's cursor stopped at: a wait or a gate,
+// the ping a gate waits on, since when it parked (a wait's timeout runs from
+// there).
+type ParkPoint struct {
+	Stage string
+	Ping  string
+	Since time.Time
 }
 
-// Park stores the active phase run as parked at stage and leaves the run
-// idle. Shared by replay and the live park so they cannot disagree.
+// Park stops the cursor at stage and leaves the run idle. Everything scoped
+// to the chain stays where it is: nothing else opens while it is parked.
+// Shared by replay and the live park so they cannot disagree.
 func (rs *State) Park(stage, ping string, since time.Time) {
-	if rs.Parked == nil {
-		rs.Parked = map[string]*PhaseRun{}
-	}
-	rs.Parked[rs.Phase] = &PhaseRun{
-		Phase: rs.Phase, Subject: rs.Subject, Tip: rs.PhaseTip, Head: rs.PhaseHead, Pos: rs.Pos, Ph: rs.Ph,
-		Feed: rs.Feed, FeedSentinel: rs.FeedSentinel, FeedAttempts: rs.FeedAttempts,
-		LastFailure: rs.LastFailure, GateAnswer: rs.GateAnswer,
-		Round: rs.Round, RoundScope: rs.RoundScope, RoundLoaded: rs.RoundLoaded, SelectPing: rs.SelectPing, CI: rs.CI,
-		ParkedAt: stage, Ping: ping, Since: since,
-	}
+	rs.Parked = &ParkPoint{Stage: stage, Ping: ping, Since: since}
 	rs.Idle = true
 }
 
-// Unpark makes the parked run of phase the active one again. False when
-// no run of that phase is parked.
-func (rs *State) Unpark(phase string) bool {
-	pr := rs.Parked[phase]
-	if pr == nil {
-		return false
-	}
-	delete(rs.Parked, phase)
-	rs.Phase, rs.Subject, rs.PhaseTip, rs.PhaseHead, rs.Pos, rs.Ph = pr.Phase, pr.Subject, pr.Tip, pr.Head, pr.Pos, pr.Ph
-	rs.Feed, rs.FeedSentinel, rs.FeedAttempts = pr.Feed, pr.FeedSentinel, pr.FeedAttempts
-	rs.LastFailure, rs.GateAnswer = pr.LastFailure, pr.GateAnswer
-	rs.Round, rs.RoundScope, rs.RoundLoaded, rs.SelectPing = pr.Round, pr.RoundScope, pr.RoundLoaded, pr.SelectPing
-	rs.CI = pr.CI
+// Unpark starts the parked chain moving again.
+func (rs *State) Unpark() {
+	rs.Parked = nil
 	rs.EndsRun, rs.AbortsRun, rs.EndReason = false, false, ""
 	rs.Idle = false
-	// A gate answered while its phase was parked: the answer is the decision
-	// the resumed stage routes by (the parked record predates it).
-	if pr.Ping != "" {
-		if a := rs.AnsweredPings[pr.Ping]; a != nil {
-			rs.GateAnswer = a
-		}
-	}
-	return true
 }
-
-// AnyParked reports whether some phase run waits at a wait point.
-func (rs *State) AnyParked() bool { return len(rs.Parked) > 0 }
 
 // RoundIDs lists the threads this phase run loaded, by id.
 func (rs *State) RoundIDs() []string {
@@ -413,6 +368,9 @@ func (rs *State) ForgetCurated(fl *flow.Flow, stageID string) {
 // counters reset (R7 — a review round's retries are per round), the feed
 // cleared. Shared by replay and the live start so they cannot disagree.
 func (rs *State) StartPhase(p *event.PhaseStarted, fl *flow.Flow) {
+	// One cursor: a start while a chain is parked is an outcome taking it,
+	// and that chain never resumes.
+	rs.Parked = nil
 	rs.Phase, rs.Subject, rs.PhaseTip, rs.PhaseHead, rs.Idle = p.Phase, p.Subject, p.Tip, p.Tip, false
 	rs.CI = p.CI
 	rs.Round, rs.RoundScope, rs.RoundLoaded, rs.SelectPing = nil, "", false, nil
@@ -672,7 +630,7 @@ func (rs *State) Apply(ev *event.Event) {
 		}
 		rs.Park(p.StageID, p.PingID, since)
 	case *event.PhaseResumed:
-		rs.Unpark(p.Phase)
+		rs.Unpark()
 	case *event.BranchPushed:
 		rs.NotePush(p.Repo, p.Branch, p.Tip)
 	case *event.ReviewCommentsLoaded:

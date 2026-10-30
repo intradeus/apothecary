@@ -168,6 +168,13 @@ func (ph *phasedHarness) waitPhaseRuns(t *testing.T, runID, phase string, n int)
 
 // waitIdle waits for the run's loop to be between phases (where a hand
 // start is answered on its merits).
+// waitHold waits until a tick saw the phase's signal hold, so a test can say
+// what that tick did not do.
+func (ph *phasedHarness) waitHold(t *testing.T, runID, phase string) {
+	t.Helper()
+	waitFor(t, func() bool { return len(ph.e.holds.of(runID, phase)) > 0 })
+}
+
 func (ph *phasedHarness) waitIdle(t *testing.T, runID string) {
 	t.Helper()
 	waitUntil(t, "the run to be idle", func() bool {
@@ -287,15 +294,15 @@ func TestStagesOnlyDocumentRunsAsOnePhase(t *testing.T) {
 }
 
 // waitFlowDoc ends the main chain with the wait on the merge: the chain parks
-// there, watchers run meanwhile, and a close routes to abort.
+// there, holding the cursor, and a close routes to abort.
 var waitFlowDoc = strings.Replace(phasedFlowDoc,
 	"  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }\n",
 	"  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }\n  - { id: merged, type: wait, for: mr_merged, on_fail: abort }\n  - { id: after, type: command, run: \"./after.sh\" }\n", 1)
 
-// A wait parks its phase: the run is idle and in review, a watcher runs in
-// the meantime and gives the workspace back, and the merge resumes the
-// phase, which finishes its stages before the run completes.
-func TestWaitParksAndWatchersRunMeanwhile(t *testing.T) {
+// A wait parks its chain and keeps the cursor: the run is idle and in review,
+// no watcher opens or asks while it waits, and the merge resumes the chain,
+// which finishes its stages before the run completes.
+func TestAParkedWaitHoldsTheCursor(t *testing.T) {
 	ph := newPhasedHarness(t, waitFlowDoc)
 	runID := ph.start(t)
 	infos, err := ph.e.RunPhases(context.Background(), runID)
@@ -307,11 +314,10 @@ func TestWaitParksAndWatchersRunMeanwhile(t *testing.T) {
 	}
 	ph.repoHost.SetTargetSHA(1, "t1")
 	ph.repoHost.SetMergeable(1, repoport.MergeConflicts, "h1")
-	ask := ph.waitPing(t, event.PingPhaseConfirm)
-	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "approve"}); err != nil {
-		t.Fatal(err)
+	ph.waitHold(t, runID, "conflicts")
+	if err := ph.e.StartPhase(runID, "conflicts", ""); !errors.Is(err, ErrPhaseNotStartable) || !strings.Contains(err.Error(), "parked at merged") {
+		t.Errorf("a watcher by hand while main is parked: %v", err)
 	}
-	ph.waitPhaseRuns(t, runID, "conflicts", 1)
 	if n := len(ph.execsOf("./after.sh")); n != 0 {
 		t.Fatalf("the parked phase went on before the merge (%d runs of after)", n)
 	}
@@ -321,16 +327,24 @@ func TestWaitParksAndWatchersRunMeanwhile(t *testing.T) {
 		t.Errorf("after ran %d times, want once after the merge", n)
 	}
 	var parked, resumed int
-	for _, e := range ph.events(t, runID) {
+	evs := ph.events(t, runID)
+	for _, e := range evs {
 		switch e.Payload.(type) {
 		case *event.PhaseParked:
 			parked++
 		case *event.PhaseResumed:
 			resumed++
+		case *event.PingRaised:
+			t.Errorf("asked something while the chain held the cursor: %v", eventTypes(evs))
 		}
 	}
 	if parked != 1 || resumed != 1 {
 		t.Errorf("parked %d resumed %d", parked, resumed)
+	}
+	for _, s := range phaseStarts(evs) {
+		if s.Phase == "conflicts" {
+			t.Error("a watcher started while the main chain held the cursor")
+		}
 	}
 	if err := ph.e.StartPhase(runID, flow.MainPhase, ""); !errors.Is(err, ErrPhaseNotStartable) {
 		t.Errorf("start after the end: %v", err)
@@ -360,13 +374,18 @@ func TestParkedWaitTimesOut(t *testing.T) {
 	}
 }
 
-// A gate parks its phase the same way: a watcher runs while the person
-// thinks, and a signal may answer the gate for them.
-func TestGateParksAndAWatcherRunsMeanwhile(t *testing.T) {
-	doc := strings.Replace(phasedFlowDoc,
+// mainGateDoc adds a gate to the main chain after the merge request opens.
+func mainGateDoc(gate string) string {
+	return strings.Replace(phasedFlowDoc,
 		"  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }\n",
-		"  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }\n  - { id: final, type: human_gate, question: \"Merge?\", input: { mr: { from: run.mr.url, type: link } }, auto_approve: mr_merged, auto_reject: mr_closed, on_reject: abort }\n", 1)
-	ph := newPhasedHarness(t, doc)
+		"  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }\n  - "+gate+"\n", 1)
+}
+
+// A gate parks its chain the same way: while the person thinks, nothing else
+// opens. Their answer ends the chain, and only then does the watcher get the
+// cursor, asking first as its policy says.
+func TestAnOpenGateHoldsTheCursor(t *testing.T) {
+	ph := newPhasedHarness(t, mainGateDoc(`{ id: final, type: human_gate, question: "Merge?", input: { mr: { from: run.mr.url, type: link } } }`))
 	runID, err := ph.e.CreateRun(context.Background(), runinput.Ticket{Title: "Phased"}, "phased", testProject)
 	if err != nil {
 		t.Fatal(err)
@@ -378,17 +397,35 @@ func TestGateParksAndAWatcherRunsMeanwhile(t *testing.T) {
 	}
 	ph.repoHost.SetTargetSHA(1, "t1")
 	ph.repoHost.SetMergeable(1, repoport.MergeConflicts, "h1")
+	ph.waitHold(t, runID, "conflicts")
+	if err := ph.e.StartPhase(runID, "conflicts", ""); !errors.Is(err, ErrPhaseNotStartable) {
+		t.Errorf("a watcher by hand while a gate is open: %v", err)
+	}
+	if err := ph.e.AnswerPing(gate.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
 	ask := ph.waitPing(t, event.PingPhaseConfirm, gate.ID)
+	if n := len(ph.execsOf("./sync.sh")); n != 0 {
+		t.Fatalf("sync ran %d times before its confirmation", n)
+	}
 	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
 	}
 	ph.waitPhaseCompleted(t, runID, "conflicts", 1)
 	if n := len(ph.execsOf("./sync.sh")); n != 1 {
-		t.Fatalf("sync ran %d times while the gate was open", n)
+		t.Fatalf("sync ran %d times", n)
 	}
-	if v := ph.view(t, runID); v.State != run.WaitingOnHuman || !v.Idle {
-		t.Errorf("after the watcher, the open gate keeps the run waiting: %s idle %v", v.State, v.Idle)
+}
+
+// A signal may answer the gate for the person: that settles the wait point,
+// and the chain goes on before anything else opens.
+func TestASignalAnswersAnOpenGate(t *testing.T) {
+	ph := newPhasedHarness(t, mainGateDoc(`{ id: final, type: human_gate, question: "Merge?", input: { mr: { from: run.mr.url, type: link } }, auto_approve: mr_merged, auto_reject: mr_closed, on_reject: abort }`))
+	runID, err := ph.e.CreateRun(context.Background(), runinput.Ticket{Title: "Phased"}, "phased", testProject)
+	if err != nil {
+		t.Fatal(err)
 	}
+	gate := ph.waitPing(t, event.PingGate)
 	ph.repoHost.SetMRState(1, repoport.MRMerged)
 	ph.waitState(t, runID, run.Completed)
 	answered := false
@@ -399,6 +436,29 @@ func TestGateParksAndAWatcherRunsMeanwhile(t *testing.T) {
 	}
 	if !answered {
 		t.Error("the merge did not answer the gate")
+	}
+}
+
+// An outcome ends the run, so it takes the cursor from a chain parked at a
+// gate nobody can answer usefully anymore: the chain never resumes and the
+// question is withdrawn with the run.
+func TestAnOutcomeTakesTheCursorFromAnOpenGate(t *testing.T) {
+	ph := newPhasedHarness(t, mainGateDoc(`{ id: final, type: human_gate, question: "Merge?", input: { mr: { from: run.mr.url, type: link } } }`))
+	runID, err := ph.e.CreateRun(context.Background(), runinput.Ticket{Title: "Phased"}, "phased", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := ph.waitPing(t, event.PingGate)
+	ph.repoHost.SetMRState(1, repoport.MRMerged)
+	ph.waitState(t, runID, run.Completed)
+	evs := ph.events(t, runID)
+	for _, p := range run.ReducePings(evs) {
+		if p.PingID == gate.ID && p.Status != "withdrawn" {
+			t.Errorf("the gate's question is %s, want it withdrawn", p.Status)
+		}
+	}
+	if _, resumed := findPayload[*event.PhaseResumed](evs); resumed {
+		t.Error("the parked chain resumed after the outcome took the cursor")
 	}
 }
 

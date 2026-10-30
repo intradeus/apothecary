@@ -81,10 +81,10 @@ func TestDoneEndsTheRunWhileWatchersAreArmed(t *testing.T) {
 }
 
 // A watcher's stage that fails with nowhere to go ends that round, not the
-// run: its phase_completed says why, the main chain stays parked on its
-// merge request, and the merge still completes the run.
+// run: its phase_completed says why, the run goes back to waiting, and the
+// merge still completes it.
 func TestADeadEndInAWatcherEndsTheRound(t *testing.T) {
-	ph := newPhasedHarness(t, waitFlowDoc)
+	ph := newPhasedHarness(t, phasedFlowDoc)
 	failSync(ph)
 	runID := ph.start(t)
 	conflictRound(t, ph)
@@ -97,14 +97,8 @@ func TestADeadEndInAWatcherEndsTheRound(t *testing.T) {
 	if _, abandoned := findPayload[*event.RunAbandoned](evs); abandoned {
 		t.Fatal("a watcher's dead end abandoned the run")
 	}
-	if infos, err := ph.e.RunPhases(context.Background(), runID); err != nil || infos[0].Live == nil || infos[0].Live.ParkedAt != "merged" {
-		t.Fatalf("main after the failed round = %+v, %v; want it still parked on the merge", infos, err)
-	}
 	ph.repoHost.SetMRState(1, repoport.MRMerged)
 	ph.waitState(t, runID, run.Completed)
-	if n := len(ph.execsOf("./after.sh")); n != 1 {
-		t.Errorf("after ran %d times, want once after the merge", n)
-	}
 }
 
 // Giving up at a watcher's debug leaf ends that round: the ping says so (its
@@ -112,7 +106,7 @@ func TestADeadEndInAWatcherEndsTheRound(t *testing.T) {
 // the round's reason, and the run goes back to waiting for the merge. In the
 // main chain the same answer still abandons the run (TestDebugLeaf).
 func TestGivingUpAtAWatchersDebugLeafEndsTheRound(t *testing.T) {
-	doc := strings.Replace(waitFlowDoc,
+	doc := strings.Replace(phasedFlowDoc,
 		`      - { id: fix_conflicts, type: command, run: "./sync.sh" }`,
 		`      - { id: fix_conflicts, type: command, run: "./sync.sh", on_fail: debug }`, 1)
 	ph := newPhasedHarness(t, doc)

@@ -13,19 +13,13 @@ stage_started stage=mr
 action_started stage=mr
 mr_created
 stage_completed stage=mr
-stage_started stage=merged
-phase_parked stage=merged phase=main
+phase_completed phase=main
 ping_raised ping=phase_confirm
 ping_answered
 phase_started phase=conflicts
 stage_started stage=fix_conflicts
 stage_failed stage=fix_conflicts
 phase_completed phase=conflicts
-phase_resumed stage=merged phase=main
-stage_completed stage=merged
-stage_started stage=after
-stage_completed stage=after
-phase_completed phase=main
 phase_started phase=shipped
 phase_completed phase=shipped
 run_completed

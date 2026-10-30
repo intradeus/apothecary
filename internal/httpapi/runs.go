@@ -271,7 +271,7 @@ func (s *Server) runRoutes() []Route {
 			Handler: s.getRunPhases, Returns: []engine.PhaseInfo{}, Scope: ScopeRun},
 		{Method: "POST", Path: "/api/runs/{id}/phases/{phase}/start", ID: "startPhase", Tag: tagRuns,
 			Summary: "Start a phase now, by hand",
-			Doc:     "Only while the run is idle (between phases, or parked at a wait point). Any phase without a live run: the phase's signal need not hold — a person's start is its own decision — and its max still applies. Acts on the named checkout's merge request, else the run's single open one, else on none.",
+			Doc:     "Only while the cursor is at the hub: no chain is running or parked at a wait point. The phase's signal need not hold — a person's start is its own decision — and its max still applies. Acts on the named checkout's merge request, else the run's single open one, else on none.",
 			Body:    StartPhaseRequest{}, Handler: s.postStartPhase, Status: http.StatusAccepted, Scope: ScopeRun},
 		{Method: "POST", Path: "/api/runs/{id}/pause", ID: "pauseRun", Tag: tagRuns,
 			Summary: "Park a run; nothing moves until play",

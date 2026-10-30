@@ -142,23 +142,25 @@ outcomes:
 	if err := ph.e.StartPhase(runID, "polish", ""); err == nil {
 		t.Fatal("a completed run must not start a phase")
 	}
-	// Keep the run alive with a firing phase that needs a merge request the
-	// flow never opens: a parked wait would do too, but a manual phase on an
-	// idle run is the case under test.
-	doc2 := strings.Replace(doc, "  - { id: build, type: command, run: \"true\" }\n",
-		"  - { id: build, type: command, run: \"true\" }\n  - { id: hold, type: human_gate, question: \"Keep the run around?\" }\n", 1)
+	// A ticket's main chain has no subject either, and the run stays between
+	// chains only while something is armed on a merge request: that is the
+	// chain to look at.
+	doc2 := `name: subj
+version: 5
+parameters: { harness: fake, model: fake/model }
+main:
+  - { id: sync, type: action, action: sync_target, run_if: run.subject }
+  - { id: load, type: action, action: load_review_comments, output: { threads: { to: artifacts/threads.yaml, type: mr_threads } }, on_fail: end }
+  - { id: shine, type: command, run: "./shine.sh" }
+outcomes:
+  - { id: shipped, on: mr_merged, then: done }
+`
 	ph2 := newPhasedHarness(t, doc2)
 	runID2, err := ph2.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "subj", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ph2.waitPing(t, event.PingGate)
-	ph2.waitState(t, runID2, run.WaitingOnHuman)
-	ph2.waitIdle(t, runID2)
-	if err := ph2.e.StartPhase(runID2, "polish", ""); err != nil {
-		t.Fatal(err)
-	}
-	ph2.waitPhaseCompleted(t, runID2, "polish", 1)
+	ph2.waitState(t, runID2, run.Completed)
 	evs := ph2.events(t, runID2)
 	if ok, note := skipped(evs, "sync"); !ok || !strings.Contains(note, "run_if run.subject") {
 		t.Errorf("sync not skipped: %v", eventTypes(evs))
@@ -174,9 +176,6 @@ outcomes:
 	}
 	if n := len(ph2.execsOf("./shine.sh")); n != 0 {
 		t.Errorf("shine ran after on_fail: end (%d)", n)
-	}
-	if v := ph2.view(t, runID2); v.State != run.WaitingOnHuman {
-		t.Errorf("state after the polish round = %s (the gate is still open)", v.State)
 	}
 }
 

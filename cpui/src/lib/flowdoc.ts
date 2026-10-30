@@ -8,7 +8,7 @@ import { stringify } from 'yaml';
 // The two ends (FLOWLANG §3). END finishes a PHASE: its chain is over and the
 // run goes back to waiting — a phase's last stage ends this way, and a
 // watcher, which may run any number of times, always does. DONE finishes the
-// RUN, now, whatever else is parked or armed: said where the work is truly
+// RUN, now, whatever is still armed: said where the work is truly
 // finished (an outcome says it once the merge request merged).
 export const END = 'end';
 export const DONE = 'done';

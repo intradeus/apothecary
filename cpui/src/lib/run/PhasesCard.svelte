@@ -2,8 +2,8 @@
 	// The flow's chains (FLOWLANG §1): the main chain the run started with,
 	// the watchers — what opens each one, a signal under its start policy or
 	// you, how often it ran, whether it is live or parked, which signals hold
-	// right now — and the outcomes that end the run. Any watcher without a
-	// live run can be started by hand while the run is idle.
+	// right now — and the outcomes that end the run. Any watcher can be
+	// started by hand while no chain holds the run's one cursor.
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
@@ -99,12 +99,14 @@
 	const spent = (p: RunPhase) =>
 		p.max !== -1 &&
 		(open.length ? open.every((m) => (p.runs[m.repo] ?? 0) >= p.max) : (p.runs[''] ?? 0) >= p.max);
+	// One cursor: a chain parked at a wait point still holds it.
+	const free = $derived(idle && !phases.some((p) => p.live));
 	const disabledWhy = (p: RunPhase) =>
 		p.live
 			? t('run.phases.live')
 			: spent(p)
 				? t('run.phases.spent')
-				: idle
+				: free
 					? t('run.phases.startNow')
 					: t('run.phases.otherRunning');
 
@@ -170,7 +172,7 @@
 						<button
 							class="btn-sm"
 							aria-busy={busy === p.id}
-							disabled={!idle || !!p.live || spent(p) || busy !== ''}
+							disabled={!free || spent(p) || busy !== ''}
 							title={disabledWhy(p)}
 							onclick={(ev) => run(p, ev)}>{t('run.phases.runNow')}</button
 						>

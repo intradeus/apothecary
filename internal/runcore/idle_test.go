@@ -137,10 +137,55 @@ func TestPlanIdleEndsARunWithNothingLeft(t *testing.T) {
 	if plan := rs.PlanIdle(open(rs, repoport.MergeClean), now); len(plan.Actions) != 0 {
 		t.Fatalf("actions = %v, want none", kinds(plan))
 	}
-	// A parked phase keeps the run alive with nothing to observe.
-	rs.Parked = map[string]*PhaseRun{"conflicts": {Phase: "conflicts", Pos: rs.Flow.Index("fix"), ParkedAt: "fix"}}
+	// A parked chain keeps the run alive with nothing to observe.
+	rs.Pos, rs.Parked = rs.Flow.Index("fix"), &ParkPoint{Stage: "fix"}
 	if plan := rs.PlanIdle(nil, now); len(plan.Actions) != 0 {
 		t.Fatalf("actions = %v, want none", kinds(plan))
+	}
+}
+
+// One cursor: a parked chain holds it. No watcher opens, by its signal or by
+// an answered confirmation, and none is asked about; what holds is still
+// shown, and the answer waits for the chain to end.
+func TestPlanIdleAParkedChainHoldsTheCursor(t *testing.T) {
+	now := time.Unix(1000, 0)
+	rs := idleState(t)
+	rs.Phase, rs.Pos, rs.Parked = flow.MainPhase, rs.Flow.Index("gate"), &ParkPoint{Stage: "gate", Ping: "gate"}
+	plan := rs.PlanIdle(open(rs, repoport.MergeConflicts), now)
+	if len(plan.Actions) != 0 {
+		t.Fatalf("actions = %v, want none: the signal must not ask while a chain holds the cursor", kinds(plan))
+	}
+	if hs := plan.Holds["conflicts"]; len(hs) != 1 || hs[0].Seen {
+		t.Fatalf("holds = %+v, want the signal shown", hs)
+	}
+
+	rs.Confirms = []*event.PingRaised{{PingID: "yes", Phase: "conflicts", Subject: "repo", TriggerKey: "t..h"}}
+	rs.AnsweredPings["yes"] = &event.PingAnswered{PingID: "yes", Answer: "approve"}
+	if plan := rs.PlanIdle(open(rs, repoport.MergeConflicts), now); len(plan.Actions) != 0 {
+		t.Fatalf("actions = %v, want the approved watcher to wait for the cursor", kinds(plan))
+	}
+	rs.Parked = nil
+	if plan := rs.PlanIdle(open(rs, repoport.MergeConflicts), now); !sameKinds(kinds(plan), []IdleActionKind{IdleBegin}) {
+		t.Fatalf("actions = %v, want it to begin once the cursor is back", kinds(plan))
+	}
+}
+
+// An outcome is the run's end, so it may take the cursor from a parked chain,
+// but a wait point its signal settles comes first.
+func TestPlanIdleAnOutcomeTakesTheCursor(t *testing.T) {
+	now := time.Unix(1000, 0)
+	rs := idleState(t)
+	merged := []MRObservation{{MR: &rs.MRs[0], Status: repoport.MRStatus{State: repoport.MRMerged}}}
+
+	rs.Phase, rs.Pos, rs.Parked = "conflicts", rs.Flow.Index("fix"), &ParkPoint{Stage: "fix"}
+	plan := rs.PlanIdle(merged, now)
+	if !sameKinds(kinds(plan), []IdleActionKind{IdleBegin}) || plan.Actions[0].Phase.ID != "shipped" {
+		t.Fatalf("actions = %+v, want the outcome", plan.Actions)
+	}
+
+	rs.Phase, rs.Pos, rs.Parked = flow.MainPhase, rs.Flow.Index("gate"), &ParkPoint{Stage: "gate", Ping: "gate"}
+	if plan := rs.PlanIdle(merged, now); !sameKinds(kinds(plan), []IdleActionKind{IdleResume}) {
+		t.Fatalf("actions = %v, want the gate settled first", kinds(plan))
 	}
 }
 
@@ -177,11 +222,11 @@ func TestPlanResume(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rs := idleState(t)
-			pr := &PhaseRun{Phase: flow.MainPhase, Pos: rs.Flow.Index(tt.stage), Ping: "p", Since: t0}
+			rs.Phase, rs.Pos, rs.Parked = flow.MainPhase, rs.Flow.Index(tt.stage), &ParkPoint{Stage: tt.stage, Ping: "p", Since: t0}
 			if tt.answer != "" {
 				rs.AnsweredPings["p"] = &event.PingAnswered{PingID: "p", Answer: tt.answer}
 			}
-			got := rs.PlanResume(pr, tt.obs(rs), tt.now)
+			got := rs.PlanResume(tt.obs(rs), tt.now)
 			if got.Kind != tt.want || got.AutoAnswer != tt.auto {
 				t.Fatalf("got %+v, want kind %v auto %q", got, tt.want, tt.auto)
 			}

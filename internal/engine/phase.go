@@ -6,8 +6,8 @@ package engine
 // a wait point mid-chain the run is idle, and the idle loop is the one
 // scheduler: a watcher opens when its signal holds for one merge request
 // (its subject), under its start policy; an outcome fires once and ends the
-// run; a person starts any watcher from the run page; one phase run holds
-// the workspace at a time.
+// run; a person starts any watcher from the run page. The run has one
+// cursor: one chain at a time holds it, parked at a wait point or moving.
 
 import (
 	"context"
@@ -516,8 +516,8 @@ func (x *exec) manualStart(req phaseStartReq) error {
 	if ph == nil {
 		return fmt.Errorf("%w: no phase %q in this flow", ErrPhaseNotStartable, req.phase)
 	}
-	if pr := rs.Parked[ph.ID]; pr != nil {
-		return fmt.Errorf("%w: phase %q is parked at %s", ErrPhaseNotStartable, ph.ID, pr.ParkedAt)
+	if rs.Parked != nil {
+		return fmt.Errorf("%w: phase %q is parked at %s", ErrPhaseNotStartable, rs.Phase, rs.Parked.Stage)
 	}
 	if ph.Kind == flow.PhaseMain {
 		return fmt.Errorf("%w: the main chain runs once, when the run is started — rerun the run to run it again", ErrPhaseNotStartable)
@@ -675,8 +675,8 @@ func (e *Engine) RunPhases(ctx context.Context, runID string) ([]PhaseInfo, erro
 			QuietFor: int(ph.On.QuietFor.Seconds()), Max: ph.On.Max, Runs: r, Total: total,
 			Holds: e.holds.of(runID, ph.ID)}
 		switch {
-		case rs.Parked[ph.ID] != nil:
-			info.Live = &PhaseLive{Subject: rs.Parked[ph.ID].Subject, ParkedAt: rs.Parked[ph.ID].ParkedAt}
+		case rs.Parked != nil && rs.Phase == ph.ID:
+			info.Live = &PhaseLive{Subject: rs.Subject, ParkedAt: rs.Parked.Stage}
 		case !rs.Done && !rs.Idle && rs.Phase == ph.ID:
 			info.Live = &PhaseLive{Subject: rs.Subject}
 		}

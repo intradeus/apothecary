@@ -21,8 +21,8 @@ Four rules shape everything below:
    stage reads the whole tree by nature; `test` reads the repository; `push`
    writes a remote. Declaring `input: { message: { from: artifacts/commit.json, type: commit_message } }` says what
    the *artifact interface* is, and is honest about being only that. The
-   workspace is shared because the engine runs one work stage at a time (*The
-   model*, below); that is the design, not a gap.
+   workspace is shared because a run has one cursor (*The model*, below); that
+   is the design, not a gap.
 2. **Values are strict, types are extensible.** Every field takes a closed set
    of values, so a typo is a parse error rather than a surprise at 3am. New
    stage types, actions, signals, sources and edge kinds are added by
@@ -53,10 +53,11 @@ is one of a few things:
 | **work stage** | `agent`, `command`, `action`. Runs in the workspace — one checkout, one branch — and at most one runs at any instant: the workspace is a mutex, which is what keeps the git history linear. |
 | **wait point** | Where a chain stops for something outside the run. It has a **source** (a signal from the registry, a person, a timer), a **policy** (`auto`: proceed when the source holds; `confirm`: raise a decision first; `manual`: only a person proceeds, the event is advice), an optional **subject** the event carries (which merge request), an occurrence **key** (the same fact never fires twice), a run bound (`max`), optionally a debounce (`quiet_for`) and a `timeout`, and **outcomes**: proceed, declined, can no longer happen, timed out, rejected with feedback. A wait point releases the workspace — unless it is one that owns it: an agent's `ask_human` turn (§9), the `debug` leaf (§3). |
 | **its spellings** | A watcher's or an outcome's `on:` is its opening wait point. `type: wait` is one mid-chain, on a signal. `type: human_gate` is one mid-chain whose first source is a person, with `auto_approve` / `auto_reject` as extra signal sources. The confirmation ping in the inbox and the Run button on the run page are the `confirm` and `manual` policies of the same thing. |
-| **chain** | A sequential list of stages: the **main** chain a run starts with, a **watcher** that runs on each new occurrence of its signal while the run is open, an **outcome** that fires once and ends the run (§1). Each is a *phase* of the run, with at most one **live run** at a time — active, or parked at a wait point inside it; each owns its cursor, its edge counters, its feed and its tip. |
-| **scheduler** | The engine's idle loop. Each tick: observe the sources (the repositories, timers, answered pings), then walk every wait point in document order — parked ones, outcomes, watchers — and resume or open the first whose event is ready under its policy. That chain run takes the workspace and runs work stages until its next wait point or its end. One start per tick. |
+| **chain** | A sequential list of stages: the **main** chain a run starts with, a **watcher** that runs on each new occurrence of its signal while the run is open, an **outcome** that fires once and ends the run (§1). Each is a *phase* of the run. |
+| **cursor** | A run has exactly one. It stands in one chain, moving or parked at a wait point inside it, or at the **hub** between chains. All of a run's work lands on one branch, so nothing runs beside anything else: not two watchers, and no watcher beside the main chain. Each chain run has its own edge counters, feed and tip. |
+| **scheduler** | The engine's idle loop. Each tick: observe the sources (the repositories, timers, answered pings). A parked chain keeps the cursor and is the only thing that can move, except an outcome (§1). At the hub, walk the wait points in document order — outcomes, then watchers — and open the first whose event is ready under its policy. That chain takes the cursor until its end. One start per tick. |
 | **run end** | Two ends, said apart. `end` finishes a **chain**: it is over and the run goes back to waiting. `done` finishes the **run**, whatever else waits; `abort` abandons it. A flow must have some route to `done` (§3). A run normally ends in an **outcome**, on what became of the merge request (`mr_merged`, `mr_closed`): it fires once and ends the run — the `builder` template's `merged` moves the ticket to done and says `done`, its `closed` says `abort`. Without one the run **completes** when no chain is active, none is parked, and nothing is **armed** — an outcome that has not fired while a merge request is open; a watcher with policy `auto` or `confirm`, its signal live for an open merge request, runs left. A dead end — a failure with nowhere to go — abandons the run in the main chain or an outcome; in a watcher it ends that round (§3). |
-| **extension points** | A new thing to react to is one signal plus its poller: it works for watchers, outcomes and mid-chain waits, under every policy, with subjects, and the scheduler does not change. A new kind of work is a stage type and an executor. A new human interaction is a gate variant. A new way to begin runs is an automation outside the run, starting a flow whose `operates_on` fits it. Parallelism is deliberately absent: the mutex is the design (§10). |
+| **extension points** | A new thing to react to is one signal plus its poller: it works for watchers, outcomes and mid-chain waits, under every policy, with subjects, and the scheduler does not change. A new kind of work is a stage type and an executor. A new human interaction is a gate variant. A new way to begin runs is an automation outside the run, starting a flow whose `operates_on` fits it. Parallelism is deliberately absent: the one cursor is the design (§10). |
 
 ---
 
@@ -501,14 +502,24 @@ round only when a reviewer writes again, an approval runs its watcher again
 only once someone pushes and it is approved again. Under `start: manual` the
 hold is shown until the fact changes.
 
-**One live run per chain, one chain at a time.** A chain has at most one run
-alive — active, or *parked* at a wait point inside it (§2 `wait`,
-`human_gate`). While it is parked the run is idle: watchers start on their
-signals or by hand, and the parked one resumes where it stopped once its
-event arrives. A watcher whose run is parked cannot be started again until
-that run finishes. The scheduler opens or resumes one wait point per tick, in
-document order, and the chosen chain holds the workspace until its next wait
-point or `done` — so two chains never touch the branch at once.
+**One cursor.** A run has one cursor, always. It is in one chain, moving or
+*parked* at a wait point inside it (§2 `wait`, `human_gate`), or at the hub
+between chains. A chain keeps it until it ends: only one watcher runs at a
+time, no watcher runs while the main chain does, and all of a run's work
+lands on one branch in order. A parked chain still holds it: the run is idle
+and nothing is spent, but no watcher starts, on a signal or by hand, and none
+is asked about, until that chain ends. What holds meanwhile is shown on the
+run page and is picked up at the hub, if it still holds.
+
+One thing may take the cursor from a parked chain: an **outcome**, because
+the run is over either way. The chain never resumes, and its open question is
+withdrawn when the run ends. A wait point the same signal settles goes first —
+a gate's `auto_approve`, a `wait` on that signal — so a chain that has
+something to do after the merge still does it.
+
+A confirmation (`start: confirm`) is asked at the hub and stays open while
+other chains take their turn: it is a question, not a chain. Approved, its
+watcher starts the next time the cursor is at the hub.
 
 **On a subject** — a chain run on one merge request: a watcher on a
 merge-request signal or started by hand on one, the main chain of a run
@@ -531,19 +542,17 @@ to waiting; `abort` and `done` still end the run itself.
 The run page starts a watcher by hand with
 `POST /api/runs/{id}/phases/{phase}/start`, naming in its body the checkout
 whose merge request is the subject — else the single open one, else none —
-while the run is idle and the watcher has no live run. The main chain is
-never started by hand.
+while the cursor is at the hub. The main chain is never started by hand.
 
 ### How a run ends
 
 Three terminals end things, and they are not the same thing (§3):
 
-- **`end`** finishes a **chain**. It is over and the run goes back to
-  waiting: a parked chain resumes when its event comes, a watcher starts on
-  its signal. A chain's last stage ends this way unless it says otherwise, and
+- **`end`** finishes a **chain**. It is over and the cursor goes back to the
+  hub: a watcher starts on its signal, an outcome fires. A chain's last stage ends this way unless it says otherwise, and
   a watcher, which may run any number of times, always does.
-- **`done`** finishes the **run**: it completes now, whatever else is parked or
-  armed, and their open questions are withdrawn. It is said where the work is
+- **`done`** finishes the **run**: it completes now, whatever is still armed,
+  and the open questions are withdrawn. It is said where the work is
   truly finished — and a flow must say it somewhere: a stage's success or
   edge, or an outcome's `then: done`. A flow with no route to `done` is
   refused, because it would say nothing about when the work is finished.
@@ -582,10 +591,12 @@ A dead end there — the tracker refusing the move with no `on_fail` — abandon
 the run, as it would in the main chain: the run's end itself failed. The
 other way to say "once the merge request merged" is a `wait` on the same
 signal (§2) parked mid-chain, for a main chain that must do something after
-the merge in the same chain.
+the merge in the same chain. That chain keeps the cursor until the merge, so
+no watcher runs in between, and the parser warns; an outcome's chain does not
+have that cost.
 
 Without an outcome or a `done`, a run **completes** when nothing is left to do
-and nothing is waiting: no chain run active, none parked, and nothing
+and nothing is waiting: no chain holds the cursor, and nothing is
 *armed* — an outcome that has not fired while a merge request is open; a
 watcher with runs left whose signal is live for an open merge request under
 `auto` or `confirm`; a confirmation still open in the inbox. There is no
@@ -788,11 +799,9 @@ repositories it touches.
 ```
 
 A gate is a wait point mid-chain (*The model*) whose first source is a person.
-It **parks its chain**: the run is idle while the question is open — nothing
-is spent, watchers may run meanwhile (a conflict fixed while the plan awaits
-approval), and the chain resumes with the answer. The workspace is not held:
-a watcher a person starts by hand may edit it while a gate is open; that
-person chose so.
+It **parks its chain**: the run is idle while the question is open and nothing
+is spent, but the chain keeps the cursor, so nothing else starts until the
+answer resumes it (only an outcome may take the cursor from it, §1).
 
 Every gate is the **same machine**: approve follows `on_success`, reject follows
 `on_reject`, each carrying the person's verdict. There is no gate kind — what a
@@ -1031,7 +1040,7 @@ stage rather than guessing — a duplicate MR is worse than a retry.
 
 A signal is something that happens *to* the run from outside it. A `wait` is a
 wait point mid-chain (*The model*): it **parks its chain** — the run is idle,
-nothing is spent, watchers run meanwhile — and resumes it when the signal
+nothing is spent, and the chain keeps the cursor — and resumes it when the signal
 holds (`on_success`), when it can no longer hold (`on_fail`: waiting for a
 merge once a merge request is closed, or with no merge request at all), or
 when `timeout` passes (`on_timeout`, else `on_fail`). A parked wait survives

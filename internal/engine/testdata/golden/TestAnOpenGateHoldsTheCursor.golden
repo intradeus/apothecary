@@ -16,16 +16,13 @@ stage_completed stage=mr
 stage_started stage=final
 ping_raised stage=final ping=gate
 phase_parked stage=final phase=main
+ping_answered
+phase_resumed stage=final phase=main
+stage_completed stage=final
+phase_completed phase=main
 ping_raised ping=phase_confirm
 ping_answered
 phase_started phase=conflicts
 stage_started stage=fix_conflicts
 stage_completed stage=fix_conflicts
 phase_completed phase=conflicts
-ping_answered
-phase_resumed stage=final phase=main
-stage_completed stage=final
-phase_completed phase=main
-phase_started phase=shipped
-phase_completed phase=shipped
-run_completed

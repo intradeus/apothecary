@@ -1158,12 +1158,17 @@ func TestEndingWarnings(t *testing.T) {
 		"  - { id: ticket_done, type: command, run: x, on_success: done }\n"
 
 	// The main chain parks on the merge and says done after it; the watcher
-	// ends with end. Nothing to warn about.
-	if w := warnings(mainChain(wait) + conflicts("      - { id: push, type: action, action: push_branch, on_success: end }\n")); w != "" {
+	// ends with end. All there is to say is that the two take turns.
+	w := warnings(mainChain(wait) + conflicts("      - { id: push, type: action, action: push_branch, on_success: end }\n"))
+	if !strings.Contains(w, `stage "wait_merge": a wait keeps the run's one cursor`) || strings.Count(w, "\n") != 0 {
 		t.Errorf("clean flow warned: %s", w)
 	}
+	// With no watcher a wait costs nothing.
+	if w := warnings(mainChain(wait)); strings.Contains(w, "cursor") {
+		t.Errorf("a wait with no watchers warned: %s", w)
+	}
 	// A watcher that ends the run, on success or on failure.
-	w := warnings(mainChain(wait) + conflicts("      - { id: push, type: action, action: push_branch, on_success: done, on_fail: abort }\n"))
+	w = warnings(mainChain(wait) + conflicts("      - { id: push, type: action, action: push_branch, on_success: done, on_fail: abort }\n"))
 	if !strings.Contains(w, `stage "push": watcher "conflicts" runs on each mr_conflicts and may run any number of times, but this stage ends the whole run (done, abort)`) {
 		t.Errorf("watcher ending the run: %s", w)
 	}
