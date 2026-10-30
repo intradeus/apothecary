@@ -172,18 +172,6 @@ func (x *exec) endsRunAtDeadEnd() bool {
 	return ph == nil || ph.Kind != flow.PhaseWatcher
 }
 
-// mrObservation is one poll of one merge request. threads, checks and
-// approval are read only when the flow has a signal that needs them (nil
-// otherwise); headSince is when this poll's head was first seen.
-type mrObservation struct {
-	mr        *runcore.MRRecord
-	status    repoport.MRStatus
-	threads   []repoport.ReviewThread
-	checks    *repoport.Checks
-	approval  *repoport.Approval
-	headSince time.Time
-}
-
 // idler is the idle loop's memory between ticks: what is not run history (the
 // repository host is the source of truth for it) and so lives only in the
 // loop. Everything is per merge request (checkout + branch).
@@ -273,12 +261,8 @@ func (x *exec) idle() error {
 	}
 }
 
-// evaluateIdle is one idle tick (the scheduler): observe once, resume the
-// first parked phase run whose wait point settled, act on answered
-// confirmations, open the first firing phase whose signal holds under its
-// start policy — subjects in checkout order, phases in document order, one
-// start per tick — record every hold for the run page, and decide whether
-// the run is over.
+// evaluateIdle is one idle tick: observe once, then carry out what the
+// observation means (runcore.State.PlanIdle).
 func (x *exec) evaluateIdle(st *idler) error {
 	defer x.checkFold()
 	rs := x.rs
@@ -298,138 +282,34 @@ func (x *exec) evaluateIdle(st *idler) error {
 	}
 	st.failures = 0
 
-	// Parked phase runs first, in document order: a wait point that settled
-	// resumes its phase before any other phase opens.
-	for i := range rs.Flow.Phases {
-		pr := rs.Parked[rs.Flow.Phases[i].ID]
-		if pr == nil {
-			continue
+	plan := rs.PlanIdle(obs, x.e.clock())
+	if plan.Holds != nil {
+		defer x.e.holds.set(rs.RunID, plan.Holds)
+	}
+	for _, a := range plan.Actions {
+		var err error
+		switch a.Kind {
+		case runcore.IdleResume:
+			err = x.resumeParked(a.Resume)
+		case runcore.IdleDecline:
+			err = x.append(&event.PhaseDeclined{Phase: a.Phase.ID, Subject: a.Subject, Key: a.Key})
+		case runcore.IdleAsk:
+			err = x.askToStart(a.Phase, a.Subject, a.Link, a.Key, a.Why)
+		case runcore.IdleBegin:
+			err = x.beginPhase(a.Phase.ID, a.Subject, a.Key, "signal", a.Tip)
+		case runcore.IdleComplete:
+			err = x.complete()
 		}
-		if resumed, err := x.tryResume(pr, obs); resumed || err != nil {
+		if err != nil {
 			return err
 		}
 	}
-
-	// A confirmation answered (here, or while another phase ran): approve
-	// starts it now, reject records the decline (R5, R6).
-	for _, cp := range rs.Confirms {
-		ans := rs.AnsweredPings[cp.PingID]
-		if ans == nil || rs.TriggerSeen[runcore.TriggerKey(cp.Phase, cp.Subject, cp.TriggerKey)] {
-			continue
-		}
-		if ans.Answer != "approve" {
-			if err := x.append(&event.PhaseDeclined{Phase: cp.Phase, Subject: cp.Subject, Key: cp.TriggerKey}); err != nil {
-				return err
-			}
-			continue
-		}
-		var tip string
-		for _, o := range obs {
-			if o.mr.Repo == cp.Subject {
-				tip = o.status.HeadSHA
-			}
-		}
-		return x.beginPhase(cp.Phase, cp.Subject, cp.TriggerKey, "signal", tip)
-	}
-
-	holds := map[string][]TriggerHold{}
-	defer x.e.holds.set(rs.RunID, holds)
-
-	// Outcomes first: an end that holds beats any watcher. Each fires once
-	// (FLOWLANG §1).
-	for i := range rs.Flow.Phases {
-		ph := &rs.Flow.Phases[i]
-		if !ph.IsOutcome() || rs.Parked[ph.ID] != nil {
-			continue
-		}
-		held, subject, link, key, why := x.outcomeHolds(ph.On.Signal, obs)
-		if !held {
-			continue
-		}
-		seen := rs.TriggerSeen[runcore.TriggerKey(ph.ID, subject, key)]
-		holds[ph.ID] = append(holds[ph.ID], TriggerHold{Subject: subject, Key: key, Why: why, Seen: seen, At: x.e.clock()})
-		if seen {
-			continue
-		}
-		switch ph.On.Start {
-		case flow.StartManual:
-			continue
-		case flow.StartConfirm:
-			if err := x.askToStart(ph, subject, link, key, why); err != nil {
-				return err
-			}
-			continue
-		}
-		return x.beginPhase(ph.ID, subject, key, "signal", "")
-	}
-
-	// Watchers, per merge request: each new occurrence of the signal on one
-	// is a round of the watcher on it.
-	for _, o := range obs {
-		for i := range rs.Flow.Phases {
-			ph := &rs.Flow.Phases[i]
-			if !ph.Fires() || rs.Parked[ph.ID] != nil {
-				continue
-			}
-			s := x.signalOn(ph.On.Signal, ph.On.QuietFor, o)
-			if !s.holds {
-				continue
-			}
-			key, why := s.key, s.why
-			spent := ph.On.Max != flow.UnlimitedMax && rs.PhaseRuns[runcore.PhaseRunKey(ph.ID, o.mr.Repo)] >= ph.On.Max
-			seen := spent || rs.TriggerSeen[runcore.TriggerKey(ph.ID, o.mr.Repo, key)]
-			holds[ph.ID] = append(holds[ph.ID], TriggerHold{Subject: o.mr.Repo, Key: key, Why: why, Seen: seen, At: x.e.clock()})
-			if seen {
-				continue
-			}
-			switch ph.On.Start {
-			case flow.StartManual:
-				// Surfaced, never started by itself: a person starts it from
-				// the run page (manualStart).
-				continue
-			case flow.StartConfirm:
-				if err := x.askToStart(ph, o.mr.Repo, o.mr.Ref.URL, key, why); err != nil {
-					return err
-				}
-				continue
-			}
-			return x.beginPhase(ph.ID, o.mr.Repo, key, "signal", o.status.HeadSHA)
-		}
-	}
-	return x.endCheck(obs)
-}
-
-// outcomeHolds evaluates an outcome's signal on the run's merge requests:
-// whether it holds, its subject, a link for the human, the occurrence key
-// and a sentence. A signal that waits for every merge request
-// (signalspec.All: merged, approved, mergeable) has no subject; any other
-// holds as soon as one merge request has it, and that one is the subject.
-func (x *exec) outcomeHolds(slug string, obs []mrObservation) (held bool, subject, link, key, why string) {
-	sig := signalspec.Get(slug)
-	if !sig.Observed() || len(obs) == 0 {
-		return false, "", "", "", ""
-	}
-	if sig.All {
-		if held, _, _ := x.waitState(slug, "", obs); !held {
-			return false, "", "", "", ""
-		}
-		why = everyOne[slug]
-		if s := x.signalOn(slug, 0, obs[0]); len(obs) == 1 && s.holds {
-			why = s.why
-		}
-		return true, "", obs[0].mr.Ref.URL, slug, why
-	}
-	for _, o := range obs {
-		if s := x.signalOn(slug, 0, o); s.holds {
-			return true, o.mr.Repo, o.mr.Ref.URL, s.key, s.why
-		}
-	}
-	return false, "", "", "", ""
+	return nil
 }
 
 // observe polls every merge request's status, and its threads when a
 // debounced trigger needs them and they are due.
-func (x *exec) observe(st *idler) ([]mrObservation, error) {
+func (x *exec) observe(st *idler) ([]runcore.MRObservation, error) {
 	rs := x.rs
 	reads := readsOf(rs.Flow)
 	every := x.e.cfg.ThreadPollInterval
@@ -437,7 +317,7 @@ func (x *exec) observe(st *idler) ([]mrObservation, error) {
 		every = time.Minute
 	}
 	now := x.e.clock()
-	out := make([]mrObservation, 0, len(rs.MRs))
+	out := make([]runcore.MRObservation, 0, len(rs.MRs))
 	for i := range rs.MRs {
 		mr := &rs.MRs[i]
 		repoHost := x.res.RepoHostFor(mr.Repo)
@@ -452,13 +332,13 @@ func (x *exec) observe(st *idler) ([]mrObservation, error) {
 		if h, ok := st.heads[k]; !ok || h.v != status.HeadSHA {
 			st.heads[k] = polled[string]{status.HeadSHA, now}
 		}
-		o := mrObservation{mr: mr, status: status, headSince: st.heads[k].at}
+		o := runcore.MRObservation{MR: mr, Status: status, HeadSince: st.heads[k].at}
 		if reads.checks && status.State == repoport.MROpen {
 			// A head's checks are asked for when the head is new, while they
 			// run, and otherwise at the thread cadence (a re-run turns them).
 			c, ok := st.checks[k]
 			stale := !ok || c.v.Head != status.HeadSHA || c.v.State == repoport.CheckPending || now.Sub(c.at) >= every ||
-				(c.v.State == repoport.ChecksNone && now.Sub(o.headSince) < every)
+				(c.v.State == repoport.ChecksNone && now.Sub(o.HeadSince) < every)
 			if stale {
 				checks, err := repoHost.MRChecks(x.ctx, mr.Ref, status.HeadSHA)
 				if err != nil {
@@ -467,7 +347,7 @@ func (x *exec) observe(st *idler) ([]mrObservation, error) {
 				st.checks[k] = polled[repoport.Checks]{checks, now}
 			}
 			v := st.checks[k].v
-			o.checks = &v
+			o.Checks = &v
 		}
 		if reads.approval && status.State == repoport.MROpen {
 			if a, ok := st.approvals[k]; !ok || now.Sub(a.at) >= every {
@@ -478,7 +358,7 @@ func (x *exec) observe(st *idler) ([]mrObservation, error) {
 				st.approvals[k] = polled[repoport.Approval]{ap, now}
 			}
 			v := st.approvals[k].v
-			o.approval = &v
+			o.Approval = &v
 		}
 		if reads.threads && status.State == repoport.MROpen {
 			if last, ok := st.threadsAt[k]; !ok || x.e.clock().Sub(last) >= every {
@@ -488,119 +368,16 @@ func (x *exec) observe(st *idler) ([]mrObservation, error) {
 				}
 				st.threads[k], st.threadsAt[k] = threads, x.e.clock()
 			}
-			o.threads = st.threads[k]
+			o.Threads = st.threads[k]
 		}
 		out = append(out, o)
 	}
 	return out, nil
 }
 
-// everyOne is what a signal that waits for every merge request says once
-// it holds on a run with several.
-var everyOne = map[string]string{
-	signalspec.MRMerged:    "Every merge request merged.",
-	signalspec.MRApproved:  "Every merge request is approved.",
-	signalspec.MRMergeable: "Every merge request can be merged now.",
-}
-
-// mrSignal is what an observed signal says about one merge request: it
-// holds — an occurrence, with its key and a sentence for a human; the merge
-// request is past it (merged: past approval and past being mergeable — held
-// for a wait or an outcome, never an occurrence for a watcher); or it can
-// never hold there again (gone, and why).
-type mrSignal struct {
-	holds, passed, gone bool
-	key, why            string
-}
-
-// signalOn evaluates an observed signal on one merge request. quiet is the
-// debounce: a watcher's quiet_for, zero for a wait, a gate or an outcome.
-func (x *exec) signalOn(slug string, quiet time.Duration, o mrObservation) mrSignal {
-	url := o.mr.Ref.URL
-	switch o.status.State {
-	case repoport.MRMerged:
-		switch slug {
-		case signalspec.MRMerged:
-			return mrSignal{holds: true, key: "merged", why: fmt.Sprintf("The merge request %s merged.", url)}
-		case signalspec.MRApproved, signalspec.MRMergeable:
-			return mrSignal{passed: true}
-		}
-		return mrSignal{gone: true, why: "the merge request merged: " + url}
-	case repoport.MRClosed:
-		if slug == signalspec.MRClosed {
-			return mrSignal{holds: true, key: "closed", why: fmt.Sprintf("The merge request %s was closed without being merged.", url)}
-		}
-		return mrSignal{gone: true, why: "merge request closed unmerged: " + url}
-	}
-	switch slug {
-	case signalspec.MRApproved:
-		// One occurrence per head it was approved at: a push after the
-		// approval, approved again, is a new one.
-		if o.approval == nil || !o.approval.Approved {
-			return mrSignal{}
-		}
-		return mrSignal{holds: true, key: o.status.HeadSHA, why: fmt.Sprintf("The merge request %s is approved.", url)}
-	case signalspec.MRConflicts:
-		if o.status.Mergeable != repoport.MergeConflicts {
-			return mrSignal{}
-		}
-		target := o.status.Target
-		if target == "" {
-			target = o.mr.Target
-		}
-		return mrSignal{holds: true, key: o.status.TargetSHA + ".." + o.status.HeadSHA,
-			why: fmt.Sprintf("The merge request %s no longer merges cleanly into %s.", url, target)}
-	case signalspec.MRReviewSettled:
-		pending := x.unskipped(repoport.PendingThreads(o.threads))
-		newest, ok := repoport.NewestPending(pending)
-		if !ok || x.e.clock().Sub(newest.CreatedAt) < quiet {
-			return mrSignal{}
-		}
-		return mrSignal{holds: true, key: newest.ID, why: fmt.Sprintf("%d review thread(s) on %s are waiting, the last comment %s ago.",
-			len(pending), url, x.e.clock().Sub(newest.CreatedAt).Round(time.Minute))}
-	case signalspec.CIFailed:
-		// The checks of the head this poll saw, failed: one occurrence per
-		// head and set of failed checks.
-		if o.checks == nil || o.checks.Head != o.status.HeadSHA || o.checks.State != repoport.CheckFailure {
-			return mrSignal{}
-		}
-		failed := o.checks.Failed()
-		return mrSignal{holds: true, key: o.status.HeadSHA + ":" + strings.Join(failed, ","),
-			why: fmt.Sprintf("CI failed on %s: %s.", url, strings.Join(failed, ", "))}
-	case signalspec.MRMergeable:
-		if !o.status.MergeableNow {
-			return mrSignal{}
-		}
-		return mrSignal{holds: true, key: o.status.HeadSHA, why: fmt.Sprintf("The repository says %s can be merged now.", url)}
-	case signalspec.MRHeadMoved:
-		head := o.status.HeadSHA
-		if head == "" || x.rs.KnownHead(o.mr.Repo, head) {
-			return mrSignal{}
-		}
-		if quiet > 0 && x.e.clock().Sub(o.headSince) < quiet {
-			return mrSignal{}
-		}
-		return mrSignal{holds: true, key: head, why: fmt.Sprintf("Someone pushed to %s: its head is now %s, a commit this run did not push.", url, shortSHA(head))}
-	}
-	return mrSignal{}
-}
-
-// shortSHA is a commit id as people read it.
-func shortSHA(sha string) string {
-	if len(sha) > 10 {
-		return sha[:10]
-	}
-	return sha
-}
-
-// askToStart raises a phase_confirm ping, once per (phase, subject, key).
+// askToStart raises a phase_confirm ping.
 func (x *exec) askToStart(ph *flow.Phase, subject, link, key, why string) error {
 	rs := x.rs
-	for _, cp := range rs.Confirms {
-		if cp.Phase == ph.ID && cp.Subject == subject && (cp.TriggerKey == key || rs.AnsweredPings[cp.PingID] == nil) {
-			return nil // already asked (or a question about it is still open)
-		}
-	}
 	q := fmt.Sprintf("%s Run the %q watcher on it?", why, ph.ID)
 	if ph.IsOutcome() {
 		q = fmt.Sprintf("%s Run the %q outcome and end the run?", why, ph.ID)
@@ -788,8 +565,8 @@ func (x *exec) openMRs() []*runcore.MRRecord {
 	}
 	var out []*runcore.MRRecord
 	for _, o := range x.lastObs {
-		if o.status.State == repoport.MROpen {
-			out = append(out, o.mr)
+		if o.Status.State == repoport.MROpen {
+			out = append(out, o.MR)
 		}
 	}
 	return out
@@ -845,7 +622,7 @@ type PhaseInfo struct {
 	Live *PhaseLive `json:"live,omitempty"`
 	// Holds are the subjects the phase's signal held for at the last idle
 	// tick (what a start: manual phase offers to start by hand).
-	Holds []TriggerHold `json:"holds,omitempty"`
+	Holds []runcore.TriggerHold `json:"holds,omitempty"`
 }
 
 // PhaseLive describes a phase's live run.

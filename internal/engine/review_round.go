@@ -126,7 +126,7 @@ func (x *exec) actionLoadReviewComments(st *flow.Stage) (bool, error) {
 		chosen := threads
 		skipped := map[string]string{}
 		if scope == actionspec.ScopePending {
-			pending := x.unskipped(repoport.PendingThreads(threads))
+			pending := x.rs.Unskipped(repoport.PendingThreads(threads))
 			chosen = pending
 			if mode := st.Setting("select", actionspec.SelectHuman); mode == actionspec.SelectHuman && len(pending) > 0 {
 				picked, waiting, err := x.selectThreads(st, mr, pending)
@@ -176,19 +176,6 @@ func inputPath(st *flow.Stage, name string) string {
 		return flow.FilePath(in.Value)
 	}
 	return ""
-}
-
-// unskipped drops the threads a human skipped in an earlier round, unless
-// someone has written there since.
-func (x *exec) unskipped(threads []repoport.ReviewThread) []repoport.ReviewThread {
-	var out []repoport.ReviewThread
-	for _, t := range threads {
-		if last, ok := x.rs.Skipped[t.ID]; ok && len(t.Comments) > 0 && t.Comments[len(t.Comments)-1].ID == last {
-			continue
-		}
-		out = append(out, t)
-	}
-	return out
 }
 
 // threadOurs reports whether the factory opened a thread: its first comment

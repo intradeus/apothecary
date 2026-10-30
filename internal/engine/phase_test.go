@@ -17,6 +17,7 @@ import (
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/runcore"
 )
 
 // phasedFlowDoc is a ticket's whole life: the main chain opens the merge
@@ -409,7 +410,7 @@ func TestManualStartPolicySurfacesTheHoldWithoutStarting(t *testing.T) {
 	ph.repoHost.SetTargetSHA(1, "t1")
 	ph.repoHost.SetMergeable(1, repoport.MergeConflicts, "h1")
 	deadline := time.Now().Add(2 * time.Second)
-	var holds []TriggerHold
+	var holds []runcore.TriggerHold
 	for time.Now().Before(deadline) && len(holds) == 0 {
 		infos, err := ph.e.RunPhases(context.Background(), runID)
 		if err != nil {

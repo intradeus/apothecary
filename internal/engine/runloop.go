@@ -67,7 +67,7 @@ type exec struct {
 	materialised map[string]*event.ReviewCurated
 	// lastObs is the idle loop's latest poll of the run's merge requests:
 	// what a hand start picks its subject from. Nil before the first poll.
-	lastObs []mrObservation
+	lastObs []runcore.MRObservation
 	// redact scrubs engine-injected secrets out of everything that leaves the
 	// workspace (PLAN5 M21). Built once per loop from the resolution.
 	redact *redact.Redactor
