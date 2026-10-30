@@ -10,17 +10,12 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
-	"apothecary/internal/sidecar"
-	"apothecary/internal/wsname"
 )
 
 var (
 	// ErrNoAgentRunning: the run is alive but no agent invocation is
 	// running to take a message (a command stage, a gate, between stages).
 	ErrNoAgentRunning = errors.New("no agent is running in this run right now")
-	// ErrNoSidecar: the run's workspace cannot host the sidecar (provisioner
-	// without one, or no workspace yet).
-	ErrNoSidecar = errors.New("this run's workspace has no sidecar")
 )
 
 const maxMessageLen = 32 << 10
@@ -72,72 +67,4 @@ func (e *Engine) SendMessage(runID, text string, interrupt bool) (string, error)
 	case <-h.done:
 		return "", fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
 	}
-}
-
-// ErrNoSuchCheckout: the run has no checkout of that name.
-var ErrNoSuchCheckout = errors.New("no such checkout in this run")
-
-// Checkout is one of a run's repositories as the workspace views address
-// it: the recorded checkout plus the git ref its changes are measured
-// against (the branch it forked from).
-type Checkout struct {
-	event.Checkout
-	Base string
-}
-
-// Checkouts lists the run's repositories (the primary first).
-func (e *Engine) Checkouts(ctx context.Context, runID string) ([]event.Checkout, error) {
-	v, err := e.runs.View(ctx, runID)
-	if err != nil {
-		return nil, err
-	}
-	return v.Checkouts, nil
-}
-
-// Workspace returns a client for the run's workspace sidecar (starting it
-// when nothing serves yet) and the checkout named by repo ("" = the primary).
-func (e *Engine) Workspace(ctx context.Context, runID, repo string) (*sidecar.Client, Checkout, error) {
-	v, err := e.runs.View(ctx, runID)
-	if err != nil {
-		return nil, Checkout{}, err
-	}
-	if v.ProjectID == "" || v.EnvID == "" {
-		return nil, Checkout{}, fmt.Errorf("run %s: %w", runID, ErrNoSidecar)
-	}
-	if v.State == run.Archived {
-		return nil, Checkout{}, fmt.Errorf("run %s is archived; its workspace is gone: %w", runID, ErrNoSidecar)
-	}
-	if repo == "" {
-		repo = event.PrimaryCheckoutName
-	}
-	var co *event.Checkout
-	for i := range v.Checkouts {
-		if v.Checkouts[i].Name == repo {
-			co = &v.Checkouts[i]
-		}
-	}
-	if co == nil {
-		return nil, Checkout{}, fmt.Errorf("%w: %q", ErrNoSuchCheckout, repo)
-	}
-	res, err := e.resolver.Resolve(ctx, v.ProjectID)
-	if err != nil {
-		return nil, Checkout{}, err
-	}
-	defer res.Close()
-	sc, ok := res.Envp.(ports.Sidecar)
-	if !ok {
-		return nil, Checkout{}, ErrNoSidecar
-	}
-	conn, err := sc.Sidecar(ctx, ports.EnvID(wsname.ForRun(v, runID)))
-	if err != nil {
-		return nil, Checkout{}, fmt.Errorf("workspace sidecar: %w", err)
-	}
-	base := co.Source
-	if base == "" {
-		base = res.RepoRef.DefaultBranch
-	}
-	if base != "" {
-		base = "origin/" + base
-	}
-	return sidecar.New(conn), Checkout{Checkout: *co, Base: base}, nil
 }

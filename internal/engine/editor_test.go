@@ -96,7 +96,7 @@ func TestOpenEditor(t *testing.T) {
 	}
 	// The run page's SSH facts carry the editor's extension list, so a
 	// desktop editor can take the same ones along.
-	info, err := h.e.SSHInfo(ctx, "r1")
+	info, err := h.workspaces().SSHInfo(ctx, "r1")
 	if err != nil || info.Workspace != "env1" || !slices.Contains(info.Extensions, "def.ext") {
 		t.Errorf("SSHInfo = %+v, %v; want the workspace and def.ext among its extensions", info, err)
 	}

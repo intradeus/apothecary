@@ -8,6 +8,7 @@ import (
 	"apothecary/internal/auth"
 	"apothecary/internal/engine"
 	"apothecary/internal/sidecar"
+	"apothecary/internal/wsinfo"
 )
 
 // SendMessageRequest is a human message to the run's running agent.
@@ -73,24 +74,24 @@ func (s *Server) deleteHold(w http.ResponseWriter, r *http.Request) {
 
 // workspace resolves the run's sidecar and the checkout ?repo= names (the
 // primary when absent), answering the error itself.
-func (s *Server) workspace(w http.ResponseWriter, r *http.Request) (*sidecar.Client, engine.Checkout, bool) {
-	c, co, err := s.Engine.Workspace(r.Context(), r.PathValue("id"), r.URL.Query().Get("repo"))
+func (s *Server) workspace(w http.ResponseWriter, r *http.Request) (*sidecar.Client, wsinfo.Checkout, bool) {
+	c, co, err := s.Workspaces.Workspace(r.Context(), r.PathValue("id"), r.URL.Query().Get("repo"))
 	if err != nil {
 		switch {
-		case errors.Is(err, engine.ErrNoSidecar):
+		case errors.Is(err, wsinfo.ErrNoSidecar):
 			writeErr(w, http.StatusServiceUnavailable, err.Error())
-		case errors.Is(err, engine.ErrNoSuchCheckout):
+		case errors.Is(err, wsinfo.ErrNoSuchCheckout):
 			writeErr(w, http.StatusNotFound, err.Error())
 		default:
 			writeErr(w, http.StatusBadGateway, err.Error())
 		}
-		return nil, engine.Checkout{}, false
+		return nil, wsinfo.Checkout{}, false
 	}
 	return c, co, true
 }
 
 func (s *Server) getWorkspaceRepos(w http.ResponseWriter, r *http.Request) {
-	cos, err := s.Engine.Checkouts(r.Context(), r.PathValue("id"))
+	cos, err := s.Workspaces.Checkouts(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
 		return

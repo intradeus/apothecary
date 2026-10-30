@@ -21,7 +21,7 @@ func (s *Server) getRunSSH(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, RunSSH{Reason: "SSH access is off on this instance (set APOTHECARY_SSH_LISTEN to turn the SSH door on)"})
 		return
 	}
-	info, err := s.Engine.SSHInfo(r.Context(), r.PathValue("id"))
+	info, err := s.Workspaces.SSHInfo(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeErr(w, http.StatusConflict, err.Error())
 		return

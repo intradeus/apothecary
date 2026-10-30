@@ -1,6 +1,6 @@
-package engine
+package wsinfo
 
-// The engine's side of the SSH door (TODO 46): which workspace a username
+// The workspace side of the SSH door (TODO 46): which workspace a username
 // names and whose run it is, how the door reaches that workspace's sidecar
 // — the door's key written into the workspace first, then the sidecar's SSH
 // socket through the provisioner — and what the run page tells a person
@@ -31,11 +31,11 @@ type SSHTarget struct {
 	Dial    func(ctx context.Context) (net.Conn, error)
 }
 
-// SetSSHDoorKey installs the door's public key, an authorized_keys line.
-func (e *Engine) SetSSHDoorKey(authorizedKey string) {
-	e.mu.Lock()
-	e.sshDoorKey = authorizedKey
-	e.mu.Unlock()
+// SetDoorKey installs the door's public key, an authorized_keys line.
+func (s *Service) SetDoorKey(authorizedKey string) {
+	s.mu.Lock()
+	s.doorKey = authorizedKey
+	s.mu.Unlock()
 }
 
 // SSHTarget resolves a workspace name (a run's env id) to the live run it
@@ -44,26 +44,26 @@ func (e *Engine) SetSSHDoorKey(authorizedKey string) {
 // an archived run, and a workspace the engine knows to be stopped or gone
 // are ErrNoWorkspace, so the door answers before a dial that cannot
 // succeed.
-func (e *Engine) SSHTarget(ctx context.Context, workspace string) (SSHTarget, error) {
-	v, ok, err := e.runByEnv(ctx, workspace)
+func (s *Service) SSHTarget(ctx context.Context, workspace string) (SSHTarget, error) {
+	v, ok, err := s.runByEnv(ctx, workspace)
 	if err != nil {
 		return SSHTarget{}, err
 	}
 	if !ok || v.ProjectID == "" || v.EnvID != workspace || v.State == run.Archived {
 		return SSHTarget{}, ErrNoWorkspace
 	}
-	if st, known := e.envState.Statuses()[v.RunID]; known && (st == ports.EnvStopped || st == ports.EnvAbsent) {
+	if st, known := s.EnvState.Statuses()[v.RunID]; known && (st == ports.EnvStopped || st == ports.EnvAbsent) {
 		return SSHTarget{}, ErrNoWorkspace
 	}
-	e.mu.Lock()
-	doorKey := e.sshDoorKey
-	e.mu.Unlock()
+	s.mu.Lock()
+	doorKey := s.doorKey
+	s.mu.Unlock()
 	projectID := v.ProjectID
 	return SSHTarget{RunID: v.RunID, OwnerID: v.UserID, EnvID: workspace, Dial: func(ctx context.Context) (net.Conn, error) {
 		if doorKey == "" {
 			return nil, errors.New("the engine has no SSH door key")
 		}
-		res, err := e.resolver.Resolve(ctx, projectID)
+		res, err := s.Resolver.Resolve(ctx, projectID)
 		if err != nil {
 			return nil, err
 		}
@@ -88,11 +88,11 @@ func (e *Engine) SSHTarget(ctx context.Context, workspace string) (SSHTarget, er
 
 // runByEnv is the live run behind a workspace: the store's index when it
 // keeps one (run.EnvLookup), else a scan of the views.
-func (e *Engine) runByEnv(ctx context.Context, envID string) (run.View, bool, error) {
-	if el, ok := e.store.(run.EnvLookup); ok {
+func (s *Service) runByEnv(ctx context.Context, envID string) (run.View, bool, error) {
+	if el, ok := s.Runs.Store.(run.EnvLookup); ok {
 		return el.RunByEnv(ctx, envID)
 	}
-	views, err := e.runs.All(ctx)
+	views, err := s.Runs.All(ctx)
 	if err != nil {
 		return run.View{}, false, err
 	}
@@ -116,8 +116,8 @@ type SSHInfo struct {
 	Extensions []string
 }
 
-func (e *Engine) SSHInfo(ctx context.Context, runID string) (SSHInfo, error) {
-	v, err := e.runs.View(ctx, runID)
+func (s *Service) SSHInfo(ctx context.Context, runID string) (SSHInfo, error) {
+	v, err := s.Runs.View(ctx, runID)
 	if err != nil {
 		return SSHInfo{}, err
 	}
@@ -125,14 +125,14 @@ func (e *Engine) SSHInfo(ctx context.Context, runID string) (SSHInfo, error) {
 		return SSHInfo{}, fmt.Errorf("run %s: %w", runID, ErrNoWorkspace)
 	}
 	info := SSHInfo{Workspace: v.EnvID}
-	if res, err := e.resolver.Resolve(ctx, v.ProjectID); err == nil {
+	if res, err := s.Resolver.Resolve(ctx, v.ProjectID); err == nil {
 		if starter, ok := res.Envp.(ports.EditorStarter); ok {
 			info.Extensions = starter.EditorExtensions(ctx, ports.EnvID(v.EnvID), res.EditorSettings)
 		}
 		res.Close()
 	}
 	// Starting the sidecar here is no waste: the connection needs it next.
-	client, _, err := e.Workspace(ctx, runID, "")
+	client, _, err := s.Workspace(ctx, runID, "")
 	if err != nil {
 		return info, nil
 	}

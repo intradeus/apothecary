@@ -58,6 +58,7 @@ import (
 	"apothecary/internal/telemetry"
 	"apothecary/internal/tickets"
 	"apothecary/internal/wsimage"
+	"apothecary/internal/wsinfo"
 	wsassets "apothecary/workspace"
 )
 
@@ -260,6 +261,7 @@ func cmdServe(args []string) error {
 	sampler := resources.New(runs, resolver, nil, log)
 	envSt := envstate.New(runs, resolver, nil, log)
 	e.SetEnvState(envSt)
+	wsSvc := wsinfo.New(runs, resolver, envSt)
 	// A project's parameter bindings are laid over a flow's defaults at run
 	// creation; the config store holds them beside the flow.
 	e.SetFlowBindings(conf)
@@ -367,6 +369,7 @@ func cmdServe(args []string) error {
 	api.MRs = mrSvc
 	api.Resources = sampler
 	api.EnvState = envSt
+	api.Workspaces = wsSvc
 	// The SSH door (TODO 46): one listener people ssh to over their VPN —
 	// desktop VS Code included — routed by username to the run's workspace.
 	// Both of its keys derive from instance secrets: the host key so a person
@@ -393,11 +396,11 @@ func cmdServe(args []string) error {
 		if err != nil {
 			return err
 		}
-		door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: authsvc, Targets: sshTargets{e}, Advertise: advertise, Log: log})
+		door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: authsvc, Targets: sshTargets{wsSvc}, Advertise: advertise, Log: log})
 		if err != nil {
 			return err
 		}
-		e.SetSSHDoorKey(door.DoorPublicKey())
+		wsSvc.SetDoorKey(door.DoorPublicKey())
 		sshLn, err := net.Listen("tcp", boot.SSHListen)
 		if err != nil {
 			return fmt.Errorf("ssh door listen %s: %w", boot.SSHListen, err)
@@ -770,12 +773,12 @@ func k8sBrowserHost(boot *config.Boot) (browser.Host, func(), error) {
 	}, func() { mux.Close() }, nil
 }
 
-// sshTargets adapts the engine for the SSH door: a username is a workspace,
-// and the engine says whose run it is and how to reach its sidecar.
-type sshTargets struct{ e *engine.Engine }
+// sshTargets adapts the workspace service for the SSH door: a username is a
+// workspace, and the service says whose run it is and how to reach its sidecar.
+type sshTargets struct{ ws *wsinfo.Service }
 
 func (s sshTargets) Lookup(ctx context.Context, workspace string) (sshdoor.Target, error) {
-	tg, err := s.e.SSHTarget(ctx, workspace)
+	tg, err := s.ws.SSHTarget(ctx, workspace)
 	if err != nil {
 		return sshdoor.Target{}, err
 	}

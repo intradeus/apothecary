@@ -22,6 +22,7 @@ import (
 	"apothecary/internal/resources"
 	"apothecary/internal/run"
 	"apothecary/internal/secrets"
+	"apothecary/internal/wsinfo"
 )
 
 // v1FlowDoc is this suite's user-created flow (the product ships none):
@@ -82,6 +83,7 @@ func newConfEnv(t *testing.T) *confEnv {
 	srv.Resources = resources.New(&run.Reader{Store: store}, resolver, nil, nil)
 	srv.EnvState = envstate.New(&run.Reader{Store: store}, resolver, nil, nil)
 	e.SetEnvState(srv.EnvState)
+	srv.Workspaces = wsinfo.New(&run.Reader{Store: store}, resolver, srv.EnvState)
 	srv.Conf = conf
 	srv.Kinds = reg
 	srv.Ops = resolver

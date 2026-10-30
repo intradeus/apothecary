@@ -8,6 +8,7 @@ import (
 
 	"apothecary/internal/engine"
 	"apothecary/internal/resolution"
+	"apothecary/internal/wsinfo"
 )
 
 // The run page's Services pane: the project's services with their live state
@@ -70,7 +71,7 @@ func serviceErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, engine.ErrNoSuchService), strings.Contains(err.Error(), "not found"):
 		status = http.StatusNotFound
-	case errors.Is(err, engine.ErrNoWorkspace):
+	case errors.Is(err, wsinfo.ErrNoWorkspace):
 		status = http.StatusConflict
 	case errors.Is(err, resolution.ErrUnresolvable):
 		status = http.StatusConflict

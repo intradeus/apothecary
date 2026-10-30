@@ -18,6 +18,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
 	"apothecary/internal/sshdoor"
+	"apothecary/internal/wsinfo"
 )
 
 // fakeSidecarSSH is a workspace's SSH server as a test sees it: it admits
@@ -102,11 +103,11 @@ func (k envDoorKey) doorKey() []byte {
 	return data
 }
 
-// sshTargets adapts the engine for the door.
-type sshTargets struct{ e *Engine }
+// sshTargets adapts the workspace service for the door.
+type sshTargets struct{ ws *wsinfo.Service }
 
 func (s sshTargets) Lookup(ctx context.Context, workspace string) (sshdoor.Target, error) {
-	tg, err := s.e.SSHTarget(ctx, workspace)
+	tg, err := s.ws.SSHTarget(ctx, workspace)
 	if err != nil {
 		return sshdoor.Target{}, err
 	}
@@ -118,6 +119,7 @@ func (s sshTargets) Lookup(ctx context.Context, workspace string) (sshdoor.Targe
 // and the session runs in it.
 func TestSSHDoorReachesTheRunsWorkspace(t *testing.T) {
 	h := newHarness(t, mustFlow(t, reviewFlowDoc))
+	ws := h.workspaces()
 	users := auth.New(auth.NewMem())
 	ctx := context.Background()
 	pw := "correct horse battery staple"
@@ -174,11 +176,11 @@ func TestSSHDoorReachesTheRunsWorkspace(t *testing.T) {
 	hostKey, _ := sshdoor.KeyFromSeed(seed)
 	_, _ = rand.Read(seed)
 	doorKey, _ := sshdoor.KeyFromSeed(seed)
-	door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: users, Targets: sshTargets{h.e}, Advertise: "door.test:2222"})
+	door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: users, Targets: sshTargets{ws}, Advertise: "door.test:2222"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.e.SetSSHDoorKey(door.DoorPublicKey())
+	ws.SetDoorKey(door.DoorPublicKey())
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -220,12 +222,12 @@ func TestSSHDoorReachesTheRunsWorkspace(t *testing.T) {
 		t.Error("an unknown workspace opened")
 	}
 	// What the run page is told.
-	info, err := h.e.SSHInfo(ctx, runID)
+	info, err := ws.SSHInfo(ctx, runID)
 	if err != nil || info.Workspace != v.EnvID {
 		t.Errorf("SSHInfo = %+v, %v", info, err)
 	}
 	// An archived run's workspace is no target, nor is an unknown name.
-	if _, err := h.e.SSHTarget(ctx, "env-999"); !errors.Is(err, ErrNoWorkspace) {
+	if _, err := ws.SSHTarget(ctx, "env-999"); !errors.Is(err, wsinfo.ErrNoWorkspace) {
 		t.Errorf("unknown workspace: %v", err)
 	}
 }

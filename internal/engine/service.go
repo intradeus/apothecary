@@ -28,6 +28,7 @@ import (
 	"apothecary/internal/run"
 	"apothecary/internal/shell"
 	"apothecary/internal/sidecar"
+	"apothecary/internal/wsinfo"
 )
 
 // usesServiceStages: only a flow with service stages has services of its
@@ -442,8 +443,6 @@ func previewURL(base, path string) string {
 // --- the run page ------------------------------------------------------------
 
 var (
-	// ErrNoWorkspace: the run has no workspace for a service to run in.
-	ErrNoWorkspace = errors.New("the run has no workspace")
 	// ErrNoSuchService: the project declares no service of that name.
 	ErrNoSuchService = errors.New("no such service in the project")
 )
@@ -578,7 +577,7 @@ func (e *Engine) StartService(ctx context.Context, runID, name string, restart b
 		return ServiceInfo{}, fmt.Errorf("%w: %q", ErrNoSuchService, name)
 	}
 	if !hasWorkspace(v) {
-		return ServiceInfo{}, fmt.Errorf("run %s: %w", runID, ErrNoWorkspace)
+		return ServiceInfo{}, fmt.Errorf("run %s: %w", runID, wsinfo.ErrNoWorkspace)
 	}
 	env := ports.EnvID(v.EnvID)
 	req := serviceRequest(svc, 0)
@@ -660,7 +659,7 @@ func (e *Engine) StopService(ctx context.Context, runID, name string) (ServiceIn
 		return ServiceInfo{}, fmt.Errorf("%w: %q", ErrNoSuchService, name)
 	}
 	if !hasWorkspace(v) {
-		return ServiceInfo{}, fmt.Errorf("run %s: %w", runID, ErrNoWorkspace)
+		return ServiceInfo{}, fmt.Errorf("run %s: %w", runID, wsinfo.ErrNoWorkspace)
 	}
 	before, _ := serviceState(ctx, res.Envp, ports.EnvID(v.EnvID), name)
 	st, err := shimService(ctx, res.Envp, ports.EnvID(v.EnvID), "stop", nil, serviceRequest(svc, 0), serviceStopBudget)
@@ -687,7 +686,7 @@ func (e *Engine) ServiceLog(ctx context.Context, runID, name string, n int) (str
 		return "", fmt.Errorf("%w: %q", ErrNoSuchService, name)
 	}
 	if !hasWorkspace(v) {
-		return "", fmt.Errorf("run %s: %w", runID, ErrNoWorkspace)
+		return "", fmt.Errorf("run %s: %w", runID, wsinfo.ErrNoWorkspace)
 	}
 	return serviceLog(ctx, res.Envp, ports.EnvID(v.EnvID), name, n)
 }

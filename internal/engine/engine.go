@@ -248,12 +248,9 @@ type Engine struct {
 	asks     map[string]*askRun
 	askHub   askHub
 
-	mu sync.Mutex
-	// sshDoorKey is the SSH door's public key (an authorized_keys line),
-	// written into a workspace before the door dials its sidecar.
-	sshDoorKey string
-	closing    bool // Shutdown in progress: scheduleLocked stops admitting runs
-	handles    map[string]*runHandle
+	mu      sync.Mutex
+	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
+	handles map[string]*runHandle
 	// live fans out ephemeral agent progress (LiveDelta) to run viewers.
 	live   liveHub
 	queue  []string // pending runs waiting for a concurrency slot (§14 FIFO)
@@ -501,18 +498,13 @@ var (
 
 	// Sentinel errors for API status mapping.
 	ErrRunNotActive = errors.New("run is not active")
-	// ErrBuildCacheOff: this provisioner keeps no build cache of its own.
-	ErrBuildCacheOff = errors.New("this provisioner has no build cache")
-	ErrPingNotFound  = errors.New("ping not found")
-	ErrPingAnswered  = errors.New("ping already answered")
+	ErrPingNotFound = errors.New("ping not found")
+	ErrPingAnswered = errors.New("ping already answered")
 	// ErrArtifactIsURL marks a gate whose payload is a link (mr_url), not a
 	// workspace artifact — the UI keeps the link-out behavior (DESIGN3 §3).
 	ErrArtifactIsURL = errors.New("ping payload is a URL, not an artifact")
 	// ErrNoArtifact marks a ping without a readable payload artifact.
 	ErrNoArtifact = errors.New("ping has no payload artifact")
-	// ErrNoLiveLog marks a run whose provisioner does not implement the
-	// optional ExecLogTailer capability, or which has no environment yet.
-	ErrNoLiveLog = errors.New("no live workspace log")
 )
 
 func New(cfg Config, store event.Store, resolver resolution.Resolver, flows flow.Source,
@@ -792,47 +784,6 @@ func (e *Engine) egressCtrl(ctx context.Context, runID string) (ports.EgressCont
 	// Works during provisioning too (EnvID not yet set): the most important time
 	// to "add to egress" is when the build is blocked on a denied domain.
 	return ctrl, ports.EnvID(wsname.ForRun(v, runID)), res.Close, nil
-}
-
-// buildCacheCtrl resolves a project to its provisioner's build-cache
-// controller. ErrBuildCacheOff when the provisioner has none — a k8s or remote
-// provisioner may cache elsewhere, or not at all.
-// It returns the project id alongside: the gateway that holds the cache is
-// keyed by it (the same value Provision stamped on the run's EnvSpec).
-func (e *Engine) buildCacheCtrl(ctx context.Context, projectID string) (ports.BuildCacheController, string, func(), error) {
-	res, err := e.resolver.Resolve(ctx, projectID)
-	if err != nil {
-		return nil, "", nil, err
-	}
-	ctrl, ok := res.Envp.(ports.BuildCacheController)
-	if !ok {
-		res.Close()
-		return nil, "", nil, ErrBuildCacheOff
-	}
-	return ctrl, res.ProjectID, res.Close, nil
-}
-
-// BuildCache reports what the project's devcontainer build cache holds. The
-// cache is per project and outlives its runs: it is what stops every run
-// rebuilding the image into its own throwaway daemon.
-func (e *Engine) BuildCache(ctx context.Context, projectID string) (ports.BuildCacheInfo, error) {
-	ctrl, project, release, err := e.buildCacheCtrl(ctx, projectID)
-	if err != nil {
-		return ports.BuildCacheInfo{}, err
-	}
-	defer release()
-	return ctrl.BuildCache(ctx, project)
-}
-
-// ClearBuildCache empties it. Safe by construction — the next build refills it,
-// so the cost of clearing when you did not need to is one slow build.
-func (e *Engine) ClearBuildCache(ctx context.Context, projectID string) error {
-	ctrl, project, release, err := e.buildCacheCtrl(ctx, projectID)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return ctrl.ClearBuildCache(ctx, project)
 }
 
 // EgressDenials lists a run's gateway-blocked hosts (run page feedback), each
@@ -2222,30 +2173,6 @@ func lastPendingPing(evs []event.Event, pingID string) bool {
 		}
 	}
 	return true
-}
-
-// WorkspaceLogTail serves the live tail of a run's workspace exec output
-// via the provisioner's OPTIONAL ExecLogTailer capability — the run-page
-// "is it actually doing something" feedback.
-func (e *Engine) WorkspaceLogTail(ctx context.Context, runID string, n int) ([]byte, error) {
-	v, err := e.runs.View(ctx, runID)
-	if err != nil {
-		return nil, err
-	}
-	if v.ProjectID == "" {
-		return nil, fmt.Errorf("run %s: %w", runID, ErrNoLiveLog)
-	}
-	env := wsname.ForRun(v, runID)
-	res, err := e.resolver.Resolve(ctx, v.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Close()
-	tailer, ok := res.Envp.(ports.ExecLogTailer)
-	if !ok {
-		return nil, fmt.Errorf("run %s: provisioner has no live log: %w", runID, ErrNoLiveLog)
-	}
-	return tailer.TailExecLog(ctx, ports.EnvID(env), n)
 }
 
 // PendingPings returns open pings (the CPUI inbox source until the DB

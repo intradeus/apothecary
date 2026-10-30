@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/wsinfo"
 )
 
 // servicesFlowDoc brings the app up, lets an agent look at it, and — when
@@ -259,7 +260,7 @@ func TestServiceRefusedWithoutAWorkspace(t *testing.T) {
 	if _, err := h.store.Append(ctx, "r1", &event.RunCreated{ProjectID: testProject, FlowName: "gate"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.e.StartService(ctx, "r1", "default", false); !errors.Is(err, ErrNoWorkspace) {
+	if _, err := h.e.StartService(ctx, "r1", "default", false); !errors.Is(err, wsinfo.ErrNoWorkspace) {
 		t.Errorf("StartService = %v", err)
 	}
 	list, err := h.e.RunServices(ctx, "r1")

@@ -63,6 +63,10 @@ var rules = []rule{
 	{pkg: "internal/mrs", mayImport: []string{"internal/event", "internal/ports", "internal/resolution", "internal/run"}},
 	{pkg: "internal/resources", mayImport: []string{"internal/ports", "internal/resolution", "internal/run", "internal/wsname"}},
 	{pkg: "internal/envstate", mayImport: []string{"internal/ports", "internal/resolution", "internal/run"}},
+	{pkg: "internal/wsinfo", mayImport: []string{
+		"internal/envstate", "internal/event", "internal/ports", "internal/resolution", "internal/run",
+		"internal/shell", "internal/sidecar", "internal/wsname",
+	}},
 	{pkg: "internal/resolution", mayImport: []string{
 		"internal/actionspec", "internal/agentspec", "internal/event", "internal/flow",
 		"internal/run", "internal/signalspec", "internal/ports",

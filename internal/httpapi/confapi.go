@@ -12,12 +12,12 @@ import (
 	"apothecary/internal/auth"
 	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
-	"apothecary/internal/engine"
 	"apothecary/internal/flow"
 	"apothecary/internal/kinds"
 	"apothecary/internal/resolution"
 	"apothecary/internal/secrets"
 	"apothecary/internal/signalspec"
+	"apothecary/internal/wsinfo"
 )
 
 // flowResp / agentResp decorate store rows with the built-in layering
@@ -735,8 +735,8 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 // without one answers 503: the UI then says so rather than showing an empty
 // cache that will never fill.
 func (s *Server) getBuildCache(w http.ResponseWriter, r *http.Request) {
-	info, err := s.Engine.BuildCache(r.Context(), r.PathValue("id"))
-	if errors.Is(err, engine.ErrBuildCacheOff) {
+	info, err := s.Workspaces.BuildCache(r.Context(), r.PathValue("id"))
+	if errors.Is(err, wsinfo.ErrBuildCacheOff) {
 		writeErr(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
@@ -750,8 +750,8 @@ func (s *Server) getBuildCache(w http.ResponseWriter, r *http.Request) {
 // deleteBuildCache empties it. The next build repopulates it, so this is a
 // safe button: the worst case is one slow build.
 func (s *Server) deleteBuildCache(w http.ResponseWriter, r *http.Request) {
-	err := s.Engine.ClearBuildCache(r.Context(), r.PathValue("id"))
-	if errors.Is(err, engine.ErrBuildCacheOff) {
+	err := s.Workspaces.ClearBuildCache(r.Context(), r.PathValue("id"))
+	if errors.Is(err, wsinfo.ErrBuildCacheOff) {
 		writeErr(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}

@@ -37,6 +37,7 @@ import (
 	"apothecary/internal/secrets"
 	"apothecary/internal/skillstore"
 	"apothecary/internal/tickets"
+	"apothecary/internal/wsinfo"
 )
 
 type Server struct {
@@ -98,6 +99,9 @@ type Server struct {
 	// EnvState is the workspace badges: reconciled container status and the
 	// engine's in-flight workspace ops (the same store the engine claims).
 	EnvState *envstate.Store
+	// Workspaces reaches run workspaces: checkouts and the sidecar, the live
+	// log, SSH facts, the build cache.
+	Workspaces *wsinfo.Service
 
 	logins loginLimiter
 }
@@ -565,13 +569,13 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 // (optional provisioner capability) — feedback while a stage is working.
 func (s *Server) getWorkspaceLog(w http.ResponseWriter, r *http.Request) {
 	n, _ := strconv.Atoi(r.URL.Query().Get("n"))
-	data, err := s.Engine.WorkspaceLogTail(r.Context(), r.PathValue("id"), n)
+	data, err := s.Workspaces.LogTail(r.Context(), r.PathValue("id"), n)
 	if err != nil {
 		status := http.StatusBadGateway
 		switch {
 		case strings.Contains(err.Error(), "not found"):
 			status = http.StatusNotFound
-		case errors.Is(err, engine.ErrNoLiveLog), os.IsNotExist(err):
+		case errors.Is(err, wsinfo.ErrNoLiveLog), os.IsNotExist(err):
 			status = http.StatusNotFound
 		}
 		writeErr(w, status, err.Error())

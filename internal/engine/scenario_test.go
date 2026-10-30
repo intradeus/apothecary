@@ -21,6 +21,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/wsinfo"
 )
 
 // testProject is the project id served by the harness's StaticResolver.
@@ -210,6 +211,13 @@ func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, s
 	registerGolden(t, h)
 	t.Cleanup(h.e.Shutdown)
 	return h
+}
+
+// workspaces is the workspace service over the harness's store and
+// resolution, sharing the engine's env state (the API's view of a run's
+// workspace).
+func (h *harness) workspaces() *wsinfo.Service {
+	return wsinfo.New(&run.Reader{Store: h.store}, resolution.StaticResolver{R: h.res}, h.e.envState)
 }
 
 // writeFile writes into a fake env through the port (lock-safe).
