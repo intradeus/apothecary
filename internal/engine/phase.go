@@ -575,8 +575,8 @@ func (x *exec) signalOn(slug string, quiet time.Duration, o mrObservation) mrSig
 		return mrSignal{holds: true, key: o.status.TargetSHA + ".." + o.status.HeadSHA,
 			why: fmt.Sprintf("The merge request %s no longer merges cleanly into %s.", url, target)}
 	case signalspec.MRReviewSettled:
-		pending := x.unskipped(pendingThreads(o.threads))
-		newest, ok := newestPending(pending)
+		pending := x.unskipped(ports.PendingThreads(o.threads))
+		newest, ok := ports.NewestPending(pending)
 		if !ok || x.e.clock().Sub(newest.CreatedAt) < quiet {
 			return mrSignal{}
 		}

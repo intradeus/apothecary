@@ -8,43 +8,6 @@ import (
 	"apothecary/internal/ports"
 )
 
-// pendingThreads are the review threads still waiting on the factory: not
-// resolved, and whose latest comment is not a factory reply (so a reviewer
-// spoke after our last reply, or we never replied). Derived from the
-// repository host alone — no cursor is stored, so nothing can drift from what
-// the reviewer sees.
-func pendingThreads(threads []ports.ReviewThread) []ports.ReviewThread {
-	var out []ports.ReviewThread
-	for _, t := range threads {
-		if t.Resolved || len(t.Comments) == 0 {
-			continue
-		}
-		if ports.IsFactoryReply(t.Comments[len(t.Comments)-1].Body) {
-			continue
-		}
-		out = append(out, t)
-	}
-	return out
-}
-
-// newestPending is the latest reviewer comment across pending threads: its
-// time drives the quiet period, its id is the trigger key.
-func newestPending(pending []ports.ReviewThread) (ports.ReviewComment, bool) {
-	var newest ports.ReviewComment
-	found := false
-	for _, t := range pending {
-		for _, c := range t.Comments {
-			if ports.IsFactoryReply(c.Body) {
-				continue
-			}
-			if !found || c.CreatedAt.After(newest.CreatedAt) {
-				newest, found = c, true
-			}
-		}
-	}
-	return newest, found
-}
-
 // MRLive is a merge request as the repository host reports it right now: the
 // run page's view of mergeability and review activity.
 type MRLive struct {
@@ -128,9 +91,9 @@ func (e *Engine) MRStatuses(ctx context.Context, runID string) ([]MRLive, error)
 				l.Error = err.Error()
 				return
 			}
-			pending := pendingThreads(threads)
+			pending := ports.PendingThreads(threads)
 			l.PendingThreads = len(pending)
-			if c, ok := newestPending(pending); ok {
+			if c, ok := ports.NewestPending(pending); ok {
 				at := c.CreatedAt
 				l.LastCommentAt = &at
 			}

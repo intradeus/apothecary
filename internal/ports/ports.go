@@ -778,6 +778,43 @@ func IsFactoryReply(body string) bool {
 	return strings.Contains(body, "<!-- apothecary run=") || strings.Contains(body, "<!-- apothecary review=")
 }
 
+// PendingThreads are the review threads still waiting on the factory: not
+// resolved, and whose latest comment is not a factory reply (so a reviewer
+// spoke after our last reply, or we never replied). Derived from the
+// repository host alone — no cursor is stored, so nothing can drift from what
+// the reviewer sees.
+func PendingThreads(threads []ReviewThread) []ReviewThread {
+	var out []ReviewThread
+	for _, t := range threads {
+		if t.Resolved || len(t.Comments) == 0 {
+			continue
+		}
+		if IsFactoryReply(t.Comments[len(t.Comments)-1].Body) {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// NewestPending is the latest reviewer comment across pending threads: its
+// time drives the quiet period, its id is the trigger key.
+func NewestPending(pending []ReviewThread) (ReviewComment, bool) {
+	var newest ReviewComment
+	found := false
+	for _, t := range pending {
+		for _, c := range t.Comments {
+			if IsFactoryReply(c.Body) {
+				continue
+			}
+			if !found || c.CreatedAt.After(newest.CreatedAt) {
+				newest, found = c, true
+			}
+		}
+	}
+	return newest, found
+}
+
 // IsReplyTo reports whether a body is the factory's reply in thread
 // threadID from round roundID: how a retry tells a reply already posted
 // from one still to post.

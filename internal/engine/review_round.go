@@ -124,7 +124,7 @@ func (x *exec) actionLoadReviewComments(st *flow.Stage) (bool, error) {
 		chosen := threads
 		skipped := map[string]string{}
 		if scope == actionspec.ScopePending {
-			pending := x.unskipped(pendingThreads(threads))
+			pending := x.unskipped(ports.PendingThreads(threads))
 			chosen = pending
 			if mode := st.Setting("select", actionspec.SelectHuman); mode == actionspec.SelectHuman && len(pending) > 0 {
 				picked, waiting, err := x.selectThreads(st, mr, pending)
@@ -144,7 +144,7 @@ func (x *exec) actionLoadReviewComments(st *flow.Stage) (bool, error) {
 			loaded = append(loaded, loadedThread(t))
 		}
 		newest := ""
-		if c, ok := newestPending(chosen); ok {
+		if c, ok := ports.NewestPending(chosen); ok {
 			newest = c.ID
 		}
 		if err := x.append(&event.ReviewCommentsLoaded{StageID: st.ID, Subject: mr.Repo, Scope: scope, Threads: loaded, Newest: newest, Skipped: skipped}); err != nil {

@@ -3,6 +3,7 @@ package ports
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDiffLines(t *testing.T) {
@@ -67,5 +68,29 @@ func TestStackedOn(t *testing.T) {
 		if got := StackedOn(target, open); got != nil {
 			t.Errorf("on %q = %+v, want none", target, got)
 		}
+	}
+}
+
+// A thread waits on the factory until our reply is its latest comment; the
+// newest pending comment ignores factory replies.
+func TestPendingThreads(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	reply := "ok " + ReplyMarker("r1", "a")
+	threads := []ReviewThread{
+		{ID: "a", Comments: []ReviewComment{{ID: "a1", Body: "fix", CreatedAt: t0}, {ID: "a2", Body: reply, CreatedAt: t0.Add(time.Minute)}}},
+		{ID: "b", Comments: []ReviewComment{{ID: "b1", Body: "why?", CreatedAt: t0.Add(2 * time.Minute)}}},
+		{ID: "c", Resolved: true, Comments: []ReviewComment{{ID: "c1", Body: "nit", CreatedAt: t0.Add(3 * time.Minute)}}},
+		{ID: "d"},
+		{ID: "e", Comments: []ReviewComment{{ID: "e1", Body: "again", CreatedAt: t0}, {ID: "e2", Body: reply, CreatedAt: t0.Add(4 * time.Minute)}, {ID: "e3", Body: "still", CreatedAt: t0.Add(time.Minute)}}},
+	}
+	pending := PendingThreads(threads)
+	if len(pending) != 2 || pending[0].ID != "b" || pending[1].ID != "e" {
+		t.Fatalf("pending = %+v", pending)
+	}
+	if c, ok := NewestPending(pending); !ok || c.ID != "b1" {
+		t.Fatalf("newest = %+v, %v", c, ok)
+	}
+	if _, ok := NewestPending(nil); ok {
+		t.Fatal("newest of nothing found something")
 	}
 }
