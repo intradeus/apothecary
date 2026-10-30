@@ -80,7 +80,7 @@ func noSubjectMsg(st *flow.Stage) string {
 // subjectRepoHost is the repository host and merge request a subject action
 // acts on.
 func (x *exec) subjectRepoHost(st *flow.Stage) (repoport.RepoHost, *mrRecord, error) {
-	mr := x.subjectMR()
+	mr := x.rs.subjectMR()
 	if mr == nil {
 		return nil, nil, fmt.Errorf("%w: %s", errNoSubject, noSubjectMsg(st))
 	}

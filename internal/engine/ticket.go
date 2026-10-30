@@ -47,7 +47,7 @@ func (x *exec) actionSkip(st *flow.Stage, note string) (bool, error) {
 	if err := x.append(&event.StageCompleted{StageID: st.ID, Skipped: true, Note: note}); err != nil {
 		return true, err
 	}
-	x.advance(st)
+	x.rs.routeSuccess(st, "")
 	return true, nil
 }
 
@@ -268,7 +268,7 @@ func (x *exec) actionTicketLink(st *flow.Stage) (bool, error) {
 		return true, err
 	}
 	mrs := rs.mrs
-	if co := x.subjectCheckout(); co != nil {
+	if co := x.rs.subjectCheckout(); co != nil {
 		mrs = nil
 		if mr := rs.mrFor(co.Name, co.Branch); mr != nil {
 			mrs = []mrRecord{*mr}
@@ -303,7 +303,7 @@ func (x *exec) actionTicketLinkBranch(st *flow.Stage) (bool, error) {
 		return true, err
 	}
 	checkouts := rs.checkouts
-	if co := x.subjectCheckout(); co != nil {
+	if co := x.rs.subjectCheckout(); co != nil {
 		checkouts = []event.Checkout{*co}
 	}
 	linked := 0

@@ -147,7 +147,7 @@ func (x *exec) completeService(st *flow.Stage, started time.Time) error {
 	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 		return err
 	}
-	x.advance(st)
+	x.rs.routeSuccess(st, "")
 	return nil
 }
 

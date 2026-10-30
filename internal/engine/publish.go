@@ -50,7 +50,7 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 	// In a phase opened for one merge request, only its checkout; otherwise
 	// every checkout of the run.
 	checkouts := rs.checkouts
-	if co := x.subjectCheckout(); co != nil {
+	if co := x.rs.subjectCheckout(); co != nil {
 		checkouts = []event.Checkout{*co}
 	}
 	var todo []event.Checkout

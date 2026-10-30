@@ -377,7 +377,7 @@ func (x *exec) diffTarget() string {
 	target := func(co event.Checkout) string {
 		return "origin/" + bootstrap.SourceBranchOr(co.Source, x.res.RepoRef.DefaultBranch)
 	}
-	if co := x.subjectCheckout(); co != nil {
+	if co := x.rs.subjectCheckout(); co != nil {
 		return x.gitDiff(co.Dir, target(*co))
 	}
 	if len(rs.checkouts) <= 1 {
@@ -391,7 +391,7 @@ func (x *exec) diffTarget() string {
 // phase run that began on no recorded commit (the delivery, which forked
 // the branch) counts from the target, which is the same thing there.
 func (x *exec) diffPhase() string {
-	if co := x.subjectCheckout(); co != nil && x.rs.phaseTip != "" {
+	if co := x.rs.subjectCheckout(); co != nil && x.rs.phaseTip != "" {
 		return x.gitDiff(co.Dir, x.rs.phaseTip)
 	}
 	return x.diffTarget()
@@ -417,7 +417,7 @@ func (x *exec) statusFiles() string {
 		}
 		return res.Output
 	}
-	if co := x.subjectCheckout(); co != nil {
+	if co := x.rs.subjectCheckout(); co != nil {
 		return status(co.Dir)
 	}
 	if len(rs.checkouts) <= 1 {

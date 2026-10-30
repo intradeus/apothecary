@@ -36,7 +36,7 @@ const markersScript = `files=$(git diff --name-only --diff-filter=U); if [ -n "$
 
 // actionSyncTarget brings the subject's target branch into it.
 func (x *exec) actionSyncTarget(st *flow.Stage) (bool, error) {
-	co := x.subjectCheckout()
+	co := x.rs.subjectCheckout()
 	if co == nil {
 		return x.actionFail(st, event.ReasonInputMissing, noSubjectMsg(st))
 	}
@@ -159,7 +159,7 @@ func (x *exec) recordSync(st *flow.Stage, strategy, targetTip string, git func(s
 func (x *exec) actionPushBranch(st *flow.Stage) (bool, error) {
 	rs := x.rs
 	cos := rs.checkouts
-	if co := x.subjectCheckout(); co != nil {
+	if co := x.rs.subjectCheckout(); co != nil {
 		cos = []event.Checkout{*co}
 	}
 	for _, co := range cos {
@@ -177,7 +177,7 @@ func (x *exec) actionPushBranch(st *flow.Stage) (bool, error) {
 			return x.actionFail(st, event.ReasonExitNonzero, fmt.Sprintf("%s: cannot read HEAD: %s", co.Name, tip))
 		}
 		expected := rs.pushed[co.Name+"\x00"+co.Branch]
-		if expected == "" && x.subjectCheckout() != nil {
+		if expected == "" && x.rs.subjectCheckout() != nil {
 			expected = rs.phaseTip
 		}
 		if expected == tip {

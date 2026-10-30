@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"apothecary/internal/event"
-	"apothecary/internal/flow"
 )
 
 // The fold invariant: at every point the run loop settles (the top of an
@@ -46,7 +45,7 @@ func checkFoldInvariant(x *exec) {
 	if rep.ph == phAfterComplete && x.rs.ph != phAfterComplete && rep.pos >= 0 && rep.pos < len(rep.fl.Stages) {
 		// The moves the next event records, not this one. One: a completed
 		// stage's on_success.
-		routeSuccess(rep, &rep.fl.Stages[rep.pos], rep.completedFeed)
+		rep.routeSuccess(&rep.fl.Stages[rep.pos], rep.completedFeed)
 	}
 	if rep.ph == phDebug && x.rs.ph == phStart && x.rs.pos == rep.pos {
 		// The third: continuing from the debug leaf (routeDebug), recorded
@@ -58,8 +57,8 @@ func checkFoldInvariant(x *exec) {
 		// Another: a phase whose end was decided (endPhase — a watcher's
 		// dead end, an empty round) and is recorded by the next step's
 		// phase_completed, which carries the reason.
-		rep.pos, rep.ph = len(rep.fl.Stages), phStart
-		rep.endsRun, rep.abortsRun, rep.endReason = false, false, x.rs.endReason
+		rep.endPhase()
+		rep.endReason = x.rs.endReason
 		rep.gateAnswer = nil // a debug leaf's rejection ends the round
 	}
 	diffs := diffState(x.rs, rep)
@@ -70,26 +69,6 @@ func checkFoldInvariant(x *exec) {
 	defer foldViolations.mu.Unlock()
 	if len(foldViolations.runs[x.rs.runID]) < 20 {
 		foldViolations.runs[x.rs.runID] = append(foldViolations.runs[x.rs.runID], diffs...)
-	}
-}
-
-// routeSuccess is advanceWith on a replayed state.
-func routeSuccess(rs *runState, st *flow.Stage, verdict string) {
-	switch st.OnSuccess {
-	case flow.TerminalEnd, flow.TerminalDone, flow.TerminalAbort:
-		rs.pos = len(rs.fl.Stages)
-		rs.endsRun = st.OnSuccess == flow.TerminalDone
-		rs.abortsRun = st.OnSuccess == flow.TerminalAbort
-		if rs.abortsRun {
-			rs.abortAt, rs.abortReason = st.ID, "aborted by flow: on_success at stage "+st.ID
-		}
-	default:
-		rs.pos = rs.fl.Index(st.OnSuccess)
-	}
-	rs.ph = phStart
-	rs.feed, rs.feedSentinel, rs.feedAttempts = verdict, "", 0
-	if verdict != "" {
-		rs.feedSentinel = flow.SourceVerdict
 	}
 }
 

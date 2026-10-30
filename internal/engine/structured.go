@@ -162,7 +162,7 @@ func (x *exec) actionCommit(st *flow.Stage) (bool, error) {
 		return x.actionFail(st, event.ReasonInputInvalid, err.Error())
 	}
 	cos := x.rs.checkouts
-	if co := x.subjectCheckout(); co != nil {
+	if co := x.rs.subjectCheckout(); co != nil {
 		cos = []event.Checkout{*co}
 	}
 	script := fmt.Sprintf(commitScript, shell.Quote(msg.text()))

@@ -184,7 +184,10 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			x.exit(cause)
 			return
 		}
-		if rs.idle {
+		step, st, note := rs.nextStep()
+		var err error
+		switch step {
+		case stepIdle:
 			// Between phases (PLAN6): watch the merge requests until a
 			// phase starts or the run ends.
 			if err := x.idle(); err != nil {
@@ -192,12 +195,10 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 				return
 			}
 			continue
-		}
-		if rs.pos < 0 {
+		case stepGone:
 			_ = x.fail(fmt.Sprintf("flow %q changed: the run's current phase no longer exists in it", fl.Name))
 			return
-		}
-		if rs.pos >= len(fl.Stages) {
+		case stepChainOver:
 			// The chain is over. After `done` the run completes, whatever
 			// else is parked or armed; otherwise only the phase ends, and the
 			// idle loop decides what follows — a parked phase resuming,
@@ -216,22 +217,19 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 				return
 			}
 			continue
-		}
-		st := &fl.Stages[rs.pos]
-		var err error
-		if rs.ph == phDebug {
+		case stepDebug:
 			// Parked on the debug leaf: a human has the workspace. Like a
 			// gate this never provisions; continuing re-enters st below.
 			err = x.stageDebug(st)
-		} else if rs.ph == phAfterComplete {
+		case stepRouteComplete:
 			err = x.routeAfterComplete(st)
-		} else if rs.ph == phAfterFail && st.Type != flow.StageAction {
+		case stepRouteFail:
 			err = x.routeAfterFail(st)
-		} else if skip, note := x.stageCondition(st); skip && rs.ph == phStart {
+		case stepSkip:
 			// A condition that does not hold: the stage completes as
-			// skipped before anything is provisioned (FLOWLANG §2 when).
+			// skipped before anything is provisioned (FLOWLANG §2 run_if).
 			err = x.skipStage(st, note)
-		} else {
+		case stepRun:
 			// Ensure the workspace lazily, right before a stage that uses it —
 			// and NEVER for a stage that only parks on something outside the
 			// run (a gate or a wait) or acts there (a remote tracker action
@@ -398,32 +396,6 @@ func (x *exec) append(ps ...event.Payload) error {
 	return nil
 }
 
-// advance follows the stage's explicit on_success target (DESIGN3 §2.1):
-// end parks pos past the last stage, which the run loop reads as the
-// phase's end; done does the same and marks the run done.
-func (x *exec) advance(st *flow.Stage) { x.advanceWith(st, "") }
-
-// advanceWith follows on_success carrying verdict — what an approval said
-// (flow.GivesVerdict) — to the target's edge.verdict; "" carries nothing.
-func (x *exec) advanceWith(st *flow.Stage, verdict string) {
-	switch st.OnSuccess {
-	case flow.TerminalEnd, flow.TerminalDone, flow.TerminalAbort:
-		x.rs.pos = len(x.rs.fl.Stages)
-		x.rs.endsRun = st.OnSuccess == flow.TerminalDone
-		x.rs.abortsRun = st.OnSuccess == flow.TerminalAbort
-		if x.rs.abortsRun {
-			x.rs.abortAt, x.rs.abortReason = st.ID, "aborted by flow: on_success at stage "+st.ID
-		}
-	default:
-		x.rs.pos = x.rs.fl.Index(st.OnSuccess) // parse-validated: always >= 0
-	}
-	x.rs.ph = phStart
-	x.rs.feed, x.rs.feedSentinel, x.rs.feedAttempts = verdict, "", 0
-	if verdict != "" {
-		x.rs.feedSentinel = flow.SourceVerdict
-	}
-}
-
 func (x *exec) complete() error {
 	rs := x.rs
 	return x.append(&event.RunCompleted{
@@ -443,12 +415,11 @@ func (x *exec) fail(reason string) error {
 }
 
 // takeEdge follows a recoverable edge of the given kind (on_fail,
-// on_reject, on_timeout — the registry lives in the flow package). The
-// edge is a chain: each link carries its own cumulative max, and a full
-// link falls through to its then fallback (retry-then-escalate). A link
-// targeting end finishes the phase, done the run, abort abandons the run;
-// an absent edge or an exhausted chain is a dead end (deadEnd: the run is
-// abandoned in the main chain or an outcome, a watcher's round ends — §3).
+// on_reject, on_timeout — the registry lives in the flow package) to the
+// link chooseEdge picks, and records it. A link targeting end finishes the
+// phase, done the run, abort abandons the run; an absent edge or an
+// exhausted chain is a dead end (deadEnd: the run is abandoned in the main
+// chain or an outcome, a watcher's round ends — §3).
 func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 	rs := x.rs
 	// The feed becomes an abandon reason and rs.feed (which an agent reads as
@@ -461,9 +432,10 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 		}
 		return shell.Tail(s, 8<<10)
 	}
-	edge := st.Edge(kind)
-	if edge == nil {
-		// A rejection is a decision, not a breakage: saying "unrecoverable
+	ch := rs.chooseEdge(st, kind)
+	switch ch.kind {
+	case edgeNone:
+		// A rejection is a verdict, not a breakage: saying "unrecoverable
 		// failure" about a human (or a signal) deliberately saying no would
 		// misreport the run's history.
 		reason := fmt.Sprintf("stage %s: unrecoverable failure with no %s", st.ID, kind)
@@ -474,53 +446,33 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 			}
 		}
 		return x.deadEnd(st, "", reason)
+	case edgeExhausted:
+		return x.deadEnd(st, kind, fmt.Sprintf("%s from %s exhausted (max %s)", kind, st.ID, chainMax(ch.edge)))
+	case edgeAbort:
+		reason := fmt.Sprintf("aborted by flow: %s at stage %s", kind, st.ID)
+		if strings.TrimSpace(feedContent) != "" {
+			reason += ": " + shell.Tail(strings.TrimSpace(feedContent), 2<<10)
+		}
+		return x.abandon(st.ID, kind, reason)
+	case edgeEnd:
+		// The phase ends here — a best-effort stage whose failure is not
+		// worth routing anywhere — or, with done, the run (FLOWLANG §3).
+		// Recorded like any link.
+		return x.append(&event.EdgeTaken{From: st.ID, To: ch.edge.To, Edge: kind, Depth: ch.depth,
+			Feed: feedTail(feedContent)})
+	case edgeDebug:
+		// The debug leaf: park here, on this stage, for a human with the
+		// workspace (stageDebug). Counted like any link — the timeline
+		// shows n/∞ — but never exhausted: the human decides when to stop.
+		return x.append(&event.EdgeTaken{From: st.ID, To: flow.ReservedDebug, Edge: kind, Count: ch.count,
+			Max: flow.UnlimitedMax, Depth: ch.depth, Feed: feedTail(feedContent)})
 	}
-	depth := 0
-	for e := edge; e != nil; e, depth = e.Then, depth+1 {
-		if e.To == flow.TerminalEnd || e.To == flow.TerminalDone {
-			// The phase ends here — a best-effort stage whose failure is not
-			// worth routing anywhere — or, with done, the run (FLOWLANG §3).
-			// Recorded like any link.
-			if err := x.append(&event.EdgeTaken{From: st.ID, To: e.To, Edge: kind, Depth: depth,
-				Feed: feedTail(feedContent)}); err != nil {
-				return err
-			}
-			return nil
-		}
-		if e.To == flow.TerminalAbort {
-			reason := fmt.Sprintf("aborted by flow: %s at stage %s", kind, st.ID)
-			if strings.TrimSpace(feedContent) != "" {
-				reason += ": " + shell.Tail(strings.TrimSpace(feedContent), 2<<10)
-			}
-			return x.abandon(st.ID, kind, reason)
-		}
-		key := chainKey(st.ID, kind, depth)
-		count := rs.edgeCounts[key] + 1
-		if e.To == flow.ReservedDebug {
-			// The debug leaf: park here, on this stage, for a human with the
-			// workspace (stageDebug). Counted like any link — the timeline
-			// shows n/∞ — but never exhausted: the human decides when to stop.
-			feed := feedTail(feedContent)
-			if err := x.append(&event.EdgeTaken{From: st.ID, To: flow.ReservedDebug, Edge: kind, Count: count,
-				Max: flow.UnlimitedMax, Depth: depth, Feed: feed}); err != nil {
-				return err
-			}
-			return nil
-		}
-		if e.Max != flow.UnlimitedMax && count > e.Max {
-			continue // this link is exhausted; fall through to then
-		}
-		// The content always rides along; whether the target renders it is the
-		// target's decision (it binds edge.verdict or edge.failure, or it does not).
-		// Persisted in the event so a crash between edge_taken and the next
-		// stage_started loses nothing.
-		feed := feedTail(feedContent)
-		if err := x.append(&event.EdgeTaken{From: st.ID, To: e.To, Edge: kind, Count: count, Max: e.Max, Depth: depth, Feed: feed}); err != nil {
-			return err
-		}
-		return nil
-	}
-	return x.deadEnd(st, kind, fmt.Sprintf("%s from %s exhausted (max %s)", kind, st.ID, chainMax(edge)))
+	// The content always rides along; whether the target renders it is the
+	// target's choice (it binds edge.verdict or edge.failure, or it does not).
+	// Persisted in the event so a crash between edge_taken and the next
+	// stage_started loses nothing.
+	return x.append(&event.EdgeTaken{From: st.ID, To: ch.edge.To, Edge: kind, Count: ch.count, Max: ch.edge.Max,
+		Depth: ch.depth, Feed: feedTail(feedContent)})
 }
 
 // chainMax renders a chain's budget for the abandon reason: "5" for a
@@ -551,12 +503,8 @@ func failEdgeKind(st *flow.Stage, reason string) string {
 // checkBudget abandons the run when §3 budget ceilings are exceeded.
 // Returns true when the run should stop.
 func (x *exec) checkBudget(st *flow.Stage) (bool, error) {
-	b := x.rs.fl.Budget
-	if x.rs.cost > b.MaxCostUSD {
-		return true, x.abandon(st.ID, "", fmt.Sprintf("budget exceeded: cost %.2f USD > max %.2f", x.rs.cost, b.MaxCostUSD))
-	}
-	if x.rs.turns > b.MaxTotalTurns {
-		return true, x.abandon(st.ID, "", fmt.Sprintf("budget exceeded: %d turns > max %d", x.rs.turns, b.MaxTotalTurns))
+	if over, reason := budgetExceeded(x.rs.fl.Budget, x.rs.cost, x.rs.turns); over {
+		return true, x.abandon(st.ID, "", reason)
 	}
 	return false, nil
 }
@@ -581,7 +529,7 @@ func (x *exec) routeAfterFail(st *flow.Stage) error {
 // stage_completed and its routing: no re-execution, only the decision.
 func (x *exec) routeAfterComplete(st *flow.Stage) error {
 	if x.emptyRound(st) {
-		x.endPhase()
+		x.rs.endPhase()
 		return nil
 	}
 	var v *Verdict
@@ -1128,7 +1076,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 // and judged nothing: it goes straight on.
 func (x *exec) afterComplete(st *flow.Stage, verdict *Verdict) error {
 	if x.rs.elided[st.ID] {
-		x.advanceWith(st, x.rs.completedFeed)
+		x.rs.routeSuccess(st, x.rs.completedFeed)
 		return nil
 	}
 	if verdict != nil && !x.rs.verdictRecorded {
@@ -1144,7 +1092,7 @@ func (x *exec) afterComplete(st *flow.Stage, verdict *Verdict) error {
 	if verdict != nil && !verdict.Approve {
 		return x.takeEdge(st, flow.EdgeReject, verdictText(st.ID, verdict))
 	}
-	x.advanceWith(st, x.rs.completedFeed)
+	x.rs.routeSuccess(st, x.rs.completedFeed)
 	return nil
 }
 
@@ -1749,7 +1697,7 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	// On a subject, in its checkout (PLAN6 R12): the phase acts on that
 	// merge request's branch only.
 	dirs := []string{event.PrimaryCheckoutDir}
-	if co := x.subjectCheckout(); co != nil {
+	if co := x.rs.subjectCheckout(); co != nil {
 		dirs = []string{co.Dir}
 	} else if st.EachRepo {
 		dirs = rs.checkoutDirs()
@@ -1820,7 +1768,7 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 		return err
 	}
-	x.advance(st)
+	x.rs.routeSuccess(st, "")
 	return nil
 }
 
@@ -2034,7 +1982,7 @@ func (x *exec) sourceLink(v string) string {
 	switch v {
 	case flow.SourceMRURL:
 		// On a subject, the merge request the phase acts on.
-		if mr := x.subjectMR(); mr != nil {
+		if mr := x.rs.subjectMR(); mr != nil {
 			return mr.Ref.URL
 		}
 		return x.rs.view.MRURL
@@ -2158,7 +2106,7 @@ func (x *exec) routeGate(st *flow.Stage, rec *event.PingAnswered, started time.T
 		if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds(), Feed: verdict}); err != nil {
 			return err
 		}
-		x.advanceWith(st, verdict)
+		x.rs.routeSuccess(st, verdict)
 		return nil
 	}
 	return x.takeEdge(st, flow.EdgeReject, verdict)
@@ -2238,18 +2186,11 @@ func (x *exec) stageAction(st *flow.Stage) error {
 		return err
 	}
 	if x.emptyRound(st) {
-		x.endPhase()
+		x.rs.endPhase()
 		return nil
 	}
-	x.advance(st)
+	x.rs.routeSuccess(st, "")
 	return nil
-}
-
-// endPhase routes straight to the phase's end (the run loop records it).
-func (x *exec) endPhase() {
-	x.rs.pos = len(x.rs.fl.Stages)
-	x.rs.endsRun, x.rs.abortsRun = false, false
-	x.rs.ph = phStart
 }
 
 // --- wait stages ------------------------------------------------------------
@@ -2281,7 +2222,7 @@ func (x *exec) completeWait(st *flow.Stage, started time.Time) error {
 	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 		return err
 	}
-	x.advance(st)
+	x.rs.routeSuccess(st, "")
 	return nil
 }
 

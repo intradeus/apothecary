@@ -102,7 +102,7 @@ func (x *exec) beginRun() error {
 // head; best effort (the stage sees whatever the checkout holds).
 func (x *exec) followAdopted() {
 	rs := x.rs
-	co := x.subjectCheckout()
+	co := x.rs.subjectCheckout()
 	if co == nil || co.Fetch == "" || rs.phaseTip == "" || x.followed == rs.phaseTip {
 		return
 	}
@@ -159,7 +159,7 @@ func (x *exec) deadEnd(st *flow.Stage, edgeKind, reason string) error {
 	}
 	x.e.log.Info("phase ended at a dead end; the run goes back to waiting",
 		"run", x.rs.runID, "phase", x.rs.phase, "stage", st.ID, "reason", reason)
-	x.endPhase()
+	x.rs.endPhase()
 	x.rs.endReason = reason
 	return nil
 }
@@ -169,24 +169,6 @@ func (x *exec) deadEnd(st *flow.Stage, edgeKind, reason string) error {
 func (x *exec) endsRunAtDeadEnd() bool {
 	ph := x.rs.fl.Phase(x.rs.phase)
 	return ph == nil || ph.Kind != flow.PhaseWatcher
-}
-
-// subjectCheckout is the checkout the phase run acts on, or nil (the main
-// chain of a run started on a ticket).
-func (x *exec) subjectCheckout() *event.Checkout {
-	if x.rs.subject == "" {
-		return nil
-	}
-	return x.rs.checkout(x.rs.subject)
-}
-
-// subjectMR is the merge request the phase run acts on, or nil.
-func (x *exec) subjectMR() *mrRecord {
-	co := x.subjectCheckout()
-	if co == nil {
-		return nil
-	}
-	return x.rs.mrFor(co.Name, co.Branch)
 }
 
 // mrObservation is one poll of one merge request. threads, checks and
@@ -816,14 +798,14 @@ func (x *exec) openMRs() []*mrRecord {
 // request it is
 // working on, and that every other checkout is context only (R12).
 func (x *exec) subjectSection() string {
-	co := x.subjectCheckout()
+	co := x.rs.subjectCheckout()
 	if co == nil {
 		return ""
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# SUBJECT\nThis phase (%s) works on the merge request of %s: ~/%s, branch %s, merging into %s.\n",
 		x.rs.phase, co.Name, co.Dir, co.Branch, co.Source)
-	if mr := x.subjectMR(); mr != nil {
+	if mr := x.rs.subjectMR(); mr != nil {
 		fmt.Fprintf(&b, "Merge request: %s\n", mr.Ref.URL)
 	}
 	if len(x.rs.checkouts) > 1 {
