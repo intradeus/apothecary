@@ -65,7 +65,6 @@ type Host interface {
 
 	// refreshShim makes the mounted shim current (Reattach).
 	refreshShim(ctx context.Context, name string) error
-	terminalCommand(name, container string) string
 	sample(ctx context.Context, name string) (ports.ResourceSample, error)
 	test(ctx context.Context) error
 	close()

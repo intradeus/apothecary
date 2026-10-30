@@ -96,6 +96,18 @@ export default {
 	'run.env.copyTitle': 'Copy: {command}',
 	'run.env.copy': 'copy',
 	'run.env.copiedLabel': 'copied',
+	// SSH into the workspace (TODO 46), through the engine's door.
+	'run.env.vscode': 'Open in VS Code',
+	'run.env.vscodeSub': 'Remote-SSH, through the engine’s door',
+	'run.env.sshCommand': 'SSH',
+	'run.env.sshKnownHosts': 'known_hosts line',
+	'run.env.copiedKnownHosts': 'Copied the known_hosts line',
+	'run.env.sshFingerprint': 'door fingerprint {fingerprint}',
+	'run.env.sshNoKey': 'Register an SSH key to connect',
+	'run.env.sshNoKeySub': 'Account → SSH keys',
+	'run.env.sshOff': 'SSH is off',
+	'run.env.sshLoading': 'Asking the SSH door…',
+	'run.env.sshFailed': 'Could not read the SSH door',
 
 	// Merge requests
 	'run.mr.one': 'MR',

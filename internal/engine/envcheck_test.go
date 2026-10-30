@@ -50,7 +50,7 @@ func TestRunEnvCheckDerivedCatalog(t *testing.T) {
 	for _, want := range []string{"provision", "bootstrap",
 		"egress_deny", "egress:gitlab.local",
 		"egress:openrouter.ai", "harness_binary", "shim", "tunnel",
-		"rw_absolute", "rw_relative", "links", "destroy"} {
+		"rw_absolute", "rw_relative", "destroy"} {
 		if s, ok := byID[want]; !ok || s.Status != "pass" {
 			t.Errorf("step %s = %+v", want, s)
 		}

@@ -2641,6 +2641,34 @@ components:
       required:
         - samples
       type: object
+    RunSSH:
+      properties:
+        command:
+          type: string
+        enabled:
+          type: boolean
+        fingerprint:
+          type: string
+        host:
+          type: string
+        host_key:
+          type: string
+        keys:
+          type: integer
+        path:
+          type: string
+        port:
+          type: integer
+        reason:
+          type: string
+        user:
+          type: string
+        vscode_url:
+          type: string
+      required:
+        - enabled
+        - keys
+      type: object
     RunServices:
       properties:
         error:
@@ -2744,6 +2772,41 @@ components:
         - state
         - ticket_title
         - updated_at
+      type: object
+    SSHKey:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        fingerprint:
+          type: string
+        id:
+          type: string
+        last_used_at:
+          format: date-time
+          type: string
+        name:
+          type: string
+        public_key:
+          type: string
+        type:
+          type: string
+      required:
+        - created_at
+        - fingerprint
+        - id
+        - name
+        - public_key
+        - type
+      type: object
+    SSHKeyRequest:
+      properties:
+        name:
+          type: string
+        public_key:
+          type: string
+      required:
+        - public_key
       type: object
     SendMessageRequest:
       properties:
@@ -5470,6 +5533,113 @@ paths:
         - session: []
         - personalToken: []
       summary: Change one's own password
+      tags:
+        - auth
+  /api/me/ssh-keys:
+    get:
+      operationId: listMySshKeys
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/SSHKey'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'One''s SSH public keys: what the SSH door lets into one''s workspaces'
+      tags:
+        - auth
+    post:
+      description: The contents of a .pub file. A key registered on one account cannot be registered on another. Disabling the account keeps its keys and ends their sessions; re-enabling it restores access.
+      operationId: addMySshKey
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SSHKeyRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SSHKey'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Register an SSH public key
+      tags:
+        - auth
+  /api/me/ssh-keys/{id}:
+    delete:
+      operationId: deleteMySshKey
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Remove an SSH public key
       tags:
         - auth
   /api/me/tokens:
@@ -9178,6 +9348,45 @@ paths:
         - session: []
         - personalToken: []
       summary: Stop a service, whoever started it
+      tags:
+        - workspace
+  /api/runs/{id}/ssh:
+    get:
+      description: The SSH door is the engine's own listener (APOTHECARY_SSH_LISTEN); the username is the workspace, the key one registered on the account. The workspace's sidecar is started on demand, so the first answer may take a moment.
+      operationId: getRunSsh
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunSSH'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'How to reach the run''s workspace over SSH: the command, the VS Code link, the door''s fingerprint'
       tags:
         - workspace
   /api/runs/{id}/workspace-log:

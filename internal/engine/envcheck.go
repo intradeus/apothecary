@@ -278,13 +278,6 @@ func runEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 	step("rw_absolute", rwRoundTrip(ctx, envp, env, "/apothecary/roundtrip.bin", blob), "")
 	step("rw_relative", rwRoundTrip(ctx, envp, env, "artifacts/roundtrip.txt", []byte("hello apothecary\n")), "")
 
-	links, lerr := envp.Links(ctx, env)
-	detail := ""
-	for _, l := range links {
-		detail += l.Kind + " "
-	}
-	step("links", lerr, strings.TrimSpace(detail))
-
 	mu.Lock()
 	defer mu.Unlock()
 	return failed, teardown

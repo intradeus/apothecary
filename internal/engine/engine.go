@@ -242,9 +242,12 @@ type Engine struct {
 	asks     map[string]*askRun
 	askHub   askHub
 
-	mu      sync.Mutex
-	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
-	handles map[string]*runHandle
+	mu sync.Mutex
+	// sshDoorKey is the SSH door's public key (an authorized_keys line),
+	// written into a workspace before the door dials its sidecar.
+	sshDoorKey string
+	closing    bool // Shutdown in progress: scheduleLocked stops admitting runs
+	handles    map[string]*runHandle
 	// live fans out ephemeral agent progress (LiveDelta) to run viewers.
 	live   liveHub
 	queue  []string // pending runs waiting for a concurrency slot (§14 FIFO)

@@ -37,6 +37,12 @@ services:
       APOTHECARY_POSTGRES_DSN: postgres://apothecary:${APOTHECARY_PG_PASSWORD}@127.0.0.1:15432/apothecary
       APOTHECARY_MASTER_KEY: ${APOTHECARY_MASTER_KEY:?run `apothecaryd keygen` and set APOTHECARY_MASTER_KEY in deploy/.env}
       APOTHECARY_LISTEN: 127.0.0.1:8080
+      # The SSH door (desktop VS Code / ssh into a run's workspace): bind the
+      # address people reach the engine at over the VPN — not 0.0.0.0, this
+      # container shares the host's network — and advertise the name they
+      # connect to. Unset = no door.
+      # APOTHECARY_SSH_LISTEN: 100.64.0.9:2222
+      # APOTHECARY_SSH_ADVERTISE: engine.tail1234.ts.net:2222
       # Opt-in hardening: with sysbox installed on the HOST, set this to
       # sysbox-runc in deploy/.env and each run's DinD sandbox drops
       # --privileged for a user namespace — a compromised run then can't reach

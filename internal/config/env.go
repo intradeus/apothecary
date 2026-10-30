@@ -4,6 +4,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -65,6 +67,42 @@ type Boot struct {
 	// PublicURL is the UI's own origin as browsers reach it
 	// (APOTHECARY_PUBLIC_URL), where an app host sends a browser to sign in.
 	PublicURL string
+	// SSHListen is where the SSH door listens (APOTHECARY_SSH_LISTEN, e.g.
+	// 0.0.0.0:2222 or a VPN address); default "" = no door. SSHAdvertise is
+	// the host:port people connect to (APOTHECARY_SSH_ADVERTISE), what the
+	// run page prints and links to; derived when unset (SSHAdvertiseAddr).
+	SSHListen    string
+	SSHAdvertise string
+}
+
+// SSHAdvertiseAddr is the address people are told to ssh to: the explicit
+// one, else the listen address when it names a host, else the public URL's
+// host with the listen port. An error when the door is on and no host can
+// be derived — "which address is this door at" must be readable off one
+// line of the deployment, not guessed.
+func (b *Boot) SSHAdvertiseAddr() (string, error) {
+	if b.SSHListen == "" {
+		return "", nil
+	}
+	if b.SSHAdvertise != "" {
+		if _, _, err := net.SplitHostPort(b.SSHAdvertise); err != nil {
+			return "", fmt.Errorf("config: APOTHECARY_SSH_ADVERTISE must be host:port, got %q", b.SSHAdvertise)
+		}
+		return b.SSHAdvertise, nil
+	}
+	host, port, err := net.SplitHostPort(b.SSHListen)
+	if err != nil {
+		return "", fmt.Errorf("config: APOTHECARY_SSH_LISTEN must be host:port, got %q", b.SSHListen)
+	}
+	if host != "" && host != "0.0.0.0" && host != "::" && host != "[::]" {
+		return net.JoinHostPort(host, port), nil
+	}
+	if b.PublicURL != "" {
+		if u, err := url.Parse(b.PublicURL); err == nil && u.Hostname() != "" {
+			return net.JoinHostPort(u.Hostname(), port), nil
+		}
+	}
+	return "", fmt.Errorf("config: APOTHECARY_SSH_LISTEN %q names no host people can reach — set APOTHECARY_SSH_ADVERTISE to the host:port they connect to", b.SSHListen)
 }
 
 // K8s is the Kubernetes part of the boot configuration.
@@ -213,6 +251,11 @@ func FromEnv() (*Boot, error) {
 	b.AppsDomain = strings.Trim(strings.TrimSpace(os.Getenv("APOTHECARY_APPS_DOMAIN")), ".")
 	b.AppsScheme = getenvDefault("APOTHECARY_APPS_SCHEME", "http")
 	b.PublicURL = strings.TrimSuffix(strings.TrimSpace(os.Getenv("APOTHECARY_PUBLIC_URL")), "/")
+	b.SSHListen = strings.TrimSpace(os.Getenv("APOTHECARY_SSH_LISTEN"))
+	b.SSHAdvertise = strings.TrimSpace(os.Getenv("APOTHECARY_SSH_ADVERTISE"))
+	if _, err := b.SSHAdvertiseAddr(); err != nil {
+		return nil, err
+	}
 	if b.AppsDomain != "" && b.PublicURL == "" {
 		return nil, fmt.Errorf("config: APOTHECARY_APPS_DOMAIN needs APOTHECARY_PUBLIC_URL (the UI's address, where app hosts send browsers to sign in)")
 	}

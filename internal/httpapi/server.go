@@ -71,6 +71,9 @@ type Server struct {
 	// answers every user route 503 — a server without it is misconfigured,
 	// never open.
 	Auth *auth.Service
+	// SSH is the engine's SSH door (TODO 46), for the run page's connection
+	// facts and for ending a disabled account's sessions; nil = no door.
+	SSH SSHAccess
 	// Limits are the instance's capacity caps: read by every user, set by
 	// an admin. nil = the engine defaults, read-only (bare test servers).
 	Limits LimitsSetting
@@ -209,6 +212,14 @@ func (e EventPingStore) GetPing(ctx context.Context, id string) (run.PingView, e
 		}
 	}
 	return run.PingView{}, fmt.Errorf("ping %s: %w", id, engine.ErrPingNotFound)
+}
+
+// SSHAccess is what the API needs from the SSH door (internal/sshdoor).
+type SSHAccess interface {
+	Address() (host string, port int)
+	Fingerprint() string
+	HostPublicKey() string
+	DropUser(userID string)
 }
 
 // pingJSON is the registry-fallback shape (Pings == nil); the projection

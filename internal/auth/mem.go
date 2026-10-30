@@ -16,6 +16,7 @@ type Mem struct {
 	methods  map[string]Method
 	sessions map[string]Session
 	tokens   map[string]Token
+	sshKeys  map[string]SSHKey
 }
 
 func NewMem() *Mem {
@@ -24,6 +25,7 @@ func NewMem() *Mem {
 		methods:  map[string]Method{},
 		sessions: map[string]Session{},
 		tokens:   map[string]Token{},
+		sshKeys:  map[string]SSHKey{},
 	}
 }
 
@@ -274,3 +276,62 @@ func (m *Mem) DeleteTokensOf(_ context.Context, userID string) error {
 }
 
 var _ DB = (*Mem)(nil)
+
+// --- ssh keys -----------------------------------------------------------------
+
+func (m *Mem) CreateSSHKey(_ context.Context, k SSHKey) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, have := range m.sshKeys {
+		if have.Fingerprint == k.Fingerprint {
+			return fmt.Errorf("ssh key %s: %w", k.Fingerprint, ErrConflict)
+		}
+	}
+	m.sshKeys[k.ID] = k
+	return nil
+}
+
+func (m *Mem) GetSSHKeyByFingerprint(_ context.Context, fingerprint string) (SSHKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, k := range m.sshKeys {
+		if k.Fingerprint == fingerprint {
+			return k, nil
+		}
+	}
+	return SSHKey{}, fmt.Errorf("ssh key: %w", ErrNotFound)
+}
+
+func (m *Mem) ListSSHKeys(_ context.Context, userID string) ([]SSHKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []SSHKey
+	for _, k := range m.sshKeys {
+		if k.UserID == userID {
+			out = append(out, k)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (m *Mem) DeleteSSHKey(_ context.Context, userID, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k, ok := m.sshKeys[id]
+	if !ok || k.UserID != userID {
+		return fmt.Errorf("ssh key %s: %w", id, ErrNotFound)
+	}
+	delete(m.sshKeys, id)
+	return nil
+}
+
+func (m *Mem) TouchSSHKey(_ context.Context, id string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if k, ok := m.sshKeys[id]; ok {
+		k.LastUsedAt = &at
+		m.sshKeys[id] = k
+	}
+	return nil
+}

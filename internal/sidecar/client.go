@@ -106,6 +106,22 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	return json.NewDecoder(res.Body).Decode(out)
 }
 
+// Health is what the sidecar says about itself: its boot id, the checkout
+// it serves (Repo) and the directory that resolves to (Workspace) — the
+// devcontainer's workspace folder, which $HOME/repo is a symlink onto, and
+// what an editor opens.
+type Health struct {
+	Boot      string `json:"boot"`
+	Repo      string `json:"repo"`
+	Workspace string `json:"workspace"`
+}
+
+func (c *Client) Health(ctx context.Context) (Health, error) {
+	var h Health
+	err := c.do(ctx, http.MethodGet, "/health", nil, &h)
+	return h, err
+}
+
 // --- agent ---------------------------------------------------------------------
 
 type StartRequest struct {

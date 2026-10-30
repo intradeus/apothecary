@@ -124,14 +124,6 @@ type ExecResult struct {
 	Output   string // combined stdout+stderr; adapters also stream to the stage log
 }
 
-type AccessLink struct {
-	Kind string // ide | terminal | app | vscode | ssh
-	URL  string
-	// Command is the copy-paste alternative for access methods that aren't
-	// a browser URL (ssh). Links carry a URL, a Command, or both.
-	Command string
-}
-
 type EnvStatus string
 
 const (
@@ -165,7 +157,6 @@ type EnvProvisioner interface {
 	// path — what a files port holds. Symlinks are never followed; a dir
 	// that is not there is fs.ErrNotExist. At most ListFilesLimit entries.
 	ListFiles(ctx context.Context, env EnvID, dir string) ([]FileEntry, error)
-	Links(ctx context.Context, env EnvID) ([]AccessLink, error)
 	Status(ctx context.Context, env EnvID) (EnvStatus, error)
 	Destroy(ctx context.Context, env EnvID) error
 }
@@ -1171,6 +1162,15 @@ type ExecLogTailer interface {
 // host it don't implement this, and the features it backs degrade honestly.
 type Sidecar interface {
 	Sidecar(ctx context.Context, env EnvID) (PortConn, error)
+}
+
+// WorkspaceSSH is an OPTIONAL EnvProvisioner capability: a dialer for the
+// sidecar's SSH server (ssh.sock beside sidecar.sock in the shim dir), the
+// far end of the engine's SSH door — a person's ssh or editor session into
+// the workspace. Starting the sidecar first is the adapter's business, as
+// for Sidecar.
+type WorkspaceSSH interface {
+	SSH(ctx context.Context, env EnvID) (PortConn, error)
 }
 
 // EngineURLProvider is an OPTIONAL EnvProvisioner capability: the URL this

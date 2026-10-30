@@ -2062,8 +2062,7 @@ func (x *exec) sourceLink(v string) string {
 		}
 		return x.rs.view.MRURL
 	case flow.SourceWorkspace:
-		// Workspace hand-off: point the human at the running environment
-		// (terminal beats IDE beats whatever else env_ready recorded).
+		// Workspace hand-off: the environment's app link, when it has one.
 		return workspaceLink(x.rs.links)
 	}
 	if name := flow.SourceService(v); name != "" {
@@ -2343,19 +2342,14 @@ func (x *exec) verdictPath(st *flow.Stage) string {
 	return flow.TypedPath(st, agentspec.TypeVerdict)
 }
 
-// workspaceLink picks the link a debugging human wants first: the web
-// terminal, else the IDE, else the first recorded link. "" when the
-// workspace recorded none (the ping still renders, just without a link).
+// workspaceLink is what run.workspace hands a person: the workspace's first
+// app link (a port exposed at provision), "" when the environment declared
+// none — the ping still renders, just without a link. The workspace itself
+// is not behind a URL the log records: the run page has its terminal and
+// editor, the SSH door its ssh route.
 func workspaceLink(links []event.Link) string {
-	for _, kind := range []string{"terminal", "ide"} {
-		for _, l := range links {
-			if l.Kind == kind {
-				return l.URL
-			}
-		}
-	}
 	for _, l := range links {
-		if l.URL != "" { // command-only links (ssh) can't be a ping deep link
+		if l.URL != "" {
 			return l.URL
 		}
 	}
@@ -2514,23 +2508,16 @@ func (x *exec) ensureEnv() error {
 	// After bootstrap (repo cloned, .apothecary/ git-excluded): deliver the
 	// human's goal + answer artifacts into the workspace for the agent.
 	x.deliverRunAttachments()
-	links, err := x.res.Envp.Links(x.ctx, id)
-	if err != nil {
-		x.e.log.Warn("links unavailable", "run", rs.runID, "err", err)
-	}
-	evLinks := make([]event.Link, 0, len(links))
-	for _, l := range links {
-		evLinks = append(evLinks, event.Link{Kind: l.Kind, URL: l.URL, Command: l.Command})
-	}
-	// Auto-expose declared + previously-exposed ports; safe to fold into
-	// env_ready because this append happens on the run's own writer
-	// goroutine BEFORE the event exists (out-of-band appends would race the
-	// seq and clobber run state — see portrelay). The live registry stays
-	// authoritative (GET /runs/{id}/ports); persisted allocations make the
-	// re-exposed URLs match the pre-restart ones (best-effort).
-	for _, l := range x.autoExpose(id) {
-		evLinks = append(evLinks, l)
-	}
+	// The workspace's links are its app ports: auto-expose the declared +
+	// previously-exposed ones; safe to fold into env_ready because this
+	// append happens on the run's own writer goroutine BEFORE the event
+	// exists (out-of-band appends would race the seq and clobber run state
+	// — see portrelay). The live registry stays authoritative (GET
+	// /runs/{id}/ports); persisted allocations make the re-exposed URLs
+	// match the pre-restart ones (best-effort). Getting INTO the workspace
+	// is not a link the log records: the run page has its terminal and
+	// editor, the SSH door its ssh/VS Code route (GET /runs/{id}/ssh).
+	evLinks := x.autoExpose(id)
 	rs.links = evLinks // live counterpart of replay's env_ready capture
 	return x.append(&event.EnvReady{EnvID: string(id), Links: evLinks})
 }

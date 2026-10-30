@@ -9,7 +9,7 @@
 	import { fleet } from '$lib/fleet.svelte';
 	import { onMount } from 'svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
-	import type { MergeRequestLive } from '$lib/domain';
+	import type { MergeRequestLive, RunSsh } from '$lib/domain';
 	import {
 		ago,
 		fmtAbs,
@@ -103,6 +103,42 @@
 		return () => (ports(), services());
 	});
 
+	// The SSH door's facts for this run (TODO 46), read each time the Env menu
+	// opens: a key registered in another tab counts at the next open. The last
+	// answer stays on screen while a fresh one is on its way.
+	let ssh = $state<RunSsh | null>(null);
+	let sshState = $state<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+	let sshFor = '';
+	$effect(() => {
+		if (!envOpen) return;
+		const id = run.id;
+		if (sshFor !== id) {
+			sshFor = id;
+			ssh = null;
+		}
+		let stale = false;
+		sshState = 'loading';
+		api.runs.ssh(id).then(
+			(s) => {
+				if (stale) return;
+				ssh = s;
+				sshState = 'ready';
+			},
+			() => {
+				if (!stale) sshState = 'failed';
+			}
+		);
+		return () => {
+			stale = true;
+		};
+	});
+	// The line that pins the door's host key in ~/.ssh/known_hosts.
+	const knownHosts = $derived(
+		ssh?.enabled && ssh.host && ssh.hostKey
+			? `${ssh.port && ssh.port !== 22 ? `[${ssh.host}]:${ssh.port}` : ssh.host} ${ssh.hostKey}`
+			: ''
+	);
+
 	async function act(which: typeof busy, fn: () => Promise<unknown>): Promise<boolean> {
 		busy = which;
 		const ok = await rs.act(fn);
@@ -195,11 +231,14 @@
 		if (await act('rebuild', () => api.runs.rebuild(run.id, noCache))) toast(t('run.rebuild.done'));
 	}
 
-	async function copy(l: { kind: string; command?: string }) {
+	async function copy(
+		l: { kind: string; command?: string },
+		said = t('run.env.copied', { kind: l.kind })
+	) {
 		if (!l.command) return;
 		try {
 			await navigator.clipboard.writeText(l.command);
-			toast(t('run.env.copied', { kind: l.kind }));
+			toast(said);
 			copied = l.kind;
 			setTimeout(() => copied === l.kind && (copied = ''), 1500);
 		} catch {
@@ -403,8 +442,8 @@
 			{/snippet}
 			<button
 				bind:this={envBtn}
-				disabled={!rs.hasWorkspace || rs.links.length === 0}
-				title={rs.links.length ? t('run.env.links') : t('run.env.noLinks')}
+				disabled={!rs.hasWorkspace}
+				title={rs.hasWorkspace ? t('run.env.links') : t('run.env.noLinks')}
 				aria-expanded={envOpen}
 				onclick={() => (envOpen = !envOpen)}>{t('run.env.button')} {I.menu}</button
 			>
@@ -467,7 +506,7 @@
 	placement="below-end"
 	width={300}
 	title={t('run.env.title')}
-	legend={t('run.env.legend', { count: rs.links.length })}
+	legend={rs.links.length ? t('run.env.legend', { count: rs.links.length }) : undefined}
 >
 	{#each rs.links as l (l.kind + (l.url ?? l.command ?? ''))}
 		{#if l.url}
@@ -488,6 +527,81 @@
 			</button>
 		{/if}
 	{/each}
+	<!-- SSH into the workspace (TODO 46): the VS Code link, the command, the
+	     door's host key — or what stands in the way. -->
+	{#if rs.links.length}<div class="menu-div"></div>{/if}
+	{#if ssh === null}
+		<div class="mi still" aria-busy={sshState === 'loading'}>
+			<span class="sub"
+				>{sshState === 'failed' ? t('run.env.sshFailed') : t('run.env.sshLoading')}</span
+			>
+		</div>
+	{:else if !ssh.enabled}
+		<div class="mi still">
+			<span class="col wrap"
+				><span>{t('run.env.sshOff')}</span><span class="sub">{ssh.reason}</span></span
+			>
+		</div>
+	{:else if ssh.keys === 0}
+		<a class="mi" href={to.account()}>
+			<span class="col"
+				><span>{t('run.env.sshNoKey')}</span><span class="sub">{t('run.env.sshNoKeySub')}</span
+				></span
+			>
+			<span class="g">{I.forward}</span>
+		</a>
+	{:else}
+		{@const s = ssh}
+		{#if s.vscodeUrl}
+			<a class="mi" href={s.vscodeUrl} title={s.vscodeUrl}>
+				<span class="col"
+					><span>{t('run.env.vscode')}</span><span class="sub ell"
+						>{s.path ?? t('run.env.vscodeSub')}</span
+					></span
+				>
+				<span class="g">{I.external}</span>
+			</a>
+		{/if}
+		{#if s.command}
+			<button
+				class="mi"
+				title={t('run.env.copyTitle', { command: s.command })}
+				onclick={() => copy({ kind: 'SSH', command: s.command })}
+			>
+				<span class="col"
+					><span>{t('run.env.sshCommand')}</span><span class="sub mono ell">{s.command}</span></span
+				>
+				<span class="cp" class:hue-grn={copied === 'SSH'}
+					>{copied === 'SSH' ? `${t('run.env.copiedLabel')} ${I.ok}` : t('run.env.copy')}</span
+				>
+			</button>
+		{/if}
+		{#if knownHosts}
+			<button
+				class="mi"
+				title={t('run.env.copyTitle', { command: knownHosts })}
+				onclick={() =>
+					copy({ kind: 'known_hosts', command: knownHosts }, t('run.env.copiedKnownHosts'))}
+			>
+				<span class="col"
+					><span>{t('run.env.sshKnownHosts')}</span><span class="sub mono ell">{knownHosts}</span
+					></span
+				>
+				<span class="cp" class:hue-grn={copied === 'known_hosts'}
+					>{copied === 'known_hosts'
+						? `${t('run.env.copiedLabel')} ${I.ok}`
+						: t('run.env.copy')}</span
+				>
+			</button>
+		{/if}
+		{#if s.fingerprint}
+			<div class="mi still">
+				<span class="sub mono ell" title={s.fingerprint}
+					>{t('run.env.sshFingerprint', { fingerprint: s.fingerprint })}</span
+				>
+			</div>
+		{/if}
+	{/if}
 </Popover>
 
 <Popover
@@ -696,6 +810,13 @@
 	}
 	.cp.hue-grn {
 		color: var(--grn);
+	}
+	/* A row that only says something: no hover, nothing to press. */
+	.still {
+		cursor: default;
+	}
+	.still:hover {
+		background: none;
 	}
 	/* Menu rows don't wrap; these explain themselves in a sentence. */
 	.wrap {

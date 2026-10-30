@@ -660,6 +660,39 @@ func (s *Server) deleteMyToken(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) listMySSHKeys(w http.ResponseWriter, r *http.Request) {
+	keys, err := s.Auth.ListSSHKeys(r.Context(), auth.UserID(r.Context()))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if keys == nil {
+		keys = []auth.SSHKey{}
+	}
+	writeJSON(w, http.StatusOK, keys)
+}
+
+func (s *Server) addMySSHKey(w http.ResponseWriter, r *http.Request) {
+	var body SSHKeyRequest
+	if !readJSON(w, r, &body) {
+		return
+	}
+	k, err := s.Auth.AddSSHKey(r.Context(), auth.UserID(r.Context()), body.Name, body.PublicKey)
+	if err != nil {
+		authErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, k)
+}
+
+func (s *Server) deleteMySSHKey(w http.ResponseWriter, r *http.Request) {
+	if err := s.Auth.DeleteSSHKey(r.Context(), auth.UserID(r.Context()), r.PathValue("id")); err != nil {
+		authErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- handlers: users (admin) --------------------------------------------------------
 
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
@@ -720,6 +753,9 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		if *body.Disabled {
 			s.standDown(ctx, id)
+			if s.SSH != nil {
+				s.SSH.DropUser(id)
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, u)

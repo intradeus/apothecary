@@ -284,4 +284,69 @@ func (s *Store) DeleteTokensOf(ctx context.Context, userID string) error {
 	return err
 }
 
+// --- ssh keys -----------------------------------------------------------------
+
+const sshKeyCols = `id, user_id, name, public_key, fingerprint, created_at, last_used_at`
+
+func scanSSHKey(row pgx.Row) (auth.SSHKey, error) {
+	var k auth.SSHKey
+	err := row.Scan(&k.ID, &k.UserID, &k.Name, &k.PublicKey, &k.Fingerprint, &k.CreatedAt, &k.LastUsedAt)
+	if err == nil {
+		if f := strings.Fields(k.PublicKey); len(f) > 0 {
+			k.Type = f[0]
+		}
+	}
+	return k, err
+}
+
+func (s *Store) CreateSSHKey(ctx context.Context, k auth.SSHKey) error {
+	_, err := s.pool.Exec(ctx, `INSERT INTO ssh_keys (`+sshKeyCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		k.ID, k.UserID, k.Name, k.PublicKey, k.Fingerprint, k.CreatedAt, k.LastUsedAt)
+	if isUnique(err) {
+		return fmt.Errorf("ssh key %s: %w", k.Fingerprint, auth.ErrConflict)
+	}
+	return err
+}
+
+func (s *Store) GetSSHKeyByFingerprint(ctx context.Context, fingerprint string) (auth.SSHKey, error) {
+	k, err := scanSSHKey(s.pool.QueryRow(ctx, `SELECT `+sshKeyCols+` FROM ssh_keys WHERE fingerprint=$1`, fingerprint))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return k, fmt.Errorf("ssh key: %w", auth.ErrNotFound)
+	}
+	return k, err
+}
+
+func (s *Store) ListSSHKeys(ctx context.Context, userID string) ([]auth.SSHKey, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+sshKeyCols+` FROM ssh_keys WHERE user_id=$1 ORDER BY created_at, id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []auth.SSHKey
+	for rows.Next() {
+		k, err := scanSSHKey(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteSSHKey(ctx context.Context, userID, id string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM ssh_keys WHERE id=$1 AND user_id=$2`, id, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("ssh key %s: %w", id, auth.ErrNotFound)
+	}
+	return nil
+}
+
+func (s *Store) TouchSSHKey(ctx context.Context, id string, at time.Time) error {
+	_, err := s.pool.Exec(ctx, `UPDATE ssh_keys SET last_used_at=$2 WHERE id=$1`, id, at)
+	return err
+}
+
 var _ auth.DB = (*Store)(nil)

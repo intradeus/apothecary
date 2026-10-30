@@ -1,10 +1,11 @@
 <script lang="ts">
-	// One's account (TODO 25): the profile, the password, and personal API
-	// tokens. Everything on this page is the signed-in user's own.
+	// One's account (TODO 25): the profile, the password, personal API
+	// tokens and SSH keys (TODO 46). Everything on this page is the signed-in
+	// user's own.
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import { session } from '$lib/session.svelte';
-	import type { Token } from '$lib/domain';
+	import type { SshKey, Token } from '$lib/domain';
 	import { ago } from '$lib/format';
 	import { t } from '$lib/i18n/index.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
@@ -127,6 +128,63 @@
 			revoking = null;
 		}
 	}
+
+	// SSH keys (TODO 46): what the engine's SSH door lets one into a run's
+	// workspace with. A key is added from its .pub line and known by its
+	// fingerprint afterwards.
+	let keys = $state<SshKey[]>([]);
+	let keysLoaded = $state(false);
+	let keysError = $state('');
+	let keyLine = $state('');
+	let keyName = $state('');
+	let adding = $state(false);
+	let removing = $state<string | null>(null);
+
+	const loadKeys = async () => {
+		try {
+			keys = await api.auth.sshKeys();
+			keysLoaded = true;
+			keysError = '';
+		} catch (err) {
+			keysError = err instanceof Error ? err.message : String(err);
+		}
+	};
+	onMount(loadKeys);
+
+	async function addKey(e: SubmitEvent) {
+		e.preventDefault();
+		adding = true;
+		keysError = '';
+		try {
+			await api.auth.addSshKey(keyLine.trim(), keyName.trim());
+			keyLine = keyName = '';
+			toast(t('page.account.sshAdded'));
+			await loadKeys();
+		} catch (err) {
+			keysError = err instanceof Error ? err.message : String(err);
+		} finally {
+			adding = false;
+		}
+	}
+
+	async function removeKey(k: SshKey) {
+		const ok = await confirmDialog({
+			title: t('page.account.sshRemove') + ` · ${k.name}`,
+			body: k.fingerprint,
+			action: t('page.account.sshRemove')
+		});
+		if (!ok) return;
+		removing = k.id;
+		try {
+			await api.auth.removeSshKey(k.id);
+			toast(t('page.account.sshRemoved'));
+			await loadKeys();
+		} catch (err) {
+			keysError = err instanceof Error ? err.message : String(err);
+		} finally {
+			removing = null;
+		}
+	}
 </script>
 
 <section class="c pane form-dense">
@@ -170,17 +228,36 @@
 	<form class="pane-body col" onsubmit={changePassword}>
 		<div class="field">
 			<label for="ac-cur">{t('page.account.current')}</label>
-			<input id="ac-cur" type="password" bind:value={current} required autocomplete="current-password" />
+			<input
+				id="ac-cur"
+				type="password"
+				bind:value={current}
+				required
+				autocomplete="current-password"
+			/>
 		</div>
 		<div class="grid2">
 			<div class="field">
 				<label for="ac-new">{t('page.account.new')}</label>
-				<input id="ac-new" type="password" bind:value={next} required minlength="8" autocomplete="new-password" />
+				<input
+					id="ac-new"
+					type="password"
+					bind:value={next}
+					required
+					minlength="8"
+					autocomplete="new-password"
+				/>
 				<div class="help">{t('auth.passwordHelp')}</div>
 			</div>
 			<div class="field">
 				<label for="ac-again">{t('auth.passwordAgain')}</label>
-				<input id="ac-again" type="password" bind:value={again} required autocomplete="new-password" />
+				<input
+					id="ac-again"
+					type="password"
+					bind:value={again}
+					required
+					autocomplete="new-password"
+				/>
 			</div>
 		</div>
 		{#if pwError}<div class="err">{pwError}</div>{/if}
@@ -239,14 +316,86 @@
 								? t('page.account.lastUsed', { ago: ago(tk.lastUsedAt) })
 								: t('page.account.neverUsed')}
 						</span>
-						<button class="btn-danger btn-sm" aria-busy={revoking === tk.id} onclick={() => revoke(tk)}
-							>{t('page.account.revoke')}</button
+						<button
+							class="btn-danger btn-sm"
+							aria-busy={revoking === tk.id}
+							onclick={() => revoke(tk)}>{t('page.account.revoke')}</button
 						>
 					</div>
 				{/each}
 			</div>
 		{:else}
-			<EmptyState compact title={t('page.account.noTokens')} text={t('page.account.noTokensText')} />
+			<EmptyState
+				compact
+				title={t('page.account.noTokens')}
+				text={t('page.account.noTokensText')}
+			/>
+		{/if}
+	</div>
+</section>
+
+<section class="c pane form-dense">
+	<div class="pane-head">
+		<h2>{t('page.account.ssh')}</h2>
+		<span class="mut small">{t('page.account.sshSub')}</span>
+	</div>
+	<div class="pane-body col">
+		<form class="col" onsubmit={addKey}>
+			<div class="field">
+				<label for="ac-sshkey">{t('page.account.sshKey')}</label>
+				<textarea
+					id="ac-sshkey"
+					class="mono pubkey"
+					rows={2}
+					bind:value={keyLine}
+					required
+					spellcheck="false"
+					placeholder={t('page.account.sshKeyPlaceholder')}></textarea>
+				<div class="help">{t('page.account.sshKeyHelp')}</div>
+			</div>
+			<div class="row nowrap mint">
+				<div class="field grow">
+					<label for="ac-sshname">{t('page.account.sshName')}</label>
+					<input
+						id="ac-sshname"
+						bind:value={keyName}
+						placeholder={t('page.account.sshNamePlaceholder')}
+					/>
+				</div>
+				<button class="btn-primary" type="submit" disabled={adding} aria-busy={adding}
+					>{I.add} {t('page.account.sshAdd')}</button
+				>
+			</div>
+		</form>
+		{#if keysError}<ErrorCard cause={t('page.account.failed')} detail={keysError} />{/if}
+		{#if !keysLoaded}
+			<Skeleton lines={2} />
+		{:else if keys.length}
+			<div class="rows">
+				{#each keys as k (k.id)}
+					<div class="r krow">
+						<span class="nm ell" title={k.publicKey}>{k.name}</span>
+						<span class="mono mut small ell" title={k.fingerprint}>{k.type} · {k.fingerprint}</span>
+						<span class="mut small ell">
+							{t('page.account.created', { ago: ago(k.createdAt) })}
+							· {k.lastUsedAt
+								? t('page.account.lastUsed', { ago: ago(k.lastUsedAt) })
+								: t('page.account.neverUsed')}
+						</span>
+						<button
+							class="btn-danger btn-sm"
+							aria-busy={removing === k.id}
+							onclick={() => removeKey(k)}>{t('page.account.sshRemove')}</button
+						>
+					</div>
+				{/each}
+			</div>
+		{:else}
+			<EmptyState
+				compact
+				title={t('page.account.noSshKeys')}
+				text={t('page.account.noSshKeysText')}
+			/>
 		{/if}
 	</div>
 </section>
@@ -270,15 +419,29 @@
 		grid-template-columns: minmax(0, 1fr) 110px minmax(0, 1.4fr) auto;
 		align-items: center;
 	}
+	.krow {
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr) minmax(0, 1.2fr) auto;
+		align-items: center;
+	}
 	.nm {
 		font-weight: 600;
 	}
+	/* A .pub line is one long word: wrap it anywhere rather than scroll. */
+	.pubkey {
+		resize: vertical;
+		min-height: 54px;
+		font-size: var(--fs-label);
+		overflow-wrap: anywhere;
+	}
 	@media (max-width: 760px) {
-		.trow {
+		.trow,
+		.krow {
 			grid-template-columns: minmax(0, 1fr) auto;
 		}
 		.trow > :nth-child(2),
-		.trow > :nth-child(3) {
+		.trow > :nth-child(3),
+		.krow > :nth-child(2),
+		.krow > :nth-child(3) {
 			display: none;
 		}
 	}

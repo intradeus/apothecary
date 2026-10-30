@@ -164,11 +164,12 @@ const (
 	ResumeReleased = "released"
 )
 
+// Link is one of a workspace's links: an app port exposed at provision
+// (kind "app"). Getting into the workspace is not a link the log records —
+// the run page and the SSH door are live facts, never frozen into an event.
 type Link struct {
 	Kind string `json:"kind"`
 	URL  string `json:"url"`
-	// Command is the copy-paste form for non-browser access (ssh).
-	Command string `json:"command,omitempty"`
 }
 
 type Usage struct {
@@ -455,7 +456,7 @@ type PingRaised struct {
 	Context  string `json:"context,omitempty"` // §9 pings.context; persisted so recovery keeps it
 	// Files are the workspace files attached to the ping (repo-relative
 	// paths; the first is the primary reviewed document). Link is a resolved
-	// URL payload (a gate's $MR_URL/$WORKSPACE sentinel). TYPED at the
+	// URL payload (a gate's run.mr.url or run.workspace). TYPED at the
 	// source (DESIGN-FILES §4): a value is a file or a link by field, never
 	// by sniffing the string for "http".
 	Files []string `json:"files,omitempty"`

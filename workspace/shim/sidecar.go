@@ -22,6 +22,11 @@ package main
 //	GET  /services        every service's state (shim service status)
 //	GET  /services/{name}/log  the last ?tail= lines of its output
 //
+// Beside the HTTP socket it serves SSH on ssh.sock (sshd.go): the far end of
+// the engine's SSH door — a person's ssh or VS Code Remote-SSH session,
+// shell and TCP forwards, as the remote user — authenticated by the door's
+// key the engine writes to /apothecary/ssh_door.pub.
+//
 // Every workspace route takes ?repo=<name> to address one of a multi-repo
 // run's additional checkouts (~/repos/<name>); absent = the primary.
 //
@@ -86,7 +91,11 @@ func runSidecar(args []string) {
 	repos := fs.String("repos", "", "directory of additional checkouts (default $HOME/repos)")
 	daemon := fs.Bool("daemon", false, "detach into the background and return once serving")
 	logPath := fs.String("log", "/apothecary/sidecar.log", "log file when detached")
+	sshSock := fs.String("ssh", "", "unix socket for the SSH server (default: ssh.sock beside --listen; off disables)")
 	_ = fs.Parse(args)
+	if *sshSock == "" {
+		*sshSock = filepath.Join(filepath.Dir(*listen), "ssh.sock")
+	}
 	if *repo == "" || *repos == "" {
 		home, _ := os.UserHomeDir()
 		if *repo == "" {
@@ -102,7 +111,7 @@ func runSidecar(args []string) {
 		return
 	}
 	if *daemon {
-		os.Exit(detach(*listen, *repo, *repos, *logPath))
+		os.Exit(detach(*listen, *repo, *repos, *logPath, *sshSock))
 	}
 	_ = os.Remove(*listen)
 	ln, err := net.Listen("unix", *listen)
@@ -111,6 +120,16 @@ func runSidecar(args []string) {
 	}
 	// The engine dials this host-side, usually as another uid.
 	_ = os.Chmod(*listen, 0o666)
+	if *sshSock != "off" {
+		// The SSH server shares the sidecar's life; it is never what decides
+		// whether a sidecar is serving (the HTTP socket is), so a failure
+		// here is logged, not fatal.
+		if _, err := startSSH(*sshSock, *repo); err != nil {
+			log.Printf("sidecar: ssh: not serving on %s: %v", *sshSock, err)
+		} else {
+			log.Printf("sidecar: ssh on %s", *sshSock)
+		}
+	}
 	evl := newEventLog()
 	s := &sidecar{repo: *repo, repos: *repos, log: evl, agent: newAgentHost(evl)}
 	log.Printf("sidecar: serving on %s (repo %s, boot %s)", *listen, *repo, evl.boot)
@@ -121,7 +140,7 @@ func runSidecar(args []string) {
 // detach re-execs the sidecar in its own session with output to a log file,
 // then waits for the socket so the caller knows it is serving. Uses no
 // setsid/nohup binaries: the workspace image is the repo's own.
-func detach(listen, repo, repos, logPath string) int {
+func detach(listen, repo, repos, logPath, sshSock string) int {
 	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
 	lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -131,7 +150,7 @@ func detach(listen, repo, repos, logPath string) int {
 	if err != nil {
 		self = os.Args[0]
 	}
-	cmd := exec.Command(self, "sidecar", "--listen", listen, "--repo", repo, "--repos", repos)
+	cmd := exec.Command(self, "sidecar", "--listen", listen, "--repo", repo, "--repos", repos, "--ssh", sshSock)
 	cmd.Stdout, cmd.Stderr = lf, lf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -154,7 +173,14 @@ func detach(listen, repo, repos, logPath string) int {
 func (s *sidecar) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSONResp(w, 200, map[string]string{"boot": s.log.boot})
+		// repo is the checkout as the sidecar was told it; workspace the
+		// directory it resolves to — the devcontainer's workspace folder,
+		// which $HOME/repo is a symlink onto. What an editor opens.
+		ws, err := filepath.EvalSymlinks(s.repo)
+		if err != nil {
+			ws = ""
+		}
+		writeJSONResp(w, 200, map[string]string{"boot": s.log.boot, "repo": s.repo, "workspace": ws})
 	})
 	mux.HandleFunc("POST /agent/start", s.agentStart)
 	mux.HandleFunc("POST /agent/session", s.agentSession)
@@ -394,13 +420,7 @@ func (s *sidecar) terminal(w http.ResponseWriter, r *http.Request) {
 	}
 	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
 	rows, _ := strconv.Atoi(r.URL.Query().Get("rows"))
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
-		if _, err := exec.LookPath("bash"); err == nil {
-			shell = "bash"
-		}
-	}
+	shell := shellPath()
 	ws, err := wsAccept(w, r)
 	if err != nil {
 		return

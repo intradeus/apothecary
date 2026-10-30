@@ -80,8 +80,8 @@ func TestJSONKeysMatchSpec(t *testing.T) {
 	}{
 		{&RunCreated{TicketTitle: "t", TicketGoal: "g", FlowName: "v1", FlowHash: "h", RepoURL: "u", Branch: "b"},
 			`{"ticket_title":"t","ticket_goal":"g","flow_name":"v1","flow_hash":"h","repo_url":"u","branch":"b"}`},
-		{&EnvReady{EnvID: "e", Links: []Link{{Kind: "ide", URL: "u"}}},
-			`{"env_id":"e","links":[{"kind":"ide","url":"u"}]}`},
+		{&EnvReady{EnvID: "e", Links: []Link{{Kind: "app", URL: "u"}}},
+			`{"env_id":"e","links":[{"kind":"app","url":"u"}]}`},
 		{&StageStarted{StageID: "build", Iteration: 1, Harness: "opencode", Model: "a/b"},
 			`{"stage_id":"build","iteration":1,"harness":"opencode","model":"a/b"}`},
 		{&StageCompleted{StageID: "build", DurationMS: 5, TurnsUsed: 3, Usage: &Usage{InputTokens: 1, OutputTokens: 2, CostUSD: 0.5}, SessionID: "s"},

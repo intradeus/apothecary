@@ -9,7 +9,16 @@
 // index.ts, because a request body is only ever built at one call site.
 
 import type * as Wire from './generated/types.gen';
-import type { AskMessage, AskState, AuthStatus, Limits, Me, Token, User } from '$lib/domain';
+import type {
+	AskMessage,
+	AskState,
+	AuthStatus,
+	Limits,
+	Me,
+	SshKey,
+	Token,
+	User
+} from '$lib/domain';
 import type { Credential, ProviderInfo, SignInPending } from '$lib/domain';
 import { asChangeType } from '$lib/domain';
 import type {
@@ -88,6 +97,7 @@ import type {
 	RunPhase,
 	RunPorts,
 	RunServices,
+	RunSsh,
 	RunState,
 	ServiceConfig,
 	ServiceState,
@@ -371,6 +381,22 @@ export function toRunPorts(w: Wire.RunPorts): RunPorts {
 			process: p.process,
 			service: p.service
 		}))
+	};
+}
+
+export function toRunSsh(w: Wire.RunSsh): RunSsh {
+	return {
+		enabled: w.enabled,
+		reason: w.reason || undefined,
+		host: w.host || undefined,
+		port: w.port || undefined,
+		user: w.user || undefined,
+		path: w.path || undefined,
+		fingerprint: w.fingerprint || undefined,
+		hostKey: w.host_key || undefined,
+		command: w.command || undefined,
+		vscodeUrl: w.vscode_url || undefined,
+		keys: w.keys
 	};
 }
 
@@ -1108,6 +1134,18 @@ export function toToken(w: Wire.Token): Token {
 		createdAt: w.created_at,
 		lastUsedAt: w.last_used_at || undefined,
 		expiresAt: w.expires_at || undefined
+	};
+}
+
+export function toSshKey(w: Wire.SshKey): SshKey {
+	return {
+		id: w.id,
+		name: w.name,
+		type: w.type,
+		publicKey: w.public_key,
+		fingerprint: w.fingerprint,
+		createdAt: w.created_at,
+		lastUsedAt: w.last_used_at || undefined
 	};
 }
 

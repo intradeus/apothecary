@@ -17,6 +17,9 @@ import type {
 	AddChannelData,
 	AddChannelErrors,
 	AddChannelResponses,
+	AddMySshKeyData,
+	AddMySshKeyErrors,
+	AddMySshKeyResponses,
 	AllowEgressHostData,
 	AllowEgressHostErrors,
 	AllowEgressHostResponses,
@@ -104,6 +107,9 @@ import type {
 	DeleteIntegrationData,
 	DeleteIntegrationErrors,
 	DeleteIntegrationResponses,
+	DeleteMySshKeyData,
+	DeleteMySshKeyErrors,
+	DeleteMySshKeyResponses,
 	DeleteMyTokenData,
 	DeleteMyTokenErrors,
 	DeleteMyTokenResponses,
@@ -227,6 +233,9 @@ import type {
 	GetRunServicesData,
 	GetRunServicesErrors,
 	GetRunServicesResponses,
+	GetRunSshData,
+	GetRunSshErrors,
+	GetRunSshResponses,
 	GetSettingsData,
 	GetSettingsErrors,
 	GetSettingsResponses,
@@ -317,6 +326,9 @@ import type {
 	ListKindsData,
 	ListKindsErrors,
 	ListKindsResponses,
+	ListMySshKeysData,
+	ListMySshKeysErrors,
+	ListMySshKeysResponses,
 	ListMyTokensData,
 	ListMyTokensErrors,
 	ListMyTokensResponses,
@@ -1640,6 +1652,81 @@ export const changeMyPassword = <ThrowOnError extends boolean = false>(
 			'Content-Type': 'application/json',
 			...options.headers
 		}
+	});
+
+/**
+ * One's SSH public keys: what the SSH door lets into one's workspaces
+ */
+export const listMySshKeys = <ThrowOnError extends boolean = false>(
+	options?: Options<ListMySshKeysData, ThrowOnError>
+): RequestResult<ListMySshKeysResponses, ListMySshKeysErrors, ThrowOnError> =>
+	(options?.client ?? client).get<ListMySshKeysResponses, ListMySshKeysErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/me/ssh-keys',
+		...options
+	});
+
+/**
+ * Register an SSH public key
+ *
+ * The contents of a .pub file. A key registered on one account cannot be registered on another. Disabling the account keeps its keys and ends their sessions; re-enabling it restores access.
+ */
+export const addMySshKey = <ThrowOnError extends boolean = false>(
+	options: Options<AddMySshKeyData, ThrowOnError>
+): RequestResult<AddMySshKeyResponses, AddMySshKeyErrors, ThrowOnError> =>
+	(options.client ?? client).post<AddMySshKeyResponses, AddMySshKeyErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/me/ssh-keys',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Remove an SSH public key
+ */
+export const deleteMySshKey = <ThrowOnError extends boolean = false>(
+	options: Options<DeleteMySshKeyData, ThrowOnError>
+): RequestResult<DeleteMySshKeyResponses, DeleteMySshKeyErrors, ThrowOnError> =>
+	(options.client ?? client).delete<DeleteMySshKeyResponses, DeleteMySshKeyErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/me/ssh-keys/{id}',
+		...options
 	});
 
 /**
@@ -3801,6 +3888,31 @@ export const stopRunService = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/runs/{id}/services/{name}/stop',
+		...options
+	});
+
+/**
+ * How to reach the run's workspace over SSH: the command, the VS Code link, the door's fingerprint
+ *
+ * The SSH door is the engine's own listener (APOTHECARY_SSH_LISTEN); the username is the workspace, the key one registered on the account. The workspace's sidecar is started on demand, so the first answer may take a moment.
+ */
+export const getRunSsh = <ThrowOnError extends boolean = false>(
+	options: Options<GetRunSshData, ThrowOnError>
+): RequestResult<GetRunSshResponses, GetRunSshErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetRunSshResponses, GetRunSshErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/ssh',
 		...options
 	});
 

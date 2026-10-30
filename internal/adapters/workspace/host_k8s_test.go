@@ -422,11 +422,3 @@ func TestParseCgroupSample(t *testing.T) {
 		t.Fatal("no cpu accepted")
 	}
 }
-
-func TestK8sTerminalCommand(t *testing.T) {
-	a := newK8sTestAdapter(t, &kubeFake{}, false)
-	got := a.host.terminalCommand("apo-x", "cname")
-	if got != "kubectl -n ws exec -it apo-x -c sandbox -- docker exec -it cname bash" {
-		t.Fatalf("got %q", got)
-	}
-}

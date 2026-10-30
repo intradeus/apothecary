@@ -60,7 +60,7 @@ const (
 	SourceDiffTarget = "run.git.diff_target" // what the branch changes against its target
 	SourceDiffPhase  = "run.git.diff_phase"  // what this phase run committed since it began
 	SourceMRURL      = "run.mr.url"          // the run's merge request (create_mr)
-	SourceWorkspace  = "run.workspace"       // the workspace's access link (terminal/IDE)
+	SourceWorkspace  = "run.workspace"       // the workspace's app link (its first exposed port)
 	// SourceFailure and SourceVerdict are what the edge that entered the
 	// stage carried: a failing stage's reason and output; a verdict — an
 	// agent's, a person's review at a gate — on a rejection, or on an

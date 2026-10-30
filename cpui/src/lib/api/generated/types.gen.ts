@@ -1191,6 +1191,20 @@ export type RunResources = {
 	samples: Array<ResourceSample> | null;
 };
 
+export type RunSsh = {
+	command?: string;
+	enabled: boolean;
+	fingerprint?: string;
+	host?: string;
+	host_key?: string;
+	keys: number;
+	path?: string;
+	port?: number;
+	reason?: string;
+	user?: string;
+	vscode_url?: string;
+};
+
 export type RunServices = {
 	error?: string;
 	services: Array<ServiceInfo> | null;
@@ -1233,6 +1247,21 @@ export type RunView = {
 	ticket_url?: string;
 	updated_at: string;
 	user_id?: string;
+};
+
+export type SshKey = {
+	created_at: string;
+	fingerprint: string;
+	id: string;
+	last_used_at?: string;
+	name: string;
+	public_key: string;
+	type: string;
+};
+
+export type SshKeyRequest = {
+	name?: string;
+	public_key: string;
 };
 
 export type SendMessageRequest = {
@@ -3283,6 +3312,113 @@ export type ChangeMyPasswordResponses = {
 };
 
 export type ChangeMyPasswordResponse = ChangeMyPasswordResponses[keyof ChangeMyPasswordResponses];
+
+export type ListMySshKeysData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/me/ssh-keys';
+};
+
+export type ListMySshKeysErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListMySshKeysResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<SshKey> | null;
+};
+
+export type ListMySshKeysResponse = ListMySshKeysResponses[keyof ListMySshKeysResponses];
+
+export type AddMySshKeyData = {
+	body: SshKeyRequest;
+	path?: never;
+	query?: never;
+	url: '/api/me/ssh-keys';
+};
+
+export type AddMySshKeyErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type AddMySshKeyResponses = {
+	/**
+	 * Created
+	 */
+	201: SshKey;
+};
+
+export type AddMySshKeyResponse = AddMySshKeyResponses[keyof AddMySshKeyResponses];
+
+export type DeleteMySshKeyData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/me/ssh-keys/{id}';
+};
+
+export type DeleteMySshKeyErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DeleteMySshKeyResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type DeleteMySshKeyResponse = DeleteMySshKeyResponses[keyof DeleteMySshKeyResponses];
 
 export type ListMyTokensData = {
 	body?: never;
@@ -6710,6 +6846,43 @@ export type StopRunServiceResponses = {
 };
 
 export type StopRunServiceResponse = StopRunServiceResponses[keyof StopRunServiceResponses];
+
+export type GetRunSshData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/ssh';
+};
+
+export type GetRunSshErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetRunSshResponses = {
+	/**
+	 * OK
+	 */
+	200: RunSsh;
+};
+
+export type GetRunSshResponse = GetRunSshResponses[keyof GetRunSshResponses];
 
 export type GetWorkspaceLogData = {
 	body?: never;

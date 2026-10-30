@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"slices"
 	"sort"
 	"strings"
@@ -68,7 +69,29 @@ type EnvProvisioner struct {
 	// Dirty seeds ConfigDirty (ports.WorkspaceDirtyChecker): which envs
 	// report build inputs newer than their container.
 	Dirty map[ports.EnvID]bool
+	// SSHDial scripts the sidecar's SSH server (ports.WorkspaceSSH): what a
+	// dial of an env's ssh.sock connects to. nil = the workspace serves no
+	// ssh.
+	SSHDial func(env ports.EnvID) (net.Conn, error)
 }
+
+// SSH implements ports.WorkspaceSSH over the SSHDial hook.
+func (f *EnvProvisioner) SSH(_ context.Context, env ports.EnvID) (ports.PortConn, error) {
+	if f.SSHDial == nil {
+		return nil, fmt.Errorf("env %s: the fake workspace serves no ssh", env)
+	}
+	return sshPortConn{env: env, dial: f.SSHDial}, nil
+}
+
+type sshPortConn struct {
+	env  ports.EnvID
+	dial func(env ports.EnvID) (net.Conn, error)
+}
+
+func (c sshPortConn) Dial(context.Context) (net.Conn, error) { return c.dial(c.env) }
+func (c sshPortConn) Close() error                           { return nil }
+
+var _ ports.WorkspaceSSH = (*EnvProvisioner)(nil)
 
 // ConfigDirty implements ports.WorkspaceDirtyChecker from the Dirty seed.
 func (p *EnvProvisioner) ConfigDirty(_ context.Context, id ports.EnvID) (bool, error) {
@@ -252,16 +275,6 @@ func (p *EnvProvisioner) WriteFile(_ context.Context, id ports.EnvID, path strin
 	defer p.mu.Unlock()
 	e.Files[path] = append([]byte(nil), data...)
 	return nil
-}
-
-func (p *EnvProvisioner) Links(_ context.Context, id ports.EnvID) ([]ports.AccessLink, error) {
-	if _, err := p.get(id); err != nil {
-		return nil, err
-	}
-	return []ports.AccessLink{
-		{Kind: "ide", URL: fmt.Sprintf("http://workspace.local/%s/ide", id)},
-		{Kind: "terminal", URL: fmt.Sprintf("http://workspace.local/%s/terminal", id)},
-	}, nil
 }
 
 func (p *EnvProvisioner) Status(_ context.Context, id ports.EnvID) (ports.EnvStatus, error) {

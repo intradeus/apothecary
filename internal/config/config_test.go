@@ -45,3 +45,26 @@ func TestKeyValidation(t *testing.T) {
 		t.Errorf("valid key refused: %v", err)
 	}
 }
+
+// The SSH door's advertised address: explicit, else the listen host when it
+// is one people can reach, else the public URL's host — and an error when
+// the door is on with nothing to tell people.
+func TestSSHAdvertiseAddr(t *testing.T) {
+	for _, c := range []struct {
+		name, listen, advertise, public, want string
+		wantErr                               bool
+	}{
+		{name: "off", want: ""},
+		{name: "explicit", listen: "0.0.0.0:2222", advertise: "door.tail.ts.net:2222", want: "door.tail.ts.net:2222"},
+		{name: "bad explicit", listen: "0.0.0.0:2222", advertise: "door.tail.ts.net", wantErr: true},
+		{name: "listen host", listen: "100.64.0.9:2222", want: "100.64.0.9:2222"},
+		{name: "wildcard with public url", listen: "0.0.0.0:2222", public: "https://apothecary.example.com", want: "apothecary.example.com:2222"},
+		{name: "wildcard alone", listen: ":2222", wantErr: true},
+	} {
+		b := &Boot{SSHListen: c.listen, SSHAdvertise: c.advertise, PublicURL: c.public}
+		got, err := b.SSHAdvertiseAddr()
+		if (err != nil) != c.wantErr || got != c.want {
+			t.Errorf("%s: got %q, %v; want %q (err %v)", c.name, got, err, c.want, c.wantErr)
+		}
+	}
+}

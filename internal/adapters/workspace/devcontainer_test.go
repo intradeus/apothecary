@@ -1163,21 +1163,6 @@ func TestSandboxGuardsRejectTmp(t *testing.T) {
 	}
 }
 
-// Links must point the human's copy-paste docker command at the inner daemon.
-func TestLinksPrefixesDockerHostForDinD(t *testing.T) {
-	r := &scriptRunner{responses: []response{{stdout: "workspace_ctr\n"}}}
-	a := newTestAdapter(t, r)
-	armSandbox(t, a, "apothecary-run1")
-	links, err := a.Links(context.Background(), "apothecary-run1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "DOCKER_HOST=unix://" + a.sockPath("apothecary-run1") + " docker exec -it workspace_ctr bash"
-	if len(links) != 1 || links[0].Command != want {
-		t.Errorf("link command = %q, want %q", links[0].Command, want)
-	}
-}
-
 func TestDestroyAbsentIsNoop(t *testing.T) {
 	// No sandbox, no legacy workspace container → the two ps queries and then
 	// the folder cleanup, nothing removed.
@@ -1190,21 +1175,6 @@ func TestDestroyAbsentIsNoop(t *testing.T) {
 		if len(c.args) > 0 && c.args[0] == "rm" {
 			t.Errorf("absent destroy must not remove anything: %v", c.args)
 		}
-	}
-}
-
-func TestLinksAreTerminalOnly(t *testing.T) {
-	r := &scriptRunner{responses: []response{
-		{stdout: "eager_apothecary\n"}, // ps names
-	}}
-	a := newTestAdapter(t, r)
-	links, err := a.Links(context.Background(), "apothecary-run1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(links) != 1 || links[0].Kind != "terminal" ||
-		links[0].Command != "docker exec -it eager_apothecary bash" {
-		t.Errorf("links = %+v", links)
 	}
 }
 

@@ -14,3 +14,8 @@ every field can stay empty — the engine's APOTHECARY_K8S_* settings fill them.
 Nodes need the wireguard kernel module (in-tree since Linux 5.6), and the
 workspace volumes a local or block storage class (the inner docker daemon
 cannot run on NFS).
+{{- if .Values.ssh.enabled }}
+
+The SSH door listens on port {{ .Values.ssh.port }} (Service apothecaryd-ssh); people reach it at
+{{ .Values.ssh.advertise }} — register an SSH key under Account, then "Open in VS Code" from a run.
+{{- end }}

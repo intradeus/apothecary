@@ -400,7 +400,9 @@ capacity — max concurrent runs (default 3) and max live environments
 that starts. On Kubernetes the chart also sets the
 `APOTHECARY_K8S_*` variables (namespace, engine URL, images, protected
 ranges), `APOTHECARY_APPS_DOMAIN` and `APOTHECARY_PUBLIC_URL`
-(`internal/config/env.go` documents each).
+(`internal/config/env.go` documents each). `APOTHECARY_SSH_LISTEN` and
+`APOTHECARY_SSH_ADVERTISE` turn the SSH door on (below); unset, there is
+none.
 
 ## Accounts
 
@@ -412,6 +414,32 @@ workshops, tickets, runs, channels and settings and sees nothing of anyone
 else's; an admin manages accounts (System → Users) and nothing more. There
 is no organisation level and no role matrix. Passwords are the one sign-in
 method today; the method table is built for OAuth and passkeys to join it.
+
+## SSH and VS Code
+
+A run's workspace is reachable from a desktop — plain `ssh`, or VS Code's
+Remote-SSH with its terminal and file tree — through the engine's **SSH
+door**: one listener the engine host exposes, usually on a VPN address
+(`APOTHECARY_SSH_LISTEN=100.64.0.9:2222`, with
+`APOTHECARY_SSH_ADVERTISE=engine.tail1234.ts.net:2222` naming what people
+connect to). No sshd runs in any container and no container port is
+published: the door authenticates the public keys registered on an account
+(**Account → SSH keys**), routes by username — the workspace's name, which
+the run page prints — to a run that account owns, and proxies the session
+to an SSH server in the workspace's sidecar, over the same private path the
+engine already uses to reach it. One host key for every run; its
+fingerprint is on the run page to verify on first connect.
+
+From a run's **Env ▾** menu: *Open in VS Code* (a `vscode://` link
+Remote-SSH understands — install the Remote-SSH extension once), the `ssh`
+command to copy, and the door's host key. The first connection from VS Code
+downloads its server into the workspace: that download rides the project's
+egress gateway, so allow `update.code.visualstudio.com` and
+`vscode.download.prss.microsoft.com` there (the held-connection review
+offers it), or set `remote.SSH.localServerDownload` to `always` on the
+desktop. Not served in this version: the sftp subsystem (use `scp -O` or
+rsync) and remote forwards (`-R`). A session ends when the workspace does
+(a rebuild, the reaper); VS Code reconnects on its own.
 
 ## Development
 

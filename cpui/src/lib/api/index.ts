@@ -22,6 +22,7 @@ import type {
 	AuthStatus,
 	Limits,
 	Me,
+	SshKey,
 	Token,
 	User
 } from '$lib/domain';
@@ -83,6 +84,7 @@ import type {
 	RunInput,
 	RunPhase,
 	RunPorts,
+	RunSsh,
 	RunServices,
 	ServiceConfig,
 	ServiceStatus,
@@ -281,6 +283,12 @@ export const runs = {
 
 	ports: async (id: string): Promise<RunPorts> =>
 		map.toRunPorts(await unwrap(gen.getRunPorts({ path: { id } }))),
+
+	/** How to reach the run's workspace over SSH (TODO 46): the command, the
+	 *  VS Code link and the door's fingerprint — or why nothing lets one in yet.
+	 *  Starts the sidecar when it is down, so the first call can take a moment. */
+	ssh: async (id: string): Promise<RunSsh> =>
+		map.toRunSsh(await unwrap(gen.getRunSsh({ path: { id } }))),
 
 	/** Publish a workspace port and get its URL. Idempotent per port. */
 	exposePort: async (id: string, port: number): Promise<ExposedPort> => {
@@ -1030,7 +1038,19 @@ export const auth = {
 		return { token: map.toToken(w.token), secret: w.secret };
 	},
 
-	revokeToken: (id: string) => unwrapVoid(gen.deleteMyToken({ path: { id } }))
+	revokeToken: (id: string) => unwrapVoid(gen.deleteMyToken({ path: { id } })),
+
+	// SSH keys (TODO 46): what the engine's SSH door lets one in with.
+	sshKeys: async (): Promise<SshKey[]> => many(await unwrap(gen.listMySshKeys()), map.toSshKey),
+
+	/** Register a public key from its .pub line. The name defaults to the
+	 *  line's comment, then to the key's type. */
+	addSshKey: async (publicKey: string, name?: string): Promise<SshKey> =>
+		map.toSshKey(
+			await unwrap(gen.addMySshKey({ body: { public_key: publicKey, name: name || undefined } }))
+		),
+
+	removeSshKey: (id: string) => unwrapVoid(gen.deleteMySshKey({ path: { id } }))
 };
 
 /** Accounts, for the instance admin. */

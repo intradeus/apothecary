@@ -716,15 +716,6 @@ func (h *k8sHost) refreshShim(ctx context.Context, name string) error {
 	return nil
 }
 
-func (h *k8sHost) terminalCommand(name, container string) string {
-	k := h.cfg.Kube
-	ctxFlag := ""
-	if k.Context != "" {
-		ctxFlag = " --context " + k.Context
-	}
-	return fmt.Sprintf("kubectl%s -n %s exec -it %s -c %s -- docker exec -it %s bash", ctxFlag, k.Namespace, name, sandboxContainer, container)
-}
-
 // --- resource sampling ----------------------------------------------------------
 
 // cgroupSample is one reading of the sandbox container's cgroup: the

@@ -1130,26 +1130,6 @@ func (a *Adapter) destroyDockerSandbox(ctx context.Context, name string) error {
 	return nil
 }
 
-// Links surfaces the terminal command; browser-facing app links are the
-// engine's business now (ports.WorkspacePortExposer + the port relay —
-// container-IP URLs were dead weight for any browser not on the docker
-// host itself).
-func (a *Adapter) Links(ctx context.Context, env ports.EnvID) ([]ports.AccessLink, error) {
-	name := string(env)
-	stdout, _, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
-		[]string{"ps", "--filter", "label=" + label(name), "--format", "{{.Names}}"}, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	cname, _, _ := strings.Cut(strings.TrimSpace(string(stdout)), "\n")
-	if code != 0 || cname == "" {
-		return nil, fmt.Errorf("workspace %s: no running container", name)
-	}
-	return []ports.AccessLink{
-		{Kind: "terminal", Command: a.host.terminalCommand(name, cname)},
-	}, nil
-}
-
 // --- optional capabilities --------------------------------------------------
 
 // Reattach (ports.WorkspaceReattacher): the bridge listeners and the

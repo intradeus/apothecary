@@ -64,8 +64,8 @@ type runState struct {
 	actionPending map[string]bool
 	sessions      map[string]ports.SessionID // stage id -> last recorded harness session
 
-	// links are the workspace access links from env_ready, kept for a
-	// human_gate whose input is $WORKSPACE (the terminal/IDE hand-off).
+	// links are the workspace's app links from env_ready (ports exposed at
+	// provision), kept for a gate or debug ping that hands out run.workspace.
 	links []event.Link
 
 	cost     float64

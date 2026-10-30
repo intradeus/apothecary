@@ -109,15 +109,18 @@ func TestGalleryCachesVersionedFilesAndFollowsStorageRedirects(t *testing.T) {
 
 func TestGalleryCacheablePaths(t *testing.T) {
 	g := newGallery("https://open-vsx.org", t.TempDir())
+	// Vendor-neutral fixtures on purpose (lint:models): the shapes are what
+	// matter — a plain, a platform-specific (@linux-x64), an alpine build, a
+	// universal one, the asset form, and the moving "latest".
 	for p, want := range map[string]bool{
-		"/api/golang/go/1.0.0/file/golang.go-1.0.0.vsix":                                      true,
-		"/api/openai/chatgpt/linux-x64/26.5.1/file/openai.chatgpt-26.5.1@linux-x64.vsix":      true,
-		"/api/anthropic/claude-code/alpine-arm64/2.1.3/file/anthropic.claude-code-2.1.3.vsix": true,
-		"/api/redhat/java/universal/1.2.0/file/redhat.java-1.2.0.vsix":                        true,
-		"/vscode/asset/golang/go/1.0.0/Microsoft.VisualStudio.Services.VSIXPackage":           true,
-		"/api/golang/go/latest/file/golang.go-latest.vsix":                                    false,
-		"/api/openai/chatgpt/linux-x64/latest/file/openai.chatgpt.vsix":                       false,
-		"/api/openai/chatgpt/linux-x64":                                                       false,
+		"/api/golang/go/1.0.0/file/golang.go-1.0.0.vsix":                             true,
+		"/api/acme/widgets/linux-x64/26.5.1/file/acme.widgets-26.5.1@linux-x64.vsix": true,
+		"/api/acme/helper/alpine-arm64/2.1.3/file/acme.helper-2.1.3.vsix":            true,
+		"/api/redhat/java/universal/1.2.0/file/redhat.java-1.2.0.vsix":               true,
+		"/vscode/asset/golang/go/1.0.0/Microsoft.VisualStudio.Services.VSIXPackage":  true,
+		"/api/golang/go/latest/file/golang.go-latest.vsix":                           false,
+		"/api/acme/widgets/linux-x64/latest/file/acme.widgets.vsix":                  false,
+		"/api/acme/widgets/linux-x64":                                                false,
 	} {
 		r := httptest.NewRequest(http.MethodGet, p, nil)
 		if got := g.cacheable(r); got != want {

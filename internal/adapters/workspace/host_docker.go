@@ -155,17 +155,6 @@ func (h dockerHost) refreshShim(ctx context.Context, name string) error {
 	return err
 }
 
-// terminalCommand: the workspace lives on the run's inner daemon, so the
-// human's copy-paste must point docker there — a plain `docker exec` would hit
-// the host daemon and not find it.
-func (h dockerHost) terminalCommand(name, container string) string {
-	prefix := ""
-	if h.a.dockerEnv(name) != nil {
-		prefix = "DOCKER_HOST=unix://" + h.a.sockPath(name) + " "
-	}
-	return fmt.Sprintf("%sdocker exec -it %s bash", prefix, container)
-}
-
 func (h dockerHost) sample(ctx context.Context, name string) (ports.ResourceSample, error) {
 	return h.a.dockerSample(ctx, name)
 }

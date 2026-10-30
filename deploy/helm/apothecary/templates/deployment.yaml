@@ -37,6 +37,10 @@ spec:
               containerPort: 8080
             - name: browser-proxy
               containerPort: 7071
+            {{- if .Values.ssh.enabled }}
+            - name: ssh
+              containerPort: {{ .Values.ssh.port }}
+            {{- end }}
           envFrom:
             - secretRef:
                 name: {{ include "apothecary.secretName" . }}
@@ -48,6 +52,12 @@ spec:
             {{- if .Values.engine.portAutoExpose }}
             - name: APOTHECARY_PORT_AUTOEXPOSE
               value: "on"
+            {{- end }}
+            {{- if .Values.ssh.enabled }}
+            - name: APOTHECARY_SSH_LISTEN
+              value: {{ printf "0.0.0.0:%v" .Values.ssh.port | quote }}
+            - name: APOTHECARY_SSH_ADVERTISE
+              value: {{ required "ssh.advertise is the host:port people ssh to (the ssh Service's address)" .Values.ssh.advertise | quote }}
             {{- end }}
             {{- with .Values.engine.otelEndpoint }}
             - name: APOTHECARY_OTEL_ENDPOINT

@@ -64,6 +64,19 @@ engine:
 service:
   type: ClusterIP
 
+# The SSH door (TODO 46): one port people ssh to — desktop VS Code's
+# Remote-SSH included — routed by username to a run's workspace. An Ingress
+# cannot carry SSH: it needs a Service of its own (a LoadBalancer, a
+# NodePort, or a tailscale-operator Service for the VPN case), and
+# `advertise` is the host:port people connect to, what the run page prints.
+ssh:
+  enabled: false
+  port: 2222
+  advertise: ""
+  service:
+    type: LoadBalancer
+    annotations: {}
+
 ingress:
   enabled: false
   className: ""

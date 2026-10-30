@@ -50,6 +50,7 @@ import (
 	"apothecary/internal/resolve"
 	"apothecary/internal/secrets"
 	"apothecary/internal/skillstore"
+	"apothecary/internal/sshdoor"
 	"apothecary/internal/telemetry"
 	"apothecary/internal/tickets"
 	"apothecary/internal/wsimage"
@@ -354,6 +355,50 @@ func cmdServe(args []string) error {
 
 	api := httpapi.New(e, store, chreg, boot.RunsDir)
 	api.Auth = authsvc
+	// The SSH door (TODO 46): one listener people ssh to over their VPN —
+	// desktop VS Code included — routed by username to the run's workspace.
+	// Both of its keys derive from instance secrets: the host key so a person
+	// verifies one fingerprint for good, the door key so every workspace can
+	// admit it across restarts.
+	if boot.SSHListen != "" {
+		advertise, err := boot.SSHAdvertiseAddr()
+		if err != nil {
+			return err
+		}
+		hostSeed, err := conf.InstanceSecret(ctx, "ssh-door-host")
+		if err != nil {
+			return fmt.Errorf("ssh door host key: %w", err)
+		}
+		doorSeed, err := conf.InstanceSecret(ctx, "ssh-door-client")
+		if err != nil {
+			return fmt.Errorf("ssh door key: %w", err)
+		}
+		hostKey, err := sshdoor.KeyFromSeed(hostSeed)
+		if err != nil {
+			return err
+		}
+		doorKey, err := sshdoor.KeyFromSeed(doorSeed)
+		if err != nil {
+			return err
+		}
+		door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: authsvc, Targets: sshTargets{e}, Advertise: advertise, Log: log})
+		if err != nil {
+			return err
+		}
+		e.SetSSHDoorKey(door.DoorPublicKey())
+		sshLn, err := net.Listen("tcp", boot.SSHListen)
+		if err != nil {
+			return fmt.Errorf("ssh door listen %s: %w", boot.SSHListen, err)
+		}
+		go func() {
+			if err := door.Serve(sshLn); err != nil {
+				log.Error("ssh door stopped", "err", err)
+			}
+		}()
+		defer door.Close()
+		api.SSH = door
+		log.Info("ssh door listening", "listen", boot.SSHListen, "advertise", advertise, "fingerprint", door.Fingerprint())
+	}
 	api.Limits = limits
 	api.Conf = conf
 	api.Kinds = reg
@@ -743,4 +788,16 @@ func k8sBrowserHost(boot *config.Boot) (browser.Host, func(), error) {
 		EngineNamespace: k.EngineNamespace,
 		PullPolicy:      k.PullPolicy,
 	}, func() { mux.Close() }, nil
+}
+
+// sshTargets adapts the engine for the SSH door: a username is a workspace,
+// and the engine says whose run it is and how to reach its sidecar.
+type sshTargets struct{ e *engine.Engine }
+
+func (s sshTargets) Lookup(ctx context.Context, workspace string) (sshdoor.Target, error) {
+	tg, err := s.e.SSHTarget(ctx, workspace)
+	if err != nil {
+		return sshdoor.Target{}, err
+	}
+	return sshdoor.Target{RunID: tg.RunID, OwnerID: tg.OwnerID, Dial: tg.Dial}, nil
 }

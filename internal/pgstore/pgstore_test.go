@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"apothecary/internal/auth"
 	"apothecary/internal/confstore"
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
@@ -531,5 +532,48 @@ func TestExposedPortsCRUD(t *testing.T) {
 	}
 	if all["run2"][8080] != 41003 {
 		t.Errorf("run2 must survive run1 delete: %+v", all)
+	}
+}
+
+// SSH keys: owned rows, unique by fingerprint across users, deleted with
+// their owner's scope only, and the door's lookup by fingerprint.
+func TestSSHKeysStore(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	for _, u := range []auth.User{{ID: "u1", Handle: "alice", Email: "a@x", CreatedAt: now, UpdatedAt: now}, {ID: "u2", Handle: "bob", Email: "b@x", CreatedAt: now, UpdatedAt: now}} {
+		if err := s.CreateUser(ctx, u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	k := auth.SSHKey{ID: "k1", UserID: "u1", Name: "laptop", PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", Fingerprint: "SHA256:one", CreatedAt: now}
+	if err := s.CreateSSHKey(ctx, k); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateSSHKey(ctx, auth.SSHKey{ID: "k2", UserID: "u2", Name: "dup", PublicKey: k.PublicKey, Fingerprint: "SHA256:one", CreatedAt: now}); !errors.Is(err, auth.ErrConflict) {
+		t.Errorf("duplicate fingerprint: %v", err)
+	}
+	got, err := s.GetSSHKeyByFingerprint(ctx, "SHA256:one")
+	if err != nil || got.ID != "k1" || got.UserID != "u1" || got.Type != "ssh-ed25519" {
+		t.Errorf("by fingerprint = %+v, %v", got, err)
+	}
+	if _, err := s.GetSSHKeyByFingerprint(ctx, "SHA256:none"); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("unknown fingerprint: %v", err)
+	}
+	if err := s.TouchSSHKey(ctx, "k1", now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := s.ListSSHKeys(ctx, "u1")
+	if err != nil || len(keys) != 1 || keys[0].LastUsedAt == nil || !keys[0].LastUsedAt.Equal(now.Add(time.Minute)) {
+		t.Errorf("list = %+v, %v", keys, err)
+	}
+	if err := s.DeleteSSHKey(ctx, "u2", "k1"); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("foreign delete: %v", err)
+	}
+	if err := s.DeleteSSHKey(ctx, "u1", "k1"); err != nil {
+		t.Error(err)
+	}
+	if keys, _ := s.ListSSHKeys(ctx, "u1"); len(keys) != 0 {
+		t.Errorf("after delete = %+v", keys)
 	}
 }

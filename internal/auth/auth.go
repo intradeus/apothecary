@@ -101,6 +101,22 @@ type Token struct {
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 }
 
+// SSHKey is a public key a person registered to reach their runs'
+// workspaces through the SSH door. PublicKey is the normalised
+// authorized_keys form (type and base64, no comment); Fingerprint its
+// SHA256 fingerprint, unique across the instance — what the door looks an
+// offered key up by; Type the key's algorithm, for the list.
+type SSHKey struct {
+	ID          string     `json:"id"`
+	UserID      string     `json:"-"`
+	Name        string     `json:"name"`
+	Type        string     `json:"type"`
+	PublicKey   string     `json:"public_key"`
+	Fingerprint string     `json:"fingerprint"`
+	CreatedAt   time.Time  `json:"created_at"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+}
+
 // DB is the persistence boundary, implemented by pgstore and by Mem.
 type DB interface {
 	CountUsers(ctx context.Context) (int, error)
@@ -132,6 +148,14 @@ type DB interface {
 	DeleteToken(ctx context.Context, userID, id string) error
 	TouchToken(ctx context.Context, id string, at time.Time) error
 	DeleteTokensOf(ctx context.Context, userID string) error
+
+	// SSH keys: a duplicate fingerprint is ErrConflict; DeleteSSHKey is
+	// owner-scoped (another user's key is ErrNotFound).
+	CreateSSHKey(ctx context.Context, k SSHKey) error
+	GetSSHKeyByFingerprint(ctx context.Context, fingerprint string) (SSHKey, error)
+	ListSSHKeys(ctx context.Context, userID string) ([]SSHKey, error)
+	DeleteSSHKey(ctx context.Context, userID, id string) error
+	TouchSSHKey(ctx context.Context, id string, at time.Time) error
 }
 
 // Verifier checks a proof against a stored method of its kind.

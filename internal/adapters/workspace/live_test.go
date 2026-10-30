@@ -266,15 +266,6 @@ opencode --version && omp --version && codex --version && code-server --version 
 		t.Errorf("loopback engine probe = %q (exit %d)", res.Output, res.ExitCode)
 	}
 
-	// Links: terminal command (app links are the port relay's business now).
-	links, err := a.Links(ctx, id)
-	must(err)
-	var kinds []string
-	for _, l := range links {
-		kinds = append(kinds, l.Kind)
-	}
-	t.Logf("links: %v", kinds)
-
 	// Declared ports from the repo's devcontainer.
 	if ap := a.AppPorts(ctx, id); len(ap) != 1 || ap[0] != 3000 {
 		t.Errorf("AppPorts = %v, want [3000]", ap)

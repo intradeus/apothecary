@@ -21,13 +21,18 @@ import (
 // sources and this builder Dockerfile, so upgrades produce a new path and
 // stale caches are simply abandoned.
 
-// gojqVersion pins the shim's one non-stdlib dependency (the `jq`
-// subcommand). The shim source can't carry its own go.mod (go:embed won't
-// take a nested module), so the builder `go get`s this exact version — its
-// own deps then resolve from gojq's go.mod alone, checksum-verified by the
-// default GOSUMDB. Must equal the root go.mod's (the shim also compiles in
-// the root module); TestShimGojqPinMatchesGoMod holds the two together.
-const gojqVersion = "v0.12.19"
+// gojqVersion and xcryptoVersion pin the shim's two non-stdlib
+// dependencies: gojq (the `jq` subcommand) and x/crypto (the sidecar's SSH
+// server). The shim source can't carry its own go.mod (go:embed won't take
+// a nested module), so the builder `go get`s these exact versions — their
+// own deps then resolve from their go.mod files alone, checksum-verified by
+// the default GOSUMDB. Each must equal the root go.mod's (the shim also
+// compiles in the root module); TestShimDependencyPinsMatchGoMod holds them
+// together.
+const (
+	gojqVersion    = "v0.12.19"
+	xcryptoVersion = "v0.54.0"
+)
 
 // shimBuilderDockerfile compiles the embedded source and parks the binary
 // in a scratch image for `docker create`+`cp` extraction (create never

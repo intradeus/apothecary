@@ -590,6 +590,36 @@ type TokenCreated struct {
 	Secret string     `json:"secret"`
 }
 
+// SSHKeyRequest registers a public key on one's account: the contents of a
+// .pub file, with an optional name (the key's comment, else its type,
+// otherwise).
+type SSHKeyRequest struct {
+	Name      string `json:"name,omitempty"`
+	PublicKey string `json:"public_key"`
+}
+
+// RunSSH is how to reach a run's workspace over SSH (the run page's "Open in
+// VS Code" and "ssh" rows). Enabled false means the instance runs no SSH
+// door (Reason says so). Host and Port are the door's advertised address;
+// User the name to log in as (the workspace); Path the folder an editor
+// opens ("" when the sidecar could not say); Fingerprint and HostKey the
+// door's host key, to verify on first connect; Command the ssh command line;
+// VSCodeURL the vscode:// link; Keys how many SSH keys the caller has
+// registered (0: nothing will let them in yet).
+type RunSSH struct {
+	Enabled     bool   `json:"enabled"`
+	Reason      string `json:"reason,omitempty"`
+	Host        string `json:"host,omitempty"`
+	Port        int    `json:"port,omitempty"`
+	User        string `json:"user,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	HostKey     string `json:"host_key,omitempty"`
+	Command     string `json:"command,omitempty"`
+	VSCodeURL   string `json:"vscode_url,omitempty"`
+	Keys        int    `json:"keys"`
+}
+
 // UserCreateRequest is an admin creating an account.
 type UserCreateRequest struct {
 	Handle   string `json:"handle"`

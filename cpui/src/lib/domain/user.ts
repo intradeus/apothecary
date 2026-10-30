@@ -40,6 +40,21 @@ export interface Token {
 	expiresAt?: string;
 }
 
+/** A public key registered for the engine's SSH door (TODO 46): what one logs
+ *  into a run's workspace with. The private half never leaves one's machine. */
+export interface SshKey {
+	id: string;
+	name: string;
+	/** The algorithm, as the .pub line names it: ssh-ed25519, ssh-rsa, … */
+	type: string;
+	/** The authorized_keys line, without its comment. */
+	publicKey: string;
+	/** SHA256:… — what `ssh-keygen -lf` prints; the handle a person recognises. */
+	fingerprint: string;
+	createdAt: string;
+	lastUsedAt?: string;
+}
+
 /** The deployment's capacity caps; `null` means no cap. */
 export interface Limits {
 	maxConcurrentRuns: number | null;

@@ -40,11 +40,6 @@ func TestEnvLifecycleAndFiles(t *testing.T) {
 		t.Errorf("exec calls = %+v", p.ExecCalls)
 	}
 
-	links, _ := p.Links(ctx, id)
-	if len(links) == 0 {
-		t.Error("no links")
-	}
-
 	if err := p.Destroy(ctx, id); err != nil {
 		t.Fatal(err)
 	}

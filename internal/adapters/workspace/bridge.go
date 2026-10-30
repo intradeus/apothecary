@@ -621,6 +621,25 @@ func (a *Adapter) Sidecar(ctx context.Context, env ports.EnvID) (ports.PortConn,
 	return nil, fmt.Errorf("sidecar in %s started but its socket is not reachable from the engine", env)
 }
 
+// sshSock is the sidecar's SSH socket beside sidecarSock.
+const sshSock = "ssh.sock"
+
+// SSH (ports.WorkspaceSSH) returns a dialer for the sidecar's SSH server,
+// starting the sidecar first when nothing serves. A sidecar started by an
+// engine from before the SSH server serves none until the workspace is
+// rebuilt: it says so rather than hanging.
+func (a *Adapter) SSH(ctx context.Context, env ports.EnvID) (ports.PortConn, error) {
+	if _, err := a.Sidecar(ctx, env); err != nil {
+		return nil, err
+	}
+	if err := a.host.waitSock(ctx, string(env), sshSock); err != nil {
+		return nil, fmt.Errorf("the sidecar in %s serves no ssh (%v) — a workspace started before this engine version needs a rebuild", env, err)
+	}
+	return a.host.dial(string(env), sshSock), nil
+}
+
+var _ ports.WorkspaceSSH = (*Adapter)(nil)
+
 func sidecarUp(ctx context.Context, conn ports.PortConn) bool {
 	dctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()

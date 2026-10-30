@@ -1,0 +1,24 @@
+{{- if .Values.ssh.enabled }}
+# The SSH door's own Service: SSH cannot ride the Ingress. A LoadBalancer or
+# NodePort reaches it from outside the cluster; a tailscale-operator Service
+# (annotations) puts it on the VPN. ssh.advertise must name whatever
+# address this Service ends up at.
+apiVersion: v1
+kind: Service
+metadata:
+  name: apothecaryd-ssh
+  labels:
+    {{- include "apothecary.labels" . | nindent 4 }}
+  {{- with .Values.ssh.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.ssh.service.type }}
+  selector:
+    {{- include "apothecary.engineSelector" . | nindent 4 }}
+  ports:
+    - name: ssh
+      port: {{ .Values.ssh.port }}
+      targetPort: {{ .Values.ssh.port }}
+{{- end }}

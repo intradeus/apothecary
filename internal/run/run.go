@@ -400,3 +400,10 @@ type ViewSource interface {
 type ViewLookup interface {
 	RunView(ctx context.Context, runID string) (View, bool, error)
 }
+
+// EnvLookup is the OPTIONAL lookup of the live run behind a workspace: the
+// SSH door names a workspace (its env id) and needs the run it belongs to,
+// without scanning every view. A store without it is scanned.
+type EnvLookup interface {
+	RunByEnv(ctx context.Context, envID string) (View, bool, error)
+}

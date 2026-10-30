@@ -298,3 +298,29 @@ export interface RunPorts {
 	exposed: ExposedPort[];
 	observed: ObservedPort[];
 }
+
+/** How a person reaches a run's workspace over SSH (TODO 46): through the
+ *  engine's door, logging in as the workspace with one of their registered
+ *  keys. `enabled` false means the instance has no door, and `reason` says
+ *  so; the other facts are then absent. */
+export interface RunSsh {
+	enabled: boolean;
+	reason?: string;
+	host?: string;
+	port?: number;
+	/** The login name: the workspace's name. */
+	user?: string;
+	/** The folder an editor opens there, when the sidecar could say it. */
+	path?: string;
+	/** The door's host key fingerprint (SHA256:…), to check on first connect. */
+	fingerprint?: string;
+	/** The door's host public key: with the host, a known_hosts line. */
+	hostKey?: string;
+	/** The ssh command that opens a shell in the workspace. */
+	command?: string;
+	/** The vscode:// link that opens the workspace in desktop VS Code (Remote-SSH). */
+	vscodeUrl?: string;
+	/** How many keys the signed-in user has registered; none means the door
+	 *  lets nobody in yet. */
+	keys: number;
+}

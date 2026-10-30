@@ -1419,7 +1419,7 @@ main:
 
 // TestDebugLeaf: the inspect-and-fix stop, built in. A failing test escalates
 // to the debug leaf: the run parks on a decision attributed to the failing
-// stage — its output as context, the workspace link — with no stage of its
+// stage — its output as context, its app link if any — with no stage of its
 // own. Continuing re-runs that stage; the stop is a WANTED ping; rejecting
 // abandons the run at that stage.
 func TestDebugLeaf(t *testing.T) {
@@ -1440,8 +1440,10 @@ func TestDebugLeaf(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := h.waitPing(t, PingDebug)
-	if p.StageID != "test" || !strings.HasSuffix(p.Link, "/terminal") || !strings.Contains(p.Context, "segfault") || p.Question != "test failed" {
-		t.Errorf("ping = stage %q link %q question %q context %q; want the failing stage, the terminal link, its output", p.StageID, p.Link, p.Question, p.Context)
+	// The fake exposes no app port, so the ping carries no link: the
+	// workspace itself is on the run page, not behind a recorded URL.
+	if p.StageID != "test" || p.Link != "" || !strings.Contains(p.Context, "segfault") || p.Question != "test failed" {
+		t.Errorf("ping = stage %q link %q question %q context %q; want the failing stage, no link, its output", p.StageID, p.Link, p.Question, p.Context)
 	}
 	// The main chain's debug leaf: giving up there abandons the run.
 	if p.Phase != flow.MainPhase || p.EndsPhase {
@@ -1511,14 +1513,14 @@ func TestDebugLeafSurvivesRestart(t *testing.T) {
 		evs := []event.Payload{
 			&event.RunCreated{TicketTitle: "T", FlowName: "dbg", ProjectID: testProject, FlowHash: fl.Hash, Branch: "apothecary/" + runID},
 			&event.EnvRequested{},
-			&event.EnvReady{EnvID: string(envID), Links: []event.Link{{Kind: "terminal", URL: "http://ws/" + runID + "/terminal"}}},
+			&event.EnvReady{EnvID: string(envID), Links: []event.Link{{Kind: "app", URL: "http://ws/" + runID + "/app"}}},
 			&event.StageStarted{StageID: "build", Iteration: 1},
 			&event.StageCompleted{StageID: "build", SessionID: "sess-1"},
 			&event.StageStarted{StageID: "test", Iteration: 1},
 			&event.StageFailed{StageID: "test", Reason: event.ReasonExitNonzero, Error: "segfault"},
 			&event.EdgeTaken{From: "test", To: "debug", Edge: "on_fail", Count: 1, Max: -1, Feed: "segfault"},
 			&event.PingRaised{PingID: "dbg-" + runID, Type: event.PingDebug, Question: "test failed", Context: "segfault",
-				Link: "http://ws/" + runID + "/terminal", StageID: "test", AnswerKind: event.AnswerYesNo},
+				Link: "http://ws/" + runID + "/app", StageID: "test", AnswerKind: event.AnswerYesNo},
 			&event.RunPaused{StageID: "test", Reason: event.PauseWaiting},
 		}
 		if answered {

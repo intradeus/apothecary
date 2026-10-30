@@ -577,6 +577,23 @@ func (s *Store) RunView(ctx context.Context, runID string) (run.View, bool, erro
 	return loadView(ctx, s.pool, runID)
 }
 
+// RunByEnv reads the live run behind a workspace (run.EnvLookup): env_id is
+// cleared when a workspace is destroyed, so at most one live run carries a
+// name; the newest wins should a rebuild race leave two.
+func (s *Store) RunByEnv(ctx context.Context, envID string) (run.View, bool, error) {
+	if envID == "" {
+		return run.View{}, false, nil
+	}
+	v, err := scanView(s.pool.QueryRow(ctx, `SELECT `+viewColumns+` FROM runs WHERE env_id=$1 ORDER BY created_at DESC LIMIT 1`, envID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return run.View{}, false, nil
+	}
+	if err != nil {
+		return run.View{}, false, err
+	}
+	return v, true, nil
+}
+
 // RunViews reads the runs read-model table: every run's view in one query
 // (run.ViewSource — the list endpoint's and the engine pollers' backing).
 func (s *Store) RunViews(ctx context.Context) ([]run.View, error) {
