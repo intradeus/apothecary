@@ -1087,7 +1087,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	// A verdict-typed output had its existence and shape checked above, so
 	// this read can now only fail on what a schema cannot say — one report
 	// per cause.
-	var verdict *ports.Verdict
+	var verdict *Verdict
 	if x.verdictPath(st) != "" {
 		v, err := x.readVerdict(st)
 		if err != nil {
@@ -2605,7 +2605,7 @@ func (x *exec) bootstrap(id ports.EnvID) error {
 
 // readVerdict reads and parses the stage's verdict output (§5.3 contract) at
 // the path its agent declares — rebindable per stage, so never hardcoded.
-func (x *exec) readVerdict(st *flow.Stage) (*ports.Verdict, error) {
+func (x *exec) readVerdict(st *flow.Stage) (*Verdict, error) {
 	path := x.verdictPath(st)
 	if path == "" {
 		return nil, fmt.Errorf("stage %s: agent %q declares no verdict output", st.ID, st.Agent)

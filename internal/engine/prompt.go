@@ -291,7 +291,7 @@ func declDesc(desc string) string {
 // JSON Schema (flow.TypeSchema, checked with the outputs); here what a
 // schema cannot say — a rejection says why, a path stays in the repository,
 // a range runs forward.
-func parseVerdict(path string, data []byte) (*ports.Verdict, error) {
+func parseVerdict(path string, data []byte) (*Verdict, error) {
 	decoded, err := flow.DecodeStructured(path, data)
 	if err != nil {
 		return nil, err
@@ -308,7 +308,7 @@ func parseVerdict(path string, data []byte) (*ports.Verdict, error) {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return nil, fmt.Errorf("%s is not a verdict: %w", path, err)
 	}
-	out := &ports.Verdict{Summary: strings.TrimSpace(v.Summary)}
+	out := &Verdict{Summary: strings.TrimSpace(v.Summary)}
 	switch v.Verdict {
 	case "APPROVE":
 		out.Approve = true
@@ -322,7 +322,7 @@ func parseVerdict(path string, data []byte) (*ports.Verdict, error) {
 			if strings.TrimSpace(remark) == "" {
 				return nil, fmt.Errorf("%s: comment %d is empty", path, i+1)
 			}
-			out.Comments = append(out.Comments, ports.VerdictComment{Body: remark})
+			out.Comments = append(out.Comments, VerdictComment{Body: remark})
 			continue
 		}
 		var c struct {
@@ -343,7 +343,7 @@ func parseVerdict(path string, data []byte) (*ports.Verdict, error) {
 		case c.Line < 0 || (c.EndLine != 0 && (c.Line == 0 || c.EndLine < c.Line)):
 			return nil, fmt.Errorf("%s: comment %d: lines %d–%d are not a range", path, i+1, c.Line, c.EndLine)
 		}
-		out.Comments = append(out.Comments, ports.VerdictComment{Path: c.Path, Line: c.Line, EndLine: c.EndLine, Quote: c.Quote, Body: c.Body})
+		out.Comments = append(out.Comments, VerdictComment{Path: c.Path, Line: c.Line, EndLine: c.EndLine, Quote: c.Quote, Body: c.Body})
 	}
 	if !out.Approve && len(out.Comments) == 0 && out.Summary == "" {
 		return nil, fmt.Errorf("%s: REJECT requires comments, or a summary saying why", path)

@@ -14,7 +14,6 @@ import (
 	"unicode/utf8"
 
 	"apothecary/internal/event"
-	"apothecary/internal/ports"
 )
 
 const (
@@ -214,7 +213,7 @@ func gateVerdict(stageID string, rec *event.PingAnswered, shown []string, files 
 
 // verdictText is the text an agent's verdict carries: on_reject's always;
 // on_success's when the approval said something (else "").
-func verdictText(stageID string, v *ports.Verdict) string {
+func verdictText(stageID string, v *Verdict) string {
 	if v.Approve && v.Summary == "" && len(v.Comments) == 0 {
 		return ""
 	}
@@ -257,4 +256,22 @@ func capVerdict(s string) string {
 		cut--
 	}
 	return s[:cut] + "\n… (the rest of the review is cut: it is longer than 32 KB)\n"
+}
+
+// Verdict is a judgement on the work: approve or reject, a summary, and
+// comments — each a remark on the whole, or on a file (and its lines).
+type Verdict struct {
+	Approve  bool
+	Summary  string
+	Comments []VerdictComment
+}
+
+// VerdictComment is one comment of a verdict: Path "" is a remark on the
+// whole change; Line 0 is on the whole file.
+type VerdictComment struct {
+	Path    string
+	Line    int
+	EndLine int
+	Quote   string
+	Body    string
 }

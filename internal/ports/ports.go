@@ -324,24 +324,6 @@ type AgentPlanEntry struct {
 	Priority string
 }
 
-// Verdict is a judgement on the work: approve or reject, a summary, and
-// comments — each a remark on the whole, or on a file (and its lines).
-type Verdict struct {
-	Approve  bool
-	Summary  string
-	Comments []VerdictComment
-}
-
-// VerdictComment is one comment of a verdict: Path "" is a remark on the
-// whole change; Line 0 is on the whole file.
-type VerdictComment struct {
-	Path    string
-	Line    int
-	EndLine int
-	Quote   string
-	Body    string
-}
-
 type Usage struct {
 	InputTokens  int
 	OutputTokens int
