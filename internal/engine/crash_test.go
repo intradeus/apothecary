@@ -255,6 +255,29 @@ outcomes:
 `
 
 // A review round: threads loaded, fixed, answered on the merge request.
+// crashOutcomeDoc: an outcome takes the cursor from a chain parked at a gate
+// nobody answers.
+const crashOutcomeDoc = `name: crash
+version: 5
+parameters: { harness: fake, model: fake/model }
+agents:
+  - name: redactor
+    prompt: describe it
+    outputs:
+      - { name: mr, type: file }
+main:
+  - { id: redact, type: agent, harness: $harness, model: $model, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } } }
+  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }
+  - { id: final, type: human_gate, question: "Keep going?" }
+  - { id: never, type: command, run: "./never.sh" }
+outcomes:
+  - id: merged
+    on: mr_merged
+    then: done
+    stages:
+      - { id: wrap, type: command, run: "./wrap.sh" }
+`
+
 const crashReviewDoc = `name: crash
 version: 5
 parameters: { harness: fake, model: fake/model }
@@ -379,6 +402,14 @@ func crashScenarios() []crashScenario {
 				if mrOpen(evs) {
 					h.repoHost.SetHead(1, "h1")
 					h.repoHost.SetMergeableNow(1, true)
+				}
+			},
+		},
+		{
+			name: "outcome", doc: crashOutcomeDoc, world: redactWorld, want: run.Completed,
+			drive: func(h *harness, _ string, evs []event.Event) {
+				if logHas(evs, func(p *event.PhaseParked) bool { return p.StageID == "final" }) {
+					h.repoHost.SetMRState(1, repoport.MRMerged)
 				}
 			},
 		},

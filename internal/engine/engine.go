@@ -252,6 +252,7 @@ type Ping struct {
 
 	key            string       // the raiser's idempotency key (RaisePing)
 	answered       bool         // guarded by Engine.mu
+	queued         bool         // an answer is on its way to the loop; guarded by Engine.mu
 	answer         *PingAnswer  // set before done closes; read only after <-done
 	deliveredFiles []answerFile // the answer's attachments, where delivered; set before done closes
 	done           chan struct{}
@@ -391,6 +392,9 @@ type answerReq struct {
 const (
 	answerSettle     = 5 * time.Second
 	answerSettleStep = 50 * time.Millisecond
+	// answerLanding is how long an answer waits to hear it landed before the
+	// queue's word for it is enough (answerLive).
+	answerLanding = 2 * time.Second
 )
 
 var (
@@ -1829,9 +1833,11 @@ func validateAnswer(kind string, form *event.Form, ans *PingAnswer) error {
 	return nil
 }
 
-// answerLive hands the answer to the run's loop and waits to hear that it
-// landed. Returns errNoLoop when there is no loop to hand it to (or it went
-// away mid-flight), which is the caller's cue to take the dormant path.
+// answerLive hands the answer to the run's loop and waits a moment to hear
+// that it landed. The queue is the acceptance: an answer it holds lands when
+// the loop next reads it, and a second one is refused. Returns errNoLoop when
+// there is no loop to hand it to (or it went away mid-flight), which is the
+// caller's cue to take the dormant path.
 func (e *Engine) answerLive(pingID string, ans PingAnswer) error {
 	e.mu.Lock()
 	p, known := e.pings[pingID]
@@ -1839,7 +1845,7 @@ func (e *Engine) answerLive(pingID string, ans PingAnswer) error {
 		e.mu.Unlock()
 		return errNoLoop
 	}
-	if p.answered {
+	if p.answered || p.queued {
 		e.mu.Unlock()
 		return fmt.Errorf("ping %s: %w", pingID, ErrPingAnswered)
 	}
@@ -1857,17 +1863,30 @@ func (e *Engine) answerLive(pingID string, ans PingAnswer) error {
 	if err := e.validateCuration(context.Background(), pingID, p.Files, p.FileTypes, &ans); err != nil {
 		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
-	// The answers channel is drained only in agent stages and gates. Don't
-	// report success for an answer nobody will ever process, and don't wedge
-	// the HTTP handler if the buffer is full.
+	e.mu.Lock()
+	if p.queued {
+		e.mu.Unlock()
+		return fmt.Errorf("ping %s: %w", pingID, ErrPingAnswered)
+	}
+	p.queued = true
+	e.mu.Unlock()
+	unqueue := func() {
+		e.mu.Lock()
+		p.queued = false
+		e.mu.Unlock()
+	}
+	// The answers channel is read in agent stages and between chains. Don't
+	// wedge the HTTP handler if the buffer is full.
 	ack := make(chan error, 1)
-	timeout := time.NewTimer(30 * time.Second)
+	timeout := time.NewTimer(answerLanding)
 	defer timeout.Stop()
 	select {
 	case h.answers <- answerReq{p: p, ans: ans, ack: ack}:
 	case <-h.done:
+		unqueue()
 		return errNoLoop
 	case <-timeout.C:
+		unqueue()
 		return fmt.Errorf("run %s is busy; the answer was not accepted — try again", p.RunID)
 	}
 	// Wait for the loop to say what it did with it. An ack that is already
@@ -1875,8 +1894,12 @@ func (e *Engine) answerLive(pingID string, ans PingAnswer) error {
 	// in the same breath (that is exactly what a stage pausing on it does).
 	select {
 	case err := <-ack:
+		if err != nil {
+			unqueue()
+		}
 		return err
 	case <-h.done:
+		unqueue()
 		select {
 		case err := <-ack:
 			return err
@@ -1884,7 +1907,9 @@ func (e *Engine) answerLive(pingID string, ans PingAnswer) error {
 			return errNoLoop
 		}
 	case <-timeout.C:
-		return fmt.Errorf("run %s is busy; the answer was not accepted — try again", p.RunID)
+		// A confirmation answered during another chain's command: that stage
+		// reads no answers, and this one lands when it ends.
+		return nil
 	}
 }
 

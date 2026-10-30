@@ -462,6 +462,66 @@ func TestAnOutcomeTakesTheCursorFromAnOpenGate(t *testing.T) {
 	}
 }
 
+// A confirmation stays open while another watcher takes its turn, so its answer
+// can arrive during a command, which reads no answers. It is accepted there and
+// then, a second one is refused, and it lands when the command ends: the watcher
+// it approved starts once the cursor is free.
+func TestAnAnswerDuringACommandIsAcceptedAtOnce(t *testing.T) {
+	doc := strings.Replace(phasedFlowDoc, "  - id: review_fixes\n",
+		"  - id: busy\n    on: mr_conflicts\n    stages:\n      - { id: work, type: command, run: \"./busy.sh\" }\n  - id: review_fixes\n", 1)
+	ph := newPhasedHarness(t, doc)
+	held := make(chan struct{})
+	release := sync.OnceFunc(func() { close(held) })
+	t.Cleanup(release)
+	var busy atomic.Bool
+	ph.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
+		if strings.Contains(cmd.Script, "./busy.sh") {
+			busy.Store(true)
+			<-held
+		}
+		return envport.ExecResult{}, nil
+	}
+	runID := ph.start(t)
+	ph.repoHost.SetTargetSHA(1, "t1")
+	ph.repoHost.SetMergeable(1, repoport.MergeConflicts, "h1")
+	ask := ph.waitPing(t, event.PingPhaseConfirm)
+	waitFor(t, busy.Load)
+
+	began := time.Now()
+	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatalf("the answer was refused: %v", err)
+	}
+	if d := time.Since(began); d > 2*answerLanding {
+		t.Errorf("the answer took %s", d)
+	}
+	if err := ph.e.AnswerPing(ask.ID, PingAnswer{Answer: "reject"}); !errors.Is(err, ErrPingAnswered) {
+		t.Errorf("a second answer: %v", err)
+	}
+	if n := len(ph.execsOf("./sync.sh")); n != 0 {
+		t.Fatalf("the approved watcher ran beside the command (%d)", n)
+	}
+	release()
+	ph.waitPhaseCompleted(t, runID, "conflicts", 1)
+
+	evs := ph.events(t, runID)
+	var answers []string
+	for _, e := range evs {
+		if a, ok := e.Payload.(*event.PingAnswered); ok && a.PingID == ask.ID {
+			answers = append(answers, a.Answer)
+		}
+	}
+	if strings.Join(answers, ",") != "approve" {
+		t.Errorf("recorded = %v", answers)
+	}
+	var order []string
+	for _, s := range phaseStarts(evs) {
+		order = append(order, s.Phase)
+	}
+	if got := strings.Join(order, ","); got != "main,busy,conflicts" {
+		t.Errorf("chains ran %s", got)
+	}
+}
+
 // A phase with start: manual never opens by itself: its hold is surfaced
 // for the run page, and a person starts it.
 func TestManualStartPolicySurfacesTheHoldWithoutStarting(t *testing.T) {

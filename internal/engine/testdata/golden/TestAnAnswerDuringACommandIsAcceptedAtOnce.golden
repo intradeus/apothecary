@@ -1,0 +1,26 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=build
+agent_prompted stage=build
+stage_completed stage=build
+stage_started stage=redact
+agent_prompted stage=redact
+stage_completed stage=redact
+stage_started stage=mr
+action_started stage=mr
+mr_created
+stage_completed stage=mr
+phase_completed phase=main
+ping_raised ping=phase_confirm
+phase_started phase=busy
+stage_started stage=work
+stage_completed stage=work
+phase_completed phase=busy
+ping_answered
+phase_started phase=conflicts
+stage_started stage=fix_conflicts
+stage_completed stage=fix_conflicts
+phase_completed phase=conflicts

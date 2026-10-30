@@ -5325,3 +5325,39 @@ Follow-ups, the same day, after the plan closed:
   `provision.go`, the take-over in `hold.go`); **`internal/runinput`** holds
   what starts a run, so `automation` no longer imports the engine; the
   adapters share `shell.Quote` and `shell.Tail`.
+
+## One cursor (2026-10-31)
+
+A run has one cursor, always: one chain at a time holds it, moving or parked
+at a wait point, or it stands at the hub between chains. All of a run's work
+lands on one branch, so nothing runs beside anything else. This overturns the
+v4 rule that a gate or a wait frees the run for watchers
+(`docs/flow-language.md` §1 is the normative text).
+
+- **Parked is one wait point.** `State.Parked` was a map of chain snapshots
+  saved at a park and restored at the resume. Nothing can overwrite a parked
+  chain's fields anymore, so `PhaseRun` and the restore are gone.
+  `ParkPoint{Stage, Ping, Since}` is all a park adds. A log where a watcher ran
+  during a wait does not replay to a sane cursor; nothing is released, so no
+  upgrader.
+- **Outcomes may take it.** An outcome always ends the run, so it can take the
+  cursor from a parked chain, which then never resumes. Otherwise a merged
+  merge request could not finish a run until someone answered a gate about it.
+  A wait point the same signal settles goes first (`auto_approve`, a `wait` on
+  it). A chain that is moving is never interrupted: the scheduler only runs
+  between chains.
+- **Confirmations stay open at the hub.** A question is not a chain: blocking
+  on one would let an unanswered CI question hold up every automatic review
+  round. So an answer can still reach the loop during another chain's command,
+  which is why R1 needed fixing rather than vanishing.
+- **R1 is fixed.** It was a false error, not a wait: after 30 s `AnswerPing`
+  said "not accepted — try again" while the answer sat in `h.answers` and
+  landed later, so a retry with a different answer was refused and the first
+  counted. The queue is now the acceptance: a person hears within
+  `answerLanding`, and a second answer is refused. A crash before it lands
+  loses it, and the question reopens with the run.
+- **Left as it is:** R3, the second `mr_merged` a crash can record; only the
+  timeline reads it. No routing events for now.
+- **Known cost:** the thread checklist of `load_review_comments` is not a
+  park. It stops the whole run (`errWaitingOnHuman`), as it always did, so a
+  merge does not end a run until someone answers it.
