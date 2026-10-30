@@ -491,16 +491,6 @@ func chainMax(e *flow.Edge) string {
 	return strings.Join(parts, "+")
 }
 
-// failEdgeKind picks the edge kind for a stage failure: timeouts route
-// through on_timeout when the stage declares it, everything else (and
-// timeouts without one) through on_fail.
-func failEdgeKind(st *flow.Stage, reason string) string {
-	if reason == event.ReasonTimeout && st.Edge(flow.EdgeTimeout) != nil {
-		return flow.EdgeTimeout
-	}
-	return flow.EdgeFail
-}
-
 // checkBudget abandons the run when §3 budget ceilings are exceeded.
 // Returns true when the run should stop.
 func (x *exec) checkBudget(st *flow.Stage) (bool, error) {
@@ -521,7 +511,7 @@ func (x *exec) routeAfterFail(st *flow.Stage) error {
 	kind := flow.EdgeFail
 	if x.rs.LastFailure != nil {
 		feed = x.rs.LastFailure.Error
-		kind = failEdgeKind(st, x.rs.LastFailure.Reason)
+		kind = runcore.FailEdgeKind(st, x.rs.LastFailure.Reason)
 	}
 	return x.takeEdge(st, kind, feed)
 }
@@ -584,14 +574,12 @@ type invocation struct {
 }
 
 // liveHold is the engine's in-flight view of a take-over during one
-// invocation: the turns the holder's messages prompted and what they spent,
-// whether the agent sits idle waiting on the holder (the stage clock is
+// invocation: what the holder's messages spent so far (leg), whether the agent sits idle waiting on the holder (the stage clock is
 // suspended then, as for a pending question), and a release waiting for the
 // turn in flight to end.
 type liveHold struct {
 	st        *runcore.HeldState
-	spend     event.HoldSpend
-	heldTurns map[string]bool
+	leg       runcore.HoldLeg
 	idle      bool
 	releasing bool
 	releaseBy string
@@ -602,7 +590,7 @@ func (x *exec) liveHold(st *flow.Stage) *liveHold {
 	if h == nil {
 		return nil
 	}
-	return &liveHold{st: h, heldTurns: map[string]bool{}}
+	return &liveHold{st: h, leg: runcore.NewHoldLeg()}
 }
 
 // holdReq is a take-over request on its way into the run loop: take, or
@@ -969,81 +957,15 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	// Capture whatever this attempt produced BEFORE routing: a failed
 	// attempt's partial outputs are the interesting ones (M27).
 	x.publishOutputs(st, iter, st.Outputs)
-	if inv.outcome == outcomeTimedOut {
-		if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonTimeout}); err != nil {
-			return err
-		}
-		// Whatever the cancelled attempt printed rides along for edges that
-		// declare feed: output.
-		return x.takeEdge(st, failEdgeKind(st, event.ReasonTimeout), shell.Tail(res.r.Output, 8<<10))
+	// Run cancellation (abort/pause/shutdown) can surface as the harness
+	// result racing the ctx branch in awaitAgent; it is not a stage
+	// failure — mirror stageCommand and let the loop exit on the cause.
+	if inv.outcome != outcomeTimedOut && res.err != nil && x.ctx.Err() != nil {
+		return context.Cause(x.ctx)
 	}
-	if res.err != nil {
-		// Run cancellation (abort/pause/shutdown) can surface as the harness
-		// result racing the ctx branch in awaitAgent; it is not a stage
-		// failure — mirror stageCommand and let the loop exit on the cause.
-		if x.ctx.Err() != nil {
-			return context.Cause(x.ctx)
-		}
-		if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonHarnessError, Error: res.err.Error()}); err != nil {
-			return err
-		}
-		return x.takeEdge(st, flow.EdgeFail, shell.Tail(res.r.Output, 8<<10))
-	}
-
-	// Output contract (§3): every effective output (decl defaults overlaid
-	// with stage rebinds) must exist. All missing paths are reported in one
-	// failure so a human sees the whole gap, not the first file only.
-	if missing := x.missingPaths(st.Outputs); len(missing) > 0 {
-		// The retry is told which files it did not write (edge.failure).
-		msg := fmt.Sprintf("declared output(s) not readable: %s", strings.Join(missing, ", "))
-		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract, Error: msg}); aerr != nil {
-			return aerr
-		}
-		return x.takeEdge(st, flow.EdgeFail, msg)
-	}
-	// Every output with a structure — a built-in type's schema, a flow schema
-	// — is checked first, all violations at once, in the words the agent
-	// read in its OUTPUT CONTRACT: a shape error is reported as one, never as
-	// a parser's complaint about a field it could not read.
-	if msg := x.checkStructuredOutputs(st); msg != "" {
-		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputInvalid, Error: msg}); aerr != nil {
-			return aerr
-		}
-		return x.takeEdge(st, flow.EdgeFail, msg)
-	}
-	// A verdict-typed output had its existence and shape checked above, so
-	// this read can now only fail on what a schema cannot say — one report
-	// per cause.
-	var verdict *Verdict
-	if x.verdictPath(st) != "" {
-		v, err := x.readVerdict(st)
-		if err != nil {
-			// The file exists (checked above) but does not hold what its type
-			// promises — a different fault from "never wrote it" (M18).
-			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputInvalid, Error: err.Error()}); aerr != nil {
-				return aerr
-			}
-			return x.takeEdge(st, flow.EdgeFail, err.Error())
-		}
-		verdict = v
-	}
-	// A review_replies output is checked against the threads this round
-	// loaded before anything is posted: a reply to an unknown thread, or a
-	// thread left without one, is this stage's fault, retried with the
-	// reason as $FAILURE.
-	if msg := x.checkReviewReplies(st); msg != "" {
-		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputInvalid, Error: msg}); aerr != nil {
-			return aerr
-		}
-		return x.takeEdge(st, flow.EdgeFail, msg)
-	}
-	// So is a review_threads output, against what the round loaded and what
-	// a person dropped, before post_review reads it.
-	if msg := x.checkReviewThreads(st); msg != "" {
-		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputInvalid, Error: msg}); aerr != nil {
-			return aerr
-		}
-		return x.takeEdge(st, flow.EdgeFail, msg)
+	obs, verdict := x.observeAttempt(st, inv)
+	if f := runcore.ClassifyAttempt(st, obs); f != nil {
+		return x.failAttempt(st, f)
 	}
 
 	completed := &event.StageCompleted{
@@ -1067,6 +989,65 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		return err
 	}
 	return x.afterComplete(st, verdict)
+}
+
+// observeAttempt reads what an agent attempt left, up to the first fault. All
+// missing paths are reported in one failure so a human sees the whole gap, not
+// the first file only.
+func (x *exec) observeAttempt(st *flow.Stage, inv invocation) (runcore.AttemptObservation, *Verdict) {
+	res := inv.res
+	o := runcore.AttemptObservation{TimedOut: inv.outcome == outcomeTimedOut, Output: shell.Tail(res.r.Output, 8<<10)}
+	if res.err != nil {
+		o.Err = res.err.Error()
+	}
+	if o.TimedOut || res.err != nil {
+		return o, nil
+	}
+	// Output contract (§3): every effective output (decl defaults overlaid
+	// with stage rebinds) must exist.
+	if o.Missing = x.missingPaths(st.Outputs); len(o.Missing) > 0 {
+		return o, nil
+	}
+	// Every output with a structure — a built-in type's schema, a flow schema
+	// — is checked first, all violations at once, in the words the agent
+	// read in its OUTPUT CONTRACT: a shape error is reported as one, never as
+	// a parser's complaint about a field it could not read.
+	if o.Invalid = x.checkStructuredOutputs(st); o.Invalid != "" {
+		return o, nil
+	}
+	// A verdict-typed output had its existence and shape checked above, so
+	// this read can now only fail on what a schema cannot say — one report
+	// per cause.
+	var verdict *Verdict
+	if x.verdictPath(st) != "" {
+		v, err := x.readVerdict(st)
+		if err != nil {
+			// The file exists (checked above) but does not hold what its type
+			// promises — a different fault from "never wrote it" (M18).
+			o.Invalid = err.Error()
+			return o, nil
+		}
+		verdict = v
+	}
+	// A review_replies output is checked against the threads this round
+	// loaded before anything is posted: a reply to an unknown thread, or a
+	// thread left without one, is this stage's fault, retried with the
+	// reason as $FAILURE.
+	if o.Invalid = x.checkReviewReplies(st); o.Invalid != "" {
+		return o, nil
+	}
+	// So is a review_threads output, against what the round loaded and what
+	// a person dropped, before post_review reads it.
+	o.Invalid = x.checkReviewThreads(st)
+	return o, verdict
+}
+
+// failAttempt records a failed attempt and routes it.
+func (x *exec) failAttempt(st *flow.Stage, f *runcore.AttemptFailure) error {
+	if err := x.append(&event.StageFailed{StageID: st.ID, Reason: f.Reason, Error: f.Error, ExitCode: f.ExitCode}); err != nil {
+		return err
+	}
+	return x.takeEdge(st, f.EdgeKind, f.Feed)
 }
 
 // afterComplete routes a completed stage — live, or recovered after a crash
@@ -1203,7 +1184,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 	}
 	holdLeg := func() event.HoldSpend {
 		if hold != nil {
-			return hold.spend
+			return hold.leg.Spend
 		}
 		return event.HoldSpend{}
 	}
@@ -1291,7 +1272,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 	// so a runner that sees the hold gone always finds it), and the stage
 	// clock runs again.
 	handBack := func(by string) error {
-		if err := x.releaseHold(st, io.tr.iter, hold.st, by, event.HoldReleasedByUser, hold.spend); err != nil {
+		if err := x.releaseHold(st, io.tr.iter, hold.st, by, event.HoldReleasedByUser, hold.leg.Spend); err != nil {
 			return err
 		}
 		if err := x.prompted(st.ID, io.tr.iter, event.PromptHandback, handbackPrompt); err != nil {
@@ -1336,11 +1317,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				return invocation{}, err
 			}
 			out := outcomeReturned
-			// Questions still open and the turn over: the agent ended it on
-			// them. An error is not a pause — a harness that died
-			// mid-question has nothing left to resume into, so it routes as
-			// the failure it is.
-			if len(open) > 0 && res.err == nil {
+			if runcore.EndedOnQuestions(len(open), res.err) {
 				out = outcomePaused
 			}
 			return invocation{res: res, outcome: out, open: open, left: left(), holdSpend: holdLeg()}, nil
@@ -1354,11 +1331,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			case agentport.AgentEvUserMessage:
 				// The holder's words reaching the agent, on the hold's account.
 				if hold != nil {
-					for _, m := range ev.Messages {
-						if !m.Verbatim {
-							hold.spend.Messages++
-						}
-					}
+					hold.leg.MessagesDelivered(ev.Messages)
 				}
 			case agentport.AgentEvTurnStart:
 				turnOpen = true
@@ -1366,20 +1339,14 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					// A turn starting under the hold is the holder's: it is
 					// what their message prompted.
 					busyAgain()
-					if !hold.heldTurns[ev.Turn] {
-						hold.heldTurns[ev.Turn] = true
-						hold.spend.Turns++
-					}
+					hold.leg.TurnStarted(ev.Turn)
 				}
 			case agentport.AgentEvTurnEnd:
 				turnOpen = false
 				if hold == nil {
 					break
 				}
-				if hold.heldTurns[ev.Turn] && ev.Usage != nil {
-					hold.spend.Add(event.HoldSpend{Usage: &event.Usage{InputTokens: ev.Usage.InputTokens,
-						OutputTokens: ev.Usage.OutputTokens, CostUSD: ev.Usage.CostUSD}})
-				}
+				hold.leg.TurnEnded(ev.Turn, ev.Usage)
 				if len(open) > 0 {
 					// The turn ended on the agent's own open question. The
 					// holder is the one to answer it, but the tool call it came
@@ -1409,10 +1376,11 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			req.ack <- nil
 		case req := <-x.h.holds:
 			var err error
-			switch {
-			case req.take && hold != nil:
+			held, releasing := hold != nil, hold != nil && hold.releasing
+			switch runcore.PlanHoldRequest(req.take, held, releasing, turnOpen || io.inbox.pending()) {
+			case runcore.HoldRefuseTaken:
 				err = ErrAlreadyHeld
-			case req.take:
+			case runcore.HoldTake:
 				if err = x.takeHold(st, io.tr.iter, req.userID); err == nil {
 					hold = x.liveHold(st)
 					io.inbox.setHeld(true)
@@ -1420,15 +1388,11 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 						idleOnHolder()
 					}
 				}
-			case hold == nil:
+			case runcore.HoldRefuseNotHeld:
 				err = ErrNotHeld
-			case hold.releasing:
-				// Already handing back when the turn in flight ends.
-			case turnOpen || io.inbox.pending():
-				// The handback follows the turn in flight (or the one the
-				// queued message is about to start).
+			case runcore.HoldReleaseAfterTurn:
 				hold.releasing, hold.releaseBy = true, req.userID
-			default:
+			case runcore.HoldHandBack:
 				err = handBack(req.userID)
 			}
 			req.ack <- err
@@ -1503,7 +1467,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			if hold != nil {
 				// Bank the leg for whoever closes the hold next (an abort's
 				// account; a pause re-reads the log and starts the leg over).
-				hold.st.Banked.Add(hold.spend)
+				hold.st.Banked.Add(hold.leg.Spend)
 			}
 			cancelRun(context.Cause(x.ctx))
 			return invocation{}, context.Cause(x.ctx)
@@ -1728,10 +1692,7 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 			return context.Cause(x.ctx)
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonTimeout}); aerr != nil {
-				return aerr
-			}
-			return x.takeEdge(st, failEdgeKind(st, event.ReasonTimeout), "")
+			return x.failAttempt(st, runcore.ClassifyAttempt(st, runcore.AttemptObservation{TimedOut: true}))
 		}
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInfra, Error: err.Error()}); aerr != nil {
 			return aerr
@@ -1740,31 +1701,17 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	}
 	x.publishLog(st.ID, rs.Iters[st.ID], res.Output)
 	x.publishOutputs(st, rs.Iters[st.ID], st.Outputs)
-	if res.ExitCode != 0 {
-		code := res.ExitCode
-		// The output tail rides in the event so recovery can route the
-		// failure without re-executing the command.
-		if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonExitNonzero,
-			ExitCode: &code, Error: shell.Tail(res.Output, 8<<10)}); err != nil {
-			return err
+	obs := runcore.AttemptObservation{ExitCode: res.ExitCode, Output: shell.Tail(res.Output, 8<<10)}
+	if res.ExitCode == 0 {
+		// A command that exits 0 without writing what it declared has not done
+		// its job — the same contract agent stages carry. And what it writes
+		// with a schema must hold it, before anything reads it.
+		if obs.Missing = x.missingPaths(st.Outputs); len(obs.Missing) == 0 {
+			obs.Invalid = x.checkStructuredOutputs(st)
 		}
-		return x.takeEdge(st, flow.EdgeFail, shell.Tail(res.Output, 8<<10))
 	}
-	// A command that exits 0 without writing what it declared has not done its
-	// job — the same contract agent stages carry.
-	if missing := x.missingPaths(st.Outputs); len(missing) > 0 {
-		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract,
-			Error: fmt.Sprintf("declared output(s) not readable: %s", strings.Join(missing, ", "))}); aerr != nil {
-			return aerr
-		}
-		return x.takeEdge(st, flow.EdgeFail, shell.Tail(res.Output, 8<<10))
-	}
-	// And what it writes with a schema must hold it, before anything reads it.
-	if msg := x.checkStructuredOutputs(st); msg != "" {
-		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputInvalid, Error: msg}); aerr != nil {
-			return aerr
-		}
-		return x.takeEdge(st, flow.EdgeFail, msg)
+	if f := runcore.ClassifyAttempt(st, obs); f != nil {
+		return x.failAttempt(st, f)
 	}
 	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 		return err

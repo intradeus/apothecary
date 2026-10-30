@@ -79,7 +79,7 @@ func (x *exec) resumeParked(p runcore.ResumePlan) error {
 		if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonTimeout, Error: p.Why}); err != nil {
 			return err
 		}
-		return x.takeEdge(st, failEdgeKind(st, event.ReasonTimeout), "")
+		return x.takeEdge(st, runcore.FailEdgeKind(st, event.ReasonTimeout), "")
 	}
 	return x.routeGate(st, ans, pr.Since)
 }

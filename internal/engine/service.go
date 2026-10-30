@@ -141,7 +141,7 @@ func (x *exec) stageService(st *flow.Stage) error {
 	if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: reason, ExitCode: code, Error: feed}); aerr != nil {
 		return aerr
 	}
-	return x.takeEdge(st, failEdgeKind(st, reason), feed)
+	return x.takeEdge(st, runcore.FailEdgeKind(st, reason), feed)
 }
 
 func (x *exec) completeService(st *flow.Stage, started time.Time) error {
