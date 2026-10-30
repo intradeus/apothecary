@@ -1,7 +1,7 @@
 // Package shell holds the two string helpers every piece of code that builds
 // a workspace command line needs: quoting a value for POSIX sh, and keeping
-// the end of a long output. They live apart from the engine so the packages
-// extracted from it (bootstrap, envcheck, services, …) share one definition.
+// the end of a long output. They live apart from the engine so every package
+// that needs them, adapters included, shares one definition.
 package shell
 
 import "strings"

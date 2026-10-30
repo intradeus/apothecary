@@ -5294,6 +5294,34 @@ timestamps; an edge to `end`/`done` clears the feed live as replay did.
 Left as they were, recorded: an answer sent during a command or action
 stage waits up to 30 s and reports busy (R1); the Ask service's `cancel` is
 never called (R2); a crash between `mr_merged` and `stage_completed` can
-record a second `mr_merged` (R3); a take-over, message or release that
-lands between a run's log saying "parked" and its loop exiting reaches the
-exiting loop (the hold tests wait for the loop).
+record a second `mr_merged` (R3).
+
+Follow-ups, the same day, after the plan closed:
+
+- **The rest of the interpreter's decisions are pure.** `runcore` now plans
+  the idle tick (`PlanIdle`, with `PlanResume`), classifies how an attempt
+  ended (`ClassifyAttempt`) and holds the take-over tables (`PlanHoldRequest`,
+  `HoldLeg`). A plan accounts for what its earlier actions will have done: a
+  decline silences its occurrence, an ask counts for the same-tick dedup and
+  keeps the run alive. `awaitAgent`'s select loop stays imperative.
+- **A crash at every event** (`internal/engine/crash_test.go`). Five scenarios
+  run clean, then once per event with the process dying right after writing
+  it: a store that refuses everything from there on, then a fresh engine over
+  the same log and the same fake world, so what the dead process did survives
+  it, 153 crash points in all. It found that a crash between `stage_started`
+  and an attempt's first prompt resumed the session the LAST attempt left,
+  dropping the retry's prompt and its feed, which could abandon the run. A
+  session now belongs to one attempt (`stage_started` forgets it), an attempt
+  that never reached its agent starts fresh under its recorded iteration, and
+  a re-executed command clears its outputs.
+- **A verb landing while a run parks acts on the parked run.** Between the
+  decision to park and the loop being gone, a pause or an abort returned
+  success and did nothing, and a release or a message was refused. The loop
+  stops taking deliveries when it decides to park (`parking`) and reads its
+  cancel cause once, on leaving, under the lock `cancelLoop` takes; the others
+  wait in `liveLoop` and take the dormant path. Its test also caught two
+  writes to the fold's state with no event behind them.
+- **`runloop.go` split by stage type** (`stage_*.go`, `invocation.go`,
+  `provision.go`, the take-over in `hold.go`); **`internal/runinput`** holds
+  what starts a run, so `automation` no longer imports the engine; the
+  adapters share `shell.Quote` and `shell.Tail`.
