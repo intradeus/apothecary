@@ -245,6 +245,8 @@ func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, s
 	}
 	h.e = New(d)
 	registerGolden(t, h)
+	// Registered before Shutdown, so it runs after: every run has stopped.
+	t.Cleanup(func() { checkFoldAfter(t, h.store) })
 	t.Cleanup(h.e.Shutdown)
 	return h
 }

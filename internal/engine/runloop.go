@@ -173,6 +173,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		return
 	}
 	for !rs.done {
+		x.checkFold()
 		if cause := context.Cause(ctx); cause != nil {
 			x.exit(cause)
 			return
@@ -290,6 +291,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 // leaves it for Recover, anything else is logged and left non-terminal
 // (recovered by replay on next boot).
 func (x *exec) exit(cause error) {
+	defer x.checkFold()
 	switch {
 	case errors.Is(cause, errAborted):
 		// A deliberate stop is abandonment, not failure (PLAN5 M24) — the
@@ -311,6 +313,17 @@ func (x *exec) exit(cause error) {
 	default:
 		x.e.log.Error("run loop error; run left non-terminal for recovery",
 			"run", x.rs.runID, "err", cause)
+	}
+}
+
+// foldCheck, when set (tests only), is handed the run at each point where
+// its live state must equal the fold of its log: the top of every loop
+// iteration, after each idle tick, and on exit.
+var foldCheck func(x *exec)
+
+func (x *exec) checkFold() {
+	if foldCheck != nil && x.rs != nil {
+		foldCheck(x)
 	}
 }
 

@@ -305,6 +305,7 @@ func (x *exec) idle() error {
 // start per tick — record every hold for the run page, and decide whether
 // the run is over.
 func (x *exec) evaluateIdle(st *idler) error {
+	defer x.checkFold()
 	rs := x.rs
 	obs, err := x.observe(st)
 	x.lastObs = obs
