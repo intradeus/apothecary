@@ -1,0 +1,20 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=build
+stage_completed stage=build
+stage_started stage=check.lint
+stage_completed stage=check.lint
+stage_started stage=check.test
+stage_failed stage=check.test
+edge_taken edge=check.test:on_fail->build
+stage_started stage=build
+stage_completed stage=build
+stage_started stage=check.lint
+stage_completed stage=check.lint
+stage_started stage=check.test
+stage_completed stage=check.test
+phase_completed phase=main
+run_completed

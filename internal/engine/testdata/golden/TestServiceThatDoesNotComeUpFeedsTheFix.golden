@@ -1,0 +1,19 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=up
+service_started stage=up
+service_failed stage=up
+stage_failed stage=up
+edge_taken edge=up:on_fail->fix
+stage_started stage=fix
+agent_prompted stage=fix
+stage_completed stage=fix
+stage_started stage=up
+service_started stage=up
+service_failed stage=up
+stage_failed stage=up
+run_abandoned
+service_stopped

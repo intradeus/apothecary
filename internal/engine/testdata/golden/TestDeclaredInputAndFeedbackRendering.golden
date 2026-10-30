@@ -1,0 +1,21 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=plan
+agent_prompted stage=plan
+stage_completed stage=plan
+stage_started stage=build
+agent_prompted stage=build
+stage_completed stage=build
+stage_started stage=test
+stage_failed stage=test
+edge_taken edge=test:on_fail->build
+stage_started stage=build
+agent_prompted stage=build
+stage_completed stage=build
+stage_started stage=test
+stage_completed stage=test
+phase_completed phase=main
+run_completed

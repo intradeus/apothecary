@@ -1,0 +1,41 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=settle.sync
+stage_failed stage=settle.sync
+edge_taken edge=settle.sync:on_fail->settle.resolve
+stage_started stage=settle.resolve
+agent_prompted stage=settle.resolve
+stage_completed stage=settle.resolve
+stage_started stage=settle.sync
+target_synced stage=settle.sync
+stage_completed stage=settle.sync
+stage_started stage=settle.test
+stage_completed stage=settle.test
+stage_started stage=settle.push
+branch_pushed stage=settle.push
+stage_completed stage=settle.push
+phase_completed phase=main
+ping_raised ping=phase_confirm
+ping_answered
+phase_started phase=again
+stage_started stage=resettle.sync
+stage_failed stage=resettle.sync
+edge_taken edge=resettle.sync:on_fail->resettle.resolve
+stage_started stage=resettle.resolve
+agent_prompted stage=resettle.resolve
+stage_completed stage=resettle.resolve
+stage_started stage=resettle.sync
+target_synced stage=resettle.sync
+stage_completed stage=resettle.sync
+stage_started stage=resettle.test
+stage_completed stage=resettle.test
+stage_started stage=resettle.push
+branch_pushed stage=resettle.push
+stage_completed stage=resettle.push
+phase_completed phase=again
+phase_started phase=closed
+phase_completed phase=closed
+run_completed

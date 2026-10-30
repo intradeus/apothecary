@@ -1,0 +1,20 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=build
+agent_prompted stage=build
+stage_completed stage=build
+stage_started stage=redact
+agent_prompted stage=redact
+stage_completed stage=redact
+stage_started stage=mr
+action_started stage=mr
+mr_created
+stage_completed stage=mr
+phase_completed phase=main
+phase_started phase=again
+stage_started stage=rereview
+stage_completed stage=rereview
+phase_completed phase=again

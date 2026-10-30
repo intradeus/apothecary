@@ -1,0 +1,40 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+snapshot_captured stage=_provision
+stage_started stage=review.poll
+review_comments_loaded stage=review.poll
+stage_completed stage=review.poll
+stage_started stage=review.read
+agent_prompted stage=review.read
+snapshot_captured stage=review.read
+stage_completed stage=review.read
+stage_started stage=review.gate
+stage_completed stage=review.gate
+stage_started stage=review.post
+action_started stage=review.post
+review_posted stage=review.post
+stage_completed stage=review.post
+phase_completed phase=main
+phase_started phase=again
+stage_started stage=rereview.poll
+review_comments_loaded stage=rereview.poll
+stage_completed stage=rereview.poll
+stage_started stage=rereview.read
+agent_prompted stage=rereview.read
+snapshot_captured stage=rereview.read
+stage_failed stage=rereview.read
+edge_taken edge=rereview.read:on_fail->rereview.read
+stage_started stage=rereview.read
+agent_prompted stage=rereview.read
+snapshot_captured stage=rereview.read
+stage_completed stage=rereview.read
+stage_started stage=rereview.gate
+stage_completed stage=rereview.gate
+stage_started stage=rereview.post
+action_started stage=rereview.post
+review_posted stage=rereview.post
+stage_completed stage=rereview.post
+phase_completed phase=again

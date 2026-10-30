@@ -1,0 +1,41 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+snapshot_captured stage=_provision
+stage_started stage=write
+agent_prompted stage=write
+snapshot_captured stage=write
+snapshot_captured stage=write
+snapshot_captured stage=write
+stage_completed stage=write
+stage_started stage=gate
+ping_raised stage=gate ping=gate
+snapshot_captured stage=gate
+snapshot_captured stage=gate
+snapshot_captured stage=gate
+phase_parked stage=gate phase=main
+ping_answered
+phase_resumed stage=gate phase=main
+edge_taken edge=gate:on_reject->write
+stage_started stage=write
+agent_prompted stage=write
+snapshot_captured stage=write
+snapshot_captured stage=write
+snapshot_captured stage=write
+stage_completed stage=write
+stage_started stage=gate
+ping_raised stage=gate ping=gate
+snapshot_captured stage=gate
+snapshot_captured stage=gate
+snapshot_captured stage=gate
+phase_parked stage=gate phase=main
+ping_answered
+phase_resumed stage=gate phase=main
+stage_completed stage=gate
+stage_started stage=build
+agent_prompted stage=build
+stage_completed stage=build
+phase_completed phase=main
+run_completed

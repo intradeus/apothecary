@@ -1,0 +1,10 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=seed
+stage_completed stage=seed
+stage_started stage=use
+stage_failed stage=use
+run_abandoned

@@ -1,0 +1,26 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=build
+stage_completed stage=build
+phase_completed phase=main
+run_completed
+# run 2
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=build
+stage_completed stage=build
+stage_started stage=hold
+ping_raised stage=hold ping=gate
+phase_parked stage=hold phase=main
+phase_started phase=polish
+stage_started stage=sync
+stage_completed stage=sync
+stage_started stage=load
+stage_failed stage=load
+edge_taken edge=load:on_fail->end
+phase_completed phase=polish

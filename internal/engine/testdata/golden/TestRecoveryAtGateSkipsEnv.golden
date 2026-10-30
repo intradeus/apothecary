@@ -1,0 +1,15 @@
+# run 1
+run_created
+env_requested
+env_ready
+stage_started stage=plan
+stage_completed stage=plan
+stage_started stage=plan_gate
+ping_raised stage=plan_gate ping=gate
+phase_started phase=main
+phase_parked stage=plan_gate phase=main
+ping_answered
+phase_resumed stage=plan_gate phase=main
+stage_completed stage=plan_gate
+phase_completed phase=main
+run_completed

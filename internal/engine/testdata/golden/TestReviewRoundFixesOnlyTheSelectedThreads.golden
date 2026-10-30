@@ -1,0 +1,75 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=build
+agent_prompted stage=build
+stage_completed stage=build
+stage_started stage=commit
+stage_completed stage=commit
+stage_started stage=push
+branch_pushed stage=push
+stage_completed stage=push
+stage_started stage=redact
+agent_prompted stage=redact
+stage_completed stage=redact
+stage_started stage=mr
+action_started stage=mr
+mr_created
+stage_completed stage=mr
+phase_completed phase=main
+phase_started phase=review_fixes
+stage_started stage=load
+ping_raised stage=load ping=select
+run_paused stage=load reason=waiting_on_human
+ping_answered
+run_unpaused
+review_comments_loaded stage=load
+stage_completed stage=load
+stage_started stage=fix
+agent_prompted stage=fix
+stage_completed stage=fix
+stage_started stage=fix_commit
+stage_completed stage=fix_commit
+stage_started stage=fix_push
+branch_pushed stage=fix_push
+stage_completed stage=fix_push
+stage_started stage=reply
+agent_prompted stage=reply
+stage_completed stage=reply
+stage_started stage=post
+action_started stage=post
+review_replies_posted stage=post
+stage_completed stage=post
+phase_completed phase=review_fixes
+phase_started phase=review_fixes
+stage_started stage=load
+ping_raised stage=load ping=select
+run_paused stage=load reason=waiting_on_human
+ping_answered
+run_unpaused
+review_comments_loaded stage=load
+stage_completed stage=load
+stage_started stage=fix
+agent_prompted stage=fix
+stage_completed stage=fix
+stage_started stage=fix_commit
+stage_completed stage=fix_commit
+stage_started stage=fix_push
+branch_pushed stage=fix_push
+stage_completed stage=fix_push
+stage_started stage=reply
+agent_prompted stage=reply
+stage_completed stage=reply
+stage_started stage=post
+action_started stage=post
+review_replies_posted stage=post
+stage_completed stage=post
+phase_completed phase=review_fixes
+phase_started phase=review_fixes
+stage_started stage=load
+ping_raised stage=load ping=select
+run_paused stage=load reason=waiting_on_human
+ping_answered
+run_unpaused

@@ -1,0 +1,27 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=look
+stage_completed stage=look
+phase_completed phase=main
+phase_started phase=ship
+stage_started stage=rebase
+target_synced stage=rebase
+stage_completed stage=rebase
+stage_started stage=push
+branch_pushed stage=push
+stage_completed stage=push
+stage_started stage=ready
+phase_parked stage=ready phase=ship
+phase_resumed stage=ready phase=ship
+stage_completed stage=ready
+stage_started stage=merge
+action_started stage=merge
+mr_merged stage=merge
+stage_completed stage=merge
+phase_completed phase=ship
+phase_started phase=merged
+phase_completed phase=merged
+run_completed

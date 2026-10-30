@@ -1,0 +1,16 @@
+# run 1
+run_created
+env_requested
+env_ready
+stage_started stage=mr
+mr_created
+stage_completed stage=mr
+stage_started stage=gate
+ping_raised stage=gate ping=gate
+phase_started phase=main
+phase_parked stage=gate phase=main
+ping_answered
+phase_resumed stage=gate phase=main
+stage_completed stage=gate
+phase_completed phase=main
+run_completed

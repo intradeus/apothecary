@@ -1,0 +1,12 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=build
+agent_prompted stage=build
+hold_taken stage=build
+hold_released stage=build
+stage_completed stage=build
+phase_completed phase=main
+run_completed

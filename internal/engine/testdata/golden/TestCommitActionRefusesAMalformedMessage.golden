@@ -1,0 +1,10 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=make
+stage_completed stage=make
+stage_started stage=commit
+stage_failed stage=commit
+run_abandoned

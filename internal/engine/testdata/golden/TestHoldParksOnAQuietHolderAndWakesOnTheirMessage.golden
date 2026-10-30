@@ -1,0 +1,23 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=build
+agent_prompted stage=build
+hold_taken stage=build
+agent_message stage=build
+stage_paused stage=build
+run_paused stage=build reason=waiting_on_human
+message_queued
+run_unpaused
+message_delivered stage=build
+stage_resumed stage=build
+agent_prompted stage=build
+agent_message stage=build
+hold_released stage=build
+agent_prompted stage=build
+agent_message stage=build
+stage_completed stage=build
+phase_completed phase=main
+run_completed

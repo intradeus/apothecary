@@ -1,0 +1,18 @@
+# run 1
+run_created
+env_requested
+env_ready
+stage_started stage=build
+agent_session stage=build
+agent_message stage=build
+ping_raised stage=build ping=clarification
+phase_started phase=main
+stage_paused stage=build
+run_paused stage=build reason=waiting_on_human
+ping_answered
+run_unpaused
+stage_resumed stage=build
+agent_prompted stage=build
+stage_completed stage=build
+phase_completed phase=main
+run_completed

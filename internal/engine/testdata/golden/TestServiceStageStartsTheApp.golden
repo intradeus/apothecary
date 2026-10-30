@@ -1,0 +1,15 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=up
+service_started stage=up
+service_ready stage=up
+stage_completed stage=up
+stage_started stage=look
+agent_prompted stage=look
+stage_completed stage=look
+service_stopped
+phase_completed phase=main
+run_completed

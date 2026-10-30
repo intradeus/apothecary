@@ -1,0 +1,6 @@
+# run 1
+run_created
+phase_started phase=main
+stage_started stage=team
+stage_failed stage=team
+run_abandoned

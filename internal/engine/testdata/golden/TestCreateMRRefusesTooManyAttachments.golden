@@ -1,0 +1,11 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=redact
+agent_prompted stage=redact
+stage_completed stage=redact
+stage_started stage=mr
+stage_failed stage=mr
+run_abandoned

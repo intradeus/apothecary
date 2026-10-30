@@ -1,0 +1,21 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=review.poll
+review_comments_loaded stage=review.poll
+stage_completed stage=review.poll
+stage_started stage=review.read
+agent_prompted stage=review.read
+stage_completed stage=review.read
+stage_started stage=review.gate
+stage_completed stage=review.gate
+stage_started stage=review.post
+action_started stage=review.post
+review_posted stage=review.post
+stage_completed stage=review.post
+phase_completed phase=main
+phase_started phase=closed
+phase_completed phase=closed
+run_completed

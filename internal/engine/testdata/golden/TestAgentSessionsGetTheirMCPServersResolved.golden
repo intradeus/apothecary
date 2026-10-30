@@ -1,0 +1,12 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=shoot
+agent_prompted stage=shoot
+stage_completed stage=shoot
+stage_started stage=query
+agent_prompted stage=query
+stage_failed stage=query
+run_abandoned

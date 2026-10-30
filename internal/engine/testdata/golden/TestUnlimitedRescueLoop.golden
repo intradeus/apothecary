@@ -1,0 +1,41 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=work
+stage_failed stage=work
+edge_taken edge=work:on_fail->rescue
+stage_started stage=rescue
+ping_raised stage=rescue ping=gate
+phase_parked stage=rescue phase=main
+ping_answered
+phase_resumed stage=rescue phase=main
+stage_completed stage=rescue
+stage_started stage=work
+stage_failed stage=work
+edge_taken edge=work:on_fail->rescue
+stage_started stage=rescue
+ping_raised stage=rescue ping=gate
+phase_parked stage=rescue phase=main
+ping_answered
+phase_resumed stage=rescue phase=main
+stage_completed stage=rescue
+stage_started stage=work
+stage_failed stage=work
+edge_taken edge=work:on_fail->rescue
+stage_started stage=rescue
+ping_raised stage=rescue ping=gate
+phase_parked stage=rescue phase=main
+ping_answered
+phase_resumed stage=rescue phase=main
+stage_completed stage=rescue
+stage_started stage=work
+stage_failed stage=work
+edge_taken edge=work:on_fail->rescue
+stage_started stage=rescue
+ping_raised stage=rescue ping=gate
+phase_parked stage=rescue phase=main
+ping_answered
+phase_resumed stage=rescue phase=main
+run_abandoned

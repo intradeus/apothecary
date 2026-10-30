@@ -1,0 +1,13 @@
+# run 1
+run_created
+env_requested
+env_ready
+stage_started stage=build
+ping_raised stage=build ping=clarification
+stage_paused stage=build
+phase_started phase=main
+run_paused stage=build reason=waiting_on_human
+ping_answered
+run_unpaused
+stage_failed stage=build
+run_abandoned

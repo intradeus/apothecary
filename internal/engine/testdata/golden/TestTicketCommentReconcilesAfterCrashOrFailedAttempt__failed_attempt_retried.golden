@@ -1,0 +1,15 @@
+# run 1
+run_created
+env_requested
+env_ready
+stage_started stage=write
+stage_completed stage=write
+stage_started stage=post
+action_started stage=post
+stage_failed stage=post
+phase_started phase=main
+env_ready
+stage_started stage=post
+stage_completed stage=post
+phase_completed phase=main
+run_completed

@@ -206,6 +206,7 @@ func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, s
 		es = store(h.store)
 	}
 	h.e = New(cfg, es, StaticResolver{R: h.res}, src, h.settings, []ports.NotificationChannel{h.ch})
+	registerGolden(t, h)
 	t.Cleanup(h.e.Shutdown)
 	return h
 }

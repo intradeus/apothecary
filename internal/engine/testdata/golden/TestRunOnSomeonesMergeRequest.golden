@@ -1,0 +1,31 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=poll
+review_comments_loaded stage=poll
+stage_completed stage=poll
+stage_started stage=read
+agent_prompted stage=read
+stage_completed stage=read
+stage_started stage=post
+action_started stage=post
+review_posted stage=post
+stage_completed stage=post
+phase_completed phase=main
+phase_started phase=again
+stage_started stage=repoll
+review_comments_loaded stage=repoll
+stage_completed stage=repoll
+stage_started stage=reread
+agent_prompted stage=reread
+stage_completed stage=reread
+stage_started stage=repost
+action_started stage=repost
+review_posted stage=repost
+stage_completed stage=repost
+phase_completed phase=again
+phase_started phase=merged
+phase_completed phase=merged
+run_completed

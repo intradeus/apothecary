@@ -1,0 +1,52 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=build
+agent_prompted stage=build
+stage_completed stage=build
+stage_started stage=commit
+stage_completed stage=commit
+stage_started stage=push
+branch_pushed stage=push
+stage_completed stage=push
+stage_started stage=redact
+agent_prompted stage=redact
+stage_completed stage=redact
+stage_started stage=mr
+action_started stage=mr
+mr_created
+stage_completed stage=mr
+phase_completed phase=main
+ping_raised ping=phase_confirm
+ping_answered
+phase_started phase=conflicts
+stage_started stage=sync
+stage_failed stage=sync
+edge_taken edge=sync:on_fail->resolve
+stage_started stage=resolve
+agent_prompted stage=resolve
+stage_completed stage=resolve
+stage_started stage=sync
+stage_failed stage=sync
+edge_taken edge=sync:on_fail->resolve
+stage_started stage=resolve
+agent_prompted stage=resolve
+stage_completed stage=resolve
+stage_started stage=sync
+stage_failed stage=sync
+edge_taken edge=sync:on_fail->debug
+ping_raised stage=sync ping=debug
+run_paused stage=sync reason=waiting_on_human
+ping_answered
+run_unpaused
+stage_started stage=sync
+target_synced stage=sync
+stage_completed stage=sync
+stage_started stage=sync_test
+stage_completed stage=sync_test
+stage_started stage=sync_push
+branch_pushed stage=sync_push
+stage_completed stage=sync_push
+phase_completed phase=conflicts

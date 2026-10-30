@@ -1,0 +1,14 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=build
+agent_prompted stage=build
+stage_completed stage=build
+stage_started stage=gate
+ping_raised stage=gate ping=gate
+phase_parked stage=gate phase=main
+ping_answered
+phase_resumed stage=gate phase=main
+run_abandoned

@@ -1,0 +1,24 @@
+# run 1
+run_created
+phase_started phase=main
+stage_started stage=kick
+stage_completed stage=kick
+env_requested
+env_ready
+stage_started stage=build
+agent_prompted stage=build
+stage_completed stage=build
+phase_completed phase=main
+run_completed
+# run 2
+run_created
+phase_started phase=main
+stage_started stage=kick
+stage_completed stage=kick
+env_requested
+env_ready
+stage_started stage=build
+agent_prompted stage=build
+stage_completed stage=build
+phase_completed phase=main
+run_completed

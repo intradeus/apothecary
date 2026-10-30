@@ -1,0 +1,13 @@
+# run 1
+run_created
+phase_started phase=main
+stage_started stage=kick
+stage_failed stage=kick
+edge_taken edge=kick:on_fail->build
+env_requested
+env_ready
+stage_started stage=build
+agent_prompted stage=build
+stage_completed stage=build
+phase_completed phase=main
+run_completed

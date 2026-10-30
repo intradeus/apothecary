@@ -1,0 +1,22 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+snapshot_captured stage=_provision
+stage_started stage=plan
+agent_prompted stage=plan
+snapshot_captured stage=plan
+stage_completed stage=plan
+stage_started stage=check
+snapshot_captured stage=check
+stage_failed stage=check
+edge_taken edge=check:on_fail->plan
+stage_started stage=plan
+agent_prompted stage=plan
+snapshot_captured stage=plan
+stage_completed stage=plan
+stage_started stage=check
+stage_completed stage=check
+phase_completed phase=main
+run_completed

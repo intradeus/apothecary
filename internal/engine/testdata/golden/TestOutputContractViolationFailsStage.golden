@@ -1,0 +1,9 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=plan
+agent_prompted stage=plan
+stage_failed stage=plan
+run_abandoned

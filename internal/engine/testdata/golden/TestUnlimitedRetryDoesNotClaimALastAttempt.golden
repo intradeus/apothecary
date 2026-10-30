@@ -1,0 +1,25 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=plan
+agent_prompted stage=plan
+stage_completed stage=plan
+stage_started stage=gate
+ping_raised stage=gate ping=gate
+phase_parked stage=gate phase=main
+ping_answered
+phase_resumed stage=gate phase=main
+edge_taken edge=gate:on_reject->plan
+stage_started stage=plan
+agent_prompted stage=plan
+stage_completed stage=plan
+stage_started stage=gate
+ping_raised stage=gate ping=gate
+phase_parked stage=gate phase=main
+ping_answered
+phase_resumed stage=gate phase=main
+stage_completed stage=gate
+phase_completed phase=main
+run_completed

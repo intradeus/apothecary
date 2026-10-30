@@ -1,0 +1,13 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+snapshot_captured stage=_provision
+stage_started stage=build
+agent_prompted stage=build
+stage_completed stage=build
+stage_started stage=test
+stage_completed stage=test
+phase_completed phase=main
+run_completed

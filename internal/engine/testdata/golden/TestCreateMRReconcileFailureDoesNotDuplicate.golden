@@ -1,0 +1,10 @@
+# run 1
+run_created
+env_requested
+env_ready
+stage_started stage=mr
+action_started stage=mr
+phase_started phase=main
+env_ready
+stage_failed stage=mr
+run_failed
