@@ -54,6 +54,7 @@ var rules = []rule{
 	{pkg: "internal/run", denyImport: outerLayers},
 	{pkg: "internal/flow", denyImport: outerLayers},
 	{pkg: "internal/shell", mayImport: []string{}},
+	{pkg: "internal/wsname", mayImport: []string{"internal/run"}},
 }
 
 // matches reports whether path is the package prefix names: "a/b" matches

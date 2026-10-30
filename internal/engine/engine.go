@@ -29,6 +29,7 @@ import (
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 	"apothecary/internal/skills"
+	"apothecary/internal/wsname"
 )
 
 // ErrEgressOff marks an allow request when proxy mode is disabled.
@@ -840,22 +841,6 @@ func (e *Engine) RunPorts(runID string) []portrelay.Exposure {
 	return e.portRelay.List(runID)
 }
 
-// envNameForRun returns the run's env id, or — while it is still provisioning
-// (EnvReady not yet emitted) — the deterministic workspace name the provisioner
-// will use. This lets egress control and the workspace-log tail work DURING the
-// build, not only after the env is ready. Provisioners whose env id isn't this
-// name simply see a name that doesn't match, degrading to their pre-ready state.
-func (e *Engine) envNameForRun(v run.View, runID string) string {
-	if v.EnvID != "" {
-		return v.EnvID
-	}
-	nameBranch := v.BranchBase
-	if nameBranch == "" {
-		nameBranch = v.Branch
-	}
-	return workspaceName(nameBranch, runID)
-}
-
 // egressCtrl resolves a run to its provisioner's egress controller (the
 // per-project gateway), or ErrEgressOff when the run isn't live or the
 // provisioner has no gateway.
@@ -882,7 +867,7 @@ func (e *Engine) egressCtrl(ctx context.Context, runID string) (ports.EgressCont
 	}
 	// Works during provisioning too (EnvID not yet set): the most important time
 	// to "add to egress" is when the build is blocked on a denied domain.
-	return ctrl, ports.EnvID(e.envNameForRun(v, runID)), res.release, nil
+	return ctrl, ports.EnvID(wsname.ForRun(v, runID)), res.release, nil
 }
 
 // buildCacheCtrl resolves a project to its provisioner's build-cache
@@ -987,13 +972,13 @@ func (e *Engine) RunEgressPolicy(ctx context.Context, runID string) (ports.Egres
 
 // auditRows converts a run's provisioner audit records into durable rows tagged
 // with the project + engine run id. Empty when the provisioner has no auditor.
-// Uses envNameForRun so it works DURING provisioning too (EnvID not yet set).
+// Uses wsname.ForRun so it works DURING provisioning too (EnvID not yet set).
 func (e *Engine) auditRows(ctx context.Context, v run.View, envp ports.EnvProvisioner) []ports.EgressAuditRow {
 	auditor, ok := envp.(ports.EgressAuditor)
 	if !ok {
 		return nil
 	}
-	recs := auditor.EgressAudit(ctx, ports.EnvID(e.envNameForRun(v, v.RunID)))
+	recs := auditor.EgressAudit(ctx, ports.EnvID(wsname.ForRun(v, v.RunID)))
 	rows := make([]ports.EgressAuditRow, 0, len(recs))
 	for _, r := range recs {
 		rows = append(rows, ports.EgressAuditRow{
@@ -1164,15 +1149,15 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 	branch := base
 	if t.TicketID != "" {
 		if base == "" {
-			base = "apothecary/" + slug(t.Title, maxBranchSlug)
+			base = "apothecary/" + wsname.Slug(t.Title, maxBranchSlug)
 		}
-		branch = base + "-" + runIDTail(runID)
+		branch = base + "-" + wsname.RunIDTail(runID)
 		if err := CheckBranch(branch); err != nil {
 			return "", fmt.Errorf("branch %q: %v", branch, err)
 		}
 	} else if branch == "" {
 		base = ""
-		branch = fmt.Sprintf("apothecary/%s-%s", strings.ToLower(runID), slug(t.Title, maxBranchSlug))
+		branch = fmt.Sprintf("apothecary/%s-%s", strings.ToLower(runID), wsname.Slug(t.Title, maxBranchSlug))
 	} else if err := CheckBranch(branch); err != nil {
 		return "", fmt.Errorf("branch %q: %v", branch, err)
 	}
@@ -2425,7 +2410,7 @@ func (e *Engine) WorkspaceLogTail(ctx context.Context, runID string, n int) ([]b
 	if v.ProjectID == "" {
 		return nil, fmt.Errorf("run %s: %w", runID, ErrNoLiveLog)
 	}
-	env := e.envNameForRun(v, runID)
+	env := wsname.ForRun(v, runID)
 	res, err := e.resolver.Resolve(ctx, v.ProjectID)
 	if err != nil {
 		return nil, err
@@ -2667,7 +2652,7 @@ func (e *Engine) SampleResourcesOnce(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		s, err := sampler.SampleResources(ctx, ports.EnvID(e.envNameForRun(v, id)))
+		s, err := sampler.SampleResources(ctx, ports.EnvID(wsname.ForRun(v, id)))
 		if err != nil {
 			e.log.Debug("resource sample failed", "run", id, "err", err)
 			continue
@@ -2923,59 +2908,9 @@ func CheckBranch(s string) error {
 	return nil
 }
 
-func slug(s string, maxLen int) string {
-	var b strings.Builder
-	prevDash := true // suppress leading dash
-	for _, r := range strings.ToLower(s) {
-		switch {
-		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
-			b.WriteRune(r)
-			prevDash = false
-		default:
-			if !prevDash {
-				b.WriteByte('-')
-				prevDash = true
-			}
-		}
-		if b.Len() >= maxLen {
-			break
-		}
-	}
-	return strings.TrimRight(b.String(), "-")
-}
-
 // maxBranchSlug bounds a branch derived from a ticket title. It is NOT a
 // readability cap — a branch name may be as long as the title needs — only a
 // filesystem backstop: a loose ref is a file, so a path component over 255
 // bytes is unwritable on ext4/APFS. The container name has its own, much
-// tighter budget and is truncated separately (workspaceName).
+// tighter budget and is truncated separately (wsname.For).
 const maxBranchSlug = 200
-
-// runIDTail is the 2-char per-run suffix: the last 2 chars of the lowercased
-// run id. Shared by the branch name (base + "-" + tail) and the workspace
-// name so both stay aligned and unique per run.
-func runIDTail(runID string) string {
-	s := strings.ToLower(runID)
-	if len(s) > 2 {
-		s = s[len(s)-2:]
-	}
-	return s
-}
-
-// workspaceName is the human-friendly workspace/container name for a run: an
-// "apo-" marker, the slugified branch, and a 2-char run-id tail to keep two
-// runs that share a branch (branches are free-text per ticket, so not unique)
-// on distinct names — which keeps reuse-by-name a same-run operation. Capped
-// at 32 chars; adapters use it verbatim.
-func workspaceName(branch, runID string) string {
-	suffix := runIDTail(runID)
-	s := slug(branch, 32-len("apo-")-1-len(suffix)) // room for prefix + "-" + suffix
-	parts := []string{"apo"}
-	if s != "" {
-		parts = append(parts, s)
-	}
-	if suffix != "" {
-		parts = append(parts, suffix)
-	}
-	return strings.Join(parts, "-")
-}

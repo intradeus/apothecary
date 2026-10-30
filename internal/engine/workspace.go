@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
 	"apothecary/internal/sidecar"
+	"apothecary/internal/wsname"
 )
 
 var (
@@ -138,7 +139,7 @@ func (e *Engine) Workspace(ctx context.Context, runID, repo string) (*sidecar.Cl
 	if !ok {
 		return nil, Checkout{}, ErrNoSidecar
 	}
-	conn, err := sc.Sidecar(ctx, ports.EnvID(e.envNameForRun(v, runID)))
+	conn, err := sc.Sidecar(ctx, ports.EnvID(wsname.ForRun(v, runID)))
 	if err != nil {
 		return nil, Checkout{}, fmt.Errorf("workspace sidecar: %w", err)
 	}

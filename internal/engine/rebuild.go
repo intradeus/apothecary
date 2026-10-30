@@ -9,6 +9,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
+	"apothecary/internal/wsname"
 )
 
 // ErrRunActive refuses a workspace op while the run's loop is live (mid-stage
@@ -81,7 +82,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		NoCache:            noCache,
 		RepoURL:            res.RepoRef.URL,
 		Branch:             v.Branch,
-		Name:               workspaceName(nameBranch, runID),
+		Name:               wsname.For(nameBranch, runID),
 		Project:            res.ProjectID,
 		ProjectName:        res.ProjectName,
 		EgressDomains:      res.EgressDomains,

@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/ports"
 	"apothecary/internal/shell"
+	"apothecary/internal/wsname"
 )
 
 // Dynamic envcheck (DESIGN2 §9): the workspace compliance gate. The check
@@ -121,7 +122,7 @@ func runEnvCheck(ctx context.Context, res *Resolution, runID string, opts EnvChe
 	envp := res.Envp
 	branch := "apothecary/" + strings.ToLower(runID)
 
-	name := workspaceName(branch, runID)
+	name := wsname.For(branch, runID)
 	env, err := envp.Provision(ctx, ports.EnvSpec{
 		RunID:   runID,
 		RepoURL: res.RepoRef.URL,

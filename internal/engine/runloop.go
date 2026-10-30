@@ -16,6 +16,7 @@ import (
 	"apothecary/internal/run"
 	"apothecary/internal/shell"
 	"apothecary/internal/signalspec"
+	"apothecary/internal/wsname"
 )
 
 var errStageTimeout = errors.New("stage timeout")
@@ -2448,7 +2449,7 @@ func (x *exec) ensureEnv() error {
 	}
 	// The container/workspace name derives from the branch STEM, not the
 	// suffixed actual branch: base already ends where the run-id tail begins,
-	// so workspaceName re-appending the tail would double it (apo-…-h1-h1).
+	// so wsname.For re-appending the tail would double it (apo-…-h1-h1).
 	// Legacy runs have no base — fall back to the actual branch.
 	nameBranch := rs.view.BranchBase
 	if nameBranch == "" {
@@ -2458,7 +2459,7 @@ func (x *exec) ensureEnv() error {
 		RunID:   rs.runID,
 		RepoURL: x.res.RepoRef.URL,
 		Branch:  rs.branch,
-		Name:    workspaceName(nameBranch, rs.runID),
+		Name:    wsname.For(nameBranch, rs.runID),
 		Project: x.res.ProjectID,
 		// The name is a docker label only; the id keys the gateway and caches.
 		ProjectName:        x.res.ProjectName,

@@ -56,7 +56,7 @@ type EnvSpec struct {
 	RepoURL string
 	Branch  string
 	// Name is the human-friendly workspace/container name the engine derives
-	// from the branch (engine.workspaceName: "apo-" + slugified branch + a
+	// from the branch (wsname.For: "apo-" + slugified branch + a
 	// short run-id tail for uniqueness, ≤32 chars). Adapters use it verbatim
 	// as the container / pod name and the env identity. Empty ⇒ the adapter falls back to WorkspaceName(RunID),
 	// the legacy run-id scheme, so direct and test callers keep working.
