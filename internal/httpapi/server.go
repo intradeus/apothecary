@@ -21,6 +21,7 @@ import (
 
 	"apothecary/internal/ask"
 	"apothecary/internal/auth"
+	"apothecary/internal/authsink"
 	"apothecary/internal/builtin"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
@@ -111,6 +112,9 @@ type Server struct {
 	Egress *egress.Service
 	// Ask runs the runs' Ask panes.
 	Ask *ask.Service
+	// AuthSink serves the per-run auth brokers (the same sink the engine
+	// registers live workspaces with).
+	AuthSink *authsink.Sink
 
 	logins loginLimiter
 }

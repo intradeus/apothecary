@@ -12,6 +12,7 @@ import (
 
 	"apothecary/internal/actionspec"
 	"apothecary/internal/ask"
+	"apothecary/internal/authsink"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/egress"
@@ -90,6 +91,8 @@ func newConfEnv(t *testing.T) *confEnv {
 	srv.EnvCheck = envcheck.NewRegistry(resolver, e, "")
 	srv.Egress = egress.New(&run.Reader{Store: store}, resolver, nil)
 	srv.Ask = ask.New(&run.Reader{Store: store}, resolver, e, ask.NewMemStore())
+	srv.AuthSink = authsink.New(&run.Reader{Store: store}, resolver, nil, nil)
+	e.SetAuthSink(srv.AuthSink)
 	srv.Conf = conf
 	srv.Kinds = reg
 	srv.Ops = resolver

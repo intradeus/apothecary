@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"apothecary/internal/auth"
+	"apothecary/internal/authsink"
 	"apothecary/internal/confstore"
-	"apothecary/internal/engine"
 	"apothecary/internal/kinds"
 	"apothecary/internal/logins"
 	"apothecary/internal/providers"
@@ -277,14 +277,14 @@ func (s *Server) completeSignIn(w http.ResponseWriter, r *http.Request) {
 // working across engine restarts, and worthless for any other run.
 func (s *Server) authBroker(w http.ResponseWriter, r *http.Request) {
 	runID := r.PathValue("id")
-	h, release, err := s.Engine.RunAuthBroker(r.Context(), runID)
+	h, release, err := s.AuthSink.RunAuthBroker(r.Context(), runID)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
 		return
 	}
 	defer release()
 	inner := r.Clone(r.Context())
-	inner.URL.Path = strings.TrimPrefix(r.URL.Path, engine.AuthBrokerPath(runID))
+	inner.URL.Path = strings.TrimPrefix(r.URL.Path, authsink.AuthBrokerPath(runID))
 	inner.URL.RawPath = ""
 	h.ServeHTTP(w, inner)
 }
@@ -292,7 +292,7 @@ func (s *Server) authBroker(w http.ResponseWriter, r *http.Request) {
 // authBrokerToken checks a broker request's bearer.
 func (s *Server) authBrokerToken(w http.ResponseWriter, r *http.Request, runID string) bool {
 	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	want := s.Engine.BrokerToken(runID)
+	want := s.AuthSink.BrokerToken(runID)
 	if !ok || want == "" || subtle.ConstantTimeCompare([]byte(token), []byte(want)) != 1 {
 		writeErr(w, http.StatusUnauthorized, "missing or invalid broker token")
 		return false

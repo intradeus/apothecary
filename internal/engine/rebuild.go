@@ -117,7 +117,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		SourceBranch:  bootstrap.SourceBranchOr(v.SourceBranch, res.RepoRef.DefaultBranch),
 		Branch:        v.Branch,
 		AgentsMDPath:  res.AgentsMDPath,
-		ProviderEnv:   e.providerEnvFor(res, runID, e.engineURLFor(res.Envp, id)),
+		ProviderEnv:   e.authSink.ProviderEnv(res, runID, e.engineURLFor(res.Envp, id)),
 		GitUser:       res.GitUser,
 		GitPass:       res.GitPass,
 		GitName:       res.GitName,

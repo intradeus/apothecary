@@ -32,6 +32,7 @@ import (
 	slackadapter "apothecary/internal/adapters/slack"
 	"apothecary/internal/ask"
 	"apothecary/internal/auth"
+	"apothecary/internal/authsink"
 	"apothecary/internal/automation"
 	"apothecary/internal/browser"
 	"apothecary/internal/builtin"
@@ -275,16 +276,16 @@ func cmdServe(args []string) error {
 	// A project's parameter bindings are laid over a flow's defaults at run
 	// creation; the config store holds them beside the flow.
 	e.SetFlowBindings(conf)
-	// The Ask panes' conversations live beside the run log.
 	// A refreshed login reaches the live workspaces that hold it; omp's
 	// per-run broker tokens derive from an instance secret, so they survive
 	// restarts.
-	keeper.OnRefresh = e.PushCredential
 	brokerKey, err := conf.InstanceSecret(ctx, "auth-broker")
 	if err != nil {
 		return fmt.Errorf("auth broker key: %w", err)
 	}
-	e.SetAuthBrokerKey(brokerKey)
+	sink := authsink.New(runs, resolver, brokerKey, log)
+	e.SetAuthSink(sink)
+	keeper.OnRefresh = sink.Push
 	if boot.OtelEndpoint != "" {
 		tel, err := telemetry.New(ctx, boot.OtelEndpoint)
 		if err != nil {
@@ -381,6 +382,7 @@ func cmdServe(args []string) error {
 	api.EnvCheck = checks
 	api.Egress = egressSvc
 	api.Ask = askSvc
+	api.AuthSink = sink
 	// The SSH door (TODO 46): one listener people ssh to over their VPN —
 	// desktop VS Code included — routed by username to the run's workspace.
 	// Both of its keys derive from instance secrets: the host key so a person

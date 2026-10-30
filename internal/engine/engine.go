@@ -20,6 +20,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"apothecary/internal/authsink"
 	"apothecary/internal/envstate"
 	"apothecary/internal/event"
 	"apothecary/internal/filestore"
@@ -247,11 +248,9 @@ type Engine struct {
 	pings  map[string]*Ping
 	tokens map[string]string // runID -> per-run bearer token (regenerated each boot, see notes)
 
-	// sinks are the live workspaces a refreshed login is pushed into
-	// (logins.go); brokerKey the instance secret broker tokens derive from.
-	sinkMu    sync.Mutex
-	sinks     map[string]*authSink
-	brokerKey []byte
+	// authSink is the live workspaces a refreshed login is pushed into, and
+	// the per-run auth brokers.
+	authSink *authsink.Sink
 
 	// observed is the per-run set of listening ports discovered at runtime
 	// (the in-workspace shim scanner + engine-side sibling scans), surfaced on
@@ -519,8 +518,14 @@ func New(cfg Config, store event.Store, resolver resolution.Resolver, flows flow
 	// The engine's own until main shares one with the API (SetEnvState); its
 	// clock follows the engine's, which tests replace.
 	e.envState = envstate.New(e.runs, resolver, func() time.Time { return e.clock() }, e.log)
+	// Without an instance key (SetAuthSink) omp's broker logins are off.
+	e.authSink = authsink.New(e.runs, resolver, nil, e.log)
 	return e
 }
+
+// SetAuthSink shares the login sink (with the instance broker key) with the
+// keeper and the API; call before Recover.
+func (e *Engine) SetAuthSink(s *authsink.Sink) { e.authSink = s }
 
 // SetEnvState shares the workspace-state store (op gate, reconciled
 // statuses) with the API; call before Recover.

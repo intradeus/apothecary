@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"apothecary/internal/auth"
+	"apothecary/internal/authsink"
 	"apothecary/internal/confstore"
 	"apothecary/internal/providers"
+	"apothecary/internal/run"
 )
 
 // Credentials are their owner's: another user can neither read, test,
@@ -91,11 +93,13 @@ func TestCredentialsAPIIsOwnerScopedAndNeverEchoes(t *testing.T) {
 // refused before anything is served.
 func TestAuthBrokerTakesOnlyItsRunsToken(t *testing.T) {
 	x := newConfEnv(t)
-	x.e.SetAuthBrokerKey([]byte("instance-key"))
+	sink := authsink.New(&run.Reader{Store: x.store}, x.resolver, []byte("instance-key"), nil)
+	x.e.SetAuthSink(sink)
+	x.srv.AuthSink = sink
 	path := "/api/runs/run-a/auth-broker/v1/snapshot"
 	for name, hdr := range map[string]map[string]string{
 		"none":          {"Authorization": ""},
-		"another run's": {"Authorization": "Bearer " + x.e.BrokerToken("run-b")},
+		"another run's": {"Authorization": "Bearer " + sink.BrokerToken("run-b")},
 		"garbage":       {"Authorization": "Bearer nope"},
 	} {
 		req, _ := http.NewRequest(http.MethodGet, x.ts.URL+path, nil)
@@ -113,7 +117,7 @@ func TestAuthBrokerTakesOnlyItsRunsToken(t *testing.T) {
 	}
 	// Its own token gets past the guard — to a run that does not exist here.
 	req, _ := http.NewRequest(http.MethodGet, x.ts.URL+path, nil)
-	req.Header.Set("Authorization", "Bearer "+x.e.BrokerToken("run-a"))
+	req.Header.Set("Authorization", "Bearer "+sink.BrokerToken("run-a"))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
