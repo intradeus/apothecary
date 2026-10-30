@@ -9,6 +9,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // seedFakeAuth stands in for a harness's SeedAuth: an auth.json somewhere under
@@ -56,7 +57,7 @@ func TestTerminalRunScrubsWorkspaceCredentials(t *testing.T) {
 		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
-	runID, err := h.e.CreateRun(ctx, Ticket{Title: "T"}, "loop", testProject)
+	runID, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +112,7 @@ func TestResumeReseedsScrubbedCredentials(t *testing.T) {
 	}
 
 	// First attempt: the retry edge exhausts and the run ends resumable.
-	runID, err := h.e.CreateRun(ctx, Ticket{Title: "T"}, "loop", testProject)
+	runID, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

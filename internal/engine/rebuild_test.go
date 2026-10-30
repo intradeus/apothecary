@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // rebuilderEnvp adds the WorkspaceRebuilder capability to the fake, with a
@@ -47,7 +48,7 @@ func (r *rebuilderEnvp) Rebuild(ctx context.Context, spec envport.EnvSpec) error
 // completedWithEnv creates a run and drives it to completion with a live env.
 func completedWithEnv(t *testing.T, h *harness) string {
 	t.Helper()
-	id, err := h.e.CreateRun(context.Background(), Ticket{Title: "t"}, "loop", testProject)
+	id, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "t"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

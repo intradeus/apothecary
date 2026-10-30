@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // A take-over: the human holds the agent's live session. While held, the end
@@ -117,7 +118,7 @@ func TestTakeOverKeepsTheSessionOpenUntilReleased(t *testing.T) {
 		r.turn(call.In, "working on it", r.firstEnd)
 		return r.drive(ctx, call.In)
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +205,7 @@ func TestReleaseWithoutAHoldIsRefused(t *testing.T) {
 		<-gate
 		return agentport.AgentResult{Session: "s", TurnsUsed: 1}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +226,7 @@ func TestHoldEndsWithTheAttempt(t *testing.T) {
 		<-taken
 		return agentport.AgentResult{Session: "s", TurnsUsed: 1}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +267,7 @@ func TestHoldParksOnAQuietHolderAndWakesOnTheirMessage(t *testing.T) {
 		r.turn(call.In, "resumed: "+call.Reply, nil)
 		return r.drive(ctx, call.In)
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +358,7 @@ func TestReleasingAParkedHoldResumesWithTheHandback(t *testing.T) {
 		r.turn(call.In, "finishing", nil)
 		return r.drive(ctx, call.In)
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

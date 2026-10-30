@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // The built-in conflict-resolver template runs as written: started on
@@ -63,7 +64,7 @@ func TestBuiltinConflictResolverTemplateRuns(t *testing.T) {
 		return res, err
 	}
 
-	runID, err := ph.e.CreateRunWith(context.Background(), Ticket{Title: "Add caching (!1 by alice)"}, "conflict-resolver", testProject, RunInput{MR: &RunMR{IID: ref.IID}})
+	runID, err := ph.e.CreateRunWith(context.Background(), runinput.Ticket{Title: "Add caching (!1 by alice)"}, "conflict-resolver", testProject, runinput.Input{MR: &runinput.MR{IID: ref.IID}})
 	if err != nil {
 		t.Fatal(err)
 	}

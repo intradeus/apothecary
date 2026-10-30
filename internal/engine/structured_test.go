@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // structuredDoc: a writer whose report has a schema, a reader that demands
@@ -78,7 +79,7 @@ func TestSchemaOutputInvalidIsRetriedWithTheViolations(t *testing.T) {
 			return agentport.AgentResult{TurnsUsed: 1}, nil
 		},
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "structured", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +121,7 @@ func TestSchemaInputInvalidFailsBeforeTheAgentRuns(t *testing.T) {
 	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
 		"reader": func(fake.RunCall) (agentport.AgentResult, error) { ran = true; return agentport.AgentResult{}, nil },
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "structured", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +152,7 @@ func TestCommitActionCommitsTheMessage(t *testing.T) {
 			return agentport.AgentResult{TurnsUsed: 1}, nil
 		},
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "structured", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +189,7 @@ func TestCommitActionRefusesAMalformedMessage(t *testing.T) {
 		}
 		return envport.ExecResult{}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "structured", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +224,7 @@ func TestCommitActionRefusedByGit(t *testing.T) {
 		}
 		return envport.ExecResult{}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "structured", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +248,7 @@ func TestCommandSchemaOutputInvalid(t *testing.T) {
 		}
 		return envport.ExecResult{}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "structured", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +277,7 @@ func TestCommandSchemaInputInvalidFailsBeforeTheScript(t *testing.T) {
 		}
 		return envport.ExecResult{}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "structured", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +320,7 @@ main:
 			return agentport.AgentResult{}, nil
 		},
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "structured", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +361,7 @@ func TestMissingOutputIsFedToTheRetry(t *testing.T) {
 			return agentport.AgentResult{TurnsUsed: 1}, nil
 		},
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "structured", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "structured", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

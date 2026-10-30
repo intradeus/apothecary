@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"apothecary/internal/event"
+	"apothecary/internal/runinput"
 )
 
 func TestCheckBranch(t *testing.T) {
@@ -40,7 +41,7 @@ func TestCreateRunCustomBranch(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 
 	runID, err := h.e.CreateRun(context.Background(),
-		Ticket{Title: "T", Branch: "feat/PROJ-123-login"}, "loop", testProject)
+		runinput.Ticket{Title: "T", Branch: "feat/PROJ-123-login"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,12 +57,12 @@ func TestCreateRunCustomBranch(t *testing.T) {
 
 	// Invalid names are refused before any event is written.
 	if _, err := h.e.CreateRun(context.Background(),
-		Ticket{Title: "T", Branch: "bad name"}, "loop", testProject); err == nil {
+		runinput.Ticket{Title: "T", Branch: "bad name"}, "loop", testProject); err == nil {
 		t.Error("CreateRun accepted an invalid branch")
 	}
 
 	// Empty keeps the generated format.
-	runID2, err := h.e.CreateRun(context.Background(), Ticket{Title: "Add login"}, "loop", testProject)
+	runID2, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "Add login"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

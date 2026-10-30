@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // A sequence runs as its expanded stages: the events name them by their
@@ -36,7 +37,7 @@ main:
 		}
 		return envport.ExecResult{}, nil
 	}
-	id, err := h.e.CreateRun(context.Background(), Ticket{Title: "sequences"}, "seq", testProject)
+	id, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "sequences"}, "seq", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

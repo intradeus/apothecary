@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // A human's verb landing while the loop is on its way to parked: the log is
@@ -80,7 +81,7 @@ func parkOnQuestion(t *testing.T, store func(*event.MemStore) event.Store) (*har
 		}
 		return agentport.AgentResult{TurnsUsed: 1, Session: "sess-1"}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +127,7 @@ func parkOnHolder(t *testing.T, store func(*event.MemStore) event.Store) (*harne
 		r.turn(call.In, "finishing", nil)
 		return r.drive(ctx, call.In)
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

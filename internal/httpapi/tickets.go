@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/filestore"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/resolution"
+	"apothecary/internal/runinput"
 	"apothecary/internal/tickets"
 )
 
@@ -325,7 +326,7 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 	var body StartRunRequest
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
 
-	runID, err := s.Runs.CreateRunWith(r.Context(), engine.Ticket{
+	runID, err := s.Runs.CreateRunWith(r.Context(), runinput.Ticket{
 		TicketID:     t.ID,
 		Title:        t.Title,
 		Goal:         t.Goal,
@@ -342,7 +343,7 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 		SourceKind: t.SourceKind,
 		SourceKey:  t.SourceKey,
 		SourceURL:  t.SourceURL,
-	}, body.Flow, t.ProjectID, engine.RunInput{Params: body.Params, MR: body.MR, Skillsets: body.Skillsets})
+	}, body.Flow, t.ProjectID, runinput.Input{Params: body.Params, MR: body.MR, Skillsets: body.Skillsets})
 	switch {
 	case errors.Is(err, engine.ErrEnvCapacity):
 		writeErr(w, http.StatusConflict, err.Error())

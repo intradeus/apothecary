@@ -17,11 +17,12 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // linkedTicket is a ticket imported from the fake tracker: its run knows
 // which integration to write through and which issue to write to.
-var linkedTicket = Ticket{TicketID: "tk-1", Title: "T", SourceID: "int-1", SourceKind: "fake",
+var linkedTicket = runinput.Ticket{TicketID: "tk-1", Title: "T", SourceID: "int-1", SourceKind: "fake",
 	SourceKey: "DEV-1", SourceURL: "https://tracker.local/browse/DEV-1"}
 
 // trackerHarness is a harness whose resolution writes to one fake tracker,
@@ -269,7 +270,7 @@ func TestLiteralStatusMovesOrFails(t *testing.T) {
 // skipped — visibly — and the flow goes on, so one flow serves every ticket.
 func TestTrackerActionSkipsATicketWrittenByHand(t *testing.T) {
 	h, tracker := trackerHarness(t, transitionFirstDoc)
-	runID, err := h.e.CreateRun(context.Background(), Ticket{TicketID: "tk-2", Title: "T"}, "tk", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{TicketID: "tk-2", Title: "T"}, "tk", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,12 +300,12 @@ func TestCreateRunRefusesATrackerThatCannotWrite(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `stage "kick"`) || !strings.Contains(err.Error(), "can only read") {
 		t.Errorf("err = %v, want the stage and the integration named", err)
 	}
-	if _, err := h.e.CreateRun(context.Background(), Ticket{TicketID: "tk-2", Title: "T"}, "tk", testProject); err != nil {
+	if _, err := h.e.CreateRun(context.Background(), runinput.Ticket{TicketID: "tk-2", Title: "T"}, "tk", testProject); err != nil {
 		t.Errorf("unlinked ticket refused: %v", err)
 	}
 	// A build with no writer at all cannot run the flow for any ticket.
 	h.res.TicketWriter = nil
-	if _, err := h.e.CreateRun(context.Background(), Ticket{TicketID: "tk-2", Title: "T"}, "tk", testProject); err == nil || !strings.Contains(err.Error(), "cannot") {
+	if _, err := h.e.CreateRun(context.Background(), runinput.Ticket{TicketID: "tk-2", Title: "T"}, "tk", testProject); err == nil || !strings.Contains(err.Error(), "cannot") {
 		t.Errorf("no-writer build: err = %v", err)
 	}
 }
@@ -319,7 +320,7 @@ func TestRerunKeepsTheTicketSource(t *testing.T) {
 	}
 	h.e.Wait(runID)
 	tracker.Tickets[0].Status = "To Do"
-	id2, err := h.e.Rerun(ctx, runID, RunInput{})
+	id2, err := h.e.Rerun(ctx, runID, runinput.Input{})
 	if err != nil {
 		t.Fatal(err)
 	}

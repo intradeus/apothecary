@@ -21,6 +21,7 @@ import (
 	"apothecary/internal/engine"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 	"apothecary/internal/skills"
 )
 
@@ -175,10 +176,10 @@ func (s *Server) startMRRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	runID, err := s.Runs.CreateRunWith(ctx, engine.Ticket{
+	runID, err := s.Runs.CreateRunWith(ctx, runinput.Ticket{
 		TicketID: t.ID, Title: t.Title, Goal: t.Goal, ChangeType: string(t.ChangeType),
 		SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,
-	}, flowName, projectID, engine.RunInput{Params: body.Params, MR: &engine.RunMR{Repo: body.Repo, IID: iid}, Skillsets: body.Skillsets})
+	}, flowName, projectID, runinput.Input{Params: body.Params, MR: &runinput.MR{Repo: body.Repo, IID: iid}, Skillsets: body.Skillsets})
 	switch {
 	case errors.Is(err, engine.ErrEnvCapacity):
 		writeErr(w, http.StatusConflict, err.Error())

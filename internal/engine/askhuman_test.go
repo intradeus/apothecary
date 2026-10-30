@@ -12,6 +12,7 @@ import (
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 const askFlowDoc = `name: ask
@@ -60,7 +61,7 @@ func TestAgentEndingTurnOnOpenQuestionPausesAttempt(t *testing.T) {
 		return agentport.AgentResult{TurnsUsed: 3, Session: "sess-1", Usage: agentport.Usage{CostUSD: 0.5}}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,7 @@ func TestHarnessErrorWithOpenQuestionFailsRatherThanPausing(t *testing.T) {
 		return agentport.AgentResult{}, context.DeadlineExceeded
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +311,7 @@ main:
 		return agentport.AgentResult{TurnsUsed: 2, Session: "sess-1"}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "askout", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "askout", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +369,7 @@ func TestParkedRunFreesItsSlotAndTheAnswerWakesIt(t *testing.T) {
 		return agentport.AgentResult{TurnsUsed: 1, Session: "sess-a"}, nil
 	}
 
-	first, err := h.e.CreateRun(ctx, Ticket{Title: "A"}, "ask", testProject)
+	first, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "A"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +396,7 @@ func TestParkedRunFreesItsSlotAndTheAnswerWakesIt(t *testing.T) {
 
 	// The freed slot admits the second run, which runs to completion while
 	// the first is still waiting.
-	second, err := h.e.CreateRun(ctx, Ticket{Title: "B"}, "ask", testProject)
+	second, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "B"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +432,7 @@ main:
   - { id: plan_gate, type: human_gate, question: "Approve?", on_success: done, on_reject: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "gated", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "gated", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +467,7 @@ func TestPauseOnAParkedRunHoldsItThroughTheAnswer(t *testing.T) {
 		}
 		return agentport.AgentResult{TurnsUsed: 1, Session: "sess-1"}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +509,7 @@ func TestPlayRefusesARunThatIsMerelyWaiting(t *testing.T) {
 		}
 		return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -643,7 +644,7 @@ func TestAnswerAfterTheTurnWasHandedBackStillPausesTheAttempt(t *testing.T) {
 		return agentport.AgentResult{TurnsUsed: 1, Session: "sess-1"}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

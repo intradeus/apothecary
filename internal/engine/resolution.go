@@ -9,6 +9,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // preflightTicket is the per-TICKET half of preflight: a tracker action
@@ -17,7 +18,7 @@ import (
 // rather than in preflight (per project, also run without a ticket by
 // PreflightProject). A ticket with no tracker passes — the engine skips
 // those stages, visibly — and so does a flow with no tracker action.
-func (e *Engine) preflightTicket(ctx context.Context, res *resolution.Resolution, fl *flow.Flow, t Ticket) error {
+func (e *Engine) preflightTicket(ctx context.Context, res *resolution.Resolution, fl *flow.Flow, t runinput.Ticket) error {
 	if t.SourceID == "" {
 		return nil
 	}

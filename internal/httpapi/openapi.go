@@ -289,6 +289,7 @@ type typeNamer struct {
 
 var typeNameOverrides = map[string]string{
 	"run.View":                 "RunView",
+	"runinput.MR":              "RunMR",
 	"run.PingView":             "PingView",
 	"reviewfile.Review":        "ReviewDocument",
 	"reviewfile.Note":          "ReviewNote",

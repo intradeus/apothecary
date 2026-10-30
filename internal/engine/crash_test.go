@@ -27,6 +27,7 @@ import (
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 var errCrashed = errors.New("the process died")
@@ -421,7 +422,7 @@ func playCrash(t *testing.T, sc crashScenario, n int) crashOutcome {
 	sc.world(h)
 	ctx := context.Background()
 
-	runID, err := h.e.CreateRun(ctx, Ticket{Title: "Crash"}, fl.Name, testProject)
+	runID, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "Crash"}, fl.Name, testProject)
 	if err != nil && !errors.Is(err, errCrashed) {
 		t.Fatal(err)
 	}

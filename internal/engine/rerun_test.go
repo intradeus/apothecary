@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"apothecary/internal/runinput"
 )
 
 // A user-chosen branch (fix/task-123-…) must survive a restart verbatim —
@@ -14,7 +16,7 @@ func TestRerunPreservesUserBranch(t *testing.T) {
 	ctx := context.Background()
 
 	id, err := h.e.CreateRun(ctx,
-		Ticket{Title: "Add a health endpoint", Branch: "fix/task-123-add-a-health-endpoint"},
+		runinput.Ticket{Title: "Add a health endpoint", Branch: "fix/task-123-add-a-health-endpoint"},
 		"loop", testProject)
 	if err != nil {
 		t.Fatal(err)
@@ -24,7 +26,7 @@ func TestRerunPreservesUserBranch(t *testing.T) {
 		t.Fatalf("setup: original branch = %q", b)
 	}
 
-	newID, err := h.e.Rerun(ctx, id, RunInput{})
+	newID, err := h.e.Rerun(ctx, id, runinput.Input{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +44,7 @@ func TestRerunRegeneratesAutoBranch(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()
 
-	id, err := h.e.CreateRun(ctx, Ticket{Title: "Add health"}, "loop", testProject) // no branch → generated
+	id, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "Add health"}, "loop", testProject) // no branch → generated
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +54,7 @@ func TestRerunRegeneratesAutoBranch(t *testing.T) {
 		t.Fatalf("setup: expected generated branch, got %q", orig)
 	}
 
-	newID, err := h.e.Rerun(ctx, id, RunInput{})
+	newID, err := h.e.Rerun(ctx, id, runinput.Input{})
 	if err != nil {
 		t.Fatal(err)
 	}

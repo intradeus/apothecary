@@ -15,6 +15,7 @@ import (
 	"apothecary/internal/resolution"
 	"apothecary/internal/resources"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // Shutdown cancels every loop before waiting on any: three agents that each
@@ -41,7 +42,7 @@ func TestShutdownCancelsEveryLoopBeforeWaiting(t *testing.T) {
 		return agentport.AgentResult{}, ctx.Err()
 	}
 	for i := 0; i < n; i++ {
-		if _, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject); err != nil {
+		if _, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -67,7 +68,7 @@ func TestShutdownCancelsEveryLoopBeforeWaiting(t *testing.T) {
 func TestRecoverClosesInterruptedRebuild(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()
-	id, err := h.e.CreateRun(ctx, Ticket{Title: "T"}, "loop", testProject)
+	id, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,7 @@ main:
   - { id: test, type: command, run: "make test" }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "c", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "c", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +180,7 @@ func TestPollersReadTheProjection(t *testing.T) {
 	var vs *viewStore
 	h := newHarnessOn(t, func(m *event.MemStore) event.Store { vs = &viewStore{MemStore: m}; return vs }, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()
-	id, err := h.e.CreateRun(ctx, Ticket{Title: "T"}, "loop", testProject)
+	id, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +214,7 @@ func TestPollersReadTheProjection(t *testing.T) {
 func TestReconcileRecordsConfigDirty(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()
-	id, err := h.e.CreateRun(ctx, Ticket{Title: "T"}, "loop", testProject)
+	id, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

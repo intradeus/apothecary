@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // The agent runs as a live session: its transcript is recorded as it
@@ -55,7 +56,7 @@ func TestTranscriptIsRecordedCoalescedAndRedacted(t *testing.T) {
 		)
 		return agentport.AgentResult{Session: "sess-t", TurnsUsed: 1, Output: "Done."}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,7 @@ func TestMessageIsDeliveredIntoTheRunningInvocation(t *testing.T) {
 		got <- msgs
 		return agentport.AgentResult{Session: "s", TurnsUsed: 2}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +215,7 @@ func TestUndeliveredMessageRidesIntoTheNextPrompt(t *testing.T) {
 		}
 		return agentport.AgentResult{Session: "s", TurnsUsed: 1}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "two", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "two", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +256,7 @@ func TestQuestionAnsweredDuringTheLiveHold(t *testing.T) {
 		answer <- ComposeAnswer(p)
 		return agentport.AgentResult{Session: "s", TurnsUsed: 3}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +313,7 @@ func TestUnansweredQuestionParksAfterTheHold(t *testing.T) {
 	h.runner.ResumeFunc = func(_ context.Context, call fake.ResumeCall) (agentport.AgentResult, error) {
 		return agentport.AgentResult{Session: "sess-p", TurnsUsed: 1}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

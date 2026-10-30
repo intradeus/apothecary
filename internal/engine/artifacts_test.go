@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/filestore"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/runinput"
 )
 
 // newFiles wires REAL filestore stores over the in-package Mem — the engine's
@@ -55,7 +56,7 @@ func TestGoalAttachmentsDeliveredAndPrompted(t *testing.T) {
 		t.Fatal(err)
 	}
 	runID, err := h.e.CreateRun(context.Background(),
-		Ticket{Title: "T", AttachmentIDs: []string{up.ID}}, "loop", testProject)
+		runinput.Ticket{Title: "T", AttachmentIDs: []string{up.ID}}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +92,7 @@ func TestProvisionLogPublished(t *testing.T) {
 	att, snaps, _ := newFiles(t)
 	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, loopFlowDoc))
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func TestProvisionLogPublishedOnBootstrapFailure(t *testing.T) {
 		return envport.ExecResult{}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +181,7 @@ main:
 		return envport.ExecResult{}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "snap", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "snap", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +262,7 @@ main:
 		h.writeFile(t, call.Env, "artifacts/dbs.md", "rewritten afterwards")
 		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ping", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

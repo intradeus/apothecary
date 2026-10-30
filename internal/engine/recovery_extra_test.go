@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // Crash between stage_failed and the edge decision: recovery routes the
@@ -160,11 +161,11 @@ func TestConcurrencyQueueFIFO(t *testing.T) {
 		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 
-	id1, err := h.e.CreateRun(context.Background(), Ticket{Title: "first"}, "loop", testProject)
+	id1, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "first"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, err := h.e.CreateRun(context.Background(), Ticket{Title: "second"}, "loop", testProject)
+	id2, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "second"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

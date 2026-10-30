@@ -22,6 +22,7 @@ import (
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 	"apothecary/internal/runcore"
+	"apothecary/internal/runinput"
 )
 
 // curatedReviewerDoc is the reviewer template's shape, small: poll the
@@ -86,7 +87,7 @@ func curatedReviewer(t *testing.T, gate bool, script func(call int, threads *rev
 		return inner(ctx, call)
 	}
 	ref := ph.repoHost.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
-	runID, err := ph.e.CreateRunWith(context.Background(), Ticket{Title: "Add caching"}, "cur", testProject, RunInput{MR: &RunMR{IID: ref.IID}})
+	runID, err := ph.e.CreateRunWith(context.Background(), runinput.Ticket{Title: "Add caching"}, "cur", testProject, runinput.Input{MR: &runinput.MR{IID: ref.IID}})
 	if err != nil {
 		t.Fatal(err)
 	}

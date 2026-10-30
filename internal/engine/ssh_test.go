@@ -18,6 +18,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/runinput"
 	"apothecary/internal/sshdoor"
 	"apothecary/internal/wsinfo"
 )
@@ -152,7 +153,7 @@ func TestSSHDoorReachesTheRunsWorkspace(t *testing.T) {
 		},
 	})
 	h.res.UserID = alice.ID
-	runID, err := h.e.CreateRun(ctx, Ticket{Title: "T"}, "rv", testProject)
+	runID, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "T"}, "rv", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

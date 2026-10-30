@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 const automergeWatcher = "  - id: automerge\n    on: mr_mergeable\n    stages:\n" +
@@ -171,7 +172,7 @@ func TestMRMergeIsPinnedToTheHeadTheRoundPushed(t *testing.T) {
 		}
 		return res, err
 	}
-	runID, err := ph.e.CreateRunWith(context.Background(), Ticket{Title: "Add caching (!1 by alice)"}, "shipper", testProject, RunInput{MR: &RunMR{IID: ref.IID}})
+	runID, err := ph.e.CreateRunWith(context.Background(), runinput.Ticket{Title: "Add caching (!1 by alice)"}, "shipper", testProject, runinput.Input{MR: &runinput.MR{IID: ref.IID}})
 	if err != nil {
 		t.Fatal(err)
 	}

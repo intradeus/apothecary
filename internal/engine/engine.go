@@ -35,74 +35,11 @@ import (
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 	"apothecary/internal/runcore"
+	"apothecary/internal/runinput"
 	"apothecary/internal/runports"
 	"apothecary/internal/skills"
 	"apothecary/internal/wsname"
 )
-
-type Ticket struct {
-	// TicketID is the parent ticket this run belongs to. When set, Branch is
-	// treated as the ticket's BASE branch and the run gets its own unique
-	// actual branch = base + "-" + <run-id tail>. Empty (direct/test path) =
-	// legacy behavior: Branch is used verbatim / generated with the run id.
-	TicketID string
-	Title    string
-	Goal     string
-	// ChangeType is the ticket's kind of change (trackerport.ChangeType), which `run_if: run.ticket.change_type == fix` reads; "" is feat.
-	ChangeType string
-	// Branch is the base branch when TicketID is set, else the run's branch
-	// override ("" = the default apothecary/<run-id>-<title-slug>). Names git
-	// check-ref-format would refuse are rejected.
-	Branch string
-	// SourceBranch is the branch this run forks off from (the base of
-	// `git switch -c <branch> origin/<SourceBranch>`). Per-run; "" defaults to
-	// the project's default branch. Names git check-ref-format would refuse are
-	// rejected.
-	SourceBranch string
-	// RunGoal is extra direction for THIS attempt, additive to Goal (which
-	// stays the enduring spec). Rendered as its own prompt section.
-	RunGoal string
-	// AttachmentIDs are uploaded files attached to THIS RUN: claimed for the
-	// run and delivered into its workspace.
-	AttachmentIDs []string
-	// TicketAttachmentIDs are the parent ticket's attachments — owned by the
-	// ticket, delivered to every run of it. Snapshotted onto run_created;
-	// NOT associated to this run.
-	TicketAttachmentIDs []string
-	// Source* snapshot the tracker issue the ticket was imported from — the
-	// ticketsource integration id, its vendor, the issue key and its page —
-	// so a flow's tracker actions (FLOWLANG §2) know what to write to. All
-	// empty for a ticket written by hand: those stages then skip.
-	SourceID   string
-	SourceKind string
-	SourceKey  string
-	SourceURL  string
-}
-
-// RunInput is the optional per-attempt input when starting a run from a
-// ticket or restarting one: a flow override plus this attempt's direction and
-// attachments.
-type RunInput struct {
-	Flow string // "" = the ticket/original run's flow
-	Goal string // extra direction for this attempt
-	// SourceBranch overrides the branch the restarted run forks off from;
-	// "" reuses the original run's source branch.
-	SourceBranch  string
-	AttachmentIDs []string
-	// Params override the project's parameter bindings for this attempt;
-	// By records who created the run on run_created ("" = a person,
-	// "automation" for an automation).
-	Params map[string]string
-	By     string
-	// MR starts the run on a merge request someone opened, for a flow with
-	// operates_on: merge_request: Repo is the checkout it belongs to ("" =
-	// the primary), IID its number.
-	MR *RunMR
-	// Skillsets are the skillsets to install into the workspace, each at a
-	// version (0 = latest). On a rerun, nil means the original run's,
-	// re-pinned to their latest; an empty non-nil list means none.
-	Skillsets []skills.Ref
-}
 
 // SkillStore is the skill library as the engine sees it (TODO 38): turn a
 // request's skillset refs into pins at run creation, and pins into the
@@ -110,12 +47,6 @@ type RunInput struct {
 type SkillStore interface {
 	ResolveSkillsets(ctx context.Context, userID string, refs []skills.Ref) ([]event.SkillsetPin, error)
 	SkillTrees(ctx context.Context, pins []event.SkillsetPin) ([]skills.Tree, error)
-}
-
-// RunMR names a merge request to create a run on.
-type RunMR struct {
-	Repo string `json:"repo,omitempty"`
-	IID  int    `json:"iid"`
 }
 
 // Config is the engine's static wiring (DESIGN2 §6.1): project-shaped
@@ -763,8 +694,8 @@ func (e *Engine) AppendEvents(ctx context.Context, runID string, ps ...event.Pay
 
 // CreateRun is CreateRunWith on a ticket, with the project's parameter
 // bindings and nothing overridden.
-func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID string) (string, error) {
-	return e.CreateRunWith(ctx, t, flowName, projectID, RunInput{})
+func (e *Engine) CreateRun(ctx context.Context, t runinput.Ticket, flowName, projectID string) (string, error) {
+	return e.CreateRunWith(ctx, t, flowName, projectID, runinput.Input{})
 }
 
 // CreateRunWith performs §1 preflight against the project's resolved
@@ -776,7 +707,7 @@ func (e *Engine) CreateRun(ctx context.Context, t Ticket, flowName, projectID st
 // is resolved with those values before preflight, so a bound harness, model
 // or run_ref is checked exactly like a literal one. Preflight failures
 // refuse the run naming the exact missing item — no events are written.
-func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectID string, in RunInput) (string, error) {
+func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName, projectID string, in runinput.Input) (string, error) {
 	if strings.TrimSpace(t.Title) == "" {
 		return "", errors.New("ticket title is required")
 	}
@@ -930,7 +861,7 @@ func runCheckouts(res *resolution.Resolution, branch, sourceBranch string) []eve
 // checkout at it: the branch is the merge request's own (a fork's, which has
 // none here, a local mr-<iid>), forked from nothing — its head is fetched from
 // the repository host's ref — and its target is what it merges into.
-func adoptMR(ctx context.Context, res *resolution.Resolution, checkouts []event.Checkout, want *RunMR) (*event.Checkout, *event.AdoptedMR, error) {
+func adoptMR(ctx context.Context, res *resolution.Resolution, checkouts []event.Checkout, want *runinput.MR) (*event.Checkout, *event.AdoptedMR, error) {
 	repo := want.Repo
 	if repo == "" {
 		repo = event.PrimaryCheckoutName
@@ -1054,7 +985,7 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 // Vocabulary: "rerun" is a new run of the same ticket, "retry" (RetryRun)
 // re-enters a failed stage in place, "play" continues a paused run, and
 // "restart" is reserved for the engine PROCESS restarting (recovery).
-func (e *Engine) Rerun(ctx context.Context, runID string, in RunInput) (string, error) {
+func (e *Engine) Rerun(ctx context.Context, runID string, in runinput.Input) (string, error) {
 	e.mu.Lock()
 	_, active := e.handles[runID]
 	e.mu.Unlock()
@@ -1088,10 +1019,10 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in RunInput) (string, 
 	// The attempt runs with the original's parameter values — unless the
 	// flow changed, or the request says otherwise. Values the flow no
 	// longer declares drop.
-	next := RunInput{Params: map[string]string{}, By: in.By, MR: in.MR, Skillsets: in.Skillsets}
+	next := runinput.Input{Params: map[string]string{}, By: in.By, MR: in.MR, Skillsets: in.Skillsets}
 	// A run started on someone's merge request is rerun on it.
 	if next.MR == nil && v.Adopted != nil {
-		next.MR = &RunMR{Repo: v.Adopted.Repo, IID: v.Adopted.IID}
+		next.MR = &runinput.MR{Repo: v.Adopted.Repo, IID: v.Adopted.IID}
 	}
 	// The original's skillsets carry over, re-pinned to their latest
 	// version (as the flow is re-read by name) — unless the request says
@@ -1112,7 +1043,7 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in RunInput) (string, 
 	}
 	maps.Copy(next.Params, in.Params)
 	if v.TicketID != "" {
-		return e.CreateRunWith(ctx, Ticket{
+		return e.CreateRunWith(ctx, runinput.Ticket{
 			TicketID: v.TicketID, Title: v.TicketTitle, Goal: v.TicketGoal, Branch: v.BranchBase,
 			ChangeType:   v.TicketChangeType,
 			SourceBranch: sourceBranch,
@@ -1130,7 +1061,7 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in RunInput) (string, 
 	if branch == "" || strings.HasPrefix(branch, "apothecary/"+strings.ToLower(runID)+"-") {
 		branch = ""
 	}
-	return e.CreateRunWith(ctx, Ticket{
+	return e.CreateRunWith(ctx, runinput.Ticket{
 		Title: v.TicketTitle, Goal: v.TicketGoal, Branch: branch,
 		SourceBranch: sourceBranch,
 		RunGoal:      in.Goal, AttachmentIDs: in.AttachmentIDs,

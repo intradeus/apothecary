@@ -11,11 +11,11 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/confstore"
-	"apothecary/internal/engine"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 	"apothecary/internal/secrets"
 	"apothecary/internal/tickets"
 )
@@ -26,9 +26,9 @@ type fakeEngine struct {
 	mu    sync.Mutex
 	Fail  error
 	calls []struct {
-		Ticket engine.Ticket
+		Ticket runinput.Ticket
 		Flow   string
-		In     engine.RunInput
+		In     runinput.Input
 	}
 	runs map[string][]run.View
 	next int
@@ -36,7 +36,7 @@ type fakeEngine struct {
 	MRs []repoport.MRInfo
 }
 
-func (f *fakeEngine) CreateRunWith(_ context.Context, t engine.Ticket, flowName, _ string, in engine.RunInput) (string, error) {
+func (f *fakeEngine) CreateRunWith(_ context.Context, t runinput.Ticket, flowName, _ string, in runinput.Input) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.Fail != nil {
@@ -49,9 +49,9 @@ func (f *fakeEngine) CreateRunWith(_ context.Context, t engine.Ticket, flowName,
 	}
 	f.runs[t.TicketID] = append(f.runs[t.TicketID], run.View{RunID: id, TicketID: t.TicketID})
 	f.calls = append(f.calls, struct {
-		Ticket engine.Ticket
+		Ticket runinput.Ticket
 		Flow   string
-		In     engine.RunInput
+		In     runinput.Input
 	}{t, flowName, in})
 	return id, nil
 }

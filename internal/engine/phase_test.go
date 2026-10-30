@@ -18,6 +18,7 @@ import (
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/runcore"
+	"apothecary/internal/runinput"
 )
 
 // phasedFlowDoc is a ticket's whole life: the main chain opens the merge
@@ -123,7 +124,7 @@ func (ph *phasedHarness) promptsOf(stage string) []string {
 // review.
 func (ph *phasedHarness) start(t *testing.T) string {
 	t.Helper()
-	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Phased"}, "phased", testProject)
+	runID, err := ph.e.CreateRun(context.Background(), runinput.Ticket{Title: "Phased"}, "phased", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +259,7 @@ func TestRunCompletesWhenNothingIsArmed(t *testing.T) {
 	doc = strings.Replace(doc, "on: { signal: mr_review_settled, quiet_for: 1h, max: 2 }", "on: manual", 1)
 	doc = strings.Replace(doc, "on: mr_merged\n    then: done", "on: { signal: mr_merged, start: manual }\n    then: done", 1)
 	ph := newPhasedHarness(t, doc)
-	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Phased"}, "phased", testProject)
+	runID, err := ph.e.CreateRun(context.Background(), runinput.Ticket{Title: "Phased"}, "phased", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +274,7 @@ func TestRunCompletesWhenNothingIsArmed(t *testing.T) {
 func TestStagesOnlyDocumentRunsAsOnePhase(t *testing.T) {
 	doc := "name: short\nversion: 5\nparameters: { harness: fake, model: fake/model }\nmain:\n  - { id: s, type: command, run: \"true\" }\n"
 	ph := newPhasedHarness(t, doc)
-	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Short"}, "short", testProject)
+	runID, err := ph.e.CreateRun(context.Background(), runinput.Ticket{Title: "Short"}, "short", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +367,7 @@ func TestGateParksAndAWatcherRunsMeanwhile(t *testing.T) {
 		"  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }\n",
 		"  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }\n  - { id: final, type: human_gate, question: \"Merge?\", input: { mr: { from: run.mr.url, type: link } }, auto_approve: mr_merged, auto_reject: mr_closed, on_reject: abort }\n", 1)
 	ph := newPhasedHarness(t, doc)
-	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Phased"}, "phased", testProject)
+	runID, err := ph.e.CreateRun(context.Background(), runinput.Ticket{Title: "Phased"}, "phased", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +519,7 @@ outcomes:
   - { id: shipped, on: mr_merged, then: done }
 `
 	ph := newPhasedHarness(t, doc)
-	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "T"}, "phased", testProject)
+	runID, err := ph.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "phased", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -628,7 +629,7 @@ func TestReviewPhaseWaitsForAQuietReview(t *testing.T) {
 // conflict first, then the review round (R3, R4).
 func TestSimultaneousTriggersRunInDocumentOrder(t *testing.T) {
 	ph := newPhasedHarness(t, strings.Replace(phasedFlowDoc, "start: confirm", "start: auto", 1))
-	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Phased"}, "phased", testProject)
+	runID, err := ph.e.CreateRun(context.Background(), runinput.Ticket{Title: "Phased"}, "phased", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -727,7 +728,7 @@ func TestIdleRunsFreeTheirSlot(t *testing.T) {
 	ph := newPhasedHarness(t, phasedFlowDoc)
 	ph.settings.L.MaxConcurrentRuns = 1
 	ph.start(t)
-	second, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Second"}, "phased", testProject)
+	second, err := ph.e.CreateRun(context.Background(), runinput.Ticket{Title: "Second"}, "phased", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

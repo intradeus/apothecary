@@ -11,6 +11,7 @@ import (
 
 	"apothecary/internal/event"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 func skipped(evs []event.Event, stage string) (bool, string) {
@@ -35,7 +36,7 @@ main:
   - { id: test, type: command, run: "true" }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	id, err := h.e.CreateRun(context.Background(), Ticket{Title: "by hand"}, "cond", testProject)
+	id, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "by hand"}, "cond", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ main:
 		t.Errorf("state = %s", v.State)
 	}
 	// With a tracker issue the stage runs.
-	id2, err := h.e.CreateRun(context.Background(), Ticket{Title: "imported", SourceID: "int-1", SourceKind: "fake", SourceKey: "DEV-1"}, "cond", testProject)
+	id2, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "imported", SourceID: "int-1", SourceKind: "fake", SourceKey: "DEV-1"}, "cond", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +90,7 @@ main:
   - { id: test, type: command, run: "true" }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	id, err := h.e.CreateRun(context.Background(), Ticket{Title: "no type"}, "cond", testProject)
+	id, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "no type"}, "cond", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +101,7 @@ main:
 	if v := h.view(t, id); v.TicketChangeType != "feat" {
 		t.Errorf("change type = %q, want feat by default", v.TicketChangeType)
 	}
-	id2, err := h.e.CreateRun(context.Background(), Ticket{Title: "crash", ChangeType: "fix"}, "cond", testProject)
+	id2, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "crash", ChangeType: "fix"}, "cond", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +134,7 @@ outcomes:
   - { id: shipped, on: mr_merged, then: done }
 `
 	ph := newPhasedHarness(t, doc)
-	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "T"}, "subj", testProject)
+	runID, err := ph.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "subj", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,7 @@ outcomes:
 	doc2 := strings.Replace(doc, "  - { id: build, type: command, run: \"true\" }\n",
 		"  - { id: build, type: command, run: \"true\" }\n  - { id: hold, type: human_gate, question: \"Keep the run around?\" }\n", 1)
 	ph2 := newPhasedHarness(t, doc2)
-	runID2, err := ph2.e.CreateRun(context.Background(), Ticket{Title: "T"}, "subj", testProject)
+	runID2, err := ph2.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "subj", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +190,7 @@ main:
   - { id: build, type: command, run: "true" }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	id, err := h.e.CreateRunWith(context.Background(), Ticket{Title: "T"}, "gated", testProject, RunInput{Params: map[string]string{"gate": "false"}})
+	id, err := h.e.CreateRunWith(context.Background(), runinput.Ticket{Title: "T"}, "gated", testProject, runinput.Input{Params: map[string]string{"gate": "false"}})
 	if err != nil {
 		t.Fatal(err)
 	}

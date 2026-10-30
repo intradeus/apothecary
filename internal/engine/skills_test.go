@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 	"apothecary/internal/skills"
 )
 
@@ -124,8 +125,8 @@ func TestRunInstallsPinnedSkills(t *testing.T) {
 	h.res.InstallSkills = rec.fn
 	ctx := context.Background()
 
-	id, err := h.e.CreateRunWith(ctx, Ticket{Title: "t"}, "loop", testProject,
-		RunInput{Skillsets: []skills.Ref{{ID: "set1"}, {ID: "set2", Seq: 1}, {ID: "set1"}}})
+	id, err := h.e.CreateRunWith(ctx, runinput.Ticket{Title: "t"}, "loop", testProject,
+		runinput.Input{Skillsets: []skills.Ref{{ID: "set1"}, {ID: "set2", Seq: 1}, {ID: "set1"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,12 +197,12 @@ func TestRunWithoutSkillsResetsOnly(t *testing.T) {
 func TestRunRefusesUnknownSkillset(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()
-	_, err := h.e.CreateRunWith(ctx, Ticket{Title: "t"}, "loop", testProject, RunInput{Skillsets: []skills.Ref{{ID: "set1"}}})
+	_, err := h.e.CreateRunWith(ctx, runinput.Ticket{Title: "t"}, "loop", testProject, runinput.Input{Skillsets: []skills.Ref{{ID: "set1"}}})
 	if err == nil || !strings.Contains(err.Error(), "skills are not available") {
 		t.Errorf("no library: err = %v", err)
 	}
 	h = newHarnessWith(t, func(_ *harness, d *Deps) { d.Skills = newSkillLib() }, mustFlow(t, loopFlowDoc))
-	_, err = h.e.CreateRunWith(ctx, Ticket{Title: "t"}, "loop", testProject, RunInput{Skillsets: []skills.Ref{{ID: "nope"}}})
+	_, err = h.e.CreateRunWith(ctx, runinput.Ticket{Title: "t"}, "loop", testProject, runinput.Input{Skillsets: []skills.Ref{{ID: "nope"}}})
 	if err == nil || !strings.Contains(err.Error(), "skillset nope") {
 		t.Errorf("unknown: err = %v", err)
 	}
@@ -213,14 +214,14 @@ func TestRerunRepinsSkillsets(t *testing.T) {
 	lib := newSkillLib()
 	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Skills = lib }, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()
-	id, err := h.e.CreateRunWith(ctx, Ticket{Title: "t"}, "loop", testProject, RunInput{Skillsets: []skills.Ref{{ID: "set2", Seq: 1}}})
+	id, err := h.e.CreateRunWith(ctx, runinput.Ticket{Title: "t"}, "loop", testProject, runinput.Input{Skillsets: []skills.Ref{{ID: "set2", Seq: 1}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait(id)
 	lib.sets["set2"].head = 3
 
-	again, err := h.e.Rerun(ctx, id, RunInput{})
+	again, err := h.e.Rerun(ctx, id, runinput.Input{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +229,7 @@ func TestRerunRepinsSkillsets(t *testing.T) {
 	if v := h.view(t, again); len(v.Skillsets) != 1 || v.Skillsets[0].Seq != 3 {
 		t.Errorf("rerun pins = %+v, want set2 at v3", v.Skillsets)
 	}
-	none, err := h.e.Rerun(ctx, again, RunInput{Skillsets: []skills.Ref{}})
+	none, err := h.e.Rerun(ctx, again, runinput.Input{Skillsets: []skills.Ref{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +245,7 @@ func TestRebuildReinstallsSkills(t *testing.T) {
 	rec := &installRecorder{}
 	h.res.InstallSkills = rec.fn
 	ctx := context.Background()
-	id, err := h.e.CreateRunWith(ctx, Ticket{Title: "t"}, "loop", testProject, RunInput{Skillsets: []skills.Ref{{ID: "set1"}}})
+	id, err := h.e.CreateRunWith(ctx, runinput.Ticket{Title: "t"}, "loop", testProject, runinput.Input{Skillsets: []skills.Ref{{ID: "set1"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +269,7 @@ func TestSkillTreeFailureFailsEnv(t *testing.T) {
 	lib.fail = errors.New("content is no longer stored")
 	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Skills = lib }, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()
-	id, err := h.e.CreateRunWith(ctx, Ticket{Title: "t"}, "loop", testProject, RunInput{Skillsets: []skills.Ref{{ID: "set1"}}})
+	id, err := h.e.CreateRunWith(ctx, runinput.Ticket{Title: "t"}, "loop", testProject, runinput.Input{Skillsets: []skills.Ref{{ID: "set1"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

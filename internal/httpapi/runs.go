@@ -12,6 +12,7 @@ import (
 	"apothecary/internal/engine"
 	"apothecary/internal/envstate"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // Runs: listing, reading and the lifecycle verbs (abort, pause, play,
@@ -172,7 +173,7 @@ func (s *Server) postRerun(w http.ResponseWriter, r *http.Request) {
 	var body RerunRequest
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
 
-	newID, err := s.Runs.Rerun(r.Context(), r.PathValue("id"), engine.RunInput{
+	newID, err := s.Runs.Rerun(r.Context(), r.PathValue("id"), runinput.Input{
 		Flow: body.Flow, Goal: body.Goal, SourceBranch: body.SourceBranch, AttachmentIDs: body.AttachmentIDs,
 		Params: body.Params, MR: body.MR, Skillsets: body.Skillsets,
 	})

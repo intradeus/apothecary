@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/modelcheck"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/runinput"
 )
 
 const modelFlowDoc = `name: models
@@ -27,7 +28,7 @@ func TestRunRefusedForAModelItsHarnessCannotReach(t *testing.T) {
 	h.res.Models = func(context.Context, string) ([]string, error) {
 		return []string{"acme/alpha-2", "acme/alpha-3", "acme/kappa-3", "other/alpha-1"}, nil
 	}
-	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "models", testProject)
+	_, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "models", testProject)
 	if err == nil {
 		t.Fatal("run created with a model the harness cannot reach")
 	}
@@ -56,7 +57,7 @@ func TestUnlistableModelsDoNotBlockTheRun(t *testing.T) {
 	h.res.Models = func(context.Context, string) ([]string, error) {
 		return nil, errors.New("provider unreachable")
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "models", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "models", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +118,7 @@ func TestRunFailsBeforeItsFirstStageOnAModelTheAgentDoesNotOffer(t *testing.T) {
 	h := newHarness(t, mustFlow(t, modelFlowDoc))
 	lr := &listingRunner{AgentRunner: h.runner, models: []string{"acme/alpha-2", "acme/alpha-3"}}
 	h.res.Runner = lr
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "models", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "models", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +145,7 @@ func TestAgentModelCheckPassesAndToleratesAnUnaskableAgent(t *testing.T) {
 		h := newHarness(t, mustFlow(t, modelFlowDoc))
 		lr.AgentRunner = h.runner
 		h.res.Runner = lr
-		runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "models", testProject)
+		runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "models", testProject)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -168,7 +169,7 @@ func TestRunRefusedWhenTheProviderRejectsTheCredential(t *testing.T) {
 		asked = append(asked, kind+":"+strings.Join(models, ","))
 		return []string{"opencode model acme/alpha-1: credential rejected (401 Invalid credential)"}, nil
 	}
-	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "models", testProject)
+	_, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "models", testProject)
 	if err == nil || !strings.Contains(err.Error(), "Invalid credential") {
 		t.Fatalf("err = %v, want the provider's refusal", err)
 	}
@@ -190,7 +191,7 @@ func TestUnverifiableCredentialsDoNotBlockTheRun(t *testing.T) {
 	h.res.CheckAuth = func(context.Context, string, []string) ([]string, []string) {
 		return nil, []string{"opencode provider zen: not an API key (subscription login)"}
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "models", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "models", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

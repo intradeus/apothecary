@@ -17,6 +17,7 @@ import (
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
 	"apothecary/internal/runcore"
+	"apothecary/internal/runinput"
 )
 
 const reviewFlowDoc = `name: rv
@@ -98,7 +99,7 @@ func (rr *reviewRun) attach(t *testing.T, runID, pingID, name string) string {
 func TestGateReviewsAFolderAndCarriesTheReview(t *testing.T) {
 	rr := newReviewRun(t)
 	h := rr.h
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "rv", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "rv", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +198,7 @@ func TestGateReviewsAFolderAndCarriesTheReview(t *testing.T) {
 func TestABareApprovalCarriesNoDecision(t *testing.T) {
 	rr := newReviewRun(t)
 	h := rr.h
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "rv", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "rv", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +280,7 @@ func TestAVerdictsApprovalCarriesItsComments(t *testing.T) {
 			return agentport.AgentResult{}, nil
 		},
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "va", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "va", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 	"apothecary/internal/services"
 )
 
@@ -85,7 +86,7 @@ func promptOf(h *harness, agent string) []string {
 // the next agent handed its address — and the chain's end stops it.
 func TestServiceStageStartsTheApp(t *testing.T) {
 	h, svcs := serviceHarness(t, servicesFlowDoc)
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "Show the app"}, "svc", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "Show the app"}, "svc", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestServiceThatDoesNotComeUpFeedsTheFix(t *testing.T) {
 	h, svcs := serviceHarness(t, servicesFlowDoc)
 	svcs.Outcomes["default"] = []string{fake.OutcomeExits, fake.OutcomeNever}
 	svcs.Log["default"] = "npm ERR! Missing script: dev\n"
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "Show the app"}, "svc", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "Show the app"}, "svc", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +194,7 @@ func TestChainEndStopsStageServicesOnly(t *testing.T) {
 	t.Cleanup(func() { services.WatchEvery = every })
 	ctx := context.Background()
 
-	runID, err := h.e.CreateRun(ctx, Ticket{Title: "Look"}, "gate", testProject)
+	runID, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "Look"}, "gate", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,12 +259,12 @@ func TestChainEndStopsStageServicesOnly(t *testing.T) {
 // naming the ones it does.
 func TestPreflightRefusesAnUnknownService(t *testing.T) {
 	h, _ := serviceHarness(t, strings.Replace(gateFlowDoc, "service: default }", "service: web }", 1))
-	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "Look"}, "gate", testProject)
+	_, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "Look"}, "gate", testProject)
 	if err == nil || !strings.Contains(err.Error(), `service "web" is not one of the project's services (default, db)`) {
 		t.Errorf("CreateRun = %v", err)
 	}
 	h.res.Services = nil
-	_, err = h.e.CreateRun(context.Background(), Ticket{Title: "Look"}, "gate", testProject)
+	_, err = h.e.CreateRun(context.Background(), runinput.Ticket{Title: "Look"}, "gate", testProject)
 	if err == nil || !strings.Contains(err.Error(), "none — declare it") {
 		t.Errorf("CreateRun with no services = %v", err)
 	}

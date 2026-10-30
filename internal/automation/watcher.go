@@ -18,10 +18,10 @@ import (
 	"time"
 
 	"apothecary/internal/confstore"
-	"apothecary/internal/engine"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 	"apothecary/internal/schedule"
 	"apothecary/internal/tickets"
 )
@@ -32,7 +32,7 @@ const By = "automation"
 // Runs is the slice of the engine a pass needs: create a run, and tell
 // whether a ticket has one.
 type Runs interface {
-	CreateRunWith(ctx context.Context, t engine.Ticket, flowName, projectID string, in engine.RunInput) (string, error)
+	CreateRunWith(ctx context.Context, t runinput.Ticket, flowName, projectID string, in runinput.Input) (string, error)
 	RunsOfTicket(ctx context.Context, ticketID string) ([]run.View, error)
 }
 
@@ -254,11 +254,11 @@ func (w *Watcher) ticketForMR(ctx context.Context, a confstore.Automation, mr re
 
 // startOn creates the run of a merge request's ticket, on that merge request.
 func (w *Watcher) startOn(ctx context.Context, a confstore.Automation, t confstore.Ticket, mr repoport.MRInfo) (string, error) {
-	id, err := w.Runs.CreateRunWith(ctx, engine.Ticket{
+	id, err := w.Runs.CreateRunWith(ctx, runinput.Ticket{
 		TicketID: t.ID, Title: t.Title, Goal: t.Goal, ChangeType: string(t.ChangeType),
 		SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,
-	}, a.Flow, a.ProjectID, engine.RunInput{Params: maps.Clone(a.Params), By: By,
-		MR: &engine.RunMR{Repo: a.Repo, IID: mr.Ref.IID}})
+	}, a.Flow, a.ProjectID, runinput.Input{Params: maps.Clone(a.Params), By: By,
+		MR: &runinput.MR{Repo: a.Repo, IID: mr.Ref.IID}})
 	if err != nil {
 		return "", err
 	}
@@ -309,12 +309,12 @@ func (w *Watcher) start(ctx context.Context, a confstore.Automation, t confstore
 			}
 		}
 	}
-	id, err := w.Runs.CreateRunWith(ctx, engine.Ticket{
+	id, err := w.Runs.CreateRunWith(ctx, runinput.Ticket{
 		TicketID: t.ID, Title: t.Title, Goal: t.Goal, Branch: t.BaseBranch,
 		ChangeType:          string(t.ChangeType),
 		TicketAttachmentIDs: attIDs,
 		SourceID:            t.SourceID, SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,
-	}, a.Flow, a.ProjectID, engine.RunInput{Params: maps.Clone(a.Params), By: By})
+	}, a.Flow, a.ProjectID, runinput.Input{Params: maps.Clone(a.Params), By: By})
 	if err != nil {
 		return "", err
 	}

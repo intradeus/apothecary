@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports/agentport"
+	"apothecary/internal/runinput"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -183,7 +184,7 @@ func TestAskHumanMultiSelect(t *testing.T) {
 		}
 		return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +228,7 @@ func TestAskHumanWithoutFieldsIsFreeText(t *testing.T) {
 		}
 		return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

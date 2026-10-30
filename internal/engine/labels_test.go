@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 const labelsFlowDoc = `name: lb
@@ -40,7 +41,7 @@ func labelsRun(t *testing.T, labelErr error) (*harness, string) {
 			return agentport.AgentResult{}, nil
 		},
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "lb", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "lb", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // statusErrEnvp fails every Status probe (e.g. an expired cluster credential),
@@ -25,7 +26,7 @@ func TestReapOnceDestroysOldCompletedOnly(t *testing.T) {
 	ctx := context.Background()
 
 	// Completed run with a live env.
-	doneID, err := h.e.CreateRun(ctx, Ticket{Title: "done"}, "loop", testProject)
+	doneID, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "done"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +84,7 @@ func TestReconcileEnvsReflectsLiveContainerStatus(t *testing.T) {
 	ctx := context.Background()
 
 	// A finished run keeps its env until reaped — a running container.
-	id, err := h.e.CreateRun(ctx, Ticket{Title: "live"}, "loop", testProject)
+	id, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "live"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +127,7 @@ func TestReconcileEnvsUnknownWhenProbeFails(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()
 
-	id, err := h.e.CreateRun(ctx, Ticket{Title: "orphan"}, "loop", testProject)
+	id, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "orphan"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

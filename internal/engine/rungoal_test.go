@@ -7,6 +7,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/runinput"
 )
 
 // lastPrompt returns the prompt of the most recent agent call.
@@ -22,7 +23,7 @@ func lastPrompt(h *harness) string {
 // ticket's goal stays the # TASK spec.
 func TestRunGoalRendersAdditionalDirection(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	runID, err := h.e.CreateRun(context.Background(), Ticket{
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{
 		TicketID: "tk-1",
 		Title:    "Add a health endpoint",
 		Goal:     "Expose /healthz returning 200.",
@@ -48,7 +49,7 @@ func TestRunGoalRendersAdditionalDirection(t *testing.T) {
 func TestNoRunGoalOmitsDirectionSection(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	runID, err := h.e.CreateRun(context.Background(),
-		Ticket{TicketID: "tk-1", Title: "T", Goal: "g"}, "loop", testProject)
+		runinput.Ticket{TicketID: "tk-1", Title: "T", Goal: "g"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +75,7 @@ func TestTicketAttachmentsReachEveryRun(t *testing.T) {
 	wantPath := ".apothecary/attachments/goal/" + up.ID[:8] + "/design.md"
 
 	for attempt := 1; attempt <= 2; attempt++ {
-		runID, err := h.e.CreateRun(context.Background(), Ticket{
+		runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{
 			TicketID: "tk-shared", Title: "T", Goal: "g",
 			TicketAttachmentIDs: []string{up.ID},
 		}, "loop", testProject)
@@ -101,13 +102,13 @@ func TestRerunCarriesDirection(t *testing.T) {
 	ctx := context.Background()
 
 	id, err := h.e.CreateRun(ctx,
-		Ticket{TicketID: "tk-9", Title: "T", Goal: "g", Branch: "feat/x"}, "loop", testProject)
+		runinput.Ticket{TicketID: "tk-9", Title: "T", Goal: "g", Branch: "feat/x"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait(id)
 
-	newID, err := h.e.Rerun(ctx, id, RunInput{Goal: "avoid the cache this time"})
+	newID, err := h.e.Rerun(ctx, id, runinput.Input{Goal: "avoid the cache this time"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +146,7 @@ main:
 		}
 		return envport.ExecResult{}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T", Goal: "g"}, "uncommitted", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T", Goal: "g"}, "uncommitted", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

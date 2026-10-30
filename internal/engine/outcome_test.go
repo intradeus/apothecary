@@ -15,6 +15,7 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // outcomeFlowDoc: the builder's shape in small. The main chain ends with the
@@ -153,7 +154,7 @@ func TestOnSuccessAbortAbandonsTheRun(t *testing.T) {
 	doc := "name: short\nversion: 5\nparameters: { harness: fake, model: fake/model }\nmain:\n" +
 		"  - { id: s, type: command, run: \"true\", on_success: abort, on_fail: done }\n"
 	ph := newPhasedHarness(t, doc)
-	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Short"}, "short", testProject)
+	runID, err := ph.e.CreateRun(context.Background(), runinput.Ticket{Title: "Short"}, "short", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"apothecary/internal/runinput"
 )
 
 // A run created under a ticket gets a unique actual branch = base + per-run
@@ -14,7 +16,7 @@ func TestTicketedRunDerivesSuffixedBranch(t *testing.T) {
 	ctx := context.Background()
 
 	id, err := h.e.CreateRun(ctx,
-		Ticket{TicketID: "tk-1", Title: "Add a health endpoint", Branch: "fix/task-123"},
+		runinput.Ticket{TicketID: "tk-1", Title: "Add a health endpoint", Branch: "fix/task-123"},
 		"loop", testProject)
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +41,7 @@ func TestTicketedRunGeneratesBaseFromTitle(t *testing.T) {
 	ctx := context.Background()
 
 	id, err := h.e.CreateRun(ctx,
-		Ticket{TicketID: "tk-2", Title: "Add a health endpoint"}, // no branch
+		runinput.Ticket{TicketID: "tk-2", Title: "Add a health endpoint"}, // no branch
 		"loop", testProject)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +64,7 @@ func TestRunSourceBranch(t *testing.T) {
 	ctx := context.Background()
 
 	// Empty ⇒ project default (testProject's repo default_branch is "main").
-	def, err := h.e.CreateRun(ctx, Ticket{TicketID: "tk-s1", Title: "T"}, "loop", testProject)
+	def, err := h.e.CreateRun(ctx, runinput.Ticket{TicketID: "tk-s1", Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +74,7 @@ func TestRunSourceBranch(t *testing.T) {
 
 	// Explicit source branch is kept.
 	exp, err := h.e.CreateRun(ctx,
-		Ticket{TicketID: "tk-s2", Title: "T", SourceBranch: "develop"}, "loop", testProject)
+		runinput.Ticket{TicketID: "tk-s2", Title: "T", SourceBranch: "develop"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +84,7 @@ func TestRunSourceBranch(t *testing.T) {
 
 	// Restart carries the original source branch forward.
 	h.e.Wait(exp)
-	newID, err := h.e.Rerun(ctx, exp, RunInput{})
+	newID, err := h.e.Rerun(ctx, exp, runinput.Input{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +94,7 @@ func TestRunSourceBranch(t *testing.T) {
 
 	// An invalid source branch is rejected.
 	if _, err := h.e.CreateRun(ctx,
-		Ticket{TicketID: "tk-s3", Title: "T", SourceBranch: "bad branch"}, "loop", testProject); err == nil {
+		runinput.Ticket{TicketID: "tk-s3", Title: "T", SourceBranch: "bad branch"}, "loop", testProject); err == nil {
 		t.Error("expected invalid source branch to be rejected")
 	}
 }
@@ -104,14 +106,14 @@ func TestRerunTicketedRunKeepsBaseNewTail(t *testing.T) {
 	ctx := context.Background()
 
 	id, err := h.e.CreateRun(ctx,
-		Ticket{TicketID: "tk-3", Title: "T", Branch: "feat/login"}, "loop", testProject)
+		runinput.Ticket{TicketID: "tk-3", Title: "T", Branch: "feat/login"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait(id)
 	orig := h.view(t, id)
 
-	newID, err := h.e.Rerun(ctx, id, RunInput{})
+	newID, err := h.e.Rerun(ctx, id, runinput.Input{})
 	if err != nil {
 		t.Fatal(err)
 	}

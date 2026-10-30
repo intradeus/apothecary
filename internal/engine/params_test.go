@@ -8,6 +8,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"apothecary/internal/runinput"
 )
 
 // staticBindings is a FlowBindings that answers the same values for every
@@ -36,7 +38,7 @@ func TestParamsResolvedAtCreation(t *testing.T) {
 	h.res.Commands["check"] = "true"
 	ctx := context.Background()
 
-	id, err := h.e.CreateRunWith(ctx, Ticket{Title: "knobs"}, "knobs", testProject, RunInput{Params: map[string]string{"mode": "manual"}})
+	id, err := h.e.CreateRunWith(ctx, runinput.Ticket{Title: "knobs"}, "knobs", testProject, runinput.Input{Params: map[string]string{"mode": "manual"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +70,7 @@ func TestParamsBindingAndOverrideRules(t *testing.T) {
 	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Bindings = bindings }, mustFlow(t, paramFlowDoc))
 	ctx := context.Background()
 
-	id, err := h.e.CreateRun(ctx, Ticket{Title: "stale"}, "knobs", testProject)
+	id, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "stale"}, "knobs", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +86,7 @@ func TestParamsBindingAndOverrideRules(t *testing.T) {
 		{map[string]string{"mode": "later"}, "takes one of auto | confirm | manual"},
 		{map[string]string{"gate": "maybe"}, "takes true or false"},
 	} {
-		if _, err := h.e.CreateRunWith(ctx, Ticket{Title: "bad"}, "knobs", testProject, RunInput{Params: tc.params}); err == nil || !strings.Contains(err.Error(), tc.substr) {
+		if _, err := h.e.CreateRunWith(ctx, runinput.Ticket{Title: "bad"}, "knobs", testProject, runinput.Input{Params: tc.params}); err == nil || !strings.Contains(err.Error(), tc.substr) {
 			t.Errorf("params %v: err = %v, want %q", tc.params, err, tc.substr)
 		}
 	}
@@ -95,7 +97,7 @@ func TestParamsBindingAndOverrideRules(t *testing.T) {
 func TestBoundRunRefIsPreflighted(t *testing.T) {
 	bindings := staticBindings{"verify": "missing"}
 	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Bindings = bindings }, mustFlow(t, paramFlowDoc))
-	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "x"}, "knobs", testProject)
+	_, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "x"}, "knobs", testProject)
 	if err == nil || !strings.Contains(err.Error(), "missing") {
 		t.Fatalf("err = %v, want a preflight refusal naming the bound run_ref", err)
 	}
@@ -106,12 +108,12 @@ func TestBoundRunRefIsPreflighted(t *testing.T) {
 func TestRerunCarriesParams(t *testing.T) {
 	h := newHarness(t, mustFlow(t, paramFlowDoc))
 	ctx := context.Background()
-	id, err := h.e.CreateRunWith(ctx, Ticket{Title: "carry"}, "knobs", testProject, RunInput{Params: map[string]string{"mode": "manual"}})
+	id, err := h.e.CreateRunWith(ctx, runinput.Ticket{Title: "carry"}, "knobs", testProject, runinput.Input{Params: map[string]string{"mode": "manual"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait(id)
-	again, err := h.e.Rerun(ctx, id, RunInput{})
+	again, err := h.e.Rerun(ctx, id, runinput.Input{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +121,7 @@ func TestRerunCarriesParams(t *testing.T) {
 	if v := h.view(t, again); v.Params["mode"] != "manual" {
 		t.Errorf("rerun params %v", v.Params)
 	}
-	steered, err := h.e.Rerun(ctx, id, RunInput{Params: map[string]string{"mode": "auto"}})
+	steered, err := h.e.Rerun(ctx, id, runinput.Input{Params: map[string]string{"mode": "auto"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +147,7 @@ func TestBoundHarnessOutsideTheSetIsRefused(t *testing.T) {
 	bindings := staticBindings{"harness": "codex"}
 	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Bindings = bindings }, mustFlow(t, boundAgentDoc))
 	ctx := context.Background()
-	_, err := h.e.CreateRun(ctx, Ticket{Title: "x"}, "bound", testProject)
+	_, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "x"}, "bound", testProject)
 	if err == nil || !strings.Contains(err.Error(), `"codex"`) || !strings.Contains(err.Error(), "harness set") {
 		t.Fatalf("err = %v, want a preflight refusal naming the bound harness", err)
 	}
@@ -169,7 +171,7 @@ func TestBoundModelIsCheckedAgainstTheHarnessList(t *testing.T) {
 		t.Fatalf("the flow's own model refused: %+v", s)
 	}
 	bindings["model"] = "fake/other"
-	_, err := h.e.CreateRun(ctx, Ticket{Title: "x"}, "bound", testProject)
+	_, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "x"}, "bound", testProject)
 	if err == nil || !strings.Contains(err.Error(), "preflight") || !strings.Contains(err.Error(), "fake/other") {
 		t.Fatalf("err = %v, want a preflight refusal naming the bound model", err)
 	}

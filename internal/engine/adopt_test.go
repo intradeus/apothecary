@@ -20,6 +20,7 @@ import (
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 const reviewerFlowDoc = `name: rev
@@ -103,7 +104,7 @@ func hasScript(scripts []string, substr string) bool {
 func TestRunOnSomeonesMergeRequest(t *testing.T) {
 	ph, scripts := newReviewerHarness(t, reviewerFlowDoc)
 	ref := ph.repoHost.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
-	runID, err := ph.e.CreateRunWith(context.Background(), Ticket{Title: "Review caching"}, "rev", testProject, RunInput{MR: &RunMR{IID: ref.IID}})
+	runID, err := ph.e.CreateRunWith(context.Background(), runinput.Ticket{Title: "Review caching"}, "rev", testProject, runinput.Input{MR: &runinput.MR{IID: ref.IID}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,16 +169,16 @@ func TestRunOnAMergeRequestRefusals(t *testing.T) {
 	ctx := context.Background()
 	ph, _ := newReviewerHarness(t, reviewerFlowDoc)
 	ref := ph.repoHost.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
-	if _, err := ph.e.CreateRunWith(ctx, Ticket{Title: "T"}, "rev", testProject, RunInput{}); err == nil || !strings.Contains(err.Error(), "starts its runs on a merge request (operates_on: merge_request): name the merge request") {
+	if _, err := ph.e.CreateRunWith(ctx, runinput.Ticket{Title: "T"}, "rev", testProject, runinput.Input{}); err == nil || !strings.Contains(err.Error(), "starts its runs on a merge request (operates_on: merge_request): name the merge request") {
 		t.Errorf("no merge request: %v", err)
 	}
 	ph.repoHost.SetMRState(ref.IID, repoport.MRClosed)
-	if _, err := ph.e.CreateRunWith(ctx, Ticket{Title: "T"}, "rev", testProject, RunInput{MR: &RunMR{IID: ref.IID}}); err == nil || !strings.Contains(err.Error(), "is closed") {
+	if _, err := ph.e.CreateRunWith(ctx, runinput.Ticket{Title: "T"}, "rev", testProject, runinput.Input{MR: &runinput.MR{IID: ref.IID}}); err == nil || !strings.Contains(err.Error(), "is closed") {
 		t.Errorf("closed merge request: %v", err)
 	}
 	ph2 := newPhasedHarness(t, phasedFlowDoc)
 	other := ph2.repoHost.AddOpenMR("bob", "Fix", "fix/x", "main", "b1")
-	if _, err := ph2.e.CreateRunWith(ctx, Ticket{Title: "T"}, "phased", testProject, RunInput{MR: &RunMR{IID: other.IID}}); err == nil || !strings.Contains(err.Error(), "starts its runs on a ticket (operates_on: ticket), not on a merge request") {
+	if _, err := ph2.e.CreateRunWith(ctx, runinput.Ticket{Title: "T"}, "phased", testProject, runinput.Input{MR: &runinput.MR{IID: other.IID}}); err == nil || !strings.Contains(err.Error(), "starts its runs on a ticket (operates_on: ticket), not on a merge request") {
 		t.Errorf("a flow started on tickets, on a merge request: %v", err)
 	}
 }
@@ -191,7 +192,7 @@ func TestForkMergeRequestIsReadOnlyAndRerunStaysOnIt(t *testing.T) {
 	ph, _ := newReviewerHarness(t, doc)
 	ref := ph.repoHost.AddOpenMR("eve", "From my fork", "main", "main", "f1")
 	ph.repoHost.MRs[0].Fork = true
-	runID, err := ph.e.CreateRunWith(context.Background(), Ticket{Title: "Fork"}, "rev", testProject, RunInput{MR: &RunMR{IID: ref.IID}})
+	runID, err := ph.e.CreateRunWith(context.Background(), runinput.Ticket{Title: "Fork"}, "rev", testProject, runinput.Input{MR: &runinput.MR{IID: ref.IID}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +206,7 @@ func TestForkMergeRequestIsReadOnlyAndRerunStaysOnIt(t *testing.T) {
 	if failed == nil || failed.StageID != "push" || !strings.Contains(failed.Error, "comes from a fork") {
 		t.Errorf("failed = %+v", failed)
 	}
-	next, err := ph.e.Rerun(context.Background(), runID, RunInput{})
+	next, err := ph.e.Rerun(context.Background(), runID, runinput.Input{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +226,7 @@ func TestBuiltinReviewerTemplateRuns(t *testing.T) {
 	src = strings.NewReplacer("  harness: opencode\n", "  harness: fake\n  model: fake/model\n").Replace(src)
 	ph, _ := newReviewerHarness(t, src)
 	ref := ph.repoHost.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
-	runID, err := ph.e.CreateRunWith(context.Background(), Ticket{Title: "Add caching (!1 by alice)"}, "reviewer", testProject, RunInput{MR: &RunMR{IID: ref.IID}})
+	runID, err := ph.e.CreateRunWith(context.Background(), runinput.Ticket{Title: "Add caching (!1 by alice)"}, "reviewer", testProject, runinput.Input{MR: &runinput.MR{IID: ref.IID}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,6 +18,7 @@ import (
 	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // A project secret is write-only: set, listed by name, removed — and its
@@ -136,7 +137,7 @@ func TestBrowserMCPStream(t *testing.T) {
 		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 	defer close(release)
-	runID, err := x.e.CreateRun(context.Background(), engine.Ticket{Title: "T"}, "loop", testProject)
+	runID, err := x.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

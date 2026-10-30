@@ -26,6 +26,7 @@ import (
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 	"apothecary/internal/runports"
 	"apothecary/internal/services"
 	"apothecary/internal/wsinfo"
@@ -414,7 +415,7 @@ func TestHappyPathFullV4Flow(t *testing.T) {
 		},
 	})
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "Add login", Goal: "Users must log in"}, "canonical", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "Add login", Goal: "Users must log in"}, "canonical", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,7 +535,7 @@ main:
 		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "declfb", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "declfb", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -585,7 +586,7 @@ func TestTestFailBuildLoopThenPass(t *testing.T) {
 		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -646,7 +647,7 @@ main:
 		},
 	})
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "rev", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "rev", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -682,7 +683,7 @@ func TestEdgeExhaustionAbandons(t *testing.T) {
 		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -725,7 +726,7 @@ main:
 		return agentport.AgentResult{TurnsUsed: 2}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ping", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -844,7 +845,7 @@ main:
 		},
 	})
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "gated", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "gated", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -898,7 +899,7 @@ main:
 		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "pricey", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "pricey", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1031,7 +1032,7 @@ main:
 		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "slow", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "slow", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1066,7 +1067,7 @@ main:
 		return agentport.AgentResult{}, ctx.Err()
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "hang", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "hang", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1169,7 +1170,7 @@ main:
 	})
 	h.repoHost.SetMRStateErr(fmt.Errorf("gitlab GET /projects/7/merge_requests/1: 401: token expired"))
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "acf", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "acf", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1229,7 +1230,7 @@ main:
 		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "unl", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "unl", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1283,7 +1284,7 @@ main:
   - { id: gate,  type: human_gate, question: "Merge when ready.", on_reject: abort }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ab", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ab", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1327,7 +1328,7 @@ main:
 		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "tmo", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "tmo", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1364,7 +1365,7 @@ main:
 		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "chain", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "chain", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1424,7 +1425,7 @@ main:
 		return agentport.AgentResult{TurnsUsed: 2}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "pp", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "pp", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1468,7 +1469,7 @@ main:
 	}
 
 	// And a paused run can be aborted directly (no goroutine to cancel).
-	run2, err := h.e.CreateRun(context.Background(), Ticket{Title: "T2"}, "pp", testProject)
+	run2, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T2"}, "pp", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1512,7 +1513,7 @@ func TestDebugLeaf(t *testing.T) {
 		return envport.ExecResult{ExitCode: 0}, nil
 	}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "dbg", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "dbg", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1556,7 +1557,7 @@ func TestDebugLeaf(t *testing.T) {
 
 	// Reject path: abandoned at the failing stage, with the human's words.
 	verifies = -1000 // keep verify failing forever for the second run
-	run2, err := h.e.CreateRun(context.Background(), Ticket{Title: "T2"}, "dbg", testProject)
+	run2, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T2"}, "dbg", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1650,7 +1651,7 @@ func TestEnvFailureAfterRetry(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	h.envp.ProvisionErrs = []error{fmt.Errorf("docker daemon unreachable"), fmt.Errorf("still unreachable")}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1673,7 +1674,7 @@ func TestBootstrapFailureIsEnvFailed(t *testing.T) {
 		}
 		return envport.ExecResult{ExitCode: 0}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1704,7 +1705,7 @@ func TestEgressCheckFailureIsEnvFailed(t *testing.T) {
 		}
 		return envport.ExecResult{ExitCode: 0}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1749,7 +1750,7 @@ func TestStageStartedCarriesAgentHash(t *testing.T) {
 	// DESIGN3 §1: stage events pin the agent-library content version so
 	// analytics can correlate outcomes with prompt versions.
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1782,7 +1783,7 @@ func TestPreflightRefusalsNameTheMissingItem(t *testing.T) {
 
 	h2 := newHarness(t, mustFlow(t, loopFlowDoc))
 	delete(h2.res.Commands, "verify")
-	_, err := h2.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	_, err := h2.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err == nil || !strings.Contains(err.Error(), `run_ref "verify"`) {
 		t.Errorf("err = %v, want mention of run_ref verify", err)
 	}
@@ -1795,7 +1796,7 @@ parameters: { harness: fake, model: fake/model }
 main:
   - { id: build, type: agent, model: $model, agent: builder, harness: codex }
 `))
-	_, err = h4.e.CreateRun(context.Background(), Ticket{Title: "T"}, "pinned", testProject)
+	_, err = h4.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "pinned", testProject)
 	if err == nil || !strings.Contains(err.Error(), `pins harness "codex"`) {
 		t.Errorf("err = %v, want harness pin refusal", err)
 	}
@@ -1817,7 +1818,7 @@ func TestPreflightRejectsRepoWithoutDevcontainer(t *testing.T) {
 		".devcontainer/devcontainer.json": true,
 		".devcontainer.json":              true,
 	}
-	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	_, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err == nil || !strings.Contains(err.Error(), "devcontainer") {
 		t.Fatalf("err = %v, want devcontainer refusal", err)
 	}
@@ -1835,7 +1836,7 @@ main:
 `
 	h := newHarness(t, mustFlow(t, doc))
 	// Planner never writes the declared artifact.
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "contract", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "contract", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1870,7 +1871,7 @@ main:
 	h.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		return envport.ExecResult{ExitCode: 0, Output: cmd.Script}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "branch", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "branch", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1897,7 +1898,7 @@ main:
 		}
 		return envport.ExecResult{ExitCode: 0}, nil
 	}
-	runID2, err := h2.e.CreateRun(context.Background(), Ticket{Title: "T"}, "branch", testProject)
+	runID2, err := h2.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "branch", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1939,7 +1940,7 @@ main:
 		gotAnswer <- ans
 		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ping", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1990,7 +1991,7 @@ main:
 		}
 		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
-	rid, err := h2.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping", testProject)
+	rid, err := h2.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ping", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2012,7 +2013,7 @@ main:
 		got3 <- ans
 		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
-	rid3, err := h3.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ping", testProject)
+	rid3, err := h3.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ping", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2049,7 +2050,7 @@ main:
 		}
 		return envport.ExecResult{ExitCode: 0, Output: "pushed"}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "r", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "r", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2102,7 +2103,7 @@ main:
 	h := newHarness(t, mustFlow(t, doc))
 	h.res.EgressDomains = []string{"models.dev", "registry-1.docker.io"}
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "p", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "p", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2147,7 +2148,7 @@ main:
 		}
 		return envport.ExecResult{ExitCode: 0}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "cmdio", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "cmdio", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2189,7 +2190,7 @@ main:
   - { id: gen, type: command, run: "generate", output: { report: { to: artifacts/report.txt, type: file } } }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "cmdout", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "cmdout", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2229,7 +2230,7 @@ main:
 			return agentport.AgentResult{}, nil
 		},
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "vrebind", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "vrebind", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2268,7 +2269,7 @@ main:
   - { id: review, type: agent, harness: $harness, model: $model, agent: reviewer, output: { verdict: { to: artifacts/verdict.json, type: verdict } } }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "vmiss", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "vmiss", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2302,7 +2303,7 @@ main:
 			return agentport.AgentResult{}, nil
 		},
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "act", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "act", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2335,7 +2336,7 @@ main:
   - { id: mr, type: action, action: create_mr, input: { body: { from: repo:artifacts/mr.md, type: file } } }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "actmiss", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "actmiss", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2420,7 +2421,7 @@ main:
 			return agentport.AgentResult{}, nil
 		},
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "waitflow", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "waitflow", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2468,7 +2469,7 @@ main:
 			return agentport.AgentResult{}, nil
 		},
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "waittimeout", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "waittimeout", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2497,7 +2498,7 @@ main:
   - { id: merged, type: wait, for: mr_merged }
 `
 	h := newHarness(t, mustFlow(t, doc))
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "waitnomr", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "waitnomr", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2548,7 +2549,7 @@ main:
 			return agentport.AgentResult{}, nil
 		},
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "twofeeds", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "twofeeds", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2606,7 +2607,7 @@ main:
 			return agentport.AgentResult{}, nil
 		},
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "settle", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "settle", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2644,7 +2645,7 @@ main:
 			return agentport.AgentResult{}, nil
 		},
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "race", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "race", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2683,7 +2684,7 @@ main:
 			return agentport.AgentResult{}, nil
 		},
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "unlim", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "unlim", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -25,6 +25,7 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 	"apothecary/internal/signalspec"
 	"apothecary/internal/skills"
 	"apothecary/internal/skillstore"
@@ -63,7 +64,7 @@ type RerunRequest struct {
 	Params map[string]string `json:"params,omitempty"`
 	// MR moves the rerun to another merge request ("" = the one the
 	// original was started on, if it was).
-	MR *engine.RunMR `json:"mr,omitempty"`
+	MR *runinput.MR `json:"mr,omitempty"`
 	// Skillsets replace the original's (absent = the original's at their
 	// latest version; an empty list = none).
 	Skillsets []skills.Ref `json:"skillsets,omitempty"`
@@ -79,7 +80,7 @@ type StartRunRequest struct {
 	Params map[string]string `json:"params,omitempty"`
 	// MR starts the run on a merge request someone opened, for a flow
 	// whose runs are started on one (operates_on: merge_request).
-	MR *engine.RunMR `json:"mr,omitempty"`
+	MR *runinput.MR `json:"mr,omitempty"`
 	// Skillsets are the caller's skillsets to install into the workspace,
 	// each at a version (seq 0 or absent = latest).
 	Skillsets []skills.Ref `json:"skillsets,omitempty"`

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"apothecary/internal/event"
+	"apothecary/internal/runinput"
 )
 
 type recordingSink struct {
@@ -37,7 +38,7 @@ func TestSinkReceivesFreshEventsOnly(t *testing.T) {
 	sink := &recordingSink{}
 	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Sink = sink }, mustFlow(t, loopFlowDoc))
 
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

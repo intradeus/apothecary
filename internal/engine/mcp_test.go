@@ -20,6 +20,7 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 const mcpFlowDoc = `name: shots
@@ -94,7 +95,7 @@ func TestRunRefusedForMCPServersTheProjectCannotServe(t *testing.T) {
 				}
 			}, mustFlow(t, mcpFlowDoc))
 			h.res.Secrets, h.res.Browser = c.secrets, c.browser
-			_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "shots", testProject)
+			_, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "shots", testProject)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("err = %v, want it to say %q", err, c.want)
 			}
@@ -125,7 +126,7 @@ func TestAgentSessionsGetTheirMCPServersResolved(t *testing.T) {
 		}
 		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "shots", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "shots", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +171,7 @@ func TestStageFailsOnASecretGoneSinceCreation(t *testing.T) {
 			return agentport.AgentResult{}, nil
 		},
 	})
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "shots", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "shots", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +204,7 @@ func TestBrowserSessionDialsTheRunsWorkspace(t *testing.T) {
 	h.res.Browser = true
 	exp := &countingExposer{EnvProvisioner: h.envp}
 	h.res.Envp = exp
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "shots", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "shots", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

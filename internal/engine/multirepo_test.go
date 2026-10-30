@@ -16,6 +16,7 @@ import (
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // fakeGit is enough of git for the engine's publish stages: branches
@@ -171,7 +172,7 @@ func TestMultiRepoRunPublishesOneMergeRequestPerChangedRepo(t *testing.T) {
 		}
 		return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "multi", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "multi", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +248,7 @@ func TestMRStatusesReportMergeabilityAndPendingThreads(t *testing.T) {
 		}
 		return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "multi", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "multi", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

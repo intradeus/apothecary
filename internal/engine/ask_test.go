@@ -13,6 +13,7 @@ import (
 	askstore "apothecary/internal/ask"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // The Ask pane (FLOWLANG §1 ask): a read-only session beside the run that
@@ -63,7 +64,7 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "Still main.go."})
 		return agentport.AgentResult{Session: call.Session, TurnsUsed: 1, Usage: agentport.Usage{CostUSD: 0.02}}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "askpane", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "askpane", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +190,7 @@ func TestAskPaneStartsAFreshSessionWhenItsOldOneIsGone(t *testing.T) {
 	h.runner.ResumeFunc = func(context.Context, fake.ResumeCall) (agentport.AgentResult, error) {
 		return agentport.AgentResult{}, errors.New("session/load gone-sess: ACP session not found")
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "askpane", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "askpane", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +251,7 @@ func TestAskPaneIsOffWithoutASection(t *testing.T) {
 		<-gate
 		return agentport.AgentResult{Session: "s", TurnsUsed: 1}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "ask", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +276,7 @@ func TestAskPaneIsOffWithoutASection(t *testing.T) {
 // The pane's harness is checked at run creation like a stage's.
 func TestAskHarnessMustBeInTheProjectSet(t *testing.T) {
 	h := newHarness(t, mustFlow(t, strings.Replace(askPaneFlowDoc, "ask: { harness: fake }", "ask: { harness: nope }", 1)))
-	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "askpane", testProject)
+	_, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "askpane", testProject)
 	if err == nil || !strings.Contains(err.Error(), `ask: harness "nope"`) {
 		t.Fatalf("create run = %v", err)
 	}
@@ -294,7 +295,7 @@ func TestAskPaneIsOffOnAHarnessThatCannotBeReadOnly(t *testing.T) {
 		<-gate
 		return agentport.AgentResult{Session: "s", TurnsUsed: 1}, nil
 	}
-	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "askpane", testProject)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "askpane", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}

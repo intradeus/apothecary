@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"apothecary/internal/event"
+	"apothecary/internal/runinput"
 )
 
 // A flow that leaves its model to the project: the document is fine, the
@@ -27,7 +28,7 @@ func TestUnboundModelRefusesTheRunUntilBound(t *testing.T) {
 	bindings := staticBindings{}
 	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Bindings = bindings }, mustFlow(t, unboundFlowDoc))
 	ctx := context.Background()
-	_, err := h.e.CreateRun(ctx, Ticket{Title: "T"}, "unbound", testProject)
+	_, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "T"}, "unbound", testProject)
 	if err == nil || !strings.Contains(err.Error(), "preflight: parameters") || !strings.Contains(err.Error(), `"model" has no value (read by build, review)`) || !strings.Contains(err.Error(), "Configure") {
 		t.Fatalf("err = %v, want the unbound refusal naming the parameter, its stages and where a value comes from", err)
 	}
@@ -39,7 +40,7 @@ func TestUnboundModelRefusesTheRunUntilBound(t *testing.T) {
 	}
 
 	// The run may bring the value itself.
-	id, err := h.e.CreateRunWith(ctx, Ticket{Title: "T"}, "unbound", testProject, RunInput{Params: map[string]string{"model": "fake/model"}})
+	id, err := h.e.CreateRunWith(ctx, runinput.Ticket{Title: "T"}, "unbound", testProject, runinput.Input{Params: map[string]string{"model": "fake/model"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +58,7 @@ func TestUnboundModelRefusesTheRunUntilBound(t *testing.T) {
 	if s := stepNamed(h.e.PreflightProject(ctx, testProject), "parameters"); s == nil || !s.OK {
 		t.Errorf("preflight parameters step once bound = %+v", s)
 	}
-	id, err = h.e.CreateRunWith(ctx, Ticket{Title: "T"}, "unbound", testProject, RunInput{Params: map[string]string{"review_model": "fake/other"}})
+	id, err = h.e.CreateRunWith(ctx, runinput.Ticket{Title: "T"}, "unbound", testProject, runinput.Input{Params: map[string]string{"review_model": "fake/other"}})
 	if err != nil {
 		t.Fatal(err)
 	}

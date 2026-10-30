@@ -17,6 +17,7 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
+	"apothecary/internal/runinput"
 )
 
 // failSync makes the conflicts phase's script fail, every time.
@@ -60,7 +61,7 @@ func TestDoneEndsTheRunWhileWatchersAreArmed(t *testing.T) {
 		"  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }\n",
 		"  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } }, on_success: done }\n", 1)
 	ph := newPhasedHarness(t, doc)
-	runID, err := ph.e.CreateRun(context.Background(), Ticket{Title: "Phased"}, "phased", testProject)
+	runID, err := ph.e.CreateRun(context.Background(), runinput.Ticket{Title: "Phased"}, "phased", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
