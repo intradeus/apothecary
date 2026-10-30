@@ -161,6 +161,18 @@ func (ph *phasedHarness) waitPhaseRuns(t *testing.T, runID, phase string, n int)
 	t.Fatalf("phase %s did not complete %d time(s); events: %v", phase, n, eventTypes(ph.events(t, runID)))
 }
 
+// waitIdle waits for the run's loop to be between phases (where a hand
+// start is answered on its merits).
+func (ph *phasedHarness) waitIdle(t *testing.T, runID string) {
+	t.Helper()
+	waitUntil(t, "the run to be idle", func() bool {
+		ph.e.mu.Lock()
+		defer ph.e.mu.Unlock()
+		h := ph.e.handles[runID]
+		return h != nil && h.idle.Load()
+	})
+}
+
 // waitPhaseCompleted waits until phase has completed n times, whatever the
 // run's state reads (a gate parked elsewhere keeps it waiting_on_human).
 func (ph *phasedHarness) waitPhaseCompleted(t *testing.T, runID, phase string, n int) {
@@ -683,12 +695,7 @@ func TestStartPhaseByHand(t *testing.T) {
 	// "Runs once" is the answer of an idle run: wait for the watcher's round
 	// to end and the loop to be between phases again.
 	ph.waitPhaseCompleted(t, runID, "conflicts", 1)
-	waitUntil(t, "the run to be idle", func() bool {
-		ph.e.mu.Lock()
-		defer ph.e.mu.Unlock()
-		h := ph.e.handles[runID]
-		return h != nil && h.idle.Load()
-	})
+	ph.waitIdle(t, runID)
 	if err := ph.e.StartPhase(runID, flow.MainPhase, ""); !errors.Is(err, ErrPhaseNotStartable) || !strings.Contains(err.Error(), "runs once") {
 		t.Errorf("the main chain by hand: %v", err)
 	}
@@ -769,6 +776,8 @@ func TestManualPhaseStartsOnlyByHand(t *testing.T) {
 	if execs := ph.execsOf("./shine.sh"); len(execs) != 1 {
 		t.Errorf("shine ran %d times", len(execs))
 	}
+	ph.waitPhaseCompleted(t, runID, "polish", 1)
+	ph.waitIdle(t, runID)
 	if err := ph.e.StartPhase(runID, "polish", ""); !errors.Is(err, ErrPhaseNotStartable) || !strings.Contains(err.Error(), "max") {
 		t.Errorf("second start past max: %v", err)
 	}

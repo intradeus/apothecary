@@ -58,6 +58,12 @@ type exec struct {
 	// invocation, so it is done lazily before the first stage that needs the
 	// workspace — never for a human_gate.
 	envEnsured bool
+	// followed is the head the adopted merge request's checkout was last
+	// brought to this loop (followAdopted: once per head).
+	followed string
+	// materialised are the curated documents written back this loop, by
+	// path: each is written once, before the first stage that reads it.
+	materialised map[string]*event.ReviewCurated
 	// lastObs is the idle loop's latest poll of the run's merge requests:
 	// what a hand start picks its subject from. Nil before the first poll.
 	lastObs []mrObservation

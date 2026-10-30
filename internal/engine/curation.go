@@ -169,7 +169,7 @@ func (x *exec) materialiseCurated(st *flow.Stage) error {
 		}
 		path := flow.FilePath(in.Value)
 		ev := rs.curated[path]
-		if ev == nil {
+		if ev == nil || x.materialised[path] == ev {
 			continue
 		}
 		var doc any
@@ -187,7 +187,10 @@ func (x *exec) materialiseCurated(st *flow.Stage) error {
 			return fmt.Errorf("writing %s as approved at gate %s: %w", path, ev.StageID, err)
 		}
 		x.e.log.Info("curated review written", "run", rs.runID, "gate", ev.StageID, "path", path, "stage", st.ID)
-		delete(rs.curated, path)
+		if x.materialised == nil {
+			x.materialised = map[string]*event.ReviewCurated{}
+		}
+		x.materialised[path] = ev
 	}
 	return nil
 }

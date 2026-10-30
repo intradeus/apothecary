@@ -109,10 +109,10 @@ func (x *exec) beginRun() error {
 func (x *exec) followAdopted() {
 	rs := x.rs
 	co := x.subjectCheckout()
-	if co == nil || co.Fetch == "" || rs.phaseTip == "" || rs.followed == rs.phaseTip {
+	if co == nil || co.Fetch == "" || rs.phaseTip == "" || x.followed == rs.phaseTip {
 		return
 	}
-	rs.followed = rs.phaseTip
+	x.followed = rs.phaseTip
 	res, err := x.gitIn(co.Dir, fmt.Sprintf("git fetch origin %s && git merge --ff-only FETCH_HEAD", shell.Quote(co.Fetch)))
 	if err != nil || res.ExitCode != 0 {
 		x.e.log.Warn("could not bring the merge request's checkout to its head", "run", rs.runID, "repo", co.Name,

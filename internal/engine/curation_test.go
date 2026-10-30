@@ -177,6 +177,7 @@ func TestGateCurationPostsWhatThePersonKept(t *testing.T) {
 		return "summary: Nothing new.\n"
 	})
 	g := ph.waitPing(t, event.PingGate)
+	waitCaptured(t, ph.harness, runID, g.ID)
 	if g.FileTypes["artifacts/review.yaml"] != agentspec.TypeReviewThreads || g.FileTypes["artifacts/threads.yaml"] != agentspec.TypeMRThreads {
 		t.Fatalf("the gate types its files: %v", g.FileTypes)
 	}
@@ -204,7 +205,9 @@ func TestGateCurationPostsWhatThePersonKept(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	ph.waitState(t, runID, run.InReview)
+	// Not waitState(in_review): the answered gate reads in_review a moment
+	// before its phase resumes.
+	ph.waitPhaseCompleted(t, runID, flow.MainPhase, 1)
 	rv := ph.repoHost.SnapshotMRs()[0].Reviews
 	if len(rv) != 1 || rv[0].Summary != "Two things." || len(rv[0].Notes) != 2 || rv[0].Notes[0].Path != "a.go" ||
 		rv[0].Notes[1].Path != "c.go" || rv[0].Notes[1].Body != "[suggestion] Use a slice here." || rv[0].Notes[0].Kind != "blocking" {
@@ -264,6 +267,7 @@ func TestARejectedCurationReachesTheRedo(t *testing.T) {
 		return "summary: Redone.\n"
 	})
 	g := ph.waitPing(t, event.PingGate)
+	waitCaptured(t, ph.harness, runID, g.ID)
 	if err := ph.e.AnswerPing(g.ID, PingAnswer{Answer: "reject", Feedback: "Too picky.", Curated: map[string]reviewfile.Curation{
 		"artifacts/review.yaml": {Items: []reviewfile.CuratedItem{{Item: "notes/1", Keep: false}}},
 	}}); err != nil {
@@ -281,7 +285,7 @@ func TestARejectedCurationReachesTheRedo(t *testing.T) {
 	if err := ph.e.AnswerPing(g2.ID, PingAnswer{Answer: "approve"}); err != nil {
 		t.Fatal(err)
 	}
-	ph.waitState(t, runID, run.InReview)
+	ph.waitPhaseCompleted(t, runID, flow.MainPhase, 1)
 	if rv := ph.repoHost.SnapshotMRs()[0].Reviews; len(rv) != 1 || rv[0].Summary != "Redone." {
 		t.Errorf("reviews = %+v", rv)
 	}
@@ -319,6 +323,7 @@ func TestReplyGateHoldsBackAReplyAndSkipsItsThread(t *testing.T) {
 	rh.clock.Advance(2 * time.Minute)
 	rh.pick(t, "d1", "d2")
 	g := rh.waitPing(t, event.PingGate)
+	waitCaptured(t, rh.harness, runID, g.ID)
 	if g.FileTypes["artifacts/replies.yaml"] != agentspec.TypeReviewReplies || g.FileTypes["artifacts/threads.yaml"] != agentspec.TypeMRThreads {
 		t.Fatalf("the gate types its files: %v", g.FileTypes)
 	}
@@ -440,4 +445,18 @@ func TestCurationReplays(t *testing.T) {
 	if rs := replay(rejected, fl); len(rs.curated) != 0 || len(rs.dropped) != 1 {
 		t.Errorf("a rejected curation: curated %v dropped %v", rs.curated, rs.dropped)
 	}
+}
+
+// waitCaptured waits for a gate's files to be captured: a curation is
+// checked against what the gate showed, which exists only once captured.
+func waitCaptured(t *testing.T, h *harness, runID, pingID string) {
+	t.Helper()
+	waitUntil(t, "the gate's files to be captured", func() bool {
+		for _, ev := range h.events(t, runID) {
+			if c, ok := ev.Payload.(*event.SnapshotCaptured); ok && c.PingID == pingID {
+				return true
+			}
+		}
+		return false
+	})
 }

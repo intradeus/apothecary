@@ -139,9 +139,8 @@ type runState struct {
 	// pushed is the tip push_branch last pushed, per repo+branch.
 	pushed map[string]string
 	// adopted is the merge request the run was created on (nil when it
-	// opens its own); followed the head its checkout was last brought to.
-	adopted  *event.AdoptedMR
-	followed string
+	// opens its own).
+	adopted *event.AdoptedMR
 	// heads are the commits the run knows on its merge requests, per
 	// checkout: every tip it pushed, the head it opened or adopted a merge
 	// request at, the tip a phase run began on. A head outside them is
