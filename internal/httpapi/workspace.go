@@ -99,7 +99,7 @@ func (s *Server) getWorkspaceRepos(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getRunMRStatus(w http.ResponseWriter, r *http.Request) {
-	out, err := s.Engine.MRStatuses(r.Context(), r.PathValue("id"))
+	out, err := s.MRs.MRStatuses(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
 		return

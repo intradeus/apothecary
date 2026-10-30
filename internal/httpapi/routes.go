@@ -15,6 +15,7 @@ package httpapi
 
 import (
 	"apothecary/internal/ask"
+	"apothecary/internal/mrs"
 	"net/http"
 
 	"apothecary/internal/actionspec"
@@ -305,7 +306,7 @@ func (s *Server) routes() []Route {
 			Handler: s.streamAsk, Produces: "text/event-stream", Scope: ScopeRun},
 		{Method: "GET", Path: "/api/runs/{id}/mrs/status", ID: "getRunMRStatus", Tag: tagRuns,
 			Summary: "Each merge request as its repository reports it now: mergeability and pending review threads",
-			Handler: s.getRunMRStatus, Returns: []engine.MRLive{}, Scope: ScopeRun},
+			Handler: s.getRunMRStatus, Returns: []mrs.MRLive{}, Scope: ScopeRun},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/repos", ID: "getWorkspaceRepos", Tag: tagWorkspace,
 			Summary: "The run's checkouts (one per repository)",
 			Handler: s.getWorkspaceRepos, Returns: []event.Checkout{}, Scope: ScopeRun},

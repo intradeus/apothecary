@@ -1,12 +1,86 @@
-package engine
+// Package mrs is the read side of merge requests: what a project's
+// repository hosts report right now, for people picking a merge request to
+// start a run on and for the run page's live status. It observes and never
+// records — nothing here appends to a run's log — so it needs only the
+// resolver and the run views, not the engine.
+package mrs
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
+	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
+	"apothecary/internal/run"
 )
+
+// Service answers merge-request questions through each project's resolved
+// repository hosts.
+type Service struct {
+	Resolver resolution.Resolver
+	Runs     *run.Reader
+}
+
+func New(resolver resolution.Resolver, runs *run.Reader) *Service {
+	return &Service{Resolver: resolver, Runs: runs}
+}
+
+// ListMRs is the open merge requests of a project's repository ("" = the
+// primary), for a person picking one to start a run on.
+func (s *Service) ListMRs(ctx context.Context, projectID, repo string) ([]ports.MRInfo, error) {
+	res, err := s.Resolver.Resolve(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Close()
+	if repo == "" {
+		repo = event.PrimaryCheckoutName
+	}
+	repoHost := res.RepoHostFor(repo)
+	if repoHost == nil {
+		return nil, fmt.Errorf("no integration reaches repository %q", repo)
+	}
+	return repoHost.ListMRs(ctx)
+}
+
+// MR reads one merge request of a project's repository ("" = the primary).
+func (s *Service) MR(ctx context.Context, projectID, repo string, iid int) (ports.MRInfo, error) {
+	res, err := s.Resolver.Resolve(ctx, projectID)
+	if err != nil {
+		return ports.MRInfo{}, err
+	}
+	defer res.Close()
+	if repo == "" {
+		repo = event.PrimaryCheckoutName
+	}
+	repoHost := res.RepoHostFor(repo)
+	if repoHost == nil {
+		return ports.MRInfo{}, fmt.Errorf("no integration reaches repository %q", repo)
+	}
+	return repoHost.GetMR(ctx, iid)
+}
+
+// RepoHostUser is who a project's repository host integration acts as in a
+// repository ("" = the primary): the account the factory's own merge requests
+// are opened by.
+func (s *Service) RepoHostUser(ctx context.Context, projectID, repo string) (string, error) {
+	res, err := s.Resolver.Resolve(ctx, projectID)
+	if err != nil {
+		return "", err
+	}
+	defer res.Close()
+	if repo == "" {
+		repo = event.PrimaryCheckoutName
+	}
+	repoHost := res.RepoHostFor(repo)
+	if repoHost == nil {
+		return "", fmt.Errorf("no integration reaches repository %q", repo)
+	}
+	return repoHost.Whoami(ctx)
+}
 
 // MRLive is a merge request as the repository host reports it right now: the
 // run page's view of mergeability and review activity.
@@ -37,15 +111,15 @@ type MRLive struct {
 
 // MRStatuses asks the repository host about each of the run's merge requests.
 // It is an observation for display, not run history: nothing is recorded.
-func (e *Engine) MRStatuses(ctx context.Context, runID string) ([]MRLive, error) {
-	v, err := e.runs.View(ctx, runID)
+func (s *Service) MRStatuses(ctx context.Context, runID string) ([]MRLive, error) {
+	v, err := s.Runs.View(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
 	if len(v.MRs) == 0 {
 		return []MRLive{}, nil
 	}
-	res, err := e.resolver.Resolve(ctx, v.ProjectID)
+	res, err := s.Resolver.Resolve(ctx, v.ProjectID)
 	if err != nil {
 		return nil, err
 	}

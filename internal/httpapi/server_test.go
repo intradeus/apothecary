@@ -20,6 +20,7 @@ import (
 	"apothecary/internal/engine"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/mrs"
 	"apothecary/internal/ports"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
@@ -149,6 +150,7 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	t.Cleanup(x.e.Shutdown)
 	x.srv = New(x.e, x.store, x.reg, cfg.RunsDir)
 	x.srv.Pings = EventPingStore{Store: x.store}
+	x.srv.MRs = mrs.New(resolution.StaticResolver{R: x.res}, &run.Reader{Store: x.store})
 	// Wire the config store so the ticket routes exist, seeded with the
 	// test project the static resolver already serves.
 	mem := confstore.NewMem()

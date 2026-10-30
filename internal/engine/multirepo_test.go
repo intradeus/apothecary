@@ -10,6 +10,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
+	"apothecary/internal/mrs"
 	"apothecary/internal/ports"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
@@ -257,7 +258,7 @@ func TestMRStatusesReportMergeabilityAndPendingThreads(t *testing.T) {
 	// d3 was answered by the factory: not pending.
 	h.repoHost.AddComment(1, "d3", "c.go", "rev", "typo", t0)
 	h.repoHost.AddComment(1, "d3", "c.go", "factory", "fixed "+ports.ReplyMarker(runID, "d3"), t0.Add(2*time.Minute))
-	got, err := h.e.MRStatuses(context.Background(), runID)
+	got, err := mrs.New(resolution.StaticResolver{R: h.res}, &run.Reader{Store: h.store}).MRStatuses(context.Background(), runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +272,7 @@ func TestMRStatusesReportMergeabilityAndPendingThreads(t *testing.T) {
 	// An open merge request whose branch the run's targets: the run's is
 	// stacked on it.
 	base := h.repoHost.AddOpenMR("bob", "The base", got[0].Target, "release", "z1")
-	if got, err = h.e.MRStatuses(context.Background(), runID); err != nil {
+	if got, err = mrs.New(resolution.StaticResolver{R: h.res}, &run.Reader{Store: h.store}).MRStatuses(context.Background(), runID); err != nil {
 		t.Fatal(err)
 	}
 	if s := got[0].StackedOn; s == nil || s.IID != base.IID || s.Branch != got[0].Target || s.Title != "The base" {

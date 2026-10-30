@@ -12,7 +12,9 @@ import (
 
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/mrs"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/signalspec"
 )
@@ -312,7 +314,7 @@ func TestMRStatusesCarryChecksAndApproval(t *testing.T) {
 	ph.repoHost.SetChecks(1, ports.Check{Name: "test", State: ports.CheckFailure, URL: "https://ci/1"})
 	ph.repoHost.SetApprovedBy(1, "rev")
 	ph.repoHost.SetMergeableNow(1, true)
-	live, err := ph.e.MRStatuses(context.Background(), runID)
+	live, err := mrs.New(resolution.StaticResolver{R: ph.res}, &run.Reader{Store: ph.store}).MRStatuses(context.Background(), runID)
 	if err != nil || len(live) != 1 {
 		t.Fatalf("live = %+v, %v", live, err)
 	}

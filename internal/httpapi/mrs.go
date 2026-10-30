@@ -71,14 +71,14 @@ type MRRunStarted struct {
 func (s *Server) listProjectMRs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	projectID, repo := r.PathValue("id"), r.URL.Query().Get("repo")
-	mrs, err := s.Engine.ListMRs(ctx, projectID, repo)
+	mrs, err := s.MRs.ListMRs(ctx, projectID, repo)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	// Who the factory is on this repository host: best effort — without it no
 	// row is marked as the factory's own.
-	me, _ := s.Engine.RepoHostUser(ctx, projectID, repo)
+	me, _ := s.MRs.RepoHostUser(ctx, projectID, repo)
 	byKey := map[string]string{}
 	if s.Conf != nil {
 		all, err := s.Conf.ListTickets(ctx, auth.UserID(ctx))
@@ -129,7 +129,7 @@ func (s *Server) startMRRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	mr, err := s.Engine.MR(ctx, projectID, body.Repo, iid)
+	mr, err := s.MRs.MR(ctx, projectID, body.Repo, iid)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

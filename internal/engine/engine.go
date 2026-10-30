@@ -1268,60 +1268,6 @@ func adoptMR(ctx context.Context, res *resolution.Resolution, checkouts []event.
 	return co, &event.AdoptedMR{Repo: repo, IID: info.Ref.IID, URL: info.Ref.URL, Head: info.Head, Author: info.Author, Title: info.Title}, nil
 }
 
-// ListMRs is the open merge requests of a project's repository ("" = the
-// primary), for a person picking one to start a run on.
-func (e *Engine) ListMRs(ctx context.Context, projectID, repo string) ([]ports.MRInfo, error) {
-	res, err := e.resolver.Resolve(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Close()
-	if repo == "" {
-		repo = event.PrimaryCheckoutName
-	}
-	repoHost := res.RepoHostFor(repo)
-	if repoHost == nil {
-		return nil, fmt.Errorf("no integration reaches repository %q", repo)
-	}
-	return repoHost.ListMRs(ctx)
-}
-
-// MR reads one merge request of a project's repository ("" = the primary).
-func (e *Engine) MR(ctx context.Context, projectID, repo string, iid int) (ports.MRInfo, error) {
-	res, err := e.resolver.Resolve(ctx, projectID)
-	if err != nil {
-		return ports.MRInfo{}, err
-	}
-	defer res.Close()
-	if repo == "" {
-		repo = event.PrimaryCheckoutName
-	}
-	repoHost := res.RepoHostFor(repo)
-	if repoHost == nil {
-		return ports.MRInfo{}, fmt.Errorf("no integration reaches repository %q", repo)
-	}
-	return repoHost.GetMR(ctx, iid)
-}
-
-// RepoHostUser is who a project's repository host integration acts as in a
-// repository ("" = the primary): the account the factory's own merge requests
-// are opened by.
-func (e *Engine) RepoHostUser(ctx context.Context, projectID, repo string) (string, error) {
-	res, err := e.resolver.Resolve(ctx, projectID)
-	if err != nil {
-		return "", err
-	}
-	defer res.Close()
-	if repo == "" {
-		repo = event.PrimaryCheckoutName
-	}
-	repoHost := res.RepoHostFor(repo)
-	if repoHost == nil {
-		return "", fmt.Errorf("no integration reaches repository %q", repo)
-	}
-	return repoHost.Whoami(ctx)
-}
-
 // ErrEnvCapacity refuses new tickets at the §14 environment cap (HTTP 409).
 var ErrEnvCapacity = errors.New("environment capacity reached")
 

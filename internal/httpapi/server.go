@@ -28,6 +28,7 @@ import (
 	"apothecary/internal/filestore"
 	"apothecary/internal/kinds"
 	"apothecary/internal/logins"
+	"apothecary/internal/mrs"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
 	"apothecary/internal/run"
@@ -88,6 +89,8 @@ type Server struct {
 	// stored, and signing in answers 503.
 	Keeper  *logins.Keeper
 	SignIns *logins.SignIns
+	// MRs reads merge requests from the projects' repository hosts.
+	MRs *mrs.Service
 
 	logins loginLimiter
 }

@@ -144,7 +144,8 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{conf: conf, eng: &fakeEngine{}, src: src, ch: &fakeChannel{}, project: p, source: source,
 		now: time.Date(2026, 10, 23, 8, 0, 0, 0, time.UTC)}
 	h.w = &Watcher{
-		Engine:  h.eng,
+		Runs:    h.eng,
+		MRs:     h.eng,
 		Tickets: &tickets.Factory{Conf: conf, Sources: fakeSources{src}},
 		Conf:    conf,
 		Notify:  h.ch,
@@ -312,7 +313,7 @@ func TestCronFiresOncePerSlot(t *testing.T) {
 	// A restart: a fresh watcher over the same store, two days later at
 	// 10:00 — one slot passed meanwhile; it fires once, not twice.
 	h.now = h.now.AddDate(0, 0, 2).Truncate(24 * time.Hour).Add(10 * time.Hour)
-	h.w = &Watcher{Engine: h.eng, Tickets: h.w.Tickets, Conf: h.conf, Clock: func() time.Time { return h.now }}
+	h.w = &Watcher{Runs: h.eng, MRs: h.eng, Tickets: h.w.Tickets, Conf: h.conf, Clock: func() time.Time { return h.now }}
 	h.pass(t)
 	if h.eng.count() != 2 {
 		t.Errorf("after a restart over a gap: runs = %d, want 2 (one firing, no catch-up)", h.eng.count())

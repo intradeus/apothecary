@@ -28,18 +28,23 @@ import (
 // By is who an automation's runs say began them.
 const By = "automation"
 
-// Engine is the slice of the engine a pass needs: create a run, tell
-// whether a ticket has one, and — for merge_request — list a repository's open
-// merge requests and who the repository host integration is.
-type Engine interface {
+// Runs is the slice of the engine a pass needs: create a run, and tell
+// whether a ticket has one.
+type Runs interface {
 	CreateRunWith(ctx context.Context, t engine.Ticket, flowName, projectID string, in engine.RunInput) (string, error)
 	RunsOfTicket(ctx context.Context, ticketID string) ([]run.View, error)
+}
+
+// MRs is what a merge_request automation reads: a repository's open merge
+// requests, and who the repository host integration is.
+type MRs interface {
 	ListMRs(ctx context.Context, projectID, repo string) ([]ports.MRInfo, error)
 	RepoHostUser(ctx context.Context, projectID, repo string) (string, error)
 }
 
 type Watcher struct {
-	Engine  Engine
+	Runs    Runs
+	MRs     MRs
 	Tickets *tickets.Factory
 	Conf    *confstore.Service
 	// Notify, when set, is told once per streak of refused firings: a run
@@ -169,7 +174,7 @@ func (w *Watcher) importOrAdopt(ctx context.Context, a confstore.Automation, key
 	if err != nil || !found || existing.AutomationID != a.ID {
 		return confstore.Ticket{}, false, err
 	}
-	runs, err := w.Engine.RunsOfTicket(ctx, existing.ID)
+	runs, err := w.Runs.RunsOfTicket(ctx, existing.ID)
 	if err != nil {
 		return confstore.Ticket{}, false, err
 	}
@@ -188,11 +193,11 @@ func (w *Watcher) importOrAdopt(ctx context.Context, a confstore.Automation, key
 // earlier pass and left without a run (a crash) is adopted; a person's
 // ticket for the same merge request is theirs.
 func (w *Watcher) pollMRs(ctx context.Context, a confstore.Automation) (bool, error) {
-	mrs, err := w.Engine.ListMRs(ctx, a.ProjectID, a.Repo)
+	mrs, err := w.MRs.ListMRs(ctx, a.ProjectID, a.Repo)
 	if err != nil {
 		return false, fmt.Errorf("list merge requests: %w", err)
 	}
-	me, err := w.Engine.RepoHostUser(ctx, a.ProjectID, a.Repo)
+	me, err := w.MRs.RepoHostUser(ctx, a.ProjectID, a.Repo)
 	if err != nil {
 		return false, fmt.Errorf("repository account: %w", err)
 	}
@@ -236,7 +241,7 @@ func (w *Watcher) ticketForMR(ctx context.Context, a confstore.Automation, mr po
 		if existing.AutomationID != a.ID {
 			return confstore.Ticket{}, false, nil
 		}
-		runs, err := w.Engine.RunsOfTicket(ctx, existing.ID)
+		runs, err := w.Runs.RunsOfTicket(ctx, existing.ID)
 		if err != nil || len(runs) > 0 {
 			return confstore.Ticket{}, false, err
 		}
@@ -248,7 +253,7 @@ func (w *Watcher) ticketForMR(ctx context.Context, a confstore.Automation, mr po
 
 // startOn creates the run of a merge request's ticket, on that merge request.
 func (w *Watcher) startOn(ctx context.Context, a confstore.Automation, t confstore.Ticket, mr ports.MRInfo) (string, error) {
-	id, err := w.Engine.CreateRunWith(ctx, engine.Ticket{
+	id, err := w.Runs.CreateRunWith(ctx, engine.Ticket{
 		TicketID: t.ID, Title: t.Title, Goal: t.Goal, ChangeType: string(t.ChangeType),
 		SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,
 	}, a.Flow, a.ProjectID, engine.RunInput{Params: maps.Clone(a.Params), By: By,
@@ -303,7 +308,7 @@ func (w *Watcher) start(ctx context.Context, a confstore.Automation, t confstore
 			}
 		}
 	}
-	id, err := w.Engine.CreateRunWith(ctx, engine.Ticket{
+	id, err := w.Runs.CreateRunWith(ctx, engine.Ticket{
 		TicketID: t.ID, Title: t.Title, Goal: t.Goal, Branch: t.BaseBranch,
 		ChangeType:          string(t.ChangeType),
 		TicketAttachmentIDs: attIDs,

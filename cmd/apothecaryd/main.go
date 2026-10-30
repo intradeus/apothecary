@@ -44,10 +44,12 @@ import (
 	"apothecary/internal/kinds"
 	"apothecary/internal/kube"
 	"apothecary/internal/logins"
+	"apothecary/internal/mrs"
 	"apothecary/internal/pgstore"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
 	"apothecary/internal/resolve"
+	"apothecary/internal/run"
 	"apothecary/internal/secrets"
 	"apothecary/internal/skillstore"
 	"apothecary/internal/sshdoor"
@@ -251,6 +253,8 @@ func cmdServe(args []string) error {
 	// Flows resolve DB-first with the compiled-in templates underneath
 	// (internal/builtin): an empty database still has flows to run.
 	e := engine.New(ecfg, store, resolver, builtin.FlowSource(conf.FlowSource()), limits, []ports.NotificationChannel{chreg})
+	runs := &run.Reader{Store: store}
+	mrSvc := mrs.New(resolver, runs)
 	// A project's parameter bindings are laid over a flow's defaults at run
 	// creation; the config store holds them beside the flow.
 	e.SetFlowBindings(conf)
@@ -355,6 +359,7 @@ func cmdServe(args []string) error {
 
 	api := httpapi.New(e, store, chreg, boot.RunsDir)
 	api.Auth = authsvc
+	api.MRs = mrSvc
 	// The SSH door (TODO 46): one listener people ssh to over their VPN —
 	// desktop VS Code included — routed by username to the run's workspace.
 	// Both of its keys derive from instance secrets: the host key so a person
@@ -563,7 +568,7 @@ func cmdServe(args []string) error {
 	// pass walks every enabled automation; each one's failure is recorded
 	// on it, never on the pass.
 	watcher := &automation.Watcher{
-		Engine: e, Conf: conf, Notify: chreg, Log: log,
+		Runs: e, MRs: mrSvc, Conf: conf, Notify: chreg, Log: log,
 		Tickets: &tickets.Factory{Conf: conf, Attachments: attachments, Sources: resolver, Log: log},
 	}
 	go func() {
