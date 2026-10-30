@@ -323,6 +323,13 @@ func (rs *runState) unpark(phase string) bool {
 	rs.ci = pr.ci
 	rs.endsRun, rs.abortsRun, rs.endReason = false, false, ""
 	rs.idle = false
+	// A gate answered while its phase was parked: the answer is the decision
+	// the resumed stage routes by (the parked record predates it).
+	if pr.ping != "" {
+		if a := rs.answeredPings[pr.ping]; a != nil {
+			rs.gateAnswer = a
+		}
+	}
 	return true
 }
 
