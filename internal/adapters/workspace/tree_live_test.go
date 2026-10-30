@@ -3,7 +3,6 @@
 package workspace
 
 import (
-	"apothecary/internal/ports/envport"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -12,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"apothecary/internal/ports/envport"
 )
 
 // TestLiveWriteTreeScript runs WriteTree's exact stdin (one script line +

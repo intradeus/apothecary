@@ -3,30 +3,29 @@
 package engine
 
 import (
-	askstore "apothecary/internal/ask"
-	"apothecary/internal/portrelay"
-	"apothecary/internal/ports/agentport"
-	"apothecary/internal/ports/envport"
-	"apothecary/internal/runports"
-	"apothecary/internal/services"
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
-	"slices"
-
 	"gopkg.in/yaml.v3"
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/agentspec"
+	askstore "apothecary/internal/ask"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
+	"apothecary/internal/ports/agentport"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/runports"
+	"apothecary/internal/services"
 	"apothecary/internal/wsinfo"
 )
 

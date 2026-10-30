@@ -1,10 +1,11 @@
 package envstate
 
 import (
-	"apothecary/internal/ports/envport"
 	"errors"
 	"testing"
 	"time"
+
+	"apothecary/internal/ports/envport"
 )
 
 func TestBadgesOverlayAndTTL(t *testing.T) {

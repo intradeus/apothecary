@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"apothecary/internal/ports/envport"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"apothecary/internal/ports/envport"
 )
 
 // A "dirty" workspace: its container was built from a

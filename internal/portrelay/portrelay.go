@@ -27,7 +27,6 @@
 package portrelay
 
 import (
-	"apothecary/internal/ports/envport"
 	"context"
 	"fmt"
 	"io"
@@ -38,6 +37,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"apothecary/internal/ports/envport"
 )
 
 // Store persists the (run → workspace port → host port) allocation so

@@ -1,11 +1,12 @@
 package workspace
 
 import (
-	"apothecary/internal/ports/envport"
 	"context"
 	"slices"
 	"strings"
 	"testing"
+
+	"apothecary/internal/ports/envport"
 )
 
 // A marked command gets the marker in its environment and the sweep ahead of

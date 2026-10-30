@@ -1,9 +1,10 @@
 package runports
 
 import (
-	"apothecary/internal/ports/envport"
 	"context"
 	"fmt"
+
+	"apothecary/internal/ports/envport"
 )
 
 // OpenEditor lazily starts code-server (VS Code in the browser) in the run's

@@ -1,17 +1,18 @@
 package envcheck
 
 import (
-	"apothecary/internal/adapters/fake"
-	"apothecary/internal/flow"
-	"apothecary/internal/ports"
-	"apothecary/internal/ports/envport"
-	"apothecary/internal/resolution"
 	"context"
 	"errors"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"apothecary/internal/adapters/fake"
+	"apothecary/internal/flow"
+	"apothecary/internal/ports"
+	"apothecary/internal/ports/envport"
+	"apothecary/internal/resolution"
 )
 
 const fixtureProject = "p1"

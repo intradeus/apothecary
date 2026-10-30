@@ -1,13 +1,14 @@
 package httpapi
 
 import (
-	"apothecary/internal/browsermcp"
 	"bufio"
 	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
 	"strings"
+
+	"apothecary/internal/browsermcp"
 )
 
 // --- project secrets ------------------------------------------------------------

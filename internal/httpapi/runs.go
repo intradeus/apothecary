@@ -1,16 +1,17 @@
 package httpapi
 
 import (
-	"apothecary/internal/auth"
-	"apothecary/internal/engine"
-	"apothecary/internal/envstate"
-	"apothecary/internal/run"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
 	"strings"
+
+	"apothecary/internal/auth"
+	"apothecary/internal/engine"
+	"apothecary/internal/envstate"
+	"apothecary/internal/run"
 )
 
 // Runs: listing, reading and the lifecycle verbs (abort, pause, play,

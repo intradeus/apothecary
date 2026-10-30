@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"apothecary/internal/ports/envport"
 	"archive/tar"
 	"bytes"
 	"context"
@@ -11,6 +10,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"apothecary/internal/ports/envport"
 )
 
 func TestWriteTreeSendsScriptAndTar(t *testing.T) {

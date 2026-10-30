@@ -1,9 +1,10 @@
 package redact
 
 import (
-	"apothecary/internal/resolution"
 	"strings"
 	"testing"
+
+	"apothecary/internal/resolution"
 )
 
 // The failure channel carries raw command output into events, prompts, gates

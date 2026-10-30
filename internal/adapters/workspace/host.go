@@ -1,13 +1,14 @@
 package workspace
 
 import (
-	"apothecary/internal/ports/envport"
 	"context"
 	"errors"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"apothecary/internal/ports/envport"
 )
 
 // A workspace has two independent axes:

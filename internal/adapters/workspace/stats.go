@@ -1,13 +1,14 @@
 package workspace
 
 import (
-	"apothecary/internal/ports/envport"
 	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
+
+	"apothecary/internal/ports/envport"
 )
 
 // SampleResources implements envport.ResourceSampler: one `docker stats` reading

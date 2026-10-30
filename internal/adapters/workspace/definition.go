@@ -1,12 +1,13 @@
 package workspace
 
 import (
-	"apothecary/internal/ports/envport"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
 	"path/filepath"
+
+	"apothecary/internal/ports/envport"
 )
 
 // Definition is how a repo describes its workspace, and how to build and enter

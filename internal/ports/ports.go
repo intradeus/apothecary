@@ -5,7 +5,6 @@
 package ports
 
 import (
-	"apothecary/internal/ports/envport"
 	"context"
 	"fmt"
 	"io"
@@ -13,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"apothecary/internal/ports/envport"
 )
 
 // RepoRef identifies a project repo at its repository host.

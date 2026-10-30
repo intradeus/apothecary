@@ -1,7 +1,6 @@
 package browser
 
 import (
-	"apothecary/internal/ports/envport"
 	"bytes"
 	"context"
 	"errors"
@@ -13,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"apothecary/internal/ports/envport"
 )
 
 // dockerHost runs each project's browser as a container on the engine's

@@ -1,14 +1,15 @@
 package httpapi
 
 import (
-	"apothecary/internal/builtin"
-	"apothecary/internal/egress"
-	"apothecary/internal/ports"
-	"apothecary/internal/run"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"apothecary/internal/builtin"
+	"apothecary/internal/egress"
+	"apothecary/internal/ports"
+	"apothecary/internal/run"
 )
 
 // A run's egress: the defaults, what the gateway blocked, the policy in

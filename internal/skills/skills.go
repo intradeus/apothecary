@@ -6,7 +6,6 @@
 package skills
 
 import (
-	"apothecary/internal/ports/envport"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -17,6 +16,8 @@ import (
 	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
+
+	"apothecary/internal/ports/envport"
 )
 
 const (

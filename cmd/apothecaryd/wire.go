@@ -1,6 +1,13 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"time"
+
 	discordadapter "apothecary/internal/adapters/discord"
 	matrixadapter "apothecary/internal/adapters/matrix"
 	slackadapter "apothecary/internal/adapters/slack"
@@ -35,12 +42,6 @@ import (
 	"apothecary/internal/telemetry"
 	"apothecary/internal/wsimage"
 	"apothecary/internal/wsinfo"
-	"context"
-	"fmt"
-	"log/slog"
-	"net"
-	"net/http"
-	"time"
 )
 
 // The services extracted from the engine declare what they consume; these

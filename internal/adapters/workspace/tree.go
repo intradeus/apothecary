@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"apothecary/internal/ports/envport"
 	"archive/tar"
 	"bytes"
 	"context"
@@ -10,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"apothecary/internal/ports/envport"
 )
 
 // WriteTree lays a whole directory down in ONE exec: a tar built here rides

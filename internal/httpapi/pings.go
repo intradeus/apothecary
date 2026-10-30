@@ -1,10 +1,6 @@
 package httpapi
 
 import (
-	"apothecary/internal/auth"
-	"apothecary/internal/engine"
-	"apothecary/internal/event"
-	"apothecary/internal/run"
 	"context"
 	"crypto/subtle"
 	"errors"
@@ -14,6 +10,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"apothecary/internal/auth"
+	"apothecary/internal/engine"
+	"apothecary/internal/event"
+	"apothecary/internal/run"
 )
 
 // Pings: the shim's ask_human (raise, hold for the answer), answering one,

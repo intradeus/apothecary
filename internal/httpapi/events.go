@@ -1,8 +1,6 @@
 package httpapi
 
 import (
-	"apothecary/internal/filestore"
-	"apothecary/internal/wsinfo"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"apothecary/internal/filestore"
+	"apothecary/internal/wsinfo"
 )
 
 // What a run says: its event stream (SSE), the stage logs captured in its

@@ -1,10 +1,11 @@
 package skills
 
 import (
-	"apothecary/internal/ports/envport"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"apothecary/internal/ports/envport"
 )
 
 func md(name, desc string) []byte {

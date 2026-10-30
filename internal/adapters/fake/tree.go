@@ -1,11 +1,12 @@
 package fake
 
 import (
-	"apothecary/internal/ports/envport"
 	"context"
 	"fmt"
 	"io/fs"
 	"strings"
+
+	"apothecary/internal/ports/envport"
 )
 
 // TreeCall is one recorded WriteTree.

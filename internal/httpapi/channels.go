@@ -1,11 +1,12 @@
 package httpapi
 
 import (
+	"net/http"
+	"strings"
+
 	"apothecary/internal/auth"
 	"apothecary/internal/channels"
 	"apothecary/internal/secrets"
-	"net/http"
-	"strings"
 )
 
 // Notification channels: a user's Matrix/Slack/Discord destinations.

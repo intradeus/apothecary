@@ -1,12 +1,13 @@
 package httpapi
 
 import (
-	"apothecary/internal/portrelay"
-	"apothecary/internal/ports/envport"
-	"apothecary/internal/runports"
 	"errors"
 	"net/http"
 	"strings"
+
+	"apothecary/internal/portrelay"
+	"apothecary/internal/ports/envport"
+	"apothecary/internal/runports"
 )
 
 // A run's workspace ports: exposing one, the in-browser editor, the ports

@@ -1,10 +1,11 @@
 package runports
 
 import (
-	"apothecary/internal/ports/envport"
 	"context"
 	"sort"
 	"time"
+
+	"apothecary/internal/ports/envport"
 )
 
 // Runtime port discovery: the in-workspace shim reports its listeners via

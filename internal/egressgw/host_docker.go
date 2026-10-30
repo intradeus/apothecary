@@ -1,7 +1,6 @@
 package egressgw
 
 import (
-	"apothecary/internal/ports/envport"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -13,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"apothecary/internal/ports/envport"
 )
 
 // DockerHost runs each project's gateway as a container on the engine host's

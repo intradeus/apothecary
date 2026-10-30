@@ -12,9 +12,10 @@
 package wshome
 
 import (
-	"apothecary/internal/ports/envport"
 	"context"
 	"strings"
+
+	"apothecary/internal/ports/envport"
 )
 
 // Resolve probes $HOME through the SAME exec path the harness itself runs
