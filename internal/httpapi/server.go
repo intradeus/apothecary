@@ -31,6 +31,7 @@ import (
 	"apothecary/internal/mrs"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
+	"apothecary/internal/resources"
 	"apothecary/internal/run"
 	"apothecary/internal/secrets"
 	"apothecary/internal/skillstore"
@@ -91,6 +92,8 @@ type Server struct {
 	SignIns *logins.SignIns
 	// MRs reads merge requests from the projects' repository hosts.
 	MRs *mrs.Service
+	// Resources serves the run-page resource graphs.
+	Resources *resources.Sampler
 
 	logins loginLimiter
 }
@@ -874,7 +877,7 @@ func (s *Server) getRunPorts(w http.ResponseWriter, r *http.Request) {
 // the sampler, not events, is authoritative. Empty when nothing was sampled
 // yet (no env, a provisioner without the capability, or an engine restart).
 func (s *Server) getRunResources(w http.ResponseWriter, r *http.Request) {
-	samples := s.Engine.RunResources(r.PathValue("id"))
+	samples := s.Resources.Samples(r.PathValue("id"))
 	if samples == nil {
 		samples = []ports.ResourceSample{}
 	}

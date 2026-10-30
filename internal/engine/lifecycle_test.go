@@ -11,6 +11,8 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
+	"apothecary/internal/resolution"
+	"apothecary/internal/resources"
 	"apothecary/internal/run"
 )
 
@@ -191,7 +193,7 @@ func TestPollersReadTheProjection(t *testing.T) {
 	if err := h.e.ReapOnce(ctx, Window(48*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.e.SampleResourcesOnce(ctx); err != nil {
+	if err := resources.New(&run.Reader{Store: vs}, resolution.StaticResolver{R: h.res}, nil, nil).SampleOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.e.Recover(ctx); err != nil {

@@ -49,6 +49,7 @@ import (
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports"
 	"apothecary/internal/resolve"
+	"apothecary/internal/resources"
 	"apothecary/internal/run"
 	"apothecary/internal/secrets"
 	"apothecary/internal/skillstore"
@@ -255,6 +256,7 @@ func cmdServe(args []string) error {
 	e := engine.New(ecfg, store, resolver, builtin.FlowSource(conf.FlowSource()), limits, []ports.NotificationChannel{chreg})
 	runs := &run.Reader{Store: store}
 	mrSvc := mrs.New(resolver, runs)
+	sampler := resources.New(runs, resolver, nil, log)
 	// A project's parameter bindings are laid over a flow's defaults at run
 	// creation; the config store holds them beside the flow.
 	e.SetFlowBindings(conf)
@@ -360,6 +362,7 @@ func cmdServe(args []string) error {
 	api := httpapi.New(e, store, chreg, boot.RunsDir)
 	api.Auth = authsvc
 	api.MRs = mrSvc
+	api.Resources = sampler
 	// The SSH door (TODO 46): one listener people ssh to over their VPN —
 	// desktop VS Code included — routed by username to the run's workspace.
 	// Both of its keys derive from instance secrets: the host key so a person
@@ -526,23 +529,7 @@ func cmdServe(args []string) error {
 	// per pass, feeding the run-page cpu/ram graphs. Same honesty rule as
 	// the reconciler: a failed sample is a gap in the series, never a
 	// carried-forward value.
-	go func() {
-		if err := e.SampleResourcesOnce(reaperCtx); err != nil && reaperCtx.Err() == nil {
-			log.Error("resource sample pass failed", "err", err)
-		}
-		t := time.NewTicker(10 * time.Second)
-		defer t.Stop()
-		for {
-			select {
-			case <-t.C:
-				if err := e.SampleResourcesOnce(reaperCtx); err != nil && reaperCtx.Err() == nil {
-					log.Error("resource sample pass failed", "err", err)
-				}
-			case <-reaperCtx.Done():
-				return
-			}
-		}
-	}()
+	go sampler.Run(reaperCtx, 10*time.Second)
 
 	// Egress audit ingest: persist each ACTIVE run's audit trail (from its
 	// per-project gateway) into the DB near-live, so the trail is durable BEFORE

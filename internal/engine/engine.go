@@ -283,16 +283,6 @@ type Engine struct {
 	// with envStatus. Same discipline: external state, memory only.
 	envDirty map[string]bool
 
-	// resources is the per-run rolling window of workspace resource samples
-	// (cpu/mem/net), appended by SampleResourcesOnce and served to the
-	// run-page graphs. Memory-only like envStatus: usage is external state,
-	// not a run-authored transition, so it never enters the event log. A
-	// failed sample appends NOTHING — a gap in the series is honest, a
-	// carried-forward value is the stale lie the reconciler comment warns
-	// against.
-	resourcesMu sync.Mutex
-	resources   map[string][]ports.ResourceSample
-
 	// observed is the per-run set of listening ports discovered at runtime
 	// (the in-workspace shim scanner + engine-side sibling scans), surfaced on
 	// the run page with click-to-expose. Memory-only and TTL-aged, like
@@ -615,7 +605,6 @@ func New(cfg Config, store event.Store, resolver resolution.Resolver, flows flow
 		envchecks: map[string]*envCheckState{},
 		envStatus: map[string]ports.EnvStatus{},
 		envDirty:  map[string]bool{},
-		resources: map[string][]ports.ResourceSample{},
 		observed:  map[string]*observedRun{},
 		askStore:  askstore.NewMemStore(),
 		asks:      map[string]*askRun{},
@@ -2500,87 +2489,6 @@ func (e *Engine) EnvStatuses() map[string]ports.EnvStatus {
 	out := make(map[string]ports.EnvStatus, len(e.envStatus))
 	maps.Copy(out, e.envStatus)
 	return out
-}
-
-// resourceWindow caps the per-run sample buffer: at the ~10s sampler cadence,
-// 360 samples ≈ the last hour — plenty for "what is this run costing right
-// now" graphs without unbounded growth.
-const resourceWindow = 360
-
-// SampleResourcesOnce takes one resource reading (cpu/mem/net) of every
-// active run's environment via the provisioner's OPTIONAL ResourceSampler
-// capability, feeding the per-run in-memory window behind the run-page
-// graphs. Unlike the reconciler it does NOT skip runs with an op in flight:
-// provisioning/rebuilding is exactly when the operator watches the graphs,
-// and a probe failure here is just a gap, never a spurious badge. Buffers of
-// terminal (or vanished) runs are dropped at the end of the pass — the
-// workspace may outlive the run for inspection, but the graphs are working
-// feedback, not history.
-func (e *Engine) SampleResourcesOnce(ctx context.Context) error {
-	views, err := e.runs.All(ctx)
-	if err != nil {
-		return err
-	}
-	live := map[string]bool{}
-	// Resolutions are cached per project within the pass, as in ReconcileEnvsOnce.
-	resolved := map[string]*resolution.Resolution{}
-	defer func() {
-		for _, res := range resolved {
-			res.Close()
-		}
-	}()
-	for _, v := range views {
-		id := v.RunID
-		// Pending runs have no container yet; pre-v2 runs with no project
-		// can't be resolved to a provisioner.
-		if v.ProjectID == "" || v.State == run.Pending || v.State.Terminal() {
-			continue
-		}
-		live[id] = true
-		res, ok := resolved[v.ProjectID]
-		if !ok {
-			res, err = e.resolver.Resolve(ctx, v.ProjectID)
-			if err != nil {
-				e.log.Debug("resource sample: resolve failed", "run", id, "project", v.ProjectID, "err", err)
-				continue
-			}
-			resolved[v.ProjectID] = res
-		}
-		sampler, ok := res.Envp.(ports.ResourceSampler)
-		if !ok {
-			continue
-		}
-		s, err := sampler.SampleResources(ctx, ports.EnvID(wsname.ForRun(v, id)))
-		if err != nil {
-			e.log.Debug("resource sample failed", "run", id, "err", err)
-			continue
-		}
-		s.At = e.clock()
-		e.resourcesMu.Lock()
-		buf := append(e.resources[id], s)
-		if len(buf) > resourceWindow {
-			buf = buf[len(buf)-resourceWindow:]
-		}
-		e.resources[id] = buf
-		e.resourcesMu.Unlock()
-	}
-	e.resourcesMu.Lock()
-	for id := range e.resources {
-		if !live[id] {
-			delete(e.resources, id)
-		}
-	}
-	e.resourcesMu.Unlock()
-	return nil
-}
-
-// RunResources returns a snapshot copy of the run's resource-sample window
-// (the run-page graphs). Empty means "nothing sampled yet": no env, a
-// provisioner without the capability, or an engine restart.
-func (e *Engine) RunResources(runID string) []ports.ResourceSample {
-	e.resourcesMu.Lock()
-	defer e.resourcesMu.Unlock()
-	return append([]ports.ResourceSample(nil), e.resources[runID]...)
 }
 
 // EnvBadges returns the per-run workspace badge string: the reconciled docker
