@@ -19,6 +19,7 @@ import (
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/resolution"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 	"apothecary/internal/runcore"
@@ -157,6 +158,37 @@ func TestReReviewContinuesItsThreadInsteadOfRepeatingIt(t *testing.T) {
 	// are filed under "fix" by the harness).
 	if p := ph.promptsOf("fix"); len(p) != 3 || !strings.Contains(p[2], "continue it under replies") {
 		t.Errorf("the retry was not told what to do instead (%d prompts)", len(p))
+	}
+}
+
+// An open gate still curates after a restart: the ping rebuilt from the log
+// knows which of its files are reviews.
+func TestAGateCuratesAfterARestart(t *testing.T) {
+	ph, _, runID := curatedReviewer(t, true, func(int, *reviewfile.Threads) string {
+		return "summary: Two things.\nnotes:\n" +
+			"  - { path: a.go, line: 3, kind: nit, body: name it, rationale: style }\n" +
+			"  - { path: b.go, line: 9, kind: nit, body: rename it, rationale: style }\n"
+	})
+	g := ph.waitPing(t, event.PingGate)
+	waitCaptured(t, ph.harness, runID, g.ID)
+	snaps := ph.e.snapshots
+	ph.e.Shutdown()
+
+	h2 := newHarnessSource(t, ph.flows, ph.flowOf(t, "cur"))
+	h2.store, h2.envp, h2.repoHost = ph.store, ph.envp, ph.repoHost
+	h2.res.Envp, h2.res.RepoHost = ph.envp, ph.repoHost
+	h2.runner.RunFunc = ph.runner.RunFunc
+	h2.res.Runner = h2.runner
+	h2.e = New(Deps{Config: Config{MRPollInterval: 5 * time.Millisecond}, Store: ph.store, Resolver: resolution.StaticResolver{R: h2.res},
+		Flows: ph.flows, Settings: h2.settings, Snapshots: snaps})
+	t.Cleanup(h2.e.Shutdown)
+	if err := h2.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := h2.e.AnswerPing(g.ID, PingAnswer{Answer: "approve", Curated: map[string]reviewfile.Curation{
+		"artifacts/review.yaml": {Items: []reviewfile.CuratedItem{{Item: "notes/1", Keep: false}}},
+	}}); err != nil {
+		t.Fatal(err)
 	}
 }
 

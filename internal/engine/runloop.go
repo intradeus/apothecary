@@ -164,7 +164,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		if _, ok := e.pings[op.PingID]; !ok {
 			e.pings[op.PingID] = &Ping{
 				ID: op.PingID, RunID: runID, Type: op.Type, Question: op.Question,
-				Context: op.Context, Files: op.Files, Link: op.Link, StageID: op.StageID,
+				Context: op.Context, Files: op.Files, FileTypes: op.FileTypes, Link: op.Link, StageID: op.StageID,
 				Form: op.Form, AnswerKind: op.Kind(), key: op.Key,
 				Phase: op.Phase, EndsPhase: op.EndsPhase,
 				RaisedAt: e.clock(), done: make(chan struct{}),
