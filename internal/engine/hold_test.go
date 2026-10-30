@@ -278,9 +278,6 @@ func TestHoldParksOnAQuietHolderAndWakesOnTheirMessage(t *testing.T) {
 		t.Fatalf("stage_paused = %+v", paused)
 	}
 	waitUntil(t, "the run to park", func() bool { return h.view(t, runID).Dormant })
-	// The log says parked a moment before the loop is gone; act on the
-	// parked run, not the exiting one.
-	h.e.Wait(runID)
 	if v := h.view(t, runID); v.State != run.WaitingOnHuman || v.Hold == nil {
 		t.Fatalf("parked view = %s hold=%+v", v.State, v.Hold)
 	}
@@ -367,10 +364,6 @@ func TestReleasingAParkedHoldResumesWithTheHandback(t *testing.T) {
 	takeOverWhenLive(t, h, runID, "u1")
 	close(r.firstEnd)
 	waitEvent[*event.StagePaused](t, h, runID)
-	waitUntil(t, "the run to park", func() bool { return h.view(t, runID).Dormant })
-	// The log says parked a moment before the loop is gone; act on the
-	// parked run, not the exiting one.
-	h.e.Wait(runID)
 
 	if err := h.e.Release(runID, "u1"); err != nil {
 		t.Fatalf("release of a parked hold: %v", err)

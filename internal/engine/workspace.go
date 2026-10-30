@@ -32,39 +32,49 @@ func (e *Engine) SendMessage(runID, text string, interrupt bool) (string, error)
 	if len(text) > maxMessageLen {
 		return "", fmt.Errorf("message is longer than %d bytes", maxMessageLen)
 	}
-	e.mu.Lock()
-	h, ok := e.handles[runID]
-	e.mu.Unlock()
-	if !ok {
-		// No loop: a run parked on the holder of a take-over is woken by
-		// their next message, as a run parked on a question is by its answer.
-		id := e.newID()
-		err := e.wakeHeld(context.Background(), runID, func(run.View) []event.Payload {
-			return []event.Payload{&event.MessageQueued{MessageID: id, Text: text, Interrupt: interrupt}}
-		})
-		if err != nil {
-			return "", err
+	if h := e.liveLoop(runID); h != nil {
+		if !h.agentLive.Load() {
+			return "", ErrNoAgentRunning
 		}
-		return id, nil
+		req := msgReq{msg: agentport.UserMessage{ID: e.newID(), Text: text, Interrupt: interrupt}, ack: make(chan error, 1)}
+		if err := e.messageLive(h, req); !errors.Is(err, errNoLoop) {
+			return req.msg.ID, err
+		}
 	}
-	if !h.agentLive.Load() {
-		return "", ErrNoAgentRunning
+	// No loop: a run parked on the holder of a take-over is woken by their
+	// next message, as a run parked on a question is by its answer.
+	id := e.newID()
+	err := e.wakeHeld(context.Background(), runID, func(run.View) []event.Payload {
+		return []event.Payload{&event.MessageQueued{MessageID: id, Text: text, Interrupt: interrupt}}
+	})
+	if err != nil {
+		return "", err
 	}
-	req := msgReq{msg: agentport.UserMessage{ID: e.newID(), Text: text, Interrupt: interrupt}, ack: make(chan error, 1)}
+	return id, nil
+}
+
+// messageLive hands a message to the run's loop and waits to hear it landed.
+// errNoLoop: the loop went without taking it.
+func (e *Engine) messageLive(h *runHandle, req msgReq) error {
 	t := time.NewTimer(5 * time.Second)
 	defer t.Stop()
 	select {
 	case h.messages <- req:
 	case <-h.done:
-		return "", fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
+		return errNoLoop
 	case <-t.C:
 		// The invocation ended between the check and the send.
-		return "", ErrNoAgentRunning
+		return ErrNoAgentRunning
 	}
 	select {
 	case err := <-req.ack:
-		return req.msg.ID, err
+		return err
 	case <-h.done:
-		return "", fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
+		select {
+		case err := <-req.ack:
+			return err
+		default:
+			return errNoLoop
+		}
 	}
 }

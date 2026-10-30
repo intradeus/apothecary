@@ -38,23 +38,22 @@ var (
 // errors: no agent is running to take over (a command stage, a gate, between
 // stages, parked), or someone already holds it.
 func (e *Engine) TakeOver(runID, userID string) error {
-	e.mu.Lock()
-	h, ok := e.handles[runID]
-	e.mu.Unlock()
-	if !ok {
-		v, err := e.dormantView(context.Background(), runID)
-		if err != nil {
+	if h := e.liveLoop(runID); h != nil {
+		if !h.agentLive.Load() {
+			return ErrNoAgentRunning
+		}
+		if err := e.holdLive(h, holdReq{take: true, userID: userID}); !errors.Is(err, errNoLoop) {
 			return err
 		}
-		if v.Hold != nil {
-			return ErrAlreadyHeld
-		}
-		return ErrNoAgentRunning
 	}
-	if !h.agentLive.Load() {
-		return ErrNoAgentRunning
+	v, err := e.dormantView(context.Background(), runID)
+	if err != nil {
+		return err
 	}
-	return e.holdLive(h, runID, holdReq{take: true, userID: userID})
+	if v.Hold != nil {
+		return ErrAlreadyHeld
+	}
+	return ErrNoAgentRunning
 }
 
 // Release hands the task back: the hold is closed with its account and the
@@ -62,36 +61,36 @@ func (e *Engine) TakeOver(runID, userID string) error {
 // when its turn in flight ends otherwise. A run parked on its holder is
 // woken for it.
 func (e *Engine) Release(runID, userID string) error {
-	e.mu.Lock()
-	h, ok := e.handles[runID]
-	e.mu.Unlock()
-	if !ok {
-		return e.wakeHeld(context.Background(), runID, func(v run.View) []event.Payload {
-			rel := &event.HoldReleased{StageID: v.Hold.StageID, Iteration: v.Hold.Iteration, UserID: userID,
-				Reason: event.HoldReleasedByUser, DurationMS: max(e.clock().Sub(v.Hold.Since).Milliseconds(), 0),
-				HoldSpend: event.HoldSpend{Turns: v.Hold.Turns, Messages: v.Hold.Messages}}
-			if v.Hold.CostUSD > 0 {
-				rel.Usage = &event.Usage{CostUSD: v.Hold.CostUSD}
-			}
-			return []event.Payload{rel}
-		})
+	if h := e.liveLoop(runID); h != nil {
+		if !h.agentLive.Load() {
+			return ErrNotHeld
+		}
+		if err := e.holdLive(h, holdReq{userID: userID}); !errors.Is(err, errNoLoop) {
+			return err
+		}
 	}
-	if !h.agentLive.Load() {
-		return ErrNotHeld
-	}
-	return e.holdLive(h, runID, holdReq{userID: userID})
+	return e.wakeHeld(context.Background(), runID, func(v run.View) []event.Payload {
+		rel := &event.HoldReleased{StageID: v.Hold.StageID, Iteration: v.Hold.Iteration, UserID: userID,
+			Reason: event.HoldReleasedByUser, DurationMS: max(e.clock().Sub(v.Hold.Since).Milliseconds(), 0),
+			HoldSpend: event.HoldSpend{Turns: v.Hold.Turns, Messages: v.Hold.Messages}}
+		if v.Hold.CostUSD > 0 {
+			rel.Usage = &event.Usage{CostUSD: v.Hold.CostUSD}
+		}
+		return []event.Payload{rel}
+	})
 }
 
 // holdLive hands a take-over request to the run's loop and waits to hear
-// what it did with it.
-func (e *Engine) holdLive(h *runHandle, runID string, req holdReq) error {
+// what it did with it. errNoLoop: the loop went without taking it, and the
+// run is parked or over on the log.
+func (e *Engine) holdLive(h *runHandle, req holdReq) error {
 	req.ack = make(chan error, 1)
 	t := time.NewTimer(5 * time.Second)
 	defer t.Stop()
 	select {
 	case h.holds <- req:
 	case <-h.done:
-		return fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
+		return errNoLoop
 	case <-t.C:
 		// The invocation ended between the check and the send.
 		return ErrNoAgentRunning
@@ -100,7 +99,14 @@ func (e *Engine) holdLive(h *runHandle, runID string, req holdReq) error {
 	case err := <-req.ack:
 		return err
 	case <-h.done:
-		return fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
+		// An ack already there wins: the loop can act on it and exit in the
+		// same breath.
+		select {
+		case err := <-req.ack:
+			return err
+		default:
+			return errNoLoop
+		}
 	}
 }
 

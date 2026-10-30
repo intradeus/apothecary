@@ -65,6 +65,11 @@ type exec struct {
 	// materialised are the curated documents written back this loop, by
 	// path: each is written once, before the first stage that reads it.
 	materialised map[string]*event.ReviewCurated
+	// cutLeg is what the take-over in force spent in the invocation a cancel
+	// cut short; heldMessages are the holder's messages a re-entry delivered
+	// in the prompt of the invocation about to start.
+	cutLeg       event.HoldSpend
+	heldMessages int
 	// lastObs is the idle loop's latest poll of the run's merge requests:
 	// what a hand start picks its subject from. Nil before the first poll.
 	lastObs []runcore.MRObservation
@@ -181,6 +186,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	}
 	for !rs.Done {
 		x.checkFold()
+		x.h.parking.Store(false)
 		if cause := context.Cause(ctx); cause != nil {
 			x.exit(cause)
 			return
@@ -297,14 +303,18 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 // (recovered by replay on next boot).
 func (x *exec) exit(cause error) {
 	defer x.checkFold()
+	cause = x.leave(cause)
 	switch {
 	case errors.Is(cause, errAborted):
 		// A deliberate stop is abandonment, not failure (PLAN5 M24) — the
 		// same terminal the flow's own `abort` edge reaches. A take-over in
 		// force ends with it, on the record.
 		for id, h := range x.rs.Holds {
+			var spent event.HoldSpend
+			spent.Add(h.Banked)
+			spent.Add(x.cutLeg)
 			_ = x.append(&event.HoldReleased{StageID: id, Iteration: x.rs.Iters[id], UserID: h.Taken.UserID,
-				Reason: event.HoldEndedWithStage, DurationMS: max(x.e.clock().Sub(h.TakenAt).Milliseconds(), 0), HoldSpend: h.Banked})
+				Reason: event.HoldEndedWithStage, DurationMS: max(x.e.clock().Sub(h.TakenAt).Milliseconds(), 0), HoldSpend: spent})
 		}
 		_ = x.append(&event.RunAbandoned{StalledAt: x.rs.View.CurrentStage, Reason: "aborted by user"})
 	case errors.Is(cause, errPaused):
@@ -319,6 +329,23 @@ func (x *exec) exit(cause error) {
 		x.e.log.Error("run loop error; run left non-terminal for recovery",
 			"run", x.rs.RunID, "err", cause)
 	}
+}
+
+// leave closes the loop to every verb, for good. A loop parking on a human
+// reads its cancel cause only here: a pause or an abort that landed first is
+// how it exits, and one that lands after sees it leaving and acts on the
+// parked run instead (cancelLoop).
+func (x *exec) leave(cause error) error {
+	x.h.parking.Store(true)
+	x.e.mu.Lock()
+	x.h.leaving = true
+	x.e.mu.Unlock()
+	if errors.Is(cause, errWaitingOnHuman) {
+		if c := context.Cause(x.ctx); c != nil {
+			return c
+		}
+	}
+	return cause
 }
 
 // foldCheck, when set (tests only), is handed the run at each point where
@@ -590,7 +617,9 @@ func (x *exec) liveHold(st *flow.Stage) *liveHold {
 	if h == nil {
 		return nil
 	}
-	return &liveHold{st: h, leg: runcore.NewHoldLeg()}
+	l := &liveHold{st: h, leg: runcore.NewHoldLeg()}
+	l.leg.Spend.Messages, x.heldMessages = x.heldMessages, 0
+	return l
 }
 
 // holdReq is a take-over request on its way into the run loop: take, or
@@ -656,7 +685,7 @@ func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner ag
 		if err != nil {
 			return holdReentry{}, err
 		}
-		rs.Holds[st.ID].Banked.Messages += n // delivered on the hold's account
+		x.heldMessages += n // on the hold's account, in the leg they start
 		return holdReentry{reply: strings.TrimPrefix(text, "\n\n---\n\n"), kind: event.PromptMessages, reason: event.ResumeMessage}, nil
 	case rs.PausedHold[st.ID]:
 		return holdReentry{park: true}, nil
@@ -674,6 +703,7 @@ func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner ag
 // no invocation is there to do the parking (a restart, a play, a loop
 // re-entry). The hold stays in force.
 func (x *exec) parkOnHold(st *flow.Stage, iter int, session agentport.SessionID) error {
+	x.h.parking.Store(true)
 	if !x.rs.PausedHold[st.ID] {
 		if err := x.append(&event.StagePaused{StageID: st.ID, Iteration: iter, Reason: event.PauseHeld,
 			SessionID: string(session)}); err != nil {
@@ -739,6 +769,7 @@ func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, init
 		resCh <- agentRes{r, err}
 	}()
 	x.h.agentLive.Store(true)
+	x.h.parking.Store(false)
 	inv, err := x.awaitAgent(st, resCh, cancelRun, budget, io, initialOpen)
 	x.h.agentLive.Store(false)
 	cancelRun(nil)
@@ -1089,6 +1120,7 @@ func (x *exec) afterComplete(st *flow.Stage, verdict *Verdict) error {
 // attempt's result. stop reports that a budget check ended the run.
 func (x *exec) pauseAttempt(st *flow.Stage, iter int, inv invocation) (stop bool, err error) {
 	rs := x.rs
+	x.h.parking.Store(true)
 	for _, p := range inv.open {
 		// Any answer from here on is news to the agent: it arrives by resume.
 		p.handedBack.Store(true)
@@ -1359,6 +1391,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					for _, p := range open {
 						p.handedBack.Store(true)
 					}
+					x.h.parking.Store(true)
 					cancelRun(errParked)
 					return collect(outcomePaused)
 				}
@@ -1451,6 +1484,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			parkC = nil
 			if hold != nil && hold.idle {
 				// The holder went quiet: park on them, hold in force.
+				x.h.parking.Store(true)
 				cancelRun(errParked)
 				inv, err := collect(outcomePaused)
 				inv.holdPark = true
@@ -1462,6 +1496,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			for _, p := range open {
 				p.handedBack.Store(true)
 			}
+			x.h.parking.Store(true)
 			cancelRun(errParked)
 			return collect(outcomePaused)
 		case <-timer.C:
@@ -1469,9 +1504,9 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			return collect(outcomeTimedOut)
 		case <-x.ctx.Done():
 			if hold != nil {
-				// Bank the leg for whoever closes the hold next (an abort's
-				// account; a pause re-reads the log and starts the leg over).
-				hold.st.Banked.Add(hold.leg.Spend)
+				// The leg for whoever closes the hold next (an abort's account;
+				// a pause re-reads the log and starts the leg over).
+				x.cutLeg = hold.leg.Spend
 			}
 			cancelRun(context.Cause(x.ctx))
 			return invocation{}, context.Cause(x.ctx)

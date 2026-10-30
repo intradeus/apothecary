@@ -268,6 +268,13 @@ type runHandle struct {
 	holds chan holdReq
 	// agentLive is set while an agent invocation runs (messages can land).
 	agentLive atomic.Bool
+	// parking is set while the loop goes from an invocation towards parked:
+	// from the decision until the next invocation, or until it is gone. It
+	// takes no delivery in between; liveLoop waits to see which way it went.
+	parking atomic.Bool
+	// leaving (under Engine.mu) is the loop past reading its cancel cause: a
+	// cancel can no longer change how it exits (cancelLoop).
+	leaving bool
 	// idle is set while the run sits between phases with its merge requests
 	// open (PLAN6): the loop only polls the repository host, so it does not
 	// hold a concurrency slot.
@@ -1495,6 +1502,56 @@ func (e *Engine) startLocked(runID string) {
 	go e.runLoop(ctx, runID, h)
 }
 
+// cancelLoop cancels the run's loop with cause and reports whether the loop
+// will act on it. A loop already past reading its cause is leaving for good:
+// this waits it out and reports false, as for a run with no loop, whose log
+// is then settled for the caller's dormant path. orElse runs under e.mu when
+// there is no loop.
+func (e *Engine) cancelLoop(runID string, cause error, orElse func()) bool {
+	for {
+		e.mu.Lock()
+		h := e.handles[runID]
+		if h == nil {
+			if orElse != nil {
+				orElse()
+			}
+			e.mu.Unlock()
+			return false
+		}
+		h.cancel(cause)
+		leaving := h.leaving
+		e.mu.Unlock()
+		if !leaving {
+			return true
+		}
+		<-h.done
+	}
+}
+
+// liveLoop returns the run's loop, nil without one. A loop on its way to
+// parked takes no delivery, and a human who got there first must not be told
+// there is nothing to talk to: this waits, within answerSettle, to see which
+// way it goes — gone, and the run is parked on the log for the caller's
+// dormant path, or back at work.
+func (e *Engine) liveLoop(runID string) *runHandle {
+	deadline := time.NewTimer(answerSettle)
+	defer deadline.Stop()
+	for {
+		e.mu.Lock()
+		h := e.handles[runID]
+		e.mu.Unlock()
+		if h == nil || !h.parking.Load() {
+			return h
+		}
+		select {
+		case <-h.done:
+		case <-deadline.C:
+			return h
+		case <-time.After(answerSettleStep):
+		}
+	}
+}
+
 // Abort cancels the run context, kills any in-flight exec and ABANDONS the
 // run (§2). The environment is kept. Runs without a live goroutine (paused,
 // or still queued pending) are aborted directly: they are dequeued and the
@@ -1507,19 +1564,16 @@ func (e *Engine) startLocked(runID string) {
 // spellings of "abort" (this verb and the flow's `abort` terminal) land in
 // opposite states. Resumability is unchanged: RetryRun accepts both.
 func (e *Engine) Abort(runID string) error {
-	e.mu.Lock()
-	h, ok := e.handles[runID]
-	if ok {
-		e.mu.Unlock()
-		h.cancel(errAborted)
-		return nil
-	}
 	// Not active: dequeue under the lock so scheduleLocked can never start
 	// it between our check and the append.
-	if i := slices.Index(e.queue, runID); i >= 0 {
-		e.queue = append(e.queue[:i], e.queue[i+1:]...)
+	cancelled := e.cancelLoop(runID, errAborted, func() {
+		if i := slices.Index(e.queue, runID); i >= 0 {
+			e.queue = append(e.queue[:i], e.queue[i+1:]...)
+		}
+	})
+	if cancelled {
+		return nil
 	}
-	e.mu.Unlock()
 
 	ctx := context.Background()
 	v, err := e.runs.View(ctx, runID)
@@ -1548,11 +1602,7 @@ func (e *Engine) Abort(runID string) error {
 // inspection; an in-flight agent attempt is cancelled and re-entered on
 // play via its recorded session, exactly like crash recovery.
 func (e *Engine) Pause(runID string) error {
-	e.mu.Lock()
-	h, ok := e.handles[runID]
-	e.mu.Unlock()
-	if ok {
-		h.cancel(errPaused)
+	if e.cancelLoop(runID, errPaused, nil) {
 		return nil
 	}
 	// No loop: a run parked on a human is still pausable, and pausing it is
