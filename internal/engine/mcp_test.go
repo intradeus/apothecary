@@ -86,11 +86,12 @@ func TestRunRefusedForMCPServersTheProjectCannotServe(t *testing.T) {
 		{"no browser here", map[string]string{"figma": "f", "db_pass": "p"}, true, false, "this apothecary runs no project browser"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			h := newHarness(t, mustFlow(t, mcpFlowDoc))
+			h := newHarnessWith(t, func(_ *harness, d *Deps) {
+				if c.wired {
+					d.Browser = &fakeBrowser{}
+				}
+			}, mustFlow(t, mcpFlowDoc))
 			h.res.Secrets, h.res.Browser = c.secrets, c.browser
-			if c.wired {
-				h.e.SetBrowser(&fakeBrowser{})
-			}
 			_, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "shots", testProject)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("err = %v, want it to say %q", err, c.want)
@@ -104,12 +105,13 @@ func TestRunRefusedForMCPServersTheProjectCannotServe(t *testing.T) {
 // builtin browser as the workspace's shim command — and no secret value
 // reaches the log, even when an agent's failure prints one.
 func TestAgentSessionsGetTheirMCPServersResolved(t *testing.T) {
-	h := newHarness(t, mustFlow(t, mcpFlowDoc))
+	b := &fakeBrowser{}
+	h := newHarnessWith(t, func(_ *harness, d *Deps) {
+		d.Browser = b
+		d.ProjectSecrets = secretMap{"figma": "figd_rotated_1", "db_pass": "pass-rotated-1"}
+	}, mustFlow(t, mcpFlowDoc))
 	h.res.Secrets = map[string]string{"figma": "figd_at_creation", "db_pass": "pass-at-creation"}
 	h.res.Browser = true
-	b := &fakeBrowser{}
-	h.e.SetBrowser(b)
-	h.e.SetProjectSecrets(secretMap{"figma": "figd_rotated_1", "db_pass": "pass-rotated-1"})
 	got := map[string][]ports.MCPServer{}
 	var mu sync.Mutex
 	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
@@ -153,11 +155,12 @@ func TestAgentSessionsGetTheirMCPServersResolved(t *testing.T) {
 // A secret deleted after the run was created fails the stage that needs it,
 // before its session opens.
 func TestStageFailsOnASecretGoneSinceCreation(t *testing.T) {
-	h := newHarness(t, mustFlow(t, mcpFlowDoc))
+	h := newHarnessWith(t, func(_ *harness, d *Deps) {
+		d.Browser = &fakeBrowser{}
+		d.ProjectSecrets = secretMap{"db_pass": "p-123456"}
+	}, mustFlow(t, mcpFlowDoc))
 	h.res.Secrets = map[string]string{"figma": "f-123456", "db_pass": "p-123456"}
 	h.res.Browser = true
-	h.e.SetBrowser(&fakeBrowser{})
-	h.e.SetProjectSecrets(secretMap{"db_pass": "p-123456"})
 	var ran atomic.Bool
 	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
 		"shooter": func(fake.RunCall) (ports.AgentResult, error) { ran.Store(true); return ports.AgentResult{}, nil },
@@ -179,11 +182,6 @@ func TestStageFailsOnASecretGoneSinceCreation(t *testing.T) {
 // The browser session reaches the run's workspace ports through the
 // provisioner's exposer, exposing each port once.
 func TestBrowserSessionDialsTheRunsWorkspace(t *testing.T) {
-	h := newHarness(t, mustFlow(t, mcpFlowDoc))
-	h.res.Secrets = map[string]string{"figma": "f-123456", "db_pass": "p-123456"}
-	h.res.Browser = true
-	exp := &countingExposer{EnvProvisioner: h.envp}
-	h.res.Envp = exp
 	b := &fakeBrowser{}
 	b.serve = func(s ports.BrowserSession, _ io.ReadWriter) error {
 		for range 3 {
@@ -195,7 +193,11 @@ func TestBrowserSessionDialsTheRunsWorkspace(t *testing.T) {
 		}
 		return nil
 	}
-	h.e.SetBrowser(b)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Browser = b }, mustFlow(t, mcpFlowDoc))
+	h.res.Secrets = map[string]string{"figma": "f-123456", "db_pass": "p-123456"}
+	h.res.Browser = true
+	exp := &countingExposer{EnvProvisioner: h.envp}
+	h.res.Envp = exp
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "shots", testProject)
 	if err != nil {
 		t.Fatal(err)

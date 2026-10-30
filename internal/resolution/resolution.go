@@ -82,8 +82,8 @@ type Resolution struct {
 	EditorSettings ports.EditorSettings
 	// Secrets are the project's secrets, opened: what a flow's MCP servers
 	// read where they say ${secrets.<name>}. Checked at run creation, fed to
-	// the redactor, and re-read when an agent stage starts (Engine
-	// SetProjectSecrets), so a rotated value needs no new run.
+	// the redactor, and re-read when an agent stage starts (the engine's
+	// Deps.ProjectSecrets), so a rotated value needs no new run.
 	Secrets map[string]string
 	// Browser is the project's browser toggle: a flow whose agents use the
 	// builtin browser MCP server is refused while it is off.

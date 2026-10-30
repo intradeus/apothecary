@@ -23,10 +23,6 @@ type FlowBindings interface {
 	Binding(ctx context.Context, projectID, flowName string) (map[string]string, error)
 }
 
-// SetFlowBindings wires the project parameter bindings (nil = none: every
-// parameter at its default unless a run overrides it).
-func (e *Engine) SetFlowBindings(b FlowBindings) { e.bindings = b }
-
 // resolveParams layers a run's parameter values: the flow's defaults, then
 // the project's bindings, then this attempt's overrides. A binding for a
 // parameter the flow no longer declares is dropped with a warning (a stale

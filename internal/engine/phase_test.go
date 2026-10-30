@@ -70,9 +70,21 @@ type phasedHarness struct {
 
 func newPhasedHarness(t *testing.T, doc string) *phasedHarness {
 	t.Helper()
-	h := newHarness(t, mustFlow(t, doc))
-	ph := &phasedHarness{harness: h, clock: &offsetClock{}, prompts: map[string][]string{}}
-	h.e.clock = ph.clock.Now
+	return newPhasedHarnessWith(t, doc, nil)
+}
+
+// newPhasedHarnessWith is newPhasedHarness with the engine's Deps adjusted
+// by opt (after the harness's own clock is set).
+func newPhasedHarnessWith(t *testing.T, doc string, opt harnessOpt) *phasedHarness {
+	t.Helper()
+	clock := &offsetClock{}
+	h := newHarnessWith(t, func(h *harness, d *Deps) {
+		d.Clock = clock.Now
+		if opt != nil {
+			opt(h, d)
+		}
+	}, mustFlow(t, doc))
+	ph := &phasedHarness{harness: h, clock: clock, prompts: map[string][]string{}}
 	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {
 		// The fake carries no stage id: a watcher's prompt is the one
 		// with a SUBJECT section.
@@ -415,8 +427,7 @@ func TestStartPolicyFromAParam(t *testing.T) {
 	doc := strings.Replace(phasedFlowDoc, "parameters: { harness: fake, model: fake/model }",
 		"parameters: { harness: fake, model: fake/model, rebase: { type: string, default: confirm, enum: [auto, confirm, manual] } }", 1)
 	doc = strings.Replace(doc, "on: { signal: mr_conflicts, start: confirm }", "on: { signal: mr_conflicts, start: $rebase }", 1)
-	ph := newPhasedHarness(t, doc)
-	ph.e.SetFlowBindings(staticBindings{"rebase": "auto"})
+	ph := newPhasedHarnessWith(t, doc, func(_ *harness, d *Deps) { d.Bindings = staticBindings{"rebase": "auto"} })
 	runID := ph.start(t)
 	ph.repoHost.SetTargetSHA(1, "t1")
 	ph.repoHost.SetMergeable(1, ports.MergeConflicts, "h1")
@@ -447,7 +458,7 @@ func TestParkedStateSurvivesARestart(t *testing.T) {
 	h2.res.Envp, h2.res.RepoHost = ph.envp, ph.repoHost
 	h2.runner.RunFunc = ph.runner.RunFunc
 	h2.res.Runner = h2.runner
-	h2.e = New(Config{MRPollInterval: 5 * time.Millisecond}, ph.store, resolution.StaticResolver{R: h2.res}, ph.flows, h2.settings, nil)
+	h2.e = New(Deps{Config: Config{MRPollInterval: 5 * time.Millisecond}, Store: ph.store, Resolver: resolution.StaticResolver{R: h2.res}, Flows: ph.flows, Settings: h2.settings})
 	t.Cleanup(h2.e.Shutdown)
 	if err := h2.e.Recover(context.Background()); err != nil {
 		t.Fatal(err)
@@ -711,7 +722,7 @@ func TestIdleRunSurvivesARestart(t *testing.T) {
 	h2.res.Envp, h2.res.RepoHost = ph.envp, ph.repoHost
 	h2.runner.RunFunc = ph.runner.RunFunc
 	h2.res.Runner = h2.runner
-	h2.e = New(Config{MRPollInterval: 5 * time.Millisecond}, ph.store, resolution.StaticResolver{R: h2.res}, ph.flows, h2.settings, nil)
+	h2.e = New(Deps{Config: Config{MRPollInterval: 5 * time.Millisecond}, Store: ph.store, Resolver: resolution.StaticResolver{R: h2.res}, Flows: ph.flows, Settings: h2.settings})
 	t.Cleanup(h2.e.Shutdown)
 	if err := h2.e.Recover(context.Background()); err != nil {
 		t.Fatal(err)

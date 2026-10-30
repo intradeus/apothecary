@@ -27,14 +27,6 @@ type ProjectSecretSource interface {
 	ProjectSecrets(ctx context.Context, projectID string) (map[string]string, error)
 }
 
-// SetProjectSecrets installs the source an agent stage re-reads the
-// project's secrets from; nil keeps the ones the run was created with.
-func (e *Engine) SetProjectSecrets(s ProjectSecretSource) { e.projectSecrets = s }
-
-// SetBrowser installs the project browser (internal/browser); nil disables
-// it, and a flow whose agents use it is refused at run creation.
-func (e *Engine) SetBrowser(b ports.Browser) { e.browser = b }
-
 // warmBrowser starts bringing the project's browser up as a run that will
 // use it is created: building its image the first time takes minutes, and
 // an agent's MCP client does not wait that long for its server.

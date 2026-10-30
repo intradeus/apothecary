@@ -118,9 +118,8 @@ func (h *harness) execScripts() []string {
 // with a manifest, and installed into every harness; the pins ride
 // run_created and the view.
 func TestRunInstallsPinnedSkills(t *testing.T) {
-	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	lib := newSkillLib()
-	h.e.SetSkills(lib)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Skills = lib }, mustFlow(t, loopFlowDoc))
 	rec := &installRecorder{}
 	h.res.InstallSkills = rec.fn
 	ctx := context.Background()
@@ -171,8 +170,7 @@ func TestRunInstallsPinnedSkills(t *testing.T) {
 // No skillsets: the neutral directory is still reset (a re-bootstrap must
 // not keep an older selection), nothing is written or installed.
 func TestRunWithoutSkillsResetsOnly(t *testing.T) {
-	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.e.SetSkills(newSkillLib())
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Skills = newSkillLib() }, mustFlow(t, loopFlowDoc))
 	rec := &installRecorder{}
 	h.res.InstallSkills = rec.fn
 	id := completedWithEnv(t, h)
@@ -202,7 +200,7 @@ func TestRunRefusesUnknownSkillset(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "skills are not available") {
 		t.Errorf("no library: err = %v", err)
 	}
-	h.e.SetSkills(newSkillLib())
+	h = newHarnessWith(t, func(_ *harness, d *Deps) { d.Skills = newSkillLib() }, mustFlow(t, loopFlowDoc))
 	_, err = h.e.CreateRunWith(ctx, Ticket{Title: "t"}, "loop", testProject, RunInput{Skillsets: []skills.Ref{{ID: "nope"}}})
 	if err == nil || !strings.Contains(err.Error(), "skillset nope") {
 		t.Errorf("unknown: err = %v", err)
@@ -212,9 +210,8 @@ func TestRunRefusesUnknownSkillset(t *testing.T) {
 // A rerun carries the original's skillsets re-pinned to their latest; an
 // explicit empty list clears them.
 func TestRerunRepinsSkillsets(t *testing.T) {
-	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	lib := newSkillLib()
-	h.e.SetSkills(lib)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Skills = lib }, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()
 	id, err := h.e.CreateRunWith(ctx, Ticket{Title: "t"}, "loop", testProject, RunInput{Skillsets: []skills.Ref{{ID: "set2", Seq: 1}}})
 	if err != nil {
@@ -243,8 +240,7 @@ func TestRerunRepinsSkillsets(t *testing.T) {
 
 // A rebuild lays the pinned skills down again in the fresh container.
 func TestRebuildReinstallsSkills(t *testing.T) {
-	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.e.SetSkills(newSkillLib())
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Skills = newSkillLib() }, mustFlow(t, loopFlowDoc))
 	rec := &installRecorder{}
 	h.res.InstallSkills = rec.fn
 	ctx := context.Background()
@@ -268,10 +264,9 @@ func TestRebuildReinstallsSkills(t *testing.T) {
 // Skill bytes that cannot be assembled fail the workspace like any other
 // bootstrap failure.
 func TestSkillTreeFailureFailsEnv(t *testing.T) {
-	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	lib := newSkillLib()
 	lib.fail = errors.New("content is no longer stored")
-	h.e.SetSkills(lib)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Skills = lib }, mustFlow(t, loopFlowDoc))
 	ctx := context.Background()
 	id, err := h.e.CreateRunWith(ctx, Ticket{Title: "t"}, "loop", testProject, RunInput{Skillsets: []skills.Ref{{ID: "set1"}}})
 	if err != nil {

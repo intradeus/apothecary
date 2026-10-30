@@ -17,20 +17,31 @@ import (
 	"apothecary/internal/skillstore"
 )
 
-// withSkills wires a Mem-backed skill library into the fixture and
-// re-serves the routes (registration is gated on the field).
-func withSkills(t *testing.T, x *env, fetch skillstore.FetchFunc) *skillstore.Store {
+// testSkills is a Mem-backed skill library: deps hands it to the engine at
+// construction, serve to the API, re-serving the routes (registration is
+// gated on the field).
+type testSkills struct {
+	lib   *skillstore.Store
+	fetch skillstore.FetchFunc
+}
+
+func newTestSkills(t *testing.T, fetch skillstore.FetchFunc) *testSkills {
 	t.Helper()
-	lib := skillstore.New(skillstore.NewMem(), filestore.NewBlobs(t.TempDir()))
-	x.srv.Skills = lib
-	x.e.SetSkills(lib)
-	if fetch != nil {
-		x.srv.SkillImports = &skillstore.Importer{Store: lib, Fetch: fetch}
+	return &testSkills{lib: skillstore.New(skillstore.NewMem(), filestore.NewBlobs(t.TempDir())), fetch: fetch}
+}
+
+func (k *testSkills) deps(d *engine.Deps) { d.Skills = k.lib }
+
+func (k *testSkills) serve(t *testing.T, x *env) *skillstore.Store {
+	t.Helper()
+	x.srv.Skills = k.lib
+	if k.fetch != nil {
+		x.srv.SkillImports = &skillstore.Importer{Store: k.lib, Fetch: k.fetch}
 	}
 	x.ts.Close()
 	x.ts = httptest.NewServer(x.srv.Handler())
 	t.Cleanup(x.ts.Close)
-	return lib
+	return k.lib
 }
 
 func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
@@ -50,8 +61,9 @@ func decode[T any](t *testing.T, data []byte) T {
 }
 
 func TestSkillsCRUDAndVersions(t *testing.T) {
-	x := newEnv(t, engine.Config{})
-	withSkills(t, x, nil)
+	skl := newTestSkills(t, nil)
+	x := newEnvWith(t, engine.Config{}, skl.deps)
+	skl.serve(t, x)
 
 	resp, data := x.do(t, "POST", "/api/skills", skillBody("pdf", "Reads PDFs."), nil)
 	if resp.StatusCode != http.StatusCreated {
@@ -131,8 +143,9 @@ func TestSkillsCRUDAndVersions(t *testing.T) {
 // Another account sees none of it: lists are theirs alone and ids read as
 // not found.
 func TestSkillsAreTheOwners(t *testing.T) {
-	x := newEnv(t, engine.Config{})
-	withSkills(t, x, nil)
+	skl := newTestSkills(t, nil)
+	x := newEnvWith(t, engine.Config{}, skl.deps)
+	skl.serve(t, x)
 	_, data := x.do(t, "POST", "/api/skills", skillBody("pdf", "Reads PDFs."), nil)
 	sk := decode[skillstore.Skill](t, data)
 	_, data = x.do(t, "POST", "/api/skillsets", SkillsetRequest{Name: "Docs", SkillIDs: []string{sk.ID}}, nil)
@@ -164,8 +177,9 @@ func TestSkillsAreTheOwners(t *testing.T) {
 // A run started with skillsets carries the pins; the fake harness records
 // the install.
 func TestStartRunWithSkillsets(t *testing.T) {
-	x := newEnv(t, engine.Config{})
-	withSkills(t, x, nil)
+	skl := newTestSkills(t, nil)
+	x := newEnvWith(t, engine.Config{}, skl.deps)
+	skl.serve(t, x)
 	_, data := x.do(t, "POST", "/api/skills", skillBody("pdf", "Reads PDFs."), nil)
 	sk := decode[skillstore.Skill](t, data)
 	_, data = x.do(t, "POST", "/api/skillsets", SkillsetRequest{Name: "Docs", SkillIDs: []string{sk.ID}}, nil)
@@ -199,7 +213,6 @@ func TestStartRunWithSkillsets(t *testing.T) {
 }
 
 func TestSkillImportAndRefresh(t *testing.T) {
-	x := newEnv(t, engine.Config{})
 	version := "1"
 	fetch := func(_ context.Context, src skillstore.Source) (skillstore.Fetched, error) {
 		md := func(n string) ports.TreeFile {
@@ -207,7 +220,9 @@ func TestSkillImportAndRefresh(t *testing.T) {
 		}
 		return skillstore.Fetched{Commit: "abc" + version, Files: []ports.TreeFile{md("alpha"), md("beta"), {Path: "README.md", Data: []byte("x")}}}, nil
 	}
-	withSkills(t, x, fetch)
+	skl := newTestSkills(t, fetch)
+	x := newEnvWith(t, engine.Config{}, skl.deps)
+	skl.serve(t, x)
 
 	resp, data := x.do(t, "POST", "/api/skills/import", SkillImportRequest{URL: "https://github.com/o/r/tree/main/skills"}, nil)
 	if resp.StatusCode != http.StatusCreated {

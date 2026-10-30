@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/auth"
 	"apothecary/internal/authsink"
 	"apothecary/internal/confstore"
+	"apothecary/internal/engine"
 	"apothecary/internal/providers"
 	"apothecary/internal/run"
 )
@@ -92,10 +93,11 @@ func TestCredentialsAPIIsOwnerScopedAndNeverEchoes(t *testing.T) {
 // user's token, another run's broker token or the shim's run token are all
 // refused before anything is served.
 func TestAuthBrokerTakesOnlyItsRunsToken(t *testing.T) {
-	x := newConfEnv(t)
-	sink := authsink.New(&run.Reader{Store: x.store}, x.resolver, []byte("instance-key"), nil)
-	x.e.SetAuthSink(sink)
-	x.srv.AuthSink = sink
+	var sink *authsink.Sink
+	x := newConfEnvWith(t, func(d *engine.Deps) {
+		sink = authsink.New(&run.Reader{Store: d.Store}, d.Resolver, []byte("instance-key"), nil)
+		d.AuthSink = sink
+	})
 	path := "/api/runs/run-a/auth-broker/v1/snapshot"
 	for name, hdr := range map[string]map[string]string{
 		"none":          {"Authorization": ""},

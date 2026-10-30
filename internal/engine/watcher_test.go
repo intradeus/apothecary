@@ -281,7 +281,14 @@ func newWatcherHarness(t *testing.T, strategy string) *watcherHarness {
 // newWatcherHarnessDoc is newWatcherHarness over a variant of its flow.
 func newWatcherHarnessDoc(t *testing.T, doc string) *watcherHarness {
 	t.Helper()
-	ph := newPhasedHarness(t, doc)
+	return newWatcherHarnessDocWith(t, doc, nil)
+}
+
+// newWatcherHarnessDocWith is newWatcherHarnessDoc with the engine's Deps
+// adjusted by opt.
+func newWatcherHarnessDocWith(t *testing.T, doc string, opt harnessOpt) *watcherHarness {
+	t.Helper()
+	ph := newPhasedHarnessWith(t, doc, opt)
 	rh := &watcherHarness{phasedHarness: ph, git: newMergeGit("main"), resolverClears: true}
 	ph.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
 		if cmd.Dir == "repo" {

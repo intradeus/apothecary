@@ -117,6 +117,12 @@ func (v *varSettings) Limits(context.Context) (engine.Limits, error) { return v.
 
 func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	t.Helper()
+	return newEnvWith(t, cfg, nil, docs...)
+}
+
+// newEnvWith is newEnv with the engine's Deps adjusted by opt.
+func newEnvWith(t *testing.T, cfg engine.Config, opt func(*engine.Deps), docs ...string) *env {
+	t.Helper()
 	x := &env{
 		store:    event.NewMemStore(),
 		envp:     fake.NewEnvProvisioner(),
@@ -156,26 +162,10 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	if cfg.MRPollInterval == 0 {
 		cfg.MRPollInterval = 5 * time.Millisecond
 	}
-	x.e = engine.New(cfg, x.store, resolution.StaticResolver{R: x.res}, flows, x.settings, []ports.NotificationChannel{x.reg})
-	t.Cleanup(x.e.Shutdown)
-	x.srv = New(x.e, x.store, x.reg, cfg.RunsDir)
-	x.srv.Pings = EventPingStore{Store: x.store}
-	x.srv.MRs = mrs.New(resolution.StaticResolver{R: x.res}, &run.Reader{Store: x.store})
-	x.srv.Resources = resources.New(&run.Reader{Store: x.store}, resolution.StaticResolver{R: x.res}, nil, nil)
-	x.srv.EnvState = envstate.New(&run.Reader{Store: x.store}, resolution.StaticResolver{R: x.res}, nil, nil)
-	x.e.SetEnvState(x.srv.EnvState)
-	x.srv.Workspaces = wsinfo.New(&run.Reader{Store: x.store}, resolution.StaticResolver{R: x.res}, x.srv.EnvState)
-	x.srv.EnvCheck = envcheck.NewRegistry(resolution.StaticResolver{R: x.res}, x.e, cfg.EngineURL)
-	x.srv.Egress = egress.New(&run.Reader{Store: x.store}, resolution.StaticResolver{R: x.res}, nil)
-	x.srv.Ask = ask.New(&run.Reader{Store: x.store}, resolution.StaticResolver{R: x.res}, x.e, ask.NewMemStore())
-	x.srv.AuthSink = authsink.New(&run.Reader{Store: x.store}, resolution.StaticResolver{R: x.res}, nil, nil)
-	x.e.SetAuthSink(x.srv.AuthSink)
-	x.srv.Ports = runports.New(&run.Reader{Store: x.store}, resolution.StaticResolver{R: x.res}, nil, runports.Config{}, nil)
-	x.e.SetRunPorts(x.srv.Ports)
-	x.e.AddEnvTeardown(x.srv.Ports)
-	x.srv.Browser = browsermcp.New(&run.Reader{Store: x.store}, resolution.StaticResolver{R: x.res}, nil)
-	x.e.AddEnvTeardown(x.srv.Browser)
-	x.srv.Services = services.New(&run.Reader{Store: x.store}, resolution.StaticResolver{R: x.res}, x.e, x.srv.Ports, nil)
+	x.e, x.srv = wire(t, engine.Deps{
+		Config: cfg, Store: x.store, Resolver: resolution.StaticResolver{R: x.res}, Flows: flows,
+		Settings: x.settings, Channels: []ports.NotificationChannel{x.reg},
+	}, opt, x.reg, cfg.RunsDir)
 	// Wire the config store so the ticket routes exist, seeded with the
 	// test project the static resolver already serves.
 	mem := confstore.NewMem()
@@ -189,6 +179,41 @@ func newEnv(t *testing.T, cfg engine.Config, docs ...string) *env {
 	x.ts = httptest.NewServer(x.srv.Handler())
 	t.Cleanup(x.ts.Close)
 	return x
+}
+
+// wire builds the engine over d and the server over it, with the services
+// the daemon shares between them built first, as cmd/apothecaryd does. opt
+// adjusts d before the engine is built; the server takes what it shares
+// (env state, login sink, browser) from d as opt left it.
+func wire(t *testing.T, d engine.Deps, opt func(*engine.Deps), reg *channels.Registry, runsDir string) (*engine.Engine, *Server) {
+	t.Helper()
+	runs := &run.Reader{Store: d.Store}
+	portsSvc := runports.New(runs, d.Resolver, nil, runports.Config{}, nil)
+	browserSvc := browsermcp.New(runs, d.Resolver, nil)
+	d.RunPorts = portsSvc
+	d.EnvState = envstate.New(runs, d.Resolver, nil, nil)
+	d.AuthSink = authsink.New(runs, d.Resolver, nil, nil)
+	d.Teardown = []engine.EnvTeardown{portsSvc, browserSvc}
+	if opt != nil {
+		opt(&d)
+	}
+	browserSvc.Browser = d.Browser
+	e := engine.New(d)
+	t.Cleanup(e.Shutdown)
+	srv := New(e, d.Store, reg, runsDir)
+	srv.Pings = EventPingStore{Store: d.Store}
+	srv.MRs = mrs.New(d.Resolver, runs)
+	srv.Resources = resources.New(runs, d.Resolver, nil, nil)
+	srv.EnvState = d.EnvState
+	srv.Workspaces = wsinfo.New(runs, d.Resolver, d.EnvState)
+	srv.EnvCheck = envcheck.NewRegistry(d.Resolver, e, d.Config.EngineURL)
+	srv.Egress = egress.New(runs, d.Resolver, nil)
+	srv.Ask = ask.New(runs, d.Resolver, e, ask.NewMemStore())
+	srv.AuthSink = d.AuthSink
+	srv.Ports = portsSvc
+	srv.Browser = browserSvc
+	srv.Services = services.New(runs, d.Resolver, e, portsSvc, nil)
+	return e, srv
 }
 
 func TestExposePortEndpoint(t *testing.T) {
@@ -829,8 +854,9 @@ func TestChannelsCRUD(t *testing.T) {
 
 func TestLogsEndpoint(t *testing.T) {
 	dir := t.TempDir()
-	x := newEnv(t, engine.Config{RunsDir: dir})
-	newFilesFor(t, x, 1<<20, []string{"text/*"}) // logs serve from snapshots (DESIGN-FILES §5.4)
+	files := newTestFiles(t, 1<<20, []string{"text/*"}) // logs serve from snapshots (DESIGN-FILES §5.4)
+	x := newEnvWith(t, engine.Config{RunsDir: dir}, files.deps)
+	files.serve(x)
 	x.envp.ExecFunc = func(env *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
 		if strings.Contains(cmd.Script, "make lint") {
 			return ports.ExecResult{ExitCode: 0, Output: "=== RUN TestAll\n--- PASS: all 42 tests"}, nil
@@ -858,7 +884,8 @@ func TestLogsEndpoint(t *testing.T) {
 // snapshot: 200 with content for file payloads, 404 for unknown pings. The
 // content comes from the record, not the live workspace (DESIGN-FILES §5.2).
 func TestPingArtifact(t *testing.T) {
-	x := newEnv(t, engine.Config{}, `name: gated
+	stores := newTestFiles(t, 1<<20, []string{"text/*"})
+	x := newEnvWith(t, engine.Config{}, stores.deps, `name: gated
 version: 5
 parameters: { harness: fake, model: fake/model }
 agents:
@@ -875,7 +902,7 @@ main:
   - { id: gate, type: human_gate, question: "Approve the plan?", input: { doc: { from: artifacts/plan.md, type: file } },
       on_reject: { to: plan, max: 2 } }
 `)
-	newFilesFor(t, x, 1<<20, []string{"text/*"})
+	stores.serve(x)
 	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
 		if err := x.envp.WriteFile(ctx, call.Env, "artifacts/plan.md", []byte("# Plan\n\n## Steps\ndo things\n"), 0o644); err != nil {
 			return ports.AgentResult{}, err

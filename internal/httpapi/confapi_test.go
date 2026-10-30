@@ -11,25 +11,13 @@ import (
 	"time"
 
 	"apothecary/internal/actionspec"
-	"apothecary/internal/ask"
-	"apothecary/internal/authsink"
-	"apothecary/internal/browsermcp"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
-	"apothecary/internal/egress"
 	"apothecary/internal/engine"
-	"apothecary/internal/envcheck"
-	"apothecary/internal/envstate"
 	"apothecary/internal/event"
 	"apothecary/internal/kinds"
-	"apothecary/internal/mrs"
 	"apothecary/internal/resolve"
-	"apothecary/internal/resources"
-	"apothecary/internal/run"
-	"apothecary/internal/runports"
 	"apothecary/internal/secrets"
-	"apothecary/internal/services"
-	"apothecary/internal/wsinfo"
 )
 
 // v1FlowDoc is this suite's user-created flow (the product ships none):
@@ -66,6 +54,12 @@ type confEnv struct {
 
 func newConfEnv(t *testing.T) *confEnv {
 	t.Helper()
+	return newConfEnvWith(t, nil)
+}
+
+// newConfEnvWith is newConfEnv with the engine's Deps adjusted by opt.
+func newConfEnvWith(t *testing.T, opt func(*engine.Deps)) *confEnv {
+	t.Helper()
 	key, err := secrets.ParseKey(secrets.GenerateKey())
 	if err != nil {
 		t.Fatal(err)
@@ -79,29 +73,10 @@ func newConfEnv(t *testing.T) *confEnv {
 
 	store := event.NewMemStore()
 	chreg := channels.NewRegistry()
-	e := engine.New(engine.Config{}, store, resolver, conf.FlowSource(),
-		engine.StaticSettings{L: engine.Limits{MaxConcurrentRuns: 3, MaxEnvironments: 6}}, nil)
-	e.SetFlowBindings(conf)
-	t.Cleanup(e.Shutdown)
-
-	srv := New(e, store, chreg, "")
-	srv.Pings = EventPingStore{Store: store}
-	srv.MRs = mrs.New(resolver, &run.Reader{Store: store})
-	srv.Resources = resources.New(&run.Reader{Store: store}, resolver, nil, nil)
-	srv.EnvState = envstate.New(&run.Reader{Store: store}, resolver, nil, nil)
-	e.SetEnvState(srv.EnvState)
-	srv.Workspaces = wsinfo.New(&run.Reader{Store: store}, resolver, srv.EnvState)
-	srv.EnvCheck = envcheck.NewRegistry(resolver, e, "")
-	srv.Egress = egress.New(&run.Reader{Store: store}, resolver, nil)
-	srv.Ask = ask.New(&run.Reader{Store: store}, resolver, e, ask.NewMemStore())
-	srv.AuthSink = authsink.New(&run.Reader{Store: store}, resolver, nil, nil)
-	e.SetAuthSink(srv.AuthSink)
-	srv.Ports = runports.New(&run.Reader{Store: store}, resolver, nil, runports.Config{}, nil)
-	e.SetRunPorts(srv.Ports)
-	e.AddEnvTeardown(srv.Ports)
-	srv.Browser = browsermcp.New(&run.Reader{Store: store}, resolver, nil)
-	e.AddEnvTeardown(srv.Browser)
-	srv.Services = services.New(&run.Reader{Store: store}, resolver, e, srv.Ports, nil)
+	e, srv := wire(t, engine.Deps{
+		Store: store, Resolver: resolver, Flows: conf.FlowSource(), Bindings: conf,
+		Settings: engine.StaticSettings{L: engine.Limits{MaxConcurrentRuns: 3, MaxEnvironments: 6}},
+	}, opt, chreg, "")
 	srv.Conf = conf
 	srv.Kinds = reg
 	srv.Ops = resolver

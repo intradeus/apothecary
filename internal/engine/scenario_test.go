@@ -46,7 +46,14 @@ type harness struct {
 	settings *varSettings
 	// askSvc is the run Ask panes, built on first use (askPane).
 	askSvc *askstore.Service
+	// rp is port exposure, wired as the daemon wires it (the engine's
+	// RunPorts and first teardown hook); relay-less until setRelay.
+	rp *runports.Service
 }
+
+// harnessOpt adjusts what a harness's engine is built from; it runs once the
+// harness's fakes and resolution exist, before the engine does.
+type harnessOpt func(h *harness, d *Deps)
 
 // varSettings is a mutable SettingsSource for tests.
 type varSettings struct{ L Limits }
@@ -144,7 +151,13 @@ func withAgents(doc string, specs map[string]*agentspec.Spec) string {
 
 func newHarness(t *testing.T, flows ...*flow.Flow) *harness {
 	t.Helper()
-	return newHarnessOn(t, nil, flows...)
+	return newHarnessWith(t, nil, flows...)
+}
+
+// newHarnessWith is newHarness with the engine's Deps adjusted by opt.
+func newHarnessWith(t *testing.T, opt harnessOpt, flows ...*flow.Flow) *harness {
+	t.Helper()
+	return newHarnessOnWith(t, nil, opt, flows...)
 }
 
 // newHarnessOn is newHarness with the engine reading and writing through
@@ -153,11 +166,16 @@ func newHarness(t *testing.T, flows ...*flow.Flow) *harness {
 // projection). nil is the plain MemStore.
 func newHarnessOn(t *testing.T, store func(*event.MemStore) event.Store, flows ...*flow.Flow) *harness {
 	t.Helper()
+	return newHarnessOnWith(t, store, nil, flows...)
+}
+
+func newHarnessOnWith(t *testing.T, store func(*event.MemStore) event.Store, opt harnessOpt, flows ...*flow.Flow) *harness {
+	t.Helper()
 	fm := flow.MapSource{}
 	for _, f := range flows {
 		fm[f.Name] = f
 	}
-	h := newHarnessSourceOn(t, store, fm, flows...)
+	h := newHarnessSourceOn(t, store, fm, opt, flows...)
 	h.flows = fm
 	return h
 }
@@ -177,10 +195,10 @@ func (h *harness) flowOf(t *testing.T, name string) *flow.Flow {
 // about what happens when the source itself misbehaves.
 func newHarnessSource(t *testing.T, src flow.Source, flows ...*flow.Flow) *harness {
 	t.Helper()
-	return newHarnessSourceOn(t, nil, src, flows...)
+	return newHarnessSourceOn(t, nil, src, nil, flows...)
 }
 
-func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, src flow.Source, flows ...*flow.Flow) *harness {
+func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, src flow.Source, opt harnessOpt, flows ...*flow.Flow) *harness {
 	t.Helper()
 	h := &harness{
 		store:    event.NewMemStore(),
@@ -213,7 +231,16 @@ func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, s
 	if store != nil {
 		es = store(h.store)
 	}
-	h.e = New(cfg, es, resolution.StaticResolver{R: h.res}, src, h.settings, []ports.NotificationChannel{h.ch})
+	h.rp = h.ports(nil)
+	d := Deps{
+		Config: cfg, Store: es, Resolver: resolution.StaticResolver{R: h.res}, Flows: src,
+		Settings: h.settings, Channels: []ports.NotificationChannel{h.ch},
+		RunPorts: h.rp, Teardown: []EnvTeardown{h.rp},
+	}
+	if opt != nil {
+		opt(h, &d)
+	}
+	h.e = New(d)
 	registerGolden(t, h)
 	t.Cleanup(h.e.Shutdown)
 	return h
@@ -241,13 +268,11 @@ func (h *harness) ports(relay *portrelay.Manager) *runports.Service {
 	return runports.New(&run.Reader{Store: h.store}, resolution.StaticResolver{R: h.res}, relay, runports.Config{}, nil)
 }
 
-// setRelay turns port exposure on through relay, the way the daemon wires
-// it: the service installed on the engine and as its teardown hook.
+// setRelay turns the harness's port exposure on through relay. Call it
+// before any run starts.
 func (h *harness) setRelay(relay *portrelay.Manager) *runports.Service {
-	rp := h.ports(relay)
-	h.e.SetRunPorts(rp)
-	h.e.AddEnvTeardown(rp)
-	return rp
+	h.rp.Relay = relay
+	return h.rp
 }
 
 // services is the run page's service control over the harness, appending

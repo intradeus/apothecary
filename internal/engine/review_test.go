@@ -51,9 +51,9 @@ type reviewRun struct {
 }
 
 func newReviewRun(t *testing.T) *reviewRun {
-	rr := &reviewRun{h: newHarness(t, mustFlow(t, reviewFlowDoc)), prompts: map[string][]string{}}
+	rr := &reviewRun{prompts: map[string][]string{}}
 	rr.att, rr.snaps, _ = newFiles(t)
-	rr.h.e.SetFiles(rr.att, rr.snaps)
+	rr.h = newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = rr.att, rr.snaps }, mustFlow(t, reviewFlowDoc))
 	record := func(agent string, c fake.RunCall) {
 		rr.mu.Lock()
 		rr.prompts[agent] = append(rr.prompts[agent], c.In.Prompt)

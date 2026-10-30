@@ -46,9 +46,8 @@ func snapshotBody(t *testing.T, snaps *filestore.Snapshots, id string) string {
 // Goal attachments are delivered into the workspace (under the git-excluded
 // .apothecary/ tree) AND listed in the agent's prompt so it can read them.
 func TestGoalAttachmentsDeliveredAndPrompted(t *testing.T) {
-	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	att, snaps, _ := newFiles(t)
-	h.e.SetFiles(att, snaps)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, loopFlowDoc))
 
 	up, err := att.Save(context.Background(), "", "spec.pdf", "application/pdf", strings.NewReader("%PDF-1.4"))
 	if err != nil {
@@ -88,9 +87,8 @@ func TestGoalAttachmentsDeliveredAndPrompted(t *testing.T) {
 // bootstrap) is captured as a log snapshot under the pseudo-stage id — it
 // used to live only in the adapter's exec.log and die with the workspace.
 func TestProvisionLogPublished(t *testing.T) {
-	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	att, snaps, _ := newFiles(t)
-	h.e.SetFiles(att, snaps)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, loopFlowDoc))
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
@@ -116,9 +114,8 @@ func TestProvisionLogPublished(t *testing.T) {
 // needs the provisioning log, and exactly when it used to vanish with the
 // workspace. The capture must happen on that exit path too.
 func TestProvisionLogPublishedOnBootstrapFailure(t *testing.T) {
-	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	att, snaps, _ := newFiles(t)
-	h.e.SetFiles(att, snaps)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, loopFlowDoc))
 
 	h.envp.ExecFunc = func(_ *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
 		if strings.Contains(cmd.Script, "git clone") {
@@ -158,9 +155,8 @@ main:
   - { id: check, type: command, run: verify, on_success: done,
       on_fail: { to: plan, max: 1 } }
 `
-	h := newHarness(t, mustFlow(t, doc))
 	att, snaps, _ := newFiles(t)
-	h.e.SetFiles(att, snaps)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, doc))
 
 	attempt := 0
 	h.agentScript(map[string]func(fake.RunCall) (ports.AgentResult, error){
@@ -245,9 +241,8 @@ parameters: { harness: fake, model: fake/model }
 main:
   - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
 `
-	h := newHarness(t, mustFlow(t, doc))
 	att, snaps, _ := newFiles(t)
-	h.e.SetFiles(att, snaps)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, doc))
 
 	runIDCh := make(chan string, 1)
 	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (ports.AgentResult, error) {

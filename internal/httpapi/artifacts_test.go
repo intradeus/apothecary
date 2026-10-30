@@ -13,19 +13,29 @@ import (
 	"apothecary/internal/filestore"
 )
 
-// newFilesFor wires real filestore stores (over the in-package Mem) into a
-// test server + engine — upload/claim side and capture/delivery side.
-func newFilesFor(t *testing.T, x *env, maxBytes int64, allow []string) (*filestore.Attachments, *filestore.Snapshots, *filestore.Mem) {
+// testFiles are real filestore stores (over the in-package Mem) for a test
+// server + engine — upload/claim side and capture/delivery side: deps hands
+// them to the engine at construction, serve to the API.
+type testFiles struct {
+	att   *filestore.Attachments
+	snaps *filestore.Snapshots
+	mem   *filestore.Mem
+}
+
+func newTestFiles(t *testing.T, maxBytes int64, allow []string) *testFiles {
 	t.Helper()
 	mem := filestore.NewMem()
 	blobs := filestore.NewBlobs(t.TempDir())
-	att := filestore.NewAttachments(mem, blobs, maxBytes, allow)
-	snaps := filestore.NewSnapshots(mem, blobs, maxBytes)
-	x.srv.Attachments = att
-	x.srv.Snapshots = snaps
-	x.e.SetFiles(att, snaps)
-	return att, snaps, mem
+	return &testFiles{
+		att:   filestore.NewAttachments(mem, blobs, maxBytes, allow),
+		snaps: filestore.NewSnapshots(mem, blobs, maxBytes),
+		mem:   mem,
+	}
 }
+
+func (f *testFiles) deps(d *engine.Deps) { d.Attachments, d.Snapshots = f.att, f.snaps }
+
+func (f *testFiles) serve(x *env) { x.srv.Attachments, x.srv.Snapshots = f.att, f.snaps }
 
 func multipartBody(name, ctype string, data []byte) (*bytes.Buffer, string) {
 	var buf bytes.Buffer
@@ -40,8 +50,9 @@ func multipartBody(name, ctype string, data []byte) (*bytes.Buffer, string) {
 }
 
 func TestPostArtifacts(t *testing.T) {
-	x := newEnv(t, engine.Config{})
-	newFilesFor(t, x, 32, []string{"text/*"})
+	files := newTestFiles(t, 32, []string{"text/*"})
+	x := newEnvWith(t, engine.Config{}, files.deps)
+	files.serve(x)
 
 	upload := func(name, ctype string, data []byte) (*http.Response, []byte) {
 		body, ct := multipartBody(name, ctype, data)

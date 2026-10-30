@@ -68,9 +68,8 @@ outcomes:
 func curatedReviewer(t *testing.T, gate bool, script func(call int, threads *reviewfile.Threads) string) (*phasedHarness, ports.MRRef, string) {
 	t.Helper()
 	doc := strings.Replace(curatedReviewerDoc, "GATE", map[bool]string{true: "true", false: "false"}[gate], 1)
-	ph := newPhasedHarness(t, doc)
 	att, snaps, _ := newFiles(t)
-	ph.e.SetFiles(att, snaps)
+	ph := newPhasedHarnessWith(t, doc, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps })
 	var calls atomic.Int32
 	inner := ph.runner.RunFunc
 	ph.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (ports.AgentResult, error) {
@@ -306,9 +305,8 @@ func replyGateDoc() string {
 // At the reply gate a person holds one reply back and rewords the other:
 // the thread held back is left alone until someone writes there again.
 func TestReplyGateHoldsBackAReplyAndSkipsItsThread(t *testing.T) {
-	rh := newWatcherHarnessDoc(t, replyGateDoc())
 	att, snaps, _ := newFiles(t)
-	rh.e.SetFiles(att, snaps)
+	rh := newWatcherHarnessDocWith(t, replyGateDoc(), func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps })
 	rh.replies = func() string {
 		return "- { thread: d1, did: fixed, reply: one }\n- { thread: d2, did: answered, reply: two }\n"
 	}

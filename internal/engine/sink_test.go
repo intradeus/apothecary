@@ -34,9 +34,8 @@ func (r *recordingSink) count(t event.Type) int {
 // Every appended event reaches the sink exactly once; recovery replay does
 // NOT re-emit history (§7: metrics would double-count otherwise).
 func TestSinkReceivesFreshEventsOnly(t *testing.T) {
-	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	sink := &recordingSink{}
-	h.e.SetSink(sink)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Sink = sink }, mustFlow(t, loopFlowDoc))
 
 	runID, err := h.e.CreateRun(context.Background(), Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
@@ -58,8 +57,7 @@ func TestSinkReceivesFreshEventsOnly(t *testing.T) {
 	// Simulate a restart: new engine over the same store, recovery of the
 	// terminal run must not re-emit anything.
 	sink2 := &recordingSink{}
-	h2 := newHarness(t, mustFlow(t, loopFlowDoc))
-	h2.e.SetSink(sink2)
+	h2 := newHarnessWith(t, func(_ *harness, d *Deps) { d.Sink = sink2 }, mustFlow(t, loopFlowDoc))
 	if err := h2.e.Recover(context.Background()); err != nil {
 		t.Fatal(err)
 	}

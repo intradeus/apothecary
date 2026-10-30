@@ -31,8 +31,8 @@ main:
 `
 
 func TestParamsResolvedAtCreation(t *testing.T) {
-	h := newHarness(t, mustFlow(t, paramFlowDoc))
-	h.e.SetFlowBindings(staticBindings{"verify": "check", "gate": "false"})
+	bindings := staticBindings{"verify": "check", "gate": "false"}
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Bindings = bindings }, mustFlow(t, paramFlowDoc))
 	h.res.Commands["check"] = "true"
 	ctx := context.Background()
 
@@ -64,8 +64,8 @@ func TestParamsResolvedAtCreation(t *testing.T) {
 // project setting must not block runs); an override for one, or a value
 // outside a parameter's enum, refuses the run.
 func TestParamsBindingAndOverrideRules(t *testing.T) {
-	h := newHarness(t, mustFlow(t, paramFlowDoc))
-	h.e.SetFlowBindings(staticBindings{"gone": "x"})
+	bindings := staticBindings{"gone": "x"}
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Bindings = bindings }, mustFlow(t, paramFlowDoc))
 	ctx := context.Background()
 
 	id, err := h.e.CreateRun(ctx, Ticket{Title: "stale"}, "knobs", testProject)
@@ -93,8 +93,8 @@ func TestParamsBindingAndOverrideRules(t *testing.T) {
 // A bound value goes through preflight like a literal: a run_ref the project
 // has no command for refuses the run.
 func TestBoundRunRefIsPreflighted(t *testing.T) {
-	h := newHarness(t, mustFlow(t, paramFlowDoc))
-	h.e.SetFlowBindings(staticBindings{"verify": "missing"})
+	bindings := staticBindings{"verify": "missing"}
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Bindings = bindings }, mustFlow(t, paramFlowDoc))
 	_, err := h.e.CreateRun(context.Background(), Ticket{Title: "x"}, "knobs", testProject)
 	if err == nil || !strings.Contains(err.Error(), "missing") {
 		t.Fatalf("err = %v, want a preflight refusal naming the bound run_ref", err)
@@ -142,8 +142,8 @@ main:
 // so preflight holds it to the project's harness set — at run creation and
 // in the project's preflight alike.
 func TestBoundHarnessOutsideTheSetIsRefused(t *testing.T) {
-	h := newHarness(t, mustFlow(t, boundAgentDoc))
-	h.e.SetFlowBindings(staticBindings{"harness": "codex"})
+	bindings := staticBindings{"harness": "codex"}
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Bindings = bindings }, mustFlow(t, boundAgentDoc))
 	ctx := context.Background()
 	_, err := h.e.CreateRun(ctx, Ticket{Title: "x"}, "bound", testProject)
 	if err == nil || !strings.Contains(err.Error(), `"codex"`) || !strings.Contains(err.Error(), "harness set") {
@@ -152,7 +152,7 @@ func TestBoundHarnessOutsideTheSetIsRefused(t *testing.T) {
 	if s := stepNamed(h.e.PreflightProject(ctx, testProject), "flow_refs"); s == nil || s.OK || !strings.Contains(s.Error, `"codex"`) {
 		t.Errorf("flow_refs step = %+v", s)
 	}
-	h.e.SetFlowBindings(staticBindings{"harness": "fake"})
+	bindings["harness"] = "fake"
 	if s := stepNamed(h.e.PreflightProject(ctx, testProject), "flow_refs"); s == nil || !s.OK {
 		t.Errorf("flow_refs with the set's own kind = %+v", s)
 	}
@@ -161,13 +161,14 @@ func TestBoundHarnessOutsideTheSetIsRefused(t *testing.T) {
 // A bound model is checked against what its harness lists, like a stage's
 // own pin: before any workspace exists, and in the project's preflight.
 func TestBoundModelIsCheckedAgainstTheHarnessList(t *testing.T) {
-	h := newHarness(t, mustFlow(t, boundAgentDoc))
+	bindings := staticBindings{}
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Bindings = bindings }, mustFlow(t, boundAgentDoc))
 	h.res.Models = func(context.Context, string) ([]string, error) { return []string{"fake/model"}, nil }
 	ctx := context.Background()
 	if s := stepNamed(h.e.PreflightProject(ctx, testProject), "models"); s == nil || !s.OK {
 		t.Fatalf("the flow's own model refused: %+v", s)
 	}
-	h.e.SetFlowBindings(staticBindings{"model": "fake/other"})
+	bindings["model"] = "fake/other"
 	_, err := h.e.CreateRun(ctx, Ticket{Title: "x"}, "bound", testProject)
 	if err == nil || !strings.Contains(err.Error(), "preflight") || !strings.Contains(err.Error(), "fake/other") {
 		t.Fatalf("err = %v, want a preflight refusal naming the bound model", err)

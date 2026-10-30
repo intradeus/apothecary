@@ -19,8 +19,10 @@ import (
 // run_id): out of the unclaimed state so the GC can't sweep them, and
 // shareable by every run of the ticket.
 func TestTicketAttachmentsClaimedAndShared(t *testing.T) {
-	x := newEnv(t, engine.Config{})
-	att, _, _ := newFilesFor(t, x, 1<<20, []string{"text/*"})
+	files := newTestFiles(t, 1<<20, []string{"text/*"})
+	x := newEnvWith(t, engine.Config{}, files.deps)
+	files.serve(x)
+	att := files.att
 	ctx := context.Background()
 	tickUp, err := att.Save(ctx, "", "design.md", "text/markdown", strings.NewReader("# D"))
 	if err != nil {
@@ -129,9 +131,11 @@ func (s stubSources) TicketSourceKind(context.Context, string) (string, error) {
 // attachment bytes — with the attachment claimed for the ticket like any
 // hand-uploaded file.
 func TestImportTicketFromSource(t *testing.T) {
-	x := newEnv(t, engine.Config{})
+	files := newTestFiles(t, 1<<20, []string{"text/*"})
+	x := newEnvWith(t, engine.Config{}, files.deps)
 	x.seedIntegration(t, "int-1", confstore.PortTicketSource)
-	att, _, _ := newFilesFor(t, x, 1<<20, []string{"text/*"})
+	files.serve(x)
+	att := files.att
 	x.srv.Sources = stubSources{src: &fake.TicketSource{
 		Tickets: []ports.SourceTicket{{
 			Key: "PROJ-7", Title: "Add a Farewell function",

@@ -47,9 +47,8 @@ main:
 // the output contract. What it does write is listed to the reader, by
 // name, and captured file by file, bytes intact.
 func TestFilesOutputLeftEmptyFailsTheStage(t *testing.T) {
-	h := newHarness(t, mustFlow(t, shotsDoc))
 	att, snaps, _ := newFiles(t)
-	h.e.SetFiles(att, snaps)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, shotsDoc))
 	h.envp.ExecFunc = func(e *fake.Env, cmd ports.Command) (ports.ExecResult, error) {
 		if cmd.Script == "leave-a-stale-shot" {
 			e.Files["artifacts/shots/stale.png"] = []byte(png)
@@ -112,9 +111,8 @@ func TestFilesOutputLeftEmptyFailsTheStage(t *testing.T) {
 // attempt starts from an empty directory, so a reader — the merge request's
 // attachments among them — sees only what the attempt that succeeded wrote.
 func TestFilesOutputIsEmptiedBetweenPasses(t *testing.T) {
-	h := newHarness(t, mustFlow(t, shotsDoc))
 	att, snaps, _ := newFiles(t)
-	h.e.SetFiles(att, snaps)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, shotsDoc))
 	var mu sync.Mutex
 	var passes int
 	var viewer string

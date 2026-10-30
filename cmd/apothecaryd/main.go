@@ -259,24 +259,12 @@ func cmdServe(args []string) error {
 	// the database and read on every admission: a change applies to the next
 	// run, no restart. Unset = the engine's defaults.
 	limits := engine.StoredLimits{Store: store}
-	// Flows resolve DB-first with the compiled-in templates underneath
-	// (internal/builtin): an empty database still has flows to run.
-	e := engine.New(ecfg, store, resolver, builtin.FlowSource(conf.FlowSource()), limits, []ports.NotificationChannel{chreg})
 	runs := &run.Reader{Store: store}
 	mrSvc := mrs.New(resolver, runs)
 	sampler := resources.New(runs, resolver, nil, log)
 	envSt := envstate.New(runs, resolver, nil, log)
-	e.SetEnvState(envSt)
-	wsSvc := wsinfo.New(runs, resolver, envSt)
-	checks := envcheck.NewRegistry(resolver, e, ecfg.EngineURL)
 	egressSvc := egress.New(runs, resolver, store) // durable egress audit trail (pgstore)
-	egressSvc.ActiveRuns = e.ActiveRunIDs
 	egressSvc.Log = log
-	askSvc := ask.New(runs, resolver, e, store)
-	askSvc.Log = log
-	// A project's parameter bindings are laid over a flow's defaults at run
-	// creation; the config store holds them beside the flow.
-	e.SetFlowBindings(conf)
 	// A refreshed login reaches the live workspaces that hold it; omp's
 	// per-run broker tokens derive from an instance secret, so they survive
 	// restarts.
@@ -285,8 +273,8 @@ func cmdServe(args []string) error {
 		return fmt.Errorf("auth broker key: %w", err)
 	}
 	sink := authsink.New(runs, resolver, brokerKey, log)
-	e.SetAuthSink(sink)
 	keeper.OnRefresh = sink.Push
+	var evSink engine.EventSink
 	if boot.OtelEndpoint != "" {
 		tel, err := telemetry.New(ctx, boot.OtelEndpoint)
 		if err != nil {
@@ -297,7 +285,7 @@ func cmdServe(args []string) error {
 			defer cancel()
 			tel.Shutdown(sctx)
 		}()
-		e.SetSink(tel)
+		evSink = tel
 		log.Info("otel telemetry enabled", "endpoint", boot.OtelEndpoint)
 	}
 	// Workspace-port publisher: exposed app ports bind the CPUI's own
@@ -320,7 +308,6 @@ func cmdServe(args []string) error {
 		return fmt.Errorf("load persisted port exposures: %w", err)
 	}
 	portsSvc := runports.New(runs, resolver, portRelay, runports.Config{AutoExpose: boot.PortAutoExpose}, log)
-	e.SetRunPorts(portsSvc)
 
 	// File stores (DESIGN-FILES): one content-addressed blob store, two typed
 	// stores over it — attachments (upload policy) and snapshots (capture
@@ -328,18 +315,9 @@ func cmdServe(args []string) error {
 	blobs := filestore.NewBlobs(boot.RunsDir)
 	attachments := filestore.NewAttachments(store, blobs, boot.UploadMaxBytes, boot.UploadMimeAllow)
 	snapshots := filestore.NewSnapshots(store, blobs, boot.SnapshotMaxBytes)
-	e.SetFiles(attachments, snapshots)
 	skillLib := skillstore.New(store, blobs)
-	e.SetSkills(skillLib)
-	// The durable ping projection. A run parked on a human has no loop and no
-	// in-memory ping, so this is what makes its question listable and
-	// answerable — the SQL view, rather than the engine folding every run's
-	// log to find one row.
-	e.SetPingLookup(store)
 	// The project browser (the builtin `browser` MCP server): one container
-	// per project, a Chromium per agent session. Agent stages re-read the
-	// project's secrets their MCP servers name when they open a session.
-	e.SetProjectSecrets(conf)
+	// per project, a Chromium per agent session.
 	bcfg := browser.Config{
 		RunsDir: boot.RunsDir,
 		Image:   wsimage.New(boot.RunsDir).EnsureBrowserImage,
@@ -366,14 +344,47 @@ func cmdServe(args []string) error {
 	browsers := browser.New(bcfg)
 	browsers.Start(ctx)
 	defer browsers.Close()
-	e.SetBrowser(browsers)
 	browserSvc := browsermcp.New(runs, resolver, browsers)
-	// What a destroyed workspace takes with it, in this order: its exposures
-	// and discovered ports, the browser's exposures, then a last flush of
-	// its egress audit.
-	e.AddEnvTeardown(portsSvc)
-	e.AddEnvTeardown(browserSvc)
-	e.AddEnvTeardown(egressSvc)
+
+	e := engine.New(engine.Deps{
+		Config:   ecfg,
+		Store:    store,
+		Resolver: resolver,
+		// Flows resolve DB-first with the compiled-in templates underneath
+		// (internal/builtin): an empty database still has flows to run.
+		Flows:    builtin.FlowSource(conf.FlowSource()),
+		Settings: limits,
+		Channels: []ports.NotificationChannel{chreg},
+		// A project's parameter bindings are laid over a flow's defaults at
+		// run creation; the config store holds them beside the flow.
+		Bindings:    conf,
+		Sink:        evSink,
+		Attachments: attachments,
+		Snapshots:   snapshots,
+		Skills:      skillLib,
+		// The durable ping projection. A run parked on a human has no loop
+		// and no in-memory ping, so this is what makes its question listable
+		// and answerable — the SQL view, rather than the engine folding every
+		// run's log to find one row.
+		PingLookup: store,
+		// Agent stages re-read the project's secrets their MCP servers name
+		// when they open a session.
+		ProjectSecrets: conf,
+		Browser:        browsers,
+		RunPorts:       portsSvc,
+		EnvState:       envSt,
+		AuthSink:       sink,
+		// What a destroyed workspace takes with it, in this order: its
+		// exposures and discovered ports, the browser's exposures, then a
+		// last flush of its egress audit.
+		Teardown: []engine.EnvTeardown{portsSvc, browserSvc, egressSvc},
+		Log:      log,
+	})
+	egressSvc.ActiveRuns = e.ActiveRunIDs
+	wsSvc := wsinfo.New(runs, resolver, envSt)
+	checks := envcheck.NewRegistry(resolver, e, ecfg.EngineURL)
+	askSvc := ask.New(runs, resolver, e, store)
+	askSvc.Log = log
 
 	if err := e.Recover(ctx); err != nil {
 		return fmt.Errorf("crash recovery: %w", err)

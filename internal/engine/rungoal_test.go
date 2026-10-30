@@ -62,9 +62,8 @@ func TestNoRunGoalOmitsDirectionSection(t *testing.T) {
 // fixed (the old table bound one run_id, so they used to reach only the
 // first run; ownership is structural now).
 func TestTicketAttachmentsReachEveryRun(t *testing.T) {
-	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	att, snaps, _ := newFiles(t)
-	h.e.SetFiles(att, snaps)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, loopFlowDoc))
 	up, err := att.Save(context.Background(), "", "design.md", "text/markdown", strings.NewReader("# Design"))
 	if err != nil {
 		t.Fatal(err)

@@ -24,7 +24,8 @@ main:
 `
 
 func TestUnboundModelRefusesTheRunUntilBound(t *testing.T) {
-	h := newHarness(t, mustFlow(t, unboundFlowDoc))
+	bindings := staticBindings{}
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Bindings = bindings }, mustFlow(t, unboundFlowDoc))
 	ctx := context.Background()
 	_, err := h.e.CreateRun(ctx, Ticket{Title: "T"}, "unbound", testProject)
 	if err == nil || !strings.Contains(err.Error(), "preflight: parameters") || !strings.Contains(err.Error(), `"model" has no value (read by build, review)`) || !strings.Contains(err.Error(), "Configure") {
@@ -52,7 +53,7 @@ func TestUnboundModelRefusesTheRunUntilBound(t *testing.T) {
 	}
 
 	// Or the project binds it, and a run override still wins.
-	h.e.SetFlowBindings(staticBindings{"model": "fake/model"})
+	bindings["model"] = "fake/model"
 	if s := stepNamed(h.e.PreflightProject(ctx, testProject), "parameters"); s == nil || !s.OK {
 		t.Errorf("preflight parameters step once bound = %+v", s)
 	}

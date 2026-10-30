@@ -474,33 +474,97 @@ var (
 	ErrNoArtifact = errors.New("ping has no payload artifact")
 )
 
-func New(cfg Config, store event.Store, resolver resolution.Resolver, flows flow.Source,
-	settings SettingsSource, channels []ports.NotificationChannel) *Engine {
-	if settings == nil {
-		settings = StaticSettings{L: Limits{}.withDefaults()}
+// Deps is everything an Engine is built from. Config, Store, Resolver and
+// Flows are required; every other field may be left zero:
+//
+//   - Settings: StaticSettings at the default limits.
+//   - Bindings: no project parameter bindings.
+//   - Sink, Attachments, Snapshots, Skills, PingLookup, ProjectSecrets,
+//     Browser: off (see each type for what "off" means).
+//   - RunPorts: a relay-less runports service (exposure off).
+//   - EnvState: a store over the same store and resolver, on Clock.
+//   - AuthSink: a keyless sink (omp's broker logins off).
+//   - Teardown: none; hooks run in order on every workspace destroy.
+//   - Clock: time.Now; NewID: a ULID; Log: slog.Default().
+//
+// The composition root (cmd/apothecaryd) shares RunPorts, EnvState and
+// AuthSink with the API, so it builds them first and hands them in here.
+type Deps struct {
+	Config   Config
+	Store    event.Store
+	Resolver resolution.Resolver
+	Flows    flow.Source
+	Settings SettingsSource
+	Channels []ports.NotificationChannel
+	Bindings FlowBindings
+
+	Sink           EventSink
+	Attachments    AttachmentStore
+	Snapshots      SnapshotStore
+	Skills         SkillStore
+	PingLookup     PingLookup
+	ProjectSecrets ProjectSecretSource
+	Browser        ports.Browser
+
+	RunPorts RunPorts
+	EnvState *envstate.Store
+	AuthSink *authsink.Sink
+	Teardown []EnvTeardown
+
+	Clock func() time.Time
+	NewID func() string
+	Log   *slog.Logger
+}
+
+func New(d Deps) *Engine {
+	if d.Settings == nil {
+		d.Settings = StaticSettings{L: Limits{}.withDefaults()}
+	}
+	if d.Clock == nil {
+		d.Clock = time.Now
+	}
+	if d.NewID == nil {
+		d.NewID = func() string { return ulid.Make().String() }
+	}
+	if d.Log == nil {
+		d.Log = slog.Default()
 	}
 	e := &Engine{
-		cfg:      cfg.withDefaults(),
-		store:    store,
-		runs:     &run.Reader{Store: store},
-		resolver: resolver,
-		flows:    flows,
-		settings: settings,
-		channels: channels,
-		clock:    time.Now,
-		newID:    func() string { return ulid.Make().String() },
-		log:      slog.Default(),
-		handles:  map[string]*runHandle{},
-		pings:    map[string]*Ping{},
-		tokens:   map[string]string{},
+		cfg:            d.Config.withDefaults(),
+		store:          d.Store,
+		runs:           &run.Reader{Store: d.Store},
+		resolver:       d.Resolver,
+		flows:          d.Flows,
+		bindings:       d.Bindings,
+		settings:       d.Settings,
+		channels:       d.Channels,
+		clock:          d.Clock,
+		newID:          d.NewID,
+		log:            d.Log,
+		sink:           d.Sink,
+		attachments:    d.Attachments,
+		snapshots:      d.Snapshots,
+		skillLib:       d.Skills,
+		pingIndex:      d.PingLookup,
+		projectSecrets: d.ProjectSecrets,
+		browser:        d.Browser,
+		runPorts:       d.RunPorts,
+		envState:       d.EnvState,
+		authSink:       d.AuthSink,
+		teardown:       d.Teardown,
+		handles:        map[string]*runHandle{},
+		pings:          map[string]*Ping{},
+		tokens:         map[string]string{},
 	}
-	// The engine's own until main shares one with the API (SetEnvState); its
-	// clock follows the engine's, which tests replace.
-	e.envState = envstate.New(e.runs, resolver, func() time.Time { return e.clock() }, e.log)
-	// Without an instance key (SetAuthSink) omp's broker logins are off.
-	e.authSink = authsink.New(e.runs, resolver, nil, e.log)
-	// Without a relay (SetRunPorts) port exposure is off.
-	e.runPorts = runports.New(e.runs, resolver, nil, runports.Config{}, e.log)
+	if e.envState == nil {
+		e.envState = envstate.New(e.runs, d.Resolver, d.Clock, e.log)
+	}
+	if e.authSink == nil {
+		e.authSink = authsink.New(e.runs, d.Resolver, nil, e.log)
+	}
+	if e.runPorts == nil {
+		e.runPorts = runports.New(e.runs, d.Resolver, nil, runports.Config{}, e.log)
+	}
 	return e
 }
 
@@ -512,18 +576,6 @@ type RunPorts interface {
 	ReopenAfterRebuild(ctx context.Context, runID string, envp ports.EnvProvisioner, id ports.EnvID, editor ports.EditorSettings)
 	Expose(ctx context.Context, runID string, port int) (string, error)
 }
-
-// SetRunPorts installs port exposure (the relay-backed service the API
-// shares); call before Recover.
-func (e *Engine) SetRunPorts(p RunPorts) { e.runPorts = p }
-
-// SetAuthSink shares the login sink (with the instance broker key) with the
-// keeper and the API; call before Recover.
-func (e *Engine) SetAuthSink(s *authsink.Sink) { e.authSink = s }
-
-// SetEnvState shares the workspace-state store (op gate, reconciled
-// statuses) with the API; call before Recover.
-func (e *Engine) SetEnvState(s *envstate.Store) { e.envState = s }
 
 // runOwner is a run's owner (its run_created user_id), "" when unknown:
 // the store's row when it keeps one, else the reduced log.
@@ -556,9 +608,6 @@ func (e *Engine) limits(ctx context.Context) Limits {
 type EventSink interface {
 	OnEvent(e event.Event)
 }
-
-// SetSink installs the telemetry sink; call before Recover. nil disables.
-func (e *Engine) SetSink(s EventSink) { e.sink = s }
 
 // AttachmentStore is the engine's delivery+claims port over human-given
 // files (DESIGN-FILES §5.2). nil = attachments off (delivery a no-op).
@@ -598,9 +647,6 @@ type PingLookup interface {
 	// ListPings is one user's pings ("" = everyone's: the engine's own passes).
 	ListPings(ctx context.Context, userID, status string, limit int) ([]run.PingView, error)
 }
-
-// SetPingLookup installs the durable ping projection; call before Recover.
-func (e *Engine) SetPingLookup(l PingLookup) { e.pingIndex = l }
 
 // pingViews lists projected pings of a status, from the index when one is
 // wired and by folding the log when not.
@@ -646,17 +692,6 @@ func (e *Engine) pingView(ctx context.Context, id string) (run.PingView, bool) {
 	}
 	return run.PingView{}, false
 }
-
-// SetFiles installs the file stores; call before Recover. nil disables the
-// respective half (delivery no-ops / captures skipped).
-func (e *Engine) SetFiles(a AttachmentStore, s SnapshotStore) {
-	e.attachments = a
-	e.snapshots = s
-}
-
-// SetSkills installs the skill library; nil (the default) refuses any run
-// that asks for skillsets and installs none.
-func (e *Engine) SetSkills(s SkillStore) { e.skillLib = s }
 
 // resolveSkillsets pins a request's skillsets: the owner's only, at the
 // head version unless one is named.
@@ -1150,10 +1185,6 @@ type EnvTeardown interface {
 	// provisioner destroys the workspace.
 	BeforeDestroy(ctx context.Context, v run.View, res *resolution.Resolution)
 }
-
-// AddEnvTeardown registers a teardown hook; call before Recover. Hooks run
-// in registration order.
-func (e *Engine) AddEnvTeardown(h EnvTeardown) { e.teardown = append(e.teardown, h) }
 
 // ActiveRunIDs is a snapshot of the runs that have a live loop.
 func (e *Engine) ActiveRunIDs() []string {

@@ -66,8 +66,9 @@ func TestProjectBrowserStatus(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(data), `"enabled":false`) || !strings.Contains(string(data), `"available":false`) {
 		t.Fatalf("no browser = %d %s", resp.StatusCode, data)
 	}
-	x.e.SetBrowser(&echoBrowser{})
-	x.srv.Browser.Browser = &echoBrowser{}
+	// The same project on an apothecary that runs browsers.
+	x = newConfEnvWith(t, func(d *engine.Deps) { d.Browser = &echoBrowser{} })
+	pid = x.wizard(t)
 	_, data = x.do(t, "GET", "/api/projects/"+pid+"/browser", nil, nil)
 	var info BrowserInfo
 	if err := json.Unmarshal(data, &info); err != nil || !info.Available || info.State != "running" || info.Container != "apo-browser-"+pid || info.Sessions != 1 {
@@ -120,10 +121,8 @@ func upgrade(t *testing.T, x *env, runID, token string) (net.Conn, *bufio.Reader
 // the engine refuses it refuses before the upgrade, and a session that then
 // fails says why on its last line.
 func TestBrowserMCPStream(t *testing.T) {
-	x := newEnv(t, engine.Config{})
 	b := &echoBrowser{}
-	x.e.SetBrowser(b)
-	x.srv.Browser.Browser = b
+	x := newEnvWith(t, engine.Config{}, func(d *engine.Deps) { d.Browser = b })
 	x.res.Browser = true
 	x.res.Envp = exposingEnv{x.envp}
 	release := make(chan struct{})
