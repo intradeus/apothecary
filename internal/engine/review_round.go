@@ -151,10 +151,6 @@ func (x *exec) actionLoadReviewComments(st *flow.Stage) (bool, error) {
 		if err := x.append(&event.ReviewCommentsLoaded{StageID: st.ID, Subject: mr.Repo, Scope: scope, Threads: loaded, Newest: newest, Skipped: skipped}); err != nil {
 			return true, err
 		}
-		rs.round, rs.roundScope, rs.roundLoaded = loaded, scope, true
-		for id, last := range skipped {
-			rs.skipped[id] = last
-		}
 		round = chosen
 	}
 	// Where the stage said the threads go (its `threads` output port).
@@ -365,7 +361,6 @@ func (x *exec) actionReplyReviewComments(st *flow.Stage) (bool, error) {
 		if err := x.append(&event.ActionStarted{StageID: st.ID, Action: st.Action}); err != nil {
 			return true, err
 		}
-		rs.actionPending[st.ID] = true
 	}
 	var posted, resolved, declined []string
 	for _, r := range replies {
@@ -389,7 +384,6 @@ func (x *exec) actionReplyReviewComments(st *flow.Stage) (bool, error) {
 	if err := x.append(&event.ReviewRepliesPosted{StageID: st.ID, Subject: mr.Repo, ThreadIDs: posted, Resolved: resolved, Declined: declined}); err != nil {
 		return true, err
 	}
-	delete(rs.actionPending, st.ID)
 	return false, nil
 }
 

@@ -161,7 +161,6 @@ func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 			if strings.Contains(c, trailer) {
 				x.e.log.Info("adopted a comment posted before an interrupted record",
 					"run", rs.runID, "stage", st.ID, "ticket", tg.key)
-				delete(rs.actionPending, st.ID)
 				return false, nil
 			}
 		}
@@ -192,7 +191,6 @@ func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 		if err := x.append(&event.ActionStarted{StageID: st.ID, Action: st.Action}); err != nil {
 			return true, err
 		}
-		rs.actionPending[st.ID] = true
 	}
 	if len(files) > 0 {
 		body, err = x.attach(body, files, func(name, ct string, data []byte) (repoport.Attachment, error) {
@@ -206,7 +204,6 @@ func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 	if err := tg.w.Comment(x.ctx, tg.key, body+"\n\n"+trailer); err != nil {
 		return x.trackerFail(st, err)
 	}
-	delete(rs.actionPending, st.ID)
 	return false, nil
 }
 

@@ -24,30 +24,10 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// foldAllow lists the runState fields the live loop may still disagree on
-// with the fold. It shrinks to nothing as the loop comes to apply the fold
-// itself; view is never compared (run.Apply already keeps it).
-var foldAllow = map[string]bool{
-	"actionPending": true,
-	"agentCursor":   true,
-	"anyStarted":    true,
-	"completedFeed": true,
-	"done":          true,
-	"edgeCounts":    true,
-	"elided":        true,
-	"feed":          true,
-	"feedSentinel":  true,
-	"gateAnswer":    true,
-	"handbackOwed":  true,
-	"holds":         true,
-	"iters":         true,
-	"lastFailure":   true,
-	"openPings":     true,
-	"parked":        true,
-	"pausedAsks":    true,
-	"ph":            true,
-	"raisedPings":   true,
-}
+// foldAllow lists the runState fields the live loop may disagree on with
+// the fold: none. view is never compared (run.Apply, inside the fold, keeps
+// it).
+var foldAllow = map[string]bool{}
 
 var foldViolations = struct {
 	mu   sync.Mutex
@@ -64,8 +44,23 @@ func checkFoldInvariant(x *exec) {
 	}
 	rep := replay(evs, x.rs.fl)
 	if rep.ph == phAfterComplete && x.rs.ph != phAfterComplete && rep.pos >= 0 && rep.pos < len(rep.fl.Stages) {
-		// The one move no event records: a completed stage's on_success.
+		// The moves the next event records, not this one. One: a completed
+		// stage's on_success.
 		routeSuccess(rep, &rep.fl.Stages[rep.pos], rep.completedFeed)
+	}
+	if rep.ph == phDebug && x.rs.ph == phStart && x.rs.pos == rep.pos {
+		// The third: continuing from the debug leaf (routeDebug), recorded
+		// by the stage's next stage_started.
+		rep.ph, rep.gateAnswer = phStart, nil
+		rep.feed, rep.feedSentinel, rep.feedAttempts = "", "", 0
+	}
+	if x.rs.pos >= len(rep.fl.Stages) && !rep.idle && rep.pos >= 0 && rep.pos < len(rep.fl.Stages) {
+		// Another: a phase whose end was decided (endPhase — a watcher's
+		// dead end, an empty round) and is recorded by the next step's
+		// phase_completed, which carries the reason.
+		rep.pos, rep.ph = len(rep.fl.Stages), phStart
+		rep.endsRun, rep.abortsRun, rep.endReason = false, false, x.rs.endReason
+		rep.gateAnswer = nil // a debug leaf's rejection ends the round
 	}
 	diffs := diffState(x.rs, rep)
 	if len(diffs) == 0 {

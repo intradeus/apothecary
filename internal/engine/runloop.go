@@ -333,8 +333,9 @@ func (x *exec) checkFold() {
 	}
 }
 
-// append writes events through the single-writer goroutine, keeps the
-// in-memory view current, and feeds the telemetry sink (§7).
+// append writes events through the single-writer goroutine, folds each into
+// the run's state — the same apply replay uses, so the live state is the
+// fold of the log — and feeds the telemetry sink (§7).
 //
 // Every payload passes through the redactor first: this is the one place
 // workspace output becomes durable (and reaches prompts, gates and the API),
@@ -343,11 +344,6 @@ func (x *exec) checkFold() {
 func (x *exec) append(ps ...event.Payload) error {
 	for _, p := range ps {
 		switch v := p.(type) {
-		case *event.StageStarted:
-			// A stage that writes a path makes the new document there: a
-			// curation of the old one, still waiting, is never written over
-			// it — the same rule replay applies.
-			x.rs.forgetCurated(x.rs.fl, v.StageID)
 		case *event.StageFailed:
 			v.Error = x.redact.Scrub(v.Error)
 		case *event.EdgeTaken:
@@ -396,7 +392,7 @@ func (x *exec) append(ps ...event.Payload) error {
 		return fmt.Errorf("append: %w", err)
 	}
 	for i := range evs {
-		run.Apply(&x.rs.view, &evs[i])
+		x.rs.apply(&evs[i])
 	}
 	x.e.emit(evs)
 	return nil
@@ -693,11 +689,7 @@ type holdReq struct {
 // takeHold records a take-over of the stage's live session.
 func (x *exec) takeHold(st *flow.Stage, iter int, userID string) error {
 	taken := &event.HoldTaken{StageID: st.ID, Iteration: iter, UserID: userID}
-	if err := x.append(taken); err != nil {
-		return err
-	}
-	x.rs.holds[st.ID] = &heldState{taken: taken, takenAt: x.e.clock()}
-	return nil
+	return x.append(taken)
 }
 
 // releaseHold closes a take-over with its account: every leg's spend, the
@@ -1163,8 +1155,6 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	if res.r.Session != "" {
 		rs.sessions[st.ID] = res.r.Session
 	}
-	rs.cost += res.r.Usage.CostUSD
-	rs.turns += res.r.TurnsUsed
 
 	if verdict != nil {
 		if err := x.append(&event.VerdictReceived{StageID: st.ID, Approve: verdict.Approve, NComments: len(verdict.Comments)}); err != nil {
@@ -1208,7 +1198,6 @@ func (x *exec) pauseAttempt(st *flow.Stage, iter int, inv invocation) (stop bool
 	if h := rs.holds[st.ID]; h != nil {
 		leg := inv.holdSpend
 		paused.Hold = &leg
-		h.banked.Add(leg)
 	}
 	if err := x.append(paused); err != nil {
 		return false, err
@@ -1216,8 +1205,6 @@ func (x *exec) pauseAttempt(st *flow.Stage, iter int, inv invocation) (stop bool
 	if inv.res.r.Session != "" {
 		rs.sessions[st.ID] = inv.res.r.Session
 	}
-	rs.cost += inv.res.r.Usage.CostUSD
-	rs.turns += inv.res.r.TurnsUsed
 	// A question-per-turn loop would otherwise never meet a budget check:
 	// nothing else bounds an attempt that keeps asking.
 	if stop, err := x.checkBudget(st); stop || err != nil {
@@ -1503,7 +1490,6 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				req.ack <- err
 				return invocation{}, err
 			}
-			x.rs.pendingMsgs = append(x.rs.pendingMsgs, q)
 			io.inbox.push(req.msg)
 			req.ack <- nil
 		case req := <-x.h.holds:
@@ -1553,7 +1539,6 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			// resumes the moment this ping is answered, and the record must
 			// keep what the human was actually shown.
 			x.publishPingFiles(req.p, st.ID)
-			x.rs.unwanted++
 			x.e.notify(x.bg, notifyport.Notification{
 				RunID: x.rs.runID, PingID: req.p.ID, Type: req.p.Type,
 				Title: fmt.Sprintf("%s: %s", req.p.Type, x.rs.view.TicketTitle),

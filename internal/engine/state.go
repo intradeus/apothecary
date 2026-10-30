@@ -479,6 +479,11 @@ func (rs *runState) apply(ev *event.Event) {
 			rs.iters[p.StageID] = p.Iteration
 		}
 	case *event.StageStarted:
+		if rs.ph == phDebug {
+			// Continued from the debug leaf: back into the stage fresh, the
+			// failure that parked it spent (runloop.routeDebug).
+			rs.feed, rs.feedSentinel, rs.feedAttempts = "", "", 0
+		}
 		rs.anyStarted = true
 		delete(rs.elided, p.StageID)
 		rs.forgetCurated(rs.fl, p.StageID)
@@ -494,6 +499,7 @@ func (rs *runState) apply(ev *event.Event) {
 		delete(rs.pausedAsks, p.StageID)
 	case *event.StageCompleted:
 		rs.ph = phAfterComplete
+		rs.gateAnswer = nil // the decision it waited on is routed
 		// What the routing that follows (advance) sets: the verdict the
 		// approval carries, or nothing — a feed the stage was entered with
 		// is spent.
@@ -553,6 +559,7 @@ func (rs *runState) apply(ev *event.Event) {
 		// own spend when it ends (stage_paused again, or stage_completed).
 		rs.ph = phIn
 	case *event.EdgeTaken:
+		rs.gateAnswer = nil // the decision it waited on is routed
 		rs.edgeCounts[chainKey(p.From, p.Edge, p.Depth)] = p.Count
 		if p.To == flow.TerminalEnd || p.To == flow.TerminalDone {
 			// The edge ended the phase — or, with done, the run.
@@ -594,7 +601,14 @@ func (rs *runState) apply(ev *event.Event) {
 		}
 		rs.startPhase(p, rs.fl)
 	case *event.PhaseCompleted:
+		// The chain is over: the cursor is past it, where the loop put it
+		// when it decided the phase's end (endPhase, a completed last stage).
+		if rs.fl != nil {
+			rs.pos = len(rs.fl.Stages)
+		}
+		rs.ph = phStart
 		rs.idle = true
+		rs.gateAnswer = nil
 		rs.endsRun, rs.abortsRun, rs.endReason = false, false, ""
 	case *event.PhaseParked:
 		rs.park(p.StageID, p.PingID, ev.TS)

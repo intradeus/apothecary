@@ -94,7 +94,6 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 		todo = append(todo, co)
 	}
 	if len(todo) == 0 {
-		delete(rs.actionPending, st.ID)
 		return false, nil
 	}
 
@@ -119,7 +118,6 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 		if err := x.append(&event.ActionStarted{StageID: st.ID, Action: st.Action}); err != nil {
 			return true, err
 		}
-		rs.actionPending[st.ID] = true
 	}
 	for _, co := range todo {
 		repoHost := x.res.RepoHostFor(co.Name)
@@ -158,7 +156,6 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 		}
 		rs.addMR(created)
 	}
-	delete(rs.actionPending, st.ID)
 	return false, nil
 }
 

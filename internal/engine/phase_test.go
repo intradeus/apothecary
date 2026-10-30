@@ -81,7 +81,10 @@ func newPhasedHarnessWith(t *testing.T, doc string, opt harnessOpt) *phasedHarne
 	t.Helper()
 	clock := &offsetClock{}
 	h := newHarnessWith(t, func(h *harness, d *Deps) {
+		// One clock for the engine and its log: a wait's timeout runs from
+		// the parked event's own time.
 		d.Clock = clock.Now
+		h.store.Clock = clock.Now
 		if opt != nil {
 			opt(h, d)
 		}

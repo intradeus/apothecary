@@ -156,9 +156,9 @@ func (x *exec) publishProvisionLog(envName string) {
 	if err != nil || len(out) == 0 {
 		return
 	}
-	iter := x.rs.iters[provisionLogStage] + 1
-	x.rs.iters[provisionLogStage] = iter
-	x.publishLog(provisionLogStage, iter, string(out))
+	// The next provisioning log's number; its snapshot_captured records it
+	// (the fold keeps the pseudo-stage's counter from there).
+	x.publishLog(provisionLogStage, x.rs.iters[provisionLogStage]+1, string(out))
 }
 
 // publishPingFiles snapshots the workspace files attached to a ping, at the

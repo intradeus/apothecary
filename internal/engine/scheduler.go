@@ -69,11 +69,7 @@ func (r *holdsRegistry) clear(runID string) {
 // point settles (tryResume).
 func (x *exec) parkAt(st *flow.Stage, pingID string) error {
 	rs := x.rs
-	if err := x.append(&event.PhaseParked{Phase: rs.phase, Subject: rs.subject, StageID: st.ID, PingID: pingID}); err != nil {
-		return err
-	}
-	rs.park(st.ID, pingID, x.e.clock())
-	return nil
+	return x.append(&event.PhaseParked{Phase: rs.phase, Subject: rs.subject, StageID: st.ID, PingID: pingID})
 }
 
 // tryResume checks one parked phase run's wait point against the latest

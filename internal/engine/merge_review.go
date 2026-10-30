@@ -134,7 +134,6 @@ func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 		if err := x.append(&event.ActionStarted{StageID: st.ID, Action: st.Action}); err != nil {
 			return true, err
 		}
-		rs.actionPending[st.ID] = true
 	}
 	reviewID := x.roundID() + "/" + st.ID
 	posted := &event.ReviewPosted{StageID: st.ID, Subject: mr.Repo, ReviewID: reviewID}
@@ -185,7 +184,6 @@ func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 	if err := x.append(posted); err != nil {
 		return true, err
 	}
-	delete(rs.actionPending, st.ID)
 	return false, nil
 }
 
@@ -214,19 +212,16 @@ func (x *exec) actionMRMerge(st *flow.Stage) (bool, error) {
 			if err := x.append(merged); err != nil {
 				return true, err
 			}
-			delete(rs.actionPending, st.ID)
 			return false, nil
 		}
 	} else {
 		if err := x.append(&event.ActionStarted{StageID: st.ID, Action: st.Action}); err != nil {
 			return true, err
 		}
-		rs.actionPending[st.ID] = true
 	}
 	err = repoHost.MergeMR(x.ctx, mr.Ref, repoport.MergeOptions{Method: method, Head: rs.phaseHead, DeleteBranch: deleteBranch})
 	var refused *repoport.ErrMergeRefused
 	if errors.As(err, &refused) {
-		delete(rs.actionPending, st.ID)
 		return x.actionFail(st, event.ReasonInputInvalid, fmt.Sprintf("%s: %s", mr.Ref.URL, refused.Error()))
 	}
 	if err != nil {
@@ -235,6 +230,5 @@ func (x *exec) actionMRMerge(st *flow.Stage) (bool, error) {
 	if err := x.append(merged); err != nil {
 		return true, err
 	}
-	delete(rs.actionPending, st.ID)
 	return false, nil
 }

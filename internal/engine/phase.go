@@ -85,13 +85,7 @@ func (x *exec) beginRun() error {
 		// Stage events but no phase start (a log written by an older build,
 		// or by hand): record the start without moving the cursor replay
 		// placed — the run is already mid-phase.
-		p := &event.PhaseStarted{Phase: begin, By: by}
-		if err := x.append(p); err != nil {
-			return err
-		}
-		rs.phase = begin
-		rs.phaseRuns[phaseRunKey(begin, "")]++
-		return nil
+		return x.append(&event.PhaseStarted{Phase: begin, By: by})
 	}
 	// A run started on someone's merge request begins on it: the merge
 	// request is the main chain's subject, at the head it was started at.
@@ -645,7 +639,6 @@ func (x *exec) askToStart(ph *flow.Phase, subject, link, key, why string) error 
 	if err := x.append(raised); err != nil {
 		return err
 	}
-	rs.confirms = append(rs.confirms, raised)
 	x.e.notify(x.bg, notifyport.Notification{RunID: rs.runID, PingID: p.ID, Type: p.Type, Title: q, Body: p.Link})
 	return nil
 }
@@ -656,11 +649,7 @@ func (x *exec) beginPhase(phase, subject, key, by, tip string) error {
 	if ph := x.rs.fl.Phase(phase); ph != nil && x.rs.fl.ReadsCIFailure(ph) {
 		p.CI = x.readCI(subject, tip)
 	}
-	if err := x.append(p); err != nil {
-		return err
-	}
-	x.rs.startPhase(p, x.rs.fl)
-	return nil
+	return x.append(p)
 }
 
 // readCI reads what failed in CI on the subject's merge request at head

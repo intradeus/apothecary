@@ -148,7 +148,6 @@ func (x *exec) recordCuration(st *flow.Stage, rec *event.PingAnswered) ([]*event
 		if err := x.append(ev); err != nil {
 			return nil, err
 		}
-		rs.noteCurated(ev)
 		out = append(out, ev)
 	}
 	return out, nil

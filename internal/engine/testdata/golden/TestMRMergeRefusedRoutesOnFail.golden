@@ -22,7 +22,6 @@ edge_taken edge=merge:on_fail->end
 phase_completed phase=automerge
 phase_started phase=automerge
 stage_started stage=merge
-action_started stage=merge
 mr_merged stage=merge
 stage_completed stage=merge
 phase_completed phase=automerge
