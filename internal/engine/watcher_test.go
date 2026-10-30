@@ -584,6 +584,9 @@ func TestReplyPostingReconcilesAfterAFailure(t *testing.T) {
 	rh.clock.Advance(2 * time.Minute)
 	rh.pick(t, "d1", "d2")
 	rh.waitState(t, runID, run.Failed)
+	// The log says failed a moment before the loop is gone; a retry asked in
+	// between is refused as still active.
+	rh.e.Wait(runID)
 	rh.repoHost.ReplyFailAfter = 0
 	if err := rh.e.RetryRun(context.Background(), runID); err != nil {
 		t.Fatal(err)
