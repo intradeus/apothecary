@@ -584,22 +584,19 @@ func (x *exec) routeAfterComplete(st *flow.Stage) error {
 		x.endPhase()
 		return nil
 	}
-	if st.Type == flow.StageAgent && x.verdictPath(st) != "" {
-		v, err := x.readVerdict(st)
-		if err != nil {
+	var v *Verdict
+	if st.Type == flow.StageAgent && x.verdictPath(st) != "" && !x.rs.elided[st.ID] {
+		var err error
+		if v, err = x.readVerdict(st); err != nil {
 			if err := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonOutputContract, Error: err.Error()}); err != nil {
 				return err
 			}
 			return x.takeEdge(st, flow.EdgeFail, "")
 		}
-		if !v.Approve {
-			return x.takeEdge(st, flow.EdgeReject, verdictText(st.ID, v))
-		}
 	}
-	// Recovery: the verdict an approval carries was replayed from its
-	// stage_completed.
-	x.advanceWith(st, x.rs.completedFeed)
-	return nil
+	// The same routing as the live completion; the verdict an approval
+	// carries was replayed from its stage_completed.
+	return x.afterComplete(st, v)
 }
 
 // --- agent stages -----------------------------------------------------------
@@ -1120,19 +1117,34 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	if err := x.append(completed); err != nil {
 		return err
 	}
+	return x.afterComplete(st, verdict)
+}
 
-	if verdict != nil {
+// afterComplete routes a completed stage — live, or recovered after a crash
+// between its stage_completed and its routing: the verdict is recorded (once:
+// a recovered stage may have it on the log already), an agent stage's spend
+// is held to the budget, then a rejection takes on_reject and anything else
+// on_success, carrying an approval's verdict. A skipped stage spent nothing
+// and judged nothing: it goes straight on.
+func (x *exec) afterComplete(st *flow.Stage, verdict *Verdict) error {
+	if x.rs.elided[st.ID] {
+		x.advanceWith(st, x.rs.completedFeed)
+		return nil
+	}
+	if verdict != nil && !x.rs.verdictRecorded {
 		if err := x.append(&event.VerdictReceived{StageID: st.ID, Approve: verdict.Approve, NComments: len(verdict.Comments)}); err != nil {
 			return err
 		}
 	}
-	if stop, err := x.checkBudget(st); stop || err != nil {
-		return err
+	if st.Type == flow.StageAgent {
+		if stop, err := x.checkBudget(st); stop || err != nil {
+			return err
+		}
 	}
 	if verdict != nil && !verdict.Approve {
 		return x.takeEdge(st, flow.EdgeReject, verdictText(st.ID, verdict))
 	}
-	x.advanceWith(st, completed.Feed)
+	x.advanceWith(st, x.rs.completedFeed)
 	return nil
 }
 

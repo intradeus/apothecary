@@ -26,7 +26,7 @@ main:
 
 // seedRun appends payloads to runID's log after a run_created for flow fl,
 // with a live workspace.
-func seedRun(t *testing.T, h *harness, runID, flowName, hash string, payloads ...event.Payload) {
+func seedRun(t *testing.T, h *harness, runID, flowName, hash string, payloads ...event.Payload) envport.EnvID {
 	t.Helper()
 	ctx := context.Background()
 	envID, err := h.envp.Provision(ctx, envport.EnvSpec{RunID: runID})
@@ -43,6 +43,7 @@ func seedRun(t *testing.T, h *harness, runID, flowName, hash string, payloads ..
 			t.Fatal(err)
 		}
 	}
+	return envID
 }
 
 // D8: a gate answered while its phase was parked, the phase resumed, and the
@@ -157,4 +158,48 @@ func TestRecoveredWaitKeepsItsTimeoutFromTheFirstPark(t *testing.T) {
 	if failed, _ := findPayload[*event.StageFailed](h2.events(t, runID)); failed == nil || failed.StageID != "merged" || failed.Reason != event.ReasonTimeout {
 		t.Errorf("failed = %+v", failed)
 	}
+}
+
+// D1: the crash hit after an agent stage's stage_completed and before its
+// routing. Recovery routes it the way the live loop would have: the verdict
+// is recorded (once), the budget is checked, then on_success or on_reject.
+func TestRecoveryAfterCompletionRecordsTheVerdictAndChecksTheBudget(t *testing.T) {
+	const doc = `name: rv
+version: 2
+parameters: { harness: fake, model: fake/model, max_cost_usd: 1.0 }
+main:
+  - { id: review, type: agent, harness: $harness, model: $model, agent: reviewer, output: { verdict: { to: artifacts/verdict.json, type: verdict } } }
+`
+	recoverAt := func(t *testing.T, cost float64) (*harness, []event.Event) {
+		fl := mustFlow(t, doc)
+		h := newHarness(t, fl)
+		env := seedRun(t, h, "r-d1", "rv", fl.Hash,
+			&event.PhaseStarted{Phase: "main", By: "human"},
+			&event.StageStarted{StageID: "review", Iteration: 1},
+			&event.StageCompleted{StageID: "review", TurnsUsed: 1, Usage: &event.Usage{CostUSD: cost}},
+		)
+		h.writeFile(t, env, "artifacts/verdict.json", `{"verdict": "APPROVE", "summary": "fine"}`)
+		if err := h.e.Recover(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		settled(t, h, "r-d1")
+		h.e.Wait("r-d1")
+		return h, h.events(t, "r-d1")
+	}
+	t.Run("over budget", func(t *testing.T) {
+		_, evs := recoverAt(t, 5)
+		ab, _ := findPayload[*event.RunAbandoned](evs)
+		if ab == nil || !strings.Contains(ab.Reason, "budget exceeded") {
+			t.Errorf("run_abandoned = %+v, want abandoned over the budget: %v", ab, eventTypes(evs))
+		}
+	})
+	t.Run("within budget", func(t *testing.T) {
+		h, evs := recoverAt(t, 0.1)
+		if n := countType(evs, event.TypeVerdictReceived); n != 1 {
+			t.Errorf("verdict_received = %d, want 1: %v", n, eventTypes(evs))
+		}
+		if v := h.view(t, "r-d1"); v.State != run.Completed {
+			t.Errorf("state = %s: %v", v.State, eventTypes(evs))
+		}
+	})
 }

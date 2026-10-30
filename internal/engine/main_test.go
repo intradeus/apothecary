@@ -146,6 +146,7 @@ func diffState(live, rep *runState) []string {
 		{"feedSentinel", live.feedSentinel, rep.feedSentinel},
 		{"feedAttempts", live.feedAttempts, rep.feedAttempts},
 		{"completedFeed", live.completedFeed, rep.completedFeed},
+		{"verdictRecorded", live.verdictRecorded, rep.verdictRecorded},
 		{"ci", live.ci, rep.ci},
 		{"lastFailure", live.lastFailure, rep.lastFailure},
 		{"checkouts", live.checkouts, rep.checkouts},

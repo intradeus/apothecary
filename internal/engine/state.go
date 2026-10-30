@@ -98,6 +98,9 @@ type runState struct {
 	// completedFeed is the verdict the last replayed stage_completed
 	// carries (an approval's), for recovery's routing of it.
 	completedFeed string
+	// verdictRecorded: the stage in progress has its verdict_received on
+	// the log, so recovery's routing does not record it twice.
+	verdictRecorded bool
 	// ci is what failed in CI as the phase run started (run.ci.failure).
 	ci *event.CIReport
 
@@ -511,6 +514,7 @@ func (rs *runState) apply(ev *event.Event) {
 			rs.feed, rs.feedSentinel, rs.feedAttempts = "", "", 0
 		}
 		rs.anyStarted = true
+		rs.verdictRecorded = false
 		delete(rs.parkSince, p.StageID)
 		delete(rs.elided, p.StageID)
 		rs.forgetCurated(rs.fl, p.StageID)
@@ -548,6 +552,8 @@ func (rs *runState) apply(ev *event.Event) {
 			rs.cost += p.Usage.CostUSD
 		}
 		rs.turns += p.TurnsUsed
+	case *event.VerdictReceived:
+		rs.verdictRecorded = true
 	case *event.StageFailed:
 		rs.ph = phAfterFail
 		rs.lastFailure = p
