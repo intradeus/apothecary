@@ -14,7 +14,7 @@ import (
 	"apothecary/internal/ports"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
-	"apothecary/internal/wsinfo"
+	"apothecary/internal/services"
 )
 
 // servicesFlowDoc brings the app up, lets an agent look at it, and — when
@@ -188,9 +188,9 @@ func TestChainEndStopsStageServicesOnly(t *testing.T) {
 	relay := portrelay.New("127.0.0.1")
 	defer relay.CloseAll()
 	h.setRelay(relay)
-	every := serviceWatchEvery
-	serviceWatchEvery = time.Millisecond
-	t.Cleanup(func() { serviceWatchEvery = every })
+	every := services.WatchEvery
+	services.WatchEvery = time.Millisecond
+	t.Cleanup(func() { services.WatchEvery = every })
 	ctx := context.Background()
 
 	runID, err := h.e.CreateRun(ctx, Ticket{Title: "Look"}, "gate", testProject)
@@ -202,12 +202,12 @@ func TestChainEndStopsStageServicesOnly(t *testing.T) {
 		t.Errorf("gate link = %q, want the app's preview", p.Link)
 	}
 
-	info, err := h.e.StartService(ctx, runID, "db", false)
+	info, err := h.services().StartService(ctx, runID, "db", false)
 	if err != nil || info.By != event.ServiceByHuman {
 		t.Fatalf("StartService = %+v, %v", info, err)
 	}
 	waitFor(t, func() bool { return countType(h.events(t, runID), event.TypeServiceReady) == 2 })
-	list, err := h.e.RunServices(ctx, runID)
+	list, err := h.services().RunServices(ctx, runID)
 	if err != nil || !list.Workspace || len(list.Services) != 2 {
 		t.Fatalf("RunServices = %+v, %v", list, err)
 	}
@@ -231,10 +231,10 @@ func TestChainEndStopsStageServicesOnly(t *testing.T) {
 	}
 
 	// A human stops it; stopping it again is no new history.
-	if info, err := h.e.StopService(ctx, runID, "db"); err != nil || info.State != "stopped" {
+	if info, err := h.services().StopService(ctx, runID, "db"); err != nil || info.State != "stopped" {
 		t.Fatalf("StopService = %+v, %v", info, err)
 	}
-	if _, err := h.e.StopService(ctx, runID, "db"); err != nil {
+	if _, err := h.services().StopService(ctx, runID, "db"); err != nil {
 		t.Fatal(err)
 	}
 	var byHuman int
@@ -246,26 +246,11 @@ func TestChainEndStopsStageServicesOnly(t *testing.T) {
 	if byHuman != 1 {
 		t.Errorf("human stops recorded = %d", byHuman)
 	}
-	if _, err := h.e.StartService(ctx, runID, "nope", false); !errors.Is(err, ErrNoSuchService) {
+	if _, err := h.services().StartService(ctx, runID, "nope", false); !errors.Is(err, services.ErrNoSuchService) {
 		t.Errorf("unknown service = %v", err)
 	}
-	if log, err := h.e.ServiceLog(ctx, runID, "db", 50); err != nil || log != "" {
+	if log, err := h.services().ServiceLog(ctx, runID, "db", 50); err != nil || log != "" {
 		t.Errorf("ServiceLog = %q, %v", log, err)
-	}
-}
-
-func TestServiceRefusedWithoutAWorkspace(t *testing.T) {
-	h, _ := serviceHarness(t, gateFlowDoc)
-	ctx := context.Background()
-	if _, err := h.store.Append(ctx, "r1", &event.RunCreated{ProjectID: testProject, FlowName: "gate"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := h.e.StartService(ctx, "r1", "default", false); !errors.Is(err, wsinfo.ErrNoWorkspace) {
-		t.Errorf("StartService = %v", err)
-	}
-	list, err := h.e.RunServices(ctx, "r1")
-	if err != nil || list.Workspace || len(list.Services) != 2 || list.Services[0].State != "stopped" {
-		t.Errorf("RunServices = %+v, %v", list, err)
 	}
 }
 

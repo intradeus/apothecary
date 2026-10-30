@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/mrs"
 	"apothecary/internal/pgstore"
 	"apothecary/internal/runports"
+	"apothecary/internal/services"
 )
 
 // The services extracted from the engine declare what they consume; these
@@ -23,6 +24,8 @@ var (
 	_ engine.EnvTeardown = (*runports.Service)(nil)
 	_ engine.RunPorts    = (*runports.Service)(nil)
 	_ engine.EnvTeardown = (*browsermcp.Service)(nil)
+	_ services.Events    = (*engine.Engine)(nil)
+	_ services.Exposer   = (*runports.Service)(nil)
 	_ egress.AuditStore  = (*pgstore.Store)(nil)
 	_ ask.Engine         = (*engine.Engine)(nil)
 	_ ask.Store          = (*pgstore.Store)(nil)

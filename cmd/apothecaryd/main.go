@@ -59,6 +59,7 @@ import (
 	"apothecary/internal/run"
 	"apothecary/internal/runports"
 	"apothecary/internal/secrets"
+	"apothecary/internal/services"
 	"apothecary/internal/skillstore"
 	"apothecary/internal/sshdoor"
 	"apothecary/internal/telemetry"
@@ -393,6 +394,7 @@ func cmdServe(args []string) error {
 	api.AuthSink = sink
 	api.Ports = portsSvc
 	api.Browser = browserSvc
+	api.Services = services.New(runs, resolver, e, portsSvc, log)
 	// The SSH door (TODO 46): one listener people ssh to over their VPN —
 	// desktop VS Code included — routed by username to the run's workspace.
 	// Both of its keys derive from instance secrets: the host key so a person

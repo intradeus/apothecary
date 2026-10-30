@@ -6,6 +6,7 @@ import (
 	askstore "apothecary/internal/ask"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/runports"
+	"apothecary/internal/services"
 	"context"
 	"fmt"
 	"sort"
@@ -247,6 +248,12 @@ func (h *harness) setRelay(relay *portrelay.Manager) *runports.Service {
 	h.e.SetRunPorts(rp)
 	h.e.AddEnvTeardown(rp)
 	return rp
+}
+
+// services is the run page's service control over the harness, appending
+// through the engine and exposing through its port service.
+func (h *harness) services() *services.Control {
+	return services.New(&run.Reader{Store: h.store}, resolution.StaticResolver{R: h.res}, h.e, h.e.runPorts, nil)
 }
 
 // writeFile writes into a fake env through the port (lock-safe).

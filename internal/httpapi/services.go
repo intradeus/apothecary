@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"apothecary/internal/engine"
 	"apothecary/internal/resolution"
+	"apothecary/internal/services"
 	"apothecary/internal/wsinfo"
 )
 
@@ -17,7 +17,7 @@ import (
 // start, ready, a stop, a failure — also lands on the run's event stream.
 
 func (s *Server) getRunServices(w http.ResponseWriter, r *http.Request) {
-	out, err := s.Engine.RunServices(r.Context(), r.PathValue("id"))
+	out, err := s.Services.RunServices(r.Context(), r.PathValue("id"))
 	if err != nil {
 		serviceErr(w, err)
 		return
@@ -26,24 +26,24 @@ func (s *Server) getRunServices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) postStartService(w http.ResponseWriter, r *http.Request) {
-	s.serviceAction(w, r, func() (engine.ServiceInfo, error) {
-		return s.Engine.StartService(r.Context(), r.PathValue("id"), r.PathValue("name"), false)
+	s.serviceAction(w, r, func() (services.ServiceInfo, error) {
+		return s.Services.StartService(r.Context(), r.PathValue("id"), r.PathValue("name"), false)
 	})
 }
 
 func (s *Server) postRestartService(w http.ResponseWriter, r *http.Request) {
-	s.serviceAction(w, r, func() (engine.ServiceInfo, error) {
-		return s.Engine.StartService(r.Context(), r.PathValue("id"), r.PathValue("name"), true)
+	s.serviceAction(w, r, func() (services.ServiceInfo, error) {
+		return s.Services.StartService(r.Context(), r.PathValue("id"), r.PathValue("name"), true)
 	})
 }
 
 func (s *Server) postStopService(w http.ResponseWriter, r *http.Request) {
-	s.serviceAction(w, r, func() (engine.ServiceInfo, error) {
-		return s.Engine.StopService(r.Context(), r.PathValue("id"), r.PathValue("name"))
+	s.serviceAction(w, r, func() (services.ServiceInfo, error) {
+		return s.Services.StopService(r.Context(), r.PathValue("id"), r.PathValue("name"))
 	})
 }
 
-func (s *Server) serviceAction(w http.ResponseWriter, _ *http.Request, act func() (engine.ServiceInfo, error)) {
+func (s *Server) serviceAction(w http.ResponseWriter, _ *http.Request, act func() (services.ServiceInfo, error)) {
 	info, err := act()
 	if err != nil {
 		serviceErr(w, err)
@@ -57,7 +57,7 @@ func (s *Server) getServiceLogs(w http.ResponseWriter, r *http.Request) {
 	if n <= 0 || n > 5000 {
 		n = 200
 	}
-	out, err := s.Engine.ServiceLog(r.Context(), r.PathValue("id"), r.PathValue("name"), n)
+	out, err := s.Services.ServiceLog(r.Context(), r.PathValue("id"), r.PathValue("name"), n)
 	if err != nil {
 		serviceErr(w, err)
 		return
@@ -69,7 +69,7 @@ func (s *Server) getServiceLogs(w http.ResponseWriter, r *http.Request) {
 func serviceErr(w http.ResponseWriter, err error) {
 	status := http.StatusBadGateway // the workspace did not answer as it should
 	switch {
-	case errors.Is(err, engine.ErrNoSuchService), strings.Contains(err.Error(), "not found"):
+	case errors.Is(err, services.ErrNoSuchService), strings.Contains(err.Error(), "not found"):
 		status = http.StatusNotFound
 	case errors.Is(err, wsinfo.ErrNoWorkspace):
 		status = http.StatusConflict

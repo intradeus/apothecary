@@ -12,6 +12,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/ports"
 	"apothecary/internal/resolution"
+	"apothecary/internal/services"
 )
 
 func TestServiceEndpoints(t *testing.T) {
@@ -35,10 +36,10 @@ func TestServiceEndpoints(t *testing.T) {
 	if _, err := x.store.Append(ctx, "r2", &event.RunCreated{ProjectID: testProject, UserID: testUser, FlowName: "loop"}); err != nil {
 		t.Fatal(err)
 	}
-	list := func(id string) engine.RunServices {
+	list := func(id string) services.RunServices {
 		t.Helper()
 		res, body := x.do(t, "GET", "/api/runs/"+id+"/services", nil, nil)
-		var out engine.RunServices
+		var out services.RunServices
 		if res.StatusCode != http.StatusOK || json.Unmarshal(body, &out) != nil {
 			t.Fatalf("GET services = %d %s", res.StatusCode, body)
 		}
@@ -48,7 +49,7 @@ func TestServiceEndpoints(t *testing.T) {
 		t.Errorf("before = %+v", got)
 	}
 	res, body := x.do(t, "POST", "/api/runs/r1/services/default/start", nil, nil)
-	var info engine.ServiceInfo
+	var info services.ServiceInfo
 	if res.StatusCode != http.StatusAccepted || json.Unmarshal(body, &info) != nil || info.By != event.ServiceByHuman {
 		t.Fatalf("start = %d %s", res.StatusCode, body)
 	}

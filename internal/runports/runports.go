@@ -115,6 +115,9 @@ func (s *Service) Expose(ctx context.Context, runID string, port int) (string, e
 	return s.Relay.Expose(runID, port, pc)
 }
 
+// Enabled reports whether ports can be exposed at all (a relay is wired).
+func (s *Service) Enabled() bool { return s.Relay != nil }
+
 // List lists a run's live exposures (the run-page ports panel).
 func (s *Service) List(runID string) []portrelay.Exposure {
 	if s.Relay == nil {

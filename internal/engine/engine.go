@@ -693,9 +693,10 @@ func (e *Engine) emit(evs []event.Event) {
 	}
 }
 
-// appendAndEmit is the store append for engine-side writers outside a run
-// goroutine (Archive, ReapOnce).
-func (e *Engine) appendAndEmit(ctx context.Context, runID string, ps ...event.Payload) error {
+// AppendEvents is the store append for writers outside a run goroutine
+// (Archive, ReapOnce, a person's service action): the only write path into a
+// run's log besides its own loop, serialized with it per run (appendLock).
+func (e *Engine) AppendEvents(ctx context.Context, runID string, ps ...event.Payload) error {
 	unlock := e.appendLock(runID)
 	evs, err := e.store.Append(ctx, runID, ps...)
 	unlock()
@@ -818,7 +819,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t Ticket, flowName, projectI
 			branch, base, sourceBranch = co.Branch, "", co.Source
 		}
 	}
-	if err := e.appendAndEmit(ctx, runID, &event.RunCreated{
+	if err := e.AppendEvents(ctx, runID, &event.RunCreated{
 		TicketTitle:         t.Title,
 		TicketGoal:          t.Goal,
 		TicketChangeType:    cmp.Or(t.ChangeType, string(ports.ChangeFeat)),
@@ -970,13 +971,13 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 	if !v.State.Terminal() {
 		return fmt.Errorf("run %s is %s; only terminal runs can be archived", runID, v.State)
 	}
-	if err := e.appendAndEmit(ctx, runID, &event.RunArchived{}); err != nil {
+	if err := e.AppendEvents(ctx, runID, &event.RunArchived{}); err != nil {
 		return err
 	}
 	if v.EnvID != "" {
 		if err := e.destroyEnv(ctx, v); err != nil {
 			e.log.Warn("archive: env destroy failed", "run", runID, "env", v.EnvID, "err", err)
-		} else if err := e.appendAndEmit(ctx, runID, &event.EnvDestroyed{EnvID: v.EnvID}); err != nil {
+		} else if err := e.AppendEvents(ctx, runID, &event.EnvDestroyed{EnvID: v.EnvID}); err != nil {
 			return err
 		}
 	}
@@ -1126,7 +1127,7 @@ func (e *Engine) RetryRun(ctx context.Context, runID string) error {
 			hash = fl.Hash
 		}
 	}
-	if err := e.appendAndEmit(ctx, runID, &event.RunRetried{StageID: v.CurrentStage, FlowHash: hash}); err != nil {
+	if err := e.AppendEvents(ctx, runID, &event.RunRetried{StageID: v.CurrentStage, FlowHash: hash}); err != nil {
 		return err
 	}
 	lim := e.limits(ctx)
@@ -1361,7 +1362,7 @@ func (e *Engine) Recover(ctx context.Context) error {
 			// the record would otherwise show a rebuild that never ends.
 			// Appending here is safe: a rebuild only runs on a run with no
 			// loop, and this one has none yet.
-			if err := e.appendAndEmit(ctx, id, &event.EnvRebuildFailed{EnvID: v.EnvID,
+			if err := e.AppendEvents(ctx, id, &event.EnvRebuildFailed{EnvID: v.EnvID,
 				Error: "interrupted: the engine restarted while the workspace was being rebuilt"}); err != nil {
 				return err
 			}
@@ -1480,7 +1481,7 @@ func (e *Engine) Abort(runID string) error {
 	if v.State.Terminal() {
 		return fmt.Errorf("run %s is already %s: %w", runID, v.State, ErrRunNotActive)
 	}
-	if err := e.appendAndEmit(ctx, runID, &event.RunAbandoned{
+	if err := e.AppendEvents(ctx, runID, &event.RunAbandoned{
 		StalledAt: v.CurrentStage, Reason: "aborted by user"}); err != nil {
 		return err
 	}
@@ -1523,7 +1524,7 @@ func (e *Engine) Pause(runID string) error {
 	}
 	e.wakeMu.Lock()
 	defer e.wakeMu.Unlock()
-	return e.appendAndEmit(ctx, runID, &event.RunPaused{StageID: v.CurrentStage, Reason: event.PauseUser})
+	return e.AppendEvents(ctx, runID, &event.RunPaused{StageID: v.CurrentStage, Reason: event.PauseUser})
 }
 
 // Play restarts a paused run through the normal scheduling queue; the loop
@@ -1563,7 +1564,7 @@ func (e *Engine) Play(ctx context.Context, runID string) error {
 			break
 		}
 	}
-	if err := e.appendAndEmit(ctx, runID, &event.RunUnpaused{Waiting: waiting, Reason: event.UnpausePlay}); err != nil {
+	if err := e.AppendEvents(ctx, runID, &event.RunUnpaused{Waiting: waiting, Reason: event.UnpausePlay}); err != nil {
 		return err
 	}
 	lim := e.limits(ctx)
@@ -1922,7 +1923,7 @@ func (e *Engine) answerDormant(ctx context.Context, pingID string, ans PingAnswe
 	if wake {
 		payloads = append(payloads, &event.RunUnpaused{Reason: event.UnpauseAnswered})
 	}
-	if err := e.appendAndEmit(ctx, v.RunID, payloads...); err != nil {
+	if err := e.AppendEvents(ctx, v.RunID, payloads...); err != nil {
 		return err
 	}
 	if !wake {
@@ -2026,7 +2027,7 @@ func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter func(userID
 			e.log.Warn("reaper: env destroy failed", "run", id, "env", v.EnvID, "err", err)
 			continue
 		}
-		if err := e.appendAndEmit(ctx, id, &event.EnvDestroyed{EnvID: v.EnvID}); err != nil {
+		if err := e.AppendEvents(ctx, id, &event.EnvDestroyed{EnvID: v.EnvID}); err != nil {
 			return err
 		}
 		e.log.Info("reaper: destroyed env of completed run", "run", id, "env", v.EnvID)

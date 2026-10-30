@@ -28,6 +28,7 @@ import (
 	"apothecary/internal/run"
 	"apothecary/internal/runports"
 	"apothecary/internal/secrets"
+	"apothecary/internal/services"
 	"apothecary/internal/wsinfo"
 )
 
@@ -100,6 +101,7 @@ func newConfEnv(t *testing.T) *confEnv {
 	e.AddEnvTeardown(srv.Ports)
 	srv.Browser = browsermcp.New(&run.Reader{Store: store}, resolver, nil)
 	e.AddEnvTeardown(srv.Browser)
+	srv.Services = services.New(&run.Reader{Store: store}, resolver, e, srv.Ports, nil)
 	srv.Conf = conf
 	srv.Kinds = reg
 	srv.Ops = resolver

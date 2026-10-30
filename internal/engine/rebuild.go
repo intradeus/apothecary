@@ -62,7 +62,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		return fmt.Errorf("run %s: load flow: %w", runID, err)
 	}
 
-	if err = e.appendAndEmit(ctx, runID, &event.EnvRebuildStarted{EnvID: v.EnvID}); err != nil {
+	if err = e.AppendEvents(ctx, runID, &event.EnvRebuildStarted{EnvID: v.EnvID}); err != nil {
 		return err
 	}
 
@@ -159,12 +159,12 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 // UpdatedAt, resetting the reaper window (see run.Apply).
 func (e *Engine) finishRebuild(ctx context.Context, runID, envID string, opErr error) error {
 	if opErr != nil {
-		if aerr := e.appendAndEmit(ctx, runID, &event.EnvRebuildFailed{EnvID: envID, Error: opErr.Error()}); aerr != nil {
+		if aerr := e.AppendEvents(ctx, runID, &event.EnvRebuildFailed{EnvID: envID, Error: opErr.Error()}); aerr != nil {
 			e.log.Warn("record env_rebuild_failed", "run", runID, "err", aerr)
 		}
 		return opErr
 	}
-	return e.appendAndEmit(ctx, runID, &event.EnvRebuildCompleted{EnvID: envID})
+	return e.AppendEvents(ctx, runID, &event.EnvRebuildCompleted{EnvID: envID})
 }
 
 // viewExtras is a run's extra checkouts as the view records them.

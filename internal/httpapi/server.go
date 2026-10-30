@@ -41,6 +41,7 @@ import (
 	"apothecary/internal/run"
 	"apothecary/internal/runports"
 	"apothecary/internal/secrets"
+	"apothecary/internal/services"
 	"apothecary/internal/skillstore"
 	"apothecary/internal/tickets"
 	"apothecary/internal/wsinfo"
@@ -122,6 +123,8 @@ type Server struct {
 	// Browser opens the agents' browser sessions and reports the project
 	// browser's state.
 	Browser *browsermcp.Service
+	// Services is the run page's service start/stop/log.
+	Services *services.Control
 
 	logins loginLimiter
 }

@@ -148,7 +148,7 @@ func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View
 		return fmt.Errorf("run %s: %w", runID, errRunBusy)
 	}
 	payloads := append(build(v), &event.RunUnpaused{Reason: event.UnpauseHold})
-	if err := e.appendAndEmit(ctx, runID, payloads...); err != nil {
+	if err := e.AppendEvents(ctx, runID, payloads...); err != nil {
 		return err
 	}
 	lim := e.limits(ctx)
