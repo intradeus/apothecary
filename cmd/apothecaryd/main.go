@@ -27,44 +27,16 @@ import (
 	"syscall"
 	"time"
 
-	discordadapter "apothecary/internal/adapters/discord"
-	matrixadapter "apothecary/internal/adapters/matrix"
-	slackadapter "apothecary/internal/adapters/slack"
-	"apothecary/internal/ask"
-	"apothecary/internal/auth"
-	"apothecary/internal/authsink"
-	"apothecary/internal/automation"
 	"apothecary/internal/browser"
-	"apothecary/internal/browsermcp"
 	"apothecary/internal/builtin"
-	"apothecary/internal/channels"
 	"apothecary/internal/config"
 	"apothecary/internal/confstore"
-	"apothecary/internal/egress"
-	"apothecary/internal/engine"
-	"apothecary/internal/envcheck"
-	"apothecary/internal/envstate"
-	"apothecary/internal/filestore"
 	"apothecary/internal/flow"
-	"apothecary/internal/httpapi"
 	"apothecary/internal/kinds"
 	"apothecary/internal/kube"
-	"apothecary/internal/logins"
-	"apothecary/internal/mrs"
 	"apothecary/internal/pgstore"
-	"apothecary/internal/portrelay"
-	"apothecary/internal/ports"
-	"apothecary/internal/resolve"
-	"apothecary/internal/resources"
-	"apothecary/internal/run"
-	"apothecary/internal/runports"
 	"apothecary/internal/secrets"
-	"apothecary/internal/services"
-	"apothecary/internal/skillstore"
 	"apothecary/internal/sshdoor"
-	"apothecary/internal/telemetry"
-	"apothecary/internal/tickets"
-	"apothecary/internal/wsimage"
 	"apothecary/internal/wsinfo"
 	wsassets "apothecary/workspace"
 )
@@ -191,406 +163,21 @@ func cmdServe(args []string) error {
 	if err != nil {
 		return err
 	}
-	key, err := boot.Key()
-	if err != nil {
-		return err
-	}
 	ctx := context.Background()
 
-	store, err := pgstore.Open(ctx, boot.PostgresDSN)
+	a, cleanup, err := buildApp(ctx, boot, *dev, log)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
-
-	reg := registry(*dev, boot)
-	conf := confstore.New(store, key)
-	conf.KindValid = reg.Valid
-
-	// No built-in flows: flows are user-defined, created in the UI (Lu,
-	// post-M8). Only -dev seeds one, for its fake sandbox.
-	if *dev {
-		log.Warn("dev mode: fake kinds registered (no real workspaces, harness, or repository host)")
-		if err := seedDevProject(ctx, conf); err != nil {
-			return fmt.Errorf("seed dev project: %w", err)
-		}
-	}
-
-	chreg := channels.NewRegistry()
-	chreg.Register("matrix", matrixadapter.Factory)
-	chreg.Register("slack", slackadapter.Factory)
-	chreg.Register("discord", discordadapter.Factory)
-	chreg.Persist(store)
-	rows, err := store.LoadChannels(ctx)
-	if err != nil {
-		return err
-	}
-	for _, r := range rows {
-		if err := chreg.Restore(r.ID, r.UserID, r.Kind, r.Config); err != nil {
-			return err
-		}
-	}
-
-	enginePort := 8080
-	if _, p, err := splitHostPort(boot.Listen); err == nil {
-		fmt.Sscanf(p, "%d", &enginePort)
-	}
-
-	// Egress filtering now lives in the per-project gateway the devcontainer
-	// provisioner brings up (internal/egressgw) — no engine-side proxy.
-	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort, boot.SandboxRuntime)
-	defer resolver.Close()
-	// The keeper is the one party that redeems provider refresh tokens
-	// (docs/model-providers-plan.md): harness credentials are opened through
-	// it, so what a workspace is seeded with is always fresh.
-	keeper := logins.New(conf, log)
-	resolver.SetLogins(keeper)
-	if boot.K8s.Namespace == "" {
-		// A docker host builds the tools bundle itself; start now rather
-		// than inside the first provision after an upgrade.
-		resolver.WarmImages(ctx)
-	}
-
-	ecfg := engine.Config{
-		EngineURL: engineURL(boot.Listen),
-		RunsDir:   boot.RunsDir,
-	}
-	// The capacity caps are an admin's setting (System → Limits), stored in
-	// the database and read on every admission: a change applies to the next
-	// run, no restart. Unset = the engine's defaults.
-	limits := engine.StoredLimits{Store: store}
-	runs := &run.Reader{Store: store}
-	mrSvc := mrs.New(resolver, runs)
-	sampler := resources.New(runs, resolver, nil, log)
-	envSt := envstate.New(runs, resolver, nil, log)
-	egressSvc := egress.New(runs, resolver, store) // durable egress audit trail (pgstore)
-	egressSvc.Log = log
-	// A refreshed login reaches the live workspaces that hold it; omp's
-	// per-run broker tokens derive from an instance secret, so they survive
-	// restarts.
-	brokerKey, err := conf.InstanceSecret(ctx, "auth-broker")
-	if err != nil {
-		return fmt.Errorf("auth broker key: %w", err)
-	}
-	sink := authsink.New(runs, resolver, brokerKey, log)
-	keeper.OnRefresh = sink.Push
-	var evSink engine.EventSink
-	if boot.OtelEndpoint != "" {
-		tel, err := telemetry.New(ctx, boot.OtelEndpoint)
-		if err != nil {
-			return fmt.Errorf("otel: %w", err)
-		}
-		defer func() {
-			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			tel.Shutdown(sctx)
-		}()
-		evSink = tel
-		log.Info("otel telemetry enabled", "endpoint", boot.OtelEndpoint)
-	}
-	// Workspace-port publisher: exposed app ports bind the CPUI's own
-	// interface (dynamic host ports; loopback by default). Before Recover —
-	// recovery re-creates the exposures. Persist() attaches durable storage
-	// (same handle as channels) so a run's ports come back on the same host
-	// port after a restart.
-	relayHost := boot.Listen
-	if h, _, err := net.SplitHostPort(boot.Listen); err == nil {
-		relayHost = h
-	}
-	portRelay := portrelay.New(relayHost)
-	defer portRelay.CloseAll()
-	if boot.AppsDomain != "" {
-		// Behind a Service and an Ingress a listener per port is unreachable:
-		// exposures become <port>-<run>.<apps domain>, served by this server.
-		portRelay.RouteByHost(boot.AppsDomain, boot.AppsScheme)
-	}
-	if err := portRelay.Persist(store); err != nil {
-		return fmt.Errorf("load persisted port exposures: %w", err)
-	}
-	portsSvc := runports.New(runs, resolver, portRelay, runports.Config{AutoExpose: boot.PortAutoExpose}, log)
-
-	// File stores (DESIGN-FILES): one content-addressed blob store, two typed
-	// stores over it — attachments (upload policy) and snapshots (capture
-	// policy, its rows a projection of snapshot_captured).
-	blobs := filestore.NewBlobs(boot.RunsDir)
-	attachments := filestore.NewAttachments(store, blobs, boot.UploadMaxBytes, boot.UploadMimeAllow)
-	snapshots := filestore.NewSnapshots(store, blobs, boot.SnapshotMaxBytes)
-	skillLib := skillstore.New(store, blobs)
-	// The project browser (the builtin `browser` MCP server): one container
-	// per project, a Chromium per agent session.
-	bcfg := browser.Config{
-		RunsDir: boot.RunsDir,
-		Image:   wsimage.New(boot.RunsDir).EnsureBrowserImage,
-		Tag:     wsimage.BrowserImageTag,
-		Log:     log,
-	}
-	if boot.K8s.Namespace != "" {
-		// On Kubernetes the engine builds nothing: the browser is the release
-		// image, its pods live beside the sandboxes, and sessions reach the
-		// routing proxy over the engine's session mux.
-		host, closeMux, err := k8sBrowserHost(boot)
-		if err != nil {
-			return err
-		}
-		defer closeMux()
-		img := boot.K8s.BrowserImage
-		if img == "" {
-			img = config.DefaultImage("browser", version)
-		}
-		bcfg.Host = host
-		bcfg.Image = func(context.Context) (string, error) { return img, nil }
-		bcfg.Tag = func() string { return img }
-	}
-	browsers := browser.New(bcfg)
-	browsers.Start(ctx)
-	defer browsers.Close()
-	browserSvc := browsermcp.New(runs, resolver, browsers)
-
-	e := engine.New(engine.Deps{
-		Config:   ecfg,
-		Store:    store,
-		Resolver: resolver,
-		// Flows resolve DB-first with the compiled-in templates underneath
-		// (internal/builtin): an empty database still has flows to run.
-		Flows:    builtin.FlowSource(conf.FlowSource()),
-		Settings: limits,
-		Channels: []ports.NotificationChannel{chreg},
-		// A project's parameter bindings are laid over a flow's defaults at
-		// run creation; the config store holds them beside the flow.
-		Bindings:    conf,
-		Sink:        evSink,
-		Attachments: attachments,
-		Snapshots:   snapshots,
-		Skills:      skillLib,
-		// The durable ping projection. A run parked on a human has no loop
-		// and no in-memory ping, so this is what makes its question listable
-		// and answerable — the SQL view, rather than the engine folding every
-		// run's log to find one row.
-		PingLookup: store,
-		// Agent stages re-read the project's secrets their MCP servers name
-		// when they open a session.
-		ProjectSecrets: conf,
-		Browser:        browsers,
-		RunPorts:       portsSvc,
-		EnvState:       envSt,
-		AuthSink:       sink,
-		// What a destroyed workspace takes with it, in this order: its
-		// exposures and discovered ports, the browser's exposures, then a
-		// last flush of its egress audit.
-		Teardown: []engine.EnvTeardown{portsSvc, browserSvc, egressSvc},
-		Log:      log,
-	})
-	egressSvc.ActiveRuns = e.ActiveRunIDs
-	wsSvc := wsinfo.New(runs, resolver, envSt)
-	checks := envcheck.NewRegistry(resolver, e, ecfg.EngineURL)
-	askSvc := ask.New(runs, resolver, e, store)
-	askSvc.Log = log
-
-	if err := e.Recover(ctx); err != nil {
-		return fmt.Errorf("crash recovery: %w", err)
-	}
-
-	// Accounts (TODO 25): sessions, tokens, the setup of a fresh instance.
-	authsvc := auth.New(store)
-
-	api := httpapi.New(e, store, chreg, boot.RunsDir)
-	api.Auth = authsvc
-	api.MRs = mrSvc
-	api.Resources = sampler
-	api.EnvState = envSt
-	api.Workspaces = wsSvc
-	api.EnvCheck = checks
-	api.Egress = egressSvc
-	api.Ask = askSvc
-	api.AuthSink = sink
-	api.Ports = portsSvc
-	api.Browser = browserSvc
-	api.Services = services.New(runs, resolver, e, portsSvc, log)
-	// The SSH door (TODO 46): one listener people ssh to over their VPN —
-	// desktop VS Code included — routed by username to the run's workspace.
-	// Both of its keys derive from instance secrets: the host key so a person
-	// verifies one fingerprint for good, the door key so every workspace can
-	// admit it across restarts.
-	if boot.SSHListen != "" {
-		advertise, err := boot.SSHAdvertiseAddr()
-		if err != nil {
-			return err
-		}
-		hostSeed, err := conf.InstanceSecret(ctx, "ssh-door-host")
-		if err != nil {
-			return fmt.Errorf("ssh door host key: %w", err)
-		}
-		doorSeed, err := conf.InstanceSecret(ctx, "ssh-door-client")
-		if err != nil {
-			return fmt.Errorf("ssh door key: %w", err)
-		}
-		hostKey, err := sshdoor.KeyFromSeed(hostSeed)
-		if err != nil {
-			return err
-		}
-		doorKey, err := sshdoor.KeyFromSeed(doorSeed)
-		if err != nil {
-			return err
-		}
-		door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: authsvc, Targets: sshTargets{wsSvc}, Advertise: advertise, Log: log})
-		if err != nil {
-			return err
-		}
-		wsSvc.SetDoorKey(door.DoorPublicKey())
-		sshLn, err := net.Listen("tcp", boot.SSHListen)
-		if err != nil {
-			return fmt.Errorf("ssh door listen %s: %w", boot.SSHListen, err)
-		}
-		go func() {
-			if err := door.Serve(sshLn); err != nil {
-				log.Error("ssh door stopped", "err", err)
-			}
-		}()
-		defer door.Close()
-		api.SSH = door
-		log.Info("ssh door listening", "listen", boot.SSHListen, "advertise", advertise, "fingerprint", door.Fingerprint())
-	}
-	api.Limits = limits
-	api.Conf = conf
-	api.Kinds = reg
-	api.Ops = resolver
-	api.Sources = resolver // ticket sources for the import factory (Jira)
-	api.Pings = store      // durable request/response projection (PLAN4 M15)
-	api.Attachments = attachments
-	api.Skills = skillLib
-	api.SkillImports = &skillstore.Importer{Store: skillLib, Fetch: skillstore.Fetch}
-	api.Snapshots = snapshots
-	api.Keeper = keeper
-	api.SignIns = logins.NewSignIns()
-	api.CPUIDir = boot.CPUIDir
-	if boot.AppsDomain != "" {
-		api.Apps = httpapi.NewApps(portRelay, boot.PublicURL)
-	}
-	if boot.CPUIDir != "" {
-		log.Info("serving CPUI", "dir", boot.CPUIDir)
-	}
-	srv := &http.Server{Addr: boot.Listen, Handler: api.Handler()}
-
+	defer cleanup()
 	reaperCtx, stopReaper := context.WithCancel(ctx)
 	defer stopReaper()
-	go func() {
-		t := time.NewTicker(time.Hour)
-		defer t.Stop()
-		for {
-			select {
-			case <-t.C:
-				// Settings are per user: each owner's windows apply to their
-				// runs and uploads. One read per owner per pass, then every
-				// decision looks its owner up (defaults for an unknown one).
-				owners, err := store.SettingsOwners(reaperCtx)
-				if err != nil {
-					log.Error("reaper: owners read failed", "err", err)
-					continue
-				}
-				settings := map[string]confstore.Settings{}
-				for _, uid := range owners {
-					set, err := conf.Settings(reaperCtx, uid)
-					if err != nil {
-						log.Error("reaper: settings read failed", "user", uid, "err", err)
-						set = confstore.DefaultSettings()
-					}
-					settings[uid] = set
-				}
-				settingsOf := func(uid string) confstore.Settings {
-					if set, ok := settings[uid]; ok {
-						return set
-					}
-					return confstore.DefaultSettings()
-				}
-				if err := e.ReapOnce(reaperCtx, func(uid string) time.Duration {
-					return settingsOf(uid).CompletedWindow()
-				}); err != nil {
-					log.Error("reaper pass failed", "err", err)
-				}
-				// Uploads never claimed by a ticket/run/answer age out
-				// (retention.orphan_uploads_after; rows only — bytes go in
-				// the blob sweep below).
-				for _, uid := range owners {
-					if n, err := attachments.GCOrphans(reaperCtx, uid, settingsOf(uid).OrphanWindow()); err != nil {
-						log.Error("reaper: upload GC failed", "user", uid, "err", err)
-					} else if n > 0 {
-						log.Info("reaper: swept unclaimed uploads", "user", uid, "count", n)
-					}
-				}
-				// Blob sweep: delete bytes no live row references. The mark
-				// set honors each owner's snapshot content retention — rows
-				// older than their retention.snapshots_after stop pinning
-				// blobs while the rows/events keep the record (DESIGN-FILES §6).
-				cutoffs := map[string]time.Time{}
-				for _, uid := range owners {
-					if window, ok := settingsOf(uid).SnapshotWindow(); ok {
-						cutoffs[uid] = time.Now().Add(-window)
-					}
-				}
-				live, err := store.LiveBlobSHAs(reaperCtx, cutoffs)
-				if err != nil {
-					log.Error("reaper: live blob set failed", "err", err)
-				} else if n, err := blobs.Sweep(live); err != nil {
-					log.Error("reaper: blob sweep failed", "err", err)
-				} else if n > 0 {
-					log.Info("reaper: swept unreferenced blobs", "count", n)
-				}
-			case <-reaperCtx.Done():
-				return
-			}
-		}
-	}()
-
-	// The login keeper: renews every provider login before it expires, idle
-	// or not, and pushes each renewal into the live workspaces using it.
-	go keeper.Run(reaperCtx, logins.DefaultEvery)
-
-	// Live-workspace reconciler: refreshes each run's real container status
-	// (running/stopped/removed) so the workspace badge reflects reality, not
-	// just the event-sourced env_id. Runs far more often than the reaper —
-	// its whole job is catching out-of-band container changes promptly. An
-	// eager first pass populates the badge without waiting a full interval.
-	go envSt.Run(reaperCtx, 30*time.Second)
-
-	// Resource sampler: one docker-stats reading of every active run's sandbox
-	// per pass, feeding the run-page cpu/ram graphs. Same honesty rule as
-	// the reconciler: a failed sample is a gap in the series, never a
-	// carried-forward value.
-	go sampler.Run(reaperCtx, 10*time.Second)
-
-	// Egress audit ingest: persist each ACTIVE run's audit trail (from its
-	// per-project gateway) into the DB near-live, so the trail is durable BEFORE
-	// the UI reads it (the single audit path: gateway file → engine → DB → UI).
-	// Cheap — only active runs, not full history — so it can run often.
-	go egressSvc.Run(reaperCtx, 5*time.Second)
-
-	// Automations: tracker queries polled into tickets and runs, schedules
-	// firing runs — the ways a run begins without a person (flow v4). A
-	// pass walks every enabled automation; each one's failure is recorded
-	// on it, never on the pass.
-	watcher := &automation.Watcher{
-		Runs: e, MRs: mrSvc, Conf: conf, Notify: chreg, Log: log,
-		Tickets: &tickets.Factory{Conf: conf, Attachments: attachments, Sources: resolver, Log: log},
-	}
-	go func() {
-		t := time.NewTicker(2 * time.Minute)
-		defer t.Stop()
-		for {
-			select {
-			case <-t.C:
-				if err := watcher.RunOnce(reaperCtx); err != nil && reaperCtx.Err() == nil {
-					log.Error("automation pass failed", "err", err)
-				}
-			case <-reaperCtx.Done():
-				return
-			}
-		}
-	}()
+	a.background(reaperCtx)
 
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("apothecaryd listening", "addr", boot.Listen, "dev", *dev)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := a.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
@@ -606,10 +193,10 @@ func cmdServe(args []string) error {
 
 	shutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(shutCtx); err != nil {
+	if err := a.srv.Shutdown(shutCtx); err != nil {
 		log.Warn("http shutdown", "err", err)
 	}
-	e.Shutdown() // runs stay non-terminal; Recover resumes them next boot
+	a.e.Shutdown() // runs stay non-terminal; Recover resumes them next boot
 	return nil
 }
 
