@@ -19,7 +19,7 @@ import (
 
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
 	"apothecary/internal/schedule"
@@ -51,7 +51,7 @@ type Watcher struct {
 	// Notify, when set, is told once per streak of refused firings: a run
 	// that cannot be created is a blocker a person should see, and the
 	// ticket is kept for them.
-	Notify ports.NotificationChannel
+	Notify notifyport.NotificationChannel
 	Clock  func() time.Time
 	Log    *slog.Logger
 	// Limit is how many issues one tracker poll takes; 50 by default.
@@ -327,7 +327,7 @@ func (w *Watcher) blocker(ctx context.Context, a confstore.Automation, err error
 	if w.Notify == nil {
 		return
 	}
-	n := ports.Notification{
+	n := notifyport.Notification{
 		Type:  "blocker",
 		Title: fmt.Sprintf("Automation %q could not start a run", a.Name),
 		Body:  err.Error(),

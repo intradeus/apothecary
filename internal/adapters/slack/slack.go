@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"apothecary/internal/channels"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/notifyport"
 )
 
 type Config struct {
@@ -39,7 +39,7 @@ func New(cfg Config) (*Channel, error) {
 
 // Factory builds a Channel from the §8 CRUD config shape {webhook_url} for
 // the channels registry.
-func Factory(config map[string]any) (ports.NotificationChannel, error) {
+func Factory(config map[string]any) (notifyport.NotificationChannel, error) {
 	str := func(k string) string {
 		v, _ := config[k].(string)
 		return v
@@ -54,7 +54,7 @@ func slackEscape(s string) string {
 	return r.Replace(s)
 }
 
-func (c *Channel) Send(ctx context.Context, n ports.Notification) error {
+func (c *Channel) Send(ctx context.Context, n notifyport.Notification) error {
 	// mrkdwn: *bold* title, plain body, and a <url|label> link back to the CPUI.
 	text := "*" + slackEscape(n.Title) + "*"
 	if n.Body != "" {
@@ -88,6 +88,6 @@ func (c *Channel) Send(ctx context.Context, n ports.Notification) error {
 }
 
 var (
-	_ ports.NotificationChannel = (*Channel)(nil)
-	_ channels.Factory          = Factory
+	_ notifyport.NotificationChannel = (*Channel)(nil)
+	_ channels.Factory               = Factory
 )

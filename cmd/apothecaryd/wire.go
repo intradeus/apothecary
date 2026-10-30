@@ -31,7 +31,7 @@ import (
 	"apothecary/internal/mrs"
 	"apothecary/internal/pgstore"
 	"apothecary/internal/portrelay"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/resolve"
 	"apothecary/internal/resources"
 	"apothecary/internal/run"
@@ -260,7 +260,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		// (internal/builtin): an empty database still has flows to run.
 		Flows:    builtin.FlowSource(conf.FlowSource()),
 		Settings: limits,
-		Channels: []ports.NotificationChannel{chreg},
+		Channels: []notifyport.NotificationChannel{chreg},
 		// A project's parameter bindings are laid over a flow's defaults at
 		// run creation; the config store holds them beside the flow.
 		Bindings:    conf,

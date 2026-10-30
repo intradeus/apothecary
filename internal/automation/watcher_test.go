@@ -12,7 +12,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/run"
@@ -87,10 +87,10 @@ func (s fakeSources) TicketSourceKind(context.Context, string) (string, error) {
 
 type fakeChannel struct {
 	mu   sync.Mutex
-	sent []ports.Notification
+	sent []notifyport.Notification
 }
 
-func (c *fakeChannel) Send(_ context.Context, n ports.Notification) error {
+func (c *fakeChannel) Send(_ context.Context, n notifyport.Notification) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.sent = append(c.sent, n)

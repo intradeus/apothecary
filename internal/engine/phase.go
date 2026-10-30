@@ -18,7 +18,7 @@ import (
 
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/shell"
 	"apothecary/internal/signalspec"
@@ -315,7 +315,7 @@ func (x *exec) evaluateIdle(st *idler) error {
 		st.failures++
 		x.e.log.Warn("idle: repository poll failed", "run", rs.runID, "err", err, "streak", st.failures)
 		if st.failures == 3 {
-			x.e.notify(x.bg, ports.Notification{RunID: rs.runID, Type: event.PingBlocker,
+			x.e.notify(x.bg, notifyport.Notification{RunID: rs.runID, Type: event.PingBlocker,
 				Title: "Cannot reach the repository to watch this run's merge requests", Body: err.Error()})
 		}
 		return nil
@@ -645,7 +645,7 @@ func (x *exec) askToStart(ph *flow.Phase, subject, link, key, why string) error 
 		return err
 	}
 	rs.confirms = append(rs.confirms, raised)
-	x.e.notify(x.bg, ports.Notification{RunID: rs.runID, PingID: p.ID, Type: p.Type, Title: q, Body: p.Link})
+	x.e.notify(x.bg, notifyport.Notification{RunID: rs.runID, PingID: p.ID, Type: p.Type, Title: q, Body: p.Link})
 	return nil
 }
 

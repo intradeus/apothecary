@@ -19,7 +19,7 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/reviewfile"
 )
@@ -294,7 +294,7 @@ func (x *exec) selectThreads(st *flow.Stage, mr *mrRecord, pending []repoport.Re
 			return nil, true, err
 		}
 		rs.selectPing = raised
-		x.e.notify(x.bg, ports.Notification{RunID: rs.runID, PingID: p.ID, Type: p.Type, Title: q, Body: p.Link})
+		x.e.notify(x.bg, notifyport.Notification{RunID: rs.runID, PingID: p.ID, Type: p.Type, Title: q, Body: p.Link})
 		return nil, true, errWaitingOnHuman
 	}
 	ans := rs.answeredPings[rs.selectPing.PingID]

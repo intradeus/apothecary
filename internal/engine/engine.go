@@ -26,9 +26,9 @@ import (
 	"apothecary/internal/filestore"
 	"apothecary/internal/flow"
 	"apothecary/internal/modelcheck"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/resolution"
@@ -211,7 +211,7 @@ type Engine struct {
 	// hold, per run (the run page's "pending" for start: manual phases).
 	holds    holdsRegistry
 	settings SettingsSource
-	channels []ports.NotificationChannel
+	channels []notifyport.NotificationChannel
 
 	clock       func() time.Time
 	newID       func() string
@@ -499,7 +499,7 @@ type Deps struct {
 	Resolver resolution.Resolver
 	Flows    flow.Source
 	Settings SettingsSource
-	Channels []ports.NotificationChannel
+	Channels []notifyport.NotificationChannel
 	Bindings FlowBindings
 
 	Sink           EventSink
@@ -980,7 +980,7 @@ func (e *Engine) checkEnvCapacity(ctx context.Context, userID string) error {
 	if !lim.EnvsCapped() || live < maxEnvs {
 		return nil
 	}
-	e.notify(ctx, ports.Notification{
+	e.notify(ctx, notifyport.Notification{
 		UserID: userID,
 		Type:   "blocker",
 		Title:  fmt.Sprintf("environment capacity reached (%d/%d)", live, maxEnvs),
@@ -2070,7 +2070,7 @@ func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter func(userID
 	return nil
 }
 
-func (e *Engine) notify(ctx context.Context, n ports.Notification) {
+func (e *Engine) notify(ctx context.Context, n notifyport.Notification) {
 	// A run's notifications go to its owner's channels: fill the owner in
 	// from the run when the caller did not.
 	if n.UserID == "" && n.RunID != "" {

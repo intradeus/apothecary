@@ -18,10 +18,10 @@ import (
 	"time"
 
 	"apothecary/internal/agentspec"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
 )
@@ -1089,10 +1089,10 @@ func (f *RepoHost) SetMRState(iid int, s repoport.MRState) {
 type Channel struct {
 	mu   sync.Mutex
 	Err  error // returned by Send when set (must never fail the run)
-	sent []ports.Notification
+	sent []notifyport.Notification
 }
 
-func (c *Channel) Send(_ context.Context, n ports.Notification) error {
+func (c *Channel) Send(_ context.Context, n notifyport.Notification) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.Err != nil {
@@ -1102,10 +1102,10 @@ func (c *Channel) Send(_ context.Context, n ports.Notification) error {
 	return nil
 }
 
-func (c *Channel) Sent() []ports.Notification {
+func (c *Channel) Sent() []notifyport.Notification {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return append([]ports.Notification(nil), c.sent...)
+	return append([]notifyport.Notification(nil), c.sent...)
 }
 
 // --- TicketSource -----------------------------------------------------------
@@ -1436,12 +1436,12 @@ func (r ReadOnlyTicketSource) OpenAttachment(ctx context.Context, a trackerport.
 
 // Compile-time port conformance.
 var (
-	_ envport.EnvProvisioner     = (*EnvProvisioner)(nil)
-	_ agentport.AgentRunner      = (*AgentRunner)(nil)
-	_ repoport.RepoHost          = (*RepoHost)(nil)
-	_ ports.NotificationChannel  = (*Channel)(nil)
-	_ trackerport.TicketSource   = (*TicketSource)(nil)
-	_ trackerport.TicketWriter   = (*TicketSource)(nil)
-	_ trackerport.TicketAttacher = (*TicketSource)(nil)
-	_ trackerport.TicketSource   = ReadOnlyTicketSource{}
+	_ envport.EnvProvisioner         = (*EnvProvisioner)(nil)
+	_ agentport.AgentRunner          = (*AgentRunner)(nil)
+	_ repoport.RepoHost              = (*RepoHost)(nil)
+	_ notifyport.NotificationChannel = (*Channel)(nil)
+	_ trackerport.TicketSource       = (*TicketSource)(nil)
+	_ trackerport.TicketWriter       = (*TicketSource)(nil)
+	_ trackerport.TicketAttacher     = (*TicketSource)(nil)
+	_ trackerport.TicketSource       = ReadOnlyTicketSource{}
 )

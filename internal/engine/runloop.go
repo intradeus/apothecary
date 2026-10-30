@@ -13,9 +13,9 @@ import (
 	"apothecary/internal/bootstrap"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/redact"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
@@ -1527,7 +1527,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			// keep what the human was actually shown.
 			x.publishPingFiles(req.p, st.ID)
 			x.rs.unwanted++
-			x.e.notify(x.bg, ports.Notification{
+			x.e.notify(x.bg, notifyport.Notification{
 				RunID: x.rs.runID, PingID: req.p.ID, Type: req.p.Type,
 				Title: fmt.Sprintf("%s: %s", req.p.Type, x.rs.view.TicketTitle),
 				Body:  req.p.Question,
@@ -1991,7 +1991,7 @@ func (x *exec) stageGate(st *flow.Stage) error {
 		// The plan a human approves is the single most important document in
 		// the run — snapshot it as reviewed, not as the workspace has it later.
 		x.publishPingFiles(p, st.ID)
-		x.e.notify(x.bg, ports.Notification{
+		x.e.notify(x.bg, notifyport.Notification{
 			RunID: rs.runID, PingID: p.ID, Type: p.Type,
 			Title: p.Question, Body: p.Primary(),
 		})
@@ -2138,7 +2138,7 @@ func (x *exec) stageDebug(st *flow.Stage) error {
 		if err := x.raiseYesNo(p); err != nil {
 			return err
 		}
-		x.e.notify(x.bg, ports.Notification{
+		x.e.notify(x.bg, notifyport.Notification{
 			RunID: rs.runID, PingID: p.ID, Type: p.Type,
 			Title: p.Question, Body: p.Primary(),
 		})

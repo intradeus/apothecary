@@ -6,9 +6,9 @@ import (
 	"io/fs"
 	"testing"
 
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 )
 
@@ -124,14 +124,14 @@ func TestRepoHost(t *testing.T) {
 
 func TestChannelNeverFailsSilently(t *testing.T) {
 	c := &Channel{}
-	if err := c.Send(context.Background(), ports.Notification{Title: "t"}); err != nil {
+	if err := c.Send(context.Background(), notifyport.Notification{Title: "t"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := c.Sent(); len(got) != 1 || got[0].Title != "t" {
 		t.Errorf("sent = %+v", got)
 	}
 	c.Err = errors.New("matrix down")
-	if err := c.Send(context.Background(), ports.Notification{}); err == nil {
+	if err := c.Send(context.Background(), notifyport.Notification{}); err == nil {
 		t.Error("scripted error not returned")
 	}
 }

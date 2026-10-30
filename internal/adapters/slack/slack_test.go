@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/notifyport"
 )
 
 func TestSendPostsWebhookMessage(t *testing.T) {
@@ -27,7 +27,7 @@ func TestSendPostsWebhookMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = ch.Send(context.Background(), ports.Notification{
+	err = ch.Send(context.Background(), notifyport.Notification{
 		Title: "plan_approval: Add login",
 		Body:  "artifacts/plan.md",
 		URL:   "http://localhost:8080/runs/r1",
@@ -63,7 +63,7 @@ func TestSendEscapesSpecialChars(t *testing.T) {
 	defer ts.Close()
 
 	ch, _ := New(Config{WebhookURL: ts.URL})
-	if err := ch.Send(context.Background(), ports.Notification{Title: "a < b & c > d"}); err != nil {
+	if err := ch.Send(context.Background(), notifyport.Notification{Title: "a < b & c > d"}); err != nil {
 		t.Fatal(err)
 	}
 	text, _ := body["text"].(string)
@@ -79,7 +79,7 @@ func TestSendErrorSurfaces(t *testing.T) {
 	}))
 	defer ts.Close()
 	ch, _ := New(Config{WebhookURL: ts.URL})
-	if err := ch.Send(context.Background(), ports.Notification{Title: "t"}); err == nil || !strings.Contains(err.Error(), "no_service") {
+	if err := ch.Send(context.Background(), notifyport.Notification{Title: "t"}); err == nil || !strings.Contains(err.Error(), "no_service") {
 		t.Errorf("err = %v", err)
 	}
 }

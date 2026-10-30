@@ -10,7 +10,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/notifyport"
 )
 
 type payload struct {
@@ -47,7 +47,7 @@ func TestSendPostsEmbed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = ch.Send(context.Background(), ports.Notification{
+	err = ch.Send(context.Background(), notifyport.Notification{
 		Title: "Plan approval: Add login",
 		Body:  "artifacts/plan.md",
 		URL:   "http://localhost:8080/runs/r1",
@@ -76,7 +76,7 @@ func TestSendPostsEmbed(t *testing.T) {
 func TestSendEscapesMarkdown(t *testing.T) {
 	ts, body, _ := capture(t)
 	ch, _ := New(Config{WebhookURL: ts.URL})
-	if err := ch.Send(context.Background(), ports.Notification{Title: "plan_approval", Body: "**hi** <@123>"}); err != nil {
+	if err := ch.Send(context.Background(), notifyport.Notification{Title: "plan_approval", Body: "**hi** <@123>"}); err != nil {
 		t.Fatal(err)
 	}
 	e := body.Embeds[0]
@@ -91,7 +91,7 @@ func TestSendEscapesMarkdown(t *testing.T) {
 func TestSendNonHTTPURLGoesInDescription(t *testing.T) {
 	ts, body, _ := capture(t)
 	ch, _ := New(Config{WebhookURL: ts.URL})
-	if err := ch.Send(context.Background(), ports.Notification{Title: "t", URL: "/runs/r1"}); err != nil {
+	if err := ch.Send(context.Background(), notifyport.Notification{Title: "t", URL: "/runs/r1"}); err != nil {
 		t.Fatal(err)
 	}
 	e := body.Embeds[0]
@@ -103,7 +103,7 @@ func TestSendNonHTTPURLGoesInDescription(t *testing.T) {
 func TestSendTruncatesToEmbedLimits(t *testing.T) {
 	ts, body, _ := capture(t)
 	ch, _ := New(Config{WebhookURL: ts.URL})
-	err := ch.Send(context.Background(), ports.Notification{
+	err := ch.Send(context.Background(), notifyport.Notification{
 		Title: strings.Repeat("é", 300),
 		Body:  strings.Repeat("a", 5000),
 	})
@@ -126,7 +126,7 @@ func TestSendErrorSurfaces(t *testing.T) {
 	}))
 	defer ts.Close()
 	ch, _ := New(Config{WebhookURL: ts.URL})
-	if err := ch.Send(context.Background(), ports.Notification{Title: "t"}); err == nil || !strings.Contains(err.Error(), "Unknown Webhook") {
+	if err := ch.Send(context.Background(), notifyport.Notification{Title: "t"}); err == nil || !strings.Contains(err.Error(), "Unknown Webhook") {
 		t.Errorf("err = %v", err)
 	}
 }

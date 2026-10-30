@@ -19,9 +19,9 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/portrelay"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/resolution"
@@ -237,7 +237,7 @@ func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, s
 	h.rp = h.ports(nil)
 	d := Deps{
 		Config: cfg, Store: es, Resolver: resolution.StaticResolver{R: h.res}, Flows: src,
-		Settings: h.settings, Channels: []ports.NotificationChannel{h.ch},
+		Settings: h.settings, Channels: []notifyport.NotificationChannel{h.ch},
 		RunPorts: h.rp, Teardown: []EnvTeardown{h.rp},
 	}
 	if opt != nil {

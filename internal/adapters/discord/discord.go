@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"apothecary/internal/channels"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/notifyport"
 )
 
 // Discord's embed limits (title 256, description 4096 characters).
@@ -46,7 +46,7 @@ func New(cfg Config) (*Channel, error) {
 
 // Factory builds a Channel from the §8 CRUD config shape {webhook_url} for
 // the channels registry.
-func Factory(config map[string]any) (ports.NotificationChannel, error) {
+func Factory(config map[string]any) (notifyport.NotificationChannel, error) {
 	str := func(k string) string {
 		v, _ := config[k].(string)
 		return v
@@ -81,7 +81,7 @@ func linkable(u string) bool {
 	return err == nil && (p.Scheme == "http" || p.Scheme == "https") && p.Host != ""
 }
 
-func (c *Channel) Send(ctx context.Context, n ports.Notification) error {
+func (c *Channel) Send(ctx context.Context, n notifyport.Notification) error {
 	// One embed: the title links back to the CPUI, the body is its text.
 	embed := map[string]any{"title": truncate(discordEscape(n.Title), maxTitle)}
 	desc := discordEscape(n.Body)
@@ -121,6 +121,6 @@ func (c *Channel) Send(ctx context.Context, n ports.Notification) error {
 }
 
 var (
-	_ ports.NotificationChannel = (*Channel)(nil)
-	_ channels.Factory          = Factory
+	_ notifyport.NotificationChannel = (*Channel)(nil)
+	_ channels.Factory               = Factory
 )

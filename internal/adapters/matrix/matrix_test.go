@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/notifyport"
 )
 
 func TestSendPutsMessageEvent(t *testing.T) {
@@ -31,7 +31,7 @@ func TestSendPutsMessageEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = ch.Send(context.Background(), ports.Notification{
+	err = ch.Send(context.Background(), notifyport.Notification{
 		Title: "plan_approval: Add login",
 		Body:  "artifacts/plan.md",
 		URL:   "http://localhost:8080/runs/r1",
@@ -58,7 +58,7 @@ func TestSendErrorSurfaces(t *testing.T) {
 	}))
 	defer ts.Close()
 	ch, _ := New(Config{Homeserver: ts.URL, AccessToken: "t", RoomID: "!r:x"})
-	if err := ch.Send(context.Background(), ports.Notification{Title: "t"}); err == nil || !strings.Contains(err.Error(), "M_FORBIDDEN") {
+	if err := ch.Send(context.Background(), notifyport.Notification{Title: "t"}); err == nil || !strings.Contains(err.Error(), "M_FORBIDDEN") {
 		t.Errorf("err = %v", err)
 	}
 }

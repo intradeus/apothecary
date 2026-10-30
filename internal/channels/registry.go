@@ -1,5 +1,5 @@
 // Package channels holds the dynamic notification fan-out (§8 channel CRUD).
-// The registry itself implements ports.NotificationChannel, so the engine
+// The registry itself implements notifyport.NotificationChannel, so the engine
 // sees one channel while the CPUI adds/removes concrete ones (Matrix in v1)
 // at runtime. Fan-out is one-way and best-effort: errors are logged, never
 // returned to the run (§4).
@@ -17,12 +17,12 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/notifyport"
 )
 
 // Factory builds a channel from its stored config (e.g. matrix: homeserver,
 // access_token, room_id).
-type Factory func(config map[string]any) (ports.NotificationChannel, error)
+type Factory func(config map[string]any) (notifyport.NotificationChannel, error)
 
 type Entry struct {
 	ID     string         `json:"id"`
@@ -30,7 +30,7 @@ type Entry struct {
 	Kind   string         `json:"kind"`
 	Config map[string]any `json:"config"`
 
-	ch ports.NotificationChannel
+	ch notifyport.NotificationChannel
 }
 
 // PersistentStore is implemented by the Postgres store (§9 channels table);
@@ -157,7 +157,7 @@ func (r *Registry) List(userID string) []*Entry {
 // Send fans out to the notification's owner's channels (every channel when
 // it names no owner: an instance-wide notice). Always returns nil: channel
 // failure must never fail a run.
-func (r *Registry) Send(ctx context.Context, n ports.Notification) error {
+func (r *Registry) Send(ctx context.Context, n notifyport.Notification) error {
 	r.mu.Lock()
 	entries := make([]*Entry, 0, len(r.entries))
 	for _, e := range r.entries {
@@ -174,4 +174,4 @@ func (r *Registry) Send(ctx context.Context, n ports.Notification) error {
 	return nil
 }
 
-var _ ports.NotificationChannel = (*Registry)(nil)
+var _ notifyport.NotificationChannel = (*Registry)(nil)

@@ -1,12 +1,8 @@
-// Package ports holds the engine-shaped vendor boundaries (DESIGN.md §4).
-// Ports are shaped by what the engine needs, never by a vendor's API; no
-// vendor types cross this boundary. The fakes in internal/adapters/fake are
-// the test substrate for every §16 scenario.
-package ports
+// Package notifyport is the notification port: a channel (Matrix, Slack,
+// Discord) a user's run events are announced on.
+package notifyport
 
-import (
-	"context"
-)
+import "context"
 
 // Notification is the one-way fan-out payload; the CPUI inbox is canonical,
 // channels are best-effort mirrors.

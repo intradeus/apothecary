@@ -27,9 +27,9 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/mrs"
-	"apothecary/internal/ports"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/resources"
@@ -134,7 +134,7 @@ func newEnvWith(t *testing.T, cfg engine.Config, opt func(*engine.Deps), docs ..
 		reg:      channels.NewRegistry(),
 		fakeCh:   &fake.Channel{},
 	}
-	x.reg.Register("test", func(map[string]any) (ports.NotificationChannel, error) {
+	x.reg.Register("test", func(map[string]any) (notifyport.NotificationChannel, error) {
 		return x.fakeCh, nil
 	})
 	flows := flow.MapSource{}
@@ -167,7 +167,7 @@ func newEnvWith(t *testing.T, cfg engine.Config, opt func(*engine.Deps), docs ..
 	}
 	x.e, x.srv = wire(t, engine.Deps{
 		Config: cfg, Store: x.store, Resolver: resolution.StaticResolver{R: x.res}, Flows: flows,
-		Settings: x.settings, Channels: []ports.NotificationChannel{x.reg},
+		Settings: x.settings, Channels: []notifyport.NotificationChannel{x.reg},
 	}, opt, x.reg, cfg.RunsDir)
 	// Wire the config store so the ticket routes exist, seeded with the
 	// test project the static resolver already serves.

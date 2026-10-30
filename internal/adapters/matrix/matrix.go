@@ -19,7 +19,7 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"apothecary/internal/channels"
-	"apothecary/internal/ports"
+	"apothecary/internal/ports/notifyport"
 )
 
 type Config struct {
@@ -45,7 +45,7 @@ func New(cfg Config) (*Channel, error) {
 
 // Factory builds a Channel from the §8 CRUD config shape
 // {homeserver, access_token, room_id} for the channels registry.
-func Factory(config map[string]any) (ports.NotificationChannel, error) {
+func Factory(config map[string]any) (notifyport.NotificationChannel, error) {
 	str := func(k string) string {
 		v, _ := config[k].(string)
 		return v
@@ -53,7 +53,7 @@ func Factory(config map[string]any) (ports.NotificationChannel, error) {
 	return New(Config{Homeserver: str("homeserver"), AccessToken: str("access_token"), RoomID: str("room_id")})
 }
 
-func (c *Channel) Send(ctx context.Context, n ports.Notification) error {
+func (c *Channel) Send(ctx context.Context, n notifyport.Notification) error {
 	body := n.Title
 	if n.Body != "" {
 		body += "\n" + n.Body
@@ -99,6 +99,6 @@ func (c *Channel) Send(ctx context.Context, n ports.Notification) error {
 }
 
 var (
-	_ ports.NotificationChannel = (*Channel)(nil)
-	_ channels.Factory          = Factory
+	_ notifyport.NotificationChannel = (*Channel)(nil)
+	_ channels.Factory               = Factory
 )
