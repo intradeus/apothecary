@@ -8,6 +8,7 @@ stage_started stage=test
 stage_failed stage=test
 edge_taken edge=test:on_fail->build
 stage_started stage=build
+agent_session stage=build
 phase_started phase=main
 stage_resumed stage=build
 agent_prompted stage=build

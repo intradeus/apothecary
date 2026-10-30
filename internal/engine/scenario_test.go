@@ -917,8 +917,8 @@ main:
 }
 
 // TestCrashRecoveryResumesViaResume simulates kill -9 mid-build: the event
-// log ends at an open stage_started for build iteration 2, with a session
-// recorded from iteration 1. Recovery must Resume, not re-Run, and finish.
+// log ends inside build iteration 2, with that attempt's session recorded.
+// Recovery must Resume, not re-Run, and finish.
 func TestCrashRecoveryResumesViaResume(t *testing.T) {
 	fl := mustFlow(t, loopFlowDoc)
 	h := newHarness(t, fl)
@@ -934,11 +934,12 @@ func TestCrashRecoveryResumesViaResume(t *testing.T) {
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
 		&event.StageStarted{StageID: "build", Iteration: 1},
-		&event.StageCompleted{StageID: "build", TurnsUsed: 10, Usage: usage, SessionID: "sess-before-crash"},
+		&event.StageCompleted{StageID: "build", TurnsUsed: 10, Usage: usage, SessionID: "sess-iteration-1"},
 		&event.StageStarted{StageID: "test", Iteration: 1},
 		&event.StageFailed{StageID: "test", Reason: event.ReasonExitNonzero},
 		&event.EdgeTaken{From: "test", To: "build", Edge: "on_fail", Count: 1, Max: 5},
 		&event.StageStarted{StageID: "build", Iteration: 2},
+		&event.AgentSession{StageID: "build", Iteration: 2, SessionID: "sess-before-crash"},
 		// kill -9 here
 	} {
 		if _, err := h.store.Append(ctx, "r-crash", p); err != nil {

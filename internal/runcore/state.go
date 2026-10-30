@@ -207,6 +207,10 @@ type State struct {
 	// stage id: what re-entry has to collect answers for before resuming.
 	PausedAsks map[string][]string
 
+	// Prompted marks a stage whose attempt in progress has told its agent
+	// something (see AttemptBegun).
+	Prompted map[string]bool
+
 	// AgentCursor is, per stage, the position in the agent's own event
 	// stream of the last transcript event recorded: after a restart, a turn
 	// still in flight is followed again from right there (Reattach).
@@ -256,6 +260,14 @@ func (rs *State) DecidesHere(r *event.PingRaised) bool {
 		return false
 	}
 	return (GatePingType(r.Type) && rs.Ph == PhIn) || (DebugPingType(r.Type) && rs.Ph == PhDebug)
+}
+
+// AttemptBegun reports whether the agent stage's attempt in progress reached
+// its agent: it was prompted, or a harness session exists for it. A crash
+// between stage_started and the first prompt leaves one that did not.
+func (rs *State) AttemptBegun(stageID string) bool {
+	_, session := rs.Sessions[stageID]
+	return session || rs.Prompted[stageID]
 }
 
 // AgentPingType: a question an agent raised through ask_human — the kind a
@@ -449,6 +461,7 @@ func NewState(fl *flow.Flow) *State {
 		RaisedPings:   map[string]*event.PingRaised{},
 		AnsweredPings: map[string]*event.PingAnswered{},
 		PausedAsks:    map[string][]string{},
+		Prompted:      map[string]bool{},
 		AgentCursor:   map[string]string{},
 		TriggerSeen:   map[string]bool{},
 		PhaseRuns:     map[string]int{},
@@ -533,6 +546,9 @@ func (rs *State) Apply(ev *event.Event) {
 		rs.GateAnswer = nil
 		rs.LastFailure = nil
 		delete(rs.PausedAsks, p.StageID)
+		// A session belongs to one attempt: a retry never re-enters the last.
+		delete(rs.Sessions, p.StageID)
+		delete(rs.Prompted, p.StageID)
 	case *event.StageCompleted:
 		rs.Ph = PhAfterComplete
 		rs.GateAnswer = nil // the decision it waited on is routed
@@ -745,6 +761,7 @@ func (rs *State) Apply(ev *event.Event) {
 			rs.HandbackOwed[p.StageID] = true
 		}
 	case *event.AgentPrompted:
+		rs.Prompted[p.StageID] = true
 		if p.Kind == event.PromptHandback {
 			delete(rs.HandbackOwed, p.StageID)
 		}

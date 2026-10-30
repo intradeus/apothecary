@@ -761,6 +761,10 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			Agent: st.Agent, AgentHash: x.rs.Flow.AgentHash(st.Agent)}); err != nil {
 			return err
 		}
+	}
+	// A crash between stage_started and the first prompt asked nothing of the
+	// agent: that attempt begins now, under the iteration already recorded.
+	if reenter = reenter && rs.AttemptBegun(st.ID); !reenter {
 		// What the agent reads with a schema is a precondition, like a
 		// command's inputs: an agent handed a malformed file would build on
 		// it. Upstream wiring, not this stage's work. Checked before the
@@ -1644,12 +1648,12 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 		return x.takeEdge(st, flow.EdgeFail, msg)
 	}
 
-	// A fresh attempt starts from a clean slate, so the output check below
-	// cannot pass on an earlier attempt's file (M18). After the input check:
-	// the two never overlap in practice, and inputs must survive regardless.
-	if fresh {
-		x.clearOutputs(st.Outputs)
-	}
+	// Every execution starts from a clean slate, so the output check below
+	// cannot pass on an earlier attempt's file (M18) — a re-execution after a
+	// crash included: it redoes the script's whole work. After the input
+	// check: the two never overlap in practice, and inputs must survive
+	// regardless.
+	x.clearOutputs(st.Outputs)
 
 	// A command stage may bound its own wall clock; unset inherits the flow
 	// default (FLOWLANG §2, PLAN5 M23).
@@ -1780,8 +1784,8 @@ func (x *exec) missingPaths(ports []flow.Port) []string {
 // the existing check a freshness check — whatever exists afterwards was
 // written by the attempt that just ran.
 //
-// Never called on crash-recovery re-entry: a resumed harness session
-// continues mid-work, and its partial outputs must survive.
+// Never called re-entering an agent's attempt after a crash: a resumed
+// harness session continues mid-work, and its partial outputs must survive.
 func (x *exec) clearOutputs(bindings []flow.Port) {
 	var paths, dirs []string
 	for _, b := range bindings {

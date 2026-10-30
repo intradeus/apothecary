@@ -3,10 +3,14 @@ package engine
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
+	"apothecary/internal/flow"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
@@ -202,4 +206,75 @@ main:
 			t.Errorf("state = %s: %v", v.State, eventTypes(evs))
 		}
 	})
+}
+
+// A retry that crashed between its stage_started and its first prompt asked
+// nothing of the agent yet. Recovery starts that attempt: a fresh session, the
+// retry's own prompt, outputs cleared — not a resume of the session the last
+// attempt left, which never hears why it is being run again.
+func TestARetryCrashedBeforeItsPromptStartsFresh(t *testing.T) {
+	fl := mustFlow(t, strings.Replace(gatedRecoveryDoc, "agent: planner,",
+		"agent: planner, input: { rejection: { from: edge.verdict, type: verdict, optional: true } },", 1))
+	h := newHarness(t, fl)
+	var stale atomic.Bool
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		_, err := h.envp.ReadFile(context.Background(), call.Env, "artifacts/plan.md")
+		stale.Store(err == nil)
+		h.writeFile(t, call.Env, "artifacts/plan.md", "the new plan\n")
+		return agentport.AgentResult{TurnsUsed: 1}, nil
+	}
+	env := seedRun(t, h, "r-d11", "gated", fl.Hash,
+		&event.PhaseStarted{Phase: "main", By: "human"},
+		&event.StageStarted{StageID: "plan", Iteration: 1},
+		&event.AgentPrompted{StageID: "plan", Iteration: 1, Kind: event.PromptStage, Text: "plan it"},
+		&event.StageCompleted{StageID: "plan", TurnsUsed: 1, SessionID: "first-attempt"},
+		&event.StageStarted{StageID: "plan_gate", Iteration: 1},
+		&event.PingRaised{PingID: "ping-d11", Type: PingGate, Question: "Approve the plan?", StageID: "plan_gate", Files: []string{"artifacts/plan.md"}},
+		&event.PingAnswered{PingID: "ping-d11", Answer: "reject", Feedback: "too vague"},
+		&event.EdgeTaken{From: "plan_gate", Edge: flow.EdgeReject, To: "plan", Feed: "too vague"},
+		&event.StageStarted{StageID: "plan", Iteration: 2},
+	)
+	h.writeFile(t, env, "artifacts/plan.md", "the rejected plan\n")
+	if err := h.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.waitPing(t, PingGate, "ping-d11")
+	if n := len(h.runner.ResumeCalls); n != 0 {
+		t.Errorf("resumed the last attempt's session %d time(s): %+v", n, h.runner.ResumeCalls)
+	}
+	calls := h.runner.SnapshotRunCalls()
+	if len(calls) != 1 {
+		t.Fatalf("run calls = %d, want the attempt started once", len(calls))
+	}
+	if !strings.Contains(calls[0].In.Prompt, "too vague") {
+		t.Errorf("the retry's prompt lost the rejection:\n%s", calls[0].In.Prompt)
+	}
+	if stale.Load() {
+		t.Error("the attempt started on the rejected attempt's output")
+	}
+}
+
+// Likewise a command stage: a re-execution after a crash starts from a clean
+// slate, or the output check passes on what an earlier attempt wrote.
+func TestARecoveredCommandDoesNotPassOnAStaleOutput(t *testing.T) {
+	doc := `name: stale
+version: 5
+parameters: { harness: fake, model: fake/model }
+main:
+  - { id: gen, type: command, run: "./gen.sh", output: { report: { to: artifacts/report.md, type: file } }, on_fail: abort }
+`
+	fl := mustFlow(t, doc)
+	h := newHarness(t, fl)
+	env := seedRun(t, h, "r-stale", "stale", fl.Hash,
+		&event.PhaseStarted{Phase: "main", By: "human"},
+		&event.StageStarted{StageID: "gen", Iteration: 2},
+	)
+	h.writeFile(t, env, "artifacts/report.md", "an earlier attempt's report\n")
+	if err := h.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	settled(t, h, "r-stale")
+	if v := h.view(t, "r-stale"); v.State != run.Abandoned {
+		t.Errorf("state = %s, want abandoned: the script wrote nothing: %v", v.State, eventTypes(h.events(t, "r-stale")))
+	}
 }
