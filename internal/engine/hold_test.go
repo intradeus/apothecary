@@ -140,7 +140,7 @@ func TestTakeOverKeepsTheSessionOpenUntilReleased(t *testing.T) {
 
 	// The turn ends under the hold: the stage does NOT complete. The holder's
 	// message is the next turn.
-	id, err := h.e.SendMessage(runID, "use sqlite", false)
+	id, err := h.e.SendMessage(runID, "use sqlite")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestHoldParksOnAQuietHolderAndWakesOnTheirMessage(t *testing.T) {
 		t.Errorf("take over while parked = %v, want ErrAlreadyHeld", err)
 	}
 
-	id, err := h.e.SendMessage(runID, "switch to sqlite", false)
+	id, err := h.e.SendMessage(runID, "switch to sqlite")
 	if err != nil {
 		t.Fatalf("message to a parked hold: %v", err)
 	}

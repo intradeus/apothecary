@@ -533,7 +533,7 @@ Naming fixes the old ambiguity. Use these names in the UI:
 
 - Control glass, radius 20px, margin 0 12px 12px.
 - Textarea area: `min-height:44px`, placeholder in `--fnt` ("Whisper to the agent…").
-- Footer row: key hints ("↵ send · ⌘↵ send now (interrupts) · ⇧↵ newline", 11px `--fnt`), an attach button, then **Take over** (tertiary, only while an agent stage runs), **Send now** (secondary) and **Send** (primary).
+- Footer row: key hints ("↵ send · ⇧↵ newline", held only; before a take-over the composer is the Take over button alone, 11px `--fnt`), an attach button, then **Take over** (tertiary, only while an agent stage runs), **Send now** (secondary) and **Send** (primary).
 - Shown only while the run is active.
 - Sending snaps the transcript back to auto-follow. If the user has scrolled up, show a floating "↓ Follow" pill.
 - **Whisper vs take-over.** A whisper is one message: read at the end of the agent's turn (or now, interrupting), and the agent carries on — the end of its next turn ends the stage as usual. **Take over** holds the session: while held, a turn ending with nothing queued is NOT the stage's end; the agent waits for your next message, every message is a turn in the same session, and the stage can only end once you **Release** — the engine then sends the fixed handback prompt, and when that turn ends the stage's output check runs as usual.
@@ -928,7 +928,7 @@ Layout: row [section nav 220px | content]. The section nav is a vertical list in
 | Context | Keys |
 |---|---|
 | Global | ⌘K command palette · ⌘\\ collapse sidebar · G then I / R / T / D to go to Inbox / Runs / Tickets / Desk |
-| Composer | ↵ send (queued until turn ends) · ⌘↵ send now (interrupts) · ⇧↵ newline |
+| Composer | ↵ send (queued until turn ends) · ⇧↵ newline |
 | Review composer | ⌘↵ add comment · Esc close |
 | Flow editor | ⌫ / Del delete selection · ⌘S save · ⌘Z / ⇧⌘Z undo / redo |
 | Search and port inputs | ↵ submits |

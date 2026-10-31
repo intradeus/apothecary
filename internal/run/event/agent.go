@@ -22,9 +22,8 @@ const (
 	TypeAgentTool     Type = "agent_tool"
 	TypeAgentPlan     Type = "agent_plan"
 	TypeAgentNotice   Type = "agent_notice"
-	// TypeMessageQueued / TypeMessageDelivered are a human's message to the
-	// running agent: accepted, then handed to the agent (at the end of its
-	// turn, or at once when it asked to interrupt).
+	// TypeMessageQueued / TypeMessageDelivered are a holder's message to the
+	// agent they took over: accepted, then handed to it at the end of its turn.
 	TypeMessageQueued    Type = "message_queued"
 	TypeMessageDelivered Type = "message_delivered"
 	// TypeHoldTaken / TypeHoldReleased bracket a TAKE-OVER: a human holding
@@ -122,9 +121,6 @@ type AgentNotice struct {
 type MessageQueued struct {
 	MessageID string `json:"message_id"`
 	Text      string `json:"text"`
-	// Interrupt: the human asked for the turn in flight to be cancelled so
-	// the agent reads this now.
-	Interrupt bool   `json:"interrupt,omitempty"`
 	StageID   string `json:"stage_id,omitempty"`
 }
 

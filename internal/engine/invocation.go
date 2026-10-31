@@ -293,7 +293,11 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				}
 			}
 		case req := <-x.h.messages:
-			q := &event.MessageQueued{MessageID: req.msg.ID, Text: req.msg.Text, Interrupt: req.msg.Interrupt, StageID: st.ID}
+			if hold == nil || hold.releasing {
+				req.ack <- ErrNotHeld
+				continue
+			}
+			q := &event.MessageQueued{MessageID: req.msg.ID, Text: req.msg.Text, StageID: st.ID}
 			if err := x.append(q); err != nil {
 				req.ack <- err
 				return invocation{}, err

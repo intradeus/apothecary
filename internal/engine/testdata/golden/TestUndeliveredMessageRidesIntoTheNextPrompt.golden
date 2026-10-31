@@ -5,7 +5,9 @@ env_requested
 env_ready
 stage_started stage=scout
 agent_prompted stage=scout
+hold_taken stage=scout
 message_queued stage=scout
+hold_released stage=scout
 stage_completed stage=scout
 stage_started stage=build
 message_delivered stage=build

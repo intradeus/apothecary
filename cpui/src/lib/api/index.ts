@@ -352,11 +352,10 @@ export const runs = {
 		return () => es.close();
 	},
 
-	/** Send the running agent a message. Delivered into its live session when
-	 *  the current turn ends — or at once, cancelling the turn, with interrupt.
-	 *  Rejects (409) when no agent is running to take it. */
-	sendMessage: async (id: string, text: string, interrupt = false): Promise<string> =>
-		(await unwrap(gen.sendRunMessage({ path: { id }, body: { text, interrupt } }))).message_id,
+	/** Send a message to the agent you took over. Delivered into its live
+	 *  session when the current turn ends. Rejects (409) without a take-over. */
+	sendMessage: async (id: string, text: string): Promise<string> =>
+		(await unwrap(gen.sendRunMessage({ path: { id }, body: { text } }))).message_id,
 
 	/** Take over the running agent's session: its turns no longer end the
 	 *  stage, they wait for your next message — until you release. Rejects

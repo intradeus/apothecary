@@ -46,7 +46,6 @@ export type ChatItem =
 			key: string;
 			id: string;
 			text: string;
-			interrupt: boolean;
 			delivered: boolean;
 			ts: string;
 			deliveredAt?: string;
@@ -378,7 +377,6 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					key,
 					id: String(p.message_id),
 					text: String(p.text ?? ''),
-					interrupt: Boolean(p.interrupt),
 					delivered: delivered.has(String(p.message_id)),
 					deliveredAt: delivered.get(String(p.message_id)),
 					ts: e.ts

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -129,19 +130,45 @@ func TestTranscriptIsRecordedCoalescedAndRedacted(t *testing.T) {
 	}
 }
 
-// sendWhenLive retries until the agent invocation is up to take a message.
-func sendWhenLive(t *testing.T, h *harness, runID, text string, interrupt bool) string {
+// sendHeld takes the agent over, then sends it a message.
+func sendHeld(t *testing.T, h *harness, runID, text string) string {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		id, err := h.e.SendMessage(runID, text, interrupt)
-		if err == nil {
-			return id
+	takeOverWhenLive(t, h, runID, "u1")
+	id, err := h.e.SendMessage(runID, text)
+	if err != nil {
+		t.Fatalf("send message: %v", err)
+	}
+	return id
+}
+
+// Nobody talks to an agent without taking it over: the message is refused,
+// nothing lands on the record, and the agent carries on undisturbed.
+func TestAMessageWithoutATakeOverIsRefused(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	var entered atomic.Bool
+	release := make(chan struct{})
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "s"})
+		entered.Store(true)
+		<-release
+		if msgs := call.In.Inbox.Take(); len(msgs) != 0 {
+			t.Errorf("the refused message reached the agent: %+v", msgs)
 		}
-		if !errors.Is(err, ErrNoAgentRunning) && !errors.Is(err, ErrRunNotActive) || time.Now().After(deadline) {
-			t.Fatalf("send message: %v", err)
-		}
-		time.Sleep(5 * time.Millisecond)
+		return agentport.AgentResult{Session: "s", TurnsUsed: 1}, nil
+	}
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, entered.Load)
+	waitEvent[*event.AgentSession](t, h, runID)
+	if _, err := h.e.SendMessage(runID, "use sqlite"); !errors.Is(err, ErrNotHeld) {
+		t.Errorf("send without a take-over = %v, want ErrNotHeld", err)
+	}
+	close(release)
+	h.e.Wait(runID)
+	if q, ok := findPayload[*event.MessageQueued](h.events(t, runID)); ok {
+		t.Errorf("a refused message reached the record: %+v", q)
 	}
 }
 
@@ -154,9 +181,6 @@ func TestMessageIsDeliveredIntoTheRunningInvocation(t *testing.T) {
 		case <-ctx.Done():
 			return agentport.AgentResult{}, ctx.Err()
 		}
-		if !call.In.Inbox.Interrupting() {
-			t.Error("the message asked to interrupt")
-		}
 		msgs := call.In.Inbox.Take()
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvUserMessage, Messages: msgs})
 		got <- msgs
@@ -166,7 +190,7 @@ func TestMessageIsDeliveredIntoTheRunningInvocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := sendWhenLive(t, h, runID, "  use sqlite  ", true)
+	id := sendHeld(t, h, runID, "  use sqlite  ")
 	msgs := <-got
 	if len(msgs) != 1 || msgs[0].ID != id || msgs[0].Text != "use sqlite" {
 		t.Fatalf("delivered = %+v", msgs)
@@ -174,7 +198,7 @@ func TestMessageIsDeliveredIntoTheRunningInvocation(t *testing.T) {
 	h.e.Wait(runID)
 	evs := h.events(t, runID)
 	q, ok := findPayload[*event.MessageQueued](evs)
-	if !ok || q.MessageID != id || !q.Interrupt || q.StageID != "build" {
+	if !ok || q.MessageID != id || q.StageID != "build" {
 		t.Errorf("message_queued = %+v", q)
 	}
 	d, ok := findPayload[*event.MessageDelivered](evs)
@@ -182,7 +206,7 @@ func TestMessageIsDeliveredIntoTheRunningInvocation(t *testing.T) {
 		t.Errorf("message_delivered = %+v", d)
 	}
 	// Nothing to take a message any more.
-	if _, err := h.e.SendMessage(runID, "late", false); err == nil {
+	if _, err := h.e.SendMessage(runID, "late"); err == nil {
 		t.Error("a finished run accepted a message")
 	}
 }
@@ -219,7 +243,7 @@ func TestUndeliveredMessageRidesIntoTheNextPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := sendWhenLive(t, h, runID, "remember the cache", false)
+	id := sendHeld(t, h, runID, "remember the cache")
 	h.e.Wait(runID)
 	pmu.Lock()
 	defer pmu.Unlock()

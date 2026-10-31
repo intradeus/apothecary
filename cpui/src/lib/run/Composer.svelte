@@ -1,12 +1,13 @@
 <script lang="ts">
-	// The composer (DESIGN 4.12): ↵ queues a message for the end of the
-	// agent's turn, ⌘↵ sends it now (interrupting the turn), ⇧↵ is a newline.
-	// Sending is optimistic: the box clears and the bubble shows at once; if
-	// the engine refuses, the text comes back with the reason.
+	// The composer (DESIGN 4.12). Nobody talks to an agent without taking it
+	// over, so until then it is only the Take over button. Take over holds the
+	// agent's session: while held (amber), its turns wait for your next message
+	// instead of ending the stage, and Release hands the task back — the stage
+	// can only end after that.
 	//
-	// Take over holds the agent's session: while held (amber), its turns
-	// wait for your next message instead of ending the stage, and Release
-	// hands the task back — the stage can only end after that.
+	// ↵ sends, delivered when the agent's turn ends; ⇧↵ is a newline. Sending
+	// is optimistic: the box clears and the bubble shows at once; if the engine
+	// refuses, the text comes back with the reason.
 	import { api } from '$lib/api';
 	import { fmtClockDuration } from '$lib/format';
 	import { t } from '$lib/i18n/index.svelte';
@@ -16,7 +17,6 @@
 		runId,
 		onsent,
 		onfailed,
-		canTakeOver = false,
 		hold,
 		releasing = false,
 		now = Date.now(),
@@ -25,11 +25,9 @@
 	}: {
 		runId: string;
 		/** Fired as the message leaves (before the engine confirms). */
-		onsent: (text: string, interrupt: boolean) => void;
+		onsent: (text: string) => void;
 		/** The engine refused it: the bubble should go. */
 		onfailed?: (text: string) => void;
-		/** An agent stage is running: its session can be taken over. */
-		canTakeOver?: boolean;
 		/** The take-over in force, if any. */
 		hold?: RunHold;
 		/** Release clicked, not yet on the record. */
@@ -41,7 +39,7 @@
 	} = $props();
 
 	let draft = $state('');
-	let sending = $state<'' | 'queue' | 'now'>('');
+	let sending = $state(false);
 	let holding = $state(false);
 	let error = $state('');
 	let ta = $state<HTMLTextAreaElement | null>(null);
@@ -70,29 +68,29 @@
 		}
 	}
 
-	async function send(interrupt: boolean) {
+	async function send() {
 		const text = draft.trim();
 		if (!text || sending) return;
-		sending = interrupt ? 'now' : 'queue';
+		sending = true;
 		error = '';
 		draft = '';
-		onsent(text, interrupt);
+		onsent(text);
 		try {
-			await api.runs.sendMessage(runId, text, interrupt);
+			await api.runs.sendMessage(runId, text);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			onfailed?.(text);
 			// Give the words back unless something new was typed meanwhile.
 			if (!draft.trim()) draft = text;
 		} finally {
-			sending = '';
+			sending = false;
 		}
 	}
 
 	function onKey(e: KeyboardEvent) {
 		if (e.key === 'Enter' && !e.shiftKey) {
 			e.preventDefault();
-			void send(e.metaKey || e.ctrlKey);
+			void send();
 		}
 	}
 
@@ -114,21 +112,24 @@
 				<span class="mut">· {t('run.composer.heldMessages', { count: hold.messages })}</span>
 			{/if}
 		</div>
+		<textarea
+			class="bare"
+			bind:this={ta}
+			bind:value={draft}
+			rows="1"
+			placeholder={t('run.composer.placeholder')}
+			onkeydown={onKey}
+			aria-label={t('run.composer.aria')}></textarea>
 	{/if}
-	<textarea
-		class="bare"
-		bind:this={ta}
-		bind:value={draft}
-		rows="1"
-		placeholder={t(held ? 'run.composer.placeholderHeld' : 'run.composer.placeholder')}
-		onkeydown={onKey}
-		aria-label={t('run.composer.aria')}></textarea>
 	<div class="foot">
-		<span class="keys">
-			<span><span class="k">↵</span> {t('run.composer.keyQueue')}</span>
-			<span><span class="k">⌘↵</span> {t('run.composer.keyNow')}</span>
-			<span class="nl"><span class="k">⇧↵</span> {t('run.composer.keyNewline')}</span>
-		</span>
+		{#if held}
+			<span class="keys">
+				<span><span class="k">↵</span> {t('run.composer.keySend')}</span>
+				<span class="nl"><span class="k">⇧↵</span> {t('run.composer.keyNewline')}</span>
+			</span>
+		{:else}
+			<span class="keys">{t('run.composer.takeOverHint')}</span>
+		{/if}
 		{#if error}<span class="err" title={error}>{error}</span>{/if}
 		<span class="spacer"></span>
 		{#if held}
@@ -140,7 +141,14 @@
 				title={t('run.composer.releaseTitle')}
 				>{t(releasing ? 'run.composer.releasing' : 'run.composer.release')}</button
 			>
-		{:else if canTakeOver}
+			<button
+				class="btn-primary btn-md"
+				onclick={send}
+				aria-busy={sending}
+				disabled={sending || !draft.trim()}
+				title={t('run.composer.sendTitle')}>{t('run.composer.send')}</button
+			>
+		{:else}
 			<button
 				class="btn-md"
 				onclick={takeOver}
@@ -149,20 +157,6 @@
 				title={t('run.composer.takeOverTitle')}>{t('run.composer.takeOver')}</button
 			>
 		{/if}
-		<button
-			class="btn-md"
-			onclick={() => send(true)}
-			aria-busy={sending === 'now'}
-			disabled={!!sending || !draft.trim()}
-			title={t('run.composer.sendNowTitle')}>{t('run.composer.sendNow')}</button
-		>
-		<button
-			class="btn-primary btn-md"
-			onclick={() => send(false)}
-			aria-busy={sending === 'queue'}
-			disabled={!!sending || !draft.trim()}
-			title={t('run.composer.sendTitle')}>{t('run.composer.send')}</button
-		>
 	</div>
 </div>
 
@@ -232,8 +226,7 @@
 	/* Drop key hints as the Session window narrows (a container query on
 	 * the window, so its own threshold). */
 	@container (max-width: 520px) {
-		.keys .nl,
-		.keys > span:nth-child(2) {
+		.keys .nl {
 			display: none;
 		}
 	}

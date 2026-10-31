@@ -1,7 +1,8 @@
 <script lang="ts">
 	// Session (DESIGN §6): the transcript, auto-following the bottom; the ping
 	// card docked above the composer while the run waits on you; the composer
-	// while the run is active, a closing note once it is finished.
+	// while there is an agent to take over or one in your hands, a closing note
+	// once the run is finished.
 	//
 	// Following glides (a smooth scroll that retargets as text streams in);
 	// scrolling up hands control to the reader and the "Follow" pill
@@ -149,20 +150,21 @@
 		/>
 	{/if}
 	{#if rs.run && !rs.terminal}
-		<Composer
-			runId={rs.runId}
-			onsent={(text, interrupt) => {
-				sending = [...sending, { text, interrupt }];
-				follow(false);
-			}}
-			onfailed={(text) => (sending = sending.filter((s) => s.text !== text))}
-			{canTakeOver}
-			hold={rs.run.hold}
-			releasing={rs.releasing}
-			now={rs.now}
-			ontakeover={() => rs.takeOver()}
-			onrelease={() => rs.release()}
-		/>
+		{#if rs.run.hold || canTakeOver}
+			<Composer
+				runId={rs.runId}
+				onsent={(text) => {
+					sending = [...sending, { text }];
+					follow(false);
+				}}
+				onfailed={(text) => (sending = sending.filter((s) => s.text !== text))}
+				hold={rs.run.hold}
+				releasing={rs.releasing}
+				now={rs.now}
+				ontakeover={() => rs.takeOver()}
+				onrelease={() => rs.release()}
+			/>
+		{/if}
 	{:else if rs.run}
 		<div class="closed">
 			<EmptyState

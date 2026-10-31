@@ -308,9 +308,9 @@ export default {
 	'run.terminal.sessionClosed': 'session closed',
 
 	// Composer
-	'run.composer.placeholder': 'Whisper to the agent…',
-	'run.composer.placeholderHeld': 'The agent is in your hands. Say what to change…',
+	'run.composer.placeholder': 'The agent is in your hands. Say what to change…',
 	'run.composer.takeOver': 'Take over',
+	'run.composer.takeOverHint': 'Take over to talk to the agent',
 	'run.composer.takeOverTitle':
 		"Hold the agent's session: its turns wait for your next message, and the stage cannot end until you release it",
 	'run.composer.release': 'Release',
@@ -321,11 +321,8 @@ export default {
 	'run.composer.heldMessages_one': '{count} message',
 	'run.composer.heldMessages_other': '{count} messages',
 	'run.composer.aria': 'Message the agent',
-	'run.composer.keyQueue': 'send, queued',
-	'run.composer.keyNow': 'send now, interrupts',
+	'run.composer.keySend': 'send',
 	'run.composer.keyNewline': 'newline',
-	'run.composer.sendNow': 'Send now',
-	'run.composer.sendNowTitle': "Cancel the agent's turn now and have it read this",
 	'run.composer.send': 'Send',
 	'run.composer.sendTitle': 'Delivered when the agent finishes its current turn',
 
@@ -373,7 +370,6 @@ export default {
 	'run.transcript.thinking': 'Thinking',
 	'run.transcript.checklist': 'Checklist',
 	'run.transcript.planProgress': '{done} of {total}',
-	'run.transcript.interrupt': 'interrupt',
 	'run.transcript.delivered': 'you · delivered {at}',
 	'run.transcript.queued': 'queued — read when its turn ends',
 	'run.transcript.asked': 'The agent asked',

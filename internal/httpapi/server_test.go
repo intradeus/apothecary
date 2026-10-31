@@ -1348,26 +1348,34 @@ main:
 		return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, nil
 	}
 	runID := x.createTicketFlow(t, "T", "msg")
+	// Nobody talks to an agent without taking it over.
+	if resp, data := x.do(t, "POST", "/api/runs/"+runID+"/messages", map[string]any{"text": "use sqlite"}, nil); resp.StatusCode != http.StatusConflict {
+		t.Fatalf("message without a take-over = %d: %s", resp.StatusCode, data)
+	}
 	var status int
 	var data []byte
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		var resp *http.Response
-		resp, data = x.do(t, "POST", "/api/runs/"+runID+"/messages", map[string]any{"text": "use sqlite"}, nil)
+		resp, data = x.do(t, "POST", "/api/runs/"+runID+"/hold", nil, nil)
 		status = resp.StatusCode
 		if status != http.StatusConflict {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if status != http.StatusAccepted || !strings.Contains(string(data), `"message_id"`) {
-		t.Fatalf("send = %d: %s", status, data)
+	if status != http.StatusAccepted {
+		t.Fatalf("take over = %d: %s", status, data)
+	}
+	resp, data := x.do(t, "POST", "/api/runs/"+runID+"/messages", map[string]any{"text": "use sqlite"}, nil)
+	if resp.StatusCode != http.StatusAccepted || !strings.Contains(string(data), `"message_id"`) {
+		t.Fatalf("send = %d: %s", resp.StatusCode, data)
 	}
 	if text := <-got; text != "use sqlite" {
 		t.Errorf("delivered %q", text)
 	}
 	x.e.Wait(runID)
-	resp, data := x.do(t, "POST", "/api/runs/"+runID+"/messages", map[string]any{"text": "too late"}, nil)
+	resp, data = x.do(t, "POST", "/api/runs/"+runID+"/messages", map[string]any{"text": "too late"}, nil)
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("message to a finished run = %d: %s", resp.StatusCode, data)
 	}

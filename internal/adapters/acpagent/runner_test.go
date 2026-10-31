@@ -152,16 +152,6 @@ func (r *recorder) Take() []agentport.UserMessage {
 	r.queue = nil
 	return q
 }
-func (r *recorder) Interrupting() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, m := range r.queue {
-		if m.Interrupt {
-			return true
-		}
-	}
-	return false
-}
 func (r *recorder) Held() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -262,43 +252,6 @@ func TestQueuedMessageBecomesTheNextTurn(t *testing.T) {
 	}
 	if res.Usage.CostUSD < 0.1999 || res.Usage.CostUSD > 0.2001 {
 		t.Errorf("cost over two turns = %v", res.Usage.CostUSD)
-	}
-}
-
-// An interrupting message cancels the turn in flight and is read at once.
-func TestInterruptingMessage(t *testing.T) {
-	h := startSidecar(t)
-	rec := newRecorder()
-	var once sync.Once
-	rec.onText = func(s string) {
-		if s == "waiting" {
-			once.Do(func() { rec.push(agentport.UserMessage{ID: "m2", Text: "stop, use sqlite", Interrupt: true}) })
-		}
-	}
-	done := make(chan error, 1)
-	go func() {
-		_, err := h.runner().Run(context.Background(), "e", agentport.AgentSpec{}, agentport.AgentInput{Prompt: "WAIT", Events: rec.on, Inbox: rec})
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("interrupt never ended the waiting turn")
-	}
-	if !strings.Contains(rec.text(), "stop, use sqlite") {
-		t.Errorf("interrupting message not delivered: %q", rec.text())
-	}
-	var stops []string
-	for _, e := range rec.events {
-		if e.Kind == agentport.AgentEvTurnEnd {
-			stops = append(stops, e.StopReason)
-		}
-	}
-	if strings.Join(stops, ",") != "cancelled,end_turn" {
-		t.Errorf("turn ends = %v", stops)
 	}
 }
 

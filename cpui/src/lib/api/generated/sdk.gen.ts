@@ -3397,9 +3397,9 @@ export const getStageLog = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Send a message to the run's running agent
+ * Send a message to the agent you took over
  *
- * Delivered into the agent's live session when its turn ends — or at once, cancelling the turn, with interrupt. 409 when no agent is running to take it (a run parked on the holder of a take-over is woken by it).
+ * Delivered into the agent's live session when its turn ends. 409 without a take-over: nobody else talks to the agent. A run parked on the holder of a take-over is woken by it.
  */
 export const sendRunMessage = <ThrowOnError extends boolean = false>(
 	options: Options<SendRunMessageData, ThrowOnError>

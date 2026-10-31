@@ -14,12 +14,9 @@ import (
 	"apothecary/internal/workspace/wsinfo"
 )
 
-// SendMessageRequest is a human message to the run's running agent.
+// SendMessageRequest is a message to the agent you took over.
 type SendMessageRequest struct {
 	Text string `json:"text"`
-	// Interrupt cancels the agent's turn in flight so it reads this now;
-	// otherwise the message is delivered when the turn ends.
-	Interrupt bool `json:"interrupt,omitempty"`
 }
 
 type MessageAccepted struct {
@@ -31,9 +28,9 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	id, err := s.Runs.SendMessage(r.PathValue("id"), body.Text, body.Interrupt)
+	id, err := s.Runs.SendMessage(r.PathValue("id"), body.Text)
 	switch {
-	case errors.Is(err, engine.ErrRunNotActive), errors.Is(err, engine.ErrNoAgentRunning):
+	case errors.Is(err, engine.ErrRunNotActive), errors.Is(err, engine.ErrNoAgentRunning), errors.Is(err, engine.ErrNotHeld):
 		writeErr(w, http.StatusConflict, err.Error())
 	case err != nil:
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -209,8 +206,8 @@ func (s *Server) workspaceRoutes() []Route {
 			Summary: "Start code-server in the workspace and get its URL",
 			Handler: s.postOpenEditor, Returns: EditorURL{}, Scope: ScopeRun},
 		{Method: "POST", Path: "/api/runs/{id}/messages", ID: "sendRunMessage", Tag: tagRuns,
-			Summary: "Send a message to the run's running agent",
-			Doc:     "Delivered into the agent's live session when its turn ends — or at once, cancelling the turn, with interrupt. 409 when no agent is running to take it (a run parked on the holder of a take-over is woken by it).",
+			Summary: "Send a message to the agent you took over",
+			Doc:     "Delivered into the agent's live session when its turn ends. 409 without a take-over: nobody else talks to the agent. A run parked on the holder of a take-over is woken by it.",
 			Handler: s.postMessage, Body: SendMessageRequest{}, Returns: MessageAccepted{}, Status: http.StatusAccepted, Scope: ScopeRun},
 		{Method: "POST", Path: "/api/runs/{id}/hold", ID: "takeOverRun", Tag: tagRuns,
 			Summary: "Take over the running agent's session",

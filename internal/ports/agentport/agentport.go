@@ -38,9 +38,9 @@ type AgentInput struct {
 	// workspace's — and must never log or persist them.
 	MCPServers []MCPServer
 	// Inbox holds the human's messages for this invocation. A runner that can
-	// deliver them mid-invocation takes them at the end of each turn (or
-	// interrupts the turn, when a message asks to); one that cannot simply
-	// never takes them, and the engine carries them into the next prompt.
+	// deliver them mid-invocation takes them at the end of each turn; one
+	// that cannot simply never takes them, and the engine carries them into
+	// the next prompt.
 	// nil = no messages.
 	Inbox Inbox
 	// ReadOnly: the session must not change the workspace (the Ask pane's
@@ -73,9 +73,6 @@ type MCPServer struct {
 type UserMessage struct {
 	ID   string
 	Text string
-	// Interrupt asks for the turn in flight to be cancelled so the message
-	// is read now, rather than queued until the agent finishes the turn.
-	Interrupt bool
 	// Verbatim marks text the engine composed (the handback prompt that
 	// ends a take-over): delivered as it is, not framed as a human's words.
 	Verbatim bool
@@ -89,8 +86,6 @@ type Inbox interface {
 	// Take removes and returns every queued message: taking IS delivering,
 	// so a runner takes only what it is about to send.
 	Take() []UserMessage
-	// Interrupting reports whether a queued message asked to interrupt.
-	Interrupting() bool
 	// Held reports whether a human holds the session (a take-over). While
 	// held, a turn that ends with nothing queued is not the invocation's
 	// end: the runner waits for the holder's next message (Wake) and keeps

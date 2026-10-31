@@ -9,8 +9,8 @@
 //   - the transcript streams as it happens (message text, tool calls with
 //     their input/output, plans), normalized by the protocol, not scraped;
 //   - the agent process and its session outlive a turn, so a human message
-//     is delivered into the SAME session (queued to the end of the turn, or
-//     interrupting it), and an ask_human tool call can simply block;
+//     is delivered into the SAME session, at the end of the turn, and an
+//     ask_human tool call can simply block;
 //   - the process outlives the engine: after a restart, Reattach follows the
 //     turn still in flight instead of restarting it.
 package acpagent
@@ -482,7 +482,6 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 		}
 		res.TurnsUsed++
 		turnCost := cost
-		interrupted := false
 		var end *sidecar.Event
 		for end == nil {
 			select {
@@ -491,11 +490,6 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 					emit(agentport.AgentEvent{Kind: agentport.AgentEvNotice, Text: "The workspace sidecar restarted; the turn in flight was lost."})
 				}
 				return done(fmt.Errorf("%s: %w", r.p.Harness, err))
-			case <-wake:
-				if in.Inbox.Interrupting() && !interrupted {
-					interrupted = true
-					_ = c.Cancel(sctx, sid)
-				}
 			case <-ctxDone:
 				// Cancelled by the engine (timeout, park, abort): ask the
 				// agent to stop, then follow the turn to its end for a while.

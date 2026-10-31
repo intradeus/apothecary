@@ -14,16 +14,13 @@ import (
 	"apothecary/internal/run/runcore"
 )
 
-// A TAKE-OVER: a human holds the running agent's session. The whisper
-// (SendMessage) delivers one message into the live session and lets the
-// agent carry on; the engine then reads the end of the agent's next turn
-// as the end of the stage — which is right for a note and wrong for a
-// conversation. A hold makes the human's intent explicit: while it is in
-// force, a turn ending with nothing queued is not the stage's end. The
-// agent waits for the holder's next message, each message is a turn in the
-// same session, and the stage can only end once the holder releases — the
-// session is then sent the handback prompt, and when THAT turn ends the
-// stage's output contract applies as usual.
+// A TAKE-OVER: a human holds the running agent's session, the only way to
+// talk to it (a read-only question goes to the Ask pane instead). While a
+// hold is in force, a turn ending with nothing queued is not the stage's end.
+// The agent waits for the holder's next message (SendMessage), each message
+// is a turn in the same session, and the stage can only end once the holder
+// releases — the session is then sent the handback prompt, and when THAT turn
+// ends the stage's output contract applies as usual.
 //
 // The hold is on the record: hold_taken, and hold_released with its
 // duration, turns and cost (every leg of it, across any park). A holder who
@@ -34,7 +31,7 @@ import (
 var (
 	// ErrAlreadyHeld: someone already holds this stage's session.
 	ErrAlreadyHeld = errors.New("someone already holds this agent's session")
-	// ErrNotHeld: a release with no take-over in force.
+	// ErrNotHeld: a release or a message with no take-over in force.
 	ErrNotHeld = errors.New("nobody holds this agent's session")
 )
 

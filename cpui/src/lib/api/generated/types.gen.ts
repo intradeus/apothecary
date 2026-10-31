@@ -1264,7 +1264,6 @@ export type SshKeyRequest = {
 };
 
 export type SendMessageRequest = {
-	interrupt?: boolean;
 	text: string;
 };
 

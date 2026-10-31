@@ -2,7 +2,6 @@
 	/** A message you sent that the run has not echoed back yet. */
 	export interface Sending {
 		text: string;
-		interrupt: boolean;
 	}
 </script>
 
@@ -167,7 +166,6 @@
 		<div class="user" use:arrive={a}>
 			<div class="bubble" class:queued={!it.delivered}>{it.text}</div>
 			<div class="um">
-				{#if it.interrupt}<span class="hue-amb">{t('run.transcript.interrupt')} · </span>{/if}
 				{#if it.delivered}{t('run.transcript.delivered', {
 						at: fmtClock(it.deliveredAt ?? it.ts)
 					})}{:else}{t('run.transcript.queued')}{/if}
@@ -199,9 +197,7 @@
 	<div class="user" use:arrive={true}>
 		<div class="bubble queued">{s.text}</div>
 		<div class="um">
-			{#if s.interrupt}<span class="hue-amb">{t('run.transcript.interrupt')} · </span>{/if}{t(
-				'run.transcript.sending'
-			)}
+			{t('run.transcript.sending')}
 		</div>
 	</div>
 {/each}

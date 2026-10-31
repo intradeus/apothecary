@@ -327,13 +327,13 @@ per-run Docker-in-Docker sandbox ── egress only via the project gateway
   agent and model, and prompts it. The sidecar normalizes the agent's
   updates — message text, tool calls with input/output/diffs, plans, usage —
   and the engine records them as the run's transcript.
-- **The run page** has a *Chat* tab (the transcript, live; your messages to
-  the agent), *Changes* (the run's diff against the branch it forked from),
+- **The run page** has a *Chat* tab (the transcript, live), *Changes* (the run's diff against the branch it forked from),
   *Files* (the checkout, read-only), *Terminal* (a shell in the repo) and
   the raw *Timeline*.
-- **Messaging the agent**: *Send* queues a message for the end of its
-  current turn, *Send now* interrupts the turn so it reads it at once —
-  either way into the same session.
+- **Talking to the agent**: only after *Take over*. While you hold it, each
+  message is a turn in the same session, delivered when its current turn
+  ends, and the stage cannot end until you *Release*. To ask about the code
+  without touching the run, use the *Ask* pane.
 - **ask_human blocks** until you answer (inbox, run page, or chat), with
   keep-alives so the harness never times the call out. If nobody answers
   within the live hold (30 min), the engine parks the run — cancels the

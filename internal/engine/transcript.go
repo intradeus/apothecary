@@ -71,17 +71,6 @@ func (b *inbox) Take() []agentport.UserMessage {
 	return q
 }
 
-func (b *inbox) Interrupting() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for _, m := range b.q {
-		if m.Interrupt {
-			return true
-		}
-	}
-	return false
-}
-
 // msgReq is a human message on its way into the run loop.
 type msgReq struct {
 	msg agentport.UserMessage

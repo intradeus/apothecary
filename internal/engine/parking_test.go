@@ -153,7 +153,7 @@ func TestAMessageWhileParkingWakesTheRun(t *testing.T) {
 	s, store := stallAt(event.TypeRunPaused)
 	h, runID := parkOnHolder(t, store)
 	err := inWindow(t, s, func() error {
-		_, err := h.e.SendMessage(runID, "try the other way", false)
+		_, err := h.e.SendMessage(runID, "try the other way")
 		return err
 	})
 	if err != nil {

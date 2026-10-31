@@ -20,11 +20,10 @@ var (
 
 const maxMessageLen = 32 << 10
 
-// SendMessage hands a human message to the run's running agent. Interrupt
-// asks for the turn in flight to be cancelled so the agent reads it now;
-// otherwise it is delivered when the agent finishes its turn. The message is
-// recorded (message_queued) before this returns.
-func (e *Engine) SendMessage(runID, text string, interrupt bool) (string, error) {
+// SendMessage hands a message to the agent a person took over: nobody talks
+// to an agent any other way (ErrNotHeld). It is delivered when the agent
+// finishes its turn, and recorded (message_queued) before this returns.
+func (e *Engine) SendMessage(runID, text string) (string, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return "", errors.New("message is empty")
@@ -36,7 +35,7 @@ func (e *Engine) SendMessage(runID, text string, interrupt bool) (string, error)
 		if !h.agentLive.Load() {
 			return "", ErrNoAgentRunning
 		}
-		req := msgReq{msg: agentport.UserMessage{ID: e.newID(), Text: text, Interrupt: interrupt}, ack: make(chan error, 1)}
+		req := msgReq{msg: agentport.UserMessage{ID: e.newID(), Text: text}, ack: make(chan error, 1)}
 		if err := e.messageLive(h, req); !errors.Is(err, errNoLoop) {
 			return req.msg.ID, err
 		}
@@ -45,7 +44,7 @@ func (e *Engine) SendMessage(runID, text string, interrupt bool) (string, error)
 	// next message, as a run parked on a question is by its answer.
 	id := e.newID()
 	err := e.wakeHeld(context.Background(), runID, func(run.View) []event.Payload {
-		return []event.Payload{&event.MessageQueued{MessageID: id, Text: text, Interrupt: interrupt}}
+		return []event.Payload{&event.MessageQueued{MessageID: id, Text: text}}
 	})
 	if err != nil {
 		return "", err
