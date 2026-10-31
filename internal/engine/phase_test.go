@@ -418,28 +418,6 @@ func TestAnOpenGateHoldsTheCursor(t *testing.T) {
 	}
 }
 
-// A signal may answer the gate for the person: that settles the wait point,
-// and the chain goes on before anything else opens.
-func TestASignalAnswersAnOpenGate(t *testing.T) {
-	ph := newPhasedHarness(t, mainGateDoc(`{ id: final, type: human_gate, question: "Merge?", input: { mr: { from: run.mr.url, type: link } }, auto_approve: mr_merged, auto_reject: mr_closed, on_reject: abort }`))
-	runID, err := ph.e.CreateRun(context.Background(), runinput.Ticket{Title: "Phased"}, "phased", testProject)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gate := ph.waitPing(t, event.PingGate)
-	ph.repoHost.SetMRState(1, repoport.MRMerged)
-	ph.waitState(t, runID, run.Completed)
-	answered := false
-	for _, e := range ph.events(t, runID) {
-		if a, ok := e.Payload.(*event.PingAnswered); ok && a.PingID == gate.ID && a.Answer == "approve" && strings.Contains(a.Feedback, "auto: mr_merged") {
-			answered = true
-		}
-	}
-	if !answered {
-		t.Error("the merge did not answer the gate")
-	}
-}
-
 // An outcome ends the run, so it takes the cursor from a chain parked at a
 // gate nobody can answer usefully anymore: the chain never resumes and the
 // question is withdrawn with the run.

@@ -201,8 +201,8 @@
 	const waitSig = $derived(
 		stage?.type === 'wait' ? signals.find((g) => g.slug === stage.for) : undefined
 	);
-	// Any signal observed on the run's merge requests may end a wait, answer
-	// a gate, open a watcher or fire an outcome: the section decides what it
+	// Any signal observed on the run's merge requests may end a wait, open
+	// a watcher or fire an outcome: the section decides what it
 	// does (FLOWLANG §1). manual — a person's start — opens a watcher only.
 	const observed = $derived(signals.filter((g) => g.kind === 'observed'));
 	// A chain's kind in the marker's hue: main brand, watchers violet, an
@@ -1202,53 +1202,6 @@
 					/>
 					{#if Object.values(s.input ?? {}).some((p) => CURATABLE_TYPES.includes(p.type ?? ''))}
 						<div class="help">{t('flow.insp.curateHelp')}</div>
-					{/if}
-					<div class="grp">
-						<div class="lbl">{t('flow.insp.autoBy')}</div>
-						<div class="help">{t('flow.insp.autoByHelp')}</div>
-					</div>
-					<div class="grid2">
-						<div class="field">
-							<label for="st-auto-ok">{t('flow.insp.approveWhen')}</label>
-							<Select
-								id="st-auto-ok"
-								value={s.auto_approve ?? ''}
-								options={[
-									{ value: '', label: '—' },
-									...observed.map((sig) => ({
-										value: sig.slug,
-										label: sig.title,
-										disabled: sig.slug === s.auto_reject
-									}))
-								]}
-								onchange={(v) => {
-									s.auto_approve = v || undefined;
-									onchange();
-								}}
-							/>
-						</div>
-						<div class="field">
-							<label for="st-auto-no">{t('flow.insp.rejectWhen')}</label>
-							<Select
-								id="st-auto-no"
-								value={s.auto_reject ?? ''}
-								options={[
-									{ value: '', label: '—' },
-									...observed.map((sig) => ({
-										value: sig.slug,
-										label: sig.title,
-										disabled: sig.slug === s.auto_approve
-									}))
-								]}
-								onchange={(v) => {
-									s.auto_reject = v || undefined;
-									onchange();
-								}}
-							/>
-						</div>
-					</div>
-					{#if s.auto_approve || s.auto_reject}
-						<div class="help">{t('flow.insp.manualStillOk')}</div>
 					{/if}
 				{:else if s.type === 'action'}
 					<div class="field">

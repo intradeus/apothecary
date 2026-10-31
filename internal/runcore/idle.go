@@ -290,8 +290,6 @@ const (
 	ResumeWaitTimedOut
 	// ResumeGateAnswered: a gate's ping has its answer on the record.
 	ResumeGateAnswered
-	// ResumeGateAuto: a signal answers the gate on the human's behalf.
-	ResumeGateAuto
 )
 
 // ResumePlan is the parked chain's wait point, settled.
@@ -302,15 +300,12 @@ type ResumePlan struct {
 	Why string
 	// Answer is the recorded answer of ResumeGateAnswered.
 	Answer *event.PingAnswered
-	// AutoAnswer and AutoFeedback are what ResumeGateAuto records.
-	AutoAnswer, AutoFeedback string
 }
 
 // PlanResume checks the parked chain's wait point against the latest
 // observation: a wait whose signal holds completes, one whose signal can no
 // longer hold or that timed out fails (on_fail / on_timeout), a gate routes
-// its answer — the human's, or the one a signal supplies (auto_approve /
-// auto_reject).
+// its answer.
 func (rs *State) PlanResume(obs []MRObservation, now time.Time) ResumePlan {
 	pr := rs.Parked
 	if pr == nil || rs.Pos < 0 || rs.Pos >= len(rs.Flow.Stages) {
@@ -333,17 +328,6 @@ func (rs *State) PlanResume(obs []MRObservation, now time.Time) ResumePlan {
 	case flow.StageHumanGate:
 		if ans := rs.AnsweredPings[pr.Ping]; ans != nil {
 			return ResumePlan{Kind: ResumeGateAnswered, Stage: st, Answer: ans}
-		}
-		// A signal answers the gate on the human's behalf: "they merged
-		// it instead of clicking approve", "they closed it, which is a
-		// no". Whichever lands first wins.
-		for _, a := range []struct{ slug, answer string }{{st.AutoApprove, "approve"}, {st.AutoReject, "reject"}} {
-			if a.slug == "" {
-				continue
-			}
-			if holds, _, _ := rs.WaitState(a.slug, rs.Subject, obs, now); holds {
-				return ResumePlan{Kind: ResumeGateAuto, Stage: st, AutoAnswer: a.answer, AutoFeedback: "auto: " + a.slug}
-			}
 		}
 	}
 	return ResumePlan{}

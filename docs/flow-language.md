@@ -52,7 +52,7 @@ is one of a few things:
 |---|---|
 | **work stage** | `agent`, `command`, `action`. Runs in the workspace — one checkout, one branch — and at most one runs at any instant: the workspace is a mutex, which is what keeps the git history linear. |
 | **wait point** | Where a chain stops for something outside the run. It has a **source** (a signal from the registry, a person, a timer), a **policy** (`auto`: proceed when the source holds; `confirm`: raise a decision first; `manual`: only a person proceeds, the event is advice), an optional **subject** the event carries (which merge request), an occurrence **key** (the same fact never fires twice), a run bound (`max`), optionally a debounce (`quiet_for`) and a `timeout`, and **outcomes**: proceed, declined, can no longer happen, timed out, rejected with feedback. A wait point releases the workspace — unless it is one that owns it: an agent's `ask_human` turn (§9), the `debug` leaf (§3). |
-| **its spellings** | A watcher's or an outcome's `on:` is its opening wait point. `type: wait` is one mid-chain, on a signal. `type: human_gate` is one mid-chain whose first source is a person, with `auto_approve` / `auto_reject` as extra signal sources. The confirmation ping in the inbox and the Run button on the run page are the `confirm` and `manual` policies of the same thing. |
+| **its spellings** | A watcher's or an outcome's `on:` is its opening wait point. `type: wait` is one mid-chain, on a signal. `type: human_gate` is one mid-chain whose source is a person. The confirmation ping in the inbox and the Run button on the run page are the `confirm` and `manual` policies of the same thing. |
 | **chain** | A sequential list of stages: the **main** chain a run starts with, a **watcher** that runs on each new occurrence of its signal while the run is open, an **outcome** that fires once and ends the run (§1). Each is a *phase* of the run. |
 | **cursor** | A run has exactly one. It stands in one chain, moving or parked at a wait point inside it, or at the **hub** between chains. All of a run's work lands on one branch, so nothing runs beside anything else: not two watchers, and no watcher beside the main chain. Each chain run has its own edge counters, feed and tip. |
 | **scheduler** | The engine's idle loop. Each tick: observe the sources (the repositories, timers, answered pings). A parked chain keeps the cursor and is the only thing that can move, except an outcome (§1). At the hub, walk the wait points in document order — outcomes, then watchers — and open the first whose event is ready under its policy. That chain takes the cursor until its end. One start per tick. |
@@ -513,9 +513,8 @@ run page and is picked up at the hub, if it still holds.
 
 One thing may take the cursor from a parked chain: an **outcome**, because
 the run is over either way. The chain never resumes, and its open question is
-withdrawn when the run ends. A wait point the same signal settles goes first —
-a gate's `auto_approve`, a `wait` on that signal — so a chain that has
-something to do after the merge still does it.
+withdrawn when the run ends. A `wait` the same signal settles goes first, so a
+chain that has something to do after the merge still does it.
 
 A confirmation (`start: confirm`) is asked at the hub and stays open while
 other chains take their turn: it is a question, not a chain. Approved, its
@@ -715,7 +714,7 @@ this context explicitly, and those *are* declared, as ports.
 |---|---|---|
 | `agent` | runs an agent this flow declares (§1) | `agent`, `input`, `output`, `model`, `harness`, `max_turns`, `timeout` |
 | `command` | runs a shell script in the workspace | `run` **or** `run_ref`, `input`, `output`, `timeout`, `each_repo` |
-| `human_gate` | parks the phase on a human decision | `question`, `input`, `auto_approve`, `auto_reject` |
+| `human_gate` | parks the phase on a human decision | `question`, `input` |
 | `action` | invokes a built-in apothecary integration | `action`, `input`, `output`, `with` |
 | `wait` | parks the phase until a signal holds | `for`, `timeout` |
 | `service` | starts, restarts or stops one of the project's services | `service`, `do`, `timeout` |
@@ -850,36 +849,6 @@ re-review is handed it under `dropped` and refused if it proposes it anyway —
 and a reply held back leaves its thread alone until someone writes there again,
 exactly as unpicking it in the round's checklist would. A rejection carries the
 same decisions to the redo in its verdict, and writes nothing.
-
-**Answered automatically.** A gate is a decision point whose *default* answerer
-is a human. `auto_approve` and `auto_reject` name signals (§2 wait) that may
-supply the same two answers:
-
-```yaml
-- id: final_gate
-  type: human_gate
-  question: "Review the merge request and merge when satisfied."
-  input: { mr: { from: run.mr.url, type: link } }
-  auto_approve: mr_merged     # they merged it instead of clicking approve
-  auto_reject: mr_closed      # they closed it unmerged, which is a no
-  on_success: done
-  on_reject: abort
-```
-
-The gate keeps accepting a manual answer the whole time: **whichever lands
-first wins.** That race is why these are fields on the gate rather than separate
-`wait` stages — the engine runs one stage at a time, so `gate → wait` would mean
-"approve, *then* wait for merge", never "either one". A signal-supplied answer is
-recorded exactly like a human's, with `auto: <signal>` as its feedback (so a
-`edge.verdict` reader still gets a reason). The same signal cannot be given to both
-fields.
-
-Why two named fields rather than one `auto_answer`, or a boolean `any_of`
-combinator: the field has to say *which* answer it supplies, because approve and
-reject route to entirely different places. And a symmetric-looking
-`any_of: [mr_merged, human_approve]` would hide a real asymmetry — a signal is
-one bit, while only a human can reject *with reasons*. Naming the two outcomes
-keeps that visible. See §10 for why general AND/OR gates are not the answer.
 
 ### action
 
@@ -1875,8 +1844,6 @@ Older spellings the parser still answers by name rather than with a bare
 |---|---|
 | `ping: plan_approval\|final_review\|manual_debug` | `question:` free text |
 | `payload:` on a gate | `input: { name: { from: …, type: … } }` |
-| `auto_complete:` | `auto_approve:` (or a `wait` stage to just park on it) |
-| `auto_answer:` | `auto_approve:` / `auto_reject:` — say which answer it supplies |
 | `feed: output` / `feed: decision` on an edge | a port on the target reading `edge.failure` / `edge.verdict` |
 | `when:` on a stage | `run_if:` — the message names it |
 | `edge.decision`, `type: decision` | `edge.verdict`, `type: verdict` |
@@ -2175,8 +2142,7 @@ Everything below follows from *The model*: one scheduler walking wait points
 over one workspace. Additive, no grammar break:
 
 - **A signal** — one `signalspec` registry entry plus a poller. A *waitable*
-  signal is picked up by `wait` and a gate's `auto_approve`/`auto_reject` for
-  free; a *firing* signal (the `Trigger` flag and a predicate in the idle
+  signal is picked up by `wait` for free; a *firing* signal (the `Trigger` flag and a predicate in the idle
   poller) opens phases under every policy — `auto`, `confirm`, `manual` — on
   the subject it carries, and the scheduler does not change; an *outcome*
   signal (the `Outcome` flag, `waitState` saying when it holds) ends the run
@@ -2241,8 +2207,8 @@ Deliberately *not* in this version, each a real change rather than a patch:
 
 ### Why no AND/OR combinators
 
-A gate answered by a signal *is* an OR, so a general `all_of:` / `any_of:` looks
-like the natural generalization. It is not, for three separate reasons:
+A general `all_of:` / `any_of:` looks like a natural addition to `wait`. It is
+not, for three separate reasons:
 
 - **AND already exists.** Signals are state predicates, so sequential `wait`
   stages compose as AND in any order (§2 wait). An `all_of:` would be a second
@@ -2254,9 +2220,7 @@ like the natural generalization. It is not, for three separate reasons:
   first.
 - **The branches are not symmetric.** A signal can only say yes or no; a human
   can say no *and why*. `any_of: [mr_merged, human_approve]` would give a stage
-  an `on_reject` edge and an `edge.verdict` only one branch could ever reach. Naming
-  the two outcomes (`auto_approve`, `auto_reject`) puts that asymmetry in the
-  open instead.
+  an `on_reject` edge and an `edge.verdict` only one branch could ever reach.
 
 Nor is human approval itself modelled as a signal (`for: human_approve`): a gate
 is not a condition but an interactive object — a question, a payload to review,
@@ -2264,7 +2228,5 @@ an attachment channel, a reject-with-reasons path, a place in someone's inbox.
 Expressing it as a signal would force the `wait` stage to grow every one of
 those fields, dissolving the type distinctions this grammar exists to keep.
 
-When a second approving signal appears, the additive move is to let
-`auto_approve` take a list — an OR in the one place it is unambiguous. The likely
-*next* need after that is not a boolean gate at all but multi-outcome routing
+The likely next need is not a boolean gate at all but multi-outcome routing
 ("which signal fired?"), which the edge-kind registry already accommodates.

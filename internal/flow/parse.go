@@ -565,8 +565,6 @@ type DocStage struct {
 	RunRef      string    `yaml:"run_ref" json:"run_ref,omitempty"`
 	EachRepo    bool      `yaml:"each_repo" json:"each_repo,omitempty"`
 	Question    string    `yaml:"question" json:"question,omitempty"`
-	AutoApprove string    `yaml:"auto_approve" json:"auto_approve,omitempty"`
-	AutoReject  string    `yaml:"auto_reject" json:"auto_reject,omitempty"`
 	Action      string    `yaml:"action" json:"action,omitempty"`
 	Service     string    `yaml:"service" json:"service,omitempty"`
 	Do          string    `yaml:"do" json:"do,omitempty"`
@@ -579,14 +577,12 @@ type DocStage struct {
 	// Retired fields, still decoded so the parser can answer with the
 	// upgrade (FLOWLANG §7) instead of the strict decoder's bare "field not
 	// found". They carry json:"-": the editor never sees or round-trips them.
-	Verdict      bool   `yaml:"verdict" json:"-"`
-	Ping         string `yaml:"ping" json:"-"`
-	Payload      string `yaml:"payload" json:"-"`
-	Body         string `yaml:"body" json:"-"`
-	AutoComplete string `yaml:"auto_complete" json:"-"`
-	AutoAnswer   string `yaml:"auto_answer" json:"-"`
-	Include      string `yaml:"include" json:"-"`
-	When         string `yaml:"when" json:"-"`
+	Verdict bool   `yaml:"verdict" json:"-"`
+	Ping    string `yaml:"ping" json:"-"`
+	Payload string `yaml:"payload" json:"-"`
+	Body    string `yaml:"body" json:"-"`
+	Include string `yaml:"include" json:"-"`
+	When    string `yaml:"when" json:"-"`
 
 	// line is the stage's source line; scope the path of sequence stages it
 	// was expanded through (empty for a stage written in its chain). Set by
@@ -611,12 +607,6 @@ func (r *DocStage) retired() []string {
 	}
 	if r.Body != "" {
 		msgs = append(msgs, `"body" is retired: use type: action, action: create_mr with input: { body: { from: <path>, type: file } }`)
-	}
-	if r.AutoComplete != "" {
-		msgs = append(msgs, fmt.Sprintf(`"auto_complete" is retired: use "auto_approve" (the signal approves the gate) — or a %s stage to just block on it`, StageWait))
-	}
-	if r.AutoAnswer != "" {
-		msgs = append(msgs, `"auto_answer" is retired: say which answer it supplies — "auto_approve" or "auto_reject"`)
 	}
 	if r.Include != "" {
 		msgs = append(msgs, fmt.Sprintf(`"include" is retired: a stage runs a sequence with "sequence" (sequence: %s)`, r.Include))
@@ -1924,8 +1914,6 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		{"run_ref", raw.RunRef != "", []StageType{StageCommand}},
 		{"each_repo", raw.EachRepo, []StageType{StageCommand}},
 		{"question", raw.Question != "", []StageType{StageHumanGate}},
-		{"auto_approve", raw.AutoApprove != "", []StageType{StageHumanGate}},
-		{"auto_reject", raw.AutoReject != "", []StageType{StageHumanGate}},
 		{"action", raw.Action != "", []StageType{StageAction}},
 		{"for", raw.For != "", []StageType{StageWait}},
 		{"service", raw.Service != "", []StageType{StageService}},
@@ -2055,23 +2043,6 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		if links > 1 {
 			return fail("input: a human_gate opens at most one link; got %d", links)
 		}
-		for _, f := range []struct{ field, slug string }{
-			{"auto_approve", raw.AutoApprove}, {"auto_reject", raw.AutoReject},
-		} {
-			if f.slug == "" {
-				continue
-			}
-			switch sig := signalspec.Get(f.slug); {
-			case sig == nil:
-				return fail("unknown %s signal %q (%s)", f.field, f.slug, observedSlugs())
-			case !sig.Observed():
-				return fail("%s: %q is not something the engine observes (%s)", f.field, f.slug, observedSlugs())
-			}
-		}
-		if raw.AutoApprove != "" && raw.AutoApprove == raw.AutoReject {
-			return fail("signal %q cannot both approve and reject this gate", raw.AutoApprove)
-		}
-		s.AutoApprove, s.AutoReject = raw.AutoApprove, raw.AutoReject
 
 	case StageAction:
 		if raw.Action == "" {
@@ -2162,8 +2133,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 			return fail("for: %q is not something the engine observes (%s)", raw.For, observedSlugs())
 		}
 		// A wait stage is a wait point mid-chain: it parks the phase until
-		// the signal holds, then continues (a person in the loop after a
-		// signal is a human_gate with auto_approve).
+		// the signal holds, then continues.
 		w := Wait{Signal: raw.For, Start: StartAuto, Max: 1}
 		if raw.Timeout != "" {
 			t, _, err := p.lookupDuration(raw.Timeout, site("timeout", ParamDuration, nil))

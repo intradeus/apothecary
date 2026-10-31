@@ -14,7 +14,7 @@ version: 5
 parameters: { harness: fake, model: fake/model }
 main:
   - { id: build, type: command, run: "true" }
-  - { id: gate, type: human_gate, question: "Merge?", auto_approve: mr_merged, auto_reject: mr_closed, on_reject: abort }
+  - { id: gate, type: human_gate, question: "Merge?", on_reject: abort }
   - { id: hold, type: wait, for: mr_mergeable, timeout: 1h, on_fail: end, on_timeout: end }
 watchers:
   - id: conflicts
@@ -183,9 +183,9 @@ func TestPlanIdleAnOutcomeTakesTheCursor(t *testing.T) {
 		t.Fatalf("actions = %+v, want the outcome", plan.Actions)
 	}
 
-	rs.Phase, rs.Pos, rs.Parked = flow.MainPhase, rs.Flow.Index("gate"), &ParkPoint{Stage: "gate", Ping: "gate"}
+	rs.Phase, rs.Pos, rs.Parked = flow.MainPhase, rs.Flow.Index("hold"), &ParkPoint{Stage: "hold"}
 	if plan := rs.PlanIdle(merged, now); !sameKinds(kinds(plan), []IdleActionKind{IdleResume}) {
-		t.Fatalf("actions = %v, want the gate settled first", kinds(plan))
+		t.Fatalf("actions = %v, want the wait settled first", kinds(plan))
 	}
 }
 
@@ -207,7 +207,6 @@ func TestPlanResume(t *testing.T) {
 		now    time.Time
 		answer string
 		want   ResumeKind
-		auto   string
 	}{
 		{name: "wait not yet", stage: "hold", obs: func(rs *State) []MRObservation { return open(rs, repoport.MergeClean) }, now: t0, want: ResumeNone},
 		{name: "wait holds", stage: "hold", obs: mergeable, now: t0, want: ResumeWaitHolds},
@@ -216,8 +215,7 @@ func TestPlanResume(t *testing.T) {
 		{name: "wait timed out", stage: "hold", obs: func(rs *State) []MRObservation { return open(rs, repoport.MergeClean) }, now: t0.Add(time.Hour), want: ResumeWaitTimedOut},
 		{name: "gate open", stage: "gate", obs: func(rs *State) []MRObservation { return open(rs, repoport.MergeClean) }, now: t0, want: ResumeNone},
 		{name: "gate answered", stage: "gate", obs: merged, now: t0, answer: "reject", want: ResumeGateAnswered},
-		{name: "gate merged instead", stage: "gate", obs: merged, now: t0, want: ResumeGateAuto, auto: "approve"},
-		{name: "gate closed instead", stage: "gate", obs: closed, now: t0, want: ResumeGateAuto, auto: "reject"},
+		{name: "gate merged instead", stage: "gate", obs: merged, now: t0, want: ResumeNone},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -227,8 +225,8 @@ func TestPlanResume(t *testing.T) {
 				rs.AnsweredPings["p"] = &event.PingAnswered{PingID: "p", Answer: tt.answer}
 			}
 			got := rs.PlanResume(tt.obs(rs), tt.now)
-			if got.Kind != tt.want || got.AutoAnswer != tt.auto {
-				t.Fatalf("got %+v, want kind %v auto %q", got, tt.want, tt.auto)
+			if got.Kind != tt.want {
+				t.Fatalf("got %+v, want kind %v", got, tt.want)
 			}
 		})
 	}

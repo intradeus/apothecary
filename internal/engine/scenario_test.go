@@ -433,13 +433,15 @@ func TestHappyPathFullV4Flow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// final_gate: auto-completes when the MR merges. Gates are one kind now,
-	// so the already-answered one is excluded by id rather than by type.
+	// final_gate: gates are one kind now, so the already-answered one is
+	// excluded by id rather than by type.
 	fp := h.waitPing(t, PingGate, p.ID)
 	if !strings.HasPrefix(fp.Link, "https://gitlab.local/mr/") || len(fp.Files) != 0 {
 		t.Errorf("final gate payload = link %q files %v, want MR URL link", fp.Link, fp.Files)
 	}
-	h.repoHost.SetMRState(1, repoport.MRMerged)
+	if err := h.e.AnswerPing(fp.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
 	h.e.Wait(runID)
 
 	v := h.view(t, runID)
@@ -1094,17 +1096,19 @@ main:
 	}
 }
 
-// TestAutoCompleteMergedWhileEngineDown: a run parked at a final gate whose
+// TestAMergeWhileTheEngineWasDownFiresTheOutcome: a run parked at a final gate whose
 // MR merged while the engine was NOT watching (down, or before the gate
 // armed) must complete on recovery via the immediate poll — with a huge
 // poll interval so a ticker tick can never be the reason it worked.
-func TestAutoCompleteMergedWhileEngineDown(t *testing.T) {
+func TestAMergeWhileTheEngineWasDownFiresTheOutcome(t *testing.T) {
 	doc := `name: ac
 version: 2
 parameters: { harness: fake, model: fake/model }
 main:
   - { id: mr,   type: action, action: create_mr, input: { body: { from: repo:artifacts/mr.md, type: file } }, on_success: gate }
-  - { id: gate, type: human_gate, question: "Merge when ready.", input: { mr: { from: run.mr.url, type: link } }, auto_approve: mr_merged, on_success: done }
+  - { id: gate, type: human_gate, question: "Merge when ready.", input: { mr: { from: run.mr.url, type: link } }, on_success: done }
+outcomes:
+  - { id: shipped, on: mr_merged, then: done }
 `
 	fl := mustFlow(t, doc)
 	h := newHarness(t, fl)
@@ -1143,27 +1147,28 @@ main:
 		t.Fatalf("state = %s, events: %v", v.State, eventTypes(h.events(t, "r-ac")))
 	}
 	evs := h.events(t, "r-ac")
-	pa, ok := findPayload[*event.PingAnswered](evs)
-	if !ok || pa.Answer != "approve" || pa.Feedback != "auto: mr_merged" {
-		t.Errorf("ping_answered = %+v, want the auto-approve", pa)
+	if pa, ok := findPayload[*event.PingAnswered](evs); ok {
+		t.Errorf("ping_answered = %+v, want the question left unanswered", pa)
 	}
 	if n := countType(evs, event.TypePingRaised); n != 1 {
 		t.Errorf("ping_raised = %d, want 1 (re-arm must not re-raise)", n)
 	}
 }
 
-// TestAutoCompletePollFailureNotifies: a repository host that keeps failing
+// TestAFailingRepoHostPollNotifies: a repository host that keeps failing
 // MRState must surface ONE blocker notification (not silent warn-forever), and
 // the gate keeps working — completing automatically once the repository host
 // recovers.
-func TestAutoCompletePollFailureNotifies(t *testing.T) {
+func TestAFailingRepoHostPollNotifies(t *testing.T) {
 	doc := `name: acf
 version: 2
 parameters: { harness: fake, model: fake/model }
 main:
   - { id: prep, type: agent, harness: $harness, model: $model, agent: builder }
   - { id: mr,   type: action, action: create_mr, input: { body: { from: repo:artifacts/mr.md, type: file } } }
-  - { id: gate, type: human_gate, question: "Merge when ready.", input: { mr: { from: run.mr.url, type: link } }, auto_approve: mr_merged }
+  - { id: gate, type: human_gate, question: "Merge when ready.", input: { mr: { from: run.mr.url, type: link } } }
+outcomes:
+  - { id: shipped, on: mr_merged, then: done }
 `
 	h := newHarness(t, mustFlow(t, doc))
 	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
@@ -2587,84 +2592,6 @@ main:
 	}
 	if strings.Contains(builds[2], "# INPUT: failure") {
 		t.Errorf("build[2] must not render a stale failure:\n%s", builds[2])
-	}
-}
-
-// TestGateAutoRejectOnClosedMR: the repository host can answer a gate either
-// way. Closing the MR unmerged is a "no" — before auto_reject the run sat at
-// the gate forever waiting for someone to come and click reject in apothecary.
-func TestGateAutoRejectOnClosedMR(t *testing.T) {
-	doc := `name: settle
-version: 2
-parameters: { harness: fake, model: fake/model }
-main:
-  - { id: redact, type: agent, harness: $harness, model: $model, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } }, on_success: mr }
-  - { id: mr,     type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } }, on_success: gate }
-  - { id: gate,   type: human_gate, question: "Merge when satisfied.", input: { mr: { from: run.mr.url, type: link } },
-      auto_approve: mr_merged, auto_reject: mr_closed,
-      on_success: done, on_reject: abort }
-`
-	h := newHarness(t, mustFlow(t, doc))
-	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
-		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
-			h.writeFile(t, c.Env, "artifacts/mr.md", "# Ship it")
-			return agentport.AgentResult{}, nil
-		},
-	})
-	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "settle", testProject)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.waitPing(t, PingGate)
-	h.repoHost.SetMRState(1, repoport.MRClosed)
-	h.e.Wait(runID)
-
-	// Rejected, so on_reject: abort stops the run.
-	if v := h.view(t, runID); v.State != run.Abandoned {
-		t.Fatalf("state = %s, want abandoned, events: %v", v.State, eventTypes(h.events(t, runID)))
-	}
-	pa, ok := findPayload[*event.PingAnswered](h.events(t, runID))
-	if !ok || pa.Answer != "reject" || !strings.Contains(pa.Feedback, "mr_closed") {
-		t.Errorf("ping_answered = %+v, want a reject naming the signal", pa)
-	}
-}
-
-// TestGateAutoApproveStillWinsARace: a human answering is never locked out by
-// an armed signal — the gate takes whichever arrives first.
-func TestGateAutoApproveStillWinsARace(t *testing.T) {
-	doc := `name: race
-version: 2
-parameters: { harness: fake, model: fake/model }
-main:
-  - { id: redact, type: agent, harness: $harness, model: $model, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } }, on_success: mr }
-  - { id: mr,     type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } }, on_success: gate }
-  - { id: gate,   type: human_gate, question: "Merge?", input: { mr: { from: run.mr.url, type: link } },
-      auto_approve: mr_merged, auto_reject: mr_closed,
-      on_success: done, on_reject: abort }
-`
-	h := newHarness(t, mustFlow(t, doc))
-	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
-		"redactor": func(c fake.RunCall) (agentport.AgentResult, error) {
-			h.writeFile(t, c.Env, "artifacts/mr.md", "# Ship it")
-			return agentport.AgentResult{}, nil
-		},
-	})
-	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "race", testProject)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The MR stays open; the human approves in apothecary instead.
-	p := h.waitPing(t, PingGate)
-	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err != nil {
-		t.Fatal(err)
-	}
-	h.e.Wait(runID)
-	if v := h.view(t, runID); v.State != run.Completed {
-		t.Fatalf("state = %s, want completed", v.State)
-	}
-	pa, _ := findPayload[*event.PingAnswered](h.events(t, runID))
-	if strings.Contains(pa.Feedback, "auto:") {
-		t.Errorf("the human's answer was overwritten by a signal: %+v", pa)
 	}
 }
 

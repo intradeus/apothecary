@@ -41,7 +41,7 @@ main:
   - { id: build,      type: agent, harness: $harness, model: $model, agent: builder, input: { plan: { from: artifacts/plan.md, type: file } } }
   - { id: test,       type: command, run_ref: verify, on_fail: { to: build, max: 5 } }
   - { id: mr,         type: action, action: create_mr, input: { body: { from: artifacts/plan.md, type: file } } }
-  - { id: final_gate, type: human_gate, question: "Merge when ready.", input: { mr: { from: run.mr.url, type: link } }, auto_approve: mr_merged }
+  - { id: final_gate, type: human_gate, question: "Merge when ready.", input: { mr: { from: run.mr.url, type: link } } }
 `
 
 // confEnv is the full config-plane stack over Mem + fake kinds: the same

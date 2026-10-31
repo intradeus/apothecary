@@ -703,10 +703,6 @@ components:
           type: string
         agent:
           type: string
-        auto_approve:
-          type: string
-        auto_reject:
-          type: string
         description:
           type: string
         do:

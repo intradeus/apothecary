@@ -329,8 +329,6 @@ export type DocSequence = {
 export type DocStage = {
 	action?: string;
 	agent?: string;
-	auto_approve?: string;
-	auto_reject?: string;
 	description?: string;
 	do?: string;
 	each_repo?: boolean;

@@ -21,8 +21,6 @@ stage_completed stage=mr
 stage_started stage=final_gate
 ping_raised stage=final_gate ping=gate
 phase_parked stage=final_gate phase=main
-ping_answered
-phase_resumed stage=final_gate phase=main
-stage_completed stage=final_gate
-phase_completed phase=main
+phase_started phase=shipped
+phase_completed phase=shipped
 run_completed

@@ -237,8 +237,7 @@ main:
   - { id: mr, type: action, action: create_mr,
       input: { body: { from: artifacts/plan.md, type: file } } }
   - { id: final_gate, type: human_gate, question: "Merge when satisfied.",
-      input: { mr: { from: run.mr.url, type: link } },
-      auto_approve: mr_merged }
+      input: { mr: { from: run.mr.url, type: link } } }
 `
 
 // seedDevProject creates a dev flow, fake integrations and a "dev" project

@@ -59,10 +59,7 @@ func (p *parser) validateContracts(f *Flow) ([]string, error) {
 		// Waiting on mr_merged ahead of the create_mr that opens the MR
 		// cannot ever succeed; the engine fails it with input_missing, which
 		// is a worse way to learn it than a warning while editing.
-		for _, slug := range []string{st.WaitFor, st.AutoApprove, st.AutoReject} {
-			if slug == "" {
-				continue
-			}
+		if slug := st.WaitFor; slug != "" {
 			sig := signalspec.Get(slug)
 			if sig == nil || sig.Needs != signalspec.NeedsMR {
 				continue
@@ -214,16 +211,9 @@ func runEndsOf(st *Stage) []string {
 }
 
 // waitsOnMerge reports whether a stage waits for the merge request's fate: a
-// wait on mr_merged/mr_closed, or a gate either of them answers.
+// wait on mr_merged or mr_closed.
 func waitsOnMerge(st *Stage) bool {
-	merge := func(s string) bool { return s == signalspec.MRMerged || s == signalspec.MRClosed }
-	switch st.Type {
-	case StageWait:
-		return merge(st.WaitFor)
-	case StageHumanGate:
-		return merge(st.AutoApprove) || merge(st.AutoReject)
-	}
-	return false
+	return st.Type == StageWait && (st.WaitFor == signalspec.MRMerged || st.WaitFor == signalspec.MRClosed)
 }
 
 // phaseShapeWarnings: what a watcher or an outcome opens on versus what the

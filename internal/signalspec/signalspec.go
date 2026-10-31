@@ -8,11 +8,10 @@
 //	watchers: [{ on: mr_conflicts, … }]   — a watcher runs its chain on each new occurrence
 //	outcomes: [{ on: mr_merged, … }]      — an outcome fires once and ends the run
 //	type: wait, for: mr_mergeable          — a wait stage parks its chain until it holds
-//	type: human_gate, auto_approve: …      — the signal answers the gate for you
 //
 // One entry is not observed: manual, a watcher a person opens from the run
 // page. Every other signal is observed on the run's merge requests, and any
-// of them may be watched, be an outcome, be waited on or answer a gate. A
+// of them may be watched, be an outcome or be waited on. A
 // run itself begins by someone's decision — a person or an automation starts
 // it, and its main chain runs — never on a signal.
 //

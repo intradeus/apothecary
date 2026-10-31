@@ -305,12 +305,11 @@ main:
   # status covers.
   - { id: in_review,  type: action, action: ticket_transition, with: { status: "In Review" },
       on_fail: { to: final_gate, max: 1 } }
-  # A gate the repository can answer either way — and an explicit on_reject, because
-  # a rejection with nowhere to go abandons the run. (`type: wait` is covered by
+  # A gate with an explicit on_reject, because a rejection with nowhere to go
+  # abandons the run. (`type: wait` is covered by
   # TestWaitStage and the engine's wait scenarios; putting one here would make
   # this fixture's end-to-end walk wait on a signal that must not fire.)
   - { id: final_gate, type: human_gate, question: "Merge when satisfied.", input: { mr: { from: run.mr.url, type: link } },
-      auto_approve: mr_merged, auto_reject: mr_closed,
       on_reject: abort }
   # Where the issue goes once merged is the project's call: an enum parameter
   # read at an enum setting (its values within the setting's).

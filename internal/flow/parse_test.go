@@ -157,8 +157,7 @@ func TestCanonicalV5(t *testing.T) {
 	}
 
 	gate := f.Stage("final_gate")
-	if len(gate.Inputs) != 1 || gate.Inputs[0] != (Port{Name: "mr", Value: SourceMRURL, Type: "link"}) ||
-		gate.AutoApprove != "mr_merged" || gate.Question == "" {
+	if len(gate.Inputs) != 1 || gate.Inputs[0] != (Port{Name: "mr", Value: SourceMRURL, Type: "link"}) || gate.Question == "" {
 		t.Errorf("final_gate = %+v", gate)
 	}
 	if dbg := f.Stage("debug_push"); len(dbg.Inputs) != 1 || dbg.Inputs[0].Value != SourceWorkspace {
@@ -346,8 +345,6 @@ func TestRetiredSpellings(t *testing.T) {
 			"with input: { body: { from: <path>, type: file } }"},
 		{"feed", header + "main:\n  - { id: a, type: agent, harness: $harness, model: $model, agent: x, on_reject: { to: a, max: 1, feed: decision } }\n",
 			"read edge.verdict from an input port"},
-		{"auto_complete", header + "main:\n  - { id: g, type: human_gate, auto_complete: mr_merged }\n",
-			`use "auto_approve"`},
 		{"bare mr_url", header + "main:\n  - { id: g, type: human_gate, input: { mr: mr_url } }\n",
 			"(mr_url is now run.mr.url)"},
 		{"bare workspace", header + "main:\n  - { id: g, type: human_gate, input: { w: workspace } }\n",
@@ -484,8 +481,6 @@ func TestValidationErrors(t *testing.T) {
 			"must be a path some stage writes", 5},
 		{"dotdot output", header + "main:\n  - { id: s, type: command, run: x, output: { o: { to: ../out.md, type: file } } }\n",
 			"must be a repo-relative path", 5},
-		{"unknown auto_approve", header + "main:\n  - { id: s, type: human_gate, auto_approve: ci_green }\n",
-			"unknown auto_approve signal", 5},
 		{"action missing action", header + "main:\n  - { id: s, type: action }\n",
 			"action is required", 5},
 		{"unknown action", header + "main:\n  - { id: s, type: action, action: send_carrier_pigeon }\n",
@@ -622,29 +617,12 @@ func TestWaitStage(t *testing.T) {
 		w.Wait == nil || w.Wait.Signal != "mr_merged" || w.Wait.Start != StartAuto || w.Wait.Timeout != 24*time.Hour || !w.Parks() {
 		t.Errorf("wait stage = %+v wait %+v", w, w.Wait)
 	}
-	// A gate may be auto-answered by the same registry.
-	g, err := Parse("t.yaml", []byte(header+`main:
-  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } }, on_success: gate }
-  - { id: gate, type: human_gate, question: "Merge?", input: { mr: { from: run.mr.url, type: link } },
-      auto_approve: mr_merged, on_success: done }
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if g.Stage("gate").AutoApprove != "mr_merged" {
-		t.Errorf("auto_approve = %q", g.Stage("gate").AutoApprove)
-	}
 	for _, tc := range []struct{ name, doc, want string }{
 		{"missing for", header + "main:\n  - { id: w, type: wait }\n", "for is required"},
 		{"unknown signal", header + "main:\n  - { id: w, type: wait, for: pigs_fly }\n", `unknown signal "pigs_fly"`},
-		{"unknown auto_approve", header + "main:\n  - { id: g, type: human_gate, auto_approve: pigs_fly }\n",
-			"unknown auto_approve signal"},
 		{"for on a gate", header + "main:\n  - { id: g, type: human_gate, for: mr_merged }\n",
 			`field "for" does not apply`},
-		{"auto_approve on a wait", header + "main:\n  - { id: w, type: wait, for: mr_merged, auto_approve: mr_merged }\n",
-			`field "auto_approve" does not apply`},
-		// A wait has no start policy: a person in the loop after a signal
-		// is a gate with auto_approve.
+		// A wait has no start policy.
 		{"start on a wait", header + "main:\n  - { id: w, type: wait, for: mr_merged, start: confirm }\n",
 			`unknown key "start"`},
 	} {
@@ -975,7 +953,6 @@ func TestPhaseValidationErrors(t *testing.T) {
 		{"two create_mr in one chain", header + "main:\n  - { id: a, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\n  - { id: b, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\n", "per phase"},
 		{"rebase without a leased push", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, with: { strategy: rebase } }, { id: p, type: command, run: \"git push\" }] }\n"), "push_branch"},
 		{"bad strategy", w("  - { id: m, on: mr_conflicts, stages: [{ id: s, type: action, action: sync_target, with: { strategy: squash } }] }\n"), "not one of merge | rebase"},
-		{"run_start on a gate", header + "main:\n  - { id: g, type: human_gate, auto_approve: run_start }\n", `unknown auto_approve signal "run_start"`},
 		{"manual on a wait", header + "main:\n  - { id: w, type: wait, for: manual }\n", "is not something the engine observes"},
 		{"run_start on a wait", header + "main:\n  - { id: w, type: wait, for: run_start }\n", "unknown signal"},
 	}
@@ -989,12 +966,11 @@ func TestPhaseValidationErrors(t *testing.T) {
 	}
 }
 
-// Any observed signal may be watched, waited on or answer a gate — what it
-// does is the flow's call, not the registry's.
+// Any observed signal may be watched or waited on — what it does is the
+// flow's call, not the registry's.
 func TestObservedSignalsGoAnywhere(t *testing.T) {
 	doc := header + "main:\n  - { id: mr, type: action, action: create_mr, input: { body: { from: repo:mr.md, type: file } } }\n" +
 		"  - { id: ready, type: wait, for: mr_mergeable, timeout: 1h, on_fail: end }\n" +
-		"  - { id: g, type: human_gate, auto_approve: mr_approved, auto_reject: mr_conflicts }\n" +
 		"watchers:\n  - { id: ship, on: { signal: mr_approved, start: confirm }, stages: [{ id: merge, type: action, action: mr_merge }] }\n" +
 		"  - { id: gone, on: mr_closed, stages: [{ id: note, type: command, run: x }] }\n" +
 		"outcomes:\n  - { id: shipped, on: mr_merged, then: done }\n"
@@ -1177,12 +1153,7 @@ func TestEndingWarnings(t *testing.T) {
 	if !strings.Contains(w, `the main chain opens a merge request and ends the run (done) without waiting for it`) {
 		t.Errorf("done without a wait: %s", w)
 	}
-	// A gate the merge answers is a wait too; and without watchers there is
-	// nothing to miss.
-	gate := "  - { id: final, type: human_gate, auto_approve: mr_merged, on_success: done, on_reject: abort }\n"
-	if w := warnings(mainChain(gate) + conflicts("")); strings.Contains(w, "without waiting") {
-		t.Errorf("a merge-answered gate is a wait: %s", w)
-	}
+	// Without watchers there is nothing to miss.
 	if w := warnings(header + "main:\n  - { id: b, type: command, run: x, output: { mr: { to: artifacts/mr.md, type: file } } }\n  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } }, on_success: done }\n"); strings.Contains(w, "without waiting") {
 		t.Errorf("no watcher, nothing to miss: %s", w)
 	}

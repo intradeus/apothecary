@@ -53,8 +53,7 @@ type SkillStore interface {
 // configuration lives in Resolutions, policy limits in the SettingsSource.
 type Config struct {
 	EngineURL string // reachable from workspaces; default http://127.0.0.1:8080 (reverse tunnel)
-	// MRPollInterval is the signal poll cadence, shared by wait stages and a
-	// gate's auto_answer (§3: 60s).
+	// MRPollInterval is the signal poll cadence (§3: 60s).
 	MRPollInterval time.Duration
 	// ThreadPollInterval is how often an idle run lists a merge request's
 	// review threads (a second, heavier call than its status) when a phase
@@ -1265,11 +1264,8 @@ func (e *Engine) preflight(ctx context.Context, res *resolution.Resolution, fl *
 				return fmt.Errorf("preflight: stage %q: %w", st.ID, err)
 			}
 		}
-		for _, slug := range []string{st.WaitFor, st.AutoApprove, st.AutoReject} {
-			if slug == "" {
-				continue
-			}
-			if err := res.SignalAvailable(slug); err != nil {
+		if st.WaitFor != "" {
+			if err := res.SignalAvailable(st.WaitFor); err != nil {
 				return fmt.Errorf("preflight: stage %q: %w", st.ID, err)
 			}
 		}
@@ -2241,11 +2237,8 @@ func (e *Engine) preflightFlowRefs(res *resolution.Resolution, fl *flow.Flow) er
 				return fmt.Errorf("stage %q: %w", st.ID, err)
 			}
 		}
-		for _, slug := range []string{st.WaitFor, st.AutoApprove, st.AutoReject} {
-			if slug == "" {
-				continue
-			}
-			if err := res.SignalAvailable(slug); err != nil {
+		if st.WaitFor != "" {
+			if err := res.SignalAvailable(st.WaitFor); err != nil {
 				return fmt.Errorf("stage %q: %w", st.ID, err)
 			}
 		}

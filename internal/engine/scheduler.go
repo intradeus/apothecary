@@ -51,19 +51,9 @@ func (x *exec) parkAt(st *flow.Stage, pingID string) error {
 }
 
 // resumeParked carries out a settled wait point: the phase resumes and its
-// stage routes. A gate a signal answers takes the answer first; a person's
-// answer that got there before it (claimed, not yet on the log) settles it
-// next tick.
+// stage routes.
 func (x *exec) resumeParked(p runcore.ResumePlan) error {
 	rs, st, at := x.rs, p.Stage, *x.rs.Parked
-	ans := p.Answer
-	if p.Kind == runcore.ResumeGateAuto {
-		rec, err := x.answerFromEngine(at.Ping, PingAnswer{Answer: p.AutoAnswer, Feedback: p.AutoFeedback})
-		if err != nil || rec == nil {
-			return err
-		}
-		ans = rec
-	}
 	if err := x.append(&event.PhaseResumed{Phase: rs.Phase, Subject: rs.Subject, StageID: st.ID}); err != nil {
 		return err
 	}
@@ -81,35 +71,5 @@ func (x *exec) resumeParked(p runcore.ResumePlan) error {
 		}
 		return x.takeEdge(st, runcore.FailEdgeKind(st, event.ReasonTimeout), "")
 	}
-	return x.routeGate(st, ans, at.Since)
-}
-
-// answerFromEngine records an answer the engine supplies for a ping (a
-// signal answering a gate) exactly as a person's would: claimed on the live
-// ping, appended, remembered. An already answered ping returns its record.
-func (x *exec) answerFromEngine(pingID string, ans PingAnswer) (*event.PingAnswered, error) {
-	x.e.mu.Lock()
-	p := x.e.pings[pingID]
-	if p != nil && p.answered {
-		x.e.mu.Unlock()
-		return x.rs.AnsweredPings[pingID], nil
-	}
-	if p != nil {
-		p.answered = true
-		p.answer = &ans
-	}
-	x.e.mu.Unlock()
-	rec := &event.PingAnswered{PingID: pingID, Answer: ans.Answer, Feedback: ans.Feedback}
-	if err := x.append(rec); err != nil {
-		if p != nil {
-			x.e.mu.Lock()
-			p.answered, p.answer = false, nil
-			x.e.mu.Unlock()
-		}
-		return nil, err
-	}
-	if p != nil {
-		close(p.done)
-	}
-	return rec, nil
+	return x.routeGate(st, p.Answer, at.Since)
 }

@@ -218,8 +218,6 @@ func readsOf(fl *flow.Flow) repoHostReads {
 	for i := range fl.Stages {
 		st := &fl.Stages[i]
 		note(st.WaitFor)
-		note(st.AutoApprove)
-		note(st.AutoReject)
 	}
 	return r
 }

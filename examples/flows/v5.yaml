@@ -433,8 +433,6 @@ main:
       mr:
         from: run.mr.url
         type: link
-    auto_approve: mr_merged
-    auto_reject: mr_closed
     on_success: ticket_done
     on_reject:
       to: build

@@ -350,15 +350,6 @@ type Stage struct {
 	// an enum the engine would have to interpret. What the human is shown is
 	// the stage's single Inputs entry.
 	Question string
-	// AutoApprove and AutoReject are signalspec slugs that answer this gate on
-	// the human's behalf when they fire: "they merged it instead of clicking
-	// approve", "they closed it, which is a no". A gate is a decision point
-	// whose default answerer is a human; these name the other things that may
-	// supply the same two answers. The human can still answer at any time —
-	// whichever lands first wins, which is why these live on the gate rather
-	// than being separate wait stages (the engine runs one stage at a time).
-	AutoApprove string
-	AutoReject  string
 
 	// action
 	Action   string    // a slug registered in actionspec

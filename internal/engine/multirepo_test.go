@@ -143,7 +143,9 @@ main:
   - { id: push, type: command, each_repo: true, run: "git push -u origin HEAD", on_success: redact }
   - { id: redact, type: agent, harness: $harness, model: $model, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } }, on_success: mr }
   - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } }, on_success: final_gate }
-  - { id: final_gate, type: human_gate, input: { mr: { from: run.mr.url, type: link } }, auto_approve: mr_merged, auto_reject: mr_closed, on_success: done, on_reject: abort }
+  - { id: final_gate, type: human_gate, input: { mr: { from: run.mr.url, type: link } }, on_success: done, on_reject: abort }
+outcomes:
+  - { id: shipped, on: mr_merged, then: done }
 `
 
 // A project with extra repositories: every checkout is cloned and branched,

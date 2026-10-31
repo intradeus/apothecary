@@ -909,12 +909,6 @@ export default {
 	'flow.insp.oneLink_one': 'A gate opens at most one link — show this one as a file, or remove it.',
 	'flow.insp.oneLink_other':
 		'At most {count} of these may be a link — show this one as a file, or remove it.',
-	'flow.insp.autoBy': 'Answered automatically by',
-	'flow.insp.autoByHelp': 'Signals that supply the same answer a human would.',
-	'flow.insp.approveWhen': 'Approve when',
-	'flow.insp.rejectWhen': 'Reject when',
-	'flow.insp.manualStillOk':
-		'The gate keeps accepting a manual answer the whole time; whichever lands first wins.',
 	'flow.insp.action': 'Action',
 	'flow.insp.actionHelp': 'A built-in apothecary integration.',
 	'port.repository': 'repository',

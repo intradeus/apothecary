@@ -234,8 +234,6 @@ export interface DocStage {
 	/** human_gate: the free text the human is asked. */
 	question?: string;
 	/** human_gate: signals that answer the gate on the human's behalf. */
-	auto_approve?: string;
-	auto_reject?: string;
 	/** A condition (FLOWLANG §2): `tracker`, `subject`, `$bool_param`, each
 	 *  optionally negated as `not x`. A stage whose condition does not hold
 	 *  completes as skipped. */
@@ -908,8 +906,6 @@ export function docToYaml(doc: FlowDoc): string {
 		if (s.run_ref) o.run_ref = s.run_ref;
 		if (s.each_repo) o.each_repo = true;
 		if (s.question) o.question = s.question;
-		if (s.auto_approve) o.auto_approve = s.auto_approve;
-		if (s.auto_reject) o.auto_reject = s.auto_reject;
 		if (s.action) o.action = s.action;
 		if (s.for) o.for = s.for;
 		if (explicit) o.on_success = s.on_success ?? effectiveSuccess(doc, idx.get(s.id)!);
