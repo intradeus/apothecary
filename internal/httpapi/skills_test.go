@@ -12,7 +12,7 @@ import (
 
 	"apothecary/internal/auth"
 	"apothecary/internal/engine"
-	"apothecary/internal/filestore"
+	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/skillstore"
 )

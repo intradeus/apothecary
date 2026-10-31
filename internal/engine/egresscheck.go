@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
-	"apothecary/internal/shell"
 )
 
 // Post-provisioning egress check: a freshly provisioned workspace proves it

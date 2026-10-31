@@ -14,7 +14,7 @@ import (
 	"apothecary/internal/actionspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/shell"
+	"apothecary/internal/platform/shell"
 )
 
 // actionFail records an outcome failure an agent or a retry can fix and

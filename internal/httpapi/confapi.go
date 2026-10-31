@@ -15,9 +15,9 @@ import (
 	"apothecary/internal/envcheck"
 	"apothecary/internal/flow"
 	"apothecary/internal/kinds"
+	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/resolution"
-	"apothecary/internal/secrets"
 	"apothecary/internal/signalspec"
 	"apothecary/internal/wsinfo"
 )

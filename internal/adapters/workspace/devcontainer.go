@@ -71,9 +71,9 @@ import (
 
 	"apothecary/internal/egressgw"
 	"apothecary/internal/egressgw/policyfile"
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/shell"
 )
 
 // idLabel is the docker label key that ties a container to its apothecary

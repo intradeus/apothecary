@@ -7,7 +7,7 @@ import (
 	"io/fs"
 	"strings"
 
-	"apothecary/internal/shell"
+	"apothecary/internal/platform/shell"
 )
 
 // execFS is sandboxFS inside a sandbox pod: each call is one small script run

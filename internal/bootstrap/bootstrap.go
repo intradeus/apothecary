@@ -17,8 +17,8 @@ import (
 
 	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/shell"
 	"apothecary/internal/skills"
 )
 

@@ -10,9 +10,9 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/runcore"
-	"apothecary/internal/shell"
 )
 
 func (x *exec) stageCommand(st *flow.Stage) error {

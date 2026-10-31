@@ -2,8 +2,8 @@ package workspace
 
 import (
 	"apothecary/internal/egressgw"
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/shell"
 	"bytes"
 	"context"
 	"encoding/json"

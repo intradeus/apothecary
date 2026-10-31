@@ -23,9 +23,9 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
-	"apothecary/internal/shell"
 )
 
 type IssuesConfig struct {

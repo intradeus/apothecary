@@ -10,10 +10,10 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"apothecary/internal/config"
 	"apothecary/internal/confstore"
 	"apothecary/internal/envcheck"
 	"apothecary/internal/pgstore"
+	"apothecary/internal/platform/config"
 	"apothecary/internal/resolve"
 )
 

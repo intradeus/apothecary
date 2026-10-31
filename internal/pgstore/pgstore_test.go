@@ -12,7 +12,7 @@ import (
 	"apothecary/internal/auth"
 	"apothecary/internal/confstore"
 	"apothecary/internal/event"
-	"apothecary/internal/filestore"
+	"apothecary/internal/platform/filestore"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 )

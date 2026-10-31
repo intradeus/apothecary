@@ -8,9 +8,9 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/confstore"
-	"apothecary/internal/filestore"
+	"apothecary/internal/platform/filestore"
+	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/trackerport"
-	"apothecary/internal/secrets"
 )
 
 const testProject = "prj-1"

@@ -18,7 +18,7 @@ import (
 	"strings"
 	"sync"
 
-	"apothecary/internal/shell"
+	"apothecary/internal/platform/shell"
 )
 
 // Runner executes one docker CLI invocation in dir; swapped in tests.

@@ -13,7 +13,7 @@ import (
 
 	"apothecary/internal/builtin"
 	"apothecary/internal/flow"
-	"apothecary/internal/secrets"
+	"apothecary/internal/platform/secrets"
 )
 
 // Service seals/opens secrets, stamps ids/timestamps and validates writes.

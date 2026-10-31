@@ -20,11 +20,11 @@ import (
 
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/runcore"
 	"apothecary/internal/services"
-	"apothecary/internal/shell"
 	"apothecary/internal/sidecar"
 )
 

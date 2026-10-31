@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/filestore"
+	"apothecary/internal/platform/filestore"
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/shell"
 )
 
 const attachmentDeliverTimeout = 30 * time.Second

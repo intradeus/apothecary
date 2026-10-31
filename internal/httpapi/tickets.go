@@ -11,7 +11,7 @@ import (
 	"apothecary/internal/auth"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
-	"apothecary/internal/filestore"
+	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/runinput"

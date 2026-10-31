@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"apothecary/internal/egressgw"
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/shell"
 )
 
 // dockerHost runs each sandbox as a Docker-in-Docker container on the engine's

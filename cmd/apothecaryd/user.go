@@ -15,8 +15,8 @@ import (
 	"strings"
 
 	"apothecary/internal/auth"
-	"apothecary/internal/config"
 	"apothecary/internal/pgstore"
+	"apothecary/internal/platform/config"
 )
 
 func cmdUser(args []string) error {

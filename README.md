@@ -400,7 +400,7 @@ capacity — max concurrent runs (default 3) and max live environments
 that starts. On Kubernetes the chart also sets the
 `APOTHECARY_K8S_*` variables (namespace, engine URL, images, protected
 ranges), `APOTHECARY_APPS_DOMAIN` and `APOTHECARY_PUBLIC_URL`
-(`internal/config/env.go` documents each). `APOTHECARY_SSH_LISTEN` and
+(`internal/platform/config/env.go` documents each). `APOTHECARY_SSH_LISTEN` and
 `APOTHECARY_SSH_ADVERTISE` turn the SSH door on (below); unset, there is
 none.
 

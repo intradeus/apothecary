@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/shell"
 )
 
 // SampleResources implements envport.ResourceSampler: one `docker stats` reading

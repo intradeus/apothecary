@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"apothecary/internal/egressgw"
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/shell"
 )
 
 // The engine bridge: engine loopback ports are exposed INSIDE the

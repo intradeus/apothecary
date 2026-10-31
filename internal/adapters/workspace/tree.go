@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/shell"
 )
 
 // WriteTree lays a whole directory down in ONE exec: a tar built here rides

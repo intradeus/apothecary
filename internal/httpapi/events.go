@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/filestore"
+	"apothecary/internal/platform/filestore"
 	"apothecary/internal/wsinfo"
 )
 

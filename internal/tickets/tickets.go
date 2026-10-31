@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	"apothecary/internal/confstore"
-	"apothecary/internal/filestore"
+	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/trackerport"
 )
 

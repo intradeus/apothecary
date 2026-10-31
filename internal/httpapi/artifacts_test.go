@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"apothecary/internal/engine"
-	"apothecary/internal/filestore"
+	"apothecary/internal/platform/filestore"
 )
 
 // testFiles are real filestore stores (over the in-package Mem) for a test

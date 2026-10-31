@@ -27,6 +27,7 @@ import (
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/mrs"
+	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/notifyport"
@@ -35,7 +36,6 @@ import (
 	"apothecary/internal/resources"
 	"apothecary/internal/run"
 	"apothecary/internal/runports"
-	"apothecary/internal/secrets"
 	"apothecary/internal/services"
 	"apothecary/internal/wsinfo"
 )

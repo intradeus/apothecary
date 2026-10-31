@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/platform/secrets"
 	"apothecary/internal/providers"
-	"apothecary/internal/secrets"
 )
 
 // Provider credentials (docs/model-providers-plan.md): a user's API keys and

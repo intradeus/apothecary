@@ -12,8 +12,8 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/event"
-	"apothecary/internal/filestore"
 	"apothecary/internal/flow"
+	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
 	"apothecary/internal/runcore"

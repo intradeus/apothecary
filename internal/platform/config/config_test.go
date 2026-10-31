@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/secrets"
+	"apothecary/internal/platform/secrets"
 )
 
 func TestFromEnvRequiresDSN(t *testing.T) {

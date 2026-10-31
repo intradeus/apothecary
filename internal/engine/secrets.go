@@ -4,10 +4,10 @@ import (
 	"context"
 	"strings"
 
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
-	"apothecary/internal/shell"
 )
 
 // Workspace credential lifecycle.

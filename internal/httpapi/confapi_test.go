@@ -16,8 +16,8 @@ import (
 	"apothecary/internal/engine"
 	"apothecary/internal/event"
 	"apothecary/internal/kinds"
+	"apothecary/internal/platform/secrets"
 	"apothecary/internal/resolve"
-	"apothecary/internal/secrets"
 )
 
 // v1FlowDoc is this suite's user-created flow (the product ships none):

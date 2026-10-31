@@ -27,9 +27,9 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/shell"
 	"apothecary/internal/sidecar"
 )
 

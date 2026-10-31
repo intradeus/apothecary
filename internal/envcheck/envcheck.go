@@ -21,9 +21,9 @@ import (
 	"apothecary/internal/bootstrap"
 	"apothecary/internal/flow"
 	"apothecary/internal/modelcheck"
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
-	"apothecary/internal/shell"
 	"apothecary/internal/wsname"
 
 	"github.com/oklog/ulid/v2"

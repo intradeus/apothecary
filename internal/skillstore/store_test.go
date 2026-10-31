@@ -7,7 +7,7 @@ import (
 
 	"apothecary/internal/confstore"
 	"apothecary/internal/event"
-	"apothecary/internal/filestore"
+	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/skills"
 )

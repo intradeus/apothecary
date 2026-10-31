@@ -9,9 +9,9 @@ import (
 	"apothecary/internal/bootstrap"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
-	"apothecary/internal/shell"
 )
 
 // actionCreateMR opens the run's draft merge requests: one per checkout that

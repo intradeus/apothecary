@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"apothecary/internal/shell"
+	"apothecary/internal/platform/shell"
 	"apothecary/workspace"
 )
 

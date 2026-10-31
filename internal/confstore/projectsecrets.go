@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/secrets"
+	"apothecary/internal/platform/secrets"
 )
 
 // Project secrets are the values a flow reads where it says

@@ -24,9 +24,9 @@ import (
 	"time"
 
 	"apothecary/internal/event"
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
-	"apothecary/internal/shell"
 	"apothecary/internal/sidecar"
 )
 

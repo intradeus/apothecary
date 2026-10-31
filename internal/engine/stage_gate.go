@@ -8,9 +8,9 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/runcore"
-	"apothecary/internal/shell"
 )
 
 func (x *exec) stageGate(st *flow.Stage) error {

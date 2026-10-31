@@ -18,10 +18,10 @@ import (
 
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/runcore"
-	"apothecary/internal/shell"
 	"apothecary/internal/signalspec"
 )
 

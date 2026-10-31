@@ -62,10 +62,11 @@ var rules = []rule{
 	{pkg: "internal/event", denyImport: outerLayers},
 	{pkg: "internal/run", denyImport: outerLayers},
 	{pkg: "internal/flow", denyImport: outerLayers},
-	{pkg: "internal/shell", mayImport: []string{}},
+	// Building blocks with no domain knowledge.
+	{pkg: "internal/platform/", mayImport: []string{"internal/platform/"}},
 	{pkg: "internal/wsname", mayImport: []string{"internal/run"}},
 	{pkg: "internal/bootstrap", mayImport: []string{
-		"internal/agentspec", "internal/event", "internal/ports/", "internal/shell", "internal/skills",
+		"internal/agentspec", "internal/event", "internal/ports/", "internal/platform/shell", "internal/skills",
 	}},
 	{pkg: "internal/modelcheck", mayImport: []string{"internal/flow", "internal/ports/", "internal/resolution"}},
 	{pkg: "internal/redact", mayImport: []string{"internal/resolution"}},
@@ -74,11 +75,11 @@ var rules = []rule{
 	{pkg: "internal/envstate", mayImport: []string{"internal/ports/", "internal/resolution", "internal/run"}},
 	{pkg: "internal/wsinfo", mayImport: []string{
 		"internal/envstate", "internal/event", "internal/ports/", "internal/resolution", "internal/run",
-		"internal/shell", "internal/sidecar", "internal/wsname",
+		"internal/platform/shell", "internal/sidecar", "internal/wsname",
 	}},
 	{pkg: "internal/envcheck", mayImport: []string{
 		"internal/agentspec", "internal/bootstrap", "internal/flow", "internal/modelcheck",
-		"internal/ports/", "internal/resolution", "internal/shell", "internal/wsname",
+		"internal/ports/", "internal/resolution", "internal/platform/shell", "internal/wsname",
 	}},
 	{pkg: "internal/egress", mayImport: []string{"internal/ports/", "internal/resolution", "internal/run", "internal/wsname"}},
 	{pkg: "internal/ask", mayImport: []string{
@@ -90,7 +91,7 @@ var rules = []rule{
 	{pkg: "internal/browsermcp", mayImport: []string{"internal/ports/", "internal/resolution", "internal/run"}},
 	{pkg: "internal/services", mayImport: []string{
 		"internal/event", "internal/ports/", "internal/resolution", "internal/run",
-		"internal/shell", "internal/sidecar", "internal/wsinfo",
+		"internal/platform/shell", "internal/sidecar", "internal/wsinfo",
 	}},
 	{pkg: "internal/runcore", mayImport: []string{
 		"internal/actionspec", "internal/agentspec", "internal/event", "internal/flow",

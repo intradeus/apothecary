@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/shell"
 )
 
 // TestLiveWriteTreeScript runs WriteTree's exact stdin (one script line +

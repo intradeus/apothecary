@@ -13,7 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"apothecary/internal/filestore"
+	"apothecary/internal/platform/filestore"
 )
 
 // --- attachments ------------------------------------------------------------

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"apothecary/internal/secrets"
+	"apothecary/internal/platform/secrets"
 )
 
 // Boot is the deployment-plane configuration (§1 exact set).

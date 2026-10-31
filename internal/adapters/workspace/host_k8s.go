@@ -20,8 +20,8 @@ import (
 
 	"apothecary/internal/egressgw"
 	"apothecary/internal/kube"
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/shell"
 	wsassets "apothecary/workspace"
 )
 

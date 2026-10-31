@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/secrets"
+	"apothecary/internal/platform/secrets"
 )
 
 func newSvc(t *testing.T) (*Service, *Mem) {

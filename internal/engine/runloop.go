@@ -11,11 +11,11 @@ import (
 	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/platform/shell"
 	"apothecary/internal/redact"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/runcore"
-	"apothecary/internal/shell"
 )
 
 var errStageTimeout = errors.New("stage timeout")
