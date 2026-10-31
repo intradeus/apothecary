@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"apothecary/internal/account/providers"
 	"apothecary/internal/confstore"
-	"apothecary/internal/providers"
 )
 
 // Store is what the keeper reads and writes credentials through

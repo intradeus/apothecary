@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/auth"
+	"apothecary/internal/account/auth"
 	"apothecary/internal/portrelay"
 )
 

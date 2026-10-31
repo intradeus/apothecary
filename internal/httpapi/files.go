@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/account/auth"
 	"apothecary/internal/agentspec"
-	"apothecary/internal/auth"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"

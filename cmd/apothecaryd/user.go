@@ -14,7 +14,7 @@ import (
 	"os"
 	"strings"
 
-	"apothecary/internal/auth"
+	"apothecary/internal/account/auth"
 	"apothecary/internal/pgstore"
 	"apothecary/internal/platform/config"
 )

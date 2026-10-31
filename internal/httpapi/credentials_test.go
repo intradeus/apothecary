@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/auth"
+	"apothecary/internal/account/auth"
+	"apothecary/internal/account/providers"
 	"apothecary/internal/authsink"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
-	"apothecary/internal/providers"
 	"apothecary/internal/run"
 )
 

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/providers"
+	"apothecary/internal/account/providers"
 )
 
 // The omp auth-broker protocol, served by the engine (docs/model-providers-

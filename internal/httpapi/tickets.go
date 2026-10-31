@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"apothecary/internal/auth"
+	"apothecary/internal/account/auth"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/platform/filestore"

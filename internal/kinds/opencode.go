@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
+	"apothecary/internal/account/providers"
 	"apothecary/internal/adapters/acpagent"
 	opencodeadapter "apothecary/internal/adapters/opencode"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/providers"
 )
 
 // OpencodeVersion is the pinned opencode release: the tools bundle mounted

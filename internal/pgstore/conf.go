@@ -10,9 +10,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"apothecary/internal/account/providers"
 	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
-	"apothecary/internal/providers"
 )
 
 // Config-plane persistence (DESIGN2 §2): pgstore implements confstore.DB.

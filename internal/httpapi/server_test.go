@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"apothecary/internal/account/auth"
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/ask"
-	"apothecary/internal/auth"
 	"apothecary/internal/authsink"
 	"apothecary/internal/browsermcp"
 	"apothecary/internal/channels"

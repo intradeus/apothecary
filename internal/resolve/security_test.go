@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"apothecary/internal/account/providers"
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/confstore"
 	"apothecary/internal/kinds"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/providers"
 )
 
 // The model-providers security rules (docs/model-providers-plan.md), held as

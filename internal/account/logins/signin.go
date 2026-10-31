@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/providers"
+	"apothecary/internal/account/providers"
 )
 
 // Signing in from the engine (docs/model-providers-plan.md): the engine runs

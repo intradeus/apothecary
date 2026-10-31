@@ -13,8 +13,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"apothecary/internal/account/auth"
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/auth"
 	"apothecary/internal/event"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"

@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
+	"apothecary/internal/account/auth"
 	"apothecary/internal/ask"
-	"apothecary/internal/auth"
 	"apothecary/internal/engine"
 	"apothecary/internal/event"
 	"apothecary/internal/mrs"

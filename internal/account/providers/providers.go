@@ -28,7 +28,7 @@ const (
 )
 
 // Flow names one OAuth flow the keeper knows end to end: its token endpoint,
-// client id and rotation semantics (internal/logins).
+// client id and rotation semantics (internal/account/logins).
 type Flow string
 
 const (

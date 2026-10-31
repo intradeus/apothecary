@@ -16,7 +16,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"apothecary/internal/auth"
+	"apothecary/internal/account/auth"
 )
 
 // upstream is a fake sidecar SSH server: it records what sessions ask for,

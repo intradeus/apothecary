@@ -50,7 +50,7 @@ func (s *Sink) log() *slog.Logger {
 }
 
 // Provider logins, workspace side (docs/model-providers-plan.md). The keeper
-// (internal/logins) refreshes a login before it expires; this package is
+// (internal/account/logins) refreshes a login before it expires; this package is
 // what reaches the live workspaces about it:
 //
 //   - push: every live workspace whose run uses the refreshed credential gets

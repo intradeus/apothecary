@@ -13,8 +13,8 @@ import (
 	"encoding/json"
 	"time"
 
+	"apothecary/internal/account/auth"
 	"apothecary/internal/actionspec"
-	"apothecary/internal/auth"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/event"

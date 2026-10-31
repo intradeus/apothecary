@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"apothecary/internal/auth"
+	"apothecary/internal/account/auth"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/skills"
 	"apothecary/internal/skillstore"

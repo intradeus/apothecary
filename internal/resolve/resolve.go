@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 
+	"apothecary/internal/account/providers"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/confstore"
 	"apothecary/internal/kinds"
@@ -28,7 +29,6 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
-	"apothecary/internal/providers"
 	"apothecary/internal/resolution"
 	"apothecary/internal/wsimage"
 )

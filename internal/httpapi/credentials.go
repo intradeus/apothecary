@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/auth"
+	"apothecary/internal/account/auth"
+	"apothecary/internal/account/logins"
+	"apothecary/internal/account/providers"
 	"apothecary/internal/authsink"
 	"apothecary/internal/confstore"
 	"apothecary/internal/kinds"
-	"apothecary/internal/logins"
-	"apothecary/internal/providers"
 )
 
 // Model provider credentials over the API (docs/model-providers-plan.md):

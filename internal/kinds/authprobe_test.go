@@ -1,7 +1,7 @@
 package kinds
 
 import (
-	"apothecary/internal/providers"
+	"apothecary/internal/account/providers"
 	"context"
 	"encoding/json"
 	"fmt"

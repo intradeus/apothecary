@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"apothecary/internal/auth"
+	"apothecary/internal/account/auth"
 	"apothecary/internal/channels"
 	"apothecary/internal/platform/secrets"
 )

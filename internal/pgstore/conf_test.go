@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"apothecary/internal/account/providers"
 	"apothecary/internal/confstore"
 	"apothecary/internal/event"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/trackerport"
-	"apothecary/internal/providers"
 )
 
 // A project may reference a BUILT-IN flow — compiled into the binary, no

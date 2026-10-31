@@ -7,9 +7,9 @@ import (
 	"sort"
 	"time"
 
+	"apothecary/internal/account/auth"
 	"apothecary/internal/actionspec"
 	"apothecary/internal/agentspec"
-	"apothecary/internal/auth"
 	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
 	"apothecary/internal/envcheck"

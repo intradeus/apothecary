@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/auth"
+	"apothecary/internal/account/auth"
 	"apothecary/internal/engine"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"

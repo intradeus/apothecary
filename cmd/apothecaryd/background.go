@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
+	"apothecary/internal/account/logins"
 	"apothecary/internal/automation"
 	"apothecary/internal/confstore"
-	"apothecary/internal/logins"
 	"apothecary/internal/tickets"
 )
 

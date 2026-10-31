@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"apothecary/internal/providers"
+	"apothecary/internal/account/providers"
 )
 
 // CheckCredential probes one provider credential on its own, from the engine

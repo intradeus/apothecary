@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/providers"
+	"apothecary/internal/account/providers"
 )
 
 func TestCredentialLifecycle(t *testing.T) {

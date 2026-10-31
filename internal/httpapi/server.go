@@ -13,8 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"apothecary/internal/account/auth"
+	"apothecary/internal/account/logins"
 	"apothecary/internal/ask"
-	"apothecary/internal/auth"
 	"apothecary/internal/authsink"
 	"apothecary/internal/browsermcp"
 	"apothecary/internal/channels"
@@ -25,7 +26,6 @@ import (
 	"apothecary/internal/envstate"
 	"apothecary/internal/event"
 	"apothecary/internal/kinds"
-	"apothecary/internal/logins"
 	"apothecary/internal/mrs"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/resources"

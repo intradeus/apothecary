@@ -87,7 +87,7 @@ with a compatible auth kind. Project validation is unchanged.
 rejected entry. Existing harness integrations are not migrated: the migration
 drops their old secrets (or the rows) and users set them up again.
 
-**Sign-in** (`internal/logins/signin.go`): a pending record per user
+**Sign-in** (`internal/account/logins/signin.go`): a pending record per user
 (`flow`, PKCE verifier, state, expiry ~15 min), two API calls — start, complete
 — and a credential sealed at the end exactly as an imported one.
 
@@ -103,7 +103,7 @@ Each flow's endpoints and client ids are taken from the pinned CLI's source
 `oauth2.ts`) and guarded by a conformance test. They are vendor CLI clients,
 not public APIs: a change fails loudly, never falls back silently.
 
-## Layer 2 — the keeper (`internal/logins`)
+## Layer 2 — the keeper (`internal/account/logins`)
 
 - **Refreshers**, one per flow, with injectable endpoints and httptest
   coverage; each knows its rotation semantics (OpenAI and Anthropic rotate,

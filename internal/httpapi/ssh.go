@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"apothecary/internal/auth"
+	"apothecary/internal/account/auth"
 )
 
 func (s *Server) getRunSSH(w http.ResponseWriter, r *http.Request) {

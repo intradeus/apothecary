@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/auth"
+	"apothecary/internal/account/auth"
 	"apothecary/internal/engine"
 )
 

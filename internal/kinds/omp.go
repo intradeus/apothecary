@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
+	"apothecary/internal/account/providers"
 	"apothecary/internal/adapters/acpagent"
 	ompadapter "apothecary/internal/adapters/omp"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/providers"
 )
 
 // OmpVersion is the pinned omp release: the tools bundle ships exactly this

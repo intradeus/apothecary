@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/providers"
+	"apothecary/internal/account/providers"
 )
 
 func keysOf(m map[string]any) []string {

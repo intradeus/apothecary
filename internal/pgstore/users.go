@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"apothecary/internal/auth"
+	"apothecary/internal/account/auth"
 )
 
 // Accounts (TODO 25): pgstore implements auth.DB. Secrets (password hashes)

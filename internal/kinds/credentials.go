@@ -4,7 +4,7 @@ import (
 	"context"
 	"sort"
 
-	"apothecary/internal/providers"
+	"apothecary/internal/account/providers"
 )
 
 // Credentials are the provider credentials a harness integration references,

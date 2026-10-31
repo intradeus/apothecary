@@ -30,7 +30,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"apothecary/internal/auth"
+	"apothecary/internal/account/auth"
 )
 
 // KeyAuth resolves an offered public key to the account it belongs to

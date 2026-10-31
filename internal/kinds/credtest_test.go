@@ -3,7 +3,7 @@ package kinds
 import (
 	"time"
 
-	"apothecary/internal/providers"
+	"apothecary/internal/account/providers"
 )
 
 // withCreds is a harness Config over these credentials (the snapshot; no

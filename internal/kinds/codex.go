@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/account/providers"
 	"apothecary/internal/adapters/acpagent"
 	codexadapter "apothecary/internal/adapters/codex"
 	"apothecary/internal/agentspec"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/providers"
 )
 
 // CodexVersion is the pinned codex CLI: the tools bundle ships this static

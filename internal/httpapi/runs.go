@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"apothecary/internal/auth"
+	"apothecary/internal/account/auth"
 	"apothecary/internal/engine"
 	"apothecary/internal/envstate"
 	"apothecary/internal/run"

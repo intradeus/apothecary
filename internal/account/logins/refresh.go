@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/providers"
+	"apothecary/internal/account/providers"
 )
 
 // endpoints are the token endpoints, a variable so tests can point them at
