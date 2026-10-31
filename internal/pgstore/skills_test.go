@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"apothecary/internal/skills"
-	"apothecary/internal/skillstore"
-	"apothecary/internal/skillstore/skilltest"
+	"apothecary/internal/skills/skillstore"
+	"apothecary/internal/skills/skillstore/skilltest"
 )
 
 func openSkills(t *testing.T) *Store {

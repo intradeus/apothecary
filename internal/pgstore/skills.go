@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"apothecary/internal/confstore"
-	"apothecary/internal/skillstore"
+	"apothecary/internal/skills/skillstore"
 )
 
 // --- skills -----------------------------------------------------------------

@@ -14,7 +14,7 @@ import (
 	"apothecary/internal/engine"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/skillstore"
+	"apothecary/internal/skills/skillstore"
 )
 
 // testSkills is a Mem-backed skill library: deps hands it to the engine at

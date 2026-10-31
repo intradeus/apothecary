@@ -10,7 +10,7 @@ import (
 
 	"apothecary/internal/confstore"
 	"apothecary/internal/skills"
-	"apothecary/internal/skillstore"
+	"apothecary/internal/skills/skillstore"
 )
 
 // RunDBContract exercises one DB implementation. open must return a fresh,

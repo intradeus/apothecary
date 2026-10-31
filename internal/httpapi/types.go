@@ -28,7 +28,7 @@ import (
 	"apothecary/internal/runinput"
 	"apothecary/internal/signalspec"
 	"apothecary/internal/skills"
-	"apothecary/internal/skillstore"
+	"apothecary/internal/skills/skillstore"
 )
 
 // --- errors -----------------------------------------------------------------

@@ -31,7 +31,7 @@ import (
 	"apothecary/internal/resources"
 	"apothecary/internal/runports"
 	"apothecary/internal/services"
-	"apothecary/internal/skillstore"
+	"apothecary/internal/skills/skillstore"
 	"apothecary/internal/tickets"
 	"apothecary/internal/wsinfo"
 )

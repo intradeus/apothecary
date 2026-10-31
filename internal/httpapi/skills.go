@@ -11,7 +11,7 @@ import (
 	"apothecary/internal/account/auth"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/skills"
-	"apothecary/internal/skillstore"
+	"apothecary/internal/skills/skillstore"
 )
 
 // The skill library (TODO 38): a user's skills and skillsets. Every route

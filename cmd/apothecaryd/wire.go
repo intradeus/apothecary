@@ -37,7 +37,7 @@ import (
 	"apothecary/internal/run"
 	"apothecary/internal/runports"
 	"apothecary/internal/services"
-	"apothecary/internal/skillstore"
+	"apothecary/internal/skills/skillstore"
 	"apothecary/internal/sshdoor"
 	"apothecary/internal/telemetry"
 	"apothecary/internal/wsimage"

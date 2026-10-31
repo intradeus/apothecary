@@ -3,8 +3,8 @@ package skillstore_test
 import (
 	"testing"
 
-	"apothecary/internal/skillstore"
-	"apothecary/internal/skillstore/skilltest"
+	"apothecary/internal/skills/skillstore"
+	"apothecary/internal/skills/skillstore/skilltest"
 )
 
 func TestMemContract(t *testing.T) {
