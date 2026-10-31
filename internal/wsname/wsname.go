@@ -27,7 +27,7 @@ func ForRun(v run.View, runID string) string {
 }
 
 // For is the human-friendly workspace/container name for a run: an
-// "apo-" marker, the slugified branch, and a 2-char run-id tail to keep two
+// "apo-" marker, the slugified branch, and a run-id tail to keep two
 // runs that share a branch (branches are free-text per ticket, so not unique)
 // on distinct names — which keeps reuse-by-name a same-run operation. Capped
 // at 32 chars; adapters use it verbatim.
@@ -44,13 +44,18 @@ func For(branch, runID string) string {
 	return strings.Join(parts, "-")
 }
 
-// RunIDTail is the 2-char per-run suffix: the last 2 chars of the lowercased
-// run id. Shared by the branch name (base + "-" + tail) and the workspace
-// name so both stay aligned and unique per run.
+// tailLen is how much of a run id tells two runs of one ticket apart. A
+// ULID's tail is random in 32 letters, so two runs on a base collide once in
+// about a million; two characters did once in a thousand.
+const tailLen = 4
+
+// RunIDTail is the per-run suffix: the end of the lowercased run id. Shared
+// by the branch name (base + "-" + tail) and the workspace name so both stay
+// aligned and unique per run.
 func RunIDTail(runID string) string {
 	s := strings.ToLower(runID)
-	if len(s) > 2 {
-		s = s[len(s)-2:]
+	if len(s) > tailLen {
+		s = s[len(s)-tailLen:]
 	}
 	return s
 }

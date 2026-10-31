@@ -2,10 +2,10 @@ package engine
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"apothecary/internal/runinput"
+	"apothecary/internal/wsname"
 )
 
 // A run created under a ticket gets a unique actual branch = base + per-run
@@ -22,7 +22,7 @@ func TestTicketedRunDerivesSuffixedBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := h.view(t, id)
-	tail := strings.ToLower(id)[len(id)-2:]
+	tail := wsname.RunIDTail(id)
 	if want := "fix/task-123-" + tail; v.Branch != want {
 		t.Errorf("branch = %q, want %q", v.Branch, want)
 	}
@@ -50,7 +50,7 @@ func TestTicketedRunGeneratesBaseFromTitle(t *testing.T) {
 	if v.BranchBase != "apothecary/add-a-health-endpoint" {
 		t.Errorf("branch_base = %q, want apothecary/add-a-health-endpoint", v.BranchBase)
 	}
-	tail := strings.ToLower(id)[len(id)-2:]
+	tail := wsname.RunIDTail(id)
 	if want := v.BranchBase + "-" + tail; v.Branch != want {
 		t.Errorf("branch = %q, want %q", v.Branch, want)
 	}
@@ -127,7 +127,7 @@ func TestRerunTicketedRunKeepsBaseNewTail(t *testing.T) {
 	if nv.Branch == orig.Branch {
 		t.Errorf("restart reused the same branch %q — tails must differ", nv.Branch)
 	}
-	if want := "feat/login-" + strings.ToLower(newID)[len(newID)-2:]; nv.Branch != want {
+	if want := "feat/login-" + wsname.RunIDTail(newID); nv.Branch != want {
 		t.Errorf("restart branch = %q, want %q", nv.Branch, want)
 	}
 }
