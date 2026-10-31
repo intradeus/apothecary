@@ -315,6 +315,11 @@ func (h *harness) waitPing(t *testing.T, ptype string, except ...string) *Ping {
 					continue pings
 				}
 			}
+			// A ping is registered a step before it is logged: an answer in
+			// that gap would reach the log ahead of the question.
+			if !logHas(h.events(t, p.RunID), func(r *event.PingRaised) bool { return r.PingID == p.ID }) {
+				continue
+			}
 			return p
 		}
 		time.Sleep(2 * time.Millisecond)
