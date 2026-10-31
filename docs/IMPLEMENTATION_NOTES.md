@@ -5413,3 +5413,9 @@ A crash after a continuing attempt's prompt was logged is the one new window:
 nothing says the agent read it, so recovery sends it again instead of telling
 it to carry on (`Continuing`). A stage with a session is not proof that this
 attempt reached its agent, so `AttemptBegun` reads `Prompted` alone.
+
+`reuse_session: false` on an agent stage opts out, for a stage that should look
+afresh: `builder`'s adversarial `review`, whose verdict the next round should not
+inherit. The fold drops the session at `stage_started`, so nothing else changes,
+crash recovery included. It is on unless said, so `Stage.FreshSession` carries
+the exception and the editor writes the key only to turn it off.

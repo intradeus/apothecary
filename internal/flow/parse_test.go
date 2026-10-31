@@ -1802,3 +1802,44 @@ func TestCondChangeTypesAreCanonical(t *testing.T) {
 		t.Errorf("CondChangeTypes = %v, want trackerport.ChangeTypes %v", CondChangeTypes, want)
 	}
 }
+
+// Reusing a session is the default and only an agent stage can turn it off.
+func TestReuseSession(t *testing.T) {
+	agent := "agents:\n  - { name: a, prompt: p }\nmain:\n  - { id: s, type: agent, harness: fake, model: fake/m, agent: a"
+	f, err := Parse("t.yaml", []byte(header+agent+" }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Stage("s").FreshSession {
+		t.Error("a stage that says nothing reuses its session")
+	}
+	f, err = Parse("t.yaml", []byte(header+agent+", reuse_session: false }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.Stage("s").FreshSession {
+		t.Error("reuse_session: false did not take")
+	}
+	f, err = Parse("t.yaml", []byte(header+agent+", reuse_session: true }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Stage("s").FreshSession {
+		t.Error("reuse_session: true is the default")
+	}
+	if _, err := Parse("t.yaml", []byte(header+"main:\n  - { id: s, type: command, run: x, reuse_session: false }\n")); err == nil || !strings.Contains(err.Error(), `"reuse_session" does not apply`) {
+		t.Errorf("on a command: %v", err)
+	}
+	// The editor's document keeps a false: it is the only value worth saying.
+	d, err := ParseDoc("t.yaml", []byte(header+agent+", reuse_session: false }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"reuse_session":false`) {
+		t.Errorf("the editor's document lost it: %s", b)
+	}
+}

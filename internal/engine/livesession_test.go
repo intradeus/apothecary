@@ -322,6 +322,47 @@ main:
 	}
 }
 
+// reuse_session: false opens a new session each attempt: the adversarial review
+// looks afresh, and its prompt still says why it is back.
+func TestAStageCanStartEachAttemptAfresh(t *testing.T) {
+	doc := `name: fresh
+version: 5
+parameters: { harness: fake, model: fake/model }
+agents:
+  - name: reviewer
+    prompt: review it
+    inputs:
+      - { name: rejection, type: verdict, optional: true }
+main:
+  - { id: look, type: agent, harness: $harness, model: $model, agent: reviewer, reuse_session: false, input: { rejection: { from: edge.verdict, type: verdict, optional: true } } }
+  - { id: gate, type: human_gate, question: "Good?", on_reject: { to: look, max: 2 } }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "fresh", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := h.waitPing(t, PingGate)
+	if err := h.e.AnswerPing(first.ID, PingAnswer{Answer: "reject", Feedback: "too vague"}); err != nil {
+		t.Fatal(err)
+	}
+	second := h.waitPing(t, PingGate, first.ID)
+	if err := h.e.AnswerPing(second.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if n := len(h.runner.ResumeCalls); n != 0 {
+		t.Errorf("resumed %d time(s): %+v", n, h.runner.ResumeCalls)
+	}
+	runs := h.runner.SnapshotRunCalls()
+	if len(runs) != 2 {
+		t.Fatalf("new sessions = %d, want one per attempt", len(runs))
+	}
+	if !strings.Contains(runs[1].In.Prompt, "too vague") {
+		t.Errorf("the attempt was not told why it is back:\n%s", runs[1].In.Prompt)
+	}
+}
+
 // A session the harness cannot load (the workspace was rebuilt) costs the agent
 // its memory, not the stage: the attempt starts a new one, prompt and all.
 func TestAttemptStartsANewSessionWhenItsIsGone(t *testing.T) {

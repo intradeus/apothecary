@@ -344,6 +344,7 @@ export type DocStage = {
 	on_timeout?: DocEdge;
 	output?: DocPorts;
 	question?: string;
+	reuse_session?: boolean | null;
 	run?: string;
 	run_if?: string;
 	run_ref?: string;

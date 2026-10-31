@@ -91,7 +91,7 @@ func sequenceStageProblem(st *DocStage) string {
 	}{
 		{"run_if", st.RunIf != ""}, {"agent", st.Agent != ""}, {"model", st.Model != ""}, {"harness", st.Harness != ""},
 		{"max_turns", st.MaxTurns != nil}, {"timeout", st.Timeout != ""}, {"input", st.Input != nil}, {"output", st.Output != nil},
-		{"run", st.Run != ""}, {"run_ref", st.RunRef != ""}, {"each_repo", st.EachRepo}, {"question", st.Question != ""},
+		{"run", st.Run != ""}, {"run_ref", st.RunRef != ""}, {"each_repo", st.EachRepo}, {"reuse_session", st.ReuseSession != nil}, {"question", st.Question != ""},
 		{"action", st.Action != ""}, {"for", st.For != ""},
 		{"on_reject", st.OnReject != nil}, {"on_timeout", st.OnTimeout != nil},
 	} {

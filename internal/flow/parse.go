@@ -564,15 +564,17 @@ type DocStage struct {
 	Run         string    `yaml:"run" json:"run,omitempty"`
 	RunRef      string    `yaml:"run_ref" json:"run_ref,omitempty"`
 	EachRepo    bool      `yaml:"each_repo" json:"each_repo,omitempty"`
-	Question    string    `yaml:"question" json:"question,omitempty"`
-	Action      string    `yaml:"action" json:"action,omitempty"`
-	Service     string    `yaml:"service" json:"service,omitempty"`
-	Do          string    `yaml:"do" json:"do,omitempty"`
-	For         string    `yaml:"for" json:"for,omitempty"`
-	OnSuccess   string    `yaml:"on_success" json:"on_success,omitempty"`
-	OnFail      *DocEdge  `yaml:"on_fail" json:"on_fail,omitempty"`
-	OnReject    *DocEdge  `yaml:"on_reject" json:"on_reject,omitempty"`
-	OnTimeout   *DocEdge  `yaml:"on_timeout" json:"on_timeout,omitempty"`
+	// ReuseSession is a pointer because it is on unless a stage says false.
+	ReuseSession *bool    `yaml:"reuse_session" json:"reuse_session,omitempty"`
+	Question     string   `yaml:"question" json:"question,omitempty"`
+	Action       string   `yaml:"action" json:"action,omitempty"`
+	Service      string   `yaml:"service" json:"service,omitempty"`
+	Do           string   `yaml:"do" json:"do,omitempty"`
+	For          string   `yaml:"for" json:"for,omitempty"`
+	OnSuccess    string   `yaml:"on_success" json:"on_success,omitempty"`
+	OnFail       *DocEdge `yaml:"on_fail" json:"on_fail,omitempty"`
+	OnReject     *DocEdge `yaml:"on_reject" json:"on_reject,omitempty"`
+	OnTimeout    *DocEdge `yaml:"on_timeout" json:"on_timeout,omitempty"`
 
 	// Retired fields, still decoded so the parser can answer with the
 	// upgrade (FLOWLANG §7) instead of the strict decoder's bare "field not
@@ -1913,6 +1915,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		{"run", raw.Run != "", []StageType{StageCommand}},
 		{"run_ref", raw.RunRef != "", []StageType{StageCommand}},
 		{"each_repo", raw.EachRepo, []StageType{StageCommand}},
+		{"reuse_session", raw.ReuseSession != nil, []StageType{StageAgent}},
 		{"question", raw.Question != "", []StageType{StageHumanGate}},
 		{"action", raw.Action != "", []StageType{StageAction}},
 		{"for", raw.For != "", []StageType{StageWait}},
@@ -1962,6 +1965,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		}
 		s.Agent = raw.Agent
 		s.MaxTurns, s.Timeout = d.MaxTurns, d.Timeout
+		s.FreshSession = raw.ReuseSession != nil && !*raw.ReuseSession
 		// Harness and model are the stage's to state — a kind or a
 		// provider/model, or the parameter it reads ($harness, $model): no
 		// stage runs on something the document does not say (FLOWLANG §2).

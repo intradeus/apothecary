@@ -497,6 +497,7 @@ main:
     agent: reviewer
     model: $review_model
     max_turns: 30
+    reuse_session: false   # each round reads the code afresh, unswayed by its last verdict
     description: "adversarial review against the plan, conventions and correctness"
     input:
       ticket:  { from: run.ticket, type: ticket }

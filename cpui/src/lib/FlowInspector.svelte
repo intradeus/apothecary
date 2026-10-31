@@ -1047,6 +1047,15 @@
 						/>
 						<div class="help">{t('flow.insp.numberOrParam')}</div>
 					</div>
+					<Toggle
+						checked={s.reuse_session !== false}
+						label={t('flow.insp.reuseSession')}
+						title={t('flow.insp.reuseSessionTitle')}
+						onchange={(v) => {
+							s.reuse_session = v ? undefined : false;
+							onchange();
+						}}
+					/>
 					<div class="field">
 						<label for="st-timeout">{t('flow.insp.timeout')}</label>
 						<input

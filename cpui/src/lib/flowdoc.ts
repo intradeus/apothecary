@@ -221,6 +221,8 @@ export interface DocStage {
 	model?: string;
 	harness?: string;
 	max_turns?: number | string;
+	/** Absent means true: the editor writes it only to turn it off. */
+	reuse_session?: boolean;
 	timeout?: string;
 	input?: StagePorts;
 	output?: StagePorts;
@@ -895,6 +897,7 @@ export function docToYaml(doc: FlowDoc): string {
 		if (s.model) o.model = s.model;
 		if (s.harness) o.harness = s.harness;
 		if (s.max_turns != null) o.max_turns = s.max_turns;
+		if (s.reuse_session === false) o.reuse_session = false;
 		if (s.timeout) o.timeout = s.timeout;
 		// input/output are three-way unions; emit only a non-empty one. Guarding
 		// on `.length` alone would silently drop the named form (objects have no

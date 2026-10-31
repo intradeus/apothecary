@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -445,5 +446,27 @@ func TestBuiltinFlowsCarryNoModel(t *testing.T) {
 			}
 			check(t, f)
 		})
+	}
+}
+
+// builder's adversarial review reads the code afresh each round; every other
+// agent stage remembers what it did.
+func TestBuilderReviewsAfresh(t *testing.T) {
+	data, err := os.ReadFile("flows/builder.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := flow.Parse("builder.yaml", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fresh []string
+	for i := range f.Stages {
+		if f.Stages[i].FreshSession {
+			fresh = append(fresh, f.Stages[i].ID)
+		}
+	}
+	if strings.Join(fresh, ",") != "review" {
+		t.Errorf("stages starting afresh = %v, want review alone", fresh)
 	}
 }

@@ -886,6 +886,9 @@ export default {
 		'<span class="mono">on_reject</span> will never fire: agent “{agent}” declares no verdict output. Add one on the agent (Outputs → type <span class="mono">verdict</span>).',
 	'flow.insp.commandHelp': 'A command name in the project running this flow.',
 	'flow.insp.literalScript': '…or literal script',
+	'flow.insp.reuseSession': 'Remember earlier attempts',
+	'flow.insp.reuseSessionTitle':
+		'An attempt sent back to this stage continues its session. Turn off for a stage that should look afresh each time, such as an adversarial review.',
 	'flow.insp.eachRepo': 'Run in each repository',
 	'flow.insp.eachRepoTitle':
 		'Multi-repo runs: run once per checkout instead of once in the primary (what git commit / push want)',

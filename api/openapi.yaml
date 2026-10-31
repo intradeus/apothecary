@@ -733,6 +733,9 @@ components:
           $ref: '#/components/schemas/DocPorts'
         question:
           type: string
+        reuse_session:
+          nullable: true
+          type: boolean
         run:
           type: string
         run_if:

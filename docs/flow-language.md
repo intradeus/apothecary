@@ -726,7 +726,7 @@ this context explicitly, and those *are* declared, as ports.
 
 | type | what it does | key fields |
 |---|---|---|
-| `agent` | runs an agent this flow declares (§1) | `agent`, `input`, `output`, `model`, `harness`, `max_turns`, `timeout` |
+| `agent` | runs an agent this flow declares (§1) | `agent`, `input`, `output`, `model`, `harness`, `max_turns`, `timeout`, `reuse_session` |
 | `command` | runs a shell script in the workspace | `run` **or** `run_ref`, `input`, `output`, `timeout`, `each_repo` |
 | `human_gate` | parks the phase on a human decision | `question`, `input` |
 | `action` | invokes a built-in apothecary integration | `action`, `input`, `output`, `with` |
@@ -1434,6 +1434,11 @@ to a stage (a rejection, a failure, a later round of a watcher) continues that
 stage's session, so the agent remembers what it did, and its prompt says why it
 is back. A session the harness can no longer load (the workspace was rebuilt)
 costs the agent that memory, not the stage: the attempt opens a new one.
+
+`reuse_session: false` makes every attempt open a new session, for a stage that
+should look afresh, such as an adversarial review unswayed by its last verdict.
+It concerns new attempts only: an answered question, a take-over and crash
+recovery are the same attempt, and stay in its session.
 
 Before every fresh attempt the engine deletes the stage's outputs, so the check
 after it cannot be satisfied by a file an earlier attempt left behind. (Crash

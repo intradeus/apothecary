@@ -326,6 +326,10 @@ type Stage struct {
 	Harness  string
 	MaxTurns int
 	Timeout  time.Duration
+	// FreshSession (reuse_session: false): each attempt opens a new session
+	// instead of continuing the stage's, so what it concluded before cannot
+	// colour its next look.
+	FreshSession bool
 
 	// Inputs and Outputs are the stage's ports: what it reads, from where,
 	// and what it writes, to where — each typed. Every one is visible to the
