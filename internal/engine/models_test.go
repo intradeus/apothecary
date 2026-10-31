@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/modelcheck"
+	"apothecary/internal/engine/modelcheck"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runinput"

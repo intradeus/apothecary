@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"apothecary/internal/engine/redact"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/resolution"
-	"apothecary/internal/redact"
 )
 
 // A refreshed login is pushed only into the workspaces whose run uses that

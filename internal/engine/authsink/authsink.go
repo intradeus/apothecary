@@ -17,9 +17,9 @@ import (
 	"slices"
 	"sync"
 
+	"apothecary/internal/engine/redact"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/resolution"
-	"apothecary/internal/redact"
 	"apothecary/internal/run"
 )
 

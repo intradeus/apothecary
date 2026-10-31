@@ -10,8 +10,8 @@ import (
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/account/providers"
-	"apothecary/internal/authsink"
 	"apothecary/internal/engine"
+	"apothecary/internal/engine/authsink"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/run"
 )

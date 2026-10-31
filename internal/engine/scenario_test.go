@@ -15,7 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"apothecary/internal/adapters/fake"
-	askstore "apothecary/internal/ask"
+	askstore "apothecary/internal/engine/ask"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/ports/agentport"

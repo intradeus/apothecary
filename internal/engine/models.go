@@ -3,7 +3,7 @@ package engine
 import (
 	"strings"
 
-	"apothecary/internal/modelcheck"
+	"apothecary/internal/engine/modelcheck"
 )
 
 // checkAgentModels is modelcheck.AgentModels for the run's flow and workspace.

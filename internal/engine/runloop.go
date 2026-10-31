@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/engine/redact"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/project/resolution"
-	"apothecary/internal/redact"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runcore"

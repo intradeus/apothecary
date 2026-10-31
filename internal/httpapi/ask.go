@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
-	"apothecary/internal/ask"
+	"apothecary/internal/engine/ask"
 )
 
 // The Ask pane: a run's read-only session beside its stages, answering

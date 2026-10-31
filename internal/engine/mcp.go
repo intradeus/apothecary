@@ -6,7 +6,7 @@ import (
 	"maps"
 	"slices"
 
-	"apothecary/internal/browsermcp"
+	"apothecary/internal/engine/browsermcp"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/project/resolution"

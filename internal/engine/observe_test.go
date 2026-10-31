@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"apothecary/internal/engine/mrs"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/signalspec"
-	"apothecary/internal/mrs"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"

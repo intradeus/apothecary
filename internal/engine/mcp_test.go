@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/browsermcp"
+	"apothecary/internal/engine/browsermcp"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/envport"

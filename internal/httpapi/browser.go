@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"apothecary/internal/browsermcp"
+	"apothecary/internal/engine/browsermcp"
 )
 
 // --- project secrets ------------------------------------------------------------

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	askstore "apothecary/internal/ask"
+	askstore "apothecary/internal/engine/ask"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"

@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	"apothecary/internal/account/auth"
-	"apothecary/internal/ask"
 	"apothecary/internal/engine"
-	"apothecary/internal/mrs"
+	"apothecary/internal/engine/ask"
+	"apothecary/internal/engine/mrs"
 	"apothecary/internal/run/event"
 	"apothecary/internal/workspace/sidecar"
 	"apothecary/internal/workspace/wsinfo"

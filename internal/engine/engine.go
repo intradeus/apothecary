@@ -20,10 +20,10 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"apothecary/internal/authsink"
+	"apothecary/internal/engine/authsink"
+	"apothecary/internal/engine/modelcheck"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/reviewfile"
-	"apothecary/internal/modelcheck"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/envport"

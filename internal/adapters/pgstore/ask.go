@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"apothecary/internal/ask"
+	"apothecary/internal/engine/ask"
 )
 
 // The Ask pane's rows (migration 0015): one thread per run, its messages in
