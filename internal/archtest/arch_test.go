@@ -1,8 +1,7 @@
-// Package archtest enforces the backend's import graph. The package map in
-// docs/clean-architecture-plan.md says which packages may depend on which;
-// this test turns that map into a build failure, so a shortcut import (an
-// extracted service reaching back into the engine, an adapter imported from
-// the domain) is caught at the commit that adds it rather than in review.
+// Package archtest enforces the backend's import graph: the rules below say
+// which packages may depend on which, so a shortcut import (an extracted
+// service reaching back into the engine, an adapter imported from the domain)
+// is caught at the commit that adds it rather than in review.
 //
 // Only imports inside the module are constrained. The standard library and
 // third-party modules are allowed everywhere; test files are not checked.

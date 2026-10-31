@@ -482,6 +482,21 @@ them. The ports the adapters implement are split by capability under
 `internal/ports/` (`envport`, `agentport`, `repoport`, …). `go test
 ./internal/archtest` enforces who may import whom.
 
+`internal/` is grouped by what a package is about:
+
+| Folder | Holds |
+|---|---|
+| `flow/` | the flow language, its registries and the built-in templates |
+| `run/` | what a run is: its event log, its fold, what starts it |
+| `engine/` | the interpreter and the services around a live run |
+| `workspace/` | everything about a run's container |
+| `project/` | what a project is configured with |
+| `account/` | who a person is and what they signed in to |
+| `skills/` | the skills format and its library |
+| `ports/`, `adapters/` | the boundaries, and what implements them |
+| `httpapi/` | the HTTP API |
+| `platform/` | building blocks with no domain knowledge |
+
 Design documents live in `docs/` — `DESIGN.md` (v1 engine),
 `DESIGN2.md` (config plane & distribution), with every deviation recorded
 in `docs/IMPLEMENTATION_NOTES.md`.
