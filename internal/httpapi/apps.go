@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
-	"apothecary/internal/portrelay"
+	"apothecary/internal/workspace/portrelay"
 )
 
 // Apps serves exposed workspace ports by hostname — <port>-<run>.<apps

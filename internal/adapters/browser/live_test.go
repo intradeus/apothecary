@@ -28,7 +28,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports/browserport"
-	"apothecary/internal/wsimage"
+	"apothecary/internal/workspace/wsimage"
 )
 
 func TestLiveBrowserSession(t *testing.T) {

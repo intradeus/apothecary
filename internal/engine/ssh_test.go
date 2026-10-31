@@ -19,8 +19,8 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runinput"
-	"apothecary/internal/sshdoor"
-	"apothecary/internal/wsinfo"
+	"apothecary/internal/workspace/sshdoor"
+	"apothecary/internal/workspace/wsinfo"
 )
 
 // fakeSidecarSSH is a workspace's SSH server as a test sees it: it admits

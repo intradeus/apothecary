@@ -12,10 +12,10 @@ import (
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
-	"apothecary/internal/resources"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runinput"
+	"apothecary/internal/workspace/resources"
 )
 
 // Shutdown cancels every loop before waiting on any: three agents that each

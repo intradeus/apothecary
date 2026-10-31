@@ -4,7 +4,7 @@
 # to run an agent or the browser editor. Build context: this directory.
 #
 # One file, two consumers: the engine builds it at runtime on a docker host
-# (internal/wsimage EnsureTools, then `docker create` + `cp` /tools out to
+# (internal/workspace/wsimage EnsureTools, then `docker create` + `cp` /tools out to
 # <RunsDir>/tools-cache/<hash>, bind-mounted into every workspace at
 # /opt/apothecary/tools), and CI publishes it as the apothecary/tools image a
 # Kubernetes sandbox pod's tools-seed init container copies onto the run
@@ -18,7 +18,7 @@
 #   TOOLS_HASH, seed.sh
 #
 # The version ARG defaults ARE the release pins: TestToolsDockerfilePinsMatchKinds
-# (internal/wsimage) holds internal/kinds' constants to them. TOOLS_HASH is the
+# (internal/workspace/wsimage) holds internal/kinds' constants to them. TOOLS_HASH is the
 # hash of this directory (`apothecaryd tools-hash`), baked in so a seeded
 # bundle can be compared with the one the engine expects. Keep it the LAST
 # build arg so a hash-only change reuses the download layers.

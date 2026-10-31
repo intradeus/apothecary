@@ -12,7 +12,7 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run/event"
-	"apothecary/internal/services"
+	"apothecary/internal/workspace/services"
 )
 
 func TestServiceEndpoints(t *testing.T) {

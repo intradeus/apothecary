@@ -16,7 +16,7 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
-	"apothecary/internal/wsname"
+	"apothecary/internal/workspace/wsname"
 )
 
 // ErrOff marks an egress request for a run with no live gateway (not live,

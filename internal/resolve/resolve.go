@@ -30,7 +30,7 @@ import (
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/resolution"
-	"apothecary/internal/wsimage"
+	"apothecary/internal/workspace/wsimage"
 )
 
 type Resolver struct {

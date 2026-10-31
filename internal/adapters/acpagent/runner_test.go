@@ -14,7 +14,7 @@ import (
 
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/sidecar"
+	"apothecary/internal/workspace/sidecar"
 )
 
 // These tests run the REAL sidecar (the shim binary, built from source) with
@@ -41,7 +41,7 @@ func build(t *testing.T) (shim, fake string) {
 		}
 		for _, b := range [][2]string{
 			{"shim", "apothecary/workspace/shim"},
-			{"fakeacp", "../../sidecar/testdata/fakeacp"},
+			{"fakeacp", "../../workspace/sidecar/testdata/fakeacp"},
 		} {
 			out, err := exec.Command("go", "build", "-o", filepath.Join(buildDir, b[0]), b[1]).CombinedOutput()
 			if err != nil {

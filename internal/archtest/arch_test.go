@@ -65,34 +65,34 @@ var rules = []rule{
 	{pkg: "internal/flow/", mayImport: []string{"internal/flow", "internal/flow/"}},
 	// Building blocks with no domain knowledge.
 	{pkg: "internal/platform/", mayImport: []string{"internal/platform/"}},
-	{pkg: "internal/wsname", mayImport: []string{"internal/run"}},
-	{pkg: "internal/bootstrap", mayImport: []string{
+	{pkg: "internal/workspace/wsname", mayImport: []string{"internal/run"}},
+	{pkg: "internal/workspace/bootstrap", mayImport: []string{
 		"internal/flow/agentspec", "internal/run/event", "internal/ports/", "internal/platform/shell", "internal/skills",
 	}},
 	{pkg: "internal/modelcheck", mayImport: []string{"internal/flow", "internal/ports/", "internal/resolution"}},
 	{pkg: "internal/redact", mayImport: []string{"internal/resolution"}},
 	{pkg: "internal/mrs", mayImport: []string{"internal/run/event", "internal/ports/", "internal/resolution", "internal/run"}},
-	{pkg: "internal/resources", mayImport: []string{"internal/ports/", "internal/resolution", "internal/run", "internal/wsname"}},
-	{pkg: "internal/envstate", mayImport: []string{"internal/ports/", "internal/resolution", "internal/run"}},
-	{pkg: "internal/wsinfo", mayImport: []string{
-		"internal/envstate", "internal/run/event", "internal/ports/", "internal/resolution", "internal/run",
-		"internal/platform/shell", "internal/sidecar", "internal/wsname",
+	{pkg: "internal/workspace/resources", mayImport: []string{"internal/ports/", "internal/resolution", "internal/run", "internal/workspace/wsname"}},
+	{pkg: "internal/workspace/envstate", mayImport: []string{"internal/ports/", "internal/resolution", "internal/run"}},
+	{pkg: "internal/workspace/wsinfo", mayImport: []string{
+		"internal/workspace/envstate", "internal/run/event", "internal/ports/", "internal/resolution", "internal/run",
+		"internal/platform/shell", "internal/workspace/sidecar", "internal/workspace/wsname",
 	}},
-	{pkg: "internal/envcheck", mayImport: []string{
-		"internal/flow/agentspec", "internal/bootstrap", "internal/flow", "internal/modelcheck",
-		"internal/ports/", "internal/resolution", "internal/platform/shell", "internal/wsname",
+	{pkg: "internal/workspace/envcheck", mayImport: []string{
+		"internal/flow/agentspec", "internal/workspace/bootstrap", "internal/flow", "internal/modelcheck",
+		"internal/ports/", "internal/resolution", "internal/platform/shell", "internal/workspace/wsname",
 	}},
-	{pkg: "internal/egress", mayImport: []string{"internal/ports/", "internal/resolution", "internal/run", "internal/wsname"}},
+	{pkg: "internal/egress", mayImport: []string{"internal/ports/", "internal/resolution", "internal/run", "internal/workspace/wsname"}},
 	{pkg: "internal/ask", mayImport: []string{
 		"internal/flow/agentspec", "internal/flow", "internal/modelcheck", "internal/ports/",
 		"internal/redact", "internal/resolution", "internal/run",
 	}},
 	{pkg: "internal/authsink", mayImport: []string{"internal/ports/", "internal/redact", "internal/resolution", "internal/run"}},
-	{pkg: "internal/runports", mayImport: []string{"internal/run/event", "internal/portrelay", "internal/ports/", "internal/resolution", "internal/run"}},
+	{pkg: "internal/workspace/runports", mayImport: []string{"internal/run/event", "internal/workspace/portrelay", "internal/ports/", "internal/resolution", "internal/run"}},
 	{pkg: "internal/browsermcp", mayImport: []string{"internal/ports/", "internal/resolution", "internal/run"}},
-	{pkg: "internal/services", mayImport: []string{
+	{pkg: "internal/workspace/services", mayImport: []string{
 		"internal/run/event", "internal/ports/", "internal/resolution", "internal/run",
-		"internal/platform/shell", "internal/sidecar", "internal/wsinfo",
+		"internal/platform/shell", "internal/workspace/sidecar", "internal/workspace/wsinfo",
 	}},
 	{pkg: "internal/run/runcore", mayImport: []string{
 		"internal/flow/actionspec", "internal/flow/agentspec", "internal/run/event", "internal/flow",

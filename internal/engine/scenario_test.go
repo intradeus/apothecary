@@ -18,7 +18,6 @@ import (
 	askstore "apothecary/internal/ask"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
-	"apothecary/internal/portrelay"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/notifyport"
@@ -28,9 +27,10 @@ import (
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runinput"
-	"apothecary/internal/runports"
-	"apothecary/internal/services"
-	"apothecary/internal/wsinfo"
+	"apothecary/internal/workspace/portrelay"
+	"apothecary/internal/workspace/runports"
+	"apothecary/internal/workspace/services"
+	"apothecary/internal/workspace/wsinfo"
 )
 
 // testProject is the project id served by the harness's StaticResolver.

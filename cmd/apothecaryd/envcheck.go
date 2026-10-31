@@ -12,9 +12,9 @@ import (
 
 	"apothecary/internal/adapters/pgstore"
 	"apothecary/internal/confstore"
-	"apothecary/internal/envcheck"
 	"apothecary/internal/platform/config"
 	"apothecary/internal/resolve"
+	"apothecary/internal/workspace/envcheck"
 )
 
 // cmdEnvcheck drives the §9 compliance gate from the CLI — the same

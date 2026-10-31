@@ -10,7 +10,7 @@ import (
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
-	"apothecary/internal/wsinfo"
+	"apothecary/internal/workspace/wsinfo"
 )
 
 const fixtureProject = "p1"

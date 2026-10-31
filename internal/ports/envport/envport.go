@@ -375,7 +375,7 @@ type ExecLogTailer interface {
 // runtime the engine drives over HTTP — the long-lived coding agent (ACP),
 // the workspace's files and git state, and terminals. Sidecar starts it if it
 // is not already serving (idempotent) and returns a dialer for its socket;
-// the HTTP API is internal/sidecar's. Provisioners whose workspaces cannot
+// the HTTP API is internal/workspace/sidecar's. Provisioners whose workspaces cannot
 // host it don't implement this, and the features it backs degrade honestly.
 type Sidecar interface {
 	Sidecar(ctx context.Context, env EnvID) (PortConn, error)

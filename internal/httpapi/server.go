@@ -22,18 +22,18 @@ import (
 	"apothecary/internal/confstore"
 	"apothecary/internal/egress"
 	"apothecary/internal/engine"
-	"apothecary/internal/envcheck"
-	"apothecary/internal/envstate"
 	"apothecary/internal/kinds"
 	"apothecary/internal/mrs"
 	"apothecary/internal/platform/filestore"
-	"apothecary/internal/resources"
 	"apothecary/internal/run/event"
-	"apothecary/internal/runports"
-	"apothecary/internal/services"
 	"apothecary/internal/skills/skillstore"
 	"apothecary/internal/tickets"
-	"apothecary/internal/wsinfo"
+	"apothecary/internal/workspace/envcheck"
+	"apothecary/internal/workspace/envstate"
+	"apothecary/internal/workspace/resources"
+	"apothecary/internal/workspace/runports"
+	"apothecary/internal/workspace/services"
+	"apothecary/internal/workspace/wsinfo"
 )
 
 type Server struct {
@@ -194,7 +194,7 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request, id string) ([
 	return evs, true
 }
 
-// SSHAccess is what the API needs from the SSH door (internal/sshdoor).
+// SSHAccess is what the API needs from the SSH door (internal/workspace/sshdoor).
 type SSHAccess interface {
 	Address() (host string, port int)
 	Fingerprint() string

@@ -24,8 +24,8 @@ import (
 	"apothecary/internal/resolution"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runcore"
-	"apothecary/internal/services"
-	"apothecary/internal/sidecar"
+	"apothecary/internal/workspace/services"
+	"apothecary/internal/workspace/sidecar"
 )
 
 // usesServiceStages: only a flow with service stages has services of its

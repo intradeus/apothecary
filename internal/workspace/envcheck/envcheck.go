@@ -17,14 +17,14 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/bootstrap"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/modelcheck"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
-	"apothecary/internal/wsname"
+	"apothecary/internal/workspace/bootstrap"
+	"apothecary/internal/workspace/wsname"
 
 	"github.com/oklog/ulid/v2"
 )

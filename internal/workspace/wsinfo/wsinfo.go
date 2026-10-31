@@ -11,13 +11,13 @@ import (
 	"fmt"
 	"sync"
 
-	"apothecary/internal/envstate"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
-	"apothecary/internal/sidecar"
-	"apothecary/internal/wsname"
+	"apothecary/internal/workspace/envstate"
+	"apothecary/internal/workspace/sidecar"
+	"apothecary/internal/workspace/wsname"
 )
 
 var (

@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"apothecary/internal/engine"
-	"apothecary/internal/portrelay"
+	"apothecary/internal/workspace/portrelay"
 )
 
 // tcpConn dials one fixed address: the "workspace app".

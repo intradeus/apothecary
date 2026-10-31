@@ -21,7 +21,6 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"apothecary/internal/authsink"
-	"apothecary/internal/envstate"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/modelcheck"
@@ -36,9 +35,10 @@ import (
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runcore"
 	"apothecary/internal/run/runinput"
-	"apothecary/internal/runports"
 	"apothecary/internal/skills"
-	"apothecary/internal/wsname"
+	"apothecary/internal/workspace/envstate"
+	"apothecary/internal/workspace/runports"
+	"apothecary/internal/workspace/wsname"
 )
 
 // SkillStore is the skill library as the engine sees it (TODO 38): turn a

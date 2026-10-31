@@ -9,7 +9,6 @@ import (
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/confstore"
-	"apothecary/internal/envcheck"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/flow/agentspec"
@@ -19,7 +18,8 @@ import (
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/resolution"
-	"apothecary/internal/wsinfo"
+	"apothecary/internal/workspace/envcheck"
+	"apothecary/internal/workspace/wsinfo"
 )
 
 // flowResp / agentResp decorate store rows with the built-in layering

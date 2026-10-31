@@ -36,8 +36,8 @@ import (
 	"apothecary/internal/kinds"
 	"apothecary/internal/platform/config"
 	"apothecary/internal/platform/secrets"
-	"apothecary/internal/sshdoor"
-	"apothecary/internal/wsinfo"
+	"apothecary/internal/workspace/sshdoor"
+	"apothecary/internal/workspace/wsinfo"
 	wsassets "apothecary/workspace"
 )
 

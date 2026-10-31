@@ -13,7 +13,7 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
-	"apothecary/internal/wsname"
+	"apothecary/internal/workspace/wsname"
 )
 
 // Sampler keeps each active run's window of resource samples.

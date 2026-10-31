@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"apothecary/internal/platform/filestore"
-	"apothecary/internal/wsinfo"
+	"apothecary/internal/workspace/wsinfo"
 )
 
 // What a run says: its event stream (SSE), the stage logs captured in its

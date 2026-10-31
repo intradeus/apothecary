@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/sidecar"
+	"apothecary/internal/workspace/sidecar"
 )
 
 // Services stands in for the workspace's service supervisor — the

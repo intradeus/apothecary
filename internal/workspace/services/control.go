@@ -12,8 +12,8 @@ import (
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
-	"apothecary/internal/sidecar"
-	"apothecary/internal/wsinfo"
+	"apothecary/internal/workspace/sidecar"
+	"apothecary/internal/workspace/wsinfo"
 )
 
 // Events appends to a run's log from outside its loop (the engine's

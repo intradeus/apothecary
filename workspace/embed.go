@@ -25,7 +25,7 @@ var BaseContext embed.FS
 // sources above (shim, gateway, browser), each with this directory as its
 // build context, and the tools bundle (images/tools: its Dockerfile plus the
 // scripts it copies, built with that directory as the context). The engine
-// builds them at runtime on a docker host (internal/wsimage); CI publishes
+// builds them at runtime on a docker host (internal/workspace/wsimage); CI publishes
 // the same files for Kubernetes, where the engine cannot build.
 //
 //go:embed images

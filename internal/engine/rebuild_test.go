@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/envstate"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runinput"
+	"apothecary/internal/workspace/envstate"
 )
 
 // rebuilderEnvp adds the WorkspaceRebuilder capability to the fake, with a

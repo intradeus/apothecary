@@ -246,7 +246,7 @@ func (c *rpcConn) dispatch(line []byte) {
 // --- normalized events ----------------------------------------------------------
 
 // sideEvent is the one vocabulary the engine consumes, whatever the agent.
-// The engine mirrors this type (internal/sidecar); keep the two in step.
+// The engine mirrors this type (internal/workspace/sidecar); keep the two in step.
 type sideEvent struct {
 	Seq     int64     `json:"seq"`
 	Boot    string    `json:"boot"`

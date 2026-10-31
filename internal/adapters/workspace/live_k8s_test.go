@@ -35,9 +35,9 @@ import (
 
 	"apothecary/internal/adapters/kube"
 	"apothecary/internal/flow/builtin"
-	"apothecary/internal/portrelay"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/workspace/portrelay"
 )
 
 func liveKube(t *testing.T) (*kube.Client, string) {

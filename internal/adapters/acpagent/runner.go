@@ -1,6 +1,6 @@
 // Package acpagent adapts the AgentRunner port to any coding agent that
 // speaks the Agent Client Protocol, hosted by the workspace sidecar
-// (internal/sidecar). One runner, every ACP harness: opencode (`opencode
+// (internal/workspace/sidecar). One runner, every ACP harness: opencode (`opencode
 // acp`), codex (`codex-acp`), and anything else that speaks the protocol. A
 // harness kind contributes only a Profile — how to start it and how a flow's
 // agent maps onto it.
@@ -30,7 +30,7 @@ import (
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/sidecar"
+	"apothecary/internal/workspace/sidecar"
 )
 
 // Profile is what one harness contributes.

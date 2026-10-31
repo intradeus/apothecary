@@ -22,13 +22,13 @@ import (
 	"apothecary/internal/flow/signalspec"
 	"apothecary/internal/kinds"
 	"apothecary/internal/platform/filestore"
-	"apothecary/internal/portrelay"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runinput"
 	"apothecary/internal/skills"
 	"apothecary/internal/skills/skillstore"
+	"apothecary/internal/workspace/portrelay"
 )
 
 // --- errors -----------------------------------------------------------------

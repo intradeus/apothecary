@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 
-	"apothecary/internal/bootstrap"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runcore"
-	"apothecary/internal/wsname"
+	"apothecary/internal/workspace/bootstrap"
+	"apothecary/internal/workspace/wsname"
 )
 
 // ErrRunActive refuses a workspace op while the run's loop is live (mid-stage

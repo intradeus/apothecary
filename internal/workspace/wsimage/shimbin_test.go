@@ -80,7 +80,7 @@ func TestEnsureShimBuildsExtractsAndCaches(t *testing.T) {
 // one version of each, or the tested shim and the shipped one quietly
 // diverge.
 func TestShimDependencyPinsMatchGoMod(t *testing.T) {
-	data, err := os.ReadFile("../../go.mod")
+	data, err := os.ReadFile("../../../go.mod")
 	if err != nil {
 		t.Fatal(err)
 	}

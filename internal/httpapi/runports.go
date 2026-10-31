@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strings"
 
-	"apothecary/internal/portrelay"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/runports"
+	"apothecary/internal/workspace/portrelay"
+	"apothecary/internal/workspace/runports"
 )
 
 // A run's workspace ports: exposing one, the in-browser editor, the ports

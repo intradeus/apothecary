@@ -47,9 +47,9 @@ import (
 	"time"
 
 	"apothecary/internal/flow/builtin"
-	"apothecary/internal/portrelay"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/wsimage"
+	"apothecary/internal/workspace/portrelay"
+	"apothecary/internal/workspace/wsimage"
 )
 
 func TestLiveLifecycle(t *testing.T) {

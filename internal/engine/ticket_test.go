@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"apothecary/internal/run/runinput"
-	"apothecary/internal/wsname"
+	"apothecary/internal/workspace/wsname"
 )
 
 // A run created under a ticket gets a unique actual branch = base + per-run

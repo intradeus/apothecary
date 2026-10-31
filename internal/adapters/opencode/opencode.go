@@ -24,7 +24,7 @@ import (
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/wshome"
+	"apothecary/internal/workspace/wshome"
 )
 
 // Config is reserved for adapter-level knobs; auth material arrives per

@@ -27,7 +27,7 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run/event"
-	"apothecary/internal/sidecar"
+	"apothecary/internal/workspace/sidecar"
 )
 
 // Supervisor phases (sidecar.ServiceState.Phase).

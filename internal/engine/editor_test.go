@@ -11,10 +11,10 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/portrelay"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/event"
-	"apothecary/internal/runports"
+	"apothecary/internal/workspace/portrelay"
+	"apothecary/internal/workspace/runports"
 )
 
 // exposerEnvp adds the WorkspacePortExposer capability to the fake.

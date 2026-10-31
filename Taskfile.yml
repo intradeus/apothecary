@@ -176,7 +176,7 @@ tasks:
   # --- local binaries (build/, gitignored) -----------------------------------
   # For poking at binaries directly. Production never uses these: the deploy
   # image builds apothecaryd, and the engine builds the shim + gateway inside
-  # docker from the go:embed'ed workspace/ sources (internal/wsimage). Always
+  # docker from the go:embed'ed workspace/ sources (internal/workspace/wsimage). Always
   # build here, never in-tree: workspace/ is embedded, so a binary dropped in
   # it ships inside apothecaryd and changes the egress-gw image hash.
   build:

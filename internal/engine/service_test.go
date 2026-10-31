@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/portrelay"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runinput"
-	"apothecary/internal/services"
+	"apothecary/internal/workspace/portrelay"
+	"apothecary/internal/workspace/services"
 )
 
 // servicesFlowDoc brings the app up, lets an agent look at it, and — when

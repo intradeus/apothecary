@@ -6,12 +6,12 @@ import (
 	"strconv"
 	"strings"
 
-	"apothecary/internal/bootstrap"
 	"apothecary/internal/flow"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run/event"
+	"apothecary/internal/workspace/bootstrap"
 )
 
 // actionCreateMR opens the run's draft merge requests: one per checkout that

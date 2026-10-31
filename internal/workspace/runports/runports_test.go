@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/portrelay"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
+	"apothecary/internal/workspace/portrelay"
 )
 
 const fixtureProject = "p1"

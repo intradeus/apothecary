@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"apothecary/internal/bootstrap"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/event"
-	"apothecary/internal/wsname"
+	"apothecary/internal/workspace/bootstrap"
+	"apothecary/internal/workspace/wsname"
 )
 
 // workspaceLink is what run.workspace hands a person: the workspace's first

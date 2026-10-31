@@ -10,9 +10,9 @@ import (
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/engine"
-	"apothecary/internal/envstate"
 	"apothecary/internal/run"
 	"apothecary/internal/run/runinput"
+	"apothecary/internal/workspace/envstate"
 )
 
 // Runs: listing, reading and the lifecycle verbs (abort, pause, play,

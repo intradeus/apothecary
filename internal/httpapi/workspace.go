@@ -10,8 +10,8 @@ import (
 	"apothecary/internal/engine"
 	"apothecary/internal/mrs"
 	"apothecary/internal/run/event"
-	"apothecary/internal/sidecar"
-	"apothecary/internal/wsinfo"
+	"apothecary/internal/workspace/sidecar"
+	"apothecary/internal/workspace/wsinfo"
 )
 
 // SendMessageRequest is a human message to the run's running agent.

@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"apothecary/internal/resolution"
-	"apothecary/internal/services"
-	"apothecary/internal/wsinfo"
+	"apothecary/internal/workspace/services"
+	"apothecary/internal/workspace/wsinfo"
 )
 
 // The run page's Services pane: the project's services with their live state

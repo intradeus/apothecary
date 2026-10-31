@@ -22,8 +22,6 @@ import (
 	"apothecary/internal/confstore"
 	"apothecary/internal/egress"
 	"apothecary/internal/engine"
-	"apothecary/internal/envcheck"
-	"apothecary/internal/envstate"
 	"apothecary/internal/flow"
 	"apothecary/internal/mrs"
 	"apothecary/internal/platform/secrets"
@@ -32,12 +30,14 @@ import (
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
-	"apothecary/internal/resources"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
-	"apothecary/internal/runports"
-	"apothecary/internal/services"
-	"apothecary/internal/wsinfo"
+	"apothecary/internal/workspace/envcheck"
+	"apothecary/internal/workspace/envstate"
+	"apothecary/internal/workspace/resources"
+	"apothecary/internal/workspace/runports"
+	"apothecary/internal/workspace/services"
+	"apothecary/internal/workspace/wsinfo"
 )
 
 const loopFlowDoc = `name: loop
