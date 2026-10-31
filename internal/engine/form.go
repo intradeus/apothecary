@@ -12,7 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"apothecary/internal/event"
+	"apothecary/internal/run/event"
 )
 
 // AnswerField is the one field of a question asked without any: a free-text

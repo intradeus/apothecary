@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"apothecary/internal/event"
+	"apothecary/internal/run/event"
 )
 
 // Reader reads run views from the event store: one run by reducing its log,

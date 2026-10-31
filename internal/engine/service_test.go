@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/event"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runinput"
 	"apothecary/internal/services"
 )
 

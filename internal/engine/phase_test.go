@@ -10,15 +10,15 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
-	"apothecary/internal/runcore"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runcore"
+	"apothecary/internal/run/runinput"
 )
 
 // phasedFlowDoc is a ticket's whole life: the main chain opens the merge

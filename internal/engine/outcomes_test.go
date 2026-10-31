@@ -8,11 +8,11 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/event"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 // overrideDoc has one chain per thing a run can be doing when its merge

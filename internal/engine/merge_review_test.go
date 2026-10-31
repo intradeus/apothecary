@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/event"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runinput"
 )
 
 const automergeWatcher = "  - id: automerge\n    on: mr_mergeable\n    stages:\n" +

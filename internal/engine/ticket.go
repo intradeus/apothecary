@@ -32,12 +32,12 @@ import (
 	"fmt"
 	"strings"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
-	"apothecary/internal/runcore"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runcore"
 )
 
 // actionSkip records a completion that did no work — the stage had nothing

@@ -8,10 +8,10 @@ import (
 	"sync"
 	"testing"
 
-	"apothecary/internal/event"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runinput"
 	"apothecary/internal/skills"
 )
 

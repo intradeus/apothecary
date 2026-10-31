@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/event"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/resources"
 	"apothecary/internal/run"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runinput"
 )
 
 // Shutdown cancels every loop before waiting on any: three agents that each

@@ -16,7 +16,7 @@ import (
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/run"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/runinput"
 	"apothecary/internal/tickets"
 )
 

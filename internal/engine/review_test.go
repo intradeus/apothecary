@@ -11,13 +11,13 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
-	"apothecary/internal/runcore"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runcore"
+	"apothecary/internal/run/runinput"
 )
 
 const reviewFlowDoc = `name: rv

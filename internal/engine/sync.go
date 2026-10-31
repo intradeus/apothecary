@@ -11,10 +11,10 @@ import (
 	"fmt"
 	"strings"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/platform/shell"
+	"apothecary/internal/run/event"
 )
 
 // actionFail records an outcome failure an agent or a retry can fix and

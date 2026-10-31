@@ -7,7 +7,7 @@ import (
 	"context"
 	"time"
 
-	"apothecary/internal/event"
+	"apothecary/internal/run/event"
 )
 
 type State string

@@ -6,10 +6,10 @@ import (
 	"fmt"
 
 	"apothecary/internal/bootstrap"
-	"apothecary/internal/event"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
-	"apothecary/internal/runcore"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runcore"
 	"apothecary/internal/wsname"
 )
 

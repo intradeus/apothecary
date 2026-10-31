@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/runcore"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runcore"
 )
 
 func (x *exec) stageCommand(st *flow.Stage) error {

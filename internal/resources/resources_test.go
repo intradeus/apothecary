@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/event"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 // samplerEnvp adds the OPTIONAL ResourceSampler capability to the fake.

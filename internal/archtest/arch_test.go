@@ -57,8 +57,8 @@ var rules = []rule{
 	{pkg: "internal/adapters/", importedOnlyBy: []string{"internal/kinds", "internal/adapters/", "cmd/"}},
 	{pkg: "internal/adapters/pgstore", importedOnlyBy: []string{"cmd/"}},
 	{pkg: "internal/engine", importedOnlyBy: []string{"cmd/", "internal/httpapi"}},
-	{pkg: "internal/runinput", mayImport: []string{"internal/skills"}},
-	{pkg: "internal/event", denyImport: outerLayers},
+	{pkg: "internal/run/runinput", mayImport: []string{"internal/skills"}},
+	{pkg: "internal/run/event", denyImport: outerLayers},
 	{pkg: "internal/run", denyImport: outerLayers},
 	// The language stands alone.
 	{pkg: "internal/flow", mayImport: []string{"internal/flow/"}},
@@ -67,15 +67,15 @@ var rules = []rule{
 	{pkg: "internal/platform/", mayImport: []string{"internal/platform/"}},
 	{pkg: "internal/wsname", mayImport: []string{"internal/run"}},
 	{pkg: "internal/bootstrap", mayImport: []string{
-		"internal/flow/agentspec", "internal/event", "internal/ports/", "internal/platform/shell", "internal/skills",
+		"internal/flow/agentspec", "internal/run/event", "internal/ports/", "internal/platform/shell", "internal/skills",
 	}},
 	{pkg: "internal/modelcheck", mayImport: []string{"internal/flow", "internal/ports/", "internal/resolution"}},
 	{pkg: "internal/redact", mayImport: []string{"internal/resolution"}},
-	{pkg: "internal/mrs", mayImport: []string{"internal/event", "internal/ports/", "internal/resolution", "internal/run"}},
+	{pkg: "internal/mrs", mayImport: []string{"internal/run/event", "internal/ports/", "internal/resolution", "internal/run"}},
 	{pkg: "internal/resources", mayImport: []string{"internal/ports/", "internal/resolution", "internal/run", "internal/wsname"}},
 	{pkg: "internal/envstate", mayImport: []string{"internal/ports/", "internal/resolution", "internal/run"}},
 	{pkg: "internal/wsinfo", mayImport: []string{
-		"internal/envstate", "internal/event", "internal/ports/", "internal/resolution", "internal/run",
+		"internal/envstate", "internal/run/event", "internal/ports/", "internal/resolution", "internal/run",
 		"internal/platform/shell", "internal/sidecar", "internal/wsname",
 	}},
 	{pkg: "internal/envcheck", mayImport: []string{
@@ -88,18 +88,18 @@ var rules = []rule{
 		"internal/redact", "internal/resolution", "internal/run",
 	}},
 	{pkg: "internal/authsink", mayImport: []string{"internal/ports/", "internal/redact", "internal/resolution", "internal/run"}},
-	{pkg: "internal/runports", mayImport: []string{"internal/event", "internal/portrelay", "internal/ports/", "internal/resolution", "internal/run"}},
+	{pkg: "internal/runports", mayImport: []string{"internal/run/event", "internal/portrelay", "internal/ports/", "internal/resolution", "internal/run"}},
 	{pkg: "internal/browsermcp", mayImport: []string{"internal/ports/", "internal/resolution", "internal/run"}},
 	{pkg: "internal/services", mayImport: []string{
-		"internal/event", "internal/ports/", "internal/resolution", "internal/run",
+		"internal/run/event", "internal/ports/", "internal/resolution", "internal/run",
 		"internal/platform/shell", "internal/sidecar", "internal/wsinfo",
 	}},
-	{pkg: "internal/runcore", mayImport: []string{
-		"internal/flow/actionspec", "internal/flow/agentspec", "internal/event", "internal/flow",
+	{pkg: "internal/run/runcore", mayImport: []string{
+		"internal/flow/actionspec", "internal/flow/agentspec", "internal/run/event", "internal/flow",
 		"internal/flow/reviewfile", "internal/run", "internal/flow/signalspec", "internal/ports/",
 	}},
 	{pkg: "internal/resolution", mayImport: []string{
-		"internal/flow/actionspec", "internal/flow/agentspec", "internal/event", "internal/flow",
+		"internal/flow/actionspec", "internal/flow/agentspec", "internal/run/event", "internal/flow",
 		"internal/run", "internal/flow/signalspec", "internal/ports/",
 	}},
 }
@@ -220,7 +220,7 @@ func TestImportGraph(t *testing.T) {
 // run's events — a time it needs comes from an event or a parameter, so
 // replay and the live loop see the same one.
 func TestRunCoreReadsNoClock(t *testing.T) {
-	dir := filepath.Join(moduleRoot(t), "internal", "runcore")
+	dir := filepath.Join(moduleRoot(t), "internal", "run", "runcore")
 	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
 	if err != nil {
 		t.Fatal(err)

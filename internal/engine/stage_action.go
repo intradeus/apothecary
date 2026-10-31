@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/actionspec"
-	"apothecary/internal/runcore"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runcore"
 )
 
 // stageAction dispatches to the executor for the stage's registered action

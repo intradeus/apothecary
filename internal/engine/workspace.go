@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/event"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 var (

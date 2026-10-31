@@ -13,8 +13,8 @@ import (
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/engine"
-	"apothecary/internal/event"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 // Pings: the shim's ask_human (raise, hold for the answer), answering one,

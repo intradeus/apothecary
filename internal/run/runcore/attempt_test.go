@@ -4,9 +4,9 @@ import (
 	"errors"
 	"testing"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/agentport"
+	"apothecary/internal/run/event"
 )
 
 func TestClassifyAttempt(t *testing.T) {

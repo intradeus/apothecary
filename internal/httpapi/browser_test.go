@@ -18,7 +18,7 @@ import (
 	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/runinput"
 )
 
 // A project secret is write-only: set, listed by name, removed — and its

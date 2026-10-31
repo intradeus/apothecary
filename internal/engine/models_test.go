@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/event"
 	"apothecary/internal/modelcheck"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runinput"
 )
 
 const modelFlowDoc = `name: models

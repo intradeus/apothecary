@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"apothecary/internal/event"
+	"apothecary/internal/run/event"
 )
 
 // Golden event logs pin what every scenario test appends, so a refactor that

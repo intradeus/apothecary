@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/event"
+	"apothecary/internal/run/event"
 )
 
 // TestReducePingsWithdrawsOnTerminal: a ping still open when its run reaches a

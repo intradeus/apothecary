@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/flow/reviewfile"
@@ -22,6 +21,7 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 // StagePhase is where the interpreter stands relative to the stage at pos.

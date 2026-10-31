@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/event"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/run/event"
 	"apothecary/internal/runports"
 )
 

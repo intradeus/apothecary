@@ -9,8 +9,8 @@ package engine
 // engine never sees them.
 
 import (
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/run/event"
 )
 
 // skipStage records a stage that did not run: started and completed as

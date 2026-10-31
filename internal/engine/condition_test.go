@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/event"
 	"apothecary/internal/run"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runinput"
 )
 
 func skipped(evs []event.Event, stage string) (bool, string) {

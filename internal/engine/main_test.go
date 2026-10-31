@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"apothecary/internal/event"
-	"apothecary/internal/runcore"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runcore"
 )
 
 // The fold invariant: at every point the run loop settles (the top of an

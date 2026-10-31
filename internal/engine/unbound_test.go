@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/event"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runinput"
 )
 
 // A flow that leaves its model to the project: the document is fine, the

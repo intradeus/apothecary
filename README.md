@@ -474,7 +474,7 @@ cd cpui && npm run dev             # UI dev server (proxies /api)
 The backend is a modular monolith. `internal/engine` runs a run: its
 lifecycle and the interpreter's loop, whose decisions — the state a run is
 in, the fold that rebuilds it from the run's events, where a stage routes —
-live in `internal/runcore`, pure and tested without a harness. Each other
+live in `internal/run/runcore`, pure and tested without a harness. Each other
 concern is its own package behind an interface it declares (`mrs`,
 `envstate`, `wsinfo`, `envcheck`, `egress`, `ask`, `runports`, `services`,
 …), never importing the engine; `cmd/apothecaryd/wire.go` builds and wires

@@ -3,8 +3,8 @@ package run
 import (
 	"time"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow/reviewfile"
+	"apothecary/internal/run/event"
 )
 
 // PingView is the projected request/response pair (PLAN4 M15): one row per

@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/event"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 // Service answers merge-request questions through each project's resolved

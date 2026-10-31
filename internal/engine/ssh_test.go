@@ -15,10 +15,10 @@ import (
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/event"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runinput"
 	"apothecary/internal/sshdoor"
 	"apothecary/internal/wsinfo"
 )

@@ -14,7 +14,7 @@ import (
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/resolution"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/runinput"
 	"apothecary/internal/tickets"
 )
 

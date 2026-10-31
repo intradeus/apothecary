@@ -7,10 +7,10 @@ import (
 	"slices"
 
 	"apothecary/internal/browsermcp"
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/resolution"
+	"apothecary/internal/run/event"
 )
 
 // MCP servers (FLOWLANG §1 mcp_servers): the tools an agent may call beyond

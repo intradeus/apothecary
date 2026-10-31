@@ -15,11 +15,11 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/event"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 // Config is how discovered ports are treated.

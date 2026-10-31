@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 // Crash recovery regressions: each test seeds the log a crash would leave

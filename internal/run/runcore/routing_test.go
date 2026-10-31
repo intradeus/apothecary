@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/run/event"
 )
 
 const routingFlowDoc = `name: routing

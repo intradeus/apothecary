@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/signalspec"
 	"apothecary/internal/mrs"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 // observeFlowDoc: the main chain opens the merge request; one watcher per

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/event"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 	"apothecary/internal/sidecar"
 	"apothecary/internal/wsinfo"
 )

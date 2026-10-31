@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
-	"apothecary/internal/runcore"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runcore"
 )
 
 // A TAKE-OVER: a human holds the running agent's session. The whisper

@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/builtin"
 	"apothecary/internal/flow/reviewfile"
@@ -20,7 +19,8 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runinput"
 )
 
 const reviewerFlowDoc = `name: rev

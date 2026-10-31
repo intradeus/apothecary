@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"apothecary/internal/event"
+	"apothecary/internal/run/event"
 )
 
 // appendAll pushes payloads through a MemStore so events carry real seq/ts.

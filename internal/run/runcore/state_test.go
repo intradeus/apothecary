@@ -6,8 +6,8 @@ package runcore
 import (
 	"testing"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/run/event"
 )
 
 const parkFlowDoc = `name: park

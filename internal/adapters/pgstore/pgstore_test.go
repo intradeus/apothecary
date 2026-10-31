@@ -11,10 +11,10 @@ import (
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/confstore"
-	"apothecary/internal/event"
 	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 // open connects to TEST_POSTGRES_DSN or skips. Each test gets a clean slate

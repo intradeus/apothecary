@@ -13,8 +13,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"apothecary/internal/event"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 // freshSchemaDSN returns TEST_POSTGRES_DSN pointed at a new, empty schema

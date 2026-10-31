@@ -99,7 +99,7 @@ type askArgs struct {
 	Question string `json:"question"`
 	Context  string `json:"context"`
 	// Fields are the form, passed to the engine as given — it validates
-	// them (internal/event.Field is the shape).
+	// them (internal/run/event.Field is the shape).
 	Fields    []json.RawMessage `json:"fields"`
 	Artifact  string            `json:"artifact"`  // legacy single ref
 	Artifacts []string          `json:"artifacts"` // multi refs

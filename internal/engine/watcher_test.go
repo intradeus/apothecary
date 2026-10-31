@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/event"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 // mergeGit is enough of git for the watchers: a commit graph with

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/runinput"
 )
 
 // A user-chosen branch (fix/task-123-…) must survive a restart verbatim —

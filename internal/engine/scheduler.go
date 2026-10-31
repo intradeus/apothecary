@@ -9,9 +9,9 @@ package engine
 import (
 	"sync"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
-	"apothecary/internal/runcore"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runcore"
 )
 
 // holdsRegistry is the engine's per-run memory of the last tick's holds.

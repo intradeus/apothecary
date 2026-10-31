@@ -8,8 +8,8 @@ import (
 	"apothecary/internal/account/auth"
 	"apothecary/internal/ask"
 	"apothecary/internal/engine"
-	"apothecary/internal/event"
 	"apothecary/internal/mrs"
+	"apothecary/internal/run/event"
 	"apothecary/internal/sidecar"
 	"apothecary/internal/wsinfo"
 )

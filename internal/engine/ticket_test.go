@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/runinput"
 	"apothecary/internal/wsname"
 )
 

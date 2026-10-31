@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/run/event"
 )
 
 const idleFlow = `name: idle

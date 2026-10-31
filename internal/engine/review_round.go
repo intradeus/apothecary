@@ -15,14 +15,14 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
-	"apothecary/internal/runcore"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runcore"
 )
 
 // at prefixes what is wrong with the file it is wrong in, once.

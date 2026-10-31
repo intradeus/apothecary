@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"apothecary/internal/bootstrap"
-	"apothecary/internal/event"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/run/event"
 	"apothecary/internal/wsname"
 )
 

@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/event"
 	"apothecary/internal/ports/agentport"
+	"apothecary/internal/run/event"
 )
 
 // --- inbox ----------------------------------------------------------------------

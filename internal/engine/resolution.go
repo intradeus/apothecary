@@ -9,7 +9,7 @@ import (
 	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/runinput"
 )
 
 // preflightTicket is the per-TICKET half of preflight: a tracker action

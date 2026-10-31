@@ -19,10 +19,10 @@ import (
 	"regexp"
 	"strings"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/run/event"
 )
 
 // What one attachments port may carry: enough for a page's worth of

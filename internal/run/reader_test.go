@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/event"
+	"apothecary/internal/run/event"
 )
 
 func TestReaderViewAndAll(t *testing.T) {

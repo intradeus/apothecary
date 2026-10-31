@@ -7,7 +7,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/runinput"
 )
 
 // lastPrompt returns the prompt of the most recent agent call.

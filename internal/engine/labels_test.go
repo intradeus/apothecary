@@ -13,7 +13,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/runinput"
 )
 
 const labelsFlowDoc = `name: lb

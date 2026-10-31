@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"apothecary/internal/bootstrap"
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/run/event"
 )
 
 // answerReply is what a paused stage resumes its agent with: the questions it

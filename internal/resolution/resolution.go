@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/flow/agentspec"
@@ -23,6 +22,7 @@ import (
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 // Resolution is everything a run needs from its project's configuration

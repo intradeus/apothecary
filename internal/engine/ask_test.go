@@ -13,7 +13,7 @@ import (
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/runinput"
 )
 
 // The Ask pane (FLOWLANG §1 ask): a read-only session beside the run that

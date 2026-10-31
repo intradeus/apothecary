@@ -13,11 +13,11 @@ import (
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
-	"apothecary/internal/event"
 	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/kinds"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/resolve"
+	"apothecary/internal/run/event"
 )
 
 // v1FlowDoc is this suite's user-created flow (the product ships none):

@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"apothecary/internal/confstore"
-	"apothecary/internal/event"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/run/event"
 	"apothecary/internal/skills"
 )
 

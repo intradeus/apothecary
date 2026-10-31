@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/signalspec"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/run/event"
 )
 
 // The scheduler's decisions, pure (FLOWLANG §1). Every wait point — a phase's

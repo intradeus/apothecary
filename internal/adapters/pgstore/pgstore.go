@@ -23,8 +23,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"apothecary/internal/event"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 //go:embed migrations/*.sql

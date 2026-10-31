@@ -16,7 +16,6 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	askstore "apothecary/internal/ask"
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/portrelay"
@@ -27,7 +26,8 @@ import (
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runinput"
 	"apothecary/internal/runports"
 	"apothecary/internal/services"
 	"apothecary/internal/wsinfo"

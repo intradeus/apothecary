@@ -13,11 +13,11 @@ import (
 	"io/fs"
 	"strings"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/run/event"
 )
 
 // structuredFile is one file a stage reads or writes, and the schemas it

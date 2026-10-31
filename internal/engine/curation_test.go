@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/flow/reviewfile"
@@ -22,8 +21,9 @@ import (
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
-	"apothecary/internal/runcore"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runcore"
+	"apothecary/internal/run/runinput"
 )
 
 // curatedReviewerDoc is the reviewer template's shape, small: poll the

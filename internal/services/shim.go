@@ -23,10 +23,10 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/event"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/resolution"
+	"apothecary/internal/run/event"
 	"apothecary/internal/sidecar"
 )
 

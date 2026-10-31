@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"apothecary/internal/event"
+	"apothecary/internal/run/event"
 )
 
 const (

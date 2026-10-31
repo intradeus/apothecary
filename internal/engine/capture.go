@@ -15,11 +15,11 @@ import (
 	"fmt"
 	"path"
 
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/run/event"
 )
 
 // capture is the one funnel: scrub → store → snapshot_captured. Both failure

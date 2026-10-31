@@ -21,7 +21,7 @@ import (
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/runinput"
 	"apothecary/internal/schedule"
 	"apothecary/internal/tickets"
 )

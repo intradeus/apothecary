@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"apothecary/internal/event"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runinput"
 )
 
 type recordingSink struct {

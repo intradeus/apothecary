@@ -16,7 +16,6 @@ import (
 	"apothecary/internal/account/auth"
 	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
-	"apothecary/internal/event"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/flow/reviewfile"
@@ -26,7 +25,8 @@ import (
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/event"
+	"apothecary/internal/run/runinput"
 	"apothecary/internal/skills"
 	"apothecary/internal/skills/skillstore"
 )

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/runinput"
+	"apothecary/internal/run/runinput"
 )
 
 // staticBindings is a FlowBindings that answers the same values for every
