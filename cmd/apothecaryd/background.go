@@ -10,9 +10,9 @@ import (
 	"apothecary/internal/tickets"
 )
 
-// background starts the daemon's loops — reaper, login keeper, workspace
-// reconciler, resource sampler, egress audit ingest, automations — all on
-// ctx, which serve cancels before it shuts the engine down.
+// background starts the daemon's loops — reaper, login keeper, outcomes,
+// workspace reconciler, resource sampler, egress audit ingest, automations —
+// all on ctx, which serve cancels before it shuts the engine down.
 func (a *app) background(ctx context.Context) {
 	go func() {
 		t := time.NewTicker(time.Hour)
@@ -85,6 +85,9 @@ func (a *app) background(ctx context.Context) {
 	// The login keeper: renews every provider login before it expires, idle
 	// or not, and pushes each renewal into the live workspaces using it.
 	go a.keeper.Run(ctx, logins.DefaultEvery)
+
+	// Outcomes override what a run is doing, which its idle tick cannot see.
+	go a.e.RunOutcomes(ctx)
 
 	// Live-workspace reconciler: refreshes each run's real container status
 	// (running/stopped/removed) so the workspace badge reflects reality, not

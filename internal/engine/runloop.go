@@ -291,24 +291,20 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 }
 
 // exit handles abnormal loop termination: abort marks the run failed,
-// pause parks it (non-terminal, skipped by Recover until play), shutdown
-// leaves it for Recover, anything else is logged and left non-terminal
-// (recovered by replay on next boot).
+// pause parks it (non-terminal, skipped by Recover until play), an outcome
+// takes the cursor, shutdown leaves it for Recover, anything else is logged
+// and left non-terminal (recovered by replay on next boot).
 func (x *exec) exit(cause error) {
 	defer x.checkFold()
 	cause = x.leave(cause)
+	var fired outcomeFired
 	switch {
+	case errors.As(cause, &fired):
+		x.takeCursor(fired)
 	case errors.Is(cause, errAborted):
 		// A deliberate stop is abandonment, not failure (PLAN5 M24) — the
-		// same terminal the flow's own `abort` edge reaches. A take-over in
-		// force ends with it, on the record.
-		for id, h := range x.rs.Holds {
-			var spent event.HoldSpend
-			spent.Add(h.Banked)
-			spent.Add(x.cutLeg)
-			_ = x.append(&event.HoldReleased{StageID: id, Iteration: x.rs.Iters[id], UserID: h.Taken.UserID,
-				Reason: event.HoldEndedWithStage, DurationMS: max(x.e.clock().Sub(h.TakenAt).Milliseconds(), 0), HoldSpend: spent})
-		}
+		// same terminal the flow's own `abort` edge reaches.
+		x.endHolds()
 		_ = x.append(&event.RunAbandoned{StalledAt: x.rs.View.CurrentStage, Reason: "aborted by user"})
 	case errors.Is(cause, errPaused):
 		_ = x.append(&event.RunPaused{StageID: x.rs.View.CurrentStage, Reason: event.PauseUser})
@@ -321,6 +317,17 @@ func (x *exec) exit(cause error) {
 	default:
 		x.e.log.Error("run loop error; run left non-terminal for recovery",
 			"run", x.rs.RunID, "err", cause)
+	}
+}
+
+// endHolds ends the take-overs in force, on the record: their stage is over.
+func (x *exec) endHolds() {
+	for id, h := range x.rs.Holds {
+		var spent event.HoldSpend
+		spent.Add(h.Banked)
+		spent.Add(x.cutLeg)
+		_ = x.append(&event.HoldReleased{StageID: id, Iteration: x.rs.Iters[id], UserID: h.Taken.UserID,
+			Reason: event.HoldEndedWithStage, DurationMS: max(x.e.clock().Sub(h.TakenAt).Milliseconds(), 0), HoldSpend: spent})
 	}
 }
 

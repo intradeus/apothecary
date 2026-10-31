@@ -205,6 +205,9 @@ type runHandle struct {
 	// leaving (under Engine.mu) is the loop past reading its cancel cause: a
 	// cancel can no longer change how it exits (cancelLoop).
 	leaving bool
+	// relaunch: the loop left for an outcome's chain, and the next one runs
+	// it (finish). Set and read on the loop's own goroutine.
+	relaunch bool
 	// idle is set while the run sits between phases with its merge requests
 	// open (PLAN6): the loop only polls the repository host, so it does not
 	// hold a concurrency slot.
@@ -2123,6 +2126,9 @@ func (e *Engine) finish(runID string, h *runHandle) {
 		if p.RunID == runID {
 			delete(e.pings, id)
 		}
+	}
+	if h.relaunch {
+		e.queue = append(e.queue, runID)
 	}
 	e.scheduleLocked(lim) // a slot freed; admit the next queued run
 	e.mu.Unlock()

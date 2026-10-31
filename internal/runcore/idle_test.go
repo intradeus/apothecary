@@ -1,6 +1,7 @@
 package runcore
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,22 @@ watchers:
     on: { signal: mr_head_moved, start: manual }
     stages:
       - { id: note, type: command, run: "true", on_success: end }
+outcomes:
+  - { id: shipped, on: mr_merged, then: done }
+`
+
+const planOutcomeFlow = `name: outcome
+version: 5
+parameters: { harness: fake, model: fake/model }
+main:
+  - { id: build, type: command, run: "true" }
+  - { id: act, type: action, action: mr_merge, run_if: run.subject }
+  - { id: hold, type: wait, for: mr_merged, on_fail: end }
+watchers:
+  - id: conflicts
+    on: mr_conflicts
+    stages:
+      - { id: fix, type: command, run: "true" }
 outcomes:
   - { id: shipped, on: mr_merged, then: done }
 `
@@ -186,6 +203,58 @@ func TestPlanIdleAnOutcomeTakesTheCursor(t *testing.T) {
 	rs.Phase, rs.Pos, rs.Parked = flow.MainPhase, rs.Flow.Index("hold"), &ParkPoint{Stage: "hold"}
 	if plan := rs.PlanIdle(merged, now); !sameKinds(kinds(plan), []IdleActionKind{IdleResume}) {
 		t.Fatalf("actions = %v, want the wait settled first", kinds(plan))
+	}
+}
+
+// What may stop a run mid-chain, and what an outcome leaves alone.
+func TestPlanOutcome(t *testing.T) {
+	now := time.Unix(1000, 0)
+	merged := func(rs *State) []MRObservation {
+		return []MRObservation{{MR: &rs.MRs[0], Status: repoport.MRStatus{State: repoport.MRMerged}}}
+	}
+	tests := []struct {
+		name    string
+		stage   string
+		phase   string
+		dormant bool
+		set     func(*State)
+		obs     func(*State) []MRObservation
+		fires   bool
+	}{
+		{name: "a running command", stage: "build", phase: flow.MainPhase, obs: merged, fires: true},
+		{name: "no fate yet", stage: "build", phase: flow.MainPhase, obs: func(rs *State) []MRObservation { return open(rs, repoport.MergeClean) }},
+		{name: "a take-over", stage: "build", phase: flow.MainPhase, obs: merged, set: func(rs *State) { rs.Holds["build"] = &HeldState{} }},
+		{name: "the chain's own merge", stage: "fix", phase: "conflicts", obs: merged, set: func(rs *State) { rs.ChainMerged = true }},
+		{name: "the run's end under way", stage: "fix", phase: "shipped", obs: merged},
+		{name: "already fired", stage: "build", phase: flow.MainPhase, obs: merged, set: func(rs *State) { rs.TriggerSeen[TriggerKey("shipped", "", "mr_merged")] = true }},
+		{name: "a live action", stage: "act", phase: flow.MainPhase, obs: merged},
+		{name: "a dormant action", stage: "act", phase: flow.MainPhase, obs: merged, dormant: true, fires: true},
+		{name: "a wait it settles", stage: "hold", phase: flow.MainPhase, obs: merged, set: func(rs *State) { rs.Parked = &ParkPoint{Stage: "hold"} }},
+		{name: "done", stage: "build", phase: flow.MainPhase, obs: merged, set: func(rs *State) { rs.Done = true }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rs := NewState(mustFlow(t, planOutcomeFlow))
+			rs.MRs = []MRRecord{{Repo: "repo", Branch: "b", Ref: repoport.MRRef{URL: "http://mr"}}}
+			rs.Phase, rs.Pos, rs.Ph = tt.phase, rs.Flow.Index(tt.stage), PhIn
+			if tt.set != nil {
+				tt.set(rs)
+			}
+			got := rs.PlanOutcome(tt.obs(rs), now, tt.dormant)
+			if (got != nil) != tt.fires {
+				t.Fatalf("got %+v, want fires = %v", got, tt.fires)
+			}
+			if got != nil && got.Phase.ID != "shipped" {
+				t.Fatalf("got %+v", got)
+			}
+		})
+	}
+	// An outcome that asks first waits for the hub, where it can.
+	rs := NewState(mustFlow(t, strings.Replace(planOutcomeFlow, "{ id: shipped, on: mr_merged, then: done }", "{ id: shipped, on: { signal: mr_merged, start: confirm }, then: done }", 1)))
+	rs.MRs = []MRRecord{{Repo: "repo", Branch: "b", Ref: repoport.MRRef{URL: "http://mr"}}}
+	rs.Phase, rs.Pos, rs.Ph = flow.MainPhase, rs.Flow.Index("build"), PhIn
+	if got := rs.PlanOutcome(merged(rs), now, false); got != nil {
+		t.Fatalf("a confirmed outcome fired: %+v", got)
 	}
 }
 

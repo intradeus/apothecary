@@ -333,6 +333,35 @@ func (rs *State) PlanResume(obs []MRObservation, now time.Time) ResumePlan {
 	return ResumePlan{}
 }
 
+// PlanOutcome is the outcome that takes the cursor from a run the idle tick
+// does not reach: in a stage, or dormant with no loop. Nil when none does: a
+// take-over keeps it, a chain that merged the merge request itself goes on to
+// its end, a wait the signal settles goes first, and a live action stage
+// finishes, because what it calls cannot be taken back halfway. An outcome
+// that asks first (start: confirm) waits for the hub, where it can ask.
+func (rs *State) PlanOutcome(obs []MRObservation, now time.Time, dormant bool) *IdleAction {
+	if rs.Done || len(rs.Holds) > 0 || rs.ChainMerged || rs.PlanResume(obs, now).Kind != ResumeNone {
+		return nil
+	}
+	if ph := rs.Flow.Phase(rs.Phase); ph != nil && ph.IsOutcome() {
+		return nil // the run's end is under way
+	}
+	if !dormant && rs.Ph == PhIn && rs.Pos >= 0 && rs.Pos < len(rs.Flow.Stages) && rs.Flow.Stages[rs.Pos].Type == flow.StageAction {
+		return nil
+	}
+	for i := range rs.Flow.Phases {
+		ph := &rs.Flow.Phases[i]
+		if !ph.IsOutcome() || ph.On.Start != flow.StartAuto {
+			continue
+		}
+		held, ok := rs.outcomeHolds(ph.On.Signal, obs, now)
+		if ok && !rs.TriggerSeen[TriggerKey(ph.ID, held.subject, held.key)] {
+			return &IdleAction{Kind: IdleBegin, Phase: ph, Subject: held.subject, Key: held.key}
+		}
+	}
+	return nil
+}
+
 // IdleActionKind is one thing an idle tick does.
 type IdleActionKind int
 
@@ -461,7 +490,7 @@ func (rs *State) PlanIdle(obs []MRObservation, now time.Time) IdlePlan {
 	// (FLOWLANG §1).
 	for i := range rs.Flow.Phases {
 		ph := &rs.Flow.Phases[i]
-		if !ph.IsOutcome() {
+		if !ph.IsOutcome() || parked && rs.ChainMerged {
 			continue
 		}
 		held, ok := rs.outcomeHolds(ph.On.Signal, obs, now)

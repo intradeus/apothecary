@@ -615,6 +615,7 @@ export function describe(e: RunEvent): Described {
 					};
 		case 'run_unpaused':
 			if (p.reason === 'hold') return { text: t('run.event.pickedUpHold'), tone: 'info' };
+			if (p.reason === 'outcome') return { text: t('run.event.outcomeTook'), tone: 'info' };
 			return p.reason === 'answered'
 				? { text: t('run.event.pickedUp'), tone: 'info' }
 				: { text: t('run.event.play'), tone: 'info' };

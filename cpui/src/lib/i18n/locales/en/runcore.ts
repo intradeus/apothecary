@@ -437,6 +437,7 @@ export default {
 	'run.event.messages_one': '{count} message',
 	'run.event.messages_other': '{count} messages',
 	'run.event.pickedUpHold': 'picked back up — your word landed',
+	'run.event.outcomeTook': 'the merge request decided: the outcome took over',
 	'run.event.stageFailed': '{stage} failed: {reason}',
 	'run.event.actionStarted': '{stage}: action {action} started',
 	'run.event.thenDepth': '(then #{depth})',

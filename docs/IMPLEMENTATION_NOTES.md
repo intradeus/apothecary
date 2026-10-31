@@ -5340,12 +5340,20 @@ v4 rule that a gate or a wait frees the run for watchers
   `ParkPoint{Stage, Ping, Since}` is all a park adds. A log where a watcher ran
   during a wait does not replay to a sane cursor; nothing is released, so no
   upgrader.
-- **Outcomes may take it.** An outcome always ends the run, so it can take the
-  cursor from a parked chain, which then never resumes. Otherwise a merged
-  merge request could not finish a run until someone answered a gate about it.
-  A wait point the same signal settles goes first (`auto_approve`, a `wait` on
-  it). A chain that is moving is never interrupted: the scheduler only runs
-  between chains.
+- **Outcomes override everything but a take-over.** An outcome is terminal, so
+  it takes the cursor from a parked chain, a running stage, and a run with no
+  loop (an agent's question, the thread checklist, the debug leaf, a pause).
+  Nothing polled those, so `Engine.RunOutcomes` does, at the signal cadence, for
+  the runs the idle tick cannot reach; `runcore.State.PlanOutcome` says what may
+  be overridden. A running loop stops as a pause stops it (`outcomeFired` is the
+  cancel cause), `exit` records the outcome's `phase_started`, and a fresh loop
+  picks it up through recovery, so no second path runs a chain. A dormant run
+  gets the same event plus `run_unpaused` (reason `outcome`) under `wakeMu`.
+  `ChainMerged` keeps a chain that merged by itself from being cut off at
+  random, and a live action stage finishes. A take-over landing between a
+  pass's read and its cancel loses the race and ends on the record, as with an
+  abort. An outcome that reads `run.ci.failure` gets no report when it starts
+  on a dormant run.
 - **Confirmations stay open at the hub.** A question is not a chain: blocking
   on one would let an unanswered CI question hold up every automatic review
   round. So an answer can still reach the loop during another chain's command,
@@ -5358,6 +5366,7 @@ v4 rule that a gate or a wait frees the run for watchers
   loses it, and the question reopens with the run.
 - **Left as it is:** R3, the second `mr_merged` a crash can record; only the
   timeline reads it. No routing events for now.
-- **Known cost:** the thread checklist of `load_review_comments` is not a
-  park. It stops the whole run (`errWaitingOnHuman`), as it always did, so a
-  merge does not end a run until someone answers it.
+- **Gates are answered by people.** `auto_approve` and `auto_reject` are gone
+  from the grammar, the engine and the flow editor. No built-in flow used them,
+  and an outcome covers a merge or a close. What went with them: an approval on
+  the repository host can no longer answer a gate.

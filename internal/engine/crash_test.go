@@ -278,6 +278,48 @@ outcomes:
       - { id: wrap, type: command, run: "./wrap.sh" }
 `
 
+// crashOverrideDoc: a merge stops the chain, whose agent is on a question.
+const crashOverrideDoc = `name: crash
+version: 5
+parameters: { harness: fake, model: fake/model }
+agents:
+  - name: redactor
+    prompt: describe it
+    outputs:
+      - { name: mr, type: file }
+  - name: asker
+    prompt: ask something
+main:
+  - { id: redact, type: agent, harness: $harness, model: $model, agent: redactor, output: { mr: { to: artifacts/mr.md, type: file } } }
+  - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }
+watchers:
+  - id: curious
+    on: mr_head_moved
+    stages:
+      - { id: asking, type: agent, harness: $harness, model: $model, agent: asker }
+      - { id: never, type: command, run: "./never.sh" }
+outcomes:
+  - id: merged
+    on: mr_merged
+    then: done
+    stages:
+      - { id: wrap, type: command, run: "./wrap.sh" }
+`
+
+func overrideWorld(h *harness) {
+	scriptAgents(h, func(env envport.EnvID, agent string) {
+		if agent == "redactor" {
+			h.envp.WriteFile(context.Background(), env, "artifacts/mr.md", []byte("# Crash\n"), 0o644) //nolint:errcheck
+			return
+		}
+		ids, _ := h.store.RunIDs(context.Background())
+		evs, _ := h.store.Events(context.Background(), ids[0], 0)
+		if !logHas(evs, func(*event.PingRaised) bool { return true }) {
+			_, _ = h.live.Load().RaisePing(ids[0], event.PingClarification, "which one?", "", nil, nil)
+		}
+	})
+}
+
 const crashReviewDoc = `name: crash
 version: 5
 parameters: { harness: fake, model: fake/model }
@@ -410,6 +452,18 @@ func crashScenarios() []crashScenario {
 			drive: func(h *harness, _ string, evs []event.Event) {
 				if logHas(evs, func(p *event.PhaseParked) bool { return p.StageID == "final" }) {
 					h.repoHost.SetMRState(1, repoport.MRMerged)
+				}
+			},
+		},
+		{
+			name: "override", doc: crashOverrideDoc, world: overrideWorld, want: run.Completed,
+			drive: func(h *harness, _ string, evs []event.Event) {
+				switch {
+				case logHas(evs, func(*event.PingRaised) bool { return true }):
+					h.repoHost.SetMRState(1, repoport.MRMerged)
+					_ = h.live.Load().OutcomesOnce(context.Background())
+				case mrOpen(evs):
+					h.repoHost.SetHead(1, "h1")
 				}
 			},
 		},

@@ -184,6 +184,9 @@ type State struct {
 	// Unpark), nil when it is not stopped at one. The chain keeps the cursor
 	// and State's fields go on being its own.
 	Parked *ParkPoint
+	// ChainMerged: this chain's mr_merge merged its merge request. It goes
+	// on to its end: the merge is its own doing, not news from outside.
+	ChainMerged bool
 	// AnyStarted: some stage has started (a stage_started is on the log).
 	AnyStarted bool
 	// Elided marks stages whose last start was a skip (a condition that did
@@ -370,7 +373,7 @@ func (rs *State) ForgetCurated(fl *flow.Flow, stageID string) {
 func (rs *State) StartPhase(p *event.PhaseStarted, fl *flow.Flow) {
 	// One cursor: a start while a chain is parked is an outcome taking it,
 	// and that chain never resumes.
-	rs.Parked = nil
+	rs.Parked, rs.ChainMerged = nil, false
 	rs.Phase, rs.Subject, rs.PhaseTip, rs.PhaseHead, rs.Idle = p.Phase, p.Subject, p.Tip, p.Tip, false
 	rs.CI = p.CI
 	rs.Round, rs.RoundScope, rs.RoundLoaded, rs.SelectPing = nil, "", false, nil
@@ -631,6 +634,8 @@ func (rs *State) Apply(ev *event.Event) {
 		rs.Park(p.StageID, p.PingID, since)
 	case *event.PhaseResumed:
 		rs.Unpark()
+	case *event.MRMerged:
+		rs.ChainMerged = true
 	case *event.BranchPushed:
 		rs.NotePush(p.Repo, p.Branch, p.Tip)
 	case *event.ReviewCommentsLoaded:

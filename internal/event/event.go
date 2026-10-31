@@ -895,6 +895,8 @@ const (
 	UnpauseAnswered = "answered"
 	// UnpauseHold: the holder of a parked take-over spoke, or released it.
 	UnpauseHold = "hold"
+	// UnpauseOutcome: an outcome took over a run with no loop.
+	UnpauseOutcome = "outcome"
 )
 
 type EnvDestroyed struct {
