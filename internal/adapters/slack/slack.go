@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/channels"
 	"apothecary/internal/ports/notifyport"
+	"apothecary/internal/project/channels"
 )
 
 type Config struct {

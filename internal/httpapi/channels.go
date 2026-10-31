@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"apothecary/internal/account/auth"
-	"apothecary/internal/channels"
 	"apothecary/internal/platform/secrets"
+	"apothecary/internal/project/channels"
 )
 
 // Notification channels: a user's Matrix/Slack/Discord destinations.

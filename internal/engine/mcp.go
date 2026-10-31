@@ -9,7 +9,7 @@ import (
 	"apothecary/internal/browsermcp"
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/agentport"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 	"apothecary/internal/run/event"
 )
 

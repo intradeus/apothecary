@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/confstore"
-	"apothecary/internal/kinds"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/trackerport"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/confstore"
+	"apothecary/internal/project/kinds"
+	"apothecary/internal/project/resolution"
 )
 
 const testFlowDoc = `name: v1

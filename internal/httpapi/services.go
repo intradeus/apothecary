@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 	"apothecary/internal/workspace/services"
 	"apothecary/internal/workspace/wsinfo"
 )

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 )
 
 // The failure channel carries raw command output into events, prompts, gates

@@ -13,9 +13,9 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"apothecary/internal/confstore"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/project/confstore"
 	"apothecary/internal/run/event"
 	"apothecary/internal/skills"
 )

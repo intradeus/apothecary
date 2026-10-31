@@ -11,7 +11,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 )

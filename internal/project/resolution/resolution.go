@@ -28,7 +28,7 @@ import (
 // Resolution is everything a run needs from its project's configuration
 // (DESIGN2 §6.1), produced per run start by the Resolver. Fields are
 // port-typed on purpose: the engine never sees kinds — the resolver
-// (internal/resolve) flattens harness capabilities into plain funcs, so the
+// (internal/project/resolve) flattens harness capabilities into plain funcs, so the
 // scenario tests keep running on bare fakes.
 type Resolution struct {
 	ProjectID   string

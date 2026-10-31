@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/workspace/wsinfo"

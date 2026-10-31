@@ -10,14 +10,14 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/confstore"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
+	"apothecary/internal/project/confstore"
+	"apothecary/internal/project/tickets"
 	"apothecary/internal/run"
 	"apothecary/internal/run/runinput"
-	"apothecary/internal/tickets"
 )
 
 // fakeEngine records what the watcher asked for and answers RunsOfTicket

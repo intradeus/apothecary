@@ -18,7 +18,7 @@ import (
 	"slices"
 
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/tickets"
+	"apothecary/internal/project/tickets"
 )
 
 // Param is one query parameter an endpoint reads.

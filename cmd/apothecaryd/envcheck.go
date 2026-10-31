@@ -11,9 +11,9 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"apothecary/internal/adapters/pgstore"
-	"apothecary/internal/confstore"
 	"apothecary/internal/platform/config"
-	"apothecary/internal/resolve"
+	"apothecary/internal/project/confstore"
+	"apothecary/internal/project/resolve"
 	"apothecary/internal/workspace/envcheck"
 )
 

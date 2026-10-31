@@ -22,14 +22,14 @@ import (
 	"sync"
 
 	"apothecary/internal/account/providers"
-	"apothecary/internal/confstore"
 	"apothecary/internal/flow/agentspec"
-	"apothecary/internal/kinds"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/confstore"
+	"apothecary/internal/project/kinds"
+	"apothecary/internal/project/resolution"
 	"apothecary/internal/workspace/wsimage"
 )
 

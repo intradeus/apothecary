@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"apothecary/internal/account/logins"
-	"apothecary/internal/automation"
-	"apothecary/internal/confstore"
-	"apothecary/internal/tickets"
+	"apothecary/internal/project/automation"
+	"apothecary/internal/project/confstore"
+	"apothecary/internal/project/tickets"
 )
 
 // background starts the daemon's loops — reaper, login keeper, outcomes,

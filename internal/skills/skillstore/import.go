@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"apothecary/internal/confstore"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/project/confstore"
 	"apothecary/internal/skills"
 )
 

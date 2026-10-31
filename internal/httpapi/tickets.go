@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
-	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/trackerport"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/confstore"
+	"apothecary/internal/project/resolution"
+	"apothecary/internal/project/tickets"
 	"apothecary/internal/run/runinput"
-	"apothecary/internal/tickets"
 )
 
 // ticketBody is the create/update DTO. Branch is the ticket's BASE branch;

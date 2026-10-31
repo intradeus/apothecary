@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/kinds"
+	"apothecary/internal/project/kinds"
 	"apothecary/workspace"
 )
 
@@ -114,7 +114,7 @@ func TestToolsDockerfilePinsMatchKinds(t *testing.T) {
 		"OMP_VERSION":       kinds.OmpVersion,
 	} {
 		if got := pins[arg]; got != want {
-			t.Errorf("workspace/images/tools/Dockerfile ARG %s=%q, internal/kinds pins %q", arg, got, want)
+			t.Errorf("workspace/images/tools/Dockerfile ARG %s=%q, internal/project/kinds pins %q", arg, got, want)
 		}
 	}
 	if _, ok := pins["CODE_SERVER_VERSION"]; !ok {

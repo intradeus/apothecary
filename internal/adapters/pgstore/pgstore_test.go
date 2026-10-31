@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
-	"apothecary/internal/confstore"
 	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/platform/filestore"
+	"apothecary/internal/project/confstore"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 )

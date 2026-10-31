@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"apothecary/internal/account/providers"
-	"apothecary/internal/confstore"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/trackerport"
+	"apothecary/internal/project/confstore"
 	"apothecary/internal/run/event"
 )
 

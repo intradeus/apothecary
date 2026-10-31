@@ -12,7 +12,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 )
 
 const fixtureProject = "p1"

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 )
 
 // Redactor scrubs the secrets the engine itself injected into a workspace out

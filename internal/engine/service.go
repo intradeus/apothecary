@@ -21,7 +21,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runcore"
 	"apothecary/internal/workspace/services"

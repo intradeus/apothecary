@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/confstore"
+	"apothecary/internal/project/confstore"
 	"apothecary/internal/skills"
 	"apothecary/internal/skills/skillstore"
 )

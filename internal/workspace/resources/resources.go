@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/workspace/wsname"
 )

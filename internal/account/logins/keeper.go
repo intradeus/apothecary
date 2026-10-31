@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"apothecary/internal/account/providers"
-	"apothecary/internal/confstore"
+	"apothecary/internal/project/confstore"
 )
 
 // Store is what the keeper reads and writes credentials through

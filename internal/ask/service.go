@@ -15,8 +15,8 @@ import (
 	"apothecary/internal/modelcheck"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/project/resolution"
 	"apothecary/internal/redact"
-	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 
 	"github.com/oklog/ulid/v2"

@@ -18,7 +18,7 @@
 #   TOOLS_HASH, seed.sh
 #
 # The version ARG defaults ARE the release pins: TestToolsDockerfilePinsMatchKinds
-# (internal/workspace/wsimage) holds internal/kinds' constants to them. TOOLS_HASH is the
+# (internal/workspace/wsimage) holds internal/project/kinds' constants to them. TOOLS_HASH is the
 # hash of this directory (`apothecaryd tools-hash`), baked in so a seeded
 # bundle can be compared with the one the engine expects. Keep it the LAST
 # build arg so a hash-only change reuses the download layers.

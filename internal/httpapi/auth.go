@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
-	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
+	"apothecary/internal/project/confstore"
 	"apothecary/internal/run"
 )
 

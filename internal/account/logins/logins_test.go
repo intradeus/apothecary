@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"apothecary/internal/account/providers"
-	"apothecary/internal/confstore"
 	"apothecary/internal/platform/secrets"
+	"apothecary/internal/project/confstore"
 )
 
 func newStore(t *testing.T) *confstore.Service {

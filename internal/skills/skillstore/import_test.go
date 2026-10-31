@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/confstore"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/project/confstore"
 )
 
 // folderFetch scripts a remote folder: skill name → description, plus a

@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/channels"
-	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/flow/actionspec"
-	"apothecary/internal/kinds"
 	"apothecary/internal/platform/secrets"
-	"apothecary/internal/resolve"
+	"apothecary/internal/project/channels"
+	"apothecary/internal/project/confstore"
+	"apothecary/internal/project/kinds"
+	"apothecary/internal/project/resolve"
 	"apothecary/internal/run/event"
 )
 

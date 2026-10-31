@@ -14,7 +14,7 @@ import (
 	"apothecary/internal/flow/signalspec"
 	"apothecary/internal/mrs"
 	"apothecary/internal/ports/repoport"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 )

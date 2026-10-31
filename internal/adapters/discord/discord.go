@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/channels"
 	"apothecary/internal/ports/notifyport"
+	"apothecary/internal/project/channels"
 )
 
 // Discord's embed limits (title 256, description 4096 characters).

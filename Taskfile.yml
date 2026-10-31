@@ -294,7 +294,7 @@ tasks:
         dir="$(mktemp -d)"; trap 'rm -rf "$dir"; docker rm -f apo-omp-conformance >/dev/null 2>&1' EXIT
         docker create --name apo-omp-conformance apothecary/tools:dev >/dev/null
         docker cp apo-omp-conformance:/tools/gnu/. "$dir/gnu" >/dev/null
-        OMP_BIN="$dir/gnu/bin/omp" go test -tags ompconformance -count=1 -run TestOmpConformance -v ./internal/kinds/
+        OMP_BIN="$dir/gnu/bin/omp" go test -tags ompconformance -count=1 -run TestOmpConformance -v ./internal/project/kinds/
 
   lint:models:
     desc: 'Fail on a real model id anywhere in the tree — models live in a project’s flow binding, never in code, flows, tests or docs (a wire fingerprint that must name one carries `lint:models-ok`)'

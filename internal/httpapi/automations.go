@@ -3,13 +3,13 @@ package httpapi
 // Automations (flow v4): the ways a run begins without a person pressing
 // Start — a tracker query polled into tickets and runs, or a schedule for
 // one ticket. Rules of a project, validated by confstore the way a firing
-// would be; internal/automation does the firing from the daemon.
+// would be; internal/project/automation does the firing from the daemon.
 
 import (
 	"errors"
 	"net/http"
 
-	"apothecary/internal/confstore"
+	"apothecary/internal/project/confstore"
 )
 
 func (s *Server) listAutomations(w http.ResponseWriter, r *http.Request) {

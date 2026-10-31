@@ -7,7 +7,7 @@ import (
 
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/actionspec"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/runinput"
 )

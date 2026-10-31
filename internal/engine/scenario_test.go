@@ -23,7 +23,7 @@ import (
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runinput"

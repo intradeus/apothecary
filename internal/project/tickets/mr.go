@@ -13,8 +13,8 @@ import (
 	"fmt"
 	"strings"
 
-	"apothecary/internal/confstore"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/project/confstore"
 )
 
 // FindByKey is the project's ticket whose source key is key (compared

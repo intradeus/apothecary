@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"apothecary/internal/confstore"
+	"apothecary/internal/project/confstore"
 	"apothecary/internal/skills"
 )
 

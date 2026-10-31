@@ -19,9 +19,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"apothecary/internal/confstore"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/trackerport"
+	"apothecary/internal/project/confstore"
 )
 
 // Sources resolves a ticketsource integration id to its adapter. Implemented

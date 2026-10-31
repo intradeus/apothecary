@@ -18,8 +18,8 @@ import (
 	"sync"
 
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/project/resolution"
 	"apothecary/internal/redact"
-	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 )
 

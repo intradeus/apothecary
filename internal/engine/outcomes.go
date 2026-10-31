@@ -15,7 +15,7 @@ import (
 
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/repoport"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runcore"

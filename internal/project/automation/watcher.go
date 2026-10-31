@@ -17,13 +17,13 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/confstore"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/project/confstore"
+	"apothecary/internal/project/schedule"
+	"apothecary/internal/project/tickets"
 	"apothecary/internal/run"
 	"apothecary/internal/run/runinput"
-	"apothecary/internal/schedule"
-	"apothecary/internal/tickets"
 )
 
 // By is who an automation's runs say began them.

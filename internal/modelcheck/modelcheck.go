@@ -15,7 +15,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 )
 
 // Result is what checking a flow's models found.

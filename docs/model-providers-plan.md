@@ -44,7 +44,7 @@ and why, is in IMPLEMENTATION_NOTES ("Model providers, logins and the keeper").
 
 ## Layer 1 — provider registry and credentials
 
-`internal/kinds/providers.go` — one table:
+`internal/project/kinds/providers.go` — one table:
 
 | field | meaning |
 |---|---|

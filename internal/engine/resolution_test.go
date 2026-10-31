@@ -6,7 +6,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/ports/agentport"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 )
 
 // TestResolutionRunnerSelection covers the per-step-harness selection logic:

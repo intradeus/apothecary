@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/kinds"
+	"apothecary/internal/project/kinds"
 )
 
 const mrFlowYAML = `name: on-mr

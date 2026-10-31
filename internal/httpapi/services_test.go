@@ -10,7 +10,7 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/engine"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 	"apothecary/internal/run/event"
 	"apothecary/internal/workspace/services"
 )

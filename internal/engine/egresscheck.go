@@ -10,7 +10,7 @@ import (
 
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/resolution"
+	"apothecary/internal/project/resolution"
 )
 
 // Post-provisioning egress check: a freshly provisioned workspace proves it

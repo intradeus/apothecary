@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"apothecary/internal/flow"
-	"apothecary/internal/schedule"
+	"apothecary/internal/project/schedule"
 )
 
 const (

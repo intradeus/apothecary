@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/confstore"
 	"apothecary/internal/engine"
 	"apothecary/internal/ports/trackerport"
+	"apothecary/internal/project/confstore"
 	"apothecary/internal/run"
 )
 

@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/confstore"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/trackerport"
+	"apothecary/internal/project/confstore"
 )
 
 const testProject = "prj-1"

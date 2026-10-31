@@ -7,7 +7,7 @@ package kinds
 // the engine speaks them). Not part of `go test ./...`: it needs the omp
 // binary of the tools bundle.
 //
-//	OMP_BIN=/path/to/omp go test -tags ompconformance -run TestOmpConformance ./internal/kinds/
+//	OMP_BIN=/path/to/omp go test -tags ompconformance -run TestOmpConformance ./internal/project/kinds/
 //
 // The tools image carries it at /tools/gnu/bin/omp (glibc) and
 // /tools/musl/bin/omp.
