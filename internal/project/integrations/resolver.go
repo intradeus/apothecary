@@ -1,6 +1,9 @@
-// Package resolve implements resolution.Resolver (DESIGN2 §6.1): project id →
-// adapter set. It is the only place kinds and confstore meet the engine —
-// harness capabilities are flattened into the port-typed Resolution.
+// Package integrations turns a project's stored integrations into live
+// adapters. Its Resolver implements resolution.Resolver (DESIGN2 §6.1), project
+// id → adapter set, flattening harness capabilities into the port-typed
+// Resolution; it also tests an integration and asks one what it offers
+// (repositories, branches, models, tickets). It is the only place kinds and
+// confstore meet the engine.
 //
 // Provisioner instances are cached per (integration id, updated_at, template)
 // and refcounted by active resolutions: a config edit makes new resolutions
@@ -8,7 +11,7 @@
 // instance closes when its last run releases it. The repository host, harness
 // and provider adapters are stateless HTTP/exec wrappers and are simply
 // constructed per resolution.
-package resolve
+package integrations
 
 import (
 	"context"

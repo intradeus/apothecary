@@ -25,7 +25,7 @@ import (
 )
 
 // Sources resolves a ticketsource integration id to its adapter. Implemented
-// by resolve.Resolver; nil in a Factory means no tracker is wired and the
+// by integrations.Resolver; nil in a Factory means no tracker is wired and the
 // import paths report that instead of pretending.
 type Sources interface {
 	TicketSource(ctx context.Context, integrationID string) (trackerport.TicketSource, error)

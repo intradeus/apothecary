@@ -56,6 +56,7 @@ var rules = []rule{
 	{pkg: "internal/adapters/", importedOnlyBy: []string{"internal/project/kinds", "internal/adapters/", "cmd/"}},
 	{pkg: "internal/adapters/pgstore", importedOnlyBy: []string{"cmd/"}},
 	{pkg: "internal/engine", importedOnlyBy: []string{"cmd/", "internal/httpapi"}},
+	{pkg: "internal/project/integrations", importedOnlyBy: []string{"cmd/"}},
 	{pkg: "internal/run/runinput", mayImport: []string{"internal/skills"}},
 	{pkg: "internal/run/event", denyImport: outerLayers},
 	{pkg: "internal/run", denyImport: outerLayers},

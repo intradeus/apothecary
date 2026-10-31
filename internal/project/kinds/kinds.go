@@ -1,7 +1,7 @@
 // Package kinds is the adapter-kind registry (DESIGN2.md §4): every
 // integration kind declares a Descriptor (drives the generic CPUI form) and
 // constructs adapters from stored config+secrets. The engine itself stays
-// ports-only — the resolver (internal/project/resolve) is the sole consumer that
+// ports-only — the resolver (internal/project/integrations) is the sole consumer that
 // turns kinds into resolution.Resolution fields.
 package kinds
 

@@ -30,7 +30,7 @@ import (
 	"apothecary/internal/project/automation"
 	"apothecary/internal/project/channels"
 	"apothecary/internal/project/confstore"
-	"apothecary/internal/project/resolve"
+	"apothecary/internal/project/integrations"
 	"apothecary/internal/run"
 	"apothecary/internal/skills/skillstore"
 	"apothecary/internal/workspace/envcheck"
@@ -67,7 +67,7 @@ type app struct {
 	log         *slog.Logger
 	store       *pgstore.Store
 	conf        *confstore.Service
-	resolver    *resolve.Resolver
+	resolver    *integrations.Resolver
 	chreg       *channels.Registry
 	e           *engine.Engine
 	srv         *http.Server
@@ -144,7 +144,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 
 	// Egress filtering now lives in the per-project gateway the devcontainer
 	// provisioner brings up (internal/adapters/egressgw) — no engine-side proxy.
-	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort, boot.SandboxRuntime)
+	resolver := integrations.New(conf, reg, boot.RunsDir, enginePort, boot.SandboxRuntime)
 	closers = append(closers, func() { resolver.Close() })
 	// The keeper is the one party that redeems provider refresh tokens
 	// (docs/model-providers-plan.md): harness credentials are opened through

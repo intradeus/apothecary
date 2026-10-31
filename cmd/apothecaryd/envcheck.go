@@ -13,7 +13,7 @@ import (
 	"apothecary/internal/adapters/pgstore"
 	"apothecary/internal/platform/config"
 	"apothecary/internal/project/confstore"
-	"apothecary/internal/project/resolve"
+	"apothecary/internal/project/integrations"
 	"apothecary/internal/workspace/envcheck"
 )
 
@@ -59,7 +59,7 @@ func cmdEnvcheck(args []string) error {
 	if _, p, err := splitHostPort(boot.Listen); err == nil {
 		fmt.Sscanf(p, "%d", &enginePort)
 	}
-	resolver := resolve.New(conf, reg, boot.RunsDir, enginePort, boot.SandboxRuntime)
+	resolver := integrations.New(conf, reg, boot.RunsDir, enginePort, boot.SandboxRuntime)
 	defer resolver.Close()
 	res, err := resolver.Resolve(ctx, project.ID)
 	if err != nil {

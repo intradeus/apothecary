@@ -15,8 +15,8 @@ import (
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/project/channels"
 	"apothecary/internal/project/confstore"
+	"apothecary/internal/project/integrations"
 	"apothecary/internal/project/kinds"
-	"apothecary/internal/project/resolve"
 	"apothecary/internal/run/event"
 )
 
@@ -49,7 +49,7 @@ main:
 type confEnv struct {
 	*env
 	conf     *confstore.Service
-	resolver *resolve.Resolver
+	resolver *integrations.Resolver
 }
 
 func newConfEnv(t *testing.T) *confEnv {
@@ -68,7 +68,7 @@ func newConfEnvWith(t *testing.T, opt func(*engine.Deps)) *confEnv {
 	kinds.RegisterFakes(reg)
 	conf := confstore.New(confstore.NewMem(), key)
 	conf.KindValid = reg.Valid
-	resolver := resolve.New(conf, reg, "", 8080, "")
+	resolver := integrations.New(conf, reg, "", 8080, "")
 	t.Cleanup(resolver.Close)
 
 	store := event.NewMemStore()
