@@ -226,6 +226,7 @@ type conn struct {
 	remote string
 	// What authentication established.
 	userID, keyID string
+	key           ssh.PublicKey
 	target        Target
 	verdicts      map[string]verdict // per offered key: the callback runs twice for one key
 	closeOnce     sync.Once
@@ -277,7 +278,19 @@ func (d *Door) handle(nc net.Conn) {
 	started := time.Now()
 	log := d.cfg.Log.With("remote", c.remote, "user", c.userID, "run", c.target.RunID)
 
-	ctx, cancel := context.WithTimeout(context.Background(), upstreamTimeout)
+	// An account disabled since the handshake found nothing to drop.
+	// DropUser follows the disabling, so with the connection known first and
+	// this look after it, one of the two sees the other. A look that fails
+	// keeps the door shut.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	_, _, err = d.cfg.Keys.AuthenticateSSHKey(ctx, c.key)
+	cancel()
+	if err != nil {
+		log.Info("ssh door: account no longer allowed in", "err", err)
+		return
+	}
+
+	ctx, cancel = context.WithTimeout(context.Background(), upstreamTimeout)
 	uconn, uchans, ureqs, err := d.upstream(ctx, c)
 	cancel()
 	if err != nil {
@@ -348,7 +361,7 @@ func (d *Door) authenticate(c *conn, username string, key ssh.PublicKey) (*ssh.P
 		d.cfg.Log.Debug("ssh door: not the owner", "remote", c.remote, "username", username, "user", user.ID, "run", target.RunID)
 		return nil, errDenied
 	}
-	c.userID, c.keyID, c.target = user.ID, k.ID, target
+	c.userID, c.keyID, c.key, c.target = user.ID, k.ID, key, target
 	return &ssh.Permissions{Extensions: map[string]string{
 		"apothecary-user": user.ID, "apothecary-key": k.ID, "apothecary-run": target.RunID,
 	}}, nil

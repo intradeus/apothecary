@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -238,6 +239,12 @@ type doorRig struct {
 
 func newDoorRig(t *testing.T) *doorRig {
 	t.Helper()
+	return newDoorRigWith(t, func(k KeyAuth) KeyAuth { return k })
+}
+
+// newDoorRigWith is a door whose key lookups go through wrap.
+func newDoorRigWith(t *testing.T, wrap func(KeyAuth) KeyAuth) *doorRig {
+	t.Helper()
 	seed := make([]byte, 32)
 	_, _ = rand.Read(seed)
 	hostKey, _ := KeyFromSeed(seed)
@@ -250,7 +257,7 @@ func newDoorRig(t *testing.T) *doorRig {
 		"apo-bob-run":   {RunID: "r2", OwnerID: keys.bob.ID, Dial: up.dial},
 		"apo-broken":    {RunID: "r3", OwnerID: keys.alice.ID, Dial: func(context.Context) (net.Conn, error) { return nil, errors.New("sidecar down") }},
 	}
-	door, err := New(Config{HostKey: hostKey, DoorKey: doorKey, Keys: keys.svc, Targets: ts, Advertise: "door.example:2222"})
+	door, err := New(Config{HostKey: hostKey, DoorKey: doorKey, Keys: wrap(keys.svc), Targets: ts, Advertise: "door.example:2222"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,6 +443,35 @@ func TestDoorRefusals(t *testing.T) {
 	}
 	if _, err := rig.connect(t, "apo-alice-run", rig.alice); err == nil {
 		t.Error("a disabled account connected")
+	}
+}
+
+// disabledAfterAuth is an account disabled just after its handshake, before
+// the door knows the connection: the look that let it in is the last to pass.
+type disabledAfterAuth struct {
+	KeyAuth
+	looks atomic.Int32
+}
+
+func (d *disabledAfterAuth) AuthenticateSSHKey(ctx context.Context, key ssh.PublicKey) (auth.User, auth.SSHKey, error) {
+	if d.looks.Add(1) > 1 {
+		return auth.User{}, auth.SSHKey{}, errors.New("account disabled")
+	}
+	return d.KeyAuth.AuthenticateSSHKey(ctx, key)
+}
+
+// An account disabled in the gap between its handshake and the door knowing
+// the connection finds nothing to drop, so the door looks again.
+func TestAnAccountDisabledDuringTheHandshakeIsOut(t *testing.T) {
+	rig := newDoorRigWith(t, func(k KeyAuth) KeyAuth { return &disabledAfterAuth{KeyAuth: k} })
+	client, err := rig.connect(t, "apo-alice-run", rig.alice)
+	if err != nil {
+		return // refused outright is out too
+	}
+	select {
+	case <-closed(client):
+	case <-time.After(5 * time.Second):
+		t.Error("a disabled account kept its connection")
 	}
 }
 
