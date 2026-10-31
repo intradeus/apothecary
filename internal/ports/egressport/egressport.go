@@ -133,7 +133,7 @@ func egressMatches(host string, list []string) bool {
 
 // EgressController is an OPTIONAL EnvProvisioner capability: inspect and live-
 // edit a run's egress policy, backed by the per-project egress gateway
-// (internal/egressgw). AllowEgress is the "add to egress" fast path — it rewrites
+// (internal/adapters/egressgw). AllowEgress is the "add to egress" fast path — it rewrites
 // the project policy file and the gateway hot-reloads it, so the next request
 // succeeds with no restart. Because the policy is per-project, an allow applies
 // to every run of the project; denials stay per-run. Provisioners without a

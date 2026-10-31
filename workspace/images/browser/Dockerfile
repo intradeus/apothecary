@@ -1,4 +1,4 @@
-# The per-project browser (internal/browser). Build context: workspace/.
+# The per-project browser (internal/adapters/browser). Build context: workspace/.
 #
 # node, @playwright/mcp and the Chromium its Playwright drives, plus the shim —
 # built from the same source as the workspace's — whose `browser-session` runs

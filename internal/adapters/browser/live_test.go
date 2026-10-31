@@ -9,7 +9,7 @@ package browser
 // outside world. Removes its container; the image stays (content-addressed,
 // reused by the daemon).
 //
-//	go test -tags live -run TestLiveBrowserSession -v -timeout 30m ./internal/browser
+//	go test -tags live -run TestLiveBrowserSession -v -timeout 30m ./internal/adapters/browser
 
 import (
 	"bufio"

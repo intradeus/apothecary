@@ -39,7 +39,6 @@ type rule struct {
 var outerLayers = []string{
 	"internal/engine",
 	"internal/httpapi",
-	"internal/pgstore",
 	"internal/confstore",
 	"internal/kinds",
 	"internal/adapters/",
@@ -56,7 +55,7 @@ var rules = []rule{
 	{pkg: "internal/ports/browserport", mayImport: []string{}},
 	{pkg: "internal/ports/notifyport", mayImport: []string{}},
 	{pkg: "internal/adapters/", importedOnlyBy: []string{"internal/kinds", "internal/adapters/", "cmd/"}},
-	{pkg: "internal/pgstore", importedOnlyBy: []string{"cmd/"}},
+	{pkg: "internal/adapters/pgstore", importedOnlyBy: []string{"cmd/"}},
 	{pkg: "internal/engine", importedOnlyBy: []string{"cmd/", "internal/httpapi"}},
 	{pkg: "internal/runinput", mayImport: []string{"internal/skills"}},
 	{pkg: "internal/event", denyImport: outerLayers},

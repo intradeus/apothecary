@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"apothecary/internal/egressgw"
+	"apothecary/internal/adapters/egressgw"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 )
@@ -47,7 +47,7 @@ func (h dockerHost) prepare(ctx context.Context, name string, spec envport.EnvSp
 	}
 	// Egress firewall: the run's DinD sandbox routes ALL egress (the workspace
 	// AND every compose sibling) through the per-project gateway
-	// (internal/egressgw). Bring it up BEFORE the sandbox so the sandbox can join
+	// (internal/adapters/egressgw). Bring it up BEFORE the sandbox so the sandbox can join
 	// the run's --internal network and default-route into its tunnel to the
 	// gateway — which is also why a privileged sandbox can't bypass it (its only
 	// NIC has no external route).

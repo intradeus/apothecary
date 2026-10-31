@@ -31,7 +31,7 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/egressgw/policyfile"
+	"apothecary/internal/adapters/egressgw/policyfile"
 	"apothecary/internal/ports/envport"
 )
 

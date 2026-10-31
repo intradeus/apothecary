@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/kube"
+	"apothecary/internal/adapters/kube"
 )
 
 // kubeScript answers kubectl invocations by their verb and object.

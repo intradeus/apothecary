@@ -1,6 +1,6 @@
 // Package browserport is the project-browser port: one browser container per
 // project, a Chromium per agent session, reaching the run's workspace ports
-// and nothing else (internal/browser implements it).
+// and nothing else (internal/adapters/browser implements it).
 package browserport
 
 import (
@@ -9,7 +9,7 @@ import (
 	"net"
 )
 
-// Browser is the project browser (internal/browser): one container per
+// Browser is the project browser (internal/adapters/browser): one container per
 // project, a Chromium per agent session, driven through Playwright's MCP
 // server — what a flow's builtin `browser` MCP server is. The browser has no
 // network of its own: it reaches the run's services at localhost, through

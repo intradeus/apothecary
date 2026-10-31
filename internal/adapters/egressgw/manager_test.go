@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"apothecary/internal/egressgw/policyfile"
+	"apothecary/internal/adapters/egressgw/policyfile"
 )
 
 // Every per-project name derives from the project's ID, lowercased (a ULID is

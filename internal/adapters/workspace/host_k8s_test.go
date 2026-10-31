@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/egressgw"
-	"apothecary/internal/kube"
+	"apothecary/internal/adapters/egressgw"
+	"apothecary/internal/adapters/kube"
 	"apothecary/internal/ports/envport"
 	wsassets "apothecary/workspace"
 )

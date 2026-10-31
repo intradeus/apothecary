@@ -1,7 +1,7 @@
 package workspace
 
 import (
-	"apothecary/internal/egressgw"
+	"apothecary/internal/adapters/egressgw"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"bytes"

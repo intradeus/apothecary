@@ -16,7 +16,7 @@ import (
 // text, so bumping it changes BrowserImageTag.
 const playwrightMCPVersion = "0.0.83"
 
-// browserDockerfile is the per-project browser (internal/browser): node,
+// browserDockerfile is the per-project browser (internal/adapters/browser): node,
 // @playwright/mcp and the Chromium its Playwright drives, plus the shim —
 // built from the same source as the workspace's — whose `browser-session`
 // runs one MCP server per agent session. The container has no network, so

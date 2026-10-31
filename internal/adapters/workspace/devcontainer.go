@@ -39,7 +39,7 @@
 // loudly).
 //
 // SECURITY POSTURE: egress is filtered OUTSIDE the workspace by the per-project
-// egress gateway (internal/egressgw). The run's DinD sandbox joins a per-run
+// egress gateway (internal/adapters/egressgw). The run's DinD sandbox joins a per-run
 // --internal docker network with no external route and is default-routed to the
 // gateway, so ALL egress — the workspace container AND every compose sibling
 // (a database, etc.) — traverses the gateway, which allows/denies by TLS SNI /
@@ -69,8 +69,8 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/egressgw"
-	"apothecary/internal/egressgw/policyfile"
+	"apothecary/internal/adapters/egressgw"
+	"apothecary/internal/adapters/egressgw/policyfile"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"

@@ -44,7 +44,7 @@ main:
   - { id: other, type: agent, harness: $harness, model: $model, agent: plain }
 `
 
-// fakeBrowser stands in for internal/browser.
+// fakeBrowser stands in for internal/adapters/browser.
 type fakeBrowser struct {
 	mu      sync.Mutex
 	warmed  []string

@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"apothecary/internal/egressgw/policyfile"
+	"apothecary/internal/adapters/egressgw/policyfile"
 )
 
 // The docker run link. A sandbox used to default-route to its gateway across

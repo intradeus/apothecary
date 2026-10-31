@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"apothecary/internal/adapters/kube"
 	workspaceadapter "apothecary/internal/adapters/workspace"
-	"apothecary/internal/kube"
 )
 
 // KubernetesDefaults are the deployment's answers (boot env) to everything a

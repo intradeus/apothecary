@@ -1,6 +1,6 @@
 package main
 
-// The project browser's two ends (internal/browser):
+// The project browser's two ends (internal/adapters/browser):
 //
 //	browser-mcp      in the WORKSPACE: the stdio MCP server a flow's builtin
 //	                 `browser` names. It upgrades a connection to the engine

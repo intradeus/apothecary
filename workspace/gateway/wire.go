@@ -1,6 +1,6 @@
 package main
 
-// wire.go is a SELF-CONTAINED copy of internal/egressgw/policyfile — the gateway
+// wire.go is a SELF-CONTAINED copy of internal/adapters/egressgw/policyfile — the gateway
 // must build standalone (pure stdlib, like the shim), so it cannot import the
 // engine-side package. The engine's TestWireCompat pins these two in lockstep;
 // keep the json tags identical on both sides.

@@ -3,7 +3,7 @@
 // session inside it, driven through Playwright's MCP server — what a flow's
 // builtin `browser` MCP server is (FLOWLANG §1 mcp_servers).
 //
-// Lifecycle follows the egress gateway's (internal/egressgw): the container
+// Lifecycle follows the egress gateway's (internal/adapters/egressgw): the container
 // is created on first need from a content-addressed image (wsimage
 // EnsureBrowserImage), reused while it runs, recreated when it runs a stale
 // image and nobody is using it, and stopped after a while with no session.

@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/egressgw/policyfile"
-	"apothecary/internal/kube"
+	"apothecary/internal/adapters/egressgw/policyfile"
+	"apothecary/internal/adapters/kube"
 	"apothecary/internal/ports/envport"
 )
 

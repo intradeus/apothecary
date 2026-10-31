@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/kube"
+	"apothecary/internal/adapters/kube"
 	"apothecary/internal/ports/envport"
 )
 

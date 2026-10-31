@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/egressgw"
+	"apothecary/internal/adapters/egressgw"
 	"apothecary/internal/ports/envport"
 )
 
