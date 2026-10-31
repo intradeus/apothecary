@@ -2,7 +2,6 @@
 export default {
 	// Run header
 	'run.header.workshopFallback': 'workshop',
-	'run.header.theWorkspace': 'the workspace',
 	'run.header.started': 'Started {at} · {ago}',
 	'run.header.layouts': 'Windows & layouts',
 	'run.header.ticket': 'ticket',
@@ -122,6 +121,7 @@ export default {
 	'run.mrStatus.mergedSuffix': 'merged',
 	'run.mrStatus.unreachable': 'repository unreachable',
 	'run.mrStatus.merged': 'merged',
+	'run.mrStatus.closed': 'closed',
 	'run.mrStatus.conflicts': 'conflicts',
 	'run.mrStatus.conflictsWith': 'conflicts with {target}',
 	'run.mrStatus.itsTarget': 'its target',
@@ -293,6 +293,7 @@ export default {
 	'run.files.pick': 'Pick a file.',
 	'run.files.firstMb': 'first 1 MB shown',
 	'run.files.readError': 'This file could not be read.',
+	'run.files.folderError': 'Could not list {path}.',
 	'run.files.binary': 'Binary file · {size}',
 
 	// Terminal

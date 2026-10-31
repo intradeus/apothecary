@@ -2,7 +2,7 @@
 	// The "which workshop" filter of a desk-wide list (runs, tickets): a
 	// select over the fleet's workshops, '' meaning all of them. The page owns
 	// the value (it mirrors ?project=).
-	import { fleet } from '$lib/fleet.svelte';
+	import { fleet } from '$lib/app/fleet.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 

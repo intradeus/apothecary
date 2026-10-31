@@ -2,14 +2,14 @@
 	import { t } from '$lib/i18n/index.svelte';
 	// The workshop's vial at header size, on a control-glass tile — the
 	// workshop page's counterpart of the run badge.
-	import { workshopVial } from '$lib/urls';
+	import { workshopVial } from '$lib/core/urls';
 	import Vial from '$lib/ui/Vial.svelte';
 
 	let { projectId, live = 0 }: { projectId: string; live?: number } = $props();
 	const hue = $derived(workshopVial(projectId).hue);
 </script>
 
-<div class="wb c" style:--h={hue}>
+<div class="wb glass" style:--tone={hue}>
 	<span class="cap">{t('workshop.badge.caption')}</span>
 	<span class="v"><Vial {projectId} idle={!live} /></span>
 </div>
@@ -37,7 +37,7 @@
 		border-radius: 50%;
 		background: radial-gradient(
 			circle,
-			color-mix(in oklch, var(--h) 40%, transparent),
+			color-mix(in oklch, var(--tone) 40%, transparent),
 			transparent 70%
 		);
 		pointer-events: none;
@@ -45,7 +45,7 @@
 	.cap {
 		font-size: var(--fs-badge);
 		font-weight: 500;
-		color: var(--mut);
+		color: var(--text-muted);
 		letter-spacing: var(--tr-small);
 	}
 	.v {

@@ -1,13 +1,14 @@
 <script lang="ts">
 	// Logs (DESIGN §6): the workspace's live exec output, the provisioning log
 	// (clone + build + bootstrap) and each stage's captured log.
+	import { errorMessage } from '$lib/core/errors';
 	import { t } from '$lib/i18n/index.svelte';
 	import { tick } from 'svelte';
 	import { api } from '$lib/api';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import Select from '$lib/ui/Select.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { PROVISION_STAGE } from '../derive';
 	import type { RunStore } from '../store.svelte';
 
@@ -35,7 +36,7 @@
 	let pre = $state<HTMLDivElement | null>(null);
 	let stick = true;
 
-	async function load(src: string) {
+	async function load(src: string, tailing = false) {
 		loading = true;
 		try {
 			if (src === 'workspace') {
@@ -51,8 +52,9 @@
 			}
 		} catch (e) {
 			if (src !== rs.logSource) return;
-			text = null;
-			note = t('runview.logs.no_log', { message: e instanceof Error ? e.message : String(e) });
+			// One failed poll is no reason to blank what is on screen.
+			if (!tailing) text = null;
+			note = t('runview.logs.no_log', { message: errorMessage(e) });
 		} finally {
 			loading = false;
 		}
@@ -68,7 +70,7 @@
 		stick = true;
 		void load(src);
 		if (src !== 'workspace' || rs.terminal || !rs.hasWorkspace) return;
-		const timer = setInterval(() => !document.hidden && load(src), 2500);
+		const timer = setInterval(() => !document.hidden && load(src, true), 2500);
 		return () => clearInterval(timer);
 	});
 
@@ -80,13 +82,13 @@
 	// teal, the harness azure, the shim violet.
 	const hue = (l: string) =>
 		/\b(DENY|denied|error|fatal|panic|failed)\b/i.test(l)
-			? 'hue-ros'
+			? 'hue-danger'
 			: /\btunnel\b/i.test(l)
-				? 'hue-tea'
+				? 'hue-accent-2'
 				: /\bharness\b/i.test(l)
-					? 'hue-emb'
+					? 'hue-running'
 					: /\bshim\b/i.test(l)
-						? 'hue-vio'
+						? 'hue-accent'
 						: '';
 	const lines = $derived((text ?? '').replace(/\n$/, '').split('\n'));
 </script>
@@ -126,7 +128,7 @@
 				bind:value={rs.logSource}
 			/>
 		{/if}
-		{#if kind !== 'workspace' || rs.terminal}
+		{#if kind !== 'workspace' || rs.terminal || !rs.hasWorkspace}
 			<span class="spacer"></span>
 			<button
 				class="btn-icon"
@@ -136,7 +138,7 @@
 				onclick={() => load(rs.logSource)}>{I.retry}</button
 			>
 		{:else}
-			<span class="hint live"><span class="ldot sm pulse hue-emb"></span>tail -f</span>
+			<span class="hint live"><span class="live-dot sm pulse hue-running"></span>tail -f</span>
 		{/if}
 	</div>
 	<div class="log out" bind:this={pre} onscroll={onScroll}>
@@ -168,7 +170,7 @@
 		line-height: 1.75;
 	}
 	.out > .empty-line {
-		font-family: var(--sans);
+		font-family: var(--font-body);
 		padding: 0;
 	}
 	.l {

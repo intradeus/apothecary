@@ -7,7 +7,7 @@
 	// may instead be one of `params` ($name), picked from a list.
 	import DurationInput from './DurationInput.svelte';
 	import Select, { type SelectOption } from './Select.svelte';
-	import { I } from './icons';
+	import { I } from '$lib/design/icons';
 
 	let {
 		value = $bindable(),
@@ -69,7 +69,7 @@
 	</div>
 {:else}
 	<div class="row nowrap unset">
-		<span class="fnt grow">{empty}</span>
+		<span class="faint grow">{empty}</span>
 		<button type="button" {id} class="btn-dashed btn-sm" onclick={() => set(fallback)}
 			>{t('ui.optional.set')}</button
 		>

@@ -15,7 +15,7 @@
 		font-weight: 700;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
-		color: var(--fnt);
+		color: var(--text-faint);
 		white-space: nowrap;
 		cursor: default;
 	}

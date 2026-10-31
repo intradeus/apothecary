@@ -10,7 +10,7 @@
 	// its quote within its lines; failing that its lines carry it.
 	import { tick, type Snippet } from 'svelte';
 	import { api } from '$lib/api';
-	import { fmtBytes } from '$lib/format';
+	import { fmtBytes } from '$lib/core/format';
 	import {
 		isMarkdown,
 		isWholeFile,
@@ -19,13 +19,13 @@
 		textOffset,
 		type CommentAnchor,
 		type DraftComment
-	} from '$lib/docreview';
+	} from '$lib/review/reviewDoc';
 	import type { LoadedDoc, ShownFile } from './files.svelte';
 	import DocHead from './DocHead.svelte';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let {
@@ -232,7 +232,7 @@
 
 {@render picker?.()}
 <DocHead path={file.path} {raisedAt} {reviewed}>{@render actions?.()}</DocHead>
-<div class="dscroll" bind:this={scrollEl} {onscroll}>
+<div class="doc-scroll" bind:this={scrollEl} {onscroll}>
 	{#if !file.captured || !file.snapshotId}
 		<div class="paper" class:flash={wholeActive}>
 			<ErrorCard cause={t('doc.notCaptured', { path: file.path })} />
@@ -260,7 +260,7 @@
 	{:else if doc.error}
 		<div class="paper"><ErrorCard cause={doc.error} /></div>
 	{:else if blocks.length === 0}
-		<div class="paper fnt" class:flash={wholeActive}>{t('doc.empty')}</div>
+		<div class="paper faint" class:flash={wholeActive}>{t('doc.empty')}</div>
 	{:else}
 		<div
 			class="paper"
@@ -285,19 +285,13 @@
 </div>
 
 <style>
-	.dscroll {
-		flex: 1;
-		min-height: 0;
-		overflow: auto;
-		padding: 16px 22px 40px;
-	}
 	.paper,
 	.pic {
 		transition: box-shadow var(--dur-fade) var(--ease-out);
 	}
 	/* A whole-file comment, hovered or jumped to: the file itself is lit. */
 	.flash {
-		box-shadow: 0 0 0 2px var(--brandLn);
+		box-shadow: 0 0 0 2px var(--brand-line);
 	}
 	.block {
 		position: relative;
@@ -325,7 +319,7 @@
 	}
 	.block.active,
 	.block.pending {
-		background: var(--brandBg);
+		background: var(--brand-bg);
 	}
 
 	/* Exact-selection highlights. ::highlight() isn't attached to an element,
@@ -369,7 +363,7 @@
 		max-width: 100%;
 		height: auto;
 		border-radius: var(--r-card);
-		background: var(--p2);
+		background: var(--fill-2);
 	}
 	.zoomed .zoom {
 		cursor: zoom-out;
@@ -385,18 +379,18 @@
 		gap: 10px;
 		padding: 40px 20px;
 		text-align: center;
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.other p {
 		margin: 0;
 	}
 	.big {
 		font-size: var(--fs-mark);
-		color: var(--fnt);
+		color: var(--text-faint);
 	}
 
 	@container review (max-width: 700px) {
-		.dscroll {
+		.doc-scroll {
 			padding: 12px 14px 24px;
 		}
 	}

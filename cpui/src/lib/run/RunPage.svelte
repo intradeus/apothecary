@@ -4,8 +4,8 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { t } from '$lib/i18n/index.svelte';
-	import { to } from '$lib/urls';
-	import { shortId, times } from '$lib/format';
+	import { to } from '$lib/core/urls';
+	import { shortId, times } from '$lib/core/format';
 	import Banner from '$lib/ui/Banner.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
@@ -85,7 +85,7 @@
 				return { hint: t('run.page.askHint') };
 			case 'pings':
 				return rs.pendingPings.length
-					? { count: rs.pendingPings.length, alert: 'sky', hint: t('run.page.waitingOnYou') }
+					? { count: rs.pendingPings.length, alert: 'attention', hint: t('run.page.waitingOnYou') }
 					: { count: rs.pings.length || '' };
 			case 'phases':
 				return {
@@ -109,14 +109,14 @@
 				return { hint: rs.logSource === 'workspace' && !rs.terminal ? 'tail -f' : '' };
 			case 'egress':
 				return rs.newDenials.length
-					? { count: rs.newDenials.length, alert: 'sky', hint: t('run.page.rulesLive') }
+					? { count: rs.newDenials.length, alert: 'attention', hint: t('run.page.rulesLive') }
 					: { hint: t('run.page.rulesLive') };
 			case 'services': {
 				const svcs = rs.services?.services ?? [];
 				const up = svcs.filter((s) => s.state === 'healthy').length;
 				const hint = up ? t('run.page.servicesHint') : '';
 				return svcs.some((s) => s.state === 'unhealthy')
-					? { count: up || '', alert: 'ros', hint }
+					? { count: up || '', alert: 'danger', hint }
 					: { count: up || '', hint };
 			}
 			case 'ports':
@@ -169,7 +169,7 @@
 		{#if showDenials}
 			<div class="bn">
 				<Banner
-					tone="sky"
+					tone="attention"
 					title={t('run.page.egressHeld', { n: times(rs.newDenials.length) })}
 					aside={t('run.page.egressAside')}
 					items={rs.newDenials.map((d) => d.host)}
@@ -185,7 +185,7 @@
 		{#if showUnknown}
 			<div class="bn">
 				<Banner
-					tone="sky"
+					tone="attention"
 					title={t('run.page.wsUnknown')}
 					items={[t('run.page.provisionerDown')]}
 					action={t('run.page.integrations')}
@@ -195,7 +195,7 @@
 			</div>
 		{/if}
 		{#if rs.error}
-			<div class="bn err">
+			<div class="bn error">
 				<ErrorCard cause={rs.error} ondismiss={() => (rs.error = '')} />
 			</div>
 		{/if}

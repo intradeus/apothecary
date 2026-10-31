@@ -4,7 +4,7 @@
 	// oldest first — the ones newer than apothecary's last word marked new,
 	// an earlier reply of apothecary's with what it said it did.
 	import type { ReviewThread } from '$lib/domain';
-	import { ago, fmtAbs } from '$lib/format';
+	import { ago, fmtAbs } from '$lib/core/format';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { kindHue, kindLabel, shortThread } from './curation';
@@ -22,15 +22,16 @@
 
 <div class="th" class:compact>
 	<div class="thh">
-		<span class="mono ell" title={where}>{where}</span>
-		{#if thread.ours}<span class="pill sm t-brand">{t('cur.thread.ours')}</span>{/if}
-		{#if thread.kind}<span class="pill sm t-{kindHue(thread.kind)}">{kindLabel(thread.kind)}</span
+		<span class="mono truncate" title={where}>{where}</span>
+		{#if thread.ours}<span class="pill sm tint-brand">{t('cur.thread.ours')}</span>{/if}
+		{#if thread.kind}<span class="pill sm tint-{kindHue(thread.kind)}"
+				>{kindLabel(thread.kind)}</span
 			>{/if}
-		<span class="pill sm {thread.resolved ? 't-grn' : 't-gold'}"
+		<span class="pill sm {thread.resolved ? 'tint-success' : 'tint-warning'}"
 			>{thread.resolved ? t('cur.thread.resolved') : t('cur.thread.open')}</span
 		>
 		<span class="spacer"></span>
-		<span class="mono fnt id" title={thread.id}>{shortThread(thread.id)}</span>
+		<span class="mono faint id" title={thread.id}>{shortThread(thread.id)}</span>
 	</div>
 	{#if thread.hunk}
 		<details class="hunk">
@@ -44,9 +45,9 @@
 				<div class="cm" class:new={c.new}>
 					<div class="cmh">
 						<b>{c.ours ? t('cur.thread.ours') : c.author}</b>
-						{#if c.at}<span class="fnt" title={fmtAbs(c.at)}>{ago(c.at)}</span>{/if}
-						{#if c.did}<span class="pill sm t-{kindHue(c.did)}">{kindLabel(c.did)}</span>{/if}
-						{#if c.new}<span class="pill sm t-gold">{t('cur.thread.new')}</span>{/if}
+						{#if c.at}<span class="faint" title={fmtAbs(c.at)}>{ago(c.at)}</span>{/if}
+						{#if c.did}<span class="pill sm tint-{kindHue(c.did)}">{kindLabel(c.did)}</span>{/if}
+						{#if c.new}<span class="pill sm tint-warning">{t('cur.thread.new')}</span>{/if}
 					</div>
 					<Markdown src={c.body} quiet />
 				</div>
@@ -63,9 +64,9 @@
 		flex-direction: column;
 		gap: 6px;
 		padding: 6px 8px 8px 10px;
-		border-left: 2px solid var(--ln2);
+		border-left: 2px solid var(--line-strong);
 		border-radius: 0 var(--r-tag) var(--r-tag) 0;
-		background: var(--p2);
+		background: var(--fill-2);
 		min-width: 0;
 	}
 	.thh {
@@ -85,7 +86,7 @@
 		font-size: var(--fs-label);
 	}
 	.hunk summary {
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.hunk pre {
 		margin: 4px 0 0;
@@ -104,7 +105,7 @@
 		font-size: var(--fs-ui);
 	}
 	.cm.new {
-		border-left-color: var(--goldLn);
+		border-left-color: var(--warning-line);
 	}
 	.cmh {
 		display: flex;

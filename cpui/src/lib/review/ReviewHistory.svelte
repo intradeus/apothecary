@@ -8,7 +8,13 @@
 	import { onMount, tick, untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { Attachment, ReviewComment } from '$lib/domain';
-	import { byPlace, commentAsShown, isMarkdown, perFile, type DraftComment } from '$lib/docreview';
+	import {
+		byPlace,
+		commentAsShown,
+		isMarkdown,
+		perFile,
+		type DraftComment
+	} from '$lib/review/reviewDoc';
 	import { ReviewFiles } from './files.svelte';
 	import ReviewLayout from './ReviewLayout.svelte';
 	import FileList from './FileList.svelte';
@@ -108,9 +114,9 @@
 
 	{#snippet main()}
 		{#if set.loading}
-			<div class="dscroll"><div class="paper"><Skeleton lines={10} /></div></div>
+			<div class="doc-scroll"><div class="paper"><Skeleton lines={10} /></div></div>
 		{:else if !file}
-			<div class="dscroll"><div class="paper"><ErrorCard cause={set.error} /></div></div>
+			<div class="doc-scroll"><div class="paper"><ErrorCard cause={set.error} /></div></div>
 		{:else}
 			{#key file.path}
 				<FileView
@@ -142,10 +148,10 @@
 			<h2>{t('doc.review')}</h2>
 			{#if comments.length}<span class="count">{comments.length}</span>{/if}
 		</div>
-		<div class="sscroll">
+		<div class="side-scroll">
 			{#if summary}
 				<div class="sum">
-					<div class="lbl">{t('doc.summary')}</div>
+					<div class="caption">{t('doc.summary')}</div>
 					<Markdown src={summary} />
 				</div>
 			{/if}
@@ -189,36 +195,16 @@
 
 <style>
 	.sub {
-		border-top: 1px solid var(--ln);
-	}
-	.dscroll {
-		flex: 1;
-		min-height: 0;
-		overflow: auto;
-		padding: 16px 22px 40px;
-	}
-	.sscroll {
-		flex: 1;
-		min-height: 0;
-		overflow: auto;
-		padding: 12px;
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
+		border-top: 1px solid var(--line);
 	}
 	.sum {
-		border-left: 3px solid var(--brandLn);
+		border-left: 3px solid var(--brand-line);
 		padding: 2px 0 2px 12px;
 	}
-	.sum .lbl {
+	.sum .caption {
 		margin-bottom: 4px;
 	}
 	.note {
 		margin: 0;
-	}
-	@container review (max-width: 700px) {
-		.sscroll {
-			overflow: visible;
-		}
 	}
 </style>

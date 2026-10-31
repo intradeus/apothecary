@@ -4,10 +4,11 @@
 	// decisions over it — what was posted, what was dropped, what was
 	// reworded (and how it was written) — and the tally. Shown on the ping's
 	// page under its verdict, and inside a run's pings view.
+	import { errorMessage } from '$lib/core/errors';
 	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { CurationView } from '$lib/domain';
-	import { curatable, type PingLike } from '$lib/ping';
+	import { curatable, type PingLike } from '$lib/core/ping';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
@@ -37,7 +38,7 @@
 		try {
 			view = await api.pings.curation(ping.id);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			loading = false;
 		}
@@ -55,7 +56,7 @@
 <div class="ch" class:embedded>
 	{#if loading}
 		<Skeleton lines={4} />
-	{:else if error || !doc}
+	{:else if error || !doc || doc.error}
 		<ErrorCard cause={t('cur.loadFailed')} detail={error || doc?.error} />
 	{:else}
 		<div class="tl">
@@ -67,14 +68,14 @@
 			{#if tl.dropped}<span>· {t('cur.hist.dropped', { count: tl.dropped })}</span>{/if}
 			{#if tl.reworded}<span>· {t('cur.hist.reworded', { count: tl.reworded })}</span>{/if}
 			{#if tl.summaryReworded}<span>· {t('cur.hist.summaryReworded')}</span>{/if}
-			{#if !c}<span class="fnt">· {t('cur.hist.asIs')}</span>{/if}
-			{#if rejected}<span class="hue-gold">· {t('cur.hist.rejected')}</span>{/if}
+			{#if !c && !rejected}<span class="faint">· {t('cur.hist.asIs')}</span>{/if}
+			{#if rejected}<span class="hue-warning">· {t('cur.hist.rejected')}</span>{/if}
 		</div>
 		{#if doc.review && summaryPosted}
 			<div class="sum">
-				<div class="lbl">
+				<div class="caption">
 					{t('cur.summary')}{#if c?.summary !== undefined}
-						<span class="pill sm t-gold">{t('cur.reworded')}</span>{/if}
+						<span class="pill sm tint-warning">{t('cur.reworded')}</span>{/if}
 				</div>
 				<Markdown src={summaryPosted} />
 				{#if c?.summary !== undefined && doc.review.summary}
@@ -94,18 +95,19 @@
 			<div class="hi card-in" class:off={!kept}>
 				<div class="ih">
 					<StatusMark
-						tone={kept ? 'ok' : 'mut'}
+						tone={kept ? 'ok' : 'muted'}
 						size="sm"
 						title={kept ? t('cur.hist.kept') : t('cur.hist.notKept')}
 					/>
-					{#if it.kind}<span class="pill sm t-{kindHue(it.kind)}">{kindLabel(it.kind)}</span>{/if}
-					{#if where}<span class="mono where ell" title={where}>{where}</span>{/if}
-					{#if it.thread}<span class="pill sm t-brand" title={it.thread}
+					{#if it.kind}<span class="pill sm tint-{kindHue(it.kind)}">{kindLabel(it.kind)}</span
+						>{/if}
+					{#if where}<span class="mono where truncate" title={where}>{where}</span>{/if}
+					{#if it.thread}<span class="pill sm tint-brand" title={it.thread}
 							>{isReply ? t('cur.answers') : t('cur.continues')} {shortThread(it.thread)}</span
 						>{/if}
-					{#if reworded}<span class="pill sm t-gold">{t('cur.reworded')}</span>{/if}
+					{#if reworded}<span class="pill sm tint-warning">{t('cur.reworded')}</span>{/if}
 					<span class="spacer"></span>
-					<span class="fnt st"
+					<span class="faint st"
 						>{kept
 							? isReply
 								? t('cur.hist.sent')
@@ -118,7 +120,7 @@
 				{#if d?.body}
 					<details>
 						<summary class="disclosure">{t('cur.hist.asWritten')}</summary>
-						<div class="txt fnt">{it.text}</div>
+						<div class="txt faint">{it.text}</div>
 					</details>
 				{/if}
 				{#if it.canResolve && kept && (d?.resolve ?? it.resolve)}
@@ -144,19 +146,19 @@
 		flex-wrap: wrap;
 		gap: 6px;
 		font-size: var(--fs-label);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.tl b {
-		color: var(--tx);
+		color: var(--text);
 	}
 	.sum {
-		border-left: 3px solid var(--brandLn);
+		border-left: 3px solid var(--brand-line);
 		padding: 2px 0 2px 12px;
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
 	}
-	.sum .lbl {
+	.sum .caption {
 		display: flex;
 		align-items: center;
 		gap: 6px;
@@ -181,7 +183,7 @@
 	}
 	.where {
 		font-size: var(--fs-id);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.st {
 		font-size: var(--fs-meta);
@@ -192,13 +194,13 @@
 	}
 	.txt.struck {
 		text-decoration: line-through;
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	details {
 		font-size: var(--fs-label);
 	}
 	details summary {
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	details .txt {
 		margin-top: 4px;

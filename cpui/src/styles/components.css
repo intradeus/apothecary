@@ -7,61 +7,61 @@
  * bar, the sidebar, overview cards). Flat tinted glass and a hairline: no
  * rim, no gradient. Never nest it: a nested backdrop-filter only blurs its
  * parent and reads as a flat translucent box. */
-.c {
-	background: var(--cBg);
-	backdrop-filter: var(--cBf);
-	-webkit-backdrop-filter: var(--cBf);
-	border: 1px solid var(--cLn);
+.glass {
+	background: var(--glass-bg);
+	backdrop-filter: var(--glass-filter);
+	-webkit-backdrop-filter: var(--glass-filter);
+	border: 1px solid var(--glass-line);
 }
 /* Never glass on glass: a window inside a window is an inset. */
-.c .c {
-	background: var(--inBg);
+.glass .glass {
+	background: var(--inset-bg);
 	backdrop-filter: none;
 	-webkit-backdrop-filter: none;
-	border-color: var(--inLn);
+	border-color: var(--inset-line);
 }
 /* Inset: a control group or field inside a window or the top bar. */
-.in {
-	background: var(--inBg);
-	border: 1px solid var(--inLn);
+.inset {
+	background: var(--inset-bg);
+	border: 1px solid var(--inset-line);
 }
 /* Island: anything that floats over content (popovers, menus, modals, the
  * MR island, drag ghosts). Opaque, so nothing ghosts through. */
-.isl {
-	background: var(--solid);
-	border: 1px solid var(--islLn);
-	box-shadow: var(--spec), var(--popSh);
+.island {
+	background: var(--island-bg);
+	border: 1px solid var(--island-line);
+	box-shadow: var(--specular), var(--shadow-pop);
 }
 /* Solid sky: a human must act now (the ping card, the waiting card). The
  * card re-points the tokens, so whatever sits in it — text, fields, cards,
  * pills — reads as ink on sky without knowing it. Its buttons are .btn-hot
  * (ink fill) and .btn-hot-outline. */
-.skycard {
-	--tx: var(--ink);
-	--tx2: var(--ink);
-	--mut: color-mix(in srgb, var(--ink) 74%, transparent);
-	--fnt: color-mix(in srgb, var(--ink) 62%, transparent);
-	--p1: color-mix(in srgb, var(--ink) 6%, transparent);
-	--p2: color-mix(in srgb, var(--ink) 9%, transparent);
-	--p3: color-mix(in srgb, var(--ink) 14%, transparent);
-	--ln: color-mix(in srgb, var(--ink) 18%, transparent);
-	--ln2: color-mix(in srgb, var(--ink) 30%, transparent);
-	--code: color-mix(in srgb, var(--ink) 10%, transparent);
-	--spec: none;
+.attention-card {
+	--text: var(--ink);
+	--text-code: var(--ink);
+	--text-muted: color-mix(in srgb, var(--ink) 74%, transparent);
+	--text-faint: color-mix(in srgb, var(--ink) 62%, transparent);
+	--fill-1: color-mix(in srgb, var(--ink) 6%, transparent);
+	--fill-2: color-mix(in srgb, var(--ink) 9%, transparent);
+	--fill-3: color-mix(in srgb, var(--ink) 14%, transparent);
+	--line: color-mix(in srgb, var(--ink) 18%, transparent);
+	--line-strong: color-mix(in srgb, var(--ink) 30%, transparent);
+	--code-bg: color-mix(in srgb, var(--ink) 10%, transparent);
+	--specular: none;
 	--link: var(--ink);
 	--brand: var(--ink);
-	--onBrand: var(--onInk);
-	--sky: var(--ink);
-	--skyTx: var(--ink);
-	--brandBg: color-mix(in srgb, var(--ink) 12%, transparent);
-	background: var(--skyFill);
+	--on-brand: var(--on-ink);
+	--attention: var(--ink);
+	--attention-text: var(--ink);
+	--brand-bg: color-mix(in srgb, var(--ink) 12%, transparent);
+	background: var(--attention-fill);
 	color: var(--ink);
-	box-shadow: 0 0 30px var(--skyGlow);
+	box-shadow: 0 0 30px var(--attention-glow);
 }
 /* Card inside a pane. */
 .card-in {
-	background: var(--p2);
-	border: 1px solid var(--ln);
+	background: var(--fill-2);
+	border: 1px solid var(--line);
 	border-radius: var(--r-card);
 }
 
@@ -83,20 +83,20 @@
 	align-items: center;
 	justify-content: center;
 	gap: 6px;
-	font-family: var(--sans);
+	font-family: var(--font-body);
 	font-size: var(--fs-label);
 	font-weight: 600;
 	line-height: 1.4;
-	color: var(--tx);
+	color: var(--text);
 	padding: 4px 11px;
 	border-radius: var(--r-tab);
-	background: var(--p2);
-	border: 1px solid var(--ln2);
-	box-shadow: var(--spec);
+	background: var(--fill-2);
+	border: 1px solid var(--line-strong);
+	box-shadow: var(--specular);
 }
 :where(button:not(.svelte-flow *, .xterm *)):hover,
 .btn:hover {
-	background: var(--p3);
+	background: var(--fill-3);
 	text-decoration: none;
 }
 :where(button:not(.svelte-flow *, .xterm *)):focus-visible,
@@ -113,57 +113,57 @@
 
 .btn-primary {
 	background: var(--brand);
-	color: var(--onBrand);
+	color: var(--on-brand);
 	border-color: transparent;
 	font-weight: 700;
-	box-shadow: 0 0 var(--glow-md) var(--brandLn);
+	box-shadow: 0 0 var(--glow-md) var(--brand-line);
 }
 .btn-primary:hover {
 	background: var(--brand);
 	filter: brightness(1.06);
 }
 .btn-sel {
-	background: var(--sel);
+	background: var(--selected-bg);
 	border: 1px solid transparent;
 	box-shadow:
-		inset 0 0 0 1px var(--selLn),
-		var(--selSh);
-	color: var(--tx);
+		inset 0 0 0 1px var(--selected-line),
+		var(--selected-shadow);
+	color: var(--text);
 	font-weight: 600;
 }
 .btn-sel:hover {
-	background: var(--p3);
+	background: var(--fill-3);
 	filter: brightness(1.12);
 }
 .btn-danger {
 	background: transparent;
 	box-shadow: none;
-	color: var(--rosTx);
-	border: 1px solid var(--rosLn);
+	color: var(--danger-text);
+	border: 1px solid var(--danger-line);
 }
 .btn-danger:hover {
-	background: var(--rosBg);
+	background: var(--danger-bg);
 }
 .btn-danger-solid {
-	background: var(--ros);
-	color: var(--rosInk);
+	background: var(--danger);
+	color: var(--on-danger);
 	border-color: transparent;
 	font-weight: 600;
-	box-shadow: 0 0 14px var(--rosGlow);
+	box-shadow: 0 0 14px var(--danger-glow);
 }
 .btn-danger-solid:hover {
-	background: var(--ros);
+	background: var(--danger);
 	filter: brightness(1.08);
 }
 .btn-ghost {
 	background: transparent;
 	border-color: transparent;
 	box-shadow: none;
-	color: var(--mut);
+	color: var(--text-muted);
 }
 .btn-ghost:hover {
-	background: var(--p3);
-	color: var(--tx);
+	background: var(--fill-3);
+	color: var(--text);
 }
 .btn-icon {
 	width: 24px;
@@ -173,12 +173,12 @@
 	background: transparent;
 	border-color: transparent;
 	box-shadow: none;
-	color: var(--mut);
+	color: var(--text-muted);
 	font-size: var(--fs-body);
 }
 .btn-icon:hover {
-	background: var(--p3);
-	color: var(--tx);
+	background: var(--fill-3);
+	color: var(--text);
 }
 /* A small icon button: inside a chip, a nudge, a row. */
 .btn-icon.btn-sm {
@@ -191,8 +191,8 @@
 .btn-notyet {
 	background: transparent;
 	box-shadow: none;
-	border: 1px dashed var(--ln2);
-	color: var(--fnt);
+	border: 1px dashed var(--line-strong);
+	color: var(--text-faint);
 	cursor: default;
 }
 .btn-notyet:hover {
@@ -220,7 +220,60 @@
 	text-decoration: underline;
 }
 
-/* ── chips, pills, tags, counts ────────────────────────────────────────── */
+.btn-md {
+	font-size: var(--fs-label);
+	padding: 5px 14px;
+}
+/* The pair inside a solid-sky card (.attention-card): ink fill, and ink outline. */
+.btn-hot {
+	background: var(--ink);
+	color: var(--on-ink);
+	border-color: transparent;
+	box-shadow: none;
+	font-weight: 700;
+}
+.btn-hot:hover {
+	background: var(--ink);
+	filter: brightness(1.3);
+}
+.btn-hot-outline {
+	background: transparent;
+	box-shadow: none;
+	color: var(--ink);
+	border: 1.5px solid color-mix(in srgb, var(--ink) 45%, transparent);
+	font-weight: 600;
+}
+.btn-hot-outline:hover {
+	background: color-mix(in srgb, var(--ink) 12%, transparent);
+}
+/* Live, but secondary to everything else in its group ("Other…"). */
+.btn-dashed {
+	background: transparent;
+	box-shadow: none;
+	border: 1px dashed var(--line-strong);
+	color: var(--text-muted);
+}
+.btn-dashed:hover {
+	background: var(--fill-1);
+	color: var(--text);
+}
+/* The terminal's own buttons (it stays dark in every theme). */
+.btn-term {
+	color: var(--term-text);
+	background: var(--term-button-bg);
+	border-color: var(--term-button-line);
+	box-shadow: none;
+}
+/* Link colour at zero specificity, so a .hue-* on the same element wins. */
+:where(.linklike) {
+	color: var(--link);
+}
+.linklike.brand,
+a.brand {
+	color: var(--link);
+}
+
+/* ── chips, pills, tags, counts ──────────────────────────────────────────── */
 
 .pill {
 	display: inline-flex;
@@ -241,83 +294,83 @@
 	background: currentColor;
 	flex: none;
 }
-.t-emb {
-	background: var(--embBg);
-	color: var(--embTx);
-	border-color: var(--embLn);
+.tint-running {
+	background: var(--running-bg);
+	color: var(--running-text);
+	border-color: var(--running-line);
 }
-.t-sky {
-	background: var(--skyBg);
-	color: var(--skyTx);
-	border-color: var(--skyLn);
+.tint-attention {
+	background: var(--attention-bg);
+	color: var(--attention-text);
+	border-color: var(--attention-line);
 }
-.t-gold {
-	background: var(--goldBg);
-	color: var(--gold);
-	border-color: var(--goldLn);
+.tint-warning {
+	background: var(--warning-bg);
+	color: var(--warning-text);
+	border-color: var(--warning-line);
 }
-.t-grn {
-	background: var(--grnBg);
-	color: var(--grn);
-	border-color: var(--grnLn);
+.tint-success {
+	background: var(--success-bg);
+	color: var(--success-text);
+	border-color: var(--success-line);
 }
-.t-ros {
-	background: var(--rosBg);
-	color: var(--rosTx);
-	border-color: var(--rosLn);
+.tint-danger {
+	background: var(--danger-bg);
+	color: var(--danger-text);
+	border-color: var(--danger-line);
 }
-.t-vio {
-	background: var(--vioBg);
-	color: var(--vio);
-	border-color: var(--vioLn);
+.tint-accent {
+	background: var(--accent-bg);
+	color: var(--accent-text);
+	border-color: var(--accent-line);
 }
-.t-tea {
-	background: var(--teaBg);
-	color: var(--tea);
-	border-color: var(--teaLn);
+.tint-accent-2 {
+	background: var(--accent-2-bg);
+	color: var(--accent-2-text);
+	border-color: var(--accent-2-line);
 }
-.t-mut {
-	background: var(--p2);
-	color: var(--mut);
-	border-color: var(--ln);
+.tint-muted {
+	background: var(--fill-2);
+	color: var(--text-muted);
+	border-color: var(--line);
 }
-.t-brand {
-	background: var(--brandBg);
+.tint-brand {
+	background: var(--brand-bg);
 	color: var(--link);
-	border-color: var(--brandLn);
+	border-color: var(--brand-line);
 }
 
 /* Mono tag: ticket keys, hashes. */
 .tag {
 	display: inline-flex;
 	align-items: center;
-	font-family: var(--mono);
+	font-family: var(--font-code);
 	font-size: var(--fs-meta);
 	font-weight: 500;
 	padding: 0 6px;
 	border-radius: var(--r-tag);
-	background: var(--p2);
-	border: 1px solid var(--ln);
-	color: var(--tx);
+	background: var(--fill-2);
+	border: 1px solid var(--line);
+	color: var(--text);
 	white-space: nowrap;
 }
 
 /* Count in nav/tab. .hot = a human must act now. */
 .count {
 	display: inline-block;
-	font-family: var(--mono);
+	font-family: var(--font-code);
 	font-size: var(--fs-id);
 	font-weight: 600;
 	padding: 0 7px;
 	border-radius: var(--r-card);
-	color: var(--mut);
+	color: var(--text-muted);
 	line-height: 1.6;
 	min-width: 18px;
 	text-align: center;
 }
 .count.hot {
-	background: var(--sky);
-	color: var(--onBrand);
+	background: var(--attention);
+	color: var(--on-brand);
 	font-weight: 700;
 }
 /* Compact: a window tab's count, a badge pinned on a rail or tab-bar icon
@@ -340,7 +393,7 @@
 	padding: 0;
 	border-radius: 50%;
 	font-size: var(--fs-label);
-	box-shadow: 0 0 var(--glow-sm) var(--skyLn);
+	box-shadow: 0 0 var(--glow-sm) var(--attention-line);
 }
 
 .dot {
@@ -349,6 +402,132 @@
 	border-radius: 50%;
 	flex: none;
 	display: inline-block;
+}
+
+.pill.sm {
+	font-size: var(--fs-id);
+	padding: 0 7px;
+}
+.pill.flat {
+	border-color: transparent;
+}
+/* Squarer corners: stage-type chips, kind chips. */
+.pill.sq {
+	border-radius: var(--r-tag);
+}
+.pill.mono {
+	font-family: var(--font-code);
+	font-weight: 500;
+}
+/* Solid sky: the "N need you" pill, the Waiting chip. */
+.pill.tint-hot {
+	background: var(--attention);
+	color: var(--on-brand);
+	font-weight: 700;
+	box-shadow: 0 0 var(--glow-md) var(--attention-line);
+}
+.count.bad {
+	background: var(--danger);
+	color: var(--on-danger);
+	font-weight: 700;
+}
+.chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	align-items: center;
+}
+
+/* A hue as a variable, for components that tint several properties from
+ * one colour (washes, accents, dots): `class="h-gold"` then var(--tone). */
+.tone-running {
+	--tone: var(--running);
+}
+.tone-attention {
+	--tone: var(--attention);
+}
+.tone-warning {
+	--tone: var(--warning);
+}
+.tone-success {
+	--tone: var(--success);
+}
+.tone-danger {
+	--tone: var(--danger);
+}
+.tone-accent {
+	--tone: var(--accent);
+}
+.tone-accent-2 {
+	--tone: var(--accent-2);
+}
+.tone-muted {
+	--tone: var(--text-muted);
+}
+.tone-brand {
+	--tone: var(--brand);
+}
+/* A tinted wash in the top-left corner of a surface (the ping card). */
+.wash,
+.glass .glass.wash {
+	background:
+		radial-gradient(
+			ellipse 70% 140% at 0% 0%,
+			color-mix(in oklch, var(--tone, var(--brand)) var(--tint-strength), transparent),
+			transparent 70%
+		),
+		var(--wash-base, var(--glass-bg));
+}
+.glass .glass.wash {
+	--wash-base: var(--inset-bg);
+}
+
+/* ── live dots and marks ───────────────────────────────────────────────── */
+
+/* A live indicator: colour it with a .hue-* class (currentColor), add
+ * .pulse while something is happening. */
+.live-dot {
+	flex: none;
+	display: inline-block;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: currentColor;
+	box-shadow: 0 0 var(--glow-sm) currentColor;
+}
+.live-dot.sm {
+	width: 6px;
+	height: 6px;
+}
+.live-dot.flat {
+	box-shadow: none;
+}
+.live-dot.hollow {
+	background: transparent;
+	border: 1.5px solid currentColor;
+	box-shadow: none;
+}
+.live-dot.dashed {
+	background: transparent;
+	border: 1.5px dashed currentColor;
+	box-shadow: none;
+}
+/* Unsaved changes: a sky dot beside a label. */
+.unsaved {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--attention-text);
+	font-size: var(--fs-meta);
+	font-weight: 600;
+}
+.unsaved::before {
+	content: '';
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--attention);
+	box-shadow: 0 0 var(--glow-sm) var(--attention);
 }
 
 /* ── tabs + segmented ──────────────────────────────────────────────────── */
@@ -369,29 +548,29 @@
 	gap: 6px;
 	font-size: var(--fs-ui);
 	font-weight: 500;
-	color: var(--mut);
+	color: var(--text-muted);
 	padding: 5px 12px;
 	border-radius: var(--r-tab);
 }
 .seg > button:hover,
 .seg > a:hover {
-	color: var(--tx);
+	color: var(--text);
 	text-decoration: none;
 }
 .seg > .on,
 .tabs > .on,
 .bead {
-	background: var(--sel);
+	background: var(--selected-bg);
 	box-shadow:
-		inset 0 0 0 1px var(--selLn),
-		var(--selSh);
-	color: var(--tx);
+		inset 0 0 0 1px var(--selected-line),
+		var(--selected-shadow);
+	color: var(--text);
 	font-weight: 600;
 }
 .seg .n {
-	font-family: var(--mono);
+	font-family: var(--font-code);
 	font-size: var(--fs-id);
-	color: var(--mut);
+	color: var(--text-muted);
 }
 
 /* A page's or pane's sections (Tabs). Scrolls sideways when narrow, the
@@ -400,7 +579,7 @@
 	display: flex;
 	gap: 4px;
 	align-items: center;
-	border-bottom: 1px solid var(--cLn);
+	border-bottom: 1px solid var(--glass-line);
 	min-height: 38px;
 	overflow-x: auto;
 	scrollbar-width: none;
@@ -417,11 +596,11 @@
 	border-radius: var(--r-tab);
 	font-size: var(--fs-ui);
 	font-weight: 500;
-	color: var(--mut);
+	color: var(--text-muted);
 }
 .tabs > button:hover,
 .tabs > a:hover {
-	color: var(--tx);
+	color: var(--text);
 	text-decoration: none;
 }
 .tabs .count {
@@ -432,8 +611,8 @@
 		mask-image: linear-gradient(
 			to right,
 			transparent,
-			#000 12px,
-			#000 calc(100% - 12px),
+			var(--mask-opaque) 12px,
+			var(--mask-opaque) calc(100% - 12px),
 			transparent
 		);
 	}
@@ -462,10 +641,10 @@
 	z-index: var(--z-scene);
 	pointer-events: none;
 	border-radius: var(--r-tab);
-	background: var(--sel);
+	background: var(--selected-bg);
 	box-shadow:
-		inset 0 0 0 1px var(--selLn),
-		var(--selSh);
+		inset 0 0 0 1px var(--selected-line),
+		var(--selected-shadow);
 	transition:
 		transform var(--dur-spring) var(--spring),
 		width var(--dur-spring) var(--spring),
@@ -478,7 +657,7 @@
 
 /* ── menus (popovers, the command palette) ─────────────────────────────── */
 
-.mi {
+.menu-item {
 	all: unset;
 	box-sizing: border-box;
 	cursor: pointer;
@@ -488,41 +667,41 @@
 	padding: 7px 9px;
 	border-radius: var(--r-row);
 	font-size: var(--fs-ui);
-	color: var(--tx);
+	color: var(--text);
 	white-space: nowrap;
 	min-width: 0;
 }
-.mi:hover {
-	background: var(--p3);
+.menu-item:hover {
+	background: var(--fill-3);
 	text-decoration: none;
 }
-.mi:active {
-	background: var(--p3);
+.menu-item:active {
+	background: var(--fill-3);
 	opacity: 0.8;
 }
-.mi:focus-visible {
+.menu-item:focus-visible {
 	outline: 2px solid var(--brand);
 	outline-offset: -2px;
 }
-.mi.on {
-	background: var(--sel);
+.menu-item.on {
+	background: var(--selected-bg);
 	box-shadow:
-		inset 0 0 0 1px var(--selLn),
-		var(--selSh);
+		inset 0 0 0 1px var(--selected-line),
+		var(--selected-shadow);
 	font-weight: 600;
 }
-.mi .sub {
-	color: var(--mut);
+.menu-item .sub {
+	color: var(--text-muted);
 	font-size: var(--fs-meta);
 }
-.mi .g {
+.menu-item .g {
 	width: 16px;
 	text-align: center;
-	color: var(--mut);
+	color: var(--text-muted);
 	flex: none;
 }
 /* A two-line row: title over a muted sub. */
-.mi .col {
+.menu-item .col {
 	display: flex;
 	flex-direction: column;
 	gap: 0;
@@ -532,7 +711,7 @@
 }
 .menu-div {
 	height: 1px;
-	background: var(--ln);
+	background: var(--line);
 	margin: 4px 6px;
 	flex: none;
 }
@@ -544,30 +723,30 @@
 :where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'])),
 :where(textarea) {
 	width: 100%;
-	font-family: var(--sans);
+	font-family: var(--font-body);
 	font-size: var(--fs-body);
-	color: var(--tx);
+	color: var(--text);
 	padding: 7px 10px;
 	border-radius: var(--r-row);
-	background: var(--p1);
-	border: 1px solid var(--ln2);
+	background: var(--fill-1);
+	border: 1px solid var(--line-strong);
 	outline: none;
 }
 input::placeholder,
 textarea::placeholder {
-	color: var(--fnt);
+	color: var(--text-faint);
 }
 :where(input, textarea):focus {
 	border-color: var(--brand);
-	box-shadow: 0 0 0 3px var(--brandBg);
+	box-shadow: 0 0 0 3px var(--brand-bg);
 }
 input.invalid,
 textarea.invalid {
-	border-color: var(--ros);
+	border-color: var(--danger);
 }
 input.mono,
 textarea.mono {
-	font-family: var(--mono);
+	font-family: var(--font-code);
 	font-size: var(--fs-label);
 }
 :where(textarea) {
@@ -576,7 +755,7 @@ textarea.mono {
 	line-height: 1.5;
 }
 input[type='checkbox'] {
-	accent-color: var(--grn);
+	accent-color: var(--success);
 }
 /* A set of radios or checkboxes (RadioGroup, CheckboxGroup): stacked, or
  * side by side when short. */
@@ -600,7 +779,7 @@ label {
 	display: block;
 	font-size: var(--fs-label);
 	font-weight: 500;
-	color: var(--tx);
+	color: var(--text);
 	margin: 10px 0 4px;
 }
 .field {
@@ -611,18 +790,18 @@ label {
 }
 .field > label,
 .field > legend,
-.flabel {
+.field-label {
 	margin: 0;
 }
 /* A field's label where no <label> fits (a fieldset's legend, a label for
  * a group of controls): the label's look. */
 legend,
-.flabel {
+.field-label {
 	display: block;
 	padding: 0;
 	font-size: var(--fs-label);
 	font-weight: 500;
-	color: var(--tx);
+	color: var(--text);
 }
 fieldset.field {
 	margin: 0;
@@ -634,9 +813,9 @@ fieldset.field > legend {
 	margin-bottom: 4px;
 }
 /* The required mark after a field's label. */
-.req {
+.required {
 	margin-left: 2px;
-	color: var(--gold);
+	color: var(--warning-text);
 }
 /* A field drawn by a component around its own parts (a search box, a tag
  * list, a stepper): an input's box, its focus ring on whatever is focused
@@ -645,25 +824,24 @@ fieldset.field > legend {
 	display: flex;
 	align-items: center;
 	border-radius: var(--r-row);
-	background: var(--p1);
-	border: 1px solid var(--ln2);
+	background: var(--fill-1);
+	border: 1px solid var(--line-strong);
 }
 .fieldbox:focus-within {
 	border-color: var(--brand);
-	box-shadow: 0 0 0 3px var(--brandBg);
+	box-shadow: 0 0 0 3px var(--brand-bg);
 }
 .fieldbox.invalid {
-	border-color: var(--ros);
+	border-color: var(--danger);
 }
 .help {
 	font-size: var(--fs-help);
 	letter-spacing: var(--tr-small);
-	color: var(--mut);
+	color: var(--text-muted);
 }
-.err,
 .error {
 	font-size: var(--fs-help);
-	color: var(--rosTx);
+	color: var(--danger-text);
 }
 .grid2 {
 	display: grid;
@@ -676,6 +854,43 @@ fieldset.field > legend {
 	}
 }
 
+.form-actions {
+	display: flex;
+	justify-content: flex-end;
+	align-items: center;
+	gap: 8px;
+}
+.wide {
+	grid-column: 1 / -1;
+}
+/* A denser form (inspectors, side panels). */
+.form-dense label,
+.form-dense legend,
+.form-dense .field-label {
+	font-size: var(--fs-help);
+	margin: 6px 0 3px;
+}
+/* In a .field the gap already spaces the label. */
+.form-dense .field > label,
+.form-dense .field > legend,
+.form-dense .field > .field-label {
+	margin: 0;
+}
+.form-dense input:not([type='checkbox'], [type='radio']),
+.form-dense textarea {
+	padding: 5px 8px;
+	font-size: var(--fs-label);
+	border-radius: var(--r-tab);
+}
+/* A borderless input that lives inside another control. */
+input.bare,
+textarea.bare {
+	border: 0;
+	background: transparent;
+	box-shadow: none;
+	padding: 3px 0;
+}
+
 /* ── tables (DESIGN 4.13) ──────────────────────────────────────────────── */
 
 table {
@@ -685,7 +900,7 @@ table {
 th {
 	letter-spacing: var(--tr-small);
 	text-align: left;
-	color: var(--mut);
+	color: var(--text-muted);
 	font-size: var(--fs-meta);
 	font-weight: 500;
 	padding: 8px 14px;
@@ -695,7 +910,7 @@ th {
 }
 td {
 	padding: 9px 14px;
-	border-top: 1px solid var(--cLn);
+	border-top: 1px solid var(--glass-line);
 	vertical-align: middle;
 }
 tr.click {
@@ -703,25 +918,26 @@ tr.click {
 }
 tr.click:hover,
 .rows > .r:hover {
-	background: var(--p1);
+	background: var(--fill-1);
 }
 tr.sel {
-	background: var(--p3);
+	background: var(--fill-3);
 }
 /* Grid rows (preferred for dense lists so long text ellipsises). */
 .rows > .r {
+	position: relative;
 	display: grid;
 	align-items: center;
 	gap: 12px;
 	padding: 9px 16px;
-	border-top: 1px solid var(--cLn);
+	border-top: 1px solid var(--glass-line);
 	color: inherit;
 	text-decoration: none;
 }
 .rows > .r.head {
 	font-size: var(--fs-meta);
 	font-weight: 500;
-	color: var(--mut);
+	color: var(--text-muted);
 	border-top: 0;
 	padding-top: 8px;
 	padding-bottom: 6px;
@@ -730,7 +946,59 @@ tr.sel {
 	background: none;
 }
 
-/* ── panes ─────────────────────────────────────────────────────────────── */
+/* ── rows ──────────────────────────────────────────────────────────────── */
+
+/* A full-width clickable row in a list (files, outline, results, menus):
+ * dims on press instead of scaling, bead when selected. */
+/* The reset sits in :where() so classes on the same element (.card-in,
+ * .faint, …) still apply. */
+:where(.rowbtn) {
+	all: unset;
+	color: var(--text);
+}
+.rowbtn {
+	box-sizing: border-box;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-width: 0;
+	padding: 7px 10px;
+	border-radius: var(--r-row);
+	text-align: left;
+	-webkit-tap-highlight-color: transparent;
+}
+.rowbtn:hover {
+	background: var(--fill-1);
+	text-decoration: none;
+}
+.rowbtn:active {
+	background: var(--fill-3);
+}
+.rowbtn:focus-visible {
+	outline: 2px solid var(--brand);
+	outline-offset: -2px;
+}
+.rowbtn.on {
+	background: var(--selected-bg);
+	box-shadow:
+		inset 0 0 0 1px var(--selected-line),
+		var(--selected-shadow);
+}
+/* A row whose title link covers the whole row (other links stay on top). */
+.stretch::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	z-index: var(--z-raise);
+}
+.over-stretch {
+	position: relative;
+	z-index: calc(var(--z-raise) + 1);
+}
+
+/* ── panes, sections, cards ──────────────────────────────────────────────── */
 
 /* Section pane on window glass. */
 .pane {
@@ -742,7 +1010,7 @@ tr.sel {
 	align-items: center;
 	gap: 10px;
 	padding: 12px 16px;
-	border-bottom: 1px solid var(--cLn);
+	border-bottom: 1px solid var(--glass-line);
 }
 .pane-head h2 {
 	font-size: var(--fs-section);
@@ -775,9 +1043,9 @@ details[open] > summary .caretglyph {
 
 /* Diff (DESIGN 4.10). */
 .diff {
-	font-family: var(--mono);
+	font-family: var(--font-code);
 	font-size: var(--fs-meta);
-	background: var(--code);
+	background: var(--code-bg);
 	border-radius: var(--r-sm);
 	overflow: auto;
 	line-height: 1.55;
@@ -792,16 +1060,16 @@ details[open] > summary .caretglyph {
 	text-align: right;
 	padding-right: 8px;
 	opacity: 0.6;
-	color: var(--mut);
+	color: var(--text-muted);
 	user-select: none;
 }
 .diff .dl.add {
-	background: var(--grnBg);
-	color: var(--grn);
+	background: var(--success-bg);
+	color: var(--success-text);
 }
 .diff .dl.del {
-	background: var(--rosBg);
-	color: var(--rosTx);
+	background: var(--danger-bg);
+	color: var(--danger-text);
 }
 .diff .dl.hunk {
 	color: var(--link);
@@ -811,9 +1079,9 @@ details[open] > summary .caretglyph {
 /* Program output: a log, a stage's last words. pre.log, or a .log block
  * of line elements (the run's logs and services panes). */
 .log {
-	font-family: var(--mono);
+	font-family: var(--font-code);
 	font-size: var(--fs-help);
-	background: var(--code);
+	background: var(--code-bg);
 	border-radius: var(--r-row);
 	padding: 10px 12px;
 	margin: 0;
@@ -821,7 +1089,7 @@ details[open] > summary .caretglyph {
 	max-height: 400px;
 	white-space: pre-wrap;
 	word-break: break-all;
-	color: var(--tx);
+	color: var(--text);
 }
 
 /* Skeleton loading bar. */
@@ -829,250 +1097,11 @@ details[open] > summary .caretglyph {
 	display: block;
 	height: 12px;
 	border-radius: var(--r-tag);
-	background: var(--p1) linear-gradient(90deg, transparent, var(--p2), transparent) no-repeat;
+	background: var(--fill-1) linear-gradient(90deg, transparent, var(--fill-2), transparent)
+		no-repeat;
 	background-size: 50% 100%;
-	animation: ap-shimmer 1.4s linear infinite;
+	animation: ap-shimmer var(--loop-shimmer) linear infinite;
 }
-
-/* ── more button variants ──────────────────────────────────────────────── */
-
-.btn-md {
-	font-size: var(--fs-label);
-	padding: 5px 14px;
-}
-/* The pair inside a solid-sky card (.skycard): ink fill, and ink outline. */
-.btn-hot {
-	background: var(--ink);
-	color: var(--onInk);
-	border-color: transparent;
-	box-shadow: none;
-	font-weight: 700;
-}
-.btn-hot:hover {
-	background: var(--ink);
-	filter: brightness(1.3);
-}
-.btn-hot-outline {
-	background: transparent;
-	box-shadow: none;
-	color: var(--ink);
-	border: 1.5px solid color-mix(in srgb, var(--ink) 45%, transparent);
-	font-weight: 600;
-}
-.btn-hot-outline:hover {
-	background: color-mix(in srgb, var(--ink) 12%, transparent);
-}
-/* Live, but secondary to everything else in its group ("Other…"). */
-.btn-dashed {
-	background: transparent;
-	box-shadow: none;
-	border: 1px dashed var(--ln2);
-	color: var(--mut);
-}
-.btn-dashed:hover {
-	background: var(--p1);
-	color: var(--tx);
-}
-/* The terminal's own buttons (it stays dark in every theme). */
-.btn-term {
-	color: var(--termTx);
-	background: var(--termBtnBg);
-	border-color: var(--termBtnLn);
-	box-shadow: none;
-}
-/* Link colour at zero specificity, so a .hue-* on the same element wins. */
-:where(.linklike) {
-	color: var(--link);
-}
-.linklike.brand,
-a.brand {
-	color: var(--link);
-}
-
-/* ── live dots and marks ───────────────────────────────────────────────── */
-
-/* A live indicator: colour it with a .hue-* class (currentColor), add
- * .pulse while something is happening. */
-.ldot {
-	flex: none;
-	display: inline-block;
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: currentColor;
-	box-shadow: 0 0 var(--glow-sm) currentColor;
-}
-.ldot.sm {
-	width: 6px;
-	height: 6px;
-}
-.ldot.flat {
-	box-shadow: none;
-}
-.ldot.hollow {
-	background: transparent;
-	border: 1.5px solid currentColor;
-	box-shadow: none;
-}
-.ldot.dashed {
-	background: transparent;
-	border: 1.5px dashed currentColor;
-	box-shadow: none;
-}
-/* Unsaved changes: a sky dot beside a label. */
-.unsaved {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	color: var(--skyTx);
-	font-size: var(--fs-meta);
-	font-weight: 600;
-}
-.unsaved::before {
-	content: '';
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: var(--sky);
-	box-shadow: 0 0 var(--glow-sm) var(--sky);
-}
-
-/* ── pills, extra sizes and tones ──────────────────────────────────────── */
-
-.pill.sm {
-	font-size: var(--fs-id);
-	padding: 0 7px;
-}
-.pill.flat {
-	border-color: transparent;
-}
-/* Squarer corners: stage-type chips, kind chips. */
-.pill.sq {
-	border-radius: var(--r-tag);
-}
-.pill.mono {
-	font-family: var(--mono);
-	font-weight: 500;
-}
-/* Solid sky: the "N need you" pill, the Waiting chip. */
-.pill.t-hot {
-	background: var(--sky);
-	color: var(--onBrand);
-	font-weight: 700;
-	box-shadow: 0 0 var(--glow-md) var(--skyLn);
-}
-.count.bad {
-	background: var(--ros);
-	color: var(--rosInk);
-	font-weight: 700;
-}
-.chips {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 4px;
-	align-items: center;
-}
-
-/* A hue as a variable, for components that tint several properties from
- * one colour (washes, accents, dots): `class="h-gold"` then var(--h). */
-.h-emb {
-	--h: var(--emb);
-}
-.h-sky {
-	--h: var(--sky);
-}
-.h-gold {
-	--h: var(--gold);
-}
-.h-grn {
-	--h: var(--grn);
-}
-.h-ros {
-	--h: var(--ros);
-}
-.h-vio {
-	--h: var(--vio);
-}
-.h-tea {
-	--h: var(--tea);
-}
-.h-mut {
-	--h: var(--mut);
-}
-.h-brand {
-	--h: var(--brand);
-}
-/* A tinted wash in the top-left corner of a surface (the ping card). */
-.wash,
-.c .c.wash {
-	background:
-		radial-gradient(
-			ellipse 70% 140% at 0% 0%,
-			color-mix(in oklch, var(--h, var(--brand)) var(--hueBg), transparent),
-			transparent 70%
-		),
-		var(--wash-base, var(--cBg));
-}
-.c .c.wash {
-	--wash-base: var(--inBg);
-}
-
-/* ── rows ──────────────────────────────────────────────────────────────── */
-
-/* A full-width clickable row in a list (files, outline, results, menus):
- * dims on press instead of scaling, bead when selected. */
-/* The reset sits in :where() so classes on the same element (.card-in,
- * .fnt, …) still apply. */
-:where(.rowbtn) {
-	all: unset;
-	color: var(--tx);
-}
-.rowbtn {
-	box-sizing: border-box;
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	width: 100%;
-	min-width: 0;
-	padding: 7px 10px;
-	border-radius: var(--r-row);
-	text-align: left;
-	-webkit-tap-highlight-color: transparent;
-}
-.rowbtn:hover {
-	background: var(--p1);
-	text-decoration: none;
-}
-.rowbtn:active {
-	background: var(--p3);
-}
-.rowbtn:focus-visible {
-	outline: 2px solid var(--brand);
-	outline-offset: -2px;
-}
-.rowbtn.on {
-	background: var(--sel);
-	box-shadow:
-		inset 0 0 0 1px var(--selLn),
-		var(--selSh);
-}
-/* A row whose title link covers the whole row (other links stay on top). */
-.rows > .r {
-	position: relative;
-}
-.stretch::after {
-	content: '';
-	position: absolute;
-	inset: 0;
-	z-index: var(--z-raise);
-}
-.over-stretch {
-	position: relative;
-	z-index: calc(var(--z-raise) + 1);
-}
-
-/* ── pane parts, sections, cards ───────────────────────────────────────── */
 
 .page > .pane {
 	flex: none;
@@ -1082,16 +1111,16 @@ a.brand {
 	align-items: center;
 	gap: 10px;
 	padding: 9px 16px;
-	border-top: 1px solid var(--cLn);
+	border-top: 1px solid var(--glass-line);
 	font-size: var(--fs-meta);
-	color: var(--mut);
+	color: var(--text-muted);
 }
 /* A small label for a group inside a pane ("Recently finished"). */
 .pane-sub,
-.lbl {
+.caption {
 	font-size: var(--fs-meta);
 	font-weight: 500;
-	color: var(--fnt);
+	color: var(--text-faint);
 	letter-spacing: var(--tr-small);
 }
 .pane-sub {
@@ -1105,7 +1134,7 @@ a.brand {
 	gap: 10px;
 }
 .card-head > .t {
-	font-family: var(--display);
+	font-family: var(--font-display);
 	font-weight: 600;
 	font-size: var(--fs-section);
 	line-height: 1.15;
@@ -1113,7 +1142,7 @@ a.brand {
 .card-head > .lg2,
 .card-head > .legend {
 	font-size: var(--fs-meta);
-	color: var(--mut);
+	color: var(--text-muted);
 }
 /* Cards in a responsive grid, sharing the whole row however few; set --min
  * per use. */
@@ -1136,7 +1165,7 @@ dl.kv {
 	font-size: var(--fs-label);
 }
 dl.kv > dt {
-	color: var(--mut);
+	color: var(--text-muted);
 	white-space: nowrap;
 }
 dl.kv > dd {
@@ -1145,21 +1174,21 @@ dl.kv > dd {
 	overflow-wrap: anywhere;
 }
 dl.kv.code {
-	background: var(--code);
+	background: var(--code-bg);
 	border-radius: var(--r-row);
 	padding: 8px 10px;
 }
 dl.kv.code > dd {
-	font-family: var(--mono);
+	font-family: var(--font-code);
 	font-size: var(--fs-help);
 }
 
 /* A quiet dashed note ("nothing here yet", "how this works"). */
 .note {
-	border: 1px dashed var(--ln2);
+	border: 1px dashed var(--line-strong);
 	border-radius: var(--r-btn);
 	padding: 10px 12px;
-	color: var(--mut);
+	color: var(--text-muted);
 	font-size: var(--fs-label);
 }
 
@@ -1211,7 +1240,7 @@ dl.kv.code > dd {
 /* A quiet hint ("refreshes every 5s"); at the right end of a .vbar. */
 .hint {
 	font-size: var(--fs-meta);
-	color: var(--fnt);
+	color: var(--text-faint);
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -1219,45 +1248,6 @@ dl.kv.code > dd {
 }
 .vbar > .hint {
 	margin-left: auto;
-}
-
-/* ── forms, extra ──────────────────────────────────────────────────────── */
-
-.form-actions {
-	display: flex;
-	justify-content: flex-end;
-	align-items: center;
-	gap: 8px;
-}
-.wide {
-	grid-column: 1 / -1;
-}
-/* A denser form (inspectors, side panels). */
-.form-dense label,
-.form-dense legend,
-.form-dense .flabel {
-	font-size: var(--fs-help);
-	margin: 6px 0 3px;
-}
-/* In a .field the gap already spaces the label. */
-.form-dense .field > label,
-.form-dense .field > legend,
-.form-dense .field > .flabel {
-	margin: 0;
-}
-.form-dense input:not([type='checkbox'], [type='radio']),
-.form-dense textarea {
-	padding: 5px 8px;
-	font-size: var(--fs-label);
-	border-radius: var(--r-tab);
-}
-/* A borderless input that lives inside another control. */
-input.bare,
-textarea.bare {
-	border: 0;
-	background: transparent;
-	box-shadow: none;
-	padding: 3px 0;
 }
 
 /* ── overlays ──────────────────────────────────────────────────────────── */
@@ -1271,7 +1261,7 @@ textarea.bare {
 	-webkit-backdrop-filter: blur(6px);
 }
 
-/* ── documents ─────────────────────────────────────────────────────────── */
+/* ── documents and code ──────────────────────────────────────────────────── */
 
 /* A reading column (plan review, captured documents). */
 .paper {
@@ -1283,7 +1273,7 @@ textarea.bare {
  * section titles. */
 .md.doc h1,
 .md.doc h2 {
-	font-family: var(--display);
+	font-family: var(--font-display);
 	font-weight: 600;
 	font-size: var(--fs-section);
 	letter-spacing: var(--tr-heading);
@@ -1293,17 +1283,38 @@ textarea.bare {
 	font-size: var(--fs-empty);
 }
 
-/* ── code and diffs, extra ─────────────────────────────────────────────── */
-
 /* Two gutters (old and new line numbers) for side-aware diffs. */
 .diff.two .dl {
 	grid-template-columns: 36px 36px 1fr;
 }
 .diff .dl.meta {
-	color: var(--mut);
+	color: var(--text-muted);
 }
 .diff-foot {
 	font-size: var(--fs-meta);
-	color: var(--fnt);
+	color: var(--text-faint);
 	padding: 6px 10px;
+}
+
+/* The two scroll columns of a review (ReviewLayout): the document, and the
+ * side column. Below the layout's breakpoint the page scrolls as one. */
+.doc-scroll {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: 16px 22px 40px;
+}
+.side-scroll {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+@container review (max-width: 700px) {
+	.side-scroll {
+		overflow: visible;
+	}
 }

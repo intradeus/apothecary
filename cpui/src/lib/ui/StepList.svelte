@@ -52,7 +52,8 @@
 	{#each steps as s, i (s.key ?? s.label)}
 		<li class="st" in:arrive|global={i}>
 			<StatusMark tone={s.tone} title={s.tone} />
-			<span class="mono id ell" class:fnt={s.tone === 'mut' || s.tone === 'pending'}>{s.label}</span
+			<span class="mono id truncate" class:faint={s.tone === 'muted' || s.tone === 'pending'}
+				>{s.label}</span
 			>
 			<span class="dt" class:bad={s.bad}>{s.detail ?? ''}</span>
 		</li>
@@ -60,14 +61,14 @@
 	{#if live}
 		<li class="st" in:arrive|global={steps.length}>
 			<StatusMark tone="live" title={t('ui.steplist.running')} />
-			<span class="mono id fnt ell">{live.label}</span>
-			<span class="dt fnt">{live.detail ?? ''}</span>
+			<span class="mono id faint truncate">{live.label}</span>
+			<span class="dt faint">{live.detail ?? ''}</span>
 		</li>
 	{/if}
 	{#if !steps.length && !live && empty}
 		<li class="st">
 			<StatusMark tone="pending" title={t('ui.steplist.none')} />
-			<span class="dt fnt span">{empty}</span>
+			<span class="dt faint span">{empty}</span>
 		</li>
 	{/if}
 </ol>
@@ -95,19 +96,19 @@
 		top: calc(50% + 11px);
 		bottom: calc(-50% + 11px);
 		width: 1px;
-		background: var(--ln2);
+		background: var(--line-strong);
 	}
 	.id {
 		font-size: var(--fs-help);
 	}
 	.dt {
-		color: var(--mut);
+		color: var(--text-muted);
 		overflow-wrap: anywhere;
 		min-width: 0;
 	}
 	.dt.bad {
-		color: var(--rosTx);
-		font-family: var(--mono);
+		color: var(--danger-text);
+		font-family: var(--font-code);
 		font-size: var(--fs-meta);
 	}
 	.span {

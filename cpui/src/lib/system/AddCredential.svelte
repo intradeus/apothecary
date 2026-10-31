@@ -6,6 +6,7 @@
 	//     code typed there (device sign-in, polled here until approved) or a
 	//     code / address pasted back here — the tokens go to the engine;
 	//   - importing a file a harness CLI wrote.
+	import { errorMessage } from '$lib/core/errors';
 	import { onDestroy } from 'svelte';
 	import { api } from '$lib/api';
 	import type { Credential, ProviderInfo, SignInPending } from '$lib/domain';
@@ -41,8 +42,12 @@
 	let rejected = $state<string[]>([]);
 	let pending = $state<SignInPending | null>(null);
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let closed = false;
 
-	onDestroy(() => clearTimeout(timer));
+	onDestroy(() => {
+		closed = true;
+		clearTimeout(timer);
+	});
 
 	async function saveKey(e: SubmitEvent) {
 		e.preventDefault();
@@ -53,7 +58,7 @@
 			toast(t('providers.added', { name: c.name }));
 			onadded([c], true);
 		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
+			error = errorMessage(err);
 		} finally {
 			busy = false;
 		}
@@ -72,7 +77,7 @@
 				onadded(r.created, r.rejected.length === 0);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
+			error = errorMessage(err);
 		} finally {
 			busy = false;
 		}
@@ -87,7 +92,7 @@
 			window.open(pending.url, '_blank', 'noopener');
 			if (!pending.paste) poll();
 		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
+			error = errorMessage(err);
 		} finally {
 			busy = false;
 		}
@@ -98,7 +103,8 @@
 	function poll() {
 		clearTimeout(timer);
 		const p = pending;
-		if (!p) return;
+		// A request can land after the panel closed: nothing would clear a new timer.
+		if (!p || closed) return;
 		timer = setTimeout(async () => {
 			try {
 				const c = await api.credentials.completeSignIn(p.id, undefined, name.trim() || undefined);
@@ -110,7 +116,7 @@
 				}
 				poll();
 			} catch (err) {
-				error = err instanceof Error ? err.message : String(err);
+				error = errorMessage(err);
 				pending = null;
 			}
 		}, p.intervalSeconds * 1000);
@@ -133,7 +139,7 @@
 				onadded([c], true);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
+			error = errorMessage(err);
 		} finally {
 			busy = false;
 		}
@@ -174,7 +180,7 @@
 				<input id="ac-{uid}-n" bind:value={name} placeholder={t('providers.namePlaceholder')} />
 			</div>
 		</div>
-		{#if error}<div class="err">{error}</div>{/if}
+		{#if error}<div class="error">{error}</div>{/if}
 		<div class="form-actions">
 			<button type="button" class="btn-ghost" onclick={oncancel}>{t('common.cancel')}</button>
 			<button class="btn-primary" type="submit" disabled={busy || !provider} aria-busy={busy}
@@ -201,7 +207,7 @@
 					<input id="ac-{uid}-sn" bind:value={name} placeholder={t('providers.namePlaceholder')} />
 				</div>
 			</div>
-			{#if error}<div class="err">{error}</div>{/if}
+			{#if error}<div class="error">{error}</div>{/if}
 			<div class="form-actions">
 				<button type="button" class="btn-ghost" onclick={oncancel}>{t('common.cancel')}</button>
 				<button class="btn-primary" type="submit" disabled={busy || !provider} aria-busy={busy}
@@ -211,12 +217,15 @@
 		</form>
 	{:else}
 		<div class="col">
-			<a class="btn btn-primary self-start" href={pending.url} target="_blank" rel="noreferrer noopener"
-				>{t('providers.open', { provider: nameOf(pending.provider) })}</a
+			<a
+				class="btn btn-primary self-start"
+				href={pending.url}
+				target="_blank"
+				rel="noreferrer noopener">{t('providers.open', { provider: nameOf(pending.provider) })}</a
 			>
 			{#if pending.userCode}
 				<div class="field">
-					<span class="lbl">{t('providers.code')}</span>
+					<span class="caption">{t('providers.code')}</span>
 					<div class="row">
 						<code class="code-big mono">{pending.userCode}</code>
 						<button type="button" class="btn-sm" onclick={copyCode}>{t('providers.copy')}</button>
@@ -251,7 +260,7 @@
 					<button type="button" class="btn-ghost" onclick={oncancel}>{t('common.cancel')}</button>
 				</div>
 			{/if}
-			{#if error}<div class="err">{error}</div>{/if}
+			{#if error}<div class="error">{error}</div>{/if}
 		</div>
 	{/if}
 {:else}
@@ -269,14 +278,14 @@
 			<div class="help">{t('providers.importHelp')}</div>
 		</div>
 		{#if rejected.length}
-			<div class="err">
+			<div class="error">
 				<strong>{t('providers.refused')}</strong>
 				<ul>
 					{#each rejected as r, i (i)}<li>{r}</li>{/each}
 				</ul>
 			</div>
 		{/if}
-		{#if error}<div class="err">{error}</div>{/if}
+		{#if error}<div class="error">{error}</div>{/if}
 		<div class="form-actions">
 			<button type="button" class="btn-ghost" onclick={oncancel}>{t('common.cancel')}</button>
 			<button class="btn-primary" type="submit" disabled={busy} aria-busy={busy}
@@ -288,12 +297,12 @@
 
 <style>
 	.code-big {
-		font-size: 1.4em;
+		font-size: var(--fs-mark);
 		letter-spacing: 0.12em;
 		padding: 6px 12px;
 		border-radius: var(--r-row);
-		background: var(--p1);
-		border: 1px solid var(--ln2);
+		background: var(--fill-1);
+		border: 1px solid var(--line-strong);
 	}
 	.self-start {
 		align-self: flex-start;

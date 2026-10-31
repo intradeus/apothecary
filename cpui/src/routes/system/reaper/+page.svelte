@@ -9,10 +9,10 @@
 
 <SettingsFrame>
 	{#snippet children(s)}
-		<section class="c pane">
+		<section class="glass pane">
 			<div class="pane-head">
 				<h2>{t('page.reaper.head')}</h2>
-				<span class="mut small">{t('page.reaper.headSub')}</span>
+				<span class="muted small">{t('page.reaper.headSub')}</span>
 			</div>
 			<SettingRow
 				label={t('page.reaper.afterLabel')}

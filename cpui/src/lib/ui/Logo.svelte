@@ -20,6 +20,6 @@
 	.logo {
 		flex: none;
 		display: block;
-		box-shadow: 0 0 22px var(--embGlow);
+		box-shadow: 0 0 22px var(--running-glow);
 	}
 </style>

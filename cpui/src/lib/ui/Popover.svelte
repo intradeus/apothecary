@@ -1,9 +1,3 @@
-<script lang="ts" module>
-	// Open popovers, innermost last: Esc closes only the top one, so a menu
-	// inside a sticky composer doesn't take the composer with it.
-	const stack: symbol[] = [];
-</script>
-
 <script lang="ts">
 	// Popover / menu (DESIGN 4.8). Positioned BESIDE its anchor, never on top
 	// of it; closes on outside pointer-down or Esc. It materialises out of its
@@ -19,6 +13,7 @@
 	import { tick, untrack, type Snippet } from 'svelte';
 	import { materialize } from './motion';
 	import { portal as toBody } from './portal';
+	import { layers } from './trap';
 
 	let {
 		anchor,
@@ -97,7 +92,9 @@
 		const vh = window.innerHeight;
 		const gap = 6;
 		minW = matchWidth ? r.width : null;
-		side = placement;
+		// A local, written to `side` once: reading state place() writes would
+		// subscribe the effect below to its own write, and a flip would loop.
+		let next = placement;
 		maxH = null;
 		if (flip && placement !== 'right') {
 			const below = vh - r.bottom - gap - 8;
@@ -105,10 +102,11 @@
 			const want = el?.scrollHeight ?? 0;
 			const down = placement.startsWith('below');
 			if (want > (down ? below : above) && (down ? above : below) > (down ? below : above))
-				side = ((down ? 'above-' : 'below-') + placement.split('-')[1]) as typeof placement;
-			maxH = side.startsWith('below') ? below : above;
+				next = ((down ? 'above-' : 'below-') + placement.split('-')[1]) as typeof placement;
+			maxH = next.startsWith('below') ? below : above;
 		}
-		switch (side) {
+		side = next;
+		switch (next) {
 			case 'below-start':
 				pos = { left: Math.max(8, r.left), top: r.bottom + gap };
 				break;
@@ -137,13 +135,21 @@
 			if (sticky || el?.contains(t) || anchor?.contains(t)) return;
 			close();
 		};
-		const me = Symbol('popover');
-		stack.push(me);
-		const key = (e: KeyboardEvent) => {
-			if (e.key === 'Escape' && stack.at(-1) === me && !e.defaultPrevented) {
-				e.preventDefault();
+		// Esc closes only the top layer, so a menu inside a sticky composer
+		// doesn't take the composer with it. A dialog under it may call this
+		// once per open dialog for the same key, hence the guard.
+		const me = {
+			dismiss() {
+				if (!open) return;
 				close();
 				anchor?.focus();
+			}
+		};
+		layers.push(me);
+		const key = (e: KeyboardEvent) => {
+			if (e.key === 'Escape' && layers.at(-1) === me && !e.defaultPrevented) {
+				e.preventDefault();
+				me.dismiss();
 			}
 		};
 		const reflow = () => place();
@@ -153,7 +159,7 @@
 		// A portaled list follows its anchor when the page under it scrolls.
 		if (portal) window.addEventListener('scroll', reflow, true);
 		return () => {
-			stack.splice(stack.indexOf(me), 1);
+			layers.splice(layers.indexOf(me), 1);
 			window.removeEventListener('pointerdown', down, true);
 			window.removeEventListener('keydown', key);
 			window.removeEventListener('resize', reflow);
@@ -166,7 +172,7 @@
 	<div
 		bind:this={el}
 		{id}
-		class="pop isl"
+		class="pop island"
 		class:top={portal}
 		{role}
 		use:toBody={portal}
@@ -178,6 +184,7 @@
 		style:width={width ? `${width}px` : null}
 		style:min-width={minW ? `${minW}px` : null}
 		style:max-height={maxH ? `${maxH}px` : null}
+		style:transform-origin={motion.origin}
 	>
 		{#if title}
 			<div class="ph">
@@ -213,18 +220,18 @@
 		padding: 6px 8px 8px;
 	}
 	.t {
-		font-family: var(--display);
+		font-family: var(--font-display);
 		font-size: var(--fs-section);
 	}
 	.lg2 {
 		font-size: var(--fs-meta);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
-	/* Menu rows (.mi, .menu-div) are shared classes in components.css; the
+	/* Menu rows (.menu-item, .menu-div) are shared classes in components.css; the
 	 * old .div divider name still works inside a popover. */
 	.pop :global(.div) {
 		height: 1px;
-		background: var(--ln);
+		background: var(--line);
 		margin: 4px 6px;
 	}
 </style>

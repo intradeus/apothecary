@@ -12,11 +12,11 @@
 	import faviconPng from '../assets/app-icons/favicon-32x32.png?url';
 	import { goto, afterNavigate } from '$app/navigation';
 	import { onMount, untrack } from 'svelte';
-	import { fleet } from '$lib/fleet.svelte';
-	import { prefs } from '$lib/prefs.svelte';
-	import { session } from '$lib/session.svelte';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { prefs } from '$lib/app/prefs.svelte';
+	import { session } from '$lib/app/session.svelte';
 	import { i18n, t } from '$lib/i18n/index.svelte';
-	import { NAV, navByChord } from '$lib/nav';
+	import { NAV, navByChord } from '$lib/app/nav';
 	import { activeDesk } from '$lib/desk/active.svelte';
 	import Noise from '$lib/ui/Noise.svelte';
 	import ConfirmHost from '$lib/ui/ConfirmHost.svelte';
@@ -24,7 +24,7 @@
 	import Sheet from '$lib/ui/Sheet.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { bump, indicator } from '$lib/ui/motion';
 	import Sidebar from '$lib/shell/Sidebar.svelte';
 	import CommandPalette from '$lib/shell/CommandPalette.svelte';
@@ -57,7 +57,7 @@
 	});
 
 	onMount(() => {
-		// "G then I/R/T/D" chords (from $lib/nav): the G arms for a second.
+		// "G then I/R/T/D" chords (from $lib/app/nav): the G arms for a second.
 		let gArmed = 0;
 		const key = (e: KeyboardEvent) => {
 			if (!session.user) return;
@@ -136,7 +136,7 @@
 
 		<LayoutButton />
 
-		<nav class="mtabs isl" aria-label={t('page.layout.primary')} use:indicator>
+		<nav class="mtabs island" aria-label={t('page.layout.primary')} use:indicator>
 			{#each tabs as tab (tab.id)}
 				{@const on = tab.match(page.url.pathname)}
 				{@const n = tab.id === 'inbox' ? fleet.pending.length : 0}
@@ -174,7 +174,7 @@
 		align-items: center;
 		justify-content: center;
 		padding: 16px;
-		color: var(--tx);
+		color: var(--text);
 	}
 	.app {
 		position: fixed;
@@ -182,7 +182,7 @@
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
-		color: var(--tx);
+		color: var(--text);
 	}
 	.shell {
 		position: relative;
@@ -244,7 +244,7 @@
 			justify-content: center;
 			gap: 1px;
 			font-size: var(--fs-id);
-			color: var(--mut);
+			color: var(--text-muted);
 			border-radius: var(--r-card);
 			position: relative;
 			-webkit-tap-highlight-color: transparent;
@@ -254,7 +254,7 @@
 			opacity: 0.7;
 		}
 		.mtabs > a.on {
-			color: var(--tx);
+			color: var(--text);
 			font-weight: 600;
 		}
 		.ti {

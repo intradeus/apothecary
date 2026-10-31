@@ -3,9 +3,10 @@
 	// provider and kind, the account it belongs to, and — for a login — how
 	// long the engine-kept token is good for and when it was last refreshed.
 	// Never a key or a token: the API sends none.
+	import { errorMessage } from '$lib/core/errors';
 	import type { Credential, ProviderInfo } from '$lib/domain';
 	import { api } from '$lib/api';
-	import { ago, fmtAbs } from '$lib/format';
+	import { ago, fmtAbs } from '$lib/core/format';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import ConfigCard from '$lib/ui/ConfigCard.svelte';
@@ -68,7 +69,7 @@
 		} catch (e) {
 			result = {
 				ok: false,
-				error: e instanceof Error ? e.message : String(e),
+				error: errorMessage(e),
 				warnings: [],
 				at: Date.now()
 			};
@@ -86,7 +87,7 @@
 			renaming = false;
 			onchanged();
 		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
+			error = errorMessage(err);
 		}
 	}
 
@@ -108,7 +109,7 @@
 			toast(t('providers.deleted', { name: c.name }));
 			onchanged();
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			removing = false;
 		}

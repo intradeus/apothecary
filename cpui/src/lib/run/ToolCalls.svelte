@@ -4,9 +4,9 @@
 	// live group (the agent is working through it now) never folds.
 	import type { AgentToolCall } from '$lib/domain';
 	import { t } from '$lib/i18n/index.svelte';
-	import { editLines, lineCounts } from '$lib/diff';
-	import { TOOL_HUE, hueOf } from '$lib/ui/hues';
-	import { I } from '$lib/ui/icons';
+	import { editLines, lineCounts } from '$lib/run/diff';
+	import { TOOL_HUE, hueOf } from '$lib/design/hues';
+	import { I } from '$lib/design/icons';
 	import CodeView from '$lib/ui/CodeView.svelte';
 	import StatusMark, { type MarkTone } from '$lib/ui/StatusMark.svelte';
 
@@ -92,16 +92,17 @@
 		<button class="rowbtn fold" onclick={() => (open = true)}>
 			<span class="b">{I.caret} {t('run.tool.calls', { count: calls.length })}</span>
 			<span class="chips">
-				{#each byKind as k (k.l)}<span class="pill sm flat sq t-{k.hue}">{k.l} {k.n}</span>{/each}
+				{#each byKind as k (k.l)}<span class="pill sm flat sq tint-{k.hue}">{k.l} {k.n}</span
+					>{/each}
 			</span>
-			{#if failed}<span class="bad hue-ros">{t('run.tool.failedCount', { count: failed })}</span
+			{#if failed}<span class="bad hue-danger">{t('run.tool.failedCount', { count: failed })}</span
 				>{/if}
 		</button>
 	</div>
 {:else}
 	<div class="group card-in" class:live>
 		{#if !live && calls.length > 3}
-			<button class="rowbtn head mut" onclick={() => (open = false)}
+			<button class="rowbtn head muted" onclick={() => (open = false)}
 				><span class="b">{I.menu} {t('run.tool.calls', { count: calls.length })}</span></button
 			>
 		{/if}
@@ -115,24 +116,25 @@
 				>
 					<StatusMark tone={tone(c.status)} size="sm" title={statusWord(c.status)} />
 					<span class="k hue-{hueOf(TOOL_HUE, c.kind)}">{word(c.kind)}</span>
-					<span class="path mono ell" title={c.title}>{title(c)}</span>
+					<span class="path mono truncate" title={c.title}>{title(c)}</span>
 					{#if n}<span class="mono nums"
-							><span class="hue-grn">+{n.add}</span> <span class="hue-ros">−{n.del}</span></span
+							><span class="hue-success">+{n.add}</span>
+							<span class="hue-danger">−{n.del}</span></span
 						>{/if}
-					{#if c.status === 'in_progress'}<span class="ip hue-emb"
+					{#if c.status === 'in_progress'}<span class="ip hue-running"
 							>{t('run.tool.status.inProgress')}</span
 						>{/if}
 				</button>
 				{#if expanded[c.toolCallId]}
 					<div class="detail">
-						{#if c.title && c.title !== title(c)}<div class="lbl">{c.title}</div>{/if}
+						{#if c.title && c.title !== title(c)}<div class="caption">{c.title}</div>{/if}
 						{#if c.input}
-							<div class="lbl">{t('run.tool.input')}</div>
+							<div class="caption">{t('run.tool.input')}</div>
 							<pre class="log">{c.input}</pre>
 						{/if}
-						{#each c.diffs as d (d.path)}
+						{#each c.diffs as d, i (i)}
 							{@const dl = editLines(d)}
-							<div class="lbl mono">{d.path}</div>
+							<div class="caption mono">{d.path}</div>
 							<CodeView
 								lines={dl.slice(0, MAX_LINES)}
 								maxHeight={320}
@@ -142,11 +144,11 @@
 							/>
 						{/each}
 						{#if c.output}
-							<div class="lbl">{t('run.tool.output')}</div>
+							<div class="caption">{t('run.tool.output')}</div>
 							<pre class="log">{c.output}</pre>
 						{/if}
 						{#if !c.input && !c.output && !c.diffs.length}
-							<div class="lbl">{t('run.tool.noDetails')}</div>
+							<div class="caption">{t('run.tool.noDetails')}</div>
 						{/if}
 					</div>
 				{/if}
@@ -177,11 +179,11 @@
 		flex-direction: column;
 	}
 	.group.live {
-		border-color: var(--embLn);
+		border-color: var(--running-line);
 	}
 	.call + .call,
-	.head.mut + .call {
-		border-top: 1px solid var(--ln);
+	.head.muted + .call {
+		border-top: 1px solid var(--line);
 	}
 	.head {
 		padding: 7px 12px;
@@ -189,8 +191,8 @@
 		border-radius: 0;
 		font-size: var(--fs-label);
 	}
-	.head.mut {
-		color: var(--mut);
+	.head.muted {
+		color: var(--text-muted);
 	}
 	.k {
 		font-weight: 600;
@@ -213,7 +215,7 @@
 		flex-direction: column;
 		gap: 4px;
 	}
-	.lbl {
+	.caption {
 		padding: 0 4px;
 	}
 	pre.log {

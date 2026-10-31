@@ -14,10 +14,10 @@
 	// view; nothing to split, maximise or hide.
 	import type { TransitionConfig } from 'svelte/transition';
 	import { t } from '$lib/i18n/index.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { bump, indicator, ms, spring } from '$lib/ui/motion';
 	import { keepInView } from '$lib/ui/inview';
-	import { token } from '$lib/ui/tokens';
+	import { token } from '$lib/design/tokens';
 	import { VIEW_LABEL, type Leaf, type ViewId } from './tree';
 	import type { ViewMeta } from './Desk.svelte';
 	import type { DeskMotion } from './desk.svelte';
@@ -93,7 +93,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <section
-	class="leaf c"
+	class="leaf glass"
 	class:compact
 	class:maxed
 	class:focused
@@ -126,8 +126,8 @@
 					{#if m.count !== undefined && m.count !== '' && m.count !== 0}
 						<span
 							class="count sm"
-							class:hot={m.alert === 'sky'}
-							class:bad={m.alert === 'ros'}
+							class:hot={m.alert === 'attention'}
+							class:bad={m.alert === 'danger'}
 							use:bump={num(m.count)}>{m.count}</span
 						>
 					{/if}
@@ -147,7 +147,7 @@
 				</div>
 			{/each}
 		</div>
-		{#if hint}<span class="hint tiny fnt ell">{hint}</span>{/if}
+		{#if hint}<span class="hint tiny faint truncate">{hint}</span>{/if}
 		{#if maxed}<span class="kbd" title={t('desk.leaf.restore')}>esc</span>{/if}
 		{#if !compact}<div class="ctl">
 				<button
@@ -195,11 +195,11 @@
 		overflow: hidden;
 	}
 	.leaf.focused {
-		border-color: var(--brandLn);
+		border-color: var(--brand-line);
 	}
 	/* Over the rest of the app: solid, or the page would show through. */
 	.leaf.maxed {
-		background: var(--solid);
+		background: var(--island-bg);
 	}
 	/* Discrete layout changes: the rect springs from wherever it is now. */
 	.spring {
@@ -220,7 +220,7 @@
 		align-items: center;
 		gap: 6px;
 		padding: 0 5px 0 6px;
-		border-bottom: 1px solid var(--cLn);
+		border-bottom: 1px solid var(--glass-line);
 	}
 	/* More tabs than room: the row scrolls sideways, without a bar. */
 	.tabrow {
@@ -252,14 +252,14 @@
 		gap: 5px;
 		font-size: var(--fs-ui);
 		font-weight: 500;
-		color: var(--mut);
+		color: var(--text-muted);
 		outline-offset: -2px;
 	}
 	.tab:hover {
-		color: var(--tx);
+		color: var(--text);
 	}
 	.tab.on {
-		color: var(--tx);
+		color: var(--text);
 		font-weight: 600;
 	}
 	/* A finger swipes the row and taps a tab; there is no drag to start. */
@@ -275,8 +275,8 @@
 		mask-image: linear-gradient(
 			to right,
 			transparent,
-			#000 14px,
-			#000 calc(100% - 14px),
+			var(--mask-opaque) 14px,
+			var(--mask-opaque) calc(100% - 14px),
 			transparent
 		);
 	}
@@ -289,7 +289,7 @@
 		width: 17px;
 		height: 17px;
 		font-size: var(--fs-body);
-		color: var(--fnt);
+		color: var(--text-faint);
 	}
 	.hint {
 		/* Gives way to the tabs first. */
@@ -302,10 +302,10 @@
 		gap: 1px;
 	}
 	.ctl .btn-icon {
-		color: var(--dim);
+		color: var(--text-dim);
 	}
 	.ctl .btn-icon:hover {
-		color: var(--tx);
+		color: var(--text);
 	}
 	.btn-icon.dim {
 		opacity: var(--o-disabled);

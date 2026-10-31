@@ -4,16 +4,16 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { to } from '$lib/urls';
-	import { fleet } from '$lib/fleet.svelte';
+	import { to } from '$lib/core/urls';
+	import { fleet } from '$lib/app/fleet.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import { stateTab, type RunTab } from '$lib/format';
+	import { stateTab, type RunTab } from '$lib/core/format';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import Updated from '$lib/ui/Updated.svelte';
 	import SearchInput from '$lib/ui/SearchInput.svelte';
 	import NewRunDialog from '$lib/run/NewRunDialog.svelte';
@@ -88,7 +88,7 @@
 
 <NewRunDialog bind:open={newRun} projectId={projectFilter} />
 
-<div class="page c">
+<div class="page glass">
 	<div class="filters">
 		<SearchInput bind:value={q} placeholder={t('page.runs.search')} />
 		<WorkshopFilter value={projectFilter} onchange={(project) => setParams({ project })} />

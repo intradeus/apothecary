@@ -4,7 +4,7 @@
 	// budget: "no cap"). Stepper has no empty state, so unset reads as a
 	// quiet line with Set, and a set value gets a clear (×).
 	import Stepper from './Stepper.svelte';
-	import { I } from './icons';
+	import { I } from '$lib/design/icons';
 
 	let {
 		value = $bindable(),
@@ -44,7 +44,7 @@
 	</div>
 {:else}
 	<div class="row nowrap unset">
-		<span class="fnt grow">{empty}</span>
+		<span class="faint grow">{empty}</span>
 		<button type="button" {id} class="btn-dashed btn-sm" onclick={() => set(fallback)}
 			>{t('ui.optional.set')}</button
 		>

@@ -3,13 +3,14 @@
 	// where its branch forked off the source branch — committed and not — and
 	// the selected file's diff. Refreshes every 5s while the run works and the
 	// window is on screen.
+	import { errorMessage } from '$lib/core/errors';
 	import { api } from '$lib/api';
 	import type { ChangedFile, FileDiff, WorkspaceChanges } from '$lib/domain';
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import { parseUnified } from '$lib/diff';
-	import { GIT_HUE, hueOf } from '$lib/ui/hues';
-	import { I } from '$lib/ui/icons';
+	import { parseUnified } from '$lib/run/diff';
+	import { GIT_HUE, hueOf } from '$lib/design/hues';
+	import { I } from '$lib/design/icons';
 	import CodeView from '$lib/ui/CodeView.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
@@ -44,7 +45,7 @@
 			if (!selected && changes.files.length) select(changes.files[0].path);
 			else if (selected) loadDiff(selected, true);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		}
 	}
 
@@ -57,15 +58,16 @@
 				diffError = '';
 			}
 		} catch (e) {
-			if (path === selected) diffError = e instanceof Error ? e.message : String(e);
+			if (path === selected) diffError = errorMessage(e);
 		} finally {
-			loadingDiff = false;
+			if (!quiet && path === selected) loadingDiff = false;
 		}
 	}
 
 	function select(path: string) {
 		selected = path;
 		diff = null;
+		diffError = '';
 		loadDiff(path);
 	}
 
@@ -124,14 +126,16 @@
 		<div class="vbar sum">
 			<span
 				>{t('run.changes.vs')}
-				<span class="mono tx">{(changes.base || 'HEAD').replace(/^origin\//, '')}</span></span
+				<span class="mono text-primary">{(changes.base || 'HEAD').replace(/^origin\//, '')}</span
+				></span
 			>
-			{#if changes.mergeBase}<span class="mono fnt"
+			{#if changes.mergeBase}<span class="mono faint"
 					>{t('run.changes.fork', { sha: changes.mergeBase.slice(0, 7) })}</span
 				>{/if}
-			<span class="tx">{t('run.changes.files', { count: changes.files.length })}</span>
+			<span class="text-primary">{t('run.changes.files', { count: changes.files.length })}</span>
 			<span class="mono"
-				><span class="hue-grn">+{totals.add}</span> <span class="hue-ros">−{totals.del}</span></span
+				><span class="hue-success">+{totals.add}</span>
+				<span class="hue-danger">−{totals.del}</span></span
 			>
 			{#if changes.commits.length}
 				<button
@@ -153,7 +157,7 @@
 		{#if showCommits}
 			<div class="commits">
 				{#each changes.commits as c (c.sha)}
-					<div><span class="mono fnt">{c.sha.slice(0, 7)}</span> {c.subject}</div>
+					<div><span class="mono faint">{c.sha.slice(0, 7)}</span> {c.subject}</div>
 				{/each}
 			</div>
 		{/if}
@@ -174,14 +178,14 @@
 							<span class="path mono" title={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}
 								>{f.path}</span
 							>
-							<span class="wip hue-gold" title={f.committed ? '' : t('run.changes.notCommitted')}
+							<span class="wip hue-warning" title={f.committed ? '' : t('run.changes.notCommitted')}
 								>{f.committed ? '' : I.dot}</span
 							>
 							<span class="cnt mono">
-								{#if f.binary}<span class="fnt">{t('run.changes.bin')}</span>{:else}<span
-										class="hue-grn">+{f.additions}</span
+								{#if f.binary}<span class="faint">{t('run.changes.bin')}</span>{:else}<span
+										class="hue-success">+{f.additions}</span
 									>
-									<span class="hue-ros">−{f.deletions}</span>{/if}
+									<span class="hue-danger">−{f.deletions}</span>{/if}
 							</span>
 						</button>
 					{/each}
@@ -190,7 +194,7 @@
 					{#if file}
 						<div class="dh mono">
 							{file.oldPath ? `${file.oldPath} → ` : ''}{file.path}
-							<span class="fnt"
+							<span class="faint"
 								>· {file.status === '?' ? 'U' : file.status}{file.binary
 									? ''
 									: ` · +${file.additions} −${file.deletions}`}{file.committed
@@ -228,13 +232,13 @@
 	.sum {
 		gap: 4px 14px;
 		font-size: var(--fs-label);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.commits {
 		margin: 0 8px 8px;
 		padding: 6px 10px;
 		border-radius: var(--r-row);
-		background: var(--p1);
+		background: var(--fill-1);
 		font-size: var(--fs-label);
 		display: flex;
 		flex-direction: column;
@@ -252,7 +256,7 @@
 		font-size: var(--fs-label);
 		padding: 4px;
 		border-radius: var(--r-card);
-		background: var(--p2);
+		background: var(--fill-2);
 	}
 	.file {
 		display: grid;
@@ -287,7 +291,7 @@
 		padding: 4px 4px 6px;
 		overflow-wrap: anywhere;
 	}
-	.dh .fnt {
+	.dh .faint {
 		font-weight: 400;
 	}
 	/* Side by side once the window is wide enough for a file list beside a

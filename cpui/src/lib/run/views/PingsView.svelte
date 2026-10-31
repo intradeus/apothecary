@@ -3,15 +3,15 @@
 	// one opens into the card that answers it; answered ones say how — one
 	// that showed files, with the review as it was submitted.
 	import { t } from '$lib/i18n/index.svelte';
-	import PingCard from '$lib/PingCard.svelte';
+	import PingCard from '$lib/pings/PingCard.svelte';
 	import PingPill from '$lib/ui/PingPill.svelte';
-	import { ago, fmtAbs, fmtClock } from '$lib/format';
-	import { answerMeta, curatable, isAgentPing, isDocumentPing } from '$lib/ping';
+	import { ago, fmtAbs, fmtClock } from '$lib/core/format';
+	import { answerMeta, curatable, isAgentPing, isDocumentPing } from '$lib/core/ping';
 	import ReviewHistory from '$lib/review/ReviewHistory.svelte';
 	import CurationHistory from '$lib/curation/CurationHistory.svelte';
-	import { to } from '$lib/urls';
+	import { to } from '$lib/core/urls';
 	import Markdown from '$lib/ui/Markdown.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import type { RunStore } from '../store.svelte';
 
 	let { rs }: { rs: RunStore } = $props();
@@ -60,7 +60,7 @@
 				>
 					<PingPill type={p.type} />
 					<span class="mid">
-						<span class="q ell" class:struck={p.status === 'withdrawn'}>{p.question}</span>
+						<span class="q truncate" class:struck={p.status === 'withdrawn'}>{p.question}</span>
 						<span class="meta"
 							>{p.stageId ? `${p.stageId} · ` : ''}<span title={fmtAbs(p.raisedAt)}
 								>{fmtClock(p.raisedAt)}</span
@@ -70,7 +70,7 @@
 								: t('runview.pings.wanted')}</span
 						>
 					</span>
-					<span class="st" class:fnt={p.status === 'withdrawn'}>
+					<span class="st" class:faint={p.status === 'withdrawn'}>
 						{#if p.status === 'answered'}{p.answerKind === 'form'
 								? answerMeta(p).word
 								: p.answer}{p.answeredAt ? ` · ${ago(p.answeredAt)}` : ''}
@@ -122,7 +122,7 @@
 		display: flex;
 		justify-content: space-between;
 		font-size: var(--fs-help);
-		color: var(--fnt);
+		color: var(--text-faint);
 	}
 	.pv .empty-line {
 		padding-left: 0;
@@ -148,25 +148,25 @@
 	}
 	.q.struck {
 		text-decoration: line-through;
-		color: var(--fnt);
+		color: var(--text-faint);
 	}
 	.meta {
 		font-size: var(--fs-help);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.st {
 		font-size: var(--fs-label);
 		font-weight: 600;
 		white-space: nowrap;
-		color: var(--mut);
+		color: var(--text-muted);
 	}
-	.st.fnt {
-		color: var(--fnt);
+	.st.faint {
+		color: var(--text-faint);
 		font-weight: 500;
 	}
 	.body {
 		padding: 10px 14px 12px;
-		border-top: 1px solid var(--ln);
+		border-top: 1px solid var(--line);
 		display: flex;
 		flex-direction: column;
 		gap: 6px;

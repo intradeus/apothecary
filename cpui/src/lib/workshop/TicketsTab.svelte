@@ -3,9 +3,9 @@
 	// Workshop tickets tab (DESIGN 7.6 list, filtered to this workshop). The
 	// status is derived: the latest run's state, or "no runs".
 	import type { Project, Ticket } from '$lib/domain';
-	import { fleet } from '$lib/fleet.svelte';
-	import { to } from '$lib/urls';
-	import { stateTab } from '$lib/format';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { to } from '$lib/core/urls';
+	import { stateTab } from '$lib/core/format';
 	import TicketTable from '$lib/tickets/TicketTable.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -13,7 +13,7 @@
 	import HeaderAction from '$lib/ui/HeaderAction.svelte';
 	import SearchInput from '$lib/ui/SearchInput.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	let {
 		project,

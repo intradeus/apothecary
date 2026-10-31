@@ -25,10 +25,10 @@
 		align-items: center;
 		justify-content: center;
 		border-radius: 50%;
-		background: var(--avatarBg);
-		color: var(--onBrand);
+		background: var(--avatar-bg);
+		color: var(--on-brand);
 		font-weight: 700;
-		box-shadow: var(--avatarSh);
+		box-shadow: var(--avatar-shadow);
 	}
 	.pr {
 		position: absolute;
@@ -38,6 +38,6 @@
 		height: 9px;
 		border-radius: 50%;
 		background: var(--presence);
-		border: 2px solid var(--solid);
+		border: 2px solid var(--island-bg);
 	}
 </style>

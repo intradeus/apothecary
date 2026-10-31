@@ -3,7 +3,7 @@
 	// submitted): its workspace path, what can be done with it, and a caption
 	// saying it is the raise-time snapshot, not the live file (DESIGN-FILES §9).
 	import type { Snippet } from 'svelte';
-	import { fmtAbs, fmtClock } from '$lib/format';
+	import { fmtAbs, fmtClock } from '$lib/core/format';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let {
@@ -22,7 +22,7 @@
 </script>
 
 <div class="pane-head dh">
-	<span class="mono mut ell" title={path}>{path}</span>
+	<span class="mono muted truncate" title={path}>{path}</span>
 	<span class="spacer"></span>
 	<span class="cap" title={fmtAbs(raisedAt)}
 		>{reviewed
@@ -39,7 +39,7 @@
 	}
 	.cap {
 		font-size: var(--fs-meta);
-		color: var(--fnt);
+		color: var(--text-faint);
 		white-space: nowrap;
 	}
 	@media (max-width: 760px) {

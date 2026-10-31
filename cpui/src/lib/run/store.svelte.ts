@@ -6,6 +6,7 @@
 // Polling is demand-driven: a view that needs a feed holds it with use*()
 // while it is visible, and every poll skips while the tab is hidden.
 
+import { errorMessage } from '$lib/core/errors';
 import { parse as parseYaml } from 'yaml';
 import { api } from '$lib/api';
 import type {
@@ -21,15 +22,13 @@ import type {
 	Snapshot,
 	Ticket
 } from '$lib/domain';
-import { fleet } from '$lib/fleet.svelte';
-import { expandDoc, normalizeDoc, successOrder } from '$lib/flowdoc';
-import { isTerminal } from '$lib/format';
+import { fleet } from '$lib/app/fleet.svelte';
+import { expandDoc, normalizeDoc, successOrder } from '$lib/domain/flowdoc';
+import { isTerminal } from '$lib/core/format';
 import { toast } from '$lib/ui/toast.svelte';
 import { t } from '$lib/i18n/index.svelte';
-import { applyDelta, emptyLive, pruneLive, type LiveState } from '$lib/transcript';
+import { applyDelta, emptyLive, pruneLive, type LiveState } from '$lib/run/transcriptItems';
 import { currentStage, envLinks, pingsOf, totals, workingSince, type StageDef } from './derive';
-
-const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export class RunStore {
 	readonly runId: string;
@@ -80,6 +79,9 @@ export class RunStore {
 	#portUsers = 0;
 	#resourceUsers = 0;
 	#serviceUsers = 0;
+	/** Reads of the run in the order they were asked, and the latest shown. */
+	#runAsked = 0;
+	#runShown = 0;
 
 	constructor(runId: string) {
 		this.runId = runId;
@@ -161,6 +163,8 @@ export class RunStore {
 			this.runId,
 			0,
 			(ev) => {
+				// A replay must not count twice (the totals, the pings).
+				if (ev.seq <= (this.events.at(-1)?.seq ?? 0)) return;
 				this.events = [...this.events, ev];
 				this.live = pruneLive(this.live, ev);
 				// State-changing events refresh the header.
@@ -190,11 +194,15 @@ export class RunStore {
 	}
 
 	async refreshRun() {
+		const asked = ++this.#runAsked;
 		try {
-			this.run = (await api.runs.get(this.runId)).run;
+			const { run } = await api.runs.get(this.runId);
+			if (asked < this.#runShown) return;
+			this.#runShown = asked;
+			this.run = run;
 			this.loadError = '';
 		} catch (e) {
-			if (!this.run) this.loadError = errText(e);
+			if (!this.run) this.loadError = errorMessage(e);
 		}
 	}
 
@@ -231,7 +239,7 @@ export class RunStore {
 			this.services = await api.runs.services(this.runId);
 			this.servicesError = '';
 		} catch (e) {
-			this.servicesError = errText(e);
+			this.servicesError = errorMessage(e);
 		}
 	}
 
@@ -301,7 +309,7 @@ export class RunStore {
 			void fleet.refresh();
 			return true;
 		} catch (e) {
-			this.error = errText(e);
+			this.error = errorMessage(e);
 			return false;
 		}
 	}
@@ -339,7 +347,7 @@ export class RunStore {
 			toast(t('run.store.answerSent'));
 			void fleet.refresh();
 		} catch (e) {
-			this.error = errText(e);
+			this.error = errorMessage(e);
 		} finally {
 			this.answering = false;
 		}

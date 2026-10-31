@@ -3,10 +3,11 @@
 	// questions about the code as it stands. Its conversation is the run's,
 	// kept with it; the model is picked here. One question at a time: the
 	// answer streams in, then the box is yours again.
+	import { errorMessage } from '$lib/core/errors';
 	import { tick } from 'svelte';
 	import { api } from '$lib/api';
 	import type { AskMessage, AskState } from '$lib/domain';
-	import { fmtClock, fmtCost } from '$lib/format';
+	import { fmtClock, fmtCost } from '$lib/core/format';
 	import { t } from '$lib/i18n/index.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
@@ -37,7 +38,8 @@
 			pane = await api.ask.state(rs.runId);
 			loadError = '';
 		} catch (e) {
-			loadError = e instanceof Error ? e.message : String(e);
+			// A conversation on screen outlives a failed re-read.
+			if (!pane) loadError = errorMessage(e);
 		}
 	}
 
@@ -85,7 +87,7 @@
 			live = { text: '', tool: '' };
 			toBottom();
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 			if (!draft.trim()) draft = text;
 		} finally {
 			sending = false;
@@ -100,14 +102,20 @@
 			await api.ask.setModel(rs.runId, model);
 			pane.model = model;
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			pickingModel = false;
 		}
 	}
 
+	/** The box shows the model in force, not a refused one. */
+	async function typeModel(input: HTMLInputElement) {
+		await pickModel(input.value.trim());
+		input.value = pane?.model ?? '';
+	}
+
 	function onKey(e: KeyboardEvent) {
-		if (e.key === 'Enter' && !e.shiftKey) {
+		if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
 			e.preventDefault();
 			void send();
 		}
@@ -133,17 +141,16 @@
 	{:else if pane}
 		<div class="head">
 			<span class="display ttl">{t('runview.ask.title')}</span>
-			{#if pane.harness}<span class="mono fnt">{pane.harness}</span>{/if}
+			{#if pane.harness}<span class="mono faint">{pane.harness}</span>{/if}
 			<span class="spacer"></span>
 			{#if enabled}
 				{#if modelOptions.length}
 					<Select
 						id="ask-model"
 						size="sm"
-						value={pane.model ?? ''}
+						bind:value={() => pane?.model ?? '', pickModel}
 						options={modelOptions}
 						disabled={pickingModel || busy}
-						onchange={(v) => pickModel(v)}
 					/>
 				{:else}
 					<input
@@ -151,7 +158,7 @@
 						value={pane.model ?? ''}
 						placeholder={t('runview.ask.modelPlaceholder')}
 						disabled={pickingModel || busy}
-						onchange={(e) => pickModel(e.currentTarget.value.trim())}
+						onchange={(e) => typeModel(e.currentTarget)}
 					/>
 				{/if}
 			{/if}
@@ -160,7 +167,7 @@
 			{#if !enabled}
 				<EmptyState compact inline title={t('runview.ask.off')} text={pane.reason ?? ''} />
 			{:else if messages.length === 0 && !live}
-				<div class="hint mut">{t('runview.ask.empty')}</div>
+				<div class="hint muted">{t('runview.ask.empty')}</div>
 			{/if}
 			{#each messages as m (m.seq)}
 				{#if m.role === 'question'}
@@ -171,10 +178,10 @@
 				{:else}
 					<div class="a">
 						{#if m.error}
-							<div class="err">{t('runview.ask.failed', { error: m.error })}</div>
+							<div class="error">{t('runview.ask.failed', { error: m.error })}</div>
 						{/if}
 						{#if m.text}<Markdown src={m.text} />{/if}
-						<div class="am mut">
+						<div class="am muted">
 							{[m.model, m.costUsd ? fmtCost(m.costUsd) : '', fmtClock(m.at)]
 								.filter(Boolean)
 								.join(' · ')}
@@ -186,14 +193,14 @@
 				<div class="a">
 					{#if live.text}<Markdown src={live.text} />{/if}
 					<div class="am">
-						<span class="ldot sm pulse hue-emb"></span>
+						<span class="live-dot sm pulse hue-running"></span>
 						{live.tool ? t('runview.ask.doing', { tool: live.tool }) : t('runview.ask.thinking')}
 					</div>
 				</div>
 			{/if}
 		</div>
 		{#if enabled}
-			<div class="comp in">
+			<div class="comp inset">
 				<textarea
 					class="bare"
 					bind:this={ta}
@@ -208,7 +215,7 @@
 						><span><span class="k">↵</span> {t('runview.ask.keySend')}</span>
 						<span><span class="k">⇧↵</span> {t('runview.ask.keyNewline')}</span></span
 					>
-					{#if error}<span class="err" title={error}>{error}</span>{/if}
+					{#if error}<span class="error" title={error}>{error}</span>{/if}
 					<span class="spacer"></span>
 					<button
 						class="btn-primary btn-md"
@@ -242,7 +249,7 @@
 		min-width: 0;
 	}
 	.ttl {
-		font-size: 17px;
+		font-size: var(--fs-section);
 	}
 	.model {
 		width: 220px;
@@ -270,9 +277,9 @@
 		gap: 3px;
 	}
 	.bubble {
-		background: var(--brandBg);
-		border: 1px solid var(--brandLn);
-		border-radius: 10px 14px 4px 14px;
+		background: var(--brand-bg);
+		border: 1px solid var(--brand-line);
+		border-radius: var(--r-row) var(--r-card) var(--r-xs) var(--r-card);
 		padding: 8px 12px;
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
@@ -280,28 +287,28 @@
 	.um,
 	.am {
 		font-size: var(--fs-meta);
-		color: var(--fnt);
+		color: var(--text-faint);
 		display: flex;
 		align-items: center;
 		gap: 6px;
 	}
 	.a {
 		max-width: 70ch;
-		font-size: 13.5px;
+		font-size: var(--fs-body);
 		line-height: 1.6;
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
 	}
-	.err {
-		color: var(--rosTx);
+	.error {
+		color: var(--danger-text);
 		font-size: var(--fs-meta);
 	}
 	.comp {
 		flex: none;
-		margin: 0 calc(12px + var(--fabClear, 0px)) 12px 12px;
+		margin: 0 calc(12px + var(--fab-clear, 0px)) 12px 12px;
 		border-radius: var(--r-btn);
-		background: var(--code);
+		background: var(--code-bg);
 		display: flex;
 		flex-direction: column;
 	}
@@ -312,7 +319,7 @@
 		resize: none;
 	}
 	.comp:focus-within {
-		border-color: var(--brandLn);
+		border-color: var(--brand-line);
 	}
 	.foot {
 		display: flex;
@@ -320,7 +327,7 @@
 		gap: 14px;
 		padding: 6px 6px 6px 14px;
 		font-size: var(--fs-meta);
-		color: var(--fnt);
+		color: var(--text-faint);
 		min-width: 0;
 	}
 	.keys {
@@ -331,10 +338,10 @@
 		min-width: 0;
 	}
 	.k {
-		font-family: var(--mono);
-		color: var(--mut);
+		font-family: var(--font-code);
+		color: var(--text-muted);
 	}
-	.foot .err {
+	.foot .error {
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;

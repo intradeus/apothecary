@@ -2,11 +2,12 @@
 	// Which skillsets a run takes along (TODO 38): any of one's own, each at
 	// the latest version unless an older one is picked. Versions load when a
 	// set is ticked.
+	import { errorMessage } from '$lib/core/errors';
 	import { api } from '$lib/api';
 	import type { Skillset, SkillsetRef, SkillsetVersion } from '$lib/domain';
-	import { ago } from '$lib/format';
+	import { ago } from '$lib/core/format';
 	import { t } from '$lib/i18n/index.svelte';
-	import { to } from '$lib/urls';
+	import { to } from '$lib/core/urls';
 	import CheckboxGroup from '$lib/ui/CheckboxGroup.svelte';
 	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 
@@ -38,7 +39,7 @@
 			(e: unknown) => {
 				if (!live) return;
 				sets = [];
-				error = e instanceof Error ? e.message : String(e);
+				error = errorMessage(e);
 			}
 		);
 		return () => {
@@ -62,7 +63,7 @@
 		(sets ?? []).map((s) => ({
 			value: s.id,
 			label: s.name,
-			detail: s.description || t('skills.version', { seq: s.headSeq })
+			detail: s.description || t('skills.version', { seq: String(s.headSeq) })
 		}))
 	);
 	const picked = $derived(value.map((r) => r.id));
@@ -87,7 +88,7 @@
 {#if sets === null}
 	<span class="help">{t('ui.loading')}</span>
 {:else if error}
-	<span class="help hue-gold">{error}</span>
+	<span class="help hue-warning">{error}</span>
 {:else if !sets.length}
 	<span class="help"
 		>{t('run.start.skillsetsNone')} <a href={to.skills()}>{t('skills.crumb')}</a></span
@@ -98,7 +99,7 @@
 		<div class="vers">
 			{#each value as r (r.id)}
 				<div class="vr">
-					<label for="{idPrefix}-v-{r.id}" class="ell">{byId.get(r.id)?.name ?? r.id}</label>
+					<label for="{idPrefix}-v-{r.id}" class="truncate">{byId.get(r.id)?.name ?? r.id}</label>
 					<Select
 						id="{idPrefix}-v-{r.id}"
 						size="sm"
@@ -130,7 +131,7 @@
 		font-size: var(--fs-label);
 	}
 	.vr label {
-		color: var(--mut);
+		color: var(--text-muted);
 		min-width: 0;
 	}
 </style>

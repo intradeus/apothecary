@@ -4,6 +4,7 @@
 	// from the engine, or import a file a CLI wrote; each card shows what the
 	// engine keeps: the account, how long the token is good for, when it was
 	// last refreshed — never the key or the token.
+	import { errorMessage } from '$lib/core/errors';
 	import { onMount } from 'svelte';
 	import { flip } from 'svelte/animate';
 	import { api } from '$lib/api';
@@ -42,7 +43,7 @@
 			loaded = true;
 			error = '';
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		}
 	};
 	onMount(refresh);

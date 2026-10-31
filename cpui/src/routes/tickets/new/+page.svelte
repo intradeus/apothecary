@@ -3,10 +3,10 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { to } from '$lib/urls';
-	import { fleet } from '$lib/fleet.svelte';
+	import { to } from '$lib/core/urls';
+	import { fleet } from '$lib/app/fleet.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import TicketForm from '$lib/TicketForm.svelte';
+	import TicketForm from '$lib/tickets/TicketForm.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -30,7 +30,7 @@
 	{/snippet}
 </PageHeader>
 
-<div class="page c">
+<div class="page glass">
 	{#if !fleet.updatedAt && fleet.error}
 		<ErrorCard
 			cause={t('page.newTicket.loadError')}

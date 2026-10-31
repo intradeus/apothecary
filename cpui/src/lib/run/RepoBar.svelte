@@ -4,7 +4,7 @@
 	import type { Snippet } from 'svelte';
 	import type { RunCheckout } from '$lib/domain';
 	import Segmented from '$lib/ui/Segmented.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let {
@@ -31,7 +31,7 @@
 
 <div class="vbar">
 	{#if checkouts.length > 1}
-		<span class="lbl">{t('run.repo.label')}</span>
+		<span class="caption">{t('run.repo.label')}</span>
 		<Segmented mono glass={false} size="sm" label={t('run.repo.aria')} {options} bind:value />
 	{/if}
 	{#if children}{@render children()}{/if}

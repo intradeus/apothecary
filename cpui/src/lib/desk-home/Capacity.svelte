@@ -2,18 +2,18 @@
 	// Capacity strip (DESIGN 7.3): concurrent runs, environments and the FIFO
 	// queue, against the deployment's limits. Reads the shared fleet poll.
 	import { t } from '$lib/i18n/index.svelte';
-	import { to } from '$lib/urls';
-	import { fleet } from '$lib/fleet.svelte';
+	import { to } from '$lib/core/urls';
+	import { fleet } from '$lib/app/fleet.svelte';
 	import Meter from '$lib/ui/Meter.svelte';
 	import Updated from '$lib/ui/Updated.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	const next = $derived(
 		[...fleet.queued].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]
 	);
 </script>
 
-<section class="cap c pane">
+<section class="cap glass pane">
 	<div class="card-in tile">
 		<Meter
 			label={t('deskhome.cap.runs')}
@@ -27,17 +27,17 @@
 			label={t('deskhome.cap.envs')}
 			value={fleet.capacity.envs.used}
 			max={fleet.capacity.envs.max}
-			tone="grn"
+			tone="success"
 			sub={t('deskhome.cap.envsSub')}
 		/>
 	</div>
 	<div class="card-in tile q">
 		<div class="row spread nowrap">
-			<span>{t('deskhome.cap.queue')}</span><span class="mono tx"
+			<span>{t('deskhome.cap.queue')}</span><span class="mono text-primary"
 				>{t('deskhome.cap.pending', { count: fleet.capacity.queued })}</span
 			>
 		</div>
-		<div class="sub ell">
+		<div class="sub truncate">
 			{#if next}{t('deskhome.cap.next')} <a href={to.run(next.id)}>{next.title}</a> · FIFO{:else}{t(
 					'deskhome.cap.none'
 				)}{/if}
@@ -65,7 +65,7 @@
 		flex-direction: column;
 		gap: 4px;
 		font-size: var(--fs-meta);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.q .row {
 		gap: 8px;
@@ -74,7 +74,7 @@
 		font-size: var(--fs-meta);
 	}
 	.sub {
-		color: var(--fnt);
+		color: var(--text-faint);
 		font-size: var(--fs-help);
 	}
 	.end {

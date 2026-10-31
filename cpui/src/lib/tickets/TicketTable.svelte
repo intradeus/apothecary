@@ -8,11 +8,11 @@
 	// title link covers the row, columns picked per page. Status is derived:
 	// the latest run's state, "×N" when there are several, "no runs" before.
 	import type { Ticket } from '$lib/domain';
-	import { to } from '$lib/urls';
-	import { fleet } from '$lib/fleet.svelte';
-	import { ago, fmtAbs } from '$lib/format';
+	import { to } from '$lib/core/urls';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { ago, fmtAbs } from '$lib/core/format';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
-	import WorkshopName from '$lib/workshop/WorkshopName.svelte';
+	import WorkshopName from '$lib/app/WorkshopName.svelte';
 	import ChangeTypeTag from './ChangeTypeTag.svelte';
 
 	let {
@@ -60,7 +60,7 @@
 		<div class="r">
 			{#each cols as c (c)}
 				{#if c === 'title'}
-					<a class="title ell stretch" href={to.ticket(tk.id)}>{tk.title}</a>
+					<a class="title truncate stretch" href={to.ticket(tk.id)}>{tk.title}</a>
 				{:else if c === 'type'}
 					<span><ChangeTypeTag type={tk.changeType} sourceType={tk.source?.type} /></span>
 				{:else if c === 'source'}
@@ -68,23 +68,23 @@
 						{#if tk.source?.key}<span
 								class="tag"
 								title={t('tickets.importedFrom', { kind: tk.source.kind })}>{tk.source.key}</span
-							>{:else}<span class="fnt">—</span>{/if}
+							>{:else}<span class="faint">—</span>{/if}
 					</span>
 				{:else if c === 'workshop'}
-					<span class="hide-sm ell"><WorkshopName projectId={tk.projectId} /></span>
+					<span class="hide-sm truncate"><WorkshopName projectId={tk.projectId} /></span>
 				{:else if c === 'branch'}
-					<span class="mono mut ell hide-sm" title={tk.baseBranch}>{tk.baseBranch}</span>
+					<span class="mono muted truncate hide-sm" title={tk.baseBranch}>{tk.baseBranch}</span>
 				{:else if c === 'runs'}
 					<span class="st">
 						{#if runs.length}
 							<StatusChip state={runs[0].state} size="sm" />
-							{#if runs.length > 1}<span class="fnt mono">×{runs.length}</span>{/if}
+							{#if runs.length > 1}<span class="faint mono">×{runs.length}</span>{/if}
 						{:else}
-							<span class="fnt">{t('tickets.noRuns')}</span>
+							<span class="faint">{t('tickets.noRuns')}</span>
 						{/if}
 					</span>
 				{:else if c === 'created'}
-					<span class="mono mut num" title={fmtAbs(tk.createdAt)}>{ago(tk.createdAt)}</span>
+					<span class="mono muted num" title={fmtAbs(tk.createdAt)}>{ago(tk.createdAt)}</span>
 				{/if}
 			{/each}
 		</div>
@@ -98,7 +98,7 @@
 	}
 	.title {
 		font-weight: 500;
-		color: var(--tx);
+		color: var(--text);
 	}
 	.title:hover {
 		text-decoration: none;

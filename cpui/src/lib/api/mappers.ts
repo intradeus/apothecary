@@ -33,8 +33,14 @@ import type {
 	SkillsetRefresh,
 	SkillsetVersion
 } from '$lib/domain';
-import { normalizeDoc, PHASE_KINDS, OPERATES_ON, type OperatesOn } from '$lib/flowdoc';
-import { answerKindOf, toCuratedMap, toFormContent, toPingForm, toReviewComment } from '$lib/ping';
+import { normalizeDoc, PHASE_KINDS, OPERATES_ON, type OperatesOn } from '$lib/domain/flowdoc';
+import {
+	answerKindOf,
+	toCuratedMap,
+	toFormContent,
+	toPingForm,
+	toReviewComment
+} from '$lib/core/ping';
 import type {
 	Curation,
 	CurationDocument,

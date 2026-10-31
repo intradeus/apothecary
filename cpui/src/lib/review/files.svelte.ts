@@ -3,10 +3,17 @@
 // once from its raise-time snapshot and kept — switching files never fetches
 // twice — and which one is open. What you review is what was captured, not
 // what the workspace holds by the time you look (DESIGN-FILES §9).
+import { errorMessage } from '$lib/core/errors';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { api } from '$lib/api';
 import type { PingFile } from '$lib/domain';
-import { docBlocks, fileKind, looksBinary, type DocBlock, type FileKind } from '$lib/docreview';
+import {
+	docBlocks,
+	fileKind,
+	looksBinary,
+	type DocBlock,
+	type FileKind
+} from '$lib/review/reviewDoc';
 import { t } from '$lib/i18n/index.svelte';
 
 export interface ShownFile extends PingFile {
@@ -18,8 +25,6 @@ export interface LoadedDoc {
 	blocks: DocBlock[];
 	error?: string;
 }
-
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export class ReviewFiles {
 	files = $state.raw<ShownFile[]>([]);
@@ -57,7 +62,7 @@ export class ReviewFiles {
 			this.link = p.link;
 			if (!this.files.length) this.error = t('doc.noFiles');
 		} catch (e) {
-			this.error = message(e);
+			this.error = errorMessage(e);
 		} finally {
 			this.loading = false;
 		}
@@ -108,7 +113,7 @@ export class ReviewFiles {
 			}
 			this.docs.set(f.path, { blocks: docBlocks(new TextDecoder().decode(bytes), f.path) });
 		} catch (e) {
-			this.docs.set(f.path, { blocks: [], error: message(e) });
+			this.docs.set(f.path, { blocks: [], error: errorMessage(e) });
 		}
 	}
 }

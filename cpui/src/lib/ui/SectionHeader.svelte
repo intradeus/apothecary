@@ -3,7 +3,7 @@
 	// hairline to the right edge, and a link or actions at the end. Inside a
 	// pane use .pane-head instead.
 	import type { Snippet } from 'svelte';
-	import { I } from './icons';
+	import { I } from '$lib/design/icons';
 
 	let {
 		title,
@@ -27,7 +27,7 @@
 	} = $props();
 </script>
 
-<div class="sh c">
+<div class="sh glass">
 	<h2>{title}</h2>
 	{#if count !== undefined}<span class="count" class:hot>{count}</span>{/if}
 	{#if sub}<span class="sub">{sub}</span>{/if}
@@ -48,7 +48,7 @@
 		min-width: 0;
 	}
 	/* Inside a window it is only a heading. */
-	:global(.c) .sh {
+	:global(.glass) .sh {
 		min-height: 0;
 		padding: 0 4px;
 		background: none;
@@ -59,7 +59,7 @@
 	}
 	.sub {
 		font-size: var(--fs-help);
-		color: var(--mut);
+		color: var(--text-muted);
 		white-space: nowrap;
 		min-width: 0;
 		overflow: hidden;
@@ -67,15 +67,15 @@
 	}
 	.rule {
 		height: 1px;
-		background: var(--cLn);
+		background: var(--glass-line);
 		margin: 0 4px;
 	}
 	a {
 		white-space: nowrap;
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	a:hover {
-		color: var(--tx);
+		color: var(--text);
 	}
 	/* A phone: the line wraps — title and actions first, the description
 	   under them in full — instead of pushing the actions off the edge. */

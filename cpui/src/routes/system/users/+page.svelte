@@ -2,12 +2,13 @@
 	// Users (TODO 25), for the instance admin: every account, with what an
 	// admin may do to one — create it, make or unmake an admin, disable it,
 	// set its password. Nothing here looks into anyone's work.
+	import { errorMessage } from '$lib/core/errors';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import { session } from '$lib/session.svelte';
+	import { session } from '$lib/app/session.svelte';
 	import type { User } from '$lib/domain';
-	import { ago } from '$lib/format';
-	import { initialsOf } from '$lib/urls';
+	import { ago } from '$lib/core/format';
+	import { initialsOf } from '$lib/core/urls';
 	import { t } from '$lib/i18n/index.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
@@ -18,7 +19,7 @@
 	import HeaderAction from '$lib/ui/HeaderAction.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import UserAvatar from '$lib/ui/UserAvatar.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	let users = $state<User[]>([]);
 	let loaded = $state(false);
@@ -44,7 +45,7 @@
 			loaded = true;
 			loadError = '';
 		} catch (err) {
-			loadError = err instanceof Error ? err.message : String(err);
+			loadError = errorMessage(err);
 		}
 	};
 	onMount(refresh);
@@ -67,7 +68,7 @@
 			toast(t('page.users.created', { handle: u.handle }));
 			await refresh();
 		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
+			error = errorMessage(err);
 		} finally {
 			busy = null;
 		}
@@ -81,7 +82,7 @@
 			toast(t('page.users.updated', { handle: u.handle }));
 			await refresh();
 		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
+			error = errorMessage(err);
 		} finally {
 			busy = null;
 		}
@@ -106,7 +107,7 @@
 			resetting = null;
 			toast(t('page.users.passwordSet', { handle: u.handle }));
 		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
+			error = errorMessage(err);
 		} finally {
 			busy = null;
 		}
@@ -192,20 +193,19 @@
 					<div class="r urow" class:off={u.disabled}>
 						<UserAvatar name={u.name} initials={initialsOf(u.name)} presence={u.id === me} />
 						<span class="col nm">
-							<span class="ell"
+							<span class="truncate"
 								>{u.name}
 								{#if u.id === me}<span class="you">{t('page.users.you')}</span>{/if}</span
 							>
-							<span class="mono mut small">@{u.handle}</span>
+							<span class="mono muted small">@{u.handle}</span>
 						</span>
-						<span class="mut ell">{u.email}</span>
+						<span class="muted truncate">{u.email}</span>
 						<span class="chips">
-							{#if u.admin}<span class="pill sm t-parch">{t('page.users.admin')}</span>{:else}<span
-									class="pill sm flat">{t('page.users.member')}</span
-								>{/if}
+							{#if u.admin}<span class="pill sm tint-brand">{t('page.users.admin')}</span
+								>{:else}<span class="pill sm flat">{t('page.users.member')}</span>{/if}
 							{#if u.disabled}<span class="pill sm t-rose">{t('page.users.disabled')}</span>{/if}
 						</span>
-						<span class="num mut small"
+						<span class="num muted small"
 							>{u.lastSeenAt ? ago(u.lastSeenAt) : t('page.users.never')}</span
 						>
 						<span class="row nowrap acts">
@@ -283,7 +283,7 @@
 	.you {
 		font-weight: 500;
 		font-size: var(--fs-meta);
-		color: var(--mut);
+		color: var(--text-muted);
 		margin-left: 4px;
 	}
 	.acts {

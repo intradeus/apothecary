@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { errorMessage } from '$lib/core/errors';
 	import { t, th } from '$lib/i18n/index.svelte';
 	// Workshop health tab (DESIGN 7.7): preflight (config checks), envcheck
 	// (a throwaway workspace that proves the contract) and the build cache.
@@ -8,7 +9,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { BuildCache, EnvCheck, Preflight, Project } from '$lib/domain';
-	import { ago, fmtAbs, fmtBytes, fmtDuration } from '$lib/format';
+	import { ago, fmtAbs, fmtBytes, fmtDuration } from '$lib/core/format';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
@@ -17,7 +18,7 @@
 	import CheckChip, { type CheckTone } from '$lib/ui/CheckChip.svelte';
 	import StepList, { type Step } from '$lib/ui/StepList.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import TransportIcon from '$lib/ui/TransportIcon.svelte';
 
 	let { project }: { project: Project } = $props();
@@ -34,7 +35,7 @@
 		} catch (e) {
 			preflight = {
 				ok: false,
-				steps: [{ id: 'request', ok: false, error: e instanceof Error ? e.message : String(e) }]
+				steps: [{ id: 'request', ok: false, error: errorMessage(e) }]
 			};
 		}
 		preflightAt = Date.now();
@@ -76,7 +77,7 @@
 			check = await api.projects.envCheck(checkId);
 			follow(checkId);
 		} catch (e) {
-			checkError = e instanceof Error ? e.message : String(e);
+			checkError = errorMessage(e);
 		} finally {
 			starting = false;
 		}
@@ -91,7 +92,7 @@
 			check = await api.projects.envCheck(check.id);
 			follow(check.id);
 		} catch (e) {
-			checkError = e instanceof Error ? e.message : String(e);
+			checkError = errorMessage(e);
 		} finally {
 			cancelling = false;
 		}
@@ -112,7 +113,7 @@
 			buildCache = await api.projects.buildCache(project.id);
 			cacheError = '';
 		} catch (e) {
-			cacheError = e instanceof Error ? e.message : String(e);
+			cacheError = errorMessage(e);
 		}
 		cacheLoaded = true;
 	}
@@ -131,7 +132,7 @@
 			await loadBuildCache();
 			toast(t('workshop.health.cleared'));
 		} catch (e) {
-			cacheError = e instanceof Error ? e.message : String(e);
+			cacheError = errorMessage(e);
 		} finally {
 			clearingCache = false;
 		}
@@ -151,7 +152,7 @@
 					if (c.status === 'running' || c.tearingDown) follow(c.id);
 				}
 			})
-			.catch((e) => (checkError = e instanceof Error ? e.message : String(e)))
+			.catch((e) => (checkError = errorMessage(e)))
 			.finally(() => (checkLoaded = true));
 		void loadBuildCache();
 		const tick = setInterval(() => (now = Date.now()), 1000);
@@ -171,7 +172,7 @@
 	const checkSteps = $derived<Step[]>(
 		(check?.steps ?? []).map((s, i) => ({
 			key: `${i}:${s.id}`,
-			tone: s.status === 'pass' ? 'ok' : s.status === 'fail' ? 'bad' : 'mut',
+			tone: s.status === 'pass' ? 'ok' : s.status === 'fail' ? 'bad' : 'muted',
 			label: s.id,
 			detail:
 				s.status === 'skip'
@@ -206,7 +207,7 @@
 
 <div class="hl">
 	<!-- Envcheck -->
-	<section class="c pane wide">
+	<section class="glass pane wide">
 		<div class="pane-head">
 			<h2>{t('workshop.health.envcheck')}</h2>
 			{#if check}
@@ -257,7 +258,7 @@
 						>{/if}
 					<span class="mono">{elapsed}</span>
 					{#if check.keep}<span>{t('workshop.health.kept')}</span>{/if}
-					<span class="mono fnt">{check.id.slice(-8).toLowerCase()}</span>
+					<span class="mono faint">{check.id.slice(-8).toLowerCase()}</span>
 				</div>
 				<StepList
 					steps={checkSteps}
@@ -277,7 +278,7 @@
 	</section>
 
 	<!-- Preflight -->
-	<section class="c pane">
+	<section class="glass pane">
 		<div class="pane-head">
 			<h2>{t('workshop.health.preflight')}</h2>
 			{#if preflight && preflight !== 'running'}
@@ -325,10 +326,11 @@
 	</section>
 
 	<!-- Build cache -->
-	<section class="c pane">
+	<section class="glass pane">
 		<div class="pane-head">
 			<h2>{t('workshop.health.cache')}</h2>
-			{#if buildCache?.available}<span class="pill t-grn">{t('workshop.health.cacheKept')}</span
+			{#if buildCache?.available}<span class="pill tint-success"
+					>{t('workshop.health.cacheKept')}</span
 				>{/if}
 			<span class="spacer"></span>
 			{#if buildCache?.available}
@@ -354,7 +356,7 @@
 					<span class="mono big"
 						>{buildCache.bytes ? fmtBytes(buildCache.bytes) : t('workshop.health.cacheEmpty')}</span
 					>
-					<span class="mut small"
+					<span class="muted small"
 						>{buildCache.bytes
 							? t('workshop.health.cacheFull')
 							: t('workshop.health.cacheFill')}</span
@@ -389,7 +391,7 @@
 		gap: 6px 14px;
 		flex-wrap: wrap;
 		font-size: var(--fs-help);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.size {
 		align-items: baseline;

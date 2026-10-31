@@ -4,8 +4,8 @@
 	// flow is a built-in", "pings are always answered here". For problems that
 	// need action use Banner.
 	import type { Snippet } from 'svelte';
-	import type { Hue } from './hues';
-	import { I } from './icons';
+	import type { Hue } from '$lib/design/hues';
+	import { I } from '$lib/design/icons';
 
 	let {
 		hue = 'brand',
@@ -15,7 +15,7 @@
 	}: { hue?: Hue; glyph?: string; ondismiss?: () => void; children: Snippet } = $props();
 </script>
 
-<div class="co in h-{hue}">
+<div class="co inset tone-{hue}">
 	<span class="g">{glyph}</span>
 	<div class="grow">{@render children()}</div>
 	{#if ondismiss}<button class="btn-ghost btn-sm" onclick={ondismiss}>{t('ui.dismiss')}</button
@@ -30,17 +30,17 @@
 		padding: 8px 10px 8px 12px;
 		border-radius: var(--r-btn);
 		font-size: var(--fs-label);
-		color: var(--mut);
+		color: var(--text-muted);
 		background:
-			linear-gradient(90deg, color-mix(in oklch, var(--h) 10%, transparent), transparent 60%),
-			var(--inBg);
+			linear-gradient(90deg, color-mix(in oklch, var(--tone) 10%, transparent), transparent 60%),
+			var(--inset-bg);
 	}
 	.g {
-		color: var(--h);
+		color: var(--tone);
 		font-weight: 700;
 	}
 	.co :global(b),
 	.co :global(strong) {
-		color: var(--tx);
+		color: var(--text);
 	}
 </style>

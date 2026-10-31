@@ -42,9 +42,9 @@
 		class:invalid={bad || !!conflict}
 	/>
 	{#if bad}
-		<div class="err">{t('flow.name.badSlug')}</div>
+		<div class="error">{t('flow.name.badSlug')}</div>
 	{:else if conflict}
-		<div class="err">{conflict}</div>
+		<div class="error">{conflict}</div>
 	{:else}
 		<div class="help">{help}</div>
 	{/if}

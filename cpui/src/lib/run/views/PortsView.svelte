@@ -1,10 +1,11 @@
 <script lang="ts">
 	// Ports (DESIGN §6): listeners the workspace scanner found (click exposes
 	// and opens), what is already exposed, and a manual "expose a port".
+	import { errorMessage } from '$lib/core/errors';
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
 	import { CODE_SERVER_PORT } from '../derive';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { toast } from '$lib/ui/toast.svelte';
 	import type { RunStore } from '../store.svelte';
 
@@ -30,18 +31,18 @@
 			await rs.refreshPorts(); // the now-exposed port drops off the detected list
 			if (w) w.location.href = res.url;
 			else window.open(res.url, '_blank');
-			toast(t('runview.ports.toast_exposed', { port }), {
+			toast(t('runview.ports.toast_exposed', { port: String(port) }), {
 				action: { label: t('runview.ports.toast_open'), run: () => window.open(res.url, '_blank') }
 			});
 		} catch (e) {
 			w?.close();
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			busy = null;
 		}
 	}
 	async function exposeInput() {
-		const port = parseInt(input, 10);
+		const port = /^\d+$/.test(input.trim()) ? Number(input) : 0;
 		if (!port || port < 1 || port > 65535) {
 			error = t('runview.ports.invalid');
 			return;
@@ -54,7 +55,7 @@
 </script>
 
 <div class="view pt">
-	<div class="lbl">{t('runview.ports.detected')}</div>
+	<div class="caption">{t('runview.ports.detected')}</div>
 	{#if rs.observed.length === 0}
 		<div class="help">{t('runview.ports.nothing_new')}</div>
 	{:else}
@@ -79,7 +80,7 @@
 		</div>
 	{/if}
 	{#if exposed.length}
-		<div class="lbl">{t('runview.ports.exposed')}</div>
+		<div class="caption">{t('runview.ports.exposed')}</div>
 		<div class="list">
 			{#each exposed as p (p.port)}
 				<a class="btn btn-md port" href={p.url} target="_blank" rel="noreferrer" title={p.url}
@@ -89,7 +90,7 @@
 		</div>
 	{/if}
 	{#if !rs.terminal}
-		<div class="lbl">{t('runview.ports.expose_a_port')}</div>
+		<div class="caption">{t('runview.ports.expose_a_port')}</div>
 		<div class="ex">
 			<input
 				class="mono"
@@ -110,7 +111,7 @@
 			{t('runview.ports.help')}
 		</div>
 	{/if}
-	{#if error}<div class="err">{error}</div>{/if}
+	{#if error}<div class="error">{error}</div>{/if}
 </div>
 
 <style>
@@ -121,7 +122,7 @@
 	.pt > * {
 		flex: none;
 	}
-	.lbl:not(:first-child) {
+	.caption:not(:first-child) {
 		margin-top: 6px;
 	}
 	.list {
@@ -130,10 +131,10 @@
 		gap: 6px;
 	}
 	.port:hover {
-		border-color: var(--tea);
+		border-color: var(--accent-2);
 	}
 	.pn {
-		color: var(--tea);
+		color: var(--accent-2-text);
 	}
 	.ex {
 		display: flex;

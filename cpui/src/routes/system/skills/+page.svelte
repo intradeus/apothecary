@@ -2,12 +2,13 @@
 	// The skill library (TODO 38): one's skills and the skillsets that group
 	// them, plus the import form. Everything here is the person's own; a run
 	// picks skillsets when it starts.
+	import { errorMessage } from '$lib/core/errors';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { Skill, SkillImportResult, Skillset } from '$lib/domain';
-	import { ago } from '$lib/format';
+	import { ago } from '$lib/core/format';
 	import { t } from '$lib/i18n/index.svelte';
-	import { to } from '$lib/urls';
+	import { to } from '$lib/core/urls';
 	import AddCard from '$lib/system/AddCard.svelte';
 	import Callout from '$lib/ui/Callout.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
@@ -16,7 +17,7 @@
 	import HeaderAction from '$lib/ui/HeaderAction.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	let skills = $state<Skill[]>([]);
 	let sets = $state<Skillset[]>([]);
@@ -38,7 +39,7 @@
 			loaded = true;
 			error = '';
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		}
 	};
 	onMount(refresh);
@@ -62,7 +63,7 @@
 			path = '';
 			await refresh();
 		} catch (e) {
-			importErr = e instanceof Error ? e.message : String(e);
+			importErr = errorMessage(e);
 		} finally {
 			busy = false;
 		}
@@ -113,7 +114,7 @@
 					/>
 					<span class="help">{t('skills.importPathHelp')}</span>
 				</div>
-				{#if importErr}<div class="err">{importErr}</div>{/if}
+				{#if importErr}<div class="error">{importErr}</div>{/if}
 				<div class="row">
 					<button
 						class="btn-primary"
@@ -129,7 +130,7 @@
 	{/if}
 
 	{#if result}
-		<Callout hue="grn" glyph={I.ok} ondismiss={() => (result = null)}>
+		<Callout hue="success" glyph={I.ok} ondismiss={() => (result = null)}>
 			{#if result.skillset}
 				<a href={to.skillset(result.skillset.id)}
 					>{t('skills.importedSet', {
@@ -144,7 +145,7 @@
 			{/if}
 			{#if result.warnings.length}
 				<div class="warns">
-					<span class="mut">{t('skills.importWarnings')}:</span>
+					<span class="muted">{t('skills.importWarnings')}:</span>
 					{#each result.warnings as w (w)}<span class="mono">{w}</span>{/each}
 				</div>
 			{/if}
@@ -169,14 +170,14 @@
 						<div class="r sk">
 							<span class="main">
 								<a class="name mono stretch" href={to.skill(s.id)}>{s.name}</a>
-								<span class="desc ell">{s.description}</span>
+								<span class="desc truncate">{s.description}</span>
 							</span>
 							<span>
-								{#if s.source}<span class="pill sm t-brand">{t('skills.remote')}</span>{/if}
+								{#if s.source}<span class="pill sm tint-brand">{t('skills.remote')}</span>{/if}
 							</span>
-							<span class="fnt opt">{s.files.length}</span>
-							<span class="fnt opt">{inSets(s.id) || '—'}</span>
-							<span class="fnt">{ago(s.updatedAt)}</span>
+							<span class="faint opt">{s.files.length}</span>
+							<span class="faint opt">{inSets(s.id) || '—'}</span>
+							<span class="faint">{ago(s.updatedAt)}</span>
 						</div>
 					{/each}
 				</div>
@@ -202,16 +203,17 @@
 						<div class="r set">
 							<span class="main">
 								<a class="name stretch" href={to.skillset(s.id)}>{s.name}</a>
-								<span class="desc ell">{s.description}</span>
+								<span class="desc truncate">{s.description}</span>
 							</span>
 							<span>
-								{#if s.source}<span class="pill sm t-brand">{t('skills.remote')}</span>{/if}
+								{#if s.source}<span class="pill sm tint-brand">{t('skills.remote')}</span>{/if}
 							</span>
 							<span class="opt"
-								><span class="pill sm t-mut">{t('skills.version', { seq: s.headSeq })}</span></span
+								><span class="pill sm tint-muted">{t('skills.version', { seq: s.headSeq })}</span
+								></span
 							>
-							<span class="fnt opt">{s.skillIds.length}</span>
-							<span class="fnt">{ago(s.updatedAt)}</span>
+							<span class="faint opt">{s.skillIds.length}</span>
+							<span class="faint">{ago(s.updatedAt)}</span>
 						</div>
 					{/each}
 				</div>
@@ -253,14 +255,14 @@
 		gap: 2px;
 	}
 	.name {
-		color: var(--tx);
+		color: var(--text);
 		font-weight: 600;
 	}
 	.name:hover {
 		text-decoration: none;
 	}
 	.desc {
-		color: var(--mut);
+		color: var(--text-muted);
 		font-size: var(--fs-label);
 	}
 	@media (max-width: 700px) {

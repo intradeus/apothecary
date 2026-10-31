@@ -5,7 +5,7 @@
 	export interface ViewMeta {
 		count?: string | number;
 		/** A count that wants attention: sky = a human must act, rose = blocked. */
-		alert?: 'sky' | 'ros';
+		alert?: 'attention' | 'danger';
 		hint?: string;
 	}
 
@@ -42,9 +42,9 @@
 	import { onMount, type Snippet } from 'svelte';
 	import type { TransitionConfig } from 'svelte/transition';
 	import { t } from '$lib/i18n/index.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { ms, rubberband } from '$lib/ui/motion';
-	import { token } from '$lib/ui/tokens';
+	import { token } from '$lib/design/tokens';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import LeafWindow from './LeafWindow.svelte';
 	import type { DeskState } from './desk.svelte';
@@ -197,7 +197,7 @@
 	const leafIdOf = (v: ViewId) => desk.leafOf(v)?.id ?? null;
 
 	/** The view in the desk's bottom-right corner, under the Layout button:
-	 *  what it docks at its foot steps aside (--fabClear). */
+	 *  what it docks at its foot steps aside (--fab-clear). */
 	const inCorner = (p: Rect) => p.x + p.w >= W - 4 && p.y + p.h >= H - 4;
 
 	function deskPoint(e: { clientX: number; clientY: number }) {
@@ -338,6 +338,7 @@
 			g.removeEventListener('pointercancel', up);
 			held = '';
 			resizing = '';
+			if (raw === a0) return; // only a click: the preset stands
 			const a = Math.max(lo, Math.min(hi, raw));
 			desk.resizeDone(withSize(desk.tree, d, sum, a), a !== raw);
 		};
@@ -351,9 +352,23 @@
 		document.body.style.cursor = c;
 		return () => (document.body.style.cursor = '');
 	});
+
+	// The bench's button toggles the Layouts menu, which closes on any press
+	// outside it, itself in the capture phase on the window: the click would
+	// find it shut and open it again. This listener is the older of the two,
+	// so it sees the menu as the press found it.
+	let benchBtn = $state<HTMLButtonElement | null>(null);
+	let pressShutMenu = false;
+	function pressCaptured(e: PointerEvent) {
+		pressShutMenu = desk.menuOpen && !!benchBtn?.contains(e.target as Node);
+	}
+	function toggleMenu() {
+		desk.menuOpen = !desk.menuOpen && !pressShutMenu;
+		pressShutMenu = false;
+	}
 </script>
 
-<svelte:window bind:innerWidth={vw} bind:innerHeight={vh} />
+<svelte:window bind:innerWidth={vw} bind:innerHeight={vh} onpointerdowncapture={pressCaptured} />
 
 <div
 	class="desk"
@@ -418,7 +433,7 @@
 				style:top="{Math.round(p?.y ?? 0)}px"
 				style:width="{Math.round(p?.w ?? 0)}px"
 				style:height="{Math.round(p?.h ?? 0)}px"
-				style:--fabClear={p && hs?.state === 'on' && inCorner(p) ? '52px' : null}
+				style:--fab-clear={p && hs?.state === 'on' && inCorner(p) ? '52px' : null}
 				onpointerdown={() => {
 					const id = places.get(v)?.leaf ?? leafIdOf(v);
 					if (id && desk.focus !== id) desk.focus = id;
@@ -462,10 +477,10 @@
 		<div class="bench" in:fadeIn>
 			<EmptyState title={t('desk.empty.title')} text={t('desk.empty.text')}>
 				<button
+					bind:this={benchBtn}
 					class="btn-primary"
 					aria-expanded={desk.menuOpen}
-					onpointerdown={(e) => e.stopPropagation()}
-					onclick={() => (desk.menuOpen = !desk.menuOpen)}>{t('desk.empty.open')} {I.menu}</button
+					onclick={toggleMenu}>{t('desk.empty.open')} {I.menu}</button
 				>
 			</EmptyState>
 		</div>
@@ -560,13 +575,13 @@
 	}
 	.gutter:hover,
 	.gutter.held {
-		background: var(--brandBg);
+		background: var(--brand-bg);
 	}
 	.grip {
 		width: 32px;
 		height: 2px;
 		border-radius: var(--r-xs);
-		background: var(--ln2);
+		background: var(--line-strong);
 		opacity: 0;
 	}
 	.gutter.row .grip {
@@ -588,13 +603,13 @@
 		border-radius: var(--r-btn);
 		background: color-mix(in oklch, var(--brand) 20%, transparent);
 		border: 2px dashed var(--brand);
-		box-shadow: inset 0 0 30px var(--brandGlow);
+		box-shadow: inset 0 0 30px var(--brand-glow);
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		font-size: var(--fs-ui);
 		font-weight: 600;
-		color: var(--brandLt);
+		color: var(--brand-light);
 		transition:
 			left var(--dur-spring) var(--spring),
 			top var(--dur-spring) var(--spring),
@@ -609,12 +624,12 @@
 		pointer-events: none;
 		padding: 3px 10px;
 		border-radius: var(--r-tab);
-		background: var(--solid);
-		border: 1px solid var(--selLn);
-		box-shadow: var(--dragSh);
+		background: var(--island-bg);
+		border: 1px solid var(--selected-line);
+		box-shadow: var(--shadow-drag);
 		font-size: var(--fs-ui);
 		font-weight: 600;
-		color: var(--tx);
+		color: var(--text);
 		white-space: nowrap;
 		/* Lifted a hair (the inverse of a press); 1 under reduced motion. */
 		transform: scale(calc(2 - var(--press-scale)));
@@ -622,7 +637,7 @@
 	}
 	.ghost.back {
 		transform: scale(1);
-		box-shadow: var(--selSh);
+		box-shadow: var(--selected-shadow);
 		transition:
 			left var(--dur-bounce) var(--spring-bounce),
 			top var(--dur-bounce) var(--spring-bounce),
@@ -632,7 +647,7 @@
 	@keyframes ghost-lift {
 		from {
 			transform: scale(1);
-			box-shadow: var(--selSh);
+			box-shadow: var(--selected-shadow);
 		}
 	}
 	.bench {

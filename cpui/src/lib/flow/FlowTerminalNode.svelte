@@ -21,8 +21,8 @@
 	// takes the hub's edge on its left, which nothing else may connect to.
 	// One component for all of them; the node type picks the tone.
 	import { Handle, Position, type NodeProps } from '@xyflow/svelte';
-	import type { Hue } from '$lib/ui/hues';
-	import { I } from '$lib/ui/icons';
+	import type { Hue } from '$lib/design/hues';
+	import { I } from '$lib/design/icons';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let { type, data }: NodeProps = $props();
@@ -44,16 +44,16 @@
 	);
 	const HUE: Record<Tone, Hue> = {
 		get outcome(): Hue {
-			return data?.then === 'abort' ? 'ros' : 'grn';
+			return data?.then === 'abort' ? 'danger' : 'success';
 		},
 		start: 'brand',
-		trigger: 'vio',
-		end: 'tea',
-		done: 'grn',
-		abort: 'ros',
-		debug: 'sky',
-		exit: 'grn',
-		failexit: 'ros'
+		trigger: 'accent',
+		end: 'accent-2',
+		done: 'success',
+		abort: 'danger',
+		debug: 'attention',
+		exit: 'success',
+		failexit: 'danger'
 	};
 	const GLYPH: Record<Tone, string> = {
 		start: I.play,
@@ -80,10 +80,10 @@
 	const marker = $derived(tone === 'start' || tone === 'trigger' || tone === 'outcome');
 	const label = $derived((data?.label as string | undefined) ?? (marker ? 'start' : tone));
 	const title = $derived((data?.title as string | undefined) ?? TITLE[tone]());
-	const handle = '--xy-handle-background-color: var(--h)';
+	const handle = '--xy-handle-background-color: var(--tone)';
 </script>
 
-<div class="term {tone} h-{HUE[tone]}" {title}>
+<div class="term {tone} tone-{HUE[tone]}" {title}>
 	{#if !marker}
 		<Handle type="target" position={Position.Left} style={handle} />
 	{:else if data?.hub}
@@ -102,20 +102,20 @@
 		gap: 7px;
 		padding: 4px 14px 5px;
 		border-radius: var(--r-pill);
-		background: var(--cBg);
-		backdrop-filter: var(--cBf);
-		-webkit-backdrop-filter: var(--cBf);
-		border: 1.5px dashed color-mix(in oklch, var(--h) 38%, transparent);
-		color: var(--h);
+		background: var(--glass-bg);
+		backdrop-filter: var(--glass-filter);
+		-webkit-backdrop-filter: var(--glass-filter);
+		border: 1.5px dashed color-mix(in oklch, var(--tone) 38%, transparent);
+		color: var(--tone);
 		white-space: nowrap;
 	}
 	/* The entry is the one solid, glowing terminal. */
 	.start {
-		border: 1px solid color-mix(in oklch, var(--h) 38%, transparent);
-		box-shadow: 0 0 var(--glow-md) color-mix(in oklch, var(--h) 14%, transparent);
+		border: 1px solid color-mix(in oklch, var(--tone) 38%, transparent);
+		box-shadow: 0 0 var(--glow-md) color-mix(in oklch, var(--tone) 14%, transparent);
 	}
 	.l {
-		font-family: var(--display);
+		font-family: var(--font-display);
 		font-weight: 600;
 		font-size: var(--fs-title);
 		line-height: 1.1;

@@ -7,19 +7,19 @@
 	// (operates_on: merge_request) starts on one from here; which flow, and so
 	// what the run does, is the person's pick. A merge request's runs are filed under its own ticket,
 	// the same one a merge-request automation would use.
+	import { errorMessage } from '$lib/core/errors';
 	import { goto } from '$app/navigation';
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
 	import type { Flow, MergeRequestRow, Project } from '$lib/domain';
-	import { ago, fmtAbs } from '$lib/format';
-	import { to } from '$lib/urls';
+	import { ago, fmtAbs } from '$lib/core/format';
+	import { to } from '$lib/core/urls';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { I } from '$lib/ui/icons';
 	import TransportIcon from '$lib/ui/TransportIcon.svelte';
 
 	let { project, flows }: { project: Project; flows: Flow[] | null } = $props();
@@ -27,14 +27,13 @@
 	let rows = $state<MergeRequestRow[] | null>(null);
 	let error = $state('');
 	let busy = $state<number | null>(null);
-	const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 	async function load() {
 		try {
 			rows = await api.projects.mergeRequests(project.id);
 			error = '';
 		} catch (e) {
-			error = msg(e);
+			error = errorMessage(e);
 		}
 	}
 	$effect(() => {
@@ -64,12 +63,12 @@
 		busy = row.mr.iid;
 		try {
 			const started = await api.projects.startRunOnMR(project.id, row.mr.iid, { flow });
-			toast(t('workshop.mrs.started', { flow, iid: row.mr.iid }), {
+			toast(t('workshop.mrs.started', { flow, iid: String(row.mr.iid) }), {
 				action: { label: t('workshop.mrs.openRun'), run: () => void goto(to.run(started.runId)) }
 			});
 			await load();
 		} catch (e) {
-			toast(msg(e));
+			toast(errorMessage(e));
 		} finally {
 			busy = null;
 		}
@@ -79,7 +78,7 @@
 <p class="lede">{t('workshop.mrs.lede')}</p>
 
 {#if flows && !starts.length}
-	<div class="help hue-gold">{t('workshop.mrs.noFlow')}</div>
+	<div class="help hue-warning">{t('workshop.mrs.noFlow')}</div>
 {/if}
 
 {#if error && !rows}
@@ -99,31 +98,32 @@
 			{#each rows as row (row.mr.iid)}
 				<div class="r fr">
 					<span class="mr">
-						<a class="linklike ell" href={row.mr.url} target="_blank" rel="noreferrer"
-							><span class="mono fnt">!{row.mr.iid}</span> {row.mr.title}</a
+						<a class="linklike truncate" href={row.mr.url} target="_blank" rel="noreferrer"
+							><span class="mono faint">!{row.mr.iid}</span> {row.mr.title}</a
 						>
-						<span class="small fnt"
+						<span class="small faint"
 							>{row.mr.author}{#if row.mine}
-								· <span class="pill sm t-brand" title={t('workshop.mrs.mineTitle')}
+								· <span class="pill sm tint-brand" title={t('workshop.mrs.mineTitle')}
 									>{t('workshop.mrs.mine')}</span
 								>{/if}{#if row.mr.draft}
-								· <span class="pill sm t-mut">{t('workshop.mrs.draft')}</span>{/if}{#if row.mr.fork}
-								· <span class="pill sm t-mut">{t('workshop.mrs.fork')}</span
+								· <span class="pill sm tint-muted">{t('workshop.mrs.draft')}</span
+								>{/if}{#if row.mr.fork}
+								· <span class="pill sm tint-muted">{t('workshop.mrs.fork')}</span
 								>{/if}{#if row.stackedOn}
 								· <a
-									class="pill sm t-gold"
+									class="pill sm tint-warning"
 									href={row.stackedOn.url}
 									target="_blank"
 									rel="noreferrer"
 									title={t('workshop.mrs.stackedTitle', {
-										iid: row.stackedOn.iid,
+										iid: String(row.stackedOn.iid),
 										title: row.stackedOn.title,
 										branch: row.stackedOn.branch
-									})}>{t('workshop.mrs.stacked', { iid: row.stackedOn.iid })}</a
+									})}>{t('workshop.mrs.stacked', { iid: String(row.stackedOn.iid) })}</a
 								>{/if}</span
 						>
 					</span>
-					<span class="mono small ell" title="{row.mr.source} → {row.mr.target}"
+					<span class="mono small truncate" title="{row.mr.source} → {row.mr.target}"
 						>{row.mr.source} → {row.mr.target}</span
 					>
 					<span class="small runs">
@@ -131,14 +131,14 @@
 							<a href={to.run(row.run.id)} class="linklike" title={fmtAbs(row.run.createdAt)}
 								><StatusChip state={row.run.state} size="sm" /></a
 							>
-							<span class="fnt ell"
+							<span class="faint truncate"
 								>{row.run.flow} · {ago(row.run.createdAt)}{#if row.ticketId && row.runs > 1}
 									· <a class="linklike" href={to.ticket(row.ticketId)}
 										>{t('workshop.mrs.allRuns', { count: row.runs })}</a
 									>{/if}</span
 							>
 						{:else}
-							<span class="fnt">{t('workshop.mrs.noRun')}</span>
+							<span class="faint">{t('workshop.mrs.noRun')}</span>
 						{/if}
 					</span>
 					<span class="acts">
@@ -160,17 +160,21 @@
 <Popover {anchor} bind:open={pickOpen} placement="below-end" portal>
 	<div class="pickbox">
 		{#if pickFor?.stackedOn}
-			<span class="help hue-gold small"
+			<span class="help hue-warning small"
 				>{t('workshop.mrs.stackedPick', {
-					iid: pickFor.mr.iid,
-					base: pickFor.stackedOn.iid,
+					iid: String(pickFor.mr.iid),
+					base: String(pickFor.stackedOn.iid),
 					branch: pickFor.stackedOn.branch
 				})}</span
 			>
 		{/if}
-		<span class="mut fnt small">{t('workshop.mrs.pick', { iid: pickFor?.mr.iid ?? '' })}</span>
+		<span class="muted faint small"
+			>{t('workshop.mrs.pick', { iid: String(pickFor?.mr.iid ?? '') })}</span
+		>
 		{#each starts as f (f.name)}
-			<button class="mi mono" onclick={() => pickFor && start(pickFor, f.name)}>{f.name}</button>
+			<button class="menu-item mono" onclick={() => pickFor && start(pickFor, f.name)}
+				>{f.name}</button
+			>
 		{/each}
 	</div>
 </Popover>
@@ -185,7 +189,7 @@
 		gap: 2px;
 		min-width: 0;
 	}
-	.ell {
+	.truncate {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;

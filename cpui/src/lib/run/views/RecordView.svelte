@@ -4,11 +4,11 @@
 	// and the files you attached. Snapshots outlive the workspace.
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
-	import { to } from '$lib/urls';
-	import { fmtAbs, fmtBytes, fmtClock } from '$lib/format';
+	import { to } from '$lib/core/urls';
+	import { fmtAbs, fmtBytes, fmtClock } from '$lib/core/format';
 	import Segmented from '$lib/ui/Segmented.svelte';
-	import type { Hue } from '$lib/ui/hues';
-	import { I } from '$lib/ui/icons';
+	import type { Hue } from '$lib/design/hues';
+	import { I } from '$lib/design/icons';
 	import type { RunStore } from '../store.svelte';
 
 	let { rs }: { rs: RunStore } = $props();
@@ -64,7 +64,7 @@
 	});
 	const rows = $derived(filter ? all.filter((r) => r.kind === filter) : all);
 	const n = (k: Kind) => all.filter((r) => r.kind === k).length;
-	const hue: Record<Kind, Hue> = { output: 'vio', log: 'tea', attachment: 'brand' };
+	const hue: Record<Kind, Hue> = { output: 'accent', log: 'accent-2', attachment: 'brand' };
 </script>
 
 <div class="view">
@@ -104,15 +104,19 @@
 					? api.files.snapshotUrl(r.id, true)
 					: api.files.attachmentUrl(r.id, true)}
 				<div class="r">
-					<a class="nm mono ell tx" href={url} target="_blank" rel="noreferrer" title={r.filename}
-						>{r.filename}</a
+					<a
+						class="nm mono truncate text-primary"
+						href={url}
+						target="_blank"
+						rel="noreferrer"
+						title={r.filename}>{r.filename}</a
 					>
-					<span><span class="pill sm flat sq t-{hue[r.kind]}">{r.label}</span></span>
-					<span class="mut ell"
+					<span><span class="pill sm flat sq tint-{hue[r.kind]}">{r.label}</span></span>
+					<span class="muted truncate"
 						>{#if r.href}<a class="src" href={r.href}>{r.source}</a>{:else}{r.source}{/if}</span
 					>
 					<span class="rt mono">{fmtBytes(r.size)}</span>
-					<span class="rt mono fnt" title={r.at ? fmtAbs(r.at) : ''}
+					<span class="rt mono faint" title={r.at ? fmtAbs(r.at) : ''}
 						>{r.at ? fmtClock(r.at) : I.none}</span
 					>
 					<span class="acts"
@@ -157,7 +161,7 @@
 		color: inherit;
 	}
 	.src:hover {
-		color: var(--tx);
+		color: var(--text);
 	}
 	.rt {
 		text-align: right;

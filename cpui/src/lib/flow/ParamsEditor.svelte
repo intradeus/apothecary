@@ -8,7 +8,12 @@
 	import { t } from '$lib/i18n/index.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import Select from '$lib/ui/Select.svelte';
-	import { KNOWN_PARAMS, readAsModelOrHarness, type DocParam, type FlowDoc } from '$lib/flowdoc';
+	import {
+		KNOWN_PARAMS,
+		readAsModelOrHarness,
+		type DocParam,
+		type FlowDoc
+	} from '$lib/domain/flowdoc';
 	import {
 		customParams,
 		defaultText,
@@ -111,14 +116,15 @@
 	}
 </script>
 
-<div class="lbl sub">{t('flow.insp.knownParams')}</div>
+<div class="caption sub">{t('flow.insp.knownParams')}</div>
 {#each KNOWN_PARAMS as name (name)}
 	{@const p = doc.parameters[name]}
 	<div class="field">
 		<label for="kp-{name}"
 			><span class="mono">{name}</span>
-			{#if leftToWorkshop(name)}<span class="fnt">{t('flow.insp.leftToWorkshop')}</span>{:else}<span
-					class="fnt">{t('flow.insp.engineDefault', { value: KNOWN_PLACEHOLDER[name] })}</span
+			{#if leftToWorkshop(name)}<span class="faint">{t('flow.insp.leftToWorkshop')}</span
+				>{:else}<span class="faint"
+					>{t('flow.insp.engineDefault', { value: KNOWN_PLACEHOLDER[name] })}</span
 				>{/if}</label
 		>
 		<input
@@ -132,7 +138,7 @@
 		     workshop may bind, like any parameter. -->
 		{#if p != null}
 			<details class="more" open={!!(p.description || p.enum?.length)}>
-				<summary class="fnt tiny">{t('flow.insp.paramMore')}</summary>
+				<summary class="faint tiny">{t('flow.insp.paramMore')}</summary>
 				<input
 					value={p.description ?? ''}
 					aria-label={t('flow.insp.description')}
@@ -157,7 +163,7 @@
 	</div>
 {/each}
 
-<div class="lbl sub">{t('flow.insp.customParams')}</div>
+<div class="caption sub">{t('flow.insp.customParams')}</div>
 {#each customParams(doc) as [name, p] (name)}
 	{@const refs = paramRefs(doc, name)}
 	{@const type = paramType(name, p)}
@@ -169,14 +175,14 @@
 				aria-label={t('flow.insp.paramName')}
 				onchange={(e) => rename(name, e.currentTarget.value)}
 			/>
-			<span class="fnt tiny">{t('flow.insp.paramUsed', { count: refs.length })}</span>
+			<span class="faint tiny">{t('flow.insp.paramUsed', { count: refs.length })}</span>
 			<span class="spacer"></span>
 			<button class="btn-sm btn-ghost" onclick={() => remove(name)}
 				>{t('flow.insp.removeParam')}</button
 			>
 		</div>
 		<div class="row">
-			<label class="fnt small" for="pt-{name}">{t('flow.insp.paramType')}</label>
+			<label class="faint small" for="pt-{name}">{t('flow.insp.paramType')}</label>
 			<Select
 				id="pt-{name}"
 				value={p.type ?? ''}
@@ -193,7 +199,7 @@
 				onchange={(c) => setList(name, p, c)}
 			/>
 		</div>
-		{#if !p.type}<div class="help hue-gold">{t('flow.insp.paramTypeRequired')}</div>{/if}
+		{#if !p.type}<div class="help hue-warning">{t('flow.insp.paramTypeRequired')}</div>{/if}
 		<div class="field">
 			<label for="pd-{name}">{t('flow.insp.paramDefault')}</label>
 			{#if type === 'bool' && !p.list}
@@ -260,7 +266,7 @@
 <div class="help">{t('flow.insp.paramsReadHelp')}</div>
 
 <style>
-	.lbl.sub {
+	.caption.sub {
 		margin-top: 8px;
 	}
 	.more {

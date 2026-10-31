@@ -2,13 +2,14 @@
 	// The Runs page's "New run" (DESIGN 7.4). A run starts from a ticket, on the
 	// ticket's page, where its flow and parameters are chosen: this only picks
 	// which ticket, and takes you there.
+	import { errorMessage } from '$lib/core/errors';
 	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
 	import type { Ticket } from '$lib/domain';
-	import { fleet } from '$lib/fleet.svelte';
+	import { fleet } from '$lib/app/fleet.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import { to } from '$lib/urls';
+	import { to } from '$lib/core/urls';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
@@ -29,6 +30,7 @@
 
 	async function load() {
 		tickets = null;
+		picked = '';
 		error = '';
 		try {
 			const all = await api.tickets.list();
@@ -37,7 +39,7 @@
 				.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 			picked = tickets[0]?.id ?? '';
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		}
 	}
 
@@ -87,7 +89,7 @@
 <style>
 	.intro {
 		margin: 0;
-		color: var(--mut);
+		color: var(--text-muted);
 		font-size: var(--fs-ui);
 		text-wrap: pretty;
 	}

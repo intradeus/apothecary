@@ -60,7 +60,7 @@
 	></span>
 	{#if label || children}
 		<span class="txt">
-			{#if children}{@render children()}{:else}{label}{/if}{#if detail}<span class="mut"
+			{#if children}{@render children()}{:else}{label}{/if}{#if detail}<span class="muted"
 					>{' — '}{detail}</span
 				>{/if}
 		</span>
@@ -76,13 +76,13 @@
 		margin: 0;
 		font-size: var(--fs-body);
 		font-weight: 400;
-		color: var(--tx);
+		color: var(--text);
 		cursor: pointer;
 		-webkit-tap-highlight-color: transparent;
 	}
 	.sm {
 		font-size: var(--fs-help);
-		color: var(--mut);
+		color: var(--text-muted);
 		align-items: center;
 	}
 	.sm .box,
@@ -109,18 +109,18 @@
 		height: 16px;
 		margin-top: 2px;
 		border-radius: var(--r-xs);
-		background: var(--p1);
-		border: 1px solid var(--ln2);
-		box-shadow: var(--spec);
+		background: var(--fill-1);
+		border: 1px solid var(--line-strong);
+		box-shadow: var(--specular);
 		transition:
 			background var(--dur-fade) var(--ease-out),
 			border-color var(--dur-fade) var(--ease-out);
 	}
 	.ck:hover .box:not(.on) {
-		border-color: var(--grnLn);
+		border-color: var(--success-line);
 	}
 	.box.on {
-		background: var(--grn);
+		background: var(--success);
 		border-color: transparent;
 	}
 	/* The tick: two borders of a rotated box, scaled in on the spring. */
@@ -131,7 +131,7 @@
 		top: 1.5px;
 		width: 4px;
 		height: 8px;
-		border: solid var(--deepInk);
+		border: solid var(--on-success);
 		border-width: 0 2px 2px 0;
 		transform: rotate(45deg) scale(0);
 		transition: transform var(--dur-spring) var(--spring);

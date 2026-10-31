@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Rendered markdown (agent output, goals, ping questions). Sanitising
-	// lives in $lib/markdown; this is the only place {@html} meets it.
-	import { mdToHtml } from '$lib/markdown';
+	// lives in $lib/core/markdown; this is the only place {@html} meets it.
+	import { mdToHtml } from '$lib/core/markdown';
 
 	let {
 		src,
@@ -16,7 +16,7 @@
 
 <style>
 	.quiet {
-		color: var(--mut);
+		color: var(--text-muted);
 		font-size: var(--fs-label);
 	}
 </style>

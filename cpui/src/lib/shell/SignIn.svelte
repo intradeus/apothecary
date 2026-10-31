@@ -2,9 +2,10 @@
 	// The sign-in page: the one thing a browser without a session sees. A
 	// handle or an email, and a password. The engine throttles guessing; the
 	// page only relays what it says.
-	import { session } from '$lib/session.svelte';
+	import { errorMessage } from '$lib/core/errors';
+	import { session } from '$lib/app/session.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import Logo from '$lib/ui/Logo.svelte';
+	import AuthGate from './AuthGate.svelte';
 
 	let login = $state('');
 	let password = $state('');
@@ -18,7 +19,7 @@
 		try {
 			await session.login(login.trim(), password);
 		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
+			error = errorMessage(err);
 		} finally {
 			busy = false;
 		}
@@ -27,95 +28,38 @@
 
 <svelte:head><title>{t('auth.signIn.docTitle')}</title></svelte:head>
 
-<div class="gate">
-	<form class="card c" onsubmit={submit}>
-		<div class="brand">
-			<Logo size={38} />
-			<div>
-				<div class="name">Apothecary</div>
-				<div class="tagline">{t('shell.sidebar.tagline')}</div>
-			</div>
-		</div>
-		<h1>{t('auth.signIn.title')}</h1>
-		<p class="mut">{t('auth.signIn.lede')}</p>
-		<div class="field">
-			<label for="si-login">{t('auth.signIn.login')}</label>
-			<input id="si-login" bind:value={login} required autocomplete="username" />
-		</div>
-		<div class="field">
-			<label for="si-pw">{t('auth.password')}</label>
-			<input
-				id="si-pw"
-				type="password"
-				bind:value={password}
-				required
-				autocomplete="current-password"
-			/>
-		</div>
-		{#if error}<div class="err">{error}</div>{/if}
-		<div class="form-actions">
-			<button class="btn-primary btn-lg" type="submit" disabled={busy} aria-busy={busy}
-				>{t('auth.signIn.action')}</button
-			>
-		</div>
+<AuthGate
+	title={t('auth.signIn.title')}
+	lede={t('auth.signIn.lede')}
+	action={t('auth.signIn.action')}
+	{busy}
+	{error}
+	onsubmit={submit}
+>
+	<div class="field">
+		<label for="si-login">{t('auth.signIn.login')}</label>
+		<input id="si-login" bind:value={login} required autocomplete="username" />
+	</div>
+	<div class="field">
+		<label for="si-pw">{t('auth.password')}</label>
+		<input
+			id="si-pw"
+			type="password"
+			bind:value={password}
+			required
+			autocomplete="current-password"
+		/>
+	</div>
+
+	{#snippet foot()}
 		<p class="help">{t('auth.signIn.lockedOut')}</p>
-	</form>
-</div>
+	{/snippet}
+</AuthGate>
 
 <style>
-	.gate {
-		position: fixed;
-		inset: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 16px;
-		color: var(--tx);
-		overflow: auto;
-	}
-	.card {
-		width: 100%;
-		max-width: 400px;
-		padding: 26px 26px 22px;
-		border-radius: var(--r-pane);
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-	}
-	.brand {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		margin-bottom: 6px;
-	}
-	.name {
-		font-weight: 600;
-		font-size: var(--fs-lead);
-		letter-spacing: var(--tr-heading);
-	}
-	.tagline {
-		font-family: var(--display);
-		font-weight: 600;
-		font-size: var(--fs-body);
-		color: var(--mut);
-	}
-	h1 {
-		margin: 0;
-		font-family: var(--display);
-		font-weight: 600;
-		font-size: var(--fs-empty);
-	}
-	p {
-		margin: 0;
-	}
-	.form-actions {
-		justify-content: stretch;
-	}
-	.form-actions > button {
-		flex: 1;
-	}
 	.help {
+		margin: 0;
 		font-size: var(--fs-meta);
-		color: var(--fnt);
+		color: var(--text-faint);
 	}
 </style>

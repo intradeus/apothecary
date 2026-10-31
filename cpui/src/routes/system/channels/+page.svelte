@@ -4,6 +4,7 @@
 	//
 	// The engine can list, add and remove channels; it has no test or edit
 	// endpoint, so a change is remove + add.
+	import { errorMessage } from '$lib/core/errors';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { ChannelEntry } from '$lib/domain';
@@ -19,8 +20,8 @@
 	import ConfigCard, { type ConfigRow } from '$lib/ui/ConfigCard.svelte';
 	import AddCard from '$lib/system/AddCard.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { I } from '$lib/ui/icons';
-	import type { Hue } from '$lib/ui/hues';
+	import { I } from '$lib/design/icons';
+	import type { Hue } from '$lib/design/hues';
 	import { materialize, ms, spring } from '$lib/ui/motion';
 	import { flip } from 'svelte/animate';
 
@@ -45,7 +46,7 @@
 			loaded = true;
 			loadError = '';
 		} catch (e) {
-			loadError = e instanceof Error ? e.message : String(e);
+			loadError = errorMessage(e);
 		}
 	};
 	onMount(refresh);
@@ -70,7 +71,7 @@
 			toast(t('page.channels.added', { kind: label(kind) }));
 			await refresh();
 		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
+			error = errorMessage(err);
 		} finally {
 			busy = false;
 		}
@@ -90,16 +91,16 @@
 			toast(t('page.channels.removed', { kind: label(c.kind) }));
 			await refresh();
 		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
+			error = errorMessage(err);
 		} finally {
 			removing = null;
 		}
 	}
 
 	const labels: Record<string, string> = { matrix: 'Matrix', slack: 'Slack', discord: 'Discord' };
-	const hues: Record<string, Hue> = { matrix: 'tea', slack: 'vio', discord: 'sky' };
+	const hues: Record<string, Hue> = { matrix: 'accent-2', slack: 'accent', discord: 'attention' };
 	const label = (k: string) => labels[k] ?? k;
-	const hue = (k: string): Hue => hues[k] ?? 'mut';
+	const hue = (k: string): Hue => hues[k] ?? 'muted';
 	/** Slack and Discord are both a webhook whose URL is the secret. */
 	const isWebhook = (k: string) => k === 'slack' || k === 'discord';
 
@@ -130,7 +131,7 @@
 	}
 </script>
 
-<Callout hue="tea" glyph={I.forward}>
+<Callout hue="accent-2" glyph={I.forward}>
 	{@html th('page.channels.callout')}
 </Callout>
 
@@ -215,7 +216,7 @@
 						</div>
 					</div>
 				{/if}
-				{#if error}<div class="err">{error}</div>{/if}
+				{#if error}<div class="error">{error}</div>{/if}
 				<div class="form-actions">
 					<button type="button" class="btn-ghost" onclick={() => (adding = false)}
 						>{t('common.cancel')}</button
@@ -241,10 +242,10 @@
 						sub={t('page.channels.mirrorsTo', { where: where(c) })}
 						summary={detail(c)}
 					>
-						{#snippet status()}<span class="pill sm t-tea">{t('page.channels.oneWay')}</span
+						{#snippet status()}<span class="pill sm tint-accent-2">{t('page.channels.oneWay')}</span
 							>{/snippet}
 						{#snippet actions()}
-							<span class="fnt tiny">{t('page.channels.changeHint')}</span>
+							<span class="faint tiny">{t('page.channels.changeHint')}</span>
 							<span class="spacer"></span>
 							<button
 								class="btn-danger btn-sm"

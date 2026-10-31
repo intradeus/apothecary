@@ -39,7 +39,7 @@
 	} = $props();
 </script>
 
-<header class="ph c">
+<header class="ph glass">
 	{#if lead}<div class="lead">{@render lead()}</div>{/if}
 	<div class="mid">
 		{#if crumbs.length || crumbsEnd}
@@ -105,7 +105,7 @@
 		align-items: center;
 		gap: 4px 14px;
 		font-size: var(--fs-label);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.acts {
 		display: flex;

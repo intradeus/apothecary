@@ -2,12 +2,13 @@
 	// Integrations (DESIGN 7.10): four groups — repositories, provisioner, harness,
 	// ticket source — each with "+ Add <kind>" per registered kind and a card
 	// per configured integration. Forms come from the engine's descriptors.
+	import { errorMessage } from '$lib/core/errors';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { Integration, KindDescriptor, Port } from '$lib/domain';
-	import { fleet } from '$lib/fleet.svelte';
+	import { fleet } from '$lib/app/fleet.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import IntegrationForm from '$lib/IntegrationForm.svelte';
+	import IntegrationForm from '$lib/system/IntegrationForm.svelte';
 	import IntegrationCard from '$lib/system/IntegrationCard.svelte';
 	import AddCard from '$lib/system/AddCard.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
@@ -64,7 +65,7 @@
 			loaded = true;
 			error = '';
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		}
 	};
 	onMount(refresh);

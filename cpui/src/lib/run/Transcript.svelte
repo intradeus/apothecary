@@ -2,6 +2,9 @@
 	/** A message you sent that the run has not echoed back yet. */
 	export interface Sending {
 		text: string;
+		/** How many messages with this text the run held when it was sent, so
+		 *  saying the same thing again isn't taken for the earlier echo. */
+		echoes?: number;
 	}
 </script>
 
@@ -13,13 +16,13 @@
 	// New items arrive with a small fade and rise (transform and opacity
 	// only, so nothing below them jumps); the history already there when the
 	// view opens, and the SSE replay that follows, land without it.
-	import { promptLabel, type ChatItem } from '$lib/transcript';
-	import { fmtClock, fmtTime } from '$lib/format';
+	import { promptLabel, type ChatItem } from '$lib/run/transcriptItems';
+	import { fmtClock, fmtTime } from '$lib/core/format';
 	import { t } from '$lib/i18n/index.svelte';
-	import { TONE_HUE } from '$lib/ui/hues';
-	import { I } from '$lib/ui/icons';
+	import { TONE_HUE } from '$lib/design/hues';
+	import { I } from '$lib/design/icons';
 	import { ms } from '$lib/ui/motion';
-	import { token } from '$lib/ui/tokens';
+	import { token } from '$lib/design/tokens';
 	import PingPill from '$lib/ui/PingPill.svelte';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -48,8 +51,12 @@
 	const planTone = (s: string): MarkTone =>
 		s === 'completed' ? 'ok' : s === 'in_progress' ? 'live' : 'pending';
 
-	const userTexts = $derived(new Set(items.flatMap((it) => (it.kind === 'user' ? [it.text] : []))));
-	const unechoed = $derived(sending.filter((s) => !userTexts.has(s.text)));
+	const unechoed = $derived(
+		sending.filter(
+			(s) =>
+				items.filter((it) => it.kind === 'user' && it.text === s.text).length <= (s.echoes ?? 0)
+		)
+	);
 
 	// Arm the arrival motion once the list has been quiet for a moment: the
 	// initial history (and the replay burst behind it) settles first.
@@ -91,7 +98,7 @@
 		<div class="divider" use:arrive={a}>
 			<span class="hl l"></span>
 			<span class="sname display">{it.stageId}</span>
-			<span class="smeta ell"
+			<span class="smeta truncate"
 				>{t('run.transcript.attempt', { n: it.iteration })}{#if it.agent}&nbsp;· {it.agent}{/if}{#if it.model}&nbsp;·
 					{it.model}{/if}{#if !it.agentic}&nbsp;·
 					{t('run.transcript.stage')}{/if} · <span class="mono">{fmtTime(it.ts)}</span></span
@@ -102,7 +109,7 @@
 		<div class="status hue-{TONE_HUE[it.tone]}" use:arrive={a}>
 			<span>{it.glyph}</span>
 			<span
-				>{it.text}{#if it.meta}<span class="mut">{' · '}{it.meta}</span>{/if}</span
+				>{it.text}{#if it.meta}<span class="muted">{' · '}{it.meta}</span>{/if}</span
 			>
 		</div>
 	{:else if it.kind === 'failure'}
@@ -118,7 +125,7 @@
 		<details class="card-in prompt" use:arrive={a}>
 			<summary class="disclosure">
 				<span class="b">{promptLabel(it.promptKind)}</span>
-				<span class="pv mut ell">{it.text.split('\n').find((l) => l.trim()) ?? ''}</span>
+				<span class="pv muted truncate">{it.text.split('\n').find((l) => l.trim()) ?? ''}</span>
 			</summary>
 			<pre>{it.text}{it.truncated ? `\n… [${t('run.transcript.truncated')}]` : ''}</pre>
 		</details>
@@ -126,7 +133,7 @@
 		{#if it.thought}
 			<details class="thought" open={it.live} use:arrive={a}>
 				<summary
-					>{#if it.live}<span class="ldot sm pulse hue-emb"></span>{/if}{t(
+					>{#if it.live}<span class="live-dot sm pulse hue-running"></span>{/if}{t(
 						'run.transcript.thinking'
 					)}
 					{I.menu}</summary
@@ -161,7 +168,7 @@
 			</div>
 		</div>
 	{:else if it.kind === 'notice'}
-		<div class="notice mut" use:arrive={a}>{it.text}</div>
+		<div class="notice muted" use:arrive={a}>{it.text}</div>
 	{:else if it.kind === 'user'}
 		<div class="user" use:arrive={a}>
 			<div class="bubble" class:queued={!it.delivered}>{it.text}</div>
@@ -174,19 +181,21 @@
 	{:else if it.kind === 'question'}
 		<div class="q card-in" class:open={it.answer === undefined && !over} use:arrive={a}>
 			<div class="qh">
-				<PingPill type={it.type} /><span class="mut small">{t('run.transcript.asked')}</span>
+				<PingPill type={it.type} /><span class="muted small">{t('run.transcript.asked')}</span>
 			</div>
 			<Markdown src={it.question} />
 			{#if it.options.length && it.answer === undefined}
-				<div class="small mut">{t('run.transcript.options', { list: it.options.join(' · ') })}</div>
+				<div class="small muted">
+					{t('run.transcript.options', { list: it.options.join(' · ') })}
+				</div>
 			{/if}
 			{#if it.answer !== undefined}
 				<div class="ans small"><b>{t('run.transcript.you')}</b> {it.answer}</div>
 			{:else if over}
-				<div class="small fnt">{t('run.transcript.withdrawn')}</div>
+				<div class="small faint">{t('run.transcript.withdrawn')}</div>
 			{:else}
 				<button class="linklike wait" onclick={onanswer}
-					><span class="ldot pulse"></span>{t('run.transcript.waiting')} {I.follow}</button
+					><span class="live-dot pulse"></span>{t('run.transcript.waiting')} {I.follow}</button
 				>
 			{/if}
 		</div>
@@ -215,10 +224,10 @@
 		min-width: 12px;
 	}
 	.hl.l {
-		background: linear-gradient(90deg, transparent, var(--ln2));
+		background: linear-gradient(90deg, transparent, var(--line-strong));
 	}
 	.hl.r {
-		background: linear-gradient(90deg, var(--ln2), transparent);
+		background: linear-gradient(90deg, var(--line-strong), transparent);
 	}
 	.sname {
 		font-size: var(--fs-section);
@@ -226,7 +235,7 @@
 	}
 	.smeta {
 		font-size: var(--fs-help);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.smeta .mono {
 		font-size: var(--fs-meta);
@@ -249,8 +258,8 @@
 	.prompt pre {
 		margin: 0;
 		padding: 8px 12px;
-		border-top: 1px solid var(--ln);
-		color: var(--mut);
+		border-top: 1px solid var(--line);
+		color: var(--text-muted);
 		font-size: var(--fs-help);
 		white-space: pre-wrap;
 		word-break: break-word;
@@ -260,7 +269,7 @@
 	.thought {
 		padding: 8px 12px;
 		border-radius: var(--r-card);
-		background: linear-gradient(90deg, var(--embBg), transparent 70%);
+		background: linear-gradient(90deg, var(--running-bg), transparent 70%);
 	}
 	.thought > summary {
 		display: flex;
@@ -268,11 +277,11 @@
 		align-items: center;
 		font-size: var(--fs-help);
 		font-weight: 600;
-		color: var(--embTx);
+		color: var(--running-text);
 	}
 	.tt {
 		padding-top: 4px;
-		color: var(--mut);
+		color: var(--text-muted);
 		font-size: var(--fs-title);
 		line-height: 1.35;
 		white-space: pre-wrap;
@@ -296,7 +305,7 @@
 	}
 	.pm {
 		font-size: var(--fs-meta);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.pl {
 		padding: 4px 14px 10px;
@@ -311,10 +320,10 @@
 		align-items: center;
 	}
 	.pe.completed {
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.pe.in_progress {
-		color: var(--embTx);
+		color: var(--running-text);
 		font-weight: 600;
 	}
 	.notice {
@@ -332,19 +341,19 @@
 	.bubble {
 		padding: 8px 13px;
 		border-radius: var(--r-row) var(--r-card) var(--r-xs) var(--r-card);
-		background: var(--brandBg);
-		border: 1px solid var(--brandLn);
+		background: var(--brand-bg);
+		border: 1px solid var(--brand-line);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}
 	.bubble.queued {
 		background: transparent;
 		border-style: dashed;
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.um {
 		font-size: var(--fs-id);
-		color: var(--fnt);
+		color: var(--text-faint);
 	}
 	.q {
 		padding: 10px 14px;
@@ -353,7 +362,7 @@
 		gap: 6px;
 	}
 	.q.open {
-		border-color: var(--skyLn);
+		border-color: var(--attention-line);
 	}
 	.qh {
 		display: flex;
@@ -365,7 +374,7 @@
 	}
 	.wait {
 		align-self: flex-start;
-		color: var(--skyTx);
+		color: var(--attention-text);
 		font-weight: 600;
 		font-size: var(--fs-label);
 		gap: 8px;

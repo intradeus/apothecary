@@ -42,7 +42,7 @@
 		align-items: center;
 		gap: 8px;
 		font-size: var(--fs-label);
-		color: var(--tx);
+		color: var(--text);
 		-webkit-tap-highlight-color: transparent;
 	}
 	.tg:focus-visible {
@@ -60,14 +60,14 @@
 		width: 28px;
 		height: 16px;
 		border-radius: var(--r-pill);
-		background: var(--p2);
-		border: 1px solid var(--ln2);
+		background: var(--fill-2);
+		border: 1px solid var(--line-strong);
 		transition:
 			background var(--dur-fade) var(--ease-out),
 			border-color var(--dur-fade) var(--ease-out);
 	}
 	.track.on {
-		background: var(--grn);
+		background: var(--success);
 		border-color: transparent;
 	}
 	/* Positioned by transform (compositor-only), sized by width; both ride
@@ -80,7 +80,7 @@
 		height: 12px;
 		border-radius: var(--r-pill);
 		background: var(--knob);
-		box-shadow: var(--knobSh);
+		box-shadow: var(--knob-shadow);
 		transition:
 			transform var(--dur-spring) var(--spring),
 			width var(--dur-spring) var(--spring);

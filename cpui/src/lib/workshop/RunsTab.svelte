@@ -2,9 +2,9 @@
 	import { t } from '$lib/i18n/index.svelte';
 	// Workshop runs tab: the runs list (DESIGN 7.4), filtered to this workshop.
 	import type { Project, Run } from '$lib/domain';
-	import { fleet } from '$lib/fleet.svelte';
-	import { to } from '$lib/urls';
-	import { shortId, stateTab } from '$lib/format';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { to } from '$lib/core/urls';
+	import { shortId, stateTab } from '$lib/core/format';
 	import NewRunDialog from '$lib/run/NewRunDialog.svelte';
 	import RunTable from '$lib/run/RunTable.svelte';
 	import HeaderAction from '$lib/ui/HeaderAction.svelte';
@@ -12,7 +12,7 @@
 	import SearchInput from '$lib/ui/SearchInput.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Updated from '$lib/ui/Updated.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	let { project, runs }: { project: Project; runs: Run[] } = $props();
 

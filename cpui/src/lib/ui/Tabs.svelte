@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { Hue } from './hues';
+	import type { Hue } from '$lib/design/hues';
 
 	export interface TabItem<V extends string> {
 		value: V;
@@ -70,7 +70,7 @@
 </script>
 
 {#snippet inner(it: TabItem<string>)}
-	{#if it.dot}<span class="ldot sm flat hue-{it.dot}"
+	{#if it.dot}<span class="live-dot sm flat hue-{it.dot}"
 		></span>{/if}{it.label}{#if it.count !== undefined}<span class="count">{it.count}</span>{/if}
 {/snippet}
 

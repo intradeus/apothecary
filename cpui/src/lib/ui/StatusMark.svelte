@@ -1,12 +1,12 @@
 <script lang="ts" module>
-	export type MarkTone = 'ok' | 'bad' | 'warn' | 'info' | 'live' | 'pending' | 'mut';
+	export type MarkTone = 'ok' | 'bad' | 'warn' | 'info' | 'live' | 'pending' | 'muted';
 </script>
 
 <script lang="ts">
 	// A round status glyph (timeline events, plan items, tool calls, check
 	// steps): ✓ done, ✕ failed, ! warn, a pulsing dot while live, a hollow
 	// ring while pending.
-	import { I } from './icons';
+	import { I } from '$lib/design/icons';
 
 	let {
 		tone,
@@ -25,14 +25,14 @@
 					info: '',
 					live: '',
 					pending: '',
-					mut: I.none
+					muted: I.none
 				} as const
 			)[tone]
 	);
 </script>
 
 <span class="sm-mark {tone} {size}" {title} role="img" aria-label={title ?? tone}>
-	{#if tone === 'live'}<span class="ldot sm pulse"></span>{:else}{g}{/if}
+	{#if tone === 'live'}<span class="live-dot sm pulse"></span>{:else}{g}{/if}
 </span>
 
 <style>
@@ -54,32 +54,32 @@
 		font-size: var(--fs-badge);
 	}
 	.ok {
-		background: var(--grn);
-		color: var(--deepInk);
+		background: var(--success);
+		color: var(--on-success);
 	}
 	.bad {
-		background: var(--rosBg);
-		color: var(--rosTx);
-		border: 1px solid var(--rosLn);
+		background: var(--danger-bg);
+		color: var(--danger-text);
+		border: 1px solid var(--danger-line);
 	}
 	.warn {
-		background: var(--goldBg);
-		color: var(--gold);
-		border: 1px solid var(--goldLn);
+		background: var(--warning-bg);
+		color: var(--warning-text);
+		border: 1px solid var(--warning-line);
 	}
 	.info {
-		background: var(--embBg);
-		border: 1px solid var(--embLn);
+		background: var(--running-bg);
+		border: 1px solid var(--running-line);
 	}
 	.live {
-		color: var(--embTx);
-		border: 1.5px solid var(--embLn);
+		color: var(--running-text);
+		border: 1.5px solid var(--running-line);
 	}
 	.pending {
-		border: 1.5px solid var(--ln2);
+		border: 1.5px solid var(--line-strong);
 	}
-	.mut {
-		background: var(--p2);
-		color: var(--mut);
+	.muted {
+		background: var(--fill-2);
+		color: var(--text-muted);
 	}
 </style>

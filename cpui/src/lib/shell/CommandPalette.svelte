@@ -5,16 +5,16 @@
 	// every keystroke (no debounce): typing never waits for the list.
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
-	import { fleet } from '$lib/fleet.svelte';
-	import { prefs } from '$lib/prefs.svelte';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { prefs } from '$lib/app/prefs.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import { THEMES } from '$lib/themes';
-	import { to } from '$lib/urls';
-	import { shortId, stateLabel, stateTab } from '$lib/format';
+	import { THEMES } from '$lib/design/themes';
+	import { to } from '$lib/core/urls';
+	import { shortId, stateLabel, stateTab } from '$lib/core/format';
 	import type { Ticket } from '$lib/domain';
-	import { NAV } from '$lib/nav';
+	import { NAV } from '$lib/app/nav';
 	import { trap } from '$lib/ui/trap';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { indicator, materialize, scrim } from '$lib/ui/motion';
 	import Vial from '$lib/ui/Vial.svelte';
 
@@ -113,7 +113,7 @@
 			...THEMES.filter((th) => th.id !== prefs.theme).map((th) => ({
 				group: 'do' as const,
 				label: t('shell.palette.useTheme', { theme: th.label.toLowerCase() }),
-				glyph: th.icon,
+				glyph: th.scheme === 'light' ? I.themeLight : I.themeDark,
 				run: act(() => prefs.setTheme(th.id))
 			})),
 			{
@@ -213,7 +213,7 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="cp-wrap" onpointerdown={(e) => e.target === e.currentTarget && (open = false)}>
 		<div
-			class="cp isl"
+			class="cp island"
 			role="dialog"
 			aria-modal="true"
 			aria-label={t('shell.palette.aria')}
@@ -221,7 +221,7 @@
 			use:trap={{ onescape: () => (open = false), initial: () => input }}
 		>
 			<div class="qrow">
-				<span class="glass" aria-hidden="true">{I.search}</span>
+				<span class="palette-glass" aria-hidden="true">{I.search}</span>
 				<input
 					class="bare q"
 					bind:this={input}
@@ -239,7 +239,7 @@
 					{/if}
 					<button
 						id="cp-{i}"
-						class="mi"
+						class="menu-item"
 						class:on={i === sel}
 						role="option"
 						aria-selected={i === sel}
@@ -249,8 +249,8 @@
 						<span class="g"
 							>{#if it.vial}<Vial projectId={it.vial} />{:else}{it.glyph}{/if}</span
 						>
-						<span class="ell grow">{it.label}</span>
-						{#if it.sub}<span class="sub ell">{it.sub}</span>{/if}
+						<span class="truncate grow">{it.label}</span>
+						{#if it.sub}<span class="sub truncate">{it.sub}</span>{/if}
 					</button>
 				{:else}
 					<div class="empty-line none">{t('shell.palette.none', { query })}</div>
@@ -286,10 +286,10 @@
 		align-items: center;
 		gap: 10px;
 		padding: 10px 14px;
-		border-bottom: 1px solid var(--ln);
+		border-bottom: 1px solid var(--line);
 	}
-	.glass {
-		color: var(--mut);
+	.palette-glass {
+		color: var(--text-muted);
 		font-size: var(--fs-title);
 	}
 	.q {
@@ -312,15 +312,15 @@
 	}
 	.gh {
 		font-size: var(--fs-meta);
-		color: var(--fnt);
+		color: var(--text-faint);
 		padding: 8px 10px 4px;
 	}
-	.mi {
+	.menu-item {
 		font-size: var(--fs-body);
 		flex: none;
 	}
 	/* The bead marks the selection; hover only moves it (onmouseenter). */
-	.mi:hover {
+	.menu-item:hover {
 		background: transparent;
 	}
 	.sub {

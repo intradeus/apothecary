@@ -42,9 +42,9 @@
 
 <div class="rv" class:embedded>
 	<div class="wb">
-		<div class="nav c pane">{@render nav()}</div>
-		<section class="main c pane">{@render main()}</section>
-		<aside class="side c pane">{@render side()}</aside>
+		<div class="nav glass pane">{@render nav()}</div>
+		<section class="main glass pane">{@render main()}</section>
+		<aside class="side glass pane">{@render side()}</aside>
 	</div>
 </div>
 

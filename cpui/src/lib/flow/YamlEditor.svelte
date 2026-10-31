@@ -46,11 +46,14 @@
 	// Syntax in the theme's hues: tokens, so light and dark both read.
 	const hues = HighlightStyle.define([
 		{ tag: [tags.definition(tags.propertyName), tags.propertyName], color: 'var(--brand)' },
-		{ tag: [tags.string, tags.content, tags.special(tags.string)], color: 'var(--tx)' },
-		{ tag: [tags.number, tags.bool, tags.null, tags.atom], color: 'var(--gold)' },
-		{ tag: [tags.comment, tags.lineComment], color: 'var(--fnt)', fontStyle: 'italic' },
-		{ tag: [tags.labelName, tags.typeName, tags.meta], color: 'var(--vio)' },
-		{ tag: [tags.punctuation, tags.separator, tags.squareBracket, tags.brace], color: 'var(--mut)' }
+		{ tag: [tags.string, tags.content, tags.special(tags.string)], color: 'var(--text)' },
+		{ tag: [tags.number, tags.bool, tags.null, tags.atom], color: 'var(--warning)' },
+		{ tag: [tags.comment, tags.lineComment], color: 'var(--text-faint)', fontStyle: 'italic' },
+		{ tag: [tags.labelName, tags.typeName, tags.meta], color: 'var(--accent)' },
+		{
+			tag: [tags.punctuation, tags.separator, tags.squareBracket, tags.brace],
+			color: 'var(--text-muted)'
+		}
 	]);
 
 	// $name reads a parameter; $UPPER is a sentinel the engine fills.
@@ -118,45 +121,49 @@
 	);
 
 	const theme = EditorView.theme({
-		'&': { height: '100%', color: 'var(--tx)', backgroundColor: 'transparent' },
+		'&': { height: '100%', color: 'var(--text)', backgroundColor: 'transparent' },
 		'&.cm-focused': { outline: 'none' },
 		'.cm-scroller': {
-			fontFamily: 'var(--mono)',
+			fontFamily: 'var(--font-code)',
 			fontSize: 'var(--fs-ui)',
 			lineHeight: '1.65'
 		},
 		'.cm-content': { padding: '14px 0', caretColor: 'var(--brand)' },
 		'.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--brand)' },
-		'.cm-gutters': { backgroundColor: 'transparent', color: 'var(--fnt)', border: 'none' },
-		'.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--p1)' },
+		'.cm-gutters': { backgroundColor: 'transparent', color: 'var(--text-faint)', border: 'none' },
+		'.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--fill-1)' },
 		'&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground':
-			{ backgroundColor: 'var(--brandBg)' },
-		'.cm-matchingBracket': { backgroundColor: 'var(--p3)', outline: 'none' },
-		'.cm-foldPlaceholder': { backgroundColor: 'var(--p2)', border: 'none', color: 'var(--mut)' },
+			{ backgroundColor: 'var(--brand-bg)' },
+		'.cm-matchingBracket': { backgroundColor: 'var(--fill-3)', outline: 'none' },
+		'.cm-foldPlaceholder': {
+			backgroundColor: 'var(--fill-2)',
+			border: 'none',
+			color: 'var(--text-muted)'
+		},
 		'.cm-tooltip': {
-			backgroundColor: 'var(--solid)',
-			color: 'var(--tx)',
-			border: '1px solid var(--ln2)',
+			backgroundColor: 'var(--island-bg)',
+			color: 'var(--text)',
+			border: '1px solid var(--line-strong)',
 			borderRadius: 'var(--r-row)',
-			fontFamily: 'var(--sans)',
+			fontFamily: 'var(--font-body)',
 			fontSize: 'var(--fs-label)',
 			maxWidth: '480px'
 		},
 		'.cm-tooltip-autocomplete > ul > li[aria-selected]': {
-			backgroundColor: 'var(--brandBg)',
-			color: 'var(--tx)'
+			backgroundColor: 'var(--brand-bg)',
+			color: 'var(--text)'
 		},
 		'.cm-diagnostic': { borderLeftWidth: '3px', padding: '4px 8px' },
-		'.cm-diagnostic-error': { borderLeftColor: 'var(--ros)' },
-		'.cm-diagnostic-warning': { borderLeftColor: 'var(--gold)' },
+		'.cm-diagnostic-error': { borderLeftColor: 'var(--danger)' },
+		'.cm-diagnostic-warning': { borderLeftColor: 'var(--warning)' },
 		'.cm-lintRange-error': {
 			backgroundImage: 'none',
-			textDecoration: 'underline wavy var(--ros)',
+			textDecoration: 'underline wavy var(--danger)',
 			textUnderlineOffset: '3px'
 		},
-		'.cm-panels': { backgroundColor: 'var(--solid)', color: 'var(--tx)' },
+		'.cm-panels': { backgroundColor: 'var(--island-bg)', color: 'var(--text)' },
 		'.cm-param': { color: 'var(--brand)', fontWeight: '600' },
-		'.cm-sentinel': { color: 'var(--vio)', fontWeight: '600' }
+		'.cm-sentinel': { color: 'var(--accent)', fontWeight: '600' }
 	});
 
 	onMount(() => {

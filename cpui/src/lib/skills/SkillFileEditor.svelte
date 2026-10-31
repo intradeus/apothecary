@@ -35,23 +35,27 @@
 		{ tag: [tags.emphasis], fontStyle: 'italic' },
 		{ tag: [tags.strong], fontWeight: '600' },
 		{ tag: [tags.link, tags.url], color: 'var(--brand)' },
-		{ tag: [tags.monospace, tags.string], color: 'var(--gold)' },
-		{ tag: [tags.comment, tags.meta, tags.processingInstruction], color: 'var(--fnt)' },
-		{ tag: [tags.list, tags.quote], color: 'var(--vio)' }
+		{ tag: [tags.monospace, tags.string], color: 'var(--warning)' },
+		{ tag: [tags.comment, tags.meta, tags.processingInstruction], color: 'var(--text-faint)' },
+		{ tag: [tags.list, tags.quote], color: 'var(--accent)' }
 	]);
 
 	const theme = EditorView.theme({
-		'&': { height: '100%', color: 'var(--tx)', backgroundColor: 'transparent' },
+		'&': { height: '100%', color: 'var(--text)', backgroundColor: 'transparent' },
 		'&.cm-focused': { outline: 'none' },
-		'.cm-scroller': { fontFamily: 'var(--mono)', fontSize: 'var(--fs-ui)', lineHeight: '1.65' },
+		'.cm-scroller': {
+			fontFamily: 'var(--font-code)',
+			fontSize: 'var(--fs-ui)',
+			lineHeight: '1.65'
+		},
 		'.cm-content': { padding: '14px 0', caretColor: 'var(--brand)' },
 		'.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--brand)' },
-		'.cm-gutters': { backgroundColor: 'transparent', color: 'var(--fnt)', border: 'none' },
-		'.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--p1)' },
+		'.cm-gutters': { backgroundColor: 'transparent', color: 'var(--text-faint)', border: 'none' },
+		'.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--fill-1)' },
 		'&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground':
-			{ backgroundColor: 'var(--brandBg)' },
-		'.cm-matchingBracket': { backgroundColor: 'var(--p3)', outline: 'none' },
-		'.cm-panels': { backgroundColor: 'var(--solid)', color: 'var(--tx)' }
+			{ backgroundColor: 'var(--brand-bg)' },
+		'.cm-matchingBracket': { backgroundColor: 'var(--fill-3)', outline: 'none' },
+		'.cm-panels': { backgroundColor: 'var(--island-bg)', color: 'var(--text)' }
 	});
 
 	const langFor = (p: string) => (languageFor(p) === 'markdown' ? markdown() : []);

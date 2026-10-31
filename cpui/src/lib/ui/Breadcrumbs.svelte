@@ -33,7 +33,7 @@
 		align-items: center;
 		gap: 6px;
 		font-size: var(--fs-label);
-		color: var(--mut);
+		color: var(--text-muted);
 		white-space: nowrap;
 		overflow: hidden;
 		min-width: 0;
@@ -45,13 +45,13 @@
 		max-width: 28ch;
 	}
 	.sep {
-		color: var(--fnt);
+		color: var(--text-faint);
 	}
 	a:hover {
-		color: var(--tx);
+		color: var(--text);
 	}
 	.cur {
-		color: var(--tx);
+		color: var(--text);
 	}
 	.mono {
 		font-size: var(--fs-help);

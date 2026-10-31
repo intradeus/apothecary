@@ -6,7 +6,7 @@
 	// under the sidebar's. Shown while a desk is on screen; a phone's desk has
 	// one window and nothing to arrange.
 	import { t } from '$lib/i18n/index.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { activeDesk } from './active.svelte';
 	import LayoutsPopover from './LayoutsPopover.svelte';
 
@@ -39,19 +39,19 @@
 		padding: 0;
 		border-radius: var(--r-row);
 		/* Over content, so opaque under the tint. */
-		background: linear-gradient(var(--brandBg), var(--brandBg)), var(--solid);
-		border: 1px solid var(--brandLn);
-		box-shadow: var(--spec), var(--floatSh);
+		background: linear-gradient(var(--brand-bg), var(--brand-bg)), var(--island-bg);
+		border: 1px solid var(--brand-line);
+		box-shadow: var(--specular), var(--shadow-float);
 		font-size: var(--fs-section);
 		font-weight: 400;
-		color: var(--brandLt);
+		color: var(--brand-light);
 	}
 	.fab:hover {
-		background: linear-gradient(var(--p3), var(--p3)), var(--solid);
+		background: linear-gradient(var(--fill-3), var(--fill-3)), var(--island-bg);
 		box-shadow:
-			var(--spec),
-			var(--floatSh),
-			0 0 var(--glow-md) var(--brandGlow);
+			var(--specular),
+			var(--shadow-float),
+			0 0 var(--glow-md) var(--brand-glow);
 	}
 	.key {
 		position: absolute;
@@ -60,8 +60,8 @@
 		padding: 0 4px;
 		border-radius: var(--r-tag);
 		background: var(--brand);
-		color: var(--onBrand);
-		font-family: var(--mono);
+		color: var(--on-brand);
+		font-family: var(--font-code);
 		font-size: var(--fs-badge);
 		font-weight: 700;
 		line-height: 1.5;

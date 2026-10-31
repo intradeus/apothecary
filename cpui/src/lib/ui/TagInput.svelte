@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
-	import { I } from './icons';
+	import { I } from '$lib/design/icons';
 	// Domain / tag list input (DESIGN 4.14): chips with ×; paste splits on
 	// whitespace and commas; Enter or comma commits; Backspace on empty pops.
 	let {
@@ -57,7 +57,7 @@
 
 <div class="fieldbox ti">
 	{#each values as v (v)}
-		<span class="pill sm t-mut" class:mono
+		<span class="pill sm tint-muted" class:mono
 			>{v}<button
 				type="button"
 				class="btn-icon btn-sm"
@@ -78,7 +78,7 @@
 		}}
 	/>
 </div>
-{#if err}<div class="err">{err}</div>{/if}
+{#if err}<div class="error">{err}</div>{/if}
 
 <style>
 	.ti {

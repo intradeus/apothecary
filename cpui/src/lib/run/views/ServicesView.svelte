@@ -7,18 +7,19 @@
 	//
 	// Live: polled every 3s while on screen (a health flip carries no event),
 	// and refetched by the store on every service_* event of the stream.
+	import { errorMessage } from '$lib/core/errors';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
-	import { to } from '$lib/urls';
-	import { fleet } from '$lib/fleet.svelte';
-	import { ago, fmtAbs } from '$lib/format';
+	import { to } from '$lib/core/urls';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { ago, fmtAbs } from '$lib/core/format';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import TransportIcon from '$lib/ui/TransportIcon.svelte';
-	import type { Hue } from '$lib/ui/hues';
+	import type { Hue } from '$lib/design/hues';
 	import type { ServiceStatus } from '$lib/domain';
 	import type { RunStore } from '../store.svelte';
 
@@ -52,16 +53,16 @@
 	function tone(s: ServiceStatus): Hue {
 		switch (s.state) {
 			case 'healthy':
-				return 'grn';
+				return 'success';
 			case 'starting':
 			case 'stopping':
-				return 'gold';
+				return 'warning';
 			case 'unhealthy':
-				return 'ros';
+				return 'danger';
 			case 'exited':
-				return s.exitCode ? 'ros' : 'mut';
+				return s.exitCode ? 'danger' : 'muted';
 			default:
-				return 'mut';
+				return 'muted';
 		}
 	}
 
@@ -128,7 +129,7 @@
 			void rs.refreshServices();
 			if (logs[s.name]) void loadLog(s.name);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			busy = { ...busy, [s.name]: undefined };
 		}
@@ -144,7 +145,7 @@
 	let logs = $state<Record<string, Log | undefined>>({});
 	const outs: Record<string, HTMLDivElement | undefined> = $state({});
 
-	async function loadLog(name: string) {
+	async function loadLog(name: string, following = false) {
 		const cur = logs[name];
 		if (!cur) return;
 		logs[name] = { ...cur, loading: true };
@@ -160,11 +161,13 @@
 					if (o) o.scrollTop = o.scrollHeight;
 				});
 		} catch (e) {
-			if (!logs[name]) return;
+			const last = logs[name];
+			if (!last) return;
 			logs[name] = {
-				text: null,
+				// One failed read of a followed log is no reason to blank it.
+				text: following ? last.text : null,
 				note: t('runview.services.log_fail', {
-					message: e instanceof Error ? e.message : String(e)
+					message: errorMessage(e)
 				}),
 				loading: false
 			};
@@ -186,7 +189,7 @@
 		const timer = setInterval(() => {
 			if (document.hidden) return;
 			for (const s of list)
-				if (logs[s.name] && !logs[s.name]!.loading && running(s)) loadLog(s.name);
+				if (logs[s.name] && !logs[s.name]!.loading && running(s)) loadLog(s.name, true);
 		}, 3000);
 		return () => clearInterval(timer);
 	});
@@ -212,7 +215,7 @@
 	{#if data && list.length}
 		<div class="vbar">
 			<span class="sum">
-				<span class="ldot sm hue-{upCount ? 'grn' : 'mut'}" class:flat={!upCount}></span>
+				<span class="live-dot sm hue-{upCount ? 'success' : 'muted'}" class:flat={!upCount}></span>
 				{t('runview.services.up_count', { up: upCount, total: list.length })}
 			</span>
 			{#if canAct}<span class="hint">{t('runview.services.hint')}</span>{/if}
@@ -273,7 +276,7 @@
 					<div class="head">
 						<span class="nm mono">{s.name}</span>
 						<span
-							class="pill sm t-{hue}"
+							class="pill sm tint-{hue}"
 							title={s.healthyAt && s.state === 'healthy'
 								? t('runview.services.healthy_since', { at: fmtAbs(s.healthyAt) })
 								: undefined}
@@ -342,9 +345,9 @@
 								{:else}
 									{t('runview.services.by_human')}
 								{/if}
-								<span class="fnt" title={fmtAbs(s.startedAt)}>· {ago(s.startedAt, rs.now)}</span>
+								<span class="faint" title={fmtAbs(s.startedAt)}>· {ago(s.startedAt, rs.now)}</span>
 								{#if on}
-									<span class="fnt"
+									<span class="faint"
 										>· {s.by === 'stage'
 											? t('runview.services.life_stage')
 											: t('runview.services.life_human')}</span
@@ -361,7 +364,9 @@
 							{#if s.probe}
 								<span class="mono probe">{s.probe}</span>
 								{#if s.lastProbeAt}
-									<span class={s.lastProbeOk ? 'hue-grn' : 'hue-ros'} title={fmtAbs(s.lastProbeAt)}
+									<span
+										class={s.lastProbeOk ? 'hue-success' : 'hue-danger'}
+										title={fmtAbs(s.lastProbeAt)}
 										>· {s.lastProbeOk
 											? t('runview.services.probe_ok', { ago: ago(s.lastProbeAt, rs.now) })
 											: t('runview.services.probe_fail', {
@@ -369,10 +374,10 @@
 												})}</span
 									>
 								{:else if on}
-									<span class="fnt">· {t('runview.services.probe_never')}</span>
+									<span class="faint">· {t('runview.services.probe_never')}</span>
 								{/if}
 							{:else}
-								<span class="fnt">{t('runview.services.no_probe')}</span>
+								<span class="faint">{t('runview.services.no_probe')}</span>
 							{/if}
 						</dd>
 						{#if s.ports.length}
@@ -392,11 +397,13 @@
 												{I.external}</a
 											>
 										{:else}
-											<span class="pill sm mono t-mut" title={t('runview.services.preview_later')}
+											<span
+												class="pill sm mono tint-muted"
+												title={t('runview.services.preview_later')}
 												>:{p.port}{p.label ? ` ${p.label}` : ''}</span
 											>
 										{/if}
-										<span class="mono fnt addr" title={t('runview.services.address_title')}
+										<span class="mono faint addr" title={t('runview.services.address_title')}
 											>{p.address}</span
 										>
 									</span>
@@ -411,7 +418,7 @@
 
 					{#if log}
 						<div class="logbar">
-							<span class="lbl">{t('runview.services.log_tail', { n: LOG_TAIL })}</span>
+							<span class="caption">{t('runview.services.log_tail', { n: LOG_TAIL })}</span>
 							<span class="spacer"></span>
 							<button
 								class="btn-icon"
@@ -449,7 +456,7 @@
 		align-items: center;
 		gap: 7px;
 		font-size: var(--fs-label);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.empty {
 		padding: 18px 16px;
@@ -459,13 +466,13 @@
 		max-width: 520px;
 	}
 	.et {
-		font-family: var(--display);
+		font-family: var(--font-display);
 		font-weight: 600;
 		font-size: var(--fs-section);
 	}
 	.empty .help,
 	.foot {
-		color: var(--mut);
+		color: var(--text-muted);
 		font-size: var(--fs-label);
 	}
 	.nows {
@@ -503,14 +510,14 @@
 		flex-wrap: wrap;
 	}
 	.desc {
-		color: var(--mut);
+		color: var(--text-muted);
 		font-size: var(--fs-label);
 	}
 	.facts {
 		--k: 64px;
 	}
 	.facts dt {
-		color: var(--fnt);
+		color: var(--text-faint);
 	}
 	.probe {
 		font-size: var(--fs-meta);
@@ -528,7 +535,7 @@
 		min-width: 0;
 	}
 	.pn {
-		color: var(--tea);
+		color: var(--accent-2-text);
 	}
 	.addr {
 		font-size: var(--fs-meta);
@@ -536,9 +543,9 @@
 	}
 	.lasterr {
 		font-size: var(--fs-meta);
-		color: var(--rosTx);
-		background: var(--rosBg);
-		border: 1px solid var(--rosLn);
+		color: var(--danger-text);
+		background: var(--danger-bg);
+		border: 1px solid var(--danger-line);
 		border-radius: var(--r-row);
 		padding: 5px 8px;
 		white-space: pre-wrap;
@@ -561,7 +568,7 @@
 		word-break: break-all;
 	}
 	.out > .empty-line {
-		font-family: var(--sans);
+		font-family: var(--font-body);
 		padding: 0;
 	}
 	.foot {

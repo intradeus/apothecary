@@ -4,7 +4,7 @@
 	// on another, what its CI says, is it approved, are reviewers waiting. The header shows it short;
 	// the phases card spells it out (`long`).
 	import type { MergeRequestLive } from '$lib/domain';
-	import { ago } from '$lib/format';
+	import { ago } from '$lib/core/format';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let {
@@ -39,7 +39,7 @@
 		return t(ci.state === 'success' ? 'run.mrStatus.ciPassed' : 'run.mrStatus.ciRunning');
 	});
 	const ciHue = $derived(
-		ci?.state === 'failure' ? 'hue-ros' : ci?.state === 'success' ? 'hue-grn' : 'fnt'
+		ci?.state === 'failure' ? 'hue-danger' : ci?.state === 'success' ? 'hue-success' : 'faint'
 	);
 	const approved = $derived(mr.state === 'open' && mr.approval?.approved ? mr.approval : undefined);
 </script>
@@ -50,27 +50,29 @@
 	title={mr.error ??
 		`${mr.branch}${mr.target ? ' → ' + mr.target : ''}${mr.state === 'merged' ? ` ${t('run.mrStatus.mergedSuffix')}` : ''}`}
 >
-	{#if repo}<span class="mono fnt">{mr.repo}</span>{/if}
+	{#if repo}<span class="mono faint">{mr.repo}</span>{/if}
 	{#if mr.error}
-		<span class="fnt">{t('run.mrStatus.unreachable')}</span>
+		<span class="faint">{t('run.mrStatus.unreachable')}</span>
 	{:else if mr.state === 'merged'}
-		<span class="hue-grn">{t('run.mrStatus.merged')}</span>
+		<span class="hue-success">{t('run.mrStatus.merged')}</span>
+	{:else if mr.state === 'closed'}
+		<span class="faint">{t('run.mrStatus.closed')}</span>
 	{:else if mr.mergeable === 'conflicts'}
-		<span class="hue-ros"
+		<span class="hue-danger"
 			>{long
 				? t('run.mrStatus.conflictsWith', { target: mr.target ?? t('run.mrStatus.itsTarget') })
 				: t('run.mrStatus.conflicts')}</span
 		>
 	{:else if mr.mergeableNow}
-		<span class="hue-grn">{t('run.mrStatus.readyToMerge')}</span>
+		<span class="hue-success">{t('run.mrStatus.readyToMerge')}</span>
 	{:else if mr.mergeable === 'clean'}
-		<span class="hue-grn">{t('run.mrStatus.mergeable')}</span>
+		<span class="hue-success">{t('run.mrStatus.mergeable')}</span>
 	{:else}
-		<span class="fnt">{long ? t('run.mrStatus.pendingLong') : t('run.mrStatus.checking')}</span>
+		<span class="faint">{long ? t('run.mrStatus.pendingLong') : t('run.mrStatus.checking')}</span>
 	{/if}
-	{#if mr.draft && mr.state === 'open'}<span class="fnt">{t('run.mrStatus.draft')}</span>{/if}
+	{#if mr.draft && mr.state === 'open'}<span class="faint">{t('run.mrStatus.draft')}</span>{/if}
 	{#if mr.stackedOn && mr.state === 'open'}<a
-			class="hue-gold linklike"
+			class="hue-warning linklike"
 			href={mr.stackedOn.url}
 			target="_blank"
 			rel="noreferrer"
@@ -80,8 +82,11 @@
 				branch: mr.stackedOn.branch
 			})}
 			>{long
-				? t('run.mrStatus.stackedLong', { iid: mr.stackedOn.iid, branch: mr.stackedOn.branch })
-				: t('run.mrStatus.stacked', { iid: mr.stackedOn.iid })}</a
+				? t('run.mrStatus.stackedLong', {
+						iid: String(mr.stackedOn.iid),
+						branch: mr.stackedOn.branch
+					})
+				: t('run.mrStatus.stacked', { iid: String(mr.stackedOn.iid) })}</a
 		>{/if}
 	{#if ciText}
 		{#if long && ciLink}<a
@@ -94,12 +99,12 @@
 				>{ciText}</span
 			>{/if}
 	{/if}
-	{#if approved}<span class="hue-grn" title={approved.by.join(', ')}
+	{#if approved}<span class="hue-success" title={approved.by.join(', ')}
 			>{long && approved.by.length
 				? t('run.mrStatus.approvedBy', { who: approved.by.join(', ') })
 				: t('run.mrStatus.approved')}</span
 		>{/if}
-	{#if threads && mr.state !== 'merged'}<span class="hue-gold">{threads}</span>{/if}
+	{#if threads && mr.state !== 'merged'}<span class="hue-warning">{threads}</span>{/if}
 </span>
 
 <style>

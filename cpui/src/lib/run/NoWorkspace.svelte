@@ -2,7 +2,7 @@
 	// What a workspace-only view shows when there is no live workspace behind
 	// it (DESIGN 7.1): the Record keeps every snapshot.
 	import EmptyState from '$lib/ui/EmptyState.svelte';
-	import { ago } from '$lib/format';
+	import { ago } from '$lib/core/format';
 	import { t } from '$lib/i18n/index.svelte';
 	import type { RunStore } from './store.svelte';
 

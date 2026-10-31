@@ -1,4 +1,4 @@
-import { CURRENT_VERSION } from '$lib/flowdoc';
+import { CURRENT_VERSION } from '$lib/domain/flowdoc';
 
 // A minimal valid document: one agent does what the ticket asks (the ticket
 // is always implicit) and the flow completes. Everything else is added in
@@ -15,13 +15,13 @@ agents:
   - name: worker
     description: does what the ticket asks
     inputs:
-      - { name: failure, description: why the last attempt failed, optional: true }
+      - { name: failure, type: failure, description: why the last attempt failed, optional: true }
     prompt: |
       Do what the TASK section asks, in this repository.
 main:
   # The chain a run starts with. Every stage declares what it reads and
-  # writes; $FAILURE is what the edge that sent the run back here carried.
+  # writes; edge.failure is what the edge that sent the run back here carried.
   - { id: work, type: agent, agent: worker, harness: $harness, model: $model, on_success: done,
-      input: { failure: $FAILURE },
+      input: { failure: { from: edge.failure, type: failure, optional: true } },
       on_fail: { to: work, max: 2 } }
 `;

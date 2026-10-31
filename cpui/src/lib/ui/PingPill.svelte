@@ -7,54 +7,54 @@
 			get label() {
 				return t('ui.ping.gate');
 			},
-			hue: 'grn',
+			hue: 'success',
 			wanted: true
 		},
 		debug: {
 			get label() {
 				return t('ui.ping.debug');
 			},
-			hue: 'sky',
+			hue: 'attention',
 			wanted: true
 		},
 		phase_confirm: {
 			get label() {
 				return t('ui.ping.phase_confirm');
 			},
-			hue: 'grn',
+			hue: 'success',
 			wanted: true
 		},
 		select: {
 			get label() {
 				return t('ui.ping.select');
 			},
-			hue: 'tea',
+			hue: 'accent-2',
 			wanted: true
 		},
 		clarification: {
 			get label() {
 				return t('ui.ping.clarification');
 			},
-			hue: 'sky',
+			hue: 'attention',
 			wanted: false
 		},
 		blocker: {
 			get label() {
 				return t('ui.ping.blocker');
 			},
-			hue: 'ros',
+			hue: 'danger',
 			wanted: false
 		},
 		permission: {
 			get label() {
 				return t('ui.ping.permission');
 			},
-			hue: 'vio',
+			hue: 'accent',
 			wanted: false
 		}
 	};
 	export const pingMeta = (type: string) =>
-		PING_META[type] ?? { label: type, hue: 'mut', wanted: false };
+		PING_META[type] ?? { label: type, hue: 'muted', wanted: false };
 </script>
 
 <script lang="ts">
@@ -62,6 +62,6 @@
 	const m = $derived(pingMeta(type));
 </script>
 
-<span class="pill t-{m.hue}" title={m.wanted ? t('ui.ping.wanted') : t('ui.ping.raised')}>
+<span class="pill tint-{m.hue}" title={m.wanted ? t('ui.ping.wanted') : t('ui.ping.raised')}>
 	<span class="dot"></span>{m.label}
 </span>

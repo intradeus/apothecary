@@ -5,10 +5,10 @@
 	// Clicking a stage opens its log.
 	import { t } from '$lib/i18n/index.svelte';
 	import StageFlask from '$lib/ui/StageFlask.svelte';
-	import { I } from '$lib/ui/icons';
-	import { STAGE_WORD } from '$lib/ui/hues';
+	import { I } from '$lib/design/icons';
+	import { STAGE_WORD } from '$lib/design/hues';
 	import Loading from '$lib/ui/Loading.svelte';
-	import { stateLabel } from '$lib/format';
+	import { stateLabel } from '$lib/core/format';
 	import { shownStages, stageRows } from '../derive';
 	import type { RunStore } from '../store.svelte';
 
@@ -63,7 +63,8 @@
 {:else if horizontal}
 	<div class="strip">
 		{#each rows as r, i (r.id)}
-			{#if opens(i)}<span class="ph mono fnt" title={t('runview.flow.phase')}>{opens(i)}</span>{/if}
+			{#if opens(i)}<span class="ph mono faint" title={t('runview.flow.phase')}>{opens(i)}</span
+				>{/if}
 			<div class="cell">
 				<button
 					class="rowbtn stage spill {r.status}"
@@ -73,9 +74,9 @@
 				>
 					<StageFlask status={r.status} />
 					<span class="txt">
-						<span class="kd ell">{kind(r)}</span>
-						<span class="id mono ell">{r.id}</span>
-						<span class="st ell tick"
+						<span class="kd truncate">{kind(r)}</span>
+						<span class="id mono truncate">{r.id}</span>
+						<span class="st truncate tick"
 							>{r.status === 'pending' ? stateLabel.pending.toLowerCase() : r.line || ' '}</span
 						>
 					</span>
@@ -87,9 +88,9 @@
 {:else}
 	<div class="view list">
 		<div class="title display">{t('runview.flow.formula')}</div>
-		<div class="sub mono fnt">{rs.run?.flowName ?? ''} {hash}</div>
+		<div class="sub mono faint">{rs.run?.flowName ?? ''} {hash}</div>
 		{#each rows as r, i (r.id)}
-			{#if opens(i)}<div class="vph mono fnt" title={t('runview.flow.phase')}>
+			{#if opens(i)}<div class="vph mono faint" title={t('runview.flow.phase')}>
 					{opens(i)}
 				</div>{/if}
 			<div class="vrow">
@@ -98,8 +99,8 @@
 					<span class="vconn" class:last={i === rows.length - 1}></span>
 				</div>
 				<button class="rowbtn stage card {r.status}" title={tip(r)} onclick={() => onstage(r.id)}>
-					<span class="id mono ell">{r.id}</span>
-					<span class="st ell tick">{r.line || ' '}</span>
+					<span class="id mono truncate">{r.id}</span>
+					<span class="st truncate tick">{r.line || ' '}</span>
 				</button>
 			</div>
 		{/each}
@@ -137,13 +138,13 @@
 	/* A stage's status change cross-fades its tint, and the flask's liquid
 	 * rides the spring to its new level. */
 	.stage {
-		--h: var(--mut);
+		--tone: var(--text-muted);
 		flex: 1;
 		min-width: 0;
 		height: 100%;
 		padding: 8px 11px;
 		border-radius: var(--r-row);
-		background: var(--p1);
+		background: var(--fill-1);
 		border: 1px solid transparent;
 		transition:
 			background-color var(--dur-fade) var(--ease-out),
@@ -156,8 +157,8 @@
 		transition: height var(--dur-spring) var(--spring);
 	}
 	.stage.stage:hover {
-		background: var(--p2);
-		border-color: var(--ln2);
+		background: var(--fill-2);
+		border-color: var(--line-strong);
 	}
 	.txt {
 		flex: 1;
@@ -169,15 +170,15 @@
 	}
 	.kd {
 		font-size: var(--fs-meta);
-		color: var(--h);
+		color: var(--tone);
 	}
 	.id {
-		color: var(--tx);
+		color: var(--text);
 		font-size: var(--fs-ui);
 	}
 	.st {
 		font-size: var(--fs-meta);
-		color: var(--fnt);
+		color: var(--text-faint);
 	}
 	/* A window too short for three lines keeps the name and the status. */
 	@container (max-height: 74px) {
@@ -186,47 +187,47 @@
 		}
 	}
 	.stage.done {
-		--h: var(--grn);
-		background: color-mix(in oklch, var(--h) 8%, transparent);
+		--tone: var(--success);
+		background: color-mix(in oklch, var(--tone) 8%, transparent);
 	}
 	.stage.done.gate {
-		--h: var(--gold);
+		--tone: var(--warning);
 	}
 	.stage.running {
-		--h: var(--embTx);
-		background: var(--running);
-		border-color: var(--embLn);
-		box-shadow: 0 0 24px var(--embGlow);
+		--tone: var(--running-text);
+		background: var(--running-fill);
+		border-color: var(--running-line);
+		box-shadow: 0 0 24px var(--running-glow);
 	}
 	.running .id {
 		font-weight: 600;
 	}
 	.running .st {
-		color: var(--embTx);
+		color: var(--running-text);
 	}
 	.stage.waiting {
-		--h: var(--skyTx);
-		background: var(--skyBg);
-		border-color: var(--skyLn);
-		box-shadow: 0 0 24px var(--skyGlow);
+		--tone: var(--attention-text);
+		background: var(--attention-bg);
+		border-color: var(--attention-line);
+		box-shadow: 0 0 24px var(--attention-glow);
 	}
 	.waiting .st {
-		color: var(--skyTx);
+		color: var(--attention-text);
 		font-weight: 600;
 	}
 	.stage.failed {
-		--h: var(--rosTx);
-		background: var(--rosBg);
-		border-color: var(--rosLn);
+		--tone: var(--danger-text);
+		background: var(--danger-bg);
+		border-color: var(--danger-line);
 	}
 	.failed .st {
-		color: var(--rosTx);
+		color: var(--danger-text);
 	}
 	.stage.pending {
 		opacity: 0.65;
 	}
 	.pending .st {
-		color: var(--fnt);
+		color: var(--text-faint);
 	}
 	.fin {
 		flex: none;
@@ -235,16 +236,16 @@
 		align-self: stretch;
 		padding: 0 14px;
 		border-radius: var(--r-row);
-		border: 1px dashed var(--ln2);
+		border: 1px dashed var(--line-strong);
 		font-size: var(--fs-lead);
-		color: var(--mut);
+		color: var(--text-muted);
 		opacity: 0.6;
 	}
 	.fin.ok,
 	.vfin.ok {
 		opacity: 1;
-		border-color: var(--grnLn);
-		color: var(--grn);
+		border-color: var(--success-line);
+		color: var(--success-text);
 	}
 	.list {
 		padding: 12px;
@@ -276,7 +277,7 @@
 		flex: 1;
 		width: 1px;
 		min-height: 8px;
-		background: var(--ln2);
+		background: var(--line-strong);
 	}
 	.card {
 		flex-direction: column;
@@ -293,9 +294,9 @@
 		margin-left: 28px;
 		padding: 5px 12px;
 		border-radius: var(--r-btn);
-		border: 1px dashed var(--ln2);
+		border: 1px dashed var(--line-strong);
 		font-size: var(--fs-title);
-		color: var(--mut);
+		color: var(--text-muted);
 		text-align: center;
 	}
 </style>

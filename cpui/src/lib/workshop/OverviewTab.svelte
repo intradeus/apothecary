@@ -4,9 +4,9 @@
 	// read-only summary of the setup — repositories, commands, default flow,
 	// egress — each pane linking to its section of the setup form.
 	import type { Flow, Integration, Project, Run } from '$lib/domain';
-	import { to } from '$lib/urls';
-	import { stateTab } from '$lib/format';
-	import { I } from '$lib/ui/icons';
+	import { to } from '$lib/core/urls';
+	import { stateTab } from '$lib/core/format';
+	import { I } from '$lib/design/icons';
 	import RunRow from '$lib/run/RunRow.svelte';
 
 	let {
@@ -34,9 +34,7 @@
 	);
 
 	const commands = $derived(
-		Object.entries(project.commands).sort(([a], [b]) =>
-			a === 'setup' ? -1 : b === 'setup' ? 1 : a.localeCompare(b)
-		)
+		Object.entries(project.commands).sort(([a], [b]) => a.localeCompare(b))
 	);
 	const defaultFlow = $derived(flows?.find((f) => f.name === project.defaultFlow));
 	const ownCount = $derived((flows ?? []).filter((f) => !f.builtin).length);
@@ -66,19 +64,19 @@
 
 <div class="ov">
 	<div class="col">
-		<section class="c pane">
+		<section class="glass pane">
 			<div class="pane-head">
 				<h2>{live.length ? t('workshop.overview.brewing') : t('workshop.overview.shelf')}</h2>
 				{#if live.length}<span class="count">{live.length}</span>{/if}
 				<span class="spacer"></span>
-				<a class="small mut" href={to.workshop(project.id, 'runs')}
+				<a class="small muted" href={to.workshop(project.id, 'runs')}
 					>{t('workshop.overview.allRuns')} {I.forward}</a
 				>
 			</div>
 			{#each live as r (r.id)}<RunRow run={r} />{/each}
 			{#if !live.length}
 				<div class="pane-body row">
-					<span class="mut small">{t('workshop.overview.runsStart')}</span>
+					<span class="muted small">{t('workshop.overview.runsStart')}</span>
 					<a class="btn btn-sm" href={to.newTicket({ project: project.id })}
 						>{I.add} {t('workshop.overview.newTicket')}</a
 					>
@@ -90,12 +88,12 @@
 			{/if}
 		</section>
 
-		<section class="c pane">
+		<section class="glass pane">
 			<div class="pane-head">
 				<h2>{t('workshop.overview.repos')}</h2>
 				<span class="count">{1 + (project.repos?.length ?? 0)}</span>
 				<span class="spacer"></span>
-				<a class="small mut" href={settings('repository')}>{t('workshop.overview.edit')}</a>
+				<a class="small muted" href={settings('repository')}>{t('workshop.overview.edit')}</a>
 			</div>
 			<div class="pane-body col">
 				<div class="repo">
@@ -103,8 +101,8 @@
 						>{t('workshop.overview.repoName')}
 						<span class="hue-brand" title={t('workshop.overview.primary')}>{I.star}</span></span
 					>
-					<span class="ell mono url" title={project.repo.url}>{project.repo.url}</span>
-					<span class="mono mut">{I.branch} {project.repo.defaultBranch}</span>
+					<span class="truncate mono url" title={project.repo.url}>{project.repo.url}</span>
+					<span class="mono muted">{I.branch} {project.repo.defaultBranch}</span>
 				</div>
 				<dl class="kv">
 					<dt>{t('workshop.overview.locator')}</dt>
@@ -117,11 +115,11 @@
 				{#each project.repos ?? [] as r (r.name)}
 					<div class="repo">
 						<span class="mono nm">{r.name}</span>
-						<span class="ell mono url" title={r.url}>{r.url}</span>
-						<span class="mono mut"
+						<span class="truncate mono url" title={r.url}>{r.url}</span>
+						<span class="mono muted"
 							>{I.branch}
 							{r.defaultBranch}{#if !r.locator}
-								<span class="pill sm t-mut">{t('workshop.overview.readOnly')}</span>{/if}</span
+								<span class="pill sm tint-muted">{t('workshop.overview.readOnly')}</span>{/if}</span
 						>
 					</div>
 				{/each}
@@ -135,22 +133,18 @@
 	</div>
 
 	<div class="col">
-		<section class="c pane">
+		<section class="glass pane">
 			<div class="pane-head">
 				<h2>{t('workshop.overview.commands')}</h2>
 				<span class="count">{commands.length}</span>
 				<span class="spacer"></span>
-				<a class="small mut" href={settings('workshop')}>{t('workshop.overview.edit')}</a>
+				<a class="small muted" href={settings('workshop')}>{t('workshop.overview.edit')}</a>
 			</div>
 			{#if commands.length}
 				<div class="pane-body">
 					<dl class="kv cmds">
 						{#each commands as [k, v] (k)}
-							<dt class="mono">
-								{k}{#if k === 'setup'}<span class="pill sm t-grn"
-										>{t('workshop.overview.bootstrap')}</span
-									>{/if}
-							</dt>
+							<dt class="mono">{k}</dt>
 							<dd><code class="script">{v}</code></dd>
 						{/each}
 					</dl>
@@ -165,38 +159,39 @@
 			{/if}
 		</section>
 
-		<section class="c pane">
+		<section class="glass pane">
 			<div class="pane-head">
 				<h2>{t('workshop.overview.formula')}</h2>
 				<span class="spacer"></span>
-				<a class="small mut" href={to.workshop(project.id, 'flows')}
+				<a class="small muted" href={to.workshop(project.id, 'flows')}
 					>{t('workshop.overview.flowsCount', { count: ownCount })} {I.forward}</a
 				>
 			</div>
 			<div class="pane-body row fl">
-				<span class="mut">{t('workshop.overview.runsStartOn')}</span>
+				<span class="muted">{t('workshop.overview.runsStartOn')}</span>
 				<a class="tag" href={to.flow(project.id, project.defaultFlow)}
 					>{project.defaultFlow || '—'}</a
 				>
-				{#if defaultFlow?.builtin}<span class="pill sm t-mut">{t('workshop.overview.builtin')}</span
+				{#if defaultFlow?.builtin}<span class="pill sm tint-muted"
+						>{t('workshop.overview.builtin')}</span
 					>{/if}
-				{#if defaultFlow?.shadowsBuiltin}<span class="pill sm t-mut"
+				{#if defaultFlow?.shadowsBuiltin}<span class="pill sm tint-muted"
 						>{t('workshop.overview.fromTemplate')}</span
 					>{/if}
-				{#if defaultFlow}<span class="mono fnt">@{defaultFlow.hash.slice(0, 6)}</span>{/if}
+				{#if defaultFlow}<span class="mono faint">@{defaultFlow.hash.slice(0, 6)}</span>{/if}
 				<span class="spacer"></span>
-				<span class="fnt small">{t('workshop.overview.unlessPicked')}</span>
+				<span class="faint small">{t('workshop.overview.unlessPicked')}</span>
 			</div>
 		</section>
 
-		<section class="c pane">
+		<section class="glass pane">
 			<div class="pane-head">
 				<h2>{t('workshop.overview.egress')}</h2>
-				<span class="pill {deny ? 't-gold' : 't-grn'}"
+				<span class="pill {deny ? 'tint-warning' : 'tint-success'}"
 					>{deny ? t('workshop.overview.denylist') : t('workshop.overview.allowlist')}</span
 				>
 				<span class="spacer"></span>
-				<a class="small mut" href={settings('workspace')}>{t('workshop.overview.edit')}</a>
+				<a class="small muted" href={settings('workspace')}>{t('workshop.overview.edit')}</a>
 			</div>
 			<div class="pane-body col">
 				<p class="lede">
@@ -205,7 +200,7 @@
 				{#if domains.length}
 					<div class="chips">
 						{#each showAll ? domains : domains.slice(0, CAP) as d (d)}
-							<span class="pill sm mono {deny ? 't-ros' : 't-mut'}">{d}</span>
+							<span class="pill sm mono {deny ? 'tint-danger' : 'tint-muted'}">{d}</span>
 						{/each}
 						{#if domains.length > CAP}
 							<button class="btn-ghost btn-sm" onclick={() => (showAll = !showAll)}
@@ -216,24 +211,24 @@
 						{/if}
 					</div>
 				{:else}
-					<div class="fnt small">
+					<div class="faint small">
 						{deny ? t('workshop.overview.nothingBlocked') : t('workshop.overview.noExtraHosts')}
 					</div>
 				{/if}
 				{#if blocked.length}
-					<div class="lbl">{t('workshop.overview.forceBlocked')}</div>
+					<div class="caption">{t('workshop.overview.forceBlocked')}</div>
 					<div class="chips">
-						{#each blocked as d (d)}<span class="pill sm mono t-ros">{d}</span>{/each}
+						{#each blocked as d (d)}<span class="pill sm mono tint-danger">{d}</span>{/each}
 					</div>
 				{/if}
 			</div>
 		</section>
 
-		<section class="c pane">
+		<section class="glass pane">
 			<div class="pane-head">
 				<h2>{t('workshop.overview.workspace')}</h2>
 				<span class="spacer"></span>
-				<a class="small mut" href={settings('workspace')}>{t('workshop.overview.edit')}</a>
+				<a class="small muted" href={settings('workspace')}>{t('workshop.overview.edit')}</a>
 			</div>
 			<div class="pane-body">
 				<dl class="kv">
@@ -263,7 +258,7 @@
 		min-width: 0;
 	}
 	.fin {
-		border-top: 1px solid var(--cLn);
+		border-top: 1px solid var(--glass-line);
 	}
 	dl.kv {
 		--k: 130px;
@@ -280,7 +275,7 @@
 	}
 	.url {
 		font-size: var(--fs-meta);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.cmds {
 		--k: 120px;
@@ -290,7 +285,7 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		color: var(--tx);
+		color: var(--text);
 		font-weight: 600;
 	}
 	.script {

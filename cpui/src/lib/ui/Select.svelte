@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { Hue } from './hues';
+	import type { Hue } from '$lib/design/hues';
 
 	export interface SelectOption<V extends string = string> {
 		value: V;
@@ -28,7 +28,7 @@
 	//   <label for="phase">Chain</label>
 	//   <Select id="phase" bind:value {options} onchange={save} />
 	import Popover from './Popover.svelte';
-	import { I } from './icons';
+	import { I } from '$lib/design/icons';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let {
@@ -85,12 +85,14 @@
 
 	const current = $derived(options.find((o) => o.value === value));
 	const filter = $derived(searchable ?? options.length > 10);
+	// In the order they are drawn, groups gathered at their first sight, so the
+	// keys walk the rows as they read.
 	const shown = $derived.by(() => {
 		const q = query.trim().toLowerCase();
-		if (!q) return options;
-		return options.filter((o) =>
-			`${o.label} ${o.detail ?? ''} ${o.value}`.toLowerCase().includes(q)
-		);
+		const hits = q
+			? options.filter((o) => `${o.label} ${o.detail ?? ''} ${o.value}`.toLowerCase().includes(q))
+			: options;
+		return [...new Set(hits.map((o) => o.group))].flatMap((g) => hits.filter((o) => o.group === g));
 	});
 	// Rows with their group headings, groups kept in order of first sight.
 	const rows = $derived.by(() => {
@@ -115,7 +117,7 @@
 		open = true;
 		active = Math.max(
 			0,
-			options.findIndex((o) => o.value === value)
+			shown.findIndex((o) => o.value === value)
 		);
 		if (!enabled(active)) active = step(active, 1);
 		if (filter) requestAnimationFrame(() => search?.focus());
@@ -124,6 +126,7 @@
 	function hide(refocus = true) {
 		if (!open) return;
 		open = false;
+		query = '';
 		if (refocus) trigger?.focus();
 	}
 
@@ -157,7 +160,7 @@
 		const now = Date.now();
 		typed = now - typedAt > 500 ? ch : typed + ch;
 		typedAt = now;
-		const from = open ? active : options.findIndex((o) => o.value === value);
+		const from = open ? active : shown.findIndex((o) => o.value === value);
 		const n = shown.length;
 		for (let k = typed.length > 1 ? 0 : 1; k <= n; k++) {
 			const j = (((from + k) % n) + n) % n;
@@ -241,8 +244,8 @@
 	onclick={() => (open ? hide() : show())}
 	onkeydown={keys}
 >
-	{#if current?.dot}<span class="ldot sm flat hue-{current.dot}"></span>{/if}
-	<span class="v ell">{current?.label ?? placeholder ?? ''}</span>
+	{#if current?.dot}<span class="live-dot sm flat hue-{current.dot}"></span>{/if}
+	<span class="v truncate">{current?.label ?? placeholder ?? ''}</span>
 	<span class="chev" aria-hidden="true">{I.menu}</span>
 </button>
 {#if name || required}
@@ -289,7 +292,7 @@
 			     take the pointer. -->
 			<div
 				id={optId(i)}
-				class="mi"
+				class="menu-item"
 				class:on={o.value === value}
 				class:hl={i === active}
 				class:mono
@@ -303,9 +306,9 @@
 				onclick={() => pick(i)}
 				onkeydown={keys}
 			>
-				{#if o.dot}<span class="ldot sm flat hue-{o.dot}"></span>{/if}
-				<span class="ell">{o.label}</span>
-				{#if o.detail}<span class="sub ell">{o.detail}</span>{/if}
+				{#if o.dot}<span class="live-dot sm flat hue-{o.dot}"></span>{/if}
+				<span class="truncate">{o.label}</span>
+				{#if o.detail}<span class="sub truncate">{o.detail}</span>{/if}
 				{#if o.value === value}<span class="ck" aria-hidden="true">{I.ok}</span>{/if}
 			</div>
 		{/each}
@@ -326,18 +329,18 @@
 		width: 100%;
 		min-width: 0;
 		text-align: left;
-		font-family: var(--sans);
+		font-family: var(--font-body);
 		font-size: var(--fs-body);
 		font-weight: 400;
-		color: var(--tx);
+		color: var(--text);
 		padding: 7px 10px;
 		border-radius: var(--r-row);
-		background: var(--p1);
-		border: 1px solid var(--ln2);
+		background: var(--fill-1);
+		border: 1px solid var(--line-strong);
 		box-shadow: none;
 	}
 	.select:hover {
-		background: var(--p2);
+		background: var(--fill-2);
 	}
 	/* A field, not a button: it does not sink on press. */
 	.select:active {
@@ -347,10 +350,10 @@
 	.select.open {
 		outline: none;
 		border-color: var(--brand);
-		box-shadow: 0 0 0 3px var(--brandBg);
+		box-shadow: 0 0 0 3px var(--brand-bg);
 	}
 	.select.invalid {
-		border-color: var(--ros);
+		border-color: var(--danger);
 	}
 	.select:disabled {
 		opacity: var(--o-disabled);
@@ -381,11 +384,11 @@
 	.select.bare.open {
 		box-shadow: none;
 		border-color: transparent;
-		background: var(--p3);
+		background: var(--fill-3);
 	}
 	.mono,
 	.mono .v {
-		font-family: var(--mono);
+		font-family: var(--font-code);
 		font-size: var(--fs-label);
 	}
 	.v {
@@ -393,12 +396,12 @@
 		min-width: 0;
 	}
 	.empty .v {
-		color: var(--fnt);
+		color: var(--text-faint);
 	}
 	.chev {
 		flex: none;
 		margin-left: auto;
-		color: var(--mut);
+		color: var(--text-muted);
 		font-size: var(--fs-meta);
 		transition: transform var(--dur-spring) var(--spring);
 	}
@@ -416,7 +419,7 @@
 		pointer-events: none;
 	}
 
-	/* The list. Rows are the shared menu rows (.mi); .hl is the keyboard's
+	/* The list. Rows are the shared menu rows (.menu-item); .hl is the keyboard's
 	 * place, drawn like the pointer's hover. */
 	.find {
 		margin: 0 0 4px;
@@ -428,21 +431,21 @@
 		padding: 8px 9px 3px;
 		font-size: var(--fs-meta);
 		font-weight: 600;
-		color: var(--mut);
+		color: var(--text-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 	}
-	.mi {
+	.menu-item {
 		flex: none;
 	}
-	.mi.hl:not(.on) {
-		background: var(--p3);
+	.menu-item.hl:not(.on) {
+		background: var(--fill-3);
 	}
-	.mi.off {
+	.menu-item.off {
 		opacity: var(--o-disabled);
 		cursor: default;
 	}
-	.mi .sub {
+	.menu-item .sub {
 		margin-left: auto;
 		padding-left: 10px;
 		max-width: 50%;
@@ -451,7 +454,7 @@
 		flex: none;
 		margin-left: auto;
 		padding-left: 8px;
-		color: var(--grn);
+		color: var(--success-text);
 		font-weight: 700;
 	}
 	.sub + .ck {
@@ -460,6 +463,6 @@
 	.none {
 		padding: 8px 9px;
 		font-size: var(--fs-label);
-		color: var(--fnt);
+		color: var(--text-faint);
 	}
 </style>

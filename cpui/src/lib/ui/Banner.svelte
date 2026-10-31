@@ -4,7 +4,7 @@
 	import type { Snippet } from 'svelte';
 
 	let {
-		tone = 'ros',
+		tone = 'danger',
 		title,
 		aside,
 		items = [],
@@ -14,7 +14,7 @@
 		ondismiss,
 		children
 	}: {
-		tone?: 'ros' | 'sky';
+		tone?: 'danger' | 'attention';
 		title: string;
 		/** Display lore aside after the title. */
 		aside?: string;
@@ -31,7 +31,7 @@
 	const more = $derived(items.length - shown.length);
 </script>
 
-<div class="bn c {tone}" role="alert">
+<div class="bn glass {tone}" role="alert">
 	<span class="bang">!</span>
 	<span class="t">{title}</span>
 	{#if aside}<span class="aside">{aside}</span>{/if}
@@ -46,7 +46,7 @@
 	{#if (action && onaction) || ondismiss}
 		<span class="acts">
 			{#if action && onaction}
-				<button class={tone === 'ros' ? 'btn-danger-solid' : 'btn-primary'} onclick={onaction}
+				<button class={tone === 'danger' ? 'btn-danger-solid' : 'btn-primary'} onclick={onaction}
 					>{action}</button
 				>
 			{/if}
@@ -64,13 +64,13 @@
 		padding: 5px 5px 5px 7px;
 		min-width: 0;
 	}
-	.ros {
-		background: var(--rosSolid);
-		border-color: var(--rosLn);
+	.danger {
+		background: var(--danger-solid);
+		border-color: var(--danger-line);
 	}
-	.sky {
-		background: var(--skySolid);
-		border-color: var(--skyLn);
+	.attention {
+		background: var(--attention-solid);
+		border-color: var(--attention-line);
 	}
 	.bang {
 		flex: none;
@@ -83,31 +83,31 @@
 		font-size: var(--fs-meta);
 		font-weight: 800;
 	}
-	.ros .bang {
-		background: var(--ros);
-		color: var(--rosInk);
-		box-shadow: 0 0 10px var(--ros);
+	.danger .bang {
+		background: var(--danger);
+		color: var(--on-danger);
+		box-shadow: 0 0 10px var(--danger);
 	}
-	.sky .bang {
-		background: var(--sky);
-		color: var(--onBrand);
-		box-shadow: 0 0 10px var(--sky);
+	.attention .bang {
+		background: var(--attention);
+		color: var(--on-brand);
+		box-shadow: 0 0 10px var(--attention);
 	}
 	.t {
 		font-weight: 700;
 		white-space: nowrap;
 	}
-	.ros .t {
-		color: var(--rosTx);
+	.danger .t {
+		color: var(--danger-text);
 	}
-	.sky .t {
-		color: var(--skyTx);
+	.attention .t {
+		color: var(--attention-text);
 	}
 	.aside {
-		font-family: var(--display);
+		font-family: var(--font-display);
 		font-weight: 600;
 		font-size: var(--fs-aside);
-		color: var(--mut);
+		color: var(--text-muted);
 		white-space: nowrap;
 	}
 	.items {
@@ -115,10 +115,10 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		color: var(--tx);
+		color: var(--text);
 	}
 	.more {
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.acts {
 		margin-left: auto;

@@ -1,14 +1,15 @@
 <script lang="ts">
 	// One configured integration (DESIGN 7.10): name, kind, masked config,
 	// the persisted test result, and Test / Edit / Delete….
+	import { errorMessage } from '$lib/core/errors';
 	import type { Integration, KindDescriptor } from '$lib/domain';
 	import { api } from '$lib/api';
-	import { ago, fmtAbs } from '$lib/format';
+	import { ago, fmtAbs } from '$lib/core/format';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import ConfigCard from '$lib/ui/ConfigCard.svelte';
 	import CheckChip from '$lib/ui/CheckChip.svelte';
-	import IntegrationForm from '$lib/IntegrationForm.svelte';
+	import IntegrationForm from '$lib/system/IntegrationForm.svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import { readTests, writeTest, type TestResult } from './testResults';
 
@@ -57,7 +58,7 @@
 			const r = await api.integrations.test(i.id);
 			result = { ok: r.ok, error: r.error, warnings: r.warnings, at: Date.now() };
 		} catch (e) {
-			result = { ok: false, error: e instanceof Error ? e.message : String(e), at: Date.now() };
+			result = { ok: false, error: errorMessage(e), at: Date.now() };
 		} finally {
 			testing = false;
 			now = Date.now();
@@ -98,7 +99,7 @@
 			toast(t('system.int.deleted', { name: i.name }));
 			onchanged();
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			removing = false;
 		}
@@ -163,6 +164,6 @@
 			oncancel={() => (editing = false)}
 		/>
 	{:else}
-		<div class="mut small">{@html th('system.int.unregistered', { kind: i.kind })}</div>
+		<div class="muted small">{@html th('system.int.unregistered', { kind: i.kind })}</div>
 	{/if}
 </ConfigCard>

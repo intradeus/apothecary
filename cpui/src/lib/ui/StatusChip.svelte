@@ -3,7 +3,7 @@
 	// Run state chip (DESIGN 3.1). The workspace has its own badge: never merge
 	// the two axes into one chip.
 	import type { RunState } from '$lib/domain';
-	import { stateHueClass, stateLabel } from '$lib/format';
+	import { stateHueClass, stateLabel } from '$lib/core/format';
 
 	let {
 		state,
@@ -18,15 +18,15 @@
 	const tone = $derived(
 		(
 			{
-				pending: 't-mut',
-				provisioning: 't-emb',
-				running: 't-emb',
-				waiting_on_human: 't-hot',
-				in_review: 't-vio',
-				paused: 't-mut',
-				completed: 't-grn',
-				abandoned: 't-gold',
-				failed: 't-ros',
+				pending: 'tint-muted',
+				provisioning: 'tint-running',
+				running: 'tint-running',
+				waiting_on_human: 'tint-hot',
+				in_review: 'tint-accent',
+				paused: 'tint-muted',
+				completed: 'tint-success',
+				abandoned: 'tint-warning',
+				failed: 'tint-danger',
 				archived: 'archived'
 			} as const
 		)[state]
@@ -47,7 +47,7 @@
 
 {#if compact}
 	<span
-		class="ldot {stateHueClass[state]}"
+		class="live-dot {stateHueClass[state]}"
 		class:flat={state === 'archived' || state === 'pending' || state === 'paused'}
 		class:pulse={live}
 		title={stateLabel[state]}
@@ -64,7 +64,7 @@
 			<span class="g">❚❚</span>
 		{:else if state !== 'archived'}
 			<!-- Only the running/provisioning dot glows; waiting's ink dot just pulses. -->
-			<span class="ldot" class:flat={tone !== 't-emb'} class:pulse={live}></span>
+			<span class="live-dot" class:flat={tone !== 'tint-running'} class:pulse={live}></span>
 		{/if}
 		{stateLabel[state]}
 		{#if aside}<span class="display aside">· {aside}</span>{/if}
@@ -87,7 +87,7 @@
 	.sc.dense .aside {
 		font-size: inherit;
 	}
-	.sc.dense .ldot {
+	.sc.dense .live-dot {
 		width: 6px;
 		height: 6px;
 	}
@@ -100,7 +100,7 @@
 	}
 	.archived {
 		background: transparent;
-		color: var(--fnt);
-		border: 1px dashed var(--ln2);
+		color: var(--text-faint);
+		border: 1px dashed var(--line-strong);
 	}
 </style>

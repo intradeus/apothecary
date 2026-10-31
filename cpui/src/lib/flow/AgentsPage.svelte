@@ -7,9 +7,9 @@
 	// it reaches the YAML like an edit in the graph.
 	import AgentEditor from '$lib/flow/AgentEditor.svelte';
 	import { runnersOf, type AgentRunner } from '$lib/flow/agents';
-	import { addAgent, type FlowDoc } from '$lib/flowdoc';
+	import { addAgent, type FlowDoc } from '$lib/domain/flowdoc';
 	import { t } from '$lib/i18n/index.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	let {
 		doc,
@@ -74,12 +74,12 @@
 				onclick={() => (selected = a.name)}
 			>
 				<span class="row nowrap">
-					<span class="mono nm ell grow">{a.name}</span>
-					{#if runs}<span class="fnt tiny">{t('flow.insp.runByCount', { count: runs })}</span
-						>{:else}<span class="hue-gold tiny">{t('flow.agents.unused')}</span>{/if}
+					<span class="mono nm truncate grow">{a.name}</span>
+					{#if runs}<span class="faint tiny">{t('flow.insp.runByCount', { count: runs })}</span
+						>{:else}<span class="hue-warning tiny">{t('flow.agents.unused')}</span>{/if}
 				</span>
-				{#if a.description}<span class="fnt small ell">{a.description}</span>{/if}
-				<span class="tiny mut">
+				{#if a.description}<span class="faint small truncate">{a.description}</span>{/if}
+				<span class="tiny muted">
 					{[
 						summary(a),
 						a.read_only && t('flow.insp.readOnly'),
@@ -109,7 +109,7 @@
 			{/key}
 		{:else}
 			<div class="empty">
-				<p class="fnt">{t('flow.agents.emptyHelp')}</p>
+				<p class="faint">{t('flow.agents.emptyHelp')}</p>
 				<button class="btn-sm" onclick={create}>{I.add} {t('flow.insp.addAgent')}</button>
 			</div>
 		{/if}
@@ -128,7 +128,7 @@
 		flex-direction: column;
 		gap: 4px;
 		padding: 14px 12px;
-		border-right: 1px solid var(--ln);
+		border-right: 1px solid var(--line);
 		overflow-y: auto;
 		min-height: 0;
 	}
@@ -154,8 +154,8 @@
 	.nm {
 		font-weight: 600;
 	}
-	.mut {
-		color: var(--mut);
+	.muted {
+		color: var(--text-muted);
 	}
 	.detail {
 		padding: 16px 22px 28px;
@@ -176,7 +176,7 @@
 		}
 		.list {
 			border-right: none;
-			border-bottom: 1px solid var(--ln);
+			border-bottom: 1px solid var(--line);
 			max-height: 34vh;
 		}
 	}

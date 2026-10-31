@@ -1,19 +1,23 @@
 /* Apothecary design system.
  *
- * Spec: docs/UX/UI/DESIGN.md. The system is four layers, in cascade order:
+ * Spec: docs/UX/UI/DESIGN.md. Rules: docs/frontend-standards.md.
+ * Five files, in cascade order:
  *
- *   styles/tokens.css      every colour, scale (type, radius, z, motion…)
- *                          and theme. Restyling or adding a theme happens
- *                          here and only here.
+ *   styles/tokens.css      every scale that isn't a colour: type, radius,
+ *                          stacking, layout, motion
+ *   styles/themes.css      every colour and every theme, and the roles that
+ *                          components use. A retheme happens here and only here.
  *   styles/base.css        element defaults, text/layout helpers, markdown
  *   styles/motion.css      keyframes and the interaction feel
  *   styles/components.css  shared classes (buttons, pills, panes, …)
  *
  * Components in src/lib/ui build on these; pages build on components.
- * Nothing below the token layer writes a raw colour or size.
+ * Nothing below the two token files writes a raw colour, and only themes.css
+ * ever sees the palette. `npm run lint` holds that.
  */
 
 @import './styles/tokens.css';
+@import './styles/themes.css';
 @import './styles/base.css';
 @import './styles/motion.css';
 @import './styles/components.css';

@@ -6,13 +6,13 @@
 	// screen. Every frame re-blurs all the glass above it, so it draws as little
 	// as it can get away with: on a timer, not at all in a hidden tab, and only
 	// for a colour change under reduced motion. Each theme colours it with
-	// --nEmb, --nSky and --nBlend in tokens.css; noise.blue and noise.speed
+	// --noise-ember, --noise-sky and --noise-blend in tokens.css; noise.blue and noise.speed
 	// drive it live. Without WebGL2 the canvas stays hidden and the backdrop is
 	// plain --frame.
 	import { onMount } from 'svelte';
 	import { noise } from './noise.svelte';
 	import { CIRCLE_COUNT, noiseCircles } from './noiseCircles';
-	import { token } from './tokens';
+	import { token } from '$lib/design/tokens';
 
 	const REST_FPS = 10;
 	/** While a turn is under way or the circles are hurrying, which steps show. */
@@ -74,17 +74,17 @@ void main(){
 		let stale = true;
 
 		const uniform = (name: string) => gl.getUniformLocation(program!, name);
-		const rgb = (name: string) => {
+		const rgbOf = (name: string) => {
 			const n = parseInt(token(name).slice(1), 16);
 			return [n >> 16, (n >> 8) & 255, n & 255].map((v) => v / 255);
 		};
 
 		const theme = () => {
 			if (!program) return;
-			const light = token('--nBlend') === 'multiply';
-			gl.uniform3fv(uniform('hue'), [...rgb('--nEmb'), ...rgb('--nSky')]);
-			gl.uniform3fv(uniform('frame'), rgb('--frame'));
-			gl.uniform1f(uniform('grain'), (light ? -0.04 : 0.04) * Number(token('--grainA')));
+			const light = token('--noise-blend') === 'multiply';
+			gl.uniform3fv(uniform('hue'), [...rgbOf('--noise-ember'), ...rgbOf('--noise-sky')]);
+			gl.uniform3fv(uniform('frame'), rgbOf('--frame'));
+			gl.uniform1f(uniform('grain'), (light ? -0.04 : 0.04) * Number(token('--noise-grain')));
 			gl.uniform1i(uniform('light'), light ? 1 : 0);
 			stale = true;
 		};

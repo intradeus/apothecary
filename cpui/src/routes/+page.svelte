@@ -4,9 +4,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { flip } from 'svelte/animate';
-	import { to } from '$lib/urls';
-	import { fleet } from '$lib/fleet.svelte';
-	import { session } from '$lib/session.svelte';
+	import { to } from '$lib/core/urls';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { session } from '$lib/app/session.svelte';
 	import { api } from '$lib/api';
 	import { t } from '$lib/i18n/index.svelte';
 	import type { Run } from '$lib/domain';
@@ -15,7 +15,7 @@
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { bump, materialize, ms, spring } from '$lib/ui/motion';
 	import NeedsYou from '$lib/desk-home/NeedsYou.svelte';
 	import WorkshopCard from '$lib/desk-home/WorkshopCard.svelte';
@@ -114,10 +114,10 @@
 
 <svelte:head><title>{t('page.desk.docTitle')}</title></svelte:head>
 
-<header class="top c">
+<header class="top glass">
 	<div class="tt">
 		<div class="cap">
-			<span>{t('nav.desk')}</span><span class="fnt">·</span>
+			<span>{t('nav.desk')}</span><span class="faint">·</span>
 			<span>{t('page.desk.workshopCount', { count: fleet.projects.length })}</span>
 		</div>
 		<h1>
@@ -127,7 +127,7 @@
 	<a class="btn btn-primary btn-lg" href={to.newTicket()}>{I.add} {t('page.desk.newTicket')}</a>
 </header>
 
-<div class="page c">
+<div class="page glass">
 	{#if !fleet.updatedAt && fleet.error}
 		<ErrorCard
 			cause={t('page.desk.engineDown')}
@@ -154,18 +154,18 @@
 						linkLabel={t('page.desk.allRuns')}
 					>
 						{#snippet actions()}
-							<span class="pill t-emb"
+							<span class="pill tint-running"
 								>{fleet.active.length
 									? t('page.desk.nLive', { count: fleet.active.length })
 									: t('page.desk.idle')}</span
 							>
 							<span
-								class="pill t-hot"
+								class="pill tint-hot"
 								class:gone={!fleet.pending.length}
 								use:bump={fleet.pending.length}
 								>{t('page.desk.nNeedYou', { count: fleet.pending.length })}</span
 							>
-							<span class="mut tiny today">{today}</span>
+							<span class="muted tiny today">{today}</span>
 						{/snippet}
 					</SectionHeader>
 
@@ -216,7 +216,7 @@
 								text={t('page.desk.nothingRunning')}
 							>
 								<span class="qn">
-									{#each quiet as p, i (p.id)}{#if i}<span class="fnt"> · </span>{/if}<a
+									{#each quiet as p, i (p.id)}{#if i}<span class="faint"> · </span>{/if}<a
 											href={to.workshop(p.id)}>{p.name}</a
 										>{/each}
 								</span>
@@ -288,7 +288,7 @@
 	}
 	.cap {
 		font-size: var(--fs-label);
-		color: var(--mut);
+		color: var(--text-muted);
 		display: flex;
 		gap: 7px;
 		white-space: nowrap;
@@ -330,7 +330,7 @@
 		height: 100%;
 	}
 	.qn a {
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	@media (max-width: 760px) {
 		.top {

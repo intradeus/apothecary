@@ -1,14 +1,15 @@
 <!-- Tickets (DESIGN 7.6): units of work, each owning many runs. The status
      column is DERIVED — the latest run's state, or "no runs". -->
 <script lang="ts">
+	import { errorMessage } from '$lib/core/errors';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { to } from '$lib/urls';
+	import { to } from '$lib/core/urls';
 	import { api } from '$lib/api';
-	import { fleet } from '$lib/fleet.svelte';
+	import { fleet } from '$lib/app/fleet.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import { stateTab } from '$lib/format';
+	import { stateTab } from '$lib/core/format';
 	import { CHANGE_TYPES, type Ticket } from '$lib/domain';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import SearchInput from '$lib/ui/SearchInput.svelte';
@@ -17,7 +18,7 @@
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import TicketTable from '$lib/tickets/TicketTable.svelte';
 	import WorkshopFilter from '$lib/shell/WorkshopFilter.svelte';
 
@@ -36,7 +37,7 @@
 		try {
 			tickets = await api.tickets.list();
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			loaded = true;
 		}
@@ -112,7 +113,7 @@
 	{/snippet}
 </PageHeader>
 
-<div class="page c">
+<div class="page glass">
 	<div class="filters">
 		<SearchInput bind:value={q} placeholder={t('page.tickets.search')} />
 		<WorkshopFilter value={projectFilter} onchange={setProject} />

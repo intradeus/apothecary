@@ -11,7 +11,7 @@ import {
 	renameAgentPort,
 	type DocAgent,
 	type FlowDoc
-} from '$lib/flowdoc';
+} from '$lib/domain/flowdoc';
 
 export type AgentField = 'input' | 'output';
 

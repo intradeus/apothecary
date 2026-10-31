@@ -368,6 +368,7 @@ export function validTree(n: unknown): n is Tree {
 					Array.isArray(m.c) &&
 					Array.isArray(m.s) &&
 					m.c.length === m.s.length &&
+					m.s.every((x) => Number.isFinite(x)) &&
 					m.c.every(ok);
 		return n === null || ok(n as Node);
 	} catch {

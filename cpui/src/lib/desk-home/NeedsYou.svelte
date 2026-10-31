@@ -4,15 +4,15 @@
 	// earlier ones queue behind it (the inbox's rule). The whole row opens the
 	// ping; the workshop link and the call to action sit above it.
 	import { t } from '$lib/i18n/index.svelte';
-	import { to } from '$lib/urls';
-	import { fleet } from '$lib/fleet.svelte';
-	import { age, fmtAbs, shortId } from '$lib/format';
-	import { pingCta, pingHeadline } from '$lib/ping';
+	import { to } from '$lib/core/urls';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { age, fmtAbs, shortId } from '$lib/core/format';
+	import { pingCta, pingHeadline } from '$lib/core/ping';
 	import type { Ping } from '$lib/domain';
 	import PingPill from '$lib/ui/PingPill.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { bump } from '$lib/ui/motion';
-	import WorkshopName from '$lib/workshop/WorkshopName.svelte';
+	import WorkshopName from '$lib/app/WorkshopName.svelte';
 
 	let { pings }: { pings: Ping[] } = $props();
 
@@ -28,7 +28,7 @@
 	});
 </script>
 
-<section class="ny c pane">
+<section class="ny glass pane">
 	<header class="pane-head">
 		<span class="count hot mark" use:bump={pings.length}>{pings.length}</span>
 		<h2>{t('deskhome.needs.title')}</h2>
@@ -42,20 +42,20 @@
 			<div class="r ny-r">
 				<span class="ty"><PingPill type={p.type} /></span>
 				<span class="what">
-					<a class="q ell stretch" href={to.ping(p.id)}
+					<a class="q truncate stretch" href={to.ping(p.id)}
 						>{pingHeadline(p.question) || t('deskhome.needs.fallback')}</a
 					>
-					<span class="sub ell">
+					<span class="sub truncate">
 						<span class="mono">{shortId(p.runId)}</span>
 						{' · '}{run?.title ?? t('deskhome.needs.runFallback')}{#if p.stageId}{' · '}<span
 								class="mono">{p.stageId}</span
-							>{/if}{#if queued > 0}<span class="hue-sky"
+							>{/if}{#if queued > 0}<span class="hue-attention"
 								>{' · '}{t('deskhome.needs.queued', { count: queued })}</span
 							>{/if}
 					</span>
 				</span>
-				<span class="ws ell"><WorkshopName projectId={run?.projectId} link /></span>
-				<span class="mono mut num age" title={fmtAbs(p.raisedAt)}>{age(p.raisedAt)}</span>
+				<span class="ws truncate"><WorkshopName projectId={run?.projectId} link /></span>
+				<span class="mono muted num age" title={fmtAbs(p.raisedAt)}>{age(p.raisedAt)}</span>
 				<a class="btn btn-sel btn-sm over-stretch cta" href={to.ping(p.id)}>{pingCta(p)}</a>
 			</div>
 		{/each}
@@ -72,7 +72,7 @@
 	}
 	header .sub {
 		font-size: var(--fs-label);
-		color: var(--mut);
+		color: var(--text-muted);
 		white-space: nowrap;
 	}
 	header a {
@@ -97,14 +97,14 @@
 	}
 	.q {
 		font-weight: 500;
-		color: var(--tx);
+		color: var(--text);
 	}
 	.q:hover {
 		text-decoration: none;
 	}
 	.what .sub {
 		font-size: var(--fs-help);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.what .sub .mono {
 		font-size: var(--fs-meta);

@@ -7,15 +7,14 @@
 	// A dense runs table (DESIGN 4.13): one grid per row so long titles
 	// ellipsise, the whole row opens the run (a stretched title link), the MR
 	// link sits above it. Columns are picked per page.
-	import { to } from '$lib/urls';
+	import { to } from '$lib/core/urls';
 	import { t } from '$lib/i18n/index.svelte';
-	import { fleet } from '$lib/fleet.svelte';
-	import { ago, fmtAbs, shortId } from '$lib/format';
+	import { ago, fmtAbs, shortId } from '$lib/core/format';
 	import type { Run } from '$lib/domain';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import WorkspaceStatus from '$lib/ui/WorkspaceStatus.svelte';
 	import StageFlask from '$lib/ui/StageFlask.svelte';
-	import WorkshopName from '$lib/workshop/WorkshopName.svelte';
+	import WorkshopName from '$lib/app/WorkshopName.svelte';
 	import MrLink from './MrLink.svelte';
 	import { runFacts, stageStatus } from './runfacts.svelte';
 
@@ -91,14 +90,14 @@
 			{#each cols as c (c)}
 				{#if c === 'title'}
 					<span class="title">
-						<a class="stretch ell" href={to.run(r.id)}>{r.title || t('run.row.untitled')}</a>
-						{#if !cols.includes('id')}<span class="mono fnt sid"
+						<a class="stretch truncate" href={to.run(r.id)}>{r.title || t('run.row.untitled')}</a>
+						{#if !cols.includes('id')}<span class="mono faint sid"
 								>{shortId(r.id)}{#if detail && r.branch}{' · '}{r.branch}{/if}</span
 							>{/if}
 					</span>
 				{:else if c === 'id'}
 					{#if cols.includes('title')}
-						<span class="mono mut hide-sm">{shortId(r.id)}</span>
+						<span class="mono muted hide-sm">{shortId(r.id)}</span>
 					{:else}
 						<a class="mono idl stretch" href={to.run(r.id)} title={r.id}>{shortId(r.id)}</a>
 					{/if}
@@ -117,26 +116,27 @@
 					<span class="stage hide-sm">
 						{#if r.currentStage}
 							<StageFlask status={stageStatus(r.state)} size="sm" />
-							<span class="mono ell">{r.currentStage}</span>
-							{#if f?.attempt}<span class="fnt att" title={t('run.table.attempt', { n: f.attempt })}
-									>#{f.attempt}</span
+							<span class="mono truncate">{r.currentStage}</span>
+							{#if f?.attempt}<span
+									class="faint att"
+									title={t('run.table.attempt', { n: f.attempt })}>#{f.attempt}</span
 								>{/if}
-						{:else}<span class="fnt">—</span>{/if}
+						{:else}<span class="faint">—</span>{/if}
 					</span>
 				{:else if c === 'workshop'}
-					<span class="hide-sm ell"><WorkshopName projectId={r.projectId} /></span>
+					<span class="hide-sm truncate"><WorkshopName projectId={r.projectId} /></span>
 				{:else if c === 'flow'}
-					<span class="mono mut ell hide-sm"
-						>{r.flowName}{#if detail && r.flowHash}<span class="fnt">
+					<span class="mono muted truncate hide-sm"
+						>{r.flowName}{#if detail && r.flowHash}<span class="faint">
 								@{r.flowHash.slice(0, 6)}</span
 							>{/if}</span
 					>
 				{:else if c === 'branch'}
-					<span class="mono mut ell hide-sm" title={r.branch}>{r.branch ?? ''}</span>
+					<span class="mono muted truncate hide-sm" title={r.branch}>{r.branch ?? ''}</span>
 				{:else if c === 'mr'}
 					<span class="hide-sm"><MrLink run={r} {detail} /></span>
 				{:else if c === 'updated'}
-					<span class="mono mut upd" title={fmtAbs(r.updatedAt)}>{ago(r.updatedAt)}</span>
+					<span class="mono muted upd" title={fmtAbs(r.updatedAt)}>{ago(r.updatedAt)}</span>
 				{/if}
 			{/each}
 		</div>
@@ -161,7 +161,7 @@
 	}
 	.title a {
 		font-weight: 500;
-		color: var(--tx);
+		color: var(--text);
 	}
 	.title a:hover {
 		text-decoration: none;
@@ -169,7 +169,7 @@
 	/* The title link covers the row (.stretch); MR and workshop links sit
 	 * above it (.over-stretch), both shared classes. */
 	.idl {
-		color: var(--tx);
+		color: var(--text);
 		font-weight: 600;
 	}
 	.idl:hover {
@@ -197,7 +197,7 @@
 		font-size: var(--fs-help);
 	}
 	.att {
-		font-family: var(--mono);
+		font-family: var(--font-code);
 		font-size: var(--fs-id);
 		flex: none;
 	}

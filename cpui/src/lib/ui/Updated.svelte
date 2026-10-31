@@ -42,17 +42,17 @@
 		align-items: center;
 		gap: 6px;
 		font-size: var(--fs-meta);
-		color: var(--fnt);
+		color: var(--text-faint);
 		white-space: nowrap;
 	}
 	.d {
 		width: 6px;
 		height: 6px;
 		border-radius: 50%;
-		background: var(--emb);
+		background: var(--running);
 	}
 	.d.paused {
 		background: transparent;
-		border: 1px solid var(--fnt);
+		border: 1px solid var(--text-faint);
 	}
 </style>

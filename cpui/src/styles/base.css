@@ -17,8 +17,8 @@ body {
 body {
 	margin: 0;
 	background: var(--frame);
-	color: var(--tx);
-	font-family: var(--sans);
+	color: var(--text);
+	font-family: var(--font-body);
 	font-size: var(--fs-body);
 	line-height: 1.5;
 	-webkit-font-smoothing: antialiased;
@@ -27,7 +27,7 @@ body {
 
 ::selection {
 	background: var(--brand);
-	color: var(--onBrand);
+	color: var(--on-brand);
 }
 
 a {
@@ -41,7 +41,7 @@ a.link {
 	color: var(--link);
 }
 a.link:hover {
-	color: var(--brandLt);
+	color: var(--brand-light);
 }
 
 :focus-visible {
@@ -56,7 +56,7 @@ h3 {
 }
 
 h1 {
-	font-family: var(--display);
+	font-family: var(--font-display);
 	font-size: var(--fs-h1);
 	font-weight: 700;
 	letter-spacing: var(--tr-display);
@@ -65,10 +65,10 @@ h1 {
 }
 /* The one accent phrase of a title: same font, in ember. */
 .accent {
-	color: var(--emb2);
+	color: var(--running-strong);
 }
 h2 {
-	font-family: var(--display);
+	font-family: var(--font-display);
 	font-weight: 600;
 	font-size: var(--fs-section);
 	letter-spacing: var(--tr-heading);
@@ -79,11 +79,11 @@ h3 {
 }
 
 code {
-	font-family: var(--mono);
+	font-family: var(--font-code);
 	font-size: var(--fs-label);
 	padding: 1px 5px;
 	border-radius: var(--r-tag);
-	background: var(--code);
+	background: var(--code-bg);
 }
 /* Inline code in prose takes the link hue. */
 .md code,
@@ -91,16 +91,13 @@ code {
 .help code {
 	color: var(--link);
 }
-.md pre code {
-	color: var(--tx2);
-}
 pre {
-	font-family: var(--mono);
+	font-family: var(--font-code);
 }
 
 hr {
 	border: 0;
-	border-top: 1px solid var(--ln);
+	border-top: 1px solid var(--line);
 	margin: 12px 0;
 }
 
@@ -109,7 +106,7 @@ hr {
 	height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-	background: var(--ln2);
+	background: var(--line-strong);
 	border-radius: var(--r-row);
 	border: 3px solid transparent;
 	background-clip: content-box;
@@ -121,21 +118,20 @@ hr {
 /* ── type helpers ──────────────────────────────────────────────────────── */
 
 .mono {
-	font-family: var(--mono);
+	font-family: var(--font-code);
 	font-size: var(--fs-help);
 	font-weight: 500;
 }
 .display {
-	font-family: var(--display);
+	font-family: var(--font-display);
 	font-weight: 600;
 	letter-spacing: var(--tr-heading);
 }
-.mut,
 .muted {
-	color: var(--mut);
+	color: var(--text-muted);
 }
-.fnt {
-	color: var(--fnt);
+.faint {
+	color: var(--text-faint);
 }
 .small {
 	font-size: var(--fs-label);
@@ -144,7 +140,7 @@ hr {
 	font-size: var(--fs-meta);
 	letter-spacing: var(--tr-small);
 }
-.ell {
+.truncate {
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -155,30 +151,82 @@ hr {
 	font-variant-numeric: tabular-nums;
 }
 .num {
-	font-family: var(--mono);
+	font-family: var(--font-code);
 	font-variant-numeric: tabular-nums;
 	text-align: right;
 }
-.hue-emb {
-	color: var(--embTx);
+.hue-running {
+	color: var(--running-text);
 }
-.hue-sky {
-	color: var(--skyTx);
+.hue-attention {
+	color: var(--attention-text);
 }
-.hue-gold {
-	color: var(--gold);
+.hue-warning {
+	color: var(--warning-text);
 }
-.hue-grn {
-	color: var(--grn);
+.hue-success {
+	color: var(--success-text);
 }
-.hue-ros {
-	color: var(--rosTx);
+.hue-danger {
+	color: var(--danger-text);
 }
-.hue-vio {
-	color: var(--vio);
+.hue-accent {
+	color: var(--accent-text);
 }
-.hue-tea {
-	color: var(--tea);
+.hue-accent-2 {
+	color: var(--accent-2-text);
+}
+
+.text-primary {
+	color: var(--text);
+}
+.hue-muted {
+	color: var(--text-muted);
+}
+.hue-brand {
+	color: var(--link);
+}
+
+/* An intro paragraph under a heading. */
+.lede {
+	font-size: var(--fs-label);
+	color: var(--text-muted);
+	max-width: 80ch;
+	text-wrap: pretty;
+	margin: 0;
+}
+/* A one-line empty message inside a view or list. */
+.empty-line {
+	font-size: var(--fs-label);
+	color: var(--text-muted);
+	padding: 12px 16px;
+	max-width: var(--measure-short);
+}
+/* A key cap ("⌘K", "esc"). */
+.kbd {
+	font-family: var(--font-code);
+	font-size: var(--fs-id);
+	padding: 1px 5px;
+	border-radius: var(--r-tag);
+	background: var(--fill-2);
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+/* A disclosure summary with a rotating caret. */
+.disclosure {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+}
+.disclosure::before {
+	content: '▸';
+	color: var(--text-muted);
+	font-size: var(--fs-meta);
+	transition: transform var(--dur-spring) var(--spring);
+}
+details[open] > .disclosure::before {
+	transform: rotate(90deg);
 }
 
 /* ── layout helpers ────────────────────────────────────────────────────── */
@@ -205,7 +253,7 @@ hr {
 	min-width: 0;
 }
 
-/* A standard page: one window, always with .c, filling what the header leaves
+/* A standard page: one window, always with .glass, filling what the header leaves
  * in the shell's main column. The backdrop is only ever seen through glass and
  * in the gaps, so a page never ends short of the pane or caps its width. */
 .page {
@@ -258,7 +306,7 @@ hr {
 .md h1,
 .md h2,
 .md h3 {
-	font-family: var(--sans);
+	font-family: var(--font-body);
 	font-style: normal;
 	font-size: var(--fs-aside);
 	font-weight: 600;
@@ -266,7 +314,7 @@ hr {
 	text-shadow: none;
 }
 .md pre {
-	background: var(--code);
+	background: var(--code-bg);
 	border-radius: var(--r-sm);
 	padding: 8px 10px;
 	overflow: auto;
@@ -275,6 +323,7 @@ hr {
 .md pre code {
 	padding: 0;
 	background: none;
+	color: var(--text-code);
 }
 .md a {
 	color: var(--link);
@@ -282,64 +331,11 @@ hr {
 .md blockquote {
 	margin: 0 0 8px;
 	padding-left: 10px;
-	border-left: 2px solid var(--ln2);
-	color: var(--mut);
+	border-left: 2px solid var(--line-strong);
+	color: var(--text-muted);
 }
 .md table td,
 .md table th {
 	padding: 4px 8px;
-	border: 1px solid var(--ln);
-}
-
-/* ── text, extra ───────────────────────────────────────────────────────── */
-
-.tx {
-	color: var(--tx);
-}
-.hue-mut {
-	color: var(--mut);
-}
-.hue-brand {
-	color: var(--link);
-}
-/* An intro paragraph under a heading. */
-.lede {
-	font-size: var(--fs-label);
-	color: var(--mut);
-	max-width: 80ch;
-	text-wrap: pretty;
-	margin: 0;
-}
-/* A one-line empty message inside a view or list. */
-.empty-line {
-	font-size: var(--fs-label);
-	color: var(--mut);
-	padding: 12px 16px;
-	max-width: var(--measure-short);
-}
-/* A key cap ("⌘K", "esc"). */
-.kbd {
-	font-family: var(--mono);
-	font-size: var(--fs-id);
-	padding: 1px 5px;
-	border-radius: var(--r-tag);
-	background: var(--p2);
-	color: var(--mut);
-	white-space: nowrap;
-}
-/* A disclosure summary with a rotating caret. */
-.disclosure {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	cursor: pointer;
-}
-.disclosure::before {
-	content: '▸';
-	color: var(--mut);
-	font-size: var(--fs-meta);
-	transition: transform var(--dur-spring) var(--spring);
-}
-details[open] > .disclosure::before {
-	transform: rotate(90deg);
+	border: 1px solid var(--line);
 }

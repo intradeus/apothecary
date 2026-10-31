@@ -13,12 +13,12 @@
 	const hue = $derived(
 		(
 			{
-				done: 'var(--grn)',
-				running: 'var(--emb)',
-				waiting: 'var(--sky)',
-				failed: 'var(--ros)',
-				paused: 'var(--mut)',
-				pending: 'var(--ln2)'
+				done: 'var(--success)',
+				running: 'var(--running)',
+				waiting: 'var(--attention)',
+				failed: 'var(--danger)',
+				paused: 'var(--text-muted)',
+				pending: 'var(--line-strong)'
 			} as const
 		)[status]
 	);
@@ -27,7 +27,7 @@
 	);
 </script>
 
-<span class="flask {size}" class:pulse={status === 'waiting'} style:--h={hue} title={status}>
+<span class="flask {size}" class:pulse={status === 'waiting'} style:--tone={hue} title={status}>
 	<span class="liquid" class:slosh={status === 'running'} style:height="{level}%"></span>
 	{#if status === 'running'}<span class="bubble"></span>{/if}
 </span>
@@ -39,30 +39,30 @@
 		display: inline-block;
 		width: 14px;
 		height: 20px;
-		border-radius: 3px 3px 7px 7px;
-		border: 1.5px solid var(--h);
+		border-radius: var(--r-flask);
+		border: 1.5px solid var(--tone);
 		overflow: hidden;
-		box-shadow: 0 0 8px color-mix(in oklch, var(--h) 30%, transparent);
+		box-shadow: 0 0 8px color-mix(in oklch, var(--tone) 30%, transparent);
 	}
 	.flask.sm {
 		width: 10px;
 		height: 14px;
 		border-width: 1px;
-		border-radius: 2px 2px 5px 5px;
+		border-radius: var(--r-vial);
 	}
 	.liquid {
 		position: absolute;
 		left: -2px;
 		right: -2px;
 		bottom: 0;
-		background: color-mix(in oklch, var(--h) 75%, transparent);
+		background: color-mix(in oklch, var(--tone) 75%, transparent);
 		/* The level rides the spring when the stage's status changes. */
 		transition:
 			height var(--dur-spring) var(--spring),
 			background var(--dur-fade) var(--ease-out);
 	}
 	.slosh {
-		animation: ap-slosh 2.4s steps(6, jump-none) infinite;
+		animation: ap-slosh var(--loop-slosh) steps(6, jump-none) infinite;
 	}
 	.bubble {
 		position: absolute;
@@ -73,7 +73,7 @@
 		margin-left: -1.5px;
 		border-radius: 50%;
 		background: var(--bubble);
-		animation: ap-bubble 1.8s steps(10, jump-none) infinite;
+		animation: ap-bubble var(--loop-bubble) steps(10, jump-none) infinite;
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.slosh,

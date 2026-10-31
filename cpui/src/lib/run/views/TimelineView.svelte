@@ -1,10 +1,11 @@
 <script lang="ts">
 	// Timeline (DESIGN §6): every lifecycle event, with the log of a finished
 	// attempt and captured files one click away.
+	import { errorMessage } from '$lib/core/errors';
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
-	import { fmtAbs, fmtTime } from '$lib/format';
-	import { I } from '$lib/ui/icons';
+	import { fmtAbs, fmtTime } from '$lib/core/format';
+	import { I } from '$lib/design/icons';
 	import Loading from '$lib/ui/Loading.svelte';
 	import StatusMark from '$lib/ui/StatusMark.svelte';
 	import { TRANSCRIPT_TYPES, describe, hasLog } from '../derive';
@@ -27,10 +28,12 @@
 		logSeq = seq;
 		logText = t('runview.timeline.loading_log');
 		try {
-			logText = (await api.runs.stageLog(rs.runId, stage)) || t('runview.timeline.empty_log');
+			const log = await api.runs.stageLog(rs.runId, stage);
+			if (logSeq === seq) logText = log || t('runview.timeline.empty_log');
 		} catch (e) {
+			if (logSeq !== seq) return;
 			logText = t('runview.timeline.no_log', {
-				message: e instanceof Error ? e.message : String(e)
+				message: errorMessage(e)
 			});
 		}
 	}
@@ -42,8 +45,8 @@
 	{/if}
 	{#each rows as { e, d } (e.seq)}
 		<div class="r">
-			<span class="t mono fnt" title={fmtAbs(e.ts)}>{fmtTime(e.ts)}</span>
-			<StatusMark tone={d.tone || 'mut'} />
+			<span class="t mono faint" title={fmtAbs(e.ts)}>{fmtTime(e.ts)}</span>
+			<StatusMark tone={d.tone || 'muted'} />
 			<span class="x">{d.text}</span>
 			<span class="a">
 				{#if hasLog(e, d.stage, rs.events, rs.terminal)}
@@ -81,7 +84,7 @@
 		border-radius: var(--r-sm);
 	}
 	.r:hover {
-		background: var(--p2);
+		background: var(--fill-2);
 	}
 	.t {
 		font-size: var(--fs-id);

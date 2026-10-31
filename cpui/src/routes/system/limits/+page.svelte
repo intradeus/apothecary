@@ -2,8 +2,9 @@
 	// Limits (DESIGN 7.10): the instance's concurrency and environment caps.
 	// One setting for everyone — they protect the machine — stored by the
 	// engine and changed here by an admin; everyone else reads them.
-	import { fleet } from '$lib/fleet.svelte';
-	import { session } from '$lib/session.svelte';
+	import { errorMessage } from '$lib/core/errors';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { session } from '$lib/app/session.svelte';
 	import { api } from '$lib/api';
 	import type { Limits } from '$lib/domain';
 	import SettingRow from '$lib/ui/SettingRow.svelte';
@@ -13,7 +14,7 @@
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	const cap = (n: number | null | undefined) =>
 		n === null ? t('page.limits.unlimited') : n === undefined ? '…' : String(n);
@@ -52,7 +53,7 @@
 			savedAt = Date.now();
 			toast(t('page.limits.saved'));
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			busy = false;
 		}
@@ -88,16 +89,16 @@
 					if (draft) draft[key] = on ? null : (fleet.limits?.[key] ?? null) || 1;
 				}}
 			/>
-			<span class="mut small">{t('page.limits.noCap')}</span>
+			<span class="muted small">{t('page.limits.noCap')}</span>
 		</div>
 	{/if}
 {/snippet}
 
 <form class="lim" onsubmit={(e) => e.preventDefault()}>
-	<section class="c pane">
+	<section class="glass pane">
 		<div class="pane-head">
 			<h2>{t('page.limits.head')}</h2>
-			<span class="mut small">{t('page.limits.headSub')}</span>
+			<span class="muted small">{t('page.limits.headSub')}</span>
 		</div>
 		<SettingRow
 			label={t('page.limits.concLabel')}

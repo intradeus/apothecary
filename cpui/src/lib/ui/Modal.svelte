@@ -34,7 +34,7 @@
 </script>
 
 {#if open}
-	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="scrim"
 		use:portal
@@ -44,7 +44,7 @@
 		<div
 			use:trap={{ onescape: close }}
 			transition:materialize={{ y: 10 }}
-			class="dlg isl"
+			class="dlg island"
 			role="dialog"
 			aria-modal="true"
 			aria-label={title}
@@ -70,7 +70,7 @@
 	}
 	.dlg {
 		border-radius: var(--r-modal);
-		box-shadow: var(--spec), var(--modalSh);
+		box-shadow: var(--specular), var(--shadow-modal);
 		padding: 20px 22px 18px;
 		display: flex;
 		flex-direction: column;
@@ -84,7 +84,7 @@
 		gap: 12px;
 	}
 	.head h2 {
-		font-family: var(--sans);
+		font-family: var(--font-body);
 		font-style: normal;
 		font-size: var(--fs-title);
 		font-weight: 600;
@@ -99,25 +99,25 @@
 		justify-content: center;
 		font-size: var(--fs-lead);
 		font-weight: 700;
-		background: var(--p2);
-		color: var(--tx);
+		background: var(--fill-2);
+		color: var(--text);
 	}
 	.ic.danger {
-		background: var(--rosBg);
-		color: var(--rosTx);
+		background: var(--danger-bg);
+		color: var(--danger-text);
 	}
 	.ic.warn {
-		background: var(--goldBg);
-		color: var(--gold);
+		background: var(--warning-bg);
+		color: var(--warning-text);
 	}
 	.body {
-		color: var(--mut);
+		color: var(--text-muted);
 		text-wrap: pretty;
 		font-size: var(--fs-body);
 	}
 	.body :global(b),
 	.body :global(strong) {
-		color: var(--tx);
+		color: var(--text);
 	}
 	.foot {
 		display: flex;

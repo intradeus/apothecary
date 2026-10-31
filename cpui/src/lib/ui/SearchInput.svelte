@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
 	// A search field with its glyph, for list filters and pickers.
-	import { I } from './icons';
+	import { I } from '$lib/design/icons';
 
 	let {
 		value = $bindable(''),
@@ -55,7 +55,7 @@
 		cursor: text;
 	}
 	.g {
-		color: var(--mut);
+		color: var(--text-muted);
 		font-size: var(--fs-lead);
 	}
 	input {

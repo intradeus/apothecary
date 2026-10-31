@@ -8,8 +8,9 @@
 	// ↵ sends, delivered when the agent's turn ends; ⇧↵ is a newline. Sending
 	// is optimistic: the box clears and the bubble shows at once; if the engine
 	// refuses, the text comes back with the reason.
+	import { errorMessage } from '$lib/core/errors';
 	import { api } from '$lib/api';
-	import { fmtClockDuration } from '$lib/format';
+	import { fmtClockDuration } from '$lib/core/format';
 	import { t } from '$lib/i18n/index.svelte';
 	import type { RunHold } from '$lib/domain';
 
@@ -78,7 +79,7 @@
 		try {
 			await api.runs.sendMessage(runId, text);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 			onfailed?.(text);
 			// Give the words back unless something new was typed meanwhile.
 			if (!draft.trim()) draft = text;
@@ -88,7 +89,7 @@
 	}
 
 	function onKey(e: KeyboardEvent) {
-		if (e.key === 'Enter' && !e.shiftKey) {
+		if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
 			e.preventDefault();
 			void send();
 		}
@@ -103,13 +104,13 @@
 	});
 </script>
 
-<div class="comp in" class:held>
+<div class="comp inset" class:held>
 	{#if held}
 		<div class="hold">
-			<span class="ldot sm pulse hue-sky"></span>
-			<span class="hue-sky">{t('run.composer.held', { duration: heldFor })}</span>
+			<span class="live-dot sm pulse hue-attention"></span>
+			<span class="hue-attention">{t('run.composer.held', { duration: heldFor })}</span>
 			{#if hold && hold.messages}
-				<span class="mut">· {t('run.composer.heldMessages', { count: hold.messages })}</span>
+				<span class="muted">· {t('run.composer.heldMessages', { count: hold.messages })}</span>
 			{/if}
 		</div>
 		<textarea
@@ -130,11 +131,11 @@
 		{:else}
 			<span class="keys">{t('run.composer.takeOverHint')}</span>
 		{/if}
-		{#if error}<span class="err" title={error}>{error}</span>{/if}
+		{#if error}<span class="error" title={error}>{error}</span>{/if}
 		<span class="spacer"></span>
 		{#if held}
 			<button
-				class="btn-md hue-sky"
+				class="btn-md hue-attention"
 				onclick={release}
 				aria-busy={holding || releasing}
 				disabled={holding || releasing}
@@ -163,9 +164,9 @@
 <style>
 	.comp {
 		flex: none;
-		margin: 0 calc(12px + var(--fabClear, 0px)) 12px 12px;
+		margin: 0 calc(12px + var(--fab-clear, 0px)) 12px 12px;
 		border-radius: var(--r-btn);
-		background: var(--code);
+		background: var(--code-bg);
 		display: flex;
 		flex-direction: column;
 	}
@@ -177,17 +178,17 @@
 		resize: none;
 	}
 	.comp:focus-within {
-		border-color: var(--brandLn);
+		border-color: var(--brand-line);
 	}
 	/* Held: the agent is in your hands — the attention colour, as a
 	 * waiting ping's card. */
 	.comp.held {
-		border-color: var(--skyLn);
-		background: var(--skyBg);
-		box-shadow: 0 0 var(--glow-lg) var(--skyGlow);
+		border-color: var(--attention-line);
+		background: var(--attention-bg);
+		box-shadow: 0 0 var(--glow-lg) var(--attention-glow);
 	}
 	.comp.held:focus-within {
-		border-color: var(--sky);
+		border-color: var(--attention);
 	}
 	.hold {
 		display: flex;
@@ -203,7 +204,7 @@
 		gap: 14px;
 		padding: 6px 6px 6px 14px;
 		font-size: var(--fs-meta);
-		color: var(--fnt);
+		color: var(--text-faint);
 		min-width: 0;
 	}
 	.keys {
@@ -214,11 +215,11 @@
 		min-width: 0;
 	}
 	.k {
-		font-family: var(--mono);
-		color: var(--mut);
+		font-family: var(--font-code);
+		color: var(--text-muted);
 	}
-	.err {
-		color: var(--rosTx);
+	.error {
+		color: var(--danger-text);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;

@@ -24,12 +24,21 @@
 	// Remembered so flipping to "never" and back keeps the number.
 	let lastN = $state(24);
 	let draft = $state<string | null>(null);
+	// The unit while a number is being typed: 60m reads back as 1h, and the
+	// next digit must not land in hours.
+	let held = $state<DurUnit | null>(null);
 
-	const unit = $derived<DurUnit>(parsed?.unit ?? 'h');
+	const unit = $derived<DurUnit>(held ?? parsed?.unit ?? 'h');
 	const shown = $derived(draft ?? (parsed && parsed.unit !== 'never' ? String(parsed.n) : ''));
+
+	function settle() {
+		draft = null;
+		held = null;
+	}
 
 	function setN(raw: string) {
 		draft = raw;
+		held = unit;
 		const n = Number(raw);
 		if (!raw || !Number.isFinite(n) || n <= 0) return;
 		lastN = n;
@@ -37,7 +46,7 @@
 	}
 
 	function setUnit(u: DurUnit) {
-		draft = null;
+		settle();
 		if (u === 'never') {
 			if (parsed && parsed.unit !== 'never') lastN = parsed.n;
 			value = 'never';
@@ -77,7 +86,7 @@
 		placeholder={unit === 'never' ? '—' : ''}
 		disabled={disabled || unit === 'never'}
 		oninput={(e) => setN(e.currentTarget.value)}
-		onblur={() => (draft = null)}
+		onblur={settle}
 	/>
 	<Select
 		{invalid}
@@ -89,7 +98,7 @@
 	/>
 </div>
 {#if parsed === null && value}
-	<div class="err">
+	<div class="error">
 		{@html th('ui.dur.unreadable', { value })}
 	</div>
 {/if}

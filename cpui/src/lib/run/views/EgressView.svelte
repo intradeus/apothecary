@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { errorMessage } from '$lib/core/errors';
 	import SearchInput from '$lib/ui/SearchInput.svelte';
 	// Egress (DESIGN §6): every host this workspace reached or was refused,
 	// and the rule in force NOW per host — toggled live, saved to the
@@ -7,14 +8,14 @@
 	// default and not yet ruled on — the run page asks until someone does).
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
-	import { to } from '$lib/urls';
-	import { fleet } from '$lib/fleet.svelte';
-	import { ago, fmtAbs, fmtBytes } from '$lib/format';
+	import { to } from '$lib/core/urls';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { ago, fmtAbs, fmtBytes } from '$lib/core/format';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import type { EgressAuditRow, EgressPolicy, EgressStatus } from '$lib/domain';
 	import type { RunStore } from '../store.svelte';
 
@@ -22,16 +23,24 @@
 
 	let rows = $state<EgressAuditRow[] | null>(null);
 	let policy = $state<EgressPolicy | null>(null);
+	/** The gateway's policy; it goes with the workspace. */
+	const gateway = $derived(rs.hasWorkspace ? policy : null);
 	let host = $state('');
 	let toggling = $state<Record<string, boolean>>({});
 	let error = $state('');
+	/** The audit read failed with nothing to show: nothing is on its way. */
+	let auditFailed = $state(false);
 
 	async function refresh() {
 		// The audit is history (always there); the policy needs a live gateway.
 		api.egress
 			.runAudit(rs.runId)
 			.then((a) => ((rows = a), (error = '')))
-			.catch((e) => rows === null && (error = e instanceof Error ? e.message : String(e)));
+			.catch((e) => {
+				if (rows !== null) return;
+				error = errorMessage(e);
+				auditFailed = true;
+			});
 		if (rs.hasWorkspace)
 			api.egress
 				.policy(rs.runId)
@@ -60,10 +69,10 @@
 	 *  a force-block wins in both modes, then mode + list membership decide;
 	 *  an allowlist miss nobody ruled on is held. null = no live gateway. */
 	function ruleFor(h: string): EgressStatus | null {
-		if (!policy) return null;
-		if (matchesList(h, policy.blockedDomains)) return 'blocked';
-		const m = matchesList(h, policy.domains);
-		if (policy.mode === 'deny') return m ? 'blocked' : 'allowed';
+		if (!gateway) return null;
+		if (matchesList(h, gateway.blockedDomains)) return 'blocked';
+		const m = matchesList(h, gateway.domains);
+		if (gateway.mode === 'deny') return m ? 'blocked' : 'allowed';
 		return m ? 'allowed' : 'held';
 	}
 
@@ -82,7 +91,11 @@
 		error = '';
 		try {
 			await api.egress.setRule(rs.runId, h, allow);
-			policy = await api.egress.policy(rs.runId);
+			// Saved. A failed read-back is no failure: the next poll catches up.
+			await api.egress
+				.policy(rs.runId)
+				.then((p) => (policy = p))
+				.catch(() => {});
 			await rs.refreshDenials();
 			toast(
 				t(
@@ -108,7 +121,7 @@
 				}
 			);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			const next = { ...flipped };
 			delete next[h];
@@ -130,9 +143,9 @@
 	const nHeld = $derived(count('held'));
 	const nBlocked = $derived(count('blocked'));
 	const mode = $derived(
-		policy
+		gateway
 			? t('runview.egress.mode_paren', {
-					mode: t(policy.mode === 'deny' ? 'runview.egress.denylist' : 'runview.egress.allowlist')
+					mode: t(gateway.mode === 'deny' ? 'runview.egress.denylist' : 'runview.egress.allowlist')
 				})
 			: ''
 	);
@@ -175,10 +188,11 @@
 			/>
 		</div>
 	{/if}
-	{#if rows === null && !error}
+	{#if rows === null && !auditFailed}
 		<Loading text={t('runview.connecting')} />
 	{:else if rows === null}
-		<!-- the error card above says why -->
+		<!-- the error card above says why, until it is dismissed -->
+		{#if !error}<div class="empty-line">{t('runview.egress.audit_unavailable')}</div>{/if}
 	{:else if all.length === 0}
 		<div class="empty-line">
 			{t('runview.egress.empty')}
@@ -195,11 +209,11 @@
 			{#each shown as r (r.host + ':' + r.port + ':' + r.verdict)}
 				{@const rule = shownRule(r.host)}
 				<div class="r">
-					<span class="mono hostc ell" title={r.dstIp ? `${r.host} (${r.dstIp})` : r.host}
+					<span class="mono hostc truncate" title={r.dstIp ? `${r.host} (${r.dstIp})` : r.host}
 						>{r.host}{r.port && r.port !== 443 ? `:${r.port}` : ''}</span
 					>
 					<span
-						class="seen {r.verdict === 'allow' ? 'hue-grn' : 'hue-ros'}"
+						class="seen {r.verdict === 'allow' ? 'hue-success' : 'hue-danger'}"
 						title={t('runview.egress.seen_title')}
 						>{r.verdict === 'allow'
 							? t('runview.egress.seen_allowed')
@@ -207,20 +221,17 @@
 					>
 					<span>
 						{#if rule}
-							<span
-								class="tg"
-								class:busy={toggling[r.host]}
-								title={t('runview.egress.toggle_title')}
-							>
+							<span class="tg" title={t('runview.egress.toggle_title')}>
 								<Segmented
 									glass={false}
 									size="sm"
 									label={t('runview.egress.rule_for', { host: r.host })}
+									disabled={toggling[r.host]}
 									value={rule}
 									onchange={(v) =>
 										v !== 'held' && v !== ruleFor(r.host) && setRule(r.host, v === 'allowed')}
 									options={[
-										{ value: 'allowed', label: t('runview.egress.rule_allow'), tone: 'grn' },
+										{ value: 'allowed', label: t('runview.egress.rule_allow'), tone: 'success' },
 										// Held sits between the two only while it holds: once
 										// ruled on, a host never goes back to it.
 										...(rule === 'held'
@@ -228,24 +239,25 @@
 													{
 														value: 'held' as const,
 														label: t('runview.egress.rule_held'),
-														tone: 'sky' as const,
+														tone: 'attention' as const,
 														title: t('runview.egress.held_title')
 													}
 												]
 											: []),
-										{ value: 'blocked', label: t('runview.egress.rule_block'), tone: 'ros' }
+										{ value: 'blocked', label: t('runview.egress.rule_block'), tone: 'danger' }
 									]}
 								/>
 							</span>
 						{:else}
-							<span class="fnt" title={t('runview.egress.no_gateway')}>{I.none}</span>
+							<span class="faint" title={t('runview.egress.no_gateway')}>{I.none}</span>
 						{/if}
 					</span>
-					<span class="fnt sm">{r.proto}</span>
+					<span class="faint sm">{r.proto}</span>
 					<span class="rt mono">{r.count}</span>
-					<span class="rt mono fnt">{fmtBytes(r.bytesOut) || '0'}/{fmtBytes(r.bytesIn) || '0'}</span
+					<span class="rt mono faint"
+						>{fmtBytes(r.bytesOut) || '0'}/{fmtBytes(r.bytesIn) || '0'}</span
 					>
-					<span class="rt mono fnt" title={fmtAbs(r.lastSeen)}>{ago(r.lastSeen)}</span>
+					<span class="rt mono faint" title={fmtAbs(r.lastSeen)}>{ago(r.lastSeen)}</span>
 				</div>
 			{/each}
 			{#if shown.length === 0}<div class="empty-line">
@@ -302,10 +314,6 @@
 	.tg {
 		display: inline-flex;
 	}
-	.tg.busy {
-		pointer-events: none;
-		opacity: var(--o-dim);
-	}
 	.sm {
 		font-size: var(--fs-meta);
 	}
@@ -320,7 +328,7 @@
 	}
 	.foot {
 		padding: 10px 12px;
-		color: var(--mut);
+		color: var(--text-muted);
 		font-size: var(--fs-label);
 	}
 	.foot a {

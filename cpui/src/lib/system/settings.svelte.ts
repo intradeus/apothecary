@@ -2,6 +2,7 @@
 // hub. One draft and one Save across both: moving between sections keeps
 // unsaved edits, and saving writes them together.
 
+import { errorMessage } from '$lib/core/errors';
 import { api } from '$lib/api';
 import type { Settings } from '$lib/domain';
 
@@ -28,7 +29,7 @@ class SettingsDraft {
 			this.saved = s;
 			this.draft = { ...s };
 		} catch (e) {
-			this.error = e instanceof Error ? e.message : String(e);
+			this.error = errorMessage(e);
 		} finally {
 			this.loading = false;
 		}
@@ -44,7 +45,7 @@ class SettingsDraft {
 			this.draft = { ...s };
 			this.savedAt = Date.now();
 		} catch (e) {
-			this.error = e instanceof Error ? e.message : String(e);
+			this.error = errorMessage(e);
 		} finally {
 			this.busy = false;
 		}

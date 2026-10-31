@@ -1,6 +1,6 @@
 <script lang="ts" module>
-	import { I } from '$lib/ui/icons';
-	import type { FileKind } from '$lib/docreview';
+	import { I } from '$lib/design/icons';
+	import type { FileKind } from '$lib/review/reviewDoc';
 
 	/** A shown file's glyph by what it is. */
 	export const KIND_ICON: Record<FileKind, string> = {
@@ -65,14 +65,14 @@
 				onclick={() => onpick(f.path)}
 			>
 				<span class="ico" aria-hidden="true">{KIND_ICON[f.kind]}</span>
-				<span class="ell grow"
-					>{baseName(f.path)}{#if dirName(f.path)}<span class="fnt dir">
+				<span class="truncate grow"
+					>{baseName(f.path)}{#if dirName(f.path)}<span class="faint dir">
 							{dirName(f.path)}</span
 						>{/if}</span
 				>
-				{#if n}<span class="pill sm mono t-brand">{n}</span>{/if}
+				{#if n}<span class="pill sm mono tint-brand">{n}</span>{/if}
 				{#if viewed?.has(f.path) && f.path !== current}<span
-						class="hue-grn seen"
+						class="hue-success seen"
 						title={t('doc.viewed')}
 						aria-label={t('doc.viewed')}>{I.ok}</span
 					>{/if}
@@ -114,11 +114,11 @@
 		gap: 7px;
 		padding: 5px 8px;
 		font-size: var(--fs-label);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.fi:hover,
 	.fi.on {
-		color: var(--tx);
+		color: var(--text);
 	}
 	.ico {
 		width: 1.1em;
@@ -139,7 +139,7 @@
 		align-items: center;
 		gap: 10px;
 		padding: 8px 12px;
-		border-bottom: 1px solid var(--ln);
+		border-bottom: 1px solid var(--line);
 	}
 	.pick .sel {
 		flex: 1;

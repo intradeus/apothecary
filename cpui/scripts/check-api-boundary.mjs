@@ -27,7 +27,8 @@ function* walk(dir) {
 
 const offenders = [];
 for (const file of walk(SRC)) {
-	if (file.startsWith(ALLOWED_PREFIX)) continue;
+	// A test may drive the real transport: it ships nowhere, so it crosses nothing.
+	if (file.startsWith(ALLOWED_PREFIX) || file.endsWith('.test.ts')) continue;
 	const text = readFileSync(file, 'utf8');
 	for (const m of text.matchAll(IMPORT_RE)) {
 		const spec = m[1] ?? m[2] ?? '';

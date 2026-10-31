@@ -12,7 +12,7 @@
 		label: string;
 		value: number;
 		max: number;
-		tone?: 'brand' | 'grn';
+		tone?: 'brand' | 'success';
 		/** A line under the bar ("at the cap, new runs are refused"). */
 		sub?: string;
 	} = $props();
@@ -25,7 +25,14 @@
 		<span>{label}</span>
 		<span class="mono v">{value}/{max || '–'}</span>
 	</div>
-	<div class="bar" role="meter" aria-valuenow={value} aria-valuemin={0} aria-valuemax={max}>
+	<div
+		class="bar"
+		role="meter"
+		aria-label={label}
+		aria-valuenow={value}
+		aria-valuemin={0}
+		aria-valuemax={max}
+	>
 		<div class="fill {tone}" style:width="{pct}%"></div>
 	</div>
 	{#if sub}<div class="sub">{sub}</div>{/if}
@@ -38,7 +45,7 @@
 		gap: 4px;
 		min-width: 0;
 		font-size: var(--fs-meta);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.top {
 		display: flex;
@@ -46,13 +53,13 @@
 		gap: 8px;
 	}
 	.v {
-		color: var(--tx);
+		color: var(--text);
 		font-size: var(--fs-meta);
 	}
 	.bar {
 		height: 5px;
 		border-radius: var(--r-xs);
-		background: var(--barTrack);
+		background: var(--bar-track);
 		overflow: hidden;
 		display: flex;
 	}
@@ -60,13 +67,13 @@
 		transition: width var(--dur-spring) var(--spring);
 	}
 	.brand {
-		background: var(--barBrand);
+		background: var(--bar-brand);
 	}
-	.grn {
-		background: var(--barGrn);
+	.success {
+		background: var(--bar-success);
 	}
 	.sub {
-		color: var(--fnt);
+		color: var(--text-faint);
 		font-size: var(--fs-help);
 	}
 </style>

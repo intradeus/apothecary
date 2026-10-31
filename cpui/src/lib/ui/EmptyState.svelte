@@ -27,7 +27,7 @@
 
 <style>
 	.es {
-		border: 1.5px dashed var(--ln2);
+		border: 1.5px dashed var(--line-strong);
 		border-radius: var(--r-pane);
 		padding: 34px 20px;
 		display: flex;
@@ -42,7 +42,7 @@
 		padding: 18px 14px;
 	}
 	.t {
-		font-family: var(--display);
+		font-family: var(--font-display);
 		font-weight: 600;
 		font-size: var(--fs-empty);
 		line-height: 1.15;
@@ -67,7 +67,7 @@
 		font-size: var(--fs-section);
 	}
 	.x {
-		color: var(--mut);
+		color: var(--text-muted);
 		max-width: 40ch;
 		font-size: var(--fs-ui);
 	}

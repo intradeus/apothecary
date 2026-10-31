@@ -1,7 +1,9 @@
 <script lang="ts">
 	// The open markdown file's headings, each with the comments under it;
 	// a click scrolls the file there.
-	import type { DocBlock } from '$lib/docreview';
+	import type { Token, Tokens } from 'marked';
+	import { marked } from '$lib/core/markdown';
+	import type { DocBlock } from '$lib/review/reviewDoc';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let {
@@ -15,11 +17,18 @@
 		onjump: (block: number) => void;
 	} = $props();
 
+	/** A heading's words: its markup goes, a name's underscores stay. */
+	const words = (toks: Token[]): string =>
+		(toks as Tokens.Generic[])
+			.map((k) => (k.tokens ? words(k.tokens) : (k.text ?? k.raw)))
+			.join('');
+
+	// Read as docBlocks reads the file, so whatever is a heading there is one here.
 	const outline = $derived(
 		blocks
 			.map((b, i) => {
-				const m = /^(#{1,6})\s+(.+?)\s*#*\s*$/m.exec(b.raw.trim().split('\n')[0]);
-				return m ? { i, level: m[1].length, text: m[2].replace(/[*_`]/g, '') } : null;
+				const h = marked.lexer(b.raw)[0];
+				return h?.type === 'heading' ? { i, level: h.depth, text: words(h.tokens ?? []) } : null;
 			})
 			.filter((x): x is { i: number; level: number; text: string } => !!x)
 	);
@@ -39,7 +48,8 @@
 				style:padding-left="{10 + (o.level - minLevel) * 12}px"
 				onclick={() => onjump(o.i)}
 				title={o.text}
-				><span class="ell grow">{o.text}</span>{#if n}<span class="pill sm mono t-brand">{n}</span
+				><span class="truncate grow">{o.text}</span>{#if n}<span class="pill sm mono tint-brand"
+						>{n}</span
 					>{/if}</button
 			>
 		{/each}
@@ -61,9 +71,9 @@
 		padding-top: 4px;
 		padding-bottom: 4px;
 		font-size: var(--fs-label);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.oi:hover {
-		color: var(--tx);
+		color: var(--text);
 	}
 </style>

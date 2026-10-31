@@ -51,7 +51,7 @@
 	<span class="ring" class:on aria-hidden="true"></span>
 	{#if label || children}
 		<span class="txt">
-			{#if children}{@render children()}{:else}{label}{/if}{#if detail}<span class="mut"
+			{#if children}{@render children()}{:else}{label}{/if}{#if detail}<span class="muted"
 					>{' — '}{detail}</span
 				>{/if}
 		</span>
@@ -67,7 +67,7 @@
 		margin: 0;
 		font-size: var(--fs-body);
 		font-weight: 400;
-		color: var(--tx);
+		color: var(--text);
 		cursor: pointer;
 		-webkit-tap-highlight-color: transparent;
 	}
@@ -90,23 +90,23 @@
 		height: 16px;
 		margin-top: 2px;
 		border-radius: var(--r-pill);
-		background: var(--p1);
-		border: 1px solid var(--ln2);
-		box-shadow: var(--spec);
+		background: var(--fill-1);
+		border: 1px solid var(--line-strong);
+		box-shadow: var(--specular);
 		transition: border-color var(--dur-fade) var(--ease-out);
 	}
 	.rd:hover .ring:not(.on) {
-		border-color: var(--grnLn);
+		border-color: var(--success-line);
 	}
 	.ring.on {
-		border-color: var(--grn);
+		border-color: var(--success);
 	}
 	.ring::after {
 		content: '';
 		position: absolute;
 		inset: 3px;
 		border-radius: var(--r-pill);
-		background: var(--grn);
+		background: var(--success);
 		transform: scale(0);
 		transition: transform var(--dur-spring) var(--spring);
 	}

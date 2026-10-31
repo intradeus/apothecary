@@ -3,14 +3,15 @@
 	// editor on the right. `new` creates one from a SKILL.md template. The
 	// whole folder saves at once; the engine checks the frontmatter and cuts
 	// a version in every skillset that lists the skill.
+	import { errorMessage } from '$lib/core/errors';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { Skill, SkillFileContent, Skillset } from '$lib/domain';
-	import { ago, fmtAbs, fmtBytes } from '$lib/format';
+	import { ago, fmtAbs, fmtBytes } from '$lib/core/format';
 	import { t, th } from '$lib/i18n/index.svelte';
-	import { to } from '$lib/urls';
+	import { to } from '$lib/core/urls';
 	import SkillFileEditor from '$lib/skills/SkillFileEditor.svelte';
 	import { decodeText, encodeText, isText, SKILL_NAME } from '$lib/skills/files';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -18,7 +19,7 @@
 	import FileChip from '$lib/ui/FileChip.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	const skillId = $derived(page.params.skillId ?? '');
 	const creating = $derived(skillId === 'new');
@@ -77,7 +78,7 @@
 			selected = files.some((f) => f.path === selected) ? selected : (files[0]?.path ?? 'SKILL.md');
 			usedBy = sets.filter((s) => s.skillIds.includes(id));
 		} catch (e) {
-			loadErr = e instanceof Error ? e.message : String(e);
+			loadErr = errorMessage(e);
 		} finally {
 			if (id === skillId) loaded = true;
 		}
@@ -193,7 +194,7 @@
 				toast(t('skills.skill.saved'));
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			saving = false;
 		}
@@ -207,7 +208,7 @@
 			toast(t('skills.skill.refreshed'));
 			await load(skillId);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			refreshing = false;
 		}
@@ -226,7 +227,7 @@
 			toast(t('skills.skill.deleted'));
 			await goto(to.skills());
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		}
 	}
 </script>
@@ -255,7 +256,7 @@
 		{:else}
 			<div class="title">
 				<span class="display at mono">{name}</span>
-				{#if skill?.source}<span class="pill sm t-brand">{t('skills.remote')}</span>{/if}
+				{#if skill?.source}<span class="pill sm tint-brand">{t('skills.remote')}</span>{/if}
 				{#if skill}<span class="desc">{skill.description}</span>{/if}
 			</div>
 		{/if}
@@ -276,7 +277,7 @@
 			>
 		</div>
 	</div>
-	{#if error}<div class="err">{error}</div>{/if}
+	{#if error}<div class="error">{error}</div>{/if}
 
 	<div class="split">
 		<aside class="files pane">
@@ -295,10 +296,10 @@
 								onblur={commitRename}
 							/>
 						{:else}
-							<button class="fname mono ell" onclick={() => (selected = f.path)} title={f.path}
+							<button class="fname mono truncate" onclick={() => (selected = f.path)} title={f.path}
 								>{f.path}</button
 							>
-							{#if f.text === null}<span class="fnt tiny">{fmtBytes(f.bytes.length)}</span>{/if}
+							{#if f.text === null}<span class="faint tiny">{fmtBytes(f.bytes.length)}</span>{/if}
 							{#if f.path !== 'SKILL.md'}
 								<button
 									class="btn-icon btn-sm"
@@ -360,17 +361,17 @@
 		<div class="meta">
 			{#if skill.source}
 				<div class="src">
-					<span class="mut">{t('skills.skill.source')}</span>
+					<span class="muted">{t('skills.skill.source')}</span>
 					<a class="mono" href={skill.source.url} target="_blank" rel="noreferrer"
 						>{skill.source.url} {I.external}</a
 					>
-					{#if skill.source.ref}<span class="fnt"
+					{#if skill.source.ref}<span class="faint"
 							>{t('skills.skill.sourceRef', { ref: skill.source.ref })}</span
 						>{/if}
-					{#if skill.source.commit}<span class="fnt mono"
+					{#if skill.source.commit}<span class="faint mono"
 							>{t('skills.skill.sourceCommit', { commit: skill.source.commit.slice(0, 10) })}</span
 						>{/if}
-					<span class="fnt" title={fmtAbs(skill.source.fetchedAt)}
+					<span class="faint" title={fmtAbs(skill.source.fetchedAt)}
 						>{t('skills.skill.sourceFetched', { ago: ago(skill.source.fetchedAt) })}</span
 					>
 					<span class="help">{t('skills.skill.refreshHelp')}</span>
@@ -378,8 +379,9 @@
 			{/if}
 			{#if usedBy.length}
 				<div class="used">
-					<span class="mut">{t('skills.skill.usedBy')}</span>
-					{#each usedBy as s (s.id)}<a class="pill sm t-mut" href={to.skillset(s.id)}>{s.name}</a
+					<span class="muted">{t('skills.skill.usedBy')}</span>
+					{#each usedBy as s (s.id)}<a class="pill sm tint-muted" href={to.skillset(s.id)}
+							>{s.name}</a
 						>{/each}
 				</div>
 			{/if}
@@ -390,7 +392,7 @@
 <style>
 	.back {
 		align-self: flex-start;
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.head {
 		display: flex;
@@ -414,7 +416,7 @@
 		font-size: var(--fs-section, 1.25rem);
 	}
 	.desc {
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.acts {
 		display: flex;
@@ -446,7 +448,7 @@
 		border-radius: var(--r-row);
 	}
 	.frow.sel {
-		background: var(--p2);
+		background: var(--fill-2);
 	}
 	.fname {
 		flex: 1;
@@ -455,7 +457,7 @@
 		background: none;
 		border: 0;
 		padding: 4px 6px;
-		color: var(--tx);
+		color: var(--text);
 		cursor: pointer;
 		font-size: var(--fs-label);
 	}
@@ -469,7 +471,7 @@
 		gap: 6px;
 		padding: 8px;
 		margin-top: auto;
-		border-top: 1px solid var(--ln);
+		border-top: 1px solid var(--line);
 	}
 	.fadd input {
 		flex: 1;

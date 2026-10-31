@@ -4,12 +4,13 @@
 	// you, how often it ran, whether it is live or parked, which signals hold
 	// right now — and the outcomes that end the run. Any watcher can be
 	// started by hand while no chain holds the run's one cursor.
+	import { errorMessage } from '$lib/core/errors';
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
 	import type { MergeRequestLive, RunPhase } from '$lib/domain';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
 	import MrStatus from './MrStatus.svelte';
@@ -40,9 +41,11 @@
 	async function load() {
 		try {
 			[mrs, phases] = await Promise.all([api.runs.mrStatus(runId), api.runs.phases(runId)]);
+			// A read that works ends a failed read, not a phase that failed to start.
+			if (cause === t('run.phases.repoError')) error = '';
 		} catch (e) {
 			cause = t('run.phases.repoError');
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		}
 	}
 
@@ -55,7 +58,7 @@
 			toast(t('run.phases.phaseStarted', { phase }));
 		} catch (e) {
 			cause = t('run.phases.phaseFailed', { phase });
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			busy = '';
 			load();
@@ -144,16 +147,17 @@
 							>{p.id}</span
 						>
 						{#if p.kind === 'outcome'}<span
-								class="pill sm t-mut"
+								class="pill sm tint-muted"
 								title={t('run.phases.outcomeTitle')}>{t('run.phases.outcomePill')}</span
 							>{/if}
-						{#if waits.length}<span class="pill sm t-hot" title={waits.map((h) => h.why).join('\n')}
-								>{t('run.phases.pending')}</span
+						{#if waits.length}<span
+								class="pill sm tint-hot"
+								title={waits.map((h) => h.why).join('\n')}>{t('run.phases.pending')}</span
 							>{/if}
 					</div>
-					<span class="mut ell"
+					<span class="muted truncate"
 						>{opens(p)} · {usage(p)}{#if p.live}
-							· <span class="tx"
+							· <span class="text-primary"
 								>{p.live.parkedAt
 									? t('run.phases.parkedAt', { stage: p.live.parkedAt })
 									: t('run.phases.running')}</span
@@ -165,7 +169,7 @@
 					{:else if p.kind === 'outcome'}
 						<!-- An outcome happens on the repository; starting one by hand would
 						     end the run from a button beside the ones that do not. -->
-						<span class="fnt small" title={t('run.phases.outcomeTitle')}
+						<span class="faint small" title={t('run.phases.outcomeTitle')}
 							>{t('run.phases.onTheRepo')}</span
 						>
 					{:else}
@@ -180,13 +184,11 @@
 				</div>
 			{/each}
 		</div>
-		{#if error}<div class="ec">
-				<ErrorCard {cause} detail={error} onretry={load} ondismiss={() => (error = '')} />
-			</div>{/if}
+		{#if error}{@render failure()}{/if}
 	</div>
 	<Popover {anchor} bind:open={pickOpen} placement="below-end">
 		<div class="pickbox">
-			<span class="mut fnt">{t('run.phases.runOn')}</span>
+			<span class="muted faint">{t('run.phases.runOn')}</span>
 			{#each open as mr (mr.repo + mr.branch)}
 				<button class="btn-sm" onclick={() => start(pick, mr.repo)}
 					>{mr.repo === 'repo' ? mr.branch : `${mr.repo}: ${mr.branch}`}</button
@@ -194,7 +196,15 @@
 			{/each}
 		</div>
 	</Popover>
+{:else if error}
+	{@render failure()}
 {/if}
+
+{#snippet failure()}
+	<div class="ec">
+		<ErrorCard {cause} detail={error} onretry={load} ondismiss={() => (error = '')} />
+	</div>
+{/snippet}
 
 <style>
 	.rc {
@@ -212,11 +222,11 @@
 	}
 	.sub {
 		font-size: var(--fs-label);
-		color: var(--mut);
+		color: var(--text-muted);
 		text-wrap: pretty;
 	}
 	.mrh {
-		border-top: 1px solid var(--ln);
+		border-top: 1px solid var(--line);
 		padding: 8px 14px;
 		display: flex;
 		gap: 10px;
@@ -225,7 +235,7 @@
 		font-size: var(--fs-label);
 	}
 	.list {
-		border-top: 1px solid var(--ln);
+		border-top: 1px solid var(--line);
 		padding: 6px 14px 8px;
 		display: flex;
 		flex-direction: column;

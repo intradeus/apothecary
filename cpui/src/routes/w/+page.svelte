@@ -4,15 +4,15 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { Integration } from '$lib/domain';
-	import { fleet } from '$lib/fleet.svelte';
-	import { to } from '$lib/urls';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { to } from '$lib/core/urls';
 	import { t } from '$lib/i18n/index.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import Vial from '$lib/ui/Vial.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { ms, spring } from '$lib/ui/motion';
 	import RunRow from '$lib/run/RunRow.svelte';
 	import WorkshopChips from '$lib/workshop/WorkshopChips.svelte';
@@ -41,7 +41,7 @@
 >
 	{#snippet meta()}
 		<span>{t('page.desk.workshopCount', { count: projects.length })}</span>
-		<span><span class="hue-emb mono">{liveTotal}</span> {t('page.workshops.live')}</span>
+		<span><span class="hue-running mono">{liveTotal}</span> {t('page.workshops.live')}</span>
 		{#if fleet.pending.length}<span
 				><span class="count hot">{fleet.pending.length}</span>
 				{t('page.workshops.awaitingYou')}</span
@@ -52,7 +52,7 @@
 	{/snippet}
 </PageHeader>
 
-<div class="page c">
+<div class="page glass">
 	{#if fleet.error && !fleet.updatedAt}
 		<ErrorCard
 			cause={t('page.workshops.loadError')}
@@ -75,12 +75,12 @@
 			{#each projects as p (p.id)}
 				{@const live = fleet.liveByProject.get(p.id) ?? []}
 				{@const pings = fleet.pingsByProject.get(p.id) ?? 0}
-				<article class="wcard c" class:quiet={!live.length} animate:flip={move()}>
+				<article class="wcard glass" class:quiet={!live.length} animate:flip={move()}>
 					<a class="head" href={to.workshop(p.id)}>
 						<Vial projectId={p.id} idle={!live.length} />
-						<span class="nm ell">{p.name}</span>
+						<span class="nm truncate">{p.name}</span>
 						<span class="sum">
-							{#if live.length}<span class="hue-emb mono">{live.length}</span>
+							{#if live.length}<span class="hue-running mono">{live.length}</span>
 								{t('page.workshops.live')}{:else}{t('page.workshops.quiet')}{/if}
 							{#if pings}<span class="count hot" title={t('page.workshops.pingsAwaiting')}
 									>{pings}</span
@@ -88,7 +88,7 @@
 						</span>
 					</a>
 					<div class="body">
-						<div class="repo mono ell" title={p.repo.url}>
+						<div class="repo mono truncate" title={p.repo.url}>
 							{repoLabel(p.repo.url)}{#if p.repos?.length}<span class="more">
 									{t('page.workshops.moreRepos', { count: p.repos.length })}</span
 								>{/if}
@@ -102,7 +102,7 @@
 						>
 					{/if}
 					<div class="foot">
-						<span class="fnt">{t('page.workshops.formula')}</span>
+						<span class="faint">{t('page.workshops.formula')}</span>
 						<span class="tag">{p.defaultFlow || '—'}</span>
 						<span class="spacer"></span>
 						<a href={to.workshop(p.id, 'tickets')}>{t('page.workshops.tickets')}</a>
@@ -130,7 +130,7 @@
 		align-items: center;
 		gap: 9px;
 		padding: 11px 14px 4px;
-		color: var(--tx);
+		color: var(--text);
 	}
 	.head:hover {
 		text-decoration: none;
@@ -144,7 +144,7 @@
 		font-size: var(--fs-aside);
 	}
 	.wcard.quiet .nm {
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.sum {
 		flex: none;
@@ -152,7 +152,7 @@
 		align-items: center;
 		gap: 6px;
 		font-size: var(--fs-meta);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.body {
 		display: flex;
@@ -162,29 +162,29 @@
 	}
 	.repo {
 		font-size: var(--fs-meta);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.more {
-		color: var(--fnt);
+		color: var(--text-faint);
 	}
 	.more-runs {
 		padding: 6px 14px;
-		border-top: 1px solid var(--cLn);
+		border-top: 1px solid var(--glass-line);
 		font-size: var(--fs-help);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.foot {
 		display: flex;
 		align-items: center;
 		gap: 10px;
 		padding: 8px 14px;
-		border-top: 1px solid var(--cLn);
+		border-top: 1px solid var(--glass-line);
 		font-size: var(--fs-help);
 	}
 	.foot a {
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.foot a:hover {
-		color: var(--tx);
+		color: var(--text);
 	}
 </style>

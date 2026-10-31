@@ -1,0 +1,502 @@
+/* Themes: every colour in the app, and the only file a retheme touches.
+ *
+ * Three tiers, top to bottom:
+ *
+ *   1. Fixed colours   the same in every theme (shadows, the terminal)
+ *   2. Theme blocks    one per theme: neutrals plus the raw palette
+ *                      (--ember, --sky, --gold, --green, --rose, --violet, --teal)
+ *   3. Roles           what the palette MEANS. Components only ever use these.
+ *
+ * The palette is private to this file: `npm run lint:tokens` fails if anything
+ * else names --ember or --sky. So a new palette, a renamed hue or "warnings are
+ * now amber" is an edit here and nowhere else.
+ *
+ * Adding a theme: copy a block, change the values, add one line to
+ * $lib/design/themes. `npm run check:themes` holds every block to the same
+ * token set. See docs/frontend-standards.md. */
+
+/* ── 1. fixed colours: the same in every theme ─────────────────────────── */
+
+:root {
+	/* text on solid fills */
+	--on-danger: #1b0a0a; /* text on solid rose */
+	--on-success: #0b1a12; /* text on light fills: solid-green checks */
+
+	/* elevation */
+	--shadow-pop: 0 22px 34px rgba(0, 0, 0, 0.55);
+	--shadow-modal: 0 30px 80px rgba(0, 0, 0, 0.5);
+	--shadow-drag: 0 10px 30px rgba(0, 0, 0, 0.45);
+	--shadow-float: 0 8px 24px rgba(0, 0, 0, 0.35);
+	/* an island's shadow: on a parent, so it follows a clip-path */
+	--island-drop: drop-shadow(0 22px 34px rgba(0, 0, 0, 0.55))
+		drop-shadow(0 0 1px rgba(0, 0, 0, 0.6));
+
+	/* small fixed bits */
+	--mask-opaque: #000; /* the opaque stop of a fade-out mask */
+	--knob: #fff;
+	--knob-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+	--bubble: rgba(255, 255, 255, 0.8);
+	--vial-idle-line: rgba(255, 255, 255, 0.2);
+
+	/* the terminal stays dark in every theme, like a real one; xterm reads
+	 * these at mount (Terminal.svelte) */
+	--term-bg: rgba(4, 9, 18, 0.78);
+	--term-line: rgba(255, 255, 255, 0.06);
+	--term-text: #e6edf6;
+	--term-muted: #93a3ba;
+	--term-faint: #7d8ca3;
+	--term-button-bg: rgba(143, 184, 234, 0.08);
+	--term-button-line: rgba(143, 184, 234, 0.22);
+	--term-cursor: #8fb8ea;
+	--term-cursor-accent: #0d1a2a;
+	--term-selection: rgba(143, 184, 234, 0.3);
+	--term-black: #0a0a0e;
+	--term-red: #ff7d8c;
+	--term-green: #a3c99a;
+	--term-yellow: #e8c25a;
+	--term-blue: #8fb8ea;
+	--term-magenta: #c3a2ff;
+	--term-cyan: #5fd6cc;
+	--term-orange: #ffb488;
+}
+
+/* ── 2. themes ─────────────────────────────────────────────────────────── */
+/* One block per theme ($lib/design/themes), Ember × Sky the default. Every
+ * theme keeps the pairing: ember means something is brewing, sky means you
+ * can act. Lines and selection derive from --line-hue (tier 3); only what a
+ * theme really changes lives in its block.
+ *
+ * The selectors match any element, so a swatch can preview a theme with
+ * data-theme="…" (ThemePicker) without the registry repeating its colours. */
+
+:root,
+[data-theme='ember-sky'] {
+	color-scheme: dark;
+	--frame: #0a0a0e;
+	--text: #e6edf6;
+	--text-muted: #93a3ba;
+	--text-faint: #7d8ca3;
+	--text-dim: #4f5d74;
+	--text-code: #c5d0df;
+	--brand: #8fb8ea;
+	--brand-light: #cfe2fa;
+	--on-brand: #0d1a2a;
+	--link: #8fb8ea;
+	--line-hue: rgb(143, 184, 234);
+	--fill-1: rgba(255, 255, 255, 0.03);
+	--fill-2: rgba(255, 255, 255, 0.05);
+	--code-bg: rgba(4, 9, 18, 0.55);
+	--specular: inset 0 1px 0 rgba(207, 226, 250, 0.08);
+	--ember: #ff6a2b;
+	--ember-2: #ff9150;
+	--ember-text: #ffb488;
+	--sky: #8fb8ea;
+	--sky-text: #8fb8ea;
+	--gold: #e8c25a;
+	--green: #a3c99a;
+	--rose: #ff5468;
+	--rose-text: #ff7d8c;
+	--violet: #c3a2ff;
+	--teal: #5fd6cc;
+	--tint-strength: 14%;
+	--glass-bg: rgba(11, 20, 36, 0.58);
+	--glass-rail-bg: rgba(11, 20, 36, 0.62);
+	--inset-bg: rgba(6, 12, 24, 0.45);
+	--island-bg: #09101e;
+	--scrim: rgba(4, 9, 18, 0.5);
+	--noise-grain: 0.55;
+	--noise-ember: #ff7a42;
+	--noise-sky: #96bff0;
+	--noise-blend: screen;
+}
+
+[data-theme='light'] {
+	color-scheme: light;
+	--frame: #ebe6dd;
+	--text: #1d232c;
+	--text-muted: #5b6576;
+	--text-faint: #6f7888;
+	--text-dim: #a0a8b4;
+	--text-code: #3c4553;
+	--brand: #8fb8ea;
+	--brand-light: #2a5c9c;
+	--on-brand: #0d1a2a;
+	--link: #2a5c9c;
+	--line-hue: rgb(50, 90, 140);
+	--fill-1: rgba(30, 40, 60, 0.03);
+	--fill-2: rgba(30, 40, 60, 0.05);
+	--code-bg: rgba(232, 227, 219, 0.7);
+	--specular: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+	--ember: #e0601f;
+	--ember-2: #c9541a;
+	--ember-text: #b5481a;
+	--sky: #8fb8ea;
+	--sky-text: #2a5c9c;
+	--gold: #9a7410;
+	--green: #3c7a3a;
+	--rose: #d33c52;
+	--rose-text: #c2334a;
+	--violet: #7a52d6;
+	--teal: #138a85;
+	--tint-strength: 12%;
+	--glass-bg: rgba(250, 248, 244, 0.58);
+	--glass-rail-bg: rgba(250, 248, 244, 0.62);
+	--inset-bg: rgba(238, 234, 227, 0.45);
+	--island-bg: #fbf9f5;
+	--scrim: rgba(4, 9, 18, 0.5);
+	--noise-grain: 0.22;
+	--noise-ember: var(--ember);
+	--noise-sky: var(--sky);
+	--noise-blend: multiply;
+}
+
+[data-theme='solarized'] {
+	color-scheme: dark;
+	--frame: #001b22;
+	--text: #eee8d5;
+	--text-muted: #93a1a1;
+	--text-faint: #839496;
+	--text-dim: #4f6a72;
+	--text-code: #c9cdbf;
+	--brand: #35b5aa;
+	--brand-light: #b4e6e0;
+	--on-brand: #00212b;
+	--link: #5fc9bf;
+	--line-hue: rgb(53, 181, 170);
+	--fill-1: rgba(238, 232, 213, 0.03);
+	--fill-2: rgba(238, 232, 213, 0.05);
+	--code-bg: rgba(0, 20, 26, 0.55);
+	--specular: inset 0 1px 0 rgba(180, 230, 224, 0.08);
+	--ember: #dd5f1f;
+	--ember-2: #ee8344;
+	--ember-text: #f5a877;
+	--sky: #35b5aa;
+	--sky-text: #5fc9bf;
+	--gold: #d4a520;
+	--green: #a3b62e;
+	--rose: #e0413e;
+	--rose-text: #f0706d;
+	--violet: #9a9ee0;
+	--teal: #4aa3e0;
+	--tint-strength: 14%;
+	--glass-bg: rgba(0, 43, 54, 0.58);
+	--glass-rail-bg: rgba(0, 43, 54, 0.62);
+	--inset-bg: rgba(0, 24, 31, 0.45);
+	--island-bg: #02222b;
+	--scrim: rgba(0, 20, 26, 0.5);
+	--noise-grain: 0.55;
+	--noise-ember: var(--ember);
+	--noise-sky: var(--sky);
+	--noise-blend: screen;
+}
+
+[data-theme='forest'] {
+	color-scheme: dark;
+	--frame: #090c08;
+	--text: #e8ecdf;
+	--text-muted: #9fab95;
+	--text-faint: #87937e;
+	--text-dim: #56614f;
+	--text-code: #c9d1bd;
+	--brand: #a7c4a0;
+	--brand-light: #d6e6d1;
+	--on-brand: #10190f;
+	--link: #a7c4a0;
+	--line-hue: rgb(167, 196, 160);
+	--fill-1: rgba(255, 255, 255, 0.03);
+	--fill-2: rgba(255, 255, 255, 0.05);
+	--code-bg: rgba(6, 12, 7, 0.55);
+	--specular: inset 0 1px 0 rgba(214, 230, 209, 0.08);
+	--ember: #e0a93a;
+	--ember-2: #ecc05f;
+	--ember-text: #f3d48f;
+	--sky: #a7c4a0;
+	--sky-text: #a7c4a0;
+	--gold: #d9cf6a;
+	--green: #8fce86;
+	--rose: #ef6a5a;
+	--rose-text: #f48d80;
+	--violet: #c3a8e8;
+	--teal: #6fd0b8;
+	--tint-strength: 14%;
+	--glass-bg: rgba(16, 26, 18, 0.58);
+	--glass-rail-bg: rgba(16, 26, 18, 0.62);
+	--inset-bg: rgba(8, 14, 9, 0.45);
+	--island-bg: #0c140d;
+	--scrim: rgba(6, 12, 7, 0.5);
+	--noise-grain: 0.55;
+	--noise-ember: var(--ember);
+	--noise-sky: var(--sky);
+	--noise-blend: screen;
+}
+
+[data-theme='brown'] {
+	color-scheme: dark;
+	--frame: #0e0a07;
+	--text: #f0e8dc;
+	--text-muted: #b3a393;
+	--text-faint: #98897a;
+	--text-dim: #64564a;
+	--text-code: #d9cdbf;
+	--brand: #e8d9bd;
+	--brand-light: #f6eddc;
+	--on-brand: #231a0f;
+	--link: #e8d9bd;
+	--line-hue: rgb(232, 217, 189);
+	--fill-1: rgba(255, 255, 255, 0.03);
+	--fill-2: rgba(255, 255, 255, 0.05);
+	--code-bg: rgba(14, 9, 6, 0.55);
+	--specular: inset 0 1px 0 rgba(246, 237, 220, 0.08);
+	--ember: #e8702a;
+	--ember-2: #f09050;
+	--ember-text: #f7b58a;
+	--sky: #e8d9bd;
+	--sky-text: #e8d9bd;
+	--gold: #e0b650;
+	--green: #adc48c;
+	--rose: #f0596a;
+	--rose-text: #f5808c;
+	--violet: #c8a8f0;
+	--teal: #78cfc0;
+	--tint-strength: 14%;
+	--glass-bg: rgba(32, 23, 16, 0.58);
+	--glass-rail-bg: rgba(32, 23, 16, 0.62);
+	--inset-bg: rgba(16, 11, 7, 0.45);
+	--island-bg: #160f0a;
+	--scrim: rgba(14, 9, 6, 0.5);
+	--noise-grain: 0.55;
+	--noise-ember: var(--ember);
+	--noise-sky: var(--sky);
+	--noise-blend: screen;
+}
+
+[data-theme='dark'] {
+	color-scheme: dark;
+	--frame: #09090b;
+	--text: #eaeaec;
+	--text-muted: #a0a1a8;
+	--text-faint: #85868d;
+	--text-dim: #56575d;
+	--text-code: #cacace;
+	--brand: #c0c3ca;
+	--brand-light: #e8e9ed;
+	--on-brand: #131417;
+	--link: #c0c3ca;
+	--line-hue: rgb(200, 203, 210);
+	--fill-1: rgba(255, 255, 255, 0.03);
+	--fill-2: rgba(255, 255, 255, 0.05);
+	--code-bg: rgba(8, 8, 10, 0.55);
+	--specular: inset 0 1px 0 rgba(232, 233, 237, 0.08);
+	--ember: #ff6a2b;
+	--ember-2: #ff9150;
+	--ember-text: #ffb488;
+	--sky: #c0c3ca;
+	--sky-text: #c0c3ca;
+	--gold: #e8c25a;
+	--green: #a3c99a;
+	--rose: #ff5468;
+	--rose-text: #ff7d8c;
+	--violet: #c3a2ff;
+	--teal: #5fd6cc;
+	--tint-strength: 14%;
+	--glass-bg: rgba(22, 22, 26, 0.58);
+	--glass-rail-bg: rgba(22, 22, 26, 0.62);
+	--inset-bg: rgba(10, 10, 12, 0.45);
+	--island-bg: #0f0f12;
+	--scrim: rgba(8, 8, 10, 0.5);
+	--noise-grain: 0.55;
+	--noise-ember: var(--ember);
+	--noise-sky: var(--sky);
+	--noise-blend: screen;
+}
+
+[data-theme='pink'] {
+	color-scheme: dark;
+	--frame: #0e090b;
+	--text: #f5e8ec;
+	--text-muted: #b8a0aa;
+	--text-faint: #9e8791;
+	--text-dim: #675560;
+	--text-code: #dcc9d0;
+	--brand: #f0a0bc;
+	--brand-light: #fbd6e3;
+	--on-brand: #2a0f1a;
+	--link: #f0a0bc;
+	--line-hue: rgb(240, 160, 188);
+	--fill-1: rgba(255, 255, 255, 0.03);
+	--fill-2: rgba(255, 255, 255, 0.05);
+	--code-bg: rgba(14, 8, 10, 0.55);
+	--specular: inset 0 1px 0 rgba(251, 214, 227, 0.08);
+	--ember: #ff7a5c;
+	--ember-2: #ff9a80;
+	--ember-text: #ffbba8;
+	--sky: #f0a0bc;
+	--sky-text: #f0a0bc;
+	--gold: #ecc468;
+	--green: #a9cf9e;
+	--rose: #ff4f6e;
+	--rose-text: #ff7d93;
+	--violet: #c8a6ff;
+	--teal: #64d6cc;
+	--tint-strength: 14%;
+	--glass-bg: rgba(34, 17, 25, 0.58);
+	--glass-rail-bg: rgba(34, 17, 25, 0.62);
+	--inset-bg: rgba(16, 8, 12, 0.45);
+	--island-bg: #150b10;
+	--scrim: rgba(14, 8, 10, 0.5);
+	--noise-grain: 0.55;
+	--noise-ember: var(--ember);
+	--noise-sky: var(--sky);
+	--noise-blend: screen;
+}
+
+/* ── 3. roles: what components use ─────────────────────────────────────── */
+/* `:root, [data-theme]` so a previewed element resolves its own palette. */
+
+:root,
+[data-theme] {
+	/* what each hue means (DESIGN 2.2) */
+	--running: var(--ember);
+	--running-text: var(--ember-text);
+	--running-strong: var(--ember-2);
+	--attention: var(--sky);
+	--attention-text: var(--sky-text);
+	--warning: var(--gold);
+	--warning-text: var(--gold);
+	--success: var(--green);
+	--success-text: var(--green);
+	--danger: var(--rose);
+	--danger-text: var(--rose-text);
+	--accent: var(--violet);
+	--accent-text: var(--violet);
+	--accent-2: var(--teal);
+	--accent-2-text: var(--teal);
+	--muted: var(--text-muted);
+	--muted-text: var(--text-muted);
+	--brand-text: var(--link);
+
+	/* each role's tints: fill, border, halo */
+	--brand-bg: color-mix(in oklch, var(--brand) var(--tint-strength), transparent);
+	--brand-line: color-mix(in oklch, var(--brand) 40%, transparent);
+	--brand-glow: color-mix(in oklch, var(--brand) 25%, transparent);
+	--running-bg: color-mix(in oklch, var(--running) var(--tint-strength), transparent);
+	--running-line: color-mix(in oklch, var(--running) 40%, transparent);
+	--running-glow: color-mix(in oklch, var(--running) 25%, transparent);
+	--attention-bg: color-mix(in oklch, var(--attention) var(--tint-strength), transparent);
+	--attention-line: color-mix(in oklch, var(--attention) 40%, transparent);
+	--attention-glow: color-mix(in oklch, var(--attention) 25%, transparent);
+	--warning-bg: color-mix(in oklch, var(--warning) var(--tint-strength), transparent);
+	--warning-line: color-mix(in oklch, var(--warning) 40%, transparent);
+	--warning-glow: color-mix(in oklch, var(--warning) 25%, transparent);
+	--success-bg: color-mix(in oklch, var(--success) var(--tint-strength), transparent);
+	--success-line: color-mix(in oklch, var(--success) 40%, transparent);
+	--success-glow: color-mix(in oklch, var(--success) 25%, transparent);
+	--danger-bg: color-mix(in oklch, var(--danger) var(--tint-strength), transparent);
+	--danger-line: color-mix(in oklch, var(--danger) 40%, transparent);
+	--danger-glow: color-mix(in oklch, var(--danger) 25%, transparent);
+	--accent-bg: color-mix(in oklch, var(--accent) var(--tint-strength), transparent);
+	--accent-line: color-mix(in oklch, var(--accent) 40%, transparent);
+	--accent-glow: color-mix(in oklch, var(--accent) 25%, transparent);
+	--accent-2-bg: color-mix(in oklch, var(--accent-2) var(--tint-strength), transparent);
+	--accent-2-line: color-mix(in oklch, var(--accent-2) 40%, transparent);
+	--accent-2-glow: color-mix(in oklch, var(--accent-2) 25%, transparent);
+	--muted-bg: color-mix(in oklch, var(--muted) var(--tint-strength), transparent);
+	--muted-line: color-mix(in oklch, var(--muted) 40%, transparent);
+	--muted-glow: color-mix(in oklch, var(--muted) 25%, transparent);
+
+	/* opaque tints: alerts over content */
+	--attention-solid: color-mix(in srgb, var(--attention) var(--tint-strength), var(--island-bg));
+	--danger-solid: color-mix(in srgb, var(--danger) var(--tint-strength), var(--island-bg));
+
+	/* lines and fills */
+	--fill-3: color-mix(in srgb, var(--line-hue) 12%, transparent);
+	--line: color-mix(in srgb, var(--line-hue) 10%, transparent);
+	--line-strong: color-mix(in srgb, var(--line-hue) 22%, transparent);
+
+	/* window glass: flat tinted glass and a hairline, nothing else */
+	--glass-filter: blur(22px) saturate(140%);
+	--glass-line: color-mix(in srgb, var(--line-hue) 16%, transparent);
+	/* inset: a control group or field inside a window. No blur. */
+	--inset-line: color-mix(in srgb, var(--line-hue) 14%, transparent);
+	/* island: opaque, over content */
+	--island-line: color-mix(in srgb, var(--line-hue) 28%, transparent);
+
+	/* selection: the one selected look */
+	--selected-bg: color-mix(in srgb, var(--line-hue) 12%, transparent);
+	--selected-line: color-mix(in srgb, var(--line-hue) 30%, transparent);
+	--selected-shadow: var(--specular);
+
+	/* running: the current stage tile, the current run row */
+	--running-fill: linear-gradient(
+		135deg,
+		var(--running-bg) 0%,
+		color-mix(in oklch, var(--running) 8%, transparent)
+	);
+
+	/* solid attention: fill and ink, kept apart from the tokens an
+	 * .attention-card re-points for what sits inside it */
+	--attention-fill: var(--attention);
+	--ink: var(--on-brand);
+	--on-ink: color-mix(in srgb, var(--attention) 45%, #fff);
+
+	/* avatars and capacity bars */
+	--avatar-bg: linear-gradient(160deg, var(--brand-light), var(--brand));
+	--avatar-shadow: var(--specular), 0 1px 3px rgba(0, 0, 0, 0.4);
+	--presence: var(--success);
+	--bar-brand: linear-gradient(
+		90deg,
+		color-mix(in srgb, var(--brand) 70%, transparent),
+		var(--brand)
+	);
+	--bar-success: linear-gradient(
+		90deg,
+		color-mix(in srgb, var(--success) 70%, transparent),
+		var(--success)
+	);
+	--bar-track: var(--fill-2);
+}
+
+/* ── user preferences ──────────────────────────────────────────────────── */
+/* Written against each theme's own tokens, so every theme, current or
+ * future, honours them without per-theme work. Placed last so they win over
+ * the theme blocks at equal specificity. */
+
+/* Motion becomes a gentle cross-fade: nothing travels, scales or bounces,
+ * but state changes still fade so they stay legible. */
+@media (prefers-reduced-motion: reduce) {
+	:root,
+	:root[data-theme] {
+		--dur-spring: 1ms;
+		--dur-bounce: 1ms;
+		--press-scale: 1;
+		--enter-scale: 1;
+		--enter-blur: 0px;
+	}
+}
+
+/* Glass becomes solid: no blur, opaque surfaces. */
+@media (prefers-reduced-transparency: reduce) {
+	:root,
+	:root[data-theme] {
+		--glass-bg: var(--island-bg);
+		--glass-rail-bg: var(--island-bg);
+		--glass-filter: none;
+	}
+}
+
+/* More contrast: defined lines, stronger secondary text, solid surfaces. */
+@media (prefers-contrast: more) {
+	:root,
+	:root[data-theme] {
+		--line: color-mix(in oklch, var(--text) 32%, transparent);
+		--line-strong: color-mix(in oklch, var(--text) 45%, transparent);
+		--glass-line: var(--line-strong);
+		--inset-line: var(--line-strong);
+		--island-line: var(--line-strong);
+		--text-muted: color-mix(in oklch, var(--text) 82%, var(--frame));
+		--text-faint: color-mix(in oklch, var(--text) 62%, var(--frame));
+		--glass-bg: var(--island-bg);
+		--glass-rail-bg: var(--island-bg);
+		--glass-filter: none;
+	}
+}

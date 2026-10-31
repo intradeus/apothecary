@@ -7,20 +7,20 @@
 // what the person saw. All selected is the default: unpicking is the
 // deliberate act.
 import type { Curation, CuratedItem, CurationDocument, ReviewThread } from '$lib/domain';
-import type { Hue } from '$lib/ui/hues';
+import type { Hue } from '$lib/design/hues';
 import { t } from '$lib/i18n/index.svelte';
 
 /** A note's kind, a reply's did: its hue, and its word. */
 const KIND_HUE: Record<string, Hue> = {
-	blocking: 'ros',
-	suggestion: 'sky',
-	question: 'gold',
-	nit: 'mut',
-	fixed: 'grn',
-	declined: 'ros',
-	answered: 'sky'
+	blocking: 'danger',
+	suggestion: 'attention',
+	question: 'warning',
+	nit: 'muted',
+	fixed: 'success',
+	declined: 'danger',
+	answered: 'attention'
 };
-export const kindHue = (kind: string): Hue => KIND_HUE[kind] ?? 'mut';
+export const kindHue = (kind: string): Hue => KIND_HUE[kind] ?? 'muted';
 export function kindLabel(kind: string): string {
 	switch (kind) {
 		case 'blocking':

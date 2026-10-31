@@ -1,9 +1,10 @@
 <script lang="ts">
 	// Ask for a new flow's name (New flow, Clone). The name is the flow's
 	// immutable id: a lowercase slug.
+	import { errorMessage } from '$lib/core/errors';
 	import { untrack, type Snippet } from 'svelte';
 	import Modal from '$lib/ui/Modal.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import SlugField, { slugOk } from './SlugField.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 
@@ -46,7 +47,7 @@
 		try {
 			await onsubmit(trimmed);
 		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
+			error = errorMessage(err);
 			busy = false;
 		}
 	}
@@ -62,7 +63,7 @@
 			conflict={dup ? t('flow.name.taken', { name: trimmed }) : ''}
 			help={t('flow.name.help')}
 		/>
-		{#if error}<div class="err">{error}</div>{/if}
+		{#if error}<div class="error">{error}</div>{/if}
 	</form>
 	{#snippet footer()}
 		<button type="button" class="btn-ghost" onclick={onclose}>{t('common.cancel')}</button>

@@ -1,6 +1,6 @@
 <script lang="ts" module>
 	import type { MergeRequestLive } from '$lib/domain';
-	import type { Hue } from '$lib/ui/hues';
+	import type { Hue } from '$lib/design/hues';
 
 	/** One merge request of the run, or a slot its flow will fill. */
 	export interface MrRow {
@@ -13,18 +13,18 @@
 	}
 
 	/** Worst first: what the overflow chip's dot shows for the rest. */
-	const RANK: Hue[] = ['ros', 'gold', 'mut', 'sky', 'grn'];
+	const RANK: Hue[] = ['danger', 'warning', 'muted', 'attention', 'success'];
 
 	export function mrHue(m: MergeRequestLive | undefined): Hue {
-		if (!m || m.error) return 'mut';
-		if (m.state === 'merged') return 'sky';
-		if (m.mergeable === 'conflicts' || m.checks?.state === 'failure') return 'ros';
-		if (m.draft) return 'mut';
-		if (m.checks?.state === 'pending') return 'gold';
-		return 'grn';
+		if (!m || m.error || m.state === 'closed') return 'muted';
+		if (m.state === 'merged') return 'attention';
+		if (m.mergeable === 'conflicts' || m.checks?.state === 'failure') return 'danger';
+		if (m.draft) return 'muted';
+		if (m.checks?.state === 'pending') return 'warning';
+		return 'success';
 	}
 	export const worstHue = (rows: MrRow[]): Hue =>
-		rows.map((r) => mrHue(r.live)).sort((a, b) => RANK.indexOf(a) - RANK.indexOf(b))[0] ?? 'mut';
+		rows.map((r) => mrHue(r.live)).sort((a, b) => RANK.indexOf(a) - RANK.indexOf(b))[0] ?? 'muted';
 </script>
 
 <script lang="ts">
@@ -35,7 +35,7 @@
 	// panes, the content arriving a beat behind it. Leaving (or Esc) pours it
 	// back along the same path. The shadow sits on a parent, so it follows the
 	// clip-path.
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { t } from '$lib/i18n/index.svelte';
 	import MrStatus from './MrStatus.svelte';
 
@@ -95,18 +95,19 @@
 			>{primary.label} {I.external}</a
 		>
 		{#if rest.length}
-			<span class="more"><span class="ldot sm flat hue-{worstHue(rest)}"></span>+{rest.length}</span
+			<span class="more"
+				><span class="live-dot sm flat hue-{worstHue(rest)}"></span>+{rest.length}</span
 			>
 		{/if}
 
 		{#if phase !== 'shut'}
 			<div class="shadow">
-				<div class="island" class:closing={phase === 'closing'} style:--pw="{pw}px">
+				<div class="mr-panel" class:closing={phase === 'closing'} style:--pw="{pw}px">
 					<div class="content">
 						<div class="head">
 							<b>{t('run.mr.requests')}</b>
 							<span class="n">{rows.length}</span>
-							{#if conflicts}<span class="hue-ros conflict"
+							{#if conflicts}<span class="hue-danger conflict"
 									>{t('run.mr.conflicts', { count: conflicts })}</span
 								>{/if}
 							{#if target}<span class="target">{target}</span>{/if}
@@ -115,14 +116,14 @@
 							{#each rows as r, i (r.key)}
 								{@const hue = mrHue(r.live)}
 								<div class="row" class:first={i === 0}>
-									<span class="ldot flat hue-{hue}" class:hollow={!r.url}></span>
+									<span class="live-dot flat hue-{hue}" class:hollow={!r.url}></span>
 									<span class="num">{r.label}</span>
 									<span class="what">
-										<span class="ell">{r.title}</span>
+										<span class="truncate">{r.title}</span>
 										{#if r.live}
 											<span class="st"><MrStatus mr={r.live} repo={multiRepo} /></span>
 										{:else if !r.url}
-											<span class="st fnt">{t('run.mr.notYet')}</span>
+											<span class="st faint">{t('run.mr.notYet')}</span>
 										{/if}
 									</span>
 									{#if r.url}
@@ -167,19 +168,19 @@
 		gap: 8px;
 		padding: 0 6px 0 12px;
 		border-radius: var(--r-float);
-		background: var(--inBg);
-		border: 1px solid var(--ln2);
+		background: var(--inset-bg);
+		border: 1px solid var(--line-strong);
 		white-space: nowrap;
 	}
 	.pill-mr.none {
 		border-style: dashed;
 		padding: 0 14px;
-		color: var(--fnt);
+		color: var(--text-faint);
 		font-size: var(--fs-help);
 	}
 	.lb {
 		font-size: var(--fs-help);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.chip {
 		display: inline-flex;
@@ -188,8 +189,8 @@
 		padding: 3px 10px;
 		border-radius: var(--r-pill);
 		background: var(--brand);
-		color: var(--onBrand);
-		font-family: var(--mono);
+		color: var(--on-brand);
+		font-family: var(--font-code);
 		font-size: var(--fs-help);
 		font-weight: 700;
 		max-width: 120px;
@@ -206,10 +207,10 @@
 		gap: 5px;
 		padding: 3px 9px;
 		border-radius: var(--r-pill);
-		border: 1px solid var(--ln2);
+		border: 1px solid var(--line-strong);
 		font-size: var(--fs-help);
 		font-weight: 600;
-		color: var(--brandLt);
+		color: var(--brand-light);
 	}
 	.shadow {
 		position: absolute;
@@ -217,19 +218,19 @@
 		right: -6px;
 		z-index: var(--z-pop);
 		width: min(420px, calc(100vw - 32px));
-		filter: var(--islDrop);
+		filter: var(--island-drop);
 	}
-	.island {
+	.mr-panel {
 		border-radius: var(--r-island);
-		background: var(--solid);
-		border: 1px solid var(--islLn);
-		box-shadow: var(--spec);
+		background: var(--island-bg);
+		border: 1px solid var(--island-line);
+		box-shadow: var(--specular);
 		clip-path: inset(0 0 0 0 round var(--r-island));
 		will-change: clip-path;
-		animation: es-morph-in 0.56s var(--ease-island) both;
+		animation: es-morph-in var(--dur-morph-in) var(--ease-island) both;
 	}
-	.island.closing {
-		animation: es-morph-out 0.34s var(--ease-island) forwards;
+	.mr-panel.closing {
+		animation: es-morph-out var(--dur-morph-out) var(--ease-island) forwards;
 	}
 	.content {
 		padding: 12px 14px 14px;
@@ -237,28 +238,28 @@
 		flex-direction: column;
 		gap: 10px;
 		will-change: opacity, transform, filter;
-		animation: es-content-in 0.56s var(--ease-island) both;
+		animation: es-content-in var(--dur-morph-in) var(--ease-island) both;
 	}
 	.closing .content {
-		animation: es-content-out 0.3s ease-out forwards;
+		animation: es-content-out var(--dur-settle-out) ease-out forwards;
 	}
 	.head {
 		display: flex;
 		align-items: center;
 		gap: 8px;
 		font-size: var(--fs-label);
-		color: var(--mut);
+		color: var(--text-muted);
 		white-space: nowrap;
 	}
 	.head b {
-		color: var(--tx);
+		color: var(--text);
 		font-size: var(--fs-read);
 	}
 	.n {
 		padding: 0 6px;
 		border-radius: var(--r-tag);
-		background: var(--sel);
-		color: var(--brandLt);
+		background: var(--selected-bg);
+		color: var(--brand-light);
 		font-weight: 700;
 		font-size: var(--fs-id);
 	}
@@ -286,14 +287,14 @@
 		border: 1px solid transparent;
 		font-size: var(--fs-label);
 		white-space: nowrap;
-		background: var(--p1);
+		background: var(--fill-1);
 	}
 	.row.first {
-		background: var(--p3);
-		border-color: var(--brandLn);
+		background: var(--fill-3);
+		border-color: var(--brand-line);
 	}
 	.num {
-		font-family: var(--mono);
+		font-family: var(--font-code);
 		font-weight: 700;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -306,20 +307,62 @@
 	}
 	.st {
 		font-size: var(--fs-meta);
-		color: var(--mut);
+		color: var(--text-muted);
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 	.go {
 		padding: 4px 9px;
-		color: var(--brandLt);
+		color: var(--brand-light);
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.island,
-		.island.closing,
+		.mr-panel,
+		.mr-panel.closing,
 		.content,
 		.closing .content {
 			animation: none;
+		}
+	}
+	/* The MR island: the outline grows out of the pill along its contour, the
+	 * content arrives a beat behind it, and closing pours back the same way. */
+	@keyframes es-morph-in {
+		from {
+			clip-path: inset(6px 6px calc(100% - 46px) calc(100% - var(--pw) - 6px) round var(--r-float));
+		}
+		to {
+			clip-path: inset(0 0 0 0 round var(--r-island));
+		}
+	}
+	@keyframes es-morph-out {
+		from {
+			clip-path: inset(0 0 0 0 round var(--r-island));
+		}
+		to {
+			clip-path: inset(6px 6px calc(100% - 46px) calc(100% - var(--pw) - 6px) round var(--r-float));
+		}
+	}
+	@keyframes es-content-in {
+		0%,
+		25% {
+			opacity: 0;
+			transform: translateY(-6px) scale(0.98);
+			filter: blur(6px);
+		}
+		100% {
+			opacity: 1;
+			transform: none;
+			filter: blur(0);
+		}
+	}
+	@keyframes es-content-out {
+		0% {
+			opacity: 1;
+			filter: blur(0);
+		}
+		55%,
+		100% {
+			opacity: 0;
+			filter: blur(5px);
 		}
 	}
 </style>

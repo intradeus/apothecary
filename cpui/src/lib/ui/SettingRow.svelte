@@ -23,7 +23,7 @@
 	<div class="txt">
 		<label for={forId}>{label}</label>
 		{#if help}<div class="help">{help}</div>{/if}
-		{#if note}<div class="help fnt">{@render note()}</div>{/if}
+		{#if note}<div class="help faint">{@render note()}</div>{/if}
 	</div>
 	<div class="ctl">{@render children()}</div>
 </div>
@@ -35,7 +35,7 @@
 		gap: 10px 24px;
 		align-items: center;
 		padding: 14px 16px;
-		border-top: 1px solid var(--cLn);
+		border-top: 1px solid var(--glass-line);
 	}
 	.sr:first-child {
 		border-top: 0;

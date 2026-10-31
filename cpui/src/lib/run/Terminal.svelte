@@ -5,8 +5,8 @@
 	import { api } from '$lib/api';
 	import { t } from '$lib/i18n/index.svelte';
 	import '@xterm/xterm/css/xterm.css';
-	import { token } from '$lib/ui/tokens';
-	import { I } from '$lib/ui/icons';
+	import { token } from '$lib/design/tokens';
+	import { I } from '$lib/design/icons';
 
 	let { runId, repo = '', dir = '' }: { runId: string; repo?: string; dir?: string } = $props();
 
@@ -30,7 +30,7 @@
 			if (disposed) return;
 			const term = new Terminal({
 				cursorBlink: true,
-				fontFamily: token('--mono'),
+				fontFamily: token('--font-code'),
 				fontSize: parseFloat(token('--fs-label')) || 12,
 				lineHeight: 1.25,
 				allowTransparency: true,
@@ -38,19 +38,19 @@
 				// in both themes, so it is read once per terminal.
 				theme: {
 					background: 'transparent',
-					foreground: token('--termTx'),
-					cursor: token('--termCursor'),
-					cursorAccent: token('--termCursorAccent'),
-					selectionBackground: token('--termSel'),
-					black: token('--termBlack'),
-					red: token('--termRed'),
-					green: token('--termGrn'),
-					yellow: token('--termYellow'),
-					blue: token('--termBlue'),
-					magenta: token('--termVio'),
-					cyan: token('--termCyan'),
-					white: token('--termTx'),
-					brightBlack: token('--termFnt')
+					foreground: token('--term-text'),
+					cursor: token('--term-cursor'),
+					cursorAccent: token('--term-cursor-accent'),
+					selectionBackground: token('--term-selection'),
+					black: token('--term-black'),
+					red: token('--term-red'),
+					green: token('--term-green'),
+					yellow: token('--term-yellow'),
+					blue: token('--term-blue'),
+					magenta: token('--term-magenta'),
+					cyan: token('--term-cyan'),
+					white: token('--term-text'),
+					brightBlack: token('--term-faint')
 				}
 			});
 			const fit = new FitAddon();
@@ -70,10 +70,12 @@
 					term.focus();
 				};
 				ws.onmessage = (m) => {
+					if (disposed) return;
 					if (m.data instanceof ArrayBuffer) term.write(new Uint8Array(m.data));
 					else term.write(String(m.data));
 				};
 				ws.onclose = () => {
+					if (disposed) return; // this pair is gone, and maybe replaced
 					status = 'closed';
 					term.write(`\r\n\x1b[90m[${t('run.terminal.sessionClosed')}]\x1b[0m\r\n`);
 				};
@@ -106,7 +108,7 @@
 
 <div class="panel">
 	<div class="vbar bar">
-		<span class="ldot sm {status}" class:pulse={status === 'connecting'}></span>
+		<span class="live-dot sm {status}" class:pulse={status === 'connecting'}></span>
 		<span
 			>{status === 'open'
 				? t('run.terminal.connected')
@@ -130,35 +132,35 @@
 		flex: 1;
 		margin: 8px;
 		border-radius: var(--r-card);
-		background: var(--termBg);
-		color: var(--termTx);
+		background: var(--term-bg);
+		color: var(--term-text);
 		display: flex;
 		flex-direction: column;
 		min-height: 0;
-		border: 1px solid var(--termLn);
+		border: 1px solid var(--term-line);
 		overflow: hidden;
 	}
 	.bar {
 		font-size: var(--fs-help);
-		color: var(--termMut);
+		color: var(--term-muted);
 		flex-wrap: nowrap;
 	}
 	.bar > .hint {
-		color: var(--termFnt);
+		color: var(--term-faint);
 	}
 	.mono {
 		font-size: var(--fs-meta);
 	}
 	/* The terminal stays dark in every theme, so its dot uses the fixed
 	 * dark palette rather than the themed hues. */
-	.ldot.open {
-		color: var(--termGrn);
+	.live-dot.open {
+		color: var(--term-green);
 	}
-	.ldot.connecting {
-		color: var(--termOrange);
+	.live-dot.connecting {
+		color: var(--term-orange);
 	}
-	.ldot.closed {
-		color: var(--termRed);
+	.live-dot.closed {
+		color: var(--term-red);
 		box-shadow: none;
 	}
 	.term {

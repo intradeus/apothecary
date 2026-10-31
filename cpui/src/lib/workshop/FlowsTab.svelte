@@ -9,10 +9,10 @@
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
 	import type { Flow, Project } from '$lib/domain';
-	import { fleet } from '$lib/fleet.svelte';
-	import { to } from '$lib/urls';
-	import { ago, fmtAbs } from '$lib/format';
-	import CopyFlow from '$lib/CopyFlow.svelte';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { to } from '$lib/core/urls';
+	import { ago, fmtAbs } from '$lib/core/format';
+	import CopyFlow from '$lib/flow/CopyFlow.svelte';
 	import FlowBindingSheet from '$lib/workshop/FlowBindingSheet.svelte';
 	import NameFlowDialog from '$lib/flow/NameFlowDialog.svelte';
 	import { flowSkeleton } from '$lib/flow/skeleton';
@@ -22,7 +22,7 @@
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	let {
 		project,
@@ -91,22 +91,22 @@
 							<span class="nm">
 								<a class="mono stretch" href={to.flow(project.id, f.name)}>{f.name}</a>
 								{#if f.name === project.defaultFlow}<span
-										class="pill sm t-brand"
+										class="pill sm tint-brand"
 										title={t('workshop.flows.defaultTitle')}>{t('workshop.flows.default')}</span
 									>{/if}
 								{#if f.shadowsBuiltin}<span
-										class="pill sm t-mut"
+										class="pill sm tint-muted"
 										title={t('workshop.flows.fromTemplateTitle')}
 										>{t('workshop.flows.fromTemplate')}</span
 									>{/if}
 								{#if configured.has(f.name)}<span
-										class="pill sm t-brand"
+										class="pill sm tint-brand"
 										title={t('workshop.flows.configuredTitle')}
 										>{t('workshop.flows.configured')}</span
 									>{/if}
 							</span>
 							<span><span class="tag">@{f.hash.slice(0, 8)}</span></span>
-							<span class="num mono fnt" title={fmtAbs(f.updatedAt)}>{ago(f.updatedAt)}</span>
+							<span class="num mono faint" title={fmtAbs(f.updatedAt)}>{ago(f.updatedAt)}</span>
 							<span class="acts over-stretch">
 								<a class="btn btn-sm" href={to.flow(project.id, f.name)}
 									>{t('workshop.flows.edit')}</a
@@ -151,18 +151,18 @@
 						<div class="r fr">
 							<span class="nm">
 								<a class="mono stretch" href={to.flow(project.id, tpl.name)}>{tpl.name}</a>
-								<span class="pill sm t-mut">{t('workshop.flows.builtin')}</span>
-								{#if tpl.name === project.defaultFlow}<span class="pill sm t-brand"
+								<span class="pill sm tint-muted">{t('workshop.flows.builtin')}</span>
+								{#if tpl.name === project.defaultFlow}<span class="pill sm tint-brand"
 										>{t('workshop.flows.default')}</span
 									>{/if}
 								{#if configured.has(tpl.name)}<span
-										class="pill sm t-brand"
+										class="pill sm tint-brand"
 										title={t('workshop.flows.configuredTitle')}
 										>{t('workshop.flows.configured')}</span
 									>{/if}
 							</span>
 							<span><span class="tag">@{tpl.hash.slice(0, 8)}</span></span>
-							<span class="num fnt small">{t('workshop.flows.fromBinary')}</span>
+							<span class="num faint small">{t('workshop.flows.fromBinary')}</span>
 							<span class="acts over-stretch">
 								<a class="btn btn-sm" href={to.flow(project.id, tpl.name)}
 									>{t('workshop.flows.view')}</a
@@ -206,12 +206,13 @@
 		flow={configuring}
 		onclose={() => (configuring = null)}
 		onsaved={(b) => {
-			configuring = null;
+			// `name` reads configuring: the toast goes before the sheet does.
 			toast(
 				b
 					? t('workshop.flows.binding.saved', { name })
 					: t('workshop.flows.binding.resetDone', { name })
 			);
+			configuring = null;
 			void loadBindings();
 		}}
 	/>
@@ -248,7 +249,7 @@
 	.nm .mono {
 		font-size: var(--fs-ui);
 		font-weight: 600;
-		color: var(--tx);
+		color: var(--text);
 	}
 	.nm .mono:hover {
 		text-decoration: none;

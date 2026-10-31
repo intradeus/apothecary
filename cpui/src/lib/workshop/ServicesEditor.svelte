@@ -156,7 +156,7 @@
 	import { untrack } from 'svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	let {
 		rows = $bindable([]),
@@ -238,22 +238,22 @@
 						: t('form.services.unfold', { name: r.name || t('form.services.unnamed') })}
 					onclick={() => toggle(r)}>{o ? '▾' : I.caret}</button
 				>
-				<span class="nm mono" class:fnt={!r.name.trim()}
+				<span class="nm mono" class:faint={!r.name.trim()}
 					>{r.name.trim() || t('form.services.unnamed')}</span
 				>
 				{#if !o}
-					<span class="sum ell">
+					<span class="sum truncate">
 						<span class="mono">{r.start.split('\n')[0]}</span>
-						<span class="fnt">· {probeSummary(r)}</span>
+						<span class="faint">· {probeSummary(r)}</span>
 						{#each r.ports.filter((p) => p.port !== '') as p, j (j)}
-							<span class="pill sm mono t-mut">:{p.port}</span>
+							<span class="pill sm mono tint-muted">:{p.port}</span>
 						{/each}
 					</span>
 				{:else if r.description.trim()}
-					<span class="sum ell fnt">{r.description}</span>
+					<span class="sum truncate faint">{r.description}</span>
 				{/if}
 				<span class="spacer"></span>
-				{#if bad}<span class="pill sm t-ros">{t('form.services.toFix')}</span>{/if}
+				{#if bad}<span class="pill sm tint-danger">{t('form.services.toFix')}</span>{/if}
 				<button
 					type="button"
 					class="btn-icon"
@@ -293,9 +293,9 @@
 								spellcheck="false"
 							/>
 							{#if has(r, 'name')}
-								<div class="err">{t('form.services.badName')}</div>
+								<div class="error">{t('form.services.badName')}</div>
 							{:else if has(r, 'dup')}
-								<div class="err">{t('form.services.dupName', { name: r.name.trim() })}</div>
+								<div class="error">{t('form.services.dupName', { name: r.name.trim() })}</div>
 							{:else}
 								<div class="help">
 									{@html th('form.services.nameHelp', { name: r.name.trim() || 'default' })}
@@ -323,12 +323,12 @@
 								bind:value={r.start}
 								placeholder="npm run dev"
 								spellcheck="false"></textarea>
-							{#if has(r, 'start')}<div class="err">{t('form.services.startRequired')}</div>{/if}
+							{#if has(r, 'start')}<div class="error">{t('form.services.startRequired')}</div>{/if}
 						</div>
 						<div class="field">
 							<label for="svc-{r.key}-stop"
 								>{t('form.services.stop')}
-								<span class="fnt">{t('form.services.optional')}</span></label
+								<span class="faint">{t('form.services.optional')}</span></label
 							>
 							<textarea
 								id="svc-{r.key}-stop"
@@ -343,7 +343,7 @@
 
 					<div class="grp">
 						<div class="row gh">
-							<span class="lbl">{t('form.services.health')}</span>
+							<span class="caption">{t('form.services.health')}</span>
 							<Segmented
 								glass={false}
 								size="sm"
@@ -372,7 +372,7 @@
 											placeholder="http://localhost:3000/health"
 											spellcheck="false"
 										/>
-										<div class={has(r, 'http') ? 'err' : 'help'}>
+										<div class={has(r, 'http') ? 'error' : 'help'}>
 											{t(has(r, 'http') ? 'form.services.badHttp' : 'form.services.httpHelp')}
 										</div>
 									{:else if r.probe === 'tcp'}
@@ -387,7 +387,7 @@
 											bind:value={r.tcp}
 											placeholder="5432"
 										/>
-										<div class={has(r, 'tcp') ? 'err' : 'help'}>
+										<div class={has(r, 'tcp') ? 'error' : 'help'}>
 											{t(has(r, 'tcp') ? 'form.services.badPort' : 'form.services.tcpHelp')}
 										</div>
 									{:else}
@@ -400,7 +400,7 @@
 											bind:value={r.command}
 											placeholder="pg_isready -h localhost"
 											spellcheck="false"></textarea>
-										<div class={has(r, 'command') ? 'err' : 'help'}>
+										<div class={has(r, 'command') ? 'error' : 'help'}>
 											{t(
 												has(r, 'command')
 													? 'form.services.commandRequired'
@@ -419,7 +419,7 @@
 										placeholder="5m"
 										spellcheck="false"
 									/>
-									<div class={has(r, 'timeout') ? 'err' : 'help'}>
+									<div class={has(r, 'timeout') ? 'error' : 'help'}>
 										{t(
 											has(r, 'timeout') ? 'form.services.badDuration' : 'form.services.timeoutHelp'
 										)}
@@ -435,7 +435,7 @@
 										placeholder="10s"
 										spellcheck="false"
 									/>
-									<div class={has(r, 'interval') ? 'err' : 'help'}>
+									<div class={has(r, 'interval') ? 'error' : 'help'}>
 										{t(
 											has(r, 'interval')
 												? 'form.services.badDuration'
@@ -449,7 +449,7 @@
 
 					<div class="grp">
 						<div class="row gh">
-							<span class="lbl">{t('form.services.ports')}</span>
+							<span class="caption">{t('form.services.ports')}</span>
 							<span class="count">{r.ports.length}</span>
 							<span class="spacer"></span>
 							<button
@@ -489,16 +489,16 @@
 										<button
 											type="button"
 											class="btn-icon"
-											aria-label={t('form.services.removePort', { port: p.port || '?' })}
+											aria-label={t('form.services.removePort', { port: String(p.port || '?') })}
 											onclick={() => (r.ports = r.ports.filter((_, k) => k !== j))}
 											>{I.close}</button
 										>
 									</div>
-									{#if has(r, `port${j}`)}<div class="err">{t('form.services.badPort')}</div>{/if}
-									{#if has(r, `portdup${j}`)}<div class="err">
-											{t('form.services.dupPort', { port: p.port })}
+									{#if has(r, `port${j}`)}<div class="error">{t('form.services.badPort')}</div>{/if}
+									{#if has(r, `portdup${j}`)}<div class="error">
+											{t('form.services.dupPort', { port: String(p.port) })}
 										</div>{/if}
-									{#if has(r, `path${j}`)}<div class="err">{t('form.services.badPath')}</div>{/if}
+									{#if has(r, `path${j}`)}<div class="error">{t('form.services.badPath')}</div>{/if}
 								{/each}
 							</div>
 						{/if}
@@ -528,7 +528,7 @@
 		overflow: hidden;
 	}
 	.svc.invalid {
-		border-color: var(--rosLn);
+		border-color: var(--danger-line);
 	}
 	.sh {
 		display: flex;
@@ -551,7 +551,7 @@
 		gap: 6px;
 		min-width: 0;
 		font-size: var(--fs-label);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.sum .mono {
 		font-size: var(--fs-meta);
@@ -561,7 +561,7 @@
 		flex-direction: column;
 		gap: 12px;
 		padding: 10px 12px 14px;
-		border-top: 1px solid var(--ln);
+		border-top: 1px solid var(--line);
 	}
 	.body textarea {
 		min-height: 54px;

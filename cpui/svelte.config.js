@@ -7,6 +7,7 @@ export default {
 	kit: {
 		// SPA bundle served by apothecaryd (cpui_dir); index.html fallback covers
 		// client-side routes like /runs/<id>.
-		adapter: adapter({ fallback: 'index.html' })
+		adapter: adapter({ fallback: 'index.html' }),
+		alias: { $test: 'src/test' }
 	}
 };

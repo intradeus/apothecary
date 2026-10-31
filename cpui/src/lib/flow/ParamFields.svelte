@@ -93,7 +93,7 @@
 	<div class="field pf">
 		<label for={id(p)}>
 			<span class="mono">{p.name}</span>
-			<span class="fnt small">{appliesLabel(p)}</span>
+			<span class="faint small">{appliesLabel(p)}</span>
 		</label>
 		{#if p.description}<div class="help">{p.description}</div>{/if}
 		{#if kind === 'list' && p.enum?.length}

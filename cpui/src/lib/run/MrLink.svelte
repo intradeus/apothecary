@@ -3,7 +3,7 @@
 	// merge request with `detail`; a dash before any is opened. Older runs
 	// carry only mrUrl (no list), which still links.
 	import type { Run } from '$lib/domain';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let { run, detail = false }: { run: Run; detail?: boolean } = $props();
@@ -30,7 +30,7 @@
 		{I.external}</a
 	>
 {:else}
-	<span class="fnt" title={t('run.mr.none')}>—</span>
+	<span class="faint" title={t('run.mr.none')}>—</span>
 {/if}
 
 <style>
@@ -46,7 +46,7 @@
 		flex-wrap: wrap;
 	}
 	.mrs a {
-		font-family: var(--mono);
+		font-family: var(--font-code);
 		font-size: var(--fs-help);
 	}
 </style>

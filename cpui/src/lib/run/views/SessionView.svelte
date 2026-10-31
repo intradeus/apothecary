@@ -9,8 +9,8 @@
 	// materialises; sending snaps straight back to the bottom.
 	import { t } from '$lib/i18n/index.svelte';
 	import { tick } from 'svelte';
-	import { buildTranscript } from '$lib/transcript';
-	import { I } from '$lib/ui/icons';
+	import { buildTranscript } from '$lib/run/transcriptItems';
+	import { I } from '$lib/design/icons';
 	import { materialize } from '$lib/ui/motion';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Transcript, { type Sending } from '../Transcript.svelte';
@@ -95,10 +95,11 @@
 		if (visible && stick) tick().then(() => toBottom(false));
 	});
 	// A sent bubble stays until the run echoes the message back.
+	const echoes = (text: string) =>
+		items.filter((it) => it.kind === 'user' && it.text === text).length;
 	$effect(() => {
-		const echoed = new Set(items.flatMap((it) => (it.kind === 'user' ? [it.text] : [])));
-		if (sending.some((s) => echoed.has(s.text)))
-			sending = sending.filter((s) => !echoed.has(s.text));
+		const waiting = sending.filter((s) => echoes(s.text) <= (s.echoes ?? 0));
+		if (waiting.length < sending.length) sending = waiting;
 	});
 </script>
 
@@ -110,14 +111,14 @@
 					{#if rs.terminal}
 						{t('runview.session.noconv_over')}
 					{:else}
-						<span class="ldot sm pulse hue-emb"></span>{t('runview.session.noconv_pending')}
+						<span class="live-dot sm pulse hue-running"></span>{t('runview.session.noconv_pending')}
 					{/if}
 				</div>
 			{/if}
 			<Transcript {items} {sending} over={rs.terminal} {onlog} onanswer={() => follow()} />
 			{#if showNudge}
 				<div class="nudge" transition:materialize={{ origin: 'center bottom', y: 6 }}>
-					<span class="mut">{t('runview.session.betweenPhases')}</span>
+					<span class="muted">{t('runview.session.betweenPhases')}</span>
 					<button class="linklike brand" onclick={onphases}
 						>{t('runview.session.openPhases')} {I.forward}</button
 					>
@@ -154,7 +155,7 @@
 			<Composer
 				runId={rs.runId}
 				onsent={(text) => {
-					sending = [...sending, { text }];
+					sending = [...sending, { text, echoes: echoes(text) }];
 					follow(false);
 				}}
 				onfailed={(text) => (sending = sending.filter((s) => s.text !== text))}
@@ -186,14 +187,14 @@
 		gap: 10px;
 		margin: 10px 0 4px;
 		padding: 6px 8px 6px 12px;
-		border: 1px solid var(--ln);
+		border: 1px solid var(--line);
 		border-radius: var(--r-pill);
-		background: var(--cBg);
+		background: var(--glass-bg);
 		font-size: var(--fs-ui);
 		width: fit-content;
 		max-width: 100%;
 	}
-	.nudge .mut {
+	.nudge .muted {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -223,12 +224,12 @@
 		gap: 12px;
 	}
 	.noconv {
-		color: var(--mut);
+		color: var(--text-muted);
 		font-size: var(--fs-ui);
 		padding: 20px 4px;
 		max-width: var(--measure-short);
 	}
-	.noconv .ldot {
+	.noconv .live-dot {
 		margin-right: 8px;
 		vertical-align: 1px;
 	}
@@ -248,9 +249,9 @@
 	.follow {
 		pointer-events: auto;
 		box-shadow:
-			inset 0 0 0 1px var(--selLn),
-			var(--selSh),
-			var(--floatSh);
+			inset 0 0 0 1px var(--selected-line),
+			var(--selected-shadow),
+			var(--shadow-float);
 	}
 	.closed {
 		flex: none;

@@ -4,9 +4,10 @@
 	// the fallback; a run may still override any value. A template is
 	// configurable without being copied — copying is only for changing its
 	// stages.
+	import { errorMessage } from '$lib/core/errors';
 	import { api } from '$lib/api';
 	import type { Flow, FlowBinding, Integration, Model, ParamDecl, Project } from '$lib/domain';
-	import { KNOWN_PARAMS } from '$lib/flowdoc';
+	import { KNOWN_PARAMS } from '$lib/domain/flowdoc';
 	import ParamFields from '$lib/flow/ParamFields.svelte';
 	import { modelHarnessKinds } from '$lib/flow/paramValues';
 	import Modal from '$lib/ui/Modal.svelte';
@@ -70,7 +71,7 @@
 			values = next;
 			stale = gone.sort();
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			loading = false;
 		}
@@ -100,7 +101,7 @@
 			const b = await api.flows.bind(project.id, flow.name, values);
 			onsaved(Object.keys(b.params).length ? b : null);
 		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
+			error = errorMessage(err);
 		} finally {
 			busy = false;
 		}
@@ -131,7 +132,7 @@
 			<Skeleton lines={5} />
 		{:else}
 			{#if stale.length}
-				<div class="help hue-gold">
+				<div class="help hue-warning">
 					{t('workshop.flows.binding.stale', { names: stale.join(', ') })}
 				</div>
 			{/if}
@@ -157,10 +158,10 @@
 					onchange={(n, v) => (values[n] = v)}
 				/>
 			{:else}
-				<p class="fnt">{t('workshop.flows.binding.none')}</p>
+				<p class="faint">{t('workshop.flows.binding.none')}</p>
 			{/if}
 		{/if}
-		{#if error}<div class="err">{error}</div>{/if}
+		{#if error}<div class="error">{error}</div>{/if}
 	</form>
 	{#snippet footer()}
 		<button type="button" class="btn-ghost" onclick={reset} disabled={busy || loading}

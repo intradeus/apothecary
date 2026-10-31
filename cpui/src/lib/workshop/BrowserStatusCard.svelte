@@ -2,12 +2,13 @@
 	// The workshop's browser as it stands: whether its container runs, on
 	// which image, and how many agent sessions use it. Read again after each
 	// save (the toggle is a setup field), and on demand.
+	import { errorMessage } from '$lib/core/errors';
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
 	import type { BrowserStatus } from '$lib/domain';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	let {
 		projectId,
@@ -31,7 +32,7 @@
 		try {
 			info = await api.projects.browser(projectId);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			loading = false;
 		}
@@ -42,7 +43,7 @@
 		void load();
 	});
 
-	const tone = $derived(info?.state === 'running' ? 'grn' : 'mut');
+	const tone = $derived(info?.state === 'running' ? 'success' : 'muted');
 	// The container runs an older image than this build would: recreated
 	// once it is next idle.
 	const outdated = $derived(!!info?.image && !!info.current && info.image !== info.current);
@@ -55,8 +56,8 @@
 {:else}
 	<div class="bs card-in">
 		<div class="row hd">
-			<span class="lbl">{t('form.browser.container')}</span>
-			<span class="pill sm t-{tone}"
+			<span class="caption">{t('form.browser.container')}</span>
+			<span class="pill sm tint-{tone}"
 				><span class="dot"></span>{info.state === 'running'
 					? t('form.browser.state.running')
 					: info.state === 'stopped'
@@ -64,7 +65,7 @@
 						: t('form.browser.state.absent')}</span
 			>
 			{#if info.state === 'running'}
-				<span class="fnt small">{t('form.browser.sessions', { count: info.sessions })}</span>
+				<span class="faint small">{t('form.browser.sessions', { count: info.sessions })}</span>
 			{/if}
 			<span class="spacer"></span>
 			<button
@@ -80,7 +81,7 @@
 			<div class="note">{t('form.browser.unavailable')}</div>
 		{:else}
 			{#if enabled !== info.enabled}
-				<div class="fnt small">
+				<div class="faint small">
 					{enabled ? t('form.browser.pendingOn') : t('form.browser.pendingOff')}
 				</div>
 			{/if}
@@ -91,7 +92,7 @@
 						<span class="mono">{info.image || info.current}</span>
 						{#if outdated}
 							<span
-								class="pill sm t-gold"
+								class="pill sm tint-warning"
 								title={t('form.browser.outdatedTitle', { image: info.current })}
 								>{t('form.browser.outdated')}</span
 							>
@@ -105,7 +106,7 @@
 			</dl>
 			<div class="help">{t('form.browser.lifecycle')}</div>
 		{/if}
-		{#if info.error}<div class="err mono">{info.error}</div>{/if}
+		{#if info.error}<div class="error mono">{info.error}</div>{/if}
 	</div>
 {/if}
 
@@ -125,7 +126,7 @@
 		font-size: var(--fs-meta);
 		overflow-wrap: anywhere;
 	}
-	.err {
+	.error {
 		white-space: pre-wrap;
 	}
 </style>

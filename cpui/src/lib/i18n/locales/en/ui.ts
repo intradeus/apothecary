@@ -13,6 +13,7 @@ export default {
 	'ui.save.unsaved': 'Unsaved changes',
 	'ui.save.saved': 'Saved',
 	'ui.save.discard': 'Discard',
+	'ui.code.truncated': 'truncated · {detail}',
 	'ui.stepper.decrease': 'decrease',
 	'ui.stepper.increase': 'increase',
 	'ui.search.placeholder': 'Search…',

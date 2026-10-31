@@ -7,7 +7,7 @@
 	import { flip } from 'svelte/animate';
 	import { toasts, type Toast } from './toast.svelte';
 	import { dragDismiss, ms, slide, spring } from './motion';
-	import { I } from './icons';
+	import { I } from '$lib/design/icons';
 
 	const GLYPH = { ok: I.ok, info: I.info, warn: I.warn, bad: I.bad } as const;
 
@@ -38,13 +38,13 @@
 <div class="toaster" aria-live="polite">
 	{#each toasts.list as tst (tst.id)}
 		<div
-			class="toast isl h-{tst.tone === 'ok'
-				? 'grn'
+			class="toast island tone-{tst.tone === 'ok'
+				? 'success'
 				: tst.tone === 'bad'
-					? 'ros'
+					? 'danger'
 					: tst.tone === 'warn'
-						? 'gold'
-						: 'sky'}"
+						? 'warning'
+						: 'attention'}"
 			role="status"
 			animate:flip={{ duration: ms('--dur-spring', 450), easing: spring }}
 			transition:slide={{ from: 'bottom', distance: 40 }}
@@ -99,7 +99,7 @@
 		user-select: none;
 	}
 	.g {
-		color: var(--h);
+		color: var(--tone);
 		font-weight: 700;
 	}
 	@media (max-width: 760px) {

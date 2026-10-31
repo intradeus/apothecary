@@ -1,19 +1,20 @@
 <!-- Ticket detail (DESIGN 7.6): the goal and its attachments on the left,
      "Start a run" on the right, the ticket's runs below (shared 4s poll). -->
 <script lang="ts">
+	import { errorMessage } from '$lib/core/errors';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { to } from '$lib/urls';
+	import { to } from '$lib/core/urls';
 	import { api } from '$lib/api';
-	import { fleet } from '$lib/fleet.svelte';
-	import { ago, fmtAbs, shortId } from '$lib/format';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { ago, fmtAbs, shortId } from '$lib/core/format';
 	import type { Attachment, Branch, SkillsetRef, Ticket } from '$lib/domain';
 	import { t, th } from '$lib/i18n/index.svelte';
-	import FlowSelect from '$lib/FlowSelect.svelte';
-	import TicketForm from '$lib/TicketForm.svelte';
+	import FlowSelect from '$lib/flow/FlowSelect.svelte';
+	import TicketForm from '$lib/tickets/TicketForm.svelte';
 	import ChangeTypeTag from '$lib/tickets/ChangeTypeTag.svelte';
-	import FileChips from '$lib/FileChips.svelte';
-	import AttachFiles from '$lib/AttachFiles.svelte';
+	import FileChips from '$lib/artifacts/FileChips.svelte';
+	import AttachFiles from '$lib/artifacts/AttachFiles.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import SectionHeader from '$lib/ui/SectionHeader.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
@@ -25,11 +26,11 @@
 	import Updated from '$lib/ui/Updated.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import TransportIcon from '$lib/ui/TransportIcon.svelte';
 	import RunTable from '$lib/run/RunTable.svelte';
 	import StartRunOptions from '$lib/run/StartRunOptions.svelte';
-	import WorkshopName from '$lib/workshop/WorkshopName.svelte';
+	import WorkshopName from '$lib/app/WorkshopName.svelte';
 
 	const ticketId = $derived(page.params.ticketId ?? '');
 
@@ -80,7 +81,7 @@
 			const def = branches.find((b) => b.isDefault) ?? branches[0];
 			if (def && !sourceBranch) sourceBranch = def.name;
 		} catch (e) {
-			branchesErr = e instanceof Error ? e.message : String(e);
+			branchesErr = errorMessage(e);
 		}
 	};
 
@@ -101,7 +102,7 @@
 				loadAttachments(tk.id);
 			})
 			.catch((e) => {
-				if (id === ticketId) loadErr = e instanceof Error ? e.message : String(e);
+				if (id === ticketId) loadErr = errorMessage(e);
 			})
 			.finally(() => {
 				if (id === ticketId) loaded = true;
@@ -130,7 +131,7 @@
 			});
 			await goto(to.run(runId));
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			starting = false;
 		}
@@ -154,7 +155,7 @@
 			toast(title ? t('page.ticket.deletedNamed', { title }) : t('page.ticket.deleted'));
 			await goto(to.tickets());
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			deleting = false;
 		}
@@ -215,7 +216,7 @@
 		{/snippet}
 	</PageHeader>
 
-	<div class="page c">
+	<div class="page glass">
 		{#if error}<ErrorCard cause={error} ondismiss={() => (error = '')} />{/if}
 
 		{#snippet runList()}
@@ -251,7 +252,7 @@
 		{:else}
 			<div class="grid">
 				<div class="work">
-					<section class="c pane">
+					<section class="glass pane">
 						<div class="pane-head">
 							<h2>{t('page.ticket.goal')}</h2>
 							<span class="help">{t('page.ticket.goalHelp')}</span>
@@ -266,7 +267,7 @@
 						{#if attachments.length}
 							<div class="pane-body att">
 								<div class="ah">
-									<span class="flabel"
+									<span class="field-label"
 										>{t('page.ticket.attachments', { count: attachments.length })}</span
 									>
 									<span class="help">{@html th('page.ticket.attachmentsHelp')}</span>
@@ -280,13 +281,13 @@
 					{@render runList()}
 				</div>
 
-				<aside class="start c pane">
+				<aside class="start glass pane">
 					<div class="pane-head"><h2>{t('page.ticket.startRun')}</h2></div>
 					<div class="pane-body sb">
 						<div class="field">
 							<label for="run-goal"
 								>{t('page.ticket.direction')}
-								<span class="mut">· {t('page.ticket.optional')}</span></label
+								<span class="muted">· {t('page.ticket.optional')}</span></label
 							>
 							<textarea
 								id="run-goal"
@@ -348,14 +349,14 @@
 		{/if}
 	</div>
 {:else if loaded}
-	<div class="page c">
+	<div class="page glass">
 		<EmptyState title={t('page.ticket.gone')} text={loadErr || t('page.ticket.goneText')}>
 			<a class="btn btn-primary" href={to.tickets()}>{t('page.ticket.allTickets')}</a>
 		</EmptyState>
 	</div>
 {:else}
 	<PageHeader {crumbs} title={t('page.ticket.fallbackTitle')} />
-	<div class="page c"><Skeleton pane lines={8} /></div>
+	<div class="page glass"><Skeleton pane lines={8} /></div>
 {/if}
 
 <style>
@@ -381,7 +382,7 @@
 		border-radius: var(--r-group);
 	}
 	.start .pane-head {
-		border-bottom-color: var(--cLn);
+		border-bottom-color: var(--glass-line);
 	}
 	.goal > :global(.md) {
 		max-width: var(--measure);
@@ -391,7 +392,7 @@
 		margin: 0;
 	}
 	.att {
-		border-top: 1px solid var(--cLn);
+		border-top: 1px solid var(--glass-line);
 		display: flex;
 		flex-direction: column;
 		gap: 8px;

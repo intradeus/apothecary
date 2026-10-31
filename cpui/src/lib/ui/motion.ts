@@ -12,7 +12,7 @@
 
 import type { Action } from 'svelte/action';
 import type { TransitionConfig } from 'svelte/transition';
-import { token } from './tokens';
+import { token } from '$lib/design/tokens';
 
 // ── springs ─────────────────────────────────────────────────────────────
 
@@ -227,6 +227,8 @@ export const dragDismiss: Action<HTMLElement, DragDismissParams> = (node, initia
 	};
 
 	const down = (e: PointerEvent) => {
+		// A touch drag ends with no click to swallow, so the mark can't outlive it.
+		delete node.dataset.dragged;
 		if (e.button !== 0) return;
 		start = { x: e.clientX, y: e.clientY, id: e.pointerId };
 		dragging = false;

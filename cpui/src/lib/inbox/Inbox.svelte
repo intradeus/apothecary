@@ -6,17 +6,18 @@
 	// Pending pings come from the shared fleet poll; the answered history is
 	// fetched here. Selection mirrors ?ping= (shallow, no navigation) so a
 	// selected ping is a deep link.
+	import { errorMessage } from '$lib/core/errors';
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { flip } from 'svelte/animate';
 	import { goto, replaceState } from '$app/navigation';
-	import { to } from '$lib/urls';
+	import { to } from '$lib/core/urls';
 	import { api } from '$lib/api';
-	import { fleet } from '$lib/fleet.svelte';
-	import { ago, age, fmtAbs, fmtCost, shortId } from '$lib/format';
-	import { answerMeta, answerSummary, pingHeadline } from '$lib/ping';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { ago, age, fmtAbs, fmtCost, shortId } from '$lib/core/format';
+	import { answerMeta, answerSummary, pingHeadline } from '$lib/core/ping';
 	import type { FormContent, Ping, Ticket } from '$lib/domain';
-	import PingCard from '$lib/PingCard.svelte';
+	import PingCard from '$lib/pings/PingCard.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import PingPill, { pingMeta } from '$lib/ui/PingPill.svelte';
@@ -27,10 +28,10 @@
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { I } from '$lib/ui/icons';
-	import type { Hue } from '$lib/ui/hues';
+	import { I } from '$lib/design/icons';
+	import type { Hue } from '$lib/design/hues';
 	import { indicator, ms, slide, spring } from '$lib/ui/motion';
-	import WorkshopName from '$lib/workshop/WorkshopName.svelte';
+	import WorkshopName from '$lib/app/WorkshopName.svelte';
 	import MrLink from '$lib/run/MrLink.svelte';
 	import { runFacts, stageStatus } from '$lib/run/runfacts.svelte';
 
@@ -57,7 +58,7 @@
 			answered = await api.pings.list('answered');
 			answeredErr = '';
 		} catch (e) {
-			answeredErr = e instanceof Error ? e.message : String(e);
+			answeredErr = errorMessage(e);
 		} finally {
 			answeredLoaded = true;
 		}
@@ -175,7 +176,7 @@
 				action: { label: t('inbox.openRunAction'), run: () => void goto(to.run(runId)) }
 			});
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			busy[p.id] = false;
 		}
@@ -204,7 +205,7 @@
 	{/snippet}
 </PageHeader>
 
-<div class="page c">
+<div class="page glass">
 	<div class="filters">
 		<Segmented
 			bind:value={tab}
@@ -226,7 +227,7 @@
 	{#if tab === 'pending'}
 		<div class="ib">
 			{#if !fleet.updatedAt && fleet.error}
-				<div class="full c pane">
+				<div class="full glass pane">
 					<ErrorCard
 						cause={t('inbox.loadErr')}
 						detail={fleet.error}
@@ -237,13 +238,13 @@
 				<Skeleton pane lines={5} />
 				<Skeleton pane lines={4} />
 			{:else if groups.length === 0}
-				<div class="full c pane">
+				<div class="full glass pane">
 					<EmptyState title={t('inbox.empty.title')} text={t('inbox.empty.text')}>
 						<a class="btn" href={to.runs()}>{t('inbox.openRuns')}</a>
 					</EmptyState>
 				</div>
 			{:else}
-				<aside class="list c pane">
+				<aside class="list glass pane">
 					<div class="scroll" use:indicator>
 						{#each shownGroups as g, i (g[0].runId)}
 							{@const p = g[0]}
@@ -262,13 +263,13 @@
 							>
 								<span class="l1">
 									<PingPill type={p.type} />
-									{#if p.stageId}<span class="mono mut st ell">{p.stageId}</span>{/if}
+									{#if p.stageId}<span class="mono muted st truncate">{p.stageId}</span>{/if}
 									<span class="spacer"></span>
-									<span class="mono mut age" title={fmtAbs(p.raisedAt)}>{age(p.raisedAt)}</span>
+									<span class="mono muted age" title={fmtAbs(p.raisedAt)}>{age(p.raisedAt)}</span>
 								</span>
-								<span class="q ell">{pingHeadline(p.question)}</span>
+								<span class="q truncate">{pingHeadline(p.question)}</span>
 								<span class="l3">
-									<span class="rt ell">{r?.title ?? shortId(p.runId)}</span>
+									<span class="rt truncate">{r?.title ?? shortId(p.runId)}</span>
 									{#if tk?.source?.key}<span class="tag">{tk.source.key}</span>{/if}
 									{#if r?.projectId}<span class="wsn"><WorkshopName projectId={r.projectId} /></span
 										>{/if}
@@ -285,22 +286,21 @@
 					</div>
 				</aside>
 
-				<section class="detail c pane">
+				<section class="detail glass pane">
 					{#if current}
 						{#if run}
-							<div class="strip c">
+							<div class="strip glass">
 								<StatusChip state={run.state} size="sm" />
 								{#if run.currentStage}
 									<span class="stg">
 										<StageFlask status={stageStatus(run.state)} size="sm" />
 										<span class="mono">{run.currentStage}</span>
-										{#if facts?.attempt}<span class="fnt"
+										{#if facts?.attempt}<span class="faint"
 												>{t('inbox.attempt', { n: facts.attempt })}</span
 											>{/if}
 									</span>
 								{/if}
-								{#if facts && facts.cost > 0}<span class="mono mut">{fmtCost(facts.cost)}</span
-									>{/if}
+								{#if facts?.cost}<span class="mono muted">{fmtCost(facts.cost)}</span>{/if}
 								<span class="wsx"
 									><WorkspaceStatus
 										state={run.state}
@@ -326,12 +326,12 @@
 						{/key}
 						{#if currentGroup.length > 1}
 							<div class="note later">
-								<div class="lbl">{t('inbox.queuedBehind')}</div>
+								<div class="caption">{t('inbox.queuedBehind')}</div>
 								{#each currentGroup.slice(1) as q (q.id)}
 									<div class="lr">
 										<PingPill type={q.type} />
-										<span class="ell">{pingHeadline(q.question)}</span>
-										<span class="mono fnt" title={fmtAbs(q.raisedAt)}>{ago(q.raisedAt)}</span>
+										<span class="truncate">{pingHeadline(q.question)}</span>
+										<span class="mono faint" title={fmtAbs(q.raisedAt)}>{ago(q.raisedAt)}</span>
 									</div>
 								{/each}
 							</div>
@@ -361,17 +361,17 @@
 						{@const v = answerMeta(p)}
 						<div class="r ah">
 							<span><PingPill type={p.type} /></span>
-							<a class="q ell stretch" href={to.ping(p.id)}>{pingHeadline(p.question)}</a>
-							<span class="ell mut hide-sm"
+							<a class="q truncate stretch" href={to.ping(p.id)}>{pingHeadline(p.question)}</a>
+							<span class="truncate muted hide-sm"
 								>{fleet.runById.get(p.runId)?.title ?? shortId(p.runId)}{#if p.stageId}<span
-										class="mono fnt">{' · '}{p.stageId}</span
+										class="mono faint">{' · '}{p.stageId}</span
 									>{/if}</span
 							>
-							<span class="ans ell hide-sm"
+							<span class="ans truncate hide-sm"
 								><span class="hue-{v.hue}">{v.glyph} {p.answer ? answerSummary(p) : '—'}</span
-								>{#if p.feedback}<span class="fnt">{' · '}{p.feedback}</span>{/if}</span
+								>{#if p.feedback}<span class="faint">{' · '}{p.feedback}</span>{/if}</span
 							>
-							<span class="mono mut num" title={p.answeredAt ? fmtAbs(p.answeredAt) : ''}
+							<span class="mono muted num" title={p.answeredAt ? fmtAbs(p.answeredAt) : ''}
 								>{p.answeredAt ? ago(p.answeredAt) : ''}</span
 							>
 						</div>
@@ -439,15 +439,15 @@
 	.q {
 		font-weight: 500;
 		font-size: var(--fs-ui);
-		color: var(--tx);
+		color: var(--text);
 	}
 	.l3 {
 		font-size: var(--fs-help);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.rt {
 		flex: 0 1 auto;
-		color: var(--tx);
+		color: var(--text);
 		opacity: 0.85;
 	}
 	.wsn {
@@ -457,7 +457,7 @@
 	}
 	.queued {
 		font-size: var(--fs-help);
-		color: var(--skyTx);
+		color: var(--attention-text);
 	}
 	.detail {
 		min-height: 0;
@@ -520,7 +520,7 @@
 	.ans {
 		font-weight: 600;
 	}
-	.ans .fnt {
+	.ans .faint {
 		font-weight: 400;
 	}
 	.num {

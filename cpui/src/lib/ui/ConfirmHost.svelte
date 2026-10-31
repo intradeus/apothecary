@@ -26,7 +26,8 @@
 		onclose={() => confirmState.settle(false)}
 	>
 		<!-- trusted copy, see confirm.svelte.ts -->
-		<p style="margin:0">{@html shown.body}</p>
+		<!-- eslint-disable-next-line no-restricted-syntax -- bodies are trusted markup: see html.ts -->
+		<p class="body">{@html shown.body}</p>
 		{#snippet footer()}
 			<button class="btn-ghost" onclick={() => confirmState.settle(false)}
 				>{shown?.cancel ?? t('common.cancel')}</button
@@ -37,3 +38,9 @@
 		{/snippet}
 	</Modal>
 {/if}
+
+<style>
+	.body {
+		margin: 0;
+	}
+</style>

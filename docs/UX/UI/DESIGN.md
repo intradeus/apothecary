@@ -1,7 +1,7 @@
 # Apothecary — Design System & UI Spec
 
 Reference implementations:
-- **Look** (colour, material, type, background, top bar, MR island): `Apothecary Ember x Sky.dc.html`, frames 1a–1g (one per theme). Theme tokens are in `themes.json`.
+- **Look** (colour, material, type, background, top bar, MR island): `Apothecary Ember x Sky.dc.html`, frames 1a–1g (one per theme). Theme tokens are in `cpui/src/styles/themes.css`.
 - **Behaviour** (live run, All-guilds desk, sidebar, org switcher, window manager): `Apothecary Live Run v10.dc.html`.
 
 Where this document and a file disagree, **the file wins**: the Ember × Sky file for anything visual, v10 for anything behavioural.
@@ -62,14 +62,14 @@ Load from Google Fonts: `Hanken Grotesk:wght@400;500;600;700`, `Bricolage Grotes
 |---|---|---|---|
 | Body (base) | Hanken Grotesk | 13–14px / 400, line-height 1.5 | `-webkit-font-smoothing: antialiased` |
 | UI labels, tabs | Hanken Grotesk | 12–13px / 500; active 600–700 | |
-| Meta, captions | Hanken Grotesk | 11.5–12.5px / 400–500 | color `--mut` or `--fnt` |
+| Meta, captions | Hanken Grotesk | 11.5–12.5px / 400–500 | color `--text-muted` or `--text-faint` |
 | Run title (h1, run page) | Bricolage Grotesque | 19px / 700, letter-spacing −.015em, line-height 1.15 | single line, ellipsis. Small on purpose: the title gives context, the windows hold the information |
 | Page title (h1, other pages) | Bricolage Grotesque | 24–28px / 700, letter-spacing −.02em | `text-wrap: balance` |
-| Display accent | the same font, coloured `--emb2` | inherits | One accent phrase per title ("Add idempotency keys to <ember>payment webhooks</ember>"). Section and window headings use Bricolage 15–20px / 600 |
+| Display accent | the same font, coloured `--ember-2` | inherits | One accent phrase per title ("Add idempotency keys to <ember>payment webhooks</ember>"). Section and window headings use Bricolage 15–20px / 600 |
 | Big readouts | Bricolage Grotesque | 22–30px / 300 | only on overview pages, never in the run top bar |
-| Agent "thinking" | Hanken Grotesk italic | 14px, line-height 1.45, color `--mut` | |
+| Agent "thinking" | Hanken Grotesk italic | 14px, line-height 1.45, color `--text-muted` | |
 | Code, ids, hashes, numbers, costs, ports, branches | JetBrains Mono | 11–13px / 500–700 | Run ids `r_7f3a`, ws ids, `@3c9e1a`, `$1.234`, counts in badges, MR numbers `!20` |
-| Inline code | JetBrains Mono 12–12.5px | `padding:1px 5px; radius 5px; background: var(--code)`, colour `--brand` in prose | |
+| Inline code | JetBrains Mono 12–12.5px | `padding:1px 5px; radius 5px; background: var(--code-bg)`, colour `--brand` in prose | |
 
 Formatting conventions:
 - relative times ("3m ago", "just now")
@@ -80,47 +80,47 @@ Formatting conventions:
 
 ### 2.2 Color tokens
 
-All tokens are CSS custom properties set on the app root, one set per theme (`[data-theme=ember-sky|solarized|forest|brown|light|dark|pink]`). **Ember × Sky is the default.** Values for every theme are in `themes.json`. The tables below give Ember × Sky (dark) and Light.
+All tokens are CSS custom properties set on the app root, one set per theme (`[data-theme=ember-sky|solarized|forest|brown|light|dark|pink]`). **Ember × Sky is the default.** Values for every theme are in `src/styles/themes.css`. The tables below give Ember × Sky (dark) and Light.
 
 **Base**
 
 | Token | Ember × Sky | Light | Use |
 |---|---|---|---|
 | `--frame` | `#0a0a0e` | `#ebe6dd` | page ground under the noise |
-| `--tx` | `#e6edf6` | `#1d232c` | primary text |
-| `--mut` | `#93a3ba` | `#5b6576` | secondary text |
-| `--fnt` | `#7d8ca3` | `#6f7888` | tertiary / meta / separators "/" |
-| `--dim` | `#4f5d74` | `#a0a8b4` | drag handles, disabled glyphs, window-control glyphs |
-| `--tx2` | `#c5d0df` | `#3c4553` | code text, file paths |
+| `--text` | `#e6edf6` | `#1d232c` | primary text |
+| `--text-muted` | `#93a3ba` | `#5b6576` | secondary text |
+| `--text-faint` | `#7d8ca3` | `#6f7888` | tertiary / meta / separators "/" |
+| `--text-dim` | `#4f5d74` | `#a0a8b4` | drag handles, disabled glyphs, window-control glyphs |
+| `--text-code` | `#c5d0df` | `#3c4553` | code text, file paths |
 | `--brand` | `#8fb8ea` (sky) | `#8fb8ea` | primary CTA fill, links, focus, caret, drop zones |
-| `--brandLt` | `#cfe2fa` | `#2a5c9c` (as text) | text on dark ink buttons, drop-zone label, link hover |
-| `--onBrand` | `#0d1a2a` | `#0d1a2a` | text on brand; also the fill of the dark secondary button inside a sky card |
-| `--p1` | `rgba(255,255,255,.03)` | `rgba(30,40,60,.03)` | faint fill / row hover |
-| `--p2` | `rgba(255,255,255,.05)` | `rgba(30,40,60,.05)` | card-in-card, secondary button fill |
-| `--p3` | `rgba(143,184,234,.12)` | `rgba(50,90,140,.10)` | hover on menu items, selected list row |
-| `--ln` | `rgba(143,184,234,.10)` | `rgba(50,90,140,.10)` | hairline (window header divider) |
-| `--ln2` | `rgba(143,184,234,.22)` | `rgba(50,90,140,.22)` | button borders, dashed outlines |
-| `--code` | `rgba(4,9,18,.55)` | `rgba(232,227,219,.7)` | code / diff / input background |
-| `--spec` | `inset 0 1px 0 rgba(207,226,250,.08)` | `inset 0 1px 0 rgba(255,255,255,.9)` | top specular on islands and small buttons |
+| `--brand-light` | `#cfe2fa` | `#2a5c9c` (as text) | text on dark ink buttons, drop-zone label, link hover |
+| `--on-brand` | `#0d1a2a` | `#0d1a2a` | text on brand; also the fill of the dark secondary button inside a sky card |
+| `--fill-1` | `rgba(255,255,255,.03)` | `rgba(30,40,60,.03)` | faint fill / row hover |
+| `--fill-2` | `rgba(255,255,255,.05)` | `rgba(30,40,60,.05)` | card-in-card, secondary button fill |
+| `--fill-3` | `rgba(143,184,234,.12)` | `rgba(50,90,140,.10)` | hover on menu items, selected list row |
+| `--line` | `rgba(143,184,234,.10)` | `rgba(50,90,140,.10)` | hairline (window header divider) |
+| `--line-strong` | `rgba(143,184,234,.22)` | `rgba(50,90,140,.22)` | button borders, dashed outlines |
+| `--code-bg` | `rgba(4,9,18,.55)` | `rgba(232,227,219,.7)` | code / diff / input background |
+| `--specular` | `inset 0 1px 0 rgba(207,226,250,.08)` | `inset 0 1px 0 rgba(255,255,255,.9)` | top specular on islands and small buttons |
 
-**Semantic hues.** Each hue `X` also derives `--XBg`, `--XLn` and `--XGlow` with `color-mix(in oklch, X N%, transparent)`:
-- `--XBg` at 14% (dark) or 12% (light): tinted fill
-- `--XLn` at 40%: border
-- `--XGlow` at 25%: outer glow
+**Semantic hues.** The theme block holds the raw palette below. Components never see it: they use the **role** in the first column, and `src/styles/themes.css` maps one to the other. Each role `X` derives `--X-bg`, `--X-line` and `--X-glow` with `color-mix(in oklch, X N%, transparent)`:
+- `--X-bg` at 14% (dark) or 12% (light): tinted fill
+- `--X-line` at 40%: border
+- `--X-glow` at 25%: outer glow
 
-| Token | Ember × Sky | Light | Meaning |
-|---|---|---|---|
-| `--emb` (ember) | `#ff6a2b` · `--emb2` `#ff9150` · `--embTx` `#ffb488` | `#e0601f` · `#c9541a` · `#b5481a` | active / running / provisioning / agent stage / read tool / CPU. Use `--embTx` for ember text on dark |
-| `--sky` | `#8fb8ea` | `#8fb8ea` (fill) · `#2a5c9c` (text) | **a human must act**: waiting_on_human, pings, held egress, the Inbox count, "in your hands", links, network |
-| `--gold` | `#e8c25a` | `#9a7410` | gates, warnings, M files, the edit tool, loop-backs, memory, abandoned |
-| `--grn` | `#a3c99a` | `#3c7a3a` | success: completed, workspace live, command stage, + lines, exec tool |
-| `--ros` | `#ff5468` · text `#ff7d8c` | `#d33c52` · text `#c2334a` | failure / danger: failed, blocked egress, − lines, Abort |
-| `--vio` | `#c3a2ff` | `#7a52d6` | action stage, search tool, permission ping |
-| `--tea` | `#5fd6cc` | `#138a85` | wait stage, on_timeout, tunnel logs |
+| Role | Palette | Ember × Sky | Light | Meaning |
+|---|---|---|---|---|
+| `--running` | `--ember` | `#ff6a2b` · strong `#ff9150` · text `#ffb488` | `#e0601f` · `#c9541a` · `#b5481a` | active / running / provisioning / agent stage / read tool / CPU. Use `--running-text` for text |
+| `--attention` | `--sky` | `#8fb8ea` | `#8fb8ea` (fill) · `#2a5c9c` (text) | **a human must act**: waiting_on_human, pings, held egress, the Inbox count, "in your hands", links, network |
+| `--warning` | `--gold` | `#e8c25a` | `#9a7410` | gates, warnings, M files, the edit tool, loop-backs, memory, abandoned |
+| `--success` | `--green` | `#a3c99a` | `#3c7a3a` | success: completed, workspace live, command stage, + lines, exec tool |
+| `--danger` | `--rose` | `#ff5468` · text `#ff7d8c` | `#d33c52` · text `#c2334a` | failure / danger: failed, blocked egress, − lines, Abort |
+| `--accent` | `--violet` | `#c3a2ff` | `#7a52d6` | action stage, search tool, permission ping |
+| `--accent-2` | `--teal` | `#5fd6cc` | `#138a85` | wait stage, on_timeout, tunnel logs |
 
-Two colours carry the story, and every theme keeps the pairing with its own hues (see `themes.json`: Solarized orange × cyan, Forest gold × sage, Brown ember × cream, Dark ember × silver, Pink coral × rose).
+Two colours carry the story, and every theme keeps the pairing with its own hues (see `themes.css`: Solarized orange × cyan, Forest gold × sage, Brown ember × cream, Dark ember × silver, Pink coral × rose).
 
-Sky is the **attention colour** as well as the CTA colour. Solid sky fill with ink `#0d1a2a` (`--onBrand`) is reserved for:
+Sky is the **attention colour** as well as the CTA colour. Solid sky fill with ink `#0d1a2a` (`--on-brand`) is reserved for:
 - primary buttons (one per group, max)
 - "a human must act now": the waiting-on-you card, inbox count badges, the Waiting chip, the "N need you" pill
 
@@ -128,11 +128,11 @@ Everything else uses tinted fills. Ember is never a button fill except the brand
 
 **Background ("noise").** One `Noise` component: a single WebGL2 fragment shader on one canvas behind everything, over the `--frame` base colour. It draws:
 - four grainy circles around the middle of the screen, ember and sky in turn: radii 344, 280, 240 and 208 on a 1280px frame, orbits up to 750 across, sized from the screen height so an ultrawide doesn't inflate them
-- a faint warm floor grain, its strength taken from `--grainA`
+- a faint warm floor grain, its strength taken from `--noise-grain`
 
 Every dot is computed from its device-pixel coordinate, never scaled: one device pixel on any screen, at full brightness (`.85`, with per-dot variation), and each circle has its own grain so two passing through each other don't merge. Density falls off from each centre, capped at `.72`.
 
-Each theme colours it with `--nEmb` and `--nSky`, plus `--nBlend`: dots `screen` over the frame, `multiply` on Light.
+Each theme colours it with `--noise-ember` and `--noise-sky`, plus `--noise-blend`: dots `screen` over the frame, `multiply` on Light.
 
 Motion:
 - Circles orbit at their own pace (97, 143, 211 and 167s), the second and fourth the other way round, on a slightly wandering path. The grain itself doesn't move; dots appear and vanish as a circle passes. It must read as still at a glance.
@@ -148,7 +148,7 @@ Motion:
 
 This is the core of the look. Windows are glass; anything that floats *over* a window is opaque. **Never stack glass-on-glass**: a nested `backdrop-filter` only blurs its parent, so it reads as a flat translucent box.
 
-**A. Window glass (`c`)** is for everything that sits on the background:
+**A. Window glass (`glass`)** is for everything that sits on the background:
 - windows / leaves
 - the top bar
 - the sidebar and rail
@@ -156,32 +156,32 @@ This is the core of the look. Windows are glass; anything that floats *over* a w
 
 | Token | Ember × Sky | Light |
 |---|---|---|
-| `--cBg` | `rgba(11,20,36,.58)` (sidebar `.62`) | `rgba(250,248,244,.58)` |
-| `--cBf` | `blur(22px) saturate(140%)` | `blur(22px) saturate(140%)` |
-| `--cLn` | `1px rgba(143,184,234,.16)` | `1px rgba(50,90,140,.16)` |
+| `--glass-bg` | `rgba(11,20,36,.58)` (sidebar `.62`) | `rgba(250,248,244,.58)` |
+| `--glass-filter` | `blur(22px) saturate(140%)` | `blur(22px) saturate(140%)` |
+| `--glass-line` | `1px rgba(143,184,234,.16)` | `1px rgba(50,90,140,.16)` |
 | radius | 16px | 16px |
 
 There is no rim, specular or gradient on windows: flat tinted glass and a hairline only.
 
-**B. Inset (`in`)** is a control group or field inside a window or the top bar:
-- `--inBg`: `rgba(6,12,24,.45)` (Light `rgba(238,234,227,.45)`)
+**B. Inset (`inset`)** is a control group or field inside a window or the top bar:
+- `--inset-bg`: `rgba(6,12,24,.45)` (Light `rgba(238,234,227,.45)`)
 - border `rgba(143,184,234,.14)`
 - radius 12px
 - No blur.
 
-**C. Island (`isl`)** is for everything that floats over content: popovers, menus, the MR island, the Layouts menu, modals and drag ghosts.
+**C. Island (`island`)** is for everything that floats over content: popovers, menus, the MR island, the Layouts menu, modals and drag ghosts.
 
 | Token | Ember × Sky | Light |
 |---|---|---|
-| `--solid` | `#09101e` (opaque) | `#fbf9f5` |
+| `--island-bg` | `#09101e` (opaque) | `#fbf9f5` |
 | border | `1px rgba(143,184,234,.28)` | `1px rgba(50,90,140,.28)` |
 | shadow | on a **parent** `filter: drop-shadow(0 22px 34px rgba(0,0,0,.55)) drop-shadow(0 0 1px rgba(0,0,0,.6))`, so the shadow follows clip-path animations | same with `rgba(30,40,60,.2)` |
-| specular | `--spec` | `--spec` |
+| specular | `--specular` | `--specular` |
 | radius | 22px (island), 17px (popover), 26px (modal) | |
 
 Modal scrim: `rgba(4,9,18,.5)` + `backdrop-filter: blur(6px)`.
 
-**Selection fill** (`--sel` / `--railSel`): `rgba(143,184,234,.12)` + an inset ring `--selLn` `rgba(143,184,234,.3)`. **Running fill** (current stage tile, current run row): `linear-gradient(135deg, var(--embBg) 0%, color-mix(in oklch, var(--emb) 8%, transparent))`, border `--embLn`, glow `0 0 24px var(--embGlow)`.
+**Selection fill** (`--selected-bg`): `rgba(143,184,234,.12)` + an inset ring `--selected-line` `rgba(143,184,234,.3)`. **Running fill** (current stage tile, current run row): `linear-gradient(135deg, var(--running-bg) 0%, color-mix(in oklch, var(--ember) 8%, transparent))`, border `--running-line`, glow `0 0 24px var(--running-glow)`.
 
 The sidebar keeps window glass in every theme. In Light it is light glass with dark text.
 
@@ -212,7 +212,7 @@ The sidebar keeps window glass in every theme. In Light it is light glass with d
   - Window gap and split gutter: **8px**.
   - Shell margin around the sidebar: 6px.
   - Desk margin: 10px top, 16px sides, 12px bottom.
-- **Hairlines:** always 1px, using `--ln`, `--cLn` or `--lgLn`. Dashed `--ln2` means "empty / not yet / drop here".
+- **Hairlines:** always 1px, using `--line`, `--glass-line` or `--lgLn`. Dashed `--line-strong` means "empty / not yet / drop here".
 - **Glows:** live indicators get `box-shadow: 0 0 8–10px <hue>`. The state glow (`--stateGlow`, the run color mixed at 45%) sits in the corner of the run badge.
 
 ### 2.5 Motion
@@ -267,7 +267,7 @@ The sidebar keeps window glass in every theme. In Light it is light glass with d
 - **Play, pause, stop** on buttons are drawn, in one 12-unit box (`TransportIcon`): as text they come from different fonts at different sizes. The text glyphs ▶ ❚❚ ■ remain only in running text, such as the transcript.
 - **Vial (workspace/project glyph):** 10×13px, `border-radius:2px 2px 5px 5px`, 1px border in the project hue at 60%. The fill is `linear-gradient(transparent X%, hue X%)`, where the fill level is decorative per project, plus a glow `0 0 8px hue@35%`. An idle project uses an empty vial with a `rgba(255,255,255,.2)` border.
 - **Stage flask:** 14×20px, `border-radius:3px 3px 7px 7px`, 1.5px border in the stage-status color. The inner liquid height equals progress (done 100%, running ~55% with slosh and bubble, pending 0%).
-- **Logo:** the brand tile `src/assets/mark/svg/apothecary-tile-primary.svg` at 36px, with a glow `0 0 22px var(--embGlow)`. It is the only ember fill in the UI, and also the favicon (with `app-icons/favicon-32x32.png` as the fallback for browsers without SVG icons).
+- **Logo:** the brand tile `src/assets/mark/svg/apothecary-tile-primary.svg` at 36px, with a glow `0 0 22px var(--running-glow)`. It is the only ember fill in the UI, and also the favicon (with `app-icons/favicon-32x32.png` as the fallback for browsers without SVG icons).
 - **Guild avatar:** a 20–30px rounded square (radius 7–10px) with a 160° gradient between two guild colors, 2-letter initials (700, dark ink `#0b1a12`) and a top specular. Sample guild colors:
   - green `#9ff0c0`→`#3fae72`
   - violet `#d9c6ff`→`#8f6fd8`
@@ -284,17 +284,17 @@ Pill (999px), 12px / 600, `padding:3px 11px 3px 9px`, 7px leading dot.
 
 | State | Style | Dot | Lore suffix |
 |---|---|---|---|
-| `pending` | tint `--p2`, text `--mut` | static muted | — |
-| `provisioning` | ember tint (`--embBg` / `--emb` / `--embLn`) | pulsing | — |
+| `pending` | tint `--fill-2`, text `--text-muted` | static muted | — |
+| `provisioning` | ember tint (`--running-bg` / `--ember` / `--running-line`) | pulsing | — |
 | `running` | ember tint | pulsing ember + glow | "· brewing" (display 14px, .85 opacity) |
 | `waiting_on_human` | **solid sky** fill, ink `#0d1a2a`, 700, sky glow | pulsing ink dot | label "Waiting on you" |
 | *(held)* | an extra sky **tint** pill beside the state chip, "● In your hands · 4:12" (live clock) — not a state: the run is running (or waiting, when parked on its holder) AND in someone's hands | pulsing sky | — |
-| `in_review` | violet tint (`--vioBg` / `--vio` / `--vioLn`), label "In review" | static | — |
-| `paused` | `--p2` tint, `--mut` text, ❚❚ glyph | static | — |
+| `in_review` | violet tint (`--accent-bg` / `--violet` / `--accent-line`), label "In review" | static | — |
+| `paused` | `--fill-2` tint, `--text-muted` text, ❚❚ glyph | static | — |
 | `completed` | green tint | ✓ | — |
 | `abandoned` | gold **tint** | static | — |
 | `failed` | rose tint, "✕ Failed" | — | "· batch spoiled" |
-| `archived` | transparent, dashed `--ln2` border, `--fnt` text | — | — |
+| `archived` | transparent, dashed `--line-strong` border, `--text-faint` text | — | — |
 
 `in_review` is the run idling between phases with its merge requests open: reviewers have it, and reaction phases start when their triggers hold. It holds no concurrency slot.
 
@@ -302,7 +302,7 @@ Groups: **Active** = pending, provisioning, running, waiting_on_human, in_review
 
 ### 3.2 Workspace status (separate axis, never merged with the run chip)
 
-Inline label: "Workspace" (`--mut`, 500), then a dot + value in the hue (600), then the mono ws id in `--fnt`.
+Inline label: "Workspace" (`--text-muted`, 500), then a dot + value in the hue (600), then the mono ws id in `--text-faint`.
 
 | Value | Hue | Dot |
 |---|---|---|
@@ -329,12 +329,12 @@ Used as chips (`padding:1px 7px; radius 6px; 10.5px/600`; tinted bg + hue text),
 
 | Status | Flask fill | Pill style | Status line |
 |---|---|---|---|
-| done | 100% grn | `--p1` bg, solid `--cLn` border | "done · $0.21 · 3m" in `--mut` |
-| running | ~55% emb, slosh + bubble | `--embBg` bg, solid `--embLn` border, emb glow | "attempt 2 · 4:12" (live clock) in emb |
-| waiting (gate open) | sky, pulsing | `--skyBg` bg | "waiting on you" |
-| failed | ros | `--rosBg` bg | reason |
+| done | 100% grn | `--fill-1` bg, solid `--glass-line` border | "done · $0.21 · 3m" in `--text-muted` |
+| running | ~55% emb, slosh + bubble | `--running-bg` bg, solid `--running-line` border, emb glow | "attempt 2 · 4:12" (live clock) in emb |
+| waiting (gate open) | sky, pulsing | `--attention-bg` bg | "waiting on you" |
+| failed | ros | `--danger-bg` bg | reason |
 | paused | mut, 50% | — | "paused — will re-enter" |
-| pending | empty | transparent bg, dashed `--ln2` border, .55 opacity | — |
+| pending | empty | transparent bg, dashed `--line-strong` border, .55 opacity | — |
 
 Every attempt shows **"attempt N"**. Loop-backs render in the transcript and timeline as gold `↩ review → build (1/3)`.
 
@@ -352,7 +352,7 @@ Type pill: 999px, 11px / 600, tint fill + hue text + hue border, 6px dot.
 | `phase_confirm` | grn | **wanted** (a reaction phase asks before running; label "Phase") |
 | `select` | tea | **wanted** (pick which review threads to address; label "Select") |
 
-- Ping status: pending (solid sky count badge), answered ("answered 4m ago — approve" in `--mut`), withdrawn (struck-through, `--fnt`).
+- Ping status: pending (solid sky count badge), answered ("answered 4m ago — approve" in `--text-muted`), withdrawn (struck-through, `--text-faint`).
 - A queued ping shows "· queued behind N".
 
 ### 3.6 Edges and handles (flow editor)
@@ -364,7 +364,7 @@ Type pill: 999px, 11px / 600, tint fill + hue text + hue border, 6px dot.
 | on_timeout | tea | dashed, animated |
 | on_reject | gold | dashed, animated |
 | fallback ("then") | same hue at 50% opacity | dashed |
-| dataflow | `--ln2` | faint, dotted |
+| dataflow | `--line-strong` | faint, dotted |
 
 - Failure edges are labelled "×3" or "×∞" in a mono 10px pill.
 - Handles are 8px dots in the edge color.
@@ -386,33 +386,33 @@ There is **one selected / secondary look everywhere**: sidebar items, rail items
 
 | Variant | Spec |
 |---|---|
-| **Primary** | bg `--brand`, color `--onBrand`, 600, radius 12px, `padding:4px 11px`, glow `0 0 14px var(--brandLn)`. One per group, max. (MR link, Retry, "Open Windows") |
-| **Secondary** | bg `--p2`, 1px `--ln2`, `box-shadow: var(--spec)`, 500. Hover bg `--p3` |
-| **Selected / chrome button** | bg `--sel` (`rgba(143,184,234,.12)`), inset ring 1px `--selLn` (`rgba(143,184,234,.3)`), text `--tx`, 600. Hover on unselected: `--p3` |
-| **Danger outline** | transparent, rose text, 1px `--rosLn`; hover `--rosBg`. Destructive actions end in "…" and open a confirm |
-| **Danger solid** | bg `--ros`, ink `#1b0a0a`, 600 (only inside confirm dialogs and alert banners) |
-| **Ghost** | transparent, `--mut`; hover `--p3` + `--tx` |
-| **Icon button** | 24×24 (window chrome) or 28×28 (sidebar), radius 7–9px, `--mut`; hover `--p3` |
-| **Disabled / not yet** | dashed 1px `--ln2`, `--fnt` text, e.g. "MR 2/2 —" |
+| **Primary** | bg `--brand`, color `--on-brand`, 600, radius 12px, `padding:4px 11px`, glow `0 0 14px var(--brand-line)`. One per group, max. (MR link, Retry, "Open Windows") |
+| **Secondary** | bg `--fill-2`, 1px `--line-strong`, `box-shadow: var(--specular)`, 500. Hover bg `--fill-3` |
+| **Selected / chrome button** | bg `--selected-bg` (`rgba(143,184,234,.12)`), inset ring 1px `--selected-line` (`rgba(143,184,234,.3)`), text `--text`, 600. Hover on unselected: `--fill-3` |
+| **Danger outline** | transparent, rose text, 1px `--danger-line`; hover `--danger-bg`. Destructive actions end in "…" and open a confirm |
+| **Danger solid** | bg `--rose`, ink `#1b0a0a`, 600 (only inside confirm dialogs and alert banners) |
+| **Ghost** | transparent, `--text-muted`; hover `--fill-3` + `--text` |
+| **Icon button** | 24×24 (window chrome) or 28×28 (sidebar), radius 7–9px, `--text-muted`; hover `--fill-3` |
+| **Disabled / not yet** | dashed 1px `--line-strong`, `--text-faint` text, e.g. "MR 2/2 —" |
 
 Size: 12px text in headers; 11–11.5px compact in the sidebar; 12.5px in menus.
 
 ### 4.2 Badges and counts
 
-- **Count in nav or tab:** JetBrains Mono 10–10.5px / 600, `padding:0 7px`, radius 13px. Neutral is transparent with `--mut`. Hot is solid sky with ink `#0d1a2a`.
+- **Count in nav or tab:** JetBrains Mono 10–10.5px / 600, `padding:0 7px`, radius 13px. Neutral is transparent with `--text-muted`. Hot is solid sky with ink `#0d1a2a`.
 - **Rail badge:** absolute top-right, 9–9.5px, `line-height:14px`, solid sky.
 - **"+N elsewhere":** sky tint, 1px sky@35% border, mono 9.5px / 700 (on the guild switcher when other guilds have pending pings).
-- **Mono tag:** ticket keys and hashes, 11px, `padding:0 6px`, radius 5px, `--p2` bg + `--ln` border.
+- **Mono tag:** ticket keys and hashes, 11px, `padding:0 6px`, radius 5px, `--fill-2` bg + `--line` border.
 
 ### 4.3 Tabs (window tab strip)
 
-- Strip height 38px with a bottom border `--cLn`. Tabs sit in a flex row, gap 2px, `overflow:hidden`.
+- Strip height 38px with a bottom border `--glass-line`. Tabs sit in a flex row, gap 2px, `overflow:hidden`.
 - **Tab:** `padding:3px 4px 3px 10px`, radius 9px, 12.5px, `cursor:grab`.
-  - Inactive: `--mut`, 500, transparent.
-  - Active: bead style (`--sel` + inset ring `--selLn` + `--selSh`), `--tx`, 600.
+  - Inactive: `--text-muted`, 500, transparent.
+  - Active: bead style (`--selected-bg` + inset ring `--selected-line` + `--selected-shadow`), `--text`, 600.
   - Each tab carries an optional count and a 17px "×" (hide window).
 - **Right side of the strip:**
-  - a hint text (11px `--fnt`, ellipsis), e.g. "following", "refreshes every 5s", "plan-build-review @3c9e1a"
+  - a hint text (11px `--text-faint`, ellipsis), e.g. "following", "refreshes every 5s", "plan-build-review @3c9e1a"
   - then window controls: split right, split down, maximise/restore (⤢ / ⤡), hide (×)
 
 ### 4.4 Segmented control
@@ -421,16 +421,16 @@ Used for filters and for repo, verdict and log-source pickers.
 
 - The container is window glass, `padding:3px`, radius 12px, gap 3px.
 - Options are 12.5px, `padding:5px 12px`, radius 9px. The selected option uses the bead/selected style.
-- Options can carry a trailing mono count in `--mut`.
+- Options can carry a trailing mono count in `--text-muted`.
 
 ### 4.5 Top bar and control groups
 
 The run top bar is one window-glass strip (radius 16px, `padding:8px 10px 8px 16px`, gap 8–10px). From left to right:
 
 1. **Title block** (`flex:1; min-width:0`):
-   - breadcrumb, 12px `--mut`: "Northwind / ledger-api / r_7f3a · PROJ-482 ↗" (ticket link in `--brand`)
+   - breadcrumb, 12px `--text-muted`: "Northwind / ledger-api / r_7f3a · PROJ-482 ↗" (ticket link in `--brand`)
    - run title, Bricolage 19px / 700, ellipsis, with the ember accent phrase
-   - status line, 12px: a **small** state chip (11.5px, `padding:1px 8px`, 6px dot), then mono 11.5px "`14:08` · $1.23 · 42 turns" with the elapsed time in `--embTx`
+   - status line, 12px: a **small** state chip (11.5px, `padding:1px 8px`, 6px dot), then mono 11.5px "`14:08` · $1.23 · 42 turns" with the elapsed time in `--ember-text`
    - No big stat numbers and no run badge in the top bar.
 2. **Run** group (inset, 4.5a): `❚❚ Pause`, `■ Abort…` (danger outline).
    - Terminal state: Retry \<stage\> (primary), New run from this…, Archive….
@@ -442,15 +442,15 @@ The run top bar is one window-glass strip (radius 16px, `padding:8px 10px 8px 16
 The **Layout** control is **not** in the top bar. It is a floating button at the bottom right of the run page (6).
 
 **4.5a Inset control group.** Inset material (2.3 B), `padding:7px 10px 8px`, column with gap 6px.
-- Label row: 12px `--mut`, nowrap.
-- Button row: gap 5px. Buttons are 12.5px / 600, `padding:4px 11px`, radius 9px, `--p2` + 1px `--ln2`.
+- Label row: 12px `--text-muted`, nowrap.
+- Button row: gap 5px. Buttons are 12.5px / 600, `padding:4px 11px`, radius 9px, `--fill-2` + 1px `--line-strong`.
 
 **4.5b MR island (Dynamic-Island pattern).** This is the only top-bar control that expands.
 
-- **Compact pill:** 170×40, radius 20px, `--inBg`, 1px `--ln2`. It contains:
-  - "Merge request", or "Merge requests" with more than one (12px `--mut`), always, so the pill says what it is before it opens
+- **Compact pill:** 170×40, radius 20px, `--inset-bg`, 1px `--line-strong`. It contains:
+  - "Merge request", or "Merge requests" with more than one (12px `--text-muted`), always, so the pill says what it is before it opens
   - the primary MR as a sky chip: mono "!20 ↗", 700, ink text
-  - an overflow chip "+N" with a 6px dot in the **worst** status among the rest (conflict ros > CI failed ros > CI running gold > draft `--fnt` > merged sky)
+  - an overflow chip "+N" with a 6px dot in the **worst** status among the rest (conflict ros > CI failed ros > CI running gold > draft `--text-faint` > merged sky)
 - **Expanded** (on hover / focus; Esc or pointer-leave closes): a 420px island anchored to the pill's top-right (−6px), z 60, so it sits **over** the panes below.
   - Head: "Merge requests", a count badge, a "N conflict" warning (ros), and the target "ledger-api → main".
   - One row per MR (grid `auto 52px 1fr auto`, `padding:7px 9px`, radius 11px):
@@ -458,23 +458,23 @@ The **Layout** control is **not** in the top bar. It is a floating button at the
     - the mono number
     - the title over a status line ("CI passing · no conflicts", "conflict in priv/repo/…", "CI running · 3m", "draft", "merged 2h ago")
     - an action: Open ↗ (primary MR, sky), Resolve (conflict, sky), or ↗ (ghost)
-  - The primary MR row has a `--p3` fill and a `--brandLn` border.
-- **Animation:** `es-morph-in` / `es-content-in` (2.5). The island is opaque `--solid`, so nothing ghosts through. Its shadow sits on the parent `drop-shadow`.
+  - The primary MR row has a `--fill-3` fill and a `--brand-line` border.
+- **Animation:** `es-morph-in` / `es-content-in` (2.5). The island is opaque `--island-bg`, so nothing ghosts through. Its shadow sits on the parent `drop-shadow`.
 - **With one MR:** the pill shows "!20 ↗" only, and hover still expands for its status. **With none:** a dashed "no MR yet" pill that does not expand.
 
 ### 4.6 Waiting-on-you card
 
-- Solid `--sky` fill, ink `--onBrand`, radius 12–16px, `padding:12px 14px`, no border.
+- Solid `--sky` fill, ink `--on-brand`, radius 12–16px, `padding:12px 14px`, no border.
 - Head: 11.5px / 700, letter-spacing .04em, e.g. "WAITING ON YOU" or "CLARIFICATION · THIS RUN".
 - Question: 14–16px / 600.
 - Actions:
-  - primary: dark ink `#0d1a2a` fill with `--brandLt` text
+  - primary: dark ink `#0d1a2a` fill with `--brand-light` text
   - secondary: 1.5px ink outline
 - This is the compact form of the ping card (4.11). It is used in the Pings window and on overview pages.
 
 ### 4.7 Alert banner (in-flow)
 
-- Opaque, because it may sit straight on the backdrop and its text must stay readable: `--solid` with the hue tint mixed in (`--rosSolid`, `--skySolid`), border `--rosLn`, radius 12px, `padding:5px 5px 5px 7px`, margin 0 16px.
+- Opaque, because it may sit straight on the backdrop and its text must stay readable: `--island-bg` with the hue tint mixed in (`--danger-solid`, `--attention-solid`), border `--danger-line`, radius 12px, `padding:5px 5px 5px 7px`, margin 0 16px.
 - Contents, left to right:
   - an 18px round "!" badge (solid hue, glow)
   - a bold hue title ("Egress held ×3")
@@ -487,19 +487,19 @@ The **Layout** control is **not** in the top bar. It is a floating button at the
 
 ### 4.8 Popover / menu
 
-- Island material (2.3 C): opaque `--solid`, 1px border `rgba(143,184,234,.28)`, `--spec`, radius 17px, `padding:6–10px`.
+- Island material (2.3 C): opaque `--island-bg`, 1px border `rgba(143,184,234,.28)`, `--specular`, radius 17px, `padding:6–10px`.
 - Shadow: on the parent, `drop-shadow(0 22px 34px rgba(0,0,0,.55))`.
 - Title in Bricolage Grotesque 19px, plus an optional right-aligned 11px legend.
-- Rows: radius 10–14px, `padding:7px 8–10px`, hover `--p3`. The selected row gets the selected style.
-- Dividers: 1px `--ln`, margin 4px 6px.
+- Rows: radius 10–14px, `padding:7px 8–10px`, hover `--fill-3`. The selected row gets the selected style.
+- Dividers: 1px `--line`, margin 4px 6px.
 - Popovers are **positioned beside their trigger, never on top of it**. The one exception is the MR island (4.5b), which grows out of its trigger. The org switcher opens to the right of the sidebar (`left: sidebarWidth + 16px`, `top: 56px`).
 - Close on outside mousedown or Esc.
 
 ### 4.9 Modal / confirm
 
 - Scrim (above), then a dialog of 440px, radius 26px, island material (2.3 C), shadow `0 30px 80px rgba(0,0,0,.5)`.
-- Header: a 34px round hue icon (danger: `--rosBg` / `--ros`) and a title.
-- Body text is `--mut`, `text-wrap: pretty`, and states consequences per object:
+- Header: a 34px round hue icon (danger: `--danger-bg` / `--rose`) and a title.
+- Body text is `--text-muted`, `text-wrap: pretty`, and states consequences per object:
   - *"The current turn is cancelled and the run becomes **abandoned**. The workspace stays up so you can inspect it; it's reaped after 48h."*
 - Footer: ghost Cancel, then the destructive solid button.
 - **Required confirms:** Abort, Archive, Delete ticket, Delete project, Delete integration, Remove channel, Delete review comment, Clear build cache, Leave editor with unsaved changes.
@@ -507,36 +507,36 @@ The **Layout** control is **not** in the top bar. It is a floating button at the
 
 ### 4.10 Content cards (inside panes)
 
-- **Card-in-pane:** radius 13–14px, `--p2` bg, 1px `--ln`.
+- **Card-in-pane:** radius 13–14px, `--fill-2` bg, 1px `--line`.
 - **Collapsible row** (`<details>`): summary line with `padding:7px 12px`, 12px text, a bold ▸ label, and a muted ellipsised preview.
 - **Tool group** (folds when >3 calls): "▸ 12 tool calls", kind chips (tinted 999px pills, 11px, "read 4"), and right-aligned "1 failed" in rose.
   - Live groups never fold.
 - **Tool call row:** status glyph, kind label in its hue (600), mono path, and mono `+14 −6`. An expanded call shows the diff.
-- **Diff:** JetBrains Mono 11px on `--code`, radius 8px.
+- **Diff:** JetBrains Mono 11px on `--code-bg`, radius 8px.
   - Grid columns `36px 1fr`, with the line number right-aligned at .6 opacity.
-  - Added lines: `--grnBg` / `--grn`. Removed lines: `--rosBg` / `--ros`.
+  - Added lines: `--success-bg` / `--green`. Removed lines: `--danger-bg` / `--rose`.
   - A "truncated · showing 400 of N lines" footer.
-  - A binary-file state: centred `--mut` text "Binary file · 24 KB".
+  - A binary-file state: centred `--text-muted` text "Binary file · 24 KB".
 - **Plan checklist:**
   - Title in display 18px, plus "v4 · 2 of 5".
-  - Items are 15px circles. Done: green fill + ✓, text struck through and muted. In progress: emb ring + pulsing dot, text emb / 600. Todo: `--ln2` ring.
+  - Items are 15px circles. Done: green fill + ✓, text struck through and muted. In progress: emb ring + pulsing dot, text emb / 600. Todo: `--line-strong` ring.
 - **Stage divider (transcript):** a hairline gradient, then the display stage name (19px), then "attempt 2 · builder · gpt-5-codex · 14:02:11", then a hairline gradient.
 - **Status line:** 12px in the hue with a glyph (↩ loop, ✓ done, ✕ failed, ⏸ parked, ↻ resumed, ⟳ engine restarted, ◉ take-over).
   - A take-over brackets its turns: sky "You took over — the agent waits for your word between turns; the stage cannot end until you release it", then "Handed back — the agent finishes its task · 12m 08s · 3 turns · 2 messages · $0.42" (the hold's own account, from `hold_released`). A holder who went quiet reads "Parked — the agent is in your hands and waits for your word".
   - The handback is a prompt card ("Handed back — finish the task"), like the stage prompt.
 - **User message bubble:**
   - right-aligned, max-width 70%
-  - `--brandBg` + `--brandLn`, radius `10px 14px 4px 14px`
+  - `--brand-bg` + `--brand-line`, radius `10px 14px 4px 14px`
   - meta below: "you · delivered 14:05", "queued — read when its turn ends", or "interrupt" (sky)
 - **Agent message:** max-width 70ch, 13.5px / 1.6, markdown. While streaming it ends with the blinking caret.
-- **Thinking:** a `<details>` (open while live) with an emb gradient tint `linear-gradient(90deg, var(--embBg), transparent 70%)`, a pulsing "Thinking ▾" summary, and the display body.
+- **Thinking:** a `<details>` (open while live) with an emb gradient tint `linear-gradient(90deg, var(--running-bg), transparent 70%)`, a pulsing "Thinking ▾" summary, and the display body.
 - **Inline agent question (non-gate ping):** a ping card (4.11) embedded in the transcript. Until answered it carries a "waiting for your answer" line.
 
 ### 4.11 Ping card (inbox, run page, inline)
 
 - Sits above the composer when the run is waiting. Radius 20px, **solid `--sky`** with ink text (the full form of 4.6):
-  - fill `--sky`, text `--onBrand`, no border, glow `0 0 30px var(--skyGlow)`
-  - inner buttons: primary = ink `#0d1a2a` fill with `--brandLt` text; secondary = 1.5px ink outline
+  - fill `--sky`, text `--on-brand`, no border, glow `0 0 30px var(--attention-glow)`
+  - inner buttons: primary = ink `#0d1a2a` fill with `--brand-light` text; secondary = 1.5px ink outline
 - **Head:** a 22px solid sky badge, the type pill, the stage, "raised 2m ago", and the run + ticket title (inbox cards always show which run and ticket they belong to).
 - **Body:** markdown question + context, and either an MR link or "Review & comment →" (opens plan review).
 - **Actions:**
@@ -549,49 +549,49 @@ The **Layout** control is **not** in the top bar. It is a floating button at the
 ### 4.12 Composer
 
 - Control glass, radius 20px, margin 0 12px 12px.
-- Textarea area: `min-height:44px`, placeholder in `--fnt` ("Whisper to the agent…").
-- Footer row: key hints ("↵ send · ⇧↵ newline", held only; before a take-over the composer is the Take over button alone, 11px `--fnt`), an attach button, then **Take over** (tertiary, only while an agent stage runs), **Send now** (secondary) and **Send** (primary).
+- Textarea area: `min-height:44px`, placeholder in `--text-faint` ("Whisper to the agent…").
+- Footer row: key hints ("↵ send · ⇧↵ newline", held only; before a take-over the composer is the Take over button alone, 11px `--text-faint`), an attach button, then **Take over** (tertiary, only while an agent stage runs), **Send now** (secondary) and **Send** (primary).
 - Shown only while the run is active.
 - Sending snaps the transcript back to auto-follow. If the user has scrolled up, show a floating "↓ Follow" pill.
 - **Whisper vs take-over.** A whisper is one message: read at the end of the agent's turn (or now, interrupting), and the agent carries on — the end of its next turn ends the stage as usual. **Take over** holds the session: while held, a turn ending with nothing queued is NOT the stage's end; the agent waits for your next message, every message is a turn in the same session, and the stage can only end once you **Release** — the engine then sends the fixed handback prompt, and when that turn ends the stage's output check runs as usual.
-- **Held state:** the composer takes the attention colour (sky border, `--skyBg` wash, sky glow, as the ping card 4.11), a head line "● In your hands · 4:12 · 2 messages" (live clock), the placeholder "The agent is in your hands. Say what to change…", and **Release** (sky) replaces Take over. After Release the button reads "Handing back…" until the engine records it — the agent's turn in flight ends first.
+- **Held state:** the composer takes the attention colour (sky border, `--attention-bg` wash, sky glow, as the ping card 4.11), a head line "● In your hands · 4:12 · 2 messages" (live clock), the placeholder "The agent is in your hands. Say what to change…", and **Release** (sky) replaces Take over. After Release the button reads "Handing back…" until the engine records it — the agent's turn in flight ends first.
 - A holder who says nothing for the live hold (30m) parks the run: it reads Waiting on you, the slot is freed, the composer stays held; the next message (or Release) wakes it.
 
 ### 4.13 Tables and lists
 
-- Rows: `padding:8–10px 14–16px`, 1px `--cLn` top border, hover `--p1`.
-- Header row: 11px / 500 `--mut`, sticky.
+- Rows: `padding:8–10px 14–16px`, 1px `--glass-line` top border, hover `--fill-1`.
+- Header row: 11px / 500 `--text-muted`, sticky.
 - Numbers and ids are in mono and right-aligned. Times are relative, with an absolute 24h tooltip.
 - Prefer a CSS grid per row (e.g. `118px minmax(0,1fr) 210px 64px auto`) so long text ellipsises instead of wrapping.
-- **File list:** a status letter (A grn, M gold, D ros, R vio, C tea, U `--mut`) in a 16px mono column, the path, `+n −n` or "bin", and a ● dot for uncommitted files.
-- **Selected row:** `--p3`.
+- **File list:** a status letter (A grn, M gold, D ros, R vio, C tea, U `--text-muted`) in a 16px mono column, the path, `+n −n` or "bin", and a ● dot for uncommitted files.
+- **Selected row:** `--fill-3`.
 
 ### 4.14 Forms
 
 - **Field:**
-  - label 12px / 500 `--tx`
-  - optional help text 11.5px `--mut`
-  - input: `padding:7px 10px`, radius 10px, bg `--p1`, 1px `--ln2`
-  - focus: 1px `--brand` + `0 0 0 3px var(--brandBg)`
-  - error: border `--ros`, message 11.5px `--ros`
+  - label 12px / 500 `--text`
+  - optional help text 11.5px `--text-muted`
+  - input: `padding:7px 10px`, radius 10px, bg `--fill-1`, 1px `--line-strong`
+  - focus: 1px `--brand` + `0 0 0 3px var(--brand-bg)`
+  - error: border `--rose`, message 11.5px `--rose`
 - **Secret input:** shows "•••• set" plus a "Replace" ghost button. Leaving it empty keeps the current value.
-- **Domain / tag list input:** chips (999px, `--p2`, × to remove). Paste splits on whitespace and commas; wildcards are allowed.
+- **Domain / tag list input:** chips (999px, `--fill-2`, × to remove). Paste splits on whitespace and commas; wildcards are allowed.
 - **Select / combobox:** the same shell + ▾. Flow pickers list "Default · \<name\>" first, then project flows, then a "Built-in templates" group. It falls back to free text if loading fails.
-- **Toggle:** a 28×16 track. Off: `--p2`. On: `--grn` with a white 12px knob.
-- **Section:** an Bricolage Grotesque 20px title + a 12px `--mut` sub. Fields sit on a 2-column grid (`minmax(0,1fr)`) with gap 12×16.
-- **"How to set this up" help:** a collapsible `<details>` card in `--p2`.
+- **Toggle:** a 28×16 track. Off: `--fill-2`. On: `--green` with a white 12px knob.
+- **Section:** an Bricolage Grotesque 20px title + a 12px `--text-muted` sub. Fields sit on a 2-column grid (`minmax(0,1fr)`) with gap 12×16.
+- **"How to set this up" help:** a collapsible `<details>` card in `--fill-2`.
 
 ### 4.15 Attachments
 
-- A drop zone (dashed `--ln2`, radius 12px, "Drop files or browse · max 20 MB · images, pdf, md").
-- Below it, chips: a 28px thumbnail or file glyph, the name, size in mono `--mut`, and ×. Over-limit chips turn rose with a reason.
+- A drop zone (dashed `--line-strong`, radius 12px, "Drop files or browse · max 20 MB · images, pdf, md").
+- Below it, chips: a 28px thumbnail or file glyph, the name, size in mono `--text-muted`, and ×. Over-limit chips turn rose with a reason.
 - Read-only file chips have the same look without the ×, and link to the stored file.
 
 ### 4.16 Sparklines (Vitals / Resources)
 
-- Three tiles in a 3-column grid, gap 6px. Each tile: `--p2`, radius 13px, `padding:7px 10px 6px`.
+- Three tiles in a 3-column grid, gap 6px. Each tile: `--fill-2`, radius 13px, `padding:7px 10px 6px`.
 - Tile content:
-  - label 11px `--mut`
+  - label 11px `--text-muted`
   - value in mono 13px / 600
   - an SVG of 120×26 (viewBox) with a 1.5px polyline in the hue and an area at 15% hue
 - Hues: CPU emb, memory gold, network sky (in = solid, out = dashed).
@@ -600,9 +600,9 @@ The **Layout** control is **not** in the top bar. It is a floating button at the
 
 ### 4.17 Empty, loading and error states
 
-- **Empty:** a dashed 1.5px `--ln2` box, a display title of 22–26px ("An empty bench", "Nothing running", "All still on the shelf"), a 1-line `--mut` explanation (max 40ch), and one primary action.
+- **Empty:** a dashed 1.5px `--line-strong` box, a display title of 22–26px ("An empty bench", "Nothing running", "All still on the shelf"), a 1-line `--text-muted` explanation (max 40ch), and one primary action.
 - **Loading:**
-  - Skeleton bars: `--p1` with a 1.4s shimmer (`linear-gradient(90deg, transparent, var(--p2), transparent)`).
+  - Skeleton bars: `--fill-1` with a 1.4s shimmer (`linear-gradient(90deg, transparent, var(--fill-2), transparent)`).
   - For live panes, prefer "Connecting…" plus a pulsing emb dot.
   - Never use a blank page.
 - **Error:**
@@ -626,22 +626,22 @@ The **Layout** control is **not** in the top bar. It is a floating button at the
 └───────────────────────────────────────────────────────────────────┘ cursor-light overlay (z40)
 ```
 
-- **Root:** full viewport, `display:flex; flex-direction:column; overflow:hidden; color: var(--tx); background: var(--scene)`.
+- **Root:** full viewport, `display:flex; flex-direction:column; overflow:hidden; color: var(--text); background: var(--scene)`.
   - The canvas is absolutely positioned at z0. Content is at z1. Popovers are at z30 and modals at z20+ (scrim covers everything).
   - The design reference is 1440×900, but the layout is fluid.
 - **Row:** `flex:1; display:flex; min-height:0`.
-- **Sidebar:** `flex:none; width:232px; margin:6px 0 6px 6px; radius 16px; overflow:hidden`, window glass (`--cBg` at .62 + `--cBf` + `--cLn`). Column layout:
+- **Sidebar:** `flex:none; width:232px; margin:6px 0 6px 6px; radius 16px; overflow:hidden`, window glass (`--glass-bg` at .62 + `--glass-filter` + `--glass-line`). Column layout:
   1. **Brand row** (56px): logo, then "Apothecary" (15px / 600) with the display tagline "software, bottled" below, then a « collapse button (28px).
   2. **Guild switcher:** a selected-style button with margin 0 10px 8px, radius 12px:
-     - 26px guild avatar, guild name (13px / 600, ellipsis), sub "4 workshops · 14 members" (11px `--mut`, ellipsis)
+     - 26px guild avatar, guild name (13px / 600, ellipsis), sub "4 workshops · 14 members" (11px `--text-muted`, ellipsis)
      - an optional "+N" elsewhere badge, then ⇅
      - opens the Guilds popover
   3. **Search / command bar:** "Search, jump, do…" plus a ⌘K mono key cap. It opens a command palette: jump to run, ticket, project, guild or action.
   4. **Nav**, scoped to the current guild: Desk ◈, Inbox ✉ (sky count), Runs ▶ (count), Tickets ☰, System ⚙. Item: `padding:6px 10px`, radius 10px, 16px glyph column, label, right count. Active item uses the selected style.
-  5. **Workshops section:** a header in display 14px `--mut`, plus a legend (▶ live · ✉ pings) and "+". A scrollable list:
+  5. **Workshops section:** a header in display 14px `--text-muted`, plus a legend (▶ live · ✉ pings) and "+". A scrollable list:
      - Each row shows the vial, name, live count (mono emb), and ping count (solid sky pill, or empty).
      - The **current workshop expands** to show its live runs as an indented tree: 15px indent with a 1px left rule. Each run row has a state dot (emb running / sky waiting), the title (ellipsis) and the mono id. The current run is highlighted with `rgba(255,255,255,.06)`.
-     - Quiet workshops are dimmer (`--mut`).
+     - Quiet workshops are dimmer (`--text-muted`).
   6. **Capacity:** a mini card in a 2-column grid, "Runs 3/6" and "Envs 4/10", each with a 5px bar (sky and green gradients).
   7. **User card** (inset, radius 12px), at the very bottom: the avatar with presence, name (12.5px / 600) and handle, which open the user menu (5.1); under a hairline, the **theme picker** (Ember × Sky, Solarized, Forest, Brown, Light, Dark, Pink), showing the theme's two hues and its name. This is the only appearance control end users get.
 - **Collapsed rail:** 60px wide with the same margins and material; a centered column with gap 4px:
@@ -682,7 +682,7 @@ The **Layout** control is **not** in the top bar. It is a floating button at the
 | `/system/{integrations,channels,account,users,limits,reaper,storage}` | System hub (`users` for admins only) |
 | `/g/…` | Old guild-scoped links redirect to the same page without the segment |
 
-Breadcrumbs always follow the hierarchy: **Desk / Workshop / Ticket key / Run id**. Each segment is a link (12px `--mut`, "/" in `--fnt`, current segment in `--tx` mono), and the row is `nowrap` with overflow hidden.
+Breadcrumbs always follow the hierarchy: **Desk / Workshop / Ticket key / Run id**. Each segment is a link (12px `--text-muted`, "/" in `--text-faint`, current segment in `--text` mono), and the row is `nowrap` with overflow hidden.
 
 ---
 
@@ -701,17 +701,17 @@ The run page body is a **user-arrangeable tiling desk**, like an IDE.
   - collapse single-child splits
   - flatten same-direction nested splits, multiplying their fractions
 - **Persistence:** save `{tree, preset}` per user, in localStorage now and on the server later.
-- **Geometry:** gap 8px between panes. Leaf header 38px. Leaves are content glass with radius 16px. Focused leaf border is `--brandLn`; others `--cLn`.
+- **Geometry:** gap 8px between panes. Leaf header 38px. Leaves are content glass with radius 16px. Focused leaf border is `--brand-line`; others `--glass-line`.
 - **Interactions:**
   - **Drag a tab** to move it. A floating "ghost" pill follows the cursor (selected style + big shadow). Drop targets:
     - the center of a leaf stacks the tab there
     - the outer 26% of a leaf's left, right, top or bottom edge splits that side
-    - drop preview: an absolute box, radius 12px, `color-mix(--brand 20%)` fill, **2px dashed `--brand`**, `inset 0 0 30px var(--brandGlow)`, and a 13px / 600 `--brandLt` label ("Stack here", "Drop to split →"…)
-  - **Gutter (8px)** between panes: cursor `col-resize` / `row-resize`. A centered 2px grip line appears on hover with a `--brandBg` highlight. Drag to resize, with a minimum pane size of about 120px.
+    - drop preview: an absolute box, radius 12px, `color-mix(--brand 20%)` fill, **2px dashed `--brand`**, `inset 0 0 30px var(--brand-glow)`, and a 13px / 600 `--brand-light` label ("Stack here", "Drop to split →"…)
+  - **Gutter (8px)** between panes: cursor `col-resize` / `row-resize`. A centered 2px grip line appears on hover with a `--brand-bg` highlight. Drag to resize, with a minimum pane size of about 120px.
   - **Leaf buttons:** split right / split down (move the active tab into a new half), fullscreen, hide.
-  - **Fullscreen** (⤢) is a moment, not a layout: the window, with all its tabs, springs out over the sidebar and the top bar to fill the screen, on solid `--solid` so nothing shows through, with an `esc` key cap in its strip. Esc (or ⤡) puts everything back exactly as it was. It is never saved and the tree does not change. Esc in a focused terminal stays the terminal's (vim needs it); an open popover or modal takes Esc first.
+  - **Fullscreen** (⤢) is a moment, not a layout: the window, with all its tabs, springs out over the sidebar and the top bar to fill the screen, on solid `--island-bg` so nothing shows through, with an `esc` key cap in its strip. Esc (or ⤡) puts everything back exactly as it was. It is never saved and the tree does not change. Esc in a focused terminal stays the terminal's (vim needs it); an open popover or modal takes Esc first.
   - **Tab ×** hides that view.
-  - **Layouts popover** (from the ⊞ **Layout** button, shortcut **L**: a 40px sky-tinted square floating at the bottom right of the run page, `--brandBg` over `--solid`, 1px `--brandLn`, with a tiny "L" key badge). It hovers over every window, a fullscreen one included (`--z-fab`); the view in the desk's bottom-right corner keeps its docked composer or ping card clear of it (`--fabClear`). The popover opens above the button, right-aligned, 300px wide, as an island (2.3 C):
+  - **Layouts popover** (from the ⊞ **Layout** button, shortcut **L**: a 40px sky-tinted square floating at the bottom right of the run page, `--brand-bg` over `--island-bg`, 1px `--brand-line`, with a tiny "L" key badge). It hovers over every window, a fullscreen one included (`--z-fab`); the view in the desk's bottom-right corner keeps its docked composer or ping card clear of it (`--fab-clear`). The popover opens above the button, right-aligned, 300px wide, as an island (2.3 C):
     - "Layouts" title + "saved in this browser"
     - preset grid (3 columns): Split, Focus, Dock, Recipe, Bench, Custom
     - "Windows" checklist (2 columns): a 14px checkbox tile per view (green ✓ when shown) + label; clicking toggles it
@@ -744,7 +744,7 @@ The run page body is a **user-arrangeable tiling desk**, like an IDE.
 | Record | Snapshots and attachments table: name, kind chip, source ("build · attempt 2", "ping answer", "run goal"), size, time, open/download. Kind filter segmented control. Note "Kept after the workspace is destroyed". |
 | Changes | Repo segmented picker (primary ★). Summary "branch vs main · fork a1b2c3 · 7 files +212 −48 · 3 commits", collapsible commits, file list (4.13) + unified diff. "Refreshes every 5s". |
 | Files | Repo picker, lazy tree (show ignored toggle, refresh), file viewer with line numbers, a 1 MB cap notice and a binary state. |
-| Terminal | Repo picker, connection status pill (connecting emb pulse / connected grn / disconnected ros + Reconnect), xterm surface on `--code`. "Session ends when you leave". |
+| Terminal | Repo picker, connection status pill (connecting emb pulse / connected grn / disconnected ros + Reconnect), xterm surface on `--code-bg`. "Session ends when you leave". |
 | Logs | Source segmented control (Workspace / Provisioning / stage logs). Mono 11.5px log tail with colored sources (tunnel tea, firewall ros, harness emb). |
 | Egress | Rule-now filter (All 41 / Allowed / Held 2 / Blocked 3) + host search. Table: host:port (mono), seen verdict chip, **rule now** toggle (allow / block, applies live, saved to the workshop policy; a held host — refused by default, not yet ruled on — shows a sky "held" between the two until someone picks one), protocol, count, bytes out/in, last seen. Footer links to the workshop egress settings. |
 | Ports | Detected ports as buttons (`:4000 beam.smp`), clicking exposes and opens. Manual "Expose port" input (1–65535, Enter submits). |
@@ -760,7 +760,7 @@ Every page uses the shell (section 5).
 **The backdrop is not looked at directly.** It shows only in the gaps between windows and, blurred, through their glass, on every page and at any screen size. So the windows always fill the main column:
 
 - A page body is one window (`.page.c`) filling all the height and width its header leaves. It never ends short of the pane, and the window itself has no `max-width`. Short content leaves empty glass, never bare backdrop.
-- What sits in that window is an inset, which `.c` inside `.c` gives by itself. A page holding one table needs no inset box: the table sits directly in the window.
+- What sits in that window is an inset, which `.glass` inside `.glass` gives by itself. A page holding one table needs no inset box: the table sits directly in the window.
 - Pages with their own columns (the System hub, the inbox, the review workbench, the flow editor) make every column a full-height window instead.
 - Cards in a `.card-grid` share the row, up to `--card-max` (860px) each.
 - Dialogs and sheets leave for `<body>`: a `position:fixed` element inside glass is trapped by it.
@@ -778,7 +778,7 @@ Every page uses the shell (section 5).
 - Filters in the window, directly above the list, in a `.filters` row: search first, then what narrows it, every control `--filter-h` tall. Filters never sit in the top bar.
 - The list sits directly on the window's glass, with no box around it. Tables use `RunTable`, `TicketTable` or `.rows`.
 
-The page header pattern is: breadcrumb row, then an h1 with one display accent phrase and an optional status chip, then a meta row (12px `--mut`, flex-wrap, gap 4px 14px), then right-aligned glass control groups. Header padding is 16–22px 20–22px 12px.
+The page header pattern is: breadcrumb row, then an h1 with one display accent phrase and an optional status chip, then a meta row (12px `--text-muted`, flex-wrap, gap 4px 14px), then right-aligned glass control groups. Header padding is 16–22px 20–22px 12px.
 
 ### 7.1 Live run: `/g/:guild/runs/:id` (reference: v10, default view)
 
@@ -847,7 +847,7 @@ The same anatomy, scoped to one guild:
   - **Left:** a document outline (headings) that jumps to sections.
   - **Center:** the document, max-width 72ch, markdown blocks rendered from the **raise-time snapshot**. A caption reads "snapshot from 14:02 · not the live file".
     - Selecting text opens a floating composer (window glass, radius 17px): section heading, "L12–18", the quoted text, a comment box, attachments, and "⌘↵ add · Esc close".
-    - Commented blocks get a 3px `--brand` left bar. Hovering a comment highlights its exact range in `--brandBg`.
+    - Commented blocks get a 3px `--brand` left bar. Hovering a comment highlights its exact range in `--brand-bg`.
     - Extra agent files appear as a thumbnail row, with "not captured" in a dashed chip.
   - **Right sidebar:** review (320px): comments sorted by position (jump, edit, delete with confirm), review-level attachments, and a footer with the actions:
     - gate: **Approve** (warns when unsent comments exist) / **Request changes (N)**
@@ -895,7 +895,7 @@ The same anatomy, scoped to one guild:
    - Save (primary, disabled until dirty, with an "Unsaved changes" sky dot)
    - Clone, Delete… or "Reset to built-in"
 2. **Body:** row [canvas 1fr | inspector 450px].
-   - **Canvas:** Svelte Flow on a transparent background over the scene, with a faint dot grid (`--ln` 1px, 20px).
+   - **Canvas:** Svelte Flow on a transparent background over the scene, with a faint dot grid (`--line` 1px, 20px).
      - **Nodes:** content glass, radius 14px, with a 3px top accent in the stage-type hue.
        - Head: type chip + mono id, plus an ENTRY tag (sky outline) on the first stage, plus a detail line (agent name / command / action / signal / "gate" / the sequence it runs).
        - Rows: inputs (bound grn dot, unbound sky hollow, sentinel vio `$DIFF_TARGET`) and outputs with data dots. Dataflow lines join dots within a chain only.

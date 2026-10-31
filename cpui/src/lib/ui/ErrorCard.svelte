@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
-	import { I } from './icons';
+	import { I } from '$lib/design/icons';
 	// Inline error (DESIGN 4.17): short cause, mono detail folded, one action
 	// (Retry by default), optionally dismissable.
 	let {
@@ -32,7 +32,7 @@
 	</div>
 	{#if detail}
 		<details>
-			<summary class="disclosure tiny mut">{t('ui.error.details')}</summary>
+			<summary class="disclosure tiny muted">{t('ui.error.details')}</summary>
 			<pre class="log">{detail}</pre>
 		</details>
 	{/if}
@@ -41,9 +41,9 @@
 <style>
 	.ec {
 		border-radius: var(--r-btn);
-		background: var(--rosSolid);
-		border: 1px solid var(--rosLn);
-		color: var(--tx);
+		background: var(--danger-solid);
+		border: 1px solid var(--danger-line);
+		color: var(--text);
 		padding: 8px 10px;
 		display: flex;
 		flex-direction: column;
@@ -51,7 +51,7 @@
 		font-size: var(--fs-ui);
 	}
 	.x {
-		color: var(--rosTx);
+		color: var(--danger-text);
 		font-weight: 700;
 	}
 	summary {

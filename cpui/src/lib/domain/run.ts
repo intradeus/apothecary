@@ -2,7 +2,7 @@
 // not the shape the wire happens to have. Nothing here imports from
 // $lib/api/generated; the mappers translate.
 
-import type { PhaseKind } from '$lib/flowdoc';
+import type { PhaseKind } from '$lib/domain/flowdoc';
 import type { SkillsetPin, SkillsetRef } from './skill';
 
 /** Every state a run can be in. Exhaustive: a new one is a type error here. */

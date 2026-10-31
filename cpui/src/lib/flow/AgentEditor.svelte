@@ -5,8 +5,8 @@
 	// typed, never where — and the flow's MCP servers it may call.
 	import Select from '$lib/ui/Select.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
-	import { I } from '$lib/ui/icons';
-	import { STAGE_HUE } from '$lib/ui/hues';
+	import { I } from '$lib/design/icons';
+	import { STAGE_HUE } from '$lib/design/hues';
 	import { t } from '$lib/i18n/index.svelte';
 	import {
 		FILE_TYPES,
@@ -18,7 +18,7 @@
 		type DocAgent,
 		type DocMCPServer,
 		type FlowDoc
-	} from '$lib/flowdoc';
+	} from '$lib/domain/flowdoc';
 	import {
 		addPort,
 		deleteAgent,
@@ -64,12 +64,14 @@
 		if (!took) el.value = current;
 	};
 	function rename(el: HTMLInputElement) {
-		const from = a.name;
+		// The page finds `agent` by name, so the rename takes `a` to another.
+		const held = a;
+		const from = held.name;
 		const took = renameAgentTo(doc, from, el.value);
 		renamed(el, from, took);
 		if (took) {
 			onchange();
-			onrenamed?.(a.name);
+			onrenamed?.(held.name);
 		}
 	}
 	async function remove() {
@@ -152,7 +154,7 @@
 
 {#snippet header()}
 	<div class="ih">
-		<span class="pill sm flat sq mono t-{STAGE_HUE.agent}">{t('flow.insp.kind.agent')}</span>
+		<span class="pill sm flat sq mono tint-{STAGE_HUE.agent}">{t('flow.insp.kind.agent')}</span>
 		<input
 			id={id('name')}
 			class="mono name-in"
@@ -162,7 +164,7 @@
 			onchange={(e) => rename(e.currentTarget)}
 		/>
 		<span class="spacer"></span>
-		<span class="fnt tiny">{t('flow.insp.runByCount', { count: used.length })}</span>
+		<span class="faint tiny">{t('flow.insp.runByCount', { count: used.length })}</span>
 		<button class="btn-danger btn-sm" onclick={remove} title={t('flow.insp.deleteAgent')}
 			>{t('flow.insp.delete')}</button
 		>
@@ -206,7 +208,7 @@
 	<div class="field prompt-field">
 		<div class="row nowrap">
 			<label for={id('prompt')} class="grow">{t('flow.insp.prompt')}</label>
-			<span class="fnt tiny"
+			<span class="faint tiny"
 				>{t('flow.agents.promptStats', {
 					lines: promptStats.lines,
 					words: promptStats.words
@@ -224,7 +226,7 @@
 		<div class="help">{t('flow.insp.promptHelp')}</div>
 	</div>
 	<div class="field">
-		<div class="lbl">{t('flow.agents.addsTitle')}</div>
+		<div class="caption">{t('flow.agents.addsTitle')}</div>
 		<div class="help">{t('flow.agents.addsHelp')}</div>
 		<pre class="adds mono card-in">{appended.join('\n')}</pre>
 	</div>
@@ -232,7 +234,7 @@
 
 {#snippet inputs()}
 	<div class="grp">
-		<div class="lbl">{t('flow.insp.inputs')}</div>
+		<div class="caption">{t('flow.insp.inputs')}</div>
 		<div class="help">{t('flow.insp.agentInputsHelp')}</div>
 	</div>
 	{#each a.inputs ?? [] as d, i (i)}
@@ -314,7 +316,7 @@
 
 {#snippet outputs()}
 	<div class="grp">
-		<div class="lbl">{t('flow.insp.outputs')}</div>
+		<div class="caption">{t('flow.insp.outputs')}</div>
 		<div class="help">{t('flow.insp.agentOutputsHelp')}</div>
 	</div>
 	{#each a.outputs ?? [] as d, i (i)}
@@ -391,7 +393,7 @@
 
 {#snippet mcp()}
 	<div class="grp">
-		<div class="lbl">{t('flow.agents.mcp')}</div>
+		<div class="caption">{t('flow.agents.mcp')}</div>
 		<div class="help">{t('flow.agents.mcpHelp')}</div>
 	</div>
 	{#each servers as m (m.name)}
@@ -402,7 +404,7 @@
 				title={t('flow.agents.mcpToggle', { name: m.name })}
 				onchange={(v) => setMCP(m.name, v)}
 			/>
-			<span class="fnt small ell grow" title={m.description ?? reach(m)}
+			<span class="faint small truncate grow" title={m.description ?? reach(m)}
 				>{m.description ?? reach(m)}</span
 			>
 			{#if onopenmcp}
@@ -414,8 +416,8 @@
 	{/each}
 	{#each undeclared as name (name)}
 		<div class="row nowrap mcp-row">
-			<span class="mono hue-gold grow">{name}</span>
-			<span class="fnt small">{t('flow.agents.mcpUndeclared')}</span>
+			<span class="mono hue-warning grow">{name}</span>
+			<span class="faint small">{t('flow.agents.mcpUndeclared')}</span>
 			<button class="btn-sm btn-ghost" onclick={() => setMCP(name, false)}
 				>{t('flow.insp.removePort')}</button
 			>
@@ -428,7 +430,7 @@
 
 {#snippet runBy()}
 	<div class="grp">
-		<div class="lbl">{t('flow.insp.runBy')}</div>
+		<div class="caption">{t('flow.insp.runBy')}</div>
 		{#if used.length}
 			<div class="chips">
 				{#each used as u (u.label)}<button class="btn-sm mono" onclick={() => onopenstage?.(u)}
@@ -463,7 +465,7 @@
 		align-items: center;
 		gap: 8px;
 		padding-bottom: 10px;
-		border-bottom: 1px solid var(--ln);
+		border-bottom: 1px solid var(--line);
 		min-width: 0;
 	}
 	.name-in {
@@ -478,7 +480,7 @@
 		gap: 2px;
 		margin-top: 4px;
 	}
-	.lbl {
+	.caption {
 		margin-top: 4px;
 	}
 	/* An agent's declared input or output: its name, then what describes it. */
@@ -522,7 +524,7 @@
 		margin: 0;
 		padding: 10px 12px;
 		white-space: pre-wrap;
-		color: var(--mut);
+		color: var(--text-muted);
 		font-size: var(--fs-label);
 	}
 	@media (max-width: 900px) {

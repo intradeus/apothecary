@@ -2,8 +2,8 @@
 // store holds the events, the views render what comes out of here.
 
 import type { Run, RunEvent, ServiceStatus } from '$lib/domain';
-import { MAIN } from '$lib/flowdoc';
-import { fmtClockDuration, fmtCost, fmtDuration, isTerminal } from '$lib/format';
+import { MAIN } from '$lib/domain/flowdoc';
+import { fmtClockDuration, fmtCost, fmtDuration, isTerminal } from '$lib/core/format';
 import { t } from '$lib/i18n/index.svelte';
 import {
 	answerKindOf,
@@ -12,7 +12,7 @@ import {
 	toPingForm,
 	toReviewComment,
 	type PingLike
-} from '$lib/ping';
+} from '$lib/core/ping';
 import type { StageStatus } from '$lib/ui/StageFlask.svelte';
 
 /** The provisioning log (clone + build + bootstrap) is filed under a

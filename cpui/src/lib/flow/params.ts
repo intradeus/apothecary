@@ -8,10 +8,15 @@ import {
 	START_POLICIES,
 	type DocParam,
 	type FlowDoc
-} from '$lib/flowdoc';
+} from '$lib/domain/flowdoc';
 
 // The stage fields a parameter may stand for, whole.
 const PARAM_FIELDS = ['model', 'harness', 'run_ref', 'timeout', 'max_turns', 'service'] as const;
+
+// A condition reads a parameter whole, negated or not: never a prefix of a
+// longer name.
+const runIfReads = (runIf: string | undefined, ref: string) =>
+	runIf?.replace(/^not\s+/, '') === ref;
 
 export type ParamType = 'bool' | 'int' | 'float' | 'string' | 'duration';
 export type ParamKind = ParamType | 'enum' | 'policy' | 'list';
@@ -112,7 +117,8 @@ export function enumParamsWithin(doc: FlowDoc, values: readonly string[]): strin
 export const policyParams = (doc: FlowDoc) => enumParamsWithin(doc, START_POLICIES);
 
 /** Where a parameter is read: "stage.field", "stage.setting", "stage.input"
- *  (a run.service.$name source), "phase.start". */
+ *  (a run.service.$name source), "phase.start", "ask.harness", and
+ *  "param.default" (another parameter's default reading it). */
 export function paramRefs(doc: FlowDoc, name: string): string[] {
 	const ref = '$' + name;
 	const out: string[] = [];
@@ -120,7 +126,7 @@ export function paramRefs(doc: FlowDoc, name: string): string[] {
 		for (const f of PARAM_FIELDS) {
 			if (s[f] === ref) out.push(`${s.id}.${f}`);
 		}
-		if (s.run_if && s.run_if.replace(/^not\s+/, '') === ref) out.push(`${s.id}.run_if`);
+		if (runIfReads(s.run_if, ref)) out.push(`${s.id}.run_if`);
 		for (const [k, v] of Object.entries(s.with ?? {})) if (v === ref) out.push(`${s.id}.${k}`);
 		for (const [k, p] of Object.entries(s.input ?? {}))
 			if (p.from === serviceSource(ref)) out.push(`${s.id}.${k}`);
@@ -130,6 +136,9 @@ export function paramRefs(doc: FlowDoc, name: string): string[] {
 		if (ph.on.max === ref) out.push(`${ph.id}.max`);
 		if (ph.on.quiet_for === ref) out.push(`${ph.id}.quiet_for`);
 	}
+	if (doc.ask?.harness === ref) out.push('ask.harness');
+	for (const [n, p] of Object.entries(doc.parameters ?? {}))
+		if (p.default === ref) out.push(`${n}.default`);
 	return out;
 }
 
@@ -142,7 +151,7 @@ export function renameParam(doc: FlowDoc, from: string, to: string) {
 	const b = '$' + to;
 	for (const s of allStages(doc)) {
 		for (const f of PARAM_FIELDS) if (s[f] === a) s[f] = b;
-		if (s.run_if) s.run_if = s.run_if.replace(a, b);
+		if (runIfReads(s.run_if, a)) s.run_if = s.run_if!.slice(0, -a.length) + b;
 		for (const k of Object.keys(s.with ?? {})) if (s.with![k] === a) s.with![k] = b;
 		for (const p of Object.values(s.input ?? {}))
 			if (p.from === serviceSource(a)) p.from = serviceSource(b);
@@ -152,4 +161,6 @@ export function renameParam(doc: FlowDoc, from: string, to: string) {
 		if (ph.on.max === a) ph.on.max = b;
 		if (ph.on.quiet_for === a) ph.on.quiet_for = b;
 	}
+	if (doc.ask?.harness === a) doc.ask.harness = b;
+	for (const p of Object.values(doc.parameters)) if (p.default === a) p.default = b;
 }

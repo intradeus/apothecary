@@ -11,11 +11,12 @@
 	// shown files — the threads beside the review — open read-only in the
 	// middle), the items in the middle, the summary and the answer on the
 	// right.
+	import { errorMessage } from '$lib/core/errors';
 	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { CurationView, Ping } from '$lib/domain';
-	import AttachFiles from '$lib/AttachFiles.svelte';
-	import { curatable } from '$lib/ping';
+	import AttachFiles from '$lib/artifacts/AttachFiles.svelte';
+	import { curatable } from '$lib/core/ping';
 	import { ReviewFiles } from '$lib/review/files.svelte';
 	import ReviewLayout from '$lib/review/ReviewLayout.svelte';
 	import FileList from '$lib/review/FileList.svelte';
@@ -25,7 +26,7 @@
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { t } from '$lib/i18n/index.svelte';
 	import CurationItem from './CurationItem.svelte';
 	import {
@@ -83,7 +84,7 @@
 			api.pings
 				.curation(ping.id)
 				.then((v) => (view = v))
-				.catch((e) => (loadError = e instanceof Error ? e.message : String(e)))
+				.catch((e) => (loadError = errorMessage(e)))
 		]);
 		if (doc) cur = loadDraft(ping.id, initialState(doc, itemsOf(doc)));
 		loaded = true;
@@ -135,7 +136,7 @@
 			clearDraft(ping.id);
 			onanswered();
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			busy = false;
 		}
@@ -170,9 +171,9 @@
 
 	{#snippet main()}
 		{#if !loaded}
-			<div class="dscroll"><div class="paper"><Skeleton lines={8} /></div></div>
+			<div class="doc-scroll"><div class="paper"><Skeleton lines={8} /></div></div>
 		{:else if onDoc}
-			<div class="dscroll items">
+			<div class="doc-scroll items">
 				{#if set.files.length > 1}
 					<FileList
 						variant="select"
@@ -214,7 +215,7 @@
 						{/if}
 					</div>
 					{#if postsNothing}
-						<Callout hue="gold" glyph={I.warn}>{t('cur.noneWarn')}</Callout>
+						<Callout hue="warning" glyph={I.warn}>{t('cur.noneWarn')}</Callout>
 					{/if}
 					{#each items as it (it.key)}
 						{#if cur.items[it.key]}
@@ -252,7 +253,7 @@
 				</FileView>
 			{/key}
 		{:else}
-			<div class="dscroll"><div class="paper"><ErrorCard cause={set.error} /></div></div>
+			<div class="doc-scroll"><div class="paper"><ErrorCard cause={set.error} /></div></div>
 		{/if}
 	{/snippet}
 
@@ -263,33 +264,37 @@
 					>{tl.kept}/{tl.total}</span
 				>{/if}
 		</div>
-		<div class="sscroll">
+		<div class="side-scroll">
 			<details class="card-in ask">
 				<summary class="disclosure">{t('cur.theAsk')}</summary>
 				<Markdown src={ping.question} quiet />
 			</details>
 
 			{#if usable && doc?.review}
-				<label class="sum field">
-					<span class="lbl"
-						>{t('cur.summary')}{#if summaryReworded}
-							<span class="pill sm t-gold">{t('cur.reworded')}</span>
+				<div class="sum field">
+					<span class="sum-head">
+						<label class="caption" for="cur-summary">{t('cur.summary')}</label>
+						{#if summaryReworded}
+							<span class="pill sm tint-warning">{t('cur.reworded')}</span>
 							<button
 								class="linklike"
+								disabled={busy}
 								onclick={() => {
 									cur.summary = doc?.review?.summary ?? '';
 									persist();
 								}}>{t('cur.restore')}</button
-							>{/if}</span
-					>
+							>
+						{/if}
+					</span>
 					<textarea
+						id="cur-summary"
 						bind:value={cur.summary}
 						oninput={persist}
 						rows="4"
 						disabled={busy}
 						placeholder={t('cur.summaryHelp')}></textarea>
 					<span class="help">{t('cur.summaryHelp')}</span>
-				</label>
+				</div>
 			{/if}
 
 			{#if dropped.length}
@@ -298,9 +303,9 @@
 					<ul>
 						{#each dropped as n, i (i)}
 							<li>
-								<span class="pill sm t-{kindHue(n.kind)}">{kindLabel(n.kind)}</span>
-								<span class="mono fnt">{n.path}:{n.line}</span>
-								<span class="ell">{n.body}</span>
+								<span class="pill sm tint-{kindHue(n.kind)}">{kindLabel(n.kind)}</span>
+								<span class="mono faint">{n.path}:{n.line}</span>
+								<span class="truncate">{n.body}</span>
 							</li>
 						{/each}
 					</ul>
@@ -310,7 +315,7 @@
 
 		<footer class="pane-foot sf">
 			<label class="fb">
-				<span class="lbl">{t('cur.feedback')}</span>
+				<span class="caption">{t('cur.feedback')}</span>
 				<textarea
 					bind:value={cur.feedback}
 					oninput={persist}
@@ -319,8 +324,8 @@
 					placeholder={t('cur.feedbackPlaceholder')}></textarea>
 			</label>
 			<AttachFiles bind:files label={t('doc.attachReview')} compact />
-			{#if blanks.length}<div class="err">{t('cur.blanksWarn')}</div>{/if}
-			{#if error}<div class="err">{error}</div>{/if}
+			{#if blanks.length}<div class="error">{t('cur.blanksWarn')}</div>{/if}
+			{#if error}<div class="error">{error}</div>{/if}
 			<div class="acts">
 				<button
 					class="btn-primary"
@@ -336,9 +341,9 @@
 					onclick={() => submit('reject')}>{t('cur.requestChanges')}</button
 				>
 			</div>
-			<p class="help fnt cap">
+			<p class="help faint cap">
 				{#if savedAt}
-					<span class="hue-grn">{I.ok} {t('cur.draftSaved')}</span>{t('cur.draftKept')}
+					<span class="hue-success">{I.ok} {t('cur.draftSaved')}</span>{t('cur.draftKept')}
 				{:else}
 					{t('cur.draftsKept')}
 				{/if}
@@ -348,12 +353,6 @@
 </ReviewLayout>
 
 <style>
-	.dscroll {
-		flex: 1;
-		min-height: 0;
-		overflow: auto;
-		padding: 16px 22px 40px;
-	}
 	.items {
 		display: flex;
 		flex-direction: column;
@@ -370,16 +369,6 @@
 	.note {
 		margin: 0;
 	}
-	/* sidebar */
-	.sscroll {
-		flex: 1;
-		min-height: 0;
-		overflow: auto;
-		padding: 12px;
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
-	}
 	.ask,
 	.drp {
 		padding: 6px 10px;
@@ -388,7 +377,7 @@
 	}
 	.ask summary,
 	.drp summary {
-		color: var(--mut);
+		color: var(--text-muted);
 		font-weight: 500;
 	}
 	.ask > :global(.md) {
@@ -413,10 +402,13 @@
 		flex-direction: column;
 		gap: 4px;
 	}
-	.sum .lbl {
+	.sum-head {
 		display: flex;
 		align-items: center;
 		gap: 6px;
+	}
+	.sum-head .caption {
+		margin: 0;
 	}
 	.sum textarea {
 		resize: vertical;
@@ -438,12 +430,7 @@
 		gap: 6px;
 	}
 	.cap,
-	.err {
+	.error {
 		margin: 0;
-	}
-	@container review (max-width: 700px) {
-		.sscroll {
-			overflow: visible;
-		}
 	}
 </style>

@@ -10,7 +10,7 @@
 	// hit, but Svelte Flow reports no click on it: data.pick opens what the
 	// edge is.
 	import { BaseEdge, EdgeLabel, getSmoothStepPath, type EdgeProps } from '@xyflow/svelte';
-	import { LABEL_PAD, LABEL_ROW } from '$lib/flowdoc';
+	import { LABEL_PAD, LABEL_ROW } from '$lib/domain/flowdoc';
 
 	let {
 		id,

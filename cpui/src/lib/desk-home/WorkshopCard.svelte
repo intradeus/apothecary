@@ -5,14 +5,14 @@
 	// places on the spring when the list reorders.
 	import { flip } from 'svelte/animate';
 	import { t } from '$lib/i18n/index.svelte';
-	import { to } from '$lib/urls';
-	import { fmtCost, fmtDuration } from '$lib/format';
+	import { to } from '$lib/core/urls';
+	import { fmtCost, fmtDuration } from '$lib/core/format';
 	import type { Project, Run } from '$lib/domain';
 	import StageChip from '$lib/ui/StageChip.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { ms, spring } from '$lib/ui/motion';
 	import RunRow from '$lib/run/RunRow.svelte';
-	import WorkshopName from '$lib/workshop/WorkshopName.svelte';
+	import WorkshopName from '$lib/app/WorkshopName.svelte';
 	import { runFacts, stageType } from '$lib/run/runfacts.svelte';
 
 	let {
@@ -46,13 +46,13 @@
 	const move = { duration: ms('--dur-spring', 450), easing: spring };
 </script>
 
-<article class="wc c pane">
+<article class="wc glass pane">
 	<header class="head">
 		<span class="nm"><WorkshopName projectId={project.id} idle={liveTotal === 0} link /></span>
 		<span class="sum">
 			{liveTotal
 				? t('deskhome.card.live', { count: liveTotal })
-				: t('deskhome.card.idle')}{#if pings}{' · '}<span class="hue-sky"
+				: t('deskhome.card.idle')}{#if pings}{' · '}<span class="hue-attention"
 					>{t('deskhome.card.pings', { count: pings })}</span
 				>{/if}
 		</span>
@@ -72,7 +72,7 @@
 						{#if st}<StageChip type={st} />{/if}
 						<span class="nums">
 							<span>{fmtDuration(now - new Date(r.createdAt).getTime())}</span>
-							<span class="fnt">{f ? fmtCost(f.cost) : '…'}</span>
+							<span class="faint">{f ? fmtCost(f.cost) : '…'}</span>
 						</span>
 					</span>
 				{/snippet}
@@ -122,11 +122,11 @@
 	.nm :global(.wn) {
 		font-size: var(--fs-body);
 		font-weight: 600;
-		color: var(--tx);
+		color: var(--text);
 	}
 	.sum {
 		font-size: var(--fs-meta);
-		color: var(--mut);
+		color: var(--text-muted);
 		white-space: nowrap;
 	}
 	.tr {
@@ -135,9 +135,9 @@
 		gap: 10px;
 	}
 	.nums {
-		font-family: var(--mono);
+		font-family: var(--font-code);
 		font-size: var(--fs-id);
-		color: var(--mut);
+		color: var(--text-muted);
 		text-align: right;
 		white-space: nowrap;
 		display: flex;
@@ -150,6 +150,6 @@
 		font-size: var(--fs-label);
 	}
 	.pane-foot > a:first-child {
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 </style>

@@ -22,7 +22,7 @@
 {/snippet}
 
 {#if pane}
-	<div class="c pane"><div class="pane-body">{@render bars()}</div></div>
+	<div class="glass pane"><div class="pane-body">{@render bars()}</div></div>
 {:else}
 	{@render bars()}
 {/if}

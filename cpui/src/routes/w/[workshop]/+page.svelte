@@ -1,13 +1,14 @@
 <script lang="ts">
 	// Workshop overview (DESIGN 7.7): the header, then a tab strip — Overview,
 	// Runs, Tickets, Flows, Health — driven by ?tab=.
+	import { errorMessage } from '$lib/core/errors';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api } from '$lib/api';
 	import type { Flow, Integration, Project, Ticket } from '$lib/domain';
-	import { fleet } from '$lib/fleet.svelte';
-	import { to, type WorkshopTab } from '$lib/urls';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { to, type WorkshopTab } from '$lib/core/urls';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import { provideHeaderSlot } from '$lib/ui/headerAction.svelte';
@@ -16,7 +17,7 @@
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import Tabs from '$lib/ui/Tabs.svelte';
 	import WorkshopChips from '$lib/workshop/WorkshopChips.svelte';
 	import WorkshopBadge from '$lib/workshop/WorkshopBadge.svelte';
@@ -57,7 +58,7 @@
 			project = await api.projects.get(projectId);
 			error = '';
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		}
 	}
 	async function loadFlows() {
@@ -65,7 +66,7 @@
 			flows = await api.flows.list(projectId);
 			flowsError = '';
 		} catch (e) {
-			flowsError = e instanceof Error ? e.message : String(e);
+			flowsError = errorMessage(e);
 		}
 	}
 	async function loadTickets() {
@@ -73,7 +74,7 @@
 			tickets = await api.tickets.list(projectId);
 			ticketsError = '';
 		} catch (e) {
-			ticketsError = e instanceof Error ? e.message : String(e);
+			ticketsError = errorMessage(e);
 		}
 	}
 
@@ -134,7 +135,7 @@
 			toast(t('page.workshop.deleted', { name: gone }));
 			await goto(to.workshops());
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			deleting = false;
 		}
@@ -155,10 +156,11 @@
 >
 	{#snippet lead()}<WorkshopBadge {projectId} live={live.length} />{/snippet}
 	{#snippet chip()}
-		{#if live.length}<span class="pill t-emb"
+		{#if live.length}<span class="pill tint-running"
 				><span class="dot pulse"></span>{t('page.desk.nLive', { count: live.length })}</span
 			>{/if}
-		{#if pings}<span class="pill t-hot">{t('page.workshop.pingsAwaiting', { count: pings })}</span
+		{#if pings}<span class="pill tint-hot"
+				>{t('page.workshop.pingsAwaiting', { count: pings })}</span
 			>{/if}
 	{/snippet}
 	{#snippet meta()}
@@ -171,10 +173,10 @@
 			{:else}
 				<span class="mono repo">{project.repo.url}</span>
 			{/if}
-			{#if project.repos?.length}<span class="fnt"
+			{#if project.repos?.length}<span class="faint"
 					>{t('page.workshops.moreRepos', { count: project.repos.length })}</span
 				>{/if}
-			<span class="mono fnt">{I.branch} {project.repo.defaultBranch}</span>
+			<span class="mono faint">{I.branch} {project.repo.defaultBranch}</span>
 			<WorkshopChips {project} {integrations} />
 		{:else if !error}
 			<span class="meta-skel"><Skeleton lines={1} /></span>
@@ -213,7 +215,7 @@
 	</div>
 </Popover>
 
-<div class="wt c">
+<div class="wt glass">
 	<Tabs
 		label={t('page.workshop.sections')}
 		value={tab}
@@ -226,7 +228,7 @@
 	/>
 </div>
 
-<div class="page c">
+<div class="page glass">
 	{#if error && !project}
 		<ErrorCard cause={t('page.settings.loadError')} detail={error} onretry={loadProject} />
 	{:else if !project}
@@ -255,7 +257,7 @@
 
 <style>
 	.repo {
-		color: var(--tx);
+		color: var(--text);
 		font-size: var(--fs-help);
 	}
 	.acts {
@@ -293,12 +295,12 @@
 		align-items: flex-start;
 	}
 	.bt {
-		font-family: var(--display);
+		font-family: var(--font-display);
 		font-size: var(--fs-section);
 	}
 	.blocked p {
 		margin: 0;
-		color: var(--mut);
+		color: var(--text-muted);
 		font-size: var(--fs-ui);
 		text-wrap: pretty;
 	}

@@ -5,8 +5,8 @@
 	// the run; links in the trailing slot stay clickable above it.
 	import type { Snippet } from 'svelte';
 	import type { Run } from '$lib/domain';
-	import { to } from '$lib/urls';
-	import { age, ago, fmtAbs, shortId, stateHueClass, stateLabel } from '$lib/format';
+	import { to } from '$lib/core/urls';
+	import { age, ago, fmtAbs, shortId, stateHueClass, stateLabel } from '$lib/core/format';
 	import { t } from '$lib/i18n/index.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import StatusMark from '$lib/ui/StatusMark.svelte';
@@ -26,7 +26,7 @@
 	} = $props();
 
 	const mark = $derived(
-		run.state === 'completed' ? 'ok' : run.state === 'failed' ? 'bad' : ('mut' as const)
+		run.state === 'completed' ? 'ok' : run.state === 'failed' ? 'bad' : ('muted' as const)
 	);
 </script>
 
@@ -37,15 +37,15 @@
 		<StatusChip state={run.state} compact />
 	{/if}
 	<span class="mid">
-		<a class="t ell stretch" href={to.run(run.id)}>{run.title || t('run.row.untitled')}</a>
-		<span class="s ell"
+		<a class="t truncate stretch" href={to.run(run.id)}>{run.title || t('run.row.untitled')}</a>
+		<span class="s truncate"
 			><span class={stateHueClass[run.state]}>{stateLabel[run.state]}</span>
 			{#if variant === 'finished'}
 				· <span title={fmtAbs(run.updatedAt)}>{ago(run.updatedAt)}</span>
 			{:else if detail ?? run.currentStage}
 				· <span class="mono">{detail ?? run.currentStage}</span>
 			{/if}{#if run.hold && variant !== 'finished'}
-				· <span class="hue-sky">{t('run.row.held')}</span>
+				{' · '}<span class="hue-attention">{t('run.row.held')}</span>
 			{/if}</span
 		>
 	</span>
@@ -55,8 +55,8 @@
 		{:else if variant === 'finished'}
 			<MrLink {run} />
 		{:else}
-			<span class="mono fnt id">{shortId(run.id)}</span>
-			<span class="mono fnt" title={fmtAbs(run.updatedAt)}>{age(run.updatedAt)}</span>
+			<span class="mono faint id">{shortId(run.id)}</span>
+			<span class="mono faint" title={fmtAbs(run.updatedAt)}>{age(run.updatedAt)}</span>
 		{/if}
 	</span>
 </div>
@@ -69,13 +69,13 @@
 		gap: 10px;
 		align-items: center;
 		padding: 8px 14px;
-		border-top: 1px solid var(--cLn);
+		border-top: 1px solid var(--glass-line);
 	}
 	.rr:hover {
-		background: var(--p1);
+		background: var(--fill-1);
 	}
 	.rr:active {
-		background: var(--p3);
+		background: var(--fill-3);
 	}
 	.mid {
 		display: flex;
@@ -86,14 +86,14 @@
 	.t {
 		font-size: var(--fs-ui);
 		font-weight: 500;
-		color: var(--tx);
+		color: var(--text);
 	}
 	.t:hover {
 		text-decoration: none;
 	}
 	.s {
 		font-size: var(--fs-meta);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.s .mono {
 		font-size: var(--fs-id);

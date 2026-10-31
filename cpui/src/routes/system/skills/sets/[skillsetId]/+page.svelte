@@ -2,20 +2,21 @@
 	// One skillset (TODO 38): name, description and which skills, with its
 	// versions beside — every saved change of content cuts one, and a run
 	// pins one. `new` creates (and cuts v1).
+	import { errorMessage } from '$lib/core/errors';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { Skill, Skillset, SkillsetVersion } from '$lib/domain';
-	import { ago, fmtAbs } from '$lib/format';
+	import { ago, fmtAbs } from '$lib/core/format';
 	import { t, th } from '$lib/i18n/index.svelte';
-	import { to } from '$lib/urls';
+	import { to } from '$lib/core/urls';
 	import CheckboxGroup from '$lib/ui/CheckboxGroup.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	const setId = $derived(page.params.skillsetId ?? '');
 	const creating = $derived(setId === 'new');
@@ -54,7 +55,7 @@
 				versions = vs;
 			}
 		} catch (e) {
-			loadErr = e instanceof Error ? e.message : String(e);
+			loadErr = errorMessage(e);
 		} finally {
 			if (id === setId) loaded = true;
 		}
@@ -92,7 +93,7 @@
 				toast(t('skills.set.saved'));
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			saving = false;
 		}
@@ -113,7 +114,7 @@
 				error = t('skills.set.refreshWarnings', { list: r.warnings.join('; ') });
 			await load(setId);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			refreshing = false;
 		}
@@ -132,7 +133,7 @@
 			toast(t('skills.set.deleted'));
 			await goto(to.skills());
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		}
 	}
 </script>
@@ -148,8 +149,9 @@
 		<section class="form pane">
 			<div class="pane-head">
 				<h2>{creating ? t('skills.set.crumbNew') : set?.name}</h2>
-				{#if set}<span class="pill sm t-mut">{t('skills.version', { seq: set.headSeq })}</span>{/if}
-				{#if set?.source}<span class="pill sm t-brand">{t('skills.remote')}</span>{/if}
+				{#if set}<span class="pill sm tint-muted">{t('skills.version', { seq: set.headSeq })}</span
+					>{/if}
+				{#if set?.source}<span class="pill sm tint-brand">{t('skills.remote')}</span>{/if}
 			</div>
 			<div class="body">
 				<div class="field">
@@ -165,7 +167,7 @@
 						placeholder={t('skills.set.descriptionPh')}></textarea>
 				</div>
 				<div class="field">
-					<span class="flabel">{t('skills.set.members')}</span>
+					<span class="field-label">{t('skills.set.members')}</span>
 					{#if options.length}
 						<CheckboxGroup {options} bind:value={picked} label={t('skills.set.members')} />
 						<span class="help">{t('skills.set.membersHelp')}</span>
@@ -177,19 +179,19 @@
 				</div>
 				{#if set?.source}
 					<div class="src">
-						<span class="mut">{t('skills.set.source')}</span>
+						<span class="muted">{t('skills.set.source')}</span>
 						<a class="mono" href={set.source.url} target="_blank" rel="noreferrer"
 							>{set.source.url} {I.external}</a
 						>
-						{#if set.source.commit}<span class="fnt mono"
+						{#if set.source.commit}<span class="faint mono"
 								>{t('skills.skill.sourceCommit', { commit: set.source.commit.slice(0, 10) })}</span
 							>{/if}
-						<span class="fnt" title={fmtAbs(set.source.fetchedAt)}
+						<span class="faint" title={fmtAbs(set.source.fetchedAt)}
 							>{t('skills.skill.sourceFetched', { ago: ago(set.source.fetchedAt) })}</span
 						>
 					</div>
 				{/if}
-				{#if error}<div class="err">{error}</div>{/if}
+				{#if error}<div class="error">{error}</div>{/if}
 				<div class="acts">
 					{#if set?.source}
 						<button class="btn-sm" disabled={refreshing} aria-busy={refreshing} onclick={refresh}
@@ -212,7 +214,7 @@
 			<aside class="vers pane">
 				<div class="pane-head">
 					<h2>{t('skills.set.versions')}</h2>
-					<span class="mono fnt">{versions.length}</span>
+					<span class="mono faint">{versions.length}</span>
 				</div>
 				<p class="help sp">{t('skills.set.versionsHelp')}</p>
 				<div class="vlist">
@@ -224,32 +226,32 @@
 								onclick={() => (openVersion = openVersion === v.seq ? null : v.seq)}
 							>
 								<span class="vn">v{v.seq}</span>
-								<span class="mono fnt">@{v.hash.slice(0, 10)}</span>
-								{#if v.seq === set?.headSeq}<span class="pill sm t-grn"
+								<span class="mono faint">@{v.hash.slice(0, 10)}</span>
+								{#if v.seq === set?.headSeq}<span class="pill sm tint-success"
 										>{t('skills.set.current')}</span
 									>{/if}
 								<span class="spacer"></span>
-								<span class="fnt tiny" title={fmtAbs(v.createdAt)}>{ago(v.createdAt)}</span>
-								<span class="fnt">{openVersion === v.seq ? I.menu : I.caret}</span>
+								<span class="faint tiny" title={fmtAbs(v.createdAt)}>{ago(v.createdAt)}</span>
+								<span class="faint">{openVersion === v.seq ? I.menu : I.caret}</span>
 							</button>
 							{#if openVersion === v.seq}
 								<ul class="members">
 									{#each v.members as m (m.skillId)}
 										<li>
 											<span class="mono">{m.name}</span>
-											<span class="fnt mono">@{m.hash.slice(0, 8)}</span>
+											<span class="faint mono">@{m.hash.slice(0, 8)}</span>
 											{#if nameById.has(m.skillId)}<a class="small" href={to.skill(m.skillId)}
 													>{I.forward}</a
 												>{/if}
 										</li>
 									{:else}
-										<li class="fnt">{t('ui.steplist.none')}</li>
+										<li class="faint">{t('ui.steplist.none')}</li>
 									{/each}
 								</ul>
 							{/if}
 						</div>
 					{:else}
-						<div class="fnt small sp">{t('skills.set.noVersions')}</div>
+						<div class="faint small sp">{t('skills.set.noVersions')}</div>
 					{/each}
 				</div>
 			</aside>
@@ -260,7 +262,7 @@
 <style>
 	.back {
 		align-self: flex-start;
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.split {
 		display: flex;
@@ -307,11 +309,11 @@
 		padding: 0 8px 10px;
 	}
 	.vr {
-		border-top: 1px solid var(--ln);
+		border-top: 1px solid var(--line);
 		font-size: var(--fs-label);
 	}
 	.vr.cur {
-		background: var(--p2);
+		background: var(--fill-2);
 		border-radius: var(--r-row);
 	}
 	.vhead {
@@ -328,7 +330,7 @@
 	}
 	.vn {
 		font-weight: 600;
-		color: var(--tx);
+		color: var(--text);
 	}
 	.members {
 		list-style: none;

@@ -29,11 +29,11 @@
 		type DocPort,
 		type DocStage,
 		type IODecl
-	} from '$lib/flowdoc';
+	} from '$lib/domain/flowdoc';
 	import { t } from '$lib/i18n/index.svelte';
 	import Select from '$lib/ui/Select.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	let {
 		stage,
@@ -195,9 +195,9 @@
 				<!-- An agent's input says optional; an action's says whether it is
 				     required (attachments: not). -->
 				{#if r.decl?.optional || r.decl?.required === false || (r.decl && !r.decl.required && !isInput)}
-					<span class="fnt">{isInput ? t('flow.insp.optional') : ''}</span>
+					<span class="faint">{isInput ? t('flow.insp.optional') : ''}</span>
 				{:else if isInput}
-					<span class="hue-gold">{t('flow.insp.required')}</span>
+					<span class="hue-warning">{t('flow.insp.required')}</span>
 				{/if}
 			{/if}
 		</div>
@@ -247,10 +247,10 @@
 			{/if}
 		</div>
 		{#if overLinks(r)}
-			<div class="err">{t('flow.insp.oneLink', { count: links ?? 0 })}</div>
+			<div class="error">{t('flow.insp.oneLink', { count: links ?? 0 })}</div>
 		{/if}
 		{#if dirMismatch(r)}
-			<div class="help hue-gold">
+			<div class="help hue-warning">
 				{r.type === 'files' ? t('flow.insp.filesPath') : t('flow.insp.dirNotFiles')}
 			</div>
 		{/if}

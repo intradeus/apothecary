@@ -201,11 +201,9 @@ export default {
 	'workshop.overview.clonedTo':
 		'Cloned to <code>~/repos/&lt;name&gt;</code> beside the primary, one merge request each.',
 	'workshop.overview.commands': 'Commands',
-	'workshop.overview.bootstrap': 'bootstrap',
-	'workshop.overview.commandsNote':
-		'Flows run these by name with <code>run_ref</code>; <code>setup</code> runs when a workspace boots.',
+	'workshop.overview.commandsNote': 'Flows run these by name with <code>run_ref</code>.',
 	'workshop.overview.noCommands':
-		'No commands — workspace setup is skipped, and flows that use <code>run_ref</code> fail preflight.',
+		'No commands — flows that use <code>run_ref</code> fail preflight.',
 	'workshop.overview.formula': 'The formula',
 	'workshop.overview.flowsCount_one': '{count} flow',
 	'workshop.overview.flowsCount_other': '{count} flows',

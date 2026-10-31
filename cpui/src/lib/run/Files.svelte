@@ -1,13 +1,14 @@
 <script lang="ts">
 	// Browse the run's checkout as it is right now. Read-only: the agent owns
 	// the files while it works; editing is what "Open editor" is for.
+	import { errorMessage } from '$lib/core/errors';
 	import { api } from '$lib/api';
 	import type { WorkspaceEntry, WorkspaceFile } from '$lib/domain';
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import { fileLines } from '$lib/diff';
-	import { fmtBytes } from '$lib/format';
-	import { I } from '$lib/ui/icons';
+	import { fileLines } from '$lib/run/diff';
+	import { fmtBytes } from '$lib/core/format';
+	import { I } from '$lib/design/icons';
 	import Checkbox from '$lib/ui/Checkbox.svelte';
 	import CodeView from '$lib/ui/CodeView.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -18,6 +19,8 @@
 	let dirs = $state<Record<string, WorkspaceEntry[]>>({});
 	let open = $state<Record<string, boolean>>({ '': true });
 	let error = $state('');
+	/** The folder `error` is about ('' is the root). */
+	let errorPath = $state('');
 	let selected = $state('');
 	let file = $state<WorkspaceFile | null>(null);
 	let fileError = $state('');
@@ -25,10 +28,12 @@
 
 	async function load(path: string) {
 		try {
-			dirs = { ...dirs, [path]: await api.workspace.tree(runId, path, repo) };
-			error = '';
+			const listed = await api.workspace.tree(runId, path, repo);
+			dirs = { ...dirs, [path]: listed };
+			if (path === errorPath) error = '';
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
+			errorPath = path;
 		}
 	}
 
@@ -43,9 +48,10 @@
 		file = null;
 		fileError = '';
 		try {
-			file = await api.workspace.file(runId, path, repo);
+			const read = await api.workspace.file(runId, path, repo);
+			if (path === selected) file = read;
 		} catch (e) {
-			fileError = e instanceof Error ? e.message : String(e);
+			if (path === selected) fileError = errorMessage(e);
 		}
 	}
 
@@ -93,7 +99,7 @@
 						onclick={() => (r.entry.dir ? toggle(r.entry) : view(r.entry.path))}
 						title={r.entry.path}
 					>
-						<span class="ell"
+						<span class="truncate"
 							>{#if r.entry.dir}{open[r.entry.path] ? I.menu : I.caret}&nbsp;{/if}{r.entry.name}{r
 								.entry.dir
 								? '/'
@@ -102,6 +108,16 @@
 					</button>
 				{/each}
 			</div>
+			{#if error}
+				<div class="ferr">
+					<ErrorCard
+						cause={t('run.files.folderError', { path: errorPath || '.' })}
+						detail={error}
+						onretry={() => load(errorPath)}
+						ondismiss={() => (error = '')}
+					/>
+				</div>
+			{/if}
 			<div class="tf">
 				<Checkbox size="sm" bind:checked={showIgnored} label={t('run.files.showIgnored')} />
 				<button
@@ -118,7 +134,7 @@
 			{:else}
 				<div class="vh mono">
 					{selected}
-					{#if file}<span class="fnt"
+					{#if file}<span class="faint"
 							>· {fmtBytes(file.size)}{file.truncated ? ` · ${t('run.files.firstMb')}` : ''}</span
 						>{/if}
 				</div>
@@ -162,7 +178,7 @@
 	}
 	.tree {
 		border-radius: var(--r-card);
-		background: var(--p2);
+		background: var(--fill-2);
 		padding: 6px;
 		display: flex;
 		flex-direction: column;
@@ -182,7 +198,12 @@
 		border-radius: var(--r-tag);
 	}
 	.node.ignored {
-		color: var(--fnt);
+		color: var(--text-faint);
+	}
+	.ferr {
+		flex: none;
+		margin-top: 4px;
+		overflow-wrap: anywhere;
 	}
 	.tf {
 		flex: none;
@@ -198,16 +219,16 @@
 		display: flex;
 		flex-direction: column;
 		border-radius: var(--r-card);
-		background: var(--code);
+		background: var(--code-bg);
 		overflow: hidden;
 	}
 	.vh {
 		flex: none;
 		padding: 7px 12px;
-		border-bottom: 1px solid var(--ln);
+		border-bottom: 1px solid var(--line);
 		overflow-wrap: anywhere;
 	}
-	.vh .fnt {
+	.vh .faint {
 		font-weight: 400;
 	}
 	.code {

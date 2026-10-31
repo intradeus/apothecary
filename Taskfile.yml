@@ -281,6 +281,18 @@ tasks:
     cmds:
       - npm run check
 
+  test:ui:
+    desc: 'CPUI tests (args pass through: task test:ui -- src/lib/run)'
+    dir: cpui
+    cmds:
+      - npx vitest run {{.CLI_ARGS}}
+
+  lint:ui:
+    desc: 'CPUI lint: code, styles, the token and layer contracts, themes, formatting (docs/frontend-standards.md)'
+    dir: cpui
+    cmds:
+      - npm run lint
+
   fmt:
     desc: gofmt the Go tree, prettier the frontend
     cmds:
@@ -304,7 +316,7 @@ tasks:
         if [ -n "$hits" ]; then echo "$hits"; echo "a model id in the tree rots when the vendor renames it — bind models per project (Workshop → Flows → Configure); tests use fake/… or acme/… ids"; exit 1; fi
 
   verify:
-    desc: 'The full pre-commit gate: gofmt, vet, go tests, model-id lint, API contract, svelte-check, UI build'
+    desc: 'The full pre-commit gate: gofmt, vet, go tests, model-id lint, API contract, svelte-check, UI lint, UI tests, UI build'
     cmds:
       - |
         out="$(gofmt -l ./cmd ./internal)"
@@ -314,6 +326,8 @@ tasks:
       - task: lint:models
       - task: api:check
       - cd cpui && npm run check
+      - task: lint:ui
+      - cd cpui && npm run test:coverage
       - cd cpui && npm run build
       - echo "verify — all green"
 

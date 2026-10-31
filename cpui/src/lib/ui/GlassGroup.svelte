@@ -5,8 +5,8 @@
 	let { label, children }: { label: Snippet | string; children: Snippet } = $props();
 </script>
 
-<div class="gg in">
-	<div class="lbl">
+<div class="gg inset">
+	<div class="caption">
 		{#if typeof label === 'string'}{label}{:else}{@render label()}{/if}
 	</div>
 	<div class="btns">{@render children()}</div>
@@ -21,9 +21,9 @@
 		gap: 6px;
 		min-width: 0;
 	}
-	.lbl {
+	.caption {
 		font-size: var(--fs-help);
-		color: var(--mut);
+		color: var(--text-muted);
 		display: flex;
 		align-items: center;
 		gap: 7px;

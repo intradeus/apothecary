@@ -3,13 +3,14 @@
 	// workspace, new branch — with direction for the attempt, files, a flow
 	// and parameter overrides (what this run used is the layer underneath:
 	// the engine carries it forward). The current run is untouched.
+	import { errorMessage } from '$lib/core/errors';
 	import { api } from '$lib/api';
-	import { fleet } from '$lib/fleet.svelte';
-	import { shortId } from '$lib/format';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { shortId } from '$lib/core/format';
 	import Modal from '$lib/ui/Modal.svelte';
-	import { I } from '$lib/ui/icons';
-	import AttachFiles from '$lib/AttachFiles.svelte';
-	import FlowSelect from '$lib/FlowSelect.svelte';
+	import { I } from '$lib/design/icons';
+	import AttachFiles from '$lib/artifacts/AttachFiles.svelte';
+	import FlowSelect from '$lib/flow/FlowSelect.svelte';
 	import StartRunOptions from './StartRunOptions.svelte';
 	import type { RunStore } from './store.svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
@@ -32,10 +33,13 @@
 	let busy = $state(false);
 	let error = $state('');
 
-	// Each opening starts with no overrides.
+	// Each opening starts with no overrides and no old failure. What was typed
+	// or attached stays: a cancel shouldn't throw that work away.
 	$effect(() => {
 		if (!open) return;
 		untrack(() => {
+			flow = '';
+			error = '';
 			params = {};
 			skillsets = (rs.run?.skillsets ?? []).map((p) => ({ id: p.id }));
 		});
@@ -60,7 +64,7 @@
 			files = [];
 			onstarted(id);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			busy = false;
 		}
@@ -103,7 +107,7 @@
 				idPrefix="nr"
 			/>
 		{/if}
-		{#if error}<div class="err">{error}</div>{/if}
+		{#if error}<div class="error">{error}</div>{/if}
 	</div>
 	{#snippet footer()}
 		<button class="btn-ghost" onclick={() => (open = false)}>{t('common.cancel')}</button>
@@ -121,11 +125,11 @@
 	}
 	.lead {
 		margin: 0;
-		color: var(--mut);
+		color: var(--text-muted);
 		text-wrap: pretty;
 	}
 	.lead :global(b) {
-		color: var(--tx);
+		color: var(--text);
 		font-weight: 600;
 	}
 </style>

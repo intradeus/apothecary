@@ -41,7 +41,7 @@
 	const justSaved = $derived(!!savedAt && !dirty && now - savedAt < 4000);
 </script>
 
-<div class="sb isl">
+<div class="sb island">
 	{#if note}<span class="help">{note}</span>{/if}
 	<span class="grow"></span>
 	{#if dirty}
@@ -80,7 +80,7 @@
 	.saved {
 		font-size: var(--fs-meta);
 		font-weight: 600;
-		color: var(--grn);
+		color: var(--success-text);
 	}
 	.saved::before {
 		content: '✓ ';

@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { Hue } from './hues';
+	import type { Hue } from '$lib/design/hues';
 
 	export interface SegOption<V extends string> {
 		value: V;
@@ -72,7 +72,7 @@
 
 <div
 	class="seg {size}"
-	class:c={glass}
+	class:glass
 	class:flat={!glass}
 	class:mono
 	class:off={disabled}
@@ -94,7 +94,7 @@
 			style:color={value === o.value && o.tone ? `var(--${o.tone})` : null}
 			title={o.title}
 			onclick={() => choose(o.value)}
-			>{#if o.dot}<span class="ldot sm flat hue-{o.dot}"
+			>{#if o.dot}<span class="live-dot sm flat hue-{o.dot}"
 				></span>{/if}{o.label}{#if o.count !== undefined}<span class="n">{o.count}</span
 				>{/if}</button
 		>
@@ -103,8 +103,8 @@
 
 <style>
 	.flat {
-		background: var(--p1);
-		border: 1px solid var(--ln);
+		background: var(--fill-1);
+		border: 1px solid var(--line);
 	}
 	.sm > button {
 		font-size: var(--fs-help);
@@ -119,7 +119,7 @@
 		pointer-events: none;
 	}
 	.mono > button {
-		font-family: var(--mono);
+		font-family: var(--font-code);
 		font-size: var(--fs-help);
 	}
 </style>

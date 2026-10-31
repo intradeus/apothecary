@@ -2,11 +2,12 @@
 	// One's account (TODO 25): the profile, the password, personal API
 	// tokens and SSH keys (TODO 46). Everything on this page is the signed-in
 	// user's own.
+	import { errorMessage } from '$lib/core/errors';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import { session } from '$lib/session.svelte';
+	import { session } from '$lib/app/session.svelte';
 	import type { SshKey, Token } from '$lib/domain';
-	import { ago } from '$lib/format';
+	import { ago } from '$lib/core/format';
 	import { t } from '$lib/i18n/index.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
@@ -14,7 +15,7 @@
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	// Profile.
 	let handle = $state(session.user?.handle ?? '');
@@ -32,7 +33,7 @@
 			await session.refresh();
 			toast(t('page.account.saved'));
 		} catch (err) {
-			profileError = err instanceof Error ? err.message : String(err);
+			profileError = errorMessage(err);
 		} finally {
 			profileBusy = false;
 		}
@@ -58,7 +59,7 @@
 			current = next = again = '';
 			toast(t('page.account.changed'));
 		} catch (err) {
-			pwError = err instanceof Error ? err.message : String(err);
+			pwError = errorMessage(err);
 		} finally {
 			pwBusy = false;
 		}
@@ -79,7 +80,7 @@
 			tokensLoaded = true;
 			tokensError = '';
 		} catch (err) {
-			tokensError = err instanceof Error ? err.message : String(err);
+			tokensError = errorMessage(err);
 		}
 	};
 	onMount(loadTokens);
@@ -93,7 +94,7 @@
 			tokenName = '';
 			await loadTokens();
 		} catch (err) {
-			tokensError = err instanceof Error ? err.message : String(err);
+			tokensError = errorMessage(err);
 		} finally {
 			minting = false;
 		}
@@ -123,7 +124,7 @@
 			toast(t('page.account.revoked'));
 			await loadTokens();
 		} catch (err) {
-			tokensError = err instanceof Error ? err.message : String(err);
+			tokensError = errorMessage(err);
 		} finally {
 			revoking = null;
 		}
@@ -146,7 +147,7 @@
 			keysLoaded = true;
 			keysError = '';
 		} catch (err) {
-			keysError = err instanceof Error ? err.message : String(err);
+			keysError = errorMessage(err);
 		}
 	};
 	onMount(loadKeys);
@@ -161,7 +162,7 @@
 			toast(t('page.account.sshAdded'));
 			await loadKeys();
 		} catch (err) {
-			keysError = err instanceof Error ? err.message : String(err);
+			keysError = errorMessage(err);
 		} finally {
 			adding = false;
 		}
@@ -180,7 +181,7 @@
 			toast(t('page.account.sshRemoved'));
 			await loadKeys();
 		} catch (err) {
-			keysError = err instanceof Error ? err.message : String(err);
+			keysError = errorMessage(err);
 		} finally {
 			removing = null;
 		}
@@ -188,10 +189,10 @@
 </script>
 
 <div class="sections">
-	<section class="c pane form-dense">
+	<section class="glass pane form-dense">
 		<div class="pane-head">
 			<h2>{t('page.account.profile')}</h2>
-			<span class="mut small">{t('page.account.profileSub')}</span>
+			<span class="muted small">{t('page.account.profileSub')}</span>
 		</div>
 		<form class="pane-body col" onsubmit={saveProfile}>
 			<div class="grid2">
@@ -212,7 +213,7 @@
 			<div class="help">
 				{t('page.account.methods', { methods: session.me?.methods.join(', ') ?? '' })}
 			</div>
-			{#if profileError}<div class="err">{profileError}</div>{/if}
+			{#if profileError}<div class="error">{profileError}</div>{/if}
 			<div class="form-actions">
 				<button class="btn-primary" type="submit" disabled={profileBusy} aria-busy={profileBusy}
 					>{t('page.account.save')}</button
@@ -221,10 +222,10 @@
 		</form>
 	</section>
 
-	<section class="c pane form-dense">
+	<section class="glass pane form-dense">
 		<div class="pane-head">
 			<h2>{t('page.account.password')}</h2>
-			<span class="mut small">{t('page.account.passwordSub')}</span>
+			<span class="muted small">{t('page.account.passwordSub')}</span>
 		</div>
 		<form class="pane-body col" onsubmit={changePassword}>
 			<div class="field">
@@ -261,7 +262,7 @@
 					/>
 				</div>
 			</div>
-			{#if pwError}<div class="err">{pwError}</div>{/if}
+			{#if pwError}<div class="error">{pwError}</div>{/if}
 			<div class="form-actions">
 				<button class="btn-primary" type="submit" disabled={pwBusy} aria-busy={pwBusy}
 					>{t('page.account.change')}</button
@@ -270,10 +271,10 @@
 		</form>
 	</section>
 
-	<section class="c pane form-dense">
+	<section class="glass pane form-dense">
 		<div class="pane-head">
 			<h2>{t('page.account.tokens')}</h2>
-			<span class="mut small">{t('page.account.tokensSub')}</span>
+			<span class="muted small">{t('page.account.tokensSub')}</span>
 		</div>
 		<div class="pane-body col">
 			<form class="row nowrap mint" onsubmit={mint}>
@@ -291,14 +292,14 @@
 				>
 			</form>
 			{#if minted}
-				<Callout hue="sky" glyph={I.info} ondismiss={() => (minted = null)}>
+				<Callout hue="attention" glyph={I.info} ondismiss={() => (minted = null)}>
 					<div class="col">
 						<strong>{t('page.account.minted')}</strong>
 						<div class="row nowrap">
 							<code class="secret mono">{minted.secret}</code>
 							<button class="btn-sm" onclick={copySecret}>{t('page.account.copy')}</button>
 						</div>
-						<span class="mut small">{t('page.account.usage', { secret: minted.secret })}</span>
+						<span class="muted small">{t('page.account.usage', { secret: minted.secret })}</span>
 					</div>
 				</Callout>
 			{/if}
@@ -309,9 +310,9 @@
 				<div class="rows">
 					{#each tokens as tk (tk.id)}
 						<div class="r trow">
-							<span class="nm ell">{tk.name}</span>
-							<span class="mono mut">{tk.prefix}…</span>
-							<span class="mut small ell">
+							<span class="nm truncate">{tk.name}</span>
+							<span class="mono muted">{tk.prefix}…</span>
+							<span class="muted small truncate">
 								{t('page.account.created', { ago: ago(tk.createdAt) })}
 								· {tk.lastUsedAt
 									? t('page.account.lastUsed', { ago: ago(tk.lastUsedAt) })
@@ -335,10 +336,10 @@
 		</div>
 	</section>
 
-	<section class="c pane form-dense">
+	<section class="glass pane form-dense">
 		<div class="pane-head">
 			<h2>{t('page.account.ssh')}</h2>
-			<span class="mut small">{t('page.account.sshSub')}</span>
+			<span class="muted small">{t('page.account.sshSub')}</span>
 		</div>
 		<div class="pane-body col">
 			<form class="col" onsubmit={addKey}>
@@ -375,11 +376,11 @@
 				<div class="rows">
 					{#each keys as k (k.id)}
 						<div class="r krow">
-							<span class="nm ell" title={k.publicKey}>{k.name}</span>
-							<span class="mono mut small ell" title={k.fingerprint}
+							<span class="nm truncate" title={k.publicKey}>{k.name}</span>
+							<span class="mono muted small truncate" title={k.fingerprint}
 								>{k.type} · {k.fingerprint}</span
 							>
-							<span class="mut small ell">
+							<span class="muted small truncate">
 								{t('page.account.created', { ago: ago(k.createdAt) })}
 								· {k.lastUsedAt
 									? t('page.account.lastUsed', { ago: ago(k.lastUsedAt) })

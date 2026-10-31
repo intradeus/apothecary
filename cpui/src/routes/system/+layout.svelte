@@ -4,13 +4,13 @@
 	// on the left, the section on the right.
 	import type { Snippet } from 'svelte';
 	import { page } from '$app/state';
-	import { to, type SystemSection } from '$lib/urls';
-	import { session } from '$lib/session.svelte';
+	import { to, type SystemSection } from '$lib/core/urls';
+	import { session } from '$lib/app/session.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import { provideHeaderSlot } from '$lib/ui/headerAction.svelte';
 	import SideNav from '$lib/ui/SideNav.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	let { children }: { children: Snippet } = $props();
 
@@ -76,7 +76,7 @@
 		active={current.id}
 		items={SECTIONS.map((s) => ({ id: s.id, label: s.label, icon: s.icon, href: to.system(s.id) }))}
 	/>
-	<div class="body c">
+	<div class="body glass">
 		<div class="inner readable">{@render children()}</div>
 	</div>
 </div>

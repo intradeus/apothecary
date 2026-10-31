@@ -9,12 +9,12 @@
 	import type { Snippet } from 'svelte';
 	import { api } from '$lib/api';
 	import type { Attachment } from '$lib/domain';
-	import { isWholeFile, type DraftComment } from '$lib/docreview';
+	import { isWholeFile, type DraftComment } from '$lib/review/reviewDoc';
 	import type { ShownFile } from './files.svelte';
 	import { KIND_ICON, baseName } from './FileList.svelte';
 	import FileChip from '$lib/ui/FileChip.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 	import { materialize, ms, spring } from '$lib/ui/motion';
 	import { t } from '$lib/i18n/index.svelte';
 
@@ -90,8 +90,8 @@
 	{#if all && g.file}
 		<div class="gh" title={g.file.path}>
 			<span aria-hidden="true">{KIND_ICON[g.file.kind]}</span>
-			<span class="ell grow mono">{baseName(g.file.path)}</span>
-			<span class="fnt">{g.list.length}</span>
+			<span class="truncate grow mono">{baseName(g.file.path)}</span>
+			<span class="faint">{g.list.length}</span>
 		</div>
 	{/if}
 	<div class="cl" role="list">
@@ -111,7 +111,7 @@
 						title={c.path === current ? t('doc.scrollTo') : t('doc.openAt', { path: c.path })}
 						onclick={() => onopen(c)}
 					>
-						<span class="ell" class:mono={!c.heading && !isWholeFile(c)}>{where(c)}</span>
+						<span class="truncate" class:mono={!c.heading && !isWholeFile(c)}>{where(c)}</span>
 					</button>
 					{#if onedit}
 						<button class="btn-ghost btn-sm" onclick={() => onedit(c)}>{t('doc.edit')}</button>
@@ -162,7 +162,7 @@
 		align-items: center;
 		gap: 7px;
 		font-size: var(--fs-label);
-		color: var(--mut);
+		color: var(--text-muted);
 		padding: 4px 2px 0;
 	}
 	.cl {
@@ -180,8 +180,8 @@
 			border-color var(--dur-fade) var(--ease-out);
 	}
 	.comment.hot {
-		border-color: var(--brandLn);
-		background: var(--brandBg);
+		border-color: var(--brand-line);
+		background: var(--brand-bg);
 	}
 	.ch {
 		display: flex;
@@ -193,10 +193,10 @@
 		flex: 1;
 		padding: 3px 4px;
 		font-size: var(--fs-help);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.jump:hover {
-		color: var(--tx);
+		color: var(--text);
 	}
 	.jump .mono {
 		font-size: var(--fs-id);
@@ -205,8 +205,8 @@
 		white-space: pre-wrap;
 		margin: 0;
 		padding-left: 8px;
-		border-left: 2px solid var(--brandLn);
-		color: var(--mut);
+		border-left: 2px solid var(--brand-line);
+		color: var(--text-muted);
 		font-size: var(--fs-meta);
 		max-height: 5.5em;
 		overflow: hidden;

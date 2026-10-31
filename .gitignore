@@ -30,3 +30,7 @@ cpui/vite.config.ts.timestamp-*
 
 # --- misc ------------------------------------------------------------------
 *.log
+
+# vitest --coverage
+cpui/coverage/
+cpui/.vitest/

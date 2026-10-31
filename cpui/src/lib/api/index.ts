@@ -38,7 +38,6 @@ import type {
 	SkillsetVersion
 } from '$lib/domain';
 import type {
-	OpenMergeRequest,
 	MergeRequestRow,
 	ActionSpec,
 	Attachment,
@@ -69,7 +68,6 @@ import type {
 	PingAnswerInput,
 	PingPayload,
 	CurationView,
-	FormContent,
 	Preflight,
 	Project,
 	ProjectDraft,
@@ -225,6 +223,9 @@ const projectBody = (p: ProjectDraft): Wire.ProjectRequest => ({
 
 // --- runs --------------------------------------------------------------------
 
+/** How long a stream the engine refused waits before asking again. */
+const STREAM_RETRY_MS = 3000;
+
 export const runs = {
 	list: async (filter?: { project?: string; ticket?: string }): Promise<Run[]> =>
 		many(
@@ -334,22 +335,43 @@ export const runs = {
 	 *  onDelta receives the agent's live progress (text being written, tool
 	 *  calls in flight). Deltas are not in the log: they carry no id, so a
 	 *  reconnect never resumes from one, and the persisted event that follows
-	 *  supersedes each. */
+	 *  supersedes each.
+	 *
+	 *  The browser retries a dropped connection by itself, but an error status
+	 *  (a proxy's 502 while the engine restarts) ends the stream for good, so
+	 *  that one is re-opened here, from the last event seen. */
 	events(
 		id: string,
 		afterSeq: number,
 		onEvent: (e: RunEvent) => void,
 		onDelta?: (d: LiveDelta) => void
 	): () => void {
-		const es = new EventSource(`/api/runs/${id}/events?after_seq=${afterSeq}`);
-		es.onmessage = (m) => onEvent(map.toRunEvent(JSON.parse(m.data) as Wire.Event));
-		if (onDelta) {
-			es.addEventListener('delta', (m) => {
-				const d = map.toLiveDelta(JSON.parse((m as MessageEvent).data));
-				if (d) onDelta(d);
-			});
-		}
-		return () => es.close();
+		let after = afterSeq;
+		let es: EventSource;
+		let retry: ReturnType<typeof setTimeout> | undefined;
+		const open = () => {
+			const source = new EventSource(`/api/runs/${id}/events?after_seq=${after}`);
+			es = source;
+			source.onmessage = (m) => {
+				const ev = map.toRunEvent(JSON.parse(m.data) as Wire.Event);
+				after = ev.seq;
+				onEvent(ev);
+			};
+			if (onDelta) {
+				source.addEventListener('delta', (m) => {
+					const d = map.toLiveDelta(JSON.parse((m as MessageEvent).data));
+					if (d) onDelta(d);
+				});
+			}
+			source.onerror = () => {
+				if (source.readyState === EventSource.CLOSED) retry = setTimeout(open, STREAM_RETRY_MS);
+			};
+		};
+		open();
+		return () => {
+			clearTimeout(retry);
+			es.close();
+		};
 	},
 
 	/** Send a message to the agent you took over. Delivered into its live
@@ -388,25 +410,42 @@ export const ask = {
 		onReconnect?: () => void,
 		afterSeq = 0
 	): () => void {
-		const es = new EventSource(`/api/runs/${runId}/ask/stream?after_seq=${afterSeq}`);
+		let after = afterSeq;
 		let opened = false;
-		es.onopen = () => {
-			if (opened) onReconnect?.();
-			opened = true;
+		let es: EventSource;
+		let retry: ReturnType<typeof setTimeout> | undefined;
+		const open = () => {
+			const source = new EventSource(`/api/runs/${runId}/ask/stream?after_seq=${after}`);
+			es = source;
+			source.onopen = () => {
+				if (opened) onReconnect?.();
+				opened = true;
+			};
+			source.onmessage = (m) => {
+				const w = JSON.parse(m.data) as { message?: Wire.Message };
+				if (!w.message) return;
+				const message = map.toAskMessage(w.message);
+				after = message.seq;
+				onFrame({ kind: 'message', message });
+			};
+			source.addEventListener('delta', (m) => {
+				const w = JSON.parse((m as MessageEvent).data) as { text?: string; tool?: string };
+				onFrame({ kind: 'delta', text: w.text ?? '', tool: w.tool || undefined });
+			});
+			source.addEventListener('state', (m) => {
+				const w = JSON.parse((m as MessageEvent).data) as { busy?: boolean; model?: string };
+				onFrame({ kind: 'state', busy: !!w.busy, model: w.model || undefined });
+			});
+			// As runs.events: an error status ends a stream for good.
+			source.onerror = () => {
+				if (source.readyState === EventSource.CLOSED) retry = setTimeout(open, STREAM_RETRY_MS);
+			};
 		};
-		es.onmessage = (m) => {
-			const w = JSON.parse(m.data) as { message?: Wire.Message };
-			if (w.message) onFrame({ kind: 'message', message: map.toAskMessage(w.message) });
+		open();
+		return () => {
+			clearTimeout(retry);
+			es.close();
 		};
-		es.addEventListener('delta', (m) => {
-			const w = JSON.parse((m as MessageEvent).data) as { text?: string; tool?: string };
-			onFrame({ kind: 'delta', text: w.text ?? '', tool: w.tool || undefined });
-		});
-		es.addEventListener('state', (m) => {
-			const w = JSON.parse((m as MessageEvent).data) as { busy?: boolean; model?: string };
-			onFrame({ kind: 'state', busy: !!w.busy, model: w.model || undefined });
-		});
-		return () => es.close();
 	}
 };
 

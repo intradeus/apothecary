@@ -7,12 +7,12 @@
 
 	let { type, sourceType }: { type: ChangeType; sourceType?: string } = $props();
 	const HUE: Record<ChangeType, string> = {
-		feat: 't-sky',
-		fix: 't-ros',
-		hotfix: 't-hot',
-		perf: 't-gold',
-		docs: 't-tea',
-		chore: 't-mut'
+		feat: 'tint-attention',
+		fix: 'tint-danger',
+		hotfix: 'tint-hot',
+		perf: 'tint-warning',
+		docs: 'tint-accent-2',
+		chore: 'tint-muted'
 	};
 </script>
 

@@ -65,22 +65,22 @@
 	const hue = $derived(
 		(
 			{
-				live: 'hue-grn',
-				starting: 'hue-emb',
-				provisioning: 'hue-emb',
-				rebuilding: 'hue-emb',
-				destroying: 'hue-gold',
-				error: 'hue-ros',
-				stopped: 'hue-mut',
-				unknown: 'hue-gold',
-				none: 'fnt'
+				live: 'hue-success',
+				starting: 'hue-running',
+				provisioning: 'hue-running',
+				rebuilding: 'hue-running',
+				destroying: 'hue-warning',
+				error: 'hue-danger',
+				stopped: 'hue-muted',
+				unknown: 'hue-warning',
+				none: 'faint'
 			} as const
 		)[v]
 	);
 	// DESIGN 3.2: live glows, stopped is a ring, unknown/none a dashed ring.
 	const dot = $derived(
 		v === 'live'
-			? 'ldot'
+			? 'live-dot'
 			: v === 'stopped'
 				? 'ldot hollow'
 				: v === 'unknown' || v === 'none'
@@ -104,7 +104,7 @@
 	<span class="dot-only {hue}" title={tip}><span class={dot} class:pulse={pulsing}></span></span>
 {:else}
 	<span class="ws {hue}" title={tip}>
-		{#if !bare}<span class="lbl">{t('ui.ws.label')}</span>{/if}
+		{#if !bare}<span class="caption">{t('ui.ws.label')}</span>{/if}
 		{#if v !== 'none'}<span class={dot} class:pulse={pulsing}></span>{/if}
 		<span class="v">{word}</span>
 		{#if envId && v !== 'none'}<span class="id mono">{envId}</span>{/if}
@@ -120,15 +120,15 @@
 		white-space: nowrap;
 		min-width: 0;
 	}
-	.lbl {
-		color: var(--mut);
+	.caption {
+		color: var(--text-muted);
 		font-weight: 500;
 	}
 	.v {
 		font-weight: 600;
 	}
 	.id {
-		color: var(--fnt);
+		color: var(--text-faint);
 		font-size: var(--fs-id);
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -142,7 +142,7 @@
 		justify-content: center;
 	}
 	/* The compact dot is 8px (DESIGN 3.2), a touch over the shared 7px. */
-	.dot-only .ldot {
+	.dot-only .live-dot {
 		width: 8px;
 		height: 8px;
 	}

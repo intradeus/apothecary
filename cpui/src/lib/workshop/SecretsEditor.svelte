@@ -3,16 +3,17 @@
 	// written, never read back. Each change is saved the moment it is made
 	// (this sits inside the setup form, but its Save does not carry them),
 	// so Enter here sets the secret rather than submitting the form.
+	import { errorMessage } from '$lib/core/errors';
 	import { onMount } from 'svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
 	import type { ProjectSecret } from '$lib/domain';
-	import { ago, fmtAbs } from '$lib/format';
+	import { ago, fmtAbs } from '$lib/core/format';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	let { projectId }: { projectId: string } = $props();
 
@@ -35,7 +36,7 @@
 		try {
 			secrets = await api.projects.secrets(projectId);
 		} catch (e) {
-			loadError = e instanceof Error ? e.message : String(e);
+			loadError = errorMessage(e);
 		}
 	}
 	onMount(load);
@@ -61,7 +62,7 @@
 				value = '';
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			busy = '';
 		}
@@ -82,7 +83,7 @@
 			secrets = (secrets ?? []).filter((s) => s.name !== n);
 			toast(t('form.secrets.toastDeleted', { name: n }), { tone: 'info' });
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorMessage(e);
 		} finally {
 			busy = '';
 		}
@@ -131,7 +132,7 @@
 								onclick={() => ((replacing = ''), (replacement = ''))}>{t('common.cancel')}</button
 							>
 						{:else}
-							<span class="fnt when" title={fmtAbs(s.updatedAt)}
+							<span class="faint when" title={fmtAbs(s.updatedAt)}
 								>{t('form.secrets.setAgo', { ago: ago(s.updatedAt) })}</span
 							>
 							<span class="spacer"></span>
@@ -187,9 +188,9 @@
 			>
 		</div>
 		{#if nameBad}
-			<div class="err">{t('form.secrets.badName')}</div>
+			<div class="error">{t('form.secrets.badName')}</div>
 		{:else if nameTaken}
-			<div class="err">{t('form.secrets.taken', { name: name.trim() })}</div>
+			<div class="error">{t('form.secrets.taken', { name: name.trim() })}</div>
 		{/if}
 		{#if error}<ErrorCard
 				cause={t('form.secrets.saveFail')}
@@ -215,7 +216,7 @@
 		align-items: center;
 		gap: 8px;
 		padding: 6px 10px;
-		border-top: 1px solid var(--ln);
+		border-top: 1px solid var(--line);
 		min-width: 0;
 	}
 	.r:first-child {

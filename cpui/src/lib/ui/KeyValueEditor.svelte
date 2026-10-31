@@ -9,7 +9,7 @@
 	import { t } from '$lib/i18n/index.svelte';
 	// An editable list of key → value rows (input bindings, commands, extra
 	// headers). Mono keys, one remove per row, an add at the foot.
-	import { I } from './icons';
+	import { I } from '$lib/design/icons';
 
 	let {
 		rows = $bindable([]),

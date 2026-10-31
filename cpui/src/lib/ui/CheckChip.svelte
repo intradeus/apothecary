@@ -8,8 +8,8 @@
 	// while it runs, a dashed outline when it never ran. `when` trails it
 	// ("tested 3h ago"). A new result materialises in place of the old one,
 	// so a re-run reads as an answer arriving rather than a repaint.
-	import type { Hue } from './hues';
-	import { I } from './icons';
+	import type { Hue } from '$lib/design/hues';
+	import { I } from '$lib/design/icons';
 	import { materialize } from './motion';
 
 	let {
@@ -28,11 +28,11 @@
 	} = $props();
 
 	const HUE: Record<CheckTone, Hue> = {
-		ok: 'grn',
-		bad: 'ros',
-		warn: 'gold',
-		live: 'emb',
-		none: 'mut'
+		ok: 'success',
+		bad: 'danger',
+		warn: 'warning',
+		live: 'running',
+		none: 'muted'
 	};
 	const GLYPH: Record<CheckTone, string> = {
 		ok: I.ok,
@@ -45,14 +45,14 @@
 
 {#key `${tone}|${label}`}
 	<span
-		class="pill cc t-{HUE[tone]} {tone}"
+		class="pill cc tint-{HUE[tone]} {tone}"
 		class:sm={size === 'sm'}
 		{title}
 		in:materialize={{ origin: 'left center' }}
 	>
 		{#if tone === 'live'}<span class="dot pulse"></span>{:else if GLYPH[tone]}<span class="g"
 				>{GLYPH[tone]}</span
-			>{/if}<span class="ell">{label}</span>{#if when}<span class="when">· {when}</span>{/if}
+			>{/if}<span class="truncate">{label}</span>{#if when}<span class="when">· {when}</span>{/if}
 	</span>
 {/key}
 

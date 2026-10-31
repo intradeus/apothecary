@@ -29,10 +29,10 @@
 	transition:grow
 	onintroend={(e) => e.currentTarget.scrollIntoView({ block: 'nearest' })}
 >
-	<div class="c in">
+	<div class="glass inset">
 		<div class="row nowrap">
 			<span class="display at">{title}</span>
-			{#if kind}<span class="pill sm flat sq t-mut">{kind}</span>{/if}
+			{#if kind}<span class="pill sm flat sq tint-muted">{kind}</span>{/if}
 			<span class="spacer"></span>
 			{#if head}{@render head()}{/if}
 		</div>
@@ -42,9 +42,9 @@
 
 <style>
 	/* The outer box is what slides (it clips); the glass card sits inside. */
-	.in {
+	.inset {
 		border-radius: var(--r-pane);
-		border-color: var(--brandLn);
+		border-color: var(--brand-line);
 		padding: 14px 16px;
 		display: flex;
 		flex-direction: column;

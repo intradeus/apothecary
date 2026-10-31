@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
-	import { portLabel } from '$lib/format';
+	import { portLabel } from '$lib/core/format';
 	// A workshop's repository / provisioner / harness chips (DESIGN 7.7).
 	import type { Integration, Project } from '$lib/domain';
 
@@ -22,13 +22,15 @@
 <span class="chips wc">
 	{#each chips as c (c.k)}
 		{#if c.ids.length === 0}
-			<span class="pill sm t-gold" title={t('workshop.chips.noneTitle', { kind: portLabel(c.k) })}
+			<span
+				class="pill sm tint-warning"
+				title={t('workshop.chips.noneTitle', { kind: portLabel(c.k) })}
 				><span class="k">{portLabel(c.k)}</span>{t('workshop.chips.none')}</span
 			>
 		{:else}
 			{#each c.ids as id (id)}
 				<span
-					class="pill sm {missing(id) ? 't-ros' : 't-mut'}"
+					class="pill sm {missing(id) ? 'tint-danger' : 'tint-muted'}"
 					title={missing(id)
 						? t('workshop.chips.missingTitle', { kind: portLabel(c.k) })
 						: `${portLabel(c.k)}: ${byId.get(id)?.kind ?? ''}`}

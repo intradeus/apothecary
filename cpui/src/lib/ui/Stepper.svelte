@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
-	import { I } from './icons';
+	import { I } from '$lib/design/icons';
 	// Integer stepper: − value + (DESIGN 7.10, limits).
 	let {
 		value = $bindable(1),
@@ -31,8 +31,13 @@
 		{value}
 		oninput={(e) => {
 			const n = Number(e.currentTarget.value);
-			if (Number.isFinite(n) && e.currentTarget.value !== '') value = clamp(n);
+			if (!Number.isFinite(n) || e.currentTarget.value === '') return;
+			value = clamp(n);
+			// A clamp onto the value it already had re-renders nothing. Past the max
+			// no further digit can help; under the min the next one may.
+			if (n > max) e.currentTarget.value = String(value);
 		}}
+		onblur={(e) => (e.currentTarget.value = String(value))}
 	/>
 	<button
 		type="button"
@@ -56,22 +61,22 @@
 		border-radius: 0;
 		background: transparent;
 		box-shadow: none;
-		color: var(--mut);
+		color: var(--text-muted);
 		font-size: var(--fs-lead);
 	}
 	.b:hover {
-		background: var(--p3);
-		color: var(--tx);
+		background: var(--fill-3);
+		color: var(--text);
 	}
 	/* .bare (components.css) strips the field chrome; the stepper draws it. */
 	input.bare {
 		width: 64px;
-		border-left: 1px solid var(--ln);
-		border-right: 1px solid var(--ln);
+		border-left: 1px solid var(--line);
+		border-right: 1px solid var(--line);
 		border-radius: 0;
 		padding: 6px 0;
 		text-align: center;
-		font-family: var(--mono);
+		font-family: var(--font-code);
 		font-weight: 600;
 		appearance: textfield;
 		-moz-appearance: textfield;

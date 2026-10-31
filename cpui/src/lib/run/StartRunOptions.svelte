@@ -5,6 +5,7 @@
 	// resolves the chosen flow's declaration and the layer underneath (the
 	// workshop's binding, or the run a rerun comes from) itself, so the forms
 	// that mount it only carry a flow name.
+	import { errorMessage } from '$lib/core/errors';
 	import { api } from '$lib/api';
 	import type {
 		Flow,
@@ -15,7 +16,7 @@
 		SkillsetRef
 	} from '$lib/domain';
 	import SkillsetPicker from '$lib/skills/SkillsetPicker.svelte';
-	import { KNOWN_PARAMS } from '$lib/flowdoc';
+	import { KNOWN_PARAMS } from '$lib/domain/flowdoc';
 	import ParamFields from '$lib/flow/ParamFields.svelte';
 	import { modelHarnessKinds } from '$lib/flow/paramValues';
 	import { t } from '$lib/i18n/index.svelte';
@@ -85,7 +86,7 @@
 			(e: unknown) => {
 				if (!live) return;
 				openMRs = [];
-				mrError = e instanceof Error ? e.message : String(e);
+				mrError = errorMessage(e);
 			}
 		);
 		return () => {
@@ -136,7 +137,7 @@
 			(e: unknown) => {
 				if (!live) return;
 				flow = null;
-				loadError = e instanceof Error ? e.message : String(e);
+				loadError = errorMessage(e);
 			}
 		);
 		return () => {
@@ -192,20 +193,20 @@
 				/>
 				<span class="help">{t('run.start.mrHelp')}</span>
 			{:else}
-				<span class="help hue-gold">{mrError || t('run.start.mrNone')}</span>
+				<span class="help hue-warning">{mrError || t('run.start.mrNone')}</span>
 			{/if}
 		</div>
 	{/if}
 	{#if askSkillsets}
 		<div class="field">
-			<span class="flabel">{t('run.start.skillsets')}</span>
+			<span class="field-label">{t('run.start.skillsets')}</span>
 			<SkillsetPicker bind:value={skillsets} {idPrefix} />
 		</div>
 	{/if}
 	<details class="card-in adv">
 		<summary>
 			{t('run.start.advanced')}
-			{#if overridden}<span class="pill sm t-brand"
+			{#if overridden}<span class="pill sm tint-brand"
 					>{t('run.start.overrides', { count: overridden })}</span
 				>{/if}
 		</summary>
@@ -238,7 +239,7 @@
 		{/if}
 	</details>
 {:else if loadError}
-	<div class="help hue-gold">{t('run.start.loadError', { error: loadError })}</div>
+	<div class="help hue-warning">{t('run.start.loadError', { error: loadError })}</div>
 {/if}
 
 <style>
@@ -250,7 +251,7 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		color: var(--mut);
+		color: var(--text-muted);
 		font-size: var(--fs-ui);
 	}
 	.adv[open] summary {

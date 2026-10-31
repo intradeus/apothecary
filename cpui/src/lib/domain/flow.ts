@@ -1,7 +1,7 @@
 // Flows: the documents a run executes, and the registries their stages may
 // name.
 
-import type { FlowDoc, PhaseKind, OperatesOn } from '$lib/flowdoc';
+import type { FlowDoc, PhaseKind, OperatesOn } from '$lib/domain/flowdoc';
 
 export interface FlowLayout {
 	nodes: Record<string, { x: number; y: number }>;

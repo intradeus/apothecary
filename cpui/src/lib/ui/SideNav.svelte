@@ -21,7 +21,7 @@
 	// `indicator`). Below 1000px it becomes a horizontal scroller.
 	import { indicator } from './motion';
 	import { keepInView } from './inview';
-	import { I } from './icons';
+	import { I } from '$lib/design/icons';
 
 	let {
 		items,
@@ -42,7 +42,7 @@
 	} = $props();
 </script>
 
-<nav class="sn c" class:fill aria-label={label ?? t('ui.sidenav.label')}>
+<nav class="sn glass" class:fill aria-label={label ?? t('ui.sidenav.label')}>
 	{#if title}<div class="t">{title}</div>{/if}
 	<div class="list" use:indicator use:keepInView>
 		{#each items as it (it.id)}
@@ -53,8 +53,8 @@
 					<span class="ic">{it.icon}</span>
 				{/if}
 				<span class="col">
-					<span class="ell">{it.label}</span>
-					{#if it.sub}<span class="sub ell">{it.sub}</span>{/if}
+					<span class="truncate">{it.label}</span>
+					{#if it.sub}<span class="sub truncate">{it.sub}</span>{/if}
 				</span>
 				{#if it.count}<span class="count" class:hot={it.hot}>{it.count}</span>{/if}
 			{/snippet}
@@ -96,10 +96,10 @@
 		position: static;
 	}
 	.t {
-		font-family: var(--display);
+		font-family: var(--font-display);
 		font-weight: 600;
 		font-size: var(--fs-aside);
-		color: var(--mut);
+		color: var(--text-muted);
 		padding: 4px 10px 4px;
 	}
 	.list {
@@ -123,7 +123,7 @@
 	.ic {
 		width: 16px;
 		text-align: center;
-		color: var(--mut);
+		color: var(--text-muted);
 		flex: none;
 	}
 	.col {
@@ -135,7 +135,7 @@
 	}
 	.sub {
 		font-size: var(--fs-meta);
-		color: var(--mut);
+		color: var(--text-muted);
 		font-weight: 400;
 	}
 	.n {
@@ -146,18 +146,18 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-family: var(--mono);
+		font-family: var(--font-code);
 		font-size: var(--fs-id);
-		border: 1px solid var(--ln2);
-		color: var(--mut);
+		border: 1px solid var(--line-strong);
+		color: var(--text-muted);
 		transition:
 			background var(--dur-fade) var(--ease-out),
 			color var(--dur-fade) var(--ease-out);
 	}
 	.n.done {
-		background: var(--grn);
+		background: var(--success);
 		border-color: transparent;
-		color: var(--deepInk);
+		color: var(--on-success);
 	}
 	@media (max-width: 1000px) {
 		.sn {
@@ -176,8 +176,8 @@
 			mask-image: linear-gradient(
 				to right,
 				transparent,
-				#000 10px,
-				#000 calc(100% - 10px),
+				var(--mask-opaque) 10px,
+				var(--mask-opaque) calc(100% - 10px),
 				transparent
 			);
 		}

@@ -12,13 +12,14 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { parse } from 'yaml';
 import { api } from '$lib/api';
-import { expandDoc, normalizeDoc, type StageKind } from '$lib/flowdoc';
+import { expandDoc, normalizeDoc, type StageKind } from '$lib/domain/flowdoc';
 import type { Run, RunEvent, RunState } from '$lib/domain';
 import type { StageStatus } from '$lib/ui/StageFlask.svelte';
 
 export interface RunFacts {
 	/** USD spent so far (every completed or paused stage leg). */
-	cost: number;
+	/** Absent until a read has worked: nothing, rather than a wrong number. */
+	cost?: number;
 	turns: number;
 	/** The current stage's attempt number, when a stage_started names it. */
 	attempt?: number;
@@ -49,12 +50,14 @@ function derive(run: Run, events: RunEvent[]): RunFacts {
 }
 
 async function load(run: Run) {
-	inflight.add(run.id);
 	try {
 		const { events } = await api.runs.get(run.id);
 		facts.set(run.id, { ...derive(run, events), at: run.updatedAt });
 	} catch {
-		facts.set(run.id, { cost: 0, turns: 0, at: run.updatedAt });
+		// Spending only grows, so the last count stands; an attempt may be another
+		// stage's by now.
+		const last = facts.get(run.id);
+		facts.set(run.id, { cost: last?.cost, turns: last?.turns ?? 0, at: run.updatedAt });
 	} finally {
 		inflight.delete(run.id);
 	}
@@ -64,7 +67,10 @@ async function load(run: Run) {
  *  fetch (async, so it is safe inside templates and deriveds). */
 export function runFacts(run: Run): RunFacts | undefined {
 	const f = facts.get(run.id);
-	if ((!f || f.at !== run.updatedAt) && !inflight.has(run.id)) queueMicrotask(() => load(run));
+	if ((!f || f.at !== run.updatedAt) && !inflight.has(run.id)) {
+		inflight.add(run.id);
+		queueMicrotask(() => load(run));
+	}
 	return f;
 }
 
@@ -74,7 +80,6 @@ const docs = new SvelteMap<string, Record<string, StageKind>>();
 const docsInflight = new Set<string>();
 
 async function loadDoc(key: string, projectId: string, hash: string) {
-	docsInflight.add(key);
 	try {
 		const v = await api.flows.version(projectId, hash);
 		const doc = expandDoc(normalizeDoc(parse(v.yaml)));
@@ -95,6 +100,7 @@ export function stageType(run: Run): StageKind | undefined {
 	const m = docs.get(key);
 	if (!m && !docsInflight.has(key)) {
 		const { projectId, flowHash } = run;
+		docsInflight.add(key);
 		queueMicrotask(() => loadDoc(key, projectId, flowHash));
 	}
 	return m?.[run.currentStage];

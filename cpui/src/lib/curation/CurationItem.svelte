@@ -40,6 +40,7 @@
 	const blank = $derived(state.keep && !state.body.trim());
 	const where = $derived(whereOf(item));
 	const why = $derived(!!(item.rationale || item.evidence || item.example));
+	const keepName = $derived(isReply ? t('cur.keepReply') : t('cur.keep'));
 
 	function restore() {
 		state.body = item.text;
@@ -49,22 +50,20 @@
 
 <div class="it card-in" class:off={!state.keep} class:invalid={blank}>
 	<div class="ih">
-		<Checkbox
-			bind:checked={state.keep}
-			{disabled}
-			title={isReply ? t('cur.keepReply') : t('cur.keep')}
-			{onchange}
-		/>
-		{#if item.kind}<span class="pill sm t-{kindHue(item.kind)}">{kindLabel(item.kind)}</span>{/if}
-		{#if where}<span class="mono where ell" title={where}>{where}</span>{/if}
+		<Checkbox bind:checked={state.keep} {disabled} title={keepName} {onchange}>
+			<span class="keep-name">{keepName}</span>
+		</Checkbox>
+		{#if item.kind}<span class="pill sm tint-{kindHue(item.kind)}">{kindLabel(item.kind)}</span
+			>{/if}
+		{#if where}<span class="mono where truncate" title={where}>{where}</span>{/if}
 		{#if item.thread}
-			<span class="pill sm t-brand" title={item.thread}
+			<span class="pill sm tint-brand" title={item.thread}
 				>{isReply ? t('cur.answers') : t('cur.continues')} {shortThread(item.thread)}</span
 			>
 		{/if}
 		<span class="spacer"></span>
 		{#if reworded}
-			<span class="pill sm t-gold">{t('cur.reworded')}</span>
+			<span class="pill sm tint-warning">{t('cur.reworded')}</span>
 			<button class="linklike sm" onclick={restore} {disabled}>{t('cur.restore')}</button>
 		{/if}
 	</div>
@@ -84,7 +83,7 @@
 		oninput={onchange}
 		rows={rowsFor(state.body)}
 		{disabled}></textarea>
-	{#if blank}<div class="err">{t('cur.blank')}</div>{/if}
+	{#if blank}<div class="error">{t('cur.blank')}</div>{/if}
 
 	{#if item.canResolve}
 		<Checkbox
@@ -135,7 +134,7 @@
 		opacity: 0.9;
 	}
 	.it.invalid {
-		border-color: var(--rosLn);
+		border-color: var(--danger-line);
 	}
 	.ih {
 		display: flex;
@@ -145,9 +144,21 @@
 		flex-wrap: wrap;
 		row-gap: 4px;
 	}
+	/* The box's name: a title alone is a tooltip, and the row has no room for it. */
+	.keep-name {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+	.ih > :global(.ck) {
+		gap: 0;
+	}
 	.where {
 		font-size: var(--fs-id);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.txt {
 		width: 100%;
@@ -157,7 +168,7 @@
 	}
 	.off .txt {
 		text-decoration: line-through;
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.linklike.sm {
 		font-size: var(--fs-meta);
@@ -166,13 +177,13 @@
 		font-size: var(--fs-label);
 	}
 	.why summary {
-		color: var(--mut);
+		color: var(--text-muted);
 		font-weight: 500;
 	}
 	.why dl {
 		margin: 6px 0 0;
 	}
-	.err {
+	.error {
 		margin: 0;
 	}
 	.help {

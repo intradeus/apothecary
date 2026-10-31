@@ -18,14 +18,14 @@
 	// from wherever it is when toggled mid-flight.
 	import type { Snippet } from 'svelte';
 	import { slide } from 'svelte/transition';
-	import type { Hue } from './hues';
+	import type { Hue } from '$lib/design/hues';
 	import { ms, spring } from './motion';
 
 	let {
 		title,
 		kind,
 		glyph,
-		hue = 'mut',
+		hue = 'muted',
 		sub,
 		status,
 		summary = [],
@@ -57,17 +57,17 @@
 		slide(node, { duration: ms('--dur-spring', 450), easing: spring });
 </script>
 
-<article class="cc c" class:open>
+<article class="cc glass" class:open>
 	<div class="body">
 		<div class="top">
-			{#if glyph}<span class="gl h-{hue}" aria-hidden="true">{glyph}</span>{/if}
+			{#if glyph}<span class="gl tone-{hue}" aria-hidden="true">{glyph}</span>{/if}
 			<div class="who">
 				<div class="nmrow">
-					<span class="nm ell">{title}</span>
-					{#if kind}<span class="pill sm flat sq t-mut">{kind}</span>{/if}
+					<span class="nm truncate">{title}</span>
+					{#if kind}<span class="pill sm flat sq tint-muted">{kind}</span>{/if}
 				</div>
 				{#if sub}
-					<div class="sub ell">
+					<div class="sub truncate">
 						{#if typeof sub === 'string'}{sub}{:else}{@render sub()}{/if}
 					</div>
 				{/if}
@@ -78,9 +78,9 @@
 		{#if summary.length}
 			<dl class="kv code">
 				{#each summary as s (s.k)}
-					<dt class="ell" title={s.k}>{s.k}</dt>
+					<dt class="truncate" title={s.k}>{s.k}</dt>
 					<dd
-						class="ell"
+						class="truncate"
 						class:secret={s.secret}
 						title={s.title ?? (s.secret ? t('ui.config.secret') : s.v)}
 					>
@@ -90,7 +90,7 @@
 			</dl>
 		{/if}
 
-		{#if error}<div class="err">{error}</div>{/if}
+		{#if error}<div class="error">{error}</div>{/if}
 
 		{#if actions}<div class="acts">{@render actions()}</div>{/if}
 	</div>
@@ -116,7 +116,7 @@
 		min-width: 0;
 	}
 	.cc.open {
-		border-color: var(--brandLn);
+		border-color: var(--brand-line);
 	}
 	.top {
 		display: flex;
@@ -133,9 +133,9 @@
 		align-items: center;
 		justify-content: center;
 		font-size: var(--fs-body);
-		color: var(--h);
-		background: color-mix(in oklch, var(--h) var(--hueBg), transparent);
-		border: 1px solid var(--ln);
+		color: var(--tone);
+		background: color-mix(in oklch, var(--tone) var(--tint-strength), transparent);
+		border: 1px solid var(--line);
 	}
 	.who {
 		flex: 1;
@@ -157,7 +157,7 @@
 	}
 	.sub {
 		font-size: var(--fs-help);
-		color: var(--mut);
+		color: var(--text-muted);
 	}
 	.st {
 		flex: none;
@@ -172,7 +172,7 @@
 		grid-template-columns: var(--k) minmax(40%, 1fr);
 	}
 	dd.secret {
-		color: var(--fnt);
+		color: var(--text-faint);
 	}
 	.acts {
 		display: flex;
@@ -183,7 +183,7 @@
 	 * when it opens: the whole of it grows from zero. */
 	.edit-in {
 		margin-top: 10px;
-		border-top: 1px solid var(--cLn);
+		border-top: 1px solid var(--glass-line);
 		padding-top: 12px;
 	}
 </style>

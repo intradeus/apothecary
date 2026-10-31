@@ -3,6 +3,7 @@
 	// Start. The workshop's rules with what the watcher last did with each,
 	// a pause toggle, and a form the server validates the way a firing
 	// would be — so a refusal names what the watcher could not run.
+	import { errorMessage } from '$lib/core/errors';
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
 	import type {
@@ -13,8 +14,8 @@
 		Project,
 		Ticket
 	} from '$lib/domain';
-	import { ago, fmtAbs } from '$lib/format';
-	import FlowSelect from '$lib/FlowSelect.svelte';
+	import { ago, fmtAbs } from '$lib/core/format';
+	import FlowSelect from '$lib/flow/FlowSelect.svelte';
 	import StartRunOptions from '$lib/run/StartRunOptions.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
@@ -26,7 +27,7 @@
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { I } from '$lib/ui/icons';
+	import { I } from '$lib/design/icons';
 
 	let {
 		project,
@@ -36,13 +37,12 @@
 
 	let rows = $state<Automation[] | null>(null);
 	let error = $state('');
-	const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 	async function load() {
 		try {
 			rows = await api.automations.list(project.id);
 			error = '';
 		} catch (e) {
-			error = msg(e);
+			error = errorMessage(e);
 		}
 	}
 	$effect(() => {
@@ -158,7 +158,7 @@
 			toast(t('workshop.automations.saved', { name: saved.name }));
 			await load();
 		} catch (err) {
-			formError = msg(err);
+			formError = errorMessage(err);
 		} finally {
 			busy = false;
 		}
@@ -169,7 +169,7 @@
 			await api.automations.update(project.id, a.id, draftOf(a, enabled));
 			await load();
 		} catch (err) {
-			toast(msg(err));
+			toast(errorMessage(err));
 		}
 	}
 
@@ -185,7 +185,7 @@
 			toast(t('workshop.automations.deleted', { name: a.name }));
 			await load();
 		} catch (err) {
-			toast(msg(err));
+			toast(errorMessage(err));
 		}
 	}
 </script>
@@ -231,7 +231,7 @@
 							onchange={(v) => toggle(a, v)}
 						/>
 						<span class="name">{a.name}</span>
-						<span class="pill sm t-mut">{kindLabel(a.kind)}</span>
+						<span class="pill sm tint-muted">{kindLabel(a.kind)}</span>
 					</span>
 					<span class="mono small fires">
 						{#if a.kind === 'cron'}
@@ -258,9 +258,10 @@
 								>{t('workshop.automations.polled', { ago: ago(a.lastPolledAt) })}</span
 							>
 						{:else}
-							<span class="fnt">{t('workshop.automations.never')}</span>
+							<span class="faint">{t('workshop.automations.never')}</span>
 						{/if}
-						{#if a.lastError}<span class="hue-gold err-line" title={a.lastError}>{a.lastError}</span
+						{#if a.lastError}<span class="hue-warning err-line" title={a.lastError}
+								>{a.lastError}</span
 							>{/if}
 					</span>
 					<span class="acts">
@@ -292,7 +293,7 @@
 				<input id="au-name" bind:value={draft.name} required />
 			</div>
 			<div class="field">
-				<span class="lbl">{t('workshop.automations.kind')}</span>
+				<span class="caption">{t('workshop.automations.kind')}</span>
 				<Segmented
 					options={KINDS}
 					value={draft.kind}
@@ -308,7 +309,7 @@
 					{#if sources.length}
 						<Select id="au-source" options={sourceOptions} bind:value={draft.sourceId} />
 					{:else}
-						<div class="help hue-gold">{t('workshop.automations.noSources')}</div>
+						<div class="help hue-warning">{t('workshop.automations.noSources')}</div>
 					{/if}
 					<span class="help">{t('workshop.automations.sourceHelp')}</span>
 				</div>
@@ -349,7 +350,7 @@
 							onchange={(v) => (draft.ticketId = v)}
 						/>
 					{:else}
-						<div class="help hue-gold">{t('workshop.automations.noTickets')}</div>
+						<div class="help hue-warning">{t('workshop.automations.noTickets')}</div>
 					{/if}
 					<span class="help">{t('workshop.automations.ticketHelp')}</span>
 				</div>
@@ -365,13 +366,20 @@
 					fallbackFlow={project.defaultFlow}
 				/>
 			</div>
-			<StartRunOptions projectId={project.id} {flowName} bind:params askMR={false} idPrefix="au" />
+			<StartRunOptions
+				projectId={project.id}
+				{flowName}
+				bind:params
+				askMR={false}
+				askSkillsets={false}
+				idPrefix="au"
+			/>
 			<Toggle
 				checked={draft.enabled}
 				label={t('workshop.automations.startEnabled')}
 				onchange={(v) => (draft.enabled = v)}
 			/>
-			{#if formError}<div class="err">{formError}</div>{/if}
+			{#if formError}<div class="error">{formError}</div>{/if}
 		</form>
 		{#snippet footer()}
 			<button type="button" class="btn-ghost" onclick={() => (open = false)}
@@ -405,7 +413,7 @@
 	}
 	.nm .name {
 		font-weight: 600;
-		color: var(--tx);
+		color: var(--text);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -441,7 +449,7 @@
 		flex-direction: column;
 		gap: 12px;
 	}
-	.lbl {
+	.caption {
 		display: block;
 		margin-bottom: 6px;
 	}
