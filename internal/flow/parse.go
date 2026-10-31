@@ -18,9 +18,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"apothecary/internal/actionspec"
-	"apothecary/internal/agentspec"
-	"apothecary/internal/signalspec"
+	"apothecary/internal/flow/actionspec"
+	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/signalspec"
 )
 
 // Error is a flow validation error pointing at a line in the source file.

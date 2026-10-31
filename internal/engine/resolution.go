@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"apothecary/internal/actionspec"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/runinput"

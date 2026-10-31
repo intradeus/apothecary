@@ -18,11 +18,11 @@ import (
 
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/signalspec"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/runcore"
-	"apothecary/internal/signalspec"
 )
 
 // ErrPhaseNotStartable: a manual phase start the run cannot take now.

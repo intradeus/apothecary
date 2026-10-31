@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"slices"
 
-	"apothecary/internal/actionspec"
-	"apothecary/internal/agentspec"
-	"apothecary/internal/signalspec"
+	"apothecary/internal/flow/actionspec"
+	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/signalspec"
 )
 
 // Schema is the JSON Schema of a flow document as it is written (FLOWLANG

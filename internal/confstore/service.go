@@ -11,8 +11,8 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"apothecary/internal/builtin"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/builtin"
 	"apothecary/internal/platform/secrets"
 )
 

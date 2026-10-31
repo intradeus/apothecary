@@ -15,9 +15,9 @@ import (
 	"fmt"
 	"path"
 
-	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/envport"
 )

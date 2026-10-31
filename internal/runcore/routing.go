@@ -3,9 +3,9 @@ package runcore
 import (
 	"fmt"
 
-	"apothecary/internal/actionspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/actionspec"
 )
 
 // The interpreter's decisions, pure: given the run's state and a stage, where

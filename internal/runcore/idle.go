@@ -7,8 +7,8 @@ import (
 
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/signalspec"
 	"apothecary/internal/ports/repoport"
-	"apothecary/internal/signalspec"
 )
 
 // The scheduler's decisions, pure (FLOWLANG §1). Every wait point — a phase's

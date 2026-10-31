@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"apothecary/internal/reviewfile"
+	"apothecary/internal/flow/reviewfile"
 )
 
 type Type string

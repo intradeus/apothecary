@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/agentspec"
+	"apothecary/internal/flow/agentspec"
 )
 
 // Every role ends with the standing ask_human section — mechanics the flow's

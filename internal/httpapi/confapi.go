@@ -8,22 +8,22 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
-	"apothecary/internal/actionspec"
-	"apothecary/internal/agentspec"
-	"apothecary/internal/builtin"
 	"apothecary/internal/confstore"
 	"apothecary/internal/envcheck"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/actionspec"
+	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/builtin"
+	"apothecary/internal/flow/signalspec"
 	"apothecary/internal/kinds"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/resolution"
-	"apothecary/internal/signalspec"
 	"apothecary/internal/wsinfo"
 )
 
 // flowResp / agentResp decorate store rows with the built-in layering
-// flags (internal/builtin): builtin = served from the binary, no DB row —
+// flags (internal/flow/builtin): builtin = served from the binary, no DB row —
 // saving under the same name creates the editable override; shadows_builtin
 // = a DB row that overrides a built-in name — deleting it resets to the
 // compiled-in default.

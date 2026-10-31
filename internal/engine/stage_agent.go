@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/runcore"

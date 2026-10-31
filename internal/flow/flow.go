@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/agentspec"
-	"apothecary/internal/signalspec"
+	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/signalspec"
 )
 
 // CurrentVersion is the grammar this build speaks. Every document declares

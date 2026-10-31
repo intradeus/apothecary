@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/agentspec"
+	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
 )

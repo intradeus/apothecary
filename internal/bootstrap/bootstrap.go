@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
+	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/skills"

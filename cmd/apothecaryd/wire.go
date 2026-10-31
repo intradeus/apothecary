@@ -19,13 +19,13 @@ import (
 	"apothecary/internal/authsink"
 	"apothecary/internal/automation"
 	"apothecary/internal/browsermcp"
-	"apothecary/internal/builtin"
 	"apothecary/internal/channels"
 	"apothecary/internal/confstore"
 	"apothecary/internal/egress"
 	"apothecary/internal/engine"
 	"apothecary/internal/envcheck"
 	"apothecary/internal/envstate"
+	"apothecary/internal/flow/builtin"
 	"apothecary/internal/httpapi"
 	"apothecary/internal/mrs"
 	"apothecary/internal/platform/config"
@@ -257,7 +257,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		Store:    store,
 		Resolver: resolver,
 		// Flows resolve DB-first with the compiled-in templates underneath
-		// (internal/builtin): an empty database still has flows to run.
+		// (internal/flow/builtin): an empty database still has flows to run.
 		Flows:    builtin.FlowSource(conf.FlowSource()),
 		Settings: limits,
 		Channels: []notifyport.NotificationChannel{chreg},

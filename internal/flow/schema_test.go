@@ -13,9 +13,9 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
 
-	"apothecary/internal/actionspec"
-	"apothecary/internal/agentspec"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/actionspec"
+	"apothecary/internal/flow/agentspec"
 )
 
 func compileSchema(t *testing.T) *jsonschema.Schema {
@@ -57,7 +57,7 @@ func asJSON(t *testing.T, src []byte) any {
 // against the schema an editor checks as it types.
 func TestSchemaAcceptsTheShippedFlows(t *testing.T) {
 	s := compileSchema(t)
-	files, _ := filepath.Glob("../builtin/flows/*.yaml")
+	files, _ := filepath.Glob("builtin/flows/*.yaml")
 	examples, _ := filepath.Glob("../../examples/flows/*.yaml")
 	files = append(files, examples...)
 	if len(files) < 3 {

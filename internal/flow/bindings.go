@@ -6,9 +6,9 @@ import (
 	"slices"
 	"strings"
 
-	"apothecary/internal/actionspec"
-	"apothecary/internal/agentspec"
-	"apothecary/internal/signalspec"
+	"apothecary/internal/flow/actionspec"
+	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/signalspec"
 )
 
 // validateContracts checks each stage's ports against the contract on the

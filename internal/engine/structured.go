@@ -13,9 +13,9 @@ import (
 	"io/fs"
 	"strings"
 
-	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 )

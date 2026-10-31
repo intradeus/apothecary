@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/agentspec"
+	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
-	"apothecary/internal/reviewfile"
 )
 
 // Fake kinds back `serve -dev` and tests: the whole config plane works against

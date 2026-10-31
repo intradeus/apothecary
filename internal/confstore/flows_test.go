@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/builtin"
+	"apothecary/internal/flow/builtin"
 )
 
 // Two projects, one name, two documents. This is the whole point of the move:

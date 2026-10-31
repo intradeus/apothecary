@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/agentspec"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/modelcheck"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"

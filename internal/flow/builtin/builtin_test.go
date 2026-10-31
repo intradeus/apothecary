@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/actionspec"
-	"apothecary/internal/agentspec"
 	"apothecary/internal/flow"
-	"apothecary/internal/signalspec"
+	"apothecary/internal/flow/actionspec"
+	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/signalspec"
 )
 
 // builderFlow is the template most of these tests check, by its name.
@@ -59,7 +59,7 @@ func TestBuiltinFlowsBindCleanly(t *testing.T) {
 // human copies to start from, so a stale one teaches the wrong grammar.
 // (The built-in default is covered above; these are the two on disk.)
 func TestShippedFlowsBindCleanly(t *testing.T) {
-	for _, path := range []string{"../../examples/flows/v5.yaml", "../flow/testdata/v5.yaml"} {
+	for _, path := range []string{"../../../examples/flows/v5.yaml", "../testdata/v5.yaml"} {
 		t.Run(path, func(t *testing.T) {
 			f, err := flow.Load(path)
 			if err != nil {
@@ -437,7 +437,7 @@ func TestBuiltinFlowsCarryNoModel(t *testing.T) {
 	for _, name := range FlowNames() {
 		t.Run(name, func(t *testing.T) { check(t, Flow(name)) })
 	}
-	for _, path := range []string{"../../examples/flows/v5.yaml"} {
+	for _, path := range []string{"../../../examples/flows/v5.yaml"} {
 		t.Run(path, func(t *testing.T) {
 			f, err := flow.Load(path)
 			if err != nil {

@@ -13,7 +13,7 @@ import (
 	"apothecary/internal/account/providers"
 	"apothecary/internal/adapters/acpagent"
 	codexadapter "apothecary/internal/adapters/codex"
-	"apothecary/internal/agentspec"
+	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/ports/envport"
 )
 

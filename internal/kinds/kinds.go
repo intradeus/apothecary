@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"sort"
 
-	"apothecary/internal/agentspec"
+	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"

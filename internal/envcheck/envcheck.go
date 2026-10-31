@@ -17,9 +17,9 @@ import (
 	"sync"
 	"time"
 
-	"apothecary/internal/agentspec"
 	"apothecary/internal/bootstrap"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/modelcheck"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"

@@ -22,8 +22,8 @@ import (
 	"sync"
 
 	"apothecary/internal/account/providers"
-	"apothecary/internal/agentspec"
 	"apothecary/internal/confstore"
+	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/kinds"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"

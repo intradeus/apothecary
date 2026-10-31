@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
+	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/ports/agentport"
-	"apothecary/internal/reviewfile"
 )
 
 // The dev fake writes, for each file the OUTPUT CONTRACT names, a document

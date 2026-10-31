@@ -18,11 +18,11 @@ import (
 	"sort"
 	"strings"
 
-	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/platform/filestore"
-	"apothecary/internal/reviewfile"
 )
 
 // curatable reports whether a shown file of that type takes a curation.

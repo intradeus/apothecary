@@ -12,12 +12,12 @@ import (
 	"fmt"
 	"strings"
 
-	"apothecary/internal/actionspec"
-	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/actionspec"
+	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/ports/repoport"
-	"apothecary/internal/reviewfile"
 )
 
 // checkReviewThreads validates an agent stage's review_threads output when

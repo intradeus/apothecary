@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"apothecary/internal/builtin"
 	"apothecary/internal/egress"
+	"apothecary/internal/flow/builtin"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/run"
 )

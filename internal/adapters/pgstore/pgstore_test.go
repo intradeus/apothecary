@@ -12,8 +12,8 @@ import (
 	"apothecary/internal/account/auth"
 	"apothecary/internal/confstore"
 	"apothecary/internal/event"
+	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/platform/filestore"
-	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 )
 

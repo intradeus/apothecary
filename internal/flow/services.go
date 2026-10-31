@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"apothecary/internal/agentspec"
+	"apothecary/internal/flow/agentspec"
 )
 
 // Services are the project's long-running processes — the app a run builds,

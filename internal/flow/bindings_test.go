@@ -7,7 +7,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"apothecary/internal/agentspec"
+	"apothecary/internal/flow/agentspec"
 )
 
 // parseWith renders specs as the document's agents block and parses it.

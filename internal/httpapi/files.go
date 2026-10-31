@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
-	"apothecary/internal/agentspec"
+	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/platform/filestore"
-	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 )
 

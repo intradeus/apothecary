@@ -6,8 +6,8 @@ import (
 
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/signalspec"
 	"apothecary/internal/runcore"
-	"apothecary/internal/signalspec"
 )
 
 // stageWait is a wait point mid-chain (FLOWLANG §2): the phase parks until

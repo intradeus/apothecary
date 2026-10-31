@@ -21,8 +21,8 @@ import (
 	"golang.org/x/text/message"
 	"gopkg.in/yaml.v3"
 
-	"apothecary/internal/agentspec"
-	"apothecary/internal/reviewfile"
+	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/reviewfile"
 )
 
 // DocSchema is one entry of `schemas:`: a name the agents' inputs and

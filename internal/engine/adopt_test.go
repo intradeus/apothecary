@@ -12,13 +12,13 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
-	"apothecary/internal/builtin"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/builtin"
+	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
-	"apothecary/internal/reviewfile"
 	"apothecary/internal/run"
 	"apothecary/internal/runinput"
 )

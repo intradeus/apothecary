@@ -15,13 +15,13 @@ import (
 	"strings"
 	"time"
 
-	"apothecary/internal/actionspec"
-	"apothecary/internal/agentspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/actionspec"
+	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
-	"apothecary/internal/reviewfile"
 	"apothecary/internal/runcore"
 )
 

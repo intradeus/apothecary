@@ -11,9 +11,9 @@ import (
 	"fmt"
 	"strings"
 
-	"apothecary/internal/actionspec"
 	"apothecary/internal/event"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/platform/shell"
 )
 

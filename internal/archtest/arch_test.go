@@ -60,12 +60,14 @@ var rules = []rule{
 	{pkg: "internal/runinput", mayImport: []string{"internal/skills"}},
 	{pkg: "internal/event", denyImport: outerLayers},
 	{pkg: "internal/run", denyImport: outerLayers},
-	{pkg: "internal/flow", denyImport: outerLayers},
+	// The language stands alone.
+	{pkg: "internal/flow", mayImport: []string{"internal/flow/"}},
+	{pkg: "internal/flow/", mayImport: []string{"internal/flow", "internal/flow/"}},
 	// Building blocks with no domain knowledge.
 	{pkg: "internal/platform/", mayImport: []string{"internal/platform/"}},
 	{pkg: "internal/wsname", mayImport: []string{"internal/run"}},
 	{pkg: "internal/bootstrap", mayImport: []string{
-		"internal/agentspec", "internal/event", "internal/ports/", "internal/platform/shell", "internal/skills",
+		"internal/flow/agentspec", "internal/event", "internal/ports/", "internal/platform/shell", "internal/skills",
 	}},
 	{pkg: "internal/modelcheck", mayImport: []string{"internal/flow", "internal/ports/", "internal/resolution"}},
 	{pkg: "internal/redact", mayImport: []string{"internal/resolution"}},
@@ -77,12 +79,12 @@ var rules = []rule{
 		"internal/platform/shell", "internal/sidecar", "internal/wsname",
 	}},
 	{pkg: "internal/envcheck", mayImport: []string{
-		"internal/agentspec", "internal/bootstrap", "internal/flow", "internal/modelcheck",
+		"internal/flow/agentspec", "internal/bootstrap", "internal/flow", "internal/modelcheck",
 		"internal/ports/", "internal/resolution", "internal/platform/shell", "internal/wsname",
 	}},
 	{pkg: "internal/egress", mayImport: []string{"internal/ports/", "internal/resolution", "internal/run", "internal/wsname"}},
 	{pkg: "internal/ask", mayImport: []string{
-		"internal/agentspec", "internal/flow", "internal/modelcheck", "internal/ports/",
+		"internal/flow/agentspec", "internal/flow", "internal/modelcheck", "internal/ports/",
 		"internal/redact", "internal/resolution", "internal/run",
 	}},
 	{pkg: "internal/authsink", mayImport: []string{"internal/ports/", "internal/redact", "internal/resolution", "internal/run"}},
@@ -93,12 +95,12 @@ var rules = []rule{
 		"internal/platform/shell", "internal/sidecar", "internal/wsinfo",
 	}},
 	{pkg: "internal/runcore", mayImport: []string{
-		"internal/actionspec", "internal/agentspec", "internal/event", "internal/flow",
-		"internal/reviewfile", "internal/run", "internal/signalspec", "internal/ports/",
+		"internal/flow/actionspec", "internal/flow/agentspec", "internal/event", "internal/flow",
+		"internal/flow/reviewfile", "internal/run", "internal/flow/signalspec", "internal/ports/",
 	}},
 	{pkg: "internal/resolution", mayImport: []string{
-		"internal/actionspec", "internal/agentspec", "internal/event", "internal/flow",
-		"internal/run", "internal/signalspec", "internal/ports/",
+		"internal/flow/actionspec", "internal/flow/agentspec", "internal/event", "internal/flow",
+		"internal/run", "internal/flow/signalspec", "internal/ports/",
 	}},
 }
 

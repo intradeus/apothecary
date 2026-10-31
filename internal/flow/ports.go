@@ -15,8 +15,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"apothecary/internal/actionspec"
-	"apothecary/internal/agentspec"
+	"apothecary/internal/flow/actionspec"
+	"apothecary/internal/flow/agentspec"
 )
 
 // DocPort is one port as the document writes it.

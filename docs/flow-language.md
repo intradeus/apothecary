@@ -1875,7 +1875,7 @@ Older spellings the parser still answers by name rather than with a bare
 The built-in `builder` flow, abridged — plan-gated build with cross-vendor
 adversarial review, the debug leaf as every stage's rescue, the ticket's
 tracker issue following the work in canonical statuses, and the merge
-request's life after it opens. Full text: `internal/builtin/flows/builder.yaml`.
+request's life after it opens. Full text: `internal/flow/builtin/flows/builder.yaml`.
 
 ```yaml
 name: builder

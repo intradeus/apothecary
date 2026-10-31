@@ -34,7 +34,7 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/kube"
-	"apothecary/internal/builtin"
+	"apothecary/internal/flow/builtin"
 	"apothecary/internal/portrelay"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"

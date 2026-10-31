@@ -18,7 +18,7 @@ import (
 	"path"
 
 	"apothecary/internal/adapters/acpagent"
-	"apothecary/internal/agentspec"
+	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/wshome"
