@@ -40,26 +40,26 @@ export const isTerminal = (s: RunState) => stateTab[s] === 'finished';
 /** The hue token of each state (DESIGN 3.1), for dots and accents. */
 export const stateHue: Record<RunState, string> = {
 	pending: 'var(--mut)',
-	provisioning: 'var(--az)',
-	running: 'var(--az)',
-	waiting_on_human: 'var(--amb)',
+	provisioning: 'var(--emb)',
+	running: 'var(--emb)',
+	waiting_on_human: 'var(--sky)',
 	in_review: 'var(--vio)',
 	paused: 'var(--mut)',
 	completed: 'var(--grn)',
-	abandoned: 'var(--amb)',
+	abandoned: 'var(--gold)',
 	failed: 'var(--ros)',
 	archived: 'var(--fnt)'
 };
 /** The same, as a text-colour class (`.hue-*`; `.fnt` for archived). */
 export const stateHueClass: Record<RunState, string> = {
 	pending: 'hue-mut',
-	provisioning: 'hue-az',
-	running: 'hue-az',
-	waiting_on_human: 'hue-amb',
+	provisioning: 'hue-emb',
+	running: 'hue-emb',
+	waiting_on_human: 'hue-sky',
 	in_review: 'hue-vio',
 	paused: 'hue-mut',
 	completed: 'hue-grn',
-	abandoned: 'hue-amb',
+	abandoned: 'hue-gold',
 	failed: 'hue-ros',
 	archived: 'fnt'
 };

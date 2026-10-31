@@ -75,22 +75,22 @@
 					? Math.min(100, nice(Math.max(...cpuShown, 1)))
 					: Math.max(100, Math.ceil(Math.max(...cpu, 0) / 100) * 100),
 				fmt: fmtPct,
-				series: [{ label: t('runview.graphs.s_cpu'), color: 'var(--az)', vals: cpuShown }]
+				series: [{ label: t('runview.graphs.s_cpu'), color: 'var(--emb)', vals: cpuShown }]
 			},
 			{
 				title: t('runview.graphs.memory'),
 				yMax: memLimit || niceBytes(Math.max(...mem, 1)),
 				fmt: bytes,
 				pctOf: memLimit || undefined,
-				series: [{ label: t('runview.graphs.s_used'), color: 'var(--vio)', vals: mem }]
+				series: [{ label: t('runview.graphs.s_used'), color: 'var(--gold)', vals: mem }]
 			},
 			{
 				title: t('runview.graphs.network'),
 				yMax: niceBytes(Math.max(...[...rx, ...tx].map((v) => v ?? 0), 1)),
 				fmt: fmtRate,
 				series: [
-					{ label: t('runview.graphs.s_in'), color: 'var(--tea)', vals: rx },
-					{ label: t('runview.graphs.s_out'), color: 'var(--tea)', vals: tx, dash: true }
+					{ label: t('runview.graphs.s_in'), color: 'var(--sky)', vals: rx },
+					{ label: t('runview.graphs.s_out'), color: 'var(--sky)', vals: tx, dash: true }
 				]
 			}
 		];
@@ -181,7 +181,7 @@
 		{#each charts as c, ci (c.title)}
 			<div class="chart">
 				<div class="head">
-					<span class="name serif">{c.title}</span>
+					<span class="name display">{c.title}</span>
 					<span class="vals">
 						{#each c.series as s (s.label)}
 							{@const v = readout(s)}

@@ -1,6 +1,6 @@
 <script lang="ts">
 	// The inline "add" card above a System grid (a new integration, a new
-	// channel): a serif title, an optional kind chip and head controls, then
+	// channel): a display title, an optional kind chip and head controls, then
 	// the form. It grows open on the spring and closes the same way; toggling
 	// it mid-flight reverses from where it is.
 	import type { Snippet } from 'svelte';
@@ -24,10 +24,14 @@
 		slide(node, { duration: ms('--dur-spring', 450), easing: spring });
 </script>
 
-<div class="ac" transition:grow>
+<div
+	class="ac"
+	transition:grow
+	onintroend={(e) => e.currentTarget.scrollIntoView({ block: 'nearest' })}
+>
 	<div class="c in">
 		<div class="row nowrap">
-			<span class="serif at">{title}</span>
+			<span class="display at">{title}</span>
 			{#if kind}<span class="pill sm flat sq t-mut">{kind}</span>{/if}
 			<span class="spacer"></span>
 			{#if head}{@render head()}{/if}

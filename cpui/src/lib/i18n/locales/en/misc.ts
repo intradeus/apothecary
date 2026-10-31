@@ -208,6 +208,7 @@ export default {
 	'form.int.credsDisabled': 'sign in again',
 	'providers.section': 'Credentials',
 	'providers.sectionSub': 'what your harnesses can run on',
+	'providers.new': 'New provider',
 	'providers.addKey': 'API key',
 	'providers.addSignIn': 'Sign in',
 	'providers.addImport': 'Import a file',

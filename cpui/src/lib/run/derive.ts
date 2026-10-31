@@ -742,7 +742,7 @@ export function vscodeRemoteSettings(extensions: string[] = []): string {
 	].join('\n');
 }
 
-/** Split a title into plain words and ONE serif accent phrase: the last two
+/** Split a title into plain words and ONE ember accent phrase: the last two
  *  or three words. */
 export function accentSplit(title: string): [string, string] {
 	const words = title.trim().split(/\s+/);

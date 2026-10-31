@@ -1,5 +1,5 @@
-<!-- Runs list (DESIGN 7.4). Runs start from tickets, so there is no "New run"
-     here. Reads the shared fleet poll (4s); the workshop filter and tab mirror
+<!-- Runs list (DESIGN 7.4). Runs start from tickets, so "New run" picks one.
+     Reads the shared fleet poll (4s); the workshop filter and tab mirror
      ?project= and ?tab= so links from a workshop land pre-filtered. -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
@@ -13,8 +13,10 @@
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
+	import { I } from '$lib/ui/icons';
 	import Updated from '$lib/ui/Updated.svelte';
 	import SearchInput from '$lib/ui/SearchInput.svelte';
+	import NewRunDialog from '$lib/run/NewRunDialog.svelte';
 	import RunTable from '$lib/run/RunTable.svelte';
 	import WorkshopFilter from '$lib/shell/WorkshopFilter.svelte';
 
@@ -23,6 +25,7 @@
 		page.url.searchParams.get('tab') === 'finished' ? 'finished' : 'active'
 	);
 	let q = $state('');
+	let newRun = $state(false);
 
 	function setParams(next: { project?: string; tab?: RunTab }) {
 		const project = next.project ?? projectFilter;
@@ -77,25 +80,29 @@
 		<Updated at={fleet.updatedAt} paused={fleet.paused} />
 	{/snippet}
 	{#snippet actions()}
-		<div class="ctl">
-			<Segmented
-				value={tab}
-				label={t('page.runs.title')}
-				onchange={(v) => setParams({ tab: v })}
-				options={[
-					{ value: 'active', label: t('page.runs.tabActive'), count: active.length },
-					{ value: 'finished', label: t('page.runs.tabFinished'), count: finished.length }
-				]}
-			/>
-			<WorkshopFilter value={projectFilter} onchange={(project) => setParams({ project })} />
-			<span class="sw"
-				><SearchInput bind:value={q} width={220} placeholder={t('page.runs.search')} /></span
-			>
-		</div>
+		<button class="btn-primary btn-lg" onclick={() => (newRun = true)}
+			>{I.add} {t('page.runs.new')}</button
+		>
 	{/snippet}
 </PageHeader>
 
-<div class="page body">
+<NewRunDialog bind:open={newRun} projectId={projectFilter} />
+
+<div class="page c">
+	<div class="filters">
+		<SearchInput bind:value={q} placeholder={t('page.runs.search')} />
+		<WorkshopFilter value={projectFilter} onchange={(project) => setParams({ project })} />
+		<Segmented
+			value={tab}
+			label={t('page.runs.title')}
+			onchange={(v) => setParams({ tab: v })}
+			options={[
+				{ value: 'active', label: t('page.runs.tabActive'), count: active.length },
+				{ value: 'finished', label: t('page.runs.tabFinished'), count: finished.length }
+			]}
+		/>
+	</div>
+
 	{#if !fleet.updatedAt && fleet.error}
 		<ErrorCard
 			cause={t('page.runs.loadError')}
@@ -138,7 +145,7 @@
 			/>
 		{/if}
 	{:else}
-		<div class="c pane">
+		<div class="pane">
 			<RunTable
 				runs={shown}
 				facts={tab === 'active'}
@@ -149,15 +156,3 @@
 		</div>
 	{/if}
 </div>
-
-<style>
-	.sw {
-		display: flex;
-		width: 220px;
-	}
-	@media (max-width: 760px) {
-		.sw {
-			width: 100%;
-		}
-	}
-</style>

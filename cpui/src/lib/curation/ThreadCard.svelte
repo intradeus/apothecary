@@ -26,7 +26,7 @@
 		{#if thread.ours}<span class="pill sm t-brand">{t('cur.thread.ours')}</span>{/if}
 		{#if thread.kind}<span class="pill sm t-{kindHue(thread.kind)}">{kindLabel(thread.kind)}</span
 			>{/if}
-		<span class="pill sm {thread.resolved ? 't-grn' : 't-amb'}"
+		<span class="pill sm {thread.resolved ? 't-grn' : 't-gold'}"
 			>{thread.resolved ? t('cur.thread.resolved') : t('cur.thread.open')}</span
 		>
 		<span class="spacer"></span>
@@ -46,7 +46,7 @@
 						<b>{c.ours ? t('cur.thread.ours') : c.author}</b>
 						{#if c.at}<span class="fnt" title={fmtAbs(c.at)}>{ago(c.at)}</span>{/if}
 						{#if c.did}<span class="pill sm t-{kindHue(c.did)}">{kindLabel(c.did)}</span>{/if}
-						{#if c.new}<span class="pill sm t-amb">{t('cur.thread.new')}</span>{/if}
+						{#if c.new}<span class="pill sm t-gold">{t('cur.thread.new')}</span>{/if}
 					</div>
 					<Markdown src={c.body} quiet />
 				</div>
@@ -104,7 +104,7 @@
 		font-size: var(--fs-ui);
 	}
 	.cm.new {
-		border-left-color: var(--ambLn);
+		border-left-color: var(--goldLn);
 	}
 	.cmh {
 		display: flex;

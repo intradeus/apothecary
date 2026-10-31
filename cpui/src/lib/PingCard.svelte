@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Ping card (DESIGN 4.11): control glass with an amber wash, because a
+	// Ping card (DESIGN 4.11): solid sky, because a
 	// human must act now. Head: badge, type, stage and age, and — in the inbox —
 	// the run and ticket it belongs to. Body: the question, then actions shaped
 	// by the ping's ANSWER KIND (the type only tunes wording): a yes/no, or a
@@ -178,7 +178,7 @@
 		</span>
 	</div>
 {:else}
-	<div class="pc lg wash h-amb" class:compact>
+	<div class="pc skycard" class:compact>
 		<div class="head">
 			<span class="count hot mark" aria-hidden="true">?</span>
 			<span class="ty">{meta.label}</span>
@@ -410,16 +410,28 @@
 {/snippet}
 
 <style>
-	/* Control glass with an amber wash (.wash.h-amb): a human must act now. */
+	/* Solid sky (.skycard): a human must act now. */
 	.pc {
 		border-radius: var(--r-float);
-		border-color: var(--ambLn);
-		box-shadow:
-			var(--lgRim),
-			0 0 var(--glow-lg) var(--ambGlow);
 		display: flex;
 		flex-direction: column;
 		min-width: 0;
+	}
+	/* The compact form (DESIGN 4.6): the window's card. */
+	.pc.compact {
+		border-radius: var(--r-btn);
+	}
+	.compact .ty {
+		font-family: var(--sans);
+		font-size: var(--fs-meta);
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+	.compact .q {
+		font-size: var(--fs-read);
+		font-weight: 600;
+		line-height: 1.3;
 	}
 	.head {
 		display: flex;
@@ -429,15 +441,14 @@
 		flex-wrap: wrap;
 		row-gap: 4px;
 	}
-	/* The round amber "?" — the same mark as the desk's needs-you count. */
 	.ty {
-		font-family: var(--serif);
+		font-family: var(--display);
 		font-size: var(--fs-section);
 		line-height: 1.1;
 	}
 	.aside {
-		font-family: var(--serif);
-		font-style: italic;
+		font-family: var(--display);
+		font-weight: 600;
 		font-size: var(--fs-aside);
 		color: var(--mut);
 	}
@@ -490,7 +501,7 @@
 		gap: 6px;
 		align-self: flex-start;
 		max-width: 100%;
-		color: var(--az);
+		color: var(--skyTx);
 		font-size: var(--fs-label);
 	}
 	.docref {

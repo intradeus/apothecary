@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
-	// Workshop runs tab: the runs list (DESIGN 7.4), filtered to this
-	// workshop. Runs start from tickets, so there is no "New run" here.
+	// Workshop runs tab: the runs list (DESIGN 7.4), filtered to this workshop.
 	import type { Project, Run } from '$lib/domain';
 	import { fleet } from '$lib/fleet.svelte';
 	import { to } from '$lib/urls';
 	import { shortId, stateTab } from '$lib/format';
+	import NewRunDialog from '$lib/run/NewRunDialog.svelte';
 	import RunTable from '$lib/run/RunTable.svelte';
+	import HeaderAction from '$lib/ui/HeaderAction.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import SearchInput from '$lib/ui/SearchInput.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
@@ -17,6 +18,7 @@
 
 	let tab = $state<'active' | 'finished'>('active');
 	let q = $state('');
+	let newRun = $state(false);
 
 	const active = $derived(runs.filter((r) => stateTab[r.state] === 'active'));
 	const finished = $derived(runs.filter((r) => stateTab[r.state] === 'finished'));
@@ -36,7 +38,16 @@
 	);
 </script>
 
-<div class="row">
+<HeaderAction>
+	<button class="btn-primary btn-lg" onclick={() => (newRun = true)}
+		>{I.add} {t('page.runs.new')}</button
+	>
+</HeaderAction>
+
+<NewRunDialog bind:open={newRun} projectId={project.id} />
+
+<div class="filters">
+	<SearchInput bind:value={q} placeholder={t('workshop.runs.search')} />
 	<Segmented
 		options={[
 			{ value: 'active', label: t('workshop.runs.active'), count: active.length },
@@ -44,7 +55,6 @@
 		]}
 		bind:value={tab}
 	/>
-	<SearchInput bind:value={q} placeholder={t('workshop.runs.search')} />
 	<span class="spacer"></span>
 	<Updated at={fleet.updatedAt} paused={fleet.paused} />
 	<a class="btn btn-sm" href={to.runs({ project: project.id, tab })}
@@ -53,7 +63,7 @@
 </div>
 
 {#if shown.length}
-	<section class="c pane">
+	<section class="pane">
 		<RunTable
 			runs={shown}
 			cols={['title', 'state', 'ws', 'stage', 'flow', 'mr', 'updated']}

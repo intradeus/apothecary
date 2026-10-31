@@ -87,7 +87,13 @@
 			</div>
 			<div class="field">
 				<label for="su-pw2">{t('auth.passwordAgain')}</label>
-				<input id="su-pw2" type="password" bind:value={again} required autocomplete="new-password" />
+				<input
+					id="su-pw2"
+					type="password"
+					bind:value={again}
+					required
+					autocomplete="new-password"
+				/>
 			</div>
 		</div>
 		{#if error}<div class="err">{error}</div>{/if}
@@ -107,7 +113,6 @@
 		align-items: center;
 		justify-content: center;
 		padding: 16px;
-		background: var(--scene);
 		color: var(--tx);
 		overflow: auto;
 	}
@@ -132,16 +137,16 @@
 		letter-spacing: var(--tr-heading);
 	}
 	.tagline {
-		font-family: var(--serif);
-		font-style: italic;
+		font-family: var(--display);
+		font-weight: 600;
 		font-size: var(--fs-body);
 		color: var(--mut);
 	}
 	h1 {
 		margin: 0;
-		font-family: var(--serif);
-		font-weight: 400;
-		font-size: var(--fs-display);
+		font-family: var(--display);
+		font-weight: 600;
+		font-size: var(--fs-empty);
 	}
 	p {
 		margin: 0;

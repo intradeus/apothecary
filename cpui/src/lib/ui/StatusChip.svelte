@@ -14,18 +14,18 @@
 		compact = false
 	}: { state: RunState; suffix?: boolean; size?: 'sm' | 'md'; compact?: boolean } = $props();
 
-	// DESIGN 3.1: a tinted .pill per state; waiting is the solid amber .t-hot.
+	// DESIGN 3.1: a tinted .pill per state; waiting is the solid sky .t-hot.
 	const tone = $derived(
 		(
 			{
 				pending: 't-mut',
-				provisioning: 't-az',
-				running: 't-az',
+				provisioning: 't-emb',
+				running: 't-emb',
 				waiting_on_human: 't-hot',
 				in_review: 't-vio',
 				paused: 't-mut',
 				completed: 't-grn',
-				abandoned: 't-amb',
+				abandoned: 't-gold',
 				failed: 't-ros',
 				archived: 'archived'
 			} as const
@@ -64,10 +64,10 @@
 			<span class="g">❚❚</span>
 		{:else if state !== 'archived'}
 			<!-- Only the running/provisioning dot glows; waiting's ink dot just pulses. -->
-			<span class="ldot" class:flat={tone !== 't-az'} class:pulse={live}></span>
+			<span class="ldot" class:flat={tone !== 't-emb'} class:pulse={live}></span>
 		{/if}
 		{stateLabel[state]}
-		{#if aside}<span class="serif aside">· {aside}</span>{/if}
+		{#if aside}<span class="display aside">· {aside}</span>{/if}
 	</span>
 {/if}
 
@@ -80,7 +80,16 @@
 	}
 	.sc.dense {
 		font-size: var(--fs-meta);
-		padding: 1px 9px 1px 7px;
+		font-weight: 700;
+		padding: 1px 8px;
+		gap: 5px;
+	}
+	.sc.dense .aside {
+		font-size: inherit;
+	}
+	.sc.dense .ldot {
+		width: 6px;
+		height: 6px;
 	}
 	.g {
 		font-size: var(--fs-id);

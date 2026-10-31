@@ -119,7 +119,7 @@
 					{#if n}<span class="mono nums"
 							><span class="hue-grn">+{n.add}</span> <span class="hue-ros">−{n.del}</span></span
 						>{/if}
-					{#if c.status === 'in_progress'}<span class="ip hue-az"
+					{#if c.status === 'in_progress'}<span class="ip hue-emb"
 							>{t('run.tool.status.inProgress')}</span
 						>{/if}
 				</button>
@@ -177,7 +177,7 @@
 		flex-direction: column;
 	}
 	.group.live {
-		border-color: var(--azLn);
+		border-color: var(--embLn);
 	}
 	.call + .call,
 	.head.mut + .call {

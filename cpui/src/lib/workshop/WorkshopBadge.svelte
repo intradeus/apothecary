@@ -9,7 +9,7 @@
 	const hue = $derived(workshopVial(projectId).hue);
 </script>
 
-<div class="wb lg" style:--h={hue}>
+<div class="wb c" style:--h={hue}>
 	<span class="cap">{t('workshop.badge.caption')}</span>
 	<span class="v"><Vial {projectId} idle={!live} /></span>
 </div>

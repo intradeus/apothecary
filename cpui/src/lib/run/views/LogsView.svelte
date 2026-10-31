@@ -84,7 +84,7 @@
 			: /\btunnel\b/i.test(l)
 				? 'hue-tea'
 				: /\bharness\b/i.test(l)
-					? 'hue-az'
+					? 'hue-emb'
 					: /\bshim\b/i.test(l)
 						? 'hue-vio'
 						: '';
@@ -136,7 +136,7 @@
 				onclick={() => load(rs.logSource)}>{I.retry}</button
 			>
 		{:else}
-			<span class="hint live"><span class="ldot sm pulse hue-az"></span>tail -f</span>
+			<span class="hint live"><span class="ldot sm pulse hue-emb"></span>tail -f</span>
 		{/if}
 	</div>
 	<div class="log out" bind:this={pre} onscroll={onScroll}>

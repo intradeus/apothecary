@@ -1,5 +1,5 @@
 <script lang="ts">
-	// A section heading outside a pane (DESIGN §7): serif title, a count, a
+	// A section heading outside a pane (DESIGN §7): display title, a count, a
 	// hairline to the right edge, and a link or actions at the end. Inside a
 	// pane use .pane-head instead.
 	import type { Snippet } from 'svelte';
@@ -17,7 +17,7 @@
 	}: {
 		title: string;
 		count?: number | string;
-		/** Solid amber count: these need a human. */
+		/** Solid sky count: these need a human. */
 		hot?: boolean;
 		sub?: string;
 		rule?: boolean;
@@ -27,7 +27,7 @@
 	} = $props();
 </script>
 
-<div class="sh">
+<div class="sh c">
 	<h2>{title}</h2>
 	{#if count !== undefined}<span class="count" class:hot>{count}</span>{/if}
 	{#if sub}<span class="sub">{sub}</span>{/if}
@@ -41,8 +41,18 @@
 		display: flex;
 		align-items: center;
 		gap: 10px;
-		padding: 0 4px;
+		flex: none;
+		min-height: 38px;
+		padding: 5px 8px 5px 14px;
+		border-radius: var(--r-btn);
 		min-width: 0;
+	}
+	/* Inside a window it is only a heading. */
+	:global(.c) .sh {
+		min-height: 0;
+		padding: 0 4px;
+		background: none;
+		border: 0;
 	}
 	h2 {
 		white-space: nowrap;
@@ -51,6 +61,9 @@
 		font-size: var(--fs-help);
 		color: var(--mut);
 		white-space: nowrap;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.rule {
 		height: 1px;

@@ -192,7 +192,7 @@
 				/>
 				<span class="help">{t('run.start.mrHelp')}</span>
 			{:else}
-				<span class="help hue-amb">{mrError || t('run.start.mrNone')}</span>
+				<span class="help hue-gold">{mrError || t('run.start.mrNone')}</span>
 			{/if}
 		</div>
 	{/if}
@@ -238,7 +238,7 @@
 		{/if}
 	</details>
 {:else if loadError}
-	<div class="help hue-amb">{t('run.start.loadError', { error: loadError })}</div>
+	<div class="help hue-gold">{t('run.start.loadError', { error: loadError })}</div>
 {/if}
 
 <style>

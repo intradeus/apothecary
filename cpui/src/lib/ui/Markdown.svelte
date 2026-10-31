@@ -5,7 +5,7 @@
 
 	let {
 		src,
-		/** A document: serif headings, for plans and captured files. */
+		/** A document: display headings, for plans and captured files. */
 		doc = false,
 		/** Muted, smaller: context under a question. */
 		quiet = false

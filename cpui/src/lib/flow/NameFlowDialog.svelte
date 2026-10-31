@@ -52,7 +52,7 @@
 	}
 </script>
 
-<Modal bind:open {title} icon={I.rx} {onclose}>
+<Modal bind:open {title} icon={I.workshop} {onclose}>
 	<form id="name-flow" class="nf" onsubmit={submit}>
 		{#if children}<div class="intro">{@render children()}</div>{/if}
 		<SlugField

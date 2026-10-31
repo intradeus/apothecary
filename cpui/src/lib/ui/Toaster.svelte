@@ -38,13 +38,13 @@
 <div class="toaster" aria-live="polite">
 	{#each toasts.list as tst (tst.id)}
 		<div
-			class="toast lg h-{tst.tone === 'ok'
+			class="toast isl h-{tst.tone === 'ok'
 				? 'grn'
 				: tst.tone === 'bad'
 					? 'ros'
 					: tst.tone === 'warn'
-						? 'amb'
-						: 'az'}"
+						? 'gold'
+						: 'sky'}"
 			role="status"
 			animate:flip={{ duration: ms('--dur-spring', 450), easing: spring }}
 			transition:slide={{ from: 'bottom', distance: 40 }}
@@ -94,8 +94,6 @@
 		max-width: min(420px, calc(100vw - 32px));
 		padding: 7px 7px 7px 12px;
 		border-radius: var(--r-btn);
-		background: var(--lgBg), var(--popBg);
-		box-shadow: var(--lgRim), var(--popSh);
 		font-size: var(--fs-ui);
 		cursor: grab;
 		user-select: none;

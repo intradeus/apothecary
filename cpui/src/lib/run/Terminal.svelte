@@ -34,7 +34,7 @@
 				fontSize: parseFloat(token('--fs-label')) || 12,
 				lineHeight: 1.25,
 				allowTransparency: true,
-				// Palette from app.css (--term*, --dk-*): the terminal stays dark
+				// Palette from app.css (--term*): the terminal stays dark
 				// in both themes, so it is read once per terminal.
 				theme: {
 					background: 'transparent',
@@ -43,12 +43,12 @@
 					cursorAccent: token('--termCursorAccent'),
 					selectionBackground: token('--termSel'),
 					black: token('--termBlack'),
-					red: token('--dk-ros'),
-					green: token('--dk-grn'),
-					yellow: token('--dk-amb'),
-					blue: token('--dk-az'),
-					magenta: token('--dk-vio'),
-					cyan: token('--dk-tea'),
+					red: token('--termRed'),
+					green: token('--termGrn'),
+					yellow: token('--termYellow'),
+					blue: token('--termBlue'),
+					magenta: token('--termVio'),
+					cyan: token('--termCyan'),
 					white: token('--termTx'),
 					brightBlack: token('--termFnt')
 				}
@@ -152,13 +152,13 @@
 	/* The terminal stays dark in every theme, so its dot uses the fixed
 	 * dark palette rather than the themed hues. */
 	.ldot.open {
-		color: var(--dk-grn);
+		color: var(--termGrn);
 	}
 	.ldot.connecting {
-		color: var(--dk-az);
+		color: var(--termOrange);
 	}
 	.ldot.closed {
-		color: var(--dk-ros);
+		color: var(--termRed);
 		box-shadow: none;
 	}
 	.term {

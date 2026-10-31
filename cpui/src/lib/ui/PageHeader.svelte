@@ -1,7 +1,8 @@
 <script lang="ts">
-	// The page header pattern (DESIGN §7): breadcrumb row, h1 with one serif
-	// accent phrase and an optional status chip, a meta row, and right-aligned
-	// control groups.
+	// The page header pattern (DESIGN §7): one window-glass strip, like the
+	// run's top bar — so its muted text never sits on the raw backdrop.
+	// Breadcrumb row, h1 with one ember accent phrase and an optional status
+	// chip, a meta row, and right-aligned control groups.
 	//
 	//   <PageHeader crumbs={…} title="Tickets for" accent="the bench">
 	//     {#snippet meta()}…{/snippet}
@@ -38,7 +39,7 @@
 	} = $props();
 </script>
 
-<header class="ph">
+<header class="ph c">
 	{#if lead}<div class="lead">{@render lead()}</div>{/if}
 	<div class="mid">
 		{#if crumbs.length || crumbsEnd}
@@ -67,8 +68,11 @@
 		display: grid;
 		grid-template-columns: auto minmax(0, 1fr) auto;
 		gap: 16px;
-		align-items: start;
-		padding: 18px 22px 12px;
+		align-items: center;
+		flex: none;
+		margin: var(--shell-gap) var(--shell-gap) 0;
+		padding: 12px 12px 12px 16px;
+		border-radius: var(--r-pane);
 	}
 	.ph:not(:has(.lead)) {
 		grid-template-columns: minmax(0, 1fr) auto;
@@ -76,7 +80,7 @@
 	.mid {
 		display: flex;
 		flex-direction: column;
-		gap: 7px;
+		gap: 5px;
 		min-width: 0;
 	}
 	.crow {

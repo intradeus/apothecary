@@ -820,7 +820,7 @@
 					aria-busy={validating}
 					onclick={validate}
 					>{t('page.flow.validate')}{#if validation?.warnings?.length}<span
-							class="pill sm mono t-amb">{validation.warnings.length}</span
+							class="pill sm mono t-sky">{validation.warnings.length}</span
 						>{/if}</button
 				>
 				<button
@@ -898,32 +898,32 @@
 </Popover>
 
 {#if flow?.builtin}
-	<div class="strip">
-		<Callout glyph={I.rx}>
+	<div class="strip c">
+		<Callout glyph={I.workshop}>
 			{@html th('page.flow.builtinCallout')}
 		</Callout>
 	</div>
 {/if}
 {#if notice}
-	<div class="strip">
+	<div class="strip c">
 		<Callout
-			hue={notice.tone === 'ok' ? 'grn' : 'az'}
+			hue={notice.tone === 'ok' ? 'grn' : 'sky'}
 			glyph={notice.tone === 'ok' ? I.ok : I.info}
 			ondismiss={() => (notice = null)}>{notice.text}</Callout
 		>
 	</div>
 {/if}
 {#if error}
-	<div class="strip">
+	<div class="strip c">
 		<ErrorCard cause={t('page.flow.wrong')} detail={error} onretry={flow ? undefined : load} />
 	</div>
 {/if}
 
 <div class="fe">
 	{#if !flow && !error}
-		<div class="canvas"><Skeleton pane lines={6} /></div>
+		<div class="canvas c"><Skeleton pane lines={6} /></div>
 	{:else if flow}
-		<div class="canvas" class:yaml={tab === 'yaml'} class:agents={tab === 'agents'}>
+		<div class="canvas c" class:yaml={tab === 'yaml'} class:agents={tab === 'agents'}>
 			{#if tab === 'agents' && doc}
 				<AgentsPage
 					{doc}
@@ -1025,9 +1025,9 @@
 		</div>
 
 		{#if showVersions}
-			<aside class="side lg" in:slide={{ from: 'right', distance: 24 }}>
+			<aside class="side c" in:slide={{ from: 'right', distance: 24 }}>
 				<div class="sh">
-					<span class="serif st">{t('page.flow.versions')}</span>
+					<span class="display st">{t('page.flow.versions')}</span>
 					<span class="spacer"></span>
 					<button
 						class="btn-icon"
@@ -1060,7 +1060,7 @@
 				</div>
 			</aside>
 		{:else if tab === 'graph' && doc}
-			<aside class="side lg" bind:this={side} in:slide={{ from: 'right', distance: 24 }}>
+			<aside class="side c" bind:this={side} in:slide={{ from: 'right', distance: 24 }}>
 				<FlowInspector
 					bind:this={inspector}
 					{doc}
@@ -1147,33 +1147,33 @@
 	}
 	.vl.err li {
 		font-size: var(--fs-meta);
-		color: var(--ros);
+		color: var(--rosTx);
 		white-space: pre-wrap;
 	}
 	.vl.warn li {
 		font-size: var(--fs-label);
-		color: var(--amb);
+		color: var(--skyTx);
 	}
 	.vw {
 		font-size: var(--fs-label);
 		font-weight: 600;
 	}
 	.strip {
-		margin: 0 16px 8px;
+		margin: var(--shell-gap) var(--shell-gap) 0;
+		border-radius: var(--r-btn);
 	}
 	.fe {
 		flex: 1;
 		min-height: 0;
 		display: flex;
-		gap: 8px;
-		padding: 0 16px 12px;
+		gap: var(--desk-gap);
+		padding: var(--shell-gap);
 	}
 	.canvas {
 		position: relative;
 		flex: 1;
 		min-width: 0;
 		border-radius: var(--r-pane);
-		border: 1px solid var(--cLn);
 		overflow: hidden;
 	}
 	/* The flow, and — while a sequence stage is selected — the sequence it

@@ -1,6 +1,6 @@
 <script lang="ts">
 	// The ping card docked above the composer while the run waits on you
-	// (DESIGN 4.11). PingCard draws its own amber control glass; this only
+	// (DESIGN 4.11). PingCard draws its own solid sky; this only
 	// docks it and says when earlier pings queue behind it.
 	import PingCard from '$lib/PingCard.svelte';
 	import type { RunPing } from './derive';
@@ -33,7 +33,7 @@
 <style>
 	.dock {
 		flex: none;
-		margin: 0 12px 12px;
+		margin: 0 calc(12px + var(--fabClear, 0px)) 12px 12px;
 		max-height: 60%;
 		overflow: auto;
 		display: flex;
@@ -42,7 +42,7 @@
 	}
 	.queue {
 		font-size: var(--fs-help);
-		color: var(--amb);
+		color: var(--skyTx);
 		padding: 0 6px;
 	}
 </style>

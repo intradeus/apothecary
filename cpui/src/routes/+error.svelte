@@ -5,7 +5,7 @@
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 </script>
 
-<div class="page">
+<div class="page c">
 	<EmptyState
 		title={page.status === 404 ? t('page.error.notFound') : t('page.error.spilled')}
 		text={page.error?.message ?? t('page.error.unexpected')}

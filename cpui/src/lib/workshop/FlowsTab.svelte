@@ -17,6 +17,8 @@
 	import NameFlowDialog from '$lib/flow/NameFlowDialog.svelte';
 	import { flowSkeleton } from '$lib/flow/skeleton';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
+	import HeaderAction from '$lib/ui/HeaderAction.svelte';
+	import SectionHeader from '$lib/ui/SectionHeader.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
@@ -62,70 +64,69 @@
 	}
 </script>
 
-<div class="row nowrap">
-	<p class="lede grow">
-		{t('workshop.flows.lede')}
-	</p>
-	<button class="btn-primary" onclick={() => (creating = true)}
+<HeaderAction>
+	<button class="btn-primary btn-lg" onclick={() => (creating = true)}
 		>{I.add} {t('workshop.flows.new')}</button
 	>
-</div>
+</HeaderAction>
+
+<p class="lede">{t('workshop.flows.lede')}</p>
 
 {#if error && !flows}
 	<ErrorCard cause={t('workshop.flows.loadError')} detail={error} onretry={onreload} />
 {:else if !flows}
 	<Skeleton pane lines={4} />
 {:else}
-	<section class="c pane">
-		<div class="pane-head">
-			<h2>{t('workshop.flows.ownTitle')}</h2>
-			<span class="count">{own.length}</span>
-		</div>
-		{#if own.length}
-			<div class="rows">
-				<div class="r head fr">
-					<span>{t('workshop.flows.colFlow')}</span><span>{t('workshop.flows.colVersion')}</span
-					><span class="num">{t('workshop.flows.colUpdated')}</span><span></span>
-				</div>
-				{#each own as f (f.name)}
-					<div class="r fr">
-						<span class="nm">
-							<a class="mono stretch" href={to.flow(project.id, f.name)}>{f.name}</a>
-							{#if f.name === project.defaultFlow}<span
-									class="pill sm t-brand"
-									title={t('workshop.flows.defaultTitle')}>{t('workshop.flows.default')}</span
-								>{/if}
-							{#if f.shadowsBuiltin}<span
-									class="pill sm t-mut"
-									title={t('workshop.flows.fromTemplateTitle')}
-									>{t('workshop.flows.fromTemplate')}</span
-								>{/if}
-							{#if configured.has(f.name)}<span
-									class="pill sm t-brand"
-									title={t('workshop.flows.configuredTitle')}>{t('workshop.flows.configured')}</span
-								>{/if}
-						</span>
-						<span><span class="tag">@{f.hash.slice(0, 8)}</span></span>
-						<span class="num mono fnt" title={fmtAbs(f.updatedAt)}>{ago(f.updatedAt)}</span>
-						<span class="acts over-stretch">
-							<a class="btn btn-sm" href={to.flow(project.id, f.name)}>{t('workshop.flows.edit')}</a
-							>
-							<button
-								class="btn-sm"
-								title={t('workshop.flows.configureTitle')}
-								onclick={() => (configuring = f)}>{t('workshop.flows.configure')}</button
-							>
-							<button
-								class="btn-sm"
-								title={t('workshop.flows.copyTitle')}
-								onclick={() => (copying = { flow: f })}>{I.copy} {t('workshop.flows.copy')}</button
-							>
-						</span>
+	<div class="sections">
+		<section class="col">
+			<SectionHeader title={t('workshop.flows.ownTitle')} count={own.length} />
+			{#if own.length}
+				<div class="pane rows">
+					<div class="r head fr">
+						<span>{t('workshop.flows.colFlow')}</span><span>{t('workshop.flows.colVersion')}</span
+						><span class="num">{t('workshop.flows.colUpdated')}</span><span></span>
 					</div>
-				{/each}
-			</div>
-		{:else}
-			<div class="pane-body">
+					{#each own as f (f.name)}
+						<div class="r fr">
+							<span class="nm">
+								<a class="mono stretch" href={to.flow(project.id, f.name)}>{f.name}</a>
+								{#if f.name === project.defaultFlow}<span
+										class="pill sm t-brand"
+										title={t('workshop.flows.defaultTitle')}>{t('workshop.flows.default')}</span
+									>{/if}
+								{#if f.shadowsBuiltin}<span
+										class="pill sm t-mut"
+										title={t('workshop.flows.fromTemplateTitle')}
+										>{t('workshop.flows.fromTemplate')}</span
+									>{/if}
+								{#if configured.has(f.name)}<span
+										class="pill sm t-brand"
+										title={t('workshop.flows.configuredTitle')}
+										>{t('workshop.flows.configured')}</span
+									>{/if}
+							</span>
+							<span><span class="tag">@{f.hash.slice(0, 8)}</span></span>
+							<span class="num mono fnt" title={fmtAbs(f.updatedAt)}>{ago(f.updatedAt)}</span>
+							<span class="acts over-stretch">
+								<a class="btn btn-sm" href={to.flow(project.id, f.name)}
+									>{t('workshop.flows.edit')}</a
+								>
+								<button
+									class="btn-sm"
+									title={t('workshop.flows.configureTitle')}
+									onclick={() => (configuring = f)}>{t('workshop.flows.configure')}</button
+								>
+								<button
+									class="btn-sm"
+									title={t('workshop.flows.copyTitle')}
+									onclick={() => (copying = { flow: f })}
+									>{I.copy} {t('workshop.flows.copy')}</button
+								>
+							</span>
+						</div>
+					{/each}
+				</div>
+			{:else}
 				<EmptyState
 					compact
 					title={t('workshop.flows.emptyTitle')}
@@ -135,54 +136,55 @@
 						>{I.add} {t('workshop.flows.new')}</button
 					>
 				</EmptyState>
-			</div>
-		{/if}
-	</section>
-
-	{#if templates.length}
-		<section class="c pane">
-			<div class="pane-head">
-				<h2>{t('workshop.flows.templates')}</h2>
-				<span class="count">{templates.length}</span>
-				<span class="mut small">{t('workshop.flows.templatesNote')}</span>
-			</div>
-			<div class="rows">
-				{#each templates as tpl (tpl.name)}
-					<div class="r fr">
-						<span class="nm">
-							<a class="mono stretch" href={to.flow(project.id, tpl.name)}>{tpl.name}</a>
-							<span class="pill sm t-mut">{t('workshop.flows.builtin')}</span>
-							{#if tpl.name === project.defaultFlow}<span class="pill sm t-brand"
-									>{t('workshop.flows.default')}</span
-								>{/if}
-							{#if configured.has(tpl.name)}<span
-									class="pill sm t-brand"
-									title={t('workshop.flows.configuredTitle')}>{t('workshop.flows.configured')}</span
-								>{/if}
-						</span>
-						<span><span class="tag">@{tpl.hash.slice(0, 8)}</span></span>
-						<span class="num fnt small">{t('workshop.flows.fromBinary')}</span>
-						<span class="acts over-stretch">
-							<a class="btn btn-sm" href={to.flow(project.id, tpl.name)}
-								>{t('workshop.flows.view')}</a
-							>
-							<button
-								class="btn-sm btn-sel"
-								title={t('workshop.flows.configureTitle')}
-								onclick={() => (configuring = tpl)}>{t('workshop.flows.configure')}</button
-							>
-							<button
-								class="btn-sm"
-								title={t('workshop.flows.useTitle')}
-								onclick={() => (copying = { flow: tpl, target: project.id })}
-								>{t('workshop.flows.use')}</button
-							>
-						</span>
-					</div>
-				{/each}
-			</div>
+			{/if}
 		</section>
-	{/if}
+
+		{#if templates.length}
+			<section class="col">
+				<SectionHeader
+					title={t('workshop.flows.templates')}
+					count={templates.length}
+					sub={t('workshop.flows.templatesNote')}
+				/>
+				<div class="pane rows">
+					{#each templates as tpl (tpl.name)}
+						<div class="r fr">
+							<span class="nm">
+								<a class="mono stretch" href={to.flow(project.id, tpl.name)}>{tpl.name}</a>
+								<span class="pill sm t-mut">{t('workshop.flows.builtin')}</span>
+								{#if tpl.name === project.defaultFlow}<span class="pill sm t-brand"
+										>{t('workshop.flows.default')}</span
+									>{/if}
+								{#if configured.has(tpl.name)}<span
+										class="pill sm t-brand"
+										title={t('workshop.flows.configuredTitle')}
+										>{t('workshop.flows.configured')}</span
+									>{/if}
+							</span>
+							<span><span class="tag">@{tpl.hash.slice(0, 8)}</span></span>
+							<span class="num fnt small">{t('workshop.flows.fromBinary')}</span>
+							<span class="acts over-stretch">
+								<a class="btn btn-sm" href={to.flow(project.id, tpl.name)}
+									>{t('workshop.flows.view')}</a
+								>
+								<button
+									class="btn-sm btn-sel"
+									title={t('workshop.flows.configureTitle')}
+									onclick={() => (configuring = tpl)}>{t('workshop.flows.configure')}</button
+								>
+								<button
+									class="btn-sm"
+									title={t('workshop.flows.useTitle')}
+									onclick={() => (copying = { flow: tpl, target: project.id })}
+									>{t('workshop.flows.use')}</button
+								>
+							</span>
+						</div>
+					{/each}
+				</div>
+			</section>
+		{/if}
+	</div>
 {/if}
 
 {#if creating}

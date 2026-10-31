@@ -202,7 +202,10 @@
 				: t('inbox.nothingPending')}
 		</span>
 	{/snippet}
-	{#snippet actions()}
+</PageHeader>
+
+<div class="page c">
+	<div class="filters">
 		<Segmented
 			bind:value={tab}
 			label={t('inbox.crumb')}
@@ -215,138 +218,129 @@
 				}
 			]}
 		/>
-	{/snippet}
-</PageHeader>
-
-{#if tab === 'pending'}
-	<div class="ib">
-		{#if !fleet.updatedAt && fleet.error}
-			<div class="full">
-				<ErrorCard
-					cause={t('inbox.loadErr')}
-					detail={fleet.error}
-					onretry={() => fleet.refresh()}
-				/>
-			</div>
-		{:else if !fleet.updatedAt}
-			<Skeleton pane lines={5} />
-			<Skeleton pane lines={4} />
-		{:else if groups.length === 0}
-			<div class="full">
-				<EmptyState title={t('inbox.empty.title')} text={t('inbox.empty.text')}>
-					<a class="btn" href={to.runs()}>{t('inbox.openRuns')}</a>
-				</EmptyState>
-			</div>
-		{:else}
-			<aside class="list c pane">
-				{#if types.length > 1}
-					<div class="pane-head filt">
-						<Segmented
-							bind:value={typeFilter}
-							options={typeOptions}
-							size="sm"
-							glass={false}
-							label={t('inbox.filterLabel')}
-						/>
-					</div>
-				{/if}
-				<div class="scroll" use:indicator>
-					{#each shownGroups as g, i (g[0].runId)}
-						{@const p = g[0]}
-						{@const r = fleet.runById.get(p.runId)}
-						{@const tk = ticketOf(p.runId)}
-						<button
-							class="rowbtn card"
-							class:on={current?.id === p.id}
-							aria-current={current?.id === p.id ? 'true' : undefined}
-							onclick={() => {
-								lastIdx = i;
-								pick(p);
-							}}
-							animate:flip={move}
-							out:slide={{ from: 'left' }}
-						>
-							<span class="l1">
-								<PingPill type={p.type} />
-								{#if p.stageId}<span class="mono mut st ell">{p.stageId}</span>{/if}
-								<span class="spacer"></span>
-								<span class="mono mut age" title={fmtAbs(p.raisedAt)}>{age(p.raisedAt)}</span>
-							</span>
-							<span class="q ell">{pingHeadline(p.question)}</span>
-							<span class="l3">
-								<span class="rt ell">{r?.title ?? shortId(p.runId)}</span>
-								{#if tk?.source?.key}<span class="tag">{tk.source.key}</span>{/if}
-								{#if r?.projectId}<span class="wsn"><WorkshopName projectId={r.projectId} /></span
-									>{/if}
-							</span>
-							{#if g.length > 1}
-								<span class="queued">{t('inbox.queued', { count: g.length - 1 })}</span>
-							{/if}
-						</button>
-					{:else}
-						<div class="empty-line">
-							{t('inbox.noneOfType', { type: pingMeta(typeFilter).label.toLowerCase() })}
-						</div>
-					{/each}
-				</div>
-			</aside>
-
-			<section class="detail">
-				{#if current}
-					{#if run}
-						<div class="strip c">
-							<StatusChip state={run.state} size="sm" />
-							{#if run.currentStage}
-								<span class="stg">
-									<StageFlask status={stageStatus(run.state)} size="sm" />
-									<span class="mono">{run.currentStage}</span>
-									{#if facts?.attempt}<span class="fnt"
-											>{t('inbox.attempt', { n: facts.attempt })}</span
-										>{/if}
-								</span>
-							{/if}
-							{#if facts && facts.cost > 0}<span class="mono mut">{fmtCost(facts.cost)}</span>{/if}
-							<span class="wsx"
-								><WorkspaceStatus
-									state={run.state}
-									envId={run.envId}
-									envStatus={run.envStatus}
-								/></span
-							>
-							<span class="spacer"></span>
-							{#if run.mrs.length || run.mrUrl}<MrLink {run} />{/if}
-							<a class="btn btn-sm" href={to.run(run.id)}>{t('inbox.openRun')} {I.forward}</a>
-						</div>
-					{/if}
-					{#if error}<ErrorCard cause={t('inbox.answerFailed')} detail={error} />{/if}
-					{#key current.id}
-						<PingCard
-							ping={current}
-							busy={busy[current.id] ?? false}
-							onanswer={(a, n, ids, content) => answer(current, a, n, ids, content)}
-							runTitle={run?.title}
-							ticketKey={ticketOf(current.runId)?.source?.key}
-							ticketTitle={ticketOf(current.runId)?.title}
-						/>
-					{/key}
-					{#if currentGroup.length > 1}
-						<div class="note later">
-							<div class="lbl">{t('inbox.queuedBehind')}</div>
-							{#each currentGroup.slice(1) as q (q.id)}
-								<div class="lr">
-									<PingPill type={q.type} />
-									<span class="ell">{pingHeadline(q.question)}</span>
-									<span class="mono fnt" title={fmtAbs(q.raisedAt)}>{ago(q.raisedAt)}</span>
-								</div>
-							{/each}
-						</div>
-					{/if}
-				{/if}
-			</section>
+		{#if tab === 'pending' && types.length > 1}
+			<Segmented bind:value={typeFilter} options={typeOptions} label={t('inbox.filterLabel')} />
 		{/if}
 	</div>
-{:else}
-	<div class="page hist">
+
+	{#if tab === 'pending'}
+		<div class="ib">
+			{#if !fleet.updatedAt && fleet.error}
+				<div class="full c pane">
+					<ErrorCard
+						cause={t('inbox.loadErr')}
+						detail={fleet.error}
+						onretry={() => fleet.refresh()}
+					/>
+				</div>
+			{:else if !fleet.updatedAt}
+				<Skeleton pane lines={5} />
+				<Skeleton pane lines={4} />
+			{:else if groups.length === 0}
+				<div class="full c pane">
+					<EmptyState title={t('inbox.empty.title')} text={t('inbox.empty.text')}>
+						<a class="btn" href={to.runs()}>{t('inbox.openRuns')}</a>
+					</EmptyState>
+				</div>
+			{:else}
+				<aside class="list c pane">
+					<div class="scroll" use:indicator>
+						{#each shownGroups as g, i (g[0].runId)}
+							{@const p = g[0]}
+							{@const r = fleet.runById.get(p.runId)}
+							{@const tk = ticketOf(p.runId)}
+							<button
+								class="rowbtn card"
+								class:on={current?.id === p.id}
+								aria-current={current?.id === p.id ? 'true' : undefined}
+								onclick={() => {
+									lastIdx = i;
+									pick(p);
+								}}
+								animate:flip={move}
+								out:slide={{ from: 'left' }}
+							>
+								<span class="l1">
+									<PingPill type={p.type} />
+									{#if p.stageId}<span class="mono mut st ell">{p.stageId}</span>{/if}
+									<span class="spacer"></span>
+									<span class="mono mut age" title={fmtAbs(p.raisedAt)}>{age(p.raisedAt)}</span>
+								</span>
+								<span class="q ell">{pingHeadline(p.question)}</span>
+								<span class="l3">
+									<span class="rt ell">{r?.title ?? shortId(p.runId)}</span>
+									{#if tk?.source?.key}<span class="tag">{tk.source.key}</span>{/if}
+									{#if r?.projectId}<span class="wsn"><WorkshopName projectId={r.projectId} /></span
+										>{/if}
+								</span>
+								{#if g.length > 1}
+									<span class="queued">{t('inbox.queued', { count: g.length - 1 })}</span>
+								{/if}
+							</button>
+						{:else}
+							<div class="empty-line">
+								{t('inbox.noneOfType', { type: pingMeta(typeFilter).label.toLowerCase() })}
+							</div>
+						{/each}
+					</div>
+				</aside>
+
+				<section class="detail c pane">
+					{#if current}
+						{#if run}
+							<div class="strip c">
+								<StatusChip state={run.state} size="sm" />
+								{#if run.currentStage}
+									<span class="stg">
+										<StageFlask status={stageStatus(run.state)} size="sm" />
+										<span class="mono">{run.currentStage}</span>
+										{#if facts?.attempt}<span class="fnt"
+												>{t('inbox.attempt', { n: facts.attempt })}</span
+											>{/if}
+									</span>
+								{/if}
+								{#if facts && facts.cost > 0}<span class="mono mut">{fmtCost(facts.cost)}</span
+									>{/if}
+								<span class="wsx"
+									><WorkspaceStatus
+										state={run.state}
+										envId={run.envId}
+										envStatus={run.envStatus}
+									/></span
+								>
+								<span class="spacer"></span>
+								{#if run.mrs.length || run.mrUrl}<MrLink {run} />{/if}
+								<a class="btn btn-sm" href={to.run(run.id)}>{t('inbox.openRun')} {I.forward}</a>
+							</div>
+						{/if}
+						{#if error}<ErrorCard cause={t('inbox.answerFailed')} detail={error} />{/if}
+						{#key current.id}
+							<PingCard
+								ping={current}
+								busy={busy[current.id] ?? false}
+								onanswer={(a, n, ids, content) => answer(current, a, n, ids, content)}
+								runTitle={run?.title}
+								ticketKey={ticketOf(current.runId)?.source?.key}
+								ticketTitle={ticketOf(current.runId)?.title}
+							/>
+						{/key}
+						{#if currentGroup.length > 1}
+							<div class="note later">
+								<div class="lbl">{t('inbox.queuedBehind')}</div>
+								{#each currentGroup.slice(1) as q (q.id)}
+									<div class="lr">
+										<PingPill type={q.type} />
+										<span class="ell">{pingHeadline(q.question)}</span>
+										<span class="mono fnt" title={fmtAbs(q.raisedAt)}>{ago(q.raisedAt)}</span>
+									</div>
+								{/each}
+							</div>
+						{/if}
+					{/if}
+				</section>
+			{/if}
+		</div>
+	{:else}
 		{#if answeredErr && !answered.length}
 			<ErrorCard cause={t('inbox.histErr')} detail={answeredErr} onretry={loadAnswered} />
 		{:else if !answeredLoaded}
@@ -354,7 +348,7 @@
 		{:else if answered.length === 0}
 			<EmptyState compact title={t('inbox.hist.emptyTitle')} text={t('inbox.hist.emptyText')} />
 		{:else}
-			<div class="c pane">
+			<div class="pane">
 				<div class="rows">
 					<div class="r head ah">
 						<span>{t('inbox.col.type')}</span><span>{t('inbox.col.question')}</span><span
@@ -385,8 +379,8 @@
 				</div>
 			</div>
 		{/if}
-	</div>
-{/if}
+	{/if}
+</div>
 
 <style>
 	.ib {
@@ -395,19 +389,19 @@
 		display: grid;
 		grid-template-columns: var(--list-w) minmax(0, 1fr);
 		grid-template-rows: minmax(0, 1fr);
-		gap: 12px;
-		padding: 2px 22px 16px;
+		gap: var(--shell-gap);
 	}
 	.full {
 		grid-column: 1 / -1;
+		grid-row: 1 / -1;
+		display: flex;
+		flex-direction: column;
+		padding: var(--shell-gap);
 	}
 	.list {
 		display: flex;
 		flex-direction: column;
 		min-height: 0;
-	}
-	.filt {
-		padding: 8px 10px;
 	}
 	.scroll {
 		flex: 1;
@@ -463,7 +457,7 @@
 	}
 	.queued {
 		font-size: var(--fs-help);
-		color: var(--amb);
+		color: var(--skyTx);
 	}
 	.detail {
 		min-height: 0;
@@ -471,7 +465,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
-		padding: 0 2px 8px;
+		padding: var(--shell-gap);
 	}
 	.strip {
 		display: flex;
@@ -516,9 +510,6 @@
 	.lr .mono {
 		font-size: var(--fs-id);
 	}
-	.hist {
-		padding-top: 2px;
-	}
 	.ah {
 		grid-template-columns: 120px minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1fr) 80px;
 		font-size: var(--fs-ui);
@@ -538,10 +529,8 @@
 	@media (max-width: 1000px) {
 		.ib {
 			grid-template-columns: minmax(0, 1fr);
-			grid-template-rows: none;
-			padding: 2px 16px 16px;
+			grid-template-rows: auto 1fr;
 			overflow: auto;
-			align-content: start;
 		}
 		.list {
 			max-height: 45vh;

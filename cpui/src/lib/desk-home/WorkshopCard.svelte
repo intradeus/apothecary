@@ -52,7 +52,7 @@
 		<span class="sum">
 			{liveTotal
 				? t('deskhome.card.live', { count: liveTotal })
-				: t('deskhome.card.idle')}{#if pings}{' · '}<span class="hue-amb"
+				: t('deskhome.card.idle')}{#if pings}{' · '}<span class="hue-sky"
 					>{t('deskhome.card.pings', { count: pings })}</span
 				>{/if}
 		</span>

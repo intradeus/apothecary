@@ -90,7 +90,7 @@
 	{#if it.kind === 'stage'}
 		<div class="divider" use:arrive={a}>
 			<span class="hl l"></span>
-			<span class="sname serif">{it.stageId}</span>
+			<span class="sname display">{it.stageId}</span>
 			<span class="smeta ell"
 				>{t('run.transcript.attempt', { n: it.iteration })}{#if it.agent}&nbsp;· {it.agent}{/if}{#if it.model}&nbsp;·
 					{it.model}{/if}{#if !it.agentic}&nbsp;·
@@ -126,12 +126,12 @@
 		{#if it.thought}
 			<details class="thought" open={it.live} use:arrive={a}>
 				<summary
-					>{#if it.live}<span class="ldot sm pulse hue-az"></span>{/if}{t(
+					>{#if it.live}<span class="ldot sm pulse hue-emb"></span>{/if}{t(
 						'run.transcript.thinking'
 					)}
 					{I.menu}</summary
 				>
-				<div class="tt serif">{it.text}</div>
+				<div class="tt display">{it.text}</div>
 			</details>
 		{:else}
 			<div class="agent" use:arrive={a}>
@@ -143,7 +143,7 @@
 	{:else if it.kind === 'plan'}
 		<div class="plan card-in">
 			<div class="ph">
-				<span class="pt serif">{t('run.transcript.checklist')}</span>
+				<span class="pt display">{t('run.transcript.checklist')}</span>
 				<span class="pm"
 					>{t('run.transcript.planProgress', {
 						done: planDone(it.entries),
@@ -260,7 +260,7 @@
 	.thought {
 		padding: 8px 12px;
 		border-radius: var(--r-card);
-		background: linear-gradient(90deg, var(--azBg), transparent 70%);
+		background: linear-gradient(90deg, var(--embBg), transparent 70%);
 	}
 	.thought > summary {
 		display: flex;
@@ -268,7 +268,7 @@
 		align-items: center;
 		font-size: var(--fs-help);
 		font-weight: 600;
-		color: var(--az);
+		color: var(--embTx);
 	}
 	.tt {
 		padding-top: 4px;
@@ -314,7 +314,7 @@
 		color: var(--mut);
 	}
 	.pe.in_progress {
-		color: var(--az);
+		color: var(--embTx);
 		font-weight: 600;
 	}
 	.notice {
@@ -353,7 +353,7 @@
 		gap: 6px;
 	}
 	.q.open {
-		border-color: var(--ambLn);
+		border-color: var(--skyLn);
 	}
 	.qh {
 		display: flex;
@@ -365,7 +365,7 @@
 	}
 	.wait {
 		align-self: flex-start;
-		color: var(--amb);
+		color: var(--skyTx);
 		font-weight: 600;
 		font-size: var(--fs-label);
 		gap: 8px;

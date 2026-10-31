@@ -22,7 +22,6 @@
 	import Capacity from '$lib/desk-home/Capacity.svelte';
 	import RunTable from '$lib/run/RunTable.svelte';
 
-
 	type Filter = 'all' | 'needs' | 'running';
 	let filter = $state<Filter>('all');
 
@@ -115,28 +114,20 @@
 
 <svelte:head><title>{t('page.desk.docTitle')}</title></svelte:head>
 
-<div class="page desk">
-	<header class="top">
-		<div class="tt">
-			<div class="cap">
-				<span>{t('nav.desk')}</span><span class="fnt">·</span>
-				<span>{t('page.desk.workshopCount', { count: fleet.projects.length })}</span>
-			</div>
-			<h1>
-				{greeting}, {session.user?.name ?? ''}. <span class="accent">{headline}</span>
-			</h1>
+<header class="top c">
+	<div class="tt">
+		<div class="cap">
+			<span>{t('nav.desk')}</span><span class="fnt">·</span>
+			<span>{t('page.desk.workshopCount', { count: fleet.projects.length })}</span>
 		</div>
-		<Segmented
-			bind:value={filter}
-			label={t('page.desk.filterRuns')}
-			options={[
-				{ value: 'all', label: t('page.desk.filterAll'), count: counts.all },
-				{ value: 'needs', label: t('page.desk.filterNeeds'), count: counts.needs },
-				{ value: 'running', label: t('page.desk.filterRunning'), count: counts.running }
-			]}
-		/>
-	</header>
+		<h1>
+			{greeting}, {session.user?.name ?? ''}. <span class="accent">{headline}</span>
+		</h1>
+	</div>
+	<a class="btn btn-primary btn-lg" href={to.newTicket()}>{I.add} {t('page.desk.newTicket')}</a>
+</header>
 
+<div class="page c">
 	{#if !fleet.updatedAt && fleet.error}
 		<ErrorCard
 			cause={t('page.desk.engineDown')}
@@ -150,122 +141,143 @@
 			<Skeleton pane lines={3} />
 		</div>
 	{:else}
-		{#if fleet.pending.length}
-			<NeedsYou pings={fleet.pending} />
-		{/if}
+		<div class="sections desk">
+			<div class="stack">
+				{#if fleet.pending.length}
+					<NeedsYou pings={fleet.pending} />
+				{/if}
 
-		<section class="sect">
-			<SectionHeader
-				title={t('page.desk.workshops')}
-				href={to.runs()}
-				linkLabel={t('page.desk.allRuns')}
-			>
-				{#snippet actions()}
-					<span class="pill t-az"
-						>{fleet.active.length
-							? t('page.desk.nLive', { count: fleet.active.length })
-							: t('page.desk.idle')}</span
+				<section class="sect">
+					<SectionHeader
+						title={t('page.desk.workshops')}
+						href={to.runs()}
+						linkLabel={t('page.desk.allRuns')}
 					>
-					<span
-						class="pill t-hot"
-						class:gone={!fleet.pending.length}
-						use:bump={fleet.pending.length}
-						>{t('page.desk.nNeedYou', { count: fleet.pending.length })}</span
-					>
-					<span class="mut tiny today">{today}</span>
-				{/snippet}
-			</SectionHeader>
+						{#snippet actions()}
+							<span class="pill t-emb"
+								>{fleet.active.length
+									? t('page.desk.nLive', { count: fleet.active.length })
+									: t('page.desk.idle')}</span
+							>
+							<span
+								class="pill t-hot"
+								class:gone={!fleet.pending.length}
+								use:bump={fleet.pending.length}
+								>{t('page.desk.nNeedYou', { count: fleet.pending.length })}</span
+							>
+							<span class="mut tiny today">{today}</span>
+						{/snippet}
+					</SectionHeader>
 
-			{#if fleet.projects.length === 0}
-				<EmptyState title={t('page.desk.noWorkshops')} text={t('page.desk.noWorkshopsText')}>
-					<a class="btn btn-primary" href={to.newWorkshop()}>{I.add} {t('page.desk.newWorkshop')}</a
-					>
-				</EmptyState>
-			{:else}
-				<div class="card-grid" style:--min="330px">
-					{#each cards as c (c.project.id)}
-						<div
-							class="cell"
-							animate:flip={move}
-							transition:materialize={{ origin: 'top center', y: 6 }}
-						>
-							<WorkshopCard
-								project={c.project}
-								live={c.live}
-								liveTotal={c.all.length}
-								finished={lastFinished.get(c.project.id) ?? []}
-								pings={fleet.pingsByProject.get(c.project.id) ?? 0}
-								tickets={ticketCounts?.get(c.project.id) ?? (ticketCounts ? 0 : undefined)}
-								{now}
+					<div class="filters">
+						<Segmented
+							bind:value={filter}
+							label={t('page.desk.filterRuns')}
+							options={[
+								{ value: 'all', label: t('page.desk.filterAll'), count: counts.all },
+								{ value: 'needs', label: t('page.desk.filterNeeds'), count: counts.needs },
+								{ value: 'running', label: t('page.desk.filterRunning'), count: counts.running }
+							]}
+						/>
+					</div>
+
+					{#if fleet.projects.length === 0}
+						<EmptyState title={t('page.desk.noWorkshops')} text={t('page.desk.noWorkshopsText')}>
+							<a class="btn btn-primary" href={to.newWorkshop()}
+								>{I.add} {t('page.desk.newWorkshop')}</a
+							>
+						</EmptyState>
+					{:else}
+						<div class="card-grid" style:--min="330px">
+							{#each cards as c (c.project.id)}
+								<div
+									class="cell"
+									animate:flip={move}
+									transition:materialize={{ origin: 'top center', y: 6 }}
+								>
+									<WorkshopCard
+										project={c.project}
+										live={c.live}
+										liveTotal={c.all.length}
+										finished={lastFinished.get(c.project.id) ?? []}
+										pings={fleet.pingsByProject.get(c.project.id) ?? 0}
+										tickets={ticketCounts?.get(c.project.id) ?? (ticketCounts ? 0 : undefined)}
+										{now}
+									/>
+								</div>
+							{/each}
+						</div>
+						{#if quiet.length}
+							<EmptyState
+								inline
+								title={cards.length || filter !== 'all'
+									? t('page.desk.quietWorkshops', { count: quiet.length })
+									: t('page.desk.allOnShelf')}
+								text={t('page.desk.nothingRunning')}
+							>
+								<span class="qn">
+									{#each quiet as p, i (p.id)}{#if i}<span class="fnt"> · </span>{/if}<a
+											href={to.workshop(p.id)}>{p.name}</a
+										>{/each}
+								</span>
+								<a class="btn btn-sm" href={to.newTicket({ project: quiet[0].id })}
+									>{I.add} {t('page.desk.newTicket')}</a
+								>
+							</EmptyState>
+						{/if}
+						{#if !cards.length && filter !== 'all' && !quiet.length}
+							<EmptyState
+								inline
+								title={filter === 'needs'
+									? t('page.desk.nothingNeeds')
+									: t('page.desk.nothingBrewing')}
+								text={t('page.desk.noLiveMatch')}
+							/>
+						{/if}
+					{/if}
+				</section>
+			</div>
+
+			<div class="stack">
+				<section class="sect">
+					<SectionHeader
+						title={t('page.desk.recentlyFinished')}
+						sub={t('page.desk.last24hSub')}
+						href={to.runs({ tab: 'finished' })}
+						linkLabel={t('page.desk.allFinished')}
+					/>
+					{#if recent.length}
+						<div class="pane">
+							<RunTable
+								runs={recent}
+								cols={['title', 'state', 'ws', 'workshop', 'flow', 'mr', 'updated']}
 							/>
 						</div>
-					{/each}
-				</div>
-				{#if quiet.length}
-					<EmptyState
-						inline
-						title={cards.length || filter !== 'all'
-							? t('page.desk.quietWorkshops', { count: quiet.length })
-							: t('page.desk.allOnShelf')}
-						text={t('page.desk.nothingRunning')}
-					>
-						<span class="qn">
-							{#each quiet as p, i (p.id)}{#if i}<span class="fnt"> · </span>{/if}<a
-									href={to.workshop(p.id)}>{p.name}</a
-								>{/each}
-						</span>
-						<a class="btn btn-sm" href={to.newTicket({ project: quiet[0].id })}
-							>{I.add} {t('page.desk.newTicket')}</a
-						>
-					</EmptyState>
-				{/if}
-				{#if !cards.length && filter !== 'all' && !quiet.length}
-					<EmptyState
-						inline
-						title={filter === 'needs' ? t('page.desk.nothingNeeds') : t('page.desk.nothingBrewing')}
-						text={t('page.desk.noLiveMatch')}
-					/>
-				{/if}
-			{/if}
-		</section>
+					{:else}
+						<EmptyState
+							compact
+							title={t('page.desk.nothingBottled')}
+							text={t('page.desk.nothingBottledText')}
+						/>
+					{/if}
+				</section>
 
-		<section class="sect">
-			<SectionHeader
-				title={t('page.desk.recentlyFinished')}
-				sub={t('page.desk.last24hSub')}
-				href={to.runs({ tab: 'finished' })}
-				linkLabel={t('page.desk.allFinished')}
-			/>
-			{#if recent.length}
-				<div class="c pane">
-					<RunTable
-						runs={recent}
-						cols={['title', 'state', 'ws', 'workshop', 'flow', 'mr', 'updated']}
-					/>
-				</div>
-			{:else}
-				<EmptyState
-					compact
-					title={t('page.desk.nothingBottled')}
-					text={t('page.desk.nothingBottledText')}
-				/>
-			{/if}
-		</section>
-
-		<Capacity />
+				<Capacity />
+			</div>
+		</div>
 	{/if}
 </div>
 
 <style>
-	.desk {
-		padding: 22px 22px 24px;
-		gap: 18px;
-	}
 	.top {
+		flex: none;
 		display: flex;
-		align-items: flex-end;
+		align-items: center;
 		gap: 16px;
 		flex-wrap: wrap;
+		margin: var(--shell-gap) var(--shell-gap) 0;
+		padding: 12px 12px 12px 16px;
+		border-radius: var(--r-pane);
 	}
 	.tt {
 		flex: 1;
@@ -288,6 +300,25 @@
 		gap: 10px;
 		flex: none;
 	}
+	/* Two stacks, so a short section never waits for the height of the one
+	 * beside it. With room for three columns, the first stack splits in two. */
+	.desk {
+		container: desk / inline-size;
+	}
+	.stack {
+		display: flex;
+		flex-direction: column;
+		gap: var(--shell-gap);
+		min-width: 0;
+	}
+	.stack > :global(*) {
+		min-width: 0;
+	}
+	@container desk (min-width: 1944px) {
+		.stack:first-child {
+			display: contents;
+		}
+	}
 	.gone {
 		display: none;
 	}
@@ -302,9 +333,6 @@
 		color: var(--mut);
 	}
 	@media (max-width: 760px) {
-		.desk {
-			padding: 16px 16px 20px;
-		}
 		.top {
 			flex-direction: column;
 			align-items: flex-start;

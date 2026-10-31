@@ -254,7 +254,7 @@
 			</div>
 		{:else}
 			<div class="title">
-				<span class="serif at mono">{name}</span>
+				<span class="display at mono">{name}</span>
 				{#if skill?.source}<span class="pill sm t-brand">{t('skills.remote')}</span>{/if}
 				{#if skill}<span class="desc">{skill.description}</span>{/if}
 			</div>
@@ -411,7 +411,7 @@
 		flex-wrap: wrap;
 	}
 	.title .at {
-		font-size: var(--fs-h2, 1.25rem);
+		font-size: var(--fs-section, 1.25rem);
 	}
 	.desc {
 		color: var(--mut);

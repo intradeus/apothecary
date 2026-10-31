@@ -91,7 +91,7 @@
 						<span class="mono">{info.image || info.current}</span>
 						{#if outdated}
 							<span
-								class="pill sm t-amb"
+								class="pill sm t-gold"
 								title={t('form.browser.outdatedTitle', { image: info.current })}
 								>{t('form.browser.outdated')}</span
 							>

@@ -1,78 +1,20 @@
 /* Tokens: every colour, scale and theme. The only file a theme touches.
  * Part of the design system; see app.css for the map. */
 
-/* ── fixed palette: the same in both themes ────────────────────────────── */
-/* Every literal colour of the dark-glass pieces lives here once: the dark
- * theme's hues point at it, and so do the parts that stay dark in light mode
- * (the sidebar, the logo stopper, avatars, the terminal). */
+/* ── fixed palette: the same in every theme ────────────────────────────── */
 
 :root {
-	/* the Onyx ink and hues (the dark theme reads these) */
-	--dk-tx: #e6efe8;
-	--dk-mut: #93ad9c;
-	--dk-fnt: #5f7c69;
-	--dk-az: #7fb2ff;
-	--dk-amb: #f5b54a;
-	--dk-grn: #7ee2a8;
-	--dk-ros: #ff7a70;
-	--dk-vio: #c3a2ff;
-	--dk-tea: #5fd6cc;
-
-	/* parchment: labels, stoppers, the user avatar */
-	--parch: #efe6cf;
-	--parch2: #cbbd98;
-	--parch3: #b9a77a;
-	--onParch: #0b2116;
-	--ink: #1d1406; /* text on solid amber */
+	/* text on solid fills */
 	--rosInk: #1b0a0a; /* text on solid rose */
-	--deepInk: #0b1a12; /* text on light fills: guild avatars, solid-green checks */
-	--userInk: #2a2210; /* text on the user avatar */
-
-	/* the sidebar (dark green in both themes) */
-	--railTx: var(--dk-tx);
-	--railMut: var(--dk-mut);
-	--railFnt: var(--dk-fnt);
-	--railSelLn: rgba(140, 230, 175, 0.26);
-	--railSelSh: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 1px 3px rgba(0, 0, 0, 0.35);
-	/* a selected nav row: the same bead as a selected button, drawn inside */
-	--railOnSh: inset 0 0 0 1px var(--railSelLn), 0 1px 3px rgba(0, 0, 0, 0.35);
-	--railHover: rgba(255, 255, 255, 0.05);
-	--railActive: rgba(255, 255, 255, 0.06);
-	--railRule: rgba(210, 255, 225, 0.12);
-	--railLn: rgba(210, 255, 225, 0.1);
-	--railField: rgba(210, 255, 225, 0.05);
-	--railFieldHover: rgba(210, 255, 225, 0.08);
-	--railCard: rgba(210, 255, 225, 0.04);
-	--railCardLn: rgba(210, 255, 225, 0.08);
-	--railTrack: rgba(0, 0, 0, 0.3);
-	--barParch: linear-gradient(90deg, var(--parch2), var(--parch));
-	--barGrn: linear-gradient(90deg, #3fae72, var(--dk-grn));
-
-	/* the logo: a glass stopper with a parchment ℞ */
-	--logoBg: radial-gradient(
-		circle at 30% 22%,
-		rgba(220, 255, 230, 0.75),
-		rgba(60, 160, 100, 0.55) 35%,
-		#0f3a22 80%
-	);
-	--logoLn: rgba(210, 255, 225, 0.35);
-	--logoSh:
-		0 0 18px rgba(80, 200, 130, 0.32), inset 0 1px 1px rgba(255, 255, 255, 0.6),
-		inset 0 -4px 8px rgba(0, 0, 0, 0.35);
-	--logoTxSh: 0 1px 2px rgba(0, 0, 0, 0.5);
-
-	/* avatars */
-	--avatarBg: linear-gradient(160deg, var(--parch), var(--parch3));
-	--avatarSh: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
-	--guildSh: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 1px 3px rgba(0, 0, 0, 0.4);
-	--presence: var(--dk-grn);
-	--presenceRing: #0a1a10;
+	--deepInk: #0b1a12; /* text on light fills: solid-green checks */
 
 	/* elevation */
-	--popSh: 0 24px 60px rgba(0, 0, 0, 0.45);
+	--popSh: 0 22px 34px rgba(0, 0, 0, 0.55);
 	--modalSh: 0 30px 80px rgba(0, 0, 0, 0.5);
 	--dragSh: 0 10px 30px rgba(0, 0, 0, 0.45);
 	--floatSh: 0 8px 24px rgba(0, 0, 0, 0.35);
+	/* an island's shadow: on a parent, so it follows a clip-path */
+	--islDrop: drop-shadow(0 22px 34px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 1px rgba(0, 0, 0, 0.6));
 
 	/* small fixed bits */
 	--knob: #fff;
@@ -80,19 +22,26 @@
 	--bubble: rgba(255, 255, 255, 0.8);
 	--vialIdleLn: rgba(255, 255, 255, 0.2);
 
-	/* the terminal stays dark in both themes, like a real one; xterm reads
+	/* the terminal stays dark in every theme, like a real one; xterm reads
 	 * these at mount (Terminal.svelte) */
-	--termBg: rgba(2, 10, 6, 0.78);
+	--termBg: rgba(4, 9, 18, 0.78);
 	--termLn: rgba(255, 255, 255, 0.06);
-	--termTx: var(--dk-tx);
-	--termMut: var(--dk-mut);
-	--termFnt: var(--dk-fnt);
-	--termBtnBg: rgba(170, 255, 205, 0.08);
-	--termBtnLn: rgba(210, 255, 225, 0.18);
-	--termCursor: var(--parch);
-	--termCursorAccent: #020a06;
-	--termSel: rgba(239, 230, 207, 0.3);
-	--termBlack: var(--deepInk);
+	--termTx: #e6edf6;
+	--termMut: #93a3ba;
+	--termFnt: #7d8ca3;
+	--termBtnBg: rgba(143, 184, 234, 0.08);
+	--termBtnLn: rgba(143, 184, 234, 0.22);
+	--termCursor: #8fb8ea;
+	--termCursorAccent: #0d1a2a;
+	--termSel: rgba(143, 184, 234, 0.3);
+	--termBlack: #0a0a0e;
+	--termRed: #ff7d8c;
+	--termGrn: #a3c99a;
+	--termYellow: #e8c25a;
+	--termBlue: #8fb8ea;
+	--termVio: #c3a2ff;
+	--termCyan: #5fd6cc;
+	--termOrange: #ffb488;
 }
 
 /* ── scales: type, radius ─────────────────────────────────────────────── */
@@ -103,21 +52,20 @@
 :root {
 	/* type */
 	--fs-badge: 9.5px; /* rail and count badges */
-	--fs-id: 10.5px; /* mono ids, hashes, counts, tiny chips */
-	--fs-meta: 11px; /* captions, meta, table heads */
-	--fs-help: 11.5px; /* help text, mono paths */
-	--fs-label: 12px; /* labels, header buttons, chips */
-	--fs-ui: 12.5px; /* tabs, menu rows, segmented, nav */
-	--fs-body: 13px; /* the base */
-	--fs-read: 13.5px; /* agent prose, long reading */
-	--fs-aside: 14px; /* serif inline asides */
+	--fs-id: 11px; /* mono ids, hashes, counts, tiny chips */
+	--fs-meta: 11.5px; /* captions, meta, table heads */
+	--fs-help: 12px; /* help text, mono paths */
+	--fs-label: 12.5px; /* labels, header buttons, chips */
+	--fs-ui: 13px; /* tabs, menu rows, segmented, nav */
+	--fs-body: 13.5px; /* the base */
+	--fs-read: 14px; /* agent prose, long reading */
+	--fs-aside: 14px; /* display inline asides */
 	--fs-lead: 15px; /* brand name, section names */
 	--fs-title: 16px; /* dialog titles, thinking, big glyphs */
-	--fs-section: 19px; /* serif section and window titles */
-	--fs-mark: 21px; /* the run badge's id */
-	--fs-empty: 24px; /* empty-state serif titles */
-	--fs-h1: 25px; /* page titles */
-	--fs-display: 30px; /* the h1's serif accent */
+	--fs-section: 17px; /* display section and window titles */
+	--fs-mark: 19px; /* the run's title: small on purpose */
+	--fs-empty: 24px; /* empty-state display titles */
+	--fs-h1: 26px; /* page titles */
 
 	/* radius: outer containers rounder than what they hold */
 	--r-xs: 4px; /* hairline bits */
@@ -129,8 +77,9 @@
 	--r-btn: 12px; /* buttons, banners, segmented shells */
 	--r-card: 14px; /* cards inside panes, stage pills */
 	--r-pane: 16px; /* windows, sidebar, sections */
-	--r-group: 17px; /* header control groups, popovers */
-	--r-float: 20px; /* composer, ping card */
+	--r-group: 17px; /* popovers */
+	--r-float: 20px; /* the docked ping card, the MR pill */
+	--r-island: 22px; /* the expanded MR island */
 	--r-modal: 26px; /* dialogs */
 	--r-pill: 999px; /* status chips, type pills */
 
@@ -144,8 +93,10 @@
 	--z-scene: 0; /* the backdrop, a sliding bead under its options */
 	--z-raise: 1; /* a row link above its row */
 	--z-float: 20; /* desk ghosts, the mobile tab bar */
+	--z-bar: 22; /* the run's top bar: its island floats over the desk */
+	--z-full: 24; /* a fullscreen window, over the sidebar and the top bar */
+	--z-fab: 26; /* the Layout button, over every window */
 	--z-pop: 30; /* popovers, the review composer */
-	--z-light: 40; /* the cursor light (pointer-events: none) */
 	--z-modal: 50; /* modal scrims */
 	--z-drawer: 55; /* the mobile drawer */
 	--z-palette: 60; /* the command palette, above everything */
@@ -153,8 +104,13 @@
 
 	/* layout */
 	--sidebar-w: 232px;
-	--rail-w: 60px;
-	--shell-gap: 6px; /* the margin around the sidebar */
+	--rail-w: 64px;
+	--shell-gap: 12px; /* the margin around the sidebar and the desk */
+	--content-max: 1600px; /* a page's content, centred in its window */
+	--settings-max: 900px; /* a page that is one settings form */
+	--section-min: 640px; /* the narrowest a section sits beside another */
+	--card-max: 860px; /* the widest a card grows, alone on its row */
+	--filter-h: 36px; /* every control in a .filters row */
 	--paper: 72ch; /* a reading column (plan review, documents) */
 	--aside-w: 320px; /* a side column next to a document or form */
 	--list-w: 380px; /* a master list beside its detail (inbox) */
@@ -226,6 +182,7 @@
 	); /* damping 0.8, response 0.4s */
 	--ease-out: cubic-bezier(0.2, 0.8, 0.2, 1); /* fades and colour */
 	--ease-in: cubic-bezier(0.4, 0, 1, 1); /* things leaving */
+	--ease-island: cubic-bezier(0.32, 0.72, 0, 1); /* the MR island: no overshoot */
 	--dur-press: 100ms; /* pointer-down feedback */
 	--dur-fade: 160ms; /* opacity and colour */
 	--dur-spring: 450ms; /* the --spring curve's settle time */
@@ -242,6 +199,7 @@
 
 	/* tracking: size-specific, never one value for all sizes */
 	--tr-display: -0.02em; /* page titles */
+	--tr-run: -0.015em; /* the run's title */
 	--tr-heading: -0.01em; /* names, card titles */
 	--tr-small: 0.01em; /* 11px and under */
 
@@ -251,7 +209,7 @@
 	--measure-tiny: 40ch; /* empty-state lines */
 
 	/* the run desk (tiling windows) */
-	--desk-gap: 8px; /* gutter between windows */
+	--desk-gap: 12px; /* gutter between windows */
 	--leaf-head: 38px; /* a window's tab strip; desk/tree.ts reads this */
 	--pane-min: 120px; /* the smallest a window resizes to */
 
@@ -270,177 +228,368 @@
 	 * values, nothing else: 760px (phone), 1000px (narrow), 1180px (wide). */
 }
 
-/* ── tokens: dark ("Onyx bottle", the default) ─────────────────────────── */
+/* ── themes ────────────────────────────────────────────────────────────── */
+/* One block per theme ($lib/themes), Ember × Sky the default. Every theme
+ * keeps the pairing: --emb means something is brewing, --sky means you can
+ * act. Lines and selection derive from --lnHue (below); only what a theme
+ * really changes lives in its block. npm run check:themes holds them equal. */
 
 :root,
-:root[data-theme='dark'] {
+:root[data-theme='ember-sky'] {
 	color-scheme: dark;
-
-	--tx: var(--dk-tx);
-	--mut: var(--dk-mut);
-	--fnt: var(--dk-fnt);
-	--brand: var(--parch);
-	--onBrand: #10261a;
-	--p1: rgba(170, 255, 205, 0.045);
-	--p2: rgba(170, 255, 205, 0.065);
-	--p3: rgba(200, 255, 220, 0.13);
-	--ln: rgba(210, 255, 225, 0.13);
-	--ln2: rgba(210, 255, 225, 0.18);
-	--code: rgba(0, 0, 0, 0.22);
-	--spec: inset 0 1px 0 rgba(255, 255, 255, 0.12);
-
-	--az: var(--dk-az);
-	--amb: var(--dk-amb);
-	--grn: var(--dk-grn);
-	--ros: var(--dk-ros);
-	--vio: var(--dk-vio);
-	--tea: var(--dk-tea);
-	--hueBg: 15%;
-
-	--scene:
-		radial-gradient(ellipse 34% 48% at 10% 20%, rgba(11, 40, 23, 0.38), transparent 70%),
-		radial-gradient(ellipse 30% 42% at 82% 72%, rgba(6, 32, 24, 0.32), transparent 70%),
-		radial-gradient(ellipse 26% 26% at 58% 6%, rgba(220, 190, 110, 0.05), transparent 70%),
-		radial-gradient(ellipse 50% 40% at 40% 105%, rgba(2, 20, 11, 0.7), transparent 70%),
-		linear-gradient(160deg, #020906, #010302 60%, #010604);
-	--body: #000302;
-
-	--sel: #0f271b;
-	--railSel: #0f271b;
-	--selLn: rgba(140, 230, 175, 0.26);
-	--selSh: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 1px 3px rgba(0, 0, 0, 0.35);
-	--selTx: var(--dk-tx);
-	--railSelTx: var(--dk-tx); /* text on the selected-chrome button */
-
-	/* control glass (lg) */
-	--lgBg:
-		radial-gradient(130% 90% at 12% -35%, rgba(255, 255, 255, 0.11), transparent 48%),
-		linear-gradient(180deg, rgba(210, 255, 228, 0.09), rgba(170, 255, 210, 0.045));
-	--lgBf: blur(20px) saturate(185%) brightness(1.07);
-	--lgLn: rgba(220, 255, 235, 0.14);
-	--lgRim:
-		inset 0 1px 0 rgba(255, 255, 255, 0.28), inset 0 -1px 0 rgba(255, 255, 255, 0.07),
-		inset 0 -14px 24px -18px rgba(170, 255, 210, 0.18), 0 14px 34px rgba(0, 8, 3, 0.4);
-	--popBg: rgba(6, 16, 10, 0.94);
-	--solidBg: #07120c; /* glass made opaque (reduced transparency) */
-	--thick: rgba(1, 8, 4, 0.78);
-
-	/* content glass (c) */
-	--cBg: rgba(1, 6, 3, 0.64);
-	--cBf: blur(28px) saturate(155%);
-	--cLn: rgba(210, 255, 225, 0.11);
-	--cSh: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 20px 50px rgba(0, 6, 2, 0.4);
-
-	/* the sidebar stays dark green in both themes */
-	--railBg:
-		linear-gradient(180deg, rgba(1, 6, 3, 0.6), rgba(1, 6, 3, 0.6)),
-		linear-gradient(180deg, rgba(225, 255, 238, 0.07), rgba(160, 255, 200, 0.02));
-
-	--light: rgba(220, 255, 230, 0.035);
-	--tshadow: rgba(0, 0, 0, 0.45);
-	--scrim: rgba(2, 12, 6, 0.45);
-	--sigil: 233, 205, 130;
-	--sigilA: 0.14;
-	--sigilA2: 0.11;
-	--sigilGlow: rgba(233, 205, 130, 0.08);
+	--frame: #0a0a0e;
+	--tx: #e6edf6;
+	--mut: #93a3ba;
+	--fnt: #7d8ca3;
+	--dim: #4f5d74;
+	--tx2: #c5d0df;
+	--brand: #8fb8ea;
+	--brandLt: #cfe2fa;
+	--onBrand: #0d1a2a;
+	--link: #8fb8ea;
+	--lnHue: rgb(143, 184, 234);
+	--p1: rgba(255, 255, 255, 0.03);
+	--p2: rgba(255, 255, 255, 0.05);
+	--code: rgba(4, 9, 18, 0.55);
+	--spec: inset 0 1px 0 rgba(207, 226, 250, 0.08);
+	--emb: #ff6a2b;
+	--emb2: #ff9150;
+	--embTx: #ffb488;
+	--sky: #8fb8ea;
+	--skyTx: #8fb8ea;
+	--gold: #e8c25a;
+	--grn: #a3c99a;
+	--ros: #ff5468;
+	--rosTx: #ff7d8c;
+	--vio: #c3a2ff;
+	--tea: #5fd6cc;
+	--hueBg: 14%;
+	--cBg: rgba(11, 20, 36, 0.58);
+	--railBg: rgba(11, 20, 36, 0.62);
+	--inBg: rgba(6, 12, 24, 0.45);
+	--solid: #09101e;
+	--scrim: rgba(4, 9, 18, 0.5);
+	--grainA: 0.55;
+	--nEmb: #ff7a42;
+	--nSky: #96bff0;
+	--nBlend: screen;
 }
-
-/* ── tokens: light ─────────────────────────────────────────────────────── */
 
 :root[data-theme='light'] {
 	color-scheme: light;
-
-	--tx: #0f2a1b;
-	--mut: #4e6a58;
-	--fnt: #7f9787;
-	--brand: #1f5a38;
-	--onBrand: #f4f1e6;
-	--p1: rgba(255, 255, 255, 0.5);
-	--p2: rgba(255, 255, 255, 0.55);
-	--p3: rgba(255, 255, 255, 0.85);
-	--ln: rgba(255, 255, 255, 0.7);
-	--ln2: rgba(20, 60, 35, 0.14);
-	--code: rgba(15, 60, 35, 0.06);
+	--frame: #ebe6dd;
+	--tx: #1d232c;
+	--mut: #5b6576;
+	--fnt: #6f7888;
+	--dim: #a0a8b4;
+	--tx2: #3c4553;
+	--brand: #8fb8ea;
+	--brandLt: #2a5c9c;
+	--onBrand: #0d1a2a;
+	--link: #2a5c9c;
+	--lnHue: rgb(50, 90, 140);
+	--p1: rgba(30, 40, 60, 0.03);
+	--p2: rgba(30, 40, 60, 0.05);
+	--code: rgba(232, 227, 219, 0.7);
 	--spec: inset 0 1px 0 rgba(255, 255, 255, 0.9);
-
-	--az: #2f6fe0;
-	--amb: #b8780c;
-	--grn: #1c8a55;
-	--ros: #d6403c;
+	--emb: #e0601f;
+	--emb2: #c9541a;
+	--embTx: #b5481a;
+	--sky: #8fb8ea;
+	--skyTx: #2a5c9c;
+	--gold: #9a7410;
+	--grn: #3c7a3a;
+	--ros: #d33c52;
+	--rosTx: #c2334a;
 	--vio: #7a52d6;
 	--tea: #138a85;
 	--hueBg: 12%;
-
-	--scene:
-		radial-gradient(ellipse 34% 48% at 10% 20%, rgba(90, 190, 130, 0.45), transparent 70%),
-		radial-gradient(ellipse 30% 42% at 82% 72%, rgba(60, 170, 140, 0.35), transparent 70%),
-		radial-gradient(ellipse 26% 26% at 58% 6%, rgba(240, 210, 140, 0.35), transparent 70%),
-		linear-gradient(160deg, #eef5ef, #dbe9df 60%, #e4efe6);
-	--body: #cfdcd2;
-
-	--sel: #ffffff;
-	--railSel: #24553a;
-	--selLn: rgba(20, 60, 35, 0.14);
-	--selSh: 0 1px 3px rgba(20, 60, 35, 0.12);
-	--selTx: #0f2a1b;
-	--railSelTx: #fff;
-
-	--lgBg:
-		radial-gradient(130% 90% at 12% -35%, rgba(255, 255, 255, 0.7), transparent 50%),
-		linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.4));
-	--lgBf: blur(20px) saturate(165%);
-	--lgLn: rgba(255, 255, 255, 0.75);
-	--lgRim:
-		inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -10px 20px -16px rgba(255, 255, 255, 0.5),
-		0 14px 34px rgba(20, 60, 35, 0.13);
-	--popBg: rgba(250, 252, 250, 0.95);
-	--solidBg: #f3f7f4;
-	--thick: rgba(255, 255, 255, 0.72);
-
-	--cBg: rgba(255, 255, 255, 0.58);
-	--cBf: blur(28px) saturate(150%);
-	--cLn: rgba(255, 255, 255, 0.75);
-	--cSh: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 20px 50px rgba(20, 60, 35, 0.1);
-
-	--railBg: linear-gradient(180deg, rgba(16, 52, 32, 0.84), rgba(12, 42, 26, 0.9));
-
-	--light: rgba(255, 255, 255, 0.12);
-	--scrim: rgba(2, 12, 6, 0.45); /* DESIGN 4.9 gives one scrim for both */
-	--tshadow: rgba(255, 255, 255, 0.5);
-	--sigil: 120, 90, 30;
-	--sigilA: 0.22;
-	--sigilA2: 0.18;
-	--sigilGlow: rgba(233, 205, 130, 0.2);
+	--cBg: rgba(250, 248, 244, 0.58);
+	--railBg: rgba(250, 248, 244, 0.62);
+	--inBg: rgba(238, 234, 227, 0.45);
+	--solid: #fbf9f5;
+	--scrim: rgba(4, 9, 18, 0.5);
+	--grainA: 0.22;
+	--nEmb: var(--emb);
+	--nSky: var(--sky);
+	--nBlend: multiply;
 }
 
-/* ── derived hues: --XBg / --XLn / --XGlow ─────────────────────────────── */
+:root[data-theme='solarized'] {
+	color-scheme: dark;
+	--frame: #001b22;
+	--tx: #eee8d5;
+	--mut: #93a1a1;
+	--fnt: #839496;
+	--dim: #4f6a72;
+	--tx2: #c9cdbf;
+	--brand: #35b5aa;
+	--brandLt: #b4e6e0;
+	--onBrand: #00212b;
+	--link: #5fc9bf;
+	--lnHue: rgb(53, 181, 170);
+	--p1: rgba(238, 232, 213, 0.03);
+	--p2: rgba(238, 232, 213, 0.05);
+	--code: rgba(0, 20, 26, 0.55);
+	--spec: inset 0 1px 0 rgba(180, 230, 224, 0.08);
+	--emb: #dd5f1f;
+	--emb2: #ee8344;
+	--embTx: #f5a877;
+	--sky: #35b5aa;
+	--skyTx: #5fc9bf;
+	--gold: #d4a520;
+	--grn: #a3b62e;
+	--ros: #e0413e;
+	--rosTx: #f0706d;
+	--vio: #9a9ee0;
+	--tea: #4aa3e0;
+	--hueBg: 14%;
+	--cBg: rgba(0, 43, 54, 0.58);
+	--railBg: rgba(0, 43, 54, 0.62);
+	--inBg: rgba(0, 24, 31, 0.45);
+	--solid: #02222b;
+	--scrim: rgba(0, 20, 26, 0.5);
+	--grainA: 0.55;
+	--nEmb: var(--emb);
+	--nSky: var(--sky);
+	--nBlend: screen;
+}
+
+:root[data-theme='forest'] {
+	color-scheme: dark;
+	--frame: #090c08;
+	--tx: #e8ecdf;
+	--mut: #9fab95;
+	--fnt: #87937e;
+	--dim: #56614f;
+	--tx2: #c9d1bd;
+	--brand: #a7c4a0;
+	--brandLt: #d6e6d1;
+	--onBrand: #10190f;
+	--link: #a7c4a0;
+	--lnHue: rgb(167, 196, 160);
+	--p1: rgba(255, 255, 255, 0.03);
+	--p2: rgba(255, 255, 255, 0.05);
+	--code: rgba(6, 12, 7, 0.55);
+	--spec: inset 0 1px 0 rgba(214, 230, 209, 0.08);
+	--emb: #e0a93a;
+	--emb2: #ecc05f;
+	--embTx: #f3d48f;
+	--sky: #a7c4a0;
+	--skyTx: #a7c4a0;
+	--gold: #d9cf6a;
+	--grn: #8fce86;
+	--ros: #ef6a5a;
+	--rosTx: #f48d80;
+	--vio: #c3a8e8;
+	--tea: #6fd0b8;
+	--hueBg: 14%;
+	--cBg: rgba(16, 26, 18, 0.58);
+	--railBg: rgba(16, 26, 18, 0.62);
+	--inBg: rgba(8, 14, 9, 0.45);
+	--solid: #0c140d;
+	--scrim: rgba(6, 12, 7, 0.5);
+	--grainA: 0.55;
+	--nEmb: var(--emb);
+	--nSky: var(--sky);
+	--nBlend: screen;
+}
+
+:root[data-theme='brown'] {
+	color-scheme: dark;
+	--frame: #0e0a07;
+	--tx: #f0e8dc;
+	--mut: #b3a393;
+	--fnt: #98897a;
+	--dim: #64564a;
+	--tx2: #d9cdbf;
+	--brand: #e8d9bd;
+	--brandLt: #f6eddc;
+	--onBrand: #231a0f;
+	--link: #e8d9bd;
+	--lnHue: rgb(232, 217, 189);
+	--p1: rgba(255, 255, 255, 0.03);
+	--p2: rgba(255, 255, 255, 0.05);
+	--code: rgba(14, 9, 6, 0.55);
+	--spec: inset 0 1px 0 rgba(246, 237, 220, 0.08);
+	--emb: #e8702a;
+	--emb2: #f09050;
+	--embTx: #f7b58a;
+	--sky: #e8d9bd;
+	--skyTx: #e8d9bd;
+	--gold: #e0b650;
+	--grn: #adc48c;
+	--ros: #f0596a;
+	--rosTx: #f5808c;
+	--vio: #c8a8f0;
+	--tea: #78cfc0;
+	--hueBg: 14%;
+	--cBg: rgba(32, 23, 16, 0.58);
+	--railBg: rgba(32, 23, 16, 0.62);
+	--inBg: rgba(16, 11, 7, 0.45);
+	--solid: #160f0a;
+	--scrim: rgba(14, 9, 6, 0.5);
+	--grainA: 0.55;
+	--nEmb: var(--emb);
+	--nSky: var(--sky);
+	--nBlend: screen;
+}
+
+:root[data-theme='dark'] {
+	color-scheme: dark;
+	--frame: #09090b;
+	--tx: #eaeaec;
+	--mut: #a0a1a8;
+	--fnt: #85868d;
+	--dim: #56575d;
+	--tx2: #cacace;
+	--brand: #c0c3ca;
+	--brandLt: #e8e9ed;
+	--onBrand: #131417;
+	--link: #c0c3ca;
+	--lnHue: rgb(200, 203, 210);
+	--p1: rgba(255, 255, 255, 0.03);
+	--p2: rgba(255, 255, 255, 0.05);
+	--code: rgba(8, 8, 10, 0.55);
+	--spec: inset 0 1px 0 rgba(232, 233, 237, 0.08);
+	--emb: #ff6a2b;
+	--emb2: #ff9150;
+	--embTx: #ffb488;
+	--sky: #c0c3ca;
+	--skyTx: #c0c3ca;
+	--gold: #e8c25a;
+	--grn: #a3c99a;
+	--ros: #ff5468;
+	--rosTx: #ff7d8c;
+	--vio: #c3a2ff;
+	--tea: #5fd6cc;
+	--hueBg: 14%;
+	--cBg: rgba(22, 22, 26, 0.58);
+	--railBg: rgba(22, 22, 26, 0.62);
+	--inBg: rgba(10, 10, 12, 0.45);
+	--solid: #0f0f12;
+	--scrim: rgba(8, 8, 10, 0.5);
+	--grainA: 0.55;
+	--nEmb: var(--emb);
+	--nSky: var(--sky);
+	--nBlend: screen;
+}
+
+:root[data-theme='pink'] {
+	color-scheme: dark;
+	--frame: #0e090b;
+	--tx: #f5e8ec;
+	--mut: #b8a0aa;
+	--fnt: #9e8791;
+	--dim: #675560;
+	--tx2: #dcc9d0;
+	--brand: #f0a0bc;
+	--brandLt: #fbd6e3;
+	--onBrand: #2a0f1a;
+	--link: #f0a0bc;
+	--lnHue: rgb(240, 160, 188);
+	--p1: rgba(255, 255, 255, 0.03);
+	--p2: rgba(255, 255, 255, 0.05);
+	--code: rgba(14, 8, 10, 0.55);
+	--spec: inset 0 1px 0 rgba(251, 214, 227, 0.08);
+	--emb: #ff7a5c;
+	--emb2: #ff9a80;
+	--embTx: #ffbba8;
+	--sky: #f0a0bc;
+	--skyTx: #f0a0bc;
+	--gold: #ecc468;
+	--grn: #a9cf9e;
+	--ros: #ff4f6e;
+	--rosTx: #ff7d93;
+	--vio: #c8a6ff;
+	--tea: #64d6cc;
+	--hueBg: 14%;
+	--cBg: rgba(34, 17, 25, 0.58);
+	--railBg: rgba(34, 17, 25, 0.62);
+	--inBg: rgba(16, 8, 12, 0.45);
+	--solid: #150b10;
+	--scrim: rgba(14, 8, 10, 0.5);
+	--grainA: 0.55;
+	--nEmb: var(--emb);
+	--nSky: var(--sky);
+	--nBlend: screen;
+}
+
+/* ── derived: lines, selection, hue variants ───────────────────────────── */
 
 :root {
-	--brandBg: color-mix(in oklch, var(--brand) var(--hueBg), transparent);
-	--brandLn: color-mix(in oklch, var(--brand) 38%, transparent);
-	--brandGlow: color-mix(in oklch, var(--brand) 14%, transparent);
-	--azBg: color-mix(in oklch, var(--az) var(--hueBg), transparent);
-	--azLn: color-mix(in oklch, var(--az) 38%, transparent);
-	--azGlow: color-mix(in oklch, var(--az) 14%, transparent);
-	--ambBg: color-mix(in oklch, var(--amb) var(--hueBg), transparent);
-	--ambLn: color-mix(in oklch, var(--amb) 38%, transparent);
-	--ambGlow: color-mix(in oklch, var(--amb) 14%, transparent);
-	--grnBg: color-mix(in oklch, var(--grn) var(--hueBg), transparent);
-	--grnLn: color-mix(in oklch, var(--grn) 38%, transparent);
-	--grnGlow: color-mix(in oklch, var(--grn) 14%, transparent);
-	--rosBg: color-mix(in oklch, var(--ros) var(--hueBg), transparent);
-	--rosLn: color-mix(in oklch, var(--ros) 38%, transparent);
-	--rosGlow: color-mix(in oklch, var(--ros) 14%, transparent);
-	--vioBg: color-mix(in oklch, var(--vio) var(--hueBg), transparent);
-	--vioLn: color-mix(in oklch, var(--vio) 38%, transparent);
-	--vioGlow: color-mix(in oklch, var(--vio) 14%, transparent);
-	--teaBg: color-mix(in oklch, var(--tea) var(--hueBg), transparent);
-	--teaLn: color-mix(in oklch, var(--tea) 38%, transparent);
-	--teaGlow: color-mix(in oklch, var(--tea) 14%, transparent);
+	--p3: color-mix(in srgb, var(--lnHue) 12%, transparent);
+	--ln: color-mix(in srgb, var(--lnHue) 10%, transparent);
+	--ln2: color-mix(in srgb, var(--lnHue) 22%, transparent);
 
-	--sans: 'Geist', system-ui, -apple-system, sans-serif;
-	--mono: 'Geist Mono', ui-monospace, 'JetBrains Mono', monospace;
-	--serif: 'Instrument Serif', Georgia, serif;
+	/* window glass (c): flat tinted glass and a hairline, nothing else */
+	--cBf: blur(22px) saturate(140%);
+	--cLn: color-mix(in srgb, var(--lnHue) 16%, transparent);
+	/* inset (in): a control group or field inside a window. No blur. */
+	--inLn: color-mix(in srgb, var(--lnHue) 14%, transparent);
+	/* island (isl): opaque, over content */
+	--islLn: color-mix(in srgb, var(--lnHue) 28%, transparent);
+
+	/* selection: the one selected look */
+	--sel: color-mix(in srgb, var(--lnHue) 12%, transparent);
+	--selLn: color-mix(in srgb, var(--lnHue) 30%, transparent);
+	--selSh: var(--spec);
+
+	/* running: the current stage tile, the current run row */
+	--running: linear-gradient(
+		135deg,
+		var(--embBg) 0%,
+		color-mix(in oklch, var(--emb) 8%, transparent)
+	);
+
+	--brandBg: color-mix(in oklch, var(--brand) var(--hueBg), transparent);
+	--brandLn: color-mix(in oklch, var(--brand) 40%, transparent);
+	--brandGlow: color-mix(in oklch, var(--brand) 25%, transparent);
+	--embBg: color-mix(in oklch, var(--emb) var(--hueBg), transparent);
+	--embLn: color-mix(in oklch, var(--emb) 40%, transparent);
+	--embGlow: color-mix(in oklch, var(--emb) 25%, transparent);
+	--skyBg: color-mix(in oklch, var(--sky) var(--hueBg), transparent);
+	--skySolid: color-mix(in srgb, var(--sky) var(--hueBg), var(--solid)); /* opaque: alerts */
+	--skyLn: color-mix(in oklch, var(--sky) 40%, transparent);
+	--skyGlow: color-mix(in oklch, var(--sky) 25%, transparent);
+	--goldBg: color-mix(in oklch, var(--gold) var(--hueBg), transparent);
+	--goldLn: color-mix(in oklch, var(--gold) 40%, transparent);
+	--goldGlow: color-mix(in oklch, var(--gold) 25%, transparent);
+	--grnBg: color-mix(in oklch, var(--grn) var(--hueBg), transparent);
+	--grnLn: color-mix(in oklch, var(--grn) 40%, transparent);
+	--grnGlow: color-mix(in oklch, var(--grn) 25%, transparent);
+	--rosBg: color-mix(in oklch, var(--ros) var(--hueBg), transparent);
+	--rosSolid: color-mix(in srgb, var(--ros) var(--hueBg), var(--solid)); /* opaque: alerts */
+	--rosLn: color-mix(in oklch, var(--ros) 40%, transparent);
+	--rosGlow: color-mix(in oklch, var(--ros) 25%, transparent);
+	--vioBg: color-mix(in oklch, var(--vio) var(--hueBg), transparent);
+	--vioLn: color-mix(in oklch, var(--vio) 40%, transparent);
+	--vioGlow: color-mix(in oklch, var(--vio) 25%, transparent);
+	--teaBg: color-mix(in oklch, var(--tea) var(--hueBg), transparent);
+	--teaLn: color-mix(in oklch, var(--tea) 40%, transparent);
+	--teaGlow: color-mix(in oklch, var(--tea) 25%, transparent);
+
+	/* solid sky: fill and ink, kept apart from the tokens a .skycard
+	 * re-points for what sits inside it */
+	--skyFill: var(--sky);
+	--ink: var(--onBrand);
+	--onInk: color-mix(in srgb, var(--sky) 45%, #fff);
+
+	/* avatars and capacity bars */
+	--avatarBg: linear-gradient(160deg, var(--brandLt), var(--brand));
+	--avatarSh: var(--spec), 0 1px 3px rgba(0, 0, 0, 0.4);
+	--presence: var(--grn);
+	--barBrand: linear-gradient(
+		90deg,
+		color-mix(in srgb, var(--brand) 70%, transparent),
+		var(--brand)
+	);
+	--barGrn: linear-gradient(90deg, color-mix(in srgb, var(--grn) 70%, transparent), var(--grn));
+	--barTrack: var(--p2);
+
+	--sans: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+	--mono: 'JetBrains Mono', ui-monospace, monospace;
+	--display: 'Bricolage Grotesque', 'Hanken Grotesk', system-ui, sans-serif;
 }
 
 /* ── user preferences ──────────────────────────────────────────────────── */
@@ -461,33 +610,29 @@
 	}
 }
 
-/* Glass becomes frosted solid: no blur, opaque surfaces. */
+/* Glass becomes solid: no blur, opaque surfaces. */
 @media (prefers-reduced-transparency: reduce) {
 	:root,
 	:root[data-theme] {
-		--lgBg: var(--solidBg);
-		--lgBf: none;
-		--cBg: var(--solidBg);
+		--cBg: var(--solid);
+		--railBg: var(--solid);
 		--cBf: none;
-		--popBg: var(--solidBg);
-		--thick: var(--solidBg);
-		--railBg: #08150d;
 	}
 }
 
-/* More contrast: defined lines, darker secondary text, solid surfaces. */
+/* More contrast: defined lines, stronger secondary text, solid surfaces. */
 @media (prefers-contrast: more) {
 	:root,
 	:root[data-theme] {
 		--ln: color-mix(in oklch, var(--tx) 32%, transparent);
 		--ln2: color-mix(in oklch, var(--tx) 45%, transparent);
 		--cLn: var(--ln2);
-		--lgLn: var(--ln2);
-		--mut: color-mix(in oklch, var(--tx) 82%, var(--body));
-		--fnt: color-mix(in oklch, var(--tx) 62%, var(--body));
-		--lgBg: var(--solidBg);
-		--lgBf: none;
-		--cBg: var(--solidBg);
+		--inLn: var(--ln2);
+		--islLn: var(--ln2);
+		--mut: color-mix(in oklch, var(--tx) 82%, var(--frame));
+		--fnt: color-mix(in oklch, var(--tx) 62%, var(--frame));
+		--cBg: var(--solid);
+		--railBg: var(--solid);
 		--cBf: none;
 	}
 }

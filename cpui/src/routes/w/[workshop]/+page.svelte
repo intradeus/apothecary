@@ -10,6 +10,7 @@
 	import { to, type WorkshopTab } from '$lib/urls';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
+	import { provideHeaderSlot } from '$lib/ui/headerAction.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
@@ -27,6 +28,7 @@
 	import MergeRequestsTab from '$lib/workshop/MergeRequestsTab.svelte';
 	import HealthTab from '$lib/workshop/HealthTab.svelte';
 
+	const slot = provideHeaderSlot();
 	const projectId = $derived(page.params.workshop!);
 	const TABS: WorkshopTab[] = [
 		'overview',
@@ -153,7 +155,7 @@
 >
 	{#snippet lead()}<WorkshopBadge {projectId} live={live.length} />{/snippet}
 	{#snippet chip()}
-		{#if live.length}<span class="pill t-az"
+		{#if live.length}<span class="pill t-emb"
 				><span class="dot pulse"></span>{t('page.desk.nLive', { count: live.length })}</span
 			>{/if}
 		{#if pings}<span class="pill t-hot">{t('page.workshop.pingsAwaiting', { count: pings })}</span
@@ -191,6 +193,7 @@
 						? t('page.workshop.notArchived', { count: blocking.length })
 						: t('page.workshop.deleteThis')}>{t('page.ticket.delete')}</button
 				>
+				{@render slot.action?.()}
 			</div>
 		{/if}
 	{/snippet}
@@ -210,7 +213,7 @@
 	</div>
 </Popover>
 
-<div class="wt">
+<div class="wt c">
 	<Tabs
 		label={t('page.workshop.sections')}
 		value={tab}
@@ -223,14 +226,14 @@
 	/>
 </div>
 
-<div class="page">
+<div class="page c">
 	{#if error && !project}
 		<ErrorCard cause={t('page.settings.loadError')} detail={error} onretry={loadProject} />
 	{:else if !project}
 		<Skeleton pane lines={5} />
 	{:else}
 		{#if error}<ErrorCard cause={t('page.channels.failed')} detail={error} />{/if}
-		<div class="tab">
+		<div class="tab readable">
 			{#if tab === 'overview'}
 				<OverviewTab {project} {integrations} {flows} {runs} />
 			{:else if tab === 'runs'}
@@ -259,7 +262,6 @@
 		display: flex;
 		gap: 6px;
 		align-items: center;
-		padding-top: 18px;
 	}
 	.meta-skel {
 		display: block;
@@ -268,12 +270,12 @@
 	}
 	.wt {
 		flex: none;
-		margin: 0 22px;
+		margin: var(--shell-gap) var(--shell-gap) 0;
+		padding: 0 8px;
+		border-radius: var(--r-btn);
 	}
-	@media (max-width: 760px) {
-		.wt {
-			margin: 0 12px;
-		}
+	.wt :global(.tabs) {
+		border-bottom: 0;
 	}
 	/* The tab's panes clip (overflow: hidden), so they must not shrink in the
 	   page's flex column. */
@@ -291,7 +293,7 @@
 		align-items: flex-start;
 	}
 	.bt {
-		font-family: var(--serif);
+		font-family: var(--display);
 		font-size: var(--fs-section);
 	}
 	.blocked p {

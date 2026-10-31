@@ -139,7 +139,7 @@ export const PRESETS = {
 								'logs',
 								'record'
 							]),
-							split('col', [0.5, 0.5], [leaf(['vitals']), leaf(['egress', 'services', 'ports'])])
+							split('col', [0.3, 0.7], [leaf(['vitals']), leaf(['egress', 'services', 'ports'])])
 						]
 					)
 				]

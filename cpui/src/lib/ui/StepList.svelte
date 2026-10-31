@@ -106,7 +106,7 @@
 		min-width: 0;
 	}
 	.dt.bad {
-		color: var(--ros);
+		color: var(--rosTx);
 		font-family: var(--mono);
 		font-size: var(--fs-meta);
 	}

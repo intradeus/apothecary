@@ -1,31 +1,25 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
-	// The mark: a glass stopper holding a parchment ℞ (DESIGN 2.6).
-	import { I } from './icons';
+	// The mark (DESIGN 2.6): the only ember fill in the UI.
+	import tile from '../../assets/mark/svg/apothecary-tile-primary.svg?url';
 
-	let { size = 30 }: { size?: number } = $props();
+	let { size = 36 }: { size?: number } = $props();
 </script>
 
-<span
+<img
 	class="logo"
+	src={tile}
+	alt={t('ui.logo.title')}
 	title={t('ui.logo.title')}
-	style:width="{size}px"
-	style:height="{size}px"
-	style:border-radius="{Math.round(size * 0.38)}px"
-	style:font-size="{Math.round(size * 0.65)}px">{I.rx}</span
->
+	width={size}
+	height={size}
+	style:border-radius="{Math.round(size * 0.24)}px"
+/>
 
 <style>
 	.logo {
 		flex: none;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		background: var(--logoBg);
-		border: 1px solid var(--logoLn);
-		box-shadow: var(--logoSh);
-		font-family: var(--serif);
-		color: var(--parch);
-		text-shadow: var(--logoTxSh);
+		display: block;
+		box-shadow: 0 0 22px var(--embGlow);
 	}
 </style>

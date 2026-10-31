@@ -1,19 +1,12 @@
 // The run page core: header, transcript, workspace tabs, rows and tables.
 export default {
 	// Run header
-	'run.header.batch': 'Batch',
 	'run.header.workshopFallback': 'workshop',
-	'run.header.ticketFallback': 'ticket',
 	'run.header.theWorkspace': 'the workspace',
 	'run.header.started': 'Started {at} · {ago}',
-	'run.header.brewed': 'brewed {duration}',
-	'run.header.brewing': 'brewing {duration}',
 	'run.header.layouts': 'Windows & layouts',
 	'run.header.ticket': 'ticket',
 	'run.header.tracker': 'tracker issue',
-	'run.header.flow': 'flow',
-	'run.header.branchTitle': "This run's branch, forked off {source}",
-	'run.header.theDefault': 'the default',
 	'run.header.default': 'default',
 	'run.header.turns_one': '{count} turn',
 	'run.header.turns_other': '{count} turns',
@@ -28,7 +21,7 @@ export default {
 	'run.header.pause': 'Pause',
 	'run.header.pauseTitle':
 		'Park the run: the current attempt is stopped, the workspace stays up for inspection, and nothing moves until Play',
-	'run.header.stop': 'Stop…',
+	'run.header.stop': 'Abort…',
 	'run.header.retry': 'Retry',
 	'run.header.retryStage': 'Retry {stage}',
 	'run.header.theFailedStage': 'the failed stage',
@@ -43,14 +36,14 @@ export default {
 		"VS Code (code-server) in the browser on this workspace — the repo, the agent's commits, a terminal",
 
 	// Stop / archive confirms
-	'run.stop.title': 'Stop run {id}?',
+	'run.stop.title': 'Abort run {id}?',
 	'run.stop.lead':
 		'<span class="tx">The current turn is cancelled and the run becomes <b>abandoned</b>. You can still retry a stage or start a new run from it.</span>',
 	'run.stop.envUp':
 		'Workspace <span class="mono">{env}</span> stays up until the reaper removes it.',
 	'run.stop.noEnv': 'No workspace is running for it.',
 	'run.stop.kept': 'The record and timeline are kept.',
-	'run.stop.action': 'Stop run',
+	'run.stop.action': 'Abort run',
 	'run.archive.title': 'Archive run {id}?',
 	'run.archive.lead':
 		'<span class="tx">The run is filed away as <b>archived</b> and leaves the lists; its record and timeline are kept.</span>',
@@ -116,13 +109,16 @@ export default {
 	// Merge requests
 	'run.mr.one': 'MR',
 	'run.mr.multi': 'MR ×{count}',
-	'run.mr.slot': 'MR {i}/{n}',
 	'run.mr.none': 'No merge request yet',
 	'run.mr.title': 'Merge request',
 	'run.mr.notOpened': 'Not opened yet',
 	'run.mr.adopted': 'The merge request this run works on: {title}, by {author}',
 	'run.mr.notOpenedRepo': '{name}: not opened yet',
 	'run.mr.requests': 'Merge requests',
+	'run.mr.notYet': 'not opened yet',
+	'run.mr.open': 'Open',
+	'run.mr.resolve': 'Resolve',
+	'run.mr.conflicts': '{count} conflict',
 	'run.mrStatus.mergedSuffix': 'merged',
 	'run.mrStatus.unreachable': 'repository unreachable',
 	'run.mrStatus.merged': 'merged',

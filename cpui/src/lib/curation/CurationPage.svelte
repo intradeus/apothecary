@@ -214,7 +214,7 @@
 						{/if}
 					</div>
 					{#if postsNothing}
-						<Callout hue="amb" glyph={I.warn}>{t('cur.noneWarn')}</Callout>
+						<Callout hue="gold" glyph={I.warn}>{t('cur.noneWarn')}</Callout>
 					{/if}
 					{#each items as it (it.key)}
 						{#if cur.items[it.key]}
@@ -273,7 +273,7 @@
 				<label class="sum field">
 					<span class="lbl"
 						>{t('cur.summary')}{#if summaryReworded}
-							<span class="pill sm t-amb">{t('cur.reworded')}</span>
+							<span class="pill sm t-gold">{t('cur.reworded')}</span>
 							<button
 								class="linklike"
 								onclick={() => {

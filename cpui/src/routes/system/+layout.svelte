@@ -7,11 +7,14 @@
 	import { to, type SystemSection } from '$lib/urls';
 	import { session } from '$lib/session.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
+	import { provideHeaderSlot } from '$lib/ui/headerAction.svelte';
 	import SideNav from '$lib/ui/SideNav.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { I } from '$lib/ui/icons';
 
 	let { children }: { children: Snippet } = $props();
+
+	const slot = provideHeaderSlot();
 
 	type Section = {
 		id: SystemSection;
@@ -62,17 +65,19 @@
 	accent={current.accent}
 >
 	{#snippet meta()}<span>{current.sub}</span>{/snippet}
+	{#snippet actions()}{@render slot.action?.()}{/snippet}
 </PageHeader>
 
 <div class="sys">
 	<SideNav
+		fill
 		title={t('page.system.crumb')}
 		label={t('page.system.sections')}
 		active={current.id}
 		items={SECTIONS.map((s) => ({ id: s.id, label: s.label, icon: s.icon, href: to.system(s.id) }))}
 	/>
-	<div class="body">
-		<div class="inner">{@render children()}</div>
+	<div class="body c">
+		<div class="inner readable">{@render children()}</div>
 	</div>
 </div>
 
@@ -81,29 +86,26 @@
 		flex: 1;
 		min-height: 0;
 		display: flex;
-		gap: 16px;
-		padding: 4px 0 0 22px;
+		gap: var(--shell-gap);
+		padding: var(--shell-gap);
 	}
 	.body {
 		flex: 1;
 		min-width: 0;
+		min-height: 0;
 		overflow: auto;
-		padding: 0 22px 22px 0;
+		padding: var(--shell-gap);
+		border-radius: var(--r-pane);
 	}
 	.inner {
-		max-width: 980px;
 		min-height: 100%;
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
+		gap: var(--shell-gap);
 	}
 	@media (max-width: 1000px) {
 		.sys {
 			flex-direction: column;
-			padding: 0 16px;
-		}
-		.body {
-			padding: 0 0 22px;
 		}
 	}
 </style>

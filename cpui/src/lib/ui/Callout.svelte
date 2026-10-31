@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
-	// A glass note strip inside a page (informational, not an alert): "this
+	// An inset note strip inside a page (informational, not an alert): "this
 	// flow is a built-in", "pings are always answered here". For problems that
 	// need action use Banner.
 	import type { Snippet } from 'svelte';
@@ -15,7 +15,7 @@
 	}: { hue?: Hue; glyph?: string; ondismiss?: () => void; children: Snippet } = $props();
 </script>
 
-<div class="co lg h-{hue}">
+<div class="co in h-{hue}">
 	<span class="g">{glyph}</span>
 	<div class="grow">{@render children()}</div>
 	{#if ondismiss}<button class="btn-ghost btn-sm" onclick={ondismiss}>{t('ui.dismiss')}</button
@@ -33,7 +33,7 @@
 		color: var(--mut);
 		background:
 			linear-gradient(90deg, color-mix(in oklch, var(--h) 10%, transparent), transparent 60%),
-			var(--lgBg);
+			var(--inBg);
 	}
 	.g {
 		color: var(--h);

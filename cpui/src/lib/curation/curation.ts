@@ -13,12 +13,12 @@ import { t } from '$lib/i18n/index.svelte';
 /** A note's kind, a reply's did: its hue, and its word. */
 const KIND_HUE: Record<string, Hue> = {
 	blocking: 'ros',
-	suggestion: 'az',
-	question: 'amb',
+	suggestion: 'sky',
+	question: 'gold',
 	nit: 'mut',
 	fixed: 'grn',
 	declined: 'ros',
-	answered: 'az'
+	answered: 'sky'
 };
 export const kindHue = (kind: string): Hue => KIND_HUE[kind] ?? 'mut';
 export function kindLabel(kind: string): string {

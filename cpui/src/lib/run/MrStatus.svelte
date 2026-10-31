@@ -70,7 +70,7 @@
 	{/if}
 	{#if mr.draft && mr.state === 'open'}<span class="fnt">{t('run.mrStatus.draft')}</span>{/if}
 	{#if mr.stackedOn && mr.state === 'open'}<a
-			class="hue-amb linklike"
+			class="hue-gold linklike"
 			href={mr.stackedOn.url}
 			target="_blank"
 			rel="noreferrer"
@@ -99,7 +99,7 @@
 				? t('run.mrStatus.approvedBy', { who: approved.by.join(', ') })
 				: t('run.mrStatus.approved')}</span
 		>{/if}
-	{#if threads && mr.state !== 'merged'}<span class="hue-amb">{threads}</span>{/if}
+	{#if threads && mr.state !== 'merged'}<span class="hue-gold">{threads}</span>{/if}
 </span>
 
 <style>

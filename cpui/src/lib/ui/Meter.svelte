@@ -1,28 +1,26 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
-	// A capacity meter: label, mono n/max, a bar. `rail` is the sidebar's
-	// compact dark form. The bar's width rides the spring when it changes.
+	// A capacity meter: label, mono n/max, a bar. The bar's
+	// width rides the spring when it changes.
 	let {
 		label,
 		value,
 		max,
-		tone = 'parch',
-		sub,
-		rail = false
+		tone = 'brand',
+		sub
 	}: {
 		label: string;
 		value: number;
 		max: number;
-		tone?: 'parch' | 'grn';
+		tone?: 'brand' | 'grn';
 		/** A line under the bar ("at the cap, new runs are refused"). */
 		sub?: string;
-		rail?: boolean;
 	} = $props();
 
 	const pct = $derived(max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0);
 </script>
 
-<div class="mt" class:rail title={t('ui.meter.title', { label, value, max: max || '–' })}>
+<div class="mt" title={t('ui.meter.title', { label, value, max: max || '–' })}>
 	<div class="top">
 		<span>{label}</span>
 		<span class="mono v">{value}/{max || '–'}</span>
@@ -51,24 +49,18 @@
 		color: var(--tx);
 		font-size: var(--fs-meta);
 	}
-	.rail {
-		color: var(--railMut);
-	}
-	.rail .v {
-		color: var(--railTx);
-	}
 	.bar {
 		height: 5px;
 		border-radius: var(--r-xs);
-		background: var(--railTrack);
+		background: var(--barTrack);
 		overflow: hidden;
 		display: flex;
 	}
 	.fill {
 		transition: width var(--dur-spring) var(--spring);
 	}
-	.parch {
-		background: var(--barParch);
+	.brand {
+		background: var(--barBrand);
 	}
 	.grn {
 		background: var(--barGrn);

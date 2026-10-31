@@ -627,9 +627,9 @@
 					type: 'labeled',
 					data: { anchor: 'right', pick: () => onselect({ kind: 'stage', id: s.id }) },
 					label: `${I.retry} ${t('flow.graph.debugReturn')}`,
-					labelStyle: hued('amb'),
+					labelStyle: hued('gold'),
 					class: 'e-dash e-then',
-					style: hued('amb')
+					style: hued('gold')
 				});
 			}
 		});
@@ -872,7 +872,7 @@
 			{/each}
 		</ViewportPortal>
 		<Background variant={BackgroundVariant.Dots} gap={gridGap} size={1.2} />
-		<Controls position="bottom-left" class="lg-pop fg-ctl">
+		<Controls position="bottom-left" class="isl fg-ctl">
 			{#snippet after()}
 				{#if onarrange}
 					<ControlButton
@@ -896,14 +896,12 @@
 	 * it reads maps to ours, so its own rules draw our look and only what it
 	 * has no variable for (sizes, the label pill, edge kinds) is styled below. */
 	.graph-wrap :global(.svelte-flow) {
-		/* Opaque, not glass: the sigils turning behind the shell made edges
-		 * and labels hard to read through a transparent canvas. */
-		--xy-background-color: var(--solidBg);
+		--xy-background-color: transparent;
 		--xy-background-pattern-color: var(--ln);
 		--xy-edge-stroke: var(--ln2);
 		--xy-edge-stroke-width: var(--edge-w);
 		--xy-edge-stroke-selected: var(--brand);
-		--xy-edge-label-background-color: var(--popBg);
+		--xy-edge-label-background-color: var(--solid);
 		--xy-edge-label-color: var(--tx);
 		--xy-connectionline-stroke: var(--brand);
 		--xy-connectionline-stroke-width: var(--edge-w);
@@ -915,7 +913,7 @@
 		--xy-node-boxshadow-hover: none;
 		--xy-node-boxshadow-selected: none;
 		--xy-handle-background-color: var(--mut);
-		--xy-handle-border-color: var(--body);
+		--xy-handle-border-color: var(--frame);
 		--xy-selection-background-color: var(--brandBg);
 		--xy-selection-border: 1px dashed var(--brandLn);
 		--xy-resize-background-color: var(--brand);
@@ -924,8 +922,8 @@
 		--xy-controls-button-color: var(--mut);
 		--xy-controls-button-color-hover: var(--tx);
 		--xy-controls-button-border-color: var(--ln);
-		--xy-controls-box-shadow: var(--lgRim), var(--popSh);
-		--xy-minimap-background-color: var(--popBg);
+		--xy-controls-box-shadow: var(--spec), var(--popSh);
+		--xy-minimap-background-color: var(--solid);
 		--xy-minimap-mask-background-color: var(--scrim);
 		--xy-minimap-mask-stroke-color: var(--ln2);
 		--xy-minimap-mask-stroke-width: 1;
@@ -1023,7 +1021,7 @@
 		color: var(--h);
 		background: color-mix(in oklch, var(--h) 14%, transparent);
 	}
-	/* Controls: a popover-glass stack (.lg-pop) with rounded corners. */
+	/* Controls: an island stack (.isl) with rounded corners. */
 	.graph-wrap :global(.fg-ctl) {
 		border-radius: var(--r-btn);
 		overflow: hidden;

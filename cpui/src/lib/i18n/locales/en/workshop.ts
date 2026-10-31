@@ -20,9 +20,6 @@ export default {
 	'workshop.chips.missingTitle': 'The {kind} integration this workshop names no longer exists',
 
 	// --- tickets tab
-	'workshop.tickets.all': 'All',
-	'workshop.tickets.running': 'Running',
-	'workshop.tickets.idle': 'Idle',
 	'workshop.tickets.search': 'Search title, key, goal',
 	'workshop.tickets.openIn': 'Open in Tickets',
 	'workshop.tickets.new': 'New ticket',
@@ -113,7 +110,6 @@ export default {
 	'workshop.mrs.loadError': 'Could not list the merge requests',
 	'workshop.mrs.emptyTitle': 'No open merge requests',
 	'workshop.mrs.emptyText': 'When one is opened in this repository, it shows here.',
-	'workshop.mrs.title': 'Merge requests',
 	'workshop.mrs.colMR': 'Merge request',
 	'workshop.mrs.colBranch': 'Branch',
 	'workshop.mrs.colRuns': 'Last run',

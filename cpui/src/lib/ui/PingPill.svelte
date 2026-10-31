@@ -14,7 +14,7 @@
 			get label() {
 				return t('ui.ping.debug');
 			},
-			hue: 'amb',
+			hue: 'sky',
 			wanted: true
 		},
 		phase_confirm: {
@@ -35,7 +35,7 @@
 			get label() {
 				return t('ui.ping.clarification');
 			},
-			hue: 'amb',
+			hue: 'sky',
 			wanted: false
 		},
 		blocker: {

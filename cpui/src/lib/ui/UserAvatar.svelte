@@ -1,5 +1,5 @@
 <script lang="ts">
-	// A person: parchment circle, initials, optional presence dot.
+	// A person: a sky circle, initials, an optional presence dot.
 	let {
 		name,
 		initials,
@@ -26,7 +26,7 @@
 		justify-content: center;
 		border-radius: 50%;
 		background: var(--avatarBg);
-		color: var(--userInk);
+		color: var(--onBrand);
 		font-weight: 700;
 		box-shadow: var(--avatarSh);
 	}
@@ -38,6 +38,6 @@
 		height: 9px;
 		border-radius: 50%;
 		background: var(--presence);
-		border: 2px solid var(--presenceRing);
+		border: 2px solid var(--solid);
 	}
 </style>

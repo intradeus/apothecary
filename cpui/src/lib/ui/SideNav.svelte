@@ -28,7 +28,8 @@
 		active,
 		title,
 		onselect,
-		label
+		label,
+		fill = false
 	}: {
 		items: SideNavItem[];
 		active: string;
@@ -36,10 +37,12 @@
 		/** Called for items without an href (in-page steps). */
 		onselect?: (id: string) => void;
 		label?: string;
+		/** The full height of its row, not a sticky card. */
+		fill?: boolean;
 	} = $props();
 </script>
 
-<nav class="sn lg" aria-label={label ?? t('ui.sidenav.label')}>
+<nav class="sn c" class:fill aria-label={label ?? t('ui.sidenav.label')}>
 	{#if title}<div class="t">{title}</div>{/if}
 	<div class="list" use:indicator use:keepInView>
 		{#each items as it (it.id)}
@@ -88,9 +91,13 @@
 		flex-direction: column;
 		gap: 4px;
 	}
+	.sn.fill {
+		align-self: stretch;
+		position: static;
+	}
 	.t {
-		font-family: var(--serif);
-		font-style: italic;
+		font-family: var(--display);
+		font-weight: 600;
 		font-size: var(--fs-aside);
 		color: var(--mut);
 		padding: 4px 10px 4px;

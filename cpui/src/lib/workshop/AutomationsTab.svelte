@@ -21,6 +21,7 @@
 	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
+	import HeaderAction from '$lib/ui/HeaderAction.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
@@ -189,35 +190,28 @@
 	}
 </script>
 
-<div class="row nowrap">
-	<p class="lede grow">{t('workshop.automations.lede')}</p>
-	<button class="btn-primary" onclick={startNew}>{I.add} {t('workshop.automations.new')}</button>
-</div>
+<HeaderAction>
+	<button class="btn-primary btn-lg" onclick={startNew}
+		>{I.add} {t('workshop.automations.new')}</button
+	>
+</HeaderAction>
+
+<p class="lede">{t('workshop.automations.lede')}</p>
 
 {#if error && !rows}
 	<ErrorCard cause={t('workshop.automations.loadError')} detail={error} onretry={load} />
 {:else if !rows}
 	<Skeleton pane lines={4} />
 {:else if !rows.length}
-	<section class="c pane">
-		<div class="pane-body">
-			<EmptyState
-				compact
-				title={t('workshop.automations.emptyTitle')}
-				text={t('workshop.automations.emptyText')}
-			>
-				<button class="btn-primary" onclick={startNew}
-					>{I.add} {t('workshop.automations.new')}</button
-				>
-			</EmptyState>
-		</div>
-	</section>
+	<EmptyState
+		compact
+		title={t('workshop.automations.emptyTitle')}
+		text={t('workshop.automations.emptyText')}
+	>
+		<button class="btn-primary" onclick={startNew}>{I.add} {t('workshop.automations.new')}</button>
+	</EmptyState>
 {:else}
-	<section class="c pane">
-		<div class="pane-head">
-			<h2>{t('page.workshop.tabAutomations')}</h2>
-			<span class="count">{rows.length}</span>
-		</div>
+	<section class="pane">
 		<div class="rows">
 			<div class="r head ar">
 				<span>{t('workshop.automations.colName')}</span><span
@@ -266,7 +260,7 @@
 						{:else}
 							<span class="fnt">{t('workshop.automations.never')}</span>
 						{/if}
-						{#if a.lastError}<span class="hue-amb err-line" title={a.lastError}>{a.lastError}</span
+						{#if a.lastError}<span class="hue-gold err-line" title={a.lastError}>{a.lastError}</span
 							>{/if}
 					</span>
 					<span class="acts">
@@ -314,7 +308,7 @@
 					{#if sources.length}
 						<Select id="au-source" options={sourceOptions} bind:value={draft.sourceId} />
 					{:else}
-						<div class="help hue-amb">{t('workshop.automations.noSources')}</div>
+						<div class="help hue-gold">{t('workshop.automations.noSources')}</div>
 					{/if}
 					<span class="help">{t('workshop.automations.sourceHelp')}</span>
 				</div>
@@ -355,7 +349,7 @@
 							onchange={(v) => (draft.ticketId = v)}
 						/>
 					{:else}
-						<div class="help hue-amb">{t('workshop.automations.noTickets')}</div>
+						<div class="help hue-gold">{t('workshop.automations.noTickets')}</div>
 					{/if}
 					<span class="help">{t('workshop.automations.ticketHelp')}</span>
 				</div>

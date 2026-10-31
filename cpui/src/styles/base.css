@@ -16,7 +16,7 @@ body {
 
 body {
 	margin: 0;
-	background: var(--body);
+	background: var(--frame);
 	color: var(--tx);
 	font-family: var(--sans);
 	font-size: var(--fs-body);
@@ -26,8 +26,8 @@ body {
 }
 
 ::selection {
-	background: var(--parch);
-	color: var(--onParch);
+	background: var(--brand);
+	color: var(--onBrand);
 }
 
 a {
@@ -38,7 +38,10 @@ a:hover {
 	text-decoration: underline;
 }
 a.link {
-	color: var(--az);
+	color: var(--link);
+}
+a.link:hover {
+	color: var(--brandLt);
 }
 
 :focus-visible {
@@ -53,28 +56,22 @@ h3 {
 }
 
 h1 {
+	font-family: var(--display);
 	font-size: var(--fs-h1);
-	font-weight: 600;
+	font-weight: 700;
 	letter-spacing: var(--tr-display);
 	line-height: 1.1;
 	text-wrap: balance;
-	text-shadow: 0 1px 14px var(--tshadow);
 }
-h1 .accent,
+/* The one accent phrase of a title: same font, in ember. */
 .accent {
-	font-family: var(--serif);
-	font-style: italic;
-	font-weight: 400;
-	letter-spacing: 0;
-}
-h1 .accent {
-	font-size: var(--fs-display);
+	color: var(--emb2);
 }
 h2 {
-	font-family: var(--serif);
-	font-weight: 400;
+	font-family: var(--display);
+	font-weight: 600;
 	font-size: var(--fs-section);
-	letter-spacing: 0;
+	letter-spacing: var(--tr-heading);
 }
 h3 {
 	font-size: var(--fs-body);
@@ -87,6 +84,15 @@ code {
 	padding: 1px 5px;
 	border-radius: var(--r-tag);
 	background: var(--code);
+}
+/* Inline code in prose takes the link hue. */
+.md code,
+.lede code,
+.help code {
+	color: var(--link);
+}
+.md pre code {
+	color: var(--tx2);
 }
 pre {
 	font-family: var(--mono);
@@ -119,10 +125,10 @@ hr {
 	font-size: var(--fs-help);
 	font-weight: 500;
 }
-.serif {
-	font-family: var(--serif);
-	font-style: italic;
-	font-weight: 400;
+.display {
+	font-family: var(--display);
+	font-weight: 600;
+	letter-spacing: var(--tr-heading);
 }
 .mut,
 .muted {
@@ -153,17 +159,20 @@ hr {
 	font-variant-numeric: tabular-nums;
 	text-align: right;
 }
-.hue-az {
-	color: var(--az);
+.hue-emb {
+	color: var(--embTx);
 }
-.hue-amb {
-	color: var(--amb);
+.hue-sky {
+	color: var(--skyTx);
+}
+.hue-gold {
+	color: var(--gold);
 }
 .hue-grn {
 	color: var(--grn);
 }
 .hue-ros {
-	color: var(--ros);
+	color: var(--rosTx);
 }
 .hue-vio {
 	color: var(--vio);
@@ -196,19 +205,33 @@ hr {
 	min-width: 0;
 }
 
-/* A standard scrolling page inside the shell's main column. */
+/* A standard page: one window, always with .c, filling what the header leaves
+ * in the shell's main column. The backdrop is only ever seen through glass and
+ * in the gaps, so a page never ends short of the pane or caps its width. */
 .page {
 	flex: 1;
 	min-height: 0;
 	overflow: auto;
-	padding: 20px 22px 28px;
+	margin: var(--shell-gap);
+	padding: var(--shell-gap);
+	border-radius: var(--r-pane);
 	display: flex;
 	flex-direction: column;
-	gap: 16px;
+	gap: var(--shell-gap);
 }
-.page.narrow > * {
-	max-width: 1100px;
+/* The glass is always the full width, the content is not: stretched across an
+ * ultrawide, a row's ends are too far apart to read. Whole sections go side by
+ * side instead (.sections). .readable passes the rule down a wrapper. */
+.page > *,
+.readable > * {
+	align-self: center;
 	width: 100%;
+	max-width: var(--content-max);
+}
+.page > .readable,
+.page > .sections,
+.readable > .sections {
+	max-width: none;
 }
 
 .spacer {
@@ -254,7 +277,7 @@ hr {
 	background: none;
 }
 .md a {
-	color: var(--az);
+	color: var(--link);
 }
 .md blockquote {
 	margin: 0 0 8px;
@@ -277,7 +300,7 @@ hr {
 	color: var(--mut);
 }
 .hue-brand {
-	color: var(--brand);
+	color: var(--link);
 }
 /* An intro paragraph under a heading. */
 .lede {

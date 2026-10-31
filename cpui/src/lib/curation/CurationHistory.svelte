@@ -68,13 +68,13 @@
 			{#if tl.reworded}<span>· {t('cur.hist.reworded', { count: tl.reworded })}</span>{/if}
 			{#if tl.summaryReworded}<span>· {t('cur.hist.summaryReworded')}</span>{/if}
 			{#if !c}<span class="fnt">· {t('cur.hist.asIs')}</span>{/if}
-			{#if rejected}<span class="hue-amb">· {t('cur.hist.rejected')}</span>{/if}
+			{#if rejected}<span class="hue-gold">· {t('cur.hist.rejected')}</span>{/if}
 		</div>
 		{#if doc.review && summaryPosted}
 			<div class="sum">
 				<div class="lbl">
 					{t('cur.summary')}{#if c?.summary !== undefined}
-						<span class="pill sm t-amb">{t('cur.reworded')}</span>{/if}
+						<span class="pill sm t-gold">{t('cur.reworded')}</span>{/if}
 				</div>
 				<Markdown src={summaryPosted} />
 				{#if c?.summary !== undefined && doc.review.summary}
@@ -103,7 +103,7 @@
 					{#if it.thread}<span class="pill sm t-brand" title={it.thread}
 							>{isReply ? t('cur.answers') : t('cur.continues')} {shortThread(it.thread)}</span
 						>{/if}
-					{#if reworded}<span class="pill sm t-amb">{t('cur.reworded')}</span>{/if}
+					{#if reworded}<span class="pill sm t-gold">{t('cur.reworded')}</span>{/if}
 					<span class="spacer"></span>
 					<span class="fnt st"
 						>{kept
@@ -135,9 +135,6 @@
 		flex-direction: column;
 		gap: 8px;
 		padding: 0 22px 24px;
-		max-width: 920px;
-		width: 100%;
-		align-self: center;
 	}
 	.ch.embedded {
 		padding: 0;

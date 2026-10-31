@@ -26,6 +26,7 @@
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { I } from '$lib/ui/icons';
+	import TransportIcon from '$lib/ui/TransportIcon.svelte';
 	import RunTable from '$lib/run/RunTable.svelte';
 	import StartRunOptions from '$lib/run/StartRunOptions.svelte';
 	import WorkshopName from '$lib/workshop/WorkshopName.svelte';
@@ -214,50 +215,72 @@
 		{/snippet}
 	</PageHeader>
 
-	<div class="page body">
+	<div class="page c">
 		{#if error}<ErrorCard cause={error} ondismiss={() => (error = '')} />{/if}
 
+		{#snippet runList()}
+			<section class="runs">
+				<SectionHeader title={t('page.runs.title')} count={runs.length}>
+					{#snippet actions()}<Updated at={fleet.updatedAt} paused={fleet.paused} />{/snippet}
+				</SectionHeader>
+				{#if runs.length === 0}
+					<EmptyState compact title={t('page.runs.shelf')} text={t('page.ticket.noRuns')} />
+				{:else}
+					<div class="pane">
+						<RunTable
+							{runs}
+							cols={['id', 'state', 'ws', 'stage', 'branch', 'flow', 'mr', 'updated']}
+						/>
+					</div>
+				{/if}
+			</section>
+		{/snippet}
+
 		{#if editing}
-			<div class="edit">
-				<TicketForm
-					projects={fleet.projects}
-					existing={ticket}
-					oncancel={() => (editing = false)}
-					onsaved={(tk) => {
-						ticket = tk;
-						editing = false;
-						loadAttachments(tk.id);
-					}}
-				/>
-			</div>
+			<TicketForm
+				projects={fleet.projects}
+				existing={ticket}
+				oncancel={() => (editing = false)}
+				onsaved={(tk) => {
+					ticket = tk;
+					editing = false;
+					loadAttachments(tk.id);
+				}}
+			/>
+			{@render runList()}
 		{:else}
 			<div class="grid">
-				<section class="c pane">
-					<div class="pane-head">
-						<h2>{t('page.ticket.goal')}</h2>
-						<span class="help">{t('page.ticket.goalHelp')}</span>
-					</div>
-					<div class="pane-body goal">
-						{#if ticket.goal}
-							<Markdown src={ticket.goal} />
-						{:else}
-							<p class="empty-line">{t('page.ticket.noGoal')}</p>
-						{/if}
-					</div>
-					{#if attachments.length}
-						<div class="pane-body att">
-							<div class="ah">
-								<span class="flabel"
-									>{t('page.ticket.attachments', { count: attachments.length })}</span
-								>
-								<span class="help">{@html th('page.ticket.attachmentsHelp')}</span>
-							</div>
-							<FileChips items={attachments.map((a) => ({ ...a, kind: 'attachment' as const }))} />
+				<div class="work">
+					<section class="c pane">
+						<div class="pane-head">
+							<h2>{t('page.ticket.goal')}</h2>
+							<span class="help">{t('page.ticket.goalHelp')}</span>
 						</div>
-					{/if}
-				</section>
+						<div class="pane-body goal">
+							{#if ticket.goal}
+								<Markdown src={ticket.goal} />
+							{:else}
+								<p class="empty-line">{t('page.ticket.noGoal')}</p>
+							{/if}
+						</div>
+						{#if attachments.length}
+							<div class="pane-body att">
+								<div class="ah">
+									<span class="flabel"
+										>{t('page.ticket.attachments', { count: attachments.length })}</span
+									>
+									<span class="help">{@html th('page.ticket.attachmentsHelp')}</span>
+								</div>
+								<FileChips
+									items={attachments.map((a) => ({ ...a, kind: 'attachment' as const }))}
+								/>
+							</div>
+						{/if}
+					</section>
+					{@render runList()}
+				</div>
 
-				<aside class="start lg pane">
+				<aside class="start c pane">
 					<div class="pane-head"><h2>{t('page.ticket.startRun')}</h2></div>
 					<div class="pane-body sb">
 						<div class="field">
@@ -316,45 +339,26 @@
 							>
 						</div>
 						<button class="btn-primary btn-lg go" onclick={startRun} aria-busy={starting}>
-							{I.play}
+							<TransportIcon kind="play" />
 							{t('page.ticket.startRunBtn')}
 						</button>
 					</div>
 				</aside>
 			</div>
 		{/if}
-
-		<section class="runs">
-			<SectionHeader title={t('page.runs.title')} count={runs.length}>
-				{#snippet actions()}<Updated at={fleet.updatedAt} paused={fleet.paused} />{/snippet}
-			</SectionHeader>
-			{#if runs.length === 0}
-				<EmptyState compact title={t('page.runs.shelf')} text={t('page.ticket.noRuns')} />
-			{:else}
-				<div class="c pane">
-					<RunTable
-						{runs}
-						cols={['id', 'state', 'ws', 'stage', 'branch', 'flow', 'mr', 'updated']}
-					/>
-				</div>
-			{/if}
-		</section>
 	</div>
 {:else if loaded}
-	<div class="page">
+	<div class="page c">
 		<EmptyState title={t('page.ticket.gone')} text={loadErr || t('page.ticket.goneText')}>
 			<a class="btn btn-primary" href={to.tickets()}>{t('page.ticket.allTickets')}</a>
 		</EmptyState>
 	</div>
 {:else}
 	<PageHeader {crumbs} title={t('page.ticket.fallbackTitle')} />
-	<div class="page"><Skeleton pane lines={8} /></div>
+	<div class="page c"><Skeleton pane lines={8} /></div>
 {/if}
 
 <style>
-	.body {
-		padding-top: 2px;
-	}
 	.src {
 		display: inline-flex;
 		align-items: center;
@@ -367,11 +371,17 @@
 		align-items: start;
 		flex: none;
 	}
+	.work {
+		display: flex;
+		flex-direction: column;
+		gap: var(--shell-gap);
+		min-width: 0;
+	}
 	.start {
 		border-radius: var(--r-group);
 	}
 	.start .pane-head {
-		border-bottom-color: var(--lgLn);
+		border-bottom-color: var(--cLn);
 	}
 	.goal > :global(.md) {
 		max-width: var(--measure);
@@ -406,9 +416,6 @@
 		flex-direction: column;
 		gap: 10px;
 		flex: none;
-	}
-	.edit {
-		max-width: 900px;
 	}
 	@media (max-width: 1000px) {
 		.grid {

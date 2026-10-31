@@ -64,7 +64,7 @@
 		{/if}
 		<span class="spacer"></span>
 		{#if reworded}
-			<span class="pill sm t-amb">{t('cur.reworded')}</span>
+			<span class="pill sm t-gold">{t('cur.reworded')}</span>
 			<button class="linklike sm" onclick={restore} {disabled}>{t('cur.restore')}</button>
 		{/if}
 	</div>

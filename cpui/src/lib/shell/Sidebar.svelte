@@ -1,8 +1,8 @@
 <script lang="ts">
 	// The sidebar (DESIGN §5): brand, search, nav, workshops (the current one
-	// expanded into its live runs), capacity and the user row — whose menu
-	// holds the account page, the admin's users page and sign-out. Collapses
-	// to a 60px rail.
+	// expanded into its live runs), capacity and the user card — the person,
+	// whose menu holds the account page, the admin's users page and sign-out,
+	// and the theme. Window glass in every theme. Collapses to a rail.
 	//
 	// Collapsing is one surface changing shape, not a swap: the aside's width
 	// rides the spring while the full and rail contents cross-fade. Each
@@ -28,6 +28,7 @@
 	import Select from '$lib/ui/Select.svelte';
 	import { I } from '$lib/ui/icons';
 	import { bump, indicator, ms } from '$lib/ui/motion';
+	import ThemePicker from './ThemePicker.svelte';
 
 	let {
 		onsearch,
@@ -85,10 +86,10 @@
 	}
 </script>
 
-<aside class="sb lg" class:rail class:drawer>
+<aside class="sb c" class:rail class:drawer>
 	{#if rail}
 		<div class="layer rl" transition:fade={xfade}>
-			<Logo size={32} />
+			<Logo />
 			<button
 				class="btn-icon rb exp"
 				title={t('shell.sidebar.expandTitle')}
@@ -135,6 +136,14 @@
 				{/each}
 			</div>
 			<span class="grow"></span>
+			<span
+				class="mono rcap"
+				title={t('ui.meter.title', {
+					label: t('shell.sidebar.runs'),
+					value: fleet.capacity.runs.used,
+					max: fleet.capacity.runs.max || '–'
+				})}>{fleet.capacity.runs.used}/{fleet.capacity.runs.max || '–'}</span
+			>
 			{#if multiLocale}
 				<span class="lang rlang">
 					<Select
@@ -148,26 +157,24 @@
 					/>
 				</span>
 			{/if}
-			<button
-				class="btn-icon rb"
-				title={t('shell.sidebar.themeTitle', { name: prefs.themeDef.label })}
-				aria-label={t('shell.sidebar.changeTheme')}
-				onclick={() => prefs.cycleTheme()}>{prefs.themeDef.icon}</button
-			>
-			<button
-				bind:this={userBtnRail}
-				class="btn-sel ruser"
-				title={user?.name}
-				aria-label={t('shell.sidebar.userMenu')}
-				onclick={() => (menuOpen = !menuOpen)}
-			>
-				<UserAvatar name={user?.name ?? ''} {initials} />
-			</button>
+			<div class="ucard rcard in">
+				<ThemePicker rail />
+				<span class="udiv"></span>
+				<button
+					bind:this={userBtnRail}
+					class="ruser"
+					title={user?.name}
+					aria-label={t('shell.sidebar.userMenu')}
+					onclick={() => (menuOpen = !menuOpen)}
+				>
+					<UserAvatar name={user?.name ?? ''} {initials} presence />
+				</button>
+			</div>
 		</div>
 	{:else}
 		<div class="layer fl" transition:fade={xfade}>
 			<div class="brand">
-				<Logo size={30} />
+				<Logo />
 				<div class="bt">
 					<span class="name">Apothecary</span>
 					<span class="tagline">{t('shell.sidebar.tagline')}</span>
@@ -256,13 +263,11 @@
 
 			<div class="cap">
 				<Meter
-					rail
 					label={t('shell.sidebar.runs')}
 					value={fleet.capacity.runs.used}
 					max={fleet.capacity.runs.max}
 				/>
 				<Meter
-					rail
 					label={t('shell.sidebar.envs')}
 					tone="grn"
 					value={fleet.capacity.envs.used}
@@ -271,21 +276,26 @@
 			</div>
 
 			<div class="user">
-				<button
-					bind:this={userBtnFull}
-					class="btn-sel who"
-					aria-label={t('shell.sidebar.userMenu')}
-					onclick={() => (menuOpen = !menuOpen)}
-				>
-					<UserAvatar name={user?.name ?? ''} {initials} presence />
-					<span class="ut">
-						<span class="un ell">{user?.name}</span>
-						<span class="ur ell"
-							>@{user?.handle}{#if user?.admin} · {t('shell.sidebar.admin')}{/if}</span
-						>
-					</span>
-					<span class="sw">{I.switcher}</span>
-				</button>
+				<div class="ucard in">
+					<button
+						bind:this={userBtnFull}
+						class="who"
+						aria-label={t('shell.sidebar.userMenu')}
+						onclick={() => (menuOpen = !menuOpen)}
+					>
+						<UserAvatar name={user?.name ?? ''} {initials} presence />
+						<span class="ut">
+							<span class="un ell">{user?.name}</span>
+							<span class="ur ell"
+								>@{user?.handle}{#if user?.admin}
+									· {t('shell.sidebar.admin')}{/if}</span
+							>
+						</span>
+						<span class="sw">{I.switcher}</span>
+					</button>
+					<span class="udiv"></span>
+					<ThemePicker />
+				</div>
 				{#if multiLocale}
 					<span class="lang">
 						<Select
@@ -299,11 +309,6 @@
 						/>
 					</span>
 				{/if}
-				<button
-					class="btn-sel btn-sm theme"
-					title={t('shell.sidebar.theme')}
-					onclick={() => prefs.cycleTheme()}>{prefs.themeDef.label}</button
-				>
 			</div>
 		</div>
 	{/if}
@@ -333,7 +338,6 @@
 </Popover>
 
 <style>
-	/* The sidebar is dark green in both themes: its text is fixed light. */
 	.sb {
 		position: relative;
 		z-index: var(--z-raise);
@@ -342,7 +346,6 @@
 		margin: var(--shell-gap) 0 var(--shell-gap) var(--shell-gap);
 		border-radius: var(--r-pane);
 		background: var(--railBg);
-		color: var(--railTx);
 		overflow: hidden;
 		transition: width var(--dur-spring) var(--spring);
 	}
@@ -375,12 +378,12 @@
 		padding: 12px 0 10px;
 	}
 
-	/* Chrome buttons on the dark rail: the shared icon button, in rail ink. */
+	/* Chrome buttons on the rail: the shared icon button, a size up. */
 	.rb {
 		width: 40px;
 		height: 32px;
 		border-radius: var(--r-row);
-		color: var(--railMut);
+		color: var(--mut);
 		font-size: var(--fs-lead);
 	}
 	.rb.exp {
@@ -395,14 +398,20 @@
 		font-size: var(--fs-body);
 	}
 	.rb:hover {
-		background: var(--railActive);
-		color: var(--railTx);
+		background: var(--p3);
+		color: var(--tx);
 	}
 	.ruser {
 		width: 40px;
 		height: 38px;
 		padding: 0;
-		border-radius: var(--r-row);
+		background: none;
+		border: 0;
+		box-shadow: none;
+		border-radius: var(--r-tab);
+	}
+	.ruser:hover {
+		background: var(--p3);
 	}
 	.rlist {
 		display: flex;
@@ -425,19 +434,19 @@
 		align-items: center;
 		justify-content: center;
 		font-size: var(--fs-lead);
-		color: var(--railMut);
+		color: var(--mut);
 		flex: none;
 	}
 	.rnav.ws {
 		height: 34px;
 	}
 	.rnav:hover {
-		background: var(--railHover);
+		background: var(--p1);
 		text-decoration: none;
-		color: var(--railTx);
+		color: var(--tx);
 	}
 	.rnav.on {
-		color: var(--railTx);
+		color: var(--tx);
 	}
 	.rbadge {
 		position: absolute;
@@ -452,7 +461,7 @@
 		width: 24px;
 		height: 1px;
 		margin: 6px 0;
-		background: var(--railRule);
+		background: var(--ln);
 	}
 
 	.brand {
@@ -476,10 +485,10 @@
 		letter-spacing: var(--tr-heading);
 	}
 	.tagline {
-		font-family: var(--serif);
-		font-style: italic;
+		font-family: var(--display);
+		font-weight: 600;
 		font-size: var(--fs-body);
-		color: var(--railMut);
+		color: var(--mut);
 	}
 
 	/* The command bar: a field in rail ink that opens the palette. */
@@ -490,19 +499,19 @@
 		margin: 0 10px 6px;
 		padding: 6px 10px;
 		border-radius: var(--r-row);
-		background: var(--railField);
-		border: 1px solid var(--railLn);
+		background: var(--p1);
+		border: 1px solid var(--ln);
 		box-shadow: none;
-		color: var(--railMut);
+		color: var(--mut);
 		font-size: var(--fs-ui);
 		font-weight: 400;
 	}
 	.search:hover {
-		background: var(--railFieldHover);
+		background: var(--p2);
 	}
 	.search .kbd {
-		background: var(--railActive);
-		color: var(--railMut);
+		background: var(--p3);
+		color: var(--mut);
 	}
 
 	.nav {
@@ -519,12 +528,12 @@
 		gap: 10px;
 		padding: 6px 10px;
 		border-radius: var(--r-row);
-		color: var(--railTx);
+		color: var(--tx);
 	}
 	.ni:hover,
 	.wi:hover,
 	.ri:hover {
-		background: var(--railHover);
+		background: var(--p1);
 		text-decoration: none;
 	}
 	.ni:active,
@@ -540,29 +549,29 @@
 		width: 16px;
 		text-align: center;
 		font-size: var(--fs-body);
-		color: var(--railMut);
+		color: var(--mut);
 	}
 	.count {
-		color: var(--railMut);
+		color: var(--mut);
 	}
 	.count.hot {
-		color: var(--ink);
+		color: var(--onBrand);
 	}
 
 	.wh {
 		flex: none;
 		padding: 14px 18px 6px;
 		font-size: var(--fs-meta);
-		color: var(--railFnt);
+		color: var(--fnt);
 		display: flex;
 		justify-content: space-between;
 		align-items: baseline;
 	}
 	.whl {
-		font-family: var(--serif);
-		font-style: italic;
+		font-family: var(--display);
+		font-weight: 600;
 		font-size: var(--fs-aside);
-		color: var(--railMut);
+		color: var(--mut);
 	}
 	.legend {
 		display: flex;
@@ -570,12 +579,12 @@
 		align-items: center;
 	}
 	.plus {
-		color: var(--railMut);
+		color: var(--mut);
 		font-size: var(--fs-aside);
 		line-height: 1;
 	}
 	.plus:hover {
-		color: var(--railTx);
+		color: var(--tx);
 		text-decoration: none;
 	}
 	.wl {
@@ -588,32 +597,32 @@
 		padding: 0 8px 8px;
 	}
 	.wi.quiet {
-		color: var(--railMut);
+		color: var(--mut);
 	}
 	.lc {
 		font-size: var(--fs-id);
-		color: var(--az);
+		color: var(--embTx);
 		min-width: 12px;
 		text-align: right;
 	}
 	.ri {
 		margin-left: 15px;
 		padding: 4px 10px 4px 14px;
-		border-left: 1px solid var(--railRule);
+		border-left: 1px solid var(--ln);
 		display: flex;
 		align-items: center;
 		gap: 8px;
 		font-size: var(--fs-label);
-		color: var(--railMut);
+		color: var(--mut);
 		border-radius: 0 var(--r-tab) var(--r-tab) 0;
 	}
 	.ri.cur {
-		background: var(--railActive);
-		color: var(--railTx);
+		background: var(--p3);
+		color: var(--tx);
 	}
 	.rid {
 		font-size: var(--fs-id);
-		color: var(--railFnt);
+		color: var(--fnt);
 	}
 
 	.cap {
@@ -621,8 +630,8 @@
 		margin: 0 10px 6px;
 		padding: 8px 10px;
 		border-radius: var(--r-row);
-		background: var(--railCard);
-		border: 1px solid var(--railCardLn);
+		background: var(--p1);
+		border: 1px solid var(--ln);
 		display: grid;
 		grid-template-columns: 1fr 1fr;
 		gap: 10px;
@@ -630,22 +639,48 @@
 
 	.user {
 		flex: none;
-		border-top: 1px solid var(--railLn);
-		padding: 8px 10px 10px 8px;
+		padding: 0 10px 10px;
 		display: flex;
 		align-items: center;
 		gap: 8px;
 	}
+	/* The user card: the person and the theme, one inset. */
+	.ucard {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		padding: 3px;
+		border-radius: var(--r-btn);
+	}
+	.rcard {
+		flex: none;
+		align-items: center;
+		gap: 2px;
+	}
+	.udiv {
+		flex: none;
+		align-self: stretch;
+		height: 1px;
+		margin: 2px 6px;
+		background: var(--ln);
+	}
 	/* The user row is the menu's trigger: avatar, name, handle. */
 	.who {
-		flex: 1;
 		min-width: 0;
 		display: flex;
 		justify-content: flex-start;
 		gap: 9px;
 		padding: 5px 7px;
+		background: none;
+		border: 0;
+		box-shadow: none;
 		text-align: left;
 		font-weight: 400;
+		border-radius: var(--r-tab);
+	}
+	.who:hover {
+		background: var(--p3);
 	}
 	.ut {
 		flex: 1;
@@ -660,23 +695,25 @@
 	}
 	.ur {
 		font-size: var(--fs-meta);
-		color: var(--railMut);
+		color: var(--mut);
 	}
 	.sw {
 		flex: none;
-		color: var(--railMut);
+		color: var(--mut);
 		font-size: var(--fs-meta);
 	}
 	.lang {
 		display: inline-flex;
 		max-width: 96px;
 	}
-	/* The rail is 60px: room for the code and the chevron. */
+	/* The rail is narrow: room for the code and the chevron. */
 	.rlang {
 		max-width: 52px;
 	}
-	.theme {
-		font-size: var(--fs-meta);
+	.rcap {
+		font-size: var(--fs-id);
+		color: var(--fnt);
+		margin-bottom: 4px;
 	}
 	/* Menu rows: base .mi is a link row; a button needs the same reset. */
 	button.mi {

@@ -25,7 +25,7 @@
 		options,
 		value = $bindable(),
 		onchange,
-		/** On control glass (default) or flat inside a pane. */
+		/** On window glass (default) or flat inside a pane. */
 		glass = true,
 		size = 'md',
 		/** Mono labels (repo names, ids). */
@@ -72,7 +72,7 @@
 
 <div
 	class="seg {size}"
-	class:lg={glass}
+	class:c={glass}
 	class:flat={!glass}
 	class:mono
 	class:off={disabled}

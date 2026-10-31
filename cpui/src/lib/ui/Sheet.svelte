@@ -6,6 +6,7 @@
 	// flick's momentum to decide (ui/motion `dragDismiss`).
 	import type { Snippet } from 'svelte';
 	import { dragDismiss, scrim, slide } from './motion';
+	import { portal } from './portal';
 	import { trap } from './trap';
 
 	let {
@@ -28,6 +29,7 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="scrim sh-scrim"
+		use:portal
 		transition:scrim
 		onpointerdown={(e) => e.target === e.currentTarget && close()}
 	></div>
@@ -36,6 +38,7 @@
 		role="dialog"
 		aria-modal="true"
 		aria-label={label}
+		use:portal
 		transition:slide={{ from: side }}
 		use:trap={{ onescape: close }}
 		use:dragDismiss={{ direction: dir, ondismiss: close }}

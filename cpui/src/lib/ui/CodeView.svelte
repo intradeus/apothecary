@@ -10,7 +10,7 @@
 </script>
 
 <script lang="ts">
-	// Code and diffs (DESIGN 4.10): Geist Mono on --code, a right-aligned
+	// Code and diffs (DESIGN 4.10): JetBrains Mono on --code, a right-aligned
 	// gutter (two for side-aware diffs), add/del tints, a truncation footer
 	// and an honest binary state. Parsing lives in $lib/diff; this renders.
 	let {

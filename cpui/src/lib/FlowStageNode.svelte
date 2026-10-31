@@ -229,16 +229,14 @@
 		border-top-color: var(--h);
 		box-shadow:
 			0 0 0 1px color-mix(in oklch, var(--h) 38%, transparent),
-			0 0 var(--glow-md) color-mix(in oklch, var(--h) 14%, transparent),
-			var(--cSh);
+			0 0 var(--glow-md) color-mix(in oklch, var(--h) 14%, transparent);
 	}
 	.stage-node.selected {
 		border-color: var(--brandLn);
 		border-top-color: var(--h);
 		box-shadow:
 			0 0 0 1.5px var(--brand),
-			0 0 calc(var(--glow-md) * 1.5) var(--brandGlow),
-			var(--cSh);
+			0 0 calc(var(--glow-md) * 1.5) var(--brandGlow);
 	}
 	/* Deleted: it leaves the way a surface arrives, in reverse. */
 	.leaving {
@@ -273,7 +271,7 @@
 		text-overflow: ellipsis;
 	}
 	.meta.unset {
-		color: var(--amb);
+		color: var(--skyTx);
 		font-style: italic;
 	}
 	.ports {
@@ -317,7 +315,7 @@
 	}
 	.unset {
 		font-style: italic;
-		color: var(--amb);
+		color: var(--skyTx);
 	}
 	/* An edge-carried input only fills on a retry: present, but not the
 	   stage's main business. */
@@ -325,7 +323,7 @@
 		opacity: 0.8;
 	}
 	/* Data dots read as plumbing, not as something you can grab: bound green,
-	   unbound amber hollow, sentinel violet. Not connectable. Their colour and
+	   unbound sky hollow, sentinel violet. Not connectable. Their colour and
 	   size go through the handle variables FlowGraph maps (--xy-handle-*,
 	   --hs), so nothing here fights Svelte Flow's own rules. */
 	.stage-node :global(.io-dot) {
@@ -341,7 +339,7 @@
 		height: calc(var(--handle) - 1px);
 		border-radius: 50%;
 		background: var(--grn);
-		border: 1px solid var(--body);
+		border: 1px solid var(--frame);
 	}
 	.io.in :global(.io-dot),
 	.io.in .vdot {
@@ -355,7 +353,7 @@
 	}
 	.io.unbound .vdot {
 		background: transparent;
-		border-color: var(--amb);
+		border-color: var(--sky);
 	}
 	.io.sentinel .vdot {
 		background: var(--vio);

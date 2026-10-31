@@ -1,5 +1,5 @@
 <script lang="ts">
-	// The flow's terminals (DESIGN 7.8): serif italic pills on content glass.
+	// The flow's terminals (DESIGN 7.8): display pills on window glass.
 	//  - start (brand, solid): the main chain's beginning — what every run
 	//    starts with — naming what runs are started on; its handle drags onto
 	//    a stage to start the chain there. Each watcher draws its own
@@ -10,7 +10,7 @@
 	//  - end (tea, dashed): a chain is over and the run goes back to waiting —
 	//    where most chains close, a watcher's always.
 	//  - done (grn, dashed) and abort (ros, dashed): where the RUN ends.
-	//  - debug (amb, dashed): the stop that comes back — a human fixes the
+	//  - debug (sky, dashed): the stop that comes back — a human fixes the
 	//    workspace, then the stage that sent the run here runs again. Drawn
 	//    once per stage that escalates to it, beside that stage, so its source
 	//    handle carries the return edge.
@@ -51,7 +51,7 @@
 		end: 'tea',
 		done: 'grn',
 		abort: 'ros',
-		debug: 'amb',
+		debug: 'sky',
 		exit: 'grn',
 		failexit: 'ros'
 	};
@@ -115,8 +115,8 @@
 		box-shadow: 0 0 var(--glow-md) color-mix(in oklch, var(--h) 14%, transparent);
 	}
 	.l {
-		font-family: var(--serif);
-		font-style: italic;
+		font-family: var(--display);
+		font-weight: 600;
 		font-size: var(--fs-title);
 		line-height: 1.1;
 	}

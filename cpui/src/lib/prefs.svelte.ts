@@ -3,7 +3,7 @@
 // These are conveniences, not records: they live in localStorage and every
 // read tolerates its absence (private windows, blocked storage).
 
-import { DEFAULT_THEME, isTheme, nextTheme, themeById, type ThemeDef } from '$lib/themes';
+import { DEFAULT_THEME, isTheme, themeById, type ThemeDef } from '$lib/themes';
 
 const read = (k: string): string | null => {
 	try {
@@ -33,7 +33,7 @@ const urlTheme = () => {
 class Prefs {
 	/** A registered theme id (see $lib/themes). */
 	theme = $state<string>(
-		[urlTheme(), read('apothecary.theme')].find((t) => isTheme(t)) ?? DEFAULT_THEME
+		[urlTheme(), read('apothecary.theme.v2')].find((t) => isTheme(t)) ?? DEFAULT_THEME
 	);
 	collapsed = $state(read('apothecary.sidebar') === 'rail');
 
@@ -46,17 +46,13 @@ class Prefs {
 		if (!isTheme(id) || id === this.theme) return;
 		const apply = () => {
 			this.theme = id;
-			write('apothecary.theme', id);
+			write('apothecary.theme.v2', id);
 			document.documentElement.dataset.theme = id;
 		};
 		const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown };
 		const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 		if (doc.startViewTransition && !still) doc.startViewTransition(apply);
 		else apply();
-	}
-	/** Step to the next registered theme (the one-button toggle). */
-	cycleTheme() {
-		this.setTheme(nextTheme(this.theme).id);
 	}
 	toggleCollapsed() {
 		this.collapsed = !this.collapsed;

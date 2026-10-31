@@ -126,23 +126,22 @@ Sky is the **attention colour** as well as the CTA colour. Solid sky fill with i
 
 Everything else uses tinted fills. Ember is never a button fill except the brand logo tile; it marks what is running.
 
-**Background ("noise").** The page has no gradient scene and no canvas. Back to front:
-1. `--frame` base colour.
-2. Warm grain tile `grain-warm.png` at .55 (.22 on Light).
-3. **The haze:** six absolutely positioned layers around the centre of the screen (never along the bottom edge):
-   - two primary-hue grainy orbs (`orb-ember.png`, 900px and 620px)
-   - two secondary-hue orbs (the same image recoloured with a CSS `filter`)
-   - two secondary-hue dithered haze fields (`mound-sky.png`, `curve-sky.png`), radially masked, `mix-blend-mode: screen` (`multiply` on Light)
-4. Mono grain `grain-mono.png` at .08, `mix-blend-mode: overlay`.
+**Background ("noise").** One `Noise` component: a single WebGL2 fragment shader on one canvas behind everything, over the `--frame` base colour. It draws:
+- four grainy circles around the middle of the screen, ember and sky in turn: radii 344, 280, 240 and 208 on a 1280px frame, orbits up to 750 across, sized from the screen height so an ultrawide doesn't inflate them
+- a faint warm floor grain, its strength taken from `--grainA`
 
-Each theme recolours the haze with per-layer CSS filters (`themes.json → noise`).
+Every dot is computed from its device-pixel coordinate, never scaled: one device pixel on any screen, at full brightness (`.85`, with per-dot variation), and each circle has its own grain so two passing through each other don't merge. Density falls off from each centre, capped at `.72`.
 
-Haze motion:
-- Only `transform` and `opacity` are animated: GPU-composited, no JS loop.
-- Durations run 90–200s, with a random negative `animation-delay` per layer so nothing moves in sync. It must read as still at a glance.
-- Motions: **Drift** (default), Tide, Slow breath, Orbit, Lava, Aurora, Ember rise, Eclipse, Swirl, Smolder, Still.
-- **Mix:** `--noiseBlue` (0–100) sets the share of the secondary hue. As one hue fades, the other brightens up to +50% so the backdrop never looks empty.
-  - **Planned:** drive it from the run state. Ember-heavy (≈20) while an agent stage runs, sky-heavy (≈80) while the run is waiting on you, neutral (50) elsewhere. Cross-fade over ~4s.
+Each theme colours it with `--nEmb` and `--nSky`, plus `--nBlend`: dots `screen` over the frame, `multiply` on Light.
+
+Motion:
+- Circles orbit at their own pace (97, 143, 211 and 167s), the second and fourth the other way round, on a slightly wandering path. The grain itself doesn't move; dots appear and vanish as a circle passes. It must read as still at a glance.
+- Circles repel each other, harder the closer they get, and two centres never come closer than one radius (the larger of the pair's). They can sit side by side and overlap, but two dense circles on top of each other would add up to white.
+- 10 frames a second at rest, 20 during a mix change or above resting speed, on a timer rather than `requestAnimationFrame`. Every frame re-blurs all the glass above it, so it must cost almost nothing.
+- `noise.speed` multiplies the pace, live. 0 stops them.
+- **Mix:** `noise.blue` (0–100) sets the share of sky: 0 all ember, 50 two of each, 100 all sky. Any change takes 3s. Dots change colour one by one, each at its own moment, so a change never passes through a muddy blend of the two hues.
+  - The run page drives it: ≈20 while an agent stage runs, ≈80 while the run is waiting on you, 50 elsewhere.
+- Nothing is drawn in a hidden tab. Under `prefers-reduced-motion` the circles hold still and only a mix change draws. Without WebGL2, or after losing the GPU context, the backdrop is plain `--frame`.
 - No foreground particles. Nothing animated ever sits above content.
 
 ### 2.3 Materials: frosted windows, opaque islands
@@ -226,7 +225,7 @@ The sidebar keeps window glass in every theme. In Light it is light glass with d
 | `ap-bubble` | translateY −10px + fade | bubble rising in the active stage vial |
 | `es-morph-in` / `es-morph-out` | `clip-path: inset(...)` from the trigger's exact rect (`round 20px`) to the full island (`round 22px`); 0.56s in, 0.34s out, `cubic-bezier(.32,.72,0,1)`, **no overshoot** | the MR island (4.5) |
 | `es-content-in` | opacity 0→1, blur 6→0px, translateY −6→0, scale .98→1; 25% delay | island content |
-| noise drift | transform / opacity only, 90–200s, random negative delays | background haze (2.2) |
+| noise orbit | one shader, 10fps at rest, orbits of 97–211s; `noise.blue` changes in 3s | background (2.2) |
 
 **Feel.** These rules follow Apple's fluid-interface principles. The implementation is in `cpui/src/styles/motion.css` and `cpui/src/lib/ui/motion.ts`, with the tokens in `cpui/src/styles/tokens.css`.
 
@@ -256,7 +255,7 @@ The sidebar keeps window glass in every theme. In Light it is light glass with d
   - A count that goes up pops once.
 - **Theme changes cross-fade** (`--dur-theme`) instead of jumping in brightness.
 - **Respect the user's settings.**
-  - `prefers-reduced-motion` zeroes every move, so motion becomes cross-fades. The background haze freezes, slosh and bubbles stop, and pulses become static dots.
+  - `prefers-reduced-motion` zeroes every move, so motion becomes cross-fades. The background circles freeze, slosh and bubbles stop, and pulses become static dots.
   - `prefers-reduced-transparency` makes the glass solid.
   - `prefers-contrast: more` strengthens lines and secondary text.
 
@@ -264,10 +263,11 @@ The sidebar keeps window glass in every theme. In Light it is light glass with d
 
 - **No icon font.** Use Unicode glyphs with `\uFE0E` (text presentation) at 13–16px:
   - nav: ◈ Desk, ✉ Inbox, ▶ Runs, ☰ Tickets, ⚙ System
-  - controls: ⌕ search, ❚❚ pause, ■ stop, ↻ retry, ↗ external, ▾ menu, ↩ loop-back, × close, « » collapse/expand, ⇅ switcher
+  - controls: ⌕ search, ↻ retry, ↗ external, ▾ menu, ↩ loop-back, × close, « » collapse/expand, ⇅ switcher
+- **Play, pause, stop** on buttons are drawn, in one 12-unit box (`TransportIcon`): as text they come from different fonts at different sizes. The text glyphs ▶ ❚❚ ■ remain only in running text, such as the transcript.
 - **Vial (workspace/project glyph):** 10×13px, `border-radius:2px 2px 5px 5px`, 1px border in the project hue at 60%. The fill is `linear-gradient(transparent X%, hue X%)`, where the fill level is decorative per project, plus a glow `0 0 8px hue@35%`. An idle project uses an empty vial with a `rgba(255,255,255,.2)` border.
 - **Stage flask:** 14×20px, `border-radius:3px 3px 7px 7px`, 1.5px border in the stage-status color. The inner liquid height equals progress (done 100%, running ~55% with slosh and bubble, pending 0%).
-- **Logo:** a 36px rounded square (radius 11px), solid `--emb`, a Bricolage 800 "A" in ink `#170a04`, glow `0 0 22px var(--embGlow)`. This is the only ember fill in the UI.
+- **Logo:** the brand tile `src/assets/mark/svg/apothecary-tile-primary.svg` at 36px, with a glow `0 0 22px var(--embGlow)`. It is the only ember fill in the UI, and also the favicon (with `app-icons/favicon-32x32.png` as the fallback for browsers without SVG icons).
 - **Guild avatar:** a 20–30px rounded square (radius 7–10px) with a 160° gradient between two guild colors, 2-letter initials (700, dark ink `#0b1a12`) and a top specular. Sample guild colors:
   - green `#9ff0c0`→`#3fae72`
   - violet `#d9c6ff`→`#8f6fd8`
@@ -439,7 +439,7 @@ The run top bar is one window-glass strip (radius 16px, `padding:8px 10px 8px 16
    - button row: Env ▾, Editor ↗, Rebuild ▾ (disabled .45 when not applicable)
 4. **MR island** (4.5b).
 
-The **Layout** control is **not** in the top bar. It lives at the bottom of the sidebar and rail (6).
+The **Layout** control is **not** in the top bar. It is a floating button at the bottom right of the run page (6).
 
 **4.5a Inset control group.** Inset material (2.3 B), `padding:7px 10px 8px`, column with gap 6px.
 - Label row: 12px `--mut`, nowrap.
@@ -448,7 +448,7 @@ The **Layout** control is **not** in the top bar. It lives at the bottom of the 
 **4.5b MR island (Dynamic-Island pattern).** This is the only top-bar control that expands.
 
 - **Compact pill:** 170×40, radius 20px, `--inBg`, 1px `--ln2`. It contains:
-  - "MRs" (12px `--mut`)
+  - "Merge request", or "Merge requests" with more than one (12px `--mut`), always, so the pill says what it is before it opens
   - the primary MR as a sky chip: mono "!20 ↗", 700, ink text
   - an overflow chip "+N" with a 6px dot in the **worst** status among the rest (conflict ros > CI failed ros > CI running gold > draft `--fnt` > merged sky)
 - **Expanded** (on hover / focus; Esc or pointer-leave closes): a 420px island anchored to the pill's top-right (−6px), z 60, so it sits **over** the panes below.
@@ -474,7 +474,7 @@ The **Layout** control is **not** in the top bar. It lives at the bottom of the 
 
 ### 4.7 Alert banner (in-flow)
 
-- Control glass over a hue tint: bg `--rosBg`, border `--rosLn`, radius 12px, `padding:5px 5px 5px 7px`, margin 0 16px.
+- Opaque, because it may sit straight on the backdrop and its text must stay readable: `--solid` with the hue tint mixed in (`--rosSolid`, `--skySolid`), border `--rosLn`, radius 12px, `padding:5px 5px 5px 7px`, margin 0 16px.
 - Contents, left to right:
   - an 18px round "!" badge (solid hue, glow)
   - a bold hue title ("Egress held ×3")
@@ -630,7 +630,7 @@ The **Layout** control is **not** in the top bar. It lives at the bottom of the 
   - The canvas is absolutely positioned at z0. Content is at z1. Popovers are at z30 and modals at z20+ (scrim covers everything).
   - The design reference is 1440×900, but the layout is fluid.
 - **Row:** `flex:1; display:flex; min-height:0`.
-- **Sidebar:** `flex:none; width:232px; margin:6px 0 6px 6px; radius 16px; overflow:hidden`, window glass (`--cBg` at .62 + `--cBf` + `--cLn`). The Layout button (6) sits at the bottom, above the capacity card. Column layout:
+- **Sidebar:** `flex:none; width:232px; margin:6px 0 6px 6px; radius 16px; overflow:hidden`, window glass (`--cBg` at .62 + `--cBf` + `--cLn`). Column layout:
   1. **Brand row** (56px): logo, then "Apothecary" (15px / 600) with the display tagline "software, bottled" below, then a « collapse button (28px).
   2. **Guild switcher:** a selected-style button with margin 0 10px 8px, radius 12px:
      - 26px guild avatar, guild name (13px / 600, ellipsis), sub "4 workshops · 14 members" (11px `--mut`, ellipsis)
@@ -643,7 +643,7 @@ The **Layout** control is **not** in the top bar. It lives at the bottom of the 
      - The **current workshop expands** to show its live runs as an indented tree: 15px indent with a 1px left rule. Each run row has a state dot (emb running / sky waiting), the title (ellipsis) and the mono id. The current run is highlighted with `rgba(255,255,255,.06)`.
      - Quiet workshops are dimmer (`--mut`).
   6. **Capacity:** a mini card in a 2-column grid, "Runs 3/6" and "Envs 4/10", each with a 5px bar (sky and green gradients).
-  7. **User row:** a top hairline, then the avatar with presence, name (12.5px / 600), role line "Maintainer · Northwind Labs", and the **theme picker** (Ember × Sky, Solarized, Forest, Brown, Light, Dark, Pink). This is the only appearance control end users get.
+  7. **User card** (inset, radius 12px), at the very bottom: the avatar with presence, name (12.5px / 600) and handle, which open the user menu (5.1); under a hairline, the **theme picker** (Ember × Sky, Solarized, Forest, Brown, Light, Dark, Pink), showing the theme's two hues and its name. This is the only appearance control end users get.
 - **Collapsed rail:** 60px wide with the same margins and material; a centered column with gap 4px:
   - logo, then a » expand button
   - guild avatar button (with a sky dot when there are pings elsewhere)
@@ -651,7 +651,7 @@ The **Layout** control is **not** in the top bar. It lives at the bottom of the 
   - nav icons (40×36, with sky count badges)
   - a 24px divider
   - workshop vials (40×34, with sky ping badges)
-  - a spacer, then the theme icon (☾ / ☀) and the user avatar
+  - a spacer, then the user card: the theme's two hues over the user avatar
   - Collapse state persists (localStorage). Shortcut ⌘\\.
   - **Mobile:** the same sidebar becomes an off-canvas drawer, and the rail becomes a bottom tab bar (Desk, Inbox, Runs, Tickets, More).
 - **Main:** `flex:1; min-width:0; display:flex; flex-direction:column`. It is transparent; the scene shows through between panes.
@@ -708,9 +708,10 @@ The run page body is a **user-arrangeable tiling desk**, like an IDE.
     - the outer 26% of a leaf's left, right, top or bottom edge splits that side
     - drop preview: an absolute box, radius 12px, `color-mix(--brand 20%)` fill, **2px dashed `--brand`**, `inset 0 0 30px var(--brandGlow)`, and a 13px / 600 `--brandLt` label ("Stack here", "Drop to split →"…)
   - **Gutter (8px)** between panes: cursor `col-resize` / `row-resize`. A centered 2px grip line appears on hover with a `--brandBg` highlight. Drag to resize, with a minimum pane size of about 120px.
-  - **Leaf buttons:** split right / split down (move the active tab into a new half), maximise (fills the desk; others hidden until restore), hide.
+  - **Leaf buttons:** split right / split down (move the active tab into a new half), fullscreen, hide.
+  - **Fullscreen** (⤢) is a moment, not a layout: the window, with all its tabs, springs out over the sidebar and the top bar to fill the screen, on solid `--solid` so nothing shows through, with an `esc` key cap in its strip. Esc (or ⤡) puts everything back exactly as it was. It is never saved and the tree does not change. Esc in a focused terminal stays the terminal's (vim needs it); an open popover or modal takes Esc first.
   - **Tab ×** hides that view.
-  - **Layouts popover** (from the ⊞ **Layout** button at the bottom of the sidebar and the rail, shortcut **L**: a 40px sky-tinted square, `--brandBg` fill, 1px `--brandLn`, with a tiny "L" key badge). It opens to the right of the rail, bottom-aligned, 300px wide, as an island (2.3 C):
+  - **Layouts popover** (from the ⊞ **Layout** button, shortcut **L**: a 40px sky-tinted square floating at the bottom right of the run page, `--brandBg` over `--solid`, 1px `--brandLn`, with a tiny "L" key badge). It hovers over every window, a fullscreen one included (`--z-fab`); the view in the desk's bottom-right corner keeps its docked composer or ping card clear of it (`--fabClear`). The popover opens above the button, right-aligned, 300px wide, as an island (2.3 C):
     - "Layouts" title + "saved in this browser"
     - preset grid (3 columns): Split, Focus, Dock, Recipe, Bench, Custom
     - "Windows" checklist (2 columns): a 14px checkbox tile per view (green ✓ when shown) + label; clicking toggles it
@@ -754,7 +755,30 @@ The run page body is a **user-arrangeable tiling desk**, like an IDE.
 
 ## 7. Page layouts
 
-Every page uses the shell (section 5). The page header pattern is: breadcrumb row, then an h1 with one display accent phrase and an optional status chip, then a meta row (12px `--mut`, flex-wrap, gap 4px 14px), then right-aligned glass control groups. Header padding is 16–22px 20–22px 12px.
+Every page uses the shell (section 5).
+
+**The backdrop is not looked at directly.** It shows only in the gaps between windows and, blurred, through their glass, on every page and at any screen size. So the windows always fill the main column:
+
+- A page body is one window (`.page.c`) filling all the height and width its header leaves. It never ends short of the pane, and the window itself has no `max-width`. Short content leaves empty glass, never bare backdrop.
+- What sits in that window is an inset, which `.c` inside `.c` gives by itself. A page holding one table needs no inset box: the table sits directly in the window.
+- Pages with their own columns (the System hub, the inbox, the review workbench, the flow editor) make every column a full-height window instead.
+- Cards in a `.card-grid` share the row, up to `--card-max` (860px) each.
+- Dialogs and sheets leave for `<body>`: a `position:fixed` element inside glass is trapped by it.
+- The sign-in, setup and engine-unreachable screens are the exception: they have no panes, so they stay a card on the backdrop.
+
+**Wide screens keep their content readable.** The glass stays full width, but stretched content leaves a row's ends too far apart to read. So content never simply stretches:
+
+- Whole sections go side by side: `.sections` is a grid of columns at least `--section-min` (640px) wide, as many as the window has room for (the Desk, Integrations, Skills, Account, a workshop's flows).
+- Anything else keeps to `--content-max` (1600px), centred in its window; `.readable` passes this down a wrapper. A page that is one settings form keeps to `--settings-max` (900px).
+- The tiling desk and the flow editor are exempt: the person lays those out.
+
+**Every list page has the same anatomy,** the one Tickets and Runs set:
+
+- One main action, in the top bar: solid, `.btn-primary.btn-lg`, worded "+ New …". A page below a shared header puts it there with `HeaderAction`. Several kinds to start from share one button and a menu (`ActionMenu`). Actions on one row or pane stay on that row or pane; pages with nothing to create have no main action.
+- Filters in the window, directly above the list, in a `.filters` row: search first, then what narrows it, every control `--filter-h` tall. Filters never sit in the top bar.
+- The list sits directly on the window's glass, with no box around it. Tables use `RunTable`, `TicketTable` or `.rows`.
+
+The page header pattern is: breadcrumb row, then an h1 with one display accent phrase and an optional status chip, then a meta row (12px `--mut`, flex-wrap, gap 4px 14px), then right-aligned glass control groups. Header padding is 16–22px 20–22px 12px.
 
 ### 7.1 Live run: `/g/:guild/runs/:id` (reference: v10, default view)
 
@@ -775,10 +799,10 @@ Every page uses the shell (section 5). The page header pattern is: breadcrumb ro
 
 ### 7.2 All-guilds desk: `/` (reference: v10, "All guilds" in the switcher)
 
-A single scrolling column, `padding:22px`, gap 18px.
+One window of two stacks: what needs you and what is brewing, then what finished and the room left. They sit side by side once the window has room, and with room for three columns the first stack splits in two.
 1. **Header row:**
    - Left: caption "All guilds · 3 guilds · 7 workshops", then an h1 "Good afternoon, Maya. *4 things need you, 6 brews on the fire.*"
-   - Right: a segmented filter: Everything (n) / Needs me (n) / Running (n).
+   - Right: the main action, **+ New ticket**. The segmented filter Everything (n) / Needs me (n) / Running (n) sits in the window, above the workshop cards it filters.
 2. **Needs you panel** (content glass, radius 18px):
    - head: a sky count badge, a display title "Awaiting your hand", "oldest first, across every guild", and "Open inbox →"
    - rows (grid `118px | 1fr | 210px | 64px | auto`):
@@ -797,7 +821,7 @@ A single scrolling column, `padding:22px`, gap 18px.
 ### 7.3 Guild desk: `/g/:guild` (not mocked; follow 7.2)
 
 The same anatomy, scoped to one guild:
-1. Header: "Northwind Labs" with an accent phrase, plus the filter.
+1. Header: "Northwind Labs" with an accent phrase, plus the main action.
 2. Needs-you panel (this guild only).
 3. The workshop card grid, the same cards as 7.2 at larger size. Add the last-finished runs (completed / failed with MR link) under the live ones, and a ticket count with "+ New ticket".
 4. A "Recently finished" table (Finished-group runs, 24h): title + id, state chip, workspace dot, workshop, flow, MR link, updated.
@@ -805,16 +829,15 @@ The same anatomy, scoped to one guild:
 
 ### 7.4 Runs list: `/g/:guild/runs`
 
-1. Header with a segmented control Active (n) / Finished (n), a workshop filter (select, mirrors `?project=`), and search.
+1. Header with one call to action, **+ New run**. In the page window, above the table, the filters as on Tickets: search, a workshop filter (select, mirrors `?project=`), and a segmented control Active (n) / Finished (n).
 2. Table columns: title + mono id, state chip, workspace dot, current stage (flask + id + attempt), workshop, flow, MR, updated.
 3. Polls every 4s with a "updated 2s ago" caption.
-4. There is no "New run" button: runs start from tickets. The empty state links to Tickets.
+4. Runs start from tickets, so **+ New run** opens a dialog that picks one and goes to its page, where the flow and parameters are chosen. With no ticket yet, it offers **New ticket**. The empty state links to Tickets.
 
 ### 7.5 Inbox and plan review: `/g/:guild/inbox`, `/:pingId`
 
-- **Inbox:** a two-pane layout.
+- **Inbox:** one window, the filters on top (Pending / Answered, then the ping types), a two-pane layout under them. It has no main action: nothing is created here.
   - **Left list** (380px, content glass):
-    - Pending / Answered segmented control, and a type filter chip row.
     - One card per run, showing its newest pending ping: type pill, stage, age, and **run title + ticket key + workshop**.
     - "Answer this first — N earlier pings queued" in sky.
   - **Right:** the selected ping card (4.11) at full size, plus a run summary strip (state, stage flask, cost, "Open run →").
@@ -848,13 +871,12 @@ The same anatomy, scoped to one guild:
   - **Right card "Import from tracker":** integration select, then search (key / words / `jql:`), then a result list (key, title, type, status, assignee). Picking one prefills the form and lists the attachments to copy, with "Open in tracker ↗" and "Clear". Skipped attachments show a warning list + Continue.
 - **Ticket detail:**
   - Header: title + source tag + workshop link + branch; Edit / Delete… on the right.
-  - **Left:** the goal and attachments ("delivered into every run's workspace").
+  - **Left:** the goal and attachments ("delivered into every run's workspace"), then the runs table for this ticket (polls every 4s).
   - **Right:** a "Start a run" card: direction (textarea), run-only files, flow picker, source-branch picker (default marked ★), and a primary "Start run".
-  - Below: the runs table for this ticket (polls every 4s).
 
 ### 7.7 Workshop overview: `/g/:guild/w/:workshop`
 
-1. Header: vial + name + repo URL (mono) + repository / provisioner / harness chips; "Edit setup" secondary, Delete… (blocked until all runs are archived, with an explanation).
+1. Header: vial + name + repo URL (mono) + repository / provisioner / harness chips; "Edit setup" secondary, Delete… (blocked until all runs are archived, with an explanation), then the open tab's main action, if it has one (New run, New ticket, New flow, New automation).
 2. A tab strip: **Overview · Runs · Tickets · Flows · Agents · Health**.
    - **Overview:** the live runs cards (as 7.2) and a read-only summary (repositories incl. additional repos, commands, default flow, egress mode + lists).
    - **Flows:** a list with "default" and "from template" chips, hash and updated; New flow, Copy, "Use built-in template". Built-in templates in their own group.
@@ -923,10 +945,10 @@ A stepped form with a left step-rail and section anchors: **1 Repository → 2 W
 
 ### 7.10 System hub: `/g/:guild/system/*`
 
-Layout: row [section nav 220px | content]. The section nav is a vertical list in the sidebar nav style:
+Layout: row [section nav 220px | content], both full-height windows. The section nav is a vertical list in the sidebar nav style:
 **Integrations · Channels · Account · Users (admins) · Limits · Reaper · Storage**. Everything but Users and Limits is the signed-in user's own.
 
-- **Integrations:** four groups (Repositories, Provisioner, Harness, Ticket source), each with "+ Add \<kind\>" buttons for its kinds.
+- **Integrations:** four groups (Repositories, Provisioner, Harness, Ticket source). **+ New integration** in the top bar lists every kind by group, and the form opens in that group.
   - **Integration card** (content glass): name, kind chip, config summary (secrets masked), **persisted test result** chip (✓ ok / ✕ error + "tested 3h ago"), Test (secondary), Edit (inline expand), Delete….
   - Forms are generated from descriptors: a "How to set this up" help panel, then fields (text / secret / JSON secret).
   - A skeleton list shows while loading.
@@ -971,6 +993,7 @@ Layout: row [section nav 220px | content]. The section nav is a vertical list in
   - `EmptyState`, `Skeleton`
   - `Sidebar`, `GuildSwitcher`, `Desk` (window manager), `LeafWindow`
 - **Desk:** keep the tree in a store and persist it. Layout is computed (absolute rects from the tree), so views can stay mounted while moving between leaves: xterm and SSE survive a re-dock.
-- **Backdrop:** one `Noise` component (section 2.2): six absolutely positioned image layers animated with CSS `transform`/`opacity` keyframes only. No canvas and no JS loop. Set `animation-play-state: paused` on `visibilitychange` and under reduced motion. Props: `theme`, `motion`, `blue` (0–100), `speed`, `intensity`.
+- **Backdrop:** one `Noise` component (section 2.2): one fragment shader on one canvas. The `noise` store holds its live parameters, `blue` (0–100) and `speed`; everything else is fixed in the component.
 - **Themes:** generate the `[data-theme=…]` blocks from `themes.json`. The theme toggle in the user row becomes a theme picker (7 themes).
 - Backdrop blur is expensive, and it is more so over an animated background. Windows are the only blurred layer; islands and popovers are opaque. Avoid blur on scrolling content.
+- Anything that animates forever runs in `steps()`, however small it is. A smooth endless animation has the compositor redraw every window's blur at the display's rate: one pulsing status dot cost more than the whole backdrop until it was stepped.

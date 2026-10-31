@@ -973,7 +973,6 @@
 		grid-template-columns: auto minmax(0, 1fr);
 		gap: 14px 16px;
 		align-items: start;
-		max-width: 1180px;
 		width: 100%;
 	}
 	.secs {

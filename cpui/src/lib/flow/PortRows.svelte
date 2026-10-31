@@ -197,7 +197,7 @@
 				{#if r.decl?.optional || r.decl?.required === false || (r.decl && !r.decl.required && !isInput)}
 					<span class="fnt">{isInput ? t('flow.insp.optional') : ''}</span>
 				{:else if isInput}
-					<span class="hue-amb">{t('flow.insp.required')}</span>
+					<span class="hue-gold">{t('flow.insp.required')}</span>
 				{/if}
 			{/if}
 		</div>
@@ -250,7 +250,7 @@
 			<div class="err">{t('flow.insp.oneLink', { count: links ?? 0 })}</div>
 		{/if}
 		{#if dirMismatch(r)}
-			<div class="help hue-amb">
+			<div class="help hue-gold">
 				{r.type === 'files' ? t('flow.insp.filesPath') : t('flow.insp.dirNotFiles')}
 			</div>
 		{/if}

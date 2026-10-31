@@ -18,6 +18,7 @@
 	import StepList, { type Step } from '$lib/ui/StepList.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { I } from '$lib/ui/icons';
+	import TransportIcon from '$lib/ui/TransportIcon.svelte';
 
 	let { project }: { project: Project } = $props();
 
@@ -220,7 +221,7 @@
 			/>
 			{#if running}
 				<button class="btn-sm" aria-busy={cancelling} onclick={cancelEnvCheck}
-					>{I.stop} {t('workshop.health.cancel')}</button
+					><TransportIcon kind="stop" /> {t('workshop.health.cancel')}</button
 				>
 				<button
 					class="btn-sm"
@@ -234,9 +235,8 @@
 					aria-busy={starting}
 					title={t('workshop.health.runEnvcheckTitle')}
 					onclick={startEnvCheck}
-					>{check
-						? `${I.retry} ${t('workshop.health.runAgain')}`
-						: `${I.play} ${t('workshop.health.runEnvcheck')}`}</button
+					>{#if check}{I.retry} {t('workshop.health.runAgain')}{:else}<TransportIcon kind="play" />
+						{t('workshop.health.runEnvcheck')}{/if}</button
 				>
 			{/if}
 		</div>
@@ -292,11 +292,9 @@
 				onclick={runPreflight}
 				aria-busy={preflight === 'running'}
 				disabled={preflight === 'running'}
-				>{preflight === 'running'
-					? t('workshop.health.checking')
-					: preflight
-						? `${I.retry} ${t('workshop.health.checkAgain')}`
-						: `${I.play} ${t('workshop.health.runPreflight')}`}</button
+				>{#if preflight === 'running'}{t('workshop.health.checking')}{:else if preflight}{I.retry}
+					{t('workshop.health.checkAgain')}{:else}<TransportIcon kind="play" />
+					{t('workshop.health.runPreflight')}{/if}</button
 			>
 		</div>
 		<div class="pane-body col">

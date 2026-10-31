@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
-	// In-flow alert banner (DESIGN 4.7): control glass over a hue tint.
+	// In-flow alert banner (DESIGN 4.7): window glass over a hue tint.
 	import type { Snippet } from 'svelte';
 
 	let {
@@ -14,9 +14,9 @@
 		ondismiss,
 		children
 	}: {
-		tone?: 'ros' | 'amb';
+		tone?: 'ros' | 'sky';
 		title: string;
-		/** Serif lore aside after the title. */
+		/** Display lore aside after the title. */
 		aside?: string;
 		/** Mono list ("host:443 · …"), ellipsised with "+N more". */
 		items?: string[];
@@ -31,7 +31,7 @@
 	const more = $derived(items.length - shown.length);
 </script>
 
-<div class="bn lg {tone}" role="alert">
+<div class="bn c {tone}" role="alert">
 	<span class="bang">!</span>
 	<span class="t">{title}</span>
 	{#if aside}<span class="aside">{aside}</span>{/if}
@@ -65,12 +65,12 @@
 		min-width: 0;
 	}
 	.ros {
-		background: var(--rosBg);
+		background: var(--rosSolid);
 		border-color: var(--rosLn);
 	}
-	.amb {
-		background: var(--ambBg);
-		border-color: var(--ambLn);
+	.sky {
+		background: var(--skySolid);
+		border-color: var(--skyLn);
 	}
 	.bang {
 		flex: none;
@@ -88,24 +88,24 @@
 		color: var(--rosInk);
 		box-shadow: 0 0 10px var(--ros);
 	}
-	.amb .bang {
-		background: var(--amb);
-		color: var(--ink);
-		box-shadow: 0 0 10px var(--amb);
+	.sky .bang {
+		background: var(--sky);
+		color: var(--onBrand);
+		box-shadow: 0 0 10px var(--sky);
 	}
 	.t {
 		font-weight: 700;
 		white-space: nowrap;
 	}
 	.ros .t {
-		color: var(--ros);
+		color: var(--rosTx);
 	}
-	.amb .t {
-		color: var(--amb);
+	.sky .t {
+		color: var(--skyTx);
 	}
 	.aside {
-		font-family: var(--serif);
-		font-style: italic;
+		font-family: var(--display);
+		font-weight: 600;
 		font-size: var(--fs-aside);
 		color: var(--mut);
 		white-space: nowrap;

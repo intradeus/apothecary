@@ -56,7 +56,7 @@
 <div class="agents">
 	<nav class="list" aria-label={t('flow.agents.listLabel')}>
 		<div class="lh">
-			<span class="serif lt">{t('flow.agents.title')}</span>
+			<span class="display lt">{t('flow.agents.title')}</span>
 			<span class="spacer"></span>
 			<button class="btn-sm" onclick={create}>{I.add} {t('flow.insp.addAgent')}</button>
 		</div>
@@ -76,7 +76,7 @@
 				<span class="row nowrap">
 					<span class="mono nm ell grow">{a.name}</span>
 					{#if runs}<span class="fnt tiny">{t('flow.insp.runByCount', { count: runs })}</span
-						>{:else}<span class="hue-amb tiny">{t('flow.agents.unused')}</span>{/if}
+						>{:else}<span class="hue-gold tiny">{t('flow.agents.unused')}</span>{/if}
 				</span>
 				{#if a.description}<span class="fnt small ell">{a.description}</span>{/if}
 				<span class="tiny mut">

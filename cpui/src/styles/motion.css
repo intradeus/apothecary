@@ -54,11 +54,13 @@
 		background-position: 200% 0;
 	}
 }
+/* In steps: a smooth endless animation, however small, has the compositor
+ * redraw every glass window's blur at the display's rate. */
 .pulse {
-	animation: ap-pulse 1.4s ease-in-out infinite;
+	animation: ap-pulse 1.4s steps(6, jump-none) infinite;
 }
 .pulse-slow {
-	animation: ap-pulse 2s ease-in-out infinite;
+	animation: ap-pulse 2s steps(6, jump-none) infinite;
 }
 .caret {
 	display: inline-block;
@@ -66,8 +68,8 @@
 	height: 15px;
 	vertical-align: text-bottom;
 	margin-left: 2px;
-	background: var(--brand);
-	box-shadow: 0 0 8px var(--brandLn);
+	background: var(--sky);
+	box-shadow: 0 0 8px var(--skyGlow);
 	animation: ap-blink 1s steps(1) infinite;
 }
 
@@ -78,6 +80,49 @@
  *    retargets from the live value when the state flips mid-flight
  *  - things leave along the path they came in
  * All of it collapses to fades under prefers-reduced-motion (tokens.css). */
+
+/* The MR island: the outline grows out of the pill along its contour, the
+ * content arrives a beat behind it, and closing pours back the same way. */
+@keyframes es-morph-in {
+	from {
+		clip-path: inset(6px 6px calc(100% - 46px) calc(100% - var(--pw) - 6px) round var(--r-float));
+	}
+	to {
+		clip-path: inset(0 0 0 0 round var(--r-island));
+	}
+}
+@keyframes es-morph-out {
+	from {
+		clip-path: inset(0 0 0 0 round var(--r-island));
+	}
+	to {
+		clip-path: inset(6px 6px calc(100% - 46px) calc(100% - var(--pw) - 6px) round var(--r-float));
+	}
+}
+@keyframes es-content-in {
+	0%,
+	25% {
+		opacity: 0;
+		transform: translateY(-6px) scale(0.98);
+		filter: blur(6px);
+	}
+	100% {
+		opacity: 1;
+		transform: none;
+		filter: blur(0);
+	}
+}
+@keyframes es-content-out {
+	0% {
+		opacity: 1;
+		filter: blur(0);
+	}
+	55%,
+	100% {
+		opacity: 0;
+		filter: blur(5px);
+	}
+}
 
 /* Press: buttons sink on pointer-down and spring back on release. */
 :where(button:not(.svelte-flow *, .xterm *)),

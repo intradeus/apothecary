@@ -174,7 +174,7 @@
 							<span class="path mono" title={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}
 								>{f.path}</span
 							>
-							<span class="wip hue-amb" title={f.committed ? '' : t('run.changes.notCommitted')}
+							<span class="wip hue-gold" title={f.committed ? '' : t('run.changes.notCommitted')}
 								>{f.committed ? '' : I.dot}</span
 							>
 							<span class="cnt mono">

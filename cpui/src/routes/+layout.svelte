@@ -1,6 +1,6 @@
 <script lang="ts">
-	// The app shell (DESIGN §5): the scene and its sigils behind everything,
-	// the sidebar, the main column the pages fill, and the cursor light on top.
+	// The app shell (DESIGN §5): the grainy backdrop behind everything, then
+	// the sidebar and the main column the pages fill.
 	// On a phone the sidebar becomes a sheet (flick it away) and the nav a
 	// bottom tab bar whose bead slides between tabs.
 	//
@@ -8,14 +8,17 @@
 	// between the setup page (no account yet), the sign-in page, and the app;
 	// a 401 later drops back to sign-in in place, so a deep link survives.
 	import '../app.css';
+	import favicon from '../assets/mark/svg/apothecary-tile-primary.svg?url';
+	import faviconPng from '../assets/app-icons/favicon-32x32.png?url';
 	import { goto, afterNavigate } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { fleet } from '$lib/fleet.svelte';
 	import { prefs } from '$lib/prefs.svelte';
 	import { session } from '$lib/session.svelte';
 	import { i18n, t } from '$lib/i18n/index.svelte';
 	import { NAV, navByChord } from '$lib/nav';
-	import Sigils from '$lib/ui/Sigils.svelte';
+	import { activeDesk } from '$lib/desk/active.svelte';
+	import Noise from '$lib/ui/Noise.svelte';
 	import ConfirmHost from '$lib/ui/ConfirmHost.svelte';
 	import Toaster from '$lib/ui/Toaster.svelte';
 	import Sheet from '$lib/ui/Sheet.svelte';
@@ -25,13 +28,13 @@
 	import { bump, indicator } from '$lib/ui/motion';
 	import Sidebar from '$lib/shell/Sidebar.svelte';
 	import CommandPalette from '$lib/shell/CommandPalette.svelte';
+	import LayoutButton from '$lib/desk/LayoutButton.svelte';
 	import SignIn from '$lib/shell/SignIn.svelte';
 	import Setup from '$lib/shell/Setup.svelte';
 	import { page } from '$app/state';
 
 	let { children } = $props();
 
-	let root = $state<HTMLDivElement | null>(null);
 	let paletteOpen = $state(false);
 	let drawerOpen = $state(false);
 
@@ -45,9 +48,12 @@
 	// whoever signs in next.
 	$effect(() => {
 		if (!session.user) return;
-		fleet.reset();
-		const stop = fleet.use();
-		return stop;
+		// Untracked: the first poll reads and sets fleet state, and must not
+		// re-run this and wipe what it just loaded.
+		return untrack(() => {
+			fleet.reset();
+			return fleet.use();
+		});
 	});
 
 	onMount(() => {
@@ -73,6 +79,12 @@
 				gArmed = Date.now();
 				return;
 			}
+			const desk = activeDesk.desk;
+			if ((e.key === 'l' || e.key === 'L') && desk && !desk.compact) {
+				e.preventDefault();
+				desk.menuOpen = !desk.menuOpen;
+				return;
+			}
 			if (gArmed && Date.now() - gArmed < 1000) {
 				const dest = navByChord(e.key);
 				gArmed = 0;
@@ -88,17 +100,22 @@
 
 	afterNavigate(() => (drawerOpen = false));
 
-	function light(e: MouseEvent) {
-		root?.style.setProperty('--lx', `${e.clientX}px`);
-		root?.style.setProperty('--ly', `${e.clientY}px`);
-	}
-
 	const tabs = NAV.filter((n) => n.mobile);
 </script>
 
+<svelte:head>
+	<link rel="icon" href={favicon} type="image/svg+xml" />
+	<link rel="icon" href={faviconPng} sizes="32x32" />
+</svelte:head>
+
+<Noise />
 {#if session.error}
 	<div class="gate">
-		<ErrorCard cause={t('auth.unreachable')} detail={session.error} onretry={() => session.load()} />
+		<ErrorCard
+			cause={t('auth.unreachable')}
+			detail={session.error}
+			onretry={() => session.load()}
+		/>
 	</div>
 {:else if !session.ready}
 	<div class="gate"><Loading /></div>
@@ -107,9 +124,7 @@
 {:else if !session.user}
 	<SignIn />
 {:else}
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="app" bind:this={root} onmousemove={light}>
-		<Sigils />
+	<div class="app">
 		<div class="shell">
 			<div class="side-slot">
 				<Sidebar onsearch={() => (paletteOpen = true)} />
@@ -118,9 +133,10 @@
 				{@render children()}
 			</main>
 		</div>
-		<div class="cursor-light" aria-hidden="true"></div>
 
-		<nav class="mtabs lg" aria-label={t('page.layout.primary')} use:indicator>
+		<LayoutButton />
+
+		<nav class="mtabs isl" aria-label={t('page.layout.primary')} use:indicator>
 			{#each tabs as tab (tab.id)}
 				{@const on = tab.match(page.url.pathname)}
 				{@const n = tab.id === 'inbox' ? fleet.pending.length : 0}
@@ -137,7 +153,11 @@
 			>
 		</nav>
 		<Sheet bind:open={drawerOpen} side="left" label={t('page.layout.navigation')}>
-			<Sidebar drawer onsearch={() => (paletteOpen = true)} onnavigate={() => (drawerOpen = false)} />
+			<Sidebar
+				drawer
+				onsearch={() => (paletteOpen = true)}
+				onnavigate={() => (drawerOpen = false)}
+			/>
 		</Sheet>
 
 		<CommandPalette bind:open={paletteOpen} />
@@ -154,7 +174,6 @@
 		align-items: center;
 		justify-content: center;
 		padding: 16px;
-		background: var(--scene);
 		color: var(--tx);
 	}
 	.app {
@@ -164,7 +183,6 @@
 		flex-direction: column;
 		overflow: hidden;
 		color: var(--tx);
-		background: var(--scene);
 	}
 	.shell {
 		position: relative;
@@ -184,18 +202,6 @@
 		min-height: 0;
 		display: flex;
 		flex-direction: column;
-	}
-	.cursor-light {
-		position: absolute;
-		inset: 0;
-		z-index: var(--z-light);
-		pointer-events: none;
-		mix-blend-mode: screen;
-		background: radial-gradient(
-			360px circle at var(--lx, 62%) var(--ly, 18%),
-			var(--light),
-			transparent 65%
-		);
 	}
 
 	/* Mobile: the sidebar becomes a sheet and the rail a bottom tab bar. */

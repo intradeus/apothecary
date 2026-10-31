@@ -35,7 +35,7 @@
 
 <style>
 	a {
-		color: var(--brand);
+		color: var(--link);
 		font-weight: 600;
 		font-size: var(--fs-label);
 		white-space: nowrap;

@@ -7,8 +7,13 @@ export default {
 	'nav.tickets': 'Tickets',
 	'nav.system': 'System',
 
-	'theme.dark': 'Dark',
+	'theme.ember-sky': 'Ember × Sky',
+	'theme.solarized': 'Solarized',
+	'theme.forest': 'Forest',
+	'theme.brown': 'Brown',
 	'theme.light': 'Light',
+	'theme.dark': 'Dark',
+	'theme.pink': 'Pink',
 
 	'shell.filter.aria': 'Filter by workshop',
 	'shell.filter.all': 'All workshops',

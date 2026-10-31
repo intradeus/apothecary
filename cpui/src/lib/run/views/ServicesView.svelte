@@ -17,6 +17,7 @@
 	import { toast } from '$lib/ui/toast.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { I } from '$lib/ui/icons';
+	import TransportIcon from '$lib/ui/TransportIcon.svelte';
 	import type { Hue } from '$lib/ui/hues';
 	import type { ServiceStatus } from '$lib/domain';
 	import type { RunStore } from '../store.svelte';
@@ -54,7 +55,7 @@
 				return 'grn';
 			case 'starting':
 			case 'stopping':
-				return 'amb';
+				return 'gold';
 			case 'unhealthy':
 				return 'ros';
 			case 'exited':
@@ -289,7 +290,8 @@
 									title={canAct
 										? t('runview.services.start_title')
 										: t('runview.services.no_workspace_short')}
-									onclick={() => act(s, 'start')}>{I.play} {t('runview.services.start')}</button
+									onclick={() => act(s, 'start')}
+									><TransportIcon kind="play" /> {t('runview.services.start')}</button
 								>
 							{:else}
 								<button
@@ -305,7 +307,8 @@
 									disabled={!canAct || !!b || s.state === 'stopping'}
 									aria-busy={b === 'stop'}
 									title={t('runview.services.stop_title')}
-									onclick={() => act(s, 'stop')}>{I.stop} {t('runview.services.stop')}</button
+									onclick={() => act(s, 'stop')}
+									><TransportIcon kind="stop" /> {t('runview.services.stop')}</button
 								>
 							{/if}
 							<button
@@ -456,8 +459,8 @@
 		max-width: 520px;
 	}
 	.et {
-		font-family: var(--serif);
-		font-style: italic;
+		font-family: var(--display);
+		font-weight: 600;
 		font-size: var(--fs-section);
 	}
 	.empty .help,
@@ -533,7 +536,7 @@
 	}
 	.lasterr {
 		font-size: var(--fs-meta);
-		color: var(--ros);
+		color: var(--rosTx);
 		background: var(--rosBg);
 		border: 1px solid var(--rosLn);
 		border-radius: var(--r-row);

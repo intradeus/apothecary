@@ -193,7 +193,7 @@
 				onchange={(c) => setList(name, p, c)}
 			/>
 		</div>
-		{#if !p.type}<div class="help hue-amb">{t('flow.insp.paramTypeRequired')}</div>{/if}
+		{#if !p.type}<div class="help hue-gold">{t('flow.insp.paramTypeRequired')}</div>{/if}
 		<div class="field">
 			<label for="pd-{name}">{t('flow.insp.paramDefault')}</label>
 			{#if type === 'bool' && !p.list}

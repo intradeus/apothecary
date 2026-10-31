@@ -213,7 +213,7 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="cp-wrap" onpointerdown={(e) => e.target === e.currentTarget && (open = false)}>
 		<div
-			class="cp lg-pop"
+			class="cp isl"
 			role="dialog"
 			aria-modal="true"
 			aria-label={t('shell.palette.aria')}

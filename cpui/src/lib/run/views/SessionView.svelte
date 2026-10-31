@@ -110,7 +110,7 @@
 					{#if rs.terminal}
 						{t('runview.session.noconv_over')}
 					{:else}
-						<span class="ldot sm pulse hue-az"></span>{t('runview.session.noconv_pending')}
+						<span class="ldot sm pulse hue-emb"></span>{t('runview.session.noconv_pending')}
 					{/if}
 				</div>
 			{/if}

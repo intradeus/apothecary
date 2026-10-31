@@ -45,9 +45,9 @@
 
 	// Syntax in the theme's hues: tokens, so light and dark both read.
 	const hues = HighlightStyle.define([
-		{ tag: [tags.definition(tags.propertyName), tags.propertyName], color: 'var(--az)' },
+		{ tag: [tags.definition(tags.propertyName), tags.propertyName], color: 'var(--brand)' },
 		{ tag: [tags.string, tags.content, tags.special(tags.string)], color: 'var(--tx)' },
-		{ tag: [tags.number, tags.bool, tags.null, tags.atom], color: 'var(--amb)' },
+		{ tag: [tags.number, tags.bool, tags.null, tags.atom], color: 'var(--gold)' },
 		{ tag: [tags.comment, tags.lineComment], color: 'var(--fnt)', fontStyle: 'italic' },
 		{ tag: [tags.labelName, tags.typeName, tags.meta], color: 'var(--vio)' },
 		{ tag: [tags.punctuation, tags.separator, tags.squareBracket, tags.brace], color: 'var(--mut)' }
@@ -134,7 +134,7 @@
 		'.cm-matchingBracket': { backgroundColor: 'var(--p3)', outline: 'none' },
 		'.cm-foldPlaceholder': { backgroundColor: 'var(--p2)', border: 'none', color: 'var(--mut)' },
 		'.cm-tooltip': {
-			backgroundColor: 'var(--popBg)',
+			backgroundColor: 'var(--solid)',
 			color: 'var(--tx)',
 			border: '1px solid var(--ln2)',
 			borderRadius: 'var(--r-row)',
@@ -148,13 +148,13 @@
 		},
 		'.cm-diagnostic': { borderLeftWidth: '3px', padding: '4px 8px' },
 		'.cm-diagnostic-error': { borderLeftColor: 'var(--ros)' },
-		'.cm-diagnostic-warning': { borderLeftColor: 'var(--amb)' },
+		'.cm-diagnostic-warning': { borderLeftColor: 'var(--gold)' },
 		'.cm-lintRange-error': {
 			backgroundImage: 'none',
 			textDecoration: 'underline wavy var(--ros)',
 			textUnderlineOffset: '3px'
 		},
-		'.cm-panels': { backgroundColor: 'var(--popBg)', color: 'var(--tx)' },
+		'.cm-panels': { backgroundColor: 'var(--solid)', color: 'var(--tx)' },
 		'.cm-param': { color: 'var(--brand)', fontWeight: '600' },
 		'.cm-sentinel': { color: 'var(--vio)', fontWeight: '600' }
 	});

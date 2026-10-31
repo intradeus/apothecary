@@ -131,7 +131,7 @@
 			<Skeleton lines={5} />
 		{:else}
 			{#if stale.length}
-				<div class="help hue-amb">
+				<div class="help hue-gold">
 					{t('workshop.flows.binding.stale', { names: stale.join(', ') })}
 				</div>
 			{/if}

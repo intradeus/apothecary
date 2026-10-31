@@ -346,6 +346,7 @@
 	@media (max-width: 900px) {
 		.split {
 			flex-direction: column;
+			align-items: stretch;
 		}
 		.vers {
 			width: 100%;

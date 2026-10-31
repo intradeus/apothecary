@@ -166,7 +166,7 @@
 	<div
 		bind:this={el}
 		{id}
-		class="pop lg-pop"
+		class="pop isl"
 		class:top={portal}
 		{role}
 		use:toBody={portal}
@@ -213,7 +213,7 @@
 		padding: 6px 8px 8px;
 	}
 	.t {
-		font-family: var(--serif);
+		font-family: var(--display);
 		font-size: var(--fs-section);
 	}
 	.lg2 {

@@ -228,7 +228,7 @@
 													{
 														value: 'held' as const,
 														label: t('runview.egress.rule_held'),
-														tone: 'amb' as const,
+														tone: 'sky' as const,
 														title: t('runview.egress.held_title')
 													}
 												]

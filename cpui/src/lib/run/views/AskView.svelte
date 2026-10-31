@@ -132,7 +132,7 @@
 		</div>
 	{:else if pane}
 		<div class="head">
-			<span class="serif ttl">{t('runview.ask.title')}</span>
+			<span class="display ttl">{t('runview.ask.title')}</span>
 			{#if pane.harness}<span class="mono fnt">{pane.harness}</span>{/if}
 			<span class="spacer"></span>
 			{#if enabled}
@@ -186,14 +186,14 @@
 				<div class="a">
 					{#if live.text}<Markdown src={live.text} />{/if}
 					<div class="am">
-						<span class="ldot sm pulse hue-az"></span>
+						<span class="ldot sm pulse hue-emb"></span>
 						{live.tool ? t('runview.ask.doing', { tool: live.tool }) : t('runview.ask.thinking')}
 					</div>
 				</div>
 			{/if}
 		</div>
 		{#if enabled}
-			<div class="comp lg">
+			<div class="comp in">
 				<textarea
 					class="bare"
 					bind:this={ta}
@@ -294,13 +294,14 @@
 		gap: 6px;
 	}
 	.err {
-		color: var(--ros);
+		color: var(--rosTx);
 		font-size: var(--fs-meta);
 	}
 	.comp {
 		flex: none;
-		margin: 0 12px 12px;
-		border-radius: var(--r-float);
+		margin: 0 calc(12px + var(--fabClear, 0px)) 12px 12px;
+		border-radius: var(--r-btn);
+		background: var(--code);
 		display: flex;
 		flex-direction: column;
 	}

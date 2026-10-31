@@ -65,7 +65,7 @@
 				return t('run.table.updated');
 		}
 	};
-	// Columns that fold away on a phone: title, state and age remain.
+	// Columns that fold away when narrow: title, state and age remain.
 	const WIDE: RunCol[] = ['id', 'ws', 'stage', 'workshop', 'flow', 'branch', 'mr'];
 
 	// Without a title column the id is the row's link, so it stays on phones.
@@ -144,6 +144,10 @@
 </div>
 
 <style>
+	/* It folds by its own width: a table can sit in a column of a wide screen. */
+	.rt {
+		container: runlist / inline-size;
+	}
 	.rt > .r {
 		grid-template-columns: var(--tpl);
 		position: relative;
@@ -205,7 +209,7 @@
 	.head > span {
 		white-space: nowrap;
 	}
-	@media (max-width: 760px) {
+	@container runlist (max-width: 860px) {
 		.rt > .r {
 			grid-template-columns: var(--tpl-sm);
 			padding-left: 14px;

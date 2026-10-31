@@ -320,8 +320,9 @@ export function answerMeta(p: Pick<PingLike, 'status' | 'answer'>): {
 	if (p.status === 'withdrawn')
 		return { glyph: I.none, word: t('ping.verdict.withdrawn'), hue: 'mut' };
 	if (p.answer === 'approve') return { glyph: I.ok, word: t('ping.verdict.approved'), hue: 'grn' };
-	if (p.answer === 'reject') return { glyph: I.loop, word: t('ping.verdict.rejected'), hue: 'amb' };
+	if (p.answer === 'reject')
+		return { glyph: I.loop, word: t('ping.verdict.rejected'), hue: 'gold' };
 	if (p.answer === 'decline')
-		return { glyph: I.none, word: t('ping.verdict.declined'), hue: 'amb' };
+		return { glyph: I.none, word: t('ping.verdict.declined'), hue: 'gold' };
 	return { glyph: I.ok, word: t('ping.verdict.answered'), hue: 'grn' };
 }

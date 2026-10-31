@@ -30,8 +30,8 @@
 	const HUE: Record<CheckTone, Hue> = {
 		ok: 'grn',
 		bad: 'ros',
-		warn: 'amb',
-		live: 'az',
+		warn: 'gold',
+		live: 'emb',
 		none: 'mut'
 	};
 	const GLYPH: Record<CheckTone, string> = {

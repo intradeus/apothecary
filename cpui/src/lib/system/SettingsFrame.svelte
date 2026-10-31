@@ -53,13 +53,14 @@
 		display: flex;
 		flex-direction: column;
 		gap: 14px;
-		min-height: 100%;
+		flex: 1;
+		max-width: var(--settings-max);
 	}
 	/* The bar rides the bottom of the section, however short it is (the
 	 * wrapper is what sticks; the bar's own offset can't act inside it). */
 	.bar {
 		position: sticky;
-		bottom: 12px;
+		bottom: 0;
 		margin-top: auto;
 	}
 </style>

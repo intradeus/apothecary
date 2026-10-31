@@ -29,13 +29,13 @@
 	const hues = HighlightStyle.define([
 		{
 			tag: [tags.heading, tags.heading1, tags.heading2, tags.heading3],
-			color: 'var(--az)',
+			color: 'var(--brand)',
 			fontWeight: '600'
 		},
 		{ tag: [tags.emphasis], fontStyle: 'italic' },
 		{ tag: [tags.strong], fontWeight: '600' },
 		{ tag: [tags.link, tags.url], color: 'var(--brand)' },
-		{ tag: [tags.monospace, tags.string], color: 'var(--amb)' },
+		{ tag: [tags.monospace, tags.string], color: 'var(--gold)' },
 		{ tag: [tags.comment, tags.meta, tags.processingInstruction], color: 'var(--fnt)' },
 		{ tag: [tags.list, tags.quote], color: 'var(--vio)' }
 	]);
@@ -51,7 +51,7 @@
 		'&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground':
 			{ backgroundColor: 'var(--brandBg)' },
 		'.cm-matchingBracket': { backgroundColor: 'var(--p3)', outline: 'none' },
-		'.cm-panels': { backgroundColor: 'var(--popBg)', color: 'var(--tx)' }
+		'.cm-panels': { backgroundColor: 'var(--solid)', color: 'var(--tx)' }
 	});
 
 	const langFor = (p: string) => (languageFor(p) === 'markdown' ? markdown() : []);

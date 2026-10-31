@@ -112,7 +112,7 @@
 	{/snippet}
 </PageHeader>
 
-<div class="page body">
+<div class="page c">
 	<div class="filters">
 		<SearchInput bind:value={q} placeholder={t('page.tickets.search')} />
 		<WorkshopFilter value={projectFilter} onchange={setProject} />
@@ -145,7 +145,7 @@
 			>
 		</EmptyState>
 	{:else}
-		<div class="c pane">
+		<div class="pane">
 			<TicketTable
 				tickets={shown}
 				cols={projectFilter
@@ -157,16 +157,6 @@
 </div>
 
 <style>
-	.body {
-		padding-top: 2px;
-	}
-	.filters {
-		display: flex;
-		gap: 8px;
-		align-items: center;
-		flex-wrap: wrap;
-		flex: none;
-	}
 	.sel {
 		display: inline-block;
 		min-width: 150px;

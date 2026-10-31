@@ -30,7 +30,7 @@
 	{/snippet}
 </PageHeader>
 
-<div class="page body">
+<div class="page c">
 	{#if !fleet.updatedAt && fleet.error}
 		<ErrorCard
 			cause={t('page.newTicket.loadError')}
@@ -48,13 +48,3 @@
 		/>
 	{/if}
 </div>
-
-<style>
-	.body {
-		padding-top: 2px;
-	}
-	.body > :global(*) {
-		max-width: 1180px;
-		width: 100%;
-	}
-</style>

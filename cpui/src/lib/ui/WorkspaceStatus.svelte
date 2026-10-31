@@ -66,13 +66,13 @@
 		(
 			{
 				live: 'hue-grn',
-				starting: 'hue-az',
-				provisioning: 'hue-az',
-				rebuilding: 'hue-az',
-				destroying: 'hue-amb',
+				starting: 'hue-emb',
+				provisioning: 'hue-emb',
+				rebuilding: 'hue-emb',
+				destroying: 'hue-gold',
 				error: 'hue-ros',
 				stopped: 'hue-mut',
-				unknown: 'hue-amb',
+				unknown: 'hue-gold',
 				none: 'fnt'
 			} as const
 		)[v]

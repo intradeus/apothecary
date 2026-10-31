@@ -4,7 +4,7 @@
 	// muted line ("Connecting…", "Reading the flow…"). Never a blank pane.
 	import type { Hue } from './hues';
 
-	let { text, hue = 'az' }: { text?: string; hue?: Hue } = $props();
+	let { text, hue = 'emb' }: { text?: string; hue?: Hue } = $props();
 </script>
 
 <div class="ld" role="status">

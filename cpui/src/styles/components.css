@@ -3,30 +3,60 @@
 
 /* ── materials ─────────────────────────────────────────────────────────── */
 
-/* Control glass: anything that floats and controls. Never nest one in
- * another. */
-.lg {
-	background: var(--lgBg);
-	backdrop-filter: var(--lgBf);
-	-webkit-backdrop-filter: var(--lgBf);
-	border: 1px solid var(--lgLn);
-	box-shadow: var(--lgRim);
-}
-/* Popovers and modals: control glass over an opaque underlay. */
-.lg-pop {
-	background: var(--lgBg), var(--popBg);
-	backdrop-filter: var(--lgBf);
-	-webkit-backdrop-filter: var(--lgBf);
-	border: 1px solid var(--lgLn);
-	box-shadow: var(--lgRim), var(--popSh);
-}
-/* Content glass: panes that hold reading material. */
+/* Window glass: everything that sits on the background (windows, the top
+ * bar, the sidebar, overview cards). Flat tinted glass and a hairline: no
+ * rim, no gradient. Never nest it: a nested backdrop-filter only blurs its
+ * parent and reads as a flat translucent box. */
 .c {
 	background: var(--cBg);
 	backdrop-filter: var(--cBf);
 	-webkit-backdrop-filter: var(--cBf);
 	border: 1px solid var(--cLn);
-	box-shadow: var(--cSh);
+}
+/* Never glass on glass: a window inside a window is an inset. */
+.c .c {
+	background: var(--inBg);
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+	border-color: var(--inLn);
+}
+/* Inset: a control group or field inside a window or the top bar. */
+.in {
+	background: var(--inBg);
+	border: 1px solid var(--inLn);
+}
+/* Island: anything that floats over content (popovers, menus, modals, the
+ * MR island, drag ghosts). Opaque, so nothing ghosts through. */
+.isl {
+	background: var(--solid);
+	border: 1px solid var(--islLn);
+	box-shadow: var(--spec), var(--popSh);
+}
+/* Solid sky: a human must act now (the ping card, the waiting card). The
+ * card re-points the tokens, so whatever sits in it — text, fields, cards,
+ * pills — reads as ink on sky without knowing it. Its buttons are .btn-hot
+ * (ink fill) and .btn-hot-outline. */
+.skycard {
+	--tx: var(--ink);
+	--tx2: var(--ink);
+	--mut: color-mix(in srgb, var(--ink) 74%, transparent);
+	--fnt: color-mix(in srgb, var(--ink) 62%, transparent);
+	--p1: color-mix(in srgb, var(--ink) 6%, transparent);
+	--p2: color-mix(in srgb, var(--ink) 9%, transparent);
+	--p3: color-mix(in srgb, var(--ink) 14%, transparent);
+	--ln: color-mix(in srgb, var(--ink) 18%, transparent);
+	--ln2: color-mix(in srgb, var(--ink) 30%, transparent);
+	--code: color-mix(in srgb, var(--ink) 10%, transparent);
+	--spec: none;
+	--link: var(--ink);
+	--brand: var(--ink);
+	--onBrand: var(--onInk);
+	--sky: var(--ink);
+	--skyTx: var(--ink);
+	--brandBg: color-mix(in srgb, var(--ink) 12%, transparent);
+	background: var(--skyFill);
+	color: var(--ink);
+	box-shadow: 0 0 30px var(--skyGlow);
 }
 /* Card inside a pane. */
 .card-in {
@@ -55,11 +85,11 @@
 	gap: 6px;
 	font-family: var(--sans);
 	font-size: var(--fs-label);
-	font-weight: 500;
+	font-weight: 600;
 	line-height: 1.4;
 	color: var(--tx);
 	padding: 4px 11px;
-	border-radius: var(--r-btn);
+	border-radius: var(--r-tab);
 	background: var(--p2);
 	border: 1px solid var(--ln2);
 	box-shadow: var(--spec);
@@ -85,28 +115,30 @@
 	background: var(--brand);
 	color: var(--onBrand);
 	border-color: transparent;
-	font-weight: 600;
-	box-shadow: 0 0 14px var(--brandLn);
+	font-weight: 700;
+	box-shadow: 0 0 var(--glow-md) var(--brandLn);
 }
 .btn-primary:hover {
 	background: var(--brand);
 	filter: brightness(1.06);
 }
 .btn-sel {
-	background: var(--railSel);
-	border: 1px solid var(--railSelLn);
-	box-shadow: var(--railSelSh);
-	color: var(--railSelTx);
+	background: var(--sel);
+	border: 1px solid transparent;
+	box-shadow:
+		inset 0 0 0 1px var(--selLn),
+		var(--selSh);
+	color: var(--tx);
 	font-weight: 600;
 }
 .btn-sel:hover {
-	background: var(--railSel);
+	background: var(--p3);
 	filter: brightness(1.12);
 }
 .btn-danger {
 	background: transparent;
 	box-shadow: none;
-	color: var(--ros);
+	color: var(--rosTx);
 	border: 1px solid var(--rosLn);
 }
 .btn-danger:hover {
@@ -209,15 +241,20 @@
 	background: currentColor;
 	flex: none;
 }
-.t-az {
-	background: var(--azBg);
-	color: var(--az);
-	border-color: var(--azLn);
+.t-emb {
+	background: var(--embBg);
+	color: var(--embTx);
+	border-color: var(--embLn);
 }
-.t-amb {
-	background: var(--ambBg);
-	color: var(--amb);
-	border-color: var(--ambLn);
+.t-sky {
+	background: var(--skyBg);
+	color: var(--skyTx);
+	border-color: var(--skyLn);
+}
+.t-gold {
+	background: var(--goldBg);
+	color: var(--gold);
+	border-color: var(--goldLn);
 }
 .t-grn {
 	background: var(--grnBg);
@@ -226,7 +263,7 @@
 }
 .t-ros {
 	background: var(--rosBg);
-	color: var(--ros);
+	color: var(--rosTx);
 	border-color: var(--rosLn);
 }
 .t-vio {
@@ -246,7 +283,7 @@
 }
 .t-brand {
 	background: var(--brandBg);
-	color: var(--brand);
+	color: var(--link);
 	border-color: var(--brandLn);
 }
 
@@ -279,8 +316,8 @@
 	text-align: center;
 }
 .count.hot {
-	background: var(--amb);
-	color: var(--ink);
+	background: var(--sky);
+	color: var(--onBrand);
 	font-weight: 700;
 }
 /* Compact: a window tab's count, a badge pinned on a rail or tab-bar icon
@@ -303,7 +340,7 @@
 	padding: 0;
 	border-radius: 50%;
 	font-size: var(--fs-label);
-	box-shadow: 0 0 var(--glow-sm) var(--ambLn);
+	box-shadow: 0 0 var(--glow-sm) var(--skyLn);
 }
 
 .dot {
@@ -405,7 +442,7 @@
 /* The sliding bead (ui/motion `indicator`). With it, one bead springs
  * between options instead of the selection jumping; options keep their own
  * background clear. Interruptible: clicking again mid-slide retargets it
- * from where it is. `.on-rail` swaps in the sidebar's selected look. */
+ * from where it is. `.on-rail` rounds it to the sidebar's rows. */
 .has-ind {
 	position: relative;
 }
@@ -437,8 +474,6 @@
 }
 .on-rail > .ind {
 	border-radius: var(--r-row);
-	background: var(--railSel);
-	box-shadow: var(--railOnSh);
 }
 
 /* ── menus (popovers, the command palette) ─────────────────────────────── */
@@ -550,6 +585,10 @@ input[type='checkbox'] {
 	flex-direction: column;
 	align-items: flex-start;
 	gap: 7px;
+	overflow-wrap: anywhere;
+}
+.choices > * {
+	max-width: 100%;
 }
 .choices.row {
 	flex-direction: row;
@@ -597,7 +636,7 @@ fieldset.field > legend {
 /* The required mark after a field's label. */
 .req {
 	margin-left: 2px;
-	color: var(--amb);
+	color: var(--gold);
 }
 /* A field drawn by a component around its own parts (a search box, a tag
  * list, a stepper): an input's box, its focus ring on whatever is focused
@@ -624,7 +663,7 @@ fieldset.field > legend {
 .err,
 .error {
 	font-size: var(--fs-help);
-	color: var(--ros);
+	color: var(--rosTx);
 }
 .grid2 {
 	display: grid;
@@ -693,7 +732,7 @@ tr.sel {
 
 /* ── panes ─────────────────────────────────────────────────────────────── */
 
-/* Section pane on content glass. */
+/* Section pane on window glass. */
 .pane {
 	border-radius: var(--r-pane);
 	overflow: hidden;
@@ -762,10 +801,10 @@ details[open] > summary .caretglyph {
 }
 .diff .dl.del {
 	background: var(--rosBg);
-	color: var(--ros);
+	color: var(--rosTx);
 }
 .diff .dl.hunk {
-	color: var(--az);
+	color: var(--link);
 	opacity: 0.8;
 }
 
@@ -801,27 +840,27 @@ details[open] > summary .caretglyph {
 	font-size: var(--fs-label);
 	padding: 5px 14px;
 }
-/* "A human must act now": the amber pair (ping cards, gates). */
+/* The pair inside a solid-sky card (.skycard): ink fill, and ink outline. */
 .btn-hot {
-	background: var(--amb);
-	color: var(--ink);
+	background: var(--ink);
+	color: var(--onInk);
 	border-color: transparent;
+	box-shadow: none;
 	font-weight: 700;
-	box-shadow: 0 0 var(--glow-md) var(--ambGlow);
 }
 .btn-hot:hover {
-	background: var(--amb);
-	filter: brightness(1.06);
+	background: var(--ink);
+	filter: brightness(1.3);
 }
 .btn-hot-outline {
 	background: transparent;
 	box-shadow: none;
-	color: var(--amb);
-	border: 1px solid var(--ambLn);
+	color: var(--ink);
+	border: 1.5px solid color-mix(in srgb, var(--ink) 45%, transparent);
 	font-weight: 600;
 }
 .btn-hot-outline:hover {
-	background: var(--ambBg);
+	background: color-mix(in srgb, var(--ink) 12%, transparent);
 }
 /* Live, but secondary to everything else in its group ("Other…"). */
 .btn-dashed {
@@ -843,11 +882,11 @@ details[open] > summary .caretglyph {
 }
 /* Link colour at zero specificity, so a .hue-* on the same element wins. */
 :where(.linklike) {
-	color: var(--az);
+	color: var(--link);
 }
 .linklike.brand,
 a.brand {
-	color: var(--brand);
+	color: var(--link);
 }
 
 /* ── live dots and marks ───────────────────────────────────────────────── */
@@ -880,12 +919,12 @@ a.brand {
 	border: 1.5px dashed currentColor;
 	box-shadow: none;
 }
-/* Unsaved changes: an amber dot beside a label. */
+/* Unsaved changes: a sky dot beside a label. */
 .unsaved {
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-	color: var(--amb);
+	color: var(--skyTx);
 	font-size: var(--fs-meta);
 	font-weight: 600;
 }
@@ -894,8 +933,8 @@ a.brand {
 	width: 7px;
 	height: 7px;
 	border-radius: 50%;
-	background: var(--amb);
-	box-shadow: 0 0 var(--glow-sm) var(--amb);
+	background: var(--sky);
+	box-shadow: 0 0 var(--glow-sm) var(--sky);
 }
 
 /* ── pills, extra sizes and tones ──────────────────────────────────────── */
@@ -915,12 +954,12 @@ a.brand {
 	font-family: var(--mono);
 	font-weight: 500;
 }
-/* Solid amber: the "N need you" pill. */
+/* Solid sky: the "N need you" pill, the Waiting chip. */
 .pill.t-hot {
-	background: var(--amb);
-	color: var(--ink);
+	background: var(--sky);
+	color: var(--onBrand);
 	font-weight: 700;
-	box-shadow: 0 0 var(--glow-md) var(--ambLn);
+	box-shadow: 0 0 var(--glow-md) var(--skyLn);
 }
 .count.bad {
 	background: var(--ros);
@@ -935,12 +974,15 @@ a.brand {
 }
 
 /* A hue as a variable, for components that tint several properties from
- * one colour (washes, accents, dots): `class="h-amb"` then var(--h). */
-.h-az {
-	--h: var(--az);
+ * one colour (washes, accents, dots): `class="h-gold"` then var(--h). */
+.h-emb {
+	--h: var(--emb);
 }
-.h-amb {
-	--h: var(--amb);
+.h-sky {
+	--h: var(--sky);
+}
+.h-gold {
+	--h: var(--gold);
 }
 .h-grn {
 	--h: var(--grn);
@@ -961,14 +1003,18 @@ a.brand {
 	--h: var(--brand);
 }
 /* A tinted wash in the top-left corner of a surface (the ping card). */
-.wash {
+.wash,
+.c .c.wash {
 	background:
 		radial-gradient(
 			ellipse 70% 140% at 0% 0%,
 			color-mix(in oklch, var(--h, var(--brand)) var(--hueBg), transparent),
 			transparent 70%
 		),
-		var(--wash-base, var(--lgBg));
+		var(--wash-base, var(--cBg));
+}
+.c .c.wash {
+	--wash-base: var(--inBg);
 }
 
 /* ── rows ──────────────────────────────────────────────────────────────── */
@@ -1051,7 +1097,7 @@ a.brand {
 .pane-sub {
 	padding: 10px 16px 4px;
 }
-/* A card's own head: serif title, muted legend on the right. */
+/* A card's own head: display title, muted legend on the right. */
 .card-head {
 	display: flex;
 	align-items: baseline;
@@ -1059,8 +1105,8 @@ a.brand {
 	gap: 10px;
 }
 .card-head > .t {
-	font-family: var(--serif);
-	font-style: italic;
+	font-family: var(--display);
+	font-weight: 600;
 	font-size: var(--fs-section);
 	line-height: 1.15;
 }
@@ -1069,12 +1115,16 @@ a.brand {
 	font-size: var(--fs-meta);
 	color: var(--mut);
 }
-/* Cards in a responsive grid; set --min per use. */
+/* Cards in a responsive grid, sharing the whole row however few; set --min
+ * per use. */
 .card-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(min(var(--min, 340px), 100%), 1fr));
+	grid-template-columns: repeat(auto-fit, minmax(min(var(--min, 340px), 100%), 1fr));
 	gap: 10px;
 	align-items: start;
+}
+.card-grid > * {
+	max-width: var(--card-max);
 }
 
 /* Key/value pairs (config summaries, agent specs). `.code` boxes them. */
@@ -1133,6 +1183,30 @@ dl.kv.code > dd {
 	padding: 8px 12px;
 	min-width: 0;
 	flex-wrap: wrap;
+}
+/* The filters over a page's list: search, then what narrows it. */
+.filters {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	flex-wrap: wrap;
+	flex: none;
+}
+.filters > .fieldbox,
+.filters .select,
+.filters > .seg {
+	box-sizing: border-box;
+	height: var(--filter-h);
+}
+/* A page's sections, side by side as far as the window has room for them. */
+.sections {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(var(--section-min), 100%), 1fr));
+	gap: var(--shell-gap);
+	align-items: start;
+}
+.sections > * {
+	min-width: 0;
 }
 /* A quiet hint ("refreshes every 5s"); at the right end of a .vbar. */
 .hint {
@@ -1205,15 +1279,14 @@ textarea.bare {
 	margin: 0 auto;
 	width: 100%;
 }
-/* Rendered documents get the serif headings the rest of the UI uses for
+/* Rendered documents get the display headings the rest of the UI uses for
  * section titles. */
 .md.doc h1,
 .md.doc h2 {
-	font-family: var(--serif);
-	font-style: italic;
-	font-weight: 400;
+	font-family: var(--display);
+	font-weight: 600;
 	font-size: var(--fs-section);
-	letter-spacing: 0;
+	letter-spacing: var(--tr-heading);
 	margin: 18px 0 8px;
 }
 .md.doc h1 {

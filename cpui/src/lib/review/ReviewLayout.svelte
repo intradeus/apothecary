@@ -44,7 +44,7 @@
 	<div class="wb">
 		<div class="nav c pane">{@render nav()}</div>
 		<section class="main c pane">{@render main()}</section>
-		<aside class="side lg pane">{@render side()}</aside>
+		<aside class="side c pane">{@render side()}</aside>
 	</div>
 </div>
 
@@ -62,7 +62,7 @@
 		display: grid;
 		grid-template-columns: 220px minmax(0, 1fr) var(--aside-w);
 		gap: 10px;
-		padding: 2px 22px 16px;
+		padding: var(--shell-gap);
 	}
 	.embedded {
 		flex: none;

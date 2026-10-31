@@ -414,7 +414,7 @@
 	{/each}
 	{#each undeclared as name (name)}
 		<div class="row nowrap mcp-row">
-			<span class="mono hue-amb grow">{name}</span>
+			<span class="mono hue-gold grow">{name}</span>
 			<span class="fnt small">{t('flow.agents.mcpUndeclared')}</span>
 			<button class="btn-sm btn-ghost" onclick={() => setMCP(name, false)}
 				>{t('flow.insp.removePort')}</button

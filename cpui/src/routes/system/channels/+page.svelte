@@ -14,6 +14,7 @@
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Callout from '$lib/ui/Callout.svelte';
+	import HeaderAction from '$lib/ui/HeaderAction.svelte';
 	import SectionHeader from '$lib/ui/SectionHeader.svelte';
 	import ConfigCard, { type ConfigRow } from '$lib/ui/ConfigCard.svelte';
 	import AddCard from '$lib/system/AddCard.svelte';
@@ -96,7 +97,7 @@
 	}
 
 	const labels: Record<string, string> = { matrix: 'Matrix', slack: 'Slack', discord: 'Discord' };
-	const hues: Record<string, Hue> = { matrix: 'tea', slack: 'vio', discord: 'az' };
+	const hues: Record<string, Hue> = { matrix: 'tea', slack: 'vio', discord: 'sky' };
 	const label = (k: string) => labels[k] ?? k;
 	const hue = (k: string): Hue => hues[k] ?? 'mut';
 	/** Slack and Discord are both a webhook whose URL is the secret. */
@@ -141,17 +142,12 @@
 		<Skeleton pane lines={3} />
 	</div>
 {:else}
-	<SectionHeader title={t('page.system.channels.title')} count={entries.length}>
-		{#snippet actions()}
-			<button
-				class="btn-sm"
-				class:btn-sel={adding}
-				aria-pressed={adding}
-				onclick={() => (adding = !adding)}
-				>{adding ? t('page.channels.close') : `${I.add} ${t('page.channels.add')}`}</button
-			>
-		{/snippet}
-	</SectionHeader>
+	<HeaderAction>
+		<button class="btn-primary btn-lg" aria-pressed={adding} onclick={() => (adding = !adding)}
+			>{adding ? t('page.channels.close') : `${I.add} ${t('page.channels.add')}`}</button
+		>
+	</HeaderAction>
+	<SectionHeader title={t('page.system.channels.title')} count={entries.length} />
 
 	{#if error && !adding}<ErrorCard cause={t('page.channels.failed')} detail={error} />{/if}
 

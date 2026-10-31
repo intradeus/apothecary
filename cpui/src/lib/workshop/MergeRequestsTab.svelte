@@ -20,6 +20,7 @@
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { I } from '$lib/ui/icons';
+	import TransportIcon from '$lib/ui/TransportIcon.svelte';
 
 	let { project, flows }: { project: Project; flows: Flow[] | null } = $props();
 
@@ -75,12 +76,10 @@
 	}
 </script>
 
-<div class="row nowrap">
-	<p class="lede grow">{t('workshop.mrs.lede')}</p>
-</div>
+<p class="lede">{t('workshop.mrs.lede')}</p>
 
 {#if flows && !starts.length}
-	<div class="help hue-amb">{t('workshop.mrs.noFlow')}</div>
+	<div class="help hue-gold">{t('workshop.mrs.noFlow')}</div>
 {/if}
 
 {#if error && !rows}
@@ -88,17 +87,9 @@
 {:else if !rows}
 	<Skeleton pane lines={4} />
 {:else if !rows.length}
-	<section class="c pane">
-		<div class="pane-body">
-			<EmptyState compact title={t('workshop.mrs.emptyTitle')} text={t('workshop.mrs.emptyText')} />
-		</div>
-	</section>
+	<EmptyState compact title={t('workshop.mrs.emptyTitle')} text={t('workshop.mrs.emptyText')} />
 {:else}
-	<section class="c pane">
-		<div class="pane-head">
-			<h2>{t('workshop.mrs.title')}</h2>
-			<span class="count">{rows.length}</span>
-		</div>
+	<section class="pane">
 		<div class="rows">
 			<div class="r head fr">
 				<span>{t('workshop.mrs.colMR')}</span><span>{t('workshop.mrs.colBranch')}</span><span
@@ -120,7 +111,7 @@
 								· <span class="pill sm t-mut">{t('workshop.mrs.fork')}</span
 								>{/if}{#if row.stackedOn}
 								· <a
-									class="pill sm t-amb"
+									class="pill sm t-gold"
 									href={row.stackedOn.url}
 									target="_blank"
 									rel="noreferrer"
@@ -156,7 +147,8 @@
 							disabled={!starts.length || busy !== null}
 							aria-busy={busy === row.mr.iid}
 							title={starts.length ? '' : t('workshop.mrs.noFlow')}
-							onclick={(ev) => pick(row, ev)}>{I.play} {t('workshop.mrs.start')}</button
+							onclick={(ev) => pick(row, ev)}
+							><TransportIcon kind="play" /> {t('workshop.mrs.start')}</button
 						>
 					</span>
 				</div>
@@ -165,10 +157,10 @@
 	</section>
 {/if}
 
-<Popover {anchor} bind:open={pickOpen} placement="below-end">
+<Popover {anchor} bind:open={pickOpen} placement="below-end" portal>
 	<div class="pickbox">
 		{#if pickFor?.stackedOn}
-			<span class="help hue-amb small"
+			<span class="help hue-gold small"
 				>{t('workshop.mrs.stackedPick', {
 					iid: pickFor.mr.iid,
 					base: pickFor.stackedOn.iid,

@@ -4,8 +4,8 @@
 	/** What a view shows in its tab and its leaf's strip. */
 	export interface ViewMeta {
 		count?: string | number;
-		/** A count that wants attention: amber = a human must act, rose = blocked. */
-		alert?: 'amb' | 'ros';
+		/** A count that wants attention: sky = a human must act, rose = blocked. */
+		alert?: 'sky' | 'ros';
 		hint?: string;
 	}
 
@@ -32,8 +32,13 @@
 	//    new rects, a release over nothing flies the ghost home
 	//  - a gutter tracks 1:1 from the grab point, rubber-bands past the
 	//    smallest pane size and bounces back to the limit on release
-	//  - split, hide, preset, maximise and restore spring every window from
+	//  - split, hide, preset, fullscreen and restore spring every window from
 	//    its live rect; windows that appear materialise, ones that go fade
+	//
+	// Fullscreen is a moment, not a layout: one window takes the screen, over
+	// the sidebar and the top bar, and Esc puts everything back as it was. It
+	// is never saved, and the tree does not change. Inside a terminal Esc
+	// belongs to the program running there; the window's button still restores.
 	import { onMount, type Snippet } from 'svelte';
 	import type { TransitionConfig } from 'svelte/transition';
 	import { t } from '$lib/i18n/index.svelte';
@@ -70,6 +75,8 @@
 	let el = $state<HTMLDivElement | null>(null);
 	let W = $state(0);
 	let H = $state(0);
+	let vw = $state(0);
+	let vh = $state(0);
 	let resizing = $state<'' | 'col-resize' | 'row-resize'>('');
 	/** The gutter being dragged (its grip lights up on pointer-down). */
 	let held = $state('');
@@ -86,9 +93,30 @@
 		const t = desk.tree;
 		if (!t || !W || !H || !geo) return out;
 		const maxLeaf = desk.max ? leavesOf(t).find((l) => l.id === desk.max) : undefined;
-		if (maxLeaf) out.leaves.push({ n: maxLeaf, x: 0, y: 0, w: W, h: H });
-		else lay(t, 0, 0, W, H, [], out, geo.gap);
+		if (maxLeaf && el) {
+			// The whole screen, in desk coordinates: the window springs out from
+			// where it is, past the desk's edges.
+			const b = el.getBoundingClientRect();
+			const g = geo.gap;
+			out.leaves.push({ n: maxLeaf, x: g - b.left, y: g - b.top, w: vw - 2 * g, h: vh - 2 * g });
+		} else lay(t, 0, 0, W, H, [], out, geo.gap);
 		return out;
+	});
+
+	$effect(() => {
+		if (!desk.max) return;
+		const key = (e: KeyboardEvent) => {
+			if (e.key !== 'Escape' || desk.drag || !desk.max) return;
+			const el = e.target as Element | null;
+			if (el?.closest('.xterm') || document.querySelector('.scrim')) return;
+			// After every listener has had its say: a popover Esc closes first
+			// marks the event handled.
+			setTimeout(() => {
+				if (!e.defaultPrevented && desk.max) desk.toggleMax(desk.max);
+			});
+		};
+		window.addEventListener('keydown', key);
+		return () => window.removeEventListener('keydown', key);
 	});
 	$effect(() => {
 		desk.rects = layout.leaves;
@@ -167,6 +195,10 @@
 	}
 
 	const leafIdOf = (v: ViewId) => desk.leafOf(v)?.id ?? null;
+
+	/** The view in the desk's bottom-right corner, under the Layout button:
+	 *  what it docks at its foot steps aside (--fabClear). */
+	const inCorner = (p: Rect) => p.x + p.w >= W - 4 && p.y + p.h >= H - 4;
 
 	function deskPoint(e: { clientX: number; clientY: number }) {
 		const b = el!.getBoundingClientRect();
@@ -321,12 +353,15 @@
 	});
 </script>
 
+<svelte:window bind:innerWidth={vw} bind:innerHeight={vh} />
+
 <div
 	class="desk"
 	bind:this={el}
 	bind:clientWidth={W}
 	bind:clientHeight={H}
 	class:busy={!!resizing || !!desk.drag}
+	class:full={!!desk.max}
 >
 	{#each layout.leaves as r (r.n.id)}
 		<LeafWindow
@@ -383,6 +418,7 @@
 				style:top="{Math.round(p?.y ?? 0)}px"
 				style:width="{Math.round(p?.w ?? 0)}px"
 				style:height="{Math.round(p?.h ?? 0)}px"
+				style:--fabClear={p && hs?.state === 'on' && inCorner(p) ? '52px' : null}
 				onpointerdown={() => {
 					const id = places.get(v)?.leaf ?? leafIdOf(v);
 					if (id && desk.focus !== id) desk.focus = id;
@@ -400,7 +436,7 @@
 
 	{#if desk.drop}
 		<div
-			class="drop serif"
+			class="drop"
 			style:left="{Math.round(desk.drop.x)}px"
 			style:top="{Math.round(desk.drop.y)}px"
 			style:width="{Math.round(desk.drop.w)}px"
@@ -444,7 +480,10 @@
 		/* The desk's own stacking: hosts over windows, gutters over hosts,
 		 * the drag preview and ghost over everything here. */
 		isolation: isolate;
-		margin: 10px 16px 12px;
+	}
+	/* Over the top bar, whose island otherwise floats over the desk. */
+	.desk.full {
+		z-index: var(--z-full);
 	}
 	.desk.busy {
 		user-select: none;
@@ -546,15 +585,16 @@
 		position: absolute;
 		z-index: var(--z-float);
 		pointer-events: none;
-		border-radius: var(--r-pane);
-		background: var(--brandBg);
-		border: 1.5px dashed var(--brand);
-		box-shadow: 0 0 30px var(--brandLn);
+		border-radius: var(--r-btn);
+		background: color-mix(in oklch, var(--brand) 20%, transparent);
+		border: 2px dashed var(--brand);
+		box-shadow: inset 0 0 30px var(--brandGlow);
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-size: var(--fs-section);
-		color: var(--brand);
+		font-size: var(--fs-ui);
+		font-weight: 600;
+		color: var(--brandLt);
 		transition:
 			left var(--dur-spring) var(--spring),
 			top var(--dur-spring) var(--spring),
@@ -569,7 +609,7 @@
 		pointer-events: none;
 		padding: 3px 10px;
 		border-radius: var(--r-tab);
-		background: var(--sel);
+		background: var(--solid);
 		border: 1px solid var(--selLn);
 		box-shadow: var(--dragSh);
 		font-size: var(--fs-ui);

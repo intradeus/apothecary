@@ -73,7 +73,7 @@
 	.refused {
 		background: var(--rosBg);
 		border-color: var(--rosLn);
-		color: var(--ros);
+		color: var(--rosTx);
 	}
 	.missing {
 		border-style: dashed;
@@ -97,7 +97,7 @@
 		font-size: var(--fs-body);
 	}
 	.refused .ico {
-		color: var(--ros);
+		color: var(--rosTx);
 		font-weight: 700;
 	}
 	.size {
@@ -106,6 +106,6 @@
 		white-space: nowrap;
 	}
 	.refused .size {
-		color: var(--ros);
+		color: var(--rosTx);
 	}
 </style>

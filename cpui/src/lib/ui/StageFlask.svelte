@@ -14,8 +14,8 @@
 		(
 			{
 				done: 'var(--grn)',
-				running: 'var(--az)',
-				waiting: 'var(--amb)',
+				running: 'var(--emb)',
+				waiting: 'var(--sky)',
 				failed: 'var(--ros)',
 				paused: 'var(--mut)',
 				pending: 'var(--ln2)'
@@ -62,7 +62,7 @@
 			background var(--dur-fade) var(--ease-out);
 	}
 	.slosh {
-		animation: ap-slosh 2.4s ease-in-out infinite;
+		animation: ap-slosh 2.4s steps(6, jump-none) infinite;
 	}
 	.bubble {
 		position: absolute;
@@ -73,7 +73,7 @@
 		margin-left: -1.5px;
 		border-radius: 50%;
 		background: var(--bubble);
-		animation: ap-bubble 1.8s ease-in infinite;
+		animation: ap-bubble 1.8s steps(10, jump-none) infinite;
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.slosh,

@@ -15,7 +15,7 @@
 <Popover
 	{anchor}
 	bind:open={desk.menuOpen}
-	placement="below-end"
+	placement="above-end"
 	width={300}
 	title={t('desk.layouts.title')}
 	legend={t('desk.layouts.legend')}

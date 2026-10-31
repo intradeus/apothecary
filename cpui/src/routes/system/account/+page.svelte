@@ -187,218 +187,222 @@
 	}
 </script>
 
-<section class="c pane form-dense">
-	<div class="pane-head">
-		<h2>{t('page.account.profile')}</h2>
-		<span class="mut small">{t('page.account.profileSub')}</span>
-	</div>
-	<form class="pane-body col" onsubmit={saveProfile}>
-		<div class="grid2">
-			<div class="field">
-				<label for="ac-handle">{t('auth.handle')}</label>
-				<input id="ac-handle" class="mono" bind:value={handle} required autocomplete="username" />
-				<div class="help">{t('auth.handleHelp')}</div>
-			</div>
-			<div class="field">
-				<label for="ac-name">{t('auth.name')}</label>
-				<input id="ac-name" bind:value={name} autocomplete="name" />
-			</div>
+<div class="sections">
+	<section class="c pane form-dense">
+		<div class="pane-head">
+			<h2>{t('page.account.profile')}</h2>
+			<span class="mut small">{t('page.account.profileSub')}</span>
 		</div>
-		<div class="field">
-			<label for="ac-email">{t('auth.email')}</label>
-			<input id="ac-email" type="email" bind:value={email} required autocomplete="email" />
-		</div>
-		<div class="help">
-			{t('page.account.methods', { methods: session.me?.methods.join(', ') ?? '' })}
-		</div>
-		{#if profileError}<div class="err">{profileError}</div>{/if}
-		<div class="form-actions">
-			<button class="btn-primary" type="submit" disabled={profileBusy} aria-busy={profileBusy}
-				>{t('page.account.save')}</button
-			>
-		</div>
-	</form>
-</section>
-
-<section class="c pane form-dense">
-	<div class="pane-head">
-		<h2>{t('page.account.password')}</h2>
-		<span class="mut small">{t('page.account.passwordSub')}</span>
-	</div>
-	<form class="pane-body col" onsubmit={changePassword}>
-		<div class="field">
-			<label for="ac-cur">{t('page.account.current')}</label>
-			<input
-				id="ac-cur"
-				type="password"
-				bind:value={current}
-				required
-				autocomplete="current-password"
-			/>
-		</div>
-		<div class="grid2">
-			<div class="field">
-				<label for="ac-new">{t('page.account.new')}</label>
-				<input
-					id="ac-new"
-					type="password"
-					bind:value={next}
-					required
-					minlength="8"
-					autocomplete="new-password"
-				/>
-				<div class="help">{t('auth.passwordHelp')}</div>
-			</div>
-			<div class="field">
-				<label for="ac-again">{t('auth.passwordAgain')}</label>
-				<input
-					id="ac-again"
-					type="password"
-					bind:value={again}
-					required
-					autocomplete="new-password"
-				/>
-			</div>
-		</div>
-		{#if pwError}<div class="err">{pwError}</div>{/if}
-		<div class="form-actions">
-			<button class="btn-primary" type="submit" disabled={pwBusy} aria-busy={pwBusy}
-				>{t('page.account.change')}</button
-			>
-		</div>
-	</form>
-</section>
-
-<section class="c pane form-dense">
-	<div class="pane-head">
-		<h2>{t('page.account.tokens')}</h2>
-		<span class="mut small">{t('page.account.tokensSub')}</span>
-	</div>
-	<div class="pane-body col">
-		<form class="row nowrap mint" onsubmit={mint}>
-			<div class="field grow">
-				<label for="ac-token">{t('page.account.tokenName')}</label>
-				<input
-					id="ac-token"
-					bind:value={tokenName}
-					required
-					placeholder={t('page.account.tokenNamePlaceholder')}
-				/>
-			</div>
-			<button class="btn-primary" type="submit" disabled={minting} aria-busy={minting}
-				>{I.add} {t('page.account.mint')}</button
-			>
-		</form>
-		{#if minted}
-			<Callout hue="amb" glyph={I.info} ondismiss={() => (minted = null)}>
-				<div class="col">
-					<strong>{t('page.account.minted')}</strong>
-					<div class="row nowrap">
-						<code class="secret mono">{minted.secret}</code>
-						<button class="btn-sm" onclick={copySecret}>{t('page.account.copy')}</button>
-					</div>
-					<span class="mut small">{t('page.account.usage', { secret: minted.secret })}</span>
+		<form class="pane-body col" onsubmit={saveProfile}>
+			<div class="grid2">
+				<div class="field">
+					<label for="ac-handle">{t('auth.handle')}</label>
+					<input id="ac-handle" class="mono" bind:value={handle} required autocomplete="username" />
+					<div class="help">{t('auth.handleHelp')}</div>
 				</div>
-			</Callout>
-		{/if}
-		{#if tokensError}<ErrorCard cause={t('page.account.failed')} detail={tokensError} />{/if}
-		{#if !tokensLoaded}
-			<Skeleton lines={2} />
-		{:else if tokens.length}
-			<div class="rows">
-				{#each tokens as tk (tk.id)}
-					<div class="r trow">
-						<span class="nm ell">{tk.name}</span>
-						<span class="mono mut">{tk.prefix}…</span>
-						<span class="mut small ell">
-							{t('page.account.created', { ago: ago(tk.createdAt) })}
-							· {tk.lastUsedAt
-								? t('page.account.lastUsed', { ago: ago(tk.lastUsedAt) })
-								: t('page.account.neverUsed')}
-						</span>
-						<button
-							class="btn-danger btn-sm"
-							aria-busy={revoking === tk.id}
-							onclick={() => revoke(tk)}>{t('page.account.revoke')}</button
-						>
-					</div>
-				{/each}
-			</div>
-		{:else}
-			<EmptyState
-				compact
-				title={t('page.account.noTokens')}
-				text={t('page.account.noTokensText')}
-			/>
-		{/if}
-	</div>
-</section>
-
-<section class="c pane form-dense">
-	<div class="pane-head">
-		<h2>{t('page.account.ssh')}</h2>
-		<span class="mut small">{t('page.account.sshSub')}</span>
-	</div>
-	<div class="pane-body col">
-		<form class="col" onsubmit={addKey}>
-			<div class="field">
-				<label for="ac-sshkey">{t('page.account.sshKey')}</label>
-				<textarea
-					id="ac-sshkey"
-					class="mono pubkey"
-					rows={2}
-					bind:value={keyLine}
-					required
-					spellcheck="false"
-					placeholder={t('page.account.sshKeyPlaceholder')}></textarea>
-				<div class="help">{t('page.account.sshKeyHelp')}</div>
-			</div>
-			<div class="row nowrap mint">
-				<div class="field grow">
-					<label for="ac-sshname">{t('page.account.sshName')}</label>
-					<input
-						id="ac-sshname"
-						bind:value={keyName}
-						placeholder={t('page.account.sshNamePlaceholder')}
-					/>
+				<div class="field">
+					<label for="ac-name">{t('auth.name')}</label>
+					<input id="ac-name" bind:value={name} autocomplete="name" />
 				</div>
-				<button class="btn-primary" type="submit" disabled={adding} aria-busy={adding}
-					>{I.add} {t('page.account.sshAdd')}</button
+			</div>
+			<div class="field">
+				<label for="ac-email">{t('auth.email')}</label>
+				<input id="ac-email" type="email" bind:value={email} required autocomplete="email" />
+			</div>
+			<div class="help">
+				{t('page.account.methods', { methods: session.me?.methods.join(', ') ?? '' })}
+			</div>
+			{#if profileError}<div class="err">{profileError}</div>{/if}
+			<div class="form-actions">
+				<button class="btn-primary" type="submit" disabled={profileBusy} aria-busy={profileBusy}
+					>{t('page.account.save')}</button
 				>
 			</div>
 		</form>
-		{#if keysError}<ErrorCard cause={t('page.account.failed')} detail={keysError} />{/if}
-		{#if !keysLoaded}
-			<Skeleton lines={2} />
-		{:else if keys.length}
-			<div class="rows">
-				{#each keys as k (k.id)}
-					<div class="r krow">
-						<span class="nm ell" title={k.publicKey}>{k.name}</span>
-						<span class="mono mut small ell" title={k.fingerprint}>{k.type} · {k.fingerprint}</span>
-						<span class="mut small ell">
-							{t('page.account.created', { ago: ago(k.createdAt) })}
-							· {k.lastUsedAt
-								? t('page.account.lastUsed', { ago: ago(k.lastUsedAt) })
-								: t('page.account.neverUsed')}
-						</span>
-						<button
-							class="btn-danger btn-sm"
-							aria-busy={removing === k.id}
-							onclick={() => removeKey(k)}>{t('page.account.sshRemove')}</button
-						>
-					</div>
-				{/each}
+	</section>
+
+	<section class="c pane form-dense">
+		<div class="pane-head">
+			<h2>{t('page.account.password')}</h2>
+			<span class="mut small">{t('page.account.passwordSub')}</span>
+		</div>
+		<form class="pane-body col" onsubmit={changePassword}>
+			<div class="field">
+				<label for="ac-cur">{t('page.account.current')}</label>
+				<input
+					id="ac-cur"
+					type="password"
+					bind:value={current}
+					required
+					autocomplete="current-password"
+				/>
 			</div>
-		{:else}
-			<EmptyState
-				compact
-				title={t('page.account.noSshKeys')}
-				text={t('page.account.noSshKeysText')}
-			/>
-		{/if}
-	</div>
-</section>
+			<div class="grid2">
+				<div class="field">
+					<label for="ac-new">{t('page.account.new')}</label>
+					<input
+						id="ac-new"
+						type="password"
+						bind:value={next}
+						required
+						minlength="8"
+						autocomplete="new-password"
+					/>
+					<div class="help">{t('auth.passwordHelp')}</div>
+				</div>
+				<div class="field">
+					<label for="ac-again">{t('auth.passwordAgain')}</label>
+					<input
+						id="ac-again"
+						type="password"
+						bind:value={again}
+						required
+						autocomplete="new-password"
+					/>
+				</div>
+			</div>
+			{#if pwError}<div class="err">{pwError}</div>{/if}
+			<div class="form-actions">
+				<button class="btn-primary" type="submit" disabled={pwBusy} aria-busy={pwBusy}
+					>{t('page.account.change')}</button
+				>
+			</div>
+		</form>
+	</section>
+
+	<section class="c pane form-dense">
+		<div class="pane-head">
+			<h2>{t('page.account.tokens')}</h2>
+			<span class="mut small">{t('page.account.tokensSub')}</span>
+		</div>
+		<div class="pane-body col">
+			<form class="row nowrap mint" onsubmit={mint}>
+				<div class="field grow">
+					<label for="ac-token">{t('page.account.tokenName')}</label>
+					<input
+						id="ac-token"
+						bind:value={tokenName}
+						required
+						placeholder={t('page.account.tokenNamePlaceholder')}
+					/>
+				</div>
+				<button class="btn-primary" type="submit" disabled={minting} aria-busy={minting}
+					>{I.add} {t('page.account.mint')}</button
+				>
+			</form>
+			{#if minted}
+				<Callout hue="sky" glyph={I.info} ondismiss={() => (minted = null)}>
+					<div class="col">
+						<strong>{t('page.account.minted')}</strong>
+						<div class="row nowrap">
+							<code class="secret mono">{minted.secret}</code>
+							<button class="btn-sm" onclick={copySecret}>{t('page.account.copy')}</button>
+						</div>
+						<span class="mut small">{t('page.account.usage', { secret: minted.secret })}</span>
+					</div>
+				</Callout>
+			{/if}
+			{#if tokensError}<ErrorCard cause={t('page.account.failed')} detail={tokensError} />{/if}
+			{#if !tokensLoaded}
+				<Skeleton lines={2} />
+			{:else if tokens.length}
+				<div class="rows">
+					{#each tokens as tk (tk.id)}
+						<div class="r trow">
+							<span class="nm ell">{tk.name}</span>
+							<span class="mono mut">{tk.prefix}…</span>
+							<span class="mut small ell">
+								{t('page.account.created', { ago: ago(tk.createdAt) })}
+								· {tk.lastUsedAt
+									? t('page.account.lastUsed', { ago: ago(tk.lastUsedAt) })
+									: t('page.account.neverUsed')}
+							</span>
+							<button
+								class="btn-danger btn-sm"
+								aria-busy={revoking === tk.id}
+								onclick={() => revoke(tk)}>{t('page.account.revoke')}</button
+							>
+						</div>
+					{/each}
+				</div>
+			{:else}
+				<EmptyState
+					compact
+					title={t('page.account.noTokens')}
+					text={t('page.account.noTokensText')}
+				/>
+			{/if}
+		</div>
+	</section>
+
+	<section class="c pane form-dense">
+		<div class="pane-head">
+			<h2>{t('page.account.ssh')}</h2>
+			<span class="mut small">{t('page.account.sshSub')}</span>
+		</div>
+		<div class="pane-body col">
+			<form class="col" onsubmit={addKey}>
+				<div class="field">
+					<label for="ac-sshkey">{t('page.account.sshKey')}</label>
+					<textarea
+						id="ac-sshkey"
+						class="mono pubkey"
+						rows={2}
+						bind:value={keyLine}
+						required
+						spellcheck="false"
+						placeholder={t('page.account.sshKeyPlaceholder')}></textarea>
+					<div class="help">{t('page.account.sshKeyHelp')}</div>
+				</div>
+				<div class="row nowrap mint">
+					<div class="field grow">
+						<label for="ac-sshname">{t('page.account.sshName')}</label>
+						<input
+							id="ac-sshname"
+							bind:value={keyName}
+							placeholder={t('page.account.sshNamePlaceholder')}
+						/>
+					</div>
+					<button class="btn-primary" type="submit" disabled={adding} aria-busy={adding}
+						>{I.add} {t('page.account.sshAdd')}</button
+					>
+				</div>
+			</form>
+			{#if keysError}<ErrorCard cause={t('page.account.failed')} detail={keysError} />{/if}
+			{#if !keysLoaded}
+				<Skeleton lines={2} />
+			{:else if keys.length}
+				<div class="rows">
+					{#each keys as k (k.id)}
+						<div class="r krow">
+							<span class="nm ell" title={k.publicKey}>{k.name}</span>
+							<span class="mono mut small ell" title={k.fingerprint}
+								>{k.type} · {k.fingerprint}</span
+							>
+							<span class="mut small ell">
+								{t('page.account.created', { ago: ago(k.createdAt) })}
+								· {k.lastUsedAt
+									? t('page.account.lastUsed', { ago: ago(k.lastUsedAt) })
+									: t('page.account.neverUsed')}
+							</span>
+							<button
+								class="btn-danger btn-sm"
+								aria-busy={removing === k.id}
+								onclick={() => removeKey(k)}>{t('page.account.sshRemove')}</button
+							>
+						</div>
+					{/each}
+				</div>
+			{:else}
+				<EmptyState
+					compact
+					title={t('page.account.noSshKeys')}
+					text={t('page.account.noSshKeysText')}
+				/>
+			{/if}
+		</div>
+	</section>
+</div>
 
 <style>
 	.mint {

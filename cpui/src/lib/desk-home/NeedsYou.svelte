@@ -49,7 +49,7 @@
 						<span class="mono">{shortId(p.runId)}</span>
 						{' · '}{run?.title ?? t('deskhome.needs.runFallback')}{#if p.stageId}{' · '}<span
 								class="mono">{p.stageId}</span
-							>{/if}{#if queued > 0}<span class="hue-amb"
+							>{/if}{#if queued > 0}<span class="hue-sky"
 								>{' · '}{t('deskhome.needs.queued', { count: queued })}</span
 							>{/if}
 					</span>
@@ -64,6 +64,7 @@
 
 <style>
 	.ny {
+		container: needs / inline-size;
 		border-radius: var(--r-group);
 	}
 	h2 {
@@ -115,7 +116,7 @@
 	.age {
 		font-size: var(--fs-meta);
 	}
-	@media (max-width: 1000px) {
+	@container needs (max-width: 800px) {
 		.ny-r {
 			grid-template-columns: auto minmax(0, 1fr) auto;
 			grid-template-areas: 'ty age cta' 'what what what';

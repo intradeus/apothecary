@@ -22,7 +22,7 @@
 <span class="chips wc">
 	{#each chips as c (c.k)}
 		{#if c.ids.length === 0}
-			<span class="pill sm t-amb" title={t('workshop.chips.noneTitle', { kind: portLabel(c.k) })}
+			<span class="pill sm t-gold" title={t('workshop.chips.noneTitle', { kind: portLabel(c.k) })}
 				><span class="k">{portLabel(c.k)}</span>{t('workshop.chips.none')}</span
 			>
 		{:else}

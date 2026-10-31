@@ -59,21 +59,21 @@
 	}
 	.bad {
 		background: var(--rosBg);
-		color: var(--ros);
+		color: var(--rosTx);
 		border: 1px solid var(--rosLn);
 	}
 	.warn {
-		background: var(--ambBg);
-		color: var(--amb);
-		border: 1px solid var(--ambLn);
+		background: var(--goldBg);
+		color: var(--gold);
+		border: 1px solid var(--goldLn);
 	}
 	.info {
-		background: var(--azBg);
-		border: 1px solid var(--azLn);
+		background: var(--embBg);
+		border: 1px solid var(--embLn);
 	}
 	.live {
-		color: var(--az);
-		border: 1.5px solid var(--azLn);
+		color: var(--embTx);
+		border: 1.5px solid var(--embLn);
 	}
 	.pending {
 		border: 1.5px solid var(--ln2);

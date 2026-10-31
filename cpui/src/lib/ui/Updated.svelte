@@ -49,7 +49,7 @@
 		width: 6px;
 		height: 6px;
 		border-radius: 50%;
-		background: var(--az);
+		background: var(--emb);
 	}
 	.d.paused {
 		background: transparent;

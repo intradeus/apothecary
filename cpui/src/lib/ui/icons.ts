@@ -1,6 +1,7 @@
 // The icon vocabulary (DESIGN 2.6). No icon font: Unicode glyphs in text
 // presentation. Every glyph the UI shows comes from here by meaning, so a
-// redesign that swaps the set (or moves to SVG) edits this file only.
+// redesign that swaps the set (or moves to SVG) edits this file only. Buttons
+// draw play, pause and stop instead (TransportIcon): as text they never match.
 //
 //   import { I } from '$lib/ui/icons';   <button>{I.retry} Retry</button>
 
@@ -43,6 +44,7 @@ export const I = {
 	// windows
 	splitRight: '◫',
 	splitDown: '⊟',
+	layout: '⊞',
 	maximise: '⤢',
 	restore: '⤡',
 	// a take-over: the agent's session in your hands
@@ -57,7 +59,6 @@ export const I = {
 	dot: '●',
 	caret: '▸',
 	// brand and domain
-	rx: '℞',
 	workshop: '⚗' + T,
 	matrix: '[m]',
 	slack: '#',

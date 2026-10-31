@@ -68,14 +68,14 @@
 <svelte:head><title>{t('page.ping.docTitle')}</title></svelte:head>
 
 {#if gone}
-	<div class="page">
+	<div class="page c">
 		<EmptyState title={t('page.ping.gone')} text={t('page.ping.goneText')}>
 			<a class="btn btn-primary" href={to.inbox()}>{t('page.ping.backToInbox')}</a>
 		</EmptyState>
 	</div>
 {:else if !ping}
 	<PageHeader {crumbs} title={t('page.ping.review')} />
-	<div class="page"><Skeleton pane lines={8} /></div>
+	<div class="page c"><Skeleton pane lines={8} /></div>
 {:else if ping.status === 'pending' && !isDocumentPing(ping)}
 	<Inbox initial={ping.id} />
 {:else}
@@ -89,7 +89,7 @@
 			<span title={fmtAbs(ping!.raisedAt)}
 				>{t('page.ping.raised', { ago: ago(ping!.raisedAt) })}</span
 			>
-			{#if ping!.status === 'pending'}<span class="hue-amb">{t('page.ping.waiting')}</span>{/if}
+			{#if ping!.status === 'pending'}<span class="hue-sky">{t('page.ping.waiting')}</span>{/if}
 		{/snippet}
 		{#snippet actions()}
 			{#if ping!.link}
@@ -127,7 +127,7 @@
 			}}
 		/>
 	{:else}
-		<div class="page ans" class:withfiles={showsFiles && !curated}>
+		<div class="page c" class:withfiles={showsFiles && !curated}>
 			<section
 				class="c pane wash h-{verdict.hue} verdict"
 				style:border-color="var(--{verdict.hue}Ln, var(--cLn))"
@@ -154,10 +154,9 @@
 					</div>
 				{/if}
 			</section>
+			{#if curated}<CurationHistory {ping} embedded />{/if}
 		</div>
-		{#if curated}
-			<CurationHistory {ping} />
-		{:else if showsFiles}
+		{#if showsFiles && !curated}
 			<ReviewHistory
 				pingId={ping.id}
 				runId={ping.runId}
@@ -171,16 +170,8 @@
 {/if}
 
 <style>
-	.ans {
-		padding-top: 2px;
-	}
-	.ans > :global(*) {
-		max-width: 920px;
-		width: 100%;
-	}
-	/* The verdict: a hue-washed pane (.wash over content glass). */
+	/* The verdict: a hue-washed pane (.wash over an inset). */
 	.verdict {
-		--wash-base: var(--cBg);
 		padding: 14px 18px 16px;
 		display: flex;
 		flex-direction: column;
@@ -198,7 +189,7 @@
 		font-size: var(--fs-lead);
 	}
 	.w {
-		font-family: var(--serif);
+		font-family: var(--display);
 		font-size: var(--fs-mark);
 		line-height: 1.1;
 	}
@@ -213,6 +204,6 @@
 	.withfiles {
 		flex: none;
 		max-height: 38vh;
-		padding-bottom: 10px;
+		margin-bottom: 0;
 	}
 </style>

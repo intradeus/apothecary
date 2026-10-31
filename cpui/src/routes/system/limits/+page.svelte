@@ -99,7 +99,11 @@
 			<h2>{t('page.limits.head')}</h2>
 			<span class="mut small">{t('page.limits.headSub')}</span>
 		</div>
-		<SettingRow label={t('page.limits.concLabel')} forId="lim-runs" help={t('page.limits.concHelp')}>
+		<SettingRow
+			label={t('page.limits.concLabel')}
+			forId="lim-runs"
+			help={t('page.limits.concHelp')}
+		>
 			{#snippet note()}
 				{t('page.limits.nowRunning', { count: fleet.slots.length })}{#if fleet.queued.length}
 					· {t('page.limits.queued', { count: fleet.queued.length })}{/if}
@@ -110,7 +114,11 @@
 				<span class="mono val">{cap(fleet.limits?.maxConcurrentRuns)}</span>
 			{/if}
 		</SettingRow>
-		<SettingRow label={t('page.limits.envsLabel')} forId="lim-envs" help={t('page.limits.envsHelp')}>
+		<SettingRow
+			label={t('page.limits.envsLabel')}
+			forId="lim-envs"
+			help={t('page.limits.envsHelp')}
+		>
 			{#snippet note()}{t('page.limits.envsNow', { count: fleet.envs.length })}{/snippet}
 			{#if session.admin && draft}
 				{@render capField('lim-envs', t('page.limits.envsLabel'), 'maxEnvironments')}
@@ -146,7 +154,8 @@
 		display: flex;
 		flex-direction: column;
 		gap: 14px;
-		min-height: 100%;
+		flex: 1;
+		max-width: var(--settings-max);
 	}
 	.val {
 		font-size: var(--fs-lead);
@@ -161,7 +170,7 @@
 	}
 	.bar {
 		position: sticky;
-		bottom: 12px;
+		bottom: 0;
 		margin-top: auto;
 	}
 </style>

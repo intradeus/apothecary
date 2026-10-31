@@ -41,18 +41,18 @@
 >
 	{#snippet meta()}
 		<span>{t('page.desk.workshopCount', { count: projects.length })}</span>
-		<span><span class="hue-az mono">{liveTotal}</span> {t('page.workshops.live')}</span>
+		<span><span class="hue-emb mono">{liveTotal}</span> {t('page.workshops.live')}</span>
 		{#if fleet.pending.length}<span
 				><span class="count hot">{fleet.pending.length}</span>
 				{t('page.workshops.awaitingYou')}</span
 			>{/if}
 	{/snippet}
 	{#snippet actions()}
-		<a class="btn btn-primary" href={to.newWorkshop()}>{newLabel}</a>
+		<a class="btn btn-primary btn-lg" href={to.newWorkshop()}>{newLabel}</a>
 	{/snippet}
 </PageHeader>
 
-<div class="page">
+<div class="page c">
 	{#if fleet.error && !fleet.updatedAt}
 		<ErrorCard
 			cause={t('page.workshops.loadError')}
@@ -80,7 +80,7 @@
 						<Vial projectId={p.id} idle={!live.length} />
 						<span class="nm ell">{p.name}</span>
 						<span class="sum">
-							{#if live.length}<span class="hue-az mono">{live.length}</span>
+							{#if live.length}<span class="hue-emb mono">{live.length}</span>
 								{t('page.workshops.live')}{:else}{t('page.workshops.quiet')}{/if}
 							{#if pings}<span class="count hot" title={t('page.workshops.pingsAwaiting')}
 									>{pings}</span

@@ -124,7 +124,7 @@
 {#if phases.length}
 	<div class="rc card-in">
 		<div class="hd">
-			<span class="t serif">{t('run.phases.title')}</span>
+			<span class="t display">{t('run.phases.title')}</span>
 			<span class="sub">{t('run.phases.sub')}</span>
 		</div>
 		{#each open as mr (mr.repo + mr.branch)}
@@ -239,7 +239,7 @@
 		font-size: var(--fs-label);
 	}
 	.phase.islive .pid {
-		color: var(--brand);
+		color: var(--link);
 	}
 	.who {
 		display: flex;

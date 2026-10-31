@@ -1,8 +1,8 @@
 <script lang="ts">
-	// The live run's header (DESIGN 7.1, 4.5, 4.6): the batch label, the
-	// breadcrumb with the Layouts button, the title with its state chip, the
-	// meta row, and three control groups that keep the RUN's lifecycle and
-	// the WORKSPACE's apart — plus the merge requests the run opened.
+	// The run's top bar (DESIGN 4.5, 7.1): one glass strip. The title block —
+	// breadcrumb, a small title, a status line — then two inset groups that keep
+	// the RUN's lifecycle and the WORKSPACE's apart, then the MR island. The
+	// title gives context; the windows hold the information.
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
 	import { to } from '$lib/urls';
@@ -10,15 +10,7 @@
 	import { onMount } from 'svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import type { MergeRequestLive, RunSsh } from '$lib/domain';
-	import {
-		ago,
-		fmtAbs,
-		fmtClockDuration,
-		fmtCost,
-		fmtHoursMinutes,
-		shortId,
-		stateHue
-	} from '$lib/format';
+	import { ago, fmtAbs, fmtClockDuration, fmtCost, shortId } from '$lib/format';
 	import { I } from '$lib/ui/icons';
 	import { toast } from '$lib/ui/toast.svelte';
 	import Breadcrumbs, { type Crumb } from '$lib/ui/Breadcrumbs.svelte';
@@ -27,9 +19,9 @@
 	import WorkspaceStatus from '$lib/ui/WorkspaceStatus.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
-	import LayoutsPopover from '$lib/desk/LayoutsPopover.svelte';
 	import type { DeskState } from '$lib/desk/desk.svelte';
-	import MrStatus from './MrStatus.svelte';
+	import TransportIcon from '$lib/ui/TransportIcon.svelte';
+	import MrIsland, { type MrRow } from './MrIsland.svelte';
 	import RerunModal from './RerunModal.svelte';
 	import { accentSplit, vscodeRemoteSettings } from './derive';
 	import type { RunStore } from './store.svelte';
@@ -51,15 +43,6 @@
 					}
 				]
 			: []),
-		...(run.ticketId
-			? [
-					{
-						label: ticketKey ?? rs.ticket?.title ?? t('run.header.ticketFallback'),
-						href: to.ticket(run.ticketId),
-						mono: !!ticketKey
-					}
-				]
-			: []),
 		{ label: sid, mono: true }
 	]);
 	// How long the batch has brewed: ticking while the run lives, stopped at
@@ -69,11 +52,10 @@
 		rs.terminal ? (rs.events.findLast((e) => END.has(e.type))?.ts ?? run.updatedAt) : undefined
 	);
 	const brewed = $derived(
-		fmtHoursMinutes(
+		fmtClockDuration(
 			(endedAt ? new Date(endedAt).getTime() : rs.now) - new Date(run.createdAt).getTime()
 		)
 	);
-	const glow = $derived(`color-mix(in oklch, ${stateHue[run.state]} 45%, transparent)`);
 	const active = $derived(!rs.terminal);
 	const wsName = $derived(run.envId ?? t('run.header.theWorkspace'));
 
@@ -83,7 +65,6 @@
 			(rs.events.findLast((e) => e.type === 'stage_failed')?.payload.stage_id as string | undefined)
 	);
 
-	let splitBtn = $state<HTMLButtonElement | null>(null);
 	let envBtn = $state<HTMLButtonElement | null>(null);
 	let rebuildBtn = $state<HTMLButtonElement | null>(null);
 	let envOpen = $state(false);
@@ -163,10 +144,6 @@
 		const timer = setInterval(() => active && !document.hidden && loadMrs(), 30_000);
 		return () => clearInterval(timer);
 	});
-	const mrShown = $derived([
-		...mrLive.filter((m) => m.state === 'open' || m.error),
-		...mrLive.filter((m) => m.state === 'merged' && !m.error)
-	]);
 
 	async function stop() {
 		const ok = await confirmDialog({
@@ -249,114 +226,106 @@
 	const canRebuild = $derived(
 		!!run.envId && run.state !== 'archived' && (rs.terminal || run.state === 'paused')
 	);
-	// The run's merge requests: the one it was created on, the ones it
-	// opened and — only when its flow opens merge requests — a "not yet" slot
-	// for each checkout still without one. A run that has none and whose flow
-	// opens none shows no slot at all.
-	const mrSlots = $derived.by(() => {
-		const n = Math.max(rs.opensMRs ? run.checkouts.length : 0, run.mrs.length, 1);
-		const slots: { label: string; url?: string; title: string }[] = [];
+	// The run's merge requests: the one it was created on, the ones it opened
+	// and — only when its flow opens merge requests — a "not yet" slot for each
+	// checkout still without one. A run that has none and whose flow opens none
+	// shows no island at all. Live status joins by URL; merged ones sink to the
+	// end, so the pill leads with what is still in play.
+	const mrRows = $derived.by(() => {
+		const rows: MrRow[] = [];
 		const seen = new Set<string>();
+		const live = (url: string) => mrLive.find((m) => m.url === url);
 		const a = run.adopted;
-		if (a)
-			slots.push({
-				label: `!${a.iid} ${I.external}`,
+		if (a) {
+			seen.add(a.repo);
+			rows.push({
+				key: a.url,
+				label: `!${a.iid}`,
 				url: a.url,
-				title: t('run.mr.adopted', { title: a.title || `!${a.iid}`, author: a.author ?? '?' })
-			});
-		const name = (i: number) => (n > 1 ? t('run.mr.slot', { i: i + 1, n }) : t('run.mr.one'));
-		run.mrs.forEach((mr, i) => {
-			seen.add(mr.repo);
-			if (mr.url === a?.url) return;
-			slots.push({
-				label: `${name(i)} ${I.external}`,
-				url: mr.url,
-				title: `${mr.repo !== 'repo' ? mr.repo + ': ' : ''}${mr.branch}${mr.target ? ' → ' + mr.target : ''}`
-			});
-		});
-		for (const c of rs.opensMRs ? run.checkouts : []) {
-			const key = c.primary ? 'repo' : c.name;
-			if (seen.has(key) || seen.has(c.name) || slots.length >= n) continue;
-			slots.push({
-				label: `${name(slots.length)} ${I.none}`,
-				title: t('run.mr.notOpenedRepo', { name: c.name })
+				title: t('run.mr.adopted', { title: a.title || `!${a.iid}`, author: a.author ?? '?' }),
+				live: live(a.url)
 			});
 		}
-		// Runs from before multi-repo carry only mrUrl, no mrs list.
-		if (!slots.length && run.mrUrl)
-			slots.push({
-				label: `${t('run.mr.one')} ${I.external}`,
-				url: run.mrUrl,
-				title: run.branch ?? t('run.mr.title')
+		for (const mr of run.mrs) {
+			seen.add(mr.repo);
+			if (mr.url === a?.url) continue;
+			rows.push({
+				key: mr.url,
+				label: `!${mr.iid}`,
+				url: mr.url,
+				title: `${mr.repo !== 'repo' ? mr.repo + ': ' : ''}${mr.branch}${mr.target ? ' → ' + mr.target : ''}`,
+				live: live(mr.url)
 			});
-		if (!slots.length && rs.opensMRs)
-			slots.push({ label: `${t('run.mr.one')} ${I.none}`, title: t('run.mr.notOpened') });
-		return slots;
+		}
+		for (const c of rs.opensMRs ? run.checkouts : []) {
+			const key = c.primary ? 'repo' : c.name;
+			if (seen.has(key) || seen.has(c.name)) continue;
+			rows.push({ key: c.name, label: I.none, title: t('run.mr.notOpenedRepo', { name: c.name }) });
+		}
+		// Runs from before multi-repo carry only mrUrl, no mrs list.
+		if (!rows.length && run.mrUrl)
+			rows.push({
+				key: run.mrUrl,
+				label: t('run.mr.one'),
+				url: run.mrUrl,
+				title: run.branch ?? t('run.mr.title'),
+				live: live(run.mrUrl)
+			});
+		if (!rows.length && rs.opensMRs)
+			rows.push({ key: 'none', label: I.none, title: t('run.mr.notOpened') });
+		return [...rows].sort(
+			(x, y) =>
+				Number(!x.url) - Number(!y.url) ||
+				Number(x.live?.state === 'merged') - Number(y.live?.state === 'merged')
+		);
+	});
+	const mrTarget = $derived.by(() => {
+		const m = run.mrs[0];
+		if (!m) return undefined;
+		return `${project?.name ?? m.repo} → ${m.target ?? run.sourceBranch ?? t('run.header.default')}`;
 	});
 </script>
 
-<header class="rh">
-	<div class="rbadge lg" style:--glow={glow}>
-		<div class="bt"><span>{t('run.header.batch')}</span><span class="mono">Nº</span></div>
-		<div class="bid">{shortId(run.id, '')}</div>
-		<div
-			class="bb tick"
-			title={t('run.header.started', {
-				at: fmtAbs(run.createdAt),
-				ago: ago(run.createdAt, rs.now)
-			})}
-		>
-			{t(rs.terminal ? 'run.header.brewed' : 'run.header.brewing', { duration: brewed })}
-		</div>
-		<span class="bg"></span>
-	</div>
-
-	<div class="mid">
+<header class="rh c">
+	<div class="title">
 		<div class="crow">
 			<Breadcrumbs {crumbs} />
-			<!-- A narrow screen has one window: no layout to pick. -->
-			{#if !desk.compact}<button
-					bind:this={splitBtn}
-					class="btn-sel btn-sm layout"
-					title={t('run.header.layouts')}
-					aria-expanded={desk.menuOpen}
-					onclick={() => (desk.menuOpen = !desk.menuOpen)}
-				>
-					<span class="lg-ic"><span></span><span></span><span></span></span>{desk.label}
-					{I.menu}
-				</button>{/if}
-		</div>
-		<div class="trow">
-			<h1 title={run.title}>
-				{plain}{#if accent}{' '}<span class="accent">{accent}</span>{/if}
-			</h1>
-			<StatusChip state={run.state} suffix />
-			{#if run.hold && !rs.terminal}
-				<span
-					class="pill sc t-amb heldchip"
-					title={t('run.header.heldTitle', { ago: ago(run.hold.since, rs.now) })}
-					><span class="ldot sm pulse hue-amb"></span>{t('run.header.held')} ·
-					<span class="mono">{fmtClockDuration(rs.now - new Date(run.hold.since).getTime())}</span
-					></span
-				>
-			{/if}
-		</div>
-		<div class="meta">
 			{#if run.ticketId}
-				<a class="tk tx" href={to.ticket(run.ticketId)}
-					>{#if ticketKey}<span class="tag">{ticketKey}</span>{/if}{t('run.header.ticket')}
-					{I.external}</a
+				<span class="dot-sep">·</span>
+				<a class="link" href={to.ticket(run.ticketId)} title={rs.ticket?.title}
+					>{ticketKey ?? t('run.header.ticket')} {I.external}</a
 				>
 			{/if}
 			{#if run.ticketUrl}
-				<a class="tx" href={run.ticketUrl} target="_blank" rel="noreferrer"
+				<a class="link" href={run.ticketUrl} target="_blank" rel="noreferrer"
 					>{t('run.header.tracker')} {I.external}</a
 				>
 			{/if}
-			<span
-				>{t('run.header.flow')} <span class="tx">{run.flowName}</span>{#if run.flowHash}
-					<span class="mono hash fnt">@{run.flowHash.slice(0, 6)}</span>{/if}</span
-			>
+		</div>
+		<h1 title={run.title}>
+			{plain}{#if accent}{' '}<span class="accent">{accent}</span>{/if}
+		</h1>
+		<div class="status">
+			<StatusChip state={run.state} size="sm" suffix={run.state === 'failed'} />
+			{#if run.hold && !rs.terminal}
+				<span
+					class="pill sm t-sky"
+					title={t('run.header.heldTitle', { ago: ago(run.hold.since, rs.now) })}
+					><span class="ldot sm pulse hue-sky"></span>{t('run.header.held')} ·
+					<span class="tick">{fmtClockDuration(rs.now - new Date(run.hold.since).getTime())}</span
+					></span
+				>
+			{/if}
+			<span class="mono stats tick">
+				<span
+					class:hue-emb={active}
+					title={t('run.header.started', {
+						at: fmtAbs(run.createdAt),
+						ago: ago(run.createdAt, rs.now)
+					})}>{brewed}</span
+				>
+				· {fmtCost(rs.totals.cost)} · {t('run.header.turns', { count: rs.totals.turns })}
+			</span>
 			{#if run.skillsets?.length}
 				<span class="sk" title={t('run.header.skillsets')}
 					>{#each run.skillsets as p (p.id)}<span class="pill sm t-mut"
@@ -364,21 +333,6 @@
 						>{/each}</span
 				>
 			{/if}
-			{#if run.branch}
-				<span
-					class="mono br ell"
-					title={t('run.header.branchTitle', {
-						source: run.sourceBranch ?? t('run.header.theDefault')
-					})}
-					><span class="tx">{run.branch}</span> ← {run.sourceBranch ??
-						t('run.header.default')}</span
-				>
-			{/if}
-			<span
-				><span class="mono tx cost">{fmtCost(rs.totals.cost)}</span> · {t('run.header.turns', {
-					count: rs.totals.turns
-				})}</span
-			>
 		</div>
 	</div>
 
@@ -391,18 +345,20 @@
 						disabled={busy !== ''}
 						aria-busy={busy === 'play'}
 						onclick={() => act('play', () => api.runs.play(run.id))}
-						title={t('run.header.playTitle')}>{I.play} {t('run.header.play')}</button
+						title={t('run.header.playTitle')}
+						><TransportIcon kind="play" /> {t('run.header.play')}</button
 					>
 				{:else if run.state !== 'pending'}
 					<button
 						disabled={busy !== ''}
 						aria-busy={busy === 'pause'}
 						onclick={() => act('pause', () => api.runs.pause(run.id))}
-						title={t('run.header.pauseTitle')}>{I.pause} {t('run.header.pause')}</button
+						title={t('run.header.pauseTitle')}
+						><TransportIcon kind="pause" /> {t('run.header.pause')}</button
 					>
 				{/if}
 				<button class="btn-danger" disabled={busy !== ''} aria-busy={busy === 'stop'} onclick={stop}
-					>{I.stop} {t('run.header.stop')}</button
+					><TransportIcon kind="stop" /> {t('run.header.stop')}</button
 				>
 			{:else}
 				{#if run.state === 'failed' || run.state === 'abandoned'}
@@ -473,32 +429,13 @@
 			>
 		</GlassGroup>
 
-		{#if mrSlots.length}<GlassGroup>
-				{#snippet label()}
-					<span>{t('run.mr.requests')}</span>
-					{#each mrShown as mr (mr.repo + mr.branch)}<MrStatus
-							{mr}
-							repo={mrLive.length > 1}
-						/>{/each}
-				{/snippet}
-				{#each mrSlots as m, i (i)}
-					{#if m.url}
-						<a
-							class="btn {i === 0 ? 'btn-primary' : ''}"
-							href={m.url}
-							target="_blank"
-							rel="noreferrer"
-							title={m.title}>{m.label}</a
-						>
-					{:else}
-						<span class="btn btn-notyet" title={m.title}>{m.label}</span>
-					{/if}
-				{/each}
-			</GlassGroup>{/if}
+		{#if mrRows.length}<MrIsland
+				rows={mrRows}
+				target={mrTarget}
+				multiRepo={mrLive.length > 1}
+			/>{/if}
 	</div>
 </header>
-
-<LayoutsPopover {desk} anchor={splitBtn} />
 
 <Popover
 	anchor={envBtn}
@@ -648,71 +585,33 @@
 
 <style>
 	.rh {
-		flex: none;
-		padding: 16px 20px 12px;
-		display: grid;
-		grid-template-columns: auto minmax(0, 1fr) auto;
-		gap: 16px;
-		align-items: center;
-	}
-	.heldchip {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		margin-left: 8px;
-	}
-	.rbadge {
-		width: 96px;
-		height: 78px;
-		border-radius: var(--r-group);
-		display: flex;
-		flex-direction: column;
-		justify-content: space-between;
-		padding: 8px 10px;
 		position: relative;
-		overflow: hidden;
-	}
-	.bt,
-	.bb {
-		font-size: var(--fs-id);
-		color: var(--mut);
+		z-index: var(--z-bar);
+		flex: none;
+		border-radius: var(--r-pane);
+		padding: 8px 10px 8px 16px;
 		display: flex;
-		justify-content: space-between;
+		align-items: center;
+		gap: 8px;
 	}
-	.bt .mono {
-		font-size: var(--fs-id);
-	}
-	.bid {
-		font-family: var(--mono);
-		font-weight: 600;
-		font-size: var(--fs-mark);
-		letter-spacing: var(--tr-display);
-		line-height: 1;
-	}
-	.bg {
-		position: absolute;
-		right: -14px;
-		bottom: -14px;
-		width: 46px;
-		height: 46px;
-		border-radius: 50%;
-		background: radial-gradient(circle, var(--glow), transparent 70%);
-		pointer-events: none;
-	}
-	.mid {
+	.title {
+		flex: 1;
+		min-width: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
-		min-width: 0;
+		gap: 3px;
 	}
 	.crow {
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: 6px;
 		min-width: 0;
+		font-size: var(--fs-help);
+		white-space: nowrap;
 	}
 	.crow :global(.bc) {
-		flex: 1;
+		flex: 0 1 auto;
+		font-size: var(--fs-help);
 	}
 	.crow :global(.bc > *) {
 		flex: 0 1 auto;
@@ -721,95 +620,60 @@
 	.crow :global(.bc > .sep) {
 		flex: none;
 	}
-	.groups :global(.ws .id) {
-		max-width: 96px;
+	.dot-sep {
+		color: var(--fnt);
 	}
-	.layout {
+	.crow .link {
 		flex: none;
-		margin-left: auto;
-		gap: 7px;
 	}
-	.lg-ic {
-		width: 11px;
-		height: 11px;
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		grid-template-rows: 1fr 1fr;
-		gap: 2px;
-	}
-	.lg-ic > span {
-		border-radius: calc(var(--r-xs) / 2);
-		border: 1.2px solid currentColor;
-	}
-	.lg-ic > span:first-child {
-		grid-row: span 2;
-	}
-	.trow {
-		display: flex;
-		align-items: flex-end;
-		gap: 12px;
-		min-width: 0;
-	}
-	/* Three lines at most — a merge request's title and its author's handle
-	   can run long; the whole of it is the tooltip. */
 	h1 {
 		min-width: 0;
-		font-size: var(--fs-empty);
-		overflow-wrap: anywhere;
-		display: -webkit-box;
-		-webkit-box-orient: vertical;
-		-webkit-line-clamp: 3;
-		line-clamp: 3;
+		font-size: var(--fs-mark);
+		letter-spacing: var(--tr-run);
+		line-height: 1.15;
+		text-wrap: nowrap;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.status {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		min-width: 0;
+		white-space: nowrap;
 		overflow: hidden;
 	}
-	h1 .accent {
-		font-size: var(--fs-display);
-	}
-	.trow :global(> :last-child) {
-		flex: none;
-		margin-bottom: 2px;
-	}
-	.meta {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 4px 14px;
+	.stats {
 		color: var(--mut);
-		font-size: var(--fs-label);
-		align-items: center;
-		min-width: 0;
-	}
-	.meta .tx {
-		font-weight: 500;
-	}
-	.tk {
-		display: inline-flex;
-		gap: 6px;
-		align-items: center;
 	}
 	.sk {
 		display: inline-flex;
-		flex-wrap: wrap;
 		gap: 4px;
 	}
-	.hash {
-		font-size: var(--fs-meta);
-	}
-	.br {
-		font-weight: 400;
-		max-width: 100%;
-	}
-	.meta .br .tx {
-		font-weight: 400;
-	}
-	.cost {
-		font-size: var(--fs-label);
-	}
 	.groups {
+		flex: none;
 		display: flex;
 		gap: 8px;
 		align-items: stretch;
 		justify-content: flex-end;
-		flex-wrap: wrap;
+		min-width: 0;
+	}
+	.groups :global(.gg + .gg) {
+		max-width: 330px;
+	}
+	.groups :global(.gg .btns > button),
+	.groups :global(.gg .btns > .btn) {
+		font-size: var(--fs-label);
+	}
+	.groups :global(.ws) {
+		font-size: var(--fs-help);
+	}
+	.groups :global(.ws .id) {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		min-width: 0;
+		max-width: 170px;
 	}
 	.cp {
 		font-size: var(--fs-help);
@@ -835,66 +699,50 @@
 	}
 	/* Container queries on the run page's own width (the desk beside the
 	 * sidebar), at the shared breakpoints. */
-	@container runpage (max-width: 1180px) {
+	@container runpage (max-width: 1000px) {
 		.rh {
-			grid-template-columns: auto minmax(0, 1fr);
-			row-gap: 10px;
+			flex-wrap: wrap;
+			padding-right: 10px;
+		}
+		.title {
+			flex-basis: 100%;
 		}
 		.groups {
-			grid-column: 1 / -1;
 			justify-content: flex-start;
+			flex-wrap: wrap;
 		}
 	}
 	@container runpage (max-width: 760px) {
-		.rbadge {
-			display: none;
-		}
 		.rh {
-			grid-template-columns: minmax(0, 1fr);
-			padding: 10px 12px 8px;
-			gap: 10px;
-		}
-		/* A smaller title, the state under it rather than squeezed beside
-		   it. */
-		.trow {
-			flex-direction: column;
-			align-items: flex-start;
-			gap: 6px;
+			padding: 10px 12px;
 		}
 		h1 {
-			font-size: var(--fs-section);
-			line-height: 1.25;
+			white-space: normal;
+			text-wrap: balance;
+			display: -webkit-box;
+			-webkit-box-orient: vertical;
+			-webkit-line-clamp: 3;
+			line-clamp: 3;
 		}
-		h1 .accent {
-			font-size: var(--fs-mark);
+		.status {
+			flex-wrap: wrap;
+			row-gap: 4px;
 		}
-		/* Run, workspace and merge requests as one card, a row each: what it
-		   is on the left, what can be done on the right. */
 		.groups {
+			flex-basis: 100%;
 			flex-direction: column;
-			gap: 0;
+			align-items: stretch;
 		}
-		.groups > :global(.gg) {
+		.groups :global(.pill-mr) {
+			align-self: flex-start;
+		}
+		.groups > :global(.gg),
+		.groups > :global(.gg + .gg) {
+			max-width: none;
 			flex-direction: row;
 			align-items: center;
 			flex-wrap: wrap;
 			gap: 6px 10px;
-			padding: 7px 8px 7px 12px;
-			border-radius: 0;
-		}
-		.groups > :global(.gg + .gg) {
-			margin-top: -1px;
-		}
-		.groups > :global(.gg:first-child) {
-			border-top-left-radius: var(--r-group);
-			border-top-right-radius: var(--r-group);
-		}
-		.groups > :global(.gg:last-child) {
-			border-bottom-left-radius: var(--r-group);
-			border-bottom-right-radius: var(--r-group);
-		}
-		.groups > :global(.gg .lbl) {
-			min-width: 0;
 		}
 		/* The workspace's id gives its room to the buttons. */
 		.groups :global(.ws .id) {
@@ -913,8 +761,8 @@
 		height: 7px;
 		margin-right: 6px;
 		border-radius: 50%;
-		background: var(--amb);
-		box-shadow: 0 0 6px var(--amb);
+		background: var(--gold);
+		box-shadow: 0 0 6px var(--gold);
 		vertical-align: middle;
 	}
 </style>

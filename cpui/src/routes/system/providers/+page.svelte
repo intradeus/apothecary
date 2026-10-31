@@ -16,7 +16,8 @@
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import SectionHeader from '$lib/ui/SectionHeader.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
-	import { I } from '$lib/ui/icons';
+	import ActionMenu from '$lib/ui/ActionMenu.svelte';
+	import HeaderAction from '$lib/ui/HeaderAction.svelte';
 	import { materialize, ms, spring } from '$lib/ui/motion';
 
 	type Mode = 'key' | 'signin' | 'import';
@@ -60,6 +61,9 @@
 		{ id: 'signin', label: t('providers.addSignIn') },
 		{ id: 'import', label: t('providers.addImport') }
 	]);
+	const menu = $derived([
+		{ items: modes.map((m) => ({ label: m.label, run: () => (adding = m.id) })) }
+	]);
 </script>
 
 {#if error && !loaded}
@@ -73,23 +77,15 @@
 		</div>
 	</section>
 {:else}
+	<HeaderAction>
+		<ActionMenu label={t('providers.new')} groups={menu} />
+	</HeaderAction>
 	<section class="col">
 		<SectionHeader
 			title={t('providers.section')}
 			count={creds.length}
 			sub={t('providers.sectionSub')}
-		>
-			{#snippet actions()}
-				{#each modes as m (m.id)}
-					<button
-						class="btn-sm"
-						class:btn-sel={adding === m.id}
-						aria-pressed={adding === m.id}
-						onclick={() => (adding = adding === m.id ? null : m.id)}>{I.add} {m.label}</button
-					>
-				{/each}
-			{/snippet}
-		</SectionHeader>
+		/>
 
 		{#if adding}
 			{@const label = modes.find((m) => m.id === adding)?.label ?? ''}

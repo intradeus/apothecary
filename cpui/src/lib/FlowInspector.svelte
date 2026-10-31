@@ -1006,7 +1006,7 @@
 					<div class="field">
 						<label for="st-harness"
 							>{t('flow.insp.harness')}
-							{#if !s.harness}<span class="hue-amb">{t('flow.insp.required')}</span>{/if}</label
+							{#if !s.harness}<span class="hue-gold">{t('flow.insp.required')}</span>{/if}</label
 						>
 						<input
 							id="st-harness"
@@ -1020,7 +1020,7 @@
 					<div class="field">
 						<label for="st-model"
 							>{t('flow.insp.model')}
-							{#if !s.model}<span class="hue-amb">{t('flow.insp.required')}</span>{/if}</label
+							{#if !s.model}<span class="hue-gold">{t('flow.insp.required')}</span>{/if}</label
 						>
 						<input
 							id="st-model"
@@ -1086,7 +1086,7 @@
 							/>
 						{/key}
 					{:else if s.agent}
-						<div class="help" class:hue-amb={!agentDecl}>
+						<div class="help" class:hue-gold={!agentDecl}>
 							{agentDecl
 								? t('flow.insp.noInputs', { name: s.agent })
 								: t('flow.insp.unknownAgent', { name: s.agent })}
@@ -1112,7 +1112,7 @@
 							{@html th('flow.insp.verdictHelp', { sentinel: SOURCE_VERDICT })}
 						</div>
 					{:else if s.agent && agentDecl && edgeOf(s, 'on_reject')}
-						<div class="help hue-amb">{@html th('flow.insp.neverFires', { agent: s.agent })}</div>
+						<div class="help hue-gold">{@html th('flow.insp.neverFires', { agent: s.agent })}</div>
 					{/if}
 				{:else if s.type === 'command'}
 					<div class="field">
@@ -1263,9 +1263,8 @@
 							<div class="io-bind card-in field">
 								<label for="act-{d.name}"
 									><span class="mono">{d.name}</span>
-									{#if d.required}<span class="hue-amb">{t('flow.insp.required')}</span>{:else}<span
-											class="fnt">{t('flow.insp.optional')}</span
-										>{/if}</label
+									{#if d.required}<span class="hue-gold">{t('flow.insp.required')}</span
+										>{:else}<span class="fnt">{t('flow.insp.optional')}</span>{/if}</label
 								>
 								{#if d.description}<div class="help">{d.description}</div>{/if}
 								{#if d.kind === 'enum'}
@@ -1355,7 +1354,7 @@
 							{/if}
 						{/key}
 					{:else if s.action}
-						<div class="help hue-amb">{t('flow.insp.unknownAction', { name: s.action })}</div>
+						<div class="help hue-gold">{t('flow.insp.unknownAction', { name: s.action })}</div>
 					{/if}
 				{:else if s.type === 'service'}
 					{@const readers = runners((x) =>
@@ -1487,7 +1486,7 @@
 							</div>
 						{/if}
 					{:else if s.for}
-						<div class="help hue-amb">{t('flow.insp.unknownSignal', { name: s.for })}</div>
+						<div class="help hue-gold">{t('flow.insp.unknownSignal', { name: s.for })}</div>
 					{/if}
 					<div class="field">
 						<label for="st-wait-timeout">{t('flow.insp.timeout')}</label>
@@ -1965,7 +1964,7 @@
 				{@const q = schemaSel}
 				{@const users = schemaUsers(doc, q.name)}
 				<div class="ih">
-					<span class="pill sm flat sq mono t-az">{t('flow.insp.kind.schema')}</span>
+					<span class="pill sm flat sq mono t-sky">{t('flow.insp.kind.schema')}</span>
 					<span class="mono iid ell">{q.name}</span>
 					<span class="spacer"></span>
 					<button
@@ -2006,7 +2005,7 @@
 						<YamlEditor bind:value={schemaText} label={t('flow.insp.schemaBody')} />
 					</div>
 					{#if schemaError}
-						<div class="help hue-amb">
+						<div class="help hue-gold">
 							{t('flow.insp.schemaBodyInvalid', { error: schemaError })}
 						</div>
 					{/if}
@@ -2157,7 +2156,7 @@
 				</div>
 			{:else}
 				<div class="ih">
-					<span class="serif ttl">{t('flow.insp.formula')}</span>
+					<span class="display ttl">{t('flow.insp.formula')}</span>
 					<span class="spacer"></span>
 					<span class="fnt tiny">{t('flow.insp.nothingSelected')}</span>
 				</div>
@@ -2292,7 +2291,7 @@
 {/snippet}
 
 <style>
-	/* The inspector sits on control glass, given by the page (DESIGN 7.8). */
+	/* The inspector sits on window glass, given by the page (DESIGN 7.8). */
 	.insp {
 		display: grid;
 		padding: 12px 14px 16px;

@@ -53,7 +53,7 @@
 	{/snippet}
 </PageHeader>
 
-<div class="page">
+<div class="page c">
 	{#if error}
 		<ErrorCard cause={t('page.settings.loadError')} detail={error} onretry={load} />
 	{:else if !project}

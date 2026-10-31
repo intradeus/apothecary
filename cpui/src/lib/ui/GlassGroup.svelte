@@ -1,11 +1,11 @@
 <script lang="ts">
-	// A labelled cluster of controls on control glass (DESIGN 4.5).
+	// A labelled cluster of controls, inset in the top bar (DESIGN 4.5a).
 	import type { Snippet } from 'svelte';
 
 	let { label, children }: { label: Snippet | string; children: Snippet } = $props();
 </script>
 
-<div class="gg lg">
+<div class="gg in">
 	<div class="lbl">
 		{#if typeof label === 'string'}{label}{:else}{@render label()}{/if}
 	</div>
@@ -14,21 +14,21 @@
 
 <style>
 	.gg {
-		border-radius: var(--r-group);
-		padding: 8px 10px;
+		border-radius: var(--r-btn);
+		padding: 7px 10px 8px;
 		display: flex;
 		flex-direction: column;
-		gap: 7px;
+		gap: 6px;
 		min-width: 0;
 	}
 	.lbl {
-		font-size: var(--fs-meta);
-		font-weight: 500;
+		font-size: var(--fs-help);
 		color: var(--mut);
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: 7px;
 		white-space: nowrap;
+		min-width: 0;
 	}
 	.btns {
 		display: flex;

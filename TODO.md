@@ -2,6 +2,7 @@
 - 23) new run on observability (full flow data + resource stats)
 - 36) Resquash migrations
 - 43) SECURITY
+- 47) git change pane: show layout file in tree
 
 ------ 
 

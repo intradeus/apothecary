@@ -15,7 +15,7 @@
 	import Checkbox from '$lib/ui/Checkbox.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
-	import SectionHeader from '$lib/ui/SectionHeader.svelte';
+	import HeaderAction from '$lib/ui/HeaderAction.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import UserAvatar from '$lib/ui/UserAvatar.svelte';
 	import { I } from '$lib/ui/icons';
@@ -120,19 +120,17 @@
 {:else if !loaded}
 	<Skeleton pane lines={4} />
 {:else}
-	<SectionHeader title={t('page.system.users.title')} count={users.length}>
-		{#snippet actions()}
-			<button
-				class="btn-sm"
-				class:btn-sel={adding}
-				aria-pressed={adding}
-				onclick={() => (adding = !adding)}
-				>{adding ? t('page.users.close') : `${I.add} ${t('page.users.add')}`}</button
-			>
-		{/snippet}
-	</SectionHeader>
+	<HeaderAction>
+		<button class="btn-primary btn-lg" aria-pressed={adding} onclick={() => (adding = !adding)}
+			>{adding ? t('page.users.close') : `${I.add} ${t('page.users.add')}`}</button
+		>
+	</HeaderAction>
 
-	{#if error}<ErrorCard cause={t('page.users.failed')} detail={error} ondismiss={() => (error = '')} />{/if}
+	{#if error}<ErrorCard
+			cause={t('page.users.failed')}
+			detail={error}
+			ondismiss={() => (error = '')}
+		/>{/if}
 
 	{#if adding}
 		<AddCard title={t('page.users.new')}>
@@ -170,7 +168,11 @@
 					<button type="button" class="btn-ghost" onclick={() => (adding = false)}
 						>{t('common.cancel')}</button
 					>
-					<button class="btn-primary" type="submit" disabled={busy === 'new'} aria-busy={busy === 'new'}
+					<button
+						class="btn-primary"
+						type="submit"
+						disabled={busy === 'new'}
+						aria-busy={busy === 'new'}
 						>{busy === 'new' ? t('page.users.creating') : t('page.users.create')}</button
 					>
 				</div>
@@ -179,7 +181,7 @@
 	{/if}
 
 	{#if users.length}
-		<section class="c pane">
+		<section class="pane">
 			<div class="rows">
 				<div class="r head urow">
 					<span></span><span>{t('page.users.name')}</span><span>{t('page.users.email')}</span><span
@@ -198,11 +200,14 @@
 						</span>
 						<span class="mut ell">{u.email}</span>
 						<span class="chips">
-							{#if u.admin}<span class="pill sm t-parch">{t('page.users.admin')}</span
-								>{:else}<span class="pill sm flat">{t('page.users.member')}</span>{/if}
+							{#if u.admin}<span class="pill sm t-parch">{t('page.users.admin')}</span>{:else}<span
+									class="pill sm flat">{t('page.users.member')}</span
+								>{/if}
 							{#if u.disabled}<span class="pill sm t-rose">{t('page.users.disabled')}</span>{/if}
 						</span>
-						<span class="num mut small">{u.lastSeenAt ? ago(u.lastSeenAt) : t('page.users.never')}</span>
+						<span class="num mut small"
+							>{u.lastSeenAt ? ago(u.lastSeenAt) : t('page.users.never')}</span
+						>
 						<span class="row nowrap acts">
 							{#if u.id !== me}
 								<button
@@ -212,12 +217,16 @@
 									>{u.admin ? t('page.users.dropAdmin') : t('page.users.makeAdmin')}</button
 								>
 								{#if u.disabled}
-									<button class="btn-sm" aria-busy={busy === u.id} onclick={() => patch(u, { disabled: false })}
-										>{t('page.users.enable')}</button
+									<button
+										class="btn-sm"
+										aria-busy={busy === u.id}
+										onclick={() => patch(u, { disabled: false })}>{t('page.users.enable')}</button
 									>
 								{:else}
-									<button class="btn-danger btn-sm" aria-busy={busy === u.id} onclick={() => disable(u)}
-										>{t('page.users.disable')}</button
+									<button
+										class="btn-danger btn-sm"
+										aria-busy={busy === u.id}
+										onclick={() => disable(u)}>{t('page.users.disable')}</button
 									>
 								{/if}
 							{/if}
@@ -243,8 +252,11 @@
 								/>
 								<div class="help">{t('page.users.resetHelp')}</div>
 							</div>
-							<button class="btn-primary btn-sm" type="submit" disabled={busy === u.id} aria-busy={busy === u.id}
-								>{t('page.users.resetAction')}</button
+							<button
+								class="btn-primary btn-sm"
+								type="submit"
+								disabled={busy === u.id}
+								aria-busy={busy === u.id}>{t('page.users.resetAction')}</button
 							>
 						</form>
 					{/if}

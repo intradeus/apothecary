@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Empty state (DESIGN 4.17): dashed box, serif title, one line, one action.
+	// Empty state (DESIGN 4.17): dashed box, display title, one line, one action.
 	// `inline` is the row form for a quiet slot inside a page ("2 quiet
 	// workshops — nothing running"): left-aligned, smaller title.
 	import type { Snippet } from 'svelte';
@@ -33,15 +33,17 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
+		justify-content: center;
 		gap: 8px;
 		text-align: center;
+		flex: 1;
 	}
 	.es.compact {
 		padding: 18px 14px;
 	}
 	.t {
-		font-family: var(--serif);
-		font-style: italic;
+		font-family: var(--display);
+		font-weight: 600;
 		font-size: var(--fs-empty);
 		line-height: 1.15;
 	}
@@ -50,8 +52,10 @@
 		align-items: baseline;
 		flex-wrap: wrap;
 		text-align: left;
+		justify-content: flex-start;
 		gap: 4px 12px;
 		padding: 12px 16px;
+		flex: none;
 	}
 	.inline .t {
 		font-size: var(--fs-section);

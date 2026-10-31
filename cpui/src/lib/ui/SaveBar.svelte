@@ -41,7 +41,7 @@
 	const justSaved = $derived(!!savedAt && !dirty && now - savedAt < 4000);
 </script>
 
-<div class="sb lg">
+<div class="sb isl">
 	{#if note}<span class="help">{note}</span>{/if}
 	<span class="grow"></span>
 	{#if dirty}
@@ -68,7 +68,7 @@
 <style>
 	.sb {
 		position: sticky;
-		bottom: 12px;
+		bottom: 0;
 		z-index: var(--z-float);
 		display: flex;
 		align-items: center;

@@ -1,7 +1,7 @@
 <script lang="ts">
-	// One leaf of the desk (DESIGN §6, 4.3): content glass with a tab strip
+	// One leaf of the desk (DESIGN §6, 4.3): window glass with a tab strip
 	// (--leaf-head) — draggable tabs with a count and a × that hides the
-	// view — a hint, and the window controls (split right / down, maximise,
+	// view — a hint, and the window controls (split right / down, fullscreen,
 	// hide). The views themselves are drawn by the desk on top of the body
 	// area, so they stay mounted while tabs move between leaves.
 	//
@@ -95,6 +95,7 @@
 <section
 	class="leaf c"
 	class:compact
+	class:maxed
 	class:focused
 	class:spring={motion === 'spring'}
 	class:bounce={motion === 'bounce'}
@@ -125,7 +126,7 @@
 					{#if m.count !== undefined && m.count !== '' && m.count !== 0}
 						<span
 							class="count sm"
-							class:hot={m.alert === 'amb'}
+							class:hot={m.alert === 'sky'}
 							class:bad={m.alert === 'ros'}
 							use:bump={num(m.count)}>{m.count}</span
 						>
@@ -147,6 +148,7 @@
 			{/each}
 		</div>
 		{#if hint}<span class="hint tiny fnt ell">{hint}</span>{/if}
+		{#if maxed}<span class="kbd" title={t('desk.leaf.restore')}>esc</span>{/if}
 		{#if !compact}<div class="ctl">
 				<button
 					class="btn-icon"
@@ -194,6 +196,10 @@
 	}
 	.leaf.focused {
 		border-color: var(--brandLn);
+	}
+	/* Over the rest of the app: solid, or the page would show through. */
+	.leaf.maxed {
+		background: var(--solid);
 	}
 	/* Discrete layout changes: the rect springs from wherever it is now. */
 	.spring {
@@ -294,6 +300,12 @@
 		flex: none;
 		display: flex;
 		gap: 1px;
+	}
+	.ctl .btn-icon {
+		color: var(--dim);
+	}
+	.ctl .btn-icon:hover {
+		color: var(--tx);
 	}
 	.btn-icon.dim {
 		opacity: var(--o-disabled);

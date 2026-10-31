@@ -1,7 +1,8 @@
 <script lang="ts">
-	// Modal (DESIGN 4.9): scrim + 440px control-glass dialog. Esc and the
+	// Modal (DESIGN 4.9): scrim + a 440px opaque island. Esc and the
 	// scrim close it; focus is trapped inside while open.
 	import type { Snippet } from 'svelte';
+	import { portal } from './portal';
 	import { trap } from './trap';
 	import { materialize, scrim } from './motion';
 
@@ -36,13 +37,14 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div
 		class="scrim"
+		use:portal
 		transition:scrim
 		onpointerdown={(e) => e.target === e.currentTarget && close()}
 	>
 		<div
 			use:trap={{ onescape: close }}
 			transition:materialize={{ y: 10 }}
-			class="dlg lg"
+			class="dlg isl"
 			role="dialog"
 			aria-modal="true"
 			aria-label={title}
@@ -67,9 +69,8 @@
 		padding: 16px;
 	}
 	.dlg {
-		background: var(--lgBg), var(--thick);
 		border-radius: var(--r-modal);
-		box-shadow: var(--lgRim), var(--modalSh);
+		box-shadow: var(--spec), var(--modalSh);
 		padding: 20px 22px 18px;
 		display: flex;
 		flex-direction: column;
@@ -103,11 +104,11 @@
 	}
 	.ic.danger {
 		background: var(--rosBg);
-		color: var(--ros);
+		color: var(--rosTx);
 	}
 	.ic.warn {
-		background: var(--ambBg);
-		color: var(--amb);
+		background: var(--goldBg);
+		color: var(--gold);
 	}
 	.body {
 		color: var(--mut);

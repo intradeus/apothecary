@@ -34,8 +34,8 @@
 		white-space: nowrap;
 	}
 	.l {
-		font-family: var(--serif);
-		font-style: italic;
+		font-family: var(--display);
+		font-weight: 600;
 		font-size: var(--fs-title);
 		line-height: 1.1;
 	}

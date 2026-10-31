@@ -10,8 +10,9 @@
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
-	import Segmented from '$lib/ui/Segmented.svelte';
+	import HeaderAction from '$lib/ui/HeaderAction.svelte';
 	import SearchInput from '$lib/ui/SearchInput.svelte';
+	import Toggle from '$lib/ui/Toggle.svelte';
 	import { I } from '$lib/ui/icons';
 
 	let {
@@ -22,7 +23,7 @@
 	}: { project: Project; tickets: Ticket[] | null; error: string; onretry: () => void } = $props();
 
 	let q = $state('');
-	let filter = $state<'all' | 'active' | 'idle'>('all');
+	let activeOnly = $state(false);
 
 	const hasActive = (tk: Ticket) =>
 		(fleet.runsByTicket.get(tk.id) ?? []).some((r) => stateTab[r.state] === 'active');
@@ -38,31 +39,24 @@
 					!tk.goal.toLowerCase().includes(s)
 				)
 					return false;
-				if (filter === 'active') return hasActive(tk);
-				if (filter === 'idle') return !hasActive(tk);
-				return true;
+				return !activeOnly || hasActive(tk);
 			})
 			.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 	);
-	const activeN = $derived((tickets ?? []).filter(hasActive).length);
 </script>
 
-<div class="row">
-	<Segmented
-		options={[
-			{ value: 'all', label: t('workshop.tickets.all'), count: tickets?.length ?? '…' },
-			{ value: 'active', label: t('workshop.tickets.running'), count: activeN },
-			{ value: 'idle', label: t('workshop.tickets.idle'), count: (tickets?.length ?? 0) - activeN }
-		]}
-		bind:value={filter}
-	/>
+<HeaderAction>
+	<a class="btn btn-primary btn-lg" href={to.newTicket({ project: project.id })}
+		>{I.add} {t('workshop.tickets.new')}</a
+	>
+</HeaderAction>
+
+<div class="filters">
 	<SearchInput bind:value={q} placeholder={t('workshop.tickets.search')} />
+	<Toggle bind:checked={activeOnly} label={t('page.tickets.hasActive')} />
 	<span class="spacer"></span>
 	<a class="btn btn-sm" href={to.tickets({ project: project.id })}
 		>{t('workshop.tickets.openIn')} {I.forward}</a
-	>
-	<a class="btn btn-primary" href={to.newTicket({ project: project.id })}
-		>{I.add} {t('workshop.tickets.new')}</a
 	>
 </div>
 
@@ -71,10 +65,10 @@
 {:else if !tickets}
 	<Skeleton pane lines={4} />
 {:else if shown.length}
-	<section class="c pane">
+	<section class="pane">
 		<TicketTable tickets={shown} cols={['title', 'type', 'source', 'branch', 'runs', 'created']} />
 	</section>
-{:else if q || filter !== 'all'}
+{:else if q || activeOnly}
 	<EmptyState
 		compact
 		title={t('workshop.tickets.noMatchTitle')}

@@ -224,7 +224,7 @@
 <form class="tf" class:edit={!!init} onsubmit={submit}>
 	<section class="main c pane">
 		{#if projects.length === 0}
-			<Callout hue="amb" glyph={I.warn}>
+			<Callout hue="gold" glyph={I.warn}>
 				{@html th('form.ticket.noWorkshops', {
 					integrationsHref: to.system('integrations'),
 					workshopHref: to.newWorkshop()
@@ -270,7 +270,7 @@
 			<div class="lrow">
 				<label for="t-branch">{t('form.ticket.baseBranch')}</label>
 				{#if branchEdited && !init}
-					<span class="pill sm t-amb">{t('form.ticket.edited')}</span>
+					<span class="pill sm t-gold">{t('form.ticket.edited')}</span>
 					<button
 						type="button"
 						class="btn-ghost btn-sm"
@@ -320,7 +320,7 @@
 
 		{#if error}<div class="err">{error}</div>{/if}
 		{#if warnings.length && created}
-			<Callout hue="amb" glyph={I.warn}>
+			<Callout hue="gold" glyph={I.warn}>
 				<b>{t('form.ticket.warnHead')}</b>
 				<ul>
 					{#each warnings as w (w)}<li>{w}</li>{/each}

@@ -87,7 +87,7 @@
 {#if sets === null}
 	<span class="help">{t('ui.loading')}</span>
 {:else if error}
-	<span class="help hue-amb">{error}</span>
+	<span class="help hue-gold">{error}</span>
 {:else if !sets.length}
 	<span class="help"
 		>{t('run.start.skillsetsNone')} <a href={to.skills()}>{t('skills.crumb')}</a></span

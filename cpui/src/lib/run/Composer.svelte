@@ -1,7 +1,7 @@
 <script lang="ts">
 	// The composer (DESIGN 4.12). Nobody talks to an agent without taking it
 	// over, so until then it is only the Take over button. Take over holds the
-	// agent's session: while held (amber), its turns wait for your next message
+	// agent's session: while held (sky), its turns wait for your next message
 	// instead of ending the stage, and Release hands the task back — the stage
 	// can only end after that.
 	//
@@ -103,11 +103,11 @@
 	});
 </script>
 
-<div class="comp lg" class:held>
+<div class="comp in" class:held>
 	{#if held}
 		<div class="hold">
-			<span class="ldot sm pulse hue-amb"></span>
-			<span class="hue-amb">{t('run.composer.held', { duration: heldFor })}</span>
+			<span class="ldot sm pulse hue-sky"></span>
+			<span class="hue-sky">{t('run.composer.held', { duration: heldFor })}</span>
 			{#if hold && hold.messages}
 				<span class="mut">· {t('run.composer.heldMessages', { count: hold.messages })}</span>
 			{/if}
@@ -134,7 +134,7 @@
 		<span class="spacer"></span>
 		{#if held}
 			<button
-				class="btn-md hue-amb"
+				class="btn-md hue-sky"
 				onclick={release}
 				aria-busy={holding || releasing}
 				disabled={holding || releasing}
@@ -163,12 +163,13 @@
 <style>
 	.comp {
 		flex: none;
-		margin: 0 12px 12px;
-		border-radius: var(--r-float);
+		margin: 0 calc(12px + var(--fabClear, 0px)) 12px 12px;
+		border-radius: var(--r-btn);
+		background: var(--code);
 		display: flex;
 		flex-direction: column;
 	}
-	/* .bare: the composer's glass is the field. */
+	/* .bare: the composer is the field. */
 	textarea {
 		min-height: 44px;
 		padding: 11px 14px;
@@ -181,12 +182,12 @@
 	/* Held: the agent is in your hands — the attention colour, as a
 	 * waiting ping's card. */
 	.comp.held {
-		border-color: var(--ambLn);
-		background: radial-gradient(ellipse 70% 140% at 0% 0%, var(--ambBg), transparent 70%);
-		box-shadow: 0 0 44px var(--ambGlow);
+		border-color: var(--skyLn);
+		background: var(--skyBg);
+		box-shadow: 0 0 var(--glow-lg) var(--skyGlow);
 	}
 	.comp.held:focus-within {
-		border-color: var(--amb);
+		border-color: var(--sky);
 	}
 	.hold {
 		display: flex;
@@ -217,7 +218,7 @@
 		color: var(--mut);
 	}
 	.err {
-		color: var(--ros);
+		color: var(--rosTx);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;

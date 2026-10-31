@@ -5,7 +5,10 @@
 	// Clicking a stage opens its log.
 	import { t } from '$lib/i18n/index.svelte';
 	import StageFlask from '$lib/ui/StageFlask.svelte';
+	import { I } from '$lib/ui/icons';
+	import { STAGE_WORD } from '$lib/ui/hues';
 	import Loading from '$lib/ui/Loading.svelte';
+	import { stateLabel } from '$lib/format';
 	import { shownStages, stageRows } from '../derive';
 	import type { RunStore } from '../store.svelte';
 
@@ -20,6 +23,22 @@
 	const opens = (i: number) =>
 		grouped && (i === 0 || rows[i - 1].phase !== rows[i].phase) ? (rows[i].phase ?? '') : '';
 	const horizontal = $derived(w > h * 2.2);
+	/** The tile's top line: how it went, and what kind of stage it is. */
+	const kind = (r: (typeof rows)[number]) =>
+		[
+			r.status === 'done'
+				? I.ok
+				: r.status === 'failed'
+					? I.bad
+					: r.status === 'running'
+						? I.dot
+						: '',
+			r.type ? (STAGE_WORD[r.type] ?? r.type) : '',
+			r.status === 'running' && r.attempt ? t('runview.flow.tip_attempt', { n: r.attempt }) : ''
+		]
+			.filter(Boolean)
+			.join(' ')
+			.replace(/ (attempt)/, ' · $1');
 	const hash = $derived(rs.run?.flowHash ? `@${rs.run.flowHash.slice(0, 6)}` : '');
 	const finished = $derived(rs.run?.state === 'completed');
 	const tip = (r: (typeof rows)[number]) =>
@@ -46,21 +65,28 @@
 		{#each rows as r, i (r.id)}
 			{#if opens(i)}<span class="ph mono fnt" title={t('runview.flow.phase')}>{opens(i)}</span>{/if}
 			<div class="cell">
-				<button class="rowbtn stage spill {r.status}" title={tip(r)} onclick={() => onstage(r.id)}>
+				<button
+					class="rowbtn stage spill {r.status}"
+					class:gate={r.type === 'human_gate'}
+					title={tip(r)}
+					onclick={() => onstage(r.id)}
+				>
 					<StageFlask status={r.status} />
 					<span class="txt">
+						<span class="kd ell">{kind(r)}</span>
 						<span class="id mono ell">{r.id}</span>
-						<span class="st ell tick">{r.line || ' '}</span>
+						<span class="st ell tick"
+							>{r.status === 'pending' ? stateLabel.pending.toLowerCase() : r.line || ' '}</span
+						>
 					</span>
 				</button>
-				<span class="conn"></span>
 			</div>
 		{/each}
-		<span class="fin serif" class:ok={finished}>{t('runview.flow.done')}</span>
+		<span class="fin display" class:ok={finished}>{t('runview.flow.done')}</span>
 	</div>
 {:else}
 	<div class="view list">
-		<div class="title serif">{t('runview.flow.formula')}</div>
+		<div class="title display">{t('runview.flow.formula')}</div>
 		<div class="sub mono fnt">{rs.run?.flowName ?? ''} {hash}</div>
 		{#each rows as r, i (r.id)}
 			{#if opens(i)}<div class="vph mono fnt" title={t('runview.flow.phase')}>
@@ -77,7 +103,7 @@
 				</button>
 			</div>
 		{/each}
-		<div class="vfin serif" class:ok={finished}>{t('runview.flow.done')}</div>
+		<div class="vfin display" class:ok={finished}>{t('runview.flow.done')}</div>
 	</div>
 {/if}
 
@@ -87,7 +113,8 @@
 		min-height: 0;
 		display: flex;
 		align-items: center;
-		padding: 6px 8px;
+		gap: 6px;
+		padding: 8px 12px 12px;
 		overflow-x: auto;
 		overflow-y: hidden;
 	}
@@ -105,23 +132,19 @@
 		display: flex;
 		align-items: center;
 		flex: 1;
-		min-width: 92px;
-	}
-	.conn {
-		flex: none;
-		width: 10px;
-		height: 1px;
-		background: var(--ln2);
+		min-width: 108px;
 	}
 	/* A stage's status change cross-fades its tint, and the flask's liquid
 	 * rides the spring to its new level. */
 	.stage {
+		--h: var(--mut);
 		flex: 1;
 		min-width: 0;
-		padding: 7px 10px;
-		border-radius: var(--r-card);
+		height: 100%;
+		padding: 8px 11px;
+		border-radius: var(--r-row);
 		background: var(--p1);
-		border: 1px solid var(--cLn);
+		border: 1px solid transparent;
 		transition:
 			background-color var(--dur-fade) var(--ease-out),
 			border-color var(--dur-fade) var(--ease-out),
@@ -141,45 +164,66 @@
 		min-width: 0;
 		display: flex;
 		flex-direction: column;
+		gap: 1px;
 		line-height: 1.3;
+	}
+	.kd {
+		font-size: var(--fs-meta);
+		color: var(--h);
 	}
 	.id {
 		color: var(--tx);
+		font-size: var(--fs-ui);
 	}
 	.st {
 		font-size: var(--fs-meta);
-		color: var(--mut);
+		color: var(--fnt);
+	}
+	/* A window too short for three lines keeps the name and the status. */
+	@container (max-height: 74px) {
+		.kd {
+			display: none;
+		}
+	}
+	.stage.done {
+		--h: var(--grn);
+		background: color-mix(in oklch, var(--h) 8%, transparent);
+	}
+	.stage.done.gate {
+		--h: var(--gold);
 	}
 	.stage.running {
-		background: var(--azBg);
-		border-color: var(--azLn);
-		box-shadow: 0 0 16px var(--azGlow);
+		--h: var(--embTx);
+		background: var(--running);
+		border-color: var(--embLn);
+		box-shadow: 0 0 24px var(--embGlow);
+	}
+	.running .id {
+		font-weight: 600;
 	}
 	.running .st {
-		color: var(--az);
-		font-family: var(--mono);
-		font-size: var(--fs-id);
+		color: var(--embTx);
 	}
 	.stage.waiting {
-		background: var(--ambBg);
-		border-color: var(--ambLn);
-		box-shadow: 0 0 16px var(--ambGlow);
+		--h: var(--skyTx);
+		background: var(--skyBg);
+		border-color: var(--skyLn);
+		box-shadow: 0 0 24px var(--skyGlow);
 	}
 	.waiting .st {
-		color: var(--amb);
+		color: var(--skyTx);
 		font-weight: 600;
 	}
 	.stage.failed {
+		--h: var(--rosTx);
 		background: var(--rosBg);
 		border-color: var(--rosLn);
 	}
 	.failed .st {
-		color: var(--ros);
+		color: var(--rosTx);
 	}
 	.stage.pending {
-		background: transparent;
-		border: 1px dashed var(--ln2);
-		opacity: var(--o-dim);
+		opacity: 0.65;
 	}
 	.pending .st {
 		color: var(--fnt);
@@ -189,15 +233,16 @@
 		display: flex;
 		align-items: center;
 		align-self: stretch;
-		margin: 4px 0;
 		padding: 0 14px;
-		border-radius: var(--r-card);
+		border-radius: var(--r-row);
 		border: 1px dashed var(--ln2);
-		font-size: var(--fs-title);
+		font-size: var(--fs-lead);
 		color: var(--mut);
+		opacity: 0.6;
 	}
 	.fin.ok,
 	.vfin.ok {
+		opacity: 1;
 		border-color: var(--grnLn);
 		color: var(--grn);
 	}
@@ -237,8 +282,9 @@
 		flex-direction: column;
 		align-items: stretch;
 		gap: 0;
+		height: auto;
 		padding: 6px 10px;
-		margin-bottom: 6px;
+		margin-bottom: 8px;
 		border-radius: var(--r-btn);
 		line-height: 1.35;
 	}

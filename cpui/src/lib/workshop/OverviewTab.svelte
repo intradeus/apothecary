@@ -192,7 +192,7 @@
 		<section class="c pane">
 			<div class="pane-head">
 				<h2>{t('workshop.overview.egress')}</h2>
-				<span class="pill {deny ? 't-amb' : 't-grn'}"
+				<span class="pill {deny ? 't-gold' : 't-grn'}"
 					>{deny ? t('workshop.overview.denylist') : t('workshop.overview.allowlist')}</span
 				>
 				<span class="spacer"></span>
@@ -266,11 +266,11 @@
 		border-top: 1px solid var(--cLn);
 	}
 	dl.kv {
-		--k: 90px;
+		--k: 130px;
 	}
 	.repo {
 		display: grid;
-		grid-template-columns: 90px minmax(0, 1fr) auto;
+		grid-template-columns: 130px minmax(0, 1fr) auto;
 		gap: 12px;
 		align-items: center;
 		font-size: var(--fs-label);

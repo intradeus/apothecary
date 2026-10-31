@@ -41,7 +41,7 @@
 <style>
 	.ec {
 		border-radius: var(--r-btn);
-		background: var(--rosBg);
+		background: var(--rosSolid);
 		border: 1px solid var(--rosLn);
 		color: var(--tx);
 		padding: 8px 10px;
@@ -51,7 +51,7 @@
 		font-size: var(--fs-ui);
 	}
 	.x {
-		color: var(--ros);
+		color: var(--rosTx);
 		font-weight: 700;
 	}
 	summary {

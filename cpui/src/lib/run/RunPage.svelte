@@ -11,6 +11,8 @@
 	import Loading from '$lib/ui/Loading.svelte';
 	import Desk, { type ViewMeta } from '$lib/desk/Desk.svelte';
 	import { DeskState } from '$lib/desk/desk.svelte';
+	import { activeDesk } from '$lib/desk/active.svelte';
+	import { NEUTRAL_MIX, noise } from '$lib/ui/noise.svelte';
 	import type { ViewId } from '$lib/desk/tree';
 	import RunHeader from './RunHeader.svelte';
 	import NoWorkspace from './NoWorkspace.svelte';
@@ -45,6 +47,25 @@
 	$effect(() => desk.setCompact(compact));
 	onMount(() => rs.start());
 
+	// The sidebar's Layout button drives this desk while the page is here.
+	$effect(() => {
+		activeDesk.desk = desk;
+		return () => {
+			activeDesk.desk = null;
+		};
+	});
+
+	// The backdrop follows the run: ember while it brews, sky while it waits
+	// on you, neutral otherwise (DESIGN 2.2).
+	$effect(() => {
+		const s = rs.run?.state;
+		noise.blue =
+			s === 'running' || s === 'provisioning' ? 20 : s === 'waiting_on_human' ? 80 : NEUTRAL_MIX;
+		return () => {
+			noise.blue = NEUTRAL_MIX;
+		};
+	});
+
 	let unknownDismissed = $state(false);
 
 	const timelineCount = $derived(rs.events.filter((e) => !TRANSCRIPT_TYPES.has(e.type)).length);
@@ -64,7 +85,7 @@
 				return { hint: t('run.page.askHint') };
 			case 'pings':
 				return rs.pendingPings.length
-					? { count: rs.pendingPings.length, alert: 'amb', hint: t('run.page.waitingOnYou') }
+					? { count: rs.pendingPings.length, alert: 'sky', hint: t('run.page.waitingOnYou') }
 					: { count: rs.pings.length || '' };
 			case 'phases':
 				return {
@@ -88,7 +109,7 @@
 				return { hint: rs.logSource === 'workspace' && !rs.terminal ? 'tail -f' : '' };
 			case 'egress':
 				return rs.newDenials.length
-					? { count: rs.newDenials.length, alert: 'amb', hint: t('run.page.rulesLive') }
+					? { count: rs.newDenials.length, alert: 'sky', hint: t('run.page.rulesLive') }
 					: { hint: t('run.page.rulesLive') };
 			case 'services': {
 				const svcs = rs.services?.services ?? [];
@@ -137,6 +158,7 @@
 <div
 	class="runpage"
 	class:compact
+	class:full={!!desk.max}
 	bind:clientWidth={pageW}
 	bind:clientHeight={pageH}
 	style:--desk-h="{Math.max(320, pageH - 22)}px"
@@ -147,7 +169,7 @@
 		{#if showDenials}
 			<div class="bn">
 				<Banner
-					tone="amb"
+					tone="sky"
 					title={t('run.page.egressHeld', { n: times(rs.newDenials.length) })}
 					aside={t('run.page.egressAside')}
 					items={rs.newDenials.map((d) => d.host)}
@@ -163,7 +185,7 @@
 		{#if showUnknown}
 			<div class="bn">
 				<Banner
-					tone="amb"
+					tone="sky"
 					title={t('run.page.wsUnknown')}
 					items={[t('run.page.provisionerDown')]}
 					action={t('run.page.integrations')}
@@ -231,27 +253,30 @@
 
 <style>
 	.runpage {
+		position: relative;
 		flex: 1;
 		min-height: 0;
 		min-width: 0;
+		padding: var(--shell-gap);
 		display: flex;
 		flex-direction: column;
+		gap: var(--shell-gap);
 		container: runpage / inline-size;
+	}
+	/* A fullscreen window rises over the sidebar: the container query makes
+	 * this page a stacking context of its own. */
+	.runpage.full {
+		z-index: var(--z-full);
 	}
 	.bn {
 		flex: none;
-		margin: 0 16px;
-	}
-	.bn + .bn {
-		margin-top: 6px;
-	}
-	.err {
-		margin-top: 6px;
 	}
 	.pad {
 		padding: 22px;
 	}
 	.compact {
+		padding: 8px;
+		gap: 8px;
 		overflow-x: hidden;
 		overflow-y: auto;
 		overscroll-behavior-y: contain;
@@ -259,6 +284,5 @@
 	.compact > :global(.desk) {
 		flex: none;
 		height: var(--desk-h);
-		margin: 8px 8px 10px;
 	}
 </style>
