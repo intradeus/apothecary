@@ -7,6 +7,7 @@ package agentport
 
 import (
 	"context"
+	"errors"
 
 	"apothecary/internal/ports/envport"
 )
@@ -37,6 +38,9 @@ type AgentInput struct {
 	// the session it opens or loads — so they are the agent's, not the
 	// workspace's — and must never log or persist them.
 	MCPServers []MCPServer
+	// Attempt is the stage's spec when a Resume starts a new attempt in the
+	// stage's session, nil when it replies within one.
+	Attempt *AgentSpec
 	// Inbox holds the human's messages for this invocation. A runner that can
 	// deliver them mid-invocation takes them at the end of each turn; one
 	// that cannot simply never takes them, and the engine carries them into
@@ -165,9 +169,14 @@ type AgentResult struct {
 	Usage     Usage
 }
 
+// ErrSessionGone: the session cannot be loaded any more (the workspace was
+// rebuilt, the harness lost it). An attempt then starts a new one.
+var ErrSessionGone = errors.New("session cannot be loaded")
+
 type AgentRunner interface {
 	Run(ctx context.Context, env envport.EnvID, spec AgentSpec, in AgentInput) (AgentResult, error)
-	// Resume continues session s with in.Prompt as the next message.
+	// Resume continues session s with in.Prompt as the next message;
+	// ErrSessionGone when s cannot be loaded.
 	Resume(ctx context.Context, env envport.EnvID, s SessionID, in AgentInput) (AgentResult, error)
 }
 

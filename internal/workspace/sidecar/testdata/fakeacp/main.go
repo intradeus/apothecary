@@ -81,6 +81,10 @@ func main() {
 			res(map[string]any{"sessionId": sid,
 				"modes": map[string]any{"availableModes": []any{map[string]any{"id": "builder"}, map[string]any{"id": "planner"}}}})
 		case "session/load":
+			if p.SessionID == "lost" {
+				fail("no such session")
+				continue
+			}
 			mu.Lock()
 			mcps[p.SessionID] = p.MCPServers
 			mu.Unlock()

@@ -1428,6 +1428,13 @@ it writes must be there (`output_contract`) and hold its shape
 schema first, then what only the round knows (a review's replies name loaded
 threads; its notes repeat neither an open thread of the factory's nor a note a
 person dropped; a round's replies answer every thread).
+**A stage has one session.** A new agent stage opens a session of its own, so
+two stages never share context, even with the same agent. An attempt sent back
+to a stage (a rejection, a failure, a later round of a watcher) continues that
+stage's session, so the agent remembers what it did, and its prompt says why it
+is back. A session the harness can no longer load (the workspace was rebuilt)
+costs the agent that memory, not the stage: the attempt opens a new one.
+
 Before every fresh attempt the engine deletes the stage's outputs, so the check
 after it cannot be satisfied by a file an earlier attempt left behind. (Crash
 recovery re-entering a live stage does *not* delete: a resumed harness session

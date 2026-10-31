@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -258,6 +259,104 @@ func TestUndeliveredMessageRidesIntoTheNextPrompt(t *testing.T) {
 	}
 	if delivered == nil || delivered.StageID != "build" || delivered.MessageIDs[0] != id {
 		t.Errorf("message_delivered = %+v", delivered)
+	}
+}
+
+// A stage sent back continues its own session, so its agent remembers what it
+// did, and its prompt says why it is back. Another stage has a session of its
+// own.
+func TestAStageSentBackContinuesItsSession(t *testing.T) {
+	doc := `name: back
+version: 5
+parameters: { harness: fake, model: fake/model }
+agents:
+  - name: planner
+    prompt: plan it
+    inputs:
+      - { name: rejection, type: verdict, optional: true }
+  - name: builder
+    prompt: build it
+main:
+  - { id: plan, type: agent, harness: $harness, model: $model, agent: planner, input: { rejection: { from: edge.verdict, type: verdict, optional: true } } }
+  - { id: gate, type: human_gate, question: "Good?", on_reject: { to: plan, max: 2 } }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "back", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := h.waitPing(t, PingGate)
+	if err := h.e.AnswerPing(first.ID, PingAnswer{Answer: "reject", Feedback: "too vague"}); err != nil {
+		t.Fatal(err)
+	}
+	second := h.waitPing(t, PingGate, first.ID)
+	if err := h.e.AnswerPing(second.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	var opened []string
+	for _, c := range h.runner.SnapshotRunCalls() {
+		if c.In.Attempt == nil {
+			opened = append(opened, c.Spec.Agent)
+		}
+	}
+	if strings.Join(opened, ",") != "planner,builder" {
+		t.Fatalf("new sessions = %v, want one per stage", opened)
+	}
+	resumes := h.runner.ResumeCalls
+	if len(resumes) != 1 || resumes[0].In.Attempt == nil || resumes[0].In.Attempt.Agent != "planner" {
+		t.Fatalf("resumes = %+v, want the plan attempt", resumes)
+	}
+	if !strings.Contains(resumes[0].Reply, "too vague") {
+		t.Errorf("the attempt was not told why it is back:\n%s", resumes[0].Reply)
+	}
+	evs := h.events(t, runID)
+	started, _ := findPayload[*event.AgentSession](evs)
+	if started != nil && resumes[0].Session != agentport.SessionID(started.SessionID) {
+		t.Errorf("resumed %q, the stage's session is %q", resumes[0].Session, started.SessionID)
+	}
+	if _, ok := findPayload[*event.StageResumed](evs); ok {
+		t.Error("a new attempt is not a stage resuming")
+	}
+}
+
+// A session the harness cannot load (the workspace was rebuilt) costs the agent
+// its memory, not the stage: the attempt starts a new one, prompt and all.
+func TestAttemptStartsANewSessionWhenItsIsGone(t *testing.T) {
+	doc := `name: gone
+version: 5
+parameters: { harness: fake, model: fake/model }
+agents:
+  - name: planner
+    prompt: plan it
+main:
+  - { id: plan, type: agent, harness: $harness, model: $model, agent: planner }
+  - { id: gate, type: human_gate, question: "Good?", on_reject: { to: plan, max: 2 } }
+`
+	h := newHarness(t, mustFlow(t, doc))
+	h.runner.ResumeFunc = func(context.Context, fake.ResumeCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{}, fmt.Errorf("resume: %w", agentport.ErrSessionGone)
+	}
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "gone", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := h.waitPing(t, PingGate)
+	if err := h.e.AnswerPing(first.ID, PingAnswer{Answer: "reject", Feedback: "too vague"}); err != nil {
+		t.Fatal(err)
+	}
+	second := h.waitPing(t, PingGate, first.ID)
+	if n := len(h.runner.SnapshotRunCalls()); n != 2 {
+		t.Errorf("run calls = %d, want a new session for the attempt", n)
+	}
+	if err := h.e.AnswerPing(second.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if st := h.view(t, runID).State; st != run.Completed {
+		t.Errorf("state = %s", st)
 	}
 }
 

@@ -87,8 +87,12 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		return x.failStageMCP(st, err)
 	}
 
-	// ONE ATTEMPT, ONE SESSION, SEVERAL INVOCATIONS. The agent runs as a
-	// live session: a question it cannot answer blocks in ask_human while
+	// ONE STAGE, ONE SESSION. A new stage opens a session of its own, and an
+	// attempt sent back to the stage continues it, so the agent remembers
+	// what it did; its prompt says why it is back.
+	//
+	// ONE ATTEMPT, SEVERAL INVOCATIONS. The agent runs as a live session: a
+	// question it cannot answer blocks in ask_human while
 	// the human is around, and the human's messages are delivered into the
 	// same session. A question nobody answers within the live hold PARKS the
 	// attempt — the turn is cancelled, the run gives its slot back, and the
@@ -195,6 +199,13 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		}
 		crashed = false
 
+		// A crash of an attempt sent into an earlier session: whether the
+		// agent read its prompt is unknown, and carrying on would lose it,
+		// feed and all. Nothing left to follow, so it is sent again.
+		if replyKind == event.PromptRestart && rs.Continuing[st.ID] {
+			reply, replyKind = "", ""
+		}
+
 		resuming := reply != "" && haveSession
 		if resuming {
 			reason := resumeReason
@@ -225,8 +236,11 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		inv, err = x.invoke(st, budget, tr, nil, text,
 			func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
 				in.MCPServers = mcp
-				if resuming {
+				switch {
+				case resuming:
 					return runner.Resume(ctx, rs.EnvID, session, in)
+				case haveSession:
+					return x.continueSession(ctx, st, runner, spec, session, in)
 				}
 				return runner.Run(ctx, rs.EnvID, spec, in)
 			})
@@ -387,6 +401,20 @@ func (x *exec) pauseAttempt(st *flow.Stage, iter int, inv invocation) (stop bool
 		return true, err
 	}
 	return false, nil
+}
+
+// continueSession sends a new attempt into the stage's session, or into a new
+// one when that session is gone: the agent loses its memory of the last
+// attempt, and its prompt still says why it is back.
+func (x *exec) continueSession(ctx context.Context, st *flow.Stage, runner agentport.AgentRunner, spec agentport.AgentSpec,
+	session agentport.SessionID, in agentport.AgentInput) (agentport.AgentResult, error) {
+	in.Attempt = &spec
+	res, err := runner.Resume(ctx, x.rs.EnvID, session, in)
+	if !errors.Is(err, agentport.ErrSessionGone) {
+		return res, err
+	}
+	x.e.log.Warn("stage's session is gone; starting a new one", "run", x.rs.RunID, "stage", st.ID, "err", err)
+	return runner.Run(ctx, x.rs.EnvID, spec, in)
 }
 
 // liveAsks are this stage's open questions that were being waited on LIVE

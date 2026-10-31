@@ -155,6 +155,7 @@ func diffState(live, rep *runcore.State) []string {
 		{"adopted", live.Adopted, rep.Adopted},
 		{"heads", live.Heads, rep.Heads},
 		{"parked", live.Parked, rep.Parked},
+		{"continuing", live.Continuing, rep.Continuing},
 		{"chainMerged", live.ChainMerged, rep.ChainMerged},
 		{"parkSince", live.ParkSince, rep.ParkSince},
 		{"anyStarted", live.AnyStarted, rep.AnyStarted},

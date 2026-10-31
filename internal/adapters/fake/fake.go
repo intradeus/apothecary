@@ -467,7 +467,22 @@ func (r *AgentRunner) Resume(ctx context.Context, env envport.EnvID, s agentport
 	r.mu.Lock()
 	call := ResumeCall{Env: env, Session: s, Reply: in.Prompt, In: in}
 	r.ResumeCalls = append(r.ResumeCalls, call)
-	fn := r.ResumeFunc
+	fn, run := r.ResumeFunc, r.RunFunc
+	if fn == nil && in.Attempt != nil {
+		// A new attempt is scripted, and counted, like the first one; only
+		// the session differs.
+		call := RunCall{Env: env, Spec: *in.Attempt, In: in}
+		r.RunCalls = append(r.RunCalls, call)
+		r.mu.Unlock()
+		if run == nil {
+			return agentport.AgentResult{Session: s, TurnsUsed: 1}, nil
+		}
+		res, err := run(ctx, call)
+		if err == nil {
+			res.Session = s
+		}
+		return res, err
+	}
 	r.mu.Unlock()
 	if fn == nil {
 		return agentport.AgentResult{Session: s, TurnsUsed: 1}, nil

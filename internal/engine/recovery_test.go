@@ -208,11 +208,32 @@ main:
 	})
 }
 
-// A retry that crashed between its stage_started and its first prompt asked
-// nothing of the agent yet. Recovery starts that attempt: a fresh session, the
-// retry's own prompt, outputs cleared — not a resume of the session the last
-// attempt left, which never hears why it is being run again.
-func TestARetryCrashedBeforeItsPromptStartsFresh(t *testing.T) {
+// A retry that crashed before its prompt begins now, in the stage's session:
+// it gets its whole prompt, rejection included, on a clean slate, not a
+// "carry on" that would lose them.
+func TestARetryCrashedBeforeItsPromptGetsItsPrompt(t *testing.T) {
+	retried := retryWorld(t, []event.Payload{&event.StageStarted{StageID: "plan", Iteration: 2}})
+	if retried.stale {
+		t.Error("the attempt started on the rejected attempt's output")
+	}
+}
+
+// The same retry crashed just after its prompt was logged: nothing says the
+// agent read it, so it is sent again rather than told to carry on.
+func TestARetryCrashedAfterItsPromptGetsItAgain(t *testing.T) {
+	retryWorld(t, []event.Payload{
+		&event.StageStarted{StageID: "plan", Iteration: 2},
+		&event.AgentPrompted{StageID: "plan", Iteration: 2, Kind: event.PromptStage, Text: "plan it, better"},
+	})
+}
+
+type retried struct{ stale bool }
+
+// retryWorld recovers a run rejected at its gate, its log ending in tail, and
+// checks the second attempt went into the first one's session with the
+// rejection.
+func retryWorld(t *testing.T, tail []event.Payload) retried {
+	t.Helper()
 	fl := mustFlow(t, strings.Replace(gatedRecoveryDoc, "agent: planner,",
 		"agent: planner, input: { rejection: { from: edge.verdict, type: verdict, optional: true } },", 1))
 	h := newHarness(t, fl)
@@ -223,35 +244,29 @@ func TestARetryCrashedBeforeItsPromptStartsFresh(t *testing.T) {
 		h.writeFile(t, call.Env, "artifacts/plan.md", "the new plan\n")
 		return agentport.AgentResult{TurnsUsed: 1}, nil
 	}
-	env := seedRun(t, h, "r-d11", "gated", fl.Hash,
+	env := seedRun(t, h, "r-d11", "gated", fl.Hash, append([]event.Payload{
 		&event.PhaseStarted{Phase: "main", By: "human"},
 		&event.StageStarted{StageID: "plan", Iteration: 1},
 		&event.AgentPrompted{StageID: "plan", Iteration: 1, Kind: event.PromptStage, Text: "plan it"},
 		&event.StageCompleted{StageID: "plan", TurnsUsed: 1, SessionID: "first-attempt"},
 		&event.StageStarted{StageID: "plan_gate", Iteration: 1},
-		&event.PingRaised{PingID: "ping-d11", Type: PingGate, Question: "Approve the plan?", StageID: "plan_gate", Files: []string{"artifacts/plan.md"}},
+		&event.PingRaised{PingID: "ping-d11", Type: PingGate, Question: "Approve the plan?", StageID: "plan_gate"},
 		&event.PingAnswered{PingID: "ping-d11", Answer: "reject", Feedback: "too vague"},
 		&event.EdgeTaken{From: "plan_gate", Edge: flow.EdgeReject, To: "plan", Feed: "too vague"},
-		&event.StageStarted{StageID: "plan", Iteration: 2},
-	)
+	}, tail...)...)
 	h.writeFile(t, env, "artifacts/plan.md", "the rejected plan\n")
 	if err := h.e.Recover(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	h.waitPing(t, PingGate, "ping-d11")
-	if n := len(h.runner.ResumeCalls); n != 0 {
-		t.Errorf("resumed the last attempt's session %d time(s): %+v", n, h.runner.ResumeCalls)
+	calls := h.runner.ResumeCalls
+	if len(calls) != 1 || calls[0].Session != "first-attempt" {
+		t.Fatalf("resumes = %+v, want the attempt in the stage's session, once", calls)
 	}
-	calls := h.runner.SnapshotRunCalls()
-	if len(calls) != 1 {
-		t.Fatalf("run calls = %d, want the attempt started once", len(calls))
+	if !strings.Contains(calls[0].Reply, "too vague") {
+		t.Errorf("the retry's prompt lost the rejection:\n%s", calls[0].Reply)
 	}
-	if !strings.Contains(calls[0].In.Prompt, "too vague") {
-		t.Errorf("the retry's prompt lost the rejection:\n%s", calls[0].In.Prompt)
-	}
-	if stale.Load() {
-		t.Error("the attempt started on the rejected attempt's output")
-	}
+	return retried{stale: stale.Load()}
 }
 
 // Likewise a command stage: a re-execution after a crash starts from a clean

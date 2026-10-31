@@ -223,6 +223,17 @@ func TestRunStreamsTheTranscript(t *testing.T) {
 }
 
 // A message sent while the agent works is delivered into the same session
+// A session the harness cannot load is told apart from any other failure: the
+// engine starts the attempt in a new one.
+func TestResumingALostSessionSaysSo(t *testing.T) {
+	h := startSidecar(t)
+	rec := newRecorder()
+	_, err := h.runner().Resume(context.Background(), "e", "lost", agentport.AgentInput{Prompt: "again", Events: rec.on, Inbox: rec})
+	if !errors.Is(err, agentport.ErrSessionGone) {
+		t.Fatalf("resume = %v, want ErrSessionGone", err)
+	}
+}
+
 // when the turn ends — no restart, no new process.
 func TestQueuedMessageBecomesTheNextTurn(t *testing.T) {
 	h := startSidecar(t)

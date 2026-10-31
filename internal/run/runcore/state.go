@@ -90,7 +90,7 @@ type State struct {
 	// effect was never confirmed (PLAN5 M20) — the crash window between a
 	// repository host call returning and its event being appended.
 	ActionPending map[string]bool
-	Sessions      map[string]agentport.SessionID // stage id -> last recorded harness session
+	Sessions      map[string]agentport.SessionID // stage id -> its harness session, kept across attempts
 
 	// Links are the workspace's app links from env_ready (ports exposed at
 	// provision), kept for a gate or debug ping that hands out run.workspace.
@@ -213,6 +213,10 @@ type State struct {
 	// Prompted marks a stage whose attempt in progress has told its agent
 	// something (see AttemptBegun).
 	Prompted map[string]bool
+	// Continuing marks a stage whose attempt in progress was prompted into
+	// the session of an earlier one. A crash cannot tell whether the agent
+	// read that prompt, so recovery sends it again.
+	Continuing map[string]bool
 
 	// AgentCursor is, per stage, the position in the agent's own event
 	// stream of the last transcript event recorded: after a restart, a turn
@@ -266,12 +270,9 @@ func (rs *State) DecidesHere(r *event.PingRaised) bool {
 }
 
 // AttemptBegun reports whether the agent stage's attempt in progress reached
-// its agent: it was prompted, or a harness session exists for it. A crash
-// between stage_started and the first prompt leaves one that did not.
-func (rs *State) AttemptBegun(stageID string) bool {
-	_, session := rs.Sessions[stageID]
-	return session || rs.Prompted[stageID]
-}
+// its agent. A crash between stage_started and the first prompt leaves one
+// that did not.
+func (rs *State) AttemptBegun(stageID string) bool { return rs.Prompted[stageID] }
 
 // AgentPingType: a question an agent raised through ask_human — the kind a
 // well-briefed agent should not need, hence counted as unwanted. Everything
@@ -423,6 +424,7 @@ func NewState(fl *flow.Flow) *State {
 		AnsweredPings: map[string]*event.PingAnswered{},
 		PausedAsks:    map[string][]string{},
 		Prompted:      map[string]bool{},
+		Continuing:    map[string]bool{},
 		AgentCursor:   map[string]string{},
 		TriggerSeen:   map[string]bool{},
 		PhaseRuns:     map[string]int{},
@@ -507,9 +509,10 @@ func (rs *State) Apply(ev *event.Event) {
 		rs.GateAnswer = nil
 		rs.LastFailure = nil
 		delete(rs.PausedAsks, p.StageID)
-		// A session belongs to one attempt: a retry never re-enters the last.
-		delete(rs.Sessions, p.StageID)
+		// A stage keeps its session across attempts: the agent sent back
+		// remembers what it did. What is new is the attempt.
 		delete(rs.Prompted, p.StageID)
+		delete(rs.Continuing, p.StageID)
 	case *event.StageCompleted:
 		rs.Ph = PhAfterComplete
 		rs.GateAnswer = nil // the decision it waited on is routed
@@ -550,6 +553,7 @@ func (rs *State) Apply(ev *event.Event) {
 		rs.Ph = PhIn
 		if p.SessionID != "" {
 			rs.Sessions[p.StageID] = agentport.SessionID(p.SessionID)
+			rs.Prompted[p.StageID] = true
 		}
 		if p.Usage != nil {
 			rs.Cost += p.Usage.CostUSD
@@ -704,6 +708,7 @@ func (rs *State) Apply(ev *event.Event) {
 		}
 	case *event.AgentSession:
 		rs.Sessions[p.StageID] = agentport.SessionID(p.SessionID)
+		rs.Prompted[p.StageID] = true
 	case *event.AgentMessage:
 		rs.NoteCursor(p.StageID, p.Cursor)
 	case *event.AgentTool:
@@ -725,6 +730,9 @@ func (rs *State) Apply(ev *event.Event) {
 		}
 	case *event.AgentPrompted:
 		rs.Prompted[p.StageID] = true
+		if _, kept := rs.Sessions[p.StageID]; kept && p.Kind == event.PromptStage {
+			rs.Continuing[p.StageID] = true
+		}
 		if p.Kind == event.PromptHandback {
 			delete(rs.HandbackOwed, p.StageID)
 		}

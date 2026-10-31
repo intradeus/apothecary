@@ -233,14 +233,22 @@ func (r *Runner) Resume(ctx context.Context, env envport.EnvID, s agentport.Sess
 	// Live in the process: a no-op (but for a model switch asked for).
 	// Otherwise (the container restarted, the harness was swapped) the agent
 	// reloads it from its own store — with the stage's MCP servers again,
-	// which a reloaded session does not keep, and read-only again if it was.
-	req := sidecar.SessionRequest{SessionID: string(s), Proc: st.Proc, MCPServers: mcp, ReadOnly: in.ReadOnly, Model: in.Model}
+	// which a reloaded session does not keep, its mode, and read-only again
+	// if it was.
+	spec := agentport.AgentSpec{Model: in.Model}
+	if in.Attempt != nil {
+		spec = *in.Attempt
+	}
+	req := sidecar.SessionRequest{SessionID: string(s), Proc: st.Proc, MCPServers: mcp, ReadOnly: in.ReadOnly, Model: spec.Model}
+	if r.p.Mode != nil {
+		req.Mode = r.p.Mode(spec)
+	}
 	if in.ReadOnly && r.p.ReadOnlyBy == ReadOnlyByMode {
 		req.Mode = r.p.ReadOnlyMode
 	}
 	sess, err := c.Session(ctx, req)
 	if err != nil {
-		return agentport.AgentResult{Session: s}, fmt.Errorf("%s: resume session: %w", r.p.Harness, err)
+		return agentport.AgentResult{Session: s}, fmt.Errorf("%s: resume session: %w: %w", r.p.Harness, agentport.ErrSessionGone, err)
 	}
 	return r.drive(ctx, c, st.Proc, sess.SessionID, sess.CostUSD, in.Prompt, "", "", in)
 }

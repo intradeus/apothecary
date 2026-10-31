@@ -5393,3 +5393,23 @@ one is being released, and the run page shows only *Take over* until there is
 one. `Interrupt` left `agentport`, the ACP runner, `message_queued`, the API and
 the UI; an old log's `interrupt` field is ignored on decode. The runner still
 cancels a turn when the engine's context ends (timeout, park, abort, outcome).
+
+## One session per stage (2026-10-31)
+
+An attempt sent back to a stage continues that stage's session instead of
+opening a new one (TODO 44). It never worked that way: a fresh attempt always
+called `Run`, and `resume` was only for a reply within an attempt.
+
+`runcore.State.Sessions` now survives `stage_started`, so a stage keeps its
+session for the run, whatever chain runs it. The prompt is the attempt's whole
+prompt, not a short note: the inputs may have changed and it carries the feed.
+`AgentInput.Attempt` tells a runner a Resume starts an attempt, and gives it the
+stage's spec. `Resume` now sets the harness's mode when a session is reloaded;
+retries reach that path, and codex would otherwise come back asking for
+approvals. A Resume that cannot load the session (`ErrSessionGone`) falls back to
+`Run`.
+
+A crash after a continuing attempt's prompt was logged is the one new window:
+nothing says the agent read it, so recovery sends it again instead of telling
+it to carry on (`Continuing`). A stage with a session is not proof that this
+attempt reached its agent, so `AttemptBegun` reads `Prompted` alone.
