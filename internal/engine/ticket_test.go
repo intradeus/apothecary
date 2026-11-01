@@ -21,6 +21,7 @@ func TestTicketedRunDerivesSuffixedBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	h.e.Wait(id) // to its end: the golden log must not depend on when the test stopped
 	v := h.view(t, id)
 	tail := wsname.RunIDTail(id)
 	if want := "fix/task-123-" + tail; v.Branch != want {

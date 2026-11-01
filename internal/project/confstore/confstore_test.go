@@ -250,9 +250,9 @@ func TestDeleteRules(t *testing.T) {
 	}
 	mem.BlockingRuns = nil
 
-	// Orderly teardown works; flow versions survive flow deletion. The
-	// project has to stop pointing at the flow first — that reference is
-	// exactly what the guard above refuses to break.
+	// Orderly teardown works; flow versions survive flow deletion, and go
+	// with the project. The project has to stop pointing at the flow first —
+	// that reference is exactly what the guard above refuses to break.
 	row, _ := svc.GetFlow(ctx, p.ID, "v1")
 	p.DefaultFlow = "builder"
 	if _, err := svc.UpdateProject(ctx, p.ID, p); err != nil {
@@ -261,11 +261,14 @@ func TestDeleteRules(t *testing.T) {
 	if err := svc.DeleteFlow(ctx, p.ID, "v1"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := svc.FlowVersion(ctx, p.ID, row.Hash); err != nil {
+		t.Errorf("flow versions must outlive their flow: %v", err)
+	}
 	if err := svc.DeleteProject(ctx, p.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.FlowVersion(ctx, p.ID, row.Hash); err != nil {
-		t.Errorf("flow versions must be immutable forever: %v", err)
+	if _, err := svc.FlowVersion(ctx, p.ID, row.Hash); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a deleted project's flow history = %v, want gone", err)
 	}
 	if err := svc.DeleteIntegration(ctx, p.RepoAccountID); err != nil {
 		t.Fatal(err)

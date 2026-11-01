@@ -461,13 +461,14 @@ func browserSession(dial func() (net.Conn, error), argv []string, stdin io.Reade
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	// Its own group: Chromium and its helpers go with it.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Before the start: a signal any later would leave Chromium orphaned.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	defer signal.Stop(sigs)
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintln(stderr, "browser-session: start:", err)
 		return 1
 	}
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
-	defer signal.Stop(sigs)
 	go func() {
 		if _, ok := <-sigs; ok {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)

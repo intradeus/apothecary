@@ -688,6 +688,7 @@ func (e *Engine) emit(evs []event.Event) {
 // (Archive, ReapOnce, a person's service action): the only write path into a
 // run's log besides its own loop, serialized with it per run (appendLock).
 func (e *Engine) AppendEvents(ctx context.Context, runID string, ps ...event.Payload) error {
+	event.Clean(ps...)
 	unlock := e.appendLock(runID)
 	evs, err := e.store.Append(ctx, runID, ps...)
 	unlock()

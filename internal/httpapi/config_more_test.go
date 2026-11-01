@@ -16,6 +16,7 @@ import (
 	"apothecary/internal/flow/builtin"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
+	"apothecary/internal/project/confstore/conftest"
 	"apothecary/internal/project/kinds"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/project/tickets"
@@ -919,9 +920,7 @@ func (f failingSource) OpenAttachment(context.Context, trackerport.SourceAttachm
 func TestTicketRoutes(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	id := x.newTicket(t, "first", "")
-	if err := x.srv.Conf.DB().UpsertProject(context.Background(), confstore.Project{ID: "prj-2", UserID: testUser, Name: "second"}); err != nil {
-		t.Fatal(err)
-	}
+	conftest.SeedProject(t, x.srv.Conf, confstore.Project{ID: "prj-2", UserID: testUser, Name: "second"})
 	res, data := x.do(t, "POST", "/api/tickets", map[string]any{"title": "second", "project_id": "prj-2"}, nil)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("second = %d %s", res.StatusCode, data)

@@ -18,6 +18,7 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 
 	"github.com/oklog/ulid/v2"
 )
@@ -362,7 +363,7 @@ func (svc *Service) Ask(ctx context.Context, runID, userID, text string) (Messag
 	}
 	th.RunID = runID
 	model := askModel(th, s.fl, svc.models(ctx, s))
-	q, err := svc.Store.AppendAskMessage(ctx, Message{RunID: runID, ID: svc.newID(), Role: RoleQuestion, Text: text, UserID: userID})
+	q, err := svc.Store.AppendAskMessage(ctx, Message{RunID: runID, ID: svc.newID(), Role: RoleQuestion, Text: event.CleanText(text), UserID: userID})
 	if err != nil {
 		return fail(err)
 	}
@@ -473,6 +474,7 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 	} else if ans.Text == "" && res.Output != "" {
 		ans.Text = red.Scrub(strings.TrimSpace(res.Output))
 	}
+	ans.Text, ans.Error = event.CleanText(ans.Text), event.CleanText(ans.Error)
 	m, aerr := svc.Store.AppendAskMessage(sctx, ans)
 	if aerr != nil {
 		svc.log().Error("ask: record answer", "run", runID, "err", aerr)

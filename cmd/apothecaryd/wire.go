@@ -80,6 +80,10 @@ type app struct {
 	mrSvc       *mrs.Service
 }
 
+// otelFlushFor is how long a shutdown waits on the telemetry collector, a
+// variable so a test on a dead one need not sit it out.
+var otelFlushFor = 5 * time.Second
+
 // buildApp opens the store and builds every adapter, service, the engine
 // and the API over them, in dependency order, then recovers the runs a
 // previous process left (after all wiring; the SSH door's key after that).
@@ -186,7 +190,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 			return nil, nil, fmt.Errorf("otel: %w", err)
 		}
 		closers = append(closers, func() {
-			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			sctx, cancel := context.WithTimeout(context.Background(), otelFlushFor)
 			defer cancel()
 			tel.Shutdown(sctx)
 		})

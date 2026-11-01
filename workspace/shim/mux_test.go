@@ -129,3 +129,65 @@ func TestSeedIsIdempotent(t *testing.T) {
 		t.Fatalf("shim.hash = %q", b)
 	}
 }
+
+// What opens a connection is what the mux reads, payload buffered behind it.
+func TestPreambleRoundTrip(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	go func() {
+		_ = writePreamble(client, "tok", "proxy")
+		_, _ = client.Write([]byte("payload"))
+	}()
+	target, br, err := readPreamble(server, "tok")
+	if err != nil || target != "proxy" {
+		t.Fatalf("target = %q, %v", target, err)
+	}
+	buf := make([]byte, 7)
+	if _, err := io.ReadFull(br, buf); err != nil || string(buf) != "payload" {
+		t.Errorf("payload = %q, %v", buf, err)
+	}
+}
+
+type brokenWriter struct{}
+
+func (brokenWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestWritePreambleReportsAFailedWrite(t *testing.T) {
+	if err := writePreamble(brokenWriter{}, "tok", "proxy"); err == nil {
+		t.Error("a failed write went unreported")
+	}
+}
+
+// No token configured admits nothing, and neither does a preamble too long to
+// be one or a client gone before it finished.
+func TestReadPreambleRefuses(t *testing.T) {
+	for _, c := range []struct{ line, token string }{
+		{"APO1 tok sidecar.sock\n", ""},
+		{"APO1 " + strings.Repeat("t", 600) + " sidecar.sock\n", "tok"},
+		{"APO1 tok side", "tok"},
+	} {
+		client, server := net.Pipe()
+		go func() {
+			_, _ = io.WriteString(client, c.line)
+			client.Close()
+		}()
+		if target, _, err := readPreamble(server, c.token); err == nil {
+			t.Errorf("%q with token %q admitted, target %q", c.line, c.token, target)
+		}
+		server.Close()
+	}
+}
+
+// Nothing listening means no port to serve from.
+func TestStartMuxFailsOnABadAddress(t *testing.T) {
+	if _, err := startMux("127.0.0.1:99999", t.TempDir(), "tok"); err == nil {
+		t.Error("a mux on an impossible port started")
+	}
+}
+
+func TestPumpStdioNeedsASocket(t *testing.T) {
+	if err := pumpStdio(filepath.Join(t.TempDir(), "gone.sock"), strings.NewReader(""), io.Discard); err == nil {
+		t.Error("pumping to a socket that is not there succeeded")
+	}
+}

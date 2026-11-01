@@ -44,6 +44,24 @@ func TestParseOrdersTiesByName(t *testing.T) {
 	}
 }
 
+// A contract suite's lines are its failure branches: they run when the code it
+// tests is broken, so they say nothing about coverage. A package that only
+// sounds like one still counts.
+func TestParseLeavesOutTestOnlyPackages(t *testing.T) {
+	rows, err := Parse(strings.NewReader(`mode: set
+apothecary/a/skilltest/s.go:1.1,2.2 5 0
+apothecary/a/pgtest/p.go:1.1,2.2 5 0
+apothecary/a/testdata/t.go:1.1,2.2 1 1
+apothecary/a/x.go:1.1,2.2 1 1
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || Total(rows).Total != 2 {
+		t.Errorf("rows = %+v", rows)
+	}
+}
+
 func TestParseRefusesWhatIsNotAProfile(t *testing.T) {
 	if _, err := Parse(strings.NewReader("mode: atomic\nnonsense\n")); err == nil {
 		t.Fatal("want an error")

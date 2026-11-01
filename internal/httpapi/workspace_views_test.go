@@ -536,7 +536,7 @@ func TestAskStream(t *testing.T) {
 	x.srv.Ask = ask.New(&run.Reader{Store: x.store}, x.srv.Workspaces.Resolver, x.e, store)
 	ctx := context.Background()
 	for _, text := range []string{"one", "two", "three"} {
-		if _, err := store.AppendAskMessage(ctx, ask.Message{RunID: "r1", Role: "user", Text: text}); err != nil {
+		if _, err := store.AppendAskMessage(ctx, ask.Message{RunID: "r1", Role: ask.RoleQuestion, Text: text}); err != nil {
 			t.Fatal(err)
 		}
 	}

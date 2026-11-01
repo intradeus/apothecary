@@ -4,8 +4,10 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -181,3 +183,131 @@ func TestHalfCloseOnAPlainConn(t *testing.T) {
 }
 
 type plainConn struct{ net.Conn }
+
+// What a relay cannot serve it says so on stderr and exits 1, for the
+// provisioner's log.
+func TestRelayRefusesBadArguments(t *testing.T) {
+	dir := shortTempDir(t)
+	token := filepath.Join(dir, "token")
+	empty := filepath.Join(dir, "empty")
+	if err := os.WriteFile(token, []byte("tok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(empty, []byte(" \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "missing")
+	serve := func(addr, tokenFile string) []string {
+		return []string{"--serve", addr, "--dir", dir, "--token-file", tokenFile}
+	}
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{nil, "no relay pairs given"},
+		{[]string{"--stdio"}, "--stdio needs <sock>"},
+		{[]string{"--stdio", missing}, "stdio " + missing},
+		{[]string{"--reverse"}, "--reverse needs <sock>:<host>:<port>"},
+		{[]string{"--reverse", "just-a-socket"}, "bad reverse spec"},
+		{[]string{"--reverse", "no-port.sock:localhost"}, "bad reverse spec"},
+		{[]string{"--reverse", filepath.Join(missing, "s.sock") + ":127.0.0.1:1"}, "listen unix"},
+		{[]string{"8080"}, "bad forward pair"},
+		{[]string{"not-a-port:/tmp/s.sock"}, "listen 127.0.0.1:not-a-port"},
+		{[]string{"--serve"}, "--serve needs a value"},
+		{[]string{"--dir"}, "--dir needs a value"},
+		{[]string{"--token-file"}, "--token-file needs a value"},
+		{[]string{"--serve", "127.0.0.1:0"}, "--serve needs --dir and --token-file"},
+		{[]string{"--serve", "127.0.0.1:0", "--dir", dir}, "--serve needs --dir and --token-file"},
+		{serve("127.0.0.1:0", missing), "token file"},
+		{serve("127.0.0.1:0", empty), "is empty"},
+		{serve("127.0.0.1:99999", token), "serve 127.0.0.1:99999"},
+	} {
+		r := shim(t, "", append([]string{"relay"}, c.args...)...)
+		if r.code != 1 || !strings.HasPrefix(r.stderr, "relay: ") || !strings.Contains(r.stderr, c.want) {
+			t.Errorf("relay %v = %d %q, want %q", c.args, r.code, r.stderr, c.want)
+		}
+	}
+}
+
+// A port already held means a relay from an earlier provision serves it: this
+// one bows out quietly.
+func TestRelayExitsQuietlyWhenThePortIsTaken(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	if r := shim(t, "", "relay", strconv.Itoa(port)+":/tmp/unused.sock"); r.code != 0 || r.stderr != "" {
+		t.Errorf("relay on a taken port = %+v", r)
+	}
+}
+
+// One connection over stdio, then the process is done.
+func TestRelayStdio(t *testing.T) {
+	dir := shortTempDir(t)
+	echoSock(t, dir, "app-3000.sock")
+	r := shim(t, "ping\n", "relay", "--stdio", filepath.Join(dir, "app-3000.sock"))
+	if r.code != 0 || r.stdout != "PING\n" {
+		t.Errorf("relay --stdio = %+v", r)
+	}
+}
+
+// All three kinds of pump in one process, until it is reaped.
+func TestRelayServesForwardReverseAndMux(t *testing.T) {
+	dir := shortTempDir(t)
+	engine := filepath.Join(dir, "engine.sock")
+	uln, err := net.Listen("unix", engine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer uln.Close()
+	echoServer(t, uln)
+	app, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	echoServer(t, app)
+	echoSock(t, dir, "sidecar.sock")
+	token := filepath.Join(dir, "token")
+	if err := os.WriteFile(token, []byte("  tok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reverse := filepath.Join(dir, "app-3000.sock")
+	if err := os.WriteFile(reverse, nil, 0o644); err != nil { // stale, from a previous relay
+		t.Fatal(err)
+	}
+	forward, mux := freePort(t), freePort(t)
+
+	startShim(t, shimCmd(t, "relay", strconv.Itoa(forward)+":"+engine,
+		"--reverse", reverse+":"+app.Addr().String(),
+		"--serve", "127.0.0.1:"+strconv.Itoa(mux), "--dir", dir, "--token-file", token))
+
+	muxAddr := "127.0.0.1:" + strconv.Itoa(mux)
+	var c net.Conn
+	waitFor(t, func() bool { c, err = net.Dial("tcp", muxAddr); return err == nil })
+	defer c.Close()
+
+	got := roundTrip(t, func() (net.Conn, error) { return net.Dial("tcp", "127.0.0.1:"+strconv.Itoa(forward)) }, "fwd")
+	if got != "echo:fwd" {
+		t.Errorf("forward = %q", got)
+	}
+	got = roundTrip(t, func() (net.Conn, error) { return net.Dial("unix", reverse) }, "rev")
+	if got != "echo:rev" {
+		t.Errorf("reverse = %q", got)
+	}
+	if info, err := os.Stat(reverse); err != nil || info.Mode().Perm() != 0o666 {
+		t.Errorf("the socket's mode lets only its owner in: %v, %v", info, err)
+	}
+	if err := writePreamble(c, "tok", "sidecar.sock"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(c, "mux\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if b, _ := io.ReadAll(c); string(b) != "OK\nMUX\n" {
+		t.Errorf("mux = %q", b)
+	}
+}

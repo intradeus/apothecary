@@ -4,25 +4,21 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-// runProbe calls os.Exit, so drive it as a subprocess via the compiled test
-// binary re-invoking `go run`. Simpler: test the observable behavior by
-// building the shim and running `probe` against a real/absent listener.
+// runProbe calls os.Exit, so drive it as a subprocess: `probe` against a
+// real/absent listener.
 func TestProbe(t *testing.T) {
-	bin := buildShim(t)
-
 	// A live listener → exit 0.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	if out, err := exec.Command(bin, "probe", ln.Addr().String()).CombinedOutput(); err != nil {
+	if out, err := shimCmd(t, "probe", ln.Addr().String()).CombinedOutput(); err != nil {
 		t.Errorf("probe of a live listener failed: %v (%s)", err, out)
 	}
 
@@ -33,7 +29,7 @@ func TestProbe(t *testing.T) {
 	}
 	addr := free.Addr().String()
 	free.Close() // now nothing is listening on addr
-	if err := exec.Command(bin, "probe", "--wait", "300ms", addr).Run(); err == nil {
+	if err := shimCmd(t, "probe", "--wait", "300ms", addr).Run(); err == nil {
 		t.Error("probe of a dead address must exit non-zero")
 	}
 }
@@ -41,12 +37,10 @@ func TestProbe(t *testing.T) {
 // --tls: a listener that accepts but never speaks TLS (the egress gateway
 // refusing a host looks like this) fails; a real TLS server passes.
 func TestProbeTLS(t *testing.T) {
-	bin := buildShim(t)
-
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer srv.Close()
 	addr := strings.TrimPrefix(srv.URL, "https://")
-	if out, err := exec.Command(bin, "probe", "--tls", addr).CombinedOutput(); err != nil {
+	if out, err := shimCmd(t, "probe", "--tls", addr).CombinedOutput(); err != nil {
 		t.Errorf("tls probe of a TLS server failed: %v (%s)", err, out)
 	}
 
@@ -64,29 +58,13 @@ func TestProbeTLS(t *testing.T) {
 			c.Close()
 		}
 	}()
-	out, err := exec.Command(bin, "probe", "--tls", ln.Addr().String()).CombinedOutput()
+	out, err := shimCmd(t, "probe", "--tls", ln.Addr().String()).CombinedOutput()
 	if err == nil {
 		t.Error("tls probe of a listener that hangs up must exit non-zero")
 	}
 	if !strings.Contains(string(out), "tls handshake") {
 		t.Errorf("failure should say why, got %q", out)
 	}
-}
-
-func buildShim(t *testing.T) string {
-	t.Helper()
-	bin := t.TempDir() + "/shim"
-	args := []string{"build", "-o", bin}
-	// `task cover:go`: what these subprocesses run counts too. Under `go test
-	// -cover` GOCOVERDIR is the test binary's own, so it is pointed here.
-	if dir := os.Getenv("APOTHECARY_COVERDIR"); dir != "" {
-		t.Setenv("GOCOVERDIR", dir)
-		args = append(args, "-cover", "-covermode=atomic", "-tags=coverflush")
-	}
-	if out, err := exec.Command("go", append(args, ".")...).CombinedOutput(); err != nil {
-		t.Fatalf("build shim: %v\n%s", err, out)
-	}
-	return bin
 }
 
 // probeOnce in-process: the plain connect, the TLS handshake, and the ways
@@ -133,5 +111,28 @@ func TestProbeOnce(t *testing.T) {
 	// An address with no port cannot be split for the SNI.
 	if err := probeOnce("127.0.0.1:0", true); err == nil {
 		t.Error("port 0 must fail the connect")
+	}
+}
+
+func TestProbeRefusesBadArguments(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{nil, "missing <host:port>"},
+		{[]string{"--wait"}, "--wait needs a duration"},
+		{[]string{"--wait", "soon", "127.0.0.1:1"}, `bad duration "soon"`},
+	} {
+		if r := shim(t, "", append([]string{"probe"}, c.args...)...); r.code != 2 || !strings.Contains(r.stderr, c.want) {
+			t.Errorf("probe %v = %+v, want %q", c.args, r, c.want)
+		}
+	}
+}
+
+// A failure says what failed, for the provisioner's log.
+func TestProbeFailureNamesTheAddress(t *testing.T) {
+	addr := "127.0.0.1:" + strconv.Itoa(freePort(t))
+	if r := shim(t, "", "probe", addr); r.code != 1 || !strings.HasPrefix(r.stderr, "probe "+addr+": ") {
+		t.Errorf("probe of a dead address = %+v", r)
 	}
 }

@@ -13,6 +13,7 @@ import (
 
 	"apothecary/internal/account/providers"
 	"apothecary/internal/flow"
+	"apothecary/internal/flow/builtin"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/trackerport"
 )
@@ -836,6 +837,43 @@ func TestCopyTemplate(t *testing.T) {
 
 // Deleting a project's flow takes its binding with it, unless a template is
 // underneath: then the delete is a reset, and the configuration stands.
+// Deleting a project's copy of a built-in is the reset to it, which the UI
+// offers on exactly the flows a project tends to default to: the default
+// resolves to the template again, and the configuration stays with the name.
+func TestResetToTheBuiltin(t *testing.T) {
+	ctx := context.Background()
+	svc, mem := newSvc(t)
+	p := seedProject(t, svc)
+	name := builtin.FlowNames()[0]
+	if err := mem.UpsertFlow(ctx, FlowRow{ProjectID: p.ID, Name: name, YAML: "name: copy\n", Hash: "h"}); err != nil {
+		t.Fatal(err)
+	}
+	p.DefaultFlow = name
+	if err := mem.UpsertProject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.PutFlowBinding(ctx, FlowBinding{ProjectID: p.ID, FlowName: name, Params: map[string]string{"model": "fake/m"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteFlow(ctx, p.ID, name); err != nil {
+		t.Fatalf("reset = %v", err)
+	}
+	if got, err := svc.GetProject(ctx, p.ID); err != nil || got.DefaultFlow != name {
+		t.Errorf("project = %+v, %v", got, err)
+	}
+	if _, err := svc.GetFlowBinding(ctx, p.ID, name); err != nil {
+		t.Errorf("the configuration went with the copy: %v", err)
+	}
+	// A live run on it still holds it: its flow can't change underneath it.
+	if err := mem.UpsertFlow(ctx, FlowRow{ProjectID: p.ID, Name: name, YAML: "name: copy\n", Hash: "h"}); err != nil {
+		t.Fatal(err)
+	}
+	mem.FlowPinnedBy = func(string, string) []string { return []string{"r1"} }
+	if err := svc.DeleteFlow(ctx, p.ID, name); !errors.Is(err, ErrReferenced) {
+		t.Errorf("reset under a live run = %v", err)
+	}
+}
+
 func TestDeleteFlowAndItsBinding(t *testing.T) {
 	ctx := context.Background()
 	svc, mem := newSvc(t)
@@ -1590,7 +1628,7 @@ func TestProjectSecretsValidationAndFailures(t *testing.T) {
 	_, err = svc.SetProjectSecret(ctx, p.ID, "tok", "v")
 	wantErr(t, "put", err, errDB)
 
-	wantErr(t, "no project", NewMem().PutProjectSecret(ctx, "gone", StoredProjectSecret{Name: "x"}), ErrInvalid)
+	wantErr(t, "no project", NewMem().PutProjectSecret(ctx, "gone", StoredProjectSecret{Name: "x", Sealed: []byte{1}}), ErrInvalid)
 }
 
 // --- automations --------------------------------------------------------------
@@ -1753,7 +1791,7 @@ func TestUpdateAutomationKeepsWhatTheWatcherMarked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.LastError != "boom" || got.LastFiredAt == nil || !got.LastFiredAt.Equal(at) || got.CreatedAt != a.CreatedAt || got.Schedule != "0 10 * * *" {
+	if got.LastError != "boom" || got.LastFiredAt == nil || !got.LastFiredAt.Equal(at) || !got.CreatedAt.Equal(pgTime(a.CreatedAt)) || got.Schedule != "0 10 * * *" {
 		t.Errorf("updated = %+v", got)
 	}
 
@@ -1823,7 +1861,7 @@ func TestAutomationLists(t *testing.T) {
 }
 
 func TestAutomationRequiresItsProject(t *testing.T) {
-	wantErr(t, "upsert", NewMem().UpsertAutomation(context.Background(), Automation{ID: "a", ProjectID: "gone"}), ErrInvalid)
+	wantErr(t, "upsert", NewMem().UpsertAutomation(context.Background(), Automation{ID: "a", ProjectID: "gone", Kind: AutomationCron}), ErrInvalid)
 }
 
 func TestValidateAutomationStoreFailures(t *testing.T) {

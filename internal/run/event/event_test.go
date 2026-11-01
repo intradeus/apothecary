@@ -363,7 +363,7 @@ func TestAppendDoesNotBlockOnACancelledWatcher(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for range 200 { // more than a subscriber's buffer
+		for range 300 { // more than a subscriber's buffer
 			if _, err := s.Append(context.Background(), "r1", &EnvRequested{}); err != nil {
 				t.Error(err)
 			}
@@ -375,7 +375,7 @@ func TestAppendDoesNotBlockOnACancelledWatcher(t *testing.T) {
 		t.Fatal("Append blocked on a watcher that had gone")
 	}
 	evs, err := s.Events(context.Background(), "r1", 0)
-	if err != nil || len(evs) != 200 {
+	if err != nil || len(evs) != 300 {
 		t.Errorf("events = %d, %v", len(evs), err)
 	}
 }

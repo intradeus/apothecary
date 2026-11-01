@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/auth/authtest"
 )
 
 // upstream is a fake sidecar SSH server: it records what sessions ask for,
@@ -194,7 +195,7 @@ type keyring struct {
 
 func newKeyring(t *testing.T) *keyring {
 	t.Helper()
-	svc := auth.New(auth.NewMem())
+	svc := authtest.New(auth.NewMem())
 	ctx := context.Background()
 	pw := "correct horse battery staple"
 	alice, err := svc.Setup(ctx, auth.NewUser{Handle: "alice", Email: "a@x", Name: "Alice", Password: pw})

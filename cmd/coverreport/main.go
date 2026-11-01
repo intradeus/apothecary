@@ -77,6 +77,9 @@ func Parse(r io.Reader) ([]Row, error) {
 	byPkg := map[string]*Row{}
 	for b, n := range stmts {
 		name := path.Dir(b.file)
+		if testOnly(name) {
+			continue
+		}
 		row := byPkg[name]
 		if row == nil {
 			row = &Row{Package: name}
@@ -99,6 +102,12 @@ func Parse(r io.Reader) ([]Row, error) {
 	})
 	return rows, nil
 }
+
+// testOnly reports a package that exists to serve tests: pgtest, skilltest and
+// the other contract suites, by the name they share. What never runs in one is
+// its own failure branches, which fire only when the code under test is
+// broken, so counting them would measure nothing.
+func testOnly(pkg string) bool { return strings.HasSuffix(path.Base(pkg), "test") }
 
 // Total sums the rows.
 func Total(rows []Row) Row {
@@ -132,7 +141,7 @@ var page = template.Must(template.New("report").Funcs(template.FuncMap{
 </style>
 <h1>Backend coverage: {{pct .Total.Percent}}%</h1>
 <p class="sum">{{.Total.Covered}} of {{.Total.Total}} statements. Floor {{pct .Min}}%. Worst first.
-<a href="files.html">Line by line</a>.</p>
+Test-only packages (<code>*test</code>) aren't counted. <a href="files.html">Line by line</a>.</p>
 <table>
 <tr><th>Package<th>Coverage<th><th>Missing<th>Statements
 {{range .Rows}}<tr class="{{if ge .Percent 90.0}}good{{else if ge .Percent 70.0}}fair{{else}}poor{{end}}">

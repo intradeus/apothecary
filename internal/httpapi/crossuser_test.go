@@ -12,6 +12,7 @@ import (
 
 	"apothecary/internal/engine"
 	"apothecary/internal/project/confstore"
+	"apothecary/internal/project/confstore/conftest"
 	"apothecary/internal/skills/skillstore"
 )
 
@@ -227,9 +228,7 @@ func TestAttachmentCannotBeClaimedByAnotherUser(t *testing.T) {
 	x := newEnvWith(t, engine.Config{}, files.deps)
 	files.serve(x)
 	bob := x.addUser(t, "bob", false)
-	if err := x.srv.Conf.DB().UpsertProject(context.Background(), confstore.Project{ID: "prj-bob", UserID: "bob", Name: "bobs"}); err != nil {
-		t.Fatal(err)
-	}
+	conftest.SeedProject(t, x.srv.Conf, confstore.Project{ID: "prj-bob", UserID: "bob", Name: "bobs"})
 	mine, err := files.att.Save(context.Background(), testUser, "secret.txt", "text/plain", strings.NewReader("my secret"))
 	if err != nil {
 		t.Fatal(err)

@@ -110,7 +110,7 @@ func TestAutomationLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := svc.GetAutomation(ctx, q.ID)
-	if got.LastFiredAt == nil || !got.LastFiredAt.Equal(fired) || got.LastError != "boom" || !got.UpdatedAt.Equal(q.UpdatedAt) {
+	if got.LastFiredAt == nil || !got.LastFiredAt.Equal(fired) || got.LastError != "boom" || !got.UpdatedAt.Equal(pgTime(q.UpdatedAt)) {
 		t.Errorf("marked = %+v (a mark is not an edit)", got)
 	}
 	if err := svc.MarkAutomation(ctx, q.ID, AutomationMark{PolledAt: fired.Add(time.Minute)}); err != nil {
@@ -127,7 +127,7 @@ func TestAutomationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if upd.ProjectID != p.ID || upd.Name != "inbox-2" || upd.Enabled || upd.LastFiredAt == nil || !upd.CreatedAt.Equal(q.CreatedAt) || !upd.UpdatedAt.After(q.UpdatedAt) {
+	if upd.ProjectID != p.ID || upd.Name != "inbox-2" || upd.Enabled || upd.LastFiredAt == nil || !upd.CreatedAt.Equal(pgTime(q.CreatedAt)) || !upd.UpdatedAt.After(q.UpdatedAt) {
 		t.Errorf("updated = %+v", upd)
 	}
 	if _, err := svc.UpdateAutomation(ctx, q.ID, Automation{Name: "x", Kind: AutomationCron, Schedule: "nope", TicketID: tk.ID, Flow: "builder"}); !errors.Is(err, ErrInvalid) {

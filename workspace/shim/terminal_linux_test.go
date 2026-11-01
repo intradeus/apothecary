@@ -10,6 +10,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -89,5 +92,64 @@ func TestSidecarTerminal(t *testing.T) {
 	out := ws.readUntil(t, "marker-42")
 	if !strings.Contains(out, "30 100") {
 		t.Errorf("resize not applied: %q", out)
+	}
+}
+
+// Keystrokes arrive binary or as plain text; a control message it does not
+// know is neither, and a shell that exits ends the stream.
+func TestSidecarTerminalInput(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
+	ts := newTestSidecar(t, t.TempDir())
+	ws := dialWS(t, strings.TrimPrefix(ts.srv.URL, "http://"), "/term")
+	defer ws.c.Close()
+	ws.send(wsOpText, []byte(`{"type":"telemetry"}`))
+	ws.send(wsOpText, []byte("echo typed-$((1+1))\n"))
+	if out := ws.readUntil(t, "typed-2"); strings.Contains(out, "telemetry") {
+		t.Errorf("a control message reached the shell: %q", out)
+	}
+	ws.send(wsOpBinary, []byte("exit\n"))
+	_ = ws.c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if _, err := io.ReadAll(ws.br); err != nil {
+		t.Errorf("after the shell's exit: %v, want the stream closed", err)
+	}
+}
+
+// A client that says goodbye gets a close back, and takes the shell with it.
+func TestSidecarTerminalClose(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
+	ts := newTestSidecar(t, t.TempDir())
+	ws := dialWS(t, strings.TrimPrefix(ts.srv.URL, "http://"), "/term")
+	defer ws.c.Close()
+	ws.send(wsOpBinary, []byte("echo shell=$$=; echo ready-$((1+1))\n"))
+	out := ws.readUntil(t, "ready-2")
+	m := regexp.MustCompile(`shell=(\d+)=`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("no pid in %q", out)
+	}
+	pid, _ := strconv.Atoi(m[1])
+	ws.send(wsOpClose, []byte{0x03, 0xe8})
+	waitGone(t, pid)
+}
+
+// With no shell to start, the terminal says why in the stream.
+func TestSidecarTerminalUnavailable(t *testing.T) {
+	t.Setenv("SHELL", "/no/such/shell")
+	ts := newTestSidecar(t, t.TempDir())
+	ws := dialWS(t, strings.TrimPrefix(ts.srv.URL, "http://"), "/term")
+	defer ws.c.Close()
+	ws.readUntil(t, "terminal unavailable")
+}
+
+func TestResizePTY(t *testing.T) {
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devNull.Close()
+	if err := resizePTY(devNull, 0, 24); err != nil {
+		t.Errorf("no size to set: %v", err)
+	}
+	if err := resizePTY(devNull, 80, 24); err == nil {
+		t.Error("resized something that is no terminal")
 	}
 }

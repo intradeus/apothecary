@@ -411,6 +411,7 @@ func (x *exec) append(ps ...event.Payload) error {
 			v.Text = x.redact.Scrub(v.Text)
 		}
 	}
+	event.Clean(ps...)
 	unlock := x.e.appendLock(x.rs.RunID)
 	evs, err := x.e.store.Append(x.bg, x.rs.RunID, ps...)
 	unlock()

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/account/auth"
+	"apothecary/internal/account/auth/authtest"
 	"apothecary/internal/account/providers"
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/engine"
@@ -604,7 +604,7 @@ func TestRunSSHFailures(t *testing.T) {
 		t.Errorf("no workspace = %d %s", res.StatusCode, body)
 	}
 	x.seedLiveRun(t, "r2")
-	x.srv.Auth = auth.New(failAfterGuard{DB: x.users, err: errors.New("db down")})
+	x.srv.Auth = authtest.New(failAfterGuard{DB: x.users, err: errors.New("db down")})
 	if res, body := x.do(t, "GET", "/api/runs/r2/ssh", nil, nil); res.StatusCode != http.StatusInternalServerError {
 		t.Errorf("keys outage = %d %s", res.StatusCode, body)
 	}

@@ -211,6 +211,10 @@ func TestForkMergeRequestIsReadOnlyAndRerunStaysOnIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// To its end: a run still going when the test stops is cut off wherever
+	// shutdown finds it, and the golden log would depend on when that was.
+	ph.waitState(t, next, run.Abandoned)
+	ph.e.Wait(next)
 	again, _ := findPayload[*event.RunCreated](ph.events(t, next))
 	if again == nil || again.MR == nil || again.MR.IID != ref.IID {
 		t.Errorf("rerun = %+v", again)

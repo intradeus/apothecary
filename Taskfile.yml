@@ -10,7 +10,7 @@ vars:
   DEV_PG: apothecary-dev-pg
   DEV_DSN: postgres://dev:dev@127.0.0.1:15433/dev
   # A floor, not a target: raise it when coverage rises, never lower it.
-  GO_COVER_MIN: 93
+  GO_COVER_MIN: 95
   # Local Kubernetes (k3d). Every kubectl/helm call names this kubeconfig:
   # these tasks never read, merge into or switch ~/.kube/config.
   K3D_CLUSTER: apothecary
@@ -298,7 +298,7 @@ tasks:
       TEST_POSTGRES: '1'
     vars:
       PG_PACKAGES:
-        sh: grep -rlw --include='*_test.go' pgtest cmd internal | xargs -n1 dirname | sort -u | sed 's|^|./|' | tr '\n' ' '
+        sh: grep -rlE --include='*_test.go' 'pgstore/pgtest"|^package pgtest' cmd internal | xargs -n1 dirname | sort -u | sed 's|^|./|' | tr '\n' ' '
     cmds:
       # -count=1: Go's test cache can't see the server, so a cached pass would
       # prove nothing.

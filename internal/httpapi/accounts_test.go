@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/auth/authtest"
 	"apothecary/internal/engine"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/run"
@@ -447,7 +448,7 @@ func TestDisablingAnAccountStandsItDown(t *testing.T) {
 	if err != nil || got.Enabled {
 		t.Errorf("automation after disable = %+v, %v", got, err)
 	}
-	if got, err := x.srv.Conf.GetAutomation(ctx, off.ID); err != nil || got.Enabled || !got.UpdatedAt.Equal(off.UpdatedAt) {
+	if got, err := x.srv.Conf.GetAutomation(ctx, off.ID); err != nil || got.Enabled || !got.UpdatedAt.Equal(off.UpdatedAt.Truncate(time.Microsecond)) {
 		t.Errorf("disabled automation was rewritten: %+v, %v", got, err)
 	}
 	// Nobody else felt it.
@@ -494,7 +495,7 @@ func TestDisabledTokenAndSessionAre403(t *testing.T) {
 
 func TestSetupBadInput(t *testing.T) {
 	x := newEnv(t, engine.Config{})
-	x.srv.Auth = auth.New(auth.NewMem())
+	x.srv.Auth = authtest.New(auth.NewMem())
 	if res, _ := x.bare(t, "POST", "/api/auth/setup", "{", nil); res.StatusCode != http.StatusBadRequest {
 		t.Errorf("malformed = %d", res.StatusCode)
 	}
@@ -518,7 +519,7 @@ func (sessionFails) CreateSession(context.Context, auth.Session) error { return 
 func TestLoginWhenTheSessionCannotBeStored(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	x.addPasswordUser(t, "lu", false)
-	x.srv.Auth = auth.New(sessionFails{x.users})
+	x.srv.Auth = authtest.New(sessionFails{x.users})
 	res, body := x.do(t, "POST", "/api/auth/login", LoginRequest{Login: "lu", Proof: goodPassword}, nil)
 	if res.StatusCode != http.StatusInternalServerError || !strings.Contains(string(body), "db down") {
 		t.Errorf("login = %d %s", res.StatusCode, body)

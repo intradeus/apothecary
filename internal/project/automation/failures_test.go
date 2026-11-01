@@ -54,13 +54,22 @@ func (b brokenMRs) RepoHostUser(ctx context.Context, p, r string) (string, error
 type brokenDB struct {
 	confstore.DB
 	listAutomations, listTickets, upsertAutomation error
+	// kindOf reports rows under a kind the table's check would refuse: one a
+	// later migration added, seen by a binary that doesn't know it.
+	kindOf map[string]string
 }
 
 func (d *brokenDB) ListAutomations(ctx context.Context, p string) ([]confstore.Automation, error) {
 	if d.listAutomations != nil {
 		return nil, d.listAutomations
 	}
-	return d.DB.ListAutomations(ctx, p)
+	rows, err := d.DB.ListAutomations(ctx, p)
+	for i := range rows {
+		if kind, ok := d.kindOf[rows[i].ID]; ok {
+			rows[i].Kind = kind
+		}
+	}
+	return rows, err
 }
 
 func (d *brokenDB) ListTickets(ctx context.Context, u string) ([]confstore.Ticket, error) {
@@ -130,10 +139,7 @@ func TestRunOnceReportsAListingFailure(t *testing.T) {
 func TestOneAutomationsFailureDoesNotStopThePass(t *testing.T) {
 	h := newHarness(t)
 	bad := h.automation(t, confstore.Automation{Name: "broken", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: true})
-	bad.Kind = "telepathy"
-	if err := h.conf.DB().UpsertAutomation(context.Background(), bad); err != nil {
-		t.Fatal(err)
-	}
+	h.breakDB(t).kindOf = map[string]string{bad.ID: "telepathy"}
 	good := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: true})
 	h.pass(t)
 	if got := h.get(t, bad.ID); !strings.Contains(got.LastError, `unknown automation kind "telepathy"`) || got.LastPolledAt == nil {

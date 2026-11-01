@@ -6,9 +6,13 @@ package ask
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Thread is a run's Ask conversation: the harness session it continues
@@ -55,7 +59,8 @@ type Store interface {
 	AskMessages(ctx context.Context, runID string, afterSeq int64) ([]Message, error)
 }
 
-// MemStore is an in-memory Store (tests, a daemon with no database).
+// MemStore is an in-memory Store (tests, a daemon with no database). It keeps
+// and refuses what Postgres does (asktest holds the two together).
 type MemStore struct {
 	mu       sync.Mutex
 	threads  map[string]Thread
@@ -66,35 +71,53 @@ func NewMemStore() *MemStore {
 	return &MemStore{threads: map[string]Thread{}, messages: map[string][]Message{}}
 }
 
-func (s *MemStore) AskThread(_ context.Context, runID string) (Thread, bool, error) {
+func (s *MemStore) AskThread(ctx context.Context, runID string) (Thread, bool, error) {
+	if err := usable(ctx, runID); err != nil {
+		return Thread{}, false, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t, ok := s.threads[runID]
 	return t, ok, nil
 }
 
-func (s *MemStore) SaveAskThread(_ context.Context, t Thread) error {
+func (s *MemStore) SaveAskThread(ctx context.Context, t Thread) error {
+	if err := usable(ctx, t.RunID, t.SessionID, t.Model); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if t.UpdatedAt.IsZero() {
-		t.UpdatedAt = time.Now().UTC()
-	}
+	t.UpdatedAt = stored(time.Now())
 	s.threads[t.RunID] = t
 	return nil
 }
 
-func (s *MemStore) AppendAskMessage(_ context.Context, m Message) (Message, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	m.Seq = int64(len(s.messages[m.RunID])) + 1
+func (s *MemStore) AppendAskMessage(ctx context.Context, m Message) (Message, error) {
 	if m.At.IsZero() {
 		m.At = time.Now().UTC()
 	}
-	s.messages[m.RunID] = append(s.messages[m.RunID], m)
+	if err := usable(ctx, m.RunID, m.ID, m.Role, m.Text, m.UserID, m.Model, m.Error); err != nil {
+		return m, err
+	}
+	if m.Role != RoleQuestion && m.Role != RoleAnswer {
+		return m, fmt.Errorf("ask message: role %q", m.Role)
+	}
+	if m.Turns < math.MinInt32 || m.Turns > math.MaxInt32 {
+		return m, fmt.Errorf("ask message: %d turns", m.Turns)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m.Seq = int64(len(s.messages[m.RunID])) + 1
+	row := m
+	row.At = stored(m.At)
+	s.messages[m.RunID] = append(s.messages[m.RunID], row)
 	return m, nil
 }
 
-func (s *MemStore) AskMessages(_ context.Context, runID string, afterSeq int64) ([]Message, error) {
+func (s *MemStore) AskMessages(ctx context.Context, runID string, afterSeq int64) ([]Message, error) {
+	if err := usable(ctx, runID); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []Message
@@ -106,5 +129,22 @@ func (s *MemStore) AskMessages(_ context.Context, runID string, afterSeq int64) 
 	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
 	return out, nil
 }
+
+// usable refuses what never reaches a row: a dead context, and strings that
+// are not text to Postgres.
+func usable(ctx context.Context, values ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for _, v := range values {
+		if strings.ContainsRune(v, 0) || !utf8.ValidString(v) {
+			return fmt.Errorf("ask: invalid text %q", v)
+		}
+	}
+	return nil
+}
+
+// stored is a time as a timestamptz column gives it back.
+func stored(t time.Time) time.Time { return t.Truncate(time.Microsecond).Local() }
 
 var _ Store = (*MemStore)(nil)

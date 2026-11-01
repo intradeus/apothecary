@@ -496,12 +496,15 @@ func (s *Store) ListFlows(ctx context.Context, projectID string) ([]confstore.Fl
 }
 
 // DeleteFlow refuses while THIS project still points at the flow or has a
-// live run pinned to it. Another project's flow of the same name is a
-// different document and never blocks.
+// live run pinned to it. A default a built-in template answers to points at
+// nothing the delete takes away: that delete is the reset to the template.
+// Another project's flow of the same name is a different document and never
+// blocks.
 func (s *Store) DeleteFlow(ctx context.Context, projectID, name string) error {
 	var refs []string
 	prows, err := s.pool.Query(ctx,
-		`SELECT name FROM projects WHERE id=$1 AND default_flow=$2 ORDER BY name`, projectID, name)
+		`SELECT name FROM projects WHERE id=$1 AND default_flow=$2 AND NOT default_flow = ANY($3) ORDER BY name`,
+		projectID, name, builtin.FlowNames())
 	if err != nil {
 		return err
 	}

@@ -312,6 +312,11 @@ func TestAQuestionUnderATakeOverParksWithTheHoldInForce(t *testing.T) {
 	}
 	var resumed atomic.Int32
 	ph.runner.ResumeFunc = func(ctx context.Context, call fake.ResumeCall) (agentport.AgentResult, error) {
+		// From its first instruction: a turn that ends before the engine
+		// said so would end the stage under the holder.
+		if !call.In.Inbox.Held() {
+			t.Error("the session resumed without its take-over")
+		}
 		resumed.Add(1)
 		r.turn(call.In, "with the answer", nil)
 		return r.drive(ctx, call.In)

@@ -54,6 +54,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -303,7 +304,8 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 }
 
 // run executes one CLI call with 3 attempts on spawn failures (the process
-// never ran). Nonzero exits are results, never retried: docker reserves
+// never ran), unless the binary isn't installed: no wait brings it back.
+// Nonzero exits are results, never retried: docker reserves
 // 125–127 for its own errors and `devcontainer exec` propagates the remote
 // command's code verbatim, so a clean exit is authoritative.
 func (a *Adapter) run(ctx context.Context, bin string, args []string, stdin []byte, tee io.Writer, env ...string) ([]byte, []byte, int, error) {
@@ -322,6 +324,9 @@ func (a *Adapter) runWith(ctx context.Context, r CmdRunner, bin string, args []s
 		lastErr = err
 		if ctx.Err() != nil {
 			return nil, nil, 0, ctx.Err()
+		}
+		if errors.Is(err, exec.ErrNotFound) {
+			break
 		}
 		select {
 		case <-time.After(time.Duration(attempt) * a.retryDelay):

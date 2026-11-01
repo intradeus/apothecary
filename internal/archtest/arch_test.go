@@ -85,7 +85,7 @@ var rules = []rule{
 	{pkg: "internal/engine/egress", mayImport: []string{"internal/ports/", "internal/project/resolution", "internal/run", "internal/workspace/wsname"}},
 	{pkg: "internal/engine/ask", mayImport: []string{
 		"internal/flow/agentspec", "internal/flow", "internal/engine/modelcheck", "internal/ports/",
-		"internal/engine/redact", "internal/project/resolution", "internal/run",
+		"internal/engine/redact", "internal/project/resolution", "internal/run", "internal/run/event",
 	}},
 	{pkg: "internal/engine/authsink", mayImport: []string{"internal/ports/", "internal/engine/redact", "internal/project/resolution", "internal/run"}},
 	{pkg: "internal/workspace/runports", mayImport: []string{"internal/run/event", "internal/workspace/portrelay", "internal/ports/", "internal/project/resolution", "internal/run"}},

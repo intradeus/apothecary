@@ -26,6 +26,8 @@ type Service struct {
 	// SessionTTL is how long a browser stays signed in without activity;
 	// each request within it slides the expiry. Default 30 days.
 	SessionTTL time.Duration
+	// HashCost prices new password hashes; zero is the production cost.
+	HashCost HashCost
 
 	now   func() time.Time
 	newID func() string
@@ -127,7 +129,7 @@ func (s *Service) CreateUser(ctx context.Context, in NewUser) (User, error) {
 	if err := checkPassword(in.Password); err != nil {
 		return User{}, err
 	}
-	hash, err := HashPassword(in.Password)
+	hash, err := s.HashCost.hash(in.Password)
 	if err != nil {
 		return User{}, err
 	}
@@ -255,7 +257,7 @@ func (s *Service) SetPassword(ctx context.Context, userID, password string) erro
 	if _, err := s.db.GetUser(ctx, userID); err != nil {
 		return err
 	}
-	hash, err := HashPassword(password)
+	hash, err := s.HashCost.hash(password)
 	if err != nil {
 		return err
 	}
@@ -335,9 +337,7 @@ func (s *Service) Login(ctx context.Context, kind, login, proof string) (User, e
 	if u.Disabled() {
 		return User{}, ErrDisabled
 	}
-	now := s.now().UTC()
-	m.LastUsedAt = &now
-	_ = s.db.PutMethod(ctx, m)
+	_ = s.db.TouchMethod(ctx, m.ID, s.now().UTC())
 	return u, nil
 }
 

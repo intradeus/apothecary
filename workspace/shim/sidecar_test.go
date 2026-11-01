@@ -3,8 +3,10 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,7 +26,15 @@ func TestMain(m *testing.M) {
 		fakeACPAgent()
 		os.Exit(0)
 	}
-	os.Exit(m.Run())
+	if os.Getenv(shimEnv) == "1" {
+		asShim()
+		os.Exit(0)
+	}
+	code := m.Run()
+	if testing.CoverMode() != "" {
+		os.RemoveAll(coverScratch())
+	}
+	os.Exit(code)
 }
 
 func fakeACPAgent() {
@@ -150,6 +160,10 @@ func fakeACPAgent() {
 						}})
 					update(sid, map[string]any{"sessionUpdate": "agent_message_chunk",
 						"content": map[string]any{"type": "text", "text": "permission:" + string(r)}})
+				}
+				if strings.Contains(text, "DIE") {
+					fmt.Fprintln(os.Stderr, "fatal: out of memory")
+					os.Exit(3)
 				}
 				if strings.Contains(text, "SILENT") {
 					// A model call that failed, reported only in the log.
@@ -672,5 +686,336 @@ func TestSidecarRepoSelector(t *testing.T) {
 	// "" and "repo" are the primary.
 	if code := ts.get("/fs/tree?repo=repo", &tree); code != 200 {
 		t.Errorf("primary by name = %d", code)
+	}
+}
+
+// A body that is not JSON is refused on every route that takes one.
+func TestSidecarRefusesBadBodies(t *testing.T) {
+	ts := newTestSidecar(t, t.TempDir())
+	for _, path := range []string{"/agent/start", "/agent/session", "/agent/prompt", "/agent/cancel"} {
+		res, err := http.Post(ts.srv.URL+path, "application/json", strings.NewReader("{nope"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out map[string]string
+		_ = json.NewDecoder(res.Body).Decode(&out)
+		res.Body.Close()
+		if res.StatusCode != http.StatusBadRequest || !strings.Contains(out["error"], "invalid body") {
+			t.Errorf("%s = %d %v", path, res.StatusCode, out)
+		}
+	}
+}
+
+// With no agent there is no session, turn or cancel to have: each says so
+// with the status the engine tells apart.
+func TestSidecarWithNoAgent(t *testing.T) {
+	ts := newTestSidecar(t, t.TempDir())
+	if code, out := ts.post("/agent/session", sessionReq{}); code != http.StatusConflict {
+		t.Errorf("session = %d %v", code, out)
+	}
+	if code, out := ts.post("/agent/session", sessionReq{Proc: "nope"}); code != http.StatusConflict {
+		t.Errorf("session on an unknown proc = %d %v", code, out)
+	}
+	if code, out := ts.post("/agent/prompt", promptReq{SessionID: "ghost", Text: "x"}); code != http.StatusBadRequest ||
+		!strings.Contains(fmt.Sprint(out["error"]), "not live") {
+		t.Errorf("prompt = %d %v", code, out)
+	}
+	if code, _ := ts.post("/agent/cancel", map[string]string{"session_id": "ghost"}); code != http.StatusConflict {
+		t.Errorf("cancel = %d", code)
+	}
+	if code, out := ts.post("/agent/start", startReq{}); code != http.StatusBadGateway || !strings.Contains(fmt.Sprint(out["error"]), "argv") {
+		t.Errorf("start with no argv = %d %v", code, out)
+	}
+	if code, out := ts.post("/agent/start", startReq{Argv: []string{"/no/such/agent"}}); code != http.StatusBadGateway ||
+		!strings.Contains(fmt.Sprint(out["error"]), "start agent") {
+		t.Errorf("start of nothing = %d %v", code, out)
+	}
+	var st hostStatus
+	ts.get("/agent/status", &st)
+	if st.Running || st.Boot == "" || len(st.Sessions) != 0 {
+		t.Errorf("status = %+v", st)
+	}
+}
+
+// An agent dying mid-turn ends the turn with its last words, says which
+// process went, and leaves the host ready for a new one.
+func TestSidecarAgentDiesMidTurn(t *testing.T) {
+	ts := newTestSidecar(t, t.TempDir())
+	_, start := ts.post("/agent/start", startReq{Argv: fakeAgentArgv(t)})
+	ts.post("/agent/session", sessionReq{})
+	ts.post("/agent/prompt", promptReq{SessionID: "s1", Turn: "T1", Text: "DIE"})
+	saw := map[string]sideEvent{}
+	ts.collect(0, func(ev sideEvent) bool {
+		saw[ev.Type] = ev
+		return saw["turn_end"].Type != "" && saw["agent_exit"].Type != ""
+	})
+	if end := saw["turn_end"]; end.StopReason != "error" || !strings.Contains(end.Error, errAgentGone.Error()) || !strings.Contains(end.Error, "out of memory") {
+		t.Errorf("turn_end = %+v", end)
+	}
+	if ex := saw["agent_exit"]; ex.Proc != start["proc"] || ex.Error != "agent exited (code 3)" || !strings.Contains(ex.Text, "out of memory") {
+		t.Errorf("agent_exit = %+v", ex)
+	}
+	var st hostStatus
+	ts.get("/agent/status", &st)
+	if st.Running || len(st.Sessions) != 0 || len(st.Turns) != 0 {
+		t.Errorf("status after the agent died = %+v", st)
+	}
+	if code, _ := ts.post("/agent/prompt", promptReq{SessionID: "s1", Turn: "T2", Text: "x"}); code != http.StatusBadRequest {
+		t.Errorf("prompt to a dead session = %d", code)
+	}
+	if code, _ := ts.post("/agent/start", startReq{Argv: fakeAgentArgv(t)}); code != 200 {
+		t.Errorf("restart = %d", code)
+	}
+	if code, _ := ts.post("/agent/session", sessionReq{}); code != 200 {
+		t.Errorf("session after the restart = %d", code)
+	}
+}
+
+// A stop is the host's own doing: the processes go, with no exit to report.
+func TestSidecarAgentStop(t *testing.T) {
+	ts := newTestSidecar(t, t.TempDir())
+	ts.post("/agent/start", startReq{Argv: fakeAgentArgv(t)})
+	ts.post("/agent/session", sessionReq{})
+	before := ts.sc.log.last()
+	if code, _ := ts.post("/agent/stop", nil); code != http.StatusNoContent {
+		t.Fatalf("stop = %d", code)
+	}
+	var st hostStatus
+	ts.get("/agent/status", &st)
+	if st.Running || len(st.Sessions) != 0 || st.LastSeq != before {
+		t.Errorf("status after stop = %+v (seq was %d)", st, before)
+	}
+}
+
+func (ts *testSidecar) lookBack(query string) []sideEvent {
+	ts.t.Helper()
+	res, err := http.Get(ts.srv.URL + "/agent/events?follow=0&" + query)
+	if err != nil {
+		ts.t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var out []sideEvent
+	dec := json.NewDecoder(res.Body)
+	for {
+		var ev sideEvent
+		if err := dec.Decode(&ev); err != nil {
+			return out
+		}
+		out = append(out, ev)
+	}
+}
+
+// follow=0 is a look back. A reader of another boot is told its seqs mean
+// nothing here; one that fell behind the buffer, that it lost events.
+func TestSidecarEventsGaps(t *testing.T) {
+	ts := newTestSidecar(t, t.TempDir())
+	ts.sc.log.emit(sideEvent{Type: "message", Text: "one"})
+	ts.sc.log.emit(sideEvent{Type: "message", Text: "two"})
+
+	if evs := ts.lookBack("after=1"); len(evs) != 1 || evs[0].Text != "two" {
+		t.Errorf("after=1 = %+v", evs)
+	}
+	if evs := ts.lookBack("after=1&boot=" + ts.sc.log.boot); len(evs) != 1 {
+		t.Errorf("same boot = %+v", evs)
+	}
+	evs := ts.lookBack("after=2&boot=other")
+	if len(evs) != 3 || evs[0].Type != "gap" || evs[0].Boot != ts.sc.log.boot || evs[1].Text != "one" {
+		t.Errorf("another boot = %+v", evs)
+	}
+
+	for range maxEventsBuf {
+		ts.sc.log.emit(sideEvent{Type: "message"})
+	}
+	evs = ts.lookBack("after=1")
+	if len(evs) != maxEventsBuf+1 || evs[0].Type != "gap" || !strings.Contains(evs[0].Text, "dropped") {
+		t.Errorf("behind the buffer: %d events, first %+v", len(evs), evs[0])
+	}
+	if evs := ts.lookBack("after=" + fmt.Sprint(ts.sc.log.last()-1)); len(evs) != 1 {
+		t.Errorf("caught up = %d events", len(evs))
+	}
+}
+
+// A quiet stream still shows the reader the connection is alive, and a reader
+// that left is noticed.
+func TestSidecarEventsKeepalive(t *testing.T) {
+	old := eventsKeepalive
+	eventsKeepalive = 5 * time.Millisecond
+	t.Cleanup(func() { eventsKeepalive = old })
+	ts := newTestSidecar(t, t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", ts.srv.URL+"/agent/events", nil)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if line, err := bufio.NewReader(res.Body).ReadString('\n'); err != nil || line != "\n" {
+		t.Errorf("keepalive = %q, %v", line, err)
+	}
+}
+
+type noFlush struct{ http.ResponseWriter }
+
+func TestSidecarEventsNeedStreaming(t *testing.T) {
+	s := &sidecar{log: newEventLog()}
+	rec := httptest.NewRecorder()
+	s.agentEvents(noFlush{rec}, httptest.NewRequest("GET", "/agent/events", nil))
+	if rec.Code != 500 {
+		t.Errorf("code = %d", rec.Code)
+	}
+}
+
+// Every workspace route answers for the checkout it was asked about: 404 for
+// one this workspace does not have, and its own errors otherwise.
+func TestSidecarWorkspaceErrors(t *testing.T) {
+	repo := gitInit(t)
+	ts := newTestSidecar(t, repo)
+	var e map[string]string
+	for _, path := range []string{"/fs/tree", "/fs/file?path=README.md", "/git/changes", "/git/diff?path=README.md", "/term"} {
+		sep := "?"
+		if strings.Contains(path, "?") {
+			sep = "&"
+		}
+		if code := ts.get(path+sep+"repo=nope", &e); code != 404 {
+			t.Errorf("%s of an unknown repo = %d", path, code)
+		}
+	}
+	for path, want := range map[string]int{
+		"/fs/tree?path=missing": 404,
+		"/fs/tree?path=../..":   400,
+		"/fs/file?path=missing": 404,
+		"/fs/file?path=src":     500,
+		"/git/diff?path=../x":   400,
+		"/git/diff?path=":       400,
+		"/term":                 400, // no upgrade
+	} {
+		if code := ts.get(path, &e); code != want {
+			t.Errorf("%s = %d, want %d", path, code, want)
+		}
+	}
+	ts2 := newTestSidecar(t, t.TempDir())
+	if code := ts2.get("/git/changes", &e); code != http.StatusConflict {
+		t.Errorf("changes outside a checkout = %d", code)
+	}
+}
+
+// /health reports the checkout, and the directory it resolves to: the
+// devcontainer's workspace folder, what an editor opens.
+func TestSidecarHealth(t *testing.T) {
+	dir := t.TempDir()
+	folder := filepath.Join(dir, "workspaces", "app")
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "repo")
+	if err := os.Symlink(folder, link); err != nil {
+		t.Fatal(err)
+	}
+	real, _ := filepath.EvalSymlinks(folder)
+	ts := newTestSidecar(t, link)
+	var h map[string]string
+	if code := ts.get("/health", &h); code != 200 || h["repo"] != link || h["workspace"] != real || h["boot"] != ts.sc.log.boot {
+		t.Errorf("health = %d %v", code, h)
+	}
+	gone := newTestSidecar(t, filepath.Join(dir, "gone"))
+	if gone.get("/health", &h); h["workspace"] != "" {
+		t.Errorf("workspace of a missing repo = %q", h["workspace"])
+	}
+}
+
+func unixClient(sock string) *http.Client {
+	return &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+		},
+	}}
+}
+
+func waitServing(t *testing.T, sock string) {
+	t.Helper()
+	waitFor(t, func() bool {
+		c, err := net.Dial("unix", sock)
+		if err != nil {
+			return false
+		}
+		c.Close()
+		return true
+	})
+}
+
+func sidecarHealth(t *testing.T, sock string) map[string]string {
+	t.Helper()
+	res, err := unixClient(sock).Get("http://sidecar/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var h map[string]string
+	if err := json.NewDecoder(res.Body).Decode(&h); err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+// The subcommand as the provisioner starts it: the socket open to the engine
+// whatever its uid, SSH beside it, $HOME's checkout by default.
+func TestRunSidecar(t *testing.T) {
+	dir := shortTempDir(t)
+	sock := filepath.Join(dir, "sidecar.sock")
+	cmd := shimCmd(t, "sidecar", "--listen", sock)
+	cmd.Env = append(cmd.Env, "HOME="+dir)
+	startShim(t, cmd)
+	waitServing(t, sock)
+	h := sidecarHealth(t, sock)
+	if h["repo"] != filepath.Join(dir, "repo") || h["boot"] == "" {
+		t.Errorf("health = %v", h)
+	}
+	if info, err := os.Stat(sock); err != nil || info.Mode().Perm() != 0o666 {
+		t.Errorf("socket mode = %v, %v", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ssh.sock")); err != nil {
+		t.Errorf("no ssh socket beside it: %v", err)
+	}
+
+	// Singleton: a second one finds the live socket and leaves, the first
+	// keeps its boot.
+	if r := shim(t, "", "sidecar", "--listen", sock); r.code != 0 || r.stderr != "" {
+		t.Errorf("a second sidecar = %+v", r)
+	}
+	if again := sidecarHealth(t, sock); again["boot"] != h["boot"] {
+		t.Errorf("the sidecar was replaced: %v, %v", h, again)
+	}
+
+	// A dead sidecar's socket file does not stop the next one.
+	stopShim(cmd)
+	next := shimCmd(t, "sidecar", "--listen", sock, "--repo", dir, "--repos", dir, "--ssh", "off")
+	startShim(t, next)
+	waitServing(t, sock)
+	if got := sidecarHealth(t, sock); got["boot"] == h["boot"] || got["repo"] != dir {
+		t.Errorf("after the restart = %v", got)
+	}
+}
+
+// SSH never decides whether a sidecar serves; the HTTP socket does.
+func TestRunSidecarSocketFailures(t *testing.T) {
+	dir := shortTempDir(t)
+	sock := filepath.Join(dir, "sidecar.sock")
+	var stderr bytes.Buffer
+	cmd := shimCmd(t, "sidecar", "--listen", sock, "--repo", dir, "--repos", dir, "--ssh", filepath.Join(dir, "missing", "ssh.sock"))
+	cmd.Stderr = &stderr
+	startShim(t, cmd)
+	waitServing(t, sock)
+	if h := sidecarHealth(t, sock); h["repo"] != dir {
+		t.Errorf("health = %v", h)
+	}
+	stopShim(cmd)
+	if !strings.Contains(stderr.String(), "ssh: not serving on") {
+		t.Errorf("stderr = %q", stderr.String())
+	}
+
+	r := shim(t, "", "sidecar", "--listen", filepath.Join(dir, "missing", "s.sock"), "--repo", dir, "--repos", dir)
+	if r.code != 1 || !strings.Contains(r.stderr, "sidecar: listen") {
+		t.Errorf("no socket = %+v", r)
 	}
 }

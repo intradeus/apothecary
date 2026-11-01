@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/auth/authtest"
 	"apothecary/internal/engine"
 )
 
@@ -146,7 +147,7 @@ func TestOwnershipIsTheWholeView(t *testing.T) {
 // by handle or email, a cross-site write is refused, and a wrong password
 // is throttled after enough tries.
 func TestSessionsAndSetup(t *testing.T) {
-	svc := auth.New(auth.NewMem())
+	svc := authtest.New(auth.NewMem())
 	x := newEnv(t, engine.Config{})
 	x.srv.Auth = svc
 	ts := httptest.NewServer(x.srv.Handler())

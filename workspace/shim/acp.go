@@ -554,6 +554,17 @@ func stderrHint(t *tailBuffer) string {
 	return ""
 }
 
+// lastWords is what an agent that went away left on stderr. Its stdout's EOF
+// says it went, but stderr only drains in cmd.Wait; the bound is for one that
+// closed stdout and lingers.
+func (p *agentProc) lastWords() string {
+	select {
+	case <-p.exited:
+	case <-time.After(time.Second):
+	}
+	return stderrHint(p.stderr)
+}
+
 func (p *agentProc) alive() bool {
 	select {
 	case <-p.exited:
@@ -563,12 +574,15 @@ func (p *agentProc) alive() bool {
 	}
 }
 
+// agentKillGrace is how long an agent has to go after a TERM; a var for tests.
+var agentKillGrace = 5 * time.Second
+
 func (p *agentProc) kill() {
 	if p.cmd.Process != nil {
 		_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGTERM)
 		select {
 		case <-p.exited:
-		case <-time.After(5 * time.Second):
+		case <-time.After(agentKillGrace):
 			_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
 			<-p.exited
 		}
@@ -738,7 +752,10 @@ func (h *agentHost) session(req sessionReq) (sessionResp, error) {
 					return sessionResp{}, err
 				}
 			}
-			return sessionResp{SessionID: sid, CostUSD: st.costUSD, Model: model}, nil
+			h.mu.Lock()
+			cost := st.costUSD
+			h.mu.Unlock()
+			return sessionResp{SessionID: sid, CostUSD: cost, Model: model}, nil
 		}
 	}
 	p, err := h.procFor(req.Proc)
@@ -990,7 +1007,7 @@ func (h *agentHost) prompt(req promptReq) error {
 			ev.StopReason = "error"
 			ev.Error = err.Error()
 			if errors.Is(err, errAgentGone) {
-				ev.Error += stderrHint(p.stderr)
+				ev.Error += p.lastWords()
 			}
 		} else {
 			var r struct {

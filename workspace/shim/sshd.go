@@ -42,6 +42,9 @@ type sshServer struct {
 	repo   string
 	config *ssh.ServerConfig
 	sem    chan struct{}
+	// hangupGrace is how long a session's process has to go once its client
+	// has hung up, before it is killed.
+	hangupGrace time.Duration
 }
 
 // startSSH serves SSH on a unix socket until the listener is closed. The
@@ -75,7 +78,7 @@ func newSSHServer(repo string) (*sshServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &sshServer{repo: repo, sem: make(chan struct{}, sshMaxConns)}
+	s := &sshServer{repo: repo, sem: make(chan struct{}, sshMaxConns), hangupGrace: 5 * time.Second}
 	s.config = &ssh.ServerConfig{
 		MaxAuthTries:  2,
 		ServerVersion: "SSH-2.0-apothecary-sidecar",

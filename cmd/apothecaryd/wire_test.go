@@ -352,6 +352,9 @@ func TestOptionalFacesOfTheBoot(t *testing.T) {
 	boot.CPUIDir = cpui
 	boot.AppsDomain, boot.AppsScheme, boot.PublicURL = "apps.test", "http", "http://ui.test"
 	boot.OtelEndpoint = freePort(t) // a collector that is not there is not fatal
+	flush := otelFlushFor
+	otelFlushFor = 10 * time.Millisecond
+	t.Cleanup(func() { otelFlushFor = flush })
 	a, _ := booted(t, boot, false)
 	c := newClient(t, a)
 

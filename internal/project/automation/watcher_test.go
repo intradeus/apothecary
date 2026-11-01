@@ -168,8 +168,12 @@ func (h *harness) automation(t *testing.T, a confstore.Automation) confstore.Aut
 	}
 	// The store stamps the wall clock; a schedule counts from when the rule
 	// was made, so pin that to the watcher's clock — otherwise the test
-	// depends on the time of day it runs at.
+	// depends on the time of day it runs at. created_at is only ever written
+	// by an insert, hence the delete.
 	created.CreatedAt, created.UpdatedAt = h.now, h.now
+	if err := h.conf.DB().DeleteAutomation(context.Background(), created.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := h.conf.DB().UpsertAutomation(context.Background(), created); err != nil {
 		t.Fatal(err)
 	}

@@ -15,6 +15,7 @@ func newService(t *testing.T) (*Service, *Mem, *time.Time) {
 	t.Helper()
 	mem := NewMem()
 	s := New(mem)
+	s.HashCost = CheapHash
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
 	return s, mem, &now
@@ -679,6 +680,75 @@ func TestDisabledCredentialIsRefusedByName(t *testing.T) {
 	}
 	if _, err := s.AuthenticateToken(ctx, tok); !errors.Is(err, ErrDisabled) {
 		t.Errorf("token = %v", err)
+	}
+}
+
+// A service prices a hash as asked and verifies it all the same, and one that
+// asks nothing gets the production cost: the zero value must never be weak.
+func TestHashCost(t *testing.T) {
+	cheap, err := CheapHash.hash(pw)
+	if err != nil || !strings.HasPrefix(cheap, "$argon2id$v=19$m=8,t=1,p=4$") {
+		t.Fatalf("cheap = %q, %v", cheap, err)
+	}
+	if err := VerifyPassword(cheap, pw); err != nil {
+		t.Error(err)
+	}
+	if err := VerifyPassword(cheap, "wrong one"); !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("wrong password = %v", err)
+	}
+	mem := NewMem()
+	prod := New(mem)
+	u, err := prod.Setup(context.Background(), NewUser{Handle: "alice", Email: "a@x", Name: "A", Password: pw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := mem.GetMethod(context.Background(), u.ID, KindPassword)
+	if err != nil || !strings.HasPrefix(string(m.Secret), "$argon2id$v=19$m=65536,t=3,p=4$") {
+		t.Errorf("a plain service hashed at %q, %v", m.Secret, err)
+	}
+}
+
+// resetOnRead sets the password right after a login has read the row, which is
+// where a real reset lands: the login is about to spend a long time verifying.
+type resetOnRead struct {
+	DB
+	reset func()
+}
+
+func (r *resetOnRead) GetMethod(ctx context.Context, userID, kind string) (Method, error) {
+	m, err := r.DB.GetMethod(ctx, userID, kind)
+	if r.reset != nil {
+		reset := r.reset
+		r.reset = nil
+		reset()
+	}
+	return m, err
+}
+
+// A reset is how a stolen password stops working, so a login that started with
+// the old one must not put it back on its way out.
+func TestALoginCannotUndoAPasswordReset(t *testing.T) {
+	admin, mem, now := newService(t)
+	ctx := context.Background()
+	u := user(t, admin, "lu", false)
+	const fresh = "a brand new password"
+	s := New(&resetOnRead{DB: mem, reset: func() {
+		if err := admin.SetPassword(ctx, u.ID, fresh); err != nil {
+			t.Error(err)
+		}
+	}})
+	s.now = func() time.Time { return *now }
+	if _, err := s.Login(ctx, KindPassword, "lu", pw); err != nil {
+		t.Fatalf("the login that raced = %v", err)
+	}
+	if _, err := admin.Login(ctx, KindPassword, "lu", pw); !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("the old password after the reset = %v", err)
+	}
+	if _, err := admin.Login(ctx, KindPassword, "lu", fresh); err != nil {
+		t.Errorf("the new password = %v", err)
+	}
+	if m, err := mem.GetMethod(ctx, u.ID, KindPassword); err != nil || m.LastUsedAt == nil {
+		t.Errorf("the use went unrecorded: %+v, %v", m, err)
 	}
 }
 

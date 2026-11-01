@@ -129,6 +129,10 @@ type DB interface {
 	TouchUser(ctx context.Context, id string, at time.Time) error
 
 	PutMethod(ctx context.Context, m Method) error
+	// TouchMethod records a use of the method and changes nothing else: a
+	// login holds a row read before its slow verify, and writing that back
+	// would undo a password set in the meantime.
+	TouchMethod(ctx context.Context, id string, at time.Time) error
 	// GetMethod is the user's method of a kind that has at most one per
 	// user (a password).
 	GetMethod(ctx context.Context, userID, kind string) (Method, error)

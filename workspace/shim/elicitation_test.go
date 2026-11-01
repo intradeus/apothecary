@@ -229,3 +229,69 @@ func TestAgentRequestCancelled(t *testing.T) {
 	}
 	inW.Close()
 }
+
+// A form the client cannot read is the agent's error, not a question.
+func TestElicitationMalformed(t *testing.T) {
+	for _, params := range []string{
+		`{"mode":`,
+		`{"mode":"form","requestedSchema":{"properties":[1]}}`,
+		`{"mode":"form","requestedSchema":{"properties":{"a":5}}}`,
+	} {
+		if res, rerr := (&agentHost{}).onElicitation(json.RawMessage(params), nil); rerr == nil || rerr.Code != -32602 {
+			t.Errorf("%s = %v, %v", params, res, rerr)
+		}
+	}
+}
+
+// A form with no message still reaches the human as a question.
+func TestElicitationDefaultQuestion(t *testing.T) {
+	fastProtocol(t)
+	eng := &fakeEngine{answer: `{"text":"x","answer":"accept","content":{"n":"v"}}`}
+	eng.serve(t)
+	res := elicit(t, `{"mode":"form","message":"  ","requestedSchema":{"properties":{"n":{"type":"string"}}}}`)
+	if res["action"] != "accept" || eng.raised[0]["question"] != "The agent needs your input to continue." {
+		t.Errorf("result = %v, raised %v", res, eng.raised)
+	}
+}
+
+// A question that could not be put, or was given up on, is cancelled.
+func TestElicitationCancelled(t *testing.T) {
+	fastProtocol(t)
+	writeTestEnv(t, "http://engine", "t")
+	withEngine(t, func(*http.Request) (*http.Response, error) { return engineReply(500, "down"), nil })
+	form := `{"mode":"form","message":"m","requestedSchema":{"properties":{"n":{"type":"string"}}}}`
+	if res := elicit(t, form); res["action"] != "cancel" {
+		t.Errorf("engine failure = %v", res)
+	}
+	done := make(chan struct{})
+	close(done)
+	res, rerr := (&agentHost{}).onElicitation(json.RawMessage(form), done)
+	if rerr != nil || res.(map[string]any)["action"] != "cancel" {
+		t.Errorf("given up on = %v, %v", res, rerr)
+	}
+}
+
+func TestOrderedObject(t *testing.T) {
+	keys, vals, err := orderedObject(json.RawMessage(`{"b":1,"a":2,"b":3}`))
+	if err != nil || len(keys) != 2 || keys[0] != "b" || string(vals["b"]) != "3" {
+		t.Errorf("keys %v, vals %v, %v", keys, vals, err)
+	}
+	for _, empty := range []string{"", "  ", "null"} {
+		if keys, _, err := orderedObject(json.RawMessage(empty)); err != nil || keys != nil {
+			t.Errorf("%q = %v, %v", empty, keys, err)
+		}
+	}
+	for _, bad := range []string{`[]`, `{`, `{1:2}`, `{"a":`, `x`} {
+		if _, _, err := orderedObject(json.RawMessage(bad)); err == nil {
+			t.Errorf("%q parsed", bad)
+		}
+	}
+}
+
+// Fields with nothing to pick from stay plain.
+func TestElicitFieldsWithoutChoices(t *testing.T) {
+	fields, _, err := elicitFields(json.RawMessage(`{"tags":{"type":"array"},"s":{"type":"string","_meta":{"codex":"unreadable"}}}`), nil)
+	if err != nil || len(fields) != 2 || fields[0].Options != nil || fields[1].Options != nil {
+		t.Errorf("fields = %+v, %v", fields, err)
+	}
+}

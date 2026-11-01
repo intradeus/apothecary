@@ -25,15 +25,33 @@ const (
 	MinPasswordLen = 8
 )
 
-// HashPassword returns the PHC string for a password.
+// HashCost is what a new hash costs: argon2id's memory (KiB) and passes. The
+// zero value is the production cost, so only a caller that names another gets
+// one.
+type HashCost struct {
+	Memory, Time uint32
+}
+
+// CheapHash is for tests, whose thousands of hashes guard nothing. Verifying
+// reads the cost off the hash, so nothing else about them changes.
+var CheapHash = HashCost{Memory: 8, Time: 1}
+
+// HashPassword returns the PHC string for a password, at the production cost.
 func HashPassword(password string) (string, error) {
+	return HashCost{}.hash(password)
+}
+
+func (c HashCost) hash(password string) (string, error) {
+	if c == (HashCost{}) {
+		c = HashCost{Memory: argonMemory, Time: argonTime}
+	}
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	key := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	key := argon2.IDKey([]byte(password), salt, c.Time, c.Memory, argonThreads, argonKeyLen)
 	return fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
-		argonMemory, argonTime, argonThreads,
+		c.Memory, c.Time, argonThreads,
 		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(key)), nil
 }

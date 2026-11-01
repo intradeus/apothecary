@@ -72,6 +72,7 @@ type sshSession struct {
 	cmd    *exec.Cmd
 	master *os.File // the PTY master, when one was requested
 	done   chan struct{}
+	grace  time.Duration // sshServer.hangupGrace
 }
 
 func (s *sshServer) session(nc ssh.NewChannel) {
@@ -79,7 +80,7 @@ func (s *sshServer) session(nc ssh.NewChannel) {
 	if err != nil {
 		return
 	}
-	ss := &sshSession{ch: ch, repo: s.repo, done: make(chan struct{})}
+	ss := &sshSession{ch: ch, repo: s.repo, done: make(chan struct{}), grace: s.hangupGrace}
 	defer ss.finish()
 	for req := range reqs {
 		ss.request(req)
@@ -197,8 +198,11 @@ func (ss *sshSession) start(argv []string, dir string) error {
 	}
 	ss.cmd = cmd
 	go func() {
+		// Output first: every byte the process wrote is on the channel before
+		// its exit is, and Wait closes the pipes on whatever a slow client
+		// has not taken yet.
+		wg.Wait()
 		err := cmd.Wait()
-		wg.Wait() // every byte the process wrote is on the channel before its exit is
 		ss.reportExit(err)
 		_ = ss.ch.Close()
 		close(ss.done)
@@ -247,7 +251,7 @@ func (ss *sshSession) finish() {
 		_ = syscall.Kill(-ss.cmd.Process.Pid, sig)
 		select {
 		case <-ss.done:
-		case <-time.After(5 * time.Second):
+		case <-time.After(ss.grace):
 			_ = syscall.Kill(-ss.cmd.Process.Pid, syscall.SIGKILL)
 			<-ss.done
 		}

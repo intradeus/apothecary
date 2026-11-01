@@ -42,7 +42,7 @@ func TestTicketCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if upd.Title != "Renamed" || upd.BaseBranch != "fix/y" || upd.CreatedAt != tk.CreatedAt {
+	if upd.Title != "Renamed" || upd.BaseBranch != "fix/y" || !upd.CreatedAt.Equal(pgTime(tk.CreatedAt)) {
 		t.Fatalf("update = %+v (created_at must be preserved)", upd)
 	}
 

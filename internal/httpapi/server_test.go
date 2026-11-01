@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/auth/authtest"
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/engine"
 	"apothecary/internal/engine/ask"
@@ -29,6 +30,7 @@ import (
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/project/channels"
 	"apothecary/internal/project/confstore"
+	"apothecary/internal/project/confstore/conftest"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
@@ -88,7 +90,7 @@ type env struct {
 func (x *env) signIn(t *testing.T) {
 	t.Helper()
 	x.users = auth.NewMem()
-	svc := auth.New(x.users)
+	svc := authtest.New(x.users)
 	now := time.Now().UTC()
 	if err := x.users.CreateUser(context.Background(), auth.User{
 		ID: testUser, Handle: "tester", Email: "tester@example.test", Name: "Tester", Admin: true,
@@ -171,13 +173,12 @@ func newEnvWith(t *testing.T, cfg engine.Config, opt func(*engine.Deps), docs ..
 	}, opt, x.reg, cfg.RunsDir)
 	// Wire the config store so the ticket routes exist, seeded with the
 	// test project the static resolver already serves.
-	mem := confstore.NewMem()
-	_ = mem.UpsertProject(context.Background(), confstore.Project{ID: testProject, UserID: testUser, Name: "test"})
 	key, err := secrets.ParseKey(secrets.GenerateKey())
 	if err != nil {
 		t.Fatal(err)
 	}
-	x.srv.Conf = confstore.New(mem, key)
+	x.srv.Conf = confstore.New(confstore.NewMem(), key)
+	conftest.SeedProject(t, x.srv.Conf, confstore.Project{ID: testProject, UserID: testUser, Name: "test"})
 	x.signIn(t)
 	x.ts = httptest.NewServer(x.srv.Handler())
 	t.Cleanup(x.ts.Close)

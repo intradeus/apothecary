@@ -342,6 +342,27 @@ func TestAFailedAskReleasesThePane(t *testing.T) {
 // Answers are the agent's words about the workspace: what it read can hold a
 // secret, and nothing the engine injected may reach the pane. That goes for
 // the stream as much as for the record.
+// A NUL in either direction is refused by Postgres: a question must not fail on
+// one, and an answer must not vanish from the thread.
+func TestBinaryTextReachesTheThreadClean(t *testing.T) {
+	r := newRig(t)
+	r.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "said\x00this"})
+		return agentport.AgentResult{}, errors.New("broke\x00down")
+	}
+	q, err := r.svc.Ask(context.Background(), runID, "u", "why\x00?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Text != "why\uFFFD?" {
+		t.Errorf("question = %q", q.Text)
+	}
+	msgs := r.answered(t, 2)
+	if a := msgs[1]; a.Text != "said\uFFFDthis" || !strings.Contains(a.Error, "broke\uFFFDdown") {
+		t.Errorf("answer = %+v", a)
+	}
+}
+
 func TestAnswersAndTheirStreamAreScrubbed(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)

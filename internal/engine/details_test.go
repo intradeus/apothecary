@@ -420,3 +420,44 @@ func TestFilesListing(t *testing.T) {
 		}
 	}
 }
+
+// An agent prints what it prints. A NUL or broken UTF-8 in its output is refused
+// by Postgres, and a refused append leaves the run stuck in `running`: the text
+// has to reach the store clean, and the run has to end.
+func TestBinaryAgentOutputDoesNotStrandTheRun(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		emit := call.In.Events
+		emit(agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "s1"})
+		emit(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "said\x00this"})
+		emit(agentport.AgentEvent{Kind: agentport.AgentEvTool, Tool: &agentport.AgentTool{ID: "t1", Title: "cat a\xff.bin", Status: "completed",
+			Input: `{"path":"a\u0000"}`, Output: "binary\x00output", Locations: []string{"a\x00.bin"}}})
+		return agentport.AgentResult{TurnsUsed: 1, Session: "s1"}, nil
+	}
+	id, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(id)
+	if v := h.view(t, id); !v.State.Terminal() {
+		t.Fatalf("the run was left %s", v.State)
+	}
+	tool, ok := findPayload[*event.AgentTool](h.events(t, id))
+	if !ok || tool.Output != "binary�output" || tool.Title != "cat a�.bin" {
+		t.Errorf("tool = %+v", tool)
+	}
+}
+
+// A ticket's text comes from outside too, by the engine's other way to the log.
+func TestBinaryTicketTextDoesNotRefuseTheRun(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	id, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T\x00", Goal: "g\xff"}, "ask", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(id)
+	created, ok := findPayload[*event.RunCreated](h.events(t, id))
+	if !ok || created.TicketTitle != "T\uFFFD" || created.TicketGoal != "g\uFFFD" {
+		t.Errorf("created = %+v", created)
+	}
+}

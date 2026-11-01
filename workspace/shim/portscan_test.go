@@ -3,12 +3,16 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -182,12 +186,13 @@ func TestPortScanRereadsEnvOn401(t *testing.T) {
 }
 
 func TestPortScanSingletonGuard(t *testing.T) {
-	ln, err := net.Listen("unix", singletonAddr)
+	addr := singletonAddr + "-guard-" + strconv.Itoa(os.Getpid()) // one namespace per host
+	ln, err := net.Listen("unix", addr)
 	if err != nil {
 		t.Fatalf("first bind: %v", err)
 	}
 	defer ln.Close()
-	if _, err := net.Listen("unix", singletonAddr); err == nil {
+	if _, err := net.Listen("unix", addr); err == nil {
 		t.Error("second bind on the abstract singleton socket must fail")
 	}
 }
@@ -208,4 +213,217 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("condition not met before deadline")
+}
+
+func TestParseExclude(t *testing.T) {
+	got, err := parseExclude([]string{"--exclude", "8080, 9090", "--exclude", "1"})
+	if err != nil || len(got) != 3 || !got[8080] || !got[9090] || !got[1] {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	if got, err := parseExclude(nil); err != nil || len(got) != 0 {
+		t.Errorf("nothing = %v, %v", got, err)
+	}
+	for _, args := range [][]string{
+		{"8080"},
+		{"--exclude"},
+		{"--exclude", "http"},
+		{"--exclude", "0"},
+		{"--exclude", "65536"},
+		{"--exclude", "8080,"},
+	} {
+		if got, err := parseExclude(args); err == nil {
+			t.Errorf("%v = %v, want an error", args, got)
+		}
+	}
+}
+
+// A port is named after the process holding its socket, found through /proc;
+// what cannot be read is skipped and the port still reports.
+func TestProcessNames(t *testing.T) {
+	root := t.TempDir()
+	proc := func(pid, comm string, fds map[string]string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(root, pid, "fd"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if comm != "" {
+			if err := os.WriteFile(filepath.Join(root, pid, "comm"), []byte(comm+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for fd, link := range fds {
+			if err := os.Symlink(link, filepath.Join(root, pid, "fd", fd)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	proc("100", "node", map[string]string{"3": "socket:[111]", "4": "pipe:[9]"})
+	proc("200", "", map[string]string{"3": "socket:[222]"}) // no comm: gone mid-scan
+	proc("300", "postgres", map[string]string{"7": "socket:[333]", "8": "socket:[333]"})
+	proc("350", "worker", map[string]string{"7": "socket:[333]"})          // forked: the first holder names it
+	if err := os.MkdirAll(filepath.Join(root, "400"), 0o755); err != nil { // no fd dir: not ours to read
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "500"), nil, 0o644); err != nil { // not a directory
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "sys"), 0o755); err != nil { // not a pid
+		t.Fatal(err)
+	}
+	// A regular file under fd/ is not a link.
+	if err := os.WriteFile(filepath.Join(root, "100", "fd", "9"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := procRoot
+	procRoot = root
+	t.Cleanup(func() { procRoot = old })
+
+	got := processNames(map[int]string{8080: "111", 5432: "333", 9000: "222"})
+	if got[8080] != "node" || got[5432] != "postgres" || got[9000] != "" {
+		t.Errorf("names = %v", got)
+	}
+	// Everything found: the walk stops there.
+	if got := processNames(map[int]string{8080: "111"}); got[8080] != "node" {
+		t.Errorf("names = %v", got)
+	}
+	procRoot = filepath.Join(root, "missing")
+	if got := processNames(map[int]string{8080: "111"}); len(got) != 0 {
+		t.Errorf("no /proc = %v", got)
+	}
+}
+
+// A report is capped, an unreadable table skipped, and the rows the kernel
+// might write that are not listeners on a port never surface.
+func TestScanListenersEdges(t *testing.T) {
+	dir := t.TempDir()
+	var table strings.Builder
+	table.WriteString("header\n")
+	for p := 1000; p < 1005; p++ {
+		table.WriteString(" 0: 0100007F:" + strings.ToUpper(strconv.FormatInt(int64(p), 16)) + " 0:0 0A 0 0 0 0 0 1\n")
+	}
+	tcp := filepath.Join(dir, "tcp")
+	if err := os.WriteFile(tcp, []byte(table.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldPaths, oldRoot, oldMax := procTCPPaths, procRoot, maxReportPorts
+	procTCPPaths, procRoot, maxReportPorts = []string{filepath.Join(dir, "gone"), tcp}, dir, 3
+	t.Cleanup(func() { procTCPPaths, procRoot, maxReportPorts = oldPaths, oldRoot, oldMax })
+
+	got := scanListeners(nil)
+	if len(got) != 3 || got[0].Port != 1000 || got[2].Port != 1002 {
+		t.Errorf("capped report = %+v", got)
+	}
+
+	rows := "h\n" +
+		" 0: 0100007F 0:0 0A 0 0 0 0 0 1\n" + // no port
+		" 1: 0100007F:ZZZZ 0:0 0A 0 0 0 0 0 2\n" + // not hex
+		" 2: 0100007F:0000 0:0 0A 0 0 0 0 0 3\n" + // port 0
+		" 3: 0100007F:1F90 0:0 0A\n" // too few columns
+	if got := parseProcNet(rows); len(got) != 0 {
+		t.Errorf("bad rows parsed = %v", got)
+	}
+}
+
+func TestLocalOrWildcardMappedAndOddLengths(t *testing.T) {
+	for _, h := range []string{
+		"0000000000000000FFFF00000100007F", // ::ffff:127.0.0.1
+		"0000000000000000FFFF000000000000", // ::ffff:0.0.0.0
+		"00000000000000000000FFFF0100007F",
+	} {
+		if !localOrWildcard(h) {
+			t.Errorf("%s should be local", h)
+		}
+	}
+	for _, h := range []string{"0000000000000000FFFF00000200A8C0", "0100", ""} {
+		if localOrWildcard(h) {
+			t.Errorf("%q should not be local", h)
+		}
+	}
+}
+
+// A report that fails to arrive is retried; one the engine refuses waits for
+// the next heartbeat rather than hammering it.
+func TestPortScanBacksOffAndKeepsGoing(t *testing.T) {
+	setListeners := fastScan(t)
+	setListeners(" 0: 0100007F:1F90 0:0 0A 0 0 0 0 0 1\n")
+	var reports atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reports.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	// No run.env yet: the engine is not reachable, and the scanner waits.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { scanLoop(ctx, nil); close(done) }()
+	time.Sleep(10 * time.Millisecond)
+	if n := reports.Load(); n != 0 {
+		t.Fatalf("reports with no run.env = %d", n)
+	}
+	writeTestEnv(t, srv.URL, "t")
+	waitFor(t, func() bool { return reports.Load() >= 2 })
+	cancel()
+	<-done
+}
+
+func TestRunPortScanRefusesBadArguments(t *testing.T) {
+	if r := shim(t, "", "portscan", "--nope"); r.code != 2 || !strings.Contains(r.stderr, "portscan: unknown arg") {
+		t.Errorf("bad arg = %+v", r)
+	}
+}
+
+// A scanner already holding the singleton is left to it.
+func TestRunPortScanIsASingleton(t *testing.T) {
+	addr := "@apothecary-portscan-test-" + strconv.Itoa(os.Getpid())
+	ln, err := net.Listen("unix", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	cmd := shimCmd(t, "portscan")
+	cmd.Env = append(cmd.Env, shimSingleton+"="+addr)
+	if r := runShim(t, "", cmd); r.code != 0 {
+		t.Errorf("a second scanner = %+v", r)
+	}
+}
+
+// The daemon as the provisioner spawns it: it reports the listeners it finds,
+// less the relay's own, to the run the env file names.
+func TestRunPortScanReports(t *testing.T) {
+	dir := t.TempDir()
+	tcp := filepath.Join(dir, "tcp")
+	rows := "h\n 0: 0100007F:1F90 0:0 0A 0 0 0 0 0 1\n 1: 0100007F:1F91 0:0 0A 0 0 0 0 0 2\n"
+	if err := os.WriteFile(tcp, []byte(rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	type report struct{ path, auth, body string }
+	got := make(chan report, 64)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body strings.Builder
+		_, _ = io.Copy(&body, r.Body)
+		select {
+		case got <- report{r.URL.Path, r.Header.Get("Authorization"), body.String()}:
+		default:
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	env := filepath.Join(dir, "run.env")
+	content := "APOTHECARY_RUN_ID=run1\nAPOTHECARY_RUN_TOKEN=tok\nAPOTHECARY_ENGINE_URL=" + srv.URL + "\n"
+	if err := os.WriteFile(env, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := shimCmd(t, "portscan", "--exclude", "8081")
+	cmd.Env = append(cmd.Env, shimRunEnv+"="+env, shimProcNet+"="+tcp, shimFastSupport+"=1",
+		shimSingleton+"=@apothecary-portscan-test-reports-"+strconv.Itoa(os.Getpid()))
+	startShim(t, cmd)
+	select {
+	case r := <-got:
+		if r.path != "/api/runs/run1/observed-ports" || r.auth != "Bearer tok" || r.body != `{"ports":[{"port":8080}]}` {
+			t.Errorf("report = %+v", r)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no report reached the engine")
+	}
 }

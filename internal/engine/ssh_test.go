@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/auth/authtest"
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
@@ -122,7 +123,7 @@ func (s sshTargets) Lookup(ctx context.Context, workspace string) (sshdoor.Targe
 func TestSSHDoorReachesTheRunsWorkspace(t *testing.T) {
 	h := newHarness(t, mustFlow(t, reviewFlowDoc))
 	ws := h.workspaces()
-	users := auth.New(auth.NewMem())
+	users := authtest.New(auth.NewMem())
 	ctx := context.Background()
 	pw := "correct horse battery staple"
 	alice, err := users.Setup(ctx, auth.NewUser{Handle: "alice", Email: "a@x", Name: "Alice", Password: pw})

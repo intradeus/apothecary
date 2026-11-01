@@ -29,6 +29,7 @@ func testKey(t *testing.T) (ssh.PublicKey, string) {
 func newKeyService(t *testing.T) (*Service, User, User) {
 	t.Helper()
 	s := New(NewMem())
+	s.HashCost = CheapHash
 	ctx := context.Background()
 	pw := "correct horse battery staple"
 	alice, err := s.Setup(ctx, NewUser{Handle: "alice", Email: "alice@example.com", Name: "Alice", Password: pw})
@@ -139,6 +140,7 @@ func TestSSHKeyEdges(t *testing.T) {
 	ctx := context.Background()
 	mem := NewMem()
 	s := New(mem)
+	s.HashCost = CheapHash
 	u, err := s.CreateUser(ctx, NewUser{Handle: "lu", Email: "lu@example.test", Password: "correct horse"})
 	if err != nil {
 		t.Fatal(err)

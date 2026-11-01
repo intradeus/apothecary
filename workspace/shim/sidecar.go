@@ -286,6 +286,10 @@ func (s *sidecar) agentCancel(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// eventsKeepalive is how often a quiet stream proves itself alive; a var for
+// tests.
+var eventsKeepalive = 15 * time.Second
+
 // agentEvents streams NDJSON. ?after= is the last seq the caller has; ?boot=
 // the sidecar instance it was read from — a different boot means this is a
 // new sidecar whose seqs restarted, and the caller is told so with a gap.
@@ -307,7 +311,7 @@ func (s *sidecar) agentEvents(w http.ResponseWriter, r *http.Request) {
 	follow := r.URL.Query().Get("follow") != "0"
 	wake, unsub := s.log.subscribe()
 	defer unsub()
-	keepalive := time.NewTicker(15 * time.Second)
+	keepalive := time.NewTicker(eventsKeepalive)
 	defer keepalive.Stop()
 	first := true
 	for {

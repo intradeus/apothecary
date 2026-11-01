@@ -138,6 +138,17 @@ func (s *Store) PutMethod(ctx context.Context, m auth.Method) error {
 	return err
 }
 
+func (s *Store) TouchMethod(ctx context.Context, id string, at time.Time) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE auth_methods SET last_used_at=$2 WHERE id=$1`, id, at)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("method %s: %w", id, auth.ErrNotFound)
+	}
+	return nil
+}
+
 func (s *Store) GetMethod(ctx context.Context, userID, kind string) (auth.Method, error) {
 	m, err := scanMethod(s.pool.QueryRow(ctx,
 		`SELECT `+methodCols+` FROM auth_methods WHERE user_id=$1 AND kind=$2 ORDER BY created_at LIMIT 1`, userID, kind))

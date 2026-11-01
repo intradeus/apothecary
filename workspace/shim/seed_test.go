@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -60,5 +61,54 @@ func TestSeedFailsOnAnUnwritableDir(t *testing.T) {
 	}
 	if err := seed(filepath.Join(blocker, "sub")); err == nil {
 		t.Error("seed into a path under a file must fail")
+	}
+}
+
+// The init container's whole job, as it runs: a binary that runs, under both
+// names, with the hash the engine checks.
+func TestRunSeed(t *testing.T) {
+	dir := filepath.Join(shortTempDir(t), "shim")
+	if r := shim(t, "", "seed", dir); r.code != 0 || r.stdout != "" {
+		t.Fatalf("seed = %+v", r)
+	}
+	if h, _ := os.ReadFile(filepath.Join(dir, "shim.hash")); string(h) != sourceHash+"\n" {
+		t.Errorf("shim.hash = %q", h)
+	}
+	for _, name := range []string{"shim", "apothecary-shim"} {
+		cmd := shimCmd(t, "version")
+		cmd.Path = filepath.Join(dir, name)
+		if r := runShim(t, "", cmd); r.code != 0 || r.stdout != sourceHash+"\n" {
+			t.Errorf("%s version = %+v", name, r)
+		}
+	}
+}
+
+func TestRunSeedRefuses(t *testing.T) {
+	if r := shim(t, "", "seed"); r.code != 2 || !strings.Contains(r.stderr, "usage: shim seed <dir>") {
+		t.Errorf("no dir = %+v", r)
+	}
+	if r := shim(t, "", "seed", "a", "b"); r.code != 2 {
+		t.Errorf("two dirs = %+v", r)
+	}
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := shim(t, "", "seed", filepath.Join(file, "sub")); r.code != 1 || !strings.HasPrefix(r.stderr, "seed: ") {
+		t.Errorf("under a file = %+v", r)
+	}
+}
+
+// Whatever stands in the way of one of the files fails the seed, rather than
+// leaving a shim dir half done and looking fine.
+func TestSeedFailsOnWhatBlocksItsFiles(t *testing.T) {
+	for _, name := range []string{"shim.tmp", "shim", "apothecary-shim", "shim.hash"} {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, name, "occupied"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := seed(dir); err == nil {
+			t.Errorf("seed past a directory at %s succeeded", name)
+		}
 	}
 }

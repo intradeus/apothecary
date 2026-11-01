@@ -62,6 +62,12 @@ func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, init
 	call func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error)) (invocation, error) {
 	runCtx, cancelRun := context.WithCancelCause(x.ctx)
 	io := newInvIO(tr)
+	// Before the agent starts: one resumed under a take-over can finish its
+	// turn at once, and if it saw no hold it would end the stage under the
+	// holder.
+	if x.rs.Holds[st.ID] != nil {
+		io.inbox.setHeld(true)
+	}
 	resCh := make(chan agentRes, 1)
 	in := io.input(prompt)
 	go func() {
@@ -104,9 +110,6 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 	// The take-over in force, if any: carried in from the log (taken in an
 	// earlier leg of this attempt) and tracked live from here.
 	hold := x.liveHold(st)
-	if hold != nil {
-		io.inbox.setHeld(true)
-	}
 	holdLeg := func() event.HoldSpend {
 		if hold != nil {
 			return hold.leg.Spend

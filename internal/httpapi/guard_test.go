@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/auth/authtest"
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/engine"
 	"apothecary/internal/platform/filestore"
@@ -636,7 +637,7 @@ func TestAccountStoreOutageIs500(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	boom := context.DeadlineExceeded
 	cookie := x.session(t, testUser)
-	x.srv.Auth = auth.New(failingDB{DB: x.users, err: boom})
+	x.srv.Auth = authtest.New(failingDB{DB: x.users, err: boom})
 
 	for name, hdr := range map[string]map[string]string{
 		"bearer": {"Authorization": "Bearer " + auth.TokenPrefix + "x"},
@@ -674,7 +675,7 @@ func (f failAfterGuard) DeleteSession(context.Context, string) error { return f.
 func TestHandlersReportTheAccountStoreFailing(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	cookie := x.session(t, testUser)
-	x.srv.Auth = auth.New(failAfterGuard{DB: x.users, err: context.DeadlineExceeded})
+	x.srv.Auth = authtest.New(failAfterGuard{DB: x.users, err: context.DeadlineExceeded})
 	for _, c := range []struct {
 		method, path string
 		hdr          map[string]string

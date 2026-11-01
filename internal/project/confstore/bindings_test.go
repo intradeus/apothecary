@@ -57,7 +57,7 @@ func TestFlowBindingRoundtrip(t *testing.T) {
 		}
 	}
 	got, err := svc.GetFlowBinding(ctx, p.ID, "knobs")
-	if err != nil || got.FlowName != "knobs" || got.Params["mode"] != "auto" || !got.UpdatedAt.Equal(b.UpdatedAt) {
+	if err != nil || got.FlowName != "knobs" || got.Params["mode"] != "auto" || !got.UpdatedAt.Equal(pgTime(b.UpdatedAt)) {
 		t.Errorf("get = %+v, %v", got, err)
 	}
 	list, err := svc.ListFlowBindings(ctx, p.ID)

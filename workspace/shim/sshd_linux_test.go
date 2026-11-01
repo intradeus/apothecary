@@ -94,3 +94,59 @@ func readUntil(t *testing.T, r io.Reader) func(marker string) string {
 		return got.String()
 	}
 }
+
+// A client hanging up on a shell hangs up the shell.
+func TestSSHHangupStopsAShellOnAPTY(t *testing.T) {
+	client, _, _, _ := newTestSSH(t)
+	t.Setenv("SHELL", "/bin/sh")
+	ses, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ses.RequestPty("xterm", 24, 80, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ses.StdinPipe(); err != nil { // open: only the hang-up ends it
+		t.Fatal(err)
+	}
+	pid := startedCommand(t, ses, "exec sleep 60")
+	ses.Close()
+	waitGone(t, pid)
+}
+
+// With no term asked for, a pty is an xterm's.
+func TestSSHPTYDefaultTerm(t *testing.T) {
+	client, _, _, _ := newTestSSH(t)
+	t.Setenv("SHELL", "/bin/sh")
+	ses, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ses.Close()
+	if err := ses.RequestPty("", 24, 80, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ses.StdinPipe(); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := ses.Output("echo $TERM"); err != nil || !strings.Contains(string(out), "xterm-256color") {
+		t.Errorf("TERM = %q, %v", out, err)
+	}
+}
+
+// A shell that cannot start is refused, on a pty as off one.
+func TestSSHShellThatCannotStart(t *testing.T) {
+	client, _, _, _ := newTestSSH(t)
+	t.Setenv("SHELL", "/no/such/shell")
+	ses, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ses.Close()
+	if err := ses.RequestPty("xterm", 24, 80, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := ses.Shell(); err == nil {
+		t.Error("a shell that does not exist started")
+	}
+}

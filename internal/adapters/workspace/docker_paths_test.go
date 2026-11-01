@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -91,6 +93,19 @@ func TestRunGivesUpWithItsContext(t *testing.T) {
 		a.retryDelay = time.Hour
 		if _, _, _, err := a.run(ctx, "x", nil, nil, nil); !errors.Is(err, context.Canceled) {
 			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("a binary that is not installed gets no second try", func(t *testing.T) {
+		missing := fmt.Errorf("x: %w", exec.ErrNotFound)
+		r := &ruleRunner{rules: []rule{{match: "x", resp: response{err: missing}}}}
+		a := newTestAdapter(t, r)
+		a.retryDelay = time.Hour
+		_, _, _, err := a.run(context.Background(), "x", []string{"one"}, nil, nil)
+		if !errors.Is(err, exec.ErrNotFound) || !strings.Contains(err.Error(), "x one:") {
+			t.Errorf("err = %v", err)
+		}
+		if n := len(r.snapshot()); n != 1 {
+			t.Errorf("attempts = %d", n)
 		}
 	})
 	t.Run("three strikes name the command", func(t *testing.T) {

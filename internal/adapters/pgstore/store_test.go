@@ -680,3 +680,31 @@ func TestEgressAuditFiltersAndBounds(t *testing.T) {
 		t.Errorf("oversized limit = %+v", lim)
 	}
 }
+
+// What Clean leaves is what Postgres takes: in the payload's jsonb and in the
+// columns projected from it, which refuse more than jsonb does.
+func TestCleanedPayloadsAreStorable(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	bad := "bad\x00text\xff"
+	ps := []event.Payload{
+		&event.RunCreated{TicketTitle: bad, TicketGoal: bad, Branch: bad, ProjectID: "p", UserID: "u", FlowName: "f"},
+		&event.PingRaised{PingID: "p1", Type: event.PingClarification, Question: bad, Context: bad, StageID: "s"},
+		&event.PingAnswered{PingID: "p1", Answer: "accept", Content: map[string]any{"k\x00": bad, "list": []any{bad}}},
+		&event.AgentTool{StageID: "s", ToolCallID: "t1", Title: bad, Input: bad, Output: bad},
+	}
+	if _, err := s.Append(ctx, "dirty", ps[3]); err == nil {
+		t.Fatal("Postgres took it unclean: this test proves nothing")
+	}
+	event.Clean(ps...)
+	if _, err := s.Append(ctx, "r1", ps...); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := s.Events(ctx, "r1", 0)
+	if err != nil || len(evs) != len(ps) {
+		t.Fatalf("events = %d, %v", len(evs), err)
+	}
+	if tool, ok := evs[3].Payload.(*event.AgentTool); !ok || tool.Output != "bad�text�" {
+		t.Errorf("tool = %+v", evs[3].Payload)
+	}
+}

@@ -380,7 +380,10 @@ const maxDiffBytes = 2 << 20
 // gitDiff is one file's unified diff against the merge base (or, for an
 // untracked file, against nothing).
 func gitDiff(root, base, rel string) (diffResp, error) {
-	if _, err := repoPathLexical(rel); err != nil {
+	// git gets the cleaned path, never rel: --no-index takes an absolute path
+	// at its word and reads whatever is there.
+	clean, err := repoPathLexical(rel)
+	if err != nil {
 		return diffResp{}, err
 	}
 	mb := mergeBase(root, base)
@@ -388,13 +391,13 @@ func gitDiff(root, base, rel string) (diffResp, error) {
 	var code int
 	var errs string
 	if mb != "" {
-		out, errs, code = runGit(root, nil, "diff", "-M", "--no-color", mb, "--", rel)
+		out, errs, code = runGit(root, nil, "diff", "-M", "--no-color", mb, "--", clean)
 	}
-	if strings.TrimSpace(out) == "" && !isTracked(root, rel) {
+	if strings.TrimSpace(out) == "" && !isTracked(root, clean) {
 		// Untracked (or no commits yet): diff against the empty file. Exit 1
 		// is "differences found", the normal case.
-		if _, err := repoPath(root, rel); err == nil {
-			out, errs, code = runGit(root, nil, "diff", "--no-index", "--no-color", "--", os.DevNull, rel)
+		if _, err := repoPath(root, clean); err == nil {
+			out, errs, code = runGit(root, nil, "diff", "--no-index", "--no-color", "--", os.DevNull, clean)
 			if code == 1 {
 				code = 0
 			}

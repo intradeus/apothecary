@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,8 +39,7 @@ func newTestSSH(t *testing.T) (client *ssh.Client, door ssh.Signer, repo, sock s
 		t.Fatal(err)
 	}
 	// A short socket path: unix socket names are capped around 100 bytes.
-	sock = filepath.Join(os.TempDir(), "apo-ssh-"+strings.TrimPrefix(filepath.Base(dir), "Test")+".sock")
-	t.Cleanup(func() { os.Remove(sock) })
+	sock = filepath.Join(shortTempDir(t), "ssh.sock")
 	ln, err := startSSH(sock, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -205,5 +208,318 @@ func TestSSHRefusesWhatItDoesNotServe(t *testing.T) {
 	}
 	if _, _, err := client.OpenChannel("x11", nil); err == nil {
 		t.Error("an x11 channel opened")
+	}
+}
+
+// A client slower than the command keeps everything it wrote: the process
+// exits with the SSH window full and the last bytes still in the pipe.
+func TestSSHExecDeliversAllOutputToASlowClient(t *testing.T) {
+	client, _, repo, _ := newTestSSH(t)
+	t.Setenv("SHELL", "/bin/sh")
+	const size = 2<<20 + 48<<10 // past the 2 MiB window, within the pipe
+	exited := filepath.Join(repo, "exited")
+	ses, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ses.Close()
+	stdout, err := ses.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ses.Start(fmt.Sprintf("head -c %d /dev/zero; touch %s", size, exited)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { _, err := os.Stat(exited); return err == nil })
+	time.Sleep(50 * time.Millisecond) // long enough for an early Wait to bite
+	if n, err := io.Copy(io.Discard, stdout); err != nil || n != size {
+		t.Errorf("got %d of %d bytes, %v", n, size, err)
+	}
+	if err := ses.Wait(); err != nil {
+		t.Errorf("exit = %v", err)
+	}
+}
+
+// startedCommand runs a shell command that first prints its pid, and returns
+// the pid once it has.
+func startedCommand(t *testing.T, ses *ssh.Session, command string) int {
+	t.Helper()
+	stdout, err := ses.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ses.Start("echo $$; " + command); err != nil {
+		t.Fatal(err)
+	}
+	line, err := bufio.NewReader(stdout).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil {
+		t.Fatalf("pid line %q: %v", line, err)
+	}
+	return pid
+}
+
+// A signal reaches the command's group, and its death comes back as an
+// exit-signal; what it is not sure of, it does not send.
+func TestSSHSignalReachesTheCommand(t *testing.T) {
+	client, _, _, _ := newTestSSH(t)
+	t.Setenv("SHELL", "/bin/sh")
+	ses, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ses.Close()
+	pid := startedCommand(t, ses, "exec sleep 60")
+	if ok, err := ses.SendRequest("signal", true, ssh.Marshal(signalReq{Signal: "WINCH"})); ok || err != nil {
+		t.Errorf("a signal outside the list = %v, %v", ok, err)
+	}
+	if ok, err := ses.SendRequest("signal", true, []byte{1}); ok || err != nil {
+		t.Errorf("a malformed signal = %v, %v", ok, err)
+	}
+	if !groupAlive(pid) {
+		t.Fatal("a refused signal reached the command")
+	}
+	if err := ses.Signal(ssh.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	var ee *ssh.ExitError
+	if err := ses.Wait(); !errors.As(err, &ee) || ee.Signal() != "TERM" {
+		t.Fatalf("exit = %v, want the TERM signal", err)
+	}
+}
+
+// A signal SSH has no name for still comes back as what killed the command.
+func TestSSHExitSignalOutsideTheList(t *testing.T) {
+	client, _, _, _ := newTestSSH(t)
+	t.Setenv("SHELL", "/bin/sh")
+	ses, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ses.Close()
+	var ee *ssh.ExitError
+	if err := ses.Run("kill -VTALRM $$"); !errors.As(err, &ee) || ee.Signal() == "" {
+		t.Fatalf("exit = %v, want a signal", err)
+	}
+}
+
+// reportExit on an error that is no process's exit: status 1, not silence.
+func TestSSHReportExitOnAWaitError(t *testing.T) {
+	ch := &recordingChannel{}
+	(&sshSession{ch: ch}).reportExit(errors.New("wait failed"))
+	var msg exitStatusMsg
+	if ch.req != "exit-status" || ssh.Unmarshal(ch.payload, &msg) != nil || msg.Status != 1 {
+		t.Errorf("sent %q %v", ch.req, ch.payload)
+	}
+}
+
+// recordingChannel notes the last request sent on it.
+type recordingChannel struct {
+	ssh.Channel
+	req     string
+	payload []byte
+}
+
+func (c *recordingChannel) SendRequest(name string, _ bool, payload []byte) (bool, error) {
+	c.req, c.payload = name, payload
+	return true, nil
+}
+
+// A client that hangs up takes its command with it.
+func TestSSHHangupStopsTheCommand(t *testing.T) {
+	client, _, _, _ := newTestSSH(t)
+	t.Setenv("SHELL", "/bin/sh")
+	ses, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := startedCommand(t, ses, "exec sleep 60")
+	ses.Close()
+	waitGone(t, pid)
+}
+
+// One that shrugs off the hangup is killed once its grace is up.
+func TestSSHHangupKillsWhatIgnoresIt(t *testing.T) {
+	_, door, _, _ := newTestSSH(t)
+	t.Setenv("SHELL", "/bin/sh")
+	s, err := newSSHServer(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.hangupGrace = 20 * time.Millisecond
+	sock := filepath.Join(shortTempDir(t), "ssh.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go s.serve(ln)
+	ses, err := dialTestSSH(t, sock, door).NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := startedCommand(t, ses, `trap '' TERM HUP; sleep 60 >/dev/null 2>&1`)
+	ses.Close()
+	waitGone(t, pid)
+}
+
+// Before its command a session takes a pty and environment words; after it,
+// nothing but the command's own business. Malformed requests are refused.
+func TestSSHRequestsOutOfTurn(t *testing.T) {
+	client, _, _, _ := newTestSSH(t)
+	t.Setenv("SHELL", "/bin/sh")
+	ses, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ses.Close()
+	for _, typ := range []string{"pty-req", "env", "exec"} {
+		if ok, err := ses.SendRequest(typ, true, []byte{1}); ok || err != nil {
+			t.Errorf("malformed %s = %v, %v", typ, ok, err)
+		}
+	}
+	if ok, _ := ses.SendRequest("window-change", true, ssh.Marshal(winchReq{Cols: 80, Rows: 24})); ok {
+		t.Error("a window change with no pty accepted")
+	}
+	if ok, _ := ses.SendRequest("env", true, ssh.Marshal(envReq{Name: "LANG", Value: "a\x00b"})); ok {
+		t.Error("a NUL in an environment word accepted")
+	}
+	stdin, err := ses.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	startedCommand(t, ses, "cat")
+	for typ, payload := range map[string][]byte{
+		"pty-req": ssh.Marshal(ptyReq{Term: "xterm", Cols: 80, Rows: 24}),
+		"env":     ssh.Marshal(envReq{Name: "LANG", Value: "C"}),
+		"exec":    ssh.Marshal(execReq{Command: "true"}),
+		"shell":   nil,
+	} {
+		if ok, err := ses.SendRequest(typ, true, payload); ok || err != nil {
+			t.Errorf("%s after the command started = %v, %v", typ, ok, err)
+		}
+	}
+	stdin.Close()
+	if err := ses.Wait(); err != nil {
+		t.Errorf("exit = %v", err)
+	}
+}
+
+// exec runs in $HOME, the repo when there is none, and is refused rather
+// than hung when it cannot start at all.
+func TestSSHExecDirectory(t *testing.T) {
+	client, _, repo, _ := newTestSSH(t)
+	t.Setenv("SHELL", "/bin/sh")
+	t.Setenv("HOME", "")
+	ses, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ses.Close()
+	if out, err := ses.Output("pwd"); err != nil || strings.TrimSpace(string(out)) != repo {
+		t.Errorf("pwd with no HOME = %q, %v, want %s", out, err, repo)
+	}
+	t.Setenv("HOME", filepath.Join(repo, "missing"))
+	ses2, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ses2.Close()
+	if err := ses2.Start("true"); err == nil {
+		t.Error("a command with no directory to run in started")
+	}
+}
+
+func TestShellPath(t *testing.T) {
+	t.Setenv("SHELL", "/bin/zsh")
+	if got := shellPath(); got != "/bin/zsh" {
+		t.Errorf("$SHELL = %s", got)
+	}
+	t.Setenv("SHELL", "")
+	withBash := t.TempDir()
+	if err := os.WriteFile(filepath.Join(withBash, "bash"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", withBash)
+	if got := shellPath(); got != "bash" {
+		t.Errorf("with bash = %s", got)
+	}
+	t.Setenv("PATH", t.TempDir())
+	if got := shellPath(); got != "/bin/sh" {
+		t.Errorf("without bash = %s", got)
+	}
+}
+
+// Past its connection limit the server hangs up before any handshake.
+func TestSSHRefusesConnectionsOverItsLimit(t *testing.T) {
+	s, err := newSSHServer(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.sem = make(chan struct{}) // no room at all
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go s.serve(ln)
+	c, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if b, err := io.ReadAll(c); err != nil || len(b) != 0 {
+		t.Errorf("got %q, %v, want the connection closed unanswered", b, err)
+	}
+}
+
+// Something that is not an SSH client gets the banner and, once it is done
+// talking, a hang-up: a failed handshake takes nothing else down.
+func TestSSHDropsWhatDoesNotSpeakIt(t *testing.T) {
+	_, _, _, sock := newTestSSH(t)
+	c, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if _, err := io.WriteString(c, "GET / HTTP/1.1\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	halfClose(c)
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	got, err := io.ReadAll(c)
+	if err != nil || !strings.HasPrefix(string(got), "SSH-2.0-apothecary-sidecar") {
+		t.Errorf("got %q, %v, want the banner and a hang-up", got, err)
+	}
+}
+
+func TestStartSSHFailsWithoutASocket(t *testing.T) {
+	if _, err := startSSH(filepath.Join(t.TempDir(), "missing", "ssh.sock"), t.TempDir()); err == nil {
+		t.Error("a socket in a directory that does not exist was served")
+	}
+}
+
+// A forward whose request is not the RFC's shape is refused, not guessed at.
+func TestSSHDirectTCPIPMalformed(t *testing.T) {
+	client, _, _, _ := newTestSSH(t)
+	if _, _, err := client.OpenChannel("direct-tcpip", []byte{1, 2}); err == nil {
+		t.Error("a malformed forward opened")
+	}
+}
+
+// A door key file with comments and junk still admits the door, and only it.
+func TestDoorKeyFileLines(t *testing.T) {
+	_, door, _, _ := newTestSSH(t)
+	line := ssh.MarshalAuthorizedKey(door.PublicKey())
+	content := append([]byte("# the door\n\nnot a key\n"), line...)
+	if err := os.WriteFile(doorKeyPath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !doorKeyAccepts(door.PublicKey()) {
+		t.Error("the door key is not found past the comments")
 	}
 }

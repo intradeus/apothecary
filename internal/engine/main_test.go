@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runcore"
@@ -154,10 +155,10 @@ func diffState(live, rep *runcore.State) []string {
 		{"pushed", live.Pushed, rep.Pushed},
 		{"adopted", live.Adopted, rep.Adopted},
 		{"heads", live.Heads, rep.Heads},
-		{"parked", live.Parked, rep.Parked},
+		{"parked", storedPark(live.Parked), rep.Parked},
 		{"continuing", live.Continuing, rep.Continuing},
 		{"chainMerged", live.ChainMerged, rep.ChainMerged},
-		{"parkSince", live.ParkSince, rep.ParkSince},
+		{"parkSince", storedSince(live.ParkSince), rep.ParkSince},
 		{"anyStarted", live.AnyStarted, rep.AnyStarted},
 		{"elided", live.Elided, rep.Elided},
 		{"openPings", live.OpenPings, rep.OpenPings},
@@ -167,7 +168,7 @@ func diffState(live, rep *runcore.State) []string {
 		{"pausedAsks", live.PausedAsks, rep.PausedAsks},
 		{"agentCursor", live.AgentCursor, rep.AgentCursor},
 		{"pendingMsgs", live.PendingMsgs, rep.PendingMsgs},
-		{"holds", live.Holds, rep.Holds},
+		{"holds", storedHolds(live.Holds), rep.Holds},
 		{"pausedHold", live.PausedHold, rep.PausedHold},
 		{"handbackOwed", live.HandbackOwed, rep.HandbackOwed},
 		{"done", live.Done, rep.Done},
@@ -177,6 +178,38 @@ func diffState(live, rep *runcore.State) []string {
 		if !sameValue(f.a, f.b) {
 			out = append(out, fmt.Sprintf("%s: live %s, fold %s", f.name, show(f.a), show(f.b)))
 		}
+	}
+	return out
+}
+
+// stored is a log time as a read gives it. The live loop folds the events
+// Append returned, a replay the rows it reads back, and a timestamptz keeps
+// microseconds in the connection's zone.
+func stored(t time.Time) time.Time { return t.Truncate(time.Microsecond).Local() }
+
+func storedPark(p *runcore.ParkPoint) *runcore.ParkPoint {
+	if p == nil {
+		return nil
+	}
+	c := *p
+	c.Since = stored(c.Since)
+	return &c
+}
+
+func storedSince(m map[string]time.Time) map[string]time.Time {
+	out := make(map[string]time.Time, len(m))
+	for k, t := range m {
+		out[k] = stored(t)
+	}
+	return out
+}
+
+func storedHolds(m map[string]*runcore.HeldState) map[string]*runcore.HeldState {
+	out := make(map[string]*runcore.HeldState, len(m))
+	for k, h := range m {
+		c := *h
+		c.TakenAt = stored(c.TakenAt)
+		out[k] = &c
 	}
 	return out
 }

@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
+	"apothecary/internal/project/confstore/conftest"
 )
 
 const testProject = "prj-1"
@@ -31,18 +32,16 @@ func (s stubSources) TicketSourceKind(context.Context, string) (string, error) {
 
 func newFactory(t *testing.T, src trackerport.TicketSource) (*Factory, *filestore.Attachments) {
 	t.Helper()
-	mem := confstore.NewMem()
-	if err := mem.UpsertProject(context.Background(), confstore.Project{ID: testProject, Name: "p"}); err != nil {
-		t.Fatal(err)
-	}
 	key, err := secrets.ParseKey(secrets.GenerateKey())
 	if err != nil {
 		t.Fatal(err)
 	}
+	conf := confstore.New(confstore.NewMem(), key)
+	conftest.SeedProject(t, conf, confstore.Project{ID: testProject, Name: "p"})
 	att := filestore.NewAttachments(filestore.NewMem(), filestore.NewBlobs(t.TempDir()),
 		1<<20, []string{"text/*", "image/png"})
 	f := &Factory{
-		Conf:        confstore.New(mem, key),
+		Conf:        conf,
 		Attachments: att,
 	}
 	if src != nil {
