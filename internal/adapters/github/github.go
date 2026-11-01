@@ -20,6 +20,7 @@ import (
 
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 )
 
 type Config struct {
@@ -87,10 +88,9 @@ func (a *Adapter) api(ctx context.Context, method, path string, body, out any) (
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-Ratelimit-Remaining") == "0" {
+	if rl := rateLimited("github "+method+" "+path, resp); rl != nil {
 		// Rate-limit 403s read like permission errors otherwise; name them.
-		return resp.StatusCode, fmt.Errorf("github %s %s: rate limit exhausted (resets at unix %s) — not a permissions problem",
-			method, path, resp.Header.Get("X-Ratelimit-Reset"))
+		return resp.StatusCode, rl
 	}
 	if resp.StatusCode >= 400 {
 		return resp.StatusCode, fmt.Errorf("github %s %s: %d: %s", method, path, resp.StatusCode, shell.Tail(string(data), 300))
@@ -101,6 +101,30 @@ func (a *Adapter) api(ctx context.Context, method, path string, body, out any) (
 		}
 	}
 	return resp.StatusCode, nil
+}
+
+// rateLimited is the typed error for a response refused by a rate limit —
+// a 429, a 403 with no requests remaining (the primary limit), or a 403
+// with Retry-After (a secondary limit) — and nil for any other. The wait is
+// Retry-After, else the X-RateLimit-Reset time.
+func rateLimited(tracker string, resp *http.Response) *trackerport.ErrRateLimited {
+	h := resp.Header
+	switch {
+	case resp.StatusCode == http.StatusTooManyRequests:
+	case resp.StatusCode == http.StatusForbidden && (h.Get("X-Ratelimit-Remaining") == "0" || h.Get("Retry-After") != ""):
+	default:
+		return nil
+	}
+	now := time.Now()
+	wait := trackerport.RetryAfter(h.Get("Retry-After"), now)
+	if wait == 0 {
+		wait = trackerport.ResetAfter(h.Get("X-Ratelimit-Reset"), now)
+	}
+	detail := fmt.Sprintf("%d: rate limited", resp.StatusCode)
+	if reset := h.Get("X-Ratelimit-Reset"); reset != "" {
+		detail = fmt.Sprintf("rate limit exhausted (resets at unix %s) — not a permissions problem", reset)
+	}
+	return &trackerport.ErrRateLimited{Tracker: tracker, Detail: detail, RetryAfter: wait}
 }
 
 func (a *Adapter) repoPath() string { return "/repos/" + a.cfg.Locator }
@@ -559,43 +583,74 @@ func (a *Adapter) graphqlURL() string {
 	return a.cfg.BaseURL + "/graphql"
 }
 
-// graphql runs one GraphQL request; out receives the "data" member.
+// graphql runs one GraphQL request; out receives the "data" member. Any
+// error the response carries fails it.
 func (a *Adapter) graphql(ctx context.Context, query string, vars map[string]any, out any) error {
+	errs, err := a.graphqlPartial(ctx, query, vars, out)
+	if err == nil && len(errs) > 0 {
+		return fmt.Errorf("github graphql: %s", errs[0].Message)
+	}
+	return err
+}
+
+// gqlError is one entry of a GraphQL response's "errors": Type is GitHub's
+// classification (NOT_FOUND, RATE_LIMITED, …), Path the field it is about.
+type gqlError struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+	Path    []any  `json:"path"`
+}
+
+// graphqlPartial runs one GraphQL request and decodes "data" into out even
+// when errors accompany it (a field GitHub could not resolve is null), and
+// hands those errors back for the caller to judge. A rate-limited response —
+// an HTTP refusal or a RATE_LIMITED error — is *trackerport.ErrRateLimited.
+func (a *Adapter) graphqlPartial(ctx context.Context, query string, vars map[string]any, out any) ([]gqlError, error) {
 	data, err := json.Marshal(map[string]any{"query": query, "variables": vars})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.graphqlURL(), bytes.NewReader(data))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+a.cfg.Token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := a.http.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if rl := rateLimited("github graphql", resp); rl != nil {
+		return nil, rl
+	}
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("github graphql: %d: %s", resp.StatusCode, shell.Tail(string(body), 300))
+		return nil, fmt.Errorf("github graphql: %d: %s", resp.StatusCode, shell.Tail(string(body), 300))
 	}
 	var env struct {
 		Data   json.RawMessage `json:"data"`
-		Errors []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
+		Errors []gqlError      `json:"errors"`
 	}
 	if err := json.Unmarshal(body, &env); err != nil {
-		return fmt.Errorf("github graphql: decode: %w", err)
+		return nil, fmt.Errorf("github graphql: decode: %w", err)
 	}
-	if len(env.Errors) > 0 {
-		return fmt.Errorf("github graphql: %s", env.Errors[0].Message)
+	for _, e := range env.Errors {
+		if e.Type == "RATE_LIMITED" {
+			now := time.Now()
+			wait := trackerport.RetryAfter(resp.Header.Get("Retry-After"), now)
+			if wait == 0 {
+				wait = trackerport.ResetAfter(resp.Header.Get("X-Ratelimit-Reset"), now)
+			}
+			return nil, &trackerport.ErrRateLimited{Tracker: "github graphql", Detail: e.Message, RetryAfter: wait}
+		}
 	}
-	if out != nil {
-		return json.Unmarshal(env.Data, out)
+	if out != nil && len(env.Data) > 0 && string(env.Data) != "null" {
+		if err := json.Unmarshal(env.Data, out); err != nil {
+			return nil, fmt.Errorf("github graphql: decode: %w", err)
+		}
 	}
-	return nil
+	return env.Errors, nil
 }
 
 const threadsQuery = `query($owner:String!,$name:String!,$n:Int!,$after:String){

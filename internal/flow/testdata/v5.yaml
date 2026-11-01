@@ -223,9 +223,9 @@ agents:
 
 main:
   # A tracker action needs no workspace: the issue moves seconds in. `to` is
-  # a canonical status the ticket's tracker translates into its own word; a
-  # ticket written by hand (no tracker issue) skips the stage, and so does a
-  # tracker with no word for it.
+  # a flow step the ticket's tracker puts on one of its statuses — the
+  # remote issue's, or the internal tracker's for a ticket with no source;
+  # a step no status holds skips the stage.
   - { id: in_progress, type: action, action: ticket_transition, with: { to: in_progress },
       on_fail: { to: plan, max: 1 } }
   # Every port says where it comes from or goes: the ticket from the run, the

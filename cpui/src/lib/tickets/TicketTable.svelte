@@ -1,12 +1,14 @@
 <script lang="ts" module>
 	import { t } from '$lib/i18n/index.svelte';
-	export type TicketCol = 'title' | 'type' | 'source' | 'workshop' | 'branch' | 'runs' | 'created';
+	export type TicketCol =
+		'title' | 'status' | 'type' | 'source' | 'workshop' | 'branch' | 'runs' | 'created';
 </script>
 
 <script lang="ts">
 	// A dense tickets table (DESIGN 7.6), like RunTable: one grid per row, the
-	// title link covers the row, columns picked per page. Status is derived:
-	// the latest run's state, "×N" when there are several, "no runs" before.
+	// title link covers the row, columns picked per page. Two states, kept
+	// apart: the ticket's status in its tracker, and its latest run's state
+	// ("×N" when there are several, "no runs" before).
 	import type { Ticket } from '$lib/domain';
 	import { to } from '$lib/core/urls';
 	import { fleet } from '$lib/app/fleet.svelte';
@@ -14,14 +16,16 @@
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import WorkshopName from '$lib/app/WorkshopName.svelte';
 	import ChangeTypeTag from './ChangeTypeTag.svelte';
+	import TicketStatusChip from './TicketStatusChip.svelte';
 
 	let {
 		tickets,
-		cols = ['title', 'type', 'source', 'workshop', 'branch', 'runs', 'created']
+		cols = ['title', 'status', 'type', 'source', 'workshop', 'branch', 'runs', 'created']
 	}: { tickets: Ticket[]; cols?: TicketCol[] } = $props();
 
 	const WIDTH: Record<TicketCol, string> = {
 		title: 'minmax(0, 2fr)',
+		status: '120px',
 		type: '56px',
 		source: '110px',
 		workshop: 'minmax(0, 1fr)',
@@ -40,6 +44,7 @@
 	const label = (c: TicketCol) =>
 		({
 			title: t('tickets.col.title'),
+			status: t('tickets.col.status'),
 			type: t('tickets.col.type'),
 			source: t('tickets.col.source'),
 			workshop: t('tickets.col.workshop'),
@@ -61,6 +66,8 @@
 			{#each cols as c (c)}
 				{#if c === 'title'}
 					<a class="title truncate stretch" href={to.ticket(tk.id)}>{tk.title}</a>
+				{:else if c === 'status'}
+					<span class="st"><TicketStatusChip status={tk.status} /></span>
 				{:else if c === 'type'}
 					<span><ChangeTypeTag type={tk.changeType} sourceType={tk.source?.type} /></span>
 				{:else if c === 'source'}

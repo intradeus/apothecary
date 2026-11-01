@@ -1,11 +1,13 @@
-<!-- Ticket detail (DESIGN 7.6): the goal and its attachments on the left,
-     "Start a run" on the right, the ticket's runs below (shared 4s poll). -->
+<!-- Ticket detail (DESIGN 7.6): its tracker state (status, labels, links,
+     freshness), the goal, attachments and discussion on the left, "Start a
+     run" on the right, the ticket's runs below (shared 4s poll). -->
 <script lang="ts">
 	import { errorMessage } from '$lib/core/errors';
+	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { to } from '$lib/core/urls';
-	import { api } from '$lib/api';
+	import { api, busyRunOf } from '$lib/api';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { ago, fmtAbs, shortId } from '$lib/core/format';
 	import type { Attachment, Branch, SkillsetRef, Ticket } from '$lib/domain';
@@ -13,6 +15,9 @@
 	import FlowSelect from '$lib/flow/FlowSelect.svelte';
 	import TicketForm from '$lib/tickets/TicketForm.svelte';
 	import ChangeTypeTag from '$lib/tickets/ChangeTypeTag.svelte';
+	import TicketStatusChip from '$lib/tickets/TicketStatusChip.svelte';
+	import TicketTracker from '$lib/tickets/TicketTracker.svelte';
+	import TicketComments from '$lib/tickets/TicketComments.svelte';
 	import FileChips from '$lib/artifacts/FileChips.svelte';
 	import AttachFiles from '$lib/artifacts/AttachFiles.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
@@ -53,6 +58,8 @@
 	let runGoal = $state(''); // direction for THIS attempt (additive to the ticket goal)
 	let runFiles = $state<File[]>([]);
 	let starting = $state(false);
+	/** The run in the way when a start was refused: one active run per ticket. */
+	let busyRun = $state('');
 
 	const project = $derived(ticket ? fleet.projectById.get(ticket.projectId) : undefined);
 
@@ -109,10 +116,34 @@
 			});
 	});
 
+	// The mirror moves on its own (the tracker, a run's ticket stages): the
+	// shared fleet poll carries the ticket's list view, so its status, labels
+	// and sync state follow it. Links and attachments are detail-only: they
+	// keep what the last read (load, a write, Refresh) gave.
+	const listed = $derived(fleet.ticketById.get(ticketId));
+	$effect(() => {
+		const view = listed;
+		untrack(() => {
+			if (!view || !ticket || editing || view.id !== ticket.id) return;
+			// Only a newer view: right after a write the list still has the old one.
+			const at = (s?: string) => (s ? Date.parse(s) : 0);
+			const newer =
+				at(view.updatedAt) > at(ticket.updatedAt) || at(view.syncedAt) > at(ticket.syncedAt);
+			if (!newer) return;
+			ticket = {
+				...view,
+				attachmentIds: ticket.attachmentIds,
+				links: ticket.links,
+				warnings: ticket.warnings
+			};
+		});
+	});
+
 	async function startRun() {
 		if (starting) return;
 		starting = true;
 		error = '';
+		busyRun = '';
 		try {
 			let attachmentIds: string[] | undefined;
 			if (runFiles.length) attachmentIds = (await api.files.upload(runFiles)).map((a) => a.id);
@@ -131,9 +162,27 @@
 			});
 			await goto(to.run(runId));
 		} catch (e) {
-			error = errorMessage(e);
+			busyRun = busyRunOf(e) ?? '';
+			if (!busyRun) error = errorMessage(e);
 		} finally {
 			starting = false;
+		}
+	}
+
+	async function abortBusy() {
+		const id = busyRun;
+		const ok = await confirmDialog({
+			title: t('run.stop.title', { id: shortId(id) }),
+			body: `${th('run.stop.lead')} ${t('run.stop.kept')}`,
+			action: t('run.stop.action')
+		});
+		if (!ok) return;
+		try {
+			await api.runs.abort(id);
+			busyRun = '';
+			void fleet.refresh();
+		} catch (e) {
+			error = errorMessage(e);
 		}
 	}
 
@@ -181,12 +230,15 @@
 {#if ticket}
 	<PageHeader {crumbs} title={ticket.title}>
 		{#snippet chip()}
-			{#if runs.length}<StatusChip state={runs[0].state} suffix />{/if}
+			<TicketStatusChip status={ticket!.status} size="md" />
+			{#if runs.length}<span title={t('page.ticket.latestRun')}
+					><StatusChip state={runs[0].state} suffix /></span
+				>{/if}
 		{/snippet}
 		{#snippet meta()}
 			<ChangeTypeTag type={ticket!.changeType} sourceType={ticket!.source?.type} />
 			{#if ticket!.source?.key}
-				<!-- Provenance: a copy taken once. Nothing here is written back. -->
+				<!-- The remote issue this ticket mirrors. -->
 				<span class="src">
 					<span class="tag">{ticket!.source.key}</span>
 					{#if ticket!.source.url}
@@ -252,6 +304,7 @@
 		{:else}
 			<div class="grid">
 				<div class="work">
+					<TicketTracker {ticket} onchange={(tk) => (ticket = tk)} />
 					<section class="glass pane">
 						<div class="pane-head">
 							<h2>{t('page.ticket.goal')}</h2>
@@ -278,6 +331,7 @@
 							</div>
 						{/if}
 					</section>
+					<TicketComments ticketId={ticket.id} syncedAt={ticket.syncedAt} />
 					{@render runList()}
 				</div>
 
@@ -339,6 +393,14 @@
 									: t('page.ticket.branchHelp', { star: I.star })}</span
 							>
 						</div>
+						{#if busyRun}
+							<div class="busy tint-warning" role="alert">
+								<span>{t('page.ticket.busy', { id: shortId(busyRun) })}</span>
+								<a class="btn btn-sm" href={to.run(busyRun)}>{t('page.ping.openRun')}</a>
+								<button class="btn-sm btn-danger" onclick={abortBusy}>{t('run.stop.action')}</button
+								>
+							</div>
+						{/if}
 						<button class="btn-primary btn-lg go" onclick={startRun} aria-busy={starting}>
 							<TransportIcon kind="play" />
 							{t('page.ticket.startRunBtn')}
@@ -411,6 +473,16 @@
 	.go {
 		align-self: stretch;
 		margin-top: 2px;
+	}
+	.busy {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 8px;
+		padding: 8px 10px;
+		border-width: 1px;
+		border-style: solid;
+		border-radius: var(--r-sm);
 	}
 	.runs {
 		display: flex;

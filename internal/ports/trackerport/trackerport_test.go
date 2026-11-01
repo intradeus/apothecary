@@ -49,29 +49,29 @@ func TestGuessChangeType(t *testing.T) {
 	}
 }
 
-func TestParseTicketStatus(t *testing.T) {
-	for _, st := range CanonicalStatuses() {
-		if got, ok := ParseTicketStatus(" " + string(st) + " "); !ok || got != st {
-			t.Errorf("ParseTicketStatus(%q) = %q, %v", st, got, ok)
+func TestParseFlowStep(t *testing.T) {
+	for _, st := range FlowSteps() {
+		if got, ok := ParseFlowStep(" " + string(st) + " "); !ok || got != st {
+			t.Errorf("ParseFlowStep(%q) = %q, %v", st, got, ok)
 		}
 	}
-	// A tracker's own word is not canonical, whatever its case.
+	// A tracker's own word is not a flow step, whatever its case.
 	for _, in := range []string{"", "In Progress", "DONE", "closed"} {
-		if got, ok := ParseTicketStatus(in); ok || got != "" {
-			t.Errorf("ParseTicketStatus(%q) = %q, %v", in, got, ok)
+		if got, ok := ParseFlowStep(in); ok || got != "" {
+			t.Errorf("ParseFlowStep(%q) = %q, %v", in, got, ok)
 		}
 	}
 }
 
-func TestStatusNames(t *testing.T) {
-	if got := StatusNames([]TicketStatus{StatusTodo, StatusDone}); got != "todo, done" {
+func TestStepNames(t *testing.T) {
+	if got := StepNames([]FlowStep{StepTodo, StepDone}); got != "todo, done" {
 		t.Errorf("names = %q", got)
 	}
-	if got := StatusNames(nil); got != "" {
+	if got := StepNames(nil); got != "" {
 		t.Errorf("no names = %q", got)
 	}
-	if !reflect.DeepEqual(CanonicalStatuses()[:2], []TicketStatus{StatusTodo, StatusInProgress}) {
-		t.Errorf("statuses are in lifecycle order: %v", CanonicalStatuses())
+	if !reflect.DeepEqual(FlowSteps()[:2], []FlowStep{StepTodo, StepInProgress}) {
+		t.Errorf("steps are in lifecycle order: %v", FlowSteps())
 	}
 }
 
@@ -87,10 +87,10 @@ func TestErrorsNameTheFix(t *testing.T) {
 			[]string{`P-1: status "Done" is not reachable from "To Do"`, "reachable: In Progress, Blocked"}, []string{"no transition"}},
 		{"nowhere to go", &ErrStatusUnreachable{Key: "P-1", From: "Done", To: "To Do"},
 			[]string{"no transition is available"}, []string{"reachable:"}},
-		{"unsupported", &ErrStatusUnsupported{Key: "o/r#1", Status: StatusInReview, Kind: "GitHub Issues", Supported: []TicketStatus{StatusTodo, StatusDone}},
-			[]string{`o/r#1: GitHub Issues has no status for "in_review"`, "it has: todo, done"}, nil},
-		{"unsupported, nothing known", &ErrStatusUnsupported{Key: "k", Status: StatusBlocked},
-			[]string{"the tracker has no status"}, []string{"it has"}},
+		{"unsupported", &ErrStatusUnsupported{Key: "o/r#1", Step: StepInReview, Supported: []FlowStep{StepTodo, StepDone}},
+			[]string{`o/r#1: the tracker has no status for step "in_review"`, "steps with a status: todo, done"}, nil},
+		{"unsupported, nothing known", &ErrStatusUnsupported{Key: "k", Step: StepBlocked},
+			[]string{"the tracker has no status"}, []string{"steps with"}},
 		{"unknown field", &ErrFieldUnknown{Key: "P-1", Field: "Team"}, []string{`no field named "Team"`}, []string{"candidates"}},
 		{"ambiguous field", &ErrFieldUnknown{Key: "P-1", Field: "Team", Candidates: []string{"Team (cf_1)", "Team (cf_2)"}},
 			[]string{"ambiguous or unknown", "candidates: Team (cf_1), Team (cf_2)"}, nil},

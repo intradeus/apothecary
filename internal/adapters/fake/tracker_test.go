@@ -13,7 +13,7 @@ func tracker() *TicketSource {
 	return &TicketSource{Tickets: []trackerport.SourceTicket{
 		{Key: "DEV-1", Title: "Login page", Body: "users cannot sign in", Status: "To Do",
 			Attachments: []trackerport.SourceAttachment{{ID: "a1"}}},
-		{Key: "DEV-2", Title: "Logout", Body: "button", Status: "In Progress"},
+		{Key: "DEV-2", RemoteID: "1002", Title: "Logout", Body: "button", Status: "In Progress", Labels: []string{"ui"}},
 		{Key: "OPS-3", Title: "Rotate keys", Body: "quarterly", Status: "Done"},
 	}, Blobs: map[string][]byte{"a1": []byte("bytes")}}
 }
@@ -52,8 +52,21 @@ func TestSearchAndFetch(t *testing.T) {
 	if err != nil || got.Key != "DEV-1" || len(got.Attachments) != 1 {
 		t.Errorf("fetch = %+v, %v", got, err)
 	}
-	if _, err := s.Fetch(bgCtx, "NOPE"); err == nil {
-		t.Error("fetched nothing")
+	if _, err := s.Fetch(bgCtx, "NOPE"); !errors.Is(err, trackerport.ErrTicketNotFound) {
+		t.Errorf("fetched nothing = %v, want ErrTicketNotFound", err)
+	}
+	// The stable id finds the ticket too, and a copy cannot write through.
+	byID, err := s.Fetch(bgCtx, "1002")
+	if err != nil || byID.Key != "DEV-2" {
+		t.Errorf("fetch by remote id = %+v, %v", byID, err)
+	}
+	byID.Labels[0] = "changed"
+	if again, _ := s.Fetch(bgCtx, "DEV-2"); again.Labels[0] != "ui" {
+		t.Error("Fetch shares the labels")
+	}
+	many, err := s.FetchMany(bgCtx, []string{"OPS-3", "NOPE", "dev-1"})
+	if err != nil || len(many) != 2 || many[0].Key != "OPS-3" || many[1].Key != "DEV-1" {
+		t.Errorf("fetch many = %+v, %v", many, err)
 	}
 	rc, err := s.OpenAttachment(bgCtx, trackerport.SourceAttachment{ID: "a1"})
 	if err != nil {
@@ -78,7 +91,10 @@ func TestErrFailsEverything(t *testing.T) {
 		"search":    func() error { _, err := s.Search(bgCtx, "", 0); return err },
 		"fetch":     func() error { _, err := s.Fetch(bgCtx, "DEV-1"); return err },
 		"open":      func() error { _, err := s.OpenAttachment(bgCtx, trackerport.SourceAttachment{}); return err },
-		"comments":  func() error { _, err := s.Comments(bgCtx, "DEV-1"); return err },
+		"comments":  func() error { _, err := s.ListComments(bgCtx, "DEV-1"); return err },
+		"many":      func() error { _, err := s.FetchMany(bgCtx, nil); return err },
+		"statuses":  func() error { _, err := s.Statuses(bgCtx); return err },
+		"types":     func() error { _, err := s.Types(bgCtx); return err },
 		"fields":    func() error { _, err := s.Fields(bgCtx, "DEV-1", nil); return err },
 		"ro test":   func() error { return ro.Test(bgCtx) },
 		"ro search": func() error { _, err := ro.Search(bgCtx, "", 0); return err },
@@ -143,7 +159,7 @@ func TestWritesFailOnErrAndWriteErrAndUnknownKeys(t *testing.T) {
 		}
 	}
 	u := tracker()
-	if _, err := u.Comments(bgCtx, "GHOST-1"); err == nil {
+	if _, err := u.ListComments(bgCtx, "GHOST-1"); err == nil {
 		t.Error("comments of nothing")
 	}
 	if _, err := u.Fields(bgCtx, "GHOST-1", nil); err == nil {
@@ -162,8 +178,15 @@ func TestTransition(t *testing.T) {
 	if err := s.Transition(bgCtx, "DEV-1", "Done"); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.Fetch(bgCtx, "DEV-1"); got.Status != "Done" {
-		t.Errorf("status = %q", got.Status)
+	if got, _ := s.Fetch(bgCtx, "DEV-1"); got.Status != "Done" || got.StatusID != "4" {
+		t.Errorf("status = %q (%q)", got.Status, got.StatusID)
+	}
+	// A status the list does not have leaves no id.
+	if err := s.Transition(bgCtx, "DEV-1", "Limbo"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Fetch(bgCtx, "DEV-1"); got.Status != "Limbo" || got.StatusID != "" {
+		t.Errorf("status = %q (%q)", got.Status, got.StatusID)
 	}
 	// Reachable's vocabulary wins over the flow's spelling.
 	s = tracker()
@@ -181,44 +204,56 @@ func TestTransition(t *testing.T) {
 	}
 }
 
-func TestTransitionTo(t *testing.T) {
+func TestMetadata(t *testing.T) {
 	s := tracker()
-	if err := s.TransitionTo(bgCtx, "DEV-1", trackerport.StatusDone); err != nil {
+	statuses, err := s.Statuses(bgCtx)
+	if err != nil || len(statuses) != len(DefaultStatuses) || statuses[3] != (trackerport.RemoteStatus{ID: "4", Name: "Done", Category: trackerport.CategoryDone}) {
+		t.Errorf("statuses = %+v, %v", statuses, err)
+	}
+	types, err := s.Types(bgCtx)
+	if err != nil || len(types) != len(DefaultTypes) {
+		t.Errorf("types = %+v, %v", types, err)
+	}
+	statuses[0].Name, types[0].Name = "changed", "changed"
+	if DefaultStatuses[0].Name != "To Do" || DefaultTypes[0].Name != "Story" {
+		t.Error("the lists share storage with the defaults")
+	}
+	s.RemoteStatuses = []trackerport.RemoteStatus{{ID: "open", Name: "Open"}}
+	s.RemoteTypes = []trackerport.RemoteType{{ID: "issue", Name: "Issue"}}
+	if got, _ := s.Statuses(bgCtx); len(got) != 1 || got[0].ID != "open" {
+		t.Errorf("configured statuses = %+v", got)
+	}
+	if got, _ := s.Types(bgCtx); len(got) != 1 || got[0].ID != "issue" {
+		t.Errorf("configured types = %+v", got)
+	}
+	if err := s.Transition(bgCtx, "DEV-1", "open"); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.Fetch(bgCtx, "DEV-1"); got.Status != "Done" {
-		t.Errorf("status = %q", got.Status)
-	}
-	var un *trackerport.ErrStatusUnsupported
-	err := s.TransitionTo(bgCtx, " DEV-1 ", trackerport.StatusBlocked)
-	if !errors.As(err, &un) || un.Key != "DEV-1" || un.Status != trackerport.StatusBlocked || len(un.Supported) != len(DefaultStatusMap) {
-		t.Errorf("unsupported = %+v", err)
-	}
-	s.StatusMap = map[trackerport.TicketStatus]string{trackerport.StatusTodo: "Backlog"}
-	if err := s.TransitionTo(bgCtx, "DEV-1", trackerport.StatusTodo); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := s.Fetch(bgCtx, "DEV-1"); got.Status != "Backlog" {
-		t.Errorf("mapped = %q", got.Status)
-	}
-	if err := s.TransitionTo(bgCtx, "DEV-1", trackerport.StatusDone); !errors.As(err, &un) || len(un.Supported) != 1 {
-		t.Errorf("custom map = %v", err)
+	if got, _ := s.Fetch(bgCtx, "DEV-1"); got.StatusID != "open" {
+		t.Errorf("status id = %q", got.StatusID)
 	}
 }
 
 func TestComments(t *testing.T) {
 	s := tracker()
+	s.Thread = map[string][]trackerport.Comment{"DEV-1": {{ID: "h1", Author: "ann", Body: "human"}}}
 	if err := s.Comment(bgCtx, "dev-1", "one"); err != nil {
 		t.Fatal(err)
 	}
 	s.Comment(bgCtx, "DEV-1", "two")
-	got, err := s.Comments(bgCtx, "DEV-1")
-	if err != nil || strings.Join(got, ",") != "one,two" {
-		t.Errorf("comments = %v, %v", got, err)
+	got, err := s.ListComments(bgCtx, "DEV-1")
+	if err != nil || len(got) != 3 || got[0].ID != "h1" || got[1].Body != "one" || got[2].Body != "two" {
+		t.Fatalf("comments = %+v, %v", got, err)
 	}
-	got[0] = "changed"
-	if again, _ := s.Comments(bgCtx, "DEV-1"); again[0] != "one" {
-		t.Error("Comments shares storage")
+	if got[1].ID == got[2].ID || got[1].ID == "" || got[1].Author != "apothecary" || got[1].Created.IsZero() {
+		t.Errorf("posted = %+v", got[1:])
+	}
+	if strings.Join(s.Posted["DEV-1"], ",") != "one,two" {
+		t.Errorf("posted = %v", s.Posted)
+	}
+	got[0].Body = "changed"
+	if again, _ := s.ListComments(bgCtx, "DEV-1"); again[0].Body != "human" {
+		t.Error("ListComments shares storage")
 	}
 }
 
@@ -233,6 +268,13 @@ func TestFields(t *testing.T) {
 	got, err := s.Fields(bgCtx, "DEV-1", []string{"a", "unset"})
 	if err != nil || got["a"] != "1" || got["unset"] != "" {
 		t.Errorf("fields = %v, %v", got, err)
+	}
+	// Labels are the ticket's own: a sync reads them back.
+	if err := s.SetFields(bgCtx, "DEV-1", map[string]string{"Labels": "x, ,y"}); err != nil {
+		t.Fatal(err)
+	}
+	if tk, _ := s.Fetch(bgCtx, "DEV-1"); strings.Join(tk.Labels, ",") != "x,y" {
+		t.Errorf("labels = %q", tk.Labels)
 	}
 	s.KnownFields = []string{"Priority"}
 	if err := s.SetFields(bgCtx, "DEV-1", map[string]string{"priority": "high"}); err != nil {

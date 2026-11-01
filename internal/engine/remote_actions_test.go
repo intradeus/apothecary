@@ -555,32 +555,32 @@ func TestTrackerWriterThatCannotBeReached(t *testing.T) {
 	doc := "name: tk\nversion: 2\nparameters: { harness: fake, model: fake/model }\nmain:\n  - { id: act, type: action, action: ticket_transition, with: { to: done } }\n"
 	t.Run("at creation", func(t *testing.T) {
 		h, _ := trackerHarness(t, doc)
-		h.res.TicketWriter = func(context.Context, string) (trackerport.TicketWriter, error) {
-			return nil, errors.New("not writable")
+		h.res.TicketTracker = func(context.Context, string) (trackerport.TicketWriter, string, error) {
+			return nil, "", errors.New("not writable")
 		}
 		_, err := h.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
 		wantErrText(t, err, `preflight: stage "act": action "ticket_transition" writes to ticket DEV-1's tracker, but not writable`)
-		h.res.TicketWriter = nil
+		h.res.TicketTracker = nil
 		_, err = h.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
 		wantErrText(t, err, "which this build cannot")
 	})
 	t.Run("once running", func(t *testing.T) {
 		h, tr := trackerHarness(t, doc)
 		calls := 0
-		h.res.TicketWriter = func(context.Context, string) (trackerport.TicketWriter, error) {
+		h.res.TicketTracker = func(context.Context, string) (trackerport.TicketWriter, string, error) {
 			if calls++; calls > 1 {
-				return nil, errors.New("credential revoked")
+				return nil, "", errors.New("credential revoked")
 			}
-			return tr, nil
+			return tr, "DEV-1", nil
 		}
 		_, sf := runOut(t, h, linkedTicket, "tk", runinput.Input{})
-		wantFailure(t, sf, event.ReasonInfra, "ticket DEV-1's tracker: credential revoked")
+		wantFailure(t, sf, event.ReasonInfra, "ticket tk-1's tracker: credential revoked")
 	})
 	t.Run("gone while running", func(t *testing.T) {
 		h, _ := trackerHarness(t, "name: tk\nversion: 2\nparameters: { harness: fake, model: fake/model }\nmain:\n  - { id: first, type: command, run: \"./first.sh\" }\n  - { id: act, type: action, action: ticket_transition, with: { to: done } }\n")
 		h.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 			if strings.Contains(cmd.Script, "./first.sh") {
-				h.res.TicketWriter = nil
+				h.res.TicketTracker = nil
 			}
 			return envport.ExecResult{}, nil
 		}
@@ -624,7 +624,9 @@ main:
   - { id: act, type: action, action: ticket_comment, input: { body: { from: artifacts/a.md, type: file }, attachments: { from: artifacts/shots/, type: files } } }
 `
 	h, tr := trackerHarness(t, doc)
-	h.res.TicketWriter = func(context.Context, string) (trackerport.TicketWriter, error) { return noAttacher{tr}, nil }
+	h.res.TicketTracker = func(context.Context, string) (trackerport.TicketWriter, string, error) {
+		return noAttacher{tr}, "DEV-1", nil
+	}
 	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 		if strings.Contains(cmd.Script, "./w.sh") {
 			env.Files["artifacts/a.md"] = []byte("note")
@@ -688,12 +690,12 @@ main:
 	h2, _ := trackerHarness(t, doc)
 	h2.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) { return envport.ExecResult{}, nil }
 	first := true
-	h2.res.TicketWriter = func(context.Context, string) (trackerport.TicketWriter, error) {
+	h2.res.TicketTracker = func(context.Context, string) (trackerport.TicketWriter, string, error) {
 		if !first {
 			h2.res.RepoHost = nil
 		}
 		first = false
-		return newTracker(), nil
+		return newTracker(), "DEV-1", nil
 	}
 	id2, sf2 := runOut(t, h2, linkedTicket, "tk", runinput.Input{})
 	if sf2 != nil {

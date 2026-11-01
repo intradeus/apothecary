@@ -230,10 +230,14 @@ func addRoute(doc *openapi3.T, rt Route, schemaFor func(any) (*openapi3.SchemaRe
 	}
 
 	// Errors: one shape, everywhere, so a client has one thing to handle.
+	// run_id is set only on the 409 refusing a run on a busy ticket.
 	errSchema := openapi3.NewSchemaRef("#/components/schemas/ErrorResponse", nil)
 	if _, ok := doc.Components.Schemas["ErrorResponse"]; !ok {
+		runID := openapi3.NewStringSchema()
+		runID.Description = "the ticket's active run, on a 409 refusing another run of it"
 		doc.Components.Schemas["ErrorResponse"] = openapi3.NewObjectSchema().
-			WithProperty("error", openapi3.NewStringSchema()).NewRef()
+			WithProperty("error", openapi3.NewStringSchema()).
+			WithProperty("run_id", runID).NewRef()
 	}
 	errResp := openapi3.NewResponse().WithDescription("error").
 		WithContent(openapi3.Content{"application/json": openapi3.NewMediaType().WithSchema(errSchema.Value)})

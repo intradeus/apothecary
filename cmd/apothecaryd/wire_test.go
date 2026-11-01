@@ -278,9 +278,19 @@ func TestDevBootRunsAFlowAndRecoversIt(t *testing.T) {
 	if code, body := c2.do("GET", "/api/pings/"+pingID, nil); code != http.StatusOK || !strings.Contains(body, `"status":"pending"`) {
 		t.Errorf("gate after restart = %d %s", code, body)
 	}
-	// The dev seed does not run twice.
-	if all, err := a2.conf.ListIntegrations(ctx, ""); err != nil || len(all) != 4 {
-		t.Errorf("integrations after restart = %d, %v", len(all), err)
+	// The dev seed does not run twice; the user's internal tracker, made on
+	// first use, is there once.
+	all, err = a2.conf.ListIntegrations(ctx, "")
+	var seeded, internal []string
+	for _, in := range all {
+		if in.Kind == confstore.KindInternal {
+			internal = append(internal, in.ID)
+		} else {
+			seeded = append(seeded, in.Kind)
+		}
+	}
+	if err != nil || len(seeded) != 4 || len(internal) > 1 {
+		t.Errorf("integrations after restart = %v + internal %v, %v", seeded, internal, err)
 	}
 }
 

@@ -94,25 +94,29 @@ func (FakeTicketSource) Descriptor() Descriptor {
 }
 
 // New serves a tiny fixed corpus so the import flow (search → pick → copy,
-// attachments included) is exercisable in -dev with no Jira.
+// attachments included) and the sync (statuses, types, labels — the ids
+// match fake.DefaultStatuses/DefaultTypes) are exercisable in -dev with no
+// Jira.
 func (FakeTicketSource) New(Config) (trackerport.TicketSource, error) {
 	return &fake.TicketSource{
 		Tickets: []trackerport.SourceTicket{
 			{
-				Key: "DEV-1", Title: "Add a Farewell function",
+				RemoteID: "1001", Key: "DEV-1", Title: "Add a Farewell function",
 				Body:   "The greeter only says hello.\n\n- [ ] add `Farewell(name string) string`\n- [ ] cover it in the tests",
 				URL:    "https://tracker.local/browse/DEV-1",
-				Status: "To Do", Type: "Story", Assignee: "Dev User",
+				Status: "To Do", StatusID: "1", Type: "Story", TypeID: "10", Assignee: "Dev User",
+				Labels:  []string{"greeter"},
 				Updated: time.Now().Add(-2 * time.Hour),
 				Attachments: []trackerport.SourceAttachment{
 					{ID: "att-1", Filename: "spec.md", Mime: "text/markdown", Size: 42, URL: "https://tracker.local/att/1"},
 				},
 			},
 			{
-				Key: "DEV-2", Title: "Flaky test in the router suite",
+				RemoteID: "1002", Key: "DEV-2", Title: "Flaky test in the router suite",
 				Body:   "`TestRoutes/redirect` fails about one run in five on CI.",
 				URL:    "https://tracker.local/browse/DEV-2",
-				Status: "In Progress", Type: "Bug", Assignee: "Dev User",
+				Status: "In Progress", StatusID: "2", Type: "Bug", TypeID: "11", Assignee: "Dev User",
+				Labels:  []string{"ci", "flaky"},
 				Updated: time.Now().Add(-30 * time.Minute),
 			},
 		},

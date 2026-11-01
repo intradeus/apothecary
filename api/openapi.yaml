@@ -156,6 +156,8 @@ components:
           type: string
         ping_id:
           type: string
+        remote_id:
+          type: string
         run_id:
           type: string
         sha256:
@@ -989,6 +991,9 @@ components:
     ErrorResponse:
       properties:
         error:
+          type: string
+        run_id:
+          description: the ticket's active run, on a 409 refusing another run of it
           type: string
       type: object
     Event:
@@ -3342,6 +3347,28 @@ components:
         source_branch:
           type: string
       type: object
+    SyncCounts:
+      properties:
+        busy:
+          type: integer
+        failed:
+          type: integer
+        gone:
+          type: integer
+        rate_limited:
+          type: integer
+        synced:
+          type: integer
+        tickets:
+          type: integer
+      required:
+        - busy
+        - failed
+        - gone
+        - rate_limited
+        - synced
+        - tickets
+      type: object
     TestResult:
       properties:
         error:
@@ -3392,50 +3419,45 @@ components:
       required:
         - threads
       type: object
-    Ticket:
+    TicketComment:
       properties:
-        automation_id:
+        author:
           type: string
-        base_branch:
-          type: string
-        change_type:
+        body_md:
           type: string
         created_at:
           format: date-time
           type: string
-        goal:
-          type: string
         id:
           type: string
-        project_id:
+        origin:
           type: string
-        source_id:
+        remote_id:
           type: string
-        source_key:
+        run_id:
           type: string
-        source_kind:
+        stage_id:
           type: string
-        source_type:
-          type: string
-        source_url:
-          type: string
-        title:
+        ticket_id:
           type: string
         updated_at:
           format: date-time
           type: string
-        user_id:
+      required:
+        - author
+        - body_md
+        - created_at
+        - id
+        - origin
+        - ticket_id
+        - updated_at
+      type: object
+    TicketCommentRequest:
+      properties:
+        body:
           type: string
       required:
-        - base_branch
-        - change_type
-        - created_at
-        - goal
-        - id
-        - project_id
-        - title
-        - updated_at
-        - user_id
+        - body
       type: object
     TicketDetail:
       properties:
@@ -3457,7 +3479,21 @@ components:
           type: string
         id:
           type: string
+        labels:
+          items:
+            type: string
+          type: array
+        links:
+          items:
+            $ref: '#/components/schemas/TicketLink'
+          nullable: true
+          type: array
         project_id:
+          type: string
+        remote_id:
+          type: string
+        remote_updated_at:
+          format: date-time
           type: string
         source_id:
           type: string
@@ -3469,7 +3505,27 @@ components:
           type: string
         source_url:
           type: string
+        status:
+          $ref: '#/components/schemas/TicketStatusRef'
+        status_changed_at:
+          format: date-time
+          type: string
+        status_changed_by:
+          type: string
+        status_id:
+          type: string
+        sync_error:
+          type: string
+        sync_state:
+          type: string
+        synced_at:
+          format: date-time
+          type: string
         title:
+          type: string
+        type:
+          $ref: '#/components/schemas/TicketTypeRef'
+        type_id:
           type: string
         updated_at:
           format: date-time
@@ -3482,6 +3538,30 @@ components:
           type: array
       required:
         - attachment_ids
+        - links
+      type: object
+    TicketLabelsRequest:
+      properties:
+        labels:
+          items:
+            type: string
+          nullable: true
+          type: array
+      required:
+        - labels
+      type: object
+    TicketLink:
+      properties:
+        ticket_id:
+          type: string
+        title:
+          type: string
+        url:
+          type: string
+      required:
+        - ticket_id
+        - title
+        - url
       type: object
     TicketRequest:
       properties:
@@ -3513,6 +3593,102 @@ components:
         - source_id
         - source_key
         - title
+      type: object
+    TicketStatusRef:
+      properties:
+        flow_step:
+          type: string
+        id:
+          type: string
+        is_done:
+          type: boolean
+        name:
+          type: string
+      required:
+        - id
+        - is_done
+        - name
+      type: object
+    TicketStatusRequest:
+      properties:
+        status_id:
+          type: string
+      required:
+        - status_id
+      type: object
+    TicketTypeRef:
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+      required:
+        - id
+        - name
+      type: object
+    TicketView:
+      properties:
+        automation_id:
+          type: string
+        base_branch:
+          type: string
+        change_type:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        goal:
+          type: string
+        id:
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+        project_id:
+          type: string
+        remote_id:
+          type: string
+        remote_updated_at:
+          format: date-time
+          type: string
+        source_id:
+          type: string
+        source_key:
+          type: string
+        source_kind:
+          type: string
+        source_type:
+          type: string
+        source_url:
+          type: string
+        status:
+          $ref: '#/components/schemas/TicketStatusRef'
+        status_changed_at:
+          format: date-time
+          type: string
+        status_changed_by:
+          type: string
+        status_id:
+          type: string
+        sync_error:
+          type: string
+        sync_state:
+          type: string
+        synced_at:
+          format: date-time
+          type: string
+        title:
+          type: string
+        type:
+          $ref: '#/components/schemas/TicketTypeRef'
+        type_id:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        user_id:
+          type: string
       type: object
     Token:
       properties:
@@ -3556,6 +3732,109 @@ components:
           type: string
       required:
         - name
+      type: object
+    TrackerStatus:
+      properties:
+        flow_step:
+          type: string
+        id:
+          type: string
+        integration_id:
+          type: string
+        is_done:
+          type: boolean
+        name:
+          type: string
+        position:
+          type: integer
+        remote_category:
+          type: string
+        remote_id:
+          type: string
+      required:
+        - id
+        - integration_id
+        - is_done
+        - name
+        - position
+        - remote_category
+        - remote_id
+      type: object
+    TrackerStatusList:
+      properties:
+        statuses:
+          items:
+            $ref: '#/components/schemas/TrackerStatus'
+          nullable: true
+          type: array
+        warnings:
+          items:
+            type: string
+          nullable: true
+          type: array
+      required:
+        - statuses
+        - warnings
+      type: object
+    TrackerStatusesUpdate:
+      properties:
+        replace_with:
+          additionalProperties:
+            type: string
+          type: object
+        statuses:
+          items:
+            $ref: '#/components/schemas/TrackerStatus'
+          nullable: true
+          type: array
+      required:
+        - statuses
+      type: object
+    TrackerType:
+      properties:
+        change_type:
+          type: string
+        id:
+          type: string
+        integration_id:
+          type: string
+        name:
+          type: string
+        position:
+          type: integer
+        remote_id:
+          type: string
+      required:
+        - change_type
+        - id
+        - integration_id
+        - name
+        - position
+        - remote_id
+      type: object
+    TrackerTypeList:
+      properties:
+        types:
+          items:
+            $ref: '#/components/schemas/TrackerType'
+          nullable: true
+          type: array
+      required:
+        - types
+      type: object
+    TrackerTypesUpdate:
+      properties:
+        replace_with:
+          additionalProperties:
+            type: string
+          type: object
+        types:
+          items:
+            $ref: '#/components/schemas/TrackerType'
+          nullable: true
+          type: array
+      required:
+        - types
       type: object
     TriggerHold:
       properties:
@@ -4998,12 +5277,20 @@ paths:
         - integrations
   /api/integrations/{id}:
     delete:
+      description: A ticket source whose tickets still mirror its issues is refused with 409, the error's tickets and active_runs counting them and the runs still going on them; ?unlink_tickets=1 unlinks them onto the internal tracker (status by name, else its done or todo step; type by change type; comments kept) in the same transaction as the delete. The internal tracker cannot be deleted (400).
       operationId: deleteIntegration
       parameters:
         - in: path
           name: id
           required: true
           schema:
+            type: string
+        - description: 1 = unlink the ticket source's tickets, then delete it
+          in: query
+          name: unlink_tickets
+          schema:
+            enum:
+              - "1"
             type: string
       responses:
         "204":
@@ -5200,6 +5487,142 @@ paths:
       summary: Repositories a repository integration (GitLab, GitHub) can see
       tags:
         - integrations
+  /api/integrations/{id}/statuses:
+    get:
+      operationId: listTrackerStatuses
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: 1 = fetch the list from the remote tracker first
+          in: query
+          name: refresh
+          schema:
+            enum:
+              - "1"
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackerStatusList'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: A ticket source's statuses, in order
+      tags:
+        - integrations
+    put:
+      description: 'A remote tracker''s rows are the fetched ones: only is_done and flow_step are taken. The internal tracker''s are the user''s: a row with no id is new, a missing one is deleted, names are unique, the order given is kept. Each flow step is held at most once (400). Deleting a status tickets use needs replace_with[id] (409 without).'
+      operationId: putTrackerStatuses
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrackerStatusesUpdate'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackerStatusList'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Save a ticket source's statuses
+      tags:
+        - integrations
+  /api/integrations/{id}/sync:
+    post:
+      description: Refreshes the status and type lists first. Each ticket's outcome is also on it (sync_state, sync_error).
+      operationId: syncIntegration
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncCounts'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Re-read every ticket of a ticket source from its tracker, done ones included
+      tags:
+        - integrations
   /api/integrations/{id}/test:
     post:
       operationId: testIntegration
@@ -5336,6 +5759,99 @@ paths:
       summary: One tracker ticket by key
       tags:
         - tickets
+  /api/integrations/{id}/types:
+    get:
+      operationId: listTrackerTypes
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: 1 = fetch the list from the remote tracker first
+          in: query
+          name: refresh
+          schema:
+            enum:
+              - "1"
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackerTypeList'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: A ticket source's issue types, in order
+      tags:
+        - integrations
+    put:
+      description: 'Like the statuses: a remote tracker''s rows only take change_type; the internal tracker''s are the user''s. Every type needs a change type (400). Deleting a type tickets use needs replace_with[id] (409 without).'
+      operationId: putTrackerTypes
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrackerTypesUpdate'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackerTypeList'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Save a ticket source's issue types
+      tags:
+        - integrations
   /api/kinds:
     get:
       operationId: listKinds
@@ -10397,13 +10913,21 @@ paths:
           name: project
           schema:
             type: string
+        - description: '1 = only tickets in a Done status, 0 = only the others (default: all)'
+          in: query
+          name: done
+          schema:
+            enum:
+              - "0"
+              - "1"
+            type: string
       responses:
         "200":
           content:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/Ticket'
+                  $ref: '#/components/schemas/TicketView'
                 nullable: true
                 type: array
           description: OK
@@ -10538,6 +11062,7 @@ paths:
       tags:
         - tickets
     put:
+      description: On a ticket mirroring a remote issue, changing what its tracker owns (title, goal, change type) is refused with 409.
       operationId: updateTicket
       parameters:
         - in: path
@@ -10622,8 +11147,150 @@ paths:
       summary: Files attached to a ticket
       tags:
         - tickets
+  /api/tickets/{id}/comments:
+    get:
+      operationId: listTicketComments
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/TicketComment'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: A ticket's comments, oldest first
+      tags:
+        - tickets
+    post:
+      description: 'Through the ticket''s tracker, like the status: on a remote issue the comment comes back with the refresh (origin remote), on the internal tracker it is the person''s (origin user). Answers with the ticket''s comments.'
+      operationId: addTicketComment
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketCommentRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/TicketComment'
+                nullable: true
+                type: array
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Comment on a ticket
+      tags:
+        - tickets
+  /api/tickets/{id}/labels:
+    put:
+      description: Through the ticket's tracker, like the status.
+      operationId: setTicketLabels
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketLabelsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Replace a ticket's labels
+      tags:
+        - tickets
   /api/tickets/{id}/runs:
     post:
+      description: 'A ticket has at most one active (non-terminal) run: while one is going the start is refused with 409, the error''s run_id naming it.'
       operationId: startTicketRun
       parameters:
         - in: path
@@ -10668,6 +11335,98 @@ paths:
         - session: []
         - personalToken: []
       summary: Start one attempt on a ticket
+      tags:
+        - tickets
+  /api/tickets/{id}/status:
+    post:
+      description: 'Through the ticket''s tracker: the remote issue (then the mirror is refreshed), else the internal tracker. A status not in the tracker''s list is 400; one the issue cannot reach from where it is 409; the remote failing 502.'
+      operationId: setTicketStatus
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketStatusRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Move a ticket to one of its tracker's statuses
+      tags:
+        - tickets
+  /api/tickets/{id}/sync:
+    post:
+      description: Done or not. A tracker that cannot be read is recorded on the ticket (sync_state error, sync_error), which the answer carries; a ticket with no source is answered as it is.
+      operationId: syncTicket
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Re-read a ticket from its remote tracker
       tags:
         - tickets
   /api/users:

@@ -18,7 +18,7 @@ import (
 
 // --- attachments ------------------------------------------------------------
 
-const attachmentCols = `id, ticket_id, run_id, ping_id, filename, mime, size, sha256, created_at, user_id`
+const attachmentCols = `id, ticket_id, run_id, ping_id, filename, mime, size, sha256, created_at, user_id, remote_id`
 
 // nullStr maps Go's zero-string convention to the schema's NULLs: the CHECKs
 // reason about NULL, not ”.
@@ -32,7 +32,7 @@ func nullStr(s string) any {
 func scanAttachment(row pgx.Row) (filestore.Attachment, error) {
 	var a filestore.Attachment
 	var ticket, run, ping sql.NullString
-	err := row.Scan(&a.ID, &ticket, &run, &ping, &a.Filename, &a.Mime, &a.Size, &a.SHA256, &a.CreatedAt, &a.UserID)
+	err := row.Scan(&a.ID, &ticket, &run, &ping, &a.Filename, &a.Mime, &a.Size, &a.SHA256, &a.CreatedAt, &a.UserID, &a.RemoteID)
 	if err != nil {
 		return a, err
 	}
@@ -60,9 +60,9 @@ func (s *Store) queryAttachments(ctx context.Context, q string, args ...any) ([]
 func (s *Store) InsertAttachment(ctx context.Context, a filestore.Attachment) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO attachments (`+attachmentCols+`)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
 		a.ID, nullStr(a.TicketID), nullStr(a.RunID), nullStr(a.PingID),
-		a.Filename, a.Mime, a.Size, a.SHA256, a.CreatedAt, a.UserID)
+		a.Filename, a.Mime, a.Size, a.SHA256, a.CreatedAt, a.UserID, a.RemoteID)
 	return err
 }
 

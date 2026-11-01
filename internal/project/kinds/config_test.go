@@ -328,47 +328,35 @@ func TestRepoAccountEgress(t *testing.T) {
 	}
 }
 
-func TestJiraValidatesItsMaps(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		values map[string]any
-		want   string
-	}{
-		{"status map", map[string]any{"status_map": "shipped=Done"}, "canonical statuses"},
-		{"type map", map[string]any{"type_map": "Bug=mend"}, "change types are"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			src, err := Jira{}.New(Config{Values: tc.values})
-			if err == nil || src != nil || !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("source %v, err %v", src, err)
-			}
-		})
-	}
-
-	// What it accepts reaches the adapter: the maps, the version, the scope.
+// What the Jira kind accepts reaches the adapter: the version and the scope.
+// The labels and the issue type's id come back for the integration's lists.
+func TestJiraConfigReachesTheAdapter(t *testing.T) {
 	var path, jql string
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /rest/api/2/search/jql", func(w http.ResponseWriter, r *http.Request) {
 		var b map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&b)
 		path, jql = r.URL.Path, b["jql"].(string)
-		_, _ = w.Write([]byte(`{"issues":[{"key":"P-1","fields":{"issuetype":{"name":"Outage"}}}]}`))
+		_, _ = w.Write([]byte(`{"issues":[{"id":"100","key":"P-1","fields":{"issuetype":{"id":"7","name":"Outage"},"labels":["ops"]}}]}`))
 	})
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 	src, err := Jira{}.New(Config{
-		Values:  map[string]any{"base_url": ts.URL, "api_version": "2", "jql": "project = P", "type_map": "Outage=hotfix", "status_map": "done=Shipped"},
+		Values:  map[string]any{"base_url": ts.URL, "api_version": "2", "jql": "project = P"},
 		Secrets: map[string]string{"api_token": "s3cret"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got, err := src.Search(context.Background(), "x", 5)
-	if err != nil || len(got) != 1 || got[0].ChangeType != trackerport.ChangeHotfix {
+	if err != nil || len(got) != 1 || got[0].TypeID != "7" || got[0].RemoteID != "100" || !slices.Equal(got[0].Labels, []string{"ops"}) {
 		t.Fatalf("search = %+v, %v", got, err)
 	}
 	if path == "" || !strings.HasPrefix(jql, "(project = P)") {
 		t.Errorf("path %q jql %q", path, jql)
+	}
+	if _, ok := src.(trackerport.TicketMetadata); !ok {
+		t.Error("the Jira source lists its statuses and types")
 	}
 }
 

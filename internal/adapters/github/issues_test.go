@@ -8,11 +8,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"apothecary/internal/ports/trackerport"
 )
 
-const issueJSONBody = `{"number":5,"title":"Flaky router test","body":"It fails **sometimes**.","html_url":"https://github.com/lu/greeter/issues/5",
+const issueJSONBody = `{"id":1005,"number":5,"title":"Flaky router test","body":"It fails **sometimes**.","html_url":"https://github.com/lu/greeter/issues/5",
 	"state":"open","updated_at":"2026-07-30T11:22:33Z","repository_url":"https://api.github.com/repos/lu/greeter",
 	"assignee":{"login":"lu"},"assignees":[{"login":"lu"}],"labels":[{"name":"bug"}],"milestone":{"title":"v1","number":2}}`
 
@@ -52,7 +53,7 @@ func issuesStub(t *testing.T) (*httptest.Server, map[string][]map[string]any, *[
 		record(w, r, 201, `{"id":1}`)
 	})
 	mux.HandleFunc("GET /repos/lu/greeter/issues/5/comments", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"body":"first"},{"body":"Merge request: feat/x: https://github.com/lu/greeter/pull/7\n\n<!-- apothecary link=https://github.com/lu/greeter/pull/7 -->"}]`))
+		_, _ = w.Write([]byte(`[{"id":11,"user":{"login":"ann"},"body":"first","created_at":"2026-07-30T10:00:00Z","updated_at":"2026-07-30T11:00:00Z"},{"id":12,"body":"Merge request: feat/x: https://github.com/lu/greeter/pull/7\n\n<!-- apothecary link=https://github.com/lu/greeter/pull/7 -->","created_at":"2026-07-30T12:00:00Z"}]`))
 	})
 	mux.HandleFunc("GET /repos/lu/greeter/milestones", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`[{"number":2,"title":"v1"},{"number":3,"title":"v2"}]`))
@@ -99,6 +100,12 @@ func TestIssuesSearchAndFetch(t *testing.T) {
 	if tk.Body != "It fails **sometimes**." || tk.URL != "https://github.com/lu/greeter/issues/5" || tk.Updated.IsZero() {
 		t.Errorf("fetch = %+v", tk)
 	}
+	if tk.RemoteID != "1005" || tk.StatusID != "open" || tk.TypeID != "issue" || strings.Join(tk.Labels, ",") != "bug" {
+		t.Errorf("ids and labels = %q %q %q %q", tk.RemoteID, tk.StatusID, tk.TypeID, tk.Labels)
+	}
+	if _, err := s.Fetch(ctx, "lu/greeter#404"); !errors.Is(err, trackerport.ErrTicketNotFound) {
+		t.Errorf("a missing issue = %v, want ErrTicketNotFound", err)
+	}
 	if _, err := s.Fetch(ctx, "lu/greeter#6"); err == nil || !strings.Contains(err.Error(), "pull request") {
 		t.Errorf("a PR behind the number was not refused: %v", err)
 	}
@@ -130,30 +137,30 @@ func TestIssuesTransitionOpenClosedOnly(t *testing.T) {
 	}
 }
 
-// Canonical statuses on an issue: done closes, todo reopens, and the rest
-// have no GitHub word — unsupported, which the engine skips.
-func TestIssuesTransitionToCanonical(t *testing.T) {
-	srv, writes, _ := issuesStub(t)
+// An issue's whole status list is open/closed, its type list one "issue"
+// (FetchMany: issues_fetchmany_test.go).
+func TestIssuesMetadataAndComments(t *testing.T) {
+	srv, _, _ := issuesStub(t)
 	s := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok"})
 	ctx := context.Background()
-	if err := s.TransitionTo(ctx, "lu/greeter#5", trackerport.StatusDone); err != nil {
-		t.Fatal(err)
+	statuses, err := s.Statuses(ctx)
+	if err != nil || len(statuses) != 2 || statuses[0] != (trackerport.RemoteStatus{ID: "open", Name: "Open", Category: trackerport.CategoryNew}) ||
+		statuses[1] != (trackerport.RemoteStatus{ID: "closed", Name: "Closed", Category: trackerport.CategoryDone}) {
+		t.Errorf("statuses = %+v, %v", statuses, err)
 	}
-	patches := writes["PATCH /repos/lu/greeter/issues/5"]
-	if len(patches) != 1 || patches[0]["state"] != "closed" || patches[0]["state_reason"] != "completed" {
-		t.Errorf("patches = %+v", patches)
+	types, err := s.Types(ctx)
+	if err != nil || len(types) != 1 || types[0] != (trackerport.RemoteType{ID: "issue", Name: "Issue"}) {
+		t.Errorf("types = %+v, %v", types, err)
 	}
-	// The stub's issue reads open, so todo is already there: no call.
-	if err := s.TransitionTo(ctx, "lu/greeter#5", trackerport.StatusTodo); err != nil {
-		t.Fatal(err)
+	comments, err := s.ListComments(ctx, "lu/greeter#5")
+	if err != nil || len(comments) != 2 {
+		t.Fatalf("comments = %+v, %v", comments, err)
 	}
-	if len(writes["PATCH /repos/lu/greeter/issues/5"]) != 1 {
-		t.Error("an already-open issue was patched")
+	if c := comments[0]; c.ID != "11" || c.Author != "ann" || c.Body != "first" || c.Updated.Sub(c.Created) != time.Hour {
+		t.Errorf("first = %+v", c)
 	}
-	var unsupported *trackerport.ErrStatusUnsupported
-	err := s.TransitionTo(ctx, "lu/greeter#5", trackerport.StatusInReview)
-	if !errors.As(err, &unsupported) || trackerport.StatusNames(unsupported.Supported) != "todo, done" || !strings.Contains(err.Error(), "GitHub Issues has no status") {
-		t.Errorf("err = %v", err)
+	if c := comments[1]; c.ID != "12" || c.Author != "" || !c.Updated.Equal(c.Created) {
+		t.Errorf("second = %+v", c)
 	}
 }
 

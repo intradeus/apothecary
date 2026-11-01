@@ -22,7 +22,6 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
-	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
@@ -57,6 +56,9 @@ type harness struct {
 	// rp is port exposure, wired as the daemon wires it (the engine's
 	// RunPorts and first teardown hook); relay-less until setRelay.
 	rp *runports.Service
+	// tickets is the ticket world the resolution's tracker actions resolve
+	// through: linkedTicket on a fake remote, others hand-written.
+	tickets *ticketWorld
 }
 
 // harnessOpt adjusts what a harness's engine is built from; it runs once the
@@ -227,12 +229,11 @@ func newHarnessSourceOn(t *testing.T, store func(*event.MemStore) event.Store, s
 		Envp:         h.envp,
 		Runner:       h.runner,
 		RepoHost:     h.repoHost,
-		// The daemon always wires a tracker writer; whether a scenario's
-		// ticket has a tracker to write to is the ticket's business (a
-		// ticket without one skips those stages). trackerHarness swaps in
-		// the tracker it asserts on.
-		TicketWriter: func(context.Context, string) (trackerport.TicketWriter, error) { return newTracker(), nil },
 	}
+	// The daemon always wires the ticket tracker; which tracker a scenario's
+	// ticket writes to is the ticket's business (its remote issue, or the
+	// internal tracker). Tests assert on h.tickets and its fake remote.
+	h.tickets = newTicketWorld(t, newTracker()).wire(h.res)
 	h.settings = &varSettings{L: Limits{}.withDefaults()}
 	cfg := Config{MRPollInterval: 5 * time.Millisecond}
 	var es event.Store = h.store

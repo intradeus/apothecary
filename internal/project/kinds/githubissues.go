@@ -5,23 +5,26 @@ import (
 	"apothecary/internal/ports/trackerport"
 )
 
-// GitHubIssues is the ticketsource/github kind: tickets imported from — and,
-// when a flow runs tracker actions, written back to — GitHub Issues. Same
-// token shape as the repository host kind; a separate integration because the
-// account a team tracks issues under is not always the one that pushes code.
+// GitHubIssues is the ticketsource/github kind: tickets imported from — kept
+// in sync with, and, when a flow runs tracker actions, written back to —
+// GitHub Issues. Same token shape as the repository host kind; a separate
+// integration because the account a team tracks issues under is not always
+// the one that pushes code.
 type GitHubIssues struct{}
 
-const githubIssuesHelp = `Imports a GitHub issue as a ticket (title, body as markdown; GitHub issues carry no attachments as such — files in a body are plain links an agent can read). An issue's key is owner/repo#123.
+const githubIssuesHelp = `Imports a GitHub issue as a ticket (title, body as markdown; GitHub issues carry no attachments as such — files in a body are plain links an agent can read). An issue's key is owner/repo#123. The ticket then MIRRORS the issue: title, body, state, labels and comments are re-read from GitHub every few minutes (not once its status is marked Done), after a stage that writes to the ticket, when a run starts, and on demand — edit them on GitHub, not in apothecary.
+
+Statuses and types: an issue is open or closed, and that is this integration's whole status list (closed is pre-filled as Done and the done flow step, open as the todo step); it has one type, Issue, whose change type you pick.
 
 What the New Ticket search box accepts:
 • owner/repo#123 — that exact issue (a bare #123 works when exactly one repository is listed below).
 • any other words — GitHub's issue search over the listed repositories (its own query syntax works: "label:bug is:open").
 • nothing — open issues assigned to you.
 
-Reads (import): GET /user (Test), GET /search/issues, GET /repos/{owner}/{repo}/issues/{n}.
+Reads (import and sync): GET /user (Test), GET /search/issues, GET /repos/{owner}/{repo}/issues/{n} (the import, and each ticket the sync refreshes — GitHub has no batch read by number), GET /repos/{owner}/{repo}/issues/{n}/comments.
 
-Writes happen ONLY when a flow runs a tracker action on a ticket imported from here:
-• ticket_transition — PATCH the issue's state: "to: todo" reopens, "to: done" closes (as completed); the other canonical statuses have no GitHub equivalent and skip the stage. "status" takes open or closed verbatim (Projects v2 columns are not reachable through the issue itself).
+Writes happen ONLY when a flow runs a tracker action on a ticket imported from here (or you change its status, labels or comments in apothecary):
+• ticket_transition — PATCH the issue's state: "to" moves to the status you gave that flow step (open reopens, closed closes as completed); a step with no status skips the stage. "status" takes open or closed verbatim (Projects v2 columns are not reachable through the issue itself).
 • ticket_comment / ticket_link — POST /repos/{owner}/{repo}/issues/{n}/comments (a link is a comment GitHub autolinks). A comment with attachments first uploads each file to POST https://uploads.github.com/user-attachments/assets (after GET /repos/{owner}/{repo} for its id) — github.com only, and only with a classic token.
 • ticket_set_field — PATCH the issue: the writable fields are labels, assignees and milestone (by title); GitHub issues have no custom fields.
 

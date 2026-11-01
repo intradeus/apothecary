@@ -340,6 +340,48 @@ func TestCronFiresOncePerSlot(t *testing.T) {
 	}
 }
 
+// busyErr is the engine's refusal of a run on a ticket that has one going
+// (engine.ErrTicketBusy), as the watcher sees it: an error naming the run.
+type busyErr struct{ run string }
+
+func (b busyErr) Error() string       { return "ticket is busy: run " + b.run + " is still active" }
+func (b busyErr) ActiveRunID() string { return b.run }
+
+// A slot that falls while the ticket's previous run is still going is
+// skipped and says so — "ticket busy: run <id>" — and is not made up once
+// the run ends; the next slot fires as usual.
+func TestCronSkipsASlotOnABusyTicket(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	tk, err := h.conf.CreateTicket(ctx, confstore.Ticket{ProjectID: h.project.ID, Title: "Nightly"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := h.automation(t, confstore.Automation{Name: "nightly", Kind: confstore.AutomationCron, Schedule: "0 9 * * *", TicketID: tk.ID, Enabled: true})
+	h.eng.Fail = fmt.Errorf("preflight: %w", busyErr{"r-live"})
+	h.now = h.now.Add(90 * time.Minute) // 09:30
+	h.pass(t)
+	got := h.get(t, a.ID)
+	if got.LastFiredAt == nil || !got.LastFiredAt.Equal(h.now) || got.LastError != "ticket busy: run r-live" {
+		t.Fatalf("busy slot: marks = fired %v err %q", got.LastFiredAt, got.LastError)
+	}
+	// The run ended: the skipped slot is not caught up.
+	h.eng.Fail = nil
+	h.now = h.now.Add(15 * time.Minute)
+	h.pass(t)
+	if h.eng.count() != 0 {
+		t.Fatalf("a skipped slot was made up: runs = %d", h.eng.count())
+	}
+	h.now = h.now.AddDate(0, 0, 1)
+	h.pass(t)
+	if h.eng.count() != 1 {
+		t.Fatalf("next slot: runs = %d, want 1", h.eng.count())
+	}
+	if got := h.get(t, a.ID); got.LastError != "" {
+		t.Errorf("last_error after the next slot fired = %q", got.LastError)
+	}
+}
+
 // Disabled automations are not walked.
 func TestDisabledAndStale(t *testing.T) {
 	h := newHarness(t)

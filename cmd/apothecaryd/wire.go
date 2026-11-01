@@ -31,6 +31,7 @@ import (
 	"apothecary/internal/project/channels"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/integrations"
+	"apothecary/internal/project/tickets"
 	"apothecary/internal/run"
 	"apothecary/internal/skills/skillstore"
 	"apothecary/internal/workspace/envcheck"
@@ -78,6 +79,7 @@ type app struct {
 	sampler     *resources.Sampler
 	egressSvc   *egress.Service
 	mrSvc       *mrs.Service
+	syncer      *tickets.Syncer
 }
 
 // otelFlushFor is how long a shutdown waits on the telemetry collector, a
@@ -254,6 +256,10 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	browsers.Start(ctx)
 	closers = append(closers, func() { browsers.Close() })
 	browserSvc := browsermcp.New(runs, resolver, browsers)
+	// The ticket sync (docs/ticket-sync-plan.md § Sync): one Syncer, so the
+	// poll, the API's refreshes and the engine's are single-flight together.
+	// It copies the files an issue gained into the same attachment store.
+	syncer := &tickets.Syncer{Conf: conf, Sources: resolver, Attachments: attachments, Log: log}
 
 	e := engine.New(engine.Deps{
 		Config:   ecfg,
@@ -271,6 +277,12 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		Attachments: attachments,
 		Snapshots:   snapshots,
 		Skills:      skillLib,
+		// A rerun starts from its ticket's current row, not the old run's
+		// copy.
+		Tickets: &tickets.Factory{Conf: conf, Attachments: attachments, Sources: resolver, Log: log},
+		// A ticket mirroring a remote issue is re-read after a ticket stage
+		// wrote to it and when a run starts on it.
+		Refresher: syncer,
 		// The durable ping projection. A run parked on a human has no loop
 		// and no in-memory ping, so this is what makes its question listable
 		// and answerable — the SQL view, rather than the engine folding every
@@ -364,7 +376,9 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	api.Kinds = reg
 	api.Ops = resolver
 	api.Sources = resolver // ticket sources for the import factory (Jira)
-	api.Pings = store      // durable request/response projection (PLAN4 M15)
+	api.Trackers = resolver
+	api.Syncer = syncer
+	api.Pings = store // durable request/response projection (PLAN4 M15)
 	api.Attachments = attachments
 	api.Skills = skillLib
 	api.SkillImports = &skillstore.Importer{Store: skillLib, Fetch: skillstore.Fetch}
@@ -386,6 +400,6 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	return &app{
 		log: log, store: store, conf: conf, resolver: resolver, chreg: chreg, e: e, srv: srv,
 		keeper: keeper, attachments: attachments, blobs: blobs,
-		envSt: envSt, sampler: sampler, egressSvc: egressSvc, mrSvc: mrSvc,
+		envSt: envSt, sampler: sampler, egressSvc: egressSvc, mrSvc: mrSvc, syncer: syncer,
 	}, closeAll, nil
 }

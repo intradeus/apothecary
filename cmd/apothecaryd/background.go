@@ -10,16 +10,20 @@ import (
 	"apothecary/internal/project/tickets"
 )
 
-// reapEvery and automationEvery are the periods of the two passes below,
-// variables so a test can watch one run.
+// reapEvery, automationEvery and ticketSyncEvery are the periods of the
+// passes below, variables so a test can watch one run.
 var (
 	reapEvery       = time.Hour
 	automationEvery = 2 * time.Minute
+	// ticketSyncEvery is the poll of the tickets mirroring remote issues
+	// (docs/ticket-sync-plan.md § Sync): every not-done, not-gone one.
+	ticketSyncEvery = 5 * time.Minute
 )
 
 // background starts the daemon's loops — reaper, login keeper, outcomes,
-// workspace reconciler, resource sampler, egress audit ingest, automations —
-// all on ctx, which serve cancels before it shuts the engine down.
+// workspace reconciler, resource sampler, egress audit ingest, automations,
+// ticket sync — all on ctx, which serve cancels before it shuts the engine
+// down.
 func (a *app) background(ctx context.Context) {
 	go func() {
 		t := time.NewTicker(reapEvery)
@@ -138,4 +142,26 @@ func (a *app) background(ctx context.Context) {
 		}
 	}()
 
+	// The ticket sync: every ticket mirroring a remote issue, not done and
+	// not gone, re-read from its tracker. A first pass at boot catches up on
+	// whatever moved while the daemon was down; an integration that cannot
+	// be read is backed off (tickets.DefaultErrorBackoff).
+	go func() {
+		pass := func() {
+			if err := a.syncer.RunOnce(ctx); err != nil && ctx.Err() == nil {
+				a.log.Error("ticket sync pass failed", "err", err)
+			}
+		}
+		pass()
+		t := time.NewTicker(ticketSyncEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				pass()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 }

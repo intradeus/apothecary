@@ -55,12 +55,13 @@ const (
 	// without it, a path no stage writes is an error, never a guess.
 	RepoPrefix = "repo:"
 
-	SourceTicket     = "run.ticket"          // the run's ticket
-	SourceStatus     = "run.git.status"      // git status: staged, unstaged, untracked
-	SourceDiffTarget = "run.git.diff_target" // what the branch changes against its target
-	SourceDiffPhase  = "run.git.diff_phase"  // what this phase run committed since it began
-	SourceMRURL      = "run.mr.url"          // the run's merge request (create_mr)
-	SourceWorkspace  = "run.workspace"       // the workspace's app link (its first exposed port)
+	SourceTicket         = "run.ticket"          // the run's ticket
+	SourceTicketComments = "run.ticket.comments" // its comments, read as the prompt is built (limit, exclude_own on the port)
+	SourceStatus         = "run.git.status"      // git status: staged, unstaged, untracked
+	SourceDiffTarget     = "run.git.diff_target" // what the branch changes against its target
+	SourceDiffPhase      = "run.git.diff_phase"  // what this phase run committed since it began
+	SourceMRURL          = "run.mr.url"          // the run's merge request (create_mr)
+	SourceWorkspace      = "run.workspace"       // the workspace's app link (its first exposed port)
 	// SourceFailure and SourceVerdict are what the edge that entered the
 	// stage carried: a failing stage's reason and output; a verdict — an
 	// agent's, a person's review at a gate — on a rejection, or on an
@@ -76,20 +77,31 @@ const (
 
 // engineSources are the engine's sources and the type of each.
 var engineSources = map[string]string{
-	SourceTicket:     agentspec.TypeTicket,
-	SourceStatus:     agentspec.TypeChangeset,
-	SourceDiffTarget: agentspec.TypeChangeset,
-	SourceDiffPhase:  agentspec.TypeChangeset,
-	SourceMRURL:      agentspec.TypeLink,
-	SourceWorkspace:  agentspec.TypeLink,
-	SourceFailure:    agentspec.TypeFailure,
-	SourceVerdict:    agentspec.TypeVerdict,
-	SourceCIFailure:  agentspec.TypeFailure,
+	SourceTicket:         agentspec.TypeTicket,
+	SourceTicketComments: agentspec.TypeTicketComments,
+	SourceStatus:         agentspec.TypeChangeset,
+	SourceDiffTarget:     agentspec.TypeChangeset,
+	SourceDiffPhase:      agentspec.TypeChangeset,
+	SourceMRURL:          agentspec.TypeLink,
+	SourceWorkspace:      agentspec.TypeLink,
+	SourceFailure:        agentspec.TypeFailure,
+	SourceVerdict:        agentspec.TypeVerdict,
+	SourceCIFailure:      agentspec.TypeFailure,
 }
 
 // EngineSources lists the engine's sources, in display order.
-var EngineSources = []string{SourceTicket, SourceStatus, SourceDiffTarget, SourceDiffPhase,
+var EngineSources = []string{SourceTicket, SourceTicketComments, SourceStatus, SourceDiffTarget, SourceDiffPhase,
 	SourceMRURL, SourceWorkspace, SourceCIFailure, SourceFailure, SourceVerdict}
+
+// A ticket_comments input's options: how many of the latest comments a
+// prompt shows (limit, at most MaxCommentsLimit), and whether it leaves out
+// the ones apothecary posted (exclude_own). The rendered comments are capped
+// at CommentsBudget bytes besides: the oldest kept ones go first.
+const (
+	DefaultCommentsLimit = 20
+	MaxCommentsLimit     = 200
+	CommentsBudget       = 32 << 10
+)
 
 // IsEngineSource reports whether v is a value the engine provides rather
 // than a file.
@@ -294,6 +306,11 @@ type Port struct {
 	// Optional is an input that may be empty: an edge source, or a value
 	// not written on every route that reaches the stage.
 	Optional bool
+	// Limit and ExcludeOwn are a ticket_comments input's options, resolved:
+	// Limit DefaultCommentsLimit and ExcludeOwn true unless the port says
+	// otherwise. Zero on every other port.
+	Limit      int
+	ExcludeOwn bool
 }
 
 // Setting is one literal an action stage gives its action (`with:`).
@@ -408,7 +425,7 @@ type Cond struct {
 }
 
 const (
-	CondTracker    = "run.ticket.tracker"     // the run's ticket has a tracker issue to write to
+	CondTracker    = "run.ticket.tracker"     // the run's ticket mirrors a remote tracker issue (it was imported)
 	CondSubject    = "run.subject"            // the phase run acts on one merge request
 	CondChangeType = "run.ticket.change_type" // the kind of change the run's ticket is: == / != a CondChangeTypes entry
 	CondNever      = "never"                  // a parameter said no

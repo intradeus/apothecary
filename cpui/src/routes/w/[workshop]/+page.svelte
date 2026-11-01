@@ -6,7 +6,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api } from '$lib/api';
-	import type { Flow, Integration, Project, Ticket } from '$lib/domain';
+	import type { Flow, Integration, Project } from '$lib/domain';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { to, type WorkshopTab } from '$lib/core/urls';
 	import { t, th } from '$lib/i18n/index.svelte';
@@ -48,10 +48,12 @@
 	let project = $state<Project | null>(null);
 	let integrations = $state<Integration[] | null>(null);
 	let flows = $state<Flow[] | null>(null);
-	let tickets = $state<Ticket[] | null>(null);
+	// The workshop's tickets, from the shared fleet poll (null until it lands).
+	const tickets = $derived(
+		fleet.updatedAt === null ? null : fleet.tickets.filter((tk) => tk.projectId === projectId)
+	);
 	let error = $state('');
 	let flowsError = $state('');
-	let ticketsError = $state('');
 
 	async function loadProject() {
 		try {
@@ -69,19 +71,10 @@
 			flowsError = errorMessage(e);
 		}
 	}
-	async function loadTickets() {
-		try {
-			tickets = await api.tickets.list(projectId);
-			ticketsError = '';
-		} catch (e) {
-			ticketsError = errorMessage(e);
-		}
-	}
 
 	onMount(() => {
 		void loadProject();
 		void loadFlows();
-		void loadTickets();
 		api.integrations
 			.list()
 			.then((l) => (integrations = l))
@@ -241,7 +234,7 @@
 			{:else if tab === 'runs'}
 				<RunsTab {project} {runs} />
 			{:else if tab === 'tickets'}
-				<TicketsTab {project} {tickets} error={ticketsError} onretry={loadTickets} />
+				<TicketsTab {project} {tickets} error={fleet.error} onretry={() => void fleet.refresh()} />
 			{:else if tab === 'mrs'}
 				<MergeRequestsTab {project} {flows} />
 			{:else if tab === 'flows'}

@@ -14,6 +14,7 @@
 		Project,
 		Ticket
 	} from '$lib/domain';
+	import { INTERNAL_TRACKER } from '$lib/domain';
 	import { ago, fmtAbs } from '$lib/core/format';
 	import FlowSelect from '$lib/flow/FlowSelect.svelte';
 	import StartRunOptions from '$lib/run/StartRunOptions.svelte';
@@ -50,7 +51,10 @@
 		void load();
 	});
 
-	const sources = $derived((integrations ?? []).filter((i) => i.port === 'ticketsource'));
+	// The internal tracker has nothing to import: it is where tickets written here live.
+	const sources = $derived(
+		(integrations ?? []).filter((i) => i.port === 'ticketsource' && i.kind !== INTERNAL_TRACKER)
+	);
 	const ticketTitle = (id: string) => (tickets ?? []).find((tk) => tk.id === id)?.title ?? id;
 	const sourceName = (id: string) => sources.find((s) => s.id === id)?.name ?? id;
 	const kindLabel = (k: AutomationKind) =>

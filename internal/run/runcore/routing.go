@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"apothecary/internal/flow"
-	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/run/event"
 )
 
@@ -110,19 +109,18 @@ func (rs *State) ChooseEdge(st *flow.Stage, kind string) EdgeChoice {
 }
 
 // StageCondition decides whether st runs now or completes as skipped: its
-// run_if against the run's facts, plus the implicit rule for a remote
-// tracker action when the ticket has no issue to write to (FLOWLANG §2).
+// run_if against the run's facts. There is no implicit rule for tracker
+// actions any more — every ticket has a tracker (its remote issue, else
+// Apothecary's internal one), so a hand-written ticket's stage writes to the
+// internal tracker. The `tracker` fact keeps meaning "the ticket has a REMOTE
+// tracker", so a flow guarding on run.ticket.tracker behaves as before; a
+// run with no ticket at all is skipped by the executor (FLOWLANG §2).
 func (rs *State) StageCondition(st *flow.Stage) (skip bool, note string) {
 	tracker := rs.View.TicketSourceID != "" && rs.View.TicketKey != ""
 	subject := rs.Subject != "" && rs.SubjectMR() != nil
 	facts := flow.CondFacts{Tracker: tracker, Subject: subject, Change: rs.View.TicketChangeType}
 	if !st.RunIf.Holds(facts) {
 		return true, "skipped: run_if " + st.RunIf.String() + " does not hold for this run"
-	}
-	if st.Type == flow.StageAction && !tracker {
-		if act := actionspec.Get(st.Action); act != nil && act.Requires == actionspec.RequiresTracker {
-			return true, "the ticket has no tracker issue (it was written by hand); nothing to write to"
-		}
 	}
 	return false, ""
 }

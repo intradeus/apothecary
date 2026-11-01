@@ -33,6 +33,7 @@ func RunDBContract(t *testing.T, open func(t *testing.T) confstore.DB) {
 	t.Run("projects", func(t *testing.T) { projects(t, open) })
 	t.Run("project deletion", func(t *testing.T) { projectDeletion(t, open) })
 	t.Run("tickets", func(t *testing.T) { tickets(t, open) })
+	t.Run("trackers", func(t *testing.T) { trackers(t, open) })
 	t.Run("flows", func(t *testing.T) { flows(t, open) })
 	t.Run("flow versions", func(t *testing.T) { flowVersions(t, open) })
 	t.Run("flow bindings", func(t *testing.T) { bindings(t, open) })
@@ -177,10 +178,31 @@ func ticket(id, projectID, user string, n int) confstore.Ticket {
 	return confstore.Ticket{ID: id, UserID: user, ProjectID: projectID, Title: "t", CreatedAt: at(n), UpdatedAt: at(n)}
 }
 
+// fullTicket mirrors an issue of tracker i9 (trackerLists), in its status st1
+// and type ty1.
 func fullTicket() confstore.Ticket {
+	remote, synced, moved := at(3), at(4), at(5)
 	return confstore.Ticket{ID: "k1", UserID: "u1", ProjectID: "p1", Title: "Title", Goal: "Goal", BaseBranch: "fix/one",
-		ChangeType: trackerport.ChangeFix, SourceID: "i9", SourceKind: "jira", SourceKey: "PROJ-1", SourceURL: "https://example.test/1",
-		SourceType: "Bug", AutomationID: "a1", CreatedAt: at(1), UpdatedAt: at(2)}
+		ChangeType: trackerport.ChangeFix, StatusID: "st1", TypeID: "ty1", Labels: []string{"backend", "Urgent"},
+		SourceID: "i9", SourceKind: "jira", SourceKey: "PROJ-1", SourceURL: "https://example.test/1",
+		SourceType: "Bug", RemoteID: "10001", RemoteUpdatedAt: &remote, SyncedAt: &synced,
+		SyncState: confstore.SyncError, SyncError: "jira: 503", StatusChangedAt: &moved, StatusChangedBy: "run:r1/main-1/kick",
+		AutomationID: "a1", CreatedAt: at(1), UpdatedAt: at(2)}
+}
+
+// trackerLists stores tracker i9 (u1's Jira) with status st1 (To Do, the
+// todo step) and type ty1 (Bug, fix): what fullTicket points at.
+func trackerLists(t *testing.T, s store) {
+	t.Helper()
+	ok(t, s.UpsertIntegration(ctx, confstore.StoredIntegration{ID: "i9", UserID: "u1", Port: confstore.PortTicketSource,
+		Kind: "jira", Name: "jira", Config: map[string]any{}, Sealed: []byte{1}, CreatedAt: at(0), UpdatedAt: at(0)}))
+	ok(t, s.ReplaceTrackerStatuses(ctx, "i9", []confstore.TrackerStatus{
+		{ID: "st1", IntegrationID: "i9", RemoteID: "1", Name: "To Do", RemoteCategory: trackerport.CategoryNew, FlowStep: trackerport.StepTodo},
+		{ID: "st2", IntegrationID: "i9", RemoteID: "2", Name: "Done", RemoteCategory: trackerport.CategoryDone, Position: 1, IsDone: true, FlowStep: trackerport.StepDone},
+	}, nil))
+	ok(t, s.ReplaceTrackerTypes(ctx, "i9", []confstore.TrackerType{
+		{ID: "ty1", IntegrationID: "i9", RemoteID: "10", Name: "Bug", ChangeType: trackerport.ChangeFix},
+	}, nil))
 }
 
 func flowRow(projectID, name, hash string, n int) confstore.FlowRow {
@@ -784,6 +806,7 @@ func projectDeletion(t *testing.T, open opener) {
 func tickets(t *testing.T, open opener) {
 	t.Run("roundtrip keeps every field", func(t *testing.T) {
 		s := seeded(t, open)
+		trackerLists(t, s)
 		k := fullTicket()
 		allSet(t, k)
 		ok(t, s.UpsertTicket(ctx, k))
@@ -834,6 +857,7 @@ func tickets(t *testing.T, open opener) {
 	t.Run("an update replaces all but created_at", func(t *testing.T) {
 		s := seeded(t, open)
 		ok(t, s.UpsertProject(ctx, plainProject("p2", "u1", "api", 1)))
+		trackerLists(t, s)
 		in := fullTicket()
 		ok(t, s.UpsertTicket(ctx, in))
 		upd := ticket("k1", "p2", "u2", 70)
@@ -843,14 +867,21 @@ func tickets(t *testing.T, open opener) {
 		same(t, "after update", s.ticket("k1"), want)
 	})
 
-	// tickets_source_idx is not a unique index: the import path refuses a
-	// second copy, the store doesn't.
-	t.Run("two tickets may share a source key", func(t *testing.T) {
+	// tickets_source_key_idx: one copy of an issue per owner and tracker,
+	// the key compared without case; another owner, or another tracker, may
+	// hold its own.
+	t.Run("an issue is one ticket per owner and tracker", func(t *testing.T) {
 		s := seeded(t, open)
+		trackerLists(t, s)
 		a, b := fullTicket(), fullTicket()
-		b.ID = "k2"
+		b.ID, b.SourceKey = "k2", "proj-1"
 		ok(t, s.UpsertTicket(ctx, a))
+		is(t, "same owner and tracker", s.UpsertTicket(ctx, b), confstore.ErrConflict)
+		b.UserID = "u2"
 		ok(t, s.UpsertTicket(ctx, b))
+		c := fullTicket()
+		c.ID, c.SourceID, c.StatusID, c.TypeID = "k3", "i8", "", ""
+		ok(t, s.UpsertTicket(ctx, c))
 	})
 
 	t.Run("lists newest first, one owner or everyone", func(t *testing.T) {

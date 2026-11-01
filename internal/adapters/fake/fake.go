@@ -1128,33 +1128,56 @@ func (c *Channel) Sent() []notifyport.Notification {
 // --- TicketSource -----------------------------------------------------------
 
 // TicketSource is an in-memory tracker: Tickets is the whole corpus, searched
-// by a case-insensitive substring of key/title/body. Attachment bytes come
-// from Blobs, keyed by attachment id.
+// by a case-insensitive substring of key/title/body and fetched by key or
+// RemoteID. Attachment bytes come from Blobs, keyed by attachment id.
 //
 // It also implements the write side (trackerport.TicketWriter), so engine scenarios
 // can script a flow's tracker actions: Reachable says which statuses a
-// Transition may reach from each one (nil = any), StatusMap which of its
-// statuses each canonical one means (nil = the stock Jira words: To Do, In
-// Progress, In Review, Done; blocked unsupported), KnownFields which field
+// Transition may reach from each one (nil = any), KnownFields which field
 // names exist (nil = any), and every write lands in FieldValues/Posted/Linked
 // and is logged to Calls ("transition DEV-1 In Progress") for assertions.
-// WriteErr fails every write when set; Err fails everything.
+// Thread is each ticket's comment list as ListComments serves it — seed it
+// with a human's comments; Comment appends there (and to Posted).
+// RemoteStatuses/RemoteTypes are the lists TicketMetadata serves (nil =
+// DefaultStatuses/DefaultTypes); a Transition to a listed status's name also
+// sets the ticket's StatusID. WriteErr fails every write when set; Err fails
+// everything.
 type TicketSource struct {
 	mu      sync.Mutex
 	Tickets []trackerport.SourceTicket
 	Blobs   map[string][]byte
 	Err     error // returned by every method when set
 
-	Reachable   map[string][]string
-	StatusMap   map[trackerport.TicketStatus]string
-	KnownFields []string
-	FieldValues map[string]map[string]string
-	Posted      map[string][]string
-	Linked      map[string][]trackerport.TicketLink
-	Calls       []string
-	WriteErr    error
+	Reachable      map[string][]string
+	RemoteStatuses []trackerport.RemoteStatus
+	RemoteTypes    []trackerport.RemoteType
+	KnownFields    []string
+	FieldValues    map[string]map[string]string
+	Posted         map[string][]string
+	Thread         map[string][]trackerport.Comment
+	Linked         map[string][]trackerport.TicketLink
+	Calls          []string
+	WriteErr       error
 	// Attached are the files Attach hosted, in order.
 	Attached []Upload
+
+	commentSeq int
+}
+
+// DefaultStatuses is the fake's stock status list (RemoteStatuses nil): a
+// stock Jira software workflow, with no "blocked" column.
+var DefaultStatuses = []trackerport.RemoteStatus{
+	{ID: "1", Name: "To Do", Category: trackerport.CategoryNew},
+	{ID: "2", Name: "In Progress", Category: trackerport.CategoryIndeterminate},
+	{ID: "3", Name: "In Review", Category: trackerport.CategoryIndeterminate},
+	{ID: "4", Name: "Done", Category: trackerport.CategoryDone},
+}
+
+// DefaultTypes is the fake's stock type list (RemoteTypes nil).
+var DefaultTypes = []trackerport.RemoteType{
+	{ID: "10", Name: "Story"},
+	{ID: "11", Name: "Bug"},
+	{ID: "12", Name: "Task"},
 }
 
 func (s *TicketSource) Test(context.Context) error { return s.Err }
@@ -1185,18 +1208,85 @@ func (s *TicketSource) Search(_ context.Context, query string, limit int) ([]tra
 	return out, nil
 }
 
+// Fetch finds the ticket by key or by RemoteID; none is
+// trackerport.ErrTicketNotFound.
 func (s *TicketSource) Fetch(_ context.Context, key string) (trackerport.SourceTicket, error) {
 	if s.Err != nil {
 		return trackerport.SourceTicket{}, s.Err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, t := range s.Tickets {
-		if strings.EqualFold(t.Key, key) {
-			return t, nil
+	if t := s.find(key); t != nil {
+		return cloneTicket(*t), nil
+	}
+	return trackerport.SourceTicket{}, fmt.Errorf("fake: no ticket %q: %w", key, trackerport.ErrTicketNotFound)
+}
+
+// FetchMany serves every key it has; the others are left out.
+func (s *TicketSource) FetchMany(_ context.Context, keys []string) ([]trackerport.SourceTicket, error) {
+	if s.Err != nil {
+		return nil, s.Err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []trackerport.SourceTicket
+	for _, k := range keys {
+		if t := s.find(k); t != nil {
+			out = append(out, cloneTicket(*t))
 		}
 	}
-	return trackerport.SourceTicket{}, fmt.Errorf("fake: no ticket %q", key)
+	return out, nil
+}
+
+// find matches a key, else a RemoteID; the caller holds mu.
+func (s *TicketSource) find(key string) *trackerport.SourceTicket {
+	key = strings.TrimSpace(key)
+	if t := s.ticket(key); t != nil {
+		return t
+	}
+	for i := range s.Tickets {
+		if s.Tickets[i].RemoteID != "" && s.Tickets[i].RemoteID == key {
+			return &s.Tickets[i]
+		}
+	}
+	return nil
+}
+
+// cloneTicket copies the slices a caller could otherwise write through.
+func cloneTicket(t trackerport.SourceTicket) trackerport.SourceTicket {
+	t.Labels = slices.Clone(t.Labels)
+	t.Attachments = slices.Clone(t.Attachments)
+	return t
+}
+
+// Statuses serves RemoteStatuses (DefaultStatuses when nil).
+func (s *TicketSource) Statuses(context.Context) ([]trackerport.RemoteStatus, error) {
+	if s.Err != nil {
+		return nil, s.Err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.statuses()), nil
+}
+
+func (s *TicketSource) statuses() []trackerport.RemoteStatus {
+	if s.RemoteStatuses != nil {
+		return s.RemoteStatuses
+	}
+	return DefaultStatuses
+}
+
+// Types serves RemoteTypes (DefaultTypes when nil).
+func (s *TicketSource) Types(context.Context) ([]trackerport.RemoteType, error) {
+	if s.Err != nil {
+		return nil, s.Err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.RemoteTypes != nil {
+		return slices.Clone(s.RemoteTypes), nil
+	}
+	return slices.Clone(DefaultTypes), nil
 }
 
 func (s *TicketSource) OpenAttachment(_ context.Context, a trackerport.SourceAttachment) (io.ReadCloser, error) {
@@ -1267,35 +1357,13 @@ func (s *TicketSource) Transition(_ context.Context, key, status string) error {
 	}
 	s.record("transition %s %s", t.Key, target)
 	t.Status = target
-	return nil
-}
-
-// DefaultStatusMap is the fake's stock vocabulary (StatusMap nil).
-var DefaultStatusMap = map[trackerport.TicketStatus]string{
-	trackerport.StatusTodo:       "To Do",
-	trackerport.StatusInProgress: "In Progress",
-	trackerport.StatusInReview:   "In Review",
-	trackerport.StatusDone:       "Done",
-}
-
-// TransitionTo moves the ticket to the status StatusMap gives the canonical
-// one; unmapped is unsupported, like a tracker with no such column.
-func (s *TicketSource) TransitionTo(ctx context.Context, key string, to trackerport.TicketStatus) error {
-	m := s.StatusMap
-	if m == nil {
-		m = DefaultStatusMap
-	}
-	name := m[to]
-	if name == "" {
-		var supported []trackerport.TicketStatus
-		for _, st := range trackerport.CanonicalStatuses() {
-			if m[st] != "" {
-				supported = append(supported, st)
-			}
+	t.StatusID = ""
+	for _, st := range s.statuses() {
+		if strings.EqualFold(st.Name, target) {
+			t.StatusID = st.ID
 		}
-		return &trackerport.ErrStatusUnsupported{Key: strings.TrimSpace(key), Status: to, Kind: "the fake tracker", Supported: supported}
 	}
-	return s.Transition(ctx, key, name)
+	return nil
 }
 
 func (s *TicketSource) Comment(_ context.Context, key, body string) error {
@@ -1311,12 +1379,21 @@ func (s *TicketSource) Comment(_ context.Context, key, body string) error {
 	if s.Posted == nil {
 		s.Posted = map[string][]string{}
 	}
+	if s.Thread == nil {
+		s.Thread = map[string][]trackerport.Comment{}
+	}
 	s.Posted[t.Key] = append(s.Posted[t.Key], body)
+	s.commentSeq++
+	now := time.Now().UTC()
+	s.Thread[t.Key] = append(s.Thread[t.Key], trackerport.Comment{
+		ID: fmt.Sprintf("c%d", s.commentSeq), Author: "apothecary", Body: body, Created: now, Updated: now,
+	})
 	s.record("comment %s", t.Key)
 	return nil
 }
 
-func (s *TicketSource) Comments(_ context.Context, key string) ([]string, error) {
+// ListComments serves the ticket's Thread, oldest first.
+func (s *TicketSource) ListComments(_ context.Context, key string) ([]trackerport.Comment, error) {
 	if s.Err != nil {
 		return nil, s.Err
 	}
@@ -1326,7 +1403,7 @@ func (s *TicketSource) Comments(_ context.Context, key string) ([]string, error)
 	if t == nil {
 		return nil, fmt.Errorf("fake: no ticket %q", key)
 	}
-	return append([]string(nil), s.Posted[t.Key]...), nil
+	return slices.Clone(s.Thread[t.Key]), nil
 }
 
 func (s *TicketSource) knows(field string) bool {
@@ -1367,6 +1444,15 @@ func (s *TicketSource) SetFields(_ context.Context, key string, fields map[strin
 			return &trackerport.ErrFieldUnknown{Key: t.Key, Field: name, Candidates: s.KnownFields}
 		}
 		s.FieldValues[t.Key][name] = fields[name]
+		// Labels are the ticket's own: the mirror reads them back.
+		if strings.EqualFold(strings.TrimSpace(name), "labels") {
+			t.Labels = nil
+			for part := range strings.SplitSeq(fields[name], ",") {
+				if p := strings.TrimSpace(part); p != "" {
+					t.Labels = append(t.Labels, p)
+				}
+			}
+		}
 		s.record("set %s %s=%s", t.Key, name, fields[name])
 	}
 	return nil
@@ -1460,5 +1546,7 @@ var (
 	_ trackerport.TicketSource       = (*TicketSource)(nil)
 	_ trackerport.TicketWriter       = (*TicketSource)(nil)
 	_ trackerport.TicketAttacher     = (*TicketSource)(nil)
+	_ trackerport.TicketMetadata     = (*TicketSource)(nil)
+	_ trackerport.TicketSyncer       = (*TicketSource)(nil)
 	_ trackerport.TicketSource       = ReadOnlyTicketSource{}
 )

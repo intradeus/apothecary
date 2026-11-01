@@ -5,10 +5,10 @@
 	// Ticket create/edit form. A ticket is a unit of work; flow is NOT chosen
 	// here — it's picked per run when a run is started.
 	//
-	// A new ticket can also be COPIED from a tracker (Jira): pick a source,
-	// search it, and the chosen issue prefills this form. The copy is taken on
-	// submit — title/goal are whatever the fields say by then, and the issue's
-	// attachments come across as ticket attachments.
+	// A new ticket can also be IMPORTED from a tracker (Jira): pick a source,
+	// search it, and the chosen issue prefills this form. From then on the
+	// ticket mirrors the issue: title, goal and change type follow the tracker,
+	// so editing a sourced ticket leaves them read-only.
 	import { api } from '$lib/api';
 	import type {
 		Attachment,
@@ -18,7 +18,7 @@
 		SourceTicket,
 		Ticket
 	} from '$lib/domain';
-	import { CHANGE_TYPES } from '$lib/domain';
+	import { CHANGE_TYPES, INTERNAL_TRACKER } from '$lib/domain';
 	import FileChips from '$lib/artifacts/FileChips.svelte';
 	import AttachFiles from '$lib/artifacts/AttachFiles.svelte';
 	import Callout from '$lib/ui/Callout.svelte';
@@ -47,6 +47,8 @@
 
 	// svelte-ignore state_referenced_locally
 	const init = $state.snapshot(existing) as Ticket | null;
+	/** A sourced ticket: its tracker owns the title, the goal and the type. */
+	const tracked = !!init?.source;
 
 	// svelte-ignore state_referenced_locally
 	let projectId = $state(
@@ -83,7 +85,9 @@
 			return;
 		}
 		try {
-			sources = (await api.integrations.list()).filter((i) => i.port === 'ticketsource');
+			sources = (await api.integrations.list()).filter(
+				(i) => i.port === 'ticketsource' && i.kind !== INTERNAL_TRACKER
+			);
 		} catch {
 			/* no tracker configured is the normal case */
 		}
@@ -251,8 +255,12 @@
 				id="t-title"
 				bind:value={title}
 				required
+				disabled={tracked}
 				placeholder={t('form.ticket.titlePlaceholder')}
 			/>
+			{#if tracked}<span class="help"
+					>{t('form.ticket.trackerOwns', { kind: init?.source?.kind ?? '' })}</span
+				>{/if}
 		</div>
 
 		<div class="field">
@@ -263,6 +271,7 @@
 				class="goal"
 				bind:value={goal}
 				required
+				disabled={tracked}
 				rows="10"
 				placeholder={t('form.ticket.goalPlaceholder')}></textarea>
 		</div>
@@ -295,6 +304,7 @@
 					inline
 					mono
 					label={t('form.ticket.changeType')}
+					disabled={tracked}
 					title={t('form.ticket.changeTypeTitle')}
 				/>
 				<input

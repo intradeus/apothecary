@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fleet } from '$lib/app/fleet.svelte';
 import type { Ticket } from '$lib/domain';
 import { aRun, aTicket } from '$test/fixtures';
-import { aWorkshop } from '$test/fixtures/app.svelte';
+import { aWorkshop, choose } from '$test/fixtures/app.svelte';
 import WithHeader from '$test/fixtures/WithHeader.svelte';
 import TicketsTab from './TicketsTab.svelte';
 
@@ -95,6 +95,29 @@ describe('TicketsTab', () => {
 		await userEvent.click(screen.getByRole('switch', { name: 'Has an active run' }));
 		expect(screen.getByRole('link', { name: 'Live' })).toBeInTheDocument();
 		expect(screen.queryByRole('link', { name: 'Stopped' })).not.toBeInTheDocument();
+	});
+
+	it('hides done tickets until asked', async () => {
+		const done = { id: 's', name: 'Closed', isDone: true };
+		setup([
+			aTicket({ id: 'a', title: 'Open one' }),
+			aTicket({ id: 'b', title: 'Shipped', status: done })
+		]);
+		expect(screen.getByRole('link', { name: 'Open one' })).toBeInTheDocument();
+		expect(screen.queryByRole('link', { name: 'Shipped' })).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole('switch', { name: 'Show done' }));
+		expect(screen.getByRole('link', { name: 'Shipped' })).toBeInTheDocument();
+	});
+
+	it('narrows to one status', async () => {
+		setup([
+			aTicket({ id: 'a', title: 'Waiting', status: { id: '1', name: 'To Do', isDone: false } }),
+			aTicket({ id: 'b', title: 'Going', status: { id: '2', name: 'Doing', isDone: false } })
+		]);
+		await choose('Filter by status', 'Doing');
+		expect(screen.getByRole('link', { name: 'Going' })).toBeInTheDocument();
+		expect(screen.queryByRole('link', { name: 'Waiting' })).not.toBeInTheDocument();
 	});
 
 	it('says nothing matched rather than inviting a first ticket', async () => {

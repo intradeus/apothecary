@@ -4,7 +4,11 @@
 // automation needs nothing of the engine to say what it wants started.
 package runinput
 
-import "apothecary/internal/skills"
+import (
+	"time"
+
+	"apothecary/internal/skills"
+)
 
 // Ticket is the work a run does.
 type Ticket struct {
@@ -44,6 +48,27 @@ type Ticket struct {
 	SourceKind string
 	SourceKey  string
 	SourceURL  string
+}
+
+// TicketNow is a ticket's tracker-owned facts as an agent's prompt shows
+// them, read when the prompt is built rather than when the run started: its
+// key on the tracker ("" for a ticket written here), the name of its status
+// ("" before its first sync), its labels, and its comments, oldest first.
+type TicketNow struct {
+	Key      string
+	Status   string
+	Labels   []string
+	Comments []TicketComment
+}
+
+// TicketComment is one comment on a ticket. Own is one apothecary posted to
+// the internal tracker (origin apothecary); one it posted to a remote
+// tracker comes back from a sync as anybody's, and is known by its trailer.
+type TicketComment struct {
+	Author string
+	Body   string
+	At     time.Time
+	Own    bool
 }
 
 // Input is the optional per-attempt input when starting a run from a

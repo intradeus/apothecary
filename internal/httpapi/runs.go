@@ -165,8 +165,9 @@ func (s *Server) postArchive(w http.ResponseWriter, r *http.Request) {
 }
 
 // postRerun starts a terminal run over as a fresh run; 201 carries the
-// new run id. 409 when the run is active/non-terminal, 404 when unknown,
-// 400 when the re-preflight refuses (config drifted since the original).
+// new run id. 409 when the run is active/non-terminal, or another run of its
+// ticket is (run_id names that one), 404 when unknown, 400 when the
+// re-preflight refuses (config drifted since the original).
 // The optional body {flow, goal, attachment_ids} steers THIS attempt —
 // a rerun after a failure is when a human most wants to give direction.
 func (s *Server) postRerun(w http.ResponseWriter, r *http.Request) {
@@ -177,6 +178,11 @@ func (s *Server) postRerun(w http.ResponseWriter, r *http.Request) {
 		Flow: body.Flow, Goal: body.Goal, SourceBranch: body.SourceBranch, AttachmentIDs: body.AttachmentIDs,
 		Params: body.Params, MR: body.MR, Skillsets: body.Skillsets,
 	})
+	var busy engine.ErrTicketBusy
+	if errors.As(err, &busy) {
+		writeJSON(w, http.StatusConflict, ErrorResponse{Error: err.Error(), RunID: busy.RunID})
+		return
+	}
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusBadRequest

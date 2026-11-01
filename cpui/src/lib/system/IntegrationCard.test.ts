@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { api } from '$lib/api';
+import { api, linkedTicketsOf } from '$lib/api';
 import type { KindDescriptor } from '$lib/domain';
 import { confirmState } from '$lib/ui/confirm.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
@@ -12,9 +12,17 @@ import { readTests, writeTest } from './testResults';
 
 vi.mock('$lib/api', () => ({
 	api: {
-		integrations: { test: vi.fn(), remove: vi.fn(), update: vi.fn() },
+		integrations: {
+			test: vi.fn(),
+			remove: vi.fn(),
+			update: vi.fn(),
+			statuses: vi.fn(),
+			types: vi.fn()
+		},
 		credentials: { providers: vi.fn(), list: vi.fn() }
-	}
+	},
+	linkedTicketsOf: vi.fn(),
+	isInUse: vi.fn()
 }));
 
 const integration = anIntegration({
@@ -241,5 +249,65 @@ describe('IntegrationCard, deleting', () => {
 
 		expect(await screen.findByText('in use')).toBeInTheDocument();
 		expect(onchanged).not.toHaveBeenCalled();
+	});
+
+	it('asks before unlinking the tickets that mirror a ticket source, then deletes', async () => {
+		const source = { ...integration, port: 'ticketsource' as const, kind: 'jira' };
+		const refusal = new Error('tickets mirror it');
+		vi.mocked(api.integrations.remove).mockRejectedValueOnce(refusal).mockResolvedValue(undefined);
+		vi.mocked(linkedTicketsOf).mockReturnValue({ tickets: 3, activeRuns: 1 });
+		const { onchanged } = setup({ integration: source });
+		await userEvent.click(del());
+		await confirmed(true);
+		const unlink = await confirmed(true);
+
+		expect(unlink.title).toBe('Unlink 3 tickets?');
+		expect(unlink.body).toContain('become Apothecary tickets');
+		expect(unlink.body).toContain('1 run on them is still going');
+		await waitFor(() => expect(onchanged).toHaveBeenCalledOnce());
+		expect(linkedTicketsOf).toHaveBeenCalledWith(refusal);
+		expect(api.integrations.remove).toHaveBeenLastCalledWith('i1', { unlinkTickets: true });
+	});
+
+	it('keeps a ticket source when the unlinking is declined', async () => {
+		vi.mocked(api.integrations.remove).mockRejectedValue(new Error('tickets mirror it'));
+		vi.mocked(linkedTicketsOf).mockReturnValue({ tickets: 1, activeRuns: 0 });
+		const { onchanged } = setup({ integration: { ...integration, port: 'ticketsource' } });
+		await userEvent.click(del());
+		await confirmed(true);
+		await confirmed(false);
+		await Promise.resolve();
+
+		expect(api.integrations.remove).toHaveBeenCalledOnce();
+		expect(onchanged).not.toHaveBeenCalled();
+	});
+});
+
+describe('IntegrationCard, a ticket tracker', () => {
+	it('opens its statuses and types', async () => {
+		vi.mocked(api.integrations.statuses).mockResolvedValue({ statuses: [], warnings: [] });
+		vi.mocked(api.integrations.types).mockResolvedValue([]);
+		setup({ integration: { ...integration, port: 'ticketsource', kind: 'jira' } });
+		await userEvent.click(screen.getByRole('button', { name: 'Statuses & types' }));
+		expect(await screen.findByRole('region', { name: 'Statuses' })).toBeInTheDocument();
+		expect(api.integrations.statuses).toHaveBeenCalledWith('i1', false);
+	});
+
+	it('offers no test, edit or delete on the internal tracker', () => {
+		setup({
+			integration: {
+				...integration,
+				port: 'ticketsource',
+				kind: 'internal',
+				config: {},
+				secrets: {}
+			},
+			descriptor: undefined
+		});
+		expect(screen.queryByRole('button', { name: 'Test' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Delete…' })).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Statuses & types' })).toBeInTheDocument();
+		expect(screen.getByText('built in')).toBeInTheDocument();
 	});
 });

@@ -43,17 +43,34 @@ function messageOf(error: unknown, response?: Response): string {
 	return t('api.unreachable');
 }
 
+/** A refused call: the engine's message, plus the status and body for the
+ *  few callers that act on a refusal's details (a 409 naming what's in the
+ *  way). */
+export class ApiError extends Error {
+	constructor(
+		message: string,
+		readonly status: number,
+		readonly body: unknown
+	) {
+		super(message);
+	}
+}
+
+function refusal(error: unknown, response?: Response): ApiError {
+	return new ApiError(messageOf(error, response), response?.status ?? 0, error);
+}
+
 /** Resolve a call to its body, or throw the engine's message. */
 export async function unwrap<T>(call: Promise<SdkResult<T>>): Promise<T> {
 	const { data, error, response } = await call;
-	if (error !== undefined || !response?.ok) throw new Error(messageOf(error, response));
+	if (error !== undefined || !response?.ok) throw refusal(error, response);
 	return data as T;
 }
 
 /** Resolve a call that returns nothing (202/204). */
 export async function unwrapVoid(call: Promise<SdkResult<unknown>>): Promise<void> {
 	const { error, response } = await call;
-	if (error !== undefined || !response?.ok) throw new Error(messageOf(error, response));
+	if (error !== undefined || !response?.ok) throw refusal(error, response);
 }
 
 /** Resolve a call whose failure is a legitimate "not available here" answer

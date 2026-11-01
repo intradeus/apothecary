@@ -103,8 +103,17 @@ func (s *Store) ListIntegrations(ctx context.Context, userID string) ([]confstor
 }
 
 func (s *Store) DeleteIntegration(ctx context.Context, id string) error {
+	return s.deleteIntegration(ctx, s.pool, id)
+}
+
+// deleteIntegration is DeleteIntegration on q: the pool, or a transaction
+// that unlinked the integration's tickets first (DeleteTicketSource).
+func (s *Store) deleteIntegration(ctx context.Context, q interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, id string) error {
 	var refs []string
-	rows, err := s.pool.Query(ctx, `
+	rows, err := q.Query(ctx, `
 		SELECT name FROM projects
 		WHERE repo_account_id=$1 OR provisioner_id=$1 OR harnesses ? $1
 		ORDER BY name`, id)
@@ -125,9 +134,10 @@ func (s *Store) DeleteIntegration(ctx context.Context, id string) error {
 	if len(refs) > 0 {
 		return fmt.Errorf("integration %s is used by project(s) %s: %w", id, strings.Join(refs, ", "), confstore.ErrReferenced)
 	}
-	tag, err := s.pool.Exec(ctx, `DELETE FROM integrations WHERE id=$1`, id)
+	tag, err := q.Exec(ctx, `DELETE FROM integrations WHERE id=$1`, id)
 	if isFK(err) {
-		return fmt.Errorf("integration %s: %w", id, confstore.ErrReferenced)
+		// Its statuses and types cascade, and a ticket still points at one.
+		return fmt.Errorf("integration %s: tickets still use its statuses or types: %w", id, confstore.ErrReferenced)
 	}
 	if err != nil {
 		return err
@@ -352,37 +362,58 @@ func (s *Store) DeleteProjectSecret(ctx context.Context, projectID, name string)
 
 const ticketCols = `id, project_id, title, goal, base_branch, ` +
 	`source_id, source_kind, source_key, source_url, automation_id, created_at, updated_at, user_id, ` +
-	`change_type, source_type`
+	`change_type, source_type, COALESCE(status_id, ''), COALESCE(type_id, ''), labels, remote_id, ` +
+	`remote_updated_at, synced_at, sync_state, sync_error, status_changed_at, status_changed_by`
 
 func scanTicket(row pgx.Row) (confstore.Ticket, error) {
 	var t confstore.Ticket
 	err := row.Scan(&t.ID, &t.ProjectID, &t.Title, &t.Goal, &t.BaseBranch,
 		&t.SourceID, &t.SourceKind, &t.SourceKey, &t.SourceURL, &t.AutomationID,
-		&t.CreatedAt, &t.UpdatedAt, &t.UserID, &t.ChangeType, &t.SourceType)
+		&t.CreatedAt, &t.UpdatedAt, &t.UserID, &t.ChangeType, &t.SourceType,
+		&t.StatusID, &t.TypeID, &t.Labels, &t.RemoteID,
+		&t.RemoteUpdatedAt, &t.SyncedAt, &t.SyncState, &t.SyncError, &t.StatusChangedAt, &t.StatusChangedBy)
+	if len(t.Labels) == 0 {
+		t.Labels = nil
+	}
 	return t, err
 }
 
+// ticketWriteErr maps a ticket write's constraint failures: the unique source
+// key is a second copy of one issue, an FK a project, status or type that
+// vanished between the service-layer validation and this write.
+func ticketWriteErr(id string, err error) error {
+	if isUnique(err) {
+		return fmt.Errorf("ticket %s: its issue is already another ticket's: %w", id, confstore.ErrConflict)
+	}
+	if isFK(err) {
+		return fmt.Errorf("ticket %s references a missing project, status or type: %w", id, confstore.ErrInvalid)
+	}
+	return err
+}
+
 func (s *Store) UpsertTicket(ctx context.Context, t confstore.Ticket) error {
+	labels := t.Labels
+	if labels == nil {
+		labels = []string{}
+	}
 	// user_id follows the project (the service copies it on validation);
 	// written on update too, so a ticket moved between projects follows.
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO tickets (id, project_id, title, goal, base_branch,
 			source_id, source_kind, source_key, source_url, automation_id, created_at, updated_at, user_id,
-			change_type, source_type)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+			change_type, source_type, status_id, type_id, labels, remote_id,
+			remote_updated_at, synced_at, sync_state, sync_error, status_changed_at, status_changed_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NULLIF($16,''),NULLIF($17,''),$18,$19,$20,$21,$22,$23,$24,$25)
 		ON CONFLICT (id) DO UPDATE SET
 			project_id=$2, title=$3, goal=$4, base_branch=$5,
 			source_id=$6, source_kind=$7, source_key=$8, source_url=$9, automation_id=$10, updated_at=$12, user_id=$13,
-			change_type=$14, source_type=$15`,
+			change_type=$14, source_type=$15, status_id=NULLIF($16,''), type_id=NULLIF($17,''), labels=$18, remote_id=$19,
+			remote_updated_at=$20, synced_at=$21, sync_state=$22, sync_error=$23, status_changed_at=$24, status_changed_by=$25`,
 		t.ID, t.ProjectID, t.Title, t.Goal, t.BaseBranch,
 		t.SourceID, t.SourceKind, t.SourceKey, t.SourceURL, t.AutomationID, t.CreatedAt, t.UpdatedAt, t.UserID,
-		t.ChangeType, t.SourceType)
-	if isFK(err) {
-		// FK backstop: the referenced project vanished between service-layer
-		// validation and this write.
-		return fmt.Errorf("ticket %s references a missing project: %w", t.ID, confstore.ErrInvalid)
-	}
-	return err
+		t.ChangeType, t.SourceType, t.StatusID, t.TypeID, labels, t.RemoteID,
+		t.RemoteUpdatedAt, t.SyncedAt, t.SyncState, t.SyncError, t.StatusChangedAt, t.StatusChangedBy)
+	return ticketWriteErr(t.ID, err)
 }
 
 func (s *Store) GetTicket(ctx context.Context, id string) (confstore.Ticket, error) {

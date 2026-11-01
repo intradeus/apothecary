@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"apothecary/internal/ports/trackerport"
 )
 
 // Ports an integration can implement. The provider port was removed
@@ -276,10 +278,53 @@ type DB interface {
 	ListProjects(ctx Ctx, userID string) ([]Project, error)
 	DeleteProject(ctx Ctx, id string) error
 
+	// Ticket writes check the ticket's status and type rows exist
+	// (ErrInvalid), not that they are its tracker's — that is the Service's.
 	UpsertTicket(ctx Ctx, t Ticket) error
 	GetTicket(ctx Ctx, id string) (Ticket, error)
 	ListTickets(ctx Ctx, userID string) ([]Ticket, error)
-	DeleteTicket(ctx Ctx, id string) error
+	DeleteTicket(ctx Ctx, id string) error // its comments and links go with it
+	// GetTicketBySource is the user's ticket of a source integration whose
+	// source key is key, without case (unique).
+	GetTicketBySource(ctx Ctx, userID, sourceID, key string) (Ticket, error)
+	// GetTicketByProjectKey is the project's oldest ticket whose source key is
+	// key, without case.
+	GetTicketByProjectKey(ctx Ctx, projectID, key string) (Ticket, error)
+	// ListTicketsBySource is the tickets of a source integration, oldest
+	// first; syncable keeps those not gone and not in a Done status.
+	ListTicketsBySource(ctx Ctx, sourceID string, syncable bool) ([]Ticket, error)
+	// SetTicketStatus sets the status in one statement, stamping
+	// status_changed_at/by and updated_at only when it changes.
+	SetTicketStatus(ctx Ctx, id, statusID, by string, at time.Time) error
+	// SetTicketLabels replaces the labels, or adds to them in order of first
+	// appearance, in one statement; returns the result.
+	SetTicketLabels(ctx Ctx, id string, labels []string, union bool, at time.Time) ([]string, error)
+	// MirrorTicket writes a sync's snapshot onto the tracker-owned columns
+	// in one statement, unless the row holds a newer one (applied=false):
+	// sync_state ok, sync_error cleared, synced_at at, a status change
+	// stamped "sync".
+	MirrorTicket(ctx Ctx, id string, m TicketMirror, changeType trackerport.ChangeType, at time.Time) (applied bool, err error)
+	// SetTicketSyncState records a sync's outcome without a snapshot
+	// (synced_at stays the last mirror's).
+	SetTicketSyncState(ctx Ctx, id, state, msg string) error
+	// DeleteTicketSource unlinks a ticketsource integration's tickets and
+	// deletes it, in one transaction: each ticket in moves loses its source,
+	// remote and sync columns and takes the move's status, type and change
+	// type (its owner's internal tracker's); its comments stay. A ticket of
+	// the integration that moves does not name (imported meanwhile) is
+	// ErrConflict, and nothing changes. Otherwise as DeleteIntegration.
+	DeleteTicketSource(ctx Ctx, integrationID string, moves []TicketUnlink, at time.Time) error
+
+	// A ticket's comments and links go with it.
+	ListTicketComments(ctx Ctx, ticketID string) ([]TicketComment, error)
+	// InsertTicketComment adds c unless one with its (run, stage) or remote
+	// id is already there (posted=false). A missing ticket is ErrNotFound.
+	InsertTicketComment(ctx Ctx, c TicketComment) (posted bool, err error)
+	// ReconcileRemoteComments makes the ticket's remote-origin comments rows,
+	// by remote id, in one transaction: insert, update, delete the rest.
+	ReconcileRemoteComments(ctx Ctx, ticketID string, rows []TicketComment) error
+	UpsertTicketLink(ctx Ctx, l TicketLink) error // a missing ticket is ErrNotFound
+	ListTicketLinks(ctx Ctx, ticketID string) ([]TicketLink, error)
 
 	UpsertFlow(ctx Ctx, row FlowRow) error // also inserts the immutable version (ON CONFLICT DO NOTHING)
 	GetFlow(ctx Ctx, projectID, name string) (FlowRow, error)
@@ -298,6 +343,30 @@ type DB interface {
 	GetFlowBinding(ctx Ctx, projectID, flowName string) (FlowBinding, error)
 	ListFlowBindings(ctx Ctx, projectID string) ([]FlowBinding, error)
 	DeleteFlowBinding(ctx Ctx, projectID, flowName string) error
+
+	// A ticketsource integration's status and type lists go with it
+	// (deleted with the integration — refused while a ticket still points at
+	// one of its rows). Lists are in position order.
+	ListTrackerStatuses(ctx Ctx, integrationID string) ([]TrackerStatus, error)
+	ListTrackerTypes(ctx Ctx, integrationID string) ([]TrackerType, error)
+	// ReplaceTrackerStatuses makes rows the integration's whole list, in one
+	// transaction: tickets on a row being dropped move to reassign[id], the
+	// dropped rows go, and rows are written by id. A dropped row a ticket
+	// still uses with no reassignment is ErrReferenced; a flow step or remote
+	// id held twice is ErrConflict.
+	ReplaceTrackerStatuses(ctx Ctx, integrationID string, rows []TrackerStatus, reassign map[string]string) error
+	// ReplaceTrackerTypes is ReplaceTrackerStatuses for types; every ticket of
+	// a type also takes the type's change type.
+	ReplaceTrackerTypes(ctx Ctx, integrationID string, rows []TrackerType, reassign map[string]string) error
+	// EnsureTrackerStatus inserts s unless the integration already lists its
+	// remote id; then the listed row takes s's name (and its category, when
+	// s has one) and keeps everything else. A flow step another status holds
+	// is not taken by the insert. Returns the stored row. A missing
+	// integration is ErrInvalid.
+	EnsureTrackerStatus(ctx Ctx, s TrackerStatus) (TrackerStatus, error)
+	// EnsureTrackerType is EnsureTrackerStatus for types: a listed row takes
+	// the name only.
+	EnsureTrackerType(ctx Ctx, t TrackerType) (TrackerType, error)
 
 	// Project secrets go with their project (deleted with it); each value
 	// is sealed by the Service before it gets here.

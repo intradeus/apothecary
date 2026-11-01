@@ -58,7 +58,7 @@ func TestCloseIsNilSafeAndReleases(t *testing.T) {
 func TestActionAvailable(t *testing.T) {
 	bare := &Resolution{}
 	full := &Resolution{RepoHost: &fake.RepoHost{},
-		TicketWriter: func(context.Context, string) (trackerport.TicketWriter, error) { return nil, nil }}
+		TicketTracker: func(context.Context, string) (trackerport.TicketWriter, string, error) { return nil, "", nil }}
 	for _, tc := range []struct {
 		action string
 		r      *Resolution

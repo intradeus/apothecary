@@ -19,6 +19,7 @@ import (
 
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 )
 
 type Config struct {
@@ -80,6 +81,10 @@ func (a *Adapter) api(ctx context.Context, method, path string, body, out any) (
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return resp.StatusCode, rateLimited("gitlab "+method+" "+path, resp.Header,
+			fmt.Sprintf("%d: %s", resp.StatusCode, shell.Tail(string(data), 300)))
+	}
 	if resp.StatusCode >= 400 {
 		return resp.StatusCode, fmt.Errorf("gitlab %s %s: %d: %s", method, path, resp.StatusCode, shell.Tail(string(data), 300))
 	}
@@ -89,6 +94,16 @@ func (a *Adapter) api(ctx context.Context, method, path string, body, out any) (
 		}
 	}
 	return resp.StatusCode, nil
+}
+
+// rateLimited is a 429's typed error: Retry-After, else RateLimit-Reset.
+func rateLimited(tracker string, h http.Header, detail string) *trackerport.ErrRateLimited {
+	now := time.Now()
+	wait := trackerport.RetryAfter(h.Get("Retry-After"), now)
+	if wait == 0 {
+		wait = trackerport.ResetAfter(h.Get("RateLimit-Reset"), now)
+	}
+	return &trackerport.ErrRateLimited{Tracker: tracker, Detail: detail, RetryAfter: wait}
 }
 
 // path is the bound project's API prefix. The adapter is constructed per

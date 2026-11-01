@@ -1,14 +1,16 @@
 package github
 
-// Issues adapts the ticketsource port — read side for the import picker, write
-// side (trackerport.TicketWriter) for a flow's tracker actions — to GitHub Issues,
-// reusing the repository host adapter's authenticated client. An issue's key
-// is "owner/repo#123": GitHub has no site-wide key, so the repository is part
-// of the identity. GitHub issues have two states and no custom fields; what
-// the write port cannot express is refused by name (Projects v2 columns are
-// not reachable through the issue itself).
+// Issues adapts the ticketsource port — read side for the import picker and
+// the sync, write side (trackerport.TicketWriter) for a flow's tracker
+// actions — to GitHub Issues, reusing the repository host adapter's
+// authenticated client. An issue's key is "owner/repo#123": GitHub has no
+// site-wide key, so the repository is part of the identity. GitHub issues
+// have two states (the integration's whole status list: open, closed), one
+// type and no custom fields; what the write port cannot express is refused
+// by name (Projects v2 columns are not reachable through the issue itself).
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -83,6 +85,9 @@ func (s *Issues) Test(ctx context.Context) error {
 }
 
 type issueJSON struct {
+	// ID is the issue's numeric id, stable across a transfer (which moves
+	// the key to another repository; GitHub redirects the old path).
+	ID            int64  `json:"id"`
 	Number        int    `json:"number"`
 	Title         string `json:"title"`
 	Body          string `json:"body"`
@@ -119,20 +124,34 @@ func repoOf(in issueJSON, fallback string) string {
 
 func toTicket(in issueJSON, repo string) trackerport.SourceTicket {
 	t := trackerport.SourceTicket{
-		Key:    fmt.Sprintf("%s#%d", repo, in.Number),
-		Title:  in.Title,
-		Body:   strings.TrimSpace(in.Body),
-		URL:    in.HTMLURL,
-		Status: in.State,
-		Type:   "issue",
+		Key:      fmt.Sprintf("%s#%d", repo, in.Number),
+		Title:    in.Title,
+		Body:     strings.TrimSpace(in.Body),
+		URL:      in.HTMLURL,
+		Status:   in.State,
+		StatusID: in.State,
+		Type:     issueType.Name,
+		TypeID:   issueType.ID,
+	}
+	if in.ID != 0 {
+		t.RemoteID = strconv.FormatInt(in.ID, 10)
+	}
+	for _, l := range in.Labels {
+		t.Labels = append(t.Labels, l.Name)
 	}
 	if in.Assignee != nil {
 		t.Assignee = in.Assignee.Login
 	}
-	if ts, err := time.Parse(time.RFC3339, in.UpdatedAt); err == nil {
-		t.Updated = ts.UTC()
-	}
+	t.Updated = parseTime(in.UpdatedAt)
 	return t
+}
+
+// parseTime reads GitHub's RFC 3339 timestamps; unparseable is zero.
+func parseTime(s string) time.Time {
+	if ts, err := time.Parse(time.RFC3339, s); err == nil {
+		return ts.UTC()
+	}
+	return time.Time{}
 }
 
 // Search runs GitHub's issue search over the configured repositories: an
@@ -175,20 +194,167 @@ func (s *Issues) Search(ctx context.Context, query string, limit int) ([]tracker
 	return tickets, nil
 }
 
-// Fetch returns one issue; a pull request behind the same number is refused.
+// Fetch returns one issue; a pull request behind the same number is
+// refused. A transferred issue answers through GitHub's redirect, under its
+// new key. 404 (no such issue, or the token cannot see it) and 410 (the
+// issue was deleted) wrap trackerport.ErrTicketNotFound.
 func (s *Issues) Fetch(ctx context.Context, key string) (trackerport.SourceTicket, error) {
 	repo, n, err := s.parseKey(key)
 	if err != nil {
 		return trackerport.SourceTicket{}, err
 	}
 	var it issueJSON
-	if _, err := s.a.api(ctx, http.MethodGet, issuePath(repo, n), nil, &it); err != nil {
+	if status, err := s.a.api(ctx, http.MethodGet, issuePath(repo, n), nil, &it); err != nil {
+		if status == http.StatusNotFound || status == http.StatusGone {
+			return trackerport.SourceTicket{}, fmt.Errorf("%w: %w", trackerport.ErrTicketNotFound, err)
+		}
 		return trackerport.SourceTicket{}, err
 	}
 	if it.PullRequest != nil {
 		return trackerport.SourceTicket{}, fmt.Errorf("github: %s#%d is a pull request, not an issue", repo, n)
 	}
 	return toTicket(it, repoOf(it, repo)), nil
+}
+
+// fetchBatch is how many issues one FetchMany query names: GitHub's cap on
+// a GraphQL query's nodes keeps a hundred aliases cheap.
+const fetchBatch = 100
+
+// issueFieldsGQL reads, per aliased issue, what the REST issue gives toTicket.
+const issueFieldsGQL = `databaseId number title body url state updatedAt
+  repository{nameWithOwner}
+  labels(first:100){nodes{name}}
+  assignees(first:1){nodes{login}}`
+
+// gqlIssue is one aliased issue of a FetchMany query.
+type gqlIssue struct {
+	DatabaseID int64  `json:"databaseId"`
+	Number     int    `json:"number"`
+	Title      string `json:"title"`
+	Body       string `json:"body"`
+	URL        string `json:"url"`
+	State      string `json:"state"`
+	UpdatedAt  string `json:"updatedAt"`
+	Repository struct {
+		NameWithOwner string `json:"nameWithOwner"`
+	} `json:"repository"`
+	Labels struct {
+		Nodes []struct {
+			Name string `json:"name"`
+		} `json:"nodes"`
+	} `json:"labels"`
+	Assignees struct {
+		Nodes []struct {
+			Login string `json:"login"`
+		} `json:"nodes"`
+	} `json:"assignees"`
+}
+
+// issueJSON is the REST shape toTicket reads, so a batched read maps exactly
+// like Fetch: the REST id is the GraphQL databaseId, the state lower-cased.
+func (g gqlIssue) issueJSON() issueJSON {
+	in := issueJSON{ID: g.DatabaseID, Number: g.Number, Title: g.Title, Body: g.Body, HTMLURL: g.URL,
+		State: strings.ToLower(g.State), UpdatedAt: g.UpdatedAt}
+	for _, l := range g.Labels.Nodes {
+		in.Labels = append(in.Labels, struct {
+			Name string `json:"name"`
+		}{l.Name})
+	}
+	if len(g.Assignees.Nodes) > 0 {
+		in.Assignee = &struct {
+			Login string `json:"login"`
+		}{g.Assignees.Nodes[0].Login}
+	}
+	return in
+}
+
+// FetchMany re-reads issues with one GraphQL query per repository and
+// fetchBatch numbers (an aliased `issue(number:)` each), mapped exactly as
+// Fetch maps the REST issue. An issue the query does not resolve — deleted,
+// transferred (GraphQL follows no redirect), or a pull request's number — is
+// left out of the result; the sync then Fetches it alone to tell which.
+func (s *Issues) FetchMany(ctx context.Context, keys []string) ([]trackerport.SourceTicket, error) {
+	byRepo := map[string][]int{}
+	var repos []string
+	seen := map[string]bool{}
+	for _, k := range keys {
+		repo, n, err := s.parseKey(k)
+		if err != nil {
+			return nil, err
+		}
+		id := fmt.Sprintf("%s#%d", strings.ToLower(repo), n)
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if _, ok := byRepo[repo]; !ok {
+			repos = append(repos, repo)
+		}
+		byRepo[repo] = append(byRepo[repo], n)
+	}
+	var out []trackerport.SourceTicket
+	for _, repo := range repos {
+		owner, name, _ := strings.Cut(repo, "/")
+		nums := byRepo[repo]
+		for start := 0; start < len(nums); start += fetchBatch {
+			batch := nums[start:min(start+fetchBatch, len(nums))]
+			got, err := s.fetchRepoBatch(ctx, owner, name, batch)
+			if err != nil {
+				return nil, err
+			}
+			for _, g := range got {
+				out = append(out, toTicket(g.issueJSON(), cmp.Or(g.Repository.NameWithOwner, repo)))
+			}
+		}
+	}
+	return out, nil
+}
+
+// fetchRepoBatch is one FetchMany query: the issues of one repository it
+// resolves, in the order asked. NOT_FOUND errors (an issue or the repository
+// itself) only leave their issues out; any other error fails the batch.
+func (s *Issues) fetchRepoBatch(ctx context.Context, owner, name string, nums []int) ([]gqlIssue, error) {
+	var q strings.Builder
+	q.WriteString("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){")
+	for _, n := range nums {
+		fmt.Fprintf(&q, "i%d:issue(number:%d){%s}\n", n, n, issueFieldsGQL)
+	}
+	q.WriteString("}}")
+	var data struct {
+		Repository map[string]*gqlIssue `json:"repository"`
+	}
+	errs, err := s.a.graphqlPartial(ctx, q.String(), map[string]any{"owner": owner, "name": name}, &data)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range errs {
+		if e.Type != "NOT_FOUND" {
+			return nil, fmt.Errorf("github graphql: %s", e.Message)
+		}
+	}
+	var out []gqlIssue
+	for _, n := range nums {
+		if g := data.Repository["i"+strconv.Itoa(n)]; g != nil {
+			out = append(out, *g)
+		}
+	}
+	return out, nil
+}
+
+// issueType is the one type a GitHub issue has.
+var issueType = trackerport.RemoteType{ID: "issue", Name: "Issue"}
+
+// Statuses: an issue is open or closed — that is the whole list.
+func (s *Issues) Statuses(context.Context) ([]trackerport.RemoteStatus, error) {
+	return []trackerport.RemoteStatus{
+		{ID: "open", Name: "Open", Category: trackerport.CategoryNew},
+		{ID: "closed", Name: "Closed", Category: trackerport.CategoryDone},
+	}, nil
+}
+
+// Types: GitHub issues have one type.
+func (s *Issues) Types(context.Context) ([]trackerport.RemoteType, error) {
+	return []trackerport.RemoteType{issueType}, nil
 }
 
 // OpenAttachment: GitHub issues carry no attachments as such (files in a
@@ -200,22 +366,6 @@ func (s *Issues) OpenAttachment(context.Context, trackerport.SourceAttachment) (
 // --- write side (trackerport.TicketWriter) ------------------------------------------
 
 var issueStates = []string{"open", "closed"}
-
-// issueStatusMap is what the canonical statuses mean for an issue: todo is
-// open, done is closed, and nothing else has a word (Projects v2 columns are
-// not reachable through the issue itself).
-var issueStatusMap = map[trackerport.TicketStatus]string{trackerport.StatusTodo: "open", trackerport.StatusDone: "closed"}
-
-// TransitionTo reopens (todo) or closes (done) the issue; every other
-// canonical status is unsupported — the engine skips the stage.
-func (s *Issues) TransitionTo(ctx context.Context, key string, to trackerport.TicketStatus) error {
-	state, ok := issueStatusMap[to]
-	if !ok {
-		return &trackerport.ErrStatusUnsupported{Key: strings.TrimSpace(key), Status: to, Kind: "GitHub Issues",
-			Supported: []trackerport.TicketStatus{trackerport.StatusTodo, trackerport.StatusDone}}
-	}
-	return s.Transition(ctx, key, state)
-}
 
 // Transition: an issue is open or closed, nothing else. Anything else a flow
 // asks for is unreachable, and the error says what is.
@@ -252,22 +402,38 @@ func (s *Issues) Comment(ctx context.Context, key, body string) error {
 	return err
 }
 
-func (s *Issues) Comments(ctx context.Context, key string) ([]string, error) {
+// ListComments lists the issue's comments, oldest first (GitHub's order),
+// paging to exhaustion.
+func (s *Issues) ListComments(ctx context.Context, key string) ([]trackerport.Comment, error) {
 	repo, n, err := s.parseKey(key)
 	if err != nil {
 		return nil, err
 	}
-	var out []string
+	var out []trackerport.Comment
 	for page := 1; page < 100; page++ {
 		var rows []struct {
-			Body string `json:"body"`
+			ID   int64 `json:"id"`
+			User *struct {
+				Login string `json:"login"`
+			} `json:"user"`
+			Body      string `json:"body"`
+			CreatedAt string `json:"created_at"`
+			UpdatedAt string `json:"updated_at"`
 		}
 		p := fmt.Sprintf("%s/comments?per_page=100&page=%d", issuePath(repo, n), page)
 		if _, err := s.a.api(ctx, http.MethodGet, p, nil, &rows); err != nil {
 			return nil, err
 		}
 		for _, r := range rows {
-			out = append(out, r.Body)
+			c := trackerport.Comment{ID: strconv.FormatInt(r.ID, 10), Body: r.Body,
+				Created: parseTime(r.CreatedAt), Updated: parseTime(r.UpdatedAt)}
+			if r.User != nil {
+				c.Author = r.User.Login
+			}
+			if c.Updated.IsZero() {
+				c.Updated = c.Created
+			}
+			out = append(out, c)
 		}
 		if len(rows) < 100 {
 			break
@@ -394,13 +560,13 @@ func (s *Issues) AddLink(ctx context.Context, key string, link trackerport.Ticke
 	if strings.TrimSpace(link.URL) == "" {
 		return fmt.Errorf("github: a link needs a URL")
 	}
-	existing, err := s.Comments(ctx, key)
+	existing, err := s.ListComments(ctx, key)
 	if err != nil {
 		return err
 	}
 	marker := linkMarker(link.URL)
 	for _, c := range existing {
-		if strings.Contains(c, marker) {
+		if strings.Contains(c.Body, marker) {
 			return nil
 		}
 	}
@@ -436,4 +602,6 @@ var (
 	_ trackerport.TicketSource   = (*Issues)(nil)
 	_ trackerport.TicketWriter   = (*Issues)(nil)
 	_ trackerport.TicketAttacher = (*Issues)(nil)
+	_ trackerport.TicketMetadata = (*Issues)(nil)
+	_ trackerport.TicketSyncer   = (*Issues)(nil)
 )

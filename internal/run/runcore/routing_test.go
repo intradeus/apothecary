@@ -140,7 +140,7 @@ func TestStageCondition(t *testing.T) {
 		{name: "run_if holds", stage: "hot", change: "hotfix"},
 		{name: "run_if does not hold", stage: "hot", change: "feat", skip: true, says: "run_if"},
 		{name: "tracker action with an issue", stage: "post", tracker: true},
-		{name: "tracker action on a ticket written by hand", stage: "post", skip: true, says: "no tracker issue"},
+		{name: "tracker action on a ticket written by hand runs (internal tracker)", stage: "post"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

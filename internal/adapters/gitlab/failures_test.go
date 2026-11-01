@@ -1068,12 +1068,12 @@ func TestIssuesSearchScopesAndLimits(t *testing.T) {
 func TestToTicketSparseIssue(t *testing.T) {
 	s := NewIssues(IssuesConfig{BaseURL: "https://gl"})
 	got := s.toTicket(issueJSON{IID: 5, UpdatedAt: "not a time", Description: "  body  "}, "g/p")
-	if got.Key != "g/p#5" || got.Type != "issue" || got.Body != "body" || !got.Updated.IsZero() || got.Assignee != "" || got.Attachments != nil {
+	if got.Key != "g/p#5" || got.Type != "Issue" || got.TypeID != "issue" || got.Body != "body" || !got.Updated.IsZero() || got.Assignee != "" || got.Attachments != nil || got.RemoteID != "" {
 		t.Errorf("sparse = %+v", got)
 	}
 	got = s.toTicket(issueJSON{IID: 5, IssueType: "incident"}, "g/p")
-	if got.Type != "incident" {
-		t.Errorf("type = %q", got.Type)
+	if got.Type != "Incident" || got.TypeID != "incident" {
+		t.Errorf("type = %q (%q)", got.Type, got.TypeID)
 	}
 }
 
@@ -1241,7 +1241,7 @@ func TestIssuesTransitionEdges(t *testing.T) {
 	if err := s.Transition(ctx, "#1", " Open "); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.TransitionTo(ctx, "#1", trackerport.StatusDone); err != nil {
+	if err := s.Transition(ctx, "#1", "closed"); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(events, []any{"reopen"}) {
@@ -1251,12 +1251,8 @@ func TestIssuesTransitionEdges(t *testing.T) {
 	if err := s.Transition(ctx, "#1", "In Review"); !errors.As(err, &unreachable) || unreachable.From != "closed" || !reflect.DeepEqual(unreachable.Reachable, issueStates) {
 		t.Errorf("unreachable = %v", err)
 	}
-	var unsupported *trackerport.ErrStatusUnsupported
-	if err := s.TransitionTo(ctx, " #1 ", trackerport.StatusInReview); !errors.As(err, &unsupported) || unsupported.Key != "#1" {
-		t.Errorf("unsupported = %v", err)
-	}
-	if err := s.Transition(ctx, "#404", "closed"); err == nil {
-		t.Error("a missing issue is an error")
+	if err := s.Transition(ctx, "#404", "closed"); !errors.Is(err, trackerport.ErrTicketNotFound) {
+		t.Errorf("a missing issue = %v, want ErrTicketNotFound", err)
 	}
 }
 
@@ -1270,7 +1266,7 @@ func TestIssuesWriteFailures(t *testing.T) {
 		"set fields": s.SetFields(ctx, bad, map[string]string{"labels": "a"}),
 		"add link":   s.AddLink(ctx, bad, trackerport.TicketLink{URL: "https://x"}),
 	}
-	_, calls["comments"] = s.Comments(ctx, bad)
+	_, calls["comments"] = s.ListComments(ctx, bad)
 	_, calls["fields"] = s.Fields(ctx, bad, []string{"labels"})
 	_, calls["attach"] = s.Attach(ctx, bad, "a", "text/plain", nil)
 	_, calls["fetch"] = s.Fetch(ctx, bad)
@@ -1283,7 +1279,7 @@ func TestIssuesWriteFailures(t *testing.T) {
 	if _, err := s.Fetch(ctx, "#1"); err == nil {
 		t.Error("fetch: a missing issue is an error")
 	}
-	if _, err := s.Comments(ctx, "#1"); err == nil {
+	if _, err := s.ListComments(ctx, "#1"); err == nil {
 		t.Error("comments: a missing issue is an error")
 	}
 	if _, err := s.Fields(ctx, "#1", nil); err == nil {
@@ -1309,15 +1305,18 @@ func TestIssuesWriteFailures(t *testing.T) {
 	}
 }
 
-func TestIssuesCommentsSkipSystemNotesAcrossPages(t *testing.T) {
-	h, calls := paged(repeat(100, `{"body":"pushed","system":true}`), `[{"body":"human"}]`)
+func TestIssuesListCommentsSkipSystemNotesAcrossPages(t *testing.T) {
+	h, calls := paged(repeat(100, `{"id":1,"body":"pushed","system":true}`), `[{"id":2,"author":{"username":"ann"},"body":"human","created_at":"2026-07-30T10:00:00Z"}]`)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v4/projects/g%2Fp/issues/1/notes", h)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
-	got, err := issuesFor(ts, "g/p").Comments(context.Background(), "#1")
-	if err != nil || !reflect.DeepEqual(got, []string{"human"}) || calls.Load() != 2 {
-		t.Errorf("comments %v, %d calls, %v", got, calls.Load(), err)
+	got, err := issuesFor(ts, "g/p").ListComments(context.Background(), "#1")
+	if err != nil || len(got) != 1 || calls.Load() != 2 {
+		t.Fatalf("comments %+v, %d calls, %v", got, calls.Load(), err)
+	}
+	if c := got[0]; c.ID != "2" || c.Author != "ann" || c.Body != "human" || c.Created.IsZero() || !c.Updated.Equal(c.Created) {
+		t.Errorf("comment = %+v", c)
 	}
 }
 

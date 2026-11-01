@@ -168,12 +168,13 @@ func (w *Watcher) importOrAdopt(ctx context.Context, a confstore.Automation, key
 		w.log().Info("automation imported a ticket", "automation", a.ID, "name", a.Name, "ticket", t.ID, "key", key)
 		return t, true, nil
 	}
-	if !errors.Is(err, tickets.ErrDuplicate) {
+	var dup *tickets.DuplicateError
+	if !errors.As(err, &dup) {
 		return confstore.Ticket{}, false, err
 	}
-	existing, found, err := w.Tickets.FindByKey(ctx, a.ProjectID, key)
-	if err != nil || !found || existing.AutomationID != a.ID {
-		return confstore.Ticket{}, false, err
+	existing := dup.Ticket
+	if existing.AutomationID != a.ID || existing.ProjectID != a.ProjectID {
+		return confstore.Ticket{}, false, nil
 	}
 	runs, err := w.Runs.RunsOfTicket(ctx, existing.ID)
 	if err != nil {
@@ -272,6 +273,11 @@ func (w *Watcher) startOn(ctx context.Context, a confstore.Automation, t confsto
 // the daemon was down, and the firing recorded BEFORE the run is created so
 // a crash in between cannot fire it twice. A rule edited after its last
 // firing counts from the edit.
+//
+// A ticket has one active run at a time (engine.ErrTicketBusy): a slot that
+// falls while the ticket's previous run is still going is skipped, recorded
+// as "ticket busy: run <id>", and not made up later — the same policy as a
+// slot missed while the daemon was down.
 func (w *Watcher) tick(ctx context.Context, a confstore.Automation) (bool, error) {
 	c, err := schedule.Parse(a.Schedule)
 	if err != nil {
@@ -297,6 +303,14 @@ func (w *Watcher) tick(ctx context.Context, a confstore.Automation) (bool, error
 		return true, fmt.Errorf("ticket %s: %w", a.TicketID, err)
 	}
 	_, err = w.start(ctx, a, t)
+	// The engine's refusal, recognised without importing the engine (the
+	// layering keeps automation below it).
+	var busy interface{ ActiveRunID() string }
+	if errors.As(err, &busy) {
+		w.log().Info("automation slot skipped: the ticket's run is still going", "automation", a.ID,
+			"name", a.Name, "ticket", t.ID, "run", busy.ActiveRunID())
+		return true, fmt.Errorf("ticket busy: run %s", busy.ActiveRunID())
+	}
 	return true, err
 }
 

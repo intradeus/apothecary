@@ -38,6 +38,12 @@ func newFactory(t *testing.T, src trackerport.TicketSource) (*Factory, *filestor
 	}
 	conf := confstore.New(confstore.NewMem(), key)
 	conftest.SeedProject(t, conf, confstore.Project{ID: testProject, Name: "p"})
+	// int-1 is the tracker every import reads from: an integration's status
+	// and type lists hang off its row.
+	if err := conf.DB().UpsertIntegration(context.Background(), confstore.StoredIntegration{ID: "int-1",
+		Port: confstore.PortTicketSource, Kind: "faketracker", Name: "tracker", Config: map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
 	att := filestore.NewAttachments(filestore.NewMem(), filestore.NewBlobs(t.TempDir()),
 		1<<20, []string{"text/*", "image/png"})
 	f := &Factory{
@@ -110,6 +116,10 @@ func TestCreateFromSourceCopiesEverything(t *testing.T) {
 	if atts[0].Size != 5 {
 		t.Errorf("imported %d bytes, want the attachment's 5", atts[0].Size)
 	}
+	// The tracker's id for the file comes along: the sync matches on it.
+	if atts[0].RemoteID != "a1" {
+		t.Errorf("remote id = %q, want a1", atts[0].RemoteID)
+	}
 	data, _, err := att.Bytes(context.Background(), atts[0].ID)
 	if err != nil || string(data) != "hello" {
 		t.Errorf("imported bytes = %q (%v)", data, err)
@@ -136,17 +146,33 @@ func TestCreateFromSourceCarriesTheType(t *testing.T) {
 		t.Errorf("stored = %+v (%v)", got, err)
 	}
 
+	// The integration's type list maps Bug to chore: the mapping wins over
+	// the name's reading.
 	src2 := devSource()
-	src2.Tickets[0].Type, src2.Tickets[0].ChangeType = "Bug", trackerport.ChangeChore
+	src2.Tickets[0].Type, src2.Tickets[0].TypeID = "Bug", "11"
 	f2, _ := newFactory(t, src2)
+	types, err := f2.Conf.EnsureRemoteTypes(ctx, "int-1", fake.DefaultTypes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range types {
+		if types[i].Name == "Bug" {
+			types[i].ChangeType = trackerport.ChangeChore
+		}
+	}
+	if _, err := f2.Conf.PutTrackerTypes(ctx, "int-1", types, nil); err != nil {
+		t.Fatal(err)
+	}
 	if tk, _, err := f2.CreateFromSource(ctx, "int-1", "PROJ-7", confstore.Ticket{ProjectID: testProject}, nil); err != nil || tk.ChangeType != trackerport.ChangeChore {
 		t.Errorf("mapped = %q (%v), want the integration's chore", tk.ChangeType, err)
 	}
 
+	// The tracker owns the type and so the change type: one picked on the
+	// form does not stick.
 	f3, _ := newFactory(t, src)
 	tk, _, err = f3.CreateFromSource(ctx, "int-1", "PROJ-7", confstore.Ticket{ProjectID: testProject, ChangeType: trackerport.ChangeFeat}, nil)
-	if err != nil || tk.ChangeType != trackerport.ChangeFeat || tk.BaseBranch != "feat/proj-7-add-a-farewell-function" {
-		t.Errorf("picked = %q, branch %q (%v)", tk.ChangeType, tk.BaseBranch, err)
+	if err != nil || tk.ChangeType != trackerport.ChangeFix || tk.BaseBranch != "fix/proj-7-add-a-farewell-function" {
+		t.Errorf("picked = %q, branch %q (%v), want the tracker's fix", tk.ChangeType, tk.BaseBranch, err)
 	}
 }
 
@@ -163,8 +189,8 @@ func TestChangeTypeIsValidated(t *testing.T) {
 	}
 }
 
-// Anything the operator typed into the prefilled form wins over the tracker's
-// version — the import is a starting point, not a lock.
+// The tracker owns what it mirrors — title and goal stay the issue's, whatever
+// the form said — and Apothecary owns the base branch: the operator's wins.
 func TestCreateFromSourceRespectsOverrides(t *testing.T) {
 	f, _ := newFactory(t, devSource())
 
@@ -175,8 +201,11 @@ func TestCreateFromSourceRespectsOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tk.Title != "My own title" || tk.Goal != "my own goal" || tk.BaseBranch != "feat/proj-7-farewell" {
-		t.Errorf("overrides lost: %+v", tk)
+	if tk.BaseBranch != "feat/proj-7-farewell" {
+		t.Errorf("base branch override lost: %+v", tk)
+	}
+	if tk.Title != "Add a Farewell function" || tk.Goal != "The greeter only says hello." {
+		t.Errorf("title/goal = %q/%q, want the issue's", tk.Title, tk.Goal)
 	}
 	if tk.SourceKey != "PROJ-7" {
 		t.Errorf("provenance lost: %+v", tk)
@@ -264,7 +293,7 @@ func TestCreateRaw(t *testing.T) {
 }
 
 // An edit must not disown an imported ticket, even though the edit DTO knows
-// nothing about provenance.
+// nothing about provenance; and what the tracker owns cannot be edited here.
 func TestUpdateKeepsProvenance(t *testing.T) {
 	f, _ := newFactory(t, devSource())
 	tk, _, err := f.CreateFromSource(context.Background(), "int-1", "PROJ-7",
@@ -273,13 +302,18 @@ func TestUpdateKeepsProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	upd, err := f.Update(context.Background(), tk.ID, confstore.Ticket{
-		ProjectID: testProject, Title: "renamed", Goal: "g",
+		ProjectID: testProject, Title: tk.Title, Goal: tk.Goal, ChangeType: tk.ChangeType, BaseBranch: "feat/elsewhere",
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if upd.SourceKey != "PROJ-7" || upd.SourceURL == "" || upd.SourceKind != "faketracker" {
+	if upd.SourceKey != "PROJ-7" || upd.SourceURL == "" || upd.SourceKind != "faketracker" || upd.BaseBranch != "feat/elsewhere" {
 		t.Errorf("provenance after edit = %+v", upd)
+	}
+	if _, err := f.Update(context.Background(), tk.ID, confstore.Ticket{
+		ProjectID: testProject, Title: "renamed", Goal: tk.Goal, ChangeType: tk.ChangeType,
+	}, nil); err == nil || !strings.Contains(err.Error(), "owned by its tracker") {
+		t.Errorf("renaming a mirrored ticket: err = %v, want refused", err)
 	}
 }
 

@@ -13,7 +13,7 @@
 
 import * as gen from './generated/sdk.gen';
 import type * as Wire from './generated/types.gen';
-import { unwrap, unwrapOptional, unwrapVoid } from './client';
+import { ApiError, unwrap, unwrapOptional, unwrapVoid } from './client';
 import * as map from './mappers';
 import type {
 	AskFrame,
@@ -90,7 +90,11 @@ import type {
 	SignalSpec,
 	SourceTicket,
 	Ticket,
+	TicketComment,
 	TicketDraft,
+	TrackerStatus,
+	TrackerSyncCounts,
+	TrackerType,
 	UploadLimits,
 	WorkspaceChanges,
 	WorkspaceEntry,
@@ -148,6 +152,11 @@ const ticketBody = (t: TicketDraft): Wire.TicketRequest => ({
 	attachment_ids: t.attachmentIds ?? [],
 	source_id: t.sourceIntegrationId ?? '',
 	source_key: t.sourceKey ?? ''
+});
+
+const trackerStatuses = (r: Wire.TrackerStatusList) => ({
+	statuses: many(r.statuses, map.toTrackerStatus),
+	warnings: r.warnings ?? []
 });
 
 // Empty optionals stay off the wire: the engine reads an absent probe as
@@ -594,8 +603,9 @@ export const pings = {
 // --- tickets -----------------------------------------------------------------
 
 export const tickets = {
-	list: async (project?: string): Promise<Ticket[]> =>
-		many(await unwrap(gen.listTickets({ query: { project } })), map.toTicket),
+	/** Every ticket, done ones included, with its tracker status (the fleet
+	 *  poll; lists filter it). */
+	list: async (): Promise<Ticket[]> => many(await unwrap(gen.listTickets()), map.toTicket),
 
 	get: async (id: string): Promise<Ticket> =>
 		map.toTicket(await unwrap(gen.getTicket({ path: { id } }))),
@@ -603,10 +613,34 @@ export const tickets = {
 	create: async (draft: TicketDraft): Promise<Ticket> =>
 		map.toTicket(await unwrap(gen.createTicket({ body: ticketBody(draft) }))),
 
+	/** Refused (409) on a sourced ticket when title, goal or change type
+	 *  differ: the tracker owns those. */
 	update: async (id: string, draft: TicketDraft): Promise<Ticket> =>
 		map.toTicket(await unwrap(gen.updateTicket({ path: { id }, body: ticketBody(draft) }))),
 
 	remove: (id: string) => unwrapVoid(gen.deleteTicket({ path: { id } })),
+
+	/** Re-read the ticket from its tracker now. A failed fetch is not thrown:
+	 *  it lands on the ticket's syncState / syncError. */
+	sync: async (id: string): Promise<Ticket> =>
+		map.toTicket(await unwrap(gen.syncTicket({ path: { id } }))),
+
+	/** Move the ticket in its tracker (the remote issue, or the internal one). */
+	setStatus: async (id: string, statusId: string): Promise<Ticket> =>
+		map.toTicket(
+			await unwrap(gen.setTicketStatus({ path: { id }, body: { status_id: statusId } }))
+		),
+
+	setLabels: async (id: string, labels: string[]): Promise<Ticket> =>
+		map.toTicket(await unwrap(gen.setTicketLabels({ path: { id }, body: { labels } }))),
+
+	/** Oldest first. */
+	comments: async (id: string): Promise<TicketComment[]> =>
+		many(await unwrap(gen.listTicketComments({ path: { id } })), map.toTicketComment),
+
+	/** Posts to the ticket's tracker; resolves to the whole updated thread. */
+	addComment: async (id: string, body: string): Promise<TicketComment[]> =>
+		many(await unwrap(gen.addTicketComment({ path: { id }, body: { body } })), map.toTicketComment),
 
 	/** A ticket's attachments — shared by every run of it, so they hang off the
 	 *  ticket rather than a run. */
@@ -614,10 +648,39 @@ export const tickets = {
 		many((await unwrap(gen.getTicketAttachments({ path: { id } }))).attachments, map.toAttachment),
 
 	/** Start one attempt. The input is per-attempt and never modifies the
-	 *  ticket. Returns the new run's id. */
+	 *  ticket. Returns the new run's id. A ticket has one active run at a
+	 *  time: see busyRunOf for the refusal. */
 	startRun: async (id: string, opts?: RunInput): Promise<string> =>
 		(await unwrap(gen.startTicketRun({ path: { id }, body: runInputBody(opts) }))).run_id
 };
+
+/** The 409 body of a refusal, when the error is one. */
+function conflictBody(e: unknown): Record<string, unknown> | undefined {
+	if (!(e instanceof ApiError) || e.status !== 409) return undefined;
+	return e.body && typeof e.body === 'object' ? (e.body as Record<string, unknown>) : {};
+}
+
+/** The run in the way, when starting a run was refused because the ticket
+ *  already has an active one. */
+export function busyRunOf(e: unknown): string | undefined {
+	const runId = conflictBody(e)?.run_id;
+	return typeof runId === 'string' && runId ? runId : undefined;
+}
+
+/** What deleting a ticket source would unlink, when the delete was refused
+ *  because tickets still mirror its issues. */
+export function linkedTicketsOf(e: unknown): { tickets: number; activeRuns: number } | undefined {
+	const body = conflictBody(e);
+	if (!body || typeof body.tickets !== 'number') return undefined;
+	return {
+		tickets: body.tickets,
+		activeRuns: typeof body.active_runs === 'number' ? body.active_runs : 0
+	};
+}
+
+/** A tracker list save refused because a deleted row is still in use: it
+ *  needs a replacement. */
+export const isInUse = (e: unknown): boolean => conflictBody(e) !== undefined;
 
 // --- projects ----------------------------------------------------------------
 
@@ -782,7 +845,91 @@ export const integrations = {
 			)
 		),
 
-	remove: (id: string) => unwrapVoid(gen.deleteIntegration({ path: { id } })),
+	/** A ticket source whose tickets still mirror it is refused (see
+	 *  linkedTicketsOf) unless unlinkTickets moves them onto the internal
+	 *  tracker in the same step. */
+	remove: (id: string, opts?: { unlinkTickets?: boolean }) =>
+		unwrapVoid(
+			gen.deleteIntegration({
+				path: { id },
+				query: opts?.unlinkTickets ? { unlink_tickets: '1' } : undefined
+			})
+		),
+
+	/** Re-read every ticket of a tracker now, done ones included. */
+	sync: async (id: string): Promise<TrackerSyncCounts> => {
+		const r = await unwrap(gen.syncIntegration({ path: { id } }));
+		return {
+			tickets: r.tickets,
+			synced: r.synced,
+			gone: r.gone,
+			failed: r.failed,
+			busy: r.busy,
+			rateLimited: r.rate_limited
+		};
+	},
+
+	/** A tracker's statuses; refresh refetches them from the remote first. */
+	statuses: async (
+		id: string,
+		refresh = false
+	): Promise<{ statuses: TrackerStatus[]; warnings: string[] }> =>
+		trackerStatuses(
+			await unwrap(
+				gen.listTrackerStatuses({ path: { id }, query: refresh ? { refresh: '1' } : undefined })
+			)
+		),
+
+	/** Remote tracker: only isDone/flowStep are taken. Internal: the list as
+	 *  given (no id = new, missing = deleted). replaceWith maps a deleted
+	 *  status in use to the one its tickets move to (see isInUse). */
+	saveStatuses: async (
+		id: string,
+		statuses: TrackerStatus[],
+		replaceWith?: Record<string, string>
+	): Promise<{ statuses: TrackerStatus[]; warnings: string[] }> =>
+		trackerStatuses(
+			await unwrap(
+				gen.putTrackerStatuses({
+					path: { id },
+					body: {
+						statuses: statuses.map(map.fromTrackerStatus),
+						...(replaceWith ? { replace_with: replaceWith } : {})
+					}
+				})
+			)
+		),
+
+	types: async (id: string, refresh = false): Promise<TrackerType[]> =>
+		many(
+			(
+				await unwrap(
+					gen.listTrackerTypes({ path: { id }, query: refresh ? { refresh: '1' } : undefined })
+				)
+			).types,
+			map.toTrackerType
+		),
+
+	/** Like saveStatuses; a remote tracker's rows only take changeType. */
+	saveTypes: async (
+		id: string,
+		types: TrackerType[],
+		replaceWith?: Record<string, string>
+	): Promise<TrackerType[]> =>
+		many(
+			(
+				await unwrap(
+					gen.putTrackerTypes({
+						path: { id },
+						body: {
+							types: types.map(map.fromTrackerType),
+							...(replaceWith ? { replace_with: replaceWith } : {})
+						}
+					})
+				)
+			).types,
+			map.toTrackerType
+		),
 
 	/** Check the credentials against the real service. */
 	test: async (id: string): Promise<{ ok: boolean; error?: string; warnings: string[] }> => {

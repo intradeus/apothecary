@@ -136,12 +136,21 @@ type Resolution struct {
 	// engine falls back to Runner.
 	Runners  map[string]agentport.AgentRunner
 	RepoHost repoport.RepoHost
-	// TicketWriter resolves the write side of a ticketsource integration — a
-	// tracker action's target — by integration id: the TICKET's (recorded at
-	// import), not the project's. nil = this build cannot write back (fakes
-	// that don't wire it); an adapter without the capability errors, naming
-	// the integration, so run creation can say so.
-	TicketWriter func(ctx context.Context, integrationID string) (trackerport.TicketWriter, error)
+	// TicketTracker resolves the tracker a ticket's tracker actions write to,
+	// from the CURRENT ticket row (not the run's snapshot, so a ticket
+	// unlinked mid-run writes to the internal tracker next): its remote
+	// issue's adapter when it has a source, the owner's internal tracker
+	// otherwise. key is the ticket's key on that tracker — the issue's key,
+	// or the ticket's id on the internal tracker — what every call takes. A
+	// deleted ticket is *trackerport.ErrNotApplicable (the stage skips); a
+	// source whose integration is gone or cannot write errors, naming it.
+	// nil = this build cannot write to a tracker (fakes that don't wire it).
+	TicketTracker func(ctx context.Context, ticketID string) (w trackerport.TicketWriter, key string, err error)
+	// TicketStep is the status name holding a flow step on the ticket's
+	// tracker (its integration's status list) — what `ticket_transition to:`
+	// moves to — or *trackerport.ErrStatusUnsupported naming the steps that
+	// have one. nil = steps cannot be resolved (fakes).
+	TicketStep func(ctx context.Context, ticketID string, step trackerport.FlowStep) (string, error)
 
 	// CredentialIDs are the provider credentials the project's harness
 	// integrations reference: a refresh of one of them is pushed into this
@@ -223,7 +232,7 @@ func (r *Resolution) ActionAvailable(st *flow.Stage) error {
 		// Per ticket, not per project: whether THIS ticket's tracker can be
 		// written is the engine's per-ticket preflight question. Here only
 		// "can this build write back at all".
-		if r.TicketWriter == nil {
+		if r.TicketTracker == nil {
 			return fmt.Errorf("action %q writes to the ticket's tracker, which this build cannot", act.Slug)
 		}
 	default:

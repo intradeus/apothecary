@@ -1146,7 +1146,7 @@ func TestIssuesWriteFailures(t *testing.T) {
 		"set fields": s.SetFields(ctx, bad, map[string]string{"labels": "a"}),
 		"add link":   s.AddLink(ctx, bad, trackerport.TicketLink{URL: "https://x"}),
 	}
-	_, calls["comments"] = s.Comments(ctx, bad)
+	_, calls["comments"] = s.ListComments(ctx, bad)
 	_, calls["fields"] = s.Fields(ctx, bad, []string{"labels"})
 	_, calls["attach"] = s.Attach(ctx, bad, "a", "text/plain", nil)
 	for name, err := range calls {
@@ -1159,7 +1159,7 @@ func TestIssuesWriteFailures(t *testing.T) {
 	if err := s.Transition(ctx, "#1", "closed"); err == nil {
 		t.Error("transition: a missing issue is an error")
 	}
-	if _, err := s.Comments(ctx, "#1"); err == nil {
+	if _, err := s.ListComments(ctx, "#1"); err == nil {
 		t.Error("comments: a missing issue is an error")
 	}
 	if _, err := s.Fields(ctx, "#1", nil); err == nil {
@@ -1179,14 +1179,14 @@ func TestIssuesWriteFailures(t *testing.T) {
 	}
 }
 
-func TestIssuesCommentsPageToTheEnd(t *testing.T) {
-	h, calls := paged(repeat(100, `{"body":"x"}`), `[{"body":"last"}]`)
+func TestIssuesListCommentsPagesToTheEnd(t *testing.T) {
+	h, calls := paged(repeat(100, `{"id":1,"body":"x"}`), `[{"id":2,"body":"last"}]`)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /repos/lu/a/issues/1/comments", h)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
-	got, err := issuesFor(ts, "lu/a").Comments(context.Background(), "#1")
-	if err != nil || len(got) != 101 || got[100] != "last" || calls.Load() != 2 {
+	got, err := issuesFor(ts, "lu/a").ListComments(context.Background(), "#1")
+	if err != nil || len(got) != 101 || got[100].Body != "last" || got[100].ID != "2" || calls.Load() != 2 {
 		t.Errorf("%d comments, %d calls, %v", len(got), calls.Load(), err)
 	}
 }

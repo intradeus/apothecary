@@ -199,9 +199,10 @@ func TestTicketsScopeAndLifecycle(t *testing.T) {
 	if _, err := s.GetTicket(ctx, "nope"); !errors.Is(err, confstore.ErrNotFound) {
 		t.Errorf("missing = %v", err)
 	}
+	// One issue is one ticket per owner and tracker: each ticket mirrors its own.
 	mk := func(id, proj, user string, at time.Time) confstore.Ticket {
 		return confstore.Ticket{ID: id, ProjectID: proj, UserID: user, Title: "T " + id, Goal: "g", BaseBranch: "b",
-			SourceID: "src", SourceKind: "jira", SourceKey: "K-1", SourceURL: "https://t.local/K-1", CreatedAt: at, UpdatedAt: at}
+			SourceID: "src", SourceKind: "jira", SourceKey: "K-" + id, SourceURL: "https://t.local/K-" + id, CreatedAt: at, UpdatedAt: at}
 	}
 	for _, tk := range []confstore.Ticket{mk("t1", "p1", "u1", testNow), mk("t2", "p1", "u1", testNow.Add(time.Hour)), mk("t3", "p2", "u2", testNow)} {
 		if err := s.UpsertTicket(ctx, tk); err != nil {
@@ -212,7 +213,7 @@ func TestTicketsScopeAndLifecycle(t *testing.T) {
 		t.Errorf("ticket of a missing project = %v", err)
 	}
 	got, err := s.GetTicket(ctx, "t1")
-	if err != nil || got.SourceKey != "K-1" || got.SourceKind != "jira" || got.BaseBranch != "b" || got.Goal != "g" {
+	if err != nil || got.SourceKey != "K-t1" || got.SourceKind != "jira" || got.BaseBranch != "b" || got.Goal != "g" {
 		t.Fatalf("roundtrip = %+v, %v", got, err)
 	}
 	mine, err := s.ListTickets(ctx, "u1")

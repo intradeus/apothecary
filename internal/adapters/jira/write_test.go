@@ -125,67 +125,6 @@ func TestTransitionMatchesReachableStatus(t *testing.T) {
 	}
 }
 
-// TransitionTo speaks canonical statuses through the status map: the stock
-// map on a stock workflow, an operator's map where the workflow differs, and
-// an honest "no such status here" the engine turns into a skip.
-func TestTransitionToUsesTheStatusMap(t *testing.T) {
-	srv, writes := writeStub(t, "3")
-	ctx := context.Background()
-	c := New(Config{BaseURL: srv.URL, Email: "you@acme.com", Token: "tok"})
-	if err := c.TransitionTo(ctx, "PROJ-7", trackerport.StatusInProgress); err != nil {
-		t.Fatal(err)
-	}
-	posts := writes["POST /rest/api/3/issue/PROJ-7/transitions"]
-	if len(posts) != 1 || posts[0]["transition"].(map[string]any)["id"] != "31" {
-		t.Fatalf("transition posts = %+v, want id 31", posts)
-	}
-	var unsupported *trackerport.ErrStatusUnsupported
-	err := c.TransitionTo(ctx, "PROJ-7", trackerport.StatusBlocked)
-	if !errors.As(err, &unsupported) || trackerport.StatusNames(unsupported.Supported) != "todo, in_progress, in_review, done" {
-		t.Fatalf("blocked: err = %v, want ErrStatusUnsupported listing the stock four", err)
-	}
-	if !strings.Contains(err.Error(), `PROJ-7: Jira has no status for "blocked"; it has: todo, in_progress, in_review, done`) {
-		t.Errorf("message = %q", err)
-	}
-	// An operator's map: done is a different transition here, and the
-	// workflow has no review column.
-	m, err := ParseStatusMap("done = Close as duplicate\nin_review=")
-	if err != nil {
-		t.Fatal(err)
-	}
-	c2 := New(Config{BaseURL: srv.URL, Email: "you@acme.com", Token: "tok", StatusMap: m})
-	if err := c2.TransitionTo(ctx, "PROJ-7", trackerport.StatusDone); err != nil {
-		t.Fatal(err)
-	}
-	if posts = writes["POST /rest/api/3/issue/PROJ-7/transitions"]; len(posts) != 2 || posts[1]["transition"].(map[string]any)["id"] != "42" {
-		t.Fatalf("transition posts = %+v, want id 42 second", posts)
-	}
-	if err := c2.TransitionTo(ctx, "PROJ-7", trackerport.StatusInReview); !errors.As(err, &unsupported) || trackerport.StatusNames(unsupported.Supported) != "todo, in_progress, done" {
-		t.Errorf("in_review on a map without it: err = %v", err)
-	}
-}
-
-// The status map text: pairs over the defaults, an empty value removes one,
-// and anything that is not canonical=status is refused by name.
-func TestParseStatusMap(t *testing.T) {
-	m, err := ParseStatusMap("")
-	if err != nil || len(m) != 4 || m[trackerport.StatusTodo] != "To Do" || m[trackerport.StatusDone] != "Done" {
-		t.Fatalf("defaults = %v, %v", m, err)
-	}
-	m, err = ParseStatusMap(" done = Ready for prod , blocked=On hold")
-	if err != nil || m[trackerport.StatusDone] != "Ready for prod" || m[trackerport.StatusBlocked] != "On hold" || m[trackerport.StatusInProgress] != "In Progress" {
-		t.Fatalf("overrides = %v, %v", m, err)
-	}
-	for text, want := range map[string]string{
-		"Ready for prod": "is not canonical=status",
-		"finished=Done":  `names "finished"; the canonical statuses are todo, in_progress, in_review, done, blocked`,
-	} {
-		if _, err := ParseStatusMap(text); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("%q: err = %v, want %q", text, err, want)
-		}
-	}
-}
-
 func TestCommentIsADFOnV3AndTextOnV2(t *testing.T) {
 	srv, writes := writeStub(t, "3")
 	c := New(Config{BaseURL: srv.URL, Email: "you@acme.com", Token: "tok"})
@@ -207,15 +146,15 @@ func TestCommentIsADFOnV3AndTextOnV2(t *testing.T) {
 	}
 }
 
-func TestCommentsRenderBothShapes(t *testing.T) {
+func TestListCommentsRenderBothShapes(t *testing.T) {
 	srv, _ := writeStub(t, "3")
 	c := New(Config{BaseURL: srv.URL, Email: "you@acme.com", Token: "tok"})
-	got, err := c.Comments(context.Background(), "PROJ-7")
+	got, err := c.ListComments(context.Background(), "PROJ-7")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || !strings.Contains(got[0], "— apothecary · run r1 · stage post") || got[1] != "plain v2 text" {
-		t.Errorf("comments = %q", got)
+	if len(got) != 2 || !strings.Contains(got[0].Body, "— apothecary · run r1 · stage post") || got[1].Body != "plain v2 text" {
+		t.Errorf("comments = %+v", got)
 	}
 }
 

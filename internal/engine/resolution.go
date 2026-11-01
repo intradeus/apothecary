@@ -13,13 +13,14 @@ import (
 )
 
 // preflightTicket is the per-TICKET half of preflight: a tracker action
-// writes through the integration the ticket was imported from, so whether
-// that integration can write is checked here, where the ticket is known,
-// rather than in preflight (per project, also run without a ticket by
-// PreflightProject). A ticket with no tracker passes — the engine skips
-// those stages, visibly — and so does a flow with no tracker action.
+// writes to the ticket's tracker — its remote issue's integration, or the
+// internal tracker for a ticket with no source — so whether that tracker
+// resolves and can write is checked here, where the ticket is known, rather
+// than in preflight (per project, also run without a ticket by
+// PreflightProject). A run with no ticket passes (the engine skips those
+// stages, visibly), and so does a flow with no tracker action.
 func (e *Engine) preflightTicket(ctx context.Context, res *resolution.Resolution, fl *flow.Flow, t runinput.Ticket) error {
-	if t.SourceID == "" {
+	if t.TicketID == "" {
 		return nil
 	}
 	for i := range fl.Stages {
@@ -31,15 +32,24 @@ func (e *Engine) preflightTicket(ctx context.Context, res *resolution.Resolution
 		if act == nil || act.Requires != actionspec.RequiresTracker {
 			continue
 		}
-		if res.TicketWriter == nil {
+		if res.TicketTracker == nil {
 			return fmt.Errorf("preflight: stage %q: action %q writes to the ticket's tracker, which this build cannot", st.ID, st.Action)
 		}
-		if _, err := res.TicketWriter(ctx, t.SourceID); err != nil {
-			return fmt.Errorf("preflight: stage %q: action %q writes to ticket %s's tracker, but %w", st.ID, st.Action, t.SourceKey, err)
+		if _, _, err := res.TicketTracker(ctx, t.TicketID); err != nil {
+			return fmt.Errorf("preflight: stage %q: action %q writes to ticket %s's tracker, but %w", st.ID, st.Action, ticketName(t), err)
 		}
-		return nil // every tracker stage writes through the same integration
+		return nil // every tracker stage writes to the same tracker
 	}
 	return nil
+}
+
+// ticketName is how a message names a run's ticket: its tracker key, else its
+// id.
+func ticketName(t runinput.Ticket) string {
+	if t.SourceKey != "" {
+		return t.SourceKey
+	}
+	return t.TicketID
 }
 
 // pinnedFlow loads the exact document a run started with (PLAN5 M19). A run

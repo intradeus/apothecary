@@ -121,6 +121,44 @@ func TestUpdateIntegrationSecretMerge(t *testing.T) {
 	}
 }
 
+// Dropping config keys leaves the rest of the config and the sealed secrets
+// byte for byte; dropping absent keys writes nothing.
+func TestDropIntegrationConfig(t *testing.T) {
+	svc, mem := newSvc(t)
+	ctx := context.Background()
+	in, err := svc.CreateIntegration(ctx, Integration{
+		Port: PortTicketSource, Kind: "jira", Name: "j",
+		Config:  map[string]any{"base_url": "https://j.example", "status_map": "done=Closed", "type_map": "Bug=fix"},
+		Secrets: map[string]string{"token": "tok"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := mem.GetIntegration(ctx, in.ID)
+	if err := svc.DropIntegrationConfig(ctx, in.ID, "status_map", "type_map"); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := mem.GetIntegration(ctx, in.ID)
+	if len(after.Config) != 1 || after.Config["base_url"] != "https://j.example" {
+		t.Errorf("config = %v", after.Config)
+	}
+	if string(after.Sealed) != string(before.Sealed) {
+		t.Error("the sealed secrets were rewritten")
+	}
+	if got, _ := svc.GetIntegration(ctx, in.ID); got.Secrets["token"] != "tok" {
+		t.Errorf("secrets = %v", got.Secrets)
+	}
+	if err := svc.DropIntegrationConfig(ctx, in.ID, "status_map"); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := mem.GetIntegration(ctx, in.ID); !again.UpdatedAt.Equal(after.UpdatedAt) {
+		t.Error("dropping absent keys wrote the row")
+	}
+	if err := svc.DropIntegrationConfig(ctx, "nope", "status_map"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown integration = %v", err)
+	}
+}
+
 func TestProjectValidation(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()

@@ -39,7 +39,7 @@ var AutomationKinds = []string{AutomationTrackerQuery, AutomationCron, Automatio
 
 // TicketKindMR is the source kind of a ticket a merge_request automation made
 // for a merge request: its key and URL are the merge request's, and it has no
-// tracker (no source id), so tracker actions skip.
+// remote tracker (no source id), so its tracker is the internal one.
 const TicketKindMR = "merge_request"
 
 type Automation struct {

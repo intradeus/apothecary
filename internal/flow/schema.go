@@ -2,6 +2,7 @@ package flow
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 
 	"apothecary/internal/flow/actionspec"
@@ -81,6 +82,8 @@ func schema() obj {
 			"schema":      str("a schema declared under schemas, which the file holds"),
 			"description": str("what it is for — documentation"),
 			"optional":    obj{"type": "boolean", "description": "it may be empty: an edge source, or a file not written on every route here"},
+			"limit":       obj{"type": "integer", "minimum": 1, "maximum": MaxCommentsLimit, "default": DefaultCommentsLimit, "description": fmt.Sprintf("run.ticket.comments only: how many of the latest comments the prompt shows (default %d, at most %d; the comments shown are also capped at %d KiB, oldest dropped first)", DefaultCommentsLimit, MaxCommentsLimit, CommentsBudget>>10)},
+			"exclude_own": obj{"type": "boolean", "default": true, "description": "run.ticket.comments only: leave out the comments apothecary posted (default true)"},
 		},
 	}
 	portOut := obj{

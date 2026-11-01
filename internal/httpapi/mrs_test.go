@@ -73,8 +73,10 @@ func TestMergeRequestsListAndStartARun(t *testing.T) {
 	if err := json.Unmarshal(data, &started); err != nil || resp.StatusCode != http.StatusCreated || started.RunID == "" || started.TicketID == "" {
 		t.Fatalf("start = %d %v: %s", resp.StatusCode, err, data)
 	}
+	// Any second run on the merge request's ticket while the first is going
+	// — the same flow or another — is refused, naming the run.
 	resp, data = x.do(t, "POST", "/api/projects/"+pid+"/mrs/1/runs", map[string]any{"flow": "on-mr"}, nil)
-	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(data), "already going") {
+	if resp.StatusCode != http.StatusConflict || decode[ErrorResponse](t, data).RunID != started.RunID {
 		t.Errorf("same flow again = %d: %s", resp.StatusCode, data)
 	}
 	if r := list()[1]; r.TicketID != started.TicketID || r.Run == nil || r.Run.ID != started.RunID || r.Run.Flow != "on-mr" {

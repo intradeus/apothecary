@@ -17,12 +17,11 @@ import (
 // base branch — the form prefills it (still editable), an automation's
 // import takes it as is. Every run then appends its own tail.
 
-// SourceChangeType is what an imported issue's change type is: the
-// integration's mapping of its type, else a guess from the type's name.
+// SourceChangeType is a GUESS at an issue's change type from its type's name
+// — what the import form prefills before the issue is imported. Once it is,
+// the change type is the integration's type list's (Factory.mirror), which a
+// guess only pre-fills for a type seen the first time.
 func SourceChangeType(st trackerport.SourceTicket) trackerport.ChangeType {
-	if st.ChangeType != "" {
-		return st.ChangeType
-	}
 	return trackerport.GuessChangeType(st.Type)
 }
 

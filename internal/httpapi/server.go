@@ -52,6 +52,14 @@ type Server struct {
 	// Sources resolves ticketsource integrations for the ticket factory (the
 	// resolver again); nil = importing is off and the routes say so.
 	Sources tickets.Sources
+	// Trackers resolves a ticket's tracker (the resolver: its remote issue's
+	// writer, else the internal tracker) for the ticket page's status,
+	// label and comment writes; nil = those routes answer 503.
+	Trackers TicketTrackers
+	// Syncer re-mirrors tickets from their remote trackers (the refresh
+	// routes, and after a write to a remote tracker); nil = the refresh
+	// routes answer 503 and a remote write waits for the poll.
+	Syncer *tickets.Syncer
 	// Pings serves the durable request/response projection (PLAN4 M15);
 	// nil falls back to the engine's in-memory pending registry.
 	Pings PingStore

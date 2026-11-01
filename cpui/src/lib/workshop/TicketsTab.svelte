@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
-	// Workshop tickets tab (DESIGN 7.6 list, filtered to this workshop). The
-	// status is derived: the latest run's state, or "no runs".
-	import type { Project, Ticket } from '$lib/domain';
+	// Workshop tickets tab (DESIGN 7.6 list, filtered to this workshop): each
+	// ticket's status in its tracker and, apart from it, its latest run.
+	import { isDone, statusNames, withStatus, type Project, type Ticket } from '$lib/domain';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { to } from '$lib/core/urls';
 	import { stateTab } from '$lib/core/format';
@@ -13,6 +13,7 @@
 	import HeaderAction from '$lib/ui/HeaderAction.svelte';
 	import SearchInput from '$lib/ui/SearchInput.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
+	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 	import { I } from '$lib/design/icons';
 
 	let {
@@ -24,12 +25,19 @@
 
 	let q = $state('');
 	let activeOnly = $state(false);
+	let status = $state('');
+	let showDone = $state(false);
 
 	const hasActive = (tk: Ticket) =>
 		(fleet.runsByTicket.get(tk.id) ?? []).some((r) => stateTab[r.state] === 'active');
 
+	const statusOptions = $derived<SelectOption[]>([
+		{ value: '', label: t('page.tickets.anyStatus') },
+		...statusNames(tickets ?? []).map((s) => ({ value: s, label: s }))
+	]);
+
 	const shown = $derived(
-		(tickets ?? [])
+		withStatus(tickets ?? [], status)
 			.filter((tk) => {
 				const s = q.trim().toLowerCase();
 				if (
@@ -39,6 +47,7 @@
 					!tk.goal.toLowerCase().includes(s)
 				)
 					return false;
+				if (!showDone && isDone(tk)) return false;
 				return !activeOnly || hasActive(tk);
 			})
 			.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -54,6 +63,10 @@
 <div class="filters">
 	<SearchInput bind:value={q} placeholder={t('workshop.tickets.search')} />
 	<Toggle bind:checked={activeOnly} label={t('page.tickets.hasActive')} />
+	<span class="sel">
+		<Select label={t('page.tickets.filterStatus')} options={statusOptions} bind:value={status} />
+	</span>
+	<Toggle bind:checked={showDone} label={t('page.tickets.showDone')} />
 	<span class="spacer"></span>
 	<a class="btn btn-sm" href={to.tickets({ project: project.id })}
 		>{t('workshop.tickets.openIn')} {I.forward}</a
@@ -66,9 +79,12 @@
 	<Skeleton pane lines={4} />
 {:else if shown.length}
 	<section class="pane">
-		<TicketTable tickets={shown} cols={['title', 'type', 'source', 'branch', 'runs', 'created']} />
+		<TicketTable
+			tickets={shown}
+			cols={['title', 'status', 'type', 'source', 'branch', 'runs', 'created']}
+		/>
 	</section>
-{:else if q || activeOnly}
+{:else if q || activeOnly || status || (!showDone && tickets.length)}
 	<EmptyState
 		compact
 		title={t('workshop.tickets.noMatchTitle')}
@@ -81,3 +97,10 @@
 		>
 	</EmptyState>
 {/if}
+
+<style>
+	.sel {
+		display: inline-block;
+		min-width: 150px;
+	}
+</style>

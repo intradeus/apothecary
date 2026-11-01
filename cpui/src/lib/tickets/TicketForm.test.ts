@@ -284,6 +284,22 @@ describe('TicketForm, editing', () => {
 		expect(api.integrations.list).not.toHaveBeenCalled();
 	});
 
+	it("leaves a sourced ticket's title, goal and type to its tracker", () => {
+		setup({
+			existing: { ...existing, source: { integrationId: 'j1', kind: 'jira', key: 'PROJ-7' } }
+		});
+		expect(title()).toBeDisabled();
+		expect(goal()).toBeDisabled();
+		expect(screen.getByRole('combobox', { name: 'Change type' })).toBeDisabled();
+		expect(screen.getByText(/follow the issue in jira/)).toBeInTheDocument();
+	});
+
+	it('lets a ticket written here be edited whole', () => {
+		setup({ existing });
+		expect(title()).toBeEnabled();
+		expect(goal()).toBeEnabled();
+	});
+
 	it('shows what is already attached', async () => {
 		vi.mocked(api.tickets.attachments).mockResolvedValue([
 			{ id: 'a1', filename: 'spec.md' }

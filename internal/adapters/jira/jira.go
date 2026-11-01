@@ -43,16 +43,6 @@ type Config struct {
 	JQL string
 	// APIVersion is "3" (Cloud, ADF descriptions) or "2" (Data Center).
 	APIVersion string
-	// StatusMap is the workflow status (or transition name) each canonical
-	// status means on this site — what TransitionTo moves to. A canonical
-	// status missing from the map is one this Jira has no word for
-	// (ErrStatusUnsupported). Nil = DefaultStatusMap.
-	StatusMap map[trackerport.TicketStatus]string
-	// TypeMap is the change type each of this site's issue types is, keyed
-	// by the lowercased type name ("bug" → fix) — what an imported ticket
-	// becomes. A type missing from it is left for the importer to guess
-	// (trackerport.GuessChangeType).
-	TypeMap map[string]trackerport.ChangeType
 }
 
 type Client struct {
@@ -77,9 +67,6 @@ func New(cfg Config) *Client {
 	cfg.Token = strings.TrimSpace(cfg.Token)
 	if cfg.APIVersion == "" {
 		cfg.APIVersion = "3"
-	}
-	if cfg.StatusMap == nil {
-		cfg.StatusMap = DefaultStatusMap()
 	}
 	return &Client{cfg: cfg, http: &http.Client{Timeout: 30 * time.Second}}
 }
@@ -175,6 +162,11 @@ func (c *Client) api(ctx context.Context, method, path string, body, out any) (i
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return resp.StatusCode, &trackerport.ErrRateLimited{Tracker: "jira " + method + " " + path,
+			Detail:     fmt.Sprintf("%d: %s", resp.StatusCode, errText(data)),
+			RetryAfter: trackerport.RetryAfter(resp.Header.Get("Retry-After"), time.Now())}
+	}
 	if resp.StatusCode >= 400 {
 		return resp.StatusCode, fmt.Errorf("jira %s %s: %d: %s", method, path, resp.StatusCode, errText(data))
 	}
@@ -210,21 +202,27 @@ func (c *Client) Test(ctx context.Context) error {
 	return nil
 }
 
-// issueFields is the field set both search and fetch request. Asking
+// issueFields is the field set search, fetch and FetchMany request. Asking
 // explicitly matters: the new /search/jql endpoint returns only the id + key
 // unless fields are named.
-const issueFields = "summary,description,status,issuetype,assignee,updated"
+const issueFields = "summary,description,status,issuetype,assignee,updated,labels"
 
 type issueJSON struct {
+	// ID is the numeric issue id: stable across a project move, where the
+	// key is not.
+	ID     string `json:"id"`
 	Key    string `json:"key"`
 	Fields struct {
 		Summary     string          `json:"summary"`
 		Description json.RawMessage `json:"description"`
 		Updated     string          `json:"updated"`
+		Labels      []string        `json:"labels"`
 		Status      struct {
+			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"status"`
 		IssueType struct {
+			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"issuetype"`
 		Assignee struct {
@@ -244,19 +242,18 @@ type issueJSON struct {
 
 func (c *Client) toTicket(in issueJSON) trackerport.SourceTicket {
 	t := trackerport.SourceTicket{
+		RemoteID: in.ID,
 		Key:      in.Key,
 		Title:    in.Fields.Summary,
 		Body:     ToMarkdown(in.Fields.Description),
 		URL:      c.cfg.BaseURL + "/browse/" + in.Key,
 		Status:   in.Fields.Status.Name,
+		StatusID: in.Fields.Status.ID,
 		Type:     in.Fields.IssueType.Name,
+		TypeID:   in.Fields.IssueType.ID,
+		Labels:   in.Fields.Labels,
 		Assignee: in.Fields.Assignee.DisplayName,
-	}
-	t.ChangeType = c.cfg.TypeMap[strings.ToLower(strings.TrimSpace(t.Type))]
-	// Jira stamps "2026-07-31T10:04:00.000+0200" — RFC3339 with no colon in
-	// the offset, so it needs its own layout.
-	if ts, err := time.Parse("2006-01-02T15:04:05.999-0700", in.Fields.Updated); err == nil {
-		t.Updated = ts.UTC()
+		Updated:  parseTime(in.Fields.Updated),
 	}
 	for _, a := range in.Fields.Attachment {
 		t.Attachments = append(t.Attachments, trackerport.SourceAttachment{
@@ -264,6 +261,16 @@ func (c *Client) toTicket(in issueJSON) trackerport.SourceTicket {
 		})
 	}
 	return t
+}
+
+// parseTime reads a Jira timestamp: "2026-07-31T10:04:00.000+0200" — RFC3339
+// with no colon in the offset, so it needs its own layout. Unparseable is
+// the zero time.
+func parseTime(s string) time.Time {
+	if ts, err := time.Parse("2006-01-02T15:04:05.999-0700", s); err == nil {
+		return ts.UTC()
+	}
+	return time.Time{}
 }
 
 // Search runs the JQL derived from the operator's free text (see JQL) and
@@ -281,24 +288,7 @@ func (c *Client) Search(ctx context.Context, query string, limit int) ([]tracker
 	if n := issueNumber(query); n != "" {
 		tickets = c.byNumber(ctx, n)
 	}
-	jql := c.JQL(query)
-	var out struct {
-		Issues []issueJSON `json:"issues"`
-	}
-	// Cloud's current endpoint. Older deployments (and Data Center) answer 404
-	// or 410 here, so fall back to the classic one rather than reporting a
-	// missing route as a search failure.
-	status, err := c.api(ctx, http.MethodPost, c.apiBase()+"/search/jql", map[string]any{
-		"jql":        jql,
-		"maxResults": limit,
-		"fields":     strings.Split(issueFields, ","),
-	}, &out)
-	if err != nil && (status == http.StatusNotFound || status == http.StatusGone ||
-		status == http.StatusMethodNotAllowed) {
-		p := fmt.Sprintf("%s/search?jql=%s&maxResults=%d&fields=%s",
-			c.apiBase(), url.QueryEscape(jql), limit, url.QueryEscape(issueFields))
-		_, err = c.api(ctx, http.MethodGet, p, nil, &out)
-	}
+	issues, _, err := c.search(ctx, c.JQL(query), limit, issueFields)
 	if err != nil {
 		// A number that already resolved to a real issue is a good answer on
 		// its own; don't discard it because the text half failed.
@@ -311,13 +301,90 @@ func (c *Client) Search(ctx context.Context, query string, limit int) ([]tracker
 	for _, t := range tickets {
 		seen[t.Key] = true
 	}
-	for _, i := range out.Issues {
+	for _, i := range issues {
 		if seen[i.Key] {
 			continue
 		}
 		tickets = append(tickets, c.toTicket(i))
 	}
 	return tickets, nil
+}
+
+// search runs one JQL query for up to limit issues with the given fields,
+// and says the status of the call that answered. Cloud's current endpoint
+// first; older deployments (and Data Center) answer 404 or 410 there, so
+// fall back to the classic one rather than reporting a missing route as a
+// search failure.
+func (c *Client) search(ctx context.Context, jql string, limit int, fields string) ([]issueJSON, int, error) {
+	var out struct {
+		Issues []issueJSON `json:"issues"`
+	}
+	status, err := c.api(ctx, http.MethodPost, c.apiBase()+"/search/jql", map[string]any{
+		"jql":        jql,
+		"maxResults": limit,
+		"fields":     strings.Split(fields, ","),
+	}, &out)
+	if err != nil && (status == http.StatusNotFound || status == http.StatusGone ||
+		status == http.StatusMethodNotAllowed) {
+		p := fmt.Sprintf("%s/search?jql=%s&maxResults=%d&fields=%s",
+			c.apiBase(), url.QueryEscape(jql), limit, url.QueryEscape(fields))
+		status, err = c.api(ctx, http.MethodGet, p, nil, &out)
+	}
+	if err != nil {
+		return nil, status, err
+	}
+	return out.Issues, status, nil
+}
+
+// fetchBatch is how many keys one FetchMany query names: the most issues a
+// search page returns with fields requested.
+const fetchBatch = 100
+
+// FetchMany re-reads tickets by key (or numeric issue id), fetchBatch at a
+// time, through JQL `key in (…)` — the consistent fields Fetch reads,
+// attachments included. JQL refuses the WHOLE query when one key no longer
+// exists (a deleted or moved issue: 400 "An issue with key … does not
+// exist"), so a refused batch falls back to one Fetch per key; a key Jira
+// does not have is left out of the result, which is how the caller learns
+// it is gone.
+func (c *Client) FetchMany(ctx context.Context, keys []string) ([]trackerport.SourceTicket, error) {
+	var out []trackerport.SourceTicket
+	for start := 0; start < len(keys); start += fetchBatch {
+		var batch []string
+		for _, k := range keys[start:min(start+fetchBatch, len(keys))] {
+			if k = strings.TrimSpace(k); k != "" {
+				batch = append(batch, k)
+			}
+		}
+		if len(batch) == 0 {
+			continue
+		}
+		quoted := make([]string, len(batch))
+		for i, k := range batch {
+			quoted[i] = quoteJQL(k)
+		}
+		issues, status, err := c.search(ctx, "key in ("+strings.Join(quoted, ", ")+")", len(batch), issueFields+",attachment")
+		if status == http.StatusBadRequest {
+			for _, k := range batch {
+				t, err := c.Fetch(ctx, k)
+				if errors.Is(err, trackerport.ErrTicketNotFound) {
+					continue
+				}
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, t)
+			}
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, i := range issues {
+			out = append(out, c.toTicket(i))
+		}
+	}
+	return out, nil
 }
 
 var looseKeyRe = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9_]*)[\s_-]+([0-9]+)$`)
@@ -458,7 +525,10 @@ func projectKeysFromJQL(jql string) []string {
 	return keys
 }
 
-// Fetch returns one issue with its attachment metadata.
+// Fetch returns one issue with its attachment metadata. key may be the
+// issue key or its numeric id (/issue/{idOrKey}); the answer carries the
+// CURRENT key, so a fetch by id after a project move learns the new one. A
+// 404 wraps trackerport.ErrTicketNotFound.
 func (c *Client) Fetch(ctx context.Context, key string) (trackerport.SourceTicket, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
@@ -466,7 +536,10 @@ func (c *Client) Fetch(ctx context.Context, key string) (trackerport.SourceTicke
 	}
 	var issue issueJSON
 	p := fmt.Sprintf("%s/issue/%s?fields=%s,attachment", c.apiBase(), url.PathEscape(key), issueFields)
-	if _, err := c.api(ctx, http.MethodGet, p, nil, &issue); err != nil {
+	if status, err := c.api(ctx, http.MethodGet, p, nil, &issue); err != nil {
+		if status == http.StatusNotFound {
+			return trackerport.SourceTicket{}, fmt.Errorf("%w: %w", trackerport.ErrTicketNotFound, err)
+		}
 		return trackerport.SourceTicket{}, err
 	}
 	if issue.Key == "" {
@@ -607,29 +680,51 @@ func itoa(v any) string {
 	return ""
 }
 
-var _ trackerport.TicketSource = (*Client)(nil)
-
-// ParseTypeMap reads the integration's type map text — issue type=change
-// type pairs separated by commas or newlines ("Bug=fix, Task=chore, Spike=
-// chore"); several types may share a change type. Type names match
-// case-insensitively. Empty text is no mapping: every type is guessed.
-func ParseTypeMap(text string) (map[string]trackerport.ChangeType, error) {
-	m := map[string]trackerport.ChangeType{}
-	for part := range strings.SplitSeq(strings.ReplaceAll(text, "\n", ","), ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		name, value, ok := strings.Cut(part, "=")
-		name = strings.ToLower(strings.TrimSpace(name))
-		if !ok || name == "" {
-			return nil, fmt.Errorf("jira: type map entry %q is not issue type=change type", part)
-		}
-		ct, known := trackerport.ParseChangeType(value)
-		if !known {
-			return nil, fmt.Errorf("jira: type map gives %q the change type %q; the change types are feat, fix, hotfix, perf, docs, chore", strings.TrimSpace(name), strings.TrimSpace(value))
-		}
-		m[name] = ct
+// Statuses lists every workflow status the site has (GET /status), each
+// with its statusCategory key — new, indeterminate or done; Jira's
+// "undefined" category (and none) is unknown.
+func (c *Client) Statuses(ctx context.Context) ([]trackerport.RemoteStatus, error) {
+	var list []struct {
+		ID             any    `json:"id"`
+		Name           string `json:"name"`
+		StatusCategory struct {
+			Key string `json:"key"`
+		} `json:"statusCategory"`
 	}
-	return m, nil
+	if _, err := c.api(ctx, http.MethodGet, c.apiBase()+"/status", nil, &list); err != nil {
+		return nil, err
+	}
+	out := make([]trackerport.RemoteStatus, 0, len(list))
+	for _, s := range list {
+		st := trackerport.RemoteStatus{ID: itoa(s.ID), Name: s.Name}
+		switch cat := trackerport.StatusCategory(s.StatusCategory.Key); cat {
+		case trackerport.CategoryNew, trackerport.CategoryIndeterminate, trackerport.CategoryDone:
+			st.Category = cat
+		}
+		out = append(out, st)
+	}
+	return out, nil
 }
+
+// Types lists every issue type the site has (GET /issuetype), sub-task
+// types included: a sub-task can be imported like any issue.
+func (c *Client) Types(ctx context.Context) ([]trackerport.RemoteType, error) {
+	var list []struct {
+		ID   any    `json:"id"`
+		Name string `json:"name"`
+	}
+	if _, err := c.api(ctx, http.MethodGet, c.apiBase()+"/issuetype", nil, &list); err != nil {
+		return nil, err
+	}
+	out := make([]trackerport.RemoteType, 0, len(list))
+	for _, t := range list {
+		out = append(out, trackerport.RemoteType{ID: itoa(t.ID), Name: t.Name})
+	}
+	return out, nil
+}
+
+var (
+	_ trackerport.TicketSource   = (*Client)(nil)
+	_ trackerport.TicketMetadata = (*Client)(nil)
+	_ trackerport.TicketSyncer   = (*Client)(nil)
+)

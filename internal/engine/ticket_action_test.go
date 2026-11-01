@@ -1,7 +1,8 @@
 package engine
 
-// Tracker actions (ticket_*): what a flow does to the issue its ticket was
-// imported from, through the fake tracker.
+// Tracker actions (ticket_*): what a flow does to its ticket's tracker — the
+// issue it was imported from, through the fake remote, or the ticket itself,
+// through the internal tracker (tracker_world_test.go).
 
 import (
 	"context"
@@ -25,14 +26,12 @@ import (
 var linkedTicket = runinput.Ticket{TicketID: "tk-1", Title: "T", SourceID: "int-1", SourceKind: "fake",
 	SourceKey: "DEV-1", SourceURL: "https://tracker.local/browse/DEV-1"}
 
-// trackerHarness is a harness whose resolution writes to one fake tracker,
-// whatever the integration id.
+// trackerHarness is a harness whose linkedTicket lives on a fake remote
+// tracker: its tracker actions write there.
 func trackerHarness(t *testing.T, doc string) (*harness, *fake.TicketSource) {
 	t.Helper()
 	h := newHarness(t, mustFlow(t, doc))
-	tracker := newTracker()
-	h.res.TicketWriter = func(context.Context, string) (trackerport.TicketWriter, error) { return tracker, nil }
-	return h, tracker
+	return h, h.tickets.remote
 }
 
 func newTracker() *fake.TicketSource {
@@ -184,12 +183,12 @@ func TestTrackerTransportErrorIsRoutable(t *testing.T) {
 	}
 }
 
-// A canonical status is the flow's word; the tracker's is the adapter's.
-// The fake translates in_progress to whatever its map says — here a
-// workflow that calls it "Doing" — so one flow fits workflows that differ.
-func TestCanonicalStatusIsMappedForTheTracker(t *testing.T) {
+// A flow step is the flow's word; the tracker's status is whichever of its
+// statuses holds the step — here a workflow that calls in_progress "Doing" —
+// so one flow fits workflows that differ.
+func TestFlowStepMovesToTheStatusHoldingIt(t *testing.T) {
 	h, tracker := trackerHarness(t, transitionFirstDoc)
-	tracker.StatusMap = map[trackerport.TicketStatus]string{trackerport.StatusTodo: "To Do", trackerport.StatusInProgress: "Doing"}
+	h.tickets.steps(map[string]trackerport.FlowStep{"To Do": trackerport.StepTodo, "Doing": trackerport.StepInProgress})
 	tracker.Reachable = map[string][]string{"To Do": {"Doing"}}
 	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
 	if err != nil {
@@ -204,14 +203,13 @@ func TestCanonicalStatusIsMappedForTheTracker(t *testing.T) {
 	}
 }
 
-// A tracker with no word for the status — GitHub Issues knows open and
-// closed — skips the stage with the reason, like a ticket with no tracker:
-// the flow is not wrong, this tracker just cannot say it. Nothing fails,
-// nothing is called.
-func TestUnsupportedCanonicalStatusSkipsTheStage(t *testing.T) {
+// A step no status of the tracker holds — GitHub Issues knows open and
+// closed — skips the stage with the reason: the flow is not wrong, this
+// tracker just cannot say it. Nothing fails, nothing is called.
+func TestStepWithNoStatusSkipsTheStage(t *testing.T) {
 	h, tracker := trackerHarness(t, transitionFirstDoc)
 	tracker.Tickets[0].Status = "open"
-	tracker.StatusMap = map[trackerport.TicketStatus]string{trackerport.StatusTodo: "open", trackerport.StatusDone: "closed"}
+	h.tickets.steps(map[string]trackerport.FlowStep{"open": trackerport.StepTodo, "closed": trackerport.StepDone})
 	tracker.Reachable = nil
 	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
 	if err != nil {
@@ -223,11 +221,11 @@ func TestUnsupportedCanonicalStatusSkipsTheStage(t *testing.T) {
 		t.Fatalf("state = %s: %v", v.State, eventTypes(evs))
 	}
 	sc, ok := findPayload[*event.StageCompleted](evs)
-	if !ok || sc.StageID != "kick" || !sc.Skipped || !strings.Contains(sc.Note, `has no status for "in_progress"`) || !strings.Contains(sc.Note, "todo, done") {
-		t.Errorf("first completion = %+v, want the move skipped with the tracker's vocabulary in the note", sc)
+	if !ok || sc.StageID != "kick" || !sc.Skipped || !strings.Contains(sc.Note, `has no status for step "in_progress"`) || !strings.Contains(sc.Note, "todo, done") {
+		t.Errorf("first completion = %+v, want the move skipped with the steps the tracker has in the note", sc)
 	}
 	if countType(evs, event.TypeStageFailed) != 0 || len(tracker.Calls) != 0 {
-		t.Errorf("an unsupported status failed or called: %v / %v", eventTypes(evs), tracker.Calls)
+		t.Errorf("an unsupported step failed or called: %v / %v", eventTypes(evs), tracker.Calls)
 	}
 }
 
@@ -266,10 +264,12 @@ func TestLiteralStatusMovesOrFails(t *testing.T) {
 	}
 }
 
-// A ticket written by hand has no tracker issue: the stage completes as
-// skipped — visibly — and the flow goes on, so one flow serves every ticket.
-func TestTrackerActionSkipsATicketWrittenByHand(t *testing.T) {
-	h, tracker := trackerHarness(t, transitionFirstDoc)
+// A ticket written by hand is on the internal tracker: `to: done` moves the
+// ticket's own status to the one holding done, and the remote is untouched —
+// so one flow serves every ticket.
+func TestTicketTransitionMovesAHandWrittenTicket(t *testing.T) {
+	h, tracker := trackerHarness(t, strings.Replace(transitionFirstDoc, "to: in_progress", "to: done", 1))
+	h.tickets.handWritten("tk-2")
 	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{TicketID: "tk-2", Title: "T"}, "tk", testProject)
 	if err != nil {
 		t.Fatal(err)
@@ -279,34 +279,48 @@ func TestTrackerActionSkipsATicketWrittenByHand(t *testing.T) {
 	if v := h.view(t, runID); v.State != run.Completed {
 		t.Fatalf("state = %s: %v", v.State, eventTypes(evs))
 	}
-	sc, ok := findPayload[*event.StageCompleted](evs)
-	if !ok || sc.StageID != "kick" || !sc.Skipped || !strings.Contains(sc.Note, "written by hand") {
-		t.Errorf("first completion = %+v, want the tracker stage skipped with a note", sc)
+	if sc, ok := findPayload[*event.StageCompleted](evs); !ok || sc.StageID != "kick" || sc.Skipped {
+		t.Errorf("first completion = %+v, want the move made", sc)
+	}
+	in, err := h.tickets.conf.InternalTracker(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err := h.tickets.status(in.ID, trackerport.StepDone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := h.tickets.ticket("tk-2"); got.StatusID != done.ID {
+		t.Errorf("status = %q (%s), want %q", got.StatusID, h.tickets.statusName("tk-2"), done.Name)
 	}
 	if len(tracker.Calls) != 0 {
-		t.Errorf("the tracker was called for an unlinked ticket: %v", tracker.Calls)
+		t.Errorf("the remote was called for a hand-written ticket: %v", tracker.Calls)
 	}
 }
 
 // Run creation refuses a flow with tracker actions on a ticket whose
-// integration cannot write — naming the stage — and accepts the same flow on
-// a ticket with no tracker at all (those stages will skip).
+// tracker cannot write — naming the stage — and accepts the same flow on a
+// ticket whose tracker can.
 func TestCreateRunRefusesATrackerThatCannotWrite(t *testing.T) {
 	h, _ := trackerHarness(t, transitionFirstDoc)
-	h.res.TicketWriter = func(_ context.Context, id string) (trackerport.TicketWriter, error) {
-		return nil, fmt.Errorf("integration %s (jira) can only read its tracker, not write to it", id)
+	world := h.res.TicketTracker
+	h.res.TicketTracker = func(ctx context.Context, id string) (trackerport.TicketWriter, string, error) {
+		if id == linkedTicket.TicketID {
+			return nil, "", fmt.Errorf("integration %s (jira) can only read its tracker, not write to it", linkedTicket.SourceID)
+		}
+		return world(ctx, id)
 	}
 	_, err := h.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
 	if err == nil || !strings.Contains(err.Error(), `stage "kick"`) || !strings.Contains(err.Error(), "can only read") {
 		t.Errorf("err = %v, want the stage and the integration named", err)
 	}
 	if _, err := h.e.CreateRun(context.Background(), runinput.Ticket{TicketID: "tk-2", Title: "T"}, "tk", testProject); err != nil {
-		t.Errorf("unlinked ticket refused: %v", err)
+		t.Errorf("hand-written ticket refused: %v", err)
 	}
-	// A build with no writer at all cannot run the flow for any ticket.
-	h.res.TicketWriter = nil
-	if _, err := h.e.CreateRun(context.Background(), runinput.Ticket{TicketID: "tk-2", Title: "T"}, "tk", testProject); err == nil || !strings.Contains(err.Error(), "cannot") {
-		t.Errorf("no-writer build: err = %v", err)
+	// A build with no tracker at all cannot run the flow for any ticket.
+	h.res.TicketTracker = nil
+	if _, err := h.e.CreateRun(context.Background(), runinput.Ticket{TicketID: "tk-3", Title: "T"}, "tk", testProject); err == nil || !strings.Contains(err.Error(), "cannot") {
+		t.Errorf("no-tracker build: err = %v", err)
 	}
 }
 
@@ -383,13 +397,15 @@ func TestTicketCommentReconcilesAfterCrashOrFailedAttempt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fl := mustFlow(t, commentDoc)
 			h := newHarness(t, fl)
-			tracker := newTracker()
-			tracker.Posted = map[string][]string{"DEV-1": {"hello\n\n— apothecary · run r-cm/main-1 · stage post"}}
-			h.res.TicketWriter = func(context.Context, string) (trackerport.TicketWriter, error) { return tracker, nil }
+			tracker := h.tickets.remote
 			ctx := context.Background()
+			if err := tracker.Comment(ctx, "DEV-1", "hello\n\n— apothecary · run r-cm/main-1 · stage post"); err != nil {
+				t.Fatal(err)
+			}
+			tracker.Calls = nil
 			history := []event.Payload{
 				&event.RunCreated{TicketTitle: "T", FlowName: "cm", ProjectID: testProject, FlowHash: fl.Hash, Branch: "apothecary/r-cm",
-					TicketSourceID: "int-1", TicketSourceKind: "fake", TicketSourceKey: "DEV-1"},
+					TicketID: linkedTicket.TicketID, TicketSourceID: "int-1", TicketSourceKind: "fake", TicketSourceKey: "DEV-1"},
 				&event.EnvRequested{},
 				&event.EnvReady{EnvID: "env-cm"},
 				&event.StageStarted{StageID: "write", Iteration: 1},
@@ -407,7 +423,8 @@ func TestTicketCommentReconcilesAfterCrashOrFailedAttempt(t *testing.T) {
 			}
 			h.e.Wait("r-cm")
 			if v := h.view(t, "r-cm"); v.State != run.Completed {
-				t.Fatalf("state = %s: %v", v.State, eventTypes(h.events(t, "r-cm")))
+				sf, _ := findPayload[*event.StageFailed](h.events(t, "r-cm"))
+				t.Fatalf("state = %s (%+v): %v", v.State, sf, eventTypes(h.events(t, "r-cm")))
 			}
 			if n := len(tracker.Posted["DEV-1"]); n != 1 {
 				t.Errorf("issue holds %d comments, want the one already there — recovery posted a duplicate", n)
@@ -455,6 +472,54 @@ func TestTicketSetFieldFromArtifactAndLiteral(t *testing.T) {
 	// Append is a union: the same run again changes nothing.
 	if m := mergeItems("ff_a, ff_b, ff_c", "ff_b, ff_c"); m != "ff_a, ff_b, ff_c" {
 		t.Errorf("mergeItems is not idempotent: %q", m)
+	}
+}
+
+// On a hand-written ticket the internal tracker writes the row: labels are
+// its one field (append merges into them), a branch link lands on the
+// ticket, and a field it does not have skips the stage with the reason
+// instead of failing.
+func TestTrackerActionsOnAHandWrittenTicket(t *testing.T) {
+	doc := `name: hw
+version: 2
+parameters: { harness: fake, model: fake/model }
+main:
+  - { id: tag,   type: action, action: ticket_set_field, with: { field: Labels, mode: append, text: "ui, backend" } }
+  - { id: team,  type: action, action: ticket_set_field, with: { field: Team, text: Platform } }
+  - { id: link,  type: action, action: ticket_link_branch }
+`
+	h, tracker := trackerHarness(t, doc)
+	h.tickets.handWritten("tk-2")
+	if _, err := h.tickets.conf.SetTicketLabels(context.Background(), "tk-2", []string{"backend"}, false); err != nil {
+		t.Fatal(err)
+	}
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{TicketID: "tk-2", Title: "T"}, "hw", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	evs := h.events(t, runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s: %v", v.State, eventTypes(evs))
+	}
+	if got := h.tickets.ticket("tk-2").Labels; !slices.Equal(got, []string{"backend", "ui"}) {
+		t.Errorf("labels = %v, want backend and ui merged", got)
+	}
+	skipped := map[string]string{}
+	for _, e := range evs {
+		if sc, ok := e.Payload.(*event.StageCompleted); ok && sc.Skipped {
+			skipped[sc.StageID] = sc.Note
+		}
+	}
+	if len(skipped) != 1 || !strings.Contains(skipped["team"], `no field "Team"`) {
+		t.Errorf("skipped = %v, want only team, naming the field", skipped)
+	}
+	links, err := h.tickets.conf.TicketLinks(context.Background(), "tk-2")
+	if err != nil || len(links) != 1 || !strings.HasPrefix(links[0].Title, "Branch") {
+		t.Errorf("links = %+v (%v)", links, err)
+	}
+	if len(tracker.Calls) != 0 {
+		t.Errorf("the remote was called: %v", tracker.Calls)
 	}
 }
 

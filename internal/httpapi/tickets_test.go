@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 // A ticket's uploads must be CLAIMED for the ticket (ticket_id set, no
@@ -87,7 +88,9 @@ func TestTicketAttachmentsClaimedAndShared(t *testing.T) {
 	}
 
 	// A SECOND run still gets the ticket's attachment (the old bug: the first
-	// run claimed it, leaving later runs with nothing).
+	// run claimed it, leaving later runs with nothing). It starts once the
+	// first has ended: a ticket has one active run at a time.
+	x.e.Wait(out.RunID)
 	resp, data = x.do(t, "POST", "/api/tickets/"+tk.ID+"/runs", map[string]any{"flow": "loop"}, nil)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("second run = %d: %s", resp.StatusCode, data)
@@ -99,9 +102,8 @@ func TestTicketAttachmentsClaimedAndShared(t *testing.T) {
 	if got, _ := att.Get(ctx, tickUp.ID); got.TicketID != tk.ID || got.RunID != "" {
 		t.Errorf("ticket attachment after 2nd run = %+v, want still shared", got)
 	}
-	// Both runs keep writing files under the t.TempDir() the store was built
-	// on; leaving them in flight races the directory's removal.
-	x.e.Wait(out.RunID)
+	// The run keeps writing files under the t.TempDir() the store was built
+	// on; leaving it in flight races the directory's removal.
 	x.e.Wait(second.RunID)
 
 	// Deleting the ticket removes its attachment rows — the leak fix.
@@ -111,6 +113,25 @@ func TestTicketAttachmentsClaimedAndShared(t *testing.T) {
 	}
 	if got, err := att.Get(ctx, tickUp.ID); err == nil {
 		t.Errorf("ticket attachment survived ticket delete: %+v", got)
+	}
+}
+
+// A ticket with an active run refuses another: 409, the error naming the
+// run so the UI can offer to open or abort it.
+func TestStartRunOnABusyTicket(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	ticket := x.newTicket(t, "T", "")
+	if _, err := x.store.Append(context.Background(), "r-live",
+		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, UserID: testUser, TicketID: ticket}); err != nil {
+		t.Fatal(err)
+	}
+	resp, data := x.startRun(t, ticket, "loop")
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("start on a busy ticket = %d: %s", resp.StatusCode, data)
+	}
+	got := decode[ErrorResponse](t, data)
+	if got.RunID != "r-live" || !strings.Contains(got.Error, "run r-live is still active") {
+		t.Errorf("409 body = %s", data)
 	}
 }
 

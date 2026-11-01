@@ -27,6 +27,10 @@ type DocPort struct {
 	Schema      string `json:"schema,omitempty"`
 	Description string `json:"description,omitempty"`
 	Optional    bool   `json:"optional,omitempty"`
+	// Limit and ExcludeOwn are a ticket_comments input's options, as
+	// written: nil when left out.
+	Limit      *int  `json:"limit,omitempty"`
+	ExcludeOwn *bool `json:"exclude_own,omitempty"`
 }
 
 // DocPortPair is one named port, its line kept for errors.
@@ -43,7 +47,7 @@ type DocPorts struct {
 }
 
 // portKeys are the keys a port takes, in the order the editor writes them.
-var portKeys = []string{"from", "to", "type", "schema", "description", "optional"}
+var portKeys = []string{"from", "to", "type", "schema", "description", "optional", "limit", "exclude_own"}
 
 // UnmarshalYAML reads the mapping by hand: a custom unmarshaler bypasses the
 // decoder's strictness, so unknown and duplicate keys are refused here.
@@ -98,6 +102,18 @@ func (d *DocPorts) UnmarshalYAML(n *yaml.Node) error {
 				if err := fv.Decode(&pr.Port.Optional); err != nil {
 					return fmt.Errorf("line %d: port %q: optional is true or false", fv.Line, k.Value)
 				}
+			case "limit":
+				var n int
+				if err := fv.Decode(&n); err != nil {
+					return fmt.Errorf("line %d: port %q: limit is a whole number", fv.Line, k.Value)
+				}
+				pr.Port.Limit = &n
+			case "exclude_own":
+				var b bool
+				if err := fv.Decode(&b); err != nil {
+					return fmt.Errorf("line %d: port %q: exclude_own is true or false", fv.Line, k.Value)
+				}
+				pr.Port.ExcludeOwn = &b
 			default:
 				return fmt.Errorf("line %d: port %q: unknown key %q — a port takes %s", fk.Line, k.Value, fk.Value, strings.Join(portKeys, ", "))
 			}
@@ -256,6 +272,8 @@ func (p *parser) buildPort(pr DocPortPair, dir portDir, st StageType, stage stri
 			return port, fmt.Errorf("an output goes somewhere: to: a path, not from:")
 		case d.Optional:
 			return port, fmt.Errorf("optional is an input's: an output is always written")
+		case d.Limit != nil || d.ExcludeOwn != nil:
+			return port, fmt.Errorf("limit and exclude_own are a %s input's", SourceTicketComments)
 		case d.To == "":
 			return port, fmt.Errorf("to is required: the path it is written to")
 		}
@@ -289,6 +307,20 @@ func (p *parser) buildPort(pr DocPortPair, dir portDir, st StageType, stage stri
 		return port, fmt.Errorf("from: %v", err)
 	}
 	port.Value = from
+	if from == SourceTicketComments {
+		port.Limit, port.ExcludeOwn = DefaultCommentsLimit, true
+		if d.Limit != nil {
+			if *d.Limit < 1 || *d.Limit > MaxCommentsLimit {
+				return port, fmt.Errorf("limit is how many of the latest comments the prompt shows: 1 to %d", MaxCommentsLimit)
+			}
+			port.Limit = *d.Limit
+		}
+		if d.ExcludeOwn != nil {
+			port.ExcludeOwn = *d.ExcludeOwn
+		}
+	} else if d.Limit != nil || d.ExcludeOwn != nil {
+		return port, fmt.Errorf("limit and exclude_own are a %s input's, not %s's", SourceTicketComments, d.From)
+	}
 	if typ := SourceType(from); typ != "" {
 		if d.Type != typ || d.Schema != "" {
 			return port, fmt.Errorf("%s is a %s — type: %s", d.From, typ, typ)

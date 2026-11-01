@@ -1,15 +1,16 @@
 package gitlab
 
-// Issues adapts the ticketsource port — read side for the import picker, write
-// side (trackerport.TicketWriter) for a flow's tracker actions — to GitLab issues,
-// reusing the repository host adapter's authenticated client. GitLab is moving
-// issues onto its "work items" framework, whose own API is GraphQL; the REST
-// issues API still serves every issue-type work item (issues, incidents,
-// tasks) and is what the rest of this package speaks, so it is what this
-// speaks too. An issue's key is GitLab's own full reference,
+// Issues adapts the ticketsource port — read side for the import picker and
+// the sync, write side (trackerport.TicketWriter) for a flow's tracker
+// actions — to GitLab issues, reusing the repository host adapter's
+// authenticated client. GitLab is moving issues onto its "work items"
+// framework, whose own API is GraphQL; the REST issues API still serves
+// every issue-type work item (issues, incidents, tasks, test cases — the
+// integration's type list) and is what the rest of this package speaks, so
+// it is what this speaks too. An issue's key is GitLab's own full reference,
 // "group/project#123": an iid is only unique within its project. An issue is
-// opened or closed and has no custom fields; what the write port cannot
-// express is refused by name.
+// opened or closed (the integration's whole status list) and has no custom
+// fields; what the write port cannot express is refused by name.
 
 import (
 	"context"
@@ -18,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -101,6 +103,8 @@ func (s *Issues) Test(ctx context.Context) error {
 }
 
 type issueJSON struct {
+	// ID is the issue's instance-wide id; IID its number in the project.
+	ID          int      `json:"id"`
 	IID         int      `json:"iid"`
 	ProjectID   int      `json:"project_id"`
 	Title       string   `json:"title"`
@@ -144,27 +148,60 @@ func (s *Issues) projectOf(in issueJSON, fallback string) string {
 var uploadRe = regexp.MustCompile(`\]\((/uploads/([0-9a-f]{32})/([^)\s]+))\)`)
 
 func (s *Issues) toTicket(in issueJSON, project string) trackerport.SourceTicket {
+	typ := issueTypeOf(in.IssueType)
 	t := trackerport.SourceTicket{
-		Key:    fmt.Sprintf("%s#%d", s.projectOf(in, project), in.IID),
-		Title:  in.Title,
-		Body:   strings.TrimSpace(in.Description),
-		URL:    in.WebURL,
-		Status: in.State,
-		Type:   in.IssueType,
+		Key:      fmt.Sprintf("%s#%d", s.projectOf(in, project), in.IID),
+		Title:    in.Title,
+		Body:     strings.TrimSpace(in.Description),
+		URL:      in.WebURL,
+		Status:   in.State,
+		StatusID: in.State,
+		Type:     typ.Name,
+		TypeID:   typ.ID,
+		Labels:   in.Labels,
+		Updated:  parseTime(in.UpdatedAt),
 	}
-	if t.Type == "" {
-		t.Type = "issue"
+	if in.ID != 0 {
+		t.RemoteID = strconv.Itoa(in.ID)
 	}
 	if in.Assignee != nil {
 		t.Assignee = in.Assignee.Username
-	}
-	if ts, err := time.Parse(time.RFC3339, in.UpdatedAt); err == nil {
-		t.Updated = ts.UTC()
 	}
 	if in.ProjectID != 0 {
 		t.Body, t.Attachments = s.uploads(t.Body, in.ProjectID)
 	}
 	return t
+}
+
+// parseTime reads GitLab's RFC 3339 timestamps; unparseable is zero.
+func parseTime(s string) time.Time {
+	if ts, err := time.Parse(time.RFC3339, s); err == nil {
+		return ts.UTC()
+	}
+	return time.Time{}
+}
+
+// issueTypes are the work item types the REST issues API serves, by their
+// issue_type value — the integration's type list.
+var issueTypes = []trackerport.RemoteType{
+	{ID: "issue", Name: "Issue"},
+	{ID: "incident", Name: "Incident"},
+	{ID: "task", Name: "Task"},
+	{ID: "test_case", Name: "Test case"},
+}
+
+// issueTypeOf names an issue_type: one of issueTypes, a type GitLab added
+// since under its own id, and an issue when GitLab does not say.
+func issueTypeOf(id string) trackerport.RemoteType {
+	if id == "" {
+		return issueTypes[0]
+	}
+	for _, t := range issueTypes {
+		if t.ID == id {
+			return t
+		}
+	}
+	return trackerport.RemoteType{ID: id, Name: id}
 }
 
 // uploads lists the files a description links and makes those links
@@ -304,13 +341,18 @@ func searchParams(query string) url.Values {
 	return v
 }
 
+// get reads one issue; a 404 wraps trackerport.ErrTicketNotFound.
 func (s *Issues) get(ctx context.Context, project string, iid int) (issueJSON, error) {
 	var it issueJSON
-	_, err := s.a.api(ctx, http.MethodGet, issuePath(project, iid), nil, &it)
+	status, err := s.a.api(ctx, http.MethodGet, issuePath(project, iid), nil, &it)
+	if status == http.StatusNotFound {
+		err = fmt.Errorf("%w: %w", trackerport.ErrTicketNotFound, err)
+	}
 	return it, err
 }
 
-// Fetch returns one issue with the files its description links.
+// Fetch returns one issue with the files its description links. No such
+// issue (or project) ⇒ an error wrapping trackerport.ErrTicketNotFound.
 func (s *Issues) Fetch(ctx context.Context, key string) (trackerport.SourceTicket, error) {
 	project, iid, err := s.parseKey(key)
 	if err != nil {
@@ -321,6 +363,62 @@ func (s *Issues) Fetch(ctx context.Context, key string) (trackerport.SourceTicke
 		return trackerport.SourceTicket{}, err
 	}
 	return s.toTicket(it, project), nil
+}
+
+// fetchBatch is how many iids one FetchMany request names: a full page.
+const fetchBatch = 100
+
+// FetchMany re-reads issues one request per project and fetchBatch iids
+// (GET /projects/:id/issues?iids[]=…). An issue — or a whole project — GitLab
+// no longer has is left out of the result.
+func (s *Issues) FetchMany(ctx context.Context, keys []string) ([]trackerport.SourceTicket, error) {
+	var order []string
+	byProject := map[string][]int{}
+	for _, k := range keys {
+		project, iid, err := s.parseKey(k)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := byProject[project]; !ok {
+			order = append(order, project)
+		}
+		byProject[project] = append(byProject[project], iid)
+	}
+	var out []trackerport.SourceTicket
+	for _, project := range order {
+		iids := byProject[project]
+		for start := 0; start < len(iids); start += fetchBatch {
+			v := url.Values{"per_page": {strconv.Itoa(fetchBatch)}, "scope": {"all"}, "state": {"all"}}
+			for _, iid := range iids[start:min(start+fetchBatch, len(iids))] {
+				v.Add("iids[]", strconv.Itoa(iid))
+			}
+			var rows []issueJSON
+			status, err := s.a.api(ctx, http.MethodGet, projectPath(project)+"/issues?"+v.Encode(), nil, &rows)
+			if status == http.StatusNotFound {
+				break
+			}
+			if err != nil {
+				return nil, err
+			}
+			for _, it := range rows {
+				out = append(out, s.toTicket(it, project))
+			}
+		}
+	}
+	return out, nil
+}
+
+// Statuses: an issue is opened or closed — that is the whole list.
+func (s *Issues) Statuses(context.Context) ([]trackerport.RemoteStatus, error) {
+	return []trackerport.RemoteStatus{
+		{ID: "opened", Name: "Open", Category: trackerport.CategoryNew},
+		{ID: "closed", Name: "Closed", Category: trackerport.CategoryDone},
+	}, nil
+}
+
+// Types lists the work item types the issues API serves (issueTypes).
+func (s *Issues) Types(context.Context) ([]trackerport.RemoteType, error) {
+	return slices.Clone(issueTypes), nil
 }
 
 // OpenAttachment downloads one uploaded file (GET
@@ -360,21 +458,6 @@ func (s *Issues) OpenAttachment(ctx context.Context, att trackerport.SourceAttac
 
 var issueStates = []string{"opened", "closed"}
 
-// issueStatusMap is what the canonical statuses mean for an issue: todo is
-// opened, done is closed, and nothing else has a word on the REST issue.
-var issueStatusMap = map[trackerport.TicketStatus]string{trackerport.StatusTodo: "opened", trackerport.StatusDone: "closed"}
-
-// TransitionTo reopens (todo) or closes (done) the issue; every other
-// canonical status is unsupported — the engine skips the stage.
-func (s *Issues) TransitionTo(ctx context.Context, key string, to trackerport.TicketStatus) error {
-	state, ok := issueStatusMap[to]
-	if !ok {
-		return &trackerport.ErrStatusUnsupported{Key: strings.TrimSpace(key), Status: to, Kind: "GitLab Issues",
-			Supported: []trackerport.TicketStatus{trackerport.StatusTodo, trackerport.StatusDone}}
-	}
-	return s.Transition(ctx, key, state)
-}
-
 // Transition: an issue is opened or closed ("open" is taken for opened, so
 // a status written for GitHub reads the same here). Anything else a flow
 // asks for is unreachable, and the error says what is.
@@ -412,27 +495,42 @@ func (s *Issues) Comment(ctx context.Context, key, body string) error {
 	return err
 }
 
-// Comments lists the issue's notes oldest first, leaving out GitLab's own
-// system notes ("changed the description", "closed").
-func (s *Issues) Comments(ctx context.Context, key string) ([]string, error) {
+// ListComments lists the issue's notes oldest first, leaving out GitLab's
+// own system notes ("changed the description", "closed").
+func (s *Issues) ListComments(ctx context.Context, key string) ([]trackerport.Comment, error) {
 	project, iid, err := s.parseKey(key)
 	if err != nil {
 		return nil, err
 	}
-	var out []string
+	var out []trackerport.Comment
 	for page := 1; page < 100; page++ {
 		var rows []struct {
-			Body   string `json:"body"`
-			System bool   `json:"system"`
+			ID     int `json:"id"`
+			Author *struct {
+				Username string `json:"username"`
+			} `json:"author"`
+			Body      string `json:"body"`
+			System    bool   `json:"system"`
+			CreatedAt string `json:"created_at"`
+			UpdatedAt string `json:"updated_at"`
 		}
 		p := fmt.Sprintf("%s/notes?sort=asc&order_by=created_at&per_page=100&page=%d", issuePath(project, iid), page)
 		if _, err := s.a.api(ctx, http.MethodGet, p, nil, &rows); err != nil {
 			return nil, err
 		}
 		for _, r := range rows {
-			if !r.System {
-				out = append(out, r.Body)
+			if r.System {
+				continue
 			}
+			c := trackerport.Comment{ID: strconv.Itoa(r.ID), Body: r.Body,
+				Created: parseTime(r.CreatedAt), Updated: parseTime(r.UpdatedAt)}
+			if r.Author != nil {
+				c.Author = r.Author.Username
+			}
+			if c.Updated.IsZero() {
+				c.Updated = c.Created
+			}
+			out = append(out, c)
 		}
 		if len(rows) < 100 {
 			break
@@ -575,13 +673,13 @@ func (s *Issues) AddLink(ctx context.Context, key string, link trackerport.Ticke
 	if strings.TrimSpace(link.URL) == "" {
 		return fmt.Errorf("gitlab: a link needs a URL")
 	}
-	existing, err := s.Comments(ctx, key)
+	existing, err := s.ListComments(ctx, key)
 	if err != nil {
 		return err
 	}
 	marker := linkMarker(link.URL)
 	for _, c := range existing {
-		if strings.Contains(c, marker) {
+		if strings.Contains(c.Body, marker) {
 			return nil
 		}
 	}
@@ -621,4 +719,6 @@ var (
 	_ trackerport.TicketSource   = (*Issues)(nil)
 	_ trackerport.TicketWriter   = (*Issues)(nil)
 	_ trackerport.TicketAttacher = (*Issues)(nil)
+	_ trackerport.TicketMetadata = (*Issues)(nil)
+	_ trackerport.TicketSyncer   = (*Issues)(nil)
 )

@@ -20,6 +20,9 @@ import type {
 	AddMySshKeyData,
 	AddMySshKeyErrors,
 	AddMySshKeyResponses,
+	AddTicketCommentData,
+	AddTicketCommentErrors,
+	AddTicketCommentResponses,
 	AllowEgressHostData,
 	AllowEgressHostErrors,
 	AllowEgressHostResponses,
@@ -365,9 +368,18 @@ import type {
 	ListSkillsetVersionsErrors,
 	ListSkillsetVersionsResponses,
 	ListSkillsResponses,
+	ListTicketCommentsData,
+	ListTicketCommentsErrors,
+	ListTicketCommentsResponses,
 	ListTicketsData,
 	ListTicketsErrors,
 	ListTicketsResponses,
+	ListTrackerStatusesData,
+	ListTrackerStatusesErrors,
+	ListTrackerStatusesResponses,
+	ListTrackerTypesData,
+	ListTrackerTypesErrors,
+	ListTrackerTypesResponses,
 	ListUsersData,
 	ListUsersErrors,
 	ListUsersResponses,
@@ -392,6 +404,12 @@ import type {
 	PutFlowBindingData,
 	PutFlowBindingErrors,
 	PutFlowBindingResponses,
+	PutTrackerStatusesData,
+	PutTrackerStatusesErrors,
+	PutTrackerStatusesResponses,
+	PutTrackerTypesData,
+	PutTrackerTypesErrors,
+	PutTrackerTypesResponses,
 	RaisePingData,
 	RaisePingErrors,
 	RaisePingResponses,
@@ -446,6 +464,12 @@ import type {
 	SetProjectSecretData,
 	SetProjectSecretErrors,
 	SetProjectSecretResponses,
+	SetTicketLabelsData,
+	SetTicketLabelsErrors,
+	SetTicketLabelsResponses,
+	SetTicketStatusData,
+	SetTicketStatusErrors,
+	SetTicketStatusResponses,
 	SetupInstanceData,
 	SetupInstanceErrors,
 	SetupInstanceResponses,
@@ -478,6 +502,12 @@ import type {
 	StreamRunEventsErrors,
 	StreamRunEventsResponse,
 	StreamRunEventsResponses,
+	SyncIntegrationData,
+	SyncIntegrationErrors,
+	SyncIntegrationResponses,
+	SyncTicketData,
+	SyncTicketErrors,
+	SyncTicketResponses,
 	TakeOverRunData,
 	TakeOverRunErrors,
 	TakeOverRunResponses,
@@ -1298,6 +1328,8 @@ export const createIntegration = <ThrowOnError extends boolean = false>(
 
 /**
  * Delete an integration
+ *
+ * A ticket source whose tickets still mirror its issues is refused with 409, the error's tickets and active_runs counting them and the runs still going on them; ?unlink_tickets=1 unlinks them onto the internal tracker (status by name, else its done or todo step; type by change type; comments kept) in the same transaction as the delete. The internal tracker cannot be deleted (400).
  */
 export const deleteIntegration = <ThrowOnError extends boolean = false>(
 	options: Options<DeleteIntegrationData, ThrowOnError>
@@ -1430,6 +1462,91 @@ export const listIntegrationRepos = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * A ticket source's statuses, in order
+ */
+export const listTrackerStatuses = <ThrowOnError extends boolean = false>(
+	options: Options<ListTrackerStatusesData, ThrowOnError>
+): RequestResult<ListTrackerStatusesResponses, ListTrackerStatusesErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		ListTrackerStatusesResponses,
+		ListTrackerStatusesErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/integrations/{id}/statuses',
+		...options
+	});
+
+/**
+ * Save a ticket source's statuses
+ *
+ * A remote tracker's rows are the fetched ones: only is_done and flow_step are taken. The internal tracker's are the user's: a row with no id is new, a missing one is deleted, names are unique, the order given is kept. Each flow step is held at most once (400). Deleting a status tickets use needs replace_with[id] (409 without).
+ */
+export const putTrackerStatuses = <ThrowOnError extends boolean = false>(
+	options: Options<PutTrackerStatusesData, ThrowOnError>
+): RequestResult<PutTrackerStatusesResponses, PutTrackerStatusesErrors, ThrowOnError> =>
+	(options.client ?? client).put<
+		PutTrackerStatusesResponses,
+		PutTrackerStatusesErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/integrations/{id}/statuses',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Re-read every ticket of a ticket source from its tracker, done ones included
+ *
+ * Refreshes the status and type lists first. Each ticket's outcome is also on it (sync_state, sync_error).
+ */
+export const syncIntegration = <ThrowOnError extends boolean = false>(
+	options: Options<SyncIntegrationData, ThrowOnError>
+): RequestResult<SyncIntegrationResponses, SyncIntegrationErrors, ThrowOnError> =>
+	(options.client ?? client).post<SyncIntegrationResponses, SyncIntegrationErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/integrations/{id}/sync',
+		...options
+	});
+
+/**
  * Check an integration's credentials against the real service
  */
 export const testIntegration = <ThrowOnError extends boolean = false>(
@@ -1500,6 +1617,58 @@ export const getSourceTicket = <ThrowOnError extends boolean = false>(
 		],
 		url: '/api/integrations/{id}/tickets/{key}',
 		...options
+	});
+
+/**
+ * A ticket source's issue types, in order
+ */
+export const listTrackerTypes = <ThrowOnError extends boolean = false>(
+	options: Options<ListTrackerTypesData, ThrowOnError>
+): RequestResult<ListTrackerTypesResponses, ListTrackerTypesErrors, ThrowOnError> =>
+	(options.client ?? client).get<ListTrackerTypesResponses, ListTrackerTypesErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/integrations/{id}/types',
+		...options
+	});
+
+/**
+ * Save a ticket source's issue types
+ *
+ * Like the statuses: a remote tracker's rows only take change_type; the internal tracker's are the user's. Every type needs a change type (400). Deleting a type tickets use needs replace_with[id] (409 without).
+ */
+export const putTrackerTypes = <ThrowOnError extends boolean = false>(
+	options: Options<PutTrackerTypesData, ThrowOnError>
+): RequestResult<PutTrackerTypesResponses, PutTrackerTypesErrors, ThrowOnError> =>
+	(options.client ?? client).put<PutTrackerTypesResponses, PutTrackerTypesErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/integrations/{id}/types',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
 	});
 
 /**
@@ -4633,6 +4802,8 @@ export const getTicket = <ThrowOnError extends boolean = false>(
 
 /**
  * Replace a ticket
+ *
+ * On a ticket mirroring a remote issue, changing what its tracker owns (title, goal, change type) is refused with 409.
  */
 export const updateTicket = <ThrowOnError extends boolean = false>(
 	options: Options<UpdateTicketData, ThrowOnError>
@@ -4686,7 +4857,94 @@ export const getTicketAttachments = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * A ticket's comments, oldest first
+ */
+export const listTicketComments = <ThrowOnError extends boolean = false>(
+	options: Options<ListTicketCommentsData, ThrowOnError>
+): RequestResult<ListTicketCommentsResponses, ListTicketCommentsErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		ListTicketCommentsResponses,
+		ListTicketCommentsErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/tickets/{id}/comments',
+		...options
+	});
+
+/**
+ * Comment on a ticket
+ *
+ * Through the ticket's tracker, like the status: on a remote issue the comment comes back with the refresh (origin remote), on the internal tracker it is the person's (origin user). Answers with the ticket's comments.
+ */
+export const addTicketComment = <ThrowOnError extends boolean = false>(
+	options: Options<AddTicketCommentData, ThrowOnError>
+): RequestResult<AddTicketCommentResponses, AddTicketCommentErrors, ThrowOnError> =>
+	(options.client ?? client).post<AddTicketCommentResponses, AddTicketCommentErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/tickets/{id}/comments',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Replace a ticket's labels
+ *
+ * Through the ticket's tracker, like the status.
+ */
+export const setTicketLabels = <ThrowOnError extends boolean = false>(
+	options: Options<SetTicketLabelsData, ThrowOnError>
+): RequestResult<SetTicketLabelsResponses, SetTicketLabelsErrors, ThrowOnError> =>
+	(options.client ?? client).put<SetTicketLabelsResponses, SetTicketLabelsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/tickets/{id}/labels',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
  * Start one attempt on a ticket
+ *
+ * A ticket has at most one active (non-terminal) run: while one is going the start is refused with 409, the error's run_id naming it.
  */
 export const startTicketRun = <ThrowOnError extends boolean = false>(
 	options: Options<StartTicketRunData, ThrowOnError>
@@ -4710,6 +4968,60 @@ export const startTicketRun = <ThrowOnError extends boolean = false>(
 			'Content-Type': 'application/json',
 			...options.headers
 		}
+	});
+
+/**
+ * Move a ticket to one of its tracker's statuses
+ *
+ * Through the ticket's tracker: the remote issue (then the mirror is refreshed), else the internal tracker. A status not in the tracker's list is 400; one the issue cannot reach from where it is 409; the remote failing 502.
+ */
+export const setTicketStatus = <ThrowOnError extends boolean = false>(
+	options: Options<SetTicketStatusData, ThrowOnError>
+): RequestResult<SetTicketStatusResponses, SetTicketStatusErrors, ThrowOnError> =>
+	(options.client ?? client).post<SetTicketStatusResponses, SetTicketStatusErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/tickets/{id}/status',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Re-read a ticket from its remote tracker
+ *
+ * Done or not. A tracker that cannot be read is recorded on the ticket (sync_state error, sync_error), which the answer carries; a ticket with no source is answered as it is.
+ */
+export const syncTicket = <ThrowOnError extends boolean = false>(
+	options: Options<SyncTicketData, ThrowOnError>
+): RequestResult<SyncTicketResponses, SyncTicketErrors, ThrowOnError> =>
+	(options.client ?? client).post<SyncTicketResponses, SyncTicketErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/tickets/{id}/sync',
+		...options
 	});
 
 /**

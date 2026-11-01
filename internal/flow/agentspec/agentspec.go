@@ -101,9 +101,9 @@ type OutputDecl struct {
 // A file type exists only for a structure something built in reads; a
 // structure only the flow's own stages pass around is a flow schema.
 //
-// A value type is what the engine provides (run.*, edge.*): a ticket, a
-// changeset (git's list of changed files), a failure, a link — and a
-// verdict, from edge.verdict.
+// A value type is what the engine provides (run.*, edge.*): a ticket, the
+// ticket's comments (ticket_comments), a changeset (git's list of changed
+// files), a failure, a link — and a verdict, from edge.verdict.
 // Only a source of the engine gives one, and only an input reads one.
 const (
 	TypeFile          = "file"
@@ -114,16 +114,17 @@ const (
 	TypeCommitMessage = "commit_message"
 	TypeFiles         = "files"
 
-	TypeTicket    = "ticket"
-	TypeChangeset = "changeset"
-	TypeFailure   = "failure"
-	TypeLink      = "link"
+	TypeTicket         = "ticket"
+	TypeTicketComments = "ticket_comments"
+	TypeChangeset      = "changeset"
+	TypeFailure        = "failure"
+	TypeLink           = "link"
 )
 
 // FileTypes and ValueTypes list the port types by kind.
 var (
 	FileTypes  = []string{TypeFile, TypeVerdict, TypeReviewThreads, TypeReviewReplies, TypeMRThreads, TypeCommitMessage, TypeFiles}
-	ValueTypes = []string{TypeTicket, TypeChangeset, TypeFailure, TypeLink}
+	ValueTypes = []string{TypeTicket, TypeTicketComments, TypeChangeset, TypeFailure, TypeLink}
 )
 
 // IsFileType reports whether t is what a file holds.

@@ -1,16 +1,13 @@
-<!-- Tickets (DESIGN 7.6): units of work, each owning many runs. The status
-     column is DERIVED — the latest run's state, or "no runs". -->
+<!-- Tickets (DESIGN 7.6): units of work, each owning many runs. Each row shows
+     the ticket's status in its tracker and, apart from it, its latest run. -->
 <script lang="ts">
-	import { errorMessage } from '$lib/core/errors';
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { to } from '$lib/core/urls';
-	import { api } from '$lib/api';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { stateTab } from '$lib/core/format';
-	import { CHANGE_TYPES, type Ticket } from '$lib/domain';
+	import { CHANGE_TYPES, isDone, statusNames, withStatus, type Ticket } from '$lib/domain';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import SearchInput from '$lib/ui/SearchInput.svelte';
 	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
@@ -22,27 +19,19 @@
 	import TicketTable from '$lib/tickets/TicketTable.svelte';
 	import WorkshopFilter from '$lib/shell/WorkshopFilter.svelte';
 
-	let tickets = $state<Ticket[]>([]);
-	let loaded = $state(false);
-	let error = $state('');
+	// The shared fleet poll carries every ticket; done ones are hidden here.
+	const loaded = $derived(fleet.updatedAt !== null);
+	const error = $derived(fleet.error);
 
 	let q = $state('');
 	let source = $state(''); // '' all · 'manual' · a tracker kind
 	let changeType = $state(''); // '' all · feat · fix · chore
 	let activeOnly = $state(false);
+	let status = $state(''); // '' all · a tracker status name
+	let showDone = $state(false);
 	const projectFilter = $derived(page.url.searchParams.get('project') ?? '');
 
-	async function load() {
-		error = '';
-		try {
-			tickets = await api.tickets.list();
-		} catch (e) {
-			error = errorMessage(e);
-		} finally {
-			loaded = true;
-		}
-	}
-	onMount(load);
+	const tickets = $derived(showDone ? fleet.tickets : fleet.tickets.filter((tk) => !isDone(tk)));
 
 	function setProject(id: string) {
 		void goto(to.tickets(id ? { project: id } : undefined), {
@@ -69,9 +58,14 @@
 		...CHANGE_TYPES.map((c) => ({ value: c, label: c }))
 	];
 
+	const statusOptions = $derived<SelectOption[]>([
+		{ value: '', label: t('page.tickets.anyStatus') },
+		...statusNames(tickets).map((s) => ({ value: s, label: s }))
+	]);
+
 	const shown = $derived.by(() => {
 		const s = q.trim().toLowerCase();
-		return tickets
+		return withStatus(tickets, status)
 			.filter((t) => !projectFilter || t.projectId === projectFilter)
 			.filter((t) => (!source ? true : source === 'manual' ? !t.source : t.source?.kind === source))
 			.filter((t) => !changeType || t.changeType === changeType)
@@ -123,13 +117,26 @@
 		<span class="sel">
 			<Select label={t('page.tickets.filterType')} options={typeOptions} bind:value={changeType} />
 		</span>
+		<span class="sel">
+			<Select label={t('page.tickets.filterStatus')} options={statusOptions} bind:value={status} />
+		</span>
 		<Toggle bind:checked={activeOnly} label={t('page.tickets.hasActive')} />
+		<Toggle bind:checked={showDone} label={t('page.tickets.showDone')} />
 	</div>
 
 	{#if error && !tickets.length}
-		<ErrorCard cause={t('page.tickets.loadError')} detail={error} onretry={load} />
+		<ErrorCard
+			cause={t('page.tickets.loadError')}
+			detail={error}
+			onretry={() => void fleet.refresh()}
+		/>
 	{:else if !loaded}
 		<Skeleton pane lines={6} />
+	{:else if tickets.length === 0 && !showDone}
+		<EmptyState title={t('page.tickets.noOpen')} text={t('page.tickets.noOpenText')}>
+			<a class="btn btn-primary" href={to.newTicket()}>{I.add} {t('page.desk.newTicket')}</a>
+			<button onclick={() => (showDone = true)}>{t('page.tickets.showDone')}</button>
+		</EmptyState>
 	{:else if tickets.length === 0}
 		<EmptyState title={t('page.tickets.empty')} text={t('page.tickets.emptyText')}>
 			<a class="btn btn-primary" href={to.newTicket()}>{I.add} {t('page.desk.newTicket')}</a>
@@ -140,6 +147,7 @@
 				onclick={() => {
 					q = '';
 					source = '';
+					status = '';
 					activeOnly = false;
 					setProject('');
 				}}>{t('page.tickets.clearFilters')}</button
@@ -150,8 +158,8 @@
 			<TicketTable
 				tickets={shown}
 				cols={projectFilter
-					? ['title', 'source', 'branch', 'runs', 'created']
-					: ['title', 'source', 'workshop', 'branch', 'runs', 'created']}
+					? ['title', 'status', 'source', 'branch', 'runs', 'created']
+					: ['title', 'status', 'source', 'workshop', 'branch', 'runs', 'created']}
 			/>
 		</div>
 	{/if}

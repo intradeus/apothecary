@@ -687,7 +687,7 @@ describe('pings', () => {
 
 describe('tickets', () => {
 	it('reads a summary with empty extras', () => {
-		expect(map.toTicket(wire<Wire.Ticket>({ id: 't', title: 'x' }))).toEqual({
+		expect(map.toTicket(wire<Wire.TicketView>({ id: 't', title: 'x' }))).toEqual({
 			id: 't',
 			projectId: '',
 			title: 'x',
@@ -696,6 +696,15 @@ describe('tickets', () => {
 			changeType: 'feat',
 			attachmentIds: [],
 			source: undefined,
+			status: undefined,
+			type: undefined,
+			labels: [],
+			links: [],
+			syncState: '',
+			syncError: undefined,
+			syncedAt: undefined,
+			statusChangedAt: undefined,
+			statusChangedBy: undefined,
 			warnings: [],
 			createdAt: '',
 			updatedAt: ''
@@ -724,6 +733,94 @@ describe('tickets', () => {
 			warnings: ['w'],
 			source: { integrationId: 'jira', kind: 'jira', key: 'K-1', url: 'u', type: undefined }
 		});
+	});
+
+	it('reads the tracker state: status, type, labels, links and sync', () => {
+		const t = map.toTicket(
+			wire<Wire.TicketDetail>({
+				id: 't',
+				status: { id: 's', name: 'In Review', is_done: false, flow_step: 'in_review' },
+				type: { id: 'y', name: 'Bug' },
+				labels: ['ui'],
+				links: [{ ticket_id: 't', url: 'https://x', title: 'Spec' }],
+				sync_state: 'error',
+				sync_error: 'timeout',
+				synced_at: '2026-01-01T00:00:00Z'
+			})
+		);
+		expect(t).toMatchObject({
+			status: { id: 's', name: 'In Review', isDone: false, flowStep: 'in_review' },
+			type: { id: 'y', name: 'Bug' },
+			labels: ['ui'],
+			links: [{ url: 'https://x', title: 'Spec' }],
+			syncState: 'error',
+			syncError: 'timeout',
+			syncedAt: '2026-01-01T00:00:00Z'
+		});
+	});
+
+	it('reads an unknown sync state and flow step as none', () => {
+		const t = map.toTicket(
+			wire<Wire.TicketView>({
+				sync_state: 'weird',
+				status: { id: 's', name: 'Odd', is_done: true, flow_step: 'none' }
+			})
+		);
+		expect(t.syncState).toBe('');
+		expect(t.status).toEqual({ id: 's', name: 'Odd', isDone: true, flowStep: undefined });
+	});
+
+	it('reads a comment, an unknown origin as remote', () => {
+		const c = wire<Wire.TicketComment>({
+			id: 'c',
+			author: 'ann',
+			body_md: 'hi',
+			origin: 'apothecary',
+			run_id: 'r1',
+			stage_id: '',
+			created_at: 'a',
+			updated_at: 'b'
+		});
+		expect(map.toTicketComment(c)).toEqual({
+			id: 'c',
+			author: 'ann',
+			bodyMd: 'hi',
+			origin: 'apothecary',
+			runId: 'r1',
+			stageId: undefined,
+			createdAt: 'a',
+			updatedAt: 'b'
+		});
+		expect(map.toTicketComment({ ...c, origin: 'bot' }).origin).toBe('remote');
+	});
+
+	it('round-trips a tracker status, leaving no step off the wire', () => {
+		const w: Wire.TrackerStatus = {
+			id: 's',
+			integration_id: 'i',
+			remote_id: '3',
+			name: 'Done',
+			remote_category: 'done',
+			position: 2,
+			is_done: true,
+			flow_step: 'done'
+		};
+		expect(map.fromTrackerStatus(map.toTrackerStatus(w))).toEqual(w);
+		const { flow_step: _, ...noStep } = w;
+		expect(map.fromTrackerStatus(map.toTrackerStatus(noStep))).toEqual(noStep);
+	});
+
+	it('round-trips a tracker type, an unknown change type as feat', () => {
+		const w: Wire.TrackerType = {
+			id: 'y',
+			integration_id: 'i',
+			remote_id: '1',
+			name: 'Bug',
+			change_type: 'fix',
+			position: 0
+		};
+		expect(map.fromTrackerType(map.toTrackerType(w))).toEqual(w);
+		expect(map.toTrackerType({ ...w, change_type: '' }).changeType).toBe('feat');
 	});
 
 	it('reads a tracker’s ticket', () => {

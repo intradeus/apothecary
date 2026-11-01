@@ -53,7 +53,7 @@ func (b brokenMRs) RepoHostUser(ctx context.Context, p, r string) (string, error
 // brokenDB is the config store with chosen calls failing.
 type brokenDB struct {
 	confstore.DB
-	listAutomations, listTickets, upsertAutomation error
+	listAutomations, findTicket, upsertAutomation error
 	// kindOf reports rows under a kind the table's check would refuse: one a
 	// later migration added, seen by a binary that doesn't know it.
 	kindOf map[string]string
@@ -72,11 +72,18 @@ func (d *brokenDB) ListAutomations(ctx context.Context, p string) ([]confstore.A
 	return rows, err
 }
 
-func (d *brokenDB) ListTickets(ctx context.Context, u string) ([]confstore.Ticket, error) {
-	if d.listTickets != nil {
-		return nil, d.listTickets
+func (d *brokenDB) GetTicketBySource(ctx context.Context, u, src, key string) (confstore.Ticket, error) {
+	if d.findTicket != nil {
+		return confstore.Ticket{}, d.findTicket
 	}
-	return d.DB.ListTickets(ctx, u)
+	return d.DB.GetTicketBySource(ctx, u, src, key)
+}
+
+func (d *brokenDB) GetTicketByProjectKey(ctx context.Context, p, key string) (confstore.Ticket, error) {
+	if d.findTicket != nil {
+		return confstore.Ticket{}, d.findTicket
+	}
+	return d.DB.GetTicketByProjectKey(ctx, p, key)
 }
 
 func (d *brokenDB) UpsertAutomation(ctx context.Context, a confstore.Automation) error {
@@ -246,7 +253,7 @@ func TestAdoptionNeedsToFindTheTicket(t *testing.T) {
 		t.Fatalf("setup: runs = %d", h.eng.count())
 	}
 	db := h.breakDB(t)
-	db.listTickets = errors.New("tickets unreadable")
+	db.findTicket = errors.New("tickets unreadable")
 	h.pass(t)
 	if h.eng.count() != 2 {
 		t.Errorf("runs = %d", h.eng.count())
@@ -353,7 +360,7 @@ func TestMergeRequestTicketLookupFailure(t *testing.T) {
 	a := h.mrAutomation(t)
 	h.eng.MRs = []repoport.MRInfo{mrOf(1, "alice")}
 	db := h.breakDB(t)
-	db.listTickets = errors.New("tickets unreadable")
+	db.findTicket = errors.New("tickets unreadable")
 	h.pass(t)
 	if got := h.get(t, a.ID); !strings.Contains(got.LastError, "tickets unreadable") {
 		t.Errorf("marks = %+v", got)

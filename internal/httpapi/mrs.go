@@ -10,7 +10,6 @@ package httpapi
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -18,7 +17,6 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
-	"apothecary/internal/engine"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
 	"apothecary/internal/run/runinput"
@@ -163,30 +161,17 @@ func (s *Server) startMRRun(w http.ResponseWriter, r *http.Request) {
 		}
 		flowName = p.DefaultFlow
 	}
-	// The same flow twice at once on one merge request is a double click, not
-	// a plan: refused while one of its runs is going. Other flows may run.
-	runs, err := s.Runs.RunsOfTicket(ctx, t.ID)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	for _, v := range runs {
-		if !v.State.Terminal() && v.FlowName == flowName {
-			writeErr(w, http.StatusConflict, fmt.Sprintf("a run of %s on %s is already going (run %s)", flowName, mr.Ref.URL, v.RunID))
-			return
-		}
-	}
+	// A second run on the merge request's ticket while one is going — a
+	// double click, or another flow — is refused by the engine (one active
+	// run per ticket): 409 naming the run.
 	runID, err := s.Runs.CreateRunWith(ctx, runinput.Ticket{
 		TicketID: t.ID, Title: t.Title, Goal: t.Goal, ChangeType: string(t.ChangeType),
 		SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,
 	}, flowName, projectID, runinput.Input{Params: body.Params, MR: &runinput.MR{Repo: body.Repo, IID: iid}, Skillsets: body.Skillsets})
-	switch {
-	case errors.Is(err, engine.ErrEnvCapacity):
-		writeErr(w, http.StatusConflict, err.Error())
-	case err != nil:
-		writeErr(w, http.StatusBadRequest, err.Error())
-	default:
-		keep = true
-		writeJSON(w, http.StatusCreated, MRRunStarted{RunID: runID, TicketID: t.ID})
+	if err != nil {
+		runStartErr(w, err)
+		return
 	}
+	keep = true
+	writeJSON(w, http.StatusCreated, MRRunStarted{RunID: runID, TicketID: t.ID})
 }

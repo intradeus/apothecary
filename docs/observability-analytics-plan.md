@@ -1,7 +1,7 @@
 # Observability and run analytics (TODO 23) — plan
 
-Status: proposed (2026-11-01). Splits TODO 23 into two products with two
-audiences:
+Status: decided (2026-11-01; answers folded in, see § Resolved). Splits
+TODO 23 into two products with two audiences:
 
 | | A. Platform observability | B. Run analytics |
 |---|---|---|
@@ -51,9 +51,11 @@ Both feed from the same run event stream; neither changes how runs execute.
    x.e.clock()`, `stage_agent.go:77`) and includes in-process waiting.
 3. **Abandoned / failed runs get no totals**; only `run_completed` carries
    `total_cost_usd`, `total_turns`.
-4. **Cost is harness-reported only.** Codex reports `0`
-   (`IMPLEMENTATION_NOTES.md:546`); non-USD cost is dropped
-   (`workspace/shim/acp.go:1275`). `0` and "unknown" are indistinguishable.
+
+Cost is taken as the harness reports it. `$0` is a real value, not
+"unknown": subscription-included usage and free models cost nothing, and
+Codex reporting `0` (`IMPLEMENTATION_NOTES.md:546`) reads the same way. No
+price catalog.
 
 ## Decisions
 
@@ -80,7 +82,9 @@ Both feed from the same run event stream; neither changes how runs execute.
    opaque UUID. This keeps "admin grants no view into other users' work"
    (`auth.go:41`, `user.ts:13`) true in spirit: the admin sees *that* run
    `r_…` of user `u_…` failed with `output_invalid` on stage `review`, not
-   what it was about.
+   what it was about. Admins get **no** cross-user analytics in the app;
+   anyone with the instance's Grafana and its Postgres datasource can rebuild
+   any view over the fact tables (B1) there.
 4. **Standard OTel config.** Honour `OTEL_EXPORTER_OTLP_*`, `OTEL_SERVICE_NAME`,
    `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`; remove
    `APOTHECARY_OTEL_ENDPOINT` (clean cutover: env.go, Helm
@@ -149,7 +153,7 @@ traces and logs).
 | Go runtime / process | `go.opentelemetry.io/contrib/instrumentation/runtime` |
 | DB | pgxpool `Stat()` as observable gauges (acquired, idle, wait count/duration); event append latency; projection rebuild duration |
 | Engine | gauges: runs by state, queued runs, capacity slots used/total, live envs; histograms: queue wait, provisioning time, stage attempt duration (stage, harness, model, outcome); counters: stage failures by `reason`, edges taken by kind, budget stops |
-| LLM | `gen_ai.client.token.usage` (type=input/output, model, harness), cost counter (model, harness), "cost unknown" counter |
+| LLM | `gen_ai.client.token.usage` (type=input/output, model, harness), cost counter (model, harness) |
 | Humans | pings raised by type, ping answer latency histogram, holds taken |
 | Workspace | egress denials (host class, not host), gateway up, sidecar poll errors |
 | Integrations | tracker/VCS call duration + errors by integration kind |
@@ -168,10 +172,18 @@ where they fail, which models people pick — aggregate only.
 
 ### A6. Stack and admin dashboards
 
-- Replace `observability/docker-compose.yaml` with pinned images: either the
-  single `grafana/otel-lgtm` image (collector + Prometheus + Tempo + Loki +
-  Grafana) or pinned collector + Tempo + Loki + Prometheus + Grafana. Keep the
-  unusual loopback ports (`IMPLEMENTATION_NOTES.md:271-276`).
+- **Dev / demo**: replace `observability/docker-compose.yaml` with the single
+  `grafana/otel-lgtm` image (collector + Prometheus + Tempo + Loki + Pyroscope
+  + Grafana), pinned by digest, keeping the unusual loopback ports
+  (`IMPLEMENTATION_NOTES.md:271-276`). It is **not production-ready**: its
+  README says it is "intended for development, demo, and testing
+  environments" and points production at Grafana Cloud
+  ([docker-otel-lgtm](https://github.com/grafana/docker-otel-lgtm)).
+- **Production**: apothecaryd only speaks OTLP via `OTEL_*`; the operator
+  points it at their own backend (Grafana Cloud, a self-run collector +
+  Tempo/Loki/Prometheus or Mimir, any OTLP vendor). The repo ships the
+  dashboards as plain JSON with datasource variables (not fixed UIDs), so
+  they import into either.
 - Collector: traces → Tempo, logs → Loki, metrics → Prometheus; exemplars on
   histograms so a slow stage links to its trace.
 - Fix datasource UIDs, Postgres password (`secureJsonData` from env), stale
@@ -179,7 +191,7 @@ where they fail, which models people pick — aggregate only.
   instead of jsonb.
 - Admin dashboards: **Platform** (RED per route, DB pool, runtime),
   **Engine** (runs by state, queue, capacity, provisioning, failure reasons),
-  **LLM spend** (tokens/cost by model and harness, unknown-cost share),
+  **LLM spend** (tokens/cost by model and harness),
   **Humans** (ping volume/latency by type), **Usage** (feature usage table
   above), **Logs/Traces** explore links.
 - Helm: optional `otel.endpoint`/headers values rendered as `OTEL_*`; no
@@ -199,10 +211,8 @@ by the egress filter today and doubles the GenAI data; revisit after A3.
 
 - `StageFailed` gains `TurnsUsed` and `Usage` (from `res.r.Usage` in
   `failAttempt`'s caller); `runcore` banks them, so budgets become correct
-  too. Old events decode with zero usage — honest "unknown".
-- `event.Usage.CostUSD` becomes "known" vs "unknown": add `CostKnown bool`
-  (or pointer) so Codex runs render "—", not `$0.00`, and averages exclude
-  them instead of dragging to zero.
+  too. Failed attempts already in the log stay at zero spend; that history
+  is not recoverable.
 - Durations are computed by the fold from event timestamps (below), not from
   `duration_ms`.
 
@@ -210,7 +220,17 @@ by the egress filter today and doubles the GenAI data; revisit after A3.
 
 Extend the run fold (`run.Apply` / `runcore` state) with an analytics
 accumulator, and write it in `projectTx`. Three tables, all user-scoped,
-all in the `RebuildProjections` TRUNCATE list:
+all in the `RebuildProjections` TRUNCATE list.
+
+Write-path rules (see § Scale):
+
+- The accumulator lives in `run.View`, which `projectTx` already loads and
+  rewrites on every append, so it adds no reads.
+- `run_facts` / `stage_attempts` / `run_skillsets` are written **only for
+  fact-bearing events** (run lifecycle, `stage_*`, `edge_taken`, pings,
+  holds, pauses, env). `agent_*` events (≈65% of a run's log) never touch
+  them.
+- No index beyond the four listed below; each one costs every fact write.
 
 **`run_facts`** — one row per run (updated as the run progresses):
 
@@ -219,10 +239,10 @@ all in the `RebuildProjections` TRUNCATE list:
 | Keys | `run_id`, `user_id`, `project_id`, `ticket_id`, `automation_id` |
 | Dimensions | `flow_name`, `flow_hash`, `ticket_change_type`, `ticket_source_type`, `tracker_kind`, `started_by` (human/automation), `state`, `end_reason` (abandon edge / fail reason), `retry_of` (try-again chain), `created_at`, `ended_at` |
 | Time (ms) | `wall`, `queued`, `provisioning`, `agent_active`, `waiting_human` (pending pings, `ask_human` pauses, parked phases), `held` (takeovers), `paused` (user pause) |
-| Spend | `cost_usd`, `cost_known`, `input_tokens`, `output_tokens`, `turns`, `ask_cost_usd` (ask pane, `ask_messages`) |
+| Spend | `cost_usd`, `input_tokens`, `output_tokens`, `turns`, `ask_cost_usd` (ask pane, `ask_messages`) |
 | Work | `stages_run`, `attempts`, `failed_attempts`, `retries` (`edge_taken` on_fail/on_reject/on_timeout), `rework_cost_usd` (spend in iterations > 1) |
 | Humans | `pings`, `pings_wanted`, `pings_unwanted`, `gates_rejected`, `human_response_ms` (sum), `holds` |
-| Outcome | `mr_opened`, `mr_merged` (when the flow observes it), `first_pass` (completed, no retries, no unwanted pings), `egress_denials` |
+| Outcome | `success` (`state = completed`; abandoned / failed are not), `mr_opened`, `first_pass` (completed, no retries, no unwanted pings), `egress_denials` |
 
 **`run_skillsets`** — `(run_id, user_id, skillset_id, name, seq, hash)`;
 a run pins several skillsets, so this is its own grain.
@@ -231,14 +251,26 @@ a run pins several skillsets, so this is its own grain.
 `stage_id`, `iteration`, `harness`, `model`, `agent`, `agent_hash`,
 `outcome` (completed / failed / paused / skipped / abandoned),
 `failure_reason`, `started_at`, `ended_at`, `active_ms`, `waiting_ms`,
-`cost_usd`, `cost_known`, tokens, `turns`, `pings` by kind.
+`cost_usd`, tokens, `turns`, `pings` by kind.
 
 Pings already have their own table (`type`, `stage_id`, `raised_at`,
 `answered_at`, `answer`) — used as-is as the fourth grain.
 
 Indexes: `(user_id, created_at)`, `(user_id, flow_name, flow_hash)`,
 `(user_id, ticket_id)` on `run_facts`; `(user_id, stage_id, model)` on
-`stage_attempts`.
+`stage_attempts`. `run_skillsets` uses its `(run_id, skillset_id)` primary
+key.
+
+**Rebuild that scales** (lands with B1). Any migration triggers a full
+rebuild at boot today (`pgstore.go:71-75`), and analytics will add
+migrations whenever a measure is added.
+
+- A migration opts in to a rebuild with a header line
+  (`-- rebuild: projections`); others don't trigger one.
+- `RebuildProjections` reads `events` once, as one stream ordered by
+  `(run_id, seq)`, instead of one `Events` query per run. It writes with
+  `pgx.Batch` / `CopyFrom` instead of one statement per row.
+- Boot logs progress (`runs n/N`) so a long rebuild isn't a silent hang.
 
 Flow version labels: `flow_versions` is keyed by hash; the catalog derives
 `v{n}` per `(project_id, name)` by `created_at`. Built-in flows (no row)
@@ -263,12 +295,21 @@ contract tests in `analytics/analyticstest`, archtest rule, assertion in
   This one function is the tenancy boundary and gets the heaviest tests.
 - Each result row carries `n`; groups with `n < 5` are flagged so a
   "flow #2 is 2× faster" built on three runs reads as noise.
+- Guardrails: every dashboard has a default time range (last 90 days);
+  "all time" is an explicit choice. Analytics queries run with
+  `SET LOCAL statement_timeout = '5s'` and a group cap (500 rows), so one
+  heavy query can't hurt run execution on the same database.
 - Routes (`httpapi/analytics.go`, `AccessUser`, `ScopeOwner`):
   `GET /api/analytics/catalog`, `POST /api/analytics/query`,
   `GET|POST|PUT|DELETE /api/analytics/dashboards[/{id}]`,
-  `GET /api/analytics/dashboards/builtin`. `listRuns` gains the run facts
-  (cost, wall time, attempts) so the run table stops fetching every run's
-  events (`runfacts.svelte.ts`).
+  `GET /api/analytics/dashboards/builtin`.
+- `listRuns` gains the run facts (cost, wall time, attempts), so the run
+  table stops fetching every run's events (`runfacts.svelte.ts`). It also
+  moves owner/project/ticket filtering and paging into SQL on
+  `runs_user_idx`. Today `RunViews` reads **every user's** run views, and
+  `httpapi/runs.go:27-63` filters them in Go, on every 4 s fleet poll per
+  open tab. Adding facts to that path without scoping it would make the
+  first hotspot worse.
 
 ### B3. Dashboards
 
@@ -294,9 +335,9 @@ contract tests in `analytics/analyticstest`, archtest rule, assertion in
   filters → viz (number, table, bar, line, scatter cost-vs-time, heatmap,
   box plot). Drill-through: a bar → the filtered run list. CSV export of any
   panel.
-- **Charts**: one dependency, `layerchart` 2.x (Svelte 5 runes, no Tailwind,
-  colours via CSS variables so `check-tokens` holds) instead of hand-rolling
-  box plots and heatmaps. Needs sign-off under the no-new-deps rule.
+- **Charts**: `layerchart` 2.x (Svelte 5 runes, no Tailwind, colours via CSS
+  variables so `check-tokens` holds) for every viz; recorded in
+  IMPLEMENTATION_NOTES per the no-new-deps rule.
 
 ### B4. Scoring (opt-in)
 
@@ -309,8 +350,66 @@ contract tests in `analytics/analyticstest`, archtest rule, assertion in
   compared set (min-max) or against a chosen baseline group (ratio). It is
   exposed as a measure, so any table can rank flows/skillsets by it.
 - Built-ins: "Cheapest", "Fastest", "Least hands-on", "Balanced".
-- Caveat shown in the UI: speed and cost without an outcome term reward
-  flows that give up early; every built-in scorecard includes success rate.
+- The outcome term is run state: `success_rate` = completed / ended runs.
+  Speed and cost without it reward flows that give up early, so every
+  built-in scorecard includes it.
+
+## Scale (measured 2026-11-01)
+
+Setup: Postgres 16 in Docker on the dev Mac, `shared_buffers=512MB`. The
+`apothecaryd` binary was built from HEAD and the schema created by its own
+migrations.
+
+**Rebuild (the existing code).** One real run (114 events) was cloned
+10,000 times, giving 1.14 M events and 861 MB of `events`. Running
+`apothecaryd rebuild-projections` took **53 s** (≈21k events/s, 20 s of it
+Go CPU). Rebuild time grows with total events, not with runs. At 1,000
+events per run, 10k runs would be ≈8 min of blocked boot after *any*
+migration [INFERENCE: linear extrapolation]. Hence "Rebuild that scales" in
+B1.
+
+**Dashboard queries** on synthetic `run_facts` / `stage_attempts` /
+`run_skillsets`:
+- 10 or 11 attempts per run (≈15 per run on average), over 2 years.
+- One heavy user owns 40% of the runs; the rest is spread over 50 users.
+- Queries are user-scoped and use the indexes above.
+
+| Query (heavy user unless noted) | 10k runs | 100k runs | 1M runs |
+|---|---|---|---|
+| Compare flows, all time (median, p90, avg cost, success) | 3 ms | 22 ms | 417 ms |
+| Weekly overview, last 90 days | 1 ms | 3 ms | 129 ms |
+| Stage × model × iteration, all time | 17 ms | 69 ms | 683 ms |
+| Cost to ship per ticket (window function), all time | 5 ms | 60 ms | 634 ms |
+| Compare skillset versions (join), all time | 5 ms | 51 ms | 486 ms |
+| Compare flows, light user | 0.4 ms | 2 ms | 19 ms |
+
+Table sizes at 1M runs: `run_facts` 291 MB, `stage_attempts` 3.1 GB (15 M rows).
+
+**Write overhead.** A fact upsert (one `run_facts` update plus one
+`stage_attempts` upsert) took ≈2.4 ms per transaction on the cold
+1M-run tables. The baseline `runs` row update took ≈0.7 ms. That is ≈20
+fact-bearing events × ~2 ms ≈ 40 ms per run in total, so it is noise next
+to agent time. It would be ~6× more if `agent_*` events also wrote facts,
+which is why the write-path rule excludes them.
+
+**Reading it.**
+- **Thousands to ~100k runs**: plain Postgres projections are comfortably
+  interactive (< 100 ms all-time), with no rollups, caching or extra store.
+- **~1M runs**: all-time panels reach 0.4–0.7 s. The 90-day default keeps
+  dashboards at ~100 ms; the 5 s timeout bounds the rest.
+- **Beyond that**, the next steps are, in order:
+  1. Daily rollup tables per `(user, flow_hash, stage, model)` for
+     sums and counts. Medians and p90 can't be rolled up exactly, so those
+     need t-digest or stay on raw rows within a time range.
+  2. Partition `stage_attempts` by month.
+  3. A columnar engine (pg_duckdb, ClickHouse).
+
+  All three sit behind `analytics.Store`, so the catalog, the query JSON,
+  the dashboards and the UI don't change.
+- **The first thing to hurt is not analytics.** The full-log rebuild and
+  the all-users `RunViews` poll already exist; B1 and B2 fix both.
+- **Out of scope**: `events` grows ≈750 B per event and is never deleted. Retention or
+  archiving of old run logs is a separate decision.
 
 ## Phases
 
@@ -338,7 +437,9 @@ tables). B0 lands first: every later number depends on it.
   budget fold.
 - B1: fold tests — live fold and rebuild produce identical `run_facts` /
   `stage_attempts`; time buckets sum to wall time; fixtures for retry,
-  takeover, park, pause, try-again, abandoned.
+  takeover, park, pause, try-again, abandoned. Re-run the § Scale rebuild
+  benchmark (10k cloned runs) and compare with the 53 s baseline; a
+  migration without `-- rebuild` must boot without rebuilding.
 - B2: compiler tests — unknown field rejected, `user_id` predicate present in
   every emitted query, cross-user rows never returned (contract test with
   two users), `n` and small-`n` flag.
@@ -347,18 +448,14 @@ tables). B0 lands first: every later number depends on it.
   dashboard panel returning data.
 - UI: builder and built-ins against seeded runs in the browser.
 
-## Open questions
+## Resolved (2026-11-01)
 
-1. **Admin cross-user visibility.** Decision 3 keeps telemetry to IDs and
-   numbers. Should admins *also* get the user analytics UI across all users,
-   or is Grafana-only correct?
-2. **Chart dependency.** `layerchart` vs keep hand-rolled SVG (more code,
-   no box plot/heatmap for free).
-3. **Cost when the harness reports none.** Show "unknown" (this plan), or add
-   a model price catalog to estimate from tokens (more accurate, one more
-   table to keep current)?
-4. **Observability stack image.** Single `grafana/otel-lgtm` (simplest dev
-   story) vs separate pinned components (closer to production).
-5. **Outcome signal for scoring.** `mr_merged` needs a flow to observe the
-   merge (`wait_merge`); flows without it only have run state. Is that enough,
-   or do we want an explicit user rating per run (thumbs up/down)?
+1. **Admin cross-user visibility**: none in the app. Admins rebuild what they
+   want in Grafana over the Postgres fact tables (Decision 3, A6).
+2. **Charts**: `layerchart` 2.x.
+3. **Cost**: as reported; `$0` is a real value (subscriptions, free models).
+   No "unknown" state, no price catalog.
+4. **Stack**: single `grafana/otel-lgtm` image for dev/demo only, since it
+   is not production-ready; production uses the operator's OTLP backend.
+5. **Scoring outcome**: run state (`completed` vs `abandoned`/`failed`). No
+   per-run user rating, no merge tracking.

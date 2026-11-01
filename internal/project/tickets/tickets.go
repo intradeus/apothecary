@@ -1,14 +1,19 @@
 // Package tickets is the ticket factory: the one place a ticket comes into
-// existence or leaves it, whether typed in by hand or copied from an external
-// tracker (Jira). Both creation paths end at the same confstore write and the
-// same attachment claim, so an imported ticket is indistinguishable
-// downstream from a hand-written one — runs, flows and workspaces know
-// nothing about Jira.
+// existence or leaves it, whether typed in by hand or imported from an
+// external tracker (Jira, GitHub Issues, GitLab). Both creation paths end at
+// the same confstore write and the same attachment claim, so downstream —
+// runs, flows, workspaces — a ticket is a ticket.
 //
-// The import is a COPY, taken once: title, body and attachment bytes are
-// pulled into apothecary's own storage. Nothing re-reads the issue later and
-// nothing is ever written back, so a tracker outage can only ever fail an
-// import — never a run.
+// Every ticket has one tracker (docs/ticket-sync-plan.md). A hand-written one
+// (and a merge request's) lives on its owner's INTERNAL tracker: its status,
+// type, labels, comments and links are the row's own, written in place
+// (package internaltracker). An imported one is a MIRROR of its issue: the
+// remote is the single source of truth for title, body, status, type, labels
+// and comments, the import takes the first snapshot (mirror.go) and the sync
+// keeps taking them; writes go to the remote and come back with the next
+// snapshot. Attachment bytes are copied into apothecary's own storage at
+// import, and again by the sync for each file the issue gains since (keyed
+// by the tracker's id for it), so a tracker outage never stalls a run.
 package tickets
 
 import (
@@ -18,6 +23,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"time"
 
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/trackerport"
@@ -38,9 +44,22 @@ type Sources interface {
 // wiring at all (a bare API server).
 var ErrNoSources = errors.New("no ticket sources are configured")
 
-// ErrDuplicate marks an issue that is already imported into the project; the
-// message names the existing ticket.
+// ErrDuplicate marks an issue that already has a ticket: one issue of one
+// tracker is one ticket per user. *DuplicateError carries it.
 var ErrDuplicate = errors.New("already imported")
+
+// DuplicateError names the ticket an issue already is, so the UI can link it
+// and an automation can adopt it.
+type DuplicateError struct {
+	Key    string
+	Ticket confstore.Ticket
+}
+
+func (e *DuplicateError) Error() string {
+	return fmt.Sprintf("%s is %v as ticket %s (%q)", e.Key, ErrDuplicate, e.Ticket.ID, e.Ticket.Title)
+}
+
+func (e *DuplicateError) Is(target error) bool { return target == ErrDuplicate }
 
 type Factory struct {
 	Conf        *confstore.Service
@@ -57,8 +76,11 @@ func (f *Factory) log() *slog.Logger {
 }
 
 // Create writes a ticket as given (the hand-written path) and claims its
-// uploads for the TICKET rather than any run. A base branch not given is
-// named from its change type (a feature by default) and title (BranchName).
+// uploads for the TICKET rather than any run. It lands on its owner's
+// internal tracker — in the status holding the todo step and the type of its
+// change type, unless given others (confstore validates them). A base branch
+// not given is named from its change type (a feature by default) and title
+// (BranchName).
 func (f *Factory) Create(ctx context.Context, in confstore.Ticket, attachmentIDs []string) (confstore.Ticket, error) {
 	in.ChangeType = normalType(in.ChangeType)
 	if in.ChangeType == "" {
@@ -99,19 +121,29 @@ func (f *Factory) Delete(ctx context.Context, id string) error {
 	return f.Conf.DeleteTicket(ctx, id)
 }
 
-// CreateFromSource copies an external issue into a ticket. Fields set on
-// `in` win over the tracker's (the operator may have edited the prefilled
-// form); everything else — and every attachment — comes from the source.
-// The issue's type comes across as the ticket's change type (the
-// integration's mapping, else a guess), and a base branch not given is named
-// from it, the key and the title (BranchName).
+// CreateFromSource imports an external issue as a ticket that mirrors it.
+// What the tracker owns — title, goal (its body), status, type and so change
+// type, labels, comments — is the issue's (mirror.go), whatever `in` says:
+// the sync would overwrite it anyway. `in` gives what Apothecary owns: the
+// project, the base branch (named from the change type, the key and the
+// title when not given — BranchName), the automation that imported it.
 //
-// Attachments are best-effort: one that is too large or of a type the
-// upload policy refuses is skipped and named in the returned warnings, since
-// losing one screenshot is no reason to lose the whole import.
+// One issue is one ticket per user: a second import is *DuplicateError,
+// checked before anything is fetched. Attachments are best-effort: one that
+// is too large or of a type the upload policy refuses is skipped and named in
+// the returned warnings, since losing one screenshot is no reason to lose the
+// whole import; so are comments.
 func (f *Factory) CreateFromSource(ctx context.Context, sourceID, key string, in confstore.Ticket, attachmentIDs []string) (confstore.Ticket, []string, error) {
 	src, kind, err := f.source(ctx, sourceID)
 	if err != nil {
+		return confstore.Ticket{}, nil, err
+	}
+	// The copied files and the ticket belong to the project's owner.
+	owner := in.UserID
+	if p, err := f.Conf.GetProject(ctx, in.ProjectID); err == nil {
+		owner = p.UserID
+	}
+	if err := f.checkDuplicate(ctx, owner, sourceID, key); err != nil {
 		return confstore.Ticket{}, nil, err
 	}
 	remote, err := src.Fetch(ctx, key)
@@ -121,40 +153,53 @@ func (f *Factory) CreateFromSource(ctx context.Context, sourceID, key string, in
 	if remote.Key == "" {
 		remote.Key = key
 	}
-	if err := f.checkDuplicate(ctx, in.ProjectID, remote.Key); err != nil {
+	if !strings.EqualFold(remote.Key, key) {
+		if err := f.checkDuplicate(ctx, owner, sourceID, remote.Key); err != nil {
+			return confstore.Ticket{}, nil, err
+		}
+	}
+	m, ct, err := Mirror(ctx, f.Conf, sourceID, src, remote)
+	if err != nil {
 		return confstore.Ticket{}, nil, err
 	}
 
 	t := in
-	if strings.TrimSpace(t.Title) == "" {
-		t.Title = remote.Title
+	t.Title, t.Goal, t.ChangeType = m.Title, m.Goal, ct
+	t.StatusID, t.TypeID, t.Labels = m.StatusID, m.TypeID, m.Labels
+	t.SourceID, t.SourceKind = sourceID, kind
+	t.SourceKey, t.SourceURL, t.SourceType = m.SourceKey, m.SourceURL, m.SourceType
+	t.RemoteID = m.RemoteID
+	if !m.RemoteUpdated.IsZero() {
+		upd := m.RemoteUpdated.UTC()
+		t.RemoteUpdatedAt = &upd
 	}
-	if strings.TrimSpace(t.Goal) == "" {
-		t.Goal = remote.Body
-	}
-	t.ChangeType = normalType(t.ChangeType)
-	if t.ChangeType == "" {
-		t.ChangeType = SourceChangeType(remote)
+	synced := time.Now().UTC()
+	t.SyncedAt, t.SyncState, t.SyncError = &synced, confstore.SyncOK, ""
+	t.StatusChangedAt, t.StatusChangedBy = nil, ""
+	if t.StatusID != "" {
+		t.StatusChangedBy = confstore.ChangedBySync
 	}
 	if strings.TrimSpace(t.BaseBranch) == "" {
 		t.BaseBranch = BranchName(t.ChangeType, remote.Key, t.Title)
 	}
-	t.SourceID, t.SourceKind = sourceID, kind
-	t.SourceKey, t.SourceURL = remote.Key, remote.URL
-	t.SourceType = remote.Type
 
-	// The copied files belong to the project's owner, like the ticket.
-	owner := t.UserID
-	if p, err := f.Conf.GetProject(ctx, t.ProjectID); err == nil {
-		owner = p.UserID
-	}
 	imported, warnings := f.importAttachments(ctx, owner, src, remote)
 
 	created, err := f.Conf.CreateTicket(ctx, t)
+	if errors.Is(err, confstore.ErrConflict) {
+		// Lost a race with another import of the same issue.
+		if derr := f.checkDuplicate(ctx, owner, sourceID, remote.Key); derr != nil {
+			err = derr
+		}
+	}
 	if err != nil {
 		return confstore.Ticket{}, nil, err
 	}
 	f.claim(ctx, created, append(append([]string{}, attachmentIDs...), imported...))
+	if err := ImportComments(ctx, f.Conf, created.ID, src, remote.Key); err != nil {
+		warnings = append(warnings, fmt.Sprintf("comments: %v (the next sync retries)", err))
+		f.log().Warn("import comments", "ticket", created.ID, "key", remote.Key, "err", err)
+	}
 	f.log().Info("imported ticket from source",
 		"ticket", created.ID, "key", remote.Key, "kind", kind,
 		"attachments_reported", len(remote.Attachments),
@@ -199,21 +244,19 @@ func (f *Factory) source(ctx context.Context, id string) (trackerport.TicketSour
 	return src, kind, nil
 }
 
-// checkDuplicate refuses a second copy of the same issue into the same
-// project — nearly always a mis-click, and two tickets tracking one issue
-// diverge silently. The error names the existing ticket so the UI can link it.
-func (f *Factory) checkDuplicate(ctx context.Context, projectID, key string) error {
-	if key == "" || projectID == "" {
+// checkDuplicate refuses a second ticket for an issue the user already has
+// one for — nearly always a mis-click, and two tickets mirroring one issue
+// would only ever say the same thing. An indexed lookup (tickets_source_key_idx).
+func (f *Factory) checkDuplicate(ctx context.Context, userID, sourceID, key string) error {
+	if key == "" {
 		return nil
 	}
-	rows, err := f.Conf.ListTickets(ctx, "")
+	t, found, err := f.Conf.TicketBySource(ctx, userID, sourceID, key)
 	if err != nil {
 		return err
 	}
-	for _, t := range rows {
-		if t.ProjectID == projectID && strings.EqualFold(t.SourceKey, key) {
-			return fmt.Errorf("%s is %w as ticket %s (%q)", key, ErrDuplicate, t.ID, t.Title)
-		}
+	if found {
+		return &DuplicateError{Key: key, Ticket: t}
 	}
 	return nil
 }
@@ -227,31 +270,74 @@ func (f *Factory) importAttachments(ctx context.Context, owner string, src track
 	if f.Attachments == nil {
 		return nil, []string{fmt.Sprintf("%d attachment(s) skipped: this server has no file store configured", len(remote.Attachments))}
 	}
-	var ids, warnings []string
-	for _, a := range remote.Attachments {
-		id, err := f.importOne(ctx, owner, src, a)
-		switch {
-		case errors.Is(err, filestore.ErrTooLarge):
-			warnings = append(warnings, fmt.Sprintf("%s: too large for this server's upload limit — attach it by hand if you need it", a.Filename))
-		case errors.Is(err, filestore.ErrMimeType):
-			warnings = append(warnings, fmt.Sprintf("%s: file type %q is not on the upload allowlist", a.Filename, a.Mime))
-		case err != nil:
-			warnings = append(warnings, fmt.Sprintf("%s: %v", a.Filename, err))
-			f.log().Warn("import attachment", "file", a.Filename, "ticket", remote.Key, "err", err)
-		default:
-			ids = append(ids, id)
-		}
+	ids, skips := copyAttachments(ctx, f.Attachments, f.log(), owner, src, remote.Key, remote.Attachments)
+	var warnings []string
+	for _, s := range skips {
+		warnings = append(warnings, s.warning())
 	}
 	return ids, warnings
 }
 
-func (f *Factory) importOne(ctx context.Context, owner string, src trackerport.TicketSource, a trackerport.SourceAttachment) (string, error) {
+// attachmentSkip is a remote file that did not land, and why.
+type attachmentSkip struct {
+	file, mime string
+	err        error
+}
+
+// refused reports a file the upload policy turned away (as opposed to one
+// that failed to download or store).
+func (s attachmentSkip) refused() bool {
+	return errors.Is(s.err, filestore.ErrTooLarge) || errors.Is(s.err, filestore.ErrMimeType)
+}
+
+func (s attachmentSkip) warning() string {
+	switch {
+	case errors.Is(s.err, filestore.ErrTooLarge):
+		return fmt.Sprintf("%s: too large for this server's upload limit — attach it by hand if you need it", s.file)
+	case errors.Is(s.err, filestore.ErrMimeType):
+		return fmt.Sprintf("%s: file type %q is not on the upload allowlist", s.file, s.mime)
+	}
+	return fmt.Sprintf("%s: %v", s.file, s.err)
+}
+
+// copyAttachments downloads remote files (OpenAttachment) into owner's
+// unclaimed uploads through the upload policy — size cap, MIME allowlist —
+// each recording the tracker's id for it (SaveImported), and returns the ids
+// that landed for the caller to claim. A file listed twice under one remote
+// id is copied once. Shared by the import and the sync, so a file the sync
+// picks up later is held to exactly what the import would have held it to.
+func copyAttachments(ctx context.Context, store *filestore.Attachments, log *slog.Logger, owner string, src trackerport.TicketSource, key string, list []trackerport.SourceAttachment) ([]string, []attachmentSkip) {
+	var ids []string
+	var skips []attachmentSkip
+	seen := map[string]bool{}
+	for _, a := range list {
+		if a.ID != "" {
+			if seen[a.ID] {
+				continue
+			}
+			seen[a.ID] = true
+		}
+		id, err := copyAttachment(ctx, store, owner, src, a)
+		if err != nil {
+			skip := attachmentSkip{file: a.Filename, mime: a.Mime, err: err}
+			if !skip.refused() {
+				log.Warn("import attachment", "file", a.Filename, "ticket", key, "err", err)
+			}
+			skips = append(skips, skip)
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids, skips
+}
+
+func copyAttachment(ctx context.Context, store *filestore.Attachments, owner string, src trackerport.TicketSource, a trackerport.SourceAttachment) (string, error) {
 	rc, err := src.OpenAttachment(ctx, a)
 	if err != nil {
 		return "", err
 	}
 	defer rc.Close()
-	att, err := f.Attachments.Save(ctx, owner, a.Filename, a.Mime, io.Reader(rc))
+	att, err := store.SaveImported(ctx, owner, a.ID, a.Filename, a.Mime, io.Reader(rc))
 	if err != nil {
 		return "", err
 	}

@@ -2,11 +2,11 @@ package tickets
 
 // Tickets for merge requests: a run created on a merge request someone opened
 // belongs to a ticket of its own — the merge request's title and description,
-// keyed by its URL, with no tracker behind it (tracker actions skip). The
-// merge_request automation makes them as it finds merge requests; the
-// workshop's Repositories tab when a person starts a run on one. Both find the
-// same ticket for the same merge request, so a merge request's runs, however
-// begun, are filed together.
+// keyed by its URL, with no remote tracker behind it (it lives on the internal
+// tracker, like a hand-written ticket). The merge_request automation makes
+// them as it finds merge requests; the workshop's Repositories tab when a
+// person starts a run on one. Both find the same ticket for the same merge
+// request, so a merge request's runs, however begun, are filed together.
 
 import (
 	"context"
@@ -18,18 +18,9 @@ import (
 )
 
 // FindByKey is the project's ticket whose source key is key (compared
-// without case), if there is one.
+// without case), if there is one — an indexed lookup.
 func (f *Factory) FindByKey(ctx context.Context, projectID, key string) (confstore.Ticket, bool, error) {
-	all, err := f.Conf.ListTickets(ctx, "")
-	if err != nil {
-		return confstore.Ticket{}, false, err
-	}
-	for _, t := range all {
-		if t.ProjectID == projectID && strings.EqualFold(t.SourceKey, key) {
-			return t, true, nil
-		}
-	}
-	return confstore.Ticket{}, false, nil
+	return f.Conf.TicketByProjectKey(ctx, projectID, key)
 }
 
 // CreateForMR makes the ticket of a merge request: titled with it and its

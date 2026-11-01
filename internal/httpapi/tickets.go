@@ -45,15 +45,19 @@ func (b ticketBody) toTicket() confstore.Ticket {
 	}
 }
 
-// ticketResp is a ticket plus anything the import could not carry over — a
+// ticketResp is a ticket — its status and type resolved — plus its
+// attachments, its links and anything the import could not carry over: a
 // skipped attachment is a fact the operator must see, and silence would read
 // as "everything came across".
 type ticketResp struct {
-	confstore.Ticket
+	TicketView
 	// AttachmentIDs are the ticket's claimed attachments (rows, not a stored
 	// column), for the edit form's re-send semantics.
 	AttachmentIDs []string `json:"attachment_ids"`
-	Warnings      []string `json:"warnings,omitempty"`
+	// Links are the internal tracker's links on the ticket (ticket_link,
+	// ticket_link_branch); a remote issue keeps its own.
+	Links    []confstore.TicketLink `json:"links"`
+	Warnings []string               `json:"warnings,omitempty"`
 }
 
 // ticketAttachmentIDs lists the ids claimed by a ticket (for responses and
@@ -82,6 +86,9 @@ func (s *Server) tickets() *tickets.Factory {
 	}
 }
 
+// listTickets is one's tickets, status and type resolved. ?project= keeps one
+// project's; ?done=1 keeps those in a Done status, ?done=0 the others (a
+// ticket not synced yet has no status, and is not done).
 func (s *Server) listTickets(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.Conf.ListTickets(r.Context(), auth.UserID(r.Context()))
 	if err != nil {
@@ -98,10 +105,21 @@ func (s *Server) listTickets(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = filtered
 	}
-	if rows == nil {
-		rows = []confstore.Ticket{}
+	views, err := s.ticketViews(r.Context(), rows)
+	if err != nil {
+		confErr(w, err)
+		return
 	}
-	writeJSON(w, http.StatusOK, rows)
+	if done := r.URL.Query().Get("done"); done == "0" || done == "1" {
+		filtered := views[:0]
+		for _, v := range views {
+			if (v.Status != nil && v.Status.IsDone) == (done == "1") {
+				filtered = append(filtered, v)
+			}
+		}
+		views = filtered
+	}
+	writeJSON(w, http.StatusOK, views)
 }
 
 // createTicket creates a ticket from scratch or, with {source_id, source_key},
@@ -132,7 +150,7 @@ func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, ticketResp{Ticket: t, AttachmentIDs: s.ticketAttachmentIDs(r, t.ID)})
+	s.writeTicket(w, r, http.StatusCreated, t, nil)
 }
 
 func (s *Server) importTicket(w http.ResponseWriter, r *http.Request, body ticketBody) {
@@ -157,8 +175,7 @@ func (s *Server) importTicket(w http.ResponseWriter, r *http.Request, body ticke
 		// issue) — an upstream problem, not a bad request.
 		writeErr(w, http.StatusBadGateway, err.Error())
 	default:
-		writeJSON(w, http.StatusCreated, ticketResp{Ticket: t,
-			AttachmentIDs: s.ticketAttachmentIDs(r, t.ID), Warnings: warnings})
+		s.writeTicket(w, r, http.StatusCreated, t, warnings)
 	}
 }
 
@@ -280,7 +297,7 @@ func (s *Server) getTicket(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, ticketResp{Ticket: t, AttachmentIDs: s.ticketAttachmentIDs(r, t.ID)})
+	s.writeTicket(w, r, http.StatusOK, t, nil)
 }
 
 func (s *Server) updateTicket(w http.ResponseWriter, r *http.Request) {
@@ -299,13 +316,15 @@ func (s *Server) updateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The factory claims any newly-attached uploads; provenance (source_*) is
-	// preserved by the store, so an edit never disowns an imported ticket.
+	// preserved by the store, so an edit never disowns an imported ticket. On
+	// a ticket mirroring a remote issue, a change to what its tracker owns
+	// (title, goal, change type) is refused with 409.
 	t, err := s.tickets().Update(r.Context(), r.PathValue("id"), body.toTicket(), body.AttachmentIDs)
 	if err != nil {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, ticketResp{Ticket: t, AttachmentIDs: s.ticketAttachmentIDs(r, t.ID)})
+	s.writeTicket(w, r, http.StatusOK, t, nil)
 }
 
 // deleteTicket routes through the factory so the ticket's attachments go
@@ -322,7 +341,8 @@ func (s *Server) deleteTicket(w http.ResponseWriter, r *http.Request) {
 // body is per-attempt and optional: {flow} overrides the project default,
 // while {goal, artifact_ids} add direction and files for THIS try on top of
 // the ticket's own (they never modify the ticket). The run derives its own
-// unique branch from the ticket's base branch.
+// unique branch from the ticket's base branch. A ticket has one active run at
+// a time: 409 with run_id naming it while another is going (runStartErr).
 func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 	t, err := s.Conf.GetTicket(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -351,13 +371,26 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 		SourceKey:  t.SourceKey,
 		SourceURL:  t.SourceURL,
 	}, body.Flow, t.ProjectID, runinput.Input{Params: body.Params, MR: body.MR, Skillsets: body.Skillsets})
+	if err != nil {
+		runStartErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, RunRef{RunID: runID})
+}
+
+// runStartErr answers a refused run start: 409 for a ticket that already has
+// an active run — the body's run_id names it, so the client can open or
+// abort it — and for the environment cap, 400 for every other refusal
+// (preflight, a bad branch, a missing flow).
+func runStartErr(w http.ResponseWriter, err error) {
+	var busy engine.ErrTicketBusy
 	switch {
+	case errors.As(err, &busy):
+		writeJSON(w, http.StatusConflict, ErrorResponse{Error: err.Error(), RunID: busy.RunID})
 	case errors.Is(err, engine.ErrEnvCapacity):
 		writeErr(w, http.StatusConflict, err.Error())
-	case err != nil:
-		writeErr(w, http.StatusBadRequest, err.Error())
 	default:
-		writeJSON(w, http.StatusCreated, RunRef{RunID: runID})
+		writeErr(w, http.StatusBadRequest, err.Error())
 	}
 }
 
@@ -366,8 +399,11 @@ func (s *Server) ticketRoutes() []Route {
 	return []Route{
 		{Method: "GET", Path: "/api/tickets", ID: "listTickets", Tag: tagTickets,
 			Summary: "One's tickets",
-			Query:   []Param{{Name: "project", Doc: "only tickets of this project"}},
-			Handler: s.listTickets, Returns: []confstore.Ticket{}, Enabled: haveConf},
+			Query: []Param{
+				{Name: "project", Doc: "only tickets of this project"},
+				{Name: "done", Doc: "1 = only tickets in a Done status, 0 = only the others (default: all)", Enum: []string{"0", "1"}},
+			},
+			Handler: s.listTickets, Returns: []TicketView{}, Enabled: haveConf},
 		{Method: "POST", Path: "/api/tickets", ID: "createTicket", Tag: tagTickets,
 			Summary: "Create a ticket",
 			Handler: s.createTicket, Body: ticketBody{}, Returns: ticketResp{},
@@ -376,6 +412,7 @@ func (s *Server) ticketRoutes() []Route {
 			Summary: "One ticket", Handler: s.getTicket, Returns: ticketResp{}, Enabled: haveConf, Scope: ScopeTicket},
 		{Method: "PUT", Path: "/api/tickets/{id}", ID: "updateTicket", Tag: tagTickets,
 			Summary: "Replace a ticket",
+			Doc:     "On a ticket mirroring a remote issue, changing what its tracker owns (title, goal, change type) is refused with 409.",
 			Handler: s.updateTicket, Body: ticketBody{}, Returns: ticketResp{}, Enabled: haveConf, Scope: ScopeTicket},
 		{Method: "DELETE", Path: "/api/tickets/{id}", ID: "deleteTicket", Tag: tagTickets,
 			Summary: "Delete a ticket", Handler: s.deleteTicket, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeTicket},
@@ -384,7 +421,31 @@ func (s *Server) ticketRoutes() []Route {
 			Handler: s.getTicketAttachments, Returns: AttachmentList{}, Enabled: haveConf, Scope: ScopeTicket},
 		{Method: "POST", Path: "/api/tickets/{id}/runs", ID: "startTicketRun", Tag: tagTickets,
 			Summary: "Start one attempt on a ticket",
+			Doc:     "A ticket has at most one active (non-terminal) run: while one is going the start is refused with 409, the error's run_id naming it.",
 			Handler: s.startTicketRun, Body: StartRunRequest{}, Returns: RunRef{},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeTicket},
+		{Method: "POST", Path: "/api/tickets/{id}/sync", ID: "syncTicket", Tag: tagTickets,
+			Summary: "Re-read a ticket from its remote tracker",
+			Doc: "Done or not. A tracker that cannot be read is recorded on the ticket (sync_state error, sync_error), which the answer carries; " +
+				"a ticket with no source is answered as it is.",
+			Handler: s.syncTicket, Returns: ticketResp{}, Enabled: haveConf, Scope: ScopeTicket},
+		{Method: "POST", Path: "/api/tickets/{id}/status", ID: "setTicketStatus", Tag: tagTickets,
+			Summary: "Move a ticket to one of its tracker's statuses",
+			Doc: "Through the ticket's tracker: the remote issue (then the mirror is refreshed), else the internal tracker. " +
+				"A status not in the tracker's list is 400; one the issue cannot reach from where it is 409; the remote failing 502.",
+			Handler: s.setTicketStatus, Body: TicketStatusRequest{}, Returns: ticketResp{}, Enabled: haveConf, Scope: ScopeTicket},
+		{Method: "PUT", Path: "/api/tickets/{id}/labels", ID: "setTicketLabels", Tag: tagTickets,
+			Summary: "Replace a ticket's labels",
+			Doc:     "Through the ticket's tracker, like the status.",
+			Handler: s.setTicketLabels, Body: TicketLabelsRequest{}, Returns: ticketResp{}, Enabled: haveConf, Scope: ScopeTicket},
+		{Method: "GET", Path: "/api/tickets/{id}/comments", ID: "listTicketComments", Tag: tagTickets,
+			Summary: "A ticket's comments, oldest first",
+			Handler: s.listTicketComments, Returns: []confstore.TicketComment{}, Enabled: haveConf, Scope: ScopeTicket},
+		{Method: "POST", Path: "/api/tickets/{id}/comments", ID: "addTicketComment", Tag: tagTickets,
+			Summary: "Comment on a ticket",
+			Doc: "Through the ticket's tracker, like the status: on a remote issue the comment comes back with the refresh (origin remote), " +
+				"on the internal tracker it is the person's (origin user). Answers with the ticket's comments.",
+			Handler: s.addTicketComment, Body: TicketCommentRequest{}, Returns: []confstore.TicketComment{},
 			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeTicket},
 	}
 }

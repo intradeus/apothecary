@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import type { Limits } from '$lib/domain';
-import { aPing, aProject, aRun } from '$test/fixtures';
+import { aPing, aProject, aRun, aTicket } from '$test/fixtures';
 import { visibility } from '$test/fixtures/app.svelte';
 import { deferred } from '$test/helpers';
 import { fleet } from './fleet.svelte';
@@ -11,6 +11,7 @@ vi.mock('$lib/api', () => ({
 		runs: { list: vi.fn() },
 		pings: { pending: vi.fn() },
 		projects: { list: vi.fn() },
+		tickets: { list: vi.fn() },
 		system: { limits: vi.fn() }
 	}
 }));
@@ -22,6 +23,7 @@ function stubEngine() {
 	vi.mocked(api.runs.list).mockResolvedValue([]);
 	vi.mocked(api.pings.pending).mockResolvedValue([]);
 	vi.mocked(api.projects.list).mockResolvedValue([]);
+	vi.mocked(api.tickets.list).mockResolvedValue([]);
 	vi.mocked(api.system.limits).mockResolvedValue(limits);
 }
 
@@ -165,6 +167,8 @@ describe('fleet.refresh', () => {
 		vi.mocked(api.runs.list).mockResolvedValue([run]);
 		vi.mocked(api.pings.pending).mockResolvedValue([ping]);
 		vi.mocked(api.projects.list).mockResolvedValue([project]);
+		const ticket = aTicket();
+		vi.mocked(api.tickets.list).mockResolvedValue([ticket]);
 
 		await fleet.refresh();
 		vi.useRealTimers();
@@ -172,6 +176,10 @@ describe('fleet.refresh', () => {
 		expect(fleet.runs).toEqual([run]);
 		expect(fleet.pending).toEqual([ping]);
 		expect(fleet.projects).toEqual([project]);
+		expect(fleet.tickets).toEqual([ticket]);
+		expect(fleet.ticketById.get(ticket.id)).toEqual(ticket);
+		// Every ticket, done ones too: the lists filter them.
+		expect(api.tickets.list).toHaveBeenCalledWith();
 		expect(fleet.limits).toEqual(limits);
 		expect(fleet.updatedAt).toBe(1_000_000);
 	});
@@ -278,6 +286,7 @@ describe('fleet.reset', () => {
 		vi.mocked(api.runs.list).mockResolvedValue([aRun()]);
 		vi.mocked(api.pings.pending).mockResolvedValue([aPing()]);
 		vi.mocked(api.projects.list).mockResolvedValue([aProject()]);
+		vi.mocked(api.tickets.list).mockResolvedValue([aTicket()]);
 		await fleet.refresh();
 		fleet.error = 'old';
 
@@ -286,6 +295,7 @@ describe('fleet.reset', () => {
 		expect(fleet.runs).toEqual([]);
 		expect(fleet.pending).toEqual([]);
 		expect(fleet.projects).toEqual([]);
+		expect(fleet.tickets).toEqual([]);
 		expect(fleet.updatedAt).toBeNull();
 		expect(fleet.error).toBe('');
 		expect(fleet.limits).toEqual(limits);

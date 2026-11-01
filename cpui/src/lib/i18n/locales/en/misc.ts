@@ -166,7 +166,20 @@ export default {
 	'system.int.thoseWorkshops': 'those workshops’',
 	'system.int.deleteTitle': 'Delete {name}?',
 	'system.int.deleteBodyTickets':
-		'The integration <b>{name}</b> and its stored secrets are deleted. Tickets already imported from it keep their copy.',
+		'The integration <b>{name}</b> and its stored secrets are deleted. If tickets still mirror its issues, you’re asked before they’re unlinked.',
+	'system.int.unlinkTitle_one': 'Unlink {count} ticket?',
+	'system.int.unlinkTitle_other': 'Unlink {count} tickets?',
+	'system.int.unlinkBody_one':
+		'<b>{count} ticket</b> mirrors an issue of {name}. It will be unlinked and become an Apothecary ticket: its status moves to the one of the same name on your own tracker, its comments stay.',
+	'system.int.unlinkBody_other':
+		'<b>{count} tickets</b> mirror issues of {name}. They will be unlinked and become Apothecary tickets: each status moves to the one of the same name on your own tracker, their comments stay.',
+	'system.int.unlinkRuns_one': '{count} run on them is still going; it keeps going.',
+	'system.int.unlinkRuns_other': '{count} runs on them are still going; they keep going.',
+	'system.int.unlinkAction': 'Unlink and delete',
+	'system.int.internalKind': 'Apothecary',
+	'system.int.internalSub': 'built in · where tickets written here live',
+	'system.int.builtIn': 'built in',
+	'system.int.lists': 'Statuses & types',
 	'system.int.deleteBodyUnused':
 		'The integration <b>{name}</b> and its stored secrets are deleted. No workshop uses it.',
 	'system.int.deleteAction': 'Delete integration',
@@ -185,6 +198,45 @@ export default {
 	'system.int.delete': 'Delete…',
 	'system.int.unregistered':
 		'Kind <code>{kind}</code> is not registered on this engine, so it can’t be edited here.',
+	// TrackerLists
+	'tracker.statuses': 'Statuses',
+	'tracker.types': 'Types',
+	'tracker.name': 'Name',
+	'tracker.done': 'Done',
+	'tracker.step': 'Flow step',
+	'tracker.changeType': 'Change type',
+	'tracker.rowTools': 'Order and delete',
+	'tracker.doneFor': '{name} is done',
+	'tracker.stepFor': 'Flow step of {name}',
+	'tracker.changeTypeFor': 'Change type of {name}',
+	'tracker.step.todo': 'to do',
+	'tracker.step.in_progress': 'in progress',
+	'tracker.step.in_review': 'in review',
+	'tracker.step.done': 'done',
+	'tracker.step.blocked': 'blocked',
+	'tracker.step.none': 'none',
+	'tracker.problem.stepTwice': 'Only one status can be “{step}”.',
+	'tracker.problem.emptyName': 'Every row needs a name.',
+	'tracker.problem.nameTwice': '“{name}” is listed twice.',
+	'tracker.addStatus': '+ Status',
+	'tracker.addType': '+ Type',
+	'tracker.saveStatuses': 'Save statuses',
+	'tracker.saveTypes': 'Save types',
+	'tracker.saved': '{name} saved',
+	'tracker.moveUp': 'Move up',
+	'tracker.moveDown': 'Move down',
+	'tracker.deleteRow': 'Delete row',
+	'tracker.refresh': 'Refresh from tracker',
+	'tracker.syncNow': 'Sync now',
+	'tracker.synced':
+		'Synced {synced} of {tickets} tickets · {gone} gone · {failed} failed · {busy} skipped (run going) · {rateLimited} held back (rate limit)',
+	'tracker.replaceTitle': 'Replace deleted rows',
+	'tracker.replaceText':
+		'Tickets still use what you deleted. Pick what each moves to, then save again.',
+	'tracker.replacePick': 'Move its tickets to…',
+	'tracker.replaceFor': 'Replacement for {name}',
+	'tracker.replaceSave': 'Move tickets and save',
+	'tracker.cancel': 'Cancel',
 	// IntegrationForm
 	'form.int.saved': '{name} saved',
 	'form.int.added': '{name} added',
@@ -298,7 +350,7 @@ export default {
 	'form.ticket.created': 'Ticket created',
 	'form.ticket.import': 'Import from tracker',
 	'form.ticket.importLede':
-		'Copy an issue in: title, goal and attachments. Nothing is written back.',
+		'Link an issue: the ticket mirrors it from then on — title, goal, status, labels and comments stay in sync, and status changes and comments made here go back to the tracker.',
 	'form.ticket.noSource': 'No ticket source connected.',
 	'form.ticket.addTracker': 'Add a tracker integration',
 	'form.ticket.from': 'from {name}',
@@ -314,6 +366,8 @@ export default {
 	'form.ticket.search': 'Search',
 	'form.ticket.searching': 'Searching…',
 	'form.ticket.noMatch': 'No matching issues.',
+	'form.ticket.trackerOwns':
+		'Title, goal and change type follow the issue in {kind}: change them there.',
 	// ProjectForm
 	'form.project.notHost': 'not a host name (wildcards as *.example.com)',
 	'form.project.dupNames': 'Command names must be unique: {names}.',
@@ -1138,7 +1192,9 @@ export default {
 	'flow.agents.addsHelp':
 		'The prompt is followed by a section per input and the output contract, from the ports of the stage that runs it — paths and contents filled in at run time — and by the standing rules on asking the human.',
 	'flow.agents.addsTask':
-		'# TASK — the ticket: title, goal, direction for this attempt, attached files',
+		'# TASK — the ticket: title, key, status, labels, goal, direction for this attempt, attached files',
+	'flow.agents.addsDiscussion':
+		'# TICKET DISCUSSION — the latest comments on the ticket, oldest first, quoted as untrusted text (omitted when there are none)',
 	'flow.agents.addsFeed': 'the {type} the edge carried, when one entered (attempt n of m)',
 	'flow.agents.addsChangeset': 'the changed files, listed (never the diff)',
 	'flow.agents.addsLink': 'the link',

@@ -24,6 +24,10 @@ type Mem struct {
 	projects     map[string]Project
 	tickets      map[string]Ticket
 	flows        map[string]FlowRow
+	statuses     map[string]TrackerStatus
+	types        map[string]TrackerType
+	comments     map[string]TicketComment
+	links        map[string]TicketLink // ticketID \x00 url
 	versions     map[string]FlowVersion
 	bindings     map[string]FlowBinding
 	automations  map[string]Automation
@@ -45,6 +49,10 @@ func NewMem() *Mem {
 		projects:     map[string]Project{},
 		tickets:      map[string]Ticket{},
 		flows:        map[string]FlowRow{},
+		statuses:     map[string]TrackerStatus{},
+		types:        map[string]TrackerType{},
+		comments:     map[string]TicketComment{},
+		links:        map[string]TicketLink{},
 		versions:     map[string]FlowVersion{},
 		bindings:     map[string]FlowBinding{},
 		automations:  map[string]Automation{},
@@ -107,6 +115,13 @@ func storedProject(p Project) Project {
 }
 
 func storedTicket(t Ticket) Ticket {
+	// Parity with the labels text[] column: empty reads back as none.
+	if len(t.Labels) == 0 {
+		t.Labels = nil
+	}
+	t.Labels = slices.Clone(t.Labels)
+	t.RemoteUpdatedAt, t.SyncedAt = pgTimePtr(t.RemoteUpdatedAt), pgTimePtr(t.SyncedAt)
+	t.StatusChangedAt = pgTimePtr(t.StatusChangedAt)
 	t.CreatedAt, t.UpdatedAt = pgTime(t.CreatedAt), pgTime(t.UpdatedAt)
 	return t
 }
@@ -195,6 +210,11 @@ func (m *Mem) ListIntegrations(_ context.Context, userID string) ([]StoredIntegr
 func (m *Mem) DeleteIntegration(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.deleteIntegration(id)
+}
+
+// deleteIntegration is DeleteIntegration under m.mu.
+func (m *Mem) deleteIntegration(id string) error {
 	// Parity with pg: references first, so a harness id nothing stands behind
 	// still reads as referenced.
 	var refs []string
@@ -210,7 +230,15 @@ func (m *Mem) DeleteIntegration(_ context.Context, id string) error {
 	if _, ok := m.integrations[id]; !ok {
 		return notFound("integration", id)
 	}
+	// Parity with the lists' cascade meeting the tickets' FKs.
+	for _, t := range m.tickets {
+		if m.statuses[t.StatusID].IntegrationID == id || m.types[t.TypeID].IntegrationID == id {
+			return fmt.Errorf("integration %s: %w", id, ErrReferenced)
+		}
+	}
 	delete(m.integrations, id)
+	maps.DeleteFunc(m.statuses, func(_ string, s TrackerStatus) bool { return s.IntegrationID == id })
+	maps.DeleteFunc(m.types, func(_ string, t TrackerType) bool { return t.IntegrationID == id })
 	return nil
 }
 
@@ -299,6 +327,7 @@ func (m *Mem) DeleteProject(_ context.Context, id string) error {
 	delete(m.projects, id)
 	// Everything under the project goes with it (pg: ON DELETE CASCADE).
 	maps.DeleteFunc(m.tickets, func(_ string, t Ticket) bool { return t.ProjectID == id })
+	m.dropOrphans()
 	maps.DeleteFunc(m.flows, func(_ string, r FlowRow) bool { return r.ProjectID == id })
 	maps.DeleteFunc(m.versions, func(_ string, v FlowVersion) bool { return v.ProjectID == id })
 	maps.DeleteFunc(m.bindings, func(_ string, b FlowBinding) bool { return b.ProjectID == id })
@@ -349,7 +378,21 @@ func (m *Mem) UpsertTicket(_ context.Context, t Ticket) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.projects[t.ProjectID]; !ok {
-		return fmt.Errorf("ticket %s references a missing project: %w", t.ID, ErrInvalid)
+		return fmt.Errorf("ticket %s references a missing project, status or type: %w", t.ID, ErrInvalid)
+	}
+	if _, ok := m.statuses[t.StatusID]; t.StatusID != "" && !ok {
+		return fmt.Errorf("ticket %s references a missing project, status or type: %w", t.ID, ErrInvalid)
+	}
+	if _, ok := m.types[t.TypeID]; t.TypeID != "" && !ok {
+		return fmt.Errorf("ticket %s references a missing project, status or type: %w", t.ID, ErrInvalid)
+	}
+	// Parity with tickets_source_key_idx.
+	if t.SourceID != "" {
+		for _, x := range m.tickets {
+			if x.ID != t.ID && x.UserID == t.UserID && x.SourceID == t.SourceID && strings.EqualFold(x.SourceKey, t.SourceKey) {
+				return fmt.Errorf("ticket %s: %s is already ticket %s: %w", t.ID, t.SourceKey, x.ID, ErrConflict)
+			}
+		}
 	}
 	// Parity with the pg upsert: only created_at survives an update. The owner
 	// is written as given; copying the project's is the Service's job.
@@ -367,7 +410,7 @@ func (m *Mem) GetTicket(_ context.Context, id string) (Ticket, error) {
 	if !ok {
 		return Ticket{}, notFound("ticket", id)
 	}
-	return t, nil
+	return storedTicket(t), nil
 }
 
 func (m *Mem) ListTickets(_ context.Context, userID string) ([]Ticket, error) {
@@ -376,7 +419,7 @@ func (m *Mem) ListTickets(_ context.Context, userID string) ([]Ticket, error) {
 	var out []Ticket
 	for _, t := range m.tickets {
 		if userID == "" || t.UserID == userID {
-			out = append(out, t)
+			out = append(out, storedTicket(t))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
@@ -390,6 +433,7 @@ func (m *Mem) DeleteTicket(_ context.Context, id string) error {
 		return notFound("ticket", id)
 	}
 	delete(m.tickets, id)
+	m.dropOrphans()
 	return nil
 }
 

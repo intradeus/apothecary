@@ -10,9 +10,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"apothecary/internal/ports/trackerport"
 )
@@ -215,15 +217,17 @@ func TestIsCloud(t *testing.T) {
 }
 
 func TestToTicketLooseShapes(t *testing.T) {
-	c := New(Config{BaseURL: "https://j", TypeMap: map[string]trackerport.ChangeType{"bug": trackerport.ChangeFix}})
+	c := New(Config{BaseURL: "https://j"})
 	var in issueJSON
-	raw := `{"key":"P-1","fields":{"summary":"s","updated":"not a time","issuetype":{"name":" Bug "},
+	raw := `{"id":"100","key":"P-1","fields":{"summary":"s","updated":"not a time","issuetype":{"id":"7","name":" Bug "},
+	  "status":{"id":"3","name":"Doing"},"labels":["a","b"],
 	  "attachment":[{"id":"10","filename":"a"},{"id":11,"filename":"b"},{"id":null,"filename":"c"}]}}`
 	if err := json.Unmarshal([]byte(raw), &in); err != nil {
 		t.Fatal(err)
 	}
 	got := c.toTicket(in)
-	if got.URL != "https://j/browse/P-1" || got.ChangeType != trackerport.ChangeFix || !got.Updated.IsZero() {
+	if got.URL != "https://j/browse/P-1" || !got.Updated.IsZero() || got.RemoteID != "100" ||
+		got.StatusID != "3" || got.Status != "Doing" || got.TypeID != "7" || !reflect.DeepEqual(got.Labels, []string{"a", "b"}) {
 		t.Errorf("ticket = %+v", got)
 	}
 	var ids []string
@@ -558,15 +562,19 @@ func TestTransitionFailures(t *testing.T) {
 	}
 }
 
-func TestSupportedStatuses(t *testing.T) {
-	c := New(Config{StatusMap: map[trackerport.TicketStatus]string{trackerport.StatusDone: "Shipped", trackerport.StatusTodo: "Open"}})
-	var unsupported *trackerport.ErrStatusUnsupported
-	err := c.TransitionTo(context.Background(), " P-1 ", trackerport.StatusInReview)
-	if !errors.As(err, &unsupported) || unsupported.Key != "P-1" || unsupported.Kind != "Jira" {
-		t.Fatalf("err = %v", err)
+// A 404 is "no such issue" — what the sync needs to tell a moved or deleted
+// issue from a tracker that is down; any other failure is not.
+func TestFetchNotFound(t *testing.T) {
+	ctx := context.Background()
+	_, err := clientFor(answer(t, map[string]reply{
+		"GET /rest/api/3/issue/P-1": {404, `{"errorMessages":["Issue does not exist or you do not have permission to see it."]}`},
+	})).Fetch(ctx, "P-1")
+	if !errors.Is(err, trackerport.ErrTicketNotFound) || !strings.Contains(err.Error(), "Issue does not exist") {
+		t.Errorf("404 = %v", err)
 	}
-	if want := []trackerport.TicketStatus{trackerport.StatusTodo, trackerport.StatusDone}; !reflect.DeepEqual(unsupported.Supported, want) {
-		t.Errorf("supported = %v", unsupported.Supported)
+	_, err = clientFor(answer(t, map[string]reply{"GET /rest/api/3/issue/P-1": {500, `boom`}})).Fetch(ctx, "P-1")
+	if err == nil || errors.Is(err, trackerport.ErrTicketNotFound) {
+		t.Errorf("500 = %v", err)
 	}
 }
 
@@ -576,7 +584,7 @@ func TestWriteFailuresReachTheCaller(t *testing.T) {
 	if err := c.Comment(ctx, "P-1", "x"); err == nil {
 		t.Error("comment: a 404 is an error")
 	}
-	if _, err := c.Comments(ctx, "P-1"); err == nil {
+	if _, err := c.ListComments(ctx, "P-1"); err == nil {
 		t.Error("comments: a 404 is an error")
 	}
 	if err := c.AddLink(ctx, "P-1", trackerport.TicketLink{URL: "https://x"}); err == nil {
@@ -604,7 +612,7 @@ func TestAddLinkTitleFallsBackToTheURL(t *testing.T) {
 	}
 }
 
-func TestCommentsPageToTheTotal(t *testing.T) {
+func TestListCommentsPagesToTheTotal(t *testing.T) {
 	var starts []string
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /rest/api/3/issue/P-1/comment", func(w http.ResponseWriter, r *http.Request) {
@@ -612,16 +620,32 @@ func TestCommentsPageToTheTotal(t *testing.T) {
 		starts = append(starts, start)
 		switch start {
 		case "0":
-			_, _ = w.Write([]byte(`{"total":3,"comments":[{"body":"a"},{"body":"b"}]}`))
+			_, _ = w.Write([]byte(`{"total":3,"comments":[
+			  {"id":"1","author":{"displayName":"Ann"},"body":"a","created":"2026-07-31T10:04:00.000+0200","updated":"2026-07-31T11:04:00.000+0200"},
+			  {"id":2,"body":"b","created":"2026-07-31T10:05:00.000+0000"}]}`))
 		default:
-			_, _ = w.Write([]byte(`{"total":3,"comments":[{"body":"c"}]}`))
+			_, _ = w.Write([]byte(`{"total":3,"comments":[{"id":"3","body":"c"}]}`))
 		}
 	})
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
-	got, err := clientFor(ts).Comments(context.Background(), "P-1")
-	if err != nil || !reflect.DeepEqual(got, []string{"a", "b", "c"}) || !reflect.DeepEqual(starts, []string{"0", "2"}) {
-		t.Errorf("comments %v, starts %v, %v", got, starts, err)
+	got, err := clientFor(ts).ListComments(context.Background(), "P-1")
+	if err != nil || len(got) != 3 || !reflect.DeepEqual(starts, []string{"0", "2"}) {
+		t.Fatalf("comments %v, starts %v, %v", got, starts, err)
+	}
+	var ids, bodies []string
+	for _, c := range got {
+		ids, bodies = append(ids, c.ID), append(bodies, c.Body)
+	}
+	if !reflect.DeepEqual(ids, []string{"1", "2", "3"}) || !reflect.DeepEqual(bodies, []string{"a", "b", "c"}) {
+		t.Errorf("ids %v, bodies %v", ids, bodies)
+	}
+	if got[0].Author != "Ann" || !got[0].Created.Equal(time.Date(2026, 7, 31, 8, 4, 0, 0, time.UTC)) || !got[0].Updated.Equal(time.Date(2026, 7, 31, 9, 4, 0, 0, time.UTC)) {
+		t.Errorf("first = %+v", got[0])
+	}
+	// Never edited: Updated is Created.
+	if !got[1].Updated.Equal(got[1].Created) || got[1].Created.IsZero() {
+		t.Errorf("second = %+v", got[1])
 	}
 }
 
@@ -659,25 +683,102 @@ func TestAttachFailures(t *testing.T) {
 	}
 }
 
-func TestParseStatusMapErrorsAndOverrides(t *testing.T) {
-	if _, err := ParseStatusMap("done"); err == nil || !strings.Contains(err.Error(), "is not canonical=status") {
-		t.Errorf("no equals = %v", err)
-	}
-	if _, err := ParseStatusMap("shipped=Done"); err == nil || !strings.Contains(err.Error(), "canonical statuses are") {
-		t.Errorf("unknown status = %v", err)
-	}
-	got, err := ParseStatusMap("done=Shipped\nin_review=\n , blocked=On hold")
+func TestStatusesAndTypes(t *testing.T) {
+	ts := answer(t, map[string]reply{
+		"GET /rest/api/3/status": {body: `[
+		  {"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+		  {"id":3,"name":"In Progress","statusCategory":{"key":"indeterminate"}},
+		  {"id":"5","name":"Done","statusCategory":{"key":"done"}},
+		  {"id":"9","name":"Odd","statusCategory":{"key":"undefined"}}]`},
+		"GET /rest/api/3/issuetype": {body: `[{"id":"10","name":"Bug"},{"id":11,"name":"Story","subtask":false}]`},
+	})
+	c := clientFor(ts)
+	statuses, err := c.Statuses(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got[trackerport.StatusDone] != "Shipped" || got[trackerport.StatusBlocked] != "On hold" {
-		t.Errorf("map = %v", got)
+	want := []trackerport.RemoteStatus{
+		{ID: "1", Name: "To Do", Category: trackerport.CategoryNew},
+		{ID: "3", Name: "In Progress", Category: trackerport.CategoryIndeterminate},
+		{ID: "5", Name: "Done", Category: trackerport.CategoryDone},
+		{ID: "9", Name: "Odd", Category: trackerport.CategoryUnknown},
 	}
-	if _, has := got[trackerport.StatusInReview]; has {
-		t.Errorf("an empty value removes the default: %v", got)
+	if !reflect.DeepEqual(statuses, want) {
+		t.Errorf("statuses = %+v", statuses)
 	}
-	if got[trackerport.StatusTodo] != "To Do" {
-		t.Errorf("unlisted statuses keep the default: %v", got)
+	types, err := c.Types(context.Background())
+	if err != nil || !reflect.DeepEqual(types, []trackerport.RemoteType{{ID: "10", Name: "Bug"}, {ID: "11", Name: "Story"}}) {
+		t.Errorf("types = %+v, %v", types, err)
+	}
+	failing := clientFor(answer(t, nil))
+	if _, err := failing.Statuses(context.Background()); err == nil {
+		t.Error("statuses: a 404 is an error")
+	}
+	if _, err := failing.Types(context.Background()); err == nil {
+		t.Error("types: a 404 is an error")
+	}
+}
+
+// FetchMany asks for every key in one JQL query, a hundred at a time; a
+// batch JQL refuses (one key no longer exists) is fetched key by key, and
+// the missing key is simply absent.
+func TestFetchMany(t *testing.T) {
+	var jqls []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /rest/api/3/search/jql", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			JQL        string   `json:"jql"`
+			MaxResults int      `json:"maxResults"`
+			Fields     []string `json:"fields"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		jqls = append(jqls, b.JQL)
+		if strings.Contains(b.JQL, `"P-GONE"`) {
+			w.WriteHeader(400)
+			_, _ = w.Write([]byte(`{"errorMessages":["An issue with key 'P-GONE' does not exist for field 'key'."]}`))
+			return
+		}
+		if !slices.Contains(b.Fields, "labels") || !slices.Contains(b.Fields, "attachment") {
+			t.Errorf("fields = %v", b.Fields)
+		}
+		n := strings.Count(b.JQL, `"`) / 2
+		var issues []string
+		for i := range n {
+			issues = append(issues, fmt.Sprintf(`{"id":"%d","key":"P-%d","fields":{"labels":["l"]}}`, i, i))
+		}
+		_, _ = fmt.Fprintf(w, `{"issues":[%s]}`, strings.Join(issues, ","))
+	})
+	mux.HandleFunc("GET /rest/api/3/issue/{key}", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("key") == "P-GONE" {
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"errorMessages":["Issue does not exist"]}`))
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"id":"1","key":%q,"fields":{}}`, r.PathValue("key"))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	c := clientFor(ts)
+	keys := make([]string, 150)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("P-%d", i)
+	}
+	got, err := c.FetchMany(context.Background(), keys)
+	if err != nil || len(got) != 150 || len(jqls) != 2 || !strings.HasPrefix(jqls[0], `key in ("P-0", "P-1"`) {
+		t.Fatalf("got %d, jqls %d (%.40q), %v", len(got), len(jqls), jqls, err)
+	}
+	if !reflect.DeepEqual(got[0].Labels, []string{"l"}) {
+		t.Errorf("first = %+v", got[0])
+	}
+	got, err = c.FetchMany(context.Background(), []string{"P-1", " ", "P-GONE"})
+	if err != nil || len(got) != 1 || got[0].Key != "P-1" {
+		t.Errorf("refused batch: %+v, %v", got, err)
+	}
+	if got, err := c.FetchMany(context.Background(), nil); err != nil || got != nil {
+		t.Errorf("no keys: %v, %v", got, err)
+	}
+	if _, err := clientFor(answer(t, map[string]reply{"POST /rest/api/3/search/jql": {500, `boom`}})).FetchMany(context.Background(), []string{"P-1"}); err == nil {
+		t.Error("a failing search is an error")
 	}
 }
 

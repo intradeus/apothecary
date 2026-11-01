@@ -86,72 +86,6 @@ func (c *Client) Transition(ctx context.Context, key, status string) error {
 	return err
 }
 
-// DefaultStatusMap is what a canonical status means on a Jira with the
-// stock software workflow: To Do → In Progress → In Review → Done. There is
-// no stock "blocked" column, so blocked is unsupported until the
-// integration maps it.
-func DefaultStatusMap() map[trackerport.TicketStatus]string {
-	return map[trackerport.TicketStatus]string{
-		trackerport.StatusTodo:       "To Do",
-		trackerport.StatusInProgress: "In Progress",
-		trackerport.StatusInReview:   "In Review",
-		trackerport.StatusDone:       "Done",
-	}
-}
-
-// ParseStatusMap reads the integration's status map text — canonical=status
-// pairs separated by commas or newlines ("done=Ready for prod, blocked=On
-// hold") — laid over DefaultStatusMap: a listed status replaces the default
-// word for it, and an empty value ("in_review=") removes the default, so a
-// flow's `to: in_review` skips on a workflow that has no review column.
-// Empty text is the defaults.
-func ParseStatusMap(text string) (map[trackerport.TicketStatus]string, error) {
-	m := DefaultStatusMap()
-	for part := range strings.SplitSeq(strings.ReplaceAll(text, "\n", ","), ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		name, value, ok := strings.Cut(part, "=")
-		if !ok {
-			return nil, fmt.Errorf("jira: status map entry %q is not canonical=status", part)
-		}
-		st, known := trackerport.ParseTicketStatus(name)
-		if !known {
-			return nil, fmt.Errorf("jira: status map names %q; the canonical statuses are %s", strings.TrimSpace(name), trackerport.StatusNames(trackerport.CanonicalStatuses()))
-		}
-		if value = strings.TrimSpace(value); value == "" {
-			delete(m, st)
-		} else {
-			m[st] = value
-		}
-	}
-	return m, nil
-}
-
-// supportedStatuses lists the canonical statuses the map has a word for,
-// in lifecycle order.
-func (c *Client) supportedStatuses() []trackerport.TicketStatus {
-	var out []trackerport.TicketStatus
-	for _, st := range trackerport.CanonicalStatuses() {
-		if c.cfg.StatusMap[st] != "" {
-			out = append(out, st)
-		}
-	}
-	return out
-}
-
-// TransitionTo moves the issue to the workflow status the integration maps
-// the canonical one to (Config.StatusMap); a canonical status with no word
-// on this site is unsupported, which the engine skips rather than fails.
-func (c *Client) TransitionTo(ctx context.Context, key string, to trackerport.TicketStatus) error {
-	name := c.cfg.StatusMap[to]
-	if name == "" {
-		return &trackerport.ErrStatusUnsupported{Key: strings.TrimSpace(key), Status: to, Kind: "Jira", Supported: c.supportedStatuses()}
-	}
-	return c.Transition(ctx, key, name)
-}
-
 func containsFold(list []string, s string) bool {
 	for _, v := range list {
 		if strings.EqualFold(v, s) {
@@ -178,14 +112,22 @@ func (c *Client) Comment(ctx context.Context, key, body string) error {
 	return err
 }
 
-// Comments lists the issue's comments as markdown, oldest first, paging to
-// exhaustion (the reconciliation read).
-func (c *Client) Comments(ctx context.Context, key string) ([]string, error) {
-	var out []string
+// ListComments lists the issue's comments, oldest first, paging to
+// exhaustion: each with its id, author's display name, timestamps and body
+// rendered to markdown.
+func (c *Client) ListComments(ctx context.Context, key string) ([]trackerport.Comment, error) {
+	var out []trackerport.Comment
 	for start := 0; ; {
 		var page struct {
 			Comments []struct {
-				Body json.RawMessage `json:"body"`
+				// id is a string on Cloud and may be a number on Data Center.
+				ID     any `json:"id"`
+				Author struct {
+					DisplayName string `json:"displayName"`
+				} `json:"author"`
+				Body    json.RawMessage `json:"body"`
+				Created string          `json:"created"`
+				Updated string          `json:"updated"`
 			} `json:"comments"`
 			Total int `json:"total"`
 		}
@@ -194,7 +136,15 @@ func (c *Client) Comments(ctx context.Context, key string) ([]string, error) {
 			return nil, err
 		}
 		for _, cm := range page.Comments {
-			out = append(out, ToMarkdown(cm.Body))
+			created := parseTime(cm.Created)
+			updated := parseTime(cm.Updated)
+			if updated.IsZero() {
+				updated = created
+			}
+			out = append(out, trackerport.Comment{
+				ID: itoa(cm.ID), Author: cm.Author.DisplayName, Body: ToMarkdown(cm.Body),
+				Created: created, Updated: updated,
+			})
 		}
 		start += len(page.Comments)
 		if len(page.Comments) == 0 || start >= page.Total {

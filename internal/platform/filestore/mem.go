@@ -54,7 +54,7 @@ func ownerChecks(ticketID, runID, pingID string) error {
 }
 
 func (m *Mem) InsertAttachment(_ context.Context, a Attachment) error {
-	if err := storable(a.ID, a.UserID, a.TicketID, a.RunID, a.PingID, a.Filename, a.Mime, a.SHA256); err != nil {
+	if err := storable(a.ID, a.UserID, a.TicketID, a.RunID, a.PingID, a.Filename, a.Mime, a.SHA256, a.RemoteID); err != nil {
 		return err
 	}
 	if err := ownerChecks(a.TicketID, a.RunID, a.PingID); err != nil {
@@ -65,9 +65,26 @@ func (m *Mem) InsertAttachment(_ context.Context, a Attachment) error {
 	if _, dup := m.attachments[a.ID]; dup {
 		return fmt.Errorf("attachment %s: duplicate key", a.ID)
 	}
+	if m.remoteTaken(a.TicketID, a.RemoteID, nil) {
+		return fmt.Errorf("attachment %s: ticket %s already holds remote file %s", a.ID, a.TicketID, a.RemoteID)
+	}
 	a.CreatedAt = instant(a.CreatedAt)
 	m.attachments[a.ID] = a
 	return nil
+}
+
+// remoteTaken is attachments_remote_idx: one row per (ticket, remote id)
+// among claimed, remote rows, the ids in except aside. Caller holds mu.
+func (m *Mem) remoteTaken(ticketID, remoteID string, except map[string]bool) bool {
+	if ticketID == "" || remoteID == "" {
+		return false
+	}
+	for id, x := range m.attachments {
+		if !except[id] && x.TicketID == ticketID && x.RemoteID == remoteID {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Mem) GetAttachment(_ context.Context, id string) (Attachment, error) {
@@ -101,6 +118,24 @@ func (m *Mem) ClaimAttachments(_ context.Context, userID string, ids []string, t
 	}
 	if err := ownerChecks(ticketID, runID, pingID); err != nil {
 		return err
+	}
+	// The unique index holds after the UPDATE or none of it applies.
+	if ticketID != "" {
+		moving := make(map[string]bool, len(matched))
+		for _, id := range matched {
+			moving[id] = true
+		}
+		seen := map[string]bool{}
+		for id := range moving {
+			r := m.attachments[id].RemoteID
+			if r == "" {
+				continue
+			}
+			if seen[r] || m.remoteTaken(ticketID, r, moving) {
+				return fmt.Errorf("claim: ticket %s already holds remote file %s", ticketID, r)
+			}
+			seen[r] = true
+		}
 	}
 	for _, id := range matched {
 		a := m.attachments[id]

@@ -167,8 +167,8 @@ func TestCanonicalV5(t *testing.T) {
 	if f.Index("in_progress") != 0 || f.Index("ticket_done") != len(ids)-1 || f.Index("nope") != -1 {
 		t.Error("Index misbehaves")
 	}
-	// The tracker stages: a canonical status, the tracker's own word, and a
-	// canonical one read from an enum parameter — settings, not ports.
+	// The tracker stages: a flow step, the tracker's own word, and a flow
+	// step read from an enum parameter — settings, not ports.
 	if st := f.Stage("in_progress"); st.Setting("to", "") != "in_progress" || len(st.Inputs) != 0 {
 		t.Errorf("in_progress = %+v", st.Settings)
 	}
@@ -1185,8 +1185,8 @@ func TestCommandTimeout(t *testing.T) {
 	wantErr(t, header+"main:\n  - { id: s, type: command, run: x, timeout: soon }\n", "invalid timeout", 5)
 }
 
-// Tracker actions: ticket_transition names a canonical status (`to`, an enum
-// the tracker translates — readable from an enum parameter within it) OR
+// Tracker actions: ticket_transition names a flow step (`to`, an enum the
+// tracker's status list resolves — readable from an enum parameter within it) OR
 // the tracker's own word (`status`, a text setting: only blankness is a parse
 // error, and quoting is the author's choice), exactly one; ticket_set_field
 // takes its value from a file OR the flow; ticket_link warns when no merge
@@ -1206,15 +1206,15 @@ func TestTrackerActionSettings(t *testing.T) {
 	if v := fp.Stages[0].Setting("status", ""); v != "In Progress" || v != fq.Stages[0].Setting("status", "") {
 		t.Errorf("plain/quoted text settings differ: %+v vs %+v", fp.Stages[0].Settings, fq.Stages[0].Settings)
 	}
-	canon, err := Parse("t.yaml", []byte(head+"  - { id: s, type: action, action: ticket_transition, with: { to: in_review } }\n"))
+	step, err := Parse("t.yaml", []byte(head+"  - { id: s, type: action, action: ticket_transition, with: { to: in_review } }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st := canon.Stages[0]; st.Setting("to", "") != "in_review" || st.Setting("status", "") != "" {
-		t.Errorf("canonical setting = %+v", st.Settings)
+	if st := step.Stages[0]; st.Setting("to", "") != "in_review" || st.Setting("status", "") != "" {
+		t.Errorf("flow step setting = %+v", st.Settings)
 	}
-	// The canonical status may come from an enum parameter within the
-	// statuses — a project decides where its issues go once merged.
+	// The flow step may come from an enum parameter within the steps — a
+	// project decides where its issues go once merged.
 	withParam := strings.Replace(head, "model: fake/m", "model: fake/m, final: { type: string, default: done, enum: [done, in_review] }", 1)
 	viaParam, err := Parse("t.yaml", []byte(withParam+"  - { id: s, type: action, action: ticket_transition, with: { to: $final } }\n"))
 	if err != nil {

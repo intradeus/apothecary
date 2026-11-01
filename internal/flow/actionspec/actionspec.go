@@ -15,9 +15,9 @@
 // asserts. Nothing else in the language changes.
 //
 // Tracker actions (ticket_*) are the one family with a per-TICKET
-// prerequisite rather than a per-project one: the tracker is the
-// integration the ticket was imported from. The engine skips them, visibly,
-// on a ticket that has none.
+// prerequisite rather than a per-project one: the tracker is the ticket's —
+// the integration it was imported from, else Apothecary's internal tracker.
+// The engine skips them, visibly, on a run with no ticket.
 //
 // This package is a leaf: stdlib only, no ports. Requires is a port-kind
 // string that the engine matches, keeping the registry free of adapter types.
@@ -119,8 +119,8 @@ type Action struct {
 	Settings []SettingSig `json:"settings,omitempty"`
 }
 
-// Statuses lists the canonical ticket statuses in lifecycle order.
-var Statuses = []string{StatusTodo, StatusInProgress, StatusInReview, StatusDone, StatusBlocked}
+// Steps lists the flow steps (ticket_transition's `to`) in lifecycle order.
+var Steps = []string{StepTodo, StepInProgress, StepInReview, StepDone, StepBlocked}
 
 // Action slugs and the port kinds they require.
 const (
@@ -133,9 +133,9 @@ const (
 	MRMerge             = "mr_merge"
 	PostReview          = "post_review"
 
-	// Tracker actions: write back to the ticket's issue tracker (the
-	// ticketsource integration the ticket was imported from). Skipped on a
-	// ticket written by hand — there is nothing to write to.
+	// Tracker actions: write to the ticket's tracker — the remote issue
+	// (the ticketsource integration the ticket was imported from) or, for a
+	// ticket with no remote source, Apothecary's internal tracker.
 	TicketTransition = "ticket_transition"
 	TicketComment    = "ticket_comment"
 	TicketSetField   = "ticket_set_field"
@@ -168,21 +168,23 @@ const (
 	BranchKeep   = "keep"
 	BranchDelete = "delete"
 
-	// Canonical ticket statuses (ticket_transition's `to`): the flow's words
-	// for where the work is, which the ticket's tracker translates into its
-	// own. They mirror trackerport.CanonicalStatuses — the registry stays free of
-	// the ports package, and a test holds the two lists equal.
-	StatusTodo       = "todo"
-	StatusInProgress = "in_progress"
-	StatusInReview   = "in_review"
-	StatusDone       = "done"
-	StatusBlocked    = "blocked"
+	// Flow steps (ticket_transition's `to`): the flow's words for where the
+	// work is. Each tracker integration's status list says which of its
+	// statuses holds each step. They mirror trackerport.FlowSteps — the
+	// registry stays free of the ports package, and a test holds the two
+	// lists equal.
+	StepTodo       = "todo"
+	StepInProgress = "in_progress"
+	StepInReview   = "in_review"
+	StepDone       = "done"
+	StepBlocked    = "blocked"
 
 	RequiresRepository = "repository"
-	// RequiresTracker: the ticket's tracker must be writable — a ticketsource
-	// integration whose adapter implements trackerport.TicketWriter. Checked per
-	// ticket at run creation (the integration is the ticket's, not the
-	// project's); a ticket with no tracker passes and the stage skips.
+	// RequiresTracker: the stage writes to the ticket's tracker. Every ticket
+	// has one — its remote issue's ticketsource integration, whose adapter
+	// must implement trackerport.TicketWriter (checked per ticket at run
+	// creation: the integration is the ticket's, not the project's), or the
+	// internal tracker for a ticket with no remote source.
 	RequiresTracker = "tracker"
 
 	// ProvidesMR pairs with signalspec.NeedsMR: create_mr is what makes an
@@ -284,15 +286,15 @@ var registry = []Action{{
 }, {
 	Slug:        TicketTransition,
 	Title:       "Move the ticket",
-	Description: "Moves the ticket's tracker issue. `to` names a canonical status (todo, in_progress, in_review, done, blocked) that the ticket's tracker translates into its own — Jira through the integration's status map, GitHub Issues to open/closed — so one flow fits every tracker; a status this tracker has no word for skips the stage with a note. `status` names the tracker's own status or transition verbatim (matched case-insensitively). Exactly one of the two. Already there: nothing happens. Not reachable from the current status: the stage fails with the statuses that are, for on_fail to route. A ticket written by hand (no tracker issue) skips the stage.",
+	Description: "Moves the ticket on its tracker — the remote issue, or the internal tracker for a ticket with no remote source. `to` names a flow step (todo, in_progress, in_review, done, blocked); the tracker integration's status list says which of its statuses holds that step, so one flow fits every tracker; a step no status holds skips the stage with a note. `status` names the tracker's own status or transition verbatim (matched case-insensitively). Exactly one of the two. Already there: nothing happens. Not reachable from the current status: the stage fails with the statuses that are, for on_fail to route.",
 	Requires:    RequiresTracker,
 	Remote:      true,
 	ExactlyOne:  []string{"to", "status"},
 	Settings: []SettingSig{{
 		Name:        "to",
-		Description: "a canonical status, translated by the ticket's tracker; one it has no word for skips the stage. Exactly one of to / status",
+		Description: "a flow step, moved to the status of the ticket's tracker that holds it; a step no status holds skips the stage. Exactly one of to / status",
 		Kind:        KindEnum,
-		Values:      Statuses,
+		Values:      Steps,
 	}, {
 		Name:        "status",
 		Description: "the tracker's own status (or transition) name, verbatim. Exactly one of to / status",
@@ -301,7 +303,7 @@ var registry = []Action{{
 }, {
 	Slug:        TicketComment,
 	Title:       "Comment on the ticket",
-	Description: "Posts a markdown artifact as a comment on the ticket's tracker issue, with a short apothecary trailer naming the run and stage — which is also how a crash between posting and recording is reconciled, so nothing is posted twice. A ticket written by hand skips the stage.",
+	Description: "Posts a markdown artifact as a comment on the ticket — on its remote issue, with a short apothecary trailer naming the run and stage, which is also how a crash between posting and recording is reconciled, so nothing is posted twice; on the internal tracker for a ticket with no remote source, keyed by run and stage.",
 	Requires:    RequiresTracker,
 	Remote:      true,
 	Inputs: []PortSig{{
@@ -319,7 +321,7 @@ var registry = []Action{{
 }, {
 	Slug:        TicketSetField,
 	Title:       "Set a ticket field",
-	Description: "Writes one field of the ticket's tracker issue, named as the tracker shows it (\"Feature flags\", \"labels\"). The value comes from an artifact (value) or is written in the flow (text) — exactly one. mode: replace overwrites; append merges comma-separated items into what is there (a list field grows, nothing is duplicated). A field the tracker cannot write from text fails the stage for on_fail. A ticket written by hand skips the stage.",
+	Description: "Writes one field of the ticket's tracker issue, named as the tracker shows it (\"Feature flags\", \"labels\"). The value comes from an artifact (value) or is written in the flow (text) — exactly one. mode: replace overwrites; append merges comma-separated items into what is there (a list field grows, nothing is duplicated). A field the tracker cannot write from text fails the stage for on_fail. The internal tracker (a ticket with no remote source) has only labels; any other field skips the stage with a note.",
 	Requires:    RequiresTracker,
 	Remote:      true,
 	ExactlyOne:  []string{"value", "text"},
@@ -348,14 +350,14 @@ var registry = []Action{{
 }, {
 	Slug:        TicketLink,
 	Title:       "Link the merge request on the ticket",
-	Description: "Attaches every merge request the run opened to the ticket's tracker issue (a remote link on Jira, a comment on GitHub), titled with the branch. Idempotent: re-entering never attaches twice. Needs a create_mr earlier on the route; with no merge request the stage fails with input_missing. A ticket written by hand skips the stage.",
+	Description: "Attaches every merge request the run opened to the ticket (a remote link on Jira, a comment on GitHub, a link on the internal tracker for a ticket with no remote source), titled with the branch. Idempotent: re-entering never attaches twice. Needs a create_mr earlier on the route; with no merge request the stage fails with input_missing.",
 	Requires:    RequiresTracker,
 	Remote:      true,
 	Needs:       NeedsMR,
 }, {
 	Slug:        TicketLinkBranch,
 	Title:       "Link the branch on the ticket",
-	Description: "Attaches the run's branch — every checkout's that is on its repository host, or the subject's when the chain acts on one merge request — to the ticket's tracker issue: a remote link on Jira, a comment on GitHub, titled with the branch. The link is the repository host's own page for the branch, so the branch must be pushed first (push_branch); the primary's, or the subject's, not being there fails the stage with input_missing. Idempotent: re-entering never attaches twice. Jira's Development panel is a different thing — it lists a branch whose NAME carries the issue key, once the repository host is connected to Jira. A ticket written by hand skips the stage.",
+	Description: "Attaches the run's branch — every checkout's that is on its repository host, or the subject's when the chain acts on one merge request — to the ticket: a remote link on Jira, a comment on GitHub, a link on the internal tracker for a ticket with no remote source, titled with the branch. The link is the repository host's own page for the branch, so the branch must be pushed first (push_branch); the primary's, or the subject's, not being there fails the stage with input_missing. Idempotent: re-entering never attaches twice. Jira's Development panel is a different thing — it lists a branch whose NAME carries the issue key, once the repository host is connected to Jira.",
 	Requires:    RequiresTracker,
 	Remote:      true,
 }, {

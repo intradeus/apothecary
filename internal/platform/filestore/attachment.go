@@ -25,6 +25,10 @@ type Attachment struct {
 	Size      int64     `json:"size"`
 	SHA256    string    `json:"sha256"`
 	CreatedAt time.Time `json:"created_at"`
+	// RemoteID is the tracker's id for a file imported from it ('' for an
+	// upload): the ticket sync copies only ids its ticket does not hold yet.
+	// Unique per ticket once claimed.
+	RemoteID string `json:"remote_id,omitempty"`
 }
 
 // Unclaimed reports a fresh upload no owner has claimed yet.
@@ -96,6 +100,16 @@ func (s *Attachments) Limits() UploadLimits {
 // rejected upload may leave an unreferenced blob behind — that is the
 // sweep's problem, not a correctness one (never-unlink rule).
 func (s *Attachments) Save(ctx context.Context, userID, filename, declaredMime string, r io.Reader) (Attachment, error) {
+	return s.save(ctx, userID, "", filename, declaredMime, r)
+}
+
+// SaveImported is Save for a file copied from a tracker, recording the
+// tracker's id for it (Attachment.RemoteID). Same limits, same allowlist.
+func (s *Attachments) SaveImported(ctx context.Context, userID, remoteID, filename, declaredMime string, r io.Reader) (Attachment, error) {
+	return s.save(ctx, userID, remoteID, filename, declaredMime, r)
+}
+
+func (s *Attachments) save(ctx context.Context, userID, remoteID, filename, declaredMime string, r io.Reader) (Attachment, error) {
 	sha, size, err := s.blobs.PutStream(r, s.max)
 	if err != nil {
 		return Attachment{}, err
@@ -106,7 +120,7 @@ func (s *Attachments) Save(ctx context.Context, userID, filename, declaredMime s
 	}
 	a := Attachment{
 		ID: newID(), UserID: userID, Filename: SafeName(filename), Mime: mimeType,
-		Size: size, SHA256: sha, CreatedAt: s.now().UTC(),
+		Size: size, SHA256: sha, RemoteID: remoteID, CreatedAt: s.now().UTC(),
 	}
 	if err := s.db.InsertAttachment(ctx, a); err != nil {
 		return Attachment{}, err

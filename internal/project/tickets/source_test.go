@@ -75,17 +75,21 @@ func TestForMRFindsTheSameTicket(t *testing.T) {
 	}
 }
 
-// failingDB is a config store whose ticket listing is down.
+// failingDB is a config store whose ticket lookups are down.
 type failingDB struct {
 	confstore.DB
 	err error
 }
 
-func (d failingDB) ListTickets(context.Context, string) ([]confstore.Ticket, error) {
-	return nil, d.err
+func (d failingDB) GetTicketBySource(context.Context, string, string, string) (confstore.Ticket, error) {
+	return confstore.Ticket{}, d.err
 }
 
-func TestFailingListingReachesTheCaller(t *testing.T) {
+func (d failingDB) GetTicketByProjectKey(context.Context, string, string) (confstore.Ticket, error) {
+	return confstore.Ticket{}, d.err
+}
+
+func TestFailingLookupReachesTheCaller(t *testing.T) {
 	f, _ := newFactory(t, devSource())
 	boom := errors.New("db down")
 	key, err := secrets.ParseKey(secrets.GenerateKey())

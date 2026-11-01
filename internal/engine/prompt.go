@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/event"
+	"apothecary/internal/run/runinput"
 	"apothecary/internal/workspace/bootstrap"
 )
 
@@ -60,14 +61,17 @@ func (x *exec) answerReply(asks []ask, written []string) string {
 
 // assemblePrompt builds the agent prompt per the §3.2 template. The ticket
 // is assembled from the stage's ports (FLOWLANG §4): each input renders by
-// its type — a ticket as the TASK section, a file as its content, a
-// changeset as its file list (never the full diff), a failure or a verdict
-// as what the entering edge carried — and the outputs as the OUTPUT CONTRACT.
-// An agent sees the ticket only through a ticket port.
+// its type — a ticket as the TASK section, its comments as the TICKET
+// DISCUSSION, a file as its content, a changeset as its file list (never the
+// full diff), a failure or a verdict as what the entering edge carried — and
+// the outputs as the OUTPUT CONTRACT. An agent sees the ticket only through
+// a ticket port; the ticket's key, status, labels and comments are read as
+// the prompt is built (ticketNow), the rest is the run's copy.
 func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 	rs := x.rs
 	var b strings.Builder
 	spec := rs.Flow.Agent(st.Agent)
+	now := x.ticketNow(st)
 	for _, in := range st.Inputs {
 		if flow.IsEdgeSource(in.Value) {
 			// The content of the edge that re-entered this stage. Only one of
@@ -88,7 +92,12 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		}
 		switch in.Value {
 		case flow.SourceTicket:
-			x.ticketSection(&b)
+			x.ticketSection(&b, now)
+			continue
+		case flow.SourceTicketComments:
+			if now != nil {
+				b.WriteString(ticketDiscussion(in.Name, inputDesc(spec, in.Name), now.Comments, in.Limit, in.ExcludeOwn))
+			}
 			continue
 		case flow.SourceCIFailure:
 			fmt.Fprintf(&b, "# INPUT: %s%s (what failed in CI)\n%s", in.Name, inputDesc(spec, in.Name), ciFailureText(rs.CI))
@@ -216,11 +225,13 @@ func humanSize(n int64) string {
 	return fmt.Sprintf("%d B", n)
 }
 
-// ticketSection renders a ticket port: the TASK — its title and goal — with
-// the human's direction for this attempt and the files attached to it.
-func (x *exec) ticketSection(b *strings.Builder) {
+// ticketSection renders a ticket port: the TASK — its title, key, status,
+// labels and goal — with the human's direction for this attempt and the
+// files attached to it.
+func (x *exec) ticketSection(b *strings.Builder, now *runinput.TicketNow) {
 	rs := x.rs
 	fmt.Fprintf(b, "# TASK\n%s\n", rs.View.TicketTitle)
+	x.ticketFacts(b, now)
 	if rs.View.TicketChangeType != "" {
 		fmt.Fprintf(b, "Change type: %s\n", rs.View.TicketChangeType)
 	}

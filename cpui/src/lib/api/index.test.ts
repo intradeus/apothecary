@@ -4,6 +4,9 @@ import * as gen from './generated/sdk.gen';
 import { client } from './generated/client.gen';
 import { onUnauthorized } from './client';
 import {
+	busyRunOf,
+	isInUse,
+	linkedTicketsOf,
 	api,
 	auth,
 	automations,
@@ -1187,5 +1190,71 @@ describe('onUnauthorized', () => {
 		answering(403);
 		await client.get({ baseUrl: 'http://engine.test', url: '/api/me' });
 		expect(gone).not.toHaveBeenCalled();
+	});
+});
+
+describe('ticket sync', () => {
+	it('lists every ticket, done ones included', async () => {
+		const fn = reply('listTickets', answer([]));
+		await tickets.list();
+		expect(fn).toHaveBeenCalledWith();
+	});
+
+	it('moves a ticket, labels it and comments on it through its tracker', async () => {
+		const status = reply('setTicketStatus', answer({ id: 't' }));
+		await tickets.setStatus('t', 's2');
+		expect(status).toHaveBeenCalledWith({ path: { id: 't' }, body: { status_id: 's2' } });
+		const labels = reply('setTicketLabels', answer({ id: 't' }));
+		await tickets.setLabels('t', ['a', 'b']);
+		expect(labels).toHaveBeenCalledWith({ path: { id: 't' }, body: { labels: ['a', 'b'] } });
+		const add = reply('addTicketComment', answer(null));
+		await expect(tickets.addComment('t', 'hi')).resolves.toEqual([]);
+		expect(add).toHaveBeenCalledWith({ path: { id: 't' }, body: { body: 'hi' } });
+	});
+
+	it('refetches a tracker list only when asked', async () => {
+		const fn = reply('listTrackerStatuses', answer({ statuses: null, warnings: null }));
+		await expect(integrations.statuses('i')).resolves.toEqual({ statuses: [], warnings: [] });
+		expect(fn).toHaveBeenLastCalledWith({ path: { id: 'i' }, query: undefined });
+		await integrations.statuses('i', true);
+		expect(fn).toHaveBeenLastCalledWith({ path: { id: 'i' }, query: { refresh: '1' } });
+	});
+
+	it('sends replacements for deleted rows only when there are some', async () => {
+		const fn = reply('putTrackerTypes', answer({ types: [] }));
+		await integrations.saveTypes('i', []);
+		expect(fn).toHaveBeenLastCalledWith({ path: { id: 'i' }, body: { types: [] } });
+		await integrations.saveTypes('i', [], { old: 'new' });
+		expect(fn).toHaveBeenLastCalledWith({
+			path: { id: 'i' },
+			body: { types: [], replace_with: { old: 'new' } }
+		});
+	});
+
+	it('unlinks the tickets of a source only when asked', async () => {
+		const fn = reply('deleteIntegration');
+		await integrations.remove('i', { unlinkTickets: true });
+		expect(fn).toHaveBeenCalledWith({ path: { id: 'i' }, query: { unlink_tickets: '1' } });
+	});
+
+	it('names the run in the way of a start', async () => {
+		reply('startTicketRun', refused({ error: 'busy', run_id: 'r9' }));
+		const e = await tickets.startRun('t').catch((x: unknown) => x);
+		expect(busyRunOf(e)).toBe('r9');
+		expect(busyRunOf(new Error('busy'))).toBeUndefined();
+	});
+
+	it('counts what deleting a source would unlink', async () => {
+		reply('deleteIntegration', refused({ error: 'linked', tickets: 4, active_runs: 2 }));
+		const e = await integrations.remove('i').catch((x: unknown) => x);
+		expect(linkedTicketsOf(e)).toEqual({ tickets: 4, activeRuns: 2 });
+		expect(isInUse(e)).toBe(true);
+	});
+
+	it('reads anything but a 409 as no conflict', async () => {
+		reply('putTrackerStatuses', refused({ error: 'bad', tickets: 1 }, 400, 'Bad Request'));
+		const e = await integrations.saveStatuses('i', []).catch((x: unknown) => x);
+		expect(isInUse(e)).toBe(false);
+		expect(linkedTicketsOf(e)).toBeUndefined();
 	});
 });

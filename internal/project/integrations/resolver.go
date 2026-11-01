@@ -33,6 +33,8 @@ import (
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/kinds"
 	"apothecary/internal/project/resolution"
+	"apothecary/internal/project/tickets"
+	"apothecary/internal/project/tickets/internaltracker"
 	"apothecary/internal/workspace/wsimage"
 )
 
@@ -362,9 +364,10 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 		Runner:          harness,
 		Runners:         runners,
 		RepoHost:        repoHost,
-		// The write side of a ticket's tracker, by integration id (the
-		// ticket's, not the project's): what a tracker action calls.
-		TicketWriter: r.TicketWriter,
+		// The tracker a ticket's tracker actions write to, from the ticket's
+		// current row (the ticket's, not the project's).
+		TicketTracker: r.TicketTracker,
+		TicketStep:    r.TicketStep,
 		// Seed and prepare EVERY harness in the set: a stage may run on any of
 		// them, so all their auth + native configs must be in the workspace.
 		SeedAuth: func(ctx context.Context, env envport.EnvID, register func(string)) error {
@@ -626,6 +629,9 @@ func (r *Resolver) testIntegration(ctx context.Context, in confstore.Integration
 		defer prov.Close()
 		return prov.Test(ctx)
 	case confstore.PortTicketSource:
+		if in.Kind == confstore.KindInternal {
+			return nil // built in: nothing to reach
+		}
 		tk, err := r.reg.TicketSource(in.Kind)
 		if err != nil {
 			return err
@@ -692,9 +698,9 @@ func (r *Resolver) TicketSource(ctx context.Context, id string) (trackerport.Tic
 	return tk.New(kindConfig(in))
 }
 
-// TicketWriter constructs the write side of a ticketsource integration for a
-// flow's tracker actions — the same adapter the import uses, asserted for its
-// optional trackerport.TicketWriter capability. An adapter without it is refused by
+// TicketWriter constructs the write side of a remote ticketsource integration
+// — the same adapter the import uses, asserted for its optional
+// trackerport.TicketWriter capability. An adapter without it is refused by
 // name, so run creation can say which integration cannot write back.
 func (r *Resolver) TicketWriter(ctx context.Context, id string) (trackerport.TicketWriter, error) {
 	in, tk, err := r.ticketSourceKind(ctx, id)
@@ -712,6 +718,57 @@ func (r *Resolver) TicketWriter(ctx context.Context, id string) (trackerport.Tic
 	return w, nil
 }
 
+// TicketTracker is resolution.Resolution.TicketTracker: the tracker of the
+// ticket as its row stands NOW. With a source, the source integration's
+// writer and the issue's key — a source whose integration is gone is an
+// error naming it (the ticket must be unlinked to move to the internal
+// tracker); without one, the internal tracker and the ticket's id. A deleted
+// ticket is *trackerport.ErrNotApplicable.
+func (r *Resolver) TicketTracker(ctx context.Context, ticketID string) (trackerport.TicketWriter, string, error) {
+	t, err := r.conf.GetTicket(ctx, ticketID)
+	if errors.Is(err, confstore.ErrNotFound) {
+		return nil, "", &trackerport.ErrNotApplicable{Key: ticketID, Reason: "the ticket was deleted"}
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	if t.SourceID == "" {
+		return internaltracker.New(r.conf), t.ID, nil
+	}
+	w, err := r.TicketWriter(ctx, t.SourceID)
+	if errors.Is(err, confstore.ErrNotFound) || errors.Is(err, resolution.ErrUnresolvable) {
+		return nil, "", fmt.Errorf("ticket %s mirrors %s of %s integration %s, which no longer resolves (%w) — unlink the ticket to put it on the internal tracker",
+			t.ID, t.SourceKey, t.SourceKind, t.SourceID, err)
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	return w, t.SourceKey, nil
+}
+
+// TicketStep is resolution.Resolution.TicketStep: the name of the status
+// holding the step on the ticket's tracker. A remote tracker whose lists were
+// never fetched is fetched first, so an issue imported before the lists
+// existed resolves too.
+func (r *Resolver) TicketStep(ctx context.Context, ticketID string, step trackerport.FlowStep) (string, error) {
+	st, err := r.conf.StepStatus(ctx, ticketID, step)
+	var unsupported *trackerport.ErrStatusUnsupported
+	if errors.As(err, &unsupported) && len(unsupported.Supported) == 0 {
+		if t, terr := r.conf.GetTicket(ctx, ticketID); terr == nil && t.SourceID != "" {
+			if src, serr := r.TicketSource(ctx, t.SourceID); serr == nil {
+				if _, lerr := tickets.SyncLists(ctx, r.conf, t.SourceID, src); lerr != nil {
+					return "", fmt.Errorf("fetching the statuses of ticket %s's tracker: %w", t.SourceKey, lerr)
+				}
+				st, err = r.conf.StepStatus(ctx, ticketID, step)
+			}
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+	return st.Name, nil
+}
+
 // TicketSourceKind names an integration's vendor ("jira") for the provenance
 // stamped on an imported ticket.
 func (r *Resolver) TicketSourceKind(ctx context.Context, id string) (string, error) {
@@ -726,6 +783,9 @@ func (r *Resolver) ticketSourceKind(ctx context.Context, id string) (confstore.I
 	in, err := r.integration(ctx, id, confstore.PortTicketSource)
 	if err != nil {
 		return confstore.Integration{}, nil, err
+	}
+	if in.Kind == confstore.KindInternal {
+		return confstore.Integration{}, nil, fmt.Errorf("integration %s is the internal tracker: nothing is imported from it", in.Name)
 	}
 	tk, err := r.reg.TicketSource(in.Kind)
 	if err != nil {

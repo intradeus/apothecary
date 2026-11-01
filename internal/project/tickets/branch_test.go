@@ -21,9 +21,6 @@ func TestSourceChangeType(t *testing.T) {
 		{trackerport.SourceTicket{Type: "Docs bug"}, trackerport.ChangeFix},
 		{trackerport.SourceTicket{Type: "Story"}, trackerport.ChangeFeat},
 		{trackerport.SourceTicket{Type: ""}, trackerport.ChangeFeat},
-		// The integration's mapping wins over the guess.
-		{trackerport.SourceTicket{Type: "Task", ChangeType: trackerport.ChangeChore}, trackerport.ChangeChore},
-		{trackerport.SourceTicket{Type: "Bug", ChangeType: trackerport.ChangeFeat}, trackerport.ChangeFeat},
 	} {
 		if got := SourceChangeType(c.st); got != c.want {
 			t.Errorf("SourceChangeType(%+v) = %q, want %q", c.st, got, c.want)

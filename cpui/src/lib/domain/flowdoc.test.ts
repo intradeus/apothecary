@@ -175,6 +175,7 @@ describe('the small vocabulary', () => {
 
 	it.each([
 		['run.ticket', 'ticket'],
+		['run.ticket.comments', 'ticket_comments'],
 		['run.git.status', 'changeset'],
 		['run.git.diff_target', 'changeset'],
 		['run.git.diff_phase', 'changeset'],
@@ -207,6 +208,7 @@ describe('the small vocabulary', () => {
 		['file', false],
 		['files', false],
 		['ticket', false],
+		['ticket_comments', false],
 		['changeset', false],
 		['failure', false],
 		['link', false]
@@ -1048,6 +1050,17 @@ describe('docToYaml', () => {
 			]);
 			const bare = written(aFlow([aStage({ id: 'a', input: { p: { from: 'f', type: '' } } })]));
 			expect(bare.main[0].input.p).toEqual({ from: 'f' });
+		});
+
+		it("keeps a comments input's options, exclude_own: false included", () => {
+			const port = {
+				from: 'run.ticket.comments',
+				type: 'ticket_comments',
+				limit: 5,
+				exclude_own: false
+			};
+			const out = written(aFlow([aStage({ id: 'a', input: { c: port } })]));
+			expect(out.main[0].input.c).toEqual(port);
 		});
 
 		it('keeps the ports in the order they were stated', () => {

@@ -89,6 +89,9 @@ export function feedSourceFor(kind: EdgeKind): string {
 // entered the stage carried (edge.*). Every engine source has one type.
 export const REPO_PREFIX = 'repo:';
 export const SOURCE_TICKET = 'run.ticket';
+// The comments on the run's ticket, read as the prompt is built: the latest
+// `limit` (default 20), apothecary's own left out unless `exclude_own: false`.
+export const SOURCE_TICKET_COMMENTS = 'run.ticket.comments';
 export const SOURCE_STATUS = 'run.git.status';
 export const SOURCE_DIFF_TARGET = 'run.git.diff_target';
 export const SOURCE_DIFF_PHASE = 'run.git.diff_phase';
@@ -104,6 +107,7 @@ export const SOURCE_VERDICT = 'edge.verdict';
 export const SOURCE_FAILURE = 'edge.failure';
 export const ENGINE_SOURCES: Record<string, string> = {
 	[SOURCE_TICKET]: 'ticket',
+	[SOURCE_TICKET_COMMENTS]: 'ticket_comments',
 	[SOURCE_STATUS]: 'changeset',
 	[SOURCE_DIFF_TARGET]: 'changeset',
 	[SOURCE_DIFF_PHASE]: 'changeset',
@@ -143,7 +147,7 @@ export const FILE_TYPES = [
 ];
 /** A verdict is also what edge.verdict gives: the one file type an engine
  *  source has too. */
-export const VALUE_TYPES = ['ticket', 'changeset', 'failure', 'link'];
+export const VALUE_TYPES = ['ticket', 'ticket_comments', 'changeset', 'failure', 'link'];
 /** What a gate shows the person: any file — a review to curate, the threads
  *  beside it, a plain document — and folders of them (a link is typed by
  *  its source). */
@@ -196,6 +200,11 @@ export interface DocPort {
 	schema?: string;
 	description?: string;
 	optional?: boolean;
+	/** A run.ticket.comments input's options: how many of the latest
+	 *  comments (1–200, default 20), and whether apothecary's own are left
+	 *  out (default true). */
+	limit?: number;
+	exclude_own?: boolean;
 }
 
 // A stage's input or output: an ordered mapping of port name to port
@@ -1008,6 +1017,8 @@ function portsYaml(ports: StagePorts): Record<string, unknown> {
 		if (p.schema) o.schema = p.schema;
 		if (p.description) o.description = p.description;
 		if (p.optional) o.optional = true;
+		if (p.limit != null) o.limit = p.limit;
+		if (p.exclude_own != null) o.exclude_own = p.exclude_own;
 		out[name] = o;
 	}
 	return out;

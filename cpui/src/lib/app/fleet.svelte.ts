@@ -1,8 +1,8 @@
-// One's desk at a glance: runs, pending pings, workshops and the deployment's
-// caps, polled once for the whole shell. The sidebar, the desk, the runs
-// list and the capacity strip all read this one copy, so their counts never
-// disagree. Everything in it is the signed-in user's: the engine lists
-// nothing of anyone else's.
+// One's desk at a glance: runs, pending pings, workshops, tickets and the
+// deployment's caps, polled once for the whole shell. The sidebar, the desk,
+// the runs and tickets lists and the capacity strip all read this one copy,
+// so their counts never disagree. Everything in it is the signed-in user's:
+// the engine lists nothing of anyone else's.
 //
 // Polling pauses while the tab is hidden; on return `paused` stays true until
 // the first refresh lands (DESIGN 4.17 "Live indicators").
@@ -10,7 +10,7 @@
 import { errorMessage } from '$lib/core/errors';
 import { api } from '$lib/api';
 import { stateTab } from '$lib/core/format';
-import type { Limits, Ping, Project, Run } from '$lib/domain';
+import type { Limits, Ping, Project, Run, Ticket } from '$lib/domain';
 
 const POLL_MS = 4000;
 
@@ -18,6 +18,9 @@ class Fleet {
 	runs = $state<Run[]>([]);
 	pending = $state<Ping[]>([]);
 	projects = $state<Project[]>([]);
+	/** Every ticket, done ones included (lists filter them), with its tracker
+	 *  status and sync state — the ticket pages follow it. */
+	tickets = $state<Ticket[]>([]);
 	/** The deployment's caps, read once: they come from the boot env. */
 	limits = $state<Limits | null>(null);
 	/** ms epoch of the last successful refresh; null before the first. */
@@ -47,6 +50,7 @@ class Fleet {
 	);
 	readonly runById = $derived(new Map(this.runs.map((r) => [r.id, r])));
 	readonly projectById = $derived(new Map(this.projects.map((p) => [p.id, p])));
+	readonly ticketById = $derived(new Map(this.tickets.map((t) => [t.id, t])));
 
 	/** A workshop's name, or a short id while projects are loading (or for
 	 *  one that was deleted). Reactive inside components. */
@@ -131,16 +135,18 @@ class Fleet {
 	async #load() {
 		const epoch = this.#epoch;
 		try {
-			const [runs, pending, projects, limits] = await Promise.all([
+			const [runs, pending, projects, tickets, limits] = await Promise.all([
 				api.runs.list(),
 				api.pings.pending(),
 				api.projects.list(),
+				api.tickets.list(),
 				this.limits ? Promise.resolve(this.limits) : api.system.limits().catch(() => null)
 			]);
 			if (epoch !== this.#epoch) return;
 			this.runs = runs;
 			this.pending = pending;
 			this.projects = projects;
+			this.tickets = tickets;
 			this.limits = limits;
 			this.updatedAt = Date.now();
 			this.paused = false;
@@ -157,6 +163,7 @@ class Fleet {
 		this.runs = [];
 		this.pending = [];
 		this.projects = [];
+		this.tickets = [];
 		this.updatedAt = null;
 		this.error = '';
 	}

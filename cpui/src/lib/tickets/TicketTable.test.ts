@@ -23,7 +23,9 @@ describe('TicketTable', () => {
 
 	it('shows every column by default', () => {
 		const { container } = render(TicketTable, { tickets: [] });
-		expect(container).toHaveTextContent(/^TitleTypeSourceWorkshopBase branchRunsCreated$/);
+		expect(container).toHaveTextContent(
+			/^TitleStatusTypeSourceWorkshopBase branchLatest runCreated$/
+		);
 	});
 
 	it('links a ticket and shows its facts', () => {
@@ -52,8 +54,20 @@ describe('TicketTable', () => {
 			],
 			cols: ['source']
 		});
-		expect(screen.getByText('PROJ-7')).toHaveAttribute('title', 'Imported from jira');
+		expect(screen.getByText('PROJ-7')).toHaveAttribute('title', 'Mirrors an issue in jira');
 		expect(screen.getByText('—')).toBeInTheDocument();
+	});
+
+	it("shows the ticket's tracker status, apart from its runs", () => {
+		render(TicketTable, {
+			tickets: [
+				aTicket({ id: 'a', status: { id: 's', name: 'In Review', isDone: false } }),
+				aTicket({ id: 'b' })
+			],
+			cols: ['status']
+		});
+		expect(screen.getByText('In Review')).toBeInTheDocument();
+		expect(screen.getByText('not synced yet')).toBeInTheDocument();
 	});
 
 	it('reads no runs before there are any', () => {

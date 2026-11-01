@@ -184,6 +184,15 @@ type Engine struct {
 	// appendLocks holds one mutex per run serializing its appends (see
 	// appendLock): runID -> *sync.Mutex.
 	appendLocks sync.Map
+	// ticketLocks holds one mutex per ticket serializing run creation on
+	// it (ticketLock, the one-active-run rule): ticketID -> *sync.Mutex.
+	ticketLocks sync.Map
+	// tickets reads a ticket's current row for Rerun; nil = a rerun copies
+	// the old run's view of its ticket.
+	tickets TicketReader
+	// refresher re-reads a ticket from its remote tracker (ticketrefresh.go);
+	// nil = the mirror is left as the last sync wrote it.
+	refresher TicketRefresher
 }
 
 type runHandle struct {
@@ -441,6 +450,8 @@ var (
 //   - EnvState: a store over the same store and resolver, on Clock.
 //   - AuthSink: a keyless sink (omp's broker logins off).
 //   - Teardown: none; hooks run in order on every workspace destroy.
+//   - Tickets: none; Rerun then starts from the old run's copy of its
+//     ticket instead of the ticket's current row.
 //   - Clock: time.Now; NewID: a ULID; Log: slog.Default().
 //
 // The composition root (cmd/apothecaryd) shares RunPorts, EnvState and
@@ -466,6 +477,11 @@ type Deps struct {
 	EnvState *envstate.Store
 	AuthSink *authsink.Sink
 	Teardown []EnvTeardown
+	Tickets  TicketReader
+	// Refresher re-mirrors a ticket from its remote tracker: after a
+	// successful ticket_* stage on a remote ticket and at run start. nil =
+	// no refresh.
+	Refresher TicketRefresher
 
 	Clock func() time.Time
 	NewID func() string
@@ -508,6 +524,8 @@ func New(d Deps) *Engine {
 		envState:       d.EnvState,
 		authSink:       d.AuthSink,
 		teardown:       d.Teardown,
+		tickets:        d.Tickets,
+		refresher:      d.Refresher,
 		handles:        map[string]*runHandle{},
 		pings:          map[string]*Ping{},
 		tokens:         map[string]string{},
@@ -714,12 +732,31 @@ func (e *Engine) CreateRun(ctx context.Context, t runinput.Ticket, flowName, pro
 // is resolved with those values before preflight, so a bound harness, model
 // or run_ref is checked exactly like a literal one. Preflight failures
 // refuse the run naming the exact missing item — no events are written.
+//
+// A ticket has at most one active run: a run on a ticket with a non-terminal
+// run is refused with ErrTicketBusy before anything else is checked. The
+// check holds the ticket's creation lock until run_created is appended
+// (ticketLock), so concurrent starts on one ticket cannot both pass. Runs
+// without a ticket are exempt. A ticket mirroring a remote issue is then
+// refreshed and its mirrored fields re-read (freshRunTicket), so the run
+// starts from the issue as it is now — in the engine rather than in each
+// caller, because every start path (API, automations, reruns, merge
+// requests) builds t from the row before calling; a refresh that fails
+// never refuses the run.
 func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName, projectID string, in runinput.Input) (string, error) {
 	if strings.TrimSpace(t.Title) == "" {
 		return "", errors.New("ticket title is required")
 	}
 	if projectID == "" {
 		return "", errors.New("project_id is required")
+	}
+	if t.TicketID != "" {
+		unlock := e.ticketLock(t.TicketID)
+		defer unlock()
+		if err := e.checkTicketIdle(ctx, t.TicketID); err != nil {
+			return "", err
+		}
+		t = e.freshRunTicket(ctx, t)
 	}
 	res, err := e.resolver.Resolve(ctx, projectID)
 	if err != nil {
@@ -989,6 +1026,13 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 // attachments and flow override — a rerun after a failure is exactly when a
 // human wants to steer the next try.
 //
+// The ticket is read as it is NOW (Deps.Tickets): its title, goal, change
+// type, base branch, attachments and tracker issue, not the old run's copy
+// of them — a ticket mirrors its tracker, and the old run started from an
+// older mirror. A ticket deleted since falls back to that copy. Like any run
+// on a ticket, the rerun is refused with ErrTicketBusy while another run of
+// the ticket is active.
+//
 // Vocabulary: "rerun" is a new run of the same ticket, "retry" (RetryRun)
 // re-enters a failed stage in place, "play" continues a paused run, and
 // "restart" is reserved for the engine PROCESS restarting (recovery).
@@ -1009,11 +1053,11 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in runinput.Input) (st
 	if v.ProjectID == "" {
 		return "", fmt.Errorf("run %s has no project; cannot restart", runID)
 	}
-	// A ticketed run restarts as a fresh attempt under the same ticket: reuse
-	// the ticket id + base branch, and CreateRun derives a new per-run tail
-	// (new unique branch, same readable stem). Legacy runs with no ticket keep
-	// the old behavior: preserve a user branch, but regenerate an auto branch
-	// so the OLD run's id doesn't get baked into the new run's name.
+	// A ticketed run restarts as a fresh attempt under the same ticket: the
+	// ticket's base branch (rerunTicket), and CreateRun derives a new per-run
+	// tail (new unique branch, same readable stem). Legacy runs with no ticket
+	// keep the old behavior: preserve a user branch, but regenerate an auto
+	// branch so the OLD run's id doesn't get baked into the new run's name.
 	flowName := in.Flow
 	if flowName == "" {
 		flowName = v.FlowName
@@ -1050,19 +1094,12 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in runinput.Input) (st
 	}
 	maps.Copy(next.Params, in.Params)
 	if v.TicketID != "" {
-		return e.CreateRunWith(ctx, runinput.Ticket{
-			TicketID: v.TicketID, Title: v.TicketTitle, Goal: v.TicketGoal, Branch: v.BranchBase,
-			ChangeType:   v.TicketChangeType,
-			SourceBranch: sourceBranch,
-			RunGoal:      in.Goal, AttachmentIDs: in.AttachmentIDs,
-			// The ticket's own attachments carry over to every attempt, and so
-			// does the tracker issue it was imported from.
-			TicketAttachmentIDs: v.TicketAttachmentIDs,
-			SourceID:            v.TicketSourceID,
-			SourceKind:          v.TicketSourceKind,
-			SourceKey:           v.TicketKey,
-			SourceURL:           v.TicketURL,
-		}, flowName, v.ProjectID, next)
+		t, err := e.rerunTicket(ctx, v)
+		if err != nil {
+			return "", err
+		}
+		t.SourceBranch, t.RunGoal, t.AttachmentIDs = sourceBranch, in.Goal, in.AttachmentIDs
+		return e.CreateRunWith(ctx, t, flowName, v.ProjectID, next)
 	}
 	branch := v.Branch
 	if branch == "" || strings.HasPrefix(branch, "apothecary/"+strings.ToLower(runID)+"-") {
@@ -1320,6 +1357,27 @@ func (e *Engine) RunsOfTicket(ctx context.Context, ticketID string) ([]run.View,
 		}
 	}
 	return out, nil
+}
+
+// ActiveRunsOfTickets counts the non-terminal runs of any of the tickets —
+// what deleting an integration reports before unlinking its tickets (those
+// runs go on, writing to the internal tracker from then on).
+func (e *Engine) ActiveRunsOfTickets(ctx context.Context, ticketIDs []string) (int, error) {
+	all, err := e.runs.All(ctx)
+	if err != nil {
+		return 0, err
+	}
+	set := make(map[string]bool, len(ticketIDs))
+	for _, id := range ticketIDs {
+		set[id] = true
+	}
+	n := 0
+	for _, v := range all {
+		if v.TicketID != "" && set[v.TicketID] && !v.State.Terminal() {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // Recover replays events on boot (§2) and restarts every non-terminal run.

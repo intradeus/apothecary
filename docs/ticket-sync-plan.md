@@ -1,25 +1,29 @@
 # Tickets that follow their tracker (TODO 49) — plan
 
-Status: proposed (2026-11-01). Reverses the "a copy taken once" decision in
-IMPLEMENTATION_NOTES ("Ticket sources", :1365) and narrows the "a ticket
-without a source skips" rule from TODO 27 ("Tracker actions", :2577).
+Status: built (2026-11-01). Where the build differs from this plan (GitLab's
+type list, backoff and error handling, where the refreshes run, GitHub's
+FetchMany through GraphQL) is recorded in IMPLEMENTATION_NOTES, "Tickets
+follow their tracker (TODO 49)". Reverses the
+"a copy taken once" decision in IMPLEMENTATION_NOTES ("Ticket sources") and
+narrows the "a ticket without a source skips" rule from TODO 27 ("Tracker
+actions").
 
 ## Why
 
 - An internal ticket is a **one-time copy** today (`tickets.Factory.CreateFromSource`):
-  title, body, type and attachments are read once. Nothing is fetched again.
+  title, body, type and attachments are read once and never fetched again.
 - An internal ticket has **no status, labels or comments**
   (`confstore.Ticket`, `0001_init.sql:95`). The "status" the UI shows is the
   latest run's state (`fleet.runsByTicket`).
 - Every `ticket_*` action writes **only to the remote issue**
   (`internal/engine/ticket.go`). A hand-written ticket has no issue, so
-  `runcore.StageCondition` (`routing.go:122-128`) and `(*exec).tracker` both
-  skip the stage. Without Jira, nothing moves to `done`.
-- Agents see only title, change type, goal, run goal and attachments
-  (`engine/prompt.go` `ticketSection`). Status, labels and comments, which
-  often carry context, are never shown to the agent.
+  `runcore.StageCondition` (`routing.go:122-128`) and `(*exec).tracker` skip
+  the stage. Without Jira, nothing ever moves to done.
+- Agents see the title, change type, goal, run goal and attachments
+  (`engine/prompt.go` `ticketSection`). They never see status, labels or
+  comments.
 
-## The model in one sentence
+## The model
 
 **Every ticket has exactly one tracker: the remote issue if it has a source,
 otherwise Apothecary itself. Every write goes to that tracker, and the
@@ -27,282 +31,354 @@ internal ticket only ever *reads* from it.**
 
 ```mermaid
 flowchart LR
-  subgraph writes
-    S[flow stage / UI action] --> R{ticket has source?}
-  end
+  S[flow stage / UI action] --> R{ticket has source?}
   R -- yes --> RT[remote tracker<br/>Jira · GitHub · GitLab]
-  R -- no --> IT[internal tracker<br/>tickets row]
-  RT -- sync: poll · manual · after write --> M[internal ticket<br/>mirror]
+  R -- no --> IT[internal tracker<br/>the ticket row]
+  RT -- "sync: 5 min poll · after a ticket stage · manual" --> M[internal ticket]
   IT --- M
   M --> P[prompts · run_if · UI]
 ```
 
-- **Sourced ticket.** It is a mirror. Title, body, status, type, labels and
-  comments are owned by the remote and overwritten on every sync. A write goes
-  to the remote and is followed by an immediate refresh of that one ticket,
-  never a dual write.
-- **Sourceless ticket.** This covers hand-written tickets and MR tickets
-  (`source_kind = merge_request`, no `source_id`). The internal ticket *is* the
-  tracker: writes land on the row directly, and sync is a no-op.
-- Both paths sit behind the same port, so the flow, engine and UI code never
-  branch on "remote or not".
-
-Your reasoning holds. A dual write (remote + internal) drifts as soon as one
-side fails, a human moves the issue in Jira, or Jira's workflow refuses a
-transition. Sourcing the mirror from the remote gives one source of truth, and
-the cost is the sync latency handled in § Gaps G1.
+- **A sourced ticket is a mirror.**
+  - The remote owns title, body, status, type, labels and comments, and every
+    sync overwrites them.
+  - The user cannot edit those fields in Apothecary.
+  - A write goes to the remote and is followed by a refresh of that one
+    ticket. Nothing is written to both sides.
+- **A sourceless ticket uses the internal tracker.** This covers hand-written
+  tickets and MR tickets (`source_kind = merge_request`, no `source_id`).
+  Writes land on the row, and sync does nothing.
+- Writing to both sides was rejected because the two would drift: as soon as
+  one write fails, a human moves the issue in Jira, or a Jira workflow refuses
+  a transition. With the remote as the single source of truth, the only cost is
+  sync latency (G1).
 
 ## Decisions
 
-1. **An internal tracker adapter implements `trackerport.TicketWriter`.**
-   Package `internal/project/tickets/internaltracker`, backed by confstore.
+1. **The internal tracker is an adapter behind the same port.**
+   - It lives in `internal/project/tickets/internaltracker`, implements
+     `trackerport.TicketWriter`, and is backed by confstore.
    - `Resolution.TicketWriter(ctx, integrationID)` becomes
-     `Resolution.TicketTracker(ctx, ticketRef)`. It returns the remote writer
+     `Resolution.TicketTracker(ctx, ticketID)`. It returns the remote writer
      when `source_id` is set, otherwise the internal one.
    - The engine keeps going through `project/resolution`, so the archtest
      layering is unchanged.
-2. **Flows keep targeting fixed *categories*; users own the *statuses*.**
-   - The canonical set `todo, in_progress, in_review, done, blocked` stays
-     closed and becomes the **status category**. Every user-defined status
-     belongs to exactly one category, and each category has one default.
-   - `ticket_transition to: in_progress` therefore still parses against a
-     fixed enum. `builder.yaml`, `actionspec.Statuses`, the parser enum tests
-     and flow portability are untouched.
-   - `status: "QA"` (free text) keeps addressing an exact status, now on
+2. **The tracker is resolved from the *current* ticket row, not the run
+   snapshot.**
+   - `RunCreated` keeps the `TicketSource*` copy for display.
+   - The run's writes follow the ticket. If the ticket is unlinked mid-run
+     (G10), the run's next `ticket_transition` lands on the internal tracker.
+     It never writes to a deleted integration.
+3. **Statuses and types live on the integration.** Each ticketsource
+   integration has its own lists, and so does the internal tracker:
+   - **Remote integration.** The lists are **fetched** from the remote and
+     extended by sync (G7). The user does not invent names; they only set the
+     columns below.
+   - **Internal tracker.** Each user gets one built-in ticketsource integration
+     of kind `internal`. It cannot be deleted, it is seeded on user creation,
+     and its lists are **edited by the user**. Sourceless tickets resolve to it
+     (`source_id` stays empty, so `run.ticket.tracker` keeps meaning "has a
+     remote tracker").
+   - GitHub and GitLab issues expose two statuses, `open` and `closed`, and
+     that is all the mirror shows. There are no label-backed statuses.
+4. **Each status row has two user-set columns.**
+
+   | column | meaning |
+   |---|---|
+   | **Done** (checkbox, any number of rows) | the work is over. The poll skips tickets in a done status (§ Sync). The UI may hide them by default |
+   | **Flow step** (`todo`/`in_progress`/`in_review`/`done`/`blocked`, or none; each step used at most once per integration) | the status that `ticket_transition to: <step>` moves to. A step with no status → the stage skips with a note, as today's `ErrStatusUnsupported` does |
+
+   - The flow-step set stays a closed enum, so `builder.yaml`,
+     `actionspec.Statuses`, the parser enum tests and flow portability are
+     untouched.
+   - `status: "<name>"` (free text) keeps addressing an exact status on
      either tracker.
-   - Jira works the same way (status → statusCategory), which makes
-     auto-mapping almost free.
-3. **The same split applies to types.**
+   - The two columns are independent: "Done", "Won't do" and "Duplicate" can
+     all be done while only "Done" is the `done` step. Saving warns, without
+     refusing, when the `done` step's status is not checked done.
+   - **Auto-suggest on fetch:**
+     - Jira: `statusCategory=done` → Done checked. Category `new` → the
+       `todo` step and category `done` → the `done` step, each if the step is
+       still free.
+     - GitHub/GitLab: `closed` → Done checked and the `done` step; `open` →
+       the `todo` step.
+5. **Each type row maps to one change type.**
    - `ChangeType` (`feat/fix/hotfix/perf/docs/chore`) stays closed. It drives
-     branch names (`BranchName`), `run_if: run.ticket.change_type` and the UI
+     branch names (`BranchName`), `run_if: run.ticket.change_type` and the
      inspector.
-   - User-defined **ticket types** (Bug, Story, Spike, …) each map to one
-     change type. `GuessChangeType` remains only as the auto-suggest for an
-     unmapped remote type.
-4. **Statuses and types are a per-user catalog. The remote → catalog mapping
-   lives on the integration.**
-   - Integrations are already per user (`confstore.Integration.UserID`), and
-     one Jira typically feeds several workshops. Mapping per (project,
-     integration) would make users redo the same mapping for every repo.
-   - "Workspace" in this codebase means the dev container, and "workshop" is
-     the project. A board vocabulary is a team concept, not a repo concept, so
-     it belongs to the user (the account; there is no org entity).
-   - The alternative of per-project catalogs is listed in § Open questions.
-5. **Mappings are fetched, not typed.** The free-text Jira `status_map` and
-   `type_map` config fields are removed in a clean cutover and migrated into
-   the mapping table. Adapters gain a metadata capability that lists remote
-   statuses and types.
-6. **Remote-owned fields are read-only locally on sourced tickets.**
-   - Local-only fields stay editable: base branch, a new `notes` field (see
-     G3), and an explicit change-type override.
-   - Editing a status, label or comment from the UI goes through the tracker
-     port, like a flow stage does.
+   - Remote types are fetched. `GuessChangeType` only pre-fills a new row.
+   - This replaces Jira's free-text `type_map`, just as decision 4 replaces
+     `status_map`. Both config fields are removed (clean cutover).
+6. **One active run per ticket** (§ Concurrency).
+7. **Comments reach prompts only when a stage opts in** (§ Prompts).
+
+## Concurrency
+
+Two runs on one ticket write conflicting *meanings*, not corrupt rows. Run A
+merges and moves the ticket to done; run B's merge request is then closed, and
+B's `closed` outcome moves the same ticket back to todo. Last write wins, and
+the ticket ends up wrong.
+
+**Rule: a ticket has at most one non-terminal run.**
+- Non-terminal means `pending`, `provisioning`, `running`,
+  `waiting_on_human`, `in_review` or `paused` (`run.State.Terminal`).
+  Completed, failed or abandoned runs do not count.
+- Runs without a ticket (`TicketID == ""`) are exempt.
+
+| where | behaviour |
+|---|---|
+| `Engine.CreateRunWith` | refuses with `ErrTicketBusy{RunID}`. The check runs under an engine per-ticket lock that is held until `RunCreated` is appended, so two concurrent starts cannot both pass. It is not a DB unique index: the projection is rebuilt from the event log, and older history may violate it |
+| `startTicketRun` (HTTP) | 409 naming the active run. The UI turns "Start run" into "Run X is active — open / abort" |
+| `Rerun` | same rule. A rerun of a finished run is refused while another run of the ticket is active |
+| cron automation (`tick`) | a fire on a busy ticket is **skipped**: `last_error = "ticket busy: run X"`, no catch-up (the same policy as missed slots) |
+| `tracker_query` / MR automations | unaffected. Each import or MR has its own ticket, and `ticketForMR` already refuses a ticket that has runs |
+
+Cost of the rule:
+- A run waiting `in_review` for days blocks a new attempt on its ticket. To
+  start a new attempt, the user aborts the old one, which is also what keeps
+  its `closed` outcome from moving the ticket back.
+- Parallel attempts on one ticket (different flows or models) are no longer
+  possible.
+
+Writers that remain after the rule:
+- the active run, the sync, the user in the Apothecary UI, and humans in the
+  remote tracker;
+- the sync is serialized per ticket (single-flight in `Syncer`) and guarded by
+  `remote_updated_at` (G1);
+- internal-tracker writes are single SQL statements: status set, label
+  union/replace in SQL, comment insert. That makes a run and a user editing at
+  once safe, with last write wins on status, which is intended because both
+  writers mean it.
 
 ## Data model (migration `0021_ticket_tracker.sql`)
 
-`0001` is frozen, so everything below is additive and re-runnable.
+`0001` is frozen, so everything below is additive and re-runnable. The product
+is pre-1.0, so there is no carry-over of hand-edited goals (G3).
 
 | table / column | purpose |
 |---|---|
-| `ticket_statuses(id, user_id, name, category, position, is_default, color)` | user catalog. Unique `(user_id, lower(name))`. One `is_default` per `(user_id, category)` |
-| `ticket_types(id, user_id, name, change_type, position, is_default)` | user catalog. Unique `(user_id, lower(name))` |
-| `tracker_mappings(integration_id, kind status\|type\|label_status, remote_value, target_id, is_primary)` | remote → catalog. `is_primary` picks the outbound remote status per category (several remote statuses can map in, but only one is written out) |
-| `tickets` + `status_id, type_id, labels text[], notes` | normalized mirror plus the local-only note |
-| `tickets` + `remote_id, remote_status, remote_type, remote_updated_at, synced_at, sync_state, sync_error` | raw remote values (shown even when unmapped), a stable id (Jira keys change on a move), and the sync bookkeeping. `sync_state ∈ ok\|error\|gone\|orphaned` |
-| `ticket_comments(id, ticket_id, remote_id, author, body_md, created_at, updated_at, origin, run_id, stage_id)` | `origin ∈ remote\|internal\|apothecary`. Unique `(ticket_id, remote_id)` and `(ticket_id, run_id, stage_id)` (the internal tracker's idempotency key, replacing trailer scanning) |
-| `ticket_links(ticket_id, url, title)` | lets `ticket_link` / `ticket_link_branch` land on internal tickets. Upsert on URL, matching Jira's globalId semantics |
-| unique `tickets(user_id, source_id, lower(source_key)) WHERE source_id <> ''` | replaces the O(n) `checkDuplicate` / `FindByKey` scans with a query. The migration must fail loudly on existing duplicates rather than drop rows |
+| `tracker_statuses(id, integration_id FK cascade, remote_id, name, remote_category, position, is_done, flow_step)` | per-integration status list. Unique `(integration_id, remote_id)` (for the internal tracker `remote_id = id`) and `(integration_id, flow_step) WHERE flow_step IS NOT NULL` |
+| `tracker_types(id, integration_id FK cascade, remote_id, name, change_type, position)` | per-integration type list |
+| `tickets` + `status_id FK tracker_statuses, type_id FK tracker_types, labels text[]` | the ticket's state, which must belong to the ticket's tracker. `change_type` stays a column derived from the type, so `run_if`, branch names and the list query don't need a join |
+| `tickets` + `remote_id, remote_updated_at, synced_at, sync_state, sync_error` | stable remote id (Jira keys change on a move) and sync bookkeeping. `sync_state ∈ ok\|error\|gone` |
+| `ticket_comments(id, ticket_id, remote_id, author, body_md, created_at, updated_at, origin, run_id, stage_id)` | `origin ∈ remote\|user\|apothecary`. Unique `(ticket_id, remote_id)` and `(ticket_id, run_id, stage_id)`: the internal tracker's idempotency key, which replaces trailer scanning there |
+| `ticket_links(ticket_id, url, title)` | lets `ticket_link` / `ticket_link_branch` land on internal tickets. Upsert on URL |
+| unique `tickets(user_id, source_id, lower(source_key)) WHERE source_id <> ''` | replaces the O(n) `checkDuplicate` / `FindByKey` scans. The migration fails loudly on existing duplicates rather than dropping rows |
 
 The migration also:
-- seeds every existing user's catalog with one status per category (To do,
-  In progress, In review, Done, Blocked) and one type per change type;
-- backfills `tickets.type_id` from `change_type`;
-- sets `status_id = todo-default` on existing tickets (sync corrects sourced
-  ones on the first pass);
-- turns every Jira integration's `status_map` / `type_map` text into
-  `tracker_mappings` rows, then deletes those config keys.
+1. creates each existing user's `internal` integration, seeded with To do
+   (`todo`), In progress (`in_progress`), In review (`in_review`), Done
+   (`done`, done ✓) and Blocked (`blocked`), plus one type per change type;
+2. sets `status_id` / `type_id` on sourceless tickets: To do, and the type
+   matching `change_type`;
+3. turns each Jira integration's `status_map` / `type_map` into status/type
+   rows (with `remote_id` filled on the first metadata fetch), then deletes
+   those config keys;
+4. leaves sourced tickets with `status_id` NULL until their first sync, which
+   the daemon runs at boot. The UI shows "not synced yet".
 
-Confstore follow-ups: `conftest.fullTicket` / `allSet` (the reflection check
-forces every new field to be covered), the `mem.go` store, the pgstore
-`ticketCols` / `scanTicket`, and new queries `TicketBySource`,
-`ListTicketsBySource(integrationID)` and `ListTicketsByProject`.
+Confstore follow-ups:
+- `conftest.fullTicket` / `allSet` (a reflection check that forces every new
+  field to be covered) and the `mem.go` store;
+- pgstore `ticketCols` / `scanTicket`;
+- new queries `TicketBySource`, `ListSyncable(integrationID)` (not done, not
+  gone) and `ListTicketsBySource(integrationID)`.
 
 ## Port changes (`internal/ports/trackerport`)
 
 | change | why |
 |---|---|
-| `SourceTicket` + `RemoteID, Labels []string, StatusCategory` | labels are already decoded and dropped (GitHub `issueJSON.Labels`, GitLab `Labels`); Jira needs `labels` added to `issueFields` |
-| `Comments` → `ListComments(key) []Comment{ID, Author, Body, Created, Updated}` | sync needs identity and order. `actionTicketComment` reconcile moves to it |
-| new optional `TicketMetadata{Statuses(ctx) []RemoteStatus{Name, Category}; Types(ctx) []RemoteType{Name}}` | feeds the mapper. Jira: `/status` (with `statusCategory`), `/issuetype`. GitHub/GitLab: fixed `open/closed` plus labels |
-| new optional `TicketSyncer{FetchMany(ctx, keys) ([]SourceTicket, error)}` | batches the poll: Jira JQL `key in (…)` (≤100), GitHub one `issues?since=` per repo, GitLab `iids[]=` |
-| `TicketStatus` renamed `StatusCategory` | it is a category now. Rename in `actionspec` too; the equality test stays |
+| `SourceTicket` + `RemoteID, Labels []string, StatusID` (the remote status id) | labels are already decoded and then dropped (GitHub `issueJSON.Labels`, GitLab `Labels`); Jira needs `labels` added to `issueFields` |
+| `Comments` → `ListComments(key) []Comment{ID, Author, Body, Created, Updated}` | sync needs identity and order. The `actionTicketComment` reconcile moves to it |
+| new optional `TicketMetadata{Statuses(ctx) []RemoteStatus{ID, Name, Category}; Types(ctx) []RemoteType{ID, Name}}` | fills the lists. Jira: `/status` (with `statusCategory`), `/issuetype`. GitHub/GitLab: fixed `open/closed`, type `issue` |
+| new optional `TicketSyncer{FetchMany(ctx, keys) ([]SourceTicket, error)}` | batched poll. Jira: JQL `key in (…)` (≤100). GitHub: one `issues?since=` per repo. GitLab: `iids[]=` |
+| `TicketStatus` renamed `FlowStep` | it names a flow step now, not a status. Rename in `actionspec` too; the equality test stays |
+| `TransitionTo(key, step)` removed from adapters | the internal tracker resolves step → status name from `tracker_statuses`, then calls `Transition(key, name)`. Adapters stop holding status maps (`jira.DefaultStatusMap`, `issueStatusMap`) |
 
-Adapters to update: Jira, GitHub issues, GitLab issues and the fake
+Adapters to update: Jira, GitHub issues, GitLab issues, and the fake
 (`fake.go:1128+`, which needs `Statuses`, `Types`, `FetchMany` and comment
 ids).
 
 ## Write path
 
-1. `(*exec).tracker` resolves `TicketTracker` from `View.TicketID` (already in
-   `RunCreated`) plus the source fields.
+1. `(*exec).tracker` calls `Resolution.TicketTracker(ctx, View.TicketID)`.
+   `View.TicketID` is already in `RunCreated`.
 2. `StageCondition` stops auto-skipping `RequiresTracker` actions, because
-   every ticket now has a tracker. `run.ticket.tracker` keeps its meaning,
-   "has a *remote* tracker", so flows that guard on it don't change behaviour.
+   every ticket now has a tracker. `run.ticket.tracker` keeps meaning "has a
+   remote tracker", so flows that guard on it behave as before.
 3. Internal tracker semantics:
 
 | action | internal tracker |
 |---|---|
-| `ticket_transition to: <category>` | set `status_id` to the category default. Already there → no-op. Category has no status → `ErrStatusUnsupported` → skip with a note (same as today's remote rule) |
-| `ticket_transition status: <name>` | catalog lookup by name. Missing → `ErrStatusUnreachable{Reachable: names}` → `input_invalid` |
+| `ticket_transition to: <step>` | set `status_id` to the status holding that step. Already there → no-op. No status holds the step → skip with a note |
+| `ticket_transition status: <name>` | lookup by name. Missing → `ErrStatusUnreachable{Reachable: names}` → `input_invalid` |
 | `ticket_comment` | insert `origin=apothecary`, keyed `(run_id, stage_id)` |
-| `ticket_set_field field: labels` | replace or append on `labels` |
-| `ticket_set_field` any other field | **skip with a note**, not `input_invalid` (see G9) |
+| `ticket_set_field field: labels` | replace or union on `labels`, in SQL |
+| `ticket_set_field` any other field | **skip with a note**, not `input_invalid` (G9) |
 | `ticket_link` / `ticket_link_branch` | upsert into `ticket_links` |
 | ticket deleted mid-run | `ErrTicketGone` → skip with a note |
 
-4. Remote tracker semantics are unchanged, plus a **write-through refresh**:
-   after a successful remote write the executor calls `Refresh(ticketID)`
-   (wired via `Resolution`) on a best-effort basis. A refresh failure never
-   fails the stage; the next poll catches up.
-5. The `TransitionTo(category)` outbound target is the remote status whose
-   mapping is `is_primary` for that category's default status. That replaces
-   `cfg.StatusMap` in the Jira adapter.
+4. The remote tracker is unchanged, except that step → status name now comes
+   from `tracker_statuses`. After a successful remote write the stage
+   refreshes the ticket (§ Sync). A refresh failure never fails the stage.
+5. The UI uses the same port to change status, labels and comments: on a
+   sourced ticket the change goes to the remote and then refreshes; on a
+   sourceless ticket it goes to the row. Title and body stay read-only on
+   sourced tickets.
 
 ## Sync
 
-- **`tickets.Syncer`** has `Refresh(ticketID)`, `RefreshIntegration(id)` and
-  `RunOnce()`. It:
-  1. groups active sourced tickets by `source_id`;
-  2. calls `FetchMany` (falling back to `Fetch` per key when the capability is
-     absent), then `ListComments`;
-  3. maps status and type through `tracker_mappings`;
-  4. writes the row and reconciles comments by `remote_id` (insert, update,
-     delete the missing ones).
-- **Loop**: a new ticker in `cmd/apothecaryd/background.go` beside the
-  automation watcher (`automationEvery = 2m`). The default interval is 5 min
-  and configurable. Tickets in the `done` category stop polling after 14 days
-  (manual refresh still works).
-- **Manual**:
-  - `POST /api/tickets/{id}/sync`
-  - `POST /api/integrations/{id}/sync`
-  - a "Refresh" button on the ticket page and on the list.
-- **Monotonic guard**: drop a fetched snapshot whose `Updated` is older than
-  the stored `remote_updated_at` (see G1).
-- **Errors**:
-  - 401/403 → `sync_state=error` with the message and backoff.
-  - 404 → retry by `remote_id` (handles a Jira move or a GitHub transfer),
-    otherwise `gone`.
-  - integration deleted → `orphaned` (provenance has no FK by design).
-- **UI freshness**: add tickets to the fleet poll (`fleet.svelte.ts`,
-  `POLL_MS = 4000`), cheap because it is a DB read, or poll only on ticket
-  pages. Do not build a ticket SSE stream yet.
+`tickets.Syncer` provides `Refresh(ticketID)`, `RefreshIntegration(id)` and
+`RunOnce()`. It is single-flight per ticket. One pass:
+1. calls `FetchMany` (or `Fetch` per key when the capability is missing),
+   then `ListComments`;
+2. resolves status and type by remote id against the integration's lists;
+3. writes the row and reconciles comments by `remote_id` (insert, update, and
+   delete the ones that are gone).
 
-## Mapper (integration-level)
+| trigger | scope | skips done? |
+|---|---|---|
+| poll every 5 min (a ticker in `cmd/apothecaryd/background.go`, beside the automation watcher) | `ListSyncable`: sourced, **status not done**, not `gone` | **yes** |
+| after each ticket stage (any stage whose action is `ticket_*`) | that run's ticket only | no |
+| before an agent stage with a `run.ticket.comments` input | that run's ticket only, so the prompt is fresh | no |
+| when a run starts on the ticket (`CreateRunWith`) | that ticket only. This trigger was not in your list; it is the one moment a done ticket's mirror (e.g. reopened in Jira) matters | no |
+| manual: `POST /api/tickets/{id}/sync`, `POST /api/integrations/{id}/sync`, Refresh buttons | the ticket, or every ticket of the integration **including done ones** | no |
 
-- `GET /api/integrations/{id}/statuses` and `/types`, following the existing
-  `/repos` and `/models` pattern. They return the remote values plus the
-  current mapping.
-- `PUT /api/integrations/{id}/mappings`. Validated on save, unlike today's
-  `status_map`, which only fails when the adapter is built.
-- **Auto-suggest**:
-  - Jira status: `statusCategory` new→todo, indeterminate→in_progress,
-    done→done, mapped to that category's default.
-  - Types: `GuessChangeType` → the default type of that change type.
-- An unmapped remote status at sync time falls back to its category's
-  default, and the ticket shows a "mapping guessed" marker. A sync never
-  produces a ticket without a status.
-- UI: a mapping section in `IntegrationForm.svelte` for ticketsource kinds
-  that replaces the two text inputs, plus a catalog editor under System
-  (statuses grouped by category, types with their change type).
+Behaviour around the done flag:
+- **Done is a read-side filter.** Unchecking Done on a status puts its tickets
+  back in the poll at the next pass, and checking it takes them out.
+- **A ticket reopened remotely while done** is only noticed by a manual
+  refresh or a run start. This is the price of not polling done tickets.
+
+Error handling:
+- **Monotonic guard:** a fetched snapshot whose `Updated` is older than the
+  stored `remote_updated_at` is dropped (G1).
+- 401 or 403 → `sync_state=error` with backoff.
+- 404 → retry by `remote_id` (handles a Jira move or a GitHub transfer),
+  otherwise `gone`, which stops polling.
+- 429 → honour `Retry-After`.
+
+UI freshness: add tickets to the fleet poll (`fleet.svelte.ts`,
+`POLL_MS = 4000`). It reads the DB, not the tracker. No ticket SSE stream is
+needed.
+
+## Integration UI and API
+
+- `GET /api/integrations/{id}/statuses` and `/types` return the lists. A
+  `?refresh=1` query refetches from the remote, following the `/repos` and
+  `/models` pattern.
+- `PUT /api/integrations/{id}/statuses` and `/types` set Done, the flow step
+  and the change type on remote integrations. On the `internal` integration
+  they also create, rename, reorder and delete rows.
+  - Validated on save: each flow step is used at most once, and every type
+    has a change type. Today's `status_map` is only checked when the adapter
+    is built.
+- In `IntegrationForm.svelte`, the ticketsource kinds get a **Statuses** table
+  (name · Done ☐ · flow step) and a **Types** table (name · change type). They
+  replace the `status_map` / `type_map` text inputs.
+- The internal integration's card has no Delete button.
+- Ticket list: a status column and filter, and done tickets hidden by default.
+  Ticket page: a status chip, labels, comments, a Refresh button and a "last
+  synced" time.
+
+## Deleting an integration
+
+`source_id` is the integration's id and `source_kind` its kind (`jira`, …),
+so tickets from two Jira integrations are told apart by `source_id`. The
+column has no FK by design, which is why unlinking is explicit:
+1. `DELETE /api/integrations/{id}` without `?unlink_tickets=1` → 409 with
+   `{tickets: N, active_runs: M}`. The UI confirms: "N tickets will be
+   unlinked and become Apothecary tickets."
+2. With the flag, in one transaction:
+   - clear `source_*` and `remote_*` on those tickets;
+   - move each ticket to the internal tracker's lists:
+     - status: same name, case-insensitive; else a done status → the
+       internal `done` step; else the internal `todo` step;
+   - type: by change type;
+   - keep the comments, now `origin=remote` history;
+   - delete the integration, which cascades its status and type rows.
+3. Active runs on those tickets continue. Decision 2 sends their next tracker
+   write to the internal tracker.
 
 ## Prompts
 
-- New input source `run.ticket.comments`, type `ticket_comments`, mirroring
-  `artifacts/threads.yaml` / `mr_threads`. Opt-in per stage, with a size cap
-  (latest N or a byte budget) and an option to exclude
-  `origin=apothecary` (the agent's own past bookkeeping).
-- `ticketSection` additionally renders key, status and labels: cheap and
-  always useful.
-- **Read at prompt-build time** from the mirror, after a `Refresh`, so a
-  comment written mid-run reaches the next stage. Prompts are assembled per
-  stage, so this does not affect replay of the event log.
-- Comments are **untrusted input**. They are wrapped and labelled as quoted
-  third-party text, and they feed TODO 43 (security).
+- New input source `run.ticket.comments` of type `ticket_comments`, modelled
+  on `artifacts/threads.yaml` / `mr_threads`. **Opt-in per stage**, with:
+  - a cap: `limit` (latest N, default 20) and a byte budget;
+  - `exclude_own: true` by default, which drops `origin=apothecary` (the run's
+    own bookkeeping).
+- `ticketSection` additionally renders the key, status and labels.
+- Comments are refreshed before the stage (§ Sync) and read at prompt-build
+  time. Prompts are assembled per stage, so replaying the event log is
+  unaffected.
+- Comments are **untrusted input**: they are wrapped and labelled as quoted
+  third-party text. This feeds TODO 43.
 
-## Gaps found, and their fixes
+## Gaps and their fixes
 
 | # | gap | fix |
 |---|---|---|
-| G1 | **Latency and flip-flop.** A stage moves Jira, and the UI shows the old status until the next poll. Jira's search index is eventually consistent, so a poll right after a write can return the *old* status | write-through `Refresh` uses `Fetch` by key (consistent), not search. The monotonic `remote_updated_at` guard drops stale batches |
-| G2 | **GitHub and GitLab only know open/closed.** With the remote as the single source of truth, `in_progress` on a GitHub issue skips, so the internal ticket never shows "in progress" either. This is a regression in perceived behaviour versus a dual write | opt-in **label-backed statuses**: a `label_status` mapping kind (`status:in-progress` label ↔ status; GitLab `workflow::` scoped labels fit natively). A write swaps the label; a read maps it. Without it, only todo/done move. Rejected: a local overlay status (it brings back the drift this design exists to prevent) |
-| G3 | **Local edits get overwritten.** Users can `PUT` an imported ticket's title and goal today and may have added direction to the goal | remote-owned fields become read-only on sourced tickets. The migration's first sync moves a goal that differs from the remote body into the new local `notes` field, which `ticketSection` renders as `# ADDITIONAL CONTEXT` |
-| G4 | **Runs snapshot the ticket**, and `Rerun` copies the *previous run's* copy (`engine.go:1052-1066`), so updated titles and goals never reach reruns | `Rerun` rebuilds `runinput.Ticket` from the current ticket row (after `Refresh`). In-flight runs keep their snapshot for title and goal (determinism); comments and status are read live (§ Prompts) |
-| G5 | **Closed enums are duplicated in Go and TypeScript** (`CanonicalStatuses`, `actionspec.Statuses`, `CondChangeTypes`, `domain/ticket.ts`, `inspector.ts`) | they stay closed as categories and change types (Decisions 2–3). Only the catalog is dynamic; the UI reads it from a new `GET /api/ticket-catalog` |
-| G6 | **Catalog deletion.** Deleting a status or type that tickets or mappings reference | the delete requires a `replace_with` id in the same category or change type; the last status of a category cannot be deleted while it is any mapping's target. Changing the default is a flag flip |
-| G7 | **Jira transition gaps.** A Jira status is reachable only by a transition from the current status, and some transitions require screen fields | unchanged (`ErrStatusUnreachable` → `input_invalid`, listing the reachable targets). The mapper UI warns when a primary status has no transition from the other categories' primaries [INFERENCE: needs `/workflow` read access; drop the warning if scopes don't allow it] |
-| G8 | **MR tickets** have `source_kind=merge_request` and no `source_id` | they use the internal tracker, so `ticket_done` in `builder.yaml` now really moves them to done. The sync query filters on `source_id <> ''` |
-| G9 | **Behaviour change for sourceless runs.** Stages that used to skip now act. A flow setting `components` on a hand-written ticket would turn a skip into `input_invalid` | the internal tracker returns a skip-class error for fields it lacks. `builder.yaml` comments (:61-69) and flow-language "Tracker actions" (:925-959) are rewritten. `on_fail` routes stay valid |
-| G10 | **The integration is deleted** while tickets reference it (no FK by design) | `sync_state=orphaned`: the mirror is frozen and remote writes fail visibly. An explicit **Detach** action clears the `source_*` fields so the ticket switches to the internal tracker. It is never automatic: a silent switch would hide data loss |
-| G11 | **Remote ticket moved or renamed** (a Jira key changes on a project move; a GitHub transfer) | store `remote_id`, and on a 404 re-resolve and rewrite `source_key` / `source_url`. Running runs keep the old key in their snapshot; Jira redirects the old key |
-| G12 | **Rate limits.** One Fetch per ticket per poll does not scale | `FetchMany` batching per integration, honour `Retry-After` / 429 with backoff, and stop polling stale done tickets |
-| G13 | **The O(n) scans** `checkDuplicate` and `FindByKey` over every user's tickets | a unique index plus `TicketBySource` |
-| G14 | **New remote attachments** are never fetched after the import | sync attachments by remote id (needs `Attachment.RemoteID`). Lower priority, phase 6 |
-| G15 | **Audit.** "Who moved this ticket?" (sync, run X stage Y, the user) | keep `status_changed_at` and `status_changed_by` on the row. A full ticket activity log is out of scope |
-| G16 | **Stale doc and UI copy** says "a copy taken once; nothing is written back": `tickets.go` package doc, `confstore.Ticket` doc, `0001` comment (frozen, leave it), `domain/ticket.ts:20`, ticket page :189, kind help texts, README :145-221 | rewritten in the phase that changes the behaviour |
-| G17 | **Run states vs ticket statuses.** `in_review` is both a run state and a status category | the UI labels them distinctly ("Run: in review" vs the ticket status chip), and the ticket list gains a status column next to the existing runs column |
-| G18 | **A human moves the issue mid-run** (e.g. to Done in Jira) | out of scope. It needs the unbuilt tracker-status *signal* (`flow-language.md:2176-2179`), which this sync makes cheap to add later |
+| G1 | **Flip-flop.** Jira's search index lags, so a poll right after a stage moved the issue can return the old status | the post-stage refresh uses `Fetch` by key (consistent), not search. The monotonic `remote_updated_at` guard drops stale batches |
+| G2 | **GitHub/GitLab expose only open/closed** | accepted: the mirror shows two statuses, and `to: in_progress` skips unless the user gives that step a status. No label-backed statuses |
+| G3 | **Users can edit an imported ticket's title and goal today** | refused on sourced tickets (API 409 on `PUT` for remote-owned fields; UI read-only). The first sync overwrites earlier hand edits (pre-1.0, no carry-over). Per-attempt direction stays in the run goal |
+| G4 | **`Rerun` copies the previous run's ticket** (`engine.go:1052-1066`) | `Rerun` rebuilds `runinput.Ticket` from the current row, after the run-start refresh |
+| G5 | **Closed enums are duplicated in Go and TypeScript** (`CanonicalStatuses`, `actionspec.Statuses`, `CondChangeTypes`, `domain/ticket.ts`, `inspector.ts`) | they stay closed, as flow steps and change types. Only the lists are dynamic, and the UI reads them per integration |
+| G6 | **Deleting an internal status or type that tickets use** | the delete takes a `replace_with` id from the same integration |
+| G7 | **A remote status appears after the fetch** (a Jira workflow edit) or is renamed | sync upserts unknown remote statuses and types by `remote_id`, pre-filled by auto-suggest, and renames follow the id. A remote status that disappears keeps its row while tickets use it |
+| G8 | **MR tickets** have `source_kind=merge_request` and no `source_id` | they use the internal tracker, so `ticket_done` in `builder.yaml` now really moves them. The sync query filters on `source_id <> ''` |
+| G9 | **Sourceless runs now act** where they used to skip. A flow setting `components` on a hand-written ticket would turn a skip into `input_invalid` | the internal tracker returns a skip-class error for fields it lacks. The `builder.yaml` header (:61-69) and flow-language "Tracker actions" (:925-959) are rewritten |
+| G10 | **Integration deleted** while tickets reference it | explicit unlink on delete (§ Deleting an integration). Runs follow the ticket (Decision 2) |
+| G11 | **Remote key changes** (Jira project move, GitHub transfer) | `remote_id`; on a 404, re-resolve and rewrite `source_key` / `source_url` |
+| G12 | **Rate limits** | `FetchMany` batching, `Retry-After`, and no polling of done or gone tickets |
+| G13 | **O(n) scans** in `checkDuplicate` / `FindByKey` | a unique index plus `TicketBySource` |
+| G14 | **New remote attachments** are never fetched | sync attachments by remote id (`Attachment.RemoteID`); phase 6 |
+| G15 | **"Who moved this ticket?"** | `status_changed_at`, plus `status_changed_by` (`sync` · `run:<id>/<stage>` · `user`) |
+| G16 | **Stale copy** says "a copy taken once; nothing is written back": `tickets.go` package doc, the `confstore.Ticket` doc, `domain/ticket.ts:20`, the ticket page :189, the kind help texts, README :145-221 (`0001` stays frozen) | rewritten in the phase that changes the behaviour |
+| G17 | **`in_review` is both a run state and a flow step** | the UI shows the ticket's status *name* (from its tracker), never the step, and labels the run state as "Run: …" |
+| G18 | **A human moves the issue mid-run** | out of scope. It needs the unbuilt tracker-status signal (`flow-language.md:2176-2179`), which sync makes cheap later |
+| G19 | **Concurrent runs on one ticket** | one non-terminal run per ticket (§ Concurrency) |
 
 ## Phases
 
 Each phase ships on its own and leaves no dead path.
 
-1. **Catalog.**
-   - Migration: statuses, types, seeds; `tickets.status_id` / `type_id` /
-     `labels`.
-   - Confstore, CRUD API and the System → Ticket catalog UI.
-   - `change_type` derived from the type, with an override.
-   - Ticket list status column and filter.
-2. **Internal tracker.**
-   - The `internaltracker` adapter, `ticket_comments`, `ticket_links`.
-   - `Resolution.TicketTracker`; remove the `StageCondition` auto-skip.
-   - Manual status, label and comment actions in the ticket page.
-   - Docs: flow-language, builder.yaml comments, IMPLEMENTATION_NOTES.
+1. **Lists and the internal tracker.**
+   - Migration: `tracker_statuses` / `tracker_types`, the `internal`
+     integration and its seeds, the new ticket columns, `ticket_comments`,
+     `ticket_links`.
+   - The `internaltracker` adapter; `Resolution.TicketTracker` from the
+     current ticket row; remove the `StageCondition` auto-skip.
+   - Internal-integration list editor, plus ticket status, labels and comments
+     in the UI.
+   - Docs: flow-language, `builder.yaml` header, IMPLEMENTATION_NOTES.
    - After this phase, TODO 49's "no tracker" half is done.
-3. **Port and adapters.** `SourceTicket` additions, `ListComments`,
-   `TicketMetadata`, `TicketSyncer` for Jira, GitHub, GitLab and the fake.
-4. **Mapper.**
-   - `tracker_mappings`, migrating `status_map` / `type_map` and removing the
-     config fields.
-   - Metadata endpoints, mapper UI with auto-suggest.
-   - Jira `TransitionTo` reads the primary mapping.
+2. **One active run per ticket.** Engine rule, 409 + UI, cron skip, `Rerun`.
+3. **Port and adapters.**
+   - `SourceTicket` additions, `ListComments`, `TicketMetadata`,
+     `TicketSyncer`, and the `FlowStep` rename.
+   - Status maps move out of the adapters (Jira, GitHub, GitLab, fake).
+4. **Remote lists.**
+   - Fetch endpoints, the Statuses and Types tables with Done and flow-step
+     columns plus auto-suggest.
+   - Migrate and remove `status_map` / `type_map`.
 5. **Sync.**
-   - `Syncer`, the background loop, manual refresh endpoints and buttons.
-   - Write-through refresh, read-only remote fields, the `notes` migration.
-   - Orphan, gone and detach handling; `Rerun` reads the current row.
+   - `Syncer`, the 5-minute loop skipping done tickets, post-stage /
+     pre-comments / run-start refresh, manual endpoints and buttons.
+   - Read-only remote fields, unlink-on-delete, `gone` handling; `Rerun` reads
+     the current row.
    - README and the kind help texts.
 6. **Prompts and extras.**
-   - The `run.ticket.comments` input, and key/status/labels in
+   - The `run.ticket.comments` input, and key, status and labels in
      `ticketSection`.
    - Attachment sync (G14).
-   - Label-backed statuses for GitHub and GitLab (G2).
 
 Verification per phase:
-- confstore conftest for both stores;
-- engine tests with the fake tracker covering internal vs remote resolution,
-  skip classes and comment idempotency on recovery;
-- sync tests (monotonic guard, 404 → `remote_id`, comment reconcile);
+- confstore conftest on both stores;
+- engine tests on the fake tracker: internal vs remote resolution, the skip
+  classes, comment idempotency on recovery, the busy-ticket refusal under
+  concurrent `CreateRunWith`;
+- sync tests: the done filter, the monotonic guard, 404 → `remote_id`, comment
+  reconcile, unlink-on-delete;
 - `TestCommittedSpecIsCurrent` after `task api:spec`;
-- a smoke run of `builder.yaml` on a hand-written ticket, ending with the
-  ticket in Done.
-
-## Open questions
-
-1. **Catalog scope.** Per user (recommended, Decision 4) or per project? Per
-   project allows different workflows per repo, but duplicates the mapping for
-   every workshop fed by the same Jira.
-2. **Label-backed statuses for GitHub/GitLab (G2).** In scope for TODO 49, or
-   a follow-up? Without them, a GitHub-sourced ticket only ever shows To do or
-   Done.
-3. **Comments in prompts.** Opt-in per stage (recommended, for cost and
-   prompt-injection reasons) or on by default in the built-in flows?
-4. **Poll interval and done-ticket cut-off.** 5 min and 14 days are proposals.
+- smoke: `builder.yaml` on a hand-written ticket ends with the ticket in Done
+  and out of the poll.

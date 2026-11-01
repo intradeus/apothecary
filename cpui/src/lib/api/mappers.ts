@@ -20,7 +20,7 @@ import type {
 	User
 } from '$lib/domain';
 import type { Credential, ProviderInfo, SignInPending } from '$lib/domain';
-import { asChangeType } from '$lib/domain';
+import { asChangeType, asFlowStep } from '$lib/domain';
 import type {
 	Skill,
 	SkillDetail,
@@ -112,7 +112,12 @@ import type {
 	Snapshot,
 	SnapshotKind,
 	SourceTicket,
+	SyncState,
 	Ticket,
+	TicketComment,
+	CommentOrigin,
+	TrackerStatus,
+	TrackerType,
 	UploadLimits,
 	WorkspaceChanges,
 	WorkspaceEntry,
@@ -616,7 +621,7 @@ export function toPingPayload(w: Wire.PingFiles): PingPayload {
 /** The list endpoint returns the ticket alone; get/create/update return it
  *  with its attachments and any import warnings. One domain type either way —
  *  the extras are simply empty on a summary. */
-export function toTicket(w: Wire.Ticket | Wire.TicketDetail): Ticket {
+export function toTicket(w: Wire.TicketView | Wire.TicketDetail): Ticket {
 	const detail = w as Wire.TicketDetail;
 	return {
 		id: w.id ?? '',
@@ -635,9 +640,90 @@ export function toTicket(w: Wire.Ticket | Wire.TicketDetail): Ticket {
 					type: w.source_type || undefined
 				}
 			: undefined,
+		status: w.status
+			? {
+					id: w.status.id,
+					name: w.status.name,
+					isDone: w.status.is_done,
+					flowStep: asFlowStep(w.status.flow_step)
+				}
+			: undefined,
+		type: w.type ? { id: w.type.id, name: w.type.name } : undefined,
+		labels: list(w.labels),
+		links: list(detail.links).map((l) => ({ url: l.url, title: l.title })),
+		syncState: oneOf(SYNC_STATES, w.sync_state, ''),
+		syncError: w.sync_error || undefined,
+		syncedAt: w.synced_at || undefined,
+		statusChangedAt: w.status_changed_at || undefined,
+		statusChangedBy: w.status_changed_by || undefined,
 		warnings: list(detail.warnings),
 		createdAt: w.created_at ?? '',
 		updatedAt: w.updated_at ?? ''
+	};
+}
+
+const SYNC_STATES: readonly SyncState[] = ['', 'ok', 'error', 'gone'];
+const COMMENT_ORIGINS: readonly CommentOrigin[] = ['remote', 'user', 'apothecary'];
+
+export function toTicketComment(w: Wire.TicketComment): TicketComment {
+	return {
+		id: w.id,
+		author: w.author,
+		bodyMd: w.body_md,
+		// Unknown reads as remote: it came from somewhere other than here.
+		origin: oneOf(COMMENT_ORIGINS, w.origin, 'remote'),
+		runId: w.run_id || undefined,
+		stageId: w.stage_id || undefined,
+		createdAt: w.created_at,
+		updatedAt: w.updated_at
+	};
+}
+
+export function toTrackerStatus(w: Wire.TrackerStatus): TrackerStatus {
+	return {
+		id: w.id,
+		integrationId: w.integration_id,
+		remoteId: w.remote_id,
+		name: w.name,
+		remoteCategory: w.remote_category,
+		position: w.position,
+		isDone: w.is_done,
+		flowStep: asFlowStep(w.flow_step)
+	};
+}
+
+export function fromTrackerStatus(s: TrackerStatus): Wire.TrackerStatus {
+	return {
+		id: s.id,
+		integration_id: s.integrationId,
+		remote_id: s.remoteId,
+		name: s.name,
+		remote_category: s.remoteCategory,
+		position: s.position,
+		is_done: s.isDone,
+		...(s.flowStep ? { flow_step: s.flowStep } : {})
+	};
+}
+
+export function toTrackerType(w: Wire.TrackerType): TrackerType {
+	return {
+		id: w.id,
+		integrationId: w.integration_id,
+		remoteId: w.remote_id,
+		name: w.name,
+		changeType: asChangeType(w.change_type),
+		position: w.position
+	};
+}
+
+export function fromTrackerType(t: TrackerType): Wire.TrackerType {
+	return {
+		id: t.id,
+		integration_id: t.integrationId,
+		remote_id: t.remoteId,
+		name: t.name,
+		change_type: t.changeType,
+		position: t.position
 	};
 }
 

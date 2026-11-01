@@ -58,6 +58,9 @@ const maskPrefix = "••••"
 // --- integrations -----------------------------------------------------------
 
 func (s *Service) CreateIntegration(ctx context.Context, in Integration) (Integration, error) {
+	if in.Kind == KindInternal {
+		return Integration{}, invalidf("integration: the internal tracker is built in — every user has exactly one, made for them")
+	}
 	if err := s.validateIntegration(ctx, &in); err != nil {
 		return Integration{}, err
 	}
@@ -117,6 +120,43 @@ func (s *Service) UpdateIntegration(ctx context.Context, id, name string, config
 	return cur, nil
 }
 
+// IntegrationConfig is an integration's stored config alone — its secrets
+// are not opened.
+func (s *Service) IntegrationConfig(ctx context.Context, id string) (map[string]any, error) {
+	r, err := s.db.GetIntegration(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return r.Config, nil
+}
+
+// DropIntegrationConfig removes config keys from an integration, its sealed
+// secrets kept exactly as stored (never opened and resealed) — a one-off
+// cleanup such as Jira's legacy status_map / type_map once the tracker lists
+// have taken them over. Keys it does not have are no change.
+func (s *Service) DropIntegrationConfig(ctx context.Context, id string, keys ...string) error {
+	r, err := s.db.GetIntegration(ctx, id)
+	if err != nil {
+		return err
+	}
+	cfg := make(map[string]any, len(r.Config))
+	for k, v := range r.Config {
+		cfg[k] = v
+	}
+	changed := false
+	for _, k := range keys {
+		if _, ok := cfg[k]; ok {
+			delete(cfg, k)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	r.Config, r.UpdatedAt = cfg, s.now().UTC()
+	return s.db.UpsertIntegration(ctx, r)
+}
+
 func (s *Service) GetIntegration(ctx context.Context, id string) (Integration, error) {
 	r, err := s.db.GetIntegration(ctx, id)
 	if err != nil {
@@ -143,7 +183,16 @@ func (s *Service) ListIntegrations(ctx context.Context, userID string) ([]Integr
 	return out, nil
 }
 
+// DeleteIntegration removes an integration nothing references. The internal
+// tracker is never deleted: every ticket without a source lives on it.
 func (s *Service) DeleteIntegration(ctx context.Context, id string) error {
+	r, err := s.db.GetIntegration(ctx, id)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if err == nil && r.Kind == KindInternal {
+		return invalidf("integration %s: the internal tracker is built in and cannot be deleted", r.Name)
+	}
 	return s.db.DeleteIntegration(ctx, id)
 }
 
@@ -179,7 +228,12 @@ func (s *Service) validateIntegration(ctx context.Context, in *Integration) erro
 	if in.Kind == "" {
 		return invalidf("integration: kind is required")
 	}
-	if s.KindValid != nil && !s.KindValid(in.Port, in.Kind) {
+	// The internal tracker is no registered kind: nothing builds an adapter
+	// for it, and it holds no credential.
+	if in.Kind == KindInternal && len(in.Secrets) > 0 {
+		return invalidf("integration: the internal tracker holds no secrets")
+	}
+	if in.Kind != KindInternal && s.KindValid != nil && !s.KindValid(in.Port, in.Kind) {
 		return invalidf("integration: unknown kind %q for port %s", in.Kind, in.Port)
 	}
 	if in.Config == nil {

@@ -14,7 +14,6 @@ import (
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
@@ -46,9 +45,7 @@ main:
 
 func trackerWorld(tracker **fake.TicketSource) func(h *harness) {
 	return func(h *harness) {
-		tr := newTracker()
-		*tracker = tr
-		h.res.TicketWriter = func(context.Context, string) (trackerport.TicketWriter, error) { return tr, nil }
+		*tracker = h.tickets.remote
 		scriptAgents(h, func(env envport.EnvID, _ string) {
 			for path, body := range map[string]string{"artifacts/note.md": "the note\n", "artifacts/value.txt": "the value\n", "artifacts/mr.md": "# Crash\n"} {
 				h.envp.WriteFile(context.Background(), env, path, []byte(body), 0o644) //nolint:errcheck

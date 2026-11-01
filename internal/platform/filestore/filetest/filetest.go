@@ -113,7 +113,7 @@ func RunContract(t *testing.T, open func(t *testing.T) DB, seedTicket func(t *te
 		ticket(t, db, "t1")
 		in := filestore.Attachment{ID: "a1", UserID: "u1", Filename: "spec.md", Mime: "text/markdown", Size: 1 << 40, SHA256: "ab12", CreatedAt: t0}
 		onTicket := upload("a2", "u1", t0)
-		onTicket.TicketID = "t1"
+		onTicket.TicketID, onTicket.RemoteID = "t1", "10001"
 		onRun := upload("a3", "u1", t0)
 		onRun.RunID = "r1"
 		onPing := upload("a4", "u1", t0)
@@ -348,6 +348,57 @@ func RunContract(t *testing.T, open func(t *testing.T) DB, seedTicket func(t *te
 			}
 		})
 	}
+
+	t.Run("a ticket holds one copy of each remote file", func(t *testing.T) {
+		db := open(t)
+		ticket(t, db, "t1")
+		ticket(t, db, "t2")
+		remote := func(id, user, remoteID string) filestore.Attachment {
+			a := upload(id, user, t0)
+			a.RemoteID = remoteID
+			return a
+		}
+		held := remote("held", "u1", "r-1")
+		held.TicketID = "t1"
+		// Unclaimed copies of one file stand side by side: two imports racing
+		// each save theirs before either claims.
+		insertAll(t, db, held, remote("again", "u1", "r-1"), remote("twin", "u1", "r-1"),
+			remote("new", "u1", "r-2"), remote("elsewhere", "u1", "r-1"), upload("plain", "u1", t0), upload("plain2", "u1", t0))
+		if got := get(t, db, "again"); got.RemoteID != "r-1" || !got.Unclaimed() {
+			t.Errorf("unclaimed copy = %+v", got)
+		}
+		// A second row of r-1 on t1, inserted or claimed, is refused whole.
+		dup := remote("dup", "u1", "r-1")
+		dup.TicketID = "t1"
+		if err := db.InsertAttachment(ctx, dup); err == nil {
+			t.Error("a second copy of a remote file was stored on its ticket")
+		}
+		if err := db.ClaimAttachments(ctx, "u1", []string{"new", "again"}, "t1", "", ""); err == nil {
+			t.Error("a claim put a second copy of a remote file on its ticket")
+		}
+		if got := get(t, db, "new"); !got.Unclaimed() {
+			t.Errorf("refused claim wrote new: %+v", got)
+		}
+		// Two copies in one claim collide with each other.
+		if err := db.ClaimAttachments(ctx, "u1", []string{"again", "twin"}, "t2", "", ""); err == nil {
+			t.Error("one claim put two copies of a remote file on a ticket")
+		}
+		// Another ticket, another file, a run, and uploads ('' is no id) are free.
+		for _, c := range []struct {
+			ids         []string
+			ticket, run string
+		}{{[]string{"elsewhere"}, "t2", ""}, {[]string{"new", "plain", "plain2"}, "t1", ""}, {[]string{"twin"}, "", "r1"}} {
+			if err := db.ClaimAttachments(ctx, "u1", c.ids, c.ticket, c.run, ""); err != nil {
+				t.Errorf("claim %v = %v", c.ids, err)
+			}
+		}
+		if got := attachmentIDs(db.AttachmentsForTicket(ctx, "t1")); !slices.Equal(got, []string{"held", "new", "plain", "plain2"}) {
+			t.Errorf("t1 = %v", got)
+		}
+		if got := get(t, db, "elsewhere"); got.TicketID != "t2" || got.RemoteID != "r-1" {
+			t.Errorf("elsewhere = %+v", got)
+		}
+	})
 
 	t.Run("attachment readers: scope and order", func(t *testing.T) {
 		db := open(t)

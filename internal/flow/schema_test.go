@@ -205,7 +205,8 @@ func TestSchemaMatchesTheGrammar(t *testing.T) {
 		}
 	}
 	// A port is read by hand; its keys are DocPort's. An input has no
-	// destination, an output no source and is never optional.
+	// destination, an output no source, is never optional and takes no
+	// ticket_comments options.
 	port := jsonKeys(reflect.TypeOf(flow.DocPort{}))
 	without := func(drop ...string) []string {
 		return slices.DeleteFunc(slices.Clone(port), func(k string) bool { return slices.Contains(drop, k) })
@@ -213,7 +214,7 @@ func TestSchemaMatchesTheGrammar(t *testing.T) {
 	if got, want := props(defs["port_in"]), without("to"); !slices.Equal(got, want) {
 		t.Errorf("port_in: the parser reads %v, the schema names %v", want, got)
 	}
-	if got, want := props(defs["port_out"]), without("from", "optional"); !slices.Equal(got, want) {
+	if got, want := props(defs["port_out"]), without("from", "optional", "limit", "exclude_own"); !slices.Equal(got, want) {
 		t.Errorf("port_out: the parser reads %v, the schema names %v", want, got)
 	}
 	stage := defs["stage"].(map[string]any)["properties"].(map[string]any)

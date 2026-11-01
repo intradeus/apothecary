@@ -254,9 +254,10 @@ type HarnessKind interface {
 	New(cfg Config, envp envport.EnvProvisioner) (Harness, error)
 }
 
-// TicketSourceKind constructs the read-only ticket-tracker port (Jira). It
-// takes no engine deps: a ticket source is a config-plane vendor — the ticket
-// factory reads from it at import time and nothing in a run ever touches it.
+// TicketSourceKind constructs the ticket-tracker port (Jira, GitHub/GitLab
+// issues). It takes no engine deps: a ticket source is a config-plane vendor
+// — the ticket factory imports from it, the sync re-reads it, and a run only
+// reaches it through a tracker action's write (trackerport.TicketWriter).
 type TicketSourceKind interface {
 	Descriptor() Descriptor
 	New(cfg Config) (trackerport.TicketSource, error)

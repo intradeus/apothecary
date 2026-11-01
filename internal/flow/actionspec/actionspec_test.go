@@ -184,8 +184,8 @@ func TestTrackerActions(t *testing.T) {
 		}
 	}
 	tr := Get(TicketTransition)
-	if to := tr.Setting("to"); to == nil || to.Kind != KindEnum || to.Required || !slices.Equal(to.Values, Statuses) || to.Default != "" {
-		t.Errorf("ticket_transition.to = %+v, want an optional enum over the canonical statuses with no default", to)
+	if to := tr.Setting("to"); to == nil || to.Kind != KindEnum || to.Required || !slices.Equal(to.Values, Steps) || to.Default != "" {
+		t.Errorf("ticket_transition.to = %+v, want an optional enum over the flow steps with no default", to)
 	}
 	if st := tr.Setting("status"); st == nil || st.Kind != KindText || st.Required {
 		t.Errorf("ticket_transition.status = %+v, want an optional text setting", st)
@@ -193,15 +193,15 @@ func TestTrackerActions(t *testing.T) {
 	if !slices.Equal(tr.ExactlyOne, []string{"to", "status"}) {
 		t.Errorf("ticket_transition.exactly_one = %v, want to / status", tr.ExactlyOne)
 	}
-	// The registry's statuses ARE the port's: a flow's `to` is what every
-	// adapter's TransitionTo understands, in the same order.
-	canonical := trackerport.CanonicalStatuses()
-	if len(canonical) != len(Statuses) {
-		t.Fatalf("statuses = %v, ports = %v", Statuses, canonical)
+	// The registry's steps ARE the port's: a flow's `to` is what every
+	// tracker's status list assigns, in the same order.
+	steps := trackerport.FlowSteps()
+	if len(steps) != len(Steps) {
+		t.Fatalf("steps = %v, ports = %v", Steps, steps)
 	}
-	for i, st := range canonical {
-		if string(st) != Statuses[i] {
-			t.Errorf("status %d = %q, ports %q", i, Statuses[i], st)
+	for i, st := range steps {
+		if string(st) != Steps[i] {
+			t.Errorf("step %d = %q, ports %q", i, Steps[i], st)
 		}
 	}
 	if body := Get(TicketComment).Input("body"); body == nil || body.Type != agentspec.TypeFile || !body.Required || body.DefaultPath == "" {
