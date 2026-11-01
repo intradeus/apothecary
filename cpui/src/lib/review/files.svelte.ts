@@ -15,6 +15,8 @@ import {
 	type FileKind
 } from '$lib/review/reviewDoc';
 import { t } from '$lib/i18n/index.svelte';
+import { treeOrder } from '$lib/core/pathTree';
+import { prefs } from '$lib/app/prefs.svelte';
 
 export interface ShownFile extends PingFile {
 	kind: FileKind;
@@ -50,7 +52,10 @@ export class ReviewFiles {
 
 	readonly file = $derived(this.files.find((f) => f.path === this.current));
 	readonly paths = $derived(this.files.map((f) => f.path));
-	/** The first file shown: an old draft's comments are on it. */
+	/** The paths in the order the file list shows them (prefs: list or tree). */
+	readonly order = $derived(prefs.fileLayout === 'tree' ? treeOrder(this.paths) : this.paths);
+	/** The gate's first file, whatever the layout: the review opens on it,
+	 *  and an old draft's comments are on it. */
 	readonly primary = $derived(this.files[0]?.path ?? '');
 
 	/** ONE fetch for the list; then the first file, then the rest in the
@@ -67,7 +72,7 @@ export class ReviewFiles {
 			this.loading = false;
 		}
 		if (!this.files.length) return;
-		await this.open(this.files[0].path);
+		await this.open(this.primary);
 		void (async () => {
 			for (const f of this.files) await this.read(f.path);
 		})();
@@ -79,10 +84,10 @@ export class ReviewFiles {
 		return this.read(path);
 	}
 
-	/** Move d files along the list (j/k), staying at its ends. */
+	/** Move d files along the list as shown (j/k), staying at its ends. */
 	step(d: number) {
-		const i = this.paths.indexOf(this.current);
-		const next = this.paths[Math.max(0, Math.min(this.paths.length - 1, i + d))];
+		const i = this.order.indexOf(this.current);
+		const next = this.order[Math.max(0, Math.min(this.order.length - 1, i + d))];
 		if (next && next !== this.current) void this.open(next);
 	}
 

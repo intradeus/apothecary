@@ -1,4 +1,4 @@
-// Per-browser UI preferences: theme, sidebar state.
+// Per-browser UI preferences: theme, sidebar state, file lists as a list or a tree.
 //
 // These are conveniences, not records: they live in localStorage and every
 // read tolerates its absence (private windows, blocked storage).
@@ -30,12 +30,16 @@ const urlTheme = () => {
 	}
 };
 
+/** How a pane lists files: flat paths, or folders you can fold. */
+export type FileLayout = 'list' | 'tree';
+
 class Prefs {
 	/** A registered theme id (see $lib/design/themes). */
 	theme = $state<string>(
 		[urlTheme(), read('apothecary.theme.v2')].find((t) => isTheme(t)) ?? DEFAULT_THEME
 	);
 	collapsed = $state(read('apothecary.sidebar') === 'rail');
+	fileLayout = $state<FileLayout>(read('apothecary.files.layout') === 'list' ? 'list' : 'tree');
 
 	/** The current theme's definition: label, icon, base scheme. */
 	readonly themeDef: ThemeDef = $derived(themeById(this.theme));
@@ -57,6 +61,10 @@ class Prefs {
 	toggleCollapsed() {
 		this.collapsed = !this.collapsed;
 		write('apothecary.sidebar', this.collapsed ? 'rail' : 'full');
+	}
+	setFileLayout(layout: FileLayout) {
+		this.fileLayout = layout;
+		write('apothecary.files.layout', layout);
 	}
 }
 

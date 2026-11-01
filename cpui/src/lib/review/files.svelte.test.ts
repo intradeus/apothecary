@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { prefs } from '$lib/app/prefs.svelte';
 import { api } from '$lib/api';
 import { aPingFile, serveSnapshots } from '$test/fixtures/review';
 import { deferred } from '$test/helpers';
@@ -18,7 +19,10 @@ const payload = (...files: ReturnType<typeof aPingFile>[]) =>
 	vi.mocked(api.pings.payload).mockResolvedValue({ files });
 
 describe('ReviewFiles', () => {
-	beforeEach(() => vi.resetAllMocks());
+	beforeEach(() => {
+		vi.resetAllMocks();
+		prefs.setFileLayout('list');
+	});
 
 	it('starts out loading, with nothing open', () => {
 		const set = new ReviewFiles('p1');
@@ -235,6 +239,34 @@ describe('ReviewFiles', () => {
 			await set.init();
 			set.step(1);
 			expect(set.current).toBe('');
+		});
+
+		describe('as a tree', () => {
+			const nested = async () => {
+				payload(
+					aPingFile({ path: 'z.png', mime: 'image/png' }),
+					aPingFile({ path: 'docs/b.png', mime: 'image/png' }),
+					aPingFile({ path: 'docs/a.png', mime: 'image/png' })
+				);
+				const set = new ReviewFiles('p1');
+				await set.init();
+				return set;
+			};
+			beforeEach(() => prefs.setFileLayout('tree'));
+
+			it('still opens on the gate’s first file', async () => {
+				expect((await nested()).current).toBe('z.png');
+			});
+
+			it('moves along the files as the tree shows them', async () => {
+				const set = await nested();
+				set.step(-1);
+				expect(set.current).toBe('docs/b.png');
+				set.step(-1);
+				expect(set.current).toBe('docs/a.png');
+				set.step(-1);
+				expect(set.current).toBe('docs/a.png');
+			});
 		});
 	});
 });

@@ -11,6 +11,7 @@ import {
 	stubGeometry
 } from '$test/fixtures/review';
 import ReviewHistory from './ReviewHistory.svelte';
+import { prefs } from '$lib/app/prefs.svelte';
 
 vi.mock('$lib/api', () => ({
 	api: {
@@ -49,7 +50,10 @@ const allFiles = () => screen.getByRole('radio', { name: /All files/ });
 
 describe('ReviewHistory', () => {
 	beforeAll(stubGeometry);
-	beforeEach(() => vi.resetAllMocks());
+	beforeEach(() => {
+		vi.resetAllMocks();
+		prefs.setFileLayout('list');
+	});
 
 	it('shows skeletons until the files are known', () => {
 		vi.mocked(api.pings.payload).mockReturnValue(new Promise(() => {}));

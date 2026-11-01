@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const THEME_KEY = 'apothecary.theme.v2';
 const SIDEBAR_KEY = 'apothecary.sidebar';
+const LAYOUT_KEY = 'apothecary.files.layout';
 
 /** A fresh Prefs: it reads the browser once, as it's built. */
 const load = async () => {
@@ -28,19 +29,27 @@ afterEach(() => {
 });
 
 describe('prefs on load', () => {
-	it('starts from the default theme and a full sidebar', async () => {
+	it('starts from the default theme, a full sidebar and files as a tree', async () => {
 		const prefs = await load();
 		expect(prefs.theme).toBe('ember-sky');
 		expect(prefs.collapsed).toBe(false);
+		expect(prefs.fileLayout).toBe('tree');
 	});
 
-	it('restores the saved theme and the rail', async () => {
+	it('restores the saved theme, the rail and the list', async () => {
 		localStorage.setItem(THEME_KEY, 'forest');
 		localStorage.setItem(SIDEBAR_KEY, 'rail');
+		localStorage.setItem(LAYOUT_KEY, 'list');
 		const prefs = await load();
 		expect(prefs.theme).toBe('forest');
 		expect(prefs.themeDef.label).toBe('Forest');
 		expect(prefs.collapsed).toBe(true);
+		expect(prefs.fileLayout).toBe('list');
+	});
+
+	it('shows files as a tree past a saved layout it does not know', async () => {
+		localStorage.setItem(LAYOUT_KEY, 'grid');
+		expect((await load()).fileLayout).toBe('tree');
 	});
 
 	it('ignores a saved theme that no longer exists', async () => {
@@ -140,5 +149,18 @@ describe('prefs.toggleCollapsed', () => {
 		prefs.toggleCollapsed();
 		expect(prefs.collapsed).toBe(false);
 		expect(localStorage.getItem(SIDEBAR_KEY)).toBe('full');
+	});
+});
+
+describe('prefs.setFileLayout', () => {
+	it('switches every file list and saves the choice', async () => {
+		const prefs = await load();
+		prefs.setFileLayout('tree');
+		expect(prefs.fileLayout).toBe('tree');
+		expect(localStorage.getItem(LAYOUT_KEY)).toBe('tree');
+
+		prefs.setFileLayout('list');
+		expect(prefs.fileLayout).toBe('list');
+		expect(localStorage.getItem(LAYOUT_KEY)).toBe('list');
 	});
 });

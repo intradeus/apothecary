@@ -1,8 +1,8 @@
 - 23) new run on observability + analytics dashboards per run/flow/skills : fastest, cheapest. Add a scoring system for the results maybe ?
 - 36) Resquash migrations
 - 43) SECURITY
-- 47) git change pane: show layout file in tree
 - 49) Ticket support for status, labels, comments etc. like source tracker. Syncing source ticket data to internal ticket, if there is a source. If not, move the ticket itself to done / add label / comments.
+- 50) Support for advisor / secondary models (omp support only for example) in the flow. This will bring a new feature : harness-specific parameters for agentic stages. This might mean that we have to move away from $parameters for harnesses.
 
 ------ 
 

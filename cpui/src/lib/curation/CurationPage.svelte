@@ -20,6 +20,7 @@
 	import { ReviewFiles } from '$lib/review/files.svelte';
 	import ReviewLayout from '$lib/review/ReviewLayout.svelte';
 	import FileList from '$lib/review/FileList.svelte';
+	import FileLayoutSwitch from '$lib/app/FileLayoutSwitch.svelte';
 	import FileView from '$lib/review/FileView.svelte';
 	import Callout from '$lib/ui/Callout.svelte';
 	import Checkbox from '$lib/ui/Checkbox.svelte';
@@ -155,7 +156,10 @@
 
 <ReviewLayout onstep={(d) => set.step(d)}>
 	{#snippet nav()}
-		<div class="pane-head"><h2>{t('doc.files')}</h2></div>
+		<div class="pane-head">
+			<h2>{t('doc.files')}</h2>
+			{#if set.files.length > 1}<span class="spacer"></span><FileLayoutSwitch />{/if}
+		</div>
 		{#if set.loading}
 			<div class="pane-body"><Skeleton lines={3} height={10} /></div>
 		{:else}

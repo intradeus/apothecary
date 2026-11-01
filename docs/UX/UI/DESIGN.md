@@ -564,6 +564,7 @@ The **Layout** control is **not** in the top bar. It is a floating button at the
 - Numbers and ids are in mono and right-aligned. Times are relative, with an absolute 24h tooltip.
 - Prefer a CSS grid per row (e.g. `118px minmax(0,1fr) 210px 64px auto`) so long text ellipsises instead of wrapping.
 - **File list:** a status letter (A grn, M gold, D ros, R vio, C tea, U `--text-muted`) in a 16px mono column, the path, `+n −n` or "bin", and a ● dot for uncommitted files.
+- **List or tree:** a file list that can grow past a handful (a run's Changes, a review's files) carries a small List / Tree segmented control, Tree by default. Tree: folders first, then files, each in git's code-unit order; a folder holding only one folder merges into one row (`cpui/src/lib/`); a folder row (▾/▸, the name, `/`) folds its contents away; files show their name only, indented 12px a level. One per-browser choice (`prefs.fileLayout`) for every such list; j/k in a review follows the order shown.
 - **Selected row:** `--fill-3`.
 
 ### 4.14 Forms
@@ -742,7 +743,7 @@ The run page body is a **user-arrangeable tiling desk**, like an IDE.
 | Pings | All pings raised by this run (ping cards); summary "1 pending · 2 answered". |
 | Timeline | Event rows: 24h time (mono), a tone dot (ok grn / bad ros / warn sky / info emb), text, and inline "log" / "open" actions. |
 | Record | Snapshots and attachments table: name, kind chip, source ("build · attempt 2", "ping answer", "run goal"), size, time, open/download. Kind filter segmented control. Note "Kept after the workspace is destroyed". |
-| Changes | Repo segmented picker (primary ★). Summary "branch vs main · fork a1b2c3 · 7 files +212 −48 · 3 commits", collapsible commits, file list (4.13) + unified diff. "Refreshes every 5s". |
+| Changes | Repo segmented picker (primary ★). Summary "branch vs main · fork a1b2c3 · 7 files +212 −48 · 3 commits", collapsible commits, List / Tree switch (4.13), file list (4.13) + unified diff; it opens on the first file shown. "Refreshes every 5s". |
 | Files | Repo picker, lazy tree (show ignored toggle, refresh), file viewer with line numbers, a 1 MB cap notice and a binary state. |
 | Terminal | Repo picker, connection status pill (connecting emb pulse / connected grn / disconnected ros + Reconnect), xterm surface on `--code-bg`. "Session ends when you leave". |
 | Logs | Source segmented control (Workspace / Provisioning / stage logs). Mono 11.5px log tail with colored sources (tunnel tea, firewall ros, harness emb). |

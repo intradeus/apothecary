@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
+import { prefs } from '$lib/app/prefs.svelte';
+import { I } from '$lib/design/icons';
 import type { FileDiff, WorkspaceChanges } from '$lib/domain';
 import { aChangedFile, aFileDiff, someChanges } from '$test/fixtures/review';
 import { deferred } from '$test/helpers';
@@ -28,7 +30,10 @@ async function mount(over: Partial<WorkspaceChanges> = {}, props = {}) {
 }
 
 describe('Changes', () => {
-	beforeEach(() => vi.resetAllMocks());
+	beforeEach(() => {
+		vi.resetAllMocks();
+		prefs.setFileLayout('list');
+	});
 
 	describe('the branch', () => {
 		it('says it is reading until the changes arrive', () => {
@@ -149,6 +154,74 @@ describe('Changes', () => {
 			const moved = aChangedFile({ path: 'new.ts', oldPath: 'old.ts', status: 'R' });
 			await mount({ files: [moved] });
 			expect(await screen.findByTitle('old.ts → new.ts')).toBeInTheDocument();
+		});
+	});
+
+	describe('as a tree', () => {
+		beforeEach(() => prefs.setFileLayout('tree'));
+
+		const top = aChangedFile({ path: 'README.md', status: 'A' });
+		const deep = aChangedFile({ path: 'src/a/x.ts', committed: false, additions: 7 });
+		const shown = () =>
+			[...document.querySelectorAll('.files button')].map((b) =>
+				b.textContent?.replace(/\s+/g, ' ').trim()
+			);
+
+		it('shows folders first, files by name under them', async () => {
+			await mount({ files: [top, app, deep, lib] });
+			await screen.findByTitle('src');
+			expect(shown()).toEqual([
+				`${I.menu} src/`,
+				`${I.menu} a/`,
+				'M x.ts ● +7 −1',
+				'M app.ts +3 −1',
+				'A lib.ts +10 −2',
+				'A README.md +3 −1'
+			]);
+		});
+
+		it('folds a folder away and back', async () => {
+			await mount({ files: [top, app, deep] });
+			const src = (await screen.findByTitle('src')).closest('button')!;
+			expect(src).toHaveAttribute('aria-expanded', 'true');
+
+			await userEvent.click(src);
+
+			expect(src).toHaveAttribute('aria-expanded', 'false');
+			expect(screen.queryByTitle('src/app.ts')).not.toBeInTheDocument();
+			expect(screen.queryByTitle('src/a/x.ts')).not.toBeInTheDocument();
+			expect(row('README.md')).toBeInTheDocument();
+
+			await userEvent.click(src);
+			expect(row('src/a/x.ts')).toBeInTheDocument();
+		});
+
+		it('opens the first file the tree shows, not git’s first', async () => {
+			await mount({ files: [top, app] });
+			await screen.findByText('+new line');
+			expect(diff).toHaveBeenCalledExactlyOnceWith('r1', 'src/app.ts', '');
+			expect(row('src/app.ts')).toHaveClass('on');
+		});
+
+		it('keeps the open file and the folded folders when the list comes back', async () => {
+			await mount({ files: [top, app, deep] });
+			await userEvent.click((await screen.findByTitle('src/a')).closest('button')!);
+			await userEvent.click(row('README.md'));
+			changes.mockClear();
+
+			await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+			await waitFor(() => expect(changes).toHaveBeenCalledOnce());
+			expect(row('README.md')).toHaveClass('on');
+			expect(screen.queryByTitle('src/a/x.ts')).not.toBeInTheDocument();
+		});
+
+		it('goes back to the list from the switch', async () => {
+			await mount();
+			await screen.findByTitle('src');
+			await userEvent.click(screen.getByRole('radio', { name: 'List' }));
+			expect(screen.queryByTitle('src')).not.toBeInTheDocument();
+			expect(row('src/app.ts')).toHaveTextContent('src/app.ts');
 		});
 	});
 

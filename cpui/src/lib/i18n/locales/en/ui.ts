@@ -65,5 +65,8 @@ export default {
 	'ui.updated.ago': 'updated {secs}s ago',
 	'ui.status.brewing': 'brewing',
 	'ui.status.spoiled': 'batch spoiled',
-	'ui.config.secret': 'write-only secret'
+	'ui.config.secret': 'write-only secret',
+	'ui.fileLayout.label': 'Show files as',
+	'ui.fileLayout.list': 'List',
+	'ui.fileLayout.tree': 'Tree'
 } as const;

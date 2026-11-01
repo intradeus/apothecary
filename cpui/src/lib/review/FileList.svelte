@@ -14,12 +14,15 @@
 </script>
 
 <script lang="ts">
-	// The files a review shows, in the gate's order: each with what it is,
-	// how many comments it carries and — once opened — a viewed mark. As a
-	// list (the workbench's left column) or, where the frame is narrow, a
-	// picker above the file (each variant shows only at its own width).
+	// The files a review shows, in the gate's order or as a tree (prefs):
+	// each with what it is, how many comments it carries and — once opened —
+	// a viewed mark. As a list (the workbench's left column) or, where the
+	// frame is narrow, a picker above the file (each variant shows only at
+	// its own width).
 	import type { ShownFile } from './files.svelte';
 	import { t } from '$lib/i18n/index.svelte';
+	import { pathTree, treeRows } from '$lib/core/pathTree';
+	import { prefs } from '$lib/app/prefs.svelte';
 	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 
 	let {
@@ -51,33 +54,40 @@
 			};
 		})
 	);
+
+	/** Folded folders in the tree, by path. */
+	let closed = $state<Record<string, boolean>>({});
+	const byPath = $derived(new Map(files.map((f) => [f.path, f])));
+	const rows = $derived(
+		prefs.fileLayout === 'tree' ? treeRows(pathTree(files.map((f) => f.path)), closed) : []
+	);
 </script>
 
 {#if variant === 'list'}
 	<nav class="fl" aria-label={t('doc.filesLabel')}>
-		{#each files as f (f.path)}
-			{@const n = counts[f.path] ?? 0}
-			<button
-				class="rowbtn fi"
-				class:on={f.path === current}
-				aria-current={f.path === current ? 'true' : undefined}
-				title={f.path}
-				onclick={() => onpick(f.path)}
-			>
-				<span class="ico" aria-hidden="true">{KIND_ICON[f.kind]}</span>
-				<span class="truncate grow"
-					>{baseName(f.path)}{#if dirName(f.path)}<span class="faint dir">
-							{dirName(f.path)}</span
-						>{/if}</span
-				>
-				{#if n}<span class="pill sm mono tint-brand">{n}</span>{/if}
-				{#if viewed?.has(f.path) && f.path !== current}<span
-						class="hue-success seen"
-						title={t('doc.viewed')}
-						aria-label={t('doc.viewed')}>{I.ok}</span
-					>{/if}
-			</button>
-		{/each}
+		{#if prefs.fileLayout === 'tree'}
+			{#each rows as r ((r.dir ? 'd:' : 'f:') + r.path)}
+				{#if r.dir}
+					<button
+						class="rowbtn fi"
+						style:padding-left="{8 + r.depth * 12}px"
+						aria-expanded={r.open}
+						title={r.path}
+						onclick={() => (closed = { ...closed, [r.path]: r.open })}
+					>
+						<span class="ico" aria-hidden="true">{r.open ? I.menu : I.caret}</span>
+						<span class="truncate grow">{r.name}/</span>
+					</button>
+				{:else}
+					{@const f = byPath.get(r.path)}
+					{#if f}{@render fileRow(f, r.name, r.depth)}{/if}
+				{/if}
+			{/each}
+		{:else}
+			{#each files as f (f.path)}
+				{@render fileRow(f, baseName(f.path), 0)}
+			{/each}
+		{/if}
 	</nav>
 {:else if files.length > 1}
 	<div class="pick">
@@ -97,6 +107,32 @@
 		>
 	</div>
 {/if}
+
+<!-- A file: in the list by its name and, faint, its folder; in the tree by
+     its name where the tree puts it. -->
+{#snippet fileRow(f: ShownFile, name: string, depth: number)}
+	{@const n = counts[f.path] ?? 0}
+	{@const dir = prefs.fileLayout === 'tree' ? '' : dirName(f.path)}
+	<button
+		class="rowbtn fi"
+		class:on={f.path === current}
+		style:padding-left={depth ? `${8 + depth * 12}px` : null}
+		aria-current={f.path === current ? 'true' : undefined}
+		title={f.path}
+		onclick={() => onpick(f.path)}
+	>
+		<span class="ico" aria-hidden="true">{KIND_ICON[f.kind]}</span>
+		<span class="truncate grow"
+			>{name}{#if dir}<span class="faint dir"> {dir}</span>{/if}</span
+		>
+		{#if n}<span class="pill sm mono tint-brand">{n}</span>{/if}
+		{#if viewed?.has(f.path) && f.path !== current}<span
+				class="hue-success seen"
+				title={t('doc.viewed')}
+				aria-label={t('doc.viewed')}>{I.ok}</span
+			>{/if}
+	</button>
+{/snippet}
 
 <style>
 	.fl {

@@ -1,14 +1,17 @@
 <script lang="ts">
 	// What the run changed (DESIGN §6 Changes): every file that differs from
 	// where its branch forked off the source branch — committed and not — and
-	// the selected file's diff. Refreshes every 5s while the run works and the
-	// window is on screen.
+	// the selected file's diff, the files as a list or a tree (prefs). Refreshes
+	// every 5s while the run works and the window is on screen.
 	import { errorMessage } from '$lib/core/errors';
 	import { api } from '$lib/api';
 	import type { ChangedFile, FileDiff, WorkspaceChanges } from '$lib/domain';
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { parseUnified } from '$lib/run/diff';
+	import { pathTree, treeOrder, treeRows } from '$lib/core/pathTree';
+	import { prefs } from '$lib/app/prefs.svelte';
+	import FileLayoutSwitch from '$lib/app/FileLayoutSwitch.svelte';
 	import { GIT_HUE, hueOf } from '$lib/design/hues';
 	import { I } from '$lib/design/icons';
 	import CodeView from '$lib/ui/CodeView.svelte';
@@ -36,14 +39,18 @@
 	let diffError = $state('');
 	let loadingDiff = $state(false);
 	let showCommits = $state(false);
+	/** Folded folders in the tree, by path. */
+	let closed = $state<Record<string, boolean>>({});
 
 	async function refresh() {
 		try {
 			changes = await api.workspace.changes(runId, repo);
 			error = '';
 			oncount?.(changes.files.length);
-			if (!selected && changes.files.length) select(changes.files[0].path);
-			else if (selected) loadDiff(selected, true);
+			if (!selected && changes.files.length) {
+				const paths = changes.files.map((f) => f.path);
+				select(prefs.fileLayout === 'tree' ? treeOrder(paths)[0] : paths[0]);
+			} else if (selected) loadDiff(selected, true);
 		} catch (e) {
 			error = errorMessage(e);
 		}
@@ -113,6 +120,12 @@
 	};
 	const lines = $derived(diff ? parseUnified(diff.diff) : []);
 	const file = $derived<ChangedFile | undefined>(changes?.files.find((f) => f.path === selected));
+	const byPath = $derived(new Map(changes?.files.map((f) => [f.path, f])));
+	const rows = $derived(
+		changes && prefs.fileLayout === 'tree'
+			? treeRows(pathTree(changes.files.map((f) => f.path)), closed)
+			: []
+	);
 </script>
 
 {#if error && !changes}
@@ -147,6 +160,7 @@
 				>
 			{/if}
 			<span class="spacer"></span>
+			<FileLayoutSwitch />
 			<button
 				class="btn-icon"
 				onclick={refresh}
@@ -166,29 +180,29 @@
 		{:else}
 			<div class="split">
 				<div class="files">
-					{#each changes.files as f (f.path)}
-						<button
-							class="rowbtn file"
-							class:on={f.path === selected}
-							onclick={() => select(f.path)}
-						>
-							<span class="st mono hue-{hueOf(GIT_HUE, f.status)}" title={statusLabel(f.status)}
-								>{f.status === '?' ? 'U' : f.status}</span
-							>
-							<span class="path mono" title={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}
-								>{f.path}</span
-							>
-							<span class="wip hue-warning" title={f.committed ? '' : t('run.changes.notCommitted')}
-								>{f.committed ? '' : I.dot}</span
-							>
-							<span class="cnt mono">
-								{#if f.binary}<span class="faint">{t('run.changes.bin')}</span>{:else}<span
-										class="hue-success">+{f.additions}</span
+					{#if prefs.fileLayout === 'tree'}
+						{#each rows as r ((r.dir ? 'd:' : 'f:') + r.path)}
+							{#if r.dir}
+								<button
+									class="rowbtn dir"
+									aria-expanded={r.open}
+									title={r.path}
+									onclick={() => (closed = { ...closed, [r.path]: r.open })}
+								>
+									<span class="name mono" style:padding-left="{r.depth * 12}px"
+										>{r.open ? I.menu : I.caret}&nbsp;{r.name}/</span
 									>
-									<span class="hue-danger">−{f.deletions}</span>{/if}
-							</span>
-						</button>
-					{/each}
+								</button>
+							{:else}
+								{@const f = byPath.get(r.path)}
+								{#if f}{@render fileRow(f, r)}{/if}
+							{/if}
+						{/each}
+					{:else}
+						{#each changes.files as f (f.path)}
+							{@render fileRow(f)}
+						{/each}
+					{/if}
 				</div>
 				<div class="dv">
 					{#if file}
@@ -225,6 +239,30 @@
 	</div>
 {/if}
 
+<!-- A changed file: in the list by its path, in the tree by its name where
+     the tree puts it. -->
+{#snippet fileRow(f: ChangedFile, at?: { name: string; depth: number })}
+	<button class="rowbtn file" class:on={f.path === selected} onclick={() => select(f.path)}>
+		<span class="st mono hue-{hueOf(GIT_HUE, f.status)}" title={statusLabel(f.status)}
+			>{f.status === '?' ? 'U' : f.status}</span
+		>
+		<span
+			class="mono {at ? 'name' : 'path'}"
+			style:padding-left={at ? `${at.depth * 12}px` : null}
+			title={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}>{at ? at.name : f.path}</span
+		>
+		<span class="wip hue-warning" title={f.committed ? '' : t('run.changes.notCommitted')}
+			>{f.committed ? '' : I.dot}</span
+		>
+		<span class="cnt mono">
+			{#if f.binary}<span class="faint">{t('run.changes.bin')}</span>{:else}<span
+					class="hue-success">+{f.additions}</span
+				>
+				<span class="hue-danger">−{f.deletions}</span>{/if}
+		</span>
+	</button>
+{/snippet}
+
 <style>
 	.pad {
 		padding: 12px;
@@ -258,20 +296,29 @@
 		border-radius: var(--r-card);
 		background: var(--fill-2);
 	}
-	.file {
+	.file,
+	.dir {
 		display: grid;
 		grid-template-columns: 18px minmax(0, 1fr) 10px 80px;
 		padding: 3px 8px;
 		border-radius: var(--r-icon);
 	}
+	.dir .name {
+		grid-column: 2 / -1;
+		color: var(--text-muted);
+	}
 	.st {
 		font-size: var(--fs-meta);
 		font-weight: 600;
 	}
-	.path {
+	.path,
+	.name {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	/* A long path loses its start, not the file name. */
+	.path {
 		direction: rtl;
 		text-align: left;
 	}
