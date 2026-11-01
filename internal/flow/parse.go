@@ -447,6 +447,13 @@ func (d *DocParams) UnmarshalJSON(data []byte) error {
 	if len(trimmed) == 0 || string(trimmed) == "null" {
 		return nil
 	}
+	// The token walk below stops at the last member without reading the
+	// closing brace, so a truncated object would pass it: check the syntax
+	// first, with the error json.Unmarshal gives.
+	if !json.Valid(trimmed) {
+		var v any
+		return json.Unmarshal(trimmed, &v)
+	}
 	dec := json.NewDecoder(bytes.NewReader(trimmed))
 	dec.UseNumber()
 	tok, err := dec.Token()

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -467,8 +468,9 @@ func TestSyncCopiesNewAttachments(t *testing.T) {
 }
 
 // A file that fails to download leaves the rest of the sync written, is
-// named on the ticket, and is copied by the next pass. One the upload policy
-// refuses is no failure of the sync: it is only logged.
+// named on the ticket, makes the sync a *PartialSyncError counted Failed, and
+// is copied by the next poll — which does not back off for it. One the upload
+// policy refuses is no failure of the sync: it is only logged.
 func TestSyncRetriesAFailedAttachment(t *testing.T) {
 	w := newSyncWorld(t)
 	ctx := context.Background()
@@ -495,22 +497,97 @@ func TestSyncRetriesAFailedAttachment(t *testing.T) {
 	if files := w.remoteFiles(t, w.open.ID); !maps.Equal(files, map[string]string{"f1": "one"}) {
 		t.Errorf("after the failure = %v", files)
 	}
-	// A refresh by name says the same, without failing.
-	if err := w.s.Refresh(ctx, w.open.ID); err != nil {
-		t.Errorf("refresh = %v", err)
-	}
-	w.src.Blobs["f2"] = []byte("two")
+	// The pass counts it failed; a refresh by name returns the typed error.
 	counts, err := w.s.RefreshIntegration(ctx, "int-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if counts.Synced != 2 || counts.Failed != 0 {
+	if counts != (SyncCounts{Tickets: 2, Synced: 1, Failed: 1}) {
 		t.Errorf("counts = %+v", counts)
+	}
+	var partial *PartialSyncError
+	if err := w.s.Refresh(ctx, w.open.ID); !errors.As(err, &partial) || partial.Key != "PROJ-7" ||
+		len(partial.Failures) != 1 || !strings.Contains(partial.Failures[0], "two.md") {
+		t.Errorf("refresh = %v, want a partial sync naming two.md", err)
+	}
+	if got := w.ticket(t, w.open.ID); got.Title != "Edited" || got.SyncState != confstore.SyncError {
+		t.Errorf("after the refresh = %q %q", got.Title, got.SyncState)
+	}
+	w.src.Blobs["f2"] = []byte("two")
+	if err := w.s.RunOnce(ctx); err != nil {
+		t.Fatal(err)
 	}
 	if files := w.remoteFiles(t, w.open.ID); !maps.Equal(files, map[string]string{"f1": "one", "f2": "two"}) {
 		t.Errorf("after the retry = %v", files)
 	}
 	if got := w.ticket(t, w.open.ID); got.SyncState != confstore.SyncOK || got.SyncError != "" {
 		t.Errorf("sync state after the retry = %q %q", got.SyncState, got.SyncError)
+	}
+}
+
+// A ticket imported before remote ids were kept holds its files with none.
+// The sync recognises them — by name and the tracker's size, or by name
+// alone when that is unambiguous — and gives them their ids instead of
+// copying them again; what it cannot tell apart it copies.
+func TestSyncAdoptsFilesImportedBeforeRemoteIDs(t *testing.T) {
+	w := newSyncWorld(t)
+	ctx := context.Background()
+	legacy := func(name, body string) string {
+		t.Helper()
+		a, err := w.att.Save(ctx, w.open.UserID, name, "text/markdown", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.att.ClaimForTicket(ctx, w.open.UserID, []string{a.ID}, w.open.ID); err != nil {
+			t.Fatal(err)
+		}
+		return a.ID
+	}
+	spec := legacy("spec.md", "hello")  // the tracker's size matches
+	notes := legacy("notes.md", "abc")  // no size from the tracker, one candidate
+	dupA := legacy("shot.md", "first")  // no size, two candidates: ambiguous
+	dupB := legacy("shot.md", "second") // (the other one)
+	sized := legacy("size.md", "12345") // the tracker's size differs
+	// Bytes only for what must be downloaded: an adoption reads nothing.
+	w.src.Blobs = map[string][]byte{"r-shot": []byte("third"), "r-size": []byte("123")}
+	w.edit("PROJ-7", func(s *trackerport.SourceTicket) {
+		s.Attachments = []trackerport.SourceAttachment{
+			{ID: "r-spec", Filename: "spec.md", Mime: "text/markdown", Size: 5},
+			{ID: "r-notes", Filename: "notes.md", Mime: "text/markdown"},
+			{ID: "r-shot", Filename: "shot.md", Mime: "text/markdown"},
+			{ID: "r-size", Filename: "size.md", Mime: "text/markdown", Size: 3},
+		}
+	})
+	check := func(when string) {
+		t.Helper()
+		rows := ticketAttachments(t, w.att, w.open.ID)
+		got := map[string]string{} // row id (or the bytes of a new row) → remote id
+		for _, a := range rows {
+			key := a.ID
+			if !slices.Contains([]string{spec, notes, dupA, dupB, sized}, a.ID) {
+				data, _, err := w.att.Bytes(ctx, a.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				key = "new:" + string(data)
+			}
+			got[key] = a.RemoteID
+		}
+		want := map[string]string{spec: "r-spec", notes: "r-notes", dupA: "", dupB: "", sized: "",
+			"new:third": "r-shot", "new:123": "r-size"}
+		if !maps.Equal(got, want) {
+			t.Errorf("%s: rows = %v, want %v", when, got, want)
+		}
+	}
+	if err := w.s.Refresh(ctx, w.open.ID); err != nil {
+		t.Fatal(err)
+	}
+	check("first refresh")
+	if err := w.s.Refresh(ctx, w.open.ID); err != nil {
+		t.Fatal(err)
+	}
+	check("second refresh")
+	if got := w.ticket(t, w.open.ID); got.SyncState != confstore.SyncOK {
+		t.Errorf("sync state = %q %q", got.SyncState, got.SyncError)
 	}
 }

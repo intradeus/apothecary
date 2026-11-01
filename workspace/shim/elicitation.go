@@ -230,6 +230,11 @@ func orderedObject(raw json.RawMessage) ([]string, map[string]json.RawMessage, e
 	if len(bytes.TrimSpace(raw)) == 0 || string(bytes.TrimSpace(raw)) == "null" {
 		return nil, vals, nil
 	}
+	// The token walk below never reads the closing brace, so a truncated
+	// object would pass it: check the syntax first.
+	if !json.Valid(raw) {
+		return nil, nil, errors.New("properties is not valid JSON")
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
 		return nil, nil, errors.New("properties is not an object")

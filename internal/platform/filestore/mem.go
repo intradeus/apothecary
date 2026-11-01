@@ -87,6 +87,24 @@ func (m *Mem) remoteTaken(ticketID, remoteID string, except map[string]bool) boo
 	return false
 }
 
+func (m *Mem) AdoptRemoteAttachment(_ context.Context, ticketID, id, remoteID string) (bool, error) {
+	if err := storable(remoteID); err != nil {
+		return false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.attachments[id]
+	if !ok || ticketID == "" || a.TicketID != ticketID || a.RemoteID != "" {
+		return false, nil
+	}
+	if m.remoteTaken(ticketID, remoteID, nil) {
+		return false, fmt.Errorf("attachment %s: ticket %s already holds remote file %s", id, ticketID, remoteID)
+	}
+	a.RemoteID = remoteID
+	m.attachments[id] = a
+	return true, nil
+}
+
 func (m *Mem) GetAttachment(_ context.Context, id string) (Attachment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -46,6 +46,11 @@ type AttachmentDB interface {
 	// runID).
 	ClaimAttachments(ctx context.Context, userID string, ids []string, ticketID, runID, pingID string) error
 	AttachmentsForTicket(ctx context.Context, ticketID string) ([]Attachment, error)
+	// AdoptRemoteAttachment gives a ticket's attachment that has no remote
+	// id yet the tracker's id for it (a file imported before remote ids were
+	// kept); adopted=false when no such row (that id, on that ticket, with
+	// remote_id '') exists. The per-ticket uniqueness of remote ids holds.
+	AdoptRemoteAttachment(ctx context.Context, ticketID, id, remoteID string) (adopted bool, err error)
 	AttachmentsForRun(ctx context.Context, runID string) ([]Attachment, error)
 	AttachmentsForPing(ctx context.Context, pingID string) ([]Attachment, error)
 	DeleteAttachmentsForRun(ctx context.Context, runID string) error
@@ -176,6 +181,13 @@ func (s *Attachments) Open(ctx context.Context, id string) (*os.File, Attachment
 		return nil, Attachment{}, err
 	}
 	return f, a, nil
+}
+
+// AdoptRemote records the tracker's id on a ticket's attachment that has none
+// (AttachmentDB.AdoptRemoteAttachment): the ticket sync's way of recognising
+// a file imported before remote ids were kept, instead of copying it again.
+func (s *Attachments) AdoptRemote(ctx context.Context, ticketID, id, remoteID string) (bool, error) {
+	return s.db.AdoptRemoteAttachment(ctx, ticketID, id, remoteID)
 }
 
 func (s *Attachments) ForTicket(ctx context.Context, ticketID string) ([]Attachment, error) {

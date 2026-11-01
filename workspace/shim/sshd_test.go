@@ -74,7 +74,9 @@ func TestSSHExecRunsACommand(t *testing.T) {
 	ses.Stdin = strings.NewReader("abc")
 	var stderr bytes.Buffer
 	ses.Stderr = &stderr
-	out, err := ses.Output("cat; echo -n err >&2; exit 7")
+	// printf, not echo -n: POSIX leaves -n unspecified, and macOS's /bin/sh
+	// prints it.
+	out, err := ses.Output("cat; printf err >&2; exit 7")
 	var ee *ssh.ExitError
 	if !errors.As(err, &ee) || ee.ExitStatus() != 7 {
 		t.Fatalf("err = %v (out %q)", err, out)
@@ -419,7 +421,10 @@ func TestSSHExecDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ses.Close()
-	if out, err := ses.Output("pwd"); err != nil || strings.TrimSpace(string(out)) != repo {
+	// pwd reports the physical cwd; a temp dir may sit behind a symlink
+	// (macOS: /var -> /private/var).
+	real, _ := filepath.EvalSymlinks(repo)
+	if out, err := ses.Output("pwd"); err != nil || (strings.TrimSpace(string(out)) != repo && strings.TrimSpace(string(out)) != real) {
 		t.Errorf("pwd with no HOME = %q, %v, want %s", out, err, repo)
 	}
 	t.Setenv("HOME", filepath.Join(repo, "missing"))

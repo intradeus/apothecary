@@ -158,6 +158,9 @@ func TestSupervisorAlive(t *testing.T) {
 	// This test process is alive but its cmdline is not a supervisor of "x",
 	// so the /proc check says no; the final kill(0) fallback still sees the
 	// process. The function returns the /proc verdict first.
+	if _, err := os.Stat("/proc/self/cmdline"); err != nil {
+		t.Skipf("no procfs here, only the kill(0) fallback: %v", err)
+	}
 	if supervisorAlive(serviceState{Name: "no-such-service", PID: os.Getpid()}) {
 		t.Error("the test process is not a supervisor of this service")
 	}

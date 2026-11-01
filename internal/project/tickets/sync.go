@@ -44,10 +44,14 @@ import (
 //
 // Attachments (Syncer.attachments): each pass copies the files the issue
 // gained since the ticket's last sync, matched on the tracker's id for each
-// (filestore.Attachment.RemoteID). One already held is skipped; one the
-// issue no longer lists is KEPT, since runs pin attachment ids at start. A
-// file that fails to download or store leaves the rest of the sync written
-// and is retried at the next pass; so is one the upload policy refuses.
+// (filestore.Attachment.RemoteID); a file imported before those ids were
+// kept is recognised by name and size and given its id instead of a second
+// copy (adoptable). One already held is skipped; one the issue no longer
+// lists is KEPT, since runs pin attachment ids at start. A file that fails
+// to download or store leaves the rest of the sync written — mirror and
+// comments — and makes it a *PartialSyncError: sync_state=error naming the
+// files, counted Failed, retried at the next pass. One the upload policy
+// refuses is only logged, and retried too.
 //
 // One ticket is synced by one caller at a time (single-flight): a second
 // Refresh while one is running waits for it and shares its outcome, and a
@@ -147,7 +151,8 @@ func (s *Syncer) release(ticketID string, f *flight, err error) {
 // Refresh re-mirrors one ticket from its tracker, done or not, gone or not —
 // a manual refresh and the engine's. A ticket with no source is a no-op. The
 // outcome is also recorded on the ticket (sync_state, sync_error); an error
-// is returned for a ticket that could not be synced (gone is not an error).
+// is returned for a ticket that could not be synced (gone is not an error),
+// a *PartialSyncError for one mirrored without every new file.
 func (s *Syncer) Refresh(ctx context.Context, ticketID string) error {
 	f, mine := s.claim(ticketID)
 	if !mine {
@@ -450,41 +455,88 @@ func (s *Syncer) mirror(ctx context.Context, src trackerport.TicketSource, t con
 		return stateUnreachable, fmt.Errorf("comments of %s: %w", remote.Key, err)
 	}
 	if err := s.attachments(ctx, src, t, remote); err != nil {
-		// The mirror and the comments stand: only the files are missing.
-		s.record(ctx, t, confstore.SyncError, err)
+		// The mirror and the comments stand: only files are missing, which
+		// settle records and a pass counts Failed.
+		return confstore.SyncError, err
 	}
 	return confstore.SyncOK, nil
 }
 
+// PartialSyncError is a sync that wrote the mirror and the comments but not
+// every new file: the ticket is sync_state=error naming them, a pass counts
+// it Failed, Refresh returns it (the API still answers with the ticket), and
+// the next sync retries the files, their ids still not held.
+type PartialSyncError struct {
+	Key string
+	// Failures says, per file (or for the claim or the listing), what failed.
+	Failures []string
+}
+
+func (e *PartialSyncError) Error() string {
+	return fmt.Sprintf("attachments of %s: %s (the next sync retries)", e.Key, strings.Join(e.Failures, "; "))
+}
+
 // attachments copies the remote's files the ticket does not hold yet (by
 // remote id) and claims them for it. A file with no remote id cannot be told
-// from one already held, so only the import copies it. A refusal by the
-// upload policy is logged, not recorded: the import already warned of it,
-// and a policy change lets the next pass take it. A failed download, store
-// or claim is the error, naming each file; the others still land.
+// from one already held, so only the import copies it. Before downloading,
+// a file imported before remote ids were kept is recognised and given its id
+// instead (adoptable). A refusal by the upload policy is logged, not
+// recorded: the import already warned of it, and a policy change lets the
+// next pass take it. Anything else that fails is a *PartialSyncError naming
+// each file; the others still land.
 func (s *Syncer) attachments(ctx context.Context, src trackerport.TicketSource, t confstore.Ticket, remote trackerport.SourceTicket) error {
 	if s.Attachments == nil || len(remote.Attachments) == 0 {
 		return nil
 	}
 	stored, err := s.Attachments.ForTicket(ctx, t.ID)
 	if err != nil {
-		return fmt.Errorf("attachments of %s: %w", remote.Key, err)
+		return &PartialSyncError{Key: remote.Key, Failures: []string{fmt.Sprintf("listing the held files: %v", err)}}
 	}
 	held := make(map[string]bool, len(stored))
+	var legacy []filestore.Attachment
 	for _, a := range stored {
+		if a.RemoteID == "" {
+			legacy = append(legacy, a)
+		}
 		held[a.RemoteID] = true
 	}
 	var fresh []trackerport.SourceAttachment
+	names := map[string]int{}
 	for _, a := range remote.Attachments {
 		if a.ID != "" && !held[a.ID] {
+			held[a.ID] = true // listed twice: once is enough
 			fresh = append(fresh, a)
+			names[filestore.SafeName(a.Filename)]++
 		}
 	}
 	if len(fresh) == 0 {
 		return nil
 	}
-	ids, skips := copyAttachments(ctx, s.Attachments, s.log(), t.UserID, src, remote.Key, fresh)
 	var failed []string
+	var download []trackerport.SourceAttachment
+	used := map[string]bool{}
+	adopted := 0
+	for _, a := range fresh {
+		id := adoptable(a, legacy, used, names)
+		if id == "" {
+			download = append(download, a)
+			continue
+		}
+		ok, err := s.Attachments.AdoptRemote(ctx, t.ID, id, a.ID)
+		switch {
+		case err != nil:
+			failed = append(failed, fmt.Sprintf("%s: %v", a.Filename, err))
+		case ok:
+			used[id] = true
+			adopted++
+		default: // gone or adopted meanwhile: copy it as any new file
+			download = append(download, a)
+		}
+	}
+	if adopted > 0 {
+		s.log().Info("ticket sync: recognised attachments imported before remote ids", "ticket", t.ID, "key", remote.Key, "count", adopted)
+	}
+	ids, skips := copyAttachments(ctx, s.Attachments, s.log(), t.UserID, src, remote.Key, download)
 	for _, sk := range skips {
 		if sk.refused() {
 			s.log().Info("ticket sync: attachment refused by the upload policy", "ticket", t.ID, "key", remote.Key, "file", sk.file, "err", sk.err)
@@ -500,9 +552,36 @@ func (s *Syncer) attachments(ctx context.Context, src trackerport.TicketSource, 
 		}
 	}
 	if len(failed) > 0 {
-		return fmt.Errorf("attachments of %s: %s (the next sync retries)", remote.Key, strings.Join(failed, "; "))
+		return &PartialSyncError{Key: remote.Key, Failures: failed}
 	}
 	return nil
+}
+
+// adoptable picks the ticket's file without a remote id that is remote file
+// a, imported before remote ids were kept — "" when none is, or when it can't
+// be told. The stored name is the import's (filestore.SafeName), compared
+// case-sensitively. With a size from the tracker, the oldest unused file of
+// that name and size is it; without one, the name must be unambiguous: one
+// unused file of that name, and one new remote file of it (names counts
+// them). A hand upload of the same name and size is taken for the import's
+// copy: the same bytes, as far as can be told without downloading them.
+func adoptable(a trackerport.SourceAttachment, legacy []filestore.Attachment, used map[string]bool, names map[string]int) string {
+	name := filestore.SafeName(a.Filename)
+	var match []string
+	for _, x := range legacy {
+		if !used[x.ID] && x.Filename == name && (a.Size <= 0 || x.Size == a.Size) {
+			match = append(match, x.ID)
+		}
+	}
+	switch {
+	case len(match) == 0:
+		return ""
+	case a.Size > 0:
+		return match[0]
+	case len(match) == 1 && names[name] == 1:
+		return match[0]
+	}
+	return ""
 }
 
 // record writes a sync's failure (or gone) onto the ticket; a ticket deleted

@@ -400,6 +400,54 @@ func RunContract(t *testing.T, open func(t *testing.T) DB, seedTicket func(t *te
 		}
 	})
 
+	t.Run("a ticket's file without a remote id can adopt one", func(t *testing.T) {
+		db := open(t)
+		ticket(t, db, "t1")
+		ticket(t, db, "t2")
+		onTicket := func(id, ticketID, remoteID string) filestore.Attachment {
+			a := upload(id, "u1", t0)
+			a.TicketID, a.RemoteID = ticketID, remoteID
+			return a
+		}
+		insertAll(t, db, onTicket("legacy", "t1", ""), onTicket("legacy2", "t1", ""), onTicket("held", "t1", "r-1"),
+			onTicket("theirs", "t2", ""), upload("free", "u1", t0))
+		adopt := func(ticketID, id, remoteID string) bool {
+			t.Helper()
+			ok, err := db.AdoptRemoteAttachment(ctx, ticketID, id, remoteID)
+			if err != nil {
+				t.Fatalf("adopt %s on %s = %v", id, ticketID, err)
+			}
+			return ok
+		}
+		if !adopt("t1", "legacy", "r-2") {
+			t.Error("a legacy file was not adopted")
+		}
+		if got := get(t, db, "legacy"); got.RemoteID != "r-2" || got.TicketID != "t1" {
+			t.Errorf("adopted = %+v", got)
+		}
+		// Only a row of that ticket, without a remote id, is adopted.
+		for _, c := range [][3]string{{"t1", "legacy", "r-3"}, {"t1", "held", "r-3"}, {"t1", "theirs", "r-3"},
+			{"t1", "free", "r-3"}, {"", "free", "r-3"}, {"t1", "ghost", "r-3"}} {
+			if adopt(c[0], c[1], c[2]) {
+				t.Errorf("adopt %s on %q took", c[1], c[0])
+			}
+		}
+		if got := get(t, db, "held"); got.RemoteID != "r-1" {
+			t.Errorf("held = %+v", got)
+		}
+		// A remote id the ticket already holds is refused, the row untouched.
+		if ok, err := db.AdoptRemoteAttachment(ctx, "t1", "legacy2", "r-1"); ok || err == nil {
+			t.Errorf("a second copy of r-1 was adopted: %v, %v", ok, err)
+		}
+		if got := get(t, db, "legacy2"); got.RemoteID != "" {
+			t.Errorf("refused adopt wrote legacy2: %+v", got)
+		}
+		// Another ticket may hold the same remote id.
+		if !adopt("t2", "theirs", "r-1") {
+			t.Error("t2 could not adopt r-1")
+		}
+	})
+
 	t.Run("attachment readers: scope and order", func(t *testing.T) {
 		db := open(t)
 		ticket(t, db, "t1")

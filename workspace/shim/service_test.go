@@ -105,7 +105,10 @@ func TestServiceKeepsRunning(t *testing.T) {
 		t.Errorf("a second start = %+v, want the running one left alone", again)
 	}
 	log := s.logs("app")
-	if !strings.Contains(log, "up in "+s.repo+" as app marker=none") {
+	// The shell reports the physical cwd; a temp dir may sit behind a
+	// symlink (macOS: /var -> /private/var).
+	real, _ := filepath.EvalSymlinks(s.repo)
+	if !strings.Contains(log, "up in "+s.repo+" as app marker=none") && !strings.Contains(log, "up in "+real+" as app marker=none") {
 		t.Errorf("the start ran in the checkout, named, without the stage marker; log:\n%s", log)
 	}
 	if !groupAlive(st.PGID) {

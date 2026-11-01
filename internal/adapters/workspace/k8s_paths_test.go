@@ -558,7 +558,10 @@ func TestK8sDialRefreshesAStaleAddress(t *testing.T) {
 	k := &kubeFake{pod: readyPod(ip), secrets: map[string]string{"apo-run-w": relaySecret("t")}}
 	_, h := k8sWith(t, k, false)
 	h.mu.Lock()
-	h.podIPs["w"] = "127.0.0.2" // the pod's old address: nothing serves there
+	// The pod's old address: nothing serves there (the mux listens on IPv4
+	// only), and the dial fails at once. Not 127.0.0.2: only Linux routes all
+	// of 127/8 to loopback; macOS blackholes it until the dial times out.
+	h.podIPs["w"] = "::1"
 	h.mu.Unlock()
 	dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

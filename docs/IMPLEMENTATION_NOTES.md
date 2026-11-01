@@ -5535,11 +5535,20 @@ the plan:
   them for the ticket; a held id is skipped, so a repeat sync copies nothing.
   A file the issue no longer lists is **kept**: runs pin attachment ids in
   `run_created`, and deleting the row would break them. A file with no
-  remote id can't be matched, so only the import copies it. A failed
-  download, store or claim sets `sync_state=error` with the files named — the
-  mirror and the comments are written all the same, the refresh does not
-  fail — and the next pass retries it, since its id is still not held; a file
-  the upload policy refuses is only logged (the import already warned) and
+  remote id can't be matched, so only the import copies it. A ticket
+  imported before remote ids were kept holds its files with `remote_id ''`:
+  before downloading, the sync **adopts** one of them instead
+  (`filestore.Attachments.AdoptRemote`, which sets the id under the unique
+  index) — the oldest of the same stored name (case-sensitive) and the
+  tracker's size, or, when the tracker gives no size, the only one of that
+  name while only one new remote file has it; anything ambiguous is copied.
+  A failed download, store or claim sets `sync_state=error` with the files
+  named, but the mirror and the comments are written all the same; the sync
+  is a `tickets.PartialSyncError`, which a pass counts `failed` (not
+  `synced`), `Refresh` returns, and `POST /api/tickets/{id}/sync` answers
+  with 200 and the ticket showing the error. The next pass retries the file,
+  its id still not held (the poll does not back off for it); a file the
+  upload policy refuses is only logged (the import already warned) and
   retried each pass too, so a raised limit takes it. No extra read: every
   `FetchMany` carries attachment metadata as `Fetch` does (the
   `TicketSyncer` contract — Jira asks for the `attachment` field, GitLab's

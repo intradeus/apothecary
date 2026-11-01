@@ -105,6 +105,10 @@ func TestSetupWGStopsAtTheFirstFailure(t *testing.T) {
 }
 
 func TestUplinkMTU(t *testing.T) {
+	// The traversal below resolves through /sys/class/net, so it needs sysfs.
+	if _, err := os.Stat("/sys/class/net"); err != nil {
+		t.Skipf("no sysfs here: %v", err)
+	}
 	dir := t.TempDir()
 	// The uplink name is the one path component between /sys/class/net and mtu.
 	ext := filepath.Join("../../..", dir)

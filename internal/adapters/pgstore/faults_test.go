@@ -90,6 +90,7 @@ func TestDeadDatabaseIsAnErrorEverywhere(t *testing.T) {
 		"InsertAttachment":       func() error { return s.InsertAttachment(ctx, filestore.Attachment{ID: "a"}) },
 		"GetAttachment":          func() error { _, err := s.GetAttachment(ctx, "a"); return err },
 		"ClaimAttachments":       func() error { return s.ClaimAttachments(ctx, "", []string{"a"}, "", "r", "") },
+		"AdoptRemoteAttachment":  func() error { _, err := s.AdoptRemoteAttachment(ctx, "t", "a", "r"); return err },
 		"AttachmentsForRun":      func() error { _, err := s.AttachmentsForRun(ctx, "r"); return err },
 		"DeleteForRun":           func() error { return s.DeleteAttachmentsForRun(ctx, "r") },
 		"DeleteForTicket":        func() error { return s.DeleteAttachmentsForTicket(ctx, "t") },

@@ -4,11 +4,13 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/engine"
+	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/tickets"
@@ -214,6 +216,35 @@ func TestSyncRoutes(t *testing.T) {
 	}
 	if res, data := x.do(t, "POST", "/api/tickets/nope/sync", nil, nil); res.StatusCode != http.StatusNotFound {
 		t.Errorf("missing ticket sync = %d %s", res.StatusCode, data)
+	}
+}
+
+// A sync that mirrors the ticket but cannot copy a new file still answers
+// 200 with the ticket, its sync_state error naming the file; the integration
+// sync counts it failed, not synced, until the file comes through.
+func TestSyncRoutesAnswerAPartialSync(t *testing.T) {
+	x := newTrackerEnv(t)
+	att := filestore.NewAttachments(filestore.NewMem(), filestore.NewBlobs(t.TempDir()), 1<<20, []string{"text/*"})
+	x.srv.Syncer = &tickets.Syncer{Conf: x.srv.Conf, Sources: stubSources{src: x.src}, Attachments: att}
+	x.src.Tickets[0].Title, x.src.Tickets[0].Updated = "Edited remotely", time.Now()
+	x.src.Tickets[0].Attachments = []trackerport.SourceAttachment{{ID: "f1", Filename: "notes.md", Mime: "text/markdown"}}
+	res, data := x.do(t, "POST", "/api/tickets/"+x.remote+"/sync", nil, nil)
+	got := decode[ticketResp](t, data)
+	if res.StatusCode != http.StatusOK || got.Title != "Edited remotely" || got.SyncState != confstore.SyncError ||
+		!strings.Contains(got.SyncError, "notes.md") {
+		t.Errorf("partial ticket sync = %d %s", res.StatusCode, data)
+	}
+	res, data = x.do(t, "POST", "/api/integrations/int-1/sync", nil, nil)
+	if got := decode[tickets.SyncCounts](t, data); res.StatusCode != http.StatusOK || got.Failed != 1 || got.Synced != 0 {
+		t.Errorf("partial integration sync = %d %s", res.StatusCode, data)
+	}
+	x.src.Blobs = map[string][]byte{"f1": []byte("notes")}
+	res, data = x.do(t, "POST", "/api/integrations/int-1/sync", nil, nil)
+	if got := decode[tickets.SyncCounts](t, data); res.StatusCode != http.StatusOK || got.Failed != 0 || got.Synced != 1 {
+		t.Errorf("integration sync after the retry = %d %s", res.StatusCode, data)
+	}
+	if got := x.ticket(t, x.remote); got.SyncState != confstore.SyncOK || got.SyncError != "" {
+		t.Errorf("after the retry = %q %q", got.SyncState, got.SyncError)
 	}
 }
 

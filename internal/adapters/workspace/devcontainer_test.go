@@ -59,7 +59,7 @@ func newTestAdapter(t *testing.T, r CmdRunner) *Adapter {
 	if err := os.WriteFile(shimSrc, []byte("#!fake-shim"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	runs := t.TempDir()
+	runs := shortRunsDir(t)
 	// The tools bundle, pre-"built": the dir a real EnsureTools returns.
 	toolsDir := filepath.Join(runs, "tools-cache", "t0st")
 	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
@@ -79,6 +79,19 @@ func newTestAdapter(t *testing.T, r CmdRunner) *Adapter {
 		return net.Listen("tcp", "127.0.0.1:0")
 	}
 	return a
+}
+
+// shortRunsDir is a RunsDir short enough for the unix sockets the bridge binds
+// under it (<runs>/<name>/shim/app-<port>.sock): t.TempDir() embeds the test
+// name, and under macOS's $TMPDIR that overruns its 104-byte sun_path.
+func shortRunsDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
 }
 
 // sandboxResp are the host-daemon responses ensureSandbox consumes for a

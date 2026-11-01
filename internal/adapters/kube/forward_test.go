@@ -114,12 +114,30 @@ func TestForwardStartFailureBacksOff(t *testing.T) {
 // loop against the API server.
 func TestForwardBacksOffBetweenRestarts(t *testing.T) {
 	c := fakeKubectl(t, `exit 0`)
-	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if _, err := c.Forward(ctx, "pod/x", 1); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err = %v", err)
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Forward(ctx, "pod/x", 1)
+		done <- err
+	}()
+	// The window opens at the first start, not at Forward: on a loaded machine
+	// the fake kubectl can take longer than any fixed window to get going.
+	argv := filepath.Join(filepath.Dir(c.Bin), "argv")
+	waitFor(t, "kubectl to start", func() bool { _, err := os.Stat(argv); return err == nil })
+	// Backoff is 250ms then 500ms: at most two starts fit in 400ms, where a
+	// tight loop would make dozens. Slowness only lowers the count.
+	time.Sleep(400 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Forward did not return after cancel")
 	}
-	b, err := os.ReadFile(filepath.Join(filepath.Dir(c.Bin), "argv"))
+	b, err := os.ReadFile(argv)
 	if err != nil {
 		t.Fatal(err)
 	}

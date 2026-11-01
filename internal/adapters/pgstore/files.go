@@ -94,6 +94,19 @@ func (s *Store) AttachmentsForTicket(ctx context.Context, ticketID string) ([]fi
 		`SELECT `+attachmentCols+` FROM attachments WHERE ticket_id=$1 ORDER BY created_at, id`, ticketID)
 }
 
+// AdoptRemoteAttachment: the WHERE clause is the whole precondition, so a
+// row already adopted, on another ticket or missing is adopted=false;
+// attachments_remote_idx refuses a second row of one remote id.
+func (s *Store) AdoptRemoteAttachment(ctx context.Context, ticketID, id, remoteID string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE attachments SET remote_id=$3
+		WHERE id=$1 AND ticket_id=$2 AND remote_id=''`, id, ticketID, remoteID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 func (s *Store) AttachmentsForRun(ctx context.Context, runID string) ([]filestore.Attachment, error) {
 	return s.queryAttachments(ctx,
 		`SELECT `+attachmentCols+` FROM attachments WHERE run_id=$1 ORDER BY created_at, id`, runID)

@@ -127,9 +127,10 @@ func (s *Server) writeTicket(w http.ResponseWriter, r *http.Request, status int,
 // --- refresh -----------------------------------------------------------------
 
 // syncTicket re-mirrors one ticket from its remote tracker (done or not) and
-// answers with it. A tracker that cannot be read is recorded on the ticket
-// (sync_state error, sync_error), which the answer carries; a ticket with no
-// source is answered as it is.
+// answers with it. A tracker that cannot be read — or a sync that mirrored
+// the ticket but not every new file (tickets.PartialSyncError) — is recorded
+// on the ticket (sync_state error, sync_error), which the 200 answer
+// carries; a ticket with no source is answered as it is.
 func (s *Server) syncTicket(w http.ResponseWriter, r *http.Request) {
 	if s.Syncer == nil {
 		writeErr(w, http.StatusServiceUnavailable, "ticket sync is not wired")
