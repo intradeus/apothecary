@@ -470,3 +470,106 @@ func TestBuilderReviewsAfresh(t *testing.T) {
 		t.Errorf("stages starting afresh = %v, want review alone", fresh)
 	}
 }
+
+// fakeStore is a flow source with version history, each answer scripted.
+type fakeStore struct {
+	got        *flow.Flow
+	getErr     error
+	versionErr error
+	version    *flow.Flow
+}
+
+func (s fakeStore) Get(context.Context, string, string) (*flow.Flow, error) {
+	return s.got, s.getErr
+}
+
+func (s fakeStore) GetVersion(context.Context, string, string, string) (*flow.Flow, error) {
+	return s.version, s.versionErr
+}
+
+// plainSource has no version history at all.
+type plainSource struct{}
+
+func (plainSource) Get(context.Context, string, string) (*flow.Flow, error) {
+	return nil, flow.ErrNotFound
+}
+
+// The database always wins; a name it doesn't have falls back to the
+// built-in; a name neither has stays not found; and a store failure is never
+// papered over with the built-in of the same name.
+func TestLayeredGet(t *testing.T) {
+	ctx := context.Background()
+	mine := &flow.Flow{Name: builderFlow}
+	boom := errors.New("db down")
+	cases := []struct {
+		name    string
+		next    fakeStore
+		flow    string
+		want    *flow.Flow
+		wantErr error
+	}{
+		{"store wins over the built-in", fakeStore{got: mine}, builderFlow, mine, nil},
+		{"falls back to the built-in", fakeStore{getErr: flow.ErrNotFound}, builderFlow, Flow(builderFlow), nil},
+		{"missing everywhere", fakeStore{getErr: flow.ErrNotFound}, "no-such-flow", nil, flow.ErrNotFound},
+		{"a store failure is not a miss", fakeStore{getErr: boom}, builderFlow, nil, boom},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := FlowSource(c.next).Get(ctx, "p", c.flow)
+			if !errors.Is(err, c.wantErr) || got != c.want {
+				t.Errorf("Get = %v, %v; want %v, %v", got, err, c.want, c.wantErr)
+			}
+		})
+	}
+}
+
+// A run pinned to a built-in's hash keeps resolving across a restart, though
+// the document was never saved; a store's own version wins, and its failure
+// is not a miss.
+func TestLayeredGetVersion(t *testing.T) {
+	ctx := context.Background()
+	b := Flow(builderFlow)
+	saved := &flow.Flow{Name: builderFlow}
+	boom := errors.New("db down")
+	source := func(next flow.Source) flow.PinnedSource { return FlowSource(next).(flow.PinnedSource) }
+
+	got, err := source(fakeStore{version: saved}).GetVersion(ctx, "p", builderFlow, "h")
+	if err != nil || got != saved {
+		t.Errorf("store version: %v, %v", got, err)
+	}
+	got, err = source(fakeStore{versionErr: flow.ErrNotFound}).GetVersion(ctx, "p", builderFlow, b.Hash)
+	if err != nil || got != b {
+		t.Errorf("built-in by hash: %v, %v", got, err)
+	}
+	if _, err = source(fakeStore{versionErr: boom}).GetVersion(ctx, "p", builderFlow, b.Hash); !errors.Is(err, boom) {
+		t.Errorf("store failure: %v", err)
+	}
+	// A hash the built-in does not carry (it changed in a later build): gone.
+	_, err = source(fakeStore{versionErr: flow.ErrNotFound}).GetVersion(ctx, "p", builderFlow, "old-hash")
+	if !errors.Is(err, flow.ErrNotFound) || !strings.Contains(err.Error(), "old-hash") {
+		t.Errorf("stale hash: %v", err)
+	}
+	if _, err = source(fakeStore{versionErr: flow.ErrNotFound}).GetVersion(ctx, "p", "no-such-flow", b.Hash); !errors.Is(err, flow.ErrNotFound) {
+		t.Errorf("unknown name: %v", err)
+	}
+	// A source without history still reaches the built-in.
+	got, err = source(plainSource{}).GetVersion(ctx, "p", builderFlow, b.Hash)
+	if err != nil || got != b {
+		t.Errorf("no history: %v, %v", got, err)
+	}
+}
+
+func TestFlowYAMLAndNames(t *testing.T) {
+	for _, name := range FlowNames() {
+		y, ok := FlowYAML(name)
+		if !ok || !strings.Contains(y, "name: "+name) {
+			t.Errorf("%s: document = %q, %v", name, y[:min(len(y), 40)], ok)
+		}
+	}
+	if _, ok := FlowYAML("no-such-flow"); ok {
+		t.Error("a document for an unknown flow")
+	}
+	if Flow("no-such-flow") != nil {
+		t.Error("a flow for an unknown name")
+	}
+}

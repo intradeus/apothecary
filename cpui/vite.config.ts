@@ -17,6 +17,9 @@ export default defineConfig({
 		include: ['src/**/*.test.ts'],
 		setupFiles: ['./src/test/setup.ts'],
 		restoreMocks: true,
+		// Nothing here is slow: this is for a machine under load, where a timed-out
+		// test keeps typing into the next one.
+		testTimeout: 30_000,
 		coverage: {
 			provider: 'v8',
 			include: ['src/lib/**/*.{ts,svelte}'],

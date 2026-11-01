@@ -45,6 +45,26 @@ func snapshotBody(t *testing.T, snaps *filestore.Snapshots, id string) string {
 	return string(data)
 }
 
+// A run takes its owner's uploads: a goal naming someone else's id claims
+// nothing, so nothing of theirs reaches this workspace.
+func TestGoalCannotClaimAnotherUsersUpload(t *testing.T) {
+	att, snaps, _ := newFiles(t)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, loopFlowDoc))
+	up, err := att.Save(context.Background(), "someone-else", "secret.txt", "text/plain", strings.NewReader("s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := h.e.CreateRun(context.Background(),
+		runinput.Ticket{Title: "T", AttachmentIDs: []string{up.ID}}, "loop", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if got, err := att.Get(context.Background(), up.ID); err != nil || !got.Unclaimed() {
+		t.Fatalf("their upload after the run = %+v, %v", got, err)
+	}
+}
+
 // Goal attachments are delivered into the workspace (under the git-excluded
 // .apothecary/ tree) AND listed in the agent's prompt so it can read them.
 func TestGoalAttachmentsDeliveredAndPrompted(t *testing.T) {

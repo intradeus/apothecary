@@ -559,6 +559,40 @@ func (h *k8sHost) destroySandbox(ctx context.Context, name string) error {
 	return nil
 }
 
+// resetSandbox empties the pod's daemon and leaves the pod: the checkout is on
+// the volume under it, which an emptyDir would lose with the pod, and a live
+// pod keeps its tunnel to the gateway. An ended pod has nothing to empty.
+func (h *k8sHost) resetSandbox(ctx context.Context, name string) error {
+	state, _, err := h.sandboxState(ctx, name)
+	if err != nil || state != "running" {
+		return err
+	}
+	docker := func(args ...string) ([]byte, error) {
+		out, stderr, code, err := h.runInner(ctx, name, h.a.cfg.DockerBin, args, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		if code != 0 {
+			return nil, fmt.Errorf("docker %s: exit %d: %s", args[0], code, shell.Tail(string(stderr), 512))
+		}
+		return out, nil
+	}
+	out, err := docker("ps", "-aq")
+	if err != nil {
+		return err
+	}
+	if ids := strings.Fields(string(out)); len(ids) > 0 {
+		if _, err := docker(append([]string{"rm", "-f", "-v"}, ids...)...); err != nil {
+			return err
+		}
+	}
+	if _, err := docker("volume", "prune", "-af"); err != nil {
+		return err
+	}
+	_, err = docker("network", "prune", "-f")
+	return err
+}
+
 // --- the engine bridge: a Service, no relay ------------------------------------
 
 func (h *k8sHost) ensureBridge(envport.EnvID) error                       { return nil }

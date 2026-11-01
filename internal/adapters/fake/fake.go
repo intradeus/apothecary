@@ -619,6 +619,8 @@ func (f *RepoHost) Reset() {
 	defer f.mu.Unlock()
 	f.MRs, f.nextID, f.ChecksCalls, f.NewHead, f.User, f.Uploads = nil, 0, 0, "", "", nil
 	f.AccessErr, f.CreateErr, f.MRStateErr, f.FindErr, f.ThreadsErr, f.ReplyErr, f.UploadErr = nil, nil, nil, nil, nil, nil, nil
+	f.LabelErr, f.BranchErr, f.Unpushed, f.MissingFiles = nil, nil, false, nil
+	f.ReplyFailAfter, f.replies = 0, 0
 }
 
 // AddOpenMR scripts a merge request someone else opened (test control): it

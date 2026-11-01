@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"reflect"
 	"testing"
 	"time"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/adapters/pgstore/pgtest"
 	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/project/confstore"
@@ -17,24 +17,17 @@ import (
 	"apothecary/internal/run/event"
 )
 
-// open connects to TEST_POSTGRES_DSN or skips. Each test gets a clean slate
-// via TRUNCATE (the migration already ran on Open).
+// open is a store on a real Postgres with a database of the test's own,
+// migrated. It skips unless TEST_POSTGRES is set (see pgtest).
 func open(t *testing.T) *Store {
 	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("TEST_POSTGRES_DSN not set; skipping Postgres store tests")
-	}
-	s, err := Open(context.Background(), dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(s.Close)
-	if _, err := s.pool.Exec(context.Background(),
-		`TRUNCATE events, runs, pings, ping_review_comments, channels, run_exposed_ports, attachments, snapshots, tickets CASCADE`); err != nil {
-		t.Fatal(err)
-	}
-	return s
+	return openDSN(t, pgtest.Migrated(t, func(dsn string) error {
+		s, err := Open(context.Background(), dsn)
+		if err == nil {
+			s.Close()
+		}
+		return err
+	}))
 }
 
 func TestAppendEventsAndSeq(t *testing.T) {
@@ -407,17 +400,17 @@ func TestAttachmentsCRUD(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := s.ClaimAttachments(ctx, []string{"a1"}, "", "run1", ""); err != nil {
+	if err := s.ClaimAttachments(ctx, "", []string{"a1"}, "", "run1", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ClaimAttachments(ctx, []string{"a2"}, "", "run1", "ping1"); err != nil {
+	if err := s.ClaimAttachments(ctx, "", []string{"a2"}, "", "run1", "ping1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ClaimAttachments(ctx, []string{"a4"}, "tick1", "", ""); err != nil {
+	if err := s.ClaimAttachments(ctx, "", []string{"a4"}, "tick1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	// Claims are one-shot: re-homing a1 to another run is a silent no-op.
-	if err := s.ClaimAttachments(ctx, []string{"a1"}, "", "run2", ""); err != nil {
+	if err := s.ClaimAttachments(ctx, "", []string{"a1"}, "", "run2", ""); err != nil {
 		t.Fatal(err)
 	}
 	if forRun, _ := s.AttachmentsForRun(ctx, "run1"); len(forRun) != 2 {

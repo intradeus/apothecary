@@ -548,11 +548,14 @@ func (c *Client) JQL(query string) string {
 	} else if f != "" {
 		out = f
 	}
-	if !strings.Contains(strings.ToLower(out), "order by") {
+	if !strings.Contains(strings.ToLower(jqlStringRe.ReplaceAllString(out, "")), "order by") {
 		out += " ORDER BY updated DESC"
 	}
 	return out
 }
+
+// jqlStringRe matches a JQL string literal: text inside one is never syntax.
+var jqlStringRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'`)
 
 // quoteJQL renders a JQL string literal, escaping the two characters that can
 // break out of one.

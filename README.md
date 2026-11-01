@@ -466,9 +466,13 @@ docker exec -it <container> bash`.
 ## Development
 
 ```sh
-go test ./...                      # unit + scenario suites (in-memory fakes)
+task test                          # every backend test: unit, then integration
+task test:unit                     # unit + scenario suites: in-memory fakes, nothing running (`go test ./...`)
+task test:integration              # the Postgres adapter and boot tests, on real throwaway containers (needs docker)
+task test:ui                       # the CPUI's tests
 go run ./cmd/apothecaryd serve -dev   # real engine/API/UI, fake vendors
 cd cpui && npm run dev             # UI dev server (proxies /api)
+task cover                         # test coverage of both halves, as pages (coverage/go, cpui/coverage)
 ```
 
 The backend is a modular monolith. `internal/engine` runs a run: its

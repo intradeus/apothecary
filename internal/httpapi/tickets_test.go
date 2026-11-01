@@ -24,11 +24,11 @@ func TestTicketAttachmentsClaimedAndShared(t *testing.T) {
 	files.serve(x)
 	att := files.att
 	ctx := context.Background()
-	tickUp, err := att.Save(ctx, "", "design.md", "text/markdown", strings.NewReader("# D"))
+	tickUp, err := att.Save(ctx, testUser, "design.md", "text/markdown", strings.NewReader("# D"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	runUp, err := att.Save(ctx, "", "trace.log", "text/plain", strings.NewReader("t"))
+	runUp, err := att.Save(ctx, testUser, "trace.log", "text/plain", strings.NewReader("t"))
 	if err != nil {
 		t.Fatal(err)
 	}

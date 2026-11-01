@@ -3249,7 +3249,7 @@ export const setEgressRule = <ThrowOnError extends boolean = false>(
 /**
  * Server-sent event stream of a run's events
  *
- * Replays from after_seq, then streams live. The stream ends when the run reaches a terminal state.
+ * Replays from after_seq, then streams live. The stream ends at the event that puts the run in a terminal state; a connection resuming past it stays open for what comes later (a retry, the workspace's teardown).
  */
 export const streamRunEvents = <ThrowOnError extends boolean = false>(
 	options: Options<StreamRunEventsData, ThrowOnError, StreamRunEventsResponse>

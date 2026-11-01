@@ -71,7 +71,7 @@ func (f *Factory) Create(ctx context.Context, in confstore.Ticket, attachmentIDs
 	if err != nil {
 		return confstore.Ticket{}, err
 	}
-	f.claim(ctx, t.ID, attachmentIDs)
+	f.claim(ctx, t, attachmentIDs)
 	return t, nil
 }
 
@@ -82,7 +82,7 @@ func (f *Factory) Update(ctx context.Context, id string, upd confstore.Ticket, a
 	if err != nil {
 		return confstore.Ticket{}, err
 	}
-	f.claim(ctx, t.ID, attachmentIDs)
+	f.claim(ctx, t, attachmentIDs)
 	return t, nil
 }
 
@@ -154,7 +154,7 @@ func (f *Factory) CreateFromSource(ctx context.Context, sourceID, key string, in
 	if err != nil {
 		return confstore.Ticket{}, nil, err
 	}
-	f.claim(ctx, created.ID, append(append([]string{}, attachmentIDs...), imported...))
+	f.claim(ctx, created, append(append([]string{}, attachmentIDs...), imported...))
 	f.log().Info("imported ticket from source",
 		"ticket", created.ID, "key", remote.Key, "kind", kind,
 		"attachments_reported", len(remote.Attachments),
@@ -258,14 +258,14 @@ func (f *Factory) importOne(ctx context.Context, owner string, src trackerport.T
 	return att.ID, nil
 }
 
-// claim binds uploads to the TICKET: shared by every run of it, out of the
-// unclaimed state so the GC can't sweep them. One-shot per attachment, so
-// re-sending a full list on update is safe.
-func (f *Factory) claim(ctx context.Context, ticketID string, ids []string) {
+// claim binds the ticket owner's uploads to the TICKET: shared by every run of
+// it, out of the unclaimed state so the GC can't sweep them. One-shot per
+// attachment, so re-sending a full list on update is safe.
+func (f *Factory) claim(ctx context.Context, t confstore.Ticket, ids []string) {
 	if f.Attachments == nil || len(ids) == 0 {
 		return
 	}
-	if err := f.Attachments.ClaimForTicket(ctx, ids, ticketID); err != nil {
-		f.log().Warn("claim ticket attachments", "ticket", ticketID, "err", err)
+	if err := f.Attachments.ClaimForTicket(ctx, t.UserID, ids, t.ID); err != nil {
+		f.log().Warn("claim ticket attachments", "ticket", t.ID, "err", err)
 	}
 }

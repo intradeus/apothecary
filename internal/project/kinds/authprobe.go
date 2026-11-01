@@ -1,6 +1,7 @@
 package kinds
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -142,7 +143,8 @@ func (pr authProbe) run(ctx context.Context, key string) (rejected bool, reason 
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	return judge(pr.kind, resp.StatusCode, strings.ReplaceAll(errorMessage(raw), key, "***"))
+	// Scrubbed before errorMessage clips: a key cut in two no longer matches.
+	return judge(pr.kind, resp.StatusCode, errorMessage(bytes.ReplaceAll(raw, []byte(key), []byte("***"))))
 }
 
 // judge maps a probe's status to a verdict.

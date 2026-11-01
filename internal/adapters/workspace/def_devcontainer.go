@@ -1,11 +1,11 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -387,14 +387,19 @@ func stripJSONC(data []byte) []byte {
 				i++
 			}
 			i++ // land on '/', loop's i++ steps past it
+		case c == '}' || c == ']':
+			// Trailing commas: ,<ws>} or ,<ws>] → drop the comma. A string
+			// ends in a quote, so this never reaches into one.
+			end := len(bytes.TrimRight(out, " \t\r\n\f"))
+			if end > 0 && out[end-1] == ',' {
+				out = append(out[:end-1], out[end:]...)
+			}
+			out = append(out, c)
 		default:
 			out = append(out, c)
 		}
 	}
-	// Trailing commas: ,<ws>} or ,<ws>] → drop the comma.
-	return trailingCommaRE.ReplaceAll(out, []byte("$1"))
+	return out
 }
-
-var trailingCommaRE = regexp.MustCompile(`,(\s*[}\]])`)
 
 var _ Definition = devcontainerDef{}

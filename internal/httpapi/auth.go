@@ -371,6 +371,17 @@ func (s *Server) ownsProject(w http.ResponseWriter, r *http.Request, projectID s
 	return true
 }
 
+// ownsIntegration is ownsProject for an integration named in a BODY (the
+// tracker a ticket is imported through): those are its owner's credentials.
+func (s *Server) ownsIntegration(w http.ResponseWriter, r *http.Request, id string) bool {
+	owner, err := s.ownerOf(r.Context(), ScopeIntegration, id)
+	if err != nil || owner != auth.UserID(r.Context()) {
+		writeErr(w, http.StatusNotFound, "integration "+id+" not found")
+		return false
+	}
+	return true
+}
+
 // --- cookies --------------------------------------------------------------------
 
 func (s *Server) setSession(w http.ResponseWriter, r *http.Request, value string) {

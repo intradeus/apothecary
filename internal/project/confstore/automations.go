@@ -19,6 +19,7 @@ package confstore
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"strings"
 	"time"
@@ -167,7 +168,8 @@ func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 	if a.Name == "" {
 		return invalidf("automation needs a name")
 	}
-	if _, err := s.db.GetProject(ctx, a.ProjectID); err != nil {
+	p, err := s.db.GetProject(ctx, a.ProjectID)
+	if err != nil {
 		return err
 	}
 	a.SourceID, a.Query = strings.TrimSpace(a.SourceID), strings.TrimSpace(a.Query)
@@ -184,6 +186,11 @@ func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 		in, err := s.db.GetIntegration(ctx, a.SourceID)
 		if err != nil {
 			return err
+		}
+		// Polled on a schedule with its owner's credentials: someone else's
+		// tracker is not there.
+		if !sameOwner(in.UserID, p.UserID) {
+			return fmt.Errorf("integration %s: %w", a.SourceID, ErrNotFound)
 		}
 		if in.Port != PortTicketSource {
 			return invalidf("integration %s is a %s, not a ticket source", a.SourceID, in.Port)
@@ -216,10 +223,6 @@ func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 			a.Repo = ""
 		}
 		if a.Repo != "" {
-			p, err := s.db.GetProject(ctx, a.ProjectID)
-			if err != nil {
-				return err
-			}
 			known := false
 			for _, r := range p.Repos {
 				known = known || r.Name == a.Repo

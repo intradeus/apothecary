@@ -21,6 +21,13 @@ func runOr(run string) string {
 
 const soOriginalDst = 80 // SO_ORIGINAL_DST (linux netfilter, SOL_IP)
 
+// Swapped in tests: a real SO_ORIGINAL_DST needs an nft REDIRECT, and the
+// destinations it yields are :80/:443.
+var (
+	originalDstOf = originalDst
+	dialUpstream  = net.DialTimeout
+)
+
 // originalDst recovers the pre-REDIRECT destination via getsockopt(SO_ORIGINAL_DST).
 func originalDst(c *net.TCPConn) (*net.TCPAddr, error) {
 	raw, err := c.SyscallConn()
@@ -63,7 +70,7 @@ func (g *gateway) serve(ln net.Listener) {
 
 func (g *gateway) handle(c *net.TCPConn) {
 	defer c.Close()
-	orig, err := originalDst(c)
+	orig, err := originalDstOf(c)
 	if err != nil {
 		return
 	}
@@ -123,7 +130,7 @@ func (g *gateway) handle(c *net.TCPConn) {
 		return
 	}
 
-	up, err := net.DialTimeout("tcp", orig.String(), 15*time.Second)
+	up, err := dialUpstream("tcp", orig.String(), 15*time.Second)
 	if err != nil {
 		return
 	}

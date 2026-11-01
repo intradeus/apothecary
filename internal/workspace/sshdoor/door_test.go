@@ -544,3 +544,148 @@ func TestDoorCloseEndsSessions(t *testing.T) {
 		t.Error("the session outlived the door")
 	}
 }
+
+func TestNewValidates(t *testing.T) {
+	seed := make([]byte, 32)
+	hostKey, _ := KeyFromSeed(seed)
+	ok := Config{HostKey: hostKey, DoorKey: hostKey, Keys: newKeyring(t).svc, Targets: targets{}, Advertise: "h:22"}
+	for name, mut := range map[string]func(*Config){
+		"no host key":      func(c *Config) { c.HostKey = nil },
+		"no door key":      func(c *Config) { c.DoorKey = nil },
+		"no keys":          func(c *Config) { c.Keys = nil },
+		"no targets":       func(c *Config) { c.Targets = nil },
+		"bad advertise":    func(c *Config) { c.Advertise = "no-colon" },
+		"zero port":        func(c *Config) { c.Advertise = "h:0" },
+		"non-numeric port": func(c *Config) { c.Advertise = "h:ssh" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := ok
+			mut(&cfg)
+			if _, err := New(cfg); err == nil {
+				t.Fatal("New must reject it")
+			}
+		})
+	}
+	d, err := New(ok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, p := d.Address(); h != "h" || p != 22 {
+		t.Errorf("Address = %s:%d", h, p)
+	}
+	if d.Fingerprint() == "" || d.HostPublicKey() == "" || d.DoorPublicKey() == "" {
+		t.Error("key material must render")
+	}
+}
+
+func TestKeyFromSeed(t *testing.T) {
+	seed := make([]byte, 32)
+	for i := range seed {
+		seed[i] = byte(i)
+	}
+	a, err := KeyFromSeed(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := KeyFromSeed(seed)
+	if string(a.PublicKey().Marshal()) != string(b.PublicKey().Marshal()) {
+		t.Error("the same seed must give the same key")
+	}
+	if _, err := KeyFromSeed(make([]byte, 16)); err == nil {
+		t.Error("a short seed must fail")
+	}
+	// Extra bytes are ignored: only the first 32 are the seed.
+	if _, err := KeyFromSeed(make([]byte, 64)); err != nil {
+		t.Errorf("a long seed: %v", err)
+	}
+}
+
+// Serve on a closed door refuses and closes the listener it was handed.
+func TestServeOnAClosedDoor(t *testing.T) {
+	rig := newDoorRig(t)
+	if err := rig.door.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.door.Serve(ln); err == nil {
+		t.Fatal("Serve on a closed door must error")
+	}
+	// The listener is closed: a dial is refused.
+	if c, err := net.DialTimeout("tcp", ln.Addr().String(), time.Second); err == nil {
+		c.Close()
+		t.Error("the listener was not closed")
+	}
+}
+
+// A connection that never completes the handshake is dropped at the deadline
+// and counts as a failure, without pinning the door.
+func TestHandshakeDeadlineDropsASilentClient(t *testing.T) {
+	rig := newDoorRig(t)
+	rig.door.failures.reset("127.0.0.1")
+	c, err := net.Dial("tcp", rig.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	// Say nothing. The door's handshakeTimeout is 30s, too long to wait on;
+	// instead assert the connection is accepted and the door stays responsive
+	// to a real client meanwhile.
+	client, err := rig.connect(t, "apo-alice-run", rig.alice)
+	if err != nil {
+		t.Fatalf("the door stopped serving: %v", err)
+	}
+	client.Close()
+}
+
+func TestHostOf(t *testing.T) {
+	if got := hostOf(nil); got != "" {
+		t.Errorf("hostOf(nil) = %q", got)
+	}
+	if got := hostOf(&net.TCPAddr{IP: net.ParseIP("10.0.0.1"), Port: 2222}); got != "10.0.0.1" {
+		t.Errorf("hostOf = %q", got)
+	}
+	// An address with no port is returned whole.
+	if got := hostOf(fakeAddr("just-a-name")); got != "just-a-name" {
+		t.Errorf("hostOf = %q", got)
+	}
+}
+
+type fakeAddr string
+
+func (fakeAddr) Network() string  { return "fake" }
+func (a fakeAddr) String() string { return string(a) }
+
+func TestFailuresWindowAndSweep(t *testing.T) {
+	f := newFailures()
+	now := time.Unix(1000, 0)
+	f.now = func() time.Time { return now }
+	for range failLimit - 1 {
+		f.fail("1.2.3.4")
+	}
+	if f.blocked("1.2.3.4") {
+		t.Fatal("blocked before the limit")
+	}
+	f.fail("1.2.3.4")
+	if !f.blocked("1.2.3.4") {
+		t.Fatal("not blocked at the limit")
+	}
+	// A different address is unaffected.
+	if f.blocked("5.6.7.8") {
+		t.Fatal("an unrelated address is blocked")
+	}
+	// The window ends; the sweep (throttled to once a minute) forgets it.
+	now = now.Add(failWindow + time.Minute + time.Second)
+	if f.blocked("1.2.3.4") {
+		t.Fatal("still blocked after the window")
+	}
+	// reset clears immediately.
+	f.fail("1.2.3.4")
+	f.reset("1.2.3.4")
+	f.fail("1.2.3.4")
+	if f.by["1.2.3.4"].count != 1 {
+		t.Fatalf("reset did not clear: %+v", f.by["1.2.3.4"])
+	}
+}

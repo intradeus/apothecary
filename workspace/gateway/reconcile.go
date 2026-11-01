@@ -7,11 +7,14 @@ import (
 	"strings"
 )
 
+// routeTable is the kernel's IPv4 routing table (swapped in tests).
+var routeTable = "/proc/net/route"
+
 // detectEXT returns the external-uplink interface = the one carrying the default
 // route (read from /proc/net/route, so no iproute2 dependency). Run networks are
 // everything else and are matched "not EXT" in nft, so they need no enumeration.
 func detectEXT() string {
-	b, err := os.ReadFile("/proc/net/route")
+	b, err := os.ReadFile(routeTable)
 	if err != nil {
 		return ""
 	}

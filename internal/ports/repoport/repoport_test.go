@@ -94,3 +94,104 @@ func TestPendingThreads(t *testing.T) {
 		t.Fatal("newest of nothing found something")
 	}
 }
+
+func TestAggregateChecks(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		items []CheckState
+		want  CheckState
+	}{
+		{"nothing", nil, ChecksNone},
+		{"only neutral", []CheckState{CheckNeutral}, ChecksNone},
+		{"success", []CheckState{CheckNeutral, CheckSuccess}, CheckSuccess},
+		{"pending beats success", []CheckState{CheckSuccess, CheckPending}, CheckPending},
+		{"failure beats everything", []CheckState{CheckPending, CheckSuccess, CheckFailure, CheckPending}, CheckFailure},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var items []Check
+			for _, s := range tc.items {
+				items = append(items, Check{State: s})
+			}
+			if got := AggregateChecks(items); got != tc.want {
+				t.Errorf("got %s", got)
+			}
+		})
+	}
+}
+
+func TestFailedIsSortedSoAFailureCompares(t *testing.T) {
+	c := Checks{Items: []Check{{Name: "z", State: CheckFailure}, {Name: "ok", State: CheckSuccess}, {Name: "a", State: CheckFailure}}}
+	got := c.Failed()
+	if len(got) != 2 || got[0] != "a" || got[1] != "z" {
+		t.Errorf("failed = %v", got)
+	}
+	if got := (Checks{}).Failed(); got != nil {
+		t.Errorf("none failed = %v", got)
+	}
+}
+
+func TestErrMergeRefusedNamesTheReason(t *testing.T) {
+	err := &ErrMergeRefused{Reason: "still a draft"}
+	if got := err.Error(); got != "the repository refused the merge: still a draft" {
+		t.Errorf("err = %q", got)
+	}
+}
+
+func TestNoteMarkerKindIsAnAttribute(t *testing.T) {
+	if got := NoteMarker("r", 2, ""); got != ReviewMarker("r", "note-2") || strings.Contains(got, "kind=") {
+		t.Errorf("kindless = %q", got)
+	}
+	got := NoteMarker("r", 2, "nit")
+	if _, part, ok := ReviewMarkerOf(got); !ok || part != "note-2" || MarkerAttr(got, "kind") != "nit" {
+		t.Errorf("kind = %q", got)
+	}
+}
+
+func TestMarkerWordsNeedAWholeMarker(t *testing.T) {
+	for _, body := range []string{"", "no marker", "<!-- apothecary review=r part=p", "<!-- other review=r -->"} {
+		if _, _, ok := ReviewMarkerOf(body); ok {
+			t.Errorf("%q reads as a marker", body)
+		}
+	}
+	if id, _, ok := ReviewMarkerOf("<!-- apothecary review=r stray -->"); !ok || id != "r" {
+		t.Errorf("a word with no value is skipped: %q, %v", id, ok)
+	}
+}
+
+func TestDiffLinesHunkForms(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		patch string
+		want  map[int]int
+	}{
+		{"both counts, section heading", "@@ -3,1 +5,2 @@ func main() {\n ctx\n+new", map[int]int{5: 3, 6: 0}},
+		{"no old count", "@@ -3 +5,1 @@\n ctx", map[int]int{5: 3}},
+		{"no new count", "@@ -3,1 +5 @@\n ctx", map[int]int{5: 3}},
+		{"no counts", "@@ -3 +5 @@\n ctx", map[int]int{5: 3}},
+		// A deleted file has no new side to anchor to.
+		{"deleted file", "@@ -1,2 +0,0 @@\n-a\n-b", map[int]int{}},
+		{"unreadable hunk", "@@ nonsense @@\n ctx", map[int]int{}},
+		{"lines before any hunk", "--- a/x\n+++ b/x\n@@ -1 +1 @@\n+y", map[int]int{1: 0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DiffLines(tc.patch)
+			if len(got) != len(tc.want) {
+				t.Fatalf("lines = %v", got)
+			}
+			for n, old := range tc.want {
+				if o, ok := got[n]; !ok || o != old {
+					t.Errorf("line %d = %d, %v", n, o, ok)
+				}
+			}
+		})
+	}
+}
+
+func TestAttachmentTarget(t *testing.T) {
+	if got := (Attachment{URL: "https://x/a", Link: "/uploads/a"}).Target(); got != "/uploads/a" {
+		t.Errorf("link wins: %q", got)
+	}
+	if got := (Attachment{URL: "https://x/a"}).Target(); got != "https://x/a" {
+		t.Errorf("url: %q", got)
+	}
+}

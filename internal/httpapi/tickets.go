@@ -140,6 +140,9 @@ func (s *Server) importTicket(w http.ResponseWriter, r *http.Request, body ticke
 		writeErr(w, http.StatusBadRequest, "importing a ticket needs both source_id and source_key")
 		return
 	}
+	if !s.ownsIntegration(w, r, body.SourceID) {
+		return
+	}
 	t, warnings, err := s.tickets().CreateFromSource(r.Context(), body.SourceID, body.SourceKey, body.toTicket(), body.AttachmentIDs)
 	switch {
 	case errors.Is(err, tickets.ErrNoSources):
@@ -290,6 +293,10 @@ func (s *Server) updateTicket(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, fmt.Sprintf("branch %q: %v", body.Branch, err))
 			return
 		}
+	}
+	// The project is in the body here too, and it decides the ticket's owner.
+	if !s.ownsProject(w, r, body.ProjectID) {
+		return
 	}
 	// The factory claims any newly-attached uploads; provenance (source_*) is
 	// preserved by the store, so an edit never disowns an imported ticket.

@@ -98,6 +98,20 @@ func (h dockerHost) destroySandbox(ctx context.Context, name string) error {
 	return h.a.destroyDockerSandbox(ctx, name)
 }
 
+// resetSandbox removes the sandbox outright, its daemon's volume with it, and
+// the links prepare remakes for a new one. The checkout is on the run folder,
+// outside the sandbox.
+func (h dockerHost) resetSandbox(ctx context.Context, name string) error {
+	if err := h.a.destroyDockerSandbox(ctx, name); err != nil {
+		return err
+	}
+	if h.a.gw != nil {
+		_ = h.a.gw.DestroyRunEgress(ctx, h.a.projectFor(name), name)
+	}
+	h.a.closeBridge(envport.EnvID(name))
+	return nil
+}
+
 func (h dockerHost) ensureBridge(env envport.EnvID) error { return h.a.ensureBridge(env) }
 func (h dockerHost) closeBridge(env envport.EnvID)        { h.a.closeBridge(env) }
 

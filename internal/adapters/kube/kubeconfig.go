@@ -38,7 +38,8 @@ func Kubeconfig(dir, value string) (path string, cleanup func(), err error) {
 	return path, func() { _ = os.Remove(path) }, nil
 }
 
-const saDir = "/var/run/secrets/kubernetes.io/serviceaccount"
+// saDir is a var for tests.
+var saDir = "/var/run/secrets/kubernetes.io/serviceaccount"
 
 // inClusterKubeconfig writes a kubeconfig for the pod's own service account.
 // kubectl does fall back to it by itself — but only when no config override

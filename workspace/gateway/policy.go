@@ -100,7 +100,7 @@ func (p *policy) allows(host string, dstIP net.IP) bool {
 		return p.verdict(host, dstIP)
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		return p.verdictNoSNI(nil, ip) || p.ipAllowed(ip)
+		return p.verdictNoSNI(nil, ip)
 	}
 	return p.verdictNoSNI(nil, dstIP)
 }

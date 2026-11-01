@@ -87,6 +87,12 @@ type crashScenario struct {
 	world func(h *harness) // scripts the harness's fakes
 	drive func(h *harness, runID string, evs []event.Event)
 	want  run.State
+	// ticket is what the run is created for (zero: a plain one); input what
+	// it is created on, read once the world is scripted; check holds what the
+	// world must look like once the run ended, however it got there.
+	ticket runinput.Ticket
+	input  func(h *harness) runinput.Input
+	check  func(t *testing.T, h *harness)
 }
 
 // approveAll answers every open question with a yes: a thread selection takes
@@ -411,7 +417,7 @@ func crashScenarios() []crashScenario {
 	mrOpen := func(evs []event.Event) bool {
 		return logHas(evs, func(p *event.PhaseCompleted) bool { return p.Phase == flow.MainPhase })
 	}
-	return []crashScenario{
+	return append(moreCrashScenarios(), []crashScenario{
 		{
 			name: "ship", doc: crashShipDoc, world: shipWorld, want: run.Completed,
 			drive: func(h *harness, runID string, evs []event.Event) {
@@ -479,7 +485,7 @@ func crashScenarios() []crashScenario {
 				}
 			},
 		},
-	}
+	}...)
 }
 
 // crashOutcome is what a run left, for comparing.
@@ -508,7 +514,15 @@ func playCrash(t *testing.T, sc crashScenario, n int) crashOutcome {
 	h.live.Store(h.e)
 	ctx := context.Background()
 
-	runID, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "Crash"}, fl.Name, testProject)
+	ticket := sc.ticket
+	if ticket.Title == "" {
+		ticket.Title = "Crash"
+	}
+	var in runinput.Input
+	if sc.input != nil {
+		in = sc.input(h)
+	}
+	runID, err := h.e.CreateRunWith(ctx, ticket, fl.Name, testProject, in)
 	if err != nil && !errors.Is(err, errCrashed) {
 		t.Fatal(err)
 	}
@@ -548,6 +562,9 @@ func playCrash(t *testing.T, sc crashScenario, n int) crashOutcome {
 	}
 	h.e.Wait(runID)
 	h.e.Shutdown()
+	if sc.check != nil {
+		sc.check(t, h)
+	}
 	evs = h.events(t, runID)
 	out := crashOutcome{state: run.Reduce(evs).State, mrs: len(h.repoHost.SnapshotMRs()), evs: evs}
 	if out.mrs > 0 {

@@ -42,9 +42,10 @@ func (m *Mem) GetAttachment(_ context.Context, id string) (Attachment, error) {
 	return a, nil
 }
 
-// ClaimAttachments mirrors the SQL: only still-unclaimed rows are touched, so
-// a second claim (or a claim of someone else's attachment) is a silent no-op.
-func (m *Mem) ClaimAttachments(_ context.Context, ids []string, ticketID, runID, pingID string) error {
+// ClaimAttachments mirrors the SQL: only the user's still-unclaimed rows are
+// touched, so a second claim (or a claim of someone else's attachment) is a
+// silent no-op.
+func (m *Mem) ClaimAttachments(_ context.Context, userID string, ids []string, ticketID, runID, pingID string) error {
 	if (ticketID == "") == (runID == "") {
 		return fmt.Errorf("claim: exactly one of ticket/run must own the attachment")
 	}
@@ -52,7 +53,7 @@ func (m *Mem) ClaimAttachments(_ context.Context, ids []string, ticketID, runID,
 	defer m.mu.Unlock()
 	for _, id := range ids {
 		a, ok := m.attachments[id]
-		if !ok || !a.Unclaimed() {
+		if !ok || !a.Unclaimed() || a.UserID != userID {
 			continue
 		}
 		a.TicketID, a.RunID, a.PingID = ticketID, runID, pingID

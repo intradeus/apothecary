@@ -76,11 +76,11 @@ func TestClaimIsOneShot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := att.ClaimForTicket(ctx, []string{a.ID}, "tick-1"); err != nil {
+	if err := att.ClaimForTicket(ctx, "", []string{a.ID}, "tick-1"); err != nil {
 		t.Fatal(err)
 	}
 	// A later claim (a run trying to steal the ticket's file) is a no-op.
-	if err := att.ClaimForRun(ctx, []string{a.ID}, "run-1", ""); err != nil {
+	if err := att.ClaimForRun(ctx, "", []string{a.ID}, "run-1", ""); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := att.Get(ctx, a.ID)
@@ -90,7 +90,7 @@ func TestClaimIsOneShot(t *testing.T) {
 
 	// Answer claim carries run+ping together.
 	b, _ := att.Save(ctx, "", "note.txt", "text/plain", strings.NewReader("n"))
-	if err := att.ClaimForRun(ctx, []string{b.ID}, "run-1", "ping-1"); err != nil {
+	if err := att.ClaimForRun(ctx, "", []string{b.ID}, "run-1", "ping-1"); err != nil {
 		t.Fatal(err)
 	}
 	byPing, _ := att.ForPing(ctx, "ping-1")
@@ -108,7 +108,7 @@ func TestDeleteForTicketAndSweepReclaimBlobs(t *testing.T) {
 	ctx := context.Background()
 
 	a, _ := att.Save(ctx, "", "doc.md", "text/markdown", strings.NewReader("ticket file"))
-	if err := att.ClaimForTicket(ctx, []string{a.ID}, "tick-1"); err != nil {
+	if err := att.ClaimForTicket(ctx, "", []string{a.ID}, "tick-1"); err != nil {
 		t.Fatal(err)
 	}
 	// The old world's leak: ticket deleted, blob immortal. Now: rows go...
@@ -135,7 +135,7 @@ func TestSweepKeepsReferencedAndFreshBlobs(t *testing.T) {
 	ctx := context.Background()
 
 	kept, _ := att.Save(ctx, "", "kept.md", "text/markdown", strings.NewReader("kept"))
-	_ = att.ClaimForTicket(ctx, []string{kept.ID}, "tick-1")
+	_ = att.ClaimForTicket(ctx, "", []string{kept.ID}, "tick-1")
 
 	// An unreferenced blob (rejected upload) — but FRESH: the grace window
 	// protects in-flight writes, so the first sweep must leave it.
@@ -162,7 +162,7 @@ func TestGCOrphans(t *testing.T) {
 
 	old, _ := att.Save(ctx, "", "old.txt", "text/plain", strings.NewReader("old"))
 	claimed, _ := att.Save(ctx, "", "claimed.txt", "text/plain", strings.NewReader("c"))
-	_ = att.ClaimForRun(ctx, []string{claimed.ID}, "run-1", "")
+	_ = att.ClaimForRun(ctx, "", []string{claimed.ID}, "run-1", "")
 
 	// Age both rows, then GC: only the unclaimed one goes.
 	att.now = func() time.Time { return time.Now().Add(48 * time.Hour) }
@@ -399,4 +399,25 @@ func liveSHAsWithCutoff(m *Mem, keepSnapshotsAfter time.Time) map[string]bool {
 		}
 	}
 	return live
+}
+
+// An id is not a key: a claim takes only the claimer's own uploads, and leaves
+// someone else's unclaimed for them.
+func TestClaimTakesOnlyTheClaimersUploads(t *testing.T) {
+	ctx := context.Background()
+	att, _, _, _ := newStores(t)
+	mine, _ := att.Save(ctx, "me", "mine.txt", "text/plain", strings.NewReader("m"))
+	theirs, _ := att.Save(ctx, "them", "theirs.txt", "text/plain", strings.NewReader("t"))
+	if err := att.ClaimForTicket(ctx, "me", []string{mine.ID, theirs.ID}, "tick-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := att.ClaimForRun(ctx, "me", []string{theirs.ID}, "run-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := att.Get(ctx, mine.ID); got.TicketID != "tick-1" {
+		t.Errorf("my upload = %+v", got)
+	}
+	if got, _ := att.Get(ctx, theirs.ID); !got.Unclaimed() {
+		t.Errorf("their upload was taken: %+v", got)
+	}
 }

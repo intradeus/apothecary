@@ -1311,13 +1311,14 @@ func (a *Adapter) dockerTest(ctx context.Context) error {
 }
 
 // Rebuild (envport.WorkspaceRebuilder) recreates the workspace container in
-// place, keeping the engine-side checkout (agent commits survive — it's a
-// bind mount that Destroy never touches). Non-compose: `up
-// --remove-existing-container` recreates the single container while keeping
-// the inner daemon + image cache warm. Compose: the only total recreate is a
-// DinD sandbox teardown + fresh provision (the flag's single-container scope
-// can't cleanly recreate a multi-service project). Build output streams into
-// exec.log so the run page's workspace-log poll shows it live.
+// place, keeping the engine-side checkout (agent commits survive). Non-compose:
+// `up --remove-existing-container` recreates the single container while keeping
+// the inner daemon + image cache warm. Compose: the only total recreate is
+// emptying the sandbox (the host's resetSandbox) and provisioning into it (the
+// flag's single-container scope can't cleanly recreate a multi-service project);
+// never Destroy, which deletes the run folder and the checkout in it. Build
+// output streams into exec.log so the run page's workspace-log poll shows it
+// live.
 func (a *Adapter) Rebuild(ctx context.Context, spec envport.EnvSpec) error {
 	name := spec.Name
 	if name == "" {
@@ -1328,7 +1329,7 @@ func (a *Adapter) Rebuild(ctx context.Context, spec envport.EnvSpec) error {
 		defer tee.Close()
 	}
 	if a.defFor(name).IsCompose(ctx, a.defEnv(name, a.srcDir(name))) {
-		if err := a.Destroy(ctx, envport.EnvID(name)); err != nil {
+		if err := a.host.resetSandbox(ctx, name); err != nil {
 			return fmt.Errorf("rebuild %s: teardown: %w", name, err)
 		}
 		_, err := a.provision(ctx, spec, false, tee)

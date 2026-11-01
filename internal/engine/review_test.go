@@ -90,7 +90,7 @@ func (rr *reviewRun) attach(t *testing.T, runID, pingID, name string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rr.att.ClaimForRun(context.Background(), []string{up.ID}, runID, pingID); err != nil {
+	if err := rr.att.ClaimForRun(context.Background(), "", []string{up.ID}, runID, pingID); err != nil {
 		t.Fatal(err)
 	}
 	return up.ID

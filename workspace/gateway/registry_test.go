@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -78,5 +81,74 @@ func TestRunRegistryRestartsOnConfigChange(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("config change did not stop the child")
+	}
+}
+
+// The supervisor restarts its child on any mtime bump, so an unchanged config
+// must not be rewritten.
+func TestWriteIfChanged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yml")
+	if err := writeIfChanged(path, "a"); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeIfChanged(path, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if mt, _ := mtime(path); !mt.Equal(old) {
+		t.Fatalf("an unchanged write moved the mtime to %s", mt)
+	}
+	if err := writeIfChanged(path, "b"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "b" {
+		t.Fatalf("content = %q", got)
+	}
+	if mt, _ := mtime(path); !mt.After(old) {
+		t.Fatal("a changed write must bump the mtime")
+	}
+	if err := writeIfChanged(filepath.Join(path, "child"), "x"); err == nil {
+		t.Fatal("an unwritable path must be an error")
+	}
+}
+
+// A proxy-mode registry refuses pushes, and pushing is the build cache's job.
+func TestBuildCacheConfigIsWritableAndRooted(t *testing.T) {
+	cfg := buildCacheRegistryConfig("/var/lib/buildcache")
+	if strings.Contains(cfg, "proxy:") {
+		t.Errorf("the build cache must not be a proxy:\n%s", cfg)
+	}
+	for _, want := range []string{"rootdirectory: /var/lib/buildcache\n", "addr: :5001\n"} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("config lacks %q:\n%s", want, cfg)
+		}
+	}
+	if !strings.Contains(mirrorRegistryConfig, "proxy:") || !strings.Contains(mirrorRegistryConfig, "addr: :5000") {
+		t.Errorf("mirror config:\n%s", mirrorRegistryConfig)
+	}
+}
+
+func TestRunRegistryReportsAStartFailure(t *testing.T) {
+	old := registryBin
+	registryBin = filepath.Join(t.TempDir(), "no-such-binary")
+	defer func() { registryBin = old }()
+	var mod time.Time
+	if ranFor, changed := runRegistry("registry", "/nope", &mod); ranFor != 0 || changed {
+		t.Fatalf("runRegistry = %s, %v", ranFor, changed)
+	}
+}
+
+func TestRelayLinesPrefixesChildOutput(t *testing.T) {
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(prev)
+	relayLines("mirror", strings.NewReader("one\ntwo\n"))
+	got := buf.String()
+	if !strings.Contains(got, "mirror: one") || !strings.Contains(got, "mirror: two") {
+		t.Fatalf("log = %q", got)
 	}
 }

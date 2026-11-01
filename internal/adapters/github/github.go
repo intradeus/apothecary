@@ -129,20 +129,24 @@ func (a *Adapter) CheckAccess(ctx context.Context, _ repoport.RepoRef) error {
 // FileExists checks a file — or, with a trailing slash, a non-empty
 // directory — at the default branch (§1 preflight). The contents endpoint
 // returns an array for directories.
+// escapeSegments escapes a path segment by segment: GitHub takes a real path,
+// and an encoded slash (%2F) is GitLab's convention, not GitHub's — proxies
+// may reject or normalize it.
+func escapeSegments(path string) string {
+	segs := strings.Split(path, "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	return strings.Join(segs, "/")
+}
+
 func (a *Adapter) FileExists(ctx context.Context, repo repoport.RepoRef, path string) (bool, error) {
 	ref := repo.DefaultBranch
 	if ref == "" {
 		ref = "main"
 	}
-	// Escape per segment: GitHub's contents API takes a real path, and an
-	// encoded slash (%2F) is GitLab's convention, not GitHub's — proxies may
-	// reject or normalize it.
-	segs := strings.Split(strings.TrimSuffix(path, "/"), "/")
-	for i, s := range segs {
-		segs[i] = url.PathEscape(s)
-	}
 	p := fmt.Sprintf("%s/contents/%s?ref=%s",
-		a.repoPath(), strings.Join(segs, "/"), url.QueryEscape(ref))
+		a.repoPath(), escapeSegments(strings.TrimSuffix(path, "/")), url.QueryEscape(ref))
 	var raw json.RawMessage
 	status, err := a.api(ctx, http.MethodGet, p, nil, &raw)
 	if status == http.StatusNotFound {
@@ -344,7 +348,11 @@ func (a *Adapter) MRChecks(ctx context.Context, mr repoport.MRRef, head string) 
 	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/commits/%s/check-runs?per_page=100", a.repoPath(), url.PathEscape(head)), nil, &runs); err != nil {
 		return out, err
 	}
-	newest := map[string]int{}
+	type latest struct {
+		item int // its place in out.Items
+		id   int64
+	}
+	newest := map[string]latest{}
 	for _, r := range runs.CheckRuns {
 		state := repoport.CheckPending
 		if r.Status == "completed" {
@@ -358,13 +366,14 @@ func (a *Adapter) MRChecks(ctx context.Context, mr repoport.MRRef, head string) 
 			}
 		}
 		c := repoport.Check{Name: r.Name, State: state, URL: r.HTMLURL}
-		if i, seen := newest[r.Name]; seen {
-			if r.ID > runs.CheckRuns[i].ID {
-				out.Items[i] = c
+		if cur, seen := newest[r.Name]; seen {
+			if r.ID > cur.id {
+				out.Items[cur.item] = c
+				newest[r.Name] = latest{cur.item, r.ID}
 			}
 			continue
 		}
-		newest[r.Name] = len(out.Items)
+		newest[r.Name] = latest{len(out.Items), r.ID}
 		out.Items = append(out.Items, c)
 	}
 	var combined struct {
@@ -686,23 +695,25 @@ func (a *Adapter) MRThreads(ctx context.Context, mr repoport.MRRef) ([]repoport.
 		Login string `json:"login"`
 		Type  string `json:"type"`
 	}
-	var reviews []struct {
+	type review struct {
 		ID          int       `json:"id"`
 		Body        string    `json:"body"`
 		State       string    `json:"state"`
 		User        user      `json:"user"`
 		SubmittedAt time.Time `json:"submitted_at"`
 	}
-	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/pulls/%d/reviews?per_page=100", a.repoPath(), mr.IID), nil, &reviews); err != nil {
+	reviews, err := everyPage[review](ctx, a, fmt.Sprintf("%s/pulls/%d/reviews", a.repoPath(), mr.IID))
+	if err != nil {
 		return nil, err
 	}
-	var comments []struct {
+	type comment struct {
 		ID        int       `json:"id"`
 		Body      string    `json:"body"`
 		User      user      `json:"user"`
 		CreatedAt time.Time `json:"created_at"`
 	}
-	if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s/issues/%d/comments?per_page=100", a.repoPath(), mr.IID), nil, &comments); err != nil {
+	comments, err := everyPage[comment](ctx, a, fmt.Sprintf("%s/issues/%d/comments", a.repoPath(), mr.IID))
+	if err != nil {
 		return nil, err
 	}
 	// Factory replies to conversation threads, by the thread they answer.
@@ -729,6 +740,23 @@ func (a *Adapter) MRThreads(ctx context.Context, mr repoport.MRRef) ([]repoport.
 		th := repoport.ReviewThread{ID: id, Comments: []repoport.ReviewComment{{ID: fmt.Sprint(c.ID), Author: c.User.Login, Body: c.Body, CreatedAt: c.CreatedAt}}}
 		th.Comments = append(th.Comments, replies[id]...)
 		out = append(out, th)
+	}
+	return out, nil
+}
+
+// everyPage reads a REST list to its end (a short page is the last), up to a
+// limit no pull request reaches, so a host that never stops can't hold a run.
+func everyPage[T any](ctx context.Context, a *Adapter, path string) ([]T, error) {
+	var out []T
+	for page := 1; page <= 100; page++ {
+		var rows []T
+		if _, err := a.api(ctx, http.MethodGet, fmt.Sprintf("%s?per_page=100&page=%d", path, page), nil, &rows); err != nil {
+			return nil, err
+		}
+		out = append(out, rows...)
+		if len(rows) < 100 {
+			break
+		}
 	}
 	return out, nil
 }
@@ -953,7 +981,7 @@ func (a *Adapter) MergeMR(ctx context.Context, mr repoport.MRRef, opts repoport.
 	if pr.Head.Repo == nil || pr.Head.Repo.FullName != pr.Base.Repo.FullName || pr.Head.Ref == "" {
 		return nil // a fork's branch is not this repository's to delete
 	}
-	code, err = a.api(ctx, http.MethodDelete, fmt.Sprintf("%s/git/refs/heads/%s", a.repoPath(), pr.Head.Ref), nil, nil)
+	code, err = a.api(ctx, http.MethodDelete, fmt.Sprintf("%s/git/refs/heads/%s", a.repoPath(), escapeSegments(pr.Head.Ref)), nil, nil)
 	if err != nil && code != http.StatusNotFound && code != http.StatusUnprocessableEntity {
 		return err
 	}

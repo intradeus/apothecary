@@ -32,3 +32,41 @@ func TestEmbedsNoBinaries(t *testing.T) {
 		})
 	}
 }
+
+func TestDockerfileReturnsContent(t *testing.T) {
+	for _, name := range []string{"shim", "gateway", "browser", "tools"} {
+		if Dockerfile(name) == "" {
+			t.Errorf("Dockerfile(%q) is empty", name)
+		}
+	}
+}
+
+func TestDockerfileMissingPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("Dockerfile of a missing image must panic")
+		}
+	}()
+	Dockerfile("no-such-image")
+}
+
+func TestHashesStableAndDistinct(t *testing.T) {
+	sh, tools := ShimSourceHash(), ToolsHash()
+	if len(sh) != 16 || len(tools) != 16 {
+		t.Errorf("hash lengths: shim %d tools %d", len(sh), len(tools))
+	}
+	if sh != ShimSourceHash() || tools != ToolsHash() {
+		t.Error("hashes must be stable")
+	}
+	if sh == tools {
+		t.Error("shim and tools hashes must differ")
+	}
+}
+
+func TestHashTreeInvalidDirIsEmpty(t *testing.T) {
+	// fs.Sub rejects an invalid path (e.g. one with ".."), so hashTree returns
+	// the empty string rather than hashing anything.
+	if got := hashTree(BaseContext, "../escape"); got != "" {
+		t.Errorf("hashTree of an invalid dir = %q, want empty", got)
+	}
+}

@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+// Swapped in tests: :53 is privileged, and these let a test close what it opened.
+var (
+	listenPacket = net.ListenPacket
+	listenStream = net.Listen
+)
+
 // resolvConfUpstream is the first nameserver of a resolv.conf, as host:53. On
 // Kubernetes that is the cluster DNS, so a run's lookups of cluster names (the
 // engine's Service) resolve too — reaching them is still the filter's call.
@@ -38,7 +44,7 @@ func (g *gateway) serveDNS(upstream string) {
 }
 
 func (g *gateway) serveDNSUDP(upstream string) {
-	pc, err := net.ListenPacket("udp", ":53")
+	pc, err := listenPacket("udp", ":53")
 	if err != nil {
 		log.Printf("dns udp listen: %v", err)
 		return
@@ -82,7 +88,7 @@ func (g *gateway) serveDNSUDP(upstream string) {
 }
 
 func (g *gateway) serveDNSTCP(upstream string) {
-	ln, err := net.Listen("tcp", ":53")
+	ln, err := listenStream("tcp", ":53")
 	if err != nil {
 		log.Printf("dns tcp listen: %v", err)
 		return

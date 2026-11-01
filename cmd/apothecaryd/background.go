@@ -10,12 +10,19 @@ import (
 	"apothecary/internal/project/tickets"
 )
 
+// reapEvery and automationEvery are the periods of the two passes below,
+// variables so a test can watch one run.
+var (
+	reapEvery       = time.Hour
+	automationEvery = 2 * time.Minute
+)
+
 // background starts the daemon's loops — reaper, login keeper, outcomes,
 // workspace reconciler, resource sampler, egress audit ingest, automations —
 // all on ctx, which serve cancels before it shuts the engine down.
 func (a *app) background(ctx context.Context) {
 	go func() {
-		t := time.NewTicker(time.Hour)
+		t := time.NewTicker(reapEvery)
 		defer t.Stop()
 		for {
 			select {
@@ -117,7 +124,7 @@ func (a *app) background(ctx context.Context) {
 		Tickets: &tickets.Factory{Conf: a.conf, Attachments: a.attachments, Sources: a.resolver, Log: a.log},
 	}
 	go func() {
-		t := time.NewTicker(2 * time.Minute)
+		t := time.NewTicker(automationEvery)
 		defer t.Stop()
 		for {
 			select {

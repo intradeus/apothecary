@@ -48,6 +48,10 @@ type Host interface {
 	// unreachable host is an error, never "".
 	sandboxState(ctx context.Context, name string) (state string, legacy bool, err error)
 	destroySandbox(ctx context.Context, name string) error
+	// resetSandbox empties the sandbox for a compose rebuild: every workspace
+	// and side container goes, and with them what they hold in the daemon.
+	// The checkout stays: agent commits live there and nowhere else yet.
+	resetSandbox(ctx context.Context, name string) error
 
 	// The engine bridge: what makes engineURL reachable from inside the
 	// workspace. bridgePorts are the workspace-loopback ports it occupies

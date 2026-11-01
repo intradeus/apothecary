@@ -110,7 +110,7 @@ func (c *Channel) Send(ctx context.Context, n notifyport.Notification) error {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return channels.ScrubURL(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {

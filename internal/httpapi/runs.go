@@ -254,7 +254,7 @@ func (s *Server) runRoutes() []Route {
 			Handler: s.getRun, Returns: RunDetail{}, Scope: ScopeRun},
 		{Method: "GET", Path: "/api/runs/{id}/events", ID: "streamRunEvents", Tag: tagRuns,
 			Summary: "Server-sent event stream of a run's events",
-			Doc:     "Replays from after_seq, then streams live. The stream ends when the run reaches a terminal state.",
+			Doc:     "Replays from after_seq, then streams live. The stream ends at the event that puts the run in a terminal state; a connection resuming past it stays open for what comes later (a retry, the workspace's teardown).",
 			Query:   []Param{{Name: "after_seq", Doc: "resume after this sequence number", Type: "integer"}},
 			Handler: s.streamEvents, Produces: "text/event-stream", Scope: ScopeRun},
 		{Method: "GET", Path: "/api/runs/{id}/logs/{stage}", ID: "getStageLog", Tag: tagRuns,

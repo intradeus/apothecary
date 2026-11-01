@@ -152,7 +152,7 @@ func (a *Apps) allowed(r *http.Request, run string) bool {
 func (a *Apps) authorize(s *Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		to, err := url.Parse(r.URL.Query().Get("to"))
-		if err != nil || to.Host == "" || !a.Relay.InAppsDomain(to.Host) {
+		if err != nil || (to.Scheme != "http" && to.Scheme != "https") || to.Host == "" || !a.Relay.InAppsDomain(to.Host) {
 			http.Error(w, "apothecary: not an app address", http.StatusBadRequest)
 			return
 		}

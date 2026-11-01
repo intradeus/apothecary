@@ -236,7 +236,7 @@ func (s *Server) answerPing(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if runID != "" {
-			if err := s.Attachments.ClaimForRun(r.Context(), body.AttachmentIDs, runID, pid); err != nil {
+			if err := s.Attachments.ClaimForRun(r.Context(), auth.UserID(r.Context()), body.AttachmentIDs, runID, pid); err != nil {
 				s.Log.Warn("claim answer attachments", "ping", pid, "err", err)
 			}
 		}

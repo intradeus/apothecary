@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -132,4 +133,96 @@ func TestAuthenticateSSHKey(t *testing.T) {
 	if _, _, err := s.AuthenticateSSHKey(ctx, pk); err != nil {
 		t.Errorf("re-enabled owner: %v", err)
 	}
+}
+
+func TestSSHKeyEdges(t *testing.T) {
+	ctx := context.Background()
+	mem := NewMem()
+	s := New(mem)
+	u, err := s.CreateUser(ctx, NewUser{Handle: "lu", Email: "lu@example.test", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
+
+	// A key with no comment and no name is named for its type.
+	k, err := s.AddSSHKey(ctx, u.ID, "", line)
+	if err != nil || k.Name != "ssh-ed25519" {
+		t.Fatalf("unnamed = %+v, %v", k, err)
+	}
+	if _, err := s.AddSSHKey(ctx, "nobody", "x", line); !errors.Is(err, ErrNotFound) {
+		t.Errorf("for nobody = %v", err)
+	}
+
+	// A certificate is not a key.
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := &ssh.Certificate{Key: key, CertType: ssh.UserCert, KeyId: "x", ValidBefore: ssh.CertTimeInfinity}
+	if err := cert.SignCert(rand.Reader, signer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddSSHKey(ctx, u.ID, "c", string(ssh.MarshalAuthorizedKey(cert))); !errors.Is(err, ErrInvalid) {
+		t.Errorf("certificate = %v", err)
+	}
+
+	// Use is recorded, on the key used.
+	at := time.Now().UTC().Truncate(time.Second)
+	if err := s.TouchSSHKey(ctx, k.ID, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TouchSSHKey(ctx, "nope", at); err != nil {
+		t.Errorf("touching nothing = %v", err)
+	}
+	keys, err := s.ListSSHKeys(ctx, u.ID)
+	if err != nil || len(keys) != 1 || keys[0].LastUsedAt == nil || !keys[0].LastUsedAt.Equal(at) {
+		t.Errorf("keys = %+v, %v", keys, err)
+	}
+
+	// A row that no longer matches what is offered, by byte, is no match; nor
+	// is one whose account has gone; nor a store that cannot say.
+	stored := mem.sshKeys[k.ID]
+	other, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherKey, err := ssh.NewPublicKey(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered := stored
+	tampered.PublicKey = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(otherKey)))
+	mem.sshKeys[k.ID] = tampered
+	if _, _, err := s.AuthenticateSSHKey(ctx, key); !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("mismatched row = %v", err)
+	}
+	orphan := stored
+	orphan.UserID = "gone"
+	mem.sshKeys[k.ID] = orphan
+	if _, _, err := s.AuthenticateSSHKey(ctx, key); !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("account gone = %v", err)
+	}
+	boom := errors.New("db down")
+	broken := New(sshLookupFails{mem, boom})
+	if _, _, err := broken.AuthenticateSSHKey(ctx, key); !errors.Is(err, boom) {
+		t.Errorf("outage = %v", err)
+	}
+}
+
+type sshLookupFails struct {
+	*Mem
+	err error
+}
+
+func (f sshLookupFails) GetSSHKeyByFingerprint(context.Context, string) (SSHKey, error) {
+	return SSHKey{}, f.err
 }

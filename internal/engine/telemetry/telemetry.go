@@ -133,6 +133,9 @@ func (t *Telemetry) OnEvent(e event.Event) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	ctx := context.Background()
+	if _, open := t.runs[e.RunID]; !open && landsAfterTheEnd(e.Payload) {
+		return // a trace opened now would have nothing to end it
+	}
 	rt := t.run(&e)
 
 	switch p := e.Payload.(type) {
@@ -179,6 +182,17 @@ func (t *Telemetry) OnEvent(e event.Event) {
 	case *event.RunFailed:
 		t.endRun(e.RunID, rt, e.TS, "failed", codes.Error, p.Reason)
 	}
+}
+
+// landsAfterTheEnd reports the events a finished run still gets: housekeeping
+// on its workspace and its archiving. A retry is not one: it is new work.
+func landsAfterTheEnd(p event.Payload) bool {
+	switch p.(type) {
+	case *event.EnvDestroyed, *event.RunArchived,
+		*event.EnvRebuildStarted, *event.EnvRebuildCompleted, *event.EnvRebuildFailed:
+		return true
+	}
+	return false
 }
 
 func (t *Telemetry) endStage(rt *runTrace, ts time.Time, code codes.Code, desc string) {

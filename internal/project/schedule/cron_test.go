@@ -65,3 +65,19 @@ func TestParseRefuses(t *testing.T) {
 		}
 	}
 }
+
+func TestStringIsTheSpellingItWasParsedFrom(t *testing.T) {
+	c, err := Parse("*/5 * * * 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.String() != "*/5 * * * 1" {
+		t.Errorf("string = %q", c.String())
+	}
+}
+
+func TestParseFieldRefusesAnEmptyListItem(t *testing.T) {
+	if _, err := Parse("1,,2 * * * *"); err == nil {
+		t.Error("an empty item is refused")
+	}
+}

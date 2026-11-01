@@ -12,11 +12,7 @@ import (
 
 func openSkills(t *testing.T) *Store {
 	t.Helper()
-	s := open(t)
-	if _, err := s.pool.Exec(context.Background(), `TRUNCATE skills, skillsets, skillset_skills, skillset_versions CASCADE`); err != nil {
-		t.Fatal(err)
-	}
-	return s
+	return open(t)
 }
 
 func TestSkillsContract(t *testing.T) {

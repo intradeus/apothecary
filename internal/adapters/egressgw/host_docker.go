@@ -160,7 +160,12 @@ func (h *DockerHost) EnsureGateway(ctx context.Context, project, projectName str
 	}
 	var netIPs map[string]string
 	if ids != "" {
-		cur, _ := h.docker(ctx, "inspect", name, "--format", `{{.Config.Image}} {{index .Config.Labels "apothecary.gw.shape"}}`)
+		// A failed inspect says nothing about the gateway, and the rm below
+		// would cut off every run attached to it: stop here instead.
+		cur, err := h.docker(ctx, "inspect", name, "--format", `{{.Config.Image}} {{index .Config.Labels "apothecary.gw.shape"}}`)
+		if err != nil {
+			return Control{}, fmt.Errorf("egressgw: inspect gateway: %w", err)
+		}
 		curImg, curShape, _ := strings.Cut(cur, " ")
 		keep := curImg == img && curShape == gwShape
 		if !keep && curShape == gwShape {

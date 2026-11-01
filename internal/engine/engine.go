@@ -571,7 +571,7 @@ type EventSink interface {
 type AttachmentStore interface {
 	// ClaimForRun binds still-unclaimed uploads to a run (goal files) or,
 	// with a pingID, to an answer within that run. One-shot per attachment.
-	ClaimForRun(ctx context.Context, ids []string, runID, pingID string) error
+	ClaimForRun(ctx context.Context, userID string, ids []string, runID, pingID string) error
 	// Get resolves one attachment by id — ticket attachments belong to the
 	// ticket, not the run, so ForRun cannot find them; the ids ride on
 	// run_created.
@@ -838,7 +838,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName,
 		return "", err
 	}
 	if e.attachments != nil && len(t.AttachmentIDs) > 0 {
-		if err := e.attachments.ClaimForRun(ctx, t.AttachmentIDs, runID, ""); err != nil {
+		if err := e.attachments.ClaimForRun(ctx, res.UserID, t.AttachmentIDs, runID, ""); err != nil {
 			e.log.Warn("claim goal attachments", "run", runID, "err", err)
 		}
 	}

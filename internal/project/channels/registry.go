@@ -11,14 +11,26 @@ package channels
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"sync"
 
 	"github.com/oklog/ulid/v2"
 
 	"apothecary/internal/ports/notifyport"
 )
+
+// ScrubURL takes the address out of an HTTP client's error: *url.Error quotes
+// it, a webhook's address is its credential, and a send's error goes to the log.
+func ScrubURL(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return fmt.Errorf("%s: %w", ue.Op, ue.Err)
+	}
+	return err
+}
 
 // Factory builds a channel from its stored config (e.g. matrix: homeserver,
 // access_token, room_id).

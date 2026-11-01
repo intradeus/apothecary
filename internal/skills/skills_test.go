@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -148,5 +149,32 @@ func TestHashes(t *testing.T) {
 	}
 	if SetHash(m1) == SetHash([]Member{{"a", "h1"}}) {
 		t.Error("membership change should change the set hash")
+	}
+}
+
+// A loose header never blocks a skill: scalars read as text, anything
+// structured as nothing.
+func TestFrontmatterScalars(t *testing.T) {
+	fm, err := ParseFrontmatter([]byte("---\nname: tool\ndescription: 42\nlicense: true\ncompatibility: 1.5\n---\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fm.Description != "42" || fm.License != "true" || fm.Compatibility != "1.5" {
+		t.Errorf("frontmatter = %+v", fm)
+	}
+	fm, err = ParseFrontmatter([]byte("---\nname: tool\ndescription: d\nlicense: [a, b]\n---\n"))
+	if err != nil || fm.License != "" {
+		t.Errorf("structured = %+v, %v", fm, err)
+	}
+}
+
+func TestValidateRefusesASkillOverTheTotal(t *testing.T) {
+	big := make([]byte, MaxFileBytes)
+	files := []envport.TreeFile{{Path: "SKILL.md", Data: md("big", "d")}}
+	for i := int64(0); i <= MaxSkillBytes/MaxFileBytes; i++ {
+		files = append(files, envport.TreeFile{Path: "f" + strconv.FormatInt(i, 10), Data: big})
+	}
+	if _, _, err := Validate("big", files); err == nil || !strings.Contains(err.Error(), "in total") {
+		t.Errorf("err = %v", err)
 	}
 }

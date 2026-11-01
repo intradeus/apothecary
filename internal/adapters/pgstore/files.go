@@ -76,16 +76,16 @@ func (s *Store) GetAttachment(ctx context.Context, id string) (filestore.Attachm
 }
 
 // ClaimAttachments is one-shot by construction: the WHERE clause only matches
-// still-unclaimed rows, so re-claims and claims of someone else's attachment
-// are silent no-ops (the caller re-sends full id lists on update).
-func (s *Store) ClaimAttachments(ctx context.Context, ids []string, ticketID, runID, pingID string) error {
+// the user's still-unclaimed rows, so re-claims and claims of someone else's
+// attachment are silent no-ops (the caller re-sends full id lists on update).
+func (s *Store) ClaimAttachments(ctx context.Context, userID string, ids []string, ticketID, runID, pingID string) error {
 	if (ticketID == "") == (runID == "") {
 		return fmt.Errorf("claim: exactly one of ticket/run must own the attachment")
 	}
 	_, err := s.pool.Exec(ctx, `
 		UPDATE attachments SET ticket_id=$1, run_id=$2, ping_id=$3
-		WHERE id = ANY($4) AND ticket_id IS NULL AND run_id IS NULL`,
-		nullStr(ticketID), nullStr(runID), nullStr(pingID), ids)
+		WHERE id = ANY($4) AND user_id = $5 AND ticket_id IS NULL AND run_id IS NULL`,
+		nullStr(ticketID), nullStr(runID), nullStr(pingID), ids, userID)
 	return err
 }
 
@@ -227,9 +227,10 @@ func (s *Store) LiveBlobSHAs(ctx context.Context, keepSnapshotsAfter map[string]
 		         ON c.user_id = COALESCE(r.user_id, '')
 		 WHERE c.keep_after IS NULL OR sn.created_at >= c.keep_after
 		UNION
-		SELECT f->>'sha256' FROM skills sk, jsonb_array_elements(sk.files) f
+		SELECT f->>'sha256' FROM skills sk, jsonb_array_elements(`+jsonArray("sk.files")+`) f
 		UNION
-		SELECT f->>'sha256' FROM skillset_versions sv, jsonb_array_elements(sv.manifest) m, jsonb_array_elements(m->'files') f`, owners, cutoffs)
+		SELECT f->>'sha256' FROM skillset_versions sv, jsonb_array_elements(`+jsonArray("sv.manifest")+`) m,
+		  jsonb_array_elements(`+jsonArray("m->'files'")+`) f`, owners, cutoffs)
 	if err != nil {
 		return nil, err
 	}
@@ -243,6 +244,13 @@ func (s *Store) LiveBlobSHAs(ctx context.Context, keepSnapshotsAfter map[string]
 		live[sha] = true
 	}
 	return live, rows.Err()
+}
+
+// jsonArray is expr, or an empty array when it holds anything else: a nil Go
+// slice marshals to a JSON null, and jsonb_array_elements fails the whole
+// query on one.
+func jsonArray(expr string) string {
+	return `CASE jsonb_typeof(` + expr + `) WHEN 'array' THEN ` + expr + ` ELSE '[]'::jsonb END`
 }
 
 var (

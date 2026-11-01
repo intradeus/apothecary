@@ -34,3 +34,4 @@ cpui/vite.config.ts.timestamp-*
 # vitest --coverage
 cpui/coverage/
 cpui/.vitest/
+/coverage/

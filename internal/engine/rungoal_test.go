@@ -69,7 +69,7 @@ func TestTicketAttachmentsReachEveryRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := att.ClaimForTicket(context.Background(), []string{up.ID}, "tk-shared"); err != nil {
+	if err := att.ClaimForTicket(context.Background(), "", []string{up.ID}, "tk-shared"); err != nil {
 		t.Fatal(err)
 	}
 	wantPath := ".apothecary/attachments/goal/" + up.ID[:8] + "/design.md"

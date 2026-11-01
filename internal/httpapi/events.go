@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"apothecary/internal/platform/filestore"
+	"apothecary/internal/run/event"
 	"apothecary/internal/workspace/wsinfo"
 )
 
@@ -80,6 +82,9 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 			}
 			fmt.Fprintf(w, "id: %d\ndata: %s\n\n", ev.Seq, data)
 			flusher.Flush()
+			if s.runEndsAt(r.Context(), ev) {
+				return
+			}
 		case <-heartbeat.C:
 			fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()
@@ -89,6 +94,28 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// runEndsAt reports whether ev is where the stream of a run stops: an event
+// that ended it, with no later retry on the log to bring it back. A browser's
+// EventSource reconnects past that event and is left open, so a page on the
+// run still sees what comes after (a retry, the workspace's teardown).
+func (s *Server) runEndsAt(ctx context.Context, ev event.Event) bool {
+	switch ev.Payload.(type) {
+	case *event.RunCompleted, *event.RunAbandoned, *event.RunFailed, *event.RunArchived:
+	default:
+		return false
+	}
+	later, err := s.Store.Events(ctx, ev.RunID, ev.Seq)
+	if err != nil {
+		return false
+	}
+	for _, e := range later {
+		if _, retried := e.Payload.(*event.RunRetried); retried {
+			return false
+		}
+	}
+	return true
 }
 
 // getWorkspaceLog serves the LIVE tail of the run's workspace exec output

@@ -344,3 +344,147 @@ func TestAgentModelsStep(t *testing.T) {
 		t.Fatalf("agent_models = %+v", step)
 	}
 }
+
+// urlEnvp adds EngineURLProvider to the fake; rwFail makes a path's read-back
+// mismatch, to drive the rw round-trip failure.
+type urlEnvp struct {
+	*fake.EnvProvisioner
+	url    string
+	rwFail string
+}
+
+func (e *urlEnvp) EngineURL(envport.EnvID) string { return e.url }
+func (e *urlEnvp) ReadFile(ctx context.Context, id envport.EnvID, path string) ([]byte, error) {
+	if e.rwFail != "" && strings.HasSuffix(path, e.rwFail) {
+		return []byte("corrupted"), nil
+	}
+	return e.EnvProvisioner.ReadFile(ctx, id, path)
+}
+
+// Keep leaves the workspace for inspection (destroy is skipped, not run), the
+// EngineURL comes from the provisioner, and the engine-reachability step names
+// that URL.
+func TestRunKeepAndEngineURLProvider(t *testing.T) {
+	h := newFixture(t)
+	h.envp.ExecFunc = firewallAwareExec()
+	urlp := &urlEnvp{EnvProvisioner: h.envp, url: "http://engine.svc:8080"}
+	h.res.Envp = urlp
+	h.res.EgressDomains = []string{"gitlab.local"}
+	h.res.HarnessBinary = "opencode"
+
+	var steps []CheckStep
+	failed := Run(context.Background(), h.res, "envck-keep", Options{Keep: true, EngineURL: "http://ignored"},
+		func(s CheckStep) { steps = append(steps, s) })
+	if failed != 0 {
+		t.Fatalf("failed = %d: %+v", failed, steps)
+	}
+	byID := map[string]CheckStep{}
+	for _, s := range steps {
+		byID[s.ID] = s
+	}
+	if byID["destroy"].Status != "skip" || !strings.Contains(byID["destroy"].Detail, "kept") {
+		t.Errorf("destroy = %+v, want skip", byID["destroy"])
+	}
+	if len(h.envp.Destroyed) != 0 {
+		t.Errorf("Keep must not destroy: %v", h.envp.Destroyed)
+	}
+	if !strings.Contains(byID["tunnel"].Detail, "http://engine.svc:8080") {
+		t.Errorf("tunnel = %+v, want the provider's URL", byID["tunnel"])
+	}
+}
+
+// Multiple harness binaries each get their own named step; the extra repos are
+// cloned too.
+func TestRunMultipleBinariesAndExtras(t *testing.T) {
+	h := newFixture(t)
+	h.envp.ExecFunc = firewallAwareExec()
+	h.res.HarnessBinaries = []string{"opencode", "codex"}
+	h.res.ExtraRepos = []resolution.ExtraRepo{{Name: "api", URL: "https://gitlab.local/g/api.git", DefaultBranch: "main"}}
+
+	var steps []CheckStep
+	failed := Run(context.Background(), h.res, "envck-multi", Options{},
+		func(s CheckStep) { steps = append(steps, s) })
+	if failed != 0 {
+		t.Fatalf("failed = %d: %+v", failed, steps)
+	}
+	byID := map[string]CheckStep{}
+	for _, s := range steps {
+		byID[s.ID] = s
+	}
+	if byID["harness_binary:opencode"].Status != "pass" || byID["harness_binary:codex"].Status != "pass" {
+		t.Errorf("per-binary steps missing: %+v", steps)
+	}
+	// The extra repo was cloned during bootstrap.
+	var clonedAPI bool
+	for _, c := range h.envp.Execs() {
+		if strings.Contains(c.Cmd.Script, "api.git") {
+			clonedAPI = true
+		}
+	}
+	if !clonedAPI {
+		t.Error("the extra repo was not cloned")
+	}
+}
+
+// No harness binary declared: the harness_binary step is skipped honestly.
+func TestRunNoHarnessBinary(t *testing.T) {
+	h := newFixture(t)
+	h.envp.ExecFunc = firewallAwareExec()
+	var skipped bool
+	Run(context.Background(), h.res, "envck-nob", Options{}, func(s CheckStep) {
+		if s.ID == "harness_binary" && s.Status == "skip" {
+			skipped = true
+		}
+	})
+	if !skipped {
+		t.Error("no binary must skip the harness_binary step")
+	}
+}
+
+// A workspace that reads back different bytes than it wrote fails the
+// round-trip check.
+func TestRunRoundTripMismatchFails(t *testing.T) {
+	h := newFixture(t)
+	h.envp.ExecFunc = firewallAwareExec()
+	h.res.Envp = &urlEnvp{EnvProvisioner: h.envp, url: "http://e", rwFail: "roundtrip.bin"}
+	var step CheckStep
+	failed := Run(context.Background(), h.res, "envck-rw", Options{}, func(s CheckStep) {
+		if s.ID == "rw_absolute" {
+			step = s
+		}
+	})
+	if failed == 0 || step.Status != "fail" || !strings.Contains(step.Detail, "content mismatch") {
+		t.Fatalf("rw_absolute = %+v (failed=%d)", step, failed)
+	}
+}
+
+func TestRegistryLatestAndGetMisses(t *testing.T) {
+	h := newFixture(t)
+	if _, ok := h.reg.Get("nope"); ok {
+		t.Error("Get of an unknown id must miss")
+	}
+	if _, ok := h.reg.Latest("no-project"); ok {
+		t.Error("Latest for a project with no checks must miss")
+	}
+	h.envp.ExecFunc = firewallAwareExec()
+	id, err := h.reg.Start(context.Background(), fixtureProject, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := waitCheck(t, h, id, func(r CheckRun) bool { return r.Status != "running" && !r.TearingDown })
+	if got.Status != "pass" {
+		t.Fatalf("status = %s", got.Status)
+	}
+	latest, ok := h.reg.Latest(fixtureProject)
+	if !ok || latest.ID != id {
+		t.Errorf("Latest = %+v", latest)
+	}
+}
+
+// A project the resolver cannot resolve fails Start.
+func TestRegistryStartUnresolvable(t *testing.T) {
+	reg := NewRegistry(resolution.StaticResolver{}, flows{mustParse(t, loopDoc)}, "")
+	if _, err := reg.Start(context.Background(), "nope", false); err == nil {
+		t.Fatal("Start of an unresolvable project must fail")
+	}
+}

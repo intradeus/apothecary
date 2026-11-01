@@ -223,7 +223,7 @@ func main() {
 		go g.serveControl(controlListen, token)
 	}
 
-	ln, err := net.Listen("tcp", ":"+itoa(g.listenPort))
+	ln, err := listenStream("tcp", ":"+itoa(g.listenPort))
 	if err != nil {
 		log.Fatalf("gateway: listen: %v", err)
 	}
@@ -310,11 +310,14 @@ func (g *gateway) applyRules() error {
 	return applyNFT(renderNFT(ext, g.listenPort, f, g.protect, g.controlPort))
 }
 
+// watchTick paces watch (swapped in tests, which close it to stop the loop).
+var watchTick = func() <-chan time.Time { return time.Tick(time.Second) }
+
 // watch polls the policy/routes files and the EXT interface, hot-reloading on
 // change, and flushes recorded denials.
 func (g *gateway) watch() {
 	var polMod, routesMod time.Time
-	for range time.Tick(time.Second) {
+	for range watchTick() {
 		if mt, ok := mtime(g.policyPath); ok && mt.After(polMod) {
 			polMod = mt
 			if err := g.loadPolicy(); err != nil {

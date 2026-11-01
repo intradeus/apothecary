@@ -47,11 +47,12 @@ func renderNFT(ext string, port int, f File, protect []*net.IPNet, controlPort i
 		w(fmt.Sprintf("add rule ip apo forward iifname != %q ip daddr { %s } drop", ext, strings.Join(cidrs, ", ")))
 	}
 	if f.normMode() == ModeDeny {
-		// allow-all raw egress except explicitly denied IP ranges.
-		w("add rule ip apo forward iifname != " + q(ext) + " accept")
+		// allow-all raw egress except explicitly denied IP ranges: the drop
+		// comes first, an accept is final.
 		if cidrs := setStr(f.DeniedCIDRs); cidrs != "" {
 			w(fmt.Sprintf("add rule ip apo forward iifname != %q ip daddr { %s } drop", ext, cidrs))
 		}
+		w("add rule ip apo forward iifname != " + q(ext) + " accept")
 	} else {
 		// deny-all raw egress except the escape hatch (allowed CIDRs / ports).
 		if cidrs := setStr(f.AllowedCIDRs); cidrs != "" {

@@ -264,20 +264,19 @@ var (
 
 func (c *cappedReader) Read(p []byte) (int, error) {
 	if c.left <= 0 {
-		return 0, errTooLarge
+		// Peek for one more byte to tell "exactly at the cap" from "over".
+		var one [1]byte
+		m, err := c.r.Read(one[:])
+		if m > 0 {
+			return 0, errTooLarge
+		}
+		return 0, err
 	}
 	if int64(len(p)) > c.left {
 		p = p[:c.left]
 	}
 	n, err := c.r.Read(p)
 	c.left -= int64(n)
-	if err == nil && c.left <= 0 {
-		// Peek for one more byte to tell "exactly at the cap" from "over".
-		var one [1]byte
-		if m, _ := c.r.Read(one[:]); m > 0 {
-			return n, errTooLarge
-		}
-	}
 	return n, err
 }
 

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -38,8 +39,21 @@ func New(cfg Config) *Adapter {
 	return &Adapter{
 		cfg:       Config{BaseURL: strings.TrimRight(cfg.BaseURL, "/"), Token: cfg.Token, ProjectID: cfg.ProjectID},
 		projectID: cfg.ProjectID,
-		http:      &http.Client{Timeout: 30 * time.Second},
+		http:      &http.Client{Timeout: 30 * time.Second, CheckRedirect: keepTokenHome},
 	}
+}
+
+// keepTokenHome follows redirects without the token past the host it was meant
+// for: net/http drops Authorization and Cookie across hosts but not a custom
+// header, and GitLab sends uploads to object storage with a redirect.
+func keepTokenHome(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+		req.Header.Del("PRIVATE-TOKEN")
+	}
+	return nil
 }
 
 // api performs one authenticated call; out may be nil.

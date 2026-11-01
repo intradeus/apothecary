@@ -3,6 +3,8 @@ package wsname
 import (
 	"strings"
 	"testing"
+
+	"apothecary/internal/run"
 )
 
 // For is the human-friendly workspace/container name policy: an
@@ -40,5 +42,50 @@ func TestWorkspaceName(t *testing.T) {
 	// so reuse-by-name can never cross runs.
 	if a, b := For("main", "TESTRUNaa"), For("main", "TESTRUNbb"); a == b {
 		t.Errorf("same branch, different runs collided: %q", a)
+	}
+}
+
+func TestForRun(t *testing.T) {
+	// A ready env: its id is used verbatim, whatever the branch.
+	if got := ForRun(run.View{EnvID: "env-abc", Branch: "feat/x"}, "RUN1"); got != "env-abc" {
+		t.Errorf("ready env = %q", got)
+	}
+	// Still provisioning: the deterministic name from BranchBase.
+	if got := ForRun(run.View{BranchBase: "feat/login", Branch: "feat/login-xy"}, "TESTRUNabcd"); got != "apo-feat-login-abcd" {
+		t.Errorf("base = %q", got)
+	}
+	// No BranchBase: falls back to Branch.
+	if got := ForRun(run.View{Branch: "hotfix/y"}, "TESTRUNabcd"); got != "apo-hotfix-y-abcd" {
+		t.Errorf("branch fallback = %q", got)
+	}
+}
+
+func TestRunIDTail(t *testing.T) {
+	if got := RunIDTail("ABCDEFGH"); got != "efgh" {
+		t.Errorf("tail = %q", got)
+	}
+	if got := RunIDTail("XY"); got != "xy" {
+		t.Errorf("short id = %q", got)
+	}
+	if got := RunIDTail(""); got != "" {
+		t.Errorf("empty = %q", got)
+	}
+}
+
+func TestSlug(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		max  int
+		want string
+	}{
+		{"Feat/Login Page", 40, "feat-login-page"},
+		{"  --weird__name--  ", 40, "weird-name"},
+		{"ALLCAPS", 40, "allcaps"},
+		{"a/b/c/d", 3, "a-b"},
+		{"...", 40, ""},
+	} {
+		if got := Slug(c.in, c.max); got != c.want {
+			t.Errorf("Slug(%q,%d) = %q, want %q", c.in, c.max, got, c.want)
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -75,8 +76,62 @@ func TestProbeTLS(t *testing.T) {
 func buildShim(t *testing.T) string {
 	t.Helper()
 	bin := t.TempDir() + "/shim"
-	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+	args := []string{"build", "-o", bin}
+	// `task cover:go`: what these subprocesses run counts too. Under `go test
+	// -cover` GOCOVERDIR is the test binary's own, so it is pointed here.
+	if dir := os.Getenv("APOTHECARY_COVERDIR"); dir != "" {
+		t.Setenv("GOCOVERDIR", dir)
+		args = append(args, "-cover", "-covermode=atomic", "-tags=coverflush")
+	}
+	if out, err := exec.Command("go", append(args, ".")...).CombinedOutput(); err != nil {
 		t.Fatalf("build shim: %v\n%s", err, out)
 	}
 	return bin
+}
+
+// probeOnce in-process: the plain connect, the TLS handshake, and the ways
+// each fails.
+func TestProbeOnce(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	// A live listener answers a plain connect.
+	if err := probeOnce(ln.Addr().String(), false); err != nil {
+		t.Errorf("plain connect: %v", err)
+	}
+	// But the TLS handshake against it fails (it hangs up).
+	if err := probeOnce(ln.Addr().String(), true); err == nil || !strings.Contains(err.Error(), "tls handshake") {
+		t.Errorf("tls against a non-TLS listener: %v", err)
+	}
+
+	// A real TLS server passes the handshake.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	if err := probeOnce(strings.TrimPrefix(srv.URL, "https://"), true); err != nil {
+		t.Errorf("tls against a TLS server: %v", err)
+	}
+
+	// Nothing listening: the connect itself fails.
+	free, _ := net.Listen("tcp", "127.0.0.1:0")
+	addr := free.Addr().String()
+	free.Close()
+	if err := probeOnce(addr, false); err == nil {
+		t.Error("a dead address must fail")
+	}
+
+	// An address with no port cannot be split for the SNI.
+	if err := probeOnce("127.0.0.1:0", true); err == nil {
+		t.Error("port 0 must fail the connect")
+	}
 }

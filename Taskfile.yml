@@ -9,6 +9,8 @@ vars:
   PROD_COMPOSE: docker compose -p apothecary -f deploy/docker-compose.yaml
   DEV_PG: apothecary-dev-pg
   DEV_DSN: postgres://dev:dev@127.0.0.1:15433/dev
+  # A floor, not a target: raise it when coverage rises, never lower it.
+  GO_COVER_MIN: 93
   # Local Kubernetes (k3d). Every kubectl/helm call names this kubeconfig:
   # these tasks never read, merge into or switch ~/.kube/config.
   K3D_CLUSTER: apothecary
@@ -270,10 +272,60 @@ tasks:
       - echo "vendored $(du -sh . | cut -f1) of Swagger UI"
 
   # --- testing & verification ------------------------------------------------
+  # Unit tests need nothing running. Integration tests run the Postgres adapter
+  # on a real server: each test binary starts its own throwaway container
+  # (internal/adapters/pgstore/pgtest, needs docker) and gives each test its own
+  # database. A test skips when TEST_POSTGRES is empty, and test:integration
+  # runs the packages that use pgtest. Live tests (real docker workspaces, a
+  # real cluster) stay behind `-tags live`.
   test:
-    desc: 'Go tests (args pass through: task test -- ./internal/engine/ -run TestX -v)'
+    desc: 'Backend tests, unit then integration; with args, those: task test -- ./internal/engine/ -run TestX -v'
+    cmds:
+      - task: test:unit
+        if: '[ -z "{{.CLI_ARGS}}" ]'
+      - task: test:integration
+
+  test:unit:
+    desc: 'Backend tests that need nothing running (args pass through)'
+    env:
+      TEST_POSTGRES: ''
     cmds:
       - go test {{.CLI_ARGS | default "./..."}}
+
+  test:integration:
+    desc: 'Backend tests against a real Postgres in throwaway containers; needs docker (args pass through)'
+    env:
+      TEST_POSTGRES: '1'
+    vars:
+      PG_PACKAGES:
+        sh: grep -rlw --include='*_test.go' pgtest cmd internal | xargs -n1 dirname | sort -u | sed 's|^|./|' | tr '\n' ' '
+    cmds:
+      # -count=1: Go's test cache can't see the server, so a cached pass would
+      # prove nothing.
+      - go test -count=1 {{.CLI_ARGS | default .PG_PACKAGES}}
+
+  cover:
+    desc: 'Test coverage of both halves, as pages: coverage/go/index.html and cpui/coverage/index.html'
+    cmds:
+      - task: cover:go
+      - cd cpui && npm run test:coverage
+      - 'echo "Backend:  coverage/go/index.html"'
+      - 'echo "Frontend: cpui/coverage/index.html"'
+
+  cover:go:
+    desc: 'Backend coverage: every package counted, Postgres tests included; fails under GO_COVER_MIN'
+    env:
+      TEST_POSTGRES: '1'
+      # Tests that run the real shim as a subprocess build it to report here.
+      APOTHECARY_COVERDIR: '{{.ROOT_DIR}}/coverage/go/subprocess'
+    cmds:
+      - rm -rf coverage/go/subprocess && mkdir -p coverage/go/subprocess
+      # -count=1: a cached package runs no subprocess, so its shim coverage would vanish.
+      - go test -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage/go/profile.out ./...
+      - go tool covdata textfmt -i=coverage/go/subprocess -o coverage/go/subprocess.out
+      - tail -n +2 coverage/go/subprocess.out >> coverage/go/profile.out
+      - go tool cover -html=coverage/go/profile.out -o coverage/go/files.html
+      - go run ./cmd/coverreport -profile coverage/go/profile.out -out coverage/go/index.html -min {{.GO_COVER_MIN}}
 
   check:
     desc: svelte-check (CPUI types)
@@ -316,13 +368,13 @@ tasks:
         if [ -n "$hits" ]; then echo "$hits"; echo "a model id in the tree rots when the vendor renames it — bind models per project (Workshop → Flows → Configure); tests use fake/… or acme/… ids"; exit 1; fi
 
   verify:
-    desc: 'The full pre-commit gate: gofmt, vet, go tests, model-id lint, API contract, svelte-check, UI lint, UI tests, UI build'
+    desc: 'The full pre-commit gate: gofmt, vet, unit + integration tests with coverage, model-id lint, API contract, svelte-check, UI lint, UI tests, UI build'
     cmds:
       - |
         out="$(gofmt -l ./cmd ./internal)"
         if [ -n "$out" ]; then echo "$out"; echo "gofmt needed — run task fmt"; exit 1; fi
       - go vet ./...
-      - go test ./...
+      - task: cover:go
       - task: lint:models
       - task: api:check
       - cd cpui && npm run check

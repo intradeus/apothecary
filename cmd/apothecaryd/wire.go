@@ -87,15 +87,14 @@ type app struct {
 // far is closed before it returns.
 func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger) (a *app, cleanup func(), err error) {
 	var closers []func()
-	cleanup = func() {
+	closeAll := func() {
 		for i := len(closers) - 1; i >= 0; i-- {
 			closers[i]()
 		}
 	}
 	defer func() {
 		if err != nil {
-			cleanup()
-			cleanup = nil
+			closeAll()
 		}
 	}()
 	key, err := boot.Key()
@@ -384,5 +383,5 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		log: log, store: store, conf: conf, resolver: resolver, chreg: chreg, e: e, srv: srv,
 		keeper: keeper, attachments: attachments, blobs: blobs,
 		envSt: envSt, sampler: sampler, egressSvc: egressSvc, mrSvc: mrSvc,
-	}, cleanup, nil
+	}, closeAll, nil
 }

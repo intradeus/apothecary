@@ -75,7 +75,7 @@ func (s *Service) UpdateTicket(ctx context.Context, id string, upd Ticket) (Tick
 	// fields must not silently erase where the ticket came from.
 	upd.SourceID, upd.SourceKind = cur.SourceID, cur.SourceKind
 	upd.SourceKey, upd.SourceURL = cur.SourceKey, cur.SourceURL
-	upd.SourceType = cur.SourceType
+	upd.SourceType, upd.AutomationID = cur.SourceType, cur.AutomationID
 	if err := s.validateTicket(ctx, &upd); err != nil {
 		return Ticket{}, err
 	}

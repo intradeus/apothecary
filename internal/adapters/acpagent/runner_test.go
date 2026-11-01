@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -43,7 +44,14 @@ func build(t *testing.T) (shim, fake string) {
 			{"shim", "apothecary/workspace/shim"},
 			{"fakeacp", "../../workspace/sidecar/testdata/fakeacp"},
 		} {
-			out, err := exec.Command("go", "build", "-o", filepath.Join(buildDir, b[0]), b[1]).CombinedOutput()
+			args := []string{"build", "-o", filepath.Join(buildDir, b[0])}
+			// `task cover:go`: what the real shim runs here counts too. Under `go
+			// test -cover` GOCOVERDIR is the test binary's own, so it is pointed here.
+			if dir := os.Getenv("APOTHECARY_COVERDIR"); dir != "" && b[0] == "shim" {
+				_ = os.Setenv("GOCOVERDIR", dir)
+				args = append(args, "-cover", "-covermode=atomic", "-tags=coverflush")
+			}
+			out, err := exec.Command("go", append(args, b[1])...).CombinedOutput()
 			if err != nil {
 				buildErr = errors.New(string(out))
 				return
@@ -73,7 +81,14 @@ func startSidecar(t *testing.T) *harness {
 	}
 	t.Cleanup(func() {
 		_ = sidecar.New(unixConn(sock)).Stop(context.Background())
-		_ = cmd.Process.Kill()
+		if os.Getenv("APOTHECARY_COVERDIR") != "" {
+			// A clean exit, so it writes its coverage (workspace/shim/coverflush.go).
+			_ = cmd.Process.Signal(syscall.SIGUSR2)
+			kill := time.AfterFunc(3*time.Second, func() { _ = cmd.Process.Kill() })
+			defer kill.Stop()
+		} else {
+			_ = cmd.Process.Kill()
+		}
 		_ = cmd.Wait()
 	})
 	for range 500 {

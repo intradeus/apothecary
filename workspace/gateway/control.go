@@ -48,9 +48,13 @@ func controlToken(file string) (string, error) {
 }
 
 func (g *gateway) serveControl(addr, token string) {
-	srv := &http.Server{Addr: addr, Handler: g.controlHandler(token), ReadHeaderTimeout: 10 * time.Second}
+	ln, err := listenStream("tcp", addr)
+	if err != nil {
+		log.Fatalf("gateway: control API: %v", err)
+	}
+	srv := &http.Server{Handler: g.controlHandler(token), ReadHeaderTimeout: 10 * time.Second}
 	log.Printf("gateway: control API on %s", addr)
-	if err := srv.ListenAndServe(); err != nil {
+	if err := srv.Serve(ln); err != nil {
 		log.Fatalf("gateway: control API: %v", err)
 	}
 }

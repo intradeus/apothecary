@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // SafeName reduces an uploaded filename to a single safe path component,
@@ -31,6 +32,9 @@ func SafeName(name string) string {
 	}
 	if len(name) > 128 {
 		name = name[len(name)-128:] // keep the extension end
+		for !utf8.RuneStart(name[0]) {
+			name = name[1:] // the cut landed inside a character
+		}
 	}
 	return name
 }

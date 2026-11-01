@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/ports/envport"
@@ -117,5 +118,170 @@ func TestSampleOnceWithoutCapability(t *testing.T) {
 	}
 	if got := h.s.Samples("r-nocap"); len(got) != 0 {
 		t.Fatalf("fake has no ResourceSampler, got %d samples", len(got))
+	}
+}
+
+// failResolver fails Resolve for a project.
+type failResolver struct {
+	inner resolution.Resolver
+	fail  string
+}
+
+func (r failResolver) Resolve(ctx context.Context, p string) (*resolution.Resolution, error) {
+	if p == r.fail {
+		return nil, errors.New("project gone")
+	}
+	return r.inner.Resolve(ctx, p)
+}
+
+// A terminal or pending run is not sampled, and its buffer is dropped.
+func TestSampleOnceSkipsAndEvicts(t *testing.T) {
+	h := newFixture()
+	ctx := context.Background()
+	h.res.Envp = samplerEnvp{EnvProvisioner: h.envp, cpu: 10}
+
+	// A live run that gets a sample.
+	liveEnv, _ := h.envp.Provision(ctx, envport.EnvSpec{RunID: "live"})
+	appendRun(t, h, "live", string(liveEnv))
+	// A pending run (created, no env) — skipped.
+	if _, err := h.store.Append(ctx, "pending", &event.RunCreated{TicketTitle: "p", FlowName: "loop", ProjectID: fixtureProject}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.s.SampleOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.s.Samples("live")) != 1 || len(h.s.Samples("pending")) != 0 {
+		t.Fatalf("live=%d pending=%d", len(h.s.Samples("live")), len(h.s.Samples("pending")))
+	}
+
+	// The run completes: next pass drops its buffer (graphs are feedback, not history).
+	if _, err := h.store.Append(ctx, "live", &event.RunCompleted{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.s.SampleOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.s.Samples("live"); len(got) != 0 {
+		t.Fatalf("a completed run kept %d samples", len(got))
+	}
+}
+
+func TestSampleOnceResolveFailureIsAGap(t *testing.T) {
+	h := newFixture()
+	ctx := context.Background()
+	h.res.Envp = samplerEnvp{EnvProvisioner: h.envp, cpu: 10}
+	env, _ := h.envp.Provision(ctx, envport.EnvSpec{RunID: "r1"})
+	appendRun(t, h, "r1", string(env))
+	h.s.Resolver = failResolver{inner: h.s.Resolver, fail: fixtureProject}
+	if err := h.s.SampleOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.s.Samples("r1"); len(got) != 0 {
+		t.Fatalf("a failed resolve left %d samples, want a gap", len(got))
+	}
+}
+
+func TestSampleOnceSampleFailureIsAGap(t *testing.T) {
+	h := newFixture()
+	ctx := context.Background()
+	h.res.Envp = samplerEnvp{EnvProvisioner: h.envp, fail: true}
+	env, _ := h.envp.Provision(ctx, envport.EnvSpec{RunID: "r1"})
+	appendRun(t, h, "r1", string(env))
+	if err := h.s.SampleOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.s.Samples("r1"); len(got) != 0 {
+		t.Fatalf("a failed sample left %d samples", len(got))
+	}
+}
+
+func TestSampleWindowIsBounded(t *testing.T) {
+	h := newFixture()
+	ctx := context.Background()
+	h.res.Envp = samplerEnvp{EnvProvisioner: h.envp, cpu: 1}
+	env, _ := h.envp.Provision(ctx, envport.EnvSpec{RunID: "r1"})
+	appendRun(t, h, "r1", string(env))
+	for range resourceWindow + 50 {
+		if err := h.s.SampleOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(h.s.Samples("r1")); got != resourceWindow {
+		t.Fatalf("window = %d, want the cap of %d", got, resourceWindow)
+	}
+}
+
+func TestSampleOnceStoreFailure(t *testing.T) {
+	h := newFixture()
+	h.s.Runs = &run.Reader{Store: failAllStore{h.store, errors.New("db down")}}
+	if err := h.s.SampleOnce(context.Background()); err == nil {
+		t.Fatal("a store failure must surface")
+	}
+}
+
+type failAllStore struct {
+	*event.MemStore
+	err error
+}
+
+func (f failAllStore) RunIDs(context.Context) ([]string, error) { return nil, f.err }
+
+func TestRunLoop(t *testing.T) {
+	h := newFixture()
+	ctx := context.Background()
+	h.res.Envp = samplerEnvp{EnvProvisioner: h.envp, cpu: 7}
+	env, _ := h.envp.Provision(ctx, envport.EnvSpec{RunID: "r1"})
+	appendRun(t, h, "r1", string(env))
+	rctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); h.s.Run(rctx, time.Millisecond) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for len(h.s.Samples("r1")) < 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("Run never sampled twice")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+func TestNilClockAndLog(t *testing.T) {
+	s := &Sampler{}
+	if s.now().IsZero() || s.log() == nil {
+		t.Error("nil clock/log must fall back")
+	}
+}
+
+func TestSamplesIsACopy(t *testing.T) {
+	h := newFixture()
+	ctx := context.Background()
+	h.res.Envp = samplerEnvp{EnvProvisioner: h.envp, cpu: 3}
+	env, _ := h.envp.Provision(ctx, envport.EnvSpec{RunID: "r1"})
+	appendRun(t, h, "r1", string(env))
+	if err := h.s.SampleOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	snap := h.s.Samples("r1")
+	snap[0].CPUPerc = 999
+	if h.s.Samples("r1")[0].CPUPerc == 999 {
+		t.Fatal("Samples returned the live buffer")
+	}
+}
+
+func appendRun(t *testing.T, h *fixture, runID, envID string) {
+	t.Helper()
+	for _, p := range []event.Payload{
+		&event.RunCreated{TicketTitle: "t", FlowName: "loop", ProjectID: fixtureProject},
+		&event.EnvRequested{}, &event.EnvReady{EnvID: envID},
+	} {
+		if _, err := h.store.Append(context.Background(), runID, p); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

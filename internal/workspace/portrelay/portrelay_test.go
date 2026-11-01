@@ -2,6 +2,7 @@ package portrelay
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/url"
@@ -259,3 +260,101 @@ func TestCloseRunTearsDownListenersAndConns(t *testing.T) {
 }
 
 var _ envport.PortConn = (*echoConn)(nil)
+
+func TestHostRoutedAndReset(t *testing.T) {
+	m := New("127.0.0.1")
+	if m.HostRouted() {
+		t.Error("a listener-mode manager is not host-routed")
+	}
+	m.RouteByHost("apps.example", "")
+	if !m.HostRouted() || m.scheme != "https" {
+		t.Errorf("default scheme = %q", m.scheme)
+	}
+
+	pc := &nopConn{}
+	u, err := m.Expose("r1", 3000, pc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u == "" {
+		t.Fatal("no url")
+	}
+	if got := m.SavedPorts("r1"); len(got) != 1 || got[0] != 3000 {
+		t.Errorf("SavedPorts = %v", got)
+	}
+	// Reset drops the run's exposures (a rebuild: the old relays are dead).
+	m.Reset("r1")
+	if _, _, _, ok := m.Lookup("3000-" + RunLabel("r1") + ".apps.example"); ok {
+		t.Error("Lookup matched after Reset")
+	}
+	if !pc.closed {
+		t.Error("Reset must close the exposure's conn")
+	}
+}
+
+func TestUrlHostWildcardBinds(t *testing.T) {
+	for _, host := range []string{"0.0.0.0", "::", "[::]"} {
+		if got := New(host).urlHost(); got != "localhost" {
+			t.Errorf("urlHost(%q) = %q, want localhost", host, got)
+		}
+	}
+	if got := New("10.0.0.5").urlHost(); got != "10.0.0.5" {
+		t.Errorf("urlHost = %q", got)
+	}
+}
+
+func TestLookupMalformedHosts(t *testing.T) {
+	m := New("127.0.0.1")
+	// Not host-routed: never matches.
+	if _, _, _, ok := m.Lookup("3000-abc.apps.example"); ok {
+		t.Error("no routing, no match")
+	}
+	m.RouteByHost("apps.example", "https")
+	for _, host := range []string{
+		"outside.other.com",           // wrong domain
+		"a.b.apps.example",            // extra label
+		"noport.apps.example",         // no "-"
+		"xyz-run.apps.example",        // non-numeric port
+		"3000-nosuchrun.apps.example", // nothing exposed
+	} {
+		if _, _, _, ok := m.Lookup(host); ok {
+			t.Errorf("Lookup(%q) matched", host)
+		}
+	}
+}
+
+func TestPersistLoadsSavedAllocations(t *testing.T) {
+	store := newFakeStore()
+	store.rows["r1"] = map[int]int{8080: 41000}
+	m := New("127.0.0.1")
+	if err := m.Persist(store); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.SavedPorts("r1"); len(got) != 1 || got[0] != 8080 {
+		t.Fatalf("SavedPorts = %v", got)
+	}
+}
+
+func TestPersistLoadFailure(t *testing.T) {
+	m := New("127.0.0.1")
+	if err := m.Persist(failLoadStore{}); err == nil {
+		t.Fatal("a load error must fail loud at boot")
+	}
+}
+
+type failLoadStore struct{}
+
+func (failLoadStore) SaveExposedPort(context.Context, string, int, int) error { return nil }
+func (failLoadStore) DeleteExposedPorts(context.Context, string) error        { return nil }
+func (failLoadStore) LoadExposedPorts(context.Context) (map[string]map[int]int, error) {
+	return nil, errors.New("db down")
+}
+
+func TestRunLabel(t *testing.T) {
+	if got := RunLabel("01HXYZABCDEF"); got != "xyzabcdef" && len(got) != 10 {
+		t.Errorf("RunLabel = %q", got)
+	}
+	if got := RunLabel("SHORT"); got != "short" {
+		t.Errorf("RunLabel short = %q", got)
+	}
+}

@@ -8,7 +8,7 @@ import (
 )
 
 func TestEgressAuditUpsertAndQuery(t *testing.T) {
-	s := open(t) // skips without TEST_POSTGRES_DSN
+	s := open(t)
 	ctx := t.Context()
 	now := time.Now().UTC().Truncate(time.Second)
 

@@ -76,13 +76,21 @@ func clientHelloSNI(b []byte) string {
 }
 
 // peekHTTPHost reads (WITHOUT consuming) an HTTP request head and returns the
-// Host header value (no port), or "".
+// Host header value (no port), or "". It waits for the end of the head, not
+// for a full window: a short request's client sends nothing more until it is
+// answered.
 func peekHTTPHost(br *bufio.Reader) string {
-	buf, _ := br.Peek(min(4096, br.Buffered()))
-	if len(buf) == 0 {
-		buf, _ = br.Peek(4096)
+	headEnd := []byte("\r\n\r\n")
+	var buf []byte
+	for !bytes.Contains(buf, headEnd) && len(buf) < 4096 {
+		// One byte past what is here: blocks only until something new arrives.
+		if _, err := br.Peek(len(buf) + 1); err != nil {
+			break
+		}
+		buf, _ = br.Peek(min(4096, br.Buffered()))
 	}
-	i := bytes.Index(buf, []byte("\r\n\r\n"))
+	buf, _ = br.Peek(min(4096, br.Buffered()))
+	i := bytes.Index(buf, headEnd)
 	if i < 0 {
 		i = len(buf)
 	}

@@ -31,14 +31,16 @@ type Attachment struct {
 func (a Attachment) Unclaimed() bool { return a.TicketID == "" && a.RunID == "" }
 
 // AttachmentDB is the metadata persistence port (implemented by pgstore and
-// the in-package Mem). Claims are one-shot: implementations update ONLY rows
-// that are still unclaimed, so an id can never be re-parented.
+// the in-package Mem). Claims are one-shot and the uploader's: implementations
+// update ONLY rows of that user that are still unclaimed, so an id can never
+// be re-parented, nor taken by someone who learned it.
 type AttachmentDB interface {
 	InsertAttachment(ctx context.Context, a Attachment) error
 	GetAttachment(ctx context.Context, id string) (Attachment, error)
-	// ClaimAttachments sets the owner columns on still-unclaimed rows.
-	// Exactly one of ticketID / runID must be non-empty (pingID rides runID).
-	ClaimAttachments(ctx context.Context, ids []string, ticketID, runID, pingID string) error
+	// ClaimAttachments sets the owner columns on userID's still-unclaimed
+	// rows. Exactly one of ticketID / runID must be non-empty (pingID rides
+	// runID).
+	ClaimAttachments(ctx context.Context, userID string, ids []string, ticketID, runID, pingID string) error
 	AttachmentsForTicket(ctx context.Context, ticketID string) ([]Attachment, error)
 	AttachmentsForRun(ctx context.Context, runID string) ([]Attachment, error)
 	AttachmentsForPing(ctx context.Context, pingID string) ([]Attachment, error)
@@ -112,22 +114,23 @@ func (s *Attachments) Save(ctx context.Context, userID, filename, declaredMime s
 	return a, nil
 }
 
-// ClaimForTicket binds still-unclaimed uploads to a ticket. Already-claimed
-// ids are a no-op, so re-sending a full list on update is safe.
-func (s *Attachments) ClaimForTicket(ctx context.Context, ids []string, ticketID string) error {
+// ClaimForTicket binds userID's still-unclaimed uploads to a ticket.
+// Already-claimed ids are a no-op, so re-sending a full list on update is
+// safe; so is someone else's id, which stays theirs.
+func (s *Attachments) ClaimForTicket(ctx context.Context, userID string, ids []string, ticketID string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	return s.db.ClaimAttachments(ctx, ids, ticketID, "", "")
+	return s.db.ClaimAttachments(ctx, userID, ids, ticketID, "", "")
 }
 
-// ClaimForRun binds still-unclaimed uploads to a run (goal files) or, with a
-// pingID, to an answer within that run.
-func (s *Attachments) ClaimForRun(ctx context.Context, ids []string, runID, pingID string) error {
+// ClaimForRun binds userID's still-unclaimed uploads to a run (goal files) or,
+// with a pingID, to an answer within that run.
+func (s *Attachments) ClaimForRun(ctx context.Context, userID string, ids []string, runID, pingID string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	return s.db.ClaimAttachments(ctx, ids, "", runID, pingID)
+	return s.db.ClaimAttachments(ctx, userID, ids, "", runID, pingID)
 }
 
 func (s *Attachments) Get(ctx context.Context, id string) (Attachment, error) {

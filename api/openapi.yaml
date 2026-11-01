@@ -8220,7 +8220,7 @@ paths:
         - egress
   /api/runs/{id}/events:
     get:
-      description: Replays from after_seq, then streams live. The stream ends when the run reaches a terminal state.
+      description: Replays from after_seq, then streams live. The stream ends at the event that puts the run in a terminal state; a connection resuming past it stays open for what comes later (a retry, the workspace's teardown).
       operationId: streamRunEvents
       parameters:
         - in: path
