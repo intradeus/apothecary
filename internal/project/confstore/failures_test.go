@@ -1145,6 +1145,26 @@ func TestTicketsByOwner(t *testing.T) {
 	wantErr(t, "missing ticket", svc.DeleteTicket(ctx, "missing"), ErrNotFound)
 }
 
+// A tracker's text arrives as it is, and one issue Postgres refuses would fail
+// its automation on every pass: it is stored clean, whoever created it.
+func TestTicketTextIsStoredClean(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newSvc(t)
+	p := seedProject(t, svc)
+	tk, err := svc.CreateTicket(ctx, Ticket{ProjectID: p.ID, Title: "t\x00", Goal: "g\xff", SourceKey: "K\x00"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.GetTicket(ctx, tk.ID)
+	if err != nil || got.Title != "t\uFFFD" || got.Goal != "g\uFFFD" || got.SourceKey != "K\uFFFD" {
+		t.Errorf("ticket = %+v, %v", got, err)
+	}
+	// A title that was nothing but NUL is still a title: not silently empty.
+	if _, err := svc.CreateTicket(ctx, Ticket{ProjectID: p.ID, Title: "\x00"}); err != nil {
+		t.Errorf("title of a NUL = %v", err)
+	}
+}
+
 // An edit form that does not know about provenance must not erase it, and an
 // automation's mark is how its next poll knows the ticket for its own.
 func TestUpdateTicketKeepsTheAutomation(t *testing.T) {

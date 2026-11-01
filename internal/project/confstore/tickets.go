@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"apothecary/internal/ports/trackerport"
+	"apothecary/internal/run/event"
 )
 
 // Ticket is a first-class unit of work that owns many runs (each run is one
@@ -103,6 +104,9 @@ func (s *Service) DeleteTicket(ctx context.Context, id string) error {
 }
 
 func (s *Service) validateTicket(ctx context.Context, t *Ticket) error {
+	// A person's text is refused at the API; a tracker's isn't theirs to fix,
+	// and one issue with a NUL would fail its automation on every pass.
+	event.CleanValue(t)
 	if strings.TrimSpace(t.Title) == "" {
 		return invalidf("ticket: title is required")
 	}

@@ -29,6 +29,7 @@ import (
 	"apothecary/internal/engine"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/run"
+	"apothecary/internal/run/event"
 )
 
 // Access is how a route is reached.
@@ -77,6 +78,9 @@ const sessionCookie = "apothecary_session"
 // writes (or 403), and the ownership check on the path's resource (or 404).
 func (s *Server) guard(rt Route) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if refuseBadText(w, r) {
+			return
+		}
 		switch rt.Auth {
 		case AccessPublic:
 			if !s.sameOrigin(w, r) {
@@ -532,7 +536,7 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusTooManyRequests, "too many failed attempts; try again later")
 		return
 	}
-	u, err := s.Auth.Login(r.Context(), body.Method, body.Login, body.Proof)
+	u, raw, err := s.Auth.SignIn(r.Context(), body.Method, body.Login, body.Proof, event.CleanText(r.UserAgent()))
 	if err != nil {
 		if errors.Is(err, auth.ErrUnauthorized) {
 			s.logins.failed(k, now)
@@ -541,15 +545,20 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logins.reset(k)
-	s.signIn(w, r, u, http.StatusOK)
+	s.signedIn(w, r, u, raw, http.StatusOK)
 }
 
+// signIn starts a session for an account that needs no proof: it was just made.
 func (s *Server) signIn(w http.ResponseWriter, r *http.Request, u auth.User, status int) {
-	raw, _, err := s.Auth.NewSession(r.Context(), u.ID, r.UserAgent())
+	raw, _, err := s.Auth.NewSession(r.Context(), u.ID, event.CleanText(r.UserAgent()))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.signedIn(w, r, u, raw, status)
+}
+
+func (s *Server) signedIn(w http.ResponseWriter, r *http.Request, u auth.User, raw string, status int) {
 	s.setSession(w, r, raw)
 	me, err := s.me(r.Context(), u)
 	if err != nil {
@@ -626,7 +635,7 @@ func (s *Server) putMyPassword(w http.ResponseWriter, r *http.Request) {
 	// a fresh one so the person is not signed out by their own change.
 	p, _ := auth.PrincipalFrom(r.Context())
 	if p.ViaCookie() {
-		if raw, _, err := s.Auth.NewSession(r.Context(), p.User.ID, r.UserAgent()); err == nil {
+		if raw, _, err := s.Auth.NewSession(r.Context(), p.User.ID, event.CleanText(r.UserAgent())); err == nil {
 			s.setSession(w, r, raw)
 		}
 	}

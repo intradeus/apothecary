@@ -9,7 +9,9 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"apothecary/internal/adapters/pgstore/pgtest"
+	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/egressport"
+	"apothecary/internal/project/confstore"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 )
@@ -706,5 +708,25 @@ func TestCleanedPayloadsAreStorable(t *testing.T) {
 	}
 	if tool, ok := evs[3].Payload.(*event.AgentTool); !ok || tool.Output != "bad�text�" {
 		t.Errorf("tool = %+v", evs[3].Payload)
+	}
+}
+
+// What the ticket path leaves is what the tickets table takes.
+func TestTicketWithBinaryTextIsStored(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	seedIntegration(t, s, "i1", "u1")
+	seedProject(t, s, mkProject("p1", "web", "u1", "i1"))
+	key, err := secrets.ParseKey(secrets.GenerateKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := confstore.New(s, key)
+	tk, err := svc.CreateTicket(ctx, confstore.Ticket{ProjectID: "p1", Title: "t\x00", Goal: "g\xff"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read, err := svc.GetTicket(ctx, tk.ID); err != nil || read.Title != "t\uFFFD" || read.Goal != "g\uFFFD" {
+		t.Errorf("ticket = %+v, %v", read, err)
 	}
 }

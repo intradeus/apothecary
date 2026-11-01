@@ -15,9 +15,14 @@ import (
 // fields: a field added later is covered.
 func Clean(ps ...Payload) {
 	for _, p := range ps {
-		if v := reflect.ValueOf(p); v.Kind() == reflect.Pointer && !v.IsNil() {
-			v.Elem().Set(cleaned(v.Elem()))
-		}
+		CleanValue(p)
+	}
+}
+
+// CleanValue is Clean for anything else headed for the store, through a pointer.
+func CleanValue(ptr any) {
+	if v := reflect.ValueOf(ptr); v.Kind() == reflect.Pointer && !v.IsNil() {
+		v.Elem().Set(cleaned(v.Elem()))
 	}
 }
 

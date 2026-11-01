@@ -11,6 +11,12 @@ import (
 
 const pw = "correct horse"
 
+// signIn is SignIn for a test about the proof, not the session.
+func signIn(s *Service, ctx context.Context, kind, who, proof string) (User, error) {
+	u, _, err := s.SignIn(ctx, kind, who, proof, "tests")
+	return u, err
+}
+
 func newService(t *testing.T) (*Service, *Mem, *time.Time) {
 	t.Helper()
 	mem := NewMem()
@@ -188,19 +194,19 @@ func TestDisableTakesCredentialsWithIt(t *testing.T) {
 	if _, err := s.AuthenticateSession(ctx, otherRaw); err != nil {
 		t.Errorf("someone else's session = %v", err)
 	}
-	if _, err := s.Login(ctx, KindPassword, "lu", pw); !errors.Is(err, ErrDisabled) {
+	if _, err := signIn(s, ctx, KindPassword, "lu", pw); !errors.Is(err, ErrDisabled) {
 		t.Errorf("login = %v", err)
 	}
 	// The wrong password reads the same as ever: a disabled account is not
 	// confirmed to someone who cannot prove it.
-	if _, err := s.Login(ctx, KindPassword, "lu", "wrong one"); !errors.Is(err, ErrUnauthorized) {
+	if _, err := signIn(s, ctx, KindPassword, "lu", "wrong one"); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("wrong password on a disabled account = %v", err)
 	}
 	got, err = s.SetDisabled(ctx, u.ID, false)
 	if err != nil || got.Disabled() {
 		t.Fatalf("enable = %+v, %v", got, err)
 	}
-	if _, err := s.Login(ctx, KindPassword, "lu", pw); err != nil {
+	if _, err := signIn(s, ctx, KindPassword, "lu", pw); err != nil {
 		t.Errorf("login after enable = %v", err)
 	}
 }
@@ -219,13 +225,13 @@ func TestLogin(t *testing.T) {
 		"wrong password":  {KindPassword, "lu", "wrong one", ErrUnauthorized},
 		"empty password":  {KindPassword, "lu", "", ErrUnauthorized},
 	} {
-		if _, err := s.Login(ctx, c.kind, c.login, c.proof); !errors.Is(err, c.want) {
+		if _, err := signIn(s, ctx, c.kind, c.login, c.proof); !errors.Is(err, c.want) {
 			t.Errorf("%s = %v, want %v", name, err, c.want)
 		}
 	}
 	*now = now.Add(time.Minute)
 	for _, login := range []string{"lu", "LU", "  lu  ", "lu@example.test", "LU@EXAMPLE.TEST"} {
-		got, err := s.Login(ctx, KindPassword, login, pw)
+		got, err := signIn(s, ctx, KindPassword, login, pw)
 		if err != nil || got.ID != u.ID {
 			t.Errorf("login %q = %+v, %v", login, got, err)
 		}
@@ -239,7 +245,7 @@ func TestLogin(t *testing.T) {
 	if err := mem.DeleteMethod(ctx, m.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Login(ctx, KindPassword, "lu", pw); !errors.Is(err, ErrUnauthorized) {
+	if _, err := signIn(s, ctx, KindPassword, "lu", pw); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("no password method = %v", err)
 	}
 }
@@ -355,9 +361,9 @@ func TestStoreOutagesPropagate(t *testing.T) {
 			t.Errorf("%s = %v, want the outage", name, err)
 		}
 	}
-	_, err = with(failDB{login: boom}).Login(ctx, KindPassword, "lu", pw)
+	_, err = signIn(with(failDB{login: boom}), ctx, KindPassword, "lu", pw)
 	check("login lookup", err)
-	_, err = with(failDB{method: boom}).Login(ctx, KindPassword, "lu", pw)
+	_, err = signIn(with(failDB{method: boom}), ctx, KindPassword, "lu", pw)
 	check("login method", err)
 	_, err = with(failDB{session: boom}).AuthenticateSession(ctx, raw)
 	check("session lookup", err)
@@ -425,10 +431,10 @@ func TestSetPassword(t *testing.T) {
 	if _, err := s.AuthenticateSession(ctx, raw); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("session after a reset = %v", err)
 	}
-	if _, err := s.Login(ctx, KindPassword, "lu", pw); !errors.Is(err, ErrUnauthorized) {
+	if _, err := signIn(s, ctx, KindPassword, "lu", pw); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("old password = %v", err)
 	}
-	if _, err := s.Login(ctx, KindPassword, "lu", "a brand new one"); err != nil {
+	if _, err := signIn(s, ctx, KindPassword, "lu", "a brand new one"); err != nil {
 		t.Errorf("new password = %v", err)
 	}
 	m, err := mem.GetMethod(ctx, u.ID, KindPassword)
@@ -443,7 +449,7 @@ func TestSetPassword(t *testing.T) {
 	if err := s.SetPassword(ctx, u.ID, pw); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Login(ctx, KindPassword, "lu", pw); err != nil {
+	if _, err := signIn(s, ctx, KindPassword, "lu", pw); err != nil {
 		t.Errorf("first password = %v", err)
 	}
 }
@@ -455,13 +461,13 @@ func TestChangePassword(t *testing.T) {
 	if err := s.ChangePassword(ctx, u.ID, "wrong one", "a brand new one"); !errors.Is(err, ErrInvalid) {
 		t.Errorf("wrong current = %v", err)
 	}
-	if _, err := s.Login(ctx, KindPassword, "lu", pw); err != nil {
+	if _, err := signIn(s, ctx, KindPassword, "lu", pw); err != nil {
 		t.Errorf("a refused change took effect: %v", err)
 	}
 	if err := s.ChangePassword(ctx, u.ID, pw, "a brand new one"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Login(ctx, KindPassword, "lu", "a brand new one"); err != nil {
+	if _, err := signIn(s, ctx, KindPassword, "lu", "a brand new one"); err != nil {
 		t.Errorf("after the change = %v", err)
 	}
 }
@@ -478,7 +484,7 @@ func TestListMethodsHidesSecrets(t *testing.T) {
 		t.Error("the password hash left the service")
 	}
 	// The stored row still has it: the strip is on the copy.
-	if _, err := s.Login(ctx, KindPassword, "lu", pw); err != nil {
+	if _, err := signIn(s, ctx, KindPassword, "lu", pw); err != nil {
 		t.Errorf("login after a list = %v", err)
 	}
 }
@@ -738,17 +744,66 @@ func TestALoginCannotUndoAPasswordReset(t *testing.T) {
 		}
 	}})
 	s.now = func() time.Time { return *now }
-	if _, err := s.Login(ctx, KindPassword, "lu", pw); err != nil {
+	if _, err := signIn(s, ctx, KindPassword, "lu", pw); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("the login that raced = %v", err)
 	}
-	if _, err := admin.Login(ctx, KindPassword, "lu", pw); !errors.Is(err, ErrUnauthorized) {
+	if _, err := signIn(admin, ctx, KindPassword, "lu", pw); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("the old password after the reset = %v", err)
 	}
-	if _, err := admin.Login(ctx, KindPassword, "lu", fresh); err != nil {
+	if _, err := signIn(admin, ctx, KindPassword, "lu", fresh); err != nil {
 		t.Errorf("the new password = %v", err)
 	}
 	if m, err := mem.GetMethod(ctx, u.ID, KindPassword); err != nil || m.LastUsedAt == nil {
 		t.Errorf("the use went unrecorded: %+v, %v", m, err)
+	}
+}
+
+// resetOnSession sets the password in the moment between a login's proof and
+// its session, the one window TestALoginCannotUndoAPasswordReset does not reach.
+type resetOnSession struct {
+	DB
+	reset   func()
+	session string
+}
+
+func (r *resetOnSession) CreateSession(ctx context.Context, se Session) error {
+	if r.reset != nil {
+		r.reset()
+		r.reset = nil
+	}
+	r.session = se.ID
+	return r.DB.CreateSession(ctx, se)
+}
+
+// A reset signs out every session that exists. One that starts a moment later
+// on the old password must not be the way back in.
+func TestASessionCannotOutliveAReset(t *testing.T) {
+	admin, mem, now := newService(t)
+	ctx := context.Background()
+	u := user(t, admin, "lu", false)
+	db := &resetOnSession{DB: mem, reset: func() {
+		if err := admin.SetPassword(ctx, u.ID, "a brand new password"); err != nil {
+			t.Error(err)
+		}
+	}}
+	s := New(db)
+	s.now = func() time.Time { return *now }
+	if _, raw, err := s.SignIn(ctx, KindPassword, "lu", pw, "tests"); !errors.Is(err, ErrUnauthorized) || raw != "" {
+		t.Fatalf("the sign-in that raced = %q, %v", raw, err)
+	}
+	if db.session == "" {
+		t.Fatal("no session was attempted: this test proves nothing")
+	}
+	if got, err := mem.GetSession(ctx, db.session); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the session survived the reset: %+v, %v", got, err)
+	}
+	// With nothing racing, a sign-in works and is what it says.
+	_, raw, err := admin.SignIn(ctx, KindPassword, "lu", "a brand new password", "tests")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, err := admin.AuthenticateSession(ctx, raw); err != nil || p.User.ID != u.ID {
+		t.Errorf("session = %+v, %v", p, err)
 	}
 }
 

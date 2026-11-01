@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -306,39 +307,57 @@ func (s *Service) ListMethods(ctx context.Context, userID string) ([]Method, err
 
 // --- login & sessions ---------------------------------------------------------
 
-// Login verifies a proof of the given kind for the account named by login
-// (handle or email). A wrong login and a wrong proof fail the same way.
-func (s *Service) Login(ctx context.Context, kind, login, proof string) (User, error) {
+// SignIn verifies a proof of the given kind for the account named by login
+// (handle or email) and starts a session on it, returning its cookie value. A
+// wrong login and a wrong proof fail the same way.
+//
+// The password can change while the proof is verified, and that signs out only
+// the sessions that exist by then. So this looks again once its own does: a
+// reset writes the secret first and signs out second, which means that in any
+// order the two land, one of them sees the other.
+func (s *Service) SignIn(ctx context.Context, kind, login, proof, userAgent string) (User, string, error) {
 	v, ok := s.verifiers[kind]
 	if !ok {
-		return User{}, invalidf("unknown authentication method %q", kind)
+		return User{}, "", invalidf("unknown authentication method %q", kind)
 	}
 	u, err := s.db.GetUserByLogin(ctx, strings.ToLower(strings.TrimSpace(login)))
 	if errors.Is(err, ErrNotFound) {
 		// Burn the same time a real verification would, so a missing
 		// account is not distinguishable by latency.
 		_ = VerifyPassword(dummyHash, proof)
-		return User{}, ErrUnauthorized
+		return User{}, "", ErrUnauthorized
 	}
 	if err != nil {
-		return User{}, err
+		return User{}, "", err
 	}
 	m, err := s.db.GetMethod(ctx, u.ID, kind)
 	if errors.Is(err, ErrNotFound) {
 		_ = VerifyPassword(dummyHash, proof)
-		return User{}, ErrUnauthorized
+		return User{}, "", ErrUnauthorized
 	}
 	if err != nil {
-		return User{}, err
+		return User{}, "", err
 	}
 	if err := v.Verify(m, proof); err != nil {
-		return User{}, ErrUnauthorized
+		return User{}, "", ErrUnauthorized
 	}
 	if u.Disabled() {
-		return User{}, ErrDisabled
+		return User{}, "", ErrDisabled
 	}
 	_ = s.db.TouchMethod(ctx, m.ID, s.now().UTC())
-	return u, nil
+	raw, sess, err := s.NewSession(ctx, u.ID, userAgent)
+	if err != nil {
+		return User{}, "", err
+	}
+	cur, err := s.db.GetMethod(ctx, u.ID, kind)
+	if err == nil && bytes.Equal(cur.Secret, m.Secret) {
+		return u, raw, nil
+	}
+	_ = s.db.DeleteSession(ctx, sess.ID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return User{}, "", err
+	}
+	return User{}, "", ErrUnauthorized
 }
 
 // dummyHash is verified against when there is no account, to equalise

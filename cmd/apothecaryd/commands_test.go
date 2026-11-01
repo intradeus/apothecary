@@ -150,14 +150,14 @@ func TestUserCommands(t *testing.T) {
 	if _, err := svc.AuthenticateSession(ctx, raw); !errors.Is(err, auth.ErrUnauthorized) {
 		t.Errorf("session after a reset = %v", err)
 	}
-	if _, err := svc.Login(ctx, auth.KindPassword, "lu", "a new password"); err != nil {
+	if _, _, err := svc.SignIn(ctx, auth.KindPassword, "lu", "a new password", "tests"); err != nil {
 		t.Errorf("login with the new password = %v", err)
 	}
 
 	// By prompt, from a pipe, and by email.
 	feedStdin(t, "piped password\n")
 	stdout(t, func() { mainWith("user", "reset-password", "lu@example.test") })
-	if _, err := svc.Login(ctx, auth.KindPassword, "lu", "piped password"); err != nil {
+	if _, _, err := svc.SignIn(ctx, auth.KindPassword, "lu", "piped password", "tests"); err != nil {
 		t.Errorf("login with the piped password = %v", err)
 	}
 
