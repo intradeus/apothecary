@@ -33,7 +33,7 @@ import (
 
 const maxControlBody = 4 << 20
 
-func controlToken(file string) (string, error) {
+func controlToken(file, env string) (string, error) {
 	if file != "" {
 		b, err := os.ReadFile(file)
 		if err != nil {
@@ -41,7 +41,7 @@ func controlToken(file string) (string, error) {
 		}
 		return strings.TrimSpace(string(b)), nil
 	}
-	if t := strings.TrimSpace(os.Getenv("APO_GW_TOKEN")); t != "" {
+	if t := strings.TrimSpace(env); t != "" {
 		return t, nil
 	}
 	return "", errors.New("no token: set --control-token-file or APO_GW_TOKEN")

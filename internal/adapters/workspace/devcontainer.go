@@ -641,7 +641,7 @@ func (a *Adapter) ensureSrc(ctx context.Context, name string, spec envport.EnvSp
 func credentialLine(repoURL, user, pass string) (string, error) {
 	u, err := url.Parse(repoURL)
 	if err != nil || u.Host == "" {
-		return "", fmt.Errorf("cannot parse repo url %q", repoURL)
+		return "", fmt.Errorf("cannot parse the repository URL")
 	}
 	if user == "" {
 		user = "oauth2"
@@ -857,13 +857,21 @@ func (a *Adapter) Exec(ctx context.Context, env envport.EnvID, cmd envport.Comma
 		script = fmt.Sprintf("cd \"$HOME/%s\" || exit 90\n%s", cmd.Dir, cmd.Script)
 	}
 	script = shimPathPrelude + script
-	tee := a.openExecLog(env, cmd)
+	var tee *os.File
+	if !cmd.NoLog {
+		tee = a.openExecLog(env, cmd)
+	}
 	if tee != nil {
 		defer tee.Close()
 	}
 	var teeW io.Writer
+	var scrubbed *scrubLines
 	if tee != nil {
 		teeW = tee
+		if cmd.Scrub != nil {
+			scrubbed = &scrubLines{w: tee, scrub: cmd.Scrub}
+			teeW = scrubbed
+		}
 	}
 	var remoteEnv []string
 	if cmd.Marker != "" {
@@ -874,6 +882,9 @@ func (a *Adapter) Exec(ctx context.Context, env envport.EnvID, cmd envport.Comma
 	}
 	stdout, stderr, code, err := a.inWorkspace(ctx, string(env), remoteEnv,
 		[]string{"bash", "-eo", "pipefail", "-s"}, []byte(script), teeW)
+	if scrubbed != nil {
+		scrubbed.flush()
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return envport.ExecResult{}, ctx.Err()
@@ -1245,7 +1256,7 @@ func (a *Adapter) openProvisionLog(name string) *os.File {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "exec.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(filepath.Join(dir, "exec.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil
 	}
@@ -1262,12 +1273,50 @@ func (a *Adapter) openExecLog(env envport.EnvID, cmd envport.Command) *os.File {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "exec.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(filepath.Join(dir, "exec.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil
 	}
 	fmt.Fprintf(f, "--- %s [dir=%s]\n%s\n", time.Now().UTC().Format(time.RFC3339), cmd.Dir, cmd.Script)
 	return f
+}
+
+// scrubLines writes whole lines through scrub; a partial last line is held
+// until its newline or flush. stdout and stderr may write concurrently.
+type scrubLines struct {
+	mu    sync.Mutex
+	w     io.Writer
+	scrub func(string) string
+	buf   []byte
+}
+
+// scrubHoldMax bounds what is held waiting for a newline; past it the held
+// text is scrubbed and written whole, never cut inside.
+const scrubHoldMax = 64 << 10
+
+func (s *scrubLines) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.buf = append(s.buf, p...)
+	if i := bytes.LastIndexByte(s.buf, '\n'); i >= 0 {
+		_, _ = io.WriteString(s.w, s.scrub(string(s.buf[:i+1])))
+		s.buf = append(s.buf[:0], s.buf[i+1:]...)
+	}
+	if len(s.buf) > scrubHoldMax {
+		_, _ = io.WriteString(s.w, s.scrub(string(s.buf)))
+		s.buf = s.buf[:0]
+	}
+	return len(p), nil
+}
+
+// flush writes what is held, scrubbed.
+func (s *scrubLines) flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.buf) > 0 {
+		_, _ = io.WriteString(s.w, s.scrub(string(s.buf)))
+		s.buf = s.buf[:0]
+	}
 }
 
 // TailExecLog implements the optional envport.ExecLogTailer capability.

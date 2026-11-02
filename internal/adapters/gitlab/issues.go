@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/platform/secrets"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
@@ -427,7 +428,7 @@ func (s *Issues) Types(context.Context) ([]trackerport.RemoteType, error) {
 func (s *Issues) OpenAttachment(ctx context.Context, att trackerport.SourceAttachment) (io.ReadCloser, error) {
 	u, err := url.Parse(att.URL)
 	if err != nil {
-		return nil, fmt.Errorf("gitlab: attachment %s: %w", att.Filename, err)
+		return nil, fmt.Errorf("gitlab: attachment %s: %w", att.Filename, secrets.ScrubURL(err))
 	}
 	base, err := url.Parse(s.a.cfg.BaseURL)
 	if err != nil {
@@ -439,12 +440,12 @@ func (s *Issues) OpenAttachment(ctx context.Context, att trackerport.SourceAttac
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, err
+		return nil, secrets.ScrubURL(err)
 	}
 	req.Header.Set("PRIVATE-TOKEN", s.a.cfg.Token)
 	resp, err := s.a.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, secrets.ScrubURL(err)
 	}
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))

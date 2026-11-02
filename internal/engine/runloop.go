@@ -162,7 +162,8 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 	}
 
 	e.mu.Lock()
-	e.tokens[runID] = e.newID()
+	tok := e.newID()
+	e.tokens[runID] = tok
 	// Re-register open pings so answers can still be delivered after a restart.
 	for _, op := range rs.OpenPings {
 		if _, ok := e.pings[op.PingID]; !ok {
@@ -176,6 +177,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		}
 	}
 	e.mu.Unlock()
+	x.redact.Add(tok, "run-token")
 
 	if err := x.beginRun(); err != nil {
 		x.exit(err)
@@ -341,7 +343,7 @@ func (x *exec) exit(cause error) {
 	case errors.Is(cause, errShutdown), cause == nil:
 	default:
 		x.e.log.ErrorContext(x.bg, "run loop error; run left non-terminal for recovery",
-			logs.RunID, x.rs.RunID, "err", cause)
+			logs.RunID, x.rs.RunID, "err", x.redact.Scrub(cause.Error()))
 	}
 }
 

@@ -398,7 +398,7 @@ func (a *Adapter) StartEditor(ctx context.Context, env envport.EnvID, port int, 
 	case codeServerMissingExit:
 		return fmt.Errorf("open editor in %s: the browser editor needs a glibc-based workspace image (the tools bundle has no code-server build for musl)", name)
 	default:
-		return fmt.Errorf("start code-server in %s: exit %d: %s", name, res.ExitCode, shell.Tail(res.Output, 1024))
+		return fmt.Errorf("start code-server in %s: exit %d (its output is in the workspace log)", name, res.ExitCode)
 	}
 }
 
@@ -614,7 +614,7 @@ func (a *Adapter) Sidecar(ctx context.Context, env envport.EnvID) (envport.PortC
 		return nil, err
 	}
 	if res.ExitCode != 0 {
-		return nil, fmt.Errorf("start sidecar in %s: exit %d: %s", env, res.ExitCode, shell.Tail(res.Output, 512))
+		return nil, fmt.Errorf("start sidecar in %s: exit %d (its output is in the workspace log)", env, res.ExitCode)
 	}
 	for range 50 {
 		if sidecarUp(ctx, conn) {

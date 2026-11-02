@@ -446,7 +446,7 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 		// failed before saying anything, the question goes to a fresh
 		// session instead, once. One that failed mid-answer keeps its error.
 		if err != nil && ctx.Err() == nil && silent && res.TurnsUsed == 0 {
-			svc.log().Info("ask: the pane's session is gone; starting a fresh one", logs.RunID, runID, "session", th.SessionID, "err", err)
+			svc.log().Info("ask: the pane's session is gone; starting a fresh one", logs.RunID, runID, "session", th.SessionID, "err", red.Scrub(err.Error()))
 			th.SessionID, in.Model = "", ""
 			res, err = runner.Run(ctx, envport.EnvID(s.v.EnvID), spec, in)
 		}

@@ -30,6 +30,22 @@ func TestSendOmitsWhatIsNotThere(t *testing.T) {
 	}
 }
 
+// A malformed stored webhook URL is the credential: the error that gets
+// logged must not quote it.
+func TestSendErrorNeverQuotesTheWebhookURL(t *testing.T) {
+	ch, err := New(Config{WebhookURL: "https://hooks.slack.com/services/T0/B0/SECRETPART\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ch.Send(context.Background(), notifyport.Notification{Title: "t"})
+	if err == nil {
+		t.Fatal("want an error for a malformed webhook URL")
+	}
+	if strings.Contains(err.Error(), "SECRETPART") {
+		t.Errorf("error quotes the webhook URL: %v", err)
+	}
+}
+
 // A link cannot break out of its <url|label> with a > of its own.
 func TestSendEscapesTheURL(t *testing.T) {
 	var body map[string]any

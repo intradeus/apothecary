@@ -1219,6 +1219,22 @@ func TestRedirectLoopStops(t *testing.T) {
 	}
 }
 
+// A failed hop to object storage must not quote its pre-signed URL: the
+// signature in it is a credential, and the error goes to the log.
+func TestOpenAttachmentErrorNeverQuotesTheRedirectTarget(t *testing.T) {
+	home := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://127.0.0.1:1/media?token=SIGNED-SECRET", http.StatusFound)
+	}))
+	defer home.Close()
+	_, err := issuesFor(home).OpenAttachment(context.Background(), trackerport.SourceAttachment{Filename: "a.txt", URL: home.URL + "/x"})
+	if err == nil {
+		t.Fatal("want an error for an unreachable redirect target")
+	}
+	if strings.Contains(err.Error(), "SIGNED-SECRET") {
+		t.Errorf("error quotes the redirect target: %v", err)
+	}
+}
+
 func TestIssuesTransitionEdges(t *testing.T) {
 	ctx := context.Background()
 	var events []any

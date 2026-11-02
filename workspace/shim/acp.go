@@ -40,7 +40,9 @@ type rpcError struct {
 
 func (e *rpcError) Error() string {
 	if len(e.Data) > 0 && string(e.Data) != "null" {
-		return fmt.Sprintf("%s (%d): %s", e.Message, e.Code, tailStr(string(e.Data), 300))
+		if data := tailStr(string(e.Data), 300); data != "" {
+			return fmt.Sprintf("%s (%d): %s", e.Message, e.Code, data)
+		}
 	}
 	return fmt.Sprintf("%s (%d)", e.Message, e.Code)
 }
@@ -562,7 +564,9 @@ func (h *agentHost) start(req startReq) (*agentProc, error) {
 
 func stderrHint(t *tailBuffer) string {
 	if s := strings.TrimSpace(t.String()); s != "" {
-		return "\n" + tailStr(s, 2000)
+		if tail := tailStr(s, 2000); tail != "" {
+			return "\n" + tail
+		}
 	}
 	return ""
 }
@@ -805,7 +809,10 @@ func (h *agentHost) session(req sessionReq) (sessionResp, error) {
 			SessionID string `json:"sessionId"`
 		}
 		if err := json.Unmarshal(raw, &nr); err != nil || nr.SessionID == "" {
-			return sessionResp{}, fmt.Errorf("session/new: no sessionId in %s", tailStr(string(raw), 300))
+			if tail := tailStr(string(raw), 300); tail != "" {
+				return sessionResp{}, fmt.Errorf("session/new: no sessionId in %s", tail)
+			}
+			return sessionResp{}, fmt.Errorf("session/new: no sessionId in the agent's answer")
 		}
 		sid = nr.SessionID
 		h.mu.Lock()
@@ -1383,11 +1390,22 @@ func truncate(s string, n int) string {
 	return s[:half] + fmt.Sprintf("\n… [%d bytes elided] …\n", len(s)-n) + s[len(s)-half:]
 }
 
+// tailStr is the last n bytes of s, starting at a line: a cut must not keep
+// the tail of a token, which the engine's redactor could no longer recognise
+// (a token never spans lines). "" when those bytes hold no line start.
 func tailStr(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[len(s)-n:]
+	return fromLineStart(s[len(s)-n:])
+}
+
+// fromLineStart is what follows the first newline in a cut text, or "".
+func fromLineStart(t string) string {
+	if i := strings.IndexByte(t, '\n'); i >= 0 {
+		return t[i+1:]
+	}
+	return ""
 }
 
 func truncList(xs []string, n int) []string {
@@ -1398,12 +1416,14 @@ func truncList(xs []string, n int) []string {
 }
 
 // tailBuffer keeps the last n bytes written to it (the agent's stderr, shown
-// when it dies so the failure explains itself).
+// when it dies so the failure explains itself). Once bytes were dropped, it
+// shows only what follows the first kept newline, like tailStr.
 type tailBuffer struct {
-	mu    sync.Mutex
-	n     int
-	buf   []byte
-	total int64 // bytes ever written: a mark for "what came after"
+	mu      sync.Mutex
+	n       int
+	buf     []byte
+	total   int64 // bytes ever written: a mark for "what came after"
+	dropped bool
 }
 
 func newTailBuffer(n int) *tailBuffer { return &tailBuffer{n: n} }
@@ -1415,6 +1435,7 @@ func (t *tailBuffer) Write(p []byte) (int, error) {
 	t.total += int64(len(p))
 	if len(t.buf) > t.n {
 		t.buf = append([]byte(nil), t.buf[len(t.buf)-t.n:]...)
+		t.dropped = true
 	}
 	return len(p), nil
 }
@@ -1422,6 +1443,9 @@ func (t *tailBuffer) Write(p []byte) (int, error) {
 func (t *tailBuffer) String() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.dropped {
+		return fromLineStart(string(t.buf))
+	}
 	return string(t.buf)
 }
 
@@ -1431,7 +1455,8 @@ func (t *tailBuffer) mark() int64 {
 	return t.total
 }
 
-// since returns what was written after mark (as much of it as is kept).
+// since returns what was written after mark (as much of it as is kept, from
+// a line start when part of it was dropped).
 func (t *tailBuffer) since(mark int64) string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -1440,7 +1465,7 @@ func (t *tailBuffer) since(mark int64) string {
 		return ""
 	}
 	if n > int64(len(t.buf)) {
-		n = int64(len(t.buf))
+		return fromLineStart(string(t.buf))
 	}
 	return string(t.buf[int64(len(t.buf))-n:])
 }

@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -138,17 +136,5 @@ func TestRunRegistryReportsAStartFailure(t *testing.T) {
 	var mod time.Time
 	if ranFor, changed := runRegistry("registry", "/nope", &mod); ranFor != 0 || changed {
 		t.Fatalf("runRegistry = %s, %v", ranFor, changed)
-	}
-}
-
-func TestRelayLinesPrefixesChildOutput(t *testing.T) {
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	defer slog.SetDefault(prev)
-	relayLines("mirror", strings.NewReader("one\ntwo\n"))
-	got := buf.String()
-	if !strings.Contains(got, `msg="mirror: one"`) || !strings.Contains(got, `msg="mirror: two"`) {
-		t.Fatalf("log = %q", got)
 	}
 }

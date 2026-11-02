@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
-	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -54,7 +54,7 @@ func (c *Client) Forward(ctx context.Context, target string, port int) (*Forward
 
 func (f *Forward) startKubectl(ctx context.Context, args []string) (*exec.Cmd, *bufio.Scanner, error) {
 	cmd := exec.CommandContext(ctx, f.c.bin(), args...)
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = io.Discard
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, nil, err
@@ -85,7 +85,9 @@ func (f *Forward) supervise(ctx context.Context) {
 					f.mu.Unlock()
 				}
 			}
-			_ = cmd.Wait()
+			if werr := cmd.Wait(); werr != nil {
+				err = werr
+			}
 		}
 		if ctx.Err() != nil {
 			return

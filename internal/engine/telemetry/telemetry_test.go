@@ -214,16 +214,18 @@ func TestRunsEndWithTheirState(t *testing.T) {
 		message string
 	}{
 		{"completed", &event.RunCompleted{}, "completed", codes.Ok, ""},
-		{"abandoned", &event.RunAbandoned{Reason: "by a person"}, "abandoned", codes.Error, "by a person"},
-		{"failed", &event.RunFailed{Reason: "out of budget"}, "failed", codes.Error, "out of budget"},
+		// A reason is free text (stage output tails, unredacted resolution
+		// errors): the status names the state, never the reason.
+		{"abandoned", &event.RunAbandoned{Reason: "by a person SECRET-REASON"}, "abandoned", codes.Error, "run abandoned"},
+		{"failed", &event.RunFailed{Reason: "boom SECRET-REASON"}, "failed", codes.Error, "run failed"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := newRig(t)
 			r.OnEvent(ev("r1", 0, &event.StageStarted{StageID: "build"}))
 			r.OnEvent(ev("r1", time.Second, c.p))
-			// The attempt left open ends with the run, naming its state and
-			// why: the marker span ended at creation.
+			// The attempt left open ends with the run, naming its state: the
+			// marker span ended at creation.
 			stage := r.ended(t, "build")
 			if stage.Status.Code != c.code || stage.Status.Description != c.message {
 				t.Errorf("open stage status = %+v", stage.Status)

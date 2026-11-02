@@ -159,7 +159,9 @@ func (p *EnvProvisioner) Exec(_ context.Context, id envport.EnvID, cmd envport.C
 	p.mu.Lock()
 	p.ExecCalls = append(p.ExecCalls, ExecCall{Env: id, Cmd: cmd})
 	fn := p.ExecFunc
-	e.execLog = append(e.execLog, []byte("--- [dir="+cmd.Dir+"]\n"+cmd.Script+"\n")...)
+	if !cmd.NoLog {
+		e.execLog = append(e.execLog, []byte("--- [dir="+cmd.Dir+"]\n"+cmd.Script+"\n")...)
+	}
 	p.mu.Unlock()
 	// `rm -f` really removes from the env's Files, so a test about deleting
 	// something (the engine's terminal credential scrub) can assert the file is
@@ -186,9 +188,13 @@ func (p *EnvProvisioner) Exec(_ context.Context, id envport.EnvID, cmd envport.C
 		return envport.ExecResult{ExitCode: 0}, nil
 	}
 	res, err := fn(e, cmd)
-	if err == nil && res.Output != "" {
+	if err == nil && res.Output != "" && !cmd.NoLog {
+		out := res.Output
+		if cmd.Scrub != nil {
+			out = cmd.Scrub(out)
+		}
 		p.mu.Lock()
-		e.execLog = append(e.execLog, []byte(res.Output+"\n")...)
+		e.execLog = append(e.execLog, []byte(out+"\n")...)
 		p.mu.Unlock()
 	}
 	return res, err

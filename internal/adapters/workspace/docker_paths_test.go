@@ -290,7 +290,7 @@ func TestEnsureSrcEdges(t *testing.T) {
 	t.Run("an unusable repo URL never reaches git", func(t *testing.T) {
 		r := &ruleRunner{}
 		a := newTestAdapter(t, r)
-		if _, err := a.ensureSrc(ctx, "w", envport.EnvSpec{RepoURL: "no-host", GitPass: "x"}); err == nil || !strings.Contains(err.Error(), "cannot parse repo url") {
+		if _, err := a.ensureSrc(ctx, "w", envport.EnvSpec{RepoURL: "no-host", GitPass: "x"}); err == nil || !strings.Contains(err.Error(), "cannot parse the repository URL") {
 			t.Errorf("err = %v", err)
 		}
 		if len(r.snapshot()) != 0 {

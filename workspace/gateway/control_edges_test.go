@@ -303,22 +303,20 @@ func TestControlBuildCacheFaults(t *testing.T) {
 }
 
 func TestControlToken(t *testing.T) {
-	t.Setenv("APO_GW_TOKEN", "")
-	if got, err := controlToken(""); err == nil {
+	if got, err := controlToken("", ""); err == nil {
 		t.Fatalf("controlToken = %q, want an error with no source", got)
 	}
-	t.Setenv("APO_GW_TOKEN", "  from-env\n")
-	if got, err := controlToken(""); err != nil || got != "from-env" {
+	if got, err := controlToken("", "  from-env\n"); err != nil || got != "from-env" {
 		t.Fatalf("controlToken = %q, %v", got, err)
 	}
 	file := filepath.Join(t.TempDir(), "token")
 	if err := os.WriteFile(file, []byte(" from-file\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := controlToken(file); err != nil || got != "from-file" {
+	if got, err := controlToken(file, "from-env"); err != nil || got != "from-file" {
 		t.Fatalf("the file must win: %q, %v", got, err)
 	}
-	if _, err := controlToken(file + ".missing"); err == nil {
+	if _, err := controlToken(file+".missing", ""); err == nil {
 		t.Fatal("an unreadable token file must be an error, not a fallback")
 	}
 }

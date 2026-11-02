@@ -116,6 +116,13 @@ type Command struct {
 	// does not, so without this a retry or a recovery re-entry would race
 	// the orphan. Empty: no tagging, no sweep.
 	Marker string
+	// Scrub, when set, is applied to every line of the command's output the
+	// adapter streams into the workspace's exec log: a command that runs repo
+	// or agent code can print the run's credentials. nil: lines go as they are.
+	Scrub func(string) string
+	// NoLog keeps the command's output out of the exec log: what it prints is
+	// returned to the caller, not progress worth streaming.
+	NoLog bool
 }
 
 type ExecResult struct {

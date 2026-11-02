@@ -549,6 +549,38 @@ func TestExecStreamsToTailableLog(t *testing.T) {
 	}
 }
 
+// Output of a command that runs repo or agent code goes into exec.log
+// through the command's Scrub, the held last line too; NoLog keeps it out.
+func TestExecLogScrubsAndCanBeSkipped(t *testing.T) {
+	scrub := func(s string) string { return strings.ReplaceAll(s, "tee-secret-1", "[x]") }
+	r := &scriptRunner{responses: []response{{stdout: "a tee-secret-1 b\n"}, {stdout: "tail tee-secret-1"}, {stdout: "quiet"}}}
+	a := newTestAdapter(t, r)
+	ctx := context.Background()
+	for _, script := range []string{"one", "two"} {
+		if _, err := a.Exec(ctx, "ws1", envport.Command{Script: script, Scrub: scrub}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(a.cfg.RunsDir, "ws1", "exec.log")
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "tee-secret-1") || strings.Count(string(got), "[x]") != 2 {
+		t.Errorf("exec.log = %q", got)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("exec.log mode = %v (%v)", info.Mode().Perm(), err)
+	}
+
+	if res, err := a.Exec(ctx, "ws2", envport.Command{Script: "logs", NoLog: true}); err != nil || res.Output != "quiet" {
+		t.Fatalf("NoLog exec = %+v, %v", res, err)
+	}
+	if _, err := os.Stat(filepath.Join(a.cfg.RunsDir, "ws2", "exec.log")); !os.IsNotExist(err) {
+		t.Errorf("NoLog exec wrote exec.log: %v", err)
+	}
+}
+
 func TestReadFile(t *testing.T) {
 	payload := base64.StdEncoding.EncodeToString([]byte("hello devcontainer"))
 	r := &scriptRunner{responses: []response{
@@ -809,11 +841,11 @@ func TestStartEditor(t *testing.T) {
 			t.Fatalf("err = %v, want the glibc explanation", err)
 		}
 	})
-	t.Run("other failure → reported", func(t *testing.T) {
+	t.Run("other failure → reported, without the workspace's output", func(t *testing.T) {
 		r := &scriptRunner{responses: []response{{code: 1, stderr: "did not start listening"}}}
 		a := newTestAdapter(t, r)
 		err := a.StartEditor(context.Background(), "apothecary-run1", envport.CodeServerPort, envport.EditorSettings{})
-		if err == nil || !strings.Contains(err.Error(), "did not start listening") {
+		if err == nil || !strings.Contains(err.Error(), "start code-server in apothecary-run1: exit 1") || strings.Contains(err.Error(), "did not start listening") {
 			t.Fatalf("err = %v", err)
 		}
 	})

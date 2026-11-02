@@ -23,7 +23,6 @@ package main
 // extension gallery on :5002 (gallery.go) is the third such cache.
 
 import (
-	"bufio"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -103,8 +102,9 @@ const (
 // empties the storage and touches the config, and the child comes back with a
 // clean slate rather than a view of deleted files.
 //
-// Child output is relayed under the given label so two registries stay
-// distinguishable in one log stream. Never returns; run it in a goroutine.
+// The child's own output is discarded: third-party request logs can quote
+// upstream credentials. Its lifecycle (exited, restarting, config changed)
+// is logged under the given label. Never returns; run it in a goroutine.
 func superviseRegistry(label, cfgPath string) {
 	backoff := registryMinBackoff
 	cfgMod, _ := mtime(cfgPath)
@@ -131,19 +131,12 @@ func superviseRegistry(label, cfgPath string) {
 func runRegistry(label, cfgPath string, cfgMod *time.Time) (ranFor time.Duration, cfgChanged bool) {
 	start := time.Now()
 	cmd := exec.Command(registryBin, "serve", cfgPath)
-	// One merged stream: the registry writes its own logs to stderr, and the
-	// prefix is what distinguishes them in `docker logs apo-gw-<project>`.
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		slog.Warn(label+": pipe", "err", err)
-		return 0, false
-	}
-	cmd.Stderr = cmd.Stdout
+	// Stdout and stderr stay nil (/dev/null): the registry's request logs
+	// can quote upstream credentials.
 	if err := cmd.Start(); err != nil {
 		slog.Warn(label+": start", "err", err)
 		return 0, false
 	}
-	go relayLines(label, out)
 
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -177,15 +170,6 @@ func stopChild(cmd *exec.Cmd, done <-chan error) {
 	case <-time.After(registryStopGrace):
 		_ = cmd.Process.Kill()
 		<-done
-	}
-}
-
-// relayLines echoes the child's output under a prefix until the pipe closes.
-func relayLines(label string, r interface{ Read([]byte) (int, error) }) {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 8<<10), 64<<10) // registry logs can be long lines
-	for sc.Scan() {
-		slog.Info(label + ": " + sc.Text())
 	}
 }
 

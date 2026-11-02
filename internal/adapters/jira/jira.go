@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"apothecary/internal/platform/secrets"
 	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/ports/trackerport"
 )
@@ -559,7 +560,7 @@ func (c *Client) OpenAttachment(ctx context.Context, a trackerport.SourceAttachm
 	}
 	u, err := url.Parse(a.URL)
 	if err != nil {
-		return nil, fmt.Errorf("jira: attachment %s: %w", a.Filename, err)
+		return nil, fmt.Errorf("jira: attachment %s: %w", a.Filename, secrets.ScrubURL(err))
 	}
 	base, err := url.Parse(c.cfg.BaseURL)
 	if err != nil {
@@ -574,14 +575,14 @@ func (c *Client) OpenAttachment(ctx context.Context, a trackerport.SourceAttachm
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, err
+		return nil, secrets.ScrubURL(err)
 	}
 	c.authorize(req)
 	// Cloud answers with a redirect to a pre-signed media host; Go drops the
 	// Authorization header on the cross-host hop, which is exactly right.
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, secrets.ScrubURL(err)
 	}
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))

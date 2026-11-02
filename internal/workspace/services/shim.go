@@ -184,7 +184,7 @@ func Log(ctx context.Context, envp envport.EnvProvisioner, env envport.EnvID, na
 	cctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	res, err := envp.Exec(cctx, env, envport.Command{
-		Script: fmt.Sprintf("apothecary-shim service logs --tail %d %s", n, name), Timeout: time.Minute})
+		Script: fmt.Sprintf("apothecary-shim service logs --tail %d %s", n, name), Timeout: time.Minute, NoLog: true})
 	if err != nil {
 		return "", err
 	}

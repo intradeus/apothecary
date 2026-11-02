@@ -196,10 +196,38 @@ func TestProjectValidation(t *testing.T) {
 		t.Errorf("default_flow err = %v", err)
 	}
 
+	// A repository URL with a password is refused, without quoting it: the
+	// URL would reach the clone script, the exec log and errors.
+	creds := base
+	creds.Repo.URL = "https://oauth2:tok@h/r.git"
+	if _, err := svc.CreateProject(ctx, creds); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "repo.url must not embed credentials") || strings.Contains(err.Error(), "tok") {
+		t.Errorf("credentialed repo.url = %v", err)
+	}
+	creds = base
+	creds.Repos = []ExtraRepo{{Name: "lib", URL: "https://oauth2:tok@h/lib.git"}}
+	if _, err := svc.CreateProject(ctx, creds); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "repos[0]: url must not embed credentials") || strings.Contains(err.Error(), "tok") {
+		t.Errorf("credentialed repos[0].url = %v", err)
+	}
+
 	// setup stays optional: no commands at all is a valid project.
 	good := base
 	if _, err := svc.CreateProject(ctx, good); err != nil {
 		t.Errorf("valid project refused: %v", err)
+	}
+}
+
+func TestRepoURLHasPassword(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"https://u:p@h/r.git":   true,
+		"https://u@h/r.git":     false,
+		"git@h:o/r.git":         false,
+		"https://u:p@h/%zz":     true, // url.Parse fails; the authority still shows it
+		"https://h/r.git":       false,
+		"https://h/a:b@c/r.git": false, // an @ in the path is no userinfo
+	} {
+		if got := RepoURLHasPassword(raw); got != want {
+			t.Errorf("RepoURLHasPassword(%q) = %v, want %v", raw, got, want)
+		}
 	}
 }
 

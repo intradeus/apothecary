@@ -158,6 +158,15 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 		}
 		return nil, err
 	}
+	// Stored before validateProject refused them: the URL would reach the
+	// clone script, the exec log and errors. The message never quotes it.
+	hasPassword := confstore.RepoURLHasPassword(p.Repo.URL)
+	for _, x := range p.Repos {
+		hasPassword = hasPassword || confstore.RepoURLHasPassword(x.URL)
+	}
+	if hasPassword {
+		return nil, unresolvable(errors.New("the project's repository URL embeds credentials; remove them (the repository integration supplies the login)"))
+	}
 
 	repoRef := repoport.RepoRef{
 		URL:           p.Repo.URL,

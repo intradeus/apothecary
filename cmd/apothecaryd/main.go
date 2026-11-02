@@ -81,7 +81,11 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		msg := err.Error()
+		if safe, ok := pgstore.RedactError(err); ok {
+			msg = safe
+		}
+		fmt.Fprintln(os.Stderr, msg)
 		os.Exit(1)
 	}
 }
@@ -165,6 +169,10 @@ func cmdServe(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Read once into boot; no child process (devcontainer, docker, git,
+	// kubectl) may inherit them — a repo's devcontainer.json could print them.
+	os.Unsetenv("APOTHECARY_MASTER_KEY")
+	os.Unsetenv("APOTHECARY_POSTGRES_DSN")
 	ctx := context.Background()
 	prov, err := telemetry.Setup(ctx, version)
 	if err != nil {

@@ -483,6 +483,22 @@ func TestOpenAttachmentDropsTheCredentialOnARedirect(t *testing.T) {
 	}
 }
 
+// A failed hop to the pre-signed media host must not quote its URL: the
+// signature in it is a credential, and the error goes to the log.
+func TestOpenAttachmentErrorNeverQuotesTheRedirectTarget(t *testing.T) {
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://127.0.0.1:1/media?token=SIGNED-SECRET", http.StatusFound)
+	}))
+	defer site.Close()
+	_, err := clientFor(site).OpenAttachment(context.Background(), trackerport.SourceAttachment{URL: site.URL + "/secure/a"})
+	if err == nil {
+		t.Fatal("want an error for an unreachable redirect target")
+	}
+	if strings.Contains(err.Error(), "SIGNED-SECRET") {
+		t.Errorf("error quotes the redirect target: %v", err)
+	}
+}
+
 func TestJQLEdges(t *testing.T) {
 	scoped := New(Config{JQL: "project = P"})
 	plain := New(Config{})

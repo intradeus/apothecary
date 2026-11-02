@@ -262,9 +262,9 @@ func (t *Telemetry) OnEvent(e event.Event) {
 		if strings.HasPrefix(p.Reason, "budget exceeded") {
 			t.budgetStops.Add(ctx, 1)
 		}
-		t.endRun(e.RunID, rt, e.TS, "abandoned", codes.Error, p.Reason)
+		t.endRun(e.RunID, rt, e.TS, "abandoned", codes.Error, "")
 	case *event.RunFailed:
-		t.endRun(e.RunID, rt, e.TS, "failed", codes.Error, p.Reason)
+		t.endRun(e.RunID, rt, e.TS, "failed", codes.Error, "")
 	}
 }
 

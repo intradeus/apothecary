@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
@@ -184,5 +185,45 @@ func TestAbortInactiveRunScrubsCredentials(t *testing.T) {
 		if workspaceHas(t, h, envID, path) {
 			t.Errorf("%s survived the abort of a paused run", path)
 		}
+	}
+}
+
+// The run token is minted after the redactor is built; an agent that echoes
+// it (it is in run.env) must still leave it off the record.
+func TestAgentOutputNeverCarriesTheRunToken(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	var tok string
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		data, err := h.envp.ReadFile(ctx, call.Env, "/apothecary/run.env")
+		if err != nil {
+			return agentport.AgentResult{}, err
+		}
+		for line := range strings.SplitSeq(string(data), "\n") {
+			if v, ok := strings.CutPrefix(line, "APOTHECARY_RUN_TOKEN="); ok {
+				tok = v
+			}
+		}
+		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "token " + tok})
+		return agentport.AgentResult{TurnsUsed: 1, Session: "s1"}, nil
+	}
+	id, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(id)
+	if tok == "" {
+		t.Fatal("run.env carried no run token")
+	}
+	redacted := false
+	for _, ev := range h.events(t, id) {
+		if m, ok := ev.Payload.(*event.AgentMessage); ok {
+			if strings.Contains(m.Text, tok) {
+				t.Errorf("the run token reached the record: %q", m.Text)
+			}
+			redacted = redacted || strings.Contains(m.Text, "[redacted:run-token]")
+		}
+	}
+	if !redacted {
+		t.Error("no message carries [redacted:run-token]")
 	}
 }

@@ -106,6 +106,11 @@ func main() {
 	flag.IntVar(&wgMTU, "wg-mtu", 0, "wg0 MTU (0 = uplink MTU - 60)")
 	flag.StringVar(&protect, "protect-cidrs", "", "comma-separated destinations no run may reach (cluster pod/service ranges, metadata)")
 	flag.Parse()
+	// The engine's secrets leave the environment at once: every child (wg, ip,
+	// nft, the registry) would otherwise inherit them.
+	envWGKey, envToken := os.Getenv("APO_GW_WG_KEY"), os.Getenv("APO_GW_TOKEN")
+	os.Unsetenv("APO_GW_WG_KEY")
+	os.Unsetenv("APO_GW_TOKEN")
 	if stateDir != "" {
 		if err := os.MkdirAll(stateDir, 0o755); err != nil {
 			slog.Error("gateway: state dir", "err", err)
@@ -175,10 +180,10 @@ func main() {
 	g.ext.Store(&ext)
 	slog.Info("gateway", "ext", ext, "listen", g.listenPort, "policy", g.policyPath)
 
-	if wgKey == "" && os.Getenv("APO_GW_WG_KEY") != "" {
+	if wgKey == "" && envWGKey != "" {
 		// wg reads the key from a file: one only this process can read.
 		wgKey = "/run/apo-gw-wg.key"
-		if err := os.WriteFile(wgKey, []byte(os.Getenv("APO_GW_WG_KEY")+"\n"), 0o600); err != nil {
+		if err := os.WriteFile(wgKey, []byte(envWGKey+"\n"), 0o600); err != nil {
 			slog.Error("gateway: wireguard key", "err", err)
 			os.Exit(1)
 		}
@@ -228,7 +233,7 @@ func main() {
 	}
 
 	if controlListen != "" {
-		token, err := controlToken(controlTokenFile)
+		token, err := controlToken(controlTokenFile, envToken)
 		if err != nil {
 			slog.Error("gateway: control token", "err", err)
 			os.Exit(1)

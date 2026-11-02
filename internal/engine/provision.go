@@ -41,8 +41,7 @@ func (x *exec) ensureEnv() (err error) {
 		trace.WithAttributes(attribute.String("apothecary.run_id", x.rs.View.RunID)))
 	defer func() {
 		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
+			span.SetStatus(codes.Error, "workspace provision failed")
 		}
 		span.End()
 	}()

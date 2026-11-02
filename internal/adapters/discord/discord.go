@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/platform/secrets"
 	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/project/channels"
@@ -106,12 +107,12 @@ func (c *Channel) Send(ctx context.Context, n notifyport.Notification) error {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.WebhookURL, bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return secrets.ScrubURL(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return channels.ScrubURL(err)
+		return secrets.ScrubURL(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -53,7 +54,12 @@ func setupWG(ext, keyFile string, listen int, addr string, mtu int) (*wgLink, er
 		}
 	}
 	if _, err := l.run("wg", "set", wgDev, "private-key", keyFile, "listen-port", strconv.Itoa(listen)); err != nil {
-		return nil, err
+		var ee *exec.ExitError
+		code := -1
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		}
+		return nil, fmt.Errorf("wg set %s private-key %s listen-port %d: exit %d (output withheld: wg quotes a malformed key)", wgDev, keyFile, listen, code)
 	}
 	if _, err := l.run("ip", "address", "replace", addr, "dev", wgDev); err != nil {
 		return nil, err

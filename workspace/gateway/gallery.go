@@ -26,6 +26,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -141,6 +142,12 @@ func (g *gallery) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	up.Header.Set("Accept-Encoding", "identity")
 	resp, err := g.client.Do(up)
 	if err != nil {
+		// *url.Error quotes the request URL: the client's query string, or
+		// a redirect target's signature.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = fmt.Errorf("%s: %w", ue.Op, ue.Err)
+		}
 		slog.Warn("gallery", "method", r.Method, "path", r.URL.Path, "err", err)
 		http.Error(w, "gallery upstream: "+err.Error(), http.StatusBadGateway)
 		return

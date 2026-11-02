@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -338,12 +339,35 @@ func RepoNameFromURL(u string) string {
 	return strings.Trim(b.String(), "-")
 }
 
+// RepoURLHasPassword reports whether a repository URL embeds a password
+// (https://user:token@host/…). An ssh-style git@host:path has a user, no
+// password, and is fine.
+func RepoURLHasPassword(raw string) bool {
+	if u, err := url.Parse(raw); err == nil {
+		if u.User == nil {
+			return false
+		}
+		_, ok := u.User.Password()
+		return ok
+	}
+	_, rest, ok := strings.Cut(raw, "://")
+	if !ok {
+		return false
+	}
+	authority, _, _ := strings.Cut(rest, "/")
+	at := strings.LastIndexByte(authority, '@')
+	return at >= 0 && strings.Contains(authority[:at], ":")
+}
+
 func (s *Service) validateProject(ctx context.Context, p *Project) error {
 	if strings.TrimSpace(p.Name) == "" {
 		return invalidf("project: name is required")
 	}
 	if p.Repo.URL == "" {
 		return invalidf("project: repo.url is required")
+	}
+	if RepoURLHasPassword(p.Repo.URL) {
+		return invalidf("project: repo.url must not embed credentials — the repository integration supplies the login")
 	}
 	if p.Repo.DefaultBranch == "" {
 		p.Repo.DefaultBranch = "main"
@@ -357,6 +381,9 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 		r.URL = strings.TrimSpace(r.URL)
 		if r.URL == "" {
 			return invalidf("project: repos[%d]: url is required", i)
+		}
+		if RepoURLHasPassword(r.URL) {
+			return invalidf("project: repos[%d]: url must not embed credentials — the repository integration supplies the login", i)
 		}
 		if r.Name == "" {
 			r.Name = RepoNameFromURL(r.URL)

@@ -89,7 +89,7 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	marker := commandMarker(rs.RunID, st.ID)
 	for _, dir := range dirs {
 		cctx, cancel := context.WithTimeout(x.ctx, timeout)
-		res, err = x.res.Envp.Exec(cctx, rs.EnvID, envport.Command{Script: script, Dir: dir, Timeout: timeout, Marker: marker})
+		res, err = x.res.Envp.Exec(cctx, rs.EnvID, envport.Command{Script: script, Dir: dir, Timeout: timeout, Marker: marker, Scrub: x.redact.Scrub})
 		cancel()
 		if err != nil {
 			break

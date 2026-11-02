@@ -331,6 +331,37 @@ func TestResolveChecksTheHarnessSet(t *testing.T) {
 	}
 }
 
+// A project stored before validateProject refused credentialed repository
+// URLs never resolves: the URL would reach the clone script, the exec log and
+// errors. The refusal says why without quoting it.
+func TestResolveRefusesARepositoryURLWithCredentials(t *testing.T) {
+	ctx := context.Background()
+	b := newBench(t)
+	p := b.project("", "", nil, nil)
+	const token = "glpat-STORED-SECRET"
+	for name, edit := range map[string]func(*confstore.Project){
+		"primary": func(p *confstore.Project) { p.Repo.URL = "https://oauth2:" + token + "@git.example/g/p.git" },
+		"extra": func(p *confstore.Project) {
+			p.Repos = []confstore.ExtraRepo{{Name: "docs", URL: "https://oauth2:" + token + "@git.example/g/docs.git"}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stored := p
+			edit(&stored)
+			if err := b.db.UpsertProject(ctx, stored); err != nil {
+				t.Fatal(err)
+			}
+			res, err := b.r.Resolve(ctx, p.ID)
+			if !errors.Is(err, resolution.ErrUnresolvable) || res != nil || !strings.Contains(err.Error(), "embeds credentials") {
+				t.Fatalf("res %v, err %v", res, err)
+			}
+			if strings.Contains(err.Error(), token) {
+				t.Errorf("the refusal quotes the credential: %v", err)
+			}
+		})
+	}
+}
+
 // A resolution that fails after taking the provisioner gives it back: a stale
 // generation would otherwise never close.
 func TestResolveReleasesTheProvisionerOnFailure(t *testing.T) {

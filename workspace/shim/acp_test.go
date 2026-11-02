@@ -713,9 +713,13 @@ func TestRPCErrorText(t *testing.T) {
 	if got := (&rpcError{Code: 1, Message: "no", Data: json.RawMessage("null")}).Error(); got != "no (1)" {
 		t.Errorf("null data = %q", got)
 	}
-	long := `"` + strings.Repeat("x", 400) + `end"`
-	if got := (&rpcError{Code: 1, Message: "no", Data: json.RawMessage(long)}).Error(); !strings.HasPrefix(got, "no (1): x") || !strings.HasSuffix(got, `end"`) || len(got) > 320 {
+	long := `"` + strings.Repeat("x", 400) + "\nend\""
+	if got := (&rpcError{Code: 1, Message: "no", Data: json.RawMessage(long)}).Error(); got != `no (1): end"` {
 		t.Errorf("data = %q", got)
+	}
+	// Cut with no line start kept: a fragment could be a token's tail.
+	if got := (&rpcError{Message: "m", Code: 1, Data: json.RawMessage(strings.Repeat("x", 400))}).Error(); got != "m (1)" {
+		t.Errorf("data cut mid-line = %q", got)
 	}
 }
 
@@ -844,20 +848,33 @@ func TestEventLogDropsTheOldest(t *testing.T) {
 }
 
 func TestTailBuffer(t *testing.T) {
+	whole := newTailBuffer(16)
+	whole.Write([]byte("ab\ncd"))
+	if got := whole.String(); got != "ab\ncd" { // nothing dropped: all of it
+		t.Errorf("nothing dropped = %q", got)
+	}
+	lines := newTailBuffer(8)
+	lines.Write([]byte("abc\ndef\ngh"))
+	if got := lines.String(); got != "def\ngh" { // from the first kept line start
+		t.Errorf("dropped = %q", got)
+	}
 	b := newTailBuffer(4)
-	if n, err := b.Write([]byte("abcdef")); n != 6 || err != nil || b.String() != "cdef" {
+	if n, err := b.Write([]byte("abcdef")); n != 6 || err != nil || b.String() != "" { // no line start kept
 		t.Errorf("%d, %v, %q", n, err, b.String())
 	}
-	mark := b.mark()
-	if got := b.since(mark); got != "" {
+
+	s := newTailBuffer(8)
+	s.Write([]byte("abc"))
+	mark := s.mark()
+	if got := s.since(mark); got != "" {
 		t.Errorf("nothing since = %q", got)
 	}
-	b.Write([]byte("g"))
-	if got := b.since(mark); got != "g" {
+	s.Write([]byte("d"))
+	if got := s.since(mark); got != "d" {
 		t.Errorf("since = %q", got)
 	}
-	b.Write([]byte("hijkl"))
-	if got := b.since(mark); got != "ijkl" { // as much as is kept
+	s.Write([]byte("ef\nghijk"))
+	if got := s.since(mark); got != "ghijk" { // as much as is kept, from a line start
 		t.Errorf("since, past the tail = %q", got)
 	}
 }
@@ -870,8 +887,11 @@ func TestTextBounds(t *testing.T) {
 		!strings.Contains(got, "[10 bytes elided]") {
 		t.Errorf("truncate = %q", got)
 	}
-	if got := tailStr("abcdef", 2); got != "ef" {
+	if got := tailStr("line1\nline2", 8); got != "line2" {
 		t.Errorf("tailStr = %q", got)
+	}
+	if got := tailStr("abcdef", 2); got != "" {
+		t.Errorf("tailStr, no line start = %q", got)
 	}
 	if got := tailStr("ab", 5); got != "ab" {
 		t.Errorf("tailStr short = %q", got)

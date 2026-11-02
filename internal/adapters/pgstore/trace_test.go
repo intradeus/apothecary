@@ -148,6 +148,22 @@ func TestRedactErrorDropsQuotedValues(t *testing.T) {
 	}
 }
 
+// The rules apply together: an error joining several failures (a watcher's
+// errors.Join) loses every quoted value, whatever severity word a localized
+// server prints.
+func TestRedactErrorAppliesEveryRule(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{`K1: ERROR: dup (SQLSTATE 23505); K2: failed to encode args[2]: unable to encode "v-secret"`,
+			"K1: ERROR (SQLSTATE 23505); K2: failed to encode args[2]: <redacted>"},
+		{`x: FEHLER: ungültig "v-secret" (SQLSTATE 22P02)`, "x: FEHLER (SQLSTATE 22P02)"},
+		{`can't scan into dest[1] (col: value): "v-secret"`, "can't scan into dest[1] (col: value): <redacted>"},
+	} {
+		if got, ok := RedactError(errors.New(c.in)); !ok || got != c.want {
+			t.Errorf("RedactError(%q) = %q, %v; want %q", c.in, got, ok, c.want)
+		}
+	}
+}
+
 // A statement outside any span (a background poll, a run loop between
 // attempts) is not a trace of its own: one query per trace is noise.
 func TestQueryTracerSkipsStatementsWithoutAParent(t *testing.T) {

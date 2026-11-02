@@ -395,7 +395,7 @@ func TestK8sEnsureCheckout(t *testing.T) {
 	}
 	k.exec = func(argv []string, _ []byte) (string, string, int) { return "", "", 1 }
 	err := h.ensureCheckout(ctx, "w", "/src", envport.EnvSpec{RepoURL: "bad", GitPass: "x"}, nil)
-	if err == nil || !strings.Contains(err.Error(), "cannot parse repo url") {
+	if err == nil || !strings.Contains(err.Error(), "cannot parse the repository URL") {
 		t.Errorf("bad URL = %v", err)
 	}
 	// With no credential the clone still reads its empty line.

@@ -112,7 +112,7 @@ func (x *exec) followAdopted() {
 	res, err := x.gitIn(co.Dir, fmt.Sprintf("git fetch origin %s && git merge --ff-only FETCH_HEAD", shell.Quote(co.Fetch)))
 	if err != nil || res.ExitCode != 0 {
 		x.e.log.WarnContext(x.bg, "could not bring the merge request's checkout to its head", logs.RunID, rs.RunID, "repo", co.Name,
-			"head", rs.PhaseTip, "err", err, "out", shell.Tail(res.Output, 512))
+			"head", rs.PhaseTip, "err", err, "out", shell.Tail(x.redact.Scrub(res.Output), 512))
 	}
 }
 

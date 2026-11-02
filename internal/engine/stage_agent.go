@@ -436,7 +436,7 @@ func (x *exec) continueSession(ctx context.Context, st *flow.Stage, runner agent
 	if !errors.Is(err, agentport.ErrSessionGone) {
 		return res, err
 	}
-	x.e.log.WarnContext(x.bg, "stage's session is gone; starting a new one", logs.RunID, x.rs.RunID, logs.StageID, st.ID, "err", err)
+	x.e.log.WarnContext(x.bg, "stage's session is gone; starting a new one", logs.RunID, x.rs.RunID, logs.StageID, st.ID, "err", x.redact.Scrub(err.Error()))
 	return runner.Run(ctx, x.rs.EnvID, spec, in)
 }
 

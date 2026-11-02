@@ -298,7 +298,7 @@ func SourceBranchOr(runSource, repoDefault string) string {
 func credentialLine(repoURL, user, pass string) (string, error) {
 	u, err := url.Parse(repoURL)
 	if err != nil || u.Host == "" {
-		return "", fmt.Errorf("cannot parse repo url %q", repoURL)
+		return "", fmt.Errorf("cannot parse the repository URL")
 	}
 	if user == "" {
 		user = "oauth2"

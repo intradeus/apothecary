@@ -60,10 +60,13 @@ func (q queryTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.Tr
 // RedactError is err as a log line may show it when it came from Postgres
 // or pgx (a logs.ErrorRedactor): a server error keeps its SQLSTATE and the
 // constraint, table and column it names, not its message, which can quote
-// the offending input; an encode error stops at the argument's index, since
-// pgx prints the argument. Anything else is not this redactor's (ok false).
+// the offending input; an encode or scan error stops at the argument's or
+// column's index, since pgx prints the value. The rules apply cumulatively,
+// so an error joining several failures loses every quoted value. Anything
+// no rule touches is not this redactor's (ok false).
 func RedactError(err error) (string, bool) {
 	s := err.Error()
+	matched := false
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		safe := "ERROR (SQLSTATE " + pgErr.Code
@@ -74,29 +77,47 @@ func RedactError(err error) (string, bool) {
 		}
 		safe += ")"
 		if i := strings.Index(s, pgErr.Error()); i >= 0 {
-			return s[:i] + safe, true
+			s = s[:i] + safe
+		} else {
+			s = safe
 		}
-		return safe, true
+		matched = true
 	}
 	// A server error flattened into text (wrapped with %v, not %w).
 	if flat := serverErrorText.ReplaceAllString(s, "$1 (SQLSTATE $2)"); flat != s {
-		return flat, true
+		s = flat
+		matched = true
 	}
 	if i := strings.Index(s, "failed to encode args["); i >= 0 {
 		if j := strings.IndexByte(s[i:], ']'); j >= 0 {
-			return s[:i+j+1] + ": <redacted>", true
+			s = s[:i+j+1] + ": <redacted>"
+		} else {
+			s = s[:i] + "failed to encode an argument"
 		}
-		return s[:i] + "failed to encode an argument", true
+		matched = true
 	}
 	if i := strings.Index(s, "unable to encode "); i >= 0 {
-		return s[:i] + "unable to encode an argument", true
+		s = s[:i] + "unable to encode an argument"
+		matched = true
 	}
-	return "", false
+	if i := strings.Index(s, "can't scan into dest["); i >= 0 {
+		if j := strings.Index(s[i:], "): "); j >= 0 {
+			s = s[:i+j+1] + ": <redacted>"
+		} else {
+			s = s[:i] + "can't scan a column"
+		}
+		matched = true
+	}
+	if !matched {
+		return "", false
+	}
+	return s, true
 }
 
-// serverErrorText is a server error's text, "ERROR: <message> (SQLSTATE
-// XXXXX)": the message is what may quote a value.
-var serverErrorText = regexp.MustCompile(`(?s)\b(ERROR|FATAL|PANIC): .*? \(SQLSTATE ([0-9A-Z]{5})\)`)
+// serverErrorText is a server error's text, "<SEVERITY>: <message> (SQLSTATE
+// XXXXX)", with any severity word (localized ones too, under a non-English
+// lc_messages): the message is what may quote a value.
+var serverErrorText = regexp.MustCompile(`(?s)(\p{Lu}+): .*? \(SQLSTATE ([0-9A-Z]{5})\)`)
 
 // literalFree is sql with each string literal ('…', E'…', $tag$…$tag$)
 // replaced by '?'. Statements are parameterised, but nothing stops a value

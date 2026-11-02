@@ -173,7 +173,7 @@ func (x *exec) infraFail(st *flow.Stage, msg string) (bool, error) {
 
 // gitIn runs one git script in a checkout directory of the workspace.
 func (x *exec) gitIn(dir, script string) (envport.ExecResult, error) {
-	return x.res.Envp.Exec(x.ctx, x.rs.EnvID, envport.Command{Script: script, Dir: dir, Timeout: x.rs.Flow.Defaults.Timeout})
+	return x.res.Envp.Exec(x.ctx, x.rs.EnvID, envport.Command{Script: script, Dir: dir, Timeout: x.rs.Flow.Defaults.Timeout, Scrub: x.redact.Scrub})
 }
 
 // repoRefFor is the repository host reference of a checkout: the project's for

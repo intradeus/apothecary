@@ -90,7 +90,11 @@ func TestSetupWGStopsAtTheFirstFailure(t *testing.T) {
 			if err == nil || link != nil {
 				t.Fatalf("setupWG = %v, %v; want the failure", link, err)
 			}
-			if !strings.Contains(err.Error(), "fake failure") {
+			if step == "wg set wg0 private-key" {
+				if strings.Contains(err.Error(), "fake failure") || !strings.Contains(err.Error(), "exit 3") {
+					t.Errorf("err = %v, want the exit code and no wg output", err)
+				}
+			} else if !strings.Contains(err.Error(), "fake failure") {
 				t.Errorf("err = %v, want the tool's stderr in it", err)
 			}
 		})
