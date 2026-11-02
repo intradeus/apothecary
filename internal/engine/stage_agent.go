@@ -178,6 +178,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 				inv, err = x.invoke(st, budget, tr, x.liveAsks(st), "",
 					func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
 						in.MCPServers = mcp
+						in.HarnessOptions = st.HarnessOptions
 						r, _, err := ra.Reattach(ctx, rs.EnvID, session, rs.AgentCursor[st.ID], in)
 						return r, err
 					})
@@ -244,6 +245,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		inv, err = x.invoke(st, budget, tr, nil, text,
 			func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
 				in.MCPServers = mcp
+				in.HarnessOptions = st.HarnessOptions
 				switch {
 				case resuming:
 					return runner.Resume(ctx, rs.EnvID, session, in)

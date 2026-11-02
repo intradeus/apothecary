@@ -38,6 +38,11 @@ type AgentInput struct {
 	// the session it opens or loads — so they are the agent's, not the
 	// workspace's — and must never log or persist them.
 	MCPServers []MCPServer
+	// HarnessOptions are the stage's options for the harness it runs on
+	// (flow.Stage.HarnessOptions). Like MCPServers they ride every call —
+	// Run, Resume, Reattach — because they choose the agent process the
+	// session lives in. Never set for a read-only session.
+	HarnessOptions map[string]string
 	// Attempt is the stage's spec when a Resume starts a new attempt in the
 	// stage's session, nil when it replies within one.
 	Attempt *AgentSpec
@@ -60,6 +65,12 @@ type AgentInput struct {
 // a session that cannot change the workspace (AgentInput.ReadOnly).
 type ReadOnlyCapable interface {
 	CanReadOnly() bool
+}
+
+// HarnessOptionsCapable is an OPTIONAL AgentRunner capability: whether it can
+// apply a stage's harness options (AgentInput.HarnessOptions).
+type HarnessOptionsCapable interface {
+	TakesHarnessOptions() bool
 }
 
 // MCPServer is one MCP server an agent session can call: a local command

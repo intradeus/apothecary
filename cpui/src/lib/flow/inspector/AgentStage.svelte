@@ -2,7 +2,10 @@
 	// An agent stage: the flow's agent it runs, what it runs on, and how the
 	// agent's declared inputs and outputs are wired here.
 	import type { Selection } from '$lib/flow/FlowGraph.svelte';
+	import type { HarnessSpec } from '$lib/domain';
 	import Toggle from '$lib/ui/Toggle.svelte';
+	import Select from '$lib/ui/Select.svelte';
+	import { enumParamsWithin, isParamRef } from '$lib/flow/params';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import PortRows from '$lib/flow/PortRows.svelte';
 	import Group from '$lib/flow/inspector/Group.svelte';
@@ -26,12 +29,14 @@
 		doc,
 		stage: s,
 		agents,
+		harnessSpecs = [],
 		onchange,
 		onopen
 	}: {
 		doc: FlowDoc;
 		stage: DocStage;
 		agents: DocAgent[];
+		harnessSpecs?: HarnessSpec[];
 		onchange: () => void;
 		onopen: (sel: Selection) => void;
 	} = $props();
@@ -47,6 +52,33 @@
 	const writtenPaths = $derived(writtenPathsOf(doc));
 	const writtenTypes = $derived(writtenTypesOf(doc));
 	const schemaNames = $derived(schemaNamesOf(doc));
+
+	// ---- harness options: only the block of the harness it runs on applies --
+	// A literal harness shows its own block; a $parameter (or none yet) shows
+	// every kind's. A block already written always shows, so it can be cleared.
+	const optionKinds = $derived.by(() => {
+		const h = s.harness ?? '';
+		const shown =
+			h && !isParamRef(h)
+				? harnessSpecs.filter((k) => k.kind === h)
+				: [...harnessSpecs];
+		for (const kind of Object.keys(s.harness_options ?? {}))
+			if (!shown.some((k) => k.kind === kind)) shown.push({ kind, options: [] });
+		return shown;
+	});
+	function optionValue(kind: string, name: string): string {
+		return s.harness_options?.[kind]?.[name] ?? '';
+	}
+	function setOption(kind: string, name: string, value: string) {
+		const all = { ...(s.harness_options ?? {}) };
+		const block = { ...(all[kind] ?? {}) };
+		if (value) block[name] = value;
+		else delete block[name];
+		if (Object.keys(block).length) all[kind] = block;
+		else delete all[kind];
+		s.harness_options = Object.keys(all).length ? all : undefined;
+		onchange();
+	}
 
 	// ---- agents: the flow carries their definitions (FLOWLANG §1) ----------
 	// They are edited in the page's Agents tab: opening one goes there.
@@ -154,6 +186,53 @@
 	/>
 	<div class="help">{t('flow.insp.durationOrParam')}</div>
 </div>
+{#if optionKinds.length > 0}
+	<Group caption={t('flow.insp.harnessOptions')}>
+		<div class="help">{t('flow.insp.harnessOptionsHelp')}</div>
+	</Group>
+	{#each optionKinds as h (h.kind)}
+		<div class="mono faint">{h.kind}</div>
+		{#each h.options as o (o.name)}
+			{@const cur = optionValue(h.kind, o.name)}
+			<div class="io-bind card-in field">
+				<label for="ho-{h.kind}-{o.name}"><span class="mono">{o.name}</span></label>
+				{#if o.kind === 'enum'}
+					{@const fits = enumParamsWithin(doc, o.values ?? [])}
+					<Select
+						id="ho-{h.kind}-{o.name}"
+						value={cur}
+						options={[
+							{ value: '', label: '—' },
+							...(o.values ?? []).map((v) => ({ value: v, label: v })),
+							...fits.map((p) => ({ value: '$' + p, label: '$' + p })),
+							...(isParamRef(cur) && !fits.includes(cur.slice(1)) ? [{ value: cur, label: cur }] : [])
+						]}
+						onchange={(v) => setOption(h.kind, o.name, v)}
+					/>
+				{:else}
+					<input
+						id="ho-{h.kind}-{o.name}"
+						list="flow-params"
+						value={cur}
+						oninput={(e) => setOption(h.kind, o.name, e.currentTarget.value.trim())}
+						placeholder="provider/model or $param"
+					/>
+				{/if}
+				{#if o.description}<div class="help">{o.description}</div>{/if}
+			</div>
+		{/each}
+		{#each Object.keys(s.harness_options?.[h.kind] ?? {}).filter((n) => !h.options.some((o) => o.name === n)) as n (n)}
+			<div class="io-bind card-in field">
+				<label for="ho-{h.kind}-{n}"><span class="mono">{n}</span></label>
+				<input
+					id="ho-{h.kind}-{n}"
+					value={optionValue(h.kind, n)}
+					oninput={(e) => setOption(h.kind, n, e.currentTarget.value.trim())}
+				/>
+			</div>
+		{/each}
+	{/each}
+{/if}
 {#if declInputs.length > 0}
 	<Group caption={t('flow.insp.inputs')}>
 		<div class="help">{t('flow.insp.inputsHelp')}</div>

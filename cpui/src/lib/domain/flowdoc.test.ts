@@ -923,6 +923,11 @@ describe('questions about the document', () => {
 		['an agent stage’s harness', { stages: [aStage({ id: 'a', harness: '$p' })] }, true],
 		['the Ask pane', { stages: [], ask: { harness: '$p' } }, true],
 		[
+			'a stage’s harness option',
+			{ stages: [aStage({ id: 'a', harness_options: { omp: { advisor: '$p' } } })] },
+			true
+		],
+		[
 			'a sequence’s stage',
 			{ stages: [], sequences: [{ id: 'q', stages: [aStage({ id: 'a', model: '$p' })] }] },
 			true
@@ -999,6 +1004,7 @@ describe('docToYaml', () => {
 			['do', { type: 'service', do: 'restart' }],
 			['model', { model: '$model' }],
 			['harness', { harness: 'opencode' }],
+			['harness_options', { harness_options: { omp: { advisor: '$adv' } } }],
 			['max_turns', { max_turns: 50 }],
 			['max_turns', { max_turns: '$turns' }],
 			['max_turns', { max_turns: 0 }],
@@ -1027,6 +1033,9 @@ describe('docToYaml', () => {
 			['input', { input: {} }],
 			['output', { output: {} }],
 			['with', { with: {} }],
+			['harness_options', { harness_options: {} }],
+			['harness_options', { harness_options: { omp: {} } }],
+			['harness_options', { harness_options: { omp: { advisor: '' } } }],
 			['each_repo', { each_repo: false }],
 			['description', { description: '' }]
 		])('writes no %s that says nothing', (key, over) => {

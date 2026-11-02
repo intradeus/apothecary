@@ -14,15 +14,24 @@
 //
 // omp reports a cumulative USD cost per session (usage_update), so budgets
 // work as for opencode.
+//
+// A stage's harness options (harnessspec: advisor, smol, slow…) are per
+// process in omp, so each distinct option set is its own `omp acp` process
+// beside the base one, keyed by its config overlay's hash (RenderOptions).
 package omp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"path"
+	"strings"
 
 	"apothecary/internal/adapters/acpagent"
 	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/harnessspec"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/workspace/wshome"
@@ -44,6 +53,9 @@ const (
 	// runs the REPO's user, so the real home is probed
 	// per env and this is only the fallback.
 	defaultHome = "/home/apothecary"
+	// optionsDir holds the config overlays of stages' harness options:
+	// engine-owned, like acpagent.RolesDir.
+	optionsDir = "/apothecary/harness-options"
 )
 
 // agentDir locates ~/.omp/agent in the home of the user omp actually runs
@@ -126,7 +138,60 @@ func (a *Adapter) Profile() acpagent.Profile {
 		},
 		ReadOnlyBy:      acpagent.ReadOnlyByProcess,
 		ReadOnlyCommand: "env OMP_MCP_TIMEOUT_MS=0 OMP_SKIP_SETUP=1 omp acp --tools=" + readOnlyTools + " --approval-mode=always-ask",
+		OptionArgs:      a.options,
 	}
+}
+
+// RenderOptions turns a stage's omp options into the config overlay omp loads
+// with --config, and the flags that go with it. The overlay is JSON (YAML
+// reads it), so no value is ever spliced into YAML or a command line.
+//
+// --advisor is a flag, not advisor.enabled: a runtime override wins over the
+// setting's ACP protocol default (off) whatever the overlay's precedence.
+// modelRoles has no protocol default, so the overlay carries it.
+func RenderOptions(opts map[string]string) (overlay []byte, flags []string, err error) {
+	roles := map[string]string{}
+	advisor := map[string]string{}
+	for k, v := range opts {
+		switch k {
+		case harnessspec.OmpAdvisor:
+			roles["advisor"] = v
+			flags = []string{"--advisor"}
+		case harnessspec.OmpAdvisorReview:
+			advisor["reviewMode"] = v
+		case harnessspec.OmpSmol:
+			roles["smol"] = v
+		case harnessspec.OmpSlow:
+			roles["slow"] = v
+		default:
+			return nil, nil, fmt.Errorf("omp: unknown harness option %q", k)
+		}
+	}
+	doc := map[string]any{}
+	if len(roles) > 0 {
+		doc["modelRoles"] = roles
+	}
+	if len(advisor) > 0 {
+		doc["advisor"] = advisor
+	}
+	overlay, err = json.Marshal(doc) // map keys sort: one option set, one overlay
+	return overlay, flags, err
+}
+
+// options writes a stage's overlay where omp can read it, named by its hash
+// so the same options always give the same command line — and so reach the
+// same process (acpagent.Profile.OptionArgs).
+func (a *Adapter) options(ctx context.Context, env envport.EnvID, opts map[string]string) (string, error) {
+	overlay, flags, err := RenderOptions(opts)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(overlay)
+	p := path.Join(optionsDir, "omp-"+hex.EncodeToString(sum[:6])+".yml")
+	if err := a.envp.WriteFile(ctx, env, p, overlay, 0o644); err != nil {
+		return "", fmt.Errorf("write %s: %w", p, err)
+	}
+	return strings.Join(append([]string{"--config=" + p}, flags...), " "), nil
 }
 
 // readOnlyTools are omp's built-in tools a read-only session loads: reading

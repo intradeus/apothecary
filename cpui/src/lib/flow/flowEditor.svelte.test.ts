@@ -22,7 +22,7 @@ vi.mock('$lib/api', () => ({
 			remove: vi.fn(),
 			version: vi.fn()
 		},
-		system: { actions: vi.fn(), signals: vi.fn() }
+		system: { actions: vi.fn(), signals: vi.fn(), harnessOptions: vi.fn() }
 	}
 }));
 vi.mock('$lib/ui/toast.svelte', () => ({ toast: vi.fn() }));
@@ -98,6 +98,7 @@ beforeEach(() => {
 	flows.schema.mockResolvedValue({ type: 'object' });
 	vi.mocked(api.system.actions).mockResolvedValue([]);
 	vi.mocked(api.system.signals).mockResolvedValue([]);
+	vi.mocked(api.system.harnessOptions).mockResolvedValue([]);
 });
 
 describe('opening a flow', () => {
@@ -168,10 +169,13 @@ describe('opening a flow', () => {
 		const signal = { slug: 'mr_merged' } as never;
 		vi.mocked(api.system.actions).mockResolvedValue([action]);
 		vi.mocked(api.system.signals).mockResolvedValue([signal]);
+		const harness = { kind: 'omp', options: [] };
+		vi.mocked(api.system.harnessOptions).mockResolvedValue([harness]);
 		const ed = await opened();
 		await vi.waitFor(() => expect(ed.flowSchema).toEqual({ type: 'object' }));
 		expect(ed.actions).toEqual([action]);
 		expect(ed.signals).toEqual([signal]);
+		expect(ed.harnessSpecs).toEqual([harness]);
 	});
 
 	it('still opens without the contracts or the schema', async () => {

@@ -451,6 +451,10 @@ func (r *AgentRunner) SnapshotRunCalls() []RunCall {
 	return append([]RunCall(nil), r.RunCalls...)
 }
 
+// TakesHarnessOptions: the fake applies any harness options — it records
+// them on RunCall.In / ResumeCall.In for tests to assert.
+func (r *AgentRunner) TakesHarnessOptions() bool { return true }
+
 func (r *AgentRunner) Run(ctx context.Context, env envport.EnvID, spec agentport.AgentSpec, in agentport.AgentInput) (agentport.AgentResult, error) {
 	r.mu.Lock()
 	call := RunCall{Env: env, Spec: spec, In: in}
@@ -1545,14 +1549,15 @@ func (r ReadOnlyTicketSource) OpenAttachment(ctx context.Context, a trackerport.
 
 // Compile-time port conformance.
 var (
-	_ envport.EnvProvisioner         = (*EnvProvisioner)(nil)
-	_ agentport.AgentRunner          = (*AgentRunner)(nil)
-	_ repoport.RepoHost              = (*RepoHost)(nil)
-	_ notifyport.NotificationChannel = (*Channel)(nil)
-	_ trackerport.TicketSource       = (*TicketSource)(nil)
-	_ trackerport.TicketWriter       = (*TicketSource)(nil)
-	_ trackerport.TicketAttacher     = (*TicketSource)(nil)
-	_ trackerport.TicketMetadata     = (*TicketSource)(nil)
-	_ trackerport.TicketSyncer       = (*TicketSource)(nil)
-	_ trackerport.TicketSource       = ReadOnlyTicketSource{}
+	_ envport.EnvProvisioner          = (*EnvProvisioner)(nil)
+	_ agentport.AgentRunner           = (*AgentRunner)(nil)
+	_ agentport.HarnessOptionsCapable = (*AgentRunner)(nil)
+	_ repoport.RepoHost               = (*RepoHost)(nil)
+	_ notifyport.NotificationChannel  = (*Channel)(nil)
+	_ trackerport.TicketSource        = (*TicketSource)(nil)
+	_ trackerport.TicketWriter        = (*TicketSource)(nil)
+	_ trackerport.TicketAttacher      = (*TicketSource)(nil)
+	_ trackerport.TicketMetadata      = (*TicketSource)(nil)
+	_ trackerport.TicketSyncer        = (*TicketSource)(nil)
+	_ trackerport.TicketSource        = ReadOnlyTicketSource{}
 )

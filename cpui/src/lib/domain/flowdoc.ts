@@ -237,6 +237,8 @@ export interface DocStage {
 	output?: StagePorts;
 	/** action: its settings — literals, or $parameters. */
 	with?: Record<string, string | string[]>;
+	/** agent: options of the harness it runs on, by harness kind. */
+	harness_options?: Record<string, Record<string, string>>;
 	run?: string;
 	run_ref?: string;
 	/** command: run once per checkout of a multi-repo run instead of once in
@@ -673,12 +675,20 @@ export function paramDefault(doc: FlowDoc, name: string): string | undefined {
 }
 
 /** Whether the document reads the parameter as a model or a harness — at an
- *  agent stage, or the Ask pane: the sites that may wait for a value. */
+ *  agent stage (its model, its harness, or one of its harness_options), or
+ *  the Ask pane: the sites that may wait for a value. A harness option reading
+ *  a parameter is a model option, or an enum one whose parameter cannot
+ *  hold an empty default anyway. */
 export function readAsModelOrHarness(doc: FlowDoc, name: string): boolean {
 	const ref = '$' + name;
 	if (doc.ask?.harness === ref) return true;
 	const stages = [...doc.stages, ...(doc.sequences ?? []).flatMap((q) => q.stages)];
-	return stages.some((s) => s.model === ref || s.harness === ref);
+	return stages.some(
+		(s) =>
+			s.model === ref ||
+			s.harness === ref ||
+			Object.values(s.harness_options ?? {}).some((block) => Object.values(block).includes(ref))
+	);
 }
 
 /** The flow's definition of an agent by name, or undefined. */
@@ -912,6 +922,8 @@ export function docToYaml(doc: FlowDoc): string {
 		if (s.do) o.do = s.do;
 		if (s.model) o.model = s.model;
 		if (s.harness) o.harness = s.harness;
+		const ho = harnessOptionsYaml(s.harness_options);
+		if (ho) o.harness_options = ho;
 		if (s.max_turns != null) o.max_turns = s.max_turns;
 		if (s.reuse_session === false) o.reuse_session = false;
 		if (s.timeout) o.timeout = s.timeout;
@@ -1002,6 +1014,19 @@ function triggerYaml(w: DocWait): unknown {
 }
 
 // nonEmptyIO reports whether a port map has anything to serialize.
+// harnessOptionsYaml drops empty values, then empty kind blocks; undefined
+// when nothing is left to say.
+function harnessOptionsYaml(
+	ho?: Record<string, Record<string, string>>
+): Record<string, Record<string, string>> | undefined {
+	const out: Record<string, Record<string, string>> = {};
+	for (const [kind, opts] of Object.entries(ho ?? {})) {
+		const kept = Object.fromEntries(Object.entries(opts ?? {}).filter(([, v]) => v !== ''));
+		if (Object.keys(kept).length) out[kind] = kept;
+	}
+	return Object.keys(out).length ? out : undefined;
+}
+
 function nonEmptyIO(v?: StagePorts): boolean {
 	return v != null && Object.keys(v).length > 0;
 }

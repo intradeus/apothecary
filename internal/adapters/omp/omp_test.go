@@ -2,12 +2,15 @@ package omp
 
 import (
 	"context"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
 	"apothecary/internal/adapters/acpagent"
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/harnessspec"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 )
@@ -98,5 +101,59 @@ func TestInstallSkillsTargetsAgentSkillsDir(t *testing.T) {
 	last := calls[len(calls)-1].Cmd.Script
 	if !strings.Contains(last, "cp -R '/apothecary/skills/pdf' '/home/apothecary/.omp/agent/skills/pdf'") {
 		t.Errorf("script = %q", last)
+	}
+}
+
+// A stage's options become one JSON overlay (sorted, so one option set is
+// one file) plus --advisor when an advisor is set.
+func TestRenderOptions(t *testing.T) {
+	overlay, flags, err := RenderOptions(map[string]string{"advisor": "acme/a", "advisor_review": "agent-end", "smol": "acme/s", "slow": "acme/l"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"advisor":{"reviewMode":"agent-end"},"modelRoles":{"advisor":"acme/a","slow":"acme/l","smol":"acme/s"}}`; string(overlay) != want {
+		t.Errorf("overlay = %s, want %s", overlay, want)
+	}
+	if !slices.Equal(flags, []string{"--advisor"}) {
+		t.Errorf("flags = %v", flags)
+	}
+	if _, flags, err := RenderOptions(map[string]string{"smol": "acme/s"}); err != nil || len(flags) != 0 {
+		t.Errorf("smol alone = %v, %v; want no flags", flags, err)
+	}
+	if _, _, err := RenderOptions(map[string]string{"brain": "acme/b"}); err == nil {
+		t.Error("an unknown option must fail")
+	}
+	// The registry and the renderer stay in step.
+	for _, o := range harnessspec.Get(harnessspec.Omp).Options {
+		if _, _, err := RenderOptions(map[string]string{o.Name: "acme/x"}); err != nil {
+			t.Errorf("registered option %q: %v", o.Name, err)
+		}
+	}
+}
+
+// The overlay lands in the workspace under its hash, and the command line
+// names it: the same options, the same path.
+func TestOptionArgsWriteTheOverlay(t *testing.T) {
+	envp, id := envWith(t)
+	ctx := context.Background()
+	p := New(envp, Config{}).Profile()
+	opts := map[string]string{"advisor": "acme/a"}
+	args, err := p.OptionArgs(ctx, id, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`^--config=(/apothecary/harness-options/omp-[0-9a-f]{12}\.yml) --advisor$`).FindStringSubmatch(args)
+	if m == nil {
+		t.Fatalf("args = %q", args)
+	}
+	body, err := envp.ReadFile(ctx, id, m[1])
+	if want, _, _ := RenderOptions(opts); err != nil || string(body) != string(want) {
+		t.Errorf("overlay file = %q, %v", body, err)
+	}
+	if again, _ := p.OptionArgs(ctx, id, map[string]string{"advisor": "acme/a"}); again != args {
+		t.Errorf("same options, different command line: %q vs %q", again, args)
+	}
+	if other, _ := p.OptionArgs(ctx, id, map[string]string{"advisor": "acme/b"}); other == args {
+		t.Error("different options share a command line")
 	}
 }

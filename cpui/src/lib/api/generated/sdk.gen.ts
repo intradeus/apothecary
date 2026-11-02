@@ -356,6 +356,9 @@ import type {
 	ListFlowVersionsData,
 	ListFlowVersionsErrors,
 	ListFlowVersionsResponses,
+	ListHarnessOptionsData,
+	ListHarnessOptionsErrors,
+	ListHarnessOptionsResponses,
 	ListIntegrationModelsData,
 	ListIntegrationModelsErrors,
 	ListIntegrationModelsResponses,
@@ -1677,6 +1680,33 @@ export const validateFlow = <ThrowOnError extends boolean = false>(
 			'Content-Type': 'application/json',
 			...options.headers
 		}
+	});
+
+/**
+ * Options an agent stage's harness_options may set, per harness kind
+ */
+export const listHarnessOptions = <ThrowOnError extends boolean = false>(
+	options?: Options<ListHarnessOptionsData, ThrowOnError>
+): RequestResult<ListHarnessOptionsResponses, ListHarnessOptionsErrors, ThrowOnError> =>
+	(options?.client ?? client).get<
+		ListHarnessOptionsResponses,
+		ListHarnessOptionsErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/harness-options',
+		...options
 	});
 
 /**

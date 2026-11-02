@@ -63,6 +63,13 @@ type Profile struct {
 	ReadOnlyBy      string
 	ReadOnlyMode    string
 	ReadOnlyCommand string
+	// OptionArgs renders a stage's harness options
+	// (agentport.AgentInput.HarnessOptions) into arguments appended to
+	// Command, first writing any file they name. The result must be a pure
+	// function of the options: the sidecar keeps one process per command
+	// line, so the same options must reach the same process on every Run,
+	// Resume and Reattach. nil: the harness takes none.
+	OptionArgs func(ctx context.Context, env envport.EnvID, opts map[string]string) (string, error)
 }
 
 // How a Profile honours a read-only session.
@@ -75,6 +82,10 @@ const (
 // CanReadOnly reports whether the harness can run a session that cannot
 // change the workspace (agentport.ReadOnlyCapable).
 func (r *Runner) CanReadOnly() bool { return r.p.ReadOnlyBy != "" }
+
+// TakesHarnessOptions reports whether the harness can apply a stage's
+// harness options (agentport.HarnessOptionsCapable).
+func (r *Runner) TakesHarnessOptions() bool { return r.p.OptionArgs != nil }
 
 type Runner struct {
 	envp envport.EnvProvisioner
@@ -107,11 +118,22 @@ func (r *Runner) client(ctx context.Context, env envport.EnvID) (*sidecar.Client
 
 // start launches (or reuses) the harness process a session runs in: the
 // read-only command line's own process for a read-only session, when that
-// is how the profile promises read-only.
-func (r *Runner) start(ctx context.Context, c *sidecar.Client, readOnly bool) (sidecar.StartResponse, error) {
+// is how the profile promises read-only; otherwise the command line with
+// the stage's harness options — each distinct set its own process.
+func (r *Runner) start(ctx context.Context, c *sidecar.Client, env envport.EnvID, in agentport.AgentInput) (sidecar.StartResponse, error) {
 	cmd := r.p.Command
-	if readOnly && r.p.ReadOnlyBy == ReadOnlyByProcess {
+	switch {
+	case in.ReadOnly && r.p.ReadOnlyBy == ReadOnlyByProcess:
 		cmd = r.p.ReadOnlyCommand
+	case !in.ReadOnly && len(in.HarnessOptions) > 0:
+		if r.p.OptionArgs == nil {
+			return sidecar.StartResponse{}, fmt.Errorf("%s: this harness takes no harness options", r.p.Harness)
+		}
+		args, err := r.p.OptionArgs(ctx, env, in.HarnessOptions)
+		if err != nil {
+			return sidecar.StartResponse{}, fmt.Errorf("%s: harness options: %w", r.p.Harness, err)
+		}
+		cmd += " " + args
 	}
 	st, err := c.Start(ctx, sidecar.StartRequest{Argv: []string{"bash", "-c", envPrelude + "exec " + cmd}})
 	if err != nil {
@@ -184,7 +206,7 @@ func (r *Runner) Run(ctx context.Context, env envport.EnvID, spec agentport.Agen
 	if err != nil {
 		return agentport.AgentResult{}, err
 	}
-	st, err := r.start(ctx, c, in.ReadOnly)
+	st, err := r.start(ctx, c, env, in)
 	if err != nil {
 		return agentport.AgentResult{}, err
 	}
@@ -222,7 +244,7 @@ func (r *Runner) Resume(ctx context.Context, env envport.EnvID, s agentport.Sess
 	if err != nil {
 		return agentport.AgentResult{}, err
 	}
-	st, err := r.start(ctx, c, in.ReadOnly)
+	st, err := r.start(ctx, c, env, in)
 	if err != nil {
 		return agentport.AgentResult{}, err
 	}
@@ -309,7 +331,7 @@ func (r *Runner) Reattach(ctx context.Context, env envport.EnvID, s agentport.Se
 	}
 	// The process is the one the turn runs in (a reuse); its id keeps
 	// another harness's exit out of this session's transcript.
-	st, err := r.start(ctx, c, in.ReadOnly)
+	st, err := r.start(ctx, c, env, in)
 	if err != nil {
 		return agentport.AgentResult{Session: s}, false, nil
 	}
@@ -328,7 +350,7 @@ func (r *Runner) AgentModels(ctx context.Context, env envport.EnvID) ([]string, 
 	if err != nil {
 		return nil, err
 	}
-	st, err := r.start(ctx, c, false)
+	st, err := r.start(ctx, c, env, agentport.AgentInput{})
 	if err != nil {
 		return nil, err
 	}

@@ -70,6 +70,7 @@ import type {
 	ActionSetting,
 	ActionSpec,
 	AgentToolCall,
+	HarnessSpec,
 	Attachment,
 	Automation,
 	Branch,
@@ -1101,6 +1102,19 @@ export function toActionSpec(w: Wire.Action): ActionSpec {
 		inputs: list(w.inputs).map(toActionPort),
 		outputs: list(w.outputs).map(toActionPort),
 		settings: list(w.settings).map(toActionSetting)
+	};
+}
+
+export function toHarnessSpec(w: Wire.Harness): HarnessSpec {
+	return {
+		kind: w.kind,
+		options: list(w.options).map((o) => ({
+			name: o.name,
+			description: o.description || undefined,
+			kind: oneOf(['model', 'enum'] as const, o.kind, 'model'),
+			values: o.values?.length ? list(o.values) : undefined,
+			needs: o.needs || undefined
+		}))
 	};
 }
 

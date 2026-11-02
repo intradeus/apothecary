@@ -58,6 +58,7 @@ import type {
 	Attachment,
 	Automation,
 	AutomationDraft,
+	HarnessSpec,
 	Branch,
 	BrowserStatus,
 	BuildCache,
@@ -1123,6 +1124,9 @@ export const system = {
 
 	actions: async (): Promise<ActionSpec[]> =>
 		many(await unwrap(gen.listActions()), map.toActionSpec),
+
+	harnessOptions: async (): Promise<HarnessSpec[]> =>
+		many(await unwrap(gen.listHarnessOptions()), map.toHarnessSpec),
 
 	signals: async (): Promise<SignalSpec[]> =>
 		many(await unwrap(gen.listSignals()), map.toSignalSpec),

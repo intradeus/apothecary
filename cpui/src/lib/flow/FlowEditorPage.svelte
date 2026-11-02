@@ -199,6 +199,7 @@
 					agents={ed.doc?.agents ?? []}
 					actions={ed.actions}
 					signals={ed.signals}
+					harnessSpecs={ed.harnessSpecs}
 					onchange={ed.markChanged}
 					onselect={panels.replace}
 					onopen={panels.openPanel}

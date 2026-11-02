@@ -11,6 +11,7 @@ import {
 	MAIN_PHASE
 } from '$test/fixtures/flow.svelte';
 import type { DocAgent, DocStage, FlowDoc } from '$lib/domain/flowdoc';
+import type { HarnessSpec } from '$lib/domain';
 import AgentStage from './AgentStage.svelte';
 
 const planner = anAgent('planner', {
@@ -18,14 +19,25 @@ const planner = anAgent('planner', {
 	outputs: [{ name: 'plan', type: 'file' }]
 });
 
+const ompSpec: HarnessSpec = {
+	kind: 'omp',
+	options: [
+		{ name: 'advisor', kind: 'model', description: 'the advisor' },
+		{ name: 'advisor_review', kind: 'enum', values: ['turn', 'agent-end'], needs: 'advisor' },
+		{ name: 'smol', kind: 'model' },
+		{ name: 'slow', kind: 'model' }
+	]
+};
+
 const setup = (
 	over: Partial<DocStage> = {},
 	agents: DocAgent[] = [planner],
-	doc: Partial<FlowDoc> = {}
+	doc: Partial<FlowDoc> = {},
+	harnessSpecs: HarnessSpec[] = []
 ) => {
 	const d = aDoc({ stages: [aStage('plan', 'agent', over)], agents, ...doc });
 	const { onchange, onopen } = handlers();
-	render(AgentStage, { doc: d, stage: d.stages[0], agents, onchange, onopen });
+	render(AgentStage, { doc: d, stage: d.stages[0], agents, harnessSpecs, onchange, onopen });
 	return { doc: d, stage: d.stages[0], onchange, onopen };
 };
 
@@ -158,6 +170,37 @@ describe('AgentStage', () => {
 		it('warns of a rejection route that can never fire', () => {
 			setup({ agent: 'planner', on_reject: { to: 'plan', max: 3 } });
 			expect(screen.getByText(/will never fire/)).toBeInTheDocument();
+		});
+	});
+
+	describe('harness options', () => {
+		it('shows every kind while the harness is a parameter', () => {
+			setup({ harness: '$harness' }, [planner], {}, [ompSpec]);
+			expect(screen.getByText('Harness options')).toBeInTheDocument();
+			expect(screen.getByLabelText('advisor')).toBeInTheDocument();
+		});
+
+		it('writes an option into its kind block', async () => {
+			const { stage, onchange } = setup({ harness: '$harness' }, [planner], {}, [ompSpec]);
+			await fill(screen.getByLabelText('advisor'), '$adv');
+			expect(stage.harness_options).toEqual({ omp: { advisor: '$adv' } });
+			expect(onchange).toHaveBeenCalled();
+		});
+
+		it('drops the block once cleared', async () => {
+			const { stage } = setup(
+				{ harness: 'omp', harness_options: { omp: { advisor: '$adv' } } },
+				[planner],
+				{},
+				[ompSpec]
+			);
+			await userEvent.clear(screen.getByLabelText('advisor'));
+			expect(stage.harness_options).toBeUndefined();
+		});
+
+		it('shows nothing for a harness that takes no options', () => {
+			setup({ harness: 'codex' }, [planner], {}, [ompSpec]);
+			expect(screen.queryByText('Harness options')).not.toBeInTheDocument();
 		});
 	});
 });

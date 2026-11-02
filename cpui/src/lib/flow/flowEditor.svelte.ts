@@ -6,7 +6,7 @@ import { errorMessage } from '$lib/core/errors';
 import { goto } from '$app/navigation';
 import type { BeforeNavigate } from '@sveltejs/kit';
 import { api } from '$lib/api';
-import type { ActionSpec, Flow, FlowVersion, SignalSpec } from '$lib/domain';
+import type { ActionSpec, Flow, FlowVersion, HarnessSpec, SignalSpec } from '$lib/domain';
 import { to } from '$lib/core/urls';
 import { t, th } from '$lib/i18n/index.svelte';
 import { confirmDialog } from '$lib/ui/confirm.svelte';
@@ -55,6 +55,7 @@ export class FlowEditor {
 	// The compiled-in action registry: what an `action` stage may name, and the
 	// signature the inspector and the dataflow layer bind against.
 	actions = $state<ActionSpec[]>([]);
+	harnessSpecs = $state<HarnessSpec[]>([]);
 	// The signal registry: what a wait stage blocks on, or a gate auto-answers on.
 	signals = $state<SignalSpec[]>([]);
 	// The flow document's JSON Schema: what the YAML tab checks as you type.
@@ -139,9 +140,10 @@ export class FlowEditor {
 		// Contracts for the binding fields and the dataflow view. Best-effort:
 		// without them the graph still renders explicit bindings.
 		try {
-			[this.actions, this.signals] = await Promise.all([
+			[this.actions, this.signals, this.harnessSpecs] = await Promise.all([
 				api.system.actions(),
-				api.system.signals()
+				api.system.signals(),
+				api.system.harnessOptions()
 			]);
 		} catch {
 			/* binding hints stay off */

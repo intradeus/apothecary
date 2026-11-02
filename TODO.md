@@ -1,7 +1,4 @@
-- 23) new run on observability + analytics dashboards per run/flow/skills : fastest, cheapest. Add a scoring system for the results maybe ?
 - 36) Resquash migrations
-- 43) SECURITY
-- 49) Ticket support for status, labels, comments etc. like source tracker. Syncing source ticket data to internal ticket, if there is a source. If not, move the ticket itself to done / add label / comments.
 - 50) Support for advisor / secondary models (omp support only for example) in the flow. This will bring a new feature : harness-specific parameters for agentic stages. This might mean that we have to move away from $parameters for harnesses.
 - 51) notifications for required actions by the user : let's say our auth manager refreshes a codex token and it fails : user needs to re-auth -> send a notification. Jira tickets have a new ticket type / status for this and mapping is required -> send notif. Basically, anything sending notifications. Not sure what can we do.
 ------ 

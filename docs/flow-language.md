@@ -351,6 +351,7 @@ server's `env` or `headers` (above) — at these sites only:
 | site | the parameter it takes |
 |---|---|
 | an agent stage's `model`, `harness`, `max_turns`, `timeout`; a command's `run_ref`, `timeout`; a service stage's `service`, `timeout` | a string; an int; a duration |
+| an agent stage's `harness_options` | a string — a model option a string that may wait for a value, like `model`; an enum option an enum parameter whose values all sit within the option's |
 | an action setting (`with:`) | a string — an enum setting needs an enum parameter whose values all sit within the setting's; a list setting (`create_mr`'s `labels`) a list of strings |
 | a watcher's or an outcome's `on.start`, a watcher's `on.quiet_for`, `on.max` | an enum within `auto \| confirm \| manual`; a duration; an int |
 | a stage's `run_if` | a bool |
@@ -726,7 +727,7 @@ this context explicitly, and those *are* declared, as ports.
 
 | type | what it does | key fields |
 |---|---|---|
-| `agent` | runs an agent this flow declares (§1) | `agent`, `input`, `output`, `model`, `harness`, `max_turns`, `timeout`, `reuse_session` |
+| `agent` | runs an agent this flow declares (§1) | `agent`, `input`, `output`, `model`, `harness`, `harness_options`, `max_turns`, `timeout`, `reuse_session` |
 | `command` | runs a shell script in the workspace | `run` **or** `run_ref`, `input`, `output`, `timeout`, `each_repo` |
 | `human_gate` | parks the phase on a human decision | `question`, `input` |
 | `action` | invokes a built-in apothecary integration | `action`, `input`, `output`, `with` |
@@ -751,6 +752,8 @@ command, `question` on an agent, and so on).
   harness: $harness                     # required: the harness kind, or a parameter ($harness)
   model: $review_model                  # required: provider/model, or a parameter — stages reading
                                         #   the same model parameter run on the same harness (§1)
+  harness_options:                      # optional: settings only one harness understands, by kind
+    omp: { advisor: $advisor_model, advisor_review: agent-end }
   max_turns: 80                         # optional overrides of the flow's parameters —
   timeout: 45m                          #   a literal, or a parameter of the right type
 ```
@@ -759,6 +762,29 @@ An agent stage **states its harness and its model**; neither falls back to a
 flow-wide default. The usual spelling is the parameters, `harness: $harness`
 and `model: $model`, so that what every stage runs on is read off the stage
 and bound by the project in one place.
+
+`harness_options:` gives the stage settings only one harness understands,
+keyed by harness kind. Only the block of the kind the stage runs on applies,
+so a stage on `harness: $harness` may carry blocks for several kinds, and a
+block for a kind a literal `harness:` never names is refused. What each kind
+takes is compiled in (`GET /api/harness-options`):
+
+| kind | option | is |
+|---|---|---|
+| `omp` | `advisor` | a model: a second model that reviews the agent's work as it goes and injects notes into its session; its spend is part of the session's |
+| `omp` | `advisor_review` | `turn` (every turn, omp's default) or `agent-end` (only when the agent ends, far cheaper); needs `advisor` |
+| `omp` | `smol` | a model: the fast model omp hands lightweight side work to |
+| `omp` | `slow` | a model: the model omp hands thorough reasoning work to |
+
+A model option is a model like the stage's own: `provider/model`, checked
+against the harness's models, its credentials and the workspace agent when a
+run is created. Its parameter may have no value yet; the run is refused
+until it has one — but only when the stage runs on that kind. Stages sharing
+a model parameter share a harness here too: an `omp` option's parameter
+runs on `omp`, never `$harness`. A model option never means "off": a
+parameter that resolves to an empty value is refused. For omp, each distinct
+option set runs in its own `omp acp` process, configured by a generated
+config overlay — no value ever reaches a command line.
 
 The agent's definition in this document's `agents:` block — its **contract** —
 declares what it reads and writes (§1, §4). The stage states that contract as

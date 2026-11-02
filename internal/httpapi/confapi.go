@@ -12,6 +12,7 @@ import (
 	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/flow/builtin"
+	"apothecary/internal/flow/harnessspec"
 	"apothecary/internal/flow/signalspec"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/egressport"
@@ -414,6 +415,12 @@ func (s *Server) listActions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, actionspec.Registry())
 }
 
+// listHarnessOptions serves the compiled-in harness option registry: what an
+// agent stage's harness_options may set, per harness kind.
+func (s *Server) listHarnessOptions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, harnessspec.Registry())
+}
+
 // listSignals serves the compiled-in signal registry: what a wait stage may
 // block on and what a gate may be auto-answered by.
 func (s *Server) listSignals(w http.ResponseWriter, r *http.Request) {
@@ -785,6 +792,9 @@ func (s *Server) registryRoutes() []Route {
 		{Method: "GET", Path: "/api/actions", ID: "listActions", Tag: tagSystem,
 			Summary: "Actions an `action` stage may name",
 			Handler: s.listActions, Returns: []actionspec.Action{}, Enabled: haveConf},
+		{Method: "GET", Path: "/api/harness-options", ID: "listHarnessOptions", Tag: tagSystem,
+			Summary: "Options an agent stage's harness_options may set, per harness kind",
+			Handler: s.listHarnessOptions, Returns: []harnessspec.Harness{}, Enabled: haveConf},
 		{Method: "GET", Path: "/api/signals", ID: "listSignals", Tag: tagSystem,
 			Summary: "Signals a `wait` stage or a gate's auto-answer may name",
 			Handler: s.listSignals, Returns: []signalspec.Signal{}, Enabled: haveConf},

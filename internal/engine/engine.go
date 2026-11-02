@@ -27,6 +27,7 @@ import (
 	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/platform/logs"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/notifyport"
@@ -1304,6 +1305,9 @@ func (e *Engine) preflight(ctx context.Context, res *resolution.Resolution, fl *
 		if st.Type == flow.StageAgent && st.Harness != "" && !res.HarnessInSet(st.Harness) {
 			return fmt.Errorf("preflight: stage %q pins harness %q, which is not in the project's harness set %v", st.ID, st.Harness, res.HarnessSet())
 		}
+		if st.Type == flow.StageAgent && !appliesHarnessOptions(res, st) {
+			return fmt.Errorf("preflight: stage %q sets harness_options.%s, which the %s harness cannot apply", st.ID, st.Harness, st.Harness)
+		}
 		// Actions and signals resolve like agents and run_refs: the flow names
 		// one, the project must have the integration it needs.
 		if st.Type == flow.StageAction {
@@ -2308,6 +2312,9 @@ func (e *Engine) preflightFlowRefs(res *resolution.Resolution, fl *flow.Flow) er
 		if st.Type == flow.StageAgent && st.Harness != "" && !res.HarnessInSet(st.Harness) {
 			return fmt.Errorf("stage %q pins harness %q, which is not in the project's harness set %v", st.ID, st.Harness, res.HarnessSet())
 		}
+		if st.Type == flow.StageAgent && !appliesHarnessOptions(res, st) {
+			return fmt.Errorf("stage %q sets harness_options.%s, which the %s harness cannot apply", st.ID, st.Harness, st.Harness)
+		}
 		if st.Type == flow.StageAction {
 			if err := res.ActionAvailable(st); err != nil {
 				return fmt.Errorf("stage %q: %w", st.ID, err)
@@ -2320,6 +2327,17 @@ func (e *Engine) preflightFlowRefs(res *resolution.Resolution, fl *flow.Flow) er
 		}
 	}
 	return nil
+}
+
+// appliesHarnessOptions reports whether the runner of st's harness can apply
+// the harness options st sets (true when it sets none): a registry row whose
+// adapter renders nothing is refused before a run starts, never partway.
+func appliesHarnessOptions(res *resolution.Resolution, st *flow.Stage) bool {
+	if len(st.HarnessOptions) == 0 {
+		return true
+	}
+	c, ok := res.RunnerFor(st.Harness).(agentport.HarnessOptionsCapable)
+	return ok && c.TakesHarnessOptions()
 }
 
 // CheckBranch refuses user-supplied branch names git check-ref-format

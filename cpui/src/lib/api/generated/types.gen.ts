@@ -468,6 +468,11 @@ export type DocStage = {
 	each_repo?: boolean;
 	for?: string;
 	harness?: string;
+	harness_options?: {
+		[key: string]: {
+			[key: string]: string;
+		};
+	};
 	id: string;
 	input?: DocPorts;
 	max_turns?: DocInt;
@@ -758,6 +763,11 @@ export type FlowVersion = {
 	yaml: string;
 };
 
+export type Harness = {
+	kind: string;
+	options: Array<Option> | null;
+};
+
 export type Health = {
 	error?: string;
 	status: string;
@@ -965,6 +975,14 @@ export type ObservedPort = {
 
 export type ObservedPortsRequest = {
 	ports: Array<ObservedPort> | null;
+};
+
+export type Option = {
+	description?: string;
+	kind: string;
+	name: string;
+	needs?: string;
+	values?: Array<string>;
 };
 
 export type OutputDecl = {
@@ -3578,6 +3596,38 @@ export type ValidateFlowResponses = {
 };
 
 export type ValidateFlowResponse = ValidateFlowResponses[keyof ValidateFlowResponses];
+
+export type ListHarnessOptionsData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/harness-options';
+};
+
+export type ListHarnessOptionsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListHarnessOptionsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<Harness> | null;
+};
+
+export type ListHarnessOptionsResponse =
+	ListHarnessOptionsResponses[keyof ListHarnessOptionsResponses];
 
 export type ListIntegrationsData = {
 	body?: never;

@@ -437,7 +437,7 @@ func TestReattachFollowsTheTurnInFlight(t *testing.T) {
 	r := h.runner()
 	c := sidecar.New(unixConn(h.sock))
 	ctx := context.Background()
-	if _, err := r.start(ctx, c, false); err != nil {
+	if _, err := r.start(ctx, c, "e", agentport.AgentInput{}); err != nil {
 		t.Fatal(err)
 	}
 	sess, err := c.Session(ctx, sidecar.SessionRequest{})
@@ -482,7 +482,7 @@ func TestReattachReplaysATurnThatFinishedMeanwhile(t *testing.T) {
 	r := h.runner()
 	c := sidecar.New(unixConn(h.sock))
 	ctx := context.Background()
-	if _, err := r.start(ctx, c, false); err != nil {
+	if _, err := r.start(ctx, c, "e", agentport.AgentInput{}); err != nil {
 		t.Fatal(err)
 	}
 	sess, _ := c.Session(ctx, sidecar.SessionRequest{})

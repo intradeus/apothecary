@@ -32,7 +32,8 @@ type Result struct {
 // endpoints, and run creation must not hang on a slow one.
 const modelListTimeout = 15 * time.Second
 
-// Models verifies that every agent stage's model is one its harness can
+// Models verifies that every agent stage's model — and every model option
+// of its harness (flow.Stage.Models) — is one its harness can
 // reach with the project's credentials. Providers retire models (a flow
 // pinning yesterday's model fails mid-run, after the workspace was built and
 // earlier stages spent their budget) — this catches it before any of that.
@@ -47,7 +48,7 @@ func Models(ctx context.Context, res *resolution.Resolution, fl *flow.Flow) Resu
 	failed := map[string]bool{}
 	for i := range fl.Stages {
 		st := &fl.Stages[i]
-		if st.Type != flow.StageAgent || st.Model == "" {
+		if st.Type != flow.StageAgent || len(st.Models()) == 0 {
 			continue
 		}
 		kind := st.Harness
@@ -71,12 +72,14 @@ func Models(ctx context.Context, res *resolution.Resolution, fl *flow.Flow) Resu
 		if models == nil {
 			continue // the harness takes any model
 		}
-		if !slices.Contains(models, st.Model) {
-			msg := fmt.Sprintf("stage %q: model %q is not available to harness %s", st.ID, st.Model, kind)
-			if near := Closest(st.Model, models, 3); len(near) > 0 {
-				msg += " (closest: " + strings.Join(near, ", ") + ")"
+		for _, use := range st.Models() {
+			if !slices.Contains(models, use.Model) {
+				msg := fmt.Sprintf("stage %q: %s %q is not available to harness %s", st.ID, use.Field, use.Model, kind)
+				if near := Closest(use.Model, models, 3); len(near) > 0 {
+					msg += " (closest: " + strings.Join(near, ", ") + ")"
+				}
+				out.Missing = append(out.Missing, msg)
 			}
-			out.Missing = append(out.Missing, msg)
 		}
 	}
 	return out
@@ -100,7 +103,7 @@ func Auth(ctx context.Context, res *resolution.Resolution, stages []flow.Stage) 
 	models := map[string][]string{}
 	for i := range stages {
 		st := &stages[i]
-		if st.Type != flow.StageAgent || st.Model == "" {
+		if st.Type != flow.StageAgent || len(st.Models()) == 0 {
 			continue
 		}
 		kind := st.Harness
@@ -110,8 +113,10 @@ func Auth(ctx context.Context, res *resolution.Resolution, stages []flow.Stage) 
 		if _, seen := models[kind]; !seen {
 			order = append(order, kind)
 		}
-		if !slices.Contains(models[kind], st.Model) {
-			models[kind] = append(models[kind], st.Model)
+		for _, use := range st.Models() {
+			if !slices.Contains(models[kind], use.Model) {
+				models[kind] = append(models[kind], use.Model)
+			}
 		}
 	}
 	for _, kind := range order {
@@ -187,7 +192,7 @@ func AgentModels(ctx context.Context, res *resolution.Resolution, env envport.En
 	skipped := map[string]bool{}
 	for i := range stages {
 		st := &stages[i]
-		if st.Type != flow.StageAgent || st.Model == "" {
+		if st.Type != flow.StageAgent || len(st.Models()) == 0 {
 			continue
 		}
 		kind := st.Harness
@@ -218,12 +223,14 @@ func AgentModels(ctx context.Context, res *resolution.Resolution, env envport.En
 			}
 			asked[kind], models = got, got
 		}
-		if !Accepts(models, st.Model) {
-			msg := fmt.Sprintf("stage %q: model %q is not offered by the %s agent in the workspace", st.ID, st.Model, kind)
-			if near := Closest(st.Model, models, 3); len(near) > 0 {
-				msg += " (closest: " + strings.Join(near, ", ") + ")"
+		for _, use := range st.Models() {
+			if !Accepts(models, use.Model) {
+				msg := fmt.Sprintf("stage %q: %s %q is not offered by the %s agent in the workspace", st.ID, use.Field, use.Model, kind)
+				if near := Closest(use.Model, models, 3); len(near) > 0 {
+					msg += " (closest: " + strings.Join(near, ", ") + ")"
+				}
+				missing = append(missing, msg)
 			}
-			missing = append(missing, msg)
 		}
 	}
 	return missing, unasked

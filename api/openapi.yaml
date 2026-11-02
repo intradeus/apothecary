@@ -1074,6 +1074,12 @@ components:
           type: string
         harness:
           type: string
+        harness_options:
+          additionalProperties:
+            additionalProperties:
+              type: string
+            type: object
+          type: object
         id:
           type: string
         input:
@@ -1751,6 +1757,19 @@ components:
         - project_id
         - yaml
       type: object
+    Harness:
+      properties:
+        kind:
+          type: string
+        options:
+          items:
+            $ref: '#/components/schemas/Option'
+          nullable: true
+          type: array
+      required:
+        - kind
+        - options
+      type: object
     Health:
       properties:
         error:
@@ -2195,6 +2214,24 @@ components:
           type: array
       required:
         - ports
+      type: object
+    Option:
+      properties:
+        description:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+        needs:
+          type: string
+        values:
+          items:
+            type: string
+          type: array
+      required:
+        - kind
+        - name
       type: object
     OutputDecl:
       properties:
@@ -6336,6 +6373,37 @@ paths:
       summary: Validate a flow document without saving it
       tags:
         - flows
+  /api/harness-options:
+    get:
+      operationId: listHarnessOptions
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Harness'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Options an agent stage's harness_options may set, per harness kind
+      tags:
+        - system
   /api/integrations:
     get:
       operationId: listIntegrations

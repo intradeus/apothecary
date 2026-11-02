@@ -20,6 +20,7 @@ import (
 
 	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/harnessspec"
 	"apothecary/internal/flow/signalspec"
 )
 
@@ -556,21 +557,24 @@ type DocStage struct {
 	ID string `yaml:"id" json:"id"`
 	// Sequence names a sequence this stage runs in its place (FLOWLANG §1
 	// Sequences): a sequence stage, which has no type.
-	Sequence    string    `yaml:"sequence" json:"sequence,omitempty"`
-	Type        string    `yaml:"type" json:"type,omitempty"`
-	Description string    `yaml:"description" json:"description,omitempty"`
-	RunIf       string    `yaml:"run_if" json:"run_if,omitempty"`
-	Agent       string    `yaml:"agent" json:"agent,omitempty"`
-	Model       string    `yaml:"model" json:"model,omitempty"`
-	Harness     string    `yaml:"harness" json:"harness,omitempty"`
-	MaxTurns    *DocInt   `yaml:"max_turns" json:"max_turns,omitempty"`
-	Timeout     string    `yaml:"timeout" json:"timeout,omitempty"`
-	Input       *DocPorts `yaml:"input" json:"input,omitempty"`
-	Output      *DocPorts `yaml:"output" json:"output,omitempty"`
-	With        *DocIO    `yaml:"with" json:"with,omitempty"`
-	Run         string    `yaml:"run" json:"run,omitempty"`
-	RunRef      string    `yaml:"run_ref" json:"run_ref,omitempty"`
-	EachRepo    bool      `yaml:"each_repo" json:"each_repo,omitempty"`
+	Sequence    string `yaml:"sequence" json:"sequence,omitempty"`
+	Type        string `yaml:"type" json:"type,omitempty"`
+	Description string `yaml:"description" json:"description,omitempty"`
+	RunIf       string `yaml:"run_if" json:"run_if,omitempty"`
+	Agent       string `yaml:"agent" json:"agent,omitempty"`
+	Model       string `yaml:"model" json:"model,omitempty"`
+	Harness     string `yaml:"harness" json:"harness,omitempty"`
+	// HarnessOptions are settings only one harness understands, by harness
+	// kind (harnessspec): only the block of the kind the stage runs on applies.
+	HarnessOptions map[string]map[string]string `yaml:"harness_options" json:"harness_options,omitempty"`
+	MaxTurns       *DocInt                      `yaml:"max_turns" json:"max_turns,omitempty"`
+	Timeout        string                       `yaml:"timeout" json:"timeout,omitempty"`
+	Input          *DocPorts                    `yaml:"input" json:"input,omitempty"`
+	Output         *DocPorts                    `yaml:"output" json:"output,omitempty"`
+	With           *DocIO                       `yaml:"with" json:"with,omitempty"`
+	Run            string                       `yaml:"run" json:"run,omitempty"`
+	RunRef         string                       `yaml:"run_ref" json:"run_ref,omitempty"`
+	EachRepo       bool                         `yaml:"each_repo" json:"each_repo,omitempty"`
 	// ReuseSession is a pointer because it is on unless a stage says false.
 	ReuseSession *bool    `yaml:"reuse_session" json:"reuse_session,omitempty"`
 	Question     string   `yaml:"question" json:"question,omitempty"`
@@ -1911,6 +1915,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		{"agent", raw.Agent != "", []StageType{StageAgent}},
 		{"model", raw.Model != "", []StageType{StageAgent}},
 		{"harness", raw.Harness != "", []StageType{StageAgent}},
+		{"harness_options", len(raw.HarnessOptions) > 0, []StageType{StageAgent}},
 		{"max_turns", raw.MaxTurns != nil, []StageType{StageAgent}},
 		// A wait stage may bound how long it waits; absent, it waits forever
 		// (like a gate — both park on something outside the run). A command
@@ -2001,6 +2006,9 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 			return fail("model: %q%s is not of the form provider/model", v, via)
 		} else {
 			s.Model = v
+		}
+		if s.HarnessOptions, perr = p.buildHarnessOptions(raw, s.Harness); perr != nil {
+			return fail("%v", perr)
 		}
 		if raw.MaxTurns != nil {
 			n, via, err := p.lookupInt(raw.MaxTurns, site("max_turns", ParamInt, nil))
@@ -2220,8 +2228,74 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	return s, nil
 }
 
+// buildHarnessOptions resolves an agent stage's harness_options: every block
+// is checked against the registry (harnessspec) and its $parameters recorded,
+// so a block for a kind the stage does not resolve to today still keeps its
+// parameters used; only the block of harness — the kind the stage runs on —
+// is kept. nil when nothing applies.
+func (p *parser) buildHarnessOptions(raw *DocStage, harness string) (map[string]string, error) {
+	var kept map[string]string
+	for _, kind := range slices.Sorted(maps.Keys(raw.HarnessOptions)) {
+		h := harnessspec.Get(kind)
+		if h == nil {
+			return nil, fmt.Errorf("harness_options: harness %q takes no options (harnesses with options: %s)", kind, harnessspec.Kinds())
+		}
+		if !IsParamRef(raw.Harness) && kind != raw.Harness {
+			return nil, fmt.Errorf("harness_options.%s: the stage runs on harness %s, so these options never apply", kind, raw.Harness)
+		}
+		block := raw.HarnessOptions[kind]
+		for _, name := range slices.Sorted(maps.Keys(block)) {
+			value := block[name]
+			sig := h.Option(name)
+			if sig == nil {
+				return nil, fmt.Errorf("harness_options.%s: %q is not an option of %s (options: %s)", kind, name, kind, h.Names())
+			}
+			if strings.TrimSpace(value) == "" {
+				return nil, fmt.Errorf("harness_options.%s.%s: a value is required — %s", kind, name, sig.Description)
+			}
+			if sig.Needs != "" {
+				if _, ok := block[sig.Needs]; !ok {
+					return nil, fmt.Errorf("harness_options.%s.%s needs %s in the same block", kind, name, sig.Needs)
+				}
+			}
+			var values []string
+			if sig.Kind == harnessspec.KindEnum {
+				values = sig.Values
+			}
+			v, via, err := p.lookup(value, paramSite{stage: raw.ID, field: "harness_options", input: kind + "." + name, typ: ParamString, values: values, unbound: sig.Kind == harnessspec.KindModel})
+			if err != nil {
+				return nil, fmt.Errorf("harness_options.%s.%s: %v", kind, name, err)
+			}
+			switch sig.Kind {
+			case harnessspec.KindModel:
+				if v != "" && !validModel(v) {
+					return nil, fmt.Errorf("harness_options.%s.%s: %q%s is not of the form provider/model", kind, name, v, via)
+				}
+				// A model option never means "off": a parameter that
+				// resolves must name a model.
+				if v == "" && IsParamRef(value) {
+					if _, ok := resolveParamValue(p.plist, p.bindings, value[1:]); ok {
+						return nil, fmt.Errorf("harness_options.%s.%s: %s is empty — bind a model", kind, name, value)
+					}
+				}
+			case harnessspec.KindEnum:
+				if !slices.Contains(sig.Values, v) {
+					return nil, fmt.Errorf("harness_options.%s.%s: %q%s is not one of %s", kind, name, v, via, strings.Join(sig.Values, " | "))
+				}
+			}
+			if kind == harness && v != "" {
+				if kept == nil {
+					kept = map[string]string{}
+				}
+				kept[name] = v
+			}
+		}
+	}
+	return kept, nil
+}
+
 // paramFields names where a $parameter is read (FLOWLANG §1 Parameters).
-const paramFields = "a stage's model, harness, max_turns, timeout, run_ref and run_if, an action's settings (with), a service stage's service, a run.service.$name source, and a watcher's or an outcome's start, quiet_for and max"
+const paramFields = "a stage's model, harness, harness_options, max_turns, timeout, run_ref and run_if, an action's settings (with), a service stage's service, a run.service.$name source, and a watcher's or an outcome's start, quiet_for and max"
 
 // notAParam refuses a $parameter in a field that reads none: written there,
 // $name would stay the text "$name" — never the parameter's value.

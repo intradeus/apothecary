@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"apothecary/internal/adapters/fake"
+	"apothecary/internal/flow/harnessspec"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
@@ -52,6 +53,38 @@ func TestRegistryValidAndDescriptors(t *testing.T) {
 			if !found {
 				t.Error("gitlab token field not marked secret")
 			}
+		}
+	}
+}
+
+// Every harness kind with registered options can apply them, and every
+// harness that can apply options has them registered: half-adding a harness
+// or its options fails here rather than at a run.
+func TestHarnessOptionsMatchTheirHarnesses(t *testing.T) {
+	r := NewRegistry()
+	r.RegisterHarness(Opencode{})
+	r.RegisterHarness(Codex{})
+	r.RegisterHarness(Omp{})
+	takes := func(kind string) bool {
+		h, err := r.harnesses[kind].New(Config{}, fake.NewEnvProvisioner())
+		if err != nil {
+			t.Fatalf("%s: %v", kind, err)
+		}
+		c, ok := h.(agentport.HarnessOptionsCapable)
+		return ok && c.TakesHarnessOptions()
+	}
+	for _, h := range harnessspec.Registry() {
+		if _, ok := r.harnesses[h.Kind]; !ok {
+			t.Errorf("harness options are registered for %q, which is no harness kind", h.Kind)
+			continue
+		}
+		if !takes(h.Kind) {
+			t.Errorf("%s has registered options but its runner cannot apply them (no Profile.OptionArgs)", h.Kind)
+		}
+	}
+	for kind := range r.harnesses {
+		if takes(kind) && harnessspec.Get(kind) == nil {
+			t.Errorf("%s applies harness options but registers none in harnessspec", kind)
 		}
 	}
 }

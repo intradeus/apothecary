@@ -905,6 +905,9 @@ export default {
 	'flow.insp.runIfHelp':
 		'A stage whose condition does not hold completes as skipped and the chain goes on. The ticket’s change type (feat, fix, hotfix, perf, docs, chore) picks stages per kind of work; a bool $parameter lets a workshop switch the stage off.',
 	'flow.insp.numberOrParam': 'A number, or an int $parameter.',
+	'flow.insp.harnessOptions': 'Harness options',
+	'flow.insp.harnessOptionsHelp':
+		'Settings only one harness understands. Only the block of the harness the stage runs on applies.',
 	'flow.insp.durationOrParam': 'A duration (30m, 2h), or a string $parameter.',
 	'flow.insp.phaseHelp': "Its routes stay inside it; the chain's last stage ends it.",
 	'flow.insp.agent': 'Agent',

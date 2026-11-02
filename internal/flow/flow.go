@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/harnessspec"
 	"apothecary/internal/flow/signalspec"
 )
 
@@ -348,6 +349,10 @@ type Stage struct {
 	// instead of continuing the stage's, so what it concluded before cannot
 	// colour its next look.
 	FreshSession bool
+	// HarnessOptions are the options of the harness the stage runs on — its
+	// kind's block of harness_options, resolved; nil when none apply or the
+	// harness is unbound.
+	HarnessOptions map[string]string
 
 	// Inputs and Outputs are the stage's ports: what it reads, from where,
 	// and what it writes, to where — each typed. Every one is visible to the
@@ -931,6 +936,29 @@ func resolveParamValue(params []Param, bindings map[string]string, name string) 
 	return "", false
 }
 
+// ModelUse is one model an agent stage runs on its harness.
+type ModelUse struct {
+	Field string // "model", or "harness_options.<kind>.<option>"
+	Model string
+}
+
+// Models lists the models the stage runs: its own first, then its harness's
+// model options in registry order. Empty values are skipped.
+func (s *Stage) Models() []ModelUse {
+	var out []ModelUse
+	if s.Model != "" {
+		out = append(out, ModelUse{Field: "model", Model: s.Model})
+	}
+	if h := harnessspec.Get(s.Harness); h != nil {
+		for _, o := range h.Options {
+			if v := s.HarnessOptions[o.Name]; o.Kind == harnessspec.KindModel && v != "" {
+				out = append(out, ModelUse{Field: "harness_options." + s.Harness + "." + o.Name, Model: v})
+			}
+		}
+	}
+	return out
+}
+
 // Unbound is one parameter the flow needs a value for and has none: no
 // default, nothing bound. Sites are where it is read — stage ids, or "ask".
 type Unbound struct {
@@ -940,8 +968,9 @@ type Unbound struct {
 
 // Unbound lists the parameters read as a model or a harness that resolve to
 // nothing in this flow (as parsed, or as bound by Resolve): what a project
-// must bind, or a run set, before the flow can run. Stable order: by first
-// use.
+// must bind, or a run set, before the flow can run. A model option under
+// harness_options counts only when its stage runs on that kind. Stable
+// order: by first use.
 func (f *Flow) Unbound() []Unbound {
 	var out []Unbound
 	idx := map[string]int{}
@@ -952,6 +981,13 @@ func (f *Flow) Unbound() []Unbound {
 			site = r.Stage
 		case "ask.harness":
 			site = "ask"
+		case "harness_options":
+			kind, opt, _ := strings.Cut(r.Input, ".")
+			st := f.Stage(r.Stage)
+			if o := harnessspec.Get(kind).Option(opt); st == nil || st.Harness != kind || o == nil || o.Kind != harnessspec.KindModel {
+				continue
+			}
+			site = r.Stage
 		default:
 			continue
 		}

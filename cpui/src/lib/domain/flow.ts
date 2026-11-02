@@ -168,6 +168,22 @@ export interface ActionSpec {
 	settings: ActionSetting[];
 }
 
+/** One option an agent stage's harness_options may set for a harness. */
+export interface HarnessOptionSpec {
+	name: string;
+	description?: string;
+	kind: 'model' | 'enum';
+	values?: string[];
+	/** Another option of the same block this one means nothing without. */
+	needs?: string;
+}
+
+/** The options one harness kind takes. Compiled in, not project data. */
+export interface HarnessSpec {
+	kind: string;
+	options: HarnessOptionSpec[];
+}
+
 /** A signal (FLOWLANG §1): what it is, never what it does — the section
  *  that names it decides that. */
 export interface SignalSpec {

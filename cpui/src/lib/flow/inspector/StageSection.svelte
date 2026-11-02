@@ -3,7 +3,7 @@
 	// stage has — its name, where it is written, its condition, its routes —
 	// around what its kind asks for.
 	import type { Selection } from '$lib/flow/FlowGraph.svelte';
-	import type { ActionSpec, SignalSpec } from '$lib/domain';
+	import type { ActionSpec, HarnessSpec, SignalSpec } from '$lib/domain';
 	import StageChip from '$lib/ui/StageChip.svelte';
 	import Select from '$lib/ui/Select.svelte';
 	import { t } from '$lib/i18n/index.svelte';
@@ -43,6 +43,7 @@
 		agents,
 		actions,
 		signals,
+		harnessSpecs = [],
 		onchange,
 		onselect,
 		onopen,
@@ -58,6 +59,7 @@
 		agents: DocAgent[];
 		actions: ActionSpec[];
 		signals: SignalSpec[];
+		harnessSpecs?: HarnessSpec[];
 		onchange: () => void;
 		onselect: (sel: Selection, how?: 'rename') => void;
 		onopen: (sel: Selection) => void;
@@ -172,7 +174,7 @@
 	</div>
 {/if}
 {#if s.type === 'agent'}
-	<AgentStage {doc} stage={s} {agents} {onchange} {onopen} />
+	<AgentStage {doc} stage={s} {agents} {harnessSpecs} {onchange} {onopen} />
 {:else if s.type === 'command'}
 	<CommandStage {doc} stage={s} {onchange} />
 {:else if s.type === 'human_gate'}

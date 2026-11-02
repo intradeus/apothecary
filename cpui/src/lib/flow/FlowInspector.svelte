@@ -22,7 +22,7 @@
 		dropStage,
 		viewKeyOf
 	} from '$lib/flow/inspector/inspector';
-	import type { ActionSpec, SignalSpec } from '$lib/domain';
+	import type { ActionSpec, HarnessSpec, SignalSpec } from '$lib/domain';
 	import {
 		removeMCPServer,
 		removePhase,
@@ -60,7 +60,8 @@
 		onback,
 		agents = [],
 		actions = [],
-		signals = []
+		signals = [],
+		harnessSpecs = []
 	}: {
 		doc: FlowDoc;
 		selection: Selection;
@@ -72,6 +73,7 @@
 		agents?: DocAgent[];
 		actions?: ActionSpec[];
 		signals?: SignalSpec[];
+		harnessSpecs?: HarnessSpec[];
 	} = $props();
 
 	// Where a delete leaves the inspector: back where it came from, or the
@@ -199,6 +201,7 @@
 					{agents}
 					{actions}
 					{signals}
+					{harnessSpecs}
 					{onchange}
 					{onselect}
 					{onopen}

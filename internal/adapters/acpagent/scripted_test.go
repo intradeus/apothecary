@@ -381,6 +381,77 @@ func TestReadOnlyByMode(t *testing.T) {
 	}
 }
 
+// A stage's harness options choose its process on every path: the session
+// it runs in, the reply that resumes it and the reattach that follows it
+// all start the same command line. A read-only session never takes them.
+func TestHarnessOptionsReachEveryStart(t *testing.T) {
+	opts := map[string]string{"advisor": "acme/adv"}
+	calls := 0
+	profile := Profile{OptionArgs: func(_ context.Context, _ envport.EnvID, got map[string]string) (string, error) {
+		calls++
+		if got["advisor"] != "acme/adv" {
+			t.Errorf("options = %v", got)
+		}
+		return "--opt", nil
+	}}
+	if !scripted(newSideFake(t), profile).TakesHarnessOptions() {
+		t.Error("a profile with OptionArgs takes options")
+	}
+	// Each path on its own sidecar, so one's stream position cannot stall
+	// the next; the command line it started is all that is asserted.
+	started := func(name string, call func(r *Runner, f *sideFake) error) string {
+		f := newSideFake(t)
+		f.endTurn()
+		if err := call(scripted(f, profile), f); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(f.starts) != 1 {
+			t.Fatalf("%s: starts = %+v, want one", name, f.starts)
+		}
+		return f.starts[0].Argv[2]
+	}
+	for name, call := range map[string]func(r *Runner, f *sideFake) error{
+		"run": func(r *Runner, _ *sideFake) error {
+			_, err := r.Run(bg, "e", agentport.AgentSpec{}, agentport.AgentInput{HarnessOptions: opts})
+			return err
+		},
+		"reply": func(r *Runner, _ *sideFake) error {
+			_, err := r.Resume(bg, "e", "s1", agentport.AgentInput{HarnessOptions: opts, Prompt: "reply"})
+			return err
+		},
+		"reattach": func(r *Runner, f *sideFake) error {
+			f.status = sidecar.Status{LastSeq: 40, Turns: []sidecar.TurnStatus{{ID: "t9", Session: "s1"}}, Sessions: map[string]float64{"s1": 1}}
+			f.push(sidecar.Event{Session: "s1", Turn: "t9", Type: "turn_end", StopReason: "end_turn"})
+			if _, ok, err := r.Reattach(bg, "e", "s1", "", agentport.AgentInput{HarnessOptions: opts}); !ok || err != nil {
+				return fmt.Errorf("reattach = %v, %v", ok, err)
+			}
+			return nil
+		},
+	} {
+		if argv := started(name, call); !strings.HasSuffix(argv, "exec agent --opt") {
+			t.Errorf("%s started %q, want the options on the command line", name, argv)
+		}
+	}
+	if calls != 3 {
+		t.Errorf("OptionArgs ran %d times, want 3", calls)
+	}
+	readOnly := started("read-only", func(r *Runner, _ *sideFake) error {
+		_, err := r.Run(bg, "e", agentport.AgentSpec{}, agentport.AgentInput{HarnessOptions: opts, ReadOnly: true})
+		return err
+	})
+	if calls != 3 || strings.Contains(readOnly, "--opt") {
+		t.Errorf("a read-only session took the options: %d calls, %q", calls, readOnly)
+	}
+
+	none := scripted(newSideFake(t), Profile{})
+	if none.TakesHarnessOptions() {
+		t.Error("a profile without OptionArgs takes no options")
+	}
+	if _, err := none.Run(bg, "e", agentport.AgentSpec{}, agentport.AgentInput{HarnessOptions: opts}); err == nil || !strings.Contains(err.Error(), "takes no harness options") {
+		t.Errorf("options on a harness that takes none = %v", err)
+	}
+}
+
 func TestResumePaths(t *testing.T) {
 	r := scripted(newSideFake(t), Profile{})
 	if _, err := r.Resume(bg, "e", "", agentport.AgentInput{}); err == nil || !strings.Contains(err.Error(), "no session recorded") {
