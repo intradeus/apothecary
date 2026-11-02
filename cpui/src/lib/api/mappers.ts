@@ -19,7 +19,7 @@ import type {
 	Token,
 	User
 } from '$lib/domain';
-import type { Credential, ProviderInfo, SignInPending } from '$lib/domain';
+import type { Credential, Notice, ProviderInfo, SignInPending } from '$lib/domain';
 import { asChangeType, asFlowStep } from '$lib/domain';
 import type {
 	Skill,
@@ -1172,6 +1172,21 @@ export function toKindDescriptor(w: Wire.KindDescriptor): KindDescriptor {
 
 export function toChannelEntry(w: Wire.ChannelEntry): ChannelEntry {
 	return { id: w.id ?? '', kind: w.kind ?? '', config: w.config ?? {} };
+}
+
+// --- notices -----------------------------------------------------------------
+
+export function toNotice(w: Wire.Notice): Notice {
+	return {
+		id: w.id ?? '',
+		kind: w.kind ?? '',
+		title: w.title ?? '',
+		body: w.body ?? '',
+		link: w.link ?? '',
+		count: w.count ?? 1,
+		createdAt: w.created_at ?? '',
+		lastSeenAt: w.last_seen_at ?? ''
+	};
 }
 
 // --- egress ------------------------------------------------------------------

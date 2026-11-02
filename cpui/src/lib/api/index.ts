@@ -22,6 +22,7 @@ import type {
 	AuthStatus,
 	Limits,
 	Me,
+	Notice,
 	SshKey,
 	Token,
 	User
@@ -565,6 +566,14 @@ export const egress = {
 			await unwrap(gen.getProjectEgressAudit({ path: { id: projectId }, query: { ...opts } })),
 			map.toEgressAuditRow
 		)
+};
+
+// --- notices -----------------------------------------------------------------
+
+export const notices = {
+	list: async (): Promise<Notice[]> => many(await unwrap(gen.listNotices()), map.toNotice),
+	dismiss: (id: string) => unwrapVoid(gen.dismissNotice({ path: { id } })),
+	dismissAll: () => unwrapVoid(gen.dismissAllNotices())
 };
 
 // --- pings -------------------------------------------------------------------
@@ -1490,5 +1499,6 @@ export const api = {
 	ask,
 	skills,
 	skillsets,
-	analytics
+	analytics,
+	notices
 };

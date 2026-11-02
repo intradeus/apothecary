@@ -117,6 +117,50 @@ func TestTransientRefreshFailure(t *testing.T) {
 	}
 }
 
+// recNotices records what the keeper tells its owner.
+type recNotices struct{ calls []string }
+
+func (r *recNotices) LoginSignedOut(_ context.Context, userID, credentialID, _, _, _ string) {
+	r.calls = append(r.calls, "signed_out "+userID+" "+credentialID)
+}
+func (r *recNotices) LoginExpired(_ context.Context, userID, credentialID, _ string, err error) {
+	if err != nil {
+		r.calls = append(r.calls, "expired "+userID+" "+credentialID)
+	}
+}
+func (r *recNotices) LoginRefreshed(_ context.Context, credentialID string) {
+	r.calls = append(r.calls, "refreshed "+credentialID)
+}
+
+// Each refresh outcome a person must hear about reaches the credential's owner.
+func TestFreshTellsNotices(t *testing.T) {
+	ctx := context.Background()
+	for name, c := range map[string]struct {
+		status  int
+		body    any
+		expires time.Duration
+		want    string
+	}{
+		"refused for good": {400, map[string]string{"error": "invalid_grant"}, time.Minute, "signed_out u1 "},
+		"expired":          {503, map[string]string{"error": "overloaded"}, -time.Minute, "expired u1 "},
+		"refreshed":        {200, map[string]any{"access_token": "new", "expires_in": 3600}, time.Minute, "refreshed "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := newStore(t)
+			ts := newTokenServer(t, func(map[string]string) (int, any) { return c.status, c.body })
+			pointEndpoints(t, ts.URL)
+			id := oauth(t, store, "r", time.Now().Add(c.expires))
+			rec := &recNotices{}
+			k := New(store, nil)
+			k.Notices = rec
+			_, _ = k.Fresh(ctx, id)
+			if len(rec.calls) != 1 || rec.calls[0] != c.want+id {
+				t.Errorf("calls = %q, want [%q]", rec.calls, c.want+id)
+			}
+		})
+	}
+}
+
 // The provider spent the old refresh token, so losing the new one must be
 // loud: the caller hears, and OnRefresh does not fire for nothing.
 func TestRefreshThatCannotBeStored(t *testing.T) {

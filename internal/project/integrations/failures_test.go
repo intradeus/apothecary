@@ -594,7 +594,7 @@ func TestWarmImagesUsesTheBuilder(t *testing.T) {
 	d := refusingDocker{calls: make(chan []string, 64)}
 	builder := wsimage.NewWithRunner(d, t.TempDir())
 	b.r.SetImageBuilder(builder)
-	b.r.WarmImages(context.Background())
+	b.r.WarmImages(context.Background(), nil)
 	select {
 	case args := <-d.calls:
 		if len(args) == 0 {

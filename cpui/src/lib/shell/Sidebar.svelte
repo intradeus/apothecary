@@ -43,7 +43,13 @@
 	const path = $derived(page.url.pathname);
 	/** A destination's count: pending pings on the inbox, live runs on runs. */
 	const count = (n: NavItem) =>
-		n.id === 'inbox' ? fleet.pending.length : n.id === 'runs' ? fleet.active.length : 0;
+		n.id === 'inbox'
+			? fleet.pending.length
+			: n.id === 'notices'
+				? fleet.notices.length
+				: n.id === 'runs'
+					? fleet.active.length
+					: 0;
 
 	// The workshop the page is "in": its own page, the run's, or ?project=.
 	const currentRunId = $derived(page.params.runId);

@@ -7,12 +7,13 @@ import "context"
 // Notification is the one-way fan-out payload; the CPUI inbox is canonical,
 // channels are best-effort mirrors.
 type Notification struct {
-	// UserID is whose channels the notification goes to: the run's owner.
+	// UserID is whose channels the notification goes to: the run's owner, or
+	// a notice's recipient.
 	// Empty is an instance-wide notice (every channel).
 	UserID string
 	RunID  string
 	PingID string
-	Type   string // ping type
+	Type   string // ping type, or a notice kind (internal/notices)
 	Title  string
 	Body   string
 	URL    string // deep link into the CPUI

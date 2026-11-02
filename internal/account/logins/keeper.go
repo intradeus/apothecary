@@ -32,6 +32,13 @@ const (
 	DefaultEvery      = time.Minute
 )
 
+// Notices hears logins their owner must fix (notices.Service); nil = log only.
+type Notices interface {
+	LoginSignedOut(ctx context.Context, userID, credentialID, name, provider, reason string)
+	LoginExpired(ctx context.Context, userID, credentialID, name string, err error)
+	LoginRefreshed(ctx context.Context, credentialID string)
+}
+
 // Keeper is the one party that redeems refresh tokens.
 type Keeper struct {
 	store  Store
@@ -43,6 +50,8 @@ type Keeper struct {
 	// OnRefresh is told every credential the keeper refreshed, after it is
 	// persisted: the engine rewrites the live workspaces that hold it.
 	OnRefresh func(ctx context.Context, credentialID string)
+	// Notices hears logins their owner must fix; nil = log only.
+	Notices Notices
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
@@ -138,6 +147,9 @@ func (k *Keeper) Fresh(ctx context.Context, id string) (providers.Credential, er
 			if derr := k.store.DisableCredential(ctx, id, err.Error()); derr != nil {
 				k.log.Error("could not record a dead login", "credential", id, "err", derr)
 			}
+			if k.Notices != nil {
+				k.Notices.LoginSignedOut(ctx, meta.UserID, id, meta.Name, c.Provider, err.Error())
+			}
 			return c, &DisabledError{Name: meta.Name, Reason: err.Error()}
 		}
 		// Transient: the current token still works until it expires, so a
@@ -145,6 +157,9 @@ func (k *Keeper) Fresh(ctx context.Context, id string) (providers.Credential, er
 		k.log.Warn("login refresh failed; will retry", "credential", id, "provider", c.Provider, "err", err)
 		if !c.Expires.IsZero() && c.Expires.After(k.now()) {
 			return c, nil
+		}
+		if k.Notices != nil {
+			k.Notices.LoginExpired(ctx, meta.UserID, id, meta.Name, err)
 		}
 		return c, fmt.Errorf("credential %q: refresh failed and the token has expired: %w", meta.Name, err)
 	}
@@ -157,6 +172,9 @@ func (k *Keeper) Fresh(ctx context.Context, id string) (providers.Credential, er
 		return c, fmt.Errorf("credential %q: could not store the refreshed login: %w", meta.Name, err)
 	}
 	k.log.Info("login refreshed", "credential", id, "provider", c.Provider, "expires", refreshed.Expires)
+	if k.Notices != nil {
+		k.Notices.LoginRefreshed(ctx, id)
+	}
 	if k.OnRefresh != nil {
 		k.OnRefresh(ctx, id)
 	}

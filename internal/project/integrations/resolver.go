@@ -53,6 +53,8 @@ type Resolver struct {
 	// logins opens provider credentials refreshing them when due (the
 	// keeper); nil opens them as stored (tests).
 	logins CredentialOpener
+	// notices hears k8s image drift; nil = log only.
+	notices ProvisionerNotices
 }
 
 // CredentialOpener opens a provider credential with an access token that
@@ -63,6 +65,26 @@ type CredentialOpener interface {
 
 // SetLogins wires the keeper.
 func (r *Resolver) SetLogins(o CredentialOpener) { r.logins = o }
+
+// ProvisionerNotices hears whether a provisioner's workspaces run this
+// engine's images (notices.Service).
+type ProvisionerNotices interface {
+	ImageDrift(ctx context.Context, userID, integrationID, name, part string, err error)
+}
+
+// SetNotices wires the notice feed.
+func (r *Resolver) SetNotices(n ProvisionerNotices) { r.notices = n }
+
+// driftFor reports in's image drift to the notices; nil when none are wired.
+func (r *Resolver) driftFor(in confstore.Integration) func(ctx context.Context, part string, err error) {
+	if r.notices == nil {
+		return nil
+	}
+	n := r.notices
+	return func(ctx context.Context, part string, err error) {
+		n.ImageDrift(ctx, in.UserID, in.ID, in.Name, part, err)
+	}
+}
 
 // openCredential is one credential, fresh when the keeper is wired.
 func (r *Resolver) openCredential(ctx context.Context, id string) (providers.Credential, error) {
@@ -134,12 +156,17 @@ func (r *Resolver) SetImageBuilder(b *wsimage.Builder) { r.builder = b }
 // needs and would otherwise pay for on its first run after an upgrade — the
 // tools bundle (~1 GB of downloads and a codex-acp compile). Same Builder as
 // the provisioners', so its lock serialises the warm-up with a concurrent
-// provision instead of racing it. Failures are logged; the provision that
-// needs the bundle retries the build and reports its own error.
-func (r *Resolver) WarmImages(ctx context.Context) {
+// provision instead of racing it. Failures are logged and handed to done
+// (nil on success; done may be nil); the provision that needs the bundle
+// retries the build and reports its own error.
+func (r *Resolver) WarmImages(ctx context.Context, done func(err error)) {
 	go func() {
-		if _, err := r.builder.EnsureTools(ctx); err != nil {
+		_, err := r.builder.EnsureTools(ctx)
+		if err != nil {
 			slog.Warn("tools bundle warm-up failed (the first provision will retry it)", "err", err)
+		}
+		if done != nil {
+			done(err)
 		}
 	}()
 }
@@ -498,6 +525,7 @@ func (r *Resolver) acquireProvisioner(in confstore.Integration) (kinds.Provision
 			ToolsDir:       r.builder.EnsureTools,
 			GatewayImage:   r.builder.EnsureGatewayImage,
 			SandboxRuntime: r.sandboxRuntime,
+			Drift:          r.driftFor(in),
 		})
 		if err != nil {
 			return nil, nil, unresolvable(fmt.Errorf("provisioner %s: %v", in.Name, err))

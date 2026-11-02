@@ -195,3 +195,41 @@ func TestSendSurvivesAFailingChannel(t *testing.T) {
 		t.Errorf("log = %q", logged.String())
 	}
 }
+
+type sentNote struct {
+	channelID, userID, kind string
+	err                     error
+}
+
+type recChannelNotices struct{ calls []sentNote }
+
+func (n *recChannelNotices) ChannelSent(_ context.Context, channelID, userID, kind string, err error) {
+	n.calls = append(n.calls, sentNote{channelID, userID, kind, err})
+}
+
+// Notices hear each channel's outcome: the failing one's error, nil for the
+// one that delivered.
+func TestSendTellsNotices(t *testing.T) {
+	chans := map[string]*recorder{"down": {err: errors.New("503 from the room")}, "up": {}}
+	r := NewRegistry()
+	r.Register("k", factoryOf(chans))
+	rec := &recChannelNotices{}
+	r.Notices = rec
+	down, err := r.Add("u", "k", map[string]any{"name": "down"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, err := r.Add("u", "k", map[string]any{"name": "up"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Send(context.Background(), notifyport.Notification{UserID: "u", Title: "t"})
+	got := map[string]sentNote{}
+	for _, c := range rec.calls {
+		got[c.channelID] = c
+	}
+	if len(rec.calls) != 2 || got[down.ID].err == nil || got[down.ID].userID != "u" || got[down.ID].kind != "k" ||
+		got[up.ID].err != nil || got[up.ID].channelID != up.ID {
+		t.Errorf("calls = %+v", rec.calls)
+	}
+}

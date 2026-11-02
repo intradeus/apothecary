@@ -26,6 +26,7 @@ import (
 	"apothecary/internal/engine/telemetry"
 	"apothecary/internal/flow/builtin"
 	"apothecary/internal/httpapi"
+	"apothecary/internal/notices"
 	"apothecary/internal/platform/config"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/notifyport"
@@ -64,6 +65,7 @@ var (
 	_ ask.Engine         = (*engine.Engine)(nil)
 	_ ask.Store          = (*pgstore.Store)(nil)
 	_ analytics.Store    = (*pgstore.Store)(nil)
+	_ notices.Store      = (*pgstore.Store)(nil)
 )
 
 // app is the daemon, built: what serving and the background loops need.
@@ -83,6 +85,7 @@ type app struct {
 	egressSvc   *egress.Service
 	mrSvc       *mrs.Service
 	syncer      *tickets.Syncer
+	notes       *notices.Service
 }
 
 // buildApp opens the store and builds every adapter, service, the engine
@@ -147,6 +150,21 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 			return nil, nil, err
 		}
 	}
+	// Notices (TODO 51): setup problems a person must act on, raised by the
+	// producers wired below and mirrored to the recipient's channels.
+	notes := &notices.Service{Store: store, Mirror: chreg, PublicURL: boot.PublicURL, Log: log,
+		Admins: func(ctx context.Context) ([]string, error) {
+			users, err := store.ListUsers(ctx)
+			var ids []string
+			for _, u := range users {
+				if u.Admin && !u.Disabled() {
+					ids = append(ids, u.ID)
+				}
+			}
+			return ids, err
+		}}
+	conf.Notices = notes
+	chreg.Notices = notes
 
 	enginePort := 8080
 	if _, p, err := splitHostPort(boot.Listen); err == nil {
@@ -162,10 +180,11 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	// it, so what a workspace is seeded with is always fresh.
 	keeper := logins.New(conf, log)
 	resolver.SetLogins(keeper)
+	resolver.SetNotices(notes)
 	if boot.K8s.Namespace == "" {
 		// A docker host builds the tools bundle itself; start now rather
 		// than inside the first provision after an upgrade.
-		resolver.WarmImages(ctx)
+		resolver.WarmImages(ctx, func(err error) { notes.ToolsImage(ctx, err) })
 	}
 
 	ecfg := engine.Config{
@@ -191,6 +210,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	}
 	sink := authsink.New(runs, resolver, brokerKey, log)
 	keeper.OnRefresh = sink.Push
+	keeper.Notices = notes
 	// The sink is always wired, on the global providers: no-op unless
 	// telemetry.Setup found OTEL_* configuration.
 	tel, err := telemetry.New(otel.GetTracerProvider(), otel.GetMeterProvider())
@@ -236,6 +256,14 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		Tag:     wsimage.BrowserImageTag,
 		Log:     log,
 	}
+	// A failed browser-image build is the admins' to fix (docker host only:
+	// on Kubernetes the image below is a release tag, nothing to build).
+	build := bcfg.Image
+	bcfg.Image = func(ctx context.Context) (string, error) {
+		tag, err := build(ctx)
+		notes.BrowserImage(ctx, err)
+		return tag, err
+	}
 	if boot.K8s.Namespace != "" {
 		// On Kubernetes the engine builds nothing: the browser is the release
 		// image, its pods live beside the sandboxes, and sessions reach the
@@ -260,7 +288,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	// The ticket sync (docs/ticket-sync-plan.md § Sync): one Syncer, so the
 	// poll, the API's refreshes and the engine's are single-flight together.
 	// It copies the files an issue gained into the same attachment store.
-	syncer := &tickets.Syncer{Conf: conf, Sources: resolver, Attachments: attachments, Log: log}
+	syncer := &tickets.Syncer{Conf: conf, Sources: resolver, Attachments: attachments, Log: log, Notices: notes}
 
 	e := engine.New(engine.Deps{
 		Config:   ecfg,
@@ -300,6 +328,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		// exposures and discovered ports, the browser's exposures, then a
 		// last flush of its egress audit.
 		Teardown: []engine.EnvTeardown{portsSvc, browserSvc, egressSvc},
+		Notices:  notes,
 		Log:      log,
 	})
 	egressSvc.ActiveRuns = e.ActiveRunIDs
@@ -325,6 +354,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	api.Egress = egressSvc
 	api.Ask = askSvc
 	api.Analytics = &analytics.Service{Store: store}
+	api.Notices = notes
 	api.AuthSink = sink
 	api.Ports = portsSvc
 	api.Browser = browserSvc
@@ -367,11 +397,13 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		go func() {
 			if err := door.Serve(sshLn); err != nil {
 				log.Error("ssh door stopped", "err", err)
+				notes.SSHDoor(context.Background(), err)
 			}
 		}()
 		closers = append(closers, func() { door.Close() })
 		api.SSH = door
 		log.Info("ssh door listening", "listen", boot.SSHListen, "advertise", advertise, "fingerprint", door.Fingerprint())
+		notes.SSHDoor(ctx, nil)
 	}
 	api.Limits = limits
 	api.Conf = conf
@@ -404,6 +436,6 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	return &app{
 		log: log, store: store, conf: conf, resolver: resolver, chreg: chreg, e: e, srv: srv,
 		keeper: keeper, attachments: attachments, blobs: blobs,
-		envSt: envSt, sampler: sampler, egressSvc: egressSvc, mrSvc: mrSvc, syncer: syncer,
+		envSt: envSt, sampler: sampler, egressSvc: egressSvc, mrSvc: mrSvc, syncer: syncer, notes: notes,
 	}, closeAll, nil
 }

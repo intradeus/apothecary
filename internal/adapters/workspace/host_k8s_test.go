@@ -292,11 +292,30 @@ func TestK8sToolsHashMismatchWarnsMissingFails(t *testing.T) {
 	k := &kubeFake{secrets: map[string]string{}}
 	a := newK8sTestAdapter(t, k, false)
 	h := a.host.(*k8sHost)
+	var drift []error
+	h.cfg.Drift = func(_ context.Context, part string, err error) {
+		if part != "tools" {
+			t.Errorf("drift part = %q, want tools", part)
+		}
+		drift = append(drift, err)
+	}
 	k.exec = func(argv []string, stdin []byte) (string, string, int) {
 		return base64.StdEncoding.EncodeToString([]byte("0123456789abcdef\n")) + "\n", "", 0
 	}
 	if err := h.checkTools(context.Background(), "apo-x"); err != nil {
 		t.Errorf("another bundle version must only warn: %v", err)
+	}
+	if len(drift) != 1 || drift[0] == nil {
+		t.Errorf("mismatch must report drift once: %v", drift)
+	}
+	k.exec = func(argv []string, stdin []byte) (string, string, int) {
+		return base64.StdEncoding.EncodeToString([]byte(wsassets.ToolsHash()+"\n")) + "\n", "", 0
+	}
+	if err := h.checkTools(context.Background(), "apo-x"); err != nil {
+		t.Errorf("matching bundle: %v", err)
+	}
+	if len(drift) != 2 || drift[1] != nil {
+		t.Errorf("match must report nil drift: %v", drift)
 	}
 	k.exec = func(argv []string, stdin []byte) (string, string, int) { return "", "", 44 }
 	err := h.checkTools(context.Background(), "apo-x")

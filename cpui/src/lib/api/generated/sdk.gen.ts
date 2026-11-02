@@ -146,6 +146,12 @@ import type {
 	DeleteTicketData,
 	DeleteTicketErrors,
 	DeleteTicketResponses,
+	DismissAllNoticesData,
+	DismissAllNoticesErrors,
+	DismissAllNoticesResponses,
+	DismissNoticeData,
+	DismissNoticeErrors,
+	DismissNoticeResponses,
 	DownloadAttachmentData,
 	DownloadAttachmentErrors,
 	DownloadAttachmentResponses,
@@ -377,6 +383,9 @@ import type {
 	ListMyTokensData,
 	ListMyTokensErrors,
 	ListMyTokensResponses,
+	ListNoticesData,
+	ListNoticesErrors,
+	ListNoticesResponses,
 	ListPingsData,
 	ListPingsErrors,
 	ListPingsResponses,
@@ -2407,6 +2416,79 @@ export const deleteMyToken = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/me/tokens/{id}',
+		...options
+	});
+
+/**
+ * One's undismissed notices, newest first
+ */
+export const listNotices = <ThrowOnError extends boolean = false>(
+	options?: Options<ListNoticesData, ThrowOnError>
+): RequestResult<ListNoticesResponses, ListNoticesErrors, ThrowOnError> =>
+	(options?.client ?? client).get<ListNoticesResponses, ListNoticesErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/notices',
+		...options
+	});
+
+/**
+ * Dismiss a notice
+ */
+export const dismissNotice = <ThrowOnError extends boolean = false>(
+	options: Options<DismissNoticeData, ThrowOnError>
+): RequestResult<DismissNoticeResponses, DismissNoticeErrors, ThrowOnError> =>
+	(options.client ?? client).post<DismissNoticeResponses, DismissNoticeErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/notices/{id}/dismiss',
+		...options
+	});
+
+/**
+ * Dismiss all of one's notices
+ */
+export const dismissAllNotices = <ThrowOnError extends boolean = false>(
+	options?: Options<DismissAllNoticesData, ThrowOnError>
+): RequestResult<DismissAllNoticesResponses, DismissAllNoticesErrors, ThrowOnError> =>
+	(options?.client ?? client).post<
+		DismissAllNoticesResponses,
+		DismissAllNoticesErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/notices/dismiss',
 		...options
 	});
 

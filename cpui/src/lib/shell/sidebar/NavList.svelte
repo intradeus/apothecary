@@ -23,8 +23,10 @@
 		>
 			<span class="ic">{n.icon}</span>
 			<span class="grow">{n.label}</span>
-			<span class="count" class:hot={n.id === 'inbox' && c > 0} use:bump={n.id === 'inbox' ? c : 0}
-				>{c || ''}</span
+			<span
+				class="count"
+				class:hot={(n.id === 'inbox' || n.id === 'notices') && c > 0}
+				use:bump={n.id === 'inbox' || n.id === 'notices' ? c : 0}>{c || ''}</span
 			>
 		</a>
 	{/each}

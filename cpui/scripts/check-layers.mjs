@@ -26,7 +26,7 @@ const LAYERS = [
 	['ui'],
 	['app'],
 	// Features, in dependency order.
-	['artifacts', 'desk', 'flow', 'skills', 'system', 'analytics'],
+	['artifacts', 'desk', 'flow', 'skills', 'system', 'analytics', 'notices'],
 	['pings'],
 	['review'],
 	['curation'],

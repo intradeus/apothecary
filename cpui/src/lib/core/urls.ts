@@ -31,6 +31,7 @@ export type SystemSection =
 export const to = {
 	desk: () => '/',
 	inbox: () => '/inbox',
+	notices: () => '/notices',
 	ping: (pingId: string) => `/inbox/${pingId}`,
 	runs: (opts?: { project?: string; tab?: 'active' | 'finished' }) =>
 		`/runs${q({ project: opts?.project, tab: opts?.tab })}`,

@@ -1351,6 +1351,31 @@ describe('integrations', () => {
 	});
 });
 
+describe('notices', () => {
+	it('reads a notice, defaulting what the engine left out', () => {
+		expect(
+			map.toNotice(
+				wire<Wire.Notice>({ id: 'n', kind: 'k', title: 'T', created_at: 'c', last_seen_at: 'l' })
+			)
+		).toEqual({
+			id: 'n',
+			kind: 'k',
+			title: 'T',
+			body: '',
+			link: '',
+			count: 1,
+			createdAt: 'c',
+			lastSeenAt: 'l'
+		});
+	});
+
+	it('keeps its body, link and count', () => {
+		expect(
+			map.toNotice(wire<Wire.Notice>({ body: 'b', link: '/system/channels', count: 3 }))
+		).toMatchObject({ body: 'b', link: '/system/channels', count: 3 });
+	});
+});
+
 describe('egress', () => {
 	it.each<[string | undefined, string]>([
 		['allowed', 'allowed'],

@@ -10,13 +10,15 @@
 import { errorMessage } from '$lib/core/errors';
 import { api } from '$lib/api';
 import { stateTab } from '$lib/core/format';
-import type { Limits, Ping, Project, Run, Ticket } from '$lib/domain';
+import type { Limits, Notice, Ping, Project, Run, Ticket } from '$lib/domain';
 
 const POLL_MS = 4000;
 
 class Fleet {
 	runs = $state<Run[]>([]);
 	pending = $state<Ping[]>([]);
+	/** Undismissed system notices, newest first. */
+	notices = $state<Notice[]>([]);
 	projects = $state<Project[]>([]);
 	/** Every ticket, done ones included (lists filter them), with its tracker
 	 *  status and sync state — the ticket pages follow it. */
@@ -135,9 +137,10 @@ class Fleet {
 	async #load() {
 		const epoch = this.#epoch;
 		try {
-			const [runs, pending, projects, tickets, limits] = await Promise.all([
+			const [runs, pending, notices, projects, tickets, limits] = await Promise.all([
 				api.runs.list(),
 				api.pings.pending(),
+				api.notices.list(),
 				api.projects.list(),
 				api.tickets.list(),
 				this.limits ? Promise.resolve(this.limits) : api.system.limits().catch(() => null)
@@ -145,6 +148,7 @@ class Fleet {
 			if (epoch !== this.#epoch) return;
 			this.runs = runs;
 			this.pending = pending;
+			this.notices = notices;
 			this.projects = projects;
 			this.tickets = tickets;
 			this.limits = limits;
@@ -162,6 +166,7 @@ class Fleet {
 		this.#inflight = null;
 		this.runs = [];
 		this.pending = [];
+		this.notices = [];
 		this.projects = [];
 		this.tickets = [];
 		this.updatedAt = null;

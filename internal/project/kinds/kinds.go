@@ -160,6 +160,9 @@ type ProvisionerDeps struct {
 	// SandboxRuntime is the OCI runtime for the per-run DinD sandbox
 	// (APOTHECARY_SANDBOX_RUNTIME). Empty ⇒ the daemon default + --privileged.
 	SandboxRuntime string
+	// Drift hears whether a workspace's seeded shim/tools match this
+	// engine (kubernetes only); nil = log only.
+	Drift func(ctx context.Context, part string, err error)
 }
 
 type ProvisionerKind interface {

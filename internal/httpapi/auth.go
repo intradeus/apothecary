@@ -74,6 +74,7 @@ const (
 	ScopeSkillset
 	ScopeDashboard
 	ScopeScorecard
+	ScopeNotice
 )
 
 // sessionCookie is the browser session's cookie.
@@ -168,6 +169,8 @@ func scopeName(sc Scope) string {
 		return "dashboard"
 	case ScopeScorecard:
 		return "scorecard"
+	case ScopeNotice:
+		return "notice"
 	}
 	return "resource"
 }
@@ -336,6 +339,12 @@ func (s *Server) ownerOf(ctx context.Context, sc Scope, id string) (string, erro
 		return set.UserID, nil
 	case ScopeDashboard, ScopeScorecard:
 		return s.analyticsOwner(ctx, sc, id)
+	case ScopeNotice:
+		if s.Notices == nil {
+			return "", errors.New("no notices")
+		}
+		n, err := s.Notices.Get(ctx, id)
+		return n.UserID, err
 	}
 	return "", fmt.Errorf("unknown scope %d", sc)
 }

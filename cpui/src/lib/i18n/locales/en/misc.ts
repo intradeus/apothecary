@@ -1377,5 +1377,8 @@ export default {
 	'doc.add': 'Add',
 	'doc.close': 'Close',
 	'doc.addHint': 'add',
-	'doc.closeHint': 'close'
+	'doc.closeHint': 'close',
+	'notices.open': 'Open',
+	'notices.dismissAll': 'Dismiss all',
+	'notices.empty': 'Nothing needs your attention.'
 } as const;

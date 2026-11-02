@@ -8,6 +8,7 @@ describe('NAV', () => {
 		expect(NAV.map((n) => n.label)).toEqual([
 			'Desk',
 			'Inbox',
+			'Notices',
 			'Runs',
 			'Tickets',
 			'Analytics',
@@ -19,6 +20,7 @@ describe('NAV', () => {
 		expect(NAV.map((n) => n.href())).toEqual([
 			'/',
 			'/inbox',
+			'/notices',
 			'/runs',
 			'/tickets',
 			'/analytics',
@@ -26,8 +28,12 @@ describe('NAV', () => {
 		]);
 	});
 
-	it('leaves Analytics and System off the mobile tab bar', () => {
-		expect(NAV.filter((n) => !n.mobile).map((n) => n.id)).toEqual(['analytics', 'system']);
+	it('leaves Notices, Analytics and System off the mobile tab bar', () => {
+		expect(NAV.filter((n) => !n.mobile).map((n) => n.id)).toEqual([
+			'notices',
+			'analytics',
+			'system'
+		]);
 	});
 
 	it('matches the desk at the root only', () => {

@@ -68,6 +68,9 @@ type Syncer struct {
 	ErrorBackoff time.Duration
 	// Now is the clock (nil = time.Now).
 	Now func() time.Time
+	// Notices hears whether the poll could read each integration's tracker;
+	// nil = log only.
+	Notices TrackerNotices
 
 	mu       sync.Mutex
 	inflight map[string]*flight
@@ -79,6 +82,11 @@ type Syncer struct {
 // minutes, three poll periods, so a revoked token is not hammered every five.
 // A manual refresh is never held back.
 const DefaultErrorBackoff = 15 * time.Minute
+
+// TrackerNotices hears whether the poll could read an integration's tracker (notices.Service); nil = log only.
+type TrackerNotices interface {
+	TrackerSync(ctx context.Context, userID, integrationID, name string, err error)
+}
 
 // SyncCounts is what a pass over an integration did.
 type SyncCounts struct {
@@ -234,19 +242,19 @@ func (s *Syncer) RunOnce(ctx context.Context) error {
 			continue
 		}
 		var counts SyncCounts
-		unreachable := false
+		var failure error
 		var limited *trackerport.ErrRateLimited
 		if src, serr := s.Sources.TicketSource(ctx, in.ID); serr != nil {
-			unreachable = true
+			failure = fmt.Errorf("integration %s: %w", in.Name, serr)
 			for _, t := range list {
-				s.record(ctx, t, confstore.SyncError, fmt.Errorf("integration %s: %w", in.Name, serr))
+				s.record(ctx, t, confstore.SyncError, failure)
 			}
 			counts.Tickets, counts.Failed = len(list), len(list)
 		} else {
-			counts, unreachable, limited = s.pass(ctx, src, list)
+			counts, failure, limited = s.pass(ctx, src, list)
 		}
 		var wait time.Duration
-		if unreachable {
+		if failure != nil {
 			wait = s.backoff()
 		}
 		if limited != nil {
@@ -263,6 +271,15 @@ func (s *Syncer) RunOnce(ctx context.Context) error {
 			delete(s.heldTill, in.ID)
 		}
 		s.mu.Unlock()
+		// Only the poll tells notices: a pass that only met rate limits or busy
+		// tickets says nothing either way.
+		if s.Notices != nil {
+			if failure != nil {
+				s.Notices.TrackerSync(ctx, in.UserID, in.ID, in.Name, failure)
+			} else if counts.Synced > 0 {
+				s.Notices.TrackerSync(ctx, in.UserID, in.ID, in.Name, nil)
+			}
+		}
 		if counts.Failed > 0 || counts.Gone > 0 {
 			s.log().Warn("ticket sync", "integration", in.ID, "tickets", counts.Tickets,
 				"synced", counts.Synced, "gone", counts.Gone, "failed", counts.Failed)
@@ -311,14 +328,14 @@ func (s *Syncer) holdIfRateLimited(integrationID string, err error) {
 
 // pass syncs a list of one integration's tickets: one FetchMany when the
 // tracker has it (a key it leaves out is fetched alone, to tell a moved
-// issue from a deleted one), else a Fetch per key. unreachable says a read
-// of the tracker failed (not a 404) — the poll's backoff signal; limited is
+// issue from a deleted one), else a Fetch per key. unreachable is the first
+// failed read of the tracker (not a 404) — the poll's backoff signal; limited is
 // the tracker's rate-limit refusal, after which the pass reads no more and
 // the tickets left are counted RateLimited, with nothing recorded on them.
 // A batch result carries the attachment metadata Fetch would (the
 // TicketSyncer contract, checked for every adapter), so the files need no
 // Fetch of their own.
-func (s *Syncer) pass(ctx context.Context, src trackerport.TicketSource, list []confstore.Ticket) (counts SyncCounts, unreachable bool, limited *trackerport.ErrRateLimited) {
+func (s *Syncer) pass(ctx context.Context, src trackerport.TicketSource, list []confstore.Ticket) (counts SyncCounts, unreachable error, limited *trackerport.ErrRateLimited) {
 	counts.Tickets = len(list)
 	type claimed struct {
 		t confstore.Ticket
@@ -387,8 +404,8 @@ func (s *Syncer) pass(ctx context.Context, src trackerport.TicketSource, list []
 			counts.Gone++
 		case err != nil:
 			counts.Failed++
-			if state == stateUnreachable {
-				unreachable = true
+			if state == stateUnreachable && unreachable == nil {
+				unreachable = err
 			}
 		default:
 			counts.Synced++

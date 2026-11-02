@@ -58,8 +58,10 @@
 			title={n.label}
 			aria-label={n.label}
 			aria-current={n.match(path) ? 'page' : undefined}
-			>{n.icon}{#if n.id === 'inbox'}<span class="count hot sm rbadge" class:gone={!c} use:bump={c}
-					>{c}</span
+			>{n.icon}{#if n.id === 'inbox' || n.id === 'notices'}<span
+					class="count hot sm rbadge"
+					class:gone={!c}
+					use:bump={c}>{c}</span
 				>{/if}</a
 		>
 	{/each}

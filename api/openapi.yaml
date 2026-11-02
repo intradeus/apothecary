@@ -2187,6 +2187,37 @@ components:
         - id
         - name
       type: object
+    Notice:
+      properties:
+        body:
+          type: string
+        count:
+          type: integer
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        last_seen_at:
+          format: date-time
+          type: string
+        link:
+          type: string
+        title:
+          type: string
+        user_id:
+          type: string
+      required:
+        - count
+        - created_at
+        - id
+        - kind
+        - last_seen_at
+        - title
+        - user_id
+      type: object
     ObservabilityInfo:
       properties:
         grafana_url:
@@ -7463,6 +7494,103 @@ paths:
       summary: Revoke a personal API token
       tags:
         - auth
+  /api/notices:
+    get:
+      operationId: listNotices
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Notice'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One's undismissed notices, newest first
+      tags:
+        - notices
+  /api/notices/{id}/dismiss:
+    post:
+      operationId: dismissNotice
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Dismiss a notice
+      tags:
+        - notices
+  /api/notices/dismiss:
+    post:
+      operationId: dismissAllNotices
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Dismiss all of one's notices
+      tags:
+        - notices
   /api/observability:
     get:
       description: '`grafana_url` is APOTHECARY_GRAFANA_URL; empty when not configured.'
@@ -12894,6 +13022,7 @@ tags:
   - name: files
   - name: flows
   - name: integrations
+  - name: notices
   - name: pings
   - name: projects
   - name: runs

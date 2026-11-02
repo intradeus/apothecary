@@ -69,6 +69,7 @@ type Route struct {
 func haveConf(s *Server) bool      { return s.Conf != nil }
 func haveSkills(s *Server) bool    { return s.Skills != nil }
 func haveAnalytics(s *Server) bool { return s.Analytics != nil }
+func haveNotices(s *Server) bool   { return s.Notices != nil }
 func haveKinds(s *Server) bool     { return s.Kinds != nil }
 func haveCPUI(s *Server) bool      { return s.CPUIDir != "" }
 
@@ -89,6 +90,7 @@ const (
 	tagAuth         = "auth"
 	tagUsers        = "users"
 	tagAnalytics    = "analytics"
+	tagNotices      = "notices"
 )
 
 var (
@@ -115,6 +117,7 @@ func (s *Server) routes() []Route {
 		s.pingRoutes(),
 		s.fileRoutes(),
 		s.channelRoutes(),
+		s.noticeRoutes(),
 		s.registryRoutes(),
 		s.integrationRoutes(),
 		s.credentialRoutes(),

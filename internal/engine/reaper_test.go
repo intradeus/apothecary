@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,50 @@ type statusErrEnvp struct{ *fake.EnvProvisioner }
 
 func (statusErrEnvp) Status(context.Context, envport.EnvID) (envport.EnvStatus, error) {
 	return "", errors.New("provisioner unreachable: signed out")
+}
+
+// destroyErrEnvp fails every Destroy, delegating everything else to the fake.
+type destroyErrEnvp struct{ *fake.EnvProvisioner }
+
+func (destroyErrEnvp) Destroy(context.Context, envport.EnvID) error {
+	return errors.New("cluster gone")
+}
+
+type reaperNotices struct{ calls [][]string }
+
+func (n *reaperNotices) ReaperEnvs(_ context.Context, failures []string) {
+	n.calls = append(n.calls, failures)
+}
+
+// A reaper pass that cannot destroy a finished workspace tells the notices,
+// naming the run; the next clean pass reports no failures (clearing it).
+func TestReapOnceReportsDestroyFailures(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	ctx := context.Background()
+	n := &reaperNotices{}
+	h.e.notices = n
+	id, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "done"}, "loop", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(id)
+	time.Sleep(5 * time.Millisecond)
+
+	h.res.Envp = destroyErrEnvp{h.envp}
+	if err := h.e.ReapOnce(ctx, Window(time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if len(n.calls) != 1 || len(n.calls[0]) != 1 || !strings.Contains(n.calls[0][0], "run "+id) {
+		t.Fatalf("failing pass: calls = %q", n.calls)
+	}
+
+	h.res.Envp = h.envp
+	if err := h.e.ReapOnce(ctx, Window(time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if len(n.calls) != 2 || len(n.calls[1]) != 0 {
+		t.Fatalf("clean pass: calls = %q", n.calls)
+	}
 }
 
 func TestReapOnceDestroysOldCompletedOnly(t *testing.T) {

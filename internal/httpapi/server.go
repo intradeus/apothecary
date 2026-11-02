@@ -23,6 +23,7 @@ import (
 	"apothecary/internal/engine/browsermcp"
 	"apothecary/internal/engine/egress"
 	"apothecary/internal/engine/mrs"
+	"apothecary/internal/notices"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/project/channels"
 	"apothecary/internal/project/confstore"
@@ -118,6 +119,9 @@ type Server struct {
 	// Analytics answers the run-analytics queries and keeps the person's
 	// dashboards and scorecards (TODO 23); nil disables its routes.
 	Analytics *analytics.Service
+	// Notices is the feed of setup problems a person must act on (TODO 51);
+	// nil disables its routes.
+	Notices *notices.Service
 	// AuthSink serves the per-run auth brokers (the same sink the engine
 	// registers live workspaces with).
 	AuthSink *authsink.Sink

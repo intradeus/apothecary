@@ -383,7 +383,7 @@ func TestOwnerOfWithoutStores(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	s := &Server{Runs: x.e, Store: x.store, Registry: x.reg, EnvCheck: x.srv.EnvCheck}
 	ctx := context.Background()
-	for _, sc := range []Scope{ScopeProject, ScopeTicket, ScopeIntegration, ScopeCredential, ScopeAttachment, ScopeSnapshot, ScopeSkill, ScopeSkillset, ScopeChannel, ScopeEnvCheck, ScopePing, ScopeRun} {
+	for _, sc := range []Scope{ScopeProject, ScopeTicket, ScopeIntegration, ScopeCredential, ScopeAttachment, ScopeSnapshot, ScopeSkill, ScopeSkillset, ScopeChannel, ScopeEnvCheck, ScopePing, ScopeRun, ScopeNotice} {
 		if owner, err := s.ownerOf(ctx, sc, "nope"); err == nil {
 			t.Errorf("%s of nothing has owner %q", scopeName(sc), owner)
 		}

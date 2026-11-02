@@ -11,6 +11,7 @@ export const I = {
 	// navigation
 	desk: '◈' + T,
 	inbox: '✉' + T,
+	notices: '⚑' + T,
 	runs: '▶' + T,
 	tickets: '☰' + T,
 	analytics: '▥',

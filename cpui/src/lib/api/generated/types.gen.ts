@@ -963,6 +963,18 @@ export type ModelInfo = {
 	name: string;
 };
 
+export type Notice = {
+	body?: string;
+	count: number;
+	created_at: string;
+	id: string;
+	kind: string;
+	last_seen_at: string;
+	link?: string;
+	title: string;
+	user_id: string;
+};
+
 export type ObservabilityInfo = {
 	grafana_url: string;
 };
@@ -4648,6 +4660,114 @@ export type DeleteMyTokenResponses = {
 };
 
 export type DeleteMyTokenResponse = DeleteMyTokenResponses[keyof DeleteMyTokenResponses];
+
+export type ListNoticesData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/notices';
+};
+
+export type ListNoticesErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListNoticesResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<Notice> | null;
+};
+
+export type ListNoticesResponse = ListNoticesResponses[keyof ListNoticesResponses];
+
+export type DismissNoticeData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/notices/{id}/dismiss';
+};
+
+export type DismissNoticeErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DismissNoticeResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type DismissNoticeResponse = DismissNoticeResponses[keyof DismissNoticeResponses];
+
+export type DismissAllNoticesData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/notices/dismiss';
+};
+
+export type DismissAllNoticesErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DismissAllNoticesResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type DismissAllNoticesResponse =
+	DismissAllNoticesResponses[keyof DismissAllNoticesResponses];
 
 export type GetObservabilityData = {
 	body?: never;

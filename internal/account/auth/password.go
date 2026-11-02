@@ -49,6 +49,7 @@ func (c HashCost) hash(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
+
 	key := argon2.IDKey([]byte(password), salt, c.Time, c.Memory, argonThreads, argonKeyLen)
 	return fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
 		c.Memory, c.Time, argonThreads,

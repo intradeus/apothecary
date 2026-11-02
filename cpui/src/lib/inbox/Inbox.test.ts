@@ -11,6 +11,7 @@ import Inbox from './Inbox.svelte';
 
 vi.mock('$lib/api', () => ({
 	api: {
+		notices: { list: vi.fn() },
 		pings: { list: vi.fn(), answer: vi.fn(), pending: vi.fn() },
 		tickets: { list: vi.fn() },
 		runs: { get: vi.fn(), list: vi.fn() },
@@ -47,6 +48,7 @@ beforeEach(() => {
 	vi.mocked(api.system.limits).mockResolvedValue(null as never);
 	vi.mocked(api.runs.list).mockResolvedValue([]);
 	vi.mocked(api.pings.pending).mockResolvedValue([]);
+	vi.mocked(api.notices.list).mockResolvedValue([]);
 	fleet.reset();
 	toasts.list = [];
 	history.replaceState(null, '', '/inbox');

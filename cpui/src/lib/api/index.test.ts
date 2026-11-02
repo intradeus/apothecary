@@ -23,6 +23,7 @@ import {
 	files,
 	flows,
 	integrations,
+	notices,
 	pings,
 	projects,
 	runs,
@@ -105,6 +106,7 @@ describe('a list the engine answers null', () => {
 		['project audit', () => egress.projectAudit('p'), 'getProjectEgressAudit'],
 		['pings', () => pings.list(), 'listPings'],
 		['pending pings', () => pings.pending(), 'listPings'],
+		['notices', () => notices.list(), 'listNotices'],
 		['tickets', () => tickets.list(), 'listTickets'],
 		['projects', () => projects.list(), 'listProjects'],
 		['branches', () => projects.branches('p'), 'listProjectBranches'],
@@ -1412,5 +1414,48 @@ describe('ticket sync', () => {
 		const e = await integrations.saveStatuses('i', []).catch((x: unknown) => x);
 		expect(isInUse(e)).toBe(false);
 		expect(linkedTicketsOf(e)).toBeUndefined();
+	});
+});
+
+describe('notices', () => {
+	it('lists the caller’s notices in our shape', async () => {
+		reply(
+			'listNotices',
+			answer([
+				{
+					id: 'n1',
+					user_id: 'u',
+					kind: 'channel_failing',
+					title: 'Your slack channel is failing',
+					count: 2,
+					created_at: 'c',
+					last_seen_at: 'l'
+				}
+			])
+		);
+		await expect(notices.list()).resolves.toEqual([
+			{
+				id: 'n1',
+				kind: 'channel_failing',
+				title: 'Your slack channel is failing',
+				body: '',
+				link: '',
+				count: 2,
+				createdAt: 'c',
+				lastSeenAt: 'l'
+			}
+		]);
+	});
+
+	it('dismisses one by id', async () => {
+		const fn = reply('dismissNotice');
+		await notices.dismiss('n1');
+		expect(fn).toHaveBeenCalledWith({ path: { id: 'n1' } });
+	});
+
+	it('dismisses them all', async () => {
+		const fn = reply('dismissAllNotices');
+		await notices.dismissAll();
+		expect(fn).toHaveBeenCalled();
 	});
 });

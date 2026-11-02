@@ -7,6 +7,7 @@ export default {
 	'page.error.unexpected': 'An unexpected error occurred.',
 	'page.error.backToDesk': 'Back to the desk',
 	'page.inbox.title': 'Inbox',
+	'page.notices.title': 'Notices',
 	'page.desk.goodEvening': 'Good evening',
 	'page.desk.goodMorning': 'Good morning',
 	'page.desk.goodAfternoon': 'Good afternoon',

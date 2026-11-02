@@ -3,6 +3,7 @@
 export default {
 	'nav.desk': 'Desk',
 	'nav.inbox': 'Inbox',
+	'nav.notices': 'Notices',
 	'nav.runs': 'Runs',
 	'nav.tickets': 'Tickets',
 	'nav.analytics': 'Analytics',

@@ -63,6 +63,8 @@ var rules = []rule{
 	// Run analytics stands alone: the query compiler and its catalog know
 	// only SQL over the fact tables, never the domain that writes them.
 	{pkg: "internal/analytics", mayImport: []string{}},
+	// Notices are a domain of their own: they reach channels only through the port.
+	{pkg: "internal/notices", mayImport: []string{"internal/ports/notifyport"}},
 	// The language stands alone.
 	{pkg: "internal/flow", mayImport: []string{"internal/flow/"}},
 	{pkg: "internal/flow/", mayImport: []string{"internal/flow", "internal/flow/"}},

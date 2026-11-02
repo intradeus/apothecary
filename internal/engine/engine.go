@@ -199,6 +199,8 @@ type Engine struct {
 	// refresher re-reads a ticket from its remote tracker (ticketrefresh.go);
 	// nil = the mirror is left as the last sync wrote it.
 	refresher TicketRefresher
+	// notices hears install-level problems; nil = log only.
+	notices Notices
 }
 
 type runHandle struct {
@@ -458,6 +460,7 @@ var (
 //   - Teardown: none; hooks run in order on every workspace destroy.
 //   - Tickets: none; Rerun then starts from the old run's copy of its
 //     ticket instead of the ticket's current row.
+//   - Notices: none; reaper failures are only logged.
 //   - Clock: time.Now; NewID: a ULID; Log: slog.Default().
 //
 // The composition root (cmd/apothecaryd) shares RunPorts, EnvState and
@@ -488,10 +491,16 @@ type Deps struct {
 	// successful ticket_* stage on a remote ticket and at run start. nil =
 	// no refresh.
 	Refresher TicketRefresher
+	Notices   Notices
 
 	Clock func() time.Time
 	NewID func() string
 	Log   *slog.Logger
+}
+
+// Notices hears the install-level problems the engine meets (notices.Service); nil = log only.
+type Notices interface {
+	ReaperEnvs(ctx context.Context, failures []string)
 }
 
 func New(d Deps) *Engine {
@@ -532,6 +541,7 @@ func New(d Deps) *Engine {
 		teardown:       d.Teardown,
 		tickets:        d.Tickets,
 		refresher:      d.Refresher,
+		notices:        d.Notices,
 		handles:        map[string]*runHandle{},
 		pings:          map[string]*Ping{},
 		tokens:         map[string]string{},
@@ -2140,6 +2150,7 @@ func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter func(userID
 	if err != nil {
 		return err
 	}
+	var failures []string
 	for _, v := range views {
 		id := v.RunID
 		if v.EnvID == "" || v.State != run.Completed {
@@ -2152,12 +2163,16 @@ func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter func(userID
 		}
 		if err := e.destroyEnv(ctx, v); err != nil {
 			e.log.Warn("reaper: env destroy failed", logs.RunID, id, "env", v.EnvID, "err", err)
+			failures = append(failures, fmt.Sprintf("run %s (workspace %s): %v", id, v.EnvID, err))
 			continue
 		}
 		if err := e.AppendEvents(ctx, id, &event.EnvDestroyed{EnvID: v.EnvID}); err != nil {
 			return err
 		}
 		e.log.Info("reaper: destroyed env of completed run", logs.RunID, id, "env", v.EnvID)
+	}
+	if e.notices != nil {
+		e.notices.ReaperEnvs(ctx, failures)
 	}
 	return nil
 }

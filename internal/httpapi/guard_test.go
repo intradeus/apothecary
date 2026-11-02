@@ -20,6 +20,7 @@ import (
 	"apothecary/internal/account/auth/authtest"
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/engine"
+	"apothecary/internal/notices"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/agentport"
@@ -34,9 +35,9 @@ type world struct {
 	*env
 	files *testFiles
 
-	run, ticket, ping, integration, credential string
-	skill, skillset, channel                   string
-	attachment, snapshot, envcheck, token      string
+	run, ticket, ping, integration, credential    string
+	skill, skillset, channel                      string
+	attachment, snapshot, envcheck, token, notice string
 
 	// otherID/other are a second, non-admin account and its bearer header.
 	otherID string
@@ -141,6 +142,13 @@ func newWorld(t *testing.T) *world {
 		return ok && cr.Status != "running"
 	})
 
+	x.srv.Notices.Raise(ctx, notices.Raise{To: []string{testUser}, Kind: "test", Title: "t"})
+	ns, err := x.srv.Notices.List(ctx, testUser)
+	if err != nil || len(ns) != 1 {
+		t.Fatalf("notices = %+v, %v", ns, err)
+	}
+	w.notice = ns[0].ID
+
 	secret, tok, err := x.srv.Auth.NewToken(ctx, testUser, "another", nil)
 	if err != nil || secret == "" {
 		t.Fatal(err)
@@ -173,7 +181,7 @@ func (w *world) owned(sc Scope) string {
 		ScopeRun: w.run, ScopeProject: testProject, ScopeTicket: w.ticket, ScopePing: w.ping,
 		ScopeIntegration: w.integration, ScopeChannel: w.channel, ScopeAttachment: w.attachment,
 		ScopeSnapshot: w.snapshot, ScopeEnvCheck: w.envcheck, ScopeCredential: w.credential,
-		ScopeSkill: w.skill, ScopeSkillset: w.skillset,
+		ScopeSkill: w.skill, ScopeSkillset: w.skillset, ScopeNotice: w.notice,
 	}[sc]
 }
 

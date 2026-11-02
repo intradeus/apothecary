@@ -124,6 +124,7 @@ func (k Kubernetes) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 			RuntimeClass:    runtimeClass,
 			Firewall:        cfg.Str("firewall", "on") != "off",
 			ProtectCIDRs:    d.ProtectCIDRs,
+			Drift:           deps.Drift,
 		},
 	})
 	return &kubernetesProvisioner{Adapter: a, cleanup: cleanup}, nil

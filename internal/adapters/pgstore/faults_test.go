@@ -10,6 +10,7 @@ import (
 	"apothecary/internal/adapters/pgstore/pgtest"
 	"apothecary/internal/analytics"
 	"apothecary/internal/engine/ask"
+	"apothecary/internal/notices"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/project/confstore"
@@ -161,6 +162,12 @@ func TestDeadDatabaseIsAnErrorEverywhere(t *testing.T) {
 		"GetScorecard":      func() error { _, err := s.GetScorecard(ctx, "s"); return err },
 		"PutScorecard":      func() error { return s.PutScorecard(ctx, analytics.Scorecard{ID: "s"}) },
 		"DeleteScorecard":   func() error { return s.DeleteScorecard(ctx, "s") },
+		"RaiseNotice":       func() error { _, _, err := s.RaiseNotice(ctx, notices.Notice{ID: "n"}); return err },
+		"ClearNotices":      func() error { return s.ClearNotices(ctx, "k", testNow) },
+		"ListNotices":       func() error { _, err := s.ListNotices(ctx, "u"); return err },
+		"GetNotice":         func() error { _, err := s.GetNotice(ctx, "n"); return err },
+		"DismissNotice":     func() error { return s.DismissNotice(ctx, "n", testNow) },
+		"DismissAllNotices": func() error { return s.DismissAllNotices(ctx, "u", testNow) },
 	}
 	for name, call := range calls {
 		err := call()
@@ -168,7 +175,7 @@ func TestDeadDatabaseIsAnErrorEverywhere(t *testing.T) {
 			t.Errorf("%s: no error from a closed pool", name)
 			continue
 		}
-		for _, miss := range []error{confstore.ErrNotFound, auth.ErrNotFound, filestore.ErrNotFound, ErrPingNotFound, analytics.ErrNotFound} {
+		for _, miss := range []error{confstore.ErrNotFound, auth.ErrNotFound, filestore.ErrNotFound, ErrPingNotFound, analytics.ErrNotFound, notices.ErrNotFound} {
 			if errors.Is(err, miss) {
 				t.Errorf("%s: a dead database read as %v", name, err)
 			}

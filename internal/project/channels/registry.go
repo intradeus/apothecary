@@ -40,12 +40,19 @@ type PersistentStore interface {
 	DeleteChannel(ctx context.Context, id string) error
 }
 
+// ChannelNotices hears how each channel send went (notices.Service); nil = log only.
+type ChannelNotices interface {
+	ChannelSent(ctx context.Context, channelID, userID, kind string, err error)
+}
+
 type Registry struct {
 	mu      sync.Mutex
 	ctors   map[string]Factory
 	entries []*Entry
 	store   PersistentStore
 	log     *slog.Logger
+	// Notices hears how each send went; set once at wiring, before any send.
+	Notices ChannelNotices
 }
 
 func NewRegistry() *Registry {
@@ -167,8 +174,12 @@ func (r *Registry) Send(ctx context.Context, n notifyport.Notification) error {
 	}
 	r.mu.Unlock()
 	for _, e := range entries {
-		if err := e.ch.Send(ctx, n); err != nil {
+		err := e.ch.Send(ctx, n)
+		if err != nil {
 			r.log.Error("channel send failed", "kind", e.Kind, "id", e.ID, "err", err)
+		}
+		if r.Notices != nil {
+			r.Notices.ChannelSent(ctx, e.ID, e.UserID, e.Kind, err)
 		}
 	}
 	return nil

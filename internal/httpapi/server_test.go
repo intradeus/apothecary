@@ -23,6 +23,7 @@ import (
 	"apothecary/internal/engine/egress"
 	"apothecary/internal/engine/mrs"
 	"apothecary/internal/flow"
+	"apothecary/internal/notices"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
@@ -179,6 +180,7 @@ func newEnvWith(t *testing.T, cfg engine.Config, opt func(*engine.Deps), docs ..
 	}
 	x.srv.Conf = confstore.New(confstore.NewMem(), key)
 	conftest.SeedProject(t, x.srv.Conf, confstore.Project{ID: testProject, UserID: testUser, Name: "test"})
+	x.srv.Notices = &notices.Service{Store: notices.NewMemStore()}
 	x.signIn(t)
 	x.ts = httptest.NewServer(x.srv.Handler())
 	t.Cleanup(x.ts.Close)

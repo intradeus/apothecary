@@ -591,3 +591,42 @@ func TestSyncAdoptsFilesImportedBeforeRemoteIDs(t *testing.T) {
 		t.Errorf("sync state = %q %q", got.SyncState, got.SyncError)
 	}
 }
+
+type syncNote struct {
+	userID, integrationID string
+	err                   error
+}
+
+type recTrackerNotices struct{ calls []syncNote }
+
+func (r *recTrackerNotices) TrackerSync(_ context.Context, userID, integrationID, _ string, err error) {
+	r.calls = append(r.calls, syncNote{userID, integrationID, err})
+}
+
+// The poll tells the integration's owner it cannot read the tracker, and
+// that it can again once a later pass syncs.
+func TestSyncPollTellsNotices(t *testing.T) {
+	w := newSyncWorld(t)
+	ctx := context.Background()
+	rec := &recTrackerNotices{}
+	w.s.Notices = rec
+	in, err := w.f.Conf.GetIntegration(ctx, "int-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.src.Err = errors.New("401 unauthorized")
+	if err := w.s.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.calls) != 1 || rec.calls[0].userID != in.UserID || rec.calls[0].integrationID != "int-1" || rec.calls[0].err == nil {
+		t.Fatalf("after a failed pass = %+v", rec.calls)
+	}
+	w.src.Err = nil
+	w.now = t0.Add(DefaultErrorBackoff + time.Minute)
+	if err := w.s.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.calls) != 2 || rec.calls[1].integrationID != "int-1" || rec.calls[1].err != nil {
+		t.Errorf("after a good pass = %+v", rec.calls)
+	}
+}

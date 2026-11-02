@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"apothecary/internal/account/logins"
@@ -40,6 +41,7 @@ func (a *app) background(ctx context.Context) {
 					a.log.Error("reaper: owners read failed", "err", err)
 					continue
 				}
+				var storage []string // what the storage clean-up failed, for the admins
 				settings := map[string]confstore.Settings{}
 				for _, uid := range owners {
 					set, err := a.conf.Settings(ctx, uid)
@@ -66,6 +68,7 @@ func (a *app) background(ctx context.Context) {
 				for _, uid := range owners {
 					if n, err := a.attachments.GCOrphans(ctx, uid, settingsOf(uid).OrphanWindow()); err != nil {
 						a.log.Error("reaper: upload GC failed", logs.UserID, uid, "err", err)
+						storage = append(storage, fmt.Sprintf("upload GC for user %s: %v", uid, err))
 					} else if n > 0 {
 						a.log.Info("reaper: swept unclaimed uploads", logs.UserID, uid, "count", n)
 					}
@@ -83,11 +86,14 @@ func (a *app) background(ctx context.Context) {
 				live, err := a.store.LiveBlobSHAs(ctx, cutoffs)
 				if err != nil {
 					a.log.Error("reaper: live blob set failed", "err", err)
+					storage = append(storage, fmt.Sprintf("live blob set: %v", err))
 				} else if n, err := a.blobs.Sweep(live); err != nil {
 					a.log.Error("reaper: blob sweep failed", "err", err)
+					storage = append(storage, fmt.Sprintf("blob sweep: %v", err))
 				} else if n > 0 {
 					a.log.Info("reaper: swept unreferenced blobs", "count", n)
 				}
+				a.notes.ReaperStorage(ctx, storage)
 			case <-ctx.Done():
 				return
 			}

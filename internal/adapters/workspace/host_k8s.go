@@ -56,6 +56,8 @@ type KubeConfig struct {
 	ProtectCIDRs []string
 	// ClusterDomain for the sandbox's DNS search path (default cluster.local).
 	ClusterDomain string
+	// Drift hears whether a workspace's seeded shim/tools match this engine; nil = log only.
+	Drift func(ctx context.Context, part string, err error)
 }
 
 // k8sHost runs each run's sandbox as a Pod. The pod mounts its volume at the
@@ -492,9 +494,18 @@ func (h *k8sHost) checkShim(ctx context.Context, name string) error {
 	}
 	got, want := strings.TrimSpace(string(b)), wsassets.ShimSourceHash()
 	if got != want {
-		return fmt.Errorf("sandbox %s: shim image %s was built from shim sources %s, this engine expects %s — publish the shim image of this engine's version", name, h.cfg.ShimImage, got, want)
+		err := fmt.Errorf("sandbox %s: shim image %s was built from shim sources %s, this engine expects %s — publish the shim image of this engine's version", name, h.cfg.ShimImage, got, want)
+		h.drift(ctx, "shim", err)
+		return err
 	}
+	h.drift(ctx, "shim", nil)
 	return nil
+}
+
+func (h *k8sHost) drift(ctx context.Context, part string, err error) {
+	if h.cfg.Drift != nil {
+		h.cfg.Drift(ctx, part, err)
+	}
 }
 
 // checkTools makes sure the tools bundle was seeded, and only WARNS when it
@@ -509,6 +520,9 @@ func (h *k8sHost) checkTools(ctx context.Context, name string) error {
 	if got, want := strings.TrimSpace(string(b)), wsassets.ToolsHash(); got != want {
 		slog.Warn("kubernetes: the seeded tools bundle is not this engine's (harness/code-server versions may differ)",
 			"env", name, "image", h.cfg.ToolsImage, "seeded", got, "expected", want)
+		h.drift(ctx, "tools", fmt.Errorf("the seeded tools bundle is %s, this engine expects %s (image %s)", got, want, h.cfg.ToolsImage))
+	} else {
+		h.drift(ctx, "tools", nil)
 	}
 	return nil
 }

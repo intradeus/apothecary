@@ -485,6 +485,11 @@ func (s *Service) internalTypes(integrationID string, cur, rows []TrackerType, r
 	return out, nil
 }
 
+// TrackerListNotices hears statuses and types a tracker added to an integration's existing lists (notices.Service); nil = silent.
+type TrackerListNotices interface {
+	TrackerListsGrew(ctx context.Context, userID, integrationID, name string, added []string)
+}
+
 // EnsureRemoteStatuses records statuses a remote tracker reported — from its
 // metadata, or the one a fetched ticket is in — and returns the integration's
 // whole list. A status already listed (by remote id) takes the tracker's
@@ -498,6 +503,7 @@ func (s *Service) EnsureRemoteStatuses(ctx context.Context, integrationID string
 		return nil, err
 	}
 	next := len(cur)
+	var added []string
 	for _, r := range remote {
 		if strings.TrimSpace(r.ID) == "" {
 			continue
@@ -510,11 +516,23 @@ func (s *Service) EnsureRemoteStatuses(ctx context.Context, integrationID string
 		case trackerport.CategoryNew:
 			st.FlowStep = trackerport.StepTodo
 		}
-		if _, err := s.db.EnsureTrackerStatus(ctx, st); err != nil {
+		got, err := s.db.EnsureTrackerStatus(ctx, st)
+		if err != nil {
 			return nil, err
+		}
+		if got.ID == st.ID { // the store keeps a listed row's id: this one is new
+			line := fmt.Sprintf("status %q: no flow step", got.Name)
+			if got.FlowStep != "" {
+				line = fmt.Sprintf("status %q: flow step %s", got.Name, got.FlowStep)
+			}
+			if got.IsDone {
+				line += ", Done"
+			}
+			added = append(added, line)
 		}
 		next++
 	}
+	s.listsGrew(ctx, integrationID, added)
 	return s.db.ListTrackerStatuses(ctx, integrationID)
 }
 
@@ -526,18 +544,38 @@ func (s *Service) EnsureRemoteTypes(ctx context.Context, integrationID string, r
 		return nil, err
 	}
 	next := len(cur)
+	var added []string
 	for _, r := range remote {
 		if strings.TrimSpace(r.ID) == "" {
 			continue
 		}
 		ty := TrackerType{ID: s.newID(), IntegrationID: integrationID, RemoteID: r.ID, Name: r.Name,
 			ChangeType: trackerport.GuessChangeType(r.Name), Position: next}
-		if _, err := s.db.EnsureTrackerType(ctx, ty); err != nil {
+		got, err := s.db.EnsureTrackerType(ctx, ty)
+		if err != nil {
 			return nil, err
+		}
+		if got.ID == ty.ID {
+			added = append(added, fmt.Sprintf("type %q: change type %s (guessed)", got.Name, got.ChangeType))
 		}
 		next++
 	}
+	s.listsGrew(ctx, integrationID, added)
 	return s.db.ListTrackerTypes(ctx, integrationID)
+}
+
+// listsGrew tells Notices the rows a tracker added to an integration's lists.
+// The lists are already written, so an integration that cannot be read now
+// only loses the notice.
+func (s *Service) listsGrew(ctx context.Context, integrationID string, added []string) {
+	if len(added) == 0 || s.Notices == nil {
+		return
+	}
+	in, err := s.db.GetIntegration(ctx, integrationID)
+	if err != nil {
+		return
+	}
+	s.Notices.TrackerListsGrew(ctx, in.UserID, integrationID, in.Name, added)
 }
 
 // StepStatus is the status of the ticket's tracker that holds a flow step —

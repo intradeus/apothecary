@@ -27,6 +27,8 @@ type Service struct {
 	// KindValid reports whether (port, kind) is registered; nil accepts any
 	// (unit tests). Wired to the kinds registry at serve time.
 	KindValid func(port, kind string) bool
+	// Notices hears statuses and types a tracker added; nil = silent.
+	Notices TrackerListNotices
 
 	now   func() time.Time
 	newID func() string
