@@ -5,6 +5,7 @@ export default {
 	'nav.inbox': 'Inbox',
 	'nav.runs': 'Runs',
 	'nav.tickets': 'Tickets',
+	'nav.analytics': 'Analytics',
 	'nav.system': 'System',
 
 	'theme.ember-sky': 'Ember × Sky',

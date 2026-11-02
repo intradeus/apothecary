@@ -18,6 +18,7 @@ import (
 
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/signalspec"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
@@ -110,7 +111,7 @@ func (x *exec) followAdopted() {
 	x.followed = rs.PhaseTip
 	res, err := x.gitIn(co.Dir, fmt.Sprintf("git fetch origin %s && git merge --ff-only FETCH_HEAD", shell.Quote(co.Fetch)))
 	if err != nil || res.ExitCode != 0 {
-		x.e.log.Warn("could not bring the merge request's checkout to its head", "run", rs.RunID, "repo", co.Name,
+		x.e.log.WarnContext(x.bg, "could not bring the merge request's checkout to its head", logs.RunID, rs.RunID, "repo", co.Name,
 			"head", rs.PhaseTip, "err", err, "out", shell.Tail(res.Output, 512))
 	}
 }
@@ -158,8 +159,8 @@ func (x *exec) deadEnd(st *flow.Stage, edgeKind, reason string) error {
 	if x.endsRunAtDeadEnd() {
 		return x.abandon(st.ID, edgeKind, reason)
 	}
-	x.e.log.Info("phase ended at a dead end; the run goes back to waiting",
-		"run", x.rs.RunID, "phase", x.rs.Phase, "stage", st.ID, "reason", reason)
+	x.e.log.InfoContext(x.bg, "phase ended at a dead end; the run goes back to waiting",
+		logs.RunID, x.rs.RunID, "phase", x.rs.Phase, logs.StageID, st.ID, "reason", reason)
 	x.rs.EndPhase()
 	x.rs.EndReason = reason
 	return nil
@@ -271,7 +272,7 @@ func (x *exec) evaluateIdle(st *idler) error {
 			return context.Cause(x.ctx)
 		}
 		st.failures++
-		x.e.log.Warn("idle: repository poll failed", "run", rs.RunID, "err", err, "streak", st.failures)
+		x.e.log.WarnContext(x.bg, "idle: repository poll failed", logs.RunID, rs.RunID, "err", err, "streak", st.failures)
 		if st.failures == 3 {
 			x.e.notify(x.bg, notifyport.Notification{RunID: rs.RunID, Type: event.PingBlocker,
 				Title: "Cannot reach the repository to watch this run's merge requests", Body: err.Error()})

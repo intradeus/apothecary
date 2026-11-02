@@ -427,7 +427,12 @@ one-offs):
 Boot environment (the whole deployment plane): `APOTHECARY_POSTGRES_DSN`,
 `APOTHECARY_MASTER_KEY` (required); `APOTHECARY_LISTEN` (default
 `127.0.0.1:8080`), `APOTHECARY_RUNS_DIR`, `APOTHECARY_CPUI_DIR`,
-`APOTHECARY_OTEL_ENDPOINT`, `APOTHECARY_BASE_IMAGE` (optional). The host's
+`APOTHECARY_BASE_IMAGE`, `APOTHECARY_LOG_FORMAT` (`text`|`json`),
+`APOTHECARY_LOG_LEVEL` (`debug`|`info`|`warn`|`error`),
+`APOTHECARY_DEBUG_ADDR` (loopback `host:port` serving pprof),
+`APOTHECARY_GRAFANA_URL` (optional). Telemetry export (traces, metrics,
+logs) is configured by the standard `OTEL_*` variables — set
+`OTEL_EXPORTER_OTLP_ENDPOINT` to turn it on. The host's
 capacity — max concurrent runs (default 3) and max live environments
 (default 6) — is not an environment variable: an admin sets it in
 **System → Limits**, the same for every user, and it applies to the next run
@@ -437,6 +442,29 @@ ranges), `APOTHECARY_APPS_DOMAIN` and `APOTHECARY_PUBLIC_URL`
 (`internal/platform/config/env.go` documents each). `APOTHECARY_SSH_LISTEN` and
 `APOTHECARY_SSH_ADVERTISE` turn the SSH door on (below); unset, there is
 none.
+
+Probes: `GET /healthz` answers 200 while the process serves HTTP;
+`GET /readyz` answers 503 while the engine drains for shutdown or cannot
+reach Postgres (2s; the answer says only `database unreachable` or
+`database timeout`, the cause is logged), 200 otherwise. Both are public;
+the Helm chart uses them for its readiness and liveness probes.
+
+Traces are short: each stage attempt is a trace of its own, linked to an
+instant `run` span; Tempo finds a run's attempts with
+`{span.apothecary.run_id="<run id>"}`.
+
+Platform observability: the engine exports traces, metrics and logs over
+OTLP when the standard `OTEL_EXPORTER_OTLP_ENDPOINT` (and optionally
+`OTEL_EXPORTER_OTLP_PROTOCOL`, `_HEADERS`, `OTEL_RESOURCE_ATTRIBUTES`) is
+set. For development, `observability/docker-compose.yaml` runs
+`grafana/otel-lgtm` (OTLP on 127.0.0.1:14317/14318, Grafana on
+127.0.0.1:3001) with six provisioned dashboards — platform, engine, LLM
+spend, humans, feature usage, and run analytics over the `run_facts` /
+`stage_attempts` tables (set `APOTHECARY_PG_PASSWORD`, and
+`APOTHECARY_PG_ADDR` if Postgres is not the default deployment's). In
+production, point `OTEL_*` at your own backend and import the same
+dashboards. `APOTHECARY_GRAFANA_URL` puts a link to them in
+**System → Observability**, which only an admin sees.
 
 ## Accounts
 

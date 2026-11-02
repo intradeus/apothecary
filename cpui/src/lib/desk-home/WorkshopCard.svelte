@@ -65,14 +65,14 @@
 			<RunRow
 				run={r}
 				detail={stageLine(r) +
-					(f?.attempt ? ` · ${t('deskhome.card.attempt', { n: f.attempt })}` : '')}
+					(f.attempt ? ` · ${t('deskhome.card.attempt', { n: f.attempt })}` : '')}
 			>
 				{#snippet trailing()}
 					<span class="tr">
 						{#if st}<StageChip type={st} />{/if}
 						<span class="nums">
 							<span>{fmtDuration(now - new Date(r.createdAt).getTime())}</span>
-							<span class="faint">{f ? fmtCost(f.cost) : '…'}</span>
+							<span class="faint">{fmtCost(f.cost)}</span>
 						</span>
 					</span>
 				{/snippet}

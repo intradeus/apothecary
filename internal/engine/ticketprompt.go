@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"apothecary/internal/flow"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/run/runinput"
 )
 
@@ -43,7 +44,7 @@ func (x *exec) ticketNow(st *flow.Stage) *runinput.TicketNow {
 	}
 	now, found, err := x.e.tickets.TicketNow(x.ctx, ticketID)
 	if err != nil {
-		x.e.log.Warn("prompt: reading the ticket", "run", x.rs.RunID, "stage", st.ID, "ticket", ticketID, "err", err)
+		x.e.log.WarnContext(x.bg, "prompt: reading the ticket", logs.RunID, x.rs.RunID, logs.StageID, st.ID, "ticket", ticketID, "err", err)
 		return nil
 	}
 	if !found {

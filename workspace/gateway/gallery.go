@@ -27,7 +27,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -141,7 +141,7 @@ func (g *gallery) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	up.Header.Set("Accept-Encoding", "identity")
 	resp, err := g.client.Do(up)
 	if err != nil {
-		log.Printf("gallery: %s %s: %v", r.Method, r.URL.Path, err)
+		slog.Warn("gallery", "method", r.Method, "path", r.URL.Path, "err", err)
 		http.Error(w, "gallery upstream: "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -262,9 +262,9 @@ func (g *gallery) clear() error {
 // only the control port) and serves the proxy until the process ends.
 func serveGallery(g *gallery) {
 	srv := &http.Server{Addr: ":" + galleryPort, Handler: g, ReadHeaderTimeout: 30 * time.Second}
-	log.Printf("gateway: extension gallery on :%s → %s (cache %s)", galleryPort, g.upstream, g.dir)
+	slog.Info("gateway: extension gallery", "port", galleryPort, "upstream", g.upstream, "cache", g.dir)
 	if err := srv.ListenAndServe(); err != nil {
-		log.Printf("gateway: gallery: %v", err)
+		slog.Error("gateway: gallery", "err", err)
 	}
 }
 

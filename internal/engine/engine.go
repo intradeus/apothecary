@@ -19,12 +19,14 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
+	"go.opentelemetry.io/otel"
 
 	"apothecary/internal/engine/authsink"
 	"apothecary/internal/engine/modelcheck"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/platform/filestore"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/notifyport"
@@ -167,10 +169,13 @@ type Engine struct {
 	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
 	handles map[string]*runHandle
 	// live fans out ephemeral agent progress (LiveDelta) to run viewers.
-	live   liveHub
-	queue  []string // pending runs waiting for a concurrency slot (§14 FIFO)
-	pings  map[string]*Ping
-	tokens map[string]string // runID -> per-run bearer token (regenerated each boot, see notes)
+	live  liveHub
+	queue []string // pending runs waiting for a concurrency slot (§14 FIFO)
+	// lastLimits are the limits scheduleLocked last admitted under: what the
+	// slots gauge reports (metrics.go).
+	lastLimits Limits
+	pings      map[string]*Ping
+	tokens     map[string]string // runID -> per-run bearer token (regenerated each boot, see notes)
 
 	// authSink is the live workspaces a refreshed login is pushed into, and
 	// the per-run auth brokers.
@@ -539,6 +544,7 @@ func New(d Deps) *Engine {
 	if e.runPorts == nil {
 		e.runPorts = runports.New(e.runs, d.Resolver, nil, runports.Config{}, e.log)
 	}
+	e.registerMetrics(otel.Meter("apothecaryd"))
 	return e
 }
 
@@ -877,7 +883,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName,
 	}
 	if e.attachments != nil && len(t.AttachmentIDs) > 0 {
 		if err := e.attachments.ClaimForRun(ctx, res.UserID, t.AttachmentIDs, runID, ""); err != nil {
-			e.log.Warn("claim goal attachments", "run", runID, "err", err)
+			e.log.Warn("claim goal attachments", logs.RunID, runID, "err", err)
 		}
 	}
 	lim := e.limits(ctx)
@@ -1005,14 +1011,14 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 	}
 	if v.EnvID != "" {
 		if err := e.destroyEnv(ctx, v); err != nil {
-			e.log.Warn("archive: env destroy failed", "run", runID, "env", v.EnvID, "err", err)
+			e.log.Warn("archive: env destroy failed", logs.RunID, runID, "env", v.EnvID, "err", err)
 		} else if err := e.AppendEvents(ctx, runID, &event.EnvDestroyed{EnvID: v.EnvID}); err != nil {
 			return err
 		}
 	}
 	if e.attachments != nil {
 		if err := e.attachments.DeleteForRun(ctx, runID); err != nil {
-			e.log.Warn("archive: attachment cleanup failed", "run", runID, "err", err)
+			e.log.Warn("archive: attachment cleanup failed", logs.RunID, runID, "err", err)
 		}
 	}
 	return nil
@@ -1151,7 +1157,7 @@ func (e *Engine) RetryRun(ctx context.Context, runID string) error {
 		}
 		if _, rerr := fl.Resolve(v.Params); rerr != nil {
 			e.log.Warn("retry keeps the pinned flow version: the current one does not resolve with the run's parameters",
-				"run", runID, "flow", v.FlowName, "err", rerr)
+				logs.RunID, runID, "flow", v.FlowName, "err", rerr)
 		} else {
 			hash = fl.Hash
 		}
@@ -1453,6 +1459,7 @@ func (e *Engine) Recover(ctx context.Context) error {
 // free (§14). Callers hold e.mu and pass limits read outside the lock
 // (settings live in the DB, §6.4).
 func (e *Engine) scheduleLocked(lim Limits) {
+	e.lastLimits = lim
 	if e.closing {
 		// A run finishing during Shutdown must not admit a queued run that
 		// nobody will cancel or wait for; it recovers on next boot.
@@ -1481,7 +1488,11 @@ func (e *Engine) startLocked(runID string) {
 	if _, exists := e.handles[runID]; exists {
 		return
 	}
-	ctx, cancel := context.WithCancelCause(context.Background())
+	// The loop's ctx stamps run_id on every line logged under it. It carries
+	// no span: a run outlives any sensible trace, so each stage attempt runs
+	// under its own (exec.attempt) and work between attempts is untraced.
+	base := logs.With(context.Background(), logs.RunID, runID)
+	ctx, cancel := context.WithCancelCause(base)
 	h := &runHandle{
 		cancel:      cancel,
 		mailbox:     make(chan raiseReq, 8),
@@ -2136,13 +2147,13 @@ func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter func(userID
 			continue
 		}
 		if err := e.destroyEnv(ctx, v); err != nil {
-			e.log.Warn("reaper: env destroy failed", "run", id, "env", v.EnvID, "err", err)
+			e.log.Warn("reaper: env destroy failed", logs.RunID, id, "env", v.EnvID, "err", err)
 			continue
 		}
 		if err := e.AppendEvents(ctx, id, &event.EnvDestroyed{EnvID: v.EnvID}); err != nil {
 			return err
 		}
-		e.log.Info("reaper: destroyed env of completed run", "run", id, "env", v.EnvID)
+		e.log.Info("reaper: destroyed env of completed run", logs.RunID, id, "env", v.EnvID)
 	}
 	return nil
 }
@@ -2155,7 +2166,7 @@ func (e *Engine) notify(ctx context.Context, n notifyport.Notification) {
 	}
 	for _, ch := range e.channels {
 		if err := ch.Send(ctx, n); err != nil {
-			e.log.Error("notification send failed", "run", n.RunID, "err", err)
+			e.log.Error("notification send failed", logs.RunID, n.RunID, "err", err)
 		}
 	}
 }

@@ -46,7 +46,9 @@ func TestRouteTableIsWellFormed(t *testing.T) {
 			t.Errorf("operation id %q used by both %s and %s", rt.ID, prev, where)
 		}
 		seen[rt.ID] = where
-		if !strings.HasPrefix(rt.Path, "/api/") {
+		// The probes keep the paths every orchestrator and load balancer
+		// expects; everything else is the API.
+		if !strings.HasPrefix(rt.Path, "/api/") && rt.Path != "/healthz" && rt.Path != "/readyz" {
 			t.Errorf("%s: every endpoint lives under /api/", where)
 		}
 	}

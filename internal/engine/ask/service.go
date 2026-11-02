@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/engine/redact"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/resolution"
@@ -396,7 +397,7 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 		}
 		th.SessionID = id
 		if err := svc.Store.SaveAskThread(ctx, th); err != nil {
-			svc.log().Warn("ask: save thread", "run", runID, "err", err)
+			svc.log().Warn("ask: save thread", logs.RunID, runID, "err", err)
 		}
 	}
 	events := func(ev agentport.AgentEvent) {
@@ -445,7 +446,7 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 		// failed before saying anything, the question goes to a fresh
 		// session instead, once. One that failed mid-answer keeps its error.
 		if err != nil && ctx.Err() == nil && silent && res.TurnsUsed == 0 {
-			svc.log().Info("ask: the pane's session is gone; starting a fresh one", "run", runID, "session", th.SessionID, "err", err)
+			svc.log().Info("ask: the pane's session is gone; starting a fresh one", logs.RunID, runID, "session", th.SessionID, "err", err)
 			th.SessionID, in.Model = "", ""
 			res, err = runner.Run(ctx, envport.EnvID(s.v.EnvID), spec, in)
 		}
@@ -459,7 +460,7 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 	}
 	th.Model = model
 	if serr := svc.Store.SaveAskThread(sctx, th); serr != nil {
-		svc.log().Warn("ask: save thread", "run", runID, "err", serr)
+		svc.log().Warn("ask: save thread", logs.RunID, runID, "err", serr)
 	}
 	mu.Lock()
 	said := strings.TrimSpace(text.String())
@@ -477,7 +478,7 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 	ans.Text, ans.Error = event.CleanText(ans.Text), event.CleanText(ans.Error)
 	m, aerr := svc.Store.AppendAskMessage(sctx, ans)
 	if aerr != nil {
-		svc.log().Error("ask: record answer", "run", runID, "err", aerr)
+		svc.log().Error("ask: record answer", logs.RunID, runID, "err", aerr)
 		m = ans
 	}
 	svc.mu.Lock()

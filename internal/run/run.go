@@ -127,6 +127,10 @@ type View struct {
 	Rebuilding bool      `json:"-"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+	// Facts are the run's analytics (where its time went, what it spent),
+	// folded beside the view. In the view JSON so they round-trip through
+	// runs.view and an incremental fold picks up where the last left off.
+	Facts Facts `json:"facts"`
 }
 
 // HoldView is a take-over as the run page and the runs list show it.
@@ -168,6 +172,7 @@ func Apply(v *View, e *event.Event) {
 		v.RunID = e.RunID
 	}
 	v.UpdatedAt = e.TS
+	v.Facts.accrue(v, e)
 	switch p := e.Payload.(type) {
 	case *event.RunCreated:
 		v.State = Pending
@@ -383,6 +388,7 @@ func Apply(v *View, e *event.Event) {
 	case *event.EnvRebuildCompleted, *event.EnvRebuildFailed:
 		v.Rebuilding = false
 	}
+	v.Facts.observe(v, e)
 }
 
 // ViewSource is an OPTIONAL event.Store capability: the runs read-model as

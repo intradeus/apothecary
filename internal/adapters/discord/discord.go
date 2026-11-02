@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/project/channels"
 )
@@ -40,7 +41,7 @@ func New(cfg Config) (*Channel, error) {
 	}
 	return &Channel{
 		cfg:  cfg,
-		http: &http.Client{Timeout: 15 * time.Second},
+		http: &http.Client{Transport: telemetry.SecretURLTransport(http.DefaultTransport), Timeout: 15 * time.Second},
 	}, nil
 }
 

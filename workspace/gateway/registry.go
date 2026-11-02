@@ -24,7 +24,7 @@ package main
 
 import (
 	"bufio"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"syscall"
@@ -119,7 +119,7 @@ func superviseRegistry(label, cfgPath string) {
 		if ranFor > registryHealthy {
 			backoff = registryMinBackoff
 		}
-		log.Printf("%s: restarting in %s", label, backoff)
+		slog.Info(label+": restarting", "in", backoff)
 		time.Sleep(backoff)
 		backoff = nextBackoff(backoff)
 	}
@@ -135,12 +135,12 @@ func runRegistry(label, cfgPath string, cfgMod *time.Time) (ranFor time.Duration
 	// prefix is what distinguishes them in `docker logs apo-gw-<project>`.
 	out, err := cmd.StdoutPipe()
 	if err != nil {
-		log.Printf("%s: pipe: %v", label, err)
+		slog.Warn(label+": pipe", "err", err)
 		return 0, false
 	}
 	cmd.Stderr = cmd.Stdout
 	if err := cmd.Start(); err != nil {
-		log.Printf("%s: start: %v", label, err)
+		slog.Warn(label+": start", "err", err)
 		return 0, false
 	}
 	go relayLines(label, out)
@@ -153,7 +153,7 @@ func runRegistry(label, cfgPath string, cfgMod *time.Time) (ranFor time.Duration
 	for {
 		select {
 		case err := <-done:
-			log.Printf("%s: exited after %s: %v", label, time.Since(start).Truncate(time.Second), err)
+			slog.Warn(label+": exited", "after", time.Since(start).Truncate(time.Second), "err", err)
 			return time.Since(start), false
 		case <-tick.C:
 			mt, ok := mtime(cfgPath)
@@ -161,7 +161,7 @@ func runRegistry(label, cfgPath string, cfgMod *time.Time) (ranFor time.Duration
 				continue
 			}
 			*cfgMod = mt
-			log.Printf("%s: config changed, restarting child", label)
+			slog.Info(label + ": config changed, restarting child")
 			stopChild(cmd, done)
 			return time.Since(start), true
 		}
@@ -185,7 +185,7 @@ func relayLines(label string, r interface{ Read([]byte) (int, error) }) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 8<<10), 64<<10) // registry logs can be long lines
 	for sc.Scan() {
-		log.Printf("%s: %s", label, sc.Text())
+		slog.Info(label + ": " + sc.Text())
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/project/channels"
 )
@@ -39,7 +40,7 @@ func New(cfg Config) (*Channel, error) {
 	}
 	return &Channel{
 		cfg:  Config{Homeserver: strings.TrimRight(cfg.Homeserver, "/"), AccessToken: cfg.AccessToken, RoomID: cfg.RoomID},
-		http: &http.Client{Timeout: 15 * time.Second},
+		http: &http.Client{Transport: telemetry.HTTPTransport(http.DefaultTransport), Timeout: 15 * time.Second},
 	}, nil
 }
 

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
 	"strings"
 
 	"apothecary/internal/account/auth"
@@ -33,32 +32,22 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	// error transitions (env_id alone can't, see run.View.EnvStatus).
 	envStatus := s.EnvState.Badges()
 	envDirty := s.EnvState.Dirty()
-	all, err := s.runViews(r.Context())
+	// Scoped to the caller (and project/ticket) in the store's query, newest
+	// first: a list never reads someone else's runs.
+	views, err := (&run.Reader{Store: s.Store}).List(r.Context(),
+		run.ListFilter{UserID: auth.UserID(r.Context()), ProjectID: project, TicketID: ticket})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	me := auth.UserID(r.Context())
-	views := make([]run.View, 0, len(all))
-	for _, v := range all {
-		if v.UserID != me {
-			continue // someone else's
-		}
-		if project != "" && v.ProjectID != project {
-			continue
-		}
-		if ticket != "" && v.TicketID != ticket {
-			continue
-		}
+	for i := range views {
 		// Overlay may carry a provisioning/error op before env_id exists, so
 		// don't gate on EnvID here.
-		if st, ok := envStatus[v.RunID]; ok {
-			v.EnvStatus = st
+		if st, ok := envStatus[views[i].RunID]; ok {
+			views[i].EnvStatus = st
 		}
-		v.EnvDirty = envDirty[v.RunID]
-		views = append(views, v)
+		views[i].EnvDirty = envDirty[views[i].RunID]
 	}
-	sort.Slice(views, func(i, j int) bool { return views[i].CreatedAt.After(views[j].CreatedAt) })
 	writeJSON(w, http.StatusOK, views)
 }
 

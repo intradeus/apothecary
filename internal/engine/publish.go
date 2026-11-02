@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"apothecary/internal/flow"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
@@ -36,7 +37,7 @@ import (
 func (x *exec) mrHead(repoHost repoport.RepoHost, ref repoport.MRRef) string {
 	st, err := repoHost.MRStatus(x.ctx, ref)
 	if err != nil {
-		x.e.log.Warn("could not read the new merge request's head", "run", x.rs.RunID, "mr", ref.URL, "err", err)
+		x.e.log.WarnContext(x.bg, "could not read the new merge request's head", logs.RunID, x.rs.RunID, "mr", ref.URL, "err", err)
 		return ""
 	}
 	return st.HeadSHA
@@ -68,7 +69,7 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 				return x.infraFail(st, fmt.Sprintf("repo %s: %v", co.Name, err))
 			}
 			if !ahead {
-				x.e.log.Info("no changes in extra repo; no merge request", "run", rs.RunID, "repo", co.Name)
+				x.e.log.InfoContext(x.bg, "no changes in extra repo; no merge request", logs.RunID, rs.RunID, "repo", co.Name)
 				continue
 			}
 		}
@@ -81,7 +82,7 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 				return x.infraFail(st, "cannot tell whether the merge request was already created: "+ferr.Error())
 			}
 			if found {
-				x.e.log.Info("adopted an existing merge request", "run", rs.RunID, "stage", st.ID, "repo", co.Name, "mr", ref.URL)
+				x.e.log.InfoContext(x.bg, "adopted an existing merge request", logs.RunID, rs.RunID, logs.StageID, st.ID, "repo", co.Name, "mr", ref.URL)
 				created := &event.MRCreated{Repo: co.Name, Branch: co.Branch, Target: co.Source, MRURL: ref.URL, MRIID: ref.IID,
 					Head: x.mrHead(repoHost, ref)}
 				if err := x.append(created); err != nil {
@@ -143,7 +144,7 @@ func (x *exec) actionCreateMR(st *flow.Stage) (bool, error) {
 		// one the host refuses is logged, and the merge request stands.
 		if labels := st.SettingList("labels"); len(labels) > 0 {
 			if err := repoHost.AddMRLabels(x.ctx, ref, labels); err != nil {
-				x.e.log.Warn("labelling the merge request", "run", rs.RunID, "mr", ref.URL, "labels", labels, "err", err)
+				x.e.log.WarnContext(x.bg, "labelling the merge request", logs.RunID, rs.RunID, "mr", ref.URL, "labels", labels, "err", err)
 			}
 		}
 		// mr_created is what makes the $MR_URL sentinel and the merge signals

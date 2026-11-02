@@ -9,6 +9,7 @@ import (
 
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/event"
@@ -107,7 +108,7 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 			return context.Cause(x.ctx)
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			return x.failAttempt(st, runcore.ClassifyAttempt(st, runcore.AttemptObservation{TimedOut: true}))
+			return x.failAttempt(st, runcore.ClassifyAttempt(st, runcore.AttemptObservation{TimedOut: true}), attemptSpend{})
 		}
 		if aerr := x.append(&event.StageFailed{StageID: st.ID, Reason: event.ReasonInfra, Error: err.Error()}); aerr != nil {
 			return aerr
@@ -126,7 +127,7 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 		}
 	}
 	if f := runcore.ClassifyAttempt(st, obs); f != nil {
-		return x.failAttempt(st, f)
+		return x.failAttempt(st, f, attemptSpend{})
 	}
 	if err := x.append(&event.StageCompleted{StageID: st.ID, DurationMS: x.e.clock().Sub(started).Milliseconds()}); err != nil {
 		return err
@@ -205,7 +206,7 @@ func (x *exec) clearOutputs(bindings []flow.Port) {
 			Dir:     "repo",
 			Timeout: time.Minute,
 		}); err != nil {
-			x.e.log.Warn("clearing declared outputs failed", "run", x.rs.RunID, "err", err)
+			x.e.log.WarnContext(x.bg, "clearing declared outputs failed", logs.RunID, x.rs.RunID, "err", err)
 		}
 	}
 }

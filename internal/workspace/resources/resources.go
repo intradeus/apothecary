@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
@@ -114,7 +115,7 @@ func (s *Sampler) SampleOnce(ctx context.Context) error {
 		if !ok {
 			res, err = s.Resolver.Resolve(ctx, v.ProjectID)
 			if err != nil {
-				s.log().Debug("resource sample: resolve failed", "run", id, "project", v.ProjectID, "err", err)
+				s.log().Debug("resource sample: resolve failed", logs.RunID, id, logs.ProjectID, v.ProjectID, "err", err)
 				continue
 			}
 			resolved[v.ProjectID] = res
@@ -125,7 +126,7 @@ func (s *Sampler) SampleOnce(ctx context.Context) error {
 		}
 		sample, err := sampler.SampleResources(ctx, envport.EnvID(wsname.ForRun(v, id)))
 		if err != nil {
-			s.log().Debug("resource sample failed", "run", id, "err", err)
+			s.log().Debug("resource sample failed", logs.RunID, id, "err", err)
 			continue
 		}
 		sample.At = s.now()

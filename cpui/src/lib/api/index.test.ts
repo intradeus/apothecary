@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ProjectDraft, RunInput, TicketDraft } from '$lib/domain';
+import type {
+	AnalyticsQuery,
+	DashboardDraft,
+	ProjectDraft,
+	RunInput,
+	ScorecardDraft,
+	TicketDraft
+} from '$lib/domain';
 import * as gen from './generated/sdk.gen';
 import { client } from './generated/client.gen';
 import { onUnauthorized } from './client';
@@ -8,6 +15,7 @@ import {
 	isInUse,
 	linkedTicketsOf,
 	api,
+	analytics,
 	auth,
 	automations,
 	credentials,
@@ -123,7 +131,11 @@ describe('a list the engine answers null', () => {
 		['users', () => users.list(), 'listUsers'],
 		['skills', () => skills.list(), 'listSkills'],
 		['skillsets', () => skillsets.list(), 'listSkillsets'],
-		['skillset versions', () => skillsets.versions('s'), 'listSkillsetVersions']
+		['skillset versions', () => skillsets.versions('s'), 'listSkillsetVersions'],
+		['dashboards', () => analytics.dashboards.list(), 'listDashboards'],
+		['scorecards', () => analytics.scorecards.list(), 'listScorecards'],
+		['dimension values', () => analytics.values('runs', 'flow_name'), 'analyticsValues'],
+		['drilled runs', () => analytics.drill('runs', []), 'drillAnalytics']
 	])('reads %s as none', async (_, call, name) => {
 		reply(name, answer(null));
 		await expect(call()).resolves.toEqual([]);
@@ -295,7 +307,19 @@ describe('what each call sends', () => {
 			{ path: { id: 'u' }, body: { password: 'p' } }
 		],
 		['a skill’s removal', () => skills.remove('s'), 'deleteSkill', { path: { id: 's' } }],
-		['a skillset’s removal', () => skillsets.remove('s'), 'deleteSkillset', { path: { id: 's' } }]
+		['a skillset’s removal', () => skillsets.remove('s'), 'deleteSkillset', { path: { id: 's' } }],
+		[
+			'a dashboard’s removal',
+			() => analytics.dashboards.remove('d'),
+			'deleteDashboard',
+			{ path: { id: 'd' } }
+		],
+		[
+			'a scorecard’s removal',
+			() => analytics.scorecards.remove('s'),
+			'deleteScorecard',
+			{ path: { id: 's' } }
+		]
 	])('sends %s', async (_, call, name, args) => {
 		const fn = reply(name);
 		await expect(call()).resolves.toBeUndefined();
@@ -779,6 +803,131 @@ describe('what each call sends', () => {
 		});
 	});
 
+	describe('analytics', () => {
+		const query: AnalyticsQuery = {
+			grain: 'runs',
+			measures: [{ field: 'cost_usd', agg: 'median' }, { field: 'success_rate' }],
+			groupBy: ['flow_hash'],
+			filters: [{ field: 'state', op: 'in', values: ['completed'] }],
+			time: { from: '2026-01-01T00:00:00Z', bucket: 'week' }
+		};
+		const wireQuery = {
+			grain: 'runs',
+			measures: [{ field: 'cost_usd', agg: 'median' }, { field: 'success_rate' }],
+			group_by: ['flow_hash'],
+			filters: [{ field: 'state', op: 'in', values: ['completed'] }],
+			time: { from: '2026-01-01T00:00:00Z', bucket: 'week' }
+		};
+
+		it('sends a query with only the parts it sets', async () => {
+			const fn = reply('queryAnalytics', answer({ rows: null }));
+			await analytics.query(query);
+			expect(fn).toHaveBeenLastCalledWith({ body: wireQuery });
+			await analytics.query({
+				...query,
+				measures: [],
+				groupBy: [],
+				filters: [],
+				time: { to: '2026-02-01T00:00:00Z' },
+				order: { by: 'score', desc: true },
+				limit: 10,
+				score: { scorecard: 'builtin-cheapest', baseline: ['a'] }
+			});
+			expect(fn).toHaveBeenLastCalledWith({
+				body: {
+					grain: 'runs',
+					measures: [],
+					group_by: [],
+					filters: [],
+					time: { to: '2026-02-01T00:00:00Z' },
+					order: { by: 'score', desc: true },
+					limit: 10,
+					score: { scorecard: 'builtin-cheapest', baseline: ['a'] }
+				}
+			});
+		});
+
+		it('leaves an empty baseline off: min-max scoring', async () => {
+			const fn = reply('queryAnalytics', answer({}));
+			await analytics.query({ ...query, time: {}, score: { scorecard: 's', baseline: [] } });
+			expect(fn.mock.lastCall?.[0].body.score).toEqual({ scorecard: 's' });
+		});
+
+		it('asks for a dimension’s values and the runs behind a row in one window', async () => {
+			const values = reply('analyticsValues', answer([{ value: 'p1', label: 'Shop' }]));
+			await expect(
+				analytics.values('runs', 'project_id', { from: '2026-01-01T00:00:00Z' })
+			).resolves.toEqual([{ value: 'p1', label: 'Shop' }]);
+			expect(values).toHaveBeenCalledWith({
+				body: { grain: 'runs', field: 'project_id', time: { from: '2026-01-01T00:00:00Z' } }
+			});
+			const drill = reply('drillAnalytics', answer([]));
+			await analytics.drill('attempts', [{ field: 'model', op: 'eq', values: ['m'] }]);
+			expect(drill).toHaveBeenCalledWith({
+				body: {
+					grain: 'attempts',
+					filters: [{ field: 'model', op: 'eq', values: ['m'] }],
+					time: {}
+				}
+			});
+		});
+
+		it('saves a dashboard with its panels’ queries on the wire', async () => {
+			const draft: DashboardDraft = {
+				name: 'Mine',
+				filters: ['flow_name'],
+				panels: [{ id: 'p', title: 'Cost', query, viz: 'bar', width: 6 }]
+			};
+			const wired = {
+				name: 'Mine',
+				filters: ['flow_name'],
+				panels: [{ id: 'p', title: 'Cost', query: wireQuery, viz: 'bar', width: 6 }]
+			};
+			const create = reply('createDashboard', answer({ id: 'd', name: 'Mine' }));
+			await expect(analytics.dashboards.create(draft)).resolves.toMatchObject({ id: 'd' });
+			expect(create).toHaveBeenCalledWith({ body: wired });
+			const update = reply('updateDashboard', answer({ id: 'd' }));
+			await analytics.dashboards.update('d', draft);
+			expect(update).toHaveBeenCalledWith({ path: { id: 'd' }, body: wired });
+			const get = reply('getDashboard', answer({ id: 'd', panels: null }));
+			await expect(analytics.dashboards.get('d')).resolves.toMatchObject({ panels: [] });
+			expect(get).toHaveBeenCalledWith({ path: { id: 'd' } });
+		});
+
+		it('saves a scorecard’s terms', async () => {
+			const draft: ScorecardDraft = {
+				name: 'Cheap',
+				terms: [
+					{ measure: { field: 'cost_usd', agg: 'median' }, direction: 'lower', weight: 0.8 },
+					{ measure: { field: 'success_rate' }, direction: 'higher', weight: 0.2 }
+				]
+			};
+			const wired = {
+				name: 'Cheap',
+				terms: [
+					{ measure: { field: 'cost_usd', agg: 'median' }, direction: 'lower', weight: 0.8 },
+					{ measure: { field: 'success_rate' }, direction: 'higher', weight: 0.2 }
+				]
+			};
+			const create = reply('createScorecard', answer({ id: 's', terms: wired.terms }));
+			await expect(analytics.scorecards.create(draft)).resolves.toMatchObject({
+				terms: draft.terms
+			});
+			expect(create).toHaveBeenCalledWith({ body: wired });
+			const update = reply('updateScorecard', answer({ id: 's' }));
+			await analytics.scorecards.update('s', draft);
+			expect(update).toHaveBeenCalledWith({ path: { id: 's' }, body: wired });
+			const get = reply('getScorecard', answer({ id: 's' }));
+			await expect(analytics.scorecards.get('s')).resolves.toMatchObject({ id: 's', terms: [] });
+			expect(get).toHaveBeenCalledWith({ path: { id: 's' } });
+		});
+
+		it('reads the catalog through the api aggregate', async () => {
+			reply('getAnalyticsCatalog', answer({ grains: null }));
+			await expect(api.analytics.catalog()).resolves.toEqual({ grains: [] });
+		});
+	});
+
 	describe('automations', () => {
 		const draft = { name: 'n', kind: 'cron', flow: 'f', enabled: true } as const;
 
@@ -848,6 +997,13 @@ describe('what each call sends', () => {
 			const fn = reply('addChannel', answer({ id: 'c' }));
 			await system.addChannel('slack', { url: 'u' });
 			expect(fn).toHaveBeenCalledWith({ body: { kind: 'slack', url: 'u' } });
+		});
+
+		it('reads the Grafana link, empty when unset', async () => {
+			reply('getObservability', answer({ grafana_url: 'https://g.example' }));
+			await expect(system.observability()).resolves.toBe('https://g.example');
+			reply('getObservability', answer({ grafana_url: '' }));
+			await expect(system.observability()).resolves.toBe('');
 		});
 	});
 

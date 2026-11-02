@@ -1,0 +1,21 @@
+{
+  "id": "builtin-tickets",
+  "name": "Tickets",
+  "filters": ["project_id", "flow_name", "ticket_change_type"],
+  "panels": [
+    {"id": "runs-per-ticket", "title": "Runs per ticket", "viz": "number", "width": 4,
+     "query": {"grain": "runs", "filters": [{"field": "ticket_id", "op": "neq", "values": [""]}],
+       "measures": [{"field": "runs_per_ticket"}]}},
+    {"id": "cost-to-ship", "title": "Median cost to ship by change type", "viz": "bar", "width": 4,
+     "query": {"grain": "tickets", "group_by": ["ticket_change_type"],
+       "filters": [{"field": "shipped", "op": "eq", "values": ["true"]}],
+       "measures": [{"field": "cost_to_ship", "agg": "median"}]}},
+    {"id": "runs-to-ship", "title": "Runs to ship by change type", "viz": "bar", "width": 4,
+     "query": {"grain": "tickets", "group_by": ["ticket_change_type"],
+       "filters": [{"field": "shipped", "op": "eq", "values": ["true"]}],
+       "measures": [{"field": "runs_to_ship", "agg": "avg"}]}},
+    {"id": "sources", "title": "Tickets by tracker issue type", "viz": "table", "width": 12,
+     "query": {"grain": "tickets", "group_by": ["ticket_source_type"],
+       "measures": [{"field": "runs", "agg": "sum"}, {"field": "ship_rate"}, {"field": "cost_to_ship", "agg": "median"}]}}
+  ]
+}

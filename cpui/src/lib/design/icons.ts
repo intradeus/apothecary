@@ -13,6 +13,7 @@ export const I = {
 	inbox: '✉' + T,
 	runs: '▶' + T,
 	tickets: '☰' + T,
+	analytics: '▥',
 	system: '⚙' + T,
 	search: '⌕',
 	more: '≡',

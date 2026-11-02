@@ -28,7 +28,7 @@ import (
 
 // SpecVersion is the documented API version. Bump it when the surface changes
 // in a way a client must notice.
-const SpecVersion = "1.1.0"
+const SpecVersion = "1.2.0"
 
 var pathParamRE = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*)\}`)
 
@@ -331,6 +331,21 @@ var typeNameOverrides = map[string]string{
 	"event.Checkout":           "RunCheckout",
 	"run.MRView":               "RunMergeRequest",
 	"confstore.ExtraRepo":      "ExtraRepo",
+	"analytics.Catalog":        "AnalyticsCatalog",
+	"analytics.GrainInfo":      "CatalogGrain",
+	"analytics.Field":          "CatalogField",
+	"analytics.Query":          "AnalyticsQuery",
+	"analytics.MeasureRef":     "AnalyticsMeasure",
+	"analytics.Filter":         "AnalyticsFilter",
+	"analytics.TimeRange":      "AnalyticsTimeRange",
+	"analytics.OrderBy":        "AnalyticsOrder",
+	"analytics.ScoreSpec":      "AnalyticsScore",
+	"analytics.Result":         "AnalyticsResult",
+	"analytics.Row":            "AnalyticsRow",
+	"analytics.Value":          "AnalyticsValue",
+	"analytics.Term":           "ScorecardTerm",
+	"httpapi.ValuesRequest":    "AnalyticsValuesRequest",
+	"httpapi.DrillRequest":     "AnalyticsDrillRequest",
 }
 
 func (n *typeNamer) name(t reflect.Type) string {

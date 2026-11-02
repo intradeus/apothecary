@@ -66,10 +66,11 @@ type Route struct {
 }
 
 // conf / kinds / cpui are the registration gates.
-func haveConf(s *Server) bool   { return s.Conf != nil }
-func haveSkills(s *Server) bool { return s.Skills != nil }
-func haveKinds(s *Server) bool  { return s.Kinds != nil }
-func haveCPUI(s *Server) bool   { return s.CPUIDir != "" }
+func haveConf(s *Server) bool      { return s.Conf != nil }
+func haveSkills(s *Server) bool    { return s.Skills != nil }
+func haveAnalytics(s *Server) bool { return s.Analytics != nil }
+func haveKinds(s *Server) bool     { return s.Kinds != nil }
+func haveCPUI(s *Server) bool      { return s.CPUIDir != "" }
 
 const (
 	tagRuns         = "runs"
@@ -87,6 +88,7 @@ const (
 	tagSystem       = "system"
 	tagAuth         = "auth"
 	tagUsers        = "users"
+	tagAnalytics    = "analytics"
 )
 
 var (
@@ -120,6 +122,8 @@ func (s *Server) routes() []Route {
 		s.projectRoutes(),
 		s.ticketRoutes(),
 		s.flowRoutes(),
+		s.analyticsRoutes(),
+		s.healthRoutes(),
 	)
 }
 
@@ -129,7 +133,7 @@ func (s *Server) Handler() http.Handler {
 		if rt.Enabled != nil && !rt.Enabled(s) {
 			continue
 		}
-		mux.HandleFunc(rt.Method+" "+rt.Path, s.guard(rt))
+		mux.Handle(rt.Method+" "+rt.Path, s.traced(rt, s.guard(rt)))
 	}
 	// A WebSocket, so outside the table (and the spec): see serveTerminal.
 	// The run's owner only, from the UI's own origin.
@@ -154,9 +158,9 @@ func (s *Server) Handler() http.Handler {
 	if s.Apps != nil {
 		// The sign-in hand-off to an app host (apps.go), on the main host.
 		mux.HandleFunc("GET /api/apps/auth", s.Apps.authorize(s))
-		return s.Apps.wrap(s, mux)
+		return s.edge(s.Apps.wrap(s, mux))
 	}
-	return mux
+	return s.edge(mux)
 }
 
 // Compile-time anchors for types the table names only through helpers.

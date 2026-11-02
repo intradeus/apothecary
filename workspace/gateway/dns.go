@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -46,7 +46,7 @@ func (g *gateway) serveDNS(upstream string) {
 func (g *gateway) serveDNSUDP(upstream string) {
 	pc, err := listenPacket("udp", ":53")
 	if err != nil {
-		log.Printf("dns udp listen: %v", err)
+		slog.Warn("dns udp listen", "err", err)
 		return
 	}
 	buf := make([]byte, 4096)
@@ -80,7 +80,7 @@ func (g *gateway) serveDNSUDP(upstream string) {
 				if ua, ok := addr.(*net.UDPAddr); ok {
 					cip = ua.IP
 				}
-				log.Printf("run=%s dns %s -> %v", runOr(g.attributeIP(cip)), name, ips)
+				slog.Info("dns", "run_id", runOr(g.attributeIP(cip)), "name", name, "ips", ips)
 			}
 			_, _ = pc.WriteTo(resp[:m], addr)
 		}()
@@ -90,7 +90,7 @@ func (g *gateway) serveDNSUDP(upstream string) {
 func (g *gateway) serveDNSTCP(upstream string) {
 	ln, err := listenStream("tcp", ":53")
 	if err != nil {
-		log.Printf("dns tcp listen: %v", err)
+		slog.Warn("dns tcp listen", "err", err)
 		return
 	}
 	for {

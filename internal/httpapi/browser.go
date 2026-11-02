@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"apothecary/internal/engine/browsermcp"
+	"apothecary/internal/platform/logs"
 )
 
 // --- project secrets ------------------------------------------------------------
@@ -136,7 +137,7 @@ func (s *Server) serveBrowserMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := sess.Serve(r.Context(), hijacked{brw.Reader, conn}); err != nil {
-		s.Log.Warn("browser session failed", "run", id, "err", err)
+		s.Log.Warn("browser session failed", logs.RunID, id, "err", err)
 		line, _ := json.Marshal(map[string]string{"apothecary_error": err.Error()})
 		_, _ = conn.Write(append(line, '\n'))
 	}

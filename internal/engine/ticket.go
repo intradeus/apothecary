@@ -40,6 +40,7 @@ import (
 
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/actionspec"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/resolution"
@@ -51,7 +52,7 @@ import (
 // to act on — and follows on_success. The sibling of actionFail (and like
 // it, returns routed=true).
 func (x *exec) actionSkip(st *flow.Stage, note string) (bool, error) {
-	x.e.log.Info("stage skipped", "run", x.rs.RunID, "stage", st.ID, "note", note)
+	x.e.log.InfoContext(x.bg, "stage skipped", logs.RunID, x.rs.RunID, logs.StageID, st.ID, "note", note)
 	if err := x.append(&event.StageCompleted{StageID: st.ID, Skipped: true, Note: note}); err != nil {
 		return true, err
 	}
@@ -165,7 +166,7 @@ func (x *exec) actionTicketTransition(st *flow.Stage) (bool, error) {
 	if err := tg.w.Transition(tg.ctx, tg.key, status); err != nil {
 		return x.trackerFail(st, err)
 	}
-	x.e.log.Info("ticket moved", "run", x.rs.RunID, "stage", st.ID, "ticket", tg.key, "to", status)
+	x.e.log.InfoContext(x.bg, "ticket moved", logs.RunID, x.rs.RunID, logs.StageID, st.ID, "ticket", tg.key, "to", status)
 	return x.written(tg)
 }
 
@@ -228,8 +229,8 @@ func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 			return x.trackerFail(st, fmt.Errorf("cannot tell whether the comment was already posted: %w", cerr))
 		}
 		if posted {
-			x.e.log.Info("adopted a comment posted before an interrupted record",
-				"run", rs.RunID, "stage", st.ID, "ticket", tg.key)
+			x.e.log.InfoContext(x.bg, "adopted a comment posted before an interrupted record",
+				logs.RunID, rs.RunID, logs.StageID, st.ID, "ticket", tg.key)
 			return x.written(tg)
 		}
 	}
@@ -309,7 +310,7 @@ func (x *exec) actionTicketSetField(st *flow.Stage) (bool, error) {
 	if err := tg.w.SetFields(tg.ctx, tg.key, map[string]string{field: value}); err != nil {
 		return x.trackerFail(st, err)
 	}
-	x.e.log.Info("ticket field set", "run", rs.RunID, "stage", st.ID, "ticket", tg.key, "field", field)
+	x.e.log.InfoContext(x.bg, "ticket field set", logs.RunID, rs.RunID, logs.StageID, st.ID, "ticket", tg.key, "field", field)
 	return x.written(tg)
 }
 
@@ -357,7 +358,7 @@ func (x *exec) actionTicketLink(st *flow.Stage) (bool, error) {
 			return x.trackerFail(st, err)
 		}
 	}
-	x.e.log.Info("ticket linked to merge request(s)", "run", rs.RunID, "stage", st.ID, "ticket", tg.key, "count", len(mrs))
+	x.e.log.InfoContext(x.bg, "ticket linked to merge request(s)", logs.RunID, rs.RunID, logs.StageID, st.ID, "ticket", tg.key, "count", len(mrs))
 	return x.written(tg)
 }
 
@@ -408,6 +409,6 @@ func (x *exec) actionTicketLinkBranch(st *flow.Stage) (bool, error) {
 	if linked == 0 {
 		return x.actionSkip(st, "no checkout of this run has a repository host to link a branch from")
 	}
-	x.e.log.Info("ticket linked to branch(es)", "run", rs.RunID, "stage", st.ID, "ticket", tg.key, "count", linked)
+	x.e.log.InfoContext(x.bg, "ticket linked to branch(es)", logs.RunID, rs.RunID, logs.StageID, st.ID, "ticket", tg.key, "count", linked)
 	return x.written(tg)
 }

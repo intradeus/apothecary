@@ -10,6 +10,7 @@ package engine
 
 import (
 	"apothecary/internal/flow"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/run/event"
 )
 
@@ -24,7 +25,7 @@ func (x *exec) skipStage(st *flow.Stage, note string) error {
 	if err := x.append(&event.StageCompleted{StageID: st.ID, Skipped: true, Note: note}); err != nil {
 		return err
 	}
-	x.e.log.Info("stage skipped", "run", rs.RunID, "stage", st.ID, "note", note)
+	x.e.log.InfoContext(x.bg, "stage skipped", logs.RunID, rs.RunID, logs.StageID, st.ID, "note", note)
 	x.rs.RouteSuccess(st, "")
 	return nil
 }

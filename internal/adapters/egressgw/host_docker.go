@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/ports/envport"
 )
 
@@ -54,7 +55,7 @@ const (
 func NewDockerHost(runsDir string, run HostRun, ensureImage func(context.Context) (string, error)) *DockerHost {
 	return &DockerHost{
 		runsDir: runsDir, run: run, ensureImage: ensureImage,
-		client: &http.Client{Timeout: 3 * time.Second},
+		client: &http.Client{Transport: telemetry.HTTPTransport(http.DefaultTransport), Timeout: 3 * time.Second},
 		ctl:    map[string]cachedControl{},
 	}
 }

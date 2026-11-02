@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/ports/trackerport"
 )
 
@@ -68,7 +69,7 @@ func New(cfg Config) *Client {
 	if cfg.APIVersion == "" {
 		cfg.APIVersion = "3"
 	}
-	return &Client{cfg: cfg, http: &http.Client{Timeout: 30 * time.Second}}
+	return &Client{cfg: cfg, http: &http.Client{Transport: telemetry.HTTPTransport(http.DefaultTransport), Timeout: 30 * time.Second}}
 }
 
 // isCloud reports an Atlassian-hosted site. Cloud REJECTS a bearer API token

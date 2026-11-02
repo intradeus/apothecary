@@ -26,6 +26,9 @@ import type {
 	AllowEgressHostData,
 	AllowEgressHostErrors,
 	AllowEgressHostResponses,
+	AnalyticsValuesData,
+	AnalyticsValuesErrors,
+	AnalyticsValuesResponses,
 	AnswerPingData,
 	AnswerPingErrors,
 	AnswerPingResponses,
@@ -68,6 +71,9 @@ import type {
 	CreateCredentialData,
 	CreateCredentialErrors,
 	CreateCredentialResponses,
+	CreateDashboardData,
+	CreateDashboardErrors,
+	CreateDashboardResponses,
 	CreateFlowData,
 	CreateFlowErrors,
 	CreateFlowResponses,
@@ -80,6 +86,9 @@ import type {
 	CreateProjectData,
 	CreateProjectErrors,
 	CreateProjectResponses,
+	CreateScorecardData,
+	CreateScorecardErrors,
+	CreateScorecardResponses,
 	CreateSkillData,
 	CreateSkillErrors,
 	CreateSkillResponses,
@@ -101,6 +110,9 @@ import type {
 	DeleteCredentialData,
 	DeleteCredentialErrors,
 	DeleteCredentialResponses,
+	DeleteDashboardData,
+	DeleteDashboardErrors,
+	DeleteDashboardResponses,
 	DeleteFlowBindingData,
 	DeleteFlowBindingErrors,
 	DeleteFlowBindingResponses,
@@ -122,6 +134,9 @@ import type {
 	DeleteProjectSecretData,
 	DeleteProjectSecretErrors,
 	DeleteProjectSecretResponses,
+	DeleteScorecardData,
+	DeleteScorecardErrors,
+	DeleteScorecardResponses,
 	DeleteSkillData,
 	DeleteSkillErrors,
 	DeleteSkillResponses,
@@ -137,9 +152,15 @@ import type {
 	DownloadSnapshotData,
 	DownloadSnapshotErrors,
 	DownloadSnapshotResponses,
+	DrillAnalyticsData,
+	DrillAnalyticsErrors,
+	DrillAnalyticsResponses,
 	ExposeRunPortData,
 	ExposeRunPortErrors,
 	ExposeRunPortResponses,
+	GetAnalyticsCatalogData,
+	GetAnalyticsCatalogErrors,
+	GetAnalyticsCatalogResponses,
 	GetAskData,
 	GetAskErrors,
 	GetAskResponses,
@@ -158,6 +179,9 @@ import type {
 	GetCredentialData,
 	GetCredentialErrors,
 	GetCredentialResponses,
+	GetDashboardData,
+	GetDashboardErrors,
+	GetDashboardResponses,
 	GetEgressDefaultsData,
 	GetEgressDefaultsErrors,
 	GetEgressDefaultsResponses,
@@ -176,6 +200,9 @@ import type {
 	GetFlowVersionData,
 	GetFlowVersionErrors,
 	GetFlowVersionResponses,
+	GetHealthzData,
+	GetHealthzErrors,
+	GetHealthzResponses,
 	GetIntegrationData,
 	GetIntegrationErrors,
 	GetIntegrationResponses,
@@ -188,6 +215,9 @@ import type {
 	GetMeData,
 	GetMeErrors,
 	GetMeResponses,
+	GetObservabilityData,
+	GetObservabilityErrors,
+	GetObservabilityResponses,
 	GetPingCurationData,
 	GetPingCurationErrors,
 	GetPingCurationResponses,
@@ -206,6 +236,9 @@ import type {
 	GetProjectEgressAuditResponses,
 	GetProjectErrors,
 	GetProjectResponses,
+	GetReadyzData,
+	GetReadyzErrors,
+	GetReadyzResponses,
 	GetRunData,
 	GetRunEgressAuditData,
 	GetRunEgressAuditErrors,
@@ -239,6 +272,9 @@ import type {
 	GetRunSshData,
 	GetRunSshErrors,
 	GetRunSshResponses,
+	GetScorecardData,
+	GetScorecardErrors,
+	GetScorecardResponses,
 	GetSettingsData,
 	GetSettingsErrors,
 	GetSettingsResponses,
@@ -302,6 +338,9 @@ import type {
 	ListCredentialsData,
 	ListCredentialsErrors,
 	ListCredentialsResponses,
+	ListDashboardsData,
+	ListDashboardsErrors,
+	ListDashboardsResponses,
 	ListEgressDenialsData,
 	ListEgressDenialsErrors,
 	ListEgressDenialsResponses,
@@ -356,6 +395,9 @@ import type {
 	ListRunsData,
 	ListRunsErrors,
 	ListRunsResponses,
+	ListScorecardsData,
+	ListScorecardsErrors,
+	ListScorecardsResponses,
 	ListSignalsData,
 	ListSignalsErrors,
 	ListSignalsResponses,
@@ -410,6 +452,9 @@ import type {
 	PutTrackerTypesData,
 	PutTrackerTypesErrors,
 	PutTrackerTypesResponses,
+	QueryAnalyticsData,
+	QueryAnalyticsErrors,
+	QueryAnalyticsResponses,
 	RaisePingData,
 	RaisePingErrors,
 	RaisePingResponses,
@@ -520,6 +565,9 @@ import type {
 	UpdateAutomationData,
 	UpdateAutomationErrors,
 	UpdateAutomationResponses,
+	UpdateDashboardData,
+	UpdateDashboardErrors,
+	UpdateDashboardResponses,
 	UpdateFlowData,
 	UpdateFlowErrors,
 	UpdateFlowResponses,
@@ -532,6 +580,9 @@ import type {
 	UpdateProjectData,
 	UpdateProjectErrors,
 	UpdateProjectResponses,
+	UpdateScorecardData,
+	UpdateScorecardErrors,
+	UpdateScorecardResponses,
 	UpdateSettingsData,
 	UpdateSettingsErrors,
 	UpdateSettingsResponses,
@@ -594,6 +645,362 @@ export const listActions = <ThrowOnError extends boolean = false>(
 		],
 		url: '/api/actions',
 		...options
+	});
+
+/**
+ * Every grain, dimension and measure a query may name
+ */
+export const getAnalyticsCatalog = <ThrowOnError extends boolean = false>(
+	options?: Options<GetAnalyticsCatalogData, ThrowOnError>
+): RequestResult<GetAnalyticsCatalogResponses, GetAnalyticsCatalogErrors, ThrowOnError> =>
+	(options?.client ?? client).get<
+		GetAnalyticsCatalogResponses,
+		GetAnalyticsCatalogErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/catalog',
+		...options
+	});
+
+/**
+ * The built-in dashboards, then one's own
+ */
+export const listDashboards = <ThrowOnError extends boolean = false>(
+	options?: Options<ListDashboardsData, ThrowOnError>
+): RequestResult<ListDashboardsResponses, ListDashboardsErrors, ThrowOnError> =>
+	(options?.client ?? client).get<ListDashboardsResponses, ListDashboardsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/dashboards',
+		...options
+	});
+
+/**
+ * Create a dashboard
+ */
+export const createDashboard = <ThrowOnError extends boolean = false>(
+	options: Options<CreateDashboardData, ThrowOnError>
+): RequestResult<CreateDashboardResponses, CreateDashboardErrors, ThrowOnError> =>
+	(options.client ?? client).post<CreateDashboardResponses, CreateDashboardErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/dashboards',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Delete a dashboard (409 on a built-in)
+ */
+export const deleteDashboard = <ThrowOnError extends boolean = false>(
+	options: Options<DeleteDashboardData, ThrowOnError>
+): RequestResult<DeleteDashboardResponses, DeleteDashboardErrors, ThrowOnError> =>
+	(options.client ?? client).delete<DeleteDashboardResponses, DeleteDashboardErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/dashboards/{id}',
+		...options
+	});
+
+/**
+ * One dashboard
+ */
+export const getDashboard = <ThrowOnError extends boolean = false>(
+	options: Options<GetDashboardData, ThrowOnError>
+): RequestResult<GetDashboardResponses, GetDashboardErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetDashboardResponses, GetDashboardErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/dashboards/{id}',
+		...options
+	});
+
+/**
+ * Replace a dashboard's name, filters and panels (409 on a built-in)
+ */
+export const updateDashboard = <ThrowOnError extends boolean = false>(
+	options: Options<UpdateDashboardData, ThrowOnError>
+): RequestResult<UpdateDashboardResponses, UpdateDashboardErrors, ThrowOnError> =>
+	(options.client ?? client).put<UpdateDashboardResponses, UpdateDashboardErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/dashboards/{id}',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * The runs behind a group (at most 200, newest first)
+ */
+export const drillAnalytics = <ThrowOnError extends boolean = false>(
+	options: Options<DrillAnalyticsData, ThrowOnError>
+): RequestResult<DrillAnalyticsResponses, DrillAnalyticsErrors, ThrowOnError> =>
+	(options.client ?? client).post<DrillAnalyticsResponses, DrillAnalyticsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/drill',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Run a query over one's own runs
+ *
+ * A whitelisted shape — grain, measures, group-by, filters, time range — checked against the catalog. At most 8 measures, 3 group-by dimensions, 10 filters and 500 rows; 422 when it runs longer than 5s.
+ */
+export const queryAnalytics = <ThrowOnError extends boolean = false>(
+	options: Options<QueryAnalyticsData, ThrowOnError>
+): RequestResult<QueryAnalyticsResponses, QueryAnalyticsErrors, ThrowOnError> =>
+	(options.client ?? client).post<QueryAnalyticsResponses, QueryAnalyticsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/query',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * The built-in scorecards, then one's own
+ */
+export const listScorecards = <ThrowOnError extends boolean = false>(
+	options?: Options<ListScorecardsData, ThrowOnError>
+): RequestResult<ListScorecardsResponses, ListScorecardsErrors, ThrowOnError> =>
+	(options?.client ?? client).get<ListScorecardsResponses, ListScorecardsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/scorecards',
+		...options
+	});
+
+/**
+ * Create a scorecard
+ */
+export const createScorecard = <ThrowOnError extends boolean = false>(
+	options: Options<CreateScorecardData, ThrowOnError>
+): RequestResult<CreateScorecardResponses, CreateScorecardErrors, ThrowOnError> =>
+	(options.client ?? client).post<CreateScorecardResponses, CreateScorecardErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/scorecards',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Delete a scorecard (409 on a built-in)
+ */
+export const deleteScorecard = <ThrowOnError extends boolean = false>(
+	options: Options<DeleteScorecardData, ThrowOnError>
+): RequestResult<DeleteScorecardResponses, DeleteScorecardErrors, ThrowOnError> =>
+	(options.client ?? client).delete<DeleteScorecardResponses, DeleteScorecardErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/scorecards/{id}',
+		...options
+	});
+
+/**
+ * One scorecard
+ */
+export const getScorecard = <ThrowOnError extends boolean = false>(
+	options: Options<GetScorecardData, ThrowOnError>
+): RequestResult<GetScorecardResponses, GetScorecardErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetScorecardResponses, GetScorecardErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/scorecards/{id}',
+		...options
+	});
+
+/**
+ * Replace a scorecard's name and terms (409 on a built-in)
+ */
+export const updateScorecard = <ThrowOnError extends boolean = false>(
+	options: Options<UpdateScorecardData, ThrowOnError>
+): RequestResult<UpdateScorecardResponses, UpdateScorecardErrors, ThrowOnError> =>
+	(options.client ?? client).put<UpdateScorecardResponses, UpdateScorecardErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/scorecards/{id}',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * One dimension's distinct values (at most 200), labelled
+ */
+export const analyticsValues = <ThrowOnError extends boolean = false>(
+	options: Options<AnalyticsValuesData, ThrowOnError>
+): RequestResult<AnalyticsValuesResponses, AnalyticsValuesErrors, ThrowOnError> =>
+	(options.client ?? client).post<AnalyticsValuesResponses, AnalyticsValuesErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/values',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
 	});
 
 /**
@@ -1970,6 +2377,31 @@ export const deleteMyToken = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/me/tokens/{id}',
+		...options
+	});
+
+/**
+ * Where the platform dashboards live (admin)
+ *
+ * `grafana_url` is APOTHECARY_GRAFANA_URL; empty when not configured.
+ */
+export const getObservability = <ThrowOnError extends boolean = false>(
+	options?: Options<GetObservabilityData, ThrowOnError>
+): RequestResult<GetObservabilityResponses, GetObservabilityErrors, ThrowOnError> =>
+	(options?.client ?? client).get<GetObservabilityResponses, GetObservabilityErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/observability',
 		...options
 	});
 
@@ -5134,4 +5566,28 @@ export const resetUserPassword = <ThrowOnError extends boolean = false>(
 			'Content-Type': 'application/json',
 			...options.headers
 		}
+	});
+
+/**
+ * Liveness: the process serves HTTP
+ */
+export const getHealthz = <ThrowOnError extends boolean = false>(
+	options?: Options<GetHealthzData, ThrowOnError>
+): RequestResult<GetHealthzResponses, GetHealthzErrors, ThrowOnError> =>
+	(options?.client ?? client).get<GetHealthzResponses, GetHealthzErrors, ThrowOnError>({
+		url: '/healthz',
+		...options
+	});
+
+/**
+ * Readiness: not draining, and the database answers
+ *
+ * 503 with status `draining` once shutdown begins, or `db` when the database does not answer within 2s. The error says only `database unreachable` or `database timeout` (the probe is public); the cause is in the server log.
+ */
+export const getReadyz = <ThrowOnError extends boolean = false>(
+	options?: Options<GetReadyzData, ThrowOnError>
+): RequestResult<GetReadyzResponses, GetReadyzErrors, ThrowOnError> =>
+	(options?.client ?? client).get<GetReadyzResponses, GetReadyzErrors, ThrowOnError>({
+		url: '/readyz',
+		...options
 	});

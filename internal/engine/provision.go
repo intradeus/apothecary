@@ -5,6 +5,12 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
+	"apothecary/internal/platform/logs"
+	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/event"
 	"apothecary/internal/workspace/bootstrap"
@@ -25,7 +31,21 @@ func workspaceLink(links []event.Link) string {
 	return ""
 }
 
-func (x *exec) ensureEnv() error {
+func (x *exec) ensureEnv() (err error) {
+	// The span covers re-attach and provisioning alike: how long the
+	// workspace took to be usable. Its own trace, linked to the run's marker:
+	// it runs before (and between) the attempts that each have theirs. The
+	// run_id attribute finds it beside them ({span.apothecary.run_id=…}).
+	pctx, span := tracer.Start(x.ctx, "workspace.provision", trace.WithNewRoot(),
+		trace.WithLinks(trace.Link{SpanContext: telemetry.RunSpanContext(x.rs.View.RunID)}),
+		trace.WithAttributes(attribute.String("apothecary.run_id", x.rs.View.RunID)))
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 	rs := x.rs
 	// Egress policy is delivered to the per-project gateway by the provisioner
 	// at Provision time (from the EnvSpec egress fields), so there is nothing to
@@ -70,7 +90,7 @@ func (x *exec) ensureEnv() error {
 			// Refresh it so the shim re-authenticates. Egress needs no refresh —
 			// the per-project gateway kept filtering across the restart.
 			if err := x.writeRunEnv(rs.EnvID); err != nil {
-				x.e.log.Warn("refreshing run.env on recovery failed", "run", rs.RunID, "err", err)
+				x.e.log.WarnContext(x.bg, "refreshing run.env on recovery failed", logs.RunID, rs.RunID, "err", err)
 			}
 			// Re-seed the credentials. A resumed run re-enters a workspace the
 			// terminal scrub emptied (secrets.go), so without this "try again"
@@ -89,8 +109,8 @@ func (x *exec) ensureEnv() error {
 			x.deliverRunAttachments()
 			return nil
 		}
-		x.e.log.Warn("environment not running; re-provisioning — whatever was changed by hand in the old container is gone with it",
-			"run", rs.RunID, "env", rs.EnvID, "status", status)
+		x.e.log.WarnContext(x.bg, "environment not running; re-provisioning — whatever was changed by hand in the old container is gone with it",
+			logs.RunID, rs.RunID, "env", rs.EnvID, "status", status)
 	}
 	// The first provisioning announces itself (the timeline's "provisioning
 	// workspace…"); a re-provisioning after a reap does not. The run may
@@ -132,12 +152,12 @@ func (x *exec) ensureEnv() error {
 	// this point — ready, env_failed, abort mid-build — so the log survives
 	// the workspace itself (see publishProvisionLog).
 	defer x.publishProvisionLog(spec.Name)
-	id, err := x.res.Envp.Provision(x.ctx, spec)
+	id, err := x.res.Envp.Provision(pctx, spec)
 	if err != nil {
 		if x.ctx.Err() != nil {
 			return context.Cause(x.ctx)
 		}
-		id, err = x.res.Envp.Provision(x.ctx, spec) // §2: failed after 1 retry
+		id, err = x.res.Envp.Provision(pctx, spec) // §2: failed after 1 retry
 	}
 	if err != nil {
 		if x.ctx.Err() != nil {

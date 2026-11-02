@@ -96,10 +96,6 @@ type State struct {
 	// provision), kept for a gate or debug ping that hands out run.workspace.
 	Links []event.Link
 
-	Cost     float64
-	Turns    int
-	Unwanted int
-
 	// Feed carries the content of the edge that re-entered the current stage
 	// (§3.2); persisted in edge_taken, so replay restores it losslessly.
 	// FeedSentinel is which input value it fills ($DECISION or $FAILURE),
@@ -273,14 +269,6 @@ func (rs *State) DecidesHere(r *event.PingRaised) bool {
 // its agent. A crash between stage_started and the first prompt leaves one
 // that did not.
 func (rs *State) AttemptBegun(stageID string) bool { return rs.Prompted[stageID] }
-
-// AgentPingType: a question an agent raised through ask_human — the kind a
-// well-briefed agent should not need, hence counted as unwanted. Everything
-// else (a stage's gate, a phase confirmation, a selection) is the engine
-// asking on purpose.
-func AgentPingType(t string) bool {
-	return t == event.PingClarification || t == event.PingBlocker || t == event.PingPermission
-}
 
 func TriggerKey(phase, subject, key string) string { return phase + "\x00" + subject + "\x00" + key }
 func PhaseRunKey(phase, subject string) string     { return phase + "\x00" + subject }
@@ -539,10 +527,6 @@ func (rs *State) Apply(ev *event.Event) {
 		if p.SessionID != "" {
 			rs.Sessions[p.StageID] = agentport.SessionID(p.SessionID)
 		}
-		if p.Usage != nil {
-			rs.Cost += p.Usage.CostUSD
-		}
-		rs.Turns += p.TurnsUsed
 	case *event.VerdictReceived:
 		rs.VerdictRecorded = true
 	case *event.StageFailed:
@@ -554,17 +538,13 @@ func (rs *State) Apply(ev *event.Event) {
 		// re-enters this stage. The session it recorded is what the
 		// re-entry resumes — without it a restart would have to start the
 		// agent over and lose everything it had done before the question.
-		// Cost and turns are banked here because the invocation that just
-		// ended really did spend them.
+		// Cost and turns are banked by View.Facts because the invocation that
+		// just ended really did spend them.
 		rs.Ph = PhIn
 		if p.SessionID != "" {
 			rs.Sessions[p.StageID] = agentport.SessionID(p.SessionID)
 			rs.Prompted[p.StageID] = true
 		}
-		if p.Usage != nil {
-			rs.Cost += p.Usage.CostUSD
-		}
-		rs.Turns += p.TurnsUsed
 		// A park on the holder of a take-over: re-entry waits for their
 		// word. Either park banks what the hold's leg spent.
 		if p.Reason == event.PauseHeld {
@@ -666,9 +646,6 @@ func (rs *State) Apply(ev *event.Event) {
 		}
 		rs.RaisedPings[p.PingID] = p
 		rs.OpenPings = append(rs.OpenPings, p)
-		if AgentPingType(p.Type) {
-			rs.Unwanted++
-		}
 	case *event.PingAnswered:
 		rs.AnsweredPings[p.PingID] = p
 		for j, op := range rs.OpenPings {
@@ -764,7 +741,7 @@ func (rs *State) OpenPing(stageID, ptype string) *event.PingRaised {
 func (rs *State) OpenAgentPings() []*event.PingRaised {
 	var out []*event.PingRaised
 	for _, p := range rs.OpenPings {
-		if AgentPingType(p.Type) {
+		if run.AgentPingType(p.Type) {
 			out = append(out, p)
 		}
 	}

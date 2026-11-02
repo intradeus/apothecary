@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/envport"
 )
 
@@ -191,7 +192,7 @@ func (s *Service) autoExposeObserved(runID string) {
 	for _, port := range todo {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		if _, err := s.Expose(ctx, runID, port); err != nil {
-			s.log().Warn("auto-expose of discovered port failed", "run", runID, "port", port, "err", err)
+			s.log().Warn("auto-expose of discovered port failed", logs.RunID, runID, "port", port, "err", err)
 		}
 		cancel()
 	}

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -50,12 +50,14 @@ func controlToken(file string) (string, error) {
 func (g *gateway) serveControl(addr, token string) {
 	ln, err := listenStream("tcp", addr)
 	if err != nil {
-		log.Fatalf("gateway: control API: %v", err)
+		slog.Error("gateway: control API", "err", err)
+		os.Exit(1)
 	}
 	srv := &http.Server{Handler: g.controlHandler(token), ReadHeaderTimeout: 10 * time.Second}
-	log.Printf("gateway: control API on %s", addr)
+	slog.Info("gateway: control API", "addr", addr)
 	if err := srv.Serve(ln); err != nil {
-		log.Fatalf("gateway: control API: %v", err)
+		slog.Error("gateway: control API", "err", err)
+		os.Exit(1)
 	}
 }
 

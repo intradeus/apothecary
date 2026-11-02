@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"apothecary/internal/platform/shell"
+	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
 )
@@ -55,7 +56,7 @@ func New(cfg Config) *Adapter {
 		cfg.BaseURL = apiGitHubCom
 	}
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
-	a := &Adapter{cfg: cfg, http: &http.Client{Timeout: 30 * time.Second}, repoIDs: map[string]int64{}}
+	a := &Adapter{cfg: cfg, http: &http.Client{Transport: telemetry.HTTPTransport(http.DefaultTransport), Timeout: 30 * time.Second}, repoIDs: map[string]int64{}}
 	if cfg.BaseURL == apiGitHubCom {
 		a.uploads = "https://uploads.github.com"
 	}

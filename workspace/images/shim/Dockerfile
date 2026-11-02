@@ -14,7 +14,7 @@ ARG SHIM_HASH=dev
 COPY shim/ /src/
 RUN cd /src && go mod init apothecary-shim >/dev/null \
     && go get github.com/itchyny/gojq/cli@v0.12.19 \
-    && go get golang.org/x/crypto/ssh@v0.54.0 \
+    && go get golang.org/x/crypto/ssh@v0.57.0 \
     && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.sourceHash=${SHIM_HASH}" -o /apothecary-shim .
 FROM scratch
 COPY --from=build /apothecary-shim /apothecary-shim

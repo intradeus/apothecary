@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"apothecary/internal/account/providers"
+	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/project/confstore"
 )
 
@@ -53,7 +54,7 @@ func New(store Store, log *slog.Logger) *Keeper {
 		log = slog.Default()
 	}
 	return &Keeper{
-		store: store, client: &http.Client{}, log: log, now: time.Now,
+		store: store, client: &http.Client{Transport: telemetry.HTTPTransport(http.DefaultTransport)}, log: log, now: time.Now,
 		Margin: DefaultMargin, StaleAfter: DefaultStaleAfter,
 		locks: map[string]*sync.Mutex{},
 	}

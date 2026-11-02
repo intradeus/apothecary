@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"sort"
@@ -85,7 +85,7 @@ func uplinkMTU(ext string) int {
 func (l *wgLink) reconcilePeers(peers map[string]Peer) {
 	out, err := l.run("wg", "show", wgDev, "peers")
 	if err != nil {
-		log.Printf("wg: list peers: %v", err)
+		slog.Warn("wg: list peers", "err", err)
 		return
 	}
 	have := map[string]bool{}
@@ -105,7 +105,7 @@ func (l *wgLink) reconcilePeers(peers map[string]Peer) {
 		}
 		want[p.PublicKey] = true
 		if _, err := l.run("wg", "set", wgDev, "peer", p.PublicKey, "allowed-ips", p.IP+"/32"); err != nil {
-			log.Printf("wg: peer %s (run=%s): %v", p.IP, run, err)
+			slog.Warn("wg: peer", "ip", p.IP, "run_id", run, "err", err)
 		}
 	}
 	var stale []string
@@ -117,7 +117,7 @@ func (l *wgLink) reconcilePeers(peers map[string]Peer) {
 	sort.Strings(stale)
 	for _, k := range stale {
 		if _, err := l.run("wg", "set", wgDev, "peer", k, "remove"); err != nil {
-			log.Printf("wg: remove peer: %v", err)
+			slog.Warn("wg: remove peer", "err", err)
 		}
 	}
 }

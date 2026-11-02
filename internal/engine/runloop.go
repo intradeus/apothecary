@@ -8,10 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"apothecary/internal/engine/redact"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/platform/shell"
+	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
@@ -77,7 +81,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 
 	evs, err := e.store.Events(bg, runID, 0)
 	if err != nil || len(evs) == 0 {
-		e.log.Error("run loop: loading events", "run", runID, "err", err)
+		e.log.ErrorContext(bg, "run loop: loading events", logs.RunID, runID, "err", err)
 		return
 	}
 	view := run.Reduce(evs)
@@ -106,7 +110,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		if errors.Is(err, resolution.ErrUnresolvable) {
 			_ = x.append(&event.RunFailed{Reason: err.Error()})
 		} else {
-			e.log.Error("run loop: resolution failed; run left non-terminal for recovery", "run", runID, "err", err)
+			e.log.ErrorContext(bg, "run loop: resolution failed; run left non-terminal for recovery", logs.RunID, runID, "err", err)
 		}
 		return
 	}
@@ -133,15 +137,15 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		default:
 			// Transient source error (DB blip): leave the run non-terminal
 			// so the next boot recovers it.
-			e.log.Error("run loop: flow load failed; run left non-terminal for recovery", "run", runID, "err", err)
+			e.log.ErrorContext(bg, "run loop: flow load failed; run left non-terminal for recovery", logs.RunID, runID, "err", err)
 		}
 		return
 	}
 	if fl.Hash != view.FlowHash {
 		// Only reachable when the pinned version is gone from the store
 		// (pruned, or a pre-pinning run): pinnedFlow already logged it.
-		e.log.Warn("running a flow version other than the one pinned at run creation",
-			"run", runID, "flow", fl.Name, "pinned", view.FlowHash, "using", fl.Hash)
+		e.log.WarnContext(bg, "running a flow version other than the one pinned at run creation",
+			logs.RunID, runID, "flow", fl.Name, "pinned", view.FlowHash, "using", fl.Hash)
 	}
 	rs := runcore.Replay(evs, fl)
 	x.rs = rs
@@ -228,7 +232,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 		case runcore.StepSkip:
 			// A condition that does not hold: the stage completes as
 			// skipped before anything is provisioned (FLOWLANG §2 run_if).
-			err = x.skipStage(st, note)
+			err = x.attempt(st, func() error { return x.skipStage(st, note) })
 		case runcore.StepRun:
 			// Ensure the workspace lazily, right before a stage that uses it —
 			// and NEVER for a stage that only parks on something outside the
@@ -268,26 +272,47 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 					return
 				}
 			}
-			switch st.Type {
-			case flow.StageAgent:
-				err = x.stageAgent(st)
-			case flow.StageCommand:
-				err = x.stageCommand(st)
-			case flow.StageHumanGate:
-				err = x.stageGate(st)
-			case flow.StageAction:
-				err = x.stageAction(st)
-			case flow.StageWait:
-				err = x.stageWait(st)
-			case flow.StageService:
-				err = x.stageService(st)
-			}
+			err = x.attempt(st, func() error {
+				switch st.Type {
+				case flow.StageAgent:
+					return x.stageAgent(st)
+				case flow.StageCommand:
+					return x.stageCommand(st)
+				case flow.StageHumanGate:
+					return x.stageGate(st)
+				case flow.StageAction:
+					return x.stageAction(st)
+				case flow.StageWait:
+					return x.stageWait(st)
+				case flow.StageService:
+					return x.stageService(st)
+				}
+				return nil
+			})
 		}
 		if err != nil {
 			x.exit(err)
 			return
 		}
 	}
+}
+
+// attempt runs one step of st's attempt with x.ctx and x.bg on the
+// attempt's own trace (telemetry.StageSpanContext): the queries, outbound
+// calls, agent invocation and log lines of the attempt land in it, under the
+// attempt span the telemetry sink exports from stage_started. The iteration
+// is the one the step records: the next on a fresh entry, the recorded one
+// on a re-entry (the stage functions' own rule).
+func (x *exec) attempt(st *flow.Stage, step func() error) error {
+	iter := x.rs.Iters[st.ID]
+	if x.rs.Ph != runcore.PhIn {
+		iter++
+	}
+	sc := telemetry.StageSpanContext(x.rs.View.RunID, st.ID, iter)
+	ctx, bg := x.ctx, x.bg
+	x.ctx, x.bg = trace.ContextWithRemoteSpanContext(ctx, sc), trace.ContextWithRemoteSpanContext(bg, sc)
+	defer func() { x.ctx, x.bg = ctx, bg }()
+	return step()
 }
 
 // exit handles abnormal loop termination: abort marks the run failed,
@@ -315,8 +340,8 @@ func (x *exec) exit(cause error) {
 		_ = x.append(&event.RunPaused{StageID: x.rs.View.CurrentStage, Reason: event.PauseWaiting})
 	case errors.Is(cause, errShutdown), cause == nil:
 	default:
-		x.e.log.Error("run loop error; run left non-terminal for recovery",
-			"run", x.rs.RunID, "err", cause)
+		x.e.log.ErrorContext(x.bg, "run loop error; run left non-terminal for recovery",
+			logs.RunID, x.rs.RunID, "err", cause)
 	}
 }
 
@@ -429,9 +454,9 @@ func (x *exec) complete() error {
 	rs := x.rs
 	return x.append(&event.RunCompleted{
 		DurationMS:    x.e.clock().Sub(rs.View.CreatedAt).Milliseconds(),
-		TotalCostUSD:  rs.Cost,
-		TotalTurns:    rs.Turns,
-		UnwantedPings: rs.Unwanted,
+		TotalCostUSD:  rs.View.Facts.CostUSD,
+		TotalTurns:    rs.View.Facts.Turns,
+		UnwantedPings: rs.View.Facts.PingsUnwanted,
 	})
 }
 
@@ -522,7 +547,7 @@ func chainMax(e *flow.Edge) string {
 // checkBudget abandons the run when §3 budget ceilings are exceeded.
 // Returns true when the run should stop.
 func (x *exec) checkBudget(st *flow.Stage) (bool, error) {
-	if over, reason := runcore.BudgetExceeded(x.rs.Flow.Budget, x.rs.Cost, x.rs.Turns); over {
+	if over, reason := runcore.BudgetExceeded(x.rs.Flow.Budget, x.rs.View.Facts.CostUSD, x.rs.View.Facts.Turns); over {
 		return true, x.abandon(st.ID, "", reason)
 	}
 	return false, nil

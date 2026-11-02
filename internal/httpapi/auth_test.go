@@ -41,6 +41,8 @@ func TestEveryRouteDeclaresItsAccess(t *testing.T) {
 		"GET /api/auth/status": true,
 		"POST /api/auth/setup": true,
 		"POST /api/auth/login": true,
+		"GET /healthz":         true,
+		"GET /readyz":          true,
 	}
 	idParam := regexp.MustCompile(`\{(id|pid)\}`)
 	// Routes whose id is checked inside the handler rather than by scope:

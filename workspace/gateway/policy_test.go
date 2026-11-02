@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -342,14 +342,14 @@ func TestInstallPolicyReportsAnNFTFailure(t *testing.T) {
 func TestInstallPolicyLogsTheDiffAndPrunes(t *testing.T) {
 	g := newTestGateway(t)
 	var buf bytes.Buffer
-	prev := log.Writer()
-	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(prev) })
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	if err := g.installPolicy(File{Mode: ModeAllow, Domains: []string{"Old.example", "keep.example"}}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), "loaded mode=allow domains=2") {
+	if !strings.Contains(buf.String(), "msg=\"policy: loaded\" mode=allow domains=2") {
 		t.Errorf("first load log = %q", buf.String())
 	}
 	g.recordDenial("run-1", "new.example")
@@ -359,7 +359,7 @@ func TestInstallPolicyLogsTheDiffAndPrunes(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := buf.String()
-	for _, want := range []string{"+allowed [new.example]", "-removed [Old.example]", "cleared denials now allowed: [new.example]"} {
+	for _, want := range []string{"msg=\"policy: allowed\" mode=allow added=[new.example]", "msg=\"policy: removed\" mode=allow removed=[Old.example]", "msg=\"policy: cleared denials now allowed\" domains=[new.example]"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("log %q lacks %q", got, want)
 		}

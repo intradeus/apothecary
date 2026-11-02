@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"time"
+
+	"apothecary/internal/platform/logs"
 )
 
 // Settings are one user's policy plane: what happens to their finished
@@ -105,7 +107,7 @@ func (s *Service) Settings(ctx context.Context, userID string) (Settings, error)
 	assign := func(key string, into any) {
 		if raw, ok := rows[key]; ok {
 			if err := json.Unmarshal([]byte(raw), into); err != nil {
-				slog.Warn("settings: corrupt stored value, using default", "key", key, "user", userID, "err", err)
+				slog.Warn("settings: corrupt stored value, using default", "key", key, logs.UserID, userID, "err", err)
 			}
 		}
 	}

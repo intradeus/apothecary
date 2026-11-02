@@ -134,8 +134,9 @@ func TestMigrateSurfacesAnUnreadableLedger(t *testing.T) {
 	}
 }
 
-// The projection rebuild after a migration is part of Open: a log it cannot
-// replay fails the boot instead of serving stale read models.
+// The projection rebuild after a migration that asks for one is part of
+// Open: a log it cannot replay fails the boot instead of serving stale read
+// models.
 func TestOpenFailsWhenThePostMigrationRebuildFails(t *testing.T) {
 	dsn := pgtest.Empty(t)
 	ctx := context.Background()
@@ -143,7 +144,7 @@ func TestOpenFailsWhenThePostMigrationRebuildFails(t *testing.T) {
 	if _, err := s.Append(ctx, "r1", &event.RunCreated{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.pool.Exec(ctx, `UPDATE events SET payload='[]'; DELETE FROM schema_migrations WHERE version = 20`); err != nil {
+	if _, err := s.pool.Exec(ctx, `UPDATE events SET payload='[]'; DELETE FROM schema_migrations WHERE version = 22`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

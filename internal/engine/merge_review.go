@@ -16,6 +16,7 @@ import (
 	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/flow/reviewfile"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run/event"
 )
@@ -126,7 +127,7 @@ func (x *exec) actionPostReview(st *flow.Stage) (bool, error) {
 		}
 	}
 	if rev.Empty() {
-		x.e.log.Info("empty review: nothing to post", "run", rs.RunID, "stage", st.ID)
+		x.e.log.InfoContext(x.bg, "empty review: nothing to post", logs.RunID, rs.RunID, logs.StageID, st.ID)
 		return false, nil
 	}
 	reentry := rs.ActionPending[st.ID]

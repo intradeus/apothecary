@@ -28,6 +28,21 @@ import type {
 } from '$lib/domain';
 import type { Credential, CredentialImport, ProviderInfo, SignInPending } from '$lib/domain';
 import type {
+	AnalyticsFilter,
+	AnalyticsQuery,
+	AnalyticsResult,
+	AnalyticsValue,
+	Catalog,
+	Dashboard,
+	DashboardDraft,
+	DrillRun,
+	Grain,
+	MeasureRef,
+	Scorecard,
+	ScorecardDraft,
+	TimeRange
+} from '$lib/domain';
+import type {
 	Skill,
 	SkillDetail,
 	SkillDraft,
@@ -1124,6 +1139,9 @@ export const system = {
 	setLimits: async (l: Limits): Promise<Limits> =>
 		map.toLimits(await unwrap(gen.setLimits({ body: map.fromLimits(l) }))),
 
+	/** The operator's Grafana URL (admin); '' when not configured. */
+	observability: async (): Promise<string> => (await unwrap(gen.getObservability())).grafana_url,
+
 	channels: async (): Promise<ChannelEntry[]> =>
 		many(await unwrap(gen.listChannels()), map.toChannelEntry),
 
@@ -1330,6 +1348,126 @@ export const skillsets = {
 		map.toSkillsetRefresh(await unwrap(gen.refreshSkillset({ path: { id } })))
 };
 
+const measureBody = (m: MeasureRef): Wire.AnalyticsMeasure =>
+	m.agg ? { field: m.field, agg: m.agg } : { field: m.field };
+
+const filterBody = (f: AnalyticsFilter): Wire.AnalyticsFilter => ({
+	field: f.field,
+	op: f.op,
+	values: f.values
+});
+
+const timeBody = (t: TimeRange): Wire.AnalyticsTimeRange => ({
+	...(t.from ? { from: t.from } : {}),
+	...(t.to ? { to: t.to } : {}),
+	...(t.bucket ? { bucket: t.bucket } : {})
+});
+
+const queryBody = (q: AnalyticsQuery): Wire.AnalyticsQuery => ({
+	grain: q.grain,
+	measures: q.measures.map(measureBody),
+	group_by: q.groupBy,
+	filters: q.filters.map(filterBody),
+	time: timeBody(q.time),
+	...(q.order ? { order: { by: q.order.by, desc: q.order.desc } } : {}),
+	...(q.limit ? { limit: q.limit } : {}),
+	...(q.score
+		? {
+				score: {
+					scorecard: q.score.scorecard,
+					...(q.score.baseline?.length ? { baseline: q.score.baseline } : {})
+				}
+			}
+		: {})
+});
+
+const dashboardBody = (d: DashboardDraft): Wire.DashboardInput => ({
+	name: d.name,
+	filters: d.filters,
+	panels: d.panels.map((p) => ({
+		id: p.id,
+		title: p.title,
+		query: queryBody(p.query),
+		viz: p.viz,
+		width: p.width
+	}))
+});
+
+const scorecardBody = (s: ScorecardDraft): Wire.ScorecardInput => ({
+	name: s.name,
+	terms: s.terms.map((t) => ({
+		measure: measureBody(t.measure),
+		direction: t.direction,
+		weight: t.weight
+	}))
+});
+
+/** The user's own run analytics: the catalog of what can be asked, the
+ *  queries, and the dashboards and scorecards built from them. Built-ins come
+ *  first in each list and are read-only (409 on update or delete). */
+export const analytics = {
+	catalog: async (): Promise<Catalog> => map.toCatalog(await unwrap(gen.getAnalyticsCatalog())),
+
+	/** Run one query. 400 names the invalid token; 422 when it took too long. */
+	query: async (q: AnalyticsQuery): Promise<AnalyticsResult> =>
+		map.toAnalyticsResult(await unwrap(gen.queryAnalytics({ body: queryBody(q) }))),
+
+	/** The distinct values of one dimension (up to 200), labelled. */
+	values: async (grain: Grain, field: string, time: TimeRange = {}): Promise<AnalyticsValue[]> =>
+		many(
+			await unwrap(gen.analyticsValues({ body: { grain, field, time: timeBody(time) } })),
+			map.toAnalyticsValue
+		),
+
+	/** The runs behind an aggregate (newest first, up to 200). Dimension
+	 *  filters only: a time bucket is a range, not a filter. */
+	drill: async (
+		grain: Grain,
+		filters: AnalyticsFilter[],
+		time: TimeRange = {}
+	): Promise<DrillRun[]> =>
+		many(
+			await unwrap(
+				gen.drillAnalytics({
+					body: { grain, filters: filters.map(filterBody), time: timeBody(time) }
+				})
+			),
+			map.toDrillRun
+		),
+
+	dashboards: {
+		list: async (): Promise<Dashboard[]> =>
+			many(await unwrap(gen.listDashboards()), map.toDashboard),
+
+		get: async (id: string): Promise<Dashboard> =>
+			map.toDashboard(await unwrap(gen.getDashboard({ path: { id } }))),
+
+		create: async (d: DashboardDraft): Promise<Dashboard> =>
+			map.toDashboard(await unwrap(gen.createDashboard({ body: dashboardBody(d) }))),
+
+		update: async (id: string, d: DashboardDraft): Promise<Dashboard> =>
+			map.toDashboard(await unwrap(gen.updateDashboard({ path: { id }, body: dashboardBody(d) }))),
+
+		remove: (id: string) => unwrapVoid(gen.deleteDashboard({ path: { id } }))
+	},
+
+	scorecards: {
+		list: async (): Promise<Scorecard[]> =>
+			many(await unwrap(gen.listScorecards()), map.toScorecard),
+
+		get: async (id: string): Promise<Scorecard> =>
+			map.toScorecard(await unwrap(gen.getScorecard({ path: { id } }))),
+
+		create: async (s: ScorecardDraft): Promise<Scorecard> =>
+			map.toScorecard(await unwrap(gen.createScorecard({ body: scorecardBody(s) }))),
+
+		update: async (id: string, s: ScorecardDraft): Promise<Scorecard> =>
+			map.toScorecard(await unwrap(gen.updateScorecard({ path: { id }, body: scorecardBody(s) }))),
+
+		remove: (id: string) => unwrapVoid(gen.deleteScorecard({ path: { id } }))
+	}
+};
+
 export const api = {
 	runs,
 	workspace,
@@ -1347,5 +1485,6 @@ export const api = {
 	users,
 	ask,
 	skills,
-	skillsets
+	skillsets,
+	analytics
 };

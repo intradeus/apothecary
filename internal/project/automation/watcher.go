@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/project/confstore"
@@ -264,7 +265,7 @@ func (w *Watcher) startOn(ctx context.Context, a confstore.Automation, t confsto
 		return "", err
 	}
 	w.log().Info("automation started a run on a merge request", "automation", a.ID, "name", a.Name,
-		"ticket", t.ID, "run", id, "mr", mr.Ref.URL)
+		"ticket", t.ID, logs.RunID, id, "mr", mr.Ref.URL)
 	return id, nil
 }
 
@@ -308,7 +309,7 @@ func (w *Watcher) tick(ctx context.Context, a confstore.Automation) (bool, error
 	var busy interface{ ActiveRunID() string }
 	if errors.As(err, &busy) {
 		w.log().Info("automation slot skipped: the ticket's run is still going", "automation", a.ID,
-			"name", a.Name, "ticket", t.ID, "run", busy.ActiveRunID())
+			"name", a.Name, "ticket", t.ID, logs.RunID, busy.ActiveRunID())
 		return true, fmt.Errorf("ticket busy: run %s", busy.ActiveRunID())
 	}
 	return true, err
@@ -333,7 +334,7 @@ func (w *Watcher) start(ctx context.Context, a confstore.Automation, t confstore
 		return "", err
 	}
 	w.log().Info("automation started a run", "automation", a.ID, "name", a.Name,
-		"ticket", t.ID, "run", id, "flow", a.Flow)
+		"ticket", t.ID, logs.RunID, id, "flow", a.Flow)
 	return id, nil
 }
 

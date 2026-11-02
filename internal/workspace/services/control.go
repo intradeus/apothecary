@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
@@ -67,7 +68,7 @@ func Expose(ctx context.Context, exposer Exposer, runID string, svc *resolution.
 		if err != nil {
 			// Read on every look at the pane: a provisioner that cannot
 			// expose says so each time, which is not news.
-			log.Debug("services: expose failed", "run", runID, "service", svc.Name, "port", p.Port, "err", err)
+			log.Debug("services: expose failed", logs.RunID, runID, "service", svc.Name, "port", p.Port, "err", err)
 			continue
 		}
 		out[p.Port] = previewURL(url, p.Path)
@@ -247,7 +248,7 @@ func (c *Control) watchService(runID, projectID string, svc resolution.Service, 
 	defer cancel()
 	res, err := c.Resolver.Resolve(ctx, projectID)
 	if err != nil {
-		c.log().Warn("services: cannot watch a start", "run", runID, "service", svc.Name, "err", err)
+		c.log().Warn("services: cannot watch a start", logs.RunID, runID, "service", svc.Name, "err", err)
 		return
 	}
 	defer res.Close()

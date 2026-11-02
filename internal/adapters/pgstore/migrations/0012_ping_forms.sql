@@ -1,3 +1,4 @@
+-- rebuild: projections
 -- Questions are forms (2026-10-27): ACP's elicitation/create shape — a list
 -- of fields, answered accept + content or decline + note — replaces the
 -- choice / multi / text answer kinds and their options. Unreleased, so the

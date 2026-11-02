@@ -2,8 +2,9 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"time"
 )
@@ -88,7 +89,7 @@ func (g *gateway) handle(c *net.TCPConn) {
 		if !allow {
 			verd = "DENY"
 		}
-		log.Printf("run=%s %s dst=%s:%d host=%q", runOr(run), verd, orig.IP, orig.Port, host)
+		slog.Info("conn", "run_id", runOr(run), "verdict", verd, "dst", fmt.Sprintf("%s:%d", orig.IP, orig.Port), "host", host)
 	}
 	if !allow {
 		g.recordDenial(run, host)

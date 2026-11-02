@@ -5,6 +5,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/account/logins"
+	"apothecary/internal/analytics"
 	"apothecary/internal/engine"
 	"apothecary/internal/engine/ask"
 	"apothecary/internal/engine/authsink"
@@ -113,6 +115,9 @@ type Server struct {
 	Egress *egress.Service
 	// Ask runs the runs' Ask panes.
 	Ask *ask.Service
+	// Analytics answers the run-analytics queries and keeps the person's
+	// dashboards and scorecards (TODO 23); nil disables its routes.
+	Analytics *analytics.Service
 	// AuthSink serves the per-run auth brokers (the same sink the engine
 	// registers live workspaces with).
 	AuthSink *authsink.Sink
@@ -123,6 +128,12 @@ type Server struct {
 	Browser *browsermcp.Service
 	// Services is the run page's service start/stop/log.
 	Services *services.Control
+	// DB answers the readiness probe (GET /readyz); nil = ready whenever
+	// the server is not draining (bare test servers have no database).
+	DB interface{ Ping(context.Context) error }
+	// GrafanaURL is where the admin's System hub links for the platform
+	// dashboards (APOTHECARY_GRAFANA_URL); "" = not configured.
+	GrafanaURL string
 
 	logins loginLimiter
 

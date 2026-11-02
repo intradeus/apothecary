@@ -3,7 +3,7 @@ import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
-import type { Run, RunEvent, RunMergeRequest } from '$lib/domain';
+import type { RunMergeRequest } from '$lib/domain';
 import { aProject, aRun } from '$test/fixtures';
 import RunTable, { type RunCol } from './RunTable.svelte';
 
@@ -155,30 +155,27 @@ describe('RunTable', () => {
 			expect(row(container, 0)).toHaveTextContent('—');
 		});
 
-		it('fetches nothing unless asked to', async () => {
-			// A run of its own: facts are cached per run across this file.
-			render(RunTable, {
-				runs: [aRun({ id: 'no-facts', currentStage: 'build' })],
-				cols: ['stage']
+		it('adds the open attempt of the current stage from the run’s facts, fetching nothing', async () => {
+			const run = aRun({
+				currentStage: 'build',
+				facts: {
+					...aRun().facts,
+					open: {
+						build: { iteration: 3, startedAt: '2026-10-31T11:00:00Z', outcome: 'running' },
+						plan: { iteration: 7, startedAt: '2026-10-31T10:00:00Z', outcome: 'paused' }
+					}
+				}
 			});
+			render(RunTable, { runs: [run], cols: ['stage'] });
 			await tick();
+			expect(screen.getByText('#3')).toHaveAttribute('title', 'attempt 3');
+			expect(screen.queryByText('#7')).not.toBeInTheDocument();
 			expect(api.runs.get).not.toHaveBeenCalled();
 		});
 
-		it('adds the attempt when facts are on', async () => {
-			const run: Run = aRun({ id: 'with-facts', currentStage: 'build' });
-			const started = {
-				type: 'stage_started',
-				ts: '2026-10-31T11:00:00Z',
-				payload: { stage_id: 'build', iteration: 3 }
-			} as unknown as RunEvent;
-			vi.mocked(api.runs.get).mockResolvedValue({ run, events: [started] } as never);
-
-			render(RunTable, { runs: [run], cols: ['stage'], facts: true });
-
-			const attempt = await screen.findByText('#3');
-			expect(attempt).toHaveAttribute('title', 'attempt 3');
-			expect(api.runs.get).toHaveBeenCalledExactlyOnceWith('with-facts');
+		it('shows no attempt when the current stage has none open', () => {
+			render(RunTable, { runs: [aRun({ currentStage: 'build' })], cols: ['stage'] });
+			expect(screen.queryByText(/^#/)).not.toBeInTheDocument();
 		});
 	});
 

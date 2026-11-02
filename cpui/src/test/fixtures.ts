@@ -18,6 +18,7 @@ export const aRun = (over: Partial<Run> = {}): Run => ({
 	envDirty: false,
 	createdAt: AT,
 	updatedAt: AT,
+	facts: { costUsd: 0, turns: 0, wallMs: 0, attempts: 0, open: {} },
 	...over
 });
 

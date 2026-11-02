@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"net/url"
 	"os"
 	"os/signal"
@@ -33,7 +34,9 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/builtin"
 	"apothecary/internal/platform/config"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/platform/secrets"
+	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/kinds"
 	"apothecary/internal/workspace/sshdoor"
@@ -158,12 +161,31 @@ func cmdServe(args []string) error {
 	dev := fs.Bool("dev", false, "register fake kinds and seed a dev project (no real workspace, opencode or repository host)")
 	_ = fs.Parse(args)
 
-	log := slog.Default()
 	boot, err := config.FromEnv()
 	if err != nil {
 		return err
 	}
 	ctx := context.Background()
+	prov, err := telemetry.Setup(ctx, version)
+	if err != nil {
+		return err
+	}
+	// Registered before cleanup's defer, so it runs after it: the providers
+	// flush what the app's last moments emitted.
+	defer func() {
+		fctx, cancel := context.WithTimeout(context.Background(), otelFlushFor)
+		defer cancel()
+		if err := prov.Shutdown(fctx); err != nil {
+			slog.Warn("otel shutdown", "err", err)
+		}
+	}()
+	// A driver error can quote a stored value (a secret's ciphertext
+	// included): log lines show it cut down to its SQLSTATE.
+	log, err := logs.New(boot.LogFormat, boot.LogLevel, os.Stderr, prov, pgstore.RedactError)
+	if err != nil {
+		return err
+	}
+	slog.SetDefault(log)
 
 	a, cleanup, err := buildApp(ctx, boot, *dev, log)
 	if err != nil {
@@ -174,13 +196,23 @@ func cmdServe(args []string) error {
 	defer stopReaper()
 	a.background(reaperCtx)
 
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
 	go func() {
 		log.Info("apothecaryd listening", "addr", boot.Listen, "dev", *dev)
 		if err := a.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
+	var debugSrv *http.Server
+	if boot.DebugAddr != "" {
+		debugSrv = &http.Server{Addr: boot.DebugAddr, Handler: pprofMux(), ReadHeaderTimeout: 10 * time.Second}
+		go func() {
+			log.Info("pprof listening", "addr", boot.DebugAddr)
+			if err := debugSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- fmt.Errorf("debug server: %w", err)
+			}
+		}()
+	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -196,8 +228,28 @@ func cmdServe(args []string) error {
 	if err := a.srv.Shutdown(shutCtx); err != nil {
 		log.Warn("http shutdown", "err", err)
 	}
+	if debugSrv != nil {
+		if err := debugSrv.Shutdown(shutCtx); err != nil {
+			log.Warn("debug server shutdown", "err", err)
+		}
+	}
 	a.e.Shutdown() // runs stay non-terminal; Recover resumes them next boot
 	return nil
+}
+
+// otelFlushFor is how long a shutdown waits on the telemetry collector.
+var otelFlushFor = 5 * time.Second
+
+// pprofMux serves net/http/pprof on an explicit mux, never the default one
+// the package registers itself on, so profiles stay off the API listener.
+func pprofMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	return mux
 }
 
 // devFlowYAML is the -dev sandbox flow: plan-gated build with an MR and a

@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/adapters/acpagent"
 	opencodeadapter "apothecary/internal/adapters/opencode"
 	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/ports/envport"
 )
 
@@ -145,7 +146,7 @@ func fetchCatalog(ctx context.Context) (map[string]catalogProvider, error) {
 	if err != nil {
 		return nil, err
 	}
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{Transport: telemetry.HTTPTransport(http.DefaultTransport), Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("model catalog unreachable: %w", err)
@@ -224,7 +225,7 @@ func liveModels(ctx context.Context, p catalogProvider, entry authEntry) ([]stri
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+entry.Key)
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Transport: telemetry.HTTPTransport(http.DefaultTransport), Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

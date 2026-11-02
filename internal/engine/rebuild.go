@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
@@ -161,7 +162,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 func (e *Engine) finishRebuild(ctx context.Context, runID, envID string, opErr error) error {
 	if opErr != nil {
 		if aerr := e.AppendEvents(ctx, runID, &event.EnvRebuildFailed{EnvID: envID, Error: opErr.Error()}); aerr != nil {
-			e.log.Warn("record env_rebuild_failed", "run", runID, "err", aerr)
+			e.log.Warn("record env_rebuild_failed", logs.RunID, runID, "err", aerr)
 		}
 		return opErr
 	}

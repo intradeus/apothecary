@@ -1,0 +1,22 @@
+{
+  "id": "builtin-stages",
+  "name": "Stages",
+  "filters": ["project_id", "flow_name", "ticket_change_type"],
+  "panels": [
+    {"id": "cost", "title": "Spend by stage", "viz": "bar", "width": 6,
+     "query": {"grain": "attempts", "group_by": ["stage_id"], "measures": [{"field": "cost_usd", "agg": "sum"}]}},
+    {"id": "active", "title": "Median active time by stage", "viz": "bar", "width": 6,
+     "query": {"grain": "attempts", "group_by": ["stage_id"], "measures": [{"field": "active_ms", "agg": "median"}]}},
+    {"id": "loops", "title": "Attempts by stage and iteration", "viz": "heatmap", "width": 12,
+     "query": {"grain": "attempts", "group_by": ["stage_id", "iteration"], "measures": []}},
+    {"id": "failures", "title": "Why attempts failed", "viz": "table", "width": 6,
+     "query": {"grain": "attempts", "group_by": ["failure_reason"],
+       "filters": [{"field": "outcome", "op": "eq", "values": ["failed"]}],
+       "measures": [{"field": "cost_usd", "agg": "sum"}]}},
+    {"id": "models", "title": "Stages by model", "viz": "table", "width": 6,
+     "query": {"grain": "attempts", "group_by": ["stage_id", "model"],
+       "measures": [
+         {"field": "cost_usd", "agg": "median"}, {"field": "active_ms", "agg": "median"},
+         {"field": "turns", "agg": "avg"}, {"field": "failure_rate"}]}}
+  ]
+}

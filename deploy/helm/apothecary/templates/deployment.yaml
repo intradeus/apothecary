@@ -59,8 +59,32 @@ spec:
             - name: APOTHECARY_SSH_ADVERTISE
               value: {{ required "ssh.advertise is the host:port people ssh to (the ssh Service's address)" .Values.ssh.advertise | quote }}
             {{- end }}
-            {{- with .Values.engine.otelEndpoint }}
-            - name: APOTHECARY_OTEL_ENDPOINT
+            {{- with .Values.otel.endpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ . | quote }}
+            {{- with $.Values.otel.protocol }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $.Values.otel.headers }}
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $.Values.otel.resourceAttributes }}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.log.format }}
+            - name: APOTHECARY_LOG_FORMAT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.log.level }}
+            - name: APOTHECARY_LOG_LEVEL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.grafanaUrl }}
+            - name: APOTHECARY_GRAFANA_URL
               value: {{ . | quote }}
             {{- end }}
             - name: APOTHECARY_K8S_NAMESPACE
@@ -108,12 +132,12 @@ spec:
               mountPath: /var/lib/apothecary/runs
           readinessProbe:
             httpGet:
-              path: /api/auth/status
+              path: /readyz
               port: http
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /api/auth/status
+              path: /healthz
               port: http
             initialDelaySeconds: 30
             periodSeconds: 30

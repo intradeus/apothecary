@@ -22,6 +22,7 @@ import (
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/platform/filestore"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/run/event"
 )
 
@@ -185,7 +186,7 @@ func (x *exec) materialiseCurated(st *flow.Stage) error {
 		if err := x.res.Envp.WriteFile(x.ctx, rs.EnvID, path, data, 0o644); err != nil {
 			return fmt.Errorf("writing %s as approved at gate %s: %w", path, ev.StageID, err)
 		}
-		x.e.log.Info("curated review written", "run", rs.RunID, "gate", ev.StageID, "path", path, "stage", st.ID)
+		x.e.log.InfoContext(x.bg, "curated review written", logs.RunID, rs.RunID, "gate", ev.StageID, "path", path, logs.StageID, st.ID)
 		if x.materialised == nil {
 			x.materialised = map[string]*event.ReviewCurated{}
 		}

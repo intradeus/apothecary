@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runcore"
 )
@@ -124,9 +125,7 @@ func diffState(live, rep *runcore.State) []string {
 		{"actionPending", live.ActionPending, rep.ActionPending},
 		{"sessions", live.Sessions, rep.Sessions},
 		{"links", live.Links, rep.Links},
-		{"cost", live.Cost, rep.Cost},
-		{"turns", live.Turns, rep.Turns},
-		{"unwanted", live.Unwanted, rep.Unwanted},
+		{"facts", storedFacts(live.View.Facts), storedFacts(rep.View.Facts)},
 		{"feed", live.Feed, rep.Feed},
 		{"feedSentinel", live.FeedSentinel, rep.FeedSentinel},
 		{"feedAttempts", live.FeedAttempts, rep.FeedAttempts},
@@ -212,6 +211,31 @@ func storedHolds(m map[string]*runcore.HeldState) map[string]*runcore.HeldState 
 		out[k] = &c
 	}
 	return out
+}
+
+// storedFacts is facts with every time as a read gives it, less the drain
+// buffer (Ended): what the store has not yet written is not state.
+func storedFacts(f run.Facts) run.Facts {
+	f.LastTS = stored(f.LastTS)
+	if f.EndedAt != nil {
+		t := stored(*f.EndedAt)
+		f.EndedAt = &t
+	}
+	f.Ended = nil
+	open := make(map[string]*run.AttemptFacts, len(f.Open))
+	for k, a := range f.Open {
+		c := *a
+		c.StartedAt = stored(c.StartedAt)
+		open[k] = &c
+	}
+	f.Open = open
+	clock := make(map[string]run.PingClock, len(f.PingClock))
+	for k, c := range f.PingClock {
+		c.RaisedAt = stored(c.RaisedAt)
+		clock[k] = c
+	}
+	f.PingClock = clock
+	return f
 }
 
 func sameValue(a, b any) bool {

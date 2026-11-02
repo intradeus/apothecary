@@ -31,6 +31,7 @@ import (
 	"sync"
 	"time"
 
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/envport"
 )
@@ -198,10 +199,10 @@ func (m *Manager) armIdleLocked(name string, p *project) {
 			return
 		}
 		if err := m.cfg.Host.Stop(ctx, name); err != nil {
-			m.cfg.Log.Warn("browser: idle stop failed", "project", name, "err", err)
+			m.cfg.Log.Warn("browser: idle stop failed", logs.ProjectID, name, "err", err)
 			return
 		}
-		m.cfg.Log.Info("browser: stopped the idle project browser", "project", name)
+		m.cfg.Log.Info("browser: stopped the idle project browser", logs.ProjectID, name)
 	})
 	p.idle = t
 }
@@ -247,7 +248,7 @@ func (m *Manager) Warm(project, projectName string) {
 		p := m.acquire(project)
 		defer m.release(project, p)
 		if err := m.ensure(ctx, project, projectName, p); err != nil {
-			m.cfg.Log.Warn("browser: warming the project browser failed", "project", project, "err", err)
+			m.cfg.Log.Warn("browser: warming the project browser failed", logs.ProjectID, project, "err", err)
 		}
 	}()
 }
@@ -291,7 +292,7 @@ func (m *Manager) Session(ctx context.Context, s browserport.BrowserSession, std
 		return err
 	}
 	defer ln.Close()
-	log := m.cfg.Log.With("project", s.Project, "run", s.Run, "session", sid)
+	log := m.cfg.Log.With(logs.ProjectID, s.Project, logs.RunID, s.Run, "session", sid)
 	srv := &http.Server{Handler: newProxy(Dial(s.Dial), log), ReadHeaderTimeout: 30 * time.Second}
 	go func() { _ = srv.Serve(ln) }()
 	defer srv.Close()

@@ -7,7 +7,7 @@ import { t } from '$lib/i18n/index.svelte';
 import { I } from '$lib/design/icons';
 
 export interface NavItem {
-	id: 'desk' | 'inbox' | 'runs' | 'tickets' | 'system';
+	id: 'desk' | 'inbox' | 'runs' | 'tickets' | 'analytics' | 'system';
 	label: string;
 	icon: string;
 	href: () => string;
@@ -63,6 +63,17 @@ export const NAV: readonly NavItem[] = [
 		chord: 't',
 		mobile: true,
 		match: (p) => p.startsWith('/tickets')
+	},
+	{
+		id: 'analytics',
+		get label() {
+			return t('nav.analytics');
+		},
+		icon: I.analytics,
+		href: () => to.analytics(),
+		chord: 'a',
+		mobile: false,
+		match: (p) => p.startsWith('/analytics')
 	},
 	{
 		id: 'system',

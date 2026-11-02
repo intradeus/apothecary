@@ -1,3 +1,4 @@
+-- rebuild: projections
 -- Users (2026-10-27, TODO 25): accounts, the ways each proves who they are,
 -- browser sessions and personal tokens — and an owner on every row a person
 -- configures. There is no organisation level: a user owns their

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
@@ -215,7 +216,7 @@ func (s *Store) Reconcile(ctx context.Context) error {
 		if !ok {
 			res, err = s.Resolver.Resolve(ctx, v.ProjectID)
 			if err != nil {
-				s.log().Debug("env reconcile: resolve failed", "run", id, "project", v.ProjectID, "err", err)
+				s.log().Debug("env reconcile: resolve failed", logs.RunID, id, logs.ProjectID, v.ProjectID, "err", err)
 				next[id] = envport.EnvUnknown
 				continue
 			}
@@ -223,7 +224,7 @@ func (s *Store) Reconcile(ctx context.Context) error {
 		}
 		st, err := res.Envp.Status(ctx, envport.EnvID(v.EnvID))
 		if err != nil {
-			s.log().Debug("env reconcile: status probe failed", "run", id, "env", v.EnvID, "err", err)
+			s.log().Debug("env reconcile: status probe failed", logs.RunID, id, "env", v.EnvID, "err", err)
 			next[id] = envport.EnvUnknown
 			continue
 		}
@@ -234,7 +235,7 @@ func (s *Store) Reconcile(ctx context.Context) error {
 			if d, derr := dc.ConfigDirty(ctx, envport.EnvID(v.EnvID)); derr == nil {
 				dirty[id] = d
 			} else {
-				s.log().Debug("env reconcile: config dirty check failed", "run", id, "env", v.EnvID, "err", derr)
+				s.log().Debug("env reconcile: config dirty check failed", logs.RunID, id, "env", v.EnvID, "err", derr)
 			}
 		}
 	}

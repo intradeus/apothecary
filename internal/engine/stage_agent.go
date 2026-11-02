@@ -7,6 +7,7 @@ import (
 
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run/event"
@@ -16,6 +17,13 @@ import (
 type agentRes struct {
 	r   agentport.AgentResult
 	err error
+}
+
+// attemptSpend is what a failed attempt's invocation spent: banked on its
+// stage_failed, since a failure's cost is as real as a success's.
+type attemptSpend struct {
+	turns int
+	usage agentport.Usage
 }
 
 // agentOutcome is how one harness invocation of an attempt ended.
@@ -278,7 +286,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	}
 	obs, verdict := x.observeAttempt(st, inv)
 	if f := runcore.ClassifyAttempt(st, obs); f != nil {
-		return x.failAttempt(st, f)
+		return x.failAttempt(st, f, attemptSpend{turns: res.r.TurnsUsed, usage: res.r.Usage})
 	}
 
 	completed := &event.StageCompleted{
@@ -355,10 +363,25 @@ func (x *exec) observeAttempt(st *flow.Stage, inv invocation) (runcore.AttemptOb
 	return o, verdict
 }
 
-// failAttempt records a failed attempt and routes it.
-func (x *exec) failAttempt(st *flow.Stage, f *runcore.AttemptFailure) error {
-	if err := x.append(&event.StageFailed{StageID: st.ID, Reason: f.Reason, Error: f.Error, ExitCode: f.ExitCode}); err != nil {
+// failAttempt records a failed attempt with what it spent and routes it. An
+// agent attempt that spent anything meets the budget first: a retry loop
+// must not spend past max_cost_usd one failure at a time.
+func (x *exec) failAttempt(st *flow.Stage, f *runcore.AttemptFailure, spend attemptSpend) error {
+	failed := &event.StageFailed{StageID: st.ID, Reason: f.Reason, Error: f.Error, ExitCode: f.ExitCode, TurnsUsed: spend.turns}
+	if spend.usage != (agentport.Usage{}) {
+		failed.Usage = &event.Usage{
+			InputTokens:  spend.usage.InputTokens,
+			OutputTokens: spend.usage.OutputTokens,
+			CostUSD:      spend.usage.CostUSD,
+		}
+	}
+	if err := x.append(failed); err != nil {
 		return err
+	}
+	if st.Type == flow.StageAgent && (spend.turns > 0 || spend.usage != (agentport.Usage{})) {
+		if stop, err := x.checkBudget(st); stop || err != nil {
+			return err
+		}
 	}
 	return x.takeEdge(st, f.EdgeKind, f.Feed)
 }
@@ -413,7 +436,7 @@ func (x *exec) continueSession(ctx context.Context, st *flow.Stage, runner agent
 	if !errors.Is(err, agentport.ErrSessionGone) {
 		return res, err
 	}
-	x.e.log.Warn("stage's session is gone; starting a new one", "run", x.rs.RunID, "stage", st.ID, "err", err)
+	x.e.log.WarnContext(x.bg, "stage's session is gone; starting a new one", logs.RunID, x.rs.RunID, logs.StageID, st.ID, "err", err)
 	return runner.Run(ctx, x.rs.EnvID, spec, in)
 }
 

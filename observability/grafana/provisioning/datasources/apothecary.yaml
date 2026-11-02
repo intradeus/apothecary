@@ -1,0 +1,19 @@
+# The engine's Postgres, for the run analytics dashboard (runs.json) over
+# the fact tables. Prometheus, Tempo and Loki come with the image
+# (uids prometheus, tempo, loki). Grafana expands ${VAR} from its env,
+# which docker-compose.yaml passes through.
+apiVersion: 1
+
+datasources:
+  - name: Apothecary (Postgres)
+    uid: apothecary-pg
+    type: grafana-postgresql-datasource
+    url: ${APOTHECARY_PG_ADDR}
+    user: apothecary
+    database: apothecary
+    jsonData:
+      database: apothecary
+      sslmode: disable
+      postgresVersion: 1600
+    secureJsonData:
+      password: ${APOTHECARY_PG_PASSWORD}

@@ -31,6 +31,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/platform/logs"
 )
 
 // KeyAuth resolves an offered public key to the account it belongs to
@@ -276,7 +277,7 @@ func (d *Door) handle(nc net.Conn) {
 		d.mu.Unlock()
 	}()
 	started := time.Now()
-	log := d.cfg.Log.With("remote", c.remote, "user", c.userID, "run", c.target.RunID)
+	log := d.cfg.Log.With("remote", c.remote, logs.UserID, c.userID, logs.RunID, c.target.RunID)
 
 	// An account disabled since the handshake found nothing to drop.
 	// DropUser follows the disabling, so with the connection known first and
@@ -354,11 +355,11 @@ func (d *Door) authenticate(c *conn, username string, key ssh.PublicKey) (*ssh.P
 	}
 	target, err := d.cfg.Targets.Lookup(ctx, username)
 	if err != nil {
-		d.cfg.Log.Debug("ssh door: no workspace for username", "remote", c.remote, "username", username, "user", user.ID, "err", err)
+		d.cfg.Log.Debug("ssh door: no workspace for username", "remote", c.remote, "username", username, logs.UserID, user.ID, "err", err)
 		return nil, errDenied
 	}
 	if target.OwnerID == "" || target.OwnerID != user.ID {
-		d.cfg.Log.Debug("ssh door: not the owner", "remote", c.remote, "username", username, "user", user.ID, "run", target.RunID)
+		d.cfg.Log.Debug("ssh door: not the owner", "remote", c.remote, "username", username, logs.UserID, user.ID, logs.RunID, target.RunID)
 		return nil, errDenied
 	}
 	c.userID, c.keyID, c.key, c.target = user.ID, k.ID, key, target

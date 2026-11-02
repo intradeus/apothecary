@@ -8,10 +8,12 @@ import (
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/adapters/pgstore/pgtest"
+	"apothecary/internal/analytics"
 	"apothecary/internal/engine/ask"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/project/confstore"
+	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/skills/skillstore"
 )
@@ -25,12 +27,14 @@ func TestDeadDatabaseIsAnErrorEverywhere(t *testing.T) {
 	ctx := context.Background()
 	now := testNow
 	calls := map[string]func() error{
+		"Ping":               func() error { return s.Ping(ctx) },
 		"Append":             func() error { _, err := s.Append(ctx, "r", &event.RunCreated{}); return err },
 		"Events":             func() error { _, err := s.Events(ctx, "r", 0); return err },
 		"RunIDs":             func() error { _, err := s.RunIDs(ctx); return err },
 		"RunView":            func() error { _, _, err := s.RunView(ctx, "r"); return err },
 		"RunByEnv":           func() error { _, _, err := s.RunByEnv(ctx, "e"); return err },
 		"RunViews":           func() error { _, err := s.RunViews(ctx); return err },
+		"ListRunViews":       func() error { _, err := s.ListRunViews(ctx, run.ListFilter{UserID: "u"}); return err },
 		"Rebuild":            func() error { _, err := s.RebuildProjections(ctx); return err },
 		"SaveChannel":        func() error { return s.SaveChannel(ctx, "c", "", "k", nil) },
 		"DeleteChannel":      func() error { return s.DeleteChannel(ctx, "c") },
@@ -141,6 +145,22 @@ func TestDeadDatabaseIsAnErrorEverywhere(t *testing.T) {
 		"ListSSHKeys":            func() error { _, err := s.ListSSHKeys(ctx, "u"); return err },
 		"DeleteSSHKey":           func() error { return s.DeleteSSHKey(ctx, "u", "k") },
 		"TouchSSHKey":            func() error { return s.TouchSSHKey(ctx, "k", now) },
+		"RunQuery": func() error {
+			_, err := s.RunQuery(ctx, analytics.Compiled{SQL: "SELECT count(*)"})
+			return err
+		},
+		"AnalyticsDrill":    func() error { _, err := s.Drill(ctx, analytics.Compiled{SQL: "SELECT 1"}); return err },
+		"AnalyticsValues":   func() error { _, err := s.Values(ctx, analytics.Compiled{SQL: "SELECT ''"}); return err },
+		"FlowVersionLabels": func() error { _, err := s.FlowVersionLabels(ctx, "u", []string{"h"}); return err },
+		"ProjectNames":      func() error { _, err := s.ProjectNames(ctx, "u", []string{"p"}); return err },
+		"ListDashboards":    func() error { _, err := s.ListDashboards(ctx, "u"); return err },
+		"GetDashboard":      func() error { _, err := s.GetDashboard(ctx, "d"); return err },
+		"PutDashboard":      func() error { return s.PutDashboard(ctx, analytics.Dashboard{ID: "d"}) },
+		"DeleteDashboard":   func() error { return s.DeleteDashboard(ctx, "d") },
+		"ListScorecards":    func() error { _, err := s.ListScorecards(ctx, "u"); return err },
+		"GetScorecard":      func() error { _, err := s.GetScorecard(ctx, "s"); return err },
+		"PutScorecard":      func() error { return s.PutScorecard(ctx, analytics.Scorecard{ID: "s"}) },
+		"DeleteScorecard":   func() error { return s.DeleteScorecard(ctx, "s") },
 	}
 	for name, call := range calls {
 		err := call()
@@ -148,7 +168,7 @@ func TestDeadDatabaseIsAnErrorEverywhere(t *testing.T) {
 			t.Errorf("%s: no error from a closed pool", name)
 			continue
 		}
-		for _, miss := range []error{confstore.ErrNotFound, auth.ErrNotFound, filestore.ErrNotFound, ErrPingNotFound} {
+		for _, miss := range []error{confstore.ErrNotFound, auth.ErrNotFound, filestore.ErrNotFound, ErrPingNotFound, analytics.ErrNotFound} {
 			if errors.Is(err, miss) {
 				t.Errorf("%s: a dead database read as %v", name, err)
 			}
@@ -188,6 +208,12 @@ func TestMalformedRowsAreErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.InsertVersion(ctx, skillstore.Version{SkillsetID: "set1", Seq: 1, Hash: "h", CreatedAt: testNow}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutDashboard(ctx, analytics.Dashboard{ID: "d1", UserID: "u1", Name: "n", CreatedAt: testNow, UpdatedAt: testNow}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutScorecard(ctx, analytics.Scorecard{ID: "sc1", UserID: "u1", Name: "n", CreatedAt: testNow, UpdatedAt: testNow}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -254,6 +280,17 @@ func TestMalformedRowsAreErrors(t *testing.T) {
 			func() error { _, err := s.GetVersion(ctx, "set1", 1); return err },
 			func() error { _, err := s.ListVersions(ctx, "set1"); return err },
 		}},
+		{"dashboard panels", `UPDATE analytics_dashboards SET panels='{}'`, `UPDATE analytics_dashboards SET panels='[]'`, "dashboard d1 panels", []func() error{
+			func() error { _, err := s.GetDashboard(ctx, "d1"); return err },
+			func() error { _, err := s.ListDashboards(ctx, "u1"); return err },
+		}},
+		{"dashboard filters", `UPDATE analytics_dashboards SET filters='{}'`, `UPDATE analytics_dashboards SET filters='[]'`, "dashboard d1 filters", []func() error{
+			func() error { _, err := s.GetDashboard(ctx, "d1"); return err },
+		}},
+		{"scorecard terms", `UPDATE analytics_scorecards SET terms='{}'`, `UPDATE analytics_scorecards SET terms='[]'`, "scorecard sc1 terms", []func() error{
+			func() error { _, err := s.GetScorecard(ctx, "sc1"); return err },
+			func() error { _, err := s.ListScorecards(ctx, "u1"); return err },
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -296,7 +333,8 @@ func sabotage(t *testing.T, s *Store, table string, call func() error) error {
 func TestAppendRollsBackWithItsProjection(t *testing.T) {
 	s := openDSN(t, pgtest.Empty(t))
 	ctx := context.Background()
-	if _, err := s.Append(ctx, "r1", &event.RunCreated{}, &event.PingRaised{PingID: "p0", Type: "blocker"}); err != nil {
+	if _, err := s.Append(ctx, "r1", &event.RunCreated{}, &event.PingRaised{PingID: "p0", Type: "blocker"},
+		&event.StageStarted{StageID: "s", Iteration: 1}); err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct {
@@ -309,12 +347,15 @@ func TestAppendRollsBackWithItsProjection(t *testing.T) {
 		{"pings", &event.RunFailed{Reason: "x"}},
 		{"ping_review_comments", &event.PingAnswered{PingID: "p0", Answer: "x", Review: []event.ReviewComment{{Path: "a", Body: "b"}}}},
 		{"snapshots", &event.SnapshotCaptured{SnapshotID: "s", Kind: "log", Filename: "f", Mime: "m"}},
+		{"run_facts", &event.StageStarted{StageID: "t", Iteration: 1}},
+		{"stage_attempts", &event.StageCompleted{StageID: "s"}},
+		{"run_skillsets", &event.RunCreated{Skillsets: []event.SkillsetPin{{ID: "k", Name: "kit", Seq: 1, Hash: "h"}}}},
 	}
 	for _, c := range cases {
 		if err := sabotage(t, s, c.table, func() error { _, err := s.Append(ctx, "r1", c.payload); return err }); err == nil {
 			t.Errorf("%T with %s gone: append succeeded", c.payload, c.table)
 		}
-		if evs, _ := s.Events(ctx, "r1", 0); len(evs) != 2 {
+		if evs, _ := s.Events(ctx, "r1", 0); len(evs) != 3 {
 			t.Fatalf("%T left %d events", c.payload, len(evs))
 		}
 	}

@@ -24,7 +24,7 @@ package main
 
 import (
 	"flag"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -71,6 +71,7 @@ type gateway struct {
 }
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	g := &gateway{denials: map[string]*Denial{}, dns: newDNSCache()}
 	flag.StringVar(&g.policyPath, "policy", "", "path to egress-policy.json")
 	flag.StringVar(&g.denialsPath, "denials", "", "path to egress-denials.json (written)")
@@ -107,7 +108,8 @@ func main() {
 	flag.Parse()
 	if stateDir != "" {
 		if err := os.MkdirAll(stateDir, 0o755); err != nil {
-			log.Fatalf("gateway: state dir: %v", err)
+			slog.Error("gateway: state dir", "err", err)
+			os.Exit(1)
 		}
 		def := func(p *string, name string) {
 			if *p == "" {
@@ -121,20 +123,23 @@ func main() {
 		if mirror {
 			def(&mirrorConfig, "registry-config.yml")
 			if err := writeIfChanged(mirrorConfig, mirrorRegistryConfig); err != nil {
-				log.Fatalf("gateway: mirror config: %v", err)
+				slog.Error("gateway: mirror config", "err", err)
+				os.Exit(1)
 			}
 		}
 		if buildCache {
 			def(&buildCacheConfig, "buildcache-config.yml")
 			if err := writeIfChanged(buildCacheConfig, buildCacheRegistryConfig(g.buildCacheDir)); err != nil {
-				log.Fatalf("gateway: build-cache config: %v", err)
+				slog.Error("gateway: build-cache config", "err", err)
+				os.Exit(1)
 			}
 		}
 	}
 	g.buildCacheConfig = buildCacheConfig
 	if galleryOn {
 		if err := galleryUpstreamOK(galleryUpstream); err != nil {
-			log.Fatalf("gateway: --gallery-upstream: %v", err)
+			slog.Error("gateway: --gallery-upstream", "err", err)
+			os.Exit(1)
 		}
 		dir := ""
 		if stateDir != "" {
@@ -145,13 +150,15 @@ func main() {
 	if controlListen != "" {
 		_, p, err := net.SplitHostPort(controlListen)
 		if err != nil {
-			log.Fatalf("gateway: --control-listen: %v", err)
+			slog.Error("gateway: --control-listen", "err", err)
+			os.Exit(1)
 		}
 		g.controlPort, _ = strconv.Atoi(p)
 	}
 	nets, err := parseCIDRs(protect)
 	if err != nil {
-		log.Fatalf("gateway: --protect-cidrs: %v", err)
+		slog.Error("gateway: --protect-cidrs", "err", err)
+		os.Exit(1)
 	}
 	g.protect = nets
 	g.audit = newAuditor(auditPath)
@@ -162,50 +169,55 @@ func main() {
 		ext = detectEXT()
 	}
 	if ext == "" {
-		log.Fatal("gateway: no default-route interface found")
+		slog.Error("gateway: no default-route interface found")
+		os.Exit(1)
 	}
 	g.ext.Store(&ext)
-	log.Printf("gateway: EXT=%s listen=:%d policy=%s", ext, g.listenPort, g.policyPath)
+	slog.Info("gateway", "ext", ext, "listen", g.listenPort, "policy", g.policyPath)
 
 	if wgKey == "" && os.Getenv("APO_GW_WG_KEY") != "" {
 		// wg reads the key from a file: one only this process can read.
 		wgKey = "/run/apo-gw-wg.key"
 		if err := os.WriteFile(wgKey, []byte(os.Getenv("APO_GW_WG_KEY")+"\n"), 0o600); err != nil {
-			log.Fatalf("gateway: wireguard key: %v", err)
+			slog.Error("gateway: wireguard key", "err", err)
+			os.Exit(1)
 		}
 	}
 	if wgKey != "" {
 		link, err := setupWG(ext, wgKey, wgListen, wgAddr, wgMTU)
 		if err != nil {
-			log.Fatalf("gateway: wireguard: %v", err)
+			slog.Error("gateway: wireguard", "err", err)
+			os.Exit(1)
 		}
 		g.wg = link
-		log.Printf("gateway: wg0 %s listening on udp/%d (mtu %d)", wgAddr, wgListen, link.mtu)
+		slog.Info("gateway: wg0 listening", "addr", wgAddr, "udp", wgListen, "mtu", link.mtu)
 	}
 	g.loadRoutes()
 	if err := g.loadPolicy(); err != nil {
-		log.Fatalf("gateway: initial policy load/apply: %v", err)
+		slog.Error("gateway: initial policy load/apply", "err", err)
+		os.Exit(1)
 	}
 
 	if g.dnsUpstream == "resolv.conf" {
 		up, err := resolvConfUpstream("/etc/resolv.conf")
 		if err != nil {
-			log.Fatalf("gateway: --dns-upstream resolv.conf: %v", err)
+			slog.Error("gateway: --dns-upstream resolv.conf", "err", err)
+			os.Exit(1)
 		}
 		g.dnsUpstream = up
 	}
-	log.Printf("gateway: DNS upstream %s", g.dnsUpstream)
+	slog.Info("gateway: DNS upstream", "addr", g.dnsUpstream)
 	g.serveDNS(g.dnsUpstream)
 	go g.watch()
 	if mirrorConfig != "" {
-		log.Printf("gateway: image mirror on :5000 (config %s)", mirrorConfig)
+		slog.Info("gateway: image mirror on :5000", "config", mirrorConfig)
 		go superviseRegistry("mirror", mirrorConfig)
 	}
 	// The writable twin: buildkit pushes the devcontainer build cache here and
 	// pulls it back on the project's next run, which is the whole reason a
 	// throwaway per-run daemon does not mean a from-scratch build.
 	if buildCacheConfig != "" {
-		log.Printf("gateway: build cache on :5001 (config %s)", buildCacheConfig)
+		slog.Info("gateway: build cache on :5001", "config", buildCacheConfig)
 		go superviseRegistry("buildcache", buildCacheConfig)
 	}
 	// The extension gallery: Open VSX, proxied and cached per project, so a
@@ -218,16 +230,18 @@ func main() {
 	if controlListen != "" {
 		token, err := controlToken(controlTokenFile)
 		if err != nil {
-			log.Fatalf("gateway: control token: %v", err)
+			slog.Error("gateway: control token", "err", err)
+			os.Exit(1)
 		}
 		go g.serveControl(controlListen, token)
 	}
 
 	ln, err := listenStream("tcp", ":"+itoa(g.listenPort))
 	if err != nil {
-		log.Fatalf("gateway: listen: %v", err)
+		slog.Error("gateway: listen", "err", err)
+		os.Exit(1)
 	}
-	log.Printf("gateway: ready (REDIRECT + SO_ORIGINAL_DST)")
+	slog.Info("gateway: ready (REDIRECT + SO_ORIGINAL_DST)")
 	g.serve(ln)
 }
 
@@ -258,13 +272,13 @@ func (g *gateway) installPolicy(f File) error {
 	g.pol.Store(pol)
 	if prev != nil {
 		if added := diffDomains(prev.Domains, f.Domains); len(added) > 0 {
-			log.Printf("policy: mode=%s +allowed %v", f.normMode(), added)
+			slog.Info("policy: allowed", "mode", f.normMode(), "added", added)
 		}
 		if removed := diffDomains(f.Domains, prev.Domains); len(removed) > 0 {
-			log.Printf("policy: mode=%s -removed %v", f.normMode(), removed)
+			slog.Info("policy: removed", "mode", f.normMode(), "removed", removed)
 		}
 	} else {
-		log.Printf("policy: loaded mode=%s domains=%d", f.normMode(), len(f.Domains))
+		slog.Info("policy: loaded", "mode", f.normMode(), "domains", len(f.Domains))
 	}
 	g.pruneDenials(pol)
 	return g.applyRules()
@@ -284,7 +298,7 @@ func (g *gateway) pruneDenials(pol *policy) {
 	}
 	g.dmu.Unlock()
 	if len(pruned) > 0 {
-		log.Printf("policy: cleared denials now allowed: %v", pruned)
+		slog.Info("policy: cleared denials now allowed", "domains", pruned)
 		g.flushDenials()
 	}
 }
@@ -321,7 +335,7 @@ func (g *gateway) watch() {
 		if mt, ok := mtime(g.policyPath); ok && mt.After(polMod) {
 			polMod = mt
 			if err := g.loadPolicy(); err != nil {
-				log.Printf("gateway: reload policy: %v", err)
+				slog.Warn("gateway: reload policy", "err", err)
 			}
 		}
 		if mt, ok := mtime(g.routesPath); ok && mt.After(routesMod) {
@@ -330,9 +344,9 @@ func (g *gateway) watch() {
 		}
 		if ext := detectEXT(); ext != "" && ext != *g.ext.Load() {
 			g.ext.Store(&ext)
-			log.Printf("gateway: EXT changed to %s", ext)
+			slog.Info("gateway: EXT changed", "ext", ext)
 			if err := g.applyRules(); err != nil {
-				log.Printf("gateway: reapply nft: %v", err)
+				slog.Warn("gateway: reapply nft", "err", err)
 			}
 		}
 		g.flushDenials()
@@ -386,7 +400,7 @@ func (g *gateway) flushDenials() {
 		return // in memory only: the control API serves it
 	}
 	if err := writeAtomic(g.denialsPath, DenialsFile{Denials: out}); err != nil {
-		log.Printf("gateway: write denials: %v", err)
+		slog.Warn("gateway: write denials", "err", err)
 	}
 }
 

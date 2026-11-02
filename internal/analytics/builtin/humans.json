@@ -1,0 +1,16 @@
+{
+  "id": "builtin-humans",
+  "name": "Humans in the loop",
+  "filters": ["project_id", "flow_name", "ticket_change_type"],
+  "panels": [
+    {"id": "pings", "title": "Pings by type", "viz": "bar", "width": 4,
+     "query": {"grain": "pings", "group_by": ["type"], "measures": []}},
+    {"id": "response", "title": "Median response time by type", "viz": "bar", "width": 4,
+     "query": {"grain": "pings", "group_by": ["type"], "measures": [{"field": "response_ms", "agg": "median"}]}},
+    {"id": "rejects", "title": "Gates rejected", "viz": "number", "width": 4,
+     "query": {"grain": "pings", "filters": [{"field": "type", "op": "eq", "values": ["gate"]}],
+       "measures": [{"field": "reject_rate"}]}},
+    {"id": "holds", "title": "Holds by flow", "viz": "bar", "width": 12,
+     "query": {"grain": "runs", "group_by": ["flow_name"], "measures": [{"field": "holds", "agg": "sum"}]}}
+  ]
+}

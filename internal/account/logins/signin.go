@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"apothecary/internal/account/providers"
+	"apothecary/internal/platform/telemetry"
 )
 
 // Signing in from the engine (docs/model-providers-plan.md): the engine runs
@@ -109,7 +110,7 @@ type SignIns struct {
 
 // NewSignIns builds the sign-in runner.
 func NewSignIns() *SignIns {
-	return &SignIns{client: &http.Client{Timeout: 30 * time.Second}, now: time.Now, m: map[string]*signin{}}
+	return &SignIns{client: &http.Client{Transport: telemetry.HTTPTransport(http.DefaultTransport), Timeout: 30 * time.Second}, now: time.Now, m: map[string]*signin{}}
 }
 
 func randomString(n int) string {

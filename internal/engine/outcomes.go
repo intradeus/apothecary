@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"apothecary/internal/flow"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
@@ -54,7 +55,7 @@ func (e *Engine) OutcomesOnce(ctx context.Context) error {
 			continue
 		}
 		if err := e.fireOutcome(ctx, v); err != nil {
-			e.log.Warn("outcomes: run skipped", "run", v.RunID, "err", err)
+			e.log.Warn("outcomes: run skipped", logs.RunID, v.RunID, "err", err)
 		}
 	}
 	return nil
@@ -178,7 +179,7 @@ func (x *exec) takeCursor(f outcomeFired) {
 	x.endHolds()
 	if !x.rs.TriggerSeen[runcore.TriggerKey(f.phase, f.subject, f.key)] {
 		if err := x.beginPhase(f.phase, f.subject, f.key, "signal", ""); err != nil {
-			x.e.log.Error("outcome not started; run left for recovery", "run", x.rs.RunID, "err", err)
+			x.e.log.ErrorContext(x.bg, "outcome not started; run left for recovery", logs.RunID, x.rs.RunID, "err", err)
 			return
 		}
 	}

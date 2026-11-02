@@ -15,6 +15,7 @@ import shell from './shell';
 import desk from './desk';
 import misc from './misc';
 import skills from './skills';
+import analytics from './analytics';
 
 const merge = <T extends Record<string, string>[]>(...parts: T) => {
 	const out: Record<string, string> = {};
@@ -31,5 +32,17 @@ type UnionToIntersection<U> = (U extends unknown ? (x: U) => void : never) exten
 	? I
 	: never;
 
-export const en = merge(common, ui, runcore, runviews, routes, workshop, shell, desk, misc, skills);
+export const en = merge(
+	common,
+	ui,
+	runcore,
+	runviews,
+	routes,
+	workshop,
+	shell,
+	desk,
+	misc,
+	skills,
+	analytics
+);
 export type MessageKey = keyof typeof en;

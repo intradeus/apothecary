@@ -32,7 +32,7 @@ import (
 // together.
 const (
 	gojqVersion    = "v0.12.19"
-	xcryptoVersion = "v0.54.0"
+	xcryptoVersion = "v0.57.0"
 )
 
 // shimBuilderDockerfile compiles the embedded source and parks the binary

@@ -18,6 +18,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/platform/filestore"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/event"
 )
@@ -31,7 +32,7 @@ func (x *exec) capture(snap filestore.Snapshot, data []byte) {
 	snap.RunID = x.rs.RunID
 	stored, err := x.e.snapshots.Capture(x.bg, snap, x.redact.Scrub, data)
 	if err != nil {
-		x.e.log.Warn("capturing snapshot", "run", x.rs.RunID, "stage", snap.StageID, "kind", snap.Kind, "err", err)
+		x.e.log.WarnContext(x.bg, "capturing snapshot", logs.RunID, x.rs.RunID, logs.StageID, snap.StageID, "kind", snap.Kind, "err", err)
 		return
 	}
 	if err := x.append(&event.SnapshotCaptured{
@@ -48,7 +49,7 @@ func (x *exec) capture(snap filestore.Snapshot, data []byte) {
 		Size:       stored.Size,
 		Truncated:  stored.Truncated,
 	}); err != nil {
-		x.e.log.Warn("recording snapshot", "run", x.rs.RunID, "stage", snap.StageID, "err", err)
+		x.e.log.WarnContext(x.bg, "recording snapshot", logs.RunID, x.rs.RunID, logs.StageID, snap.StageID, "err", err)
 	}
 }
 
@@ -87,16 +88,16 @@ func (x *exec) publishOutputs(st *flow.Stage, iter int, bindings []flow.Port) {
 func (x *exec) publishDir(st *flow.Stage, iter int, b flow.Port) {
 	files, err := x.dirFiles(b.Value)
 	if err != nil {
-		x.e.log.Warn("listing a files output", "run", x.rs.RunID, "stage", st.ID, "path", b.Value, "err", err)
+		x.e.log.WarnContext(x.bg, "listing a files output", logs.RunID, x.rs.RunID, logs.StageID, st.ID, "path", b.Value, "err", err)
 	}
 	for i, f := range files {
 		if i == attachmentMaxFiles {
-			x.e.log.Warn("files output holds more files than are captured", "run", x.rs.RunID, "stage", st.ID,
+			x.e.log.WarnContext(x.bg, "files output holds more files than are captured", logs.RunID, x.rs.RunID, logs.StageID, st.ID,
 				"path", b.Value, "files", len(files), "captured", attachmentMaxFiles)
 			break
 		}
 		if f.Size > attachmentMaxBytes {
-			x.e.log.Warn("file too large to capture", "run", x.rs.RunID, "stage", st.ID, "path", f.Path, "size", f.Size)
+			x.e.log.WarnContext(x.bg, "file too large to capture", logs.RunID, x.rs.RunID, logs.StageID, st.ID, "path", f.Path, "size", f.Size)
 			continue
 		}
 		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.EnvID, f.Path)
@@ -174,7 +175,7 @@ func (x *exec) publishPingFiles(p *Ping, stageID string) {
 	for _, ref := range p.Files {
 		data, err := x.res.Envp.ReadFile(x.ctx, x.rs.EnvID, ref)
 		if err != nil {
-			x.e.log.Warn("snapshotting ping file", "run", x.rs.RunID, "ping", p.ID, "ref", ref, "err", err)
+			x.e.log.WarnContext(x.bg, "snapshotting ping file", logs.RunID, x.rs.RunID, "ping", p.ID, "ref", ref, "err", err)
 			continue
 		}
 		x.capture(filestore.Snapshot{

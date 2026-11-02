@@ -6,9 +6,14 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"apothecary/internal/flow"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/notifyport"
+	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runcore"
 )
@@ -60,7 +65,14 @@ func (io *invIO) drain(record func(agentport.AgentEvent) (bool, error)) error {
 // and the transcript while it runs.
 func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, initialOpen []*Ping, prompt string,
 	call func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error)) (invocation, error) {
-	runCtx, cancelRun := context.WithCancelCause(x.ctx)
+	// x.ctx is the attempt's (exec.attempt): the invocation is a child of the
+	// attempt span the telemetry sink exports from the event stream.
+	spanCtx, span := tracer.Start(x.ctx, "agent.invoke", trace.WithAttributes(
+		attribute.String("apothecary.harness", st.Harness),
+		attribute.String("gen_ai.request.model", st.Model),
+	))
+	defer span.End()
+	runCtx, cancelRun := context.WithCancelCause(spanCtx)
 	io := newInvIO(tr)
 	// Before the agent starts: one resumed under a take-over can finish its
 	// turn at once, and if it saw no hold it would end the stage under the
@@ -232,7 +244,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					return invocation{}, err
 				}
 			case <-grace.C:
-				x.e.log.Warn("harness ignored cancellation; abandoning attempt", "run", x.rs.RunID, "stage", st.ID)
+				x.e.log.WarnContext(x.bg, "harness ignored cancellation; abandoning attempt", logs.RunID, x.rs.RunID, logs.StageID, st.ID)
 				return invocation{outcome: out, open: open, left: left(), holdSpend: holdLeg()}, nil
 			}
 		}
@@ -369,7 +381,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			// An answer the agent never saw does not close the question: once
 			// the turn was handed back (parked), the only way in is a resume,
 			// so the ping stays open and the attempt pauses on it below.
-			if handled && runcore.AgentPingType(ar.p.Type) && !ar.p.handedBack.Load() {
+			if handled && run.AgentPingType(ar.p.Type) && !ar.p.handedBack.Load() {
 				open = dropPing(open, ar.p)
 				if len(open) == 0 {
 					resume()

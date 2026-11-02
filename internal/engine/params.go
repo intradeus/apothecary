@@ -12,6 +12,7 @@ import (
 	"fmt"
 
 	"apothecary/internal/flow"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/run"
 )
 
@@ -48,7 +49,7 @@ func (e *Engine) resolveParams(ctx context.Context, fl *flow.Flow, projectID str
 		for k, v := range bound {
 			if fl.Param(k) == nil {
 				e.log.Warn("flow binding names a parameter the flow no longer declares; ignored",
-					"project", projectID, "flow", fl.Name, "param", k)
+					logs.ProjectID, projectID, "flow", fl.Name, "param", k)
 				continue
 			}
 			out[k] = v

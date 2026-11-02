@@ -3,8 +3,10 @@ package run
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"apothecary/internal/run/event"
 )
@@ -77,5 +79,69 @@ func TestReaderReportsWhatTheStoreCouldNotDo(t *testing.T) {
 	all, err := (&Reader{Store: &failingStore{Store: st, emptyRun: "r2"}}).All(ctx)
 	if err != nil || len(all) != 1 || all[0].RunID != "r1" {
 		t.Errorf("All = %+v, %v", all, err)
+	}
+}
+
+// listerStore keeps a projection list of its own: List must use it.
+type listerStore struct {
+	event.Store
+	got ListFilter
+}
+
+func (s *listerStore) ListRunViews(_ context.Context, f ListFilter) ([]View, error) {
+	s.got = f
+	return []View{{RunID: "from-store"}}, nil
+}
+
+func TestReaderListScopesToTheOwnerNewestFirst(t *testing.T) {
+	ctx := context.Background()
+	st := event.NewMemStore()
+	for _, r := range []struct {
+		id string
+		c  event.RunCreated
+	}{
+		{"a1", event.RunCreated{UserID: "u1", ProjectID: "p1", TicketID: "t1"}},
+		{"b1", event.RunCreated{UserID: "u2", ProjectID: "p1", TicketID: "t1"}},
+		{"a2", event.RunCreated{UserID: "u1", ProjectID: "p2", TicketID: "t2"}},
+		{"a3", event.RunCreated{UserID: "u1", ProjectID: "p1", TicketID: "t2"}},
+	} {
+		if _, err := st.Append(ctx, r.id, &r.c); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond) // distinct created_at
+	}
+	ids := func(f ListFilter) []string {
+		t.Helper()
+		vs, err := (&Reader{Store: st}).List(ctx, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := []string{}
+		for _, v := range vs {
+			out = append(out, v.RunID)
+		}
+		return out
+	}
+	for _, c := range []struct {
+		f    ListFilter
+		want []string
+	}{
+		{ListFilter{UserID: "u1"}, []string{"a3", "a2", "a1"}},
+		{ListFilter{UserID: "u1", ProjectID: "p1"}, []string{"a3", "a1"}},
+		{ListFilter{UserID: "u1", TicketID: "t2"}, []string{"a3", "a2"}},
+		{ListFilter{UserID: "u2"}, []string{"b1"}},
+		{ListFilter{UserID: "nobody"}, []string{}},
+	} {
+		if got := ids(c.f); !slices.Equal(got, c.want) {
+			t.Errorf("List(%+v) = %v, want %v", c.f, got, c.want)
+		}
+	}
+	if _, err := (&Reader{Store: &failingStore{Store: st, ids: errors.New("db down")}}).List(ctx, ListFilter{UserID: "u1"}); err == nil {
+		t.Error("List on a failing store = nil error")
+	}
+	ls := &listerStore{Store: st}
+	vs, err := (&Reader{Store: ls}).List(ctx, ListFilter{UserID: "u1", ProjectID: "p"})
+	if err != nil || len(vs) != 1 || vs[0].RunID != "from-store" || ls.got != (ListFilter{UserID: "u1", ProjectID: "p"}) {
+		t.Errorf("List via ViewLister = %+v, %v (filter %+v)", vs, err, ls.got)
 	}
 }

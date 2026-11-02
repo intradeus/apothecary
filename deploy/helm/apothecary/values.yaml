@@ -55,7 +55,6 @@ engine:
     size: 20Gi
     storageClass: ""
   portAutoExpose: false
-  otelEndpoint: ""
   extraEnv: {}
   resources: {}
   nodeSelector: {}
@@ -63,6 +62,25 @@ engine:
 
 service:
   type: ClusterIP
+
+# Platform telemetry: traces, metrics and logs over OTLP to the operator's
+# backend (any OTLP collector; the repo's otel-lgtm stack is for dev only).
+# An empty endpoint exports nothing; protocol/headers/resourceAttributes
+# render only alongside it, as the standard OTEL_* variables.
+otel:
+  endpoint: ""
+  protocol: grpc
+  headers: ""
+  resourceAttributes: ""
+
+# The engine's own log lines on stderr: json|text, debug|info|warn|error.
+log:
+  format: json
+  level: info
+
+# Where the admin's System hub links for the platform dashboards; "" hides
+# the link behind a not-configured note.
+grafanaUrl: ""
 
 # The SSH door (TODO 46): one port people ssh to — desktop VS Code's
 # Remote-SSH included — routed by username to a run's workspace. An Ingress

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/skills"
 )
@@ -209,7 +210,7 @@ var errArchiveNotFound = errors.New("archive not found")
 // Fetch downloads the source's archive over plain HTTP and returns the
 // files under its folder.
 func Fetch(ctx context.Context, src Source) (Fetched, error) {
-	client := &http.Client{Timeout: fetchTimeout}
+	client := &http.Client{Transport: telemetry.HTTPTransport(http.DefaultTransport), Timeout: fetchTimeout}
 	var last error
 	for _, u := range archiveURLs(src) {
 		f, err := download(ctx, client, u, src.Path)

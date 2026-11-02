@@ -29,6 +29,85 @@ export type AdoptedMr = {
 	url: string;
 };
 
+export type AnalyticsCatalog = {
+	grains: Array<CatalogGrain> | null;
+};
+
+export type AnalyticsDrillRequest = {
+	filters: Array<AnalyticsFilter> | null;
+	grain: string;
+	time: AnalyticsTimeRange;
+};
+
+export type AnalyticsFilter = {
+	field: string;
+	op: string;
+	values: Array<string> | null;
+};
+
+export type AnalyticsMeasure = {
+	agg?: string;
+	field: string;
+};
+
+export type AnalyticsOrder = {
+	by: string;
+	desc?: boolean;
+};
+
+export type AnalyticsQuery = {
+	filters?: Array<AnalyticsFilter>;
+	grain: string;
+	group_by?: Array<string>;
+	limit?: number;
+	measures: Array<AnalyticsMeasure> | null;
+	order?: AnalyticsOrder;
+	score?: AnalyticsScore;
+	time: AnalyticsTimeRange;
+};
+
+export type AnalyticsResult = {
+	dims: Array<CatalogField> | null;
+	labels: {
+		[key: string]: {
+			[key: string]: string;
+		} | null;
+	} | null;
+	measures: Array<CatalogField> | null;
+	rows: Array<AnalyticsRow> | null;
+	truncated: boolean;
+};
+
+export type AnalyticsRow = {
+	dims: Array<string> | null;
+	n: number;
+	score?: number | null;
+	small: boolean;
+	values: Array<number | null> | null;
+};
+
+export type AnalyticsScore = {
+	baseline?: Array<string>;
+	scorecard: string;
+};
+
+export type AnalyticsTimeRange = {
+	bucket?: string;
+	from?: string;
+	to?: string;
+};
+
+export type AnalyticsValue = {
+	label: string;
+	value: string;
+};
+
+export type AnalyticsValuesRequest = {
+	field: string;
+	grain: string;
+	time: AnalyticsTimeRange;
+};
+
 export type AnswerAccepted = {
 	status: string;
 };
@@ -85,6 +164,27 @@ export type Attachment = {
 
 export type AttachmentList = {
 	attachments: Array<Attachment> | null;
+};
+
+export type AttemptFacts = {
+	active_ms: number;
+	agent?: string;
+	agent_hash?: string;
+	cost_usd: number;
+	ended_at?: string;
+	failure_reason?: string;
+	harness?: string;
+	input_tokens: number;
+	iteration: number;
+	model?: string;
+	outcome: string;
+	output_tokens: number;
+	pings: number;
+	seq: number;
+	stage_id: string;
+	started_at: string;
+	turns: number;
+	waiting_ms: number;
 };
 
 export type AuthStatus = {
@@ -152,6 +252,22 @@ export type BrowserInfo = {
 export type BuildCacheInfo = {
 	available: boolean;
 	bytes: number;
+};
+
+export type CatalogField = {
+	aggs?: Array<string>;
+	id: string;
+	label: string;
+	type: string;
+};
+
+export type CatalogGrain = {
+	derived: Array<CatalogField> | null;
+	dimensions: Array<CatalogField> | null;
+	id: string;
+	label: string;
+	measures: Array<CatalogField> | null;
+	time_field: string;
 };
 
 export type ChannelEntry = {
@@ -243,6 +359,23 @@ export type CurationDocument = {
 export type CurationView = {
 	documents: Array<CurationDocument> | null;
 	threads?: ThreadsDocument;
+};
+
+export type Dashboard = {
+	builtin: boolean;
+	created_at: string;
+	filters: Array<string> | null;
+	id: string;
+	name: string;
+	panels: Array<Panel> | null;
+	updated_at: string;
+	user_id: string;
+};
+
+export type DashboardInput = {
+	filters: Array<string> | null;
+	name: string;
+	panels: Array<Panel> | null;
 };
 
 export type DocAsk = {
@@ -372,6 +505,17 @@ export type DocWatcher = {
 	then?: string;
 };
 
+export type DrillRun = {
+	cost_usd: number;
+	created_at: string;
+	flow_hash: string;
+	flow_name: string;
+	run_id: string;
+	state: string;
+	title: string;
+	wall_ms: number;
+};
+
 export type EditorConfig = {
 	font_size?: number;
 	format_on_save?: boolean;
@@ -488,6 +632,45 @@ export type ExtraRepo = {
 	url: string;
 };
 
+export type Facts = {
+	active_ms: number;
+	attempts: number;
+	cost_usd: number;
+	end_reason?: string;
+	ended_at?: string;
+	failed_attempts: number;
+	gates_rejected: number;
+	held_ms: number;
+	holds: number;
+	human_response_ms: number;
+	input_tokens: number;
+	last_ts: string;
+	mrs_created: number;
+	open?: {
+		[key: string]: AttemptFacts;
+	};
+	output_tokens: number;
+	paused_ms: number;
+	ping_clock?: {
+		[key: string]: PingClock;
+	};
+	pings: number;
+	pings_answered: number;
+	pings_unwanted: number;
+	provisioning_ms: number;
+	queued_ms: number;
+	retries: number;
+	rework_cost_usd: number;
+	stages?: {
+		[key: string]: number;
+	};
+	stalled_at?: string;
+	tracker_kind?: string;
+	try_agains: number;
+	turns: number;
+	waiting_human_ms: number;
+};
+
 export type Field = {
 	default?: string;
 	help?: string;
@@ -573,6 +756,11 @@ export type FlowVersion = {
 	name: string;
 	project_id: string;
 	yaml: string;
+};
+
+export type Health = {
+	error?: string;
+	status: string;
 };
 
 export type HoldView = {
@@ -765,6 +953,10 @@ export type ModelInfo = {
 	name: string;
 };
 
+export type ObservabilityInfo = {
+	grafana_url: string;
+};
+
 export type ObservedPort = {
 	port: number;
 	process?: string;
@@ -780,6 +972,14 @@ export type OutputDecl = {
 	name: string;
 	schema?: string;
 	type?: string;
+};
+
+export type Panel = {
+	id: string;
+	query: AnalyticsQuery;
+	title: string;
+	viz: string;
+	width: number;
 };
 
 export type Param = {
@@ -857,6 +1057,11 @@ export type PhaseSummary = {
 	start: string;
 	subject?: boolean;
 	then?: string;
+};
+
+export type PingClock = {
+	raised_at: string;
+	type: string;
 };
 
 export type PingField = {
@@ -1226,6 +1431,7 @@ export type RunView = {
 	env_dirty?: boolean;
 	env_id?: string;
 	env_status?: string;
+	facts: Facts;
 	flow_hash: string;
 	flow_name: string;
 	hold?: HoldView;
@@ -1267,6 +1473,27 @@ export type SshKey = {
 export type SshKeyRequest = {
 	name?: string;
 	public_key: string;
+};
+
+export type Scorecard = {
+	builtin: boolean;
+	created_at: string;
+	id: string;
+	name: string;
+	terms: Array<ScorecardTerm> | null;
+	updated_at: string;
+	user_id: string;
+};
+
+export type ScorecardInput = {
+	name: string;
+	terms: Array<ScorecardTerm> | null;
+};
+
+export type ScorecardTerm = {
+	direction: string;
+	measure: AnalyticsMeasure;
+	weight: number;
 };
 
 export type SendMessageRequest = {
@@ -1883,6 +2110,513 @@ export type ListActionsResponses = {
 };
 
 export type ListActionsResponse = ListActionsResponses[keyof ListActionsResponses];
+
+export type GetAnalyticsCatalogData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/analytics/catalog';
+};
+
+export type GetAnalyticsCatalogErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetAnalyticsCatalogResponses = {
+	/**
+	 * OK
+	 */
+	200: AnalyticsCatalog;
+};
+
+export type GetAnalyticsCatalogResponse =
+	GetAnalyticsCatalogResponses[keyof GetAnalyticsCatalogResponses];
+
+export type ListDashboardsData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/analytics/dashboards';
+};
+
+export type ListDashboardsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListDashboardsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<Dashboard> | null;
+};
+
+export type ListDashboardsResponse = ListDashboardsResponses[keyof ListDashboardsResponses];
+
+export type CreateDashboardData = {
+	body: DashboardInput;
+	path?: never;
+	query?: never;
+	url: '/api/analytics/dashboards';
+};
+
+export type CreateDashboardErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type CreateDashboardResponses = {
+	/**
+	 * Created
+	 */
+	201: Dashboard;
+};
+
+export type CreateDashboardResponse = CreateDashboardResponses[keyof CreateDashboardResponses];
+
+export type DeleteDashboardData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/analytics/dashboards/{id}';
+};
+
+export type DeleteDashboardErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DeleteDashboardResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type DeleteDashboardResponse = DeleteDashboardResponses[keyof DeleteDashboardResponses];
+
+export type GetDashboardData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/analytics/dashboards/{id}';
+};
+
+export type GetDashboardErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetDashboardResponses = {
+	/**
+	 * OK
+	 */
+	200: Dashboard;
+};
+
+export type GetDashboardResponse = GetDashboardResponses[keyof GetDashboardResponses];
+
+export type UpdateDashboardData = {
+	body: DashboardInput;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/analytics/dashboards/{id}';
+};
+
+export type UpdateDashboardErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type UpdateDashboardResponses = {
+	/**
+	 * OK
+	 */
+	200: Dashboard;
+};
+
+export type UpdateDashboardResponse = UpdateDashboardResponses[keyof UpdateDashboardResponses];
+
+export type DrillAnalyticsData = {
+	body: AnalyticsDrillRequest;
+	path?: never;
+	query?: never;
+	url: '/api/analytics/drill';
+};
+
+export type DrillAnalyticsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DrillAnalyticsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<DrillRun> | null;
+};
+
+export type DrillAnalyticsResponse = DrillAnalyticsResponses[keyof DrillAnalyticsResponses];
+
+export type QueryAnalyticsData = {
+	body: AnalyticsQuery;
+	path?: never;
+	query?: never;
+	url: '/api/analytics/query';
+};
+
+export type QueryAnalyticsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type QueryAnalyticsResponses = {
+	/**
+	 * OK
+	 */
+	200: AnalyticsResult;
+};
+
+export type QueryAnalyticsResponse = QueryAnalyticsResponses[keyof QueryAnalyticsResponses];
+
+export type ListScorecardsData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/analytics/scorecards';
+};
+
+export type ListScorecardsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListScorecardsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<Scorecard> | null;
+};
+
+export type ListScorecardsResponse = ListScorecardsResponses[keyof ListScorecardsResponses];
+
+export type CreateScorecardData = {
+	body: ScorecardInput;
+	path?: never;
+	query?: never;
+	url: '/api/analytics/scorecards';
+};
+
+export type CreateScorecardErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type CreateScorecardResponses = {
+	/**
+	 * Created
+	 */
+	201: Scorecard;
+};
+
+export type CreateScorecardResponse = CreateScorecardResponses[keyof CreateScorecardResponses];
+
+export type DeleteScorecardData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/analytics/scorecards/{id}';
+};
+
+export type DeleteScorecardErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DeleteScorecardResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type DeleteScorecardResponse = DeleteScorecardResponses[keyof DeleteScorecardResponses];
+
+export type GetScorecardData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/analytics/scorecards/{id}';
+};
+
+export type GetScorecardErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetScorecardResponses = {
+	/**
+	 * OK
+	 */
+	200: Scorecard;
+};
+
+export type GetScorecardResponse = GetScorecardResponses[keyof GetScorecardResponses];
+
+export type UpdateScorecardData = {
+	body: ScorecardInput;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/analytics/scorecards/{id}';
+};
+
+export type UpdateScorecardErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type UpdateScorecardResponses = {
+	/**
+	 * OK
+	 */
+	200: Scorecard;
+};
+
+export type UpdateScorecardResponse = UpdateScorecardResponses[keyof UpdateScorecardResponses];
+
+export type AnalyticsValuesData = {
+	body: AnalyticsValuesRequest;
+	path?: never;
+	query?: never;
+	url: '/api/analytics/values';
+};
+
+export type AnalyticsValuesErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type AnalyticsValuesResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<AnalyticsValue> | null;
+};
+
+export type AnalyticsValuesResponse = AnalyticsValuesResponses[keyof AnalyticsValuesResponses];
 
 export type UploadAttachmentsData = {
 	body: {
@@ -3864,6 +4598,41 @@ export type DeleteMyTokenResponses = {
 };
 
 export type DeleteMyTokenResponse = DeleteMyTokenResponses[keyof DeleteMyTokenResponses];
+
+export type GetObservabilityData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/observability';
+};
+
+export type GetObservabilityErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetObservabilityResponses = {
+	/**
+	 * OK
+	 */
+	200: ObservabilityInfo;
+};
+
+export type GetObservabilityResponse = GetObservabilityResponses[keyof GetObservabilityResponses];
 
 export type ListPingsData = {
 	body?: never;
@@ -8820,3 +9589,57 @@ export type ResetUserPasswordResponses = {
 
 export type ResetUserPasswordResponse =
 	ResetUserPasswordResponses[keyof ResetUserPasswordResponses];
+
+export type GetHealthzData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/healthz';
+};
+
+export type GetHealthzErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetHealthzResponses = {
+	/**
+	 * OK
+	 */
+	200: Health;
+};
+
+export type GetHealthzResponse = GetHealthzResponses[keyof GetHealthzResponses];
+
+export type GetReadyzData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/readyz';
+};
+
+export type GetReadyzErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetReadyzResponses = {
+	/**
+	 * OK
+	 */
+	200: Health;
+};
+
+export type GetReadyzResponse = GetReadyzResponses[keyof GetReadyzResponses];

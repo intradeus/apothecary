@@ -24,7 +24,8 @@ export type SystemSection =
 	| 'users'
 	| 'limits'
 	| 'reaper'
-	| 'storage';
+	| 'storage'
+	| 'observability';
 
 /** Route builders. */
 export const to = {
@@ -51,13 +52,18 @@ export const to = {
 	newSkill: () => '/system/skills/new',
 	skill: (skillId: string) => `/system/skills/${skillId}`,
 	newSkillset: () => '/system/skills/sets/new',
-	skillset: (skillsetId: string) => `/system/skills/sets/${skillsetId}`
+	skillset: (skillsetId: string) => `/system/skills/sets/${skillsetId}`,
+	// Run analytics (TODO 23): the user's dashboards and scorecards.
+	analytics: () => '/analytics',
+	dashboard: (id: string) => `/analytics/${encodeURIComponent(id)}`,
+	scorecards: () => '/analytics/scorecards'
 };
 
 // --- workshop identity ------------------------------------------------------
 
 // Token references, not colours: a vial follows the theme like everything else.
-const HUES = [
+// Chart series cycle the same list.
+export const HUES = [
 	'var(--success)',
 	'var(--running)',
 	'var(--accent)',

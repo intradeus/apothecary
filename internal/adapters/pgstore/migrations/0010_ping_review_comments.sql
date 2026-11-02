@@ -1,3 +1,4 @@
+-- rebuild: projections
 -- Review comments (2026-10-26): what a person said about the files a ping
 -- showed — a gate over a plan and a folder of screenshots — one row per
 -- comment, each on one file (path) and, on a text file, a stretch of its

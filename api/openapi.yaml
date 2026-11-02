@@ -61,6 +61,204 @@ components:
         - repo
         - url
       type: object
+    AnalyticsCatalog:
+      properties:
+        grains:
+          items:
+            $ref: '#/components/schemas/CatalogGrain'
+          nullable: true
+          type: array
+      required:
+        - grains
+      type: object
+    AnalyticsDrillRequest:
+      properties:
+        filters:
+          items:
+            $ref: '#/components/schemas/AnalyticsFilter'
+          nullable: true
+          type: array
+        grain:
+          type: string
+        time:
+          $ref: '#/components/schemas/AnalyticsTimeRange'
+      required:
+        - filters
+        - grain
+        - time
+      type: object
+    AnalyticsFilter:
+      properties:
+        field:
+          type: string
+        op:
+          type: string
+        values:
+          items:
+            type: string
+          nullable: true
+          type: array
+      required:
+        - field
+        - op
+        - values
+      type: object
+    AnalyticsMeasure:
+      properties:
+        agg:
+          type: string
+        field:
+          type: string
+      required:
+        - field
+      type: object
+    AnalyticsOrder:
+      properties:
+        by:
+          type: string
+        desc:
+          type: boolean
+      required:
+        - by
+      type: object
+    AnalyticsQuery:
+      properties:
+        filters:
+          items:
+            $ref: '#/components/schemas/AnalyticsFilter'
+          type: array
+        grain:
+          type: string
+        group_by:
+          items:
+            type: string
+          type: array
+        limit:
+          type: integer
+        measures:
+          items:
+            $ref: '#/components/schemas/AnalyticsMeasure'
+          nullable: true
+          type: array
+        order:
+          $ref: '#/components/schemas/AnalyticsOrder'
+        score:
+          $ref: '#/components/schemas/AnalyticsScore'
+        time:
+          $ref: '#/components/schemas/AnalyticsTimeRange'
+      required:
+        - grain
+        - measures
+        - time
+      type: object
+    AnalyticsResult:
+      properties:
+        dims:
+          items:
+            $ref: '#/components/schemas/CatalogField'
+          nullable: true
+          type: array
+        labels:
+          additionalProperties:
+            additionalProperties:
+              type: string
+            nullable: true
+            type: object
+          nullable: true
+          type: object
+        measures:
+          items:
+            $ref: '#/components/schemas/CatalogField'
+          nullable: true
+          type: array
+        rows:
+          items:
+            $ref: '#/components/schemas/AnalyticsRow'
+          nullable: true
+          type: array
+        truncated:
+          type: boolean
+      required:
+        - dims
+        - labels
+        - measures
+        - rows
+        - truncated
+      type: object
+    AnalyticsRow:
+      properties:
+        dims:
+          items:
+            type: string
+          nullable: true
+          type: array
+        "n":
+          format: int64
+          type: integer
+        score:
+          format: double
+          nullable: true
+          type: number
+        small:
+          type: boolean
+        values:
+          items:
+            format: double
+            nullable: true
+            type: number
+          nullable: true
+          type: array
+      required:
+        - dims
+        - "n"
+        - small
+        - values
+      type: object
+    AnalyticsScore:
+      properties:
+        baseline:
+          items:
+            type: string
+          type: array
+        scorecard:
+          type: string
+      required:
+        - scorecard
+      type: object
+    AnalyticsTimeRange:
+      properties:
+        bucket:
+          type: string
+        from:
+          format: date-time
+          type: string
+        to:
+          format: date-time
+          type: string
+      type: object
+    AnalyticsValue:
+      properties:
+        label:
+          type: string
+        value:
+          type: string
+      required:
+        - label
+        - value
+      type: object
+    AnalyticsValuesRequest:
+      properties:
+        field:
+          type: string
+        grain:
+          type: string
+        time:
+          $ref: '#/components/schemas/AnalyticsTimeRange'
+      required:
+        - field
+        - grain
+        - time
+      type: object
     AnswerAccepted:
       properties:
         status:
@@ -186,6 +384,64 @@ components:
           type: array
       required:
         - attachments
+      type: object
+    AttemptFacts:
+      properties:
+        active_ms:
+          format: int64
+          type: integer
+        agent:
+          type: string
+        agent_hash:
+          type: string
+        cost_usd:
+          format: double
+          type: number
+        ended_at:
+          format: date-time
+          type: string
+        failure_reason:
+          type: string
+        harness:
+          type: string
+        input_tokens:
+          type: integer
+        iteration:
+          type: integer
+        model:
+          type: string
+        outcome:
+          type: string
+        output_tokens:
+          type: integer
+        pings:
+          type: integer
+        seq:
+          format: int64
+          type: integer
+        stage_id:
+          type: string
+        started_at:
+          format: date-time
+          type: string
+        turns:
+          type: integer
+        waiting_ms:
+          format: int64
+          type: integer
+      required:
+        - active_ms
+        - cost_usd
+        - input_tokens
+        - iteration
+        - outcome
+        - output_tokens
+        - pings
+        - seq
+        - stage_id
+        - started_at
+        - turns
+        - waiting_ms
       type: object
     AuthStatus:
       properties:
@@ -330,6 +586,54 @@ components:
       required:
         - available
         - bytes
+      type: object
+    CatalogField:
+      properties:
+        aggs:
+          items:
+            type: string
+          type: array
+        id:
+          type: string
+        label:
+          type: string
+        type:
+          type: string
+      required:
+        - id
+        - label
+        - type
+      type: object
+    CatalogGrain:
+      properties:
+        derived:
+          items:
+            $ref: '#/components/schemas/CatalogField'
+          nullable: true
+          type: array
+        dimensions:
+          items:
+            $ref: '#/components/schemas/CatalogField'
+          nullable: true
+          type: array
+        id:
+          type: string
+        label:
+          type: string
+        measures:
+          items:
+            $ref: '#/components/schemas/CatalogField'
+          nullable: true
+          type: array
+        time_field:
+          type: string
+      required:
+        - derived
+        - dimensions
+        - id
+        - label
+        - measures
+        - time_field
       type: object
     ChannelEntry:
       properties:
@@ -524,6 +828,61 @@ components:
           $ref: '#/components/schemas/ThreadsDocument'
       required:
         - documents
+      type: object
+    Dashboard:
+      properties:
+        builtin:
+          type: boolean
+        created_at:
+          format: date-time
+          type: string
+        filters:
+          items:
+            type: string
+          nullable: true
+          type: array
+        id:
+          type: string
+        name:
+          type: string
+        panels:
+          items:
+            $ref: '#/components/schemas/Panel'
+          nullable: true
+          type: array
+        updated_at:
+          format: date-time
+          type: string
+        user_id:
+          type: string
+      required:
+        - builtin
+        - created_at
+        - filters
+        - id
+        - name
+        - panels
+        - updated_at
+        - user_id
+      type: object
+    DashboardInput:
+      properties:
+        filters:
+          items:
+            type: string
+          nullable: true
+          type: array
+        name:
+          type: string
+        panels:
+          items:
+            $ref: '#/components/schemas/Panel'
+          nullable: true
+          type: array
+      required:
+        - filters
+        - name
+        - panels
       type: object
     DocAsk:
       properties:
@@ -790,6 +1149,37 @@ components:
         - id
         - "on"
       type: object
+    DrillRun:
+      properties:
+        cost_usd:
+          format: double
+          type: number
+        created_at:
+          format: date-time
+          type: string
+        flow_hash:
+          type: string
+        flow_name:
+          type: string
+        run_id:
+          type: string
+        state:
+          type: string
+        title:
+          type: string
+        wall_ms:
+          format: int64
+          type: integer
+      required:
+        - cost_usd
+        - created_at
+        - flow_hash
+        - flow_name
+        - run_id
+        - state
+        - title
+        - wall_ms
+      type: object
     EditorConfig:
       properties:
         font_size:
@@ -1048,6 +1438,110 @@ components:
         - name
         - url
       type: object
+    Facts:
+      properties:
+        active_ms:
+          format: int64
+          type: integer
+        attempts:
+          type: integer
+        cost_usd:
+          format: double
+          type: number
+        end_reason:
+          type: string
+        ended_at:
+          format: date-time
+          type: string
+        failed_attempts:
+          type: integer
+        gates_rejected:
+          type: integer
+        held_ms:
+          format: int64
+          type: integer
+        holds:
+          type: integer
+        human_response_ms:
+          format: int64
+          type: integer
+        input_tokens:
+          type: integer
+        last_ts:
+          format: date-time
+          type: string
+        mrs_created:
+          type: integer
+        open:
+          additionalProperties:
+            $ref: '#/components/schemas/AttemptFacts'
+          type: object
+        output_tokens:
+          type: integer
+        paused_ms:
+          format: int64
+          type: integer
+        ping_clock:
+          additionalProperties:
+            $ref: '#/components/schemas/PingClock'
+          type: object
+        pings:
+          type: integer
+        pings_answered:
+          type: integer
+        pings_unwanted:
+          type: integer
+        provisioning_ms:
+          format: int64
+          type: integer
+        queued_ms:
+          format: int64
+          type: integer
+        retries:
+          type: integer
+        rework_cost_usd:
+          format: double
+          type: number
+        stages:
+          additionalProperties:
+            type: integer
+          type: object
+        stalled_at:
+          type: string
+        tracker_kind:
+          type: string
+        try_agains:
+          type: integer
+        turns:
+          type: integer
+        waiting_human_ms:
+          format: int64
+          type: integer
+      required:
+        - active_ms
+        - attempts
+        - cost_usd
+        - failed_attempts
+        - gates_rejected
+        - held_ms
+        - holds
+        - human_response_ms
+        - input_tokens
+        - last_ts
+        - mrs_created
+        - output_tokens
+        - paused_ms
+        - pings
+        - pings_answered
+        - pings_unwanted
+        - provisioning_ms
+        - queued_ms
+        - retries
+        - rework_cost_usd
+        - try_agains
+        - turns
+        - waiting_human_ms
+      type: object
     Field:
       properties:
         default:
@@ -1256,6 +1750,15 @@ components:
         - name
         - project_id
         - yaml
+      type: object
+    Health:
+      properties:
+        error:
+          type: string
+        status:
+          type: string
+      required:
+        - status
       type: object
     HoldView:
       properties:
@@ -1665,6 +2168,13 @@ components:
         - id
         - name
       type: object
+    ObservabilityInfo:
+      properties:
+        grafana_url:
+          type: string
+      required:
+        - grafana_url
+      type: object
     ObservedPort:
       properties:
         port:
@@ -1698,6 +2208,25 @@ components:
           type: string
       required:
         - name
+      type: object
+    Panel:
+      properties:
+        id:
+          type: string
+        query:
+          $ref: '#/components/schemas/AnalyticsQuery'
+        title:
+          type: string
+        viz:
+          type: string
+        width:
+          type: integer
+      required:
+        - id
+        - query
+        - title
+        - viz
+        - width
       type: object
     Param:
       properties:
@@ -1865,6 +2394,17 @@ components:
         - signal
         - stages
         - start
+      type: object
+    PingClock:
+      properties:
+        raised_at:
+          format: date-time
+          type: string
+        type:
+          type: string
+      required:
+        - raised_at
+        - type
       type: object
     PingField:
       properties:
@@ -2715,6 +3255,8 @@ components:
           type: string
         env_status:
           type: string
+        facts:
+          $ref: '#/components/schemas/Facts'
         flow_hash:
           type: string
         flow_name:
@@ -2774,6 +3316,7 @@ components:
           type: string
       required:
         - created_at
+        - facts
         - flow_hash
         - flow_name
         - run_id
@@ -2815,6 +3358,63 @@ components:
           type: string
       required:
         - public_key
+      type: object
+    Scorecard:
+      properties:
+        builtin:
+          type: boolean
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        terms:
+          items:
+            $ref: '#/components/schemas/ScorecardTerm'
+          nullable: true
+          type: array
+        updated_at:
+          format: date-time
+          type: string
+        user_id:
+          type: string
+      required:
+        - builtin
+        - created_at
+        - id
+        - name
+        - terms
+        - updated_at
+        - user_id
+      type: object
+    ScorecardInput:
+      properties:
+        name:
+          type: string
+        terms:
+          items:
+            $ref: '#/components/schemas/ScorecardTerm'
+          nullable: true
+          type: array
+      required:
+        - name
+        - terms
+      type: object
+    ScorecardTerm:
+      properties:
+        direction:
+          type: string
+        measure:
+          $ref: '#/components/schemas/AnalyticsMeasure'
+        weight:
+          format: double
+          type: number
+      required:
+        - direction
+        - measure
+        - weight
       type: object
     SendMessageRequest:
       properties:
@@ -4194,7 +4794,7 @@ components:
 info:
   description: The engine's whole surface. The control-plane UI talks only to this API, and its client is generated from this document.
   title: Apothecary engine API
-  version: 1.1.0
+  version: 1.2.0
 openapi: 3.0.3
 paths:
   /api/actions:
@@ -4228,6 +4828,535 @@ paths:
       summary: Actions an `action` stage may name
       tags:
         - system
+  /api/analytics/catalog:
+    get:
+      operationId: getAnalyticsCatalog
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsCatalog'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Every grain, dimension and measure a query may name
+      tags:
+        - analytics
+  /api/analytics/dashboards:
+    get:
+      operationId: listDashboards
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Dashboard'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: The built-in dashboards, then one's own
+      tags:
+        - analytics
+    post:
+      operationId: createDashboard
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DashboardInput'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dashboard'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Create a dashboard
+      tags:
+        - analytics
+  /api/analytics/dashboards/{id}:
+    delete:
+      operationId: deleteDashboard
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Delete a dashboard (409 on a built-in)
+      tags:
+        - analytics
+    get:
+      operationId: getDashboard
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dashboard'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One dashboard
+      tags:
+        - analytics
+    put:
+      operationId: updateDashboard
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DashboardInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dashboard'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Replace a dashboard's name, filters and panels (409 on a built-in)
+      tags:
+        - analytics
+  /api/analytics/drill:
+    post:
+      operationId: drillAnalytics
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalyticsDrillRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/DrillRun'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: The runs behind a group (at most 200, newest first)
+      tags:
+        - analytics
+  /api/analytics/query:
+    post:
+      description: A whitelisted shape — grain, measures, group-by, filters, time range — checked against the catalog. At most 8 measures, 3 group-by dimensions, 10 filters and 500 rows; 422 when it runs longer than 5s.
+      operationId: queryAnalytics
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalyticsQuery'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsResult'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Run a query over one's own runs
+      tags:
+        - analytics
+  /api/analytics/scorecards:
+    get:
+      operationId: listScorecards
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Scorecard'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: The built-in scorecards, then one's own
+      tags:
+        - analytics
+    post:
+      operationId: createScorecard
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScorecardInput'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scorecard'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Create a scorecard
+      tags:
+        - analytics
+  /api/analytics/scorecards/{id}:
+    delete:
+      operationId: deleteScorecard
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Delete a scorecard (409 on a built-in)
+      tags:
+        - analytics
+    get:
+      operationId: getScorecard
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scorecard'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One scorecard
+      tags:
+        - analytics
+    put:
+      operationId: updateScorecard
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScorecardInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scorecard'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Replace a scorecard's name and terms (409 on a built-in)
+      tags:
+        - analytics
+  /api/analytics/values:
+    post:
+      operationId: analyticsValues
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalyticsValuesRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/AnalyticsValue'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One dimension's distinct values (at most 200), labelled
+      tags:
+        - analytics
   /api/attachments:
     post:
       operationId: uploadAttachments
@@ -6266,6 +7395,39 @@ paths:
       summary: Revoke a personal API token
       tags:
         - auth
+  /api/observability:
+    get:
+      description: '`grafana_url` is APOTHECARY_GRAFANA_URL; empty when not configured.'
+      operationId: getObservability
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservabilityInfo'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Where the platform dashboards live (admin)
+      tags:
+        - system
   /api/pings:
     get:
       operationId: listPings
@@ -11607,10 +12769,56 @@ paths:
       summary: Set an account's password
       tags:
         - users
+  /healthz:
+    get:
+      operationId: getHealthz
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security: []
+      summary: 'Liveness: the process serves HTTP'
+      tags:
+        - system
+  /readyz:
+    get:
+      description: 503 with status `draining` once shutdown begins, or `db` when the database does not answer within 2s. The error says only `database unreachable` or `database timeout` (the probe is public); the cause is in the server log.
+      operationId: getReadyz
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security: []
+      summary: 'Readiness: not draining, and the database answers'
+      tags:
+        - system
 servers:
   - description: the engine, same origin as the UI
     url: /
 tags:
+  - name: analytics
   - name: auth
   - name: automations
   - name: channels

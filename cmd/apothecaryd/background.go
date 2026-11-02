@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"apothecary/internal/account/logins"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/project/automation"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/tickets"
@@ -43,7 +44,7 @@ func (a *app) background(ctx context.Context) {
 				for _, uid := range owners {
 					set, err := a.conf.Settings(ctx, uid)
 					if err != nil {
-						a.log.Error("reaper: settings read failed", "user", uid, "err", err)
+						a.log.Error("reaper: settings read failed", logs.UserID, uid, "err", err)
 						set = confstore.DefaultSettings()
 					}
 					settings[uid] = set
@@ -64,9 +65,9 @@ func (a *app) background(ctx context.Context) {
 				// the blob sweep below).
 				for _, uid := range owners {
 					if n, err := a.attachments.GCOrphans(ctx, uid, settingsOf(uid).OrphanWindow()); err != nil {
-						a.log.Error("reaper: upload GC failed", "user", uid, "err", err)
+						a.log.Error("reaper: upload GC failed", logs.UserID, uid, "err", err)
 					} else if n > 0 {
-						a.log.Info("reaper: swept unclaimed uploads", "user", uid, "count", n)
+						a.log.Info("reaper: swept unclaimed uploads", logs.UserID, uid, "count", n)
 					}
 				}
 				// Blob sweep: delete bytes no live row references. The mark

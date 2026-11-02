@@ -62,6 +62,7 @@
 		"@xyflow/svelte": "^1.6.2",
 		"codemirror": "^6.0.2",
 		"codemirror-json-schema": "^0.8.1",
+		"layerchart": "^2.9.2",
 		"marked": "^18.0.6",
 		"yaml": "^2.9.0"
 	}

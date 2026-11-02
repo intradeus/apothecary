@@ -1,7 +1,8 @@
 # Observability and run analytics (TODO 23) — plan
 
-Status: decided (2026-11-01; answers folded in, see § Resolved). Splits
-TODO 23 into two products with two audiences:
+Status: built (2026-11-02). Where the build differs from this plan is
+recorded in IMPLEMENTATION_NOTES, "Observability and run analytics (TODO 23)".
+Splits TODO 23 into two products with two audiences:
 
 | | A. Platform observability | B. Run analytics |
 |---|---|---|

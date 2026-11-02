@@ -1,10 +1,8 @@
-// Facts about a run the list endpoint does not carry: what it has cost, which
-// attempt its current stage is on, and what TYPE that stage is. They are
-// derived from the run's event log and its flow document, fetched lazily and
-// only for the runs a page actually shows (desk cards, the active runs list,
-// the inbox's selected run). Cached per run and refetched when the run's
-// updatedAt moves; the flow document is cached per (workshop, flow hash),
-// which never changes.
+// What the lists show about a run beyond its row: what it has cost, which
+// attempt its current stage is on, and what TYPE that stage is. Spend and
+// attempts come with the run itself (its folded facts); the stage type is
+// read lazily from the run's pinned flow document, cached per (workshop,
+// flow hash), which never changes.
 //
 // Read-only GETs. A failed fetch degrades to "unknown" — the cells that read
 // these show nothing rather than a wrong number.
@@ -13,65 +11,29 @@ import { SvelteMap } from 'svelte/reactivity';
 import { parse } from 'yaml';
 import { api } from '$lib/api';
 import { expandDoc, normalizeDoc, type StageKind } from '$lib/domain/flowdoc';
-import type { Run, RunEvent, RunState } from '$lib/domain';
+import type { Run, RunState } from '$lib/domain';
 import type { StageStatus } from '$lib/ui/StageFlask.svelte';
 
-export interface RunFacts {
-	/** USD spent so far (every completed or paused stage leg). */
-	/** Absent until a read has worked: nothing, rather than a wrong number. */
-	cost?: number;
+export interface RunGlance {
+	/** USD spent so far, failed attempts included. */
+	cost: number;
 	turns: number;
-	/** The current stage's attempt number, when a stage_started names it. */
+	/** The current stage's attempt number while that attempt is open. */
 	attempt?: number;
-	/** When the current stage's latest attempt started. */
+	/** When the current stage's open attempt started. */
 	stageStartedAt?: string;
 }
 
-const facts = new SvelteMap<string, RunFacts & { at: string }>();
-const inflight = new Set<string>();
-
-function derive(run: Run, events: RunEvent[]): RunFacts {
-	let cost = 0;
-	let turns = 0;
-	let attempt: number | undefined;
-	let stageStartedAt: string | undefined;
-	for (const e of events) {
-		if (e.type === 'stage_completed' || e.type === 'stage_paused') {
-			const u = e.payload.usage as { cost_usd?: number } | undefined;
-			cost += u?.cost_usd ?? 0;
-			turns += (e.payload.turns_used as number | undefined) ?? 0;
-		} else if (e.type === 'stage_started' && e.payload.stage_id === run.currentStage) {
-			const it = e.payload.iteration;
-			attempt = typeof it === 'number' ? it : attempt;
-			stageStartedAt = e.ts;
-		}
-	}
-	return { cost, turns, attempt, stageStartedAt };
-}
-
-async function load(run: Run) {
-	try {
-		const { events } = await api.runs.get(run.id);
-		facts.set(run.id, { ...derive(run, events), at: run.updatedAt });
-	} catch {
-		// Spending only grows, so the last count stands; an attempt may be another
-		// stage's by now.
-		const last = facts.get(run.id);
-		facts.set(run.id, { cost: last?.cost, turns: last?.turns ?? 0, at: run.updatedAt });
-	} finally {
-		inflight.delete(run.id);
-	}
-}
-
-/** The run's facts, or undefined while they load. Reading it schedules the
- *  fetch (async, so it is safe inside templates and deriveds). */
-export function runFacts(run: Run): RunFacts | undefined {
-	const f = facts.get(run.id);
-	if ((!f || f.at !== run.updatedAt) && !inflight.has(run.id)) {
-		inflight.add(run.id);
-		queueMicrotask(() => load(run));
-	}
-	return f;
+/** The run's spend and its current stage's attempt, from the facts the list
+ *  carries. */
+export function runFacts(run: Run): RunGlance {
+	const open = run.currentStage ? run.facts.open[run.currentStage] : undefined;
+	return {
+		cost: run.facts.costUsd,
+		turns: run.facts.turns,
+		attempt: open?.iteration,
+		stageStartedAt: open?.startedAt
+	};
 }
 
 // --- stage types, from the run's pinned flow version -------------------------

@@ -358,11 +358,15 @@ type StageCompleted struct {
 	Feed string `json:"feed,omitempty"`
 }
 
+// StageFailed carries what the failed attempt spent (TurnsUsed/Usage), like
+// StageCompleted does: a failed attempt's cost is real, and budgets count it.
 type StageFailed struct {
-	StageID  string `json:"stage_id"`
-	Reason   string `json:"reason"` // exit_nonzero|timeout|harness_error|output_contract|infra
-	ExitCode *int   `json:"exit_code,omitempty"`
-	Error    string `json:"error,omitempty"`
+	StageID   string `json:"stage_id"`
+	Reason    string `json:"reason"` // exit_nonzero|timeout|harness_error|output_contract|infra
+	ExitCode  *int   `json:"exit_code,omitempty"`
+	Error     string `json:"error,omitempty"`
+	TurnsUsed int    `json:"turns_used,omitempty"`
+	Usage     *Usage `json:"usage,omitempty"`
 }
 
 // StagePaused records an attempt parking mid-flight: the harness invocation

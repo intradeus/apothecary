@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/egressgw/policyfile"
+	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/ports/envport"
 )
 
@@ -115,7 +116,7 @@ type auditSnap struct {
 func NewManager(host Host) *Manager {
 	return &Manager{
 		host:       host,
-		client:     &http.Client{Timeout: 20 * time.Second},
+		client:     &http.Client{Transport: telemetry.HTTPTransport(http.DefaultTransport), Timeout: 20 * time.Second},
 		pmu:        map[string]*sync.Mutex{},
 		auditCache: map[string]auditSnap{},
 	}
@@ -426,7 +427,7 @@ func (m *Manager) call(ctx context.Context, ctl Control, method, path string, in
 // WaitHealthy polls the gateway's /healthz until it answers or ctx/limit ends.
 func WaitHealthy(ctx context.Context, client *http.Client, baseURL string, limit time.Duration) error {
 	if client == nil {
-		client = &http.Client{Timeout: 3 * time.Second}
+		client = &http.Client{Transport: telemetry.HTTPTransport(http.DefaultTransport), Timeout: 3 * time.Second}
 	}
 	deadline := time.Now().Add(limit)
 	var last error

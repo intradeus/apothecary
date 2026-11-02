@@ -6,7 +6,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"time"
+
+	"go.opentelemetry.io/otel"
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/account/logins"
@@ -15,6 +16,7 @@ import (
 	matrixadapter "apothecary/internal/adapters/matrix"
 	"apothecary/internal/adapters/pgstore"
 	slackadapter "apothecary/internal/adapters/slack"
+	"apothecary/internal/analytics"
 	"apothecary/internal/engine"
 	"apothecary/internal/engine/ask"
 	"apothecary/internal/engine/authsink"
@@ -61,6 +63,7 @@ var (
 	_ egress.AuditStore  = (*pgstore.Store)(nil)
 	_ ask.Engine         = (*engine.Engine)(nil)
 	_ ask.Store          = (*pgstore.Store)(nil)
+	_ analytics.Store    = (*pgstore.Store)(nil)
 )
 
 // app is the daemon, built: what serving and the background loops need.
@@ -81,10 +84,6 @@ type app struct {
 	mrSvc       *mrs.Service
 	syncer      *tickets.Syncer
 }
-
-// otelFlushFor is how long a shutdown waits on the telemetry collector, a
-// variable so a test on a dead one need not sit it out.
-var otelFlushFor = 5 * time.Second
 
 // buildApp opens the store and builds every adapter, service, the engine
 // and the API over them, in dependency order, then recovers the runs a
@@ -126,6 +125,13 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 			return nil, nil, fmt.Errorf("seed dev project: %w", err)
 		}
 	}
+	// Which flow features and automation kinds are in use, as gauges (after
+	// the dev seed, so its first snapshot sees the seeded flow).
+	stopUsage, err := startUsageMetrics(otel.Meter("apothecaryd"), store, log)
+	if err != nil {
+		return nil, nil, fmt.Errorf("feature usage metrics: %w", err)
+	}
+	closers = append(closers, stopUsage)
 
 	chreg := channels.NewRegistry()
 	chreg.Register("matrix", matrixadapter.Factory)
@@ -185,20 +191,15 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	}
 	sink := authsink.New(runs, resolver, brokerKey, log)
 	keeper.OnRefresh = sink.Push
-	var evSink engine.EventSink
-	if boot.OtelEndpoint != "" {
-		tel, err := telemetry.New(ctx, boot.OtelEndpoint)
-		if err != nil {
-			return nil, nil, fmt.Errorf("otel: %w", err)
-		}
-		closers = append(closers, func() {
-			sctx, cancel := context.WithTimeout(context.Background(), otelFlushFor)
-			defer cancel()
-			tel.Shutdown(sctx)
-		})
-		evSink = tel
-		log.Info("otel telemetry enabled", "endpoint", boot.OtelEndpoint)
+	// The sink is always wired, on the global providers: no-op unless
+	// telemetry.Setup found OTEL_* configuration.
+	tel, err := telemetry.New(otel.GetTracerProvider(), otel.GetMeterProvider())
+	if err != nil {
+		return nil, nil, fmt.Errorf("otel: %w", err)
 	}
+	// Ends the open spans; main's provider shutdown, after cleanup, flushes them.
+	closers = append(closers, func() { tel.Shutdown(context.Background()) })
+	var evSink engine.EventSink = tel
 	// Workspace-port publisher: exposed app ports bind the CPUI's own
 	// interface (dynamic host ports; loopback by default). Before Recover —
 	// recovery re-creates the exposures. Persist() attaches durable storage
@@ -323,6 +324,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	api.EnvCheck = checks
 	api.Egress = egressSvc
 	api.Ask = askSvc
+	api.Analytics = &analytics.Service{Store: store}
 	api.AuthSink = sink
 	api.Ports = portsSvc
 	api.Browser = browserSvc
@@ -379,6 +381,8 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	api.Trackers = resolver
 	api.Syncer = syncer
 	api.Pings = store // durable request/response projection (PLAN4 M15)
+	api.DB = store    // the readiness probe's database check
+	api.GrafanaURL = boot.GrafanaURL
 	api.Attachments = attachments
 	api.Skills = skillLib
 	api.SkillImports = &skillstore.Importer{Store: skillLib, Fetch: skillstore.Fetch}

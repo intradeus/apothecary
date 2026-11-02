@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"apothecary/internal/flow"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/resolution"
@@ -190,7 +191,7 @@ func (e *Engine) stopStageServices(ctx context.Context, res *resolution.Resoluti
 	pick func(sidecar.ServiceState) bool, record func(event.Payload) error) {
 	states, err := services.States(ctx, res.Envp, env)
 	if err != nil {
-		e.log.Warn("services: cannot read what runs to stop it", "run", runID, "err", err)
+		e.log.Warn("services: cannot read what runs to stop it", logs.RunID, runID, "err", err)
 		return
 	}
 	for _, st := range states {
@@ -202,7 +203,7 @@ func (e *Engine) stopStageServices(ctx context.Context, res *resolution.Resoluti
 			req = services.Request(svc, 0)
 		}
 		if _, err := services.Shim(ctx, res.Envp, env, "stop", nil, req, services.StopBudget); err != nil {
-			e.log.Warn("services: stop failed", "run", runID, "service", st.Name, "err", err)
+			e.log.Warn("services: stop failed", logs.RunID, runID, "service", st.Name, "err", err)
 			continue
 		}
 		_ = record(&event.ServiceStopped{Service: st.Name, By: event.ServiceByEngine, Reason: reason})

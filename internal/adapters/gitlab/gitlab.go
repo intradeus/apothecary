@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"apothecary/internal/platform/shell"
+	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/ports/trackerport"
 )
@@ -40,7 +41,7 @@ func New(cfg Config) *Adapter {
 	return &Adapter{
 		cfg:       Config{BaseURL: strings.TrimRight(cfg.BaseURL, "/"), Token: cfg.Token, ProjectID: cfg.ProjectID},
 		projectID: cfg.ProjectID,
-		http:      &http.Client{Timeout: 30 * time.Second, CheckRedirect: keepTokenHome},
+		http:      &http.Client{Transport: telemetry.HTTPTransport(http.DefaultTransport), Timeout: 30 * time.Second, CheckRedirect: keepTokenHome},
 	}
 }
 

@@ -148,7 +148,6 @@
 		<div class="pane">
 			<RunTable
 				runs={shown}
-				facts={tab === 'active'}
 				cols={projectFilter
 					? ['title', 'state', 'ws', 'stage', 'flow', 'mr', 'updated']
 					: ['title', 'state', 'ws', 'stage', 'workshop', 'flow', 'mr', 'updated']}

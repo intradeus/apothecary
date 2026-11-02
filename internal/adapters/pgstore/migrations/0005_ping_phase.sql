@@ -1,3 +1,4 @@
+-- rebuild: projections
 -- A ping says which phase it belongs to, and whether giving up on a debug
 -- decision ends that phase run rather than the run (flow v4: a reaction's
 -- dead end is one round over, never the run's end) — so the inbox can word

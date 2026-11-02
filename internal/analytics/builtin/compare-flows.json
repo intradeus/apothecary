@@ -1,0 +1,21 @@
+{
+  "id": "builtin-compare-flows",
+  "name": "Compare flows",
+  "filters": ["project_id", "flow_name", "ticket_change_type"],
+  "panels": [
+    {"id": "table", "title": "Flow versions, ranked", "viz": "table", "width": 12,
+     "query": {"grain": "runs", "group_by": ["flow_name", "flow_hash"],
+       "measures": [
+         {"field": "wall_ms", "agg": "median"}, {"field": "wall_ms", "agg": "p90"},
+         {"field": "cost_usd", "agg": "median"}, {"field": "attempts", "agg": "avg"},
+         {"field": "pings", "agg": "avg"}, {"field": "success_rate"}],
+       "score": {"scorecard": "builtin-balanced"}, "order": {"by": "score", "desc": true}}},
+    {"id": "wall", "title": "Median wall time by flow version", "viz": "bar", "width": 6,
+     "query": {"grain": "runs", "group_by": ["flow_hash"], "measures": [{"field": "wall_ms", "agg": "median"}]}},
+    {"id": "spread", "title": "Wall time spread by flow version", "viz": "box", "width": 6,
+     "query": {"grain": "runs", "group_by": ["flow_hash"],
+       "measures": [
+         {"field": "wall_ms", "agg": "p25"}, {"field": "wall_ms", "agg": "median"}, {"field": "wall_ms", "agg": "p75"},
+         {"field": "wall_ms", "agg": "min"}, {"field": "wall_ms", "agg": "max"}]}}
+  ]
+}

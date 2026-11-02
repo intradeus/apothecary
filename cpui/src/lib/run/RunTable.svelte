@@ -21,12 +21,10 @@
 	let {
 		runs,
 		cols = ['title', 'state', 'ws', 'stage', 'workshop', 'flow', 'mr', 'updated'],
-		/** Fetch per-run facts (attempt) for the stage column. Keep to short lists. */
-		facts = false,
 		/** Detail for a single workshop's list: the flow's @hash, the branch
 		 *  under the title, one !iid link per merge request. */
 		detail = false
-	}: { runs: Run[]; cols?: RunCol[]; facts?: boolean; detail?: boolean } = $props();
+	}: { runs: Run[]; cols?: RunCol[]; detail?: boolean } = $props();
 
 	const WIDTH: Record<RunCol, string> = {
 		title: 'minmax(0,1fr)',
@@ -85,7 +83,7 @@
 			>{/each}
 	</div>
 	{#each runs as r (r.id)}
-		{@const f = facts ? runFacts(r) : undefined}
+		{@const f = runFacts(r)}
 		<div class="r">
 			{#each cols as c (c)}
 				{#if c === 'title'}
@@ -117,7 +115,7 @@
 						{#if r.currentStage}
 							<StageFlask status={stageStatus(r.state)} size="sm" />
 							<span class="mono truncate">{r.currentStage}</span>
-							{#if f?.attempt}<span
+							{#if f.attempt}<span
 									class="faint att"
 									title={t('run.table.attempt', { n: f.attempt })}>#{f.attempt}</span
 								>{/if}

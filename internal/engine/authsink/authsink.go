@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"apothecary/internal/engine/redact"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
@@ -118,10 +119,10 @@ func (s *Sink) Push(ctx context.Context, credentialID string) {
 			continue
 		}
 		if err := t.sink.res.SeedAuth(ctx, t.sink.env, func(v string) { t.sink.redact.Add(v, "harness-auth") }); err != nil {
-			s.log().Warn("could not push a refreshed login into a live workspace", "run", t.runID, "env", t.sink.env, "credential", credentialID, "err", err)
+			s.log().Warn("could not push a refreshed login into a live workspace", logs.RunID, t.runID, "env", t.sink.env, "credential", credentialID, "err", err)
 			continue
 		}
-		s.log().Info("pushed a refreshed login into a live workspace", "run", t.runID, "env", t.sink.env, "credential", credentialID)
+		s.log().Info("pushed a refreshed login into a live workspace", logs.RunID, t.runID, "env", t.sink.env, "credential", credentialID)
 	}
 }
 

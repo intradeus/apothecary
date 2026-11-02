@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,12 +143,12 @@ func TestRunRegistryReportsAStartFailure(t *testing.T) {
 
 func TestRelayLinesPrefixesChildOutput(t *testing.T) {
 	var buf bytes.Buffer
-	prev := log.Writer()
-	log.SetOutput(&buf)
-	defer log.SetOutput(prev)
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
 	relayLines("mirror", strings.NewReader("one\ntwo\n"))
 	got := buf.String()
-	if !strings.Contains(got, "mirror: one") || !strings.Contains(got, "mirror: two") {
+	if !strings.Contains(got, `msg="mirror: one"`) || !strings.Contains(got, `msg="mirror: two"`) {
 		t.Fatalf("log = %q", got)
 	}
 }

@@ -1,0 +1,21 @@
+{
+  "id": "builtin-overview",
+  "name": "Overview",
+  "filters": ["project_id", "flow_name", "ticket_change_type"],
+  "panels": [
+    {"id": "runs", "title": "Runs", "viz": "number", "width": 3,
+     "query": {"grain": "runs", "measures": []}},
+    {"id": "success", "title": "Success rate", "viz": "number", "width": 3,
+     "query": {"grain": "runs", "measures": [{"field": "success_rate"}]}},
+    {"id": "wall", "title": "Median wall time", "viz": "number", "width": 3,
+     "query": {"grain": "runs", "measures": [{"field": "wall_ms", "agg": "median"}]}},
+    {"id": "spend", "title": "Spend", "viz": "number", "width": 3,
+     "query": {"grain": "runs", "measures": [{"field": "cost_usd", "agg": "sum"}]}},
+    {"id": "weekly-runs", "title": "Runs and success rate by week", "viz": "line", "width": 12,
+     "query": {"grain": "runs", "measures": [{"field": "success_rate"}], "time": {"bucket": "week"}}},
+    {"id": "weekly-spend", "title": "Spend by week", "viz": "line", "width": 6,
+     "query": {"grain": "runs", "measures": [{"field": "cost_usd", "agg": "sum"}], "time": {"bucket": "week"}}},
+    {"id": "weekly-unwanted", "title": "Unwanted pings per run by week", "viz": "line", "width": 6,
+     "query": {"grain": "runs", "measures": [{"field": "unwanted_pings_per_run"}], "time": {"bucket": "week"}}}
+  ]
+}

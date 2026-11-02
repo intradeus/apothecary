@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
@@ -152,12 +153,12 @@ func (s *Service) AutoExpose(ctx context.Context, runID string, envp envport.Env
 		}
 		pc, err := exposer.ExposePort(ctx, id, port)
 		if err != nil {
-			s.log().Warn("auto-expose failed", "run", runID, "port", port, "err", err)
+			s.log().Warn("auto-expose failed", logs.RunID, runID, "port", port, "err", err)
 			continue
 		}
 		url, err := s.Relay.Expose(runID, port, pc)
 		if err != nil {
-			s.log().Warn("auto-expose failed", "run", runID, "port", port, "err", err)
+			s.log().Warn("auto-expose failed", logs.RunID, runID, "port", port, "err", err)
 			continue
 		}
 		out = append(out, event.Link{Kind: "app", URL: url})
@@ -180,7 +181,7 @@ func (s *Service) ReopenAfterRebuild(ctx context.Context, runID string, envp env
 	s.AutoExpose(ctx, runID, envp, id)
 	if starter, ok := envp.(envport.EditorStarter); ok && editorWasOpen {
 		if serr := starter.StartEditor(ctx, id, envport.CodeServerPort, editor); serr != nil {
-			s.log().Warn("rebuild: restart editor", "run", runID, "err", serr)
+			s.log().Warn("rebuild: restart editor", logs.RunID, runID, "err", serr)
 		}
 	}
 }

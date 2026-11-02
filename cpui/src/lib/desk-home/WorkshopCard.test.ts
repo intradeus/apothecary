@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
@@ -59,24 +59,22 @@ describe('WorkshopCard, its runs', () => {
 		expect(screen.getByText('queued')).toBeInTheDocument();
 	});
 
-	it('shows elapsed time, and cost and attempt once the log is read', async () => {
-		vi.mocked(api.runs.get).mockResolvedValue({
-			events: [
-				{ type: 'stage_started', payload: { stage_id: 'build', iteration: 2 }, ts: '' },
-				{ type: 'stage_completed', payload: { usage: { cost_usd: 1.5 } }, ts: '' }
-			]
-		} as never);
+	it('shows elapsed time, cost and attempt from the run’s facts', () => {
 		stage({
 			id: 'r-facts',
 			currentStage: 'build',
-			createdAt: new Date(now - 90_000).toISOString()
+			createdAt: new Date(now - 90_000).toISOString(),
+			facts: {
+				...aRun().facts,
+				costUsd: 1.5,
+				open: { build: { iteration: 2, startedAt: '', outcome: 'running' } }
+			}
 		});
 
-		expect(screen.getByText('…')).toBeInTheDocument();
-		expect(await screen.findByText('build · attempt 2')).toBeInTheDocument();
-		await waitFor(() => expect(screen.queryByText('…')).not.toBeInTheDocument());
+		expect(screen.getByText('build · attempt 2')).toBeInTheDocument();
 		expect(screen.getByText('$1.500')).toBeInTheDocument();
 		expect(screen.getByText(/1m/)).toBeInTheDocument();
+		expect(api.runs.get).not.toHaveBeenCalled();
 	});
 
 	it('heads last finished runs only when there are some', () => {

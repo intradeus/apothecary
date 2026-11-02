@@ -7,6 +7,7 @@ import (
 
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/run/event"
@@ -88,18 +89,18 @@ func (x *exec) gateFiles(st *flow.Stage) (files []string, types map[string]strin
 		dir := flow.FilePath(in.Value)
 		held, err := x.dirFiles(dir)
 		if err != nil {
-			x.e.log.Warn("listing a gate's folder", "run", x.rs.RunID, "stage", st.ID, "path", dir, "err", err)
+			x.e.log.WarnContext(x.bg, "listing a gate's folder", logs.RunID, x.rs.RunID, logs.StageID, st.ID, "path", dir, "err", err)
 		}
 		for _, f := range held {
 			if f.Size > attachmentMaxBytes {
-				x.e.log.Warn("file too large to review", "run", x.rs.RunID, "stage", st.ID, "path", f.Path, "size", f.Size)
+				x.e.log.WarnContext(x.bg, "file too large to review", logs.RunID, x.rs.RunID, logs.StageID, st.ID, "path", f.Path, "size", f.Size)
 				continue
 			}
 			files = append(files, f.Path)
 		}
 	}
 	if len(files) > attachmentMaxFiles {
-		x.e.log.Warn("a gate shows more files than are reviewed", "run", x.rs.RunID, "stage", st.ID,
+		x.e.log.WarnContext(x.bg, "a gate shows more files than are reviewed", logs.RunID, x.rs.RunID, logs.StageID, st.ID,
 			"files", len(files), "shown", attachmentMaxFiles)
 		files = files[:attachmentMaxFiles]
 	}

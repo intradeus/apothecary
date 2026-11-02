@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/adapters/acpagent"
 	ompadapter "apothecary/internal/adapters/omp"
 	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/ports/envport"
 )
 
@@ -147,7 +148,7 @@ func fetchOmpCatalog(ctx context.Context, version string) (map[string]map[string
 	if err != nil {
 		return nil, err
 	}
-	resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
+	resp, err := (&http.Client{Transport: telemetry.HTTPTransport(http.DefaultTransport), Timeout: 60 * time.Second}).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("omp model catalog unreachable: %w", err)
 	}

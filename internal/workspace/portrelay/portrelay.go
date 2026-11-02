@@ -38,6 +38,7 @@ import (
 	"sync"
 	"time"
 
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/envport"
 )
 
@@ -239,7 +240,7 @@ func (m *Manager) Expose(runID string, port int, pc envport.PortConn) (string, e
 			ctx, cancel := context.WithTimeout(context.Background(), storeTimeout)
 			defer cancel()
 			if err := store.SaveExposedPort(ctx, runID, port, 0); err != nil {
-				slog.Warn("portrelay: persist exposure failed", "run", runID, "port", port, "err", err)
+				slog.Warn("portrelay: persist exposure failed", logs.RunID, runID, "port", port, "err", err)
 			}
 		}
 		return url, nil
@@ -270,7 +271,7 @@ func (m *Manager) Expose(runID string, port int, pc envport.PortConn) (string, e
 		ctx, cancel := context.WithTimeout(context.Background(), storeTimeout)
 		defer cancel()
 		if err := store.SaveExposedPort(ctx, runID, port, hostPort); err != nil {
-			slog.Warn("portrelay: persist exposure failed", "run", runID, "port", port, "err", err)
+			slog.Warn("portrelay: persist exposure failed", logs.RunID, runID, "port", port, "err", err)
 		}
 	}
 	return url, nil
@@ -350,7 +351,7 @@ func (m *Manager) CloseRun(runID string) {
 		ctx, cancel := context.WithTimeout(context.Background(), storeTimeout)
 		defer cancel()
 		if err := store.DeleteExposedPorts(ctx, runID); err != nil {
-			slog.Warn("portrelay: prune exposures failed", "run", runID, "err", err)
+			slog.Warn("portrelay: prune exposures failed", logs.RunID, runID, "err", err)
 		}
 	}
 }

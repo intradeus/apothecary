@@ -25,8 +25,12 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"apothecary/internal/account/auth"
 	"apothecary/internal/engine"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
@@ -68,6 +72,8 @@ const (
 	ScopeCredential
 	ScopeSkill
 	ScopeSkillset
+	ScopeDashboard
+	ScopeScorecard
 )
 
 // sessionCookie is the browser session's cookie.
@@ -113,6 +119,8 @@ func (s *Server) guard(rt Route) http.HandlerFunc {
 			return
 		}
 		ctx := auth.WithPrincipal(r.Context(), p)
+		trace.SpanFromContext(ctx).SetAttributes(attribute.String("apothecary.user_id", p.User.ID))
+		ctx = logs.With(ctx, logs.UserID, p.User.ID)
 		if rt.Scope != ScopeNone {
 			id := r.PathValue("id")
 			if rt.Scope == ScopePing {
@@ -156,6 +164,10 @@ func scopeName(sc Scope) string {
 		return "snapshot"
 	case ScopeEnvCheck:
 		return "envcheck"
+	case ScopeDashboard:
+		return "dashboard"
+	case ScopeScorecard:
+		return "scorecard"
 	}
 	return "resource"
 }
@@ -322,6 +334,8 @@ func (s *Server) ownerOf(ctx context.Context, sc Scope, id string) (string, erro
 			return "", err
 		}
 		return set.UserID, nil
+	case ScopeDashboard, ScopeScorecard:
+		return s.analyticsOwner(ctx, sc, id)
 	}
 	return "", fmt.Errorf("unknown scope %d", sc)
 }
@@ -789,7 +803,7 @@ func (s *Server) standDown(ctx context.Context, userID string) {
 		for _, v := range views {
 			if v.UserID == userID && !v.State.Terminal() {
 				if err := s.Runs.Abort(v.RunID); err != nil {
-					s.Log.Warn("disable user: abort run", "user", userID, "run", v.RunID, "err", err)
+					s.Log.Warn("disable user: abort run", logs.UserID, userID, logs.RunID, v.RunID, "err", err)
 				}
 			}
 		}
@@ -812,7 +826,7 @@ func (s *Server) standDown(ctx context.Context, userID string) {
 			}
 			a.Enabled = false
 			if _, err := s.Conf.UpdateAutomation(ctx, a.ID, a); err != nil {
-				s.Log.Warn("disable user: automation", "user", userID, "automation", a.ID, "err", err)
+				s.Log.Warn("disable user: automation", logs.UserID, userID, "automation", a.ID, "err", err)
 			}
 		}
 	}

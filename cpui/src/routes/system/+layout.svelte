@@ -39,7 +39,7 @@
 		section('skills', I.skills),
 		section('channels', I.channels),
 		section('account', I.members),
-		...(session.admin ? [section('users', I.members)] : []),
+		...(session.admin ? [section('users', I.members), section('observability', I.info)] : []),
 		section('limits', I.limits),
 		section('reaper', I.reaper),
 		section('storage', I.storage)

@@ -84,6 +84,21 @@ export interface Run {
 	envDirty: boolean;
 	createdAt: string;
 	updatedAt: string;
+	/** What the run has spent and how its time went, folded from its events. */
+	facts: RunFacts;
+}
+
+/** The run's analytics accumulator as the lists need it. */
+export interface RunFacts {
+	costUsd: number;
+	turns: number;
+	/** Queued + provisioning + active + waiting on a human + held + paused. */
+	wallMs: number;
+	/** Stage attempts started. */
+	attempts: number;
+	endedAt?: string;
+	/** Stage id → its attempt that has not ended yet. */
+	open: Record<string, { iteration: number; startedAt: string; outcome: string }>;
 }
 
 /** A take-over as the run page shows it: who holds the agent's session,

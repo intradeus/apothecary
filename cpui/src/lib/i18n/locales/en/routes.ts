@@ -137,6 +137,11 @@ export default {
 	'page.system.storage.title': 'Storage',
 	'page.system.storage.accent': '& retention',
 	'page.system.storage.sub': 'How long uploads and snapshot content are kept.',
+	'page.system.observability.label': 'Observability',
+	'page.system.observability.title': 'Observability',
+	'page.system.observability.accent': 'of the instance',
+	'page.system.observability.sub':
+		'Requests, the database, the scheduler and LLM spend — in the operator’s Grafana.',
 	'page.newTicket.title': 'New ticket',
 	'page.newTicket.crumb': 'New',
 	'page.newTicket.accent': 'ticket',
@@ -272,6 +277,13 @@ export default {
 	'page.storage.snapsLabel': 'Expire snapshot content after',
 	'page.storage.snapsHelp':
 		"Snapshots are what a run's Record keeps after its workspace is gone. When content expires, the record (name, hash, size) is kept and only the bytes are freed.",
+	'page.observability.head': 'Platform dashboards',
+	'page.observability.headSub': 'traces, metrics and logs',
+	'page.observability.open': 'Open Grafana',
+	'page.observability.unsetTitle': 'Grafana is not configured',
+	'page.observability.unsetText':
+		'Set APOTHECARY_GRAFANA_URL on the engine to link the platform dashboards here.',
+	'page.observability.loadError': 'Couldn’t load the observability settings',
 	'page.users.count_one': '{count} account',
 	'page.users.count_other': '{count} accounts',
 	'page.users.name': 'Name',

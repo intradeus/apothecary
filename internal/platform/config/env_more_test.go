@@ -12,7 +12,8 @@ func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{
 		"APOTHECARY_LISTEN", "APOTHECARY_MASTER_KEY", "APOTHECARY_RUNS_DIR", "APOTHECARY_CPUI_DIR",
-		"APOTHECARY_OTEL_ENDPOINT", "APOTHECARY_ARTIFACT_MAX_BYTES", "APOTHECARY_UPLOAD_MAX_BYTES",
+		"APOTHECARY_LOG_FORMAT", "APOTHECARY_LOG_LEVEL", "APOTHECARY_DEBUG_ADDR", "APOTHECARY_GRAFANA_URL",
+		"APOTHECARY_ARTIFACT_MAX_BYTES", "APOTHECARY_UPLOAD_MAX_BYTES",
 		"APOTHECARY_ARTIFACT_MIME_ALLOW", "APOTHECARY_UPLOAD_MIME_ALLOW", "APOTHECARY_SNAPSHOT_MAX_BYTES",
 		"APOTHECARY_PORT_AUTOEXPOSE", "APOTHECARY_SANDBOX_RUNTIME", "APOTHECARY_K8S_NAMESPACE",
 		"APOTHECARY_K8S_ENGINE_NAMESPACE", "APOTHECARY_K8S_ENGINE_URL", "APOTHECARY_K8S_KUBECONFIG",
@@ -25,6 +26,44 @@ func clearEnv(t *testing.T) {
 		t.Setenv(name, "")
 	}
 	t.Setenv("APOTHECARY_POSTGRES_DSN", "postgres://x@localhost/db")
+}
+
+// Logging and the debug server default quiet and safe; a bad value refuses
+// to boot naming the variable, and pprof never binds beyond loopback.
+func TestObservabilityKnobs(t *testing.T) {
+	clearEnv(t)
+	b, err := FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.LogFormat != "text" || b.LogLevel != "info" || b.DebugAddr != "" || b.GrafanaURL != "" {
+		t.Errorf("defaults = %q %q %q %q", b.LogFormat, b.LogLevel, b.DebugAddr, b.GrafanaURL)
+	}
+	for _, c := range []struct{ name, val, err string }{
+		{"APOTHECARY_LOG_FORMAT", "json", ""},
+		{"APOTHECARY_LOG_FORMAT", "xml", `config: APOTHECARY_LOG_FORMAT must be text or json, got "xml"`},
+		{"APOTHECARY_LOG_LEVEL", "debug", ""},
+		{"APOTHECARY_LOG_LEVEL", "loud", `config: APOTHECARY_LOG_LEVEL must be debug, info, warn or error, got "loud"`},
+		{"APOTHECARY_DEBUG_ADDR", "127.0.0.1:6060", ""},
+		{"APOTHECARY_DEBUG_ADDR", "localhost:6060", ""},
+		{"APOTHECARY_DEBUG_ADDR", "[::1]:6060", ""},
+		{"APOTHECARY_DEBUG_ADDR", "0.0.0.0:6060", `config: APOTHECARY_DEBUG_ADDR must be a loopback host:port, got "0.0.0.0:6060"`},
+		{"APOTHECARY_DEBUG_ADDR", ":6060", `config: APOTHECARY_DEBUG_ADDR must be a loopback host:port, got ":6060"`},
+		{"APOTHECARY_DEBUG_ADDR", "127.0.0.1", `config: APOTHECARY_DEBUG_ADDR must be a loopback host:port, got "127.0.0.1"`},
+		{"APOTHECARY_GRAFANA_URL", "https://grafana.example", ""},
+	} {
+		t.Run(c.name+"="+c.val, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv(c.name, c.val)
+			_, err := FromEnv()
+			if c.err == "" && err != nil {
+				t.Fatal(err)
+			}
+			if c.err != "" && (err == nil || err.Error() != c.err) {
+				t.Fatalf("err = %v, want %s", err, c.err)
+			}
+		})
+	}
 }
 
 func TestUploadLimits(t *testing.T) {

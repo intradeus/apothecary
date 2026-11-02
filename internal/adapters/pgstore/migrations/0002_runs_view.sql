@@ -1,3 +1,4 @@
+-- rebuild: projections
 -- The runs projection grew three columns after the chain was squashed into
 -- 0001 (88171e3, "projection reads"): the whole run.View as JSON next to the
 -- typed columns SQL filters on, plus the two view fields the JSON omits

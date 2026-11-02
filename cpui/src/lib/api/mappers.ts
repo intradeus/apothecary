@@ -33,6 +33,23 @@ import type {
 	SkillsetRefresh,
 	SkillsetVersion
 } from '$lib/domain';
+import type {
+	Agg,
+	AnalyticsFieldType,
+	AnalyticsQuery,
+	AnalyticsResult,
+	AnalyticsValue,
+	Catalog,
+	CatalogField,
+	Dashboard,
+	DrillRun,
+	FilterOp,
+	Grain,
+	MeasureRef,
+	Panel,
+	Scorecard
+} from '$lib/domain';
+import { BUCKETS, DIRECTIONS, PANEL_WIDTHS, VIZES } from '$lib/domain';
 import { normalizeDoc, PHASE_KINDS, OPERATES_ON, type OperatesOn } from '$lib/domain/flowdoc';
 import {
 	answerKindOf,
@@ -97,6 +114,7 @@ import type {
 	Repo,
 	ResourceSample,
 	Run,
+	RunFacts,
 	RunDetail,
 	RunEvent,
 	RunFiles,
@@ -260,7 +278,25 @@ export function toRun(w: Wire.RunView): Run {
 		envStatus: w.env_status as Run['envStatus'],
 		envDirty: w.env_dirty ?? false,
 		createdAt: w.created_at,
-		updatedAt: w.updated_at
+		updatedAt: w.updated_at,
+		facts: toRunFacts(w.facts)
+	};
+}
+
+export function toRunFacts(w: Wire.Facts): RunFacts {
+	return {
+		costUsd: w.cost_usd,
+		turns: w.turns,
+		wallMs:
+			w.queued_ms + w.provisioning_ms + w.active_ms + w.waiting_human_ms + w.held_ms + w.paused_ms,
+		attempts: w.attempts,
+		endedAt: w.ended_at || undefined,
+		open: Object.fromEntries(
+			Object.entries(w.open ?? {}).map(([id, a]) => [
+				id,
+				{ iteration: a.iteration, startedAt: a.started_at, outcome: a.outcome }
+			])
+		)
 	};
 }
 
@@ -1468,4 +1504,153 @@ export function toSkillImportResult(w: Wire.ImportResult): SkillImportResult {
 
 export function toSkillsetRefresh(w: Wire.SkillsetRefreshResult): SkillsetRefresh {
 	return { skillset: toSkillset(w.skillset), warnings: w.warnings ?? [] };
+}
+
+// --- analytics ---------------------------------------------------------------
+
+const GRAINS: Grain[] = ['runs', 'attempts', 'skillsets', 'pings', 'tickets'];
+const FIELD_TYPES: AnalyticsFieldType[] = [
+	'text',
+	'bool',
+	'time',
+	'count',
+	'usd',
+	'ms',
+	'tokens',
+	'ratio'
+];
+const AGGS: Agg[] = ['sum', 'avg', 'min', 'max', 'median', 'p25', 'p75', 'p90'];
+const FILTER_OPS: FilterOp[] = ['eq', 'neq', 'in', 'not_in'];
+
+/** An agg the engine names that this UI does not know reads as none: the
+ *  measure still shows, by its catalog label. */
+const asAgg = (v: string | undefined): Agg | undefined =>
+	AGGS.includes(v as Agg) ? (v as Agg) : undefined;
+
+export function toCatalogField(w: Wire.CatalogField): CatalogField {
+	return {
+		id: w.id,
+		label: w.label,
+		type: oneOf(FIELD_TYPES, w.type, 'text'),
+		aggs: list(w.aggs).flatMap((a) => asAgg(a) ?? [])
+	};
+}
+
+export function toCatalog(w: Wire.AnalyticsCatalog): Catalog {
+	return {
+		grains: list(w.grains).map((g) => ({
+			id: oneOf(GRAINS, g.id, 'runs'),
+			label: g.label,
+			timeField: g.time_field,
+			dimensions: list(g.dimensions).map(toCatalogField),
+			measures: list(g.measures).map(toCatalogField),
+			derived: list(g.derived).map(toCatalogField)
+		}))
+	};
+}
+
+export function toMeasureRef(w: Wire.AnalyticsMeasure): MeasureRef {
+	const agg = asAgg(w.agg);
+	return agg ? { field: w.field, agg } : { field: w.field };
+}
+
+export function toAnalyticsQuery(w: Wire.AnalyticsQuery): AnalyticsQuery {
+	const bucket = BUCKETS.find((b) => b === w.time?.bucket);
+	return {
+		grain: oneOf(GRAINS, w.grain, 'runs'),
+		measures: list(w.measures).map(toMeasureRef),
+		groupBy: list(w.group_by),
+		filters: list(w.filters).map((f) => ({
+			field: f.field,
+			op: oneOf(FILTER_OPS, f.op, 'eq'),
+			values: list(f.values)
+		})),
+		time: {
+			...(w.time?.from ? { from: w.time.from } : {}),
+			...(w.time?.to ? { to: w.time.to } : {}),
+			...(bucket ? { bucket } : {})
+		},
+		...(w.order ? { order: { by: w.order.by, desc: w.order.desc ?? false } } : {}),
+		...(w.limit ? { limit: w.limit } : {}),
+		...(w.score
+			? {
+					score: {
+						scorecard: w.score.scorecard,
+						...(w.score.baseline?.length ? { baseline: w.score.baseline } : {})
+					}
+				}
+			: {})
+	};
+}
+
+export function toAnalyticsResult(w: Wire.AnalyticsResult): AnalyticsResult {
+	return {
+		dims: list(w.dims).map(toCatalogField),
+		measures: list(w.measures).map(toCatalogField),
+		rows: list(w.rows).map((r) => ({
+			dims: list(r.dims),
+			values: list(r.values),
+			n: r.n,
+			small: r.small,
+			...(r.score != null ? { score: r.score } : {})
+		})),
+		labels: Object.fromEntries(Object.entries(w.labels ?? {}).map(([k, v]) => [k, v ?? {}])),
+		truncated: w.truncated
+	};
+}
+
+export function toPanel(w: Wire.Panel): Panel {
+	return {
+		id: w.id,
+		title: w.title,
+		query: toAnalyticsQuery(w.query),
+		viz: oneOf(VIZES, w.viz, 'table'),
+		width: PANEL_WIDTHS.find((n) => n === w.width) ?? 12
+	};
+}
+
+export function toDashboard(w: Wire.Dashboard): Dashboard {
+	return {
+		id: w.id,
+		userId: w.user_id || undefined,
+		name: w.name,
+		builtin: w.builtin,
+		filters: list(w.filters),
+		panels: list(w.panels).map(toPanel),
+		createdAt: w.created_at,
+		updatedAt: w.updated_at
+	};
+}
+
+export function toScorecard(w: Wire.Scorecard): Scorecard {
+	return {
+		id: w.id,
+		userId: w.user_id || undefined,
+		name: w.name,
+		builtin: w.builtin,
+		terms: list(w.terms).map((t) => ({
+			measure: toMeasureRef(t.measure),
+			direction: oneOf(DIRECTIONS, t.direction, 'lower'),
+			weight: t.weight
+		})),
+		createdAt: w.created_at,
+		updatedAt: w.updated_at
+	};
+}
+
+export function toDrillRun(w: Wire.DrillRun): DrillRun {
+	return {
+		runId: w.run_id,
+		title: w.title,
+		flowName: w.flow_name,
+		flowHash: w.flow_hash,
+		state: oneOf(RUN_STATES, w.state, 'pending'),
+		createdAt: w.created_at,
+		wallMs: w.wall_ms,
+		costUsd: w.cost_usd
+	};
+}
+
+export function toAnalyticsValue(w: Wire.AnalyticsValue): AnalyticsValue {
+	return { value: w.value, label: w.label || w.value };
 }

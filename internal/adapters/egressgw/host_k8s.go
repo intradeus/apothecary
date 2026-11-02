@@ -17,6 +17,7 @@ import (
 
 	"apothecary/internal/adapters/egressgw/policyfile"
 	"apothecary/internal/adapters/kube"
+	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/ports/envport"
 )
 
@@ -64,7 +65,7 @@ func (h *K8sHost) httpClient() *http.Client {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.client == nil {
-		h.client = &http.Client{Timeout: 3 * time.Second}
+		h.client = &http.Client{Transport: telemetry.HTTPTransport(http.DefaultTransport), Timeout: 3 * time.Second}
 	}
 	if h.fwd == nil {
 		h.fwd = map[string]*kube.Forward{}

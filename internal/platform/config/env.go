@@ -20,7 +20,18 @@ type Boot struct {
 	MasterKeyRaw string // APOTHECARY_MASTER_KEY, required for serve
 	RunsDir      string // APOTHECARY_RUNS_DIR, default /var/lib/apothecary/runs
 	CPUIDir      string // APOTHECARY_CPUI_DIR, default "" (API only)
-	OtelEndpoint string // APOTHECARY_OTEL_ENDPOINT, default "" (disabled)
+	// LogFormat is the stderr log encoding (APOTHECARY_LOG_FORMAT, text|json,
+	// default text); LogLevel its threshold (APOTHECARY_LOG_LEVEL,
+	// debug|info|warn|error, default info). Telemetry export itself is
+	// configured by the standard OTEL_* variables, not here.
+	LogFormat string
+	LogLevel  string
+	// DebugAddr serves net/http/pprof when set (APOTHECARY_DEBUG_ADDR,
+	// loopback host:port only); default "" = off.
+	DebugAddr string
+	// GrafanaURL is the admin-facing link to the operator's Grafana
+	// (APOTHECARY_GRAFANA_URL); default "" = not configured.
+	GrafanaURL string
 	// UploadMaxBytes caps each uploaded attachment (documents/images given to
 	// a ticket, run goal or ping answer). APOTHECARY_UPLOAD_MAX_BYTES,
 	// default 25 MiB. (APOTHECARY_ARTIFACT_MAX_BYTES is read as a legacy
@@ -193,7 +204,6 @@ func FromEnv() (*Boot, error) {
 		MasterKeyRaw: os.Getenv("APOTHECARY_MASTER_KEY"),
 		RunsDir:      getenvDefault("APOTHECARY_RUNS_DIR", "/var/lib/apothecary/runs"),
 		CPUIDir:      os.Getenv("APOTHECARY_CPUI_DIR"),
-		OtelEndpoint: os.Getenv("APOTHECARY_OTEL_ENDPOINT"),
 	}
 	b.UploadMaxBytes = DefaultUploadMaxBytes
 	for _, key := range []string{"APOTHECARY_ARTIFACT_MAX_BYTES", "APOTHECARY_UPLOAD_MAX_BYTES"} {
@@ -256,6 +266,21 @@ func FromEnv() (*Boot, error) {
 	if _, err := b.SSHAdvertiseAddr(); err != nil {
 		return nil, err
 	}
+	b.LogFormat = getenvDefault("APOTHECARY_LOG_FORMAT", "text")
+	if b.LogFormat != "text" && b.LogFormat != "json" {
+		return nil, fmt.Errorf("config: APOTHECARY_LOG_FORMAT must be text or json, got %q", b.LogFormat)
+	}
+	b.LogLevel = getenvDefault("APOTHECARY_LOG_LEVEL", "info")
+	switch b.LogLevel {
+	case "debug", "info", "warn", "error":
+	default:
+		return nil, fmt.Errorf("config: APOTHECARY_LOG_LEVEL must be debug, info, warn or error, got %q", b.LogLevel)
+	}
+	b.DebugAddr = strings.TrimSpace(os.Getenv("APOTHECARY_DEBUG_ADDR"))
+	if b.DebugAddr != "" && !loopbackHostPort(b.DebugAddr) {
+		return nil, fmt.Errorf("config: APOTHECARY_DEBUG_ADDR must be a loopback host:port, got %q", b.DebugAddr)
+	}
+	b.GrafanaURL = strings.TrimSpace(os.Getenv("APOTHECARY_GRAFANA_URL"))
 	if b.AppsDomain != "" && b.PublicURL == "" {
 		return nil, fmt.Errorf("config: APOTHECARY_APPS_DOMAIN needs APOTHECARY_PUBLIC_URL (the UI's address, where app hosts send browsers to sign in)")
 	}
@@ -263,6 +288,20 @@ func FromEnv() (*Boot, error) {
 		return nil, fmt.Errorf("config: APOTHECARY_POSTGRES_DSN is required")
 	}
 	return b, nil
+}
+
+// loopbackHostPort reports whether addr is host:port on a loopback host: the
+// profiling endpoints serve heap contents and must never face a network.
+func loopbackHostPort(addr string) bool {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func splitComma(s string) []string {

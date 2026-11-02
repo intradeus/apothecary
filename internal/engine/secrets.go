@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
@@ -49,8 +50,8 @@ func (e *Engine) ScrubWorkspaceSecrets(ctx context.Context, v run.View) {
 	}
 	res, err := e.resolver.Resolve(ctx, v.ProjectID)
 	if err != nil {
-		e.log.Warn("workspace secret scrub skipped: project unresolvable",
-			"run", v.RunID, "env", v.EnvID, "err", err)
+		e.log.WarnContext(ctx, "workspace secret scrub skipped: project unresolvable",
+			logs.RunID, v.RunID, "env", v.EnvID, "err", err)
 		return
 	}
 	defer res.Close()
@@ -61,8 +62,8 @@ func (e *Engine) ScrubWorkspaceSecrets(ctx context.Context, v run.View) {
 	for _, kind := range append([]string{res.HarnessKind}, res.HarnessKinds...) {
 		if st, ok := res.RunnerFor(kind).(agentport.AgentStopper); ok {
 			if err := st.StopAgent(ctx, id); err != nil {
-				e.log.Warn("could not stop the workspace agent of a finished run",
-					"run", v.RunID, "env", v.EnvID, "err", err)
+				e.log.WarnContext(ctx, "could not stop the workspace agent of a finished run",
+					logs.RunID, v.RunID, "env", v.EnvID, "err", err)
 			}
 			break // one sidecar per workspace: one stop covers every harness
 		}
@@ -89,13 +90,13 @@ func (e *Engine) ScrubWorkspaceSecrets(ctx context.Context, v run.View) {
 	})
 	switch {
 	case err != nil:
-		e.log.Warn("workspace secret scrub failed; credentials remain in the workspace",
-			"run", v.RunID, "env", v.EnvID, "err", err)
+		e.log.WarnContext(ctx, "workspace secret scrub failed; credentials remain in the workspace",
+			logs.RunID, v.RunID, "env", v.EnvID, "err", err)
 	case out.ExitCode != 0:
-		e.log.Warn("workspace secret scrub failed; credentials remain in the workspace",
-			"run", v.RunID, "env", v.EnvID, "exit", out.ExitCode, "output", shell.Tail(out.Output, 512))
+		e.log.WarnContext(ctx, "workspace secret scrub failed; credentials remain in the workspace",
+			logs.RunID, v.RunID, "env", v.EnvID, "exit", out.ExitCode, "output", shell.Tail(out.Output, 512))
 	default:
-		e.log.Info("scrubbed workspace credentials of finished run",
-			"run", v.RunID, "env", v.EnvID, "files", len(quoted))
+		e.log.InfoContext(ctx, "scrubbed workspace credentials of finished run",
+			logs.RunID, v.RunID, "env", v.EnvID, "files", len(quoted))
 	}
 }

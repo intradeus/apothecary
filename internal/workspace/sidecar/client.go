@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"apothecary/internal/platform/telemetry"
 )
 
 // Dialer opens one connection to the sidecar (envport.PortConn satisfies it).
@@ -37,13 +39,14 @@ type Client struct {
 }
 
 func New(d Dialer) *Client {
-	tr := &http.Transport{
+	var tr http.RoundTripper = &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return d.Dial(ctx)
 		},
 		MaxIdleConns:    4,
 		IdleConnTimeout: 30 * time.Second,
 	}
+	tr = telemetry.HTTPTransport(tr)
 	return &Client{
 		d:      d,
 		http:   &http.Client{Transport: tr, Timeout: 5 * time.Minute},

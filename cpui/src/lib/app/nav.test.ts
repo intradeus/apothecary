@@ -5,7 +5,14 @@ const item = (id: string) => NAV.find((n) => n.id === id)!;
 
 describe('NAV', () => {
 	it('labels each destination from the catalogue', () => {
-		expect(NAV.map((n) => n.label)).toEqual(['Desk', 'Inbox', 'Runs', 'Tickets', 'System']);
+		expect(NAV.map((n) => n.label)).toEqual([
+			'Desk',
+			'Inbox',
+			'Runs',
+			'Tickets',
+			'Analytics',
+			'System'
+		]);
 	});
 
 	it('links each destination', () => {
@@ -14,12 +21,13 @@ describe('NAV', () => {
 			'/inbox',
 			'/runs',
 			'/tickets',
+			'/analytics',
 			'/system/integrations'
 		]);
 	});
 
-	it('leaves System off the mobile tab bar', () => {
-		expect(NAV.filter((n) => !n.mobile).map((n) => n.id)).toEqual(['system']);
+	it('leaves Analytics and System off the mobile tab bar', () => {
+		expect(NAV.filter((n) => !n.mobile).map((n) => n.id)).toEqual(['analytics', 'system']);
 	});
 
 	it('matches the desk at the root only', () => {
@@ -31,13 +39,14 @@ describe('NAV', () => {
 		['inbox', '/inbox/01PING'],
 		['runs', '/runs/01RUN'],
 		['tickets', '/tickets/new'],
+		['analytics', '/analytics/scorecards'],
 		['system', '/system/skills/abc']
 	])('keeps %s lit on the pages inside it', (id, path) => {
 		expect(item(id).match(path)).toBe(true);
 	});
 
 	it('has exactly one destination for a page inside the app', () => {
-		for (const path of ['/', '/inbox', '/runs/1', '/tickets/1', '/system/limits'])
+		for (const path of ['/', '/inbox', '/runs/1', '/tickets/1', '/analytics/d1', '/system/limits'])
 			expect(NAV.filter((n) => n.match(path))).toHaveLength(1);
 	});
 
@@ -51,7 +60,8 @@ describe('navByChord', () => {
 		['d', 'desk'],
 		['i', 'inbox'],
 		['r', 'runs'],
-		['t', 'tickets']
+		['t', 'tickets'],
+		['a', 'analytics']
 	])('sends G then %s to %s', (key, id) => {
 		expect(navByChord(key)?.id).toBe(id);
 	});

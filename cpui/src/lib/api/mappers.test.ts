@@ -17,6 +17,22 @@ const aRunView = (over: object = {}) =>
 		flow_hash: 'abc',
 		created_at: AT,
 		updated_at: AT,
+		facts: aFacts(),
+		...over
+	});
+
+const aFacts = (over: object = {}) =>
+	wire<Wire.Facts>({
+		last_ts: AT,
+		queued_ms: 1,
+		provisioning_ms: 2,
+		active_ms: 30,
+		waiting_human_ms: 400,
+		held_ms: 5000,
+		paused_ms: 60000,
+		cost_usd: 0.5,
+		turns: 7,
+		attempts: 2,
 		...over
 	});
 
@@ -120,6 +136,31 @@ describe('runs', () => {
 		'archived'
 	])('keeps the state %s', (state) => {
 		expect(map.toRun(aRunView({ state })).state).toBe(state);
+	});
+
+	it('sums the six time buckets into wall time and keeps the open attempts', () => {
+		const run = map.toRun(
+			aRunView({
+				facts: aFacts({
+					ended_at: AT,
+					open: {
+						build: { iteration: 3, started_at: AT, outcome: 'paused', stage_id: 'build' }
+					}
+				})
+			})
+		);
+		expect(run.facts).toEqual({
+			costUsd: 0.5,
+			turns: 7,
+			wallMs: 65433,
+			attempts: 2,
+			endedAt: AT,
+			open: { build: { iteration: 3, startedAt: AT, outcome: 'paused' } }
+		});
+	});
+
+	it('reads a run with no open attempt and no end', () => {
+		expect(map.toRun(aRunView()).facts).toMatchObject({ endedAt: undefined, open: {} });
 	});
 
 	it('falls back visibly on a state it does not know', () => {
@@ -1746,5 +1787,201 @@ describe('skills', () => {
 		expect(
 			map.toSkillsetRefresh(wire<Wire.SkillsetRefreshResult>({ skillset: { id: 'x' } }))
 		).toMatchObject({ skillset: { id: 'x' }, warnings: [] });
+	});
+});
+
+describe('analytics', () => {
+	it('reads the catalog, dropping aggs it does not know and narrowing types', () => {
+		const c = map.toCatalog(
+			wire<Wire.AnalyticsCatalog>({
+				grains: [
+					{
+						id: 'attempts',
+						label: 'Stage attempts',
+						time_field: 'started_at',
+						dimensions: [{ id: 'model', label: 'Model', type: 'text' }],
+						measures: [
+							{ id: 'cost_usd', label: 'Cost', type: 'usd', aggs: ['sum', 'p99', 'median'] }
+						],
+						derived: null
+					},
+					{ id: 'galaxies', label: '?', time_field: 'x', dimensions: null, measures: null }
+				]
+			})
+		);
+		expect(c.grains[0]).toEqual({
+			id: 'attempts',
+			label: 'Stage attempts',
+			timeField: 'started_at',
+			dimensions: [{ id: 'model', label: 'Model', type: 'text', aggs: [] }],
+			measures: [{ id: 'cost_usd', label: 'Cost', type: 'usd', aggs: ['sum', 'median'] }],
+			derived: []
+		});
+		expect(c.grains[1]).toMatchObject({ id: 'runs', dimensions: [], measures: [], derived: [] });
+		expect(
+			map.toCatalogField(wire<Wire.CatalogField>({ id: 'x', label: 'X', type: 'furlongs' })).type
+		).toBe('text');
+	});
+
+	it('reads a result: null values stay null, null label maps become empty', () => {
+		const r = map.toAnalyticsResult(
+			wire<Wire.AnalyticsResult>({
+				dims: [{ id: 'bucket', label: 'Week', type: 'time' }],
+				measures: [{ id: 'cost_usd', label: 'Cost (p90)', type: 'usd' }],
+				rows: [
+					{ dims: ['2026-10-26'], values: [1.5], n: 7, small: false, score: 80 },
+					{ dims: null, values: [null], n: 2, small: true, score: null }
+				],
+				labels: { project_id: { p1: 'Shop' }, flow_hash: null },
+				truncated: true
+			})
+		);
+		expect(r.rows).toEqual([
+			{ dims: ['2026-10-26'], values: [1.5], n: 7, small: false, score: 80 },
+			{ dims: [], values: [null], n: 2, small: true }
+		]);
+		expect(r.labels).toEqual({ project_id: { p1: 'Shop' }, flow_hash: {} });
+		expect(r.truncated).toBe(true);
+		expect(
+			map.toAnalyticsResult(
+				wire<Wire.AnalyticsResult>({ dims: null, measures: null, rows: null, labels: null })
+			)
+		).toMatchObject({ dims: [], measures: [], rows: [], labels: {} });
+	});
+
+	it('reads a dashboard’s panels, falling back visibly on an unknown viz, width or grain', () => {
+		const d = map.toDashboard(
+			wire<Wire.Dashboard>({
+				id: 'builtin-overview',
+				user_id: '',
+				name: 'Overview',
+				builtin: true,
+				filters: ['flow_name'],
+				created_at: AT,
+				updated_at: AT,
+				panels: [
+					{
+						id: 'p1',
+						title: 'Weekly cost',
+						viz: 'line',
+						width: 6,
+						query: {
+							grain: 'runs',
+							measures: [{ field: 'cost_usd', agg: 'sum' }],
+							group_by: ['flow_name'],
+							filters: [{ field: 'state', op: 'in', values: ['completed'] }],
+							time: { bucket: 'week', from: AT, to: AT },
+							order: { by: 'm0' },
+							limit: 20,
+							score: { scorecard: 'builtin-cheapest', baseline: ['a'] }
+						}
+					},
+					{
+						id: 'p2',
+						title: 'Odd',
+						viz: 'pie',
+						width: 5,
+						query: {
+							grain: 'galaxies',
+							measures: null,
+							filters: [{ field: 'f', op: 'like', values: null }],
+							time: { bucket: 'fortnight' },
+							score: { scorecard: 's', baseline: [] }
+						}
+					}
+				]
+			})
+		);
+		expect(d).toMatchObject({ userId: undefined, builtin: true, filters: ['flow_name'] });
+		expect(d.panels[0]).toEqual({
+			id: 'p1',
+			title: 'Weekly cost',
+			viz: 'line',
+			width: 6,
+			query: {
+				grain: 'runs',
+				measures: [{ field: 'cost_usd', agg: 'sum' }],
+				groupBy: ['flow_name'],
+				filters: [{ field: 'state', op: 'in', values: ['completed'] }],
+				time: { bucket: 'week', from: AT, to: AT },
+				order: { by: 'm0', desc: false },
+				limit: 20,
+				score: { scorecard: 'builtin-cheapest', baseline: ['a'] }
+			}
+		});
+		expect(d.panels[1]).toEqual({
+			id: 'p2',
+			title: 'Odd',
+			viz: 'table',
+			width: 12,
+			query: {
+				grain: 'runs',
+				measures: [],
+				groupBy: [],
+				filters: [{ field: 'f', op: 'eq', values: [] }],
+				time: {},
+				score: { scorecard: 's' }
+			}
+		});
+		expect(
+			map.toDashboard(wire<Wire.Dashboard>({ id: 'd', user_id: 'u', filters: null, panels: null }))
+		).toMatchObject({ userId: 'u', filters: [], panels: [] });
+	});
+
+	it('reads a scorecard, an unknown direction as lower', () => {
+		expect(
+			map.toScorecard(
+				wire<Wire.Scorecard>({
+					id: 's',
+					user_id: 'u',
+					name: 'Cheap',
+					builtin: false,
+					created_at: AT,
+					updated_at: AT,
+					terms: [
+						{ measure: { field: 'cost_usd', agg: 'median' }, direction: 'higher', weight: 1 },
+						{ measure: { field: 'wall_ms', agg: 'fastest' }, direction: 'sideways', weight: 2 }
+					]
+				})
+			)
+		).toEqual({
+			id: 's',
+			userId: 'u',
+			name: 'Cheap',
+			builtin: false,
+			createdAt: AT,
+			updatedAt: AT,
+			terms: [
+				{ measure: { field: 'cost_usd', agg: 'median' }, direction: 'higher', weight: 1 },
+				{ measure: { field: 'wall_ms' }, direction: 'lower', weight: 2 }
+			]
+		});
+	});
+
+	it('reads a drilled run and a dimension value, a missing label as the value', () => {
+		expect(
+			map.toDrillRun(
+				wire<Wire.DrillRun>({
+					run_id: 'r',
+					title: 'T',
+					flow_name: 'f',
+					flow_hash: 'h',
+					state: 'completed',
+					created_at: AT,
+					wall_ms: 60000,
+					cost_usd: 0.25
+				})
+			)
+		).toEqual({
+			runId: 'r',
+			title: 'T',
+			flowName: 'f',
+			flowHash: 'h',
+			state: 'completed',
+			createdAt: AT,
+			wallMs: 60000,
+			costUsd: 0.25
+		});
+		expect(map.toAnalyticsValue({ value: 'v', label: '' })).toEqual({ value: 'v', label: 'v' });
 	});
 });

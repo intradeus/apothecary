@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"apothecary/internal/platform/filestore"
+	"apothecary/internal/platform/logs"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 )
@@ -77,17 +78,17 @@ func (x *exec) deliverAttachments(atts []filestore.Attachment) []string {
 		Dir:     "repo",
 		Timeout: attachmentDeliverTimeout,
 	}); err != nil {
-		x.e.log.Warn("attachment mkdir", "run", x.rs.RunID, "err", err)
+		x.e.log.WarnContext(x.bg, "attachment mkdir", logs.RunID, x.rs.RunID, "err", err)
 		return paths
 	}
 	for i, a := range atts {
 		data, _, err := x.e.attachments.Bytes(x.ctx, a.ID)
 		if err != nil {
-			x.e.log.Warn("attachment read", "run", x.rs.RunID, "attachment", a.ID, "err", err)
+			x.e.log.WarnContext(x.bg, "attachment read", logs.RunID, x.rs.RunID, "attachment", a.ID, "err", err)
 			continue
 		}
 		if err := x.res.Envp.WriteFile(x.ctx, x.rs.EnvID, paths[i], data, 0o444); err != nil {
-			x.e.log.Warn("attachment write", "run", x.rs.RunID, "attachment", a.ID, "err", err)
+			x.e.log.WarnContext(x.bg, "attachment write", logs.RunID, x.rs.RunID, "attachment", a.ID, "err", err)
 		}
 	}
 	return paths
@@ -104,7 +105,7 @@ func (x *exec) ticketAttachments() []filestore.Attachment {
 	for _, id := range x.rs.View.TicketAttachmentIDs {
 		a, err := x.e.attachments.Get(x.ctx, id)
 		if err != nil {
-			x.e.log.Warn("ticket attachment missing", "run", x.rs.RunID, "attachment", id, "err", err)
+			x.e.log.WarnContext(x.bg, "ticket attachment missing", logs.RunID, x.rs.RunID, "attachment", id, "err", err)
 			continue
 		}
 		out = append(out, a)
@@ -120,7 +121,7 @@ func (x *exec) runAndTicketAttachments() []filestore.Attachment {
 	}
 	atts, err := x.e.attachments.ForRun(x.ctx, x.rs.RunID)
 	if err != nil {
-		x.e.log.Warn("attachment list", "run", x.rs.RunID, "err", err)
+		x.e.log.WarnContext(x.bg, "attachment list", logs.RunID, x.rs.RunID, "err", err)
 		atts = nil
 	}
 	seen := make(map[string]struct{}, len(atts))
@@ -182,7 +183,7 @@ func (x *exec) pingAnswerAttachments(pingID string) []filestore.Attachment {
 	}
 	atts, err := x.e.attachments.ForPing(x.ctx, pingID)
 	if err != nil {
-		x.e.log.Warn("answer attachments", "run", x.rs.RunID, "ping", pingID, "err", err)
+		x.e.log.WarnContext(x.bg, "answer attachments", logs.RunID, x.rs.RunID, "ping", pingID, "err", err)
 		return nil
 	}
 	return atts

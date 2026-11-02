@@ -2,8 +2,6 @@ package telemetry
 
 import (
 	"context"
-	"net"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,10 +12,9 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	colmetric "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
-	coltrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
-	"google.golang.org/grpc"
+	"go.opentelemetry.io/otel/trace"
 
+	ptel "apothecary/internal/platform/telemetry"
 	"apothecary/internal/run/event"
 )
 
@@ -25,6 +22,7 @@ import (
 // exactly what a collector would have been sent.
 type rig struct {
 	*Telemetry
+	tp     *sdktrace.TracerProvider
 	spans  *tracetest.InMemoryExporter
 	reader *sdkmetric.ManualReader
 }
@@ -32,25 +30,14 @@ type rig struct {
 func newRig(t *testing.T) *rig {
 	t.Helper()
 	spans := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(spans))
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(spans), sdktrace.WithIDGenerator(ptel.IDGenerator()))
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	tel := &Telemetry{tp: tp, mp: mp, tracer: tp.Tracer("test"), runs: map[string]*runTrace{}}
-	meter := mp.Meter("test")
-	var err error
-	if tel.runsTotal, err = meter.Int64Counter("runs"); err != nil {
+	tel, err := New(tp, mp)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if tel.pingsTotal, err = meter.Int64Counter("pings"); err != nil {
-		t.Fatal(err)
-	}
-	if tel.stageCost, err = meter.Float64Histogram("cost"); err != nil {
-		t.Fatal(err)
-	}
-	if tel.stageTurns, err = meter.Int64Histogram("turns"); err != nil {
-		t.Fatal(err)
-	}
-	return &rig{Telemetry: tel, spans: spans, reader: reader}
+	return &rig{Telemetry: tel, tp: tp, spans: spans, reader: reader}
 }
 
 func (r *rig) ended(t *testing.T, name string) tracetest.SpanStub {
@@ -121,10 +108,10 @@ func spanAttr(s tracetest.SpanStub, key string) (string, bool) {
 	return "", false
 }
 
-// A run's stage attempt is a child of the run's span, with the stage's
-// attributes, its cost and turns on the histograms and its end at the event's
-// time, not at the clock's.
-func TestStageAttemptIsAChildSpanOfTheRun(t *testing.T) {
+// A stage attempt is the root of its own trace, linked to the run's marker
+// span (instant, at run_created), with the stage's attributes, its cost and
+// turns on the histograms and its end at the event's time, not the clock's.
+func TestStageAttemptIsItsOwnTraceLinkedToTheRun(t *testing.T) {
 	r := newRig(t)
 	r.OnEvent(ev("r1", 0, &event.RunCreated{FlowName: "delivery", TicketTitle: "add login"}))
 	r.OnEvent(ev("r1", time.Second, &event.StageStarted{StageID: "build", Iteration: 2, Harness: "fake", Model: "fake/model"}))
@@ -133,8 +120,16 @@ func TestStageAttemptIsAChildSpanOfTheRun(t *testing.T) {
 
 	stage := r.ended(t, "build")
 	run := r.ended(t, "run")
-	if stage.Parent.SpanID() != run.SpanContext.SpanID() {
-		t.Errorf("stage's parent = %s, want the run span %s", stage.Parent.SpanID(), run.SpanContext.SpanID())
+	if !run.StartTime.Equal(at) || !run.EndTime.Equal(at) {
+		t.Errorf("run marker spans %v–%v, want the instant of run_created", run.StartTime, run.EndTime)
+	}
+	if stage.Parent.IsValid() || stage.SpanContext.TraceID() == run.SpanContext.TraceID() {
+		t.Errorf("stage in trace %s under %s, want a root of its own", stage.SpanContext.TraceID(), stage.Parent.SpanID())
+	}
+	if len(stage.Links) != 1 || !stage.Links[0].SpanContext.Equal(trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: run.SpanContext.TraceID(), SpanID: run.SpanContext.SpanID(), TraceFlags: trace.FlagsSampled, Remote: true,
+	})) {
+		t.Errorf("stage links = %+v, want the run marker", stage.Links)
 	}
 	if stage.Status.Code != codes.Ok {
 		t.Errorf("stage status = %v, want ok", stage.Status)
@@ -153,15 +148,15 @@ func TestStageAttemptIsAChildSpanOfTheRun(t *testing.T) {
 	if got, _ := spanAttr(run, "apothecary.flow"); got != "delivery" {
 		t.Errorf("run flow = %q", got)
 	}
-	if got, _ := spanAttr(run, "apothecary.ticket"); got != "add login" {
-		t.Errorf("run ticket = %q", got)
+	if _, ok := spanAttr(run, "apothecary.ticket"); ok {
+		t.Error("run span carries the ticket title")
 	}
 
 	m := r.metrics(t)
-	if got := counted(t, m["runs"], "state", "completed"); got != 1 {
+	if got := counted(t, m["apothecary_runs_total"], "state", "completed"); got != 1 {
 		t.Errorf("runs{completed} = %d", got)
 	}
-	cost := m["cost"].Data.(metricdata.Histogram[float64]).DataPoints
+	cost := m["apothecary_stage_cost_usd"].Data.(metricdata.Histogram[float64]).DataPoints
 	if len(cost) != 1 || cost[0].Sum != 0.5 {
 		t.Fatalf("cost histogram = %+v", cost)
 	}
@@ -173,7 +168,7 @@ func TestStageAttemptIsAChildSpanOfTheRun(t *testing.T) {
 	if v, _ := cost[0].Attributes.Value(attrKey("model")); v.AsString() != "fake/model" {
 		t.Errorf("cost model = %q", v.AsString())
 	}
-	turns := m["turns"].Data.(metricdata.Histogram[int64]).DataPoints
+	turns := m["apothecary_stage_turns"].Data.(metricdata.Histogram[int64]).DataPoints
 	if len(turns) != 1 || turns[0].Sum != 4 {
 		t.Fatalf("turns histogram = %+v", turns)
 	}
@@ -186,11 +181,11 @@ func TestStageWithoutUsageRecordsNoSample(t *testing.T) {
 	r.OnEvent(ev("r1", 0, &event.StageStarted{StageID: "verify"}))
 	r.OnEvent(ev("r1", time.Second, &event.StageCompleted{StageID: "verify"}))
 	m := r.metrics(t)
-	if _, ok := m["cost"]; ok {
-		t.Errorf("a cost sample without usage: %+v", m["cost"])
+	if _, ok := m["apothecary_stage_cost_usd"]; ok {
+		t.Errorf("a cost sample without usage: %+v", m["apothecary_stage_cost_usd"])
 	}
-	if _, ok := m["turns"]; ok {
-		t.Errorf("a turns sample without turns: %+v", m["turns"])
+	if _, ok := m["apothecary_stage_turns"]; ok {
+		t.Errorf("a turns sample without turns: %+v", m["apothecary_stage_turns"])
 	}
 }
 
@@ -227,19 +222,22 @@ func TestRunsEndWithTheirState(t *testing.T) {
 			r := newRig(t)
 			r.OnEvent(ev("r1", 0, &event.StageStarted{StageID: "build"}))
 			r.OnEvent(ev("r1", time.Second, c.p))
-			run := r.ended(t, "run")
-			if run.Status.Code != c.code || run.Status.Description != c.message {
-				t.Errorf("run status = %+v", run.Status)
-			}
-			// The stage left open ends with the run, naming why.
+			// The attempt left open ends with the run, naming its state and
+			// why: the marker span ended at creation.
 			stage := r.ended(t, "build")
-			if stage.Status.Code != c.code || (c.code == codes.Error && stage.Status.Description != "run "+c.state) {
+			if stage.Status.Code != c.code || stage.Status.Description != c.message {
 				t.Errorf("open stage status = %+v", stage.Status)
+			}
+			if got, _ := spanAttr(stage, "apothecary.run_state"); got != c.state {
+				t.Errorf("run_state = %q", got)
+			}
+			if got := r.spanNames(); len(got) != 1 {
+				t.Errorf("ended spans = %v", got)
 			}
 			if _, ok := r.runs["r1"]; ok {
 				t.Error("a finished run stays tracked")
 			}
-			if got := counted(t, r.metrics(t)["runs"], "state", c.state); got != 1 {
+			if got := counted(t, r.metrics(t)["apothecary_runs_total"], "state", c.state); got != 1 {
 				t.Errorf("runs{%s} = %d", c.state, got)
 			}
 		})
@@ -275,23 +273,27 @@ func TestCompletionWithoutAnOpenStage(t *testing.T) {
 	if got := r.spanNames(); len(got) != 0 {
 		t.Errorf("ended spans = %v", got)
 	}
-	if turns := r.metrics(t)["turns"].Data.(metricdata.Histogram[int64]).DataPoints; len(turns) != 1 || turns[0].Sum != 2 {
+	if turns := r.metrics(t)["apothecary_stage_turns"].Data.(metricdata.Histogram[int64]).DataPoints; len(turns) != 1 || turns[0].Sum != 2 {
 		t.Fatalf("turns = %+v", turns)
 	}
 }
 
-// A run recovered at boot has no run_created this session: the first event
-// seen opens its span, at that event's time.
-func TestRecoveredRunGetsASpanFromTheFirstEventSeen(t *testing.T) {
+// A run recovered at boot has no run_created this session: it gets no span
+// of its own (its marker was exported when it was created), and its attempts
+// still link to that marker by derived ID.
+func TestRecoveredRunLinksItsAttemptsToTheMarker(t *testing.T) {
 	r := newRig(t)
 	r.OnEvent(ev("r1", time.Hour, &event.PingRaised{Type: "human_input"}))
-	r.OnEvent(ev("r1", 2*time.Hour, &event.RunCompleted{}))
-	run := r.ended(t, "run")
-	if !run.StartTime.Equal(at.Add(time.Hour)) {
-		t.Errorf("run span starts %v", run.StartTime)
+	r.OnEvent(ev("r1", 2*time.Hour, &event.StageStarted{StageID: "build", Iteration: 3}))
+	r.OnEvent(ev("r1", 3*time.Hour, &event.StageCompleted{StageID: "build"}))
+	r.OnEvent(ev("r1", 3*time.Hour, &event.RunCompleted{}))
+	if got := r.spanNames(); len(got) != 1 || got[0] != "build" {
+		t.Fatalf("ended spans = %v, want only the attempt", got)
 	}
-	if got, _ := spanAttr(run, "apothecary.run_id"); got != "r1" {
-		t.Errorf("run id = %q", got)
+	stage := r.ended(t, "build")
+	if len(stage.Links) != 1 || stage.Links[0].SpanContext.TraceID() != ptel.RunTraceID("r1") ||
+		stage.Links[0].SpanContext.SpanID() != ptel.RunSpanID("r1") {
+		t.Errorf("stage links = %+v, want the run marker", stage.Links)
 	}
 }
 
@@ -300,7 +302,7 @@ func TestPingsAreCountedByType(t *testing.T) {
 	r.OnEvent(ev("r1", 0, &event.PingRaised{Type: "human_input"}))
 	r.OnEvent(ev("r2", 0, &event.PingRaised{Type: "human_input"}))
 	r.OnEvent(ev("r1", 0, &event.PingRaised{Type: "hitl"}))
-	m := r.metrics(t)["pings"]
+	m := r.metrics(t)["apothecary_pings_total"]
 	if got := counted(t, m, "type", "human_input"); got != 2 {
 		t.Errorf("human_input = %d", got)
 	}
@@ -335,13 +337,8 @@ func TestShutdownEndsOpenSpans(t *testing.T) {
 	if len(r.runs) != 0 {
 		t.Errorf("runs left tracked: %v", r.runs)
 	}
-	names := seen.names()
-	want := map[string]int{"build": 1, "run": 2}
-	got := map[string]int{}
-	for _, n := range names {
-		got[n]++
-	}
-	if len(got) != len(want) || got["build"] != 1 || got["run"] != 2 {
+	// r2's marker ended when it was created; only r1's attempt was open.
+	if names := seen.names(); len(names) != 1 || names[0] != "build" {
 		t.Errorf("ended at shutdown = %v", names)
 	}
 }
@@ -363,110 +360,6 @@ func (p *recordingProcessor) names() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]string(nil), p.ended...)
-}
-
-// collector is a loopback OTLP/gRPC collector: what New's exporters really
-// send over the wire.
-type collector struct {
-	coltrace.UnimplementedTraceServiceServer
-	mu      sync.Mutex
-	spans   []string
-	metrics []string
-}
-
-func (c *collector) Export(_ context.Context, req *coltrace.ExportTraceServiceRequest) (*coltrace.ExportTraceServiceResponse, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, rs := range req.GetResourceSpans() {
-		for _, ss := range rs.GetScopeSpans() {
-			for _, s := range ss.GetSpans() {
-				c.spans = append(c.spans, s.GetName())
-			}
-		}
-	}
-	return &coltrace.ExportTraceServiceResponse{}, nil
-}
-
-// metricsServer exists because both OTLP services call their rpc Export.
-type metricsServer struct {
-	colmetric.UnimplementedMetricsServiceServer
-	c *collector
-}
-
-func (m metricsServer) Export(_ context.Context, req *colmetric.ExportMetricsServiceRequest) (*colmetric.ExportMetricsServiceResponse, error) {
-	m.c.mu.Lock()
-	defer m.c.mu.Unlock()
-	for _, rm := range req.GetResourceMetrics() {
-		for _, sm := range rm.GetScopeMetrics() {
-			for _, mt := range sm.GetMetrics() {
-				m.c.metrics = append(m.c.metrics, mt.GetName())
-			}
-		}
-	}
-	return &colmetric.ExportMetricsServiceResponse{}, nil
-}
-
-// New exports over OTLP/gRPC under the four metric names dashboards read, and
-// Shutdown is what flushes them.
-func TestNewExportsToTheCollectorOnShutdown(t *testing.T) {
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	col := &collector{}
-	srv := grpc.NewServer()
-	coltrace.RegisterTraceServiceServer(srv, col)
-	colmetric.RegisterMetricsServiceServer(srv, metricsServer{c: col})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_ = srv.Serve(lis)
-	}()
-	t.Cleanup(func() {
-		srv.Stop()
-		<-done
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	tel, err := New(ctx, lis.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	tel.OnEvent(ev("r1", 0, &event.RunCreated{FlowName: "delivery"}))
-	tel.OnEvent(ev("r1", time.Second, &event.StageStarted{StageID: "build", Harness: "fake", Model: "fake/model"}))
-	tel.OnEvent(ev("r1", 2*time.Second, &event.StageCompleted{StageID: "build", TurnsUsed: 1, Usage: &event.Usage{CostUSD: 0.1}}))
-	tel.OnEvent(ev("r1", 2*time.Second, &event.PingRaised{Type: "human_input"}))
-	tel.OnEvent(ev("r1", 3*time.Second, &event.RunCompleted{}))
-	tel.Shutdown(ctx)
-
-	col.mu.Lock()
-	defer col.mu.Unlock()
-	gotSpans := map[string]bool{}
-	for _, s := range col.spans {
-		gotSpans[s] = true
-	}
-	if !gotSpans["run"] || !gotSpans["build"] {
-		t.Errorf("collector saw spans %v", col.spans)
-	}
-	gotMetrics := map[string]bool{}
-	for _, m := range col.metrics {
-		gotMetrics[m] = true
-	}
-	for _, want := range []string{"apothecary_runs_total", "apothecary_pings_total", "apothecary_stage_cost_usd", "apothecary_stage_turns"} {
-		if !gotMetrics[want] {
-			t.Errorf("collector saw no %s in %v", want, col.metrics)
-		}
-	}
-}
-
-// An endpoint gRPC cannot parse is refused at boot, named for the exporter
-// that refused it, rather than dropping every span silently.
-func TestNewRefusesAnEndpointItCannotParse(t *testing.T) {
-	_, err := New(context.Background(), "collector:\x00")
-	if err == nil || !strings.Contains(err.Error(), "otel trace exporter") {
-		t.Fatalf("err = %v", err)
-	}
 }
 
 // An event landing after a run ended (its env_destroyed from the reaper, its
@@ -498,5 +391,135 @@ func TestARetryAfterTheEndOpensATrace(t *testing.T) {
 	r.OnEvent(ev("r1", 2*time.Hour, &event.EnvRebuildStarted{EnvID: "env-1"}))
 	if _, tracked := r.runs["r1"]; !tracked {
 		t.Error("housekeeping closed a live trace")
+	}
+}
+
+// The run marker and each stage attempt take the IDs derived from the run,
+// so work spans the engine parents on StageSpanContext land under the
+// attempt — as children with IDs of their own.
+func TestSpansTakeTheRunsDerivedIDs(t *testing.T) {
+	r := newRig(t)
+	r.OnEvent(ev("r1", 0, &event.RunCreated{FlowName: "delivery", FlowHash: "h1", ProjectID: "p1", UserID: "u1",
+		TicketID: "t1", TicketChangeType: "feature", By: "human", Skillsets: []event.SkillsetPin{{Name: "go", Seq: 3}}}))
+	r.OnEvent(ev("r1", time.Second, &event.StageStarted{StageID: "build", Iteration: 2, Model: "m", Agent: "coder", AgentHash: "ah"}))
+	// What the engine starts under the attempt before the sink exports it.
+	_, invoke := r.tracer.Start(trace.ContextWithRemoteSpanContext(context.Background(), ptel.StageSpanContext("r1", "build", 2)), "agent.invoke")
+	invoke.End()
+	r.OnEvent(ev("r1", 2*time.Second, &event.StageCompleted{StageID: "build", Usage: &event.Usage{InputTokens: 10, OutputTokens: 5}}))
+	r.OnEvent(ev("r1", 3*time.Second, &event.RunCompleted{}))
+
+	run, stage, child := r.ended(t, "run"), r.ended(t, "build"), r.ended(t, "agent.invoke")
+	if run.SpanContext.TraceID() != ptel.RunTraceID("r1") || run.SpanContext.SpanID() != ptel.RunSpanID("r1") {
+		t.Errorf("run span = %s/%s", run.SpanContext.TraceID(), run.SpanContext.SpanID())
+	}
+	if run.Parent.IsValid() {
+		t.Errorf("run span has a parent %s", run.Parent.SpanID())
+	}
+	if stage.SpanContext.TraceID() != ptel.StageTraceID("r1", "build", 2) || stage.SpanContext.SpanID() != ptel.StageSpanID("r1", "build", 2) {
+		t.Errorf("stage span = %s/%s", stage.SpanContext.TraceID(), stage.SpanContext.SpanID())
+	}
+	if child.SpanContext.TraceID() != stage.SpanContext.TraceID() || child.Parent.SpanID() != stage.SpanContext.SpanID() ||
+		child.SpanContext.SpanID() == stage.SpanContext.SpanID() {
+		t.Errorf("agent.invoke %s/%s under %s, want a child of the attempt", child.SpanContext.TraceID(), child.SpanContext.SpanID(), child.Parent.SpanID())
+	}
+	for k, want := range map[string]string{
+		"apothecary.project_id": "p1", "apothecary.user_id": "u1", "apothecary.ticket_id": "t1",
+		"apothecary.flow_hash": "h1", "apothecary.ticket_change_type": "feature", "apothecary.started_by": "human",
+		"apothecary.skillsets": `["go@3"]`,
+	} {
+		if got, _ := spanAttr(run, k); got != want {
+			t.Errorf("run %s = %q, want %q", k, got, want)
+		}
+	}
+	for k, want := range map[string]string{
+		"gen_ai.request.model": "m", "gen_ai.agent.name": "coder", "apothecary.agent_hash": "ah",
+		"gen_ai.usage.input_tokens": "10", "gen_ai.usage.output_tokens": "5",
+	} {
+		if got, _ := spanAttr(stage, k); got != want {
+			t.Errorf("stage %s = %q, want %q", k, got, want)
+		}
+	}
+}
+
+// histCount is how many samples a histogram took with one attribute value
+// ("" key = all).
+func histCount(t *testing.T, m metricdata.Metrics, key, value string) (n uint64, sum float64) {
+	t.Helper()
+	switch d := m.Data.(type) {
+	case metricdata.Histogram[float64]:
+		for _, dp := range d.DataPoints {
+			if v, ok := dp.Attributes.Value(attrKey(key)); key == "" || ok && v.AsString() == value {
+				n, sum = n+dp.Count, sum+dp.Sum
+			}
+		}
+	case metricdata.Histogram[int64]:
+		for _, dp := range d.DataPoints {
+			if v, ok := dp.Attributes.Value(attrKey(key)); key == "" || ok && v.AsString() == value {
+				n, sum = n+dp.Count, sum+float64(dp.Sum)
+			}
+		}
+	default:
+		t.Fatalf("metric %s is %T", m.Name, m.Data)
+	}
+	return n, sum
+}
+
+// One run through the lifecycle records every A4 instrument from its events.
+func TestLifecycleMetrics(t *testing.T) {
+	r := newRig(t)
+	r.OnEvent(ev("r1", 0, &event.RunCreated{}))
+	r.OnEvent(ev("r1", 2*time.Second, &event.EnvRequested{}))
+	r.OnEvent(ev("r1", 5*time.Second, &event.EnvReady{}))
+	r.OnEvent(ev("r1", 6*time.Second, &event.StageStarted{StageID: "build", Iteration: 1, Harness: "h", Model: "m"}))
+	r.OnEvent(ev("r1", 7*time.Second, &event.PingRaised{PingID: "p1", Type: "gate"}))
+	r.OnEvent(ev("r1", 10*time.Second, &event.PingAnswered{PingID: "p1"}))
+	r.OnEvent(ev("r1", 11*time.Second, &event.StagePaused{StageID: "build", Usage: &event.Usage{InputTokens: 1, OutputTokens: 2, CostUSD: 0.1}}))
+	r.OnEvent(ev("r1", 12*time.Second, &event.HoldTaken{}))
+	r.OnEvent(ev("r1", 16*time.Second, &event.StageFailed{StageID: "build", Reason: "timeout", Usage: &event.Usage{InputTokens: 3, OutputTokens: 4, CostUSD: 0.2}}))
+	r.OnEvent(ev("r1", 16*time.Second, &event.EdgeTaken{Edge: "on_fail"}))
+	r.OnEvent(ev("r1", 17*time.Second, &event.StageStarted{StageID: "build", Iteration: 2, Harness: "h", Model: "m"}))
+	r.OnEvent(ev("r1", 18*time.Second, &event.StageCompleted{StageID: "build", Skipped: true}))
+	r.OnEvent(ev("r1", 19*time.Second, &event.RunAbandoned{Reason: "budget exceeded: $1"}))
+	m := r.metrics(t)
+
+	if got := counted(t, m["apothecary.stage.attempts"], "stage", "build"); got != 2 {
+		t.Errorf("attempts = %d", got)
+	}
+	if n, sum := histCount(t, m["apothecary.stage.duration"], "outcome", "failed"); n != 1 || sum != 10 {
+		t.Errorf("failed duration n=%d sum=%v", n, sum)
+	}
+	if n, _ := histCount(t, m["apothecary.stage.duration"], "outcome", "skipped"); n != 1 {
+		t.Errorf("skipped duration n=%d", n)
+	}
+	if got := counted(t, m["apothecary.stage.failures"], "reason", "timeout"); got != 1 {
+		t.Errorf("failures = %d", got)
+	}
+	if got := counted(t, m["apothecary.edges"], "edge", "on_fail"); got != 1 {
+		t.Errorf("edges = %d", got)
+	}
+	if got := m["apothecary.budget.stops"].Data.(metricdata.Sum[int64]).DataPoints[0].Value; got != 1 {
+		t.Errorf("budget stops = %d", got)
+	}
+	if got := m["apothecary.holds"].Data.(metricdata.Sum[int64]).DataPoints[0].Value; got != 1 {
+		t.Errorf("holds = %d", got)
+	}
+	if n, sum := histCount(t, m["gen_ai.client.token.usage"], "gen_ai.token.type", "input"); n != 2 || sum != 4 {
+		t.Errorf("input tokens n=%d sum=%v", n, sum)
+	}
+	if n, sum := histCount(t, m["gen_ai.client.token.usage"], "gen_ai.token.type", "output"); n != 2 || sum != 6 {
+		t.Errorf("output tokens n=%d sum=%v", n, sum)
+	}
+	cost := m["apothecary.llm.cost"].Data.(metricdata.Sum[float64]).DataPoints
+	if len(cost) != 1 || cost[0].Value < 0.2999 || cost[0].Value > 0.3001 {
+		t.Errorf("llm cost = %+v", cost)
+	}
+	if n, sum := histCount(t, m["apothecary.run.queue_wait"], "", ""); n != 1 || sum != 2 {
+		t.Errorf("queue wait n=%d sum=%v", n, sum)
+	}
+	if n, sum := histCount(t, m["apothecary.workspace.provision"], "outcome", "ready"); n != 1 || sum != 3 {
+		t.Errorf("provision n=%d sum=%v", n, sum)
+	}
+	if n, sum := histCount(t, m["apothecary.ping.answer_wait"], "type", "gate"); n != 1 || sum != 3 {
+		t.Errorf("answer wait n=%d sum=%v", n, sum)
 	}
 }
