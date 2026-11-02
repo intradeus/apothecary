@@ -1,0 +1,510 @@
+name: hands-on
+version: 5
+description: "you build the change by hand in the run's workspace; an AI commits, tests, reviews and describes it and opens the merge request; review comments, conflicts and failed CI come back to you"
+# builder's shape with a person where its builders were. A run is started on
+# a ticket, and its MAIN chain moves the ticket to in progress, then hands
+# you the workspace (build, a manual stage): the editor, your desktop VS Code
+# over SSH, the AI CLIs installed there. Press Done when the change is ready:
+# what you left uncommitted is committed for you (a commit message agent,
+# then the commit), the tests run, an AI reviews the branch ($ai_review),
+# another describes it, and the branch is pushed and the merge request
+# opened — one you opened yourself for the branch is adopted. A failing test
+# or a rejection comes back to you at build, with what it said; each return
+# is your decision, so they are unlimited.
+# From there the run is idle, and the WATCHERS bring the merge request's
+# life back to you, each as a manual stage:
+#   conflicts     the target moved and the MR no longer merges — the engine
+#                 merges the target in; a conflict pauses the merge with the
+#                 files named, and you remove the markers ($conflicts_start)
+#   review_fixes  reviewers commented, then went quiet for an hour — you pick
+#                 the threads worth fixing and fix them by hand; the fix is
+#                 committed, tested and pushed, and a reply to each thread is
+#                 drafted for you to check before it is posted ($reply_gate)
+#   ci_fix        a CI check failed on the merge request's head — you get
+#                 the failed jobs and steps, fix it, and the fix is committed,
+#                 tested and pushed ($ci_start)
+# The OUTCOMES end the run on what became of the merge request, as in
+# builder: merged (done) or closed (abort).
+#
+# Giving up at a manual stage is a dead end: in the main chain it abandons
+# the run, in a watcher it ends that round. A stage the agents cannot get
+# past goes to the debug leaf, as in builder.
+# model has no default on purpose: the project binds it (Workshop → Flows →
+# Configure), and every agent stage reads it as $model.
+parameters:
+  harness: opencode
+  timeout: 60m
+  max_turns: 50
+  max_cost_usd: 5.0
+  max_total_turns: 300
+  verify:          { type: string, default: verify, description: "the project command that runs the tests (project.commands)" }
+  review_model:    { type: string, default: $model, description: "the reviewer's model — bind a second vendor's for a real cross-check; unbound, the review runs on $model" }
+  conflicts_start: { type: string, default: confirm, enum: [auto, confirm, manual], description: "how a conflict fix begins: by itself, after asking, or by hand from the run page" }
+  review_start:    { type: string, default: auto, enum: [auto, confirm, manual], description: "how a review-fix round begins" }
+  reply_gate:      { type: bool, default: true, description: "a person reads each round's replies before they are posted: picks the ones to send, rewords them" }
+  ci_start:        { type: string, default: confirm, enum: [auto, confirm, manual], description: "how a CI fix begins once a check fails on the merge request" }
+  mr_labels:       { type: string, list: true, default: [apothecary], description: "labels the merge request gets once it is open" }
+  ai_review:       { type: bool, default: true, description: "an AI reviews what you built before the merge request opens; a rejection comes back to you with its comments" }
+ask: { harness: $harness }  # a read-only Ask pane beside every run, on the flow's harness
+agents:
+  - name: committer
+    description: writes a one-line commit message for the build's uncommitted work
+    read_only: true
+    allow_bash: true
+    inputs:
+      - { name: ticket, type: ticket, optional: true, description: "the ticket the change is for" }
+      - { name: changes, type: changeset, description: "the uncommitted files the commit will record" }
+      - { name: plan, type: file, optional: true, description: "the approved plan, for context on what the change set implements" }
+      - { name: failure, type: failure, optional: true, description: "what the previous attempt printed when it failed" }
+    outputs:
+      # A commit_message is what the commit action reads: JSON {subject,
+      # body?}, checked when this stage ends.
+      - { name: message, type: commit_message, description: "the commit's subject line, and a body only when the subject cannot carry the why" }
+    prompt: |
+      You are the commit agent of a software factory. The building agent has
+      finished; you write ONE short commit message covering its work. A later
+      stage performs the commit from your file — you MUST NOT run `git commit`,
+      `git add` or `git push` yourself.
+
+      Your only deliverable is the JSON file named in the OUTPUT CONTRACT
+      section: {"subject": "..."} — the subject is a single line, no trailing
+      period. Add a "body" (plain text, wrapped at 72 columns) only when the
+      change needs a why the subject cannot carry; most commits need none.
+
+      Inspect before writing:
+      - The files listed in your changes input (`git diff HEAD` on them) —
+        what actually changed.
+      - `git log -20 --format='%s'` — the project's existing commit style.
+        Match it: follow whatever convention the repo already uses (e.g.
+        Conventional Commits `type(scope): summary`, or a plain imperative
+        subject), including its casing and tense. Do not invent a convention
+        the project does not already use.
+
+      The subject line: imperative mood, under 70 characters, summarizing the
+      whole change in one line; if it spans areas, name the most significant.
+
+      If the changes input shows nothing uncommitted, write a short subject
+      in the project's style anyway (the commit stage skips a clean tree).
+  - name: reviewer
+    description: adversarial code reviewer
+    read_only: true
+    allow_bash: true
+    inputs:
+      - { name: ticket, type: ticket, description: "the ticket the change is for" }
+      - { name: changes, type: changeset, description: "the set of changed files in this branch to review" }
+      - { name: failure, type: failure, optional: true, description: "what the previous attempt printed when it failed" }
+    outputs:
+      # A verdict is what makes a stage's on_reject edge reachable: REJECT
+      # routes the run back down it, carrying these comments as edge.verdict.
+      - { name: verdict, type: verdict, description: "APPROVE or REJECT, with actionable comments naming file, problem and resolution" }
+    prompt: |
+      You are the adversarial reviewer of a software factory. Your job is to
+      find reasons to REJECT — approve only when you have genuinely tried and
+      failed to find a substantive problem.
+
+      Review the branch's changes — written by a person, by hand — against three sources of truth, in order:
+      1. The ticket in your prompt: is everything it asks implemented, and nothing beyond it?
+      2. AGENTS.md conventions and the project's DDD/SOLID standards: layer
+         boundaries respected, dependencies point inward, single responsibility,
+         no vendor types leaking across interfaces.
+      3. Correctness: read the changed code, run the test suite yourself via
+         bash, and hunt for unhandled edge cases, racy constructs, and tests
+         that assert too little.
+
+      You may run tests and linters, but you never modify repo files — your only
+      deliverable is the verdict file named in the OUTPUT CONTRACT section.
+      Comments must be actionable: name the file,
+      the problem, and what would resolve it. Style nits without substance are
+      not grounds for rejection; missing tests, plan deviations, and broken
+      invariants are.
+  - name: redactor
+    description: writes the merge request description
+    read_only: true
+    allow_bash: true
+    inputs:
+      - { name: ticket, type: ticket, description: "the ticket the change is for" }
+      - { name: changes, type: changeset, description: "the set of changed files to describe for whoever reads the merge request" }
+      - { name: shots, type: files, optional: true, description: "screenshots of the change, when they were taken" }
+      - { name: failure, type: failure, optional: true, description: "what the previous attempt printed when it failed" }
+    outputs:
+      - { name: body, type: file, description: "the merge request description; first line a \"# <title>\" heading" }
+    prompt: |
+      You are the redaction agent of a software factory. The work is done and
+      reviewed; you write the merge request description that a human will read
+      before merging. Your only deliverable is the file named in the OUTPUT
+      CONTRACT section.
+
+      Structure (the first line MUST be a `# <MR title>` heading, imperative
+      mood, under 70 characters):
+      # <title>
+      ## Summary        — what changed and why, 2-4 sentences, plain language
+      ## Changes        — bullet list grouped by area, referencing key files
+      ## Test evidence  — which tests cover the change and their result; run
+                          the suite via bash and quote the relevant tail
+      ## Review notes   — anything the reviewer flagged and how it was
+                          addressed; anything the human should double-check
+
+      Read the diff and the plan; do not speculate about intent you cannot see
+      in the repository. Never modify any repo file — your only output is the
+      file named in the OUTPUT CONTRACT.
+
+      If screenshots are among your inputs, show the ones a reviewer should
+      see where they explain the change, as markdown images by their path
+      (`![The new settings page](artifacts/shots/settings.png)`). The merge
+      request carries every screenshot either way: those you do not show are
+      listed after your description.
+  - name: replier
+    description: answers each review thread with what was done about it
+    read_only: true
+    allow_bash: true
+    inputs:
+      - { name: comments, type: mr_threads, description: "the review threads this round took on, with their ids and comments — the ones newer than the last reply marked new" }
+      - { name: changes, type: changeset, description: "the files this round changed" }
+      - { name: rejection, type: verdict, optional: true, description: "why a person sent the last replies back from the reply gate" }
+      - { name: failure, type: failure, optional: true, description: "why the previous attempt's replies were refused" }
+    outputs:
+      - { name: replies, type: review_replies, description: "one entry per thread: what was done about it (did), the reply to post, and the owner's rationale" }
+    prompt: |
+      You are the reply agent of a software factory. A round of review
+      comments was just fixed and pushed; you answer each thread so the
+      reviewer knows what happened without re-reading the diff.
+
+      Your only deliverable is the file named in the OUTPUT CONTRACT, in the
+      shape its schema says: one entry per thread in your comments input, e.g.
+        - thread: <the thread id, exactly as given>
+          did: fixed
+          reply: Renamed `fetchAll` to `listWidgets` in api/widgets.go and its two callers.
+          rationale: the old name promised a full fetch the function never did
+          evidence: "commit 3f2a1c; api/widgets_test.go still passes"
+      did says what happened: fixed (the code changed), declined (left as it
+      is on purpose), answered (the thread asked something and the reply
+      answers it). reply is what the reviewer reads: concretely what changed
+      and where (inspect the diff with `git diff` / `git log`), or — when the
+      comment was not followed — why, in one or two sentences; a comment
+      judged wrong still gets a reply saying so. rationale and evidence are
+      never posted: they are for the person who decides whether to send the
+      reply — required with declined. Answer the newest comments of each
+      thread (marked new); the earlier exchange is context. Never claim a
+      change you cannot see in the repository. Leave resolve false: the
+      reviewer resolves their own threads. Do not modify any repo file.
+      If your prompt carries a rejection, a person read your last replies and
+      sent them back: do what they asked, and keep off the replies they held
+      back.
+
+main:
+  # The issue moves first; a tracker hiccup goes straight on to the work:
+  # bookkeeping never blocks it.
+  - id: in_progress
+    type: action
+    action: ticket_transition
+    with: { to: in_progress }
+    description: "move the ticket to its tracker's in-progress status"
+    on_success: build
+    on_fail: { to: build, max: 1 }
+
+  # Your turn. A failing test or a rejection lands back here with what it
+  # said; each is a person's decision, so those returns are unlimited.
+  - id: build
+    type: manual
+    description: "you build the change in the workspace"
+    question: "Build the change in the workspace — the editor, your desktop VS Code over SSH, the AI CLIs installed there. Press Done when it is ready: what you leave uncommitted is committed for you, then tested and reviewed; a failure or a rejection comes back here."
+    input:
+      ticket:    { from: run.ticket, type: ticket }
+      rejection: { from: edge.verdict, type: verdict, optional: true, description: "what the AI reviewer asked you to change" }
+      failure:   { from: edge.failure, type: failure, optional: true, description: "what the tests printed" }
+    on_success: commit_msg
+
+  - id: commit_msg
+    type: agent
+    harness: $harness
+    model: $model
+    agent: committer
+    max_turns: 10
+    description: "write the commit message for what you left uncommitted"
+    input:
+      ticket:  { from: run.ticket, type: ticket }
+      changes: { from: run.git.status, type: changeset }
+      failure: { from: edge.failure, type: failure, optional: true }
+    output:
+      message: { to: artifacts/commit.json, type: commit_message }
+    on_fail: { to: commit_msg, max: 1, then: debug }
+
+  # A clean tree (you committed yourself) is skipped.
+  - id: commit
+    type: action
+    action: commit
+    input:
+      message: { from: artifacts/commit.json, type: commit_message }
+    on_fail: debug
+
+  - id: test
+    type: command
+    run_ref: $verify
+    on_fail: { to: build, max: -1 }
+
+  - id: review
+    type: agent
+    harness: $harness
+    agent: reviewer
+    model: $review_model
+    run_if: $ai_review
+    max_turns: 30
+    reuse_session: false   # each round reads the code afresh, unswayed by its last verdict
+    description: "adversarial review against the ticket, conventions and correctness"
+    input:
+      ticket:  { from: run.ticket, type: ticket }
+      changes: { from: run.git.diff_target, type: changeset }
+      failure: { from: edge.failure, type: failure, optional: true }
+    output:
+      verdict: { to: artifacts/verdict.yaml, type: verdict }
+    on_reject: { to: build, max: -1 }
+    on_fail: { to: review, max: 1, then: debug }
+
+  - id: redact
+    type: agent
+    harness: $harness
+    model: $model
+    agent: redactor
+    max_turns: 15
+    description: "write the merge request description"
+    input:
+      ticket:  { from: run.ticket, type: ticket }
+      changes: { from: run.git.diff_target, type: changeset }
+      failure: { from: edge.failure, type: failure, optional: true }
+    output:
+      body:    { to: artifacts/mr.md, type: file }
+    on_fail: { to: redact, max: 1, then: debug }
+
+  - id: push
+    type: action
+    action: push_branch
+    on_fail: debug
+
+  - id: link_branch
+    type: action
+    action: ticket_link_branch
+    description: "link the pushed branch on the ticket's tracker"
+    on_fail: { to: mr, max: 1 }
+
+  # A merge request you already opened for the branch is adopted.
+  - id: mr
+    type: action
+    action: create_mr
+    input:
+      body: { from: artifacts/mr.md, type: file }
+    with:
+      labels: $mr_labels
+    on_success: in_review
+
+  - id: in_review
+    type: action
+    action: ticket_transition
+    with: { to: in_review }
+    description: "move the ticket to its tracker's in-review status"
+    on_fail: end
+
+watchers:
+  # The target moved under the merge request: the engine merges it in, and a
+  # conflict comes to you with the files named.
+  - id: conflicts
+    on: { signal: mr_conflicts, start: $conflicts_start }
+    description: "merge the target branch in, you resolve, re-test, push"
+    stages:
+      - id: sync
+        type: action
+        action: sync_target
+        with: { strategy: merge }
+        description: "the engine merges the target in; a conflict pauses the merge with the files named"
+        on_success: sync_test
+        on_fail: { to: resolve, max: -1 }
+
+      - id: resolve
+        type: manual
+        description: "you remove the conflict markers"
+        question: "The target branch conflicts with this one: the merge is paused in the working tree, the conflicted files are listed below. Remove the conflict markers keeping both intents — edit the files only, no git commands — then press Done."
+        input:
+          conflict: { from: edge.failure, type: failure, optional: true, description: "the conflicted files" }
+        on_success: sync
+
+      - id: sync_test
+        type: command
+        run_ref: $verify
+        on_fail: debug
+
+      - id: sync_push
+        type: action
+        action: push_branch
+        on_success: end
+        on_fail: debug
+
+  # Reviewers commented, then went quiet for an hour: you pick the threads
+  # worth fixing, fix them by hand, and each gets a drafted reply.
+  - id: review_fixes
+    on: { signal: mr_review_settled, start: $review_start, quiet_for: 1h }
+    description: "you fix the review threads; test, push, and reply on each"
+    stages:
+      - id: load
+        type: action
+        action: load_review_comments
+        with: { select: human }
+        output:
+          threads: { to: artifacts/threads.yaml, type: mr_threads }
+
+      - id: fix
+        type: manual
+        description: "you address the review threads"
+        question: "Address the review threads below in the workspace, then press Done: what you leave uncommitted is committed for you, and a reply to each thread is drafted for you to check before it is posted."
+        input:
+          comments: { from: artifacts/threads.yaml, type: mr_threads, description: "the threads you picked for this round" }
+          failure:  { from: edge.failure, type: failure, optional: true, description: "what the tests printed" }
+        on_success: fix_commit_msg
+
+      - id: fix_commit_msg
+        type: agent
+        harness: $harness
+        model: $model
+        agent: committer
+        max_turns: 10
+        input:
+          ticket:  { from: run.ticket, type: ticket }
+          changes: { from: run.git.status, type: changeset }
+          failure: { from: edge.failure, type: failure, optional: true }
+        output:
+          message: { to: artifacts/commit.json, type: commit_message }
+        on_success: fix_commit
+        on_fail: { to: fix_commit_msg, max: 1, then: debug }
+
+      - id: fix_commit
+        type: action
+        action: commit
+        input:
+          message: { from: artifacts/commit.json, type: commit_message }
+        on_success: fix_test
+        on_fail: debug
+
+      - id: fix_test
+        type: command
+        run_ref: $verify
+        on_success: fix_push
+        on_fail: { to: fix, max: -1 }
+
+      - id: fix_push
+        type: action
+        action: push_branch
+        on_success: reply
+        on_fail: debug
+
+      - id: reply
+        type: agent
+        harness: $harness
+        model: $model
+        agent: replier
+        max_turns: 15
+        description: "answer each thread with what was done"
+        input:
+          comments:  { from: artifacts/threads.yaml, type: mr_threads }
+          changes:   { from: run.git.diff_phase, type: changeset }
+          rejection: { from: edge.verdict, type: verdict, optional: true }
+          failure:   { from: edge.failure, type: failure, optional: true }
+        output:
+          replies:   { to: artifacts/replies.yaml, type: review_replies }
+        on_success: reply_gate
+        on_fail: { to: reply, max: 1, then: debug }
+
+      # A person reads the replies before they are posted ($reply_gate): each
+      # beside the thread it answers, with the agent's rationale. They pick
+      # the ones to send and reword them; a reply held back leaves its
+      # thread alone until someone writes there again. Rejecting sends the
+      # replier back with their feedback.
+      - id: reply_gate
+        type: human_gate
+        run_if: $reply_gate
+        question: "Send these replies on the merge request? Pick the ones to send and reword them as you like; rejecting sends them back with your feedback."
+        input:
+          replies: { from: artifacts/replies.yaml, type: review_replies }
+          threads: { from: artifacts/threads.yaml, type: mr_threads }
+        on_reject: { to: reply, max: -1 }
+
+      - id: post
+        type: action
+        action: reply_review_comments
+        input:
+          replies: { from: artifacts/replies.yaml, type: review_replies }
+        on_success: end
+
+  # A CI check failed on the merge request's head: the failed jobs and steps
+  # come to you.
+  - id: ci_fix
+    on: { signal: ci_failed, start: $ci_start }
+    description: "you reproduce the failed CI job and fix it; test, push"
+    stages:
+      - id: ci_repair
+        type: manual
+        description: "you fix what the failed CI job reports"
+        question: "A CI check failed on the merge request's head — the failed jobs and steps are below. Reproduce and fix it in the workspace, then press Done: what you leave uncommitted is committed for you."
+        input:
+          ci:      { from: run.ci.failure, type: failure }
+          failure: { from: edge.failure, type: failure, optional: true, description: "what the local tests printed" }
+        on_success: ci_commit_msg
+
+      - id: ci_commit_msg
+        type: agent
+        harness: $harness
+        model: $model
+        agent: committer
+        max_turns: 10
+        input:
+          ticket:  { from: run.ticket, type: ticket }
+          changes: { from: run.git.status, type: changeset }
+          failure: { from: edge.failure, type: failure, optional: true }
+        output:
+          message: { to: artifacts/commit.json, type: commit_message }
+        on_success: ci_commit
+        on_fail: { to: ci_commit_msg, max: 1, then: debug }
+
+      - id: ci_commit
+        type: action
+        action: commit
+        input:
+          message: { from: artifacts/commit.json, type: commit_message }
+        on_success: ci_test
+        on_fail: debug
+
+      - id: ci_test
+        type: command
+        run_ref: $verify
+        on_success: ci_push
+        on_fail: { to: ci_repair, max: -1 }
+
+      - id: ci_push
+        type: action
+        action: push_branch
+        on_success: end
+        on_fail: debug
+
+outcomes:
+  # ---- outcomes: once, and the run is over --------------------------------
+  # Merged: the ticket is done, and so is the run. The tracker is best
+  # effort here too — a hiccup moving the issue never un-finishes the work.
+  - id: merged
+    on: mr_merged
+    description: "every merge request merged — the ticket is done, the run is done"
+    stages:
+      - id: ticket_done
+        type: action
+        action: ticket_transition
+        with: { to: done }
+        description: "move the ticket to its tracker's done status"
+        on_fail: done
+
+  - id: closed
+    on: mr_closed
+    then: abort
+    description: "a merge request closed unmerged — the ticket goes back to to-do, the run is abandoned"
+    stages:
+      - id: ticket_back
+        type: action
+        action: ticket_transition
+        with: { to: todo }
+        description: "move the ticket back to its tracker's to-do status"
+        on_fail: abort

@@ -9,11 +9,14 @@
 
 	let {
 		ping,
+		runId,
 		queued,
 		busy,
 		onanswer
 	}: {
 		ping: RunPing;
+		/** The run it belongs to: a manual card opens its workspace. */
+		runId: string;
 		/** Earlier pings of this run still waiting behind this one. */
 		queued: number;
 		busy: boolean;
@@ -26,7 +29,7 @@
 		<div class="queue">{t('run.pingDock.queued', { count: queued })}</div>
 	{/if}
 	{#key ping.id}
-		<PingCard {ping} {busy} {onanswer} compact />
+		<PingCard {ping} {runId} {busy} {onanswer} compact />
 	{/key}
 </div>
 

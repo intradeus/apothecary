@@ -403,6 +403,43 @@ func TestConflictResolverTemplate(t *testing.T) {
 	}
 }
 
+// TestHandsOnTemplate: a person builds, resolves, fixes and repairs by hand;
+// every unlimited link has a person on it — a manual or gate target, or a
+// gate source (the reply gate's send-back) — and the workspace template is a
+// bare hand-over.
+func TestHandsOnTemplate(t *testing.T) {
+	f := Flow("hands-on")
+	if f == nil {
+		t.Fatal("no built-in hands-on")
+	}
+	for _, id := range []string{"build", "resolve", "fix", "ci_repair"} {
+		if st := f.Stage(id); st == nil || st.Type != flow.StageManual {
+			t.Errorf("stage %s = %+v, want a manual stage", id, st)
+		}
+	}
+	for i := range f.Stages {
+		src := &f.Stages[i]
+		for kind, e := range src.Edges {
+			for link := e; link != nil; link = link.Then {
+				if link.Max != flow.UnlimitedMax || src.Type == flow.StageHumanGate {
+					continue
+				}
+				if tgt := f.Stage(link.To); tgt == nil || (tgt.Type != flow.StageManual && tgt.Type != flow.StageHumanGate) {
+					t.Errorf("%s.%s: max -1 into %s, with no person on the link", src.ID, kind, link.To)
+				}
+			}
+		}
+	}
+
+	w := Flow("workspace-only")
+	if w == nil {
+		t.Fatal("no built-in workspace-only")
+	}
+	if len(w.Stages) != 1 || w.Stages[0].Type != flow.StageManual || w.Stages[0].OnSuccess != flow.TerminalDone {
+		t.Errorf("workspace stages = %+v, want one manual stage ending the run", w.Stages)
+	}
+}
+
 // TestBuiltinFlowsCarryNoModel: a template names no model — model ids change
 // under a document that must not. The model parameter has no default (the
 // project binds it), every agent stage reads its harness and model from a

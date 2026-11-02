@@ -327,7 +327,7 @@ func (p *parser) buildPort(pr DocPortPair, dir portDir, st StageType, stage stri
 		}
 		switch st {
 		case StageCommand, StageAction:
-			return port, fmt.Errorf("%s reads files; %s is a value the engine provides to an agent or a gate", map[StageType]string{StageCommand: "a command", StageAction: "an action"}[st], d.From)
+			return port, fmt.Errorf("%s reads files; %s is a value the engine provides to an agent, a gate or a manual stage", map[StageType]string{StageCommand: "a command", StageAction: "an action"}[st], d.From)
 		case StageHumanGate:
 			if typ != agentspec.TypeLink {
 				return port, fmt.Errorf("a gate shows a file or a link; %s is a %s", d.From, typ)

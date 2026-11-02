@@ -13,6 +13,7 @@ const ping = (id: string, question = `Question ${id}?`) =>
 
 const props = (over = {}) => ({
 	ping: ping('p1'),
+	runId: 'r1',
 	queued: 0,
 	busy: false,
 	onanswer: vi.fn(),

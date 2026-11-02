@@ -430,6 +430,10 @@ const (
 	// question is a bare label — the card is the UI's. Approve re-enters that
 	// stage, reject abandons the run. Engine-raised and wanted, like a gate.
 	PingDebug = "debug"
+	// PingManual is a manual stage (FLOWLANG §2): the run's workspace is in
+	// a person's hands; approve (Done) follows on_success, reject (give up)
+	// is a dead end. StageID is the manual stage, Context its brief.
+	PingManual = "manual"
 	// PingPhaseConfirm asks a human whether a phase may start (a phase with
 	// `confirm: true`). Answered like a gate — approve | reject — but it
 	// belongs to no stage: it is raised while the run is between phases.
@@ -726,14 +730,14 @@ func OptionIDs(opts []Option) []string {
 	return out
 }
 
-// Kind is the ping's answer kind: a gate, phase confirmation or debug leaf
-// is a yes/no, anything else a form.
+// Kind is the ping's answer kind: a gate, phase confirmation, debug leaf or
+// manual stage is a yes/no, anything else a form.
 func (p *PingRaised) Kind() string {
 	if p.AnswerKind != "" {
 		return p.AnswerKind
 	}
 	switch p.Type {
-	case PingGate, PingPhaseConfirm, PingDebug:
+	case PingGate, PingPhaseConfirm, PingDebug, PingManual:
 		return AnswerYesNo
 	}
 	return AnswerForm

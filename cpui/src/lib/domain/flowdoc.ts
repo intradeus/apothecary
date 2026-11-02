@@ -37,7 +37,7 @@ export type EdgeKind = (typeof EDGE_KINDS)[number];
 /** 'sequence' is the editor's name for a stage that runs a sequence in its
  *  place: the YAML gives it `sequence:` and no type. */
 export type StageKind =
-	'agent' | 'command' | 'human_gate' | 'action' | 'wait' | 'service' | 'sequence';
+	'agent' | 'command' | 'human_gate' | 'manual' | 'action' | 'wait' | 'service' | 'sequence';
 
 // CURRENT_VERSION is the grammar this build writes; every document declares
 // it, so a future break is a refusal rather than a mis-parse (FLOWLANG §1).
@@ -163,7 +163,8 @@ export const takesSchema = (type?: string) =>
  *  flow's stages name (`services`). */
 export function sourcesFor(type: StageKind, services: string[] = [], ciFailed = false): string[] {
 	const running = services.map(serviceSource);
-	if (type === 'agent')
+	// A manual stage's brief may read every engine source an agent's prompt may.
+	if (type === 'agent' || type === 'manual')
 		return [
 			...Object.keys(ENGINE_SOURCES).filter((v) => ciFailed || v !== SOURCE_CI_FAILURE),
 			...running
@@ -244,7 +245,7 @@ export interface DocStage {
 	/** command: run once per checkout of a multi-repo run instead of once in
 	 *  the primary (what git commit / push want). */
 	each_repo?: boolean;
-	/** human_gate: the free text the human is asked. */
+	/** human_gate: the free text the human is asked; manual: what the person is to do. */
 	question?: string;
 	/** human_gate: signals that answer the gate on the human's behalf. */
 	/** A condition (FLOWLANG §2): `tracker`, `subject`, `$bool_param`, each
@@ -1446,6 +1447,7 @@ export function freshStage(doc: FlowDoc, type: StageKind, taken = doc.stages): D
 		agent: 'agent',
 		command: 'cmd',
 		human_gate: 'gate',
+		manual: 'manual',
 		action: 'action',
 		wait: 'wait',
 		service: 'service',
@@ -1459,7 +1461,7 @@ export function freshStage(doc: FlowDoc, type: StageKind, taken = doc.stages): D
 	if (doc.phases?.length) s.phase = doc.phases[0].id;
 	if (type === 'agent') s.agent = doc.agents?.[0]?.name ?? '';
 	if (type === 'command') s.run_ref = '';
-	if (type === 'human_gate') s.question = '';
+	if (type === 'human_gate' || type === 'manual') s.question = '';
 	if (type === 'action') s.action = '';
 	if (type === 'wait') s.for = '';
 	if (type === 'service') s.service = serviceFor(doc);
@@ -1846,6 +1848,7 @@ export function stageInputs(
 			return declaredPorts(s.input, actions.find((a) => a.slug === s.action)?.inputs ?? []);
 		case 'command':
 		case 'human_gate':
+		case 'manual':
 		case 'wait':
 			return portEntries(s.input).map(([name, p]) => port(name, p));
 		// A sequence stage states nothing itself: its sequence's stages do. A
@@ -1883,6 +1886,7 @@ export function stageOutputs(
 		case 'command':
 			return portEntries(s.output).map(([name, p]) => port(name, p));
 		case 'human_gate':
+		case 'manual':
 		case 'wait':
 		case 'service':
 		case 'sequence':

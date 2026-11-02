@@ -180,10 +180,11 @@ describe('what a stage may name', () => {
 		]
 	])('offers a sequence stage in %s, or not', (_, where, doc, offered) => {
 		const kinds = addKinds(doc, where);
-		expect(kinds.slice(0, 6)).toEqual([
+		expect(kinds.slice(0, 7)).toEqual([
 			'agent',
 			'command',
 			'human_gate',
+			'manual',
 			'action',
 			'wait',
 			'service'

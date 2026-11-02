@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -345,6 +346,60 @@ func (t *Threads) IDs() []string {
 		out = append(out, th.ID)
 	}
 	return out
+}
+
+// Markdown renders the threads for a person: each under a heading saying
+// where it is, its hunk, then its comments quoted, author first. Dropped is
+// left out — those are notes a person declined earlier, kept for a reviewer
+// agent.
+func (t *Threads) Markdown() string {
+	if t == nil || len(t.Threads) == 0 {
+		return "(no threads)\n"
+	}
+	var b strings.Builder
+	if t.MergeRequest != "" {
+		fmt.Fprintf(&b, "Merge request: %s\n\n", t.MergeRequest)
+	}
+	for i, th := range t.Threads {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		loc := "conversation"
+		switch {
+		case th.Path != "" && th.Line > 0:
+			loc = th.Path + ":" + strconv.Itoa(th.Line)
+		case th.Path != "":
+			loc = th.Path
+		}
+		fmt.Fprintf(&b, "### %s · thread %s", loc, th.ID)
+		if th.Resolved {
+			b.WriteString(" · resolved")
+		}
+		if th.Ours {
+			b.WriteString(" · apothecary's")
+		}
+		b.WriteString("\n\n")
+		if th.Hunk != "" {
+			b.WriteString("```diff\n" + strings.TrimRight(th.Hunk, "\n") + "\n```\n\n")
+		}
+		for _, c := range th.Comments {
+			b.WriteString("- **" + c.Author + "**")
+			if c.At != "" {
+				b.WriteString(" · " + c.At)
+			}
+			if c.New {
+				b.WriteString(" · new")
+			}
+			if c.Ours {
+				b.WriteString(" · apothecary")
+			}
+			b.WriteString("\n")
+			for _, line := range strings.Split(strings.TrimRight(c.Body, "\n"), "\n") {
+				b.WriteString("  > " + line + "\n")
+			}
+		}
+	}
+	return b.String()
 }
 
 // --- paths and text ---------------------------------------------------------

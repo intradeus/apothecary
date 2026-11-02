@@ -383,7 +383,13 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 				});
 				break;
 			case 'ping_raised':
-				if (p.type === 'gate' || p.type === 'phase_confirm' || p.type === 'debug') break;
+				if (
+					p.type === 'gate' ||
+					p.type === 'phase_confirm' ||
+					p.type === 'debug' ||
+					p.type === 'manual'
+				)
+					break;
 				{
 					const form = toPingForm(p.form);
 					const a = answered.get(String(p.ping_id));

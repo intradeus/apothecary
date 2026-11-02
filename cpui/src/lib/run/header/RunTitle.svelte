@@ -42,6 +42,9 @@
 		)
 	);
 	const active = $derived(!rs.terminal);
+	// A manual stage hands the workspace over as surely as a hold does.
+	const handed = $derived(rs.pendingPings.find((p) => p.type === 'manual'));
+	const since = $derived(run.hold?.since ?? handed?.raisedAt ?? run.updatedAt);
 </script>
 
 <div class="title">
@@ -64,13 +67,12 @@
 	</h1>
 	<div class="status">
 		<StatusChip state={run.state} size="sm" suffix={run.state === 'failed'} />
-		{#if run.hold && !rs.terminal}
+		{#if (run.hold || handed) && !rs.terminal}
 			<span
 				class="pill sm tint-attention"
-				title={t('run.header.heldTitle', { ago: ago(run.hold.since, rs.now) })}
+				title={t('run.header.heldTitle', { ago: ago(since, rs.now) })}
 				><span class="live-dot sm pulse hue-attention"></span>{t('run.header.held')} ·
-				<span class="tick">{fmtClockDuration(rs.now - new Date(run.hold.since).getTime())}</span
-				></span
+				<span class="tick">{fmtClockDuration(rs.now - new Date(since).getTime())}</span></span
 			>
 		{/if}
 		<span class="mono stats tick">

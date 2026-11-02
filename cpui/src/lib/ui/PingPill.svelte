@@ -17,6 +17,13 @@
 			hue: 'attention',
 			wanted: true
 		},
+		manual: {
+			get label() {
+				return t('ui.ping.manual');
+			},
+			hue: 'attention',
+			wanted: true
+		},
 		phase_confirm: {
 			get label() {
 				return t('ui.ping.phase_confirm');

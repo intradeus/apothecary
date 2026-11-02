@@ -45,7 +45,13 @@
 		t('runview.flow.tip', {
 			parts: [
 				r.id,
-				r.type ? (r.type === 'human_gate' ? t('runview.flow.tip_gate') : r.type) : '',
+				r.type
+					? r.type === 'human_gate'
+						? t('runview.flow.tip_gate')
+						: r.type === 'manual'
+							? t('runview.flow.tip_manual')
+							: r.type
+					: '',
 				r.agent ?? '',
 				r.attempt ? t('runview.flow.tip_attempt', { n: r.attempt }) : ''
 			]

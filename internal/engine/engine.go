@@ -234,11 +234,13 @@ type runHandle struct {
 	done        chan struct{}
 }
 
-// PingGate and PingDebug are re-exported for the engine's callers (the HTTP
-// layer and tests); the vocabulary itself belongs to the event catalog.
+// PingGate, PingDebug and PingManual are re-exported for the engine's
+// callers (the HTTP layer and tests); the vocabulary itself belongs to the
+// event catalog.
 const (
-	PingGate  = event.PingGate
-	PingDebug = event.PingDebug
+	PingGate   = event.PingGate
+	PingDebug  = event.PingDebug
+	PingManual = event.PingManual
 )
 
 // Ping is an open (or answered) human interaction. Gate pings are raised by

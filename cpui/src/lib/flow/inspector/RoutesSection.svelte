@@ -73,10 +73,11 @@
 		onchange();
 	}
 
-	const targetsGate = (id: string) => scopeStages.find((x) => x.id === id)?.type === 'human_gate';
-	// Unlimited (-1) needs a human on the link: gate target (each firing
-	// parks on a decision) or gate source (the link only fires on reject).
-	const unlimitedOK = (to: string) => s.type === 'human_gate' || targetsGate(to);
+	const targetsHuman = (id: string) =>
+		['human_gate', 'manual'].includes(scopeStages.find((x) => x.id === id)?.type ?? '');
+	// Unlimited (-1) needs a human on the link: a gate or manual target (each
+	// firing parks on a person) or a gate source (the link only fires on reject).
+	const unlimitedOK = (to: string) => s.type === 'human_gate' || targetsHuman(to);
 
 	// retarget switches one chain link's target, normalizing the link's other
 	// fields: links to a reserved target (end, done, abort, debug) carry no
@@ -228,7 +229,7 @@
 									<button
 										class="btn-sm unl"
 										aria-label={t('flow.insp.noLimit')}
-										title={targetsGate(link.to)
+										title={targetsHuman(link.to)
 											? t('flow.insp.noLimitTitleGate')
 											: t('flow.insp.noLimitTitle')}
 										onclick={() => setUnlimited(link, true)}>∞</button

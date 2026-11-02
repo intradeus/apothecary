@@ -20,6 +20,7 @@
 	import FileChip from '$lib/ui/FileChip.svelte';
 	import { I } from '$lib/design/icons';
 	import { t, th } from '$lib/i18n/index.svelte';
+	import { openRunEditor } from '$lib/app/editor';
 	import { untrack } from 'svelte';
 	import {
 		answerMeta,
@@ -46,6 +47,7 @@
 		ticketTitle,
 		ticketKey,
 		stage,
+		runId,
 		compact = false
 	}: {
 		ping: PingLike;
@@ -68,6 +70,8 @@
 		ticketKey?: string;
 		/** Overrides ping.stageId in the head. */
 		stage?: string;
+		/** The run the ping belongs to, when the ping does not say. */
+		runId?: string;
 		/** Tighter padding, no body indent (docked or inline use). */
 		compact?: boolean;
 	} = $props();
@@ -132,26 +136,64 @@
 	const busyOn = (answer: string) => off && sending === answer;
 	const verdict = $derived(answerMeta(ping));
 	const pingRunId = $derived((ping as { runId?: string }).runId);
+	const theRunId = $derived(runId ?? pingRunId);
 	const runLink = $derived(runHref ?? (pingRunId ? to.run(pingRunId) : undefined));
 
 	/** The debug leaf carries facts, not prose: the card is the wording. */
 	const debug = $derived(ping.type === 'debug');
+	/** A manual stage: the workspace is the person's until Done. */
+	const manual = $derived(ping.type === 'manual');
+	/** Both hand the workspace over: giving up is a dead end. */
+	const leaf = $derived(debug || manual);
 	/** A gate over a review document: the page curates it; inline, the card
 	 *  can only approve it as written. */
 	const cur = $derived(curatable(ping));
 	// Giving up at a watcher's debug leaf ends that round, not the run: the
 	// engine says which on the ping, and the buttons say what will happen.
-	const endsRound = $derived(debug && ping.endsPhase);
+	const endsRound = $derived(leaf && ping.endsPhase);
 	const phaseName = $derived(ping.phase ?? '');
 	const aside = $derived(
 		ping.type === 'gate'
 			? t('ping.aside.gate')
 			: debug
 				? t('ping.aside.debug')
-				: unwanted
-					? t('ping.aside.agent')
-					: ''
+				: manual
+					? t('ping.aside.manual')
+					: unwanted
+						? t('ping.aside.agent')
+						: ''
 	);
+
+	// A manual card opens the workspace: code-server, or desktop VS Code
+	// over the SSH door when it is on.
+	let wsBusy = $state(false);
+	let wsErr = $state('');
+	let vscodeUrl = $state('');
+	async function openEditor() {
+		if (!theRunId) return;
+		wsBusy = true;
+		wsErr = '';
+		try {
+			await openRunEditor(theRunId);
+		} catch (e) {
+			wsErr = errorMessage(e);
+		} finally {
+			wsBusy = false;
+		}
+	}
+	$effect(() => {
+		if (!manual || !theRunId) return;
+		let stale = false;
+		api.runs.ssh(theRunId).then(
+			(s) => {
+				if (!stale && s.enabled && s.vscodeUrl) vscodeUrl = s.vscodeUrl;
+			},
+			() => {}
+		);
+		return () => {
+			stale = true;
+		};
+	});
 
 	// A reason taken back must not ride along on the answer that follows.
 	function cancelNote() {
@@ -232,6 +274,22 @@
 				<div class="q"><Markdown src={ping.question} /></div>
 				{#if ping.context}<Markdown src={ping.context} quiet />{/if}
 			{/if}
+			{#if manual}
+				<div class="ws">
+					{#if theRunId}
+						<button class="btn-sel btn-sm" disabled={wsBusy} aria-busy={wsBusy} onclick={openEditor}
+							>{t('ping.openEditor')} {I.external}</button
+						>
+					{/if}
+					{#if vscodeUrl}
+						<a class="btn btn-ghost btn-sm" href={vscodeUrl}>{t('ping.openVscode')} {I.external}</a>
+					{/if}
+				</div>
+				{#if wsErr}<div class="error">{wsErr}</div>{/if}
+				<div class="faint brief">
+					{@html th('ping.manualBrief', { path: '.apothecary/manual/' + stageId + '.md' })}
+				</div>
+			{/if}
 
 			{#if ping.link}
 				<!-- Typed at the source (DESIGN-FILES §4): a link payload links out… -->
@@ -273,14 +331,14 @@
 			{:else if kind === 'yes_no'}
 				{#if noteOpen}
 					<textarea
-						aria-label={debug
+						aria-label={leaf
 							? endsRound
 								? t('ping.debugEndPlaceholder', { phase: phaseName })
 								: t('ping.debugReasonPlaceholder')
 							: t('ping.changesPlaceholder')}
 						bind:value={note}
 						rows="3"
-						placeholder={debug
+						placeholder={leaf
 							? endsRound
 								? t('ping.debugEndPlaceholder', { phase: phaseName })
 								: t('ping.debugReasonPlaceholder')
@@ -295,9 +353,11 @@
 						onclick={() => submit('approve')}
 						>{debug
 							? t('ping.continueRerun', { stage: stageId ?? '' })
-							: cur
-								? t('ping.approveAsWritten')
-								: t('ping.approve')}</button
+							: manual
+								? t('ping.manualDone')
+								: cur
+									? t('ping.approveAsWritten')
+									: t('ping.approve')}</button
 					>
 					{#if noteOpen}
 						<button
@@ -305,7 +365,7 @@
 							disabled={off || !note.trim()}
 							aria-busy={busyOn('reject')}
 							onclick={() => submit('reject')}
-							>{debug
+							>{leaf
 								? endsRound
 									? t('ping.endPhase', { phase: phaseName })
 									: t('ping.abandonRun')
@@ -314,7 +374,7 @@
 						<button class="btn-ghost btn-sm" onclick={cancelNote}>{t('common.cancel')}</button>
 					{:else}
 						<button class="btn-hot-outline btn-md" disabled={off} onclick={() => (noteOpen = true)}
-							>{debug
+							>{leaf
 								? endsRound
 									? t('ping.endPhaseOpen')
 									: t('ping.abandon')
@@ -527,6 +587,12 @@
 		min-width: 0;
 	}
 	.acts {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		align-items: center;
+	}
+	.ws {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 6px;

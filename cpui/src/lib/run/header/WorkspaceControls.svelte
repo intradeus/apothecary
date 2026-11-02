@@ -3,7 +3,7 @@
 	// and the editor. The menus themselves are the header's: they open beside
 	// these buttons, from outside the glass.
 	import { errorMessage } from '$lib/core/errors';
-	import { api } from '$lib/api';
+	import { openRunEditor } from '$lib/app/editor';
 	import { t } from '$lib/i18n/index.svelte';
 	import { I } from '$lib/design/icons';
 	import GlassGroup from '$lib/ui/GlassGroup.svelte';
@@ -38,16 +38,10 @@
 	function openEditor() {
 		return actions.run('editor', async () => {
 			rs.error = '';
-			// Open the tab inside the click so it is not blocked; code-server boots
-			// for a few seconds on first open.
-			const w = window.open('', '_blank');
 			try {
-				const url = await api.runs.openEditor(run.id);
-				if (w) w.location.href = url;
-				else window.open(url, '_blank');
+				await openRunEditor(run.id);
 				return true;
 			} catch (e) {
-				w?.close();
 				rs.error = errorMessage(e);
 				return false;
 			}

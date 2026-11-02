@@ -1897,12 +1897,12 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	}
 	st := StageType(raw.Type)
 	switch st {
-	case StageAgent, StageCommand, StageHumanGate, StageAction, StageWait, StageService:
+	case StageAgent, StageCommand, StageHumanGate, StageAction, StageWait, StageService, StageManual:
 	case "":
 		return fail("type is required")
 	default:
-		return fail("unknown type %q (%s|%s|%s|%s|%s|%s)", raw.Type,
-			StageAgent, StageCommand, StageHumanGate, StageAction, StageWait, StageService)
+		return fail("unknown type %q (%s|%s|%s|%s|%s|%s|%s)", raw.Type,
+			StageAgent, StageCommand, StageHumanGate, StageAction, StageWait, StageService, StageManual)
 	}
 	// Reject fields that don't apply to the stage type (DESIGN.md §3: "model
 	// only on agent stages"; generalized to every type-specific field).
@@ -1921,14 +1921,14 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		// (like a gate — both park on something outside the run). A command
 		// bounds its script.
 		{"timeout", raw.Timeout != "", []StageType{StageAgent, StageCommand, StageWait, StageService}},
-		{"input", raw.Input != nil, []StageType{StageAgent, StageCommand, StageHumanGate, StageAction}},
+		{"input", raw.Input != nil, []StageType{StageAgent, StageCommand, StageHumanGate, StageAction, StageManual}},
 		{"output", raw.Output != nil, []StageType{StageAgent, StageCommand, StageAction}},
 		{"with", raw.With != nil, []StageType{StageAction}},
 		{"run", raw.Run != "", []StageType{StageCommand}},
 		{"run_ref", raw.RunRef != "", []StageType{StageCommand}},
 		{"each_repo", raw.EachRepo, []StageType{StageCommand}},
 		{"reuse_session", raw.ReuseSession != nil, []StageType{StageAgent}},
-		{"question", raw.Question != "", []StageType{StageHumanGate}},
+		{"question", raw.Question != "", []StageType{StageHumanGate, StageManual}},
 		{"action", raw.Action != "", []StageType{StageAction}},
 		{"for", raw.For != "", []StageType{StageWait}},
 		{"service", raw.Service != "", []StageType{StageService}},
@@ -2062,6 +2062,9 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		if links > 1 {
 			return fail("input: a human_gate opens at most one link; got %d", links)
 		}
+	case StageManual:
+		// Every input — links included — is rendered into the person's brief.
+		s.Question = raw.Question
 
 	case StageAction:
 		if raw.Action == "" {
@@ -2387,7 +2390,7 @@ func (p *parser) buildEdgeLink(raw *DocEdge, kind string, s *Stage, line, depth 
 			return fail("then after an unlimited link (max -1) is unreachable — it never exhausts")
 		}
 	} else if *raw.Max < 1 {
-		return fail("max must be >= 1 (or -1 for unlimited, human_gate targets only), got %d", *raw.Max)
+		return fail("max must be >= 1 (or -1 for unlimited, with a person on the link), got %d", *raw.Max)
 	}
 	e := &Edge{To: raw.To, Max: *raw.Max}
 	var err error
@@ -2416,8 +2419,8 @@ func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 					// Unlimited needs a human on the link: gate target (each
 					// firing parks on a decision) or gate source (the link
 					// only fires when a human rejects).
-					if tgt := &f.Stages[ids[link.To]]; tgt.Type != StageHumanGate && s.Type != StageHumanGate {
-						return p.errf(s.Line, "stage %q: %s: max -1 (unlimited) requires a human_gate on the link (source or target) — every firing must cost a human decision; budgets cannot bound cost-free retries (use a finite max)",
+					if tgt := &f.Stages[ids[link.To]]; tgt.Type != StageHumanGate && tgt.Type != StageManual && s.Type != StageHumanGate {
+						return p.errf(s.Line, "stage %q: %s: max -1 (unlimited) requires a human on the link: a human_gate source or target, or a manual target — every firing must cost a human decision; budgets cannot bound cost-free retries (use a finite max)",
 							s.ID, kind)
 					}
 				}

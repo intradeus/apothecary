@@ -102,7 +102,7 @@ func schema() obj {
 		"required":             []string{"id"},
 		"properties": obj{
 			"id":              withDesc(slug, "the stage's id: lowercase, unique in its chain (or its sequence)"),
-			"type":            stringsOf("what the stage is (a sequence stage has none: it names a sequence)", string(StageAgent), string(StageCommand), string(StageHumanGate), string(StageAction), string(StageWait), string(StageService)),
+			"type":            stringsOf("what the stage is (a sequence stage has none: it names a sequence)", string(StageAgent), string(StageCommand), string(StageHumanGate), string(StageAction), string(StageWait), string(StageService), string(StageManual)),
 			"sequence":        str("run this sequence in the stage's place (a stage that does has no type)"),
 			"description":     str("what the stage is for — documentation only"),
 			"run_if":          str("run only when this holds: run.ticket.tracker, run.subject or a bool $parameter — each may be negated, `not x` — or run.ticket.change_type == (or !=) feat, fix, hotfix, perf, docs or chore"),
@@ -119,7 +119,7 @@ func schema() obj {
 			"run":             str("command: a script, run in the workspace"),
 			"run_ref":         str("command: one of the project's commands, or a $parameter naming one"),
 			"each_repo":       obj{"type": "boolean", "description": "command: run once per repository of a multi-repo run"},
-			"question":        str("human_gate: what the person is asked"),
+			"question":        str("human_gate: what the person is asked; manual: what the person is to do"),
 			"action":          stringsOf("action: the action it performs", actionSlugs...),
 			"for":             stringsOf("wait: the signal it waits for", observed...),
 			"service":         str("service: one of the project's services, or a $parameter naming one (service: $app)"),

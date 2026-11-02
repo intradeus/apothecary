@@ -45,6 +45,9 @@ const (
 	// (FLOWLANG §3 service): the app the run builds, brought up to be looked
 	// at, then healthy before the chain goes on.
 	StageService StageType = "service"
+	// StageManual hands the run's workspace to a person (FLOWLANG §2): the
+	// chain parks until they press Done (on_success) or give up (a dead end).
+	StageManual StageType = "manual"
 )
 
 // Sources are where a stage's input comes from (FLOWLANG §4): a file some
@@ -288,7 +291,7 @@ const UnlimitedMax = -1
 // target decides whether to bind it.
 type Edge struct {
 	To   string
-	Max  int   // >= 1, or UnlimitedMax on human_gate targets
+	Max  int   // >= 1, or UnlimitedMax with a person on the link (a gate source, a gate or manual target)
 	Then *Edge // fallback link once this one is exhausted; nil = abandon
 }
 
@@ -369,13 +372,14 @@ type Stage struct {
 	// in the primary. What `git commit` and `git push` want.
 	EachRepo bool
 
-	// human_gate
+	// human_gate, manual
 	//
 	// Question is the free text the human is asked; empty falls back to the
 	// stage id. Gates are one machine — approve follows OnSuccess, reject
 	// follows the on_reject edge — so intent lives in this text rather than in
 	// an enum the engine would have to interpret. What the human is shown is
-	// the stage's single Inputs entry.
+	// the stage's single Inputs entry. On a manual stage it is the person's
+	// instruction: what to do in the workspace before pressing Done.
 	Question string
 
 	// action

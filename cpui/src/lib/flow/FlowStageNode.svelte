@@ -85,6 +85,7 @@
 				: sequence
 					? set(`${sequence.id}: ${sequence.stages.map((q) => q.id).join(' → ')}`)
 					: unset(t('flow.node.unknownSequence', { sequence: stage.sequence }));
+		if (stage.type === 'manual') return set(stage.question || t('flow.node.byHand'));
 		return set(stage.question || t('flow.node.asksHuman'));
 	});
 </script>

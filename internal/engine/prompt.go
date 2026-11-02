@@ -8,6 +8,7 @@ import (
 
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
+	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/event"
@@ -71,68 +72,7 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 	rs := x.rs
 	var b strings.Builder
 	spec := rs.Flow.Agent(st.Agent)
-	now := x.ticketNow(st)
-	for _, in := range st.Inputs {
-		if flow.IsEdgeSource(in.Value) {
-			// The content of the edge that re-entered this stage. Only one of
-			// $DECISION / $FAILURE can be filled at a time (the edge kind
-			// decides which), and neither on a first attempt.
-			if in.Value != rs.FeedSentinel || rs.Feed == "" {
-				continue
-			}
-			// Both were capped where they were taken: a failure to its tail,
-			// a verdict to its head.
-			fmt.Fprintf(&b, "# INPUT: %s%s (%s)\n%s\n",
-				in.Name, inputDesc(spec, in.Name), attemptOf(iter, rs.FeedAttempts), strings.TrimRight(rs.Feed, "\n"))
-			continue
-		}
-		if name := flow.SourceService(in.Value); name != "" {
-			fmt.Fprintf(&b, "# INPUT: %s%s (link)\n%s\n", in.Name, inputDesc(spec, in.Name), x.serviceInput(name))
-			continue
-		}
-		switch in.Value {
-		case flow.SourceTicket:
-			x.ticketSection(&b, now)
-			continue
-		case flow.SourceTicketComments:
-			if now != nil {
-				b.WriteString(ticketDiscussion(in.Name, inputDesc(spec, in.Name), now.Comments, in.Limit, in.ExcludeOwn))
-			}
-			continue
-		case flow.SourceCIFailure:
-			fmt.Fprintf(&b, "# INPUT: %s%s (what failed in CI)\n%s", in.Name, inputDesc(spec, in.Name), ciFailureText(rs.CI))
-			continue
-		case flow.SourceMRURL, flow.SourceWorkspace:
-			if link := x.sourceLink(in.Value); link != "" {
-				fmt.Fprintf(&b, "# INPUT: %s%s (link)\n%s\n", in.Name, inputDesc(spec, in.Name), link)
-			}
-			continue
-		case flow.SourceDiffTarget:
-			fmt.Fprintf(&b, "# INPUT: %s%s (git diff --name-status <target>...HEAD: what the branch changes against its target)\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n",
-				in.Name, inputDesc(spec, in.Name), x.diffTarget())
-			continue
-		case flow.SourceDiffPhase:
-			fmt.Fprintf(&b, "# INPUT: %s%s (git diff --name-status <phase start>...HEAD: what this phase committed since it began)\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n",
-				in.Name, inputDesc(spec, in.Name), x.diffPhase())
-			continue
-		case flow.SourceStatus:
-			fmt.Fprintf(&b, "# INPUT: %s%s (git status --short)\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n",
-				in.Name, inputDesc(spec, in.Name), x.statusFiles())
-			continue
-		}
-		path := flow.FilePath(in.Value)
-		if in.Type == agentspec.TypeFiles {
-			// A directory: what it holds, by name — screenshots are read with
-			// the agent's own tools, never pasted into a prompt.
-			fmt.Fprintf(&b, "# INPUT: %s%s (files: %s)\n%s", in.Name, inputDesc(spec, in.Name), path, x.filesListing(path))
-			continue
-		}
-		content := "(file missing)"
-		if data, err := x.res.Envp.ReadFile(x.ctx, rs.EnvID, path); err == nil {
-			content = shell.Tail(string(data), 16<<10)
-		}
-		fmt.Fprintf(&b, "# INPUT: %s%s (file: %s)\n%s\n", in.Name, inputDesc(spec, in.Name), path, content)
-	}
+	x.writeInputs(&b, st, iter, func(in flow.Port) string { return inputDesc(spec, in.Name) }, false)
 
 	if sec := x.subjectSection(); sec != "" {
 		b.WriteString(sec)
@@ -191,6 +131,81 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		}
 	}
 	return b.String()
+}
+
+// writeInputs renders a stage's input ports, each by its type — what an
+// agent's prompt and a manual stage's brief both open with. desc is a port's
+// " — description" suffix. readableThreads renders an mr_threads file as
+// markdown, for a person, instead of the document an agent reads.
+func (x *exec) writeInputs(b *strings.Builder, st *flow.Stage, iter int, desc func(in flow.Port) string, readableThreads bool) {
+	rs := x.rs
+	now := x.ticketNow(st)
+	for _, in := range st.Inputs {
+		if flow.IsEdgeSource(in.Value) {
+			// The content of the edge that re-entered this stage. Only one of
+			// $DECISION / $FAILURE can be filled at a time (the edge kind
+			// decides which), and neither on a first attempt.
+			if in.Value != rs.FeedSentinel || rs.Feed == "" {
+				continue
+			}
+			// Both were capped where they were taken: a failure to its tail,
+			// a verdict to its head.
+			fmt.Fprintf(b, "# INPUT: %s%s (%s)\n%s\n",
+				in.Name, desc(in), attemptOf(iter, rs.FeedAttempts), strings.TrimRight(rs.Feed, "\n"))
+			continue
+		}
+		if name := flow.SourceService(in.Value); name != "" {
+			fmt.Fprintf(b, "# INPUT: %s%s (link)\n%s\n", in.Name, desc(in), x.serviceInput(name))
+			continue
+		}
+		switch in.Value {
+		case flow.SourceTicket:
+			x.ticketSection(b, now)
+			continue
+		case flow.SourceTicketComments:
+			if now != nil {
+				b.WriteString(ticketDiscussion(in.Name, desc(in), now.Comments, in.Limit, in.ExcludeOwn))
+			}
+			continue
+		case flow.SourceCIFailure:
+			fmt.Fprintf(b, "# INPUT: %s%s (what failed in CI)\n%s", in.Name, desc(in), ciFailureText(rs.CI))
+			continue
+		case flow.SourceMRURL, flow.SourceWorkspace:
+			if link := x.sourceLink(in.Value); link != "" {
+				fmt.Fprintf(b, "# INPUT: %s%s (link)\n%s\n", in.Name, desc(in), link)
+			}
+			continue
+		case flow.SourceDiffTarget:
+			fmt.Fprintf(b, "# INPUT: %s%s (git diff --name-status <target>...HEAD: what the branch changes against its target)\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n",
+				in.Name, desc(in), x.diffTarget())
+			continue
+		case flow.SourceDiffPhase:
+			fmt.Fprintf(b, "# INPUT: %s%s (git diff --name-status <phase start>...HEAD: what this phase committed since it began)\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n",
+				in.Name, desc(in), x.diffPhase())
+			continue
+		case flow.SourceStatus:
+			fmt.Fprintf(b, "# INPUT: %s%s (git status --short)\n%s\nInspect changed files directly with your read tools; do not ask for the diff.\n",
+				in.Name, desc(in), x.statusFiles())
+			continue
+		}
+		path := flow.FilePath(in.Value)
+		if in.Type == agentspec.TypeFiles {
+			// A directory: what it holds, by name — screenshots are read with
+			// the agent's own tools, never pasted into a prompt.
+			fmt.Fprintf(b, "# INPUT: %s%s (files: %s)\n%s", in.Name, desc(in), path, x.filesListing(path))
+			continue
+		}
+		content := "(file missing)"
+		if data, err := x.res.Envp.ReadFile(x.ctx, rs.EnvID, path); err == nil {
+			content = shell.Tail(string(data), 16<<10)
+			if readableThreads && in.Type == agentspec.TypeMRThreads {
+				if th, perr := reviewfile.ParseThreads(path, data); perr == nil {
+					content = th.Markdown()
+				}
+			}
+		}
+		fmt.Fprintf(b, "# INPUT: %s%s (file: %s)\n%s\n", in.Name, desc(in), path, content)
+	}
 }
 
 // promptFilesListed caps the files a files input lists in a prompt.

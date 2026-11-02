@@ -117,6 +117,7 @@ export default {
 	'runview.timeline.open': 'open',
 	'runview.connecting': 'Connecting…',
 	'runview.flow.tip_gate': 'gate',
+	'runview.flow.tip_manual': 'by hand',
 	'runview.flow.tip_attempt': 'attempt {n}',
 	'runview.flow.tip': '{parts} — open its log',
 	'runview.flow.reading': 'Reading the flow…',

@@ -288,6 +288,8 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 					return x.stageWait(st)
 				case flow.StageService:
 					return x.stageService(st)
+				case flow.StageManual:
+					return x.stageManual(st)
 				}
 				return nil
 			})

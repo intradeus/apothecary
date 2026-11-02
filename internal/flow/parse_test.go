@@ -541,7 +541,7 @@ func TestValidationErrors(t *testing.T) {
 		{"unknown edge field", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: 1, bogus: 1 } }\n",
 			"bogus", 0},
 		{"unlimited without a gate on the link", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: -1 } }\n",
-			"requires a human_gate", 5},
+			"requires a human on the link", 5},
 		{"max below -1", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: s, max: -2 } }\n",
 			"max must be >= 1", 5},
 		{"then after unlimited", header + "main:\n  - { id: s, type: command, run: x, on_fail: { to: g, max: -1, then: { to: s, max: 1 } } }\n  - { id: g, type: human_gate, on_success: done }\n",
@@ -750,6 +750,49 @@ func TestAbortAndThenChains(t *testing.T) {
 	}
 	if d.Main[2].OnReject == nil || d.Main[2].OnReject.To != TerminalAbort || d.Main[2].OnReject.Max != nil {
 		t.Fatalf("doc on_reject = %+v", d.Main[2].OnReject)
+	}
+}
+
+// A manual stage hands the workspace to a person: it reads inputs and asks a
+// question, writes nothing, and only succeeds — Done follows on_success.
+func TestManualStage(t *testing.T) {
+	f, err := Parse("t.yaml", []byte(header+"main:\n  - { id: work, type: manual, question: q }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := f.Stage("work"); w.Type != StageManual || w.Question != "q" || w.OnSuccess != TerminalDone {
+		t.Fatalf("work = %+v", w)
+	}
+	wantErr(t, header+"main:\n  - { id: work, type: manual, output: { x: { to: x.md, type: file } } }\n",
+		`field "output" does not apply to type manual`, 5)
+	wantErr(t, header+"main:\n  - { id: work, type: manual, on_fail: { to: work, max: 1 } }\n",
+		`field "on_fail" does not apply`, 5)
+
+	// Every firing of a link into a manual stage costs a person's work: it
+	// may be unlimited. Into a command it may not.
+	review := `  - id: review
+    type: agent
+    harness: $harness
+    model: $model
+    agent: reviewer
+    input: { changes: { from: run.git.diff_target, type: changeset } }
+    output: { verdict: { to: artifacts/verdict.json, type: verdict } }
+    on_reject: { to: work, max: -1 }
+`
+	manual := "  - id: work\n    type: manual\n    input: { review: { from: edge.verdict, type: verdict, optional: true } }\n"
+	mf, err := Parse("t.yaml", []byte(portsDoc+manual+review))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := mf.Stage("review").Edge(EdgeReject); e.Max != UnlimitedMax {
+		t.Fatalf("manual-target unlimited link = %+v", e)
+	}
+	if err := parsePorts(t, "  - { id: work, type: command, run: x }\n"+review); err == nil || !strings.Contains(err.Error(), "requires a human on the link") {
+		t.Fatalf("unlimited into a command: %v", err)
+	}
+	// The verdict port with no edge that fills it is a mistake.
+	if err := parsePorts(t, manual); err == nil || !strings.Contains(err.Error(), "edge.verdict is never filled") {
+		t.Fatalf("unfilled edge.verdict: %v", err)
 	}
 }
 

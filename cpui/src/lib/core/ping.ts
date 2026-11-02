@@ -73,7 +73,9 @@ export function toReviewComment(o: unknown): ReviewComment {
  *  own decisions are yes/no, anything else a form. */
 export function answerKindOf(kind: unknown, type: string): AnswerKind {
 	if (kind === 'yes_no' || kind === 'form') return kind;
-	return type === 'gate' || type === 'phase_confirm' || type === 'debug' ? 'yes_no' : 'form';
+	return type === 'gate' || type === 'phase_confirm' || type === 'debug' || type === 'manual'
+		? 'yes_no'
+		: 'form';
 }
 
 const FIELD_TYPES: FieldType[] = ['string', 'number', 'integer', 'boolean', 'array'];

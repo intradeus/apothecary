@@ -127,6 +127,31 @@ func TestThreadsRoundTrip(t *testing.T) {
 	}
 }
 
+// A person reads the threads as markdown: where each is, its hunk, its
+// comments quoted; the dropped notes are the reviewer agent's, not theirs.
+func TestThreadsMarkdown(t *testing.T) {
+	th := &Threads{MergeRequest: "https://x/mr/1", Threads: []Thread{
+		{ID: "t1", Path: "a.go", Line: 3, Hunk: "@@ -1 +1 @@\n-a\n+b", Comments: []Comment{
+			{Author: "ana", At: "2026-01-02T03:04:05Z", New: true, Body: "Rename it.\nAnd test it."},
+			{Author: "factory", Ours: true, Body: "Renamed."},
+		}},
+		{ID: "t2", Resolved: true, Ours: true, Comments: []Comment{{Author: "bo", Body: "LGTM"}}},
+	}, Dropped: []Note{{Path: "b.go", Body: "never shown"}}}
+	want := "Merge request: https://x/mr/1\n\n" +
+		"### a.go:3 · thread t1\n\n" +
+		"```diff\n@@ -1 +1 @@\n-a\n+b\n```\n\n" +
+		"- **ana** · 2026-01-02T03:04:05Z · new\n  > Rename it.\n  > And test it.\n" +
+		"- **factory** · apothecary\n  > Renamed.\n" +
+		"\n### conversation · thread t2 · resolved · apothecary's\n\n" +
+		"- **bo**\n  > LGTM\n"
+	if got := th.Markdown(); got != want {
+		t.Fatalf("markdown:\n%s\nwant:\n%s", got, want)
+	}
+	if got := (&Threads{}).Markdown(); got != "(no threads)\n" {
+		t.Fatalf("empty = %q", got)
+	}
+}
+
 func TestNormalizeBody(t *testing.T) {
 	a := NormalizeBody("[Blocking]  This   error drops\nthe line.\n\n<!-- apothecary review=r/x part=note-1 kind=blocking -->")
 	b := NormalizeBody("this error drops the line.")

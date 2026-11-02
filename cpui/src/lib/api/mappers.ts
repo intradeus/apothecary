@@ -166,6 +166,7 @@ const RUN_STATES: RunState[] = [
 const PING_TYPES: PingType[] = [
 	'gate',
 	'debug',
+	'manual',
 	'phase_confirm',
 	'select',
 	'clarification',

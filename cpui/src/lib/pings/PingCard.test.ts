@@ -9,7 +9,10 @@ import { deferred } from '$test/helpers';
 import PingCard from './PingCard.svelte';
 
 vi.mock('$lib/api', () => ({
-	api: { files: { upload: vi.fn(), limits: vi.fn(async () => null) } }
+	api: {
+		files: { upload: vi.fn(), limits: vi.fn(async () => null) },
+		runs: { ssh: vi.fn(async () => ({ enabled: false })), openEditor: vi.fn() }
+	}
 }));
 
 const NOW = Date.parse('2026-10-31T12:00:00Z');
@@ -382,6 +385,25 @@ describe('a parked stage', () => {
 		await userEvent.click(btn('End review — the run keeps waiting'));
 		expect(onanswer.mock.calls[0].slice(0, 2)).toEqual(['reject', 'Enough']);
 		expect(noBtn('Abandon the run')).not.toBeInTheDocument();
+	});
+});
+
+describe('a manual stage', () => {
+	const manual = { type: 'manual', stageId: 'work', question: 'Build it' };
+
+	it('hands the workspace over, naming where the brief is', () => {
+		const { container } = setup(manual, { runId: 'r1' });
+		expect(screen.getByText('Build it')).toBeInTheDocument();
+		expect(btn(/open editor/i)).toBeEnabled();
+		expect(container).toHaveTextContent(
+			'The brief is also in the workspace: .apothecary/manual/work.md'
+		);
+	});
+
+	it('continues on Done', async () => {
+		const { onanswer } = setup(manual, { runId: 'r1' });
+		await userEvent.click(btn('Done — continue'));
+		expect(onanswer.mock.calls[0][0]).toBe('approve');
 	});
 });
 

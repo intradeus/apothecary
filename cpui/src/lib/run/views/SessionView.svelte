@@ -145,6 +145,7 @@
 	{#if ping}
 		<PingDock
 			{ping}
+			runId={rs.runId}
 			queued={rs.pendingPings.length - 1}
 			busy={rs.answering}
 			onanswer={(a, note, files, content) => rs.answer(ping.id, a, note, files, content)}

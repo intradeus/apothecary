@@ -59,9 +59,7 @@
 	const optionKinds = $derived.by(() => {
 		const h = s.harness ?? '';
 		const shown =
-			h && !isParamRef(h)
-				? harnessSpecs.filter((k) => k.kind === h)
-				: [...harnessSpecs];
+			h && !isParamRef(h) ? harnessSpecs.filter((k) => k.kind === h) : [...harnessSpecs];
 		for (const kind of Object.keys(s.harness_options ?? {}))
 			if (!shown.some((k) => k.kind === kind)) shown.push({ kind, options: [] });
 		return shown;
@@ -205,7 +203,9 @@
 							{ value: '', label: '—' },
 							...(o.values ?? []).map((v) => ({ value: v, label: v })),
 							...fits.map((p) => ({ value: '$' + p, label: '$' + p })),
-							...(isParamRef(cur) && !fits.includes(cur.slice(1)) ? [{ value: cur, label: cur }] : [])
+							...(isParamRef(cur) && !fits.includes(cur.slice(1))
+								? [{ value: cur, label: cur }]
+								: [])
 						]}
 						onchange={(v) => setOption(h.kind, o.name, v)}
 					/>

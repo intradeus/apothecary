@@ -628,6 +628,7 @@ export default {
 	// PingCard
 	'ping.aside.gate': 'the bench awaits your seal',
 	'ping.aside.debug': 'the bench is yours — mend it, then continue',
+	'ping.aside.manual': 'the workspace is yours — work there, then press Done',
 	'ping.aside.agent': 'a note from the agent',
 	'ping.withdrawn': 'withdrawn',
 	'ping.answeredAgo': 'answered {ago} —',
@@ -651,6 +652,10 @@ export default {
 	'ping.endPhaseOpen': 'Give up this round…',
 	'ping.changesPlaceholder': 'What should change? Required — the run takes it as feedback.',
 	'ping.continueRerun': 'Continue — re-run {stage}',
+	'ping.manualDone': 'Done — continue',
+	'ping.openEditor': 'Open editor',
+	'ping.openVscode': 'VS Code desktop',
+	'ping.manualBrief': 'The brief is also in the workspace: <span class="mono">{path}</span>',
 	'ping.approve': 'Approve',
 	'ping.abandonRun': 'Abandon the run',
 	'ping.sendChanges': 'Send changes',
@@ -759,6 +764,7 @@ export default {
 	'flow.node.noSignal': '(no signal)',
 	'flow.node.noService': '{do} (no service)',
 	'flow.node.asksHuman': 'asks a human',
+	'flow.node.byHand': 'by hand',
 	'flow.node.entryTitle': 'Its chain begins here',
 	'flow.node.entry': 'first',
 	'flow.node.unbound': 'unbound',
@@ -965,6 +971,13 @@ export default {
 	'flow.insp.shows': 'Shows',
 	'flow.insp.showsHelp':
 		'The files to review — a path ending in <span class="mono">/</span> is a folder, each of its files shown — and at most one link beside them: <span class="mono">run.workspace</span> hands over the workspace’s app link (its first exposed port); <span class="mono">run.mr.url</span> the merge request opened by a <span class="mono">create_mr</span> action.',
+	'flow.insp.manualQuestion': 'What to do',
+	'flow.insp.manualQuestionPlaceholder': 'Build the change in the workspace, then press Done.',
+	'flow.insp.manualQuestionHelp':
+		'Shown on the Your turn card and at the top of the brief written to .apothecary/manual/<stage>.md.',
+	'flow.insp.manualShows': 'Hands them',
+	'flow.insp.manualShowsHelp':
+		'What flowed in — a verdict, a failure, review threads, files, links — rendered into the brief.',
 	'flow.insp.curateHelp':
 		'A review shown here opens the curation page: the person picks the notes or replies to post and rewords them, and the file is rewritten with their choices before the next stage reads it. Show the mr_threads file beside it, so each item sits next to its thread.',
 	'flow.insp.oneLink_one': 'A gate opens at most one link — show this one as a file, or remove it.',
@@ -1021,7 +1034,7 @@ export default {
 	'flow.insp.removeLink': 'Remove this link',
 	'flow.insp.thenLink': 'then',
 	'flow.insp.routesHelp':
-		'A failure route sends the run to its target up to ×N times, then falls through to its next link; with every link spent, the run is abandoned. It carries edge.failure — edge.verdict for on_reject — for the target to read, or the retry runs blind. ∞ only where a person decides each time: from a gate, or to one.',
+		'A failure route sends the run to its target up to ×N times, then falls through to its next link; with every link spent, the run is abandoned. It carries edge.failure — edge.verdict for on_reject — for the target to read, or the retry runs blind. ∞ only where a person decides each time: from a gate, or to a gate or a by-hand stage.',
 	// The way back to the panel this one was opened from
 	'flow.insp.back': 'Back to {what}',
 	'flow.insp.backStage': 'stage {id}',

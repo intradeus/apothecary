@@ -251,18 +251,19 @@ func ChainKey(from, kind string, depth int) string {
 	return fmt.Sprintf("%s|%s|%d", from, kind, depth)
 }
 
-func GatePingType(t string) bool  { return t == event.PingGate }
-func DebugPingType(t string) bool { return t == event.PingDebug }
+func GatePingType(t string) bool   { return t == event.PingGate }
+func DebugPingType(t string) bool  { return t == event.PingDebug }
+func ManualPingType(t string) bool { return t == event.PingManual }
 
 // DecidesHere reports whether an answer to this ping is the routing decision
-// the stage at pos is waiting for: its gate's ping while the gate is open, or
-// the debug leaf's while the run is parked there — and the stage's own ping,
-// never a stale one an earlier attempt raised.
+// the stage at pos is waiting for: its gate's or manual stage's ping while
+// the stage is open, or the debug leaf's while the run is parked there — and
+// the stage's own ping, never a stale one an earlier attempt raised.
 func (rs *State) DecidesHere(r *event.PingRaised) bool {
 	if rs.Flow == nil || rs.Pos < 0 || rs.Pos >= len(rs.Flow.Stages) || r.StageID != rs.Flow.Stages[rs.Pos].ID {
 		return false
 	}
-	return (GatePingType(r.Type) && rs.Ph == PhIn) || (DebugPingType(r.Type) && rs.Ph == PhDebug)
+	return ((GatePingType(r.Type) || ManualPingType(r.Type)) && rs.Ph == PhIn) || (DebugPingType(r.Type) && rs.Ph == PhDebug)
 }
 
 // AttemptBegun reports whether the agent stage's attempt in progress reached
@@ -643,6 +644,10 @@ func (rs *State) Apply(ev *event.Event) {
 		}
 		if p.Type == event.PingSelect {
 			rs.SelectPing = p
+		}
+		if p.Type == event.PingManual {
+			// The handover: when the person got the workspace.
+			rs.ParkSince[p.StageID] = ev.TS
 		}
 		rs.RaisedPings[p.PingID] = p
 		rs.OpenPings = append(rs.OpenPings, p)

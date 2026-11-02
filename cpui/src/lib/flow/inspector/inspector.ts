@@ -148,6 +148,7 @@ export const addKinds = (
 		'agent',
 		'command',
 		'human_gate',
+		'manual',
 		'action',
 		'wait',
 		'service',

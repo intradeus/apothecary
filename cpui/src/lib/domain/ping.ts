@@ -4,9 +4,17 @@
 /** 'gate' is every human_gate stage (approve / reject with feedback; what it
  *  asks lives in its question). 'debug' is the flow's debug leaf: the failing
  *  stage is parked for you — continue re-runs it, reject abandons the run.
- *  The rest are raised by agents. */
+ *  'manual' is a manual stage: the run's workspace is in your hands — Done
+ *  follows on_success, give up is a dead end. The rest are raised by agents. */
 export type PingType =
-	'gate' | 'debug' | 'phase_confirm' | 'select' | 'clarification' | 'blocker' | 'permission';
+	| 'gate'
+	| 'debug'
+	| 'manual'
+	| 'phase_confirm'
+	| 'select'
+	| 'clarification'
+	| 'blocker'
+	| 'permission';
 
 export type PingStatus = 'pending' | 'answered' | 'withdrawn';
 

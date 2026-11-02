@@ -11,6 +11,7 @@
 	import AgentStage from '$lib/flow/inspector/AgentStage.svelte';
 	import CommandStage from '$lib/flow/inspector/CommandStage.svelte';
 	import GateStage from '$lib/flow/inspector/GateStage.svelte';
+	import ManualStage from '$lib/flow/inspector/ManualStage.svelte';
 	import ActionStage from '$lib/flow/inspector/ActionStage.svelte';
 	import ServiceStage from '$lib/flow/inspector/ServiceStage.svelte';
 	import SequenceStage from '$lib/flow/inspector/SequenceStage.svelte';
@@ -179,6 +180,8 @@
 	<CommandStage {doc} stage={s} {onchange} />
 {:else if s.type === 'human_gate'}
 	<GateStage {doc} stage={s} {onchange} />
+{:else if s.type === 'manual'}
+	<ManualStage {doc} stage={s} {onchange} />
 {:else if s.type === 'action'}
 	<ActionStage {doc} stage={s} {actions} {onchange} />
 {:else if s.type === 'service'}

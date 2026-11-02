@@ -26,6 +26,8 @@ export const STAGE_HUE: Record<string, Hue> = {
 	command: 'success',
 	human_gate: 'warning',
 	gate: 'warning',
+	// A person works the workspace: a human must act.
+	manual: 'attention',
 	action: 'accent',
 	wait: 'accent-2',
 	// A service is the project's, as a command is: the same hue.
@@ -33,7 +35,7 @@ export const STAGE_HUE: Record<string, Hue> = {
 	sequence: 'brand'
 };
 /** The chip word for a stage type ("human_gate" reads "gate"). */
-export const STAGE_WORD: Record<string, string> = { human_gate: 'gate' };
+export const STAGE_WORD: Record<string, string> = { human_gate: 'gate', manual: 'by hand' };
 
 /** Flow edge kinds (DESIGN 3.6). */
 export const EDGE_HUE: Record<string, Hue> = {

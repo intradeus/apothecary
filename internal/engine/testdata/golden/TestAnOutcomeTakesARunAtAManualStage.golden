@@ -1,0 +1,23 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=redact
+agent_prompted stage=redact
+stage_completed stage=redact
+stage_started stage=mr
+action_started stage=mr
+mr_created
+stage_completed stage=mr
+phase_completed phase=main
+phase_started phase=by_hand
+stage_started stage=hands
+ping_raised stage=hands ping=manual
+run_paused stage=hands reason=waiting_on_human
+phase_started phase=merged
+run_unpaused
+stage_started stage=wrap
+stage_completed stage=wrap
+phase_completed phase=merged
+run_completed

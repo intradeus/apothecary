@@ -164,15 +164,23 @@ export function stageRows(
 	const over = state ? isTerminal(state) : false;
 
 	// Stages parked on the debug leaf: a pending debug ping names its stage.
+	// A manual stage is in the person's hands while its ping is pending.
 	const parked = new Set<string>();
 	const debugStage = new Map<string, string>();
+	const handed = new Set<string>();
+	const manualStage = new Map<string, string>();
 	for (const e of events) {
 		if (e.type === 'ping_raised' && e.payload.type === 'debug') {
 			debugStage.set(String(e.payload.ping_id), String(e.payload.stage_id));
 			parked.add(String(e.payload.stage_id));
+		} else if (e.type === 'ping_raised' && e.payload.type === 'manual') {
+			manualStage.set(String(e.payload.ping_id), String(e.payload.stage_id));
+			handed.add(String(e.payload.stage_id));
 		} else if (e.type === 'ping_answered') {
 			const sid = debugStage.get(String(e.payload.ping_id));
 			if (sid) parked.delete(sid);
+			const mid = manualStage.get(String(e.payload.ping_id));
+			if (mid) handed.delete(mid);
 		}
 	}
 
@@ -209,6 +217,8 @@ export function stageRows(
 				status: 'failed' as StageStatus,
 				line: String(end.payload.reason ?? 'failed').replace(/_/g, ' ')
 			};
+		if (!over && !end && handed.has(d.id))
+			return { ...r, status: 'waiting' as StageStatus, line: t('run.stage.manual') };
 		if (!over && (end?.type === 'stage_paused' || state === 'waiting_on_human'))
 			return { ...r, status: 'waiting' as StageStatus, line: t('run.stage.waiting') };
 		if (state === 'paused')
@@ -249,7 +259,12 @@ export function stageRows(
 	for (const r of rows) {
 		if (r.status === 'running' || r.status === 'waiting' || r.status === 'done') continue;
 		if (r.status === 'pending' && !r.line)
-			r.line = r.type === 'human_gate' ? t('run.stage.gate') : r.type;
+			r.line =
+				r.type === 'human_gate'
+					? t('run.stage.gate')
+					: r.type === 'manual'
+						? t('run.stage.byHand')
+						: r.type;
 	}
 	return rows.map(({ endSeq: _e, startSeq: _s, ...r }) => r);
 }
@@ -440,6 +455,8 @@ export function describe(e: RunEvent): Described {
 		case 'ping_raised':
 			if (p.type === 'debug')
 				return { text: t('run.event.parkedDebug', { stage: String(p.stage_id) }), tone: 'warn' };
+			if (p.type === 'manual')
+				return { text: t('run.event.manualRaised', { stage: String(p.stage_id) }), tone: 'warn' };
 			return {
 				text: t('run.event.ping', { type: String(p.type), question: String(p.question) }),
 				tone: 'warn'

@@ -1,0 +1,15 @@
+# run 1
+run_created
+phase_started phase=main
+env_requested
+env_ready
+stage_started stage=work
+ping_raised stage=work ping=manual
+run_paused stage=work reason=waiting_on_human
+ping_answered
+run_unpaused
+stage_completed stage=work
+stage_started stage=after
+stage_completed stage=after
+phase_completed phase=main
+run_completed

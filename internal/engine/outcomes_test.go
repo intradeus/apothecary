@@ -55,6 +55,10 @@ watchers:
       - { id: merge, type: action, action: mr_merge }
       - { id: tail, type: command, run: "./tail.sh" }
       - { id: tail_more, type: command, run: "./more.sh" }
+  - id: by_hand
+    on: manual
+    stages:
+      - { id: hands, type: manual }
 outcomes:
   - id: merged
     on: mr_merged
@@ -201,6 +205,18 @@ func TestAnOutcomeTakesARunAtTheDebugLeaf(t *testing.T) {
 		t.Fatal(err)
 	}
 	ph.waitPing(t, PingDebug)
+	waitEvent[*event.RunPaused](t, ph.harness, runID)
+	ph.e.Wait(runID)
+	ph.mergeAndEnd(t, runID)
+}
+
+// An outcome takes a run whose workspace is in a person's hands.
+func TestAnOutcomeTakesARunAtAManualStage(t *testing.T) {
+	ph, runID := outcomeHarness(t)
+	if err := ph.e.StartPhase(runID, "by_hand", ""); err != nil {
+		t.Fatal(err)
+	}
+	ph.waitPing(t, PingManual)
 	waitEvent[*event.RunPaused](t, ph.harness, runID)
 	ph.e.Wait(runID)
 	ph.mergeAndEnd(t, runID)
