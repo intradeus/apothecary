@@ -5,7 +5,7 @@ import { screen, within } from '@testing-library/svelte';
 import { createRawSnippet, type Snippet } from 'svelte';
 import { vi } from 'vitest';
 import type { ViewPlace } from '$lib/desk/Desk.svelte';
-import { DeskState } from '$lib/desk/desk.svelte';
+import { DeskState } from '$lib/desk/deskState.svelte';
 import { leaf, split, type LayoutId, type Tree, type ViewId } from '$lib/desk/tree';
 
 export const DESK_KEY = 'apothecary.desk.v1';

@@ -64,9 +64,12 @@ func setupWG(ext, keyFile string, listen int, addr string, mtu int) (*wgLink, er
 	return l, nil
 }
 
+// sysClassNet is the kernel's network-interface tree (swapped in tests).
+var sysClassNet = "/sys/class/net"
+
 // uplinkMTU reads the uplink's MTU (1500 when unreadable).
 func uplinkMTU(ext string) int {
-	b, err := os.ReadFile("/sys/class/net/" + ext + "/mtu")
+	b, err := os.ReadFile(sysClassNet + "/" + ext + "/mtu")
 	if err != nil {
 		return 1500
 	}

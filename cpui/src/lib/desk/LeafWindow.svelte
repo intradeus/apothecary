@@ -20,7 +20,7 @@
 	import { token } from '$lib/design/tokens';
 	import { VIEW_LABEL, type Leaf, type ViewId } from './tree';
 	import type { ViewMeta } from './Desk.svelte';
-	import type { DeskMotion } from './desk.svelte';
+	import type { DeskMotion } from './deskState.svelte';
 
 	let {
 		leaf,

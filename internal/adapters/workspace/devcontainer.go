@@ -32,11 +32,12 @@
 // 127.0.0.1 by a tiny in-container node relay. Loopback parity holds, so
 // run.env/proxy.env keep the same addresses as every other provisioner.
 // Ports declared by the repo's devcontainer (forwardPorts/appPort) are
-// surfaced as Links against the container's own bridge IP: per-instance
-// unique, so concurrent runs never contend for host ports (the headless
-// CLI does not publish forwardPorts; only appPort / compose `ports:`
-// publish, and a fixed-port collision fails the second `devcontainer up`
-// loudly).
+// reported by AppPorts and auto-exposed by the engine at env_ready
+// (runports.AutoExpose): ExposePort starts an in-container reverse relay
+// (`shim relay --reverse`) on a bind-mounted unix socket, and the engine's
+// portrelay publishes it as a Link on a port of its own host (or a hostname,
+// behind an Ingress) — the same socket channel as the bridge, so the
+// container's IP is never dialled and concurrent runs never contend for a port.
 //
 // SECURITY POSTURE: egress is filtered OUTSIDE the workspace by the per-project
 // egress gateway (internal/adapters/egressgw). The run's DinD sandbox joins a per-run

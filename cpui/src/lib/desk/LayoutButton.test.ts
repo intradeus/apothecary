@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { activeDesk } from './active.svelte';
-import { DeskState } from './desk.svelte';
+import { DeskState } from './deskState.svelte';
 import LayoutButton from './LayoutButton.svelte';
 
 const fab = () => screen.getByRole('button', { name: 'Windows & layouts' });

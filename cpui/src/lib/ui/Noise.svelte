@@ -10,7 +10,7 @@
 	// drive it live. Without WebGL2 the canvas stays hidden and the backdrop is
 	// plain --frame.
 	import { onMount } from 'svelte';
-	import { noise } from './noise.svelte';
+	import { noise } from './noiseState.svelte';
 	import { CIRCLE_COUNT, noiseCircles } from './noiseCircles';
 	import { token } from '$lib/design/tokens';
 

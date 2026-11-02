@@ -1,37 +1,21 @@
-//go:build ompconformance
+//go:build conformance
 
 package kinds
 
 // The broker face against the real pinned omp (docs/model-providers-plan.md:
 // omp's wire schemas are strict and unversioned, so only omp itself can say
-// the engine speaks them). Not part of `go test ./...`: it needs the omp
-// binary of the tools bundle.
-//
-//	OMP_BIN=/path/to/omp go test -tags ompconformance -run TestOmpConformance ./internal/project/kinds/
-//
-// The tools image carries it at /tools/gnu/bin/omp (glibc) and
-// /tools/musl/bin/omp.
+// the engine speaks them). How these tests run: conformance_test.go.
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestOmpConformance(t *testing.T) {
-	bin := os.Getenv("OMP_BIN")
-	if bin == "" {
-		t.Skip("OMP_BIN not set")
-	}
-	out, err := exec.Command(bin, "--version").CombinedOutput()
-	if err != nil || !strings.Contains(string(out), OmpVersion) {
-		t.Fatalf("OMP_BIN is %q, want omp %s: %v", strings.TrimSpace(string(out)), OmpVersion, err)
-	}
+	bin := toolsBin(t, "omp")
+	wantVersion(t, bin, OmpVersion)
 	h, _ := Omp{}.New(withCreds(
 		login("openai-chatgpt", "chatgpt-access-conformance", map[string]string{"account_id": "acct-c", "email": "c@example.test"}),
 		login("anthropic", "anthropic-access-conformance", map[string]string{"email": "c@example.test"}),
@@ -61,16 +45,10 @@ func TestOmpConformance(t *testing.T) {
 	defer srv.Close()
 
 	runOn := func(runID string, args ...string) (string, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, bin, args...)
-		cmd.Env = []string{
-			"HOME=" + t.TempDir(), "PATH=" + os.Getenv("PATH"), "OMP_SKIP_SETUP=1", "NO_COLOR=1",
-			"OMP_AUTH_BROKER_URL=" + srv.URL + "/api/runs/" + runID + "/auth-broker",
-			"OMP_AUTH_BROKER_TOKEN=" + token,
-		}
-		b, err := cmd.CombinedOutput()
-		return string(b), err
+		return runBin(t, harnessEnv(t.TempDir(), "OMP_SKIP_SETUP=1",
+			"OMP_AUTH_BROKER_URL="+srv.URL+"/api/runs/"+runID+"/auth-broker",
+			"OMP_AUTH_BROKER_TOKEN="+token,
+		), "", bin, args...)
 	}
 	run := func(args ...string) (string, error) { return runOn("r1", args...) }
 	// "Available" models are the ones omp holds a credential for: listing
@@ -107,11 +85,4 @@ func TestOmpConformance(t *testing.T) {
 	if strings.Contains(exp, "refresh-chatgpt-access-conformance") || strings.Contains(exp, "refresh-anthropic-access-conformance") {
 		t.Error("omp holds a refresh token it was never sent")
 	}
-}
-
-func tail(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return "…" + s[len(s)-n:]
 }

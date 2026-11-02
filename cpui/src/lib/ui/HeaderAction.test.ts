@@ -3,7 +3,7 @@ import type { Component } from 'svelte';
 import { describe, expect, it } from 'vitest';
 import { text } from '$test/helpers';
 import HeaderAction from './HeaderAction.svelte';
-import { provideHeaderSlot } from './headerAction.svelte';
+import { provideHeaderSlot } from './headerSlot.svelte';
 
 type Slot = ReturnType<typeof provideHeaderSlot>;
 

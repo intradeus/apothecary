@@ -47,7 +47,7 @@
 	import { token } from '$lib/design/tokens';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import LeafWindow from './LeafWindow.svelte';
-	import type { DeskState } from './desk.svelte';
+	import type { DeskState } from './deskState.svelte';
 	import {
 		VIEW_LABEL,
 		VIEWS,

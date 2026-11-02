@@ -26,9 +26,10 @@ const AskAgent = "ask"
 type Spec struct {
 	Name        string `yaml:"name" json:"name"`
 	Description string `yaml:"description" json:"description,omitempty"`
-	// ReadOnly denies the harness's edit/write/patch tools. Honesty note
-	// (§5.1): with AllowBash true the agent can still mutate files through
-	// shell — accepted v1 residual for the reviewer.
+	// ReadOnly denies the harness's file edits, except of the agent's own
+	// outputs (OutputPaths). Honesty note (§5.1): with AllowBash true the
+	// agent can still mutate files through shell — accepted v1 residual
+	// for the reviewer.
 	ReadOnly  bool   `yaml:"read_only" json:"read_only,omitempty"`
 	AllowBash bool   `yaml:"allow_bash" json:"allow_bash,omitempty"`
 	Prompt    string `yaml:"prompt" json:"prompt"`
@@ -43,6 +44,12 @@ type Spec struct {
 	// Resolved for a run when a stage opens the agent's session (secrets
 	// filled then, never here): see agentport.AgentInput.MCPServers.
 	MCP []string `yaml:"mcp" json:"mcp,omitempty"`
+	// OutputPaths is where the flow's stages running this agent write its
+	// outputs — each stage's `to:`, verbatim as the engine tells the agent
+	// (repo-relative; a files output's directory ends in "/"). Filled by
+	// flow.WorkspaceAgents for the harness config; not part of the agent's
+	// definition, so never parsed, serialized or hashed.
+	OutputPaths []string `yaml:"-" json:"-"`
 }
 
 // InputDecl is one value the agent reads, rendered into its prompt.

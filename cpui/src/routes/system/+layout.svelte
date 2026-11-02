@@ -7,7 +7,7 @@
 	import { to, type SystemSection } from '$lib/core/urls';
 	import { session } from '$lib/app/session.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
-	import { provideHeaderSlot } from '$lib/ui/headerAction.svelte';
+	import { provideHeaderSlot } from '$lib/ui/headerSlot.svelte';
 	import SideNav from '$lib/ui/SideNav.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { I } from '$lib/design/icons';

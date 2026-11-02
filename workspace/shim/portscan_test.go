@@ -185,15 +185,28 @@ func TestPortScanRereadsEnvOn401(t *testing.T) {
 	<-done
 }
 
+// testSingleton is a singleton address for one test: a socket file in a
+// short temp dir (sun_path is ~104 bytes), not the production abstract name,
+// so a killed shim leaves nothing in the source tree and two runs never meet.
+func testSingleton(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "ps")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return filepath.Join(dir, "singleton.sock")
+}
+
 func TestPortScanSingletonGuard(t *testing.T) {
-	addr := singletonAddr + "-guard-" + strconv.Itoa(os.Getpid()) // one namespace per host
+	addr := testSingleton(t)
 	ln, err := net.Listen("unix", addr)
 	if err != nil {
 		t.Fatalf("first bind: %v", err)
 	}
 	defer ln.Close()
 	if _, err := net.Listen("unix", addr); err == nil {
-		t.Error("second bind on the abstract singleton socket must fail")
+		t.Error("second bind on the singleton socket must fail")
 	}
 }
 
@@ -375,7 +388,7 @@ func TestRunPortScanRefusesBadArguments(t *testing.T) {
 
 // A scanner already holding the singleton is left to it.
 func TestRunPortScanIsASingleton(t *testing.T) {
-	addr := "@apothecary-portscan-test-" + strconv.Itoa(os.Getpid())
+	addr := testSingleton(t)
 	ln, err := net.Listen("unix", addr)
 	if err != nil {
 		t.Fatal(err)
@@ -416,7 +429,7 @@ func TestRunPortScanReports(t *testing.T) {
 	}
 	cmd := shimCmd(t, "portscan", "--exclude", "8081")
 	cmd.Env = append(cmd.Env, shimRunEnv+"="+env, shimProcNet+"="+tcp, shimFastSupport+"=1",
-		shimSingleton+"=@apothecary-portscan-test-reports-"+strconv.Itoa(os.Getpid()))
+		shimSingleton+"="+testSingleton(t))
 	startShim(t, cmd)
 	select {
 	case r := <-got:

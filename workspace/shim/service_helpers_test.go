@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -149,20 +150,43 @@ func TestObservedMarksDeadSupervisorExited(t *testing.T) {
 }
 
 func TestSupervisorAlive(t *testing.T) {
+	old := procRoot
+	procRoot = t.TempDir()
+	t.Cleanup(func() { procRoot = old })
+	proc := func(pid int, state byte, cmdline string) {
+		dir := filepath.Join(procRoot, strconv.Itoa(pid))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		stat := strconv.Itoa(pid) + " (shim) " + string(state) + " 1 1 1"
+		if err := os.WriteFile(filepath.Join(dir, "stat"), []byte(stat), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "cmdline"), []byte(cmdline), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if supervisorAlive(serviceState{PID: 0}) {
 		t.Error("pid 0 is not alive")
 	}
-	if supervisorAlive(serviceState{Name: "x", PID: 999999}) {
+	proc(101, 'S', "/opt/apothecary/shim\x00service\x00supervise\x00app\x00")
+	if !supervisorAlive(serviceState{Name: "app", PID: 101}) {
+		t.Error("the service's own supervisor is alive")
+	}
+	// A recycled pid: alive, but some other command.
+	if supervisorAlive(serviceState{Name: "web", PID: 101}) {
+		t.Error("another service's supervisor is not this one's")
+	}
+	proc(102, 'Z', "")
+	if supervisorAlive(serviceState{Name: "app", PID: 102}) {
+		t.Error("a zombie is not alive")
+	}
+	// No proc entry: the kill(0) fallback decides.
+	if !supervisorAlive(serviceState{Name: "app", PID: os.Getpid()}) {
+		t.Error("a live pid with no proc entry falls back to kill(0)")
+	}
+	if supervisorAlive(serviceState{Name: "app", PID: 999999}) {
 		t.Error("a nonexistent pid is not alive")
-	}
-	// This test process is alive but its cmdline is not a supervisor of "x",
-	// so the /proc check says no; the final kill(0) fallback still sees the
-	// process. The function returns the /proc verdict first.
-	if _, err := os.Stat("/proc/self/cmdline"); err != nil {
-		t.Skipf("no procfs here, only the kill(0) fallback: %v", err)
-	}
-	if supervisorAlive(serviceState{Name: "no-such-service", PID: os.Getpid()}) {
-		t.Error("the test process is not a supervisor of this service")
 	}
 }
 

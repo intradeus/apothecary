@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DeskState } from './desk.svelte';
+import { DeskState } from './deskState.svelte';
 import { leaf, leavesOf, PRESETS, split, type LeafRect, type Tree, type ViewId } from './tree';
 
 const KEY = 'apothecary.desk.v1';

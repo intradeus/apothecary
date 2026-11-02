@@ -75,7 +75,8 @@ func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 	specs := []*agentspec.Spec{
 		{Name: "builder", Description: "builds", ReadOnly: false, AllowBash: true, Prompt: "Build it.\n"},
 		{Name: "planner", Description: "plans", ReadOnly: true, AllowBash: false, Prompt: "Plan carefully.\n",
-			Outputs: []agentspec.OutputDecl{{Name: "plan", Type: "file"}}},
+			Outputs:     []agentspec.OutputDecl{{Name: "plan", Type: "file"}, {Name: "shots", Type: "files"}},
+			OutputPaths: []string{"artifacts/plan.md", "artifacts/shots/"}},
 	}
 	a := New(envp, Config{})
 	if err := a.PrepareEnv(context.Background(), id, specs); err != nil {
@@ -92,18 +93,29 @@ func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"mode: primary", "edit: false", "patch: false", "write: true", "bash: false", "Plan carefully.", "# ASKING THE HUMAN", "listed as ask_human_ask_human"} {
+	// A read-only agent edits nothing but its outputs: opencode's one file
+	// permission (edit, write and patch alike), denied, then allowed per
+	// output path — a files output's whole directory. The last match wins.
+	for _, want := range []string{"mode: primary", "bash: false", "Plan carefully.", "# ASKING THE HUMAN", "listed as ask_human_ask_human",
+		"permission:\n  edit:\n    \"*\": deny\n    \"artifacts/plan.md\": allow\n    \"artifacts/shots/*\": allow\n---\n"} {
 		if !strings.Contains(string(planner), want) {
 			t.Errorf("planner.md missing %q:\n%s", want, planner)
 		}
 	}
-	// A read-only agent with nothing to write (the Ask pane's) gets no
-	// write tool either.
+	// Never per tool: in opencode, `write: true` re-allows every edit.
+	front, _, _ := strings.Cut(strings.TrimPrefix(string(planner), "---\n"), "---\n")
+	for _, never := range []string{"edit: false", "patch:", "write:"} {
+		if strings.Contains(front, never) {
+			t.Errorf("planner.md has %q:\n%s", never, front)
+		}
+	}
+	// A read-only agent with nothing to write (the Ask pane's) edits
+	// nothing.
 	if err := a.PrepareEnv(context.Background(), id, []*agentspec.Spec{{Name: "ask", ReadOnly: true, Prompt: "Answer.\n"}}); err != nil {
 		t.Fatal(err)
 	}
 	askMD, _ := envp.ReadFile(ctx, id, "/home/apothecary/.config/opencode/agent/ask.md")
-	for _, want := range []string{"edit: false", "patch: false", "write: false", "bash: false"} {
+	for _, want := range []string{"permission:\n  edit: deny\n", "bash: false"} {
 		if !strings.Contains(string(askMD), want) {
 			t.Errorf("ask.md missing %q:\n%s", want, askMD)
 		}
@@ -114,7 +126,7 @@ func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 		t.Errorf("ask.md must not carry the ask_human rules:\n%s", askMD)
 	}
 	builder, _ := envp.ReadFile(ctx, id, "/home/apothecary/.config/opencode/agent/builder.md")
-	if strings.Contains(string(builder), "edit: false") || !strings.Contains(string(builder), "bash: true") {
+	if strings.Contains(string(builder), "permission:") || !strings.Contains(string(builder), "bash: true") {
 		t.Errorf("builder.md tool perms wrong:\n%s", builder)
 	}
 

@@ -2,7 +2,7 @@ import { render } from '@testing-library/svelte';
 import { flushSync, tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Noise from './Noise.svelte';
-import { NEUTRAL_MIX, noise } from './noise.svelte';
+import { NEUTRAL_MIX, noise } from './noiseState.svelte';
 
 // jsdom has no WebGL and no layout, and tokens.css isn't loaded: the context,
 // the frame clock, the resize observer and the tokens are the seams.

@@ -110,6 +110,17 @@ func (c *rpcConn) write(f rpcFrame) error {
 // There is deliberately no timeout here: session/prompt legitimately runs for
 // as long as the agent works. Callers that need one cancel via done.
 func (c *rpcConn) call(method string, params any, done <-chan struct{}) (json.RawMessage, error) {
+	wait, err := c.send(method, params)
+	if err != nil {
+		return nil, err
+	}
+	return wait(done)
+}
+
+// send writes a request and returns the wait for its response, so a caller
+// can order what it writes next after the request (a cancel after the
+// prompt it cancels) without waiting for the answer.
+func (c *rpcConn) send(method string, params any) (wait func(done <-chan struct{}) (json.RawMessage, error), err error) {
 	raw, err := json.Marshal(params)
 	if err != nil {
 		return nil, err
@@ -129,15 +140,17 @@ func (c *rpcConn) call(method string, params any, done <-chan struct{}) (json.Ra
 		c.pmu.Unlock()
 		return nil, err
 	}
-	select {
-	case r := <-ch:
-		return r.result, r.err
-	case <-done:
-		c.pmu.Lock()
-		delete(c.pending, id)
-		c.pmu.Unlock()
-		return nil, errors.New(method + ": abandoned")
-	}
+	return func(done <-chan struct{}) (json.RawMessage, error) {
+		select {
+		case r := <-ch:
+			return r.result, r.err
+		case <-done:
+			c.pmu.Lock()
+			delete(c.pending, id)
+			c.pmu.Unlock()
+			return nil, errors.New(method + ": abandoned")
+		}
+	}, nil
 }
 
 func (c *rpcConn) notify(method string, params any) error {
@@ -997,11 +1010,17 @@ func (h *agentHost) prompt(req promptReq) error {
 	h.turns[req.SessionID] = turn
 	h.mu.Unlock()
 	h.log.emit(sideEvent{Type: "turn_start", Session: req.SessionID, Turn: req.Turn})
+	// The request is written before prompt returns, so a cancel the engine
+	// sends next reaches the agent after the prompt it cancels.
+	wait, err := p.conn.send("session/prompt", map[string]any{
+		"sessionId": req.SessionID,
+		"prompt":    []any{map[string]any{"type": "text", "text": req.Text}},
+	})
 	go func() {
-		raw, err := p.conn.call("session/prompt", map[string]any{
-			"sessionId": req.SessionID,
-			"prompt":    []any{map[string]any{"type": "text", "text": req.Text}},
-		}, p.exited)
+		var raw json.RawMessage
+		if err == nil {
+			raw, err = wait(p.exited)
+		}
 		ev := sideEvent{Type: "turn_end", Session: req.SessionID, Turn: req.Turn}
 		if err != nil {
 			ev.StopReason = "error"

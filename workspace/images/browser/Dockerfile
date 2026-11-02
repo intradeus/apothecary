@@ -6,12 +6,14 @@
 # engine's routing proxy, so everything is installed here, at build time; it
 # idles on `sleep` until a session is exec'd into it. The browser comes from
 # Playwright's own CLI — the copy @playwright/mcp depends on — so its build is
-# the one the server expects.
+# the one the server expects. The gojq and x/crypto pins must equal the root
+# go.mod's, as in the shim's Dockerfile (TestShimDependencyPinsMatchGoMod).
 FROM golang:1.26-alpine AS shim
 ARG SHIM_HASH=dev
 COPY shim/ /src/
 RUN cd /src && go mod init apothecary-shim >/dev/null \
     && go get github.com/itchyny/gojq/cli@v0.12.19 \
+    && go get golang.org/x/crypto/ssh@v0.54.0 \
     && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.sourceHash=${SHIM_HASH}" -o /apothecary-shim .
 FROM node:22-bookworm-slim
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright NODE_ENV=production

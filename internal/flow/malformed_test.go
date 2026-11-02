@@ -622,6 +622,41 @@ func TestWorkspaceAgents(t *testing.T) {
 	}
 }
 
+// Each prepared agent carries the paths its stages write its outputs to, as
+// the engine hands them to it: what a read-only agent may still edit. The
+// flow's own definitions stay untouched (and their hash with them).
+func TestWorkspaceAgentsCarryOutputPaths(t *testing.T) {
+	doc := header + "ask: { harness: fake }\n" + `agents:
+  - name: r
+    prompt: review
+    read_only: true
+    outputs:
+      - { name: notes, type: file }
+      - { name: shots, type: files }
+  - name: idle
+    prompt: nothing
+main:
+  - { id: s1, type: agent, harness: $harness, model: $model, agent: r, output: { notes: { to: artifacts/r1.md, type: file }, shots: { to: artifacts/shots/, type: files } }, on_success: s2 }
+  - { id: s2, type: agent, harness: $harness, model: $model, agent: r, output: { notes: { to: artifacts/r2.md, type: file }, shots: { to: artifacts/shots/, type: files } } }
+`
+	f, err := Parse("t.yaml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := f.AgentHash("r")
+	got := map[string][]string{}
+	for _, sp := range f.WorkspaceAgents() {
+		got[sp.Name] = sp.OutputPaths
+	}
+	want := map[string][]string{"r": {"artifacts/r1.md", "artifacts/r2.md", "artifacts/shots/"}, "idle": nil, AskAgent: nil}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("output paths = %v, want %v", got, want)
+	}
+	if f.Agent("r").OutputPaths != nil || f.AgentHash("r") != hash {
+		t.Errorf("the flow's own agent changed: %v, hash %s → %s", f.Agent("r").OutputPaths, hash, f.AgentHash("r"))
+	}
+}
+
 func TestReadsCIFailure(t *testing.T) {
 	doc := header + agentReadsFailure + "main:\n  - { id: m, type: command, run: 'true', on_success: done }\nwatchers:\n  - { id: fix, on: ci_failed, stages: [{ id: w1, type: agent, harness: $harness, model: $model, agent: fix, input: { failure: { from: run.ci.failure, type: failure } } }] }\n  - { id: other, on: mr_merged, stages: [{ id: w2, type: command, run: 'true' }] }\n"
 	f, err := Parse("t.yaml", []byte(doc))

@@ -93,12 +93,22 @@ func (h *codexHarness) EgressDomains() []string {
 	return []string{"api.openai.com", "chatgpt.com", "auth.openai.com", "registry.npmjs.org"}
 }
 
-// EnvVars: API-key auth rides the standard env var through provider.env.
+// codexAPIKeyLogin is codex-acp's default auth request for an API key: with
+// it, a session that finds no login signs in with OPENAI_API_KEY from the
+// environment. Without it codex-acp answers session/new "Authentication
+// required" — the sidecar never calls ACP authenticate — so the key alone
+// opens no session (codex-acp 2.2.2 startAcpServer, DEFAULT_AUTH_REQUEST;
+// proven by TestCodexConformance). The login stores the key in
+// $CODEX_HOME/auth.json, which AuthFiles removes when the run ends.
+const codexAPIKeyLogin = `{"methodId":"api-key"}`
+
+// EnvVars: API-key auth rides the standard env var through provider.env,
+// with the auth request that makes codex-acp use it.
 func (h *codexHarness) EnvVars() map[string]string {
 	if h.apiKey == "" {
 		return nil
 	}
-	return map[string]string{"OPENAI_API_KEY": h.apiKey}
+	return map[string]string{"OPENAI_API_KEY": h.apiKey, "DEFAULT_AUTH_REQUEST": codexAPIKeyLogin}
 }
 
 // EditorExtensions (kinds.EditorExtender): the Codex extension.

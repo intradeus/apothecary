@@ -105,13 +105,12 @@ func TestSetupWGStopsAtTheFirstFailure(t *testing.T) {
 }
 
 func TestUplinkMTU(t *testing.T) {
-	// The traversal below resolves through /sys/class/net, so it needs sysfs.
-	if _, err := os.Stat("/sys/class/net"); err != nil {
-		t.Skipf("no sysfs here: %v", err)
+	old := sysClassNet
+	sysClassNet = t.TempDir()
+	t.Cleanup(func() { sysClassNet = old })
+	if err := os.MkdirAll(filepath.Join(sysClassNet, "eth0"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	dir := t.TempDir()
-	// The uplink name is the one path component between /sys/class/net and mtu.
-	ext := filepath.Join("../../..", dir)
 	for _, c := range []struct {
 		content string
 		want    int
@@ -121,10 +120,10 @@ func TestUplinkMTU(t *testing.T) {
 		{"1279\n", 1500}, // under IPv6's minimum: not believed
 		{"garbage\n", 1500},
 	} {
-		if err := os.WriteFile(filepath.Join(dir, "mtu"), []byte(c.content), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(sysClassNet, "eth0", "mtu"), []byte(c.content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if got := uplinkMTU(ext); got != c.want {
+		if got := uplinkMTU("eth0"); got != c.want {
 			t.Errorf("uplinkMTU(%q) = %d, want %d", c.content, got, c.want)
 		}
 	}

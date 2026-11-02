@@ -67,23 +67,33 @@ tasks:
 
   # --- local Kubernetes (k3d: k3s in docker) ----------------------------------
   # task k8s:cluster k8s:images k8s:deploy → http://apothecary.localhost:8090
+  # Idempotent: creates the cluster if it is missing, starts it if it is
+  # stopped, and (re)writes its kubeconfig; up to date once the API answers.
   k8s:cluster:
-    desc: Create the local k3d cluster and its image registry (kubeconfig in deploy/.k3d-kubeconfig)
+    desc: Create (or start) the local k3d cluster and its image registry (kubeconfig in deploy/.k3d-kubeconfig)
     preconditions:
       - sh: command -v k3d
         msg: "install k3d: https://k3d.io"
+      # k3d's nodes share the docker host's kernel (on macOS, the docker VM's),
+      # and every run's sandbox tunnels to its gateway over WireGuard: create
+      # a wireguard link the way the gateway does, in a throwaway netns. On
+      # Linux that also loads the module on demand.
+      - sh: docker run --rm --cap-add NET_ADMIN --network none alpine:3.21 sh -c 'ip link add apo-wgprobe type wireguard && ip link del apo-wgprobe'
+        msg: "the docker host's kernel can't create wireguard links (Linux: sudo modprobe wireguard)"
     status:
-      - k3d cluster get {{.K3D_CLUSTER}} >/dev/null 2>&1
+      - test -s {{.K3D_KUBECONFIG}}
+      - '{{.K3D_KUBECTL}} get --raw /readyz >/dev/null 2>&1'
     cmds:
-      # The wireguard module must be loadable on the host: k3d's nodes share
-      # its kernel, and every run's sandbox tunnels to its gateway with it.
-      - 'lsmod | grep -q "^wireguard" || echo "note: the wireguard module is not loaded; the first gateway loads it on demand (or: sudo modprobe wireguard)"'
+      # The server node, not `k3d cluster get`: right after a delete, that
+      # can still report the cluster (seen with k3d 5.9.0).
       - >-
+        k3d node get k3d-{{.K3D_CLUSTER}}-server-0 >/dev/null 2>&1 ||
         k3d cluster create {{.K3D_CLUSTER}}
         --registry-create k3d-registry.localhost:0.0.0.0:5111
         -p "{{.K3D_HTTP_PORT}}:80@loadbalancer"
         --kubeconfig-update-default=false --kubeconfig-switch-context=false
         --wait
+      - k3d cluster start {{.K3D_CLUSTER}} --wait
       - k3d kubeconfig get {{.K3D_CLUSTER}} > {{.K3D_KUBECONFIG}}
       - chmod 600 {{.K3D_KUBECONFIG}}
 
@@ -175,13 +185,22 @@ tasks:
     cmds:
       - docker rm -f {{.DEV_PG}} 2>/dev/null || true
 
-  # --- local binaries (build/, gitignored) -----------------------------------
-  # For poking at binaries directly. Production never uses these: the deploy
-  # image builds apothecaryd, and the engine builds the shim + gateway inside
-  # docker from the go:embed'ed workspace/ sources (internal/workspace/wsimage). Always
-  # build here, never in-tree: workspace/ is embedded, so a binary dropped in
-  # it ships inside apothecaryd and changes the egress-gw image hash.
+  # --- build: everything a release ships, built from the working tree ---------
+  # `task build` is CI's build job: the binaries, the CPUI and every image. The
+  # binaries land in build/ (gitignored), for poking at them directly.
+  # Production never uses these: the deploy image builds apothecaryd, and the
+  # engine builds the shim + gateway inside docker from the go:embed'ed
+  # workspace/ sources (internal/workspace/wsimage). Always build here, never
+  # in-tree: workspace/ is embedded, so a binary dropped in it ships inside
+  # apothecaryd and changes the egress-gw image hash.
   build:
+    desc: 'Build everything: apothecaryd, the shim and gateway, the CPUI, and the six images (needs docker)'
+    cmds:
+      - task: build:bin
+      - task: build:ui
+      - task: build:images
+
+  build:bin:
     desc: Build apothecaryd, the workspace shim and the egress gateway into build/
     cmds:
       - task: build:daemon
@@ -193,17 +212,30 @@ tasks:
     cmds:
       - go build -o build/apothecaryd ./cmd/apothecaryd
 
+  # The shim and the gateway only ever run in Linux containers.
   build:shim:
-    desc: Build the in-workspace shim into build/ (static, like the engine's)
-    env: {CGO_ENABLED: '0'}
+    desc: Build the in-workspace shim into build/ (static linux, like the engine's)
+    env: {CGO_ENABLED: '0', GOOS: linux}
     cmds:
       - go build -trimpath -o build/shim ./workspace/shim
 
   build:gateway:
-    desc: Build the egress gateway daemon into build/ (static, like the engine's)
-    env: {CGO_ENABLED: '0'}
+    desc: Build the egress gateway daemon into build/ (static linux, like the engine's)
+    env: {CGO_ENABLED: '0', GOOS: linux}
     cmds:
       - go build -trimpath -o build/gateway ./workspace/gateway
+
+  build:ui:
+    desc: Production CPUI build (cpui/build)
+    dir: cpui
+    cmds:
+      - npm run build
+
+  build:images:
+    desc: 'Build the six release images from the working tree, tagged apothecary-build/<name>:ci, without pushing (needs docker)'
+    env: {PREFIX: apothecary-build}
+    cmds:
+      - deploy/images.sh ci
 
   clean:
     desc: Remove build/
@@ -216,12 +248,6 @@ tasks:
     dir: cpui
     cmds:
       - npm run dev
-
-  ui:build:
-    desc: Production CPUI build (cpui/build)
-    dir: cpui
-    cmds:
-      - npm run build
 
   # --- API contract ----------------------------------------------------------
   # The engine's route table (internal/httpapi/routes.go) is the one place an
@@ -271,38 +297,180 @@ tasks:
       - rm -rf package swagger-ui-dist-*.tgz
       - echo "vendored $(du -sh . | cut -f1) of Swagger UI"
 
-  # --- testing & verification ------------------------------------------------
-  # Unit tests need nothing running. Integration tests run the Postgres adapter
-  # on a real server: each test binary starts its own throwaway container
-  # (internal/adapters/pgstore/pgtest, needs docker) and gives each test its own
-  # database. A test skips when TEST_POSTGRES is empty, and test:integration
-  # runs the packages that use pgtest. Live tests (real docker workspaces, a
-  # real cluster) stay behind `-tags live`.
+  # --- tests, lint ------------------------------------------------------------
+  # Four units, each its own CI job (.github/workflows/ci.yml):
+  #   test:unit         nothing running, any OS: Go unit + scenario suites and
+  #                     the CPUI's tests (CI runs them on Linux and macOS)
+  #   test:integration  real dependencies, always in containers: Postgres and
+  #                     boot, docker workspaces and the browser, the harness
+  #                     binaries, Kubernetes (k3d)
+  #   lint              every linter and type check
+  #   build             every binary, the CPUI and every image (above)
+  # The fan-out tasks don't forward arguments: the suites take different ones
+  # (go test flags, vitest filters, test-binary flags). Pass them to the one
+  # suite they belong to — except test:unit, whose arguments are the Go tests'
+  # (`task test:unit -- -count=1 ./...`), the UI half running whole. An
+  # override only reaches the task called (CLI_ARGS is re-read below it), so
+  # each fan-out names its leaves.
   test:
-    desc: 'Backend tests, unit then integration; with args, those: task test -- ./internal/engine/ -run TestX -v'
+    desc: 'Unit then integration tests (no args: pass them to one suite)'
     cmds:
-      - task: test:unit
-        if: '[ -z "{{.CLI_ARGS}}" ]'
+      - task: test:unit:go
+        vars: {CLI_ARGS: ''}
+      - task: test:unit:ui
+        vars: {CLI_ARGS: ''}
       - task: test:integration
+        vars: {CLI_ARGS: ''}
 
   test:unit:
-    desc: 'Backend tests that need nothing running (args pass through)'
+    desc: 'Unit tests, nothing running: Go (`go test ./...`) and the CPUI (vitest); args go to go test (task test:unit -- -count=1 ./...)'
+    cmds:
+      - task: test:unit:go
+      - task: test:unit:ui
+        vars: {CLI_ARGS: ''}
+
+  test:unit:go:
+    desc: 'Go unit + scenario suites (args pass through: task test:unit:go -- ./internal/engine/ -run TestX -v)'
     env:
       TEST_POSTGRES: ''
     cmds:
       - go test {{.CLI_ARGS | default "./..."}}
 
+  test:unit:ui:
+    desc: 'CPUI tests (args pass through: task test:unit:ui -- src/lib/run)'
+    dir: cpui
+    cmds:
+      - npx vitest run {{.CLI_ARGS}}
+
+  test:linux:
+    desc: 'Go unit tests inside a Linux container, so the Linux-only build-tagged tests run from any host; needs docker (args pass through)'
+    cmds:
+      # --init: Go as PID 1 doesn't reap children, breaking the process-group tests.
+      # --tmpfs /tmp:exec: overlay /tmp reports empty directory sizes as 0.
+      - >-
+        docker run --rm --init --tmpfs /tmp:exec
+        -v "{{.ROOT_DIR}}":/src:ro -w /src
+        -v apothecary-gomod:/go/pkg/mod -v apothecary-gocache:/root/.cache/go-build
+        -e TEST_POSTGRES=''
+        golang:1.26.4
+        go test -count=1 {{.CLI_ARGS | default "./..."}}
+
   test:integration:
-    desc: 'Backend tests against a real Postgres in throwaway containers; needs docker (args pass through)'
+    desc: 'Every integration suite: Postgres + boot, docker workspaces + browser, the harness binaries, Kubernetes (needs docker; no args: pass them to one suite)'
+    cmds:
+      - task: test:integration:pg
+        vars: {CLI_ARGS: ''}
+      - task: test:integration:docker
+        vars: {CLI_ARGS: ''}
+      - task: test:integration:harness
+        vars: {CLI_ARGS: ''}
+      - task: test:integration:k8s
+        vars: {CLI_ARGS: ''}
+
+  # Each test binary starts its own throwaway Postgres container
+  # (internal/adapters/pgstore/pgtest) and gives each test its own database. A
+  # test skips when TEST_POSTGRES is empty; these are the packages using pgtest.
+  test:integration:pg:
+    desc: 'The Postgres adapter and boot tests, on real throwaway containers (needs docker; args pass through)'
     env:
       TEST_POSTGRES: '1'
     vars:
       PG_PACKAGES:
         sh: grep -rlE --include='*_test.go' 'pgstore/pgtest"|^package pgtest' cmd internal | xargs -n1 dirname | sort -u | sed 's|^|./|' | tr '\n' ' '
     cmds:
+      - task: pg:warm
       # -count=1: Go's test cache can't see the server, so a cached pass would
       # prove nothing.
       - go test -count=1 {{.CLI_ARGS | default .PG_PACKAGES}}
+
+  # One pgtest test on its own first: it pulls postgres and testcontainers'
+  # reaper image and starts a reaper. Test binaries run in parallel, and on a
+  # cold docker (a fresh CI runner) they would all race to pull and to create
+  # the one reaper container their session shares; the losers outlast
+  # testcontainers' 20s retry and fail on the name conflict.
+  pg:warm:
+    internal: true
+    env:
+      TEST_POSTGRES: '1'
+    cmds:
+      - go test -count=1 -run '^TestEmptyDatabasesAreSeparate$' ./internal/adapters/pgstore/pgtest/
+
+  # The `live` tests drive real docker (DinD sandboxes, devcontainer up, the
+  # egress gateway, the browser container). They run INSIDE the engine image,
+  # as apothecaryd does in production: root, the docker CLI and the pinned
+  # @devcontainers/cli, the host's docker socket, host networking, and a
+  # RunsDir bind-mounted at the same path. That RunsDir is a named volume's
+  # mountpoint: a real path on the docker host (on macOS, inside the docker
+  # VM, on its data disk) — the run's unix sockets do not cross a macOS file
+  # share, so it can never be a folder of the Mac. The egress gateway is on:
+  # APOTHECARY_LIVE_GATEWAY=0 turns it off.
+  test:integration:docker:
+    desc: 'Docker workspaces (lifecycle, gateway, file tree) and the browser, inside the engine image (needs docker; args are go test flags, e.g. -- -test.run TestLiveLifecycle)'
+    vars:
+      LIVE_RUNS:
+        sh: docker volume create apothecary-live-runs >/dev/null && docker volume inspect -f '{{"{{"}}.Mountpoint{{"}}"}}' apothecary-live-runs
+      ARCH:
+        sh: docker version --format '{{"{{"}}.Server.Arch{{"}}"}}'
+      GATEWAY: '{{.APOTHECARY_LIVE_GATEWAY | default "1"}}'
+    cmds:
+      - docker build -q -f deploy/Dockerfile -t apothecary/apothecaryd:live .
+      - mkdir -p build/live
+      - for: [workspace, browser]
+        cmd: GOOS=linux GOARCH={{.ARCH}} CGO_ENABLED=0 go test -c -tags live -o build/live/{{.ITEM}}.test ./internal/adapters/{{.ITEM}}/
+      # Only the docker live tests: the packages' unit tests run in test:unit,
+      # the Kubernetes one in test:integration:k8s.
+      - for: [workspace, browser]
+        cmd: >-
+          docker run --rm --network host --entrypoint /live/{{.ITEM}}.test
+          -v /var/run/docker.sock:/var/run/docker.sock
+          -v {{.LIVE_RUNS}}:{{.LIVE_RUNS}}
+          -v "{{.ROOT_DIR}}/build/live":/live:ro
+          -e APOTHECARY_LIVE_RUNS_DIR={{.LIVE_RUNS}}
+          -e APOTHECARY_LIVE_GATEWAY={{.GATEWAY}}
+          apothecary/apothecaryd:live
+          -test.v -test.count=1 -test.timeout 30m -test.run '^TestLive' -test.skip '^TestLiveK8s' {{.CLI_ARGS}}
+
+  # The pinned harness binaries against what the engine hands them: config and
+  # auth files, provider.env, the ACP face, omp's broker. Only the harness can
+  # say it accepts them (internal/project/kinds/conformance_test.go). The
+  # bundle is the one this engine expects — apothecary/tools:<ToolsHash>, built
+  # as wsimage.EnsureTools builds it when missing — seeded into a volume by its
+  # own seed.sh (as a Kubernetes sandbox's init container does; a no-op when
+  # the volume holds this hash) and mounted where every workspace mounts it.
+  # Its binaries are Linux ones, so the tests run in a Linux container.
+  test:integration:harness:
+    desc: 'The pinned harness CLIs of the tools bundle against what the engine generates (needs docker; args are go test flags, e.g. -- -run TestCodexConformance)'
+    vars:
+      TOOLS_HASH:
+        sh: go run ./cmd/apothecaryd tools-hash
+    cmds:
+      - >-
+        docker image inspect apothecary/tools:{{.TOOLS_HASH}} >/dev/null 2>&1 ||
+        docker build -t apothecary/tools:{{.TOOLS_HASH}} --build-arg TOOLS_HASH={{.TOOLS_HASH}} workspace/images/tools
+      - docker run --rm -v apothecary-harness-tools:/seed apothecary/tools:{{.TOOLS_HASH}} /seed/tools
+      # --init and --tmpfs /tmp:exec: as test:linux.
+      - >-
+        docker run --rm --init --tmpfs /tmp:exec
+        -v "{{.ROOT_DIR}}":/src:ro -w /src
+        -v apothecary-gomod:/go/pkg/mod -v apothecary-gocache:/root/.cache/go-build
+        -v apothecary-harness-tools:/opt/apothecary:ro
+        -e TEST_POSTGRES=''
+        golang:1.26.4
+        go test -tags conformance -count=1 -timeout 20m -v -run Conformance {{.CLI_ARGS}} ./internal/project/kinds/
+
+  # Reuses the cluster if it exists (and leaves it, with the :local images
+  # pushed to its registry); otherwise creates it and deletes it afterwards,
+  # registry included — pass or fail.
+  test:integration:k8s:
+    desc: 'The Kubernetes provisioner on a local k3d cluster: cluster, images, live test (needs docker, k3d)'
+    vars:
+      CLUSTER_EXISTED:
+        sh: k3d node get k3d-{{.K3D_CLUSTER}}-server-0 >/dev/null 2>&1 && echo yes || echo no
+    cmds:
+      - task: k8s:cluster
+      - defer: '{{if eq .CLUSTER_EXISTED "no"}}{{.TASK_EXE}} k8s:down{{end}}'
+      - task: k8s:images
+      - task: k8s:test-live
 
   cover:
     desc: 'Test coverage of both halves, as pages: coverage/go/index.html and cpui/coverage/index.html'
@@ -319,6 +487,7 @@ tasks:
       # Tests that run the real shim as a subprocess build it to report here.
       APOTHECARY_COVERDIR: '{{.ROOT_DIR}}/coverage/go/subprocess'
     cmds:
+      - task: pg:warm
       - rm -rf coverage/go/subprocess && mkdir -p coverage/go/subprocess
       # -count=1: a cached package runs no subprocess, so its shim coverage would vanish.
       - go test -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage/go/profile.out ./...
@@ -327,22 +496,29 @@ tasks:
       - go tool cover -html=coverage/go/profile.out -o coverage/go/files.html
       - go run ./cmd/coverreport -profile coverage/go/profile.out -out coverage/go/index.html -min {{.GO_COVER_MIN}}
 
-  check:
-    desc: svelte-check (CPUI types)
+  lint:
+    desc: 'Every linter and type check: gofmt, go vet (both OSes, every build tag), model ids, the API contract, svelte-check, the CPUI linters'
+    cmds:
+      - task: lint:go
+      - task: lint:models
+      - task: api:check
+      - task: lint:ui
+
+  lint:go:
+    desc: 'gofmt, and go vet for linux and darwin with every build tag, so no file goes unchecked'
+    cmds:
+      - |
+        out="$(gofmt -l ./cmd ./internal ./workspace)"
+        if [ -n "$out" ]; then echo "$out"; echo "gofmt needed — run task fmt"; exit 1; fi
+      - for: [linux, darwin]
+        cmd: GOOS={{.ITEM}} CGO_ENABLED=0 go vet ./...
+      - CGO_ENABLED=0 GOOS=linux go vet -tags live,conformance,coverflush ./...
+
+  lint:ui:
+    desc: 'CPUI: svelte-check, then every lint — code, styles, the token and layer contracts, tests beside sources, themes, formatting (docs/frontend-standards.md)'
     dir: cpui
     cmds:
       - npm run check
-
-  test:ui:
-    desc: 'CPUI tests (args pass through: task test:ui -- src/lib/run)'
-    dir: cpui
-    cmds:
-      - npx vitest run {{.CLI_ARGS}}
-
-  lint:ui:
-    desc: 'CPUI lint: code, styles, the token and layer contracts, themes, formatting (docs/frontend-standards.md)'
-    dir: cpui
-    cmds:
       - npm run lint
 
   fmt:
@@ -350,15 +526,6 @@ tasks:
     cmds:
       - gofmt -w ./cmd ./internal ./workspace 2>/dev/null || gofmt -w .
       - cd cpui && npm run format
-
-  test:omp-broker:
-    desc: 'Run the pinned omp (from the tools image) against the engine''s auth broker face — omp''s wire schemas are strict'
-    cmds:
-      - |
-        dir="$(mktemp -d)"; trap 'rm -rf "$dir"; docker rm -f apo-omp-conformance >/dev/null 2>&1' EXIT
-        docker create --name apo-omp-conformance apothecary/tools:dev >/dev/null
-        docker cp apo-omp-conformance:/tools/gnu/. "$dir/gnu" >/dev/null
-        OMP_BIN="$dir/gnu/bin/omp" go test -tags ompconformance -count=1 -run TestOmpConformance -v ./internal/project/kinds/
 
   lint:models:
     desc: 'Fail on a real model id anywhere in the tree — models live in a project’s flow binding, never in code, flows, tests or docs (a wire fingerprint that must name one carries `lint:models-ok`)'
@@ -368,19 +535,13 @@ tasks:
         if [ -n "$hits" ]; then echo "$hits"; echo "a model id in the tree rots when the vendor renames it — bind models per project (Workshop → Flows → Configure); tests use fake/… or acme/… ids"; exit 1; fi
 
   verify:
-    desc: 'The full pre-commit gate: gofmt, vet, unit + integration tests with coverage, model-id lint, API contract, svelte-check, UI lint, UI tests, UI build'
+    desc: 'The pre-commit gate: every lint, the unit tests with coverage (Postgres included), the binaries and the CPUI build'
     cmds:
-      - |
-        out="$(gofmt -l ./cmd ./internal)"
-        if [ -n "$out" ]; then echo "$out"; echo "gofmt needed — run task fmt"; exit 1; fi
-      - go vet ./...
+      - task: lint
       - task: cover:go
-      - task: lint:models
-      - task: api:check
-      - cd cpui && npm run check
-      - task: lint:ui
       - cd cpui && npm run test:coverage
-      - cd cpui && npm run build
+      - task: build:bin
+      - task: build:ui
       - echo "verify — all green"
 
   # --- production stack (published image) ------------------------------------

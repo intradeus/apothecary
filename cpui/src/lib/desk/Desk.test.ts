@@ -15,7 +15,7 @@ import {
 	windows
 } from '$test/fixtures/desk';
 import { activeDesk } from './active.svelte';
-import { DeskState } from './desk.svelte';
+import { DeskState } from './deskState.svelte';
 import Desk, { type ViewMeta } from './Desk.svelte';
 import LayoutButton from './LayoutButton.svelte';
 import { leaf, leavesOf, split, type ViewId } from './tree';

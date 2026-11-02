@@ -10,9 +10,9 @@
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
 	import Desk, { type ViewMeta } from '$lib/desk/Desk.svelte';
-	import { DeskState } from '$lib/desk/desk.svelte';
+	import { DeskState } from '$lib/desk/deskState.svelte';
 	import { activeDesk } from '$lib/desk/active.svelte';
-	import { NEUTRAL_MIX, noise } from '$lib/ui/noise.svelte';
+	import { NEUTRAL_MIX, noise } from '$lib/ui/noiseState.svelte';
 	import type { ViewId } from '$lib/desk/tree';
 	import RunHeader from './RunHeader.svelte';
 	import NoWorkspace from './NoWorkspace.svelte';

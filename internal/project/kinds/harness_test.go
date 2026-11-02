@@ -126,7 +126,8 @@ func TestCodexCredentialRouting(t *testing.T) {
 	envp, id := newEnv(t)
 	ctx := context.Background()
 	key, _ := Codex{}.New(withCreds(apiKey("openai", "sk-1")), envp)
-	if got := key.EnvVars(); len(got) != 1 || got["OPENAI_API_KEY"] != "sk-1" {
+	// The key, and the auth request that has codex-acp sign in with it.
+	if got := key.EnvVars(); len(got) != 2 || got["OPENAI_API_KEY"] != "sk-1" || got["DEFAULT_AUTH_REQUEST"] != `{"methodId":"api-key"}` {
 		t.Errorf("env = %v", got)
 	}
 	if got := key.(SecretHolder).SecretValues(); got != nil {

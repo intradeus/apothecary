@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1045,9 +1046,29 @@ func (f *Flow) AgentSpecs() []*agentspec.Spec {
 }
 
 // WorkspaceAgents lists the agents a workspace is prepared with: the flow's
-// own, plus the Ask pane's when the flow has one. Nil-safe.
+// own, plus the Ask pane's when the flow has one. Each is a copy carrying its
+// OutputPaths: the `to:` of every output of every stage running it, as the
+// engine hands them to the agent (the prompt's output contract) — what a
+// read-only agent may still write. Nil-safe.
 func (f *Flow) WorkspaceAgents() []*agentspec.Spec {
 	specs := f.AgentSpecs()
+	for i, sp := range specs {
+		cp := *sp
+		cp.OutputPaths = nil
+		for j := range f.Stages {
+			if f.Stages[j].Agent != sp.Name {
+				continue
+			}
+			for _, o := range f.Stages[j].Outputs {
+				if o.Value != "" && !IsEngineSource(o.Value) {
+					cp.OutputPaths = append(cp.OutputPaths, o.Value)
+				}
+			}
+		}
+		slices.Sort(cp.OutputPaths)
+		cp.OutputPaths = slices.Compact(cp.OutputPaths)
+		specs[i] = &cp
+	}
 	if f != nil && f.Ask != nil {
 		specs = append(specs, agentspec.Ask())
 	}

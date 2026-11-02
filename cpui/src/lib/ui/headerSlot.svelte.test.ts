@@ -3,7 +3,7 @@ import { flushSync, type Component } from 'svelte';
 import { describe, expect, it } from 'vitest';
 import { text } from '$test/helpers';
 import HeaderAction from './HeaderAction.svelte';
-import { headerSlot, provideHeaderSlot } from './headerAction.svelte';
+import { headerSlot, provideHeaderSlot } from './headerSlot.svelte';
 
 // Context only exists while a component initialises, so a bare function stands
 // in for the layout. Its context map is the one handed to `render`, which is

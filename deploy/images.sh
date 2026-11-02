@@ -25,13 +25,14 @@ read -r -a EXTRA <<< "${EXTRA_TAGS:-}"
 tags() {
   local name=$1 t
   printf -- '-t\n%s\n' "$PREFIX/$name:$VERSION"
-  for t in "${EXTRA[@]}"; do printf -- '-t\n%s\n' "$PREFIX/$name:$t"; done
+  for t in ${EXTRA[@]+"${EXTRA[@]}"}; do printf -- '-t\n%s\n' "$PREFIX/$name:$t"; done
 }
 
 build() {
   local name=$1; shift
   echo "==> $PREFIX/$name:$VERSION"
-  mapfile -t T < <(tags "$name")
+  T=()
+  while IFS= read -r t; do T+=("$t"); done < <(tags "$name") # no mapfile: macOS ships bash 3.2
   docker build "${T[@]}" "$@"
 }
 
@@ -51,7 +52,7 @@ build browser -f workspace/images/browser/Dockerfile --build-arg "SHIM_HASH=$SHI
 if [ "$PUSH" = "--push" ]; then
   for name in apothecaryd sandbox shim tools egress-gw browser; do
     docker push "$PREFIX/$name:$VERSION"
-    for t in "${EXTRA[@]}"; do docker push "$PREFIX/$name:$t"; done
+    for t in ${EXTRA[@]+"${EXTRA[@]}"}; do docker push "$PREFIX/$name:$t"; done
   done
 fi
 echo "done: $PREFIX/{apothecaryd,sandbox,shim,tools,egress-gw,browser}:$VERSION"

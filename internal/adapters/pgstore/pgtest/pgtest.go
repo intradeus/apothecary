@@ -5,7 +5,7 @@
 // here needs a fixed port or a truncate.
 //
 // Tests skip unless TEST_POSTGRES is set, so `go test ./...` needs nothing
-// running; `task test:integration` sets it. Once set, a missing docker daemon
+// running; `task test:integration:pg` sets it. Once set, a missing docker daemon
 // is a failure, not a skip: a run that asked for Postgres must not pass
 // without it.
 //
@@ -44,6 +44,13 @@ var (
 )
 
 func start() {
+	// The images are public: pull them anonymously. Unset, testcontainers
+	// reads ~/.docker/config.json and asks every credential helper in it for
+	// the user's registry logins — on macOS a keychain prompt, from a test.
+	// An explicit DOCKER_AUTH_CONFIG still wins.
+	if os.Getenv("DOCKER_AUTH_CONFIG") == "" {
+		_ = os.Setenv("DOCKER_AUTH_CONFIG", "{}")
+	}
 	ctx := context.Background()
 	c, err := postgres.Run(ctx, Image,
 		postgres.WithDatabase("test"), postgres.WithUsername("test"), postgres.WithPassword("test"),
@@ -61,7 +68,7 @@ func start() {
 func server(t *testing.T) string {
 	t.Helper()
 	if os.Getenv(EnableVar) == "" {
-		t.Skip(EnableVar + " not set: this test needs a real Postgres (task test:integration)")
+		t.Skip(EnableVar + " not set: this test needs a real Postgres (task test:integration:pg)")
 	}
 	startOnce.Do(start)
 	if startErr != nil {

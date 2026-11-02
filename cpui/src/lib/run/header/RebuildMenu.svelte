@@ -4,7 +4,7 @@
 	import { t } from '$lib/i18n/index.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
-	import type { DeskState } from '$lib/desk/desk.svelte';
+	import type { DeskState } from '$lib/desk/deskState.svelte';
 	import type { RunStore } from '../store.svelte';
 	import type { HeaderAct } from './actions.svelte';
 

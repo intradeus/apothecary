@@ -162,15 +162,6 @@ func agentMarkdown(s *agentspec.Spec, servers []string) string {
 	fmt.Fprintf(&b, "description: %q\n", s.Description)
 	b.WriteString("mode: primary\n")
 	b.WriteString("tools:\n")
-	if s.ReadOnly {
-		// read_only denies edit/patch but keeps write for an agent that
-		// declares outputs: §5.3's read-only agents (planner, reviewer,
-		// redactor) must still create their artifact files. write must be
-		// re-enabled EXPLICITLY — in opencode, edit:false disables the whole
-		// file-modification tool group. An agent with nothing to write (the
-		// Ask pane's) gets none of it. See IMPLEMENTATION_NOTES.
-		fmt.Fprintf(&b, "  edit: false\n  patch: false\n  write: %v\n", len(s.Outputs) > 0)
-	}
 	fmt.Fprintf(&b, "  bash: %v\n", s.AllowBash)
 	if s.Name == agentspec.AskAgent {
 		// The Ask pane answers; a question it raised would land on the
@@ -182,6 +173,9 @@ func agentMarkdown(s *agentspec.Spec, servers []string) string {
 			fmt.Fprintf(&b, "  %q: false\n", m+"_*")
 		}
 	}
+	if s.ReadOnly {
+		b.WriteString(readOnlyPermission(s.OutputPaths))
+	}
 	b.WriteString("---\n")
 	b.WriteString(s.Prompt)
 	if s.Name != agentspec.AskAgent {
@@ -189,6 +183,30 @@ func agentMarkdown(s *agentspec.Spec, servers []string) string {
 		// told the exact name it will see (FLOWLANG §9).
 		b.WriteString("\n")
 		b.WriteString(acpagent.AskHumanRules(askHumanListedAs))
+	}
+	return b.String()
+}
+
+// readOnlyPermission is a read-only agent's file permission: no edit but of
+// its own outputs — §5.3's read-only agents (planner, reviewer, redactor)
+// must still deliver their files, and the Ask pane's, with none, edits
+// nothing. opencode has ONE file permission, `edit`, for its edit, write and
+// patch tools alike (`tools: {edit: false, write: true}` re-allowed every
+// edit), so the rule is per path, matched against the file's path relative
+// to the repository — the form the engine's output contract names it in:
+// deny everything, then allow each output, a files output's whole directory.
+// The last matching rule wins, so the allows follow the deny.
+func readOnlyPermission(outputs []string) string {
+	if len(outputs) == 0 {
+		return "permission:\n  edit: deny\n"
+	}
+	var b strings.Builder
+	b.WriteString("permission:\n  edit:\n    \"*\": deny\n")
+	for _, p := range outputs {
+		if strings.HasSuffix(p, "/") {
+			p += "*"
+		}
+		fmt.Fprintf(&b, "    %q: allow\n", p)
 	}
 	return b.String()
 }

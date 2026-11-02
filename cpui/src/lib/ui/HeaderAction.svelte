@@ -4,7 +4,7 @@
 	//
 	//   <HeaderAction><a class="btn btn-primary btn-lg" href={…}>…</a></HeaderAction>
 	import type { Snippet } from 'svelte';
-	import { headerSlot } from './headerAction.svelte';
+	import { headerSlot } from './headerSlot.svelte';
 
 	let { children }: { children: Snippet } = $props();
 

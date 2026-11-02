@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DESK_KEY, aDesk } from '$test/fixtures/desk';
-import { DeskState } from './desk.svelte';
+import { DeskState } from './deskState.svelte';
 import LayoutsPopover from './LayoutsPopover.svelte';
 import { PRESET_IDS, VIEWS, VIEW_LABEL, leaf, leavesOf } from './tree';
 

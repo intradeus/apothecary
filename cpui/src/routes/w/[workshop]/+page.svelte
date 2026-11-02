@@ -11,7 +11,7 @@
 	import { to, type WorkshopTab } from '$lib/core/urls';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
-	import { provideHeaderSlot } from '$lib/ui/headerAction.svelte';
+	import { provideHeaderSlot } from '$lib/ui/headerSlot.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';

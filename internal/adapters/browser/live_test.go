@@ -9,7 +9,9 @@ package browser
 // outside world. Removes its container; the image stays (content-addressed,
 // reused by the daemon).
 //
-//	go test -tags live -run TestLiveBrowserSession -v -timeout 30m ./internal/adapters/browser
+// Like the workspace live test, it needs APOTHECARY_LIVE_RUNS_DIR: a RunsDir
+// on the docker host, bind-mounted at the SAME path when the test runs in a
+// container (the session socket lives under it). `task test:integration:docker` runs both.
 
 import (
 	"bufio"
@@ -32,7 +34,14 @@ import (
 )
 
 func TestLiveBrowserSession(t *testing.T) {
-	runs, err := os.MkdirTemp("", "apo-browser-live-")
+	base := os.Getenv("APOTHECARY_LIVE_RUNS_DIR")
+	if base == "" {
+		t.Skip("APOTHECARY_LIVE_RUNS_DIR unset: needs a RunsDir on the docker host — see the header comment")
+	}
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := os.MkdirTemp(base, "browser-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,11 +72,15 @@ func TestLiveBrowserSession(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- m.Session(ctx, browserport.BrowserSession{Project: project, Run: "r1", Dial: dial}, struct {
+		err := m.Session(ctx, browserport.BrowserSession{Project: project, Run: "r1", Dial: dial}, struct {
 			io.Reader
 			io.Writer
 		}{toServer, toAgent})
+		// Nobody reads the requests once the session is gone: fail the
+		// test's writes with the session's error instead of blocking them.
+		toServer.CloseWithError(fmt.Errorf("session ended: %v", err))
 		toAgent.Close()
+		done <- err
 	}()
 
 	rd := bufio.NewReader(fromServer)
@@ -77,7 +90,7 @@ func TestLiveBrowserSession(t *testing.T) {
 		id++
 		line, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
 		if _, err := fromAgent.Write(append(line, '\n')); err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s: %v", method, err)
 		}
 		for {
 			l, err := rd.ReadBytes('\n')

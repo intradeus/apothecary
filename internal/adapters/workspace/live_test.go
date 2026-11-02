@@ -20,16 +20,11 @@ package workspace
 //     egress gateway (--internal network, DNS + pull-through mirror via the
 //     gateway) instead of the default bridge. Torn down at the end.
 //
-// From the repo root, with the local engine image built
-// (docker compose -p apothecary-local -f deploy/docker-compose.local.yaml build):
-//
-//	go test -c -tags live -o /tmp/live.test ./internal/adapters/workspace/
-//	R=$HOME/.cache/apothecary-live; mkdir -p $R
-//	docker run --rm --entrypoint /live.test \
-//	  -v /var/run/docker.sock:/var/run/docker.sock -v $R:$R \
-//	  -v /tmp/live.test:/live.test:ro \
-//	  -e APOTHECARY_LIVE_RUNS_DIR=$R -e APOTHECARY_SANDBOX_RUNTIME=sysbox-runc \
-//	  apothecary/apothecaryd:local -test.v -test.run TestLiveLifecycle
+// `task test:integration:docker` runs it that way: inside the engine image, with the host's
+// docker socket, host networking, and APOTHECARY_LIVE_RUNS_DIR bind-mounted at
+// the same path. That RunsDir is a named volume's mountpoint, a real path on
+// the docker host (on macOS, inside the docker VM): the run's unix sockets do
+// not cross a macOS file share.
 
 import (
 	"bytes"

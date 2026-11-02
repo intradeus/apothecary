@@ -215,7 +215,15 @@ Verified against opencode 1.17.8 (pinned in the image):
   group, so `write: true` must be set EXPLICITLY. Caught by the planner
   itself raising an ask_human blocker ping ("I have no write tool") — which
   incidentally proved the full §10 path (MCP tool → shim → tunnel → engine
-  inbox → curl answer) live before its formal test.
+  inbox → curl answer) live before its formal test. **Superseded
+  (2026-11-02)**: in opencode 1.17.8 edit, write and patch share ONE
+  permission, `edit`, so `write: true` re-allowed every edit — a read-only
+  agent with outputs could change any file (found by
+  `TestOpencodeConformance`). A read-only agent now gets
+  `permission.edit: {"*": deny, <each output path>: allow}` (a files
+  output's directory as `<dir>/*`, which covers nested files); the paths are
+  its stages' `to:` (`agentspec.Spec.OutputPaths`, filled by
+  `flow.WorkspaceAgents`). One with no outputs gets `edit: deny`.
 - `ports.HarnessPreparer` (optional interface) is how bootstrap step 4
   invokes harness config generation — an addition over the §4 "final" port
   set; fakes don't implement it and the engine type-asserts.
@@ -4918,9 +4926,12 @@ AWorkspace` (rule 3, real codex/opencode/omp harnesses), `engine/
 TestPushCredentialScopesAndRedactsFirst` (rules 2 and 4), `httpapi/
 TestCredentialsAPIIsOwnerScopedAndNeverEchoes` and `TestAuthBrokerTakesOnly
 ItsRunsToken` (rule 1), `kinds/TestOmpBrokerWire` (schema + sentinel).
-`task test:omp-broker` runs the real pinned omp from the tools image
-against the broker face: it fetched the snapshot, fell back from the stream,
-and listed the served logins' models — and none against an empty broker.
+`task test:integration:harness` runs the real pinned omp from the tools bundle
+against the broker face (`kinds/TestOmpConformance`): it fetched the snapshot,
+fell back from the stream, and listed the served logins' models — and none
+against an empty broker. The same task holds opencode and codex to what the
+engine generates for them (`TestOpencodeConformance`, `TestCodexConformance`,
+build tag `conformance`; see "Harness conformance tests").
 
 **Found while running it.** The settings table stores JSON; the instance
 secret was first written as a bare string and Postgres refused it at boot.
@@ -5595,3 +5606,53 @@ the plan:
 - **GitHub batches through GraphQL**, not `issues?since=`: listing by date
   pages through every issue updated since, while aliases read exactly the
   numbers asked for.
+
+## Harness conformance tests (2026-11-02)
+
+`task test:integration:harness` (CI: the integration job's `harness` entry)
+runs `go test -tags conformance -run Conformance ./internal/project/kinds/`
+in a golang container with the tools bundle the engine expects —
+`apothecary/tools:<ToolsHash>`, built as `wsimage.EnsureTools` builds it when
+absent, seeded into the `apothecary-harness-tools` volume by the bundle's own
+`seed.sh` and mounted at `/opt/apothecary/tools`. A missing or different
+bundle (its `TOOLS_HASH`) fails the tests; they never skip. Each runs the
+kinds' real `Prepare`/`SeedAuth`/`EnvVars` output through the binary:
+
+- **omp** (`TestOmpConformance`): the broker face, as above.
+- **opencode** (`TestOpencodeConformance`): `opencode debug config` accepts
+  the generated config and agents (opencode refuses unknown keys); `auth
+  list` keeps every auth.json entry and `models` lists each provider, none
+  without auth.json; over ACP the agents are session modes, and a turn on a
+  fake Anthropic carries the auth.json key and the selected agent's prompt.
+  The read-only reviewer writes its outputs (a file, a nested file of its
+  files directory) and is refused three other paths and an edit of
+  `README.md`; the builder, the control, writes them all.
+- **codex** (`TestCodexConformance`): `codex mcp get ask_human --json` shows
+  the generated server whole; `codex login status` takes the rendered
+  ChatGPT auth.json; over codex-acp an API-key session opens in the engine's
+  mode and its turn reaches a fake OpenAI with the key. This test found that
+  codex-acp 2.2.2 refuses a session with only `OPENAI_API_KEY` ("Authentication
+  required": it signs in from env only under `DEFAULT_AUTH_REQUEST`, and the
+  sidecar never calls `authenticate`) — the kind now sets
+  `DEFAULT_AUTH_REQUEST={"methodId":"api-key"}` beside the key.
+
+Limits, on purpose:
+
+- **A ChatGPT login opens no session offline**: on `session/new` codex's
+  app-server runs workspace routing discovery against chatgpt.com, which
+  neither env nor `CODEX_CONFIG` redirects; `codex login status` is the
+  closest honest check.
+- codex ignores `OPENAI_BASE_URL`; the test reaches its fake through
+  `CODEX_CONFIG={"openai_base_url": …}`, which codex-acp passes to the
+  session. opencode reaches its fake through the repository's own
+  `opencode.json` (`provider.anthropic.options.baseURL`).
+- Only the glibc builds run (the golang image is Debian); the musl ones are
+  untested here.
+- **codex and omp enforce `read_only` by instruction only** for a stage's
+  agent: codex runs every stage session in `agent-full-access` and omp with
+  its full tool set; only the Ask pane's session is read-only (codex's
+  `read-only` mode, omp's `--tools=read,grep,glob,web_search` process). The
+  role text says "do not modify … except the output artifacts"
+  (`acpagent.RoleText`). Neither harness offers per-path write rules.
+- The bundle lacks `codex-code-mode-host`: every codex turn warns "Code
+  Mode is unavailable … will fail closed".

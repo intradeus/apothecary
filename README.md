@@ -25,15 +25,19 @@ exactly two touchpoints — plan approval and final review.
 
 ## Prerequisites
 
-- A Linux host with **Docker** (the reference deployment uses host
-  networking and the docker socket), **or a Kubernetes cluster** (k3s
-  included — see [Kubernetes](#kubernetes)). The docker provisioner runs each
+- **Docker** — a Linux host, or macOS through Docker (`task local`, where the
+  engine itself runs in a container; `task test:integration:docker` passes on OrbStack,
+  Docker Desktop is untested) — **or a Kubernetes cluster** (k3s included — see
+  [Kubernetes](#kubernetes)). The reference deployment uses host networking
+  and the docker socket. The docker provisioner runs each
   run's workspace inside its own **Docker-in-Docker sandbox** (a
   `docker:dind` container), so repo compose files run verbatim with no
   cross-run collisions and teardown is total. By default that sandbox is
   `--privileged` — see [Unprivileged sandboxes](#unprivileged-sandboxes-optional)
-  to drop that. Its `RunsDir` must be a **persistent path, not under `/tmp`**
-  (dind masks `/tmp`) — the default `/var/lib/apothecary/runs` is fine.
+  to drop that. Its `RunsDir` must be a **persistent path on the docker host,
+  not under `/tmp`** (dind masks `/tmp`) — the default `/var/lib/apothecary/runs`
+  is fine. On macOS that path lives inside the docker VM, never in a folder of
+  the Mac: the engine's unix sockets under it don't cross a macOS file share.
 - A **repository account**: GitLab PAT (`api` scope, Developer+ on the target
   project) or GitHub PAT (`repo` scope, or fine-grained Contents:RW +
   Pull requests:RW).
@@ -495,15 +499,37 @@ docker exec -it <container> bash`.
 
 ## Development
 
+Four units of checks, each a task and a CI job (`.github/workflows/ci.yml`,
+on every pull request and push to `main`; a release needs all four green):
+
 ```sh
-task test                          # every backend test: unit, then integration
-task test:unit                     # unit + scenario suites: in-memory fakes, nothing running (`go test ./...`)
-task test:integration              # the Postgres adapter and boot tests, on real throwaway containers (needs docker)
-task test:ui                       # the CPUI's tests
+task test:unit                     # unit: Go (`go test ./...`) + the CPUI (vitest) — nothing running, macOS or Linux; args go to go test (-- -count=1 ./...)
+task test:integration              # integration: every suite below (needs docker)
+task test:integration:pg           #   the Postgres adapter and boot tests, on throwaway containers
+task test:integration:docker       #   docker workspaces (lifecycle, egress gateway, file tree) + the browser, inside the engine image
+task test:integration:harness      #   the pinned harness CLIs (tools image) against what the engine hands them
+task test:integration:k8s          #   the Kubernetes provisioner on a local k3d cluster
+task lint                          # lint: gofmt, go vet (linux + darwin, every build tag), model ids, API contract, svelte-check, CPUI linters
+task build                         # build: apothecaryd, shim, gateway, the CPUI, the six images
+
+task test                          # unit, then integration
+task test:linux                    # the Go unit tests in a Linux container, incl. the Linux-only build-tagged ones
+task verify                        # pre-commit gate: lint, unit tests with coverage, binaries, CPUI build
+task cover                         # test coverage of both halves, as pages (coverage/go, cpui/coverage)
 go run ./cmd/apothecaryd serve -dev   # real engine/API/UI, fake vendors
 cd cpui && npm run dev             # UI dev server (proxies /api)
-task cover                         # test coverage of both halves, as pages (coverage/go, cpui/coverage)
 ```
+
+Development happens on macOS or Linux, and `task test:unit` passes on both
+(CI runs it on each): a unit test fakes what it needs (fixture `/proc` and
+`/sys` roots, injected paths) rather than reading the machine. Anything that
+needs a real environment is an integration test and runs in containers.
+Running Apothecary itself on macOS means running it in Docker
+(`task local`), never a native engine: the engine talks to its workspaces over
+unix sockets under RunsDir, which must be a path on the docker host (inside
+the docker VM on macOS), since those sockets do not cross a macOS file share.
+`go run ./cmd/apothecaryd serve -dev` stays for UI and API work against fake
+vendors.
 
 The backend is a modular monolith. `internal/engine` runs a run: its
 lifecycle and the interpreter's loop, whose decisions — the state a run is

@@ -2,7 +2,7 @@
 
 How `cpui/` is built, and the rules that keep it that way. The visual spec is [DESIGN.md](UX/UI/DESIGN.md); the catalogue of shared classes and components is [cpui/src/lib/ui/README.md](../cpui/src/lib/ui/README.md).
 
-Almost everything here is enforced. Run `npm run lint` in `cpui/`, or `task lint:ui` from the root. `task verify` runs it too.
+Almost everything here is enforced. Run `npm run lint` in `cpui/`, or `task lint:ui` from the root (svelte-check, then every lint). `task lint` and CI's lint job run it too.
 
 ## Architecture
 
@@ -102,7 +102,9 @@ A component earns its place with behaviour or structure. A wrapper that only ren
 
 ## Tests
 
-Every component and module has its tests beside it: `Foo.svelte` → `Foo.test.ts`, `foo.ts` → `foo.test.ts`, `foo.svelte.ts` → `foo.svelte.test.ts`. `check-tests` fails on a file without one, so a new component can't arrive untested. Run them with `npm test`, `npm run test:watch` or `task test:ui`.
+Every component and module has its tests beside it: `Foo.svelte` → `Foo.test.ts`, `foo.ts` → `foo.test.ts`, `foo.svelte.ts` → `foo.svelte.test.ts`. `check-tests` fails on a file without one, so a new component can't arrive untested. Run them with `npm test`, `npm run test:watch` or `task test:unit:ui` (CI's unit job, on Linux and macOS).
+
+No two names under `src/` may differ only by case: macOS's filesystem is case-insensitive, so `noise.svelte.ts` beside `Noise.svelte` resolves to the wrong file there. A rune module next to its component is named after what it exports instead (`noiseState.svelte.ts`, `headerSlot.svelte.ts`). `check-tests` enforces this too.
 
 The stack is Vitest, Testing Library and jsdom. Shared pieces live in `src/test`, imported as `$test`: the jsdom stubs (`setup.ts`), `text()`, `deferred()` and `rect()` (`helpers.ts`), and domain fixtures such as `aRun({ state: 'failed' })` (`fixtures.ts`).
 
@@ -127,11 +129,11 @@ jsdom has no layout and no CSS, so tests can't see a rule that stopped applying.
 | `npm run lint:styles` | Stylelint | Literals where a token belongs, `!important`, naming. |
 | `npm run lint:tokens` | `scripts/check-tokens.mjs` | Palette privacy, raw colours, `[data-theme]`, every `var()` resolves, every `Hue` has its family. |
 | `npm run lint:layers` | `scripts/check-layers.mjs` | The rank table, no loose files. |
-| `npm run lint:tests` | `scripts/check-tests.mjs` | Every component and module has a test beside it. |
+| `npm run lint:tests` | `scripts/check-tests.mjs` | Every component and module has a test beside it; no two names under `src/` differ only by case. |
 | `npm run check:themes` | `scripts/check-themes.mjs` | Every theme block defines every token. |
 | `npm run lint:format` | Prettier | Formatting. `npm run format` fixes it. |
 | `task api:check` | `scripts/check-api-boundary.mjs` | The generated client stays behind `$lib/api`. |
 
-`npm run lint` runs every lint and format check; `task verify` adds `check`, `api:check`, the tests with coverage, and the build.
+`npm run lint` runs every lint and format check; `task lint:ui` adds `check` (svelte-check), `task lint` adds `api:check` and the Go side, and `task verify` adds the tests with coverage and the build.
 
 A disable comment needs a reason on the same line. Prefer changing the rule's config, with a comment saying why, when a rule is wrong for a whole category of code.

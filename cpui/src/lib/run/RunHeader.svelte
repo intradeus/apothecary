@@ -8,7 +8,7 @@
 	import { t } from '$lib/i18n/index.svelte';
 	import { shortId } from '$lib/core/format';
 	import { toast } from '$lib/ui/toast.svelte';
-	import type { DeskState } from '$lib/desk/desk.svelte';
+	import type { DeskState } from '$lib/desk/deskState.svelte';
 	import RerunModal from './RerunModal.svelte';
 	import type { RunStore } from './store.svelte';
 	import EnvMenu from './header/EnvMenu.svelte';

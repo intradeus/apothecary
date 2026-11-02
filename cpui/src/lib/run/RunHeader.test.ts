@@ -4,7 +4,7 @@ import { goto } from '$app/navigation';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
-import { DeskState } from '$lib/desk/desk.svelte';
+import { DeskState } from '$lib/desk/deskState.svelte';
 import type { Run } from '$lib/domain';
 import { toasts } from '$lib/ui/toast.svelte';
 import { aProject, aRun } from '$test/fixtures';

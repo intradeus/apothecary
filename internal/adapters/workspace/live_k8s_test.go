@@ -3,7 +3,8 @@
 package workspace
 
 // Live test of the Kubernetes host against a real cluster (k3d locally:
-// task k8s:cluster k8s:images, then task k8s:test-live). It needs:
+// task test:integration:k8s, or task k8s:cluster k8s:images k8s:test-live to
+// keep the cluster). It needs:
 //
 //   - APOTHECARY_LIVE_KUBECONFIG: a kubeconfig for a THROWAWAY cluster. The
 //     test creates and deletes its own namespace; it never uses kubectl's
@@ -111,6 +112,9 @@ spec:
           git config daemon.uploadpack true
           exec git daemon --reuseaddr --export-all --base-path=/srv --listen=0.0.0.0 /srv
       ports: [{containerPort: 9418}]
+      # Ready once the daemon listens, not when the container starts: it
+      # installs git-daemon first.
+      readinessProbe: {tcpSocket: {port: 9418}, periodSeconds: 2}
 ---
 apiVersion: v1
 kind: Service

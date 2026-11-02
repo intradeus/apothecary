@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
-import type { DeskState } from '$lib/desk/desk.svelte';
+import type { DeskState } from '$lib/desk/deskState.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
 import { aRun, aRunStore } from '$test/fixtures';
 import { bound, settled } from '$test/fixtures/run-components';

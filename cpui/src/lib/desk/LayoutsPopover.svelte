@@ -6,7 +6,7 @@
 	import Popover from '$lib/ui/Popover.svelte';
 	import StatusMark from '$lib/ui/StatusMark.svelte';
 	import { indicator } from '$lib/ui/motion';
-	import type { DeskState } from './desk.svelte';
+	import type { DeskState } from './deskState.svelte';
 	import { PRESETS, PRESET_IDS, VIEWS, VIEW_LABEL } from './tree';
 
 	let { desk, anchor }: { desk: DeskState; anchor: HTMLElement | null } = $props();

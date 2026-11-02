@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -39,7 +40,11 @@ type sideFake struct {
 	cancels  int
 	stops    int
 	afters   []string // the ?after= of each follow
-	feed     chan sidecar.Event
+	// log is every event pushed; each follow streams those after its
+	// ?after=, as the sidecar does, so a follow whose client has gone (but
+	// the server hasn't noticed yet) can't swallow the next follow's events.
+	log      []sidecar.Event
+	logged   chan struct{} // closed and replaced on each push
 	drop     chan struct{}
 	onPrompt func(sidecar.PromptRequest)
 	onCancel func()
@@ -47,7 +52,7 @@ type sideFake struct {
 
 func newSideFake(t *testing.T) *sideFake {
 	t.Helper()
-	f := &sideFake{boot: "b1", init: "{}", fail: map[string]int{}, feed: make(chan sidecar.Event, 256), drop: make(chan struct{}, 1),
+	f := &sideFake{boot: "b1", init: "{}", fail: map[string]int{}, logged: make(chan struct{}), drop: make(chan struct{}, 1),
 		session: sidecar.SessionResponse{SessionID: "s1"}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(func() {
@@ -109,6 +114,9 @@ func (f *sideFake) serve(w http.ResponseWriter, r *http.Request) {
 	case "/agent/status":
 		f.mu.Lock()
 		st := f.status
+		if st.LastSeq == 0 {
+			st.LastSeq = f.seq
+		}
 		f.mu.Unlock()
 		if st.Boot == "" {
 			st.Boot = f.boot
@@ -132,15 +140,25 @@ func (f *sideFake) events(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	f.mu.Lock()
 	f.afters = append(f.afters, r.URL.Query().Get("after"))
 	f.mu.Unlock()
 	w.(http.Flusher).Flush()
-	for {
+	for next := 0; ; {
+		f.mu.Lock()
+		evs := f.log[next:]
+		next = len(f.log)
+		logged := f.logged
+		f.mu.Unlock()
+		for _, ev := range evs {
+			if ev.Seq > after {
+				enc.Encode(ev)
+			}
+		}
+		w.(http.Flusher).Flush()
 		select {
-		case ev := <-f.feed:
-			enc.Encode(ev)
-			w.(http.Flusher).Flush()
+		case <-logged:
 		case <-f.drop:
 			return
 		case <-r.Context().Done():
@@ -161,7 +179,11 @@ func (f *sideFake) push(evs ...sidecar.Event) {
 		if ev.Boot == "" {
 			ev.Boot = f.boot
 		}
-		f.feed <- ev
+		f.log = append(f.log, ev)
+	}
+	if len(evs) > 0 {
+		close(f.logged)
+		f.logged = make(chan struct{})
 	}
 }
 

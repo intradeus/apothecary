@@ -1,0 +1,167 @@
+# CI/CD: four units of checks, each a Taskfile task (task --list), on every
+# pull request and every push to main — then, on main only, the release: a
+# version-stamped image set to GHCR + a matching git tag. Versions are
+# monotonic: v2.0.<run_number>. Pin one in deploy/.env via
+#   APOTHECARY_IMAGE=ghcr.io/intradeus/apothecary/apothecaryd:v2.0.N
+# (or, on Kubernetes, the Helm chart's image.tag=v2.0.N).
+#
+#   unit         task test:unit          Linux and macOS (development is on macOS)
+#   integration  task test:integration:* real dependencies, in containers
+#   lint         task lint               every linter and type check
+#   build        task build              every binary, the CPUI and every image
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A newer push supersedes a pull request's run; main's runs (which release)
+  # always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Six images per release (deploy/images.sh): apothecaryd, sandbox, shim,
+  # tools, egress-gw, browser. A Kubernetes deployment pulls all of them.
+  PREFIX: ghcr.io/intradeus/apothecary
+
+jobs:
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cpui/package-lock.json
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm ci
+        working-directory: cpui
+      - run: task test:unit
+
+  integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [pg, docker, harness, k8s]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # k3d (pinned), and the wireguard module every run's sandbox tunnels to
+      # its gateway with (k3d's nodes share the runner's kernel). The runner
+      # already has docker and kubectl. systemd-resolved answers *.localhost
+      # with loopback, but the registry's name is pinned in /etc/hosts anyway:
+      # dockerd resolves it to push, and only to loopback does it speak plain
+      # HTTP. The six images live three times (docker, the registry, the
+      # node's containerd) and the tools bundle once more on the run's volume:
+      # drop toolchains this job never uses, or the kubelet evicts the pods
+      # for disk pressure. The task creates the cluster and deletes it again.
+      - name: Kubernetes prerequisites
+        if: matrix.suite == 'k8s'
+        env:
+          K3D_VERSION: v5.9.0
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+          curl -fsSL -o "$RUNNER_TEMP/k3d" "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
+          sudo install -m 0755 "$RUNNER_TEMP/k3d" /usr/local/bin/k3d
+          k3d version
+          sudo modprobe wireguard
+          echo "127.0.0.1 k3d-registry.localhost" | sudo tee -a /etc/hosts
+      - run: task test:integration:${{ matrix.suite }}
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cpui/package-lock.json
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm ci
+        working-directory: cpui
+      - run: task lint
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cpui/package-lock.json
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm ci
+        working-directory: cpui
+      - run: task build
+
+  release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [unit, integration, lint, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the version tag
+      packages: write # push to ghcr
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute version
+        id: v
+        run: |
+          echo "version=v2.0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "sha=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push the release images
+        run: EXTRA_TAGS="${{ steps.v.outputs.sha }} latest" deploy/images.sh "${{ steps.v.outputs.version }}" --push
+      - name: Tag the release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Check the REMOTE: the checkout is shallow and tagless, so a
+          # local rev-parse never sees an existing tag and re-runs would
+          # fail on the push.
+          if git ls-remote --exit-code --tags origin "refs/tags/${{ steps.v.outputs.version }}" >/dev/null 2>&1; then
+            echo "tag exists (re-run); skipping"
+          else
+            git tag "${{ steps.v.outputs.version }}"
+            git push origin "${{ steps.v.outputs.version }}"
+          fi

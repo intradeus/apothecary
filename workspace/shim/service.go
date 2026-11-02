@@ -279,13 +279,14 @@ func supervisorAlive(st serviceState) bool {
 	if st.PID <= 0 {
 		return false
 	}
-	if stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", st.PID)); err == nil {
+	proc := filepath.Join(procRoot, strconv.Itoa(st.PID))
+	if stat, err := os.ReadFile(filepath.Join(proc, "stat")); err == nil {
 		if i := strings.LastIndexByte(string(stat), ')'); i >= 0 && i+2 < len(stat) {
 			if s := stat[i+2]; s == 'Z' || s == 'X' {
 				return false
 			}
 		}
-		if cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", st.PID)); err == nil {
+		if cmdline, err := os.ReadFile(filepath.Join(proc, "cmdline")); err == nil {
 			return strings.Contains(string(cmdline), "service\x00supervise\x00"+st.Name+"\x00")
 		}
 	}

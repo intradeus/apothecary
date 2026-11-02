@@ -152,7 +152,7 @@ func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec envport.E
 	// (1) dind remounts /tmp as tmpfs and hides bind mounts under it, so a
 	//     socket there never appears; (2) a unix socket path must fit sun_path.
 	if !a.noSandboxGuard {
-		// Cleaned: macOS's $TMPDIR (os.TempDir's source) ends in a slash.
+		// Cleaned: $TMPDIR (os.TempDir's source) may end in a slash.
 		if strings.HasPrefix(runRoot, filepath.Clean(os.TempDir())+string(os.PathSeparator)) || strings.HasPrefix(runRoot, "/tmp/") {
 			return fmt.Errorf("devcontainer DinD: RunsDir %q is under the temp dir — dind masks /tmp, so the inner socket can't surface; configure a persistent RunsDir (e.g. /var/lib/apothecary/runs)", runRoot)
 		}

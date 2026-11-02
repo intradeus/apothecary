@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { activeDesk } from './active.svelte';
-import { DeskState } from './desk.svelte';
+import { DeskState } from './deskState.svelte';
 
 describe('activeDesk', () => {
 	it('starts with no desk on screen, so the Layout button stays away', () => {

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { activeDesk } from '$lib/desk/active.svelte';
 import type { EgressDenial, Run, RunEvent, RunServices } from '$lib/domain';
-import { NEUTRAL_MIX, noise } from '$lib/ui/noise.svelte';
+import { NEUTRAL_MIX, noise } from '$lib/ui/noiseState.svelte';
 import { aRun } from '$test/fixtures';
 import { aSample, settled } from '$test/fixtures/run-components';
 import { DESK_KEY, sizeDesk, tab, windows } from '$test/fixtures/desk';
