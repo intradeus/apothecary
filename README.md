@@ -331,7 +331,8 @@ and apply without a restart. Notification mirrors (Matrix, Slack, Discord) live 
 Releases are semver tags (`vX.Y.Z`) cut by CI after a human approves them;
 nothing is published on its own.
 
-1. A push to `main` runs `ci`. When it is green, the `manual-release`
+1. A pull request is squash-merged into `main` (direct pushes are refused),
+   and the merge runs `ci`. When it is green, the `manual-release`
    workflow plans the release of that commit: its job summary shows the next
    version and the `CHANGELOG.md` section it would add.
 2. Approve the `release` environment's deployment on that run.
@@ -350,24 +351,35 @@ The version follows the conventional commits since the last tag (rules in
 | `fix`, `chore`, `perf`, `refactor`, `build`, `revert` | patch |
 | only `docs`, `test`, `ci`, `style` | no release |
 
-Commit messages are checked by commitizen (`brew install commitizen`), in CI
-(the `commits` job, and the PR title for squash-merges) and locally:
+Every commit message follows that convention: the `commit-msg` hook
+(`lefthook.yml`) checks it, and it is registered on its own by `npm ci` in
+`cpui` — nothing else to install. A pull request's title becomes the
+squashed commit, so the `pr-title` workflow checks it the same way.
 
 ```sh
-task hooks              # git runs cz check on every commit message
-task commit             # write one interactively: type, scope, ! for breaking
-task release:preview    # the version and changelog the next release would get
+task commit             # write one interactively (needs commitizen: brew install commitizen)
+task release:preview    # the version and changelog the next release would get (same)
 ```
 
 One-time GitHub setup:
 
-1. *Settings → Environments → `release`*: add the required reviewers and
+1. *Settings → General → Pull Requests*: allow **squash merging** only, with
+   the default commit message **Pull request title**.
+2. *Settings → Rules → Rulesets → New branch ruleset* on the default branch,
+   active: **Restrict deletions**, **Require a pull request before merging**
+   (allowed merge method: squash), **Require status checks to pass** (`unit`,
+   `integration (pg|docker|harness|k8s)`, `lint`, `build`, `pr-title`) and
+   **Block force pushes**. Bypass list: **Deploy keys** only. On a private
+   repository GitHub enforces rulesets only on a paid plan: if the ruleset
+   page says it "won't be enforced", nothing is blocked yet.
+3. *Settings → Deploy keys*: add a key **with write access** and store its
+   private half as the `RELEASE_DEPLOY_KEY` secret (`ssh-keygen -t ed25519
+   -N '' -f release-key`). The release job pushes its commit and tag with it:
+   the only push `main` takes.
+4. *Settings → Environments → `release`*: add the required reviewers and
    limit deployment branches to `main`. Without this environment GitHub
    creates an unprotected one on the first run and nothing waits for
    approval.
-2. If `main` is protected against pushes from Actions, add a `RELEASE_TOKEN`
-   secret: a fine-grained PAT with *contents: write* that may bypass the
-   protection. The release job pushes with it instead of `GITHUB_TOKEN`.
 
 ### Deploying a release
 

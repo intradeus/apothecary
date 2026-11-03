@@ -1,0 +1,25 @@
+# main takes squash merges only, under the pull request's title: that title
+# is the commit the release reads (.cz.toml), so it follows the convention.
+# Its own workflow so that fixing a title re-runs this check alone. The check
+# is the commit-msg hook's own script (lefthook.yml), which already checked
+# every commit of the branch.
+name: pr-title
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the pull request title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          printf '%s\n' "$TITLE" > "$RUNNER_TEMP/title"
+          sh .lefthook/commit-msg/conventional.sh "$RUNNER_TEMP/title"

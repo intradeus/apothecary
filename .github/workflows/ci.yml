@@ -1,13 +1,13 @@
-# CI: five units of checks, each a Taskfile task (task --list), on every pull
+# CI: four units of checks, each a Taskfile task (task --list), on every pull
 # request and every push to main. A green main run offers a manual-release
 # (see manual-release.yml): a human approves it, and it cuts the next semver
-# tag, CHANGELOG.md and the image set on GHCR.
+# tag, CHANGELOG.md and the image set on GHCR. A pull request's title is
+# checked by pr-title.yml.
 #
 #   unit         task test:unit          Linux
 #   integration  task test:integration:* real dependencies, in containers
 #   lint         task lint               every linter and type check
 #   build        task build              every binary, the CPUI and every image
-#   commits      task lint:commits       commit messages follow .cz.toml
 name: ci
 
 on:
@@ -137,37 +137,3 @@ jobs:
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h /
       - run: task build
-
-  commits:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: arduino/setup-task@v2
-        with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - run: pipx install "commitizen==4.19.3"
-      - name: Check commit messages
-        env:
-          EVENT: ${{ github.event_name }}
-          BEFORE: ${{ github.event.before }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          if [ "$EVENT" = pull_request ]; then
-            RANGE="$BASE..$HEAD_SHA"
-          elif [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            RANGE="$BEFORE..$GITHUB_SHA"
-          else
-            # First push of the branch, a force-push, or a manual run.
-            RANGE="$GITHUB_SHA~1..$GITHUB_SHA"
-          fi
-          task lint:commits RANGE="$RANGE"
-      # A squash-merge uses the PR title as the commit subject.
-      - name: Check the pull request title
-        if: github.event_name == 'pull_request'
-        env:
-          TITLE: ${{ github.event.pull_request.title }}
-        run: cz check --message "$TITLE"
