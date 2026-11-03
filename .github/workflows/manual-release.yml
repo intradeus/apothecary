@@ -80,7 +80,7 @@ jobs:
       # Never cancel: an approved release can be partway through pushing.
       cancel-in-progress: false
     permissions:
-      contents: write # push the release commit and tag
+      contents: read # the release commit and tag go out with the deploy key
       packages: write # push to ghcr
     env:
       SHA: ${{ github.event.workflow_run.head_sha }}
@@ -89,9 +89,10 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
-          # The push credential: RELEASE_TOKEN when main is protected against
-          # the Actions token.
-          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          # The push credential: main takes no direct pushes, and its ruleset
+          # lets deploy keys bypass that — this one, a write deploy key, is
+          # the only one (README § Releases).
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
       - run: pipx install "commitizen==${COMMITIZEN_VERSION}"
       # Approval can arrive hours later: check the state again.
       - id: plan

@@ -298,7 +298,7 @@ tasks:
       - echo "vendored $(du -sh . | cut -f1) of Swagger UI"
 
   # --- tests, lint ------------------------------------------------------------
-  # Five units, each its own CI job (.github/workflows/ci.yml):
+  # Four units, each its own CI job (.github/workflows/ci.yml):
   #   test:unit         nothing running, any OS: Go unit + scenario suites and
   #                     the CPUI's tests (CI runs them on Linux)
   #   test:integration  real dependencies, always in containers: Postgres and
@@ -306,7 +306,6 @@ tasks:
   #                     binaries, Kubernetes (k3d)
   #   lint              every linter and type check
   #   build             every binary, the CPUI and every image (above)
-  #   lint:commits      commit messages follow .cz.toml (below)
   # The fan-out tasks don't forward arguments: the suites take different ones
   # (go test flags, vitest filters, test-binary flags). Pass them to the one
   # suite they belong to — except test:unit, whose arguments are the Go tests'
@@ -571,28 +570,17 @@ tasks:
       - '{{.PROD_COMPOSE}} logs -f apothecaryd'
 
   # --- commits & releases ----------------------------------------------------
-  # Commits follow .cz.toml (commitizen); a green main run offers a
+  # Commits follow .cz.toml; lefthook.yml's commit-msg hook checks each one
+  # (registered by `npm ci` in cpui), and a green main run offers a
   # manual-release that cuts the next semver tag (.github/workflows).
-  hooks:
-    desc: 'Enforce the commit convention locally: git uses .githooks (commit-msg runs cz check; needs commitizen: brew install commitizen)'
-    cmds:
-      - git config core.hooksPath .githooks
-
   commit:
-    desc: 'Write a conventional commit interactively (cz commit: type, scope, ! for breaking)'
+    desc: 'Write a conventional commit interactively (cz commit: type, scope, ! for breaking; needs commitizen)'
     interactive: true
-    cmds:
-      - cz commit
-
-  lint:commits:
-    desc: 'Check commit messages against .cz.toml (task lint:commits RANGE=a..b; default origin/main..HEAD)'
-    vars:
-      RANGE: '{{.RANGE | default "origin/main..HEAD"}}'
     preconditions:
       - sh: command -v cz
         msg: 'install commitizen: brew install commitizen (or pipx install commitizen)'
     cmds:
-      - if [ "$(git rev-list --count '{{.RANGE}}')" = 0 ]; then echo "no commits in {{.RANGE}}"; else cz check --rev-range '{{.RANGE}}'; fi
+      - cz commit
 
   release:preview:
     desc: 'The version and changelog section the next release of HEAD would get (dry run; needs commitizen)'
