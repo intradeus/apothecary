@@ -336,17 +336,18 @@ and apply without a restart. Notification mirrors (Matrix, Slack, Discord) live 
 
 ## Releases & upgrade
 
-Releases are semver tags (`vX.Y.Z`) cut by CI after a human approves them;
-nothing is published on its own.
+Releases are semver tags (`vX.Y.Z`) cut by CI when you ask for one; nothing
+is published on its own.
 
-1. A push to `main` runs `ci`. When it is green, the `manual-release`
-   workflow plans the release of that commit: its job summary shows the next
-   version and the `CHANGELOG.md` section it would add.
-2. Approve the `release` environment's deployment on that run.
-3. CI commits `CHANGELOG.md` as `chore(release): vX.Y.Z [skip ci]`, tags it
+1. *Actions → manual-release → Run workflow* on `main`. It releases `main`'s
+   head, and refuses to unless `ci` passed on that commit. Its job summary
+   shows the version and the `CHANGELOG.md` section it adds.
+2. CI commits `CHANGELOG.md` as `chore(release): vX.Y.Z [skip ci]`, tags it
    `vX.Y.Z`, pushes both to `main`, and pushes the five images to
    `ghcr.io/intradeus/apothecary/<name>` as `:vX.Y.Z`, `:latest` and
    `:sha-…`. No GitHub Release is created.
+
+Running it again after a failed image push re-publishes that release's images.
 
 The version follows the conventional commits since the last tag (rules in
 `.cz.toml`):
@@ -369,13 +370,15 @@ task release:preview    # the version and changelog the next release would get
 
 One-time GitHub setup:
 
-1. *Settings → Environments → `release`*: add the required reviewers and
-   limit deployment branches to `main`. Without this environment GitHub
-   creates an unprotected one on the first run and nothing waits for
-   approval.
+1. *Settings → Environments → `release`*: limit deployment branches to
+   `main`, and give it no required reviewers (with them, each run waits for
+   an approval on top of the click).
 2. If `main` is protected against pushes from Actions, add a `RELEASE_TOKEN`
-   secret: a fine-grained PAT with *contents: write* that may bypass the
-   protection. The release job pushes with it instead of `GITHUB_TOKEN`.
+   secret: a fine-grained PAT, resource owner `intradeus`, repository access
+   to `apothecary`, *Contents: Read and write*, from an account that may
+   bypass the protection. The release job pushes with it instead of
+   `GITHUB_TOKEN`. A token without that permission fails the push with
+   `Write access to repository not granted` (403).
 
 ### Deploying a release
 

@@ -465,12 +465,16 @@ func TestUnansweredQuestionParksAfterTheHold(t *testing.T) {
 	h := newHarness(t, mustFlow(t, askFlowDoc))
 	h.e.cfg.AskHumanHold = 30 * time.Millisecond
 	runIDCh := make(chan string, 1)
+	// The ping the agent's tool call holds, as the ask_human long-poll does:
+	// once the run parks, PendingPings answers with a copy from the log.
+	raised := make(chan *Ping, 1)
 	h.runner.RunFunc = func(ctx context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
 		id := <-runIDCh
 		p, err := h.e.RaisePing(id, "clarification", "one endpoint or two?", "", nil, nil)
 		if err != nil {
 			return agentport.AgentResult{}, err
 		}
+		raised <- p
 		p.Await(ctx) // blocks until the engine cancels the turn
 		return agentport.AgentResult{Session: "sess-p", TurnsUsed: 1, Usage: agentport.Usage{CostUSD: 0.1}}, ctx.Err()
 	}
@@ -482,7 +486,7 @@ func TestUnansweredQuestionParksAfterTheHold(t *testing.T) {
 		t.Fatal(err)
 	}
 	runIDCh <- runID
-	p := h.waitPing(t, "clarification")
+	p := <-raised
 	paused := waitEvent[*event.StagePaused](t, h, runID)
 	if len(paused.PingIDs) != 1 || paused.PingIDs[0] != p.ID || paused.SessionID != "sess-p" ||
 		paused.Usage == nil || paused.Usage.CostUSD != 0.1 {

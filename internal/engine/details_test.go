@@ -9,7 +9,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/ports/agentport"
@@ -331,11 +330,11 @@ parameters: { harness: fake, model: fake/model }
 main:
   - { id: c, type: command, run: "./c.sh" }
 `))
-		entered := make(chan struct{})
+		entered, aborted := make(chan struct{}), make(chan struct{})
 		h.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
 			if strings.Contains(cmd.Script, "./c.sh") {
 				close(entered)
-				time.Sleep(10 * time.Millisecond)
+				<-aborted // the command dies of the abort, never ahead of it
 				return envport.ExecResult{}, errors.New("signal: killed")
 			}
 			return envport.ExecResult{}, nil
@@ -348,6 +347,7 @@ main:
 		if err := h.e.Abort(id); err != nil {
 			t.Fatal(err)
 		}
+		close(aborted)
 		h.e.Wait(id)
 		evs := h.events(t, id)
 		if s := run.Reduce(evs).State; s != run.Abandoned {

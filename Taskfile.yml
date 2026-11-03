@@ -97,6 +97,21 @@ tasks:
       - k3d kubeconfig get {{.K3D_CLUSTER}} > {{.K3D_KUBECONFIG}}
       - chmod 600 {{.K3D_KUBECONFIG}}
 
+  # The API server answers /readyz, waiting up to 3 minutes: a k3s server can
+  # restart under memory pressure long after `cluster create --wait`.
+  k8s:ready:
+    internal: true
+    cmds:
+      - |
+        for _ in $(seq 90); do
+          {{.K3D_KUBECTL}} get --raw /readyz >/dev/null 2>&1 && exit 0
+          sleep 2
+        done
+        echo "the k3d API server is not ready after 3 minutes" >&2
+        {{.K3D_KUBECTL}} get --raw '/readyz?verbose' >&2 || true
+        docker logs --tail 50 k3d-{{.K3D_CLUSTER}}-server-0 >&2 || true
+        exit 1
+
   k8s:images:
     desc: Build the five images from the working tree and push them to the k3d registry as :local
     cmds:
@@ -147,6 +162,7 @@ tasks:
   k8s:test-live:
     desc: Run the live Kubernetes tests (the provisioner, the project browser) against the k3d cluster
     cmds:
+      - task: k8s:ready
       - >-
         APOTHECARY_LIVE_KUBECONFIG=$PWD/{{.K3D_KUBECONFIG}}
         APOTHECARY_LIVE_K8S_NAMESPACE=apothecary-live
@@ -461,13 +477,17 @@ tasks:
 
   # Reuses the cluster if it exists (and leaves it, with the :local images
   # pushed to its registry); otherwise creates it and deletes it afterwards,
-  # registry included — pass or fail.
+  # registry included — pass or fail. The images are built before the cluster
+  # starts: building the tools bundle beside a running k3s starves a CI
+  # runner, and its API server drops out ("apiserver not ready") under the
+  # tests. k8s:images then only pushes, from the build cache.
   test:integration:k8s:
     desc: 'The Kubernetes provisioner and project browser on a local k3d cluster: cluster, images, live tests (needs docker, k3d)'
     vars:
       CLUSTER_EXISTED:
         sh: k3d node get k3d-{{.K3D_CLUSTER}}-server-0 >/dev/null 2>&1 && echo yes || echo no
     cmds:
+      - PREFIX={{.K3D_REGISTRY}}/apothecary deploy/images.sh local
       - task: k8s:cluster
       - defer: '{{if eq .CLUSTER_EXISTED "no"}}{{.TASK_EXE}} k8s:down{{end}}'
       - task: k8s:images
@@ -571,8 +591,8 @@ tasks:
       - '{{.PROD_COMPOSE}} logs -f apothecaryd'
 
   # --- commits & releases ----------------------------------------------------
-  # Commits follow .cz.toml (commitizen); a green main run offers a
-  # manual-release that cuts the next semver tag (.github/workflows).
+  # Commits follow .cz.toml (commitizen); manual-release, run by hand on a
+  # green main, cuts the next semver tag (.github/workflows).
   hooks:
     desc: 'Enforce the commit convention locally: git uses .githooks (commit-msg runs cz check; needs commitizen: brew install commitizen)'
     cmds:
