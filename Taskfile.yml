@@ -145,13 +145,13 @@ tasks:
       - '{{.K3D_KUBECTL}} {{.CLI_ARGS}}'
 
   k8s:test-live:
-    desc: Run the live Kubernetes provisioner test against the k3d cluster
+    desc: Run the live Kubernetes tests (the provisioner, the project browser) against the k3d cluster
     cmds:
       - >-
         APOTHECARY_LIVE_KUBECONFIG=$PWD/{{.K3D_KUBECONFIG}}
         APOTHECARY_LIVE_K8S_NAMESPACE=apothecary-live
         APOTHECARY_LIVE_IMAGE_PREFIX={{.K3D_REGISTRY}}/apothecary
-        go test -tags live -count=1 -timeout 30m -run TestLiveK8s -v ./internal/adapters/workspace/
+        go test -tags live -count=1 -timeout 30m -run TestLiveK8s -v ./internal/adapters/workspace/ ./internal/adapters/browser/
 
   k8s:down:
     desc: Delete the k3d cluster (its registry and everything in it)
@@ -463,7 +463,7 @@ tasks:
   # pushed to its registry); otherwise creates it and deletes it afterwards,
   # registry included — pass or fail.
   test:integration:k8s:
-    desc: 'The Kubernetes provisioner on a local k3d cluster: cluster, images, live test (needs docker, k3d)'
+    desc: 'The Kubernetes provisioner and project browser on a local k3d cluster: cluster, images, live tests (needs docker, k3d)'
     vars:
       CLUSTER_EXISTED:
         sh: k3d node get k3d-{{.K3D_CLUSTER}}-server-0 >/dev/null 2>&1 && echo yes || echo no

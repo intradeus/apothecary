@@ -74,15 +74,22 @@ FROM alpine:3.21 AS musllibs
 RUN apk add --no-cache libstdc++ libgcc && mkdir /lib-out \
  && cp -L /usr/lib/libstdc++.so.6 /usr/lib/libgcc_s.so.1 /lib-out/
 
-# --- the bundle ---------------------------------------------------------------
-# alpine, not scratch: seed.sh needs sh and cp.
-FROM alpine:3.21
+# --- assembly -----------------------------------------------------------------
+# The wrappers and the permissions, in a stage of their own: assemble.sh's
+# chmod -R touches every file, and in the final image that would store the
+# whole tree a second time (a changed file's layer holds all of it).
+FROM alpine:3.21 AS assemble
 COPY --from=fetch /out /tools
 COPY --from=acp-gnu /out/codex-acp /tools/gnu/libexec/codex-acp
 COPY --from=acp-musl /out/codex-acp /tools/musl/libexec/codex-acp
 COPY --from=musllibs /lib-out/ /tools/musl/lib/
 COPY assemble.sh seed.sh /tools/
 RUN sh /tools/assemble.sh && rm /tools/assemble.sh
+
+# --- the bundle ---------------------------------------------------------------
+# alpine, not scratch: seed.sh needs sh and cp. One layer: the finished tree.
+FROM alpine:3.21
+COPY --from=assemble /tools /tools
 ARG TOOLS_HASH=dev
 RUN printf '%s\n' "$TOOLS_HASH" > /tools/TOOLS_HASH
 ENTRYPOINT ["/tools/seed.sh"]

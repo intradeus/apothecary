@@ -128,7 +128,7 @@ task k8s:cluster    # a k3d cluster + image registry; never touches ~/.kube/conf
 task k8s:images     # build the five images from the working tree, push as :local
 task k8s:deploy     # helm install with values-k3d.yaml
 # → http://apothecary.localhost:8090
-task k8s:test-live  # the provisioner's live test against the cluster
+task k8s:test-live  # the provisioner's and the browser's live tests against the cluster
 task k8s:down
 ```
 
@@ -589,7 +589,7 @@ task test:integration              # integration: every suite below (needs docke
 task test:integration:pg           #   the Postgres adapter and boot tests, on throwaway containers
 task test:integration:docker       #   docker workspaces (lifecycle, egress gateway, file tree) + the browser, inside the engine image
 task test:integration:harness      #   the pinned harness CLIs (tools image) against what the engine hands them
-task test:integration:k8s          #   the Kubernetes provisioner on a local k3d cluster
+task test:integration:k8s          #   the Kubernetes provisioner and project browser on a local k3d cluster
 task lint                          # lint: gofmt, go vet (linux + darwin, every build tag), model ids, API contract, svelte-check, CPUI linters
 task build                         # build: apothecaryd, shim, gateway, the CPUI, the five images
 

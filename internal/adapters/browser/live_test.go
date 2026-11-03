@@ -12,6 +12,7 @@ package browser
 // Like the workspace live test, it needs APOTHECARY_LIVE_RUNS_DIR: a RunsDir
 // on the docker host, bind-mounted at the SAME path when the test runs in a
 // container (the session socket lives under it). `task test:integration:docker` runs both.
+// The Kubernetes twin is live_k8s_test.go.
 
 import (
 	"bufio"
@@ -46,10 +47,28 @@ func TestLiveBrowserSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(runs)
-	_ = os.Chmod(runs, 0o755) // the container's root is not this test's user
+	_ = os.Chmod(runs, 0o755) // the container's user is not this test's
 	const project = "live-test"
 	defer exec.Command("docker", "rm", "-f", containerName(project)).Run()
 
+	m := New(Config{RunsDir: runs, Image: Pulled(DefaultImage, nil), Tag: func() string { return DefaultImage },
+		Shim: wsimage.New(runs).EnsureShim, Log: slog.New(slog.NewTextHandler(os.Stderr, nil))})
+	defer m.Close()
+	liveSession(t, m, project)
+	if out, _ := exec.Command("docker", "exec", containerName(project), "sh", "-c", chromiumCount).Output(); strings.TrimSpace(string(out)) != "0" {
+		t.Errorf("chromium outlived its session: %s", out)
+	}
+}
+
+// chromiumCount counts the Chromium processes left in the browser.
+const chromiumCount = `for p in /proc/[0-9]*; do tr '\0' ' ' <$p/cmdline 2>/dev/null; echo; done | grep -c "[c]hrom" || true`
+
+// liveSession drives one MCP session of project's browser against an app
+// on the test's own loopback, standing in for the run's port 3000: it is
+// reached and seen, the outside world is not, and the session ends with its
+// stdin.
+func liveSession(t *testing.T, m *Manager, project string) {
+	t.Helper()
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `<html><head><title>Live app</title></head><body><h1>Hello from the run</h1></body></html>`)
 	}))
@@ -61,10 +80,6 @@ func TestLiveBrowserSession(t *testing.T) {
 		var d net.Dialer
 		return d.DialContext(ctx, "tcp", app.Listener.Addr().String())
 	}
-
-	m := New(Config{RunsDir: runs, Image: Pulled(DefaultImage, nil), Tag: func() string { return DefaultImage },
-		Shim: wsimage.New(runs).EnsureShim, Log: slog.New(slog.NewTextHandler(os.Stderr, nil))})
-	defer m.Close()
 
 	toServer, fromAgent := io.Pipe()
 	fromServer, toAgent := io.Pipe()
@@ -146,9 +161,5 @@ func TestLiveBrowserSession(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("the session outlived its stdin")
-	}
-	if out, _ := exec.Command("docker", "exec", containerName(project), "sh", "-c",
-		`for p in /proc/[0-9]*; do tr '\0' ' ' <$p/cmdline 2>/dev/null; echo; done | grep -c "[c]hrom" || true`).Output(); strings.TrimSpace(string(out)) != "0" {
-		t.Errorf("chromium outlived its session: %s", out)
 	}
 }
