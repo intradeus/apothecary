@@ -55,7 +55,7 @@ exactly two touchpoints — plan approval and final review.
 
 ```sh
 git clone <this repo> && cd apothecary
-cp deploy/env.example deploy/.env
+cp deploy/.env.example deploy/.env
 docker run --rm ghcr.io/intradeus/apothecary/apothecaryd:latest keygen
 #  -> paste the output into deploy/.env as APOTHECARY_MASTER_KEY,
 #     and set APOTHECARY_PG_PASSWORD to anything strong
@@ -298,25 +298,74 @@ and apply without a restart. Notification mirrors (Matrix, Slack, Discord) live 
 
 ## Releases & upgrade
 
-**Every push to `main` releases automatically** (`.github/workflows/
-release.yml`): tests run, then a version-stamped image
-(`v2.0.<run>`) is pushed to
-`ghcr.io/intradeus/apothecary/apothecaryd` (also `:latest` and `:sha-…`)
-and a matching git tag is created.
+Releases are semver tags (`vX.Y.Z`) cut by CI after a human approves them;
+nothing is published on its own.
 
-Compose runs `:latest` by default. To upgrade:
+1. A push to `main` runs `ci`. When it is green, the `manual-release`
+   workflow plans the release of that commit: its job summary shows the next
+   version and the `CHANGELOG.md` section it would add.
+2. Approve the `release` environment's deployment on that run.
+3. CI commits `CHANGELOG.md` as `chore(release): vX.Y.Z [skip ci]`, tags it
+   `vX.Y.Z`, pushes both to `main`, and pushes the six images to
+   `ghcr.io/intradeus/apothecary/<name>` as `:vX.Y.Z`, `:latest` and
+   `:sha-…`. No GitHub Release is created.
+
+The version follows the conventional commits since the last tag (rules in
+`.cz.toml`):
+
+| commits since the last tag | bump |
+|---|---|
+| `type!:` or a `BREAKING CHANGE` footer | major |
+| `feat` | minor |
+| `fix`, `chore`, `perf`, `refactor`, `build`, `revert` | patch |
+| only `docs`, `test`, `ci`, `style` | no release |
+
+Commit messages are checked by commitizen (`brew install commitizen`), in CI
+(the `commits` job, and the PR title for squash-merges) and locally:
 
 ```sh
-docker compose -p apothecary -f deploy/docker-compose.yaml pull apothecaryd
-docker compose -p apothecary -f deploy/docker-compose.yaml up -d
+task hooks              # git runs cz check on every commit message
+task commit             # write one interactively: type, scope, ! for breaking
+task release:preview    # the version and changelog the next release would get
+```
+
+One-time GitHub setup:
+
+1. *Settings → Environments → `release`*: add the required reviewers and
+   limit deployment branches to `main`. Without this environment GitHub
+   creates an unprotected one on the first run and nothing waits for
+   approval.
+2. If `main` is protected against pushes from Actions, add a `RELEASE_TOKEN`
+   secret: a fine-grained PAT with *contents: write* that may bypass the
+   protection. The release job pushes with it instead of `GITHUB_TOKEN`.
+
+### Deploying a release
+
+Both production setups follow `:latest`, so a deployment picks up a release
+by re-pulling. Compose:
+
+```sh
+task prod:upgrade       # pull apothecaryd, up -d, print the running version
 ```
 
 To stay on a fixed version instead, pin it in `deploy/.env`:
 
 ```sh
 # deploy/.env
-APOTHECARY_IMAGE=ghcr.io/intradeus/apothecary/apothecaryd:v2.0.42
+APOTHECARY_IMAGE=ghcr.io/intradeus/apothecary/apothecaryd:v3.0.0
 ```
+
+Helm (`deploy/helm/apothecary/values-production.yaml` lists the secret to
+create first):
+
+```sh
+helm upgrade --install apothecary deploy/helm/apothecary -n apothecary \
+  -f deploy/helm/apothecary/values-production.yaml --set ingress.host=<host>
+# each new release: the pull policy is Always, so a restart re-pulls :latest
+kubectl -n apothecary rollout restart deployment/apothecaryd
+```
+
+Pin all six images with `--set image.tag=vX.Y.Z`.
 
 (If the GHCR package is private: `docker login ghcr.io` with a
 `read:packages` PAT first, or make the package public in its settings.)
@@ -334,10 +383,10 @@ published-image stack (own ports: engine `127.0.0.1:8081`, postgres
 docker compose -p apothecary-local -f deploy/docker-compose.local.yaml up -d --build
 ```
 
-Alternatives: `deploy/release.sh vX` builds a pinnable versioned image for
-the main stack (`APOTHECARY_IMAGE=` in `deploy/.env`), and
-`go run ./cmd/apothecaryd serve -dev` skips docker entirely (fake kinds,
-seeded sandbox project).
+Alternatives: `PREFIX=apothecary deploy/images.sh dev` builds a versioned
+image set for the main stack (`APOTHECARY_IMAGE=apothecary/apothecaryd:dev`
+in `deploy/.env`), and `go run ./cmd/apothecaryd serve -dev` skips docker
+entirely (fake kinds, seeded sandbox project).
 
 ## How a run works
 

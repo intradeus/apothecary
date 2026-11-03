@@ -1,0 +1,89 @@
+# Commit convention and release rules (commitizen; `task commit`, `task hooks`,
+# `task release:preview`). manual-release.yml cuts each release from these.
+#
+#   <type>(<scope>)!: <subject>      scope and ! optional
+#
+#   ! or BREAKING CHANGE  major      feat  minor
+#   fix chore perf refactor build revert   patch
+#   docs test ci style    no release (docs still appear in the changelog)
+[tool.commitizen]
+name = "cz_customize"
+version_provider = "scm"          # current version = highest reachable v* tag
+version_scheme = "semver2"
+tag_format = "v$version"
+annotated_tag = true
+update_changelog_on_bump = true
+changelog_file = "CHANGELOG.md"
+changelog_incremental = true
+template = "deploy/CHANGELOG.md.j2"
+bump_message = "chore(release): v$new_version [skip ci]"
+
+[tool.commitizen.customize]
+schema = "<type>(<scope>)!: <subject>   — scope and ! optional"
+example = "feat(flow)!: a run has one cursor"
+schema_pattern = '(?s)(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\(\S+\))?!?: ([^\n\r]+)((\n\n.*)|(\s*))?$'
+bump_pattern = '^((BREAKING[\-\ ]CHANGE|\w+)(\(.+\))?!?):'
+commit_parser = '^((?P<change_type>feat|fix|perf|refactor|revert|build|chore|docs|BREAKING CHANGE)(?:\((?P<scope>[^()\r\n]*)\)|\()?(?P<breaking>!)?|\w+!):\s(?P<message>.*)?'
+changelog_pattern = '^((BREAKING[\-\ ]CHANGE|feat|fix|perf|refactor|revert|build|chore|docs)(\(.+\))?!?):'
+change_type_order = ["BREAKING CHANGE", "Features", "Fixes", "Performance", "Refactors", "Reverts", "Build", "Chores", "Docs"]
+message_template = "{{type}}{% if scope %}({{scope}}){% endif %}{% if breaking %}!{% endif %}: {{subject}}{% if body %}\n\n{{body}}{% endif %}"
+
+[tool.commitizen.customize.bump_map]      # first match wins: keep this order
+'^.+!$' = "MAJOR"
+'^BREAKING[\-\ ]CHANGE' = "MAJOR"
+'^feat' = "MINOR"
+'^fix' = "PATCH"
+'^chore' = "PATCH"
+'^perf' = "PATCH"
+'^refactor' = "PATCH"
+'^build' = "PATCH"
+'^revert' = "PATCH"
+
+[tool.commitizen.customize.change_type_map]
+feat = "Features"
+fix = "Fixes"
+perf = "Performance"
+refactor = "Refactors"
+revert = "Reverts"
+build = "Build"
+chore = "Chores"
+docs = "Docs"
+
+[[tool.commitizen.customize.questions]]
+type = "list"
+name = "type"
+message = "Type of change"
+choices = [
+  { value = "feat", name = "feat: a new feature (minor bump)" },
+  { value = "fix", name = "fix: a bug fix (patch)" },
+  { value = "chore", name = "chore: maintenance (patch)" },
+  { value = "perf", name = "perf: a performance improvement (patch)" },
+  { value = "refactor", name = "refactor: restructuring without behavior change (patch)" },
+  { value = "build", name = "build: build system or dependencies (patch)" },
+  { value = "revert", name = "revert: reverts a commit (patch)" },
+  { value = "docs", name = "docs: documentation only (no release)" },
+  { value = "test", name = "test: tests only (no release)" },
+  { value = "ci", name = "ci: CI configuration (no release)" },
+  { value = "style", name = "style: formatting only (no release)" },
+]
+
+[[tool.commitizen.customize.questions]]
+type = "input"
+name = "scope"
+message = "Scope (optional: engine, cpui, flow, …)"
+
+[[tool.commitizen.customize.questions]]
+type = "confirm"
+name = "breaking"
+message = "Breaking change? (adds !, major bump)"
+default = false
+
+[[tool.commitizen.customize.questions]]
+type = "input"
+name = "subject"
+message = "Subject"
+
+[[tool.commitizen.customize.questions]]
+type = "input"
+name = "body"
+message = "Body (optional)"

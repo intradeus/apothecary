@@ -1,20 +1,126 @@
 #!/usr/bin/env bash
-# Release build (DESIGN2 §15 / M11): the version-stamped images of a release.
+# Semver releases (rules in .cz.toml; the flow in .github/workflows/manual-release.yml).
+# Releases are cut by CI only; a local versioned build is
+# `PREFIX=apothecary deploy/images.sh <version>`.
 #
-#   deploy/release.sh v2.0.0            build apothecary/*:v2.0.0 (+ :latest)
-#   deploy/release.sh                   version = git describe
-#   REGISTRY=ghcr.io/you deploy/release.sh v2.0.0
-#                                       build as <registry>/apothecary/* and push
-#
-# The compose file honors APOTHECARY_IMAGE, so a docker deployment pins a
-# release with e.g. APOTHECARY_IMAGE=apothecary/apothecaryd:v2.0.0 in
-# deploy/.env; the Helm chart pins all six with image.tag.
+#   deploy/release.sh preview             the version + changelog section the next
+#                                         release of HEAD would get (dry run)
+#   deploy/release.sh plan <sha>          mode=release|resume|superseded|none, version=
+#                                         (RELEASE_NOTES_FILE=f also writes the notes)
+#   deploy/release.sh cut                 bump: CHANGELOG.md commit + annotated tag on
+#                                         HEAD (must be origin/main); prints the tag
+#   deploy/release.sh images <tag> [--push]
+#                                         build (and push) the six images as <tag>,
+#                                         sha-<short> and, for the newest tag, latest
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${1:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
-if [ -n "${REGISTRY:-}" ]; then
-  PREFIX="${REGISTRY}/apothecary" EXTRA_TAGS=latest deploy/images.sh "$VERSION" --push
-else
-  PREFIX=apothecary EXTRA_TAGS=latest deploy/images.sh "$VERSION"
-fi
+TAG_GLOB='v[0-9]*.[0-9]*.[0-9]*'
+
+usage() {
+  sed -n '2,14p' "$0" >&2
+  exit 2
+}
+
+die() {
+  echo "release: $*" >&2
+  exit 1
+}
+
+fetch() {
+  git fetch --quiet --tags origin +refs/heads/main:refs/remotes/origin/main
+}
+
+# The next version of HEAD (v-prefixed), or "" when no commit since the last
+# tag bumps it.
+next_version() {
+  local out rc=0 err
+  err=$(mktemp)
+  out=$(cz bump --get-next --yes 2>"$err") || rc=$?
+  case $rc in
+    0) echo "v$out" ;;
+    3 | 21) echo "" ;; # no commits / no eligible commit
+    *)
+      cat "$err" >&2
+      rm -f "$err"
+      echo "release: cz bump --get-next failed ($rc)" >&2
+      exit "$rc"
+      ;;
+  esac
+  rm -f "$err"
+}
+
+notes() {
+  cz bump --dry-run --yes --changelog-to-stdout
+}
+
+preview() {
+  local next
+  next=$(next_version)
+  if [ -z "$next" ]; then
+    echo "nothing to release: no commit since $(git describe --tags --abbrev=0 --match "$TAG_GLOB") bumps the version"
+    return
+  fi
+  notes
+}
+
+plan() {
+  local sha next t
+  [ -n "${1:-}" ] || usage
+  fetch
+  sha=$(git rev-parse "$1^{commit}")
+  # A release commit for sha is already tagged (and pushed): the image push
+  # failed or is being retried.
+  for t in $(git tag --list "$TAG_GLOB" --contains "$sha"); do
+    if [ "$(git rev-parse "$t^{commit}^" 2>/dev/null || true)" = "$sha" ]; then
+      echo "mode=resume"
+      echo "version=$t"
+      return
+    fi
+  done
+  if [ "$(git rev-parse origin/main)" != "$sha" ]; then
+    echo "mode=superseded"
+    echo "version="
+    return
+  fi
+  [ "$(git rev-parse HEAD)" = "$sha" ] || die "plan needs $sha checked out"
+  next=$(next_version)
+  if [ -z "$next" ]; then
+    echo "mode=none"
+    echo "version="
+    return
+  fi
+  echo "mode=release"
+  echo "version=$next"
+  if [ -n "${RELEASE_NOTES_FILE:-}" ]; then
+    notes >"$RELEASE_NOTES_FILE"
+  fi
+}
+
+cut() {
+  fetch
+  [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || die "HEAD is not origin/main; refusing to cut"
+  cz bump --yes --git-output-to-stderr >&2
+  git describe --tags --exact-match --match "$TAG_GLOB" HEAD
+}
+
+images() {
+  local tag extra
+  tag="${1:-}"
+  [ -n "$tag" ] || usage
+  [ "$(git describe --tags --exact-match --match "$TAG_GLOB" HEAD 2>/dev/null || true)" = "$tag" ] || die "HEAD is not $tag"
+  extra="sha-$(git rev-parse --short=7 HEAD)"
+  # Only the newest release moves latest: resuming an older one never rolls it back.
+  if [ "$tag" = "$(git tag --list "$TAG_GLOB" --sort=-v:refname | sed -n 1p)" ]; then
+    extra="$extra latest"
+  fi
+  EXTRA_TAGS="$extra" deploy/images.sh "$tag" ${2:+"$2"}
+}
+
+case "${1:-}" in
+  preview) preview ;;
+  plan) plan "${2:-}" ;;
+  cut) cut ;;
+  images) images "${2:-}" "${3:-}" ;;
+  *) usage ;;
+esac

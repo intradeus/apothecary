@@ -1,0 +1,8 @@
+#!/bin/sh
+# Rejects a commit message that breaks the convention in .cz.toml.
+# Enabled by `task hooks` (git config core.hooksPath .githooks).
+if ! command -v cz >/dev/null 2>&1; then
+  echo "commit-msg: commitizen (cz) is not installed: brew install commitizen (or pipx install commitizen)" >&2
+  exit 1
+fi
+exec cz check --allow-abort --commit-msg-file "$1"

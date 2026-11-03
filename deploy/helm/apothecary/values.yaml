@@ -8,7 +8,9 @@ image:
   # shim, tools, egress-gw, browser (see deploy/images.sh).
   repository: ghcr.io/intradeus/apothecary
   tag: ""            # default: the chart's appVersion
-  pullPolicy: IfNotPresent
+  # The default tag is the mutable :latest, so nodes must re-pull it. With a
+  # pinned image.tag (vX.Y.Z), IfNotPresent is enough.
+  pullPolicy: Always
   # Per-image overrides (full references), e.g. a mirror.
   overrides:
     apothecaryd: ""
@@ -55,6 +57,13 @@ engine:
     size: 20Gi
     storageClass: ""
   portAutoExpose: false
+  # Uploads (attachments on tickets, run goals, ping answers) and engine
+  # captures. Empty = the engine's defaults: 25 MiB; text/*, common images,
+  # PDF, JSON, Office documents; snapshots capped like uploads.
+  uploads:
+    maxBytes: ""
+    mimeAllow: ""          # comma-separated, e.g. "text/*,image/png"
+    snapshotMaxBytes: ""
   extraEnv: {}
   resources: {}
   nodeSelector: {}

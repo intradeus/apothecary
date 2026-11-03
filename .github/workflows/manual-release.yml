@@ -1,0 +1,144 @@
+# manual-release: after a green `ci` run on main, a human approves the
+# `release` environment and this cuts the next semver release of that commit
+# (rules in .cz.toml; deploy/release.sh does the work):
+#
+#   plan     what the commit would release: release vX.Y.Z (with its notes),
+#            resume (the tag exists, its images did not all land), none (only
+#            docs/test/ci/style since the last tag) or superseded (main moved on;
+#            the newer commit's run releases it)
+#   release  behind the `release` environment's required reviewers: commit
+#            CHANGELOG.md + tag vX.Y.Z, build the six images, push main and the
+#            tag atomically, then push the images as vX.Y.Z, sha-<short> and
+#            latest (latest only for the newest release)
+#
+# The release commit carries [skip ci], so it starts no ci run of its own.
+name: manual-release
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  COMMITIZEN_VERSION: 4.19.3
+
+defaults:
+  run:
+    # bash -eo pipefail: a failing plan must not hide behind `| tee`.
+    shell: bash
+
+jobs:
+  plan:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      version: ${{ steps.plan.outputs.version }}
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - run: pipx install "commitizen==${COMMITIZEN_VERSION}"
+      - id: plan
+        env:
+          RELEASE_NOTES_FILE: ${{ runner.temp }}/notes.md
+        run: deploy/release.sh plan "$SHA" | tee -a "$GITHUB_OUTPUT"
+      - name: Summary
+        env:
+          MODE: ${{ steps.plan.outputs.mode }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          {
+            echo "## manual-release: $MODE $VERSION"
+            echo
+            case "$MODE" in
+              release)
+                echo "Approve the **release** deployment to publish."
+                echo
+                cat "$RUNNER_TEMP/notes.md"
+                ;;
+              resume) echo "Tag exists; approving re-publishes its images." ;;
+              none) echo "No commit since the last tag bumps the version (docs/test/ci/style only)." ;;
+              superseded) echo "main moved past this commit; the newer commit's run releases it." ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    needs: plan
+    if: needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'resume'
+    runs-on: ubuntu-latest
+    environment: release
+    concurrency:
+      group: manual-release
+      # Never cancel: an approved release can be partway through pushing.
+      cancel-in-progress: false
+    permissions:
+      contents: write # push the release commit and tag
+      packages: write # push to ghcr
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          # The push credential: RELEASE_TOKEN when main is protected against
+          # the Actions token.
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+      - run: pipx install "commitizen==${COMMITIZEN_VERSION}"
+      # Approval can arrive hours later: check the state again.
+      - id: plan
+        run: deploy/release.sh plan "$SHA" | tee -a "$GITHUB_OUTPUT"
+      - name: Nothing to release
+        if: steps.plan.outputs.mode != 'release' && steps.plan.outputs.mode != 'resume'
+        env:
+          MODE: ${{ steps.plan.outputs.mode }}
+        run: |
+          echo "::notice title=manual-release::$MODE: main is at $(git rev-parse --short origin/main); that commit's own run releases it"
+      - name: Cut the release
+        if: steps.plan.outputs.mode == 'release'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          tag=$(deploy/release.sh cut)
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+      - name: Check out the existing release
+        if: steps.plan.outputs.mode == 'resume'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          git checkout --detach "$VERSION"
+          echo "TAG=$VERSION" >> "$GITHUB_ENV"
+      # Build before anything is public.
+      - name: Build the release images
+        if: env.TAG != ''
+        run: deploy/release.sh images "$TAG"
+      # Fails, publishing nothing, if main moved since the plan.
+      - name: Push the release commit and tag
+        if: env.TAG != '' && steps.plan.outputs.mode == 'release'
+        run: git push --atomic origin HEAD:refs/heads/main "refs/tags/$TAG"
+      - name: Login to GHCR
+        if: env.TAG != ''
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Push the release images
+        if: env.TAG != ''
+        run: deploy/release.sh images "$TAG" --push
+      - name: Summary
+        if: env.TAG != ''
+        run: |
+          {
+            echo "## Released $TAG"
+            echo
+            for name in apothecaryd sandbox shim tools egress-gw browser; do
+              echo "- \`ghcr.io/intradeus/apothecary/$name:$TAG\`"
+            done
+            echo
+            awk '/^## /{n++} n==1' CHANGELOG.md
+          } >> "$GITHUB_STEP_SUMMARY"

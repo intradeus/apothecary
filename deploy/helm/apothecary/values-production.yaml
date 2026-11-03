@@ -1,0 +1,29 @@
+# Production: an external Postgres, secrets in a Secret you create, an
+# Ingress with TLS. Images follow :latest (the newest approved release).
+#
+#   kubectl create namespace apothecary
+#   kubectl -n apothecary create secret generic apothecaryd-env \
+#     --from-literal=APOTHECARY_MASTER_KEY="$(docker run --rm ghcr.io/intradeus/apothecary/apothecaryd:latest keygen)" \
+#     --from-literal=APOTHECARY_POSTGRES_DSN=postgres://…
+#   helm upgrade --install apothecary deploy/helm/apothecary -n apothecary \
+#     -f deploy/helm/apothecary/values-production.yaml --set ingress.host=<host>
+#
+# Upgrade to the newest release:
+#   kubectl -n apothecary rollout restart deployment/apothecaryd
+# The values don't change, so `helm upgrade` alone would not restart the pod;
+# the restart re-pulls :latest because the pull policy is Always.
+#
+# Pin a release: add --set image.tag=vX.Y.Z (and optionally
+# --set image.pullPolicy=IfNotPresent).
+existingSecret: apothecaryd-env
+postgres:
+  enabled: false     # bring a managed Postgres; its DSN is in existingSecret
+ingress:
+  enabled: true
+  host: ""           # required: --set ingress.host=apothecary.example.com
+  appsDomain: ""     # optional wildcard apps domain (needs a wildcard record + cert)
+  scheme: https
+  tls: []
+log:
+  format: json
+  level: info

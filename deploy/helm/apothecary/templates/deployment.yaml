@@ -53,6 +53,18 @@ spec:
             - name: APOTHECARY_PORT_AUTOEXPOSE
               value: "on"
             {{- end }}
+            {{- with .Values.engine.uploads.maxBytes }}
+            - name: APOTHECARY_UPLOAD_MAX_BYTES
+              value: {{ . | int64 | quote }}
+            {{- end }}
+            {{- with .Values.engine.uploads.snapshotMaxBytes }}
+            - name: APOTHECARY_SNAPSHOT_MAX_BYTES
+              value: {{ . | int64 | quote }}
+            {{- end }}
+            {{- with .Values.engine.uploads.mimeAllow }}
+            - name: APOTHECARY_UPLOAD_MIME_ALLOW
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.ssh.enabled }}
             - name: APOTHECARY_SSH_LISTEN
               value: {{ printf "0.0.0.0:%v" .Values.ssh.port | quote }}
