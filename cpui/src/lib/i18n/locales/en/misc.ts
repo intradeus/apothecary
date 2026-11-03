@@ -1384,7 +1384,6 @@ export default {
 	'doc.view.new': 'new',
 	'doc.view.apothecary': 'apothecary',
 	'doc.view.did': 'said it {did}',
-	'doc.view.dropped': 'Dropped earlier',
 	'doc.showComments': 'Which comments',
 	'doc.thisFile': 'This file',
 	'doc.allFiles': 'All files',

@@ -8,13 +8,7 @@
 	import { onMount, tick, untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { Attachment, ReviewComment } from '$lib/domain';
-	import {
-		byPlace,
-		commentAsShown,
-		isRendered,
-		perFile,
-		type DraftComment
-	} from '$lib/review/reviewDoc';
+	import { byPlace, commentAsShown, perFile, type DraftComment } from '$lib/review/reviewDoc';
 	import { ReviewFiles } from './files.svelte';
 	import ReviewLayout from './ReviewLayout.svelte';
 	import FileList from './FileList.svelte';
@@ -106,7 +100,7 @@
 		{:else}
 			<FileList files={set.files} current={set.current} {counts} onpick={(p) => void set.open(p)} />
 		{/if}
-		{#if file?.kind === 'text' && isRendered(file) && doc && !doc.error}
+		{#if file?.kind === 'text' && doc?.rendered && !doc.error}
 			<div class="pane-head sub"><h2>{t('doc.outline')}</h2></div>
 			<Outline
 				blocks={doc.blocks}

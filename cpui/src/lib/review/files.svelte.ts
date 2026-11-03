@@ -8,9 +8,9 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { api } from '$lib/api';
 import type { PingFile } from '$lib/domain';
 import {
-	docBlocks,
 	fileKind,
 	looksBinary,
+	readDoc,
 	type DocBlock,
 	type FileKind
 } from '$lib/review/reviewDoc';
@@ -22,9 +22,11 @@ export interface ShownFile extends PingFile {
 	kind: FileKind;
 }
 
-/** A read text file: its blocks, or why there are none. */
+/** A read text file: its blocks, or why there are none, and whether they
+ *  are rendered (markdown, a structured type's view) rather than a listing. */
 export interface LoadedDoc {
 	blocks: DocBlock[];
+	rendered?: boolean;
 	error?: string;
 }
 
@@ -116,8 +118,7 @@ export class ReviewFiles {
 				);
 				return;
 			}
-			const text = new TextDecoder().decode(bytes);
-			this.docs.set(f.path, { blocks: docBlocks(text, f.path, f.type) });
+			this.docs.set(f.path, readDoc(new TextDecoder().decode(bytes), f.path, f.type));
 		} catch (e) {
 			this.docs.set(f.path, { blocks: [], error: errorMessage(e) });
 		}

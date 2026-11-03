@@ -12,7 +12,6 @@
 	import { api } from '$lib/api';
 	import { fmtBytes } from '$lib/core/format';
 	import {
-		isRendered,
 		isWholeFile,
 		locate,
 		rangeAt,
@@ -262,12 +261,7 @@
 	{:else if blocks.length === 0}
 		<div class="paper faint" class:flash={wholeActive}>{t('doc.empty')}</div>
 	{:else}
-		<div
-			class="paper"
-			class:listing={!isRendered(file)}
-			class:flash={wholeActive}
-			bind:this={paperEl}
-		>
+		<div class="paper" class:listing={!doc.rendered} class:flash={wholeActive} bind:this={paperEl}>
 			{#each blocks as b, i (i)}
 				<div
 					class="block"

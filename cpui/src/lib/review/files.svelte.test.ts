@@ -167,15 +167,25 @@ describe('ReviewFiles', () => {
 		expect(set.docs.get('cfg.yaml')?.blocks.map((b) => b.startLine)).toEqual([1, 3]);
 	});
 
-	it('reads a structured file by its port type', async () => {
+	it.each([
+		['by its view', 'verdict: APPROVE\n', true, '## Approved'],
+		[
+			'as written when it is not its type',
+			'verdict: MAYBE\n',
+			false,
+			'```yaml\nverdict: MAYBE\n```'
+		]
+	])('reads a structured file %s', async (_, body, rendered, first) => {
 		const v = aPingFile({ path: 'artifacts/verdict.yaml', snapshotId: 'v', type: 'verdict' });
 		payload(v);
-		serveSnapshots({ v: 'verdict: APPROVE\n' });
+		serveSnapshots({ v: body });
 		const set = new ReviewFiles('p1');
 
 		await set.init();
 
-		expect(set.docs.get('artifacts/verdict.yaml')?.blocks[0].raw).toBe('## Approved');
+		const doc = set.docs.get('artifacts/verdict.yaml');
+		expect(doc?.rendered).toBe(rendered);
+		expect(doc?.blocks[0].raw).toBe(first);
 	});
 
 	it.each([

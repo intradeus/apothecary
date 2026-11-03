@@ -4,7 +4,7 @@ import { tick } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { aComment, aShownFile, select, stubGeometry } from '$test/fixtures/review';
 import { rect, text } from '$test/helpers';
-import { docBlocks, type CommentAnchor } from './reviewDoc';
+import { readDoc, type CommentAnchor } from './reviewDoc';
 import FileView from './FileView.svelte';
 
 vi.mock('$lib/api', () => ({
@@ -17,7 +17,7 @@ vi.mock('$lib/api', () => ({
 }));
 
 const SRC = '# Plan\n\nShip the webhook first.\n\n## Risks\n\nRetries may double charge.\n';
-const doc = { blocks: docBlocks(SRC, 'plan.md') };
+const doc = readDoc(SRC, 'plan.md');
 const base = { file: aShownFile(), doc, comments: [], raisedAt: '2026-10-31T12:00:00Z' };
 const blockOf = (s: string) => screen.getByText(s).closest<HTMLElement>('.block')!;
 const textOf = (s: string) => screen.getByText(s).firstChild!;
@@ -71,7 +71,7 @@ describe('FileView', () => {
 			render(FileView, {
 				...base,
 				file,
-				doc: { blocks: docBlocks('# not a heading\n', 'cfg.yaml') }
+				doc: readDoc('# not a heading\n', 'cfg.yaml')
 			});
 			expect(screen.getByText('# not a heading')).toBeInTheDocument();
 			expect(screen.queryByRole('heading')).not.toBeInTheDocument();
@@ -83,7 +83,7 @@ describe('FileView', () => {
 			const { container } = render(FileView, {
 				...base,
 				file,
-				doc: { blocks: docBlocks(src, file.path, file.type) }
+				doc: readDoc(src, file.path, file.type)
 			});
 			expect(screen.getByRole('heading', { name: 'Rejected' })).toBeInTheDocument();
 			expect(screen.getByText('wrap it')).toBeInTheDocument();

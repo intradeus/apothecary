@@ -21,7 +21,6 @@
 		commentId,
 		perFile,
 		commentToSend,
-		isRendered,
 		isWholeFile,
 		loadDraft,
 		saveDraft,
@@ -369,7 +368,7 @@
 				onpick={(p) => void set.open(p)}
 			/>
 		{/if}
-		{#if file?.kind === 'text' && isRendered(file) && doc && !doc.error}
+		{#if file?.kind === 'text' && doc?.rendered && !doc.error}
 			<div class="pane-head sub"><h2>{t('doc.outline')}</h2></div>
 			<Outline
 				blocks={doc.blocks}
