@@ -41,6 +41,10 @@ func TestMainBootsFromItsStateDirAndEnforces(t *testing.T) {
 	if err := os.WriteFile(keyFile, []byte("key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	keyDir := filepath.Join(root, "etc-wireguard")
+	origKeyDir := wgKeyDir
+	wgKeyDir = keyDir
+	defer func() { wgKeyDir = origKeyDir }()
 	wgLog := fakeTools(t)
 	useRouteTable(t, "eth0")
 	ix := newInterception(t, &net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 443})
@@ -128,8 +132,20 @@ func TestMainBootsFromItsStateDirAndEnforces(t *testing.T) {
 			t.Errorf("rules lack %q:\n%s", want, first)
 		}
 	}
-	if got := calls(t, wgLog); !strings.Contains(got, "wg set wg0 peer peer-key allowed-ips 10.90.0.2/32") {
+	got := calls(t, wgLog)
+	if !strings.Contains(got, "wg set wg0 peer peer-key allowed-ips 10.90.0.2/32") {
 		t.Errorf("the persisted peer was not restored:\n%s", got)
+	}
+	// wg reads the key where a host's AppArmor profile for wg allows it.
+	staged := filepath.Join(keyDir, "wg0.key")
+	if !strings.Contains(got, "wg set wg0 private-key "+staged+" ") {
+		t.Errorf("wg did not read its key from %s:\n%s", staged, got)
+	}
+	if b, err := os.ReadFile(staged); err != nil || string(b) != "key\n" {
+		t.Errorf("staged key = %q, %v", b, err)
+	}
+	if info, err := os.Stat(staged); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("staged key mode = %v, %v", info.Mode(), err)
 	}
 
 	// The persisted policy is live on the wire.

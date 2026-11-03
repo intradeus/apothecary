@@ -141,6 +141,14 @@ Cluster requirements:
   it the sandbox could route around its gateway.
 - The **`wireguard` kernel module** on the nodes (in-tree since Linux 5.6;
   loaded on demand).
+- Nodes may confine `/usr/bin/wg` with AppArmor (Ubuntu 26.04 ships
+  `/etc/apparmor.d/wg`, which also attaches to a privileged container's `wg`):
+  nothing to do, the tunnel reads its key from `/etc/wireguard`, the one place
+  that profile allows. Sandbox images up to v3.0.0 read it from
+  `/secrets/wg` and their `wg` init container fails with
+  `fopen: Permission denied`; upgrade, or allow that path on the node
+  (`echo '/secrets/wg/** r,' | sudo tee -a /etc/apparmor.d/local/wg && sudo
+  apparmor_parser -r /etc/apparmor.d/wg`).
 - **Privileged pods** in the workspaces namespace (the chart labels it), or
   [sysbox](https://github.com/nestybox/sysbox) on the nodes and the
   integration's *runtime class* set with *privileged* off.
@@ -328,18 +336,21 @@ and apply without a restart. Notification mirrors (Matrix, Slack, Discord) live 
 
 ## Releases & upgrade
 
-Releases are semver tags (`vX.Y.Z`) cut by CI after a human approves them;
-nothing is published on its own.
+Releases are semver tags (`vX.Y.Z`) cut by CI when you ask for one; nothing
+is published on its own.
 
 1. A pull request is squash-merged into `main` (direct pushes are refused),
-   and the merge runs `ci`. When it is green, the `manual-release`
-   workflow plans the release of that commit: its job summary shows the next
-   version and the `CHANGELOG.md` section it would add.
-2. Approve the `release` environment's deployment on that run.
+   and the merge runs `ci`.
+2. When you want a release: *Actions → manual-release → Run workflow* on
+   `main`. It releases `main`'s head, and refuses to unless `ci` passed on
+   that commit. Its job summary shows the version and the `CHANGELOG.md`
+   section it adds.
 3. CI commits `CHANGELOG.md` as `chore(release): vX.Y.Z [skip ci]`, tags it
    `vX.Y.Z`, pushes both to `main`, and pushes the five images to
    `ghcr.io/intradeus/apothecary/<name>` as `:vX.Y.Z`, `:latest` and
    `:sha-…`. No GitHub Release is created.
+
+Running it again after a failed image push re-publishes that release's images.
 
 The version follows the conventional commits since the last tag (rules in
 `.cz.toml`):
@@ -376,10 +387,9 @@ One-time GitHub setup:
    private half as the `RELEASE_DEPLOY_KEY` secret (`ssh-keygen -t ed25519
    -N '' -f release-key`). The release job pushes its commit and tag with it:
    the only push `main` takes.
-4. *Settings → Environments → `release`*: add the required reviewers and
-   limit deployment branches to `main`. Without this environment GitHub
-   creates an unprotected one on the first run and nothing waits for
-   approval.
+4. *Settings → Environments → `release`*: limit deployment branches to
+   `main`, and give it no required reviewers (with them, each run waits for
+   an approval on top of the click).
 
 ### Deploying a release
 

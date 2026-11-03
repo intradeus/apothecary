@@ -40,6 +40,34 @@ func runCmd(name string, args ...string) (string, error) {
 	return string(out), nil
 }
 
+// wgKeyDir is where wg reads its private key from: /etc/wireguard, the one
+// place a host's AppArmor profile for /usr/bin/wg lets it read keys (Ubuntu
+// 26.04 ships one, /etc/apparmor.d/wg, and it attaches to a container's wg
+// too when the container runs unconfined). Swapped in tests.
+var wgKeyDir = "/etc/wireguard"
+
+// stageWGKey writes the private key — from file (--wg-key) or else env
+// ($APO_GW_WG_KEY) — to wgKeyDir/wg0.key, readable by this process only,
+// and returns that path for wg.
+func stageWGKey(file, env string) (string, error) {
+	key := env
+	if file != "" {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			return "", err
+		}
+		key = string(b)
+	}
+	if err := os.MkdirAll(wgKeyDir, 0o700); err != nil {
+		return "", err
+	}
+	path := wgKeyDir + "/" + wgDev + ".key"
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(key)+"\n"), 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 // setupWG creates wg0 (idempotently: a restarted container gets a fresh
 // netns, a restarted daemon finds its own wg0 and reuses it).
 func setupWG(ext, keyFile string, listen int, addr string, mtu int) (*wgLink, error) {

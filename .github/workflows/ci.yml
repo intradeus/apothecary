@@ -1,8 +1,8 @@
 # CI: four units of checks, each a Taskfile task (task --list), on every pull
-# request and every push to main. A green main run offers a manual-release
-# (see manual-release.yml): a human approves it, and it cuts the next semver
-# tag, CHANGELOG.md and the image set on GHCR. A pull request's title is
-# checked by pr-title.yml.
+# request and every push to main. A release is cut by hand (manual-release.yml),
+# only from a main commit this workflow passed: the next semver tag,
+# CHANGELOG.md and the image set on GHCR. A pull request's title is checked
+# by pr-title.yml.
 #
 #   unit         task test:unit          Linux
 #   integration  task test:integration:* real dependencies, in containers
@@ -22,7 +22,7 @@ permissions:
 concurrency:
   group: ci-${{ github.ref }}
   # A newer push supersedes a pull request's run; main's runs always finish
-  # (each green one offers a manual-release).
+  # (manual-release releases only a commit ci passed).
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

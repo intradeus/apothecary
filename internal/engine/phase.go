@@ -60,6 +60,13 @@ func (e *Engine) StartPhase(runID, phase, subject string) error {
 	case err := <-req.ack:
 		return err
 	case <-h.done:
+		// A phase that parks at once (a debug leaf, a gate) acks and exits
+		// before this select runs: both are ready, and the ack is the answer.
+		select {
+		case err := <-req.ack:
+			return err
+		default:
+		}
 		return fmt.Errorf("%w: the run ended", ErrPhaseNotStartable)
 	}
 }

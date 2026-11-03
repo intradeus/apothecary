@@ -1,27 +1,26 @@
-# manual-release: after a green `ci` run on main, a human approves the
-# `release` environment and this cuts the next semver release of that commit
-# (rules in .cz.toml; deploy/release.sh does the work):
+# manual-release: run by hand (Actions → manual-release → Run workflow, on
+# main) whenever a release is wanted; it cuts the next semver release of
+# main's head (rules in .cz.toml; deploy/release.sh does the work). Nothing
+# triggers it on its own.
 #
-#   plan     what the commit would release: release vX.Y.Z (with its notes),
-#            resume (the tag exists, its images did not all land), none (only
-#            docs/test/ci/style since the last tag) or superseded (main moved on;
-#            the newer commit's run releases it)
-#   release  behind the `release` environment's required reviewers: commit
-#            CHANGELOG.md + tag vX.Y.Z, build the five images, push main and the
-#            tag atomically, then push the images as vX.Y.Z, sha-<short> and
-#            latest (latest only for the newest release)
+#   plan     refuses a commit whose `ci` run did not pass, then says what it
+#            would release: release vX.Y.Z (with its notes), resume (the tag
+#            exists, its images did not all land), none (only
+#            docs/test/ci/style since the last tag) or superseded (main moved
+#            on while this ran; run it again)
+#   release  commit CHANGELOG.md + tag vX.Y.Z, build the five images, push main
+#            and the tag atomically, then push the images as vX.Y.Z,
+#            sha-<short> and latest (latest only for the newest release)
 #
 # The release commit carries [skip ci], so it starts no ci run of its own.
 name: manual-release
 
 on:
-  workflow_run:
-    workflows: [ci]
-    types: [completed]
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read # plan: the ci run of the commit
 
 env:
   COMMITIZEN_VERSION: 4.19.3
@@ -33,18 +32,27 @@ defaults:
 
 jobs:
   plan:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       mode: ${{ steps.plan.outputs.mode }}
       version: ${{ steps.plan.outputs.version }}
     env:
-      SHA: ${{ github.event.workflow_run.head_sha }}
+      SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
+      - name: Require a green ci run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SHA&status=success" --jq .total_count)
+          if [ "$n" = 0 ]; then
+            echo "::error title=manual-release::ci has not passed on $SHA (main's head); wait for it or fix it, then run again"
+            exit 1
+          fi
       - run: pipx install "commitizen==${COMMITIZEN_VERSION}"
       - id: plan
         env:
@@ -59,14 +67,10 @@ jobs:
             echo "## manual-release: $MODE $VERSION"
             echo
             case "$MODE" in
-              release)
-                echo "Approve the **release** deployment to publish."
-                echo
-                cat "$RUNNER_TEMP/notes.md"
-                ;;
-              resume) echo "Tag exists; approving re-publishes its images." ;;
+              release) cat "$RUNNER_TEMP/notes.md" ;;
+              resume) echo "Tag exists; re-publishing its images." ;;
               none) echo "No commit since the last tag bumps the version (docs/test/ci/style only)." ;;
-              superseded) echo "main moved past this commit; the newer commit's run releases it." ;;
+              superseded) echo "main moved past this commit while this ran; run manual-release again." ;;
             esac
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -77,24 +81,24 @@ jobs:
     environment: release
     concurrency:
       group: manual-release
-      # Never cancel: an approved release can be partway through pushing.
+      # Never cancel: a release can be partway through pushing.
       cancel-in-progress: false
     permissions:
       contents: read # the release commit and tag go out with the deploy key
       packages: write # push to ghcr
     env:
-      SHA: ${{ github.event.workflow_run.head_sha }}
+      SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           # The push credential: main takes no direct pushes, and its ruleset
           # lets deploy keys bypass that — this one, a write deploy key, is
           # the only one (README § Releases).
           ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
       - run: pipx install "commitizen==${COMMITIZEN_VERSION}"
-      # Approval can arrive hours later: check the state again.
+      # Check the state again: main can move between the two jobs.
       - id: plan
         run: deploy/release.sh plan "$SHA" | tee -a "$GITHUB_OUTPUT"
       - name: Nothing to release
@@ -102,7 +106,7 @@ jobs:
         env:
           MODE: ${{ steps.plan.outputs.mode }}
         run: |
-          echo "::notice title=manual-release::$MODE: main is at $(git rev-parse --short origin/main); that commit's own run releases it"
+          echo "::notice title=manual-release::$MODE: main is at $(git rev-parse --short origin/main); run manual-release again to release it"
       - name: Cut the release
         if: steps.plan.outputs.mode == 'release'
         run: |

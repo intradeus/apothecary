@@ -180,16 +180,13 @@ func main() {
 	g.ext.Store(&ext)
 	slog.Info("gateway", "ext", ext, "listen", g.listenPort, "policy", g.policyPath)
 
-	if wgKey == "" && envWGKey != "" {
-		// wg reads the key from a file: one only this process can read.
-		wgKey = "/run/apo-gw-wg.key"
-		if err := os.WriteFile(wgKey, []byte(envWGKey+"\n"), 0o600); err != nil {
+	if wgKey != "" || envWGKey != "" {
+		key, err := stageWGKey(wgKey, envWGKey)
+		if err != nil {
 			slog.Error("gateway: wireguard key", "err", err)
 			os.Exit(1)
 		}
-	}
-	if wgKey != "" {
-		link, err := setupWG(ext, wgKey, wgListen, wgAddr, wgMTU)
+		link, err := setupWG(ext, key, wgListen, wgAddr, wgMTU)
 		if err != nil {
 			slog.Error("gateway: wireguard", "err", err)
 			os.Exit(1)

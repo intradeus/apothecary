@@ -292,6 +292,11 @@ func TestHoldParksOnAQuietHolderAndWakesOnTheirMessage(t *testing.T) {
 	if err := h.e.TakeOver(runID, "u2"); !errors.Is(err, ErrAlreadyHeld) {
 		t.Errorf("take over while parked = %v, want ErrAlreadyHeld", err)
 	}
+	// One park is the case: the holder stays quiet after the resumed turn
+	// too, and a slow machine must not reach the release a hold later. The
+	// loop is gone, so nothing reads the hold while it changes.
+	h.e.Wait(runID)
+	h.e.cfg.AskHumanHold = time.Hour
 
 	id, err := h.e.SendMessage(runID, "switch to sqlite")
 	if err != nil {
