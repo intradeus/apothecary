@@ -109,9 +109,9 @@ func (s *Service) ToolsImage(ctx context.Context, err error) {
 		"Every docker-host provision needs it and retries the build; until one succeeds, runs fail to provision: %s")
 }
 
-// BrowserImage: how building the project-browser image went (nil clears).
+// BrowserImage: how pulling the project-browser image went (nil clears).
 func (s *Service) BrowserImage(ctx context.Context, err error) {
-	s.admin(ctx, KindBrowserImageFailed, "browser_image", err, "The project browser image failed to build",
+	s.admin(ctx, KindBrowserImageFailed, "browser_image", err, "The project browser image could not be pulled",
 		"Flows that use the browser MCP server cannot start a browser: %s")
 }
 

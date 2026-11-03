@@ -70,7 +70,7 @@ jobs:
       # already has docker and kubectl. systemd-resolved answers *.localhost
       # with loopback, but the registry's name is pinned in /etc/hosts anyway:
       # dockerd resolves it to push, and only to loopback does it speak plain
-      # HTTP. The six images live three times (docker, the registry, the
+      # HTTP. The five images live three times (docker, the registry, the
       # node's containerd) and the tools bundle once more on the run's volume:
       # drop toolchains this job never uses, or the kubelet evicts the pods
       # for disk pressure. The task creates the cluster and deletes it again.

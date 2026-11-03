@@ -4,14 +4,17 @@
 # in the workspaces namespace.
 
 image:
-  # Six images per release, all under this prefix: apothecaryd, sandbox,
-  # shim, tools, egress-gw, browser (see deploy/images.sh).
+  # Five images per release, all under this prefix: apothecaryd, sandbox,
+  # shim, tools, egress-gw (see deploy/images.sh). The project browser is
+  # Microsoft's Playwright MCP image, pinned by the engine.
   repository: ghcr.io/intradeus/apothecary
   tag: ""            # default: the chart's appVersion
   # The default tag is the mutable :latest, so nodes must re-pull it. With a
   # pinned image.tag (vX.Y.Z), IfNotPresent is enough.
   pullPolicy: Always
-  # Per-image overrides (full references), e.g. a mirror.
+  # Per-image overrides (full references), e.g. a mirror. browser replaces
+  # the engine's pinned browser image; it must be the same image (its
+  # session command depends on the image's layout).
   overrides:
     apothecaryd: ""
     sandbox: ""

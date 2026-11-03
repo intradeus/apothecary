@@ -10,7 +10,7 @@
 #   deploy/release.sh cut                 bump: CHANGELOG.md commit + annotated tag on
 #                                         HEAD (must be origin/main); prints the tag
 #   deploy/release.sh images <tag> [--push]
-#                                         build (and push) the six images as <tag>,
+#                                         build (and push) the five images as <tag>,
 #                                         sha-<short> and, for the newest tag, latest
 set -euo pipefail
 cd "$(dirname "$0")/.."

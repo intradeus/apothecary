@@ -125,10 +125,3 @@ func TestEnsureToolsIncompleteExtraction(t *testing.T) {
 		t.Fatal("an extraction with no marker must fail")
 	}
 }
-
-func TestEnsureBrowserImageBuildFailure(t *testing.T) {
-	d := &scriptDocker{resp: map[string]dockerResp{"build": resp("", 0, errors.New("daemon gone"))}}
-	if _, err := NewWithRunner(d, t.TempDir()).EnsureBrowserImage(context.Background()); err == nil {
-		t.Fatal("want an error")
-	}
-}

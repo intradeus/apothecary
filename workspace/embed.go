@@ -22,8 +22,8 @@ import (
 var BaseContext embed.FS
 
 // Images holds the Dockerfiles of the images apothecary builds from the
-// sources above (shim, gateway, browser), each with this directory as its
-// build context, and the tools bundle (images/tools: its Dockerfile plus the
+// sources above (shim, gateway), each with this directory as its build
+// context, and the tools bundle (images/tools: its Dockerfile plus the
 // scripts it copies, built with that directory as the context). The engine
 // builds them at runtime on a docker host (internal/workspace/wsimage); CI publishes
 // the same files for Kubernetes, where the engine cannot build.

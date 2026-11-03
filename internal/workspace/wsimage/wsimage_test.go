@@ -111,8 +111,8 @@ func TestWriteLogWithoutRunsDir(t *testing.T) {
 	NewWithRunner(&recordingRunner{}, "").writeLog("apothecary/x:tag", "out") // must not panic
 }
 
-func TestToolsImageTagAndBrowserTagAreContentAddressed(t *testing.T) {
-	if ToolsImageTag() != ToolsImageTag() || BrowserImageTag() != BrowserImageTag() {
+func TestToolsImageTagIsContentAddressed(t *testing.T) {
+	if ToolsImageTag() != ToolsImageTag() {
 		t.Error("tags must be stable")
 	}
 }

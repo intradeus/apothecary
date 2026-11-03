@@ -74,8 +74,8 @@ func TestGatewayHashIsStableAndDistinct(t *testing.T) {
 	if len(gatewayHash()) != 16 {
 		t.Errorf("hash length = %d", len(gatewayHash()))
 	}
-	if gatewayHash() == shimHash() || gatewayHash() == browserHash() {
-		t.Error("the gateway hash must differ from the shim's and browser's")
+	if gatewayHash() == shimHash() {
+		t.Error("the gateway hash must differ from the shim's")
 	}
 }
 

@@ -249,37 +249,38 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	snapshots := filestore.NewSnapshots(store, blobs, boot.SnapshotMaxBytes)
 	skillLib := skillstore.New(store, blobs)
 	// The project browser (the builtin `browser` MCP server): one container
-	// per project, a Chromium per agent session.
+	// per project, a Chromium per agent session, from Microsoft's Playwright
+	// MCP image with the engine's shim.
+	browserImg := boot.BrowserImage
+	if browserImg == "" {
+		browserImg = browser.DefaultImage
+	}
 	bcfg := browser.Config{
 		RunsDir: boot.RunsDir,
-		Image:   wsimage.New(boot.RunsDir).EnsureBrowserImage,
-		Tag:     wsimage.BrowserImageTag,
+		Image:   browser.Pulled(browserImg, nil),
+		Tag:     func() string { return browserImg },
+		Shim:    wsimage.New(boot.RunsDir).EnsureShim,
 		Log:     log,
 	}
-	// A failed browser-image build is the admins' to fix (docker host only:
-	// on Kubernetes the image below is a release tag, nothing to build).
-	build := bcfg.Image
+	// A failed browser-image pull is the admins' to fix (docker host only:
+	// on Kubernetes the kubelet pulls it).
+	pull := bcfg.Image
 	bcfg.Image = func(ctx context.Context) (string, error) {
-		tag, err := build(ctx)
+		ref, err := pull(ctx)
 		notes.BrowserImage(ctx, err)
-		return tag, err
+		return ref, err
 	}
 	if boot.K8s.Namespace != "" {
-		// On Kubernetes the engine builds nothing: the browser is the release
-		// image, its pods live beside the sandboxes, and sessions reach the
-		// routing proxy over the engine's session mux.
+		// On Kubernetes the engine pulls nothing: the browser's pods live
+		// beside the sandboxes, seed the release's shim, and sessions reach
+		// the routing proxy over the engine's session mux.
 		host, closeMux, err := k8sBrowserHost(boot)
 		if err != nil {
 			return nil, nil, err
 		}
 		closers = append(closers, func() { closeMux() })
-		img := boot.K8s.BrowserImage
-		if img == "" {
-			img = config.DefaultImage("browser", version)
-		}
 		bcfg.Host = host
-		bcfg.Image = func(context.Context) (string, error) { return img, nil }
-		bcfg.Tag = func() string { return img }
+		bcfg.Image = func(context.Context) (string, error) { return browserImg, nil }
 	}
 	browsers := browser.New(bcfg)
 	browsers.Start(ctx)

@@ -35,7 +35,7 @@ func TestEmbedsNoBinaries(t *testing.T) {
 }
 
 // TestTreeHoldsOnlyRegularFiles guards the docker build context the images
-// are built from (deploy/images.sh builds shim, gateway and browser from this
+// are built from (deploy/images.sh builds shim and gateway from this
 // directory): go:embed skips a socket or a pipe, but `docker build` ships it as
 // an empty file, so the image's shim hash stops matching the engine's. A test
 // that binds a unix socket in its package directory leaves exactly that.
@@ -52,7 +52,7 @@ func TestTreeHoldsOnlyRegularFiles(t *testing.T) {
 }
 
 func TestDockerfileReturnsContent(t *testing.T) {
-	for _, name := range []string{"shim", "gateway", "browser", "tools"} {
+	for _, name := range []string{"shim", "gateway", "tools"} {
 		if Dockerfile(name) == "" {
 			t.Errorf("Dockerfile(%q) is empty", name)
 		}

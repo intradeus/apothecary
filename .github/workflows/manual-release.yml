@@ -7,7 +7,7 @@
 #            docs/test/ci/style since the last tag) or superseded (main moved on;
 #            the newer commit's run releases it)
 #   release  behind the `release` environment's required reviewers: commit
-#            CHANGELOG.md + tag vX.Y.Z, build the six images, push main and the
+#            CHANGELOG.md + tag vX.Y.Z, build the five images, push main and the
 #            tag atomically, then push the images as vX.Y.Z, sha-<short> and
 #            latest (latest only for the newest release)
 #
@@ -136,7 +136,7 @@ jobs:
           {
             echo "## Released $TAG"
             echo
-            for name in apothecaryd sandbox shim tools egress-gw browser; do
+            for name in apothecaryd sandbox shim tools egress-gw; do
               echo "- \`ghcr.io/intradeus/apothecary/$name:$TAG\`"
             done
             echo

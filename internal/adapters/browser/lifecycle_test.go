@@ -106,7 +106,7 @@ func TestSessionFailures(t *testing.T) {
 	boom := errors.New("boom")
 
 	bad := New(Config{Host: &hostFake{}, Log: slog.New(slog.DiscardHandler), Image: func(context.Context) (string, error) { return "", boom }})
-	if err := bad.Session(ctx, s, nil); !errors.Is(err, boom) || !strings.Contains(err.Error(), "build the browser image") {
+	if err := bad.Session(ctx, s, nil); !errors.Is(err, boom) || !strings.Contains(err.Error(), "prepare the browser image") {
 		t.Errorf("image = %v", err)
 	}
 	bad.Close()
@@ -347,11 +347,15 @@ func TestStatus(t *testing.T) {
 
 // --- docker host -------------------------------------------------------------
 
+func fixedShim(path string) func(context.Context) (string, error) {
+	return func(context.Context) (string, error) { return path, nil }
+}
+
 func TestDockerHostFailures(t *testing.T) {
 	ctx := context.Background()
 	boom := errors.New("no docker")
 	spawn := func(context.Context, []string) ([]byte, []byte, int, error) { return nil, nil, 0, boom }
-	h := &dockerHost{runsDir: t.TempDir(), run: spawn}
+	h := &dockerHost{runsDir: t.TempDir(), run: spawn, shim: fixedShim("/s/apothecary-shim")}
 	if err := h.Ensure(ctx, "P1", "", "i", true); !errors.Is(err, boom) {
 		t.Errorf("Ensure = %v", err)
 	}
@@ -370,17 +374,27 @@ func TestDockerHostFailures(t *testing.T) {
 	}
 	file := filepath.Join(t.TempDir(), "plain")
 	os.WriteFile(file, nil, 0o644)
-	if err := (&dockerHost{runsDir: file, run: spawn}).Ensure(ctx, "P1", "", "i", true); err == nil || errors.Is(err, boom) {
+	if err := (&dockerHost{runsDir: file, run: spawn, shim: h.shim}).Ensure(ctx, "P1", "", "i", true); err == nil || errors.Is(err, boom) {
 		t.Errorf("mount dir under a file = %v", err)
+	}
+	// No shim, no browser: the session runner lives in it.
+	shimErr := errors.New("shim build failed")
+	noShim := &dockerHost{runsDir: t.TempDir(), run: spawn, shim: func(context.Context) (string, error) { return "", shimErr }}
+	if err := noShim.Ensure(ctx, "P1", "", "i", true); !errors.Is(err, shimErr) {
+		t.Errorf("shim failure = %v", err)
+	}
+	if err := (&dockerHost{runsDir: t.TempDir(), run: spawn}).Ensure(ctx, "P1", "", "i", true); err == nil || errors.Is(err, boom) {
+		t.Errorf("no shim source = %v", err)
 	}
 }
 
 func TestDockerHostEnsureSteps(t *testing.T) {
 	ctx := context.Background()
+	shim := fixedShim("/s/apothecary-shim")
 	fail := func(word string) func(context.Context, []string) ([]byte, []byte, int, error) {
 		return func(_ context.Context, args []string) ([]byte, []byte, int, error) {
 			if args[0] == "ps" {
-				return []byte("old\n"), nil, 0, nil
+				return []byte("c1\told\t/s/apothecary-shim\n"), nil, 0, nil
 			}
 			if args[0] == word {
 				return nil, []byte("nope"), 1, nil
@@ -388,18 +402,18 @@ func TestDockerHostEnsureSteps(t *testing.T) {
 			return nil, nil, 0, nil
 		}
 	}
-	if err := (&dockerHost{runsDir: t.TempDir(), run: fail("rm")}).Ensure(ctx, "P1", "", "new", true); err == nil {
+	if err := (&dockerHost{runsDir: t.TempDir(), run: fail("rm"), shim: shim}).Ensure(ctx, "P1", "", "new", true); err == nil {
 		t.Error("rm failure swallowed")
 	}
-	if err := (&dockerHost{runsDir: t.TempDir(), run: fail("start")}).Ensure(ctx, "P1", "", "new", false); err == nil {
+	if err := (&dockerHost{runsDir: t.TempDir(), run: fail("start"), shim: shim}).Ensure(ctx, "P1", "", "new", false); err == nil {
 		t.Error("start failure swallowed")
 	}
-	if err := (&dockerHost{runsDir: t.TempDir(), run: fail("run")}).Ensure(ctx, "P1", "", "new", true); err == nil {
+	if err := (&dockerHost{runsDir: t.TempDir(), run: fail("run"), shim: shim}).Ensure(ctx, "P1", "", "new", true); err == nil {
 		t.Error("run failure swallowed")
 	}
 	// The container is locked down whoever asks; the name is a label only.
 	var run []string
-	h := &dockerHost{runsDir: t.TempDir(), run: func(_ context.Context, args []string) ([]byte, []byte, int, error) {
+	h := &dockerHost{runsDir: t.TempDir(), shim: shim, run: func(_ context.Context, args []string) ([]byte, []byte, int, error) {
 		if args[0] == "run" {
 			run = args
 		}
@@ -410,10 +424,49 @@ func TestDockerHostEnsureSteps(t *testing.T) {
 	}
 	line := strings.Join(run, " ")
 	for _, want := range []string{"--name apo-browser-p1", "--network none", "--cap-drop ALL", "--security-opt no-new-privileges",
-		"--label apothecary.project=P1", "--label apothecary.project.name=My App"} {
+		"--label apothecary.project=P1", "--label apothecary.project.name=My App", "-v /s:/opt/apothecary/shim:ro"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("run missing %q: %s", want, line)
 		}
+	}
+}
+
+// What the container was created from is read off its labels: a new image or
+// a new shim makes it stale, and so does a container older than the labels.
+func TestDockerHostStaleness(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name, ps string
+		replace  bool
+		recreate bool
+	}{
+		{"current", "c1\timg@sha256:a\t/s/apothecary-shim", true, false},
+		{"new image", "c1\timg@sha256:old\t/s/apothecary-shim", true, true},
+		{"new shim", "c1\timg@sha256:a\t/old/apothecary-shim", true, true},
+		{"new shim, busy", "c1\timg@sha256:a\t/old/apothecary-shim", false, false},
+		{"unlabelled", "c1\t\t", true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var calls []string
+			h := &dockerHost{runsDir: t.TempDir(), shim: fixedShim("/s/apothecary-shim"), run: func(_ context.Context, args []string) ([]byte, []byte, int, error) {
+				calls = append(calls, args[0])
+				if args[0] == "ps" {
+					return []byte(c.ps + "\n"), nil, 0, nil
+				}
+				return nil, nil, 0, nil
+			}}
+			if err := h.Ensure(ctx, "P1", "", "img@sha256:a", c.replace); err != nil {
+				t.Fatal(err)
+			}
+			want := "ps start"
+			if c.recreate {
+				want = "ps rm run"
+			}
+			if got := strings.Join(calls, " "); got != want {
+				t.Errorf("calls = %q, want %q", got, want)
+			}
+		})
 	}
 }
 
@@ -424,9 +477,14 @@ func TestDockerHostRunningAndInspect(t *testing.T) {
 	if got, err := h.Running(ctx); err != nil || strings.Join(got, ",") != "p1,p2" {
 		t.Errorf("running = %v, %v", got, err)
 	}
-	out = "img:1\texited\n"
-	if img, running, err := h.Inspect(ctx, "P1"); err != nil || img != "img:1" || running {
+	// docker reports a digest-pinned image by its repository; the label has the reference.
+	out = "exited\tmcr.example/mcp\tmcr.example/mcp:v1@sha256:a\n"
+	if img, running, err := h.Inspect(ctx, "P1"); err != nil || img != "mcr.example/mcp:v1@sha256:a" || running {
 		t.Errorf("inspect = %q %v %v", img, running, err)
+	}
+	out = "running\tapothecary/browser:old\t\n"
+	if img, running, err := h.Inspect(ctx, "P1"); err != nil || img != "apothecary/browser:old" || !running {
+		t.Errorf("unlabelled = %q %v %v", img, running, err)
 	}
 	out = ""
 	if img, running, err := h.Inspect(ctx, "P1"); err != nil || img != "" || running {
@@ -434,6 +492,44 @@ func TestDockerHostRunningAndInspect(t *testing.T) {
 	}
 	if h.Name("ABC") != "apo-browser-abc" {
 		t.Errorf("name = %q", h.Name("ABC"))
+	}
+}
+
+// The image is pulled once: a daemon that has it is not asked again.
+func TestPulled(t *testing.T) {
+	ctx := context.Background()
+	var calls []string
+	have := false
+	pullCode, pullErr := 0, error(nil)
+	run := func(_ context.Context, args []string) ([]byte, []byte, int, error) {
+		calls = append(calls, strings.Join(args, " "))
+		switch args[0] {
+		case "image":
+			if have {
+				return []byte("sha256:x"), nil, 0, nil
+			}
+			return nil, []byte("No such image"), 1, nil
+		case "pull":
+			return nil, []byte(" denied \n"), pullCode, pullErr
+		}
+		return nil, nil, 0, nil
+	}
+	pull := Pulled("ref@sha256:a", run)
+	if ref, err := pull(ctx); err != nil || ref != "ref@sha256:a" || len(calls) != 2 || calls[1] != "pull --quiet ref@sha256:a" {
+		t.Errorf("missing = %q %v %v", ref, err, calls)
+	}
+	have, calls = true, nil
+	if ref, err := pull(ctx); err != nil || ref != "ref@sha256:a" || len(calls) != 1 {
+		t.Errorf("present = %q %v %v", ref, err, calls)
+	}
+	have, pullCode = false, 1
+	if _, err := pull(ctx); err == nil || err.Error() != "docker pull ref@sha256:a: exit 1: denied" {
+		t.Errorf("refused = %v", err)
+	}
+	boom := errors.New("no docker")
+	pullCode, pullErr = 0, boom
+	if _, err := pull(ctx); !errors.Is(err, boom) {
+		t.Errorf("spawn = %v", err)
 	}
 }
 
@@ -565,13 +661,15 @@ func (k *kubeCalls) saw(sub string) bool {
 }
 
 func k8sHost(k *kubeCalls) *K8sHost {
-	return &K8sHost{Kube: &kube.Client{Namespace: "ws", R: k}, PullPolicy: "Always"}
+	return &K8sHost{Kube: &kube.Client{Namespace: "ws", R: k}, ShimImage: "shim:1", PullPolicy: "Always"}
 }
 
-const runningPod = `{"spec":{"containers":[{"name":"browser","image":"img:1"}]},"status":{"phase":"Running"}}`
+const runningPod = `{"spec":{"initContainers":[{"name":"shim-seed","image":"shim:1"}],"containers":[{"name":"browser","image":"img:1"}]},"status":{"phase":"Running"}}`
 
 func TestK8sEnsure(t *testing.T) {
 	ctx := context.Background()
+	oldShim := strings.Replace(runningPod, "shim:1", "shim:0", 1)
+	unseeded := `{"spec":{"containers":[{"name":"browser","image":"img:1"}]},"status":{"phase":"Running"}}`
 	cases := []struct {
 		name    string
 		pod     string
@@ -583,6 +681,9 @@ func TestK8sEnsure(t *testing.T) {
 		{"current", runningPod, "img:1", true, false},
 		{"stale, replace", runningPod, "img:2", true, true},
 		{"stale, busy", runningPod, "img:2", false, false},
+		{"stale shim, replace", oldShim, "img:1", true, true},
+		{"stale shim, busy", oldShim, "img:1", false, false},
+		{"no shim seed, replace", unseeded, "img:1", true, true},
 		{"ended", `{"spec":{"containers":[{"image":"img:1"}]},"status":{"phase":"Failed"}}`, "img:1", false, true},
 		{"finished", `{"spec":{"containers":[{"image":"img:1"}]},"status":{"phase":"Succeeded"}}`, "img:1", false, true},
 	}
@@ -617,7 +718,9 @@ func TestK8sEnsureManifest(t *testing.T) {
 		}
 	}
 	for _, want := range []string{`"image":"img:1"`, `"imagePullPolicy":"Always"`, `"apothecary.io/project-name":"My App"`, `"apothecary.io/browser":"p1"`,
-		`"allowPrivilegeEscalation":false`, `"drop":["ALL"]`, `"automountServiceAccountToken":false`, `"medium":"Memory"`} {
+		`"allowPrivilegeEscalation":false`, `"drop":["ALL"]`, `"automountServiceAccountToken":false`, `"medium":"Memory"`,
+		`"initContainers":[{"name":"shim-seed","image":"shim:1"`, `"args":["seed","/opt/apothecary/shim"]`,
+		`"command":["sleep","infinity"]`, `"mountPath":"/opt/apothecary/shim","readOnly":true`} {
 		if !strings.Contains(created, want) {
 			t.Errorf("pod missing %s:\n%s", want, created)
 		}

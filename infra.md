@@ -105,7 +105,7 @@ flowchart TB
             relay["sidecar: relay :7070<br/>APO1 token socket → shim dir"]
             dind["sandbox: dockerd<br/>devcontainer + compose siblings"]
         end
-        br["apo-browser-&lt;project&gt; pod"]
+        br["apo-browser-&lt;project&gt; pod<br/>init: shim-seed · Playwright MCP image"]
     end
 
     internet(["🌐 Internet"])

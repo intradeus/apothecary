@@ -123,8 +123,10 @@ spec:
               value: {{ include "apothecary.image" (dict "root" . "key" "tools" "name" "tools") }}
             - name: APOTHECARY_GATEWAY_IMAGE
               value: {{ include "apothecary.image" (dict "root" . "key" "gateway" "name" "egress-gw") }}
+            {{- with .Values.image.overrides.browser }}
             - name: APOTHECARY_BROWSER_IMAGE
-              value: {{ include "apothecary.image" (dict "root" . "key" "browser" "name" "browser") }}
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.ingress.enabled }}
             - name: APOTHECARY_PUBLIC_URL
               value: {{ printf "%s://%s%s" .Values.ingress.scheme .Values.ingress.host (ternary (printf ":%v" .Values.ingress.appsPort) "" (ne (toString .Values.ingress.appsPort) "")) | quote }}

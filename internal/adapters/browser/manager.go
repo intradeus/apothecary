@@ -4,9 +4,12 @@
 // builtin `browser` MCP server is (FLOWLANG §1 mcp_servers).
 //
 // Lifecycle follows the egress gateway's (internal/adapters/egressgw): the container
-// is created on first need from a content-addressed image (wsimage
-// EnsureBrowserImage), reused while it runs, recreated when it runs a stale
-// image and nobody is using it, and stopped after a while with no session.
+// is created on first need from Microsoft's Playwright MCP image (DefaultImage,
+// pinned by digest), reused while it runs, recreated when it runs a stale
+// image or shim and nobody is using it, and stopped after a while with no
+// session. The image is not ours: the engine gives it the shim (a read-only
+// mount on docker, a seeded volume on Kubernetes) and keeps it idle on
+// `sleep` instead of the image's own MCP server.
 //
 // A session is one `docker exec -i` of `apothecary-shim browser-session`,
 // which starts @playwright/mcp (one MCP server, one Chromium) on that exec's
@@ -46,10 +49,15 @@ type StreamRun func(ctx context.Context, args []string, stdin io.Reader, stdout 
 // Config wires a Manager.
 type Config struct {
 	RunsDir string
-	// Image builds (once) the browser image and returns its tag; Tag is the
-	// tag this build would run, without building (Status).
+	// Image makes the browser image available and returns its reference
+	// (docker: Pulled); Tag is the reference it would run, without pulling
+	// (Status).
 	Image func(ctx context.Context) (string, error)
 	Tag   func() string
+	// Shim returns the host path of the shim binary the docker host mounts
+	// into the browser (wsimage EnsureShim); Kubernetes seeds it from the
+	// shim image instead.
+	Shim func(ctx context.Context) (string, error)
 	// Run / Stream default to the docker CLI.
 	Run    HostRun
 	Stream StreamRun
@@ -113,7 +121,7 @@ func New(cfg Config) *Manager {
 		cfg.Log = slog.Default()
 	}
 	if cfg.Host == nil {
-		cfg.Host = &dockerHost{runsDir: cfg.RunsDir, run: cfg.Run, stream: cfg.Stream}
+		cfg.Host = &dockerHost{runsDir: cfg.RunsDir, run: cfg.Run, stream: cfg.Stream, shim: cfg.Shim}
 	}
 	return &Manager{cfg: cfg, projects: map[string]*project{}}
 }
@@ -129,13 +137,29 @@ var _ browserport.Browser = (*Manager)(nil)
 
 func containerName(project string) string { return "apo-browser-" + envport.ProjectHostKey(project) }
 
+// DefaultImage is the project browser: Microsoft's Playwright MCP server with
+// the Chromium its Playwright drives, pinned by digest (an index: amd64 and
+// arm64). APOTHECARY_BROWSER_IMAGE overrides it, e.g. with a mirror. A bump
+// is re-checked with the live session test: playwrightArgs depend on the
+// image's layout (/app/cli.js).
+const DefaultImage = "mcr.microsoft.com/playwright/mcp:v0.0.83@sha256:690763cbb437ee7233f538a953bb5390bf03791eb5c965b471e59d17a6132fcb"
+
 // playwrightArgs start one MCP server with its own in-memory Chromium. The
 // session adds --proxy-server (its relay's port, known only inside).
-var playwrightArgs = []string{"playwright-mcp", "--headless", "--isolated", "--browser", "chromium",
+var playwrightArgs = []string{"node", "/app/cli.js", "--headless", "--isolated", "--browser", "chromium",
 	"--no-sandbox", "--image-responses", "allow"}
 
-// shimInImage is where the browser image carries the shim.
-const shimInImage = "/usr/local/bin/apothecary-shim"
+// idleCommand keeps the browser up between sessions in place of the image's
+// own entrypoint (an MCP server on the container's stdio).
+var idleCommand = []string{"sleep", "infinity"}
+
+// shimDir is where the browser finds the shim: mounted from the host's shim
+// cache (docker) or seeded by an init container (Kubernetes, whose seed also
+// writes the apothecary-shim alias); shimPath is the binary in it.
+const (
+	shimDir  = "/opt/apothecary/shim"
+	shimPath = shimDir + "/apothecary-shim"
+)
 
 // --- lifecycle ----------------------------------------------------------------
 
@@ -259,7 +283,7 @@ func (m *Manager) Warm(project, projectName string) {
 func (m *Manager) ensure(ctx context.Context, name, projectName string, p *project) error {
 	img, err := m.cfg.Image(ctx)
 	if err != nil {
-		return fmt.Errorf("build the browser image: %w", err)
+		return fmt.Errorf("prepare the browser image: %w", err)
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -298,7 +322,7 @@ func (m *Manager) Session(ctx context.Context, s browserport.BrowserSession, std
 	defer srv.Close()
 
 	log.Info("browser: session started")
-	argv := append(append([]string{shimInImage, "browser-session"}, reach...), "--")
+	argv := append(append([]string{shimPath, "browser-session"}, reach...), "--")
 	argv = append(argv, playwrightArgs...)
 	err = m.cfg.Host.Exec(ctx, s.Project, argv, stdio, stdio)
 	log.Info("browser: session ended", "err", err)

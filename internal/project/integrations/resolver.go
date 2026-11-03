@@ -134,8 +134,8 @@ type provEntry struct {
 }
 
 // New builds the resolver. The builder compiles + caches the apothecary-owned
-// images a docker host needs (the shim, the tools bundle, the gateway and
-// browser images → ProvisionerDeps).
+// images a docker host needs (the shim, the tools bundle and the gateway
+// image → ProvisionerDeps).
 // sandboxRuntime is APOTHECARY_SANDBOX_RUNTIME (empty ⇒ privileged sandbox).
 func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort int, sandboxRuntime string) *Resolver {
 	return &Resolver{

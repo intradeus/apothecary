@@ -143,6 +143,7 @@ type fakeDocker struct {
 	mu        sync.Mutex
 	calls     []string
 	container string // "" | "<image>\t<state>"
+	shim      string // the container's shim label
 	streams   [][]string
 	stream    func(args []string, stdin io.Reader, stdout io.Writer) error
 }
@@ -158,12 +159,20 @@ func (d *fakeDocker) run(_ context.Context, args []string) ([]byte, []byte, int,
 		}
 		img, state, _ := strings.Cut(d.container, "\t")
 		if strings.Contains(strings.Join(args, " "), "{{.State}}") {
-			return []byte(d.container + "\n"), nil, 0, nil
+			return []byte(state + "\t" + img + "\t" + img + "\n"), nil, 0, nil
 		}
-		_ = state
-		return []byte(img + "\n"), nil, 0, nil
+		return []byte("c1\t" + img + "\t" + d.shim + "\n"), nil, 0, nil
 	case "run":
-		d.container = args[len(args)-1] + "\trunning"
+		for i, a := range args {
+			if a == "--label" {
+				if v, ok := strings.CutPrefix(args[i+1], imageLabel+"="); ok {
+					d.container = v + "\trunning"
+				}
+				if v, ok := strings.CutPrefix(args[i+1], shimLabel+"="); ok {
+					d.shim = v
+				}
+			}
+		}
 	case "rm":
 		d.container = ""
 	case "start":
@@ -206,20 +215,23 @@ func newTestManager(t *testing.T, d *fakeDocker, img *string) *Manager {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(runs) })
+	shim := filepath.Join(runs, "shim-cache", "h1", "apothecary-shim")
 	m := New(Config{RunsDir: runs, Run: d.run, Stream: d.exec, IdleAfter: 50 * time.Millisecond,
 		Image: func(context.Context) (string, error) { return *img, nil },
 		Tag:   func() string { return *img },
+		Shim:  func(context.Context) (string, error) { return shim, nil },
 		Log:   slog.New(slog.DiscardHandler)})
 	t.Cleanup(m.Close)
 	return m
 }
 
 // A session brings the container up (no network, labelled, the project dir
-// mounted), execs one session runner whose proxy socket routes to the run,
-// and leaves the container to the idle stop when it ends.
+// and the shim mounted, idling instead of the image's own server), execs one
+// session runner whose proxy socket routes to the run, and leaves the
+// container to the idle stop when it ends.
 func TestSessionBringsTheBrowserUpAndRoutesTheRun(t *testing.T) {
 	d := &fakeDocker{}
-	img := "apothecary/browser:aaa"
+	img := "mcr.example/playwright/mcp:v1@sha256:aaa"
 	m := newTestManager(t, d, &img)
 	dial, _ := runApp(t, 3000)
 	d.stream = func(args []string, stdin io.Reader, stdout io.Writer) error {
@@ -260,16 +272,20 @@ func TestSessionBringsTheBrowserUpAndRoutesTheRun(t *testing.T) {
 	}
 	// Named by the project's id, lowercased; the name is a label for docker ps.
 	dir := filepath.Join(m.cfg.RunsDir, "browser", "01hwebapp")
+	shimDir := filepath.Join(m.cfg.RunsDir, "shim-cache", "h1")
 	for _, want := range []string{"--name apo-browser-01hwebapp", "--network none", "--label apothecary=true",
 		"--label apothecary.project=01HWEBAPP", "--label apothecary.project.name=Web App",
-		"--label apothecary.browser=true", "-v " + dir + ":" + dir, "apothecary/browser:aaa"} {
+		"--label apothecary.browser=true", "--label apothecary.browser.image=" + img,
+		"--label apothecary.browser.shim=" + shimDir + "/apothecary-shim",
+		"-v " + dir + ":" + dir, "-v " + shimDir + ":/opt/apothecary/shim:ro",
+		"--entrypoint sleep " + img + " infinity"} {
 		if !strings.Contains(runCall, want) {
 			t.Errorf("docker run lacks %q: %s", want, runCall)
 		}
 	}
 	ex := strings.Join(d.streams[0], " ")
-	if !strings.HasPrefix(ex, "exec -i apo-browser-01hwebapp /usr/local/bin/apothecary-shim browser-session --sock "+dir+"/s-") ||
-		!strings.Contains(ex, " -- playwright-mcp --headless --isolated --browser chromium") {
+	if !strings.HasPrefix(ex, "exec -i apo-browser-01hwebapp /opt/apothecary/shim/apothecary-shim browser-session --sock "+dir+"/s-") ||
+		!strings.Contains(ex, " -- node /app/cli.js --headless --isolated --browser chromium") {
 		t.Errorf("exec = %s", ex)
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
@@ -285,8 +301,8 @@ func TestSessionBringsTheBrowserUpAndRoutesTheRun(t *testing.T) {
 
 // A container on a stale image is recreated only when nobody uses it.
 func TestStaleBrowserIsRecreatedOnlyWhenIdle(t *testing.T) {
-	d := &fakeDocker{container: "apothecary/browser:old\trunning"}
-	img := "apothecary/browser:new"
+	d := &fakeDocker{container: "img@sha256:old\trunning"}
+	img := "img@sha256:new"
 	m := newTestManager(t, d, &img)
 	hold := make(chan struct{})
 	started := make(chan struct{}, 2)
@@ -313,7 +329,7 @@ func TestStaleBrowserIsRecreatedOnlyWhenIdle(t *testing.T) {
 		t.Fatalf("calls = %v", d.calls)
 	}
 	// It goes stale again under a busy session: the second keeps it.
-	img = "apothecary/browser:newer"
+	img = "img@sha256:newer"
 	second := sess()
 	<-started
 	if d.did("rm -f") != 1 || d.did("start apo-browser-p") != 1 {

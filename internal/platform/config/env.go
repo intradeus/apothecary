@@ -61,6 +61,11 @@ type Boot struct {
 	// of the deployment you can read off one line, not of whatever happened to
 	// be installed on the machine.
 	SandboxRuntime string
+	// BrowserImage overrides the project browser's image on either host
+	// (APOTHECARY_BROWSER_IMAGE), e.g. a mirror of it; default "" = the one
+	// the engine pins (browser.DefaultImage), which its session command
+	// depends on.
+	BrowserImage string
 
 	// Kubernetes: the deployment-wide facts a Kubernetes provisioner and the
 	// project browsers need. A provisioner integration may override most of
@@ -142,9 +147,9 @@ type K8s struct {
 	// direct when running in a pod, portforward otherwise.
 	Transport string
 	// Images apothecary runs on the cluster (it cannot build there).
-	// APOTHECARY_SANDBOX_IMAGE, _SHIM_IMAGE, _TOOLS_IMAGE, _GATEWAY_IMAGE,
-	// _BROWSER_IMAGE; defaults are the engine's own release (see DefaultImage).
-	SandboxImage, ShimImage, ToolsImage, GatewayImage, BrowserImage string
+	// APOTHECARY_SANDBOX_IMAGE, _SHIM_IMAGE, _TOOLS_IMAGE, _GATEWAY_IMAGE;
+	// defaults are the engine's own release (see DefaultImage).
+	SandboxImage, ShimImage, ToolsImage, GatewayImage string
 	// PullPolicy for those images (APOTHECARY_K8S_IMAGE_PULL_POLICY): ""
 	// = the cluster default; Always for a reused tag like :local.
 	PullPolicy string
@@ -229,6 +234,7 @@ func FromEnv() (*Boot, error) {
 	}
 	b.PortAutoExpose = os.Getenv("APOTHECARY_PORT_AUTOEXPOSE") == "on"
 	b.SandboxRuntime = strings.TrimSpace(os.Getenv("APOTHECARY_SANDBOX_RUNTIME"))
+	b.BrowserImage = strings.TrimSpace(os.Getenv("APOTHECARY_BROWSER_IMAGE"))
 	b.K8s = K8s{
 		Namespace:          strings.TrimSpace(os.Getenv("APOTHECARY_K8S_NAMESPACE")),
 		EngineNamespace:    strings.TrimSpace(os.Getenv("APOTHECARY_K8S_ENGINE_NAMESPACE")),
@@ -240,7 +246,6 @@ func FromEnv() (*Boot, error) {
 		ShimImage:          strings.TrimSpace(os.Getenv("APOTHECARY_SHIM_IMAGE")),
 		ToolsImage:         strings.TrimSpace(os.Getenv("APOTHECARY_TOOLS_IMAGE")),
 		GatewayImage:       strings.TrimSpace(os.Getenv("APOTHECARY_GATEWAY_IMAGE")),
-		BrowserImage:       strings.TrimSpace(os.Getenv("APOTHECARY_BROWSER_IMAGE")),
 		PullPolicy:         strings.TrimSpace(os.Getenv("APOTHECARY_K8S_IMAGE_PULL_POLICY")),
 		BrowserProxyListen: getenvDefault("APOTHECARY_K8S_BROWSER_PROXY_LISTEN", ":7071"),
 		BrowserProxyAddr:   strings.TrimSpace(os.Getenv("APOTHECARY_K8S_BROWSER_PROXY_ADDR")),

@@ -98,7 +98,7 @@ tasks:
       - chmod 600 {{.K3D_KUBECONFIG}}
 
   k8s:images:
-    desc: Build the six images from the working tree and push them to the k3d registry as :local
+    desc: Build the five images from the working tree and push them to the k3d registry as :local
     cmds:
       - PREFIX={{.K3D_REGISTRY}}/apothecary deploy/images.sh local --push
 
@@ -194,7 +194,7 @@ tasks:
   # in-tree: workspace/ is embedded, so a binary dropped in it ships inside
   # apothecaryd and changes the egress-gw image hash.
   build:
-    desc: 'Build everything: apothecaryd, the shim and gateway, the CPUI, and the six images (needs docker)'
+    desc: 'Build everything: apothecaryd, the shim and gateway, the CPUI, and the five images (needs docker)'
     cmds:
       - task: build:bin
       - task: build:ui
@@ -232,7 +232,7 @@ tasks:
       - npm run build
 
   build:images:
-    desc: 'Build the six release images from the working tree, tagged apothecary-build/<name>:ci, without pushing (needs docker)'
+    desc: 'Build the five release images from the working tree, tagged apothecary-build/<name>:ci, without pushing (needs docker)'
     env: {PREFIX: apothecary-build}
     cmds:
       - deploy/images.sh ci

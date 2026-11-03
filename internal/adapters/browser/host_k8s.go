@@ -17,10 +17,13 @@ import (
 // socket with the engine, so a session's Chromium reaches the routing proxy
 // over TCP: the engine's SessionMux, opened with the session's token. The
 // pod's network policy lets it reach that port and nothing else — the
-// docker host's --network none, with one door.
+// docker host's --network none, with one door. The shim comes from the
+// release's shim image, seeded into the pod by an init container.
 type K8sHost struct {
-	Kube  *kube.Client
-	Image string // ignored: the manager passes the image to Ensure
+	Kube *kube.Client
+	// ShimImage is the shim the pod's init container seeds (the same one a
+	// sandbox pod seeds).
+	ShimImage string
 	// Mux serves the sessions' routing proxies.
 	Mux *SessionMux
 	// EngineNamespace selects the engine's pods in the network policy;
@@ -46,7 +49,8 @@ func (h *K8sHost) Ensure(ctx context.Context, project, projectName, img string, 
 		return err
 	}
 	if found {
-		stale := len(pod.Spec.Containers) > 0 && pod.Spec.Containers[0].Image != img
+		stale := len(pod.Spec.Containers) == 0 || pod.Spec.Containers[0].Image != img ||
+			len(pod.Spec.InitContainers) == 0 || pod.Spec.InitContainers[0].Image != h.ShimImage
 		ended := pod.Status.Phase == "Failed" || pod.Status.Phase == "Succeeded"
 		if !ended && (!stale || !replace) {
 			return h.Kube.WaitReady(ctx, name, 5*time.Minute)
@@ -67,15 +71,28 @@ func (h *K8sHost) Ensure(ctx context.Context, project, projectName, img string, 
 			RestartPolicy:                "Always",
 			AutomountServiceAccountToken: kube.Ptr(false),
 			EnableServiceLinks:           kube.Ptr(false),
+			// The shim image's entrypoint is the shim: `seed` copies itself.
+			InitContainers: []kube.Container{{
+				Name: "shim-seed", Image: h.ShimImage, ImagePullPolicy: h.PullPolicy,
+				Args:         []string{"seed", shimDir},
+				VolumeMounts: []kube.VolumeMount{{Name: "shim", MountPath: shimDir}},
+			}},
 			Containers: []kube.Container{{
 				Name: "browser", Image: img, ImagePullPolicy: h.PullPolicy,
+				Command: idleCommand,
 				SecurityContext: &kube.SecurityContext{
 					AllowPrivilegeEscalation: kube.Ptr(false),
 					Capabilities:             &kube.Capabilities{Drop: []string{"ALL"}},
 				},
-				VolumeMounts: []kube.VolumeMount{{Name: "shm", MountPath: "/dev/shm"}},
+				VolumeMounts: []kube.VolumeMount{
+					{Name: "shm", MountPath: "/dev/shm"},
+					{Name: "shim", MountPath: shimDir, ReadOnly: true},
+				},
 			}},
-			Volumes: []kube.Volume{{Name: "shm", EmptyDir: &kube.EmptyDirVolumeSource{Medium: "Memory", SizeLimit: "1Gi"}}},
+			Volumes: []kube.Volume{
+				{Name: "shm", EmptyDir: &kube.EmptyDirVolumeSource{Medium: "Memory", SizeLimit: "1Gi"}},
+				{Name: "shim", EmptyDir: &kube.EmptyDirVolumeSource{}},
+			},
 		}}
 	if err := h.Kube.Create(ctx, p); err != nil {
 		return err

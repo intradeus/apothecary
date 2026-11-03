@@ -20,11 +20,21 @@ import (
 // docker daemon, with NO network: a session's Chromium reaches the engine's
 // routing proxy through a unix socket on a per-project bind mount (the
 // sanctioned channel on docker hosts that drop container→host IP traffic).
+// The shim is the engine's own build (Config.Shim), mounted read-only.
 type dockerHost struct {
 	runsDir string
 	run     HostRun
 	stream  StreamRun
+	shim    func(ctx context.Context) (string, error)
 }
+
+// A browser container's labels record what it was created from: docker
+// reports a digest-pinned image by its repository alone, and a bind mount's
+// source not at all, so these are what staleness compares.
+const (
+	imageLabel = "apothecary.browser.image"
+	shimLabel  = "apothecary.browser.shim"
+)
 
 // dir is the project's bind mount: the sessions' proxy sockets, at the same
 // path in the daemon and the container.
@@ -53,13 +63,22 @@ func (h *dockerHost) Ensure(ctx context.Context, name, projectName, img string, 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	if h.shim == nil {
+		return errors.New("browser: no shim to mount (Config.Shim)")
+	}
+	shim, err := h.shim(ctx)
+	if err != nil {
+		return fmt.Errorf("browser: the shim: %w", err)
+	}
 	c := containerName(name)
-	cur, err := h.docker(ctx, "ps", "-a", "--filter", "name=^"+c+"$", "--format", "{{.Image}}")
+	cur, err := h.docker(ctx, "ps", "-a", "--filter", "name=^"+c+"$", "--format",
+		`{{.ID}}	{{.Label "`+imageLabel+`"}}	{{.Label "`+shimLabel+`"}}`)
 	if err != nil {
 		return err
 	}
-	if cur != "" {
-		if cur == img || !replace {
+	if f := strings.Split(cur, "\t"); f[0] != "" {
+		current := len(f) == 3 && f[1] == img && f[2] == shim
+		if current || !replace {
 			_, err := h.docker(ctx, "start", c) // a no-op when running
 			return err
 		}
@@ -71,11 +90,13 @@ func (h *dockerHost) Ensure(ctx context.Context, name, projectName, img string, 
 		"--label", "apothecary=true",
 		"--label", "apothecary.project=" + name, // the id: what Running finds it by
 		"--label", "apothecary.browser=true",
+		"--label", imageLabel + "=" + img,
+		"--label", shimLabel + "=" + shim,
 	}
 	if projectName != "" {
 		args = append(args, "--label", "apothecary.project.name="+projectName) // for a human's docker ps
 	}
-	_, err = h.docker(ctx, append(args,
+	args = append(args,
 		// No network at all: the routing proxy is the only way out.
 		"--network", "none",
 		"--init",
@@ -83,7 +104,10 @@ func (h *dockerHost) Ensure(ctx context.Context, name, projectName, img string, 
 		"--security-opt", "no-new-privileges",
 		"--shm-size", "1g",
 		"-v", dir+":"+dir,
-		img)...)
+		"-v", filepath.Dir(shim)+":"+shimDir+":ro",
+		"--entrypoint", idleCommand[0],
+		img)
+	_, err = h.docker(ctx, append(args, idleCommand[1:]...)...)
 	return err
 }
 
@@ -101,13 +125,41 @@ func (h *dockerHost) Running(ctx context.Context) ([]string, error) {
 	return strings.Fields(out), nil
 }
 
+// Inspect reports the image the container was created from: its label, or
+// docker's own idea of it for a container older than the label.
 func (h *dockerHost) Inspect(ctx context.Context, name string) (string, bool, error) {
-	out, err := h.docker(ctx, "ps", "-a", "--filter", "name=^"+containerName(name)+"$", "--format", "{{.Image}}\t{{.State}}")
+	out, err := h.docker(ctx, "ps", "-a", "--filter", "name=^"+containerName(name)+"$", "--format",
+		`{{.State}}	{{.Image}}	{{.Label "`+imageLabel+`"}}`)
 	if err != nil || out == "" {
 		return "", false, err
 	}
-	img, state, _ := strings.Cut(out, "\t")
-	return img, state == "running", nil
+	f := append(strings.Split(out, "\t"), "", "")
+	img := f[1]
+	if f[2] != "" {
+		img = f[2]
+	}
+	return img, f[0] == "running", nil
+}
+
+// Pulled is the docker host's Config.Image: ref, pulled when the daemon
+// lacks it. A digest-pinned ref never changes, so one pull is all it needs.
+func Pulled(ref string, run HostRun) func(context.Context) (string, error) {
+	if run == nil {
+		run = dockerRun
+	}
+	return func(ctx context.Context) (string, error) {
+		if _, _, code, err := run(ctx, []string{"image", "inspect", "--format", "{{.Id}}", ref}); err == nil && code == 0 {
+			return ref, nil
+		}
+		_, errb, code, err := run(ctx, []string{"pull", "--quiet", ref})
+		if err != nil {
+			return "", err
+		}
+		if code != 0 {
+			return "", fmt.Errorf("docker pull %s: exit %d: %s", ref, code, strings.TrimSpace(string(errb)))
+		}
+		return ref, nil
+	}
 }
 
 // Listen: a fresh unix socket on the project's bind mount.

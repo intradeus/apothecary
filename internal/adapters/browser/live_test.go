@@ -2,12 +2,12 @@
 
 package browser
 
-// Live test against the host's docker: builds the real browser image (node,
-// @playwright/mcp, Chromium — minutes the first time), starts the real
-// container, and drives one MCP session that browses an app on the test's
-// own loopback through the routing proxy, screenshots it, and is refused the
-// outside world. Removes its container; the image stays (content-addressed,
-// reused by the daemon).
+// Live test against the host's docker: pulls the pinned browser image
+// (DefaultImage) and builds the shim it mounts (minutes the first time),
+// starts the real container, and drives one MCP session that browses an app
+// on the test's own loopback through the routing proxy, screenshots it, and
+// is refused the outside world. Removes its container; the image and the
+// shim stay (reused by the daemon).
 //
 // Like the workspace live test, it needs APOTHECARY_LIVE_RUNS_DIR: a RunsDir
 // on the docker host, bind-mounted at the SAME path when the test runs in a
@@ -62,8 +62,8 @@ func TestLiveBrowserSession(t *testing.T) {
 		return d.DialContext(ctx, "tcp", app.Listener.Addr().String())
 	}
 
-	m := New(Config{RunsDir: runs, Image: wsimage.New(runs).EnsureBrowserImage, Tag: wsimage.BrowserImageTag,
-		Log: slog.New(slog.NewTextHandler(os.Stderr, nil))})
+	m := New(Config{RunsDir: runs, Image: Pulled(DefaultImage, nil), Tag: func() string { return DefaultImage },
+		Shim: wsimage.New(runs).EnsureShim, Log: slog.New(slog.NewTextHandler(os.Stderr, nil))})
 	defer m.Close()
 
 	toServer, fromAgent := io.Pipe()

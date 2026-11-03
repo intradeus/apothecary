@@ -434,8 +434,13 @@ func k8sBrowserHost(boot *config.Boot) (browser.Host, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("browser session listener %s: %w", k.BrowserProxyListen, err)
 	}
+	shim := k.ShimImage
+	if shim == "" {
+		shim = config.DefaultImage("shim", version)
+	}
 	return &browser.K8sHost{
 		Kube:            &kube.Client{Kubeconfig: kubeconfig, Namespace: k.Namespace},
+		ShimImage:       shim,
 		Mux:             mux,
 		EngineNamespace: k.EngineNamespace,
 		PullPolicy:      k.PullPolicy,

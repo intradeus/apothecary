@@ -90,7 +90,9 @@ itself, in a namespace of its own:
   engine — so the gateway, which judges by TLS SNI / HTTP Host and records
   every denial, is the only way out. The cluster's own pod and service ranges
   and cloud metadata are never reachable through it;
-- **one browser pod per project**, reaching the engine's session proxy only.
+- **one browser pod per project** (Microsoft's Playwright MCP image, pinned by
+  the engine, with the shim seeded in), reaching the engine's session proxy
+  only.
 
 ```sh
 helm upgrade --install apothecary deploy/helm/apothecary \
@@ -123,7 +125,7 @@ Locally, with [k3d](https://k3d.io) and [helm](https://helm.sh) installed:
 
 ```sh
 task k8s:cluster    # a k3d cluster + image registry; never touches ~/.kube/config
-task k8s:images     # build the six images from the working tree, push as :local
+task k8s:images     # build the five images from the working tree, push as :local
 task k8s:deploy     # helm install with values-k3d.yaml
 # → http://apothecary.localhost:8090
 task k8s:test-live  # the provisioner's live test against the cluster
@@ -306,7 +308,7 @@ nothing is published on its own.
    version and the `CHANGELOG.md` section it would add.
 2. Approve the `release` environment's deployment on that run.
 3. CI commits `CHANGELOG.md` as `chore(release): vX.Y.Z [skip ci]`, tags it
-   `vX.Y.Z`, pushes both to `main`, and pushes the six images to
+   `vX.Y.Z`, pushes both to `main`, and pushes the five images to
    `ghcr.io/intradeus/apothecary/<name>` as `:vX.Y.Z`, `:latest` and
    `:sha-…`. No GitHub Release is created.
 
@@ -365,14 +367,16 @@ helm upgrade --install apothecary deploy/helm/apothecary -n apothecary \
 kubectl -n apothecary rollout restart deployment/apothecaryd
 ```
 
-Pin all six images with `--set image.tag=vX.Y.Z`.
+Pin all five images with `--set image.tag=vX.Y.Z`. The project browser is
+Microsoft's Playwright MCP image, pinned by digest in the engine, so it moves
+only with an engine release.
 
 (If the GHCR package is private: `docker login ghcr.io` with a
 `read:packages` PAT first, or make the package public in its settings.)
 
-Migrations apply at boot, and the workspace shim and the gateway/browser
-images are content-addressed — they rebuild themselves on first use after
-their sources change.
+Migrations apply at boot, and the workspace shim and the gateway image are
+content-addressed — they rebuild themselves on first use after their
+sources change.
 
 To run an **uncommitted tree** as the real containerized service, use the
 local-build stack — it builds from the working tree and runs beside the
@@ -587,7 +591,7 @@ task test:integration:docker       #   docker workspaces (lifecycle, egress gate
 task test:integration:harness      #   the pinned harness CLIs (tools image) against what the engine hands them
 task test:integration:k8s          #   the Kubernetes provisioner on a local k3d cluster
 task lint                          # lint: gofmt, go vet (linux + darwin, every build tag), model ids, API contract, svelte-check, CPUI linters
-task build                         # build: apothecaryd, shim, gateway, the CPUI, the six images
+task build                         # build: apothecaryd, shim, gateway, the CPUI, the five images
 
 task test                          # unit, then integration
 task test:linux                    # the Go unit tests in a Linux container, incl. the Linux-only build-tagged ones

@@ -78,7 +78,7 @@ func TestEnsureShimBuildsExtractsAndCaches(t *testing.T) {
 // The builder pins the shim's dependencies for the docker build; the root
 // module compiles the same shim source (go vet/test ./...). Both must use
 // one version of each, or the tested shim and the shipped one quietly
-// diverge. The browser image compiles the shim too, with the same pins.
+// diverge.
 func TestShimDependencyPinsMatchGoMod(t *testing.T) {
 	data, err := os.ReadFile("../../../go.mod")
 	if err != nil {
@@ -101,10 +101,8 @@ func TestShimDependencyPinsMatchGoMod(t *testing.T) {
 		if dep.pin != modVersion {
 			t.Errorf("shim builder pins %s %s, go.mod requires %s", dep.module, dep.pin, modVersion)
 		}
-		for name, dockerfile := range map[string]string{"shim": shimBuilderDockerfile, "browser": browserDockerfile} {
-			if !strings.Contains(dockerfile, dep.get+modVersion+" ") {
-				t.Errorf("%s Dockerfile does not get %s%s:\n%s", name, dep.get, modVersion, dockerfile)
-			}
+		if !strings.Contains(shimBuilderDockerfile, dep.get+modVersion+" ") {
+			t.Errorf("shim Dockerfile does not get %s%s:\n%s", dep.get, modVersion, shimBuilderDockerfile)
 		}
 	}
 }
