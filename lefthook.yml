@@ -1,0 +1,7 @@
+# Git hooks (lefthook). Registered automatically: `npm ci` / `npm install` in
+# cpui runs the lefthook package's postinstall, which installs them (not on
+# CI). By hand: cd cpui && npx lefthook install.
+commit-msg:
+  scripts:
+    "conventional.sh":
+      runner: sh
