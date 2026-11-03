@@ -1,8 +1,11 @@
 #!/bin/sh
-# Final-stage assembly: the wrapper scripts and the permissions. Every path a
-# wrapper names is the IN-CONTAINER mount point (/opt/apothecary/tools) — the
-# same on both hosts and independent of the bundle's hash — so the bundle can
-# be extracted anywhere engine-side and still run once mounted.
+# Final-stage assembly: the wrapper scripts. Every path a wrapper names is
+# the IN-CONTAINER mount point (/opt/apothecary/tools) — the same on both
+# hosts and independent of the bundle's hash — so the bundle can be extracted
+# anywhere engine-side and still run once mounted.
+#
+# Everything else arrives with its final mode (the Dockerfile's stages set
+# it): a chmod here of a file an earlier layer holds would store it twice.
 set -eu
 T=/opt/apothecary/tools
 root=/tools
@@ -29,7 +32,5 @@ wrap "$root/musl/bin/codex-acp" "$musl_libs
 export CODEX_PATH=$T/musl/bin/codex
 exec $T/musl/libexec/codex-acp \"\$@\""
 
-# docker cp and cp -a preserve modes: a non-root remote user must be able to
-# read everything and run the entries.
-chmod -R a+rX "$root"
-chmod 0755 "$root"/gnu/bin/* "$root"/gnu/libexec/* "$root"/musl/bin/* "$root"/musl/libexec/* "$root/seed.sh"
+# seed.sh comes from the build context, which a docker host writes 0644.
+chmod 0755 "$root/seed.sh"

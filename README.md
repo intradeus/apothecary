@@ -1,9 +1,37 @@
-# ⚗ Apothecary
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="cpui/src/assets/lockups/hero/apothecary-hero-on-dark-1390x322.png">
+    <source media="(prefers-color-scheme: light)" srcset="cpui/src/assets/lockups/hero/apothecary-hero-on-light-1390x322.png">
+    <img alt="Apothecary — software, bottled" src="cpui/src/assets/lockups/hero/apothecary-hero-on-dark-1390x322.png" width="720">
+  </picture>
+</p>
 
-A self-hosted software factory: **a ticket goes in, a reviewed merge
-request comes out.** AI agents and deterministic gates alternate along a
-flow you define, inside disposable sandboxed workspaces, with humans at
-exactly two touchpoints — plan approval and final review.
+<p align="center">
+  <b>A self-hosted software factory: a ticket goes in, a reviewed merge request comes out.</b>
+</p>
+
+<p align="center">
+  <a href="https://github.com/intradeus/apothecary/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/intradeus/apothecary/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="CHANGELOG.md"><img alt="Changelog" src="https://img.shields.io/badge/changelog-semver-ff6b2c"></a>
+  <img alt="Go 1.26" src="https://img.shields.io/badge/go-1.26-00ADD8?logo=go&logoColor=white">
+  <img alt="Svelte 5" src="https://img.shields.io/badge/svelte-5-FF3E00?logo=svelte&logoColor=white">
+  <a href="#kubernetes"><img alt="Docker or Kubernetes" src="https://img.shields.io/badge/runs%20on-docker%20%7C%20kubernetes-326CE5?logo=kubernetes&logoColor=white"></a>
+</p>
+
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#kubernetes">Kubernetes</a> ·
+  <a href="#configure-all-in-the-ui">Configure</a> ·
+  <a href="#how-a-run-works">How a run works</a> ·
+  <a href="#security-model-short-form">Security</a> ·
+  <a href="#development">Development</a>
+</p>
+
+---
+
+AI agents and deterministic gates alternate along a flow you define, inside
+disposable sandboxed workspaces, with humans at exactly two touchpoints —
+plan approval and final review.
 
 - **Configured entirely in the UI.** Repository accounts, workspace
   provisioning, the coding agent and its model auth, projects, flows —
@@ -395,7 +423,7 @@ entirely (fake kinds, seeded sandbox project).
 ## How a run works
 
 ```
-apothecaryd (engine: flow interpreter, event log, API + UI)
+apothecaryd (the engine: flow interpreter, event log, API + UI)
   │  unix sockets in the bind-mounted run folder — no container networking
   ▼
 per-run Docker-in-Docker sandbox ── egress only via the project gateway
@@ -602,7 +630,7 @@ cd cpui && npm run dev             # UI dev server (proxies /api)
 ```
 
 Development happens on macOS or Linux, and `task test:unit` passes on both
-(CI runs it on each): a unit test fakes what it needs (fixture `/proc` and
+(CI runs it on Linux): a unit test fakes what it needs (fixture `/proc` and
 `/sys` roots, injected paths) rather than reading the machine. Anything that
 needs a real environment is an integration test and runs in containers.
 Running Apothecary itself on macOS means running it in Docker

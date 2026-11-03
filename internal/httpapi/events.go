@@ -49,16 +49,17 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Live agent progress rides the same stream as "delta" frames: no id
+	// (they are not in the log, so a reconnect must not resume from one),
+	// and superseded by the agent_message / agent_tool event that follows.
+	// Subscribed before the response starts: a delta sent once the client
+	// sees the stream open must reach it.
+	live, stopLive := s.Runs.SubscribeLive(id)
+	defer stopLive()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
-
-	// Live agent progress rides the same stream as "delta" frames: no id
-	// (they are not in the log, so a reconnect must not resume from one),
-	// and superseded by the agent_message / agent_tool event that follows.
-	live, stopLive := s.Runs.SubscribeLive(id)
-	defer stopLive()
 
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()

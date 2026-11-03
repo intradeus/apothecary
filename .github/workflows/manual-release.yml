@@ -116,6 +116,13 @@ jobs:
         run: |
           git checkout --detach "$VERSION"
           echo "TAG=$VERSION" >> "$GITHUB_ENV"
+      # Five images, the 2.3 GB tools bundle among them: the runner's unused
+      # toolchains leave too little disk for it.
+      - name: Free disk space
+        if: env.TAG != ''
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       # Build before anything is public.
       - name: Build the release images
         if: env.TAG != ''

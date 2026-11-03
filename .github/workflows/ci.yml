@@ -3,7 +3,7 @@
 # (see manual-release.yml): a human approves it, and it cuts the next semver
 # tag, CHANGELOG.md and the image set on GHCR.
 #
-#   unit         task test:unit          Linux and macOS (development is on macOS)
+#   unit         task test:unit          Linux
 #   integration  task test:integration:* real dependencies, in containers
 #   lint         task lint               every linter and type check
 #   build        task build              every binary, the CPUI and every image
@@ -27,11 +27,7 @@ concurrency:
 
 jobs:
   unit:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -65,22 +61,28 @@ jobs:
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # The tools bundle (≈2.3 GB) is built, then extracted or seeded once
+      # more, beside the suites' own images; the runner's preinstalled
+      # toolchains these jobs never use leave too little disk for it.
+      - name: Free disk space
+        if: matrix.suite != 'pg'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       # k3d (pinned), and the wireguard module every run's sandbox tunnels to
       # its gateway with (k3d's nodes share the runner's kernel). The runner
       # already has docker and kubectl. systemd-resolved answers *.localhost
       # with loopback, but the registry's name is pinned in /etc/hosts anyway:
       # dockerd resolves it to push, and only to loopback does it speak plain
       # HTTP. The five images live three times (docker, the registry, the
-      # node's containerd) and the tools bundle once more on the run's volume:
-      # drop toolchains this job never uses, or the kubelet evicts the pods
-      # for disk pressure. The task creates the cluster and deletes it again.
+      # node's containerd) and the tools bundle once more on the run's volume,
+      # which is why the disk was freed above. The task creates the cluster
+      # and deletes it again.
       - name: Kubernetes prerequisites
         if: matrix.suite == 'k8s'
         env:
           K3D_VERSION: v5.9.0
         run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
-          df -h /
           curl -fsSL -o "$RUNNER_TEMP/k3d" "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
           sudo install -m 0755 "$RUNNER_TEMP/k3d" /usr/local/bin/k3d
           k3d version
@@ -129,6 +131,11 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: npm ci
         working-directory: cpui
+      # Five images, the tools bundle among them: see the integration job.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       - run: task build
 
   commits:

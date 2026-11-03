@@ -300,7 +300,7 @@ tasks:
   # --- tests, lint ------------------------------------------------------------
   # Five units, each its own CI job (.github/workflows/ci.yml):
   #   test:unit         nothing running, any OS: Go unit + scenario suites and
-  #                     the CPUI's tests (CI runs them on Linux and macOS)
+  #                     the CPUI's tests (CI runs them on Linux)
   #   test:integration  real dependencies, always in containers: Postgres and
   #                     boot, docker workspaces and the browser, the harness
   #                     binaries, Kubernetes (k3d)

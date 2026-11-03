@@ -33,7 +33,9 @@ ARG OMP_VERSION=18.13.1
 ARG CODE_SERVER_VERSION=4.143.1
 RUN apk add --no-cache curl tar
 COPY fetch.sh /fetch.sh
-RUN sh /fetch.sh /out
+# Readable by any user, set here: a chmod in a later layer would store every
+# file it touches again (see the bundle below).
+RUN sh /fetch.sh /out && chmod -R a+rX /out
 
 # --- codex-acp ----------------------------------------------------------------
 # The ACP bridge for codex is plain JS on npm with no prebuilt binaries; its
@@ -57,7 +59,8 @@ RUN case "${TARGETARCH:-$(uname -m)}" in \
       arm64|aarch64) t=bun-linux-arm64 ;; \
       *) echo "unsupported architecture: ${TARGETARCH:-$(uname -m)}" >&2; exit 1 ;; \
     esac \
- && bun build /acp/index.js --compile --minify --target="$t" --outfile /out/codex-acp
+ && bun build /acp/index.js --compile --minify --target="$t" --outfile /out/codex-acp \
+ && chmod 0755 /out/codex-acp
 
 FROM oven/bun:${BUN_VERSION}-alpine AS acp-musl
 ARG TARGETARCH
@@ -67,29 +70,27 @@ RUN case "${TARGETARCH:-$(uname -m)}" in \
       arm64|aarch64) t=bun-linux-arm64-musl ;; \
       *) echo "unsupported architecture: ${TARGETARCH:-$(uname -m)}" >&2; exit 1 ;; \
     esac \
- && bun build /acp/index.js --compile --minify --target="$t" --outfile /out/codex-acp
+ && bun build /acp/index.js --compile --minify --target="$t" --outfile /out/codex-acp \
+ && chmod 0755 /out/codex-acp
 
 # --- musl runtime libs --------------------------------------------------------
 FROM alpine:3.21 AS musllibs
 RUN apk add --no-cache libstdc++ libgcc && mkdir /lib-out \
- && cp -L /usr/lib/libstdc++.so.6 /usr/lib/libgcc_s.so.1 /lib-out/
+ && cp -L /usr/lib/libstdc++.so.6 /usr/lib/libgcc_s.so.1 /lib-out/ \
+ && chmod a+r /lib-out/*
 
-# --- assembly -----------------------------------------------------------------
-# The wrappers and the permissions, in a stage of their own: assemble.sh's
-# chmod -R touches every file, and in the final image that would store the
-# whole tree a second time (a changed file's layer holds all of it).
-FROM alpine:3.21 AS assemble
+# --- the bundle ---------------------------------------------------------------
+# alpine, not scratch: seed.sh needs sh and cp. Every file arrives with its
+# final mode, and assemble.sh only adds the wrappers: a chmod here of what an
+# earlier layer holds would store it twice (4.3 GB instead of 2.3), in the
+# image and in the build.
+FROM alpine:3.21
 COPY --from=fetch /out /tools
 COPY --from=acp-gnu /out/codex-acp /tools/gnu/libexec/codex-acp
 COPY --from=acp-musl /out/codex-acp /tools/musl/libexec/codex-acp
 COPY --from=musllibs /lib-out/ /tools/musl/lib/
 COPY assemble.sh seed.sh /tools/
 RUN sh /tools/assemble.sh && rm /tools/assemble.sh
-
-# --- the bundle ---------------------------------------------------------------
-# alpine, not scratch: seed.sh needs sh and cp. One layer: the finished tree.
-FROM alpine:3.21
-COPY --from=assemble /tools /tools
 ARG TOOLS_HASH=dev
 RUN printf '%s\n' "$TOOLS_HASH" > /tools/TOOLS_HASH
 ENTRYPOINT ["/tools/seed.sh"]
