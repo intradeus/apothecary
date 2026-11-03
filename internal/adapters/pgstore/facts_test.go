@@ -2,7 +2,6 @@ package pgstore
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -27,8 +26,8 @@ func TestNeedsRebuild(t *testing.T) {
 	}
 }
 
-// A migration without the header applies without touching the projections;
-// one with it replays them from the log.
+// A later migration without the header applies without touching the
+// projections; one with it replays them from the log.
 func TestMigrateRebuildsOnlyWhenAsked(t *testing.T) {
 	dsn := pgtest.Empty(t)
 	ctx := context.Background()
@@ -36,12 +35,10 @@ func TestMigrateRebuildsOnlyWhenAsked(t *testing.T) {
 	if _, err := s.Append(ctx, "r1", &event.RunCreated{TicketTitle: "T"}); err != nil {
 		t.Fatal(err)
 	}
-	stale := func(s *Store, version int) {
-		t.Helper()
-		if _, err := s.pool.Exec(ctx, fmt.Sprintf(`UPDATE runs SET ticket_title='stale'; DELETE FROM schema_migrations WHERE version=%d`, version)); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := s.pool.Exec(ctx, `UPDATE runs SET ticket_title='stale'`); err != nil {
+		t.Fatal(err)
 	}
+	s.Close()
 	title := func(s *Store) string {
 		t.Helper()
 		var got string
@@ -50,18 +47,14 @@ func TestMigrateRebuildsOnlyWhenAsked(t *testing.T) {
 		}
 		return got
 	}
-	stale(s, 21) // 0021_ticket_tracker: no header
-	s.Close()
-	s = openDSN(t, dsn)
-	if got, want := ledger(t, s), shipped(t); !slices.Equal(got, want) {
-		t.Fatalf("ledger = %v, want %v", got, want)
-	}
+	plain := map[string]string{"0002_plain.sql": `CREATE TABLE plain (x int);`}
+	s = openSrc(t, dsn, withMigrations(t, plain))
 	if got := title(s); got != "stale" {
 		t.Errorf("a migration without the header rebuilt the projections (title %q)", got)
 	}
-	stale(s, 22) // 0022_run_analytics: the header
 	s.Close()
-	if got := title(openDSN(t, dsn)); got != "T" {
+	plain["0003_rebuilt.sql"] = "-- rebuild: projections\nCREATE TABLE rebuilt (x int);"
+	if got := title(openSrc(t, dsn, withMigrations(t, plain))); got != "T" {
 		t.Errorf("a migration with the header left the projections alone (title %q)", got)
 	}
 }

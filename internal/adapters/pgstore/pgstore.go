@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"slices"
@@ -31,6 +32,8 @@ import (
 	"apothecary/internal/run/event"
 )
 
+// migrationsFS holds the shipped migrations, under migrations/.
+//
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
@@ -67,6 +70,12 @@ type sub struct {
 // such a migration; a migration that touches no projection opts out by
 // leaving the header off.
 func Open(ctx context.Context, dsn string) (*Store, error) {
+	return openWith(ctx, dsn, migrationsFS)
+}
+
+// openWith is Open applying the migrations src holds under migrations/: the
+// shipped ones, or a test's beside them.
+func openWith(ctx context.Context, dsn string, src fs.FS) (*Store, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres connect: %w", err)
@@ -78,7 +87,7 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		return nil, fmt.Errorf("postgres connect: %w", err)
 	}
 	s := &Store{pool: pool, subs: map[string][]*sub{}, Clock: time.Now, metrics: newStoreMetrics()}
-	_, rebuild, err := s.migrate(ctx)
+	_, rebuild, err := s.migrate(ctx, src)
 	if err != nil {
 		pool.Close()
 		return nil, err
@@ -100,34 +109,24 @@ func (s *Store) Close() {
 	s.pool.Close()
 }
 
-// preSquashHead is the last version of the migration chain folded into
-// 0001_init.sql (2026-10-19). A DB that applied that whole chain already has
-// exactly the init schema, so migrate collapses its ledger to {1}. Remove
-// once no pre-squash DB is left.
-//
-// That equivalence is why 0001_init.sql is FROZEN at its squash-time content
-// (TestInitMigrationIsFrozen): a database that applied version 1 — collapsed
-// or fresh — never re-runs it, so an edit to the file reaches only databases
-// created after the edit. Every schema change since the squash is its own
-// NNNN_name.sql, idempotent where a fresh database already has the result.
-//
-// One deliberate exception: on 2026-10-24 the repository port and the
-// project column that names its integration (repo_account_id) were renamed
-// in place, in 0001 and 0006, and the freeze re-taken. A database created
-// before that does not match the code; it is reset (the project is
-// unreleased), not migrated.
-const preSquashHead = 25
+// 0001_init.sql is the v1.0.0 schema: the development chain, squashed. It is
+// FROZEN (TestInitMigrationIsFrozen): a database that applied version 1
+// never re-runs it, so an edit to the file reaches only databases created
+// after the edit. Every schema change from here on is its own
+// NNNN_name.sql. A database still on the development chain holds versions
+// this binary does not ship and is refused at boot: it is reset, not
+// migrated.
 
-// migration is one embedded migrations/NNNN_name.sql file.
+// migration is one migrations/NNNN_name.sql file.
 type migration struct {
 	version int
 	name    string
 }
 
-// migrations lists the embedded migrations in version order, rejecting
-// unnumbered names and duplicate versions.
-func migrations() ([]migration, error) {
-	entries, err := migrationsFS.ReadDir("migrations")
+// migrations lists src's migrations in version order, rejecting unnumbered
+// names and duplicate versions.
+func migrations(src fs.FS) ([]migration, error) {
+	entries, err := fs.ReadDir(src, "migrations")
 	if err != nil {
 		return nil, err
 	}
@@ -163,10 +162,10 @@ func needsRebuild(sql []byte) bool {
 	return false
 }
 
-// migrate applies the pending migrations, reporting how many it applied and
-// whether any of them asked for a projections rebuild.
-func (s *Store) migrate(ctx context.Context) (applied int, rebuild bool, err error) {
-	migs, err := migrations()
+// migrate applies src's pending migrations, reporting how many it applied
+// and whether any of them asked for a projections rebuild.
+func (s *Store) migrate(ctx context.Context, src fs.FS) (applied int, rebuild bool, err error) {
+	migs, err := migrations(src)
 	if err != nil {
 		return 0, false, err
 	}
@@ -192,23 +191,16 @@ func (s *Store) migrate(ctx context.Context) (applied int, rebuild bool, err err
 	if err != nil {
 		return 0, false, err
 	}
-	if squashed(done) {
-		if _, err := s.pool.Exec(ctx, `DELETE FROM schema_migrations WHERE version > 1`); err != nil {
-			return 0, false, fmt.Errorf("collapse pre-squash migrations: %w", err)
-		}
-		done = map[int]bool{1: true}
-	}
-
 	// A version this binary doesn't ship means the schema was written by a
-	// newer apothecaryd (or a pre-squash chain applied only partway): refuse
-	// rather than run against tables we don't know.
+	// newer apothecaryd, or is a development database from before the v1.0.0
+	// squash: refuse rather than run against tables we don't know.
 	known := map[int]bool{}
 	for _, m := range migs {
 		known[m.version] = true
 	}
 	for v := range done {
 		if !known[v] {
-			return 0, false, fmt.Errorf("database has migration %d applied, which this apothecaryd does not ship — upgrade apothecaryd, or reset a dev database", v)
+			return 0, false, fmt.Errorf("database has migration %d applied, which this apothecaryd does not ship — upgrade apothecaryd, or reset a database made before v1.0.0", v)
 		}
 	}
 
@@ -216,7 +208,7 @@ func (s *Store) migrate(ctx context.Context) (applied int, rebuild bool, err err
 		if done[m.version] {
 			continue
 		}
-		sql, err := migrationsFS.ReadFile("migrations/" + m.name)
+		sql, err := fs.ReadFile(src, "migrations/"+m.name)
 		if err != nil {
 			return applied, rebuild, err
 		}
@@ -255,19 +247,6 @@ func (s *Store) appliedMigrations(ctx context.Context) (map[int]bool, error) {
 		applied[v] = true
 	}
 	return applied, nil
-}
-
-// squashed reports a ledger holding the whole pre-squash chain (1..preSquashHead).
-func squashed(applied map[int]bool) bool {
-	if len(applied) != preSquashHead {
-		return false
-	}
-	for v := 1; v <= preSquashHead; v++ {
-		if !applied[v] {
-			return false
-		}
-	}
-	return true
 }
 
 // --- event.Store ------------------------------------------------------------

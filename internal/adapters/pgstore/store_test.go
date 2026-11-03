@@ -58,35 +58,8 @@ func TestOpenSurfacesConnectionFailures(t *testing.T) {
 	}
 }
 
-func TestSquashedOnlyMatchesTheWholeChain(t *testing.T) {
-	whole := map[int]bool{}
-	for v := 1; v <= preSquashHead; v++ {
-		whole[v] = true
-	}
-	if !squashed(whole) {
-		t.Error("the whole chain must collapse")
-	}
-	short := map[int]bool{}
-	for v := 1; v < preSquashHead; v++ {
-		short[v] = true
-	}
-	if squashed(short) {
-		t.Error("a chain applied partway must not collapse")
-	}
-	holed := map[int]bool{}
-	for v := 2; v <= preSquashHead+1; v++ {
-		holed[v] = true
-	}
-	if squashed(holed) {
-		t.Error("the right count with the wrong versions must not collapse")
-	}
-	if squashed(nil) {
-		t.Error("an empty ledger must not collapse")
-	}
-}
-
 func TestMigrationsAreOrderedAndUnique(t *testing.T) {
-	migs, err := migrations()
+	migs, err := migrations(migrationsFS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,21 +76,21 @@ func TestMigrateFailureIsNotRecorded(t *testing.T) {
 	dsn := pgtest.Empty(t)
 	ctx := context.Background()
 	s := openDSN(t, dsn)
-	if _, err := s.pool.Exec(ctx, `DROP TABLE ssh_keys; CREATE TABLE ssh_keys (nope int); DELETE FROM schema_migrations WHERE version = 20`); err != nil {
+	if _, err := s.pool.Exec(ctx, `CREATE TABLE widgets (nope int)`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
-	_, err := Open(ctx, dsn)
-	if err == nil || !strings.Contains(err.Error(), "0020_ssh_keys") {
+	src := withMigrations(t, map[string]string{"0002_widgets.sql": `CREATE TABLE widgets (id int);`})
+	if _, err := openWith(ctx, dsn, src); err == nil || !strings.Contains(err.Error(), "0002_widgets") {
 		t.Fatalf("Open = %v, want a failure naming the migration", err)
 	}
 	// Repair the obstacle: the migration applies on the next boot.
 	repair := openRaw(t, dsn)
-	if _, err := repair.Exec(ctx, `DROP TABLE ssh_keys`); err != nil {
+	if _, err := repair.Exec(ctx, `DROP TABLE widgets`); err != nil {
 		t.Fatal(err)
 	}
-	s2 := openDSN(t, dsn)
-	if err := s2.pool.QueryRow(ctx, `SELECT 1 FROM schema_migrations WHERE version = 20`).Scan(new(int)); err != nil {
+	s2 := openSrc(t, dsn, src)
+	if err := s2.pool.QueryRow(ctx, `SELECT 1 FROM schema_migrations WHERE version = 2`).Scan(new(int)); err != nil {
 		t.Errorf("retried migration not recorded: %v", err)
 	}
 }
@@ -144,11 +117,12 @@ func TestOpenFailsWhenThePostMigrationRebuildFails(t *testing.T) {
 	if _, err := s.Append(ctx, "r1", &event.RunCreated{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.pool.Exec(ctx, `UPDATE events SET payload='[]'; DELETE FROM schema_migrations WHERE version = 22`); err != nil {
+	if _, err := s.pool.Exec(ctx, `UPDATE events SET payload='[]'`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
-	if _, err := Open(ctx, dsn); err == nil || !strings.Contains(err.Error(), "rebuild projections after migrating") {
+	src := withMigrations(t, map[string]string{"0002_rebuild.sql": "-- rebuild: projections\nSELECT 1;"})
+	if _, err := openWith(ctx, dsn, src); err == nil || !strings.Contains(err.Error(), "rebuild projections after migrating") {
 		t.Fatalf("Open = %v", err)
 	}
 }
