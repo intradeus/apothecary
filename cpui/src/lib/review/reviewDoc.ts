@@ -6,6 +6,7 @@
 import type { Token } from 'marked';
 import { marked } from '$lib/core/markdown';
 import type { PingFile, ReviewComment } from '$lib/domain';
+import { isStructuredView, structuredBlocks } from '$lib/review/structured';
 
 export interface DocBlock {
 	/** The block's own markdown (a fenced listing for a non-markdown file);
@@ -129,6 +130,11 @@ export function isMarkdown(path: string): boolean {
 	return !base.includes('.') || /\.(md|markdown|mdx)$/i.test(base);
 }
 
+/** Whether a file is shown rendered — markdown, or a structured type with a
+ *  view of its own — rather than as a listing (and so has an outline). */
+export const isRendered = (f: Pick<PingFile, 'path' | 'type'>) =>
+	isMarkdown(f.path) || isStructuredView(f.type);
+
 /** A non-markdown text as a fenced listing, its fence longer than any run of
  *  backticks inside so the text can never close it. */
 export function listing(src: string, path: string): string {
@@ -141,9 +147,13 @@ export function listing(src: string, path: string): string {
 // docBlocks splits a file into the blocks comments anchor to. Markdown is
 // lexed into top-level blocks, each carrying its source line range and
 // nearest heading (marked tokens keep `raw`, so line numbers are cumulative
-// newline counts); any other file into runs of lines between blank lines,
-// each a listing of its own.
-export function docBlocks(src: string, path: string): DocBlock[] {
+// newline counts); a structured type with a view of its own is rendered by
+// it (structured.ts), falling back to a listing when it does not read as its
+// type; any other file into runs of lines between blank lines, each a
+// listing of its own.
+export function docBlocks(src: string, path: string, type?: string): DocBlock[] {
+	if (type && isStructuredView(type))
+		return structuredBlocks(src, type) ?? listingBlocks(src, path);
 	if (!isMarkdown(path)) return listingBlocks(src, path);
 	const tokens = marked.lexer(src);
 	const out: DocBlock[] = [];

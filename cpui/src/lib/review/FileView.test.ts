@@ -77,6 +77,19 @@ describe('FileView', () => {
 			expect(screen.queryByRole('heading')).not.toBeInTheDocument();
 		});
 
+		it('renders a structured file by its view, not as a listing', () => {
+			const file = aShownFile({ path: 'v.yaml', type: 'verdict' });
+			const src = 'verdict: REJECT\ncomments:\n  - { path: a.go, line: 3, body: wrap it }\n';
+			const { container } = render(FileView, {
+				...base,
+				file,
+				doc: { blocks: docBlocks(src, file.path, file.type) }
+			});
+			expect(screen.getByRole('heading', { name: 'Rejected' })).toBeInTheDocument();
+			expect(screen.getByText('wrap it')).toBeInTheDocument();
+			expect(container.querySelector('.listing')).toBeNull();
+		});
+
 		it('offers anything else as a download with its size', () => {
 			const file = aShownFile({ kind: 'other', snapshotId: 'bin', size: 2048 });
 			render(FileView, { ...base, file });

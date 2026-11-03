@@ -11,7 +11,7 @@
 	import {
 		byPlace,
 		commentAsShown,
-		isMarkdown,
+		isRendered,
 		perFile,
 		type DraftComment
 	} from '$lib/review/reviewDoc';
@@ -106,7 +106,7 @@
 		{:else}
 			<FileList files={set.files} current={set.current} {counts} onpick={(p) => void set.open(p)} />
 		{/if}
-		{#if file?.kind === 'text' && isMarkdown(file.path) && doc && !doc.error}
+		{#if file?.kind === 'text' && isRendered(file) && doc && !doc.error}
 			<div class="pane-head sub"><h2>{t('doc.outline')}</h2></div>
 			<Outline
 				blocks={doc.blocks}

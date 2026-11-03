@@ -12,7 +12,7 @@
 	import { api } from '$lib/api';
 	import { fmtBytes } from '$lib/core/format';
 	import {
-		isMarkdown,
+		isRendered,
 		isWholeFile,
 		locate,
 		rangeAt,
@@ -264,7 +264,7 @@
 	{:else}
 		<div
 			class="paper"
-			class:listing={!isMarkdown(file.path)}
+			class:listing={!isRendered(file)}
 			class:flash={wholeActive}
 			bind:this={paperEl}
 		>

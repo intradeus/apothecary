@@ -116,7 +116,8 @@ export class ReviewFiles {
 				);
 				return;
 			}
-			this.docs.set(f.path, { blocks: docBlocks(new TextDecoder().decode(bytes), f.path) });
+			const text = new TextDecoder().decode(bytes);
+			this.docs.set(f.path, { blocks: docBlocks(text, f.path, f.type) });
 		} catch (e) {
 			this.docs.set(f.path, { blocks: [], error: errorMessage(e) });
 		}
