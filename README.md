@@ -141,6 +141,14 @@ Cluster requirements:
   it the sandbox could route around its gateway.
 - The **`wireguard` kernel module** on the nodes (in-tree since Linux 5.6;
   loaded on demand).
+- Nodes may confine `/usr/bin/wg` with AppArmor (Ubuntu 26.04 ships
+  `/etc/apparmor.d/wg`, which also attaches to a privileged container's `wg`):
+  nothing to do, the tunnel reads its key from `/etc/wireguard`, the one place
+  that profile allows. Sandbox images up to v3.0.0 read it from
+  `/secrets/wg` and their `wg` init container fails with
+  `fopen: Permission denied`; upgrade, or allow that path on the node
+  (`echo '/secrets/wg/** r,' | sudo tee -a /etc/apparmor.d/local/wg && sudo
+  apparmor_parser -r /etc/apparmor.d/wg`).
 - **Privileged pods** in the workspaces namespace (the chart labels it), or
   [sysbox](https://github.com/nestybox/sysbox) on the nodes and the
   integration's *runtime class* set with *privileged* off.

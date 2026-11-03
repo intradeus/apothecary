@@ -125,13 +125,17 @@ func (h *DockerHost) withPeer(project, run string, att Attachment) (Attachment, 
 // the default route (idempotent: a re-provision re-runs it on a live
 // sandbox). The tunnel's own packets go to the gateway's address on the run
 // network, which the on-link subnet route keeps off wg0. MTU: the uplink's
-// less the WireGuard overhead (IPv4 20 + UDP 8 + WireGuard 32).
+// less the WireGuard overhead (IPv4 20 + UDP 8 + WireGuard 32). wg reads the
+// key from /etc/wireguard, the one place a host's AppArmor profile for
+// /usr/bin/wg allows (Ubuntu 26.04 ships one; it attaches whenever the
+// container runs unconfined).
 const linkScript = `set -eu
 umask 077
-printf '%s\n' "$APO_WG_KEY" > /tmp/wg.key
+mkdir -p /etc/wireguard
+printf '%s\n' "$APO_WG_KEY" > /etc/wireguard/wg0.key
 mtu=$(ip -o link show eth0 | awk '{for (i = 1; i < NF; i++) if ($i == "mtu") print $(i+1)}')
 ip link show wg0 >/dev/null 2>&1 || ip link add wg0 type wireguard
-wg set wg0 private-key /tmp/wg.key peer "$APO_WG_GW_KEY" endpoint "$APO_WG_ENDPOINT" allowed-ips 0.0.0.0/0 persistent-keepalive 25
+wg set wg0 private-key /etc/wireguard/wg0.key peer "$APO_WG_GW_KEY" endpoint "$APO_WG_ENDPOINT" allowed-ips 0.0.0.0/0 persistent-keepalive 25
 ip address replace "$APO_WG_IP/32" dev wg0
 ip link set wg0 mtu $((${mtu:-1500} - 60)) up
 ip route replace default dev wg0

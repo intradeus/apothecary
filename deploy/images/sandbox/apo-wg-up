@@ -13,6 +13,12 @@
 # the gateway's endpoint (else the tunnel's own packets would loop into wg0)
 # and the engine. The CNI's pod-network routes stay too (replies to the
 # engine's dial-in); the network policy is what keeps the pod from using them.
+#
+# wg reads the private key from /etc/wireguard, never from the secret's
+# mount: a host that confines /usr/bin/wg with an AppArmor profile (Ubuntu
+# 26.04 ships /etc/apparmor.d/wg) lets it read keys there only, and that
+# profile attaches to this container's wg too, a privileged container running
+# unconfined.
 set -eu
 mkdir -p /run/apo
 if [ ! -s /run/apo/orig-gw ]; then
@@ -24,7 +30,8 @@ MTU=$(( $(cat /sys/class/net/eth0/mtu) - 60 ))   # outer IPv4 20 + UDP 8 + WireG
 
 sysctl -qw net.ipv6.conf.all.disable_ipv6=1 net.ipv4.conf.all.rp_filter=0 net.ipv4.conf.default.rp_filter=0 net.ipv4.conf.eth0.rp_filter=0
 ip link show wg0 >/dev/null 2>&1 || ip link add wg0 type wireguard
-wg set wg0 private-key /secrets/wg/wg-private-key \
+(umask 077 && mkdir -p /etc/wireguard && cat /secrets/wg/wg-private-key > /etc/wireguard/wg0.key)
+wg set wg0 private-key /etc/wireguard/wg0.key \
   peer "$(cat /secrets/wg/gw-public-key)" endpoint "$GW_ENDPOINT" allowed-ips 0.0.0.0/0 persistent-keepalive 25
 ip address replace "$(cat /secrets/wg/wg-ip)/32" dev wg0
 ip link set wg0 mtu "$MTU" up
