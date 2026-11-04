@@ -1334,6 +1334,11 @@ func (a *Adapter) TailExecLog(_ context.Context, env envport.EnvID, n int) ([]by
 	if err != nil {
 		return nil, err
 	}
+	// Some filesystems (overlayfs, btrfs) size an empty directory 0: it
+	// would read as an empty log.
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("live exec log %s: not a regular file", path)
+	}
 	if n <= 0 {
 		n = 64 << 10
 	}
