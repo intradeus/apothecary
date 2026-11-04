@@ -78,13 +78,12 @@ jobs:
     needs: plan
     if: needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'resume'
     runs-on: ubuntu-latest
-    environment: release
     concurrency:
       group: manual-release
       # Never cancel: a release can be partway through pushing.
       cancel-in-progress: false
     permissions:
-      contents: read # the release commit and tag go out with the deploy key
+      contents: write # push the release commit and tag to main
       packages: write # push to ghcr
     env:
       SHA: ${{ github.sha }}
@@ -93,10 +92,6 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-          # The push credential: main takes no direct pushes, and its ruleset
-          # lets deploy keys bypass that — this one, a write deploy key, is
-          # the only one (README § Releases).
-          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
       - run: pipx install "commitizen==${COMMITIZEN_VERSION}"
       # Check the state again: main can move between the two jobs.
       - id: plan
