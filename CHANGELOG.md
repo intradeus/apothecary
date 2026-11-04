@@ -2,6 +2,20 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v3.1.0 (2026-11-04)
+
+### Features
+
+- **ci**: add manual release
+
+### Fixes
+
+- **ci**: add github release on release
+- **ci**: fixing CI failed timing tests
+- **ci**: Commit convention
+- **ci**: fixing tests
+- **infra**: read keys from /etc/wireguard (AppArmor on Ubuntu 26.04)
+
 ## v3.0.0 (2026-11-03)
 
 ### Features
