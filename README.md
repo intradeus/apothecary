@@ -347,9 +347,14 @@ is published on its own.
 3. CI commits `CHANGELOG.md` as `chore(release): vX.Y.Z [skip ci]`, tags it
    `vX.Y.Z`, pushes both to `main`, and pushes the five images to
    `ghcr.io/intradeus/apothecary/<name>` as `:vX.Y.Z`, `:latest` and
-   `:sha-…`. No GitHub Release is created.
+   `:sha-…`.
+4. Once the images are up, it creates the GitHub Release `vX.Y.Z`: that
+   version's `CHANGELOG.md` section, a link to the diff since the previous
+   release, and the `docker pull` commands of its images. *Watch → Custom → Releases* on the repository notifies you of each
+   one.
 
-Running it again after a failed image push re-publishes that release's images.
+Running it again after a failed image push re-publishes that release's
+images, then creates the GitHub Release if it is missing.
 
 The version follows the conventional commits since the last tag (rules in
 `.cz.toml`):
