@@ -414,12 +414,25 @@ func launch(req serviceRequest) error {
 	return fmt.Errorf("the supervisor of %s did not start (see its log)", req.Name)
 }
 
-// waitSettled waits until the service is no longer starting, or for d.
+// settleSlack is how long past its deadline a starting service may take to
+// turn unhealthy: the supervisor decides at a probe made at the deadline,
+// and a probe can run for up to 30s.
+const settleSlack = 35 * time.Second
+
+// waitSettled waits until the service is no longer starting, or for d. The
+// supervisor's deadline is its own clock, set after this one started, so
+// waiting is bounded by that deadline (plus the probe that decides) too:
+// otherwise --wait could return "starting" a moment before "unhealthy".
 func waitSettled(name string, d time.Duration) serviceState {
 	end := time.Now().Add(d)
 	for {
 		st, _ := loadServiceState(name)
 		st = observed(st)
+		if st.Deadline != nil {
+			if dl := st.Deadline.Add(settleSlack); dl.After(end) {
+				end = dl
+			}
+		}
 		if st.Phase != svcStarting || !time.Now().Before(end) {
 			return st
 		}

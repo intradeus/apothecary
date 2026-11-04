@@ -339,8 +339,7 @@ and apply without a restart. Notification mirrors (Matrix, Slack, Discord) live 
 Releases are semver tags (`vX.Y.Z`) cut by CI when you ask for one; nothing
 is published on its own.
 
-1. A pull request is squash-merged into `main` (direct pushes are refused),
-   and the merge runs `ci`.
+1. A push to `main` (or a pull request squash-merged into it) runs `ci`.
 2. When you want a release: *Actions → manual-release → Run workflow* on
    `main`. It releases `main`'s head, and refuses to unless `ci` passed on
    that commit. Its job summary shows the version and the `CHANGELOG.md`
@@ -348,9 +347,14 @@ is published on its own.
 3. CI commits `CHANGELOG.md` as `chore(release): vX.Y.Z [skip ci]`, tags it
    `vX.Y.Z`, pushes both to `main`, and pushes the five images to
    `ghcr.io/intradeus/apothecary/<name>` as `:vX.Y.Z`, `:latest` and
-   `:sha-…`. No GitHub Release is created.
+   `:sha-…`.
+4. Once the images are up, it creates the GitHub Release `vX.Y.Z`: that
+   version's `CHANGELOG.md` section, a link to the diff since the previous
+   release, and the `docker pull` commands of its images. *Watch → Custom → Releases* on the repository notifies you of each
+   one.
 
-Running it again after a failed image push re-publishes that release's images.
+Running it again after a failed image push re-publishes that release's
+images, then creates the GitHub Release if it is missing.
 
 The version follows the conventional commits since the last tag (rules in
 `.cz.toml`):
@@ -372,24 +376,15 @@ task commit             # write one interactively (needs commitizen: brew instal
 task release:preview    # the version and changelog the next release would get (same)
 ```
 
-One-time GitHub setup:
+No GitHub setup is needed: the release job pushes its commit and tag to
+`main` with the workflow's own token, so `main` must not refuse pushes from
+GitHub Actions (no ruleset or branch protection blocking them).
 
-1. *Settings → General → Pull Requests*: allow **squash merging** only, with
-   the default commit message **Pull request title**.
-2. *Settings → Rules → Rulesets → New branch ruleset* on the default branch,
-   active: **Restrict deletions**, **Require a pull request before merging**
-   (allowed merge method: squash), **Require status checks to pass** (`unit`,
-   `integration (pg|docker|harness|k8s)`, `lint`, `build`, `pr-title`) and
-   **Block force pushes**. Bypass list: **Deploy keys** only. On a private
-   repository GitHub enforces rulesets only on a paid plan: if the ruleset
-   page says it "won't be enforced", nothing is blocked yet.
-3. *Settings → Deploy keys*: add a key **with write access** and store its
-   private half as the `RELEASE_DEPLOY_KEY` secret (`ssh-keygen -t ed25519
-   -N '' -f release-key`). The release job pushes its commit and tag with it:
-   the only push `main` takes.
-4. *Settings → Environments → `release`*: limit deployment branches to
-   `main`, and give it no required reviewers (with them, each run waits for
-   an approval on top of the click).
+Optional, if you merge pull requests by squashing: on the repository page,
+the **Settings** tab (repository admins only) → **General** → scroll to the
+**Pull Requests** section → under **Allow squash merging**, set *Default
+commit message* to **Pull request title**. The squashed commit then carries
+the title `pr-title` checked.
 
 ### Deploying a release
 

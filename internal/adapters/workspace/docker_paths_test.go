@@ -716,7 +716,7 @@ func TestTailExecLog(t *testing.T) {
 			t.Errorf("tail %d = %q, %v", n, got, err)
 		}
 	}
-	// A directory at the log's path: opens, cannot be read.
+	// A directory at the log's path is not a log.
 	os.MkdirAll(filepath.Join(a.folderFor("d"), "exec.log"), 0o755)
 	if _, err := a.TailExecLog(ctx, "d", 10); err == nil {
 		t.Error("read a directory as a log")

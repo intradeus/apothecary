@@ -10,7 +10,9 @@
 #            on while this ran; run it again)
 #   release  commit CHANGELOG.md + tag vX.Y.Z, build the five images, push main
 #            and the tag atomically, then push the images as vX.Y.Z,
-#            sha-<short> and latest (latest only for the newest release)
+#            sha-<short> and latest (latest only for the newest release),
+#            and last create the GitHub Release vX.Y.Z (its CHANGELOG section
+#            and the images' pull commands)
 #
 # The release commit carries [skip ci], so it starts no ci run of its own.
 name: manual-release
@@ -78,13 +80,12 @@ jobs:
     needs: plan
     if: needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'resume'
     runs-on: ubuntu-latest
-    environment: release
     concurrency:
       group: manual-release
       # Never cancel: a release can be partway through pushing.
       cancel-in-progress: false
     permissions:
-      contents: read # the release commit and tag go out with the deploy key
+      contents: write # push the release commit and tag to main
       packages: write # push to ghcr
     env:
       SHA: ${{ github.sha }}
@@ -93,10 +94,6 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-          # The push credential: main takes no direct pushes, and its ruleset
-          # lets deploy keys bypass that — this one, a write deploy key, is
-          # the only one (README § Releases).
-          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
       - run: pipx install "commitizen==${COMMITIZEN_VERSION}"
       # Check the state again: main can move between the two jobs.
       - id: plan
@@ -142,15 +139,45 @@ jobs:
       - name: Push the release images
         if: env.TAG != ''
         run: deploy/release.sh images "$TAG" --push
+      # The tag's CHANGELOG section, the diff since the previous tag, and its
+      # images; the release and the run's summary both show it.
+      - name: Write the release notes
+        if: env.TAG != ''
+        run: |
+          prev=$(git describe --tags --abbrev=0 --match 'v*' "$TAG^" 2>/dev/null || true)
+          {
+            echo "## Changelog"
+            awk -v tag="$TAG" '/^## /{on = index($0, "## " tag " ") == 1; next} on' CHANGELOG.md
+            if [ -n "$prev" ]; then
+              echo
+              echo "**Full diff:** $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$prev...$TAG"
+            fi
+            echo
+            echo "## Images"
+            echo
+            echo '```sh'
+            for name in apothecaryd sandbox shim tools egress-gw; do
+              echo "docker pull ghcr.io/intradeus/apothecary/$name:$TAG"
+            done
+            echo '```'
+          } > "$RUNNER_TEMP/release.md"
+      # Last, so a release never points at images that are not there. A
+      # resumed release keeps the GitHub Release an earlier run made.
+      - name: Create the GitHub Release
+        if: env.TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "The GitHub Release $TAG exists"
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/release.md"
+          fi
       - name: Summary
         if: env.TAG != ''
         run: |
           {
             echo "## Released $TAG"
             echo
-            for name in apothecaryd sandbox shim tools egress-gw; do
-              echo "- \`ghcr.io/intradeus/apothecary/$name:$TAG\`"
-            done
-            echo
-            awk '/^## /{n++} n==1' CHANGELOG.md
+            cat "$RUNNER_TEMP/release.md"
           } >> "$GITHUB_STEP_SUMMARY"

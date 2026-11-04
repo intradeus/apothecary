@@ -1,5 +1,5 @@
-# main takes squash merges only, under the pull request's title: that title
-# is the commit the release reads (.cz.toml), so it follows the convention.
+# A squash merge lands under the pull request's title: that title is then the
+# commit the release reads (.cz.toml), so it follows the convention.
 # Its own workflow so that fixing a title re-runs this check alone. The check
 # is the commit-msg hook's own script (lefthook.yml), which already checked
 # every commit of the branch.
