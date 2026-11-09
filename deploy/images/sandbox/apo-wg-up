@@ -26,7 +26,12 @@ if [ ! -s /run/apo/orig-gw ]; then
 fi
 ORIG_GW=$(cat /run/apo/orig-gw)
 [ -n "$ORIG_GW" ] || { echo "apo-wg-up: no default gateway on eth0" >&2; exit 1; }
-MTU=$(( $(cat /sys/class/net/eth0/mtu) - 60 ))   # outer IPv4 20 + UDP 8 + WireGuard 32
+# eth0's MTU from netlink, never /sys/class/net: under sysbox with
+# hostUsers: false the container's /sys is the host's sysfs (the host's
+# interfaces, no eth0 of this pod) and a cat there crash-looped this container.
+LINK_MTU=$(ip -o link show dev eth0 | awk '{for (i = 1; i <= NF; i++) if ($i == "mtu") {print $(i + 1); exit}}')
+[ -n "$LINK_MTU" ] || { echo "apo-wg-up: no mtu for eth0" >&2; exit 1; }
+MTU=$(( LINK_MTU - 60 ))   # outer IPv4 20 + UDP 8 + WireGuard 32
 
 sysctl -qw net.ipv6.conf.all.disable_ipv6=1 net.ipv4.conf.all.rp_filter=0 net.ipv4.conf.default.rp_filter=0 net.ipv4.conf.eth0.rp_filter=0
 ip link show wg0 >/dev/null 2>&1 || ip link add wg0 type wireguard

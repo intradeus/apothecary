@@ -188,6 +188,10 @@ Cluster requirements:
     sudo apparmor_parser -r /etc/apparmor.d/fusermount3 && sudo systemctl restart sysbox
     ```
 
+    The kernel log then still shows one `fusermount3` denial of
+    `dac_override` per sandbox start: harmless, the profile withholds that
+    capability on purpose and the rules above do not grant it.
+
   - **Unprivileged user namespaces (24.04 and later).**
     `kernel.apparmor_restrict_unprivileged_userns=1` lets only a process
     that is root on the host, or runs under a profile allowing it, create

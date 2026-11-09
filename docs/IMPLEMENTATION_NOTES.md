@@ -5985,6 +5985,19 @@ false` to every `sysbox-runc` pod; the fix is for the engine to say so.
 - Not changed: the docker provisioner (`APOTHECARY_SANDBOX_RUNTIME`) —
   docker hands sysbox no user namespace and sysbox makes its own, the
   live-verified path. The AppArmor point applies to Ubuntu docker hosts too.
+- **`/sys` is the host's.** The same deployment's next failure: the `wg`
+  init container crash-looped on `cat /sys/class/net/eth0/mtu`. Under
+  sysbox with `hostUsers: false` the container's `/sys` is the host's sysfs
+  — same device number, the node's interfaces (enp*, docker0, cni0, veths),
+  no eth0 of the pod — while netlink (`ip link`) shows the pod's own `lo`
+  and `eth0`. `apo-wg-up` now reads the MTU from `ip -o link show dev eth0`
+  and fails loudly when there is none; it was the only `/sys` read in the
+  sandbox scripts (the gateway's `sysClassNet` runs in the gateway
+  container, never under the runtime class). Residual for the security
+  model: a sysbox sandbox on Kubernetes can *read* the node's sysfs
+  (interface names, hardware details; writes are refused, root there being
+  an unprivileged host uid) — sysbox/containerd behaviour, worth an upstream
+  report, and far less than a privileged sandbox exposes.
 - The 2026-10-27 residual ("sysbox on Kubernetes designed but not
   live-verified") stands for the engine's own live test; the pod shape is now
   the one a real cluster accepted.
