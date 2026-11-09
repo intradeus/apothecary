@@ -2,6 +2,12 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v3.2.4 (2026-11-09)
+
+### Fixes
+
+- **engine**: put the checkout on the run's branch before the devcontainer build
+
 ## v3.2.3 (2026-11-09)
 
 ### Fixes
