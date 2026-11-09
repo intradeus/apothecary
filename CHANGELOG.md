@@ -2,6 +2,12 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v3.2.2 (2026-11-09)
+
+### Fixes
+
+- **deployment**: wireguard deploment issue
+
 ## v3.2.1 (2026-11-09)
 
 ### Fixes
