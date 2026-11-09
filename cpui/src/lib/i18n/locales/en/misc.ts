@@ -481,6 +481,9 @@ export default {
 	'form.project.hostsHelp':
 		'Paste a list — whitespace and commas split it. Sensible defaults are common registry, OS-mirror and dev-tool hosts most builds need. Force-blocked hosts are managed from a run’s Egress window.',
 	'form.project.forceBlocked': 'Force-blocked ({count}):',
+	'form.project.docker': 'Docker in workspaces',
+	'form.project.dockerHelp':
+		'Give this workshop’s workspaces their run’s own docker daemon — testcontainers, docker compose, docker run — by adding the standard docker-outside-of-docker feature to the build. A repo that declares the feature itself needs nothing here. The instance’s daemon door decides whether it is allowed: open by itself under an unprivileged sandbox, by the operator’s setting otherwise.',
 	'form.project.extensions': 'code-server extensions',
 	'form.project.extensionsHelp':
 		"VS Code extension ids from Open VSX, installed the first time the browser editor opens in a run (together with the repo's devcontainer customizations, and each harness's own extension — Codex, opencode — signed in like its agent) — no rebuild.",

@@ -95,6 +95,12 @@ type EnvSpec struct {
 	// would otherwise drop (e.g. an external managed database).
 	EgressAllowedCIDRs []string
 	EgressAllowedPorts []int
+	// Docker is the project's "Docker in workspaces" toggle: the workspace
+	// gets its run's own docker daemon — the provisioner injects the standard
+	// docker-outside-of-docker feature into the build when the repo does not
+	// declare it itself. Gated by the deployment's daemon door like a repo's
+	// own declaration.
+	Docker bool
 	// GitUser/GitPass are the repository host git credential (see type
 	// comment). Empty for public repos.
 	GitUser string

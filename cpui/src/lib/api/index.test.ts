@@ -526,6 +526,7 @@ describe('what each call sends', () => {
 					}
 				],
 				browser: { enabled: true },
+				docker: true,
 				egress_mode: 'deny',
 				editor: {
 					theme: 't',

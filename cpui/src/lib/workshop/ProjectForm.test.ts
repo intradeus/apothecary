@@ -117,7 +117,8 @@ describe('ProjectForm, draft()', () => {
 					trustWorkspace: true
 				},
 				services: [{ name: 'web', start: 'go', ports: [] }],
-				browserEnabled: true
+				browserEnabled: true,
+				docker: true
 			}
 		} as Partial<Project>);
 		await userEvent.click(envcheck());
@@ -161,7 +162,8 @@ describe('ProjectForm, draft()', () => {
 						ports: []
 					}
 				],
-				browserEnabled: true
+				browserEnabled: true,
+				docker: true
 			},
 			defaultFlow: 'mine'
 		});
@@ -348,6 +350,12 @@ describe('ProjectForm, every section reaches the draft', () => {
 			extraDomains: ['a.test', 'c.test'],
 			deniedDomains: ['b.test', 'd.test']
 		});
+	});
+
+	it('workspace: Docker in workspaces', async () => {
+		edit();
+		await userEvent.click(screen.getByRole('switch', { name: 'Docker in workspaces' }));
+		expect((await save()).workspace.docker).toBe(true);
 	});
 
 	it('workspace: the defaults added from the engine', async () => {

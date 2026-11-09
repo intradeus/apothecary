@@ -91,6 +91,10 @@ type Resolution struct {
 	// Browser is the project's browser toggle: a flow whose agents use the
 	// builtin browser MCP server is refused while it is off.
 	Browser bool
+	// WorkspaceDocker is the project's "Docker in workspaces" toggle
+	// (confstore.WorkspaceConfig.Docker): the provisioner injects the
+	// docker-outside-of-docker feature into the workspace build.
+	WorkspaceDocker bool
 	// HarnessKind is a deterministic FALLBACK harness kind (the first
 	// available in the project's set) — NOT a project-chosen default. The
 	// real default is the flow's defaults.harness, applied per stage; this

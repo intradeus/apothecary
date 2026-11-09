@@ -67,6 +67,10 @@ engine:
     maxBytes: ""
     mimeAllow: ""          # comma-separated, e.g. "text/*,image/png"
     snapshotMaxBytes: ""
+  # Any other APOTHECARY_* variable, e.g. the daemon door (README, "Docker in
+  # workspaces"): APOTHECARY_WORKSPACE_DOCKER: "on" hands a run's own docker
+  # daemon to a docker-outside-of-docker devcontainer under privileged pods
+  # too (auto, the default, does so only under an unprivileged runtime class).
   extraEnv: {}
   resources: {}
   nodeSelector: {}

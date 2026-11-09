@@ -4757,6 +4757,8 @@ components:
           items:
             type: string
           type: array
+        docker:
+          type: boolean
         editor:
           $ref: '#/components/schemas/EditorConfig'
         egress_allowed_cidrs:

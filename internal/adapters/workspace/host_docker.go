@@ -84,6 +84,14 @@ func (h dockerHost) runInner(ctx context.Context, name, bin string, args []strin
 
 func (dockerHost) fs(string) sandboxFS { return osFS{} }
 
+// unprivileged: the opted-in user-namespace runtime (sandbox.go) is what
+// takes --privileged off a docker-host sandbox.
+func (h dockerHost) unprivileged() bool { return h.a.cfg.SandboxRuntime != "" }
+
+func (dockerHost) unprivilegedHint() string {
+	return "APOTHECARY_SANDBOX_RUNTIME=sysbox-runc, with sysbox installed on the HOST"
+}
+
 func (h dockerHost) sandboxState(ctx context.Context, name string) (string, bool, error) {
 	st, err := h.a.sandboxState(ctx, name)
 	if err != nil {

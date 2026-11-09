@@ -35,6 +35,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # Every optional engine variable in deploy/.env reaches the engine, as in
+    # the reference deployment: APOTHECARY_SANDBOX_RUNTIME,
+    # APOTHECARY_WORKSPACE_DOCKER (the daemon door), log format, ...
+    env_file: [.env]
     environment:
       APOTHECARY_POSTGRES_DSN: postgres://apothecary:${APOTHECARY_PG_PASSWORD}@127.0.0.1:15434/apothecary
       APOTHECARY_MASTER_KEY: ${APOTHECARY_MASTER_KEY:?run `apothecaryd keygen` and set APOTHECARY_MASTER_KEY in deploy/.env}

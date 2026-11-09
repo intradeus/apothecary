@@ -1,11 +1,19 @@
-# deploy/Dockerfile build context (repo root): keep it lean.
+# Build context of deploy/Dockerfile AND of .devcontainer/Dockerfile (both the
+# repo root): keep it lean.
 .git
 build
 cpui/node_modules
 cpui/build
 cpui/.svelte-kit
+cpui/coverage
+coverage
 observability
 docs
 examples
 deploy/.env
 **/*.log
+# Stray in-tree build outputs (the default `go build` names; see .gitignore).
+apothecaryd
+gateway
+shim
+*.test

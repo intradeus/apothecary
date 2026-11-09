@@ -37,6 +37,12 @@ security.ubuntu.com
 ports.ubuntu.com
 *.ubuntu.com
 deb.nodesource.com
+# Docker's apt repo: the devcontainer docker-outside-of-docker /
+# docker-in-docker features install the docker CLI from it (moby=false, or a
+# distro Microsoft's repo lacks; moby=true uses packages.microsoft.com above).
+# *.docker.com already allows it; named so a project that trims that wildcard
+# keeps those features building, and so envcheck probes it.
+download.docker.com
 dl-cdn.alpinelinux.org
 *.alpinelinux.org
 *.fedoraproject.org

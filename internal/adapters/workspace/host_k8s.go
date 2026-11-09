@@ -139,6 +139,15 @@ func (h *k8sHost) runInner(ctx context.Context, name, bin string, args []string,
 
 func (h *k8sHost) fs(name string) sandboxFS { return execFS{h: h, name: name} }
 
+// unprivileged: a runtime class that nests dockerd (sysbox) with privileged
+// off — the two sites in podManifest that drop the privileged security
+// context read the same predicate.
+func (h *k8sHost) unprivileged() bool { return h.cfg.RuntimeClass != "" && !h.cfg.Privileged }
+
+func (*k8sHost) unprivilegedHint() string {
+	return "the Kubernetes provisioner integration's runtime class set to one that nests dockerd (sysbox-runc on the nodes) with privileged off"
+}
+
 // --- prepare -----------------------------------------------------------------
 
 func (h *k8sHost) prepare(ctx context.Context, name string, spec envport.EnvSpec, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error) {
@@ -355,7 +364,7 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 	secretMode := int32(0o400)
 	runMount := kube.VolumeMount{Name: "data", SubPath: "run", MountPath: folder}
 	privileged := func() *kube.SecurityContext {
-		if h.cfg.RuntimeClass != "" && !h.cfg.Privileged {
+		if h.unprivileged() {
 			return nil
 		}
 		return &kube.SecurityContext{Privileged: kube.Ptr(true)}
@@ -427,7 +436,7 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 			Options:     []kube.PodDNSConfigOpt{{Name: "ndots", Value: "2"}},
 		}
 		wgSec := kube.SecurityContext{Privileged: kube.Ptr(true)}
-		if h.cfg.RuntimeClass != "" && !h.cfg.Privileged {
+		if h.unprivileged() {
 			wgSec = kube.SecurityContext{Capabilities: &kube.Capabilities{Add: []string{"NET_ADMIN"}}}
 		}
 		wg := kube.Container{Name: "wg", Image: h.cfg.SandboxImage, ImagePullPolicy: h.cfg.PullPolicy,

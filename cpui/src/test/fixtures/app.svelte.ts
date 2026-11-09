@@ -53,7 +53,8 @@ export const aWorkshop = (over: Partial<Project> = {}): Project =>
 			allowedPorts: [],
 			codeServerExtensions: [],
 			services: [],
-			browserEnabled: false
+			browserEnabled: false,
+			docker: false
 		},
 		...over
 	} as Partial<Project>);

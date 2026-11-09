@@ -193,6 +193,7 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 		sandboxResp([]response{
 			{stdout: upOK},     // devcontainer up
 			{code: 0},          // docker exec root-init
+			{code: 0},          // devcontainer run-user-commands
 			{stdout: "cid1\n"}, // docker ps -q (relay)
 			{code: 0},          // docker exec -d relay
 			{code: 0},          // docker exec -d portscan
@@ -284,6 +285,7 @@ func TestProvisionStreamsToExecLog(t *testing.T) {
 		sandboxResp([]response{
 			{stdout: upOK},     // devcontainer up (teed into exec.log)
 			{code: 0},          // root-init
+			{code: 0},          // run-user-commands
 			{stdout: "cid1\n"}, // ps -q (relay)
 			{code: 0},          // relay exec
 			{code: 0},          // portscan exec
@@ -319,6 +321,7 @@ func TestProvisionUsesEngineSuppliedName(t *testing.T) {
 		sandboxResp([]response{
 			{stdout: upOK},     // devcontainer up
 			{code: 0},          // docker exec root-init
+			{code: 0},          // devcontainer run-user-commands
 			{stdout: "cid1\n"}, // docker ps -q (relay)
 			{code: 0},          // docker exec -d relay
 			{code: 0},          // docker exec -d portscan
@@ -376,6 +379,7 @@ func TestProvisionHonorsRepoDevcontainer(t *testing.T) {
 	r := &scriptRunner{responses: sandboxResp([]response{
 		{stdout: upOK},     // up (no clone: src pre-seeded)
 		{code: 0},          // root-init
+		{code: 0},          // run-user-commands
 		{stdout: "cid1\n"}, // docker ps -q (relay)
 		{code: 0},          // docker exec -d relay
 		{code: 0},          // docker exec -d portscan
@@ -435,6 +439,7 @@ func TestRepoDevcontainerMountsToolsNotFeatures(t *testing.T) {
 	r := &scriptRunner{responses: sandboxResp([]response{
 		{stdout: upOK},     // up
 		{code: 0},          // root-init
+		{code: 0},          // run-user-commands
 		{stdout: "cid1\n"}, // docker ps -q (relay)
 		{code: 0},          // docker exec -d relay
 		{code: 0},          // docker exec -d portscan
@@ -667,6 +672,7 @@ func TestRebuildNonComposeRemovesContainer(t *testing.T) {
 		sandboxResp([]response{
 			{stdout: upOK},     // devcontainer up (teed into exec.log)
 			{code: 0},          // root-init
+			{code: 0},          // run-user-commands
 			{stdout: "cid1\n"}, // docker ps -q (relay)
 			{code: 0},          // docker exec -d relay
 			{code: 0},          // docker exec -d portscan
@@ -966,8 +972,9 @@ func provisionRepoDinD(t *testing.T, rest []response) (*Adapter, *scriptRunner) 
 	return a, r
 }
 
+// up, root-init, run-user-commands, docker ps (relay), relay exec, portscan.
 var repoUpTail = []response{
-	{stdout: upOK}, {code: 0}, {stdout: "cid1\n"}, {code: 0}, {code: 0},
+	{stdout: upOK}, {code: 0}, {code: 0}, {stdout: "cid1\n"}, {code: 0}, {code: 0},
 }
 
 // The sandbox is a --privileged host container carrying the apothecary labels,
@@ -1616,7 +1623,8 @@ func TestProvisionOmitsCacheFlagsWithoutGateway(t *testing.T) {
 		[]response{{code: 0}}, // git clone
 		sandboxResp([]response{
 			{stdout: upOK},
-			{code: 0},
+			{code: 0}, // root-init
+			{code: 0}, // run-user-commands
 			{stdout: "cid1\n"},
 			{code: 0},
 			{code: 0},
@@ -1647,7 +1655,8 @@ func TestRebuildWithoutCachePassesNoCache(t *testing.T) {
 		[]response{{code: 0}}, // git clone
 		sandboxResp([]response{
 			{stdout: upOK},
-			{code: 0},
+			{code: 0}, // root-init
+			{code: 0}, // run-user-commands
 			{stdout: "cid1\n"},
 			{code: 0},
 			{code: 0},
@@ -1674,7 +1683,8 @@ func TestRebuildKeepsTheCacheByDefault(t *testing.T) {
 		[]response{{code: 0}},
 		sandboxResp([]response{
 			{stdout: upOK},
-			{code: 0},
+			{code: 0}, // root-init
+			{code: 0}, // run-user-commands
 			{stdout: "cid1\n"},
 			{code: 0},
 			{code: 0},

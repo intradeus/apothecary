@@ -234,6 +234,7 @@ const projectBody = (p: ProjectDraft): Wire.ProjectRequest => ({
 		code_server_extensions: p.workspace.codeServerExtensions,
 		services: p.workspace.services.map(serviceBody),
 		browser: { enabled: p.workspace.browserEnabled },
+		docker: p.workspace.docker,
 		...(p.workspace.egressMode ? { egress_mode: p.workspace.egressMode } : {}),
 		editor: {
 			theme: p.workspace.editor?.theme,

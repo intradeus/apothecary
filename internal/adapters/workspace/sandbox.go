@@ -38,13 +38,33 @@ func (a *Adapter) hostRun(ctx context.Context, args []string) ([]byte, []byte, i
 }
 
 // sandboxShapeLabel records how a sandbox was created (its mounts and
-// flags), so a sandbox of an older shape is recreated on first use instead of
+// flags), so a sandbox of another shape is recreated on first use instead of
 // failing later on what it lacks — the same mechanism as the gateway's
-// apothecary.gw.shape. Shape 2 added the tools-cache parity mount.
+// apothecary.gw.shape. Shape 2 added the tools-cache parity mount; shape 3 is
+// shape 2 plus the daemon door (createSandbox). The shape a run needs follows
+// doorOpen, so opening the door — by setting or by runtime — recreates an
+// existing sandbox on its next Rebuild or recovery, and a closed-door sandbox
+// is byte-identical to before (no churn).
 const (
-	sandboxShapeLabel = "apothecary.sandbox.shape"
-	sandboxShape      = "2"
+	sandboxShapeLabel  = "apothecary.sandbox.shape"
+	sandboxShapeClosed = "2"
+	sandboxShapeDoor   = "3"
 )
+
+// daemonDoorSocket is dockerd's default socket inside the sandbox: what the
+// docker-outside-of-docker feature (and a plain source=/var/run/docker.sock
+// mount) binds into the workspace. The dind image is Alpine, whose /var/run
+// is /run, so the listener lands at /run/docker.sock and the bind source
+// resolves through that symlink.
+const daemonDoorSocket = "/var/run/docker.sock"
+
+// sandboxShape is the shape this deployment's sandboxes must have.
+func (a *Adapter) sandboxShape() string {
+	if a.doorOpen() {
+		return sandboxShapeDoor
+	}
+	return sandboxShapeClosed
+}
 
 // sandboxIDs lists the run's sandbox container ids on the host daemon (0 or 1).
 func (a *Adapter) sandboxIDs(ctx context.Context, name string) ([]string, error) {
@@ -175,7 +195,7 @@ func (a *Adapter) ensureSandbox(ctx context.Context, name string, spec envport.E
 		// re-enter here on an existing sandbox: recreate it. The inner
 		// /var/lib/docker volume stays, so the image cache and the stopped
 		// workspace container survive; `up` restarts the latter.
-		cur, err := a.sandboxIDsWith(ctx, name, sandboxShapeLabel+"="+sandboxShape)
+		cur, err := a.sandboxIDsWith(ctx, name, sandboxShapeLabel+"="+a.sandboxShape())
 		if err != nil {
 			return err
 		}
@@ -252,7 +272,7 @@ func (a *Adapter) createSandbox(ctx context.Context, name string, spec envport.E
 		"--label", managedLabel+"=true",
 		"--label", label(name),
 		"--label", sandboxLabel+"=true",
-		"--label", sandboxShapeLabel+"="+sandboxShape,
+		"--label", sandboxShapeLabel+"="+a.sandboxShape(),
 	)
 	if spec.Project != "" {
 		args = append(args, "--label", projectLabel+"="+spec.Project)
@@ -277,9 +297,21 @@ func (a *Adapter) createSandbox(ctx context.Context, name string, spec envport.E
 		// Explicit `dockerd` arg1 makes the entrypoint SKIP its default host
 		// injection (which would add an insecure tcp://0.0.0.0:2375 listener,
 		// slowing startup and breaking on future docker) while still running
-		// its iptables/cgroup setup. We listen only on the parity-mount socket.
+		// its iptables/cgroup setup. The parity-mount socket is the engine's
+		// channel on every runtime.
 		"dockerd", "--host=unix://"+a.sockPath(name),
 	)
+	// The daemon door: the same daemon on its default socket, for a workspace
+	// whose devcontainer binds it (docker-outside-of-docker: testcontainers,
+	// `docker compose`, `docker run` from the agent — everything it starts
+	// dies with the run and egresses through the gateway like the workspace).
+	// Open automatically under an unprivileged runtime, where the sandbox is
+	// the boundary; under --privileged that daemon is host root, so it takes
+	// the operator's explicit APOTHECARY_WORKSPACE_DOCKER=on. The matching
+	// refusal of a repo that asks for a closed door is checkDaemonDoor.
+	if a.doorOpen() {
+		args = append(args, "--host=unix://"+daemonDoorSocket)
+	}
 	// Inner containers resolve external names through the gateway too, so their
 	// DNS queries arrive where egress is filtered (compose service-name lookups
 	// stay local to the embedded 127.0.0.11 resolver — unaffected). The gateway

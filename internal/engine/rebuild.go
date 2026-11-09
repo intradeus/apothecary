@@ -89,6 +89,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		EgressBlocked:      res.EgressBlocked,
 		EgressAllowedCIDRs: res.EgressAllowedCIDRs,
 		EgressAllowedPorts: res.EgressAllowedPorts,
+		Docker:             res.WorkspaceDocker,
 		GitUser:            res.GitUser,
 		GitPass:            res.GitPass,
 	}

@@ -236,6 +236,10 @@
 					<dd>{intName(project.provisionerId)}</dd>
 					<dt>{t('workshop.overview.harnesses')}</dt>
 					<dd>{(project.harnessIds ?? []).map(intName).join(', ') || '—'}</dd>
+					<dt>{t('workshop.overview.docker')}</dt>
+					<dd>
+						{project.workspace.docker ? t('workshop.overview.on') : t('workshop.overview.off')}
+					</dd>
 					<dt>{t('workshop.overview.extensions')}</dt>
 					<dd class="mono">{(project.workspace.codeServerExtensions ?? []).join(', ') || '—'}</dd>
 					<dt>{t('workshop.overview.editor')}</dt>

@@ -798,6 +798,7 @@ function toWorkspacePolicy(w: Wire.Project['workspace']): WorkspacePolicy {
 		codeServerExtensions: list(w?.code_server_extensions),
 		services: list(w?.services).map(toServiceConfig),
 		browserEnabled: w?.browser?.enabled ?? false,
+		docker: w?.docker ?? false,
 		editor: w?.editor
 			? {
 					theme: w.editor.theme,

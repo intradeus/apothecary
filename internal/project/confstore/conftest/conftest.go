@@ -170,6 +170,7 @@ func fullProject() confstore.Project {
 				Health: confstore.ServiceHealth{HTTP: "http://localhost:3000", TCP: 3000, Command: "true", Timeout: "1m", Interval: "5s"},
 				Ports:  []confstore.ServicePort{{Port: 3000, Label: "web", Path: "/app"}}}},
 			Browser: confstore.BrowserConfig{Enabled: true},
+			Docker:  true,
 		},
 		DefaultFlow: template(), CreatedAt: at(1), UpdatedAt: at(2)}
 }

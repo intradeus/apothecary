@@ -904,6 +904,7 @@ describe('projects', () => {
 				codeServerExtensions: [],
 				services: [],
 				browserEnabled: false,
+				docker: false,
 				editor: undefined
 			},
 			defaultFlow: '',
@@ -924,6 +925,7 @@ describe('projects', () => {
 					egress_allowed_ports: [22],
 					code_server_extensions: ['e'],
 					browser: { enabled: true },
+					docker: true,
 					editor: {
 						theme: 't',
 						font_size: 12,
@@ -955,6 +957,7 @@ describe('projects', () => {
 			allowedPorts: [22],
 			codeServerExtensions: ['e'],
 			browserEnabled: true,
+			docker: true,
 			editor: {
 				theme: 't',
 				fontSize: 12,

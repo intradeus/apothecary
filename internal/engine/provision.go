@@ -142,6 +142,7 @@ func (x *exec) ensureEnv() (err error) {
 		EgressBlocked:      x.res.EgressBlocked,
 		EgressAllowedCIDRs: x.res.EgressAllowedCIDRs,
 		EgressAllowedPorts: x.res.EgressAllowedPorts,
+		Docker:             x.res.WorkspaceDocker,
 		// For clone-first provisioners (devcontainer): the engine-side
 		// checkout needs the repository host credential before the env exists.
 		GitUser: x.res.GitUser,

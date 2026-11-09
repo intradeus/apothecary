@@ -296,6 +296,10 @@ func TestK8sUnprivilegedRuntime(t *testing.T) {
 	if pod.Spec.RuntimeClassName != "sysbox-runc" || pod.Spec.Containers[0].SecurityContext != nil {
 		t.Errorf("sandbox = %+v, class %q", pod.Spec.Containers[0].SecurityContext, pod.Spec.RuntimeClassName)
 	}
+	// ...which is also what opens the daemon door under auto.
+	if !h.unprivileged() {
+		t.Error("a runtime class with privileged off is an unprivileged sandbox")
+	}
 	if pod.Metadata.Annotations["apothecary.io/project-name"] != "My App" {
 		t.Errorf("annotations = %v", pod.Metadata.Annotations)
 	}
@@ -309,6 +313,76 @@ func TestK8sUnprivilegedRuntime(t *testing.T) {
 	if pod.Spec.Containers[0].SecurityContext == nil || !*pod.Spec.Containers[0].SecurityContext.Privileged {
 		t.Errorf("sandbox = %+v", pod.Spec.Containers[0].SecurityContext)
 	}
+	if h.unprivileged() {
+		t.Error("a privileged pod is not an unprivileged sandbox, runtime class or not")
+	}
+}
+
+// doorPod is provisionPod with a repo whose devcontainer uses the
+// docker-outside-of-docker feature.
+func doorPod(seen *[]string) func([]string, []byte) (string, string, int) {
+	var stdins [][]byte
+	inner := inPod(seen, &stdins)
+	cfg := `{"features":{"ghcr.io/devcontainers/features/docker-outside-of-docker:1":{}}}`
+	return func(argv []string, stdin []byte) (string, string, int) {
+		if argv[0] == "bash" && strings.Contains(string(stdin), "devcontainer.json") && strings.Contains(string(stdin), "base64 <") {
+			*seen = append(*seen, strings.Join(argv, " "))
+			return base64.StdEncoding.EncodeToString([]byte(cfg)) + "\n", "", 0
+		}
+		return inner(argv, stdin)
+	}
+}
+
+// The daemon door is one policy on both hosts: a privileged pod under auto
+// refuses a docker-outside-of-docker repo before `devcontainer up`, naming
+// the setting; an unprivileged runtime class, or the operator's on, lets it
+// through.
+func TestK8sDaemonDoor(t *testing.T) {
+	spec := envport.EnvSpec{Name: "w", RepoURL: "https://git.test/r.git"}
+	upRan := func(seen []string) bool {
+		for _, l := range seen {
+			if strings.HasPrefix(l, "devcontainer up") {
+				return true
+			}
+		}
+		return false
+	}
+	t.Run("closed: privileged, auto", func(t *testing.T) {
+		var seen []string
+		k := &kubeFake{secrets: map[string]string{}, exec: doorPod(&seen)}
+		a, _ := k8sWith(t, k, false)
+		_, err := a.Provision(context.Background(), spec)
+		if err == nil || !strings.Contains(err.Error(), "APOTHECARY_WORKSPACE_DOCKER=on") || !strings.Contains(err.Error(), "runtime class") {
+			t.Fatalf("err = %v", err)
+		}
+		if upRan(seen) {
+			t.Errorf("refusal must come before the build: %v", seen)
+		}
+	})
+	t.Run("open: runtime class, auto", func(t *testing.T) {
+		var seen []string
+		k := &kubeFake{secrets: map[string]string{}, exec: doorPod(&seen)}
+		a, h := k8sWith(t, k, false)
+		h.cfg.RuntimeClass, h.cfg.Privileged = "sysbox-runc", false
+		if _, err := a.Provision(context.Background(), spec); err != nil {
+			t.Fatalf("provision: %v\nin-pod: %v", err, seen)
+		}
+		if !upRan(seen) {
+			t.Errorf("no devcontainer up: %v", seen)
+		}
+	})
+	t.Run("open: privileged, on", func(t *testing.T) {
+		var seen []string
+		k := &kubeFake{secrets: map[string]string{}, exec: doorPod(&seen)}
+		a, _ := k8sWith(t, k, false)
+		a.cfg.WorkspaceDocker = "on"
+		if _, err := a.Provision(context.Background(), spec); err != nil {
+			t.Fatalf("provision: %v\nin-pod: %v", err, seen)
+		}
+		if !upRan(seen) {
+			t.Errorf("no devcontainer up: %v", seen)
+		}
+	})
 }
 
 func TestK8sNetworkPolicyEngineScope(t *testing.T) {

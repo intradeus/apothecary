@@ -30,10 +30,18 @@ import (
 type Host interface {
 	// prepare is everything before the definition builds, in this host's
 	// order: the checkout, the shim, the egress attachment and the sandbox.
-	// detect picks the definition from the checkout; prepare calls it as soon
-	// as the checkout exists, so a repo without a definition fails before the
-	// (expensive) sandbox comes up wherever the host allows it.
+	// detect picks the definition from the checkout and refuses one this
+	// deployment cannot honor (the daemon door); prepare calls it as soon as
+	// the checkout exists, so such a repo fails before the (expensive) sandbox
+	// comes up wherever the host allows it.
 	prepare(ctx context.Context, name string, spec envport.EnvSpec, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error)
+
+	// unprivileged reports that this host's sandboxes run without
+	// --privileged (a user-namespace runtime): sandbox root is not host root.
+	// It decides the daemon door under APOTHECARY_WORKSPACE_DOCKER=auto;
+	// unprivilegedHint is how an operator gets there on this host.
+	unprivileged() bool
+	unprivilegedHint() string
 
 	// runInner runs one CLI invocation against the run's sandbox: its inner
 	// docker daemon, its checkout, its devcontainer CLI.

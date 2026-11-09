@@ -125,6 +125,13 @@ type WorkspaceConfig struct {
 	// Chromium per agent session reaching the run's services at localhost —
 	// what a flow's builtin `browser` MCP server drives.
 	Browser BrowserConfig `json:"browser,omitzero"`
+	// Docker gives this project's workspaces their run's own docker daemon
+	// (testcontainers, `docker compose`, `docker run` from the agent) without
+	// the repo declaring the docker-outside-of-docker feature itself: the
+	// engine injects that feature into the devcontainer build. Subject to the
+	// deployment's daemon door (APOTHECARY_WORKSPACE_DOCKER): a closed door
+	// refuses the project's runs at provision, naming the fix.
+	Docker bool `json:"docker,omitempty"`
 }
 
 // ServiceConfig is one project service. Start runs in the run's primary

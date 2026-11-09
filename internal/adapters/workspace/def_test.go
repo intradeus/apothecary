@@ -55,6 +55,7 @@ func TestDefinitionUpFlags(t *testing.T) {
 	}
 	line := r.lines()[0]
 	for _, want := range []string{"--remove-existing-container", "--build-no-cache", "--id-label apothecary.project=P1",
+		"--skip-post-create", "--skip-post-attach", // the hooks run after root-init (RunUserCommands)
 		"--mount type=bind,source=/s,target=/opt/apothecary", "--mount type=bind,source=/t,target=/opt/apothecary/tools"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("up missing %q: %s", want, line)

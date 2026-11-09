@@ -201,7 +201,7 @@ func newBench(t *testing.T, harnesses ...scriptKind) *bench {
 		reg.RegisterHarness(k)
 	}
 	svc.KindValid = reg.Valid
-	return &bench{t: t, svc: svc, reg: reg, r: New(svc, reg, t.TempDir(), 8080, ""), db: db, made: made, close: closed}
+	return &bench{t: t, svc: svc, reg: reg, r: New(svc, reg, t.TempDir(), 8080, "", ""), db: db, made: made, close: closed}
 }
 
 func (b *bench) integration(port, kind string) string {
@@ -519,7 +519,7 @@ func TestProvisionerAcquireFailsForAnUnknownKind(t *testing.T) {
 		reg := kinds.NewRegistry()
 		kinds.RegisterFakes(reg)
 		return reg
-	}(), t.TempDir(), 0, "")
+	}(), t.TempDir(), 0, "", "")
 	if _, err := r.Resolve(context.Background(), p.ID); !errors.Is(err, resolution.ErrUnresolvable) || !strings.Contains(err.Error(), "counting") {
 		t.Errorf("err = %v", err)
 	}
@@ -672,7 +672,7 @@ func TestUnregisteredKinds(t *testing.T) {
 	prov := b.integration(confstore.PortProvisioner, "counting")
 	src := b.integration(confstore.PortTicketSource, "fake")
 	hs := b.integration(confstore.PortHarness, "fake")
-	r := New(b.svc, kinds.NewRegistry(), t.TempDir(), 0, "")
+	r := New(b.svc, kinds.NewRegistry(), t.TempDir(), 0, "", "")
 	for name, err := range map[string]error{
 		"repository":  second(r.TestIntegration(ctx, repo)),
 		"provisioner": second(r.TestIntegration(ctx, prov)),
@@ -717,7 +717,7 @@ func TestListBranches(t *testing.T) {
 	if _, err := other.r.ListBranches(ctx, broken.ID); !errors.Is(err, errKind) {
 		t.Errorf("account = %v", err)
 	}
-	r := New(b.svc, kinds.NewRegistry(), t.TempDir(), 0, "")
+	r := New(b.svc, kinds.NewRegistry(), t.TempDir(), 0, "", "")
 	if _, err := r.ListBranches(ctx, p.ID); !errors.Is(err, resolution.ErrUnresolvable) {
 		t.Errorf("unknown kind = %v", err)
 	}

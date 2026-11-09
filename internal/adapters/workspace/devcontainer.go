@@ -157,6 +157,13 @@ type Config struct {
 	// neither the host, nor its docker socket, nor any other run's state.
 	// Verified against the daemon once before first use.
 	SandboxRuntime string
+	// WorkspaceDocker is the daemon door's setting (APOTHECARY_WORKSPACE_DOCKER):
+	// whether a workspace may take its run's own docker daemon, which the
+	// sandbox then also serves on /var/run/docker.sock (sandbox.go). "auto"
+	// (default, "") opens it only for an unprivileged sandbox; "on" opens it
+	// under privileged sandboxes too — the operator accepting that such a
+	// workspace is host root; "off" never. See doorOpen and checkDaemonDoor.
+	WorkspaceDocker string
 }
 
 type Adapter struct {
@@ -466,28 +473,52 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExi
 
 	// The host brings up everything the definition builds on: the checkout,
 	// the shim, the egress attachment and the sandbox (its own docker daemon).
+	// detect runs as soon as the checkout exists: a repo without a definition,
+	// or one asking for what this deployment does not hand out (the daemon
+	// door), fails before anything expensive comes up.
+	// injectDocker: the project asked for docker (spec.Docker) and the repo
+	// does not already declare the feature — decided where the config is read.
+	injectDocker := false
 	p, err := a.host.prepare(ctx, name, spec, plog, func(ctx context.Context, src string) (Definition, error) {
-		return a.detect(ctx, a.host.fs(name), src)
+		fsys := a.host.fs(name)
+		def, err := a.detect(ctx, fsys, src)
+		if err != nil {
+			return nil, err
+		}
+		asks := def.SandboxDaemonUse(ctx, fsys, src)
+		if asks == "" && spec.Docker {
+			asks = "the project's Docker setting"
+			injectDocker = true
+		}
+		return def, a.checkDaemonDoor(asks)
 	})
 	if err != nil {
 		return "", err
 	}
 	a.recordDefinition(name, p.def)
 
-	ws, err := p.def.Up(ctx, a.defEnv(name, p.src), spec, upOptions{
+	opts := upOptions{
 		shimDir:        p.shimDir,
 		toolsDir:       p.toolsDir,
 		gwIP:           p.gwIP,
 		project:        spec.Project,
 		removeExisting: removeExisting,
 		noCache:        spec.NoCache,
+		docker:         injectDocker,
 		log:            logW,
 		plog:           plog,
-	})
+	}
+	ws, err := p.def.Up(ctx, a.defEnv(name, p.src), spec, opts)
 	if err != nil {
 		return "", err
 	}
 	if err := a.rootInit(ctx, name, ws); err != nil {
+		return "", err
+	}
+	// The repo's lifecycle hooks, now that the checkout belongs to the remote
+	// user (rootInit): `up` skipped them so a non-root user's postCreateCommand
+	// does not meet a root-owned tree (the engine clones as itself).
+	if err := p.def.RunUserCommands(ctx, a.defEnv(name, p.src), opts); err != nil {
 		return "", err
 	}
 	// What this container was built from, for the "config changed" hint.
@@ -517,6 +548,42 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExi
 
 // errNoDefinition is what a repo without any workspace definition gets.
 var errNoDefinition = fmt.Errorf("repo has no .devcontainer/devcontainer.json — apothecary requires a devcontainer")
+
+// doorOpen is the daemon door's state for this deployment: whether a
+// workspace may take its run's docker daemon (the sandbox then also serves it
+// on /var/run/docker.sock). "on" and "off" are the operator's word; "auto"
+// (the default) follows the sandbox's privilege — an unprivileged sandbox is
+// the boundary already, so its daemon adds nothing the run does not hold.
+func (a *Adapter) doorOpen() bool {
+	switch a.cfg.WorkspaceDocker {
+	case "on":
+		return true
+	case "off":
+		return false
+	}
+	return a.host.unprivileged()
+}
+
+// checkDaemonDoor refuses, before anything is built, a workspace that asks
+// for the sandbox's own docker daemon (what: the repo's declaration per
+// SandboxDaemonUse, or the project's Docker setting; "" asks for nothing)
+// while the door is closed — under a privileged sandbox that daemon is host
+// root, so the deployment has to say so (APOTHECARY_WORKSPACE_DOCKER=on) or
+// run sandboxes unprivileged. Narrow by design: only the socket is refused;
+// `runArgs --privileged` and compose `privileged: true` run verbatim as
+// documented (README, security model). The refusal names what asked and
+// both ways out, instead of docker's late "bind source path does not exist"
+// when the feature's mount finds no socket.
+func (a *Adapter) checkDaemonDoor(what string) error {
+	if what == "" || a.doorOpen() {
+		return nil
+	}
+	drop := fmt.Sprintf("or drop the ask (the docker-outside-of-docker feature / the %s mount in the devcontainer, or the project's Docker setting)", daemonDoorSocket)
+	if a.cfg.WorkspaceDocker == "off" {
+		return fmt.Errorf("devcontainer asks for the sandbox's docker daemon (%s), which this deployment does not hand to workspaces (APOTHECARY_WORKSPACE_DOCKER=off). Set it to auto or on, %s", what, drop)
+	}
+	return fmt.Errorf("devcontainer asks for the sandbox's docker daemon (%s), which this deployment does not hand to workspaces: its sandboxes are privileged, so that daemon is root on the host. Either run sandboxes unprivileged (%s — README, \"Unprivileged sandboxes\"), or set APOTHECARY_WORKSPACE_DOCKER=on — accepting that a workspace using it is root on this host (fine on your own laptop, not on a shared server) — %s", what, a.host.unprivilegedHint(), drop)
+}
 
 // detect picks the repo's definition (first match wins). A repo without one
 // is unsupported — the engine preflight already refuses it; this is
@@ -778,15 +845,25 @@ func (a *Adapter) ensureTools(ctx context.Context) (string, error) {
 // Exec'd PATH, so an image that ships its own harness still wins. A musl
 // image gets no code-server link (there is no musl build). `devcontainer
 // exec` has no --user, so this one call goes through docker directly.
+//
+// A non-root remote user also gets the checkout: the engine clones it as
+// itself (root in the engine image) and bind-mounts it, and the CLI never
+// remaps a uid when it runs as root (nor for compose), so without this the
+// user's own hooks and bootstrap's `git switch` meet a root-owned tree. The
+// hooks run after this (RunUserCommands), which is why `up` skips them.
 func (a *Adapter) rootInit(ctx context.Context, name string, res Workspace) error {
 	user := res.RemoteUser
 	if user == "" {
 		user = "root"
 	}
+	own := ""
+	if user != "root" && res.WorkspaceFolder != "" {
+		own = fmt.Sprintf("chown -R %s: %s\n", shell.Quote(user), shell.Quote(res.WorkspaceFolder))
+	}
 	script := fmt.Sprintf(`set -e
 mkdir -p /apothecary %[3]s
 chown %[1]s /apothecary %[3]s
-H="$(getent passwd %[1]s | cut -d: -f6)"
+%[4]sH="$(getent passwd %[1]s | cut -d: -f6)"
 [ -n "$H" ] || H=/root
 ln -sfn %[2]s "$H/repo"
 libc=gnu
@@ -802,7 +879,7 @@ for f in /opt/apothecary/tools/$libc/bin/*; do
   printf '#!/bin/sh\nset -a\n[ -r /apothecary/provider.env ] && . /apothecary/provider.env\nset +a\nexec %%s "$@"\n' "$f" > "$b"
   chmod 0755 "$b"
 done
-true`, shell.Quote(user), shell.Quote(res.WorkspaceFolder), codeServerState)
+true`, shell.Quote(user), shell.Quote(res.WorkspaceFolder), codeServerState, own)
 	_, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
 		[]string{"exec", "-u", "root", res.ContainerID, "sh", "-c", script}, nil, nil)
 	if err != nil {
