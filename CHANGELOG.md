@@ -2,6 +2,13 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v3.2.3 (2026-11-09)
+
+### Fixes
+
+- **tests**: update golden logs and test timing issues
+- **engine**: run the devcontainer CLI on the scoped branch, not main
+
 ## v3.2.2 (2026-11-09)
 
 ### Fixes
