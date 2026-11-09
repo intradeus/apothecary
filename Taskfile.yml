@@ -112,9 +112,28 @@ tasks:
         docker logs --tail 50 k3d-{{.K3D_CLUSTER}}-server-0 >&2 || true
         exit 1
 
+  # dockerd speaks plain HTTP to a registry listed as insecure in daemon.json
+  # on either image store, but to a name that merely resolves to loopback (as
+  # k3d-registry.localhost does) only with the classic store: the containerd
+  # image store, the default of a fresh Docker 29 install, trusts no name but
+  # the literal `localhost`, and the push fails with "server gave HTTP
+  # response to HTTPS client". Checked before the build, which runs for
+  # minutes.
+  k8s:registry-check:
+    internal: true
+    silent: true
+    cmds:
+      - |
+        docker info --format '{{"{{"}}json .RegistryConfig.IndexConfigs{{"}}"}}' | grep -q '"{{.K3D_REGISTRY}}"' && exit 0
+        docker info --format '{{"{{"}}.DriverStatus{{"}}"}}' | grep -q io.containerd.snapshotter || exit 0
+        echo 'the docker daemon uses the containerd image store and would push to {{.K3D_REGISTRY}} over HTTPS;' >&2
+        echo 'list it in /etc/docker/daemon.json and restart docker: {"insecure-registries": ["{{.K3D_REGISTRY}}"]}' >&2
+        exit 1
+
   k8s:images:
     desc: Build the five images from the working tree and push them to the k3d registry as :local
     cmds:
+      - task: k8s:registry-check
       - PREFIX={{.K3D_REGISTRY}}/apothecary deploy/images.sh local --push
 
   k8s:deploy:
@@ -486,6 +505,7 @@ tasks:
       CLUSTER_EXISTED:
         sh: k3d node get k3d-{{.K3D_CLUSTER}}-server-0 >/dev/null 2>&1 && echo yes || echo no
     cmds:
+      - task: k8s:registry-check
       - PREFIX={{.K3D_REGISTRY}}/apothecary deploy/images.sh local
       - task: k8s:cluster
       - defer: '{{if eq .CLUSTER_EXISTED "no"}}{{.TASK_EXE}} k8s:down{{end}}'

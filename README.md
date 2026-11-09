@@ -169,7 +169,11 @@ task k8s:down
 ```
 
 Every kubectl call these tasks make names `deploy/.k3d-kubeconfig`
-explicitly; `task k8s:kubectl -- get pods -A` is the shortcut.
+explicitly; `task k8s:kubectl -- get pods -A` is the shortcut. A docker
+daemon on the containerd image store (the default of a fresh Docker 29
+install) pushes to the registry over HTTPS unless `/etc/docker/daemon.json`
+lists `k3d-registry.localhost:5111` under `insecure-registries`;
+`task k8s:images` checks and says so.
 
 ## Configure (all in the UI)
 

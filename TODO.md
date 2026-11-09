@@ -1,6 +1,11 @@
 
 ------ 
 
-After 1.0.0 : 
+After 3.0.0 :
+
 - 48) "Queues" : queue tasks, for automatic resolution
 - 49) internal AI - byok, run an agent in a harnesss (in the project's sidecar / gateway ?) so you can ask it to generate flows or do other internal AI tasks (find other usecases)
+- 50) Analytics fixes
+- 51) Notices page has mismatching UI.
+- 52) ci upgrades (we run CI on MR and on merge on main... can we improve that somehow ? caching or something ? Speed is also VERY slow ...)
+- 54) Ask - multi-session support.

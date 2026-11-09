@@ -71,23 +71,35 @@ jobs:
           df -h /
       # k3d (pinned), and the wireguard module every run's sandbox tunnels to
       # its gateway with (k3d's nodes share the runner's kernel). The runner
-      # already has docker and kubectl. systemd-resolved answers *.localhost
-      # with loopback, but the registry's name is pinned in /etc/hosts anyway:
-      # dockerd resolves it to push, and only to loopback does it speak plain
-      # HTTP. The five images live three times (docker, the registry, the
-      # node's containerd) and the tools bundle once more on the run's volume,
-      # which is why the disk was freed above. The task creates the cluster
-      # and deletes it again.
+      # already has docker and kubectl. The registry's name is pinned in
+      # /etc/hosts (systemd-resolved answers *.localhost with loopback anyway)
+      # and listed as insecure in daemon.json: dockerd speaks plain HTTP to a
+      # listed registry on either image store, but to a name that merely
+      # resolves to loopback only with the classic store — the containerd
+      # image store, the default of a fresh Docker 29 install and what the
+      # runner's dockerd now runs, trusts no name but the literal `localhost`
+      # and pushes over HTTPS ("server gave HTTP response to HTTPS client").
+      # The five images live three times (docker, the registry, the node's
+      # containerd) and the tools bundle once more on the run's volume, which
+      # is why the disk was freed above. The task creates the cluster and
+      # deletes it again.
       - name: Kubernetes prerequisites
         if: matrix.suite == 'k8s'
         env:
           K3D_VERSION: v5.9.0
+          K3D_REGISTRY: k3d-registry.localhost:5111 # Taskfile K3D_REGISTRY
         run: |
           curl -fsSL -o "$RUNNER_TEMP/k3d" "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
           sudo install -m 0755 "$RUNNER_TEMP/k3d" /usr/local/bin/k3d
           k3d version
           sudo modprobe wireguard
-          echo "127.0.0.1 k3d-registry.localhost" | sudo tee -a /etc/hosts
+          echo "127.0.0.1 ${K3D_REGISTRY%%:*}" | sudo tee -a /etc/hosts
+          sudo mkdir -p /etc/docker
+          [ -s /etc/docker/daemon.json ] || echo '{}' | sudo tee /etc/docker/daemon.json >/dev/null
+          jq --arg r "$K3D_REGISTRY" '."insecure-registries" += [$r]' /etc/docker/daemon.json > "$RUNNER_TEMP/daemon.json"
+          sudo install -m 0644 "$RUNNER_TEMP/daemon.json" /etc/docker/daemon.json
+          sudo systemctl restart docker
+          docker info --format '{{json .RegistryConfig.IndexConfigs}}' | grep -q "\"$K3D_REGISTRY\""
       - run: task test:integration:${{ matrix.suite }}
 
   lint:
