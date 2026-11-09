@@ -392,9 +392,9 @@ func TestAnOpenGateHoldsTheCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	gate := ph.waitPing(t, event.PingGate)
-	v := ph.waitState(t, runID, run.WaitingOnHuman)
-	if !v.Idle {
-		t.Errorf("a parked gate leaves the run idle: %+v", v.State)
+	waitEvent[*event.PhaseParked](t, ph.harness, runID) // the park lands after the ping
+	if v := ph.view(t, runID); v.State != run.WaitingOnHuman || !v.Idle {
+		t.Errorf("a parked gate leaves the run waiting and idle: %s idle=%v", v.State, v.Idle)
 	}
 	ph.repoHost.SetTargetSHA(1, "t1")
 	ph.repoHost.SetMergeable(1, repoport.MergeConflicts, "h1")
@@ -509,7 +509,7 @@ func TestManualStartPolicySurfacesTheHoldWithoutStarting(t *testing.T) {
 	runID := ph.start(t)
 	ph.repoHost.SetTargetSHA(1, "t1")
 	ph.repoHost.SetMergeable(1, repoport.MergeConflicts, "h1")
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	var holds []runcore.TriggerHold
 	for time.Now().Before(deadline) && len(holds) == 0 {
 		infos, err := ph.e.RunPhases(context.Background(), runID)

@@ -202,6 +202,7 @@ func TestChainEndStopsStageServicesOnly(t *testing.T) {
 	if !strings.HasPrefix(p.Link, "http://127.0.0.1:") {
 		t.Errorf("gate link = %q, want the app's preview", p.Link)
 	}
+	waitEvent[*event.PhaseParked](t, h, runID) // the human acts once the gate has parked
 
 	info, err := h.services().StartService(ctx, runID, "db", false)
 	if err != nil || info.By != event.ServiceByHuman {

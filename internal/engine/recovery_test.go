@@ -152,7 +152,7 @@ func TestRecoveredWaitKeepsItsTimeoutFromTheFirstPark(t *testing.T) {
 	})
 	// An hour and a minute after the first park: the timeout has run out.
 	ph.clock.Advance(31 * time.Minute)
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && h2.view(t, runID).State != run.Abandoned {
 		time.Sleep(5 * time.Millisecond)
 	}

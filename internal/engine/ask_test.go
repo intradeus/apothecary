@@ -116,7 +116,7 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 	mu.Unlock()
 	// The stream carried the question, the answer being written, and the answer.
 	var kinds []string
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && strings.Count(strings.Join(kinds, " "), "message") < 2 {
 		select {
 		case f := <-frames:

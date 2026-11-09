@@ -195,7 +195,7 @@ func TestPausedAttemptResumesAfterRestart(t *testing.T) {
 	}
 
 	// The recovered run is waiting, not working: no harness call yet.
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if len(h.e.PendingPings()) > 0 {
 			break
@@ -255,7 +255,7 @@ func TestAnswerWithNoSessionToResumeFailsTheAttempt(t *testing.T) {
 	if err := h.e.Recover(ctx); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && len(h.e.PendingPings()) == 0 {
 		time.Sleep(2 * time.Millisecond)
 	}
@@ -378,7 +378,7 @@ func TestParkedRunFreesItsSlotAndTheAnswerWakesIt(t *testing.T) {
 
 	// Parked: no loop, and the run still reads as waiting on a human rather
 	// than paused — nobody pressed anything.
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && h.e.active(first) {
 		time.Sleep(2 * time.Millisecond)
 	}
@@ -438,7 +438,7 @@ main:
 	}
 	p := h.waitPing(t, "gate")
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && !h.view(t, runID).Idle {
 		time.Sleep(2 * time.Millisecond)
 	}

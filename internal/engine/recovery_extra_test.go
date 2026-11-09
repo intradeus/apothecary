@@ -134,7 +134,7 @@ func TestRecoveryRefreshesRunEnvToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Wait until the recovered loop reaches the agent stage, then check the file.
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	var content []byte
 	for time.Now().Before(deadline) {
 		if data, err := h.envp.ReadFile(ctx, envID, "/apothecary/run.env"); err == nil {

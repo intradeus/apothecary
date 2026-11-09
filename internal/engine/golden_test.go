@@ -22,6 +22,12 @@ import (
 // the files; otherwise a test with a file is compared against it and a test
 // without one is not checked. A golden file changes only in a commit whose
 // message names the behaviour change that changed it.
+//
+// Shutdown cancels every loop, and a cancelled loop appends nothing more: a
+// test that returns while its run is still mid-step (a ping just raised, the
+// park not yet on the log) renders a log that depends on the machine's load.
+// Such a test waits for the loop to go (e.Wait) or for the event it expects
+// last before returning.
 
 var golden = struct {
 	mu        sync.Mutex

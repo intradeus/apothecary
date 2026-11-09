@@ -218,7 +218,7 @@ func countReports(mu *sync.Mutex, bodies *[][]observedPort) int {
 
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return

@@ -108,6 +108,9 @@ func TestGateReviewsAFolderAndCarriesTheReview(t *testing.T) {
 	if strings.Join(g.Files, ",") != strings.Join(want, ",") {
 		t.Fatalf("the gate shows %v", g.Files)
 	}
+	// The snapshots are taken after the ping is raised and before the park
+	// lands: read them once the gate has parked.
+	waitEvent[*event.PhaseParked](t, h, runID)
 	var shown []string
 	for _, sn := range snapshotsFor(t, rr.snaps, runID) {
 		if sn.Kind == filestore.KindPingFile && sn.PingID == g.ID {

@@ -303,7 +303,7 @@ func TestServeMCPFraming(t *testing.T) {
 		return out.String()
 	}
 	// tools/call replies async; wait briefly for the 4th reply.
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for strings.Count(readOut(), "\n") < 4 && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
 	}

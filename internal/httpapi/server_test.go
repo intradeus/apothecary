@@ -525,7 +525,7 @@ func TestSSEReplayAndLive(t *testing.T) {
 	}
 
 	close(block) // run continues; live events must arrive on the same stream
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		ev := readEvent()
 		types = append(types, string(ev.Type))
@@ -1273,7 +1273,9 @@ func TestHoldForClampsGraceHold(t *testing.T) {
 // polls again. Only the engine parking the run (after the live hold) hands it
 // back, and from then on the poll answers 410 so the call stops waiting.
 func TestPingLongPollStaysLiveUntilTheRunParks(t *testing.T) {
-	x := newEnv(t, engine.Config{AskHumanHold: 150 * time.Millisecond}, `name: hold
+	// The hold is the room the first poll has to land before the park: a
+	// loaded CI runner can take a good part of it.
+	x := newEnv(t, engine.Config{AskHumanHold: 500 * time.Millisecond}, `name: hold
 version: 5
 parameters: { harness: fake, model: fake/model }
 agents:

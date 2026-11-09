@@ -2441,7 +2441,7 @@ main:
 		t.Fatal(err)
 	}
 	// The run reaches the wait stage and stays there: no ping, not finished.
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if h.view(t, runID).CurrentStage == "merged" {
 			break

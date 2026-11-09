@@ -377,6 +377,32 @@ tasks:
     cmds:
       - npx vitest run {{.CLI_ARGS}}
 
+  # A flake hides until a loaded CI runner finds it; this is that runner,
+  # locally: the tests pinned to two CPUs shared with six busy loops, repeated,
+  # under the race detector. What fails here fails on CI sooner or later.
+  # Linux only (taskset); the whole tree takes about an hour.
+  test:stress:
+    desc: 'Go tests under CI-like load: 2 CPUs + burners, -race, repeated (task test:stress -- ./internal/engine/; COUNT=5 task test:stress)'
+    vars:
+      COUNT: '{{.COUNT | default "3"}}'
+    preconditions:
+      - sh: command -v taskset
+        msg: "test:stress needs taskset (Linux, util-linux)"
+    env:
+      TEST_POSTGRES: ''
+      GOMAXPROCS: '2'
+    cmds:
+      # The burners carry a marker in their argv (sh's $0) for pkill: Task's
+      # shell has no $! to kill them by, and a timeout bounds a stray one.
+      # `|| rc=$?`: Task runs this under set -e, and a failing go test must
+      # still reach the pkill.
+      - |
+        for _ in 1 2 3 4 5 6; do timeout 2h taskset -c 0,1 sh -c 'while :; do :; done' apothecary-test-stress-burner & done
+        rc=0
+        taskset -c 0,1 go test -race -count={{.COUNT}} -timeout 30m {{.CLI_ARGS | default "./..."}} || rc=$?
+        pkill -f apothecary-test-stress-burner
+        exit $rc
+
   test:linux:
     desc: 'Go unit tests inside a Linux container, so the Linux-only build-tagged tests run from any host; needs docker (args pass through)'
     cmds:

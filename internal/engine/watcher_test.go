@@ -497,6 +497,7 @@ func TestRebaseIsPushedLeased(t *testing.T) {
 	if gate.StageID != "sync_push" {
 		t.Fatalf("parked at %s", gate.StageID)
 	}
+	rh.e.Wait(runID) // the gate parks the run: let the loop append the park
 	rh.git.mu.Lock()
 	defer rh.git.mu.Unlock()
 	if rh.git.remote[branch] != stranger {
@@ -688,7 +689,7 @@ func TestReviewRoundWithNothingSelectedEndsAtOnce(t *testing.T) {
 // A selection answer must name offered threads.
 func TestSelectionAnswerIsValidated(t *testing.T) {
 	rh := newWatcherHarness(t, "merge")
-	rh.start(t)
+	runID := rh.start(t)
 	rh.repoHost.AddComment(1, "d1", "a.go", "rev", "nit", rh.clock.Now())
 	rh.clock.Advance(2 * time.Minute)
 	p := rh.waitPing(t, event.PingSelect)
@@ -698,4 +699,7 @@ func TestSelectionAnswerIsValidated(t *testing.T) {
 			t.Errorf("answer %+v accepted", bad)
 		}
 	}
+	// The unanswered selection parks the run: let the loop go before the
+	// test ends, or Shutdown may cut off the park (see golden_test.go).
+	rh.e.Wait(runID)
 }
