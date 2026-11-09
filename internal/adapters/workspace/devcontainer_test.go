@@ -1727,3 +1727,24 @@ func TestListFiles(t *testing.T) {
 		t.Fatalf("want fs.ErrNotExist, got %v", err)
 	}
 }
+
+// The checkout is cloned at the run's source branch, so the devcontainer is
+// built from the files the run starts from (a run fixing the devcontainer
+// must build with its fix); no source branch keeps the remote's default.
+func TestEnsureSrcClonesAtSourceBranch(t *testing.T) {
+	for _, tc := range []struct{ source, want string }{
+		{"develop", "clone --branch develop -- https://g.local/grp/repo.git "},
+		{"", "clone -- https://g.local/grp/repo.git "},
+	} {
+		r := &scriptRunner{}
+		a := newTestAdapter(t, r)
+		src, err := a.ensureSrc(context.Background(), "apo-src-1",
+			envport.EnvSpec{RepoURL: "https://g.local/grp/repo.git", SourceBranch: tc.source})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(find(t, r.calls, "git", "clone").args, " "); got != tc.want+src {
+			t.Errorf("source %q: clone args = %q, want %q", tc.source, got, tc.want+src)
+		}
+	}
+}

@@ -4,7 +4,8 @@
 # CHANGELOG.md and the image set on GHCR. A pull request's title is checked
 # by pr-title.yml.
 #
-#   unit         task test:unit          Linux
+#   unit         task cover              unit tests of both halves, under their
+#                                        coverage floors (Go incl. Postgres, CPUI)
 #   integration  task test:integration:* real dependencies, in containers
 #   lint         task lint               every linter and type check
 #   build        task build              every binary, the CPUI and every image
@@ -44,7 +45,20 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: npm ci
         working-directory: cpui
-      - run: task test:unit
+      # The unit tests with their coverage floors (GO_COVER_MIN, cpui's
+      # vite.config.ts thresholds): a floor only ever rises, and a change
+      # that drops under one fails here, not on someone's `task cover` later.
+      # The Postgres-backed tests run too (throwaway containers).
+      - run: task cover
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: |
+            coverage/go/index.html
+            coverage/go/files.html
+            cpui/coverage/
+          retention-days: 14
 
   integration:
     strategy:

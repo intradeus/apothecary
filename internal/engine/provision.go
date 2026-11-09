@@ -132,8 +132,13 @@ func (x *exec) ensureEnv() (err error) {
 		RunID:   rs.RunID,
 		RepoURL: x.res.RepoRef.URL,
 		Branch:  rs.Branch,
-		Name:    wsname.For(nameBranch, rs.RunID),
-		Project: x.res.ProjectID,
+		// The checkout is cloned at the source branch, so the devcontainer
+		// the run starts in is that branch's (a run fixing the devcontainer
+		// must build with its fix); bootstrap forks the run branch off the
+		// same value.
+		SourceBranch: bootstrap.SourceBranchOr(rs.SourceBranch, x.res.RepoRef.DefaultBranch),
+		Name:         wsname.For(nameBranch, rs.RunID),
+		Project:      x.res.ProjectID,
 		// The name is a docker label only; the id keys the gateway and caches.
 		ProjectName:        x.res.ProjectName,
 		EgressDomains:      x.res.EgressDomains,

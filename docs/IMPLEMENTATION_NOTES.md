@@ -6001,3 +6001,67 @@ false` to every `sysbox-runc` pod; the fix is for the engine to say so.
 - The 2026-10-27 residual ("sysbox on Kubernetes designed but not
   live-verified") stands for the engine's own live test; the pod shape is now
   the one a real cluster accepted.
+
+## The checkout is cloned at the run's source branch (2026-11-09)
+
+- Found by a run meant to fix a repo's devcontainer: it built the broken one.
+  Provision cloned with a plain `git clone` (the remote's default branch) on
+  both hosts (`host_k8s.go ensureCheckout` inside the pod, `devcontainer.go
+  ensureSrc` engine-side), detected and built the devcontainer from that
+  checkout and ran its lifecycle hooks (`RunUserCommands`, still inside
+  Provision), and only then did bootstrap's branch step `git switch -c <run>
+  origin/<source>`. The source branch the engine already computed for
+  bootstrap (`bootstrap.SourceBranchOr`) never reached the provisioner: the
+  `EnvSpec` had no field for it (its `Branch`, the run branch, is read by no
+  adapter — it does not exist on the remote when the clone happens).
+- Now `EnvSpec.SourceBranch`, set by provision and rebuild from the same
+  value bootstrap gets (the environment self-check sets the project's
+  default branch, which its bootstrap forks from), and both clone sites pass `--branch <source>` when it
+  is set — without `--single-branch`, so `origin/<source>` and the default
+  branch stay available to bootstrap (`git switch -c <run> origin/<source>`
+  is unchanged) and to the prompt's diffs. A source branch missing on the
+  remote fails the clone, loudly, instead of silently building the default.
+  The name was checked at run creation (`CheckBranch` on the ticket's source
+  branch; a merge-request run's source is the target branch the host
+  reported; the fallback is the repository's default branch), and `--`
+  already preceded the URL and the path; `--branch`'s own argument is taken
+  verbatim by git's option parser.
+- Rebuild was less of a gap than it looked: the checkout (with the agent's
+  commits, on the run branch) survives a rebuild on both hosts and the
+  container is rebuilt from it, so an agent's devcontainer edits already got
+  built. Only the clone after a reap (checkout gone) fell back to the default
+  branch; it now lands on the source branch like the first one. Cloning the
+  pushed run branch instead, for a re-provisioned run, is not done: the
+  working tree is gone with the workspace either way, and bootstrap's
+  `git switch <run>` picks the pushed branch up when it exists.
+- A run created on a merge request forks from `FETCH_HEAD` (the host's head
+  ref); its clone lands on the run's source branch — the target — not the
+  merge request's branch, whose devcontainer it therefore still does not
+  build with. Acceptable: the head ref is not a clonable branch, and the
+  review flows that run on merge requests do not change the devcontainer.
+
+## CI's unit job enforces both coverage floors (2026-11-09)
+
+- The CPUI floor (`cpui/vite.config.ts` thresholds, lines 99%) was enforced
+  only by a local `task cover` / `task verify`; CI's unit job ran
+  `task test:unit`, which has no coverage. Main sat at 98.96% lines without
+  anyone seeing it (found while fixing the Notices page, TODO 51). The unit
+  job now runs `task cover`: `cover:go` (every package, Postgres tests
+  included, `GO_COVER_MIN`) then `npm run test:coverage`, and uploads both
+  reports as a workflow artifact (`coverage`, 14 days). A floor only rises;
+  a change that drops under one fails the pull request.
+- Not `task verify`: lint and build have their own jobs, and the pre-commit
+  gate repeating them in CI would only lengthen it (TODO 52). The Postgres
+  tests now run twice in CI: `cover:go` runs every package with
+  `TEST_POSTGRES=1`, so the `pg` integration suite (the pgtest packages,
+  same flag) is a subset of it. It stays for now as the fast, isolated
+  signal on the Postgres adapter; dropping it to shorten CI is TODO 52's
+  call.
+- Getting back over the CPUI floor took tests, not a lower number: the run
+  header's Stop and Archive (each asks first, naming the workspace it keeps
+  or destroys; archive's toast offers the ticket) and the retry label read
+  off the log were never exercised, and some forty one-line calls in
+  `api/index.ts` (the thin reads: run ports/ssh/services, the Ask pane, a
+  workspace file/changes/diff, a ping's payload and curation, skills and
+  skillsets by id, the account calls) had no test saying which endpoint they
+  reach with which arguments. They do now, as one table.

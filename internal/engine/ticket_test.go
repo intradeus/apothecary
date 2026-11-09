@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/runinput"
 	"apothecary/internal/workspace/wsname"
 )
@@ -72,6 +73,13 @@ func TestRunSourceBranch(t *testing.T) {
 	if v := h.view(t, def); v.SourceBranch != "main" {
 		t.Errorf("default source_branch = %q, want main", v.SourceBranch)
 	}
+	// The provisioner clones the checkout AT the source branch (the
+	// devcontainer is built from the files the run starts from), not only
+	// bootstrap forking the run branch off it.
+	h.e.Wait(def)
+	if got := h.provisionedSource(t, def); got != "main" {
+		t.Errorf("provisioned at %q, want main", got)
+	}
 
 	// Explicit source branch is kept.
 	exp, err := h.e.CreateRun(ctx,
@@ -85,6 +93,9 @@ func TestRunSourceBranch(t *testing.T) {
 
 	// Restart carries the original source branch forward.
 	h.e.Wait(exp)
+	if got := h.provisionedSource(t, exp); got != "develop" {
+		t.Errorf("provisioned at %q, want develop", got)
+	}
 	newID, err := h.e.Rerun(ctx, exp, runinput.Input{})
 	if err != nil {
 		t.Fatal(err)
@@ -131,4 +142,16 @@ func TestRerunTicketedRunKeepsBaseNewTail(t *testing.T) {
 	if want := "feat/login-" + wsname.RunIDTail(newID); nv.Branch != want {
 		t.Errorf("restart branch = %q, want %q", nv.Branch, want)
 	}
+}
+
+// provisionedSource is the source branch the run's workspace was cloned at
+// (the EnvSpec the provisioner received).
+func (h *harness) provisionedSource(t *testing.T, runID string) string {
+	t.Helper()
+	v := h.view(t, runID)
+	env := h.envp.Env(envport.EnvID(v.EnvID))
+	if env == nil {
+		t.Fatalf("run %s has no provisioned workspace (env %q)", runID, v.EnvID)
+	}
+	return env.Spec.SourceBranch
 }

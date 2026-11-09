@@ -37,6 +37,7 @@ security.ubuntu.com
 ports.ubuntu.com
 *.ubuntu.com
 deb.nodesource.com
+containers.dev
 # Docker's apt repo: the devcontainer docker-outside-of-docker /
 # docker-in-docker features install the docker CLI from it (moby=false, or a
 # distro Microsoft's repo lacks; moby=true uses packages.microsoft.com above).

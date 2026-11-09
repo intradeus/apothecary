@@ -16,6 +16,7 @@ import {
 	linkedTicketsOf,
 	api,
 	analytics,
+	ask,
 	auth,
 	automations,
 	credentials,
@@ -1458,5 +1459,209 @@ describe('notices', () => {
 		const fn = reply('dismissAllNotices');
 		await notices.dismissAll();
 		expect(fn).toHaveBeenCalled();
+	});
+});
+
+// The thin reads and writes: each one reaches its endpoint with its arguments
+// as the path, query or body the contract names, and maps what comes back
+// without choking on a sparse answer.
+describe('the rest of the surface', () => {
+	type Case = [string, () => Promise<unknown>, SdkName, unknown, unknown];
+	const cases: Case[] = [
+		['runs.files', () => runs.files('r'), 'getRunFiles', answer({}), { path: { id: 'r' } }],
+		['runs.ports', () => runs.ports('r'), 'getRunPorts', answer({}), { path: { id: 'r' } }],
+		['runs.ssh', () => runs.ssh('r'), 'getRunSsh', answer({}), { path: { id: 'r' } }],
+		[
+			'runs.services',
+			() => runs.services('r'),
+			'getRunServices',
+			answer({}),
+			{ path: { id: 'r' } }
+		],
+		['ask.state', () => ask.state('r'), 'getAsk', answer({}), { path: { id: 'r' } }],
+		[
+			'ask.send',
+			() => ask.send('r', 'why?'),
+			'askRun',
+			answer({}),
+			{ path: { id: 'r' }, body: { text: 'why?' } }
+		],
+		[
+			'workspace.file',
+			() => workspace.file('r', 'a.ts'),
+			'getWorkspaceFile',
+			answer({}),
+			{ path: { id: 'r' }, query: { path: 'a.ts', repo: '' } }
+		],
+		[
+			'workspace.changes',
+			() => workspace.changes('r', 'docs'),
+			'getWorkspaceChanges',
+			answer({}),
+			{ path: { id: 'r' }, query: { repo: 'docs' } }
+		],
+		[
+			'workspace.diff',
+			() => workspace.diff('r', 'a.ts'),
+			'getWorkspaceDiff',
+			answer({}),
+			{ path: { id: 'r' }, query: { path: 'a.ts', repo: '' } }
+		],
+		['pings.get', () => pings.get('p'), 'getPing', answer({}), { path: { pid: 'p' } }],
+		['pings.payload', () => pings.payload('p'), 'getPingFiles', answer({}), { path: { pid: 'p' } }],
+		[
+			'pings.curation',
+			() => pings.curation('p'),
+			'getPingCuration',
+			answer({}),
+			{ path: { pid: 'p' } }
+		],
+		['tickets.get', () => tickets.get('t'), 'getTicket', answer({}), { path: { id: 't' } }],
+		['tickets.sync', () => tickets.sync('t'), 'syncTicket', answer({}), { path: { id: 't' } }],
+		[
+			'projects.preflight',
+			() => projects.preflight('p'),
+			'preflightProject',
+			answer({}),
+			{ path: { id: 'p' } }
+		],
+		[
+			'projects.envCheck',
+			() => projects.envCheck('c'),
+			'getEnvCheck',
+			answer({}),
+			{ path: { id: 'c' } }
+		],
+		[
+			'projects.browser',
+			() => projects.browser('p'),
+			'getProjectBrowser',
+			answer({}),
+			{ path: { id: 'p' } }
+		],
+		[
+			'credentials.addKey',
+			() => credentials.addKey('acme', 'k', 'work'),
+			'createCredential',
+			answer({}),
+			{ body: { provider: 'acme', key: 'k', name: 'work' } }
+		],
+		[
+			'credentials.rename',
+			() => credentials.rename('c', 'home'),
+			'renameCredential',
+			answer({}),
+			{ path: { id: 'c' }, body: { name: 'home' } }
+		],
+		[
+			'credentials.signIn',
+			() => credentials.signIn('acme'),
+			'startSignIn',
+			answer({}),
+			{ body: { provider: 'acme' } }
+		],
+		[
+			'integrations.sourceTicket',
+			() => integrations.sourceTicket('i', 'K-1'),
+			'getSourceTicket',
+			answer({}),
+			{ path: { id: 'i', key: 'K-1' } }
+		],
+		['files.limits', () => files.limits(), 'getAttachmentLimits', answer({}), undefined],
+		[
+			'system.harnessOptions',
+			() => system.harnessOptions(),
+			'listHarnessOptions',
+			answer([]),
+			undefined
+		],
+		['system.settings', () => system.settings(), 'getSettings', answer({}), undefined],
+		[
+			'auth.setup',
+			() => auth.setup({ handle: 'lu', email: 'lu@x.test', name: 'Lu', password: 'longenough' }),
+			'setupInstance',
+			answer({ user: {} }),
+			{ body: { handle: 'lu', email: 'lu@x.test', name: 'Lu', password: 'longenough' } }
+		],
+		['auth.me', () => auth.me(), 'getMe', answer({ user: {} }), undefined],
+		[
+			'auth.updateMe',
+			() => auth.updateMe({ name: 'Lu' }),
+			'updateMe',
+			answer({ user: {} }),
+			{ body: { name: 'Lu' } }
+		],
+		[
+			'users.update',
+			() => users.update('u', { admin: true }),
+			'updateUser',
+			answer({}),
+			{ path: { id: 'u' }, body: { admin: true } }
+		],
+		['skills.get', () => skills.get('s'), 'getSkill', answer({ skill: {} }), { path: { id: 's' } }],
+		[
+			'skills.update',
+			() => skills.update('s', { name: 'n', files: [] }),
+			'updateSkill',
+			answer({}),
+			{ path: { id: 's' }, body: { name: 'n', files: [] } }
+		],
+		[
+			'skills.refresh',
+			() => skills.refresh('s'),
+			'refreshSkill',
+			answer({}),
+			{ path: { id: 's' } }
+		],
+		['skillsets.get', () => skillsets.get('k'), 'getSkillset', answer({}), { path: { id: 'k' } }],
+		[
+			'skillsets.update',
+			() => skillsets.update('k', { name: 'n', skillIds: ['s'] }),
+			'updateSkillset',
+			answer({}),
+			{ path: { id: 'k' }, body: { name: 'n', skill_ids: ['s'] } }
+		],
+		[
+			'skillsets.refresh',
+			() => skillsets.refresh('k'),
+			'refreshSkillset',
+			answer({ skillset: {} }),
+			{ path: { id: 'k' } }
+		]
+	];
+
+	it.each(cases)('%s', async (_name, call, sdk, wire, args) => {
+		const fn = reply(sdk, wire);
+		await call();
+		if (args === undefined) expect(fn).toHaveBeenCalledOnce();
+		else expect(fn).toHaveBeenCalledWith(args);
+	});
+
+	it('reports a tracker sync in our words', async () => {
+		reply(
+			'syncIntegration',
+			answer({ tickets: 3, synced: 2, gone: 0, failed: 1, busy: false, rate_limited: true })
+		);
+		expect(await integrations.sync('i')).toEqual({
+			tickets: 3,
+			synced: 2,
+			gone: 0,
+			failed: 1,
+			busy: false,
+			rateLimited: true
+		});
+	});
+
+	it('asks a tracker for its types, refreshed only when told', async () => {
+		const fn = reply('listTrackerTypes', answer({ types: [] }));
+		expect(await integrations.types('i')).toEqual([]);
+		expect(fn).toHaveBeenLastCalledWith({ path: { id: 'i' }, query: undefined });
+		await integrations.types('i', true);
+		expect(fn).toHaveBeenLastCalledWith({ path: { id: 'i' }, query: { refresh: '1' } });
+	});
+
+	it('reads a negative cap as no cap', async () => {
+		reply('getLimits', answer({ max_concurrent_runs: -1, max_environments: 2 }));
+		expect(await system.limits()).toEqual({ maxConcurrentRuns: null, maxEnvironments: 2 });
 	});
 });

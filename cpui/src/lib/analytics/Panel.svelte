@@ -100,17 +100,18 @@
 				>{t('analytics.panel.small')}</span
 			>
 		{/if}
-		<span class="grow"></span>
-		{@render actions?.()}
-		<button
-			bind:this={menuBtn}
-			type="button"
-			class="btn-icon btn-sm"
-			aria-label={t('analytics.panel.menu')}
-			aria-haspopup="menu"
-			aria-expanded={menuOpen}
-			onclick={() => (menuOpen = !menuOpen)}>{I.more}</button
-		>
+		<span class="acts">
+			{@render actions?.()}
+			<button
+				bind:this={menuBtn}
+				type="button"
+				class="btn-icon btn-sm"
+				aria-label={t('analytics.panel.menu')}
+				aria-haspopup="menu"
+				aria-expanded={menuOpen}
+				onclick={() => (menuOpen = !menuOpen)}>{I.more}</button
+			>
+		</span>
 	</header>
 
 	<Popover anchor={menuBtn} bind:open={menuOpen} placement="below-end" role="menu" portal flip>
@@ -154,25 +155,36 @@
 <DrillSheet bind:open={drillOpen} title={panel.title} {query} {result} row={drillRow} />
 
 <style>
+	/* A card's inset: the title and the viz never touch its edge. */
 	.pn {
 		display: flex;
 		flex-direction: column;
-		gap: 8px;
+		gap: 10px;
+		padding: 12px 14px 14px;
 		min-width: 0;
 		height: 100%;
 	}
+	/* The title keeps its line: when a narrow panel's controls (edit mode's
+	   move, edit, remove) would leave it two letters, they wrap under it. */
 	header {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		flex-wrap: wrap;
+		gap: 6px 8px;
 		min-width: 0;
 	}
 	h3 {
+		flex: 0 1 auto;
+		min-width: 0;
 		font-size: var(--fs-section);
 		font-weight: 600;
 	}
-	.grow {
-		flex: 1;
+	.acts {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-left: auto;
+		flex: none;
 	}
 	.body {
 		min-width: 0;

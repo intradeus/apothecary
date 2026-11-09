@@ -689,6 +689,7 @@ on every pull request and push to `main`; a release needs all four green):
 
 ```sh
 task test:unit                     # unit: Go (`go test ./...`) + the CPUI (vitest) — nothing running, macOS or Linux; args go to go test (-- -count=1 ./...)
+task cover                         #   what CI's unit job runs: the same tests under their coverage floors (Go incl. the Postgres tests, CPUI), reports as pages
 task test:integration              # integration: every suite below (needs docker)
 task test:integration:pg           #   the Postgres adapter and boot tests, on throwaway containers
 task test:integration:docker       #   docker workspaces (lifecycle, egress gateway, file tree) + the browser, inside the engine image
@@ -700,7 +701,6 @@ task build                         # build: apothecaryd, shim, gateway, the CPUI
 task test                          # unit, then integration
 task test:linux                    # the Go unit tests in a Linux container, incl. the Linux-only build-tagged ones
 task verify                        # pre-commit gate: lint, unit tests with coverage, binaries, CPUI build
-task cover                         # test coverage of both halves, as pages (coverage/go, cpui/coverage)
 go run ./cmd/apothecaryd serve -dev   # real engine/API/UI, fake vendors
 task dev                           # the same, on :18080 against a scratch Postgres (API only)
 task dev:up                        # ...plus the built UI, master key written to deploy/.env if missing
@@ -710,7 +710,10 @@ devcontainer up --workspace-folder . && devcontainer exec --workspace-folder . t
 ```
 
 Development happens on macOS or Linux, and `task test:unit` passes on both
-(CI runs it on Linux): a unit test fakes what it needs (fixture `/proc` and
+(CI's unit job runs `task cover` on Linux: the same tests, Postgres ones
+included, under the coverage floors — `GO_COVER_MIN` in the Taskfile and the
+thresholds in `cpui/vite.config.ts`, which only ever rise): a unit test fakes
+what it needs (fixture `/proc` and
 `/sys` roots, injected paths) rather than reading the machine. Anything that
 needs a real environment is an integration test and runs in containers.
 Running Apothecary itself on macOS means running it in Docker

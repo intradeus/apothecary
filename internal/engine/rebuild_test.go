@@ -187,5 +187,10 @@ func TestRebuildPassesNoCacheThrough(t *testing.T) {
 		if rb.lastSpec.NoCache != noCache {
 			t.Errorf("provisioner saw NoCache=%v, want %v", rb.lastSpec.NoCache, noCache)
 		}
+		// A re-clone after a reap lands on the run's source branch, like the
+		// first one (testProject's default branch).
+		if rb.lastSpec.SourceBranch != "main" {
+			t.Errorf("rebuild spec source branch = %q, want main", rb.lastSpec.SourceBranch)
+		}
 	}
 }

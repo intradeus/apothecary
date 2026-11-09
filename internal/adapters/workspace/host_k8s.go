@@ -493,12 +493,21 @@ func (h *k8sHost) ensureCheckout(ctx context.Context, name, src string, spec env
 		}
 		cred = line
 	}
+	// The clone lands on the run's source branch (bootstrap forks the run
+	// branch off it): the devcontainer is then built from the files the run
+	// starts from, not the remote's default branch. The engine checked the
+	// name (CheckBranch) before the run existed; `--` keeps the URL and the
+	// path from being read as options.
+	branch := ""
+	if spec.SourceBranch != "" {
+		branch = "--branch " + shell.Quote(spec.SourceBranch) + " "
+	}
 	// One line of script, then the credential: bash reads the script line,
 	// `read` takes the next.
 	script := fmt.Sprintf(`IFS= read -r CRED; mkdir -p %[1]s; f=%[1]s/git-credentials; umask 077; `+
 		`if [ -n "$CRED" ]; then printf '%%s\n' "$CRED" > "$f"; set -- -c "credential.helper=store --file=$f"; else set --; fi; `+
-		`git "$@" clone -- %[2]s %[3]s; rc=$?; rm -f "$f"; exit $rc`,
-		shell.Quote(filepath.Dir(src)), shell.Quote(spec.RepoURL), shell.Quote(src))
+		`git "$@" clone %[4]s-- %[2]s %[3]s; rc=$?; rm -f "$f"; exit $rc`,
+		shell.Quote(filepath.Dir(src)), shell.Quote(spec.RepoURL), shell.Quote(src), branch)
 	stdin := []byte(script + "\n" + cred + "\n")
 	_, stderr, code, err := h.runInner(ctx, name, "bash", []string{"-s"}, stdin, nil)
 	if err != nil {

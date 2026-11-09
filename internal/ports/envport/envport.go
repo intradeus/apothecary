@@ -54,6 +54,12 @@ type EnvSpec struct {
 	RunID   string
 	RepoURL string
 	Branch  string
+	// SourceBranch is the branch the checkout is cloned at: the one the run
+	// forks off from (bootstrap's `git switch -c <Branch> origin/<SourceBranch>`),
+	// so the devcontainer is built from the files the run starts from, not
+	// the remote's default branch. The engine checks the name (CheckBranch)
+	// before a run exists; empty ⇒ the remote's HEAD.
+	SourceBranch string
 	// Name is the human-friendly workspace/container name the engine derives
 	// from the branch (wsname.For: "apo-" + slugified branch + a
 	// short run-id tail for uniqueness, ≤32 chars). Adapters use it verbatim

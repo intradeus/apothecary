@@ -80,6 +80,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		NoCache:            noCache,
 		RepoURL:            res.RepoRef.URL,
 		Branch:             v.Branch,
+		SourceBranch:       bootstrap.SourceBranchOr(v.SourceBranch, res.RepoRef.DefaultBranch),
 		Name:               wsname.For(nameBranch, runID),
 		Project:            res.ProjectID,
 		ProjectName:        res.ProjectName,

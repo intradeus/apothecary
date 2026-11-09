@@ -24,7 +24,8 @@ Apothecary on this repo (README, "Developing Apothecary with Apothecary").
 | before pushing, always | `task fmt`, then `task lint` (gofmt, go vet with every build tag on linux+darwin, model ids, API contract, svelte-check + the CPUI linters, helm lint) |
 | unit tests | `task test:unit` (Go + vitest; nothing running needed) |
 | Postgres-backed tests | `task test:integration:pg` (throwaway `postgres:16` containers on the run's docker daemon — the project's *Docker in workspaces* setting) |
-| you changed Go | `task cover:go` — the 95% floor (`cmd/coverreport`) only ever rises |
+| you changed Go | `task cover:go` — the 95% floor (`cmd/coverreport`) only ever rises; CI's unit job runs `task cover` (both halves' floors) |
+| you changed `cpui/` | `cd cpui && npm run test:coverage` — the floors in `cpui/vite.config.ts` (lines 99%) only ever rise; CI's unit job enforces them |
 | you changed `internal/httpapi/routes.go` | `task api` (regenerates `api/openapi.yaml` + `cpui/src/lib/api/generated`; a stale spec fails a unit test) |
 | one package | `task test:unit:go -- ./internal/x -run TestY -v` |
 | bring the app up | `task dev:up` (below) |

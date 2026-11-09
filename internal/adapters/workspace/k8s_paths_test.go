@@ -499,6 +499,17 @@ func TestK8sEnsureCheckout(t *testing.T) {
 	if !strings.HasSuffix(script, "\n\n") {
 		t.Errorf("stdin = %q", script)
 	}
+	if !strings.Contains(script, " clone -- ") {
+		t.Errorf("no source branch: script = %q", script)
+	}
+	// Cloned at the run's source branch, so the devcontainer is built from the
+	// files the run starts from; quoted, `--` still before the URL and path.
+	if err := h.ensureCheckout(ctx, "w", "/src", envport.EnvSpec{RepoURL: "https://git.test/r.git", SourceBranch: "develop"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(script, " clone --branch 'develop' -- 'https://git.test/r.git' '/src'") {
+		t.Errorf("source branch: script = %q", script)
+	}
 	notCloned := &kubeFake{exec: func(argv []string, _ []byte) (string, string, int) { return "", "", 1 }}
 	_, h = k8sWith(t, notCloned, false, kubeRule{match: "bash -s", stderr: "Unable to connect to the server", code: 1})
 	if err := h.ensureCheckout(ctx, "w", "/src", envport.EnvSpec{}, nil); err == nil {

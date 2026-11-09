@@ -40,36 +40,37 @@
 	{/snippet}
 </PageHeader>
 
-<div class="notices">
+<!-- The page window every list page has (DESIGN 7): the notices sit on its
+     glass, each banner falling back to an inset by itself. -->
+<div class="page glass">
 	{#if error}<ErrorCard cause={error} ondismiss={() => (error = '')} />{/if}
 	{#if fleet.updatedAt === null}
 		<Skeleton pane lines={4} />
 	{:else if !fleet.notices.length}
 		<EmptyState title={t('notices.empty')} />
 	{:else}
-		{#each fleet.notices as n (n.id)}
-			<Banner
-				tone="attention"
-				title={n.title}
-				aside={aside(n)}
-				action={n.link ? t('notices.open') : undefined}
-				onaction={n.link ? () => goto(n.link) : undefined}
-				ondismiss={() => act(() => api.notices.dismiss(n.id))}
-			>
-				{#if n.body}<p class="body">{n.body}</p>{/if}
-			</Banner>
-		{/each}
+		<div class="list">
+			{#each fleet.notices as n (n.id)}
+				<Banner
+					tone="attention"
+					title={n.title}
+					aside={aside(n)}
+					action={n.link ? t('notices.open') : undefined}
+					onaction={n.link ? () => goto(n.link) : undefined}
+					ondismiss={() => act(() => api.notices.dismiss(n.id))}
+				>
+					{#if n.body}<p class="body">{n.body}</p>{/if}
+				</Banner>
+			{/each}
+		</div>
 	{/if}
 </div>
 
 <style>
-	.notices {
+	.list {
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
-		padding: var(--shell-gap);
-		min-height: 0;
-		overflow: auto;
 	}
 	.body {
 		margin: 0;

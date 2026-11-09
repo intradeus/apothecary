@@ -75,6 +75,7 @@ Every role has one family, so code can build the name from a `Hue`:
 - **No `!important`.** Element defaults sit in `:where()`, so any class wins.
 - **A hue is never a class of your own.** Don't write `.fill.success`. Use `.tone-success` and read `--tone`, so the class doesn't drift from the hue.
 - **Inside glass, never glass.** See DESIGN 2.3.
+- **The backdrop is never looked at directly.** It shows only in the gaps between windows and, blurred, through them. So every page body is one `.page.glass` window filling what the header leaves, on every page and at every screen size: short content leaves empty glass, never bare backdrop. A page with its own columns (the System hub, the inbox, the review workbench, the flow editor) makes each column a full-height window instead; dialogs and sheets leave for `<body>`. Tickets and Runs are the model: `PageHeader`, then `<div class="page glass">` holding the filters and the list. No script checks this yet, so it is a review item: a page component that wraps its content in a bare `<div>` with its own padding is the bug the Notices page shipped with. See DESIGN 7.
 
 Five files in cascade order, described at the top of `src/app.css`. `themes.css` and `tokens.css` are the only ones that define tokens for the whole app.
 
@@ -102,7 +103,7 @@ A component earns its place with behaviour or structure. A wrapper that only ren
 
 ## Tests
 
-Every component and module has its tests beside it: `Foo.svelte` → `Foo.test.ts`, `foo.ts` → `foo.test.ts`, `foo.svelte.ts` → `foo.svelte.test.ts`. `check-tests` fails on a file without one, so a new component can't arrive untested. Run them with `npm test`, `npm run test:watch` or `task test:unit:ui` (CI's unit job, on Linux and macOS).
+Every component and module has its tests beside it: `Foo.svelte` → `Foo.test.ts`, `foo.ts` → `foo.test.ts`, `foo.svelte.ts` → `foo.svelte.test.ts`. `check-tests` fails on a file without one, so a new component can't arrive untested. Run them with `npm test`, `npm run test:watch` or `task test:unit:ui`; CI's unit job runs them as `npm run test:coverage` (through `task cover`), so the coverage floor in `vite.config.ts` fails a pull request, not only a local `task cover`.
 
 No two names under `src/` may differ only by case: macOS's filesystem is case-insensitive, so `noise.svelte.ts` beside `Noise.svelte` resolves to the wrong file there. A rune module next to its component is named after what it exports instead (`noiseState.svelte.ts`, `headerSlot.svelte.ts`). `check-tests` enforces this too.
 

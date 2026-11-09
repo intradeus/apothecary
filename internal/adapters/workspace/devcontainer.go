@@ -678,7 +678,16 @@ func (a *Adapter) ensureSrc(ctx context.Context, name string, spec envport.EnvSp
 	if err := os.MkdirAll(a.folderFor(name), 0o755); err != nil {
 		return "", err
 	}
-	args := []string{"clone", "--", spec.RepoURL, src}
+	// Cloned at the run's source branch (bootstrap forks the run branch off
+	// it), so the devcontainer is built from the files the run starts from,
+	// not the remote's default branch. The engine checked the name
+	// (CheckBranch) before the run existed; `--` keeps the URL and the path
+	// from being read as options.
+	args := []string{"clone"}
+	if spec.SourceBranch != "" {
+		args = append(args, "--branch", spec.SourceBranch)
+	}
+	args = append(args, "--", spec.RepoURL, src)
 	if spec.GitPass != "" {
 		// The credential rides a mode-0600 store file consumed by git's
 		// credential machinery — never argv (ps-visible), never the checkout

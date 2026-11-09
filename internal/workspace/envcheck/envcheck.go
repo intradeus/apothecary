@@ -133,8 +133,10 @@ func check(ctx context.Context, res *resolution.Resolution, runID string, opts O
 		RunID:   runID,
 		RepoURL: res.RepoRef.URL,
 		Branch:  branch,
-		Name:    name,
-		Project: res.ProjectID,
+		// Cloned at the branch bootstrap below forks from, as a run is.
+		SourceBranch: res.RepoRef.DefaultBranch,
+		Name:         name,
+		Project:      res.ProjectID,
 		// The name is a docker label only; the id keys the gateway and caches.
 		ProjectName:        res.ProjectName,
 		EgressDomains:      res.EgressDomains,
