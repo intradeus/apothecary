@@ -61,6 +61,11 @@ export interface WorkspacePolicy {
 	 *  Chromium per agent session — what a flow's `builtin: browser` MCP
 	 *  server drives. */
 	browserEnabled: boolean;
+	/** Docker in this workshop's workspaces: the run's own docker daemon
+	 *  (testcontainers, compose, `docker run`) without the repo declaring the
+	 *  docker-outside-of-docker feature itself — the engine adds it to the
+	 *  build. The instance's daemon door decides whether it is allowed. */
+	docker: boolean;
 }
 
 /** code-server defaults, applied as VS Code user settings when the browser

@@ -68,7 +68,7 @@ func newConfEnvWith(t *testing.T, opt func(*engine.Deps)) *confEnv {
 	kinds.RegisterFakes(reg)
 	conf := confstore.New(confstore.NewMem(), key)
 	conf.KindValid = reg.Valid
-	resolver := integrations.New(conf, reg, "", 8080, "")
+	resolver := integrations.New(conf, reg, "", 8080, "", "")
 	t.Cleanup(resolver.Close)
 
 	store := event.NewMemStore()

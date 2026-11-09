@@ -18,8 +18,17 @@ type Definition interface {
 	// across engine restarts without re-detecting.
 	Name() string
 	Detect(ctx context.Context, fsys sandboxFS, src string) bool
-	// Up builds (or reuses) and starts the workspace container.
+	// Up builds (or reuses) and starts the workspace container, WITHOUT the
+	// repo's lifecycle hooks: RunUserCommands runs them once the adapter has
+	// handed the checkout to the remote user (rootInit).
 	Up(ctx context.Context, e defEnv, spec envport.EnvSpec, o upOptions) (Workspace, error)
+	RunUserCommands(ctx context.Context, e defEnv, o upOptions) error
+	// SandboxDaemonUse says what in the definition asks for the sandbox's own
+	// docker daemon (devcontainer: the docker-outside-of-docker feature, or a
+	// /var/run/docker.sock bind), "" when nothing does — the input to the
+	// daemon-door refusal. Best-effort: unreadable or unparseable asks for
+	// nothing.
+	SandboxDaemonUse(ctx context.Context, fsys sandboxFS, src string) string
 	// ExecArgs is the command prefix that runs a program inside the workspace
 	// container as its remote user, with remoteEnv set; the caller appends the
 	// program and its arguments.
@@ -55,8 +64,12 @@ type upOptions struct {
 	gwIP, project  string
 	removeExisting bool
 	noCache        bool
-	log            io.Writer
-	plog           func(string, ...any)
+	// docker injects the docker-outside-of-docker feature into the build —
+	// the project's "Docker in workspaces" toggle for a repo that does not
+	// declare the feature itself (never both: the CLI would install it twice).
+	docker bool
+	log    io.Writer
+	plog   func(string, ...any)
 }
 
 // Workspace is the started workspace container.

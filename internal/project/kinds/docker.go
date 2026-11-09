@@ -36,7 +36,8 @@ func (Docker) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 		DinDImage:       cfg.Str("dind_image", ""), // "" ⇒ adapter default
 		// Deployment-wide, not a form field: it names a runtime the HOST
 		// daemon must have installed (APOTHECARY_SANDBOX_RUNTIME).
-		SandboxRuntime: deps.SandboxRuntime,
+		SandboxRuntime:  deps.SandboxRuntime,
+		WorkspaceDocker: deps.WorkspaceDocker,
 	}), nil
 }
 

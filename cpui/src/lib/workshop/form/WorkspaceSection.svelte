@@ -1,6 +1,7 @@
 <script lang="ts">
 	// 4 · Workspace: what a run's sandbox may reach, and the editor it opens.
 	import TagInput from '$lib/ui/TagInput.svelte';
+	import Toggle from '$lib/ui/Toggle.svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import FormPane from './FormPane.svelte';
 	import FormSub from './FormSub.svelte';
@@ -12,6 +13,7 @@
 		egressMode = $bindable(),
 		allowDomains = $bindable(),
 		denyDomains = $bindable(),
+		docker = $bindable(),
 		codeServerExtensions = $bindable(),
 		editor = $bindable(),
 		onerror
@@ -20,6 +22,7 @@
 		egressMode: 'allow' | 'deny';
 		allowDomains: string[];
 		denyDomains: string[];
+		docker: boolean;
 		codeServerExtensions: string[];
 		editor: EditorFields;
 		onerror: (message: string) => void;
@@ -30,6 +33,11 @@
 	{#snippet lead()}{@html th('form.project.workspaceSub')}{/snippet}
 
 	<EgressPolicy {blockedDomains} bind:egressMode bind:allowDomains bind:denyDomains {onerror} />
+
+	<FormSub>
+		<Toggle bind:checked={docker} label={t('form.project.docker')} />
+		<div class="help">{t('form.project.dockerHelp')}</div>
+	</FormSub>
 
 	<FormSub>
 		<div class="row">

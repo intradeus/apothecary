@@ -173,8 +173,14 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 
 	// Egress filtering now lives in the per-project gateway the devcontainer
 	// provisioner brings up (internal/adapters/egressgw) — no engine-side proxy.
-	resolver := integrations.New(conf, reg, boot.RunsDir, enginePort, boot.SandboxRuntime)
+	resolver := integrations.New(conf, reg, boot.RunsDir, enginePort, boot.SandboxRuntime, boot.WorkspaceDocker)
 	closers = append(closers, func() { resolver.Close() })
+	// The daemon door under privileged sandboxes is the operator's explicit
+	// call (README, "Docker in workspaces"): say so once, where the choice is
+	// read off the deployment, not discovered from a run.
+	if boot.WorkspaceDocker == "on" && boot.SandboxRuntime == "" {
+		log.Warn("APOTHECARY_WORKSPACE_DOCKER=on with privileged sandboxes: a workspace whose devcontainer takes the sandbox's docker daemon (docker-outside-of-docker) runs as root on this host")
+	}
 	// The keeper is the one party that redeems provider refresh tokens
 	// (docs/model-providers-plan.md): harness credentials are opened through
 	// it, so what a workspace is seeded with is always fresh.

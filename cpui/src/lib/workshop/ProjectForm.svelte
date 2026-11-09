@@ -132,6 +132,8 @@
 	const svcIssues = $derived(serviceIssues(serviceList));
 	let svcStrict = $state(false);
 	let browserEnabled = $state(init?.workspace.browserEnabled ?? false);
+	// Docker in workspaces: the run's own daemon, added to the build.
+	let docker = $state(init?.workspace.docker ?? false);
 	// Flows are user-defined — no built-in fallback exists.
 	let defaultFlow = $state(init?.defaultFlow ?? flowNames[0] ?? '');
 
@@ -233,7 +235,8 @@
 					trustWorkspace: editor.trustWorkspace
 				},
 				services: serviceConfigs(serviceList),
-				browserEnabled
+				browserEnabled,
+				docker
 			},
 			defaultFlow
 		};
@@ -379,6 +382,7 @@
 			bind:egressMode
 			bind:allowDomains
 			bind:denyDomains
+			bind:docker
 			bind:codeServerExtensions
 			bind:editor
 			onerror={(message) => (error = message)}

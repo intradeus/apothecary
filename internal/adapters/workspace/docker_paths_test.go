@@ -412,6 +412,28 @@ func TestRootInitDefaultsToRoot(t *testing.T) {
 	if !strings.Contains(script, `ln -sfn '/workspaces/it'\''s' "$H/repo"`) {
 		t.Errorf("a repo-derived folder must stay quoted: %s", script)
 	}
+	// root already owns the engine's checkout: nothing to hand over.
+	if strings.Contains(script, "chown -R") {
+		t.Errorf("no ownership change for root: %s", script)
+	}
+}
+
+// A non-root remote user gets the checkout (the engine cloned it as root),
+// quoted like the folder, before anything else refers to it.
+func TestRootInitOwnsTheCheckoutForANonRootUser(t *testing.T) {
+	r := &ruleRunner{}
+	a := newTestAdapter(t, r)
+	if err := a.rootInit(context.Background(), "w", Workspace{ContainerID: "c", RemoteUser: "dev", WorkspaceFolder: "/workspaces/it's"}); err != nil {
+		t.Fatal(err)
+	}
+	script := r.snapshot()[0].args[len(r.snapshot()[0].args)-1]
+	own := `chown -R 'dev': '/workspaces/it'\''s'`
+	if !strings.Contains(script, own) {
+		t.Errorf("script = %s", script)
+	}
+	if strings.Index(script, own) > strings.Index(script, `"$H/repo"`) {
+		t.Errorf("ownership must precede the repo link: %s", script)
+	}
 }
 
 func TestRenameIsBestEffort(t *testing.T) {

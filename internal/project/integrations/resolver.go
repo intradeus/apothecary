@@ -46,7 +46,10 @@ type Resolver struct {
 	// sandboxRuntime is deployment-wide (APOTHECARY_SANDBOX_RUNTIME), not
 	// per-integration: it names a runtime the HOST daemon must have.
 	sandboxRuntime string
-	builder        *wsimage.Builder
+	// workspaceDocker is the daemon door's deployment-wide setting
+	// (APOTHECARY_WORKSPACE_DOCKER: auto|on|off).
+	workspaceDocker string
+	builder         *wsimage.Builder
 
 	mu    sync.Mutex
 	cache map[string]*provEntry // provisioner integration id -> entry
@@ -136,16 +139,18 @@ type provEntry struct {
 // New builds the resolver. The builder compiles + caches the apothecary-owned
 // images a docker host needs (the shim, the tools bundle and the gateway
 // image → ProvisionerDeps).
-// sandboxRuntime is APOTHECARY_SANDBOX_RUNTIME (empty ⇒ privileged sandbox).
-func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort int, sandboxRuntime string) *Resolver {
+// sandboxRuntime is APOTHECARY_SANDBOX_RUNTIME (empty ⇒ privileged sandbox);
+// workspaceDocker is APOTHECARY_WORKSPACE_DOCKER (auto|on|off; empty ⇒ auto).
+func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort int, sandboxRuntime, workspaceDocker string) *Resolver {
 	return &Resolver{
-		conf:           conf,
-		reg:            reg,
-		runsDir:        runsDir,
-		enginePort:     enginePort,
-		sandboxRuntime: sandboxRuntime,
-		builder:        wsimage.New(runsDir),
-		cache:          map[string]*provEntry{},
+		conf:            conf,
+		reg:             reg,
+		runsDir:         runsDir,
+		enginePort:      enginePort,
+		sandboxRuntime:  sandboxRuntime,
+		workspaceDocker: workspaceDocker,
+		builder:         wsimage.New(runsDir),
+		cache:           map[string]*provEntry{},
 	}
 }
 
@@ -362,12 +367,13 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 			WordWrap:       p.Workspace.Editor.WordWrap,
 			TrustWorkspace: p.Workspace.Editor.TrustWorkspace,
 		},
-		Secrets:      projectSecrets,
-		Browser:      p.Workspace.Browser.Enabled,
-		ExtraRepos:   extras,
-		RepoHosts:    repoHosts,
-		HarnessKind:  defaultKind,
-		HarnessKinds: kindList,
+		Secrets:         projectSecrets,
+		Browser:         p.Workspace.Browser.Enabled,
+		WorkspaceDocker: p.Workspace.Docker,
+		ExtraRepos:      extras,
+		RepoHosts:       repoHosts,
+		HarnessKind:     defaultKind,
+		HarnessKinds:    kindList,
 		Models: func(ctx context.Context, kind string) ([]string, error) {
 			h, ok := byKind[kind]
 			if !ok {
@@ -519,13 +525,14 @@ func (r *Resolver) acquireProvisioner(in confstore.Integration) (kinds.Provision
 	}
 	if e == nil {
 		prov, err := pk.New(kindConfig(in), kinds.ProvisionerDeps{
-			RunsDir:        r.runsDir,
-			EnginePort:     r.enginePort,
-			ShimBin:        r.builder.EnsureShim,
-			ToolsDir:       r.builder.EnsureTools,
-			GatewayImage:   r.builder.EnsureGatewayImage,
-			SandboxRuntime: r.sandboxRuntime,
-			Drift:          r.driftFor(in),
+			RunsDir:         r.runsDir,
+			EnginePort:      r.enginePort,
+			ShimBin:         r.builder.EnsureShim,
+			ToolsDir:        r.builder.EnsureTools,
+			GatewayImage:    r.builder.EnsureGatewayImage,
+			SandboxRuntime:  r.sandboxRuntime,
+			WorkspaceDocker: r.workspaceDocker,
+			Drift:           r.driftFor(in),
 		})
 		if err != nil {
 			return nil, nil, unresolvable(fmt.Errorf("provisioner %s: %v", in.Name, err))
@@ -659,6 +666,7 @@ func (r *Resolver) testIntegration(ctx context.Context, in confstore.Integration
 			RunsDir: r.runsDir, EnginePort: r.enginePort,
 			ShimBin: r.builder.EnsureShim, ToolsDir: r.builder.EnsureTools,
 			GatewayImage: r.builder.EnsureGatewayImage, SandboxRuntime: r.sandboxRuntime,
+			WorkspaceDocker: r.workspaceDocker,
 		})
 		if err != nil {
 			return err

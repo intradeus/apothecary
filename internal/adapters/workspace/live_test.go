@@ -16,6 +16,12 @@ package workspace
 //     runs in a container (Invariant A).
 //   - APOTHECARY_SANDBOX_RUNTIME (optional, e.g. sysbox-runc): the test then
 //     asserts the sandbox came up unprivileged under that runtime.
+//   - APOTHECARY_WORKSPACE_DOCKER (optional: auto|on|off): the daemon door.
+//     TestLiveLifecycle asserts the sandbox's default socket exists exactly
+//     when the door is open; TestLiveDaemonDoor provisions a
+//     docker-outside-of-docker repo through it (open) or asserts the early
+//     refusal (closed). Run the three cells: the runtime set (auto → open),
+//     nothing set (auto → refused), =on with no runtime (privileged → open).
 //   - APOTHECARY_LIVE_GATEWAY=1 (optional): also stand up the per-project
 //     egress gateway (--internal network, DNS + pull-through mirror via the
 //     gateway) instead of the default bridge. Torn down at the end.
@@ -116,9 +122,10 @@ func TestLiveLifecycle(t *testing.T) {
 	builder := wsimage.New(runsDir)
 	cfg := Config{
 		RunsDir: runsDir, ProvisionTimeout: 8 * time.Minute, EnginePort: enginePort,
-		ShimBin:        builder.EnsureShim,
-		ToolsDir:       builder.EnsureTools,
-		SandboxRuntime: sandboxRuntime,
+		ShimBin:         builder.EnsureShim,
+		ToolsDir:        builder.EnsureTools,
+		SandboxRuntime:  sandboxRuntime,
+		WorkspaceDocker: os.Getenv("APOTHECARY_WORKSPACE_DOCKER"),
 	}
 	// The tools bundle: a one-time build of minutes (every harness release +
 	// code-server + a codex-acp compile), cached under RunsDir afterwards.
@@ -182,6 +189,15 @@ func TestLiveLifecycle(t *testing.T) {
 	case sandboxRuntime == "" && !strings.HasPrefix(posture, "true "):
 		t.Errorf("sandbox posture = %q, want privileged under the default runtime", posture)
 	}
+	// The daemon door: the inner daemon's default socket exists in the
+	// sandbox exactly when the deployment opens it (auto → unprivileged only,
+	// on → always, off → never). cfg.WorkspaceDocker follows the env here, as
+	// the engine's does.
+	doorErr := exec.CommandContext(ctx, "docker", "exec", string(id), "test", "-S", daemonDoorSocket).Run()
+	if open := a.doorOpen(); open != (doorErr == nil) {
+		t.Errorf("daemon door open = %v, but %s in the sandbox: %v", open, daemonDoorSocket, doorErr)
+	}
+	t.Logf("daemon door open: %v (APOTHECARY_WORKSPACE_DOCKER=%q, runtime %q)", a.doorOpen(), cfg.WorkspaceDocker, sandboxRuntime)
 
 	// Exec: containerEnv, lifecycle hook, and the $HOME/repo contract.
 	res, err := a.Exec(ctx, id, envport.Command{Script: "echo env=$SMOKE; ls /tmp/pc-ran; cat file.txt", Dir: "repo"})
@@ -291,4 +307,226 @@ opencode --version && omp --version && codex --version && code-server --version 
 		t.Errorf("exposed app GET = %q via %s", page, exposedURL)
 	}
 	t.Logf("exposed :3000 at %s", exposedURL)
+}
+
+// liveAdapter is the live test's adapter over the real toolchain (see
+// TestLiveLifecycle for what each piece is), or a skip where it cannot run.
+func liveAdapter(t *testing.T, ctx context.Context, project string) (*Adapter, Config) {
+	t.Helper()
+	runsDir := os.Getenv("APOTHECARY_LIVE_RUNS_DIR")
+	if runsDir == "" {
+		t.Skip("APOTHECARY_LIVE_RUNS_DIR unset: needs a RunsDir outside /tmp — see the header comment")
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("must run as root: the inner daemon's socket is root:docker 0660 on the host, as apothecaryd sees it")
+	}
+	runsDir, err := filepath.Abs(runsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	builder := wsimage.New(runsDir)
+	cfg := Config{
+		RunsDir: runsDir, ProvisionTimeout: 8 * time.Minute,
+		ShimBin:         builder.EnsureShim,
+		ToolsDir:        builder.EnsureTools,
+		SandboxRuntime:  os.Getenv("APOTHECARY_SANDBOX_RUNTIME"),
+		WorkspaceDocker: os.Getenv("APOTHECARY_WORKSPACE_DOCKER"),
+	}
+	if _, err := builder.EnsureTools(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("APOTHECARY_LIVE_GATEWAY") == "1" {
+		cfg.GatewayImage = builder.EnsureGatewayImage
+		t.Cleanup(func() {
+			gw := "apo-gw-" + envport.ProjectHostKey(project)
+			for _, args := range [][]string{
+				{"rm", "-f", gw},
+				{"volume", "rm", "-f", gw + "-cache", gw + "-buildcache", gw + "-state"},
+			} {
+				_ = exec.Command("docker", args...).Run()
+			}
+		})
+	}
+	a := New(cfg)
+	t.Cleanup(a.Close)
+	return a, cfg
+}
+
+// liveRepo is a one-commit git repo of the given files (paths relative to
+// its root) plus a file.txt.
+func liveRepo(t *testing.T, ctx context.Context, files map[string]string) string {
+	t.Helper()
+	repo := t.TempDir()
+	files["file.txt"] = "from-the-repo\n"
+	for rel, content := range files {
+		p := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"add", "-A"},
+		{"-c", "user.email=live@test", "-c", "user.name=live", "commit", "-qm", "live"},
+	} {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	return repo
+}
+
+// The daemon door, end to end: a repo whose devcontainer uses the standard
+// docker-outside-of-docker feature. Door open → it provisions and the
+// workspace drives the sandbox's daemon, nested socket mount included (what
+// testcontainers' reaper does); under sysbox the shared tools cache stays
+// read-only even to that daemon's containers. Door closed → refused before
+// anything exists, naming the setting.
+func TestLiveDaemonDoor(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	const project = "livedoor"
+	a, cfg := liveAdapter(t, ctx, project)
+	repo := liveRepo(t, ctx, map[string]string{".devcontainer/devcontainer.json": `{
+  "image": "debian:bookworm-slim",
+  "remoteUser": "root",
+  "features": {"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}}
+}`})
+	spec := envport.EnvSpec{RunID: "LIVEDOOR1", RepoURL: "file://" + repo, Project: project,
+		EgressDomains: builtin.EgressDefaults()}
+	open := a.doorOpen()
+	t.Logf("door open: %v (APOTHECARY_WORKSPACE_DOCKER=%q, runtime %q)", open, cfg.WorkspaceDocker, cfg.SandboxRuntime)
+
+	id, err := a.Provision(ctx, spec)
+	if !open {
+		if err == nil || !strings.Contains(err.Error(), "APOTHECARY_WORKSPACE_DOCKER") {
+			t.Fatalf("closed door: err = %v, want the refusal", err)
+		}
+		out, _ := exec.CommandContext(ctx, "docker", "ps", "-aq", "--filter", "label="+label(WorkspaceName(spec.RunID))).Output()
+		if strings.TrimSpace(string(out)) != "" {
+			t.Errorf("refusal created something: %s", out)
+		}
+		t.Logf("refused as expected: %v", err)
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := a.Destroy(context.WithoutCancel(ctx), id); err != nil {
+			t.Errorf("destroy: %v", err)
+		}
+	}()
+	res, err := a.Exec(ctx, id, envport.Command{Timeout: 5 * time.Minute, Script: `set -e
+docker version --format 'server {{.Server.Version}}'
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock docker:29-cli docker ps --format '{{.Names}}'
+docker run --rm alpine:3.21 echo door-ok`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Output, "door-ok") || !strings.Contains(res.Output, "server ") {
+		t.Fatalf("docker through the door: exit %d: %q", res.ExitCode, res.Output)
+	}
+	t.Logf("through the door: %s", strings.TrimSpace(res.Output))
+	if cfg.SandboxRuntime != "" {
+		// The tools cache is shared by every run and the sandbox mounts it
+		// read-only at its own path (Invariant A): a container of the inner
+		// daemon, privileged or not, must not be able to write it or remount
+		// it writable (the userns locks the flag). The mount must be THERE for
+		// the check to mean anything.
+		toolsCache := filepath.Join(cfg.RunsDir, "tools-cache")
+		res, err := a.Exec(ctx, id, envport.Command{Timeout: 2 * time.Minute, Script: fmt.Sprintf(`docker run --rm --privileged -v %s:/t alpine:3.21 sh -c 'grep " /t " /proc/mounts | head -1; ls /t | head -3; (mount -o remount,rw /t 2>/dev/null && echo REMOUNTED) || echo remount-refused; (touch /t/.door-write 2>/dev/null && echo WROTE) || echo write-refused'`, toolsCache)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case !strings.Contains(res.Output, " /t "):
+			t.Errorf("the tools cache is not mounted where the probe looks: %q", res.Output)
+		case strings.Contains(res.Output, "REMOUNTED") || strings.Contains(res.Output, "WROTE"):
+			t.Errorf("the shared tools cache is writable through the door: %q", res.Output)
+		case !strings.Contains(res.Output, "remount-refused") || !strings.Contains(res.Output, "write-refused"):
+			t.Errorf("unexpected probe output: %q", res.Output)
+		}
+		t.Logf("tools cache under the door: %s", strings.TrimSpace(res.Output))
+	}
+}
+
+// The project's "Docker in workspaces": a repo that declares nothing gets the
+// feature injected into its build (--additional-features) and drives the
+// sandbox daemon like a repo that declared it. Only meaningful with the door
+// open; closed, the refusal path is TestLiveDaemonDoor's.
+func TestLiveProjectDocker(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	const project = "liveprojdocker"
+	a, cfg := liveAdapter(t, ctx, project)
+	if !a.doorOpen() {
+		t.Skipf("door closed (APOTHECARY_WORKSPACE_DOCKER=%q, runtime %q): the refusal is TestLiveDaemonDoor's", cfg.WorkspaceDocker, cfg.SandboxRuntime)
+	}
+	repo := liveRepo(t, ctx, map[string]string{".devcontainer/devcontainer.json": `{"image": "debian:bookworm-slim"}`})
+	id, err := a.Provision(ctx, envport.EnvSpec{RunID: "LIVEPROJD1", RepoURL: "file://" + repo, Project: project,
+		Docker: true, EgressDomains: builtin.EgressDefaults()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := a.Destroy(context.WithoutCancel(ctx), id); err != nil {
+			t.Errorf("destroy: %v", err)
+		}
+	}()
+	res, err := a.Exec(ctx, id, envport.Command{Timeout: 3 * time.Minute, Script: `docker version --format 'server {{.Server.Version}}' && docker run --rm alpine:3.21 echo project-docker-ok`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Output, "project-docker-ok") {
+		t.Fatalf("injected docker: exit %d: %q", res.ExitCode, res.Output)
+	}
+	t.Logf("project docker: %s", strings.TrimSpace(res.Output))
+}
+
+// A non-root remote user owns the checkout before its own hooks run: the
+// engine cloned it as root, root-init hands it over, then the hooks run.
+func TestLiveNonRootUser(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	const project = "liveuser"
+	a, _ := liveAdapter(t, ctx, project)
+	// A tiny Dockerfile: the image needs the user (and git, for the hook and
+	// for bootstrap) up front.
+	repo := liveRepo(t, ctx, map[string]string{
+		".devcontainer/Dockerfile": "FROM debian:bookworm-slim\n" +
+			"RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* && useradd -m -u 1000 dev\n",
+		".devcontainer/devcontainer.json": `{
+  "build": {"dockerfile": "Dockerfile"},
+  "remoteUser": "dev",
+  "postCreateCommand": "id -un > .hook-ran && git status --porcelain > .git-ok"
+}`,
+	})
+	id, err := a.Provision(ctx, envport.EnvSpec{RunID: "LIVEUSER1", RepoURL: "file://" + repo, Project: project,
+		EgressDomains: builtin.EgressDefaults()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := a.Destroy(context.WithoutCancel(ctx), id); err != nil {
+			t.Errorf("destroy: %v", err)
+		}
+	}()
+	res, err := a.Exec(ctx, id, envport.Command{Dir: "repo", Script: `id -un; cat .hook-ran; stat -c '%U' .git .hook-ran; git switch -c live-branch && echo switched`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"dev\ndev\ndev\ndev", "switched"} {
+		if !strings.Contains(res.Output, want) {
+			t.Errorf("non-root user: output missing %q: %q (exit %d)", want, res.Output, res.ExitCode)
+		}
+	}
 }

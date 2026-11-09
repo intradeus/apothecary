@@ -1,0 +1,36 @@
+// The repo's devcontainer: what VS Code and the devcontainer CLI open locally,
+// and what every apothecary run of this repo builds (README, "Developing
+// Apothecary with Apothecary"). Compose-based: this container (`app`) beside
+// a Postgres (`db`); see docker-compose.yml. The pins are held to their
+// sources of truth by internal/devtools/devcontainer.
+{
+	"name": "apothecary",
+	"dockerComposeFile": "docker-compose.yml",
+	"service": "app",
+	"workspaceFolder": "/workspaces/apothecary",
+	"shutdownAction": "stopCompose",
+	// Non-root; the image's own user stays root.
+	"remoteUser": "dev",
+	// No docker feature here: in a run the project's "Docker in workspaces"
+	// setting adds it (the engine injects docker-outside-of-docker, bound to
+	// the run's own sandbox daemon). In VS Code, add that feature yourself if
+	// you want the Postgres suites' testcontainers inside the container;
+	// otherwise run `task test:integration:pg` on the host.
+	"forwardPorts": [18080],
+	"portsAttributes": {
+		"18080": { "label": "apothecary (task dev:up)" }
+	},
+	"postCreateCommand": "bash .devcontainer/post-create.sh",
+	"customizations": {
+		"vscode": {
+			// Also what a run's browser editor installs (code-server).
+			"extensions": [
+				"golang.go",
+				"svelte.svelte-vscode",
+				"dbaeumer.vscode-eslint",
+				"esbenp.prettier-vscode",
+				"stylelint.vscode-stylelint"
+			]
+		}
+	}
+}

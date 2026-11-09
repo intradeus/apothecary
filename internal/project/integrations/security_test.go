@@ -85,7 +85,7 @@ func TestNoRefreshTokenReachesAWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := New(svc, reg, "", 8080, "")
+	r := New(svc, reg, "", 8080, "", "")
 	res, err := r.Resolve(ctx, p.ID)
 	if err != nil {
 		t.Fatal(err)

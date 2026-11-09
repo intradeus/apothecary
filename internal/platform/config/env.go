@@ -61,6 +61,22 @@ type Boot struct {
 	// of the deployment you can read off one line, not of whatever happened to
 	// be installed on the machine.
 	SandboxRuntime string
+	// WorkspaceDocker says whether a workspace may take its run's own docker
+	// daemon — the "daemon door": the sandbox's dockerd also listens on
+	// /var/run/docker.sock, so a devcontainer using the standard
+	// docker-outside-of-docker feature (testcontainers, `docker compose`,
+	// `docker run` from the agent) works. APOTHECARY_WORKSPACE_DOCKER:
+	//   - "auto" (default, ""): open only when the sandbox is unprivileged
+	//     (SandboxRuntime set; on Kubernetes a runtime class with privileged
+	//     off), where the sandbox is the boundary and its daemon adds nothing
+	//     the run does not already hold;
+	//   - "on": open under privileged sandboxes too. A workspace that uses it
+	//     is then root on the host — fine for an instance on your own laptop,
+	//     not for a shared server;
+	//   - "off": never.
+	// A repo asking for the door while it is closed is refused at provision
+	// with both ways out named. Any other value refuses to boot.
+	WorkspaceDocker string
 	// BrowserImage overrides the project browser's image on either host
 	// (APOTHECARY_BROWSER_IMAGE), e.g. a mirror of it; default "" = the one
 	// the engine pins (browser.DefaultImage), which its session command
@@ -234,6 +250,13 @@ func FromEnv() (*Boot, error) {
 	}
 	b.PortAutoExpose = os.Getenv("APOTHECARY_PORT_AUTOEXPOSE") == "on"
 	b.SandboxRuntime = strings.TrimSpace(os.Getenv("APOTHECARY_SANDBOX_RUNTIME"))
+	switch b.WorkspaceDocker = strings.TrimSpace(os.Getenv("APOTHECARY_WORKSPACE_DOCKER")); b.WorkspaceDocker {
+	case "":
+		b.WorkspaceDocker = "auto"
+	case "auto", "on", "off":
+	default:
+		return nil, fmt.Errorf("config: APOTHECARY_WORKSPACE_DOCKER must be auto, on or off, got %q", b.WorkspaceDocker)
+	}
 	b.BrowserImage = strings.TrimSpace(os.Getenv("APOTHECARY_BROWSER_IMAGE"))
 	b.K8s = K8s{
 		Namespace:          strings.TrimSpace(os.Getenv("APOTHECARY_K8S_NAMESPACE")),

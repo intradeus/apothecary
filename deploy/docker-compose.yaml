@@ -44,6 +44,13 @@ services:
     # DinD sandbox drops --privileged for a user namespace — a compromised run
     # then can't reach the host, its docker socket, or any other run. Empty =
     # today's privileged sandbox. Linux-only (see deploy/.env.example).
+    #
+    # Docker in workspaces (README, "Docker in workspaces"):
+    # APOTHECARY_WORKSPACE_DOCKER=auto|on|off in deploy/.env. auto (default)
+    # hands a run's own daemon to a docker-outside-of-docker devcontainer only
+    # under sysbox; on does so under privileged sandboxes too — such a
+    # workspace is then root on this host (a laptop instance's call, not a
+    # shared server's); off never.
     env_file: [.env]
     environment:
       APOTHECARY_POSTGRES_DSN: postgres://apothecary:${APOTHECARY_PG_PASSWORD}@127.0.0.1:15432/apothecary

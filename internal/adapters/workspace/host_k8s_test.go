@@ -187,6 +187,9 @@ func TestK8sProvisionSequence(t *testing.T) {
 	if pod == nil {
 		t.Fatal("no pod created")
 	}
+	if a.host.unprivileged() {
+		t.Error("the default pod is privileged: not an unprivileged sandbox")
+	}
 	b, _ := json.Marshal(pod)
 	ps := string(b)
 	for _, want := range []string{

@@ -1,0 +1,52 @@
+# The devcontainer's services (devcontainer.json): this container (`app`)
+# beside a Postgres (`db`) the dev engine and `task dev:*` use.
+#
+# Relative paths resolve against this file's directory (.devcontainer/), so
+# `..` is the checkout root — and NOTHING above it: under apothecary the
+# checkout's parent is the run's folder, with its sockets and shim (the CLI
+# does not expand ${localWorkspaceFolder} in compose files; `..` is the
+# standard way). Docker in a run comes from the project's "Docker in
+# workspaces" setting, not from this file (README, "Docker in workspaces").
+# internal/devtools/devcontainer and pgtest hold the pins here to go.mod,
+# deploy/ and CI.
+services:
+  app:
+    build:
+      context: ..                      # the repo root: go.mod/go.sum pre-warm the module cache
+      dockerfile: .devcontainer/Dockerfile
+    init: true                         # a reaping PID 1 (the process-group tests; see test:linux)
+    tmpfs:
+      - /tmp:exec,mode=1777            # overlayfs /tmp reports empty dirs as 0 bytes (see test:linux)
+    volumes:
+      - ..:/workspaces/apothecary:cached
+      # The container's own node_modules: `npm ci` here never deletes or
+      # rebuilds the host's (a mac's native binaries would not run in here
+      # anyway). The Dockerfile pre-creates the directory owned by `dev`, which
+      # the fresh volume takes over.
+      - cpui_node_modules:/workspaces/apothecary/cpui/node_modules
+    environment:
+      # The Taskfile's dev tasks use this instead of starting their own
+      # Postgres (dev:db is skipped).
+      APOTHECARY_DEV_DSN: postgres://dev:dev@db:5432/dev
+    command: sleep infinity
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: dev
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev -d dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  pgdata:
+  cpui_node_modules:

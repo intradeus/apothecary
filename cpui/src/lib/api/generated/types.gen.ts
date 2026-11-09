@@ -2074,6 +2074,7 @@ export type WorkspaceConfig = {
 	browser?: BrowserConfig;
 	code_server_extensions?: Array<string>;
 	denied_domains?: Array<string>;
+	docker?: boolean;
 	editor?: EditorConfig;
 	egress_allowed_cidrs?: Array<string>;
 	egress_allowed_ports?: Array<number>;

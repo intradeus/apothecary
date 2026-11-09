@@ -151,7 +151,9 @@ Cluster requirements:
   apparmor_parser -r /etc/apparmor.d/wg`).
 - **Privileged pods** in the workspaces namespace (the chart labels it), or
   [sysbox](https://github.com/nestybox/sysbox) on the nodes and the
-  integration's *runtime class* set with *privileged* off.
+  integration's *runtime class* set with *privileged* off — which is also
+  what opens the [daemon door](#docker-in-workspaces) under
+  `APOTHECARY_WORKSPACE_DOCKER=auto`.
 - A **local or block storage class** for workspace volumes: the inner docker
   daemon cannot run on NFS.
 - Clusters whose pod or service ranges differ from k3s's defaults:
@@ -647,7 +649,11 @@ task test:linux                    # the Go unit tests in a Linux container, inc
 task verify                        # pre-commit gate: lint, unit tests with coverage, binaries, CPUI build
 task cover                         # test coverage of both halves, as pages (coverage/go, cpui/coverage)
 go run ./cmd/apothecaryd serve -dev   # real engine/API/UI, fake vendors
+task dev                           # the same, on :18080 against a scratch Postgres (API only)
+task dev:up                        # ...plus the built UI, master key written to deploy/.env if missing
 cd cpui && npm run dev             # UI dev server (proxies /api)
+
+devcontainer up --workspace-folder . && devcontainer exec --workspace-folder . task test:unit   # the repo's own devcontainer (no docker inside it: the pg suite runs on the host, or add the docker-outside-of-docker feature locally)
 ```
 
 Development happens on macOS or Linux, and `task test:unit` passes on both
@@ -691,6 +697,47 @@ Design documents live in `docs/` — `DESIGN.md` (v1 engine),
 `DESIGN2.md` (config plane & distribution), with every deviation recorded
 in `docs/IMPLEMENTATION_NOTES.md`.
 
+## Developing Apothecary with Apothecary
+
+This repo is a project like any other: it carries `AGENTS.md` and its own
+`.devcontainer/` (compose: a Go/Node toolchain container beside a
+`postgres:16`), so an Apothecary instance can run agent runs on it. The
+recipe:
+
+1. **The door.** The Postgres suites run on testcontainers, so the project
+   turns on *Docker in workspaces* (step 3; the devcontainer itself declares
+   no docker feature) and the instance must open the
+   [daemon door](#docker-in-workspaces): on your own laptop,
+   `APOTHECARY_WORKSPACE_DOCKER=on` in `deploy/.env` (sandboxes stay
+   privileged — a run on this repo is then root on your machine, your call);
+   on a shared server, `APOTHECARY_SANDBOX_RUNTIME=sysbox-runc` instead,
+   which opens it by itself. A closed door refuses the project with a
+   message naming both. The engine host must also reach `ghcr.io` (the
+   feature is fetched engine-side on docker).
+2. **Integrations.** A GitHub repository account (classic PAT with `repo`),
+   a Docker provisioner, a harness; the model is bound later under
+   Workshop → Flows → Configure.
+3. **Project.** Repository `https://github.com/intradeus/apothecary`,
+   locator `intradeus/apothecary`, default branch `main`, AGENTS.md path
+   left default. Workspace: **Docker in workspaces** on. Commands: `verify` =
+   `task lint && task test:unit && task test:integration:pg`; optionally
+   `setup` = `bash .devcontainer/post-create.sh`.
+4. **Egress.** *Add sensible defaults*, then add `get.helm.sh` (helm comes
+   from there) — everything else the build and the hooks dial (Debian, the
+   Go module proxy, npm, GitHub, Docker Hub through the mirror,
+   `download.docker.com` for the feature) is in the defaults.
+5. **Service `default`.** Start `task dev:up`, health
+   `http://localhost:18080/healthz`, timeout `15m` (the first start builds
+   the UI and compiles the daemon), ports `[{18080, "UI"}]`. A screenshot
+   stage then lands on "Claim this apothecary" and creates the first
+   account of that throwaway instance.
+6. **Flow.** The builder template; `screenshots` needs the project's
+   Browser enabled.
+7. Preflight (AGENTS.md and the devcontainer are found) → Envcheck → a ticket.
+
+`AGENTS.md` tells the agent what to run and what never to run inside a
+workspace (the image-building and sandbox-nesting suites).
+
 ## Security model (short form)
 
 Engine and host are trusted; **workspaces are not** (prompt injection is
@@ -700,7 +747,11 @@ the boundary, not the agent's permission prompts. Workspaces get: a per-run Dock
 through a WireGuard tunnel to a per-project gateway that filters by hostname (TLS SNI / HTTP
 Host, no MITM) against the derived allowlist — a privileged sandbox can't
 bypass it because enforcement lives outside it (the host needs the
-`wireguard` kernel module, mainline since 5.6); a per-run bearer token
+`wireguard` kernel module, mainline since 5.6); the run's own docker daemon
+reaches a workspace only through the *daemon door* — open by itself under an
+unprivileged sandbox, by the operator's explicit `APOTHECARY_WORKSPACE_DOCKER=on`
+otherwise, and a repo asking for it while it is closed is refused before
+anything is built ([Docker in workspaces](#docker-in-workspaces)); a per-run bearer token
 scoped to their own ping endpoints,
 and secrets injected as files at bootstrap — never through provisioner
 parameters; when a run ends its agent process is stopped and the
@@ -752,6 +803,43 @@ re-verify it with the live test described at the top of
 `internal/adapters/workspace/live_test.go`. On a Linux host this is the
 recommended setting; it stays opt-in only because it is a host install we
 don't ship.
+
+### Docker in workspaces
+
+A repo whose tests or tooling need a docker daemon — testcontainers,
+`docker compose`, a `docker run` from the agent — declares the standard
+`ghcr.io/devcontainers/features/docker-outside-of-docker` feature (or a
+`/var/run/docker.sock` mount) in its devcontainer, exactly as it would for VS
+Code. In a run that socket is the **daemon door**: the run's own sandbox
+daemon, also listening on its default socket. Everything the workspace
+starts through it is a sibling container inside the same sandbox — it dies
+with the run and egresses through the project's gateway like the workspace
+itself; testcontainers' reaper and port detection work with no overrides.
+
+Whether the door is open is one deployment setting, `APOTHECARY_WORKSPACE_DOCKER`:
+
+| value | the door |
+|---|---|
+| `auto` (default) | open only when the sandbox is unprivileged (`APOTHECARY_SANDBOX_RUNTIME`; on Kubernetes a runtime class with *privileged* off). There the sandbox is the boundary already, so handing a run its own daemon adds nothing it does not hold. |
+| `on` | open under privileged sandboxes too. **A workspace that takes it is then root on the host** — the daemon can start a privileged container in a privileged sandbox, which is the host. Fine for an instance on your own laptop running your own repos; not for a shared server, where sysbox is the answer. |
+| `off` | never. |
+
+A repo that asks for the door while it is closed is refused at provision,
+before anything is built, with a message naming what asked and both ways
+out — instead of docker's late "bind source path does not exist" when the
+feature's mount finds no socket. `runArgs: ["--privileged"]` and compose
+`privileged: true` are not the door and keep running verbatim, as above.
+The feature installs the docker CLI from `download.docker.com`
+(`moby: false`) or `packages.microsoft.com` (its default), both in the
+offered egress defaults.
+
+A repo that does not declare the feature can still get docker from the
+project: **Workshop → Settings → Workspace → Docker in workspaces** adds the
+same (pinned) feature to the build through the devcontainer CLI's
+`--additional-features`, with the repo's files untouched. It is an ask like
+the repo's own: the door decides, a closed one refuses the project's runs
+naming the setting, and a repo that already declares the feature is left
+alone.
 
 **One deliberate carve-out:** the gateway also hosts the project's caches:
 the pull-through Docker Hub cache on `:5000` (each run's inner dockerd pulls

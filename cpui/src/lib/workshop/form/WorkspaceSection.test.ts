@@ -13,6 +13,7 @@ const setup = (over: Record<string, unknown> = {}) => {
 		egressMode: 'allow' as 'allow' | 'deny',
 		allowDomains: [] as string[],
 		denyDomains: [] as string[],
+		docker: false,
 		codeServerExtensions: [] as string[],
 		editor: {
 			theme: '',
@@ -57,6 +58,13 @@ describe('WorkspaceSection', () => {
 		const props = setup();
 		await userEvent.click(screen.getByRole('switch', { name: 'Word wrap' }));
 		expect(props.editor.wordWrap).toBe(true);
+	});
+
+	it('binds the Docker toggle, explained', async () => {
+		const props = setup();
+		expect(screen.getByText(/own docker daemon/)).toBeInTheDocument();
+		await userEvent.click(screen.getByRole('switch', { name: 'Docker in workspaces' }));
+		expect(props.docker).toBe(true);
 	});
 
 	it('passes a failed defaults fetch up', async () => {

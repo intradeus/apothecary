@@ -8,7 +8,9 @@ vars:
   LOCAL_COMPOSE: docker compose -p apothecary-local -f deploy/docker-compose.local.yaml
   PROD_COMPOSE: docker compose -p apothecary -f deploy/docker-compose.yaml
   DEV_PG: apothecary-dev-pg
-  DEV_DSN: postgres://dev:dev@127.0.0.1:15433/dev
+  # The dev tasks' Postgres. APOTHECARY_DEV_DSN overrides it — the repo's
+  # devcontainer sets it to its `db` sibling, and dev:db is then skipped.
+  DEV_DSN: '{{.APOTHECARY_DEV_DSN | default "postgres://dev:dev@127.0.0.1:15433/dev"}}'
   # A floor, not a target: raise it when coverage rises, never lower it.
   GO_COVER_MIN: 95
   # Local Kubernetes (k3d). Every kubectl/helm call names this kubeconfig:
@@ -196,7 +198,7 @@ tasks:
 
   # --- go-run dev mode (fake kinds, no docker build) -------------------------
   dev:
-    desc: Run the daemon from source with fake kinds + seeded sandbox (UI on :18080)
+    desc: 'Run the daemon from source with fake kinds + seeded sandbox: the API on :18080 (task ui for the UI; task dev:up for both)'
     deps: [dev:db]
     env:
       APOTHECARY_POSTGRES_DSN: '{{.DEV_DSN}}'
@@ -208,6 +210,9 @@ tasks:
   dev:db:
     desc: Start (or reuse) the scratch dev Postgres on :15433
     internal: true
+    status:
+      # A Postgres was provided (the devcontainer's db): nothing to start.
+      - test -n "$APOTHECARY_DEV_DSN"
     cmds:
       - docker start {{.DEV_PG}} 2>/dev/null ||
         docker run -d --name {{.DEV_PG}}
@@ -219,6 +224,34 @@ tasks:
     desc: Delete the scratch dev Postgres (fresh seed on next `task dev`)
     cmds:
       - docker rm -f {{.DEV_PG}} 2>/dev/null || true
+
+  dev:app:
+    desc: 'Build the CPUI, then run the daemon from source serving API + UI on :18080 (fake kinds) — what the apothecary project service runs (task dev:up)'
+    deps: [dev:db]
+    preconditions:
+      - sh: test -n "$APOTHECARY_MASTER_KEY"
+        msg: 'APOTHECARY_MASTER_KEY is unset: `task dev:key` writes one into deploy/.env'
+    env:
+      APOTHECARY_POSTGRES_DSN: '{{.DEV_DSN}}'
+      APOTHECARY_LISTEN: 127.0.0.1:18080
+      APOTHECARY_RUNS_DIR: /tmp/apothecary-dev-runs
+      APOTHECARY_CPUI_DIR: '{{.ROOT_DIR}}/cpui/build'
+    cmds:
+      - task: build:ui
+      - go run ./cmd/apothecaryd serve -dev
+
+  dev:key:
+    desc: 'Write a fresh APOTHECARY_MASTER_KEY into deploy/.env (gitignored) when it has none'
+    status:
+      - grep -qs '^APOTHECARY_MASTER_KEY=' deploy/.env
+    cmds:
+      - echo "APOTHECARY_MASTER_KEY=$(go run ./cmd/apothecaryd keygen)" >> deploy/.env
+
+  dev:up:
+    desc: 'dev:key, then dev:app in a fresh task process (the dotenv is read at start, so the key just written is seen): the one-liner the apothecary project service starts'
+    cmds:
+      - task: dev:key
+      - '{{.TASK_EXE}} dev:app'
 
   # --- build: everything a release ships, built from the working tree ---------
   # `task build` is CI's build job: the binaries, the CPUI and every image. The
@@ -488,6 +521,7 @@ tasks:
           -v "{{.ROOT_DIR}}/build/live":/live:ro
           -e APOTHECARY_LIVE_RUNS_DIR={{.LIVE_RUNS}}
           -e APOTHECARY_LIVE_GATEWAY={{.GATEWAY}}
+          -e APOTHECARY_SANDBOX_RUNTIME -e APOTHECARY_WORKSPACE_DOCKER
           apothecary/apothecaryd:live
           -test.v -test.count=1 -test.timeout 30m -test.run '^TestLive' -test.skip '^TestLiveK8s' {{.CLI_ARGS}}
 
@@ -608,7 +642,7 @@ tasks:
     desc: 'Fail on a real model id anywhere in the tree — models live in a project’s flow binding, never in code, flows, tests or docs (a wire fingerprint that must name one carries `lint:models-ok`)'
     cmds:
       - |
-        hits="$(grep -rnE --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.svelte-kit --exclude-dir=build --exclude-dir=generated --exclude-dir=UX --exclude=IMPLEMENTATION_NOTES.md --exclude=TODO.md 'glm-[0-9]|gpt-[0-9]|claude-(sonnet|opus|haiku|[0-9])|qwen[0-9]|kimi-k[0-9]|gemini-[0-9]' cmd internal cpui/src docs examples workspace api README.md 2>/dev/null | grep -v 'lint:models-ok' || true)"
+        hits="$(grep -rnE --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.svelte-kit --exclude-dir=build --exclude-dir=generated --exclude-dir=UX --exclude=IMPLEMENTATION_NOTES.md --exclude=TODO.md 'glm-[0-9]|gpt-[0-9]|claude-(sonnet|opus|haiku|[0-9])|qwen[0-9]|kimi-k[0-9]|gemini-[0-9]' cmd internal cpui/src docs examples workspace api README.md AGENTS.md 2>/dev/null | grep -v 'lint:models-ok' || true)"
         if [ -n "$hits" ]; then echo "$hits"; echo "a model id in the tree rots when the vendor renames it — bind models per project (Workshop → Flows → Configure); tests use fake/… or acme/… ids"; exit 1; fi
 
   verify:

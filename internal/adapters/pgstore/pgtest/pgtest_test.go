@@ -13,13 +13,15 @@ import (
 // The tests run on the Postgres production runs: when deploy/ moves, so must
 // Image, or they stop proving anything about it.
 func TestImageIsTheOneDeployed(t *testing.T) {
-	for _, f := range []string{"docker-compose.yaml", "docker-compose.local.yaml"} {
-		data, err := os.ReadFile("../../../../deploy/" + f)
+	// The deployments, and the repo's own devcontainer, whose `db` sibling is
+	// the Postgres `task dev` runs against: the same one these tests use.
+	for _, f := range []string{"deploy/docker-compose.yaml", "deploy/docker-compose.local.yaml", ".devcontainer/docker-compose.yml"} {
+		data, err := os.ReadFile("../../../../" + f)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(string(data), "image: "+Image+"\n") {
-			t.Errorf("deploy/%s does not run %s", f, Image)
+			t.Errorf("%s does not run %s", f, Image)
 		}
 	}
 }

@@ -105,7 +105,8 @@ func (k Kubernetes) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 		return nil, fmt.Errorf("kubernetes: privileged=off needs a runtime_class that can nest dockerd (e.g. sysbox-runc)")
 	}
 	a := workspaceadapter.New(workspaceadapter.Config{
-		RunsDir: deps.RunsDir,
+		RunsDir:         deps.RunsDir,
+		WorkspaceDocker: deps.WorkspaceDocker,
 		Kube: &workspaceadapter.KubeConfig{
 			Kube:            &kube.Client{Kubeconfig: path, Context: cfg.Str("context", ""), Namespace: ns},
 			SandboxImage:    cfg.Str("sandbox_image", d.SandboxImage),
