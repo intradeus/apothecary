@@ -48,6 +48,7 @@ func TestTicketedRunGeneratesBaseFromTitle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	h.e.Wait(id) // to its end: the golden log must not depend on when the test stopped
 	v := h.view(t, id)
 	if v.BranchBase != "apothecary/add-a-health-endpoint" {
 		t.Errorf("branch_base = %q, want apothecary/add-a-health-endpoint", v.BranchBase)
@@ -100,6 +101,7 @@ func TestRunSourceBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	h.e.Wait(newID)
 	if v := h.view(t, newID); v.SourceBranch != "develop" {
 		t.Errorf("restart source_branch = %q, want develop", v.SourceBranch)
 	}
@@ -129,6 +131,7 @@ func TestRerunTicketedRunKeepsBaseNewTail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	h.e.Wait(newID) // to its end: the golden log must not depend on when the test stopped
 	nv := h.view(t, newID)
 	if nv.TicketID != "tk-3" {
 		t.Errorf("restart ticket_id = %q, want tk-3", nv.TicketID)

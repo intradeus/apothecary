@@ -30,6 +30,7 @@ func TestRerunPreservesUserBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	h.e.Wait(newID) // to its end: the golden log must not depend on when the test stopped
 	if newID == id {
 		t.Fatal("restart must mint a new run id")
 	}
@@ -58,6 +59,7 @@ func TestRerunRegeneratesAutoBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	h.e.Wait(newID) // to its end: the golden log must not depend on when the test stopped
 	nb := h.view(t, newID).Branch
 	if nb == orig {
 		t.Errorf("auto branch not regenerated: still carries the old run id (%q)", nb)

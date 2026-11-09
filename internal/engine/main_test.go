@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"reflect"
 	"sort"
@@ -23,6 +25,14 @@ import (
 
 func TestMain(m *testing.M) {
 	foldCheck = checkFoldInvariant
+	// The engine logs through slog.Default() when Deps.Log is unset, and the
+	// harness leaves it unset: a failing package then prints thousands of
+	// INFO/WARN/ERROR lines (scrubs, flow warnings, the crash tests' dying
+	// stores) around the one assertion that matters. Silence it;
+	// APOTHECARY_TEST_LOGS=1 brings the lines back when they are the point.
+	if os.Getenv("APOTHECARY_TEST_LOGS") == "" {
+		slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}
 	os.Exit(m.Run())
 }
 
