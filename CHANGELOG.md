@@ -2,6 +2,18 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v3.2.0 (2026-11-09)
+
+### Features
+
+- **deployment**: add docker outside of docker support to launch containers dynamically in sandbox
+
+### Fixes
+
+- **ci**: fix flaky unit tests
+- **ci**: fix CI for k8s
+- **analytics**: fix analytics dashboards
+
 ## v3.1.0 (2026-11-04)
 
 ### Features
