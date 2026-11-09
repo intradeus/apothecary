@@ -30,7 +30,20 @@ func TestMain(m *testing.M) {
 		asShim()
 		os.Exit(0)
 	}
+	// No test in this package reaches the developer's home or shell: SSH
+	// sessions exec in $HOME, the terminal and an SSH shell are login
+	// shells that would read the developer's profile (a zsh without one
+	// even starts its first-run wizard), agents start with os.Environ().
+	// A test that cares sets its own.
+	home, err := os.MkdirTemp("", "shim-home-")
+	if err == nil {
+		_ = os.Setenv("HOME", home)
+	}
+	_ = os.Setenv("SHELL", "/bin/sh")
 	code := m.Run()
+	if home != "" {
+		os.RemoveAll(home)
+	}
 	if testing.CoverMode() != "" {
 		os.RemoveAll(coverScratch())
 	}

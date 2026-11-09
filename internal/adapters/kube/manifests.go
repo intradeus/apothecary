@@ -31,20 +31,23 @@ type Pod struct {
 }
 
 type PodSpec struct {
-	RestartPolicy                 string              `json:"restartPolicy,omitempty"`
-	TerminationGracePeriodSeconds *int64              `json:"terminationGracePeriodSeconds,omitempty"`
-	RuntimeClassName              string              `json:"runtimeClassName,omitempty"`
-	ServiceAccountName            string              `json:"serviceAccountName,omitempty"`
-	AutomountServiceAccountToken  *bool               `json:"automountServiceAccountToken,omitempty"`
-	EnableServiceLinks            *bool               `json:"enableServiceLinks,omitempty"`
-	DNSPolicy                     string              `json:"dnsPolicy,omitempty"`
-	DNSConfig                     *PodDNSConfig       `json:"dnsConfig,omitempty"`
-	Hostname                      string              `json:"hostname,omitempty"`
-	InitContainers                []Container         `json:"initContainers,omitempty"`
-	Containers                    []Container         `json:"containers"`
-	Volumes                       []Volume            `json:"volumes,omitempty"`
-	NodeSelector                  map[string]string   `json:"nodeSelector,omitempty"`
-	SecurityContext               *PodSecurityContext `json:"securityContext,omitempty"`
+	RestartPolicy                 string `json:"restartPolicy,omitempty"`
+	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
+	RuntimeClassName              string `json:"runtimeClassName,omitempty"`
+	// HostUsers false gives the pod a user namespace of its own, the kubelet
+	// choosing the mapping; nil (the default) keeps it in the host's.
+	HostUsers                    *bool               `json:"hostUsers,omitempty"`
+	ServiceAccountName           string              `json:"serviceAccountName,omitempty"`
+	AutomountServiceAccountToken *bool               `json:"automountServiceAccountToken,omitempty"`
+	EnableServiceLinks           *bool               `json:"enableServiceLinks,omitempty"`
+	DNSPolicy                    string              `json:"dnsPolicy,omitempty"`
+	DNSConfig                    *PodDNSConfig       `json:"dnsConfig,omitempty"`
+	Hostname                     string              `json:"hostname,omitempty"`
+	InitContainers               []Container         `json:"initContainers,omitempty"`
+	Containers                   []Container         `json:"containers"`
+	Volumes                      []Volume            `json:"volumes,omitempty"`
+	NodeSelector                 map[string]string   `json:"nodeSelector,omitempty"`
+	SecurityContext              *PodSecurityContext `json:"securityContext,omitempty"`
 }
 
 type PodSecurityContext struct {

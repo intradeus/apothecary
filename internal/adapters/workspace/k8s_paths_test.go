@@ -283,7 +283,10 @@ func TestK8sStorageChoices(t *testing.T) {
 }
 
 // A runtime class drops privilege, and with it the tunnel's privileged
-// container to a bare capability.
+// container to a bare capability; the pod asks for a user namespace of its
+// own (hostUsers: false, sysbox's documented pod shape — without it the
+// sandbox sysctls containerd writes fail with "ip_unprivileged_port_start:
+// permission denied" and the pod never starts).
 func TestK8sUnprivilegedRuntime(t *testing.T) {
 	k := &kubeFake{}
 	_, h := k8sWith(t, k, false)
@@ -295,6 +298,12 @@ func TestK8sUnprivilegedRuntime(t *testing.T) {
 	}
 	if pod.Spec.RuntimeClassName != "sysbox-runc" || pod.Spec.Containers[0].SecurityContext != nil {
 		t.Errorf("sandbox = %+v, class %q", pod.Spec.Containers[0].SecurityContext, pod.Spec.RuntimeClassName)
+	}
+	if pod.Spec.HostUsers == nil || *pod.Spec.HostUsers {
+		t.Errorf("hostUsers = %v, want false: an unprivileged sandbox pod gets its own user namespace", pod.Spec.HostUsers)
+	}
+	if b, _ := json.Marshal(pod); !strings.Contains(string(b), `"hostUsers":false`) {
+		t.Errorf("hostUsers false must reach the manifest (omitempty on a bool would drop it): %s", b)
 	}
 	// ...which is also what opens the daemon door under auto.
 	if !h.unprivileged() {
@@ -312,6 +321,9 @@ func TestK8sUnprivilegedRuntime(t *testing.T) {
 	pod, _ = h.podManifest(context.Background(), "w", envport.EnvSpec{}, att)
 	if pod.Spec.Containers[0].SecurityContext == nil || !*pod.Spec.Containers[0].SecurityContext.Privileged {
 		t.Errorf("sandbox = %+v", pod.Spec.Containers[0].SecurityContext)
+	}
+	if pod.Spec.HostUsers != nil {
+		t.Errorf("hostUsers = %v on a privileged pod, want unset: it stays in the host's user namespace", *pod.Spec.HostUsers)
 	}
 	if h.unprivileged() {
 		t.Error("a privileged pod is not an unprivileged sandbox, runtime class or not")

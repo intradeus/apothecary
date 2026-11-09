@@ -23,6 +23,9 @@ import (
 // door key written where the server looks, and returns a client over it.
 func newTestSSH(t *testing.T) (client *ssh.Client, door ssh.Signer, repo, sock string) {
 	t.Helper()
+	// exec sessions run in $HOME: a home of the test's own, never the
+	// developer's — whose absence, on a bare runner, would fail every exec.
+	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -97,7 +100,16 @@ func TestSSHExecRunsACommand(t *testing.T) {
 func TestSSHEnvAllowlistAndCwd(t *testing.T) {
 	client, _, _, _ := newTestSSH(t)
 	t.Setenv("SHELL", "/bin/sh")
-	home, _ := os.UserHomeDir()
+	// The session inherits the sidecar's own environment (in a workspace,
+	// the container's); only what the client sends is filtered. A desktop
+	// host may carry LD_PRELOAD itself (gtk-nocsd sets it), which the shell
+	// below would print as the host's value, not a leak — blank it so the
+	// empty line means what it says.
+	t.Setenv("LD_PRELOAD", "")
+	// exec runs in $HOME — the one newTestSSH gave this test. pwd reports
+	// the physical path (a temp dir may sit behind a symlink).
+	home := os.Getenv("HOME")
+	realHome, _ := filepath.EvalSymlinks(home)
 	ses, err := client.NewSession()
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +126,7 @@ func TestSSHEnvAllowlistAndCwd(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) != 3 || lines[0] != "fr_FR.UTF-8" || lines[1] != "" || lines[2] != home {
+	if len(lines) != 3 || lines[0] != "fr_FR.UTF-8" || lines[1] != "" || (lines[2] != home && lines[2] != realHome) {
 		t.Errorf("out = %q (home %s)", out, home)
 	}
 }

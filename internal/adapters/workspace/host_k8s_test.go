@@ -208,6 +208,9 @@ func TestK8sProvisionSequence(t *testing.T) {
 	if strings.Contains(ps, `"dnsPolicy"`) || strings.Contains(ps, `"name":"wg"`) {
 		t.Errorf("firewall off but the pod is tunnelled: %s", ps)
 	}
+	if strings.Contains(ps, `"hostUsers"`) {
+		t.Errorf("a privileged pod must not ask for a user namespace: %s", ps)
+	}
 	np := k.obj(k.applied, "NetworkPolicy")
 	nb, _ := json.Marshal(np)
 	if !strings.Contains(string(nb), `"policyTypes":["Ingress"]`) || !strings.Contains(string(nb), `"port":7070`) {

@@ -109,8 +109,9 @@ optionally, a Postgres); the engine then creates every workspace object
 itself, in a namespace of its own:
 
 - **one sandbox pod per run**: `docker:dind` plus git and the devcontainer
-  CLI, privileged (or unprivileged under a sysbox `RuntimeClass`), with the
-  run's checkout and inner docker state on a volume. Compose devcontainers
+  CLI, privileged (or unprivileged under a sysbox `RuntimeClass`, in a user
+  namespace of its own), with the run's checkout and inner docker state on a
+  volume. Compose devcontainers
   run verbatim inside it, exactly as on the docker host;
 - **one egress gateway per project** (a Deployment): the same filter as on
   docker. Each sandbox pod's default route is a WireGuard tunnel to it, and a
@@ -153,7 +154,55 @@ Cluster requirements:
   [sysbox](https://github.com/nestybox/sysbox) on the nodes and the
   integration's *runtime class* set with *privileged* off — which is also
   what opens the [daemon door](#docker-in-workspaces) under
-  `APOTHECARY_WORKSPACE_DOCKER=auto`.
+  `APOTHECARY_WORKSPACE_DOCKER=auto`. Under a runtime class the sandbox pod
+  is also created with `hostUsers: false`, sysbox's documented pod shape on
+  Kubernetes: a user namespace of the pod's own, made by the kubelet and
+  adopted by sysbox. Without it sysbox still makes one for the container,
+  but containerd has set up the pod's network namespace before that, and
+  the sandbox sysctls it then writes fail from a user namespace that does
+  not own it — `ip_unprivileged_port_start: permission denied`, and the pod
+  never starts. So the cluster needs Kubernetes user namespaces (on by
+  default since 1.33): **containerd ≥ 2.0.5** (or CRI-O), **sysbox ≥ 0.7**
+  (an older `sysbox-runc` answers no `features` and the kubelet rejects the
+  pod: `RuntimeClass handler "sysbox-runc" does not support user
+  namespaces`), a kernel ≥ 6.3, and idmapped mounts on the workspace
+  storage class (ext4, xfs, btrfs; one more reason NFS is out).
+- **AppArmor on Ubuntu nodes** meets sysbox twice:
+  - **`fusermount3` (Ubuntu 25.04 and later, 26.04 included).**
+    `/etc/apparmor.d/fusermount3` lets FUSE mount under a few trees only,
+    and sysbox-fs mounts the virtualised `/proc` and `/sys` of every
+    container under `/var/lib/sysboxfs` — so no sandbox starts at all
+    (`failed to pre-register with sysbox-fs`; `journalctl -u sysbox-fs`
+    says `fusermount3: mount failed: Permission denied`, the kernel log
+    `apparmor="DENIED" operation="mount" profile="fusermount3"`). Allow
+    sysbox's mounts in the profile's local override, with the rules its
+    maintainers give, and reload:
+
+    ```sh
+    sudo tee -a /etc/apparmor.d/local/fusermount3 <<'EOF'
+    # allow Sysbox to create fuse mounts
+    mount fstype=@{fuse_types} options=(nosuid,nodev,rw) -> /var/lib/sysboxfs/**/,
+    mount fstype=@{fuse_types} options=(nosuid,nodev,ro) -> /var/lib/sysboxfs/**/,
+    umount /var/lib/sysboxfs/**/,
+    EOF
+    sudo apparmor_parser -r /etc/apparmor.d/fusermount3 && sudo systemctl restart sysbox
+    ```
+
+  - **Unprivileged user namespaces (24.04 and later).**
+    `kernel.apparmor_restrict_unprivileged_userns=1` lets only a process
+    that is root on the host, or runs under a profile allowing it, create
+    a user namespace. sysbox and a privileged sandbox are host root and
+    unaffected; under sysbox nothing in a sandbox is — that is the point —
+    so a tool in the workspace that sandboxes itself with a user namespace
+    of its own (a harness's bubblewrap command sandbox, Chrome, rootless
+    podman, docker's userns-remap) is denied: `bwrap: setting up uid map:
+    Permission denied` in the run, `apparmor="DENIED"
+    operation="userns_create" profile="unconfined"` in the node's kernel
+    log. Lift it (`echo kernel.apparmor_restrict_unprivileged_userns=0 |
+    sudo tee /etc/sysctl.d/60-apothecary-userns.conf && sudo sysctl
+    --system`), or ship a profile with a `userns,` rule for each such
+    binary (it attaches by the binary's path, as the `wg` profile above
+    does).
 - A **local or block storage class** for workspace volumes: the inner docker
   daemon cannot run on NFS.
 - Clusters whose pod or service ranges differ from k3s's defaults:
@@ -796,8 +845,11 @@ go into Docker Desktop's VM on macOS/Windows — leave the variable unset there;
 Docker Desktop Business subscribers get the same technology via Enhanced
 Container Isolation instead). Official packages cover Ubuntu/Debian, with
 Fedora/Rocky/Alma/CentOS/Amazon Linux listed as compatible and other distros
-building from source. Kernel ≥5.12. The default `docker:29-dind` sandbox
-image is verified under sysbox — the full provisioning path, egress gateway
+building from source. Kernel ≥5.12. Ubuntu 25.04 and later confine
+`fusermount3` with AppArmor and sysbox starts no container until its mounts
+are allowed — the override is under the Kubernetes cluster requirements
+above; so is the user-namespace restriction of 24.04 and later. The default
+`docker:29-dind` sandbox image is verified under sysbox — the full provisioning path, egress gateway
 included (`docs/IMPLEMENTATION_NOTES.md`). If you override `dind_image`,
 re-verify it with the live test described at the top of
 `internal/adapters/workspace/live_test.go`. On a Linux host this is the

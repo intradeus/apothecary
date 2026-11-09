@@ -48,8 +48,9 @@ func (k Kubernetes) Descriptor() Descriptor {
 			{Name: "storage_class", Label: "Storage class", Help: "Must be a local or block filesystem: the inner docker daemon cannot run on NFS."},
 			{Name: "storage_size", Label: "Storage size per run", Placeholder: "20Gi"},
 			{Name: "privileged", Label: "Privileged sandboxes (on/off)", Placeholder: "on", Default: "on",
-				Help: "off needs a runtime class able to nest dockerd unprivileged (sysbox)."},
-			{Name: "runtime_class", Label: "Runtime class", Placeholder: "sysbox-runc"},
+				Help: "off needs a runtime class able to nest dockerd unprivileged (sysbox). The pod then also gets a user namespace of its own (hostUsers: false), which containerd 2.x requires for sysbox: containerd 2.0.5+, sysbox 0.7+ (README, cluster requirements)."},
+			{Name: "runtime_class", Label: "Runtime class", Placeholder: "sysbox-runc",
+				Help: "A class that nests dockerd unprivileged, installed on the nodes. With privileged off the pod is created with hostUsers: false (README, cluster requirements)."},
 			{Name: "firewall", Label: "Egress firewall (on/off)", Placeholder: "on", Default: "on"},
 		},
 	}

@@ -9,3 +9,4 @@ After 3.0.0 :
 - 51) Notices page has mismatching UI.
 - 52) ci upgrades (we run CI on MR and on merge on main... can we improve that somehow ? caching or something ? Speed is also VERY slow ...)
 - 54) Ask - multi-session support.
+- 55) Collaborative planning

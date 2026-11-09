@@ -48,7 +48,9 @@ type KubeConfig struct {
 	// Storage: "pvc" (default; survives a pod restart) or "emptydir".
 	Storage, StorageClass, StorageSize string
 	// Privileged sandboxes (default) — a nested dockerd needs it under runc.
-	// Off requires RuntimeClass (e.g. sysbox-runc installed on the nodes).
+	// Off requires RuntimeClass (e.g. sysbox-runc installed on the nodes),
+	// and the pod then also asks for a user namespace of its own
+	// (hostUsers: false; see podManifest).
 	Privileged   bool
 	RuntimeClass string
 	// Firewall routes every sandbox through its project's egress gateway.
@@ -415,6 +417,19 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 		}}
 	if h.cfg.RuntimeClass != "" {
 		pod.Spec.RuntimeClassName = h.cfg.RuntimeClass
+	}
+	if h.unprivileged() {
+		// The pod's own Kubernetes user namespace: sysbox's documented pod
+		// shape (runtimeClassName + hostUsers: false; sysbox ≥ 0.7 on
+		// containerd ≥ 2.0.5). Left on the host's user namespace, sysbox
+		// still makes one for the container, but containerd has set up the
+		// pod's network namespace before that, and the sandbox sysctls it
+		// then writes (net.ipv4.ip_unprivileged_port_start) fail from the
+		// user namespace that does not own it: "ip_unprivileged_port_start:
+		// permission denied", and the pod never starts. With hostUsers false
+		// the kubelet makes the user namespace first and sysbox adopts its
+		// mapping. README, "Cluster requirements".
+		pod.Spec.HostUsers = kube.Ptr(false)
 	}
 	if h.cfg.Storage == "pvc" {
 		pod.Spec.Volumes = append(pod.Spec.Volumes, kube.Volume{Name: "data",
