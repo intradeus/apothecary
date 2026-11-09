@@ -52,8 +52,10 @@
 	const BOX: Agg[] = ['p25', 'median', 'p75', 'min', 'max'];
 	const OPS: FilterOp[] = ['eq', 'neq', 'in', 'not_in'];
 
+	// Not crypto.randomUUID: it is missing on plain-HTTP origins other than
+	// localhost, and this runs whenever a dashboard mounts.
 	const blank = (): PanelT => ({
-		id: `p-${crypto.randomUUID().slice(0, 8)}`,
+		id: `p-${Math.random().toString(36).slice(2, 10)}`,
 		title: '',
 		query: { grain: 'runs', measures: [], groupBy: [], filters: [], time: {} },
 		viz: 'table',

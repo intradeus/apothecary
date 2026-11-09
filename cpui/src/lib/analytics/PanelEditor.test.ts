@@ -255,4 +255,16 @@ describe('PanelEditor', () => {
 		render(PanelEditor, { open: false, panel: aPanel(), onsave: vi.fn() });
 		expect(api.analytics.query).not.toHaveBeenCalled();
 	});
+
+	it('mounts where crypto.randomUUID is missing (plain HTTP, not localhost)', async () => {
+		vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) });
+		try {
+			const onsave = vi.fn();
+			render(PanelEditor, { open: true, onsave });
+			await userEvent.type(screen.getByLabelText('Title'), 'Runs');
+			expect((await saved(onsave)).id).toMatch(/^p-[a-z0-9]+$/);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
 });
