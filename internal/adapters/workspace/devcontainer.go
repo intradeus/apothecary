@@ -76,6 +76,7 @@ import (
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/workspace/checkout"
 )
 
 // idLabel is the docker label key that ties a container to its apothecary
@@ -678,21 +679,24 @@ func (a *Adapter) ensureSrc(ctx context.Context, name string, spec envport.EnvSp
 	if err := os.MkdirAll(a.folderFor(name), 0o755); err != nil {
 		return "", err
 	}
-	// Cloned at the run's source branch (bootstrap forks the run branch off
-	// it), so the devcontainer is built from the files the run starts from,
-	// not the remote's default branch. The engine checked the name
-	// (CheckBranch) before the run existed; `--` keeps the URL and the path
-	// from being read as options.
-	args := []string{"clone"}
-	if spec.SourceBranch != "" {
-		args = append(args, "--branch", spec.SourceBranch)
+	// The clone, then the branch step inside it (checkout.BranchScript): the
+	// checkout is on the run's branch before the devcontainer is built from
+	// it, so the build reads the files the run works on, not the remote's
+	// default branch. `--` keeps the URL and the path from being read as
+	// options.
+	script := fmt.Sprintf("git clone -- %s %s", shell.Quote(spec.RepoURL), shell.Quote(src))
+	if spec.Branch != "" {
+		script += fmt.Sprintf(" && cd %s && { %s; }", shell.Quote(src), checkout.BranchScript(spec.Branch, spec.SourceBranch, spec.Fetch))
 	}
-	args = append(args, "--", spec.RepoURL, src)
+	var env []string
 	if spec.GitPass != "" {
 		// The credential rides a mode-0600 store file consumed by git's
-		// credential machinery — never argv (ps-visible), never the checkout
-		// config, and removed as soon as the clone returns.
-		cred, err := credentialLine(spec.RepoURL, spec.GitUser, spec.GitPass)
+		// credential machinery, named through git's environment config —
+		// never argv (ps-visible), never the checkout config — and removed
+		// as soon as the script returns. Every git command of the script
+		// sees it: the branch step's fetch of a merge request's head needs
+		// it as much as the clone.
+		cred, err := checkout.CredentialLine(spec.RepoURL, spec.GitUser, spec.GitPass)
 		if err != nil {
 			return "", err
 		}
@@ -701,28 +705,16 @@ func (a *Adapter) ensureSrc(ctx context.Context, name string, spec envport.EnvSp
 			return "", err
 		}
 		defer os.Remove(credPath)
-		args = append([]string{"-c", "credential.helper=store --file=" + credPath}, args...)
+		env = []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0=store --file=" + credPath}
 	}
-	_, stderr, code, err := a.run(ctx, "git", args, nil, nil)
+	_, stderr, code, err := a.run(ctx, "sh", []string{"-c", script}, nil, nil, env...)
 	if err != nil {
 		return "", err
 	}
 	if code != 0 {
-		return "", fmt.Errorf("clone %s: exit %d: %s", spec.RepoURL, code, shell.Tail(string(stderr), 2048))
+		return "", fmt.Errorf("checkout %s: exit %d: %s", spec.RepoURL, code, shell.Tail(string(stderr), 2048))
 	}
 	return src, nil
-}
-
-// credentialLine mirrors bootstrap's credential-store entry format.
-func credentialLine(repoURL, user, pass string) (string, error) {
-	u, err := url.Parse(repoURL)
-	if err != nil || u.Host == "" {
-		return "", fmt.Errorf("cannot parse the repository URL")
-	}
-	if user == "" {
-		user = "oauth2"
-	}
-	return fmt.Sprintf("%s://%s:%s@%s", u.Scheme, url.QueryEscape(user), url.QueryEscape(pass), u.Host), nil
 }
 
 // policyFor maps an EnvSpec's egress inputs to the gateway policy file. Allow

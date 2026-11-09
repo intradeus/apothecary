@@ -704,7 +704,7 @@ flow is written against, and no binding names them:
 | the ticket | title, goal and change type as the run started; key, status, labels and comments as they are when a prompt is built — the prompt's `# TASK` section through a `run.ticket` port, its comments through a `run.ticket.comments` one |
 | the run goal | extra direction for *this* attempt, its own prompt section |
 | the repository | the project's repo, cloned into the workspace — plus, for a multi-repo project, its *additional* repositories beside it (`~/repos/<name>`), each on the same branch name |
-| the branch | the ticket's base branch (`apothecary/<slug>` unless the ticket names one) with the run's id tail appended, forked from the run's source branch (the checkout is cloned at that branch, so the devcontainer the run builds is that branch's) — or, for a run created on a merge request someone opened, that merge request's own branch |
+| the branch | the ticket's base branch (`apothecary/<slug>` unless the ticket names one) with the run's id tail appended, forked from the run's source branch — or, for a run created on a merge request someone opened, that merge request's own branch, at its head. The workspace's checkout is put on the run's branch before its devcontainer is built, so the devcontainer the run starts in is its own branch's |
 | the workspace | one checkout shared by every agent and command stage |
 | the services | the project's long-running processes — its app, a database — each a start script, a stop, a health probe and its ports, started by a `service` stage (§2) or by a person from the run page |
 | the parameters | the values the run was created with (§1 *Parameters*) |

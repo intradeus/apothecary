@@ -131,12 +131,15 @@ func (x *exec) ensureEnv() (err error) {
 	spec := envport.EnvSpec{
 		RunID:   rs.RunID,
 		RepoURL: x.res.RepoRef.URL,
-		Branch:  rs.Branch,
-		// The checkout is cloned at the source branch, so the devcontainer
-		// the run starts in is that branch's (a run fixing the devcontainer
-		// must build with its fix); bootstrap forks the run branch off the
-		// same value.
+		// The provisioner puts the checkout on the run's branch before the
+		// devcontainer is built from it — from the merge request's head when
+		// the run was created on one, else forked off the source branch —
+		// so the devcontainer the run starts in is its own (a run fixing the
+		// devcontainer must build with its fix). Bootstrap gets the same
+		// three values and re-enters the branch.
+		Branch:       rs.Branch,
 		SourceBranch: bootstrap.SourceBranchOr(rs.SourceBranch, x.res.RepoRef.DefaultBranch),
+		Fetch:        x.primaryFetch(),
 		Name:         wsname.For(nameBranch, rs.RunID),
 		Project:      x.res.ProjectID,
 		// The name is a docker label only; the id keys the gateway and caches.

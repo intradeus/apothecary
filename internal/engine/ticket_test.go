@@ -74,12 +74,12 @@ func TestRunSourceBranch(t *testing.T) {
 	if v := h.view(t, def); v.SourceBranch != "main" {
 		t.Errorf("default source_branch = %q, want main", v.SourceBranch)
 	}
-	// The provisioner clones the checkout AT the source branch (the
-	// devcontainer is built from the files the run starts from), not only
-	// bootstrap forking the run branch off it.
+	// The provisioner puts the checkout on the run's branch, forked off the
+	// source branch, before the devcontainer is built from it — not only
+	// bootstrap, after the build. A ticket run has no merge request head.
 	h.e.Wait(def)
-	if got := h.provisionedSource(t, def); got != "main" {
-		t.Errorf("provisioned at %q, want main", got)
+	if spec := h.provisionedSpec(t, def); spec.SourceBranch != "main" || spec.Branch != h.view(t, def).Branch || spec.Fetch != "" {
+		t.Errorf("provisioned spec = %+v, want the run branch forked off main", spec)
 	}
 
 	// Explicit source branch is kept.
@@ -94,7 +94,7 @@ func TestRunSourceBranch(t *testing.T) {
 
 	// Restart carries the original source branch forward.
 	h.e.Wait(exp)
-	if got := h.provisionedSource(t, exp); got != "develop" {
+	if got := h.provisionedSpec(t, exp).SourceBranch; got != "develop" {
 		t.Errorf("provisioned at %q, want develop", got)
 	}
 	newID, err := h.e.Rerun(ctx, exp, runinput.Input{})
@@ -147,14 +147,15 @@ func TestRerunTicketedRunKeepsBaseNewTail(t *testing.T) {
 	}
 }
 
-// provisionedSource is the source branch the run's workspace was cloned at
-// (the EnvSpec the provisioner received).
-func (h *harness) provisionedSource(t *testing.T, runID string) string {
+// provisionedSpec is the EnvSpec the run's workspace was provisioned with:
+// the branch, source branch and fetch ref the provisioner put the checkout
+// on before the devcontainer build.
+func (h *harness) provisionedSpec(t *testing.T, runID string) envport.EnvSpec {
 	t.Helper()
 	v := h.view(t, runID)
 	env := h.envp.Env(envport.EnvID(v.EnvID))
 	if env == nil {
 		t.Fatalf("run %s has no provisioned workspace (env %q)", runID, v.EnvID)
 	}
-	return env.Spec.SourceBranch
+	return env.Spec
 }

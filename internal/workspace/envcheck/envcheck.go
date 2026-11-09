@@ -133,7 +133,8 @@ func check(ctx context.Context, res *resolution.Resolution, runID string, opts O
 		RunID:   runID,
 		RepoURL: res.RepoRef.URL,
 		Branch:  branch,
-		// Cloned at the branch bootstrap below forks from, as a run is.
+		// The provisioner forks the branch off the default branch before
+		// the build, as a run's is; bootstrap below re-enters it.
 		SourceBranch: res.RepoRef.DefaultBranch,
 		Name:         name,
 		Project:      res.ProjectID,

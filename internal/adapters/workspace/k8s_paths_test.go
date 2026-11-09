@@ -132,7 +132,7 @@ func TestK8sProvisionFailuresStopAtTheirStage(t *testing.T) {
 				return "", "not found\n", 128
 			}
 			return "", "", 0
-		}, "clone https://git.test/r.git: exit 128"},
+		}, "checkout https://git.test/r.git: exit 128"},
 		{"no definition", nil, func(argv []string, stdin []byte) (string, string, int) {
 			if argv[0] == "bash" && strings.Contains(string(stdin), "[ -e") {
 				return "", "", 1
@@ -499,16 +499,36 @@ func TestK8sEnsureCheckout(t *testing.T) {
 	if !strings.HasSuffix(script, "\n\n") {
 		t.Errorf("stdin = %q", script)
 	}
-	if !strings.Contains(script, " clone -- ") {
-		t.Errorf("no source branch: script = %q", script)
+	if !strings.Contains(script, "git clone -- 'https://git.test/r.git' '/src'; rc=$?") {
+		t.Errorf("no branch: script = %q", script)
 	}
-	// Cloned at the run's source branch, so the devcontainer is built from the
-	// files the run starts from; quoted, `--` still before the URL and path.
-	if err := h.ensureCheckout(ctx, "w", "/src", envport.EnvSpec{RepoURL: "https://git.test/r.git", SourceBranch: "develop"}, nil); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(script, " clone --branch 'develop' -- 'https://git.test/r.git' '/src'") {
-		t.Errorf("source branch: script = %q", script)
+	// The branch step runs inside the checkout, in the same script as the
+	// clone — before the devcontainer is built from it and while the
+	// credential file still exists (a merge request's head is fetched with
+	// it) — and the credential reaches every git command through git's
+	// environment config, never argv.
+	for _, tc := range []struct {
+		spec envport.EnvSpec
+		want string
+	}{
+		{envport.EnvSpec{Branch: "feat/x", SourceBranch: "develop"},
+			`git clone -- 'https://git.test/r.git' '/src' && cd '/src' && { git switch 'feat/x' 2>/dev/null || git switch -c 'feat/x' 'origin/develop'; }; rc=$?; rm -f "$f"`},
+		{envport.EnvSpec{Branch: "feat/x", SourceBranch: "main", Fetch: "refs/merge-requests/4/head", GitPass: "tok"},
+			`git clone -- 'https://git.test/r.git' '/src' && cd '/src' && { git switch 'feat/x' 2>/dev/null || { git fetch origin 'refs/merge-requests/4/head' && git switch -c 'feat/x' FETCH_HEAD; }; }; rc=$?; rm -f "$f"`},
+	} {
+		tc.spec.RepoURL = "https://git.test/r.git"
+		if err := h.ensureCheckout(ctx, "w", "/src", tc.spec, nil); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(script, tc.want) || strings.Contains(script, "--branch") {
+			t.Errorf("branch step: script = %q\n want %q", script, tc.want)
+		}
+		if !strings.Contains(script, `export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0="store --file=$f"`) {
+			t.Errorf("credential not in git's env: %q", script)
+		}
+		if tc.spec.GitPass != "" && !strings.HasSuffix(script, "\nhttps://oauth2:tok@git.test\n") {
+			t.Errorf("credential line: %q", script)
+		}
 	}
 	notCloned := &kubeFake{exec: func(argv []string, _ []byte) (string, string, int) { return "", "", 1 }}
 	_, h = k8sWith(t, notCloned, false, kubeRule{match: "bash -s", stderr: "Unable to connect to the server", code: 1})

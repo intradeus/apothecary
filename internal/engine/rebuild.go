@@ -81,6 +81,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		RepoURL:            res.RepoRef.URL,
 		Branch:             v.Branch,
 		SourceBranch:       bootstrap.SourceBranchOr(v.SourceBranch, res.RepoRef.DefaultBranch),
+		Fetch:              viewPrimaryFetch(v),
 		Name:               wsname.For(nameBranch, runID),
 		Project:            res.ProjectID,
 		ProjectName:        res.ProjectName,
@@ -119,6 +120,7 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		RepoURL:       res.RepoRef.URL,
 		SourceBranch:  bootstrap.SourceBranchOr(v.SourceBranch, res.RepoRef.DefaultBranch),
 		Branch:        v.Branch,
+		Fetch:         viewPrimaryFetch(v),
 		AgentsMDPath:  res.AgentsMDPath,
 		ProviderEnv:   e.authSink.ProviderEnv(res, runID, e.engineURLFor(res.Envp, id)),
 		GitUser:       res.GitUser,
@@ -178,7 +180,20 @@ func viewExtras(v run.View) []bootstrap.ExtraCheckout {
 		if co.Primary {
 			continue
 		}
-		out = append(out, bootstrap.ExtraCheckout{Name: co.Name, Dir: co.Dir, URL: co.URL, Branch: co.Branch, Source: co.Source})
+		out = append(out, bootstrap.ExtraCheckout{Name: co.Name, Dir: co.Dir, URL: co.URL, Branch: co.Branch, Source: co.Source, Fetch: co.Fetch})
 	}
 	return out
+}
+
+// viewPrimaryFetch is the primary checkout's fetch ref as the view records
+// it: the head of the merge request the run was created on, or "". A
+// rebuild that lost its checkout (reaped) clones again and must land on the
+// same head the first one did (exec.primaryFetch, the live run's twin).
+func viewPrimaryFetch(v run.View) string {
+	for _, co := range v.Checkouts {
+		if co.Primary {
+			return co.Fetch
+		}
+	}
+	return ""
 }

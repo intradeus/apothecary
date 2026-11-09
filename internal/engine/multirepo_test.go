@@ -87,7 +87,7 @@ func (g *fakeGit) exec(_ *fake.Env, cmd envport.Command) (envport.ExecResult, er
 	fail := func(out string) (envport.ExecResult, error) { return envport.ExecResult{ExitCode: 1, Output: out}, nil }
 	switch {
 	case strings.HasPrefix(s, "git switch "):
-		// bootstrap: git switch "b" 2>/dev/null || git switch -c "b" origin/src
+		// bootstrap: git switch 'b' 2>/dev/null || git switch -c 'b' 'origin/src'
 		b := unq(f[2])
 		if _, exists := g.branches[b]; !exists {
 			if i := strings.Index(s, "origin/"); i >= 0 {

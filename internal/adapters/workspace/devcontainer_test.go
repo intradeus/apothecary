@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
@@ -213,13 +214,18 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 		t.Errorf("env id = %s", id)
 	}
 
-	clone := find(t, r.calls, "git", "-c")
-	joined := strings.Join(clone.args, " ")
+	clone := find(t, r.calls, "sh", "-c")
+	joined := strings.Join(append(append([]string{}, clone.args...), clone.env...), " ")
 	if strings.Contains(joined, "sekret") {
-		t.Fatalf("credential leaked into argv: %v", clone.args)
+		t.Fatalf("credential leaked into argv or env: %v %v", clone.args, clone.env)
 	}
-	if !strings.Contains(joined, "credential.helper=store --file=") {
-		t.Errorf("clone must use a credential store file: %v", clone.args)
+	// Named through git's environment config, so the clone and the branch
+	// step's fetch both read it — never argv.
+	if !strings.Contains(strings.Join(clone.env, " "), "GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=store --file=") {
+		t.Errorf("clone must use a credential store file: %v", clone.env)
+	}
+	if !strings.Contains(clone.args[1], "git clone -- ") {
+		t.Errorf("not a clone: %v", clone.args)
 	}
 	if _, err := os.Stat(filepath.Join(a.folderFor("apothecary-run1"), "git-credentials")); !errors.Is(err, fs.ErrNotExist) {
 		t.Error("credential file must be removed after clone")
@@ -401,7 +407,7 @@ func TestProvisionHonorsRepoDevcontainer(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range r.calls {
-		if c.bin == "git" {
+		if strings.Contains(strings.Join(c.args, " "), "git clone") {
 			t.Error("must not re-clone an existing checkout")
 		}
 	}
@@ -1605,16 +1611,6 @@ func TestWorkspaceName(t *testing.T) {
 	}
 }
 
-func TestCredentialLine(t *testing.T) {
-	line, err := credentialLine("https://gitlab.local/grp/repo.git", "", "p@ss w")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if line != "https://oauth2:p%40ss+w@gitlab.local" {
-		t.Errorf("line = %q", line)
-	}
-}
-
 // No gateway, no cache flags. The build cache lives in the project gateway's
 // writable registry, so a provisioner running without one must degrade to the
 // old behaviour rather than pass buildkit a reference to nothing.
@@ -1731,20 +1727,44 @@ func TestListFiles(t *testing.T) {
 // The checkout is cloned at the run's source branch, so the devcontainer is
 // built from the files the run starts from (a run fixing the devcontainer
 // must build with its fix); no source branch keeps the remote's default.
-func TestEnsureSrcClonesAtSourceBranch(t *testing.T) {
-	for _, tc := range []struct{ source, want string }{
-		{"develop", "clone --branch develop -- https://g.local/grp/repo.git "},
-		{"", "clone -- https://g.local/grp/repo.git "},
+// The checkout is on the run's branch before the devcontainer is built from
+// it: one script, the clone then the branch step inside the checkout — a
+// merge request's run from the fetched head, any other forked off the source
+// branch (re-entered first in both cases, for a pushed branch). No branch
+// (a bare caller) leaves the clone where it lands.
+func TestEnsureSrcEntersTheRunBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		spec envport.EnvSpec
+		want string
+	}{
+		{"new run", envport.EnvSpec{Branch: "feat/x", SourceBranch: "develop"},
+			" && cd %s && { git switch 'feat/x' 2>/dev/null || git switch -c 'feat/x' 'origin/develop'; }"},
+		{"merge request", envport.EnvSpec{Branch: "feat/x", SourceBranch: "main", Fetch: "refs/merge-requests/4/head"},
+			" && cd %s && { git switch 'feat/x' 2>/dev/null || { git fetch origin 'refs/merge-requests/4/head' && git switch -c 'feat/x' FETCH_HEAD; }; }"},
+		{"no branch", envport.EnvSpec{}, ""},
 	} {
 		r := &scriptRunner{}
 		a := newTestAdapter(t, r)
-		src, err := a.ensureSrc(context.Background(), "apo-src-1",
-			envport.EnvSpec{RepoURL: "https://g.local/grp/repo.git", SourceBranch: tc.source})
+		tc.spec.RepoURL = "https://g.local/grp/repo.git"
+		src, err := a.ensureSrc(context.Background(), "apo-src-1", tc.spec)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := strings.Join(find(t, r.calls, "git", "clone").args, " "); got != tc.want+src {
-			t.Errorf("source %q: clone args = %q, want %q", tc.source, got, tc.want+src)
+		q := "'" + src + "'"
+		want := "git clone -- 'https://g.local/grp/repo.git' " + q
+		if tc.want != "" {
+			want += fmt.Sprintf(tc.want, q)
+		}
+		c := find(t, r.calls, "sh", "-c")
+		if len(c.args) != 2 || c.args[1] != want {
+			t.Errorf("%s: script = %q\n want %q", tc.name, c.args, want)
+		}
+		if strings.Contains(c.args[1], "--branch") {
+			t.Errorf("%s: the clone picks no branch of its own: %q", tc.name, c.args[1])
+		}
+		if len(c.env) != 0 {
+			t.Errorf("%s: no credential, no git env: %v", tc.name, c.env)
 		}
 	}
 }

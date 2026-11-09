@@ -136,7 +136,7 @@ func TestProvisionFailuresStopAtTheirStage(t *testing.T) {
 		want    string
 		stopped string // a later call that must not happen
 	}{
-		{"clone exit", []rule{fail("clone --", 128, "repository not found")}, "clone https://git.test/r.git: exit 128: repository not found", "run -d"},
+		{"clone exit", []rule{fail("clone --", 128, "repository not found")}, "checkout https://git.test/r.git: exit 128: repository not found", "run -d"},
 		{"clone spawn", []rule{spawnFail("clone --")}, "spawn failed", "run -d"},
 		{"sandbox list exit", []rule{fail("ps -aq --filter label=apothecary.env=w", 1, "denied")}, "docker ps: exit 1", "run -d"},
 		{"sandbox list spawn", []rule{spawnFail("ps -aq --filter label=apothecary.env=w")}, "spawn failed", "run -d"},
@@ -257,8 +257,14 @@ func TestCloneCredentialIsEphemeral(t *testing.T) {
 			t.Errorf("credential in argv: %s", l)
 		}
 	}
-	if !r.saw("credential.helper=store --file=" + credPath) {
-		t.Errorf("clone did not use the store: %v", r.lines())
+	// The store is named through git's environment config (every git command
+	// of the script reads it, the branch step's fetch included), never argv.
+	var env []string
+	for _, c := range r.snapshot() {
+		env = append(env, c.env...)
+	}
+	if got := strings.Join(env, " "); !strings.Contains(got, "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=store --file="+credPath) {
+		t.Errorf("clone did not use the store: env %q, lines %v", got, r.lines())
 	}
 }
 

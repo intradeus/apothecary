@@ -71,8 +71,12 @@ var rules = []rule{
 	// Building blocks with no domain knowledge.
 	{pkg: "internal/platform/", mayImport: []string{"internal/platform/"}},
 	{pkg: "internal/workspace/wsname", mayImport: []string{"internal/run"}},
+	// The git steps a checkout is set up with, shared by the provisioners
+	// (before the devcontainer build) and bootstrap (inside the workspace).
+	{pkg: "internal/workspace/checkout", mayImport: []string{"internal/platform/shell"}},
 	{pkg: "internal/workspace/bootstrap", mayImport: []string{
 		"internal/flow/agentspec", "internal/run/event", "internal/ports/", "internal/platform/shell", "internal/skills",
+		"internal/workspace/checkout",
 	}},
 	{pkg: "internal/engine/modelcheck", mayImport: []string{"internal/flow", "internal/ports/", "internal/project/resolution"}},
 	{pkg: "internal/engine/redact", mayImport: []string{"internal/project/resolution"}},

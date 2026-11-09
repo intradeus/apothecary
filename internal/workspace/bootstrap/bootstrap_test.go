@@ -150,8 +150,8 @@ func TestRunBootstrapExtras(t *testing.T) {
 	all := strings.Join(f.scripts(), "\n")
 	for _, want := range []string{
 		"mkdir -p 'repos' && { [ -e 'repos/lib'/.git ] || git clone \"https://git.example/acme/lib.git\" 'repos/lib'; }",
-		`git switch -c "feat/x" origin/develop`,
-		"git fetch origin 'refs/merge-requests/4/head' && git switch -c \"feat/x\" FETCH_HEAD",
+		`git switch -c 'feat/x' 'origin/develop'`,
+		"git fetch origin 'refs/merge-requests/4/head' && git switch -c 'feat/x' FETCH_HEAD",
 	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("scripts lack %q:\n%s", want, all)
@@ -413,38 +413,12 @@ func (e resetFailEnvp) Exec(context.Context, envport.EnvID, envport.Command) (en
 	return e.res, e.err
 }
 
-func TestBranchScript(t *testing.T) {
-	if got, want := branchScript("feat/x", "main", ""),
-		`git switch "feat/x" 2>/dev/null || git switch -c "feat/x" origin/main`; got != want {
-		t.Errorf("fork = %q", got)
-	}
-	// Re-entered first in both forms: a restart must never recreate a branch.
-	got := branchScript("feat/x", "main", "refs/pull/4/head")
-	if !strings.HasPrefix(got, `git switch "feat/x" 2>/dev/null ||`) || strings.Contains(got, "origin/main") {
-		t.Errorf("fetch = %q", got)
-	}
-}
-
 func TestSourceBranchOr(t *testing.T) {
 	if got := SourceBranchOr("dev", "main"); got != "dev" {
 		t.Errorf("got %q", got)
 	}
 	if got := SourceBranchOr("", "main"); got != "main" {
 		t.Errorf("got %q", got)
-	}
-}
-
-func TestCredentialLine(t *testing.T) {
-	if got, err := credentialLine("https://git.example/a.git", "", "p"); err != nil || got != "https://oauth2:p@git.example" {
-		t.Errorf("default user: %q, %v", got, err)
-	}
-	if got, err := credentialLine("https://git.example:8443/a.git", "u@x", "p:w"); err != nil || got != "https://u%40x:p%3Aw@git.example:8443" {
-		t.Errorf("escaping: %q, %v", got, err)
-	}
-	for _, bad := range []string{"", "not a url", "/just/a/path", "::"} {
-		if got, err := credentialLine(bad, "u", "p"); err == nil {
-			t.Errorf("credentialLine(%q) = %q, want an error", bad, got)
-		}
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"apothecary/internal/adapters/kube"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/workspace/checkout"
 	wsassets "apothecary/workspace"
 )
 
@@ -487,26 +488,27 @@ func (h *k8sHost) ensureCheckout(ctx context.Context, name, src string, spec env
 	}
 	cred := ""
 	if spec.GitPass != "" {
-		line, err := credentialLine(spec.RepoURL, spec.GitUser, spec.GitPass)
+		line, err := checkout.CredentialLine(spec.RepoURL, spec.GitUser, spec.GitPass)
 		if err != nil {
 			return err
 		}
 		cred = line
 	}
-	// The clone lands on the run's source branch (bootstrap forks the run
-	// branch off it): the devcontainer is then built from the files the run
-	// starts from, not the remote's default branch. The engine checked the
-	// name (CheckBranch) before the run existed; `--` keeps the URL and the
-	// path from being read as options.
+	// The clone, then the branch step inside it (checkout.BranchScript): the
+	// checkout is on the run's branch before the devcontainer is built from
+	// it. `--` keeps the URL and the path from being read as options.
 	branch := ""
-	if spec.SourceBranch != "" {
-		branch = "--branch " + shell.Quote(spec.SourceBranch) + " "
+	if spec.Branch != "" {
+		branch = fmt.Sprintf(" && cd %s && { %s; }", shell.Quote(src), checkout.BranchScript(spec.Branch, spec.SourceBranch, spec.Fetch))
 	}
 	// One line of script, then the credential: bash reads the script line,
-	// `read` takes the next.
+	// `read` takes the next. The credential reaches every git command of the
+	// script through git's environment config — never argv, never the
+	// checkout's config — and is removed when the script ends: the branch
+	// step's fetch of a merge request's head needs it as much as the clone.
 	script := fmt.Sprintf(`IFS= read -r CRED; mkdir -p %[1]s; f=%[1]s/git-credentials; umask 077; `+
-		`if [ -n "$CRED" ]; then printf '%%s\n' "$CRED" > "$f"; set -- -c "credential.helper=store --file=$f"; else set --; fi; `+
-		`git "$@" clone %[4]s-- %[2]s %[3]s; rc=$?; rm -f "$f"; exit $rc`,
+		`if [ -n "$CRED" ]; then printf '%%s\n' "$CRED" > "$f"; export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0="store --file=$f"; fi; `+
+		`git clone -- %[2]s %[3]s%[4]s; rc=$?; rm -f "$f"; exit $rc`,
 		shell.Quote(filepath.Dir(src)), shell.Quote(spec.RepoURL), shell.Quote(src), branch)
 	stdin := []byte(script + "\n" + cred + "\n")
 	_, stderr, code, err := h.runInner(ctx, name, "bash", []string{"-s"}, stdin, nil)
@@ -514,7 +516,7 @@ func (h *k8sHost) ensureCheckout(ctx context.Context, name, src string, spec env
 		return err
 	}
 	if code != 0 {
-		return fmt.Errorf("clone %s: exit %d: %s", spec.RepoURL, code, shell.Tail(string(stderr), 2048))
+		return fmt.Errorf("checkout %s: exit %d: %s", spec.RepoURL, code, shell.Tail(string(stderr), 2048))
 	}
 	return nil
 }

@@ -119,8 +119,14 @@ func TestRunOnSomeonesMergeRequest(t *testing.T) {
 	if len(v.MRs) != 1 || v.MRs[0].Author != "alice" || v.MRs[0].IID != ref.IID || v.Adopted == nil {
 		t.Errorf("view mrs = %+v adopted %+v", v.MRs, v.Adopted)
 	}
-	if !hasScript(scripts(), `git switch "feature/cache" 2>/dev/null || { git fetch origin 'refs/merge-requests/1/head' && git switch -c "feature/cache" FETCH_HEAD; }`) {
+	if !hasScript(scripts(), `git switch 'feature/cache' 2>/dev/null || { git fetch origin 'refs/merge-requests/1/head' && git switch -c 'feature/cache' FETCH_HEAD; }`) {
 		t.Errorf("bootstrap did not check out the merge request's head:\n%s", strings.Join(scripts(), "\n"))
+	}
+	// The provisioner got the same three values: the checkout was on the
+	// merge request's head before the devcontainer was built from it, so a
+	// merge request changing the devcontainer builds with its change.
+	if spec := ph.provisionedSpec(t, runID); spec.Branch != "feature/cache" || spec.SourceBranch != "main" || spec.Fetch != "refs/merge-requests/1/head" {
+		t.Errorf("provisioned spec branch %q source %q fetch %q, want the merge request's", spec.Branch, spec.SourceBranch, spec.Fetch)
 	}
 	starts := phaseStarts(ph.events(t, runID))
 	if len(starts) != 1 || starts[0].Phase != flow.MainPhase || starts[0].Subject != "repo" || starts[0].Tip != "a1" {

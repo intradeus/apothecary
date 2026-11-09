@@ -53,13 +53,21 @@ func ProjectHostKey(projectID string) string {
 type EnvSpec struct {
 	RunID   string
 	RepoURL string
-	Branch  string
-	// SourceBranch is the branch the checkout is cloned at: the one the run
-	// forks off from (bootstrap's `git switch -c <Branch> origin/<SourceBranch>`),
-	// so the devcontainer is built from the files the run starts from, not
-	// the remote's default branch. The engine checks the name (CheckBranch)
-	// before a run exists; empty ⇒ the remote's HEAD.
+	// Branch is the run's branch. The checkout is put on it right after the
+	// clone, before the devcontainer is built from it (checkout.BranchScript:
+	// re-entered when the remote holds it, else created from Fetch, else
+	// forked from origin/<SourceBranch>), so the build reads the files the
+	// run works on, not the remote's default branch. Bootstrap re-enters it.
+	// Empty ⇒ the clone is left where it lands.
+	Branch string
+	// SourceBranch is the branch Branch forks off from when neither the
+	// remote nor Fetch provides it. The engine checks the name (CheckBranch)
+	// before a run exists.
 	SourceBranch string
+	// Fetch, when set, is the ref Branch starts from instead of forking
+	// SourceBranch: the head of the merge request the run was created on,
+	// as its repository host names it (a fork's included).
+	Fetch string
 	// Name is the human-friendly workspace/container name the engine derives
 	// from the branch (wsname.For: "apo-" + slugified branch + a
 	// short run-id tail for uniqueness, ≤32 chars). Adapters use it verbatim

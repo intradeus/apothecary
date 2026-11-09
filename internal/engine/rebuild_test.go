@@ -187,10 +187,30 @@ func TestRebuildPassesNoCacheThrough(t *testing.T) {
 		if rb.lastSpec.NoCache != noCache {
 			t.Errorf("provisioner saw NoCache=%v, want %v", rb.lastSpec.NoCache, noCache)
 		}
-		// A re-clone after a reap lands on the run's source branch, like the
-		// first one (testProject's default branch).
-		if rb.lastSpec.SourceBranch != "main" {
-			t.Errorf("rebuild spec source branch = %q, want main", rb.lastSpec.SourceBranch)
+		// A re-clone after a reap enters the run's branch like the first
+		// one: the pushed branch, else forked off the source branch
+		// (testProject's default branch); no merge request head here.
+		if rb.lastSpec.SourceBranch != "main" || rb.lastSpec.Branch == "" || rb.lastSpec.Fetch != "" {
+			t.Errorf("rebuild spec branch %q source %q fetch %q, want the run branch off main", rb.lastSpec.Branch, rb.lastSpec.SourceBranch, rb.lastSpec.Fetch)
 		}
+	}
+}
+
+// A rebuild's bootstrap and provisioner read the checkouts from the view:
+// the merge request's head for the primary, every extra with its own.
+func TestViewCheckoutsForRebuild(t *testing.T) {
+	v := run.View{Checkouts: []event.Checkout{
+		{Name: "lib", Dir: "repos/lib", URL: "u", Branch: "b", Source: "s", Fetch: "refs/merge-requests/2/head"},
+		{Name: "repo", Dir: "repo", Primary: true, Fetch: "refs/merge-requests/7/head"},
+	}}
+	if got := viewPrimaryFetch(v); got != "refs/merge-requests/7/head" {
+		t.Errorf("primary fetch = %q", got)
+	}
+	if got := viewPrimaryFetch(run.View{}); got != "" {
+		t.Errorf("no checkouts: fetch = %q", got)
+	}
+	extras := viewExtras(v)
+	if len(extras) != 1 || extras[0].Name != "lib" || extras[0].Fetch != "refs/merge-requests/2/head" || extras[0].Source != "s" {
+		t.Errorf("extras = %+v", extras)
 	}
 }
