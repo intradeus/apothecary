@@ -441,7 +441,8 @@ func (a *Adapter) Provision(ctx context.Context, spec envport.EnvSpec) (envport.
 // provision is the shared create-or-recreate core behind Provision and
 // Rebuild. removeExisting adds `--remove-existing-container` so the CLI
 // `docker rm -f`s any container matching the id-labels first (a from-scratch
-// recreate — the Rebuild path). tee, when non-nil, receives the `up` build
+// recreate — the Rebuild path); up adds it on its own when the CLI handed
+// back a container it did not create. tee, when non-nil, receives the `up` build
 // output live (Rebuild streams it into exec.log so the run page shows it).
 func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExisting bool, tee io.Writer) (envport.EnvID, error) {
 	ctx, cancel := context.WithTimeout(ctx, a.cfg.ProvisionTimeout)
@@ -514,7 +515,7 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExi
 		log:            logW,
 		plog:           plog,
 	}
-	ws, err := p.def.Up(ctx, a.defEnv(name, p.src), spec, opts)
+	ws, err := a.up(ctx, name, p, spec, &opts)
 	if err != nil {
 		return left, err
 	}
@@ -550,6 +551,68 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExi
 	// container ID or the apothecary.env id-label), so it's safe to do last.
 	a.renameContainer(ctx, ws.ContainerID, name)
 	return envport.EnvID(name), nil
+}
+
+// up runs the definition's Up and makes sure the container it hands back is
+// one the CLI created for this workspace, with our mounts and labels.
+//
+// For a compose configuration the CLI does not look its container up by our
+// id-labels: it takes whatever container the compose project already has for
+// the service, and reuses it as it is. A repository whose initializeCommand
+// runs `docker compose up -d` with the devcontainer's own service (so that
+// VS Code reuses it) starts that container itself, and it does so on every
+// `up`, a recovery's too: the override the CLI adds changes the service's
+// config, so compose replaces our container with its own. The container the
+// CLI returns then has neither /opt/apothecary nor our labels, and every
+// later step fails on it.
+//
+// Such a container is never ours to keep, so one more `up` with
+// --remove-existing-container replaces it: the CLI removes it and creates the
+// service's container with our mounts and labels, the sibling services left
+// running. If even that leaves a foreign container, the error says so.
+func (a *Adapter) up(ctx context.Context, name string, p prep, spec envport.EnvSpec, opts *upOptions) (Workspace, error) {
+	env := a.defEnv(name, p.src)
+	ws, err := p.def.Up(ctx, env, spec, *opts)
+	if err != nil {
+		return Workspace{}, err
+	}
+	ours, err := a.ownsContainer(ctx, name, ws.ContainerID)
+	if err != nil || ours {
+		return ws, err
+	}
+	if !opts.removeExisting {
+		opts.plog("→ the devcontainer CLI reused a container it did not create (the repository's initializeCommand started it?): replacing it\n")
+		opts.removeExisting = true
+		if ws, err = p.def.Up(ctx, env, spec, *opts); err != nil {
+			return Workspace{}, err
+		}
+		if ours, err = a.ownsContainer(ctx, name, ws.ContainerID); err != nil || ours {
+			return ws, err
+		}
+	}
+	return Workspace{}, fmt.Errorf("workspace %s: the devcontainer CLI reused container %s, which it did not create, so it has none of apothecary's mounts and labels; does the repository's initializeCommand start the devcontainer's service?", name, shortID(ws.ContainerID))
+}
+
+// ownsContainer reports whether the container carries this workspace's
+// id-label, on the run's daemon.
+func (a *Adapter) ownsContainer(ctx context.Context, name, containerID string) (bool, error) {
+	out, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
+		[]string{"ps", "-aq", "--filter", "id=" + containerID, "--filter", "label=" + label(name)}, nil, nil)
+	if err != nil {
+		return false, err
+	}
+	if code != 0 {
+		return false, fmt.Errorf("workspace %s: look up container %s: exit %d: %s", name, shortID(containerID), code, shell.Tail(string(stderr), 512))
+	}
+	return strings.TrimSpace(string(out)) != "", nil
+}
+
+// shortID is a container id as docker prints it.
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 // errNoDefinition is what a repo without any workspace definition gets.

@@ -98,6 +98,7 @@ func upRules() []rule {
 	return []rule{
 		{match: "up --workspace-folder", resp: response{stdout: `{"outcome":"success","containerId":"cid1","remoteUser":"vscode","remoteWorkspaceFolder":"/workspaces/w"}` + "\n"}},
 		{match: "ps -q --filter label=apothecary.env", resp: response{stdout: "cid1\n"}},
+		{match: "ps -aq --filter id=cid1", resp: response{stdout: "cid1\n"}}, // up's container is ours
 	}
 }
 

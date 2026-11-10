@@ -89,9 +89,11 @@ func (d devcontainerDef) Up(ctx context.Context, e defEnv, spec envport.EnvSpec,
 		args = append(args, "--id-label", projectLabel+"="+spec.Project)
 	}
 	if o.removeExisting {
-		// Force a from-scratch recreate: the CLI removes any container matching
-		// the id-labels before (re)creating. The checkout (with agent commits)
-		// is untouched; only the container is rebuilt.
+		// Force a from-scratch recreate: the CLI removes the container it
+		// finds before (re)creating it — the one matching the id-labels, or
+		// for compose the project's container for the service, ours or not
+		// (Adapter.up). The checkout (with agent commits) is untouched; only
+		// the container is rebuilt.
 		args = append(args, "--remove-existing-container")
 	}
 	// The repo is honored untouched: no features, no override config. Egress

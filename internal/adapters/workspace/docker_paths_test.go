@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -149,6 +150,8 @@ func TestProvisionFailuresStopAtTheirStage(t *testing.T) {
 		{"root init spawn", []rule{spawnFail("exec -u root")}, "spawn failed", "shim relay"},
 		{"no container", []rule{{match: "ps -q --filter label=apothecary.env", resp: response{stdout: "\n"}}}, "no running container", "shim relay"},
 		{"container query spawn", []rule{spawnFail("ps -q --filter label=apothecary.env")}, "spawn failed", "shim relay"},
+		{"owner lookup exit", []rule{fail("ps -aq --filter id=", 1, "denied")}, "look up container cid1: exit 1: denied", "exec -u root"},
+		{"owner lookup spawn", []rule{spawnFail("ps -aq --filter id=")}, "spawn failed", "exec -u root"},
 		{"relay exit", []rule{fail("/opt/apothecary/shim relay", 1, "busy")}, "start relay in w: exit 1: busy", "rename"},
 		{"relay spawn", []rule{spawnFail("/opt/apothecary/shim relay")}, "spawn failed", "rename"},
 	}
@@ -1036,5 +1039,87 @@ func TestOSFS(t *testing.T) {
 	defer os.Chmod(locked, 0o755)
 	if _, err := f.Walk(ctx, dir); err == nil {
 		t.Error("an unreadable directory reads as empty")
+	}
+}
+
+// foreignUp answers `devcontainer up` with a container the CLI did not create
+// (cid0, as when the repository's initializeCommand started the service)
+// unless --remove-existing-container is passed, or always when stubborn.
+func foreignUp(stubborn bool) []rule {
+	res := func(cid string) *response {
+		return &response{stdout: `{"outcome":"success","containerId":"` + cid + `","remoteUser":"vscode","remoteWorkspaceFolder":"/workspaces/w"}` + "\n"}
+	}
+	return []rule{
+		{match: "up --workspace-folder", fn: func(args []string, _ []byte) *response {
+			if !stubborn && slices.Contains(args, "--remove-existing-container") {
+				return res("cid1")
+			}
+			return res("cid0")
+		}},
+		{match: "ps -aq --filter id=cid0", resp: response{stdout: "\n"}}, // not ours
+	}
+}
+
+func upCalls(r *ruleRunner) []string {
+	var ups []string
+	for _, l := range r.lines() {
+		if strings.Contains(l, "up --workspace-folder") {
+			ups = append(ups, l)
+		}
+	}
+	return ups
+}
+
+// A compose project whose initializeCommand starts the devcontainer's own
+// service hands the CLI a container it then reuses without our mounts and
+// labels. One more `up` with --remove-existing-container replaces it, and
+// the rest of the provision runs on the container the CLI created.
+func TestProvisionReplacesAContainerTheCLIDidNotCreate(t *testing.T) {
+	a, r := armedAdapter(t, foreignUp(false)...)
+	if _, err := a.Provision(context.Background(), envport.EnvSpec{Name: "w", RepoURL: "https://git.test/r.git"}); err != nil {
+		t.Fatalf("provision: %v\n%s", err, strings.Join(r.lines(), "\n"))
+	}
+	ups := upCalls(r)
+	if len(ups) != 2 || strings.Contains(ups[0], "--remove-existing-container") || !strings.Contains(ups[1], "--remove-existing-container") {
+		t.Fatalf("ups = %q, want a plain one, then one replacing the container", ups)
+	}
+	if r.saw("exec -u root cid0") || !r.saw("exec -u root cid1") {
+		t.Errorf("root init must run in the CLI's own container:\n%s", strings.Join(r.lines(), "\n"))
+	}
+	logged, _ := os.ReadFile(filepath.Join(a.folderFor("w"), "exec.log"))
+	if !strings.Contains(string(logged), "reused a container it did not create") {
+		t.Errorf("exec.log does not say why the container was replaced:\n%s", logged)
+	}
+}
+
+// When even the replacing `up` hands back a foreign container, the provision
+// fails with what happened, before anything runs in it.
+func TestProvisionRefusesAContainerTheCLIDidNotCreate(t *testing.T) {
+	a, r := armedAdapter(t, foreignUp(true)...)
+	id, err := a.Provision(context.Background(), envport.EnvSpec{Name: "w", RepoURL: "https://git.test/r.git"})
+	if err == nil || !strings.Contains(err.Error(), "reused container cid0, which it did not create") || !strings.Contains(err.Error(), "initializeCommand") {
+		t.Fatalf("err = %v", err)
+	}
+	if id != "w" {
+		t.Errorf("id = %q, want the workspace name", id)
+	}
+	if n := len(upCalls(r)); n != 2 {
+		t.Errorf("%d ups, want 2", n)
+	}
+	if r.saw("exec -u root") {
+		t.Error("root init ran in a foreign container")
+	}
+}
+
+// A recreate already passes --remove-existing-container: a foreign container
+// after it is an error at once, not a second recreate.
+func TestRecreateDoesNotRetryAForeignContainer(t *testing.T) {
+	a, r := armedAdapter(t, foreignUp(true)...)
+	_, err := a.provision(context.Background(), envport.EnvSpec{Name: "w", RepoURL: "https://git.test/r.git"}, true, nil)
+	if err == nil || !strings.Contains(err.Error(), "did not create") {
+		t.Fatalf("err = %v", err)
+	}
+	if ups := upCalls(r); len(ups) != 1 || !strings.Contains(ups[0], "--remove-existing-container") {
+		t.Errorf("ups = %q", ups)
 	}
 }
