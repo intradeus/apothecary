@@ -2,6 +2,17 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v3.3.0 (2026-11-10)
+
+### Features
+
+- **flow**: pass ping answers as input
+
+### Fixes
+
+- **devcontainer**: pass the build-cache flags only when there is an image to build
+- **tools**: upgrades to tools and usability : retries, provision log, default egress
+
 ## v3.2.6 (2026-11-10)
 
 ### Fixes
