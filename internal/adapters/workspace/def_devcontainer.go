@@ -23,7 +23,8 @@ import (
 // is injected into the repo's build: the harnesses and code-server arrive as
 // the bind-mounted tools bundle (/opt/apothecary/tools), like the shim.
 type devcontainerDef struct {
-	bin string // the devcontainer CLI
+	bin    string // the devcontainer CLI
+	docker string // the docker CLI, for what the devcontainer CLI hands to compose ("" = docker)
 }
 
 func (devcontainerDef) Name() string { return "devcontainer" }
@@ -134,7 +135,7 @@ func (d devcontainerDef) Up(ctx context.Context, e defEnv, spec envport.EnvSpec,
 	// docker:29-dind runs the containerd image store, which is exactly what
 	// makes the default docker driver able to (docker's own error message
 	// names it as the alternative to switching drivers).
-	if o.gwIP != "" && o.project != "" {
+	if o.gwIP != "" && o.project != "" && d.cacheBuilds(ctx, e, plog) {
 		cacheRef := egressgw.BuildCacheRef(o.gwIP, o.project)
 		imageRef := egressgw.BuildCacheImageRef(o.gwIP, o.project)
 		args = append(args,
@@ -164,6 +165,92 @@ func (d devcontainerDef) Up(ctx context.Context, e defEnv, spec envport.EnvSpec,
 			strings.TrimSpace(res.Message+" "+res.Description), shell.Tail("\n"+string(stderr), 2048))
 	}
 	return Workspace{ContainerID: res.ContainerID, RemoteUser: res.RemoteUser, WorkspaceFolder: res.RemoteWorkspaceFolder}, nil
+}
+
+// cacheBuilds reports whether `up` builds an image the build cache can
+// serve. For a compose devcontainer that takes the service the devcontainer
+// runs in having a build: section in the merged compose configuration: the
+// CLI writes --cache-from into its own compose override under the service's
+// build:, and a service with none — an image used as it is, say a prebuilt
+// file's `build: !reset null` — gets cache_from straight on the service,
+// which compose refuses ("services.<svc>.cache_from false schema"). Nothing
+// to build is nothing to cache, so the flags go. A single-container
+// devcontainer always builds (its features extend even a bare image). A
+// compose configuration that cannot be read leaves the cache off: the flags
+// only ever buy speed, and the wrong guess fails the build.
+func (d devcontainerDef) cacheBuilds(ctx context.Context, e defEnv, plog func(string, ...any)) bool {
+	cfg := devcontainerConfig(ctx, e.fs, e.src)
+	if cfg == "" {
+		return true
+	}
+	raw, err := e.fs.ReadFile(ctx, cfg)
+	if err != nil {
+		return true
+	}
+	files := referencedComposeFiles(cfg, raw)
+	if len(files) == 0 {
+		return true
+	}
+	service := composeService(raw)
+	builds, why := d.composeServiceBuilds(ctx, e, files, service)
+	if !builds {
+		plog("→ build cache off for this build: %s\n", why)
+	}
+	return builds
+}
+
+// composeServiceBuilds reads the merged compose configuration (`docker
+// compose config`, which resolves the files' overrides and !reset tags the
+// way the build will) and reports whether service has a build: section;
+// otherwise why not, for the log.
+func (d devcontainerDef) composeServiceBuilds(ctx context.Context, e defEnv, files []string, service string) (bool, string) {
+	if service == "" {
+		return false, "devcontainer.json names no compose service"
+	}
+	args := []string{"compose"}
+	for _, f := range files {
+		args = append(args, "-f", f)
+	}
+	args = append(args, "config", "--format", "json")
+	bin := d.docker
+	if bin == "" {
+		bin = "docker"
+	}
+	out, stderr, code, err := e.run(ctx, bin, args, nil, nil)
+	if err != nil {
+		return false, "the compose configuration could not be read: " + err.Error()
+	}
+	if code != 0 {
+		return false, fmt.Sprintf("the compose configuration could not be read (exit %d): %s", code, shell.Tail(strings.TrimSpace(string(stderr)), 512))
+	}
+	var conf struct {
+		Services map[string]struct {
+			Build json.RawMessage `json:"build"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(out, &conf); err != nil {
+		return false, "the compose configuration is not JSON: " + err.Error()
+	}
+	svc, ok := conf.Services[service]
+	if !ok {
+		return false, fmt.Sprintf("the compose configuration has no service %q", service)
+	}
+	if b := bytes.TrimSpace(svc.Build); len(b) == 0 || string(b) == "null" {
+		return false, fmt.Sprintf("the compose service %q has no build: section (its image is used as it is)", service)
+	}
+	return true, ""
+}
+
+// composeService is the compose service a devcontainer.json runs in ("" when
+// it names none or cannot be parsed).
+func composeService(raw []byte) string {
+	var cfg struct {
+		Service string `json:"service"`
+	}
+	if json.Unmarshal(stripJSONC(raw), &cfg) != nil {
+		return ""
+	}
+	return cfg.Service
 }
 
 // RunUserCommands runs the repo's lifecycle hooks against the container `up`

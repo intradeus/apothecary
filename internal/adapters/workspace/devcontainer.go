@@ -251,7 +251,7 @@ func New(cfg Config) *Adapter {
 		defByEnv:   map[string]Definition{},
 	}
 	a.host = dockerHost{a}
-	a.defs = []Definition{devcontainerDef{bin: cfg.DevcontainerBin}}
+	a.defs = []Definition{devcontainerDef{bin: cfg.DevcontainerBin, docker: cfg.DockerBin}}
 	if cfg.Kube != nil {
 		kh := newK8sHost(a, cfg.Kube)
 		a.host = kh

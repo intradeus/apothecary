@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -312,5 +313,95 @@ func TestStripJSONCLeavesCommasInStrings(t *testing.T) {
 		if got := string(stripJSONC([]byte(in))); got != want {
 			t.Errorf("stripJSONC(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// The build cache's flags go on `up` only when there is an image to build:
+// a single-container devcontainer, or a compose service with a build:
+// section in the merged configuration. An image-only service — a prebuilt
+// file's `build: !reset null` — would get cache_from straight on the service
+// in the CLI's own override, which compose refuses.
+func TestBuildCacheOnlyWhereSomethingIsBuilt(t *testing.T) {
+	const ok = `{"outcome":"success","containerId":"c"}` + "\n"
+	composeCfg := `{
+		// a comment, as devcontainer.json allows
+		"dockerComposeFile": ["../docker-compose.yml", "../docker-compose.prebuilt.yml"],
+		"service": "devcontainer"
+	}`
+	cases := []struct {
+		name, devcontainer string
+		config             response // docker compose config's answer
+		wantCache          bool
+		wantSaid           string
+	}{
+		{"a single container", `{"image": "mcr.microsoft.com/devcontainers/base"}`, response{}, true, ""},
+		{"a compose service that builds", composeCfg,
+			response{stdout: `{"services":{"devcontainer":{"build":{"context":".","dockerfile":"Dockerfile"}},"db":{"image":"postgres"}}}`}, true, ""},
+		{"an image-only compose service", composeCfg,
+			response{stdout: `{"services":{"devcontainer":{"image":"repo/dev:prebuilt"},"db":{"build":{"context":"db"}}}}`}, false,
+			`the compose service "devcontainer" has no build: section`},
+		{"a build reset to null", composeCfg,
+			response{stdout: `{"services":{"devcontainer":{"image":"repo/dev:prebuilt","build":null}}}`}, false, "has no build: section"},
+		{"an unreadable compose configuration", composeCfg,
+			response{code: 15, stderr: "services.devcontainer.x additional property"}, false, "could not be read (exit 15): services.devcontainer.x"},
+		{"a compose command that does not run", composeCfg, response{err: errors.New("no docker")}, false, "could not be read: no docker"},
+		{"a compose configuration that is not JSON", composeCfg, response{stdout: "services:\n"}, false, "is not JSON"},
+		{"a service the configuration lacks", composeCfg, response{stdout: `{"services":{"app":{"build":"."}}}`}, false, `has no service "devcontainer"`},
+		{"no service named", `{"dockerComposeFile": "../docker-compose.yml"}`, response{}, false, "names no compose service"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			src := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(src, ".devcontainer"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(src, ".devcontainer", "devcontainer.json"), []byte(c.devcontainer), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			r := &ruleRunner{rules: []rule{
+				{match: "compose ", resp: c.config},
+				{match: " up ", resp: response{stdout: ok}},
+			}}
+			var said []string
+			o := upOptions{shimDir: "/s", toolsDir: "/t", gwIP: "10.90.0.1", project: "P1",
+				plog: func(f string, a ...any) { said = append(said, fmt.Sprintf(f, a...)) }}
+			d := devcontainerDef{bin: "devcontainer", docker: "dockr"}
+			if _, err := d.Up(context.Background(), devEnv(t, src, r), envport.EnvSpec{Project: "P1"}, o); err != nil {
+				t.Fatal(err)
+			}
+			var up string
+			for _, l := range r.lines() {
+				if strings.HasPrefix(l, "devcontainer up ") {
+					up = l
+				}
+				if strings.Contains(l, "compose ") {
+					want := "dockr compose -f " + filepath.Join(src, "docker-compose.yml") + " -f " +
+						filepath.Join(src, "docker-compose.prebuilt.yml") + " config --format json"
+					if c.devcontainer == composeCfg && l != want {
+						t.Errorf("compose call = %q, want %q", l, want)
+					}
+				}
+			}
+			if got := strings.Contains(up, "--cache-from") && strings.Contains(up, "--cache-to"); got != c.wantCache {
+				t.Errorf("cache flags = %v, want %v: %s", got, c.wantCache, up)
+			}
+			log := strings.Join(said, "")
+			if c.wantSaid == "" && strings.Contains(log, "build cache off") {
+				t.Errorf("said the cache is off: %s", log)
+			}
+			if c.wantSaid != "" && (!strings.Contains(log, "→ build cache off for this build: ") || !strings.Contains(log, c.wantSaid)) {
+				t.Errorf("log = %q, want it to say %q", log, c.wantSaid)
+			}
+		})
+	}
+}
+
+func TestDockerBinDefaultsForCompose(t *testing.T) {
+	r := &ruleRunner{rules: []rule{{match: "compose ", resp: response{stdout: `{"services":{"s":{"build":"."}}}`}}}}
+	if ok, _ := (devcontainerDef{}).composeServiceBuilds(context.Background(), devEnv(t, "/src", r), []string{"/c.yml"}, "s"); !ok || !strings.HasPrefix(r.lines()[0], "docker compose ") {
+		t.Errorf("ok %v, calls %v", ok, r.lines())
+	}
+	if composeService([]byte("not json")) != "" {
+		t.Error("an unparseable devcontainer.json named a service")
 	}
 }
