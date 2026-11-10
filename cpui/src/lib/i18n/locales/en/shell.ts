@@ -54,6 +54,8 @@ export default {
 	'shell.palette.workshops': 'Workshops',
 	'shell.palette.runs': 'Runs',
 	'shell.palette.tickets': 'Tickets',
+	'shell.palette.mrs': 'Merge requests',
+	'shell.palette.newRun': 'New run',
 	'shell.palette.pending': '{count} pending',
 	'shell.palette.integrations': 'Integrations',
 	'shell.palette.channels': 'Channels',
@@ -62,7 +64,7 @@ export default {
 	'shell.palette.newWorkshop': 'New workshop',
 	'shell.palette.useTheme': 'Use the {theme} theme',
 	'shell.palette.aria': 'Command palette',
-	'shell.palette.placeholder': 'Search runs, tickets, workshops, actions…',
+	'shell.palette.placeholder': 'Search runs, tickets, merge requests, workshops, actions…',
 	'shell.palette.search': 'Search',
 	'shell.palette.none': 'Nothing matches “{query}”.',
 

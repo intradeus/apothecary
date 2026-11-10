@@ -8,9 +8,12 @@ import { fleet } from '$lib/app/fleet.svelte';
 import { prefs } from '$lib/app/prefs.svelte';
 import { aPing, aProject, aRun, aTicket } from '$test/fixtures';
 import { bindable } from '$test/fixtures/app.svelte';
+import { anOpenMr } from '$test/fixtures/run-components';
 import CommandPalette from './CommandPalette.svelte';
 
-vi.mock('$lib/api', () => ({ api: { tickets: { list: vi.fn() } } }));
+vi.mock('$lib/api', () => ({
+	api: { tickets: { list: vi.fn() }, projects: { mergeRequests: vi.fn() } }
+}));
 
 const setup = (open = true) => {
 	const props = bindable({ open });
@@ -24,6 +27,7 @@ const selected = () => screen.getByRole('option', { selected: true });
 beforeEach(() => {
 	vi.resetAllMocks();
 	vi.mocked(api.tickets.list).mockResolvedValue([]);
+	vi.mocked(api.projects.mergeRequests).mockResolvedValue([]);
 	fleet.reset();
 	prefs.theme = 'ember-sky';
 	prefs.collapsed = false;
@@ -232,6 +236,44 @@ describe('CommandPalette, doing things', () => {
 		setup();
 		await userEvent.type(search(), 'write');
 		expect(selected()).toHaveTextContent('billing');
+	});
+
+	it('opens the New run dialog, closing itself', async () => {
+		const { props } = setup();
+		await userEvent.type(search(), 'new run');
+		expect(selected()).toHaveTextContent('New run');
+		await userEvent.keyboard('{Enter}');
+		expect(props.open).toBe(false);
+		expect(await screen.findByRole('dialog', { name: 'New run' })).toBeInTheDocument();
+		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('jumps to a merge request of any workshop, reading them once a search is typed', async () => {
+		fleet.projects = [
+			aProject({ id: 'p1', name: 'billing' }),
+			aProject({ id: 'p2', name: 'docs' })
+		];
+		vi.mocked(api.projects.mergeRequests).mockImplementation((id) =>
+			id === 'p2'
+				? Promise.reject(new Error('no token'))
+				: Promise.resolve([{ mr: anOpenMr({ iid: 7, title: 'Add keys', author: 'ada' }), runs: 0 }])
+		);
+		setup();
+		await tick();
+		expect(api.projects.mergeRequests).not.toHaveBeenCalled();
+
+		await userEvent.type(search(), 'add keys');
+		const row = await screen.findByRole('option', { name: /!7 Add keys/ });
+		expect(row).toHaveTextContent('ada · billing');
+		expect(api.projects.mergeRequests).toHaveBeenCalledTimes(2);
+		await userEvent.click(row);
+		expect(goto).toHaveBeenCalledWith('/merge-requests/p1/7');
+	});
+
+	it('offers the merge requests page among the places to go', async () => {
+		setup();
+		await userEvent.type(search(), 'merge');
+		expect(screen.getByRole('option', { name: /Merge requests.*G M/ })).toBeInTheDocument();
 	});
 
 	it('switches theme from a row, with no navigation', async () => {
