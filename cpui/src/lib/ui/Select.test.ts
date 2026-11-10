@@ -520,6 +520,25 @@ describe('Select', () => {
 			await waitFor(() => expect(filterBox()).toHaveFocus());
 		});
 
+		// The filter takes the focus a frame after opening. A list closed
+		// within that frame keeps the focus on the field: the late frame must
+		// not send it into the filter box of a list on its way out.
+		it('leaves the focus on the field when the list closes within a frame', async () => {
+			const frames: FrameRequestCallback[] = [];
+			const raf = vi
+				.spyOn(window, 'requestAnimationFrame')
+				.mockImplementation((cb) => frames.push(cb));
+			render(Select, { options: many, value: 'v0' });
+			await userEvent.click(field());
+			await userEvent.keyboard('{Escape}');
+			expect(field()).toHaveFocus();
+
+			frames.forEach((cb) => cb(0));
+			raf.mockRestore();
+
+			expect(field()).toHaveFocus();
+		});
+
 		it.each([
 			['the label', 'hay'],
 			['the detail', 'STACK'],

@@ -120,7 +120,9 @@
 			shown.findIndex((o) => o.value === value)
 		);
 		if (!enabled(active)) active = step(active, 1);
-		if (filter) requestAnimationFrame(() => search?.focus());
+		// A frame later, once the list is drawn; not if it closed meanwhile (its
+		// filter box lingers through the leave transition).
+		if (filter) requestAnimationFrame(() => open && search?.focus());
 	}
 
 	function hide(refocus = true) {

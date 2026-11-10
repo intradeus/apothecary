@@ -17,3 +17,4 @@ After 3.0.0 :
 → bringing up the sandbox pod
 - 59) "Retry" retries the currently blocked stage. But at the provisionning step, it should retry provisionning too. Or is that the point of rebuild ? In that case, we need rebuild to work while provisionning fails, now the button is disabled.
 - 60) While provisionning, the egress gateway should ALLOW all new domains by default, and only block domains that are written as blocked by the workspace.
+- 61) Thinking font is HUGE 
