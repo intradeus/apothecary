@@ -15,9 +15,12 @@
 // environment is torn down (CloseRun), NOT on shutdown (CloseAll) — the
 // whole point is that active runs' allocations survive a reboot.
 //
-// Trust level: the listeners carry raw TCP to workspace apps with no auth
-// — exactly the CPUI's own posture (the API has none either); both bind
-// the same host. The default 127.0.0.1 keeps everything loopback.
+// Trust level: the listeners carry raw TCP to workspace apps with no auth,
+// on the host the CPUI binds. The default 127.0.0.1 keeps everything
+// loopback; a wildcard bind (0.0.0.0) opens them to whatever reaches the
+// machine — and, not knowing which name that is, the URLs say "localhost"
+// until ForHost names the host a request came in on. Host routing below is
+// the mode behind the user's session.
 //
 // Host routing (RouteByHost) is the other mode, for an engine behind a
 // Service and an Ingress (Kubernetes), where a listener per port would be
@@ -32,6 +35,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -210,6 +214,33 @@ func (m *Manager) urlHost() string {
 		return "localhost"
 	}
 	return m.host
+}
+
+// ForHost is a URL this manager handed out as the browser that sent a
+// request should open it. A listener bound to every interface cannot know
+// the name people reach the machine by — its URLs say "localhost" — but the
+// request that asks for one does: the host the UI was opened at (a VPN
+// address, a tailnet name) reaches the same machine, so the listener's port
+// is there too. Anything else (a specific bind, host routing, a request
+// that came in on localhost) is returned as it is.
+func (m *Manager) ForHost(raw, reqHost string) string {
+	m.mu.Lock()
+	wild := m.domain == "" && m.urlHost() == "localhost" && m.host != "localhost"
+	m.mu.Unlock()
+	if !wild {
+		return raw
+	}
+	h := stripPort(reqHost)
+	h = strings.TrimSuffix(strings.TrimPrefix(h, "["), "]")
+	if h == "" || h == "localhost" {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() != "localhost" {
+		return raw
+	}
+	u.Host = net.JoinHostPort(h, u.Port())
+	return u.String()
 }
 
 // Expose publishes env's port through pc and returns the browser URL. A

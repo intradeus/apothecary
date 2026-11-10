@@ -102,16 +102,17 @@ type Boot struct {
 	// SSHListen is where the SSH door listens (APOTHECARY_SSH_LISTEN, e.g.
 	// 0.0.0.0:2222 or a VPN address); default "" = no door. SSHAdvertise is
 	// the host:port people connect to (APOTHECARY_SSH_ADVERTISE), what the
-	// run page prints and links to; derived when unset (SSHAdvertiseAddr).
+	// run page prints and links to; derived when unset (SSHAdvertiseAddr),
+	// down to the host each person opened the UI at.
 	SSHListen    string
 	SSHAdvertise string
 }
 
 // SSHAdvertiseAddr is the address people are told to ssh to: the explicit
 // one, else the listen address when it names a host, else the public URL's
-// host with the listen port. An error when the door is on and no host can
-// be derived — "which address is this door at" must be readable off one
-// line of the deployment, not guessed.
+// host with the listen port, else the port alone (":2222") — a door on
+// every interface with nothing configured is reached at the host each
+// person opened the UI at, which the API fills in per request.
 func (b *Boot) SSHAdvertiseAddr() (string, error) {
 	if b.SSHListen == "" {
 		return "", nil
@@ -130,11 +131,13 @@ func (b *Boot) SSHAdvertiseAddr() (string, error) {
 		return net.JoinHostPort(host, port), nil
 	}
 	if b.PublicURL != "" {
-		if u, err := url.Parse(b.PublicURL); err == nil && u.Hostname() != "" {
-			return net.JoinHostPort(u.Hostname(), port), nil
+		u, err := url.Parse(b.PublicURL)
+		if err != nil || u.Hostname() == "" {
+			return "", fmt.Errorf("config: APOTHECARY_PUBLIC_URL %q names no host to advertise the SSH door at — set APOTHECARY_SSH_ADVERTISE to the host:port people connect to", b.PublicURL)
 		}
+		return net.JoinHostPort(u.Hostname(), port), nil
 	}
-	return "", fmt.Errorf("config: APOTHECARY_SSH_LISTEN %q names no host people can reach — set APOTHECARY_SSH_ADVERTISE to the host:port they connect to", b.SSHListen)
+	return net.JoinHostPort("", port), nil
 }
 
 // K8s is the Kubernetes part of the boot configuration.

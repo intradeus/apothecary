@@ -649,6 +649,20 @@ describe('describe', () => {
 			''
 		],
 		['run_paused', 'at a stage', { stage_id: 's' }, 'paused at s', ''],
+		[
+			'run_paused',
+			'over budget',
+			{ reason: 'budget', stage_id: 's', note: 'budget exceeded: 12 turns > max 10' },
+			'paused at s — over budget: budget exceeded: 12 turns > max 10. Play grants another budget’s worth',
+			'warn'
+		],
+		[
+			'run_retried',
+			'provisioning',
+			{ provision: true },
+			'retry — provisioning the workspace again',
+			'info'
+		],
 		['run_paused', 'between stages', {}, 'paused', ''],
 		['run_unpaused', 'hold', { reason: 'hold' }, 'picked back up — your word landed', 'info'],
 		[

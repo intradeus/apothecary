@@ -1,10 +1,12 @@
 package main
 
 import (
+	"log/slog"
 	"net"
 	"os"
 	"sort"
 	"strings"
+	"time"
 )
 
 // routeTable is the kernel's IPv4 routing table (swapped in tests).
@@ -84,6 +86,92 @@ func (g *gateway) applyRoutes(r Routes) {
 		g.audit.retain(active)
 		g.retainDenials(active)
 	}
+	g.reapplyIfOpenChanged()
+}
+
+// isOpen reports whether the run's egress is open right now (Routes.Open).
+func (g *gateway) isOpen(run string) bool {
+	if run == "" {
+		return false
+	}
+	r := g.routesMem.Load()
+	if r == nil {
+		return false
+	}
+	until, ok := r.Open[run]
+	return ok && time.Now().Before(until)
+}
+
+// openSources are the source ranges of the runs whose egress is open at now:
+// each one's subnet and, on a tunnel, its address. Sorted, so an unchanged
+// set renders the same rules.
+func (g *gateway) openSources(now time.Time) []string {
+	r := g.routesMem.Load()
+	if r == nil {
+		return nil
+	}
+	var out []string
+	for run, until := range r.Open {
+		if !now.Before(until) {
+			continue
+		}
+		if c := r.RunSubnets[run]; c != "" {
+			out = append(out, c)
+		}
+		if p, ok := r.Peers[run]; ok && p.IP != "" {
+			out = append(out, p.IP)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// reapplyIfOpenChanged re-renders the nft rules when the set of open runs
+// moved — the raw-egress accept for them lives there. A no-op before the
+// policy and the uplink are known (startup applies the rules itself).
+func (g *gateway) reapplyIfOpenChanged() {
+	if g.ext.Load() == nil || g.file.Load() == nil {
+		return
+	}
+	key := strings.Join(g.openSources(time.Now()), ",")
+	if prev := g.openKey.Load(); prev != nil && *prev == key {
+		return
+	}
+	if err := g.applyRules(); err != nil {
+		slog.Warn("gateway: reapply nft for open runs", "err", err)
+	}
+}
+
+// expireOpen closes the windows whose deadline passed: the engine closes a
+// run's window when its provisioning ends, this is for when it never does.
+func (g *gateway) expireOpen(now time.Time) {
+	r := g.routesMem.Load()
+	if r == nil {
+		return
+	}
+	expired := false
+	for _, until := range r.Open {
+		if !now.Before(until) {
+			expired = true
+			break
+		}
+	}
+	if !expired {
+		return
+	}
+	g.cmu.Lock()
+	defer g.cmu.Unlock()
+	rt := g.currentRoutes()
+	for run, until := range rt.Open {
+		if !now.Before(until) {
+			delete(rt.Open, run)
+			slog.Info("gateway: provisioning egress window expired", "run_id", run)
+		}
+	}
+	if err := g.persist(g.routesPath, rt); err != nil {
+		slog.Warn("gateway: persist routes", "err", err)
+	}
+	g.applyRoutes(rt)
 }
 
 // attributeIP maps a source IP to the run whose sandbox subnet contains it.

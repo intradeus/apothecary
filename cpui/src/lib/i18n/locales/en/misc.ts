@@ -67,6 +67,8 @@ export default {
 	'transcript.runCompleted': 'Run completed',
 	'transcript.runFailed': 'Run failed — {reason}',
 	'transcript.runAbandoned': 'Run abandoned',
+	'transcript.pausedBudget':
+		'Paused over budget — the work is kept; Play grants another budget’s worth',
 	'transcript.abandonedAt': ' at {stage}',
 	'transcript.retrying': 'Retrying in the same workspace',
 	// AttachFiles

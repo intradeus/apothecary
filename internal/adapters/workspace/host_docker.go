@@ -61,6 +61,7 @@ func (h dockerHost) prepare(ctx context.Context, name string, spec envport.EnvSp
 			return prep{}, gerr
 		}
 		gwIP = att.GatewayIP
+		a.openProvisionEgress(ctx, spec.Project, name, plog)
 		// Record the owning project NOW (not after the build): if the build is
 		// blocked on a denied domain, "add to egress" must be able to find this
 		// run's gateway mid-provision to unblock it.

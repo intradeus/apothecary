@@ -289,9 +289,26 @@ describe('buildTranscript', () => {
 		],
 		['run_abandoned', 'with no detail', {}, { text: 'Run abandoned' }],
 		['run_retried', '', {}, { text: 'Retrying in the same workspace', tone: 'info' }],
+		[
+			'run_paused',
+			'over budget',
+			{ reason: 'budget', note: 'budget exceeded: 12 turns > max 10' },
+			{
+				text: 'Paused over budget — the work is kept; Play grants another budget’s worth — budget exceeded: 12 turns > max 10',
+				tone: 'warn',
+				glyph: I.pause
+			}
+		],
+		['run_paused', 'over budget, no note', { reason: 'budget' }, { tone: 'warn', glyph: I.pause }],
 		['run_resumed', 'old spelling', {}, { text: 'Retrying in the same workspace' }]
 	])('words %s %s', (type, _case, payload, want) => {
 		expect(only([anEvent(1, type, payload)])).toMatchObject({ kind: 'status', ...want });
+	});
+
+	it('says nothing of a pause that is not the budget', () => {
+		expect(buildTranscript([anEvent(1, 'run_paused', { reason: 'user' })], emptyLive())).toEqual(
+			[]
+		);
 	});
 
 	describe('failures', () => {
@@ -355,8 +372,8 @@ describe('buildTranscript', () => {
 			emptyLive()
 		);
 		expect(items).toMatchObject([
-			{ kind: 'message', text: 'Said', thought: false, live: false },
-			{ kind: 'message', text: 'Mused', thought: true, live: false }
+			{ kind: 'message', text: 'Said', thought: false, live: false, segment: 's1' },
+			{ kind: 'message', text: 'Mused', thought: true, live: false, segment: 's2' }
 		]);
 	});
 

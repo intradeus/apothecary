@@ -16,6 +16,7 @@ export const aRun = (over: Partial<Run> = {}): Run => ({
 	checkouts: [],
 	idle: false,
 	envDirty: false,
+	provisionFailed: false,
 	createdAt: AT,
 	updatedAt: AT,
 	facts: { costUsd: 0, turns: 0, wallMs: 0, attempts: 0, open: {} },

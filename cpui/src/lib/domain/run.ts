@@ -82,6 +82,12 @@ export interface Run {
 	/** The devcontainer configuration changed since the workspace's container
 	 *  was built: a rebuild would pick it up. */
 	envDirty: boolean;
+	/** Why a paused run is paused: the pause button ('user'), or the flow's
+	 *  budget ('budget', with the ceiling that tripped). */
+	pause?: { reason: string; note?: string };
+	/** The run ended because its workspace failed to come up: a retry
+	 *  provisions it again. */
+	provisionFailed: boolean;
 	createdAt: string;
 	updatedAt: string;
 	/** What the run has spent and how its time went, folded from its events. */

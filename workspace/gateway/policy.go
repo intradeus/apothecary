@@ -138,6 +138,29 @@ func (p *policy) verdict(host string, dstIP net.IP) bool {
 	}
 }
 
+// verdictOpen decides a connection from a run whose egress is open (it is
+// being provisioned): anything goes but what the project blocks — its
+// force-blocked domains, and in deny mode its denylist. names are the
+// hostnames the destination was resolved from, for a connection without a
+// readable SNI/Host.
+func (p *policy) verdictOpen(host string, names []string, dstIP net.IP) bool {
+	if p.mode == ModeDeny {
+		if host != "" {
+			return p.verdict(host, dstIP)
+		}
+		return p.verdictNoSNI(names, dstIP)
+	}
+	if p.blockedHost(host) || p.blockedIP(dstIP) {
+		return false
+	}
+	for _, n := range names {
+		if p.blockedHost(n) {
+			return false
+		}
+	}
+	return true
+}
+
 // verdictNoSNI decides a connection with NO readable SNI/Host (ECH, IP-literal,
 // oversized ClientHello) using the hostnames the destination IP was DNS-resolved
 // from (the gateway snoops its own DNS forwarder). A no-SNI TLS connection to a

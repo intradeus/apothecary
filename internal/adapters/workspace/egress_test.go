@@ -25,9 +25,13 @@ func TestProvisionThroughTheGateway(t *testing.T) {
 	os.Remove(filepath.Join(a.folderFor("w"), "gwproject"))
 
 	var projectAtBuild string
+	var windowsAtBuild []string
 	r.mu.Lock()
 	r.rules = append([]rule{{match: "up --workspace-folder", fn: func([]string, []byte) *response {
 		projectAtBuild = a.projectFor("w")
+		g.mu.Lock()
+		windowsAtBuild = append([]string(nil), g.windows...)
+		g.mu.Unlock()
 		return nil
 	}, resp: response{stdout: `{"outcome":"success","containerId":"cid1","remoteUser":"vscode","remoteWorkspaceFolder":"/workspaces/w"}` + "\n"}}}, r.rules...)
 	r.mu.Unlock()
@@ -39,6 +43,13 @@ func TestProvisionThroughTheGateway(t *testing.T) {
 	}
 	if projectAtBuild != "P1" {
 		t.Errorf("project marker during the build = %q", projectAtBuild)
+	}
+	// The build runs with the run's egress open, and provisioning closes it.
+	if len(windowsAtBuild) != 1 || windowsAtBuild[0] != "open w" {
+		t.Errorf("egress windows during the build = %v, want it open", windowsAtBuild)
+	}
+	if len(g.windows) != 2 || g.windows[1] != "close w" {
+		t.Errorf("egress windows = %v, want closed once provisioning ended", g.windows)
 	}
 	if a.gatewayIPFor("w") != "10.77.0.2" {
 		t.Errorf("gateway marker = %q", a.gatewayIPFor("w"))
@@ -86,6 +97,32 @@ func TestProvisionGatewayFailures(t *testing.T) {
 		}
 		if r.saw("run -d") {
 			t.Error("a sandbox started outside the firewall")
+		}
+	})
+	t.Run("a failed provision closes its egress window too", func(t *testing.T) {
+		a, _ := armedAdapter(t)
+		g := withGateway(t, a)
+		g.linkErr = errors.New("no wireguard module")
+		_, _ = a.Provision(ctx, spec)
+		if len(g.windows) != 2 || g.windows[0] != "open w" || g.windows[1] != "close w" {
+			t.Errorf("egress windows = %v, want opened then closed", g.windows)
+		}
+	})
+	t.Run("a window the gateway refuses leaves the policy in force", func(t *testing.T) {
+		a, _ := armedAdapter(t)
+		g := withGateway(t, a)
+		g.windowErr = true
+		g.linkErr = errors.New("stop after the window")
+		_, err := a.Provision(ctx, spec)
+		if err == nil || !strings.Contains(err.Error(), "stop after the window") {
+			t.Fatalf("err = %v, want provisioning to go on past a refused window", err)
+		}
+		log, _ := os.ReadFile(filepath.Join(a.folderFor("w"), "exec.log"))
+		if !strings.Contains(string(log), "=== provisioning failed after ") || !strings.Contains(string(log), "stop after the window ===") {
+			t.Errorf("provision log does not end on the failure:\n%s", log)
+		}
+		if !strings.Contains(string(log), "egress stays on the project policy while provisioning") {
+			t.Errorf("provision log does not say the window stayed shut:\n%s", log)
 		}
 	})
 	t.Run("a tunnel that fails stops the build", func(t *testing.T) {

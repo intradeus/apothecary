@@ -33,7 +33,17 @@ func (s *Server) postExposePort(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, status, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, ExposedPort{Port: body.Port, URL: url})
+	writeJSON(w, http.StatusOK, ExposedPort{Port: body.Port, URL: s.reach(r, url)})
+}
+
+// reach is a relay URL as the requesting browser opens it (portrelay
+// ForHost): an engine bound to every interface hands out the host the UI
+// was reached at, not "localhost".
+func (s *Server) reach(r *http.Request, url string) string {
+	if url == "" || s.Ports == nil || s.Ports.Relay == nil {
+		return url
+	}
+	return s.Ports.Relay.ForHost(url, r.Host)
 }
 
 // postOpenEditor lazily starts code-server in the run's workspace and returns
@@ -53,7 +63,7 @@ func (s *Server) postOpenEditor(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, status, msg)
 		return
 	}
-	writeJSON(w, http.StatusOK, EditorURL{URL: url})
+	writeJSON(w, http.StatusOK, EditorURL{URL: s.reach(r, url)})
 }
 
 // postObservedPorts receives the in-workspace shim scanner's listener
@@ -94,8 +104,9 @@ func (s *Server) getRunPorts(w http.ResponseWriter, r *http.Request) {
 		exposed = []portrelay.Exposure{}
 	}
 	live := map[int]bool{}
-	for _, e := range exposed {
+	for i, e := range exposed {
 		live[e.Port] = true
+		exposed[i].URL = s.reach(r, e.URL)
 	}
 	observed := []envport.ObservedPort{}
 	for _, p := range s.Ports.ObservedPorts(id) {

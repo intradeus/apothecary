@@ -79,6 +79,12 @@
 			(it.kind === 'user' && sending.some((s) => s.text === it.text))
 		);
 
+	// A thought follows the stream — open while it is live, folded once it is
+	// done — until you open or close it yourself: then it stays as you left
+	// it, through the messages that keep arriving and the live thought giving
+	// way to the recorded one (the same segment, another key).
+	let toggled: Record<string, boolean> = $state({});
+
 	function arrive(node: HTMLElement, on: boolean) {
 		if (!armed || !on) return;
 		node.animate([{ opacity: 0 }, { opacity: 1 }], {
@@ -131,14 +137,20 @@
 		</details>
 	{:else if it.kind === 'message'}
 		{#if it.thought}
-			<details class="thought" open={it.live} use:arrive={a}>
+			{@const tk = it.segment || it.key}
+			{@const open = toggled[tk] ?? it.live}
+			<details class="thought" {open} use:arrive={a}>
 				<summary
+					onclick={(e) => {
+						e.preventDefault();
+						toggled[tk] = !open;
+					}}
 					>{#if it.live}<span class="live-dot sm pulse hue-running"></span>{/if}{t(
 						'run.transcript.thinking'
 					)}
 					{I.menu}</summary
 				>
-				<div class="tt display">{it.text}</div>
+				<div class="tt">{it.text}</div>
 			</details>
 		{:else}
 			<div class="agent" use:arrive={a}>
@@ -282,9 +294,10 @@
 	.tt {
 		padding-top: 4px;
 		color: var(--text-muted);
-		font-size: var(--fs-title);
-		line-height: 1.35;
+		font-size: var(--fs-label);
+		line-height: 1.5;
 		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
 	.agent {
 		max-width: var(--measure);

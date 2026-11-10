@@ -17,6 +17,9 @@ export default {
 	'run.header.play': 'Play',
 	'run.header.playTitle':
 		'Play: continue where it left off — the in-flight stage re-enters (agent sessions pick up); retry budgets are untouched',
+	'run.header.playBudget': 'Continue past budget',
+	'run.header.playBudgetTitle':
+		'The run spent its budget ({why}) and was paused, not abandoned: the work and the workspace are kept. Continuing grants it another budget’s worth, counted from here',
 	'run.header.pause': 'Pause',
 	'run.header.pauseTitle':
 		'Park the run: the current attempt is stopped, the workspace stays up for inspection, and nothing moves until Play',
@@ -24,6 +27,9 @@ export default {
 	'run.header.retry': 'Retry',
 	'run.header.retryStage': 'Retry {stage}',
 	'run.header.theFailedStage': 'the failed stage',
+	'run.header.retryProvision': 'Retry provisioning',
+	'run.header.retryProvisionTitle':
+		'The workspace never came up: provision it again — afresh, picking up what the failed attempt left — then carry on from where the run stopped',
 	'run.header.retryTitle':
 		'Re-run {stage} in the same workspace — keeps its files and commits; only retries what failed',
 	'run.header.rerun': 'New run from this…',
@@ -488,6 +494,9 @@ export default {
 	'run.event.parked': 'parked at {stage} — waiting for you (the run released its slot)',
 	'run.event.pausedAt': 'paused at {stage}',
 	'run.event.paused': 'paused',
+	'run.event.pausedBudget':
+		'paused at {stage} — over budget: {why}. Play grants another budget’s worth',
+	'run.event.retriedProvision': 'retry — provisioning the workspace again',
 	'run.event.pickedUp': 'picked back up — your answer landed',
 	'run.event.play': 'play — continuing where it left off',
 	'run.event.archived': 'archived',

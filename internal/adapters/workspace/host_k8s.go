@@ -170,16 +170,18 @@ func (h *k8sHost) prepare(ctx context.Context, name string, spec envport.EnvSpec
 		if att, err = a.gw.EnsureRunEgress(ctx, spec.Project, spec.ProjectName, name, policyFor(spec)); err != nil {
 			return prep{}, err
 		}
+		a.openProvisionEgress(ctx, spec.Project, name, plog)
 		a.recordGateway(name, spec.Project, att.GatewayIP)
 	}
-	plog("→ bringing up the sandbox pod\n")
-	if err := h.ensurePod(ctx, name, spec, att); err != nil {
+	plog("→ bringing up the sandbox pod %s (namespace %s)\n", name, h.cfg.Kube.Namespace)
+	if err := h.ensurePod(ctx, name, spec, att, plog); err != nil {
 		return prep{}, err
 	}
 	src := a.srcDir(name)
 	if err := h.ensureCheckout(ctx, name, src, spec, plog); err != nil {
 		return prep{}, err
 	}
+	plog("→ checking the shim and tools bundle seeded into the pod\n")
 	def, err := detect(ctx, src)
 	if err != nil {
 		return prep{}, err
@@ -238,7 +240,7 @@ func (h *k8sHost) labels(name, project string) map[string]string {
 // waits for the pod to be Ready (its dockerd answering). A pod that ended
 // (Failed/Succeeded) is replaced — the claim, and with it the checkout and the
 // inner daemon's images and containers, survives.
-func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSpec, att egressgw.Attachment) error {
+func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSpec, att egressgw.Attachment, plog func(string, ...any)) error {
 	k := h.cfg.Kube
 	if _, err := h.relayToken(ctx, name, true, spec.Project); err != nil {
 		return err
@@ -268,25 +270,103 @@ func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSp
 		return err
 	}
 	if found && (pod.Status.Phase == "Failed" || pod.Status.Phase == "Succeeded") {
+		plog("→ replacing the sandbox pod: the last one ended (%s); its volume and checkout are kept\n", pod.Status.Phase)
 		if err := k.Delete(ctx, "pod", name, true); err != nil {
 			return err
 		}
 		found = false
 	}
-	if !found {
+	if found {
+		plog("→ reusing the sandbox pod (%s)\n", orDefault(pod.Status.Phase, "unknown phase"))
+	} else {
 		p, err := h.podManifest(ctx, name, spec, att)
 		if err != nil {
 			return err
 		}
+		plog("→ creating the sandbox pod (image %s)\n", h.cfg.SandboxImage)
 		if err := k.Create(ctx, p); err != nil {
 			return err
 		}
 	}
 	h.forgetPod(name)
-	if err := k.WaitReady(ctx, name, 5*time.Minute); err != nil {
+	plog("→ waiting for the sandbox pod to be ready: scheduled, images pulled, its docker daemon up (up to 5m)\n")
+	if err := h.waitPodReady(ctx, name, 5*time.Minute, plog); err != nil {
 		return fmt.Errorf("sandbox pod %s never became ready (inspect: kubectl -n %s describe pod %s): %w", name, k.Namespace, name, err)
 	}
 	return nil
+}
+
+// podProgressEvery paces the "still waiting" lines of waitPodReady.
+var podProgressEvery = 10 * time.Second
+
+// waitPodReady waits for the pod to be Ready, telling the provisioning log
+// what it is waiting on while it does — its phase and each container not
+// ready yet, with why (an image pulling, a crash loop): a pod that never
+// comes up must not read as a log that just stopped. A line is written when
+// the answer changes.
+func (h *k8sHost) waitPodReady(ctx context.Context, name string, timeout time.Duration, plog func(string, ...any)) error {
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		t := time.NewTicker(podProgressEvery)
+		defer t.Stop()
+		last := ""
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+			var pod kube.Pod
+			if found, err := h.cfg.Kube.Get(ctx, "pod", name, &pod); err != nil || !found {
+				continue
+			}
+			if s := podProgress(pod.Status); s != last {
+				plog("  … pod %s\n", s)
+				last = s
+			}
+		}
+	}()
+	err := h.cfg.Kube.WaitReady(ctx, name, timeout)
+	close(stop)
+	wg.Wait()
+	return err
+}
+
+// podProgress says where a pod is on its way to Ready: its phase, then each
+// container that is not ready and why.
+func podProgress(s kube.PodStatus) string {
+	parts := []string{orDefault(s.Phase, "Pending")}
+	all := append(append([]kube.ContainerStatus(nil), s.InitContainerStatuses...), s.ContainerStatuses...)
+	for _, c := range all {
+		if c.Ready {
+			continue
+		}
+		st := "not ready"
+		switch {
+		case c.State.Waiting != nil:
+			st = orDefault(c.State.Waiting.Reason, "waiting")
+			if m := strings.TrimSpace(c.State.Waiting.Message); m != "" {
+				st += ": " + shell.Tail(m, 200)
+			}
+		case c.State.Terminated != nil:
+			st = "exited " + strconv.Itoa(c.State.Terminated.ExitCode)
+			if r := c.State.Terminated.Reason; r != "" {
+				st += " (" + r + ")"
+			}
+		case c.State.Running != nil:
+			st = "running, not ready yet"
+		}
+		if c.RestartCount > 0 {
+			st += fmt.Sprintf(", %d restarts", c.RestartCount)
+		}
+		parts = append(parts, c.Name+": "+st)
+	}
+	return strings.Join(parts, "; ")
 }
 
 // engineAddr is the engine's host and port from its workspace URL.
@@ -484,8 +564,10 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 // and removes.
 func (h *k8sHost) ensureCheckout(ctx context.Context, name, src string, spec envport.EnvSpec, plog func(string, ...any)) error {
 	if _, _, code, err := h.runInner(ctx, name, "test", []string{"-d", filepath.Join(src, ".git")}, nil, nil); err == nil && code == 0 {
+		plog("→ keeping the checkout already in the pod\n")
 		return nil
 	}
+	plog("→ cloning the repository into the pod\n")
 	cred := ""
 	if spec.GitPass != "" {
 		line, err := checkout.CredentialLine(spec.RepoURL, spec.GitUser, spec.GitPass)

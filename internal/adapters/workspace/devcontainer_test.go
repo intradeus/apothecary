@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -311,11 +312,55 @@ func TestProvisionStreamsToExecLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tail exec log: %v", err)
 	}
-	for _, want := range []string{"provisioning apothecary-run1", "preparing source checkout",
-		"per-run sandbox + egress gateway", "building devcontainer"} {
+	for _, want := range []string{"provisioning apothecary-run1", "] → preparing source checkout: https://g.local/grp/repo.git",
+		"per-run sandbox + egress gateway", "building devcontainer", "→ workspace definition: devcontainer",
+		"→ preparing the container (container cid1", "→ connecting the workspace to the engine",
+		"→ waiting for the workspace to answer", "=== workspace apothecary-run1 ready in "} {
 		if !strings.Contains(string(log), want) {
 			t.Errorf("exec.log missing provisioning marker %q:\n%s", want, log)
 		}
+	}
+	if !regexp.MustCompile(`(?m)^\[\+\d\d:\d\d\] → `).Match(log) {
+		t.Errorf("exec.log step lines carry no elapsed time:\n%s", log)
+	}
+}
+
+func TestProvisionLogHelpers(t *testing.T) {
+	var b strings.Builder
+	start := time.Now().Add(-(61*time.Second + 500*time.Millisecond))
+	plog := provisionLogger(&b, start)
+	plog("=== header ===\n")
+	plog("→ step %d\n", 1)
+	plog("  … progress\n")
+	plog("plain build output\n")
+	if got := b.String(); got != "=== header ===\n[+01:01] → step 1\n[+01:01]   … progress\nplain build output\n" {
+		t.Errorf("log = %q", got)
+	}
+	provisionLogger(nil, start)("→ nowhere\n") // no log: nothing to write, no panic
+
+	for _, c := range []struct {
+		branch, source, want string
+	}{
+		{"", "", ""},
+		{"fix/x", "", " (branch fix/x)"},
+		{"fix/x", "fix/x", " (branch fix/x)"},
+		{"fix/x", "main", " (branch fix/x, off main)"},
+	} {
+		if got := branchNote(envport.EnvSpec{Branch: c.branch, SourceBranch: c.source}); got != c.want {
+			t.Errorf("branchNote(%q, %q) = %q, want %q", c.branch, c.source, got, c.want)
+		}
+	}
+	for in, want := range map[string]string{
+		"https://user:tok@git.test/r.git": "https://git.test/r.git",
+		"https://git.test/r.git":          "https://git.test/r.git",
+		"::not a url":                     "::not a url",
+	} {
+		if got := safeURL(in); got != want {
+			t.Errorf("safeURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if orDefault("", "d") != "d" || orDefault("v", "d") != "v" {
+		t.Error("orDefault")
 	}
 }
 

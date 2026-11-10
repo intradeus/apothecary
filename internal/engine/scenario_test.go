@@ -892,7 +892,10 @@ main:
 	}
 }
 
-func TestBudgetExceededAbandons(t *testing.T) {
+// Past its budget a run is paused, never abandoned: the work and the
+// workspace stay, and play grants another budget's worth, counted from the
+// spend play found.
+func TestBudgetExceededPausesAndPlayGrantsAnotherBudget(t *testing.T) {
 	doc := `name: pricey
 version: 2
 parameters: { harness: fake, model: fake/model, max_cost_usd: 1.0 }
@@ -917,15 +920,30 @@ main:
 	}
 	h.e.Wait(runID)
 
-	if v := h.view(t, runID); v.State != run.Abandoned {
-		t.Fatalf("state = %s", v.State)
+	v := h.view(t, runID)
+	if v.State != run.Paused || v.PauseReason != event.PauseBudget || !strings.Contains(v.PauseNote, "budget exceeded") {
+		t.Fatalf("state = %s pause = %q %q", v.State, v.PauseReason, v.PauseNote)
 	}
-	ra, _ := findPayload[*event.RunAbandoned](h.events(t, runID))
-	if !strings.Contains(ra.Reason, "budget exceeded") {
-		t.Errorf("reason = %q", ra.Reason)
+	if n := countType(h.events(t, runID), event.TypeRunAbandoned); n != 0 {
+		t.Errorf("run_abandoned = %d, want none", n)
 	}
 	if got := len(h.runner.RunCalls); got != 2 {
 		t.Errorf("build ran %d times, want 2 (0.6 + 0.6 > 1.0)", got)
+	}
+
+	if err := h.e.Play(context.Background(), runID); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	v = h.view(t, runID)
+	if v.State != run.Paused || v.PauseReason != event.PauseBudget {
+		t.Fatalf("after play: state = %s pause = %q", v.State, v.PauseReason)
+	}
+	if got := len(h.runner.RunCalls); got != 4 {
+		t.Errorf("build ran %d times, want 4 (a second 1.0 window from 1.2)", got)
+	}
+	if f := v.Facts; f.BudgetCostBase < 1.19 || f.BudgetCostBase > 1.21 {
+		t.Errorf("budget window base = %v, want 1.2", f.BudgetCostBase)
 	}
 }
 
@@ -1715,6 +1733,79 @@ func TestFailedProvisionLeftoversAreArchived(t *testing.T) {
 	}
 	if v := h.view(t, runID); v.EnvID != "" {
 		t.Errorf("env_id after archive = %q", v.EnvID)
+	}
+}
+
+// A run that failed provisioning is retried by provisioning it again: no
+// stage ever started and nothing may be left, and still "try again" is the
+// verb — it provisions afresh under the same name (picking the leftovers
+// up) and the run goes on from where the failure caught it.
+func TestRetryAfterFailedProvisionProvisionsAgain(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	h.envp.LeaveOnFailure = true
+	h.envp.ProvisionErrs = []error{fmt.Errorf("devcontainer up: exit 1"), fmt.Errorf("devcontainer up: exit 1")}
+	ctx := context.Background()
+	runID, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "T"}, "loop", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Failed || !v.ProvisionFailed || v.CurrentStage != "" {
+		t.Fatalf("view = %s provision_failed %v stage %q", v.State, v.ProvisionFailed, v.CurrentStage)
+	}
+
+	if err := h.e.RetryRun(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	evs := h.events(t, runID)
+	rr, _ := findPayload[*event.RunRetried](evs)
+	if rr == nil || !rr.Provision {
+		t.Fatalf("run_retried = %+v, want a provisioning retry", rr)
+	}
+	if n := countType(evs, event.TypeEnvRequested); n != 2 {
+		t.Errorf("env_requested = %d, want 2 (the retry provisions again): %v", n, eventTypes(evs))
+	}
+	if n := countType(evs, event.TypeEnvReady); n != 1 {
+		t.Errorf("env_ready = %d, want 1: %v", n, eventTypes(evs))
+	}
+	if v := h.view(t, runID); v.State != run.Completed || v.ProvisionFailed {
+		t.Errorf("after the retry: state %s provision_failed %v: %v", v.State, v.ProvisionFailed, eventTypes(evs))
+	}
+}
+
+// A bootstrap that failed left a workspace that is up but never prepared:
+// the retry provisions and bootstraps it again rather than re-attaching to
+// a workspace with no checkout in it.
+func TestRetryAfterFailedBootstrapBootstrapsAgain(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	clones := 0
+	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
+		if strings.Contains(cmd.Script, "git clone") {
+			if clones++; clones == 1 {
+				return envport.ExecResult{ExitCode: 1, Output: "fatal: ENOSPC"}, nil
+			}
+		}
+		return envport.ExecResult{ExitCode: 0}, nil
+	}
+	ctx := context.Background()
+	runID, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "T"}, "loop", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Failed || !v.ProvisionFailed {
+		t.Fatalf("view = %s provision_failed %v", v.State, v.ProvisionFailed)
+	}
+	if err := h.e.RetryRun(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if clones != 2 {
+		t.Errorf("clones = %d, want 2 (the retry bootstraps again)", clones)
+	}
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Errorf("after the retry: state %s: %v", v.State, eventTypes(h.events(t, runID)))
 	}
 }
 

@@ -821,3 +821,47 @@ func TestEnsureGatewayFailedInspectKeepsABusyGateway(t *testing.T) {
 		t.Errorf("a gateway serving live runs was removed: %v", fd.calls)
 	}
 }
+
+// A provisioning run's window opens and closes on the gateway, the run's name
+// escaped like every other control path; a project without a gateway has
+// nothing to open (an error the provisioner logs) and nothing to close.
+func TestOpenAndCloseRunEgress(t *testing.T) {
+	var got []string
+	var body policyfile.RunOpen
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Method+" "+r.URL.EscapedPath())
+		if r.Method == http.MethodPut {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	ctx := context.Background()
+	m := NewManager(&scriptedHost{ctl: Control{BaseURL: srv.URL}, up: true})
+	until := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := m.OpenRunEgress(ctx, "p", "a b", until); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.CloseRunEgress(ctx, "p", "a b"); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "PUT /runs/a%20b/open" || got[1] != "DELETE /runs/a%20b/open" || !body.Until.Equal(until) {
+		t.Errorf("calls = %v body = %+v", got, body)
+	}
+
+	none := NewManager(&scriptedHost{})
+	if err := none.OpenRunEgress(ctx, "p", "r", until); !errors.Is(err, ErrNoGateway) {
+		t.Errorf("open without a gateway = %v", err)
+	}
+	if err := none.CloseRunEgress(ctx, "p", "r"); err != nil {
+		t.Errorf("close without a gateway = %v", err)
+	}
+	down, _ := gatewayAnswering(t, http.StatusBadGateway, "")
+	failing := NewManager(&scriptedHost{ctl: down, up: true})
+	if err := failing.OpenRunEgress(ctx, "p", "r", until); err == nil || !strings.Contains(err.Error(), "open run egress") {
+		t.Errorf("open on a failing gateway = %v", err)
+	}
+	if err := failing.CloseRunEgress(ctx, "p", "r"); err == nil || !strings.Contains(err.Error(), "close run egress") {
+		t.Errorf("close on a failing gateway = %v", err)
+	}
+}

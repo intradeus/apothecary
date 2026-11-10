@@ -47,8 +47,8 @@ func TestKeyValidation(t *testing.T) {
 }
 
 // The SSH door's advertised address: explicit, else the listen host when it
-// is one people can reach, else the public URL's host — and an error when
-// the door is on with nothing to tell people.
+// is one people can reach, else the public URL's host, else the port alone (the
+// API names the host per request).
 func TestSSHAdvertiseAddr(t *testing.T) {
 	for _, c := range []struct {
 		name, listen, advertise, public, want string
@@ -59,7 +59,9 @@ func TestSSHAdvertiseAddr(t *testing.T) {
 		{name: "bad explicit", listen: "0.0.0.0:2222", advertise: "door.tail.ts.net", wantErr: true},
 		{name: "listen host", listen: "100.64.0.9:2222", want: "100.64.0.9:2222"},
 		{name: "wildcard with public url", listen: "0.0.0.0:2222", public: "https://apothecary.example.com", want: "apothecary.example.com:2222"},
-		{name: "wildcard alone", listen: ":2222", wantErr: true},
+		// Nothing names a host: each person gets the one they opened the UI at.
+		{name: "wildcard alone", listen: ":2222", want: ":2222"},
+		{name: "wildcard everywhere", listen: "0.0.0.0:2222", want: ":2222"},
 	} {
 		b := &Boot{SSHListen: c.listen, SSHAdvertise: c.advertise, PublicURL: c.public}
 		got, err := b.SSHAdvertiseAddr()

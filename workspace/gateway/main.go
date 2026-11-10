@@ -62,6 +62,7 @@ type gateway struct {
 	file       atomic.Pointer[File]
 	routesAttr atomic.Pointer[[]subnetRun]
 	routesMem  atomic.Pointer[Routes] // the routes as last applied (no --state-dir)
+	openKey    atomic.Pointer[string] // the open sources the nft rules were last rendered with
 	dns        *dnsCache              // IP→hostname learned from forwarded DNS, for no-SNI connections
 	audit      *auditor               // aggregated egress trail flushed for the engine to ingest
 
@@ -323,7 +324,10 @@ func diffDomains(a, b []string) []string {
 func (g *gateway) applyRules() error {
 	ext := *g.ext.Load()
 	f := *g.file.Load()
-	return applyNFT(renderNFT(ext, g.listenPort, f, g.protect, g.controlPort))
+	open := g.openSources(time.Now())
+	key := strings.Join(open, ",")
+	g.openKey.Store(&key)
+	return applyNFT(renderNFT(ext, g.listenPort, f, g.protect, g.controlPort, open))
 }
 
 // watchTick paces watch (swapped in tests, which close it to stop the loop).
@@ -351,6 +355,7 @@ func (g *gateway) watch() {
 				slog.Warn("gateway: reapply nft", "err", err)
 			}
 		}
+		g.expireOpen(time.Now())
 		g.flushDenials()
 		g.audit.flush()
 	}

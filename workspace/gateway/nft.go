@@ -16,7 +16,11 @@ import (
 // in deny mode), MSS clamping for forwarded traffic, MASQUERADE, and an IPv6
 // blanket drop. Interfaces are matched "not EXT" because run-nets appear as
 // eth1/eth2/… inside the container (not by docker network name).
-func renderNFT(ext string, port int, f File, protect []*net.IPNet, controlPort int) string {
+//
+// open are the sources (subnets, tunnel addresses) of the runs whose egress
+// is open while they provision: in allow mode their raw egress is accepted
+// too — past the protected destinations, never before them.
+func renderNFT(ext string, port int, f File, protect []*net.IPNet, controlPort int, open []string) string {
 	var b strings.Builder
 	w := func(s string) { b.WriteString(s); b.WriteByte('\n') }
 
@@ -54,6 +58,9 @@ func renderNFT(ext string, port int, f File, protect []*net.IPNet, controlPort i
 		}
 		w("add rule ip apo forward iifname != " + q(ext) + " accept")
 	} else {
+		if srcs := setStr(open); srcs != "" {
+			w(fmt.Sprintf("add rule ip apo forward iifname != %q ip saddr { %s } accept", ext, srcs))
+		}
 		// deny-all raw egress except the escape hatch (allowed CIDRs / ports).
 		if cidrs := setStr(f.AllowedCIDRs); cidrs != "" {
 			w(fmt.Sprintf("add rule ip apo forward iifname != %q ip daddr { %s } accept", ext, cidrs))

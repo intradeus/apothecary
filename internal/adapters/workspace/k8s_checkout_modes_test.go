@@ -88,7 +88,7 @@ func TestK8sCheckoutKeepsTrackedModes(t *testing.T) {
 	}}
 	_, h := k8sWith(t, k, false)
 	spec := envport.EnvSpec{RepoURL: "file://localhost" + remote, Branch: "feat/x", SourceBranch: "main", GitPass: "tok"}
-	if err := h.ensureCheckout(context.Background(), "w", src, spec, nil); err != nil {
+	if err := h.ensureCheckout(context.Background(), "w", src, spec, discard); err != nil {
 		t.Fatal(err)
 	}
 

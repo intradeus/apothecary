@@ -70,6 +70,19 @@ func (g *gateway) handle(c *net.TCPConn) {
 		if host == "" {
 			host = orig.IP.String()
 		}
+	} else if g.isOpen(run) {
+		// Provisioning: open but for what the project blocks.
+		var names []string
+		if host == "" {
+			names = g.dns.names(orig.IP)
+		}
+		allow = pol.verdictOpen(host, names, orig.IP)
+		if host == "" {
+			host = orig.IP.String()
+			if len(names) > 0 {
+				host = names[0]
+			}
+		}
 	} else if host != "" {
 		allow = pol.verdict(host, orig.IP)
 	} else {

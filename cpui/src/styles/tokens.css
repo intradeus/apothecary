@@ -18,7 +18,7 @@
 	--fs-read: 14px; /* agent prose, long reading */
 	--fs-aside: 14px; /* display inline asides */
 	--fs-lead: 15px; /* brand name, section names */
-	--fs-title: 16px; /* dialog titles, thinking, big glyphs */
+	--fs-title: 16px; /* dialog titles, big glyphs */
 	--fs-section: 17px; /* display section and window titles */
 	--fs-mark: 19px; /* the run's title: small on purpose */
 	--fs-empty: 24px; /* empty-state display titles */

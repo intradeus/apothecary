@@ -124,9 +124,18 @@ type View struct {
 	// Rebuilding: an env_rebuild_started with no completion or failure after
 	// it. Only ever true between the two halves of one RebuildEnv call — or
 	// when the process died in between, which is what recovery closes.
-	Rebuilding bool      `json:"-"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	Rebuilding bool `json:"-"`
+	// ProvisionFailed: the run ended on env_failed — its workspace never came
+	// up (or never came back). Retry provisions it again (event.RunRetried
+	// Provision).
+	ProvisionFailed bool `json:"provision_failed,omitempty"`
+	// PauseReason/PauseNote say why a paused run is paused (event.RunPaused):
+	// "user" for the button, "budget" when the engine stopped it at the
+	// flow's budget, with the line that tripped. Cleared by play.
+	PauseReason string    `json:"pause_reason,omitempty"`
+	PauseNote   string    `json:"pause_note,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 	// Facts are the run's analytics (where its time went, what it spent),
 	// folded beside the view. In the view JSON so they round-trip through
 	// runs.view and an incremental fold picks up where the last left off.
@@ -222,8 +231,10 @@ func Apply(v *View, e *event.Event) {
 	case *event.EnvReady:
 		v.State = Running
 		v.EnvID = p.EnvID
+		v.ProvisionFailed = false
 	case *event.EnvFailed:
 		v.State = Failed
+		v.ProvisionFailed = true
 		if p.EnvID != "" {
 			v.EnvID = p.EnvID
 		}
@@ -323,7 +334,10 @@ func Apply(v *View, e *event.Event) {
 		// Back to work: re-entering StageID in the same workspace. The env
 		// persisted (abandoned/failed runs are never reaped).
 		v.State = Running
-		v.CurrentStage = p.StageID
+		v.ProvisionFailed = false
+		if p.StageID != "" { // a provisioning retry may have no stage yet
+			v.CurrentStage = p.StageID
+		}
 		// "Try again" re-pins the run to the flow version resume saw, so an
 		// edit made to fix the failure actually takes effect (PLAN5 M19).
 		if p.FlowHash != "" {
@@ -363,6 +377,10 @@ func Apply(v *View, e *event.Event) {
 		v.Dormant = true
 		if p.Reason != event.PauseWaiting {
 			v.State = Paused
+			v.PauseReason, v.PauseNote = p.Reason, p.Note
+			if v.PauseReason == "" {
+				v.PauseReason = event.PauseUser
+			}
 		}
 		if p.StageID != "" {
 			v.CurrentStage = p.StageID
@@ -372,6 +390,11 @@ func Apply(v *View, e *event.Event) {
 		// off (crash-recovery path). A re-armed gate raises no new ping, so
 		// the event itself says whether the run is back to waiting.
 		v.Dormant = false
+		if v.PauseReason == event.PauseBudget {
+			// Play past the budget: another budget's worth, counted from here.
+			v.Facts.BudgetCostBase, v.Facts.BudgetTurnsBase = v.Facts.CostUSD, v.Facts.Turns
+		}
+		v.PauseReason, v.PauseNote = "", ""
 		if p.Waiting {
 			v.State = WaitingOnHuman
 		} else {

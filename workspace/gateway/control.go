@@ -26,6 +26,8 @@ import (
 //	GET  /routes               run routes and WireGuard peers
 //	PUT  /runs/{run}           attach a run: {subnet, peer?}
 //	DELETE /runs/{run}         detach it
+//	PUT  /runs/{run}/open      open its egress while it provisions: {until}
+//	DELETE /runs/{run}/open    close that window
 //	GET  /denials[?run=]       recorded denials
 //	GET  /audit[?run=]         the aggregated egress trail
 //	GET  /buildcache           {bytes}
@@ -116,11 +118,28 @@ func (g *gateway) controlHandler(token string) http.Handler {
 			}
 		})
 	})
+	mux.HandleFunc("PUT /runs/{run}/open", func(w http.ResponseWriter, r *http.Request) {
+		var o RunOpen
+		if !readBody(w, r, &o) {
+			return
+		}
+		g.updateRoutes(w, func(rt *Routes) {
+			if time.Now().Before(o.Until) {
+				rt.Open[r.PathValue("run")] = o.Until
+			} else {
+				delete(rt.Open, r.PathValue("run"))
+			}
+		})
+	})
 	mux.HandleFunc("DELETE /runs/{run}", func(w http.ResponseWriter, r *http.Request) {
 		g.updateRoutes(w, func(rt *Routes) {
 			delete(rt.RunSubnets, r.PathValue("run"))
 			delete(rt.Peers, r.PathValue("run"))
+			delete(rt.Open, r.PathValue("run"))
 		})
+	})
+	mux.HandleFunc("DELETE /runs/{run}/open", func(w http.ResponseWriter, r *http.Request) {
+		g.updateRoutes(w, func(rt *Routes) { delete(rt.Open, r.PathValue("run")) })
 	})
 	mux.HandleFunc("GET /denials", func(w http.ResponseWriter, r *http.Request) {
 		run := r.URL.Query().Get("run")
@@ -180,6 +199,9 @@ func (g *gateway) currentRoutes() Routes {
 	}
 	if rt.Peers == nil {
 		rt.Peers = map[string]Peer{}
+	}
+	if rt.Open == nil {
+		rt.Open = map[string]time.Time{}
 	}
 	return rt
 }

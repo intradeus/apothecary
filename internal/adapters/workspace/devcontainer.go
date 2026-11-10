@@ -444,7 +444,7 @@ func (a *Adapter) Provision(ctx context.Context, spec envport.EnvSpec) (envport.
 // recreate — the Rebuild path); up adds it on its own when the CLI handed
 // back a container it did not create. tee, when non-nil, receives the `up` build
 // output live (Rebuild streams it into exec.log so the run page shows it).
-func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExisting bool, tee io.Writer) (envport.EnvID, error) {
+func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExisting bool, tee io.Writer) (_ envport.EnvID, err error) {
 	ctx, cancel := context.WithTimeout(ctx, a.cfg.ProvisionTimeout)
 	defer cancel()
 	// The engine supplies a human-friendly, slug-of-branch name (unique per
@@ -471,12 +471,20 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExi
 			logW = lf
 		}
 	}
-	plog := func(format string, args ...any) {
-		if logW != nil {
-			fmt.Fprintf(logW, format, args...)
+	start := time.Now()
+	plog := provisionLogger(logW, start)
+	plog("\n=== apothecary: provisioning %s @ %s ===\n", name, start.UTC().Format(time.RFC3339))
+	// The log ends saying how it ended: a failure's cause is right there,
+	// not only on the run's timeline.
+	defer func() {
+		took := time.Since(start).Round(time.Second)
+		if err != nil {
+			plog("=== provisioning failed after %s: %s ===\n", took, shell.Tail(err.Error(), 2048))
+			return
 		}
-	}
-	plog("\n=== apothecary: provisioning %s @ %s ===\n→ preparing source checkout\n", name, time.Now().UTC().Format(time.RFC3339))
+		plog("=== workspace %s ready in %s ===\n", name, took)
+	}()
+	plog("→ preparing source checkout: %s%s\n", safeURL(spec.RepoURL), branchNote(spec))
 
 	// The host brings up everything the definition builds on: the checkout,
 	// the shim, the egress attachment and the sandbox (its own docker daemon).
@@ -486,6 +494,9 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExi
 	// injectDocker: the project asked for docker (spec.Docker) and the repo
 	// does not already declare the feature — decided where the config is read.
 	injectDocker := false
+	// The host opens the run's egress as soon as it is attached to the
+	// gateway; whatever way provisioning ends, it closes here.
+	defer a.closeProvisionEgress(ctx, spec.Project, name, plog)
 	p, err := a.host.prepare(ctx, name, spec, plog, func(ctx context.Context, src string) (Definition, error) {
 		fsys := a.host.fs(name)
 		def, err := a.detect(ctx, fsys, src)
@@ -503,6 +514,7 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExi
 		return left, err
 	}
 	a.recordDefinition(name, p.def)
+	plog("→ workspace definition: %s\n", p.def.Name())
 
 	opts := upOptions{
 		shimDir:        p.shimDir,
@@ -519,6 +531,7 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExi
 	if err != nil {
 		return left, err
 	}
+	plog("→ preparing the container (container %s, user %s)\n", shortID(ws.ContainerID), orDefault(ws.RemoteUser, "root"))
 	if err := a.rootInit(ctx, name, ws); err != nil {
 		return left, err
 	}
@@ -532,12 +545,14 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExi
 	a.recordConfigDigest(name, p.src, plog)
 	// Engine bridge + in-container relay: the shim must reach the engine
 	// before anything runs in the workspace.
+	plog("→ connecting the workspace to the engine\n")
 	if err := a.host.ensureBridge(envport.EnvID(name)); err != nil {
 		return left, err
 	}
 	if err := a.startRelay(ctx, name); err != nil {
 		return left, err
 	}
+	plog("→ waiting for the workspace to answer\n")
 	if err := a.waitReady(ctx, name); err != nil {
 		return left, err
 	}
@@ -802,6 +817,85 @@ func policyFor(spec envport.EnvSpec) policyfile.File {
 		AllowedCIDRs:   spec.EgressAllowedCIDRs,
 		AllowedPorts:   spec.EgressAllowedPorts,
 	}
+}
+
+// provisionLogger writes the provisioning log: every step line ("→ …", and
+// a step's progress "  … ") carries the time since provisioning began, so a
+// slow step reads as slow and a stuck one shows where it stuck. w nil: no log.
+func provisionLogger(w io.Writer, start time.Time) func(string, ...any) {
+	return func(format string, args ...any) {
+		if w == nil {
+			return
+		}
+		msg := fmt.Sprintf(format, args...)
+		if strings.HasPrefix(msg, "→") || strings.HasPrefix(msg, "  … ") {
+			d := time.Since(start)
+			msg = fmt.Sprintf("[+%02d:%02d] %s", int(d.Minutes()), int(d.Seconds())%60, msg)
+		}
+		io.WriteString(w, msg)
+	}
+}
+
+// branchNote says which branch a checkout lands on, for the log.
+func branchNote(spec envport.EnvSpec) string {
+	switch {
+	case spec.Branch == "":
+		return ""
+	case spec.SourceBranch != "" && spec.SourceBranch != spec.Branch:
+		return fmt.Sprintf(" (branch %s, off %s)", spec.Branch, spec.SourceBranch)
+	}
+	return " (branch " + spec.Branch + ")"
+}
+
+// safeURL is a repository URL fit for a log: never its userinfo.
+func safeURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
+}
+
+// openProvisionEgress opens the run's egress for as long as provisioning may
+// take: the image build, the devcontainer's features and lifecycle hooks
+// fetch from hosts no allowlist names, and failing a build on them only to
+// add them one by one helps nobody. Only what the project blocks stays
+// blocked. Best-effort: a gateway that will not open leaves the run on the
+// project policy, which is where it would have been anyway.
+func (a *Adapter) openProvisionEgress(ctx context.Context, project, name string, plog func(string, ...any)) {
+	if a.gw == nil || project == "" {
+		return
+	}
+	until := time.Now().Add(a.cfg.ProvisionTimeout + time.Minute)
+	if err := a.gw.OpenRunEgress(ctx, project, name, until); err != nil {
+		plog("→ egress stays on the project policy while provisioning: %v\n", err)
+		return
+	}
+	plog("→ egress open while provisioning: only the project's blocked domains are refused\n")
+}
+
+// closeProvisionEgress puts the run back on the project policy once
+// provisioning ends — succeeded, failed or cancelled (hence its own context).
+func (a *Adapter) closeProvisionEgress(ctx context.Context, project, name string, plog func(string, ...any)) {
+	if a.gw == nil || project == "" {
+		return
+	}
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	if err := a.gw.CloseRunEgress(cctx, project, name); err != nil {
+		// The window's deadline closes it on the gateway's own.
+		slog.Warn("closing the provisioning egress window failed; its deadline will", "env", name, "err", err)
+		return
+	}
+	plog("→ egress back on the project policy\n")
 }
 
 // recordGateway persists which project (by id) owns an env and the address

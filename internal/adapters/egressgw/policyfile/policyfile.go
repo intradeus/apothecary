@@ -76,6 +76,13 @@ type Routes struct {
 	// allowed its one tunnel address — which is also its RunSubnets entry, so
 	// attribution is the same lookup and cannot be forged by a sandbox.
 	Peers map[string]Peer `json:"peers,omitempty"`
+	// Open are the runs whose egress is open, each until when: a run being
+	// provisioned (its image build, its devcontainer's lifecycle hooks) may
+	// reach anything but the project's blocked domains — and in deny mode its
+	// denylist. The engine closes the window when provisioning ends; the
+	// deadline is what closes it when nothing does (an engine killed
+	// mid-build).
+	Open map[string]time.Time `json:"open,omitempty"`
 }
 
 // Peer is one run's WireGuard identity on the gateway's wg0.
@@ -88,6 +95,12 @@ type Peer struct {
 type RunRoute struct {
 	Subnet string `json:"subnet"`
 	Peer   *Peer  `json:"peer,omitempty"`
+}
+
+// RunOpen is the body of the control API's PUT /runs/{run}/open: open the
+// run's egress until then (Routes.Open).
+type RunOpen struct {
+	Until time.Time `json:"until"`
 }
 
 // BuildCacheInfo is the control API's GET /buildcache answer.

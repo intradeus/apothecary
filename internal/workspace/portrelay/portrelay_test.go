@@ -358,3 +358,31 @@ func TestRunLabel(t *testing.T) {
 		t.Errorf("RunLabel short = %q", got)
 	}
 }
+
+func TestForHost(t *testing.T) {
+	wild := New("0.0.0.0")
+	for _, c := range []struct{ raw, host, want string }{
+		{"http://localhost:41234/", "100.1.2.3:8080", "http://100.1.2.3:41234/"},
+		{"http://localhost:41234/x?y=1", "box.tail1234.ts.net", "http://box.tail1234.ts.net:41234/x?y=1"},
+		{"http://localhost:41234/", "[fd7a::1]:8080", "http://[fd7a::1]:41234/"},
+		{"http://localhost:41234/", "localhost:8080", "http://localhost:41234/"},
+		{"http://localhost:41234/", "", "http://localhost:41234/"},
+		{"http://127.0.0.1:41234/", "100.1.2.3", "http://127.0.0.1:41234/"},
+		{"::bad", "100.1.2.3", "::bad"},
+	} {
+		if got := wild.ForHost(c.raw, c.host); got != c.want {
+			t.Errorf("wildcard ForHost(%q, %q) = %q, want %q", c.raw, c.host, got, c.want)
+		}
+	}
+	// A specific bind names its host already; host routing names its own.
+	for _, m := range []*Manager{New("127.0.0.1"), New("localhost"), New("100.1.2.3")} {
+		if got := m.ForHost("http://localhost:1/", "10.0.0.1"); got != "http://localhost:1/" {
+			t.Errorf("%s: ForHost = %q", m.host, got)
+		}
+	}
+	routed := New("0.0.0.0")
+	routed.RouteByHost("apps.test", "http")
+	if got := routed.ForHost("http://localhost:1/", "10.0.0.1"); got != "http://localhost:1/" {
+		t.Errorf("host-routed ForHost = %q", got)
+	}
+}

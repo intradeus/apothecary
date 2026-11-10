@@ -195,7 +195,7 @@ func TestRenderNFTProtectsCIDRsBeforeModeAccepts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, mode := range []Mode{ModeAllow, ModeDeny} {
-		out := renderNFT("eth0", 9040, File{Mode: mode, AllowedCIDRs: []string{"10.0.0.0/8"}}, nets, 0)
+		out := renderNFT("eth0", 9040, File{Mode: mode, AllowedCIDRs: []string{"10.0.0.0/8"}}, nets, 0, nil)
 		drop := strings.Index(out, `ip daddr { 10.42.0.0/16, 169.254.0.0/16 } drop`)
 		if drop < 0 {
 			t.Fatalf("%s: protect rule missing:\n%s", mode, out)
@@ -207,7 +207,7 @@ func TestRenderNFTProtectsCIDRsBeforeModeAccepts(t *testing.T) {
 			t.Fatalf("%s: allowed CIDR precedes the protect drop:\n%s", mode, out)
 		}
 	}
-	if out := renderNFT("eth0", 9040, File{}, nil, 0); strings.Contains(out, "daddr {  }") {
+	if out := renderNFT("eth0", 9040, File{}, nil, 0, nil); strings.Contains(out, "daddr {  }") {
 		t.Fatal("empty protect set rendered")
 	}
 }
@@ -227,11 +227,11 @@ func TestProtected(t *testing.T) {
 }
 
 func TestRenderNFTClosesTheControlPortToRuns(t *testing.T) {
-	out := renderNFT("eth0", 9040, File{}, nil, 9041)
+	out := renderNFT("eth0", 9040, File{}, nil, 9041, nil)
 	if !strings.Contains(out, `add rule ip apo input iifname != { "eth0", "lo" } tcp dport 9041 drop`) {
 		t.Fatalf("control port open to run links:\n%s", out)
 	}
-	if strings.Contains(renderNFT("eth0", 9040, File{}, nil, 0), "input") {
+	if strings.Contains(renderNFT("eth0", 9040, File{}, nil, 0, nil), "input") {
 		t.Fatal("input chain rendered with no control API")
 	}
 }
