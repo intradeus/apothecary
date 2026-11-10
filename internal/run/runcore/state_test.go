@@ -135,3 +135,28 @@ func mustFlow(t *testing.T, doc string) *flow.Flow {
 	}
 	return f
 }
+
+// A workspace a failed provisioning left behind is the view's to destroy,
+// never the run's to work in: a retry provisions afresh. One that failed
+// after it was provisioned (bootstrap, the egress probe) stays the run's.
+func TestReplayIgnoresAPartialWorkspace(t *testing.T) {
+	fl := mustFlow(t, parkFlowDoc)
+	ev := func(p event.Payload) event.Event { return event.Event{RunID: "r", Type: p.EventType(), Payload: p} }
+	for _, tc := range []struct {
+		failed *event.EnvFailed
+		want   string
+	}{
+		{&event.EnvFailed{Error: "up failed", EnvID: "apo-x", Partial: true}, ""},
+		{&event.EnvFailed{Error: "bootstrap failed", EnvID: "apo-x"}, "apo-x"},
+		{&event.EnvFailed{Error: "no sandbox"}, ""},
+	} {
+		rs := Replay([]event.Event{
+			ev(&event.RunCreated{TicketTitle: "t", FlowName: "park", By: "human"}),
+			ev(&event.EnvRequested{}),
+			ev(tc.failed),
+		}, fl)
+		if string(rs.EnvID) != tc.want || !rs.Done {
+			t.Errorf("%s: env %q done %v, want env %q", tc.failed.Error, rs.EnvID, rs.Done, tc.want)
+		}
+	}
+}

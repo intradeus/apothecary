@@ -1358,6 +1358,11 @@ func TestExposePortTargetsSiblingService(t *testing.T) {
 	if !strings.Contains(strings.Join(relay.args, " "), want) {
 		t.Errorf("relay spec must target the sibling service (%s): %v", want, relay.args)
 	}
+	// As root, whatever the image's default user: the socket goes in the
+	// shim dir.
+	if !strings.HasPrefix(strings.Join(relay.args, " "), "exec -d -u root cid1 ") {
+		t.Errorf("relay must run as root: %v", relay.args)
+	}
 }
 
 func TestExposePortStartsReverseRelayAndDials(t *testing.T) {
@@ -1392,7 +1397,7 @@ func TestExposePortStartsReverseRelayAndDials(t *testing.T) {
 	}
 	relay := find(t, r.calls, "docker", "exec")
 	joined := strings.Join(relay.args, " ")
-	for _, want := range []string{"-d cid1 /opt/apothecary/shim relay", "--reverse /opt/apothecary/app-3000.sock:127.0.0.1:3000"} {
+	for _, want := range []string{"-d -u root cid1 /opt/apothecary/shim relay", "--reverse /opt/apothecary/app-3000.sock:127.0.0.1:3000"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("reverse relay args missing %q: %v", want, relay.args)
 		}

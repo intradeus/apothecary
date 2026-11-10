@@ -17,7 +17,7 @@ func TestConcurrentStartsOnOneTicketCreateOneRun(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	// The winner stays in provisioning, so it is active for the whole race.
 	entered := make(chan struct{})
-	h.res.Envp = blockProvision{h.envp, entered}
+	h.res.Envp = blockProvision{h.envp, entered, ""}
 	ctx := context.Background()
 
 	const n = 8

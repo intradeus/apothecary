@@ -6141,3 +6141,103 @@ false` to every `sysbox-runc` pod; the fix is for the engine to say so.
   rebuild test asserts its spec and the view helpers. A check that the
   checkout's HEAD equals the merge request's head before the build needs a
   real remote: that is the docker integration suite, CI only.
+
+## The Kubernetes checkout keeps the modes git records (2026-11-10)
+
+- Every file of a Kubernetes run's checkout was 0600 or 0700: `ensureCheckout`
+  (`host_k8s.go`) set `umask 077` for the credential file as a plain
+  statement of its script, so it held for `git clone` and the branch step
+  too. A compose sibling running as a non-root user (a seed container
+  bind-mounting the repo's `entrypoint.sh`, recorded 100755) failed with
+  "Permission denied". There since Kubernetes support; runs failed earlier
+  before. The Docker host never had it: it writes the credential file with
+  an explicit 0600 from Go, and git runs under the engine's umask.
+- Now only the credential write runs under 077, in a subshell; git writes
+  under the pod's umask. `TestK8sCheckoutKeepsTrackedModes` runs the
+  generated script for real (local bash and git, a `file://localhost`
+  remote, a `git` wrapper on PATH that records the credential file's mode
+  mid-script): 0755 for the executable, 0644 for the rest, 0600 for the
+  credential, which is gone afterwards. It failed with 0700/0600 before the
+  fix.
+- Existing checkouts stay as they were: the clone is skipped when one
+  exists, git does not repair the modes of files it already wrote, and a
+  rebuild keeps the checkout. An affected run needs its workspace destroyed
+  and provisioned again, or a one-time chmod of the checkout.
+
+## A failed provisioning records what it left behind (2026-11-10)
+
+- Runs whose workspace failed to provision could never be cleaned up. Both
+  hosts create the sandbox (Kubernetes: the pod, its PVC, two secrets, a
+  NetworkPolicy; Docker: the sandbox container and its volume) and the
+  checkout before `devcontainer up`; when a later step failed, `Provision`
+  returned no id, `env_failed` carried none, and archive (`v.EnvID != ""`)
+  destroyed nothing. Found with twelve archived runs whose sandboxes still
+  ran their full compose stacks and exhausted the host's async I/O pool.
+- The port's contract now says it: a failed `Provision` returns, with the
+  error, the id of what it left behind, or "" when it created nothing. The
+  devcontainer adapter returns the workspace name on every failure past the
+  name (Destroy tolerates a name with nothing behind it: Kubernetes deletes
+  with `--ignore-not-found`, Docker finds no sandbox and removes the
+  folder). The engine records it rather than guessing it from `spec.Name`:
+  the name is an adapter convention the fake provisioner does not follow.
+- `env_failed` gains `partial`: the id names leftovers, never a ready
+  workspace. The run view keeps it (archive destroys it, the capacity count
+  sees it, the run page shows it for inspection until then); the run's own
+  state ignores it, so a retry provisions afresh under the same name
+  instead of running in a container that was never bootstrapped. The
+  bootstrap and egress-probe failures keep recording a non-partial id, as
+  before.
+- The same leak had a second door: a run aborted mid-provisioning ended
+  abandoned with nothing recorded. An abort now records the leftovers the
+  same way (`provisionStopped`); a pause or a shutdown records nothing, since
+  the run provisions again under the same name when it resumes and the
+  provisioner picks them up.
+- The reaper is unchanged: it destroys completed runs' workspaces only, and
+  failed or abandoned runs are never auto-reaped (they are evidence).
+  Archive is what reclaims them.
+- Tests: every Kubernetes failure stage returns the name and destroying it
+  deletes the pod, the claim, the policy and the secret; every Docker
+  failure stage returns the name; the engine records a partial leftover and
+  archive destroys it (`TestFailedProvisionLeftoversAreArchived`), likewise
+  after an abort (`TestAbortDuringProvisioningRecordsTheLeftovers`); the
+  run-state fold ignores a partial id and keeps a bootstrapped one.
+- Runs that failed before this release have no id on record. Their
+  workspaces are removed by hand (`kubectl delete pod,pvc,secret,networkpolicy`
+  by the workspace name, or `docker rm -f` on the sandbox).
+
+## A non-root remote user can use the shim dir (2026-11-10)
+
+- With `remoteUser: node` (common: the Node, JavaScript and TypeScript
+  images), the sidecar never started on Kubernetes: it runs as the remote
+  user and creates `sidecar.sock` and `ssh.sock` in `/opt/apothecary`, which
+  the shim-seed init container makes root's, 0755 ("bind: permission
+  denied" in `/apothecary/sidecar.log`). No sidecar means no file tree,
+  diff, terminal, Ask pane, editor or SSH door. The docker host has the same
+  failure whenever the remote user's uid is not the engine's: the CLI
+  remaps it only when it runs as a non-root user (never for the engine
+  image, which runs as root) and never for compose. Dev from source hid it
+  (engine uid 1000 = `node`).
+- The reverse relay behind app port exposure (`app-<port>.sock`, same dir)
+  was started with a bare `docker exec`, i.e. as the image's default user:
+  an image ending in `USER node` could expose no port.
+- `rootInit` (root, after `up`, before the lifecycle hooks) now gives a
+  non-root remote user the shim dir's group, writable: `chgrp "$(id -g
+  <user>)"` + `chmod g+w`, not recursive. The group, not the owner: the
+  engine must keep writing there whatever uid it runs as (`engine.sock`
+  after a restart, the shim on upgrade), and on the docker host the dir is
+  its own run folder seen through the sandbox. The shim binary and the tools
+  bundle keep their owners. The devcontainer spec has no group setting; the
+  gid is the one the user's processes run with. The reverse relay now runs
+  with `-u root` (it only pipes bytes; its socket is 0666).
+- Checked by hand against real `node:22-bookworm-slim` containers, one with
+  root and one with `USER node` as default user, the shim dir root-owned
+  0755 as the seed leaves it, the real static shim and the exact script
+  `rootInit` generates: the sidecar fails with "bind: permission denied"
+  before `rootInit`; after it the sidecar starts as `node` on the first
+  call, `/health` answers from the host side, `ssh.sock` is served, an app
+  port answers through a root-run reverse relay, and the dir stays root's.
+  Unit tests pin the script (group and mode, no owner change, no
+  recursion, nothing for root) and the relay's `-u root`.
+- Workspaces provisioned before this need a rebuild, or the two commands run
+  by hand as root inside them.
+

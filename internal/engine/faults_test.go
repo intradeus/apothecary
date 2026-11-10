@@ -6,6 +6,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -111,7 +112,7 @@ func TestRecoveryStopsWhenCredentialsCannotBeReseeded(t *testing.T) {
 func TestAbortDuringProvisioning(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	entered := make(chan struct{})
-	h.res.Envp = blockProvision{h.envp, entered}
+	h.res.Envp = blockProvision{h.envp, entered, ""}
 	id, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
@@ -129,15 +130,43 @@ func TestAbortDuringProvisioning(t *testing.T) {
 	}
 }
 
+// An abort mid-build ends the run with what the provisioner left behind on
+// record, so archiving the run destroys it.
+func TestAbortDuringProvisioningRecordsTheLeftovers(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	entered := make(chan struct{})
+	h.res.Envp = blockProvision{h.envp, entered, "apo-left"}
+	id, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	if err := h.e.Abort(id); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(id)
+	f, ok := findPayload[*event.EnvFailed](h.events(t, id))
+	if v := h.view(t, id); v.State != run.Abandoned || v.EnvID != "apo-left" || !ok || !f.Partial {
+		t.Fatalf("state %s env %q env_failed %+v", v.State, v.EnvID, f)
+	}
+	if err := h.e.Archive(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(h.envp.Destroyed, envport.EnvID("apo-left")) {
+		t.Errorf("archive did not destroy the leftovers (destroyed %v)", h.envp.Destroyed)
+	}
+}
+
 type blockProvision struct {
 	*fake.EnvProvisioner
 	entered chan struct{}
+	left    envport.EnvID // what the cancelled provisioning leaves behind
 }
 
 func (b blockProvision) Provision(ctx context.Context, _ envport.EnvSpec) (envport.EnvID, error) {
 	close(b.entered)
 	<-ctx.Done()
-	return "", ctx.Err()
+	return b.left, ctx.Err()
 }
 
 // Bootstrap failing leaves the workspace on record, as evidence, and its

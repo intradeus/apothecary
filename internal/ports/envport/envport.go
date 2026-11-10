@@ -167,6 +167,10 @@ const (
 
 type EnvProvisioner interface {
 	// Provision blocks until the environment is ready; 1 internal retry.
+	// On failure it returns, with the error, the id of whatever it left
+	// behind — a sandbox, its volume, a checkout — or "" when it created
+	// nothing. That id names a workspace that was never ready: the caller
+	// keeps it for inspection and destroys it (Destroy), never runs in it.
 	Provision(ctx context.Context, spec EnvSpec) (EnvID, error)
 	Exec(ctx context.Context, env EnvID, cmd Command) (ExecResult, error)
 	// ReadFile/WriteFile paths: relative = repo-root-relative

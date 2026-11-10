@@ -154,9 +154,10 @@ func check(ctx context.Context, res *resolution.Resolution, runID string, opts O
 		if opts.Keep {
 			return failed, noTeardown
 		}
-		// A failed or cancelled provision returns no id, but may have built
-		// half a workspace (a sandbox, a volume, an egress network) under
-		// the name it was given — which is its identity. Remove by name.
+		// A failed provision returns the id of the half workspace it left
+		// (a sandbox, a volume, an egress network); one that returned none
+		// may still have left something under the name it was given, its
+		// identity. Remove it either way.
 		if env == "" {
 			env = envport.EnvID(name)
 		}

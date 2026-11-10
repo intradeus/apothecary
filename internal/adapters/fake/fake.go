@@ -55,6 +55,10 @@ type EnvProvisioner struct {
 	// order (nil entries succeed) — for testing the 1-retry rule.
 	ProvisionErrs []error
 	provisions    int
+	// LeaveOnFailure makes a failing Provision leave a half-built workspace
+	// behind and return its id with the error, as a real provisioner does
+	// once it created a sandbox.
+	LeaveOnFailure bool
 	// ExecFunc scripts command execution; nil means exit 0, empty output.
 	// It runs with the env's lock NOT held; use the env's Files freely —
 	// fakes are single-writer like the engine.
@@ -116,7 +120,16 @@ func (p *EnvProvisioner) Provision(_ context.Context, spec envport.EnvSpec) (env
 		err := p.ProvisionErrs[p.provisions]
 		p.provisions++
 		if err != nil {
-			return "", err
+			if !p.LeaveOnFailure {
+				return "", err
+			}
+			// A half-built workspace, as a real provisioner leaves one:
+			// one per spec name, reused by the next attempt.
+			id := envport.EnvID("left-" + spec.Name)
+			if p.envs[id] == nil {
+				p.envs[id] = &Env{ID: id, Spec: spec, Status: envport.EnvStopped, Files: map[string][]byte{}}
+			}
+			return id, err
 		}
 	} else {
 		p.provisions++

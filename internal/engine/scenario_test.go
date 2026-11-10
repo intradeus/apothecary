@@ -1681,6 +1681,43 @@ func TestEnvFailureAfterRetry(t *testing.T) {
 	}
 }
 
+// A provisioning that fails after the sandbox exists leaves it behind; the
+// run records it, so archiving the run destroys it (unrecorded, the sandbox
+// and its compose stack ran on forever), and it counts against the
+// environment capacity until then.
+func TestFailedProvisionLeftoversAreArchived(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	h.envp.LeaveOnFailure = true
+	h.envp.ProvisionErrs = []error{fmt.Errorf("devcontainer up: exit 1"), fmt.Errorf("devcontainer up: exit 1")}
+
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	ef, _ := findPayload[*event.EnvFailed](h.events(t, runID))
+	if ef == nil || ef.EnvID == "" || !ef.Partial {
+		t.Fatalf("env_failed = %+v, want the leftover recorded as partial", ef)
+	}
+	left := envport.EnvID(ef.EnvID)
+	if h.envp.Env(left) == nil {
+		t.Fatalf("no leftover %s in the provisioner", left)
+	}
+	if v := h.view(t, runID); v.State != run.Failed || v.EnvID != ef.EnvID {
+		t.Fatalf("view state %s env %q, want failed with %q", v.State, v.EnvID, ef.EnvID)
+	}
+	if err := h.e.Archive(context.Background(), runID); err != nil {
+		t.Fatal(err)
+	}
+	if h.envp.Env(left) != nil || !slices.Contains(h.envp.Destroyed, left) {
+		t.Errorf("archive left %s standing (destroyed %v)", left, h.envp.Destroyed)
+	}
+	if v := h.view(t, runID); v.EnvID != "" {
+		t.Errorf("env_id after archive = %q", v.EnvID)
+	}
+}
+
 func TestBootstrapFailureIsEnvFailed(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {

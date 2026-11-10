@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -29,6 +30,19 @@ func workspaceLink(links []event.Link) string {
 		}
 	}
 	return ""
+}
+
+// provisionStopped ends a provisioning the run's context cancelled. An
+// abort ends the run: what the provisioner left behind is recorded, as a
+// failed provisioning's is, or nothing would ever destroy it. A pause or a
+// shutdown records nothing — the run provisions again under the same name
+// when it resumes, and the provisioner picks the leftovers up.
+func (x *exec) provisionStopped(left envport.EnvID) error {
+	cause := context.Cause(x.ctx)
+	if left != "" && errors.Is(cause, errAborted) {
+		_ = x.append(&event.EnvFailed{Error: "provisioning stopped: aborted by user", EnvID: string(left), Partial: true})
+	}
+	return cause
 }
 
 func (x *exec) ensureEnv() (err error) {
@@ -163,15 +177,19 @@ func (x *exec) ensureEnv() (err error) {
 	id, err := x.res.Envp.Provision(pctx, spec)
 	if err != nil {
 		if x.ctx.Err() != nil {
-			return context.Cause(x.ctx)
+			return x.provisionStopped(id)
 		}
 		id, err = x.res.Envp.Provision(pctx, spec) // §2: failed after 1 retry
 	}
 	if err != nil {
 		if x.ctx.Err() != nil {
-			return context.Cause(x.ctx)
+			return x.provisionStopped(id)
 		}
-		return x.append(&event.EnvFailed{Error: err.Error()})
+		// What the failed provisioning left behind (a sandbox with its
+		// compose stack, a volume, a checkout) is recorded: archive and the
+		// capacity count see it, and a human can inspect it until then.
+		// Unrecorded, it was never destroyed.
+		return x.append(&event.EnvFailed{Error: err.Error(), EnvID: string(id), Partial: id != ""})
 	}
 	rs.EnvID = id
 	if err := x.bootstrap(id); err != nil {

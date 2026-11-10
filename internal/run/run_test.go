@@ -79,6 +79,7 @@ func TestReduceFailurePaths(t *testing.T) {
 		want State
 	}{
 		{"env failed", []event.Payload{&event.RunCreated{}, &event.EnvRequested{}, &event.EnvFailed{Error: "boom"}}, Failed},
+		{"env failed, leftovers", []event.Payload{&event.RunCreated{}, &event.EnvRequested{}, &event.EnvFailed{Error: "boom", EnvID: "apo-x", Partial: true}}, Failed},
 		{"abandoned", []event.Payload{&event.RunCreated{}, &event.EnvRequested{}, &event.EnvReady{}, &event.RunAbandoned{StalledAt: "test", Reason: "edge exhausted"}}, Abandoned},
 		{"aborted", []event.Payload{&event.RunCreated{}, &event.EnvRequested{}, &event.EnvReady{}, &event.RunFailed{Reason: "aborted"}}, Failed},
 	}
@@ -90,6 +91,11 @@ func TestReduceFailurePaths(t *testing.T) {
 			}
 			if !v.State.Terminal() {
 				t.Error("state should be terminal")
+			}
+			// What a failed provisioning left behind is the view's: archive
+			// and the capacity count read it from here.
+			if ef, ok := tc.ps[len(tc.ps)-1].(*event.EnvFailed); ok && v.EnvID != ef.EnvID {
+				t.Errorf("env_id = %q, want %q", v.EnvID, ef.EnvID)
 			}
 		})
 	}

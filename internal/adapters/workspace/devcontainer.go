@@ -454,6 +454,11 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExi
 	if name == "" {
 		name = WorkspaceName(spec.RunID)
 	}
+	// From here on a failure may leave a sandbox, its volume, a checkout:
+	// it returns the name with the error, so the caller can destroy what
+	// was left (envport.EnvProvisioner.Provision). Destroy tolerates a name
+	// with nothing behind it.
+	left := envport.EnvID(name)
 
 	// Capture provisioning output (clone + build) into the same exec.log the
 	// UI tails, so init/provision streams live instead of only post-ready
@@ -494,7 +499,7 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExi
 		return def, a.checkDaemonDoor(asks)
 	})
 	if err != nil {
-		return "", err
+		return left, err
 	}
 	a.recordDefinition(name, p.def)
 
@@ -511,29 +516,29 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExi
 	}
 	ws, err := p.def.Up(ctx, a.defEnv(name, p.src), spec, opts)
 	if err != nil {
-		return "", err
+		return left, err
 	}
 	if err := a.rootInit(ctx, name, ws); err != nil {
-		return "", err
+		return left, err
 	}
 	// The repo's lifecycle hooks, now that the checkout belongs to the remote
 	// user (rootInit): `up` skipped them so a non-root user's postCreateCommand
 	// does not meet a root-owned tree (the engine clones as itself).
 	if err := p.def.RunUserCommands(ctx, a.defEnv(name, p.src), opts); err != nil {
-		return "", err
+		return left, err
 	}
 	// What this container was built from, for the "config changed" hint.
 	a.recordConfigDigest(name, p.src, plog)
 	// Engine bridge + in-container relay: the shim must reach the engine
 	// before anything runs in the workspace.
 	if err := a.host.ensureBridge(envport.EnvID(name)); err != nil {
-		return "", err
+		return left, err
 	}
 	if err := a.startRelay(ctx, name); err != nil {
-		return "", err
+		return left, err
 	}
 	if err := a.waitReady(ctx, name); err != nil {
-		return "", err
+		return left, err
 	}
 	// The other half of the cache. The CLI builds with BUILDKIT_INLINE_CACHE=1,
 	// so the image it just built carries the metadata --cache-from needs — but
@@ -852,14 +857,28 @@ func (a *Adapter) ensureTools(ctx context.Context) (string, error) {
 // remaps a uid when it runs as root (nor for compose), so without this the
 // user's own hooks and bootstrap's `git switch` meet a root-owned tree. The
 // hooks run after this (RunUserCommands), which is why `up` skips them.
+//
+// A non-root remote user also gets the shim dir's group, writable: the
+// sidecar runs as that user and creates its sockets there (sidecar.sock,
+// ssh.sock). The dir is root's on Kubernetes (the seed init container) and
+// the engine's on the docker host, whose uid the user shares only when the
+// CLI remapped it — never for a root engine, never for compose. The group,
+// not the owner: the engine must keep writing there (engine.sock after a
+// restart, the shim on upgrade) whatever uid it runs as, and on the docker
+// host the dir is its own run folder. Not recursive: the shim and the tools
+// bundle keep their owners. The gid is the one the user's processes run
+// with — a devcontainer has no way to name another.
 func (a *Adapter) rootInit(ctx context.Context, name string, res Workspace) error {
 	user := res.RemoteUser
 	if user == "" {
 		user = "root"
 	}
 	own := ""
-	if user != "root" && res.WorkspaceFolder != "" {
-		own = fmt.Sprintf("chown -R %s: %s\n", shell.Quote(user), shell.Quote(res.WorkspaceFolder))
+	if user != "root" {
+		own = fmt.Sprintf("chgrp \"$(id -g %[1]s)\" /opt/apothecary\nchmod g+w /opt/apothecary\n", shell.Quote(user))
+		if res.WorkspaceFolder != "" {
+			own += fmt.Sprintf("chown -R %s: %s\n", shell.Quote(user), shell.Quote(res.WorkspaceFolder))
+		}
 	}
 	script := fmt.Sprintf(`set -e
 mkdir -p /apothecary %[3]s

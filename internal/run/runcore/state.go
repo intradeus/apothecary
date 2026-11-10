@@ -466,7 +466,9 @@ func (rs *State) Apply(ev *event.Event) {
 		rs.Links = p.Links
 	case *event.EnvFailed:
 		rs.Done = true
-		if p.EnvID != "" {
+		// A partial workspace is never run in: a retry provisions afresh
+		// (the same name, so the provisioner picks the leftovers up).
+		if p.EnvID != "" && !p.Partial {
 			rs.EnvID = envport.EnvID(p.EnvID)
 		}
 	case *event.SnapshotCaptured:

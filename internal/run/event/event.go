@@ -322,10 +322,17 @@ type EnvReady struct {
 
 type EnvFailed struct {
 	Error string `json:"error"`
-	// EnvID is set when a workspace was provisioned before the failure
-	// (bootstrap errors): capacity counting, archive and the reaper need it
-	// to see — and destroy — the orphan.
+	// EnvID is set when a workspace exists after the failure: capacity
+	// counting and archive need it to see — and destroy — the orphan, and a
+	// human inspects it until then. Either one that was provisioned and
+	// failed later (bootstrap, the egress probe), or what a failed
+	// provisioning left behind (Partial).
 	EnvID string `json:"env_id,omitempty"`
+	// Partial marks an EnvID the provisioner left behind when it failed: a
+	// sandbox, a volume, a checkout, never a ready workspace. The run's view
+	// keeps it (to be destroyed); the run's own state does not, so a retry
+	// provisions afresh instead of running in it.
+	Partial bool `json:"partial,omitempty"`
 }
 
 type StageStarted struct {

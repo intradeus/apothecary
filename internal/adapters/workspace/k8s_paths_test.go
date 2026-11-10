@@ -163,9 +163,25 @@ func TestK8sProvisionFailuresStopAtTheirStage(t *testing.T) {
 				k.exec = provisionPod()
 			}
 			a, _ := k8sWith(t, k, false, c.rules...)
-			_, err := a.Provision(context.Background(), spec)
+			id, err := a.Provision(context.Background(), spec)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("err = %v, want %q", err, c.want)
+			}
+			// Whatever the stage, the failure names what it may have left
+			// (the pod, its claim, its secret and policy) and destroying that
+			// name removes all of it: unnamed, it was never destroyed.
+			if id != "w" {
+				t.Fatalf("failed provision returned %q, want the workspace name", id)
+			}
+			kf := &kubeFake{}
+			d, _ := k8sWith(t, kf, false)
+			if err := d.Destroy(context.Background(), id); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"pod/w", "persistentvolumeclaim/" + dataClaimName("w"), "networkpolicy/" + runSecretName("w"), "secret/" + runSecretName("w")} {
+				if !slices.Contains(kf.deleted, want) {
+					t.Errorf("destroy left %s (deleted %v)", want, kf.deleted)
+				}
 			}
 		})
 	}

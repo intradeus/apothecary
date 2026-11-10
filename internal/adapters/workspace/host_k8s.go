@@ -506,8 +506,11 @@ func (h *k8sHost) ensureCheckout(ctx context.Context, name, src string, spec env
 	// script through git's environment config — never argv, never the
 	// checkout's config — and is removed when the script ends: the branch
 	// step's fetch of a merge request's head needs it as much as the clone.
-	script := fmt.Sprintf(`IFS= read -r CRED; mkdir -p %[1]s; f=%[1]s/git-credentials; umask 077; `+
-		`if [ -n "$CRED" ]; then printf '%%s\n' "$CRED" > "$f"; export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0="store --file=$f"; fi; `+
+	// Only the credential write runs under umask 077 (a subshell): git must
+	// write the checkout with the modes it records, or a container running
+	// as a non-root user cannot read a file bind-mounted from it.
+	script := fmt.Sprintf(`IFS= read -r CRED; mkdir -p %[1]s; f=%[1]s/git-credentials; `+
+		`if [ -n "$CRED" ]; then (umask 077; printf '%%s\n' "$CRED" > "$f"); export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0="store --file=$f"; fi; `+
 		`git clone -- %[2]s %[3]s%[4]s; rc=$?; rm -f "$f"; exit $rc`,
 		shell.Quote(filepath.Dir(src)), shell.Quote(spec.RepoURL), shell.Quote(src), branch)
 	stdin := []byte(script + "\n" + cred + "\n")

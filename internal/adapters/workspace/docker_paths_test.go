@@ -155,9 +155,13 @@ func TestProvisionFailuresStopAtTheirStage(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			a, r := armedAdapter(t, c.rules...)
-			_, err := a.Provision(context.Background(), envport.EnvSpec{Name: "w", RepoURL: "https://git.test/r.git"})
+			id, err := a.Provision(context.Background(), envport.EnvSpec{Name: "w", RepoURL: "https://git.test/r.git"})
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("err = %v, want it to contain %q", err, c.want)
+			}
+			// The failure names what it may have left, for the caller to destroy.
+			if id != "w" {
+				t.Errorf("failed provision returned %q, want the workspace name", id)
 			}
 			if r.saw(c.stopped) {
 				t.Errorf("provision went on to %q:\n%s", c.stopped, strings.Join(r.lines(), "\n"))
@@ -418,8 +422,9 @@ func TestRootInitDefaultsToRoot(t *testing.T) {
 	if !strings.Contains(script, `ln -sfn '/workspaces/it'\''s' "$H/repo"`) {
 		t.Errorf("a repo-derived folder must stay quoted: %s", script)
 	}
-	// root already owns the engine's checkout: nothing to hand over.
-	if strings.Contains(script, "chown -R") {
+	// root already owns the engine's checkout and may write the shim dir:
+	// nothing to hand over.
+	if strings.Contains(script, "chown -R") || strings.Contains(script, "chgrp") {
 		t.Errorf("no ownership change for root: %s", script)
 	}
 }
@@ -439,6 +444,30 @@ func TestRootInitOwnsTheCheckoutForANonRootUser(t *testing.T) {
 	}
 	if strings.Index(script, own) > strings.Index(script, `"$H/repo"`) {
 		t.Errorf("ownership must precede the repo link: %s", script)
+	}
+	// The sidecar (run as this user) creates its sockets in the shim dir:
+	// the user's group may write it, the owner stays, nothing recursive.
+	for _, want := range []string{`chgrp "$(id -g 'dev')" /opt/apothecary` + "\n", "chmod g+w /opt/apothecary\n"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("shim dir not writable for the user (%q): %s", want, script)
+		}
+	}
+	if strings.Contains(script, "chown 'dev' /opt/apothecary") || strings.Contains(script, "-R /opt/apothecary") {
+		t.Errorf("the shim dir keeps its owner, non-recursively: %s", script)
+	}
+}
+
+// Without a workspace folder there is no checkout to hand over, but the
+// sidecar still needs the shim dir.
+func TestRootInitShimDirWithoutAFolder(t *testing.T) {
+	r := &ruleRunner{}
+	a := newTestAdapter(t, r)
+	if err := a.rootInit(context.Background(), "w", Workspace{ContainerID: "c", RemoteUser: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	script := r.snapshot()[0].args[len(r.snapshot()[0].args)-1]
+	if !strings.Contains(script, `chgrp "$(id -g 'node')" /opt/apothecary`) || strings.Contains(script, "chown -R") {
+		t.Errorf("script = %s", script)
 	}
 }
 

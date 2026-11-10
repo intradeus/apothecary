@@ -551,8 +551,12 @@ func (a *Adapter) ExposePort(ctx context.Context, env envport.EnvID, port int) (
 		return nil, err
 	}
 	spec := fmt.Sprintf("/opt/apothecary/%s:%s:%d", sock, a.relayTarget(ctx, name, cid, port), port)
+	// As root: the relay creates its socket in the shim dir, which only root,
+	// the engine and the remote user's group may write (rootInit), and a bare
+	// exec runs as the image's default user — `USER node` in a Dockerfile.
+	// It only pipes bytes; the socket is opened to every uid below.
 	_, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
-		[]string{"exec", "-d", cid, "/opt/apothecary/shim", "relay", "--reverse", spec}, nil, nil)
+		[]string{"exec", "-d", "-u", "root", cid, "/opt/apothecary/shim", "relay", "--reverse", spec}, nil, nil)
 	if err != nil {
 		return nil, err
 	}
