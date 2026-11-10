@@ -120,7 +120,7 @@ func (e *RemoteOwnedError) Error() string {
 func (e *RemoteOwnedError) Is(target error) bool { return target == ErrRemoteOwned }
 
 // CreateTicket validates and inserts a ticket. Branch-format validation is the
-// caller's job (the httpapi layer runs engine.CheckBranch, which confstore
+// caller's job (the httpapi layer runs checkout.CheckBranch, which confstore
 // cannot import) — this only enforces the required fields, that the project
 // exists, and that the status and type are its tracker's. A ticket with no
 // source lands on its owner's internal tracker, in the status holding the

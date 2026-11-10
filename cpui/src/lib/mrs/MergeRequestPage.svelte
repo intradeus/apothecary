@@ -11,9 +11,8 @@
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { shortId } from '$lib/core/format';
 	import type { MergeRequestRow, SkillsetRef } from '$lib/domain';
-	import { t, th } from '$lib/i18n/index.svelte';
+	import { t } from '$lib/i18n/index.svelte';
 	import { I } from '$lib/design/icons';
-	import FlowSelect from '$lib/flow/FlowSelect.svelte';
 	import WorkshopName from '$lib/app/WorkshopName.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import SectionHeader from '$lib/ui/SectionHeader.svelte';
@@ -23,11 +22,9 @@
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Updated from '$lib/ui/Updated.svelte';
-	import TransportIcon from '$lib/ui/TransportIcon.svelte';
-	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import RunTable from '$lib/run/RunTable.svelte';
-	import StartRunOptions from '$lib/run/StartRunOptions.svelte';
+	import StartRunPanel from '$lib/run/StartRunPanel.svelte';
 	import MrMeta from './MrMeta.svelte';
 	import { runsOnMR } from './runsOnMR';
 
@@ -45,7 +42,6 @@
 	/** The run in the way when a start was refused: one at a time on it. */
 	let busyRun = $state('');
 
-	const project = $derived(fleet.projectById.get(projectId));
 	// The runs the shared poll carries that went through it: started on it,
 	// or the one that opened it.
 	const runs = $derived(runsOnMR(fleet.runs, projectId, iid, repo));
@@ -92,23 +88,6 @@
 			if (!busyRun) error = errorMessage(e);
 		} finally {
 			starting = false;
-		}
-	}
-
-	async function abortBusy() {
-		const id = busyRun;
-		const ok = await confirmDialog({
-			title: t('run.stop.title', { id: shortId(id) }),
-			body: `${th('run.stop.lead')} ${t('run.stop.kept')}`,
-			action: t('run.stop.action')
-		});
-		if (!ok) return;
-		try {
-			await api.runs.abort(id);
-			busyRun = '';
-			void fleet.refresh();
-		} catch (e) {
-			error = errorMessage(e);
 		}
 	}
 
@@ -171,53 +150,28 @@
 				</section>
 			</div>
 
-			<aside class="start glass pane">
-				<div class="pane-head"><h2>{t('page.ticket.startRun')}</h2></div>
-				<div class="pane-body sb">
+			<StartRunPanel
+				{projectId}
+				operatesOn="merge_request"
+				bind:flow
+				bind:params
+				bind:skillsets
+				bind:busyRun
+				busyText={(id) => t('page.mr.busy', { id })}
+				{starting}
+				disabled={!open}
+				onstart={startRun}
+				onerror={(m) => (error = m)}
+				idPrefix="mr"
+			>
+				{#snippet before()}
 					{#if !open}
-						<p class="help hue-warning">{t('page.mr.notOpen', { state: row.mr.state })}</p>
+						<p class="help hue-warning not-open">
+							{t('page.mr.notOpen', { state: row!.mr.state })}
+						</p>
 					{/if}
-					<div class="field">
-						<label for="mr-flow">{t('page.ticket.flow')}</label>
-						<FlowSelect
-							id="mr-flow"
-							{projectId}
-							operatesOn="merge_request"
-							fallbackFlow={project?.defaultFlow}
-							bind:value={flow}
-							fallbackLabel={t('page.ticket.defaultFlow', {
-								flow: project?.defaultFlow || t('page.ticket.projectDefault')
-							})}
-						/>
-					</div>
-					{#if project}
-						<StartRunOptions
-							{projectId}
-							flowName={flow.trim() || project.defaultFlow}
-							bind:params
-							bind:skillsets
-							askMR={false}
-							idPrefix="mr"
-						/>
-					{/if}
-					{#if busyRun}
-						<div class="busy tint-warning" role="alert">
-							<span>{t('page.mr.busy', { id: shortId(busyRun) })}</span>
-							<a class="btn btn-sm" href={to.run(busyRun)}>{t('page.ping.openRun')}</a>
-							<button class="btn-sm btn-danger" onclick={abortBusy}>{t('run.stop.action')}</button>
-						</div>
-					{/if}
-					<button
-						class="btn-primary btn-lg go"
-						onclick={startRun}
-						disabled={!open}
-						aria-busy={starting}
-					>
-						<TransportIcon kind="play" />
-						{t('page.ticket.startRunBtn')}
-					</button>
-				</div>
-			</aside>
+				{/snippet}
+			</StartRunPanel>
 		</div>
 	</div>
 {:else if loaded}
@@ -251,12 +205,6 @@
 		gap: var(--shell-gap);
 		min-width: 0;
 	}
-	.start {
-		border-radius: var(--r-group);
-	}
-	.start .pane-head {
-		border-bottom-color: var(--glass-line);
-	}
 	.body > :global(.md) {
 		max-width: var(--measure);
 	}
@@ -264,27 +212,8 @@
 		padding: 0;
 		margin: 0;
 	}
-	.sb {
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-	}
-	.sb > .help {
+	.not-open {
 		margin: 0;
-	}
-	.go {
-		align-self: stretch;
-		margin-top: 2px;
-	}
-	.busy {
-		display: flex;
-		align-items: center;
-		flex-wrap: wrap;
-		gap: 8px;
-		padding: 8px 10px;
-		border-width: 1px;
-		border-style: solid;
-		border-radius: var(--r-sm);
 	}
 	.runs {
 		display: flex;

@@ -25,17 +25,19 @@ import (
 	"apothecary/internal/project/tickets"
 	"apothecary/internal/run"
 	"apothecary/internal/run/runinput"
+	"apothecary/internal/workitem"
+	"apothecary/internal/workitem/mergerequest"
+	"apothecary/internal/workitem/ticket"
 )
 
 // By is who an automation's runs say began them.
 const By = "automation"
 
 // Runs is the slice of the engine a pass needs: create a run, and tell
-// whether a ticket — or a merge request — has one.
+// whether a work item — a ticket, a merge request — has one.
 type Runs interface {
 	CreateRunWith(ctx context.Context, t runinput.Ticket, flowName, projectID string, in runinput.Input) (string, error)
-	RunsOfTicket(ctx context.Context, ticketID string) ([]run.View, error)
-	RunsOnMR(ctx context.Context, projectID, repo string, iid int) ([]run.View, error)
+	RunsOf(ctx context.Context, item workitem.Ref) ([]run.View, error)
 }
 
 // MRs is what a merge_request automation reads: a repository's open merge
@@ -178,7 +180,7 @@ func (w *Watcher) importOrAdopt(ctx context.Context, a confstore.Automation, key
 	if existing.AutomationID != a.ID || existing.ProjectID != a.ProjectID {
 		return confstore.Ticket{}, false, nil
 	}
-	runs, err := w.Runs.RunsOfTicket(ctx, existing.ID)
+	runs, err := w.Runs.RunsOf(ctx, ticket.Ref(existing.ProjectID, existing.ID))
 	if err != nil {
 		return confstore.Ticket{}, false, err
 	}
@@ -211,7 +213,7 @@ func (w *Watcher) pollMRs(ctx context.Context, a confstore.Automation) (bool, er
 		if mr.State != repoport.MROpen || mr.Draft || strings.EqualFold(mr.Author, me) {
 			continue
 		}
-		runs, err := w.Runs.RunsOnMR(ctx, a.ProjectID, a.Repo, mr.Ref.IID)
+		runs, err := w.Runs.RunsOf(ctx, mergerequest.Ref(a.ProjectID, a.Repo, mr.Ref.IID))
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", mr.Ref.URL, err))
 			continue
@@ -233,7 +235,7 @@ func (w *Watcher) pollMRs(ctx context.Context, a confstore.Automation) (bool, er
 
 // startOn creates the automation's run on a merge request.
 func (w *Watcher) startOn(ctx context.Context, a confstore.Automation, mr repoport.MRInfo) (string, error) {
-	id, err := w.Runs.CreateRunWith(ctx, tickets.MRWork(mr), a.Flow, a.ProjectID, runinput.Input{Params: maps.Clone(a.Params), By: By,
+	id, err := w.Runs.CreateRunWith(ctx, mergerequest.Work(mr), a.Flow, a.ProjectID, runinput.Input{Params: maps.Clone(a.Params), By: By,
 		MR: &runinput.MR{Repo: a.Repo, IID: mr.Ref.IID}})
 	if err != nil {
 		return "", err
@@ -249,7 +251,7 @@ func (w *Watcher) startOn(ctx context.Context, a confstore.Automation, mr repopo
 // a crash in between cannot fire it twice. A rule edited after its last
 // firing counts from the edit.
 //
-// A ticket has one active run at a time (engine.ErrTicketBusy): a slot that
+// A ticket has one active run at a time (workitem.ErrBusy): a slot that
 // falls while the ticket's previous run is still going is skipped, recorded
 // as "ticket busy: run <id>", and not made up later — the same policy as a
 // slot missed while the daemon was down.

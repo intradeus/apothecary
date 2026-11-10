@@ -4,9 +4,7 @@
 package run
 
 import (
-	"cmp"
 	"context"
-	"slices"
 	"time"
 
 	"apothecary/internal/run/event"
@@ -153,29 +151,6 @@ type HoldView struct {
 	Turns     int       `json:"turns,omitempty"`
 	Messages  int       `json:"messages,omitempty"`
 	CostUSD   float64   `json:"cost_usd,omitempty"`
-}
-
-// MRIIDs are the merge requests of the checkout repo ("" is the primary)
-// in the run's data: the one it was started on, and those it opened.
-func (v View) MRIIDs(repo string) []int {
-	repo = cmp.Or(repo, event.PrimaryCheckoutName)
-	var out []int
-	if a := v.Adopted; a != nil && cmp.Or(a.Repo, event.PrimaryCheckoutName) == repo {
-		out = append(out, a.IID)
-	}
-	for _, m := range v.MRs {
-		if cmp.Or(m.Repo, event.PrimaryCheckoutName) == repo {
-			out = append(out, m.IID)
-		}
-	}
-	return out
-}
-
-// HasMR reports whether the merge request iid of the checkout repo ("" is
-// the primary) is in the run's data: the run was started on it, or opened
-// (or adopted) it for its own branch — either way it went through the run.
-func (v View) HasMR(repo string, iid int) bool {
-	return slices.Contains(v.MRIIDs(repo), iid)
 }
 
 // MRView is one merge request as the run page shows it.

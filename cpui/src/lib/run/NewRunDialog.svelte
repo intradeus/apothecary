@@ -1,16 +1,16 @@
 <script lang="ts">
-	// The Runs page's "New run" (DESIGN 7.4). A run starts on one of the two
-	// work items — a ticket or a merge request — on its page, where its flow
-	// and parameters are chosen: this only picks which, and takes you there.
-	// A merge request is no ticket: none is made for it.
+	// The Runs page's "New run" (DESIGN 7.4). A run starts on a work item — a
+	// ticket, a merge request (WORK_ITEMS) — on that item's page, where its
+	// flow and parameters are chosen: this only picks which, and takes you
+	// there. One tab per kind; a kind whose items live in a workshop's
+	// repository asks which workshop first.
 	import { errorMessage } from '$lib/core/errors';
 	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { api } from '$lib/api';
-	import type { MergeRequestRow, Ticket } from '$lib/domain';
 	import { fleet } from '$lib/app/fleet.svelte';
+	import { WORK_ITEMS, type WorkItemOption } from '$lib/app/workItems';
+	import type { OperatesOn } from '$lib/domain/flowdoc';
 	import { t } from '$lib/i18n/index.svelte';
-	import { to } from '$lib/core/urls';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
@@ -22,161 +22,96 @@
 		projectId = ''
 	}: {
 		open: boolean;
-		/** Only this workshop's tickets and merge requests, when the page is
-		 *  filtered to one. */
+		/** Only this workshop's items, when the page is filtered to one. */
 		projectId?: string;
 	} = $props();
 
-	type Mode = 'ticket' | 'mr';
-	let mode = $state<Mode>('ticket');
+	let kind = $state<OperatesOn>(WORK_ITEMS[0].kind);
+	const item = $derived(WORK_ITEMS.find((w) => w.kind === kind)!);
 
-	// --- a ticket ---
-	let tickets = $state<Ticket[] | null>(null);
-	let error = $state('');
-	let picked = $state('');
-
-	async function load() {
-		tickets = null;
-		picked = '';
-		error = '';
-		try {
-			const all = await api.tickets.list();
-			tickets = all
-				.filter((tk) => !projectId || tk.projectId === projectId)
-				.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-			picked = tickets[0]?.id ?? '';
-		} catch (e) {
-			error = errorMessage(e);
-		}
-	}
-
-	$effect(() => {
-		if (open) untrack(load);
-	});
-
-	const options = $derived<SelectOption[]>(
-		(tickets ?? []).map((tk) => ({
-			value: tk.id,
-			label: tk.title,
-			detail: projectId ? undefined : fleet.projectName(tk.projectId)
-		}))
-	);
-
-	// --- a merge request ---
-	// Merge requests live in each workshop's repository: one workshop at a
-	// time, the page's when it is filtered to one.
-	let mrProject = $state('');
-	let mrs = $state<MergeRequestRow[] | null>(null);
-	let mrError = $state('');
-	let pickedMR = $state('');
-
+	// The workshop a per-workshop kind reads from: the page's, else picked.
+	let workshop = $state('');
 	const projectOptions = $derived<SelectOption[]>(
 		fleet.projects.map((p) => ({ value: p.id, label: p.name }))
 	);
 	$effect(() => {
 		if (!open) return;
-		const want = projectId || untrack(() => mrProject) || fleet.projects[0]?.id || '';
+		const first = fleet.projects[0]?.id ?? '';
 		untrack(() => {
-			if (mrProject !== want && (projectId || !mrProject)) mrProject = want;
+			if (projectId) workshop = projectId;
+			else if (!workshop) workshop = first;
 		});
 	});
+	/** Where the current kind reads its items: '' = every workshop. */
+	const scope = $derived(projectId || (item.perWorkshop ? workshop : ''));
 
-	async function loadMRs(pid: string) {
-		mrs = null;
-		mrError = '';
-		pickedMR = '';
+	let options = $state<WorkItemOption[] | null>(null);
+	let error = $state('');
+	let picked = $state('');
+	let reading = 0;
+
+	async function load() {
+		const which = ++reading;
+		options = null;
+		picked = '';
+		error = '';
 		try {
-			const rows = await api.projects.mergeRequests(pid);
-			if (pid !== mrProject) return;
-			mrs = rows;
-			pickedMR = rows[0] ? String(rows[0].mr.iid) : '';
+			const got = await item.options(scope);
+			if (which !== reading) return;
+			options = got;
+			picked = got[0]?.value ?? '';
 		} catch (e) {
-			if (pid === mrProject) mrError = errorMessage(e);
+			if (which === reading) error = errorMessage(e);
 		}
 	}
 
+	// Read again on each opening, on a tab switch and on a workshop pick.
 	$effect(() => {
-		const pid = mrProject;
-		if (!open || mode !== 'mr' || !pid) return;
-		untrack(() => loadMRs(pid));
+		if (!open) return;
+		void [kind, scope];
+		if (item.perWorkshop && !scope) return;
+		untrack(load);
 	});
 
-	const mrOptions = $derived<SelectOption[]>(
-		(mrs ?? []).map((r) => ({
-			value: String(r.mr.iid),
-			label: `!${r.mr.iid} ${r.mr.title}`,
-			detail: r.mr.author
-		}))
+	const selectOptions = $derived<SelectOption[]>(
+		(options ?? []).map((o) => ({ value: o.value, label: o.label, detail: o.detail }))
 	);
-
-	function next() {
-		if (mode === 'ticket') {
-			if (picked) void goto(to.ticket(picked));
-		} else if (pickedMR && mrProject) {
-			void goto(to.mergeRequest(mrProject, Number(pickedMR)));
-		}
-	}
-	const ready = $derived(mode === 'ticket' ? !!picked : !!pickedMR && !!mrProject);
+	const chosen = $derived(options?.find((o) => o.value === picked));
 </script>
 
 <Modal bind:open title={t('page.runs.new')}>
 	<Tabs
 		label={t('page.runs.newMode')}
-		bind:value={mode}
-		items={[
-			{ value: 'ticket', label: t('page.runs.newModeTicket') },
-			{ value: 'mr', label: t('page.runs.newModeMR') }
-		]}
+		bind:value={kind}
+		items={WORK_ITEMS.map((w) => ({ value: w.kind, label: w.one }))}
 	/>
-	{#if mode === 'ticket'}
-		{#if error}
-			<ErrorCard cause={t('page.runs.newLoadError')} detail={error} onretry={load} />
-		{:else if tickets === null}
-			<Loading />
-		{:else if tickets.length === 0}
-			<p class="intro">{t('page.runs.newNone')}</p>
-		{:else}
-			<p class="intro">{t('page.runs.newIntro')}</p>
-			<div class="field">
-				<label for="new-run-ticket">{t('page.runs.newPick')}</label>
-				<Select id="new-run-ticket" {options} bind:value={picked} />
-			</div>
-		{/if}
+	{#if item.perWorkshop && !projectId}
+		<div class="field">
+			<label for="new-run-workshop">{t('page.runs.newPickWorkshop')}</label>
+			<Select id="new-run-workshop" options={projectOptions} bind:value={workshop} />
+		</div>
+	{/if}
+	{#if error}
+		<ErrorCard cause={item.loadError} detail={error} onretry={load} />
+	{:else if options === null}
+		<Loading />
+	{:else if options.length === 0}
+		<p class="intro">{item.none}</p>
 	{:else}
-		<p class="intro">{t('page.runs.newIntroMR')}</p>
-		{#if !projectId}
-			<div class="field">
-				<label for="new-run-workshop">{t('page.runs.newPickWorkshop')}</label>
-				<Select id="new-run-workshop" options={projectOptions} bind:value={mrProject} />
-			</div>
-		{/if}
-		{#if mrError}
-			<ErrorCard
-				cause={t('page.runs.newMRLoadError')}
-				detail={mrError}
-				onretry={() => loadMRs(mrProject)}
-			/>
-		{:else if mrs === null}
-			<Loading />
-		{:else if mrs.length === 0}
-			<p class="intro">{t('page.runs.newNoMR')}</p>
-		{:else}
-			<div class="field">
-				<label for="new-run-mr">{t('page.runs.newPickMR')}</label>
-				<Select id="new-run-mr" options={mrOptions} bind:value={pickedMR} />
-			</div>
-		{/if}
+		<p class="intro">{item.intro}</p>
+		<div class="field">
+			<label for="new-run-item">{item.one}</label>
+			<Select id="new-run-item" options={selectOptions} bind:value={picked} />
+		</div>
 	{/if}
 	{#snippet footer()}
 		<button type="button" class="btn-ghost" onclick={() => (open = false)}
 			>{t('common.cancel')}</button
 		>
-		{#if mode === 'ticket' && tickets?.length === 0}
-			<a class="btn btn-primary" href={to.newTicket(projectId ? { project: projectId } : undefined)}
-				>{t('page.desk.newTicket')}</a
-			>
+		{#if options?.length === 0 && item.create}
+			<a class="btn btn-primary" href={item.create.href(projectId)}>{item.create.label}</a>
 		{:else}
-			<button class="btn-primary" disabled={!ready} onclick={next}
+			<button class="btn-primary" disabled={!chosen} onclick={() => chosen && goto(chosen.href)}
 				>{t('page.runs.newContinue')}</button
 			>
 		{/if}

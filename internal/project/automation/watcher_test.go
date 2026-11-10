@@ -18,10 +18,12 @@ import (
 	"apothecary/internal/project/tickets"
 	"apothecary/internal/run"
 	"apothecary/internal/run/runinput"
+	"apothecary/internal/workitem"
+	"apothecary/internal/workitem/items"
 )
 
-// fakeEngine records what the watcher asked for and answers RunsOfTicket
-// from it; Fail refuses every creation (a preflight refusal, say).
+// fakeEngine records what the watcher asked for and answers RunsOf from
+// it; Fail refuses every creation (a preflight refusal, say).
 type fakeEngine struct {
 	mu    sync.Mutex
 	Fail  error
@@ -30,15 +32,14 @@ type fakeEngine struct {
 		Flow   string
 		In     runinput.Input
 	}
-	runs map[string][]run.View
-	// mrRuns are the runs created on each merge request, by iid.
-	mrRuns map[int][]run.View
-	next   int
+	// runs are the runs created on each work item.
+	runs map[workitem.Ref][]run.View
+	next int
 	// MRs is what ListMRs reports (merge_request).
 	MRs []repoport.MRInfo
 }
 
-func (f *fakeEngine) CreateRunWith(_ context.Context, t runinput.Ticket, flowName, _ string, in runinput.Input) (string, error) {
+func (f *fakeEngine) CreateRunWith(_ context.Context, t runinput.Ticket, flowName, projectID string, in runinput.Input) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.Fail != nil {
@@ -47,14 +48,10 @@ func (f *fakeEngine) CreateRunWith(_ context.Context, t runinput.Ticket, flowNam
 	f.next++
 	id := fmt.Sprintf("r%d", f.next)
 	if f.runs == nil {
-		f.runs = map[string][]run.View{}
+		f.runs = map[workitem.Ref][]run.View{}
 	}
-	f.runs[t.TicketID] = append(f.runs[t.TicketID], run.View{RunID: id, TicketID: t.TicketID})
-	if in.MR != nil {
-		if f.mrRuns == nil {
-			f.mrRuns = map[int][]run.View{}
-		}
-		f.mrRuns[in.MR.IID] = append(f.mrRuns[in.MR.IID], run.View{RunID: id})
+	for _, item := range items.All().Requested(projectID, t, in) {
+		f.runs[item] = append(f.runs[item], run.View{RunID: id, TicketID: t.TicketID})
 	}
 	f.calls = append(f.calls, struct {
 		Ticket runinput.Ticket
@@ -64,16 +61,10 @@ func (f *fakeEngine) CreateRunWith(_ context.Context, t runinput.Ticket, flowNam
 	return id, nil
 }
 
-func (f *fakeEngine) RunsOfTicket(_ context.Context, ticketID string) ([]run.View, error) {
+func (f *fakeEngine) RunsOf(_ context.Context, item workitem.Ref) ([]run.View, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.runs[ticketID], nil
-}
-
-func (f *fakeEngine) RunsOnMR(_ context.Context, _, _ string, iid int) ([]run.View, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.mrRuns[iid], nil
+	return f.runs[item], nil
 }
 
 func (f *fakeEngine) ListMRs(context.Context, string, string) ([]repoport.MRInfo, error) {

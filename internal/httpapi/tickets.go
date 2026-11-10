@@ -16,6 +16,7 @@ import (
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/project/tickets"
 	"apothecary/internal/run/runinput"
+	"apothecary/internal/workspace/checkout"
 )
 
 // ticketBody is the create/update DTO. Branch is the ticket's BASE branch;
@@ -131,7 +132,7 @@ func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Branch != "" {
-		if err := engine.CheckBranch(body.Branch); err != nil {
+		if err := checkout.CheckBranch(body.Branch); err != nil {
 			writeErr(w, http.StatusBadRequest, fmt.Sprintf("branch %q: %v", body.Branch, err))
 			return
 		}
@@ -306,7 +307,7 @@ func (s *Server) updateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Branch != "" {
-		if err := engine.CheckBranch(body.Branch); err != nil {
+		if err := checkout.CheckBranch(body.Branch); err != nil {
 			writeErr(w, http.StatusBadRequest, fmt.Sprintf("branch %q: %v", body.Branch, err))
 			return
 		}
@@ -378,8 +379,8 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, RunRef{RunID: runID})
 }
 
-// runBusy is a start refused for a run in the way — a ticket's
-// (engine.ErrTicketBusy) or a merge request's (engine.ErrMRBusy).
+// runBusy is a start refused for a run in the way: a work item's active
+// run (workitem.ErrBusy).
 type runBusy interface {
 	error
 	ActiveRunID() string

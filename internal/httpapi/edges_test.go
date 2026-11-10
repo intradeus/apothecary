@@ -671,7 +671,7 @@ func TestMergeRequestStartRefusals(t *testing.T) {
 	if err := repoHost.MergeMR(context.Background(), mr, repoport.MergeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if res, data := x.do(t, "POST", start, MRRunRequest{Flow: "on-mr"}, nil); res.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), "open one") {
+	if res, data := x.do(t, "POST", start, MRRunRequest{Flow: "on-mr"}, nil); res.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), "open merge request") {
 		t.Errorf("closed = %d %s", res.StatusCode, data)
 	}
 }

@@ -22,23 +22,6 @@ func mrInfo() repoport.MRInfo {
 		Author: "alice", Source: "feature", Target: "main"}
 }
 
-// A run on a merge request is given its title and description, with no
-// ticket made for it.
-func TestMRWork(t *testing.T) {
-	got := MRWork(mrInfo())
-	if got.Title != "Add x (!4 by alice)" || got.TicketID != "" || got.SourceKind != "" {
-		t.Errorf("work = %+v", got)
-	}
-	if want := "why\n\nMerge request " + mrInfo().Ref.URL + " by alice: feature → main."; got.Goal != want {
-		t.Errorf("goal = %q", got.Goal)
-	}
-	bare := mrInfo()
-	bare.Body = " "
-	if got := MRWork(bare); !strings.HasPrefix(got.Goal, "Merge request ") {
-		t.Errorf("no description, no gap: %q", got.Goal)
-	}
-}
-
 func TestFindByKeyStaysInItsProject(t *testing.T) {
 	f, _ := newFactory(t, nil)
 	if _, found, err := f.FindByKey(context.Background(), "other-project", mrInfo().Ref.URL); err != nil || found {

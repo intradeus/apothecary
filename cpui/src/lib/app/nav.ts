@@ -5,6 +5,7 @@
 import { to } from '$lib/core/urls';
 import { t } from '$lib/i18n/index.svelte';
 import { I } from '$lib/design/icons';
+import { WORK_ITEMS } from './workItems';
 
 export interface NavItem {
 	id: 'desk' | 'inbox' | 'notices' | 'runs' | 'tickets' | 'mrs' | 'analytics' | 'system';
@@ -63,29 +64,18 @@ export const NAV: readonly NavItem[] = [
 		mobile: true,
 		match: (p) => p.startsWith('/runs')
 	},
-	{
-		id: 'tickets',
+	// The work items runs start on, in their registry's order.
+	...WORK_ITEMS.map((w): NavItem => ({
+		id: w.navId,
 		get label() {
-			return t('nav.tickets');
+			return w.label;
 		},
-		icon: I.tickets,
-		href: () => to.tickets(),
-		chord: 't',
-		mobile: true,
-		match: (p) => p.startsWith('/tickets')
-	},
-	// The other work item runs start on, beside tickets.
-	{
-		id: 'mrs',
-		get label() {
-			return t('nav.mrs');
-		},
-		icon: I.branch,
-		href: () => to.mergeRequests(),
-		chord: 'm',
-		mobile: false,
-		match: (p) => p.startsWith('/merge-requests')
-	},
+		icon: w.icon,
+		href: w.list,
+		chord: w.chord,
+		mobile: w.mobile,
+		match: w.match
+	})),
 	{
 		id: 'analytics',
 		get label() {

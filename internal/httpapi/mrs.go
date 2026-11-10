@@ -10,16 +10,15 @@ package httpapi
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	"apothecary/internal/ports/repoport"
-	"apothecary/internal/project/tickets"
 	"apothecary/internal/run"
 	"apothecary/internal/run/runinput"
 	"apothecary/internal/skills"
+	"apothecary/internal/workitem/mergerequest"
 )
 
 // MRRow is one merge request: what the repository host says of it, what it
@@ -68,14 +67,14 @@ func (s *Server) listProjectMRs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	byIID, err := s.Runs.RunsOnMRs(ctx, projectID, repo)
+	byKey, err := s.Runs.ItemRuns(ctx, projectID, mergerequest.Name)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	out := make([]MRRow, 0, len(mrs))
 	for _, mr := range mrs {
-		out = append(out, mrRow(mr, mrs, byIID[mr.Ref.IID]))
+		out = append(out, mrRow(mr, mrs, byKey[mergerequest.Key(repo, mr.Ref.IID)]))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -98,7 +97,7 @@ func (s *Server) getProjectMR(w http.ResponseWriter, r *http.Request) {
 	// What it is stacked on is among the open ones; without them it is
 	// only not said.
 	open, _ := s.MRs.ListMRs(ctx, projectID, repo)
-	runs, err := s.Runs.RunsOnMR(ctx, projectID, repo, iid)
+	runs, err := s.Runs.RunsOf(ctx, mergerequest.Ref(projectID, repo, iid))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -138,8 +137,8 @@ func (s *Server) startMRRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if mr.State != repoport.MROpen {
-		writeErr(w, http.StatusBadRequest, fmt.Sprintf("merge request %s is %s: a run starts on an open one", mr.Ref.URL, mr.State))
+	if err := mergerequest.CheckOpen(mr); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	flowName := body.Flow
@@ -154,7 +153,7 @@ func (s *Server) startMRRun(w http.ResponseWriter, r *http.Request) {
 	// A second run on the merge request while one is still working on it —
 	// a double click, or another flow — is refused by the engine: 409
 	// naming the run.
-	runID, err := s.Runs.CreateRunWith(ctx, tickets.MRWork(mr), flowName, projectID,
+	runID, err := s.Runs.CreateRunWith(ctx, mergerequest.Work(mr), flowName, projectID,
 		runinput.Input{Params: body.Params, MR: &runinput.MR{Repo: body.Repo, IID: iid}, Skillsets: body.Skillsets})
 	if err != nil {
 		runStartErr(w, err)

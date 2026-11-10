@@ -19,19 +19,16 @@ import (
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/run"
 	"apothecary/internal/run/runinput"
+	"apothecary/internal/workitem"
 )
 
-// brokenRuns answers RunsOfTicket with an error.
+// brokenRuns answers RunsOf with an error.
 type brokenRuns struct {
 	*fakeEngine
 	err error
 }
 
-func (b brokenRuns) RunsOfTicket(context.Context, string) ([]run.View, error) {
-	return nil, b.err
-}
-
-func (b brokenRuns) RunsOnMR(context.Context, string, string, int) ([]run.View, error) {
+func (b brokenRuns) RunsOf(context.Context, workitem.Ref) ([]run.View, error) {
 	return nil, b.err
 }
 
