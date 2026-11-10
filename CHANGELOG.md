@@ -2,6 +2,13 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v3.2.6 (2026-11-10)
+
+### Fixes
+
+- **ui**: keep the focus on a select closed within a frame
+- **workspace**: never keep a container the devcontainer CLI did not create
+
 ## v3.2.5 (2026-11-10)
 
 ### Fixes
