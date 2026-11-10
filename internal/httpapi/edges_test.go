@@ -129,13 +129,6 @@ func TestSmallHelpers(t *testing.T) {
 	if got := truncate("ab", 3); got != "ab" {
 		t.Errorf("truncate short = %q", got)
 	}
-	in := []string{"a", "b", "a"}
-	if got := removeStr(in, "a"); !reflect.DeepEqual(got, []string{"b"}) {
-		t.Errorf("removeStr = %v", got)
-	}
-	if !reflect.DeepEqual(in, []string{"a", "b", "a"}) {
-		t.Errorf("removeStr changed its input: %v", in)
-	}
 	if got := statusText(599); got != "status 599" {
 		t.Errorf("statusText = %q", got)
 	}

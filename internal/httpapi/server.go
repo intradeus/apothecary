@@ -231,22 +231,3 @@ func truncate(s string, n int) string {
 	}
 	return s
 }
-
-func containsStr(ss []string, v string) bool {
-	for _, s := range ss {
-		if s == v {
-			return true
-		}
-	}
-	return false
-}
-
-func removeStr(ss []string, v string) []string {
-	out := ss[:0:0]
-	for _, s := range ss {
-		if s != v {
-			out = append(out, s)
-		}
-	}
-	return out
-}

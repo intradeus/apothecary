@@ -81,3 +81,13 @@ export interface AgentToolCall {
 	diffs: { path: string; oldText?: string; newText: string }[];
 	turn?: string;
 }
+
+/** One byte range of the workspace's live log. Keeping up reads on from
+ *  `end`; going back reads what ends at `start`. `size` is the log's whole
+ *  length when it was read: below what was kept up to, the log was replaced. */
+export interface LogRange {
+	text: string;
+	start: number;
+	end: number;
+	size: number;
+}

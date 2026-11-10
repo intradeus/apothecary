@@ -41,9 +41,7 @@ function mount(over: Partial<Props> = {}) {
 }
 const flowIs = (over: Partial<Flow>) => vi.mocked(api.flows.get).mockResolvedValue(aFlow(over));
 const openMrs = (...list: OpenMergeRequest[]) =>
-	vi
-		.mocked(api.projects.mergeRequests)
-		.mockResolvedValue(list.map((mr) => ({ mr, mine: false, runs: 0 })));
+	vi.mocked(api.projects.mergeRequests).mockResolvedValue(list.map((mr) => ({ mr, runs: 0 })));
 const onMrFlow = { operatesOn: 'merge_request' } as Partial<Flow>;
 const advanced = () => screen.findByText(/Advanced · parameters/);
 const harness = (id: string, kind: string) =>
@@ -379,7 +377,7 @@ describe('StartRunOptions', () => {
 			flushSync(() => (props.flowName = 'hotfix'));
 			await waitFor(() => expect(screen.queryByText(/^Listing/)).not.toBeInTheDocument());
 
-			late.resolve([{ mr: anOpenMr({ iid: 20 }), mine: false, runs: 0 }] as never);
+			late.resolve([{ mr: anOpenMr({ iid: 20 }), runs: 0 }] as never);
 			await settled();
 
 			expect(props.mr).toBe(0);

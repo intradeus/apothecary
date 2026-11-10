@@ -1,12 +1,10 @@
 package tickets
 
-// Tickets for merge requests: a run created on a merge request someone opened
-// belongs to a ticket of its own — the merge request's title and description,
-// keyed by its URL, with no remote tracker behind it (it lives on the internal
-// tracker, like a hand-written ticket). The merge_request automation makes
-// them as it finds merge requests; the workshop's Repositories tab when a
-// person starts a run on one. Both find the same ticket for the same merge
-// request, so a merge request's runs, however begun, are filed together.
+// A run on a merge request someone opened works on that merge request, not
+// on a ticket: no ticket is made for it. Its title and description are the
+// work the run is given, and its runs are found by what they worked on
+// (engine.RunsOnMR), however they began — the merge_request automation, or a
+// person starting one from the workshop or the New run dialog.
 
 import (
 	"context"
@@ -15,6 +13,7 @@ import (
 
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/project/confstore"
+	"apothecary/internal/run/runinput"
 )
 
 // FindByKey is the project's ticket whose source key is key (compared
@@ -23,33 +22,15 @@ func (f *Factory) FindByKey(ctx context.Context, projectID, key string) (confsto
 	return f.Conf.TicketByProjectKey(ctx, projectID, key)
 }
 
-// CreateForMR makes the ticket of a merge request: titled with it and its
-// author, its description and a line naming it as the goal, its URL as the
-// key. automationID records the automation that made it ("" = a person).
-func (f *Factory) CreateForMR(ctx context.Context, projectID, automationID string, mr repoport.MRInfo) (confstore.Ticket, error) {
+// MRWork is the work a run on a merge request is given: titled with it and
+// its author, its description and a line naming it as the goal. No ticket:
+// the run's ticket fields carry it, so a flow's prompts read it the way
+// they read a ticket's.
+func MRWork(mr repoport.MRInfo) runinput.Ticket {
 	goal := strings.TrimSpace(mr.Body)
 	if goal != "" {
 		goal += "\n\n"
 	}
 	goal += fmt.Sprintf("Merge request %s by %s: %s → %s.", mr.Ref.URL, mr.Author, mr.Source, mr.Target)
-	t, err := f.Conf.CreateTicket(ctx, confstore.Ticket{
-		ProjectID: projectID, Title: fmt.Sprintf("%s (!%d by %s)", mr.Title, mr.Ref.IID, mr.Author), Goal: goal,
-		SourceKind: confstore.TicketKindMR, SourceKey: mr.Ref.URL, SourceURL: mr.Ref.URL, AutomationID: automationID,
-	})
-	if err != nil {
-		return confstore.Ticket{}, err
-	}
-	f.log().Info("ticket made for a merge request", "ticket", t.ID, "mr", mr.Ref.URL, "automation", automationID)
-	return t, nil
-}
-
-// ForMR is the merge request's ticket — whoever made it — or a new one;
-// created says which.
-func (f *Factory) ForMR(ctx context.Context, projectID string, mr repoport.MRInfo) (t confstore.Ticket, created bool, err error) {
-	t, found, err := f.FindByKey(ctx, projectID, mr.Ref.URL)
-	if err != nil || found {
-		return t, false, err
-	}
-	t, err = f.CreateForMR(ctx, projectID, "", mr)
-	return t, err == nil, err
+	return runinput.Ticket{Title: fmt.Sprintf("%s (!%d by %s)", mr.Title, mr.Ref.IID, mr.Author), Goal: goal}
 }

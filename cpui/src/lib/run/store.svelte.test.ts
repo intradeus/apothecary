@@ -736,9 +736,18 @@ describe('the derived state', () => {
 		expect(store(aRun(over)).hasWorkspace).toBe(want);
 	});
 
+	it.each<[string, Partial<Run>, boolean]>([
+		['a provisioning run', { state: 'provisioning' }, true],
+		['a live container', { envId: 'e', state: 'running' }, true],
+		['a running run without one', { state: 'running' }, false]
+	])('has a live workspace or not for %s', (_, over, want) => {
+		expect(store(aRun(over)).workspaceLive).toBe(want);
+	});
+
 	it('has no workspace and is not terminal before the run loads', () => {
 		const rs = store(null);
 		expect(rs.hasWorkspace).toBe(false);
+		expect(rs.workspaceLive).toBe(false);
 		expect(rs.terminal).toBe(false);
 	});
 

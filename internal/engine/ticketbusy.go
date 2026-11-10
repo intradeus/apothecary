@@ -1,9 +1,12 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"sync"
+
+	"apothecary/internal/run/event"
 )
 
 // ErrTicketBusy refuses a run on a ticket that already has one going: a
@@ -55,6 +58,46 @@ func (e *Engine) checkTicketIdle(ctx context.Context, ticketID string) error {
 	for _, v := range all {
 		if v.TicketID == ticketID && !v.State.Terminal() {
 			return ErrTicketBusy{TicketID: ticketID, RunID: v.RunID}
+		}
+	}
+	return nil
+}
+
+// ErrMRBusy refuses a run on a merge request a run is still working on —
+// one started on it, or the one that opened it: two runs pushing to one
+// branch undo each other. Like ErrTicketBusy it names the run in the way.
+type ErrMRBusy struct {
+	Repo  string
+	IID   int
+	RunID string // the merge request's active run
+}
+
+func (e ErrMRBusy) Error() string {
+	return fmt.Sprintf("merge request !%d is busy: run %s is still working on it; abort it or wait for it to end", e.IID, e.RunID)
+}
+
+// ActiveRunID names the run holding the merge request.
+func (e ErrMRBusy) ActiveRunID() string { return e.RunID }
+
+// mrLock serializes run creation per merge request, like ticketLock.
+func (e *Engine) mrLock(projectID, repo string, iid int) func() {
+	repo = cmp.Or(repo, event.PrimaryCheckoutName)
+	m, _ := e.ticketLocks.LoadOrStore(fmt.Sprintf("mr\x00%s\x00%s\x00%d", projectID, repo, iid), &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
+// checkMRIdle refuses with ErrMRBusy when a non-terminal run of the
+// project has the merge request in its data. The caller holds mrLock.
+func (e *Engine) checkMRIdle(ctx context.Context, projectID, repo string, iid int) error {
+	runs, err := e.RunsOnMR(ctx, projectID, repo, iid)
+	if err != nil {
+		return fmt.Errorf("merge request !%d: listing its runs: %w", iid, err)
+	}
+	for _, v := range runs {
+		if !v.State.Terminal() {
+			return ErrMRBusy{Repo: repo, IID: iid, RunID: v.RunID}
 		}
 	}
 	return nil

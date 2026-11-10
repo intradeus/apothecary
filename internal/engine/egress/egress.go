@@ -1,7 +1,9 @@
 // Package egress is the live control of a run's network egress and its
 // durable audit trail: what the per-project gateway blocked, the run page's
 // "allow this host" and rule toggles (hot-reloaded, no restart), and the
-// ingest of the gateway's audit into the store before anyone reads it. None of
+// ingest of the gateway's audit into the store before anyone reads it — which
+// also allows on the project every host a run reached only because its
+// egress was open while it provisioned. None of
 // it is a step of a run's flow, so it lives beside the engine, not in it.
 package egress
 
@@ -10,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"sync"
 	"time"
 
 	"apothecary/internal/ports/egressport"
@@ -31,6 +35,13 @@ type AuditStore interface {
 	QueryEgressAudit(ctx context.Context, f egressport.EgressAuditFilter) ([]egressport.EgressAuditRow, error)
 }
 
+// Rules records a host's rule on its project, so every later run starts
+// with it (allow → the allowlist, block → the blocked list). Implemented by
+// *confstore.Service.
+type Rules interface {
+	SaveEgressRule(ctx context.Context, projectID string, allow bool, hosts ...string) error
+}
+
 // Service controls and audits egress through each project's resolved
 // provisioner.
 type Service struct {
@@ -38,11 +49,20 @@ type Service struct {
 	Resolver resolution.Resolver
 	// Audit is the durable trail; nil = audit off.
 	Audit AuditStore
+	// Rules saves what a provisioning reached to the project; nil = those
+	// hosts are held once the window closes, like any other.
+	Rules Rules
 	// ActiveRuns lists the runs whose audit the ingest pulls (the engine's
 	// live loops); nil = none.
 	ActiveRuns func() []string
 	// Log is nil for slog.Default.
 	Log *slog.Logger
+
+	mu sync.Mutex
+	// adopted: per run, the hosts its provisioning reached that were looked
+	// at once — allowed then, or already ruled on. Never twice: a host
+	// someone takes off the allowlist mid-run stays off.
+	adopted map[string]map[string]bool
 }
 
 func New(runs *run.Reader, resolver resolution.Resolver, audit AuditStore) *Service {
@@ -73,18 +93,28 @@ func (s *Service) Run(ctx context.Context, every time.Duration) {
 	}
 }
 
-// Forget is part of the engine's teardown hook: egress keeps no per-run
-// memory.
-func (s *Service) Forget(string) {}
+// Forget is part of the engine's teardown hook: it drops which hosts the
+// run's provisioning had allowed.
+func (s *Service) Forget(runID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.adopted, runID)
+}
 
 // BeforeDestroy flushes the run's audit one last time before its workspace
 // (and possibly the project gateway) is torn down, so the trail is durable
-// even for the last activity.
+// even for the last activity — and allows what a provisioning that ended
+// since the last ingest reached.
 func (s *Service) BeforeDestroy(ctx context.Context, v run.View, res *resolution.Resolution) {
+	if s.Audit == nil && s.Rules == nil {
+		return
+	}
+	recs := records(ctx, v, res.Envp)
+	s.adopt(ctx, v, res.Envp, recs)
 	if s.Audit == nil {
 		return
 	}
-	if rows := auditRows(ctx, v, res.Envp); len(rows) > 0 {
+	if rows := auditRows(v, recs); len(rows) > 0 {
 		_ = s.Audit.UpsertEgressAudit(ctx, rows)
 	}
 }
@@ -173,15 +203,20 @@ func (s *Service) Policy(ctx context.Context, runID string) (egressport.EgressPo
 	return ctrl.EgressPolicy(ctx, env)
 }
 
-// auditRows converts a run's provisioner audit records into durable rows tagged
-// with the project + engine run id. Empty when the provisioner has no auditor.
-// Uses wsname.ForRun so it works DURING provisioning too (EnvID not yet set).
-func auditRows(ctx context.Context, v run.View, envp envport.EnvProvisioner) []egressport.EgressAuditRow {
+// records reads a run's audit from its provisioner; nil when it has no
+// auditor. Uses wsname.ForRun so it works DURING provisioning too (EnvID not
+// yet set).
+func records(ctx context.Context, v run.View, envp envport.EnvProvisioner) []egressport.EgressAuditRecord {
 	auditor, ok := envp.(egressport.EgressAuditor)
 	if !ok {
 		return nil
 	}
-	recs := auditor.EgressAudit(ctx, envport.EnvID(wsname.ForRun(v, v.RunID)))
+	return auditor.EgressAudit(ctx, envport.EnvID(wsname.ForRun(v, v.RunID)))
+}
+
+// auditRows converts a run's audit records into durable rows tagged with the
+// project + engine run id.
+func auditRows(v run.View, recs []egressport.EgressAuditRecord) []egressport.EgressAuditRow {
 	rows := make([]egressport.EgressAuditRow, 0, len(recs))
 	for _, r := range recs {
 		rows = append(rows, egressport.EgressAuditRow{
@@ -193,6 +228,79 @@ func auditRows(ctx context.Context, v run.View, envp envport.EnvProvisioner) []e
 	return rows
 }
 
+// adopt allows, live and on the project, every host the run reached only
+// because its egress was open while it provisioned: a first provisioning
+// fetches from hosts no allowlist names, and what it needed is allowed from
+// then on — the egress view lists each one, to block if it should not be.
+// What the project blocks was never let through; a host someone ruled on
+// since the connection is left as they ruled. IP literals stay held: an
+// address behind a CDN is no rule worth keeping.
+func (s *Service) adopt(ctx context.Context, v run.View, envp envport.EnvProvisioner, recs []egressport.EgressAuditRecord) {
+	if s.Rules == nil || v.ProjectID == "" {
+		return
+	}
+	var hosts []string
+	s.mu.Lock()
+	for _, r := range recs {
+		if !r.Provisioning || r.Verdict != "allow" || r.Host == "" || net.ParseIP(r.Host) != nil || s.adopted[v.RunID][r.Host] {
+			continue
+		}
+		if s.adopted == nil {
+			s.adopted = map[string]map[string]bool{}
+		}
+		if s.adopted[v.RunID] == nil {
+			s.adopted[v.RunID] = map[string]bool{}
+		}
+		s.adopted[v.RunID][r.Host] = true
+		hosts = append(hosts, r.Host)
+	}
+	s.mu.Unlock()
+	if len(hosts) == 0 {
+		return
+	}
+	ctrl, ok := envp.(egressport.EgressController)
+	if !ok {
+		return
+	}
+	env := envport.EnvID(wsname.ForRun(v, v.RunID))
+	pol, err := ctrl.EgressPolicy(ctx, env)
+	if err != nil {
+		s.unmark(v.RunID, hosts) // the next ingest asks again
+		return
+	}
+	var held []string
+	for _, h := range hosts {
+		if pol.Status(h) == egressport.EgressHeld {
+			held = append(held, h)
+		}
+	}
+	if len(held) == 0 {
+		return
+	}
+	// The project first: a save that fails leaves the hosts held, and the
+	// next ingest tries again.
+	if err := s.Rules.SaveEgressRule(ctx, v.ProjectID, true, held...); err != nil {
+		s.unmark(v.RunID, held)
+		s.log().Warn("saving what provisioning reached to the project failed", "run_id", v.RunID, "hosts", held, "err", err)
+		return
+	}
+	for _, h := range held {
+		if err := ctrl.AllowEgress(ctx, env, h); err != nil {
+			// Saved: the gateway gets it with the project's next policy.
+			s.log().Warn("allowing what provisioning reached on the gateway failed", "run_id", v.RunID, "host", h, "err", err)
+		}
+	}
+	s.log().Info("allowed what provisioning reached", "run_id", v.RunID, "hosts", held)
+}
+
+func (s *Service) unmark(runID string, hosts []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, h := range hosts {
+		delete(s.adopted[runID], h)
+	}
+}
+
 // IngestOnce pulls the aggregated egress audit of every ACTIVE run
 // (ActiveRuns: the engine's live loops — cheap, no full-history scan) and upserts it
 // into durable storage. This is the SINGLE audit path: the gateway writes a file
@@ -200,7 +308,7 @@ func auditRows(ctx context.Context, v run.View, envp envport.EnvProvisioner) []e
 // the UI reads the DB — so every audit fact is PERSISTED before it is delivered.
 // Run on a fast ticker for near-live freshness, and once more before env destroy.
 func (s *Service) IngestOnce(ctx context.Context) error {
-	if s.Audit == nil {
+	if s.Audit == nil && s.Rules == nil {
 		return nil
 	}
 	var ids []string
@@ -221,10 +329,12 @@ func (s *Service) IngestOnce(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
-		rows = append(rows, auditRows(ctx, v, res.Envp)...)
+		recs := records(ctx, v, res.Envp)
+		s.adopt(ctx, v, res.Envp, recs)
+		rows = append(rows, auditRows(v, recs)...)
 		res.Close()
 	}
-	if len(rows) == 0 {
+	if s.Audit == nil || len(rows) == 0 {
 		return nil
 	}
 	return s.Audit.UpsertEgressAudit(ctx, rows)

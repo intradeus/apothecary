@@ -7,7 +7,7 @@ import { t } from '$lib/i18n/index.svelte';
 import { I } from '$lib/design/icons';
 
 export interface NavItem {
-	id: 'desk' | 'inbox' | 'notices' | 'runs' | 'tickets' | 'analytics' | 'system';
+	id: 'desk' | 'inbox' | 'notices' | 'runs' | 'tickets' | 'mrs' | 'analytics' | 'system';
 	label: string;
 	icon: string;
 	href: () => string;
@@ -73,6 +73,18 @@ export const NAV: readonly NavItem[] = [
 		chord: 't',
 		mobile: true,
 		match: (p) => p.startsWith('/tickets')
+	},
+	// The other work item runs start on, beside tickets.
+	{
+		id: 'mrs',
+		get label() {
+			return t('nav.mrs');
+		},
+		icon: I.branch,
+		href: () => to.mergeRequests(),
+		chord: 'm',
+		mobile: false,
+		match: (p) => p.startsWith('/merge-requests')
 	},
 	{
 		id: 'analytics',

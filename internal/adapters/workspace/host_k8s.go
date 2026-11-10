@@ -889,7 +889,10 @@ func (h *k8sHost) refreshShim(ctx context.Context, name string) error {
 
 // cgroupSample is one reading of the sandbox container's cgroup: the
 // container holds the inner dockerd and, nested under it, every workspace
-// and compose sibling — the run's whole footprint.
+// and compose sibling — the run's whole footprint. memUsed is the working
+// set (memory.current less the inactive file cache, as the kubelet and
+// `docker stats` count it): a build leaves gigabytes of page cache the
+// kernel drops first, and counting it reads as a workspace about to OOM.
 type cgroupSample struct {
 	at       time.Time
 	usageUS  int64
@@ -903,6 +906,7 @@ type cgroupSample struct {
 const sampleScript = `cd /sys/fs/cgroup 2>/dev/null || exit 3
 echo "cpu $(awk '$1=="usage_usec"{print $2}' cpu.stat)"
 echo "mem $(cat memory.current)"
+echo "inactive $(awk '$1=="inactive_file"{print $2}' memory.stat 2>/dev/null)"
 echo "max $(cat memory.max)"
 echo "pids $(cat pids.current 2>/dev/null || echo 0)"
 echo "quota $(cat cpu.max 2>/dev/null)"
@@ -911,7 +915,7 @@ awk -F'[: ]+' '$2=="eth0"{print "net "$3" "$11}' /proc/net/dev`
 
 func parseCgroupSample(out string) (cgroupSample, error) {
 	s := cgroupSample{}
-	var quota, period int64
+	var quota, period, inactive int64
 	seen := 0
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
@@ -925,6 +929,8 @@ func parseCgroupSample(out string) (cgroupSample, error) {
 			seen++
 		case "mem":
 			s.memUsed = n(1)
+		case "inactive":
+			inactive = n(1)
 		case "max":
 			if f[1] != "max" {
 				s.memLimit = n(1)
@@ -946,6 +952,7 @@ func parseCgroupSample(out string) (cgroupSample, error) {
 	if seen == 0 {
 		return s, errors.New("no cpu.stat usage")
 	}
+	s.memUsed = max(s.memUsed-inactive, 0)
 	if quota > 0 && period > 0 {
 		if c := int((quota + period - 1) / period); c > 0 && (s.cpus == 0 || c < s.cpus) {
 			s.cpus = c

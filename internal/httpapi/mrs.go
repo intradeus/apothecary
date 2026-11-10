@@ -1,44 +1,38 @@
 package httpapi
 
 // A project repository's merge requests as a source of runs, the way the
-// tracker's issues are tickets: each open merge request with the runs done on
-// it — through its ticket, the one a merge_request automation would use too —
-// and a way to start a run of any flow whose runs are started on one
-// (operates_on: merge_request). Which flow — a review, a rebase, anything — is
-// the person's
-// pick; nothing here knows one from another.
+// tracker's issues are tickets: each open merge request with the runs that
+// went through it, and a way to start a run of any flow whose runs are
+// started on one (operates_on: merge_request). A merge request is no ticket
+// and gets none: its runs are found by what they worked on. Which flow — a
+// review, a rebase, anything — is the person's pick; nothing here knows one
+// from another.
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
-	"apothecary/internal/account/auth"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/project/tickets"
 	"apothecary/internal/run"
 	"apothecary/internal/run/runinput"
 	"apothecary/internal/skills"
 )
 
-// MRRow is one open merge request: what the repository host says of it,
-// whether the factory itself opened it, what it is stacked on, and the runs
-// done on it here.
+// MRRow is one merge request: what the repository host says of it, what it
+// is stacked on, and the runs that went through it here.
 type MRRow struct {
 	MR repoport.MRInfo `json:"mr"`
-	// Mine: the repository host integration's own account opened it (the
-	// factory's own runs did).
-	Mine bool `json:"mine,omitempty"`
 	// StackedOn is the open merge request it targets the branch of: it
 	// merges into that branch, not the repository's main line.
 	StackedOn *repoport.MRBase `json:"stacked_on,omitempty"`
-	// TicketID is the merge request's ticket, once a run was started on it
-	// or an automation picked it; Run its newest run, Runs how many it has.
-	TicketID string `json:"ticket_id,omitempty"`
-	Run      *MRRun `json:"run,omitempty"`
-	Runs     int    `json:"runs,omitempty"`
+	// Runs is how many runs have it in their data — started on it, or
+	// opened it — and Run the newest of them.
+	Run  *MRRun `json:"run,omitempty"`
+	Runs int    `json:"runs,omitempty"`
 }
 
 // MRRun is the newest run on a merge request.
@@ -61,10 +55,9 @@ type MRRunRequest struct {
 	Skillsets []skills.Ref `json:"skillsets,omitempty"`
 }
 
-// MRRunStarted names the run started and the ticket it belongs to.
+// MRRunStarted names the run started.
 type MRRunStarted struct {
-	RunID    string `json:"run_id"`
-	TicketID string `json:"ticket_id"`
+	RunID string `json:"run_id"`
 }
 
 func (s *Server) listProjectMRs(w http.ResponseWriter, r *http.Request) {
@@ -75,42 +68,54 @@ func (s *Server) listProjectMRs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// Who the factory is on this repository host: best effort — without it no
-	// row is marked as the factory's own.
-	me, _ := s.MRs.RepoHostUser(ctx, projectID, repo)
-	byKey := map[string]string{}
-	if s.Conf != nil {
-		all, err := s.Conf.ListTickets(ctx, auth.UserID(ctx))
-		if err != nil {
-			confErr(w, err)
-			return
-		}
-		for _, t := range all {
-			if t.ProjectID == projectID && t.SourceKey != "" {
-				byKey[strings.ToLower(t.SourceKey)] = t.ID
-			}
-		}
+	byIID, err := s.Runs.RunsOnMRs(ctx, projectID, repo)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	out := make([]MRRow, 0, len(mrs))
 	for _, mr := range mrs {
-		row := MRRow{MR: mr, Mine: me != "" && strings.EqualFold(mr.Author, me), TicketID: byKey[strings.ToLower(mr.Ref.URL)],
-			StackedOn: repoport.StackedOn(mr.Target, mrs)}
-		if row.TicketID != "" {
-			runs, err := s.Runs.RunsOfTicket(ctx, row.TicketID)
-			if err != nil {
-				writeErr(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			row.Runs = len(runs)
-			for _, v := range runs {
-				if row.Run == nil || v.CreatedAt.After(row.Run.CreatedAt) {
-					row.Run = &MRRun{ID: v.RunID, State: v.State, Flow: v.FlowName, CreatedAt: v.CreatedAt}
-				}
-			}
-		}
-		out = append(out, row)
+		out = append(out, mrRow(mr, mrs, byIID[mr.Ref.IID]))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// getProjectMR is one merge request, open or not, with its description:
+// what a run started on it is given.
+func (s *Server) getProjectMR(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, repo := r.PathValue("id"), r.URL.Query().Get("repo")
+	iid, err := strconv.Atoi(r.PathValue("iid"))
+	if err != nil || iid <= 0 {
+		writeErr(w, http.StatusBadRequest, "iid must be a merge request number")
+		return
+	}
+	mr, err := s.MRs.MR(ctx, projectID, repo, iid)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// What it is stacked on is among the open ones; without them it is
+	// only not said.
+	open, _ := s.MRs.ListMRs(ctx, projectID, repo)
+	runs, err := s.Runs.RunsOnMR(ctx, projectID, repo, iid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, mrRow(mr, open, runs))
+}
+
+// mrRow is a merge request with what it is stacked on among open, and the
+// newest of the runs that went through it.
+func mrRow(mr repoport.MRInfo, open []repoport.MRInfo, runs []run.View) MRRow {
+	row := MRRow{MR: mr, StackedOn: repoport.StackedOn(mr.Target, open), Runs: len(runs)}
+	for _, v := range runs {
+		if row.Run == nil || v.CreatedAt.After(row.Run.CreatedAt) {
+			row.Run = &MRRun{ID: v.RunID, State: v.State, Flow: v.FlowName, CreatedAt: v.CreatedAt}
+		}
+	}
+	return row
 }
 
 func (s *Server) startMRRun(w http.ResponseWriter, r *http.Request) {
@@ -137,21 +142,6 @@ func (s *Server) startMRRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Sprintf("merge request %s is %s: a run starts on an open one", mr.Ref.URL, mr.State))
 		return
 	}
-	t, created, err := s.tickets().ForMR(ctx, projectID, mr)
-	if err != nil {
-		confErr(w, err)
-		return
-	}
-	// A ticket made for a start that is then refused goes with the refusal:
-	// nothing is left behind for a run that never began.
-	keep := false
-	defer func() {
-		if created && !keep {
-			if derr := s.tickets().Delete(ctx, t.ID); derr != nil {
-				s.Log.Warn("drop the ticket of a refused run", "ticket", t.ID, "err", derr)
-			}
-		}
-	}()
 	flowName := body.Flow
 	if flowName == "" {
 		p, err := s.Conf.GetProject(ctx, projectID)
@@ -161,17 +151,14 @@ func (s *Server) startMRRun(w http.ResponseWriter, r *http.Request) {
 		}
 		flowName = p.DefaultFlow
 	}
-	// A second run on the merge request's ticket while one is going — a
-	// double click, or another flow — is refused by the engine (one active
-	// run per ticket): 409 naming the run.
-	runID, err := s.Runs.CreateRunWith(ctx, runinput.Ticket{
-		TicketID: t.ID, Title: t.Title, Goal: t.Goal, ChangeType: string(t.ChangeType),
-		SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,
-	}, flowName, projectID, runinput.Input{Params: body.Params, MR: &runinput.MR{Repo: body.Repo, IID: iid}, Skillsets: body.Skillsets})
+	// A second run on the merge request while one is still working on it —
+	// a double click, or another flow — is refused by the engine: 409
+	// naming the run.
+	runID, err := s.Runs.CreateRunWith(ctx, tickets.MRWork(mr), flowName, projectID,
+		runinput.Input{Params: body.Params, MR: &runinput.MR{Repo: body.Repo, IID: iid}, Skillsets: body.Skillsets})
 	if err != nil {
 		runStartErr(w, err)
 		return
 	}
-	keep = true
-	writeJSON(w, http.StatusCreated, MRRunStarted{RunID: runID, TicketID: t.ID})
+	writeJSON(w, http.StatusCreated, MRRunStarted{RunID: runID})
 }

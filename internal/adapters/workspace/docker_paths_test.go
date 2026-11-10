@@ -759,26 +759,29 @@ func TestLogsWithoutARunFolder(t *testing.T) {
 	}
 }
 
-func TestTailExecLog(t *testing.T) {
+func TestReadExecLog(t *testing.T) {
 	ctx := context.Background()
-	if _, err := New(Config{}).TailExecLog(ctx, "w", 10); err == nil || !strings.Contains(err.Error(), "runs dir is not configured") {
+	if _, err := New(Config{}).ReadExecLog(ctx, "w", -1, 10); err == nil || !strings.Contains(err.Error(), "runs dir is not configured") {
 		t.Errorf("no runs dir = %v", err)
 	}
 	a := newTestAdapter(t, &ruleRunner{})
-	if _, err := a.TailExecLog(ctx, "w", 10); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := a.ReadExecLog(ctx, "w", -1, 10); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("no log = %v", err)
 	}
 	os.MkdirAll(a.folderFor("w"), 0o755)
 	os.WriteFile(filepath.Join(a.folderFor("w"), "exec.log"), []byte("0123456789"), 0o644)
-	cases := map[int]string{4: "6789", 10: "0123456789", 99: "0123456789", 0: "0123456789", -1: "0123456789"}
+	cases := map[int64]string{4: "6789", 10: "0123456789", 99: "0123456789", 0: "0123456789", -1: "0123456789"}
 	for n, want := range cases {
-		if got, err := a.TailExecLog(ctx, "w", n); err != nil || string(got) != want {
-			t.Errorf("tail %d = %q, %v", n, got, err)
+		if got, err := a.ReadExecLog(ctx, "w", -1, n); err != nil || string(got.Data) != want || got.Size != 10 {
+			t.Errorf("tail %d = %+v, %v", n, got, err)
 		}
+	}
+	if got, err := a.ReadExecLog(ctx, "w", 7, 10); err != nil || string(got.Data) != "789" || got.Start != 7 {
+		t.Errorf("from 7 = %+v, %v", got, err)
 	}
 	// A directory at the log's path is not a log.
 	os.MkdirAll(filepath.Join(a.folderFor("d"), "exec.log"), 0o755)
-	if _, err := a.TailExecLog(ctx, "d", 10); err == nil {
+	if _, err := a.ReadExecLog(ctx, "d", -1, 10); err == nil {
 		t.Error("read a directory as a log")
 	}
 }

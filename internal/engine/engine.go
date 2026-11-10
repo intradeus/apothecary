@@ -777,6 +777,14 @@ func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName,
 		}
 		t = e.freshRunTicket(ctx, t)
 	}
+	// One run at a time on a merge request too, whatever started it.
+	if in.MR != nil {
+		unlock := e.mrLock(projectID, in.MR.Repo, in.MR.IID)
+		defer unlock()
+		if err := e.checkMRIdle(ctx, projectID, in.MR.Repo, in.MR.IID); err != nil {
+			return "", err
+		}
+	}
 	res, err := e.resolver.Resolve(ctx, projectID)
 	if err != nil {
 		return "", fmt.Errorf("preflight: %w", err)
@@ -1392,6 +1400,38 @@ func (e *Engine) RunsOfTicket(ctx context.Context, ticketID string) ([]run.View,
 	for _, v := range all {
 		if v.TicketID == ticketID {
 			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
+// RunsOnMR lists the project's runs that have the merge request iid of the
+// checkout repo ("" = the primary) in their data — started on it, or opened
+// it — in the order the store keeps them. A merge request belongs to no
+// ticket: its runs are found by what they worked on.
+func (e *Engine) RunsOnMR(ctx context.Context, projectID, repo string, iid int) ([]run.View, error) {
+	by, err := e.RunsOnMRs(ctx, projectID, repo)
+	return by[iid], err
+}
+
+// RunsOnMRs is RunsOnMR for every merge request of the checkout repo at
+// once, by iid: one scan for a list of them.
+func (e *Engine) RunsOnMRs(ctx context.Context, projectID, repo string) (map[int][]run.View, error) {
+	all, err := e.runs.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[int][]run.View{}
+	for _, v := range all {
+		if v.ProjectID != projectID {
+			continue
+		}
+		seen := map[int]bool{}
+		for _, iid := range v.MRIIDs(repo) {
+			if !seen[iid] {
+				seen[iid] = true
+				out[iid] = append(out[iid], v)
+			}
 		}
 	}
 	return out, nil

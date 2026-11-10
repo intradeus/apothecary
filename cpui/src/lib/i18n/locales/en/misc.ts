@@ -541,6 +541,9 @@ export default {
 	'form.services.startRequired': 'Start is required — the script that runs it.',
 	'form.services.stop': 'Stop',
 	'form.services.optional': 'optional',
+	'form.services.stopTipLabel': 'What Stop does without a stop command',
+	'form.services.stopTip':
+		"Without a stop command, Stop sends SIGTERM to the start command's whole process group, waits 10 seconds, then sends SIGKILL. A start that launches something in the background and exits (docker compose up -d, a forking daemon) leaves nothing to signal: give it a stop command.",
 	'form.services.startHelp':
 		'Shell, run in the primary checkout. Without a stop script, stopping signals the running start; give one when start only launched something and exited.',
 	'form.services.health': 'Health',

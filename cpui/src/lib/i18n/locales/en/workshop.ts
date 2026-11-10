@@ -147,14 +147,16 @@ export default {
 	'workshop.mrs.colRuns': 'Last run',
 	'workshop.mrs.draft': 'draft',
 	'workshop.mrs.fork': 'from a fork',
-	'workshop.mrs.mine': 'opened by the factory',
 	'workshop.mrs.stacked': 'stacked on !{iid}',
 	'workshop.mrs.stackedTitle':
 		'Stacked on !{iid} ({title}): it targets {branch}, that merge request’s branch, so merging it lands there — not on the main line. Merge !{iid} first.',
 	'workshop.mrs.stackedPick':
 		'!{iid} is stacked on !{base}: what a run merges goes into {branch}, not the main line.',
-	'workshop.mrs.mineTitle':
-		'The repository account this workshop uses opened it: one of its runs did. A merge-request automation never picks these; a run started here is yours to start.',
+	'workshop.mrs.processed_one': 'processed by apothecary once',
+	'workshop.mrs.processed_other': 'processed by apothecary {count} times',
+	'workshop.mrs.processedTitle':
+		'Runs that have this merge request in their data: started on it, or the run that opened it.',
+	'workshop.mrs.onHost': 'Open on the repository host',
 	'workshop.mrs.noRun': 'no run yet',
 	'workshop.mrs.allRuns_one': '{count} run',
 	'workshop.mrs.allRuns_other': 'all {count} runs',
@@ -167,7 +169,7 @@ export default {
 	'workshop.automations.repo': 'Repository',
 	'workshop.automations.repoPrimary': 'the primary repository',
 	'workshop.automations.repoHelp':
-		'Every merge request someone else opens here gets a ticket and one run, of a flow started on merge requests (operates_on: merge_request) — drafts once they are marked ready; the integration’s own (the factory’s) never.',
+		'Every merge request someone else opens here gets one run, of a flow started on merge requests (operates_on: merge_request) — no ticket: the run is given its title and description. Drafts once they are marked ready; one a run has already been through, never.',
 	'workshop.automations.mrSummary': 'merge requests others open in {repo}',
 	'workshop.automations.polled': 'polled {ago}',
 	'workshop.automations.fired': 'fired {ago}',

@@ -122,6 +122,16 @@ describe('EgressView', () => {
 			expect(screen.getByTitle('No live gateway — the workspace is gone')).toBeInTheDocument();
 		});
 
+		// Provisioning reaches hosts as it goes; each can be blocked before
+		// the workspace is even up.
+		it('rules on hosts while the run provisions', async () => {
+			const rs = aViewStore(aRun({ state: 'provisioning' }));
+			await open([anAuditRow()], aPolicy({ domains: ['api.test'] }), rs);
+
+			expect(api.egress.policy).toHaveBeenCalledWith(rs.runId);
+			expect(rule('api.test')).toBe('allow');
+		});
+
 		it('shows no toggles when the gateway answers it has no policy', async () => {
 			await open([anAuditRow()], null);
 			expect(screen.queryByRole('radiogroup', { name: /^Rule for/ })).not.toBeInTheDocument();

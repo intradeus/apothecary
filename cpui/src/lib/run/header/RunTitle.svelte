@@ -56,6 +56,19 @@
 				>{ticketKey ?? t('run.header.ticket')} {I.external}</a
 			>
 		{/if}
+		{#if run.adopted && run.projectId && !run.ticketId}
+			<!-- Started on a merge request: that is its work item, not a ticket. -->
+			<span class="dot-sep">·</span>
+			<a
+				class="link"
+				href={to.mergeRequest(
+					run.projectId,
+					run.adopted.iid,
+					run.adopted.repo && run.adopted.repo !== 'repo' ? run.adopted.repo : undefined
+				)}
+				title={run.adopted.title}>!{run.adopted.iid}</a
+			>
+		{/if}
 		{#if run.ticketUrl}
 			<a class="link" href={run.ticketUrl} target="_blank" rel="noreferrer"
 				>{t('run.header.tracker')} {I.external}</a

@@ -378,15 +378,22 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, RunRef{RunID: runID})
 }
 
-// runStartErr answers a refused run start: 409 for a ticket that already has
-// an active run — the body's run_id names it, so the client can open or
+// runBusy is a start refused for a run in the way — a ticket's
+// (engine.ErrTicketBusy) or a merge request's (engine.ErrMRBusy).
+type runBusy interface {
+	error
+	ActiveRunID() string
+}
+
+// runStartErr answers a refused run start: 409 for a ticket or a merge
+// request that already has an active run — the body's run_id names it, so the client can open or
 // abort it — and for the environment cap, 400 for every other refusal
 // (preflight, a bad branch, a missing flow).
 func runStartErr(w http.ResponseWriter, err error) {
-	var busy engine.ErrTicketBusy
+	var busy runBusy
 	switch {
 	case errors.As(err, &busy):
-		writeJSON(w, http.StatusConflict, ErrorResponse{Error: err.Error(), RunID: busy.RunID})
+		writeJSON(w, http.StatusConflict, ErrorResponse{Error: err.Error(), RunID: busy.ActiveRunID()})
 	case errors.Is(err, engine.ErrEnvCapacity):
 		writeErr(w, http.StatusConflict, err.Error())
 	default:

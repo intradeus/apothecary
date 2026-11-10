@@ -95,6 +95,11 @@ export class RunStore {
 			this.run.state !== 'archived' &&
 			this.run.envStatus !== 'absent'
 	);
+	/** A workspace is up or on its way: from the moment provisioning starts,
+	 *  its exec log streams and its egress gateway answers. */
+	readonly workspaceLive = $derived(
+		this.hasWorkspace || (this.run !== null && this.run.state === 'provisioning')
+	);
 	readonly totals = $derived(totals(this.events));
 	readonly pings = $derived(pingsOf(this.events, this.run));
 	/** Newest first: each answer reveals the next-earlier one. */

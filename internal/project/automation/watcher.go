@@ -31,10 +31,11 @@ import (
 const By = "automation"
 
 // Runs is the slice of the engine a pass needs: create a run, and tell
-// whether a ticket has one.
+// whether a ticket — or a merge request — has one.
 type Runs interface {
 	CreateRunWith(ctx context.Context, t runinput.Ticket, flowName, projectID string, in runinput.Input) (string, error)
 	RunsOfTicket(ctx context.Context, ticketID string) ([]run.View, error)
+	RunsOnMR(ctx context.Context, projectID, repo string, iid int) ([]run.View, error)
 }
 
 // MRs is what a merge_request automation reads: a repository's open merge
@@ -187,14 +188,11 @@ func (w *Watcher) importOrAdopt(ctx context.Context, a confstore.Automation, key
 	return existing, true, nil
 }
 
-// pollMRs lists the repository's open merge requests and creates a run on
-// each one someone else opened that has none yet: its own ticket first (the
-// merge request's title, description and link; keyed by its URL, with no
-// tracker), then the run of the automation's flow. Drafts
-// wait until they are marked ready; the integration's own merge requests —
-// the ones the factory's runs opened — are never picked. A ticket made by an
-// earlier pass and left without a run (a crash) is adopted; a person's
-// ticket for the same merge request is theirs.
+// pollMRs lists the repository's open merge requests and creates a run of
+// the automation's flow on each one someone else opened that no run has
+// been through yet — whoever started it — given the merge request's title
+// and description as its work; no ticket is made. Drafts wait until they
+// are marked ready; the integration's own merge requests are never picked.
 func (w *Watcher) pollMRs(ctx context.Context, a confstore.Automation) (bool, error) {
 	mrs, err := w.MRs.ListMRs(ctx, a.ProjectID, a.Repo)
 	if err != nil {
@@ -213,15 +211,15 @@ func (w *Watcher) pollMRs(ctx context.Context, a confstore.Automation) (bool, er
 		if mr.State != repoport.MROpen || mr.Draft || strings.EqualFold(mr.Author, me) {
 			continue
 		}
-		t, ok, err := w.ticketForMR(ctx, a, mr)
+		runs, err := w.Runs.RunsOnMR(ctx, a.ProjectID, a.Repo, mr.Ref.IID)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", mr.Ref.URL, err))
 			continue
 		}
-		if !ok {
+		if len(runs) > 0 {
 			continue
 		}
-		if _, err := w.startOn(ctx, a, t, mr); err != nil {
+		if _, err := w.startOn(ctx, a, mr); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", mr.Ref.URL, err))
 			continue
 		}
@@ -233,39 +231,15 @@ func (w *Watcher) pollMRs(ctx context.Context, a confstore.Automation) (bool, er
 	return fired, nil
 }
 
-// ticketForMR is the ticket a merge request's run belongs to: made now, or
-// this automation's earlier one still without a run.
-func (w *Watcher) ticketForMR(ctx context.Context, a confstore.Automation, mr repoport.MRInfo) (confstore.Ticket, bool, error) {
-	existing, found, err := w.Tickets.FindByKey(ctx, a.ProjectID, mr.Ref.URL)
-	if err != nil {
-		return confstore.Ticket{}, false, err
-	}
-	if found {
-		if existing.AutomationID != a.ID {
-			return confstore.Ticket{}, false, nil
-		}
-		runs, err := w.Runs.RunsOfTicket(ctx, existing.ID)
-		if err != nil || len(runs) > 0 {
-			return confstore.Ticket{}, false, err
-		}
-		return existing, true, nil
-	}
-	t, err := w.Tickets.CreateForMR(ctx, a.ProjectID, a.ID, mr)
-	return t, err == nil, err
-}
-
-// startOn creates the run of a merge request's ticket, on that merge request.
-func (w *Watcher) startOn(ctx context.Context, a confstore.Automation, t confstore.Ticket, mr repoport.MRInfo) (string, error) {
-	id, err := w.Runs.CreateRunWith(ctx, runinput.Ticket{
-		TicketID: t.ID, Title: t.Title, Goal: t.Goal, ChangeType: string(t.ChangeType),
-		SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,
-	}, a.Flow, a.ProjectID, runinput.Input{Params: maps.Clone(a.Params), By: By,
+// startOn creates the automation's run on a merge request.
+func (w *Watcher) startOn(ctx context.Context, a confstore.Automation, mr repoport.MRInfo) (string, error) {
+	id, err := w.Runs.CreateRunWith(ctx, tickets.MRWork(mr), a.Flow, a.ProjectID, runinput.Input{Params: maps.Clone(a.Params), By: By,
 		MR: &runinput.MR{Repo: a.Repo, IID: mr.Ref.IID}})
 	if err != nil {
 		return "", err
 	}
 	w.log().Info("automation started a run on a merge request", "automation", a.ID, "name", a.Name,
-		"ticket", t.ID, logs.RunID, id, "mr", mr.Ref.URL)
+		logs.RunID, id, "mr", mr.Ref.URL)
 	return id, nil
 }
 

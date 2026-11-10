@@ -39,6 +39,12 @@ export const to = {
 	tickets: (opts?: { project?: string }) => `/tickets${q({ project: opts?.project })}`,
 	newTicket: (opts?: { project?: string }) => `/tickets/new${q({ project: opts?.project })}`,
 	ticket: (ticketId: string) => `/tickets/${ticketId}`,
+	// Merge requests, the other thing runs start on: across workshops, and
+	// one of them — where a run is started on it. A repo other than the
+	// primary is a query parameter.
+	mergeRequests: (opts?: { project?: string }) => `/merge-requests${q({ project: opts?.project })}`,
+	mergeRequest: (projectId: string, iid: number, repo?: string) =>
+		`/merge-requests/${projectId}/${iid}${q({ repo })}`,
 	workshops: () => '/w',
 	newWorkshop: () => '/w/new',
 	workshop: (projectId: string, tab?: WorkshopTab) =>

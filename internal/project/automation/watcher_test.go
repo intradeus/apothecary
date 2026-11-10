@@ -31,7 +31,9 @@ type fakeEngine struct {
 		In     runinput.Input
 	}
 	runs map[string][]run.View
-	next int
+	// mrRuns are the runs created on each merge request, by iid.
+	mrRuns map[int][]run.View
+	next   int
 	// MRs is what ListMRs reports (merge_request).
 	MRs []repoport.MRInfo
 }
@@ -48,6 +50,12 @@ func (f *fakeEngine) CreateRunWith(_ context.Context, t runinput.Ticket, flowNam
 		f.runs = map[string][]run.View{}
 	}
 	f.runs[t.TicketID] = append(f.runs[t.TicketID], run.View{RunID: id, TicketID: t.TicketID})
+	if in.MR != nil {
+		if f.mrRuns == nil {
+			f.mrRuns = map[int][]run.View{}
+		}
+		f.mrRuns[in.MR.IID] = append(f.mrRuns[in.MR.IID], run.View{RunID: id})
+	}
 	f.calls = append(f.calls, struct {
 		Ticket runinput.Ticket
 		Flow   string
@@ -60,6 +68,12 @@ func (f *fakeEngine) RunsOfTicket(_ context.Context, ticketID string) ([]run.Vie
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.runs[ticketID], nil
+}
+
+func (f *fakeEngine) RunsOnMR(_ context.Context, _, _ string, iid int) ([]run.View, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.mrRuns[iid], nil
 }
 
 func (f *fakeEngine) ListMRs(context.Context, string, string) ([]repoport.MRInfo, error) {
@@ -435,8 +449,12 @@ func TestMergeRequestAutomationStartsOnOthersMergeRequestsOnce(t *testing.T) {
 	}
 	c := h.eng.calls[0]
 	if c.In.MR == nil || c.In.MR.IID != 4 || c.In.By != By || c.Flow != "rev" || !strings.Contains(c.Ticket.Title, "(!4 by alice)") ||
-		c.Ticket.SourceKind != confstore.TicketKindMR || c.Ticket.SourceKey != mr(4, "", false).Ref.URL {
+		c.Ticket.TicketID != "" || !strings.Contains(c.Ticket.Goal, mr(4, "", false).Ref.URL) {
 		t.Errorf("call = %+v", c)
+	}
+	// A run on a merge request belongs to no ticket: none is made for it.
+	if all, _ := h.conf.ListTickets(ctx, ""); len(all) != 0 {
+		t.Errorf("tickets = %+v", all)
 	}
 	h.pass(t)
 	if n := h.eng.count(); n != 1 {

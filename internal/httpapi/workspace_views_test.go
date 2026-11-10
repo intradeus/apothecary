@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -415,7 +417,7 @@ func TestEgressRule(t *testing.T) {
 		t.Fatalf("block = %d %s", res.StatusCode, body)
 	}
 	p, _ := x.conf.GetProject(t.Context(), projectID)
-	if !containsStr(p.Workspace.BlockedDomains, "example.com") || containsStr(p.Workspace.ExtraDomains, "example.com") {
+	if !slices.Contains(p.Workspace.BlockedDomains, "example.com") || slices.Contains(p.Workspace.ExtraDomains, "example.com") {
 		t.Errorf("after block: %+v", p.Workspace)
 	}
 	// Twice is once.
@@ -429,7 +431,7 @@ func TestEgressRule(t *testing.T) {
 		t.Fatalf("allow = %d %s", res.StatusCode, body)
 	}
 	p, _ = x.conf.GetProject(t.Context(), projectID)
-	if containsStr(p.Workspace.BlockedDomains, "example.com") || !containsStr(p.Workspace.ExtraDomains, "example.com") {
+	if slices.Contains(p.Workspace.BlockedDomains, "example.com") || !slices.Contains(p.Workspace.ExtraDomains, "example.com") {
 		t.Errorf("after allow: %+v", p.Workspace)
 	}
 	set("example.com", true)
@@ -830,12 +832,21 @@ func TestWorkspaceLogFailures(t *testing.T) {
 		t.Errorf("no live log = %d %s", res.StatusCode, body)
 	}
 	x.res.Envp = tailEnv{bareEnv{x.envp}, []byte("0123456789"), nil}
+	var got WorkspaceLog
 	res, body := x.do(t, "GET", "/api/runs/r1/workspace-log?n=4", nil, nil)
-	if res.StatusCode != http.StatusOK || string(body) != "6789" {
-		t.Errorf("tail = %d %q", res.StatusCode, body)
+	_ = json.Unmarshal(body, &got)
+	if res.StatusCode != http.StatusOK || got != (WorkspaceLog{Data: "6789", Start: 6, End: 10, Size: 10}) {
+		t.Errorf("tail = %d %s", res.StatusCode, body)
 	}
-	if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
-		t.Errorf("tail content type = %q", ct)
+	res, body = x.do(t, "GET", "/api/runs/r1/workspace-log?from=2&n=3", nil, nil)
+	_ = json.Unmarshal(body, &got)
+	if res.StatusCode != http.StatusOK || got != (WorkspaceLog{Data: "234", Start: 2, End: 5, Size: 10}) {
+		t.Errorf("range = %d %s", res.StatusCode, body)
+	}
+	for _, bad := range []string{"-1", "x"} {
+		if res, body := x.do(t, "GET", "/api/runs/r1/workspace-log?from="+bad, nil, nil); res.StatusCode != http.StatusBadRequest {
+			t.Errorf("from=%s = %d %s", bad, res.StatusCode, body)
+		}
 	}
 	x.res.Envp = tailEnv{bareEnv{x.envp}, nil, errors.New("docker logs failed")}
 	if res, body := x.do(t, "GET", "/api/runs/r1/workspace-log", nil, nil); res.StatusCode != http.StatusBadGateway {
@@ -849,14 +860,11 @@ type tailEnv struct {
 	err  error
 }
 
-func (e tailEnv) TailExecLog(_ context.Context, _ envport.EnvID, n int) ([]byte, error) {
+func (e tailEnv) ReadExecLog(_ context.Context, _ envport.EnvID, from, n int64) (envport.ExecLogChunk, error) {
 	if e.err != nil {
-		return nil, e.err
+		return envport.ExecLogChunk{}, e.err
 	}
-	if n > 0 && n < len(e.data) {
-		return e.data[len(e.data)-n:], nil
-	}
-	return e.data, nil
+	return envport.ReadExecLogRange(bytes.NewReader(e.data), int64(len(e.data)), from, n)
 }
 
 // The URL parser's refusal of a malformed origin is a refusal, not a pass.

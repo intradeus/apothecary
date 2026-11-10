@@ -11,6 +11,7 @@ describe('NAV', () => {
 			'Notices',
 			'Runs',
 			'Tickets',
+			'Merge requests',
 			'Analytics',
 			'System'
 		]);
@@ -23,14 +24,16 @@ describe('NAV', () => {
 			'/notices',
 			'/runs',
 			'/tickets',
+			'/merge-requests',
 			'/analytics',
 			'/system/integrations'
 		]);
 	});
 
-	it('leaves Notices, Analytics and System off the mobile tab bar', () => {
+	it('leaves Notices, Merge requests, Analytics and System off the mobile tab bar', () => {
 		expect(NAV.filter((n) => !n.mobile).map((n) => n.id)).toEqual([
 			'notices',
+			'mrs',
 			'analytics',
 			'system'
 		]);
@@ -45,6 +48,7 @@ describe('NAV', () => {
 		['inbox', '/inbox/01PING'],
 		['runs', '/runs/01RUN'],
 		['tickets', '/tickets/new'],
+		['mrs', '/merge-requests/01PROJ/12'],
 		['analytics', '/analytics/scorecards'],
 		['system', '/system/skills/abc']
 	])('keeps %s lit on the pages inside it', (id, path) => {
@@ -52,7 +56,15 @@ describe('NAV', () => {
 	});
 
 	it('has exactly one destination for a page inside the app', () => {
-		for (const path of ['/', '/inbox', '/runs/1', '/tickets/1', '/analytics/d1', '/system/limits'])
+		for (const path of [
+			'/',
+			'/inbox',
+			'/runs/1',
+			'/tickets/1',
+			'/merge-requests',
+			'/analytics/d1',
+			'/system/limits'
+		])
 			expect(NAV.filter((n) => n.match(path))).toHaveLength(1);
 	});
 
@@ -67,6 +79,7 @@ describe('navByChord', () => {
 		['i', 'inbox'],
 		['r', 'runs'],
 		['t', 'tickets'],
+		['m', 'mrs'],
 		['a', 'analytics']
 	])('sends G then %s to %s', (key, id) => {
 		expect(navByChord(key)?.id).toBe(id);
