@@ -17,7 +17,6 @@ package telemetry
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -102,7 +101,7 @@ func New(tp trace.TracerProvider, mp metric.MeterProvider) (*Telemetry, error) {
 	t.stageDuration = f64h("apothecary.stage.duration", "s", "stage attempt duration, by outcome")
 	t.stageFailures = i64c("apothecary.stage.failures", "{failure}", "failed stage attempts, by reason")
 	t.edges = i64c("apothecary.edges", "{edge}", "failure/rejection edges taken, by edge")
-	t.budgetStops = i64c("apothecary.budget.stops", "{run}", "runs abandoned for exceeding their budget")
+	t.budgetStops = i64c("apothecary.budget.stops", "{run}", "runs paused for exceeding their budget")
 	t.tokenUsage, err = m.Int64Histogram("gen_ai.client.token.usage", metric.WithUnit("{token}"),
 		metric.WithDescription("tokens used per stage leg, by token type"))
 	errs = append(errs, err)
@@ -258,10 +257,11 @@ func (t *Telemetry) OnEvent(e event.Event) {
 		t.holds.Add(ctx, 1)
 	case *event.RunCompleted:
 		t.endRun(e.RunID, rt, e.TS, "completed", codes.Ok, "")
-	case *event.RunAbandoned:
-		if strings.HasPrefix(p.Reason, "budget exceeded") {
+	case *event.RunPaused:
+		if p.Reason == event.PauseBudget {
 			t.budgetStops.Add(ctx, 1)
 		}
+	case *event.RunAbandoned:
 		t.endRun(e.RunID, rt, e.TS, "abandoned", codes.Error, "")
 	case *event.RunFailed:
 		t.endRun(e.RunID, rt, e.TS, "failed", codes.Error, "")

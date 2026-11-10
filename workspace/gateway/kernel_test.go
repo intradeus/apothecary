@@ -307,7 +307,7 @@ func TestParseCIDRs(t *testing.T) {
 
 func TestRenderNFTAllowModeEscapeHatches(t *testing.T) {
 	rules := renderNFT("eth0", 9040, File{Mode: ModeAllow,
-		AllowedCIDRs: []string{" 192.0.2.0/24 ", ""}, AllowedPorts: []int{22, 0, -1, 5432}}, nil, 0)
+		AllowedCIDRs: []string{" 192.0.2.0/24 ", ""}, AllowedPorts: []int{22, 0, -1, 5432}}, nil, 0, nil)
 	for _, want := range []string{
 		`iifname != "eth0" tcp dport { 80, 443 } redirect to :9040`,
 		`iifname != "eth0" ip daddr { 192.0.2.0/24 } accept`,
@@ -330,7 +330,7 @@ func TestRenderNFTAllowModeEscapeHatches(t *testing.T) {
 
 // A bare allow-mode policy opens nothing at all at L3.
 func TestRenderNFTAllowModeWithoutHatchesAcceptsNothing(t *testing.T) {
-	rules := renderNFT("eth0", 9040, File{Mode: ModeAllow}, nil, 0)
+	rules := renderNFT("eth0", 9040, File{Mode: ModeAllow}, nil, 0, nil)
 	var accepts []string
 	for _, line := range strings.Split(rules, "\n") {
 		if strings.HasPrefix(line, "add rule ip apo forward") && strings.HasSuffix(line, "accept") {
@@ -343,7 +343,7 @@ func TestRenderNFTAllowModeWithoutHatchesAcceptsNothing(t *testing.T) {
 }
 
 func TestRenderNFTDenyModeAcceptsRawEgress(t *testing.T) {
-	rules := renderNFT("eth0", 9040, File{Mode: ModeDeny}, nil, 0)
+	rules := renderNFT("eth0", 9040, File{Mode: ModeDeny}, nil, 0, nil)
 	if !strings.Contains(rules, `add rule ip apo forward iifname != "eth0" accept`) {
 		t.Fatalf("deny mode is allow-all at L3:\n%s", rules)
 	}
@@ -355,7 +355,7 @@ func TestRenderNFTDenyModeAcceptsRawEgress(t *testing.T) {
 // nft rules run in order and accept is final in a base chain, so the drop of a
 // denied range has to come before the blanket accept or it never fires.
 func TestRenderNFTDenyModeDropsDeniedCIDRsBeforeAccepting(t *testing.T) {
-	rules := renderNFT("eth0", 9040, File{Mode: ModeDeny, DeniedCIDRs: []string{"192.0.2.0/24"}}, nil, 0)
+	rules := renderNFT("eth0", 9040, File{Mode: ModeDeny, DeniedCIDRs: []string{"192.0.2.0/24"}}, nil, 0, nil)
 	drop := strings.Index(rules, "ip daddr { 192.0.2.0/24 } drop")
 	accept := strings.Index(rules, `add rule ip apo forward iifname != "eth0" accept`)
 	if drop < 0 || accept < 0 || drop > accept {

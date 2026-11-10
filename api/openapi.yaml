@@ -1451,6 +1451,11 @@ components:
           type: integer
         attempts:
           type: integer
+        budget_cost_base:
+          format: double
+          type: number
+        budget_turns_base:
+          type: integer
         cost_usd:
           format: double
           type: number
@@ -3347,12 +3352,18 @@ components:
           additionalProperties:
             type: string
           type: object
+        pause_note:
+          type: string
+        pause_reason:
+          type: string
         phase:
           type: string
         phase_subject:
           type: string
         project_id:
           type: string
+        provision_failed:
+          type: boolean
         run_goal:
           type: string
         run_id:

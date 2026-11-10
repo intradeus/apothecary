@@ -137,6 +137,8 @@ type gwFake struct {
 	bytes     int64
 	cleared   int
 	routes    []string
+	windows   []string // "open <run>" / "close <run>": the provisioning egress window
+	windowErr bool     // the window endpoints answer 500
 	detached  []string
 	linked    []string
 	att       egressgw.Attachment
@@ -151,6 +153,17 @@ func newGwFake(t *testing.T) *gwFake {
 	mux.HandleFunc("PUT /policy", func(_ http.ResponseWriter, r *http.Request) { json.NewDecoder(r.Body).Decode(&g.policy) })
 	mux.HandleFunc("PUT /runs/{run}", func(_ http.ResponseWriter, r *http.Request) { g.routes = append(g.routes, "+"+r.PathValue("run")) })
 	mux.HandleFunc("DELETE /runs/{run}", func(_ http.ResponseWriter, r *http.Request) { g.routes = append(g.routes, "-"+r.PathValue("run")) })
+	window := func(verb string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if g.windowErr {
+				http.Error(w, "window refused", http.StatusInternalServerError)
+				return
+			}
+			g.windows = append(g.windows, verb+" "+r.PathValue("run"))
+		}
+	}
+	mux.HandleFunc("PUT /runs/{run}/open", window("open"))
+	mux.HandleFunc("DELETE /runs/{run}/open", window("close"))
 	mux.HandleFunc("GET /denials", func(w http.ResponseWriter, r *http.Request) {
 		var out []policyfile.Denial
 		for _, d := range g.denials {

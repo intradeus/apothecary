@@ -640,6 +640,8 @@ export type ExtraRepo = {
 export type Facts = {
 	active_ms: number;
 	attempts: number;
+	budget_cost_base?: number;
+	budget_turns_base?: number;
 	cost_usd: number;
 	end_reason?: string;
 	ended_at?: string;
@@ -1472,9 +1474,12 @@ export type RunView = {
 	params?: {
 		[key: string]: string;
 	};
+	pause_note?: string;
+	pause_reason?: string;
 	phase?: string;
 	phase_subject?: string;
 	project_id?: string;
+	provision_failed?: boolean;
 	run_goal?: string;
 	run_id: string;
 	skillsets?: Array<SkillsetPin>;

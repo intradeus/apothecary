@@ -172,6 +172,37 @@ func (m *Manager) EnsureRunEgress(ctx context.Context, project, projectName, run
 	return att, nil
 }
 
+// OpenRunEgress opens the run's egress until then: while it provisions, a run
+// may reach anything but the project's blocked domains (and in deny mode its
+// denylist) — an image build or a devcontainer feature fetching from hosts
+// nobody listed must not fail on the allowlist. The deadline closes the
+// window on the gateway's own when CloseRunEgress never comes (an engine
+// killed mid-build).
+func (m *Manager) OpenRunEgress(ctx context.Context, project, run string, until time.Time) error {
+	ctl, ok := m.host.Control(ctx, project)
+	if !ok {
+		return ErrNoGateway
+	}
+	if err := m.call(ctx, ctl, http.MethodPut, "/runs/"+url.PathEscape(run)+"/open", policyfile.RunOpen{Until: until}, nil); err != nil {
+		return fmt.Errorf("egressgw: open run egress: %w", err)
+	}
+	return nil
+}
+
+// CloseRunEgress ends the window OpenRunEgress opened: the run is filtered by
+// the project policy alone again. Idempotent; a project without a gateway
+// has nothing to close.
+func (m *Manager) CloseRunEgress(ctx context.Context, project, run string) error {
+	ctl, ok := m.host.Control(ctx, project)
+	if !ok {
+		return nil
+	}
+	if err := m.call(ctx, ctl, http.MethodDelete, "/runs/"+url.PathEscape(run)+"/open", nil, nil); err != nil {
+		return fmt.Errorf("egressgw: close run egress: %w", err)
+	}
+	return nil
+}
+
 // DestroyRunEgress drops the run's route and link. The GATEWAY ITSELF IS KEPT:
 // it holds the project's warm image and build caches, far more expensive to
 // rebuild than an idle gateway is to keep.

@@ -22,6 +22,9 @@ func (s *Server) getRunServices(w http.ResponseWriter, r *http.Request) {
 		serviceErr(w, err)
 		return
 	}
+	for i := range out.Services {
+		s.reachService(r, &out.Services[i])
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -43,13 +46,21 @@ func (s *Server) postStopService(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) serviceAction(w http.ResponseWriter, _ *http.Request, act func() (services.ServiceInfo, error)) {
+func (s *Server) serviceAction(w http.ResponseWriter, r *http.Request, act func() (services.ServiceInfo, error)) {
 	info, err := act()
 	if err != nil {
 		serviceErr(w, err)
 		return
 	}
+	s.reachService(r, &info)
 	writeJSON(w, http.StatusAccepted, info)
+}
+
+// reachService names the request's host in a service's preview links.
+func (s *Server) reachService(r *http.Request, info *services.ServiceInfo) {
+	for i := range info.Ports {
+		info.Ports[i].URL = s.reach(r, info.Ports[i].URL)
+	}
 }
 
 func (s *Server) getServiceLogs(w http.ResponseWriter, r *http.Request) {

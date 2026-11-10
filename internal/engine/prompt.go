@@ -167,6 +167,9 @@ func (x *exec) writeInputs(b *strings.Builder, st *flow.Stage, iter int, desc fu
 				b.WriteString(ticketDiscussion(in.Name, desc(in), now.Comments, in.Limit, in.ExcludeOwn))
 			}
 			continue
+		case flow.SourcePingAnswers:
+			b.WriteString(x.pingAnswersSection(in.Name, desc(in)))
+			continue
 		case flow.SourceCIFailure:
 			fmt.Fprintf(b, "# INPUT: %s%s (what failed in CI)\n%s", in.Name, desc(in), ciFailureText(rs.CI))
 			continue

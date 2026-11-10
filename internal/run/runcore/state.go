@@ -693,6 +693,14 @@ func (rs *State) Apply(ev *event.Event) {
 		rs.LastFailure = nil
 		rs.GateAnswer = nil
 		rs.EdgeCounts = map[string]int{}
+		if p.Provision {
+			// The workspace failed: provision it afresh (env_requested
+			// again, the provisioner picking up the leftovers by name) and
+			// leave the cursor where the failure caught it.
+			rs.EnvID = ""
+			rs.EnvRequested = false
+			break
+		}
 		if rs.Flow != nil {
 			rs.Pos = rs.Flow.Index(p.StageID)
 		}

@@ -46,8 +46,9 @@ type DenialsFile struct {
 }
 
 type Routes struct {
-	RunSubnets map[string]string `json:"run_subnets"`
-	Peers      map[string]Peer   `json:"peers,omitempty"`
+	RunSubnets map[string]string    `json:"run_subnets"`
+	Peers      map[string]Peer      `json:"peers,omitempty"`
+	Open       map[string]time.Time `json:"open,omitempty"`
 }
 
 type Peer struct {
@@ -58,6 +59,10 @@ type Peer struct {
 type RunRoute struct {
 	Subnet string `json:"subnet"`
 	Peer   *Peer  `json:"peer,omitempty"`
+}
+
+type RunOpen struct {
+	Until time.Time `json:"until"`
 }
 
 type BuildCacheInfo struct {

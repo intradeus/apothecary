@@ -1,8 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +33,7 @@ import (
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/workspace/portrelay"
+	"apothecary/internal/workspace/services"
 	"apothecary/internal/workspace/wsinfo"
 )
 
@@ -711,5 +715,80 @@ func TestCredentialTestOfAFreshLogin(t *testing.T) {
 	got := decode[TestResult](t, data)
 	if res.StatusCode != http.StatusOK || !got.OK || len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "valid until") {
 		t.Errorf("test = %d %s", res.StatusCode, data)
+	}
+}
+
+// An engine bound to every interface cannot name the host people reach it
+// at, so its relay URLs say "localhost" — the API hands each browser the
+// host it opened the UI at instead: the same machine, so the same ports.
+func TestRelayURLsNameTheHostTheUIWasReachedAt(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	x.seedLiveRun(t, "r1")
+	relay := portrelay.New("0.0.0.0")
+	t.Cleanup(relay.CloseAll)
+	x.srv.Ports.Relay = relay
+	x.res.Envp = exposer{EnvProvisioner: x.envp}
+	// The browser reached the UI at 100.1.2.3:8080 (the client dials the
+	// test server; the Host it sends is what the engine reads).
+	at := func(method, path string, in any) []byte {
+		t.Helper()
+		var rd io.Reader
+		if in != nil {
+			b, _ := json.Marshal(in)
+			rd = bytes.NewReader(b)
+		}
+		req, err := http.NewRequest(method, x.ts.URL+path, rd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = "100.1.2.3:8080"
+		res, err := http.DefaultClient.Do(x.authed(req))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		out, _ := io.ReadAll(res.Body)
+		return out
+	}
+
+	body := at("POST", "/api/runs/r1/expose-port", ExposePortRequest{Port: 3000})
+	got := decode[ExposedPort](t, body)
+	if !strings.HasPrefix(got.URL, "http://100.1.2.3:") || strings.HasPrefix(got.URL, "http://100.1.2.3:8080/") {
+		t.Fatalf("exposed url = %q, want the UI's host on the relay's own port", got.URL)
+	}
+	body = at("GET", "/api/runs/r1/ports", nil)
+	if ports := decode[RunPorts](t, body); len(ports.Ports) != 1 || ports.Ports[0].URL != got.URL {
+		t.Errorf("ports = %s, want %s", body, got.URL)
+	}
+	// From the machine itself, localhost stays localhost.
+	local := httptest.NewRequest("GET", "/", nil)
+	local.Host = "localhost:8080"
+	if got := x.srv.reach(local, relay.List("r1")[0].URL); !strings.HasPrefix(got, "http://localhost:") {
+		t.Errorf("local url = %q", got)
+	}
+	// A preview link of a service goes the same way.
+	info := services.ServiceInfo{Ports: []services.ServicePortInfo{{Port: 3000, URL: relay.List("r1")[0].URL + "health"}, {Port: 9}}}
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "box.tail1234.ts.net"
+	x.srv.reachService(req, &info)
+	if !strings.HasPrefix(info.Ports[0].URL, "http://box.tail1234.ts.net:") || !strings.HasSuffix(info.Ports[0].URL, "/health") || info.Ports[1].URL != "" {
+		t.Errorf("service links = %+v", info.Ports)
+	}
+	// No relay: nothing to rewrite.
+	x.srv.Ports.Relay = nil
+	if got := x.srv.reach(req, "http://localhost:1/"); got != "http://localhost:1/" {
+		t.Errorf("reach without a relay = %q", got)
+	}
+}
+
+// A door on every interface with nothing configured to advertise is named
+// by the host the page was reached at.
+func TestRunSSHNamesTheRequestHostWhenTheDoorHasNone(t *testing.T) {
+	for host, want := range map[string]string{"100.1.2.3:8080": "100.1.2.3", "[fd7a::1]:8080": "fd7a::1", "box.ts.net": "box.ts.net"} {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Host = host
+		if got := requestHostname(req); got != want {
+			t.Errorf("requestHostname(%q) = %q, want %q", host, got, want)
+		}
 	}
 }

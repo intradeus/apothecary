@@ -172,10 +172,11 @@ type SecretVolumeSource struct {
 }
 
 type PodStatus struct {
-	Phase             string            `json:"phase,omitempty"`
-	PodIP             string            `json:"podIP,omitempty"`
-	Conditions        []PodCondition    `json:"conditions,omitempty"`
-	ContainerStatuses []ContainerStatus `json:"containerStatuses,omitempty"`
+	Phase                 string            `json:"phase,omitempty"`
+	PodIP                 string            `json:"podIP,omitempty"`
+	Conditions            []PodCondition    `json:"conditions,omitempty"`
+	InitContainerStatuses []ContainerStatus `json:"initContainerStatuses,omitempty"`
+	ContainerStatuses     []ContainerStatus `json:"containerStatuses,omitempty"`
 }
 
 type PodCondition struct {
@@ -184,9 +185,31 @@ type PodCondition struct {
 }
 
 type ContainerStatus struct {
-	Name         string `json:"name"`
-	Ready        bool   `json:"ready"`
-	RestartCount int    `json:"restartCount"`
+	Name         string         `json:"name"`
+	Ready        bool           `json:"ready"`
+	RestartCount int            `json:"restartCount"`
+	State        ContainerState `json:"state,omitempty"`
+}
+
+// ContainerState is which of its states a container is in (one is set).
+type ContainerState struct {
+	Waiting    *ContainerStateWaiting    `json:"waiting,omitempty"`
+	Running    *ContainerStateRunning    `json:"running,omitempty"`
+	Terminated *ContainerStateTerminated `json:"terminated,omitempty"`
+}
+
+type ContainerStateWaiting struct {
+	Reason  string `json:"reason,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+type ContainerStateRunning struct {
+	StartedAt string `json:"startedAt,omitempty"`
+}
+
+type ContainerStateTerminated struct {
+	ExitCode int    `json:"exitCode"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // Ready reports the pod's Ready condition.

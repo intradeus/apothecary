@@ -65,12 +65,12 @@ main:
 	h.e.Wait(runID)
 
 	evs := h.events(t, runID)
-	if v := h.view(t, runID); v.State != run.Abandoned {
+	if v := h.view(t, runID); v.State != run.Paused {
 		t.Fatalf("state = %s: %v", v.State, eventTypes(evs))
 	}
-	ra, _ := findPayload[*event.RunAbandoned](evs)
-	if !strings.HasPrefix(ra.Reason, "budget exceeded") {
-		t.Errorf("reason = %q", ra.Reason)
+	rp, _ := findPayload[*event.RunPaused](evs)
+	if rp == nil || rp.Reason != event.PauseBudget || !strings.HasPrefix(rp.Note, "budget exceeded") {
+		t.Errorf("run_paused = %+v", rp)
 	}
 	if got := len(h.runner.RunCalls); got != 2 {
 		t.Errorf("plan ran %d times, want 2 (0.4 + 0.4 > 0.5)", got)

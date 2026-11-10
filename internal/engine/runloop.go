@@ -320,16 +320,20 @@ func (x *exec) attempt(st *flow.Stage, step func() error) error {
 }
 
 // exit handles abnormal loop termination: abort marks the run failed,
-// pause parks it (non-terminal, skipped by Recover until play), an outcome
+// pause parks it (non-terminal, skipped by Recover until play) — the pause
+// button's or the budget's —, an outcome
 // takes the cursor, shutdown leaves it for Recover, anything else is logged
 // and left non-terminal (recovered by replay on next boot).
 func (x *exec) exit(cause error) {
 	defer x.checkFold()
 	cause = x.leave(cause)
 	var fired outcomeFired
+	var budget budgetPaused
 	switch {
 	case errors.As(cause, &fired):
 		x.takeCursor(fired)
+	case errors.As(cause, &budget):
+		_ = x.append(&event.RunPaused{StageID: x.rs.View.CurrentStage, Reason: event.PauseBudget, Note: budget.reason})
 	case errors.Is(cause, errAborted):
 		// A deliberate stop is abandonment, not failure (PLAN5 M24) — the
 		// same terminal the flow's own `abort` edge reaches.
@@ -548,11 +552,19 @@ func chainMax(e *flow.Edge) string {
 	return strings.Join(parts, "+")
 }
 
-// checkBudget abandons the run when §3 budget ceilings are exceeded.
-// Returns true when the run should stop.
-func (x *exec) checkBudget(st *flow.Stage) (bool, error) {
-	if over, reason := runcore.BudgetExceeded(x.rs.Flow.Budget, x.rs.View.Facts.CostUSD, x.rs.View.Facts.Turns); over {
-		return true, x.abandon(st.ID, "", reason)
+// budgetPaused stops the loop when the run's spend passed the flow's §3
+// budget: exit parks it as a budget pause. Never an abandon — the work done
+// so far and its workspace stay, and play grants another budget's worth.
+type budgetPaused struct{ reason string }
+
+func (b budgetPaused) Error() string { return b.reason }
+
+// checkBudget stops the run when §3 budget ceilings are exceeded: it
+// returns a budgetPaused for the loop's exit to park the run on.
+func (x *exec) checkBudget(_ *flow.Stage) (bool, error) {
+	cost, turns := x.rs.View.Facts.BudgetSpend()
+	if over, reason := runcore.BudgetExceeded(x.rs.Flow.Budget, cost, turns); over {
+		return true, budgetPaused{reason}
 	}
 	return false, nil
 }

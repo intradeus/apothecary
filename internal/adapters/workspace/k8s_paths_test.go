@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -253,7 +254,7 @@ func TestK8sEndedPodIsReplacedAndALiveOneKept(t *testing.T) {
 	for phase, replaced := range map[string]bool{"Failed": true, "Succeeded": true, "Running": false, "Pending": false} {
 		k := &kubeFake{pod: `{"status":{"phase":"` + phase + `"}}`, secrets: map[string]string{}}
 		_, h := k8sWith(t, k, false)
-		if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}); err != nil {
+		if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}, discard); err != nil {
 			t.Fatal(err)
 		}
 		if got := len(k.deleted) == 1 && k.deleted[0] == "pod/w"; got != replaced {
@@ -265,7 +266,7 @@ func TestK8sEndedPodIsReplacedAndALiveOneKept(t *testing.T) {
 	}
 	k := &kubeFake{pod: `{"status":{"phase":"Failed"}}`, secrets: map[string]string{}}
 	_, h := k8sWith(t, k, false, kubeRule{match: "delete pod", stderr: "boom", code: 1})
-	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}); err == nil {
+	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}, discard); err == nil {
 		t.Error("a dead pod could not go, but the provision went on")
 	}
 }
@@ -275,7 +276,7 @@ func TestK8sStorageChoices(t *testing.T) {
 	k := &kubeFake{secrets: map[string]string{}}
 	_, h := k8sWith(t, k, false)
 	h.cfg.StorageClass, h.cfg.StorageSize = "fast", "5Gi"
-	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}); err != nil {
+	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}, discard); err != nil {
 		t.Fatal(err)
 	}
 	pvc, _ := json.Marshal(k.obj(k.created, "PersistentVolumeClaim"))
@@ -286,7 +287,7 @@ func TestK8sStorageChoices(t *testing.T) {
 	k = &kubeFake{secrets: map[string]string{}}
 	_, h = k8sWith(t, k, false)
 	h.cfg.Storage = "emptydir"
-	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}); err != nil {
+	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}, discard); err != nil {
 		t.Fatal(err)
 	}
 	if k.obj(k.created, "PersistentVolumeClaim") != nil {
@@ -492,11 +493,11 @@ func TestK8sEnsureCheckout(t *testing.T) {
 		return "", "", 0
 	}}
 	_, h := k8sWith(t, k, false)
-	if err := h.ensureCheckout(ctx, "w", "/src", envport.EnvSpec{RepoURL: "https://git.test/r.git"}, nil); err != nil || clones != 0 {
+	if err := h.ensureCheckout(ctx, "w", "/src", envport.EnvSpec{RepoURL: "https://git.test/r.git"}, discard); err != nil || clones != 0 {
 		t.Errorf("existing checkout = %v, clones = %d", err, clones)
 	}
 	k.exec = func(argv []string, _ []byte) (string, string, int) { return "", "", 1 }
-	err := h.ensureCheckout(ctx, "w", "/src", envport.EnvSpec{RepoURL: "bad", GitPass: "x"}, nil)
+	err := h.ensureCheckout(ctx, "w", "/src", envport.EnvSpec{RepoURL: "bad", GitPass: "x"}, discard)
 	if err == nil || !strings.Contains(err.Error(), "cannot parse the repository URL") {
 		t.Errorf("bad URL = %v", err)
 	}
@@ -509,7 +510,7 @@ func TestK8sEnsureCheckout(t *testing.T) {
 		script = string(stdin)
 		return "", "", 0
 	}
-	if err := h.ensureCheckout(ctx, "w", "/src", envport.EnvSpec{RepoURL: "https://git.test/r.git"}, nil); err != nil {
+	if err := h.ensureCheckout(ctx, "w", "/src", envport.EnvSpec{RepoURL: "https://git.test/r.git"}, discard); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasSuffix(script, "\n\n") {
@@ -533,7 +534,7 @@ func TestK8sEnsureCheckout(t *testing.T) {
 			`git clone -- 'https://git.test/r.git' '/src' && cd '/src' && { git switch 'feat/x' 2>/dev/null || { git fetch origin 'refs/merge-requests/4/head' && git switch -c 'feat/x' FETCH_HEAD; }; }; rc=$?; rm -f "$f"`},
 	} {
 		tc.spec.RepoURL = "https://git.test/r.git"
-		if err := h.ensureCheckout(ctx, "w", "/src", tc.spec, nil); err != nil {
+		if err := h.ensureCheckout(ctx, "w", "/src", tc.spec, discard); err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(script, tc.want) || strings.Contains(script, "--branch") {
@@ -548,7 +549,7 @@ func TestK8sEnsureCheckout(t *testing.T) {
 	}
 	notCloned := &kubeFake{exec: func(argv []string, _ []byte) (string, string, int) { return "", "", 1 }}
 	_, h = k8sWith(t, notCloned, false, kubeRule{match: "bash -s", stderr: "Unable to connect to the server", code: 1})
-	if err := h.ensureCheckout(ctx, "w", "/src", envport.EnvSpec{}, nil); err == nil {
+	if err := h.ensureCheckout(ctx, "w", "/src", envport.EnvSpec{}, discard); err == nil {
 		t.Error("a transport failure read as a clone")
 	}
 }
@@ -1063,5 +1064,77 @@ func TestK8sResetSandboxEdges(t *testing.T) {
 	gone := &kubeFake{secrets: map[string]string{}}
 	if _, h := k8sWith(t, gone, false, kubeRule{match: "pod w -o json", stderr: "api down", code: 1}); h.resetSandbox(ctx, "w") == nil {
 		t.Error("an unreachable cluster went unnoticed")
+	}
+}
+
+// discard is a provisioning log nobody reads.
+func discard(string, ...any) {}
+
+// slowWait is a kubectl whose `wait` takes a while: long enough for the
+// progress lines to be written.
+type slowWait struct {
+	*kubeRules
+	d time.Duration
+}
+
+func (k *slowWait) Run(ctx context.Context, bin string, args []string, stdin []byte, tee io.Writer, env ...string) ([]byte, []byte, int, error) {
+	if slices.Contains(args, "wait") {
+		time.Sleep(k.d)
+		return nil, nil, 0, nil
+	}
+	return k.kubeRules.Run(ctx, bin, args, stdin, tee, env...)
+}
+
+// While the pod comes up, the log says what it waits on — and says it once
+// per change, not once per poll.
+func TestK8sWaitingForThePodSaysWhatItWaitsOn(t *testing.T) {
+	prev := podProgressEvery
+	podProgressEvery = 5 * time.Millisecond
+	t.Cleanup(func() { podProgressEvery = prev })
+	k := &kubeFake{secrets: map[string]string{}, pod: `{"status":{"phase":"Pending","containerStatuses":[` +
+		`{"name":"sandbox","ready":false,"restartCount":2,"state":{"waiting":{"reason":"ImagePullBackOff","message":"pull access denied"}}},` +
+		`{"name":"wg","ready":true,"state":{"running":{}}}]}}`}
+	_, h := k8sWith(t, k, false)
+	h.cfg.Kube.R = &slowWait{kubeRules: h.cfg.Kube.R.(*kubeRules), d: 60 * time.Millisecond}
+	var mu sync.Mutex
+	var lines []string
+	plog := func(f string, a ...any) { mu.Lock(); lines = append(lines, fmt.Sprintf(f, a...)); mu.Unlock() }
+	if err := h.ensurePod(context.Background(), "w", envport.EnvSpec{}, egressgw.Attachment{}, plog); err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(lines, "")
+	want := "  … pod Pending; sandbox: ImagePullBackOff: pull access denied, 2 restarts\n"
+	if strings.Count(all, want) != 1 {
+		t.Errorf("log = %q, want one line %q", all, want)
+	}
+	for _, step := range []string{"→ reusing the sandbox pod (Pending)", "→ waiting for the sandbox pod to be ready"} {
+		if !strings.Contains(all, step) {
+			t.Errorf("log misses %q:\n%s", step, all)
+		}
+	}
+}
+
+func TestPodProgress(t *testing.T) {
+	cases := []struct {
+		s    kube.PodStatus
+		want string
+	}{
+		{kube.PodStatus{}, "Pending"},
+		{kube.PodStatus{Phase: "Pending", InitContainerStatuses: []kube.ContainerStatus{
+			{Name: "seed", State: kube.ContainerState{Terminated: &kube.ContainerStateTerminated{ExitCode: 1, Reason: "Error"}}}}},
+			"Pending; seed: exited 1 (Error)"},
+		{kube.PodStatus{Phase: "Running", ContainerStatuses: []kube.ContainerStatus{
+			{Name: "sandbox", State: kube.ContainerState{Running: &kube.ContainerStateRunning{}}},
+			{Name: "wg", State: kube.ContainerState{Waiting: &kube.ContainerStateWaiting{}}},
+			{Name: "x"}}},
+			"Running; sandbox: running, not ready yet; wg: waiting; x: not ready"},
+		{kube.PodStatus{Phase: "Pending", ContainerStatuses: []kube.ContainerStatus{
+			{Name: "c", State: kube.ContainerState{Terminated: &kube.ContainerStateTerminated{ExitCode: 137}}}}},
+			"Pending; c: exited 137"},
+	}
+	for _, c := range cases {
+		if got := podProgress(c.s); got != c.want {
+			t.Errorf("podProgress = %q, want %q", got, c.want)
+		}
 	}
 }

@@ -37,7 +37,16 @@ export type ChatItem =
 			error?: string;
 	  }
 	| { kind: 'prompt'; key: string; promptKind: string; text: string; truncated: boolean }
-	| { kind: 'message'; key: string; text: string; thought: boolean; live: boolean }
+	| {
+			kind: 'message';
+			key: string;
+			text: string;
+			thought: boolean;
+			live: boolean;
+			/** The agent's segment: the same while it streams and once recorded,
+			 *  where the key changes. */
+			segment?: string;
+	  }
 	| { kind: 'tools'; key: string; calls: AgentToolCall[]; live: boolean }
 	| { kind: 'plan'; key: string; entries: { content: string; status: string }[] }
 	| { kind: 'notice'; key: string; text: string }
@@ -310,6 +319,18 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					tone: 'bad'
 				});
 				break;
+			case 'run_paused':
+				// Only the budget's pause is news in the conversation: it is
+				// what stopped the agent, and why it is not abandoned.
+				if (p.reason !== 'budget') break;
+				items.push({
+					kind: 'status',
+					key,
+					glyph: I.pause,
+					text: t('transcript.pausedBudget') + (p.note ? ` — ${p.note}` : ''),
+					tone: 'warn'
+				});
+				break;
 			case 'run_abandoned':
 				items.push({
 					kind: 'status',
@@ -347,7 +368,8 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					key,
 					text: String(p.text ?? ''),
 					thought: Boolean(p.thought),
-					live: false
+					live: false,
+					segment: p.segment ? String(p.segment) : undefined
 				});
 				break;
 			case 'agent_tool': {
@@ -435,7 +457,8 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 				key: 'live-' + k,
 				text: m.text,
 				thought: m.thought,
-				live: true
+				live: true,
+				segment: seg
 			});
 		} else {
 			const id = k.slice(2);

@@ -1136,7 +1136,8 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in runinput.Input) (st
 // the agent's commits are reused; only the failed stage re-runs, with
 // retry budgets reset. Distinct from Rerun (a fresh run from stage
 // one). Refused when the run is active, not terminal, completed/archived,
-// has no stalled stage, or its workspace is gone.
+// has no stalled stage, or its workspace is gone — except a run that failed
+// provisioning its workspace: retrying it provisions the workspace again.
 func (e *Engine) RetryRun(ctx context.Context, runID string) error {
 	e.mu.Lock()
 	_, active := e.handles[runID]
@@ -1151,31 +1152,46 @@ func (e *Engine) RetryRun(ctx context.Context, runID string) error {
 	if v.State != run.Abandoned && v.State != run.Failed {
 		return fmt.Errorf("run %s is %s; only abandoned or failed runs can be retried (completed runs have nothing to retry)", runID, v.State)
 	}
+	if v.ProvisionFailed {
+		// The workspace is what failed: trying again is provisioning it
+		// again, whether or not a stage ever started or anything was left.
+		return e.retry(ctx, runID, &event.RunRetried{StageID: v.CurrentStage, FlowHash: e.retryPin(ctx, v), Provision: true})
+	}
 	if v.CurrentStage == "" {
 		return fmt.Errorf("run %s has no stage to retry (it never started one); rerun it as a new run instead", runID)
 	}
 	if v.EnvID == "" {
 		return fmt.Errorf("run %s has no workspace to retry in; rerun it as a new run instead", runID)
 	}
-	// Re-pin to the flow's current version: a retry is human-initiated, so it
-	// is where an edited flow (an edited prompt, a fixed binding) legitimately
-	// reaches a run in flight — unlike crash recovery or play, which must
-	// never change behavior underneath a running stage (PLAN5 M19). A flow
-	// that no longer resolves keeps the old pin rather than blocking the retry.
-	hash := ""
-	if fl, ferr := e.flows.Get(ctx, v.ProjectID, v.FlowName); ferr == nil {
-		if fl.Stage(v.CurrentStage) == nil {
-			return fmt.Errorf("run %s cannot resume: flow %q no longer has a stage %q — rerun it as a new run instead",
-				runID, v.FlowName, v.CurrentStage)
-		}
-		if _, rerr := fl.Resolve(v.Params); rerr != nil {
-			e.log.Warn("retry keeps the pinned flow version: the current one does not resolve with the run's parameters",
-				logs.RunID, runID, "flow", v.FlowName, "err", rerr)
-		} else {
-			hash = fl.Hash
-		}
+	if fl, ferr := e.flows.Get(ctx, v.ProjectID, v.FlowName); ferr == nil && fl.Stage(v.CurrentStage) == nil {
+		return fmt.Errorf("run %s cannot resume: flow %q no longer has a stage %q — rerun it as a new run instead",
+			runID, v.FlowName, v.CurrentStage)
 	}
-	if err := e.AppendEvents(ctx, runID, &event.RunRetried{StageID: v.CurrentStage, FlowHash: hash}); err != nil {
+	return e.retry(ctx, runID, &event.RunRetried{StageID: v.CurrentStage, FlowHash: e.retryPin(ctx, v)})
+}
+
+// retryPin is the flow version a retry re-pins the run to: the current one.
+// A retry is human-initiated, so it is where an edited flow (an edited
+// prompt, a fixed binding) legitimately reaches a run in flight — unlike
+// crash recovery or play, which must never change behavior underneath a
+// running stage (PLAN5 M19). A flow that no longer resolves keeps the old
+// pin ("") rather than blocking the retry.
+func (e *Engine) retryPin(ctx context.Context, v run.View) string {
+	fl, err := e.flows.Get(ctx, v.ProjectID, v.FlowName)
+	if err != nil {
+		return ""
+	}
+	if _, rerr := fl.Resolve(v.Params); rerr != nil {
+		e.log.Warn("retry keeps the pinned flow version: the current one does not resolve with the run's parameters",
+			logs.RunID, v.RunID, "flow", v.FlowName, "err", rerr)
+		return ""
+	}
+	return fl.Hash
+}
+
+// retry records a retry and queues the run.
+func (e *Engine) retry(ctx context.Context, runID string, ev *event.RunRetried) error {
+	if err := e.AppendEvents(ctx, runID, ev); err != nil {
 		return err
 	}
 	lim := e.limits(ctx)

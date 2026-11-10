@@ -818,7 +818,12 @@ through its bridge, can do nothing with it but ask its own questions.
 Browser sessions are HttpOnly cookies; writes with a cookie must come from
 the UI's own origin. The engine itself still speaks plain HTTP: put TLS in
 front of it before leaving localhost, and the workspace-port relay stays
-bound to the listen host. Integration secrets are secretbox-encrypted at
+bound to the listen host. Bound to every interface (`0.0.0.0`), the relay's
+links — the editor, exposed ports, service previews — name the host each
+browser opened the UI at, and so does the SSH door when nothing is set to
+advertise. Those per-port listeners carry raw TCP with no sign-in: on a
+shared network use `APOTHECARY_APPS_DOMAIN`, which serves every port behind
+the user's session. Integration secrets are secretbox-encrypted at
 rest under `APOTHECARY_MASTER_KEY` and never leave the engine unmasked.
 Residual risks and their rationale: `docs/IMPLEMENTATION_NOTES.md`.
 

@@ -160,6 +160,45 @@ describe('Transcript', () => {
 			show([message('**raw**', { thought: true })]);
 			expect(screen.getByText('**raw**')).toBeInTheDocument();
 		});
+
+		it('stays open once you open it, whatever arrives after', async () => {
+			const ux = userEvent.setup();
+			const thought = message('Hmm', { thought: true, segment: 's1' }, 'e1');
+			const { container, rerender } = show([thought]);
+			await ux.click(screen.getByText(/Thinking/));
+			expect(container.querySelector('details')).toHaveAttribute('open');
+
+			await rerender({ items: [{ ...thought }, message('Next')] });
+			expect(container.querySelector('details')).toHaveAttribute('open');
+
+			await ux.click(screen.getByText(/Thinking/));
+			expect(container.querySelector('details')).not.toHaveAttribute('open');
+		});
+
+		it('keeps your choice when the live thought gives way to the recorded one', async () => {
+			const ux = userEvent.setup();
+			const { container, rerender } = show([
+				message('Hmm', { thought: true, live: true, segment: 's1' }, 'live-m:s1')
+			]);
+			// Closed by hand while it streams…
+			await ux.click(screen.getByText(/Thinking/));
+			expect(container.querySelector('details')).not.toHaveAttribute('open');
+			await rerender({
+				items: [message('Hmm, so', { thought: true, live: true, segment: 's1' }, 'live-m:s1')]
+			});
+			expect(container.querySelector('details')).not.toHaveAttribute('open');
+			// …and opened again: it stays open once recorded, under another key.
+			await ux.click(screen.getByText(/Thinking/));
+			await rerender({
+				items: [message('Hmm, so.', { thought: true, segment: 's1' }, 'e7'), message('Next')]
+			});
+			expect(container.querySelector('details')).toHaveAttribute('open');
+		});
+
+		it('reads in the body face, not the display one', () => {
+			const { container } = show([message('Hmm', { thought: true })]);
+			expect(container.querySelector('.tt')).not.toHaveClass('display');
+		});
 	});
 
 	describe('a tool group', () => {

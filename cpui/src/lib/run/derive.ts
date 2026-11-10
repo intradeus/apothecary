@@ -615,10 +615,22 @@ export function describe(e: RunEvent): Described {
 			return { text: t('run.event.runFailed', { reason: String(p.reason) }), tone: 'bad' };
 		case 'run_retried':
 		case 'run_resumed': // the pre-rename spelling, still in stored history
-			return { text: t('run.event.retried'), tone: 'info' };
+			return {
+				text: p.provision ? t('run.event.retriedProvision') : t('run.event.retried'),
+				tone: 'info'
+			};
 		case 'run_paused':
 			// Parked by the engine on a human is not the same as paused by one:
-			// the first releases the slot and comes back on its own.
+			// the first releases the slot and comes back on its own. Over its
+			// budget the run is paused, never abandoned: say what tripped.
+			if (p.reason === 'budget')
+				return {
+					text: t('run.event.pausedBudget', {
+						stage: String(p.stage_id ?? ''),
+						why: String(p.note ?? '')
+					}),
+					tone: 'warn'
+				};
 			return p.reason === 'waiting_on_human'
 				? {
 						text: t('run.event.parked', { stage: String(p.stage_id) }),

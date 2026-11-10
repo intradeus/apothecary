@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -32,6 +33,11 @@ func (s *Server) getRunSSH(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host, port := s.SSH.Address()
+	if host == "" {
+		// The door listens on every interface and no address was configured
+		// to advertise: the host this page was reached at reaches it too.
+		host = requestHostname(r)
+	}
 	out := RunSSH{
 		Enabled: true, Host: host, Port: port, User: info.Workspace, Path: info.Path,
 		Fingerprint: s.SSH.Fingerprint(), HostKey: strings.TrimSpace(s.SSH.HostPublicKey()),
@@ -70,4 +76,13 @@ func vscodeURL(host string, port int, user, path string) string {
 		u += (&url.URL{Path: path}).EscapedPath()
 	}
 	return u
+}
+
+// requestHostname is the host a request came in on, without its port.
+func requestHostname(r *http.Request) string {
+	h := r.Host
+	if hh, _, err := net.SplitHostPort(h); err == nil {
+		h = hh
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(h, "["), "]")
 }

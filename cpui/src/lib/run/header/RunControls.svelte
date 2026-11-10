@@ -79,8 +79,11 @@
 				disabled={actions.any}
 				aria-busy={actions.has('play')}
 				onclick={() => act('play', () => api.runs.play(run.id))}
-				title={t('run.header.playTitle')}
-				><TransportIcon kind="play" /> {t('run.header.play')}</button
+				title={run.pause?.reason === 'budget'
+					? t('run.header.playBudgetTitle', { why: run.pause.note ?? '' })
+					: t('run.header.playTitle')}
+				><TransportIcon kind="play" />
+				{run.pause?.reason === 'budget' ? t('run.header.playBudget') : t('run.header.play')}</button
 			>
 		{:else if run.state !== 'pending'}
 			<button
@@ -101,13 +104,17 @@
 				disabled={actions.any}
 				aria-busy={actions.has('retry')}
 				onclick={retry}
-				title={t('run.header.retryTitle', {
-					stage: retryStage ?? t('run.header.theFailedStage')
-				})}
+				title={run.provisionFailed
+					? t('run.header.retryProvisionTitle')
+					: t('run.header.retryTitle', {
+							stage: retryStage ?? t('run.header.theFailedStage')
+						})}
 				>{I.retry}
-				{retryStage
-					? t('run.header.retryStage', { stage: retryStage })
-					: t('run.header.retry')}</button
+				{run.provisionFailed
+					? t('run.header.retryProvision')
+					: retryStage
+						? t('run.header.retryStage', { stage: retryStage })
+						: t('run.header.retry')}</button
 			>
 		{/if}
 		<button disabled={actions.any} onclick={() => onrerun()} title={t('run.header.rerunTitle')}

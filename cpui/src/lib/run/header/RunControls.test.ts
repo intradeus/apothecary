@@ -40,6 +40,28 @@ describe('RunControls', () => {
 		expect(api.runs.play).toHaveBeenCalledOnce();
 	});
 
+	it('offers to continue a run its budget paused, saying what tripped', async () => {
+		setup({
+			state: 'paused',
+			pause: { reason: 'budget', note: 'budget exceeded: 12 turns > max 10' }
+		});
+		const play = screen.getByRole('button', { name: /continue past budget/i });
+		expect(play).toHaveAttribute(
+			'title',
+			expect.stringContaining('budget exceeded: 12 turns > max 10')
+		);
+		await userEvent.click(play);
+		expect(api.runs.play).toHaveBeenCalledOnce();
+	});
+
+	it('retries provisioning when the workspace never came up', () => {
+		setup({ state: 'failed', provisionFailed: true, currentStage: 'build' });
+		expect(screen.getByRole('button', { name: /retry provisioning/i })).toHaveAttribute(
+			'title',
+			expect.stringContaining('provision it again')
+		);
+	});
+
 	it('holds the run buttons while any header action runs', async () => {
 		const { actions } = setup({ state: 'running' });
 		const build = deferred<boolean>();

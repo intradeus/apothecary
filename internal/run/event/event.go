@@ -865,6 +865,12 @@ type RunRetried struct {
 	// sanctioned moment to pick up an edit — fix a prompt or a binding, then
 	// retry. Empty on pre-repin events, which keep their original pin.
 	FlowHash string `json:"flow_hash,omitempty"`
+	// Provision: the run failed provisioning its workspace (env_failed), so
+	// "try again" is provisioning it again — afresh, under the same name, so
+	// the provisioner picks up what the failed attempt left — and the cursor
+	// stays where the failure caught it: no stage re-enters before the
+	// workspace is up.
+	Provision bool `json:"provision,omitempty"`
 }
 
 // RunPaused parks a run: the loop goroutine exits cleanly (a controlled
@@ -877,16 +883,23 @@ type RunRetried struct {
 // only play moves it. PauseWaiting is the engine parking a run that has
 // nothing left to do but wait for a human — it reads waiting_on_human, since
 // a run waiting for YOU is not a run someone pressed pause on, and the answer
-// itself wakes it. Empty means user: every pause predating this field was one.
+// itself wakes it. PauseBudget is the engine stopping a run whose spend went
+// past the flow's budget: it reads paused like the button — the work and the
+// workspace are kept — and play grants it another budget's worth (the
+// budget window restarts at the spend play found). Empty means user: every
+// pause predating this field was one. Note says why, for a person: the
+// budget line that tripped.
 type RunPaused struct {
 	StageID string `json:"stage_id,omitempty"`
-	Reason  string `json:"reason,omitempty"` // user|waiting_on_human
+	Reason  string `json:"reason,omitempty"` // user|waiting_on_human|budget
+	Note    string `json:"note,omitempty"`
 }
 
 // RunPaused reasons.
 const (
 	PauseUser    = "user"
 	PauseWaiting = "waiting_on_human"
+	PauseBudget  = "budget"
 )
 
 // RunUnpaused (play) restarts a paused run's loop; it re-enters mid-stage

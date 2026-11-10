@@ -481,7 +481,9 @@ func TestLifecycleMetrics(t *testing.T) {
 	r.OnEvent(ev("r1", 16*time.Second, &event.EdgeTaken{Edge: "on_fail"}))
 	r.OnEvent(ev("r1", 17*time.Second, &event.StageStarted{StageID: "build", Iteration: 2, Harness: "h", Model: "m"}))
 	r.OnEvent(ev("r1", 18*time.Second, &event.StageCompleted{StageID: "build", Skipped: true}))
-	r.OnEvent(ev("r1", 19*time.Second, &event.RunAbandoned{Reason: "budget exceeded: $1"}))
+	r.OnEvent(ev("r1", 18*time.Second, &event.RunPaused{Reason: event.PauseBudget, Note: "budget exceeded: $1"}))
+	r.OnEvent(ev("r1", 18*time.Second, &event.RunUnpaused{}))
+	r.OnEvent(ev("r1", 19*time.Second, &event.RunAbandoned{Reason: "gave up"}))
 	m := r.metrics(t)
 
 	if got := counted(t, m["apothecary.stage.attempts"], "stage", "build"); got != 2 {

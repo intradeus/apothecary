@@ -192,9 +192,9 @@ main:
 	}
 	t.Run("over budget", func(t *testing.T) {
 		_, evs := recoverAt(t, 5)
-		ab, _ := findPayload[*event.RunAbandoned](evs)
-		if ab == nil || !strings.Contains(ab.Reason, "budget exceeded") {
-			t.Errorf("run_abandoned = %+v, want abandoned over the budget: %v", ab, eventTypes(evs))
+		rp, _ := findPayload[*event.RunPaused](evs)
+		if rp == nil || rp.Reason != event.PauseBudget || !strings.Contains(rp.Note, "budget exceeded") {
+			t.Errorf("run_paused = %+v, want paused over the budget: %v", rp, eventTypes(evs))
 		}
 	})
 	t.Run("within budget", func(t *testing.T) {

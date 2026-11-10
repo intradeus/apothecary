@@ -6272,3 +6272,114 @@ false` to every `sysbox-runc` pod; the fix is for the engine to say so.
   one; the retry returns ours with the shim mount each time, and the sibling
   service keeps running. Unit tests pin the retry, the refusal, no second
   recreate after a recreate, and the lookup's failures.
+
+## Budgets pause; retry provisions; provisioning is open and legible (2026-11-10)
+
+- **A spent budget pauses the run.** `checkBudget` no longer abandons: it
+  returns a `budgetPaused` error the loop's exit turns into
+  `run_paused{reason: budget, note: <the ceiling that tripped>}`. The run
+  reads `paused` (view `pause_reason`/`pause_note`), its work and workspace
+  stay, and play grants another budget's worth: `RunUnpaused` after a budget
+  pause sets `Facts.BudgetCostBase/BudgetTurnsBase` to the spend at that
+  play, and `Facts.BudgetSpend` is what the ceilings are held to. The fold
+  derives the window, so no new event field and replay agrees with the live
+  state. The `apothecary.budget.stops` metric counts budget pauses. What
+  still abandons a run: abort, the flow's `abort` terminal, and a dead end in
+  the main chain or an outcome (an absent or exhausted failure edge, giving
+  up at the debug leaf or a manual stage, a missing MR body). Retry accepts
+  all of them in the same workspace.
+- **Retry after `env_failed` provisions again.** The view gets
+  `provision_failed`. `RetryRun` accepts such a run whether or not a stage
+  started or anything was left, and records `run_retried{provision: true}`.
+  runcore then clears the env id and `EnvRequested` and leaves the cursor
+  where the failure caught it, so the loop requests the workspace again
+  under the same name (the provisioner picks up the leftovers) and
+  bootstraps it. A failed bootstrap left a running container with no
+  checkout, so re-attaching to it would have skipped the bootstrap. Rebuild
+  stays what it was: recreating a workspace that exists.
+- **Provisioning egress is open.** The gateway keeps `Routes.Open`
+  (run → deadline), set by `PUT /runs/{run}/open` and cleared by
+  `DELETE /runs/{run}/open` or a detach. An open run's :80/:443 traffic is
+  judged by `verdictOpen`: everything but the project's blocked domains,
+  and in deny mode its denylist. Its raw egress is accepted by an nft
+  `ip saddr` rule placed after the protected-destination drops. The
+  provisioner opens the window as soon as the run is attached (docker and
+  Kubernetes), with the provision timeout plus a minute as the deadline,
+  and `provision` closes it on every exit. The deadline, enforced by the
+  gateway's watch loop, closes a window an engine killed mid-build never
+  closed. Per run, never a project-mode flip: other runs of the project keep
+  the policy. A window the gateway refuses is logged and provisioning goes on
+  under the policy.
+- **The provisioning log says where it is.** Every step line carries
+  `[+mm:ss]` since provisioning began. New steps: the checkout's repository
+  and branch (userinfo stripped), the definition, container preparation,
+  connecting to the engine, waiting for the workspace, and on Kubernetes
+  reusing, creating or replacing the pod and cloning into it. While waiting
+  for the pod, its phase and each unready container's state
+  (`ImagePullBackOff: …`, exits, restarts) are written whenever they change
+  (`kube.ContainerStatus.State`). The log ends with `=== workspace … ready
+  in …` or `=== provisioning failed after …: <cause> ===`.
+- **Relay links name the UI's host.** A relay bound to every interface
+  cannot know the machine's reachable name. `portrelay.ForHost` rewrites
+  its `localhost` URLs to the host of the request that asks (expose, open
+  editor, the ports list, service previews). A specific bind, host routing
+  and a request on localhost are left alone. `SSHAdvertiseAddr` no longer
+  refuses a wildcard door with nothing to advertise: it returns `:port`, and
+  `GET /runs/{id}/ssh` fills in the request's host. Residual: those
+  listeners are raw TCP without sign-in, as they always were on a wildcard
+  bind. `APOTHECARY_APPS_DOMAIN` is the mode behind the session. code-server
+  over plain HTTP on a non-localhost origin has no secure context, so its
+  webviews need TLS in front.
+- **Thinking** reads in the body face at the label size. A thought you open
+  or close keeps that state, keyed by its segment, through new messages and
+  through the live thought giving way to the recorded one. Thoughts you
+  never touched still follow the stream.
+
+## The owner's answers reach later stages: run.ping_answers (2026-11-10)
+
+- Found live: the builder asked, the answer changed the plan, the builder
+  followed the answer — and the reviewer, whose inputs were the ticket, the
+  plan and the diff, rejected the build for deviating from the plan. The
+  answers lived in the pings, where no later stage could read them.
+- A new engine source, `run.ping_answers`, of a new value type,
+  `ping_answers`, read from the run's log (`run.ReducePings`) when the
+  prompt is built. Engine-side on purpose: it is the record of what the
+  person said, which a builder-written "decisions" file could forget or
+  misquote, and any flow's stage opts in with one port.
+- What counts: every answered agent question; a gate, debug leaf or manual
+  stage only when the person wrote feedback or review comments; never a
+  phase confirmation or a selection (they decide what runs, not what is
+  built). Each answer is rendered by `composeAnswerText`, the renderer the
+  asking agent read it through, its attachments named (`answerFileRefs`,
+  no delivery: the workspace has them). Quoted line by line, oldest first,
+  capped at `flow.PingAnswersBudget` (32 KiB): the oldest go first, a long
+  question gives way to its answer, a long answer is cut on a line.
+- Unlike a ticket's comments the answers are the owner's direction, and the
+  section says so: they amend the plan and other inputs where they differ, a
+  later answer over an earlier one. Nothing answered still renders a line,
+  so a prompt naming the input never meets a silence.
+- The `builder` template wires it into build, review, redact and the
+  review-fix round; the reviewer's prompt checks the plan "as the task
+  owner's answers amend it". Take-over messages are not in it: the source
+  is about pings, and a held session's words reach that session already.
+
+## The build cache only goes on an image that is built (2026-11-10)
+
+- Found live, right after the container-replacement fix: the CLI replaced
+  the foreign container, then failed to create its own. With a gateway,
+  `up` always carried `--cache-from` (twice) and `--cache-to`. The CLI
+  writes `cache_from` into its compose override under the service's
+  `build:`, and the repo's prebuilt compose file had reset that service's
+  build (`build: !reset null`). So `cache_from` landed directly on the
+  service, and compose refused the override
+  (`services.devcontainer.cache_from false schema`). It had never shown up
+  before because the CLI skips the build when it reuses a container, and
+  the repo's `initializeCommand` always left one to reuse.
+- `devcontainerDef.cacheBuilds`: a single-container devcontainer keeps the
+  flags. A compose one keeps them only when its service has a `build:` in
+  the merged configuration (`docker compose -f … config --format json`,
+  which resolves overrides and `!reset` the way the build will). If the
+  configuration cannot be read, or names no such service, the cache stays
+  off: the flags only ever buy speed, and a wrong guess fails the build.
+  The provisioning log says when and why the cache is off. An image-only
+  service has nothing to cache anyway.

@@ -26,33 +26,38 @@ func AgentPingType(t string) bool {
 // was in, which is why FactBearing must cover every event that moves State,
 // Dormant or Hold.
 type Facts struct {
-	LastTS          time.Time  `json:"last_ts"`
-	EndedAt         *time.Time `json:"ended_at,omitempty"`
-	EndReason       string     `json:"end_reason,omitempty"`   // RunAbandoned.Reason | RunFailed.Reason
-	StalledAt       string     `json:"stalled_at,omitempty"`   // RunAbandoned.StalledAt
-	TrackerKind     string     `json:"tracker_kind,omitempty"` // RunCreated.TicketSourceKind (View's copy is json:"-")
-	QueuedMS        int64      `json:"queued_ms"`
-	ProvisioningMS  int64      `json:"provisioning_ms"`
-	ActiveMS        int64      `json:"active_ms"`
-	WaitingHumanMS  int64      `json:"waiting_human_ms"`
-	HeldMS          int64      `json:"held_ms"`
-	PausedMS        int64      `json:"paused_ms"`
-	CostUSD         float64    `json:"cost_usd"`
-	ReworkCostUSD   float64    `json:"rework_cost_usd"`
-	InputTokens     int        `json:"input_tokens"`
-	OutputTokens    int        `json:"output_tokens"`
-	Turns           int        `json:"turns"`
-	Attempts        int        `json:"attempts"`
-	FailedAttempts  int        `json:"failed_attempts"`
-	Retries         int        `json:"retries"`
-	TryAgains       int        `json:"try_agains"`
-	Pings           int        `json:"pings"`
-	PingsUnwanted   int        `json:"pings_unwanted"`
-	PingsAnswered   int        `json:"pings_answered"`
-	GatesRejected   int        `json:"gates_rejected"`
-	HumanResponseMS int64      `json:"human_response_ms"`
-	Holds           int        `json:"holds"`
-	MRsCreated      int        `json:"mrs_created"`
+	LastTS         time.Time  `json:"last_ts"`
+	EndedAt        *time.Time `json:"ended_at,omitempty"`
+	EndReason      string     `json:"end_reason,omitempty"`   // RunAbandoned.Reason | RunFailed.Reason
+	StalledAt      string     `json:"stalled_at,omitempty"`   // RunAbandoned.StalledAt
+	TrackerKind    string     `json:"tracker_kind,omitempty"` // RunCreated.TicketSourceKind (View's copy is json:"-")
+	QueuedMS       int64      `json:"queued_ms"`
+	ProvisioningMS int64      `json:"provisioning_ms"`
+	ActiveMS       int64      `json:"active_ms"`
+	WaitingHumanMS int64      `json:"waiting_human_ms"`
+	HeldMS         int64      `json:"held_ms"`
+	PausedMS       int64      `json:"paused_ms"`
+	CostUSD        float64    `json:"cost_usd"`
+	ReworkCostUSD  float64    `json:"rework_cost_usd"`
+	InputTokens    int        `json:"input_tokens"`
+	OutputTokens   int        `json:"output_tokens"`
+	Turns          int        `json:"turns"`
+	// BudgetCostBase/BudgetTurnsBase are the spend the budget window starts
+	// at: zero, until a play resumes a run the budget paused — the flow's
+	// ceilings then count from the spend at that play (BudgetSpend).
+	BudgetCostBase  float64 `json:"budget_cost_base,omitempty"`
+	BudgetTurnsBase int     `json:"budget_turns_base,omitempty"`
+	Attempts        int     `json:"attempts"`
+	FailedAttempts  int     `json:"failed_attempts"`
+	Retries         int     `json:"retries"`
+	TryAgains       int     `json:"try_agains"`
+	Pings           int     `json:"pings"`
+	PingsUnwanted   int     `json:"pings_unwanted"`
+	PingsAnswered   int     `json:"pings_answered"`
+	GatesRejected   int     `json:"gates_rejected"`
+	HumanResponseMS int64   `json:"human_response_ms"`
+	Holds           int     `json:"holds"`
+	MRsCreated      int     `json:"mrs_created"`
 	// Stages counts the attempts started per stage id; its length is the
 	// number of distinct stages the run entered.
 	Stages map[string]int `json:"stages,omitempty"`
@@ -104,6 +109,13 @@ const (
 	OutcomeFailed    = "failed"
 	OutcomeAbandoned = "abandoned"
 )
+
+// BudgetSpend is the spend the flow's budget is held to: everything since
+// the budget window last opened (the run's start, or the play that resumed
+// it past its budget).
+func (f Facts) BudgetSpend() (float64, int) {
+	return f.CostUSD - f.BudgetCostBase, f.Turns - f.BudgetTurnsBase
+}
 
 // WallMS is the run's wall clock so far: the sum of the six buckets.
 func (f Facts) WallMS() int64 {

@@ -185,7 +185,6 @@ func TestBootRefusals(t *testing.T) {
 		want string
 	}{
 		{"apps host needs a UI address", map[string]string{"APOTHECARY_APPS_DOMAIN": "apps.example"}, "APOTHECARY_PUBLIC_URL"},
-		{"ssh door with no host", map[string]string{"APOTHECARY_SSH_LISTEN": "0.0.0.0:2222"}, "APOTHECARY_SSH_ADVERTISE"},
 		{"ssh door with a bad address", map[string]string{"APOTHECARY_SSH_LISTEN": "nonsense"}, "APOTHECARY_SSH_LISTEN"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
