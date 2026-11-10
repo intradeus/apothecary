@@ -1216,6 +1216,8 @@ export default {
 		'# TASK — the ticket: title, key, status, labels, goal, direction for this attempt, attached files',
 	'flow.agents.addsDiscussion':
 		'# TICKET DISCUSSION — the latest comments on the ticket, oldest first, quoted as untrusted text (omitted when there are none)',
+	'flow.agents.addsAnswers':
+		'# PING ANSWERS — what the task’s owner answered during the run, oldest first, as direction that amends the plan',
 	'flow.agents.addsFeed': 'the {type} the edge carried, when one entered (attempt n of m)',
 	'flow.agents.addsChangeset': 'the changed files, listed (never the diff)',
 	'flow.agents.addsLink': 'the link',

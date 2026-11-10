@@ -10,3 +10,4 @@ After 3.0.0 :
 - 55) Collaborative planning (back and forth between an agentic stage and the task owner)
 - 56) Secrets inside the sandbox - engine's credential manager should be able to inject secrets in the sandbox's secret manager, for usage in scripts (ex: glab or whatever). Those secrets should not be accessible by agent stages directly, but through tool calls (maybe ? Or reuse that nvidia/microsoft technique with secret aliases - agent thinks the secret is 'abc' but all secrets are replaced live by a watcher, since 'abc' = 'password123!'), or by command stages (i guess ? for now). credentials reaper should properly work too, for those injected secrets in the sandbox's cred manager 
 - 57) k8s / docker compose. Should we choose 1 and stick to it ? annoying to manage both, will personally only use k3s.
+- 58) takeover's release is slow - what is it waiting for ?

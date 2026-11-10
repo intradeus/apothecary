@@ -711,7 +711,7 @@ flow is written against, and no binding names them:
 | run identity | run id and its bearer token, for the ask_human channel |
 
 A flow declares none of it because none of it varies per stage. `run.ticket`,
-`run.ticket.comments`, `run.git.*`, `run.mr.url`, `run.workspace` and `run.service.<name>` (§4) are how a stage reaches into
+`run.ticket.comments`, `run.ping_answers`, `run.git.*`, `run.mr.url`, `run.workspace` and `run.service.<name>` (§4) are how a stage reaches into
 this context explicitly, and those *are* declared, as ports.
 
 ---
@@ -1397,6 +1397,7 @@ What the names are checked against follows from the stage type:
 | `repo:docs/spec.md` | a file of the repository nothing in the flow writes | any file type |
 | `run.ticket` | the run's ticket — title, change type, goal, the person's direction for this attempt, the files attached to it, and its key, status and labels as they are when the prompt is built; an agent reading it gets the `# TASK` section | `ticket` |
 | `run.ticket.comments` | the comments on the run's ticket — the remote issue's, synced, or the internal tracker's — read when the prompt is built, right after the ticket is refreshed from its tracker. Options on the port: `limit`, how many of the latest it shows (1–200, default 20), and `exclude_own` (default `true`), which leaves out what apothecary posted (the internal tracker's run comments, and the remote comments signed with its trailer). An agent reading it gets a `# TICKET DISCUSSION` section; no comment left to show, no section | `ticket_comments` |
+| `run.ping_answers` | what the task's owner answered while the run went on, read from the run's log when the prompt is built: every question an agent asked (`ask_human`), and a gate, a `debug` leaf or a `manual` stage when the person wrote feedback or review comments there (a bare approve says nothing; a phase confirmation never counts). Oldest first, each under the stage that asked and when, the question and the answer quoted; capped at 32 KiB, the oldest dropped first. An agent reading it gets a `# PING ANSWERS` section that presents the answers as the owner's direction, amending the plan where they differ; nothing answered yet, it says so. The `builder` template's reviewer reads it, so a plan changed by an answer is not taken for a deviation | `ping_answers` |
 | `run.git.diff_target` | `git diff --name-status <target>...HEAD` — what the branch changes against **its target**, the branch it forked from and its merge request merges into: the changed-file list, never the full diff. On a multi-repo run one section per checkout, on a subject the subject's only | `changeset` |
 | `run.git.diff_phase` | `git diff --name-status <chain start>...HEAD` — what **this chain run** committed since the head it began on: a review round's fixes, not the whole branch. A chain run that began on no recorded head counts from the target | `changeset` |
 | `run.git.status` | `git status --short` — staged, unstaged and untracked files, what a commit would record right now (the diffs compare commits, so they cannot see this); scoped per checkout like the diffs | `changeset` |
@@ -1517,7 +1518,7 @@ path is the stage's to say.
 
 The prompt is assembled, never templated, from the stage's ports: each input
 renders by its type — a `ticket` as the `# TASK` section, `ticket_comments` as
-the `# TICKET DISCUSSION` section, a file as `# INPUT: <name> — <description>
+the `# TICKET DISCUSSION` section, `ping_answers` as the `# PING ANSWERS` section, a file as `# INPUT: <name> — <description>
 (file: <path>)` and its content, a changeset as its file list, a failure or a
 verdict as what the edge carried — and the outputs as the `# OUTPUT
 CONTRACT`, each path with its shape. An agent sees the ticket only through a
@@ -1553,7 +1554,7 @@ input:
 | `review_replies` | a review round's answers (below): a list of `{thread, did, reply, resolve, rationale, evidence}` | `reply_review_comments`, a curating `human_gate` |
 | `mr_threads` | what is on the merge request, as `load_review_comments` read it (below): every thread with its comments, and the notes a person dropped at a gate | the reviewing and fixing agents, the curation page, the engine's own guards |
 | `commit_message` | `{"subject": "...", "body": "..."}` — a one-line subject (at most 100 characters), an optional body | `commit` |
-| `ticket`, `ticket_comments`, `changeset`, `failure`, `link` | values the engine provides — and `verdict`, from `edge.verdict` | inputs only |
+| `ticket`, `ticket_comments`, `ping_answers`, `changeset`, `failure`, `link` | values the engine provides — and `verdict`, from `edge.verdict` | inputs only |
 
 **Why these, and nothing else.** A file type exists for a structure something
 *built in* reads — the router, an action — and the action's port names it, so

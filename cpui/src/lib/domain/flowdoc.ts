@@ -92,6 +92,10 @@ export const SOURCE_TICKET = 'run.ticket';
 // The comments on the run's ticket, read as the prompt is built: the latest
 // `limit` (default 20), apothecary's own left out unless `exclude_own: false`.
 export const SOURCE_TICKET_COMMENTS = 'run.ticket.comments';
+// What the task's owner answered during the run — an agent's questions, and
+// what a person said at a gate — read from the run's log as the prompt is
+// built: how a later stage learns what changed the plan.
+export const SOURCE_PING_ANSWERS = 'run.ping_answers';
 export const SOURCE_STATUS = 'run.git.status';
 export const SOURCE_DIFF_TARGET = 'run.git.diff_target';
 export const SOURCE_DIFF_PHASE = 'run.git.diff_phase';
@@ -108,6 +112,7 @@ export const SOURCE_FAILURE = 'edge.failure';
 export const ENGINE_SOURCES: Record<string, string> = {
 	[SOURCE_TICKET]: 'ticket',
 	[SOURCE_TICKET_COMMENTS]: 'ticket_comments',
+	[SOURCE_PING_ANSWERS]: 'ping_answers',
 	[SOURCE_STATUS]: 'changeset',
 	[SOURCE_DIFF_TARGET]: 'changeset',
 	[SOURCE_DIFF_PHASE]: 'changeset',
@@ -147,7 +152,14 @@ export const FILE_TYPES = [
 ];
 /** A verdict is also what edge.verdict gives: the one file type an engine
  *  source has too. */
-export const VALUE_TYPES = ['ticket', 'ticket_comments', 'changeset', 'failure', 'link'];
+export const VALUE_TYPES = [
+	'ticket',
+	'ticket_comments',
+	'ping_answers',
+	'changeset',
+	'failure',
+	'link'
+];
 /** What a gate shows the person: any file — a review to curate, the threads
  *  beside it, a plain document — and folders of them (a link is typed by
  *  its source). */

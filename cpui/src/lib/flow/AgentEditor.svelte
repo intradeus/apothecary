@@ -126,6 +126,7 @@
 		for (const d of a.inputs ?? []) {
 			if (d.type === 'ticket') lines.push(t('flow.agents.addsTask'));
 			else if (d.type === 'ticket_comments') lines.push(t('flow.agents.addsDiscussion'));
+			else if (d.type === 'ping_answers') lines.push(t('flow.agents.addsAnswers'));
 			else if (d.type === 'failure' || d.type === 'verdict')
 				lines.push(`# INPUT: ${d.name} — ${t('flow.agents.addsFeed', { type: d.type })}`);
 			else if (d.type === 'changeset')
