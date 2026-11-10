@@ -2,6 +2,12 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v3.2.5 (2026-11-10)
+
+### Fixes
+
+- **workspace**: sandbox permission issue, reaper not working for failed provisions
+
 ## v3.2.4 (2026-11-09)
 
 ### Fixes
