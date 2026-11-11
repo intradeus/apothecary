@@ -167,9 +167,9 @@ func (s *Server) postRerun(w http.ResponseWriter, r *http.Request) {
 		Flow: body.Flow, Goal: body.Goal, SourceBranch: body.SourceBranch, AttachmentIDs: body.AttachmentIDs,
 		Params: body.Params, MR: body.MR, Skillsets: body.Skillsets,
 	})
-	var busy engine.ErrTicketBusy
+	var busy runBusy
 	if errors.As(err, &busy) {
-		writeJSON(w, http.StatusConflict, ErrorResponse{Error: err.Error(), RunID: busy.RunID})
+		writeJSON(w, http.StatusConflict, ErrorResponse{Error: err.Error(), RunID: busy.ActiveRunID()})
 		return
 	}
 	if err != nil {
@@ -256,8 +256,13 @@ func (s *Server) runRoutes() []Route {
 			Summary: "A stage's captured log (latest attempt)",
 			Query:   tailQuery, Handler: s.getLog, Produces: "text/plain", Scope: ScopeRun},
 		{Method: "GET", Path: "/api/runs/{id}/workspace-log", ID: "getWorkspaceLog", Tag: tagWorkspace,
-			Summary: "Live tail of the workspace's exec log",
-			Query:   tailQuery, Handler: s.getWorkspaceLog, Produces: "text/plain", Scope: ScopeRun},
+			Summary: "A range of the workspace's live exec log",
+			Doc:     "Without from: the last n bytes. With from: up to n bytes from that offset — the end of the last read, to keep up, or a range ending at the start of what is on screen, to go back. A size below the offset kept up to means the log was replaced: read the tail again.",
+			Query: []Param{
+				{Name: "from", Doc: "byte offset to read from (default: the tail)", Type: "integer"},
+				{Name: "n", Doc: "bytes to read (default 64 KiB, at most 8 MiB)", Type: "integer"},
+			},
+			Handler: s.getWorkspaceLog, Returns: WorkspaceLog{}, Scope: ScopeRun},
 
 		{Method: "POST", Path: "/api/runs/{id}/abort", ID: "abortRun", Tag: tagRuns,
 			Summary: "Stop a run for good", Handler: s.postAbort, Status: http.StatusAccepted, Scope: ScopeRun},

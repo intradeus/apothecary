@@ -447,3 +447,20 @@ func TestParseCgroupSample(t *testing.T) {
 		t.Fatal("no cpu accepted")
 	}
 }
+
+// The working set, not the charge: the inactive file cache a build leaves
+// behind is what the kernel reclaims first, so it is no one's usage.
+func TestParseCgroupSampleWorkingSet(t *testing.T) {
+	s, err := parseCgroupSample("cpu 1\nmem 18200\ninactive 14800\n")
+	if err != nil || s.memUsed != 3400 {
+		t.Fatalf("working set = %d, %v", s.memUsed, err)
+	}
+	// A memory.stat that cannot be read leaves the charge as it is.
+	if s, _ = parseCgroupSample("cpu 1\nmem 500\ninactive\n"); s.memUsed != 500 {
+		t.Fatalf("no inactive_file = %d", s.memUsed)
+	}
+	// Counters read a moment apart never go below zero.
+	if s, _ = parseCgroupSample("cpu 1\nmem 100\ninactive 120\n"); s.memUsed != 0 {
+		t.Fatalf("clamped = %d", s.memUsed)
+	}
+}

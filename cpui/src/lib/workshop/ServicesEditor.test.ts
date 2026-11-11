@@ -257,6 +257,14 @@ describe('ServicesEditor', () => {
 		expect(props.rows[0]).toMatchObject({ name: 'api', description: 'The API', stop: 'kill' });
 	});
 
+	it('says what Stop does when no stop command is given', async () => {
+		setup([row()]);
+		const info = screen.getByRole('button', { name: 'What Stop does without a stop command' });
+		expect(info).toHaveAccessibleDescription(/SIGTERM .* then sends SIGKILL/);
+		await userEvent.hover(info);
+		expect(screen.getByRole('tooltip')).toHaveTextContent(/docker compose up -d/);
+	});
+
 	it('switches the probe, showing its field and durations', async () => {
 		const props = setup([row()]);
 		expect(screen.getByText(/No probe: up as soon as it started/)).toBeInTheDocument();

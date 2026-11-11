@@ -399,7 +399,9 @@ type ResourceSampler interface {
 // adapter's business; implementations that cannot stream simply don't
 // implement the interface and the API degrades honestly.
 type ExecLogTailer interface {
-	TailExecLog(ctx context.Context, env EnvID, n int) ([]byte, error)
+	// ReadExecLog reads up to n bytes from offset from, or the last n bytes
+	// when from is negative (ReadExecLogRange says how a range is cut).
+	ReadExecLog(ctx context.Context, env EnvID, from, n int64) (ExecLogChunk, error)
 }
 
 // Sidecar is an OPTIONAL EnvProvisioner capability: the per-workspace

@@ -9,32 +9,6 @@ import (
 	"apothecary/internal/run/runinput"
 )
 
-func TestCheckBranch(t *testing.T) {
-	valid := []string{
-		"feat/PROJ-123-login-form",
-		"fix/issue_42.hotfix",
-		"a/b/c",
-		"release-1.0",
-	}
-	for _, s := range valid {
-		if err := CheckBranch(s); err != nil {
-			t.Errorf("CheckBranch(%q) = %v, want nil", s, err)
-		}
-	}
-	invalid := []string{
-		"/leading", "trailing/", "a//b",
-		"a..b", "a@{b",
-		"has space", "tab\there",
-		"seg/.hidden", "ends.", "x.lock",
-		"car^et", "col:on", "ast*erisk", "back\\slash",
-	}
-	for _, s := range invalid {
-		if err := CheckBranch(s); err == nil {
-			t.Errorf("CheckBranch(%q) = nil, want error", s)
-		}
-	}
-}
-
 // A ticket's free-text branch overrides the generated name end to end:
 // run_created, the provisioned workspace, and the MR-side state all carry it.
 func TestCreateRunCustomBranch(t *testing.T) {

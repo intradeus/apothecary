@@ -23,8 +23,9 @@
 
 	let rows = $state<EgressAuditRow[] | null>(null);
 	let policy = $state<EgressPolicy | null>(null);
-	/** The gateway's policy; it goes with the workspace. */
-	const gateway = $derived(rs.hasWorkspace ? policy : null);
+	/** The gateway's policy: from provisioning — when what the run reaches
+	 *  is allowed as it goes — until the workspace goes. */
+	const gateway = $derived(rs.workspaceLive ? policy : null);
 	let host = $state('');
 	let toggling = $state<Record<string, boolean>>({});
 	let error = $state('');
@@ -41,7 +42,7 @@
 				error = errorMessage(e);
 				auditFailed = true;
 			});
-		if (rs.hasWorkspace)
+		if (rs.workspaceLive)
 			api.egress
 				.policy(rs.runId)
 				.then((p) => (policy = p))

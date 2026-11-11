@@ -9,6 +9,8 @@ import (
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runinput"
+	"apothecary/internal/workitem"
+	"apothecary/internal/workitem/ticket"
 )
 
 // Concurrent starts on one ticket: exactly one run is created, every other
@@ -49,9 +51,9 @@ func TestConcurrentStartsOnOneTicketCreateOneRun(t *testing.T) {
 		t.Fatalf("%d runs created, want exactly 1 (errors: %v)", len(ids), errs)
 	}
 	for _, err := range errs {
-		var busy ErrTicketBusy
-		if !errors.As(err, &busy) || busy.RunID != ids[0] || busy.TicketID != "tk-race" {
-			t.Errorf("refusal = %v, want ErrTicketBusy naming %s", err, ids[0])
+		var busy workitem.ErrBusy
+		if !errors.As(err, &busy) || busy.RunID != ids[0] || busy.Item != ticket.Ref(testProject, "tk-race") {
+			t.Errorf("refusal = %v, want ErrBusy naming %s", err, ids[0])
 		}
 	}
 	<-entered
@@ -69,9 +71,9 @@ func TestTicketBusyRule(t *testing.T) {
 		h := newHarness(t, mustFlow(t, loopFlowDoc))
 		h.seed(t, "r-live", &event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, TicketID: "tk-1"})
 		_, err := h.e.CreateRun(ctx, runinput.Ticket{TicketID: "tk-1", Title: "T"}, "loop", testProject)
-		var busy ErrTicketBusy
+		var busy workitem.ErrBusy
 		if !errors.As(err, &busy) || busy.RunID != "r-live" {
-			t.Fatalf("CreateRun = %v, want ErrTicketBusy naming r-live", err)
+			t.Fatalf("CreateRun = %v, want ErrBusy naming r-live", err)
 		}
 		if got := err.Error(); got != "ticket tk-1 is busy: run r-live is still active; abort it or wait for it to end" {
 			t.Errorf("message = %q", got)
@@ -186,9 +188,9 @@ func TestRerunRefusedWhileTheTicketIsBusy(t *testing.T) {
 	h.e.Wait(id)
 	h.seed(t, "r-live", &event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, TicketID: "tk-b"})
 	_, err = h.e.Rerun(ctx, id, runinput.Input{})
-	var busy ErrTicketBusy
+	var busy workitem.ErrBusy
 	if !errors.As(err, &busy) || busy.RunID != "r-live" {
-		t.Fatalf("Rerun = %v, want ErrTicketBusy naming r-live", err)
+		t.Fatalf("Rerun = %v, want ErrBusy naming r-live", err)
 	}
 	if v := h.view(t, "r-live"); v.State != run.Pending {
 		t.Errorf("the active run was touched: %s", v.State)

@@ -4,6 +4,7 @@ import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { PROVISION_STAGE } from '$lib/run/derive';
+import type { LogRange } from '$lib/domain';
 import { aRun } from '$test/fixtures';
 import { aLiveRun, anEvent, aViewStore } from '$test/fixtures/run-views';
 import { deferred } from '$test/helpers';
@@ -12,6 +13,13 @@ import LogsView from './LogsView.svelte';
 vi.mock('$lib/api', () => ({ api: { runs: { workspaceLog: vi.fn(), stageLog: vi.fn() } } }));
 
 const RUN = '01TESTRUN0000000000000ABCD';
+/** A range of the log: `text`, starting at byte `start` of a log that ends with it. */
+const logOf = (text: string, start = 0, size = start + text.length): LogRange => ({
+	text,
+	start,
+	end: start + text.length,
+	size
+});
 const provisioned = anEvent(1, 'env_requested');
 const stageEvents = [
 	anEvent(2, 'stage_completed', { stage_id: 'plan' }),
@@ -23,15 +31,15 @@ const reload = () => screen.queryByRole('button', { name: 'Reload' });
 
 async function open(rs = live()) {
 	const view = render(LogsView, { rs, visible: true });
-	await tick();
-	await tick();
+	// The first read, and the scroll to the bottom it ends with, settle.
+	for (let i = 0; i < 4; i++) await tick();
 	return { ...view, rs };
 }
 
 describe('LogsView', () => {
 	beforeEach(() => {
 		vi.resetAllMocks();
-		vi.mocked(api.runs.workspaceLog).mockResolvedValue('');
+		vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf(''));
 		vi.mocked(api.runs.stageLog).mockResolvedValue('');
 	});
 	afterEach(() => {
@@ -46,12 +54,12 @@ describe('LogsView', () => {
 		});
 
 		it('says it is connecting until the log lands', async () => {
-			const log = deferred<string | null>();
+			const log = deferred<LogRange | null>();
 			vi.mocked(api.runs.workspaceLog).mockReturnValue(log.promise);
 			render(LogsView, { rs: live(), visible: true });
 
 			expect(screen.getByRole('status')).toHaveTextContent('Connecting…');
-			log.resolve('booted');
+			log.resolve(logOf('booted'));
 			expect(await screen.findByText('booted')).toBeInTheDocument();
 			expect(screen.queryByRole('status')).not.toBeInTheDocument();
 		});
@@ -106,7 +114,7 @@ describe('LogsView', () => {
 
 	describe('the lines', () => {
 		it('shows one row per line, without a trailing blank', async () => {
-			vi.mocked(api.runs.workspaceLog).mockResolvedValue('one\ntwo\n');
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('one\ntwo\n'));
 			await open();
 			const first = screen.getByText('one');
 			expect(first.parentElement?.children).toHaveLength(2);
@@ -120,19 +128,19 @@ describe('LogsView', () => {
 			['harness started', 'hue-running'],
 			['shim ready', 'hue-accent']
 		])('tints %s by its source', async (line, hue) => {
-			vi.mocked(api.runs.workspaceLog).mockResolvedValue(line);
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf(line));
 			await open();
 			expect(screen.getByText(line)).toHaveClass(hue);
 		});
 
 		it('leaves plain output untinted, and only matches whole words', async () => {
-			vi.mocked(api.runs.workspaceLog).mockResolvedValue('terrorised shimmer');
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('terrorised shimmer'));
 			await open();
 			expect(screen.getByText('terrorised shimmer').className).not.toMatch(/hue-/);
 		});
 
 		it('lets a failure outrank its source', async () => {
-			vi.mocked(api.runs.workspaceLog).mockResolvedValue('tunnel failed');
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('tunnel failed'));
 			await open();
 			expect(screen.getByText('tunnel failed')).toHaveClass('hue-danger');
 		});
@@ -160,7 +168,7 @@ describe('LogsView', () => {
 
 		it('reads the workspace log by default', async () => {
 			await open();
-			expect(api.runs.workspaceLog).toHaveBeenCalledExactlyOnceWith(RUN);
+			expect(api.runs.workspaceLog).toHaveBeenCalledExactlyOnceWith(RUN, { n: 2 << 20 });
 			expect(api.runs.stageLog).not.toHaveBeenCalled();
 			expect(source('Workspace · live')).toBeChecked();
 		});
@@ -256,20 +264,53 @@ describe('LogsView', () => {
 		});
 
 		it('reads the live tail every 2.5s', async () => {
-			vi.mocked(api.runs.workspaceLog).mockResolvedValue('first');
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('first'));
 			await open();
-			vi.mocked(api.runs.workspaceLog).mockResolvedValue('first\nsecond');
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('\nsecond', 5));
 
 			await vi.advanceTimersByTimeAsync(2500);
 
-			expect(api.runs.workspaceLog).toHaveBeenCalledTimes(2);
+			// Only what was written since: the read starts where the last ended.
+			expect(api.runs.workspaceLog).toHaveBeenLastCalledWith(RUN, { from: 5, n: 1 << 20 });
+			expect(screen.getByText('first')).toBeInTheDocument();
 			expect(screen.getByText('second')).toBeInTheDocument();
 		});
 
-		it('keeps the old lines on screen between reads', async () => {
-			vi.mocked(api.runs.workspaceLog).mockResolvedValue('first');
+		it('reads the tail again when the log was replaced', async () => {
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('old workspace'));
 			await open();
-			vi.mocked(api.runs.workspaceLog).mockReturnValue(deferred<string>().promise);
+			vi.mocked(api.runs.workspaceLog)
+				.mockResolvedValueOnce(logOf('', 3, 3))
+				.mockResolvedValueOnce(logOf('new'));
+
+			await vi.advanceTimersByTimeAsync(2500);
+
+			expect(api.runs.workspaceLog).toHaveBeenLastCalledWith(RUN, { n: 2 << 20 });
+			expect(screen.getByText('new')).toBeInTheDocument();
+			expect(screen.queryByText('old workspace')).not.toBeInTheDocument();
+		});
+
+		it('does not read twice while a slow read is out', async () => {
+			await open();
+			vi.mocked(api.runs.workspaceLog).mockReturnValue(deferred<LogRange>().promise);
+			await vi.advanceTimersByTimeAsync(7500);
+			expect(api.runs.workspaceLog).toHaveBeenCalledTimes(2);
+		});
+
+		it('says so when the stream goes away', async () => {
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('first'));
+			await open();
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(null);
+			await vi.advanceTimersByTimeAsync(2500);
+			expect(
+				screen.getByText('No live output here — this provisioner does not stream it.')
+			).toBeInTheDocument();
+		});
+
+		it('keeps the old lines on screen between reads', async () => {
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('first'));
+			await open();
+			vi.mocked(api.runs.workspaceLog).mockReturnValue(deferred<LogRange>().promise);
 
 			await vi.advanceTimersByTimeAsync(2500);
 
@@ -320,14 +361,23 @@ describe('LogsView', () => {
 			expect(screen.queryByText('tail -f')).not.toBeInTheDocument();
 		});
 
-		it('does not tail before there is a workspace', async () => {
+		// The clone and the build stream into the same log before the
+		// workspace exists.
+		it('tails a provisioning run', async () => {
 			await open(aViewStore(aRun({ state: 'provisioning' })));
+			await vi.advanceTimersByTimeAsync(5000);
+			expect(api.runs.workspaceLog).toHaveBeenCalledTimes(3);
+			expect(screen.getByText('tail -f')).toBeInTheDocument();
+		});
+
+		it('does not tail before provisioning starts', async () => {
+			await open(aViewStore(aRun({ state: 'pending' })));
 			await vi.advanceTimersByTimeAsync(5000);
 			expect(api.runs.workspaceLog).toHaveBeenCalledOnce();
 		});
 
 		it('starts tailing when the workspace appears', async () => {
-			const { rs } = await open(aViewStore(aRun({ state: 'provisioning' })));
+			const { rs } = await open(aViewStore(aRun({ state: 'pending' })));
 			rs.run = aLiveRun();
 			await tick();
 			await vi.advanceTimersByTimeAsync(2500);
@@ -340,13 +390,77 @@ describe('LogsView', () => {
 		});
 
 		it('keeps the lines when one read of the tail fails', async () => {
-			vi.mocked(api.runs.workspaceLog).mockResolvedValue('first');
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('first'));
 			await open();
 			vi.mocked(api.runs.workspaceLog).mockRejectedValue(new Error('blip'));
 
 			await vi.advanceTimersByTimeAsync(2500);
 
 			expect(screen.getByText('first')).toBeInTheDocument();
+		});
+	});
+
+	describe('going back', () => {
+		const earlier = () => screen.queryByRole('button', { name: /^Load earlier output/ });
+
+		it('offers what came before the tail, and puts it above', async () => {
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('tail line', 3 << 20));
+			await open();
+			expect(earlier()).toHaveTextContent('Load earlier output · 3.0 MB before this');
+
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue({
+				text: 'older ',
+				start: 1 << 20,
+				end: 3 << 20,
+				size: 4 << 20
+			});
+			await userEvent.click(earlier()!);
+
+			expect(api.runs.workspaceLog).toHaveBeenLastCalledWith(RUN, { from: 1 << 20, n: 2 << 20 });
+			expect(screen.getByText('older tail line')).toBeInTheDocument();
+			expect(earlier()).toHaveTextContent('1.0 MB before this');
+		});
+
+		it('offers nothing once the log is on screen from its first byte', async () => {
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('all of it'));
+			await open();
+			expect(earlier()).not.toBeInTheDocument();
+		});
+
+		it('starts over when the log moved under it', async () => {
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('tail', 10));
+			await open();
+			vi.mocked(api.runs.workspaceLog)
+				.mockResolvedValueOnce(logOf('other', 0, 5))
+				.mockResolvedValueOnce(logOf('fresh'));
+			await userEvent.click(earlier()!);
+
+			expect(await screen.findByText('fresh')).toBeInTheDocument();
+			expect(earlier()).not.toBeInTheDocument();
+		});
+
+		it('says why it could not go back, and keeps what is on screen', async () => {
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('tail', 10));
+			await open();
+			vi.mocked(api.runs.workspaceLog).mockRejectedValue(new Error('gone'));
+			await userEvent.click(earlier()!);
+
+			expect(screen.getByText('tail')).toBeInTheDocument();
+			expect(earlier()).toBeEnabled();
+		});
+
+		it('keeps nothing it read for a source no longer shown', async () => {
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('tail', 10));
+			const { rs } = await open(live({ events: stageEvents }));
+			const out = deferred<LogRange | null>();
+			vi.mocked(api.runs.workspaceLog).mockReturnValue(out.promise);
+			vi.mocked(api.runs.stageLog).mockResolvedValue('plan output');
+			await userEvent.click(earlier()!);
+			rs.logSource = 'plan';
+			await tick();
+			out.resolve(logOf('older', 5, 14));
+			expect(await screen.findByText('plan output')).toBeInTheDocument();
+			expect(screen.queryByText(/older/)).not.toBeInTheDocument();
 		});
 	});
 
@@ -358,7 +472,7 @@ describe('LogsView', () => {
 
 		beforeEach(() => {
 			vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-			vi.mocked(api.runs.workspaceLog).mockResolvedValue('first');
+			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('first'));
 		});
 
 		it('stays at the bottom as the tail grows', async () => {

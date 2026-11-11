@@ -32,6 +32,7 @@ const LAYERS = [
 	['curation'],
 	['tickets'],
 	['run'],
+	['mrs'],
 	['workshop'],
 	['desk-home', 'inbox', 'shell']
 ];

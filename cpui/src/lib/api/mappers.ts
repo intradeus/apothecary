@@ -82,6 +82,7 @@ import type {
 	EgressAuditRow,
 	EgressDenial,
 	EgressPolicy,
+	LogRange,
 	EnvCheck,
 	EnvCheckStep,
 	FileDiff,
@@ -332,9 +333,7 @@ export function toRunPhase(w: Wire.PhaseInfo): RunPhase {
 export function toMergeRequestRow(w: Wire.MrRow): MergeRequestRow {
 	return {
 		mr: toOpenMergeRequest(w.mr),
-		mine: w.mine ?? false,
 		stackedOn: w.stacked_on ? toMergeRequestBase(w.stacked_on) : undefined,
-		ticketId: w.ticket_id || undefined,
 		run: w.run
 			? {
 					id: w.run.id,
@@ -360,7 +359,9 @@ export function toOpenMergeRequest(w: Wire.MrInfo): OpenMergeRequest {
 		source: w.source,
 		target: w.target,
 		draft: w.draft ?? false,
-		fork: w.fork ?? false
+		fork: w.fork ?? false,
+		body: w.body ?? '',
+		state: w.state === 'merged' || w.state === 'closed' ? w.state : 'open'
 	};
 }
 
@@ -1191,6 +1192,12 @@ export function toNotice(w: Wire.Notice): Notice {
 		createdAt: w.created_at ?? '',
 		lastSeenAt: w.last_seen_at ?? ''
 	};
+}
+
+export function toLogRange(w: Wire.WorkspaceLog): LogRange {
+	const start = w.start ?? 0;
+	const end = w.end ?? start;
+	return { text: w.data ?? '', start, end, size: w.size ?? end };
 }
 
 // --- egress ------------------------------------------------------------------

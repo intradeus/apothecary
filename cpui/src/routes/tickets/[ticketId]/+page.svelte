@@ -12,7 +12,6 @@
 	import { ago, fmtAbs, shortId } from '$lib/core/format';
 	import type { Attachment, Branch, SkillsetRef, Ticket } from '$lib/domain';
 	import { t, th } from '$lib/i18n/index.svelte';
-	import FlowSelect from '$lib/flow/FlowSelect.svelte';
 	import TicketForm from '$lib/tickets/TicketForm.svelte';
 	import ChangeTypeTag from '$lib/tickets/ChangeTypeTag.svelte';
 	import TicketStatusChip from '$lib/tickets/TicketStatusChip.svelte';
@@ -32,9 +31,8 @@
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { I } from '$lib/design/icons';
-	import TransportIcon from '$lib/ui/TransportIcon.svelte';
 	import RunTable from '$lib/run/RunTable.svelte';
-	import StartRunOptions from '$lib/run/StartRunOptions.svelte';
+	import StartRunPanel from '$lib/run/StartRunPanel.svelte';
 	import WorkshopName from '$lib/app/WorkshopName.svelte';
 
 	const ticketId = $derived(page.params.ticketId ?? '');
@@ -166,23 +164,6 @@
 			if (!busyRun) error = errorMessage(e);
 		} finally {
 			starting = false;
-		}
-	}
-
-	async function abortBusy() {
-		const id = busyRun;
-		const ok = await confirmDialog({
-			title: t('run.stop.title', { id: shortId(id) }),
-			body: `${th('run.stop.lead')} ${t('run.stop.kept')}`,
-			action: t('run.stop.action')
-		});
-		if (!ok) return;
-		try {
-			await api.runs.abort(id);
-			busyRun = '';
-			void fleet.refresh();
-		} catch (e) {
-			error = errorMessage(e);
 		}
 	}
 
@@ -335,9 +316,20 @@
 					{@render runList()}
 				</div>
 
-				<aside class="start glass pane">
-					<div class="pane-head"><h2>{t('page.ticket.startRun')}</h2></div>
-					<div class="pane-body sb">
+				<StartRunPanel
+					projectId={ticket.projectId}
+					bind:flow
+					bind:params={runParams}
+					bind:mr={runMR}
+					bind:skillsets={runSkillsets}
+					bind:busyRun
+					busyText={(id) => t('page.ticket.busy', { id })}
+					{starting}
+					onstart={startRun}
+					onerror={(m) => (error = m)}
+					idPrefix="tk"
+				>
+					{#snippet before()}
 						<div class="field">
 							<label for="run-goal"
 								>{t('page.ticket.direction')}
@@ -351,27 +343,8 @@
 							<span class="help">{t('page.ticket.directionHelp')}</span>
 						</div>
 						<AttachFiles bind:files={runFiles} label={t('page.ticket.runFiles')} compact />
-						<div class="field">
-							<label for="flow">{t('page.ticket.flow')}</label>
-							<FlowSelect
-								id="flow"
-								projectId={ticket.projectId}
-								bind:value={flow}
-								fallbackLabel={t('page.ticket.defaultFlow', {
-									flow: project?.defaultFlow || t('page.ticket.projectDefault')
-								})}
-							/>
-						</div>
-						{#if project}
-							<StartRunOptions
-								projectId={ticket.projectId}
-								flowName={flow.trim() || project.defaultFlow}
-								bind:params={runParams}
-								bind:mr={runMR}
-								bind:skillsets={runSkillsets}
-								idPrefix="tk"
-							/>
-						{/if}
+					{/snippet}
+					{#snippet after()}
 						<div class="field">
 							<label for="source-branch">{t('page.ticket.sourceBranch')}</label>
 							{#if branches.length}
@@ -393,20 +366,8 @@
 									: t('page.ticket.branchHelp', { star: I.star })}</span
 							>
 						</div>
-						{#if busyRun}
-							<div class="busy tint-warning" role="alert">
-								<span>{t('page.ticket.busy', { id: shortId(busyRun) })}</span>
-								<a class="btn btn-sm" href={to.run(busyRun)}>{t('page.ping.openRun')}</a>
-								<button class="btn-sm btn-danger" onclick={abortBusy}>{t('run.stop.action')}</button
-								>
-							</div>
-						{/if}
-						<button class="btn-primary btn-lg go" onclick={startRun} aria-busy={starting}>
-							<TransportIcon kind="play" />
-							{t('page.ticket.startRunBtn')}
-						</button>
-					</div>
-				</aside>
+					{/snippet}
+				</StartRunPanel>
 			</div>
 		{/if}
 	</div>
@@ -440,12 +401,6 @@
 		gap: var(--shell-gap);
 		min-width: 0;
 	}
-	.start {
-		border-radius: var(--r-group);
-	}
-	.start .pane-head {
-		border-bottom-color: var(--glass-line);
-	}
 	.goal > :global(.md) {
 		max-width: var(--measure);
 	}
@@ -464,25 +419,6 @@
 		align-items: baseline;
 		gap: 10px;
 		flex-wrap: wrap;
-	}
-	.sb {
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-	}
-	.go {
-		align-self: stretch;
-		margin-top: 2px;
-	}
-	.busy {
-		display: flex;
-		align-items: center;
-		flex-wrap: wrap;
-		gap: 8px;
-		padding: 8px 10px;
-		border-width: 1px;
-		border-style: solid;
-		border-radius: var(--r-sm);
 	}
 	.runs {
 		display: flex;

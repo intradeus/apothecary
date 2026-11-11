@@ -195,8 +195,13 @@ describe('a call that may have nothing to say', () => {
 		await expect(projects.latestEnvCheck('p')).resolves.toMatchObject({ id: 'c', status: 'pass' });
 		reply('getFlowBinding', answer({ flow_name: 'f', params: { a: '1' } }));
 		await expect(flows.binding('p', 'f')).resolves.toMatchObject({ flowName: 'f' });
-		reply('getWorkspaceLog', answer('log text'));
-		await expect(runs.workspaceLog('r', 10)).resolves.toBe('log text');
+		reply('getWorkspaceLog', answer({ data: 'log text', start: 2, end: 10, size: 12 }));
+		await expect(runs.workspaceLog('r', { from: 2, n: 10 })).resolves.toEqual({
+			text: 'log text',
+			start: 2,
+			end: 10,
+			size: 12
+		});
 	});
 });
 
@@ -575,16 +580,38 @@ describe('what each call sends', () => {
 		});
 
 		it('starts a run on a merge request, its number a path segment', async () => {
-			const fn = reply('startMrRun', answer({ run_id: 'r', ticket_id: 't' }));
+			const fn = reply('startMrRun', answer({ run_id: 'r' }));
 			await expect(
-				projects.startRunOnMR('p', 12, { flow: 'f', repo: 'x', params: { a: '1' } })
-			).resolves.toEqual({ runId: 'r', ticketId: 't' });
+				projects.startRunOnMR('p', 12, {
+					flow: 'f',
+					repo: 'x',
+					params: { a: '1' },
+					skillsets: [{ id: 's1', seq: 2 }, { id: 's2' }]
+				})
+			).resolves.toEqual({ runId: 'r' });
 			expect(fn).toHaveBeenCalledWith({
 				path: { id: 'p', iid: '12' },
-				body: { flow: 'f', repo: 'x', params: { a: '1' } }
+				body: {
+					flow: 'f',
+					repo: 'x',
+					params: { a: '1' },
+					skillsets: [{ id: 's1', seq: 2 }, { id: 's2' }]
+				}
 			});
 			await projects.startRunOnMR('p', 12, { params: {} });
 			expect(fn).toHaveBeenLastCalledWith({ path: { id: 'p', iid: '12' }, body: {} });
+		});
+
+		it('reads one merge request, by repository only when told', async () => {
+			const info = { ref: { IID: 3, URL: 'u' }, title: 't', author: 'a', source: 's', target: 'm' };
+			const fn = reply('getProjectMr', answer({ mr: { ...info, body: 'why' }, runs: 1 }));
+			await expect(projects.mergeRequest('p', 3)).resolves.toMatchObject({
+				mr: { iid: 3, body: 'why' },
+				runs: 1
+			});
+			expect(fn).toHaveBeenLastCalledWith({ path: { id: 'p', iid: '3' }, query: undefined });
+			await projects.mergeRequest('p', 3, 'x');
+			expect(fn).toHaveBeenLastCalledWith({ path: { id: 'p', iid: '3' }, query: { repo: 'x' } });
 		});
 
 		it('filters merge requests by repository only when told', async () => {

@@ -13,8 +13,10 @@
 package checkout
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"apothecary/internal/platform/shell"
 )
@@ -47,4 +49,29 @@ func CredentialLine(repoURL, user, pass string) (string, error) {
 		user = "oauth2"
 	}
 	return fmt.Sprintf("%s://%s:%s@%s", u.Scheme, url.QueryEscape(user), url.QueryEscape(pass), u.Host), nil
+}
+
+// CheckBranch refuses user-supplied branch names git check-ref-format
+// would: the run would otherwise die much later, at bootstrap's git switch.
+func CheckBranch(s string) error {
+	if strings.HasPrefix(s, "/") || strings.HasSuffix(s, "/") || strings.Contains(s, "//") {
+		return errors.New(`"/" cannot lead, trail or repeat`)
+	}
+	if strings.Contains(s, "..") || strings.Contains(s, "@{") {
+		return errors.New(`".." and "@{" are not allowed`)
+	}
+	for seg := range strings.SplitSeq(s, "/") {
+		if strings.HasPrefix(seg, ".") {
+			return errors.New(`path segments cannot start with "."`)
+		}
+		if strings.HasSuffix(seg, ".") || strings.HasSuffix(seg, ".lock") {
+			return errors.New(`path segments cannot end with "." or ".lock"`)
+		}
+	}
+	for _, r := range s {
+		if r <= ' ' || r == 0x7f || strings.ContainsRune(`~^:?*[\`, r) {
+			return fmt.Errorf("character %q is not allowed", r)
+		}
+	}
+	return nil
 }

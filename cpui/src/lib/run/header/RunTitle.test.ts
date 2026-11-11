@@ -78,6 +78,22 @@ describe('RunTitle', () => {
 			expect(noLink(/^ticket/)).not.toBeInTheDocument();
 		});
 
+		it('links the merge request a ticketless run was started on', () => {
+			setup({ projectId: 'p1', adopted: { repo: 'repo', iid: 7, url: 'u', title: 'Add keys' } });
+			expect(link('!7')).toHaveAttribute('href', '/merge-requests/p1/7');
+			expect(link('!7')).toHaveAttribute('title', 'Add keys');
+		});
+
+		it('names an extra repository in the merge request link', () => {
+			setup({ projectId: 'p1', adopted: { repo: 'docs', iid: 7, url: 'u' } });
+			expect(link('!7')).toHaveAttribute('href', '/merge-requests/p1/7?repo=docs');
+		});
+
+		it('links the ticket, not the merge request, of a ticket’s run on one', () => {
+			setup({ ticketId: 't1', adopted: { repo: 'repo', iid: 7, url: 'u' } });
+			expect(screen.queryByRole('link', { name: '!7' })).not.toBeInTheDocument();
+		});
+
 		it('opens the tracker issue in a new tab', () => {
 			setup({ ticketUrl: 'https://tracker.test/1' });
 			const issue = link(/tracker issue/);

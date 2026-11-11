@@ -101,6 +101,8 @@ export const anOpenMr = (over: Partial<OpenMergeRequest> = {}): OpenMergeRequest
 	target: 'main',
 	draft: false,
 	fork: false,
+	body: '',
+	state: 'open',
 	...over
 });
 

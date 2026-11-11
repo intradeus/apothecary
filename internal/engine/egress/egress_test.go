@@ -455,3 +455,134 @@ func TestRunIngestsOnEveryTickAndStops(t *testing.T) {
 		t.Fatal("Run outlived its context")
 	}
 }
+
+// rules is the project side of an adoption: what was saved, per project.
+type rules struct {
+	saved map[string][]string
+	err   error
+	calls int
+}
+
+func (r *rules) SaveEgressRule(_ context.Context, projectID string, allow bool, hosts ...string) error {
+	r.calls++
+	if r.err != nil {
+		return r.err
+	}
+	if !allow {
+		panic("adoption only ever allows")
+	}
+	if r.saved == nil {
+		r.saved = map[string][]string{}
+	}
+	r.saved[projectID] = append(r.saved[projectID], hosts...)
+	return nil
+}
+
+// What a provisioning reached only through its open window is allowed, on
+// the project and live; what the policy already rules on, IP literals and
+// what came through the policy are left alone — and each host is looked at
+// once per run.
+func TestIngestAllowsWhatProvisioningReached(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	rl := &rules{}
+	r.svc.Rules = rl
+	r.live(t, "r1", project, "") // still provisioning
+	env := envport.EnvID(wsname.ForRun(run.View{Branch: "feat/r1"}, "r1"))
+	r.prov.Rules = map[envport.EnvID][]string{env: {"blocked.test=deny", "known.test=allow"}}
+	r.prov.audit[env] = []egressport.EgressAuditRecord{
+		{Host: "ghcr.io", Verdict: "allow", Provisioning: true},
+		{Host: "ghcr.io", Port: 80, Verdict: "allow", Provisioning: true}, // same host, another port
+		{Host: "deb.debian.org", Verdict: "allow", Provisioning: true},
+		{Host: "known.test", Verdict: "allow", Provisioning: true},   // allowed already
+		{Host: "blocked.test", Verdict: "allow", Provisioning: true}, // blocked since: left blocked
+		{Host: "203.0.113.9", Verdict: "allow", Provisioning: true},  // an IP literal
+		{Host: "policy.test", Verdict: "allow"},                      // the policy let it through
+		{Host: "denied.test", Verdict: "deny", Provisioning: true},
+	}
+	r.svc.ActiveRuns = func() []string { return []string{"r1"} }
+	if err := r.svc.IngestOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ghcr.io", "deb.debian.org"}
+	if got := rl.saved[project]; !reflect.DeepEqual(got, want) {
+		t.Errorf("saved = %v, want %v", got, want)
+	}
+	if got := r.prov.Allowed[env]; !reflect.DeepEqual(got, want) {
+		t.Errorf("allowed live = %v, want %v", got, want)
+	}
+	for _, row := range r.audit.rows {
+		if row.Host == "ghcr.io" && row.Verdict != "allow" {
+			t.Errorf("row = %+v", row)
+		}
+	}
+
+	// Once per run: someone taking it off the allowlist is not undone.
+	r.prov.Rules[env] = append(r.prov.Rules[env], "ghcr.io=deny")
+	r.prov.Allowed = nil
+	if err := r.svc.IngestOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rl.calls != 1 || len(r.prov.Allowed[env]) != 0 {
+		t.Errorf("adopted again: %d saves, %v", rl.calls, r.prov.Allowed[env])
+	}
+	// Forgotten with the run.
+	r.svc.Forget("r1")
+	r.svc.mu.Lock()
+	if _, ok := r.svc.adopted["r1"]; ok {
+		t.Error("the run's adoptions outlived it")
+	}
+	r.svc.mu.Unlock()
+	r.res.balanced(t)
+}
+
+// A save that fails leaves the hosts held and asks again on the next pass;
+// a policy that cannot be read does too. Without Rules nothing is adopted.
+func TestAdoptionRetriesWhatItCouldNotSave(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	rl := &rules{err: errors.New("db down")}
+	r.svc.Rules = rl
+	r.live(t, "r1", project, "env-1")
+	r.prov.audit["env-1"] = []egressport.EgressAuditRecord{{Host: "ghcr.io", Verdict: "allow", Provisioning: true}}
+	v, err := r.svc.Runs.View(ctx, "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := &resolution.Resolution{Envp: r.prov}
+
+	r.svc.BeforeDestroy(ctx, v, res)
+	if len(r.prov.Allowed["env-1"]) != 0 {
+		t.Fatal("allowed live what the project never saved")
+	}
+	r.prov.policy = errors.New("gateway gone")
+	r.svc.BeforeDestroy(ctx, v, res)
+	r.prov.policy = nil
+	rl.err = nil
+	r.svc.BeforeDestroy(ctx, v, res)
+	if got := rl.saved[project]; !reflect.DeepEqual(got, []string{"ghcr.io"}) {
+		t.Errorf("after the retry saved = %v", got)
+	}
+
+	// No gateway to ask, no project, or no Rules: nothing happens.
+	r2 := newRig(t)
+	r2.live(t, "r1", project, "env-1")
+	r2.prov.audit["env-1"] = r.prov.audit["env-1"]
+	r2.svc.ActiveRuns = func() []string { return []string{"r1"} }
+	r2.svc.Audit = nil
+	if err := r2.svc.IngestOnce(ctx); err != nil || len(r2.prov.asked) != 0 {
+		t.Errorf("no audit, no rules: %v, asked %v", err, r2.prov.asked)
+	}
+	rl2 := &rules{}
+	r2.svc.Rules = rl2
+	if err := r2.svc.IngestOnce(ctx); err != nil || rl2.saved[project] == nil {
+		t.Errorf("rules without an audit store: %v, saved %v", err, rl2.saved)
+	}
+	rl3 := &rules{}
+	r2.svc.Rules = rl3
+	r2.svc.adopt(ctx, v, plain{r2.prov.EnvProvisioner}, []egressport.EgressAuditRecord{{Host: "x.test", Verdict: "allow", Provisioning: true}})
+	r2.svc.adopt(ctx, run.View{RunID: "r9"}, r2.prov, []egressport.EgressAuditRecord{{Host: "x.test", Verdict: "allow", Provisioning: true}})
+	if rl3.calls != 0 {
+		t.Errorf("saved without a gateway or a project: %d", rl3.calls)
+	}
+}

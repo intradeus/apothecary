@@ -9,6 +9,7 @@
 	import Select from '$lib/ui/Select.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
 	import { I } from '$lib/design/icons';
+	import { fmtBytes } from '$lib/core/format';
 	import { PROVISION_STAGE } from '../derive';
 	import type { RunStore } from '../store.svelte';
 
@@ -36,14 +37,75 @@
 	let pre = $state<HTMLDivElement | null>(null);
 	let stick = true;
 
+	// The workspace log is read as byte ranges: its last FIRST bytes once,
+	// then only what was written since `end`, so a refresh shows as much as
+	// a page left open. What came before `start` is a click away.
+	const FIRST = 2 << 20;
+	const EARLIER = 2 << 20;
+	const STEP = 1 << 20;
+	/** Where what is on screen starts in the log; 0 = from the first byte. */
+	let start = $state(0);
+	/** Where what is on screen ends: the next read starts here. */
+	let end = 0;
+	/** A read is out: a slow one must not be read twice and appended twice. */
+	let reading = false;
+	let earlier = $state(false);
+
+	async function readWorkspace(fresh: boolean) {
+		let out = await api.runs.workspaceLog(rs.runId, fresh ? { n: FIRST } : { from: end, n: STEP });
+		if (rs.logSource !== 'workspace') return;
+		// Shorter than what was read already: the workspace was replaced.
+		if (out && !fresh && out.size < end) {
+			out = await api.runs.workspaceLog(rs.runId, { n: FIRST });
+			fresh = true;
+			if (rs.logSource !== 'workspace') return;
+		}
+		note = out === null ? t('runview.logs.no_stream') : '';
+		if (out === null) {
+			text = null;
+			return;
+		}
+		if (fresh) {
+			text = out.text;
+			start = out.start;
+		} else {
+			text = (text ?? '') + out.text;
+		}
+		end = out.end;
+	}
+
+	async function loadEarlier() {
+		if (earlier || text === null || start === 0) return;
+		earlier = true;
+		const from = Math.max(0, start - EARLIER);
+		try {
+			const out = await api.runs.workspaceLog(rs.runId, { from, n: start - from });
+			if (!out || rs.logSource !== 'workspace' || text === null) return;
+			if (out.end !== start) {
+				// The log moved under us (replaced): start over from its tail.
+				await load('workspace');
+				return;
+			}
+			// Keep the reader's place while the text grows above it.
+			const height = pre?.scrollHeight ?? 0;
+			const top = pre?.scrollTop ?? 0;
+			text = out.text + text;
+			start = out.start;
+			await tick();
+			if (pre) pre.scrollTop = top + (pre.scrollHeight - height);
+		} catch (e) {
+			note = t('runview.logs.no_log', { message: errorMessage(e) });
+		} finally {
+			earlier = false;
+		}
+	}
+
 	async function load(src: string, tailing = false) {
-		loading = true;
+		if (tailing && reading) return;
+		reading = loading = true;
 		try {
 			if (src === 'workspace') {
-				const out = await api.runs.workspaceLog(rs.runId);
-				if (src !== rs.logSource) return;
-				text = out;
-				note = out === null ? t('runview.logs.no_stream') : '';
+				await readWorkspace(!tailing || text === null);
 			} else {
 				const out = await api.runs.stageLog(rs.runId, src);
 				if (src !== rs.logSource) return;
@@ -56,7 +118,7 @@
 			if (!tailing) text = null;
 			note = t('runview.logs.no_log', { message: errorMessage(e) });
 		} finally {
-			loading = false;
+			reading = loading = false;
 		}
 		if (stick) tick().then(() => pre && (pre.scrollTop = pre.scrollHeight));
 	}
@@ -68,8 +130,10 @@
 		text = null;
 		note = '';
 		stick = true;
+		start = end = 0;
 		void load(src);
-		if (src !== 'workspace' || rs.terminal || !rs.hasWorkspace) return;
+		// Provisioning streams into the same log: it is tailed from the start.
+		if (src !== 'workspace' || rs.terminal || !rs.workspaceLive) return;
 		const timer = setInterval(() => !document.hidden && load(src, true), 2500);
 		return () => clearInterval(timer);
 	});
@@ -128,7 +192,7 @@
 				bind:value={rs.logSource}
 			/>
 		{/if}
-		{#if kind !== 'workspace' || rs.terminal || !rs.hasWorkspace}
+		{#if kind !== 'workspace' || rs.terminal || !rs.workspaceLive}
 			<span class="spacer"></span>
 			<button
 				class="btn-icon"
@@ -151,6 +215,11 @@
 				{kind === 'workspace' ? t('runview.logs.no_live_ws') : t('runview.logs.empty')}
 			</div>
 		{:else}
+			{#if kind === 'workspace' && start > 0}
+				<button class="btn-sm earlier" aria-busy={earlier} disabled={earlier} onclick={loadEarlier}
+					>{t('runview.logs.earlier', { size: fmtBytes(start) })}</button
+				>
+			{/if}
 			{#each lines as l, i (i)}<div class="l {hue(l)}">{l || ' '}</div>{/each}
 		{/if}
 	</div>
@@ -172,6 +241,10 @@
 	.out > .empty-line {
 		font-family: var(--font-body);
 		padding: 0;
+	}
+	.earlier {
+		margin: 4px 0 8px;
+		font-family: var(--font-body);
 	}
 	.l {
 		white-space: pre-wrap;

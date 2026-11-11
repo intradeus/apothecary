@@ -22,56 +22,10 @@ func mrInfo() repoport.MRInfo {
 		Author: "alice", Source: "feature", Target: "main"}
 }
 
-func TestCreateForMR(t *testing.T) {
+func TestFindByKeyStaysInItsProject(t *testing.T) {
 	f, _ := newFactory(t, nil)
-	ctx := context.Background()
-	got, err := f.CreateForMR(ctx, testProject, "auto-1", mrInfo())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Title != "Add x (!4 by alice)" || got.AutomationID != "auto-1" || got.SourceKind != confstore.TicketKindMR ||
-		got.SourceKey != mrInfo().Ref.URL || got.SourceURL != mrInfo().Ref.URL || got.SourceID != "" {
-		t.Errorf("ticket = %+v", got)
-	}
-	if want := "why\n\nMerge request " + mrInfo().Ref.URL + " by alice: feature → main."; got.Goal != want {
-		t.Errorf("goal = %q", got.Goal)
-	}
-
-	bare := mrInfo()
-	bare.Body, bare.Ref.URL = " ", "https://git.example/other"
-	got, err = f.CreateForMR(ctx, testProject, "", bare)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(got.Goal, "Merge request ") {
-		t.Errorf("no description, no gap: %q", got.Goal)
-	}
-
-	if _, err := f.CreateForMR(ctx, "no-such-project", "", mrInfo()); err == nil {
-		t.Error("a ticket needs its project")
-	}
-}
-
-// A merge request's runs are filed together however they began: the same
-// ticket comes back, case aside, and only within its project.
-func TestForMRFindsTheSameTicket(t *testing.T) {
-	f, _ := newFactory(t, nil)
-	ctx := context.Background()
-	first, created, err := f.ForMR(ctx, testProject, mrInfo())
-	if err != nil || !created {
-		t.Fatalf("first = %v, %v", created, err)
-	}
-	again := mrInfo()
-	again.Ref.URL = strings.ToUpper(again.Ref.URL)
-	second, created, err := f.ForMR(ctx, testProject, again)
-	if err != nil || created || second.ID != first.ID {
-		t.Errorf("second = %+v, %v, %v", second, created, err)
-	}
-	if _, found, err := f.FindByKey(ctx, "other-project", mrInfo().Ref.URL); err != nil || found {
+	if _, found, err := f.FindByKey(context.Background(), "other-project", mrInfo().Ref.URL); err != nil || found {
 		t.Errorf("another project's key: %v, %v", found, err)
-	}
-	if _, created, err := f.ForMR(ctx, "no-such-project", mrInfo()); err == nil || created {
-		t.Errorf("creation failure = %v, %v", created, err)
 	}
 }
 
@@ -100,9 +54,6 @@ func TestFailingLookupReachesTheCaller(t *testing.T) {
 	ctx := context.Background()
 	if _, _, err := f.FindByKey(ctx, testProject, "k"); !errors.Is(err, boom) {
 		t.Errorf("find = %v", err)
-	}
-	if _, created, err := f.ForMR(ctx, testProject, mrInfo()); !errors.Is(err, boom) || created {
-		t.Errorf("for mr = %v, %v", created, err)
 	}
 	// A duplicate check that cannot run must not import blindly.
 	if _, _, err := f.CreateFromSource(ctx, "int-1", "PROJ-7", confstore.Ticket{ProjectID: testProject}, nil); !errors.Is(err, boom) {

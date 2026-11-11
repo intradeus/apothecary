@@ -355,3 +355,9 @@ func (f *Factory) claim(ctx context.Context, t confstore.Ticket, ids []string) {
 		f.log().Warn("claim ticket attachments", "ticket", t.ID, "err", err)
 	}
 }
+
+// FindByKey is the project's ticket whose source key is key (compared
+// without case), if there is one — an indexed lookup.
+func (f *Factory) FindByKey(ctx context.Context, projectID, key string) (confstore.Ticket, bool, error) {
+	return f.Conf.TicketByProjectKey(ctx, projectID, key)
+}

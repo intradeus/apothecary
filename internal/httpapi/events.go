@@ -122,8 +122,18 @@ func (s *Server) runEndsAt(ctx context.Context, ev event.Event) bool {
 // getWorkspaceLog serves the LIVE tail of the run's workspace exec output
 // (optional provisioner capability) — feedback while a stage is working.
 func (s *Server) getWorkspaceLog(w http.ResponseWriter, r *http.Request) {
-	n, _ := strconv.Atoi(r.URL.Query().Get("n"))
-	data, err := s.Workspaces.LogTail(r.Context(), r.PathValue("id"), n)
+	q := r.URL.Query()
+	n, _ := strconv.ParseInt(q.Get("n"), 10, 64)
+	from := int64(-1)
+	if v := q.Get("from"); v != "" {
+		f, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || f < 0 {
+			writeErr(w, http.StatusBadRequest, "from must be a byte offset (0 or more)")
+			return
+		}
+		from = f
+	}
+	chunk, err := s.Workspaces.Log(r.Context(), r.PathValue("id"), from, n)
 	if err != nil {
 		status := http.StatusBadGateway
 		switch {
@@ -135,8 +145,7 @@ func (s *Server) getWorkspaceLog(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, status, err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write(data)
+	writeJSON(w, http.StatusOK, WorkspaceLog{Data: string(chunk.Data), Start: chunk.Start, End: chunk.End, Size: chunk.Size})
 }
 
 func (s *Server) getLog(w http.ResponseWriter, r *http.Request) {

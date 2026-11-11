@@ -308,10 +308,11 @@ func TestProvisionStreamsToExecLog(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	log, err := a.TailExecLog(context.Background(), "apothecary-run1", 0)
+	chunk, err := a.ReadExecLog(context.Background(), "apothecary-run1", -1, 0)
 	if err != nil {
 		t.Fatalf("tail exec log: %v", err)
 	}
+	log := chunk.Data
 	for _, want := range []string{"provisioning apothecary-run1", "] → preparing source checkout: https://g.local/grp/repo.git",
 		"per-run sandbox + egress gateway", "building devcontainer", "→ workspace definition: devcontainer",
 		"→ preparing the container (container cid1", "→ connecting the workspace to the engine",
@@ -601,11 +602,11 @@ func TestExecStreamsToTailableLog(t *testing.T) {
 	if _, err := a.Exec(context.Background(), "ws1", envport.Command{Script: "echo live output"}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := a.TailExecLog(context.Background(), "ws1", 0)
+	chunk, err := a.ReadExecLog(context.Background(), "ws1", -1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(got), "live output") {
+	if got := chunk.Data; !strings.Contains(string(got), "live output") {
 		t.Errorf("exec.log = %q", got)
 	}
 }

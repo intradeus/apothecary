@@ -6,11 +6,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import { aProject, aTicket } from '$test/fixtures';
-import { bound } from '$test/fixtures/run-components';
+import { anOpenMr, bound } from '$test/fixtures/run-components';
 import { deferred } from '$test/helpers';
 import NewRunDialog from './NewRunDialog.svelte';
 
-vi.mock('$lib/api', () => ({ api: { tickets: { list: vi.fn() } } }));
+vi.mock('$lib/api', () => ({
+	api: { tickets: { list: vi.fn() }, projects: { mergeRequests: vi.fn() } }
+}));
 
 const older = aTicket({
 	id: 'old',
@@ -195,5 +197,93 @@ describe('NewRunDialog', () => {
 		await tick();
 
 		expect(continueBtn()).toBeDisabled();
+	});
+
+	describe('on a merge request', () => {
+		const mrTab = () => screen.getByRole('tab', { name: 'Merge request' });
+		const mrPicker = () => screen.findByRole('combobox', { name: 'Merge request' });
+		beforeEach(() => {
+			vi.mocked(api.projects.mergeRequests).mockImplementation((pid) =>
+				Promise.resolve(
+					pid === 'p1'
+						? [
+								{ mr: anOpenMr({ iid: 7, title: 'Add keys' }), runs: 0 },
+								{ mr: anOpenMr({ iid: 8, title: 'Fix typo' }), runs: 0 }
+							]
+						: []
+				)
+			);
+		});
+
+		it('reads nothing of the repository until the tab is chosen', async () => {
+			open();
+			await picker();
+			expect(api.projects.mergeRequests).not.toHaveBeenCalled();
+		});
+
+		it('says the run is given the merge request, no ticket made', async () => {
+			open();
+			await userEvent.click(mrTab());
+			expect(await screen.findByText(/with no ticket made/)).toBeInTheDocument();
+		});
+
+		it('picks the first open one of the first workshop, and goes to its page', async () => {
+			open();
+			await userEvent.click(mrTab());
+			expect(await mrPicker()).toHaveTextContent('!7 Add keys');
+			expect(api.projects.mergeRequests).toHaveBeenCalledWith('p1');
+
+			await userEvent.click(continueBtn());
+			expect(goto).toHaveBeenCalledExactlyOnceWith('/merge-requests/p1/7');
+		});
+
+		it('goes to the one picked', async () => {
+			open();
+			await userEvent.click(mrTab());
+			await userEvent.click(await mrPicker());
+			await userEvent.click(screen.getByRole('option', { name: /Fix typo/ }));
+			await userEvent.click(continueBtn());
+			expect(goto).toHaveBeenCalledExactlyOnceWith('/merge-requests/p1/8');
+		});
+
+		it('reads another workshop’s when it is picked', async () => {
+			open();
+			await userEvent.click(mrTab());
+			await mrPicker();
+			await userEvent.click(screen.getByRole('combobox', { name: 'Workshop' }));
+			await userEvent.click(screen.getByRole('option', { name: 'docs' }));
+			expect(
+				await screen.findByText('This workshop’s repository has no open merge request.')
+			).toBeInTheDocument();
+			expect(continueBtn()).toBeDisabled();
+		});
+
+		it('keeps to the page’s workshop, without asking which', async () => {
+			open({ projectId: 'p2' });
+			await userEvent.click(mrTab());
+			await screen.findByText('This workshop’s repository has no open merge request.');
+			expect(api.projects.mergeRequests).toHaveBeenCalledWith('p2');
+			expect(screen.queryByRole('combobox', { name: 'Workshop' })).not.toBeInTheDocument();
+		});
+
+		it('says when the repository will not answer, and tries again', async () => {
+			vi.mocked(api.projects.mergeRequests).mockRejectedValueOnce(new Error('no token'));
+			open();
+			await userEvent.click(mrTab());
+			expect(await screen.findByRole('alert')).toHaveTextContent(
+				'Could not list the merge requests'
+			);
+			expect(continueBtn()).toBeDisabled();
+			await userEvent.click(screen.getByRole('button', { name: /Retry/ }));
+			expect(await mrPicker()).toHaveTextContent('!7 Add keys');
+		});
+
+		it('shows it is loading', async () => {
+			vi.mocked(api.projects.mergeRequests).mockReturnValue(deferred<never>().promise);
+			open();
+			await picker();
+			await userEvent.click(mrTab());
+			expect(screen.getByRole('status')).toHaveTextContent('Loading…');
+		});
 	});
 });

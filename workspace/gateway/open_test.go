@@ -69,6 +69,33 @@ func TestHandleLetsAnOpenRunThroughButNotToWhatIsBlocked(t *testing.T) {
 	}
 }
 
+// What only the window let through is marked so on the trail — the engine
+// allows those hosts on the project; what the policy allows anyway is not.
+func TestHandleMarksWhatOnlyTheWindowLetThrough(t *testing.T) {
+	dstIP := net.ParseIP("203.0.113.7").To4()
+	for _, c := range []struct {
+		host string
+		mode Mode
+		want bool
+	}{
+		{"registry.npmjs.org", ModeAllow, true},
+		{"good.example", ModeAllow, false}, // on the allowlist already
+		{"registry.npmjs.org", ModeDeny, false},
+	} {
+		g := newTestGateway(t)
+		g.applyRoutes(Routes{RunSubnets: map[string]string{"run-1": "127.0.0.0/8"}, Open: map[string]time.Time{"run-1": time.Now().Add(time.Hour)}})
+		if err := g.installPolicy(File{Mode: c.mode, Domains: []string{"good.example"}}); err != nil {
+			t.Fatal(err)
+		}
+		newInterception(t, &net.TCPAddr{IP: dstIP, Port: 443})
+		_ = exchange(t, g, buildClientHello(c.host))
+		recs := g.audit.snapshot("run-1")
+		if len(recs) != 1 || recs[0].Verdict != "allow" || recs[0].Provisioning != c.want {
+			t.Errorf("%s (%s): records = %+v, want one allow marked %v", c.host, c.mode, recs, c.want)
+		}
+	}
+}
+
 func TestControlOpensAndClosesARunsWindow(t *testing.T) {
 	g := newTestGateway(t)
 	var rendered []string

@@ -26,9 +26,10 @@ const row = (over: Partial<MergeRequestRow['mr']> = {}, rest: Partial<MergeReque
 			target: 'main',
 			draft: false,
 			fork: false,
+			body: '',
+			state: 'open',
 			...over
 		},
-		mine: false,
 		runs: 0,
 		...rest
 	}) as MergeRequestRow;
@@ -69,9 +70,13 @@ describe('MergeRequestsTab, listing', () => {
 		expect(await screen.findByRole('link', { name: /Add keys/ })).toBeInTheDocument();
 	});
 
-	it('links the merge request and shows its branches', async () => {
+	it('links the merge request’s page and the host, and shows its branches', async () => {
 		setup();
 		expect(await screen.findByRole('link', { name: '!12 Add keys' })).toHaveAttribute(
+			'href',
+			'/merge-requests/p1/12'
+		);
+		expect(screen.getByRole('link', { name: 'Open on the repository host' })).toHaveAttribute(
 			'href',
 			'https://git.test/mr/12'
 		);
@@ -79,11 +84,11 @@ describe('MergeRequestsTab, listing', () => {
 		expect(screen.getByText('no run yet')).toBeInTheDocument();
 	});
 
-	it('marks a draft, a fork, and one the factory opened', async () => {
-		setup([row({ draft: true, fork: true }, { mine: true })]);
+	it('marks a draft, a fork, and how often it was processed', async () => {
+		setup([row({ draft: true, fork: true }, { runs: 1 })]);
 		expect(await screen.findByText('draft')).toBeInTheDocument();
 		expect(screen.getByText('from a fork')).toBeInTheDocument();
-		expect(screen.getByText('opened by the factory')).toBeInTheDocument();
+		expect(screen.getByText('processed by apothecary once')).toBeInTheDocument();
 	});
 
 	it('says what it is stacked on, linking it', async () => {
@@ -105,14 +110,13 @@ describe('MergeRequestsTab, listing', () => {
 				{},
 				{
 					run: { id: 'r1', state: 'running', flow: 'reviewer', createdAt: '2026-10-31T12:00:00Z' },
-					runs: 3,
-					ticketId: 't1'
+					runs: 3
 				}
 			)
 		]);
 		expect(await screen.findByRole('link', { name: 'all 3 runs' })).toHaveAttribute(
 			'href',
-			'/tickets/t1'
+			'/merge-requests/p1/12'
 		);
 		expect(screen.getByText(/reviewer/)).toBeInTheDocument();
 	});

@@ -119,26 +119,32 @@ func (s *Service) Workspace(ctx context.Context, runID, repo string) (*sidecar.C
 	return sidecar.New(conn), Checkout{Checkout: *co, Base: base}, nil
 }
 
-// LogTail serves the live tail of a run's workspace exec output
-// via the provisioner's OPTIONAL ExecLogTailer capability — the run-page
-// "is it actually doing something" feedback.
-func (s *Service) LogTail(ctx context.Context, runID string, n int) ([]byte, error) {
+// MaxLogRead caps one read of the workspace log.
+const MaxLogRead = 8 << 20
+
+// Log reads a range of a run's workspace exec output — from offset from, or
+// the tail when from is negative (envport.ReadExecLogRange) — via the
+// provisioner's OPTIONAL ExecLogTailer capability: the run page's "is it
+// actually doing something" feedback, kept up by reading on from where the
+// last read ended.
+func (s *Service) Log(ctx context.Context, runID string, from, n int64) (envport.ExecLogChunk, error) {
+	n = min(n, MaxLogRead)
 	v, err := s.Runs.View(ctx, runID)
 	if err != nil {
-		return nil, err
+		return envport.ExecLogChunk{}, err
 	}
 	if v.ProjectID == "" {
-		return nil, fmt.Errorf("run %s: %w", runID, ErrNoLiveLog)
+		return envport.ExecLogChunk{}, fmt.Errorf("run %s: %w", runID, ErrNoLiveLog)
 	}
 	env := wsname.ForRun(v, runID)
 	res, err := s.Resolver.Resolve(ctx, v.ProjectID)
 	if err != nil {
-		return nil, err
+		return envport.ExecLogChunk{}, err
 	}
 	defer res.Close()
 	tailer, ok := res.Envp.(envport.ExecLogTailer)
 	if !ok {
-		return nil, fmt.Errorf("run %s: provisioner has no live log: %w", runID, ErrNoLiveLog)
+		return envport.ExecLogChunk{}, fmt.Errorf("run %s: provisioner has no live log: %w", runID, ErrNoLiveLog)
 	}
-	return tailer.TailExecLog(ctx, envport.EnvID(env), n)
+	return tailer.ReadExecLog(ctx, envport.EnvID(env), from, n)
 }

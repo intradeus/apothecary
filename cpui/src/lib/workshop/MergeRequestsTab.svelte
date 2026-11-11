@@ -5,8 +5,9 @@
 	// when a run is started on it: what it merges lands in that branch. Any
 	// flow of the workshop whose runs are started on a merge request
 	// (operates_on: merge_request) starts on one from here; which flow, and so
-	// what the run does, is the person's pick. A merge request's runs are filed under its own ticket,
-	// the same one a merge-request automation would use.
+	// what the run does, is the person's pick. A merge request belongs to no
+	// ticket: its runs are the ones with it in their data, and its page
+	// (title link) is where a run is started with every option.
 	import { errorMessage } from '$lib/core/errors';
 	import { goto } from '$app/navigation';
 	import { t } from '$lib/i18n/index.svelte';
@@ -21,6 +22,8 @@
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import TransportIcon from '$lib/ui/TransportIcon.svelte';
+	import { I } from '$lib/design/icons';
+	import MrMeta from '$lib/mrs/MrMeta.svelte';
 
 	let { project, flows }: { project: Project; flows: Flow[] | null } = $props();
 
@@ -98,30 +101,20 @@
 			{#each rows as row (row.mr.iid)}
 				<div class="r fr">
 					<span class="mr">
-						<a class="linklike truncate" href={row.mr.url} target="_blank" rel="noreferrer"
-							><span class="mono faint">!{row.mr.iid}</span> {row.mr.title}</a
-						>
-						<span class="small faint"
-							>{row.mr.author}{#if row.mine}
-								· <span class="pill sm tint-brand" title={t('workshop.mrs.mineTitle')}
-									>{t('workshop.mrs.mine')}</span
-								>{/if}{#if row.mr.draft}
-								· <span class="pill sm tint-muted">{t('workshop.mrs.draft')}</span
-								>{/if}{#if row.mr.fork}
-								· <span class="pill sm tint-muted">{t('workshop.mrs.fork')}</span
-								>{/if}{#if row.stackedOn}
-								· <a
-									class="pill sm tint-warning"
-									href={row.stackedOn.url}
-									target="_blank"
-									rel="noreferrer"
-									title={t('workshop.mrs.stackedTitle', {
-										iid: String(row.stackedOn.iid),
-										title: row.stackedOn.title,
-										branch: row.stackedOn.branch
-									})}>{t('workshop.mrs.stacked', { iid: String(row.stackedOn.iid) })}</a
-								>{/if}</span
-						>
+						<span class="title">
+							<a class="linklike truncate" href={to.mergeRequest(project.id, row.mr.iid)}
+								><span class="mono faint">!{row.mr.iid}</span> {row.mr.title}</a
+							>
+							<a
+								class="faint host"
+								href={row.mr.url}
+								target="_blank"
+								rel="noreferrer"
+								title={t('workshop.mrs.onHost')}
+								aria-label={t('workshop.mrs.onHost')}>{I.external}</a
+							>
+						</span>
+						<MrMeta {row} />
 					</span>
 					<span class="mono small truncate" title="{row.mr.source} → {row.mr.target}"
 						>{row.mr.source} → {row.mr.target}</span
@@ -132,8 +125,8 @@
 								><StatusChip state={row.run.state} size="sm" /></a
 							>
 							<span class="faint truncate"
-								>{row.run.flow} · {ago(row.run.createdAt)}{#if row.ticketId && row.runs > 1}
-									· <a class="linklike" href={to.ticket(row.ticketId)}
+								>{row.run.flow} · {ago(row.run.createdAt)}{#if row.runs > 1}
+									· <a class="linklike" href={to.mergeRequest(project.id, row.mr.iid)}
 										>{t('workshop.mrs.allRuns', { count: row.runs })}</a
 									>{/if}</span
 							>
@@ -188,6 +181,16 @@
 		flex-direction: column;
 		gap: 2px;
 		min-width: 0;
+	}
+	.title {
+		display: flex;
+		align-items: baseline;
+		gap: 6px;
+		min-width: 0;
+	}
+	.host {
+		flex: none;
+		text-decoration: none;
 	}
 	.truncate {
 		overflow: hidden;

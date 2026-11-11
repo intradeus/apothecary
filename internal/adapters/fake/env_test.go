@@ -66,7 +66,7 @@ func TestUnknownEnvFailsEveryOperation(t *testing.T) {
 		"read":  func() error { _, err := p.ReadFile(ctx, "ghost", "f"); return err },
 		"list":  func() error { _, err := p.ListFiles(ctx, "ghost", "d"); return err },
 		"write": func() error { return p.WriteFile(ctx, "ghost", "f", nil, 0) },
-		"tail":  func() error { _, err := p.TailExecLog(ctx, "ghost", 0); return err },
+		"tail":  func() error { _, err := p.ReadExecLog(ctx, "ghost", -1, 0); return err },
 		"tree":  func() error { return p.WriteTree(ctx, "ghost", "/d", nil) },
 	}
 	for name, op := range ops {
@@ -102,10 +102,11 @@ func TestExecScriptingAndLog(t *testing.T) {
 	if _, err := p.Exec(ctx, id, envport.Command{Script: "fail"}); !errors.Is(err, boom) {
 		t.Errorf("err = %v", err)
 	}
-	log, err := p.TailExecLog(ctx, id, 0)
+	chunk, err := p.ReadExecLog(ctx, id, -1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+	log := chunk.Data
 	for _, want := range []string{"--- [dir=repo]\nseen\n", "out-seen\n", "fail\n"} {
 		if !strings.Contains(string(log), want) {
 			t.Errorf("log missing %q: %q", want, log)
@@ -114,9 +115,12 @@ func TestExecScriptingAndLog(t *testing.T) {
 	if strings.Contains(string(log), "not logged") {
 		t.Errorf("a failed exec's output was logged: %q", log)
 	}
-	tail, _ := p.TailExecLog(ctx, id, 5)
-	if len(tail) != 5 || !strings.HasSuffix(string(log), string(tail)) {
-		t.Errorf("tail = %q", tail)
+	tail, _ := p.ReadExecLog(ctx, id, -1, 5)
+	if len(tail.Data) != 5 || !strings.HasSuffix(string(log), string(tail.Data)) || tail.End != int64(len(log)) {
+		t.Errorf("tail = %+v", tail)
+	}
+	if from, _ := p.ReadExecLog(ctx, id, 3, 4); string(from.Data) != string(log[3:7]) {
+		t.Errorf("range = %+v", from)
 	}
 	if got := p.Execs(); len(got) != 2 || got[1].Cmd.Script != "fail" {
 		t.Errorf("execs = %+v", got)

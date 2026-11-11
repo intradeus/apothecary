@@ -58,3 +58,20 @@ func TestProtoFor(t *testing.T) {
 		}
 	}
 }
+
+// A connection is on the trail from the moment it is let through, its bytes
+// when it ends; the provisioning mark sticks once set.
+func TestAuditorCountsAConnectionAsItStarts(t *testing.T) {
+	a := newAuditor("")
+	a.connect("run1", "ghcr.io", "1.1.1.1", 443, "tls", "allow", true)
+	recs := a.snapshot("run1")
+	if len(recs) != 1 || recs[0].Count != 1 || recs[0].BytesIn != 0 || !recs[0].Provisioning {
+		t.Fatalf("while open = %+v", recs)
+	}
+	a.transfer("run1", "ghcr.io", 443, "allow", 10, 5000)
+	a.connect("run1", "ghcr.io", "1.1.1.1", 443, "tls", "allow", false)
+	recs = a.snapshot("run1")
+	if len(recs) != 1 || recs[0].Count != 2 || recs[0].BytesIn != 5000 || !recs[0].Provisioning {
+		t.Fatalf("after = %+v", recs)
+	}
+}

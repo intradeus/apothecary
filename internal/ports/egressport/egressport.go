@@ -49,6 +49,10 @@ type EgressAuditRecord struct {
 	BytesIn  int64     `json:"bytes_in"`
 	First    time.Time `json:"first"`
 	Last     time.Time `json:"last"`
+	// Provisioning: some of these connections got through only because the
+	// run's egress was open while it provisioned (the policy would have held
+	// them). Not stored: the engine allows those hosts on the project.
+	Provisioning bool `json:"provisioning,omitempty"`
 }
 
 // EgressAuditRow is a durable audit record (an EgressAuditRecord tagged with its
