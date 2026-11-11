@@ -14,3 +14,4 @@ After 3.0.0 :
 - 64) Feature(tickets): workbench settings to define the branch name based on the ticket FOLLOWING THE FORMAT THE USER WANTS !! Right now its hardcoded ({type}/{ticket}-title) - make it dynamic and per-workbench.
 - 65) Upgrade watchers UI
 - 66) Dark theme should be darker.
+- 67) full live visualizer (geek view): how many sandboxes are running, some stats on CPU/RAM, if its in an agentic state show the agent and its subagents. Something cool and geeky that shows your full workforce in progress, for all projects. imagine a cool UI for it, not something basic but something fun and geeky.

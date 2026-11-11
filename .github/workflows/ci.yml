@@ -6,9 +6,20 @@
 #
 #   unit         task cover              unit tests of both halves, under their
 #                                        coverage floors (Go incl. Postgres, CPUI)
-#   integration  task test:integration:* real dependencies, in containers
+#   images       deploy/images.sh        the four images the suites below run,
+#                                        built once, kept in the Actions cache
+#   integration  task test:integration:* real dependencies, in containers: pg
+#                                        on its own; harness and k8s load the
+#                                        images job's images from the cache
 #   lint         task lint               every linter and type check
-#   build        task build              every binary, the CPUI and every image
+#   build        task build:bin build:ui every binary and the CPUI, and the
+#                                        engine image
+#
+# Images go between jobs through the Actions cache (10 GB per repository,
+# not the account's artifact storage): a job that needs them rebuilds with
+# every layer a cache hit, which is a download. On a pull request the image
+# jobs run only when it touches the sandbox side (the changes job); every
+# push to main runs everything.
 name: ci
 
 on:
@@ -60,11 +71,61 @@ jobs:
             cpui/coverage/
           retention-days: 14
 
-  integration:
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: [pg, harness, k8s]
+  # Whether a pull request touches what the image-based suites test: the
+  # images, the adapters and kinds they exercise, the chart, the build.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      sandbox: ${{ github.event_name != 'pull_request' || steps.filter.outputs.sandbox == 'true' }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            sandbox:
+              - 'workspace/**'
+              - 'deploy/**'
+              - 'charts/**'
+              - 'internal/adapters/**'
+              - 'internal/workspace/**'
+              - 'internal/project/kinds/**'
+              - 'internal/platform/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Taskfile.yml'
+              - '.github/workflows/ci.yml'
+
+  # The four images the harness and k8s suites run (the engine's own is the
+  # build job's), built once: those suites wait for this job and load them
+  # from the cache it fills, instead of each building them again.
+  images:
+    needs: changes
+    if: needs.changes.outputs.sandbox == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # The tools bundle (≈2.3 GB) and its build stages: the runner's
+      # preinstalled toolchains these jobs never use leave too little disk.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: crazy-max/ghaction-github-runtime@v3 # the cache's credentials, for buildx
+      - run: deploy/images.sh local
+        env:
+          IMAGES: sandbox shim tools egress-gw
+          PREFIX: k3d-registry.localhost:5111/apothecary # Taskfile K3D_REGISTRY
+          CACHE: gha-warm # the cache is the output: nothing to load here
+
+  integration-pg:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,46 +136,60 @@ jobs:
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      # The tools bundle (≈2.3 GB) is built, then extracted or seeded once
-      # more, beside the suites' own images; the runner's preinstalled
-      # toolchains these jobs never use leave too little disk for it.
+      - run: task test:integration:pg
+
+  integration:
+    needs: [changes, images]
+    if: needs.changes.outputs.sandbox == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [harness, k8s]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # The images live twice (docker, then the node or the seeded volume).
       - name: Free disk space
-        if: matrix.suite != 'pg'
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: crazy-max/ghaction-github-runtime@v3
+      # The images job's images, from the cache: every layer a hit.
+      - name: Load the tools image
+        if: matrix.suite == 'harness'
+        run: IMAGES=tools CACHE=gha-read PREFIX=apothecary deploy/images.sh "$(go run ./cmd/apothecaryd tools-hash)"
+      - name: Load the images
+        if: matrix.suite == 'k8s'
+        run: deploy/images.sh local
+        env:
+          IMAGES: sandbox shim tools egress-gw
+          PREFIX: k3d-registry.localhost:5111/apothecary # Taskfile K3D_REGISTRY
+          CACHE: gha-read
       # k3d (pinned), and the wireguard module every run's sandbox tunnels to
       # its gateway with (k3d's nodes share the runner's kernel). The runner
-      # already has docker and kubectl. The registry's name is pinned in
-      # /etc/hosts (systemd-resolved answers *.localhost with loopback anyway)
-      # and listed as insecure in daemon.json: dockerd speaks plain HTTP to a
-      # listed registry on either image store, but to a name that merely
-      # resolves to loopback only with the classic store — the containerd
-      # image store, the default of a fresh Docker 29 install and what the
-      # runner's dockerd now runs, trusts no name but the literal `localhost`
-      # and pushes over HTTPS ("server gave HTTP response to HTTPS client").
-      # The five images live three times (docker, the registry, the node's
-      # containerd) and the tools bundle once more on the run's volume, which
-      # is why the disk was freed above. The task creates the cluster and
+      # already has docker and kubectl. The images are imported into the
+      # node, so no registry setup is needed. The task creates the cluster and
       # deletes it again.
       - name: Kubernetes prerequisites
         if: matrix.suite == 'k8s'
         env:
           K3D_VERSION: v5.9.0
-          K3D_REGISTRY: k3d-registry.localhost:5111 # Taskfile K3D_REGISTRY
         run: |
           curl -fsSL -o "$RUNNER_TEMP/k3d" "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
           sudo install -m 0755 "$RUNNER_TEMP/k3d" /usr/local/bin/k3d
           k3d version
           sudo modprobe wireguard
-          echo "127.0.0.1 ${K3D_REGISTRY%%:*}" | sudo tee -a /etc/hosts
-          sudo mkdir -p /etc/docker
-          [ -s /etc/docker/daemon.json ] || echo '{}' | sudo tee /etc/docker/daemon.json >/dev/null
-          jq --arg r "$K3D_REGISTRY" '."insecure-registries" += [$r]' /etc/docker/daemon.json > "$RUNNER_TEMP/daemon.json"
-          sudo install -m 0644 "$RUNNER_TEMP/daemon.json" /etc/docker/daemon.json
-          sudo systemctl restart docker
-          docker info --format '{{json .RegistryConfig.IndexConfigs}}' | grep -q "\"$K3D_REGISTRY\""
       - run: task test:integration:${{ matrix.suite }}
+        env:
+          APOTHECARY_IMAGES_PREBUILT: '1'
 
   lint:
     runs-on: ubuntu-latest
@@ -157,9 +232,12 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: npm ci
         working-directory: cpui
-      # Five images, the tools bundle among them: see the integration job.
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
-          df -h /
-      - run: task build
+      - run: task build:bin build:ui
+      # The engine's image; the other four are the images job's.
+      - uses: docker/setup-buildx-action@v3
+      - uses: crazy-max/ghaction-github-runtime@v3
+      - run: deploy/images.sh ci
+        env:
+          IMAGES: apothecaryd
+          PREFIX: apothecary-build
+          CACHE: gha

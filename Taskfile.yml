@@ -145,6 +145,7 @@ tasks:
         APOTHECARY_LIVE_KUBECONFIG=$PWD/{{.K3D_KUBECONFIG}}
         APOTHECARY_LIVE_K8S_NAMESPACE=apothecary-live
         APOTHECARY_LIVE_IMAGE_PREFIX={{.K3D_REGISTRY}}/apothecary
+        APOTHECARY_LIVE_PULL_POLICY={{.PULL_POLICY | default "Always"}}
         go test -tags live -count=1 -timeout 30m -run TestLiveK8s -v ./internal/adapters/workspace/ ./internal/adapters/browser/
 
   k8s:down:
@@ -483,24 +484,36 @@ tasks:
         golang:1.26.4
         go test -tags conformance -count=1 -timeout 20m -v -run Conformance {{.CLI_ARGS}} ./internal/project/kinds/
 
-  # Reuses the cluster if it exists (and leaves it, with the :local images
-  # pushed to its registry); otherwise creates it and deletes it afterwards,
-  # registry included — pass or fail. The images are built before the cluster
-  # starts: building the tools bundle beside a running k3s starves a CI
-  # runner, and its API server drops out ("apiserver not ready") under the
-  # tests. k8s:images then only pushes, from the build cache.
+  # Reuses the cluster if it exists (and leaves it); otherwise creates it and
+  # deletes it afterwards — pass or fail. The images are imported into the
+  # node rather than pushed to the cluster's registry and pulled back: one
+  # copy of the 2.3 GB tools bundle instead of two.
   test:integration:k8s:
-    desc: 'The Kubernetes provisioner and project browser on a local k3d cluster: cluster, images, live tests (needs docker, k3d)'
+    desc: 'The Kubernetes provisioner and project browser on a local k3d cluster: images, cluster, import, live tests (needs docker, k3d)'
     vars:
       CLUSTER_EXISTED:
         sh: k3d node get k3d-{{.K3D_CLUSTER}}-server-0 >/dev/null 2>&1 && echo yes || echo no
+      # The images the live tests run: the engine itself runs here, as a test
+      # process, so its image is not among them.
+      LIVE_IMAGES: sandbox shim tools egress-gw
     cmds:
-      - task: k8s:registry-check
-      - PREFIX={{.K3D_REGISTRY}}/apothecary deploy/images.sh local
+      # Built before the cluster starts (building the tools bundle beside a
+      # running k3s starves a CI runner); already in docker when
+      # APOTHECARY_IMAGES_PREBUILT=1 (CI loads them from its images job).
+      - cmd: IMAGES="{{.LIVE_IMAGES}}" PREFIX={{.K3D_REGISTRY}}/apothecary deploy/images.sh local
+        if: '[ "${APOTHECARY_IMAGES_PREBUILT:-}" != 1 ]'
       - task: k8s:cluster
       - defer: '{{if eq .CLUSTER_EXISTED "no"}}{{.TASK_EXE}} k8s:down{{end}}'
-      - task: k8s:images
+      # Straight into the node's image store: no registry push, no pull.
+      - task: k8s:import
+        vars: {IMAGES: '{{.LIVE_IMAGES}}'}
       - task: k8s:test-live
+        vars: {PULL_POLICY: IfNotPresent}
+
+  k8s:import:
+    internal: true
+    cmds:
+      - k3d image import -c {{.K3D_CLUSTER}} {{range (splitList " " .IMAGES)}}{{$.K3D_REGISTRY}}/apothecary/{{.}}:local {{end}}
 
   cover:
     desc: 'Test coverage of both halves, as pages: coverage/go/index.html and cpui/coverage/index.html'

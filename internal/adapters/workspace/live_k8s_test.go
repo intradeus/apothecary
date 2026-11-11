@@ -14,6 +14,8 @@ package workspace
 //   - APOTHECARY_LIVE_K8S_NAMESPACE (default apothecary-live).
 //   - APOTHECARY_LIVE_GATEWAY=0 to skip the egress gateway (default on).
 //   - APOTHECARY_LIVE_KEEP=1 to leave the namespace for inspection.
+//   - APOTHECARY_LIVE_PULL_POLICY (default Always): IfNotPresent when the
+//     images were imported into the cluster's nodes instead of pushed.
 //
 // The test runs OUTSIDE the cluster, like an engine on a laptop: it reaches
 // pods through kubectl port-forward. Pods cannot reach a docker host's own
@@ -42,6 +44,15 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/workspace/portrelay"
 )
+
+// livePullPolicy is how the cluster gets this tree's images: pulled from
+// the registry they were pushed to, or already on the nodes (imported).
+func livePullPolicy() string {
+	if p := os.Getenv("APOTHECARY_LIVE_PULL_POLICY"); p != "" {
+		return p
+	}
+	return "Always"
+}
 
 func liveKube(t *testing.T) (*kube.Client, string) {
 	t.Helper()
@@ -163,7 +174,7 @@ func TestLiveK8sLifecycle(t *testing.T) {
 		Kube: &KubeConfig{
 			Kube:         c,
 			SandboxImage: img("sandbox"), ShimImage: img("shim"), ToolsImage: img("tools"), GatewayImage: img("egress-gw"),
-			PullPolicy:      "Always",
+			PullPolicy:      livePullPolicy(),
 			EngineURL:       "http://" + engineIP + ":8080",
 			EngineNamespace: ns,
 			Forward:         true,

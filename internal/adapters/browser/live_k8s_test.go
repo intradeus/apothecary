@@ -17,6 +17,8 @@ package browser
 //     default apothecary-live>-browser).
 //   - APOTHECARY_LIVE_IMAGE_PREFIX: where this tree's shim image was pushed
 //     (tag :local).
+//   - APOTHECARY_LIVE_PULL_POLICY (default Always): IfNotPresent when the
+//     image was imported into the cluster's nodes instead of pushed.
 //   - APOTHECARY_LIVE_KEEP=1 to leave the namespace for inspection.
 //
 // Unlike the workspace test it cannot stub the engine in the cluster: the
@@ -46,6 +48,15 @@ import (
 	"apothecary/internal/ports/browserport"
 	"apothecary/workspace"
 )
+
+// pullPolicy is how the cluster gets this tree's shim image: pulled from the
+// registry it was pushed to, or already on the nodes (imported).
+func pullPolicy() string {
+	if p := os.Getenv("APOTHECARY_LIVE_PULL_POLICY"); p != "" {
+		return p
+	}
+	return "Always"
+}
 
 func TestLiveK8sBrowserSession(t *testing.T) {
 	kc := os.Getenv("APOTHECARY_LIVE_KUBECONFIG")
@@ -81,7 +92,7 @@ func TestLiveK8sBrowserSession(t *testing.T) {
 
 	const project = "live-k8s"
 	m := New(Config{
-		Host: &K8sHost{Kube: c, ShimImage: prefix + "/shim:local", Mux: mux, EngineCIDR: ip + "/32", PullPolicy: "Always"},
+		Host: &K8sHost{Kube: c, ShimImage: prefix + "/shim:local", Mux: mux, EngineCIDR: ip + "/32", PullPolicy: pullPolicy()},
 		// The kubelet pulls; nothing to prepare engine-side.
 		Image: func(context.Context) (string, error) { return DefaultImage, nil },
 		Tag:   func() string { return DefaultImage },
