@@ -3,12 +3,9 @@
 # repo-authored workspace image needs no Node, npm, apt or egress of its own
 # to run an agent or the browser editor. Build context: this directory.
 #
-# One file, two consumers: the engine builds it at runtime on a docker host
-# (internal/workspace/wsimage EnsureTools, then `docker create` + `cp` /tools out to
-# <RunsDir>/tools-cache/<hash>, bind-mounted into every workspace at
-# /opt/apothecary/tools), and CI publishes it as the apothecary/tools image a
-# Kubernetes sandbox pod's tools-seed init container copies onto the run
-# volume (seed.sh). Layout under /tools:
+# CI publishes it as the apothecary/tools image a sandbox pod's tools-seed
+# init container copies onto the run volume (seed.sh), mounted into every
+# workspace at /opt/apothecary/tools. Layout under /tools:
 #
 #   gnu/bin/   opencode codex codex-acp omp code-server   (glibc images)
 #   musl/bin/  opencode codex codex-acp omp               (Alpine images)
@@ -18,7 +15,7 @@
 #   TOOLS_HASH, seed.sh
 #
 # The version ARG defaults ARE the release pins: TestToolsDockerfilePinsMatchKinds
-# (internal/workspace/wsimage) holds internal/project/kinds' constants to them. TOOLS_HASH is the
+# (internal/project/kinds) holds that package's constants to them. TOOLS_HASH is the
 # hash of this directory (`apothecaryd tools-hash`), baked in so a seeded
 # bundle can be compared with the one the engine expects. Keep it the LAST
 # build arg so a hash-only change reuses the download layers.

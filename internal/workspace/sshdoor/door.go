@@ -1,8 +1,13 @@
-// Package sshdoor is the engine's SSH door (TODO 46): one listener a person
-// reaches over their VPN, `ssh -p 2222 apo-<workspace>@engine` — or VS
-// Code Remote-SSH, which is the same thing — that lets them into the
-// workspace the username names, as the user their key belongs to, if they
-// own the run.
+// Package sshdoor is the engine's SSH door (TODO 46): what lets a person into
+// a run's workspace over SSH — `ssh <workspace>.apothecary`, or VS Code
+// Remote-SSH, which is the same thing — as the user their key belongs to, if
+// they own the run.
+//
+// A person reaches it through the engine's HTTPS address: the apothecary
+// CLI's ssh-proxy opens a tunnel that names the workspace, and the API hands
+// the stream to ServeConn. Nothing else is published. For the dev loop the
+// door can also listen on a TCP port of its own (Serve), where the SSH
+// username names the workspace.
 //
 // The door terminates the person's SSH connection (their key, against the
 // keys registered on their account; the instance's one stable host key) and
@@ -63,8 +68,9 @@ type Config struct {
 	HostKey, DoorKey ssh.Signer
 	Keys             KeyAuth
 	Targets          Targets
-	// Advertise is the host:port people connect to (the VPN name of the
-	// engine host): what the run page prints and links to.
+	// Advertise is the host:port people connect to when the door listens
+	// on a TCP port of its own (Serve): what the run page prints and links
+	// to. Empty when the door is reached only through the HTTPS tunnel.
 	Advertise string
 	Log       *slog.Logger
 }
@@ -115,13 +121,17 @@ func New(cfg Config) (*Door, error) {
 	case cfg.Keys == nil || cfg.Targets == nil:
 		return nil, errors.New("sshdoor: key authentication and targets are required")
 	}
-	host, portStr, err := net.SplitHostPort(cfg.Advertise)
-	if err != nil {
-		return nil, fmt.Errorf("sshdoor: advertise %q is not host:port: %v", cfg.Advertise, err)
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port <= 0 {
-		return nil, fmt.Errorf("sshdoor: advertise %q has no port", cfg.Advertise)
+	var host string
+	var port int
+	if cfg.Advertise != "" {
+		h, portStr, err := net.SplitHostPort(cfg.Advertise)
+		if err != nil {
+			return nil, fmt.Errorf("sshdoor: advertise %q is not host:port: %v", cfg.Advertise, err)
+		}
+		if port, err = strconv.Atoi(portStr); err != nil || port <= 0 {
+			return nil, fmt.Errorf("sshdoor: advertise %q has no port", cfg.Advertise)
+		}
+		host = h
 	}
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
@@ -138,7 +148,8 @@ func KeyFromSeed(seed []byte) (ssh.Signer, error) {
 	return ssh.NewSignerFromKey(ed25519.NewKeyFromSeed(seed[:ed25519.SeedSize]))
 }
 
-// Address is the advertised host and port.
+// Address is the advertised host and port; ("", 0) when the door has no
+// listener of its own and is reached only through the HTTPS tunnel.
 func (d *Door) Address() (string, int) { return d.host, d.port }
 
 // Fingerprint is the host key's SHA256 fingerprint, as ssh prints it.
@@ -180,8 +191,17 @@ func (d *Door) Serve(ln net.Listener) error {
 			}
 			return err
 		}
-		go d.handle(nc)
+		go d.handle(nc, "", hostOf(nc.RemoteAddr()))
 	}
+}
+
+// ServeConn runs one connection that arrived through the HTTPS tunnel and
+// returns when it ends. workspace is the workspace it was opened for (the
+// SSH username is then not read); who is the caller as the API
+// authenticated them, which the failure throttle counts by instead of an
+// address every tunnel shares (the ingress's).
+func (d *Door) ServeConn(nc net.Conn, workspace, who string) {
+	d.handle(nc, workspace, who)
 }
 
 // Close stops accepting and ends every live connection.
@@ -229,8 +249,11 @@ type conn struct {
 	userID, keyID string
 	key           ssh.PublicKey
 	target        Target
-	verdicts      map[string]verdict // per offered key: the callback runs twice for one key
-	closeOnce     sync.Once
+	// workspace, when set, is the workspace a tunnelled connection was
+	// opened for, which the username would otherwise name.
+	workspace string
+	verdicts  map[string]verdict // per offered key: the callback runs twice for one key
+	closeOnce sync.Once
 }
 
 type verdict struct {
@@ -241,9 +264,10 @@ type verdict struct {
 func (c *conn) close() { c.closeOnce.Do(func() { _ = c.raw.Close() }) }
 
 // handle runs one connection: the handshake under a deadline and the
-// throttle, the upstream, then the proxy until either side ends.
-func (d *Door) handle(nc net.Conn) {
-	c := &conn{door: d, raw: nc, remote: hostOf(nc.RemoteAddr()), verdicts: map[string]verdict{}}
+// throttle, the upstream, then the proxy until either side ends. remote is
+// what the throttle counts failures by.
+func (d *Door) handle(nc net.Conn, workspace, remote string) {
+	c := &conn{door: d, raw: nc, remote: remote, workspace: workspace, verdicts: map[string]verdict{}}
 	defer c.close()
 	if d.failures.blocked(c.remote) {
 		return
@@ -338,14 +362,17 @@ func (d *Door) serverConfig(c *conn) *ssh.ServerConfig {
 	return cfg
 }
 
-// authenticate is the door's whole decision: the username is a workspace,
-// the key is a registered one, the key's account is not disabled, the
-// workspace belongs to a run of that account's, and the workspace is
-// there to be reached. Any miss is errDenied, with the reason in the log
-// only.
+// authenticate is the door's whole decision: the workspace (the tunnel's,
+// else the username) is one, the key is a registered one, the key's account
+// is not disabled, the workspace belongs to a run of that account's, and the
+// workspace is there to be reached. Any miss is errDenied, with the reason in
+// the log only.
 func (d *Door) authenticate(c *conn, username string, key ssh.PublicKey) (*ssh.Permissions, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if c.workspace != "" {
+		username = c.workspace
+	}
 	if !usernameRe.MatchString(username) {
 		return nil, errDenied
 	}

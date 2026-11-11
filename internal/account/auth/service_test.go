@@ -669,6 +669,59 @@ func TestTokens(t *testing.T) {
 	}
 }
 
+// An idle token (the CLI's sign-in) has no fixed expiry: it is refused once
+// unused for its window, counted from creation until first used, and every
+// use slides it — touched at most once a minute, like any token.
+func TestIdleTokens(t *testing.T) {
+	s, mem, now := newService(t)
+	ctx := context.Background()
+	u := user(t, s, "lu", false)
+
+	if _, _, err := s.NewIdleToken(ctx, u.ID, "cli", 0); !errors.Is(err, ErrInvalid) {
+		t.Errorf("no window = %v", err)
+	}
+	if _, _, err := s.NewIdleToken(ctx, u.ID, " ", time.Hour); !errors.Is(err, ErrInvalid) {
+		t.Errorf("nameless = %v", err)
+	}
+	const window = 7 * 24 * time.Hour
+	secret, tok, err := s.NewIdleToken(ctx, u.ID, "apothecary CLI on laptop", window)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok.IdleSeconds != int(window/time.Second) || tok.ExpiresAt != nil {
+		t.Errorf("token = %+v", tok)
+	}
+	if stored, _ := mem.GetTokenByHash(ctx, tok.Hash); stored.IdleSeconds != tok.IdleSeconds {
+		t.Errorf("stored window = %d", stored.IdleSeconds)
+	}
+	// Never used: the window runs from creation.
+	created := *now
+	*now = created.Add(window - time.Second)
+	if _, err := s.AuthenticateToken(ctx, secret); err != nil {
+		t.Fatalf("within the window = %v", err)
+	}
+	// That use slid it: a full window later minus a second still works.
+	*now = now.Add(window - time.Second)
+	if _, err := s.AuthenticateToken(ctx, secret); err != nil {
+		t.Fatalf("slid = %v", err)
+	}
+	// A whole window with no use: refused, like an expired token.
+	*now = now.Add(window)
+	if _, err := s.AuthenticateToken(ctx, secret); !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("idle past the window = %v", err)
+	}
+
+	// Never used at all, a window after creation: refused.
+	unused, _, err := s.NewIdleToken(ctx, u.ID, "cli", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(time.Hour)
+	if _, err := s.AuthenticateToken(ctx, unused); !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("unused past the window = %v", err)
+	}
+}
+
 func TestDisabledCredentialIsRefusedByName(t *testing.T) {
 	s, mem, _ := newService(t)
 	ctx := context.Background()

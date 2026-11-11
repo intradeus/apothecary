@@ -235,17 +235,25 @@ func (s *Store) DeleteSessionsOf(ctx context.Context, userID string) error {
 
 // --- tokens -------------------------------------------------------------------
 
-const tokenCols = `id, user_id, name, hash, prefix, created_at, last_used_at, expires_at`
+const tokenCols = `id, user_id, name, hash, prefix, created_at, last_used_at, expires_at, idle_seconds`
 
 func scanToken(row pgx.Row) (auth.Token, error) {
 	var t auth.Token
-	err := row.Scan(&t.ID, &t.UserID, &t.Name, &t.Hash, &t.Prefix, &t.CreatedAt, &t.LastUsedAt, &t.ExpiresAt)
+	var idle *int
+	err := row.Scan(&t.ID, &t.UserID, &t.Name, &t.Hash, &t.Prefix, &t.CreatedAt, &t.LastUsedAt, &t.ExpiresAt, &idle)
+	if idle != nil {
+		t.IdleSeconds = int(*idle)
+	}
 	return t, err
 }
 
 func (s *Store) CreateToken(ctx context.Context, t auth.Token) error {
-	_, err := s.pool.Exec(ctx, `INSERT INTO api_tokens (`+tokenCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		t.ID, t.UserID, t.Name, t.Hash, t.Prefix, t.CreatedAt, t.LastUsedAt, t.ExpiresAt)
+	var idle *int // NULL: no inactivity window
+	if t.IdleSeconds > 0 {
+		idle = &t.IdleSeconds
+	}
+	_, err := s.pool.Exec(ctx, `INSERT INTO api_tokens (`+tokenCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		t.ID, t.UserID, t.Name, t.Hash, t.Prefix, t.CreatedAt, t.LastUsedAt, t.ExpiresAt, idle)
 	return err
 }
 

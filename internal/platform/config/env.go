@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"apothecary/internal/platform/secrets"
 )
@@ -50,34 +51,22 @@ type Boot struct {
 	// of only listing them for click-to-expose. APOTHECARY_PORT_AUTOEXPOSE
 	// ("on" enables); default off.
 	PortAutoExpose bool
-	// SandboxRuntime is the OCI runtime each run's Docker-in-Docker sandbox is
-	// created with. APOTHECARY_SANDBOX_RUNTIME; default "" = the daemon's
-	// default runtime, which needs `--privileged` to host a nested dockerd —
-	// so sandbox root is host root. Set it to "sysbox-runc" (sysbox installed
-	// on the HOST) and the sandbox runs unprivileged in a user namespace
-	// instead, containing a compromised run to its own workspace.
-	//
-	// Opt-in, not auto-detected: which isolation a run got must be a property
-	// of the deployment you can read off one line, not of whatever happened to
-	// be installed on the machine.
-	SandboxRuntime string
 	// WorkspaceDocker says whether a workspace may take its run's own docker
 	// daemon — the "daemon door": the sandbox's dockerd also listens on
 	// /var/run/docker.sock, so a devcontainer using the standard
 	// docker-outside-of-docker feature (testcontainers, `docker compose`,
 	// `docker run` from the agent) works. APOTHECARY_WORKSPACE_DOCKER:
-	//   - "auto" (default, ""): open only when the sandbox is unprivileged
-	//     (SandboxRuntime set; on Kubernetes a runtime class with privileged
-	//     off), where the sandbox is the boundary and its daemon adds nothing
-	//     the run does not already hold;
+	//   - "auto" (default, ""): open only when the sandbox is unprivileged (a
+	//     runtime class with privileged off), where the sandbox is the
+	//     boundary and its daemon adds nothing the run does not already hold;
 	//   - "on": open under privileged sandboxes too. A workspace that uses it
-	//     is then root on the host — fine for an instance on your own laptop,
-	//     not for a shared server;
+	//     is then root on its node — fine for a cluster of your own, not for
+	//     a shared one;
 	//   - "off": never.
 	// A repo asking for the door while it is closed is refused at provision
 	// with both ways out named. Any other value refuses to boot.
 	WorkspaceDocker string
-	// BrowserImage overrides the project browser's image on either host
+	// BrowserImage overrides the project browser's image
 	// (APOTHECARY_BROWSER_IMAGE), e.g. a mirror of it; default "" = the one
 	// the engine pins (browser.DefaultImage), which its session command
 	// depends on.
@@ -106,7 +95,14 @@ type Boot struct {
 	// down to the host each person opened the UI at.
 	SSHListen    string
 	SSHAdvertise string
+	// CLITokenIdle is how long a token the terminal client's browser
+	// sign-in mints stays valid without use, each use sliding it
+	// (APOTHECARY_CLI_TOKEN_IDLE, a Go duration); default 168h (7 days).
+	CLITokenIdle time.Duration
 }
+
+// DefaultCLITokenIdle is APOTHECARY_CLI_TOKEN_IDLE's default.
+const DefaultCLITokenIdle = 7 * 24 * time.Hour
 
 // SSHAdvertiseAddr is the address people are told to ssh to: the explicit
 // one, else the listen address when it names a host, else the public URL's
@@ -177,6 +173,12 @@ type K8s struct {
 	// BrowserProxyAddr how a browser pod reaches it
 	// (APOTHECARY_K8S_BROWSER_PROXY_ADDR, default the engine URL's host:7071).
 	BrowserProxyListen, BrowserProxyAddr string
+	// RuntimeClass and Privileged are the sandbox shape a Kubernetes
+	// provisioner integration gets when it leaves its own fields empty:
+	// APOTHECARY_K8S_RUNTIME_CLASS (e.g. sysbox-runc) and
+	// APOTHECARY_K8S_PRIVILEGED (on|off, default on). Privileged off needs a
+	// runtime class that nests dockerd unprivileged.
+	RuntimeClass, Privileged string
 }
 
 // DefaultProtectCIDRs are k3s's default pod and service ranges plus
@@ -252,7 +254,6 @@ func FromEnv() (*Boot, error) {
 		}
 	}
 	b.PortAutoExpose = os.Getenv("APOTHECARY_PORT_AUTOEXPOSE") == "on"
-	b.SandboxRuntime = strings.TrimSpace(os.Getenv("APOTHECARY_SANDBOX_RUNTIME"))
 	switch b.WorkspaceDocker = strings.TrimSpace(os.Getenv("APOTHECARY_WORKSPACE_DOCKER")); b.WorkspaceDocker {
 	case "":
 		b.WorkspaceDocker = "auto"
@@ -275,6 +276,16 @@ func FromEnv() (*Boot, error) {
 		PullPolicy:         strings.TrimSpace(os.Getenv("APOTHECARY_K8S_IMAGE_PULL_POLICY")),
 		BrowserProxyListen: getenvDefault("APOTHECARY_K8S_BROWSER_PROXY_LISTEN", ":7071"),
 		BrowserProxyAddr:   strings.TrimSpace(os.Getenv("APOTHECARY_K8S_BROWSER_PROXY_ADDR")),
+		RuntimeClass:       strings.TrimSpace(os.Getenv("APOTHECARY_K8S_RUNTIME_CLASS")),
+		Privileged:         strings.TrimSpace(os.Getenv("APOTHECARY_K8S_PRIVILEGED")),
+	}
+	switch b.K8s.Privileged {
+	case "", "on", "off":
+	default:
+		return nil, fmt.Errorf("config: APOTHECARY_K8S_PRIVILEGED must be on or off, got %q", b.K8s.Privileged)
+	}
+	if b.K8s.Privileged == "off" && b.K8s.RuntimeClass == "" {
+		return nil, fmt.Errorf("config: APOTHECARY_K8S_PRIVILEGED=off needs APOTHECARY_K8S_RUNTIME_CLASS, a runtime class that nests dockerd unprivileged (e.g. sysbox-runc)")
 	}
 	if raw := os.Getenv("APOTHECARY_K8S_PROTECT_CIDRS"); raw != "" {
 		b.K8s.ProtectCIDRs = splitComma(raw)
@@ -296,6 +307,14 @@ func FromEnv() (*Boot, error) {
 	b.SSHAdvertise = strings.TrimSpace(os.Getenv("APOTHECARY_SSH_ADVERTISE"))
 	if _, err := b.SSHAdvertiseAddr(); err != nil {
 		return nil, err
+	}
+	b.CLITokenIdle = DefaultCLITokenIdle
+	if raw := strings.TrimSpace(os.Getenv("APOTHECARY_CLI_TOKEN_IDLE")); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d <= 0 {
+			return nil, fmt.Errorf("config: APOTHECARY_CLI_TOKEN_IDLE must be a positive duration (e.g. 168h), got %q", raw)
+		}
+		b.CLITokenIdle = d
 	}
 	b.LogFormat = getenvDefault("APOTHECARY_LOG_FORMAT", "text")
 	if b.LogFormat != "text" && b.LogFormat != "json" {

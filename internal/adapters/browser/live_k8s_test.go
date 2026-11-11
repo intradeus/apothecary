@@ -6,8 +6,9 @@ package browser
 // locally: task test:integration:k8s, or task k8s:cluster k8s:images
 // k8s:test-live to keep the cluster): the browser pod pulls the pinned image
 // (DefaultImage), its init container seeds this tree's shim, and one MCP
-// session runs through the engine's session mux — the docker test's session
-// (liveSession), on a pod.
+// session (liveSession) runs through the engine's session mux: it browses an
+// app on the test's own loopback through the routing proxy, screenshots it,
+// and is refused the outside world.
 //
 // It needs what the workspace's Kubernetes live test needs:
 //
@@ -20,16 +21,20 @@ package browser
 //
 // Unlike the workspace test it cannot stub the engine in the cluster: the
 // session mux IS this process, so the browser pod must reach it. The test
-// asks the cluster which of the docker host's names reaches it
+// asks the cluster which of the host's names reaches it
 // (host.k3d.internal on Linux, host.docker.internal on Docker Desktop and
 // OrbStack) and fails when none does.
 
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strconv"
@@ -38,6 +43,7 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/kube"
+	"apothecary/internal/ports/browserport"
 	"apothecary/workspace"
 )
 
@@ -173,4 +179,108 @@ spec:
 		t.Fatalf("no pod reached this process over host.k3d.internal or host.docker.internal (port %d); probe log:\n%s", port, logs)
 	}
 	return "", ""
+}
+
+// chromiumCount counts the Chromium processes left in the browser.
+const chromiumCount = `for p in /proc/[0-9]*; do tr '\0' ' ' <$p/cmdline 2>/dev/null; echo; done | grep -c "[c]hrom" || true`
+
+// liveSession drives one MCP session of project's browser against an app
+// on the test's own loopback, standing in for the run's port 3000: it is
+// reached and seen, the outside world is not, and the session ends with its
+// stdin.
+func liveSession(t *testing.T, m *Manager, project string) {
+	t.Helper()
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `<html><head><title>Live app</title></head><body><h1>Hello from the run</h1></body></html>`)
+	}))
+	defer app.Close()
+	dial := func(ctx context.Context, port int) (net.Conn, error) {
+		if port != 3000 {
+			return nil, fmt.Errorf("nothing on %d", port)
+		}
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", app.Listener.Addr().String())
+	}
+
+	toServer, fromAgent := io.Pipe()
+	fromServer, toAgent := io.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		err := m.Session(ctx, browserport.BrowserSession{Project: project, Run: "r1", Dial: dial}, struct {
+			io.Reader
+			io.Writer
+		}{toServer, toAgent})
+		// Nobody reads the requests once the session is gone: fail the
+		// test's writes with the session's error instead of blocking them.
+		toServer.CloseWithError(fmt.Errorf("session ended: %v", err))
+		toAgent.Close()
+		done <- err
+	}()
+
+	rd := bufio.NewReader(fromServer)
+	id := 0
+	call := func(method string, params any) map[string]any {
+		t.Helper()
+		id++
+		line, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+		if _, err := fromAgent.Write(append(line, '\n')); err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		for {
+			l, err := rd.ReadBytes('\n')
+			if err != nil {
+				t.Fatalf("%s: %v (session: %v)", method, err, <-done)
+			}
+			var m map[string]any
+			if json.Unmarshal(l, &m) != nil {
+				continue
+			}
+			if v, ok := m["id"].(float64); ok && int(v) == id {
+				return m
+			}
+		}
+	}
+	text := func(m map[string]any) string {
+		b, _ := json.Marshal(m)
+		return string(b)
+	}
+
+	init := call("initialize", map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{},
+		"clientInfo": map[string]any{"name": "live", "version": "1"}})
+	if _, ok := init["result"]; !ok {
+		t.Fatalf("initialize = %s", text(init))
+	}
+	fromAgent.Write([]byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n"))
+
+	nav := call("tools/call", map[string]any{"name": "browser_navigate", "arguments": map[string]any{"url": "http://localhost:3000/"}})
+	if !strings.Contains(text(nav), "Page Title: Live app") {
+		t.Fatalf("navigate to the run = %s", text(nav))
+	}
+	// An action's snapshot goes to a file in the container; asking for one
+	// returns it inline.
+	snap := call("tools/call", map[string]any{"name": "browser_snapshot", "arguments": map[string]any{}})
+	if !strings.Contains(text(snap), "Hello from the run") {
+		t.Fatalf("snapshot = %s", text(snap))
+	}
+	shot := call("tools/call", map[string]any{"name": "browser_take_screenshot", "arguments": map[string]any{}})
+	if !strings.Contains(text(shot), `"type":"image"`) {
+		t.Fatalf("screenshot = %.500s", text(shot))
+	}
+	out := call("tools/call", map[string]any{"name": "browser_navigate", "arguments": map[string]any{"url": "https://example.com/"}})
+	if strings.Contains(text(out), "Example Domain") {
+		t.Fatalf("the browser reached the outside world: %.500s", text(out))
+	}
+	t.Logf("outside world: %.300s", text(out))
+
+	fromAgent.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the session outlived its stdin")
+	}
 }

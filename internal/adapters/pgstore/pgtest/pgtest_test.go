@@ -10,12 +10,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// The tests run on the Postgres production runs: when deploy/ moves, so must
-// Image, or they stop proving anything about it.
+// The tests run on the Postgres production runs: when the chart's bundled
+// Postgres moves, so must Image, or they stop proving anything about it.
 func TestImageIsTheOneDeployed(t *testing.T) {
-	// The deployments, and the repo's own devcontainer, whose `db` sibling is
-	// the Postgres `task dev` runs against: the same one these tests use.
-	for _, f := range []string{"deploy/docker-compose.yaml", "deploy/docker-compose.local.yaml", ".devcontainer/docker-compose.yml"} {
+	// The chart's bundled Postgres, and the repo's own devcontainer, whose
+	// `db` sibling is the Postgres `task dev` runs against: the same one these
+	// tests use.
+	for _, f := range []string{"charts/apothecary/values.yaml", ".devcontainer/docker-compose.yml"} {
 		data, err := os.ReadFile("../../../../" + f)
 		if err != nil {
 			t.Fatal(err)

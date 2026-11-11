@@ -5,13 +5,11 @@
 //
 // The package has two halves:
 //
-//   - a Host owns the gateway's lifetime and each run's link to it — docker
-//     (host_docker.go: a container multi-homed onto per-run --internal
-//     networks) or Kubernetes (host_k8s.go: a Deployment the run pods reach
-//     over WireGuard peers);
+//   - a Host owns the gateway's lifetime and each run's link to it: K8sHost
+//     (host_k8s.go), a Deployment the run pods reach over WireGuard peers. The
+//     interface stays as the seam the Manager's unit tests fake;
 //   - the Manager drives the gateway itself over its control API (policy and
-//     run routes in; denials, audit and build-cache facts out), the same way
-//     on every host.
+//     run routes in; denials, audit and build-cache facts out).
 //
 // Every `project` argument in this package is the project's ID (projects.id).
 // envport.ProjectHostKey turns it into the token names use; the project's NAME is
@@ -36,9 +34,6 @@ import (
 	"apothecary/internal/ports/envport"
 )
 
-// HostRun runs one CLI invocation (docker against the HOST daemon, or kubectl).
-type HostRun func(ctx context.Context, args []string) (stdout, stderr []byte, code int, err error)
-
 // Control is how to reach one project's gateway control API.
 type Control struct {
 	BaseURL string // e.g. http://127.0.0.1:49153
@@ -55,13 +50,10 @@ type Attachment struct {
 	// Peer is the run's WireGuard identity: its public key and tunnel address.
 	Peer *policyfile.Peer
 	// WGEndpoint (host:port) is where the run's sandbox sends its WireGuard
-	// traffic. WGSecret is the Secret holding its WireGuard identity
-	// (Kubernetes); on docker the engine links the sandbox itself (LinkSandbox)
-	// with the private half and the gateway's public key.
-	WGEndpoint   string
-	WGSecret     string
-	WGPrivateKey string
-	WGGatewayKey string
+	// traffic. WGSecret is the Secret holding its WireGuard identity, which
+	// the sandbox pod mounts.
+	WGEndpoint string
+	WGSecret   string
 }
 
 // Host is where a project's gateway runs and how runs are linked to it.
@@ -76,22 +68,6 @@ type Host interface {
 	AttachRun(ctx context.Context, project, projectName, run string) (Attachment, error)
 	// DetachRun undoes AttachRun. Best-effort, idempotent.
 	DetachRun(ctx context.Context, project, run string) error
-}
-
-// SandboxLinker is a Host whose engine brings the run's tunnel up inside the
-// sandbox (docker). A Kubernetes pod does that itself (its wg sidecar).
-type SandboxLinker interface {
-	LinkSandbox(ctx context.Context, att Attachment, sandbox string) error
-}
-
-// LinkSandbox makes the run's WireGuard tunnel the running sandbox's default
-// route. A no-op on hosts whose sandboxes link themselves.
-func (m *Manager) LinkSandbox(ctx context.Context, att Attachment, sandbox string) error {
-	l, ok := m.host.(SandboxLinker)
-	if !ok || att.Peer == nil {
-		return nil
-	}
-	return l.LinkSandbox(ctx, att, sandbox)
 }
 
 // ErrNoGateway: the project has no gateway to ask.

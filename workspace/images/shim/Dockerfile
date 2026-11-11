@@ -1,9 +1,7 @@
 # The static in-workspace shim. Build context: the repo's workspace/ dir.
 #
-# One file, two consumers: the engine builds it at runtime on a docker host
-# (internal/workspace/wsimage, then `docker create` + `cp` the binary out), and CI
-# publishes it as the apothecary/shim image a Kubernetes sandbox pod's
-# shim-seed init container copies onto the run volume (`shim seed`).
+# CI publishes it as the apothecary/shim image a sandbox pod's shim-seed init
+# container copies onto the run volume (`shim seed`).
 #
 # SHIM_HASH is the hash of the shim's sources (`apothecaryd shim-hash`), baked
 # in so a seeded shim can be checked against the engine that expects it.

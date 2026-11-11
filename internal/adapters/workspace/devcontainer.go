@@ -1,54 +1,40 @@
-// Package devcontainer adapts the EnvProvisioner port to the reference
-// @devcontainers/cli (devcontainers/cli, Microsoft-backed) plus the local
-// docker CLI: the workspace IS the target repo's own devcontainer. This is
-// the "run whatever the repo defines" provisioner — the CLI discovers
-// .devcontainer/devcontainer.json (or .devcontainer.json) in the checkout
-// and builds/runs exactly that (image, Dockerfile or compose, features,
-// lifecycle hooks). A repo without one is unsupported — there is no
-// apothecary-built fallback image.
+// Package workspace adapts the EnvProvisioner port to the reference
+// @devcontainers/cli (devcontainers/cli, Microsoft-backed): the workspace IS
+// the target repo's own devcontainer. This is the "run whatever the repo
+// defines" provisioner — the CLI discovers .devcontainer/devcontainer.json (or
+// .devcontainer.json) in the checkout and builds/runs exactly that (image,
+// Dockerfile or compose, features, lifecycle hooks). A repo without one is
+// unsupported — there is no apothecary-built fallback image.
 //
-// The model inverts the §11 clone order: the workspace definition
-// lives in the repo, so the adapter materializes an engine-side checkout
-// FIRST (EnvSpec.GitUser/GitPass; the credential rides a temp store file,
-// never argv, and never enters the container) and `devcontainer up`
-// bind-mounts it as the workspace folder. The §11 contract that the repo
-// is at $HOME/repo is preserved with a symlink created by a one-time
+// Each run's sandbox is a pod on a Kubernetes cluster (host_k8s.go) with its
+// own docker daemon, and the CLIs run inside it. The model inverts the §11
+// clone order: the workspace definition lives in the repo, so the sandbox
+// holds a checkout FIRST (the credential never enters the workspace) and
+// `devcontainer up` mounts it as the workspace folder. The §11 contract that
+// the repo is at $HOME/repo is preserved with a symlink created by a one-time
 // root init, so bootstrap's idempotent clone step no-ops and everything
-// downstream (branch, agent-configs, commands, ReadFile paths) is
-// unchanged. In-workspace git auth still comes from bootstrap step 3.
+// downstream (branch, agent-configs, commands, ReadFile paths) is unchanged.
 //
 // The CLI has no stop/list/delete and holds no state beyond docker labels
-// (`--id-label`): status, destroy, links and IP/gateway discovery go
-// through the docker CLI on the same label. Exec rides `devcontainer exec`
-// (script on stdin), which faithfully propagates exit codes and keeps
-// stdout/stderr separated — no sentinel tricks needed (verified live
-// against @devcontainers/cli 0.86.0 / docker 29).
+// (`--id-label`): status, destroy, links and IP/gateway discovery go through
+// the docker CLI on the same label. Exec rides `devcontainer exec` (script on
+// stdin), which faithfully propagates exit codes and keeps stdout/stderr
+// separated — no sentinel tricks needed.
 //
-// There are no reverse tunnels (exec is docker-exec transport, not ssh),
-// and hardened docker hosts drop container→host IP traffic entirely
-// (verified live), so workspace→engine traffic rides the engine bridge
-// (bridge.go): unix sockets in the bind-mounted shim dir, pumped to the
-// engine's loopback engine-side and re-exposed on the workspace's own
-// 127.0.0.1 by a tiny in-container node relay. Loopback parity holds, so
-// run.env/proxy.env keep the same addresses as every other provisioner.
-// Ports declared by the repo's devcontainer (forwardPorts/appPort) are
-// reported by AppPorts and auto-exposed by the engine at env_ready
-// (runports.AutoExpose): ExposePort starts an in-container reverse relay
-// (`shim relay --reverse`) on a bind-mounted unix socket, and the engine's
-// portrelay publishes it as a Link on a port of its own host (or a hostname,
-// behind an Ingress) — the same socket channel as the bridge, so the
-// container's IP is never dialled and concurrent runs never contend for a port.
+// No container IP is ever dialled. Workspace→engine traffic rides the engine
+// bridge (the pod's dial-in mux), re-exposed on the workspace's own 127.0.0.1
+// by the shim's relay, so run.env/proxy.env keep loopback addresses. A
+// workspace port is reached by an in-container reverse relay (`shim relay
+// --reverse`, ExposePort) that the engine dials per connection: for the
+// apps domain's browser links and for the CLI's tunnels (runports).
 //
-// SECURITY POSTURE: egress is filtered OUTSIDE the workspace by the per-project
-// egress gateway (internal/adapters/egressgw). The run's DinD sandbox joins a per-run
-// --internal docker network with no external route and is default-routed to the
-// gateway, so ALL egress — the workspace container AND every compose sibling
-// (a database, etc.) — traverses the gateway, which allows/denies by TLS SNI /
-// HTTP Host (no MITM). A privileged sandbox cannot bypass it (enforcement lives
-// in a separate container + the host bridge). This finally covers compose
-// devcontainers, which the old in-container firewall left wide open. The
-// per-project firewall=off switch (GatewayOff) is the escape hatch: the sandbox
-// then egresses directly on the host bridge, unfiltered. See egressport.EgressController.
+// SECURITY POSTURE: egress is filtered OUTSIDE the workspace by the
+// per-project egress gateway (internal/adapters/egressgw), which the sandbox
+// pod reaches over WireGuard: ALL egress — the workspace container AND every
+// compose sibling (a database, etc.) — traverses the gateway, which
+// allows/denies by TLS SNI / HTTP Host (no MITM). A privileged sandbox cannot
+// bypass it (its network policy admits nothing else). The per-integration
+// firewall=off switch is the escape hatch. See egressport.EgressController.
 package workspace
 
 import (
@@ -60,7 +46,6 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -76,7 +61,6 @@ import (
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/workspace/checkout"
 )
 
 // idLabel is the docker label key that ties a container to its apothecary
@@ -106,14 +90,11 @@ type Config struct {
 	// "devcontainer"; install with `npm install -g @devcontainers/cli`).
 	DevcontainerBin string
 	// DockerBin is the docker CLI (default "docker"). The daemon it points
-	// at is where workspaces run; remote daemons work via the engine
-	// process's DOCKER_HOST.
+	// at is the sandbox's own.
 	DockerBin string
-	// RunsDir receives per-env state: the checkout, shim/, the markers
-	// (definition, gwproject, gwip, devcontainer.sum) and exec.log — and,
-	// beside the env folders, the engine-wide caches (shim-cache/,
-	// tools-cache/, builds/). Empty = system temp dir for state and no exec
-	// log.
+	// RunsDir receives the engine's side of per-env state: the markers
+	// (definition, gwproject, gwip, devcontainer.sum) and exec.log. Empty =
+	// system temp dir for state and no exec log.
 	RunsDir string
 	// ProvisionTimeout bounds clone+build+up+ready (default 15m; first
 	// builds of heavy devcontainers can be slow).
@@ -122,48 +103,16 @@ type Config struct {
 	// workspace's own 127.0.0.1 through the engine bridge (bridge.go).
 	// Default 8080.
 	EnginePort int
-	// ShimBin builds (cached) and returns the host path of the static
-	// in-workspace shim binary (wsimage.EnsureShim), bind-mounted into
-	// every workspace at /opt/apothecary/shim. Required.
-	ShimBin func(ctx context.Context) (string, error)
-	// ToolsDir builds (cached) and returns the host directory of the tools
-	// bundle (wsimage.EnsureTools): every harness CLI and code-server as
-	// standalone builds, bind-mounted into every workspace at
-	// /opt/apothecary/tools. Required on the docker host.
-	ToolsDir func(ctx context.Context) (string, error)
-	// GatewayImage builds (cached) and returns the tag of the per-project
-	// egress gateway image (wsimage.EnsureGatewayImage). Required for egress
-	// filtering; nil ⇒ no gateway (the sandbox runs on the default bridge,
-	// unfiltered — used by tests and the GatewayOff escape hatch).
-	GatewayImage func(ctx context.Context) (string, error)
-	// GatewayOff disables the egress gateway for this provisioner (the escape
-	// hatch). Default (false) = gateway ON. Off = the sandbox egresses directly
-	// via the host bridge with no filtering.
-	GatewayOff bool
-	// DinDImage is the sandbox image providing the per-run nested docker
-	// daemon (default "docker:29-dind"). Each run gets its own daemon so repo
-	// compose files run verbatim — container_name/ports collide with nothing
-	// — and Destroy is total (the whole inner daemon dies). Override for a
-	// mirror or a pinned digest.
-	DinDImage string
-	// Kube, when set, runs every sandbox as a pod on a Kubernetes cluster
-	// (host_k8s.go) instead of a container on the engine's docker daemon.
+	// Kube is the cluster every sandbox runs on, one pod per run
+	// (host_k8s.go). Required: New without it builds an adapter with no host,
+	// which only this package's tests do (they install their own).
 	Kube *KubeConfig
-	// SandboxRuntime is the OCI runtime the per-run sandbox is created with
-	// (APOTHECARY_SANDBOX_RUNTIME). Empty (default) = the daemon's default
-	// runtime plus --privileged, which is what a nested dockerd needs under
-	// plain runc — and which makes sandbox root equivalent to host root.
-	// "sysbox-runc" (sysbox installed on the HOST) runs the sandbox
-	// unprivileged in a user namespace instead, so a compromised run reaches
-	// neither the host, nor its docker socket, nor any other run's state.
-	// Verified against the daemon once before first use.
-	SandboxRuntime string
 	// WorkspaceDocker is the daemon door's setting (APOTHECARY_WORKSPACE_DOCKER):
 	// whether a workspace may take its run's own docker daemon, which the
-	// sandbox then also serves on /var/run/docker.sock (sandbox.go). "auto"
-	// (default, "") opens it only for an unprivileged sandbox; "on" opens it
-	// under privileged sandboxes too — the operator accepting that such a
-	// workspace is host root; "off" never. See doorOpen and checkDaemonDoor.
+	// sandbox serves on /var/run/docker.sock. "auto" (default, "") opens it
+	// only for an unprivileged sandbox; "on" opens it under privileged
+	// sandboxes too — the operator accepting that such a workspace is root on
+	// its node; "off" never. See doorOpen and checkDaemonDoor.
 	WorkspaceDocker string
 }
 
@@ -172,8 +121,8 @@ type Adapter struct {
 	runner     CmdRunner
 	retryDelay time.Duration
 
-	// host is where sandboxes run (docker daemon or Kubernetes); defs are the
-	// workspace definitions a repo may carry, in detection order.
+	// host is where sandboxes run (Kubernetes; a test host in tests); defs
+	// are the workspace definitions a repo may carry, in detection order.
 	host Host
 	defs []Definition
 
@@ -181,19 +130,13 @@ type Adapter struct {
 	defMu    sync.Mutex
 	defByEnv map[string]Definition
 
-	// listen is swapped in tests.
-	listen func(network, addr string) (net.Listener, error)
-	// noSandboxGuard disables the DinD path guards (temp-dir + sun_path
-	// length) so unit tests can drive the scripted sandbox flow from a
-	// t.TempDir() RunsDir; the guards themselves have a dedicated test.
+	// noSandboxGuard disables the RunsDir-under-/tmp guard (host_k8s.go) so
+	// unit tests can run from a t.TempDir(); the guard has a test of its own.
 	noSandboxGuard bool
 
-	bridgeMu sync.Mutex
-	bridges  map[envport.EnvID][]net.Listener // engine-side unix listeners per env
-
-	// gw is the per-project egress gateway manager (nil ⇒ gateway off). It owns
-	// the gateway container + per-run --internal networks and the policy/denials
-	// files; Provision/Destroy drive its lifecycle.
+	// gw is the per-project egress gateway manager (nil ⇒ gateway off): the
+	// gateway's lifecycle, each run's attachment, the policy and denials;
+	// Provision/Destroy drive it.
 	gw *egressgw.Manager
 
 	// sibPortsMu guards the last sibling-port scan per env (port -> compose
@@ -205,17 +148,6 @@ type Adapter struct {
 	// sidecarMu serializes sidecar starts, so two callers racing on a cold
 	// workspace start one (the shim's own singleton guard backs this up).
 	sidecarMu sync.Mutex
-
-	// runtimeMu guards runtimeOK, the "cfg.SandboxRuntime is registered with
-	// the daemon" check. Only SUCCESS is cached: a transient docker failure
-	// must not wedge the provisioner for the process's lifetime.
-	runtimeMu sync.Mutex
-	runtimeOK bool
-
-	// cpusMu guards the cached host CPU count (see hostCPUs — the docker
-	// stats CPUPerc denominator, fetched once per adapter lifetime).
-	cpusMu sync.Mutex
-	cpus   int
 }
 
 // CmdRunner executes one CLI invocation (devcontainer, docker or git);
@@ -238,28 +170,18 @@ func New(cfg Config) *Adapter {
 	if cfg.EnginePort == 0 {
 		cfg.EnginePort = 8080
 	}
-	if cfg.DinDImage == "" {
-		cfg.DinDImage = "docker:29-dind"
-	}
 	a := &Adapter{
 		cfg:        cfg,
 		runner:     &cliRunner{},
 		retryDelay: time.Second,
-		listen:     net.Listen,
-		bridges:    map[envport.EnvID][]net.Listener{},
 		sibPorts:   map[envport.EnvID]map[int]string{},
 		defByEnv:   map[string]Definition{},
 	}
-	a.host = dockerHost{a}
 	a.defs = []Definition{devcontainerDef{bin: cfg.DevcontainerBin, docker: cfg.DockerBin}}
 	if cfg.Kube != nil {
 		kh := newK8sHost(a, cfg.Kube)
 		a.host = kh
 		a.gw = kh.gatewayManager()
-		return a
-	}
-	if cfg.GatewayImage != nil && !cfg.GatewayOff {
-		a.gw = egressgw.NewDockerManager(cfg.RunsDir, a.hostRun, cfg.GatewayImage)
 	}
 	return a
 }
@@ -376,56 +298,21 @@ func (a *Adapter) folderFor(name string) string {
 // reused the FIRST run's containers, our per-run `--id-label` never landed on
 // anything, and the next run failed with "no running container". Naming the
 // checkout after the workspace keeps each run's compose project distinct.
-//
-// The legacy <folder>/src layout wins when it is already a checkout, so
-// workspaces created before this fix keep resolving to their existing clone.
 func (a *Adapter) srcDir(name string) string {
-	if legacy := filepath.Join(a.folderFor(name), "src"); isCheckout(legacy) {
-		return legacy
-	}
 	return filepath.Join(a.folderFor(name), name)
 }
 
 // --- daemon split (Docker-in-Docker) ----------------------------------------
 //
-// Each run gets its own nested docker daemon inside a --privileged sandbox
-// container (sandbox.go). The workspace's compose then runs verbatim in an
-// isolated daemon: container_name/ports collide with nothing, and Destroy is
-// total. The engine keeps driving the devcontainer/docker CLIs ENGINE-SIDE;
-// they target the inner daemon via DOCKER_HOST pointing at a unix socket the
-// inner dockerd creates on the run folder (mounted into the sandbox at the
-// IDENTICAL path, so the devcontainer CLI's host-resolved bind sources line
-// up in the sandbox fs by construction).
+// Each run gets its own nested docker daemon inside its sandbox pod
+// (host_k8s.go). The workspace's compose then runs verbatim in an isolated
+// daemon: container_name/ports collide with nothing, and Destroy is total.
 
-// sockPath is the inner daemon's unix socket, on the run folder (== the
-// sandbox's parity mount). The daemon must not live under /tmp (dind masks it)
-// and the path must fit a unix sun_path (108) — both guarded in ensureSandbox.
-func (a *Adapter) sockPath(name string) string {
-	return filepath.Join(a.folderFor(name), "docker.sock")
-}
-
-// dockerEnv points the docker/devcontainer CLIs at the run's INNER daemon —
-// or returns nil when the run predates the sandbox (no socket file yet), which
-// transparently keeps legacy envs and pre-provision probes on the host daemon.
-func (a *Adapter) dockerEnv(name string) []string {
-	if _, err := os.Stat(a.sockPath(name)); err != nil {
-		return nil
-	}
-	return []string{"DOCKER_HOST=unix://" + a.sockPath(name)}
-}
-
-// runInner is a.run against the run's inner daemon (host daemon for legacy
-// envs — dockerEnv nil). extraEnv is appended after the daemon selector. Every
-// call that acts on the WORKSPACE or its inner containers goes through this;
-// sandbox-lifecycle calls (create/start/rm the sandbox itself) use a.run so
-// they never carry the inner DOCKER_HOST — see sandbox.go's Invariant C.
+// runInner runs one CLI invocation against the run's sandbox (its inner
+// docker daemon, its checkout, its devcontainer CLI). Every call that acts on
+// the WORKSPACE or its inner containers goes through this.
 func (a *Adapter) runInner(ctx context.Context, name, bin string, args []string, stdin []byte, tee io.Writer, extraEnv ...string) ([]byte, []byte, int, error) {
 	return a.host.runInner(ctx, name, bin, args, stdin, tee, extraEnv...)
-}
-
-func isCheckout(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, ".git"))
-	return err == nil
 }
 
 // --- Provision --------------------------------------------------------------
@@ -751,55 +638,6 @@ func (a *Adapter) renameContainer(ctx context.Context, containerID, name string)
 	}
 }
 
-// ensureSrc materializes the engine-side checkout the workspace folder is
-// mounted from. An existing checkout is kept (crash recovery; it may hold
-// agent commits via the bind mount).
-func (a *Adapter) ensureSrc(ctx context.Context, name string, spec envport.EnvSpec) (string, error) {
-	src := a.srcDir(name)
-	if isCheckout(src) {
-		return src, nil
-	}
-	if err := os.MkdirAll(a.folderFor(name), 0o755); err != nil {
-		return "", err
-	}
-	// The clone, then the branch step inside it (checkout.BranchScript): the
-	// checkout is on the run's branch before the devcontainer is built from
-	// it, so the build reads the files the run works on, not the remote's
-	// default branch. `--` keeps the URL and the path from being read as
-	// options.
-	script := fmt.Sprintf("git clone -- %s %s", shell.Quote(spec.RepoURL), shell.Quote(src))
-	if spec.Branch != "" {
-		script += fmt.Sprintf(" && cd %s && { %s; }", shell.Quote(src), checkout.BranchScript(spec.Branch, spec.SourceBranch, spec.Fetch))
-	}
-	var env []string
-	if spec.GitPass != "" {
-		// The credential rides a mode-0600 store file consumed by git's
-		// credential machinery, named through git's environment config —
-		// never argv (ps-visible), never the checkout config — and removed
-		// as soon as the script returns. Every git command of the script
-		// sees it: the branch step's fetch of a merge request's head needs
-		// it as much as the clone.
-		cred, err := checkout.CredentialLine(spec.RepoURL, spec.GitUser, spec.GitPass)
-		if err != nil {
-			return "", err
-		}
-		credPath := filepath.Join(a.folderFor(name), "git-credentials")
-		if err := os.WriteFile(credPath, []byte(cred+"\n"), 0o600); err != nil {
-			return "", err
-		}
-		defer os.Remove(credPath)
-		env = []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0=store --file=" + credPath}
-	}
-	_, stderr, code, err := a.run(ctx, "sh", []string{"-c", script}, nil, nil, env...)
-	if err != nil {
-		return "", err
-	}
-	if code != 0 {
-		return "", fmt.Errorf("checkout %s: exit %d: %s", spec.RepoURL, code, shell.Tail(string(stderr), 2048))
-	}
-	return src, nil
-}
-
 // policyFor maps an EnvSpec's egress inputs to the gateway policy file. Allow
 // mode (the default) uses the derived allowlist; deny mode uses the denylist.
 func policyFor(spec envport.EnvSpec) policyfile.File {
@@ -935,63 +773,6 @@ func (a *Adapter) projectFor(name string) string {
 	return strings.TrimSpace(string(b))
 }
 
-// ensureShim places the static shim binary (ask_human MCP server + engine
-// relay, docker-built via cfg.ShimBin) into the per-env dir bind-mounted
-// at /opt/apothecary — the path harness configs (and startRelay) hardcode.
-// Written as tmp+rename: overwriting a binary a live relay is executing
-// would fail with ETXTBSY, while rename just swaps the directory entry.
-// Alongside it, the relative symlink apothecary-shim -> shim is the name
-// scripts call it by (shimPathPrelude puts the dir on their PATH); relative,
-// so it resolves inside the container too, and rename never breaks it.
-// Reattach runs this as well, so older workspaces gain the alias.
-func (a *Adapter) ensureShim(ctx context.Context, name string) (string, error) {
-	dir := filepath.Join(a.folderFor(name), "shim")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	if a.cfg.ShimBin == nil {
-		return "", fmt.Errorf("devcontainer: no shim builder configured")
-	}
-	src, err := a.cfg.ShimBin(ctx)
-	if err != nil {
-		return "", fmt.Errorf("build shim binary: %w", err)
-	}
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return "", err
-	}
-	tmp := filepath.Join(dir, "shim.tmp")
-	if err := os.WriteFile(tmp, data, 0o755); err != nil {
-		return "", err
-	}
-	if err := os.Rename(tmp, filepath.Join(dir, "shim")); err != nil {
-		return "", err
-	}
-	alias := filepath.Join(dir, shimAlias)
-	if target, err := os.Readlink(alias); err == nil && target == "shim" {
-		return dir, nil
-	}
-	_ = os.Remove(alias)
-	return dir, os.Symlink("shim", alias)
-}
-
-// shimAlias is the shim's callable name in workspaces (see ensureShim).
-const shimAlias = "apothecary-shim"
-
-// ensureTools builds (cached) the tools bundle on the engine host and returns
-// its directory (cfg.ToolsDir); its PARENT is what the sandbox mounts, the
-// dir itself is what the workspace mounts at /opt/apothecary/tools.
-func (a *Adapter) ensureTools(ctx context.Context) (string, error) {
-	if a.cfg.ToolsDir == nil {
-		return "", fmt.Errorf("devcontainer: no tools builder configured")
-	}
-	dir, err := a.cfg.ToolsDir(ctx)
-	if err != nil {
-		return "", fmt.Errorf("build tools bundle: %w", err)
-	}
-	return dir, nil
-}
-
 // rootInit performs the one-time (idempotent) root-level setup the §11
 // contract needs inside an arbitrary user image: the /apothecary state dir
 // (and the editor's state under it) owned by the remote user, the $HOME/repo
@@ -1009,20 +790,17 @@ func (a *Adapter) ensureTools(ctx context.Context) (string, error) {
 // image gets no code-server link (there is no musl build). `devcontainer
 // exec` has no --user, so this one call goes through docker directly.
 //
-// A non-root remote user also gets the checkout: the engine clones it as
-// itself (root in the engine image) and bind-mounts it, and the CLI never
-// remaps a uid when it runs as root (nor for compose), so without this the
+// A non-root remote user also gets the checkout: it is cloned as root in the
+// sandbox and mounted in, and the CLI never remaps a uid when it runs as
+// root (nor for compose), so without this the
 // user's own hooks and bootstrap's `git switch` meet a root-owned tree. The
 // hooks run after this (RunUserCommands), which is why `up` skips them.
 //
 // A non-root remote user also gets the shim dir's group, writable: the
 // sidecar runs as that user and creates its sockets there (sidecar.sock,
-// ssh.sock). The dir is root's on Kubernetes (the seed init container) and
-// the engine's on the docker host, whose uid the user shares only when the
-// CLI remapped it — never for a root engine, never for compose. The group,
+// ssh.sock). The dir is root's (the pod's seed init container). The group,
 // not the owner: the engine must keep writing there (engine.sock after a
-// restart, the shim on upgrade) whatever uid it runs as, and on the docker
-// host the dir is its own run folder. Not recursive: the shim and the tools
+// restart, the shim on upgrade) whatever uid it runs as. Not recursive: the shim and the tools
 // bundle keep their owners. The gid is the one the user's processes run
 // with — a devcontainer has no way to name another.
 func (a *Adapter) rootInit(ctx context.Context, name string, res Workspace) error {
@@ -1279,11 +1057,10 @@ func (a *Adapter) Status(ctx context.Context, env envport.EnvID) (envport.EnvSta
 	return a.status(ctx, string(env))
 }
 
-// status reports the env's liveness in two stages: the SANDBOX on the host
-// daemon gates the WORKSPACE on the inner daemon. A run with no sandbox is a
-// legacy (pre-DinD) env — it keeps the original host-label query — or absent.
+// status reports the env's liveness in two stages: the SANDBOX gates the
+// WORKSPACE on the sandbox's inner daemon. A run with no sandbox is absent.
 func (a *Adapter) status(ctx context.Context, name string) (envport.EnvStatus, error) {
-	sbx, legacy, err := a.host.sandboxState(ctx, name)
+	sbx, err := a.host.sandboxState(ctx, name)
 	if err != nil {
 		// Host didn't answer — return the error so the reconciler
 		// records EnvUnknown and recovery WAITS, rather than reading "" as
@@ -1292,14 +1069,9 @@ func (a *Adapter) status(ctx context.Context, name string) (envport.EnvStatus, e
 	}
 	switch sbx {
 	case "":
-		// No sandbox. Pre-DinD envs (no inner socket) resolve on the host
-		// daemon as before; a DinD env whose sandbox is gone is absent.
-		if legacy {
-			return a.workspaceState(ctx, name, false)
-		}
 		return envport.EnvAbsent, nil
 	case "running":
-		return a.workspaceState(ctx, name, true) // sandbox up → query the inner workspace
+		return a.workspaceState(ctx, name) // sandbox up → query the inner workspace
 	case "created", "restarting":
 		return envport.EnvStarting, nil
 	default: // exited, paused, dead, removing
@@ -1308,16 +1080,9 @@ func (a *Adapter) status(ctx context.Context, name string) (envport.EnvStatus, e
 }
 
 // workspaceState maps the workspace container's `docker ps` state for our
-// id-label. inner selects the daemon: the inner one when the sandbox is up,
-// the host one for legacy envs.
-func (a *Adapter) workspaceState(ctx context.Context, name string, inner bool) (envport.EnvStatus, error) {
-	q := a.run
-	if inner {
-		q = func(ctx context.Context, bin string, args []string, stdin []byte, tee io.Writer, env ...string) ([]byte, []byte, int, error) {
-			return a.runInner(ctx, name, bin, args, stdin, tee, env...)
-		}
-	}
-	stdout, stderr, code, err := q(ctx, a.cfg.DockerBin,
+// id-label, on the sandbox's inner daemon.
+func (a *Adapter) workspaceState(ctx context.Context, name string) (envport.EnvStatus, error) {
+	stdout, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
 		[]string{"ps", "-a", "--filter", "label=" + label(name), "--format", "{{.State}}"}, nil, nil)
 	if err != nil {
 		return "", err
@@ -1351,52 +1116,6 @@ func (a *Adapter) Destroy(ctx context.Context, env envport.EnvID) error {
 	}
 	a.host.closeBridge(env)
 	return os.RemoveAll(a.folderFor(name))
-}
-
-// destroyDockerSandbox removes a docker-host env's sandbox (and with it the
-// inner daemon and everything in it), or a legacy env's host-daemon workspace.
-func (a *Adapter) destroyDockerSandbox(ctx context.Context, name string) error {
-	ids, err := a.sandboxIDs(ctx, name)
-	if err != nil {
-		return err
-	}
-	if len(ids) > 0 {
-		// DinD env: removing the sandbox tears down the inner daemon and with
-		// it EVERY workspace + compose side service + network inside — the
-		// side-service leak that plagued the shared-daemon design is gone by
-		// construction. The named /var/lib/docker volume goes next.
-		if _, stderr, code, err := a.hostRun(ctx, append([]string{"rm", "-f"}, ids...)); err != nil {
-			return err
-		} else if code != 0 {
-			return fmt.Errorf("docker rm %s sandbox: exit %d: %s", name, code, shell.Tail(string(stderr), 512))
-		}
-		if _, stderr, code, err := a.hostRun(ctx, []string{"volume", "rm", "-f", a.sandboxVolume(name)}); err != nil {
-			return err
-		} else if code != 0 {
-			return fmt.Errorf("docker volume rm %s: exit %d: %s", a.sandboxVolume(name), code, shell.Tail(string(stderr), 512))
-		}
-	} else {
-		// Legacy (pre-DinD) env: the workspace container lives on the host
-		// daemon; remove it by id-label (its compose side services were never
-		// labeled and are not reaped — the old, documented limitation).
-		stdout, stderr, code, err := a.run(ctx, a.cfg.DockerBin,
-			[]string{"ps", "-aq", "--filter", "label=" + label(name)}, nil, nil)
-		if err != nil {
-			return err
-		}
-		if code != 0 {
-			return fmt.Errorf("docker ps: exit %d: %s", code, shell.Tail(string(stderr), 512))
-		}
-		if wids := strings.Fields(string(stdout)); len(wids) > 0 {
-			if _, stderr, code, err = a.run(ctx, a.cfg.DockerBin, append([]string{"rm", "-f"}, wids...), nil, nil); err != nil {
-				return err
-			}
-			if code != 0 {
-				return fmt.Errorf("docker rm %s: exit %d: %s", name, code, shell.Tail(string(stderr), 512))
-			}
-		}
-	}
-	return nil
 }
 
 // --- optional capabilities --------------------------------------------------
@@ -1606,23 +1325,6 @@ func (a *Adapter) TailExecLog(_ context.Context, env envport.EnvID, n int) ([]by
 
 // Test is the cheap probe (DESIGN2 §4): the host can run sandboxes.
 func (a *Adapter) Test(ctx context.Context) error { return a.host.test(ctx) }
-
-// dockerTest: both CLIs answer and the daemon is up. All local.
-func (a *Adapter) dockerTest(ctx context.Context) error {
-	if _, _, code, err := a.run(ctx, a.cfg.DevcontainerBin, []string{"--version"}, nil, nil); err != nil || code != 0 {
-		return fmt.Errorf("devcontainer CLI not runnable (%q): %v — install with `npm install -g @devcontainers/cli`", a.cfg.DevcontainerBin, err)
-	}
-	_, stderr, code, err := a.run(ctx, a.cfg.DockerBin, []string{"version", "--format", "{{.Server.Version}}"}, nil, nil)
-	if err != nil {
-		return fmt.Errorf("docker CLI not runnable (%q): %v", a.cfg.DockerBin, err)
-	}
-	if code != 0 {
-		return fmt.Errorf("docker daemon unreachable: %s", shell.Tail(string(stderr), 512))
-	}
-	// An opted-in sandbox runtime is a host capability, so the "Test" button
-	// is the right place to find out it isn't installed — not the first run.
-	return a.ensureRuntime(ctx)
-}
 
 // Rebuild (envport.WorkspaceRebuilder) recreates the workspace container in
 // place, keeping the engine-side checkout (agent commits survive). Non-compose:

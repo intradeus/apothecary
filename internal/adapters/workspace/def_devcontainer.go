@@ -480,7 +480,8 @@ func parseBuildRefs(cfgPath string, raw []byte) (dockerfiles, compose []string) 
 // sandbox's own docker daemon: the docker-outside-of-docker feature, a
 // `mounts` or `runArgs` bind of the default socket, or a compose volume of it
 // in any compose file the configuration names. Raw JSONC, no CLI call (like
-// EditorExtensions): it runs before the sandbox exists on the docker host.
+// EditorExtensions): it runs as soon as the checkout exists, before the
+// definition builds.
 // Best-effort — a file that cannot be read or parsed asks for nothing, and a
 // missed case degrades to docker's own late bind error, never to a false
 // refusal of a repo that asked for nothing.

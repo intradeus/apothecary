@@ -17,12 +17,16 @@ const portBtn = (port: number) => screen.getByRole('button', { name: new RegExp(
 const input = () => screen.getByRole('textbox', { name: 'Port' });
 const exposeBtn = () => screen.getByRole('button', { name: 'Expose ↵' });
 /** A live run whose feed goes on answering what it already shows. */
-function live(over: { observed?: ObservedPort[]; exposed?: ExposedPort[] } = {}) {
+function live(over: { observed?: ObservedPort[]; exposed?: ExposedPort[]; links?: boolean } = {}) {
+	const links = over.links ?? true;
 	vi.mocked(api.runs.ports).mockResolvedValue({
 		observed: over.observed ?? [],
-		exposed: over.exposed ?? []
+		exposed: over.exposed ?? [],
+		links
 	});
-	return aViewStore(aLiveRun(), over);
+	const rs = aViewStore(aLiveRun(), over);
+	rs.portLinks = links;
+	return rs;
 }
 
 /** A tab window.open handed out: `location.href` is where it ended up. */
@@ -57,6 +61,90 @@ describe('PortsView', () => {
 			const hold = vi.spyOn(rs, 'usePorts');
 			render(PortsView, { rs, visible: false });
 			expect(hold).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('on your machine', () => {
+		it('offers both forward commands, naming the workspace, and says how to see them', () => {
+			render(PortsView, { rs: live(), visible: true });
+			expect(screen.getByText('On your machine')).toBeInTheDocument();
+			expect(screen.getByText('apothecary forward env-1')).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Copy apothecary forward env-1' })).toBeEnabled();
+			expect(screen.getByText('apothecary forward env-1 --same')).toBeInTheDocument();
+			expect(
+				screen.getByRole('button', { name: 'Copy apothecary forward env-1 --same' })
+			).toBeEnabled();
+			expect(screen.getByText(/each on a free port of your machine/)).toHaveTextContent(
+				'apothecary forward status'
+			);
+			expect(screen.getByText(/^The same port numbers on your machine/)).toBeInTheDocument();
+		});
+
+		it('names the run until it has a workspace', () => {
+			vi.mocked(api.runs.ports).mockResolvedValue({ observed: [], exposed: [], links: true });
+			render(PortsView, { rs: aViewStore(aLiveRun({ envId: undefined })), visible: true });
+			expect(screen.getByText(`apothecary forward ${RUN}`)).toBeInTheDocument();
+			expect(screen.getByText(`apothecary forward ${RUN} --same`)).toBeInTheDocument();
+		});
+
+		it('is gone once the run is over', () => {
+			vi.mocked(api.runs.ports).mockResolvedValue({ observed: [], exposed: [], links: true });
+			render(PortsView, {
+				rs: aViewStore(aLiveRun({ state: 'completed' }), {
+					observed: [{ port: 3000 }],
+					exposed: [{ port: 4000, url: URL }]
+				}),
+				visible: true
+			});
+			expect(screen.queryByText(/apothecary forward/)).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /^Copy apothecary/ })).not.toBeInTheDocument();
+		});
+	});
+
+	describe('one port at a time', () => {
+		it('copies the command for each detected port, beside its expose button', async () => {
+			const user = userEvent.setup();
+			const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+			render(PortsView, {
+				rs: live({ observed: [{ port: 3000 }, { port: 5432, service: 'db' }] }),
+				visible: true
+			});
+			expect(portBtn(3000)).toBeInTheDocument();
+			await user.click(screen.getByRole('button', { name: 'Copy apothecary forward env-1 5432' }));
+			expect(write).toHaveBeenCalledExactlyOnceWith('apothecary forward env-1 5432');
+			expect(api.runs.exposePort).not.toHaveBeenCalled();
+		});
+
+		it('copies it from the chips when there are no browser links', () => {
+			render(PortsView, {
+				rs: live({ links: false, observed: [{ port: 5432, service: 'db' }] }),
+				visible: true
+			});
+			expect(
+				screen.getByRole('button', { name: 'Copy apothecary forward env-1 5432' })
+			).toBeInTheDocument();
+		});
+
+		it('copies it beside an exposed port too', () => {
+			render(PortsView, { rs: live({ exposed: [{ port: 4000, url: URL }] }), visible: true });
+			expect(
+				screen.getByRole('button', { name: 'Copy apothecary forward env-1 4000' })
+			).toBeInTheDocument();
+		});
+	});
+
+	describe('without browser links', () => {
+		it('lists what listens without offering to open it, and drops the expose form', () => {
+			render(PortsView, {
+				rs: live({ links: false, observed: [{ port: 5432, service: 'db' }, { port: 3000 }] }),
+				visible: true
+			});
+			expect(screen.getByText(':5432')).toBeInTheDocument();
+			expect(screen.getByText(':3000')).toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /:5432/ })).not.toBeInTheDocument();
+			expect(screen.queryByText('Expose a port')).not.toBeInTheDocument();
+			expect(screen.queryByRole('textbox', { name: 'Port' })).not.toBeInTheDocument();
+			expect(screen.getByText('apothecary forward env-1')).toBeInTheDocument();
 		});
 	});
 
@@ -105,7 +193,8 @@ describe('PortsView', () => {
 			render(PortsView, { rs: live({ observed: [{ port: 4000 }] }), visible: true });
 			vi.mocked(api.runs.ports).mockResolvedValue({
 				exposed: [{ port: 4000, url: URL }],
-				observed: []
+				observed: [],
+				links: true
 			});
 
 			await userEvent.click(await screen.findByRole('button', { name: /:4000/ }));
@@ -300,7 +389,7 @@ describe('PortsView', () => {
 	});
 
 	describe('a finished run', () => {
-		const feed = { observed: [{ port: 4000 }], exposed: [{ port: 5000, url: URL }] };
+		const feed = { observed: [{ port: 4000 }], exposed: [{ port: 5000, url: URL }], links: true };
 		function over() {
 			vi.mocked(api.runs.ports).mockResolvedValue(feed);
 			return aViewStore(aLiveRun({ state: 'completed' }), feed);

@@ -14,8 +14,8 @@ import (
 // A workspace has two independent axes:
 //
 //   - the HOST is where the run's sandbox lives and how the engine reaches it:
-//     a Docker-in-Docker container on the engine's docker daemon (host_docker.go)
-//     or a Pod on a Kubernetes cluster (host_k8s.go);
+//     a Pod on a Kubernetes cluster (host_k8s.go; the package's tests run on a
+//     host of their own);
 //   - the DEFINITION is what gets built inside that sandbox, read from the
 //     repo: today a devcontainer.json (def_devcontainer.go).
 //
@@ -51,10 +51,9 @@ type Host interface {
 	fs(name string) sandboxFS
 
 	// sandboxState is the sandbox's state word ("running", "created",
-	// "exited", ...) or "" when there is none. legacy reports a pre-sandbox
-	// env whose workspace lives directly on the host daemon (docker only). An
-	// unreachable host is an error, never "".
-	sandboxState(ctx context.Context, name string) (state string, legacy bool, err error)
+	// "exited", ...) or "" when there is none. An unreachable host is an
+	// error, never "".
+	sandboxState(ctx context.Context, name string) (state string, err error)
 	destroySandbox(ctx context.Context, name string) error
 	// resetSandbox empties the sandbox for a compose rebuild: every workspace
 	// and side container goes, and with them what they hold in the daemon.
@@ -82,6 +81,10 @@ type Host interface {
 	close()
 }
 
+// daemonDoorSocket is dockerd's default socket inside the sandbox: what the
+// daemon door hands a docker-outside-of-docker devcontainer.
+const daemonDoorSocket = "/var/run/docker.sock"
+
 // prep is what Host.prepare hands the definition: the checkout (as the sandbox
 // sees it), the shim dir to mount at /opt/apothecary, the tools bundle to
 // mount at /opt/apothecary/tools, the egress gateway's IP on the run's link
@@ -107,8 +110,9 @@ type sandboxFS interface {
 	Walk(ctx context.Context, dir string) ([]string, error)
 }
 
-// osFS is sandboxFS on the engine's own filesystem — the docker host, whose
-// run folder is bind-mounted into the sandbox at the same path.
+// osFS is sandboxFS on the engine's own filesystem: the run folder as the
+// engine sees it (the tests' host; the Kubernetes host reads the pod's
+// volume through exec instead).
 type osFS struct{}
 
 func (osFS) ReadFile(_ context.Context, path string) ([]byte, error) { return os.ReadFile(path) }

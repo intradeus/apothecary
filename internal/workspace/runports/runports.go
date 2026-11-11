@@ -57,6 +57,8 @@ type Service struct {
 	// path returns nothing rather than a stale lie.
 	mu       sync.Mutex
 	observed map[string]*observedRun
+	// conns are the paths kept for tunnels, per run and port (tunnel.go).
+	conns map[string]map[int]envport.PortConn
 }
 
 func New(runs *run.Reader, resolver resolution.Resolver, relay *portrelay.Manager, cfg Config, log *slog.Logger) *Service {
@@ -77,8 +79,10 @@ func (s *Service) log() *slog.Logger {
 	return slog.Default()
 }
 
-// ErrPortsOff marks an expose request when no port relay is configured.
-var ErrPortsOff = errors.New("port exposure is not configured")
+// ErrPortsOff marks an expose request when no port relay is configured: on
+// Kubernetes, a deployment without an apps domain, whose web links nothing
+// could reach. Ports are then reached with the CLI's tunnel (Dial).
+var ErrPortsOff = errors.New("browser links to workspace ports need an apps domain (APOTHECARY_APPS_DOMAIN); reach the port with `apothecary forward` instead")
 
 // Expose publishes a workspace port of a live run and returns the
 // browser URL (the run-page "open the app" path). Idempotent per
@@ -173,6 +177,7 @@ func (s *Service) AutoExpose(ctx context.Context, runID string, envp envport.Env
 // old container too: bring it back, so an editor tab left open reconnects
 // instead of facing a dead port.
 func (s *Service) ReopenAfterRebuild(ctx context.Context, runID string, envp envport.EnvProvisioner, id envport.EnvID, editor envport.EditorSettings) {
+	s.dropConns(runID)
 	editorWasOpen := false
 	if s.Relay != nil {
 		editorWasOpen = slices.Contains(s.Relay.SavedPorts(runID), envport.CodeServerPort)
@@ -192,6 +197,7 @@ func (s *Service) Forget(runID string) {
 	if s.Relay != nil {
 		s.Relay.CloseRun(runID)
 	}
+	s.dropConns(runID)
 	s.forgetObserved(runID)
 }
 

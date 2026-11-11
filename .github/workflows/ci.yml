@@ -64,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [pg, docker, harness, k8s]
+        suite: [pg, harness, k8s]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

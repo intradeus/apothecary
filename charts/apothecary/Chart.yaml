@@ -1,0 +1,12 @@
+apiVersion: v2
+name: apothecary
+description: Apothecary — agent runs in per-run Docker-in-Docker sandbox pods, egress-filtered by a per-project gateway, reached through one HTTPS address.
+type: application
+# The release stamps version and appVersion (deploy/release.sh chart): a
+# chart version pins every image. In the repository, the images are :latest.
+version: 0.0.0-dev
+appVersion: "latest"
+kubeVersion: ">=1.29.0-0"
+keywords: [agents, devcontainer, sandbox]
+home: https://github.com/intradeus/apothecary
+sources: [https://github.com/intradeus/apothecary]

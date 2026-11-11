@@ -111,6 +111,7 @@ func sessionRow(s Session) Session {
 func tokenRow(t Token) Token {
 	t.CreatedAt = instant(t.CreatedAt)
 	t.LastUsedAt, t.ExpiresAt = optional(t.LastUsedAt), optional(t.ExpiresAt)
+	t.IdleSeconds = max(t.IdleSeconds, 0) // Postgres keeps no window as NULL
 	return t
 }
 

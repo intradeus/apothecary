@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -517,7 +518,7 @@ func (s *Server) getAuthStatus(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, AuthStatus{SetupRequired: needsSetup, Methods: s.Auth.Methods()})
+	writeJSON(w, http.StatusOK, AuthStatus{SetupRequired: needsSetup, Methods: s.Auth.Methods(), Version: s.Version})
 }
 
 // postSetup claims a fresh instance: the first account, signed in at once.
@@ -537,6 +538,7 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 		authErr(w, err)
 		return
 	}
+	s.newAccount(r.Context(), u.ID)
 	s.signIn(w, r, u, http.StatusCreated)
 }
 
@@ -762,7 +764,18 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		authErr(w, err)
 		return
 	}
+	s.newAccount(r.Context(), u.ID)
 	writeJSON(w, http.StatusCreated, u)
+}
+
+// newAccount runs the NewAccount hook for an account just made.
+func (s *Server) newAccount(ctx context.Context, userID string) {
+	if s.NewAccount == nil {
+		return
+	}
+	if err := s.NewAccount(ctx, userID); err != nil {
+		slog.Warn("new account: the deployment's defaults were not applied", logs.UserID, userID, "err", err)
+	}
 }
 
 func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {

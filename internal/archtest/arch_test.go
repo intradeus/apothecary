@@ -70,6 +70,12 @@ var rules = []rule{
 	{pkg: "internal/flow/", mayImport: []string{"internal/flow", "internal/flow/"}},
 	// Building blocks with no domain knowledge.
 	{pkg: "internal/platform/", mayImport: []string{"internal/platform/"}},
+	// The terminal client speaks to the engine over its API and nothing
+	// else: it imports nothing of the engine, nothing of the engine imports
+	// it, and its binary is only its wiring.
+	{pkg: "internal/client/", mayImport: []string{"internal/client/", "internal/platform/"},
+		importedOnlyBy: []string{"internal/client/", "cmd/apothecary"}},
+	{pkg: "cmd/apothecary", mayImport: []string{"internal/client/"}},
 	{pkg: "internal/workspace/wsname", mayImport: []string{"internal/run"}},
 	// The git steps a checkout is set up with, shared by the provisioners
 	// (before the devcontainer build) and bootstrap (inside the workspace).

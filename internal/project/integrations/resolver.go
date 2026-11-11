@@ -35,7 +35,6 @@ import (
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/project/tickets"
 	"apothecary/internal/project/tickets/internaltracker"
-	"apothecary/internal/workspace/wsimage"
 )
 
 type Resolver struct {
@@ -43,13 +42,9 @@ type Resolver struct {
 	reg        *kinds.Registry
 	runsDir    string
 	enginePort int
-	// sandboxRuntime is deployment-wide (APOTHECARY_SANDBOX_RUNTIME), not
-	// per-integration: it names a runtime the HOST daemon must have.
-	sandboxRuntime string
 	// workspaceDocker is the daemon door's deployment-wide setting
 	// (APOTHECARY_WORKSPACE_DOCKER: auto|on|off).
 	workspaceDocker string
-	builder         *wsimage.Builder
 
 	mu    sync.Mutex
 	cache map[string]*provEntry // provisioner integration id -> entry
@@ -136,44 +131,17 @@ type provEntry struct {
 	stale bool
 }
 
-// New builds the resolver. The builder compiles + caches the apothecary-owned
-// images a docker host needs (the shim, the tools bundle and the gateway
-// image → ProvisionerDeps).
-// sandboxRuntime is APOTHECARY_SANDBOX_RUNTIME (empty ⇒ privileged sandbox);
-// workspaceDocker is APOTHECARY_WORKSPACE_DOCKER (auto|on|off; empty ⇒ auto).
-func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort int, sandboxRuntime, workspaceDocker string) *Resolver {
+// New builds the resolver. workspaceDocker is APOTHECARY_WORKSPACE_DOCKER
+// (auto|on|off; empty ⇒ auto).
+func New(conf *confstore.Service, reg *kinds.Registry, runsDir string, enginePort int, workspaceDocker string) *Resolver {
 	return &Resolver{
 		conf:            conf,
 		reg:             reg,
 		runsDir:         runsDir,
 		enginePort:      enginePort,
-		sandboxRuntime:  sandboxRuntime,
 		workspaceDocker: workspaceDocker,
-		builder:         wsimage.New(runsDir),
 		cache:           map[string]*provEntry{},
 	}
-}
-
-// SetImageBuilder swaps the image builder (tests).
-func (r *Resolver) SetImageBuilder(b *wsimage.Builder) { r.builder = b }
-
-// WarmImages builds, in the background, what every docker-host provision
-// needs and would otherwise pay for on its first run after an upgrade — the
-// tools bundle (~1 GB of downloads and a codex-acp compile). Same Builder as
-// the provisioners', so its lock serialises the warm-up with a concurrent
-// provision instead of racing it. Failures are logged and handed to done
-// (nil on success; done may be nil); the provision that needs the bundle
-// retries the build and reports its own error.
-func (r *Resolver) WarmImages(ctx context.Context, done func(err error)) {
-	go func() {
-		_, err := r.builder.EnsureTools(ctx)
-		if err != nil {
-			slog.Warn("tools bundle warm-up failed (the first provision will retry it)", "err", err)
-		}
-		if done != nil {
-			done(err)
-		}
-	}()
 }
 
 // unresolvable wraps errors that no retry will heal (§6.1): missing
@@ -527,10 +495,6 @@ func (r *Resolver) acquireProvisioner(in confstore.Integration) (kinds.Provision
 		prov, err := pk.New(kindConfig(in), kinds.ProvisionerDeps{
 			RunsDir:         r.runsDir,
 			EnginePort:      r.enginePort,
-			ShimBin:         r.builder.EnsureShim,
-			ToolsDir:        r.builder.EnsureTools,
-			GatewayImage:    r.builder.EnsureGatewayImage,
-			SandboxRuntime:  r.sandboxRuntime,
 			WorkspaceDocker: r.workspaceDocker,
 			Drift:           r.driftFor(in),
 		})
@@ -664,8 +628,6 @@ func (r *Resolver) testIntegration(ctx context.Context, in confstore.Integration
 		}
 		prov, err := pk.New(kindConfig(in), kinds.ProvisionerDeps{
 			RunsDir: r.runsDir, EnginePort: r.enginePort,
-			ShimBin: r.builder.EnsureShim, ToolsDir: r.builder.EnsureTools,
-			GatewayImage: r.builder.EnsureGatewayImage, SandboxRuntime: r.sandboxRuntime,
 			WorkspaceDocker: r.workspaceDocker,
 		})
 		if err != nil {

@@ -144,9 +144,9 @@ func TestSidecarStartFailures(t *testing.T) {
 	}
 }
 
-// noSockHost is the docker host with a waitSock that gives up at once: the
-// real one spends 5s before saying the same thing.
-type noSockHost struct{ dockerHost }
+// noSockHost is the test host with a waitSock that gives up at once, as a
+// host does when the socket never comes.
+type noSockHost struct{ *testHost }
 
 func (noSockHost) waitSock(context.Context, string, string) error {
 	return errors.New("never appeared")
@@ -170,7 +170,7 @@ func TestSSH(t *testing.T) {
 
 func TestSSHFromAnOldSidecarSaysSo(t *testing.T) {
 	a := newTestAdapter(t, &ruleRunner{})
-	a.host = noSockHost{dockerHost{a}}
+	a.host = noSockHost{hostOf(t, a)}
 	serveSock(t, a, sidecarSock)
 	_, err := a.SSH(context.Background(), "w")
 	if err == nil || !strings.Contains(err.Error(), "needs a rebuild") {
@@ -182,22 +182,6 @@ func TestSSHNeedsItsSidecar(t *testing.T) {
 	a := newTestAdapter(t, &ruleRunner{rules: []rule{{match: "exec --id-label", resp: response{code: 1}}}})
 	if _, err := a.SSH(context.Background(), "w"); err == nil {
 		t.Error("ssh with no sidecar")
-	}
-}
-
-func TestDockerWaitSock(t *testing.T) {
-	a := newTestAdapter(t, &ruleRunner{})
-	h := dockerHost{a}
-	dir := filepath.Join(a.folderFor("w"), "shim")
-	os.MkdirAll(dir, 0o755)
-	os.WriteFile(filepath.Join(dir, "app-1.sock"), nil, 0o644)
-	if err := h.waitSock(context.Background(), "w", "app-1.sock"); err != nil {
-		t.Errorf("present = %v", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	if err := h.waitSock(ctx, "w", "absent.sock"); !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("absent = %v", err)
 	}
 }
 
@@ -224,7 +208,7 @@ func TestExposePortFailures(t *testing.T) {
 	})
 	t.Run("socket never appears", func(t *testing.T) {
 		a := newTestAdapter(t, &ruleRunner{rules: []rule{cid}})
-		a.host = noSockHost{dockerHost{a}}
+		a.host = noSockHost{hostOf(t, a)}
 		if _, err := a.ExposePort(ctx, "w", 3000); err == nil || !strings.Contains(err.Error(), "relay socket never appeared") {
 			t.Errorf("err = %v", err)
 		}
@@ -247,70 +231,6 @@ func TestStartRelayNeedsAContainer(t *testing.T) {
 	a = newTestAdapter(t, &ruleRunner{rules: []rule{fail("ps -q", 1, "")}})
 	if _, err := a.containerID(context.Background(), "w"); err == nil {
 		t.Error("a failed ps found a container")
-	}
-}
-
-func TestBridgeLifecycle(t *testing.T) {
-	a := newTestAdapter(t, &ruleRunner{})
-	a.listen = net.Listen
-	// Nothing on the engine port: the bridge drops the connection, no leak.
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a.cfg.EnginePort = probe.Addr().(*net.TCPAddr).Port
-	probe.Close()
-	if err := a.ensureBridge("w"); err != nil {
-		t.Fatal(err)
-	}
-	sock := filepath.Join(a.folderFor("w"), "shim", "engine.sock")
-	if info, _ := os.Stat(sock); info.Mode().Perm() != 0o666 {
-		t.Errorf("socket mode = %v: a root-user image could not reach it", info.Mode())
-	}
-	c, err := net.Dial("unix", sock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.SetDeadline(time.Now().Add(5 * time.Second))
-	if b, err := io.ReadAll(c); err != nil || len(b) != 0 {
-		t.Errorf("read = %q, %v", b, err)
-	}
-	c.Close()
-
-	a.closeBridge("w")
-	if _, ok := a.bridges["w"]; ok {
-		t.Error("bridge record left behind")
-	}
-	if c, err := net.Dial("unix", sock); err == nil {
-		c.Close()
-		t.Error("a closed bridge still answers")
-	}
-	// Close sweeps whatever is left.
-	if err := a.ensureBridge("w"); err != nil {
-		t.Fatal(err)
-	}
-	a.Close()
-	if len(a.bridges) != 0 {
-		t.Errorf("bridges after Close = %v", a.bridges)
-	}
-}
-
-func TestEnsureBridgeRunFolderFailure(t *testing.T) {
-	a := newTestAdapter(t, &ruleRunner{})
-	os.WriteFile(filepath.Join(a.cfg.RunsDir, "w"), nil, 0o644)
-	if err := a.ensureBridge("w"); err == nil {
-		t.Error("a bridge under a file succeeded")
-	}
-}
-
-func TestDockerBridgePorts(t *testing.T) {
-	a := newTestAdapter(t, &ruleRunner{})
-	a.cfg.EnginePort = 8123
-	if got := (dockerHost{a}).bridgePorts(); len(got) != 1 || got[0] != 8123 {
-		t.Errorf("ports = %v", got)
-	}
-	if pairs := a.relayPairs(); len(pairs) != 1 || pairs[0] != "8123:/opt/apothecary/engine.sock" {
-		t.Errorf("pairs = %v", pairs)
 	}
 }
 

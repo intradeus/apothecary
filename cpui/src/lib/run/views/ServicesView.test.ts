@@ -349,6 +349,33 @@ describe('ServicesView', () => {
 			expect(screen.queryByRole('link', { name: /:3000/ })).not.toBeInTheDocument();
 		});
 
+		it('copies the command that forwards each port, naming the workspace', async () => {
+			const user = userEvent.setup();
+			const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+			await open([
+				aService({
+					ports: [
+						{ port: 3000, label: 'web', address: 'http://localhost:3000/', url: 'https://p.test/' },
+						{ port: 5432, address: 'localhost:5432' }
+					]
+				})
+			]);
+			expect(btn('Copy apothecary forward env-1 3000')).toBeInTheDocument();
+			await user.click(btn('Copy apothecary forward env-1 5432'));
+			expect(write).toHaveBeenCalledExactlyOnceWith('apothecary forward env-1 5432');
+		});
+
+		it('names the run when it has no workspace id, and offers nothing without a workspace', async () => {
+			const rs = aViewStore(aRun({ envId: undefined }));
+			const ports = [{ port: 3000, address: 'http://localhost:3000/' }];
+			const view = await open([aService({ ports })], { rs });
+			expect(btn(`Copy apothecary forward ${RUN} 3000`)).toBeInTheDocument();
+			view.unmount();
+
+			await open([aService({ state: 'stopped', ports })], { workspace: false });
+			expect(noBtn(/^Copy apothecary forward/)).not.toBeInTheDocument();
+		});
+
 		it('shows its description and its last error', async () => {
 			await open([aService({ description: 'The web app', lastError: 'bind: in use' })]);
 			expect(screen.getByText('The web app')).toBeInTheDocument();

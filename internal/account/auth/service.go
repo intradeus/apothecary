@@ -443,6 +443,20 @@ const TokenPrefix = "apo_"
 // NewToken mints a personal token. The secret is returned once; the row
 // keeps its hash.
 func (s *Service) NewToken(ctx context.Context, userID, name string, expires *time.Time) (string, Token, error) {
+	return s.newToken(ctx, userID, name, expires, 0)
+}
+
+// NewIdleToken mints a token with no fixed expiry that is refused after idle
+// without use, each use sliding the window (the CLI's sign-in: a browser
+// session's rules, for a terminal).
+func (s *Service) NewIdleToken(ctx context.Context, userID, name string, idle time.Duration) (string, Token, error) {
+	if idle < time.Second {
+		return "", Token{}, invalidf("an inactivity window must be at least a second")
+	}
+	return s.newToken(ctx, userID, name, nil, int(idle/time.Second))
+}
+
+func (s *Service) newToken(ctx context.Context, userID, name string, expires *time.Time, idleSeconds int) (string, Token, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return "", Token{}, invalidf("token name is required")
@@ -458,7 +472,7 @@ func (s *Service) NewToken(ctx context.Context, userID, name string, expires *ti
 	t := Token{
 		ID: s.newID(), UserID: userID, Name: name,
 		Hash: hashSecret(secret), Prefix: secret[:len(TokenPrefix)+6],
-		CreatedAt: s.now().UTC(), ExpiresAt: expires,
+		CreatedAt: s.now().UTC(), ExpiresAt: expires, IdleSeconds: idleSeconds,
 	}
 	if err := s.db.CreateToken(ctx, t); err != nil {
 		return "", Token{}, err
@@ -481,6 +495,15 @@ func (s *Service) AuthenticateToken(ctx context.Context, secret string) (Princip
 	now := s.now().UTC()
 	if t.ExpiresAt != nil && !now.Before(*t.ExpiresAt) {
 		return Principal{}, ErrUnauthorized
+	}
+	if t.IdleSeconds > 0 {
+		last := t.CreatedAt
+		if t.LastUsedAt != nil {
+			last = *t.LastUsedAt
+		}
+		if now.Sub(last) >= time.Duration(t.IdleSeconds)*time.Second {
+			return Principal{}, ErrUnauthorized
+		}
 	}
 	u, err := s.db.GetUser(ctx, t.UserID)
 	if err != nil {

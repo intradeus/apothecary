@@ -28,6 +28,8 @@ export interface AuthStatus {
 	setupRequired: boolean;
 	/** Authentication methods this instance can verify. */
 	methods: string[];
+	/** The engine's build version ("v3.4.0", or "dev"). */
+	version: string;
 }
 
 /** A personal API token: never its secret, which is shown once at creation. */
@@ -38,6 +40,19 @@ export interface Token {
 	createdAt: string;
 	lastUsedAt?: string;
 	expiresAt?: string;
+	/** An inactivity window, in seconds: the token signs out after that long
+	 *  unused, each use sliding it. What the CLI's browser sign-in mints. */
+	idleSeconds?: number;
+}
+
+/** A terminal sign-in waiting for its approval in the browser
+ *  (`apothecary login`): the code the terminal shows, and what the token it
+ *  gets will be called. */
+export interface CliLogin {
+	/** As the terminal prints it: ABCD-EFGH. */
+	userCode: string;
+	name: string;
+	expiresAt: string;
 }
 
 /** A public key registered for the engine's SSH door (TODO 46): what one logs

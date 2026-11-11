@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // clearEnv blanks every variable FromEnv reads, so a test states only the ones
@@ -15,13 +16,13 @@ func clearEnv(t *testing.T) {
 		"APOTHECARY_LOG_FORMAT", "APOTHECARY_LOG_LEVEL", "APOTHECARY_DEBUG_ADDR", "APOTHECARY_GRAFANA_URL",
 		"APOTHECARY_ARTIFACT_MAX_BYTES", "APOTHECARY_UPLOAD_MAX_BYTES",
 		"APOTHECARY_ARTIFACT_MIME_ALLOW", "APOTHECARY_UPLOAD_MIME_ALLOW", "APOTHECARY_SNAPSHOT_MAX_BYTES",
-		"APOTHECARY_PORT_AUTOEXPOSE", "APOTHECARY_SANDBOX_RUNTIME", "APOTHECARY_WORKSPACE_DOCKER", "APOTHECARY_K8S_NAMESPACE",
+		"APOTHECARY_PORT_AUTOEXPOSE", "APOTHECARY_K8S_RUNTIME_CLASS", "APOTHECARY_K8S_PRIVILEGED", "APOTHECARY_WORKSPACE_DOCKER", "APOTHECARY_K8S_NAMESPACE",
 		"APOTHECARY_K8S_ENGINE_NAMESPACE", "APOTHECARY_K8S_ENGINE_URL", "APOTHECARY_K8S_KUBECONFIG",
 		"APOTHECARY_K8S_TRANSPORT", "APOTHECARY_K8S_PROTECT_CIDRS", "APOTHECARY_SANDBOX_IMAGE",
 		"APOTHECARY_SHIM_IMAGE", "APOTHECARY_TOOLS_IMAGE", "APOTHECARY_GATEWAY_IMAGE", "APOTHECARY_BROWSER_IMAGE",
 		"APOTHECARY_K8S_IMAGE_PULL_POLICY", "APOTHECARY_K8S_BROWSER_PROXY_LISTEN", "APOTHECARY_K8S_BROWSER_PROXY_ADDR",
 		"APOTHECARY_APPS_DOMAIN", "APOTHECARY_APPS_SCHEME", "APOTHECARY_PUBLIC_URL", "APOTHECARY_SSH_LISTEN",
-		"APOTHECARY_SSH_ADVERTISE",
+		"APOTHECARY_SSH_ADVERTISE", "APOTHECARY_CLI_TOKEN_IDLE",
 	} {
 		t.Setenv(name, "")
 	}
@@ -126,7 +127,7 @@ func TestUploadAllowlist(t *testing.T) {
 func TestSmallSwitches(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("APOTHECARY_PORT_AUTOEXPOSE", "yes")
-	t.Setenv("APOTHECARY_SANDBOX_RUNTIME", "  sysbox-runc ")
+	t.Setenv("APOTHECARY_K8S_RUNTIME_CLASS", "  sysbox-runc ")
 	t.Setenv("APOTHECARY_PUBLIC_URL", " https://ui.example/ ")
 	b, err := FromEnv()
 	if err != nil {
@@ -135,8 +136,8 @@ func TestSmallSwitches(t *testing.T) {
 	if b.PortAutoExpose {
 		t.Error(`only "on" turns auto-expose on`)
 	}
-	if b.SandboxRuntime != "sysbox-runc" || b.PublicURL != "https://ui.example" {
-		t.Errorf("trimmed = %q %q", b.SandboxRuntime, b.PublicURL)
+	if b.K8s.RuntimeClass != "sysbox-runc" || b.PublicURL != "https://ui.example" {
+		t.Errorf("trimmed = %q %q", b.K8s.RuntimeClass, b.PublicURL)
 	}
 	t.Setenv("APOTHECARY_PORT_AUTOEXPOSE", "on")
 	if b, _ = FromEnv(); !b.PortAutoExpose {
@@ -162,11 +163,14 @@ func TestKubernetesSettings(t *testing.T) {
 	t.Setenv("APOTHECARY_K8S_PROTECT_CIDRS", "10.0.0.0/8, 192.168.0.0/16")
 	t.Setenv("APOTHECARY_K8S_BROWSER_PROXY_LISTEN", ":9000")
 	t.Setenv("APOTHECARY_SANDBOX_IMAGE", "img:1")
+	t.Setenv("APOTHECARY_K8S_RUNTIME_CLASS", "sysbox-runc")
+	t.Setenv("APOTHECARY_K8S_PRIVILEGED", "off")
 	if b, err = FromEnv(); err != nil {
 		t.Fatal(err)
 	}
 	k := b.K8s
 	if k.Namespace != "sandboxes" || k.Transport != "direct" || k.BrowserProxyListen != ":9000" || k.SandboxImage != "img:1" ||
+		k.RuntimeClass != "sysbox-runc" || k.Privileged != "off" ||
 		!slices.Equal(k.ProtectCIDRs, []string{"10.0.0.0/8", "192.168.0.0/16"}) {
 		t.Errorf("set = %+v", k)
 	}
@@ -186,6 +190,8 @@ func TestBootRefusals(t *testing.T) {
 	}{
 		{"apps host needs a UI address", map[string]string{"APOTHECARY_APPS_DOMAIN": "apps.example"}, "APOTHECARY_PUBLIC_URL"},
 		{"ssh door with a bad address", map[string]string{"APOTHECARY_SSH_LISTEN": "nonsense"}, "APOTHECARY_SSH_LISTEN"},
+		{"privileged neither on nor off", map[string]string{"APOTHECARY_K8S_PRIVILEGED": "maybe"}, "APOTHECARY_K8S_PRIVILEGED"},
+		{"unprivileged sandboxes need a runtime class", map[string]string{"APOTHECARY_K8S_PRIVILEGED": "off"}, "APOTHECARY_K8S_RUNTIME_CLASS"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			clearEnv(t)
@@ -196,6 +202,29 @@ func TestBootRefusals(t *testing.T) {
 				t.Errorf("err = %v, want it to name %s", err, c.want)
 			}
 		})
+	}
+}
+
+// The CLI token's inactivity window: a week by default, any positive Go
+// duration, and anything else refuses to boot naming the variable.
+func TestCLITokenIdle(t *testing.T) {
+	clearEnv(t)
+	b, err := FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.CLITokenIdle != 168*time.Hour {
+		t.Errorf("default = %v", b.CLITokenIdle)
+	}
+	t.Setenv("APOTHECARY_CLI_TOKEN_IDLE", " 72h ")
+	if b, err := FromEnv(); err != nil || b.CLITokenIdle != 72*time.Hour {
+		t.Errorf("72h = %v, %v", b, err)
+	}
+	for _, bad := range []string{"0", "-1h", "a week", "7"} {
+		t.Setenv("APOTHECARY_CLI_TOKEN_IDLE", bad)
+		if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), "APOTHECARY_CLI_TOKEN_IDLE") {
+			t.Errorf("%q = %v, want a refusal naming the variable", bad, err)
+		}
 	}
 }
 

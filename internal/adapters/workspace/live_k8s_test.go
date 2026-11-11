@@ -28,6 +28,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strings"
@@ -36,6 +37,7 @@ import (
 
 	"apothecary/internal/adapters/kube"
 	"apothecary/internal/flow/builtin"
+	"apothecary/internal/platform/wstunnel"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/workspace/portrelay"
@@ -280,6 +282,53 @@ func TestLiveK8sLifecycle(t *testing.T) {
 		r.Body.Close()
 		t.Logf("exposed %s → %s", url, strings.TrimSpace(string(b)))
 	}
+
+	// The CLI's tunnels: a workspace port, and the workspace's SSH server, each
+	// carried inside one WebSocket exactly as the engine serves them
+	// (httpapi servePortTunnel / serveSSHTunnel), from a client outside.
+	tunnel := func(target envport.PortConn) net.Conn {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			up, err := target.Dial(r.Context())
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			ws, err := wstunnel.Accept(w, r)
+			if err != nil {
+				up.Close()
+				return
+			}
+			wstunnel.Pipe(ws, up)
+		}))
+		t.Cleanup(srv.Close)
+		conn, err := wstunnel.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+		if err != nil {
+			t.Fatalf("tunnel: %v", err)
+		}
+		return conn
+	}
+	tc := tunnel(pc)
+	_ = tc.SetDeadline(time.Now().Add(30 * time.Second))
+	if _, err := tc.Write([]byte("GET /health HTTP/1.0\r\nHost: app\r\n\r\n")); err != nil {
+		t.Fatalf("through the tunnel: %v", err)
+	}
+	if b, _ := io.ReadAll(tc); !strings.Contains(string(b), " 200 ") {
+		t.Fatalf("port through the tunnel answered %q", b)
+	}
+	tc.Close()
+	sshc, err := a.SSH(ctx, env)
+	if err != nil {
+		t.Fatalf("ssh: %v", err)
+	}
+	sc2 := tunnel(sshc)
+	_ = sc2.SetDeadline(time.Now().Add(30 * time.Second))
+	banner := make([]byte, 8)
+	if _, err := io.ReadFull(sc2, banner); err != nil || string(banner) != "SSH-2.0-" {
+		t.Fatalf("ssh through the tunnel: %q %v", banner, err)
+	}
+	sc2.Close()
+	t.Log("tunnels: a workspace port and its SSH server answer through a WebSocket")
 
 	if s1, err := a.SampleResources(ctx, env); err == nil {
 		t.Logf("first sample unexpectedly complete: %+v", s1)

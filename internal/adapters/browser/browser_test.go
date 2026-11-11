@@ -11,8 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -137,113 +135,28 @@ func TestProxyRefusesTheOutsideWorld(t *testing.T) {
 	}
 }
 
-// --- the manager, on a scripted docker ------------------------------------------
+// --- the manager, on the fake host ---------------------------------------------
 
-type fakeDocker struct {
-	mu        sync.Mutex
-	calls     []string
-	container string // "" | "<image>\t<state>"
-	shim      string // the container's shim label
-	streams   [][]string
-	stream    func(args []string, stdin io.Reader, stdout io.Writer) error
-}
-
-func (d *fakeDocker) run(_ context.Context, args []string) ([]byte, []byte, int, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.calls = append(d.calls, strings.Join(args, " "))
-	switch args[0] {
-	case "ps":
-		if d.container == "" || slices.Contains(args, "label=apothecary.browser=true") {
-			return nil, nil, 0, nil
-		}
-		img, state, _ := strings.Cut(d.container, "\t")
-		if strings.Contains(strings.Join(args, " "), "{{.State}}") {
-			return []byte(state + "\t" + img + "\t" + img + "\n"), nil, 0, nil
-		}
-		return []byte("c1\t" + img + "\t" + d.shim + "\n"), nil, 0, nil
-	case "run":
-		for i, a := range args {
-			if a == "--label" {
-				if v, ok := strings.CutPrefix(args[i+1], imageLabel+"="); ok {
-					d.container = v + "\trunning"
-				}
-				if v, ok := strings.CutPrefix(args[i+1], shimLabel+"="); ok {
-					d.shim = v
-				}
-			}
-		}
-	case "rm":
-		d.container = ""
-	case "start":
-		img, _, _ := strings.Cut(d.container, "\t")
-		d.container = img + "\trunning"
-	case "stop":
-		img, _, _ := strings.Cut(d.container, "\t")
-		d.container = img + "\texited"
-	}
-	return nil, nil, 0, nil
-}
-
-func (d *fakeDocker) exec(_ context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
-	d.mu.Lock()
-	d.streams = append(d.streams, args)
-	f := d.stream
-	d.mu.Unlock()
-	if f != nil {
-		return f(args, stdin, stdout)
-	}
-	return nil
-}
-
-func (d *fakeDocker) did(prefix string) int {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	n := 0
-	for _, c := range d.calls {
-		if strings.HasPrefix(c, prefix) {
-			n++
-		}
-	}
-	return n
-}
-
-func newTestManager(t *testing.T, d *fakeDocker, img *string) *Manager {
-	t.Helper()
-	runs, err := os.MkdirTemp("", "br")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(runs) })
-	shim := filepath.Join(runs, "shim-cache", "h1", "apothecary-shim")
-	m := New(Config{RunsDir: runs, Run: d.run, Stream: d.exec, IdleAfter: 50 * time.Millisecond,
-		Image: func(context.Context) (string, error) { return *img, nil },
-		Tag:   func() string { return *img },
-		Shim:  func(context.Context) (string, error) { return shim, nil },
-		Log:   slog.New(slog.DiscardHandler)})
-	t.Cleanup(m.Close)
-	return m
-}
-
-// A session brings the container up (no network, labelled, the project dir
-// and the shim mounted, idling instead of the image's own server), execs one
-// session runner whose proxy socket routes to the run, and leaves the
-// container to the idle stop when it ends.
+// A session brings the browser up, execs one session runner whose routing
+// proxy routes to the run, closes that proxy with the session, and leaves the
+// browser to the idle stop.
 func TestSessionBringsTheBrowserUpAndRoutesTheRun(t *testing.T) {
-	d := &fakeDocker{}
 	img := "mcr.example/playwright/mcp:v1@sha256:aaa"
-	m := newTestManager(t, d, &img)
+	h := &hostFake{}
+	m := New(Config{Host: h, IdleAfter: 50 * time.Millisecond, Log: slog.New(slog.DiscardHandler),
+		Image: func(context.Context) (string, error) { return img, nil },
+		Tag:   func() string { return img }})
+	t.Cleanup(m.Close)
 	dial, _ := runApp(t, 3000)
-	d.stream = func(args []string, stdin io.Reader, stdout io.Writer) error {
-		i := slices.Index(args, "--sock")
+	var proxyAddr string
+	h.exec = func(argv []string, stdin io.Reader, stdout io.Writer) error {
+		i := slices.Index(argv, "--engine")
 		if i < 0 {
-			return fmt.Errorf("no --sock in %v", args)
+			return fmt.Errorf("no --engine in %v", argv)
 		}
-		// What Chromium does through the relay: a proxy request on the socket.
-		hc := &http.Client{Transport: &http.Transport{
-			Proxy:       http.ProxyURL(&url.URL{Scheme: "http", Host: "relay"}),
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return net.Dial("unix", args[i+1]) },
-		}}
+		proxyAddr = argv[i+1]
+		// What Chromium does through the relay: a proxy request to the engine.
+		hc := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: proxyAddr})}}
 		resp, err := hc.Get("http://localhost:3000/home")
 		if err != nil {
 			return err
@@ -264,49 +177,44 @@ func TestSessionBringsTheBrowserUpAndRoutesTheRun(t *testing.T) {
 	if want := "app GET /home host=localhost:3000\n" + `{"jsonrpc":"2.0","id":1,"method":"initialize"}` + "\n"; out.String() != want {
 		t.Errorf("session stdio = %q", out.String())
 	}
-	runCall := ""
-	for _, c := range d.calls {
-		if strings.HasPrefix(c, "run ") {
-			runCall = c
-		}
+	// The sole session may replace a stale browser.
+	if got := strings.Join(h.ensured, ","); got != "01HWEBAPP:"+img+":replace" {
+		t.Errorf("ensured = %s", got)
 	}
-	// Named by the project's id, lowercased; the name is a label for docker ps.
-	dir := filepath.Join(m.cfg.RunsDir, "browser", "01hwebapp")
-	shimDir := filepath.Join(m.cfg.RunsDir, "shim-cache", "h1")
-	for _, want := range []string{"--name apo-browser-01hwebapp", "--network none", "--label apothecary=true",
-		"--label apothecary.project=01HWEBAPP", "--label apothecary.project.name=Web App",
-		"--label apothecary.browser=true", "--label apothecary.browser.image=" + img,
-		"--label apothecary.browser.shim=" + shimDir + "/apothecary-shim",
-		"-v " + dir + ":" + dir, "-v " + shimDir + ":/opt/apothecary/shim:ro",
-		"--entrypoint sleep " + img + " infinity"} {
-		if !strings.Contains(runCall, want) {
-			t.Errorf("docker run lacks %q: %s", want, runCall)
-		}
-	}
-	ex := strings.Join(d.streams[0], " ")
-	if !strings.HasPrefix(ex, "exec -i apo-browser-01hwebapp /opt/apothecary/shim/apothecary-shim browser-session --sock "+dir+"/s-") ||
+	ex := strings.Join(h.execs[0], " ")
+	if !strings.HasPrefix(ex, "/opt/apothecary/shim/apothecary-shim browser-session --engine "+proxyAddr+" -- ") ||
 		!strings.Contains(ex, " -- node /app/cli.js --headless --isolated --browser chromium") {
 		t.Errorf("exec = %s", ex)
 	}
-	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
-		t.Errorf("the session left %v behind", entries)
+	// The session's routing proxy went with it.
+	if c, err := net.DialTimeout("tcp", proxyAddr, time.Second); err == nil {
+		c.Close()
+		t.Error("the session's proxy outlived it")
 	}
 	// Idle: stopped once nobody has used it for IdleAfter.
-	waitFor(t, func() bool { return d.did("stop") == 1 })
-	st, err := m.Status(context.Background(), "Web App")
-	if err != nil || st.State != "stopped" || st.Sessions != 0 || st.Image != img || st.Current != img {
+	waitFor(t, func() bool { return len(h.stops()) == 1 })
+	if h.stops()[0] != "01HWEBAPP" {
+		t.Errorf("stopped = %v", h.stops())
+	}
+	h.image = img
+	st, err := m.Status(context.Background(), "01HWEBAPP")
+	if err != nil || st.State != "stopped" || st.Sessions != 0 || st.Image != img || st.Current != img || st.Container != "name-01HWEBAPP" {
 		t.Errorf("status = %+v, %v", st, err)
 	}
 }
 
-// A container on a stale image is recreated only when nobody uses it.
+// A stale browser is replaced only by a session that has it to itself: a
+// second session arriving while the first runs keeps what is there.
 func TestStaleBrowserIsRecreatedOnlyWhenIdle(t *testing.T) {
-	d := &fakeDocker{container: "img@sha256:old\trunning"}
 	img := "img@sha256:new"
-	m := newTestManager(t, d, &img)
+	var imgMu sync.Mutex
+	h := &hostFake{}
+	m := New(Config{Host: h, IdleAfter: time.Hour, Log: slog.New(slog.DiscardHandler),
+		Image: func(context.Context) (string, error) { imgMu.Lock(); defer imgMu.Unlock(); return img, nil }})
+	t.Cleanup(m.Close)
 	hold := make(chan struct{})
 	started := make(chan struct{}, 2)
-	d.stream = func([]string, io.Reader, io.Writer) error {
+	h.exec = func([]string, io.Reader, io.Writer) error {
 		started <- struct{}{}
 		<-hold
 		return nil
@@ -322,24 +230,23 @@ func TestStaleBrowserIsRecreatedOnlyWhenIdle(t *testing.T) {
 		}()
 		return ch
 	}
-	// Nobody else is using it: the first session recreates it.
 	first := sess()
 	<-started
-	if d.did("rm -f apo-browser-p") != 1 || !strings.HasPrefix(d.container, img) {
-		t.Fatalf("calls = %v", d.calls)
-	}
-	// It goes stale again under a busy session: the second keeps it.
+	imgMu.Lock()
 	img = "img@sha256:newer"
+	imgMu.Unlock()
 	second := sess()
 	<-started
-	if d.did("rm -f") != 1 || d.did("start apo-browser-p") != 1 {
-		t.Errorf("a busy browser was recreated: %v", d.calls)
-	}
 	close(hold)
 	for _, ch := range []chan error{first, second} {
 		if err := <-ch; err != nil {
 			t.Error(err)
 		}
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if got := strings.Join(h.ensured, ","); got != "p:img@sha256:new:replace,p:img@sha256:newer:keep" {
+		t.Errorf("a busy browser was recreated: %s", got)
 	}
 }
 

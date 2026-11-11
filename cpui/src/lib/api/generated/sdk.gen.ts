@@ -32,6 +32,9 @@ import type {
 	AnswerPingData,
 	AnswerPingErrors,
 	AnswerPingResponses,
+	ApproveCliLoginData,
+	ApproveCliLoginErrors,
+	ApproveCliLoginResponses,
 	ArchiveRunData,
 	ArchiveRunErrors,
 	ArchiveRunResponses,
@@ -146,6 +149,9 @@ import type {
 	DeleteTicketData,
 	DeleteTicketErrors,
 	DeleteTicketResponses,
+	DenyCliLoginData,
+	DenyCliLoginErrors,
+	DenyCliLoginResponses,
 	DismissAllNoticesData,
 	DismissAllNoticesErrors,
 	DismissAllNoticesResponses,
@@ -182,6 +188,9 @@ import type {
 	GetBuildCacheData,
 	GetBuildCacheErrors,
 	GetBuildCacheResponses,
+	GetCliLoginData,
+	GetCliLoginErrors,
+	GetCliLoginResponses,
 	GetCredentialData,
 	GetCredentialErrors,
 	GetCredentialResponses,
@@ -452,6 +461,9 @@ import type {
 	PlayRunData,
 	PlayRunErrors,
 	PlayRunResponses,
+	PollCliLoginData,
+	PollCliLoginErrors,
+	PollCliLoginResponses,
 	PreflightProjectData,
 	PreflightProjectErrors,
 	PreflightProjectResponses,
@@ -530,6 +542,9 @@ import type {
 	SetupInstanceData,
 	SetupInstanceErrors,
 	SetupInstanceResponses,
+	StartCliLoginData,
+	StartCliLoginErrors,
+	StartCliLoginResponses,
 	StartEnvCheckData,
 	StartEnvCheckErrors,
 	StartEnvCheckResponses,
@@ -1240,6 +1255,115 @@ export const deleteChannel = <ThrowOnError extends boolean = false>(
 		],
 		url: '/api/channels/{id}',
 		...options
+	});
+
+/**
+ * Start a terminal sign-in (device authorization)
+ *
+ * The CLI keeps device_code secret and prints user_code with verification_url, where a signed-in person approves it. Then it polls POST /api/cli/logins/token every interval seconds until expires_in passes. 503 when too many sign-ins are waiting.
+ */
+export const startCliLogin = <ThrowOnError extends boolean = false>(
+	options: Options<StartCliLoginData, ThrowOnError>
+): RequestResult<StartCliLoginResponses, StartCliLoginErrors, ThrowOnError> =>
+	(options.client ?? client).post<StartCliLoginResponses, StartCliLoginErrors, ThrowOnError>({
+		url: '/api/cli/logins',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * A terminal sign-in waiting for approval, by its user code
+ *
+ * The code in any case, with or without its dash. 404 when it expired or is unknown.
+ */
+export const getCliLogin = <ThrowOnError extends boolean = false>(
+	options: Options<GetCliLoginData, ThrowOnError>
+): RequestResult<GetCliLoginResponses, GetCliLoginErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetCliLoginResponses, GetCliLoginErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/cli/logins/{code}',
+		...options
+	});
+
+/**
+ * Approve a terminal sign-in: it signs in as you
+ *
+ * Mints a personal token named after the sign-in, refused after the deployment's inactivity window without use. 404 when expired or unknown; 409 when already answered.
+ */
+export const approveCliLogin = <ThrowOnError extends boolean = false>(
+	options: Options<ApproveCliLoginData, ThrowOnError>
+): RequestResult<ApproveCliLoginResponses, ApproveCliLoginErrors, ThrowOnError> =>
+	(options.client ?? client).post<ApproveCliLoginResponses, ApproveCliLoginErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/cli/logins/{code}/approve',
+		...options
+	});
+
+/**
+ * Deny a terminal sign-in
+ *
+ * 404 when expired or unknown; 409 when already answered.
+ */
+export const denyCliLogin = <ThrowOnError extends boolean = false>(
+	options: Options<DenyCliLoginData, ThrowOnError>
+): RequestResult<DenyCliLoginResponses, DenyCliLoginErrors, ThrowOnError> =>
+	(options.client ?? client).post<DenyCliLoginResponses, DenyCliLoginErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/cli/logins/{code}/deny',
+		...options
+	});
+
+/**
+ * Collect a terminal sign-in's token once it is approved
+ *
+ * 202 {status: pending} until approved; 200 {status: approved, token, token_id, handle} once, then the sign-in is gone; 403 when it was denied; 410 when it expired or is unknown; 429 when polled faster than the interval. The token is refused after the deployment's inactivity window (APOTHECARY_CLI_TOKEN_IDLE) without use; each use slides it.
+ */
+export const pollCliLogin = <ThrowOnError extends boolean = false>(
+	options: Options<PollCliLoginData, ThrowOnError>
+): RequestResult<PollCliLoginResponses, PollCliLoginErrors, ThrowOnError> =>
+	(options.client ?? client).post<PollCliLoginResponses, PollCliLoginErrors, ThrowOnError>({
+		url: '/api/cli/logins/token',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
 	});
 
 /**

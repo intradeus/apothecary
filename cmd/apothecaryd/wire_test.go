@@ -149,7 +149,7 @@ func TestBuildAppBootsOnPostgres(t *testing.T) {
 
 	// The real kinds, and no fakes outside -dev.
 	code, body = c.do("GET", "/api/kinds", nil)
-	if code != http.StatusOK || !strings.Contains(body, `"gitlab"`) || !strings.Contains(body, `"docker"`) || strings.Contains(body, `"kind":"fake"`) {
+	if code != http.StatusOK || !strings.Contains(body, `"gitlab"`) || !strings.Contains(body, `"kind":"kubernetes"`) || strings.Contains(body, `"kind":"fake"`) {
 		t.Errorf("kinds = %d %s", code, body)
 	}
 	// Each of these answers only when its field of the server was wired.
@@ -367,6 +367,15 @@ func TestOptionalFacesOfTheBoot(t *testing.T) {
 	if code, body := c.do("GET", "/some/client/route", nil); code != http.StatusOK || body != "<the app>" {
 		t.Errorf("UI = %d %q", code, body)
 	}
+	// The engine says its version to anyone; a terminal sign-in links to
+	// the UI at its public address, not the address the CLI dialled.
+	if code, body := c.do("GET", "/api/auth/status", nil); code != http.StatusOK || !strings.Contains(body, `"version":"`+version+`"`) {
+		t.Errorf("status = %d %s", code, body)
+	}
+	if code, body := c.do("POST", "/api/cli/logins", map[string]string{"name": "apothecary CLI on laptop"}); code != http.StatusCreated ||
+		!strings.Contains(body, `"verification_url":"http://ui.test/cli-login?code=`) {
+		t.Errorf("cli login = %d %s", code, body)
+	}
 	// An app host is routed to the relay, not the API.
 	req, _ := http.NewRequest("GET", c.base+"/api/me", nil)
 	req.Host = "3000-nothing.apps.test"
@@ -486,7 +495,7 @@ func TestRegistry(t *testing.T) {
 		return false
 	}
 	real := registry(false, &config.Boot{})
-	for _, kind := range []string{"gitlab", "github", "docker", "kubernetes", "opencode", "codex", "omp", "jira"} {
+	for _, kind := range []string{"gitlab", "github", "kubernetes", "opencode", "codex", "omp", "jira"} {
 		if !has(real, kind) {
 			t.Errorf("%s is missing", kind)
 		}

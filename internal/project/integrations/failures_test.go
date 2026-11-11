@@ -19,7 +19,6 @@ import (
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/kinds"
 	"apothecary/internal/project/resolution"
-	"apothecary/internal/workspace/wsimage"
 )
 
 // --- scriptable kinds ---------------------------------------------------------
@@ -201,7 +200,7 @@ func newBench(t *testing.T, harnesses ...scriptKind) *bench {
 		reg.RegisterHarness(k)
 	}
 	svc.KindValid = reg.Valid
-	return &bench{t: t, svc: svc, reg: reg, r: New(svc, reg, t.TempDir(), 8080, "", ""), db: db, made: made, close: closed}
+	return &bench{t: t, svc: svc, reg: reg, r: New(svc, reg, t.TempDir(), 8080, ""), db: db, made: made, close: closed}
 }
 
 func (b *bench) integration(port, kind string) string {
@@ -519,7 +518,7 @@ func TestProvisionerAcquireFailsForAnUnknownKind(t *testing.T) {
 		reg := kinds.NewRegistry()
 		kinds.RegisterFakes(reg)
 		return reg
-	}(), t.TempDir(), 0, "", "")
+	}(), t.TempDir(), 0, "")
 	if _, err := r.Resolve(context.Background(), p.ID); !errors.Is(err, resolution.ErrUnresolvable) || !strings.Contains(err.Error(), "counting") {
 		t.Errorf("err = %v", err)
 	}
@@ -587,29 +586,6 @@ func (d refusingDocker) Run(_ context.Context, _ string, args ...string) (string
 	return "", 1, errors.New("no docker here")
 }
 
-// The warm-up builds through the swapped builder, in the background, and a
-// failure leaves the resolver standing for the provision that retries it.
-func TestWarmImagesUsesTheBuilder(t *testing.T) {
-	b := newBench(t)
-	d := refusingDocker{calls: make(chan []string, 64)}
-	builder := wsimage.NewWithRunner(d, t.TempDir())
-	b.r.SetImageBuilder(builder)
-	b.r.WarmImages(context.Background(), nil)
-	select {
-	case args := <-d.calls:
-		if len(args) == 0 {
-			t.Error("an empty docker call")
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("the warm-up never reached the builder")
-	}
-	// The builder runs one build at a time: this waits the warm-up out, and
-	// the failure it logged left the builder usable.
-	if _, err := builder.EnsureTools(context.Background()); err == nil {
-		t.Error("nothing can build here")
-	}
-}
-
 // --- integration operations ---------------------------------------------------
 
 func TestTestIntegration(t *testing.T) {
@@ -672,7 +648,7 @@ func TestUnregisteredKinds(t *testing.T) {
 	prov := b.integration(confstore.PortProvisioner, "counting")
 	src := b.integration(confstore.PortTicketSource, "fake")
 	hs := b.integration(confstore.PortHarness, "fake")
-	r := New(b.svc, kinds.NewRegistry(), t.TempDir(), 0, "", "")
+	r := New(b.svc, kinds.NewRegistry(), t.TempDir(), 0, "")
 	for name, err := range map[string]error{
 		"repository":  second(r.TestIntegration(ctx, repo)),
 		"provisioner": second(r.TestIntegration(ctx, prov)),
@@ -717,7 +693,7 @@ func TestListBranches(t *testing.T) {
 	if _, err := other.r.ListBranches(ctx, broken.ID); !errors.Is(err, errKind) {
 		t.Errorf("account = %v", err)
 	}
-	r := New(b.svc, kinds.NewRegistry(), t.TempDir(), 0, "", "")
+	r := New(b.svc, kinds.NewRegistry(), t.TempDir(), 0, "")
 	if _, err := r.ListBranches(ctx, p.ID); !errors.Is(err, resolution.ErrUnresolvable) {
 		t.Errorf("unknown kind = %v", err)
 	}

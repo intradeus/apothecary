@@ -6,8 +6,8 @@ package main
 // exit codes. Repo images carry no jq/python guarantee; the shim is bind-
 // mounted into every workspace, so `apothecary-shim jq -r .subject
 // artifacts/commit.json` works whatever the image. The version is pinned in
-// the shim builder Dockerfile (internal/workspace/wsimage gojqVersion), which a test
-// holds equal to the root go.mod's.
+// the shim image's Dockerfile (workspace/images/shim), which a test holds
+// equal to the root go.mod's.
 
 import (
 	"os"

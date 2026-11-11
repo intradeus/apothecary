@@ -318,6 +318,10 @@ export interface ObservedPort {
 export interface RunPorts {
 	exposed: ExposedPort[];
 	observed: ObservedPort[];
+	/** Whether the engine hands out browser links to ports. When not (a
+	 *  cluster without an apps domain), ports are reached with
+	 *  `apothecary forward`, which works either way. */
+	links: boolean;
 }
 
 /** How a person reaches a run's workspace over SSH (TODO 46): through the
@@ -339,6 +343,10 @@ export interface RunSsh {
 	hostKey?: string;
 	/** The ssh command that opens a shell in the workspace. */
 	command?: string;
+	/** The one-time command that makes `command` work, when there is one:
+	 *  `apothecary ssh-config`, which routes `<workspace>.apothecary` through
+	 *  the engine's HTTPS address. */
+	setup?: string;
 	/** The vscode:// link that opens the workspace in desktop VS Code (Remote-SSH). */
 	vscodeUrl?: string;
 	/** The extension ids the workspace's own editor runs — what the desktop

@@ -143,23 +143,6 @@ type Provisioner interface {
 type ProvisionerDeps struct {
 	RunsDir    string
 	EnginePort int
-	// ShimBin builds (cached) and returns the host path of the static
-	// in-workspace shim binary (wsimage.EnsureShim); the devcontainer
-	// provisioner bind-mounts it at provision time.
-	ShimBin func(ctx context.Context) (string, error)
-	// ToolsDir builds (cached) and returns the host directory of the tools
-	// bundle (wsimage.EnsureTools): every harness CLI and code-server as
-	// standalone builds, which the docker provisioner bind-mounts into every
-	// workspace at /opt/apothecary/tools. The parent of that directory is
-	// what each sandbox mounts (every bundle version, read-only).
-	ToolsDir func(ctx context.Context) (string, error)
-	// GatewayImage builds (cached) and returns the tag of the per-project egress
-	// gateway image (wsimage.EnsureGatewayImage); the devcontainer provisioner
-	// runs one gateway container per project to filter all workspace egress.
-	GatewayImage func(ctx context.Context) (string, error)
-	// SandboxRuntime is the OCI runtime for the per-run DinD sandbox
-	// (APOTHECARY_SANDBOX_RUNTIME). Empty ⇒ the daemon default + --privileged.
-	SandboxRuntime string
 	// WorkspaceDocker is the daemon door's setting (APOTHECARY_WORKSPACE_DOCKER:
 	// auto|on|off) — whether a workspace may take its run's docker daemon.
 	WorkspaceDocker string

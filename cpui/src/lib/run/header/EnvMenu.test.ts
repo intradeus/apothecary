@@ -282,6 +282,40 @@ describe('EnvMenu', () => {
 				expect(screen.queryByRole('button', { name: /known_hosts/ })).not.toBeInTheDocument();
 			});
 		});
+
+		describe('through the HTTPS tunnel', () => {
+			const tunnel = door({
+				host: 'apo-w.apothecary',
+				hostKey: 'ssh-ed25519 AAAA',
+				command: 'ssh apo-w.apothecary',
+				setup: 'apothecary ssh-config'
+			});
+
+			it('offers the one-time setup above the command', async () => {
+				await ready(tunnel);
+				const setupRow = row(/Once, on your machine/);
+				expect(setupRow).toHaveTextContent('apothecary ssh-config');
+				await userEvent.click(setupRow);
+				expect(writeText).toHaveBeenCalledWith('apothecary ssh-config');
+				expect(toasts.list.map((t) => t.text)).toEqual([
+					'Copied — run it once and ssh to any workspace by name'
+				]);
+				expect(setupRow).toHaveTextContent(/copied/);
+				expect(row(/^SSH/)).toHaveTextContent('ssh apo-w.apothecary');
+			});
+
+			it('leaves the host key to the setup', async () => {
+				await ready(tunnel);
+				expect(screen.queryByRole('button', { name: /known_hosts/ })).not.toBeInTheDocument();
+			});
+
+			it('has no setup row when the door listens itself', async () => {
+				await ready(door({ command: 'ssh -p 2222 w@door.test' }));
+				expect(
+					screen.queryByRole('button', { name: /Once, on your machine/ })
+				).not.toBeInTheDocument();
+			});
+		});
 	});
 
 	describe('what the workspace serves', () => {

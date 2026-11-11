@@ -10,8 +10,12 @@ Apothecary on this repo (README, "Developing Apothecary with Apothecary").
   package is about — see the README's "Development" table), `workspace/`
   (the in-workspace shim, the egress gateway and the tools-bundle sources,
   `go:embed`ed into the daemon). `go test ./internal/archtest` enforces who
-  may import whom.
-- UI: `cpui/` (SvelteKit, static build served by the daemon).
+  may import whom. Kubernetes is the only sandbox host.
+- Clients: the web UI, `cpui/` (SvelteKit, static build served by the
+  daemon); the terminal client, `cmd/apothecary` + `internal/client` (talks
+  to the engine over its API only; archtest holds it to that).
+- Deployment: the Helm chart, `charts/apothecary` (`ci/*-values.yaml` are
+  its tested examples; `task chart:docs` regenerates its README).
 - `Taskfile.yml` holds every dev command; `task --list` shows them.
 - Design decisions and their deviations are appended to
   `docs/IMPLEMENTATION_NOTES.md` (newest at the bottom); `docs/flow-language.md`
@@ -32,10 +36,10 @@ Apothecary on this repo (README, "Developing Apothecary with Apothecary").
 
 ## Never run in a workspace
 
-`task test:integration:docker`, `test:integration:harness`,
-`test:integration:k8s`, `test:integration`, `test`, `verify`, `build`,
-`build:images`, `local*`, `k8s:*`, `prod:*`, `deploy/images.sh`: they build
-multi-gigabyte images, nest sandboxes or start a k3d cluster. CI runs them.
+`task test:integration:harness`, `test:integration:k8s`,
+`test:integration`, `test`, `verify`, `build`, `build:images`, `k8s:*`,
+`deploy/images.sh`: they build multi-gigabyte images, nest sandboxes or
+start a k3d cluster. CI runs them.
 
 ## Hard rules
 

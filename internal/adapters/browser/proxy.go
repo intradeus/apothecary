@@ -13,13 +13,13 @@ import (
 	"time"
 )
 
-// The routing proxy is the browser's only way out: Chromium runs in a
-// container with no network, its --proxy-server a loopback relay inside the
-// container that pipes to this proxy's unix socket. Every request names a
-// host, and a host the run serves — localhost, 127.0.0.1, ::1, *.localhost
-// — goes to the run's workspace port of the same number (Playwright sends
-// loopback through the proxy too: it adds <-loopback> to Chromium's bypass
-// list). Anything else is refused: the browser must not be a way around the
+// The routing proxy is the browser's only way out: Chromium runs in a pod
+// whose network policy allows nothing but the engine's session mux, its
+// --proxy-server a loopback relay inside the pod that pipes to this proxy
+// over that mux. Every request names a host, and a host the run serves —
+// localhost, 127.0.0.1, ::1, *.localhost — goes to the run's workspace port
+// of the same number (Playwright sends loopback through the proxy too: it
+// adds <-loopback> to Chromium's bypass list). Anything else is refused: the browser must not be a way around the
 // project's egress gateway, and an app under development that needs the
 // internet reaches it from its own workspace, where the gateway judges it.
 

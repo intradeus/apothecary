@@ -283,14 +283,20 @@ describe('runs', () => {
 			map.toRunPorts(
 				wire<Wire.RunPorts>({
 					ports: [{ port: 80, url: 'u' }],
-					observed: [{ port: 81, process: 'p', service: 's' }]
+					observed: [{ port: 81, process: 'p', service: 's' }],
+					links: true
 				})
 			)
 		).toEqual({
 			exposed: [{ port: 80, url: 'u' }],
-			observed: [{ port: 81, process: 'p', service: 's' }]
+			observed: [{ port: 81, process: 'p', service: 's' }],
+			links: true
 		});
-		expect(map.toRunPorts(wire<Wire.RunPorts>({}))).toEqual({ exposed: [], observed: [] });
+		expect(map.toRunPorts(wire<Wire.RunPorts>({}))).toEqual({
+			exposed: [],
+			observed: [],
+			links: false
+		});
 	});
 
 	it('reads what lets one in over SSH, blanks as absent', () => {
@@ -302,6 +308,7 @@ describe('runs', () => {
 				extensions: [],
 				host_key: 'k',
 				vscode_url: 'v',
+				setup: '',
 				keys: 0
 			})
 		);
@@ -312,8 +319,12 @@ describe('runs', () => {
 			extensions: undefined,
 			hostKey: 'k',
 			vscodeUrl: 'v',
+			setup: undefined,
 			keys: 0
 		});
+		expect(
+			map.toRunSsh(wire<Wire.RunSsh>({ enabled: true, setup: 'apothecary ssh-config' })).setup
+		).toBe('apothecary ssh-config');
 		expect(
 			map.toRunSsh(wire<Wire.RunSsh>({ enabled: true, extensions: ['a'] })).extensions
 		).toEqual(['a']);
@@ -1468,8 +1479,14 @@ describe('accounts', () => {
 			map.toAuthStatus(wire<Wire.AuthStatus>({ setup_required: true, methods: ['password'] }))
 		).toEqual({
 			setupRequired: true,
-			methods: ['password']
+			methods: ['password'],
+			version: ''
 		});
+		expect(
+			map.toAuthStatus(
+				wire<Wire.AuthStatus>({ setup_required: false, methods: [], version: 'v3.4.0' })
+			).version
+		).toBe('v3.4.0');
 	});
 
 	it('reads a token and an SSH key, blanks as absent', () => {
@@ -1483,8 +1500,19 @@ describe('accounts', () => {
 			prefix: 'p',
 			createdAt: AT,
 			lastUsedAt: undefined,
-			expiresAt: undefined
+			expiresAt: undefined,
+			idleSeconds: undefined
 		});
+		expect(
+			map.toToken(
+				wire<Wire.Token>({ id: 't', name: 'n', prefix: 'p', created_at: AT, idle_seconds: 604800 })
+			).idleSeconds
+		).toBe(604800);
+		expect(
+			map.toCliLogin(
+				wire<Wire.CliLoginInfo>({ user_code: 'ABCD-EFGH', name: 'cli', expires_at: AT })
+			)
+		).toEqual({ userCode: 'ABCD-EFGH', name: 'cli', expiresAt: AT });
 		expect(
 			map.toSshKey(
 				wire<Wire.SshKey>({

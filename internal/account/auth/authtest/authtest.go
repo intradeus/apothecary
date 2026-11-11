@@ -769,6 +769,33 @@ func RunContract(t *testing.T, open func(t *testing.T) auth.DB) {
 		}
 	})
 
+	// An inactivity window is a column too: it reads back as stored, and a
+	// token without one (or a nonsense negative one) reads back as none.
+	t.Run("a token's inactivity window round-trips", func(t *testing.T) {
+		db := open(t)
+		seedUsers(t, db)
+		k := token("t1", "u1", "h1")
+		k.IdleSeconds = 7 * 24 * 3600
+		if err := db.CreateToken(ctx, k); err != nil {
+			t.Fatal(err)
+		}
+		neg := token("t2", "u1", "h2")
+		neg.IdleSeconds = -5
+		if err := db.CreateToken(ctx, neg); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := db.GetTokenByHash(ctx, "h1"); err != nil || got.IdleSeconds != 7*24*3600 {
+			t.Errorf("windowed token = %+v, %v", got, err)
+		}
+		if got, err := db.GetTokenByHash(ctx, "h2"); err != nil || got.IdleSeconds != 0 {
+			t.Errorf("negative window = %+v, %v", got, err)
+		}
+		list, err := db.ListTokens(ctx, "u1")
+		if err != nil || len(list) != 2 || list[0].IdleSeconds+list[1].IdleSeconds != 7*24*3600 {
+			t.Errorf("list = %+v, %v", list, err)
+		}
+	})
+
 	// Expiry is a column to the port and a rule to the service: the row reads
 	// back past its date, so the service can delete it and answer 401.
 	t.Run("expiry is the caller's", func(t *testing.T) {

@@ -190,6 +190,7 @@ export type AttemptFacts = {
 export type AuthStatus = {
 	methods: Array<string> | null;
 	setup_required: boolean;
+	version: string;
 };
 
 export type Automation = {
@@ -252,6 +253,35 @@ export type BrowserInfo = {
 export type BuildCacheInfo = {
 	available: boolean;
 	bytes: number;
+};
+
+export type CliLoginInfo = {
+	expires_at: string;
+	name: string;
+	user_code: string;
+};
+
+export type CliLoginPoll = {
+	handle?: string;
+	status: string;
+	token?: string;
+	token_id?: string;
+};
+
+export type CliLoginPollRequest = {
+	device_code: string;
+};
+
+export type CliLoginRequest = {
+	name: string;
+};
+
+export type CliLoginStarted = {
+	device_code: string;
+	expires_in: number;
+	interval: number;
+	user_code: string;
+	verification_url: string;
 };
 
 export type CatalogField = {
@@ -1420,6 +1450,7 @@ export type RunMergeRequest = {
 };
 
 export type RunPorts = {
+	links: boolean;
 	observed: Array<ObservedPort> | null;
 	ports: Array<PortExposure> | null;
 };
@@ -1443,6 +1474,7 @@ export type RunSsh = {
 	path?: string;
 	port?: number;
 	reason?: string;
+	setup?: string;
 	user?: string;
 	vscode_url?: string;
 };
@@ -1918,6 +1950,7 @@ export type Token = {
 	created_at: string;
 	expires_at?: string;
 	id: string;
+	idle_seconds?: number;
 	last_used_at?: string;
 	name: string;
 	prefix: string;
@@ -2994,6 +3027,187 @@ export type DeleteChannelResponses = {
 };
 
 export type DeleteChannelResponse = DeleteChannelResponses[keyof DeleteChannelResponses];
+
+export type StartCliLoginData = {
+	body: CliLoginRequest;
+	path?: never;
+	query?: never;
+	url: '/api/cli/logins';
+};
+
+export type StartCliLoginErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type StartCliLoginResponses = {
+	/**
+	 * Created
+	 */
+	201: CliLoginStarted;
+};
+
+export type StartCliLoginResponse = StartCliLoginResponses[keyof StartCliLoginResponses];
+
+export type GetCliLoginData = {
+	body?: never;
+	path: {
+		code: string;
+	};
+	query?: never;
+	url: '/api/cli/logins/{code}';
+};
+
+export type GetCliLoginErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetCliLoginResponses = {
+	/**
+	 * OK
+	 */
+	200: CliLoginInfo;
+};
+
+export type GetCliLoginResponse = GetCliLoginResponses[keyof GetCliLoginResponses];
+
+export type ApproveCliLoginData = {
+	body?: never;
+	path: {
+		code: string;
+	};
+	query?: never;
+	url: '/api/cli/logins/{code}/approve';
+};
+
+export type ApproveCliLoginErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ApproveCliLoginResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type ApproveCliLoginResponse = ApproveCliLoginResponses[keyof ApproveCliLoginResponses];
+
+export type DenyCliLoginData = {
+	body?: never;
+	path: {
+		code: string;
+	};
+	query?: never;
+	url: '/api/cli/logins/{code}/deny';
+};
+
+export type DenyCliLoginErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DenyCliLoginResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type DenyCliLoginResponse = DenyCliLoginResponses[keyof DenyCliLoginResponses];
+
+export type PollCliLoginData = {
+	body: CliLoginPollRequest;
+	path?: never;
+	query?: never;
+	url: '/api/cli/logins/token';
+};
+
+export type PollCliLoginErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type PollCliLoginResponses = {
+	/**
+	 * OK
+	 */
+	200: CliLoginPoll;
+};
+
+export type PollCliLoginResponse = PollCliLoginResponses[keyof PollCliLoginResponses];
 
 export type ListCredentialsData = {
 	body?: never;

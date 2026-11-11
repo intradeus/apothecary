@@ -52,6 +52,8 @@ export class RunStore {
 	dismissed = $state<Set<string>>(new Set());
 	exposed = $state<{ port: number; url: string }[]>([]);
 	observed = $state<ObservedPort[]>([]);
+	/** Whether ports get browser links (RunPorts.links); until the feed says. */
+	portLinks = $state(true);
 	snapshots = $state<Snapshot[]>([]);
 	attachments = $state<Attachment[]>([]);
 	samples = $state<ResourceSample[]>([]);
@@ -229,6 +231,7 @@ export class RunStore {
 			const pr = await api.runs.ports(this.runId);
 			this.exposed = pr.exposed;
 			this.observed = pr.observed;
+			this.portLinks = pr.links;
 		} catch {
 			/* transient */
 		}

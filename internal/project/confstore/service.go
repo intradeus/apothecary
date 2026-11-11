@@ -84,6 +84,26 @@ func (s *Service) CreateIntegration(ctx context.Context, in Integration) (Integr
 	return in, nil
 }
 
+// EnsureProvisioner gives a user with no provisioner integration one of kind
+// kind, every field empty — what a deployment that knows its own sandbox
+// host (Kubernetes, from its APOTHECARY_K8S_* settings) hands each new
+// account, so a fresh install can run a workspace without a form. A user who
+// has any provisioner keeps theirs. The integration made is returned, or the
+// zero value when there was one already.
+func (s *Service) EnsureProvisioner(ctx context.Context, userID, kind, name string) (Integration, error) {
+	rows, err := s.db.ListIntegrations(ctx, userID)
+	if err != nil {
+		return Integration{}, err
+	}
+	for _, r := range rows {
+		if r.Port == PortProvisioner && r.UserID == userID {
+			return Integration{}, nil
+		}
+	}
+	return s.CreateIntegration(ctx, Integration{UserID: userID, Port: PortProvisioner, Kind: kind, Name: name,
+		Config: map[string]any{}, Secrets: map[string]string{}})
+}
+
 // UpdateIntegration applies the §3 write semantics: config replaces whole;
 // secretPatch merges — keys present replace, "" deletes, absent keep. Port
 // and kind are immutable.

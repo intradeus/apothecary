@@ -30,7 +30,11 @@ beforeEach(() => {
 
 describe('session.load', () => {
 	it('signs a browser with a session in', async () => {
-		vi.mocked(api.auth.status).mockResolvedValue({ setupRequired: false, methods: ['password'] });
+		vi.mocked(api.auth.status).mockResolvedValue({
+			setupRequired: false,
+			methods: ['password'],
+			version: 'v1'
+		});
 		vi.mocked(api.auth.me).mockResolvedValue(me({ name: 'Lucas' }));
 
 		await session.load();
@@ -41,7 +45,11 @@ describe('session.load', () => {
 	});
 
 	it('treats a failed me as signed out, not as an outage', async () => {
-		vi.mocked(api.auth.status).mockResolvedValue({ setupRequired: false, methods: ['password'] });
+		vi.mocked(api.auth.status).mockResolvedValue({
+			setupRequired: false,
+			methods: ['password'],
+			version: 'v1'
+		});
 		vi.mocked(api.auth.me).mockRejectedValue(new Error('401 Unauthorized'));
 
 		await session.load();
@@ -52,7 +60,11 @@ describe('session.load', () => {
 	});
 
 	it('does not ask who is signed in when the instance has no account yet', async () => {
-		vi.mocked(api.auth.status).mockResolvedValue({ setupRequired: true, methods: [] });
+		vi.mocked(api.auth.status).mockResolvedValue({
+			setupRequired: true,
+			methods: [],
+			version: 'v1'
+		});
 
 		await session.load();
 
@@ -74,7 +86,11 @@ describe('session.load', () => {
 		vi.mocked(api.auth.status).mockRejectedValueOnce(new Error('engine unreachable'));
 		await session.load();
 
-		vi.mocked(api.auth.status).mockResolvedValue({ setupRequired: false, methods: [] });
+		vi.mocked(api.auth.status).mockResolvedValue({
+			setupRequired: false,
+			methods: [],
+			version: 'v1'
+		});
 		vi.mocked(api.auth.me).mockResolvedValue(me());
 		await session.load();
 

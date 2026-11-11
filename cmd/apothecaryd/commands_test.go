@@ -269,8 +269,8 @@ func TestRebuildProjections(t *testing.T) {
 	}
 }
 
-// envEnv is a database with a project on real kinds, the provisioner one the
-// empty PATH leaves with no docker.
+// envEnv is a database with a project on real kinds, the provisioner a
+// Kubernetes one the empty PATH leaves with no kubectl.
 func envEnv(t *testing.T) (*confstore.Service, confstore.Project) {
 	t.Helper()
 	noHostTools(t)
@@ -297,10 +297,12 @@ func envEnv(t *testing.T) (*confstore.Service, confstore.Project) {
 	p, err := conf.CreateProject(ctx, confstore.Project{
 		Name:          "web",
 		RepoAccountID: mk(confstore.PortRepository, "gitlab", map[string]any{"base_url": "http://127.0.0.1:1"}, map[string]string{"token": "t"}),
-		ProvisionerID: mk(confstore.PortProvisioner, "docker", nil, nil),
-		HarnessIDs:    []string{mk(confstore.PortHarness, "opencode", nil, nil)},
-		Repo:          confstore.RepoConfig{URL: "http://127.0.0.1:1/g/p.git", Locator: "1", DefaultBranch: "main"},
-		DefaultFlow:   builtin.FlowNames()[0],
+		ProvisionerID: mk(confstore.PortProvisioner, "kubernetes",
+			map[string]any{"namespace": "work", "engine_url": "http://127.0.0.1:1"},
+			map[string]string{"kubeconfig": "apiVersion: v1\nkind: Config\n"}),
+		HarnessIDs:  []string{mk(confstore.PortHarness, "opencode", nil, nil)},
+		Repo:        confstore.RepoConfig{URL: "http://127.0.0.1:1/g/p.git", Locator: "1", DefaultBranch: "main"},
+		DefaultFlow: builtin.FlowNames()[0],
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -308,8 +310,8 @@ func envEnv(t *testing.T) (*confstore.Service, confstore.Project) {
 	return conf, p
 }
 
-// The check runs against the live provisioner; with no docker to provision on
-// it fails, says so step by step, and exits with the count.
+// The check runs against the live provisioner; with no cluster to provision
+// on it fails, says so step by step, and exits with the count.
 func TestEnvcheckCommand(t *testing.T) {
 	envEnv(t)
 	var err error

@@ -1,0 +1,28 @@
+Apothecary is starting in {{ .Release.Namespace }}; workspaces will run in {{ .Values.workspaces.namespace }}.
+
+{{- with include "apothecary.publicURL" . }}
+
+1. Open {{ . }}/ and create the first account ("Claim this apothecary").
+{{- else }}
+
+1. Reach it with:
+     kubectl -n {{ .Release.Namespace }} port-forward svc/apothecaryd 8080:8080
+   then open http://localhost:8080/ and create the first account.
+   (Set access.http.ingress or access.publicURL to give it an address.)
+{{- end }}
+   Each account gets a Kubernetes provisioner with this deployment's
+   settings; nothing to fill in.
+
+2. On your machine, install the apothecary CLI (the release's binaries) and
+   sign in once:
+     apothecary login {{ include "apothecary.publicURL" . | default "<the address above>" }}
+     apothecary ssh-config      # then: ssh <workspace>.apothecary, or VS Code Remote-SSH
+   A run's ports come to your localhost with: apothecary forward <run>
+{{- if not .Values.access.http.appsDomain }}
+   (No apps domain: runs' web apps have no browser links; forward them.)
+{{- end }}
+
+Sandboxes run {{ if .Values.workspaces.privileged }}PRIVILEGED (sandbox root is root on its node){{ else }}unprivileged under the {{ .Values.workspaces.runtimeClassName }} RuntimeClass, which must be installed on the nodes that run them{{ end }}.
+Nodes need the wireguard kernel module (in-tree since Linux 5.6), and
+workspace volumes a local or block storage class (the inner docker daemon
+cannot run on NFS).

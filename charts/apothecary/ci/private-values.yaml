@@ -1,0 +1,22 @@
+# A deployment reachable only over a private network or VPN — WireGuard, a
+# corporate VPN, a tailnet, a cloud private link. Nothing here names one:
+# point an ingress class you run on that network at the engine, with its
+# own annotations and TLS, and the rest of the chart is unchanged.
+#
+# For example, with the Tailscale Kubernetes operator: className tailscale,
+# and tls hosts [apothecary] give https://apothecary.<tailnet>.ts.net (the
+# operator issues the certificate). A wildcard apps domain needs a DNS name
+# you own pointing at the ingress's private address; without one, web apps
+# are reached with `apothecary forward`.
+masterKey: ci-placeholder
+postgres:
+  password: ci-placeholder
+
+access:
+  http:
+    ingress:
+      enabled: true
+      className: private-vpn
+      host: apothecary.internal.example.com
+      tls:
+        - hosts: [apothecary.internal.example.com]

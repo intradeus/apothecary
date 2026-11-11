@@ -67,6 +67,20 @@ export default {
 
 	// Sign-in, setup, the account.
 	'auth.unreachable': 'The engine could not be reached',
+	'auth.cli.docTitle': 'Terminal sign-in',
+	'auth.cli.title': 'Sign in the apothecary CLI?',
+	'auth.cli.loading': 'Looking up the sign-in…',
+	'auth.cli.codeLabel': 'Sign-in code',
+	'auth.cli.check': 'Check that your terminal shows this code',
+	'auth.cli.warning':
+		'Approve only a sign-in you started yourself: the terminal will act as you until it goes unused for a while.',
+	'auth.cli.approve': 'Approve',
+	'auth.cli.deny': 'Deny',
+	'auth.cli.approved': 'Signed in — you can close this tab; the terminal is ready.',
+	'auth.cli.denied': 'Denied — the terminal stays signed out.',
+	'auth.cli.gone': 'This sign-in expired or is unknown',
+	'auth.cli.goneText': 'Run apothecary login again in your terminal and follow the new link.',
+	'auth.cli.failed': 'The engine refused',
 	'auth.handle': 'Handle',
 	'auth.handleHelp':
 		'Lowercase letters, digits and dashes. How you sign in, and how you are named.',

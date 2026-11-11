@@ -812,13 +812,13 @@ func TestK8sCheckShimMissing(t *testing.T) {
 
 func TestK8sSandboxStateErrors(t *testing.T) {
 	_, h := k8sWith(t, &kubeFake{}, false, kubeRule{match: "pod", stderr: "boom", code: 1})
-	if st, _, err := h.sandboxState(context.Background(), "w"); err == nil || st != "" {
+	if st, err := h.sandboxState(context.Background(), "w"); err == nil || st != "" {
 		t.Errorf("state = %q, %v (must stay unknown)", st, err)
 	}
 	k := &kubeFake{pod: `{"status":{"phase":"Unknown"}}`}
 	_, h = k8sWith(t, k, false)
-	if st, legacy, err := h.sandboxState(context.Background(), "w"); err != nil || st != "exited" || legacy {
-		t.Errorf("unknown phase = %q %v %v", st, legacy, err)
+	if st, err := h.sandboxState(context.Background(), "w"); err != nil || st != "exited" {
+		t.Errorf("unknown phase = %q %v", st, err)
 	}
 }
 

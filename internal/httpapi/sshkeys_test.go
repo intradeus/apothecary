@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -75,12 +76,25 @@ func TestSSHKeysAPI(t *testing.T) {
 }
 
 // stubDoor is an SSHAccess for the run page's facts.
-type stubDoor struct{ dropped []string }
+type stubDoor struct {
+	dropped, served []string
+	tunnelOnly      bool // no listener of its own: reached through the tunnel
+}
 
-func (stubDoor) Address() (string, int)    { return "door.example", 2222 }
+func (d stubDoor) Address() (string, int) {
+	if d.tunnelOnly {
+		return "", 0
+	}
+	return "door.example", 2222
+}
 func (stubDoor) Fingerprint() string       { return "SHA256:abc" }
 func (stubDoor) HostPublicKey() string     { return "ssh-ed25519 AAAAhost\n" }
 func (d *stubDoor) DropUser(userID string) { d.dropped = append(d.dropped, userID) }
+func (d *stubDoor) ServeConn(nc net.Conn, workspace, who string) {
+	d.served = append(d.served, workspace+" "+who)
+	_, _ = nc.Write([]byte("SSH-2.0-stub\r\n"))
+	nc.Close()
+}
 
 // The run page's SSH facts: off when the instance has no door; the
 // command, the link and the fingerprint when it has one.
@@ -91,7 +105,7 @@ func TestRunSSHFacts(t *testing.T) {
 	resp, data := x.do(t, "GET", "/api/runs/"+runID+"/ssh", nil, nil)
 	var off RunSSH
 	_ = json.Unmarshal(data, &off)
-	if resp.StatusCode != http.StatusOK || off.Enabled || !strings.Contains(off.Reason, "APOTHECARY_SSH_LISTEN") {
+	if resp.StatusCode != http.StatusOK || off.Enabled || !strings.Contains(off.Reason, "SSH access is off") {
 		t.Fatalf("off = %d %+v", resp.StatusCode, off)
 	}
 	// On: once the run has a workspace.
@@ -130,8 +144,22 @@ func TestRunSSHFacts(t *testing.T) {
 	}
 	_, data = x.do(t, "GET", "/api/runs/"+runID+"/ssh", nil, nil)
 	_ = json.Unmarshal(data, &on)
-	if on.Keys != 1 {
-		t.Errorf("keys = %d", on.Keys)
+	if on.Keys != 1 || on.Setup != "" {
+		t.Errorf("keys = %d, setup %q", on.Keys, on.Setup)
+	}
+
+	// A door reached only through the HTTPS tunnel: the workspace's alias,
+	// the one-time setup that routes it, no port.
+	x.srv.SSH = &stubDoor{tunnelOnly: true}
+	_, data = x.do(t, "GET", "/api/runs/"+runID+"/ssh", nil, nil)
+	var tun RunSSH
+	_ = json.Unmarshal(data, &tun)
+	if host := envID + ".apothecary"; tun.Host != host || tun.Port != 0 || tun.Command != "ssh "+host || tun.Setup != "apothecary ssh-config" {
+		t.Fatalf("tunnel = %+v", tun)
+	}
+	raw, _ := hex.DecodeString(strings.TrimPrefix(tun.VSCodeURL, "vscode://vscode-remote/ssh-remote+"))
+	if !strings.HasPrefix(string(raw), `{"hostName":"`+envID+`.apothecary"}`) {
+		t.Errorf("vscode authority = %s", raw)
 	}
 }
 

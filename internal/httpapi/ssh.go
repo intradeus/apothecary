@@ -3,6 +3,11 @@ package httpapi
 // The run page's SSH facts (TODO 46): how a person reaches the run's
 // workspace through the engine's SSH door — the command, the VS Code link,
 // the door's fingerprint — and whether anything will let them in yet.
+//
+// The door is reached through the HTTPS tunnel (`ssh <workspace>.apothecary`
+// once `apothecary ssh-config` has run), unless it also listens on a TCP
+// port of its own (APOTHECARY_SSH_LISTEN, the dev loop), which the facts
+// then name instead.
 
 import (
 	"encoding/hex"
@@ -15,11 +20,12 @@ import (
 	"strings"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/platform/wstunnel"
 )
 
 func (s *Server) getRunSSH(w http.ResponseWriter, r *http.Request) {
 	if s.SSH == nil {
-		writeJSON(w, http.StatusOK, RunSSH{Reason: "SSH access is off on this instance (set APOTHECARY_SSH_LISTEN to turn the SSH door on)"})
+		writeJSON(w, http.StatusOK, RunSSH{Reason: errNoDoor.Error()})
 		return
 	}
 	info, err := s.Workspaces.SSHInfo(r.Context(), r.PathValue("id"))
@@ -32,20 +38,31 @@ func (s *Server) getRunSSH(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	out := RunSSH{
+		Enabled: true, User: info.Workspace, Path: info.Path,
+		Fingerprint: s.SSH.Fingerprint(), HostKey: strings.TrimSpace(s.SSH.HostPublicKey()),
+		Extensions: info.Extensions,
+		Keys:       len(keys),
+	}
 	host, port := s.SSH.Address()
+	if port == 0 {
+		// Through the tunnel: the host is the workspace's alias, which the
+		// CLI's ssh config routes; the username is not read.
+		out.Host = info.Workspace + wstunnel.SSHHostSuffix
+		out.Setup = "apothecary ssh-config"
+		out.Command = "ssh " + out.Host
+		out.VSCodeURL = vscodeURLFor(out.Host, info.Path)
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
 	if host == "" {
 		// The door listens on every interface and no address was configured
 		// to advertise: the host this page was reached at reaches it too.
 		host = requestHostname(r)
 	}
-	out := RunSSH{
-		Enabled: true, Host: host, Port: port, User: info.Workspace, Path: info.Path,
-		Fingerprint: s.SSH.Fingerprint(), HostKey: strings.TrimSpace(s.SSH.HostPublicKey()),
-		Command:    sshCommand(host, port, info.Workspace),
-		VSCodeURL:  vscodeURL(host, port, info.Workspace, info.Path),
-		Extensions: info.Extensions,
-		Keys:       len(keys),
-	}
+	out.Host, out.Port = host, port
+	out.Command = sshCommand(host, port, info.Workspace)
+	out.VSCodeURL = vscodeURL(host, port, info.Workspace, info.Path)
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -70,6 +87,11 @@ func vscodeURL(host string, port int, user, path string) string {
 	if port != 22 {
 		dest += " -p " + strconv.Itoa(port)
 	}
+	return vscodeURLFor(dest, path)
+}
+
+// vscodeURLFor is the Remote-SSH link for a destination as typed.
+func vscodeURLFor(dest, path string) string {
 	authority, _ := json.Marshal(map[string]string{"hostName": dest})
 	u := "vscode://vscode-remote/ssh-remote+" + hex.EncodeToString(authority)
 	if path != "" {

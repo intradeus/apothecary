@@ -2,11 +2,9 @@
 #   task --list
 version: '3'
 
-dotenv: ['deploy/.env'] # APOTHECARY_MASTER_KEY / APOTHECARY_PG_PASSWORD for dev + compose tasks
+dotenv: ['deploy/.env'] # APOTHECARY_MASTER_KEY for the dev tasks
 
 vars:
-  LOCAL_COMPOSE: docker compose -p apothecary-local -f deploy/docker-compose.local.yaml
-  PROD_COMPOSE: docker compose -p apothecary -f deploy/docker-compose.yaml
   DEV_PG: apothecary-dev-pg
   # The dev tasks' Postgres. APOTHECARY_DEV_DSN overrides it — the repo's
   # devcontainer sets it to its `db` sibling, and dev:db is then skipped.
@@ -26,46 +24,6 @@ tasks:
     silent: true
     cmds:
       - task --list
-
-  # --- local docker stack (builds from the working tree) ---------------------
-  local:
-    desc: Build the working tree and (re)start the local docker stack (UI on :8081)
-    cmds:
-      - '{{.LOCAL_COMPOSE}} up -d --build'
-      - sleep 2
-      - docker exec apothecary-local-apothecaryd-1 apothecaryd version
-      - 'echo "UI: http://127.0.0.1:8081"'
-
-  local:logs:
-    desc: Follow the local stack's daemon logs
-    cmds:
-      - '{{.LOCAL_COMPOSE}} logs -f apothecaryd'
-
-  local:down:
-    desc: Stop the local stack + sweep engine-managed docker objects (data kept)
-    cmds:
-      # Compose down first (stops apothecaryd so it can't recreate anything)...
-      - '{{.LOCAL_COMPOSE}} down'
-      # ...then sweep the objects the ENGINE creates on the host daemon (per-run
-      # DinD sandboxes, per-project egress gateways, apo-egress-* networks and
-      # sandbox volumes) — compose doesn't know about them, so they'd leak.
-      - task: local:sweep-managed
-
-  # Remove every apothecary-engine-managed docker object (all carry the
-  # apothecary=true label). Safe to run anytime; ignores "nothing to remove".
-  local:sweep-managed:
-    desc: Remove leaked engine-managed docker objects (sandboxes, gateways, nets, volumes)
-    cmds:
-      - docker ps -aq --filter label=apothecary=true | xargs -r docker rm -f
-      - docker network ls -q --filter label=apothecary=true | xargs -r docker network rm
-      - docker volume ls -q --filter label=apothecary=true | xargs -r docker volume rm -f
-
-  local:destroy:
-    desc: Stop the local stack, delete its volumes AND sweep engine-managed objects
-    prompt: This wipes the local stack's database and runs dir. Continue?
-    cmds:
-      - '{{.LOCAL_COMPOSE}} down -v'
-      - task: local:sweep-managed
 
   # --- local Kubernetes (k3d: k3s in docker) ----------------------------------
   # task k8s:cluster k8s:images k8s:deploy → http://apothecary.localhost:8090
@@ -148,12 +106,11 @@ tasks:
     cmds:
       - test -s deploy/.k3d-master-key || (go run ./cmd/apothecaryd keygen > deploy/.k3d-master-key && chmod 600 deploy/.k3d-master-key)
       - >-
-        helm upgrade --install apothecary deploy/helm/apothecary
+        helm upgrade --install apothecary charts/apothecary
         --kubeconfig {{.K3D_KUBECONFIG}} -n apothecary --create-namespace
-        -f deploy/helm/apothecary/values-k3d.yaml
+        -f charts/apothecary/ci/k3d-values.yaml
         --set masterKey="$(cat deploy/.k3d-master-key)"
-        --set ingress.host=apothecary.localhost
-        --set ingress.appsPort={{.K3D_HTTP_PORT}}
+        --set access.http.port={{.K3D_HTTP_PORT}}
       # :local is rebuilt in place: restart so the engine pulls the new one.
       - '{{.K3D_KUBECTL}} -n apothecary rollout restart deploy/apothecaryd'
       - '{{.K3D_KUBECTL}} -n apothecary rollout status deploy/apothecaryd --timeout=5m'
@@ -171,7 +128,7 @@ tasks:
       - '{{.K3D_KUBECTL}} -n apothecary-workspaces get pods,pvc,deploy,svc,netpol,secrets -l apothecary.io/managed=true'
 
   k8s:sweep:
-    desc: Delete every engine-managed workspace object on the k3d cluster (the twin of local:sweep-managed)
+    desc: Delete every engine-managed workspace object on the k3d cluster
     cmds:
       - '{{.K3D_KUBECTL}} -n apothecary-workspaces delete pods,deploy,svc,netpol,secrets,pvc -l apothecary.io/managed=true --ignore-not-found'
 
@@ -256,11 +213,10 @@ tasks:
   # --- build: everything a release ships, built from the working tree ---------
   # `task build` is CI's build job: the binaries, the CPUI and every image. The
   # binaries land in build/ (gitignored), for poking at them directly.
-  # Production never uses these: the deploy image builds apothecaryd, and the
-  # engine builds the shim + gateway inside docker from the go:embed'ed
-  # workspace/ sources (internal/workspace/wsimage). Always build here, never
-  # in-tree: workspace/ is embedded, so a binary dropped in it ships inside
-  # apothecaryd and changes the egress-gw image hash.
+  # Production never uses these: the release images are built by
+  # deploy/images.sh. Always build here, never in-tree: workspace/ is
+  # embedded, so a binary dropped in it ships inside apothecaryd and changes
+  # the shim and egress-gw image hashes.
   build:
     desc: 'Build everything: apothecaryd, the shim and gateway, the CPUI, and the five images (needs docker)'
     cmds:
@@ -269,9 +225,10 @@ tasks:
       - task: build:images
 
   build:bin:
-    desc: Build apothecaryd, the workspace shim and the egress gateway into build/
+    desc: Build apothecaryd, the apothecary client, the workspace shim and the egress gateway into build/
     cmds:
       - task: build:daemon
+      - task: build:client
       - task: build:shim
       - task: build:gateway
 
@@ -279,6 +236,17 @@ tasks:
     desc: Build apothecaryd into build/
     cmds:
       - go build -o build/apothecaryd ./cmd/apothecaryd
+
+  build:client:
+    desc: Build the apothecary terminal client into build/ (this machine's OS)
+    cmds:
+      - go build -o build/apothecary ./cmd/apothecary
+
+  # The released client binaries, one per OS and architecture people run it on.
+  build:client:release:
+    desc: 'Cross-build the apothecary client for Linux, macOS and Windows into build/client/ (VERSION=vX.Y.Z)'
+    cmds:
+      - deploy/release.sh client {{.VERSION | default "dev"}}
 
   # The shim and the gateway only ever run in Linux containers.
   build:shim:
@@ -348,7 +316,7 @@ tasks:
       - node cpui/scripts/check-api-boundary.mjs
 
   api:docs:
-    desc: Open the Swagger UI of a running engine (task local / task dev first)
+    desc: Open the Swagger UI of a running engine (task dev or task dev:up first)
     cmds:
       - 'echo "Swagger UI: {{.API_URL}}/docs   ·   document: {{.API_URL}}/api/openapi.json"'
       - '(xdg-open {{.API_URL}}/docs >/dev/null 2>&1 &) || true'
@@ -450,11 +418,9 @@ tasks:
         go test -count=1 {{.CLI_ARGS | default "./..."}}
 
   test:integration:
-    desc: 'Every integration suite: Postgres + boot, docker workspaces + browser, the harness binaries, Kubernetes (needs docker; no args: pass them to one suite)'
+    desc: 'Every integration suite: Postgres + boot, the harness binaries, Kubernetes (needs docker; no args: pass them to one suite)'
     cmds:
       - task: test:integration:pg
-        vars: {CLI_ARGS: ''}
-      - task: test:integration:docker
         vars: {CLI_ARGS: ''}
       - task: test:integration:harness
         vars: {CLI_ARGS: ''}
@@ -489,47 +455,11 @@ tasks:
     cmds:
       - go test -count=1 -run '^TestEmptyDatabasesAreSeparate$' ./internal/adapters/pgstore/pgtest/
 
-  # The `live` tests drive real docker (DinD sandboxes, devcontainer up, the
-  # egress gateway, the browser container). They run INSIDE the engine image,
-  # as apothecaryd does in production: root, the docker CLI and the pinned
-  # @devcontainers/cli, the host's docker socket, host networking, and a
-  # RunsDir bind-mounted at the same path. That RunsDir is a named volume's
-  # mountpoint: a real path on the docker host (on macOS, inside the docker
-  # VM, on its data disk) — the run's unix sockets do not cross a macOS file
-  # share, so it can never be a folder of the Mac. The egress gateway is on:
-  # APOTHECARY_LIVE_GATEWAY=0 turns it off.
-  test:integration:docker:
-    desc: 'Docker workspaces (lifecycle, gateway, file tree) and the browser, inside the engine image (needs docker; args are go test flags, e.g. -- -test.run TestLiveLifecycle)'
-    vars:
-      LIVE_RUNS:
-        sh: docker volume create apothecary-live-runs >/dev/null && docker volume inspect -f '{{"{{"}}.Mountpoint{{"}}"}}' apothecary-live-runs
-      ARCH:
-        sh: docker version --format '{{"{{"}}.Server.Arch{{"}}"}}'
-      GATEWAY: '{{.APOTHECARY_LIVE_GATEWAY | default "1"}}'
-    cmds:
-      - docker build -q -f deploy/Dockerfile -t apothecary/apothecaryd:live .
-      - mkdir -p build/live
-      - for: [workspace, browser]
-        cmd: GOOS=linux GOARCH={{.ARCH}} CGO_ENABLED=0 go test -c -tags live -o build/live/{{.ITEM}}.test ./internal/adapters/{{.ITEM}}/
-      # Only the docker live tests: the packages' unit tests run in test:unit,
-      # the Kubernetes one in test:integration:k8s.
-      - for: [workspace, browser]
-        cmd: >-
-          docker run --rm --network host --entrypoint /live/{{.ITEM}}.test
-          -v /var/run/docker.sock:/var/run/docker.sock
-          -v {{.LIVE_RUNS}}:{{.LIVE_RUNS}}
-          -v "{{.ROOT_DIR}}/build/live":/live:ro
-          -e APOTHECARY_LIVE_RUNS_DIR={{.LIVE_RUNS}}
-          -e APOTHECARY_LIVE_GATEWAY={{.GATEWAY}}
-          -e APOTHECARY_SANDBOX_RUNTIME -e APOTHECARY_WORKSPACE_DOCKER
-          apothecary/apothecaryd:live
-          -test.v -test.count=1 -test.timeout 30m -test.run '^TestLive' -test.skip '^TestLiveK8s' {{.CLI_ARGS}}
-
   # The pinned harness binaries against what the engine hands them: config and
   # auth files, provider.env, the ACP face, omp's broker. Only the harness can
   # say it accepts them (internal/project/kinds/conformance_test.go). The
   # bundle is the one this engine expects — apothecary/tools:<ToolsHash>, built
-  # as wsimage.EnsureTools builds it when missing — seeded into a volume by its
+  # here from workspace/images/tools when missing — seeded into a volume by its
   # own seed.sh (as a Kubernetes sandbox's init container does; a no-op when
   # the volume holds this hash) and mounted where every workspace mounts it.
   # Its binaries are Linux ones, so the tests run in a Linux container.
@@ -622,15 +552,31 @@ tasks:
       - npm run check
       - npm run lint
 
+  # Every example values file lints and renders, the schema refuses what it
+  # must, and the chart's README is what helm-docs makes of values.yaml.
   lint:helm:
-    desc: 'helm lint the chart with its default, production and k3d values'
+    desc: 'helm lint + template the chart with its defaults and every ci/*-values.yaml; the schema refuses bad values; the README is current'
     preconditions:
       - sh: command -v helm
         msg: 'install helm: https://helm.sh/docs/intro/install/'
+    vars:
+      CHART: charts/apothecary
+      HELM_DOCS: go run github.com/norwoodj/helm-docs/cmd/helm-docs@v1.14.2
+      VALUES:
+        sh: ls charts/apothecary/ci/*-values.yaml
     cmds:
-      - helm lint deploy/helm/apothecary --set masterKey=lint --set postgres.password=lint
-      - helm lint deploy/helm/apothecary -f deploy/helm/apothecary/values-production.yaml --set ingress.host=apothecary.example.com
-      - helm lint deploy/helm/apothecary -f deploy/helm/apothecary/values-k3d.yaml --set masterKey=lint
+      - helm lint {{.CHART}} --set masterKey=lint --set postgres.password=lint
+      - helm template lint {{.CHART}} --set masterKey=lint --set postgres.password=lint >/dev/null
+      - for: { var: VALUES }
+        cmd: helm lint {{.CHART}} -f {{.ITEM}} && helm template lint {{.CHART}} -f {{.ITEM}} >/dev/null
+      - for: [workspaces.runtimeClassName=, access.http.ingress.enabled=true, access.http.appsDomain=apps.example.com, ssh.enabled=true, engine.replicas=2]
+        cmd: '! helm template lint {{.CHART}} --set masterKey=lint --set postgres.password=lint --set {{.ITEM}} >/dev/null 2>&1 || { echo "the schema must refuse {{.ITEM}}"; exit 1; }'
+      - '{{.HELM_DOCS}} -c charts -s file --skip-version-footer -l warning -d | diff -u {{.CHART}}/README.md - || { echo "charts/apothecary/README.md is stale: run task chart:docs"; exit 1; }'
+
+  chart:docs:
+    desc: Regenerate charts/apothecary/README.md from values.yaml (helm-docs)
+    cmds:
+      - go run github.com/norwoodj/helm-docs/cmd/helm-docs@v1.14.2 -c charts -s file --skip-version-footer -l warning
 
   fmt:
     desc: gofmt the Go tree, prettier the frontend
@@ -654,20 +600,6 @@ tasks:
       - task: build:bin
       - task: build:ui
       - echo "verify — all green"
-
-  # --- production stack (published image) ------------------------------------
-  prod:upgrade:
-    desc: Pull the latest release and restart the production stack
-    cmds:
-      - '{{.PROD_COMPOSE}} pull apothecaryd'
-      - '{{.PROD_COMPOSE}} up -d'
-      - sleep 2
-      - docker exec apothecary-apothecaryd-1 apothecaryd version
-
-  prod:logs:
-    desc: Follow the production daemon logs
-    cmds:
-      - '{{.PROD_COMPOSE}} logs -f apothecaryd'
 
   # --- commits & releases ----------------------------------------------------
   # Commits follow .cz.toml; lefthook.yml's commit-msg hook checks each one

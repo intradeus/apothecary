@@ -452,9 +452,12 @@ components:
           type: array
         setup_required:
           type: boolean
+        version:
+          type: string
       required:
         - methods
         - setup_required
+        - version
       type: object
     Automation:
       properties:
@@ -586,6 +589,66 @@ components:
       required:
         - available
         - bytes
+      type: object
+    CLILoginInfo:
+      properties:
+        expires_at:
+          format: date-time
+          type: string
+        name:
+          type: string
+        user_code:
+          type: string
+      required:
+        - expires_at
+        - name
+        - user_code
+      type: object
+    CLILoginPoll:
+      properties:
+        handle:
+          type: string
+        status:
+          type: string
+        token:
+          type: string
+        token_id:
+          type: string
+      required:
+        - status
+      type: object
+    CLILoginPollRequest:
+      properties:
+        device_code:
+          type: string
+      required:
+        - device_code
+      type: object
+    CLILoginRequest:
+      properties:
+        name:
+          type: string
+      required:
+        - name
+      type: object
+    CLILoginStarted:
+      properties:
+        device_code:
+          type: string
+        expires_in:
+          type: integer
+        interval:
+          type: integer
+        user_code:
+          type: string
+        verification_url:
+          type: string
+      required:
+        - device_code
+        - expires_in
+        - interval
+        - user_code
+        - verification_url
       type: object
     CatalogField:
       properties:
@@ -3227,6 +3290,8 @@ components:
       type: object
     RunPorts:
       properties:
+        links:
+          type: boolean
         observed:
           items:
             $ref: '#/components/schemas/ObservedPort'
@@ -3238,6 +3303,7 @@ components:
           nullable: true
           type: array
       required:
+        - links
         - observed
         - ports
       type: object
@@ -3281,6 +3347,8 @@ components:
         port:
           type: integer
         reason:
+          type: string
+        setup:
           type: string
         user:
           type: string
@@ -4379,6 +4447,8 @@ components:
           type: string
         id:
           type: string
+        idle_seconds:
+          type: integer
         last_used_at:
           format: date-time
           type: string
@@ -5773,6 +5843,189 @@ paths:
       summary: Remove a notification channel
       tags:
         - channels
+  /api/cli/logins:
+    post:
+      description: The CLI keeps device_code secret and prints user_code with verification_url, where a signed-in person approves it. Then it polls POST /api/cli/logins/token every interval seconds until expires_in passes. 503 when too many sign-ins are waiting.
+      operationId: startCliLogin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CLILoginRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CLILoginStarted'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security: []
+      summary: Start a terminal sign-in (device authorization)
+      tags:
+        - auth
+  /api/cli/logins/{code}:
+    get:
+      description: The code in any case, with or without its dash. 404 when it expired or is unknown.
+      operationId: getCliLogin
+      parameters:
+        - in: path
+          name: code
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CLILoginInfo'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: A terminal sign-in waiting for approval, by its user code
+      tags:
+        - auth
+  /api/cli/logins/{code}/approve:
+    post:
+      description: Mints a personal token named after the sign-in, refused after the deployment's inactivity window without use. 404 when expired or unknown; 409 when already answered.
+      operationId: approveCliLogin
+      parameters:
+        - in: path
+          name: code
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'Approve a terminal sign-in: it signs in as you'
+      tags:
+        - auth
+  /api/cli/logins/{code}/deny:
+    post:
+      description: 404 when expired or unknown; 409 when already answered.
+      operationId: denyCliLogin
+      parameters:
+        - in: path
+          name: code
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Deny a terminal sign-in
+      tags:
+        - auth
+  /api/cli/logins/token:
+    post:
+      description: '202 {status: pending} until approved; 200 {status: approved, token, token_id, handle} once, then the sign-in is gone; 403 when it was denied; 410 when it expired or is unknown; 429 when polled faster than the interval. The token is refused after the deployment''s inactivity window (APOTHECARY_CLI_TOKEN_IDLE) without use; each use slides it.'
+      operationId: pollCliLogin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CLILoginPollRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CLILoginPoll'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security: []
+      summary: Collect a terminal sign-in's token once it is approved
+      tags:
+        - auth
   /api/credentials:
     get:
       operationId: listCredentials

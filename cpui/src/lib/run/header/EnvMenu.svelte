@@ -58,9 +58,10 @@
 			stale = true;
 		};
 	});
-	// The line that pins the door's host key in ~/.ssh/known_hosts.
+	// The line that pins the door's host key in ~/.ssh/known_hosts — not
+	// through the tunnel, where the one-time setup's ssh config pins it.
 	const knownHosts = $derived(
-		ssh?.enabled && ssh.host && ssh.hostKey
+		ssh?.enabled && ssh.host && ssh.hostKey && !ssh.setup
 			? `${ssh.port && ssh.port !== 22 ? `[${ssh.host}]:${ssh.port}` : ssh.host} ${ssh.hostKey}`
 			: ''
 	);
@@ -138,6 +139,21 @@
 				>
 				<span class="cp" class:hue-success={copied === 'settings'}
 					>{copied === 'settings' ? `${t('run.env.copiedLabel')} ${I.ok}` : t('run.env.copy')}</span
+				>
+			</button>
+		{/if}
+		{#if s.setup}
+			<button
+				class="menu-item"
+				title={t('run.env.copyTitle', { command: s.setup })}
+				onclick={() => copy({ kind: 'setup', command: s.setup }, t('run.env.copiedSetup'))}
+			>
+				<span class="col"
+					><span>{t('run.env.sshSetup')}</span><span class="sub mono truncate">{s.setup}</span
+					></span
+				>
+				<span class="cp" class:hue-success={copied === 'setup'}
+					>{copied === 'setup' ? `${t('run.env.copiedLabel')} ${I.ok}` : t('run.env.copy')}</span
 				>
 			</button>
 		{/if}

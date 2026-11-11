@@ -1,0 +1,34 @@
+# EKS, reachable inside the VPC (over a VPN, peering, or a private link).
+# Needs the AWS Load Balancer Controller and the EBS CSI driver; sandbox
+# nodes are a node group with sysbox installed (sysbox-deploy-k8s), whose
+# RuntimeClass places sandbox pods there.
+#
+#   kubectl -n apothecary create secret generic apothecaryd-env \
+#     --from-literal=APOTHECARY_MASTER_KEY="$(apothecaryd keygen)" \
+#     --from-literal=APOTHECARY_POSTGRES_DSN=postgres://…@<rds>:5432/apothecary
+existingSecret: apothecaryd-env
+postgres:
+  enabled: false           # RDS; the DSN is in existingSecret
+
+engine:
+  runsDir:
+    storageClass: gp3      # WaitForFirstConsumer: a volume in the pod's zone
+
+workspaces:
+  protectCIDRs: "10.0.0.0/16,172.20.0.0/16,169.254.0.0/16" # the VPC and the service CIDR
+
+access:
+  http:
+    ingress:
+      enabled: true
+      className: alb
+      host: apothecary.internal.example.com
+      annotations:
+        alb.ingress.kubernetes.io/scheme: internal
+        alb.ingress.kubernetes.io/target-type: ip    # the engine's Service is ClusterIP
+        alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+        alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:region:account:certificate/id
+        alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    # Optional: a Route 53 wildcard record to the ALB and the ACM certificate
+    # covering *.apps.internal.example.com.
+    appsDomain: apps.internal.example.com
