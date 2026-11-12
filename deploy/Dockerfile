@@ -6,7 +6,7 @@
 #   docker build -f deploy/Dockerfile -t apothecary/apothecaryd:dev .
 
 # --- CPUI --------------------------------------------------------------------
-FROM node:22-bookworm-slim AS cpui
+FROM node:26.13.1-bookworm-slim AS cpui
 WORKDIR /src
 COPY cpui/package.json cpui/package-lock.json ./
 RUN npm ci

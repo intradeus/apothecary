@@ -219,7 +219,7 @@ jobs:
             go-test-go-
       - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
         with:
-          version: 3.x
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       # Unit and Postgres-backed tests in one pass (TEST_POSTGRES=1: throwaway
       # containers), so the floor counts both.
@@ -249,18 +249,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc # the one Node, everywhere
           package-manager-cache: false # node_modules is cached below
       - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
         with:
-          version: 3.x
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       # node_modules itself, keyed on the lockfile: npm ci only when it changed.
       - id: modules
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: cpui/node_modules
-          key: cpui-node-modules-${{ runner.os }}-node22-${{ hashFiles('cpui/package-lock.json') }}
+          key: cpui-node-modules-${{ runner.os }}-node${{ hashFiles('.nvmrc') }}-${{ hashFiles('cpui/package-lock.json') }}
       - if: steps.modules.outputs.cache-hit != 'true'
         run: npm ci
         working-directory: cpui
@@ -268,7 +268,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: cpui/node_modules
-          key: cpui-node-modules-${{ runner.os }}-node22-${{ hashFiles('cpui/package-lock.json') }}
+          key: cpui-node-modules-${{ runner.os }}-node${{ hashFiles('.nvmrc') }}-${{ hashFiles('cpui/package-lock.json') }}
       - run: task ui:test
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -305,8 +305,12 @@ jobs:
             go-lint-go-
       - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
         with:
-          version: 3.x
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc # api:check's boundary script
+          package-manager-cache: false
       - run: task go:lint
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: '!cancelled() && github.ref == ''refs/heads/main'' && steps.gocache.outputs.cache-hit != ''true'''
@@ -330,11 +334,23 @@ jobs:
           go-version-file: go.mod
       - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
         with:
-          version: 3.x
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
         with:
-          version: v3.16.2
+          version: v4.3.0 # .devcontainer/Dockerfile HELM_VERSION
+      # The shellcheck actionlint runs, not the runner image's: the same one
+      # as the devcontainer's (SHELLCHECK_VERSION) and a laptop's.
+      - name: shellcheck
+        env:
+          SHELLCHECK_VERSION: 0.11.0 # .devcontainer/Dockerfile SHELLCHECK_VERSION
+          SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/sc.tar.xz" "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "$SHELLCHECK_SHA256  $RUNNER_TEMP/sc.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/sc.tar.xz" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
       - run: task repo:lint
 
   ui-lint:
@@ -346,18 +362,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc # the one Node, everywhere
           package-manager-cache: false # node_modules is cached below
       - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
         with:
-          version: 3.x
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       # node_modules itself, keyed on the lockfile: npm ci only when it changed.
       - id: modules
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: cpui/node_modules
-          key: cpui-node-modules-${{ runner.os }}-node22-${{ hashFiles('cpui/package-lock.json') }}
+          key: cpui-node-modules-${{ runner.os }}-node${{ hashFiles('.nvmrc') }}-${{ hashFiles('cpui/package-lock.json') }}
       - if: steps.modules.outputs.cache-hit != 'true'
         run: npm ci
         working-directory: cpui
@@ -365,7 +381,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: cpui/node_modules
-          key: cpui-node-modules-${{ runner.os }}-node22-${{ hashFiles('cpui/package-lock.json') }}
+          key: cpui-node-modules-${{ runner.os }}-node${{ hashFiles('.nvmrc') }}-${{ hashFiles('cpui/package-lock.json') }}
       - run: task ui:lint
 
   # The four images the harness and k8s suites run (the engine's own is the
@@ -388,7 +404,7 @@ jobs:
       - uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0; the cache's credentials, for buildx
       - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
         with:
-          version: 3.x
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: task sandbox:images
         env:
@@ -410,7 +426,7 @@ jobs:
           go-version-file: go.mod
       - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
         with:
-          version: 3.x
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       # The k8s suite holds its images twice at its peak (docker, then the
       # k3d node: ≈15 GB), more than the runner has free, so the toolchains
@@ -477,7 +493,7 @@ jobs:
       - uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
       - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
         with:
-          version: 3.x
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: task engine:image
         env:

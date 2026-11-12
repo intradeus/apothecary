@@ -23,6 +23,22 @@ Apothecary on this repo (README, "Developing Apothecary with Apothecary").
 
 ## Run these (repo root, inside the devcontainer)
 
+The devcontainer has exactly CI's tools; so must anywhere else a check runs.
+One version each, pinned once:
+
+| Tool | Pinned in | Outside the devcontainer |
+|---|---|---|
+| Go | `go.mod` (`go` line) | automatic: the Taskfile sets `GOTOOLCHAIN` to it |
+| Node and npm | `.nvmrc`; npm is the one that Node ships (`cpui/package.json` engines) | `fnm use` / `nvm use` |
+| helm, task, shellcheck | `.devcontainer/Dockerfile` `ARG`s | install those versions |
+
+`task` refuses a check on any other version (the `pin:*` tasks), and
+`npm ci` refuses another Node or npm (`cpui/.npmrc` engine-strict). A
+version bump changes its pin, and `go test ./internal/devtools/...` names
+every copy that must follow (the CI workflows, the engine image, the
+devcontainer).
+
+
 | When | Command |
 |---|---|
 | before pushing, always | `task fmt`, then `task check`: every lint, the Go tests (Postgres included) and the CPUI tests, in parallel, under their coverage floors; logs in `build/checks/` |

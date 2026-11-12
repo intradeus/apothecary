@@ -162,7 +162,7 @@ jobs:
       - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
         if: env.TAG != ''
         with:
-          version: v3.16.2
+          version: v4.3.0 # .devcontainer/Dockerfile HELM_VERSION
       - name: Push the chart
         if: env.TAG != ''
         run: |

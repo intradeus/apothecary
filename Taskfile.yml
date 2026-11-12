@@ -4,6 +4,12 @@ version: '3'
 
 dotenv: ['deploy/.env'] # APOTHECARY_MASTER_KEY for the dev tasks
 
+# Exactly go.mod's Go, as CI's setup-go and the devcontainer's image use: a
+# newer Go on the machine would otherwise build, vet and test with itself. Go
+# fetches that toolchain once (golang.org/toolchain) when it is not the local one.
+env:
+  GOTOOLCHAIN: 'go{{.GO_VERSION}}'
+
 vars:
   DEV_PG: apothecary-dev-pg
   # The dev tasks' Postgres. APOTHECARY_DEV_DSN overrides it — the repo's
@@ -20,6 +26,22 @@ vars:
   K3D_KUBECTL: kubectl --kubeconfig deploy/.k3d-kubeconfig
   # The images the sandbox suites run (sandbox:images).
   SANDBOX_IMAGES: sandbox shim tools egress-gw
+
+  # One version of each tool, here as in CI and the devcontainer
+  # (internal/devtools/devcontainer holds every copy to its source): the
+  # pin:* tasks refuse a check on any other, saying what to install.
+  GO_VERSION:
+    sh: awk '/^go /{print $2}' go.mod
+  NODE_VERSION:
+    sh: cat .nvmrc
+  NPM_VERSION:
+    sh: jq -r .engines.npm cpui/package.json
+  HELM_VERSION:
+    sh: sed -n 's/^ARG HELM_VERSION=//p' .devcontainer/Dockerfile
+  TASK_PIN:
+    sh: sed -n 's/^ARG TASK_VERSION=v//p' .devcontainer/Dockerfile
+  SHELLCHECK_VERSION:
+    sh: sed -n 's/^ARG SHELLCHECK_VERSION=//p' .devcontainer/Dockerfile
 
 tasks:
   default:
@@ -267,6 +289,7 @@ tasks:
       - go build -trimpath -o build/gateway ./workspace/gateway
 
   build:ui:
+    deps: [pin:node]
     desc: Production CPUI build (cpui/build)
     dir: cpui
     cmds:
@@ -308,6 +331,7 @@ tasks:
       - go run ./cmd/openapigen -o api/openapi.yaml
 
   api:client:
+    deps: [pin:node]
     desc: Regenerate cpui/src/lib/api/generated from api/openapi.yaml
     dir: cpui
     cmds:
@@ -315,6 +339,7 @@ tasks:
       - npx prettier --write src/lib/api/generated
 
   api:check:
+    deps: [pin:node]
     desc: 'Fail if the spec is stale or the generated client leaked past the ACL'
     cmds:
       - go run ./cmd/openapigen -check
@@ -420,8 +445,34 @@ tasks:
         echo "all green in ${SECONDS}s"
         EOF
 
+  # --- pins -------------------------------------------------------------------
+  pin:task:
+    internal: true
+    preconditions:
+      - sh: '[ "{{.TASK_VERSION}}" = "{{.TASK_PIN}}" ]'
+        msg: 'task {{.TASK_PIN}} is what CI and the devcontainer run, this is {{.TASK_VERSION}}: go install github.com/go-task/task/v3/cmd/task@v{{.TASK_PIN}} (or work in the devcontainer)'
+
+  pin:node:
+    internal: true
+    preconditions:
+      - sh: '[ "$(node --version 2>/dev/null)" = "v{{.NODE_VERSION}}" ] && [ "$(npm --version 2>/dev/null)" = "{{.NPM_VERSION}}" ]'
+        msg: 'Node v{{.NODE_VERSION}} with npm {{.NPM_VERSION}} (.nvmrc) is what CI and the devcontainer run: `fnm use` (after `fnm install`), or work in the devcontainer'
+
+  pin:helm:
+    internal: true
+    preconditions:
+      - sh: 'helm version --short 2>/dev/null | grep -q "^v{{.HELM_VERSION}}+"'
+        msg: 'helm v{{.HELM_VERSION}} is what CI and the devcontainer run: https://github.com/helm/helm/releases/tag/v{{.HELM_VERSION}}'
+
+  pin:shellcheck:
+    internal: true
+    preconditions:
+      - sh: 'shellcheck --version 2>/dev/null | grep -qx "version: {{.SHELLCHECK_VERSION}}"'
+        msg: 'shellcheck {{.SHELLCHECK_VERSION}} is what CI and the devcontainer run (actionlint calls it): https://github.com/koalaman/shellcheck/releases/tag/v{{.SHELLCHECK_VERSION}}'
+
   # --- go ---------------------------------------------------------------------
   go:test:
+    deps: [pin:task]
     desc: 'Every Go test, the Postgres-backed ones included, under the GO_COVER_MIN floor; pages in coverage/go/ (needs docker) — CI: go-test'
     env:
       TEST_POSTGRES: '1'
@@ -509,10 +560,11 @@ tasks:
         -v "{{.ROOT_DIR}}":/src:ro -w /src
         -v apothecary-gomod:/go/pkg/mod -v apothecary-gocache:/root/.cache/go-build
         -e TEST_POSTGRES=''
-        golang:1.26.4
+        golang:{{.GO_VERSION}}
         go test -count=1 {{.CLI_ARGS | default "./..."}}
 
   go:lint:
+    deps: [pin:task]
     desc: 'gofmt; go vet on linux with every build tag, on darwin, and the client on windows, so no file goes unchecked; the API contract — CI: go-lint'
     cmds:
       - |
@@ -529,12 +581,14 @@ tasks:
 
   # --- ui ---------------------------------------------------------------------
   ui:test:
+    deps: [pin:task, pin:node]
     desc: 'The CPUI tests under the floors in cpui/vite.config.ts; pages in cpui/coverage/ — CI: ui-test'
     dir: cpui
     cmds:
       - npm run test:coverage
 
   ui:test:run:
+    deps: [pin:node]
     desc: 'CPUI tests; args go to vitest (task ui:test:run -- src/lib/run)'
     dir: cpui
     cmds:
@@ -542,6 +596,7 @@ tasks:
 
   # The production build too: a prerender error shows only there.
   ui:lint:
+    deps: [pin:task, pin:node]
     desc: 'CPUI: svelte-check, every lint (code, styles, token and layer contracts, tests beside sources, themes, formatting: docs/frontend-standards.md), the production build — CI: ui-lint'
     dir: cpui
     cmds:
@@ -554,6 +609,7 @@ tasks:
   # in the tree: an id there rots when the vendor renames it. Tests use fake/…
   # or acme/… ids.
   repo:lint:
+    deps: [pin:task, pin:shellcheck]
     desc: 'No model id anywhere in the tree (code, flows, tests, docs), the workflows (actionlint), and chart:lint — CI: repo-lint'
     cmds:
       - |
@@ -566,6 +622,7 @@ tasks:
   # Every example values file lints and renders, the schema refuses what it
   # must, and the chart's README is what helm-docs makes of values.yaml.
   chart:lint:
+    deps: [pin:helm]
     desc: 'helm lint + template the chart with its defaults and every ci/*-values.yaml; the schema refuses bad values; the README is current'
     preconditions:
       - sh: command -v helm
@@ -593,6 +650,7 @@ tasks:
   # The images the sandbox suites run; the engine itself runs there as a test
   # process, so its image is not among them.
   sandbox:images:
+    deps: [pin:task]
     desc: 'Build the four images the sandbox suites run (sandbox, shim, tools, egress-gw) as <k3d registry>/apothecary/<name>:local (needs docker) — CI: sandbox-images'
     cmds:
       - IMAGES="{{.SANDBOX_IMAGES}}" PREFIX={{.K3D_REGISTRY}}/apothecary deploy/images.sh local
@@ -612,6 +670,7 @@ tasks:
   # the volume holds this hash) and mounted where every workspace mounts it.
   # Its binaries are Linux ones, so the tests run in a Linux container.
   sandbox:test:harness:
+    deps: [pin:task]
     desc: 'The pinned harness CLIs of the tools bundle against what the engine generates (needs docker; args are go test flags, e.g. -- -run TestCodexConformance) — CI: sandbox-test (harness)'
     vars:
       TOOLS_HASH:
@@ -628,7 +687,7 @@ tasks:
         -v apothecary-gomod:/go/pkg/mod -v apothecary-gocache:/root/.cache/go-build
         -v apothecary-harness-tools:/opt/apothecary:ro
         -e TEST_POSTGRES=''
-        golang:1.26.4
+        golang:{{.GO_VERSION}}
         go test -tags conformance -count=1 -timeout 20m -v -run Conformance {{.CLI_ARGS}} ./internal/project/kinds/
 
   # Reuses the cluster if it exists (and leaves it); otherwise creates it and
@@ -636,6 +695,7 @@ tasks:
   # node rather than pushed to the cluster's registry and pulled back: one
   # copy of the 2.3 GB tools bundle instead of two.
   sandbox:test:k8s:
+    deps: [pin:task]
     desc: 'The Kubernetes provisioner and project browser on a local k3d cluster: images, cluster, import, live tests (needs docker, k3d) — CI: sandbox-test (k8s)'
     vars:
       CLUSTER_EXISTED:
@@ -661,6 +721,7 @@ tasks:
 
   # --- engine -----------------------------------------------------------------
   engine:image:
+    deps: [pin:task]
     desc: 'Build the engine image from the working tree as apothecary-build/apothecaryd:ci (deploy/Dockerfile; needs docker) — CI: engine-image'
     env: {IMAGES: apothecaryd, PREFIX: apothecary-build}
     cmds:

@@ -729,6 +729,11 @@ way in is the run's inner docker daemon:
 
 ## Development
 
+The checks run with exactly CI's tools: Go from `go.mod` (the Taskfile's
+`GOTOOLCHAIN` fetches it), Node and npm from `.nvmrc` (`fnm use`), and helm,
+task and shellcheck at the versions in `.devcontainer/Dockerfile`, which has
+them all. `task` refuses a check on any other version.
+
 Every CI job (`.github/workflows/ci.yml`, on every pull request and push to
 `main`) is one task with the same name: the go-test job runs `task go:test`,
 and so on. CI skips a side of the tree a change does not touch (Go, UI,

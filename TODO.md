@@ -1,7 +1,6 @@
 After 3.0.0 :
 - 48) Feature(automation): "Queue" system, queue workitems (tickets, MRs) for fully automatic resolution. Maybe just an order of resolution basically ? Don't work on task A while task B is not done.  
 - 49) Feature(mcp) AI introspection in platform - byok, run an agent in a harnesss (in the project's sidecar / gateway ?) so you can ask it to generate flows or do other internal AI tasks (analytics dashboards... find other usecases). Add MCP server etc. Goal is to have AI support in the UI itself - not just in the sandboxed environment.
-- 52) Fix(ci): ci upgrades (we run CI on MR and on merge on main... can we improve that somehow ? caching or something ? Speed is also VERY slow ... 15min CI) + consumes a LOT of github CI minutes (3000 minutes gone in a few days...)
 - 54) Feature(run) Ask - multi-session support.
 - 55) Feature(flow) Collaborative planning (back and forth between an agentic stage and the task owner)
 - 56) Feature(workspace) Secrets inside the sandbox - engine's credential manager should be able to inject secrets in the sandbox's secret manager, for usage in scripts (ex: glab or whatever). Those secrets should not be accessible by agent stages directly, but through tool calls (maybe ? Or reuse that nvidia/microsoft technique with secret aliases - agent thinks the secret is 'abc' but all secrets are replaced live by a watcher, since 'abc' = 'password123!'), or by command stages (i guess ? for now). credentials reaper should properly work too, for those injected secrets in the sandbox's cred manager 
