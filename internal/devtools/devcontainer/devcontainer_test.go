@@ -60,7 +60,8 @@ func TestNodeMajorMatchesDeployImage(t *testing.T) {
 
 func TestHelmPinMatchesCI(t *testing.T) {
 	df := read(t, ".devcontainer/Dockerfile")
-	ci := regexp.MustCompile(`azure/setup-helm@\S+\s+with:\s+version: v(\S+)`).FindStringSubmatch(read(t, ".github/workflows/ci.yml"))
+	// The action is pinned to a commit, its release in a trailing comment.
+	ci := regexp.MustCompile(`azure/setup-helm@\S+(?:[ \t]+#[^\n]*)?\s+with:\s+version: v(\S+)`).FindStringSubmatch(read(t, ".github/workflows/ci.yml"))
 	if ci == nil {
 		t.Fatal("ci.yml has no azure/setup-helm version")
 	}
