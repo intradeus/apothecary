@@ -422,7 +422,8 @@ jobs:
         if: matrix.suite == 'k8s'
         run: |
           df -h /
-          nohup sh -c 'sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL; touch "$RUNNER_TEMP/disk-freed"' >/dev/null 2>&1 &
+          # A background subshell outlives the step; the runner ends it with the job.
+          (sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL; touch "$RUNNER_TEMP/disk-freed") >/dev/null 2>&1 &
       - if: matrix.suite == 'harness'
         run: df -h /
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1

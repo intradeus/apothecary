@@ -19,6 +19,11 @@ export default defineConfig({
 		// Node's globals (structuredClone, …) build objects of another realm,
 		// which Svelte will not make reactive, and `location` cannot be stubbed.
 		pool: 'vmThreads',
+		// A VM context keeps memory a test file left behind, so a worker grows
+		// file after file. By default vitest restarts one past RAM ÷ workers:
+		// on a 2-core, 7 GB CI runner that is above the ~2 GB heap a worker
+		// has, and the worker died mid-suite. Restart it past 1 GB instead.
+		vmMemoryLimit: '1GB',
 		include: ['src/**/*.test.ts'],
 		setupFiles: ['./src/test/setup.ts'],
 		restoreMocks: true,

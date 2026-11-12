@@ -6937,3 +6937,29 @@ pg 1).
     figures in the sandbox jobs were measured on 26.04.
   - `.github/actionlint.yaml` declares that label (actionlint 1.7.12 does
     not know it yet), and `repo:lint` now runs actionlint on the workflows.
+- **The first run on GitHub** (same day): three jobs failed.
+  - `repo-lint`: the runner has shellcheck, so actionlint ran it there; this
+    machine has none. It flagged the background disk-freeing step's
+    `sh -c '…$RUNNER_TEMP…'`. That step is now a plain background subshell,
+    and the workflows were checked with shellcheck's image.
+  - `ui-test`: a vitest worker died mid-suite ("Worker exited
+    unexpectedly"). A private repository's runner has 2 vCPUs and about
+    7 GB, not the 4 and 16 assumed above. vitest recycles a vmThreads worker
+    past RAM ÷ workers by default (about 3.5 GB there), above the ~2 GB heap
+    a worker gets, while a VM context keeps memory a file left behind.
+    `vmMemoryLimit: '1GB'` recycles workers well before that. On 2 cores
+    here, with workers capped at a 2 GB heap, the run passes and takes 236 s
+    instead of 300 s: smaller heaps collect faster. The crash itself was
+    not reproduced locally: running Node 22, CI's version, was not possible
+    here.
+  - `sandbox-test (k8s)`: `TestLiveK8sBrowserSession` failed as it does on
+    this machine: no pod reached the test process over host.k3d.internal or
+    host.docker.internal, and the probe printed nothing, so DNS and the
+    firewall were indistinguishable. The probe now logs what each name
+    resolved to and whether it connected. On a failure the test prints
+    CoreDNS's NodeHosts, and it no longer waits out 3 minutes once the probe
+    has ended. The cluster network's gateway, which needs no DNS, is now a
+    third candidate (APOTHECARY_LIVE_HOST_GATEWAY, from `docker network
+    inspect`). It passed on main with the old flow, which pushed to the
+    registry and restarted dockerd; whether one of those was what made it
+    pass is open until the next run's probe log.

@@ -148,6 +148,7 @@ tasks:
         APOTHECARY_LIVE_K8S_NAMESPACE=apothecary-live
         APOTHECARY_LIVE_IMAGE_PREFIX={{.K3D_REGISTRY}}/apothecary
         APOTHECARY_LIVE_PULL_POLICY={{.PULL_POLICY | default "Always"}}
+        APOTHECARY_LIVE_HOST_GATEWAY="$(docker network inspect k3d-{{.K3D_CLUSTER}} --format '{{"{{"}}range .IPAM.Config{{"}}"}}{{"{{"}}.Gateway{{"}}"}} {{"{{"}}end{{"}}"}}' 2>/dev/null | tr ' ' '\n' | grep -m1 -E '^[0-9.]+$' || true)"
         go test -tags live -count=1 -timeout 30m -run TestLiveK8s -v ./internal/adapters/workspace/ ./internal/adapters/browser/
 
   k8s:down:

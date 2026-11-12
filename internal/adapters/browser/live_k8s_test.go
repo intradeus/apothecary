@@ -20,6 +20,9 @@ package browser
 //   - APOTHECARY_LIVE_PULL_POLICY (default Always): IfNotPresent when the
 //     image was imported into the cluster's nodes instead of pushed.
 //   - APOTHECARY_LIVE_KEEP=1 to leave the namespace for inspection.
+//   - APOTHECARY_LIVE_HOST_GATEWAY: the cluster network's gateway on the
+//     docker host, a candidate address that needs no DNS (the Taskfile sets
+//     it from `docker network inspect`).
 //
 // Unlike the workspace test it cannot stub the engine in the cluster: the
 // session mux IS this process, so the browser pod must reach it. The test
@@ -139,7 +142,11 @@ func freePort(t *testing.T) string {
 // hostSeenFromPods is the docker host's name that reaches this process from
 // a pod, and the IPv4 address it resolves to there (the browser's network
 // policy lets the pod reach that address only): a probe pod tells a
-// listener here, over each candidate, which one it came in on.
+// listener here, over each candidate, which one it came in on. The
+// candidates are k3d's and Docker Desktop's names for the host, then the
+// cluster network's gateway (APOTHECARY_LIVE_HOST_GATEWAY, set by `task
+// k8s:test-live`), which needs no DNS. The probe logs what it resolved and
+// whether it connected, so a failure says which of the two it was.
 func hostSeenFromPods(t *testing.T, c *kube.Client) (string, string) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "0.0.0.0:0")
@@ -162,6 +169,7 @@ func hostSeenFromPods(t *testing.T, c *kube.Client) (string, string) {
 		}
 	}()
 	port := ln.Addr().(*net.TCPAddr).Port
+	candidates := "host.k3d.internal host.docker.internal " + os.Getenv("APOTHECARY_LIVE_HOST_GATEWAY")
 	probe := fmt.Sprintf(`
 apiVersion: v1
 kind: Pod
@@ -174,22 +182,44 @@ spec:
       command: [sh, -c]
       args:
         - |
-          for h in host.k3d.internal host.docker.internal; do
-            ip=$(nslookup "$h" 2>/dev/null | awk '/^Address: [0-9.]+$/ {a=$2} END {print a}')
-            [ -n "$ip" ] && echo "$h $ip" | nc -w 3 "$ip" %d
+          for h in %s; do
+            case $h in
+              *[!0-9.]*) ip=$(nslookup "$h" 2>/dev/null | awk '/^Address: [0-9.]+$/ {a=$2} END {print a}') ;;
+              *) ip=$h ;;
+            esac
+            if [ -z "$ip" ]; then echo "$h: does not resolve"; continue; fi
+            if echo "$h $ip" | nc -w 3 "$ip" %d; then echo "$h ($ip): connected"; else echo "$h ($ip): no connection"; fi
           done
           exit 0
-`, port)
+`, candidates, port)
 	kubectlLive(t, c, probe, "apply", "-f", "-")
-	select {
-	case line := <-heard:
-		host, ip, _ := strings.Cut(line, " ")
-		return host, ip
-	case <-time.After(3 * time.Minute):
+	// The probe takes seconds once it runs: give up soon after it ends
+	// rather than waiting out the deadline.
+	deadline := time.After(3 * time.Minute)
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+	ended := 0
+	for {
+		select {
+		case line := <-heard:
+			host, ip, _ := strings.Cut(line, " ")
+			return host, ip
+		case <-tick.C:
+			phase, _ := exec.Command("kubectl", append(c.Global(), "get", "pod", "host-probe", "-o", "jsonpath={.status.phase}")...).Output()
+			if p := string(phase); p == "Succeeded" || p == "Failed" {
+				if ended++; ended < 2 {
+					continue
+				}
+			} else {
+				continue
+			}
+		case <-deadline:
+		}
 		logs, _ := exec.Command("kubectl", append(c.Global(), "logs", "host-probe")...).CombinedOutput()
-		t.Fatalf("no pod reached this process over host.k3d.internal or host.docker.internal (port %d); probe log:\n%s", port, logs)
+		hosts, _ := exec.Command("kubectl", "--kubeconfig", c.Kubeconfig, "-n", "kube-system", "get", "configmap", "coredns", "-o", "jsonpath={.data.NodeHosts}").CombinedOutput()
+		t.Fatalf("no pod reached this process (port %d) over %s\nprobe log:\n%s\nCoreDNS NodeHosts:\n%s", port, candidates, logs, hosts)
+		return "", ""
 	}
-	return "", ""
 }
 
 // chromiumCount counts the Chromium processes left in the browser.
