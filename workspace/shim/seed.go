@@ -14,7 +14,7 @@ var sourceHash = "dev"
 
 // runSeed is the Kubernetes init container's job: put this very binary into
 // the run's shim dir — the directory the workspace container mounts at
-// /opt/apothecary — exactly as the docker host's ensureShim does: tmp+rename
+// /opt/apothecary — as a sandbox pod's shim-seed init container needs it: tmp+rename
 // (a live relay may be executing the old one), the apothecary-shim alias, and
 // shim.hash for the engine's check.
 func runSeed(args []string) {

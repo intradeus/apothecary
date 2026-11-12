@@ -3,7 +3,7 @@
 package workspace
 
 // Live test of the Kubernetes host against a real cluster (k3d locally:
-// task test:integration:k8s, or task k8s:cluster k8s:images k8s:test-live to
+// task sandbox:test:k8s, or task k8s:cluster k8s:images k8s:test-live to
 // keep the cluster). It needs:
 //
 //   - APOTHECARY_LIVE_KUBECONFIG: a kubeconfig for a THROWAWAY cluster. The
@@ -14,6 +14,8 @@ package workspace
 //   - APOTHECARY_LIVE_K8S_NAMESPACE (default apothecary-live).
 //   - APOTHECARY_LIVE_GATEWAY=0 to skip the egress gateway (default on).
 //   - APOTHECARY_LIVE_KEEP=1 to leave the namespace for inspection.
+//   - APOTHECARY_LIVE_PULL_POLICY (default Always): IfNotPresent when the
+//     images were imported into the cluster's nodes instead of pushed.
 //
 // The test runs OUTSIDE the cluster, like an engine on a laptop: it reaches
 // pods through kubectl port-forward. Pods cannot reach a docker host's own
@@ -28,6 +30,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strings"
@@ -36,10 +39,20 @@ import (
 
 	"apothecary/internal/adapters/kube"
 	"apothecary/internal/flow/builtin"
+	"apothecary/internal/platform/wstunnel"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/workspace/portrelay"
 )
+
+// livePullPolicy is how the cluster gets this tree's images: pulled from
+// the registry they were pushed to, or already on the nodes (imported).
+func livePullPolicy() string {
+	if p := os.Getenv("APOTHECARY_LIVE_PULL_POLICY"); p != "" {
+		return p
+	}
+	return "Always"
+}
 
 func liveKube(t *testing.T) (*kube.Client, string) {
 	t.Helper()
@@ -161,7 +174,7 @@ func TestLiveK8sLifecycle(t *testing.T) {
 		Kube: &KubeConfig{
 			Kube:         c,
 			SandboxImage: img("sandbox"), ShimImage: img("shim"), ToolsImage: img("tools"), GatewayImage: img("egress-gw"),
-			PullPolicy:      "Always",
+			PullPolicy:      livePullPolicy(),
 			EngineURL:       "http://" + engineIP + ":8080",
 			EngineNamespace: ns,
 			Forward:         true,
@@ -280,6 +293,53 @@ func TestLiveK8sLifecycle(t *testing.T) {
 		r.Body.Close()
 		t.Logf("exposed %s → %s", url, strings.TrimSpace(string(b)))
 	}
+
+	// The CLI's tunnels: a workspace port, and the workspace's SSH server, each
+	// carried inside one WebSocket exactly as the engine serves them
+	// (httpapi servePortTunnel / serveSSHTunnel), from a client outside.
+	tunnel := func(target envport.PortConn) net.Conn {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			up, err := target.Dial(r.Context())
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			ws, err := wstunnel.Accept(w, r)
+			if err != nil {
+				up.Close()
+				return
+			}
+			wstunnel.Pipe(ws, up)
+		}))
+		t.Cleanup(srv.Close)
+		conn, err := wstunnel.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+		if err != nil {
+			t.Fatalf("tunnel: %v", err)
+		}
+		return conn
+	}
+	tc := tunnel(pc)
+	_ = tc.SetDeadline(time.Now().Add(30 * time.Second))
+	if _, err := tc.Write([]byte("GET /health HTTP/1.0\r\nHost: app\r\n\r\n")); err != nil {
+		t.Fatalf("through the tunnel: %v", err)
+	}
+	if b, _ := io.ReadAll(tc); !strings.Contains(string(b), " 200 ") {
+		t.Fatalf("port through the tunnel answered %q", b)
+	}
+	tc.Close()
+	sshc, err := a.SSH(ctx, env)
+	if err != nil {
+		t.Fatalf("ssh: %v", err)
+	}
+	sc2 := tunnel(sshc)
+	_ = sc2.SetDeadline(time.Now().Add(30 * time.Second))
+	banner := make([]byte, 8)
+	if _, err := io.ReadFull(sc2, banner); err != nil || string(banner) != "SSH-2.0-" {
+		t.Fatalf("ssh through the tunnel: %q %v", banner, err)
+	}
+	sc2.Close()
+	t.Log("tunnels: a workspace port and its SSH server answer through a WebSocket")
 
 	if s1, err := a.SampleResources(ctx, env); err == nil {
 		t.Logf("first sample unexpectedly complete: %+v", s1)

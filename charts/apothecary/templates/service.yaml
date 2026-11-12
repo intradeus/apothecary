@@ -1,0 +1,24 @@
+# Named apothecaryd: workspaces reach the engine (and browsers its session
+# proxy) at apothecaryd.<namespace>.svc. The Service port must equal the
+# container port — the workspaces' network policies allow the pod port.
+apiVersion: v1
+kind: Service
+metadata:
+  name: apothecaryd
+  labels:
+    {{- include "apothecary.labels" . | nindent 4 }}
+  {{- with .Values.access.http.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.access.http.service.type }}
+  selector:
+    {{- include "apothecary.engineSelector" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+    - name: browser-proxy
+      port: 7071
+      targetPort: 7071

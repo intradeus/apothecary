@@ -649,25 +649,25 @@ func (h *k8sHost) checkTools(ctx context.Context, name string) error {
 
 // --- state / teardown ----------------------------------------------------------
 
-func (h *k8sHost) sandboxState(ctx context.Context, name string) (string, bool, error) {
+func (h *k8sHost) sandboxState(ctx context.Context, name string) (string, error) {
 	var pod kube.Pod
 	found, err := h.cfg.Kube.Get(ctx, "pod", name, &pod)
 	if err != nil {
-		return "", false, err
+		return "", err
 	}
 	if !found {
-		return "", false, nil
+		return "", nil
 	}
 	switch pod.Status.Phase {
 	case "Running":
 		if pod.Status.Ready() {
-			return "running", false, nil
+			return "running", nil
 		}
-		return "created", false, nil
+		return "created", nil
 	case "Pending":
-		return "created", false, nil
+		return "created", nil
 	default: // Succeeded, Failed, Unknown
-		return "exited", false, nil
+		return "exited", nil
 	}
 }
 
@@ -697,7 +697,7 @@ func (h *k8sHost) destroySandbox(ctx context.Context, name string) error {
 // the volume under it, which an emptyDir would lose with the pod, and a live
 // pod keeps its tunnel to the gateway. An ended pod has nothing to empty.
 func (h *k8sHost) resetSandbox(ctx context.Context, name string) error {
-	state, _, err := h.sandboxState(ctx, name)
+	state, err := h.sandboxState(ctx, name)
 	if err != nil || state != "running" {
 		return err
 	}

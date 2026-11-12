@@ -47,13 +47,13 @@ func TestMigrateRebuildsOnlyWhenAsked(t *testing.T) {
 		}
 		return got
 	}
-	plain := map[string]string{"0002_plain.sql": `CREATE TABLE plain (x int);`}
+	plain := map[string]string{"9001_plain.sql": `CREATE TABLE plain (x int);`}
 	s = openSrc(t, dsn, withMigrations(t, plain))
 	if got := title(s); got != "stale" {
 		t.Errorf("a migration without the header rebuilt the projections (title %q)", got)
 	}
 	s.Close()
-	plain["0003_rebuilt.sql"] = "-- rebuild: projections\nCREATE TABLE rebuilt (x int);"
+	plain["9002_rebuilt.sql"] = "-- rebuild: projections\nCREATE TABLE rebuilt (x int);"
 	if got := title(openSrc(t, dsn, withMigrations(t, plain))); got != "T" {
 		t.Errorf("a migration with the header left the projections alone (title %q)", got)
 	}

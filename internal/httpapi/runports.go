@@ -114,7 +114,7 @@ func (s *Server) getRunPorts(w http.ResponseWriter, r *http.Request) {
 			observed = append(observed, p)
 		}
 	}
-	writeJSON(w, http.StatusOK, RunPorts{Ports: exposed, Observed: observed})
+	writeJSON(w, http.StatusOK, RunPorts{Ports: exposed, Observed: observed, Links: s.Ports.Enabled()})
 }
 
 // getRunResources serves the run's rolling window of resource samples

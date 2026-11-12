@@ -146,7 +146,6 @@ func registry(dev bool, boot *config.Boot) *kinds.Registry {
 	reg := kinds.NewRegistry()
 	reg.RegisterRepoHost(kinds.GitLab{})
 	reg.RegisterRepoHost(kinds.GitHub{})
-	reg.RegisterProvisioner(kinds.Docker{})
 	reg.RegisterProvisioner(kinds.Kubernetes{Defaults: kubernetesDefaults(boot)})
 	reg.RegisterHarness(kinds.Opencode{})
 	reg.RegisterHarness(kinds.Codex{})
@@ -412,6 +411,8 @@ func kubernetesDefaults(boot *config.Boot) kinds.KubernetesDefaults {
 		PullPolicy:      k.PullPolicy,
 		ProtectCIDRs:    k.ProtectCIDRs,
 		Transport:       k.Transport,
+		RuntimeClass:    k.RuntimeClass,
+		Privileged:      k.Privileged,
 	}
 }
 

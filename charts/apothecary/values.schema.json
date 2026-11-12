@@ -1,0 +1,165 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Apothecary chart values",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "global": { "type": "object" },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": { "enum": ["", "Always", "IfNotPresent", "Never"] },
+        "overrides": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "apothecaryd": { "type": "string" },
+            "sandbox": { "type": "string" },
+            "shim": { "type": "string" },
+            "tools": { "type": "string" },
+            "gateway": { "type": "string" },
+            "browser": { "type": "string" }
+          }
+        }
+      }
+    },
+    "imagePullSecrets": { "type": "array" },
+    "masterKey": { "type": "string" },
+    "existingSecret": { "type": "string" },
+    "externalDSN": { "type": "string" },
+    "postgres": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": { "type": "string" },
+        "user": { "type": "string" },
+        "password": { "type": "string" },
+        "database": { "type": "string" },
+        "storage": { "type": "string" },
+        "storageClass": { "type": "string" }
+      }
+    },
+    "access": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "publicURL": { "type": "string", "pattern": "^(https?://[^/]+/?)?$" },
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "service": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "type": { "enum": ["ClusterIP", "LoadBalancer", "NodePort"] },
+                "annotations": { "type": "object" }
+              }
+            },
+            "ingress": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "className": { "type": "string" },
+                "annotations": { "type": "object" },
+                "host": { "type": "string" },
+                "tls": { "type": "array" }
+              },
+              "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] },
+              "then": {
+                "properties": { "host": { "minLength": 1 } },
+                "required": ["host"],
+                "description": "an enabled ingress needs access.http.ingress.host"
+              }
+            },
+            "scheme": { "enum": ["http", "https"] },
+            "appsDomain": { "type": "string" },
+            "port": { "type": ["string", "integer"] }
+          }
+        }
+      },
+      "if": {
+        "properties": { "http": { "properties": { "appsDomain": { "minLength": 1 } }, "required": ["appsDomain"] } },
+        "required": ["http"]
+      },
+      "then": {
+        "description": "an apps domain needs the UI's address: an enabled ingress or access.publicURL",
+        "anyOf": [
+          { "properties": { "publicURL": { "minLength": 1 } }, "required": ["publicURL"] },
+          { "properties": { "http": { "properties": { "ingress": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } }, "required": ["ingress"] } } }
+        ]
+      }
+    },
+    "workspaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "namespace": { "type": "string", "minLength": 1 },
+        "createNamespace": { "type": "boolean" },
+        "podSecurity": { "enum": ["privileged", "baseline", "restricted"] },
+        "runtimeClassName": { "type": "string" },
+        "privileged": { "type": "boolean" },
+        "protectCIDRs": { "type": "string" },
+        "clusterDomain": { "type": "string" }
+      },
+      "if": { "properties": { "privileged": { "const": false } } },
+      "then": {
+        "description": "unprivileged sandboxes need workspaces.runtimeClassName (e.g. sysbox-runc); or set workspaces.privileged: true on a cluster of your own",
+        "properties": { "runtimeClassName": { "minLength": 1 } },
+        "required": ["runtimeClassName"]
+      }
+    },
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runsDir": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "size": { "type": "string" },
+            "storageClass": { "type": "string" }
+          }
+        },
+        "portAutoExpose": { "type": "boolean" },
+        "uploads": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxBytes": { "type": ["string", "integer"] },
+            "mimeAllow": { "type": "string" },
+            "snapshotMaxBytes": { "type": ["string", "integer"] }
+          }
+        },
+        "extraEnv": { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean"] } },
+        "resources": { "type": "object" },
+        "nodeSelector": { "type": "object" },
+        "tolerations": { "type": "array" }
+      }
+    },
+    "otel": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": { "type": "string" },
+        "protocol": { "type": "string" },
+        "headers": { "type": "string" },
+        "resourceAttributes": { "type": "string" }
+      }
+    },
+    "log": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "format": { "enum": ["json", "text"] },
+        "level": { "enum": ["debug", "info", "warn", "error"] }
+      }
+    },
+    "grafanaUrl": { "type": "string" }
+  }
+}

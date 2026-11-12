@@ -1,0 +1,54 @@
+# Apothecary Helm chart
+
+{{ template "chart.description" . }}
+
+{{ template "chart.versionBadge" . }}{{ template "chart.appVersionBadge" . }}
+
+The chart deploys the engine (and, optionally, a Postgres). The engine
+creates every workspace object itself, at runtime, in the workspaces
+namespace: one sandbox pod per run, one egress gateway and one browser per
+project.
+
+People reach Apothecary through **one HTTPS address**. The UI, the API and the
+`apothecary` CLI's tunnels all go through it:
+- `apothecary forward <run>` brings a run's ports to your localhost.
+- `ssh <workspace>.apothecary` reaches a workspace over SSH.
+
+No other port is published.
+
+## Install
+
+```sh
+helm install apothecary oci://ghcr.io/intradeus/charts/apothecary \
+  --version <X.Y.Z> -n apothecary --create-namespace -f my-values.yaml
+```
+
+Start `my-values.yaml` from the example that matches your cluster, in
+[`ci/`](ci/):
+
+| Example | For |
+|---|---|
+| `devbox-values.yaml` | A k3s box with sysbox, on a domain you own (Traefik and cert-manager) or a LAN address |
+| `private-values.yaml` | A cluster reachable only over a VPN or private network, through any ingress class |
+| `eks-private-values.yaml` | EKS inside the VPC: an internal ALB, RDS, gp3 |
+| `eks-public-values.yaml` | EKS on the internet: the same, internet-facing |
+| `k3d-values.yaml` | Local development (`task k8s:deploy`) |
+
+Then open the address `helm install` prints, claim the instance, and install
+the `apothecary` CLI from the release.
+
+## Before you install
+
+- **Sandboxes run unprivileged under sysbox** (`workspaces.runtimeClassName:
+  sysbox-runc`). Install sysbox on the nodes that run them. Its RuntimeClass
+  places sandbox pods on those nodes. Privileged sandboxes
+  (`workspaces.privileged: true`) are for a cluster of your own only.
+- **Nodes need the wireguard kernel module**, in-tree since Linux 5.6.
+- **Workspace volumes need a local or block storage class.** The inner
+  docker daemon cannot run on NFS.
+- **Set `workspaces.protectCIDRs`** to your cluster's pod and service ranges,
+  plus link-local.
+
+{{ template "chart.requirementsSection" . }}
+
+{{ template "chart.valuesSection" . }}

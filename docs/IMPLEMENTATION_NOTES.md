@@ -6538,3 +6538,472 @@ false` to every `sysbox-runc` pod; the fix is for the engine to say so.
 
   The engine, the busy rule, the automations' "already processed" check,
   the dialog and the sidebar do not change.
+
+## Kubernetes only, one chart, tunnels and the apothecary client (2026-11-11)
+
+The plan is `docs/kubernetes-only-plan.md`. What was decided while building
+it, and where it deviates:
+
+- **The docker provisioner is gone.** That means its host
+  (`workspace/host_docker.go`, `sandbox.go`), the docker browser and gateway
+  hosts, the `docker` kind, `wsimage` (the engine-side image builds),
+  `APOTHECARY_SANDBOX_RUNTIME`, the compose deployment and its tasks. The
+  engine image drops docker, Node and the devcontainer CLI: they run in the
+  sandbox pod, and the engine only runs `kubectl`.
+- **No backward compatibility with the docker provisioner.** Nothing was
+  ever deployed on it, so no migration and no special case: a `docker` kind
+  is unknown like any other.
+- **The `Host` seam stays.** The adapter's host-blind logic (definition,
+  exec, sidecar, ports, editor, daemon-door decisions, egress orchestration)
+  is tested on a test-only host (`testHost` in `fixtures_test.go`), which
+  mirrors the pod host's prepare without a cluster.
+- **The pin guards moved, not vanished.**
+  - `TestShimDependencyPinsMatchGoMod` now reads the published shim
+    Dockerfile (`workspace/embed_test.go`).
+  - `TestToolsDockerfilePinsMatchKinds` lives in `internal/project/kinds`.
+  - The embedded sources stay: the k8s host hashes them to detect a stale
+    seeded shim or tools bundle.
+- **`test:integration:harness` was not ported** (a deviation). It never used
+  the docker provisioner; Docker is only its Linux test runner.
+- **The sandbox shape has deployment defaults.** `APOTHECARY_K8S_RUNTIME_CLASS`
+  and `APOTHECARY_K8S_PRIVILEGED` fill an integration's empty fields, and
+  boot refuses privileged off without a runtime class. The daemon-door
+  warning reads the deployment's setting. Sandbox placement is the
+  RuntimeClass's own `scheduling` (sysbox's installer sets it up), not chart
+  values or engine code.
+- **Every account gets a Kubernetes provisioner** (`confstore.EnsureProvisioner`
+  through `httpapi.Server.NewAccount`, wired only on Kubernetes). It runs
+  when the instance is claimed and when an admin adds an account, and is a
+  no-op for an account that has any provisioner. It is created at account
+  time rather than first boot because integrations are per user.
+- **One network surface: the engine's HTTPS address.**
+  - Port tunnel: `GET /api/runs/{id}/ports/{port}/tunnel`.
+  - SSH tunnel: `GET /api/ssh/tunnel?workspace=…`.
+  - Both are WebSockets (`internal/platform/wstunnel`, on
+    gorilla/websocket), because every ingress and load balancer passes a
+    WebSocket and not all pass a bare upgrade.
+  - Pings run on a timer to stay under 60-second idle timeouts. A failed
+    ping write is how a dead peer shows.
+  - Read deadlines are not used for liveness: gorilla answers pongs only
+    while something reads, so they would kill an idle tunnel.
+- **runports keeps one path per run and port** (`Dial`), because opening one
+  starts a relay in the workspace. The path is dropped on teardown and on
+  rebuild, and reopened once if it stops answering. Tunnels need no relay.
+- **On Kubernetes without an apps domain the relay is off.** A listener per
+  port would hand out URLs nothing reaches. `RunPorts.links` tells the UI,
+  which then shows the forward command and no Expose button.
+- **The SSH door has no port of its own on Kubernetes** (`APOTHECARY_SSH_LISTEN`
+  is for the dev loop).
+  - The CLI's `ssh-config` writes one wildcard block,
+    `Host *.apothecary`, with `ProxyCommand apothecary ssh-proxy %h`.
+  - It pins the door's single host key under one `HostKeyAlias`, with
+    `StrictHostKeyChecking accept-new`. Trust on first use is acceptable
+    here: it rides an authenticated TLS tunnel.
+  - The tunnel names the workspace, so the door ignores the SSH username
+    (`ServeConn`).
+  - The door throttles failures by the API's user, because every tunnel
+    shares the ingress's address.
+  - The run page's SSH facts carry `setup`: the one-time command.
+- **The terminal client** is `cmd/apothecary` (wiring only),
+  `internal/client/api` (the one HTTP client) and `internal/client/cli`
+  (thin commands, one printer).
+  - archtest: the client imports only itself and `internal/platform`, and
+    only the client and its binary import it.
+  - `login` and `forward` were reworked the next day (below).
+  - The commands use the standard `flag` package, as `apothecaryd` does. The
+    TUI will be Bubble Tea, in the same binary, on the same `api` package;
+    the dependency is not added yet.
+- **The chart is `charts/apothecary`.**
+  - Its schema refuses the removed keys (`ssh`, `ingress`, `service`,
+    `engine.replicas`), unprivileged sandboxes without a runtime class, an
+    ingress without a host, and an apps domain without the UI's address.
+  - It runs one engine with `Recreate`.
+  - `pullPolicy` is automatic: Always for latest/local/dev tags,
+    IfNotPresent otherwise.
+  - Examples in `ci/` are linted and rendered by `task lint:helm`, which also
+    diffs the helm-docs README. helm-docs runs non-strict, because strict
+    mode demands an entry for every parent object.
+  - Nothing names a VPN product: the private example passes any ingress
+    class through untouched.
+- **Release.** The chart is pushed to `oci://ghcr.io/intradeus/charts`,
+  stamped `X.Y.Z` / `vX.Y.Z`. The client is cross-built for
+  Linux/macOS/Windows on amd64/arm64 and attached to the GitHub Release with
+  `SHA256SUMS`.
+- **Not done here:**
+  - The k3d integration test that forwards a port and SSHs through the
+    tunnel is not written yet.
+  - The run-page preview pane and shareable app URLs are out of scope.
+
+## The client signs in through the browser, forwards in the background, and updates itself (2026-11-11)
+
+- **Browser login, the device authorization grant (RFC 8628, as
+  `gh auth login` does).**
+  - `apothecary login <url>` opens a sign-in (`POST /api/cli/logins`, public)
+    and opens the browser on `/cli-login?code=XXXX-XXXX`.
+  - The person approves it there, signed in as usual. The code shown on the
+    page and in the terminal is what they compare.
+  - The client polls `POST /api/cli/logins/token` with its secret device
+    code until it gets a token.
+  - One flow for a desktop and for a machine without a browser
+    (`--no-browser` prints the address): no localhost callback, no PKCE.
+  - Pending sign-ins live in the engine's memory (one replica), last 10
+    minutes, and number at most 1000. A token is minted under the lock, so
+    two racing approvals cannot mint two.
+  - `--token <personal token>` stays, for scripts and CI. The password
+    login is gone from the client.
+- **The client's token expires after a stretch of disuse, not on a date.**
+  - Migration 0002 adds `api_tokens.idle_seconds`. A token with one is
+    refused once its last use (or its creation) is older than the window,
+    and every use slides it (touched at most once a minute).
+  - The window is `APOTHECARY_CLI_TOKEN_IDLE` (default `168h`). Tokens made
+    in the UI never get one.
+  - Account → API tokens shows such a token as the CLI's, "signs out after
+    N days unused".
+  - A token approved but never collected (the client quit) idles out by
+    itself.
+- **Local ports are random by default.**
+  - A run's port lands on a free local port, and the client prints the
+    mapping.
+  - `--same` keeps the numbers, for a frontend that calls its API at
+    `localhost:<port>`; `port:local` names one.
+  - The local port a run's port got is remembered (`ports.json`, the last
+    200 runs), so forwarding it again lands on the same one while it is
+    free.
+- **Forwards live in a per-user background daemon** (`__forward-daemon`).
+  - It is started by the first `forward`, detached (its own session on Unix,
+    `DETACHED_PROCESS` on Windows), so closing or killing the terminal
+    leaves it running.
+  - Commands reach it over a unix socket in `<config>/apothecary/forwards/`
+    (0700, the socket 0600), with HTTP+JSON on it. Go speaks AF_UNIX on
+    Windows 10 and later too.
+  - It reads the sign-in again on every new forward and connection, so a new
+    login reaches running forwards.
+  - It drops a run whose workspace or sign-in is gone, and exits once nothing
+    is forwarded, or 30 s after starting with nothing asked.
+  - It writes its own log (`forward logs`). `forward status` names each run
+    by its ticket key and title and its workspace. A run is named by its id
+    or its workspace (the env id the SSH door also uses).
+- **`apothecary update` installs the release of the engine's version, not
+  the newest.**
+  - The engine says its version on the public `/api/auth/status`; it is
+    `main.version`, stamped at build time.
+  - The client downloads `apothecary-<os>-<arch>` and `SHA256SUMS` from that
+    GitHub Release, refuses a checksum mismatch, and replaces itself with
+    one rename. Windows moves the running `.exe` aside first.
+  - An engine built from source (`dev`) has no release to match. Once a day a
+    command checks the engine's version and says when the client differs.
+- **The UI copies the commands.**
+  - The Ports view shows `apothecary forward <ws>` and `--same`, and a copy
+    button per port (`apothecary forward <ws> <port>`).
+  - The Services view has the same per-port copy button.
+  - The commands name the workspace, not the run id.
+
+## A fresh box, from nothing: deploy/k3s/install.sh (2026-11-11)
+
+- **There were no scripts to upstream.** Nothing in the repository set up a
+  node, so the install was written from the documented requirements. It has
+  not been run end to end yet: the first run on a fresh box is its test.
+- **One idempotent script** (bash, shellcheck-clean), in this order:
+  1. preflight;
+  2. wireguard, the sysbox `fusermount3` AppArmor override, the
+     unprivileged-userns sysctl;
+  3. sysbox from its `.deb`;
+  4. k3s from a release channel, refusing Kubernetes < 1.33 and
+     containerd < 2.0.5;
+  5. a `sysbox-runc` runtime, through k3s's `config-v3.toml.tmpl`, which
+     keeps k3s's own settings ("base") and the same `SystemdCgroup` as runc;
+     then the RuntimeClass;
+  6. a smoke-test pod shaped like a sandbox (sysbox, `hostUsers: false`,
+     `docker:29-dind`, no privilege);
+  7. Helm, cert-manager with `--domain`, then the chart.
+- **No admission policy for `hostUsers: false`** (a deviation from the
+  plan). The engine already sets it on every sandbox it creates under a
+  runtime class.
+- **The master key comes from the release's own `apothecaryd keygen`,** run
+  once as a pod, so its format is the engine's by construction. It is kept
+  with the database password in `/root/.apothecary/install.env` (0600), and
+  reruns reuse them.
+- **Two shapes.**
+  - LAN: the UI as a LoadBalancer Service on port 8080 of the box (k3s's
+    ServiceLB), plain HTTP, `access.publicURL` set to that address.
+  - `--domain`: a Traefik ingress with a cert-manager Let's Encrypt
+    certificate (HTTP-01).
+
+## CI builds each image once, and the k8s suite imports instead of pushing (2026-11-11)
+
+- **Profiled first, cold** (no build cache or base images), on a 20-core box:
+  13 minutes in all.
+  - Building all five images: 4m47, of which the engine image took 1m53 and
+    the tools bundle 1m52.
+  - Pushing them to the cluster's registry: 3m50.
+  - The live tests: 3m.
+  - Memory stayed under 1.5 GB for the cluster and pods. CPU was about 3
+    cores on average, with bursts to every core during builds.
+- **CI built the same images three times:** the build job (five), the k8s
+  suite (five) and the harness suite (tools).
+- **Now one `images` job builds the four the suites run.**
+  - It fills the GitHub Actions cache (`deploy/images.sh` with
+    `CACHE=gha-warm`, one cache scope per image).
+  - The harness and k8s jobs wait for it, then build through that cache
+    (`CACHE=gha-read`): every layer a hit, which is a download.
+  - The engine image moved to the build job; no suite runs it (the live
+    tests run the engine as a test process).
+  - Not artifacts: those count against the account's storage (about 2 GB on
+    Pro), and a 1–1.5 GB image set per run would exhaust it. The Actions
+    cache is a separate 10 GB per repository; eviction there costs speed,
+    never a failure.
+- **The k8s suite imports its images into the k3d node** (`k3d image import`,
+  `APOTHECARY_LIVE_PULL_POLICY=IfNotPresent`) instead of pushing to the
+  registry and pulling back. The tools bundle is copied once, not twice, and
+  CI no longer reconfigures dockerd for an insecure registry. `k8s:images`
+  (push) stays for the `k8s:deploy` dev loop.
+- **Path filters.** On a pull request, `images`, harness and k8s run only
+  when it touches the sandbox side (`changes` job, dorny/paths-filter).
+  Pushes to main run everything, so manual-release still only releases a
+  fully tested commit.
+- **Measured locally after the change:** cold 8m11 (−37%), warm 6m02
+  (−53%). Warm, the image import (1m40) and the tests are what remains.
+
+## CI runs per side of the tree, main included; vitest shares one jsdom per worker (2026-11-12)
+
+What a push to main used to cost, measured from its job logs: about 59
+billed minutes (unit 10, lint 6, build 11, docker 11, harness 6, k8s 14,
+pg 1).
+
+- **The CPUI's coverage run was 8 of unit's 10 minutes.** vitest built a
+  jsdom for each of the 318 test files: 152 s of 470 s.
+  - `pool: 'vmThreads'` builds one per worker and still gives each test file
+    its own context. On 4 cores it went from 235 s to 139 s, with the same
+    tests and coverage.
+  - `isolate: false` was slower (370 s) and broke every file that mocks a
+    module.
+  - The price: inside a VM context Node's globals belong to another realm.
+    `structuredClone` returned objects Svelte would not make reactive, so
+    PanelEditor's draft no longer used it; `$state.snapshot` is already a
+    copy. jsdom's `location` cannot be stubbed there, so
+    `workspace.terminalUrl` takes the page's location as an argument.
+- **Jobs per side of the tree:**
+  - Named `<side>-<check>`, the side being when the job runs: `go-test`,
+    `go-lint`, `ui-test`, `ui-lint`, `sandbox-images`, `sandbox-test`
+    (harness, k8s), `engine-image`, and `repo-lint` (model ids and the chart,
+    which read Markdown), which always runs. CI's old "unit" job ran the
+    Postgres tests too: the Taskfile's unit/integration split is about what a
+    test needs on your machine, not what a CI job holds.
+  - `integration-pg` is gone: `task go:test` already runs every Postgres
+    test.
+  - The build job is gone: `go-lint` builds the binaries, `ui-lint` the CPUI.
+    `engine-image` runs when its build inputs change (its Dockerfile
+    compiles both again).
+- **Main is filtered too, against the last commit ci passed on main**, not
+  against the previous commit.
+  - The filter must not compare with the previous commit: a docs commit on
+    top of a red code commit would go green, and manual-release would
+    release it.
+  - Comparing with the last green ancestor means that a green commit has
+    had everything changed since the previous green one tested.
+  - No green ancestor (a force-push, the first run), or a run by hand:
+    everything runs.
+  - This replaces "pushes to main run everything" in the entry above.
+- **Lint:**
+  - The plain Linux vet is gone: no file is built only without a tag, so
+    the tagged vet covers it.
+  - The client is now vetted for Windows. Nothing compiled it before the
+    release, which built it after pushing the tag; the release now builds the
+    client before anything is public.
+- **The release builds its images from ci's Actions cache** (`gha-read`). A
+  run on main reads only caches main wrote, never a pull request's.
+- **Every job has a `timeout-minutes`** (GitHub's default is six hours).
+- **Freeing disk (1.5 minutes per job) only where it is needed.**
+  - The `sandbox-images` job keeps only the builder's cache (about 6 GB), and the
+    harness suite needs about 10 GB: both now run on the runner's free disk
+    as it is.
+  - The k8s suite peaks at about 15 GB: its images are in docker and,
+    during the import, in the k3d node too. It still deletes the unused
+    toolchains, but in the background while the images load, and waits for
+    the deletion only before the cluster starts.
+  - These sizes were measured locally. Each job prints `df` first, so the
+    first GitHub run shows the runner's real headroom.
+
+## Every CI job is one task of the same name; check and ci run them in parallel (2026-11-12)
+
+- **CI's job names and the Taskfile's task names used to differ.**
+  - CI's "unit" job ran the Postgres tests too, while the Taskfile's
+    `test:unit` meant "nothing running".
+  - The CPUI's coverage run had no task at all.
+- **Now each job `<side>-<check>` runs exactly `task <side>:<check>`:**
+  - `go:test` (was `cover:go`), `go:lint` (gofmt, vet, `api:check`),
+    `ui:test`, `ui:lint` (the production build included: a prerender error
+    shows only there), `repo:lint` (model ids, `chart:lint`).
+  - `sandbox:images`, `sandbox:test:harness`, `sandbox:test:k8s`,
+    `engine:image`.
+  - The variants keep the side: `go:test:run` (args, nothing running),
+    `go:test:pg`, `go:test:linux`, `go:test:stress`, `ui:test:run`.
+  - Gone, with no aliases: `test:unit*`, `test:integration*`, `cover*`,
+    `lint:*`, and the old `verify` (the pre-commit gate `check` replaces).
+- **The umbrellas run checks side by side** (`checks`, a bash runner), each
+  into `build/checks/<task>.log`. They print one line per check (ok or
+  FAIL, seconds, log path), then the last 40 lines of each failure, and exit
+  1 if any failed.
+  - `lint` runs every lint; `test` runs every test suite.
+  - `check` is the pre-push gate: the lints, `go:test` and `ui:test`.
+  - `ci` runs everything CI runs, locally (it never skips a side as CI
+    does). It was first named `verify`, too close to `check` to tell apart.
+- **What the runner holds apart:**
+  - `ui:test` and `ui:lint` both write `cpui/.svelte-kit`, so they run one
+    after the other (`ui:lint` still runs when `ui:test` fails).
+  - The sandbox suites wait for `sandbox:images`, then run side by side, k8s
+    with `APOTHECARY_IMAGES_PREBUILT=1`.
+  - Ctrl-C stops them all.
+  - Measured: `task check` in 2m36 on 20 cores, every check green; the Go
+    tests stayed green beside vitest and the lints.
+- **No exemption marker for the model-id lint.** `lint:models-ok` is gone
+  at the user's call.
+  - Its one user, the Gemini sign-in's User-Agent, now drops the model
+    segment Gemini CLI's own carries:
+    `GeminiCLI/<version> (linux; x64; terminal)`.
+  - Unverified against Code Assist's project lookup, the only call that
+    sends it.
+
+## A merged pull request is not tested again; caches, pins (2026-11-12)
+
+- **Main skips what a pull request's green run already tested.**
+  - A commit SHA can't tell: the merge makes a new commit, and the pull
+    request's run tested its own merge commit (refs/pull/N/merge).
+  - The tree can: git's hash of the files.
+  - The `passed` job, the last of a pull request's run (only when every job
+    passed or was skipped), uploads an artifact named `ci-green-<tree>` of
+    the tree it tested, kept 30 days.
+  - On a push to main, `changes` looks the tree up. If it finds a marker,
+    nothing runs and the run is green, so manual-release's gate (a green
+    run on that SHA) still holds.
+- **The conditions for that skip:**
+  - The push moved main from its last green commit (`before` = that
+    commit). Every file is then either one the pull request touched (green
+    on these exact files) or one that commit holds (green there).
+  - The marker comes from this repository's own run (a fork's pull request
+    runs the fork's ci.yml), from a `ci.yml` run that concluded success.
+  - Main moved meanwhile, or a merge produced other files: the trees differ
+    and the usual filtered run happens.
+- **`passed` must not be a required check:** GitHub counts a skipped
+  required check as passing, and `passed` is skipped when a job fails.
+- **Caches:**
+  - `cpui/node_modules`, keyed on the lockfile: `npm ci` runs only when
+    the lockfile changed (35–45 s a UI job before).
+  - go-test and go-lint keep their own Go build cache. It is saved from main
+    once a week (the key carries the ISO week), so at most two new entries
+    a week compete with the image layers for the 10 GB. setup-go's own cache
+    was keyed on go.sum alone: saved once per dependency change by whichever
+    job ended first, and never refreshed. Whether it is worth it shows in
+    go-lint's time on the second run of a week.
+- **pr-title no longer runs on every push** (`synchronize`): a push can't
+  change the title, and each run billed a minute. If pr-title becomes a
+  required check, `synchronize` has to come back (a required check must
+  report on the head commit).
+- **Every action is pinned to a commit**, with its version as a comment;
+  `.github/dependabot.yml` proposes updates monthly, grouped into one pull
+  request titled `ci(deps): …`.
+- **With manual-release** (checked the same day):
+  - Its gate asks for a successful `ci.yml` run on the release SHA. A main
+    run whose tests and lints the marker skipped is one, since a skipped job
+    counts as passed.
+  - A release commit (`chore(release): vX [skip ci]`, CHANGELOG.md only)
+    gets no ci run, so main's last green commit stays the one before it.
+    The shortcut therefore accepts a gap between that commit and the push's
+    `before` when it changes only CHANGELOG.md, which no check reads.
+    Otherwise the first merge after every release would always run in full.
+  - The release builds its images from main's Actions cache, which a run on
+    main can't fill from a pull request's. So a skipped merge still runs
+    `sandbox-images` and `engine-image` when their inputs changed (outputs
+    `images`, `engine`); only the tests and lints are skipped.
+  - Simulated on a scratch repository with a stand-in GitHub API: a merge on
+    the green commit or after a release commit, its tree marked, skips; no
+    marker, a non-green commit in between, or a previous head missing from
+    history (a force-push) runs as usual.
+- **Node 24 actions, a pinned runner image** (same day, from the run's
+  annotations):
+  - Every action moved to its newest release, which runs on Node 24.
+    GitHub deprecated Node 20 and was forcing those actions onto Node 24
+    with a warning.
+    - checkout 7, setup-go 7, setup-node 7, upload-artifact 7, cache 6,
+      setup-task 3, setup-helm 5, ghaction-github-runtime 4,
+      setup-buildx-action 4, paths-filter 4.
+    - Their breaking changes don't touch this repository's use. checkout 6
+      keeps credentials in a file of their own, and manual-release's `git
+      push` still finds them. setup-go 6 reads the toolchain from go.mod as
+      before. setup-node's automatic npm cache is turned off explicitly:
+      `node_modules` is cached by the workflow itself.
+  - `runs-on: ubuntu-26.04`, not `ubuntu-latest`. During GitHub's move of
+    `ubuntu-latest` to 26.04, a job could land on either image. The disk
+    figures in the sandbox jobs were measured on 26.04.
+  - `.github/actionlint.yaml` declares that label (actionlint 1.7.12 does
+    not know it yet), and `repo:lint` now runs actionlint on the workflows.
+- **The first run on GitHub** (same day): three jobs failed.
+  - `repo-lint`: the runner has shellcheck, so actionlint ran it there; this
+    machine has none. It flagged the background disk-freeing step's
+    `sh -c '…$RUNNER_TEMP…'`. That step is now a plain background subshell,
+    and the workflows were checked with shellcheck's image.
+  - `ui-test`: a vitest worker died mid-suite ("Worker exited
+    unexpectedly"). A private repository's runner has 2 vCPUs and about
+    7 GB, not the 4 and 16 assumed above. vitest recycles a vmThreads worker
+    past RAM ÷ workers by default (about 3.5 GB there), above the ~2 GB heap
+    a worker gets, while a VM context keeps memory a file left behind.
+    `vmMemoryLimit: '1GB'` recycles workers well before that. On 2 cores
+    here, with workers capped at a 2 GB heap, the run passes and takes 236 s
+    instead of 300 s: smaller heaps collect faster. The crash itself was
+    not reproduced locally: running Node 22, CI's version, was not possible
+    here.
+  - `sandbox-test (k8s)`: `TestLiveK8sBrowserSession` failed as it does on
+    this machine: no pod reached the test process over host.k3d.internal or
+    host.docker.internal, and the probe printed nothing, so DNS and the
+    firewall were indistinguishable. The probe now logs what each name
+    resolved to and whether it connected. On a failure the test prints
+    CoreDNS's NodeHosts, and it no longer waits out 3 minutes once the probe
+    has ended. The cluster network's gateway, which needs no DNS, is now a
+    third candidate (APOTHECARY_LIVE_HOST_GATEWAY, from `docker network
+    inspect`). It passed on main with the old flow, which pushed to the
+    registry and restarted dockerd; whether one of those was what made it
+    pass is open until the next run's probe log.
+
+## One version of every tool, on a laptop as in CI (2026-11-12)
+
+- **Why:** two CI-only failures in a row came from differences between the
+  laptop and CI, not from the code.
+  - The vitest worker crash: a 2-core, 7 GB runner against a 20-core laptop.
+  - The dagre failure: CI's Node 22 loaded dagre's ES module as CommonJS
+    under the VM pool, where the laptop's Node 24 did not. Reproduced in a
+    `node:22` container.
+  - Before those, shellcheck: CI's runner image had it, the laptop did not,
+    so actionlint checked more in CI.
+  - Also different: Go (1.27.2 on the laptop, 1.26.4 in CI), helm (4.3.0
+    and 3.16.2), task (3.49.1, 3.54.0 in the devcontainer, "3.x" in CI).
+- **Now every tool has one pin, and every place takes it from there:**
+
+  | Tool | Pin | CI | Devcontainer | Laptop |
+  |---|---|---|---|---|
+  | Go 1.26.4 | `go.mod` | setup-go | `golang:1.26.4` | Taskfile `GOTOOLCHAIN` (Go fetches it) |
+  | Node 26.13.1 (LTS) | `.nvmrc` | setup-node's `node-version-file` | `node:26.13.1` | `fnm use` |
+  | npm 11.20.0 | `cpui/package.json` engines (the npm of that Node) | with Node | with Node | with Node |
+  | helm 4.3.0, task 3.54.0, shellcheck 0.11.0 | `.devcontainer/Dockerfile` ARGs | installed exactly | installed | installed by hand |
+
+  The engine image builds the CPUI on `node:26.13.1-bookworm-slim` too. The
+  Taskfile's two `golang` images read `go.mod` instead of a copy of it.
+- **Enforced three ways:**
+  - `cpui/.npmrc` engine-strict: `npm ci` refuses another Node or npm.
+  - `pin:task`, `pin:node`, `pin:helm` and `pin:shellcheck` are deps of the
+    checks that need them, so a check refuses to run on another version and
+    says what to install.
+  - `internal/devtools/devcontainer` (TestOneNodeEverywhere,
+    TestToolPinsMatchCI) holds every copy to its pin: the workflows, both
+    Dockerfiles, package.json and the Taskfile.
+- **Node 26 rather than 24:** 26.13.1 became LTS on 2026-11-10, no
+  dependency's engines refuse it, and `@types/node` was already 26. Helm
+  moved to 4 the same way: the chart lints and renders identically under it.
+- **npm 11.20 runs no install script unless approved.** esbuild and
+  lefthook (the commit hooks) are approved in package.json's
+  `allowScripts`, for their exact versions; a version bump needs approving
+  again. Node 26 ships no corepack, so the devcontainer's symlink to it went.
+- **Machine size is the one difference left:** CI's runner has 2 vCPUs and
+  about 7 GB. `docker run --cpuset-cpus=0,1 --memory=7g` reproduces it, and
+  the whole CPUI suite passed that way on node:26.13.1. `--cpus=2` does not:
+  `nproc` still reports every core, so vitest starts 20 workers.
+- **The dagre `server.deps.inline` workaround is gone:** Node 26 loads it.

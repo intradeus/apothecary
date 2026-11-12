@@ -45,7 +45,7 @@ func build(t *testing.T) (shim, fake string) {
 			{"fakeacp", "../../workspace/sidecar/testdata/fakeacp"},
 		} {
 			args := []string{"build", "-o", filepath.Join(buildDir, b[0])}
-			// `task cover:go`: what the real shim runs here counts too. Under `go
+			// `task go:test`: what the real shim runs here counts too. Under `go
 			// test -cover` GOCOVERDIR is the test binary's own, so it is pointed here.
 			if dir := os.Getenv("APOTHECARY_COVERDIR"); dir != "" && b[0] == "shim" {
 				_ = os.Setenv("GOCOVERDIR", dir)

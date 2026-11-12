@@ -8,6 +8,7 @@
 	import { session } from '$lib/app/session.svelte';
 	import type { SshKey, Token } from '$lib/domain';
 	import { ago } from '$lib/core/format';
+	import { tokenLife } from '$lib/system/tokenLife';
 	import { t } from '$lib/i18n/index.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
@@ -309,14 +310,22 @@
 			{:else if tokens.length}
 				<div class="rows">
 					{#each tokens as tk (tk.id)}
+						{@const life = tokenLife(tk)}
 						<div class="r trow">
-							<span class="nm truncate">{tk.name}</span>
+							<span class="nm truncate"
+								>{#if life.cli}<span
+										class="pill sm tint-accent-2"
+										title={t('page.account.cliTitle')}>{t('page.account.cli')}</span
+									>
+								{/if}{tk.name}</span
+							>
 							<span class="mono muted">{tk.prefix}…</span>
 							<span class="muted small truncate">
 								{t('page.account.created', { ago: ago(tk.createdAt) })}
 								· {tk.lastUsedAt
 									? t('page.account.lastUsed', { ago: ago(tk.lastUsedAt) })
-									: t('page.account.neverUsed')}
+									: t('page.account.neverUsed')}{#if life.text}
+									· {life.text}{/if}
 							</span>
 							<button
 								class="btn-danger btn-sm"

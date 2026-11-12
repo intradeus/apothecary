@@ -20,6 +20,7 @@ import type {
 	AskMessage,
 	AskState,
 	AuthStatus,
+	CliLogin,
 	Limits,
 	Me,
 	Notice,
@@ -526,10 +527,16 @@ export const workspace = {
 	/** WebSocket URL of a terminal in the workspace (binary frames are
 	 *  keystrokes/output; a JSON text frame {type:'resize',cols,rows} resizes).
 	 *  Not in the generated client: a protocol switch is not an OpenAPI call. */
-	terminalUrl: (runId: string, cols: number, rows: number, repo = ''): string => {
-		const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+	terminalUrl: (
+		runId: string,
+		cols: number,
+		rows: number,
+		repo = '',
+		page: Pick<Location, 'protocol' | 'host'> = location
+	): string => {
+		const proto = page.protocol === 'https:' ? 'wss:' : 'ws:';
 		const q = new URLSearchParams({ cols: String(cols), rows: String(rows), repo });
-		return `${proto}//${location.host}/api/runs/${runId}/terminal?${q}`;
+		return `${proto}//${page.host}/api/runs/${runId}/terminal?${q}`;
 	}
 };
 
@@ -692,6 +699,12 @@ export const tickets = {
 function conflictBody(e: unknown): Record<string, unknown> | undefined {
 	if (!(e instanceof ApiError) || e.status !== 409) return undefined;
 	return e.body && typeof e.body === 'object' ? (e.body as Record<string, unknown>) : {};
+}
+
+/** Whether a call was refused because what it names is not there (404): an
+ *  expired terminal sign-in code, say. */
+export function isNotFound(e: unknown): boolean {
+	return e instanceof ApiError && e.status === 404;
 }
 
 /** The run in the way, when starting a run was refused because the ticket
@@ -1295,7 +1308,21 @@ export const auth = {
 			await unwrap(gen.addMySshKey({ body: { public_key: publicKey, name: name || undefined } }))
 		),
 
-	removeSshKey: (id: string) => unwrapVoid(gen.deleteMySshKey({ path: { id } }))
+	removeSshKey: (id: string) => unwrapVoid(gen.deleteMySshKey({ path: { id } })),
+
+	// The terminal client's sign-in (`apothecary login`): the browser sees
+	// the waiting sign-in by the code the terminal printed, and answers it.
+	// An unknown or expired code is a 404 (ApiError.status).
+
+	/** A sign-in waiting for approval; the code in any case, dash or not. */
+	cliLogin: async (code: string): Promise<CliLogin> =>
+		map.toCliLogin(await unwrap(gen.getCliLogin({ path: { code } }))),
+
+	/** Sign the terminal in as oneself: it collects a token on its next poll. */
+	approveCliLogin: (code: string) => unwrapVoid(gen.approveCliLogin({ path: { code } })),
+
+	/** Refuse it: the terminal stays signed out. */
+	denyCliLogin: (code: string) => unwrapVoid(gen.denyCliLogin({ path: { code } }))
 };
 
 /** Accounts, for the instance admin. */

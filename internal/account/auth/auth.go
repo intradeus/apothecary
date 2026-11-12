@@ -99,6 +99,11 @@ type Token struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	// IdleSeconds, when positive, is an inactivity window: the token is
+	// refused once its last use (or its creation, never used) is that old,
+	// and every use slides it — what the CLI's browser-approved sign-in
+	// mints. Zero: no window, only ExpiresAt.
+	IdleSeconds int `json:"idle_seconds,omitempty"`
 }
 
 // SSHKey is a public key a person registered to reach their runs'

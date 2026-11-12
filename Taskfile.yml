@@ -2,11 +2,15 @@
 #   task --list
 version: '3'
 
-dotenv: ['deploy/.env'] # APOTHECARY_MASTER_KEY / APOTHECARY_PG_PASSWORD for dev + compose tasks
+dotenv: ['deploy/.env'] # APOTHECARY_MASTER_KEY for the dev tasks
+
+# Exactly go.mod's Go, as CI's setup-go and the devcontainer's image use: a
+# newer Go on the machine would otherwise build, vet and test with itself. Go
+# fetches that toolchain once (golang.org/toolchain) when it is not the local one.
+env:
+  GOTOOLCHAIN: 'go{{.GO_VERSION}}'
 
 vars:
-  LOCAL_COMPOSE: docker compose -p apothecary-local -f deploy/docker-compose.local.yaml
-  PROD_COMPOSE: docker compose -p apothecary -f deploy/docker-compose.yaml
   DEV_PG: apothecary-dev-pg
   # The dev tasks' Postgres. APOTHECARY_DEV_DSN overrides it — the repo's
   # devcontainer sets it to its `db` sibling, and dev:db is then skipped.
@@ -20,52 +24,30 @@ vars:
   K3D_REGISTRY: k3d-registry.localhost:5111
   K3D_HTTP_PORT: '8090'
   K3D_KUBECTL: kubectl --kubeconfig deploy/.k3d-kubeconfig
+  # The images the sandbox suites run (sandbox:images).
+  SANDBOX_IMAGES: sandbox shim tools egress-gw
+
+  # One version of each tool, here as in CI and the devcontainer
+  # (internal/devtools/devcontainer holds every copy to its source): the
+  # pin:* tasks refuse a check on any other, saying what to install.
+  GO_VERSION:
+    sh: awk '/^go /{print $2}' go.mod
+  NODE_VERSION:
+    sh: cat .nvmrc
+  NPM_VERSION:
+    sh: jq -r .engines.npm cpui/package.json
+  HELM_VERSION:
+    sh: sed -n 's/^ARG HELM_VERSION=//p' .devcontainer/Dockerfile
+  TASK_PIN:
+    sh: sed -n 's/^ARG TASK_VERSION=v//p' .devcontainer/Dockerfile
+  SHELLCHECK_VERSION:
+    sh: sed -n 's/^ARG SHELLCHECK_VERSION=//p' .devcontainer/Dockerfile
 
 tasks:
   default:
     silent: true
     cmds:
       - task --list
-
-  # --- local docker stack (builds from the working tree) ---------------------
-  local:
-    desc: Build the working tree and (re)start the local docker stack (UI on :8081)
-    cmds:
-      - '{{.LOCAL_COMPOSE}} up -d --build'
-      - sleep 2
-      - docker exec apothecary-local-apothecaryd-1 apothecaryd version
-      - 'echo "UI: http://127.0.0.1:8081"'
-
-  local:logs:
-    desc: Follow the local stack's daemon logs
-    cmds:
-      - '{{.LOCAL_COMPOSE}} logs -f apothecaryd'
-
-  local:down:
-    desc: Stop the local stack + sweep engine-managed docker objects (data kept)
-    cmds:
-      # Compose down first (stops apothecaryd so it can't recreate anything)...
-      - '{{.LOCAL_COMPOSE}} down'
-      # ...then sweep the objects the ENGINE creates on the host daemon (per-run
-      # DinD sandboxes, per-project egress gateways, apo-egress-* networks and
-      # sandbox volumes) — compose doesn't know about them, so they'd leak.
-      - task: local:sweep-managed
-
-  # Remove every apothecary-engine-managed docker object (all carry the
-  # apothecary=true label). Safe to run anytime; ignores "nothing to remove".
-  local:sweep-managed:
-    desc: Remove leaked engine-managed docker objects (sandboxes, gateways, nets, volumes)
-    cmds:
-      - docker ps -aq --filter label=apothecary=true | xargs -r docker rm -f
-      - docker network ls -q --filter label=apothecary=true | xargs -r docker network rm
-      - docker volume ls -q --filter label=apothecary=true | xargs -r docker volume rm -f
-
-  local:destroy:
-    desc: Stop the local stack, delete its volumes AND sweep engine-managed objects
-    prompt: This wipes the local stack's database and runs dir. Continue?
-    cmds:
-      - '{{.LOCAL_COMPOSE}} down -v'
-      - task: local:sweep-managed
 
   # --- local Kubernetes (k3d: k3s in docker) ----------------------------------
   # task k8s:cluster k8s:images k8s:deploy → http://apothecary.localhost:8090
@@ -148,12 +130,11 @@ tasks:
     cmds:
       - test -s deploy/.k3d-master-key || (go run ./cmd/apothecaryd keygen > deploy/.k3d-master-key && chmod 600 deploy/.k3d-master-key)
       - >-
-        helm upgrade --install apothecary deploy/helm/apothecary
+        helm upgrade --install apothecary charts/apothecary
         --kubeconfig {{.K3D_KUBECONFIG}} -n apothecary --create-namespace
-        -f deploy/helm/apothecary/values-k3d.yaml
+        -f charts/apothecary/ci/k3d-values.yaml
         --set masterKey="$(cat deploy/.k3d-master-key)"
-        --set ingress.host=apothecary.localhost
-        --set ingress.appsPort={{.K3D_HTTP_PORT}}
+        --set access.http.port={{.K3D_HTTP_PORT}}
       # :local is rebuilt in place: restart so the engine pulls the new one.
       - '{{.K3D_KUBECTL}} -n apothecary rollout restart deploy/apothecaryd'
       - '{{.K3D_KUBECTL}} -n apothecary rollout status deploy/apothecaryd --timeout=5m'
@@ -171,7 +152,7 @@ tasks:
       - '{{.K3D_KUBECTL}} -n apothecary-workspaces get pods,pvc,deploy,svc,netpol,secrets -l apothecary.io/managed=true'
 
   k8s:sweep:
-    desc: Delete every engine-managed workspace object on the k3d cluster (the twin of local:sweep-managed)
+    desc: Delete every engine-managed workspace object on the k3d cluster
     cmds:
       - '{{.K3D_KUBECTL}} -n apothecary-workspaces delete pods,deploy,svc,netpol,secrets,pvc -l apothecary.io/managed=true --ignore-not-found'
 
@@ -188,6 +169,8 @@ tasks:
         APOTHECARY_LIVE_KUBECONFIG=$PWD/{{.K3D_KUBECONFIG}}
         APOTHECARY_LIVE_K8S_NAMESPACE=apothecary-live
         APOTHECARY_LIVE_IMAGE_PREFIX={{.K3D_REGISTRY}}/apothecary
+        APOTHECARY_LIVE_PULL_POLICY={{.PULL_POLICY | default "Always"}}
+        APOTHECARY_LIVE_HOST_GATEWAY="$(docker network inspect k3d-{{.K3D_CLUSTER}} --format '{{"{{"}}range .IPAM.Config{{"}}"}}{{"{{"}}.Gateway{{"}}"}} {{"{{"}}end{{"}}"}}' 2>/dev/null | tr ' ' '\n' | grep -m1 -E '^[0-9.]+$' || true)"
         go test -tags live -count=1 -timeout 30m -run TestLiveK8s -v ./internal/adapters/workspace/ ./internal/adapters/browser/
 
   k8s:down:
@@ -254,13 +237,13 @@ tasks:
       - '{{.TASK_EXE}} dev:app'
 
   # --- build: everything a release ships, built from the working tree ---------
-  # `task build` is CI's build job: the binaries, the CPUI and every image. The
-  # binaries land in build/ (gitignored), for poking at them directly.
-  # Production never uses these: the deploy image builds apothecaryd, and the
-  # engine builds the shim + gateway inside docker from the go:embed'ed
-  # workspace/ sources (internal/workspace/wsimage). Always build here, never
-  # in-tree: workspace/ is embedded, so a binary dropped in it ships inside
-  # apothecaryd and changes the egress-gw image hash.
+  # `task build`: the binaries, the CPUI and every image (CI builds the CPUI
+  # in ui:lint, the images in sandbox:images and engine:image). The binaries
+  # land in build/ (gitignored), for poking at them directly.
+  # Production never uses these: the release images are built by
+  # deploy/images.sh. Always build here, never in-tree: workspace/ is
+  # embedded, so a binary dropped in it ships inside apothecaryd and changes
+  # the shim and egress-gw image hashes.
   build:
     desc: 'Build everything: apothecaryd, the shim and gateway, the CPUI, and the five images (needs docker)'
     cmds:
@@ -269,9 +252,10 @@ tasks:
       - task: build:images
 
   build:bin:
-    desc: Build apothecaryd, the workspace shim and the egress gateway into build/
+    desc: Build apothecaryd, the apothecary client, the workspace shim and the egress gateway into build/
     cmds:
       - task: build:daemon
+      - task: build:client
       - task: build:shim
       - task: build:gateway
 
@@ -279,6 +263,17 @@ tasks:
     desc: Build apothecaryd into build/
     cmds:
       - go build -o build/apothecaryd ./cmd/apothecaryd
+
+  build:client:
+    desc: Build the apothecary terminal client into build/ (this machine's OS)
+    cmds:
+      - go build -o build/apothecary ./cmd/apothecary
+
+  # The released client binaries, one per OS and architecture people run it on.
+  build:client:release:
+    desc: 'Cross-build the apothecary client for Linux, macOS and Windows into build/client/ (VERSION=vX.Y.Z)'
+    cmds:
+      - deploy/release.sh client {{.VERSION | default "dev"}}
 
   # The shim and the gateway only ever run in Linux containers.
   build:shim:
@@ -294,6 +289,7 @@ tasks:
       - go build -trimpath -o build/gateway ./workspace/gateway
 
   build:ui:
+    deps: [pin:node]
     desc: Production CPUI build (cpui/build)
     dir: cpui
     cmds:
@@ -335,6 +331,7 @@ tasks:
       - go run ./cmd/openapigen -o api/openapi.yaml
 
   api:client:
+    deps: [pin:node]
     desc: Regenerate cpui/src/lib/api/generated from api/openapi.yaml
     dir: cpui
     cmds:
@@ -342,13 +339,14 @@ tasks:
       - npx prettier --write src/lib/api/generated
 
   api:check:
+    deps: [pin:node]
     desc: 'Fail if the spec is stale or the generated client leaked past the ACL'
     cmds:
       - go run ./cmd/openapigen -check
       - node cpui/scripts/check-api-boundary.mjs
 
   api:docs:
-    desc: Open the Swagger UI of a running engine (task local / task dev first)
+    desc: Open the Swagger UI of a running engine (task dev or task dev:up first)
     cmds:
       - 'echo "Swagger UI: {{.API_URL}}/docs   ·   document: {{.API_URL}}/api/openapi.json"'
       - '(xdg-open {{.API_URL}}/docs >/dev/null 2>&1 &) || true'
@@ -365,107 +363,144 @@ tasks:
       - rm -rf package swagger-ui-dist-*.tgz
       - echo "vendored $(du -sh . | cut -f1) of Swagger UI"
 
-  # --- tests, lint ------------------------------------------------------------
-  # Four units, each its own CI job (.github/workflows/ci.yml):
-  #   test:unit         nothing running, any OS: Go unit + scenario suites and
-  #                     the CPUI's tests (CI runs them on Linux)
-  #   test:integration  real dependencies, always in containers: Postgres and
-  #                     boot, docker workspaces and the browser, the harness
-  #                     binaries, Kubernetes (k3d)
-  #   lint              every linter and type check
-  #   build             every binary, the CPUI and every image (above)
-  # The fan-out tasks don't forward arguments: the suites take different ones
-  # (go test flags, vitest filters, test-binary flags). Pass them to the one
-  # suite they belong to — except test:unit, whose arguments are the Go tests'
-  # (`task test:unit -- -count=1 ./...`), the UI half running whole. An
-  # override only reaches the task called (CLI_ARGS is re-read below it), so
-  # each fan-out names its leaves.
+  # --- checks: each CI job is one task, named after it -------------------------
+  # .github/workflows/ci.yml's jobs are <side>-<check>; each runs the task
+  # <side>:<check>, so `task go:test` is exactly what the go-test job runs.
+  # The side is when CI runs it: go (anything but cpui/, docs/, Markdown),
+  # ui (cpui/), repo (always), sandbox (the images and what drives them),
+  # engine (the engine image's build inputs).
+  #
+  # The umbrellas run several at once, each into its own log under
+  # build/checks/, and print one line per check, then the tail of any failure:
+  #   task lint     go:lint ui:lint repo:lint
+  #   task test     go:test ui:test sandbox:test
+  #   task check    lint, go:test, ui:test: the pre-push gate (docker for
+  #                 Postgres; no images, no cluster)
+  #   task ci       everything CI runs, locally (docker, k3d, ~15 GB of
+  #                 disk); unlike CI, it never skips a side
+  #
+  # <side>:test:run passes its arguments to the test runner, for one package
+  # or file; it runs nothing that needs docker.
+  lint:
+    desc: 'Every linter and type check, in parallel: go:lint, ui:lint, repo:lint (logs in build/checks/)'
+    cmds:
+      - task: checks
+        vars: {CHECKS: 'go:lint ui:lint repo:lint'}
+
   test:
-    desc: 'Unit then integration tests (no args: pass them to one suite)'
+    desc: 'Every test suite, in parallel: go:test, ui:test, sandbox:test (needs docker, k3d; logs in build/checks/)'
     cmds:
-      - task: test:unit:go
-        vars: {CLI_ARGS: ''}
-      - task: test:unit:ui
-        vars: {CLI_ARGS: ''}
-      - task: test:integration
-        vars: {CLI_ARGS: ''}
+      - task: checks
+        vars: {CHECKS: 'go:test ui:test sandbox'}
 
-  test:unit:
-    desc: 'Unit tests, nothing running: Go (`go test ./...`) and the CPUI (vitest); args go to go test (task test:unit -- -count=1 ./...)'
+  check:
+    desc: 'The pre-push gate, in parallel: every lint, go:test, ui:test (needs docker for Postgres; logs in build/checks/)'
     cmds:
-      - task: test:unit:go
-      - task: test:unit:ui
-        vars: {CLI_ARGS: ''}
+      - task: checks
+        vars: {CHECKS: 'go:lint repo:lint go:test ui:test,ui:lint'}
 
-  test:unit:go:
-    desc: 'Go unit + scenario suites (args pass through: task test:unit:go -- ./internal/engine/ -run TestX -v)'
+  ci:
+    desc: 'Everything CI runs, locally and in parallel: check, then the sandbox images and suites; never skips a side as CI does (needs docker, k3d, ~15 GB of disk; logs in build/checks/)'
+    cmds:
+      - task: checks
+        vars: {CHECKS: 'go:lint repo:lint go:test ui:test,ui:lint sandbox'}
+
+  # CHECKS: space-separated, each run in parallel with the others; a,b runs
+  # a then b (ui:test and ui:lint both write cpui/.svelte-kit, so they never
+  # overlap); `sandbox` builds the sandbox images, then runs its two suites
+  # side by side on them. Ctrl-C stops them all.
+  checks:
+    internal: true
+    silent: true
+    cmds:
+      - |
+        TASK='{{.TASK_EXE}}' CHECKS='{{.CHECKS}}' bash <<'EOF'
+        set -u
+        out=build/checks
+        rm -rf "$out" && mkdir -p "$out"
+        trap 'trap - INT TERM; kill 0' INT TERM
+        # run <task>: one check, into build/checks/<task>.log, and its line
+        run() {
+          local log="$out/${1//:/-}.log" start=$SECONDS rc=0
+          "$TASK" "$1" >"$log" 2>&1 || rc=$?
+          printf '%-4s  %-22s %4ss  %s\n' "$([ $rc = 0 ] && echo ok || echo FAIL)" "$1" $((SECONDS - start)) "$log" | tee -a "$out/summary"
+          return $rc
+        }
+        for c in $CHECKS; do
+          case $c in
+            sandbox)
+              { run sandbox:images &&
+                { run sandbox:test:harness & (export APOTHECARY_IMAGES_PREBUILT=1; run sandbox:test:k8s) & wait; }; } & ;;
+            *) (IFS=,; for t in $c; do run "$t"; done) & ;;
+          esac
+        done
+        wait
+        if grep -q '^FAIL' "$out/summary"; then
+          for log in $(awk '/^FAIL/ {print $NF}' "$out/summary"); do
+            printf '\n== %s (last 40 lines)\n' "$log"
+            tail -n 40 "$log"
+          done
+          exit 1
+        fi
+        echo "all green in ${SECONDS}s"
+        EOF
+
+  # --- pins -------------------------------------------------------------------
+  pin:task:
+    internal: true
+    preconditions:
+      - sh: '[ "{{.TASK_VERSION}}" = "{{.TASK_PIN}}" ]'
+        msg: 'task {{.TASK_PIN}} is what CI and the devcontainer run, this is {{.TASK_VERSION}}: go install github.com/go-task/task/v3/cmd/task@v{{.TASK_PIN}} (or work in the devcontainer)'
+
+  pin:node:
+    internal: true
+    preconditions:
+      - sh: '[ "$(node --version 2>/dev/null)" = "v{{.NODE_VERSION}}" ] && [ "$(npm --version 2>/dev/null)" = "{{.NPM_VERSION}}" ]'
+        msg: 'Node v{{.NODE_VERSION}} with npm {{.NPM_VERSION}} (.nvmrc) is what CI and the devcontainer run: `fnm use` (after `fnm install`), or work in the devcontainer'
+
+  pin:helm:
+    internal: true
+    preconditions:
+      - sh: 'helm version --short 2>/dev/null | grep -q "^v{{.HELM_VERSION}}+"'
+        msg: 'helm v{{.HELM_VERSION}} is what CI and the devcontainer run: https://github.com/helm/helm/releases/tag/v{{.HELM_VERSION}}'
+
+  pin:shellcheck:
+    internal: true
+    preconditions:
+      - sh: 'shellcheck --version 2>/dev/null | grep -qx "version: {{.SHELLCHECK_VERSION}}"'
+        msg: 'shellcheck {{.SHELLCHECK_VERSION}} is what CI and the devcontainer run (actionlint calls it): https://github.com/koalaman/shellcheck/releases/tag/v{{.SHELLCHECK_VERSION}}'
+
+  # --- go ---------------------------------------------------------------------
+  go:test:
+    deps: [pin:task]
+    desc: 'Every Go test, the Postgres-backed ones included, under the GO_COVER_MIN floor; pages in coverage/go/ (needs docker) — CI: go-test'
+    env:
+      TEST_POSTGRES: '1'
+      # Tests that run the real shim as a subprocess build it to report here.
+      APOTHECARY_COVERDIR: '{{.ROOT_DIR}}/coverage/go/subprocess'
+    cmds:
+      - task: pg:warm
+      - rm -rf coverage/go/subprocess && mkdir -p coverage/go/subprocess
+      # -count=1: a cached package runs no subprocess, so its shim coverage
+      # would vanish; and Go's test cache can't see the Postgres server.
+      - go test -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage/go/profile.out ./...
+      - go tool covdata textfmt -i=coverage/go/subprocess -o coverage/go/subprocess.out
+      - tail -n +2 coverage/go/subprocess.out >> coverage/go/profile.out
+      - go tool cover -html=coverage/go/profile.out -o coverage/go/files.html
+      - go run ./cmd/coverreport -profile coverage/go/profile.out -out coverage/go/index.html -min {{.GO_COVER_MIN}}
+
+  go:test:run:
+    desc: 'Go tests, nothing running (the Postgres-backed ones skip); args go to go test: task go:test:run -- ./internal/engine/ -run TestX -v'
     env:
       TEST_POSTGRES: ''
     cmds:
       - go test {{.CLI_ARGS | default "./..."}}
 
-  test:unit:ui:
-    desc: 'CPUI tests (args pass through: task test:unit:ui -- src/lib/run)'
-    dir: cpui
-    cmds:
-      - npx vitest run {{.CLI_ARGS}}
-
-  # A flake hides until a loaded CI runner finds it; this is that runner,
-  # locally: the tests pinned to two CPUs shared with six busy loops, repeated,
-  # under the race detector. What fails here fails on CI sooner or later.
-  # Linux only (taskset); the whole tree takes about an hour.
-  test:stress:
-    desc: 'Go tests under CI-like load: 2 CPUs + burners, -race, repeated (task test:stress -- ./internal/engine/; COUNT=5 task test:stress)'
-    vars:
-      COUNT: '{{.COUNT | default "3"}}'
-    preconditions:
-      - sh: command -v taskset
-        msg: "test:stress needs taskset (Linux, util-linux)"
-    env:
-      TEST_POSTGRES: ''
-      GOMAXPROCS: '2'
-    cmds:
-      # The burners carry a marker in their argv (sh's $0) for pkill: Task's
-      # shell has no $! to kill them by, and a timeout bounds a stray one.
-      # `|| rc=$?`: Task runs this under set -e, and a failing go test must
-      # still reach the pkill.
-      - |
-        for _ in 1 2 3 4 5 6; do timeout 2h taskset -c 0,1 sh -c 'while :; do :; done' apothecary-test-stress-burner & done
-        rc=0
-        taskset -c 0,1 go test -race -count={{.COUNT}} -timeout 30m {{.CLI_ARGS | default "./..."}} || rc=$?
-        pkill -f apothecary-test-stress-burner
-        exit $rc
-
-  test:linux:
-    desc: 'Go unit tests inside a Linux container, so the Linux-only build-tagged tests run from any host; needs docker (args pass through)'
-    cmds:
-      # --init: Go as PID 1 doesn't reap children, breaking the process-group tests.
-      # --tmpfs /tmp:exec: overlay /tmp reports empty directory sizes as 0.
-      - >-
-        docker run --rm --init --tmpfs /tmp:exec
-        -v "{{.ROOT_DIR}}":/src:ro -w /src
-        -v apothecary-gomod:/go/pkg/mod -v apothecary-gocache:/root/.cache/go-build
-        -e TEST_POSTGRES=''
-        golang:1.26.4
-        go test -count=1 {{.CLI_ARGS | default "./..."}}
-
-  test:integration:
-    desc: 'Every integration suite: Postgres + boot, docker workspaces + browser, the harness binaries, Kubernetes (needs docker; no args: pass them to one suite)'
-    cmds:
-      - task: test:integration:pg
-        vars: {CLI_ARGS: ''}
-      - task: test:integration:docker
-        vars: {CLI_ARGS: ''}
-      - task: test:integration:harness
-        vars: {CLI_ARGS: ''}
-      - task: test:integration:k8s
-        vars: {CLI_ARGS: ''}
-
   # Each test binary starts its own throwaway Postgres container
   # (internal/adapters/pgstore/pgtest) and gives each test its own database. A
   # test skips when TEST_POSTGRES is empty; these are the packages using pgtest.
-  test:integration:pg:
-    desc: 'The Postgres adapter and boot tests, on real throwaway containers (needs docker; args pass through)'
+  go:test:pg:
+    desc: 'Only the Postgres-backed Go tests, on throwaway containers (needs docker; args go to go test)'
     env:
       TEST_POSTGRES: '1'
     vars:
@@ -489,52 +524,154 @@ tasks:
     cmds:
       - go test -count=1 -run '^TestEmptyDatabasesAreSeparate$' ./internal/adapters/pgstore/pgtest/
 
-  # The `live` tests drive real docker (DinD sandboxes, devcontainer up, the
-  # egress gateway, the browser container). They run INSIDE the engine image,
-  # as apothecaryd does in production: root, the docker CLI and the pinned
-  # @devcontainers/cli, the host's docker socket, host networking, and a
-  # RunsDir bind-mounted at the same path. That RunsDir is a named volume's
-  # mountpoint: a real path on the docker host (on macOS, inside the docker
-  # VM, on its data disk) — the run's unix sockets do not cross a macOS file
-  # share, so it can never be a folder of the Mac. The egress gateway is on:
-  # APOTHECARY_LIVE_GATEWAY=0 turns it off.
-  test:integration:docker:
-    desc: 'Docker workspaces (lifecycle, gateway, file tree) and the browser, inside the engine image (needs docker; args are go test flags, e.g. -- -test.run TestLiveLifecycle)'
+  # A flake hides until a loaded CI runner finds it; this is that runner,
+  # locally: the tests pinned to two CPUs shared with six busy loops, repeated,
+  # under the race detector. What fails here fails on CI sooner or later.
+  # Linux only (taskset); the whole tree takes about an hour.
+  go:test:stress:
+    desc: 'Go tests under CI-like load: 2 CPUs + burners, -race, repeated (task go:test:stress -- ./internal/engine/; COUNT=5 task go:test:stress)'
     vars:
-      LIVE_RUNS:
-        sh: docker volume create apothecary-live-runs >/dev/null && docker volume inspect -f '{{"{{"}}.Mountpoint{{"}}"}}' apothecary-live-runs
-      ARCH:
-        sh: docker version --format '{{"{{"}}.Server.Arch{{"}}"}}'
-      GATEWAY: '{{.APOTHECARY_LIVE_GATEWAY | default "1"}}'
+      COUNT: '{{.COUNT | default "3"}}'
+    preconditions:
+      - sh: command -v taskset
+        msg: "go:test:stress needs taskset (Linux, util-linux)"
+    env:
+      TEST_POSTGRES: ''
+      GOMAXPROCS: '2'
     cmds:
-      - docker build -q -f deploy/Dockerfile -t apothecary/apothecaryd:live .
-      - mkdir -p build/live
-      - for: [workspace, browser]
-        cmd: GOOS=linux GOARCH={{.ARCH}} CGO_ENABLED=0 go test -c -tags live -o build/live/{{.ITEM}}.test ./internal/adapters/{{.ITEM}}/
-      # Only the docker live tests: the packages' unit tests run in test:unit,
-      # the Kubernetes one in test:integration:k8s.
-      - for: [workspace, browser]
-        cmd: >-
-          docker run --rm --network host --entrypoint /live/{{.ITEM}}.test
-          -v /var/run/docker.sock:/var/run/docker.sock
-          -v {{.LIVE_RUNS}}:{{.LIVE_RUNS}}
-          -v "{{.ROOT_DIR}}/build/live":/live:ro
-          -e APOTHECARY_LIVE_RUNS_DIR={{.LIVE_RUNS}}
-          -e APOTHECARY_LIVE_GATEWAY={{.GATEWAY}}
-          -e APOTHECARY_SANDBOX_RUNTIME -e APOTHECARY_WORKSPACE_DOCKER
-          apothecary/apothecaryd:live
-          -test.v -test.count=1 -test.timeout 30m -test.run '^TestLive' -test.skip '^TestLiveK8s' {{.CLI_ARGS}}
+      # The burners carry a marker in their argv (sh's $0) for pkill: Task's
+      # shell has no $! to kill them by, and a timeout bounds a stray one.
+      # `|| rc=$?`: Task runs this under set -e, and a failing go test must
+      # still reach the pkill.
+      - |
+        for _ in 1 2 3 4 5 6; do timeout 2h taskset -c 0,1 sh -c 'while :; do :; done' apothecary-test-stress-burner & done
+        rc=0
+        taskset -c 0,1 go test -race -count={{.COUNT}} -timeout 30m {{.CLI_ARGS | default "./..."}} || rc=$?
+        pkill -f apothecary-test-stress-burner
+        exit $rc
+
+  go:test:linux:
+    desc: 'Go tests inside a Linux container, so the Linux-only build-tagged ones run from any host; nothing else running (needs docker; args pass through)'
+    cmds:
+      # --init: Go as PID 1 doesn't reap children, breaking the process-group tests.
+      # --tmpfs /tmp:exec: overlay /tmp reports empty directory sizes as 0.
+      - >-
+        docker run --rm --init --tmpfs /tmp:exec
+        -v "{{.ROOT_DIR}}":/src:ro -w /src
+        -v apothecary-gomod:/go/pkg/mod -v apothecary-gocache:/root/.cache/go-build
+        -e TEST_POSTGRES=''
+        golang:{{.GO_VERSION}}
+        go test -count=1 {{.CLI_ARGS | default "./..."}}
+
+  go:lint:
+    deps: [pin:task]
+    desc: 'gofmt; go vet on linux with every build tag, on darwin, and the client on windows, so no file goes unchecked; the API contract — CI: go-lint'
+    cmds:
+      - |
+        out="$(gofmt -l ./cmd ./internal ./workspace)"
+        if [ -n "$out" ]; then echo "$out"; echo "gofmt needed — run task fmt"; exit 1; fi
+      # No file is built only without a tag (no //go:build !live), so the
+      # tagged vet checks every untagged file too.
+      - CGO_ENABLED=0 GOOS=linux go vet -tags live,conformance,coverflush ./...
+      - CGO_ENABLED=0 GOOS=darwin go vet ./...
+      # The terminal client ships for Windows too (deploy/release.sh client);
+      # the engine does not build there.
+      - CGO_ENABLED=0 GOOS=windows go vet ./cmd/apothecary/... ./internal/client/...
+      - task: api:check
+
+  # --- ui ---------------------------------------------------------------------
+  ui:test:
+    deps: [pin:task, pin:node]
+    desc: 'The CPUI tests under the floors in cpui/vite.config.ts; pages in cpui/coverage/ — CI: ui-test'
+    dir: cpui
+    cmds:
+      - npm run test:coverage
+
+  ui:test:run:
+    deps: [pin:node]
+    desc: 'CPUI tests; args go to vitest (task ui:test:run -- src/lib/run)'
+    dir: cpui
+    cmds:
+      - npx vitest run {{.CLI_ARGS}}
+
+  # The production build too: a prerender error shows only there.
+  ui:lint:
+    deps: [pin:task, pin:node]
+    desc: 'CPUI: svelte-check, every lint (code, styles, token and layer contracts, tests beside sources, themes, formatting: docs/frontend-standards.md), the production build — CI: ui-lint'
+    dir: cpui
+    cmds:
+      - npm run check
+      - npm run lint
+      - task: build:ui
+
+  # --- repo -------------------------------------------------------------------
+  # Models are bound per project (Workshop → Flows → Configure), never named
+  # in the tree: an id there rots when the vendor renames it. Tests use fake/…
+  # or acme/… ids.
+  repo:lint:
+    deps: [pin:task, pin:shellcheck]
+    desc: 'No model id anywhere in the tree (code, flows, tests, docs), the workflows (actionlint), and chart:lint — CI: repo-lint'
+    cmds:
+      - |
+        hits="$(grep -rnE --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.svelte-kit --exclude-dir=build --exclude-dir=generated --exclude-dir=UX --exclude=IMPLEMENTATION_NOTES.md --exclude=TODO.md 'glm-[0-9]|gpt-[0-9]|claude-(sonnet|opus|haiku|[0-9])|qwen[0-9]|kimi-k[0-9]|gemini-[0-9]' cmd internal cpui/src docs examples workspace api README.md AGENTS.md 2>/dev/null || true)"
+        if [ -n "$hits" ]; then echo "$hits"; echo "a model id in the tree rots when the vendor renames it — bind models per project (Workshop → Flows → Configure); tests use fake/… or acme/… ids"; exit 1; fi
+      # The workflows: expressions, job graph, shell (shellcheck when installed).
+      - go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - task: chart:lint
+
+  # Every example values file lints and renders, the schema refuses what it
+  # must, and the chart's README is what helm-docs makes of values.yaml.
+  chart:lint:
+    deps: [pin:helm]
+    desc: 'helm lint + template the chart with its defaults and every ci/*-values.yaml; the schema refuses bad values; the README is current'
+    preconditions:
+      - sh: command -v helm
+        msg: 'install helm: https://helm.sh/docs/intro/install/'
+    vars:
+      CHART: charts/apothecary
+      HELM_DOCS: go run github.com/norwoodj/helm-docs/cmd/helm-docs@v1.14.2
+      VALUES:
+        sh: ls charts/apothecary/ci/*-values.yaml
+    cmds:
+      - helm lint {{.CHART}} --set masterKey=lint --set postgres.password=lint
+      - helm template lint {{.CHART}} --set masterKey=lint --set postgres.password=lint >/dev/null
+      - for: { var: VALUES }
+        cmd: helm lint {{.CHART}} -f {{.ITEM}} && helm template lint {{.CHART}} -f {{.ITEM}} >/dev/null
+      - for: [workspaces.runtimeClassName=, access.http.ingress.enabled=true, access.http.appsDomain=apps.example.com, ssh.enabled=true, engine.replicas=2]
+        cmd: '! helm template lint {{.CHART}} --set masterKey=lint --set postgres.password=lint --set {{.ITEM}} >/dev/null 2>&1 || { echo "the schema must refuse {{.ITEM}}"; exit 1; }'
+      - '{{.HELM_DOCS}} -c charts -s file --skip-version-footer -l warning -d | diff -u {{.CHART}}/README.md - || { echo "charts/apothecary/README.md is stale: run task chart:docs"; exit 1; }'
+
+  chart:docs:
+    desc: Regenerate charts/apothecary/README.md from values.yaml (helm-docs)
+    cmds:
+      - go run github.com/norwoodj/helm-docs/cmd/helm-docs@v1.14.2 -c charts -s file --skip-version-footer -l warning
+
+  # --- sandbox ----------------------------------------------------------------
+  # The images the sandbox suites run; the engine itself runs there as a test
+  # process, so its image is not among them.
+  sandbox:images:
+    deps: [pin:task]
+    desc: 'Build the four images the sandbox suites run (sandbox, shim, tools, egress-gw) as <k3d registry>/apothecary/<name>:local (needs docker) — CI: sandbox-images'
+    cmds:
+      - IMAGES="{{.SANDBOX_IMAGES}}" PREFIX={{.K3D_REGISTRY}}/apothecary deploy/images.sh local
+
+  sandbox:test:
+    desc: 'sandbox:images, then the harness and k8s suites side by side (needs docker, k3d; logs in build/checks/)'
+    cmds:
+      - task: checks
+        vars: {CHECKS: sandbox}
 
   # The pinned harness binaries against what the engine hands them: config and
   # auth files, provider.env, the ACP face, omp's broker. Only the harness can
   # say it accepts them (internal/project/kinds/conformance_test.go). The
   # bundle is the one this engine expects — apothecary/tools:<ToolsHash>, built
-  # as wsimage.EnsureTools builds it when missing — seeded into a volume by its
+  # here from workspace/images/tools when missing — seeded into a volume by its
   # own seed.sh (as a Kubernetes sandbox's init container does; a no-op when
   # the volume holds this hash) and mounted where every workspace mounts it.
   # Its binaries are Linux ones, so the tests run in a Linux container.
-  test:integration:harness:
-    desc: 'The pinned harness CLIs of the tools bundle against what the engine generates (needs docker; args are go test flags, e.g. -- -run TestCodexConformance)'
+  sandbox:test:harness:
+    deps: [pin:task]
+    desc: 'The pinned harness CLIs of the tools bundle against what the engine generates (needs docker; args are go test flags, e.g. -- -run TestCodexConformance) — CI: sandbox-test (harness)'
     vars:
       TOOLS_HASH:
         sh: go run ./cmd/apothecaryd tools-hash
@@ -543,131 +680,58 @@ tasks:
         docker image inspect apothecary/tools:{{.TOOLS_HASH}} >/dev/null 2>&1 ||
         docker build -t apothecary/tools:{{.TOOLS_HASH}} --build-arg TOOLS_HASH={{.TOOLS_HASH}} workspace/images/tools
       - docker run --rm -v apothecary-harness-tools:/seed apothecary/tools:{{.TOOLS_HASH}} /seed/tools
-      # --init and --tmpfs /tmp:exec: as test:linux.
+      # --init and --tmpfs /tmp:exec: as go:test:linux.
       - >-
         docker run --rm --init --tmpfs /tmp:exec
         -v "{{.ROOT_DIR}}":/src:ro -w /src
         -v apothecary-gomod:/go/pkg/mod -v apothecary-gocache:/root/.cache/go-build
         -v apothecary-harness-tools:/opt/apothecary:ro
         -e TEST_POSTGRES=''
-        golang:1.26.4
+        golang:{{.GO_VERSION}}
         go test -tags conformance -count=1 -timeout 20m -v -run Conformance {{.CLI_ARGS}} ./internal/project/kinds/
 
-  # Reuses the cluster if it exists (and leaves it, with the :local images
-  # pushed to its registry); otherwise creates it and deletes it afterwards,
-  # registry included — pass or fail. The images are built before the cluster
-  # starts: building the tools bundle beside a running k3s starves a CI
-  # runner, and its API server drops out ("apiserver not ready") under the
-  # tests. k8s:images then only pushes, from the build cache.
-  test:integration:k8s:
-    desc: 'The Kubernetes provisioner and project browser on a local k3d cluster: cluster, images, live tests (needs docker, k3d)'
+  # Reuses the cluster if it exists (and leaves it); otherwise creates it and
+  # deletes it afterwards — pass or fail. The images are imported into the
+  # node rather than pushed to the cluster's registry and pulled back: one
+  # copy of the 2.3 GB tools bundle instead of two.
+  sandbox:test:k8s:
+    deps: [pin:task]
+    desc: 'The Kubernetes provisioner and project browser on a local k3d cluster: images, cluster, import, live tests (needs docker, k3d) — CI: sandbox-test (k8s)'
     vars:
       CLUSTER_EXISTED:
         sh: k3d node get k3d-{{.K3D_CLUSTER}}-server-0 >/dev/null 2>&1 && echo yes || echo no
     cmds:
-      - task: k8s:registry-check
-      - PREFIX={{.K3D_REGISTRY}}/apothecary deploy/images.sh local
+      # Built before the cluster starts (building the tools bundle beside a
+      # running k3s starves a CI runner); already in docker when
+      # APOTHECARY_IMAGES_PREBUILT=1 (CI's sandbox-images job, sandbox:test).
+      - cmd: '{{.TASK_EXE}} sandbox:images'
+        if: '[ "${APOTHECARY_IMAGES_PREBUILT:-}" != 1 ]'
       - task: k8s:cluster
       - defer: '{{if eq .CLUSTER_EXISTED "no"}}{{.TASK_EXE}} k8s:down{{end}}'
-      - task: k8s:images
+      # Straight into the node's image store: no registry push, no pull.
+      - task: k8s:import
+        vars: {IMAGES: '{{.SANDBOX_IMAGES}}'}
       - task: k8s:test-live
+        vars: {PULL_POLICY: IfNotPresent}
 
-  cover:
-    desc: 'Test coverage of both halves, as pages: coverage/go/index.html and cpui/coverage/index.html'
+  k8s:import:
+    internal: true
     cmds:
-      - task: cover:go
-      - cd cpui && npm run test:coverage
-      - 'echo "Backend:  coverage/go/index.html"'
-      - 'echo "Frontend: cpui/coverage/index.html"'
+      - k3d image import -c {{.K3D_CLUSTER}} {{range (splitList " " .IMAGES)}}{{$.K3D_REGISTRY}}/apothecary/{{.}}:local {{end}}
 
-  cover:go:
-    desc: 'Backend coverage: every package counted, Postgres tests included; fails under GO_COVER_MIN'
-    env:
-      TEST_POSTGRES: '1'
-      # Tests that run the real shim as a subprocess build it to report here.
-      APOTHECARY_COVERDIR: '{{.ROOT_DIR}}/coverage/go/subprocess'
+  # --- engine -----------------------------------------------------------------
+  engine:image:
+    deps: [pin:task]
+    desc: 'Build the engine image from the working tree as apothecary-build/apothecaryd:ci (deploy/Dockerfile; needs docker) — CI: engine-image'
+    env: {IMAGES: apothecaryd, PREFIX: apothecary-build}
     cmds:
-      - task: pg:warm
-      - rm -rf coverage/go/subprocess && mkdir -p coverage/go/subprocess
-      # -count=1: a cached package runs no subprocess, so its shim coverage would vanish.
-      - go test -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage/go/profile.out ./...
-      - go tool covdata textfmt -i=coverage/go/subprocess -o coverage/go/subprocess.out
-      - tail -n +2 coverage/go/subprocess.out >> coverage/go/profile.out
-      - go tool cover -html=coverage/go/profile.out -o coverage/go/files.html
-      - go run ./cmd/coverreport -profile coverage/go/profile.out -out coverage/go/index.html -min {{.GO_COVER_MIN}}
-
-  lint:
-    desc: 'Every linter and type check: gofmt, go vet (both OSes, every build tag), model ids, the API contract, svelte-check, the CPUI linters, the Helm chart'
-    cmds:
-      - task: lint:go
-      - task: lint:models
-      - task: api:check
-      - task: lint:ui
-      - task: lint:helm
-
-  lint:go:
-    desc: 'gofmt, and go vet for linux and darwin with every build tag, so no file goes unchecked'
-    cmds:
-      - |
-        out="$(gofmt -l ./cmd ./internal ./workspace)"
-        if [ -n "$out" ]; then echo "$out"; echo "gofmt needed — run task fmt"; exit 1; fi
-      - for: [linux, darwin]
-        cmd: GOOS={{.ITEM}} CGO_ENABLED=0 go vet ./...
-      - CGO_ENABLED=0 GOOS=linux go vet -tags live,conformance,coverflush ./...
-
-  lint:ui:
-    desc: 'CPUI: svelte-check, then every lint — code, styles, the token and layer contracts, tests beside sources, themes, formatting (docs/frontend-standards.md)'
-    dir: cpui
-    cmds:
-      - npm run check
-      - npm run lint
-
-  lint:helm:
-    desc: 'helm lint the chart with its default, production and k3d values'
-    preconditions:
-      - sh: command -v helm
-        msg: 'install helm: https://helm.sh/docs/intro/install/'
-    cmds:
-      - helm lint deploy/helm/apothecary --set masterKey=lint --set postgres.password=lint
-      - helm lint deploy/helm/apothecary -f deploy/helm/apothecary/values-production.yaml --set ingress.host=apothecary.example.com
-      - helm lint deploy/helm/apothecary -f deploy/helm/apothecary/values-k3d.yaml --set masterKey=lint
+      - deploy/images.sh ci
 
   fmt:
     desc: gofmt the Go tree, prettier the frontend
     cmds:
       - gofmt -w ./cmd ./internal ./workspace 2>/dev/null || gofmt -w .
       - cd cpui && npm run format
-
-  lint:models:
-    desc: 'Fail on a real model id anywhere in the tree — models live in a project’s flow binding, never in code, flows, tests or docs (a wire fingerprint that must name one carries `lint:models-ok`)'
-    cmds:
-      - |
-        hits="$(grep -rnE --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.svelte-kit --exclude-dir=build --exclude-dir=generated --exclude-dir=UX --exclude=IMPLEMENTATION_NOTES.md --exclude=TODO.md 'glm-[0-9]|gpt-[0-9]|claude-(sonnet|opus|haiku|[0-9])|qwen[0-9]|kimi-k[0-9]|gemini-[0-9]' cmd internal cpui/src docs examples workspace api README.md AGENTS.md 2>/dev/null | grep -v 'lint:models-ok' || true)"
-        if [ -n "$hits" ]; then echo "$hits"; echo "a model id in the tree rots when the vendor renames it — bind models per project (Workshop → Flows → Configure); tests use fake/… or acme/… ids"; exit 1; fi
-
-  verify:
-    desc: 'The pre-commit gate: every lint, the unit tests with coverage (Postgres included), the binaries and the CPUI build'
-    cmds:
-      - task: lint
-      - task: cover:go
-      - cd cpui && npm run test:coverage
-      - task: build:bin
-      - task: build:ui
-      - echo "verify — all green"
-
-  # --- production stack (published image) ------------------------------------
-  prod:upgrade:
-    desc: Pull the latest release and restart the production stack
-    cmds:
-      - '{{.PROD_COMPOSE}} pull apothecaryd'
-      - '{{.PROD_COMPOSE}} up -d'
-      - sleep 2
-      - docker exec apothecary-apothecaryd-1 apothecaryd version
-
-  prod:logs:
-    desc: Follow the production daemon logs
-    cmds:
-      - '{{.PROD_COMPOSE}} logs -f apothecaryd'
 
   # --- commits & releases ----------------------------------------------------
   # Commits follow .cz.toml; lefthook.yml's commit-msg hook checks each one

@@ -108,6 +108,7 @@ var (
 func (s *Server) routes() []Route {
 	return slices.Concat(
 		s.authRoutes(),
+		s.cliLoginRoutes(),
 		s.userRoutes(),
 		s.runRoutes(),
 		s.egressRoutes(),
@@ -145,6 +146,22 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		s.serveTerminal(w, r)
+	}}))
+	// The tunnels (tunnel.go): a workspace port onto a person's localhost,
+	// and the SSH door. The caller's session or bearer token; a browser only
+	// from the UI's own origin. The SSH tunnel's ownership check is the
+	// door's own.
+	mux.HandleFunc("GET /api/runs/{id}/ports/{port}/tunnel", s.guard(Route{Scope: ScopeRun, Handler: func(w http.ResponseWriter, r *http.Request) {
+		if !s.sameOriginUpgrade(w, r) {
+			return
+		}
+		s.servePortTunnel(w, r)
+	}}))
+	mux.HandleFunc("GET /api/ssh/tunnel", s.guard(Route{Handler: func(w http.ResponseWriter, r *http.Request) {
+		if !s.sameOriginUpgrade(w, r) {
+			return
+		}
+		s.serveSSHTunnel(w, r)
 	}}))
 	// The workspace's browser MCP stream, upgraded likewise: see
 	// serveBrowserMCP (it checks the run token itself, before the upgrade).

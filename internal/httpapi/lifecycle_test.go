@@ -334,6 +334,9 @@ func TestObservedPortsAreSanitised(t *testing.T) {
 	if len(got.Observed) != 1 || len(got.Observed[0].Process) != 64 || len(got.Observed[0].Service) != 64 {
 		t.Errorf("observed = %+v", got.Observed)
 	}
+	if got.Links {
+		t.Error("no relay: no browser links, and the page must be told so")
+	}
 	if res, _ := x.bare(t, "POST", "/api/runs/"+id+"/observed-ports", "{", bearer); res.StatusCode != http.StatusBadRequest {
 		t.Errorf("malformed = %d", res.StatusCode)
 	}

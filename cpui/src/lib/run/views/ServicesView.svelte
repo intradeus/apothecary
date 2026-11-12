@@ -3,7 +3,8 @@
 	// as they stand in this run's workspace — up or not, who started each
 	// (a stage, or a person here) and since when, its probe and how that last
 	// went, its ports with their preview links — and Start / Restart / Stop
-	// by hand, with each one's output a click away.
+	// by hand, with each one's output a click away. Each port also copies
+	// the `apothecary forward` line that brings it onto one's own machine.
 	//
 	// Live: polled every 3s while on screen (a health flip carries no event),
 	// and refetched by the store on every service_* event of the stream.
@@ -19,6 +20,7 @@
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { I } from '$lib/design/icons';
 	import TransportIcon from '$lib/ui/TransportIcon.svelte';
+	import CopyButton from '$lib/ui/CopyButton.svelte';
 	import type { Hue } from '$lib/design/hues';
 	import type { ServiceStatus } from '$lib/domain';
 	import type { RunStore } from '../store.svelte';
@@ -41,6 +43,8 @@
 	const list = $derived(data?.services ?? []);
 	const canAct = $derived(!!data?.workspace);
 	const upCount = $derived(list.filter((s) => s.state === 'healthy').length);
+	/** What `apothecary forward` is told: the workspace, else the run. */
+	const ws = $derived(rs.run?.envId || rs.runId);
 
 	/** Whether the workspace runs it right now (or is bringing it up/down). */
 	const running = (s: ServiceStatus) =>
@@ -406,6 +410,7 @@
 										<span class="mono faint addr" title={t('runview.services.address_title')}
 											>{p.address}</span
 										>
+										{#if canAct}<CopyButton command={`apothecary forward ${ws} ${p.port}`} />{/if}
 									</span>
 								{/each}
 							</dd>

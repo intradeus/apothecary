@@ -1,13 +1,16 @@
-
------- 
-
 After 3.0.0 :
-
-- 48) "Queues" : queue tasks, for automatic resolution
-- 49) AI native platform - byok, run an agent in a harnesss (in the project's sidecar / gateway ?) so you can ask it to generate flows or do other internal AI tasks (analytics dashboards... find other usecases). Add MCP server etc. Goal is to have AI support in the UI itself - not just in the sandboxed environment.
-- 52) ci upgrades (we run CI on MR and on merge on main... can we improve that somehow ? caching or something ? Speed is also VERY slow ... 15min CI) 
-- 54) Ask - multi-session support.
-- 55) Collaborative planning (back and forth between an agentic stage and the task owner)
-- 56) Secrets inside the sandbox - engine's credential manager should be able to inject secrets in the sandbox's secret manager, for usage in scripts (ex: glab or whatever). Those secrets should not be accessible by agent stages directly, but through tool calls (maybe ? Or reuse that nvidia/microsoft technique with secret aliases - agent thinks the secret is 'abc' but all secrets are replaced live by a watcher, since 'abc' = 'password123!'), or by command stages (i guess ? for now). credentials reaper should properly work too, for those injected secrets in the sandbox's cred manager 
-- 57) k8s / docker compose. Should we choose 1 and stick to it ? annoying to manage both, will personally only use k3s.
-- 58) takeover's release is slow - what is it waiting for ?
+- 48) Feature(automation): "Queue" system, queue workitems (tickets, MRs) for fully automatic resolution. Maybe just an order of resolution basically ? Don't work on task A while task B is not done.  
+- 49) Feature(mcp) AI introspection in platform - byok, run an agent in a harnesss (in the project's sidecar / gateway ?) so you can ask it to generate flows or do other internal AI tasks (analytics dashboards... find other usecases). Add MCP server etc. Goal is to have AI support in the UI itself - not just in the sandboxed environment.
+- 54) Feature(run) Ask - multi-session support.
+- 55) Feature(flow) Collaborative planning (back and forth between an agentic stage and the task owner)
+- 56) Feature(workspace) Secrets inside the sandbox - engine's credential manager should be able to inject secrets in the sandbox's secret manager, for usage in scripts (ex: glab or whatever). Those secrets should not be accessible by agent stages directly, but through tool calls (maybe ? Or reuse that nvidia/microsoft technique with secret aliases - agent thinks the secret is 'abc' but all secrets are replaced live by a watcher, since 'abc' = 'password123!'), or by command stages (i guess ? for now). credentials reaper should properly work too, for those injected secrets in the sandbox's cred manager 
+- 58) Fix(engine) takeover's release is slow - what is it waiting for ?
+- 59) Fix(engine) Optional AGENTS.md, no defaults > and rename it to 'ai documentation entrypoint'
+- 60) Fix(ui) Improved terminal / logs components in the frontend run panes : copy/paste annoying right now. Need a scroll top/down button for both too.
+- 61) Fix(engine) :one of the run did something weird : it didn't have access to the browser MCP server (toggled off), but seemed to be aware of it so the agent downloaded playwright and ran some tests in the browser. I feel like this should not be allowed ? Or maybe it also ran the browser itself using docker, since they have access to docker, so not sure exactly how it happened, but it happened. How can we improve that guardrail ?
+- 62) Feature(workspace) : Permanent volumes. For pnpm cache, for example.
+- 63) TechDebt(tickets): should we remove internal tickets / separate it better ? We can have an internal ticketing system, but now its merged with the remote one so it feels weird ... I don't think syncing is a good solution. So maybe we get rid of the sync, only dynamically load the tickets (WITH CACHE !!! for faster loads) from the ticket source of the workbench. And if the ticket source of the workbench is internal then that's it ! Would allow to remove that mapping thing, annoying ...
+- 64) Feature(tickets): workbench settings to define the branch name based on the ticket FOLLOWING THE FORMAT THE USER WANTS !! Right now its hardcoded ({type}/{ticket}-title) - make it dynamic and per-workbench.
+- 65) Upgrade watchers UI
+- 66) Dark theme should be darker.
+- 67) full live visualizer (geek view): how many sandboxes are running, some stats on CPU/RAM, if its in an agentic state show the agent and its subagents. Something cool and geeky that shows your full workforce in progress, for all projects. imagine a cool UI for it, not something basic but something fun and geeky.

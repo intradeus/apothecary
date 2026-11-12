@@ -22,12 +22,12 @@ func TestRegistryValidAndDescriptors(t *testing.T) {
 	r := NewRegistry()
 	r.RegisterRepoHost(GitLab{})
 	r.RegisterRepoHost(GitHub{})
-	r.RegisterProvisioner(Docker{})
+	r.RegisterProvisioner(Kubernetes{})
 	r.RegisterHarness(Opencode{})
 	r.RegisterHarness(Codex{})
 	r.RegisterHarness(Omp{})
 	for _, ok := range [][2]string{
-		{"repository", "gitlab"}, {"repository", "github"}, {"provisioner", "docker"},
+		{"repository", "gitlab"}, {"repository", "github"}, {"provisioner", "kubernetes"},
 		{"harness", "opencode"}, {"harness", "codex"}, {"harness", "omp"},
 	} {
 		if !r.Valid(ok[0], ok[1]) {

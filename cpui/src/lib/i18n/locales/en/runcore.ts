@@ -102,6 +102,8 @@ export default {
 		'remote.defaultExtensionsIfInstalledLocally · remote.downloadExtensionsLocally',
 	'run.env.copiedVscodeSettings': 'Copied the settings.json lines for the desktop',
 	'run.env.sshCommand': 'SSH',
+	'run.env.sshSetup': 'Once, on your machine',
+	'run.env.copiedSetup': 'Copied — run it once and ssh to any workspace by name',
 	'run.env.sshKnownHosts': 'known_hosts line',
 	'run.env.copiedKnownHosts': 'Copied the known_hosts line',
 	'run.env.sshFingerprint': 'door fingerprint {fingerprint}',

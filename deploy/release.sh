@@ -12,13 +12,19 @@
 #   deploy/release.sh images <tag> [--push]
 #                                         build (and push) the five images as <tag>,
 #                                         sha-<short> and, for the newest tag, latest
+#   deploy/release.sh client <version>    cross-build the apothecary terminal client
+#                                         into build/client/ (+ SHA256SUMS)
+#   deploy/release.sh chart <tag> [--push]
+#                                         package the chart as <tag> (its images'
+#                                         tag) into build/chart/, and push it to
+#                                         oci://ghcr.io/intradeus/charts
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 TAG_GLOB='v[0-9]*.[0-9]*.[0-9]*'
 
 usage() {
-  sed -n '2,14p' "$0" >&2
+  sed -n '2,20p' "$0" >&2
   exit 2
 }
 
@@ -117,10 +123,44 @@ images() {
   EXTRA_TAGS="$extra" deploy/images.sh "$tag" ${2:+"$2"}
 }
 
+# The terminal client, for every OS and architecture people run it on: static
+# binaries named apothecary-<os>-<arch>, and their checksums.
+client() {
+  local version os arch out
+  version="${1:-}"
+  [ -n "$version" ] || usage
+  rm -rf build/client
+  mkdir -p build/client
+  for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+    os=${target%/*}
+    arch=${target#*/}
+    out="build/client/apothecary-$os-$arch"
+    [ "$os" = windows ] && out="$out.exe"
+    CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
+      -ldflags "-s -w -X main.version=$version" -o "$out" ./cmd/apothecary
+  done
+  (cd build/client && sha256sum apothecary-* >SHA256SUMS)
+}
+
+# The chart at the release's version: chart version X.Y.Z, appVersion vX.Y.Z,
+# so its default image tag is the release's and a chart version pins them all.
+chart() {
+  local tag
+  tag="${1:-}"
+  [ -n "$tag" ] || usage
+  rm -rf build/chart
+  helm package charts/apothecary --version "${tag#v}" --app-version "$tag" -d build/chart >&2
+  if [ "${2:-}" = --push ]; then
+    helm push "build/chart/apothecary-${tag#v}.tgz" "oci://${CHART_REGISTRY:-ghcr.io/intradeus/charts}"
+  fi
+}
+
 case "${1:-}" in
+  chart) chart "${2:-}" "${3:-}" ;;
   preview) preview ;;
   plan) plan "${2:-}" ;;
   cut) cut ;;
   images) images "${2:-}" "${3:-}" ;;
+  client) client "${2:-}" ;;
   *) usage ;;
 esac

@@ -5,7 +5,7 @@
 // here needs a fixed port or a truncate.
 //
 // Tests skip unless TEST_POSTGRES is set, so `go test ./...` needs nothing
-// running; `task test:integration:pg` sets it. Once set, a missing docker daemon
+// running; `task go:test:pg` sets it. Once set, a missing docker daemon
 // is a failure, not a skip: a run that asked for Postgres must not pass
 // without it.
 //
@@ -68,7 +68,7 @@ func start() {
 func server(t *testing.T) string {
 	t.Helper()
 	if os.Getenv(EnableVar) == "" {
-		t.Skip(EnableVar + " not set: this test needs a real Postgres (task test:integration:pg)")
+		t.Skip(EnableVar + " not set: this test needs a real Postgres (task go:test:pg)")
 	}
 	startOnce.Do(start)
 	if startErr != nil {

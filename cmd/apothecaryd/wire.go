@@ -29,6 +29,7 @@ import (
 	"apothecary/internal/notices"
 	"apothecary/internal/platform/config"
 	"apothecary/internal/platform/filestore"
+	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/project/automation"
 	"apothecary/internal/project/channels"
@@ -44,7 +45,6 @@ import (
 	"apothecary/internal/workspace/runports"
 	"apothecary/internal/workspace/services"
 	"apothecary/internal/workspace/sshdoor"
-	"apothecary/internal/workspace/wsimage"
 	"apothecary/internal/workspace/wsinfo"
 )
 
@@ -173,13 +173,13 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 
 	// Egress filtering now lives in the per-project gateway the devcontainer
 	// provisioner brings up (internal/adapters/egressgw) — no engine-side proxy.
-	resolver := integrations.New(conf, reg, boot.RunsDir, enginePort, boot.SandboxRuntime, boot.WorkspaceDocker)
+	resolver := integrations.New(conf, reg, boot.RunsDir, enginePort, boot.WorkspaceDocker)
 	closers = append(closers, func() { resolver.Close() })
 	// The daemon door under privileged sandboxes is the operator's explicit
 	// call (README, "Docker in workspaces"): say so once, where the choice is
 	// read off the deployment, not discovered from a run.
-	if boot.WorkspaceDocker == "on" && boot.SandboxRuntime == "" {
-		log.Warn("APOTHECARY_WORKSPACE_DOCKER=on with privileged sandboxes: a workspace whose devcontainer takes the sandbox's docker daemon (docker-outside-of-docker) runs as root on this host")
+	if boot.WorkspaceDocker == "on" && boot.K8s.Privileged != "off" {
+		log.Warn("APOTHECARY_WORKSPACE_DOCKER=on with privileged sandboxes: a workspace whose devcontainer takes the sandbox's docker daemon (docker-outside-of-docker) runs as root on its node")
 	}
 	// The keeper is the one party that redeems provider refresh tokens
 	// (docs/model-providers-plan.md): harness credentials are opened through
@@ -187,11 +187,6 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	keeper := logins.New(conf, log)
 	resolver.SetLogins(keeper)
 	resolver.SetNotices(notes)
-	if boot.K8s.Namespace == "" {
-		// A docker host builds the tools bundle itself; start now rather
-		// than inside the first provision after an upgrade.
-		resolver.WarmImages(ctx, func(err error) { notes.ToolsImage(ctx, err) })
-	}
 
 	ecfg := engine.Config{
 		EngineURL: engineURL(boot.Listen),
@@ -248,7 +243,14 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	if err := portRelay.Persist(store); err != nil {
 		return nil, nil, fmt.Errorf("load persisted port exposures: %w", err)
 	}
-	portsSvc := runports.New(runs, resolver, portRelay, runports.Config{AutoExpose: boot.PortAutoExpose}, log)
+	relay := portRelay
+	if boot.K8s.Namespace != "" && boot.AppsDomain == "" {
+		// On a cluster without an apps domain a listener per port would hand
+		// out URLs nothing reaches: no browser links, and people reach ports
+		// through the CLI's tunnel (runports.Dial), which needs no relay.
+		relay = nil
+	}
+	portsSvc := runports.New(runs, resolver, relay, runports.Config{AutoExpose: boot.PortAutoExpose}, log)
 
 	// File stores (DESIGN-FILES): one content-addressed blob store, two typed
 	// stores over it — attachments (upload policy) and snapshots (capture
@@ -257,44 +259,37 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	attachments := filestore.NewAttachments(store, blobs, boot.UploadMaxBytes, boot.UploadMimeAllow)
 	snapshots := filestore.NewSnapshots(store, blobs, boot.SnapshotMaxBytes)
 	skillLib := skillstore.New(store, blobs)
-	// The project browser (the builtin `browser` MCP server): one container
-	// per project, a Chromium per agent session, from Microsoft's Playwright
-	// MCP image with the engine's shim.
+	// The project browser (the builtin `browser` MCP server): one pod per
+	// project beside the sandboxes, a Chromium per agent session, from
+	// Microsoft's Playwright MCP image seeded with the release's shim; the
+	// kubelet pulls it, and sessions reach the routing proxy over the
+	// engine's session mux. Without a cluster (the fake-kinds dev loop) there
+	// is no browser, and the MCP server says so.
 	browserImg := boot.BrowserImage
 	if browserImg == "" {
 		browserImg = browser.DefaultImage
 	}
 	bcfg := browser.Config{
-		RunsDir: boot.RunsDir,
-		Image:   browser.Pulled(browserImg, nil),
-		Tag:     func() string { return browserImg },
-		Shim:    wsimage.New(boot.RunsDir).EnsureShim,
-		Log:     log,
+		Image: func(context.Context) (string, error) { return browserImg, nil },
+		Tag:   func() string { return browserImg },
+		Log:   log,
 	}
-	// A failed browser-image pull is the admins' to fix (docker host only:
-	// on Kubernetes the kubelet pulls it).
-	pull := bcfg.Image
-	bcfg.Image = func(ctx context.Context) (string, error) {
-		ref, err := pull(ctx)
-		notes.BrowserImage(ctx, err)
-		return ref, err
-	}
+	var browserPort browserport.Browser
 	if boot.K8s.Namespace != "" {
-		// On Kubernetes the engine pulls nothing: the browser's pods live
-		// beside the sandboxes, seed the release's shim, and sessions reach
-		// the routing proxy over the engine's session mux.
 		host, closeMux, err := k8sBrowserHost(boot)
 		if err != nil {
 			return nil, nil, err
 		}
 		closers = append(closers, func() { closeMux() })
 		bcfg.Host = host
-		bcfg.Image = func(context.Context) (string, error) { return browserImg, nil }
 	}
 	browsers := browser.New(bcfg)
 	browsers.Start(ctx)
 	closers = append(closers, func() { browsers.Close() })
-	browserSvc := browsermcp.New(runs, resolver, browsers)
+	if bcfg.Host != nil {
+		browserPort = browsers
+	}
+	browserSvc := browsermcp.New(runs, resolver, browserPort)
 	// The ticket sync (docs/ticket-sync-plan.md § Sync): one Syncer, so the
 	// poll, the API's refreshes and the engine's are single-flight together.
 	// It copies the files an issue gained into the same attachment store.
@@ -369,37 +364,40 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	api.Ports = portsSvc
 	api.Browser = browserSvc
 	api.Services = services.New(runs, resolver, e, portsSvc, log)
-	// The SSH door (TODO 46): one listener people ssh to over their VPN —
-	// desktop VS Code included — routed by username to the run's workspace.
-	// Both of its keys derive from instance secrets: the host key so a person
-	// verifies one fingerprint for good, the door key so every workspace can
-	// admit it across restarts.
+	// The SSH door (TODO 46): routed by workspace to the run's workspace,
+	// desktop VS Code included. People reach it through the HTTPS tunnel
+	// (the CLI's ssh-proxy); APOTHECARY_SSH_LISTEN also gives it a TCP port
+	// of its own, for the dev loop. Both of its keys derive from instance
+	// secrets: the host key so a person verifies one fingerprint for good,
+	// the door key so every workspace can admit it across restarts.
+	advertise, err := boot.SSHAdvertiseAddr()
+	if err != nil {
+		return nil, nil, err
+	}
+	hostSeed, err := conf.InstanceSecret(ctx, "ssh-door-host")
+	if err != nil {
+		return nil, nil, fmt.Errorf("ssh door host key: %w", err)
+	}
+	doorSeed, err := conf.InstanceSecret(ctx, "ssh-door-client")
+	if err != nil {
+		return nil, nil, fmt.Errorf("ssh door key: %w", err)
+	}
+	hostKey, err := sshdoor.KeyFromSeed(hostSeed)
+	if err != nil {
+		return nil, nil, err
+	}
+	doorKey, err := sshdoor.KeyFromSeed(doorSeed)
+	if err != nil {
+		return nil, nil, err
+	}
+	door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: authsvc, Targets: sshTargets{wsSvc}, Advertise: advertise, Log: log})
+	if err != nil {
+		return nil, nil, err
+	}
+	wsSvc.SetDoorKey(door.DoorPublicKey())
+	closers = append(closers, func() { door.Close() })
+	api.SSH = door
 	if boot.SSHListen != "" {
-		advertise, err := boot.SSHAdvertiseAddr()
-		if err != nil {
-			return nil, nil, err
-		}
-		hostSeed, err := conf.InstanceSecret(ctx, "ssh-door-host")
-		if err != nil {
-			return nil, nil, fmt.Errorf("ssh door host key: %w", err)
-		}
-		doorSeed, err := conf.InstanceSecret(ctx, "ssh-door-client")
-		if err != nil {
-			return nil, nil, fmt.Errorf("ssh door key: %w", err)
-		}
-		hostKey, err := sshdoor.KeyFromSeed(hostSeed)
-		if err != nil {
-			return nil, nil, err
-		}
-		doorKey, err := sshdoor.KeyFromSeed(doorSeed)
-		if err != nil {
-			return nil, nil, err
-		}
-		door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: authsvc, Targets: sshTargets{wsSvc}, Advertise: advertise, Log: log})
-		if err != nil {
-			return nil, nil, err
-		}
-		wsSvc.SetDoorKey(door.DoorPublicKey())
 		sshLn, err := net.Listen("tcp", boot.SSHListen)
 		if err != nil {
 			return nil, nil, fmt.Errorf("ssh door listen %s: %w", boot.SSHListen, err)
@@ -410,10 +408,17 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 				notes.SSHDoor(context.Background(), err)
 			}
 		}()
-		closers = append(closers, func() { door.Close() })
-		api.SSH = door
 		log.Info("ssh door listening", "listen", boot.SSHListen, "advertise", advertise, "fingerprint", door.Fingerprint())
-		notes.SSHDoor(ctx, nil)
+	}
+	notes.SSHDoor(ctx, nil)
+	if boot.K8s.Namespace != "" {
+		// Every account gets a Kubernetes provisioner whose fields are all
+		// empty — the deployment's APOTHECARY_K8S_* settings fill them — so
+		// a fresh install runs a workspace without a form first.
+		api.NewAccount = func(ctx context.Context, userID string) error {
+			_, err := conf.EnsureProvisioner(ctx, userID, "kubernetes", "Kubernetes")
+			return err
+		}
 	}
 	api.Limits = limits
 	api.Conf = conf
@@ -432,6 +437,9 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	api.Keeper = keeper
 	api.SignIns = logins.NewSignIns()
 	api.CPUIDir = boot.CPUIDir
+	api.Version = version
+	api.PublicURL = boot.PublicURL
+	api.CLITokenIdle = boot.CLITokenIdle
 	if boot.AppsDomain != "" {
 		api.Apps = httpapi.NewApps(portRelay, boot.PublicURL)
 	}

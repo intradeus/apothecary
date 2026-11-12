@@ -21,6 +21,14 @@ const goodPassword = "correct horse"
 // addPasswordUser makes a password account over the admin API.
 func (x *env) addPasswordUser(t *testing.T, handle string, admin bool) auth.User {
 	t.Helper()
+	var made []string
+	x.srv.NewAccount = func(_ context.Context, userID string) error { made = append(made, userID); return nil }
+	defer func() { x.srv.NewAccount = nil }()
+	defer func() {
+		if !t.Failed() && len(made) != 1 {
+			t.Errorf("an account made by an admin gets the deployment's defaults: %v", made)
+		}
+	}()
 	res, body := x.do(t, "POST", "/api/users", UserCreateRequest{
 		Handle: handle, Email: handle + "@example.test", Password: goodPassword, Admin: admin,
 	}, nil)

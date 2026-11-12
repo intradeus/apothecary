@@ -1,7 +1,7 @@
 // coverreport turns a merged Go coverage profile into a page: every package,
 // its statements and how many ran, worst first, with a link into `go tool
 // cover`'s per-file view. It fails when the total falls under the floor, which
-// is how `task verify` holds it.
+// is how `task go:test` (CI's go-test job) holds it.
 //
 //	coverreport -profile coverage/go/profile.out -out coverage/go/index.html -min 90
 package main

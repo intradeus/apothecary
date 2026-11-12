@@ -2,7 +2,7 @@
 
 How `cpui/` is built, and the rules that keep it that way. The visual spec is [DESIGN.md](UX/UI/DESIGN.md); the catalogue of shared classes and components is [cpui/src/lib/ui/README.md](../cpui/src/lib/ui/README.md).
 
-Almost everything here is enforced. Run `npm run lint` in `cpui/`, or `task lint:ui` from the root (svelte-check, then every lint). `task lint` and CI's lint job run it too.
+Almost everything here is enforced. Run `npm run lint` in `cpui/`, or `task ui:lint` from the root (svelte-check, every lint, then the production build); CI's ui-lint job runs exactly that.
 
 ## Architecture
 
@@ -103,7 +103,7 @@ A component earns its place with behaviour or structure. A wrapper that only ren
 
 ## Tests
 
-Every component and module has its tests beside it: `Foo.svelte` → `Foo.test.ts`, `foo.ts` → `foo.test.ts`, `foo.svelte.ts` → `foo.svelte.test.ts`. `check-tests` fails on a file without one, so a new component can't arrive untested. Run them with `npm test`, `npm run test:watch` or `task test:unit:ui`; CI's unit job runs them as `npm run test:coverage` (through `task cover`), so the coverage floor in `vite.config.ts` fails a pull request, not only a local `task cover`.
+Every component and module has its tests beside it: `Foo.svelte` → `Foo.test.ts`, `foo.ts` → `foo.test.ts`, `foo.svelte.ts` → `foo.svelte.test.ts`. `check-tests` fails on a file without one, so a new component can't arrive untested. Run them with `npm test`, `npm run test:watch` or `task ui:test:run`; CI's ui-test job runs them as `task ui:test` (vitest with coverage), so the coverage floor in `vite.config.ts` fails a pull request, not only a local `task ui:test`.
 
 No two names under `src/` may differ only by case: macOS's filesystem is case-insensitive, so `noise.svelte.ts` beside `Noise.svelte` resolves to the wrong file there. A rune module next to its component is named after what it exports instead (`noiseState.svelte.ts`, `headerSlot.svelte.ts`). `check-tests` enforces this too.
 
@@ -135,6 +135,6 @@ jsdom has no layout and no CSS, so tests can't see a rule that stopped applying.
 | `npm run lint:format` | Prettier | Formatting. `npm run format` fixes it. |
 | `task api:check` | `scripts/check-api-boundary.mjs` | The generated client stays behind `$lib/api`. |
 
-`npm run lint` runs every lint and format check; `task lint:ui` adds `check` (svelte-check), `task lint` adds `api:check` and the Go side, and `task verify` adds the tests with coverage and the build.
+`npm run lint` runs every lint and format check; `task ui:lint` adds `check` (svelte-check) and the production build, `task lint` adds the Go and repository lints (`api:check` among them), and `task check` adds the tests with coverage.
 
 A disable comment needs a reason on the same line. Prefer changing the rule's config, with a comment saying why, when a rule is wrong for a whole category of code.

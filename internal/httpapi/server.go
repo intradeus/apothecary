@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -83,6 +84,11 @@ type Server struct {
 	// answers every user route 503 — a server without it is misconfigured,
 	// never open.
 	Auth *auth.Service
+	// NewAccount runs once an account exists (the instance claimed, or an
+	// admin adding one): the deployment's defaults for it, such as its
+	// provisioner. Best-effort: a failure is logged, never the account's.
+	// nil = nothing.
+	NewAccount func(ctx context.Context, userID string) error
 	// SSH is the engine's SSH door (TODO 46), for the run page's connection
 	// facts and for ending a disabled account's sessions; nil = no door.
 	SSH SSHAccess
@@ -139,7 +145,19 @@ type Server struct {
 	// dashboards (APOTHECARY_GRAFANA_URL); "" = not configured.
 	GrafanaURL string
 
-	logins loginLimiter
+	// Version is the engine's build version (cmd/apothecaryd's main.version),
+	// told to anyone who asks GET /api/auth/status: the CLI compares it
+	// with its own.
+	Version string
+	// PublicURL is the UI's origin as browsers reach it
+	// (APOTHECARY_PUBLIC_URL); "" = each request's own scheme and host.
+	PublicURL string
+	// CLITokenIdle is the inactivity window of the tokens a terminal
+	// sign-in mints (APOTHECARY_CLI_TOKEN_IDLE); 0 = DefaultCLITokenIdle.
+	CLITokenIdle time.Duration
+
+	logins    loginLimiter
+	cliLogins cliLogins
 
 	// drain is closed by Drain: the long-lived responses (event streams,
 	// ask_human holds) end on it.
@@ -223,6 +241,9 @@ type SSHAccess interface {
 	Fingerprint() string
 	HostPublicKey() string
 	DropUser(userID string)
+	// ServeConn runs one connection from the HTTPS tunnel, opened by who
+	// for workspace, until it ends.
+	ServeConn(nc net.Conn, workspace, who string)
 }
 
 func truncate(s string, n int) string {

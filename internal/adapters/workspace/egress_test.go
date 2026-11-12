@@ -15,9 +15,10 @@ import (
 	"apothecary/internal/ports/envport"
 )
 
-// With a gateway: the run's project is recorded before the build (a blocked
-// build must be unblockable), the sandbox lands on the run network, the
-// tunnel comes up, the build cache is used and refilled.
+// With a gateway: the run is routed and its policy installed, the run's
+// project is recorded before the build (a blocked build must be unblockable),
+// the build runs with the egress window open, and the build cache is used and
+// refilled.
 func TestProvisionThroughTheGateway(t *testing.T) {
 	a, r := armedAdapter(t, rule{match: "--format {{.Config.Image}}", resp: response{stdout: "img:built\n"}})
 	g := withGateway(t, a)
@@ -57,18 +58,8 @@ func TestProvisionThroughTheGateway(t *testing.T) {
 	if g.policy.Mode != policyfile.ModeAllow || g.policy.Domains[0] != "github.com" {
 		t.Errorf("policy = %+v", g.policy)
 	}
-	if len(g.linked) != 1 || g.linked[0] != "w" {
-		t.Errorf("linked = %v", g.linked)
-	}
-	run := r.lines()[r.index("run -d --name w")]
-	for _, want := range []string{"--network apo-egress-w", "--dns 10.77.0.2", "--registry-mirror=http://10.77.0.2:5000",
-		"--insecure-registry=10.77.0.2:5001", "--label apothecary.project=P1", "--label apothecary.project.name=Proj"} {
-		if !strings.Contains(run, want) {
-			t.Errorf("sandbox args missing %q:\n%s", want, run)
-		}
-	}
-	if !r.saw("sysctl -w net.ipv6.conf.all.disable_ipv6=1") {
-		t.Error("ipv6 left on: a route around the tunnel")
+	if len(g.routes) != 1 || g.routes[0] != "+w" {
+		t.Errorf("run routes = %v, want the run registered", g.routes)
 	}
 	up := r.lines()[r.index("up --workspace-folder")]
 	cache := egressgw.BuildCacheRef("10.77.0.2", "P1")
@@ -88,52 +79,41 @@ func TestProvisionThroughTheGateway(t *testing.T) {
 func TestProvisionGatewayFailures(t *testing.T) {
 	ctx := context.Background()
 	spec := envport.EnvSpec{Name: "w", RepoURL: "https://git.test/r.git", Project: "P1"}
-	t.Run("no gateway, no sandbox", func(t *testing.T) {
+	t.Run("no gateway, no build", func(t *testing.T) {
 		a, r := armedAdapter(t)
 		g := withGateway(t, a)
 		g.ensureErr = errors.New("gateway image failed")
 		if _, err := a.Provision(ctx, spec); err == nil || !strings.Contains(err.Error(), "gateway image failed") {
 			t.Fatalf("err = %v", err)
 		}
-		if r.saw("run -d") {
-			t.Error("a sandbox started outside the firewall")
+		if r.saw("up --workspace-folder") {
+			t.Error("a workspace built outside the firewall")
 		}
 	})
 	t.Run("a failed provision closes its egress window too", func(t *testing.T) {
-		a, _ := armedAdapter(t)
+		a, _ := armedAdapter(t, fail("up --workspace-folder", 1, "build broke"))
 		g := withGateway(t, a)
-		g.linkErr = errors.New("no wireguard module")
-		_, _ = a.Provision(ctx, spec)
+		if _, err := a.Provision(ctx, spec); err == nil {
+			t.Fatal("a failed build provisioned")
+		}
 		if len(g.windows) != 2 || g.windows[0] != "open w" || g.windows[1] != "close w" {
 			t.Errorf("egress windows = %v, want opened then closed", g.windows)
 		}
 	})
 	t.Run("a window the gateway refuses leaves the policy in force", func(t *testing.T) {
-		a, _ := armedAdapter(t)
+		a, _ := armedAdapter(t, fail("up --workspace-folder", 1, "stop after the window"))
 		g := withGateway(t, a)
 		g.windowErr = true
-		g.linkErr = errors.New("stop after the window")
 		_, err := a.Provision(ctx, spec)
 		if err == nil || !strings.Contains(err.Error(), "stop after the window") {
 			t.Fatalf("err = %v, want provisioning to go on past a refused window", err)
 		}
 		log, _ := os.ReadFile(filepath.Join(a.folderFor("w"), "exec.log"))
-		if !strings.Contains(string(log), "=== provisioning failed after ") || !strings.Contains(string(log), "stop after the window ===") {
+		if !strings.Contains(string(log), "=== provisioning failed after ") || !strings.Contains(string(log), "stop after the window") {
 			t.Errorf("provision log does not end on the failure:\n%s", log)
 		}
 		if !strings.Contains(string(log), "egress stays on the project policy while provisioning") {
 			t.Errorf("provision log does not say the window stayed shut:\n%s", log)
-		}
-	})
-	t.Run("a tunnel that fails stops the build", func(t *testing.T) {
-		a, r := armedAdapter(t)
-		g := withGateway(t, a)
-		g.linkErr = errors.New("no wireguard module")
-		if _, err := a.Provision(ctx, spec); err == nil || !strings.Contains(err.Error(), "no wireguard module") {
-			t.Fatalf("err = %v", err)
-		}
-		if r.saw("up --workspace-folder") {
-			t.Error("a build ran with no tunnel")
 		}
 	})
 }
@@ -291,10 +271,10 @@ func TestDestroyDropsTheRunsEgress(t *testing.T) {
 }
 
 // A rebuild keeps the checkout: agent commits live there and nothing else has
-// them yet. Compose takes the sandbox-teardown road, and the promise holds on
-// it too.
+// them yet. Compose takes the sandbox-reset road, and the promise holds on it
+// too.
 func TestComposeRebuildKeepsTheCheckout(t *testing.T) {
-	a, r := armedAdapter(t, rule{match: "read-configuration", resp: response{stdout: `{"configuration":{"dockerComposeFile":"c.yml"}}` + "\n"}})
+	a, _ := armedAdapter(t, rule{match: "read-configuration", resp: response{stdout: `{"configuration":{"dockerComposeFile":"c.yml"}}` + "\n"}})
 	src := a.srcDir("w")
 	if err := os.MkdirAll(filepath.Join(src, ".git"), 0o755); err != nil {
 		t.Fatal(err)
@@ -307,41 +287,55 @@ func TestComposeRebuildKeepsTheCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustExist(t, commit)
-	if r.saw("clone --") {
-		t.Error("a rebuild re-cloned over the run's work")
+	if h := hostOf(t, a); len(h.destroys) != 0 {
+		t.Errorf("a rebuild destroyed the sandbox (and the checkout with it): %v", h.destroys)
 	}
 }
 
-func TestRebuildComposeTearsDownThenProvisions(t *testing.T) {
-	sandbox := "ps -aq --filter label=apothecary.env=w --filter label=apothecary.sandbox=true"
+// Compose: the sandbox is emptied first, then the workspace provisioned into
+// it — never with the single-container flag.
+func TestRebuildComposeResetsThenProvisions(t *testing.T) {
 	compose := rule{match: "read-configuration", resp: response{stdout: `{"mergedConfiguration":{"dockerComposeFile":"c.yml"}}` + "\n"}}
-	a, r := armedAdapter(t, compose, rule{match: sandbox, resp: response{stdout: "sbx1\n"}})
+	a, r := armedAdapter(t, compose)
+	h := hostOf(t, a)
+	resetsAtBuild := -1
 	r.mu.Lock()
-	// The teardown removes the fixture's checkout: the clone puts one back.
-	r.rules = append([]rule{{match: "clone --", fn: func(args []string, _ []byte) *response {
-		seedDevcontainer(t, a, "w")
-		armSandbox(t, a, "w")
+	r.rules = append([]rule{{match: "up --workspace-folder", fn: func([]string, []byte) *response {
+		resetsAtBuild = len(h.resets)
 		return nil
-	}}}, r.rules...)
+	}, resp: response{stdout: `{"outcome":"success","containerId":"cid1","remoteUser":"vscode","remoteWorkspaceFolder":"/workspaces/w"}` + "\n"}}}, r.rules...)
 	r.mu.Unlock()
 	if err := a.Rebuild(context.Background(), envport.EnvSpec{Name: "w", RepoURL: "https://git.test/r.git"}); err != nil {
 		t.Fatal(err)
 	}
-	rm, up := r.index("rm -f sbx1"), r.index("up --workspace-folder")
-	if rm < 0 || up < rm {
-		t.Errorf("rm at %d, up at %d", rm, up)
+	if len(h.resets) != 1 || h.resets[0] != "w" || resetsAtBuild != 1 {
+		t.Errorf("resets = %v (%d at the build), want the sandbox reset before the build", h.resets, resetsAtBuild)
 	}
 	if r.saw("--remove-existing-container") {
 		t.Error("a compose rebuild used the single-container flag")
 	}
 }
 
+// Non-compose: the container is recreated in place; the sandbox is not reset.
+func TestRebuildNonComposeKeepsTheSandbox(t *testing.T) {
+	a, r := armedAdapter(t)
+	if err := a.Rebuild(context.Background(), envport.EnvSpec{Name: "w", RepoURL: "https://git.test/r.git"}); err != nil {
+		t.Fatal(err)
+	}
+	if h := hostOf(t, a); len(h.resets) != 0 {
+		t.Errorf("a single-container rebuild reset the sandbox: %v", h.resets)
+	}
+	if !r.saw("--remove-existing-container") {
+		t.Error("a single-container rebuild must recreate the container")
+	}
+}
+
 func TestRebuildTeardownFailureStopsIt(t *testing.T) {
 	a, r := armedAdapter(t,
-		rule{match: "read-configuration", resp: response{stdout: `{"configuration":{"dockerComposeFile":"c.yml"}}` + "\n"}},
-		fail("apothecary.sandbox=true", 1, "daemon down"))
+		rule{match: "read-configuration", resp: response{stdout: `{"configuration":{"dockerComposeFile":"c.yml"}}` + "\n"}})
+	hostOf(t, a).resetErr = errors.New("daemon down")
 	err := a.Rebuild(context.Background(), envport.EnvSpec{Name: "w"})
-	if err == nil || !strings.Contains(err.Error(), "rebuild w: teardown") {
+	if err == nil || !strings.Contains(err.Error(), "rebuild w: teardown") || !strings.Contains(err.Error(), "daemon down") {
 		t.Fatalf("err = %v", err)
 	}
 	if r.saw("up --workspace-folder") {
@@ -350,13 +344,14 @@ func TestRebuildTeardownFailureStopsIt(t *testing.T) {
 }
 
 func TestRebuildFallsBackToTheRunName(t *testing.T) {
-	r := &ruleRunner{rules: []rule{fail("git ", 128, "nope")}}
+	r := &ruleRunner{}
 	a := newTestAdapter(t, r)
 	err := a.Rebuild(context.Background(), envport.EnvSpec{RunID: "01ABCDEFGH"})
-	if err == nil {
-		t.Fatal("clone failure swallowed")
+	if err == nil || !strings.Contains(err.Error(), ".devcontainer/devcontainer.json") {
+		t.Fatalf("err = %v, want the missing definition", err)
 	}
 	if !r.saw(a.srcDir(WorkspaceName("01ABCDEFGH"))) {
 		t.Errorf("calls = %v", r.lines())
 	}
+	mustExist(t, a.folderFor(WorkspaceName("01ABCDEFGH")))
 }

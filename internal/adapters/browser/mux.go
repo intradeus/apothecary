@@ -11,9 +11,8 @@ import (
 )
 
 // SessionMux is the engine's ONE TCP listener for every browser session's
-// routing proxy, for browsers that cannot share a unix socket with the engine
-// (Kubernetes pods). A session's relay opens each connection with the same
-// preamble the shim's dial-in mux uses:
+// routing proxy (the browsers are Kubernetes pods). A session's relay opens
+// each connection with the same preamble the shim's dial-in mux uses:
 //
 //	APO1 <session token> proxy\n
 //

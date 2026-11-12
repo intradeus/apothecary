@@ -12,21 +12,19 @@ import (
 	"io/fs"
 )
 
-// BaseContext holds the invariant material apothecary compiles/injects: the
-// static shim's source tree (compiled by wsimage.EnsureShim, bind-mounted in)
-// and the egress gateway daemon's source tree (compiled into the per-project
-// egress-gw image by wsimage.EnsureGatewayImage). Egress is enforced by that
-// external gateway now, so there is no in-container firewall feature.
+// BaseContext holds the invariant material apothecary ships: the static
+// shim's source tree and the egress gateway daemon's. deploy/images.sh builds
+// them into the release's shim and egress-gw images; the engine embeds them
+// only to hash them, so it can tell whether a seeded shim matches it.
 //
 //go:embed shim gateway
 var BaseContext embed.FS
 
-// Images holds the Dockerfiles of the images apothecary builds from the
-// sources above (shim, gateway), each with this directory as its build
-// context, and the tools bundle (images/tools: its Dockerfile plus the
-// scripts it copies, built with that directory as the context). The engine
-// builds them at runtime on a docker host (internal/workspace/wsimage); CI publishes
-// the same files for Kubernetes, where the engine cannot build.
+// Images holds the Dockerfiles of the images built from the sources above
+// (shim, gateway), each with this directory as its build context, and the
+// tools bundle (images/tools: its Dockerfile plus the scripts it copies,
+// built with that directory as the context). CI publishes them
+// (deploy/images.sh); the engine never builds an image.
 //
 //go:embed images
 var Images embed.FS

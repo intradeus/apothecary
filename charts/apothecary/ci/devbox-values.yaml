@@ -1,0 +1,27 @@
+# A single-node k3s box with sysbox installed (deploy/k3s/install.sh), on a
+# domain you own: Traefik (k3s's ingress) with a cert-manager certificate.
+#
+#   helm install apothecary oci://ghcr.io/intradeus/charts/apothecary \
+#     --version X.Y.Z -n apothecary --create-namespace -f devbox-values.yaml \
+#     --set masterKey="$(apothecaryd keygen)" --set postgres.password=...
+#
+# No domain at all, on a LAN: drop the ingress, set
+# access.http.service.type=LoadBalancer (k3s publishes it on the node's
+# address, port 8080), access.http.scheme=http and
+# access.publicURL=http://<the box's address>:8080 — plain HTTP, so for a
+# private network only.
+masterKey: ci-placeholder
+postgres:
+  password: ci-placeholder
+
+access:
+  http:
+    ingress:
+      enabled: true
+      className: traefik
+      host: apothecary.example.com
+      annotations:
+        cert-manager.io/cluster-issuer: letsencrypt
+      tls:
+        - secretName: apothecary-tls
+          hosts: [apothecary.example.com]

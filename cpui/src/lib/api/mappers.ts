@@ -13,6 +13,7 @@ import type {
 	AskMessage,
 	AskState,
 	AuthStatus,
+	CliLogin,
 	Limits,
 	Me,
 	SshKey,
@@ -432,7 +433,8 @@ export function toRunPorts(w: Wire.RunPorts): RunPorts {
 			port: p.port,
 			process: p.process,
 			service: p.service
-		}))
+		})),
+		links: w.links === true
 	};
 }
 
@@ -447,6 +449,7 @@ export function toRunSsh(w: Wire.RunSsh): RunSsh {
 		fingerprint: w.fingerprint || undefined,
 		hostKey: w.host_key || undefined,
 		command: w.command || undefined,
+		setup: w.setup || undefined,
 		vscodeUrl: w.vscode_url || undefined,
 		extensions: w.extensions?.length ? w.extensions : undefined,
 		keys: w.keys
@@ -1292,7 +1295,7 @@ export function toMe(w: Wire.Me): Me {
 }
 
 export function toAuthStatus(w: Wire.AuthStatus): AuthStatus {
-	return { setupRequired: w.setup_required, methods: w.methods ?? [] };
+	return { setupRequired: w.setup_required, methods: w.methods ?? [], version: w.version ?? '' };
 }
 
 export function toToken(w: Wire.Token): Token {
@@ -1302,8 +1305,13 @@ export function toToken(w: Wire.Token): Token {
 		prefix: w.prefix,
 		createdAt: w.created_at,
 		lastUsedAt: w.last_used_at || undefined,
-		expiresAt: w.expires_at || undefined
+		expiresAt: w.expires_at || undefined,
+		idleSeconds: w.idle_seconds || undefined
 	};
+}
+
+export function toCliLogin(w: Wire.CliLoginInfo): CliLogin {
+	return { userCode: w.user_code, name: w.name, expiresAt: w.expires_at };
 }
 
 export function toSshKey(w: Wire.SshKey): SshKey {

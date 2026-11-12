@@ -1,14 +1,55 @@
-# CI: four units of checks, each a Taskfile task (task --list), on every pull
-# request and every push to main. A release is cut by hand (manual-release.yml),
-# only from a main commit this workflow passed: the next semver tag,
-# CHANGELOG.md and the image set on GHCR. A pull request's title is checked
-# by pr-title.yml.
+# CI, on every pull request and every push to main. A release is cut by hand
+# (manual-release.yml), only from a main commit this workflow passed: the next
+# semver tag, CHANGELOG.md, the images and the chart on GHCR, the client
+# binaries. A pull request's title is checked by pr-title.yml.
 #
-#   unit         task cover              unit tests of both halves, under their
-#                                        coverage floors (Go incl. Postgres, CPUI)
-#   integration  task test:integration:* real dependencies, in containers
-#   lint         task lint               every linter and type check
-#   build        task build              every binary, the CPUI and every image
+# Every job is named <side>-<check> and runs the task <side>:<check> (the
+# Taskfile's checks section): `task go:test` locally is the go-test job, and
+# `task ci` runs them all at once (without skipping a side).
+#
+#   changes           which sides of the tree a change touches
+#   go-test           every Go test, the Postgres ones included, under
+#                     GO_COVER_MIN
+#   go-lint           gofmt, go vet (linux, darwin, the client on windows),
+#                     the API contract
+#   ui-test           the CPUI's tests, under vite.config.ts's floors
+#   ui-lint           svelte-check, the CPUI linters, the production build
+#   repo-lint         model ids anywhere, the workflows (actionlint), the
+#                     chart and its README
+#   sandbox-images    the four images the sandbox suites run, built once into
+#                     the Actions cache
+#   sandbox-test      the harness and k8s suites, on those images
+#   engine-image      the engine's image
+#
+# A job runs only when a change touches its side: go (everything but cpui/,
+# docs/ and Markdown), ui (cpui/), sandbox (the images and what drives them),
+# engine (the engine image's build inputs); repo always. A pull request is compared
+# with its base. A push to main is compared with the last main commit this
+# workflow passed, so a commit that is released has had everything changed
+# since a green commit tested; with no such commit, and in a run by hand,
+# everything runs. A skipped job counts as passed. This workflow and the
+# Taskfile are on every side.
+#
+# A merged pull request is not tested again. Its green run tested the pull
+# request merged into its base; the `passed` job records that tree (git's
+# hash of the files) as an artifact, ci-green-<tree>. When a push moves main
+# from its last green commit to a commit with a recorded tree, every file is
+# one a green run tested (what the pull request touched) or one the last
+# green commit holds (the rest), so no test or lint runs and the run is
+# green (manual-release's gate). The image builds still run when their
+# inputs changed: main's cache is what the next release builds from. A
+# commit SHA can't say this: the merge makes a new commit, and the pull
+# request's run tested a merge commit of its own.
+#
+# Images go between jobs through the Actions cache (10 GB per repository, not
+# the account's artifact storage): a job that needs them rebuilds with every
+# layer a cache hit, which is a download.
+#
+# Every job has a timeout: GitHub's default is six hours of billed minutes.
+# The runner image is pinned (ubuntu-26.04, the image the disk figures above
+# were measured on), not ubuntu-latest, which moves between releases.
+# Actions are pinned to a commit (a tag can be moved); Dependabot proposes
+# updates monthly (.github/dependabot.yml).
 name: ci
 
 on:
@@ -27,139 +68,455 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  unit:
-    runs-on: ubuntu-latest
+  changes:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # a pull request's files
+      actions: read # main's last green run
+    outputs:
+      go: ${{ steps.tested.outputs.yes != 'true' && (steps.everything.outputs.yes == 'true' || steps.go.outputs.go == 'true') }}
+      ui: ${{ steps.tested.outputs.yes != 'true' && (steps.everything.outputs.yes == 'true' || steps.areas.outputs.ui == 'true') }}
+      sandbox: ${{ steps.tested.outputs.yes != 'true' && (steps.everything.outputs.yes == 'true' || steps.areas.outputs.sandbox == 'true') }}
+      repo: ${{ steps.tested.outputs.yes != 'true' }}
+      # The image builds run even for a merge already tested: what they fill
+      # is main's Actions cache, which a release builds from and which a run
+      # on main can't read from a pull request's.
+      images: ${{ steps.everything.outputs.yes == 'true' || steps.areas.outputs.sandbox == 'true' }}
+      engine: ${{ steps.everything.outputs.yes == 'true' || steps.areas.outputs.engine == 'true' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      # A pull request's files come from the API; main's from git.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'push'
+        with:
+          fetch-depth: 0
+      - id: base
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // ""')
+          if [ -n "$sha" ] && [ "$sha" != "$GITHUB_SHA" ] && git merge-base --is-ancestor "$sha" HEAD 2>/dev/null; then
+            echo "Compared with $sha, main's last green commit"
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=changes::no green ancestor on main to compare with: everything runs"
+          fi
+      # A merged pull request whose tree a green run of this workflow already
+      # tested (header). Only from the last green commit, only a run of this
+      # repository's own pull request (a fork's runs its own ci.yml). Between
+      # that commit and the push's `before` may lie only release commits
+      # (manual-release's, [skip ci]): they change CHANGELOG.md, which no
+      # check reads.
+      - id: tested
+        if: github.event_name == 'push' && steps.base.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GREEN: ${{ steps.base.outputs.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$BEFORE" != "$GREEN" ]; then
+            if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              echo "main's previous head $BEFORE is not in its history: no shortcut"
+              exit 0
+            fi
+            other=$(git diff --name-only "$GREEN" "$BEFORE" | grep -vx 'CHANGELOG.md' || true)
+            if [ -n "$other" ]; then
+              echo "main changed since its last green commit $GREEN, before this push: no shortcut"
+              exit 0
+            fi
+          fi
+          tree=$(git rev-parse 'HEAD^{tree}')
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=ci-green-$tree&per_page=50" \
+            --jq '.artifacts[] | select(.expired | not) | select(.workflow_run.head_repository_id == .workflow_run.repository_id) | .workflow_run.id')
+          for run in $runs; do
+            ok=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" \
+              --jq 'select(.conclusion == "success" and .event == "pull_request" and (.path | startswith(".github/workflows/ci.yml"))) | .id')
+            if [ -n "$ok" ]; then
+              echo "::notice title=changes::run $run passed on these exact files (tree $tree): nothing runs again"
+              echo "yes=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "No green pull request run of tree $tree: the changes since $GREEN run"
+      - id: everything
+        if: github.event_name != 'pull_request' && steps.base.outputs.sha == ''
+        run: echo "yes=true" >> "$GITHUB_OUTPUT"
+      # Every file must match every pattern: anything but the UI and the docs.
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: go
+        if: steps.everything.outputs.yes != 'true' && steps.tested.outputs.yes != 'true'
+        with:
+          base: ${{ steps.base.outputs.sha }}
+          predicate-quantifier: every
+          filters: |
+            go:
+              - '**'
+              - '!cpui/**'
+              - '!docs/**'
+              - '!**/*.md'
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: areas
+        if: steps.everything.outputs.yes != 'true'
+        with:
+          base: ${{ steps.base.outputs.sha }}
+          filters: |
+            ui:
+              - 'cpui/**'
+              - 'Taskfile.yml'
+              - '.github/workflows/ci.yml'
+            sandbox:
+              - 'workspace/**'
+              - 'deploy/**'
+              - 'charts/**'
+              - 'internal/adapters/**'
+              - 'internal/workspace/**'
+              - 'internal/project/kinds/**'
+              - 'internal/platform/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Taskfile.yml'
+              - '.github/workflows/ci.yml'
+            engine:
+              - 'deploy/Dockerfile'
+              - 'deploy/images.sh'
+              - '.dockerignore'
+              - 'go.mod'
+              - 'go.sum'
+              - 'cpui/package.json'
+              - 'cpui/package-lock.json'
+              - '.github/workflows/ci.yml'
+
+  # The tests with their coverage floors (GO_COVER_MIN, cpui's vite.config.ts
+  # thresholds): a floor only ever rises, and a change that drops under one
+  # fails here, not on someone's machine later.
+  go-test:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # setup-go's own cache is keyed on go.sum alone: saved once per
+      # dependency change, by whichever job ends first, and never refreshed.
+      # This job's own build cache instead, saved from main once a week.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v4
+          cache: false
+      - id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - id: gocache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: cpui/package-lock.json
-      - uses: arduino/setup-task@v2
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-test-go-${{ hashFiles('go.sum') }}-${{ steps.week.outputs.week }}
+          restore-keys: |
+            go-test-go-${{ hashFiles('go.sum') }}-
+            go-test-go-
+      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
         with:
-          version: 3.x
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - run: npm ci
-        working-directory: cpui
-      # The unit tests with their coverage floors (GO_COVER_MIN, cpui's
-      # vite.config.ts thresholds): a floor only ever rises, and a change
-      # that drops under one fails here, not on someone's `task cover` later.
-      # The Postgres-backed tests run too (throwaway containers).
-      - run: task cover
-      - uses: actions/upload-artifact@v4
+      # Unit and Postgres-backed tests in one pass (TEST_POSTGRES=1: throwaway
+      # containers), so the floor counts both.
+      - run: task go:test
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: '!cancelled() && github.ref == ''refs/heads/main'' && steps.gocache.outputs.cache-hit != ''true'''
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-test-go-${{ hashFiles('go.sum') }}-${{ steps.week.outputs.week }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: coverage
+          name: coverage-go
           path: |
             coverage/go/index.html
             coverage/go/files.html
-            cpui/coverage/
           retention-days: 14
 
-  integration:
+  ui-test:
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc # the one Node, everywhere
+          package-manager-cache: false # node_modules is cached below
+      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
+        with:
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # node_modules itself, keyed on the lockfile: npm ci only when it changed.
+      - id: modules
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: cpui/node_modules
+          key: cpui-node-modules-${{ runner.os }}-node${{ hashFiles('.nvmrc') }}-${{ hashFiles('cpui/package-lock.json') }}
+      - if: steps.modules.outputs.cache-hit != 'true'
+        run: npm ci
+        working-directory: cpui
+      - if: steps.modules.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: cpui/node_modules
+          key: cpui-node-modules-${{ runner.os }}-node${{ hashFiles('.nvmrc') }}-${{ hashFiles('cpui/package-lock.json') }}
+      - run: task ui:test
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: coverage-ui
+          path: cpui/coverage/
+          retention-days: 14
+
+  go-lint:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # setup-go's own cache is keyed on go.sum alone: saved once per
+      # dependency change, by whichever job ends first, and never refreshed.
+      # This job's own build cache instead, saved from main once a week.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - id: gocache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-lint-go-${{ hashFiles('go.sum') }}-${{ steps.week.outputs.week }}
+          restore-keys: |
+            go-lint-go-${{ hashFiles('go.sum') }}-
+            go-lint-go-
+      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
+        with:
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc # api:check's boundary script
+          package-manager-cache: false
+      - run: task go:lint
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: '!cancelled() && github.ref == ''refs/heads/main'' && steps.gocache.outputs.cache-hit != ''true'''
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-lint-go-${{ hashFiles('go.sum') }}-${{ steps.week.outputs.week }}
+
+  # Always: a model id can land anywhere, docs included, and the chart's
+  # README is Markdown (helm-docs checks it is current).
+  repo-lint:
+    needs: changes
+    if: needs.changes.outputs.repo == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0; helm-docs runs with go run
+        with:
+          go-version-file: go.mod
+      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
+        with:
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v4.3.0 # .devcontainer/Dockerfile HELM_VERSION
+      # The shellcheck actionlint runs, not the runner image's: the same one
+      # as the devcontainer's (SHELLCHECK_VERSION) and a laptop's.
+      - name: shellcheck
+        env:
+          SHELLCHECK_VERSION: 0.11.0 # .devcontainer/Dockerfile SHELLCHECK_VERSION
+          SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/sc.tar.xz" "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "$SHELLCHECK_SHA256  $RUNNER_TEMP/sc.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/sc.tar.xz" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
+      - run: task repo:lint
+
+  ui-lint:
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc # the one Node, everywhere
+          package-manager-cache: false # node_modules is cached below
+      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
+        with:
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # node_modules itself, keyed on the lockfile: npm ci only when it changed.
+      - id: modules
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: cpui/node_modules
+          key: cpui-node-modules-${{ runner.os }}-node${{ hashFiles('.nvmrc') }}-${{ hashFiles('cpui/package-lock.json') }}
+      - if: steps.modules.outputs.cache-hit != 'true'
+        run: npm ci
+        working-directory: cpui
+      - if: steps.modules.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: cpui/node_modules
+          key: cpui-node-modules-${{ runner.os }}-node${{ hashFiles('.nvmrc') }}-${{ hashFiles('cpui/package-lock.json') }}
+      - run: task ui:lint
+
+  # The four images the harness and k8s suites run (the engine's own is the
+  # engine-image job's), built once: sandbox-test waits for this job and
+  # loads them from the cache it fills, instead of each suite building them.
+  sandbox-images:
+    needs: changes
+    if: needs.changes.outputs.images == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Nothing is loaded into docker here: the builder's cache (≈6 GB) fits
+      # the runner's free disk as it is.
+      - run: df -h /
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0; the cache's credentials, for buildx
+      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
+        with:
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task sandbox:images
+        env:
+          CACHE: gha-warm # the cache is the output: nothing to load here
+
+  sandbox-test:
+    needs: [changes, sandbox-images]
+    if: needs.changes.outputs.sandbox == 'true'
     strategy:
       fail-fast: false
       matrix:
-        suite: [pg, docker, harness, k8s]
-    runs-on: ubuntu-latest
+        suite: [harness, k8s]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: arduino/setup-task@v2
+      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
         with:
-          version: 3.x
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      # The tools bundle (≈2.3 GB) is built, then extracted or seeded once
-      # more, beside the suites' own images; the runner's preinstalled
-      # toolchains these jobs never use leave too little disk for it.
-      - name: Free disk space
-        if: matrix.suite != 'pg'
+      # The k8s suite holds its images twice at its peak (docker, then the
+      # k3d node: ≈15 GB), more than the runner has free, so the toolchains
+      # it never uses go. Deleting them takes about 1.5 minutes, so it runs
+      # in the background while the images load (which needs only half
+      # that), and the suite waits for it before the cluster starts. The
+      # harness suite (≈10 GB) fits as it is.
+      - name: Free disk space, in the background
+        if: matrix.suite == 'k8s'
         run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h /
+          # A background subshell outlives the step; the runner ends it with the job.
+          (sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL; touch "$RUNNER_TEMP/disk-freed") >/dev/null 2>&1 &
+      - if: matrix.suite == 'harness'
+        run: df -h /
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      # sandbox-images' images, from the cache: every layer a hit.
+      - name: Load the tools image
+        if: matrix.suite == 'harness'
+        run: IMAGES=tools CACHE=gha-read PREFIX=apothecary deploy/images.sh "$(go run ./cmd/apothecaryd tools-hash)"
+      - name: Load the images
+        if: matrix.suite == 'k8s'
+        run: deploy/images.sh local
+        env:
+          IMAGES: sandbox shim tools egress-gw
+          PREFIX: k3d-registry.localhost:5111/apothecary # Taskfile K3D_REGISTRY
+          CACHE: gha-read
       # k3d (pinned), and the wireguard module every run's sandbox tunnels to
       # its gateway with (k3d's nodes share the runner's kernel). The runner
-      # already has docker and kubectl. The registry's name is pinned in
-      # /etc/hosts (systemd-resolved answers *.localhost with loopback anyway)
-      # and listed as insecure in daemon.json: dockerd speaks plain HTTP to a
-      # listed registry on either image store, but to a name that merely
-      # resolves to loopback only with the classic store — the containerd
-      # image store, the default of a fresh Docker 29 install and what the
-      # runner's dockerd now runs, trusts no name but the literal `localhost`
-      # and pushes over HTTPS ("server gave HTTP response to HTTPS client").
-      # The five images live three times (docker, the registry, the node's
-      # containerd) and the tools bundle once more on the run's volume, which
-      # is why the disk was freed above. The task creates the cluster and
+      # already has docker and kubectl. The images are imported into the
+      # node, so no registry setup is needed. The task creates the cluster and
       # deletes it again.
       - name: Kubernetes prerequisites
         if: matrix.suite == 'k8s'
         env:
           K3D_VERSION: v5.9.0
-          K3D_REGISTRY: k3d-registry.localhost:5111 # Taskfile K3D_REGISTRY
         run: |
           curl -fsSL -o "$RUNNER_TEMP/k3d" "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
           sudo install -m 0755 "$RUNNER_TEMP/k3d" /usr/local/bin/k3d
           k3d version
           sudo modprobe wireguard
-          echo "127.0.0.1 ${K3D_REGISTRY%%:*}" | sudo tee -a /etc/hosts
-          sudo mkdir -p /etc/docker
-          [ -s /etc/docker/daemon.json ] || echo '{}' | sudo tee /etc/docker/daemon.json >/dev/null
-          jq --arg r "$K3D_REGISTRY" '."insecure-registries" += [$r]' /etc/docker/daemon.json > "$RUNNER_TEMP/daemon.json"
-          sudo install -m 0644 "$RUNNER_TEMP/daemon.json" /etc/docker/daemon.json
-          sudo systemctl restart docker
-          docker info --format '{{json .RegistryConfig.IndexConfigs}}' | grep -q "\"$K3D_REGISTRY\""
-      - run: task test:integration:${{ matrix.suite }}
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: cpui/package-lock.json
-      - uses: arduino/setup-task@v2
-        with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.16.2
-      - run: npm ci
-        working-directory: cpui
-      - run: task lint
-
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: cpui/package-lock.json
-      - uses: arduino/setup-task@v2
-        with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - run: npm ci
-        working-directory: cpui
-      # Five images, the tools bundle among them: see the integration job.
-      - name: Free disk space
+      - name: Wait for the disk to be freed
+        if: matrix.suite == 'k8s'
+        timeout-minutes: 5
         run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          until [ -f "$RUNNER_TEMP/disk-freed" ]; do sleep 2; done
           df -h /
-      - run: task build
+      - run: task sandbox:test:${{ matrix.suite }}
+        env:
+          APOTHECARY_IMAGES_PREBUILT: '1'
+
+  # The engine's image builds (its Dockerfile builds the binary and the CPUI
+  # again, from source). Run when its build inputs change; the code itself is
+  # checked by go-lint and ui-lint. Its cache is what a release builds from.
+  engine-image:
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
+        with:
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task engine:image
+        env:
+          CACHE: gha
+
+  # On a pull request, once every job passed or was skipped: the tree this
+  # run tested (the pull request merged into its base), for main to find
+  # once it is merged as is (header).
+  passed:
+    needs: [changes, go-test, ui-test, go-lint, repo-lint, ui-lint, sandbox-images, sandbox-test, engine-image]
+    if: github.event_name == 'pull_request' && !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - id: tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$GITHUB_SHA" --jq .tree.sha)
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "$GITHUB_SHA $tree" > "$RUNNER_TEMP/tested"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-green-${{ steps.tree.outputs.tree }}
+          path: ${{ runner.temp }}/tested
+          retention-days: 30

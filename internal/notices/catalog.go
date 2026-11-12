@@ -13,8 +13,6 @@ const (
 	KindTrackerUnreachable  = "tracker_unreachable"
 	KindTrackerMapping      = "tracker_mapping"
 	KindChannelFailing      = "channel_failing" // never mirrored: it is about the mirror
-	KindToolsImageFailed    = "tools_image_failed"
-	KindBrowserImageFailed  = "browser_image_failed"
 	KindK8sImageDrift       = "k8s_image_drift"
 	KindSSHDoorStopped      = "ssh_door_stopped"
 	KindReaperEnvsFailed    = "reaper_envs_failed"
@@ -101,18 +99,6 @@ func (s *Service) ChannelSent(ctx context.Context, channelID, userID, kind strin
 		Body:  fmt.Sprintf("Notifications sent to it are not arriving: %s", err),
 		Link:  linkChannels,
 	})
-}
-
-// ToolsImage: how the docker host's tools-bundle warm-up went (nil clears).
-func (s *Service) ToolsImage(ctx context.Context, err error) {
-	s.admin(ctx, KindToolsImageFailed, "tools_image", err, "The workspace tools bundle failed to build",
-		"Every docker-host provision needs it and retries the build; until one succeeds, runs fail to provision: %s")
-}
-
-// BrowserImage: how pulling the project-browser image went (nil clears).
-func (s *Service) BrowserImage(ctx context.Context, err error) {
-	s.admin(ctx, KindBrowserImageFailed, "browser_image", err, "The project browser image could not be pulled",
-		"Flows that use the browser MCP server cannot start a browser: %s")
 }
 
 // ImageDrift: whether a Kubernetes workspace's seeded part ("shim" or

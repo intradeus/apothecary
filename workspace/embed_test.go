@@ -5,6 +5,7 @@ import (
 	"embed"
 	"io/fs"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -86,5 +87,35 @@ func TestHashTreeInvalidDirIsEmpty(t *testing.T) {
 	// the empty string rather than hashing anything.
 	if got := hashTree(BaseContext, "../escape"); got != "" {
 		t.Errorf("hashTree of an invalid dir = %q, want empty", got)
+	}
+}
+
+// The shim image (deploy/images.sh builds images/shim) pins the shim's two
+// dependencies; the root module compiles the same shim source (go vet/test
+// ./...). Both must use one version of each, or the tested shim and the
+// shipped one quietly diverge.
+func TestShimDependencyPinsMatchGoMod(t *testing.T) {
+	data, err := os.ReadFile("../go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dockerfile := Dockerfile("shim")
+	for _, dep := range []struct{ module, get string }{
+		{"github.com/itchyny/gojq", "github.com/itchyny/gojq/cli@"},
+		{"golang.org/x/crypto", "golang.org/x/crypto/ssh@"},
+	} {
+		var modVersion string
+		for _, line := range strings.Split(string(data), "\n") {
+			f := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "require "))
+			if len(f) >= 2 && f[0] == dep.module {
+				modVersion = f[1]
+			}
+		}
+		if modVersion == "" {
+			t.Fatalf("go.mod does not require %s", dep.module)
+		}
+		if !strings.Contains(dockerfile, dep.get+modVersion+" ") {
+			t.Errorf("shim Dockerfile does not get %s%s:\n%s", dep.get, modVersion, dockerfile)
+		}
 	}
 }

@@ -199,6 +199,11 @@ type EgressRuleResult struct {
 type RunPorts struct {
 	Ports    []portrelay.Exposure   `json:"ports"`
 	Observed []envport.ObservedPort `json:"observed"`
+	// Links says whether this engine hands out browser links to workspace
+	// ports (an apps domain, or a listener per port in the dev loop). False on
+	// a cluster without an apps domain: ports are then reached with
+	// `apothecary forward`, which works either way.
+	Links bool `json:"links"`
 }
 
 // ObservedPortsRequest is the in-workspace scanner's listener snapshot.
@@ -561,6 +566,46 @@ type AuthStatus struct {
 	SetupRequired bool `json:"setup_required"`
 	// Methods are the authentication methods this instance can verify.
 	Methods []string `json:"methods"`
+	// Version is the engine's build version ("v3.4.0", or "dev").
+	Version string `json:"version"`
+}
+
+// CLILoginRequest starts a terminal sign-in. Name is what the minted token
+// will be called ("apothecary CLI on <hostname>"); empty = "apothecary CLI".
+type CLILoginRequest struct {
+	Name string `json:"name"`
+}
+
+// CLILoginStarted is what the terminal keeps and prints: the device code is
+// its secret, the user code and the link are for the person.
+type CLILoginStarted struct {
+	DeviceCode      string `json:"device_code"`
+	UserCode        string `json:"user_code"`
+	VerificationURL string `json:"verification_url"`
+	// Interval is the polling interval, in seconds.
+	Interval int `json:"interval"`
+	// ExpiresIn is how long the sign-in waits for approval, in seconds.
+	ExpiresIn int `json:"expires_in"`
+}
+
+// CLILoginPollRequest is the terminal's poll.
+type CLILoginPollRequest struct {
+	DeviceCode string `json:"device_code"`
+}
+
+// CLILoginPoll is its answer: pending, or approved with the token (once).
+type CLILoginPoll struct {
+	Status  string `json:"status"` // pending | approved
+	Token   string `json:"token,omitempty"`
+	TokenID string `json:"token_id,omitempty"`
+	Handle  string `json:"handle,omitempty"`
+}
+
+// CLILoginInfo is a terminal sign-in as its approval page shows it.
+type CLILoginInfo struct {
+	UserCode  string    `json:"user_code"`
+	Name      string    `json:"name"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // SetupRequest claims a fresh instance: its first account, an admin.
@@ -636,7 +681,11 @@ type RunSSH struct {
 	Fingerprint string `json:"fingerprint,omitempty"`
 	HostKey     string `json:"host_key,omitempty"`
 	Command     string `json:"command,omitempty"`
-	VSCodeURL   string `json:"vscode_url,omitempty"`
+	// Setup is the one-time command that makes Command work, when there is
+	// one: the apothecary CLI writing the ssh config that routes
+	// <workspace>.apothecary through the HTTPS tunnel.
+	Setup     string `json:"setup,omitempty"`
+	VSCodeURL string `json:"vscode_url,omitempty"`
 	// Extensions are the VS Code extension ids the workspace's own editor
 	// runs (the definition's ∪ the project's): what a desktop editor over
 	// SSH can carry over (remote.defaultExtensionsIfInstalledLocally).

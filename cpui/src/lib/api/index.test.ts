@@ -13,6 +13,7 @@ import { onUnauthorized } from './client';
 import {
 	busyRunOf,
 	isInUse,
+	isNotFound,
 	linkedTicketsOf,
 	api,
 	analytics,
@@ -308,6 +309,18 @@ describe('what each call sends', () => {
 		],
 		['a token’s revoking', () => auth.revokeToken('t'), 'deleteMyToken', { path: { id: 't' } }],
 		['an SSH key’s removal', () => auth.removeSshKey('k'), 'deleteMySshKey', { path: { id: 'k' } }],
+		[
+			'a terminal sign-in’s approval',
+			() => auth.approveCliLogin('ABCD-EFGH'),
+			'approveCliLogin',
+			{ path: { code: 'ABCD-EFGH' } }
+		],
+		[
+			'a terminal sign-in’s denial',
+			() => auth.denyCliLogin('ABCD-EFGH'),
+			'denyCliLogin',
+			{ path: { code: 'ABCD-EFGH' } }
+		],
 		[
 			'a password reset',
 			() => users.resetPassword('u', 'p'),
@@ -1083,9 +1096,8 @@ describe('what each call sends', () => {
 		});
 
 		it('speaks wss on a secure page', () => {
-			vi.stubGlobal('location', { protocol: 'https:', host: 'apo.test' });
-			expect(workspace.terminalUrl('r', 1, 1)).toMatch(/^wss:\/\/apo\.test\//);
-			vi.unstubAllGlobals();
+			const page = { protocol: 'https:', host: 'apo.test' };
+			expect(workspace.terminalUrl('r', 1, 1, '', page)).toMatch(/^wss:\/\/apo\.test\//);
 		});
 	});
 
@@ -1431,6 +1443,14 @@ describe('ticket sync', () => {
 		expect(busyRunOf(new Error('busy'))).toBeUndefined();
 	});
 
+	it('tells a 404 from any other refusal', async () => {
+		reply('getCliLogin', refused({ error: 'expired' }, 404, 'Not Found'));
+		expect(isNotFound(await auth.cliLogin('x').catch((x: unknown) => x))).toBe(true);
+		reply('approveCliLogin', refused({ error: 'answered' }));
+		expect(isNotFound(await auth.approveCliLogin('x').catch((x: unknown) => x))).toBe(false);
+		expect(isNotFound(new Error('404'))).toBe(false);
+	});
+
 	it('counts what deleting a source would unlink', async () => {
 		reply('deleteIntegration', refused({ error: 'linked', tickets: 4, active_runs: 2 }));
 		const e = await integrations.remove('i').catch((x: unknown) => x);
@@ -1611,6 +1631,13 @@ describe('the rest of the surface', () => {
 			{ body: { handle: 'lu', email: 'lu@x.test', name: 'Lu', password: 'longenough' } }
 		],
 		['auth.me', () => auth.me(), 'getMe', answer({ user: {} }), undefined],
+		[
+			'auth.cliLogin',
+			() => auth.cliLogin('abcdefgh'),
+			'getCliLogin',
+			answer({ user_code: 'ABCD-EFGH', name: 'n', expires_at: 'x' }),
+			{ path: { code: 'abcdefgh' } }
+		],
 		[
 			'auth.updateMe',
 			() => auth.updateMe({ name: 'Lu' }),

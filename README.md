@@ -15,7 +15,7 @@
   <a href="CHANGELOG.md"><img alt="Changelog" src="https://img.shields.io/badge/changelog-semver-ff6b2c"></a>
   <img alt="Go 1.26" src="https://img.shields.io/badge/go-1.26-00ADD8?logo=go&logoColor=white">
   <img alt="Svelte 5" src="https://img.shields.io/badge/svelte-5-FF3E00?logo=svelte&logoColor=white">
-  <a href="#kubernetes"><img alt="Docker or Kubernetes" src="https://img.shields.io/badge/runs%20on-docker%20%7C%20kubernetes-326CE5?logo=kubernetes&logoColor=white"></a>
+  <a href="#kubernetes"><img alt="Kubernetes" src="https://img.shields.io/badge/runs%20on-kubernetes-326CE5?logo=kubernetes&logoColor=white"></a>
 </p>
 
 <p align="center">
@@ -53,19 +53,14 @@ plan approval and final review.
 
 ## Prerequisites
 
-- **Docker** — a Linux host, or macOS through Docker (`task local`, where the
-  engine itself runs in a container; `task test:integration:docker` passes on OrbStack,
-  Docker Desktop is untested) — **or a Kubernetes cluster** (k3s included — see
-  [Kubernetes](#kubernetes)). The reference deployment uses host networking
-  and the docker socket. The docker provisioner runs each
-  run's workspace inside its own **Docker-in-Docker sandbox** (a
-  `docker:dind` container), so repo compose files run verbatim with no
-  cross-run collisions and teardown is total. By default that sandbox is
-  `--privileged` — see [Unprivileged sandboxes](#unprivileged-sandboxes-optional)
-  to drop that. Its `RunsDir` must be a **persistent path on the docker host,
-  not under `/tmp`** (dind masks `/tmp`) — the default `/var/lib/apothecary/runs`
-  is fine. On macOS that path lives inside the docker VM, never in a folder of
-  the Mac: the engine's unix sockets under it don't cross a macOS file share.
+- **A Kubernetes cluster**: a single-node k3s box, EKS, or any other,
+  reachable over the internet or only over your VPN. See
+  [Kubernetes](#kubernetes) for what it needs (sysbox on the nodes that run
+  sandboxes, NetworkPolicy enforcement, the wireguard module).
+  Each run's workspace gets its own **sandbox pod with its own docker
+  daemon**, so repo compose files run verbatim, with no cross-run collisions,
+  and teardown is total.
+- **Helm**, to install the chart.
 - A **repository account**: GitLab PAT (`api` scope, Developer+ on the target
   project) or GitHub PAT (`repo` scope, or fine-grained Contents:RW +
   Pull requests:RW).
@@ -81,40 +76,86 @@ plan approval and final review.
 
 ## Install
 
-```sh
-git clone <this repo> && cd apothecary
-cp deploy/.env.example deploy/.env
-docker run --rm ghcr.io/intradeus/apothecary/apothecaryd:latest keygen
-#  -> paste the output into deploy/.env as APOTHECARY_MASTER_KEY,
-#     and set APOTHECARY_PG_PASSWORD to anything strong
-docker compose -p apothecary -f deploy/docker-compose.yaml up -d
-```
+**A fresh Ubuntu box?** `sudo deploy/k3s/install.sh` sets up everything:
+k3s, sysbox and the chart. Add `--domain <host> --email <address>` for
+HTTPS. [`deploy/k3s/README.md`](deploy/k3s/README.md) walks through each
+step. On a cluster you already have:
 
-(keygen runs via plain `docker run`: compose refuses to start anything —
-including keygen itself — until the key it generates is set.)
+1. **Pick the example values file** that matches your cluster from
+   [`charts/apothecary/ci/`](charts/apothecary/ci/):
+   - `devbox-values.yaml`: a k3s box, on a domain or a LAN address.
+   - `private-values.yaml`: a cluster behind a VPN, with any ingress class.
+   - `eks-private-values.yaml` and `eks-public-values.yaml`: EKS.
 
-Open **http://127.0.0.1:8080**. The stack is apothecaryd (engine + UI, bound
-to the host's loopback) and Postgres 16 on `127.0.0.1:15432`; both restart
-automatically. Database migrations apply at boot.
+   Copy it, and set your host names and secrets.
+2. **Install the chart:**
 
-> The docker socket mount makes the engine part of the trusted control
-> plane (it builds workspace images on your daemon). Workspaces themselves
-> never see the socket.
+   ```sh
+   helm install apothecary oci://ghcr.io/intradeus/charts/apothecary \
+     --version <X.Y.Z> -n apothecary --create-namespace -f my-values.yaml
+   ```
+
+   A chart version pins every image. The chart's
+   [README](charts/apothecary/README.md) lists every value.
+3. **Open the address the install prints** and claim the instance by
+   creating the first account. Each account gets a Kubernetes provisioner
+   with the deployment's settings, so there is nothing to fill in.
+4. **On your machine, install the `apothecary` client** (the release's
+   binaries) and sign in once:
+
+   ```sh
+   apothecary login https://apothecary.example.com   # approve it in the browser
+   apothecary ssh-config     # once: ssh <workspace>.apothecary, VS Code Remote-SSH
+   ```
+
+   The sign-in lasts as long as you keep using it: it expires after 7 days
+   without use (`APOTHECARY_CLI_TOKEN_IDLE`), and every use extends it.
+   `apothecary update` keeps the client at the engine's version.
+
+Database migrations apply at boot. The master key (`apothecaryd keygen`)
+seals every stored secret; keep it in a Secret (`existingSecret`).
+
+## Reaching a run from your machine
+
+Everything goes through Apothecary's one HTTPS address. No VPN is needed,
+and no other port is published.
+
+- **A run's ports on your machine:** `apothecary forward <run>`, the run
+  named by its id or its workspace's name.
+  - Every port the workspace listens on lands on a free port of your
+    machine, and the client prints where (`3000 → localhost:43263`).
+    Forwarding the same port again lands on the same local port while it is
+    free, so bookmarks and database connections keep working.
+  - The forward follows the run's ports as they open and close.
+  - `apothecary forward <run> 5432` forwards one port, and `5432:15432` picks
+    its local port.
+  - `--same` keeps the port numbers: use it when a frontend calls its API at
+    `localhost:<port>`, so it works as on your laptop.
+  - Forwards run in the background until `apothecary forward stop <run>` (or
+    `--all`). Closing the terminal does not end them, and several runs
+    forward side by side.
+  - `apothecary forward status` lists them, run by run, with each run's
+    ticket. `apothecary forward logs` shows the forwarder's log.
+- **A shell or desktop VS Code:** after `apothecary ssh-config`,
+  `ssh <workspace>.apothecary`, or *Open in VS Code* from the run page.
+- **Web apps in the browser, without the client:** set an apps domain
+  (`access.http.appsDomain`, a wildcard DNS record and certificate). Each web
+  port is then at `https://<port>-<run>.<apps domain>`, behind its owner's
+  sign-in.
 
 ## Kubernetes
 
-Apothecary runs on any Kubernetes cluster — k3s included — from the Helm
-chart in `deploy/helm/apothecary`. The chart deploys the engine (and,
-optionally, a Postgres); the engine then creates every workspace object
+Apothecary runs on any Kubernetes cluster, k3s included, from the Helm
+chart in `charts/apothecary`. The chart deploys the engine (and,
+optionally, a Postgres). The engine then creates every workspace object
 itself, in a namespace of its own:
 
 - **one sandbox pod per run**: `docker:dind` plus git and the devcontainer
-  CLI, privileged (or unprivileged under a sysbox `RuntimeClass`, in a user
-  namespace of its own), with the run's checkout and inner docker state on a
-  volume. Compose devcontainers
-  run verbatim inside it, exactly as on the docker host;
-- **one egress gateway per project** (a Deployment): the same filter as on
-  docker. Each sandbox pod's default route is a WireGuard tunnel to it, and a
+  CLI, unprivileged under a sysbox `RuntimeClass` (in a user namespace of
+  its own) by default, with the run's checkout and inner docker state on a
+  volume. Compose devcontainers run verbatim inside it;
+- **one egress gateway per project** (a Deployment). Each sandbox pod's
+  default route is a WireGuard tunnel to it, and a
   network policy lets the pod send nothing but that tunnel and HTTP to the
   engine — so the gateway, which judges by TLS SNI / HTTP Host and records
   every denial, is the only way out. The cluster's own pod and service ranges
@@ -122,19 +163,6 @@ itself, in a namespace of its own:
 - **one browser pod per project** (Microsoft's Playwright MCP image, pinned by
   the engine, with the shim seeded in), reaching the engine's session proxy
   only.
-
-```sh
-helm upgrade --install apothecary deploy/helm/apothecary \
-  -n apothecary --create-namespace \
-  --set masterKey="$(docker run --rm ghcr.io/intradeus/apothecary/apothecaryd:latest keygen)" \
-  --set postgres.password=<strong> \
-  --set ingress.enabled=true --set ingress.host=apothecary.example.com \
-  --set ingress.appsDomain=apps.example.com
-```
-
-Exposed workspace ports and the browser editor are served by the engine at
-`<port>-<run>.<apps domain>`: point a wildcard DNS record (and certificate)
-at the ingress. Each app host asks the run's owner to sign in once.
 
 Cluster requirements:
 
@@ -150,11 +178,15 @@ Cluster requirements:
   `fopen: Permission denied`; upgrade, or allow that path on the node
   (`echo '/secrets/wg/** r,' | sudo tee -a /etc/apparmor.d/local/wg && sudo
   apparmor_parser -r /etc/apparmor.d/wg`).
-- **Privileged pods** in the workspaces namespace (the chart labels it), or
-  [sysbox](https://github.com/nestybox/sysbox) on the nodes and the
-  integration's *runtime class* set with *privileged* off — which is also
-  what opens the [daemon door](#docker-in-workspaces) under
-  `APOTHECARY_WORKSPACE_DOCKER=auto`. Under a runtime class the sandbox pod
+- **[sysbox](https://github.com/nestybox/sysbox) on the nodes that run
+  sandboxes** (the chart's default: `workspaces.runtimeClassName:
+  sysbox-runc`, privileged off). The RuntimeClass's own scheduling
+  (`nodeSelector`, `tolerations`) places sandbox pods on those nodes. This is
+  also what opens the [daemon door](#docker-in-workspaces) under
+  `APOTHECARY_WORKSPACE_DOCKER=auto`. A cluster of your own without sysbox
+  (k3d, a dev box) can run sandboxes privileged instead
+  (`workspaces.privileged: true`): sandbox root is then root on its node.
+  Under a runtime class the sandbox pod
   is also created with `hostUsers: false`, sysbox's documented pod shape on
   Kubernetes: a user namespace of the pod's own, made by the kubelet and
   adopted by sysbox. Without it sysbox still makes one for the container,
@@ -211,13 +243,24 @@ Cluster requirements:
   daemon cannot run on NFS.
 - Clusters whose pod or service ranges differ from k3s's defaults:
   `--set workspaces.protectCIDRs=<pods>,<services>,169.254.0.0/16`.
+- **On EKS:**
+  - Sandbox nodes are a managed node group on an Ubuntu EKS AMI with
+    `sysbox-deploy-k8s`, labelled and tainted for sandboxes. Check
+    sysbox's supported OS and kernel list against the AMI. Bottlerocket is
+    not supported.
+  - EBS volumes are single-zone, so use a `WaitForFirstConsumer` gp3
+    StorageClass.
+  - An ALB in front of the engine needs
+    `alb.ingress.kubernetes.io/target-type: ip`, because the engine's
+    Service is ClusterIP.
+  - Images can be mirrored to ECR with `image.overrides`.
 
 Locally, with [k3d](https://k3d.io) and [helm](https://helm.sh) installed:
 
 ```sh
 task k8s:cluster    # a k3d cluster + image registry; never touches ~/.kube/config
 task k8s:images     # build the five images from the working tree, push as :local
-task k8s:deploy     # helm install with values-k3d.yaml
+task k8s:deploy     # helm install with charts/apothecary/ci/k3d-values.yaml
 # → http://apothecary.localhost:8090
 task k8s:test-live  # the provisioner's and the browser's live tests against the cluster
 task k8s:down
@@ -234,11 +277,11 @@ lists `k3d-registry.localhost:5111` under `insecure-registries`;
 
 1. **Integrations** — add and **Test** each:
    - *Repositories*: GitLab or GitHub + token.
-   - *Provisioner*: **Docker** (a Docker-in-Docker sandbox per run on the
-     engine's docker daemon; nothing to fill in) or **Kubernetes** (a sandbox
-     pod per run; on a Helm install every field can stay empty — the chart's
-     `APOTHECARY_K8S_*` settings fill them). Either way the workspace inside
-     the sandbox is the repo's own `.devcontainer/devcontainer.json`.
+   - *Provisioner*: **Kubernetes**, a sandbox pod per run. Each account
+     already has one with every field empty, filled from the chart's
+     `APOTHECARY_K8S_*` settings; add another only to run on another cluster
+     or with other settings. The workspace inside the sandbox is the repo's
+     own `.devcontainer/devcontainer.json`.
    - *Harness*: opencode (paste your `auth.json` — it carries ALL model
      credentials), codex (API key and/or ChatGPT `auth.json`) or omp
      (oh-my-pi: provider API keys as `ANTHROPIC_API_KEY=…` lines and/or
@@ -404,12 +447,16 @@ is published on its own.
    that commit. Its job summary shows the version and the `CHANGELOG.md`
    section it adds.
 3. CI commits `CHANGELOG.md` as `chore(release): vX.Y.Z [skip ci]`, tags it
-   `vX.Y.Z`, pushes both to `main`, and pushes the five images to
+   `vX.Y.Z`, pushes both to `main`, pushes the five images to
    `ghcr.io/intradeus/apothecary/<name>` as `:vX.Y.Z`, `:latest` and
-   `:sha-…`.
+   `:sha-…`, and the Helm chart to
+   `oci://ghcr.io/intradeus/charts/apothecary` as `X.Y.Z`, pinned to those
+   images.
 4. Once the images are up, it creates the GitHub Release `vX.Y.Z`: that
    version's `CHANGELOG.md` section, a link to the diff since the previous
-   release, and the `docker pull` commands of its images. *Watch → Custom → Releases* on the repository notifies you of each
+   release, the `docker pull` commands of its images, the chart's install
+   command, and the `apothecary` client's binaries for Linux, macOS and
+   Windows. *Watch → Custom → Releases* on the repository notifies you of each
    one.
 
 Running it again after a failed image push re-publishes that release's
@@ -447,62 +494,33 @@ the title `pr-title` checked.
 
 ### Deploying a release
 
-Both production setups follow `:latest`, so a deployment picks up a release
-by re-pulling. Compose:
+A chart version pins every image, so upgrading is one command:
 
 ```sh
-task prod:upgrade       # pull apothecaryd, up -d, print the running version
+helm upgrade apothecary oci://ghcr.io/intradeus/charts/apothecary \
+  --version <X.Y.Z> -n apothecary -f my-values.yaml
 ```
 
-To stay on a fixed version instead, pin it in `deploy/.env`:
+The project browser is Microsoft's Playwright MCP image, pinned by digest in
+the engine, so it moves only with an engine release. Migrations apply at
+boot. Update the `apothecary` client from the same release.
 
-```sh
-# deploy/.env
-APOTHECARY_IMAGE=ghcr.io/intradeus/apothecary/apothecaryd:v3.0.0
-```
+(If the GHCR packages are private: `helm registry login ghcr.io` and an
+`imagePullSecrets` entry with a `read:packages` PAT, or make the packages
+public in their settings.)
 
-Helm (`deploy/helm/apothecary/values-production.yaml` lists the secret to
-create first):
-
-```sh
-helm upgrade --install apothecary deploy/helm/apothecary -n apothecary \
-  -f deploy/helm/apothecary/values-production.yaml --set ingress.host=<host>
-# each new release: the pull policy is Always, so a restart re-pulls :latest
-kubectl -n apothecary rollout restart deployment/apothecaryd
-```
-
-Pin all five images with `--set image.tag=vX.Y.Z`. The project browser is
-Microsoft's Playwright MCP image, pinned by digest in the engine, so it moves
-only with an engine release.
-
-(If the GHCR package is private: `docker login ghcr.io` with a
-`read:packages` PAT first, or make the package public in its settings.)
-
-Migrations apply at boot, and the workspace shim and the gateway image are
-content-addressed — they rebuild themselves on first use after their
-sources change.
-
-To run an **uncommitted tree** as the real containerized service, use the
-local-build stack — it builds from the working tree and runs beside the
-published-image stack (own ports: engine `127.0.0.1:8081`, postgres
-`127.0.0.1:15434`; own volumes; same `deploy/.env` secrets):
-
-```sh
-docker compose -p apothecary-local -f deploy/docker-compose.local.yaml up -d --build
-```
-
-Alternatives: `PREFIX=apothecary deploy/images.sh dev` builds a versioned
-image set for the main stack (`APOTHECARY_IMAGE=apothecary/apothecaryd:dev`
-in `deploy/.env`), and `go run ./cmd/apothecaryd serve -dev` skips docker
-entirely (fake kinds, seeded sandbox project).
+To run an **uncommitted tree** for real, on a local k3d cluster:
+`task k8s:cluster k8s:images k8s:deploy` (see [Kubernetes](#kubernetes)).
+`go run ./cmd/apothecaryd serve -dev` (or `task dev:up`) skips the cluster
+entirely: fake kinds, a seeded sandbox project.
 
 ## How a run works
 
 ```
 apothecaryd (the engine: flow interpreter, event log, API + UI)
-  │  unix sockets in the bind-mounted run folder — no container networking
+  │  the sandbox pod's dial-in mux — no container IP is ever dialled
   ▼
-per-run Docker-in-Docker sandbox ── egress only via the project gateway
+per-run sandbox pod (its own docker daemon) ── egress only via the project gateway
   └─ the repo's own devcontainer (the workspace)
        ├─ shim sidecar   one per workspace: HTTP on /opt/apothecary/sidecar.sock
        │    ├─ the coding agent, long-lived, spoken to in ACP
@@ -563,9 +581,8 @@ flow-side contract is in `docs/flow-language.md`.
 
 ## CLI
 
-Everything ships in the image (`docker compose -p apothecary -f
-deploy/docker-compose.yaml exec apothecaryd <cmd>`, or `run --rm` for
-one-offs):
+Two binaries. The engine's commands ship in its image (`kubectl -n apothecary
+exec deploy/apothecaryd -- apothecaryd <cmd>`):
 
 | command | purpose |
 |---|---|
@@ -580,6 +597,26 @@ one-offs):
 | `apothecaryd shim-hash` | the shim source hash a published shim image must carry |
 | `apothecaryd tools-hash` | the tools bundle hash a published tools image carries |
 | `apothecaryd version` | build version |
+
+The `apothecary` client runs on your machine (the release's binaries;
+`task build:client` from source) and talks to an engine over its HTTPS
+address:
+
+| command | purpose |
+|---|---|
+| `apothecary login <url>` | sign in: the page opens, you approve the code it shows, and this machine gets a sign-in that lasts while you use it (expires after 7 days unused). `--token <personal token>` signs in with a token from **Account → API tokens** instead, for scripts and CI; `--no-browser` only prints the page's address |
+| `apothecary forward <run> [port[:local]]... [--same]` | a run's ports on free local ports (`--same`: the same numbers), in the background until stopped; with no port, every port it listens on, kept in step |
+| `apothecary forward status` | what is forwarded, run by run |
+| `apothecary forward stop <run> [port]...` or `--all` | stop forwarding |
+| `apothecary forward logs` | the background forwarder's log |
+| `apothecary ssh-config` | once: route `ssh <workspace>.apothecary` and VS Code Remote-SSH through the engine |
+| `apothecary ssh-proxy <host>` | the ssh `ProxyCommand` that `ssh-config` installs |
+| `apothecary update [--check]` | install the client release matching the engine's version, checked against the release's `SHA256SUMS` |
+| `apothecary logout` | sign out, revoking this machine's sign-in |
+
+`APOTHECARY_URL` and `APOTHECARY_TOKEN` stand in for `login` in scripts. With
+no arguments the client prints its help. Once a day a command checks the
+engine's version and says when the client differs from it.
 
 Boot environment (the whole deployment plane): `APOTHECARY_POSTGRES_DSN`,
 `APOTHECARY_MASTER_KEY` (required); `APOTHECARY_LISTEN` (default
@@ -596,9 +633,11 @@ capacity — max concurrent runs (default 3) and max live environments
 that starts. On Kubernetes the chart also sets the
 `APOTHECARY_K8S_*` variables (namespace, engine URL, images, protected
 ranges), `APOTHECARY_APPS_DOMAIN` and `APOTHECARY_PUBLIC_URL`
-(`internal/platform/config/env.go` documents each). `APOTHECARY_SSH_LISTEN` and
-`APOTHECARY_SSH_ADVERTISE` turn the SSH door on (below); unset, there is
-none.
+(`internal/platform/config/env.go` documents each), including the sandbox
+shape every provisioner gets by default: `APOTHECARY_K8S_RUNTIME_CLASS` and
+`APOTHECARY_K8S_PRIVILEGED`. `APOTHECARY_SSH_LISTEN` gives the SSH door a TCP
+port of its own, for the dev loop; deployments reach it through the client's
+tunnel instead.
 
 Probes: `GET /healthz` answers 200 while the process serves HTTP;
 `GET /readyz` answers 503 while the engine drains for shutdown or cannot
@@ -636,29 +675,37 @@ method today; the method table is built for OAuth and passkeys to join it.
 
 ## SSH and VS Code
 
-A run's workspace is reachable from a desktop — plain `ssh`, or VS Code's
-Remote-SSH with its terminal and file tree — through the engine's **SSH
-door**: one listener the engine host exposes, usually on a VPN address
-(`APOTHECARY_SSH_LISTEN=100.64.0.9:2222`, with
-`APOTHECARY_SSH_ADVERTISE=engine.tail1234.ts.net:2222` naming what people
-connect to). No sshd runs in any container and no container port is
-published: the door authenticates the public keys registered on an account
-(**Account → SSH keys**), routes by username — the workspace's name, which
-the run page prints — to a run that account owns, and proxies the session
-to an SSH server in the workspace's sidecar, over the same private path the
-engine already uses to reach it. One host key for every run; its
-fingerprint is on the run page to verify on first connect.
+A run's workspace is reachable from a desktop, with plain `ssh` or VS Code's
+Remote-SSH (its terminal and file tree), through the engine's **SSH door**.
+No sshd runs in any container, and no SSH port is published.
 
-From a run's **Env ▾** menu: *Open in VS Code* (a `vscode://` link
-Remote-SSH understands — install the Remote-SSH extension once), the `ssh`
-command to copy, and the door's host key. The first connection from VS Code
-downloads its server into the workspace: that download rides the project's
-egress gateway, so allow `update.code.visualstudio.com` and
-`vscode.download.prss.microsoft.com` there (the held-connection review
-offers it), or set `remote.SSH.localServerDownload` to `always` on the
-desktop. Not served in this version: the sftp subsystem (use `scp -O` or
-rsync) and remote forwards (`-R`). A session ends when the workspace does
-(a rebuild, the reaper); VS Code reconnects on its own.
+1. **Register a key** under **Account → SSH keys**.
+2. **Run `apothecary ssh-config` once.** It writes one block into
+   `~/.ssh/config`: every host named `<workspace>.apothecary` goes through
+   `apothecary ssh-proxy`, inside the engine's HTTPS address.
+3. **Connect:** `ssh <workspace>.apothecary`, or *Open in VS Code* from the
+   run page.
+
+The door authenticates the key, checks that the run is yours, and proxies the
+session to an SSH server in the workspace's sidecar, over the engine's own
+path into the workspace. The tunnel itself needs your client's token. The
+door has one host key for every run, pinned under one alias; its fingerprint
+is on the run page.
+
+From a run's **Env ▾** menu: the one-time setup command, *Open in VS Code* (a
+`vscode://` link that Remote-SSH understands; install the Remote-SSH
+extension once), and the `ssh` command to copy. The first connection from VS
+Code downloads its server into the workspace. That download rides the
+project's egress gateway, so either:
+- allow `update.code.visualstudio.com` and
+  `vscode.download.prss.microsoft.com` there (the held-connection review
+  offers it), or
+- set `remote.SSH.localServerDownload` to `always` on the desktop.
+
+Port forwards (`ssh -L`) work too, though `apothecary forward` is simpler.
+Not served in this version: the sftp subsystem (use `scp -O` or rsync) and
+remote forwards (`-R`). A session ends when the workspace does (a rebuild,
+the reaper); VS Code reconnects on its own.
 
 Desktop VS Code keeps its own extensions over SSH. The ones that run in
 the workspace — language servers, the harness extensions — install into
@@ -677,49 +724,60 @@ extension is installed.) A harness extension signs in with the workspace's
 own credentials, the ones the engine seeded, never the desktop's.
 
 When the sidecar itself is broken and the door cannot dial, the operator's
-way in is the run's inner docker daemon, on the engine host:
-`DOCKER_HOST=unix://<RunsDir>/<workspace>/docker.sock docker exec -it <container> bash`
-— on Kubernetes `kubectl -n <namespace> exec -it <workspace> -c sandbox --
-docker exec -it <container> bash`.
+way in is the run's inner docker daemon:
+`kubectl -n <namespace> exec -it <workspace> -c sandbox -- docker exec -it <container> bash`.
 
 ## Development
 
-Four units of checks, each a task and a CI job (`.github/workflows/ci.yml`,
-on every pull request and push to `main`; a release needs all four green):
+The checks run with exactly CI's tools: Go from `go.mod` (the Taskfile's
+`GOTOOLCHAIN` fetches it), Node and npm from `.nvmrc` (`fnm use`), and helm,
+task and shellcheck at the versions in `.devcontainer/Dockerfile`, which has
+them all. `task` refuses a check on any other version.
+
+Every CI job (`.github/workflows/ci.yml`, on every pull request and push to
+`main`) is one task with the same name: the go-test job runs `task go:test`,
+and so on. CI skips a side of the tree a change does not touch (Go, UI,
+sandbox images, engine image); a release needs a green run.
 
 ```sh
-task test:unit                     # unit: Go (`go test ./...`) + the CPUI (vitest) — nothing running, macOS or Linux; args go to go test (-- -count=1 ./...)
-task cover                         #   what CI's unit job runs: the same tests under their coverage floors (Go incl. the Postgres tests, CPUI), reports as pages
-task test:integration              # integration: every suite below (needs docker)
-task test:integration:pg           #   the Postgres adapter and boot tests, on throwaway containers
-task test:integration:docker       #   docker workspaces (lifecycle, egress gateway, file tree) + the browser, inside the engine image
-task test:integration:harness      #   the pinned harness CLIs (tools image) against what the engine hands them
-task test:integration:k8s          #   the Kubernetes provisioner and project browser on a local k3d cluster
-task lint                          # lint: gofmt, go vet (linux + darwin, every build tag), model ids, API contract, svelte-check, CPUI linters
-task build                         # build: apothecaryd, shim, gateway, the CPUI, the five images
+task check                         # before pushing: every lint, the Go tests (Postgres included) and the CPUI tests, in parallel, under their coverage floors (needs docker for Postgres)
+task ci                            # everything CI runs, locally and in parallel: check, then the sandbox images and suites; never skips a side as CI does (needs docker, k3d, ~15 GB of disk)
+task lint                          #   every lint, in parallel; task test: every test suite
+                                   #   (the umbrellas log each check to build/checks/ and print one line per check, then the tail of any failure)
 
-task test                          # unit, then integration
-task test:linux                    # the Go unit tests in a Linux container, incl. the Linux-only build-tagged ones
-task verify                        # pre-commit gate: lint, unit tests with coverage, binaries, CPUI build
+task go:test                       # every Go test, Postgres ones included, under GO_COVER_MIN; pages in coverage/go/
+task go:lint                       # gofmt, go vet (linux with every build tag, darwin, the client on windows), the API contract
+task ui:test                       # the CPUI tests under their floors; pages in cpui/coverage/
+task ui:lint                       # svelte-check, the CPUI linters, the production build
+task repo:lint                     # no model id anywhere in the tree; the Helm chart and its README (chart:lint)
+task sandbox:images                # the four images the sandbox suites run
+task sandbox:test:harness          # the pinned harness CLIs (tools image) against what the engine hands them
+task sandbox:test:k8s              # the Kubernetes provisioner and project browser on a local k3d cluster
+task engine:image                  # the engine image
+
+task go:test:run -- ./internal/x -run TestY -v   # Go tests, nothing running (Postgres-backed ones skip)
+task go:test:pg                    # only the Postgres-backed Go tests, on throwaway containers
+task go:test:linux                 # the Go tests in a Linux container, incl. the Linux-only build-tagged ones
+task go:test:stress                # Go tests under CI-like load (2 CPUs, burners, -race)
+task ui:test:run -- src/lib/x      # CPUI tests, args to vitest
+task build                         # apothecaryd, the apothecary client, shim, gateway, the CPUI, the five images
 go run ./cmd/apothecaryd serve -dev   # real engine/API/UI, fake vendors
 task dev                           # the same, on :18080 against a scratch Postgres (API only)
 task dev:up                        # ...plus the built UI, master key written to deploy/.env if missing
 cd cpui && npm run dev             # UI dev server (proxies /api)
 
-devcontainer up --workspace-folder . && devcontainer exec --workspace-folder . task test:unit   # the repo's own devcontainer (no docker inside it: the pg suite runs on the host, or add the docker-outside-of-docker feature locally)
+devcontainer up --workspace-folder . && devcontainer exec --workspace-folder . task go:test:run   # the repo's own devcontainer (no docker inside it: the pg suite runs on the host, or add the docker-outside-of-docker feature locally)
 ```
 
-Development happens on macOS or Linux, and `task test:unit` passes on both
-(CI's unit job runs `task cover` on Linux: the same tests, Postgres ones
-included, under the coverage floors — `GO_COVER_MIN` in the Taskfile and the
+Development happens on macOS or Linux, and `task go:test:run` and `task
+ui:test:run` pass on both (CI runs `task go:test` and `task ui:test` on Linux:
+the same tests, Postgres ones included, under the coverage floors — `GO_COVER_MIN` in the Taskfile and the
 thresholds in `cpui/vite.config.ts`, which only ever rise): a unit test fakes
 what it needs (fixture `/proc` and
 `/sys` roots, injected paths) rather than reading the machine. Anything that
 needs a real environment is an integration test and runs in containers.
-Running Apothecary itself on macOS means running it in Docker
-(`task local`), never a native engine: the engine talks to its workspaces over
-unix sockets under RunsDir, which must be a path on the docker host (inside
-the docker VM on macOS), since those sockets do not cross a macOS file share.
+Running Apothecary for real means a cluster: locally, k3d
+(`task k8s:cluster k8s:images k8s:deploy`, on Linux or macOS).
 `go run ./cmd/apothecaryd serve -dev` stays for UI and API work against fake
 vendors.
 
@@ -748,7 +806,11 @@ them. The ports the adapters implement are split by capability under
 | `skills/` | the skills format and its library |
 | `ports/`, `adapters/` | the boundaries, and what implements them |
 | `httpapi/` | the HTTP API |
+| `client/` | the `apothecary` terminal client (`cmd/apothecary`): talks to an engine over its API only |
 | `platform/` | building blocks with no domain knowledge |
+
+The clients are two: the web UI in `cpui/`, and the terminal client. The
+Helm chart is in `charts/apothecary`.
 
 Design documents live in `docs/` — `DESIGN.md` (v1 engine),
 `DESIGN2.md` (config plane & distribution), with every deviation recorded
@@ -764,20 +826,18 @@ recipe:
 1. **The door.** The Postgres suites run on testcontainers, so the project
    turns on *Docker in workspaces* (step 3; the devcontainer itself declares
    no docker feature) and the instance must open the
-   [daemon door](#docker-in-workspaces): on your own laptop,
-   `APOTHECARY_WORKSPACE_DOCKER=on` in `deploy/.env` (sandboxes stay
-   privileged — a run on this repo is then root on your machine, your call);
-   on a shared server, `APOTHECARY_SANDBOX_RUNTIME=sysbox-runc` instead,
-   which opens it by itself. A closed door refuses the project with a
-   message naming both. The engine host must also reach `ghcr.io` (the
-   feature is fetched engine-side on docker).
-2. **Integrations.** A GitHub repository account (classic PAT with `repo`),
-   a Docker provisioner, a harness; the model is bound later under
-   Workshop → Flows → Configure.
+   [daemon door](#docker-in-workspaces). Under the chart's default
+   (unprivileged sysbox sandboxes) it opens by itself. On a cluster of your
+   own with privileged sandboxes, set `APOTHECARY_WORKSPACE_DOCKER: "on"` in
+   `engine.extraEnv`: a run on this repo is then root on its node, your call.
+   A closed door refuses the project with a message naming both.
+2. **Integrations.** A GitHub repository account (classic PAT with `repo`)
+   and a harness. The Kubernetes provisioner is already there. The model is
+   bound later under Workshop → Flows → Configure.
 3. **Project.** Repository `https://github.com/intradeus/apothecary`,
    locator `intradeus/apothecary`, default branch `main`, AGENTS.md path
    left default. Workspace: **Docker in workspaces** on. Commands: `verify` =
-   `task lint && task test:unit && task test:integration:pg`; optionally
+   `task check`; optionally
    `setup` = `bash .devcontainer/post-create.sh`.
 4. **Egress.** *Add sensible defaults*, then add `get.helm.sh` (helm comes
    from there) — everything else the build and the hooks dial (Debian, the
@@ -799,12 +859,13 @@ workspace (the image-building and sandbox-nesting suites).
 
 Engine and host are trusted; **workspaces are not** (prompt injection is
 assumed). The agent runs with its harness's approvals off — the sandbox is
-the boundary, not the agent's permission prompts. Workspaces get: a per-run Docker-in-Docker sandbox on its own
-`--internal` docker network with no external route, all egress forced
-through a WireGuard tunnel to a per-project gateway that filters by hostname (TLS SNI / HTTP
-Host, no MITM) against the derived allowlist — a privileged sandbox can't
-bypass it because enforcement lives outside it (the host needs the
-`wireguard` kernel module, mainline since 5.6); the run's own docker daemon
+the boundary, not the agent's permission prompts. Workspaces get: a per-run
+sandbox pod, unprivileged under sysbox by default, whose network policy lets
+it send nothing but a WireGuard tunnel to its project's gateway and HTTP to
+the engine. The gateway filters by hostname (TLS SNI / HTTP Host, no MITM)
+against the derived allowlist. A privileged sandbox can't bypass it either,
+because enforcement lives outside it (nodes need the `wireguard` kernel
+module, mainline since 5.6). The run's own docker daemon
 reaches a workspace only through the *daemon door* — open by itself under an
 unprivileged sandbox, by the operator's explicit `APOTHECARY_WORKSPACE_DOCKER=on`
 otherwise, and a repo asking for it while it is closed is refused before
@@ -817,57 +878,43 @@ token reaches only its own run's ping endpoints), and a resource that is
 not the caller's answers 404 — so a workspace, which can reach the API
 through its bridge, can do nothing with it but ask its own questions.
 Browser sessions are HttpOnly cookies; writes with a cookie must come from
-the UI's own origin. The engine itself still speaks plain HTTP: put TLS in
-front of it before leaving localhost, and the workspace-port relay stays
-bound to the listen host. Bound to every interface (`0.0.0.0`), the relay's
-links — the editor, exposed ports, service previews — name the host each
-browser opened the UI at, and so does the SSH door when nothing is set to
-advertise. Those per-port listeners carry raw TCP with no sign-in: on a
-shared network use `APOTHECARY_APPS_DOMAIN`, which serves every port behind
-the user's session. Integration secrets are secretbox-encrypted at
+the UI's own origin. **Nothing but the engine's HTTP address is published.**
+- **Workspace ports and SSH** reach people only through the client's
+  tunnels, which need a personal token and the run's ownership (and, for SSH,
+  a registered key).
+- **Web apps and the editor** get browser links only with an apps domain,
+  each behind its owner's sign-in.
+
+The engine itself speaks plain HTTP, so terminate TLS at the ingress.
+Integration secrets are secretbox-encrypted at
 rest under `APOTHECARY_MASTER_KEY` and never leave the engine unmasked.
 Residual risks and their rationale: `docs/IMPLEMENTATION_NOTES.md`.
 
-### Unprivileged sandboxes (optional)
+### Sandbox privilege
 
-By default the per-run sandbox is `--privileged`, because a nested dockerd
-needs to mount overlayfs, manage cgroups and program netfilter. That means
-**root in a sandbox is root on the host** — so a hostile repo (a
-`devcontainer.json` with `"runArgs": ["--privileged"]`, or a compose service
-with `privileged: true`, both of which run verbatim by design) or an escape
-from the workspace container reaches every other run's checkout, the host
-docker socket, and `APOTHECARY_MASTER_KEY` — i.e. every integration secret
-you have configured.
+A nested dockerd needs to mount overlayfs, manage cgroups and program
+netfilter. Run privileged, **root in a sandbox is root on its node**: a
+hostile repo (a `devcontainer.json` with `"runArgs": ["--privileged"]`, or a
+compose service with `privileged: true`, both of which run verbatim by
+design), or an escape from the workspace container, reaches every other
+sandbox on that node.
 
-Install [sysbox](https://github.com/nestybox/sysbox/blob/master/docs/user-guide/install.md)
-on the host and set one variable in `deploy/.env`:
+So the chart's default is **unprivileged sandboxes under
+[sysbox](https://github.com/nestybox/sysbox)**:
+`workspaces.runtimeClassName: sysbox-runc`, privileged off. Root inside a
+sandbox is then an unprivileged uid on the node, `/proc` and `/sys` are
+virtualised, and the pod gets a user namespace of its own. A compromised
+run is confined to what that run already legitimately holds.
 
-```sh
-APOTHECARY_SANDBOX_RUNTIME=sysbox-runc
-```
-
-The sandbox is then created with `--runtime=sysbox-runc` and **no**
-`--privileged`: root inside it is an unprivileged uid on the host, `/proc` and
-`/sys` are virtualized, and the only bind mount is the run's own folder. A
-compromised run is confined to what that run already legitimately holds. Boot
-and the provisioner's **Test** button fail with a precise error if the daemon
-has no such runtime, so a typo can't silently degrade to privileged.
-
-Caveats: **Linux only** (sysbox installs systemd units on the host, so it can't
-go into Docker Desktop's VM on macOS/Windows — leave the variable unset there;
-Docker Desktop Business subscribers get the same technology via Enhanced
-Container Isolation instead). Official packages cover Ubuntu/Debian, with
-Fedora/Rocky/Alma/CentOS/Amazon Linux listed as compatible and other distros
-building from source. Kernel ≥5.12. Ubuntu 25.04 and later confine
-`fusermount3` with AppArmor and sysbox starts no container until its mounts
-are allowed — the override is under the Kubernetes cluster requirements
-above; so is the user-namespace restriction of 24.04 and later. The default
-`docker:29-dind` sandbox image is verified under sysbox — the full provisioning path, egress gateway
-included (`docs/IMPLEMENTATION_NOTES.md`). If you override `dind_image`,
-re-verify it with the live test described at the top of
-`internal/adapters/workspace/live_test.go`. On a Linux host this is the
-recommended setting; it stays opt-in only because it is a host install we
-don't ship.
+- **Requirements:** sysbox installed on the nodes that run sandboxes, with
+  the cluster requirements under [Kubernetes](#kubernetes) (containerd ≥
+  2.0.5, sysbox ≥ 0.7, the AppArmor overrides on recent Ubuntu).
+- **Refusing to downgrade:** the chart refuses unprivileged sandboxes
+  without a runtime class, and the engine refuses `APOTHECARY_K8S_PRIVILEGED=off`
+  without `APOTHECARY_K8S_RUNTIME_CLASS`, so a typo can't silently degrade to
+  privileged.
+- **Privileged instead:** set `workspaces.privileged: true`, for a cluster
+  of your own without sysbox (k3d, a dev box). Never on a shared one.
 
 ### Docker in workspaces
 
@@ -885,8 +932,8 @@ Whether the door is open is one deployment setting, `APOTHECARY_WORKSPACE_DOCKER
 
 | value | the door |
 |---|---|
-| `auto` (default) | open only when the sandbox is unprivileged (`APOTHECARY_SANDBOX_RUNTIME`; on Kubernetes a runtime class with *privileged* off). There the sandbox is the boundary already, so handing a run its own daemon adds nothing it does not hold. |
-| `on` | open under privileged sandboxes too. **A workspace that takes it is then root on the host** — the daemon can start a privileged container in a privileged sandbox, which is the host. Fine for an instance on your own laptop running your own repos; not for a shared server, where sysbox is the answer. |
+| `auto` (default) | open only when the sandbox is unprivileged (a runtime class with *privileged* off, the chart's default). There the sandbox is the boundary already, so handing a run its own daemon adds nothing it does not hold. |
+| `on` | open under privileged sandboxes too. **A workspace that takes it is then root on its node**: the daemon can start a privileged container in a privileged sandbox, which is the node. Fine on a cluster of your own running your own repos; not on a shared one, where sysbox is the answer. |
 | `off` | never. |
 
 A repo that asks for the door while it is closed is refused at provision,
@@ -920,13 +967,13 @@ workspace itself dials is filtered as before.
 
 ## Image cache
 
-Each project's gateway keeps a warm image cache so the project's runs stop
-cold-pulling the same base images. It lives in the `apo-gw-<project>-cache`
-volume and is never reaped; the gateway container is likewise kept warm
-(`--restart unless-stopped`) instead of being torn down with the project's
-last run. To reclaim the space, or to force a rebuild of the gateway:
+Each project's gateway keeps a warm image cache, so the project's runs stop
+cold-pulling the same base images. It lives on the gateway's volume, the PVC
+`apo-gw-<project>` in the workspaces namespace, and is never reaped. The
+gateway itself is likewise kept running instead of being torn down with the
+project's last run. To reclaim the space, or to force a fresh gateway:
 
 ```sh
-docker rm -f apo-gw-<project>            # next run recreates it
-docker volume rm apo-gw-<project>-cache  # disposable: pure cache
+kubectl -n apothecary-workspaces delete deploy/apo-gw-<project>   # the next run recreates it
+kubectl -n apothecary-workspaces delete pvc/apo-gw-<project>      # disposable: pure cache
 ```

@@ -11,8 +11,10 @@
 #   release  commit CHANGELOG.md + tag vX.Y.Z, build the five images, push main
 #            and the tag atomically, then push the images as vX.Y.Z,
 #            sha-<short> and latest (latest only for the newest release),
-#            and last create the GitHub Release vX.Y.Z (its CHANGELOG section
-#            and the images' pull commands)
+#            then the Helm chart as oci://ghcr.io/intradeus/charts/apothecary
+#            X.Y.Z (pinned to those images), and last create the GitHub Release
+#            vX.Y.Z (its CHANGELOG section, the images' pull commands, the
+#            chart's install command and the apothecary client's binaries)
 #
 # The release commit carries [skip ci], so it starts no ci run of its own.
 name: manual-release
@@ -35,14 +37,14 @@ defaults:
 jobs:
   plan:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       mode: ${{ steps.plan.outputs.mode }}
       version: ${{ steps.plan.outputs.version }}
     env:
       SHA: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -79,7 +81,7 @@ jobs:
   release:
     needs: plan
     if: needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'resume'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     concurrency:
       group: manual-release
       # Never cancel: a release can be partway through pushing.
@@ -90,7 +92,7 @@ jobs:
     env:
       SHA: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -125,10 +127,26 @@ jobs:
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h /
-      # Build before anything is public.
+      # The layers ci built on main come from its Actions cache: only what the
+      # version changes (the engine's binary) is built again. A run on main
+      # reads only caches main wrote, never a pull request's.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: env.TAG != ''
+      - uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+        if: env.TAG != ''
+      # Build everything before anything is public.
       - name: Build the release images
         if: env.TAG != ''
+        env:
+          CACHE: gha-read
         run: deploy/release.sh images "$TAG"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: env.TAG != ''
+        with:
+          go-version-file: go.mod
+      - name: Build the client binaries
+        if: env.TAG != ''
+        run: deploy/release.sh client "$TAG"
       # Fails, publishing nothing, if main moved since the plan.
       - name: Push the release commit and tag
         if: env.TAG != '' && steps.plan.outputs.mode == 'release'
@@ -138,7 +156,18 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Push the release images
         if: env.TAG != ''
+        env:
+          CACHE: gha-read
         run: deploy/release.sh images "$TAG" --push
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        if: env.TAG != ''
+        with:
+          version: v4.3.0 # .devcontainer/Dockerfile HELM_VERSION
+      - name: Push the chart
+        if: env.TAG != ''
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          deploy/release.sh chart "$TAG" --push
       # The tag's CHANGELOG section, the diff since the previous tag, and its
       # images; the release and the run's summary both show it.
       - name: Write the release notes
@@ -160,6 +189,16 @@ jobs:
               echo "docker pull ghcr.io/intradeus/apothecary/$name:$TAG"
             done
             echo '```'
+            echo
+            echo "## Helm chart"
+            echo
+            echo '```sh'
+            echo "helm install apothecary oci://ghcr.io/intradeus/charts/apothecary --version ${TAG#v} -f my-values.yaml"
+            echo '```'
+            echo
+            echo "## The apothecary client"
+            echo
+            echo "Download the binary for your OS below, put it on your PATH as \`apothecary\`, then \`apothecary login <your engine's URL>\`. SHA256SUMS lists their checksums."
           } > "$RUNNER_TEMP/release.md"
       # Last, so a release never points at images that are not there. A
       # resumed release keeps the GitHub Release an earlier run made.
@@ -169,9 +208,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "The GitHub Release $TAG exists"
+            echo "The GitHub Release $TAG exists; re-uploading the client binaries"
+            gh release upload "$TAG" --clobber build/client/*
           else
-            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/release.md"
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/release.md" build/client/*
           fi
       - name: Summary
         if: env.TAG != ''

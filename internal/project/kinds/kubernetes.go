@@ -18,12 +18,17 @@ type KubernetesDefaults struct {
 	PullPolicy                                        string
 	ProtectCIDRs                                      []string
 	Transport                                         string // direct | portforward
+	// RuntimeClass and Privileged are the sandbox shape an integration gets
+	// when it leaves its own fields empty (APOTHECARY_K8S_RUNTIME_CLASS,
+	// APOTHECARY_K8S_PRIVILEGED=on|off). Privileged "" means on.
+	RuntimeClass, Privileged string
 }
 
 // Kubernetes is the provisioner/kubernetes kind: each run's sandbox is a pod
 // (docker:dind + the devcontainer CLI) on a Kubernetes cluster, egress goes
 // through the project's gateway over WireGuard, and the workspace inside is
-// whatever the repo defines — the same as the docker kind, on a cluster.
+// whatever the repo defines (its devcontainer.json), built by the reference
+// @devcontainers/cli inside the pod.
 type Kubernetes struct{ Defaults KubernetesDefaults }
 
 func (k Kubernetes) Descriptor() Descriptor {
@@ -47,9 +52,9 @@ func (k Kubernetes) Descriptor() Descriptor {
 			{Name: "storage", Label: "Workspace storage (pvc/emptydir)", Placeholder: "pvc", Default: "pvc"},
 			{Name: "storage_class", Label: "Storage class", Help: "Must be a local or block filesystem: the inner docker daemon cannot run on NFS."},
 			{Name: "storage_size", Label: "Storage size per run", Placeholder: "20Gi"},
-			{Name: "privileged", Label: "Privileged sandboxes (on/off)", Placeholder: "on", Default: "on",
+			{Name: "privileged", Label: "Privileged sandboxes (on/off)", Placeholder: orDefault(d.Privileged, "on"),
 				Help: "off needs a runtime class able to nest dockerd unprivileged (sysbox). The pod then also gets a user namespace of its own (hostUsers: false), which containerd 2.x requires for sysbox: containerd 2.0.5+, sysbox 0.7+ (README, cluster requirements)."},
-			{Name: "runtime_class", Label: "Runtime class", Placeholder: "sysbox-runc",
+			{Name: "runtime_class", Label: "Runtime class", Placeholder: orDefault(d.RuntimeClass, "sysbox-runc"),
 				Help: "A class that nests dockerd unprivileged, installed on the nodes. With privileged off the pod is created with hostUsers: false (README, cluster requirements)."},
 			{Name: "firewall", Label: "Egress firewall (on/off)", Placeholder: "on", Default: "on"},
 		},
@@ -99,8 +104,8 @@ func (k Kubernetes) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 		cleanup()
 		return nil, fmt.Errorf("kubernetes: storage must be pvc or emptydir, got %q", storage)
 	}
-	runtimeClass := cfg.Str("runtime_class", "")
-	privileged := cfg.Str("privileged", "on") != "off"
+	runtimeClass := cfg.Str("runtime_class", d.RuntimeClass)
+	privileged := cfg.Str("privileged", orDefault(d.Privileged, "on")) != "off"
 	if !privileged && runtimeClass == "" {
 		cleanup()
 		return nil, fmt.Errorf("kubernetes: privileged=off needs a runtime_class that can nest dockerd (e.g. sysbox-runc)")

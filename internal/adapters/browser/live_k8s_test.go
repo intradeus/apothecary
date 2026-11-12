@@ -3,11 +3,12 @@
 package browser
 
 // Live test of the Kubernetes browser host against a real cluster (k3d
-// locally: task test:integration:k8s, or task k8s:cluster k8s:images
+// locally: task sandbox:test:k8s, or task k8s:cluster k8s:images
 // k8s:test-live to keep the cluster): the browser pod pulls the pinned image
 // (DefaultImage), its init container seeds this tree's shim, and one MCP
-// session runs through the engine's session mux — the docker test's session
-// (liveSession), on a pod.
+// session (liveSession) runs through the engine's session mux: it browses an
+// app on the test's own loopback through the routing proxy, screenshots it,
+// and is refused the outside world.
 //
 // It needs what the workspace's Kubernetes live test needs:
 //
@@ -16,20 +17,29 @@ package browser
 //     default apothecary-live>-browser).
 //   - APOTHECARY_LIVE_IMAGE_PREFIX: where this tree's shim image was pushed
 //     (tag :local).
+//   - APOTHECARY_LIVE_PULL_POLICY (default Always): IfNotPresent when the
+//     image was imported into the cluster's nodes instead of pushed.
 //   - APOTHECARY_LIVE_KEEP=1 to leave the namespace for inspection.
+//   - APOTHECARY_LIVE_HOST_GATEWAY: the cluster network's gateway on the
+//     docker host, a candidate address that needs no DNS (the Taskfile sets
+//     it from `docker network inspect`).
 //
 // Unlike the workspace test it cannot stub the engine in the cluster: the
 // session mux IS this process, so the browser pod must reach it. The test
-// asks the cluster which of the docker host's names reaches it
+// asks the cluster which of the host's names reaches it
 // (host.k3d.internal on Linux, host.docker.internal on Docker Desktop and
 // OrbStack) and fails when none does.
 
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strconv"
@@ -38,8 +48,18 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/kube"
+	"apothecary/internal/ports/browserport"
 	"apothecary/workspace"
 )
+
+// pullPolicy is how the cluster gets this tree's shim image: pulled from the
+// registry it was pushed to, or already on the nodes (imported).
+func pullPolicy() string {
+	if p := os.Getenv("APOTHECARY_LIVE_PULL_POLICY"); p != "" {
+		return p
+	}
+	return "Always"
+}
 
 func TestLiveK8sBrowserSession(t *testing.T) {
 	kc := os.Getenv("APOTHECARY_LIVE_KUBECONFIG")
@@ -75,7 +95,7 @@ func TestLiveK8sBrowserSession(t *testing.T) {
 
 	const project = "live-k8s"
 	m := New(Config{
-		Host: &K8sHost{Kube: c, ShimImage: prefix + "/shim:local", Mux: mux, EngineCIDR: ip + "/32", PullPolicy: "Always"},
+		Host: &K8sHost{Kube: c, ShimImage: prefix + "/shim:local", Mux: mux, EngineCIDR: ip + "/32", PullPolicy: pullPolicy()},
 		// The kubelet pulls; nothing to prepare engine-side.
 		Image: func(context.Context) (string, error) { return DefaultImage, nil },
 		Tag:   func() string { return DefaultImage },
@@ -122,7 +142,11 @@ func freePort(t *testing.T) string {
 // hostSeenFromPods is the docker host's name that reaches this process from
 // a pod, and the IPv4 address it resolves to there (the browser's network
 // policy lets the pod reach that address only): a probe pod tells a
-// listener here, over each candidate, which one it came in on.
+// listener here, over each candidate, which one it came in on. The
+// candidates are k3d's and Docker Desktop's names for the host, then the
+// cluster network's gateway (APOTHECARY_LIVE_HOST_GATEWAY, set by `task
+// k8s:test-live`), which needs no DNS. The probe logs what it resolved and
+// whether it connected, so a failure says which of the two it was.
 func hostSeenFromPods(t *testing.T, c *kube.Client) (string, string) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "0.0.0.0:0")
@@ -145,6 +169,7 @@ func hostSeenFromPods(t *testing.T, c *kube.Client) (string, string) {
 		}
 	}()
 	port := ln.Addr().(*net.TCPAddr).Port
+	candidates := "host.k3d.internal host.docker.internal " + os.Getenv("APOTHECARY_LIVE_HOST_GATEWAY")
 	probe := fmt.Sprintf(`
 apiVersion: v1
 kind: Pod
@@ -157,20 +182,146 @@ spec:
       command: [sh, -c]
       args:
         - |
-          for h in host.k3d.internal host.docker.internal; do
-            ip=$(nslookup "$h" 2>/dev/null | awk '/^Address: [0-9.]+$/ {a=$2} END {print a}')
-            [ -n "$ip" ] && echo "$h $ip" | nc -w 3 "$ip" %d
+          for h in %s; do
+            case $h in
+              *[!0-9.]*) ip=$(nslookup "$h" 2>/dev/null | awk '/^Address: [0-9.]+$/ {a=$2} END {print a}') ;;
+              *) ip=$h ;;
+            esac
+            if [ -z "$ip" ]; then echo "$h: does not resolve"; continue; fi
+            if echo "$h $ip" | nc -w 3 "$ip" %d; then echo "$h ($ip): connected"; else echo "$h ($ip): no connection"; fi
           done
           exit 0
-`, port)
+`, candidates, port)
 	kubectlLive(t, c, probe, "apply", "-f", "-")
-	select {
-	case line := <-heard:
-		host, ip, _ := strings.Cut(line, " ")
-		return host, ip
-	case <-time.After(3 * time.Minute):
+	// The probe takes seconds once it runs: give up soon after it ends
+	// rather than waiting out the deadline.
+	deadline := time.After(3 * time.Minute)
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+	ended := 0
+	for {
+		select {
+		case line := <-heard:
+			host, ip, _ := strings.Cut(line, " ")
+			return host, ip
+		case <-tick.C:
+			phase, _ := exec.Command("kubectl", append(c.Global(), "get", "pod", "host-probe", "-o", "jsonpath={.status.phase}")...).Output()
+			if p := string(phase); p == "Succeeded" || p == "Failed" {
+				if ended++; ended < 2 {
+					continue
+				}
+			} else {
+				continue
+			}
+		case <-deadline:
+		}
 		logs, _ := exec.Command("kubectl", append(c.Global(), "logs", "host-probe")...).CombinedOutput()
-		t.Fatalf("no pod reached this process over host.k3d.internal or host.docker.internal (port %d); probe log:\n%s", port, logs)
+		hosts, _ := exec.Command("kubectl", "--kubeconfig", c.Kubeconfig, "-n", "kube-system", "get", "configmap", "coredns", "-o", "jsonpath={.data.NodeHosts}").CombinedOutput()
+		t.Fatalf("no pod reached this process (port %d) over %s\nprobe log:\n%s\nCoreDNS NodeHosts:\n%s", port, candidates, logs, hosts)
+		return "", ""
 	}
-	return "", ""
+}
+
+// chromiumCount counts the Chromium processes left in the browser.
+const chromiumCount = `for p in /proc/[0-9]*; do tr '\0' ' ' <$p/cmdline 2>/dev/null; echo; done | grep -c "[c]hrom" || true`
+
+// liveSession drives one MCP session of project's browser against an app
+// on the test's own loopback, standing in for the run's port 3000: it is
+// reached and seen, the outside world is not, and the session ends with its
+// stdin.
+func liveSession(t *testing.T, m *Manager, project string) {
+	t.Helper()
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `<html><head><title>Live app</title></head><body><h1>Hello from the run</h1></body></html>`)
+	}))
+	defer app.Close()
+	dial := func(ctx context.Context, port int) (net.Conn, error) {
+		if port != 3000 {
+			return nil, fmt.Errorf("nothing on %d", port)
+		}
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", app.Listener.Addr().String())
+	}
+
+	toServer, fromAgent := io.Pipe()
+	fromServer, toAgent := io.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		err := m.Session(ctx, browserport.BrowserSession{Project: project, Run: "r1", Dial: dial}, struct {
+			io.Reader
+			io.Writer
+		}{toServer, toAgent})
+		// Nobody reads the requests once the session is gone: fail the
+		// test's writes with the session's error instead of blocking them.
+		toServer.CloseWithError(fmt.Errorf("session ended: %v", err))
+		toAgent.Close()
+		done <- err
+	}()
+
+	rd := bufio.NewReader(fromServer)
+	id := 0
+	call := func(method string, params any) map[string]any {
+		t.Helper()
+		id++
+		line, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+		if _, err := fromAgent.Write(append(line, '\n')); err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		for {
+			l, err := rd.ReadBytes('\n')
+			if err != nil {
+				t.Fatalf("%s: %v (session: %v)", method, err, <-done)
+			}
+			var m map[string]any
+			if json.Unmarshal(l, &m) != nil {
+				continue
+			}
+			if v, ok := m["id"].(float64); ok && int(v) == id {
+				return m
+			}
+		}
+	}
+	text := func(m map[string]any) string {
+		b, _ := json.Marshal(m)
+		return string(b)
+	}
+
+	init := call("initialize", map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{},
+		"clientInfo": map[string]any{"name": "live", "version": "1"}})
+	if _, ok := init["result"]; !ok {
+		t.Fatalf("initialize = %s", text(init))
+	}
+	fromAgent.Write([]byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n"))
+
+	nav := call("tools/call", map[string]any{"name": "browser_navigate", "arguments": map[string]any{"url": "http://localhost:3000/"}})
+	if !strings.Contains(text(nav), "Page Title: Live app") {
+		t.Fatalf("navigate to the run = %s", text(nav))
+	}
+	// An action's snapshot goes to a file in the container; asking for one
+	// returns it inline.
+	snap := call("tools/call", map[string]any{"name": "browser_snapshot", "arguments": map[string]any{}})
+	if !strings.Contains(text(snap), "Hello from the run") {
+		t.Fatalf("snapshot = %s", text(snap))
+	}
+	shot := call("tools/call", map[string]any{"name": "browser_take_screenshot", "arguments": map[string]any{}})
+	if !strings.Contains(text(shot), `"type":"image"`) {
+		t.Fatalf("screenshot = %.500s", text(shot))
+	}
+	out := call("tools/call", map[string]any{"name": "browser_navigate", "arguments": map[string]any{"url": "https://example.com/"}})
+	if strings.Contains(text(out), "Example Domain") {
+		t.Fatalf("the browser reached the outside world: %.500s", text(out))
+	}
+	t.Logf("outside world: %.300s", text(out))
+
+	fromAgent.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the session outlived its stdin")
+	}
 }

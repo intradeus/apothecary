@@ -80,8 +80,8 @@ func TestMigrateFailureIsNotRecorded(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Close()
-	src := withMigrations(t, map[string]string{"0002_widgets.sql": `CREATE TABLE widgets (id int);`})
-	if _, err := openWith(ctx, dsn, src); err == nil || !strings.Contains(err.Error(), "0002_widgets") {
+	src := withMigrations(t, map[string]string{"9001_widgets.sql": `CREATE TABLE widgets (id int);`})
+	if _, err := openWith(ctx, dsn, src); err == nil || !strings.Contains(err.Error(), "9001_widgets") {
 		t.Fatalf("Open = %v, want a failure naming the migration", err)
 	}
 	// Repair the obstacle: the migration applies on the next boot.
@@ -90,7 +90,7 @@ func TestMigrateFailureIsNotRecorded(t *testing.T) {
 		t.Fatal(err)
 	}
 	s2 := openSrc(t, dsn, src)
-	if err := s2.pool.QueryRow(ctx, `SELECT 1 FROM schema_migrations WHERE version = 2`).Scan(new(int)); err != nil {
+	if err := s2.pool.QueryRow(ctx, `SELECT 1 FROM schema_migrations WHERE version = 9001`).Scan(new(int)); err != nil {
 		t.Errorf("retried migration not recorded: %v", err)
 	}
 }
@@ -121,7 +121,7 @@ func TestOpenFailsWhenThePostMigrationRebuildFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Close()
-	src := withMigrations(t, map[string]string{"0002_rebuild.sql": "-- rebuild: projections\nSELECT 1;"})
+	src := withMigrations(t, map[string]string{"9001_rebuild.sql": "-- rebuild: projections\nSELECT 1;"})
 	if _, err := openWith(ctx, dsn, src); err == nil || !strings.Contains(err.Error(), "rebuild projections after migrating") {
 		t.Fatalf("Open = %v", err)
 	}

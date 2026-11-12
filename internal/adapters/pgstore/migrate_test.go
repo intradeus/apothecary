@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io/fs"
 	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
+	"apothecary/internal/account/auth"
 	"apothecary/internal/adapters/pgstore/pgtest"
 )
 
@@ -70,15 +73,33 @@ func ledger(t *testing.T, s *Store) []int {
 	return out
 }
 
+// shipped is the versions this binary ships, in order.
+func shipped(t *testing.T) []int {
+	t.Helper()
+	migs, err := migrations(migrationsFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []int
+	for _, m := range migs {
+		out = append(out, m.version)
+	}
+	return out
+}
+
 func TestMigrateFreshAndIdempotent(t *testing.T) {
 	dsn := pgtest.Empty(t)
 	s := openDSN(t, dsn)
-	if got := ledger(t, s); !slices.Equal(got, []int{1}) {
-		t.Fatalf("ledger = %v, want the init alone", got)
+	want := shipped(t)
+	if want[0] != 1 {
+		t.Fatalf("shipped = %v, want the init first", want)
+	}
+	if got := ledger(t, s); !slices.Equal(got, want) {
+		t.Fatalf("ledger = %v, want every shipped migration %v", got, want)
 	}
 	s.Close()
-	if got := ledger(t, openDSN(t, dsn)); !slices.Equal(got, []int{1}) {
-		t.Fatalf("ledger after reopen = %v, want the init alone", got)
+	if got := ledger(t, openDSN(t, dsn)); !slices.Equal(got, want) {
+		t.Fatalf("ledger after reopen = %v, want %v", got, want)
 	}
 }
 
@@ -97,18 +118,40 @@ func TestMigrateRefusesUnknownVersion(t *testing.T) {
 	}
 }
 
-// A later release's migration applies once, on top of the init.
+// A later release's migration applies once, on top of what shipped.
 func TestMigrateAppliesALaterMigrationOnce(t *testing.T) {
 	dsn := pgtest.Empty(t)
 	openDSN(t, dsn).Close()
-	src := withMigrations(t, map[string]string{"0002_widgets.sql": `CREATE TABLE widgets (id int);`})
+	have := shipped(t)
+	next := have[len(have)-1] + 1
+	src := withMigrations(t, map[string]string{fmt.Sprintf("%04d_widgets.sql", next): `CREATE TABLE widgets (id int);`})
+	want := append(slices.Clone(have), next)
 	s := openSrc(t, dsn, src)
-	if got := ledger(t, s); !slices.Equal(got, []int{1, 2}) {
-		t.Fatalf("ledger = %v, want the init and 2", got)
+	if got := ledger(t, s); !slices.Equal(got, want) {
+		t.Fatalf("ledger = %v, want %v", got, want)
 	}
 	s.Close()
-	if got := ledger(t, openSrc(t, dsn, src)); !slices.Equal(got, []int{1, 2}) {
+	if got := ledger(t, openSrc(t, dsn, src)); !slices.Equal(got, want) {
 		t.Fatalf("ledger after reopen = %v", got)
+	}
+}
+
+// 0002_token_idle: a token without an inactivity window is stored as NULL,
+// what every token made before the column has (the round trip itself is the
+// auth contract's).
+func TestTokenIdleSecondsColumn(t *testing.T) {
+	s := openDSN(t, pgtest.Empty(t))
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	if err := s.CreateUser(ctx, auth.User{ID: "u1", Handle: "u1", Email: "u1@x", Name: "u1", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateToken(ctx, auth.Token{ID: "t1", UserID: "u1", Name: "ui", Hash: "h1", Prefix: "apo_1", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	var null bool
+	if err := s.pool.QueryRow(ctx, `SELECT idle_seconds IS NULL FROM api_tokens WHERE id='t1'`).Scan(&null); err != nil || !null {
+		t.Errorf("no window stored as NULL = %v, %v", null, err)
 	}
 }
 

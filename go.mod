@@ -5,6 +5,7 @@ go 1.26.4
 require (
 	github.com/felixge/httpsnoop v1.1.0
 	github.com/getkin/kin-openapi v0.149.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/itchyny/gojq v0.12.19
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/oklog/ulid/v2 v2.1.1

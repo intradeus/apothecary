@@ -112,7 +112,6 @@ func TestDescriptorsFlagSecretsAndRequired(t *testing.T) {
 		{GitLabIssues{}.Descriptor(), []string{"token"}, []string{"base_url", "token"}},
 		{Jira{}.Descriptor(), []string{"api_token"}, []string{"base_url", "api_token"}},
 		{Kubernetes{}.Descriptor(), []string{"kubeconfig"}, nil},
-		{Docker{}.Descriptor(), nil, nil},
 	} {
 		t.Run(tc.d.Port+"/"+tc.d.Kind, func(t *testing.T) {
 			var secret, required []string
@@ -369,34 +368,6 @@ func TestSplitList(t *testing.T) {
 	}
 }
 
-// The docker kind's paths reach the adapter: its Test names the CLI it tried.
-// Neither exists, so nothing runs, and a context ending early cuts the spawn
-// retries short.
-func TestDockerNamesItsConfiguredCLIs(t *testing.T) {
-	dir := t.TempDir()
-	missing := filepath.Join(dir, "no-such-cli")
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	p, err := Docker{}.New(Config{Values: map[string]any{"devcontainer_path": missing}}, ProvisionerDeps{RunsDir: dir})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer p.Close()
-	if err := p.Test(ctx); err == nil || !strings.Contains(err.Error(), "devcontainer CLI not runnable") || !strings.Contains(err.Error(), missing) {
-		t.Errorf("devcontainer = %v", err)
-	}
-	p, err = Docker{}.New(Config{Values: map[string]any{"devcontainer_path": "true", "docker_path": missing, "firewall": "off"}}, ProvisionerDeps{RunsDir: dir})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer p.Close()
-	short, stop := context.WithTimeout(context.Background(), 2*time.Second)
-	defer stop()
-	if err := p.Test(short); err == nil || !strings.Contains(err.Error(), "docker CLI not runnable") || !strings.Contains(err.Error(), missing) {
-		t.Errorf("docker = %v", err)
-	}
-}
-
 func TestKubernetesDescriptorShowsTheDeploymentsAnswers(t *testing.T) {
 	d := Kubernetes{Defaults: KubernetesDefaults{Namespace: "work", PullPolicy: "Always"}}.Descriptor()
 	byName := map[string]Field{}
@@ -473,6 +444,37 @@ func TestKubernetesValidation(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "kubernetes: kubeconfig") {
 		t.Errorf("err = %v", err)
 	}
+}
+
+// The deployment's sandbox shape (APOTHECARY_K8S_RUNTIME_CLASS and
+// APOTHECARY_K8S_PRIVILEGED) answers an integration that leaves it empty, and
+// the form shows it; an integration's own value still wins.
+func TestKubernetesSandboxShapeFromTheDeployment(t *testing.T) {
+	d := KubernetesDefaults{Namespace: "w", EngineURL: "http://e:8080", RuntimeClass: "sysbox-runc", Privileged: "off"}
+	byName := map[string]Field{}
+	for _, f := range (Kubernetes{Defaults: d}).Descriptor().Fields {
+		byName[f.Name] = f
+	}
+	if byName["privileged"].Placeholder != "off" || byName["runtime_class"].Placeholder != "sysbox-runc" || byName["privileged"].Default != "" {
+		t.Errorf("privileged %+v, runtime_class %+v", byName["privileged"], byName["runtime_class"])
+	}
+	secrets := map[string]string{"kubeconfig": testKubeconfig}
+	p, err := Kubernetes{Defaults: d}.New(Config{Secrets: secrets}, ProvisionerDeps{RunsDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("unprivileged from the deployment: %v", err)
+	}
+	p.Close()
+	// Privileged off from the deployment, but no runtime class anywhere: refused.
+	d.RuntimeClass = ""
+	if _, err := (Kubernetes{Defaults: d}).New(Config{Secrets: secrets}, ProvisionerDeps{RunsDir: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "privileged=off needs a runtime_class") {
+		t.Errorf("err = %v", err)
+	}
+	// The integration's own value wins over the deployment's.
+	p, err = Kubernetes{Defaults: d}.New(Config{Values: map[string]any{"privileged": "on"}, Secrets: secrets}, ProvisionerDeps{RunsDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("privileged from the integration: %v", err)
+	}
+	p.Close()
 }
 
 func TestKubernetesBuildsAndCleansUp(t *testing.T) {

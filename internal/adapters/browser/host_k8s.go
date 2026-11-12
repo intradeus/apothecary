@@ -13,11 +13,10 @@ import (
 	"apothecary/internal/ports/envport"
 )
 
-// K8sHost runs each project's browser as a pod. A pod cannot share a unix
-// socket with the engine, so a session's Chromium reaches the routing proxy
-// over TCP: the engine's SessionMux, opened with the session's token. The
-// pod's network policy lets it reach that port and nothing else — the
-// docker host's --network none, with one door. The shim comes from the
+// K8sHost runs each project's browser as a pod. A session's Chromium reaches
+// the routing proxy over TCP: the engine's SessionMux, opened with the
+// session's token. The pod's network policy lets it reach that port and
+// nothing else — no network, with one door. The shim comes from the
 // release's shim image, seeded into the pod by an init container.
 type K8sHost struct {
 	Kube *kube.Client

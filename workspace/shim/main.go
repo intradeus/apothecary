@@ -1,7 +1,7 @@
 // apothecary-shim is the single static in-workspace helper binary
 // (DESIGN.md §10 + the devcontainer engine bridge). It is built FROM THIS
-// SOURCE by docker itself (wsimage EnsureShim / the base-image multi-stage
-// build) — stdlib plus two pinned pure-Go dependencies (gojq for `jq`,
+// SOURCE by the shim image's multi-stage build (workspace/images/shim) —
+// stdlib plus two pinned pure-Go dependencies (gojq for `jq`,
 // x/crypto/ssh for the sidecar's SSH server), CGO off — so it runs in any
 // workspace image including musl ones, with no node/curl/jq assumptions.
 //

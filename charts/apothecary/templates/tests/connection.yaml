@@ -1,0 +1,16 @@
+# `helm test`: the engine answers its liveness probe through its Service.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: apothecaryd-test-connection
+  labels:
+    {{- include "apothecary.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: healthz
+      image: curlimages/curl:8.11.1
+      args: ["-fsS", "--retry", "5", "--retry-connrefused", "http://apothecaryd.{{ .Release.Namespace }}.svc.{{ .Values.workspaces.clusterDomain }}:8080/healthz"]

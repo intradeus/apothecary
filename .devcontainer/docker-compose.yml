@@ -14,9 +14,9 @@ services:
     build:
       context: ..                      # the repo root: go.mod/go.sum pre-warm the module cache
       dockerfile: .devcontainer/Dockerfile
-    init: true                         # a reaping PID 1 (the process-group tests; see test:linux)
+    init: true                         # a reaping PID 1 (the process-group tests; see go:test:linux)
     tmpfs:
-      - /tmp:exec,mode=1777            # overlayfs /tmp reports empty dirs as 0 bytes (see test:linux)
+      - /tmp:exec,mode=1777            # overlayfs /tmp reports empty dirs as 0 bytes (see go:test:linux)
     volumes:
       - ..:/workspaces/apothecary:cached
       # The container's own node_modules: `npm ci` here never deletes or

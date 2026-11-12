@@ -1,0 +1,171 @@
+# Apothecary on Kubernetes. The chart deploys the ENGINE (and optionally a
+# Postgres); the engine itself creates every workspace object at runtime —
+# one sandbox pod per run, one egress gateway and one browser per project —
+# in the workspaces namespace. People reach it through one HTTPS address:
+# the UI, the API, and the `apothecary` CLI's tunnels (a run's ports on
+# their localhost, SSH into workspaces) all ride it.
+
+image:
+  # -- Prefix of the five release images: apothecaryd, sandbox, shim, tools,
+  # egress-gw (deploy/images.sh). The project browser is Microsoft's
+  # Playwright MCP image, pinned by the engine.
+  repository: ghcr.io/intradeus/apothecary
+  # -- Image tag. Empty: the chart's appVersion, so a chart version pins every
+  # image.
+  tag: ""
+  # -- Pull policy. Empty: Always for a reused tag (latest, local),
+  # IfNotPresent for a release tag.
+  pullPolicy: ""
+  # -- Per-image overrides (full references), e.g. a mirror such as ECR.
+  # browser must be the same image as the engine's pin (its session command
+  # depends on the image's layout).
+  overrides:
+    apothecaryd: ""
+    sandbox: ""
+    shim: ""
+    tools: ""
+    gateway: ""
+    browser: ""
+# -- Pull secrets for private registries or mirrors.
+imagePullSecrets: []
+
+# -- The master key that seals every stored secret (`apothecaryd keygen`).
+# Prefer existingSecret in production.
+masterKey: ""
+# -- A Secret holding APOTHECARY_MASTER_KEY and APOTHECARY_POSTGRES_DSN; when
+# set, the chart creates no Secret of its own.
+existingSecret: ""
+# -- The Postgres DSN when the bundled Postgres is off and no existingSecret
+# is set.
+externalDSN: ""
+
+postgres:
+  # -- A single-instance Postgres in the release's namespace. For production,
+  # disable it and use a managed one (existingSecret or externalDSN).
+  enabled: true
+  # -- Postgres image.
+  image: postgres:16
+  # -- Database user.
+  user: apothecary
+  # -- Database password; required when enabled.
+  password: ""
+  # -- Database name.
+  database: apothecary
+  # -- Volume size.
+  storage: 10Gi
+  # -- Storage class; empty for the cluster default.
+  storageClass: ""
+
+# How people reach Apothecary: one HTTP address. Nothing else is published —
+# no SSH port, no port per workspace: the CLI tunnels both through it.
+access:
+  # -- The UI's own address as browsers reach it (https://apothecary.example.com).
+  # Derived from the ingress when that is enabled; set it when the HTTP
+  # Service is reached directly. Required with an apps domain.
+  publicURL: ""
+  http:
+    service:
+      # -- The engine's Service type: ClusterIP behind an ingress, or
+      # LoadBalancer / NodePort to reach it directly (a LAN dev box).
+      type: ClusterIP
+      # -- Service annotations (a cloud load balancer's, a VPN operator's).
+      annotations: {}
+    ingress:
+      # -- Serve the UI through an Ingress.
+      enabled: false
+      # -- Any ingress class: traefik, nginx, alb, a VPN operator's. The chart
+      # passes it, the annotations and tls through untouched.
+      className: ""
+      # -- Ingress annotations (e.g. alb.ingress.kubernetes.io/target-type: ip
+      # behind an AWS ALB, cert-manager's issuer).
+      annotations: {}
+      # -- The UI's hostname; required when enabled.
+      host: ""
+      # -- Ingress TLS, as the controller wants it.
+      tls: []
+      #  - secretName: apothecary-tls
+      #    hosts: [apothecary.example.com, "*.apps.example.com"]
+    # -- http or https: how browsers reach the ingress host and the apps domain.
+    scheme: https
+    # -- Optional: browser links to web apps a run serves, at
+    # <port>-<run>.<appsDomain>, behind the owner's sign-in. Needs a wildcard
+    # DNS record and certificate on the ingress, and a domain other than the
+    # UI's. Without it, ports are reached with `apothecary forward`.
+    appsDomain: ""
+    # -- The port browsers use for the ingress when it is not the scheme's
+    # default (k3d: 8090).
+    port: ""
+
+workspaces:
+  # -- Where sandboxes, gateways and browsers live.
+  namespace: apothecary-workspaces
+  # -- Create that namespace with the chart.
+  createNamespace: true
+  # -- The namespace's Pod Security level. Gateways need NET_ADMIN, so
+  # privileged even with unprivileged sandboxes.
+  podSecurity: privileged
+  # -- The RuntimeClass that nests each run's dockerd unprivileged (sysbox,
+  # installed on the nodes that run sandboxes). The RuntimeClass's own
+  # scheduling (nodeSelector, tolerations) places sandbox pods on those nodes.
+  runtimeClassName: sysbox-runc
+  # -- Run sandboxes privileged instead. Sandbox root is then root on its
+  # node: for a cluster of your own without sysbox (k3d, a dev box), never a
+  # shared one. Needed when runtimeClassName is empty.
+  privileged: false
+  # -- Destinations no workspace may reach through its gateway: the cluster's
+  # pod and service ranges and link-local metadata. The defaults are k3s's;
+  # set your cluster's (EKS: the VPC CIDR).
+  protectCIDRs: "10.42.0.0/16,10.43.0.0/16,169.254.0.0/16"
+  # -- The cluster's DNS domain.
+  clusterDomain: cluster.local
+
+# The engine is one pod (strategy Recreate): it holds in-process state (runs'
+# loops, live tunnels, the SSH door) and owns the runs volume, so it never
+# runs twice.
+engine:
+  runsDir:
+    # -- The engine's runs volume: uploads, snapshots, exec logs, markers.
+    size: 20Gi
+    # -- Storage class; empty for the cluster default.
+    storageClass: ""
+  # -- Publish ports the workspace starts listening on without a click (with
+  # an apps domain).
+  portAutoExpose: false
+  uploads:
+    # -- Upload size cap in bytes; empty for 25 MiB.
+    maxBytes: ""
+    # -- Allowed MIME types, comma-separated; empty for the engine's list.
+    mimeAllow: ""
+    # -- Cap for engine captures in bytes; empty for the upload cap.
+    snapshotMaxBytes: ""
+  # -- Any other APOTHECARY_* variable, e.g. APOTHECARY_WORKSPACE_DOCKER: "on"
+  # to hand a run's docker daemon to a docker-outside-of-docker devcontainer
+  # under privileged sandboxes too (auto, the default, does so only
+  # unprivileged).
+  extraEnv: {}
+  # -- The engine container's resources.
+  resources: {}
+  # -- The engine pod's node selector.
+  nodeSelector: {}
+  # -- The engine pod's tolerations.
+  tolerations: []
+
+otel:
+  # -- OTLP endpoint for traces, metrics and logs; empty exports nothing.
+  endpoint: ""
+  # -- grpc or http/protobuf.
+  protocol: grpc
+  # -- OTEL_EXPORTER_OTLP_HEADERS.
+  headers: ""
+  # -- OTEL_RESOURCE_ATTRIBUTES.
+  resourceAttributes: ""
+
+log:
+  # -- json or text.
+  format: json
+  # -- debug, info, warn or error.
+  level: info
+
+# -- Where the admin's System hub links for platform dashboards; empty hides
+# the link.
+grafanaUrl: ""

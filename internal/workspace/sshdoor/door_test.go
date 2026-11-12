@@ -690,3 +690,88 @@ func TestFailuresWindowAndSweep(t *testing.T) {
 		t.Fatalf("reset did not clear: %+v", f.by["1.2.3.4"])
 	}
 }
+
+// tunnel runs one connection through ServeConn, as the API does for the
+// HTTPS tunnel, and returns the client's end.
+func (r *doorRig) tunnel(t *testing.T, workspace, who, user string, key ssh.Signer) (*ssh.Client, error) {
+	t.Helper()
+	// A real socket pair: net.Pipe is unbuffered, and both ends of an SSH
+	// handshake write their banner first.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		if doorEnd, err := ln.Accept(); err == nil {
+			r.door.ServeConn(doorEnd, workspace, who)
+		}
+	}()
+	cliEnd, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc, chans, reqs, err := ssh.NewClientConn(cliEnd, "tunnel", &ssh.ClientConfig{
+		User: user, Auth: []ssh.AuthMethod{ssh.PublicKeys(key)},
+		HostKeyCallback: ssh.FixedHostKey(r.door.cfg.HostKey.PublicKey()), Timeout: 5 * time.Second,
+	})
+	if err != nil {
+		cliEnd.Close()
+		return nil, err
+	}
+	c := ssh.NewClient(sc, chans, reqs)
+	t.Cleanup(func() { c.Close() })
+	return c, nil
+}
+
+// Through the tunnel the workspace is the one the tunnel was opened for:
+// the SSH username is whatever the person's ssh sends, and ownership is
+// still the door's to check.
+func TestTunnelledConnectionNamesItsWorkspace(t *testing.T) {
+	rig := newDoorRig(t)
+	client, err := rig.tunnel(t, "apo-alice-run", "user:alice", "whoever-locally", rig.alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ses, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ses.Close()
+	if out, _ := ses.Output("whoami"); string(out) != "out:whoami:" {
+		t.Errorf("out = %q", out)
+	}
+	// Someone else's workspace is refused, whatever the username says.
+	if _, err := rig.tunnel(t, "apo-bob-run", "user:alice", "apo-alice-run", rig.alice); err == nil {
+		t.Error("alice reached bob's workspace through the tunnel")
+	}
+	// The throttle counts the caller the API named, not an address every
+	// tunnel shares.
+	counted := func(who string) bool {
+		f := rig.door.failures
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.by[who] != nil
+	}
+	// The door records the refusal after the client has its answer.
+	deadline := time.Now().Add(5 * time.Second)
+	for !counted("user:alice") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !counted("user:alice") || counted("127.0.0.1") {
+		t.Error("the failure must be counted against the tunnel's caller")
+	}
+}
+
+// A door reached only through the tunnel has no address of its own.
+func TestDoorWithoutAListener(t *testing.T) {
+	seed := make([]byte, 32)
+	key, _ := KeyFromSeed(seed)
+	d, err := New(Config{HostKey: key, DoorKey: key, Keys: newKeyring(t).svc, Targets: targets{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, p := d.Address(); h != "" || p != 0 {
+		t.Errorf("Address = %q:%d", h, p)
+	}
+}

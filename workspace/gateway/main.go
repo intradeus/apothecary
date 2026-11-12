@@ -18,8 +18,9 @@
 // the Docker Hub mirror and the build cache (registry.go) and the VS Code
 // extension gallery (gallery.go).
 //
-// Self-contained (pure stdlib), like workspace/shim: it is built standalone by
-// wsimage.EnsureGatewayImage and cannot import apothecary packages.
+// Self-contained (pure stdlib), like workspace/shim: it is built standalone
+// into the egress-gw image (workspace/images/gateway) and cannot import
+// apothecary packages.
 package main
 
 import (

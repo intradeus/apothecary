@@ -1,5 +1,9 @@
 export default {
 	'ui.dismiss': 'Dismiss',
+	'ui.copy.label': 'copy',
+	'ui.copy.done': 'copied',
+	'ui.copy.aria': 'Copy {command}',
+	'ui.copy.failed': 'Could not copy — the browser refused clipboard access.',
 	'ui.breadcrumb': 'Breadcrumb',
 	'ui.banner.more': '+{count} more',
 	'ui.logo.title': 'Apothecary',

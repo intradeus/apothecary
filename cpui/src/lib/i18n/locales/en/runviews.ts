@@ -30,6 +30,11 @@ export default {
 	'runview.session.closed_text': 'The run is finished.',
 	'runview.session.closed_text_ws':
 		'The run is finished. The workspace stays up until the reaper removes it.',
+	'runview.ports.forward': 'On your machine',
+	'runview.ports.forward_help':
+		'Every port the workspace listens on, each on a free port of your machine, kept in step as ports open and close. Needs the apothecary CLI, signed in once with apothecary login; apothecary forward status lists what is forwarded, run by run.',
+	'runview.ports.forward_same_help':
+		'The same port numbers on your machine, so a frontend calling its API at localhost:<port> works as it does on your laptop.',
 	'runview.ports.detected': 'Detected listening',
 	'runview.ports.nothing_new': 'Nothing new listening — ports the workspace opens show up here.',
 	'runview.ports.title_service': 'Detected listener in service {service} — expose and open',

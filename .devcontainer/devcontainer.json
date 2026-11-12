@@ -15,7 +15,7 @@
 	// setting adds it (the engine injects docker-outside-of-docker, bound to
 	// the run's own sandbox daemon). In VS Code, add that feature yourself if
 	// you want the Postgres suites' testcontainers inside the container;
-	// otherwise run `task test:integration:pg` on the host.
+	// otherwise run `task go:test:pg` on the host.
 	"forwardPorts": [18080],
 	"portsAttributes": {
 		"18080": { "label": "apothecary (task dev:up)" }

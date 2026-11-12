@@ -2,7 +2,7 @@ package main
 
 // A minimal RFC 6455 WebSocket server — enough for one terminal stream. The
 // shim is built from its own source tree with two pinned dependencies and
-// nothing else (see wsimage.EnsureShim), so this is stdlib by choice as
+// nothing else (see workspace/images/shim), so this is stdlib by choice as
 // much as necessity, and small: no extensions, no subprotocols, server role
 // only.
 

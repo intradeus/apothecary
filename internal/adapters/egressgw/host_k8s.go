@@ -22,12 +22,11 @@ import (
 )
 
 // K8sHost runs each project's gateway as a Deployment on a Kubernetes cluster.
-// A pod has no docker network to be multi-homed onto, so each run's sandbox
-// pod reaches its gateway over its own WireGuard peer: the pod's default route
-// is the tunnel, its network policy lets it send nothing but WireGuard to the
-// gateway (and HTTP to the engine), and the gateway judges what comes out of
-// wg0 with the same filter a docker run network gets. Every peer is allowed
-// exactly its own /32, so attribution is the same lookup — and unforgeable.
+// Each run's sandbox pod reaches its gateway over its own WireGuard peer: the
+// pod's default route is the tunnel, its network policy lets it send nothing
+// but WireGuard to the gateway (and HTTP to the engine), and the gateway
+// judges what comes out of wg0. Every peer is allowed exactly its own /32, so
+// attribution is a lookup of the source address — and unforgeable.
 type K8sHost struct {
 	Kube            *kube.Client
 	Image           string   // the gateway image (cluster-pullable)
@@ -49,6 +48,10 @@ const (
 	wgNet       = "10.90.0.0/16"
 	wgGatewayIP = "10.90.0.1"
 	wgPort      = 51820
+	// controlPort is the gateway's control API; buildCacheDir where its
+	// build-cache registry keeps its storage.
+	controlPort   = "9041"
+	buildCacheDir = "/var/lib/buildcache"
 	// The labels the gateway's and runs' objects carry.
 	labelManaged = "apothecary.io/managed"
 	labelGateway = "apothecary.io/gateway"

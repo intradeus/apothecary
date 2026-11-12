@@ -1,31 +1,35 @@
-// Package browser is the project browser: ONE container per project
+// Package browser is the project browser: ONE pod per project
 // (apo-browser-<project id>) that its runs share, a Chromium launched per agent
 // session inside it, driven through Playwright's MCP server — what a flow's
 // builtin `browser` MCP server is (FLOWLANG §1 mcp_servers).
 //
-// Lifecycle follows the egress gateway's (internal/adapters/egressgw): the container
+// Lifecycle follows the egress gateway's (internal/adapters/egressgw): the pod
 // is created on first need from Microsoft's Playwright MCP image (DefaultImage,
 // pinned by digest), reused while it runs, recreated when it runs a stale
 // image or shim and nobody is using it, and stopped after a while with no
-// session. The image is not ours: the engine gives it the shim (a read-only
-// mount on docker, a seeded volume on Kubernetes) and keeps it idle on
-// `sleep` instead of the image's own MCP server.
+// session. The image is not ours: the engine gives it the shim (a volume an
+// init container seeds) and keeps it idle on `sleep` instead of the image's
+// own MCP server.
 //
-// A session is one `docker exec -i` of `apothecary-shim browser-session`,
+// A session is one `kubectl exec -i` of `apothecary-shim browser-session`,
 // which starts @playwright/mcp (one MCP server, one Chromium) on that exec's
 // stdio — the engine bridges it to the agent's `shim browser-mcp` in the
-// workspace. The container has NO network (--network none): the session's
-// Chromium proxies everything through a loopback relay in the container, to a
-// unix socket on the per-project bind mount, to this package's routing proxy
-// (proxy.go), which sends the run's localhost to the run's workspace and
-// refuses everything else. Container→host IP traffic is blocked on hardened
-// docker hosts anyway; a bind-mounted unix socket is the sanctioned channel.
+// workspace. The pod's network policy lets it reach the engine's session mux
+// (mux.go) and nothing else: the session's Chromium proxies everything
+// through a loopback relay in the pod, over that mux, to this package's
+// routing proxy (proxy.go), which sends the run's localhost to the run's
+// workspace and refuses everything else.
+//
+// Browsers run on Kubernetes only (K8sHost). A Manager with no Host is a
+// deployment without a project browser: it starts nothing and its sessions
+// fail with ErrNoHost.
 package browser
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -36,44 +40,32 @@ import (
 
 	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/browserport"
-	"apothecary/internal/ports/envport"
 )
-
-// HostRun runs one docker CLI invocation against the host daemon.
-type HostRun func(ctx context.Context, args []string) (stdout, stderr []byte, code int, err error)
-
-// StreamRun runs one docker CLI invocation wired to a stream — the exec a
-// session is.
-type StreamRun func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error
 
 // Config wires a Manager.
 type Config struct {
-	RunsDir string
-	// Image makes the browser image available and returns its reference
-	// (docker: Pulled); Tag is the reference it would run, without pulling
+	// Image returns the browser image's reference, ready to run (on
+	// Kubernetes the kubelet pulls it); Tag is the reference it would run
 	// (Status).
 	Image func(ctx context.Context) (string, error)
 	Tag   func() string
-	// Shim returns the host path of the shim binary the docker host mounts
-	// into the browser (wsimage EnsureShim); Kubernetes seeds it from the
-	// shim image instead.
-	Shim func(ctx context.Context) (string, error)
-	// Run / Stream default to the docker CLI.
-	Run    HostRun
-	Stream StreamRun
-	// IdleAfter is how long a container with no session keeps running
-	// (default 10 minutes). Chromium is per session, so an idle container
+	// IdleAfter is how long a browser with no session keeps running
+	// (default 10 minutes). Chromium is per session, so an idle browser
 	// holds only node — but there is no reason to hold even that.
 	IdleAfter time.Duration
 	Log       *slog.Logger
-	// Host is where browsers run; nil = containers on the docker daemon (Run,
-	// Stream, RunsDir).
+	// Host is where browsers run (K8sHost); nil = this deployment has no
+	// project browser (ErrNoHost).
 	Host Host
 }
 
-// Host is where project browsers run: a container on the engine's docker
-// daemon (host_docker.go) or a pod on Kubernetes (host_k8s.go). The manager
-// keeps the policy — when to start, recreate, stop — and the host does it.
+// ErrNoHost is what a Manager with no Host answers: browsers run on
+// Kubernetes only.
+var ErrNoHost = errors.New("the project browser needs a Kubernetes deployment")
+
+// Host is where project browsers run: a pod on Kubernetes (host_k8s.go). The
+// manager keeps the policy — when to start, recreate, stop — and the host does
+// it; the interface is also the seam the manager's unit tests fake.
 type Host interface {
 	// Ensure brings the project's browser up from img: created when absent,
 	// started when stopped, recreated on another image only when replace.
@@ -108,20 +100,11 @@ type project struct {
 }
 
 func New(cfg Config) *Manager {
-	if cfg.Run == nil {
-		cfg.Run = dockerRun
-	}
-	if cfg.Stream == nil {
-		cfg.Stream = dockerStream
-	}
 	if cfg.IdleAfter <= 0 {
 		cfg.IdleAfter = 10 * time.Minute
 	}
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
-	}
-	if cfg.Host == nil {
-		cfg.Host = &dockerHost{runsDir: cfg.RunsDir, run: cfg.Run, stream: cfg.Stream, shim: cfg.Shim}
 	}
 	return &Manager{cfg: cfg, projects: map[string]*project{}}
 }
@@ -134,8 +117,6 @@ var _ browserport.Browser = (*Manager)(nil)
 // project's ID, lowercased — never its name (a rename must not strand a
 // browser, and two projects called "api" must not share one). Every
 // `project`/`name` argument in this file is that id.
-
-func containerName(project string) string { return "apo-browser-" + envport.ProjectHostKey(project) }
 
 // DefaultImage is the project browser: Microsoft's Playwright MCP server with
 // the Chromium its Playwright drives, pinned by digest (an index: amd64 and
@@ -153,9 +134,9 @@ var playwrightArgs = []string{"node", "/app/cli.js", "--headless", "--isolated",
 // own entrypoint (an MCP server on the container's stdio).
 var idleCommand = []string{"sleep", "infinity"}
 
-// shimDir is where the browser finds the shim: mounted from the host's shim
-// cache (docker) or seeded by an init container (Kubernetes, whose seed also
-// writes the apothecary-shim alias); shimPath is the binary in it.
+// shimDir is where the browser finds the shim, seeded by an init container
+// (whose seed also writes the apothecary-shim alias); shimPath is the binary
+// in it.
 const (
 	shimDir  = "/opt/apothecary/shim"
 	shimPath = shimDir + "/apothecary-shim"
@@ -233,8 +214,12 @@ func (m *Manager) armIdleLocked(name string, p *project) {
 
 // Start arms the idle stop for every project browser already running — one
 // a previous engine process left behind has no session to count it out. The
-// label it reads back is the project id.
+// label it reads back is the project id. With no Host there is nothing to
+// look for.
 func (m *Manager) Start(ctx context.Context) {
+	if m.cfg.Host == nil {
+		return
+	}
 	names, err := m.cfg.Host.Running(ctx)
 	if err != nil {
 		m.cfg.Log.Warn("browser: listing running browsers failed", "err", err)
@@ -250,8 +235,8 @@ func (m *Manager) Start(ctx context.Context) {
 	}
 }
 
-// Close stops the idle timers (the containers stay; the next process
-// re-arms them in Start).
+// Close stops the idle timers (the browsers stay; the next process re-arms
+// them in Start).
 func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -264,8 +249,12 @@ func (m *Manager) Close() {
 }
 
 // Warm brings the project's browser up in the background. project is the
-// id; projectName is a docker label only.
+// id; projectName is an annotation only. With no Host it does nothing: the
+// session that follows is the one to say why.
 func (m *Manager) Warm(project, projectName string) {
+	if m.cfg.Host == nil {
+		return
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
@@ -277,7 +266,7 @@ func (m *Manager) Warm(project, projectName string) {
 	}()
 }
 
-// ensure brings the project's container up: created when absent, started
+// ensure brings the project's browser up: created when absent, started
 // when stopped, recreated when it runs a stale image and only the caller
 // is using it (a busy browser keeps its image until it is idle).
 func (m *Manager) ensure(ctx context.Context, name, projectName string, p *project) error {
@@ -305,6 +294,9 @@ func newSessionID() string {
 // routing proxy for the run on a fresh socket, one exec of the session
 // runner — until either side closes.
 func (m *Manager) Session(ctx context.Context, s browserport.BrowserSession, stdio io.ReadWriter) error {
+	if m.cfg.Host == nil {
+		return ErrNoHost
+	}
 	p := m.acquire(s.Project)
 	defer m.release(s.Project, p)
 	if err := m.ensure(ctx, s.Project, s.ProjectName, p); err != nil {
@@ -333,8 +325,11 @@ func (m *Manager) Session(ctx context.Context, s browserport.BrowserSession, std
 }
 
 // Status is the project's browser as the settings page shows it (name is
-// the project id).
+// the project id). With no Host it is ErrNoHost.
 func (m *Manager) Status(ctx context.Context, name string) (browserport.BrowserStatus, error) {
+	if m.cfg.Host == nil {
+		return browserport.BrowserStatus{}, ErrNoHost
+	}
 	st := browserport.BrowserStatus{Container: m.cfg.Host.Name(name), State: "absent"}
 	if m.cfg.Tag != nil {
 		st.Current = m.cfg.Tag()

@@ -56,3 +56,26 @@ func TestEnsureRemoteStatusesTellsNotices(t *testing.T) {
 		t.Errorf("a repeat told = %+v", rec.calls[2:])
 	}
 }
+
+// A new account gets the deployment's provisioner once; one it has already
+// (made by hand, or a second call) is kept.
+func TestEnsureProvisioner(t *testing.T) {
+	svc, _ := newSvc(t)
+	ctx := context.Background()
+	in, err := svc.EnsureProvisioner(ctx, "u1", "fake", "Kubernetes")
+	if err != nil || in.ID == "" || in.Port != PortProvisioner || in.Kind != "fake" || in.Name != "Kubernetes" || in.UserID != "u1" {
+		t.Fatalf("made = %+v, %v", in, err)
+	}
+	again, err := svc.EnsureProvisioner(ctx, "u1", "fake", "Kubernetes")
+	if err != nil || again.ID != "" {
+		t.Errorf("a second call made %+v, %v", again, err)
+	}
+	// Another user's provisioner is not this user's.
+	if other, err := svc.EnsureProvisioner(ctx, "u2", "fake", "Kubernetes"); err != nil || other.ID == "" {
+		t.Errorf("u2 = %+v, %v", other, err)
+	}
+	list, _ := svc.ListIntegrations(ctx, "u1")
+	if len(list) != 1 {
+		t.Errorf("u1 has %d integrations", len(list))
+	}
+}

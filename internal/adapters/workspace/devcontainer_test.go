@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"net"
@@ -17,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/adapters/egressgw"
 	"apothecary/internal/ports/envport"
 )
 
@@ -57,33 +55,15 @@ func (s *scriptRunner) Run(_ context.Context, bin string, args []string, stdin [
 
 func newTestAdapter(t *testing.T, r CmdRunner) *Adapter {
 	t.Helper()
-	shimSrc := filepath.Join(t.TempDir(), "apothecary-shim")
-	if err := os.WriteFile(shimSrc, []byte("#!fake-shim"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	runs := shortRunsDir(t)
-	// The tools bundle, pre-"built": the dir a real EnsureTools returns.
-	toolsDir := filepath.Join(runs, "tools-cache", "t0st")
-	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	a := NewWithRunner(Config{
-		RunsDir:  runs,
-		ShimBin:  func(context.Context) (string, error) { return shimSrc, nil },
-		ToolsDir: func(context.Context) (string, error) { return toolsDir, nil },
-		// No GatewayImage ⇒ a.gw is nil ⇒ the egress gateway path is skipped and
-		// the sandbox runs on the default bridge, keeping the scripted-runner
-		// lifecycle tests independent of the (docker-heavy) gateway.
-	}, r)
+	// No gateway unless a test adds one (withGateway): the scripted-runner
+	// lifecycle tests stay independent of it.
+	a := NewWithRunner(Config{RunsDir: shortRunsDir(t)}, r)
+	a.host = newTestHost(a)
 	a.retryDelay = time.Millisecond
-	a.noSandboxGuard = true // t.TempDir() is under /tmp; the guard has its own test
-	a.listen = func(network, addr string) (net.Listener, error) {
-		return net.Listen("tcp", "127.0.0.1:0")
-	}
 	return a
 }
 
-// shortRunsDir is a RunsDir short enough for the unix sockets the bridge binds
+// shortRunsDir is a RunsDir short enough for the unix sockets the tests serve
 // under it (<runs>/<name>/shim/app-<port>.sock): t.TempDir() embeds the test
 // name, and under macOS's $TMPDIR that overruns its 104-byte sun_path.
 func shortRunsDir(t *testing.T) string {
@@ -96,16 +76,19 @@ func shortRunsDir(t *testing.T) string {
 	return dir
 }
 
-// sandboxResp are the host-daemon responses ensureSandbox consumes for a
-// FRESH sandbox (no existing one): ps-miss, volume create, docker run, and the
-// readiness version probe. Prepend to a Provision test's response script.
-func sandboxResp(rest []response) []response {
-	return append([]response{
-		{stdout: ""},       // sandboxIDs: none yet
-		{code: 0},          // volume create
-		{stdout: "sbx1\n"}, // docker run (sandbox container id)
-		{stdout: "29.6.2"}, // version probe → ready
-	}, rest...)
+// provisionOK is a gatewayless Provision's CLI script from `up` on: the
+// sandbox, the checkout and the bridge are the (test) host's and cost the
+// runner nothing.
+func provisionOK() []response {
+	return []response{
+		{stdout: upOK},     // devcontainer up
+		{stdout: "cid1\n"}, // up's container is ours
+		{code: 0},          // docker exec root-init
+		{code: 0},          // devcontainer run-user-commands
+		{stdout: "cid1\n"}, // docker ps -q (relay)
+		{code: 0},          // docker exec -d portscan
+		{code: 0},          // ready/relay probe
+	}
 }
 
 // seedDevcontainer writes a minimal .devcontainer/devcontainer.json into the
@@ -122,16 +105,11 @@ func seedDevcontainer(t *testing.T, a *Adapter, name string) {
 	}
 }
 
-// armSandbox pre-creates the run folder + a dummy inner-daemon socket file, so
-// waitSandboxReady's os.Stat passes (the scripted version probe then confirms)
-// and dockerEnv activates → inner calls carry DOCKER_HOST. A plain file (not a
-// real socket) suffices and avoids the unix path-length limit on long tempdirs.
+// armSandbox pre-creates the run folder, so the test host reports the
+// sandbox running.
 func armSandbox(t *testing.T, a *Adapter, name string) {
 	t.Helper()
 	if err := os.MkdirAll(a.folderFor(name), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(a.sockPath(name), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -163,18 +141,6 @@ func TestSrcDirBasenameIsUniquePerRun(t *testing.T) {
 		t.Errorf("srcDir basename = %q, want the workspace name", filepath.Base(one))
 	}
 
-	// A pre-existing <folder>/src checkout still wins, so workspaces created
-	// before this fix keep resolving to their existing clone.
-	legacy := filepath.Join(a.folderFor("apo-old-99"), "src")
-	if err := os.MkdirAll(legacy, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacy, ".git"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := a.srcDir("apo-old-99"); got != legacy {
-		t.Errorf("legacy checkout not honored: got %q, want %q", got, legacy)
-	}
 }
 
 // find returns the first recorded call whose bin and leading arg match.
@@ -189,19 +155,16 @@ func find(t *testing.T, calls []call, bin, firstArg string) call {
 	return call{}
 }
 
-func TestProvisionClonesUpsAndInits(t *testing.T) {
-	r := &scriptRunner{responses: append(
-		[]response{{code: 0}}, // git clone (before ensureSandbox)
-		sandboxResp([]response{
-			{stdout: upOK},     // devcontainer up
-			{stdout: "cid1\n"}, // up's container is ours
-			{code: 0},          // docker exec root-init
-			{code: 0},          // devcontainer run-user-commands
-			{stdout: "cid1\n"}, // docker ps -q (relay)
-			{code: 0},          // docker exec -d relay
-			{code: 0},          // docker exec -d portscan
-			{code: 0},          // ready/relay probe
-		})...)}
+func TestProvisionUpsAndInits(t *testing.T) {
+	r := &scriptRunner{responses: []response{
+		{stdout: upOK},     // devcontainer up
+		{stdout: "cid1\n"}, // up's container is ours
+		{code: 0},          // docker exec root-init
+		{code: 0},          // devcontainer run-user-commands
+		{stdout: "cid1\n"}, // docker ps -q (relay)
+		{code: 0},          // docker exec -d portscan
+		{code: 0},          // ready/relay probe
+	}}
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	seedDevcontainer(t, a, "apothecary-run1")
@@ -215,35 +178,23 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 	if id != "apothecary-run1" {
 		t.Errorf("env id = %s", id)
 	}
-
-	clone := find(t, r.calls, "sh", "-c")
-	joined := strings.Join(append(append([]string{}, clone.args...), clone.env...), " ")
-	if strings.Contains(joined, "sekret") {
-		t.Fatalf("credential leaked into argv or env: %v %v", clone.args, clone.env)
-	}
-	// Named through git's environment config, so the clone and the branch
-	// step's fetch both read it — never argv.
-	if !strings.Contains(strings.Join(clone.env, " "), "GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=store --file=") {
-		t.Errorf("clone must use a credential store file: %v", clone.env)
-	}
-	if !strings.Contains(clone.args[1], "git clone -- ") {
-		t.Errorf("not a clone: %v", clone.args)
-	}
-	if _, err := os.Stat(filepath.Join(a.folderFor("apothecary-run1"), "git-credentials")); !errors.Is(err, fs.ErrNotExist) {
-		t.Error("credential file must be removed after clone")
+	for _, c := range r.calls {
+		if strings.Contains(strings.Join(append(append([]string{}, c.args...), c.env...), " ")+string(c.stdin), "sekret") {
+			t.Fatalf("credential leaked into a workspace call: %v %v", c.args, c.env)
+		}
 	}
 
 	up := find(t, r.calls, "devcontainer", "up")
-	joined = strings.Join(up.args, " ")
+	joined := strings.Join(up.args, " ")
 	for _, want := range []string{
-		// Fresh clone → checkout named after the workspace (unique compose
-		// project per run); the legacy <folder>/src layout is covered below.
+		// Checkout named after the workspace (unique compose project per run);
+		// the legacy <folder>/src layout is covered below.
 		"--workspace-folder " + filepath.Join(a.folderFor("apothecary-run1"), "apothecary-run1"),
 		"--id-label apothecary.env=apothecary-run1",
-		"target=/opt/apothecary",
+		"source=" + filepath.Join(a.folderFor("apothecary-run1"), "shim") + ",target=/opt/apothecary",
 		// The tools bundle (harness CLIs + code-server) rides in beside the
 		// shim — nothing is injected into the repo's build.
-		"source=" + filepath.Join(a.cfg.RunsDir, "tools-cache", "t0st") + ",target=/opt/apothecary/tools",
+		"source=" + filepath.Join(a.folderFor("apothecary-run1"), "tools") + ",target=/opt/apothecary/tools",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("up args missing %q: %v", want, up.args)
@@ -252,14 +203,6 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 	// The repo brings its own devcontainer — no apothecary override config.
 	if strings.Contains(joined, "--override-config") {
 		t.Errorf("repo has its own devcontainer; no override expected: %v", up.args)
-	}
-	shim, err := os.ReadFile(filepath.Join(a.folderFor("apothecary-run1"), "shim", "shim"))
-	if err != nil || string(shim) != "#!fake-shim" {
-		t.Errorf("shim binary not materialized: %q, %v", shim, err)
-	}
-	// The callable alias: relative, so it resolves in the container too.
-	if target, err := os.Readlink(filepath.Join(a.folderFor("apothecary-run1"), "shim", "apothecary-shim")); err != nil || target != "shim" {
-		t.Errorf("apothecary-shim alias = %q, %v; want -> shim", target, err)
 	}
 
 	init := find(t, r.calls, "docker", "exec")
@@ -277,29 +220,26 @@ func TestProvisionClonesUpsAndInits(t *testing.T) {
 		}
 	}
 
-	// The engine bridge came up (only the engine socket now — egress is external).
-	if n := len(a.bridges["apothecary-run1"]); n != 1 {
-		t.Errorf("bridge listeners = %d, want 1 (engine)", n)
+	// The engine bridge came up, and its in-container relay went to the
+	// workspace's container.
+	h := hostOf(t, a)
+	if !h.bridged["apothecary-run1"] {
+		t.Error("the engine bridge was never ensured")
+	}
+	if !slices.Equal(h.relays, []string{"apothecary-run1 cid1"}) {
+		t.Errorf("bridge relays = %v, want the workspace container's", h.relays)
 	}
 	a.Close()
+	if !h.closed {
+		t.Error("Close must close the host")
+	}
 }
 
 // Provisioning streams into the same exec.log the UI tails (TailExecLog), so
 // init/build progress shows live before the env is ready — not just post-ready
 // command output.
 func TestProvisionStreamsToExecLog(t *testing.T) {
-	r := &scriptRunner{responses: append(
-		[]response{{code: 0}}, // git clone
-		sandboxResp([]response{
-			{stdout: upOK},     // devcontainer up (teed into exec.log)
-			{stdout: "cid1\n"}, // up's container is ours
-			{code: 0},          // root-init
-			{code: 0},          // run-user-commands
-			{stdout: "cid1\n"}, // ps -q (relay)
-			{code: 0},          // relay exec
-			{code: 0},          // portscan exec
-			{code: 0},          // ready probe
-		})...)}
+	r := &scriptRunner{responses: provisionOK()} // up's output is teed into exec.log
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	seedDevcontainer(t, a, "apothecary-run1")
@@ -314,7 +254,7 @@ func TestProvisionStreamsToExecLog(t *testing.T) {
 	}
 	log := chunk.Data
 	for _, want := range []string{"provisioning apothecary-run1", "] → preparing source checkout: https://g.local/grp/repo.git",
-		"per-run sandbox + egress gateway", "building devcontainer", "→ workspace definition: devcontainer",
+		"building devcontainer", "→ workspace definition: devcontainer",
 		"→ preparing the container (container cid1", "→ connecting the workspace to the engine",
 		"→ waiting for the workspace to answer", "=== workspace apothecary-run1 ready in "} {
 		if !strings.Contains(string(log), want) {
@@ -370,19 +310,7 @@ func TestProvisionLogHelpers(t *testing.T) {
 // container to it so `docker ps` shows the branch, not the run-id hash.
 func TestProvisionUsesEngineSuppliedName(t *testing.T) {
 	const name = "apo-fix-branch-abcd"
-	r := &scriptRunner{responses: append(
-		[]response{{code: 0}}, // git clone
-		sandboxResp([]response{
-			{stdout: upOK},     // devcontainer up
-			{stdout: "cid1\n"}, // up's container is ours
-			{code: 0},          // docker exec root-init
-			{code: 0},          // devcontainer run-user-commands
-			{stdout: "cid1\n"}, // docker ps -q (relay)
-			{code: 0},          // docker exec -d relay
-			{code: 0},          // docker exec -d portscan
-			{code: 0},          // ready/relay probe
-			{code: 0},          // docker rename
-		})...)}
+	r := &scriptRunner{responses: provisionOK()} // then docker rename
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, name)
 	seedDevcontainer(t, a, name)
@@ -430,48 +358,11 @@ func TestProvisionUsesEngineSuppliedName(t *testing.T) {
 	a.Close()
 }
 
-func TestProvisionHonorsRepoDevcontainer(t *testing.T) {
-	r := &scriptRunner{responses: sandboxResp([]response{
-		{stdout: upOK},     // up (no clone: src pre-seeded)
-		{stdout: "cid1\n"}, // up's container is ours
-		{code: 0},          // root-init
-		{code: 0},          // run-user-commands
-		{stdout: "cid1\n"}, // docker ps -q (relay)
-		{code: 0},          // docker exec -d relay
-		{code: 0},          // docker exec -d portscan
-		{code: 0},          // ready/relay probe
-	})}
-	a := newTestAdapter(t, r)
-	armSandbox(t, a, "apothecary-run1")
-	src := filepath.Join(a.folderFor("apothecary-run1"), "src")
-	// .git is a real dir: its presence makes ensureSrc skip cloning.
-	for _, d := range []string{filepath.Join(src, ".devcontainer"), filepath.Join(src, ".git")} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(src, ".devcontainer", "devcontainer.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.Provision(context.Background(), envport.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"}); err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range r.calls {
-		if strings.Contains(strings.Join(c.args, " "), "git clone") {
-			t.Error("must not re-clone an existing checkout")
-		}
-	}
-	up := find(t, r.calls, "devcontainer", "up")
-	if strings.Contains(strings.Join(up.args, " "), "--override-config") {
-		t.Errorf("repo devcontainer must be honored, not overridden: %v", up.args)
-	}
-}
-
-// seedRepoDevcontainer pre-seeds a repo-authored checkout (legacy /src
-// layout, so no clone is attempted) and returns its path.
+// seedRepoDevcontainer pre-seeds a repo-authored checkout and returns its
+// path.
 func seedRepoDevcontainer(t *testing.T, a *Adapter, name string) string {
 	t.Helper()
-	src := filepath.Join(a.folderFor(name), "src")
+	src := a.srcDir(name)
 	// .git is a real directory here (unlike the minimal fixtures elsewhere),
 	// so the checkout counts as cloned.
 	for _, d := range []string{filepath.Join(src, ".devcontainer"), filepath.Join(src, ".git")} {
@@ -492,16 +383,7 @@ func seedRepoDevcontainer(t *testing.T, a *Adapter, name string) string {
 // code-server are the bundle), no override config, nothing written under
 // .devcontainer/.
 func TestRepoDevcontainerMountsToolsNotFeatures(t *testing.T) {
-	r := &scriptRunner{responses: sandboxResp([]response{
-		{stdout: upOK},     // up
-		{stdout: "cid1\n"}, // up's container is ours
-		{code: 0},          // root-init
-		{code: 0},          // run-user-commands
-		{stdout: "cid1\n"}, // docker ps -q (relay)
-		{code: 0},          // docker exec -d relay
-		{code: 0},          // docker exec -d portscan
-		{code: 0},          // ready/relay probe
-	})}
+	r := &scriptRunner{responses: provisionOK()}
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	src := seedRepoDevcontainer(t, a, "apothecary-run1")
@@ -513,7 +395,7 @@ func TestRepoDevcontainerMountsToolsNotFeatures(t *testing.T) {
 	joined := strings.Join(up.args, " ")
 	for _, want := range []string{
 		"--mount type=bind,source=" + filepath.Join(a.folderFor("apothecary-run1"), "shim") + ",target=/opt/apothecary",
-		"--mount type=bind,source=" + filepath.Join(a.cfg.RunsDir, "tools-cache", "t0st") + ",target=/opt/apothecary/tools",
+		"--mount type=bind,source=" + filepath.Join(a.folderFor("apothecary-run1"), "tools") + ",target=/opt/apothecary/tools",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("up args missing %q: %v", want, up.args)
@@ -537,23 +419,24 @@ func TestRepoDevcontainerMountsToolsNotFeatures(t *testing.T) {
 }
 
 func TestProvisionRejectsRepoWithoutDevcontainer(t *testing.T) {
-	// The guard fires right after the checkout, before the sandbox — only the
-	// clone runs; no config on disk means the repo is unsupported.
-	r := &scriptRunner{responses: []response{{code: 0}}} // clone
+	// The guard fires as soon as the host has the checkout, before anything
+	// builds: no config on disk means the repo is unsupported.
+	r := &scriptRunner{}
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	_, err := a.Provision(context.Background(), envport.EnvSpec{RunID: "run1", RepoURL: "https://g.local/r.git"})
 	if err == nil || !strings.Contains(err.Error(), ".devcontainer/devcontainer.json") {
 		t.Fatalf("want no-devcontainer error, got %v", err)
 	}
+	if len(r.calls) != 0 {
+		t.Errorf("nothing may build for a repo without a definition: %v", r.calls)
+	}
 }
 
 func TestProvisionSurfacesUpFailure(t *testing.T) {
-	r := &scriptRunner{responses: append(
-		[]response{{code: 0}}, // clone
-		sandboxResp([]response{
-			{stdout: `{"outcome":"error","message":"Dockerfile failed","description":"exit 1"}`, stderr: "build log tail", code: 1},
-		})...)}
+	r := &scriptRunner{responses: []response{
+		{stdout: `{"outcome":"error","message":"Dockerfile failed","description":"exit 1"}`, stderr: "build log tail", code: 1},
+	}}
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	seedDevcontainer(t, a, "apothecary-run1")
@@ -673,45 +556,38 @@ func TestWriteFileSendsScriptAndPayload(t *testing.T) {
 	}
 }
 
-// Status is two-stage: the SANDBOX on the host daemon gates the WORKSPACE on
-// the inner daemon.
+// Status is two-stage: the host's SANDBOX gates the WORKSPACE on the inner
+// daemon.
 func TestStatusMapping(t *testing.T) {
 	cases := []struct {
-		name string
-		arm  bool       // pre-create the inner socket (a DinD env exists)
-		resp []response // sandbox-state query, then (if running) inner workspace query
-		want envport.EnvStatus
+		name    string
+		sandbox string     // the host's sandbox state
+		resp    []response // the inner workspace query, when the sandbox runs
+		want    envport.EnvStatus
 	}{
-		{"sandbox running + workspace running", true,
-			[]response{{stdout: "running\n"}, {stdout: "running\n"}}, envport.EnvRunning},
-		{"sandbox running + workspace created", true,
-			[]response{{stdout: "running\n"}, {stdout: "created\n"}}, envport.EnvStarting},
-		{"sandbox running + workspace exited", true,
-			[]response{{stdout: "running\n"}, {stdout: "exited\n"}}, envport.EnvStopped},
-		{"sandbox created", true,
-			[]response{{stdout: "created\n"}}, envport.EnvStarting},
-		{"sandbox exited", true,
-			[]response{{stdout: "exited\n"}}, envport.EnvStopped},
-		{"DinD env, sandbox gone → absent", true,
-			[]response{{stdout: ""}}, envport.EnvAbsent},
-		// Legacy (pre-DinD) env: no sandbox, no socket → the old host-label query.
-		{"legacy running", false,
-			[]response{{stdout: ""}, {stdout: "running\n"}}, envport.EnvRunning},
-		{"legacy absent", false,
-			[]response{{stdout: ""}, {stdout: ""}}, envport.EnvAbsent},
+		{"sandbox running + workspace running", "running", []response{{stdout: "running\n"}}, envport.EnvRunning},
+		{"sandbox running + workspace created", "running", []response{{stdout: "created\n"}}, envport.EnvStarting},
+		{"sandbox running + workspace exited", "running", []response{{stdout: "exited\n"}}, envport.EnvStopped},
+		{"sandbox running + no workspace", "running", []response{{stdout: ""}}, envport.EnvAbsent},
+		{"sandbox created", "created", nil, envport.EnvStarting},
+		{"sandbox restarting", "restarting", nil, envport.EnvStarting},
+		{"sandbox exited", "exited", nil, envport.EnvStopped},
+		{"sandbox gone → absent", "", nil, envport.EnvAbsent},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			a := newTestAdapter(t, &scriptRunner{responses: c.resp})
-			if c.arm {
-				armSandbox(t, a, "apothecary-run1")
-			}
+			r := &scriptRunner{responses: c.resp}
+			a := newTestAdapter(t, r)
+			hostOf(t, a).state = func(string) (string, error) { return c.sandbox, nil }
 			got, err := a.Status(context.Background(), "apothecary-run1")
 			if err != nil {
 				t.Fatal(err)
 			}
 			if got != c.want {
 				t.Errorf("got %s, want %s", got, c.want)
+			}
+			if c.sandbox != "running" && len(r.calls) != 0 {
+				t.Errorf("a sandbox that is not running must not be queried inside: %v", r.calls)
 			}
 		})
 	}
@@ -721,21 +597,9 @@ func TestStatusMapping(t *testing.T) {
 // --remove-existing-container, and the build output is teed into exec.log so
 // the run page's workspace-log poll shows it.
 func TestRebuildNonComposeRemovesContainer(t *testing.T) {
-	r := &scriptRunner{responses: append(
-		[]response{
-			{stdout: `{"mergedConfiguration":{}}`}, // Rebuild isCompose: not compose
-			{code: 0},                              // ensureSrc git clone
-		},
-		sandboxResp([]response{
-			{stdout: upOK},     // devcontainer up (teed into exec.log)
-			{stdout: "cid1\n"}, // up's container is ours
-			{code: 0},          // root-init
-			{code: 0},          // run-user-commands
-			{stdout: "cid1\n"}, // docker ps -q (relay)
-			{code: 0},          // docker exec -d relay
-			{code: 0},          // docker exec -d portscan
-			{code: 0},          // ready probe
-		})...)}
+	r := &scriptRunner{responses: append([]response{
+		{stdout: `{"mergedConfiguration":{}}`}, // Rebuild isCompose: not compose
+	}, provisionOK()...)}
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	seedDevcontainer(t, a, "apothecary-run1") // non-compose devcontainer
@@ -930,25 +794,30 @@ func TestStripJSONC(t *testing.T) {
 	}
 }
 
-// A host-daemon failure on the sandbox probe must surface as an ERROR — not a
-// silent "" that maps to EnvAbsent — so recovery waits instead of nuking a
-// live workspace (the recovery-disaster fix).
+// A host failure on the sandbox probe — or the inner daemon's on the workspace
+// query — must surface as an ERROR, not a silent "" that maps to EnvAbsent, so
+// recovery waits instead of nuking a live workspace (the recovery-disaster fix).
 func TestStatusHostDaemonErrorPropagates(t *testing.T) {
 	for _, c := range []struct {
-		name string
-		resp []response
+		name    string
+		hostErr error
+		resp    []response
 	}{
+		{"host unreachable", errors.New("the cluster did not answer"), nil},
 		// a.run retries an exec error 3× before giving up, so exhaust them.
-		{"exec error", []response{
+		{"inner exec error", nil, []response{
 			{err: errors.New("cannot connect to docker daemon")},
 			{err: errors.New("cannot connect to docker daemon")},
 			{err: errors.New("cannot connect to docker daemon")},
 		}},
-		{"nonzero exit", []response{{code: 1, stderr: "daemon not running"}}},
+		{"inner nonzero exit", nil, []response{{code: 1, stderr: "daemon not running"}}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			a := newTestAdapter(t, &scriptRunner{responses: c.resp})
 			armSandbox(t, a, "apothecary-run1")
+			if c.hostErr != nil {
+				hostOf(t, a).state = func(string) (string, error) { return "", c.hostErr }
+			}
 			st, err := a.Status(context.Background(), "apothecary-run1")
 			if err == nil {
 				t.Fatalf("want error, got status %q", st)
@@ -960,65 +829,42 @@ func TestStatusHostDaemonErrorPropagates(t *testing.T) {
 	}
 }
 
-// Legacy (pre-DinD) env: no sandbox → the workspace container is removed by
-// id-label on the host daemon.
-func TestDestroyLegacyRemovesContainersAndFolder(t *testing.T) {
-	r := &scriptRunner{responses: []response{
-		{stdout: ""},       // sandboxIDs: none → legacy path
-		{stdout: "cid1\n"}, // docker ps -aq (host workspace container)
-		{code: 0},          // docker rm -f
-	}}
-	a := newTestAdapter(t, r)
-	if err := os.MkdirAll(a.folderFor("apothecary-run1"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Destroy(context.Background(), "apothecary-run1"); err != nil {
-		t.Fatal(err)
-	}
-	rm := find(t, r.calls, "docker", "rm")
-	if !strings.Contains(strings.Join(rm.args, " "), "-f cid1") {
-		t.Errorf("rm args = %v", rm.args)
-	}
-	if _, err := os.Stat(a.folderFor("apothecary-run1")); !errors.Is(err, fs.ErrNotExist) {
-		t.Error("env folder not cleaned up")
-	}
-}
-
-// DinD env: removing the sandbox tears down the whole inner daemon (every
-// workspace + side service + network) and the named docker volume goes next —
-// the side-service leak is gone by construction.
-func TestDestroyRemovesSandboxAndVolume(t *testing.T) {
-	r := &scriptRunner{responses: []response{
-		{stdout: "sbx1\n"}, // sandboxIDs: the sandbox container
-		{code: 0},          // docker rm -f sbx1
-		{code: 0},          // docker volume rm -f
-	}}
+// Destroy removes the host's sandbox (the whole inner daemon: every workspace,
+// side service and network) and then the run folder, and drops the engine
+// bridge — the side-service leak is gone by construction.
+func TestDestroyRemovesSandboxAndFolder(t *testing.T) {
+	r := &scriptRunner{}
 	a := newTestAdapter(t, r)
 	const name = "apothecary-run1"
 	armSandbox(t, a, name)
+	h := hostOf(t, a)
+	if err := h.ensureBridge(name); err != nil {
+		t.Fatal(err)
+	}
 	if err := a.Destroy(context.Background(), envport.EnvID(name)); err != nil {
 		t.Fatal(err)
 	}
-	rm := find(t, r.calls, "docker", "rm")
-	if !strings.Contains(strings.Join(rm.args, " "), "-f sbx1") {
-		t.Errorf("rm must target the sandbox: %v", rm.args)
+	if !slices.Equal(h.destroys, []string{name}) {
+		t.Errorf("sandbox destroys = %v, want [%s]", h.destroys, name)
 	}
-	vol := find(t, r.calls, "docker", "volume")
-	if !strings.Contains(strings.Join(vol.args, " "), "rm -f "+name+"-docker") {
-		t.Errorf("volume rm missing: %v", vol.args)
+	if h.bridged[name] {
+		t.Error("the engine bridge outlived the env")
 	}
 	if _, err := os.Stat(a.folderFor(name)); !errors.Is(err, fs.ErrNotExist) {
 		t.Error("env folder not cleaned up")
 	}
+	if len(r.calls) != 0 {
+		t.Errorf("destroy is the host's: no workspace calls expected, got %v", r.calls)
+	}
 }
 
-// --- Docker-in-Docker sandbox ------------------------------------------------
+// --- the sandbox's inner daemon ----------------------------------------------
 
-// provisionRepoDinD runs a repo-authored (seeded, no-clone, no-image)
-// provision through the sandbox path and returns the recorded calls.
-func provisionRepoDinD(t *testing.T, rest []response) (*Adapter, *scriptRunner) {
+// provisionRepo runs a repo-authored (seeded, legacy-layout) provision with
+// the given CLI script and returns the recorded calls.
+func provisionRepo(t *testing.T, rest []response) (*Adapter, *scriptRunner) {
 	t.Helper()
-	r := &scriptRunner{responses: sandboxResp(rest)}
+	r := &scriptRunner{responses: rest}
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	seedRepoDevcontainer(t, a, "apothecary-run1")
@@ -1030,233 +876,12 @@ func provisionRepoDinD(t *testing.T, rest []response) (*Adapter, *scriptRunner) 
 	return a, r
 }
 
-// up, root-init, run-user-commands, docker ps (relay), relay exec, portscan.
-var repoUpTail = []response{
-	{stdout: upOK}, {stdout: "cid1\n"}, {code: 0}, {code: 0}, {stdout: "cid1\n"}, {code: 0}, {code: 0},
-}
-
-// The sandbox is a --privileged host container carrying the apothecary labels,
-// the /var/lib/docker volume, the identical-path parity mount, and a dockerd
-// that listens ONLY on the parity-mount socket — and it must never carry the
-// inner DOCKER_HOST (Invariant C).
-func TestProvisionCreatesSandbox(t *testing.T) {
-	a, r := provisionRepoDinD(t, repoUpTail)
-	run := find(t, r.calls, "docker", "run")
-	joined := strings.Join(run.args, " ")
-	root := a.folderFor("apothecary-run1")
-	for _, want := range []string{
-		"--privileged",
-		"--label apothecary.sandbox=true",
-		"--label apothecary.env=apothecary-run1",
-		"--label apothecary.project=01HACME",
-		"--label apothecary.project.name=Acme",
-		"-v apothecary-run1-docker:/var/lib/docker",
-		"-v " + root + ":" + root,
-		// The tools bundles (every version, read-only), same path in host +
-		// sandbox; and the shape label that says this sandbox has the mount.
-		"-v " + filepath.Join(a.cfg.RunsDir, "tools-cache") + ":" + filepath.Join(a.cfg.RunsDir, "tools-cache") + ":ro",
-		"--label apothecary.sandbox.shape=2",
-		"docker:29-dind dockerd --host=unix://" + a.sockPath("apothecary-run1"),
-	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("sandbox run missing %q: %v", want, run.args)
-		}
-	}
-	if envHas(run, "DOCKER_HOST") {
-		t.Errorf("sandbox lifecycle must NOT carry the inner DOCKER_HOST: %v", run.env)
-	}
-	// This adapter has no gateway (newTestAdapter passes no GatewayImage), so
-	// there is no mirror to point the inner daemon at.
-	if strings.Contains(joined, "--registry-mirror") {
-		t.Errorf("gatewayless sandbox must not get mirror flags: %v", run.args)
-	}
-}
-
-// Opting into a user-namespace runtime (APOTHECARY_SANDBOX_RUNTIME) swaps
-// --privileged for --runtime: the two are mutually exclusive (sysbox rejects
-// privileged containers), and keeping the flag would defeat the point.
-func TestSandboxRuntimeReplacesPrivileged(t *testing.T) {
-	r := &scriptRunner{responses: []response{
-		{stdout: `{"runc":{},"sysbox-runc":{}}`}, // docker info: runtime present
-		{stdout: ""},                             // sandboxIDs: none yet
-		{code: 0},                                // volume create
-		{stdout: "sbx1\n"},                       // docker run
-		{stdout: "29.6.2"},                       // readiness probe
-	}}
-	a := newTestAdapter(t, r)
-	a.cfg.SandboxRuntime = "sysbox-runc"
-	const name = "apothecary-run1"
-	armSandbox(t, a, name)
-	if err := a.ensureSandbox(context.Background(), name, envport.EnvSpec{Project: "Acme"}, egressgw.Attachment{}, "/tc"); err != nil {
-		t.Fatal(err)
-	}
-	run := find(t, r.calls, "docker", "run")
-	joined := strings.Join(run.args, " ")
-	if !strings.Contains(joined, "--runtime sysbox-runc") {
-		t.Errorf("sandbox run missing the configured runtime: %v", run.args)
-	}
-	if strings.Contains(joined, "--privileged") {
-		t.Errorf("an unprivileged runtime must NOT also get --privileged: %v", run.args)
-	}
-	// The labels/mounts/dockerd tail are unchanged by the runtime swap.
-	for _, want := range []string{
-		"--label apothecary.sandbox=true",
-		"-v apothecary-run1-docker:/var/lib/docker",
-		"docker:29-dind dockerd --host=unix://" + a.sockPath(name),
-	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("sandbox run missing %q: %v", want, run.args)
-		}
-	}
-}
-
-// A runtime the daemon doesn't have fails BEFORE anything is created, naming
-// the deployment variable — not minutes later with docker's bare "Unknown
-// runtime specified".
-func TestSandboxRuntimeMissingFailsEarly(t *testing.T) {
-	r := &scriptRunner{responses: []response{{stdout: `{"runc":{},"nvidia":{}}`}}}
-	a := newTestAdapter(t, r)
-	a.cfg.SandboxRuntime = "sysbox-runc"
-	err := a.ensureSandbox(context.Background(), "apothecary-run1", envport.EnvSpec{}, egressgw.Attachment{}, "/tc")
-	if err == nil {
-		t.Fatal("expected a runtime-not-installed error")
-	}
-	for _, want := range []string{"APOTHECARY_SANDBOX_RUNTIME=sysbox-runc", "nvidia, runc"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error should mention %q: %v", want, err)
-		}
-	}
-	for _, c := range r.calls {
-		if len(c.args) > 0 && c.args[0] == "run" {
-			t.Errorf("nothing must be created when the runtime is missing: %v", c.args)
-		}
-	}
-}
-
-// The default (unset) deployment is byte-identical to before: privileged
-// sandbox, and no docker info probe at all.
-func TestSandboxRuntimeUnsetKeepsPrivileged(t *testing.T) {
-	_, r := provisionRepoDinD(t, repoUpTail)
-	run := find(t, r.calls, "docker", "run")
-	if !strings.Contains(strings.Join(run.args, " "), "--privileged") {
-		t.Errorf("default sandbox must stay privileged: %v", run.args)
-	}
-	for _, c := range r.calls {
-		if len(c.args) > 0 && c.args[0] == "info" {
-			t.Errorf("no runtime probe when APOTHECARY_SANDBOX_RUNTIME is unset: %v", c.args)
-		}
-	}
-}
-
-// A sandbox created before the tools-cache parity mount existed (no shape
-// label) would make `up` fail on the missing bind source — on a Rebuild or a
-// recovery re-provision, both of which reuse an existing sandbox. It is
-// recreated on first use instead; its /var/lib/docker volume stays.
-func TestPreBundleSandboxIsRecreated(t *testing.T) {
-	r := &scriptRunner{responses: []response{
-		{stdout: "sbx0\n"}, // sandboxIDs: an existing sandbox...
-		{stdout: ""},       // ...without the current shape label
-		{code: 0},          // docker rm -f sbx0
-		{code: 0},          // volume create (idempotent)
-		{stdout: "sbx1\n"}, // docker run
-		{stdout: "29.6.2"}, // readiness probe
-	}}
-	a := newTestAdapter(t, r)
-	const name = "apothecary-run1"
-	armSandbox(t, a, name)
-	tc := filepath.Join(a.cfg.RunsDir, "tools-cache")
-	if err := a.ensureSandbox(context.Background(), name, envport.EnvSpec{}, egressgw.Attachment{}, tc); err != nil {
-		t.Fatal(err)
-	}
-	rmAt, runAt := -1, -1
-	for i, c := range r.calls {
-		joined := strings.Join(c.args, " ")
-		switch {
-		case strings.HasPrefix(joined, "rm -f"):
-			rmAt = i
-			if !strings.Contains(joined, "sbx0") {
-				t.Errorf("must remove the old sandbox: %v", c.args)
-			}
-		case strings.HasPrefix(joined, "run "):
-			runAt = i
-			if !strings.Contains(joined, "-v "+tc+":"+tc+":ro") || !strings.Contains(joined, "--label apothecary.sandbox.shape=2") {
-				t.Errorf("recreated sandbox lacks the mount or the shape label: %v", c.args)
-			}
-		case strings.HasPrefix(joined, "start"):
-			t.Errorf("a previous-shape sandbox must be recreated, not started: %v", c.args)
-		case strings.HasPrefix(joined, "volume rm"):
-			t.Errorf("the inner daemon's volume must survive: %v", c.args)
-		}
-	}
-	if rmAt < 0 || runAt < 0 || rmAt > runAt {
-		t.Errorf("expected rm -f then run, got rm@%d run@%d: %v", rmAt, runAt, r.calls)
-	}
-}
-
-// A sandbox of the current shape is simply started (a no-op when up).
-func TestCurrentShapeSandboxIsStarted(t *testing.T) {
-	r := &scriptRunner{responses: []response{
-		{stdout: "sbx1\n"}, // sandboxIDs
-		{stdout: "sbx1\n"}, // ...and it carries the shape label
-		{code: 0},          // docker start
-		{stdout: "29.6.2"}, // readiness probe
-	}}
-	a := newTestAdapter(t, r)
-	const name = "apothecary-run1"
-	armSandbox(t, a, name)
-	if err := a.ensureSandbox(context.Background(), name, envport.EnvSpec{}, egressgw.Attachment{}, "/tc"); err != nil {
-		t.Fatal(err)
-	}
-	started := false
-	for _, c := range r.calls {
-		switch c.args[0] {
-		case "start":
-			started = true
-		case "rm", "run":
-			t.Errorf("a current sandbox must be reused: %v", c.args)
-		}
-	}
-	if !started {
-		t.Errorf("sandbox never started: %v", r.calls)
-	}
-}
-
-// With a gateway the inner daemon is pointed at the project's pull-through
-// cache on the gateway, over plain HTTP inside the run's --internal network.
-func TestCreateSandboxWiresGatewayMirror(t *testing.T) {
-	r := &scriptRunner{}
-	a := newTestAdapter(t, r)
-	const name = "apothecary-run1"
-	if err := a.createSandbox(context.Background(), name, envport.EnvSpec{Project: "Acme"}, "172.20.0.2", "/tc"); err != nil {
-		t.Fatal(err)
-	}
-	run := find(t, r.calls, "docker", "run")
-	joined := strings.Join(run.args, " ")
-	for _, want := range []string{
-		"--network " + egressNet(name),
-		"--dns 172.20.0.2",
-		"--registry-mirror=http://172.20.0.2:5000",
-		"--insecure-registry=172.20.0.2:5000",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("sandbox run missing %q: %v", want, run.args)
-		}
-	}
-	// The mirror flags are dockerd's, so they must follow the image + dockerd.
-	dockerd := strings.Index(joined, "dockerd --host=")
-	if mirror := strings.Index(joined, "--registry-mirror"); dockerd < 0 || mirror < dockerd {
-		t.Errorf("mirror flags must be dockerd args, not docker run args: %v", run.args)
-	}
-	if envHas(run, "DOCKER_HOST") {
-		t.Errorf("sandbox lifecycle must NOT carry the inner DOCKER_HOST: %v", run.env)
-	}
-}
-
-// Every workspace/inner call targets the inner daemon; the `up` call also keeps
-// the buildx entitlement env.
-func TestInnerCallsCarryDockerHost(t *testing.T) {
-	a, r := provisionRepoDinD(t, repoUpTail)
-	dh := "DOCKER_HOST=unix://" + a.sockPath("apothecary-run1")
+// Every workspace/inner call goes through the host's runInner (the test host
+// marks them with the inner daemon's DOCKER_HOST); the `up` call also keeps the
+// buildx entitlement env.
+func TestInnerCallsGoThroughTheHost(t *testing.T) {
+	a, r := provisionRepo(t, provisionOK())
+	dh := "DOCKER_HOST=unix://" + hostOf(t, a).innerSock("apothecary-run1")
 	up := find(t, r.calls, "devcontainer", "up")
 	if !envHas(up, dh) {
 		t.Errorf("up must target the inner daemon: env=%v", up.env)
@@ -1264,50 +889,103 @@ func TestInnerCallsCarryDockerHost(t *testing.T) {
 	if !envHas(up, "BUILDX_BAKE_ENTITLEMENTS_FS=0") {
 		t.Errorf("up lost the buildx entitlement env: %v", up.env)
 	}
-	// A docker exec (root-init) also targets the inner daemon.
-	ex := find(t, r.calls, "docker", "exec")
-	if !envHas(ex, dh) {
-		t.Errorf("inner docker exec must carry DOCKER_HOST: %v", ex.env)
+	for _, c := range r.calls {
+		if !envHas(c, dh) {
+			t.Errorf("%s %v bypassed the host: env=%v", c.bin, c.args, c.env)
+		}
 	}
 }
 
-// A pre-DinD env (no socket) keeps every op on the host daemon with no
-// DOCKER_HOST — the migration-safe fallback.
-func TestLegacyEnvFallsBackToHostDaemon(t *testing.T) {
-	r := &scriptRunner{responses: []response{{stdout: "out\n"}}}
-	a := newTestAdapter(t, r) // no armSandbox → no socket
-	if _, err := a.Exec(context.Background(), "legacy-run", envport.Command{Script: "true"}); err != nil {
+// Reattach rebuilds what died with the previous engine for a workspace still
+// running: the shim first, then the bridge and its relay, then the readiness
+// probe. A workspace that is not running, or a shim that cannot be refreshed,
+// stops it.
+func TestReattach(t *testing.T) {
+	ctx := context.Background()
+	r := &scriptRunner{responses: []response{
+		{stdout: "running\n"}, // workspace state
+		{stdout: "cid1\n"},    // docker ps -q (relay)
+		{code: 0},             // docker exec -d portscan
+		{code: 0},             // ready probe
+	}}
+	a := newTestAdapter(t, r)
+	armSandbox(t, a, "w")
+	h := hostOf(t, a)
+	if err := a.Reattach(ctx, "w"); err != nil {
 		t.Fatal(err)
 	}
-	if envHas(r.calls[0], "DOCKER_HOST") {
-		t.Errorf("legacy env must not carry DOCKER_HOST: %v", r.calls[0].env)
+	if !h.bridged["w"] || !slices.Equal(h.relays, []string{"w cid1"}) {
+		t.Errorf("bridged = %v, relays = %v", h.bridged, h.relays)
+	}
+
+	a = newTestAdapter(t, &scriptRunner{responses: []response{{stdout: "exited\n"}}})
+	armSandbox(t, a, "w")
+	if err := a.Reattach(ctx, "w"); err == nil || !strings.Contains(err.Error(), "not running") {
+		t.Errorf("stopped workspace = %v", err)
+	}
+
+	r = &scriptRunner{responses: []response{{stdout: "running\n"}}}
+	a = newTestAdapter(t, r)
+	armSandbox(t, a, "w")
+	h = hostOf(t, a)
+	h.shimErr = errors.New("shim drifted")
+	if err := a.Reattach(ctx, "w"); !errors.Is(err, h.shimErr) {
+		t.Errorf("shim failure = %v", err)
+	}
+	if h.bridged["w"] || len(r.calls) != 1 {
+		t.Errorf("reattached past a stale shim: bridged=%v calls=%v", h.bridged, r.calls)
+	}
+
+	a = newTestAdapter(t, &scriptRunner{})
+	hostOf(t, a).state = func(string) (string, error) { return "", errors.New("host down") }
+	if err := a.Reattach(ctx, "w"); err == nil || !strings.Contains(err.Error(), "host down") {
+		t.Errorf("unreachable host = %v", err)
+	}
+
+	for name, arm := range map[string]func(h *testHost){
+		"bridge": func(h *testHost) { h.bridgeErr = errors.New("address in use") },
+		"relay":  func(h *testHost) { h.relayErr = errors.New("relay busy") },
+	} {
+		r = &scriptRunner{responses: []response{{stdout: "running\n"}, {stdout: "cid1\n"}}}
+		a = newTestAdapter(t, r)
+		armSandbox(t, a, "w")
+		arm(hostOf(t, a))
+		if err := a.Reattach(ctx, "w"); err == nil {
+			t.Errorf("%s failure: reattached", name)
+		}
+		for _, c := range r.calls {
+			if strings.Contains(string(c.stdin)+strings.Join(c.args, " "), "/dev/tcp/") {
+				t.Errorf("%s failure: probed readiness anyway", name)
+			}
+		}
 	}
 }
 
-// The guards refuse a /tmp RunsDir (dind masks it) and an over-long socket
-// path — with the test seam OFF.
-func TestSandboxGuardsRejectTmp(t *testing.T) {
-	a := newTestAdapter(t, &scriptRunner{})
-	a.noSandboxGuard = false
-	a.cfg.RunsDir = filepath.Join(os.TempDir(), "apothecary-runs")
-	err := a.ensureSandbox(context.Background(), "run1", envport.EnvSpec{}, egressgw.Attachment{}, "/tc")
-	if err == nil || !strings.Contains(err.Error(), "masks /tmp") {
-		t.Fatalf("want /tmp guard error, got %v", err)
+// A host that cannot prepare the sandbox fails the provision before anything
+// builds, and hands back the name so the caller can destroy what was left.
+func TestProvisionHostPrepareFailure(t *testing.T) {
+	r := &scriptRunner{}
+	a := newTestAdapter(t, r)
+	hostOf(t, a).prepErr = errors.New("no capacity")
+	id, err := a.Provision(context.Background(), envport.EnvSpec{Name: "w"})
+	if !errors.Is(err, hostOf(t, a).prepErr) || id != "w" {
+		t.Fatalf("Provision = %q, %v", id, err)
+	}
+	if len(r.calls) != 0 {
+		t.Errorf("built after a failed prepare: %v", r.calls)
 	}
 }
 
+// Destroy tolerates a name with nothing behind it (a failed Provision hands
+// back its name for exactly this).
 func TestDestroyAbsentIsNoop(t *testing.T) {
-	// No sandbox, no legacy workspace container → the two ps queries and then
-	// the folder cleanup, nothing removed.
-	r := &scriptRunner{responses: []response{{stdout: ""}, {stdout: ""}}}
+	r := &scriptRunner{}
 	a := newTestAdapter(t, r)
 	if err := a.Destroy(context.Background(), "apothecary-run1"); err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range r.calls {
-		if len(c.args) > 0 && c.args[0] == "rm" {
-			t.Errorf("absent destroy must not remove anything: %v", c.args)
-		}
+	if len(r.calls) != 0 {
+		t.Errorf("absent destroy must not run anything: %v", r.calls)
 	}
 }
 
@@ -1472,7 +1150,6 @@ func TestExposePortStartsReverseRelayAndDials(t *testing.T) {
 func TestStartRelayAlsoStartsPortScan(t *testing.T) {
 	r := &scriptRunner{responses: []response{
 		{stdout: "cid1\n"},                     // docker ps -q (relay)
-		{code: 0},                              // docker exec -d relay
 		{code: 1, stderr: "no such container"}, // docker exec -d portscan FAILS
 	}}
 	a := newTestAdapter(t, r)
@@ -1550,97 +1227,49 @@ func TestRelayTargetPrefersScannedSibling(t *testing.T) {
 	}
 }
 
-func TestBridgePumpsBytesOverUnixSocket(t *testing.T) {
-	// Real engine-side TCP listener the bridge forwards to.
-	engine, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer engine.Close()
-	go func() {
-		for {
-			c, err := engine.Accept()
-			if err != nil {
-				return
-			}
-			go func(c net.Conn) {
-				defer c.Close()
-				buf := make([]byte, 4)
-				if _, err := io.ReadFull(c, buf); err == nil {
-					_, _ = c.Write([]byte("pong-" + string(buf)))
-				}
-			}(c)
-		}
-	}()
-	_, portStr, _ := net.SplitHostPort(engine.Addr().String())
-	port, _ := net.LookupPort("tcp", portStr)
-
-	a := newTestAdapter(t, &scriptRunner{})
-	a.listen = net.Listen
-	a.cfg.EnginePort = port
-	if err := a.ensureBridge("ws1"); err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-
-	sock := filepath.Join(a.folderFor("ws1"), "shim", "engine.sock")
-	c, err := net.Dial("unix", sock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	if _, err := c.Write([]byte("ping")); err != nil {
-		t.Fatal(err)
-	}
-	got, err := io.ReadAll(c)
-	if err != nil || string(got) != "pong-ping" {
-		t.Fatalf("round trip = %q, %v", got, err)
-	}
-
-	// Idempotent per env: a second ensure opens nothing new.
-	if err := a.ensureBridge("ws1"); err != nil {
-		t.Fatal(err)
-	}
-	if n := len(a.bridges["ws1"]); n != 1 {
-		t.Errorf("listeners = %d, want 1", n)
-	}
-}
-
-func TestStartRelayDetachesStaticShim(t *testing.T) {
-	r := &scriptRunner{responses: []response{
-		{stdout: "cid1\n"}, // docker ps -q
-		{code: 0},          // docker exec -d
-	}}
+// startRelay hands the workspace's container to the host's bridge relay (the
+// host decides how the engine reaches it); a relay that fails fails the start,
+// and port discovery is not started for a workspace the engine cannot reach.
+func TestStartRelayHandsTheContainerToTheHost(t *testing.T) {
+	r := &scriptRunner{responses: []response{{stdout: "cid1\n"}}} // docker ps -q
 	a := newTestAdapter(t, r)
+	h := hostOf(t, a)
 	if err := a.startRelay(context.Background(), "apothecary-run1"); err != nil {
 		t.Fatal(err)
 	}
-	relay := find(t, r.calls, "docker", "exec")
-	joined := strings.Join(relay.args, " ")
-	for _, want := range []string{
-		"-d cid1 /opt/apothecary/shim relay",
-		"8080:/opt/apothecary/engine.sock",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("relay start missing %q: %v", want, relay.args)
+	if !slices.Equal(h.relays, []string{"apothecary-run1 cid1"}) {
+		t.Errorf("relays = %v", h.relays)
+	}
+
+	r = &scriptRunner{responses: []response{{stdout: "cid1\n"}}}
+	a = newTestAdapter(t, r)
+	hostOf(t, a).relayErr = errors.New("relay refused")
+	if err := a.startRelay(context.Background(), "apothecary-run1"); err == nil || !strings.Contains(err.Error(), "relay refused") {
+		t.Fatalf("err = %v, want the relay's", err)
+	}
+	for _, c := range r.calls {
+		if strings.Contains(strings.Join(c.args, " "), "portscan") {
+			t.Errorf("port discovery started without a relay: %v", c.args)
 		}
 	}
-	// Egress is external now — no proxy socket is relayed.
-	if strings.Contains(joined, "proxy.sock") {
-		t.Errorf("proxy.sock must not be relayed: %v", relay.args)
+
+	// No running container: nothing to relay to.
+	a = newTestAdapter(t, &scriptRunner{responses: []response{{stdout: ""}}})
+	if err := a.startRelay(context.Background(), "apothecary-run1"); err == nil || !strings.Contains(err.Error(), "no running container") {
+		t.Fatalf("err = %v, want no running container", err)
 	}
 }
 
-func TestTestProbeReportsMissingCLI(t *testing.T) {
-	r := &scriptRunner{responses: []response{
-		{err: errors.New("exec: not found")},
-		{err: errors.New("exec: not found")},
-		{err: errors.New("exec: not found")},
-	}}
-	a := newTestAdapter(t, r)
-	err := a.Test(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "npm install -g @devcontainers/cli") {
-		t.Fatalf("want install hint, got %v", err)
+// Test is the host's probe.
+func TestTestIsTheHostsProbe(t *testing.T) {
+	a := newTestAdapter(t, &scriptRunner{})
+	h := hostOf(t, a)
+	if err := a.Test(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.testErr = errors.New("no cluster")
+	if err := a.Test(context.Background()); !errors.Is(err, h.testErr) {
+		t.Fatalf("Test = %v, want the host's error", err)
 	}
 }
 
@@ -1672,19 +1301,8 @@ func TestWorkspaceName(t *testing.T) {
 // writable registry, so a provisioner running without one must degrade to the
 // old behaviour rather than pass buildkit a reference to nothing.
 func TestProvisionOmitsCacheFlagsWithoutGateway(t *testing.T) {
-	r := &scriptRunner{responses: append(
-		[]response{{code: 0}}, // git clone
-		sandboxResp([]response{
-			{stdout: upOK},
-			{stdout: "cid1\n"}, // up's container is ours
-			{code: 0},          // root-init
-			{code: 0},          // run-user-commands
-			{stdout: "cid1\n"},
-			{code: 0},
-			{code: 0},
-			{code: 0},
-		})...)}
-	a := newTestAdapter(t, r) // no GatewayImage ⇒ a.gw == nil
+	r := &scriptRunner{responses: provisionOK()}
+	a := newTestAdapter(t, r) // no withGateway ⇒ a.gw == nil
 	armSandbox(t, a, "apothecary-run1")
 	seedDevcontainer(t, a, "apothecary-run1")
 	if _, err := a.Provision(context.Background(), envport.EnvSpec{
@@ -1705,18 +1323,7 @@ func TestProvisionOmitsCacheFlagsWithoutGateway(t *testing.T) {
 // and --no-cache beats --cache-from in buildkit (verified directly: 1s warm
 // vs 32s with --no-cache against the same populated registry).
 func TestRebuildWithoutCachePassesNoCache(t *testing.T) {
-	r := &scriptRunner{responses: append(
-		[]response{{code: 0}}, // git clone
-		sandboxResp([]response{
-			{stdout: upOK},
-			{stdout: "cid1\n"}, // up's container is ours
-			{code: 0},          // root-init
-			{code: 0},          // run-user-commands
-			{stdout: "cid1\n"},
-			{code: 0},
-			{code: 0},
-			{code: 0},
-		})...)}
+	r := &scriptRunner{responses: provisionOK()}
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	seedDevcontainer(t, a, "apothecary-run1")
@@ -1734,18 +1341,7 @@ func TestRebuildWithoutCachePassesNoCache(t *testing.T) {
 // ...and the default stays cached. A rebuild that silently threw the cache
 // away would cost 77s every time someone recreated a container.
 func TestRebuildKeepsTheCacheByDefault(t *testing.T) {
-	r := &scriptRunner{responses: append(
-		[]response{{code: 0}},
-		sandboxResp([]response{
-			{stdout: upOK},
-			{stdout: "cid1\n"}, // up's container is ours
-			{code: 0},          // root-init
-			{code: 0},          // run-user-commands
-			{stdout: "cid1\n"},
-			{code: 0},
-			{code: 0},
-			{code: 0},
-		})...)}
+	r := &scriptRunner{responses: provisionOK()}
 	a := newTestAdapter(t, r)
 	armSandbox(t, a, "apothecary-run1")
 	seedDevcontainer(t, a, "apothecary-run1")
@@ -1781,50 +1377,5 @@ func TestListFiles(t *testing.T) {
 	}
 	if _, err := a.ListFiles(context.Background(), "ws", "missing/"); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("want fs.ErrNotExist, got %v", err)
-	}
-}
-
-// The checkout is cloned at the run's source branch, so the devcontainer is
-// built from the files the run starts from (a run fixing the devcontainer
-// must build with its fix); no source branch keeps the remote's default.
-// The checkout is on the run's branch before the devcontainer is built from
-// it: one script, the clone then the branch step inside the checkout — a
-// merge request's run from the fetched head, any other forked off the source
-// branch (re-entered first in both cases, for a pushed branch). No branch
-// (a bare caller) leaves the clone where it lands.
-func TestEnsureSrcEntersTheRunBranch(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		spec envport.EnvSpec
-		want string
-	}{
-		{"new run", envport.EnvSpec{Branch: "feat/x", SourceBranch: "develop"},
-			" && cd %s && { git switch 'feat/x' 2>/dev/null || git switch -c 'feat/x' 'origin/develop'; }"},
-		{"merge request", envport.EnvSpec{Branch: "feat/x", SourceBranch: "main", Fetch: "refs/merge-requests/4/head"},
-			" && cd %s && { git switch 'feat/x' 2>/dev/null || { git fetch origin 'refs/merge-requests/4/head' && git switch -c 'feat/x' FETCH_HEAD; }; }"},
-		{"no branch", envport.EnvSpec{}, ""},
-	} {
-		r := &scriptRunner{}
-		a := newTestAdapter(t, r)
-		tc.spec.RepoURL = "https://g.local/grp/repo.git"
-		src, err := a.ensureSrc(context.Background(), "apo-src-1", tc.spec)
-		if err != nil {
-			t.Fatal(err)
-		}
-		q := "'" + src + "'"
-		want := "git clone -- 'https://g.local/grp/repo.git' " + q
-		if tc.want != "" {
-			want += fmt.Sprintf(tc.want, q)
-		}
-		c := find(t, r.calls, "sh", "-c")
-		if len(c.args) != 2 || c.args[1] != want {
-			t.Errorf("%s: script = %q\n want %q", tc.name, c.args, want)
-		}
-		if strings.Contains(c.args[1], "--branch") {
-			t.Errorf("%s: the clone picks no branch of its own: %q", tc.name, c.args[1])
-		}
-		if len(c.env) != 0 {
-			t.Errorf("%s: no credential, no git env: %v", tc.name, c.env)
-		}
 	}
 }

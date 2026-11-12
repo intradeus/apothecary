@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"apothecary/internal/adapters/egressgw"
 	"apothecary/internal/ports/envport"
 )
 
@@ -97,101 +96,38 @@ func TestSandboxDaemonUseFollowsComposeRefs(t *testing.T) {
 	}
 }
 
-// --- the door in the sandbox ------------------------------------------------
+// --- the door's state ------------------------------------------------------
 
-// The setting decides the second listener and the shape label: auto follows
-// the sandbox's privilege, on/off are the operator's word either way.
+// auto follows the sandbox's privilege (the host's word); on/off are the
+// operator's either way.
 func TestDaemonDoorFollowsTheSetting(t *testing.T) {
 	cases := []struct {
-		name, setting, runtime string
-		open, privileged       bool
+		name, setting string
+		unpriv, open  bool
 	}{
-		{"auto privileged", "", "", false, true},
-		{"auto unprivileged", "auto", "sysbox-runc", true, false},
-		{"on privileged", "on", "", true, true},
-		{"on unprivileged", "on", "sysbox-runc", true, false},
-		{"off unprivileged", "off", "sysbox-runc", false, false},
-		{"off privileged", "off", "", false, true},
+		{"auto privileged", "", false, false},
+		{"auto unprivileged", "auto", true, true},
+		{"on privileged", "on", false, true},
+		{"on unprivileged", "on", true, true},
+		{"off unprivileged", "off", true, false},
+		{"off privileged", "off", false, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			r := &scriptRunner{}
-			a := newTestAdapter(t, r)
-			a.cfg.WorkspaceDocker, a.cfg.SandboxRuntime = c.setting, c.runtime
+			a := newTestAdapter(t, &scriptRunner{})
+			a.cfg.WorkspaceDocker = c.setting
+			hostOf(t, a).unpriv = c.unpriv
 			if a.doorOpen() != c.open {
-				t.Fatalf("doorOpen = %v", a.doorOpen())
+				t.Fatalf("doorOpen = %v, want %v", a.doorOpen(), c.open)
 			}
-			if err := a.createSandbox(context.Background(), "apothecary-run1", envport.EnvSpec{}, "", "/tc"); err != nil {
-				t.Fatal(err)
+			// Nothing asked: never a refusal, whatever the door.
+			if err := a.checkDaemonDoor(""); err != nil {
+				t.Errorf("no ask refused: %v", err)
 			}
-			run := find(t, r.calls, "docker", "run")
-			var hosts []string
-			for _, arg := range run.args {
-				if strings.HasPrefix(arg, "--host=") {
-					hosts = append(hosts, arg)
-				}
-			}
-			joined := strings.Join(run.args, " ")
-			switch {
-			case c.open && (len(hosts) != 2 || hosts[1] != "--host=unix://"+daemonDoorSocket):
-				t.Errorf("open door wants the parity socket then the default one, got %v", hosts)
-			case !c.open && (len(hosts) != 1 || strings.Contains(joined, daemonDoorSocket)):
-				t.Errorf("closed door wants the parity socket only, got %v", hosts)
-			}
-			if shape := "--label apothecary.sandbox.shape=" + map[bool]string{true: "3", false: "2"}[c.open]; !strings.Contains(joined, shape) {
-				t.Errorf("sandbox run missing %q: %v", shape, run.args)
-			}
-			if strings.Contains(joined, "--privileged") != c.privileged {
-				t.Errorf("--privileged present = %v, want %v: %v", !c.privileged, c.privileged, run.args)
+			if err := a.checkDaemonDoor("feature x"); (err == nil) != c.open {
+				t.Errorf("an ask with the door open=%v: err = %v", c.open, err)
 			}
 		})
-	}
-}
-
-// Opening the door changes the shape, so an existing closed-door sandbox is
-// recreated on its next use (Rebuild, recovery): rm then run, its inner
-// daemon's volume kept.
-func TestOpeningTheDoorRecreatesSandbox(t *testing.T) {
-	r := &scriptRunner{responses: []response{
-		{stdout: "sbx0\n"}, // sandboxIDs: an existing sandbox...
-		{stdout: ""},       // ...without the door's shape label
-		{code: 0},          // docker rm -f sbx0
-		{code: 0},          // volume create (idempotent)
-		{stdout: "sbx1\n"}, // docker run
-		{stdout: "29.6.2"}, // readiness probe
-	}}
-	a := newTestAdapter(t, r)
-	a.cfg.WorkspaceDocker = "on"
-	const name = "apothecary-run1"
-	armSandbox(t, a, name)
-	if err := a.ensureSandbox(context.Background(), name, envport.EnvSpec{}, egressgw.Attachment{}, "/tc"); err != nil {
-		t.Fatal(err)
-	}
-	rmAt, runAt := -1, -1
-	for i, c := range r.calls {
-		joined := strings.Join(c.args, " ")
-		switch {
-		case strings.HasPrefix(joined, "ps ") && strings.Contains(joined, "shape="):
-			if !strings.Contains(joined, "label=apothecary.sandbox.shape=3") {
-				t.Errorf("must look for the door's shape: %v", c.args)
-			}
-		case strings.HasPrefix(joined, "rm -f"):
-			rmAt = i
-		case strings.HasPrefix(joined, "run "):
-			runAt = i
-			for _, want := range []string{"--label apothecary.sandbox.shape=3", "--host=unix://" + daemonDoorSocket, "--privileged"} {
-				if !strings.Contains(joined, want) {
-					t.Errorf("recreated sandbox missing %q: %v", want, c.args)
-				}
-			}
-		case strings.HasPrefix(joined, "start"):
-			t.Errorf("a closed-door sandbox must be recreated, not started: %v", c.args)
-		case strings.HasPrefix(joined, "volume rm"):
-			t.Errorf("the inner daemon's volume must survive: %v", c.args)
-		}
-	}
-	if rmAt < 0 || runAt < 0 || rmAt > runAt {
-		t.Errorf("expected rm -f then run, got rm@%d run@%d: %v", rmAt, runAt, r.calls)
 	}
 }
 
@@ -225,7 +161,7 @@ func TestProvisionRefusesDaemonDoorWhenClosed(t *testing.T) {
 	for _, want := range []string{
 		"feature ghcr.io/devcontainers/features/docker-outside-of-docker:1",
 		"root on the host",
-		"APOTHECARY_SANDBOX_RUNTIME=sysbox-runc",
+		hostOf(t, a).unprivilegedHint(), // how this host gets unprivileged
 		"APOTHECARY_WORKSPACE_DOCKER=on",
 		"Unprivileged sandboxes",
 	} {
@@ -238,16 +174,17 @@ func TestProvisionRefusesDaemonDoorWhenClosed(t *testing.T) {
 	}
 }
 
-// off is off, even where the sandbox would be unprivileged; the message says
-// so instead of sending the operator to sysbox.
+// off is off, even where the sandbox is unprivileged; the message says so
+// instead of sending the operator to the host's unprivileged setup.
 func TestProvisionRefusesDaemonDoorWhenOff(t *testing.T) {
 	r := &scriptRunner{}
 	a := newTestAdapter(t, r)
-	a.cfg.WorkspaceDocker, a.cfg.SandboxRuntime = "off", "sysbox-runc"
+	a.cfg.WorkspaceDocker = "off"
+	hostOf(t, a).unpriv = true
 	armSandbox(t, a, "apothecary-run1")
 	doorRepo(t, a, "apothecary-run1")
 	_, err := a.Provision(context.Background(), doorSpec)
-	if err == nil || !strings.Contains(err.Error(), "APOTHECARY_WORKSPACE_DOCKER=off") || strings.Contains(err.Error(), "sysbox") {
+	if err == nil || !strings.Contains(err.Error(), "APOTHECARY_WORKSPACE_DOCKER=off") || strings.Contains(err.Error(), hostOf(t, a).unprivilegedHint()) {
 		t.Fatalf("err = %v", err)
 	}
 	if len(r.calls) != 0 {
@@ -255,47 +192,32 @@ func TestProvisionRefusesDaemonDoorWhenOff(t *testing.T) {
 	}
 }
 
-// An open door (auto + an unprivileged runtime) provisions the same repo: the
-// config is not read for the refusal at all, and the sandbox carries the
-// second listener.
-func TestProvisionOpensDaemonDoorUnderRuntime(t *testing.T) {
-	r := &scriptRunner{responses: append([]response{
-		{stdout: `{"runc":{},"sysbox-runc":{}}`}, // docker info: runtime present
-	}, sandboxResp(repoUpTail)...)}
-	a := newTestAdapter(t, r)
-	a.cfg.SandboxRuntime = "sysbox-runc"
-	armSandbox(t, a, "apothecary-run1")
-	doorRepo(t, a, "apothecary-run1")
-	if _, err := a.Provision(context.Background(), doorSpec); err != nil {
-		t.Fatal(err)
-	}
-	run := find(t, r.calls, "docker", "run")
-	joined := strings.Join(run.args, " ")
-	for _, want := range []string{"--runtime sysbox-runc", "--host=unix://" + daemonDoorSocket, "--label apothecary.sandbox.shape=3"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("sandbox run missing %q: %v", want, run.args)
-		}
-	}
-	find(t, r.calls, "devcontainer", "up")
-}
-
-// The operator's "on" opens it under a privileged sandbox too — both flags on
-// the same `docker run`.
-func TestProvisionOpensDaemonDoorWhenOn(t *testing.T) {
-	r := &scriptRunner{responses: sandboxResp(repoUpTail)}
-	a := newTestAdapter(t, r)
-	a.cfg.WorkspaceDocker = "on"
-	armSandbox(t, a, "apothecary-run1")
-	doorRepo(t, a, "apothecary-run1")
-	if _, err := a.Provision(context.Background(), doorSpec); err != nil {
-		t.Fatal(err)
-	}
-	run := find(t, r.calls, "docker", "run")
-	joined := strings.Join(run.args, " ")
-	for _, want := range []string{"--privileged", "--host=unix://" + daemonDoorSocket, "--label apothecary.sandbox.shape=3"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("sandbox run missing %q: %v", want, run.args)
-		}
+// An open door — auto on an unprivileged host, or the operator's "on" under a
+// privileged one — provisions the same repo, verbatim: the repo declares the
+// feature itself, so nothing is injected.
+func TestProvisionOpensDaemonDoor(t *testing.T) {
+	for _, c := range []struct {
+		name, setting string
+		unpriv        bool
+	}{
+		{"auto, unprivileged", "auto", true},
+		{"on, privileged", "on", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := &scriptRunner{responses: provisionOK()}
+			a := newTestAdapter(t, r)
+			a.cfg.WorkspaceDocker = c.setting
+			hostOf(t, a).unpriv = c.unpriv
+			armSandbox(t, a, "apothecary-run1")
+			doorRepo(t, a, "apothecary-run1")
+			if _, err := a.Provision(context.Background(), doorSpec); err != nil {
+				t.Fatal(err)
+			}
+			up := find(t, r.calls, "devcontainer", "up")
+			if strings.Contains(strings.Join(up.args, " "), "--additional-features") {
+				t.Errorf("the repo declares the feature; nothing to inject: %v", up.args)
+			}
+		})
 	}
 }
 
@@ -305,7 +227,7 @@ func TestProvisionOpensDaemonDoorWhenOn(t *testing.T) {
 // repo that does not declare it (the CLI's --additional-features: the repo's
 // files stay untouched), through the same door.
 func TestProvisionInjectsDockerForTheProject(t *testing.T) {
-	r := &scriptRunner{responses: sandboxResp(repoUpTail)}
+	r := &scriptRunner{responses: provisionOK()}
 	a := newTestAdapter(t, r)
 	a.cfg.WorkspaceDocker = "on"
 	armSandbox(t, a, "apothecary-run1")
@@ -324,16 +246,12 @@ func TestProvisionInjectsDockerForTheProject(t *testing.T) {
 	if strings.Contains(joined, "--override-config") {
 		t.Errorf("the repo's config must stay untouched: %v", up.args)
 	}
-	run := find(t, r.calls, "docker", "run")
-	if !strings.Contains(strings.Join(run.args, " "), "--host=unix://"+daemonDoorSocket) {
-		t.Errorf("the door must be open for the injected feature to bind: %v", run.args)
-	}
 }
 
 // A repo that already declares the feature is left alone even with the
 // project's setting on: injecting it twice would install it twice.
 func TestProjectDockerDefersToTheRepo(t *testing.T) {
-	r := &scriptRunner{responses: sandboxResp(repoUpTail)}
+	r := &scriptRunner{responses: provisionOK()}
 	a := newTestAdapter(t, r)
 	a.cfg.WorkspaceDocker = "on"
 	armSandbox(t, a, "apothecary-run1")
@@ -367,7 +285,7 @@ func TestProjectDockerRefusedWhenDoorClosed(t *testing.T) {
 	}
 	// Off: no injection and no refusal — the repo asked for nothing itself.
 	spec.Docker = false
-	r2 := &scriptRunner{responses: sandboxResp(repoUpTail)}
+	r2 := &scriptRunner{responses: provisionOK()}
 	a2 := newTestAdapter(t, r2)
 	armSandbox(t, a2, "apothecary-run1")
 	seedRepoDevcontainer(t, a2, "apothecary-run1")
@@ -385,7 +303,7 @@ func TestProjectDockerRefusedWhenDoorClosed(t *testing.T) {
 // remote user; then the hooks run — in that order, against the same
 // container, so a non-root user's postCreateCommand meets a tree it owns.
 func TestProvisionRunsHooksAfterRootInit(t *testing.T) {
-	a, r := provisionRepoDinD(t, repoUpTail)
+	a, r := provisionRepo(t, provisionOK())
 	up := find(t, r.calls, "devcontainer", "up")
 	for _, want := range []string{"--skip-post-create", "--skip-post-attach"} {
 		if !strings.Contains(strings.Join(up.args, " "), want) {
@@ -413,7 +331,7 @@ func TestProvisionRunsHooksAfterRootInit(t *testing.T) {
 					t.Errorf("run-user-commands missing %q: %v", want, c.args)
 				}
 			}
-			if !envHas(c, "DOCKER_HOST=unix://"+a.sockPath("apothecary-run1")) {
+			if !envHas(c, "DOCKER_HOST=unix://"+hostOf(t, a).innerSock("apothecary-run1")) {
 				t.Errorf("hooks must run against the inner daemon: %v", c.env)
 			}
 		}

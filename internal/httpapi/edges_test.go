@@ -548,6 +548,9 @@ func TestExposeThroughARelay(t *testing.T) {
 	if len(ports.Ports) != 1 || len(ports.Observed) != 1 || ports.Observed[0].Port != 4000 {
 		t.Errorf("an exposed port stayed in the discovered list: %s", body)
 	}
+	if !ports.Links {
+		t.Error("a relay hands out browser links")
+	}
 
 	x.res.Envp = exposer{EnvProvisioner: x.envp, exposeErr: errors.New("no such listener")}
 	if res, body := x.do(t, "POST", "/api/runs/r1/expose-port", ExposePortRequest{Port: 3001}, nil); res.StatusCode != http.StatusConflict {

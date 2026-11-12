@@ -1,5 +1,5 @@
 // Package devcontainer holds the repo's own devcontainer (.devcontainer/) to
-// its sources of truth: the Go version to go.mod, Node to the deploy image,
+// its sources of truth: the Go version to go.mod, Node to .nvmrc,
 // helm to CI, Postgres to pgtest, and the shape apothecary itself needs when
 // it runs this repo (README, "Developing Apothecary with Apothecary").
 package devcontainer
@@ -47,25 +47,84 @@ func TestGoImageMatchesGoMod(t *testing.T) {
 	}
 }
 
-func TestNodeMajorMatchesDeployImage(t *testing.T) {
-	df := read(t, ".devcontainer/Dockerfile")
-	deploy := regexp.MustCompile(`(?m)^FROM node:(\d+)-bookworm-slim`).FindStringSubmatch(read(t, "deploy/Dockerfile"))
-	if deploy == nil {
-		t.Fatal("deploy/Dockerfile does not build the CPUI on node:<major>-bookworm-slim")
+// One Node, everywhere: .nvmrc names the exact version, npm is the one that
+// Node ships, and the engine image, the devcontainer, cpui's engines (which
+// npm enforces: .npmrc engine-strict) and every CI setup-node take them from
+// there. A different Node on one side is how a check passes on a laptop and
+// fails in CI.
+func TestOneNodeEverywhere(t *testing.T) {
+	node := strings.TrimSpace(read(t, ".nvmrc"))
+	if !regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(node) {
+		t.Fatalf(".nvmrc = %q, want an exact version (e.g. 26.13.1)", node)
 	}
-	if got := argDefault(t, df, "NODE_MAJOR"); got != deploy[1] {
-		t.Errorf("NODE_MAJOR = %s, deploy/Dockerfile uses node %s", got, deploy[1])
+	if deploy := regexp.MustCompile(`(?m)^FROM node:(\S+)-bookworm-slim`).FindStringSubmatch(read(t, "deploy/Dockerfile")); deploy == nil || deploy[1] != node {
+		t.Errorf("deploy/Dockerfile builds the CPUI on node %v, .nvmrc says %s", deploy, node)
+	}
+	df := read(t, ".devcontainer/Dockerfile")
+	if got := argDefault(t, df, "NODE_VERSION"); got != node {
+		t.Errorf("devcontainer NODE_VERSION = %s, .nvmrc says %s", got, node)
+	}
+	if !strings.Contains(df, "FROM node:${NODE_VERSION}-bookworm-slim") {
+		t.Error("the devcontainer must take node from node:${NODE_VERSION}-bookworm-slim")
+	}
+	pkg := read(t, "cpui/package.json")
+	if eng := regexp.MustCompile(`"node":\s*"([^"]+)"`).FindStringSubmatch(pkg); eng == nil || eng[1] != node {
+		t.Errorf("cpui/package.json engines.node = %v, want exactly %s", eng, node)
+	}
+	if npm := regexp.MustCompile(`"npm":\s*"(\d+\.\d+\.\d+)"`).FindStringSubmatch(pkg); npm == nil {
+		t.Error("cpui/package.json engines.npm must name the exact npm that .nvmrc's Node ships")
+	}
+	if !strings.Contains(read(t, "cpui/.npmrc"), "engine-strict=true") {
+		t.Error("cpui/.npmrc must set engine-strict=true, so another Node or npm refuses to install")
+	}
+	for _, wf := range []string{"ci.yml", "manual-release.yml", "pr-title.yml"} {
+		y := read(t, ".github/workflows/"+wf)
+		if regexp.MustCompile(`(?m)^\s+node-version:`).MatchString(y) {
+			t.Errorf("%s names a Node version: use node-version-file: .nvmrc", wf)
+		}
+		uses := len(regexp.MustCompile(`uses: actions/setup-node@`).FindAllString(y, -1))
+		if files := strings.Count(y, "node-version-file: .nvmrc"); files != uses {
+			t.Errorf("%s: %d setup-node steps, %d read .nvmrc", wf, uses, files)
+		}
 	}
 }
 
-func TestHelmPinMatchesCI(t *testing.T) {
+// helm, task and shellcheck: the devcontainer's ARGs are the versions, and
+// every workflow installs exactly those (a "3.x" would drift).
+func TestToolPinsMatchCI(t *testing.T) {
 	df := read(t, ".devcontainer/Dockerfile")
-	ci := regexp.MustCompile(`azure/setup-helm@\S+\s+with:\s+version: v(\S+)`).FindStringSubmatch(read(t, ".github/workflows/ci.yml"))
-	if ci == nil {
-		t.Fatal("ci.yml has no azure/setup-helm version")
+	helm, task, sc := argDefault(t, df, "HELM_VERSION"), strings.TrimPrefix(argDefault(t, df, "TASK_VERSION"), "v"), argDefault(t, df, "SHELLCHECK_VERSION")
+	for _, wf := range []string{"ci.yml", "manual-release.yml"} {
+		y := read(t, ".github/workflows/"+wf)
+		// The actions are pinned to a commit, their release in a trailing comment.
+		for _, m := range regexp.MustCompile(`azure/setup-helm@\S+(?:[ \t]+#[^\n]*)?\s+with:\s+version: v(\S+)`).FindAllStringSubmatch(y, -1) {
+			if m[1] != helm {
+				t.Errorf("%s installs helm %s, the devcontainer %s", wf, m[1], helm)
+			}
+		}
+		for _, m := range regexp.MustCompile(`arduino/setup-task@\S+(?:[ \t]+#[^\n]*)?\s+with:\s+version: (\S+)`).FindAllStringSubmatch(y, -1) {
+			if m[1] != task {
+				t.Errorf("%s installs task %s, the devcontainer %s", wf, m[1], task)
+			}
+		}
 	}
-	if got := argDefault(t, df, "HELM_VERSION"); got != ci[1] {
-		t.Errorf("HELM_VERSION = %s, CI lints with helm %s", got, ci[1])
+	ci := read(t, ".github/workflows/ci.yml")
+	if !strings.Contains(ci, "azure/setup-helm@") || !strings.Contains(ci, "arduino/setup-task@") {
+		t.Fatal("ci.yml installs no helm or no task")
+	}
+	if m := regexp.MustCompile(`SHELLCHECK_VERSION: (\S+)`).FindStringSubmatch(ci); m == nil || m[1] != sc {
+		t.Errorf("ci.yml installs shellcheck %v, the devcontainer %s", m, sc)
+	}
+	sum := regexp.MustCompile(`amd64\) a=x86_64; sum=([0-9a-f]{64})`).FindStringSubmatch(df)
+	if m := regexp.MustCompile(`SHELLCHECK_SHA256: ([0-9a-f]{64})`).FindStringSubmatch(ci); sum == nil || m == nil || m[1] != sum[1] {
+		t.Error("ci.yml's shellcheck checksum is not the devcontainer's amd64 one")
+	}
+	// The Taskfile's guards read the same ARGs.
+	tf := read(t, "Taskfile.yml")
+	for _, arg := range []string{"HELM_VERSION", "TASK_VERSION", "SHELLCHECK_VERSION"} {
+		if !strings.Contains(tf, "ARG "+arg+"=") {
+			t.Errorf("Taskfile.yml does not read %s from .devcontainer/Dockerfile", arg)
+		}
 	}
 }
 

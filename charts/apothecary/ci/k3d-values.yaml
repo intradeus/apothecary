@@ -1,0 +1,31 @@
+# Local development on k3d (task k8s:cluster k8s:images k8s:deploy), and the
+# chart's CI check. The master key comes from `task k8s:deploy` (a generated,
+# git-ignored deploy/.k3d-master-key); the database password is a
+# throwaway's.
+image:
+  repository: k3d-registry.localhost:5111/apothecary
+  tag: local
+
+masterKey: ci-placeholder
+postgres:
+  enabled: true
+  password: apothecary
+
+engine:
+  runsDir:
+    size: 10Gi
+
+# k3d's nodes have no sysbox: privileged sandboxes, on a cluster of one's own.
+workspaces:
+  runtimeClassName: ""
+  privileged: true
+
+access:
+  http:
+    scheme: http
+    port: "8090"
+    appsDomain: apps.localhost
+    ingress:
+      enabled: true
+      className: traefik
+      host: apothecary.localhost
