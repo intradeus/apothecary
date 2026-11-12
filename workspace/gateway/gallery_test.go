@@ -110,7 +110,7 @@ func TestGalleryCachesVersionedFilesAndFollowsStorageRedirects(t *testing.T) {
 
 func TestGalleryCacheablePaths(t *testing.T) {
 	g := newGallery("https://open-vsx.org", t.TempDir())
-	// Vendor-neutral fixtures on purpose (lint:models): the shapes are what
+	// Vendor-neutral fixtures on purpose (repo:lint): the shapes are what
 	// matter — a plain, a platform-specific (@linux-x64), an alpine build, a
 	// universal one, the asset form, and the moving "latest".
 	for p, want := range map[string]bool{

@@ -1,0 +1,15 @@
+# The workflows pin every action to a commit (a tag can be moved under
+# them). Dependabot keeps those pins current: one pull request a month for
+# all of them, titled as a conventional commit (pr-title.yml checks it).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci
+      include: scope

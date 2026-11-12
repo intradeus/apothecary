@@ -3,7 +3,7 @@
 package browser
 
 // Live test of the Kubernetes browser host against a real cluster (k3d
-// locally: task test:integration:k8s, or task k8s:cluster k8s:images
+// locally: task sandbox:test:k8s, or task k8s:cluster k8s:images
 // k8s:test-live to keep the cluster): the browser pod pulls the pinned image
 // (DefaultImage), its init container seeds this tree's shim, and one MCP
 // session (liveSession) runs through the engine's session mux: it browses an

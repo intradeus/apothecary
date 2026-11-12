@@ -69,7 +69,8 @@
 
 	// A fresh copy each time it opens: cancelling leaves the panel untouched.
 	function reset() {
-		draft = structuredClone($state.snapshot(panel) ?? blank());
+		// A snapshot is already a deep copy.
+		draft = $state.snapshot(panel) ?? blank();
 		preview = null;
 		tried = false;
 		catalog.load();

@@ -14,6 +14,11 @@ export default defineConfig({
 	},
 	test: {
 		environment: 'jsdom',
+		// One jsdom per worker, each test file still in its own context: a
+		// jsdom per file was a third of the suite's time. Inside a VM context
+		// Node's globals (structuredClone, …) build objects of another realm,
+		// which Svelte will not make reactive, and `location` cannot be stubbed.
+		pool: 'vmThreads',
 		include: ['src/**/*.test.ts'],
 		setupFiles: ['./src/test/setup.ts'],
 		restoreMocks: true,

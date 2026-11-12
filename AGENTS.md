@@ -25,26 +25,25 @@ Apothecary on this repo (README, "Developing Apothecary with Apothecary").
 
 | When | Command |
 |---|---|
-| before pushing, always | `task fmt`, then `task lint` (gofmt, go vet with every build tag on linux+darwin, model ids, API contract, svelte-check + the CPUI linters, helm lint) |
-| unit tests | `task test:unit` (Go + vitest; nothing running needed) |
-| Postgres-backed tests | `task test:integration:pg` (throwaway `postgres:16` containers on the run's docker daemon — the project's *Docker in workspaces* setting) |
-| you changed Go | `task cover:go` — the 95% floor (`cmd/coverreport`) only ever rises; CI's unit job runs `task cover` (both halves' floors) |
-| you changed `cpui/` | `cd cpui && npm run test:coverage` — the floors in `cpui/vite.config.ts` (lines 99%) only ever rise; CI's unit job enforces them |
+| before pushing, always | `task fmt`, then `task check`: every lint, the Go tests (Postgres included) and the CPUI tests, in parallel, under their coverage floors; logs in `build/checks/` |
+| one check | the task named after its CI job: `task go:test`, `go:lint`, `ui:test`, `ui:lint`, `repo:lint` (go-test is `task go:test`, and so on) |
+| one package | `task go:test:run -- ./internal/x -run TestY -v` (nothing running; Postgres-backed tests skip) |
+| Postgres-backed tests | `task go:test:pg` (throwaway `postgres:16` containers on the run's docker daemon — the project's *Docker in workspaces* setting) |
+| one CPUI test | `task ui:test:run -- src/lib/x` |
+| coverage | `task go:test` holds the 95% floor (`cmd/coverreport`), `task ui:test` the floors in `cpui/vite.config.ts` (lines 99%); they only ever rise |
 | you changed `internal/httpapi/routes.go` | `task api` (regenerates `api/openapi.yaml` + `cpui/src/lib/api/generated`; a stale spec fails a unit test) |
-| one package | `task test:unit:go -- ./internal/x -run TestY -v` |
 | bring the app up | `task dev:up` (below) |
 
 ## Never run in a workspace
 
-`task test:integration:harness`, `test:integration:k8s`,
-`test:integration`, `test`, `verify`, `build`, `build:images`, `k8s:*`,
-`deploy/images.sh`: they build multi-gigabyte images, nest sandboxes or
-start a k3d cluster. CI runs them.
+`task ci`, `test`, `sandbox:*`, `engine:image`, `build`,
+`build:images`, `k8s:*`, `deploy/images.sh`: they build multi-gigabyte
+images, nest sandboxes or start a k3d cluster. CI runs them.
 
 ## Hard rules
 
 - **No model id anywhere** — code, flows, tests, docs, this file. `task
-  lint:models` fails the tree on one. Models are bound per project in the UI.
+  repo:lint` fails the tree on one, and there is no exemption marker. Models are bound per project in the UI.
 - **Conventional commits**: `<type>(<scope>)!: subject`, a blank line before
   any body; types build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test.
   The lefthook `commit-msg` hook (installed by `npm ci` in `cpui`) rejects

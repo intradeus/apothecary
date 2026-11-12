@@ -390,9 +390,9 @@ func (s *SignIns) completeGemini(ctx context.Context, si *signin, pasted string)
 func (s *SignIns) geminiProject(ctx context.Context, access string) (string, error) {
 	h := map[string]string{
 		"Authorization": "Bearer " + access,
-		// Gemini CLI's own User-Agent shape names a model; this is the client
-		// fingerprint omp sends, not a model apothecary runs. lint:models-ok
-		"User-Agent":      "GeminiCLI/" + geminiCLIVersion + "/gemini-3.1-pro-preview (linux; x64; terminal)", // lint:models-ok
+		// Gemini CLI's client fingerprint, without the model segment its own
+		// User-Agent carries: no model id lives in this tree.
+		"User-Agent":      "GeminiCLI/" + geminiCLIVersion + " (linux; x64; terminal)",
 		"Client-Metadata": "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI",
 	}
 	meta := map[string]any{"ideType": "IDE_UNSPECIFIED", "platform": "PLATFORM_UNSPECIFIED", "pluginType": "GEMINI"}

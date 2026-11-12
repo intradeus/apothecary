@@ -729,33 +729,44 @@ way in is the run's inner docker daemon:
 
 ## Development
 
-Four units of checks, each a task and a CI job (`.github/workflows/ci.yml`,
-on every pull request and push to `main`; a release needs all four green):
+Every CI job (`.github/workflows/ci.yml`, on every pull request and push to
+`main`) is one task with the same name: the go-test job runs `task go:test`,
+and so on. CI skips a side of the tree a change does not touch (Go, UI,
+sandbox images, engine image); a release needs a green run.
 
 ```sh
-task test:unit                     # unit: Go (`go test ./...`) + the CPUI (vitest) — nothing running, macOS or Linux; args go to go test (-- -count=1 ./...)
-task cover                         #   what CI's unit job runs: the same tests under their coverage floors (Go incl. the Postgres tests, CPUI), reports as pages
-task test:integration              # integration: every suite below (needs docker)
-task test:integration:pg           #   the Postgres adapter and boot tests, on throwaway containers
-task test:integration:harness      #   the pinned harness CLIs (tools image) against what the engine hands them
-task test:integration:k8s          #   the Kubernetes provisioner and project browser on a local k3d cluster
-task lint                          # lint: gofmt, go vet (linux + darwin, every build tag), model ids, API contract, svelte-check, CPUI linters, the Helm chart
-task build                         # build: apothecaryd, the apothecary client, shim, gateway, the CPUI, the five images
+task check                         # before pushing: every lint, the Go tests (Postgres included) and the CPUI tests, in parallel, under their coverage floors (needs docker for Postgres)
+task ci                            # everything CI runs, locally and in parallel: check, then the sandbox images and suites; never skips a side as CI does (needs docker, k3d, ~15 GB of disk)
+task lint                          #   every lint, in parallel; task test: every test suite
+                                   #   (the umbrellas log each check to build/checks/ and print one line per check, then the tail of any failure)
 
-task test                          # unit, then integration
-task test:linux                    # the Go unit tests in a Linux container, incl. the Linux-only build-tagged ones
-task verify                        # pre-commit gate: lint, unit tests with coverage, binaries, CPUI build
+task go:test                       # every Go test, Postgres ones included, under GO_COVER_MIN; pages in coverage/go/
+task go:lint                       # gofmt, go vet (linux with every build tag, darwin, the client on windows), the API contract
+task ui:test                       # the CPUI tests under their floors; pages in cpui/coverage/
+task ui:lint                       # svelte-check, the CPUI linters, the production build
+task repo:lint                     # no model id anywhere in the tree; the Helm chart and its README (chart:lint)
+task sandbox:images                # the four images the sandbox suites run
+task sandbox:test:harness          # the pinned harness CLIs (tools image) against what the engine hands them
+task sandbox:test:k8s              # the Kubernetes provisioner and project browser on a local k3d cluster
+task engine:image                  # the engine image
+
+task go:test:run -- ./internal/x -run TestY -v   # Go tests, nothing running (Postgres-backed ones skip)
+task go:test:pg                    # only the Postgres-backed Go tests, on throwaway containers
+task go:test:linux                 # the Go tests in a Linux container, incl. the Linux-only build-tagged ones
+task go:test:stress                # Go tests under CI-like load (2 CPUs, burners, -race)
+task ui:test:run -- src/lib/x      # CPUI tests, args to vitest
+task build                         # apothecaryd, the apothecary client, shim, gateway, the CPUI, the five images
 go run ./cmd/apothecaryd serve -dev   # real engine/API/UI, fake vendors
 task dev                           # the same, on :18080 against a scratch Postgres (API only)
 task dev:up                        # ...plus the built UI, master key written to deploy/.env if missing
 cd cpui && npm run dev             # UI dev server (proxies /api)
 
-devcontainer up --workspace-folder . && devcontainer exec --workspace-folder . task test:unit   # the repo's own devcontainer (no docker inside it: the pg suite runs on the host, or add the docker-outside-of-docker feature locally)
+devcontainer up --workspace-folder . && devcontainer exec --workspace-folder . task go:test:run   # the repo's own devcontainer (no docker inside it: the pg suite runs on the host, or add the docker-outside-of-docker feature locally)
 ```
 
-Development happens on macOS or Linux, and `task test:unit` passes on both
-(CI's unit job runs `task cover` on Linux: the same tests, Postgres ones
-included, under the coverage floors — `GO_COVER_MIN` in the Taskfile and the
+Development happens on macOS or Linux, and `task go:test:run` and `task
+ui:test:run` pass on both (CI runs `task go:test` and `task ui:test` on Linux:
+the same tests, Postgres ones included, under the coverage floors — `GO_COVER_MIN` in the Taskfile and the
 thresholds in `cpui/vite.config.ts`, which only ever rise): a unit test fakes
 what it needs (fixture `/proc` and
 `/sys` roots, injected paths) rather than reading the machine. Anything that
@@ -820,7 +831,7 @@ recipe:
 3. **Project.** Repository `https://github.com/intradeus/apothecary`,
    locator `intradeus/apothecary`, default branch `main`, AGENTS.md path
    left default. Workspace: **Docker in workspaces** on. Commands: `verify` =
-   `task lint && task test:unit && task test:integration:pg`; optionally
+   `task check`; optionally
    `setup` = `bash .devcontainer/post-create.sh`.
 4. **Egress.** *Add sensible defaults*, then add `get.helm.sh` (helm comes
    from there) — everything else the build and the hooks dial (Debian, the

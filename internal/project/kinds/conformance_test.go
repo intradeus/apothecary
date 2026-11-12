@@ -9,7 +9,7 @@ package kinds
 // wire protocols are its own, versioned with it (docs/model-providers-plan.md).
 //
 // Not part of `go test ./...`: they need the bundle, which holds Linux
-// binaries whose wrappers name its mount point. `task test:integration:harness`
+// binaries whose wrappers name its mount point. `task sandbox:test:harness`
 // builds the bundle the engine expects and runs them in a Linux container:
 //
 //	go test -tags conformance -run Conformance ./internal/project/kinds/
@@ -48,10 +48,10 @@ func toolsBin(t *testing.T, name string) string {
 	t.Helper()
 	hash, err := os.ReadFile(filepath.Join(toolsDir, "TOOLS_HASH"))
 	if err != nil {
-		t.Fatalf("no tools bundle at %s (%v): run `task test:integration:harness`", toolsDir, err)
+		t.Fatalf("no tools bundle at %s (%v): run `task sandbox:test:harness`", toolsDir, err)
 	}
 	if got, want := strings.TrimSpace(string(hash)), workspace.ToolsHash(); got != want {
-		t.Fatalf("the tools bundle at %s is %s, this engine expects %s: rebuild it (`task test:integration:harness`)", toolsDir, got, want)
+		t.Fatalf("the tools bundle at %s is %s, this engine expects %s: rebuild it (`task sandbox:test:harness`)", toolsDir, got, want)
 	}
 	bin := filepath.Join(toolsDir, "gnu", "bin", name)
 	if _, err := os.Stat(bin); err != nil {

@@ -3,7 +3,7 @@
 package workspace
 
 // Live test of the Kubernetes host against a real cluster (k3d locally:
-// task test:integration:k8s, or task k8s:cluster k8s:images k8s:test-live to
+// task sandbox:test:k8s, or task k8s:cluster k8s:images k8s:test-live to
 // keep the cluster). It needs:
 //
 //   - APOTHECARY_LIVE_KUBECONFIG: a kubeconfig for a THROWAWAY cluster. The

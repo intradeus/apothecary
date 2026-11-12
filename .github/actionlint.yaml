@@ -1,0 +1,6 @@
+# actionlint (task repo:lint). The workflows run on ubuntu-26.04, a
+# GitHub-hosted label newer than actionlint's list of them: drop it from here
+# once actionlint knows it.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

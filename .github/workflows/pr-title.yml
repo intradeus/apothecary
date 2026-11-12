@@ -7,16 +7,17 @@ name: pr-title
 
 on:
   pull_request:
-    types: [opened, edited, reopened, synchronize]
+    # Not on a push: it can't change the title.
+    types: [opened, edited, reopened]
 
 permissions:
   contents: read
 
 jobs:
   pr-title:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check the pull request title
         env:
           TITLE: ${{ github.event.pull_request.title }}

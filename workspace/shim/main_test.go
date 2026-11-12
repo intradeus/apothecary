@@ -63,7 +63,7 @@ func shimCmd(t *testing.T, args ...string) *exec.Cmd {
 	cmd := exec.Command(exe, args...)
 	// Under -race a process otherwise sleeps a second on its way out.
 	cmd.Env = append(os.Environ(), shimEnv+"=1", "GORACE=atexit_sleep_ms=0")
-	// `task cover:go`: what this process runs counts too. Any other -cover run
+	// `task go:test`: what this process runs counts too. Any other -cover run
 	// still needs a directory, or the process warns about it on stderr; a
 	// shared one, as a detached supervisor can outlive the test.
 	if dir := os.Getenv("APOTHECARY_COVERDIR"); dir != "" {

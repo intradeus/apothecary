@@ -1069,9 +1069,8 @@ describe('what each call sends', () => {
 		});
 
 		it('speaks wss on a secure page', () => {
-			vi.stubGlobal('location', { protocol: 'https:', host: 'apo.test' });
-			expect(workspace.terminalUrl('r', 1, 1)).toMatch(/^wss:\/\/apo\.test\//);
-			vi.unstubAllGlobals();
+			const page = { protocol: 'https:', host: 'apo.test' };
+			expect(workspace.terminalUrl('r', 1, 1, '', page)).toMatch(/^wss:\/\/apo\.test\//);
 		});
 	});
 

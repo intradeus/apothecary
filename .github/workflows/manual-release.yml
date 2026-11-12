@@ -37,14 +37,14 @@ defaults:
 jobs:
   plan:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       mode: ${{ steps.plan.outputs.mode }}
       version: ${{ steps.plan.outputs.version }}
     env:
       SHA: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -81,7 +81,7 @@ jobs:
   release:
     needs: plan
     if: needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'resume'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     concurrency:
       group: manual-release
       # Never cancel: a release can be partway through pushing.
@@ -92,7 +92,7 @@ jobs:
     env:
       SHA: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -127,10 +127,26 @@ jobs:
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h /
-      # Build before anything is public.
+      # The layers ci built on main come from its Actions cache: only what the
+      # version changes (the engine's binary) is built again. A run on main
+      # reads only caches main wrote, never a pull request's.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: env.TAG != ''
+      - uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+        if: env.TAG != ''
+      # Build everything before anything is public.
       - name: Build the release images
         if: env.TAG != ''
+        env:
+          CACHE: gha-read
         run: deploy/release.sh images "$TAG"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: env.TAG != ''
+        with:
+          go-version-file: go.mod
+      - name: Build the client binaries
+        if: env.TAG != ''
+        run: deploy/release.sh client "$TAG"
       # Fails, publishing nothing, if main moved since the plan.
       - name: Push the release commit and tag
         if: env.TAG != '' && steps.plan.outputs.mode == 'release'
@@ -140,8 +156,10 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Push the release images
         if: env.TAG != ''
+        env:
+          CACHE: gha-read
         run: deploy/release.sh images "$TAG" --push
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
         if: env.TAG != ''
         with:
           version: v3.16.2
@@ -150,13 +168,6 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
           deploy/release.sh chart "$TAG" --push
-      - uses: actions/setup-go@v5
-        if: env.TAG != ''
-        with:
-          go-version-file: go.mod
-      - name: Build the client binaries
-        if: env.TAG != ''
-        run: deploy/release.sh client "$TAG"
       # The tag's CHANGELOG section, the diff since the previous tag, and its
       # images; the release and the run's summary both show it.
       - name: Write the release notes

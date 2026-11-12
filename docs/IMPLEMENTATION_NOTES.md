@@ -6608,3 +6608,177 @@ it, and where it deviates:
   fully tested commit.
 - **Measured locally after the change:** cold 8m11 (−37%), warm 6m02
   (−53%). Warm, the image import (1m40) and the tests are what remains.
+
+## CI runs per side of the tree, main included; vitest shares one jsdom per worker (2026-11-12)
+
+What a push to main used to cost, measured from its job logs: about 59
+billed minutes (unit 10, lint 6, build 11, docker 11, harness 6, k8s 14,
+pg 1).
+
+- **The CPUI's coverage run was 8 of unit's 10 minutes.** vitest built a
+  jsdom for each of the 318 test files: 152 s of 470 s.
+  - `pool: 'vmThreads'` builds one per worker and still gives each test file
+    its own context. On 4 cores it went from 235 s to 139 s, with the same
+    tests and coverage.
+  - `isolate: false` was slower (370 s) and broke every file that mocks a
+    module.
+  - The price: inside a VM context Node's globals belong to another realm.
+    `structuredClone` returned objects Svelte would not make reactive, so
+    PanelEditor's draft no longer used it; `$state.snapshot` is already a
+    copy. jsdom's `location` cannot be stubbed there, so
+    `workspace.terminalUrl` takes the page's location as an argument.
+- **Jobs per side of the tree:**
+  - Named `<side>-<check>`, the side being when the job runs: `go-test`,
+    `go-lint`, `ui-test`, `ui-lint`, `sandbox-images`, `sandbox-test`
+    (harness, k8s), `engine-image`, and `repo-lint` (model ids and the chart,
+    which read Markdown), which always runs. CI's old "unit" job ran the
+    Postgres tests too: the Taskfile's unit/integration split is about what a
+    test needs on your machine, not what a CI job holds.
+  - `integration-pg` is gone: `task go:test` already runs every Postgres
+    test.
+  - The build job is gone: `go-lint` builds the binaries, `ui-lint` the CPUI.
+    `engine-image` runs when its build inputs change (its Dockerfile
+    compiles both again).
+- **Main is filtered too, against the last commit ci passed on main**, not
+  against the previous commit.
+  - The filter must not compare with the previous commit: a docs commit on
+    top of a red code commit would go green, and manual-release would
+    release it.
+  - Comparing with the last green ancestor means that a green commit has
+    had everything changed since the previous green one tested.
+  - No green ancestor (a force-push, the first run), or a run by hand:
+    everything runs.
+  - This replaces "pushes to main run everything" in the entry above.
+- **Lint:**
+  - The plain Linux vet is gone: no file is built only without a tag, so
+    the tagged vet covers it.
+  - The client is now vetted for Windows. Nothing compiled it before the
+    release, which built it after pushing the tag; the release now builds the
+    client before anything is public.
+- **The release builds its images from ci's Actions cache** (`gha-read`). A
+  run on main reads only caches main wrote, never a pull request's.
+- **Every job has a `timeout-minutes`** (GitHub's default is six hours).
+- **Freeing disk (1.5 minutes per job) only where it is needed.**
+  - The `sandbox-images` job keeps only the builder's cache (about 6 GB), and the
+    harness suite needs about 10 GB: both now run on the runner's free disk
+    as it is.
+  - The k8s suite peaks at about 15 GB: its images are in docker and,
+    during the import, in the k3d node too. It still deletes the unused
+    toolchains, but in the background while the images load, and waits for
+    the deletion only before the cluster starts.
+  - These sizes were measured locally. Each job prints `df` first, so the
+    first GitHub run shows the runner's real headroom.
+
+## Every CI job is one task of the same name; check and ci run them in parallel (2026-11-12)
+
+- **CI's job names and the Taskfile's task names used to differ.**
+  - CI's "unit" job ran the Postgres tests too, while the Taskfile's
+    `test:unit` meant "nothing running".
+  - The CPUI's coverage run had no task at all.
+- **Now each job `<side>-<check>` runs exactly `task <side>:<check>`:**
+  - `go:test` (was `cover:go`), `go:lint` (gofmt, vet, `api:check`),
+    `ui:test`, `ui:lint` (the production build included: a prerender error
+    shows only there), `repo:lint` (model ids, `chart:lint`).
+  - `sandbox:images`, `sandbox:test:harness`, `sandbox:test:k8s`,
+    `engine:image`.
+  - The variants keep the side: `go:test:run` (args, nothing running),
+    `go:test:pg`, `go:test:linux`, `go:test:stress`, `ui:test:run`.
+  - Gone, with no aliases: `test:unit*`, `test:integration*`, `cover*`,
+    `lint:*`, and the old `verify` (the pre-commit gate `check` replaces).
+- **The umbrellas run checks side by side** (`checks`, a bash runner), each
+  into `build/checks/<task>.log`. They print one line per check (ok or
+  FAIL, seconds, log path), then the last 40 lines of each failure, and exit
+  1 if any failed.
+  - `lint` runs every lint; `test` runs every test suite.
+  - `check` is the pre-push gate: the lints, `go:test` and `ui:test`.
+  - `ci` runs everything CI runs, locally (it never skips a side as CI
+    does). It was first named `verify`, too close to `check` to tell apart.
+- **What the runner holds apart:**
+  - `ui:test` and `ui:lint` both write `cpui/.svelte-kit`, so they run one
+    after the other (`ui:lint` still runs when `ui:test` fails).
+  - The sandbox suites wait for `sandbox:images`, then run side by side, k8s
+    with `APOTHECARY_IMAGES_PREBUILT=1`.
+  - Ctrl-C stops them all.
+  - Measured: `task check` in 2m36 on 20 cores, every check green; the Go
+    tests stayed green beside vitest and the lints.
+- **No exemption marker for the model-id lint.** `lint:models-ok` is gone
+  at the user's call.
+  - Its one user, the Gemini sign-in's User-Agent, now drops the model
+    segment Gemini CLI's own carries:
+    `GeminiCLI/<version> (linux; x64; terminal)`.
+  - Unverified against Code Assist's project lookup, the only call that
+    sends it.
+
+## A merged pull request is not tested again; caches, pins (2026-11-12)
+
+- **Main skips what a pull request's green run already tested.**
+  - A commit SHA can't tell: the merge makes a new commit, and the pull
+    request's run tested its own merge commit (refs/pull/N/merge).
+  - The tree can: git's hash of the files.
+  - The `passed` job, the last of a pull request's run (only when every job
+    passed or was skipped), uploads an artifact named `ci-green-<tree>` of
+    the tree it tested, kept 30 days.
+  - On a push to main, `changes` looks the tree up. If it finds a marker,
+    nothing runs and the run is green, so manual-release's gate (a green
+    run on that SHA) still holds.
+- **The conditions for that skip:**
+  - The push moved main from its last green commit (`before` = that
+    commit). Every file is then either one the pull request touched (green
+    on these exact files) or one that commit holds (green there).
+  - The marker comes from this repository's own run (a fork's pull request
+    runs the fork's ci.yml), from a `ci.yml` run that concluded success.
+  - Main moved meanwhile, or a merge produced other files: the trees differ
+    and the usual filtered run happens.
+- **`passed` must not be a required check:** GitHub counts a skipped
+  required check as passing, and `passed` is skipped when a job fails.
+- **Caches:**
+  - `cpui/node_modules`, keyed on the lockfile: `npm ci` runs only when
+    the lockfile changed (35–45 s a UI job before).
+  - go-test and go-lint keep their own Go build cache. It is saved from main
+    once a week (the key carries the ISO week), so at most two new entries
+    a week compete with the image layers for the 10 GB. setup-go's own cache
+    was keyed on go.sum alone: saved once per dependency change by whichever
+    job ended first, and never refreshed. Whether it is worth it shows in
+    go-lint's time on the second run of a week.
+- **pr-title no longer runs on every push** (`synchronize`): a push can't
+  change the title, and each run billed a minute. If pr-title becomes a
+  required check, `synchronize` has to come back (a required check must
+  report on the head commit).
+- **Every action is pinned to a commit**, with its version as a comment;
+  `.github/dependabot.yml` proposes updates monthly, grouped into one pull
+  request titled `ci(deps): …`.
+- **With manual-release** (checked the same day):
+  - Its gate asks for a successful `ci.yml` run on the release SHA. A main
+    run whose tests and lints the marker skipped is one, since a skipped job
+    counts as passed.
+  - A release commit (`chore(release): vX [skip ci]`, CHANGELOG.md only)
+    gets no ci run, so main's last green commit stays the one before it.
+    The shortcut therefore accepts a gap between that commit and the push's
+    `before` when it changes only CHANGELOG.md, which no check reads.
+    Otherwise the first merge after every release would always run in full.
+  - The release builds its images from main's Actions cache, which a run on
+    main can't fill from a pull request's. So a skipped merge still runs
+    `sandbox-images` and `engine-image` when their inputs changed (outputs
+    `images`, `engine`); only the tests and lints are skipped.
+  - Simulated on a scratch repository with a stand-in GitHub API: a merge on
+    the green commit or after a release commit, its tree marked, skips; no
+    marker, a non-green commit in between, or a previous head missing from
+    history (a force-push) runs as usual.
+- **Node 24 actions, a pinned runner image** (same day, from the run's
+  annotations):
+  - Every action moved to its newest release, which runs on Node 24.
+    GitHub deprecated Node 20 and was forcing those actions onto Node 24
+    with a warning.
+    - checkout 7, setup-go 7, setup-node 7, upload-artifact 7, cache 6,
+      setup-task 3, setup-helm 5, ghaction-github-runtime 4,
+      setup-buildx-action 4, paths-filter 4.
+    - Their breaking changes don't touch this repository's use. checkout 6
+      keeps credentials in a file of their own, and manual-release's `git
+      push` still finds them. setup-go 6 reads the toolchain from go.mod as
+      before. setup-node's automatic npm cache is turned off explicitly:
+      `node_modules` is cached by the workflow itself.
+  - `runs-on: ubuntu-26.04`, not `ubuntu-latest`. During GitHub's move of
+    `ubuntu-latest` to 26.04, a job could land on either image. The disk
+    figures in the sandbox jobs were measured on 26.04.
+  - `.github/actionlint.yaml` declares that label (actionlint 1.7.12 does
+    not know it yet), and `repo:lint` now runs actionlint on the workflows.

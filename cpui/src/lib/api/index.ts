@@ -519,10 +519,16 @@ export const workspace = {
 	/** WebSocket URL of a terminal in the workspace (binary frames are
 	 *  keystrokes/output; a JSON text frame {type:'resize',cols,rows} resizes).
 	 *  Not in the generated client: a protocol switch is not an OpenAPI call. */
-	terminalUrl: (runId: string, cols: number, rows: number, repo = ''): string => {
-		const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+	terminalUrl: (
+		runId: string,
+		cols: number,
+		rows: number,
+		repo = '',
+		page: Pick<Location, 'protocol' | 'host'> = location
+	): string => {
+		const proto = page.protocol === 'https:' ? 'wss:' : 'ws:';
 		const q = new URLSearchParams({ cols: String(cols), rows: String(rows), repo });
-		return `${proto}//${location.host}/api/runs/${runId}/terminal?${q}`;
+		return `${proto}//${page.host}/api/runs/${runId}/terminal?${q}`;
 	}
 };
 
