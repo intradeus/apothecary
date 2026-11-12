@@ -5,9 +5,10 @@
 import { to } from '$lib/core/urls';
 import { t } from '$lib/i18n/index.svelte';
 import { I } from '$lib/design/icons';
+import { WORK_ITEMS } from './workItems';
 
 export interface NavItem {
-	id: 'desk' | 'inbox' | 'notices' | 'runs' | 'tickets' | 'analytics' | 'system';
+	id: 'desk' | 'inbox' | 'notices' | 'runs' | 'tickets' | 'mrs' | 'analytics' | 'system';
 	label: string;
 	icon: string;
 	href: () => string;
@@ -63,17 +64,18 @@ export const NAV: readonly NavItem[] = [
 		mobile: true,
 		match: (p) => p.startsWith('/runs')
 	},
-	{
-		id: 'tickets',
+	// The work items runs start on, in their registry's order.
+	...WORK_ITEMS.map((w): NavItem => ({
+		id: w.navId,
 		get label() {
-			return t('nav.tickets');
+			return w.label;
 		},
-		icon: I.tickets,
-		href: () => to.tickets(),
-		chord: 't',
-		mobile: true,
-		match: (p) => p.startsWith('/tickets')
-	},
+		icon: w.icon,
+		href: w.list,
+		chord: w.chord,
+		mobile: w.mobile,
+		match: w.match
+	})),
 	{
 		id: 'analytics',
 		get label() {

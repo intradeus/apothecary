@@ -39,6 +39,9 @@ import (
 	"apothecary/internal/run/runcore"
 	"apothecary/internal/run/runinput"
 	"apothecary/internal/skills"
+	"apothecary/internal/workitem"
+	"apothecary/internal/workitem/items"
+	"apothecary/internal/workspace/checkout"
 	"apothecary/internal/workspace/envstate"
 	"apothecary/internal/workspace/runports"
 	"apothecary/internal/workspace/wsname"
@@ -190,9 +193,9 @@ type Engine struct {
 	// appendLocks holds one mutex per run serializing its appends (see
 	// appendLock): runID -> *sync.Mutex.
 	appendLocks sync.Map
-	// ticketLocks holds one mutex per ticket serializing run creation on
-	// it (ticketLock, the one-active-run rule): ticketID -> *sync.Mutex.
-	ticketLocks sync.Map
+	// items are the kinds of work item runs are started on; they hold the
+	// per-item creation locks (the one-active-run rule).
+	items *workitem.Registry
 	// tickets reads a ticket's current row for Rerun; nil = a rerun copies
 	// the old run's view of its ticket.
 	tickets TicketReader
@@ -489,6 +492,9 @@ type Deps struct {
 	AuthSink *authsink.Sink
 	Teardown []EnvTeardown
 	Tickets  TicketReader
+	// Items are the kinds of work item runs start on; nil = every kind
+	// (workitem/items).
+	Items *workitem.Registry
 	// Refresher re-mirrors a ticket from its remote tracker: after a
 	// successful ticket_* stage on a remote ticket and at run start. nil =
 	// no refresh.
@@ -518,7 +524,11 @@ func New(d Deps) *Engine {
 	if d.Log == nil {
 		d.Log = slog.Default()
 	}
+	if d.Items == nil {
+		d.Items = items.All()
+	}
 	e := &Engine{
+		items:          d.Items,
 		cfg:            d.Config.withDefaults(),
 		store:          d.Store,
 		runs:           &run.Reader{Store: d.Store},
@@ -752,11 +762,14 @@ func (e *Engine) CreateRun(ctx context.Context, t runinput.Ticket, flowName, pro
 // or run_ref is checked exactly like a literal one. Preflight failures
 // refuse the run naming the exact missing item — no events are written.
 //
-// A ticket has at most one active run: a run on a ticket with a non-terminal
-// run is refused with ErrTicketBusy before anything else is checked. The
-// check holds the ticket's creation lock until run_created is appended
-// (ticketLock), so concurrent starts on one ticket cannot both pass. Runs
-// without a ticket are exempt. A ticket mirroring a remote issue is then
+// The work items a start names (t.TicketID, in.MR — workitem) each have at
+// most one active run: a start naming one a non-terminal run holds is
+// refused with workitem.ErrBusy before anything else is checked. The check
+// holds the items' creation locks until run_created is appended, so
+// concurrent starts on one item cannot both pass. A run on a bare title
+// names none. The flow must operate on what the start names (operates_on),
+// and each item points the run at itself (its branch, its checkout) through
+// its kind. A ticket mirroring a remote issue is then
 // refreshed and its mirrored fields re-read (freshRunTicket), so the run
 // starts from the issue as it is now — in the engine rather than in each
 // caller, because every start path (API, automations, reruns, merge
@@ -769,12 +782,19 @@ func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName,
 	if projectID == "" {
 		return "", errors.New("project_id is required")
 	}
-	if t.TicketID != "" {
-		unlock := e.ticketLock(t.TicketID)
+	items := e.items.Requested(projectID, t, in)
+	if len(items) > 0 {
+		unlock := e.items.Lock(items)
 		defer unlock()
-		if err := e.checkTicketIdle(ctx, t.TicketID); err != nil {
+		all, err := e.runs.All(ctx)
+		if err != nil {
+			return "", fmt.Errorf("listing the runs of %v: %w", items, err)
+		}
+		if err := e.items.Idle(all, items); err != nil {
 			return "", err
 		}
+	}
+	if t.TicketID != "" {
 		t = e.freshRunTicket(ctx, t)
 	}
 	res, err := e.resolver.Resolve(ctx, projectID)
@@ -789,7 +809,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName,
 	if err != nil {
 		return "", fmt.Errorf("flow %q: %w", flowName, err)
 	}
-	if err := startsOn(fl, in.MR != nil); err != nil {
+	if err := e.items.StartsOn(fl.Name, fl.OperatesOn, items); err != nil {
 		return "", err
 	}
 	params, err := e.resolveParams(ctx, fl, projectID, in.Params)
@@ -826,47 +846,42 @@ func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName,
 	}
 
 	runID := e.newID()
-	// base is the branch stem; the run's ACTUAL branch appends a per-run tail
-	// when the run belongs to a ticket, so each attempt is a unique, readable
-	// branch (no remote collisions) and the container name — slugified from
-	// the base — stays sane. The direct/test path (no ticket) is unchanged.
-	base := strings.TrimSpace(t.Branch)
-	branch := base
-	if t.TicketID != "" {
-		if base == "" {
-			base = "apothecary/" + wsname.Slug(t.Title, maxBranchSlug)
-		}
-		branch = base + "-" + wsname.RunIDTail(runID)
-		if err := CheckBranch(branch); err != nil {
-			return "", fmt.Errorf("branch %q: %v", branch, err)
-		}
-	} else if branch == "" {
-		base = ""
-		branch = fmt.Sprintf("apothecary/%s-%s", strings.ToLower(runID), wsname.Slug(t.Title, maxBranchSlug))
-	} else if err := CheckBranch(branch); err != nil {
-		return "", fmt.Errorf("branch %q: %v", branch, err)
-	}
+	// The run's branch: the start's own, which the items it is started on
+	// may rename (a ticket's base + tail) or replace with their own
+	// checkout (a merge request's head).
+	st := &workitem.Start{RunID: runID, Title: t.Title, Res: res, Base: strings.TrimSpace(t.Branch)}
+	st.Branch = st.Base
 	// SourceBranch is the base this run forks off from; empty falls back to the
 	// project's default branch (itself "main" by default).
-	sourceBranch := strings.TrimSpace(t.SourceBranch)
-	if sourceBranch == "" {
-		sourceBranch = res.RepoRef.DefaultBranch
-	} else if err := CheckBranch(sourceBranch); err != nil {
-		return "", fmt.Errorf("source branch %q: %v", sourceBranch, err)
+	st.SourceBranch = strings.TrimSpace(t.SourceBranch)
+	if st.SourceBranch == "" {
+		st.SourceBranch = res.RepoRef.DefaultBranch
+	} else if err := checkout.CheckBranch(st.SourceBranch); err != nil {
+		return "", fmt.Errorf("source branch %q: %v", st.SourceBranch, err)
 	}
-	checkouts := runCheckouts(res, branch, sourceBranch)
-	var adopted *event.AdoptedMR
-	if in.MR != nil {
-		// Created on someone's merge request: the run works on its branch,
-		// checked out from the ref the repository host keeps for its head.
-		var co *event.Checkout
-		if co, adopted, err = adoptMR(ctx, res, checkouts, in.MR); err != nil {
-			return "", fmt.Errorf("preflight: %w", err)
-		}
-		if co.Primary {
-			branch, base, sourceBranch = co.Branch, "", co.Source
+	if err := e.items.Prepare(ctx, st, items); err != nil {
+		return "", fmt.Errorf("preflight: %w", err)
+	}
+	if st.Branch == "" {
+		st.Base = ""
+		st.Branch = fmt.Sprintf("apothecary/%s-%s", strings.ToLower(runID), wsname.Slug(t.Title, workitem.MaxBranchSlug))
+	} else if err := checkout.CheckBranch(st.Branch); err != nil {
+		return "", fmt.Errorf("branch %q: %v", st.Branch, err)
+	}
+	checkouts := runCheckouts(res, st.Branch, st.SourceBranch)
+	for _, rp := range st.Repoints {
+		for i := range checkouts {
+			co := &checkouts[i]
+			if co.Name != rp.Repo {
+				continue
+			}
+			co.Branch, co.Source, co.Fetch, co.Fork = rp.Branch, rp.Source, rp.Fetch, rp.Fork
+			if co.Primary {
+				st.Branch, st.Base, st.SourceBranch = co.Branch, "", co.Source
+			}
 		}
 	}
+	branch, base, sourceBranch, adopted := st.Branch, st.Base, st.SourceBranch, st.Adopted
 	if err := e.AppendEvents(ctx, runID, &event.RunCreated{
 		TicketTitle:         t.Title,
 		TicketGoal:          t.Goal,
@@ -918,42 +933,6 @@ func runCheckouts(res *resolution.Resolution, branch, sourceBranch string) []eve
 			URL: x.URL, Locator: x.Locator, Branch: branch, Source: x.DefaultBranch})
 	}
 	return out
-}
-
-// adoptMR reads the merge request a run is being created on and points its
-// checkout at it: the branch is the merge request's own (a fork's, which has
-// none here, a local mr-<iid>), forked from nothing — its head is fetched from
-// the repository host's ref — and its target is what it merges into.
-func adoptMR(ctx context.Context, res *resolution.Resolution, checkouts []event.Checkout, want *runinput.MR) (*event.Checkout, *event.AdoptedMR, error) {
-	repo := want.Repo
-	if repo == "" {
-		repo = event.PrimaryCheckoutName
-	}
-	var co *event.Checkout
-	for i := range checkouts {
-		if checkouts[i].Name == repo {
-			co = &checkouts[i]
-		}
-	}
-	if co == nil {
-		return nil, nil, fmt.Errorf("merge request: the project has no repository %q", repo)
-	}
-	repoHost := res.RepoHostFor(repo)
-	if repoHost == nil {
-		return nil, nil, fmt.Errorf("merge request: no integration reaches repository %q", repo)
-	}
-	info, err := repoHost.GetMR(ctx, want.IID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("merge request !%d: %w", want.IID, err)
-	}
-	if info.State != repoport.MROpen {
-		return nil, nil, fmt.Errorf("merge request %s is %s: a run is created on an open one", info.Ref.URL, info.State)
-	}
-	co.Branch, co.Source, co.Fetch, co.Fork = info.Source, info.Target, info.HeadRef, info.Fork
-	if info.Fork || CheckBranch(info.Source) != nil {
-		co.Branch = fmt.Sprintf("mr-%d", info.Ref.IID)
-	}
-	return co, &event.AdoptedMR{Repo: repo, IID: info.Ref.IID, URL: info.Ref.URL, Head: info.Head, Author: info.Author, Title: info.Title}, nil
 }
 
 // ErrEnvCapacity refuses new tickets at the §14 environment cap (HTTP 409).
@@ -1381,21 +1360,49 @@ func (e *Engine) preflight(ctx context.Context, res *resolution.Resolution, fl *
 	return nil
 }
 
-// RunsOfTicket lists the runs created for a ticket, newest last — what an
-// automation asks before starting a run for a ticket it imported earlier.
-func (e *Engine) RunsOfTicket(ctx context.Context, ticketID string) ([]run.View, error) {
+// RunsOf lists the runs that hold the work item — started on it, or made
+// it their own on the way — in the order the store keeps them: what an
+// automation asks before starting a run on an item it found, and what a
+// work item's page lists.
+func (e *Engine) RunsOf(ctx context.Context, item workitem.Ref) ([]run.View, error) {
 	all, err := e.runs.All(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var out []run.View
 	for _, v := range all {
-		if v.TicketID == ticketID {
+		if e.items.Holds(v, item) {
 			out = append(out, v)
 		}
 	}
 	return out, nil
 }
+
+// ItemRuns is RunsOf for every item of one kind in a project at once, by
+// item key: one scan for a list of them.
+func (e *Engine) ItemRuns(ctx context.Context, projectID, kind string) (map[string][]run.View, error) {
+	k, ok := e.items.Get(kind)
+	if !ok {
+		return nil, fmt.Errorf("no kind of work item %q", kind)
+	}
+	all, err := e.runs.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]run.View{}
+	for _, v := range all {
+		if v.ProjectID != projectID {
+			continue
+		}
+		for _, item := range k.Held(v) {
+			out[item.Key] = append(out[item.Key], v)
+		}
+	}
+	return out, nil
+}
+
+// Items is the registry of work item kinds the engine starts runs on.
+func (e *Engine) Items() *workitem.Registry { return e.items }
 
 // ActiveRunsOfTickets counts the non-terminal runs of any of the tickets —
 // what deleting an integration reports before unlinking its tickets (those
@@ -2372,35 +2379,3 @@ func appliesHarnessOptions(res *resolution.Resolution, st *flow.Stage) bool {
 	c, ok := res.RunnerFor(st.Harness).(agentport.HarnessOptionsCapable)
 	return ok && c.TakesHarnessOptions()
 }
-
-// CheckBranch refuses user-supplied branch names git check-ref-format
-// would: the run would otherwise die much later, at bootstrap's git switch.
-func CheckBranch(s string) error {
-	if strings.HasPrefix(s, "/") || strings.HasSuffix(s, "/") || strings.Contains(s, "//") {
-		return errors.New(`"/" cannot lead, trail or repeat`)
-	}
-	if strings.Contains(s, "..") || strings.Contains(s, "@{") {
-		return errors.New(`".." and "@{" are not allowed`)
-	}
-	for seg := range strings.SplitSeq(s, "/") {
-		if strings.HasPrefix(seg, ".") {
-			return errors.New(`path segments cannot start with "."`)
-		}
-		if strings.HasSuffix(seg, ".") || strings.HasSuffix(seg, ".lock") {
-			return errors.New(`path segments cannot end with "." or ".lock"`)
-		}
-	}
-	for _, r := range s {
-		if r <= ' ' || r == 0x7f || strings.ContainsRune(`~^:?*[\`, r) {
-			return fmt.Errorf("character %q is not allowed", r)
-		}
-	}
-	return nil
-}
-
-// maxBranchSlug bounds a branch derived from a ticket title. It is NOT a
-// readability cap — a branch name may be as long as the title needs — only a
-// filesystem backstop: a loose ref is a file, so a path component over 255
-// bytes is unwritable on ext4/APFS. The container name has its own, much
-// tighter budget and is truncated separately (wsname.For).
-const maxBranchSlug = 200

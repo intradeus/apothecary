@@ -793,6 +793,7 @@ them. The ports the adapters implement are split by capability under
 |---|---|
 | `flow/` | the flow language, its registries and the built-in templates |
 | `run/` | what a run is: its event log, its fold, what starts it |
+| `workitem/` | what runs are started on — a ticket, a merge request — one package per kind, registered once (`workitem/items`) |
 | `engine/` | the interpreter and the services around a live run |
 | `workspace/` | everything about a run's container |
 | `project/` | what a project is configured with |

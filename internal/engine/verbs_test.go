@@ -20,6 +20,7 @@ import (
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runinput"
+	"apothecary/internal/workitem/ticket"
 )
 
 // seed writes a run's history straight to the log: a run in a state with no
@@ -234,14 +235,14 @@ main:
 			t.Error("a rerun rewrote its original")
 		}
 		// The ticket's runs, oldest to newest attempt, all found.
-		runs, err := h.e.RunsOfTicket(ctx, "tk-1")
+		runs, err := h.e.RunsOf(ctx, ticket.Ref(testProject, "tk-1"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(runs) != 3 {
 			t.Errorf("runs of the ticket = %d", len(runs))
 		}
-		if none, err := h.e.RunsOfTicket(ctx, "tk-2"); err != nil || len(none) != 0 {
+		if none, err := h.e.RunsOf(ctx, ticket.Ref(testProject, "tk-2")); err != nil || len(none) != 0 {
 			t.Errorf("runs of another ticket = %v, %v", none, err)
 		}
 	})
@@ -568,7 +569,7 @@ main:
 	ref := h.repoHost.AddOpenMR("alice", "t", "feat/a", "main", "abc")
 	h.repoHost.SetMRState(ref.IID, repoport.MRMerged)
 	_, err = start(h, &runinput.MR{IID: ref.IID})
-	wantErrText(t, err, "a run is created on an open one")
+	wantErrText(t, err, "a run starts on an open merge request")
 
 	// A branch git would refuse is checked out under a local name.
 	odd := h.repoHost.AddOpenMR("alice", "t", "weird..branch", "main", "abc")
@@ -734,8 +735,11 @@ func TestReapOnceReportsItsFailures(t *testing.T) {
 	if err := h.e.Recover(ctx); err == nil || !strings.Contains(err.Error(), "db down") {
 		t.Errorf("recover = %v", err)
 	}
-	if _, err := h.e.RunsOfTicket(ctx, "t"); err == nil {
+	if _, err := h.e.RunsOf(ctx, ticket.Ref(testProject, "t")); err == nil {
 		t.Error("runs of a ticket swallowed the failure")
+	}
+	if _, err := h.e.ItemRuns(ctx, testProject, ticket.Name); err == nil {
+		t.Error("runs of a kind swallowed the failure")
 	}
 }
 

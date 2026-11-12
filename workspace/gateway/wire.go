@@ -81,6 +81,8 @@ type AuditRecord struct {
 	BytesIn  int64     `json:"bytes_in"`
 	First    time.Time `json:"first"`
 	Last     time.Time `json:"last"`
+	// Provisioning: let through by the run's provisioning window, not the policy.
+	Provisioning bool `json:"provisioning,omitempty"`
 }
 
 type AuditFile struct {

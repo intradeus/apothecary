@@ -124,6 +124,10 @@ type AuditRecord struct {
 	BytesIn  int64     `json:"bytes_in"`
 	First    time.Time `json:"first"`
 	Last     time.Time `json:"last"`
+	// Provisioning: some of these connections got through only because the
+	// run's egress was open while it provisioned — the policy alone would
+	// have refused them. The engine allows those hosts on the project.
+	Provisioning bool `json:"provisioning,omitempty"`
 }
 
 // AuditFile is <RunsDir>/gw/<project>/egress-audit.json — the gateway writes it

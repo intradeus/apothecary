@@ -706,7 +706,9 @@ func orDefault(s, def string) string {
 // take: the image build, the devcontainer's features and lifecycle hooks
 // fetch from hosts no allowlist names, and failing a build on them only to
 // add them one by one helps nobody. Only what the project blocks stays
-// blocked. Best-effort: a gateway that will not open leaves the run on the
+// blocked; every new host it reaches lands on the project's allowlist (the
+// engine's egress ingest), where the egress view can block it for the next
+// run. Best-effort: a gateway that will not open leaves the run on the
 // project policy, which is where it would have been anyway.
 func (a *Adapter) openProvisionEgress(ctx context.Context, project, name string, plog func(string, ...any)) {
 	if a.gw == nil || project == "" {
@@ -717,7 +719,7 @@ func (a *Adapter) openProvisionEgress(ctx context.Context, project, name string,
 		plog("→ egress stays on the project policy while provisioning: %v\n", err)
 		return
 	}
-	plog("→ egress open while provisioning: only the project's blocked domains are refused\n")
+	plog("→ egress open while provisioning: a new host is allowed and added to the project's allowlist; its blocked domains stay refused\n")
 }
 
 // closeProvisionEgress puts the run back on the project policy once
@@ -1176,6 +1178,7 @@ func (a *Adapter) EgressAudit(ctx context.Context, env envport.EnvID) []egresspo
 		out = append(out, egressport.EgressAuditRecord{
 			Host: r.Host, DstIP: r.DstIP, Port: r.Port, Proto: r.Proto, Verdict: r.Verdict,
 			Count: r.Count, BytesOut: r.BytesOut, BytesIn: r.BytesIn, First: r.First, Last: r.Last,
+			Provisioning: r.Provisioning,
 		})
 	}
 	return out
@@ -1222,7 +1225,7 @@ func (a *Adapter) EgressPolicy(ctx context.Context, env envport.EnvID) (egresspo
 func (a *Adapter) Close() { a.host.close() }
 
 // openProvisionLog opens (append) the env's exec.log — the same file the UI
-// tails via TailExecLog — so the clone + devcontainer build stream live during
+// reads via ReadExecLog — so the clone + devcontainer build stream live during
 // provisioning, before the env is ready. nil when RunsDir is unset or open fails.
 func (a *Adapter) openProvisionLog(name string) *os.File {
 	dir := a.folderFor(name)
@@ -1292,35 +1295,27 @@ func (s *scrubLines) flush() {
 	}
 }
 
-// TailExecLog implements the optional envport.ExecLogTailer capability.
-func (a *Adapter) TailExecLog(_ context.Context, env envport.EnvID, n int) ([]byte, error) {
+// ReadExecLog implements the optional envport.ExecLogTailer capability.
+func (a *Adapter) ReadExecLog(_ context.Context, env envport.EnvID, from, n int64) (envport.ExecLogChunk, error) {
 	if a.cfg.RunsDir == "" {
-		return nil, fmt.Errorf("live exec log: runs dir is not configured")
+		return envport.ExecLogChunk{}, fmt.Errorf("live exec log: runs dir is not configured")
 	}
 	path := filepath.Join(a.cfg.RunsDir, string(env), "exec.log")
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return envport.ExecLogChunk{}, err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return envport.ExecLogChunk{}, err
 	}
 	// Some filesystems (overlayfs, btrfs) size an empty directory 0: it
 	// would read as an empty log.
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("live exec log %s: not a regular file", path)
+		return envport.ExecLogChunk{}, fmt.Errorf("live exec log %s: not a regular file", path)
 	}
-	if n <= 0 {
-		n = 64 << 10
-	}
-	off := max(info.Size()-int64(n), 0)
-	buf := make([]byte, info.Size()-off)
-	if _, err := f.ReadAt(buf, off); err != nil && err != io.EOF {
-		return nil, err
-	}
-	return buf, nil
+	return envport.ReadExecLogRange(f, info.Size(), from, n)
 }
 
 // Test is the cheap probe (DESIGN2 §4): the host can run sandboxes.

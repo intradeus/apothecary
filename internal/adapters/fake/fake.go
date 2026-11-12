@@ -232,22 +232,16 @@ func parseRemove(script string) (paths []string, recursive, ok bool) {
 	return out, fields[1] == "-rf", true
 }
 
-// TailExecLog implements the optional envport.ExecLogTailer capability.
-func (p *EnvProvisioner) TailExecLog(_ context.Context, id envport.EnvID, n int) ([]byte, error) {
+// ReadExecLog implements the optional envport.ExecLogTailer capability.
+func (p *EnvProvisioner) ReadExecLog(_ context.Context, id envport.EnvID, from, n int64) (envport.ExecLogChunk, error) {
 	e, err := p.get(id)
 	if err != nil {
-		return nil, err
+		return envport.ExecLogChunk{}, err
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	log := e.execLog
-	if n <= 0 {
-		n = 64 << 10
-	}
-	if len(log) > n {
-		log = log[len(log)-n:]
-	}
-	return append([]byte(nil), log...), nil
+	log := append([]byte(nil), e.execLog...)
+	p.mu.Unlock()
+	return envport.ReadExecLogRange(bytes.NewReader(log), int64(len(log)), from, n)
 }
 
 func (p *EnvProvisioner) ReadFile(_ context.Context, id envport.EnvID, path string) ([]byte, error) {

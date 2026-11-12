@@ -394,15 +394,21 @@ describe('merge requests', () => {
 			source: 's',
 			target: 'main',
 			draft: false,
-			fork: false
+			fork: false,
+			body: '',
+			state: 'open'
 		});
+	});
+
+	it('reads what a merge request is no longer', () => {
+		for (const state of ['merged', 'closed'] as const)
+			expect(map.toOpenMergeRequest(wire<Wire.MrInfo>({ ...info, state })).state).toBe(state);
 	});
 
 	it('reads a row with nothing else known', () => {
 		expect(map.toMergeRequestRow(wire<Wire.MrRow>({ mr: info }))).toMatchObject({
-			mine: false,
+			mr: { body: '' },
 			stackedOn: undefined,
-			ticketId: undefined,
 			run: undefined,
 			runs: 0
 		});
@@ -411,17 +417,14 @@ describe('merge requests', () => {
 	it('reads a row’s run and what it stacks on', () => {
 		const row = map.toMergeRequestRow(
 			wire<Wire.MrRow>({
-				mr: info,
-				mine: true,
-				ticket_id: 't',
+				mr: { ...info, body: 'why' },
 				runs: 2,
 				stacked_on: { iid: 1, url: 'u', title: 't', branch: 'b' },
 				run: { id: 'r', state: 'failed', flow: 'f', created_at: AT }
 			})
 		);
 		expect(row).toMatchObject({
-			mine: true,
-			ticketId: 't',
+			mr: { body: 'why' },
 			runs: 2,
 			stackedOn: { iid: 1, branch: 'b' },
 			run: { id: 'r', state: 'failed', flow: 'f', createdAt: AT }

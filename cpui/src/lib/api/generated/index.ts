@@ -81,6 +81,7 @@ export {
 	getProject,
 	getProjectBrowser,
 	getProjectEgressAudit,
+	getProjectMr,
 	getReadyz,
 	getRun,
 	getRunEgressAudit,
@@ -625,6 +626,10 @@ export type {
 	GetProjectEgressAuditResponse,
 	GetProjectEgressAuditResponses,
 	GetProjectErrors,
+	GetProjectMrData,
+	GetProjectMrErrors,
+	GetProjectMrResponse,
+	GetProjectMrResponses,
 	GetProjectResponse,
 	GetProjectResponses,
 	GetReadyzData,
@@ -1279,5 +1284,6 @@ export type {
 	WorkspaceConfig,
 	WorkspaceDiff,
 	WorkspaceEntry,
-	WorkspaceFile
+	WorkspaceFile,
+	WorkspaceLog
 } from './types.gen';

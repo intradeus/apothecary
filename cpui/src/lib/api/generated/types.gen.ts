@@ -939,12 +939,10 @@ export type MrRef = {
 };
 
 export type MrRow = {
-	mine?: boolean;
 	mr: MrInfo;
 	run?: MrRun;
 	runs?: number;
 	stacked_on?: MrBase;
-	ticket_id?: string;
 };
 
 export type MrRun = {
@@ -965,7 +963,6 @@ export type MrRunRequest = {
 
 export type MrRunStarted = {
 	run_id: string;
-	ticket_id: string;
 };
 
 export type Me = {
@@ -2141,6 +2138,13 @@ export type WorkspaceFile = {
 	path: string;
 	size: number;
 	truncated: boolean;
+};
+
+export type WorkspaceLog = {
+	data: string;
+	end: number;
+	size: number;
+	start: number;
 };
 
 export type SourceAttachmentJson = {
@@ -6405,6 +6409,49 @@ export type ListProjectMrsResponses = {
 
 export type ListProjectMrsResponse = ListProjectMrsResponses[keyof ListProjectMrsResponses];
 
+export type GetProjectMrData = {
+	body?: never;
+	path: {
+		id: string;
+		iid: string;
+	};
+	query?: {
+		/**
+		 * the repository: "repo" (the default) for the primary, an extra repository's name
+		 */
+		repo?: string;
+	};
+	url: '/api/projects/{id}/mrs/{iid}';
+};
+
+export type GetProjectMrErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetProjectMrResponses = {
+	/**
+	 * OK
+	 */
+	200: MrRow;
+};
+
+export type GetProjectMrResponse = GetProjectMrResponses[keyof GetProjectMrResponses];
+
 export type StartMrRunData = {
 	body: MrRunRequest;
 	path: {
@@ -8388,7 +8435,11 @@ export type GetWorkspaceLogData = {
 	};
 	query?: {
 		/**
-		 * bytes of tail to return (default 64 KiB)
+		 * byte offset to read from (default: the tail)
+		 */
+		from?: number;
+		/**
+		 * bytes to read (default 64 KiB, at most 8 MiB)
 		 */
 		n?: number;
 	};
@@ -8416,9 +8467,9 @@ export type GetWorkspaceLogErrors = {
 
 export type GetWorkspaceLogResponses = {
 	/**
-	 * No Content
+	 * OK
 	 */
-	204: string;
+	200: WorkspaceLog;
 };
 
 export type GetWorkspaceLogResponse = GetWorkspaceLogResponses[keyof GetWorkspaceLogResponses];

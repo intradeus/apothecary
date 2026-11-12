@@ -18,15 +18,17 @@ import (
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/run"
+	"apothecary/internal/run/runinput"
+	"apothecary/internal/workitem"
 )
 
-// brokenRuns answers RunsOfTicket with an error.
+// brokenRuns answers RunsOf with an error.
 type brokenRuns struct {
 	*fakeEngine
 	err error
 }
 
-func (b brokenRuns) RunsOfTicket(context.Context, string) ([]run.View, error) {
+func (b brokenRuns) RunsOf(context.Context, workitem.Ref) ([]run.View, error) {
 	return nil, b.err
 }
 
@@ -317,15 +319,17 @@ func TestMergeRequestAutomationIsLimited(t *testing.T) {
 
 // A refused run keeps its ticket; the next pass adopts it instead of making
 // a second; a person's ticket for the same merge request stays theirs.
-func TestMergeRequestTicketIsAdoptedOrLeftAlone(t *testing.T) {
+// A refused start leaves nothing behind and is tried again on the next
+// pass; a merge request a run has been through — a person's, say — is left
+// alone; runs that cannot be read are reported.
+func TestMergeRequestRunIsRetriedOrLeftAlone(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	a := h.mrAutomation(t)
 	h.eng.MRs = []repoport.MRInfo{mrOf(1, "alice")}
 	h.eng.Fail = errors.New("preflight: boom")
 	h.pass(t)
-	all, _ := h.conf.ListTickets(ctx, "")
-	if len(all) != 1 || all[0].AutomationID != a.ID {
+	if all, _ := h.conf.ListTickets(ctx, ""); len(all) != 0 {
 		t.Fatalf("tickets = %+v", all)
 	}
 	if got := h.get(t, a.ID); !strings.Contains(got.LastError, "preflight: boom") || !strings.Contains(got.LastError, mrOf(1, "").Ref.URL) || got.LastFiredAt != nil {
@@ -333,36 +337,24 @@ func TestMergeRequestTicketIsAdoptedOrLeftAlone(t *testing.T) {
 	}
 	h.eng.Fail = nil
 	h.pass(t)
-	if all, _ := h.conf.ListTickets(ctx, ""); len(all) != 1 || h.eng.count() != 1 || h.eng.calls[0].Ticket.TicketID != all[0].ID {
-		t.Fatalf("tickets %+v, runs %+v", all, h.eng.calls)
+	if h.eng.count() != 1 || h.eng.calls[0].Ticket.TicketID != "" {
+		t.Fatalf("runs %+v", h.eng.calls)
 	}
 
 	theirs := mrOf(2, "bob")
-	if _, _, err := h.w.Tickets.ForMR(ctx, h.project.ID, theirs); err != nil {
+	if _, err := h.eng.CreateRunWith(ctx, runinput.Ticket{Title: "by hand"}, "rev", h.project.ID, runinput.Input{MR: &runinput.MR{IID: 2}}); err != nil {
 		t.Fatal(err)
 	}
 	h.eng.MRs = []repoport.MRInfo{theirs}
 	h.pass(t)
-	if h.eng.count() != 1 {
-		t.Errorf("a person's ticket got an automation's run: %+v", h.eng.calls)
+	if h.eng.count() != 2 {
+		t.Errorf("a merge request a person's run went through got an automation's run: %+v", h.eng.calls)
 	}
 
-	h.eng.MRs = []repoport.MRInfo{mrOf(1, "alice")}
+	h.eng.MRs = []repoport.MRInfo{mrOf(3, "alice")}
 	h.w.Runs = brokenRuns{h.eng, errors.New("runs unreadable")}
 	h.pass(t)
 	if got := h.get(t, a.ID); !strings.Contains(got.LastError, "runs unreadable") {
-		t.Errorf("marks = %+v", got)
-	}
-}
-
-func TestMergeRequestTicketLookupFailure(t *testing.T) {
-	h := newHarness(t)
-	a := h.mrAutomation(t)
-	h.eng.MRs = []repoport.MRInfo{mrOf(1, "alice")}
-	db := h.breakDB(t)
-	db.findTicket = errors.New("tickets unreadable")
-	h.pass(t)
-	if got := h.get(t, a.ID); !strings.Contains(got.LastError, "tickets unreadable") {
 		t.Errorf("marks = %+v", got)
 	}
 }

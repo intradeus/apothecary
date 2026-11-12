@@ -65,6 +65,9 @@ func (g *gateway) handle(c *net.TCPConn) {
 		return
 	}
 	allow := false
+	// byWindow: only the run's provisioning window let it through — the
+	// policy alone would have held it. The engine allows such hosts.
+	byWindow := false
 	if g.protected(orig.IP) {
 		// Never reachable through the gateway, whatever the policy says.
 		if host == "" {
@@ -77,6 +80,13 @@ func (g *gateway) handle(c *net.TCPConn) {
 			names = g.dns.names(orig.IP)
 		}
 		allow = pol.verdictOpen(host, names, orig.IP)
+		if allow {
+			if host != "" {
+				byWindow = !pol.verdict(host, orig.IP)
+			} else {
+				byWindow = !pol.verdictNoSNI(names, orig.IP)
+			}
+		}
 		if host == "" {
 			host = orig.IP.String()
 			if len(names) > 0 {
@@ -115,6 +125,7 @@ func (g *gateway) handle(c *net.TCPConn) {
 		return
 	}
 	defer up.Close()
+	g.audit.connect(run, host, orig.IP.String(), orig.Port, proto, "allow", byWindow)
 	// br still holds the peeked ClientHello/request (Peek does not consume), so
 	// io.Copy(up, br) forwards it first — do NOT re-write it separately.
 	var bytesOut, bytesIn int64
@@ -123,7 +134,7 @@ func (g *gateway) handle(c *net.TCPConn) {
 	go func() { bytesIn = pipe(c, up); done <- struct{}{} }()   // upstream → client
 	<-done
 	<-done
-	g.audit.record(run, host, orig.IP.String(), orig.Port, proto, "allow", bytesOut, bytesIn)
+	g.audit.transfer(run, host, orig.Port, "allow", bytesOut, bytesIn)
 }
 
 // pipe copies src→dst then half-closes dst's write side, so the peer sees a

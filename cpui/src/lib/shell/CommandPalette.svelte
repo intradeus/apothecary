@@ -1,5 +1,6 @@
 <script lang="ts">
-	// ⌘K: jump to a run, ticket, workshop or page, or do something. It
+	// ⌘K: jump to a run, ticket, merge request, workshop or page, or do
+	// something — start a new run among them. It
 	// materialises from the top centre over a fading scrim and leaves the same
 	// way; the keyboard-selected row carries a sliding bead. The filter runs on
 	// every keystroke (no debounce): typing never waits for the list.
@@ -12,6 +13,7 @@
 	import { to } from '$lib/core/urls';
 	import { shortId, stateLabel, stateTab } from '$lib/core/format';
 	import type { Ticket } from '$lib/domain';
+	import NewRunDialog from '$lib/run/NewRunDialog.svelte';
 	import { NAV } from '$lib/app/nav';
 	import { trap } from '$lib/ui/trap';
 	import { I } from '$lib/design/icons';
@@ -20,17 +22,16 @@
 
 	let { open = $bindable(false) }: { open: boolean } = $props();
 
-	type Group = 'go' | 'do' | 'workshops' | 'runs' | 'tickets';
-	const groupLabel = (g: Group) =>
-		g === 'go'
-			? t('shell.palette.goTo')
-			: g === 'do'
-				? t('shell.palette.do')
-				: g === 'workshops'
-					? t('shell.palette.workshops')
-					: g === 'runs'
-						? t('shell.palette.runs')
-						: t('shell.palette.tickets');
+	type Group = 'go' | 'do' | 'workshops' | 'runs' | 'tickets' | 'mrs';
+	const GROUP_LABEL: Record<Group, () => string> = {
+		go: () => t('shell.palette.goTo'),
+		do: () => t('shell.palette.do'),
+		workshops: () => t('shell.palette.workshops'),
+		runs: () => t('shell.palette.runs'),
+		tickets: () => t('shell.palette.tickets'),
+		mrs: () => t('shell.palette.mrs')
+	};
+	const groupLabel = (g: Group) => GROUP_LABEL[g]();
 
 	interface Item {
 		group: Group;
@@ -46,15 +47,41 @@
 	let sel = $state(0);
 	let input = $state<HTMLInputElement | null>(null);
 	let tickets = $state<Ticket[]>([]);
+	/** Every workshop's open merge requests, read from their repositories —
+	 *  only once a search is typed, once per opening: they show only in
+	 *  search results, and each workshop is a call to its repository host. */
+	let mrs = $state<{ projectId: string; iid: number; title: string; author: string }[]>([]);
+	let mrsRead = false;
+	/** The New run dialog, opened from "New run". */
+	let newRun = $state(false);
 
 	$effect(() => {
 		if (!open) return;
 		query = '';
 		sel = 0;
+		mrsRead = false;
 		api.tickets
 			.list()
 			.then((list) => (tickets = list))
 			.catch(() => {});
+	});
+
+	$effect(() => {
+		if (!open || !query.trim() || mrsRead) return;
+		mrsRead = true;
+		const ids = fleet.projects.map((p) => p.id);
+		void Promise.allSettled(ids.map((id) => api.projects.mergeRequests(id))).then((read) => {
+			mrs = read.flatMap((r, i) =>
+				r.status === 'fulfilled'
+					? r.value.map((row) => ({
+							projectId: ids[i],
+							iid: row.mr.iid,
+							title: row.mr.title,
+							author: row.mr.author
+						}))
+					: []
+			);
+		});
 	});
 
 	const go = (href: string) => () => {
@@ -97,6 +124,12 @@
 				label: t('shell.palette.limits'),
 				glyph: I.limits,
 				run: go(to.system('limits'))
+			},
+			{
+				group: 'do' as const,
+				label: t('shell.palette.newRun'),
+				glyph: I.add,
+				run: act(() => (newRun = true))
 			},
 			{
 				group: 'do' as const,
@@ -159,6 +192,14 @@
 				glyph: I.tickets,
 				run: go(to.ticket(tk.id))
 			});
+		for (const mr of mrs.slice(0, 80))
+			out.push({
+				group: 'mrs' as const,
+				label: `!${mr.iid} ${mr.title}`,
+				sub: `${mr.author} · ${fleet.projectName(mr.projectId)}`,
+				glyph: I.branch,
+				run: go(to.mergeRequest(mr.projectId, mr.iid))
+			});
 		return out;
 	});
 
@@ -202,6 +243,8 @@
 		}
 	}
 </script>
+
+<NewRunDialog bind:open={newRun} />
 
 {#if open}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->

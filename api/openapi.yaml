@@ -2136,8 +2136,6 @@ components:
       type: object
     MRRow:
       properties:
-        mine:
-          type: boolean
         mr:
           $ref: '#/components/schemas/MRInfo'
         run:
@@ -2146,8 +2144,6 @@ components:
           type: integer
         stacked_on:
           $ref: '#/components/schemas/MRBase'
-        ticket_id:
-          type: string
       required:
         - mr
       type: object
@@ -2187,11 +2183,8 @@ components:
       properties:
         run_id:
           type: string
-        ticket_id:
-          type: string
       required:
         - run_id
-        - ticket_id
       type: object
     Me:
       properties:
@@ -4911,6 +4904,25 @@ components:
         - path
         - size
         - truncated
+      type: object
+    WorkspaceLog:
+      properties:
+        data:
+          type: string
+        end:
+          format: int64
+          type: integer
+        size:
+          format: int64
+          type: integer
+        start:
+          format: int64
+          type: integer
+      required:
+        - data
+        - end
+        - size
+        - start
       type: object
     sourceAttachmentJSON:
       properties:
@@ -9369,7 +9381,7 @@ paths:
         - flows
   /api/projects/{id}/mrs:
     get:
-      description: 'The repository''s open merge requests, newest first: each with its author and head, whether the factory itself opened it, and the runs done on it here — its ticket and that ticket''s newest run. What a run of a flow started on merge requests (operates_on: merge_request) may be started on.'
+      description: 'The repository''s open merge requests, newest first: each with its author and head, and the runs that went through it here — how many have it in their data (started on it, or opened it) and the newest. What a run of a flow started on merge requests (operates_on: merge_request) may be started on.'
       operationId: listProjectMRs
       parameters:
         - in: path
@@ -9414,9 +9426,57 @@ paths:
       summary: Open merge requests of a project's repository, with the runs on each
       tags:
         - projects
+  /api/projects/{id}/mrs/{iid}:
+    get:
+      operationId: getProjectMR
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: iid
+          required: true
+          schema:
+            type: string
+        - description: 'the repository: "repo" (the default) for the primary, an extra repository''s name'
+          in: query
+          name: repo
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MRRow'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One merge request, with its description and the runs on it
+      tags:
+        - projects
   /api/projects/{id}/mrs/{iid}/runs:
     post:
-      description: 'Finds or makes the merge request''s ticket and starts a run on the merge request of a flow whose runs are started on one (operates_on: merge_request; the project''s default flow unless the body names another). 409 while a run of the same flow on it is going.'
+      description: 'Starts a run on the merge request of a flow whose runs are started on one (operates_on: merge_request; the project''s default flow unless the body names another), given its title and description as its work. No ticket is made. 409 while another run is still working on it.'
       operationId: startMRRun
       parameters:
         - in: path
@@ -11532,6 +11592,7 @@ paths:
         - workspace
   /api/runs/{id}/workspace-log:
     get:
+      description: 'Without from: the last n bytes. With from: up to n bytes from that offset — the end of the last read, to keep up, or a range ending at the start of what is on screen, to go back. A size below the offset kept up to means the log was replaced: read the tail again.'
       operationId: getWorkspaceLog
       parameters:
         - in: path
@@ -11539,18 +11600,23 @@ paths:
           required: true
           schema:
             type: string
-        - description: bytes of tail to return (default 64 KiB)
+        - description: 'byte offset to read from (default: the tail)'
+          in: query
+          name: from
+          schema:
+            type: integer
+        - description: bytes to read (default 64 KiB, at most 8 MiB)
           in: query
           name: "n"
           schema:
             type: integer
       responses:
-        "204":
+        "200":
           content:
-            text/plain:
+            application/json:
               schema:
-                type: string
-          description: No Content
+                $ref: '#/components/schemas/WorkspaceLog'
+          description: OK
         "400":
           content:
             application/json: {}
@@ -11570,7 +11636,7 @@ paths:
       security:
         - session: []
         - personalToken: []
-      summary: Live tail of the workspace's exec log
+      summary: A range of the workspace's live exec log
       tags:
         - workspace
   /api/runs/{id}/workspace/changes:

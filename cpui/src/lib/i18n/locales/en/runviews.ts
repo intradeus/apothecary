@@ -221,6 +221,7 @@ export default {
 	'runview.logs.empty': 'The log is empty.',
 	'runview.logs.no_stream': 'No live output here — this provisioner does not stream it.',
 	'runview.logs.no_log': 'No log: {message}',
+	'runview.logs.earlier': 'Load earlier output · {size} before this',
 	'runview.graphs.cpu': 'CPU',
 	'runview.graphs.memory': 'Memory',
 	'runview.graphs.network': 'Network',

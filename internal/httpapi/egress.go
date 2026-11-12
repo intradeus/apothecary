@@ -138,23 +138,7 @@ func (s *Server) postEgressAllow(w http.ResponseWriter, r *http.Request) {
 
 	// Persist to the project so future runs inherit it (best-effort — the
 	// live unblock already succeeded).
-	persisted := false
-	if s.Conf != nil {
-		if evs, err := s.Store.Events(r.Context(), runID, 0); err == nil && len(evs) > 0 {
-			if pid := run.Reduce(evs).ProjectID; pid != "" {
-				if p, err := s.Conf.GetProject(r.Context(), pid); err == nil {
-					if !containsStr(p.Workspace.ExtraDomains, host) {
-						p.Workspace.ExtraDomains = append(p.Workspace.ExtraDomains, host)
-						if _, err := s.Conf.UpdateProject(r.Context(), pid, p); err == nil {
-							persisted = true
-						}
-					} else {
-						persisted = true
-					}
-				}
-			}
-		}
-	}
+	persisted := s.saveEgressRule(r, runID, host, true)
 	writeJSON(w, http.StatusOK, EgressAllowResult{Allowed: host, Persisted: persisted})
 }
 
@@ -182,32 +166,24 @@ func (s *Server) postEgressRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Persist to the project: keep the two lists mutually exclusive so future
-	// runs inherit the same effective rule (best-effort — the live change won).
-	persisted := false
-	if s.Conf != nil {
-		if evs, err := s.Store.Events(r.Context(), runID, 0); err == nil && len(evs) > 0 {
-			if pid := run.Reduce(evs).ProjectID; pid != "" {
-				if p, err := s.Conf.GetProject(r.Context(), pid); err == nil {
-					if body.Allow {
-						p.Workspace.BlockedDomains = removeStr(p.Workspace.BlockedDomains, host)
-						if !containsStr(p.Workspace.ExtraDomains, host) {
-							p.Workspace.ExtraDomains = append(p.Workspace.ExtraDomains, host)
-						}
-					} else {
-						p.Workspace.ExtraDomains = removeStr(p.Workspace.ExtraDomains, host)
-						if !containsStr(p.Workspace.BlockedDomains, host) {
-							p.Workspace.BlockedDomains = append(p.Workspace.BlockedDomains, host)
-						}
-					}
-					if _, err := s.Conf.UpdateProject(r.Context(), pid, p); err == nil {
-						persisted = true
-					}
-				}
-			}
-		}
-	}
+	// Persist to the project so future runs inherit the same effective rule
+	// (best-effort — the live change won).
+	persisted := s.saveEgressRule(r, runID, host, body.Allow)
 	writeJSON(w, http.StatusOK, EgressRuleResult{Host: host, Allow: body.Allow, Persisted: persisted})
+}
+
+// saveEgressRule records a host's rule on the run's project; false when it
+// could not (no config plane, no project, a failed save).
+func (s *Server) saveEgressRule(r *http.Request, runID, host string, allow bool) bool {
+	if s.Conf == nil {
+		return false
+	}
+	evs, err := s.Store.Events(r.Context(), runID, 0)
+	if err != nil || len(evs) == 0 {
+		return false
+	}
+	pid := run.Reduce(evs).ProjectID
+	return pid != "" && s.Conf.SaveEgressRule(r.Context(), pid, allow, host) == nil
 }
 
 // egressRoutes is a run's and a project's egress.

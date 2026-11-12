@@ -256,11 +256,12 @@ export interface RunInput {
  *  newest run. */
 export interface MergeRequestRow {
 	mr: OpenMergeRequest;
-	mine: boolean;
 	/** The open merge request whose branch it targets: it merges there. */
 	stackedOn?: MergeRequestBase;
-	ticketId?: string;
+	/** The newest run that went through it. */
 	run?: { id: string; state: RunState; flow: string; createdAt: string };
+	/** How many runs have it in their data: started on it, or opened it. A
+	 *  merge request belongs to no ticket; its runs are found this way. */
 	runs: number;
 }
 
@@ -283,6 +284,10 @@ export interface OpenMergeRequest {
 	target: string;
 	draft: boolean;
 	fork: boolean;
+	/** Its description: what a run started on it is given. */
+	body: string;
+	/** A run starts only on an open one. */
+	state: 'open' | 'merged' | 'closed';
 }
 
 /** One point-in-time reading of the workspace's resource usage (the whole

@@ -156,6 +156,7 @@
 	import { untrack } from 'svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
+	import InfoTip from '$lib/ui/InfoTip.svelte';
 	import { I } from '$lib/design/icons';
 
 	let {
@@ -326,10 +327,15 @@
 							{#if has(r, 'start')}<div class="error">{t('form.services.startRequired')}</div>{/if}
 						</div>
 						<div class="field">
-							<label for="svc-{r.key}-stop"
-								>{t('form.services.stop')}
-								<span class="faint">{t('form.services.optional')}</span></label
-							>
+							<div class="label-row">
+								<label for="svc-{r.key}-stop"
+									>{t('form.services.stop')}
+									<span class="faint">{t('form.services.optional')}</span></label
+								>
+								<InfoTip label={t('form.services.stopTipLabel')}
+									>{t('form.services.stopTip')}</InfoTip
+								>
+							</div>
 							<textarea
 								id="svc-{r.key}-stop"
 								class="mono"
@@ -518,6 +524,11 @@
 </div>
 
 <style>
+	.label-row {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
 	.svcs {
 		display: flex;
 		flex-direction: column;

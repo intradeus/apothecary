@@ -259,31 +259,39 @@ func TestWorkspaceRefusals(t *testing.T) {
 	})
 }
 
-func TestLogTail(t *testing.T) {
+func TestLog(t *testing.T) {
 	ctx := context.Background()
 	h := newFixture(t)
 	env := h.addRun(t, "r1", "main")
 	if _, err := h.fake.Exec(ctx, env, envport.Command{Script: "echo marker"}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := h.s.LogTail(ctx, "r1", 1024)
-	if err != nil || !strings.Contains(string(got), "echo marker") {
-		t.Fatalf("LogTail = %q, %v", got, err)
+	got, err := h.s.Log(ctx, "r1", -1, 1024)
+	if err != nil || !strings.Contains(string(got.Data), "echo marker") || got.End != got.Size {
+		t.Fatalf("Log = %+v, %v", got, err)
+	}
+	// Reading on from the end: nothing new yet.
+	if next, err := h.s.Log(ctx, "r1", got.End, 1024); err != nil || len(next.Data) != 0 || next.Start != got.End {
+		t.Fatalf("read on = %+v, %v", next, err)
+	}
+	// A read asking for more than the cap gets the cap.
+	if _, err := h.s.Log(ctx, "r1", 0, MaxLogRead*2); err != nil {
+		t.Fatal(err)
 	}
 
-	if _, err := h.s.LogTail(ctx, "nope", 1); err == nil {
+	if _, err := h.s.Log(ctx, "nope", -1, 1); err == nil {
 		t.Error("an unknown run must be an error")
 	}
 	h.createOnly(t, "no-project", "")
-	if _, err := h.s.LogTail(ctx, "no-project", 1); !errors.Is(err, ErrNoLiveLog) {
+	if _, err := h.s.Log(ctx, "no-project", -1, 1); !errors.Is(err, ErrNoLiveLog) {
 		t.Errorf("err = %v", err)
 	}
 	h.res.Envp = plainEnvp{h.fake}
-	if _, err := h.s.LogTail(ctx, "r1", 1); !errors.Is(err, ErrNoLiveLog) {
+	if _, err := h.s.Log(ctx, "r1", -1, 1); !errors.Is(err, ErrNoLiveLog) {
 		t.Errorf("err = %v", err)
 	}
 	h.s.Resolver = resolution.StaticResolver{}
-	if _, err := h.s.LogTail(ctx, "r1", 1); !errors.Is(err, resolution.ErrUnresolvable) {
+	if _, err := h.s.Log(ctx, "r1", -1, 1); !errors.Is(err, resolution.ErrUnresolvable) {
 		t.Errorf("err = %v", err)
 	}
 }

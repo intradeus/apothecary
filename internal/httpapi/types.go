@@ -141,6 +141,17 @@ type SkillsetRefreshResult struct {
 	Warnings []string            `json:"warnings,omitempty"`
 }
 
+// WorkspaceLog is one byte range of a run's workspace log: Data runs from
+// Start to End, Size is the log's length when it was read. Keeping up asks
+// next from End; going back asks for what ends at Start. Ranges never split
+// a character.
+type WorkspaceLog struct {
+	Data  string `json:"data"`
+	Start int64  `json:"start"`
+	End   int64  `json:"end"`
+	Size  int64  `json:"size"`
+}
+
 // --- egress -----------------------------------------------------------------
 
 // EgressDefaults is the built-in allowlist every project starts from.

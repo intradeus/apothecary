@@ -113,6 +113,20 @@ var rules = []rule{
 		"internal/flow/actionspec", "internal/flow/agentspec", "internal/run/event", "internal/flow",
 		"internal/flow/reviewfile", "internal/run", "internal/flow/signalspec", "internal/ports/",
 	}},
+	// Work items: the contract every kind meets, the kinds, and the one
+	// list that registers them. The contract names no kind; a kind knows
+	// only the contract and what it reads (its port, the run's view).
+	{pkg: "internal/workitem", mayImport: []string{
+		"internal/project/resolution", "internal/run", "internal/run/event", "internal/run/runinput",
+	}},
+	{pkg: "internal/workitem/ticket", mayImport: []string{
+		"internal/workitem", "internal/run", "internal/run/runinput", "internal/workspace/checkout", "internal/workspace/wsname",
+	}},
+	{pkg: "internal/workitem/mergerequest", mayImport: []string{
+		"internal/workitem", "internal/ports/repoport", "internal/run", "internal/run/event", "internal/run/runinput",
+		"internal/workspace/checkout",
+	}},
+	{pkg: "internal/workitem/items", mayImport: []string{"internal/workitem", "internal/workitem/"}},
 	{pkg: "internal/project/resolution", mayImport: []string{
 		"internal/flow/actionspec", "internal/flow/agentspec", "internal/run/event", "internal/flow",
 		"internal/run", "internal/flow/signalspec", "internal/ports/",

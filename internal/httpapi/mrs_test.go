@@ -26,8 +26,8 @@ outcomes:
 `
 
 // The repository's merge requests are a source of runs: each listed with
-// the factory's own marked and the runs on it; any flow that begins on a
-// merge request starts there, filed under the merge request's ticket.
+// the runs that went through it; any flow that begins on a merge request
+// starts there, given its title and description — with no ticket made.
 func TestMergeRequestsListAndStartARun(t *testing.T) {
 	x := newConfEnv(t)
 	pid := x.wizard(t)
@@ -44,9 +44,8 @@ func TestMergeRequestsListAndStartARun(t *testing.T) {
 			Ref    struct{ IID int }
 			Author string `json:"author"`
 		} `json:"mr"`
-		Mine     bool   `json:"mine"`
-		TicketID string `json:"ticket_id"`
-		Run      *struct {
+		Runs int `json:"runs"`
+		Run  *struct {
 			ID   string `json:"id"`
 			Flow string `json:"flow"`
 		} `json:"run"`
@@ -61,33 +60,46 @@ func TestMergeRequestsListAndStartARun(t *testing.T) {
 		return rows
 	}
 	rows := list()
-	if len(rows) != 2 || rows[0].MR.Author != "apothecary" || !rows[0].Mine || rows[1].MR.Author != "alice" || rows[1].Mine || rows[1].TicketID != "" {
+	if len(rows) != 2 || rows[0].MR.Author != "apothecary" || rows[1].MR.Author != "alice" || rows[1].Runs != 0 || rows[1].Run != nil {
 		t.Fatalf("rows = %+v", rows)
 	}
 
 	resp, data := x.do(t, "POST", "/api/projects/"+pid+"/mrs/1/runs", map[string]any{"flow": "on-mr"}, nil)
 	var started struct {
-		RunID    string `json:"run_id"`
-		TicketID string `json:"ticket_id"`
+		RunID string `json:"run_id"`
 	}
-	if err := json.Unmarshal(data, &started); err != nil || resp.StatusCode != http.StatusCreated || started.RunID == "" || started.TicketID == "" {
+	if err := json.Unmarshal(data, &started); err != nil || resp.StatusCode != http.StatusCreated || started.RunID == "" {
 		t.Fatalf("start = %d %v: %s", resp.StatusCode, err, data)
 	}
-	// Any second run on the merge request's ticket while the first is going
-	// — the same flow or another — is refused, naming the run.
+	// Any second run on the merge request while the first is going — the
+	// same flow or another — is refused, naming the run.
 	resp, data = x.do(t, "POST", "/api/projects/"+pid+"/mrs/1/runs", map[string]any{"flow": "on-mr"}, nil)
 	if resp.StatusCode != http.StatusConflict || decode[ErrorResponse](t, data).RunID != started.RunID {
 		t.Errorf("same flow again = %d: %s", resp.StatusCode, data)
 	}
-	if r := list()[1]; r.TicketID != started.TicketID || r.Run == nil || r.Run.ID != started.RunID || r.Run.Flow != "on-mr" {
+	if r := list()[1]; r.Runs != 1 || r.Run == nil || r.Run.ID != started.RunID || r.Run.Flow != "on-mr" {
 		t.Errorf("alice's row after the start = %+v", r)
 	}
-	resp, data = x.do(t, "GET", "/api/tickets/"+started.TicketID, nil, nil)
-	if resp.StatusCode != 200 || !strings.Contains(string(data), `"source_kind":"merge_request"`) || !strings.Contains(string(data), "(!1 by alice)") {
-		t.Errorf("ticket = %d: %s", resp.StatusCode, data)
+	// No ticket: the run carries the merge request as its work.
+	if resp, data := x.do(t, "GET", "/api/tickets", nil, nil); resp.StatusCode != 200 || strings.Contains(string(data), "!1 by alice") {
+		t.Errorf("tickets = %d: %s", resp.StatusCode, data)
+	}
+	resp, data = x.do(t, "GET", "/api/runs/"+started.RunID, nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(data), "(!1 by alice)") || strings.Contains(string(data), `"ticket_id"`) {
+		t.Errorf("run = %d: %s", resp.StatusCode, data)
+	}
+	// One merge request, with its description and its runs.
+	resp, data = x.do(t, "GET", "/api/projects/"+pid+"/mrs/1", nil, nil)
+	if one := decode[MRRow](t, data); resp.StatusCode != 200 || one.MR.Title != "Add caching" || one.Runs != 1 || one.Run == nil || one.Run.ID != started.RunID {
+		t.Errorf("one = %d: %s", resp.StatusCode, data)
+	}
+	for path, want := range map[string]int{"/mrs/x": 400, "/mrs/99": 400} {
+		if resp, data := x.do(t, "GET", "/api/projects/"+pid+path, nil, nil); resp.StatusCode != want {
+			t.Errorf("%s = %d: %s", path, resp.StatusCode, data)
+		}
 	}
 	// The factory's own merge request takes a run like any other; a flow
-	// whose runs are started on tickets is refused and leaves no ticket.
+	// whose runs are started on tickets is refused.
 	plain := "name: plain\nversion: 5\nparameters: { harness: fake, model: a/b }\nmain:\n  - { id: s, type: command, run: \"true\" }\n"
 	if resp, data := x.do(t, "POST", "/api/projects/"+pid+"/flows", map[string]any{"name": "plain", "yaml": plain}, nil); resp.StatusCode != http.StatusCreated {
 		t.Fatalf("save plain = %d: %s", resp.StatusCode, data)
@@ -95,9 +107,6 @@ func TestMergeRequestsListAndStartARun(t *testing.T) {
 	resp, data = x.do(t, "POST", "/api/projects/"+pid+"/mrs/2/runs", map[string]any{"flow": "plain"}, nil)
 	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), "starts its runs on a ticket") {
 		t.Errorf("plain flow = %d: %s", resp.StatusCode, data)
-	}
-	if rows := list(); rows[0].TicketID != "" {
-		t.Errorf("a refused start left ticket %s", rows[0].TicketID)
 	}
 	resp, data = x.do(t, "POST", "/api/projects/"+pid+"/mrs/2/runs", map[string]any{"flow": "on-mr"}, nil)
 	if resp.StatusCode != http.StatusCreated {

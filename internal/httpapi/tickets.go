@@ -16,6 +16,7 @@ import (
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/project/tickets"
 	"apothecary/internal/run/runinput"
+	"apothecary/internal/workspace/checkout"
 )
 
 // ticketBody is the create/update DTO. Branch is the ticket's BASE branch;
@@ -131,7 +132,7 @@ func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Branch != "" {
-		if err := engine.CheckBranch(body.Branch); err != nil {
+		if err := checkout.CheckBranch(body.Branch); err != nil {
 			writeErr(w, http.StatusBadRequest, fmt.Sprintf("branch %q: %v", body.Branch, err))
 			return
 		}
@@ -306,7 +307,7 @@ func (s *Server) updateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Branch != "" {
-		if err := engine.CheckBranch(body.Branch); err != nil {
+		if err := checkout.CheckBranch(body.Branch); err != nil {
 			writeErr(w, http.StatusBadRequest, fmt.Sprintf("branch %q: %v", body.Branch, err))
 			return
 		}
@@ -378,15 +379,22 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, RunRef{RunID: runID})
 }
 
-// runStartErr answers a refused run start: 409 for a ticket that already has
-// an active run — the body's run_id names it, so the client can open or
+// runBusy is a start refused for a run in the way: a work item's active
+// run (workitem.ErrBusy).
+type runBusy interface {
+	error
+	ActiveRunID() string
+}
+
+// runStartErr answers a refused run start: 409 for a ticket or a merge
+// request that already has an active run — the body's run_id names it, so the client can open or
 // abort it — and for the environment cap, 400 for every other refusal
 // (preflight, a bad branch, a missing flow).
 func runStartErr(w http.ResponseWriter, err error) {
-	var busy engine.ErrTicketBusy
+	var busy runBusy
 	switch {
 	case errors.As(err, &busy):
-		writeJSON(w, http.StatusConflict, ErrorResponse{Error: err.Error(), RunID: busy.RunID})
+		writeJSON(w, http.StatusConflict, ErrorResponse{Error: err.Error(), RunID: busy.ActiveRunID()})
 	case errors.Is(err, engine.ErrEnvCapacity):
 		writeErr(w, http.StatusConflict, err.Error())
 	default:

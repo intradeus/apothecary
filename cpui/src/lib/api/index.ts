@@ -51,6 +51,7 @@ import type {
 	SkillImportResult,
 	Skillset,
 	SkillsetDraft,
+	SkillsetRef,
 	SkillsetRefresh,
 	SkillsetVersion
 } from '$lib/domain';
@@ -68,6 +69,7 @@ import type {
 	EgressAuditRow,
 	EgressDenial,
 	EgressPolicy,
+	LogRange,
 	EnvCheck,
 	ExposedPort,
 	FileDiff,
@@ -351,10 +353,16 @@ export const runs = {
 	stageLog: (id: string, stage: string, n = 65536): Promise<string> =>
 		unwrap(gen.getStageLog({ path: { id, stage }, query: { n } })) as Promise<string>,
 
-	/** Live tail of the workspace's exec output — an optional provisioner
-	 *  capability, so null means "not available here", not "failed". */
-	workspaceLog: (id: string, n = 65536): Promise<string | null> =>
-		unwrapOptional(gen.getWorkspaceLog({ path: { id }, query: { n } })) as Promise<string | null>,
+	/** A range of the workspace's live exec output: the last `n` bytes, or
+	 *  up to `n` from byte `from`. An optional provisioner capability, so
+	 *  null means "not available here", not "failed". */
+	workspaceLog: async (
+		id: string,
+		range: { from?: number; n?: number } = {}
+	): Promise<LogRange | null> => {
+		const w = await unwrapOptional(gen.getWorkspaceLog({ path: { id }, query: range }));
+		return w ? map.toLogRange(w) : null;
+	},
 
 	/** SSE stream of a run's events: replays from afterSeq, then follows live.
 	 *  Returns the unsubscribe. EventSource is the browser's, not the SDK's —
@@ -747,24 +755,44 @@ export const projects = {
 			await unwrap(gen.listProjectMrs({ path: { id }, query: repo ? { repo } : undefined })),
 			map.toMergeRequestRow
 		),
-	/** Start a run of a flow on a merge request: its ticket found or made,
-	 *  the run started on it (the flow's operates_on must be merge_request). */
+	/** One merge request, with its description and the runs on it. */
+	mergeRequest: async (id: string, iid: number, repo?: string): Promise<MergeRequestRow> =>
+		map.toMergeRequestRow(
+			await unwrap(
+				gen.getProjectMr({ path: { id, iid: String(iid) }, query: repo ? { repo } : undefined })
+			)
+		),
+	/** Start a run of a flow on a merge request (the flow's operates_on must
+	 *  be merge_request), given its title and description: no ticket. */
 	startRunOnMR: async (
 		id: string,
 		iid: number,
-		opts?: { flow?: string; repo?: string; params?: Record<string, string> }
-	): Promise<{ runId: string; ticketId: string }> => {
+		opts?: {
+			flow?: string;
+			repo?: string;
+			params?: Record<string, string>;
+			skillsets?: SkillsetRef[];
+		}
+	): Promise<{ runId: string }> => {
 		const r = await unwrap(
 			gen.startMrRun({
 				path: { id, iid: String(iid) },
 				body: {
 					...(opts?.flow ? { flow: opts.flow } : {}),
 					...(opts?.repo ? { repo: opts.repo } : {}),
-					...(opts?.params && Object.keys(opts.params).length ? { params: opts.params } : {})
+					...(opts?.params && Object.keys(opts.params).length ? { params: opts.params } : {}),
+					...(opts?.skillsets?.length
+						? {
+								skillsets: opts.skillsets.map((s) => ({
+									id: s.id,
+									...(s.seq ? { seq: s.seq } : {})
+								}))
+							}
+						: {})
 				}
 			})
 		);
-		return { runId: r.run_id, ticketId: r.ticket_id };
+		return { runId: r.run_id };
 	},
 
 	preflight: async (id: string): Promise<Preflight> =>

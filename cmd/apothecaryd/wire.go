@@ -202,6 +202,9 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	envSt := envstate.New(runs, resolver, nil, log)
 	egressSvc := egress.New(runs, resolver, store) // durable egress audit trail (pgstore)
 	egressSvc.Log = log
+	// What a provisioning reaches through its open window lands on the
+	// project's allowlist.
+	egressSvc.Rules = conf
 	// A refreshed login reaches the live workspaces that hold it; omp's
 	// per-run broker tokens derive from an instance secret, so they survive
 	// restarts.

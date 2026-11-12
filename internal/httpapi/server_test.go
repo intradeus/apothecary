@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1238,7 +1239,7 @@ func TestEgressAllow(t *testing.T) {
 	}
 	// Persisted to the project's extra_domains.
 	p, _ := x.conf.GetProject(t.Context(), projectID)
-	if !containsStr(p.Workspace.ExtraDomains, "models.dev") {
+	if !slices.Contains(p.Workspace.ExtraDomains, "models.dev") {
 		t.Errorf("extra_domains = %v", p.Workspace.ExtraDomains)
 	}
 

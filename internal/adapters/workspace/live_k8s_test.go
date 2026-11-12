@@ -198,8 +198,8 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	start := time.Now()
 	env, err := a.Provision(ctx, spec)
 	if err != nil {
-		if b, _ := a.TailExecLog(ctx, envport.EnvID(name), 8<<10); len(b) > 0 {
-			t.Logf("exec.log tail:\n%s", b)
+		if c, _ := a.ReadExecLog(ctx, envport.EnvID(name), -1, 8<<10); len(c.Data) > 0 {
+			t.Logf("exec.log tail:\n%s", c.Data)
 		}
 		t.Fatalf("provision: %v", err)
 	}

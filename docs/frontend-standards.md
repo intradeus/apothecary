@@ -16,7 +16,7 @@ The import graph is the architecture. Each folder of `src/lib` has a rank, and a
 | 3 | `api` | The anti-corruption layer around the generated client (see its README). |
 | 4 | `ui` | The design system: generic components. May not know what a run is called on the wire. |
 | 5 | `app` | What every page shares: `session`, `fleet`, `prefs`, `nav`. |
-| 6+ | features | `artifacts`, `desk`, `flow`, `skills`, `system`, `analytics`, then `pings`, `review`, `curation`, `tickets`, `run`, `workshop`, and finally `desk-home`, `inbox`, `shell`. |
+| 6+ | features | `artifacts`, `desk`, `flow`, `skills`, `system`, `analytics`, then `pings`, `review`, `curation`, `tickets`, `run`, `mrs`, `workshop`, and finally `desk-home`, `inbox`, `shell`. |
 | top | `src/routes` | Load and compose. |
 
 **Where does a new file go?** Into the feature that owns it. No loose files in `src/lib`: the layer check fails on one. Used by two features? Move it down to the lowest folder both can import, rather than having one feature import the other.

@@ -6384,6 +6384,161 @@ false` to every `sysbox-runc` pod; the fix is for the engine to say so.
   The provisioning log says when and why the cache is off. An image-only
   service has nothing to cache anyway.
 
+## Provisioning allows what it reaches, on the project (2026-11-10)
+
+- The provisioning window used to let a run reach anything but what the
+  project blocks, and remember nothing. The hosts went through unrecorded
+  as rules, so the egress view had nothing to rule on. Once the window
+  closed, the next run's agent met the same hosts held.
+- The gateway now marks an audit record `provisioning` when the window
+  alone let the connection through (allow mode, a host the policy would
+  have held). In deny mode the window is the policy, so nothing is marked.
+- The engine's egress ingest (every 5 s, and once more before destroy)
+  adopts each marked hostname. It saves the hostname to the project's
+  `extra_domains` first, then allows it live on the gateway. Adoption is
+  the same as a person clicking Allow. Hosts that are blocked, or ruled on
+  since, are left alone. IP literals stay held. Each host is looked at
+  once per run, so taking it off the allowlist mid-run sticks. The
+  project save (`confstore.SaveEgressRule`) is shared with the HTTP rule
+  endpoints, which used to duplicate it.
+- The gateway counts a connection when it is let through and adds its
+  bytes when it ends, so a long download is on the trail from its start.
+- The run page treats a provisioning run as live (`RunStore.workspaceLive`).
+  The egress view loads the policy, so a host can be blocked
+  mid-provision, and the workspace log is tailed from the first line of
+  the clone instead of once.
+- `k8sHost.sample` reports the working set (`memory.current` minus
+  `inactive_file`), as the kubelet and `docker stats` do. A build's page
+  cache read as a workspace about to run out of memory.
+
+## The workspace log is read by byte range (2026-11-10)
+
+- The Logs pane read the last 64 KiB again on every poll. A refresh showed
+  only that much of a long build. The provisioning copy is captured only
+  when provisioning ends, so it was no help while it ran.
+- `envport.ExecLogTailer` is now `ReadExecLog(from, n)`: up to n bytes from
+  an offset, or the tail when from is negative.
+  `envport.ReadExecLogRange` is the one implementation both adapters
+  share. It moves both edges back to the start of a UTF-8 character, so
+  ranges read back to back splice into the log exactly. A character still
+  being written comes with the next read.
+- `GET /api/runs/{id}/workspace-log` answers JSON `{data, start, end, size}`
+  and takes `from`. It reads at most 8 MiB per call (`wsinfo.MaxLogRead`).
+- The pane reads the last 2 MiB once, then only what was written since
+  `end` (1 MiB per poll), one read at a time. A `size` below `end` means
+  the log was replaced: it reads the tail again. "Load earlier output"
+  reads the 2 MiB ending at `start` and keeps the reader's place.
+- A new `InfoTip` (`$lib/ui`): a ⓘ beside a field's label. The tooltip is
+  the button's `aria-describedby`, and it is portalled to `<body>` so glass
+  doesn't clip it. The first use is the services editor's Stop field: no
+  stop command means SIGTERM to the start command's process group, then
+  SIGKILL 10 s later.
+
+## A merge request is a work item, not a ticket (2026-11-10)
+
+- A run used to need a ticket, so starting one on a merge request found or
+  made a ticket keyed by the merge request's URL. That covered the
+  workshop's Start button and the merge_request automation. The engine
+  never needed the ticket: a run without one was already supported (tracker
+  stages skip it, visibly). The ticket only grouped runs, deduplicated the
+  automation and enforced one active run.
+- A run on a merge request now has no ticket. `tickets.MRWork` turns the
+  merge request into the run's work: title "<title> (!iid by author)", and
+  the description plus a line naming the merge request as the goal.
+  `ForMR`/`CreateForMR` are gone. Merge request tickets made before this
+  stay as plain tickets.
+- A merge request's runs are the runs that have it in their data: the one
+  they were started on (`View.Adopted`) or the one they opened
+  (`View.MRs`, from `mr_created`). `View.MRIIDs`/`HasMR` and
+  `Engine.RunsOnMR(s)` find them. The UI does the same over the fleet poll
+  (`$lib/mrs/runsOnMR`).
+- One active run per merge request (`ErrMRBusy`, under an `mrLock` like the
+  ticket lock) applies to every run started on one, a ticket's run
+  included: two runs pushing to one branch undo each other. The HTTP layer
+  answers both refusals the same way: a 409 naming the run in the way
+  (`runBusy`).
+- The automation skips a merge request any run has been through, whoever
+  started it. Before, it skipped one with a ticket.
+- "Opened by the factory" compared the merge request's author with the
+  repository integration's account. With a personal token that marked a
+  person's own merge requests, and it said nothing about merge requests the
+  factory had only reviewed. It is replaced by "processed by apothecary
+  N times", the count of runs that have the merge request in their data.
+  `MRRow.Mine`/`TicketID` are gone. `RepoHostUser` still keeps the
+  automation off the integration's own merge requests.
+- The UI treats merge requests as the second work item:
+  - **Sidebar:** a "Merge requests" entry beside Tickets (`G M`), opening
+    `/merge-requests`, every workshop's open ones.
+  - **Merge request page:** `/merge-requests/[project]/[iid]` (`?repo=`) is
+    the ticket page's twin. It shows the description and starts a run with
+    only the flows that begin on a merge request (`GET
+    /api/projects/{id}/mrs/{iid}`).
+  - **New run:** Ticket and Merge request tabs.
+  - **Run header:** a ticketless merge request run links its merge request.
+
+## Work items: tickets and merge requests behind one contract (2026-11-10)
+
+- Every place that started, guarded or listed runs branched on "ticket or
+  merge request" by hand:
+  - two busy errors (`ErrTicketBusy`, `ErrMRBusy`) with two lock maps;
+  - `RunsOfTicket` beside `RunsOnMR(s)`;
+  - `startsOn(fl, onMR bool)`;
+  - `adoptMR` inside `CreateRunWith`;
+  - `MRWork`, which sat in `project/tickets`;
+  - a two-tab New run dialog and two copies of the start panel.
+
+  A third kind would have touched all of them.
+- `internal/workitem` is the contract. A kind is a value of a flow's
+  `operates_on`. `Kind` says:
+  - how a start names one of its items (`Requested`);
+  - which items a run holds, read from its view (`Held`);
+  - how a new run is pointed at it (`Prepare`: its branch, or a `Repoint`
+    of a checkout onto the item's own branch);
+  - whether a flow of its kind requires one (`Required`), and whether one
+    may come along with a run on another kind (`Accompanies`).
+- The `Registry` (built once in `workitem/items`, in preparation order)
+  turns that into what the engine needs: `Requested`, `StartsOn`, `Lock`
+  and `Idle` (`ErrBusy`), `Prepare`, `Holds`. The engine names no kind.
+  Its `CreateRunWith` locks and checks the requested items, has the
+  registry check the flow's `operates_on`, lets the items prepare the
+  start, then applies their repoints. `RunsOf(ref)` and `ItemRuns(project,
+  kind)` replace the per-kind run lookups.
+- The two kinds:
+  - `workitem/ticket` owns the base + run-tail branch rule.
+  - `workitem/mergerequest` owns the MR's checkout (from `adoptMR`), `Work`
+    (what the run is given), `Key`/`Ref`/`ParseKey` (`repo!iid`), and
+    `CheckOpen`/`ErrNotOpen`.
+- `CheckBranch` moved from the engine to `workspace/checkout`: both kinds
+  and the API need it.
+- A `Ref` carries its project: merge request numbers are only unique
+  within a repository.
+- Kept per kind, because they genuinely differ:
+  - where items come from (`project/tickets` and trackers; the repository
+    host via `engine/mrs`);
+  - a ticket's tracker refresh and tracker preflight;
+  - how a rerun rebuilds its inputs;
+  - each kind's page.
+- A test pins the registered kinds to the language's `operates_on`
+  values, on both sides.
+- The UI mirrors the contract:
+  - `$lib/app/workItems.ts` is the registry of kinds. Each has its labels,
+    icon, chord, list page, whether its items live per workshop, the New
+    run dialog's texts, and an `options(projectId)` loader that gives each
+    item's page.
+  - The sidebar entries and the New run dialog's tabs are generated from
+    it.
+  - `$lib/run/StartRunPanel` is the one start panel every work item page
+    mounts. A kind's own fields come in through `before` and `after`
+    (a ticket's direction and source branch, a merge request's state).
+- A new kind costs:
+  - a `workitem/<kind>` package and a line in `workitem/items`;
+  - its `operates_on` value in the language;
+  - its source and start route;
+  - a `WORK_ITEMS` entry and its page.
+
+  The engine, the busy rule, the automations' "already processed" check,
+  the dialog and the sidebar do not change.
+
 ## Kubernetes only, one chart, tunnels and the apothecary client (2026-11-11)
 
 The plan is `docs/kubernetes-only-plan.md`. What was decided while building

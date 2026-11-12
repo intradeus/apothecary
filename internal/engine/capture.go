@@ -153,7 +153,8 @@ func (x *exec) publishProvisionLog(envName string) {
 	if env == "" {
 		env = envport.EnvID(envName)
 	}
-	out, err := tailer.TailExecLog(x.bg, env, provisionLogTail)
+	chunk, err := tailer.ReadExecLog(x.bg, env, -1, provisionLogTail)
+	out := chunk.Data
 	if err != nil || len(out) == 0 {
 		return
 	}

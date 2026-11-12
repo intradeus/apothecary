@@ -250,6 +250,9 @@ import type {
 	GetProjectEgressAuditErrors,
 	GetProjectEgressAuditResponses,
 	GetProjectErrors,
+	GetProjectMrData,
+	GetProjectMrErrors,
+	GetProjectMrResponses,
 	GetProjectResponses,
 	GetReadyzData,
 	GetReadyzErrors,
@@ -3508,7 +3511,7 @@ export const listFlowVersions = <ThrowOnError extends boolean = false>(
 /**
  * Open merge requests of a project's repository, with the runs on each
  *
- * The repository's open merge requests, newest first: each with its author and head, whether the factory itself opened it, and the runs done on it here — its ticket and that ticket's newest run. What a run of a flow started on merge requests (operates_on: merge_request) may be started on.
+ * The repository's open merge requests, newest first: each with its author and head, and the runs that went through it here — how many have it in their data (started on it, or opened it) and the newest. What a run of a flow started on merge requests (operates_on: merge_request) may be started on.
  */
 export const listProjectMrs = <ThrowOnError extends boolean = false>(
 	options: Options<ListProjectMrsData, ThrowOnError>
@@ -3531,9 +3534,32 @@ export const listProjectMrs = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * One merge request, with its description and the runs on it
+ */
+export const getProjectMr = <ThrowOnError extends boolean = false>(
+	options: Options<GetProjectMrData, ThrowOnError>
+): RequestResult<GetProjectMrResponses, GetProjectMrErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetProjectMrResponses, GetProjectMrErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/mrs/{iid}',
+		...options
+	});
+
+/**
  * Start a run of a flow on a merge request
  *
- * Finds or makes the merge request's ticket and starts a run on the merge request of a flow whose runs are started on one (operates_on: merge_request; the project's default flow unless the body names another). 409 while a run of the same flow on it is going.
+ * Starts a run on the merge request of a flow whose runs are started on one (operates_on: merge_request; the project's default flow unless the body names another), given its title and description as its work. No ticket is made. 409 while another run is still working on it.
  */
 export const startMrRun = <ThrowOnError extends boolean = false>(
 	options: Options<StartMrRunData, ThrowOnError>
@@ -4754,7 +4780,9 @@ export const getRunSsh = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Live tail of the workspace's exec log
+ * A range of the workspace's live exec log
+ *
+ * Without from: the last n bytes. With from: up to n bytes from that offset — the end of the last read, to keep up, or a range ending at the start of what is on screen, to go back. A size below the offset kept up to means the log was replaced: read the tail again.
  */
 export const getWorkspaceLog = <ThrowOnError extends boolean = false>(
 	options: Options<GetWorkspaceLogData, ThrowOnError>
