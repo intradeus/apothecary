@@ -465,8 +465,8 @@ jobs:
         env:
           K3D_VERSION: v5.9.0 # .devcontainer/Dockerfile K3D_VERSION
           K3D_SHA256: 06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0
-          KUBECTL_VERSION: v1.35.5 # .devcontainer/Dockerfile KUBECTL_VERSION
-          KUBECTL_SHA256: 90f75ea6ecc9ea5633262e1c0b83a40560003b30fc94a04cb099404fcef0c224
+          KUBECTL_VERSION: v1.34.1 # .devcontainer/Dockerfile KUBECTL_VERSION
+          KUBECTL_SHA256: 7721f265e18709862655affba5343e85e1980639395d5754473dafaadcaa69e3
         run: |
           curl -fsSL -o "$RUNNER_TEMP/k3d" "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
           echo "$K3D_SHA256  $RUNNER_TEMP/k3d" | sha256sum -c -

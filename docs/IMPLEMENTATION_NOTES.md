@@ -7014,12 +7014,14 @@ pg 1).
   sandbox suites) failed in the devcontainer: the k8s suite needs k3d and
   kubectl, which only CI installed, and three things assumed the docker
   daemon's host is the machine `task` runs on.
-- **k3d v5.9.0 and kubectl v1.35.5 are pinned like the other tools:**
+- **k3d v5.9.0 and kubectl v1.34.1 are pinned like the other tools:**
   `.devcontainer/Dockerfile` ARGs with per-arch checksums, CI's
   sandbox-test (k8s) installs exactly those (kubectl was the runner's
   unpinned one), `TestToolPinsMatchCI` holds the versions and the amd64
   checksums together, and `pin:k3d` guards `sandbox:test:k8s`. kubectl is
-  the Kubernetes of k3d's default k3s.
+  the engine image's (`deploy/Dockerfile`), held to it by the same test: the
+  live tests drive the cluster as the engine does, one minor below k3d's
+  default k3s.
 - **Container mode, decided by `deploy/self-container.sh`:** inside a
   container of the very daemon the CLI drives (the devcontainer with the
   docker-outside-of-docker feature; a run's workspace has the same shape),
@@ -7049,8 +7051,46 @@ pg 1).
   The exit code still arrives (a separate wait call), so a check's ok/FAIL
   is right, but a failing harness or go:test:linux log can be empty; rerun
   it detached (`docker run -d`, `docker logs`) to read it.
-- **Not done:** running these suites in a run's own sandbox. That nests
-  k3s and the live test's DinD sandbox inside the run's sandbox, and needs
-  more disk (20 GiB by default against ~25 GB of images), egress for k3d's
-  and the nested k3s's pulls, and AGENTS.md's "Never run in a workspace"
-  list changed.
+- **`task ci` in a run** (same day): the goal is a run that verifies with
+  everything CI runs but the macOS and Windows builds, taking that load off
+  CI.
+  - `task ci` now runs `engine:image` too: it said "everything CI runs" but
+    left out CI's engine-image job.
+  - A run's workspace is a container of its sandbox's own daemon, the shape
+    container mode handles: k3d's nodes are its siblings, the live tests'
+    sandbox pods run in them. Containers on one kernel, not VMs: the cost
+    is a daemon per level, not a guest OS.
+  - The egress defaults already allow every nested pull: Docker Hub
+    directly (k3s's system images and the nested gateway's mirror pull
+    with their own containerd, not through the sandbox's mirror), ghcr.io
+    (k3d's images), mcr.microsoft.com (the browser). The devcontainer
+    build adds `dl.k8s.io` (kubectl).
+  - kubectl is now the engine image's v1.34.1 in the devcontainer and CI
+    too (it was briefly a second pin, v1.35.5).
+  - AGENTS.md: the heavy suites run in a workspace with docker; `task check`
+    while iterating, `task ci` from the verifying stage; never the release
+    builds.
+  - Measured in the devcontainer on Docker Desktop (11 CPUs, 9.4 GB):
+    `task ci` peaked at 8.3 GB. Eight checks passed; `ui:test` lost two
+    timer-bound tests (Inbox selection, FlowEditorPage delete) under the
+    load, taking 771 s instead of 488 s, and passed alone (7304 tests).
+  - Not yet verified in a run under sysbox: k3d's privileged nodes on the
+    sandbox's daemon, and WireGuard links created at the nested level.
+    The README lists the project settings (storage 60Gi, verify timeout
+    60m, 16 GB).
+- **The UI tests' async waits get 10 s, not 1 s** (same day). Testing
+  Library's `waitFor`/`findBy*` and vitest's `vi.waitFor` default to 1 s.
+  Under `task ci` (every suite at once) the UI tests ran about 8× slower:
+  983 took over a second, against 120 alone, and two waits that hold in
+  milliseconds idle timed out (Inbox selection, FlowEditorPage delete).
+  `src/test/setup.ts` sets `asyncUtilTimeout` and wraps `vi.waitFor` with
+  one `ASYNC_TIMEOUT`; a wait that names its own timeout keeps it, and
+  `src/test/setup.test.ts` holds all three (it failed before the change: a
+  1.2 s wait gave up at 972 ms). A wait still ends as soon as it holds, so
+  only a real failure reports later. Under `task ci` again both passed, the
+  Inbox one at 4.8 s.
+  - That run lost a different test, PanelEditor's long edit (1.3 s idle),
+    to the 30 s test timeout at 38 s: no wait in it, the Docker VM (9.4 GB)
+    was swapping (about 3 GB in swap). Memory, not timing: `testTimeout`
+    stays, and the README asks 16 GB for a run that verifies with
+    `task ci`.

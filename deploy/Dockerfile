@@ -26,7 +26,8 @@ RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o /out/apothec
 FROM debian:bookworm-slim
 
 # kubectl drives the Kubernetes provisioner (sandbox pods, gateways,
-# browsers). Pinned; bump per release.
+# browsers). Pinned; bump per release, with .devcontainer/Dockerfile's
+# KUBECTL_VERSION (internal/devtools/devcontainer holds them together).
 ARG KUBECTL_VERSION=v1.34.1
 
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \

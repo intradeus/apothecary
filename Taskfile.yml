@@ -393,8 +393,9 @@ tasks:
   #   task test     go:test ui:test sandbox:test
   #   task check    lint, go:test, ui:test: the pre-push gate (docker for
   #                 Postgres; no images, no cluster)
-  #   task ci       everything CI runs, locally (docker, k3d, ~15 GB of
-  #                 disk); unlike CI, it never skips a side
+  #   task ci       everything CI runs (but the macOS and Windows builds),
+  #                 locally: test, lint and the engine image (docker, k3d,
+  #                 ~25 GB of disk); unlike CI, it never skips a side
   #
   # <side>:test:run passes its arguments to the test runner, for one package
   # or file; it runs nothing that needs docker.
@@ -417,10 +418,10 @@ tasks:
         vars: {CHECKS: 'go:lint repo:lint go:test ui:test,ui:lint'}
 
   ci:
-    desc: 'Everything CI runs, locally and in parallel: check, then the sandbox images and suites; never skips a side as CI does (needs docker, k3d, ~15 GB of disk; logs in build/checks/)'
+    desc: 'Everything CI runs, locally and in parallel: check, the sandbox images and suites, the engine image; never skips a side as CI does (needs docker, k3d, ~15 GB of disk; logs in build/checks/)'
     cmds:
       - task: checks
-        vars: {CHECKS: 'go:lint repo:lint go:test ui:test,ui:lint sandbox'}
+        vars: {CHECKS: 'go:lint repo:lint go:test ui:test,ui:lint sandbox engine:image'}
 
   # CHECKS: space-separated, each run in parallel with the others; a,b runs
   # a then b (ui:test and ui:lint both write cpui/.svelte-kit, so they never

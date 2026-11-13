@@ -844,10 +844,11 @@ recipe:
 3. **Project.** Repository `https://github.com/intradeus/apothecary`,
    locator `intradeus/apothecary`, default branch `main`, AGENTS.md path
    left default. Workspace: **Docker in workspaces** on. Commands: `verify` =
-   `task check`; optionally
+   `task check`, or `task ci` to verify each run with everything CI runs
+   but the macOS and Windows builds (below); optionally
    `setup` = `bash .devcontainer/post-create.sh`.
 4. **Egress.** *Add sensible defaults*, then add `get.helm.sh` (helm comes
-   from there) — everything else the build and the hooks dial (Debian, the
+   from there) and `dl.k8s.io` (kubectl) — everything else the build and the hooks dial (Debian, the
    Go module proxy, npm, GitHub, Docker Hub through the mirror,
    `download.docker.com` for the feature) is in the defaults.
 5. **Service `default`.** Start `task dev:up`, health
@@ -859,8 +860,28 @@ recipe:
    Browser enabled.
 7. Preflight (AGENTS.md and the devcontainer are found) → Envcheck → a ticket.
 
-`AGENTS.md` tells the agent what to run and what never to run inside a
-workspace (the image-building and sandbox-nesting suites).
+`AGENTS.md` tells the agent what to run while it iterates (`task check`)
+and what never to run inside a workspace (the release builds).
+
+**`task ci` in a run.** The run's workspace drives its sandbox's own
+daemon, so the sandbox suites' k3d cluster is a sibling container there
+and the live tests' sandbox pods run inside it: containers within
+containers on the node's one kernel, not VMs. What that needs beyond the
+recipe:
+
+- The kubernetes integration's `storage_size` at `60Gi` or more (default
+  `20Gi`): the sandbox's daemon holds the devcontainer, the five images
+  and the cluster's copy of four of them, about 25 GB at the peak.
+- The `verify` command stage's `timeout` at `60m` or more (flow default
+  `30m`): every run builds the images from cold, its daemon being new.
+- Memory for every suite at once: 16 GB for the sandbox pod. In a 9.4 GB
+  Docker VM `task ci` used all of it and swapped about 3 GB more, and a
+  worker frozen by swap can outlast a UI test's 30 s timeout. CPU is
+  shared, not reserved: under load tests run several times slower, which
+  is why every async wait in the UI tests has a 10 s budget
+  (`cpui/src/test/setup.ts`).
+- Sandboxes under sysbox (the chart's default) or privileged: the k3d
+  nodes are privileged containers of the sandbox's daemon.
 
 ## Security model (short form)
 

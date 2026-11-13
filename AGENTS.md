@@ -50,11 +50,17 @@ devcontainer).
 | you changed `internal/httpapi/routes.go` | `task api` (regenerates `api/openapi.yaml` + `cpui/src/lib/api/generated`; a stale spec fails a unit test) |
 | bring the app up | `task dev:up` (below) |
 
-## Never run in a workspace
+## The heavy suites
 
-`task ci`, `test`, `sandbox:*`, `engine:image`, `build`,
-`build:images`, `k8s:*`, `deploy/images.sh`: they build multi-gigabyte
-images, nest sandboxes or start a k3d cluster. CI runs them.
+`task ci` (and `test`, `sandbox:*`, `engine:image`, `k8s:*`) build
+multi-gigabyte images and start a k3d cluster: about 25 GB of disk and ten
+minutes or more. They run in a workspace with docker (the project's *Docker
+in workspaces*), the devcontainer included. While you iterate, run `task
+check`; leave `task ci` to the stage that verifies the run, unless your
+change is to the images, the sandbox or the Kubernetes provisioner.
+
+Never run `build`, `build:images` or `deploy/images.sh … --push`: they
+build every platform's binaries or publish images.
 
 ## Hard rules
 

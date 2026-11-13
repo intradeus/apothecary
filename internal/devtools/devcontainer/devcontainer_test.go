@@ -134,6 +134,10 @@ func TestToolPinsMatchCI(t *testing.T) {
 			t.Errorf("ci.yml's %s is not the devcontainer's amd64 checksum", tool.sumVar)
 		}
 	}
+	// kubectl is the engine's: the live tests drive the cluster as it does.
+	if eng := regexp.MustCompile(`(?m)^ARG KUBECTL_VERSION=(\S+)`).FindStringSubmatch(read(t, "deploy/Dockerfile")); eng == nil || eng[1] != argDefault(t, df, "KUBECTL_VERSION") {
+		t.Errorf("deploy/Dockerfile's kubectl is %v, the devcontainer's %s", eng, argDefault(t, df, "KUBECTL_VERSION"))
+	}
 	// The Taskfile's guards read the same ARGs.
 	tf := read(t, "Taskfile.yml")
 	for _, arg := range []string{"HELM_VERSION", "TASK_VERSION", "SHELLCHECK_VERSION", "K3D_VERSION"} {
