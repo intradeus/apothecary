@@ -11,7 +11,7 @@ func TestEgressDefaults(t *testing.T) {
 		t.Fatalf("egress defaults = %d entries, want a broad list", len(got))
 	}
 	// Comments and blanks are stripped; a few representative hosts survive.
-	for _, want := range []string{"registry-1.docker.io", "pypi.org", "github.com", "*.docker.io", "download.docker.com"} {
+	for _, want := range []string{"registry-1.docker.io", "pypi.org", "github.com", "*.docker.io", "download.docker.com", "get.helm.sh", "dl.k8s.io"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("egress defaults missing %q", want)
 		}
