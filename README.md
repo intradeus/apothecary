@@ -731,8 +731,15 @@ way in is the run's inner docker daemon:
 
 The checks run with exactly CI's tools: Go from `go.mod` (the Taskfile's
 `GOTOOLCHAIN` fetches it), Node and npm from `.nvmrc` (`fnm use`), and helm,
-task and shellcheck at the versions in `.devcontainer/Dockerfile`, which has
-them all. `task` refuses a check on any other version.
+task, shellcheck, k3d and kubectl at the versions in `.devcontainer/Dockerfile`,
+which has them all. `task` refuses a check on any other version.
+
+`task test` and `task ci` also run in the devcontainer, given docker (the
+docker-outside-of-docker feature): a task that finds itself in a container of
+the daemon it drives (`deploy/self-container.sh`) joins the k3d cluster's
+network and reaches the API server by name, offers the live tests' pods its
+own address on that network, and hands `docker run` the checkout's path on
+the daemon's host.
 
 Every CI job (`.github/workflows/ci.yml`, on every pull request and push to
 `main`) is one task with the same name: the go-test job runs `task go:test`,
@@ -766,7 +773,7 @@ task dev                           # the same, on :18080 against a scratch Postg
 task dev:up                        # ...plus the built UI, master key written to deploy/.env if missing
 cd cpui && npm run dev             # UI dev server (proxies /api)
 
-devcontainer up --workspace-folder . && devcontainer exec --workspace-folder . task go:test:run   # the repo's own devcontainer (no docker inside it: the pg suite runs on the host, or add the docker-outside-of-docker feature locally)
+devcontainer up --workspace-folder . && devcontainer exec --workspace-folder . task go:test:run   # the repo's own devcontainer (no docker inside it: the pg and sandbox suites run on the host, or add the docker-outside-of-docker feature locally)
 ```
 
 Development happens on macOS or Linux, and `task go:test:run` and `task

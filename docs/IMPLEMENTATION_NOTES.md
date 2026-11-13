@@ -7007,3 +7007,50 @@ pg 1).
   the whole CPUI suite passed that way on node:26.13.1. `--cpus=2` does not:
   `nproc` still reports every core, so vitest starts 20 workers.
 - **The dagre `server.deps.inline` workaround is gone:** Node 26 loads it.
+
+## `task test` in the devcontainer (2026-11-13)
+
+- **Why:** `task test` (go:test, ui:test, the sandbox images and both
+  sandbox suites) failed in the devcontainer: the k8s suite needs k3d and
+  kubectl, which only CI installed, and three things assumed the docker
+  daemon's host is the machine `task` runs on.
+- **k3d v5.9.0 and kubectl v1.35.5 are pinned like the other tools:**
+  `.devcontainer/Dockerfile` ARGs with per-arch checksums, CI's
+  sandbox-test (k8s) installs exactly those (kubectl was the runner's
+  unpinned one), `TestToolPinsMatchCI` holds the versions and the amd64
+  checksums together, and `pin:k3d` guards `sandbox:test:k8s`. kubectl is
+  the Kubernetes of k3d's default k3s.
+- **Container mode, decided by `deploy/self-container.sh`:** inside a
+  container of the very daemon the CLI drives (the devcontainer with the
+  docker-outside-of-docker feature; a run's workspace has the same shape),
+  it finds its own id from the hostname bind in `/proc/self/mountinfo` and
+  checks it with `docker inspect`. Elsewhere it answers nothing and every
+  task behaves as before.
+  - `k8s:cluster` joins the `k3d-<cluster>` network and points the
+    kubeconfig at `k3d-<cluster>-serverlb:6443`: the host's
+    `0.0.0.0:<port>` is not the container's. The shared kubeconfig is
+    then valid on one side only; the other side's status check fails on
+    it and rewrites it. `k8s:down` disconnects first, so k3d can remove
+    the network.
+  - `k8s:test-live` offers the container's IP on that network as the first
+    `APOTHECARY_LIVE_HOST_GATEWAY` candidate: the browser test's pods must
+    reach the test process, which is no longer behind the network gateway.
+  - `go:test:linux` and `sandbox:test:harness` bind the checkout by its
+    path on the daemon's host (the source of the bind mount holding it):
+    `/workspaces/apothecary` does not exist there.
+- **Verified** in the repo's devcontainer brought up by the devcontainer CLI
+  with the engine's pinned docker-outside-of-docker feature, as `dev`, on
+  Docker Desktop (arm64): `task test` all green in 624 s, both live k8s
+  tests and the four conformance tests passing.
+- **The feature's socat proxy truncates attached output.** On Docker
+  Desktop the socket is root's, so the feature serves it to `dev` through
+  `socat`, which closes a connection 0.5 s after one side half-closes: an
+  attached `docker run` loses whatever its container prints after that.
+  The exit code still arrives (a separate wait call), so a check's ok/FAIL
+  is right, but a failing harness or go:test:linux log can be empty; rerun
+  it detached (`docker run -d`, `docker logs`) to read it.
+- **Not done:** running these suites in a run's own sandbox. That nests
+  k3s and the live test's DinD sandbox inside the run's sandbox, and needs
+  more disk (20 GiB by default against ~25 GB of images), egress for k3d's
+  and the nested k3s's pulls, and AGENTS.md's "Never run in a workspace"
+  list changed.

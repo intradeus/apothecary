@@ -89,8 +89,8 @@ func TestOneNodeEverywhere(t *testing.T) {
 	}
 }
 
-// helm, task and shellcheck: the devcontainer's ARGs are the versions, and
-// every workflow installs exactly those (a "3.x" would drift).
+// helm, task, shellcheck, k3d and kubectl: the devcontainer's ARGs are the
+// versions, and every workflow installs exactly those (a "3.x" would drift).
 func TestToolPinsMatchCI(t *testing.T) {
 	df := read(t, ".devcontainer/Dockerfile")
 	helm, task, sc := argDefault(t, df, "HELM_VERSION"), strings.TrimPrefix(argDefault(t, df, "TASK_VERSION"), "v"), argDefault(t, df, "SHELLCHECK_VERSION")
@@ -119,9 +119,24 @@ func TestToolPinsMatchCI(t *testing.T) {
 	if m := regexp.MustCompile(`SHELLCHECK_SHA256: ([0-9a-f]{64})`).FindStringSubmatch(ci); sum == nil || m == nil || m[1] != sum[1] {
 		t.Error("ci.yml's shellcheck checksum is not the devcontainer's amd64 one")
 	}
+	// k3d and kubectl: the k8s sandbox suite's, the same release and the
+	// same amd64 binary in CI as in the devcontainer.
+	for _, tool := range []struct{ arg, sumVar, caseLabel string }{
+		{"K3D_VERSION", "K3D_SHA256", "k3d"},
+		{"KUBECTL_VERSION", "KUBECTL_SHA256", "kc"},
+	} {
+		want := argDefault(t, df, tool.arg)
+		if m := regexp.MustCompile(tool.arg + `: (\S+)`).FindStringSubmatch(ci); m == nil || m[1] != want {
+			t.Errorf("ci.yml installs %s %v, the devcontainer %s", tool.arg, m, want)
+		}
+		sum := regexp.MustCompile(`amd64\) a=amd64;.*\b` + tool.caseLabel + `=([0-9a-f]{64})`).FindStringSubmatch(df)
+		if m := regexp.MustCompile(tool.sumVar + `: ([0-9a-f]{64})`).FindStringSubmatch(ci); sum == nil || m == nil || m[1] != sum[1] {
+			t.Errorf("ci.yml's %s is not the devcontainer's amd64 checksum", tool.sumVar)
+		}
+	}
 	// The Taskfile's guards read the same ARGs.
 	tf := read(t, "Taskfile.yml")
-	for _, arg := range []string{"HELM_VERSION", "TASK_VERSION", "SHELLCHECK_VERSION"} {
+	for _, arg := range []string{"HELM_VERSION", "TASK_VERSION", "SHELLCHECK_VERSION", "K3D_VERSION"} {
 		if !strings.Contains(tf, "ARG "+arg+"=") {
 			t.Errorf("Taskfile.yml does not read %s from .devcontainer/Dockerfile", arg)
 		}

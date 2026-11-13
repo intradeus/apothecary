@@ -7,9 +7,12 @@
 #   HELM_VERSION       = CI's setup-helm version
 #   TASK_VERSION       = CI's setup-task version
 #   SHELLCHECK_VERSION = the shellcheck CI installs for actionlint
+#   K3D_VERSION        = the k3d CI's sandbox-test (k8s) installs
+#   KUBECTL_VERSION    = the kubectl CI's sandbox-test (k8s) installs
 # Base images come from Docker Hub (a run pulls them through the project
 # gateway's mirror); the build dials only the Go module proxy, Debian's
-# mirrors and get.helm.sh beyond that.
+# mirrors, get.helm.sh, github.com (shellcheck, k3d) and dl.k8s.io beyond
+# that.
 ARG GO_VERSION=1.26.4
 ARG NODE_VERSION=26.13.1
 
@@ -20,6 +23,8 @@ FROM golang:${GO_VERSION}-bookworm
 ARG HELM_VERSION=4.3.0
 ARG TASK_VERSION=v3.54.0
 ARG SHELLCHECK_VERSION=0.11.0
+ARG K3D_VERSION=v5.9.0
+ARG KUBECTL_VERSION=v1.35.5
 ARG USERNAME=dev
 
 # sudo: a human's convenience. iproute2: testcontainers-go finds the docker
@@ -62,6 +67,24 @@ RUN set -eu; case "$(dpkg --print-architecture)" in \
     tar -xJf /tmp/sc.tar.xz -C /tmp; \
     mv "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck; \
     rm -rf /tmp/sc.tar.xz "/tmp/shellcheck-v${SHELLCHECK_VERSION}"
+
+# k3d and kubectl, which the k8s sandbox suite drives (task sandbox:test:k8s,
+# so task test). k3d against the checksums.txt of its release, kubectl against
+# the .sha256 dl.k8s.io publishes beside it; the same amd64 ones CI checks.
+# kubectl is the Kubernetes of k3d's default k3s. Docker itself comes from the
+# docker-outside-of-docker feature (devcontainer.json).
+RUN set -eu; case "$(dpkg --print-architecture)" in \
+      amd64) a=amd64; k3d=06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0; kc=90f75ea6ecc9ea5633262e1c0b83a40560003b30fc94a04cb099404fcef0c224 ;; \
+      arm64) a=arm64; k3d=03cde5cf23e6e8e67de5a039ecf26e5b85aca82fba3e5d13dadf904cd218a250; kc=ac69e06fd6860d69786692f5af1c3a1208ed54f8366a4d97ab15c172e99765ee ;; \
+      *) echo "no k3d/kubectl checksum for $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/k3d "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-${a}"; \
+    echo "$k3d  /tmp/k3d" | sha256sum -c -; \
+    install -m 0755 /tmp/k3d /usr/local/bin/k3d; \
+    curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${a}/kubectl"; \
+    echo "$kc  /tmp/kubectl" | sha256sum -c -; \
+    install -m 0755 /tmp/kubectl /usr/local/bin/kubectl; \
+    rm -f /tmp/k3d /tmp/kubectl
 
 RUN useradd -m -s /bin/bash -u 1000 "${USERNAME}" \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/${USERNAME}" \

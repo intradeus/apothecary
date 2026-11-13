@@ -30,7 +30,7 @@ One version each, pinned once:
 |---|---|---|
 | Go | `go.mod` (`go` line) | automatic: the Taskfile sets `GOTOOLCHAIN` to it |
 | Node and npm | `.nvmrc`; npm is the one that Node ships (`cpui/package.json` engines) | `fnm use` / `nvm use` |
-| helm, task, shellcheck | `.devcontainer/Dockerfile` `ARG`s | install those versions |
+| helm, task, shellcheck, k3d, kubectl | `.devcontainer/Dockerfile` `ARG`s | install those versions |
 
 `task` refuses a check on any other version (the `pin:*` tasks), and
 `npm ci` refuses another Node or npm (`cpui/.npmrc` engine-strict). A
