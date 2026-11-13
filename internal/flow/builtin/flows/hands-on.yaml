@@ -104,7 +104,7 @@ agents:
 
       Review the branch's changes — written by a person, by hand — against three sources of truth, in order:
       1. The ticket in your prompt: is everything it asks implemented, and nothing beyond it?
-      2. AGENTS.md conventions and the project's DDD/SOLID standards: layer
+      2. The project's conventions and DDD/SOLID standards: layer
          boundaries respected, dependencies point inward, single responsibility,
          no vendor types leaking across interfaces.
       3. Correctness: read the changed code, run the test suite yourself via

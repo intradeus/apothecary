@@ -934,7 +934,7 @@ A stepped form with a left step-rail and section anchors: **1 Repository → 2 W
 1. **Repository:**
    - repository account select
    - "Browse repositories" (searchable list; each row has "Use" and "+ extra")
-   - URL, locator, default branch, AGENTS.md path
+   - URL, locator, default branch, agent guide path (optional)
    - additional repos as an editable table (name, URL, locator: empty = read-only, branch), with the note "cloned to ~/repos/\<name\>, one MR each"
 2. **Workshop:** name; commands as a key → script table, each run only by a flow's `run_ref`; default flow.
 3. **Execution:** provisioner select; harness integrations as a multi-select (one per harness kind).
@@ -960,6 +960,25 @@ Layout: row [section nav 220px | content], both full-height windows. The section
 - **Reaper:** destroy completed environments after a duration; destroy abandoned environments (`never` only today, shown disabled with a reason).
 - **Storage:** sweep unclaimed uploads after a duration; expire snapshot content after a duration or never.
 - **Duration inputs:** a number + unit select (m / h / d / never) replaces free text. Show "Applies immediately — no restart".
+
+### 7.11 War room: `/war-room`
+
+The geek view: one live tactical map of every sandbox the signed-in person has in flight, across all their workshops. Not a list: it is meant to look like a game's command screen, and to stay glanceable from across a room.
+
+- **Frame:** one `.page.glass` window, as every page. Inside it, an always-dark **board** (the fixed terminal colours, the same in every theme) holding the HUD, the map, the kill feed and, when a unit is selected, the dossier. A **Fullscreen** toggle puts the board alone on the screen (kiosk mode, the Fullscreen API).
+- **HUD** (top strip): mono numerals over small-caps captions — sandboxes online, cores busy, RAM used / limit, agents on station, drones (subagents) out, alerts — and the slot meter (concurrent runs and environments against their caps, `fleet.capacity`) as segmented energy cells. Alerts take `--danger` / `--attention` when non-zero.
+- **Map** (one SVG): each workshop is a **hex sector** on an axial grid, spiralling out from the centre in workshop-name order, tinted alternately `--accent` / `--accent-2` (categorical only) with its name in small caps along the top edge. A faint grid and a slow **radar sweep** sit behind everything. The layout is deterministic (`$lib/swarm/hexLayout`): units never jump between polls.
+- **Unit** (one run's sandbox), a slot inside its sector, oldest at the centre, a second ring opening when the first seven are taken:
+  - a **state ring** in the state's role (`--running` brewing, `--attention` needs you, `--accent` in review, `--success` / `--danger` / `--warning` for completed / failed / abandoned, muted otherwise), pulsing while the run is live or waiting;
+  - **CPU and RAM bars** (HP / energy), full at the unit's cores × 100 % and its memory limit. No sample is an empty dashed track, never a zero;
+  - a **pilot badge** (harness, agent, stage) only while an agent is on station;
+  - one **drone** per subagent in flight, orbiting the unit;
+  - an alert marker when a question is open or the run failed.
+  - Each unit is a keyboard-reachable button whose label says the run, its state, its agent and its drones. Click or Enter opens the dossier.
+- **Kill feed:** a polite live list, newest first, at most 50 lines: deployed, cleared a stage, needs you, in review, completed, failed, abandoned, launched a drone — each in its role. A unit that ends stays on the map for five minutes so its outcome can be seen, then leaves.
+- **Dossier:** the selected unit's details — workshop, flow, state, stage and phase, workspace status, pings, take-over; the agent's harness, agent, iteration, current tool and subagent titles — with the run page's resource sparklines (4.16) and a link to the run. Esc closes it.
+- **Motion:** radar rotation, ring pulse, drone orbit and the feed's slide-in are CSS keyframes on token durations. All of it stops under `prefers-reduced-motion: reduce`, and while the tab is hidden (polling pauses then too, and shows "paused" until the first refresh lands, 4.17).
+- **States:** loading (skeleton), empty ("No units deployed"), error with no snapshot (`ErrorCard` with Retry); an error after a snapshot keeps the map and says so inline.
 
 ---
 

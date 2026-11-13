@@ -485,7 +485,7 @@ func TestValidateProjectFillsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Repo.DefaultBranch != "main" || got.Repo.AgentsMDPath != "AGENTS.md" || got.Commands == nil {
+	if got.Repo.DefaultBranch != "main" || got.Repo.AgentsMDPath != "" || got.Commands == nil {
 		t.Errorf("defaults = %+v", got.Repo)
 	}
 	if len(got.HarnessIDs) != 1 {
@@ -497,6 +497,26 @@ func TestValidateProjectFillsDefaults(t *testing.T) {
 	}
 	if got.Repos[1].DefaultBranch != "dev" {
 		t.Errorf("a stated branch stays: %+v", got.Repos[1])
+	}
+}
+
+func TestValidateProjectAgentGuide(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newSvc(t)
+	for _, tc := range []struct{ owner, in, want string }{
+		{"g1", "docs/AI.md", "docs/AI.md"},
+		{"g2", " AGENTS.md ", "AGENTS.md"},
+		{"g3", "   ", ""},
+	} {
+		p := goodProject(t, svc, tc.owner)
+		p.Repo.AgentsMDPath = tc.in
+		got, err := svc.CreateProject(ctx, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Repo.AgentsMDPath != tc.want {
+			t.Errorf("%q: agent guide = %q, want %q", tc.in, got.Repo.AgentsMDPath, tc.want)
+		}
 	}
 }
 

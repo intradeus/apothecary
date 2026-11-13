@@ -7051,3 +7051,201 @@ pg 1).
   no title is stored.
 - **Residual:** there is no cap on sessions answering at once; they share
   the workspace's agent process (omp: its read-only process).
+## The agent guide is optional, with no default (2026-11-13)
+
+- **Optional, no default:** a project's guide path may be empty, and
+  `confstore.validateProject` no longer fills in `AGENTS.md` (it trims, so
+  whitespace is empty). Empty means none:
+  - preflight (`CreateRun` and `PreflightProject`) checks no file and lists
+    no `repo_file:` step;
+  - bootstrap links nothing (an empty path used to emit
+    `ln -sf "" AGENTS.md`, a dangling link);
+  - the prompt says nothing about it.
+  A path that is set and missing on the repository host still fails
+  preflight, as before.
+- **Renamed in the UI only:** the form and the overview call it the
+  *Agent guide*. The wire, storage and Go names stay `repo.agents_md_path`,
+  `RepoConfig.AgentsMDPath`, `agentsMdPath`: no migration, no API or
+  OpenAPI change.
+- **Stored values are kept:** existing projects (usually `AGENTS.md`) still
+  require the file until someone clears the field. The form's help text
+  says to leave it empty for none.
+- **The prompt names it, not the flows:** the built-in flows (builder,
+  hands-on, reviewer) and the v5 reference flow no longer mention
+  `AGENTS.md`. Instead `assemblePrompt` adds a `# REPOSITORY GUIDE` section
+  naming the configured path, after REPOSITORIES and before the OUTPUT
+  CONTRACT, only when the path is set and the file reads from the run's
+  checkout (the run branch, not the repository host's default branch).
+  envport has no stat call, so the check reads the file; guide-sized files
+  make that acceptable. The harnesses that read a root `AGENTS.md` on their
+  own still do with the setting empty: optional means Apothecary neither
+  requires nor injects it.
+- **Pinned hashes:** editing the built-in YAML changes each flow's SHA-256.
+  A run paused across the upgrade and pinned to an old built-in hash no
+  longer resolves through the built-in layer of `GetVersion`, which knows
+  only the compiled-in hash (unless the store holds that version) — the cost
+  of any built-in edit.
+## War room: one live map of one's whole swarm (2026-11-13)
+
+- **What:** a `/war-room` page that shows every sandbox the signed-in person
+  has in flight, across all their workshops, on one tactical map (DESIGN
+  7.11). It is fed by one new endpoint, `GET /api/swarm`.
+- **Scope is "mine".** The units are the caller's runs from
+  `run.Reader.List(UserID)`, the same per-user query the runs list makes,
+  never `run.Reader.All`. There is no admin or instance-wide mode: ownership
+  is per user everywhere else, so the war room is too. The units are every
+  non-terminal run, plus runs that ended in the last five minutes (by their
+  last event), so the map can show how they ended before they leave.
+  Archived runs never show.
+- **The crew board is observation, not history.** `engine.crewBoard`
+  (`internal/engine/crew.go`) holds, per run, the agent on station: stage,
+  iteration, harness kind (the stage's own, else the resolution's
+  fallback), agent binding, since, whether a turn is active, the latest
+  in-flight tool's title, and the subagent spawn calls in flight.
+  - `stageAgent` boards the run once the attempt's MCP servers resolve and
+    leaves on every return, so a run parked on a question, failed, done or
+    cancelled is off the board.
+  - The transcript feeds it tool updates and turn start/end. A finished
+    call (completed or failed) drops out; `turn_end` clears everything
+    still in flight, because a cancelled turn never reports its pending
+    calls finished.
+  - Titles go through the run's redactor, as tool input and output do.
+  - It has its own mutex (the loop writes, HTTP reads) and `Engine.Crew()`
+    returns deep copies.
+  - Like the live deltas and the resource window, it is memory only: no
+    event, no migration. After an engine restart it is empty until the loop
+    is back in the stage (a reattached turn boards again), so a unit shows
+    its state without a pilot for a moment. The resource window restarts
+    empty too. Both are acceptable for an observation surface.
+  - `resources.Sampler.Latest(runID)` gives the newest sample without
+    copying a 360-sample window per run per poll.
+- **Subagents are recognised by the shape of the tool call.** ACP has no
+  notion of a subagent: a spawn is a tool call like any other. So
+  `subagentSpawns(title, input)` reads the call's title and raw input, and
+  counts 0 for anything it does not know: a drone is never counted on a
+  guess. What it knows, from the sources of the pinned versions (read, not
+  run against a live harness):
+  - **opencode 1.17.8**: the `task` tool, kind `think`, raw input
+    `{description, prompt, subagent_type, ...}` → 1. Its first `tool_call`
+    usually carries `{}`; the arguments arrive with `in_progress`, so the
+    board re-classifies on every update. Calls inside the subagent are not
+    forwarded (its child session is not an ACP session).
+  - **codex-acp 2.2.2 over codex 0.160.1**: the collab tool `spawn_agent`,
+    surfaced with the title `spawnAgent`, kind `other` → 1. Its siblings
+    (`wait`, `sendInput`, `closeAgent`, …) spawn nothing. A client that
+    advertised native subagent sessions would get child sessions instead;
+    the shim does not, so the tool call is what arrives.
+  - **omp 18.13.1**: the `task` tool, kind `other`. One assignment
+    `{agent, task, solutionSpace, ...}` → 1; a batch
+    `{context, tasks: [{task, ...}, ...]}` → one per assignment. Progress
+    comes as content on the call, not as nested tool calls.
+  - The shim truncates raw input at 16 KiB. A batch cut short is no longer
+    JSON and counts 0, as the classifier promises for anything malformed.
+    A harness upgrade that changes a shape does the same: drones stay at
+    zero, never at a wrong count.
+  - The count is spawn calls in flight, not deeper activity: nested calls
+    are not forwarded by opencode or omp, and codex's are not told apart.
+- **One polled snapshot, not a stream.** The page polls `GET /api/swarm`
+  every 2 s while open. Resource samples only change every ~10 s, there is
+  no global event bus to stream from, and a typed JSON route gets its
+  schema and client from the route table, where an SSE stream's deltas are
+  hand-parsed. It costs one per-user `List` per open war room every 2 s,
+  the query the `fleet` poll already makes every 4 s. A stream can carry
+  the same `Swarm` document later if a sub-second feel is wanted. The kill
+  feed is the client's diff of consecutive snapshots (`$lib/swarm/feed`),
+  so it starts empty: the board as first found is not news.
+- **Dev fakes act it out.** The fake provisioner samples synthetic,
+  bounded, drifting cpu/memory/pids per workspace. The fake harness has a
+  `demo` field: `on` acts each turn out over ~30 s — ordinary tools, one
+  subagent, then a batch of two — before writing its outputs. The dev seed
+  turns it on for `dev-harness`; every test that registers the fakes keeps
+  the 200 ms fake. The demo turn emits no session: the fake has none to
+  resume, and a recorded one would send a retried stage down the resume
+  path.
+## `task test` in the devcontainer (2026-11-13)
+
+- **Why:** `task test` (go:test, ui:test, the sandbox images and both
+  sandbox suites) failed in the devcontainer: the k8s suite needs k3d and
+  kubectl, which only CI installed, and three things assumed the docker
+  daemon's host is the machine `task` runs on.
+- **k3d v5.9.0 and kubectl v1.34.1 are pinned like the other tools:**
+  `.devcontainer/Dockerfile` ARGs with per-arch checksums, CI's
+  sandbox-test (k8s) installs exactly those (kubectl was the runner's
+  unpinned one), `TestToolPinsMatchCI` holds the versions and the amd64
+  checksums together, and `pin:k3d` guards `sandbox:test:k8s`. kubectl is
+  the engine image's (`deploy/Dockerfile`), held to it by the same test: the
+  live tests drive the cluster as the engine does, one minor below k3d's
+  default k3s.
+- **Container mode, decided by `deploy/self-container.sh`:** inside a
+  container of the very daemon the CLI drives (the devcontainer with the
+  docker-outside-of-docker feature; a run's workspace has the same shape),
+  it finds its own id from the hostname bind in `/proc/self/mountinfo` and
+  checks it with `docker inspect`. Elsewhere it answers nothing and every
+  task behaves as before.
+  - `k8s:cluster` joins the `k3d-<cluster>` network and points the
+    kubeconfig at `k3d-<cluster>-serverlb:6443`: the host's
+    `0.0.0.0:<port>` is not the container's. The shared kubeconfig is
+    then valid on one side only; the other side's status check fails on
+    it and rewrites it. `k8s:down` disconnects first, so k3d can remove
+    the network.
+  - `k8s:test-live` offers the container's IP on that network as the first
+    `APOTHECARY_LIVE_HOST_GATEWAY` candidate: the browser test's pods must
+    reach the test process, which is no longer behind the network gateway.
+  - `go:test:linux` and `sandbox:test:harness` bind the checkout by its
+    path on the daemon's host (the source of the bind mount holding it):
+    `/workspaces/apothecary` does not exist there.
+- **Verified** in the repo's devcontainer brought up by the devcontainer CLI
+  with the engine's pinned docker-outside-of-docker feature, as `dev`, on
+  Docker Desktop (arm64): `task test` all green in 624 s, both live k8s
+  tests and the four conformance tests passing.
+- **The feature's socat proxy truncates attached output.** On Docker
+  Desktop the socket is root's, so the feature serves it to `dev` through
+  `socat`, which closes a connection 0.5 s after one side half-closes: an
+  attached `docker run` loses whatever its container prints after that.
+  The exit code still arrives (a separate wait call), so a check's ok/FAIL
+  is right, but a failing harness or go:test:linux log can be empty; rerun
+  it detached (`docker run -d`, `docker logs`) to read it.
+- **`task ci` in a run** (same day): the goal is a run that verifies with
+  everything CI runs but the macOS and Windows builds, taking that load off
+  CI.
+  - `task ci` now runs `engine:image` too: it said "everything CI runs" but
+    left out CI's engine-image job.
+  - A run's workspace is a container of its sandbox's own daemon, the shape
+    container mode handles: k3d's nodes are its siblings, the live tests'
+    sandbox pods run in them. Containers on one kernel, not VMs: the cost
+    is a daemon per level, not a guest OS.
+  - The egress defaults already allow every nested pull: Docker Hub
+    directly (k3s's system images and the nested gateway's mirror pull
+    with their own containerd, not through the sandbox's mirror), ghcr.io
+    (k3d's images), mcr.microsoft.com (the browser). `dl.k8s.io` (kubectl)
+    and `get.helm.sh` (helm), which this repo's devcontainer build fetches
+    and every project had to add by hand, are in the defaults now too.
+  - kubectl is now the engine image's v1.34.1 in the devcontainer and CI
+    too (it was briefly a second pin, v1.35.5).
+  - AGENTS.md: the heavy suites run in a workspace with docker; `task check`
+    while iterating, `task ci` from the verifying stage; never the release
+    builds.
+  - Measured in the devcontainer on Docker Desktop (11 CPUs, 9.4 GB):
+    `task ci` peaked at 8.3 GB. Eight checks passed; `ui:test` lost two
+    timer-bound tests (Inbox selection, FlowEditorPage delete) under the
+    load, taking 771 s instead of 488 s, and passed alone (7304 tests).
+  - Not yet verified in a run under sysbox: k3d's privileged nodes on the
+    sandbox's daemon, and WireGuard links created at the nested level.
+    The README lists the project settings (storage 60Gi, verify timeout
+    60m, 16 GB).
+- **The UI tests' async waits get 10 s, not 1 s** (same day). Testing
+  Library's `waitFor`/`findBy*` and vitest's `vi.waitFor` default to 1 s.
+  Under `task ci` (every suite at once) the UI tests ran about 8× slower:
+  983 took over a second, against 120 alone, and two waits that hold in
+  milliseconds idle timed out (Inbox selection, FlowEditorPage delete).
+  `src/test/setup.ts` sets `asyncUtilTimeout` and wraps `vi.waitFor` with
+  one `ASYNC_TIMEOUT`; a wait that names its own timeout keeps it, and
+  `src/test/setup.test.ts` holds all three (it failed before the change: a
+  1.2 s wait gave up at 972 ms). A wait still ends as soon as it holds, so
+  only a real failure reports later. Under `task ci` again both passed, the
+  Inbox one at 4.8 s.
+  - That run lost a different test, PanelEditor's long edit (1.3 s idle),
+    to the 30 s test timeout at 38 s: no wait in it, the Docker VM (9.4 GB)
+    was swapping (about 3 GB in swap). Memory, not timing: `testTimeout`
+    stays, and the README asks 16 GB for a run that verifies with
+    `task ci`.

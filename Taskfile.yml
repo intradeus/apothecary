@@ -42,6 +42,8 @@ vars:
     sh: sed -n 's/^ARG TASK_VERSION=v//p' .devcontainer/Dockerfile
   SHELLCHECK_VERSION:
     sh: sed -n 's/^ARG SHELLCHECK_VERSION=//p' .devcontainer/Dockerfile
+  K3D_VERSION:
+    sh: sed -n 's/^ARG K3D_VERSION=//p' .devcontainer/Dockerfile
 
 tasks:
   default:
@@ -79,6 +81,18 @@ tasks:
         --wait
       - k3d cluster start {{.K3D_CLUSTER}} --wait
       - k3d kubeconfig get {{.K3D_CLUSTER}} > {{.K3D_KUBECONFIG}}
+      # In a container of the docker daemon itself (the devcontainer), the
+      # host's 0.0.0.0:<port> the kubeconfig names is not this container's:
+      # join the cluster's network and reach its load balancer by name. The
+      # kubeconfig is then this side's only; the other side's status check
+      # fails on it and rewrites it.
+      - cmd: |
+          self="$(deploy/self-container.sh id)"
+          docker network inspect k3d-{{.K3D_CLUSTER}} | grep -q "\"$self\"" ||
+            docker network connect k3d-{{.K3D_CLUSTER}} "$self"
+          sed -i.bak 's|^\( *server:\) https://.*|\1 https://k3d-{{.K3D_CLUSTER}}-serverlb:6443|' {{.K3D_KUBECONFIG}}
+          rm -f {{.K3D_KUBECONFIG}}.bak
+        if: '[ -n "$(deploy/self-container.sh id)" ]'
       - chmod 600 {{.K3D_KUBECONFIG}}
 
   # The API server answers /readyz, waiting up to 3 minutes: a k3s server can
@@ -170,12 +184,15 @@ tasks:
         APOTHECARY_LIVE_K8S_NAMESPACE=apothecary-live
         APOTHECARY_LIVE_IMAGE_PREFIX={{.K3D_REGISTRY}}/apothecary
         APOTHECARY_LIVE_PULL_POLICY={{.PULL_POLICY | default "Always"}}
-        APOTHECARY_LIVE_HOST_GATEWAY="$(docker network inspect k3d-{{.K3D_CLUSTER}} --format '{{"{{"}}range .IPAM.Config{{"}}"}}{{"{{"}}.Gateway{{"}}"}} {{"{{"}}end{{"}}"}}' 2>/dev/null | tr ' ' '\n' | grep -m1 -E '^[0-9.]+$' || true)"
+        APOTHECARY_LIVE_HOST_GATEWAY="$(deploy/self-container.sh ip k3d-{{.K3D_CLUSTER}}) $(docker network inspect k3d-{{.K3D_CLUSTER}} --format '{{"{{"}}range .IPAM.Config{{"}}"}}{{"{{"}}.Gateway{{"}}"}} {{"{{"}}end{{"}}"}}' 2>/dev/null | tr ' ' '\n' | grep -m1 -E '^[0-9.]+$' || true)"
         go test -tags live -count=1 -timeout 30m -run TestLiveK8s -v ./internal/adapters/workspace/ ./internal/adapters/browser/
 
   k8s:down:
     desc: Delete the k3d cluster (its registry and everything in it)
     cmds:
+      # The devcontainer's endpoint would keep k3d from removing the network.
+      - cmd: docker network disconnect k3d-{{.K3D_CLUSTER}} "$(deploy/self-container.sh id)" 2>/dev/null || true
+        if: '[ -n "$(deploy/self-container.sh id)" ]'
       - k3d cluster delete {{.K3D_CLUSTER}}
       - rm -f {{.K3D_KUBECONFIG}}
 
@@ -376,8 +393,9 @@ tasks:
   #   task test     go:test ui:test sandbox:test
   #   task check    lint, go:test, ui:test: the pre-push gate (docker for
   #                 Postgres; no images, no cluster)
-  #   task ci       everything CI runs, locally (docker, k3d, ~15 GB of
-  #                 disk); unlike CI, it never skips a side
+  #   task ci       everything CI runs (but the macOS and Windows builds),
+  #                 locally: test, lint and the engine image (docker, k3d,
+  #                 ~25 GB of disk); unlike CI, it never skips a side
   #
   # <side>:test:run passes its arguments to the test runner, for one package
   # or file; it runs nothing that needs docker.
@@ -400,10 +418,10 @@ tasks:
         vars: {CHECKS: 'go:lint repo:lint go:test ui:test,ui:lint'}
 
   ci:
-    desc: 'Everything CI runs, locally and in parallel: check, then the sandbox images and suites; never skips a side as CI does (needs docker, k3d, ~15 GB of disk; logs in build/checks/)'
+    desc: 'Everything CI runs, locally and in parallel: check, the sandbox images and suites, the engine image; never skips a side as CI does (needs docker, k3d, ~15 GB of disk; logs in build/checks/)'
     cmds:
       - task: checks
-        vars: {CHECKS: 'go:lint repo:lint go:test ui:test,ui:lint sandbox'}
+        vars: {CHECKS: 'go:lint repo:lint go:test ui:test,ui:lint sandbox engine:image'}
 
   # CHECKS: space-separated, each run in parallel with the others; a,b runs
   # a then b (ui:test and ui:lint both write cpui/.svelte-kit, so they never
@@ -451,6 +469,12 @@ tasks:
     preconditions:
       - sh: '[ "{{.TASK_VERSION}}" = "{{.TASK_PIN}}" ]'
         msg: 'task {{.TASK_PIN}} is what CI and the devcontainer run, this is {{.TASK_VERSION}}: go install github.com/go-task/task/v3/cmd/task@v{{.TASK_PIN}} (or work in the devcontainer)'
+
+  pin:k3d:
+    internal: true
+    preconditions:
+      - sh: 'k3d version 2>/dev/null | grep -qx "k3d version {{.K3D_VERSION}}"'
+        msg: 'k3d {{.K3D_VERSION}} is what CI and the devcontainer run: https://github.com/k3d-io/k3d/releases/tag/{{.K3D_VERSION}}'
 
   pin:node:
     internal: true
@@ -557,7 +581,7 @@ tasks:
       # --tmpfs /tmp:exec: overlay /tmp reports empty directory sizes as 0.
       - >-
         docker run --rm --init --tmpfs /tmp:exec
-        -v "{{.ROOT_DIR}}":/src:ro -w /src
+        -v "$(deploy/self-container.sh path "{{.ROOT_DIR}}")":/src:ro -w /src
         -v apothecary-gomod:/go/pkg/mod -v apothecary-gocache:/root/.cache/go-build
         -e TEST_POSTGRES=''
         golang:{{.GO_VERSION}}
@@ -683,7 +707,7 @@ tasks:
       # --init and --tmpfs /tmp:exec: as go:test:linux.
       - >-
         docker run --rm --init --tmpfs /tmp:exec
-        -v "{{.ROOT_DIR}}":/src:ro -w /src
+        -v "$(deploy/self-container.sh path "{{.ROOT_DIR}}")":/src:ro -w /src
         -v apothecary-gomod:/go/pkg/mod -v apothecary-gocache:/root/.cache/go-build
         -v apothecary-harness-tools:/opt/apothecary:ro
         -e TEST_POSTGRES=''
@@ -695,7 +719,7 @@ tasks:
   # node rather than pushed to the cluster's registry and pulled back: one
   # copy of the 2.3 GB tools bundle instead of two.
   sandbox:test:k8s:
-    deps: [pin:task]
+    deps: [pin:task, pin:k3d]
     desc: 'The Kubernetes provisioner and project browser on a local k3d cluster: images, cluster, import, live tests (needs docker, k3d) — CI: sandbox-test (k8s)'
     vars:
       CLUSTER_EXISTED:

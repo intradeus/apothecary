@@ -34,7 +34,7 @@ const LAYERS = [
 	['run'],
 	['mrs'],
 	['workshop'],
-	['desk-home', 'inbox', 'shell']
+	['desk-home', 'inbox', 'shell', 'swarm']
 ];
 const rank = new Map(LAYERS.flatMap((peers, i) => peers.map((name) => [name, i])));
 

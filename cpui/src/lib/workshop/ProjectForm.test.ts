@@ -175,12 +175,19 @@ describe('ProjectForm, draft()', () => {
 		await retype('Repo URL', ' https://new.git ');
 		await retype('Locator', ' 8 ');
 		await retype('Default branch', ' dev ');
-		await retype('AGENTS.md path', ' B.md ');
+		await retype('Agent guide (optional)', ' B.md ');
 
 		expect(await save()).toMatchObject({
 			name: 'acme',
 			repo: { url: 'https://new.git', locator: '8', defaultBranch: 'dev', agentsMdPath: 'B.md' }
 		});
+	});
+
+	it('saves a cleared agent guide as none', async () => {
+		edit();
+		await retype('Agent guide (optional)', '');
+
+		expect((await save()).repo.agentsMdPath).toBe('');
 	});
 
 	it('leaves out commands with no name or no script, keeping scripts as written', async () => {
@@ -261,7 +268,7 @@ describe('ProjectForm, every section reaches the draft', () => {
 		await retype('Repo URL', 'https://b.git');
 		await retype('Locator', '8');
 		await retype('Default branch', 'dev');
-		await retype('AGENTS.md path', 'B.md');
+		await retype('Agent guide (optional)', 'B.md');
 
 		expect(await save()).toMatchObject({
 			repoAccountId: 'repo-2',
@@ -558,7 +565,7 @@ describe('ProjectForm, creating', () => {
 			provisionerId: 'prov-1',
 			harnessIds: ['h-a'],
 			defaultFlow: 'mine',
-			repo: { defaultBranch: 'main', agentsMdPath: 'AGENTS.md' },
+			repo: { defaultBranch: 'main', agentsMdPath: '' },
 			commands: {},
 			workspace: { egressMode: 'allow', browserEnabled: false, services: [] }
 		});

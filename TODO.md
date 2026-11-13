@@ -8,7 +8,7 @@ After 3.0.0 :
 - 59) Fix(engine) Optional AGENTS.md, no defaults > and rename it to 'ai documentation entrypoint'
 - 60) Fix(ui) Improved terminal / logs components in the frontend run panes : copy/paste annoying right now. Need a scroll top/down button for both too.
 - 61) Fix(engine) :one of the run did something weird : it didn't have access to the browser MCP server (toggled off), but seemed to be aware of it so the agent downloaded playwright and ran some tests in the browser. I feel like this should not be allowed ? Or maybe it also ran the browser itself using docker, since they have access to docker, so not sure exactly how it happened, but it happened. How can we improve that guardrail ?
-- 62) Feature(workspace) : Permanent volumes. For pnpm cache, for example.
+- 62) Feature(workspace) : Permanent volumes. For pnpm cache, for example. across run caching, shared in the same workspace.
 - 63) TechDebt(tickets): should we remove internal tickets / separate it better ? We can have an internal ticketing system, but now its merged with the remote one so it feels weird ... I don't think syncing is a good solution. So maybe we get rid of the sync, only dynamically load the tickets (WITH CACHE !!! for faster loads) from the ticket source of the workbench. And if the ticket source of the workbench is internal then that's it ! Would allow to remove that mapping thing, annoying ...
 - 64) Feature(tickets): workbench settings to define the branch name based on the ticket FOLLOWING THE FORMAT THE USER WANTS !! Right now its hardcoded ({type}/{ticket}-title) - make it dynamic and per-workbench.
 - 65) Upgrade watchers UI

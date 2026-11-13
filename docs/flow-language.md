@@ -165,7 +165,8 @@ Three things follow, and they are the point:
 The cost, accepted deliberately: two flows wanting the same agent copy it, and
 a project can no longer override an agent for a flow it runs. What stays
 per-project is the genuinely per-project: `commands` (`run_ref`), integrations,
-the repo's own `AGENTS.md` — and the values it binds to the flow's parameters.
+the repo's own agent guide (an optional project setting, e.g. `AGENTS.md`) —
+and the values it binds to the flow's parameters.
 
 **Determinism and pinning.** A flow's identity is the SHA-256 of its raw bytes.
 A run records that hash *and the parameter values it was created with* at
@@ -1866,7 +1867,7 @@ project's set, every agent stage's model is one its harness lists (when the
 list can be fetched), an action's required integration is configured, every
 watcher and outcome on an observed signal has whoever raises it — and a flow
 started on merge requests has where they are: a repository integration — the repo has a
-devcontainer and an `AGENTS.md` — and, when the flow has a tracker action,
+devcontainer and, when the project sets one, its agent guide — and, when the flow has a tracker action,
 that the ticket's tracker can write (an imported ticket's integration; the
 internal tracker always can). The same checks answer
 `POST /api/projects/{id}/preflight` step by step, with a `parameters` step for

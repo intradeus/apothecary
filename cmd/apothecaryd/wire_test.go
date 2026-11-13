@@ -219,6 +219,19 @@ func TestDevBootRunsAFlowAndRecoversIt(t *testing.T) {
 	if err != nil || len(all) != 4 {
 		t.Fatalf("seeded integrations = %d, %v", len(all), err)
 	}
+	// The seeded harness acts its turns out slowly for the war room; this
+	// test wants the quick fake, so it turns the pacing off.
+	for _, in := range all {
+		if in.Port != confstore.PortHarness {
+			continue
+		}
+		if in.Config["demo"] != "on" {
+			t.Errorf("seeded harness config = %v, want demo on", in.Config)
+		}
+		if _, err := a.conf.UpdateIntegration(ctx, in.ID, in.Name, map[string]any{}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// The seed is ownerless; a dev hands it to the first account by hand.
 	u, err := a.store.GetUserByLogin(ctx, "lu")

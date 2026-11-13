@@ -366,6 +366,17 @@ export type CredentialRequest = {
 	provider: string;
 };
 
+export type CrewPresence = {
+	agent: string;
+	harness: string;
+	iteration: number;
+	since: string;
+	stage_id: string;
+	subagents: Array<SwarmSubagent> | null;
+	tool?: string;
+	turn_active: boolean;
+};
+
 export type CuratedItem = {
 	body?: string;
 	item: string;
@@ -1795,6 +1806,35 @@ export type StartRunRequest = {
 	};
 	skillsets?: Array<Ref>;
 	source_branch?: string;
+};
+
+export type Swarm = {
+	at: string;
+	units: Array<SwarmUnit> | null;
+};
+
+export type SwarmSubagent = {
+	count: number;
+	since: string;
+	title: string;
+	tool_call_id: string;
+};
+
+export type SwarmUnit = {
+	created_at: string;
+	crew?: CrewPresence;
+	current_stage?: string;
+	env_status?: string;
+	flow_name: string;
+	held: boolean;
+	open_pings: number;
+	phase?: string;
+	project_id: string;
+	resources?: ResourceSample;
+	run_id: string;
+	state: string;
+	ticket_title: string;
+	updated_at: string;
 };
 
 export type SyncCounts = {
@@ -9442,6 +9482,37 @@ export type DownloadSnapshotResponses = {
 };
 
 export type DownloadSnapshotResponse = DownloadSnapshotResponses[keyof DownloadSnapshotResponses];
+
+export type GetSwarmData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/swarm';
+};
+
+export type GetSwarmErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetSwarmResponses = {
+	/**
+	 * OK
+	 */
+	200: Swarm;
+};
+
+export type GetSwarmResponse = GetSwarmResponses[keyof GetSwarmResponses];
 
 export type ListTicketsData = {
 	body?: never;

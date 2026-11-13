@@ -455,19 +455,27 @@ jobs:
           IMAGES: sandbox shim tools egress-gw
           PREFIX: k3d-registry.localhost:5111/apothecary # Taskfile K3D_REGISTRY
           CACHE: gha-read
-      # k3d (pinned), and the wireguard module every run's sandbox tunnels to
-      # its gateway with (k3d's nodes share the runner's kernel). The runner
-      # already has docker and kubectl. The images are imported into the
-      # node, so no registry setup is needed. The task creates the cluster and
-      # deletes it again.
+      # k3d and kubectl (pinned, as in the devcontainer), and the wireguard
+      # module every run's sandbox tunnels to its gateway with (k3d's nodes
+      # share the runner's kernel). The runner already has docker. The images
+      # are imported into the node, so no registry setup is needed. The task
+      # creates the cluster and deletes it again.
       - name: Kubernetes prerequisites
         if: matrix.suite == 'k8s'
         env:
-          K3D_VERSION: v5.9.0
+          K3D_VERSION: v5.9.0 # .devcontainer/Dockerfile K3D_VERSION
+          K3D_SHA256: 06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0
+          KUBECTL_VERSION: v1.34.1 # .devcontainer/Dockerfile KUBECTL_VERSION
+          KUBECTL_SHA256: 7721f265e18709862655affba5343e85e1980639395d5754473dafaadcaa69e3
         run: |
           curl -fsSL -o "$RUNNER_TEMP/k3d" "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
+          echo "$K3D_SHA256  $RUNNER_TEMP/k3d" | sha256sum -c -
           sudo install -m 0755 "$RUNNER_TEMP/k3d" /usr/local/bin/k3d
           k3d version
+          curl -fsSL -o "$RUNNER_TEMP/kubectl" "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "$KUBECTL_SHA256  $RUNNER_TEMP/kubectl" | sha256sum -c -
+          sudo install -m 0755 "$RUNNER_TEMP/kubectl" /usr/local/bin/kubectl
+          kubectl version --client
           sudo modprobe wireguard
       - name: Wait for the disk to be freed
         if: matrix.suite == 'k8s'

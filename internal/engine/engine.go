@@ -173,7 +173,10 @@ type Engine struct {
 	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
 	handles map[string]*runHandle
 	// live fans out ephemeral agent progress (LiveDelta) to run viewers.
-	live  liveHub
+	live liveHub
+	// crew is the agents on station right now, per run (crew.go): the war
+	// room's live picture, never history.
+	crew  crewBoard
 	queue []string // pending runs waiting for a concurrency slot (§14 FIFO)
 	// lastLimits are the limits scheduleLocked last admitted under: what the
 	// slots gauge reports (metrics.go).
@@ -1268,15 +1271,18 @@ func (e *Engine) preflight(ctx context.Context, res *resolution.Resolution, fl *
 			}
 		}
 	}
-	// AGENTS.md stays a repo file (it describes the repo); agents themselves
-	// live in the project's library since v3 — the .apothecary/agents/ repo
-	// contract is retired.
-	ok, err := res.RepoHost.FileExists(ctx, res.RepoRef, res.AgentsMDPath)
-	if err != nil {
-		return fmt.Errorf("preflight: checking %s: %w", res.AgentsMDPath, err)
-	}
-	if !ok {
-		return fmt.Errorf("preflight: %s not found in repo", res.AgentsMDPath)
+	// The agent guide is an optional repo file (it describes the repo): an
+	// empty path means none and checks nothing. Agents themselves live in the
+	// project's library since v3 — the .apothecary/agents/ repo contract is
+	// retired.
+	if res.AgentsMDPath != "" {
+		ok, err := res.RepoHost.FileExists(ctx, res.RepoRef, res.AgentsMDPath)
+		if err != nil {
+			return fmt.Errorf("preflight: checking %s: %w", res.AgentsMDPath, err)
+		}
+		if !ok {
+			return fmt.Errorf("preflight: %s not found in repo", res.AgentsMDPath)
+		}
 	}
 	// Every workspace runs the repo's OWN devcontainer — there is no
 	// apothecary-built fallback image.
@@ -2290,11 +2296,13 @@ func (e *Engine) PreflightProject(ctx context.Context, projectID string) []Prefl
 				f.CheckAccess(ctx, repoport.RepoRef{URL: x.URL, DefaultBranch: x.DefaultBranch, Locator: x.Locator})))
 		}
 	}
-	ok, ferr := res.RepoHost.FileExists(ctx, res.RepoRef, res.AgentsMDPath)
-	if ferr == nil && !ok {
-		ferr = fmt.Errorf("%s not found in repo", res.AgentsMDPath)
+	if res.AgentsMDPath != "" {
+		ok, ferr := res.RepoHost.FileExists(ctx, res.RepoRef, res.AgentsMDPath)
+		if ferr == nil && !ok {
+			ferr = fmt.Errorf("%s not found in repo", res.AgentsMDPath)
+		}
+		steps = append(steps, step("repo_file:"+res.AgentsMDPath, ferr))
 	}
-	steps = append(steps, step("repo_file:"+res.AgentsMDPath, ferr))
 	dc, dcErr := hasDevcontainer(ctx, res)
 	if dcErr == nil && !dc {
 		dcErr = fmt.Errorf("no .devcontainer/devcontainer.json in repo")
