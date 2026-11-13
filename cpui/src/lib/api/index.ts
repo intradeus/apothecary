@@ -29,6 +29,7 @@ import type {
 	User
 } from '$lib/domain';
 import type { Credential, CredentialImport, ProviderInfo, SignInPending } from '$lib/domain';
+import type { Swarm } from '$lib/domain';
 import type {
 	AnalyticsFilter,
 	AnalyticsQuery,
@@ -1537,6 +1538,11 @@ export const analytics = {
 	}
 };
 
+/** The war room: every sandbox one has in flight, across one's workshops. */
+export const swarm = {
+	get: async (): Promise<Swarm> => map.toSwarm(await unwrap(gen.getSwarm()))
+};
+
 export const api = {
 	runs,
 	workspace,
@@ -1556,5 +1562,6 @@ export const api = {
 	skills,
 	skillsets,
 	analytics,
-	notices
+	notices,
+	swarm
 };

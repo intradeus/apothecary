@@ -54,7 +54,8 @@ describe('Rail', () => {
 		setup({ path: '/tickets/1' });
 		expect(nav().getByRole('link', { name: 'Tickets' })).toHaveAttribute('aria-current', 'page');
 		expect(nav().getByRole('link', { name: 'Desk' })).not.toHaveAttribute('aria-current');
-		expect(nav().getAllByRole('link')).toHaveLength(8);
+		expect(nav().getAllByRole('link')).toHaveLength(9);
+		expect(nav().getByRole('link', { name: 'War room' })).toHaveAttribute('href', '/war-room');
 		expect(nav().getByRole('link', { name: 'Merge requests' })).toHaveAttribute(
 			'href',
 			'/merge-requests'

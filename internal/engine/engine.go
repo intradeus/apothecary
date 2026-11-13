@@ -173,7 +173,10 @@ type Engine struct {
 	closing bool // Shutdown in progress: scheduleLocked stops admitting runs
 	handles map[string]*runHandle
 	// live fans out ephemeral agent progress (LiveDelta) to run viewers.
-	live  liveHub
+	live liveHub
+	// crew is the agents on station right now, per run (crew.go): the war
+	// room's live picture, never history.
+	crew  crewBoard
 	queue []string // pending runs waiting for a concurrency slot (§14 FIFO)
 	// lastLimits are the limits scheduleLocked last admitted under: what the
 	// slots gauge reports (metrics.go).

@@ -3,7 +3,25 @@
 // geometry stubs it itself. Nothing reaches the network: `$lib/api` is mocked
 // per test, and a fetch that slips through fails loudly.
 import '@testing-library/jest-dom/vitest';
+import { configure } from '@testing-library/svelte/pure';
 import { vi } from 'vitest';
+
+// One budget for every async wait. Testing Library's waitFor and findBy* and
+// vitest's vi.waitFor each give up after 1 s by default, which a loaded
+// machine misses: under `task ci`, every suite at once, tests ran about 8×
+// slower (983 took over a second, against 120 alone) and two waits that hold
+// in milliseconds on an idle machine timed out. A wait still ends the moment
+// its condition holds, so only a real failure takes longer to report, well
+// inside testTimeout (vite.config.ts). A wait that names its own timeout
+// keeps it.
+export const ASYNC_TIMEOUT = 10_000;
+configure({ asyncUtilTimeout: ASYNC_TIMEOUT });
+const viWaitFor = vi.waitFor.bind(vi);
+vi.waitFor = ((callback, options) =>
+	viWaitFor(
+		callback,
+		typeof options === 'number' ? options : { timeout: ASYNC_TIMEOUT, ...options }
+	)) as typeof vi.waitFor;
 
 class NoObserver {
 	observe() {}

@@ -311,6 +311,9 @@ import type {
 	GetStageLogData,
 	GetStageLogErrors,
 	GetStageLogResponses,
+	GetSwarmData,
+	GetSwarmErrors,
+	GetSwarmResponses,
 	GetTicketAttachmentsData,
 	GetTicketAttachmentsErrors,
 	GetTicketAttachmentsResponses,
@@ -5397,6 +5400,31 @@ export const downloadSnapshot = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/snapshots/{id}',
+		...options
+	});
+
+/**
+ * Every sandbox one has in flight, across all one's workshops
+ *
+ * The war room's live snapshot: the caller's non-terminal runs, plus those that ended in the last five minutes, each with its workspace status, newest resource sample and the agent on station with its subagents in flight.
+ */
+export const getSwarm = <ThrowOnError extends boolean = false>(
+	options?: Options<GetSwarmData, ThrowOnError>
+): RequestResult<GetSwarmResponses, GetSwarmErrors, ThrowOnError> =>
+	(options?.client ?? client).get<GetSwarmResponses, GetSwarmErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/swarm',
 		...options
 	});
 

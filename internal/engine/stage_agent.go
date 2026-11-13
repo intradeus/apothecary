@@ -94,6 +94,11 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	if err != nil {
 		return x.failStageMCP(st, err)
 	}
+	// The agent is on station (the war room's crew board) for as long as
+	// this attempt has it in a session; every way out of here leaves.
+	x.e.crew.board(rs.RunID, Crew{StageID: st.ID, Iteration: iter, Harness: stationHarness(st, x.res),
+		Agent: st.Agent, Since: x.e.clock()})
+	defer x.e.crew.leave(rs.RunID)
 
 	// ONE STAGE, ONE SESSION. A new stage opens a session of its own, and an
 	// attempt sent back to the stage continues it, so the agent remembers

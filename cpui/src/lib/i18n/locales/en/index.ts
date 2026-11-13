@@ -16,6 +16,7 @@ import desk from './desk';
 import misc from './misc';
 import skills from './skills';
 import analytics from './analytics';
+import swarm from './swarm';
 
 const merge = <T extends Record<string, string>[]>(...parts: T) => {
 	const out: Record<string, string> = {};
@@ -43,6 +44,7 @@ export const en = merge(
 	desk,
 	misc,
 	skills,
-	analytics
+	analytics,
+	swarm
 );
 export type MessageKey = keyof typeof en;

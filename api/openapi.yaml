@@ -834,6 +834,37 @@ components:
         - key
         - provider
       type: object
+    CrewPresence:
+      properties:
+        agent:
+          type: string
+        harness:
+          type: string
+        iteration:
+          type: integer
+        since:
+          format: date-time
+          type: string
+        stage_id:
+          type: string
+        subagents:
+          items:
+            $ref: '#/components/schemas/SwarmSubagent'
+          nullable: true
+          type: array
+        tool:
+          type: string
+        turn_active:
+          type: boolean
+      required:
+        - agent
+        - harness
+        - iteration
+        - since
+        - stage_id
+        - subagents
+        - turn_active
+      type: object
     CuratedItem:
       properties:
         body:
@@ -4086,6 +4117,80 @@ components:
           type: array
         source_branch:
           type: string
+      type: object
+    Swarm:
+      properties:
+        at:
+          format: date-time
+          type: string
+        units:
+          items:
+            $ref: '#/components/schemas/SwarmUnit'
+          nullable: true
+          type: array
+      required:
+        - at
+        - units
+      type: object
+    SwarmSubagent:
+      properties:
+        count:
+          type: integer
+        since:
+          format: date-time
+          type: string
+        title:
+          type: string
+        tool_call_id:
+          type: string
+      required:
+        - count
+        - since
+        - title
+        - tool_call_id
+      type: object
+    SwarmUnit:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        crew:
+          $ref: '#/components/schemas/CrewPresence'
+        current_stage:
+          type: string
+        env_status:
+          type: string
+        flow_name:
+          type: string
+        held:
+          type: boolean
+        open_pings:
+          type: integer
+        phase:
+          type: string
+        project_id:
+          type: string
+        resources:
+          $ref: '#/components/schemas/ResourceSample'
+        run_id:
+          type: string
+        state:
+          type: string
+        ticket_title:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - created_at
+        - flow_name
+        - held
+        - open_pings
+        - project_id
+        - run_id
+        - state
+        - ticket_title
+        - updated_at
       type: object
     SyncCounts:
       properties:
@@ -12594,6 +12699,35 @@ paths:
       summary: Download one engine-captured record
       tags:
         - files
+  /api/swarm:
+    get:
+      description: 'The war room''s live snapshot: the caller''s non-terminal runs, plus those that ended in the last five minutes, each with its workspace status, newest resource sample and the agent on station with its subagents in flight.'
+      operationId: getSwarm
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Swarm'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Every sandbox one has in flight, across all one's workshops
+      tags:
+        - swarm
   /api/tickets:
     get:
       operationId: listTickets
@@ -13359,6 +13493,7 @@ tags:
   - name: projects
   - name: runs
   - name: skills
+  - name: swarm
   - name: system
   - name: tickets
   - name: users

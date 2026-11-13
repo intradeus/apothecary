@@ -127,26 +127,58 @@ func logHas[T event.Payload](evs []event.Event, ok func(T) bool) bool {
 }
 
 // scriptAgents runs act for every agent turn, new or resumed. Each session
-// announces itself at once, as a harness does, so a crash inside a turn
-// leaves a session to resume.
-func scriptAgents(h *harness, act func(env envport.EnvID, agent string)) {
+// announces itself at once, as a harness does, and the agent acts only once
+// the engine recorded it: a crash inside a turn leaves a session to resume,
+// never a question with no session under it. (The loop takes queued events
+// and questions in whichever order its select picks.) act gets the engine
+// that was live when the turn began: a shutdown does not wait for an agent
+// goroutine, which may still be acting once the test swapped in the next
+// engine, and must not reach it.
+func scriptAgents(h *harness, act func(e *Engine, env envport.EnvID, agent string)) {
 	var mu sync.Mutex
 	agents := map[string]string{}
-	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		e := h.live.Load()
 		mu.Lock()
 		id := fmt.Sprintf("sess-%d", len(agents)+1)
 		agents[id] = call.Spec.Agent
 		mu.Unlock()
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: id})
-		act(call.Env, call.Spec.Agent)
+		awaitSession(ctx, h, e, id)
+		act(e, call.Env, call.Spec.Agent)
 		return agentport.AgentResult{TurnsUsed: 1, Session: agentport.SessionID(id)}, nil
 	}
 	h.runner.ResumeFunc = func(_ context.Context, call fake.ResumeCall) (agentport.AgentResult, error) {
+		e := h.live.Load()
 		mu.Lock()
 		agent := agents[string(call.Session)]
 		mu.Unlock()
-		act(call.Env, agent)
+		act(e, call.Env, agent)
 		return agentport.AgentResult{TurnsUsed: 1, Session: call.Session}, nil
+	}
+}
+
+// awaitSession returns once session id is on a run's log, the process died
+// (its store refuses everything, the session included), or the loop stopped
+// listening to the turn.
+func awaitSession(ctx context.Context, h *harness, e *Engine, id string) {
+	cs, _ := e.store.(*crashStore)
+	for {
+		if cs != nil && cs.isDead() {
+			return
+		}
+		ids, _ := h.store.RunIDs(context.Background())
+		for _, runID := range ids {
+			evs, _ := h.store.Events(context.Background(), runID, 0)
+			if logHas(evs, func(p *event.AgentSession) bool { return p.SessionID == id }) {
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Millisecond):
+		}
 	}
 }
 
@@ -196,13 +228,13 @@ main:
 // askWorld has the agent ask once, whatever a crash repeats; a turn that
 // finds the question on the log has its answer coming and finishes.
 func askWorld(h *harness) {
-	scriptAgents(h, func(envport.EnvID, string) {
+	scriptAgents(h, func(e *Engine, _ envport.EnvID, _ string) {
 		ids, _ := h.store.RunIDs(context.Background())
 		evs, _ := h.store.Events(context.Background(), ids[0], 0)
 		if logHas(evs, func(*event.PingRaised) bool { return true }) {
 			return
 		}
-		_, _ = h.live.Load().RaisePing(ids[0], event.PingClarification, "one endpoint or two?", "", nil, nil)
+		_, _ = e.RaisePing(ids[0], event.PingClarification, "one endpoint or two?", "", nil, nil)
 	})
 }
 
@@ -230,7 +262,7 @@ outcomes:
 `
 
 func redactWorld(h *harness) {
-	scriptAgents(h, func(env envport.EnvID, agent string) {
+	scriptAgents(h, func(_ *Engine, env envport.EnvID, agent string) {
 		if agent == "redactor" {
 			h.envp.WriteFile(context.Background(), env, "artifacts/mr.md", []byte("# Crash\n"), 0o644) //nolint:errcheck
 		}
@@ -313,7 +345,7 @@ outcomes:
 `
 
 func overrideWorld(h *harness) {
-	scriptAgents(h, func(env envport.EnvID, agent string) {
+	scriptAgents(h, func(e *Engine, env envport.EnvID, agent string) {
 		if agent == "redactor" {
 			h.envp.WriteFile(context.Background(), env, "artifacts/mr.md", []byte("# Crash\n"), 0o644) //nolint:errcheck
 			return
@@ -321,7 +353,7 @@ func overrideWorld(h *harness) {
 		ids, _ := h.store.RunIDs(context.Background())
 		evs, _ := h.store.Events(context.Background(), ids[0], 0)
 		if !logHas(evs, func(*event.PingRaised) bool { return true }) {
-			_, _ = h.live.Load().RaisePing(ids[0], event.PingClarification, "which one?", "", nil, nil)
+			_, _ = e.RaisePing(ids[0], event.PingClarification, "which one?", "", nil, nil)
 		}
 	})
 }
@@ -362,7 +394,7 @@ outcomes:
 `
 
 func reviewWorld(h *harness) {
-	scriptAgents(h, func(env envport.EnvID, agent string) {
+	scriptAgents(h, func(_ *Engine, env envport.EnvID, agent string) {
 		switch agent {
 		case "redactor":
 			h.envp.WriteFile(context.Background(), env, "artifacts/mr.md", []byte("# Crash\n"), 0o644) //nolint:errcheck
@@ -378,7 +410,7 @@ func reviewWorld(h *harness) {
 func shipWorld(h *harness) {
 	var mu sync.Mutex
 	failed, fixed, rejected, addressed := false, false, false, false
-	act := func(env envport.EnvID, agent string) {
+	act := func(_ *Engine, env envport.EnvID, agent string) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch agent {
