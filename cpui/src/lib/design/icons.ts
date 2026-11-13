@@ -15,6 +15,7 @@ export const I = {
 	runs: '▶' + T,
 	tickets: '☰' + T,
 	analytics: '▥',
+	warRoom: '⌖',
 	system: '⚙' + T,
 	search: '⌕',
 	more: '≡',

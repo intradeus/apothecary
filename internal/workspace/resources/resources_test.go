@@ -274,6 +274,39 @@ func TestSamplesIsACopy(t *testing.T) {
 	}
 }
 
+// Latest is the newest sample of the window; none for an unknown run and
+// none once the run's buffer was evicted.
+func TestLatest(t *testing.T) {
+	h := newFixture()
+	ctx := context.Background()
+	env, _ := h.envp.Provision(ctx, envport.EnvSpec{RunID: "r1"})
+	appendRun(t, h, "r1", string(env))
+	if _, ok := h.s.Latest("r1"); ok {
+		t.Fatal("a sample before any pass")
+	}
+	for _, cpu := range []float64{5, 9} {
+		h.res.Envp = samplerEnvp{EnvProvisioner: h.envp, cpu: cpu}
+		if err := h.s.SampleOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, ok := h.s.Latest("r1"); !ok || got.CPUPerc != 9 {
+		t.Fatalf("Latest = %+v, %v; want the newest (cpu 9)", got, ok)
+	}
+	if _, ok := h.s.Latest("nope"); ok {
+		t.Fatal("an unknown run has a sample")
+	}
+	if _, err := h.store.Append(ctx, "r1", &event.RunCompleted{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.s.SampleOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.s.Latest("r1"); ok {
+		t.Fatal("an evicted run still has a sample")
+	}
+}
+
 func appendRun(t *testing.T, h *fixture, runID, envID string) {
 	t.Helper()
 	for _, p := range []event.Payload{

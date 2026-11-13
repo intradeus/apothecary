@@ -255,6 +255,8 @@ func (t *transcript) handle(ev agentport.AgentEvent) error {
 		snap := *cur
 		snap.Input, snap.Output = t.x.redact.Scrub(snap.Input), t.x.redact.Scrub(snap.Output)
 		t.publish(LiveDelta{Kind: "tool", Turn: ev.Turn, Tool: &snap})
+		t.x.e.crew.tool(t.x.rs.RunID, cur.ToolCallID, t.x.redact.Scrub(cur.Title), cur.Status,
+			subagentSpawns(cur.Title, cur.Input), t.x.e.clock())
 		if cur.Status == "completed" || cur.Status == "failed" {
 			return t.flushTool(ev.Tool.ID)
 		}
@@ -286,12 +288,14 @@ func (t *transcript) handle(ev agentport.AgentEvent) error {
 			Text: fmt.Sprintf("Permission requested for %s: %s", title, ev.Text)})
 	case agentport.AgentEvTurnStart:
 		t.publish(LiveDelta{Kind: "turn_start", Turn: ev.Turn})
+		t.x.e.crew.turn(t.x.rs.RunID, true)
 		return nil
 	case agentport.AgentEvTurnEnd:
 		if err := t.flushAll(); err != nil {
 			return err
 		}
 		t.publish(LiveDelta{Kind: "turn_end", Turn: ev.Turn})
+		t.x.e.crew.turn(t.x.rs.RunID, false)
 		if ev.Error != "" {
 			return t.x.append(&event.AgentNotice{StageID: t.st, Iteration: t.iter, Cursor: t.cursor,
 				Text: "The turn ended with an error: " + ev.Error})

@@ -159,3 +159,16 @@ func (s *Sampler) Samples(runID string) []envport.ResourceSample {
 	defer s.mu.Unlock()
 	return append([]envport.ResourceSample(nil), s.buf[runID]...)
 }
+
+// Latest returns the newest sample of the run's window, false when there is
+// none — a cross-run snapshot (the war room) reads one sample per run
+// without copying whole windows.
+func (s *Sampler) Latest(runID string) (envport.ResourceSample, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	buf := s.buf[runID]
+	if len(buf) == 0 {
+		return envport.ResourceSample{}, false
+	}
+	return buf[len(buf)-1], true
+}

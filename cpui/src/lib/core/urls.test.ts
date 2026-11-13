@@ -35,7 +35,8 @@ describe('to', () => {
 		[to.newSkill(), '/system/skills/new'],
 		[to.skill('s1'), '/system/skills/s1'],
 		[to.newSkillset(), '/system/skills/sets/new'],
-		[to.skillset('s1'), '/system/skills/sets/s1']
+		[to.skillset('s1'), '/system/skills/sets/s1'],
+		[to.warRoom(), '/war-room']
 	])('builds %s', (built, url) => {
 		expect(built).toBe(url);
 	});

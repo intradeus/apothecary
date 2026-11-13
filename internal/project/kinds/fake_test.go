@@ -1,12 +1,16 @@
 package kinds
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/ports/agentport"
+	"apothecary/internal/ports/envport"
 )
 
 // The dev fake writes, for each file the OUTPUT CONTRACT names, a document
@@ -50,5 +54,98 @@ func TestDevFakeWritesWhatTheContractAsks(t *testing.T) {
 	}
 	if err := reviewfile.CheckReplies(replies, []string{"d1", "d2"}); err != nil {
 		t.Errorf("the replies stub answers every thread: %v", err)
+	}
+}
+
+// The dev sandboxes' synthetic stats stay inside their host, whatever the
+// workspace and the hour.
+func TestFakeSamplesStayInBounds(t *testing.T) {
+	start := time.Unix(1_700_000_000, 0)
+	for _, env := range []envport.EnvID{"a", "fake-env-1", "fake-env-2", "zzz"} {
+		for step := range 500 {
+			s := syntheticSample(env, start.Add(time.Duration(step)*7*time.Second))
+			if s.CPUs != fakeCPUs || s.CPUPerc < 0 || s.CPUPerc > fakeCPUs*100 {
+				t.Fatalf("%s: cpu %.1f%% of %d cores", env, s.CPUPerc, s.CPUs)
+			}
+			if s.MemUsed <= 0 || s.MemUsed >= s.MemLimit || s.PIDs <= 0 || s.NetRx < 0 || s.NetTx < 0 {
+				t.Fatalf("%s: %+v", env, s)
+			}
+		}
+	}
+	p, _ := FakeProvisioner{}.New(Config{}, ProvisionerDeps{})
+	if _, ok := p.(envport.ResourceSampler); !ok {
+		t.Fatal("the fake provisioner samples no resources")
+	}
+}
+
+// A demo turn: the turn opens, ordinary tools and subagent spawns (one, then
+// a batch) play out, the turn closes.
+func TestDemoTurn(t *testing.T) {
+	var evs []agentport.AgentEvent
+	if err := demoTurn(context.Background(), func(ev agentport.AgentEvent) { evs = append(evs, ev) }, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) < 3 || evs[0].Kind != agentport.AgentEvTurnStart || evs[len(evs)-1].Kind != agentport.AgentEvTurnEnd {
+		t.Fatalf("events = %+v", evs)
+	}
+	var single, batch, ordinary bool
+	for _, ev := range evs {
+		if ev.Tool == nil || ev.Tool.Status != "in_progress" {
+			continue
+		}
+		switch in := ev.Tool.Input; {
+		case strings.Contains(in, `"tasks":[`):
+			batch = true
+		case strings.Contains(in, `"solutionSpace"`):
+			single = true
+		default:
+			ordinary = true
+		}
+	}
+	if !single || !batch || !ordinary {
+		t.Errorf("single spawn %v, batch %v, ordinary tools %v", single, batch, ordinary)
+	}
+}
+
+// A demo turn stops when its run does.
+func TestDemoTurnHonoursCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	if err := demoTurn(ctx, nil, time.Hour); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Error("a cancelled demo turn kept going")
+	}
+}
+
+// Without demo the fake is the quick one every test relies on; with it, the
+// turn is acted out.
+func TestFakeHarnessDemoIsOptIn(t *testing.T) {
+	envp := fake.NewEnvProvisioner()
+	env, err := envp.Provision(context.Background(), envport.EnvSpec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(cfg Config, ctx context.Context) ([]agentport.AgentEvent, error) {
+		h, err := FakeHarness{}.New(cfg, envp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var evs []agentport.AgentEvent
+		_, err = h.Run(ctx, env, agentport.AgentSpec{Agent: "dev"}, agentport.AgentInput{
+			Events: func(ev agentport.AgentEvent) { evs = append(evs, ev) }})
+		return evs, err
+	}
+	start := time.Now()
+	if evs, err := run(Config{}, context.Background()); err != nil || len(evs) != 0 || time.Since(start) > 5*time.Second {
+		t.Errorf("plain fake: %d events, %v, took %s", len(evs), err, time.Since(start))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	evs, err := run(Config{Values: map[string]any{"demo": "on"}}, ctx)
+	if !errors.Is(err, context.DeadlineExceeded) || len(evs) != 1 || evs[0].Kind != agentport.AgentEvTurnStart {
+		t.Errorf("demo fake under a short deadline: %+v, %v", evs, err)
 	}
 }

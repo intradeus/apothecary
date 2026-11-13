@@ -46,7 +46,7 @@ main:
 func trackerWorld(tracker **fake.TicketSource) func(h *harness) {
 	return func(h *harness) {
 		*tracker = h.tickets.remote
-		scriptAgents(h, func(env envport.EnvID, _ string) {
+		scriptAgents(h, func(_ *Engine, env envport.EnvID, _ string) {
 			for path, body := range map[string]string{"artifacts/note.md": "the note\n", "artifacts/value.txt": "the value\n", "artifacts/mr.md": "# Crash\n"} {
 				h.envp.WriteFile(context.Background(), env, path, []byte(body), 0o644) //nolint:errcheck
 			}
@@ -186,7 +186,7 @@ func moreCrashScenarios() []crashScenario {
 					}
 					return envport.ExecResult{}, nil
 				}
-				scriptAgents(h, func(env envport.EnvID, _ string) {
+				scriptAgents(h, func(_ *Engine, env envport.EnvID, _ string) {
 					h.envp.WriteFile(context.Background(), env, "artifacts/commit.yaml", []byte("subject: fix the thing\n"), 0o644) //nolint:errcheck
 				})
 			},
@@ -205,7 +205,7 @@ func moreCrashScenarios() []crashScenario {
 			name: "post-review", doc: crashPostDoc, want: run.Completed,
 			world: func(h *harness) {
 				h.repoHost.AddOpenMR("alice", "Add caching", "feature/cache", "main", "a1")
-				scriptAgents(h, func(env envport.EnvID, _ string) {
+				scriptAgents(h, func(_ *Engine, env envport.EnvID, _ string) {
 					h.envp.WriteFile(context.Background(), env, "artifacts/review.yaml", []byte(noteA), 0o644) //nolint:errcheck
 				})
 			},
@@ -225,7 +225,7 @@ func moreCrashScenarios() []crashScenario {
 					Health: resolution.ServiceHealth{TCP: 3000}, Ports: []resolution.ServicePort{{Port: 3000, Label: "app"}}}}
 				svcs := fake.NewServices()
 				h.envp.ExecFunc = svcs.Exec(nil)
-				scriptAgents(h, func(envport.EnvID, string) {})
+				scriptAgents(h, func(*Engine, envport.EnvID, string) {})
 			},
 			drive: func(*harness, string, []event.Event) {},
 		},

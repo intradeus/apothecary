@@ -8,7 +8,8 @@ import { I } from '$lib/design/icons';
 import { WORK_ITEMS } from './workItems';
 
 export interface NavItem {
-	id: 'desk' | 'inbox' | 'notices' | 'runs' | 'tickets' | 'mrs' | 'analytics' | 'system';
+	id:
+		'desk' | 'inbox' | 'notices' | 'runs' | 'warRoom' | 'tickets' | 'mrs' | 'analytics' | 'system';
 	label: string;
 	icon: string;
 	href: () => string;
@@ -63,6 +64,17 @@ export const NAV: readonly NavItem[] = [
 		chord: 'r',
 		mobile: true,
 		match: (p) => p.startsWith('/runs')
+	},
+	{
+		id: 'warRoom',
+		get label() {
+			return t('nav.warRoom');
+		},
+		icon: I.warRoom,
+		href: () => to.warRoom(),
+		chord: 'w',
+		mobile: false,
+		match: (p) => p.startsWith(to.warRoom())
 	},
 	// The work items runs start on, in their registry's order.
 	...WORK_ITEMS.map((w): NavItem => ({
