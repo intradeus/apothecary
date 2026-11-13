@@ -2,6 +2,23 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v3.4.0 (2026-11-13)
+
+### Features
+
+- **workitems**: add workitem kinds for tickets and merge request, MRs are now first-class citizens
+- **deployment**: full k8s native deployment, removed docker-compose version
+
+### Fixes
+
+- **environment**: pin tools version
+- **ci**: fix tests and ci
+- **ci**: read the pinned helm version past its comment
+- **ui**: new merge request in command palette
+- **ui**: ui fixes on vitals, logs, egress and mrs
+- **ci**: upgrade CI speed and cache
+- **ci**: speed upgrades for k8s integration tests
+
 ## v3.3.0 (2026-11-10)
 
 ### Features
