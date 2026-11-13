@@ -799,8 +799,7 @@ export function toSourceTicket(w: Wire.SourceTicket): SourceTicket {
 			mime: a.mime,
 			size: a.size
 		})),
-		changeType: asChangeType(w.change_type),
-		branch: w.branch ?? ''
+		changeType: asChangeType(w.change_type)
 	};
 }
 
@@ -842,7 +841,8 @@ export function toProject(w: Wire.Project): Project {
 			url: w.repo?.url ?? '',
 			locator: w.repo?.locator ?? '',
 			defaultBranch: w.repo?.default_branch ?? '',
-			agentsMdPath: w.repo?.agents_md_path ?? ''
+			agentsMdPath: w.repo?.agents_md_path ?? '',
+			branchFormat: w.repo?.branch_format ?? ''
 		},
 		repos: list(w.repos).map((r) => ({
 			name: r.name,

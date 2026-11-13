@@ -530,7 +530,13 @@ describe('what each call sends', () => {
 			repo_account_id: 'acc',
 			provisioner_id: 'prov',
 			harness_ids: ['h'],
-			repo: { url: 'u', locator: 'l', default_branch: 'main', agents_md_path: 'AGENTS.md' },
+			repo: {
+				url: 'u',
+				locator: 'l',
+				default_branch: 'main',
+				agents_md_path: 'AGENTS.md',
+				branch_format: '{ticket_number}/{ticket_title}'
+			},
 			repos: [{ name: 'n', url: 'v', locator: 'm', default_branch: 'dev' }],
 			commands: { test: 'make test' },
 			workspace: {

@@ -3033,6 +3033,8 @@ components:
       properties:
         agents_md_path:
           type: string
+        branch_format:
+          type: string
         default_branch:
           type: string
         locator:
@@ -4048,8 +4050,6 @@ components:
           type: array
         body:
           type: string
-        branch:
-          type: string
         change_type:
           type: string
         key:
@@ -4065,7 +4065,6 @@ components:
         url:
           type: string
       required:
-        - branch
         - change_type
         - key
         - title

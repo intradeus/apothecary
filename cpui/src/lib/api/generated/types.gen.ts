@@ -1335,6 +1335,7 @@ export type Ref = {
 
 export type RepoConfig = {
 	agents_md_path: string;
+	branch_format?: string;
 	default_branch: string;
 	locator: string;
 	url: string;
@@ -1771,7 +1772,6 @@ export type SourceTicket = {
 	assignee?: string;
 	attachments?: Array<SourceAttachmentJson>;
 	body?: string;
-	branch: string;
 	change_type: string;
 	key: string;
 	status?: string;

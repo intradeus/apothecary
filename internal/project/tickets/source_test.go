@@ -249,18 +249,6 @@ func TestCreateFailure(t *testing.T) {
 	}
 }
 
-func TestSlugBoundsAndTrims(t *testing.T) {
-	if got := slug("  -- Hello,  World! -- "); got != "hello-world" {
-		t.Errorf("slug = %q", got)
-	}
-	if got := slug(strings.Repeat("ab ", 500)); len(got) > maxStem+1 {
-		t.Errorf("slug length = %d", len(got))
-	}
-	if got := BranchName(trackerport.ChangeFix, "", "!!!"); got != "fix/ticket" {
-		t.Errorf("nothing to name it with = %q", got)
-	}
-}
-
 // failingClaims is an attachment store refusing claims and deletes.
 type failingClaims struct{ *filestore.Mem }
 

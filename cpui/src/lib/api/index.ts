@@ -219,7 +219,8 @@ const projectBody = (p: ProjectDraft): Wire.ProjectRequest => ({
 		url: p.repo.url,
 		locator: p.repo.locator,
 		default_branch: p.repo.defaultBranch,
-		agents_md_path: p.repo.agentsMdPath
+		agents_md_path: p.repo.agentsMdPath,
+		branch_format: p.repo.branchFormat
 	},
 	repos: (p.repos ?? []).map((r) => ({
 		name: r.name,

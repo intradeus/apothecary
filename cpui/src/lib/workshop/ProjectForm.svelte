@@ -5,6 +5,7 @@
 	// exists) — and a sticky footer (Cancel / Save, plus "Run envcheck after
 	// saving"). Secrets are saved one by one as they are set, not by Save.
 	import { errorMessage } from '$lib/core/errors';
+	import { DEFAULT_BRANCH_FORMAT } from '$lib/core/branchname';
 	import { onMount, untrack } from 'svelte';
 	import { replaceState } from '$app/navigation';
 	import { api } from '$lib/api';
@@ -85,6 +86,7 @@
 	let locator = $state(init?.repo.locator ?? '');
 	let defaultBranch = $state(init?.repo.defaultBranch ?? 'main');
 	let agentsMD = $state(init?.repo.agentsMdPath ?? '');
+	let branchFormat = $state(init?.repo.branchFormat || DEFAULT_BRANCH_FORMAT);
 
 	// Commands as editable key → script rows; flows run them by name.
 	const initCommands = Object.entries(init?.commands ?? {});
@@ -207,7 +209,8 @@
 				url: repoURL.trim(),
 				locator: locator.trim(),
 				defaultBranch: defaultBranch.trim(),
-				agentsMdPath: agentsMD.trim()
+				agentsMdPath: agentsMD.trim(),
+				branchFormat: branchFormat.trim()
 			},
 			repos: extraRepos.map((r) => ({
 				name: r.name.trim(),
@@ -364,6 +367,7 @@
 			bind:locator
 			bind:defaultBranch
 			bind:agentsMD
+			bind:branchFormat
 			bind:name
 			bind:extraRepos
 		/>

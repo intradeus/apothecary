@@ -28,6 +28,7 @@ const setup = (over: Record<string, unknown> = {}) => {
 		locator: '',
 		defaultBranch: 'main',
 		agentsMD: 'AGENTS.md',
+		branchFormat: '{ticket_type}/{ticket_number}-{ticket_title}',
 		name: '',
 		extraRepos: [] as ExtraRepo[],
 		...over
@@ -75,6 +76,61 @@ describe('RepositorySection, the fields', () => {
 		setup({ repoAccounts: [], repoAccountId: '' });
 		expect(screen.getAllByRole('link')[0]).toHaveAttribute('href', '/system/integrations');
 		expect(browse()).toBeDisabled();
+	});
+});
+
+describe('RepositorySection, the branch format', () => {
+	const field = () => screen.getByLabelText('Branch name format');
+	async function typeFormat(f: string) {
+		await userEvent.clear(field());
+		// user-event reads { and [ as key descriptors: doubled, they are literal.
+		await userEvent.type(field(), f.replace(/[{[]/g, '$&$&'));
+	}
+
+	it('binds, and previews a sample ticket’s branch by it', async () => {
+		const props = setup();
+		expect(screen.getByText('e.g. feat/proj-123-add-footnotes')).toBeInTheDocument();
+		await typeFormat('users/{ticket_number}_{ticket_title}');
+		expect(props.branchFormat).toBe('users/{ticket_number}_{ticket_title}');
+		expect(screen.getByText('e.g. users/proj-123_add-footnotes')).toBeInTheDocument();
+		expect(field()).toHaveAttribute('aria-invalid', 'false');
+	});
+
+	it('previews the default when left empty', async () => {
+		setup({ branchFormat: '' });
+		expect(field()).toHaveAttribute('placeholder', '{ticket_type}/{ticket_number}-{ticket_title}');
+		expect(screen.getByText('e.g. feat/proj-123-add-footnotes')).toBeInTheDocument();
+	});
+
+	it('names the placeholders in its help', () => {
+		setup();
+		for (const p of ['{ticket_type}', '{ticket_number}', '{ticket_title}']) {
+			expect(screen.getByText(p, { selector: 'code' })).toBeInTheDocument();
+		}
+	});
+
+	it.each([
+		[
+			'{type}/{ticket_title}',
+			'Unknown placeholder {type}: use {ticket_type}, {ticket_number} or {ticket_title}.'
+		],
+		[
+			'{ticket_title',
+			'Unbalanced braces: the placeholders are {ticket_type}, {ticket_number} and {ticket_title}.'
+		],
+		[
+			'{ticket_type}/main',
+			'Needs {ticket_number} or {ticket_title}, or every ticket would get the same branch.'
+		],
+		[`${'x'.repeat(90)}/{ticket_title}`, 'Longer than 100 characters.'],
+		['{ticket_type} {ticket_title}', '“feat add-footnotes” is not a valid branch name.'],
+		['{ticket_number}', 'A ticket with no issue key would get no branch name: add {ticket_title}.']
+	])('shows why %j is refused instead of a preview', async (f, why) => {
+		setup();
+		await typeFormat(f);
+		expect(screen.getByText(why)).toBeInTheDocument();
+		expect(screen.queryByText(/^e\.g\./)).not.toBeInTheDocument();
+		expect(field()).toHaveAttribute('aria-invalid', 'true');
 	});
 });
 

@@ -195,11 +195,11 @@ type sourceTicketJSON struct {
 	Assignee    string                 `json:"assignee,omitempty"`
 	Updated     string                 `json:"updated,omitempty"`
 	Attachments []sourceAttachmentJSON `json:"attachments,omitempty"`
-	// ChangeType and Branch are what an import makes of this issue — the
-	// ticket's change type and base branch (tickets.BranchName) — for the
-	// form to prefill.
+	// ChangeType is what an import makes of this issue — the ticket's change
+	// type — for the form to prefill. The form names the branch itself, by
+	// the workshop's branch format, which this integration-level view knows
+	// nothing of.
 	ChangeType trackerport.ChangeType `json:"change_type"`
-	Branch     string                 `json:"branch"`
 }
 
 type sourceAttachmentJSON struct {
@@ -214,7 +214,6 @@ func toSourceTicketJSON(t trackerport.SourceTicket) sourceTicketJSON {
 		Status: t.Status, Type: t.Type, Assignee: t.Assignee,
 		ChangeType: tickets.SourceChangeType(t),
 	}
-	out.Branch = tickets.BranchName(out.ChangeType, t.Key, t.Title)
 	if !t.Updated.IsZero() {
 		out.Updated = t.Updated.UTC().Format(time.RFC3339)
 	}

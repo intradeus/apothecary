@@ -16,6 +16,7 @@ import (
 	"apothecary/internal/flow/builtin"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/trackerport"
+	"apothecary/internal/project/branchname"
 )
 
 var errDB = errors.New("db down")
@@ -461,6 +462,8 @@ func TestValidateProject(t *testing.T) {
 		{"no default flow", func(p *Project) { p.DefaultFlow = "" }, "default_flow is required"},
 		{"unknown default flow", func(p *Project) { p.DefaultFlow = "no-such-flow" }, `default_flow "no-such-flow"`},
 		{"bad service", func(p *Project) { p.Workspace.Services = []ServiceConfig{{Name: "Web"}} }, "must be a slug"},
+		{"unknown placeholder in the branch format", func(p *Project) { p.Repo.BranchFormat = "{type}/{ticket_title}" }, "repo.branch_format: unknown placeholder {type}"},
+		{"branch format git refuses", func(p *Project) { p.Repo.BranchFormat = "{ticket_type}..{ticket_title}" }, "repo.branch_format: "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := base
@@ -485,7 +488,7 @@ func TestValidateProjectFillsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Repo.DefaultBranch != "main" || got.Repo.AgentsMDPath != "" || got.Commands == nil {
+	if got.Repo.DefaultBranch != "main" || got.Repo.AgentsMDPath != "" || got.Repo.BranchFormat != branchname.Default || got.Commands == nil {
 		t.Errorf("defaults = %+v", got.Repo)
 	}
 	if len(got.HarnessIDs) != 1 {
@@ -517,6 +520,30 @@ func TestValidateProjectAgentGuide(t *testing.T) {
 		if got.Repo.AgentsMDPath != tc.want {
 			t.Errorf("%q: agent guide = %q, want %q", tc.in, got.Repo.AgentsMDPath, tc.want)
 		}
+	}
+}
+
+func TestProjectBranchFormat(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newSvc(t)
+	p := goodProject(t, svc, "o1")
+	p.Repo.BranchFormat = " {ticket_number}/{ticket_title} "
+	created, err := svc.CreateProject(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.GetProject(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Repo.BranchFormat != "{ticket_number}/{ticket_title}" {
+		t.Errorf("stored format = %q, want it trimmed", got.Repo.BranchFormat)
+	}
+	got.Repo.BranchFormat = "{ticket_type}/main"
+	_, err = svc.UpdateProject(ctx, got.ID, got)
+	wantErr(t, "update", err, ErrInvalid)
+	if err == nil || !strings.Contains(err.Error(), "repo.branch_format: needs {ticket_number} or {ticket_title}") {
+		t.Errorf("err = %v", err)
 	}
 }
 

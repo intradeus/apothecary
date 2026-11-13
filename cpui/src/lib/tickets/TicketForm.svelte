@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { errorMessage } from '$lib/core/errors';
 	import { to } from '$lib/core/urls';
+	import { renderBranch, slug } from '$lib/core/branchname';
 	import { t, th } from '$lib/i18n/index.svelte';
 	// Ticket create/edit form. A ticket is a unit of work; flow is NOT chosen
 	// here — it's picked per run when a run is started.
@@ -148,34 +149,28 @@
 		...sources.map((s) => ({ value: s.id, label: `${s.name} (${s.kind})` }))
 	]);
 
-	// The ticket's change type — what it is — names its branch:
-	// {type}/{key}-{title} (feat/proj-123-add-footnotes), prefilled until the
-	// user edits it. An imported issue's type and name are the engine's
-	// (tickets.BranchName — the same an automation's import gets: the
-	// integration's type map, else read from the type's name); a hand-written
-	// ticket has no key. Changing the type later swaps the branch's prefix in
-	// the field — runs already started keep theirs.
+	// The ticket's base branch is named by its workshop's branch format
+	// ($lib/core/branchname: {ticket_type}/{ticket_number}-{ticket_title} by
+	// default, so feat/proj-123-add-footnotes) from its change type, the
+	// picked issue's key (a hand-written ticket has none) and the title — the
+	// name the engine gives a ticket created without one, an automation's
+	// import included. It is prefilled, and follows the workshop, the type and
+	// the title, until the user edits it; changing the type then swaps a
+	// leading type in the field — runs already started keep theirs.
 	let branchEdited = $state(init != null);
 	let changeType = $state<ChangeType>(init?.changeType ?? 'feat');
 	const typeOptions: SelectOption<ChangeType>[] = CHANGE_TYPES.map((c) => ({ value: c, label: c }));
-	// The WHOLE title: a git branch has no meaningful length limit, and the one
-	// thing that does — the run's container name — is derived and truncated
-	// separately by the engine (engine.workspaceName), so nothing is gained by
-	// cutting the readable name short here.
-	const slugify = (s: string) =>
-		s
-			.toLowerCase()
-			.replace(/[^a-z0-9]+/g, '-')
-			.replace(/^-+|-+$/g, '');
+	const branchFormat = $derived(projects.find((p) => p.id === projectId)?.repo.branchFormat ?? '');
 	// Swap a branch's leading change type; any other name is left alone.
 	function withType(b: string, type: string) {
 		const [head, ...rest] = b.split('/');
 		return rest.length && CHANGE_TYPES.includes(head as ChangeType) ? [type, ...rest].join('/') : b;
 	}
+	// A hand-written ticket with no title yet has nothing to be named by: no
+	// name yet, rather than the engine's last-resort "ticket".
 	function autoBranch() {
-		if (picked) return withType(picked.branch, changeType);
-		const s = slugify(title);
-		return s ? `${changeType}/${s}` : '';
+		if (!picked && !slug(title)) return '';
+		return renderBranch(branchFormat, changeType, picked?.key ?? '', title);
 	}
 	$effect(() => {
 		if (!branchEdited) branch = autoBranch();
@@ -311,7 +306,7 @@
 					id="t-branch"
 					bind:value={branch}
 					oninput={() => (branchEdited = true)}
-					placeholder="feat/proj-123-short-description"
+					placeholder={renderBranch(branchFormat, changeType, 'PROJ-123', 'Short description')}
 					class="mono"
 				/>
 			</div>

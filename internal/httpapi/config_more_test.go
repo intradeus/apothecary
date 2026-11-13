@@ -171,6 +171,34 @@ func TestProjectCRUDEdges(t *testing.T) {
 	}
 }
 
+// The workshop's branch format rides in repo: saved as sent, refused with
+// the field named when it is not one.
+func TestProjectBranchFormat(t *testing.T) {
+	x := newConfEnv(t)
+	path := "/api/projects/" + x.makeProject(t, "web", nil)
+	_, body := x.do(t, "GET", path, nil, nil)
+	p := decode[confstore.Project](t, body)
+	put := func(format string) (*http.Response, []byte) {
+		repo := p.Repo
+		repo.BranchFormat = format
+		return x.do(t, "PUT", path, map[string]any{
+			"name": p.Name, "repo_account_id": p.RepoAccountID, "provisioner_id": p.ProvisionerID,
+			"harness_ids": p.HarnessIDs, "repo": repo, "default_flow": p.DefaultFlow,
+		}, nil)
+	}
+	res, body := put("{ticket_number}/{ticket_title}")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("update = %d %s", res.StatusCode, body)
+	}
+	_, body = x.do(t, "GET", path, nil, nil)
+	if got := decode[confstore.Project](t, body).Repo.BranchFormat; got != "{ticket_number}/{ticket_title}" {
+		t.Errorf("read back %q", got)
+	}
+	if res, body := put("{type}/{title}"); res.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "repo.branch_format") {
+		t.Errorf("invalid format = %d %s", res.StatusCode, body)
+	}
+}
+
 func TestIntegrationCRUDEdges(t *testing.T) {
 	x := newConfEnv(t)
 	malformed(t, x.env, "POST", "/api/integrations")

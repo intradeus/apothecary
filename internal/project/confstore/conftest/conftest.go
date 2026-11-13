@@ -159,9 +159,10 @@ func plainProject(id, user, name string, n int) confstore.Project {
 func fullProject() confstore.Project {
 	return confstore.Project{ID: "p1", UserID: "u1", Name: "web", RepoAccountID: "i1", ProvisionerID: "i2",
 		HarnessIDs: []string{"i3", "i2"},
-		Repo:       confstore.RepoConfig{URL: "https://example.test/g/web.git", Locator: "42", DefaultBranch: "trunk", AgentsMDPath: "docs/AGENTS.md"},
-		Repos:      []confstore.ExtraRepo{{Name: "api", URL: "https://example.test/g/api.git", Locator: "43", DefaultBranch: "main"}},
-		Commands:   map[string]string{"check": "make check"},
+		Repo: confstore.RepoConfig{URL: "https://example.test/g/web.git", Locator: "42", DefaultBranch: "trunk", AgentsMDPath: "docs/AGENTS.md",
+			BranchFormat: "{ticket_number}/{ticket_title}"},
+		Repos:    []confstore.ExtraRepo{{Name: "api", URL: "https://example.test/g/api.git", Locator: "43", DefaultBranch: "main"}},
+		Commands: map[string]string{"check": "make check"},
 		Workspace: confstore.WorkspaceConfig{
 			ExtraDomains: []string{"pypi.org"}, EgressMode: "deny", DeniedDomains: []string{"denied.test"}, BlockedDomains: []string{"blocked.test"},
 			EgressAllowedCIDRs: []string{"10.0.0.0/8"}, EgressAllowedPorts: []int{22}, CodeServerExtensions: []string{"acme.ext"},
