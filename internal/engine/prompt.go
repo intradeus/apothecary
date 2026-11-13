@@ -88,6 +88,7 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		}
 		b.WriteString("Change only the repositories the task needs; each one that changes gets its own merge request.\n")
 	}
+	b.WriteString(x.guideSection())
 
 	outs := st.Outputs
 	if len(outs) > 0 {
@@ -131,6 +132,20 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		}
 	}
 	return b.String()
+}
+
+// guideSection renders the project's agent guide: a section naming the file
+// when one is set and the run's checkout holds it, else nothing — an unset or
+// absent guide adds no prompt text (the built-in flows name no file).
+func (x *exec) guideSection() string {
+	path := x.res.AgentsMDPath
+	if path == "" {
+		return ""
+	}
+	if _, err := x.res.Envp.ReadFile(x.ctx, x.rs.EnvID, path); err != nil {
+		return ""
+	}
+	return fmt.Sprintf("# REPOSITORY GUIDE\nThis repository's agent guide is %s: read it first and follow its conventions.\n", path)
 }
 
 // writeInputs renders a stage's input ports, each by its type — what an

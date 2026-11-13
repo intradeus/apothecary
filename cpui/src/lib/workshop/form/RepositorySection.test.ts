@@ -53,8 +53,8 @@ describe('RepositorySection, the fields', () => {
 		await userEvent.type(screen.getByLabelText('Locator'), '9');
 		await userEvent.clear(screen.getByLabelText('Default branch'));
 		await userEvent.type(screen.getByLabelText('Default branch'), 'dev');
-		await userEvent.clear(screen.getByLabelText('AGENTS.md path'));
-		await userEvent.type(screen.getByLabelText('AGENTS.md path'), 'docs/AGENTS.md');
+		await userEvent.clear(screen.getByLabelText('Agent guide (optional)'));
+		await userEvent.type(screen.getByLabelText('Agent guide (optional)'), 'docs/AGENTS.md');
 
 		expect(props).toMatchObject({
 			repoAccountId: 'h',

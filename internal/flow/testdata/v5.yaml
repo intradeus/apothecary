@@ -43,7 +43,7 @@ agents:
       Method:
       1. Restate the ticket's goal in one or two sentences, in your own words.
       2. Explore the repository with your read tools until you understand the
-         structures the ticket touches. Follow the conventions in AGENTS.md.
+         structures the ticket touches.
       3. Write the plan to the path named in the OUTPUT CONTRACT section with
          exactly these sections:
          ## Goal            — the restated goal
@@ -87,8 +87,7 @@ agents:
       - Follow the plan's steps in order. If the plan turns out to be wrong or
         incomplete in a way you cannot resolve within its intent, use the
         ask_human tool (type=blocker) instead of improvising a redesign.
-      - Follow the conventions in AGENTS.md and mirror the style of the
-        surrounding code.
+      - Mirror the style of the surrounding code.
       - Do NOT run `git commit`, `git add` or `git push`. Leave your changes in
         the working tree — a dedicated commit stage records them for you.
       - Run the project's tests and linters after each step; leave the tree
@@ -169,7 +168,7 @@ agents:
       Review the branch's changes against three sources of truth, in order:
       1. The approved plan provided in your prompt: is everything implemented,
          and nothing beyond it?
-      2. AGENTS.md conventions and the project's DDD/SOLID standards: layer
+      2. The project's conventions and DDD/SOLID standards: layer
          boundaries respected, dependencies point inward, single responsibility,
          no vendor types leaking across interfaces.
       3. Correctness: read the changed code, run the test suite yourself via

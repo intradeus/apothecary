@@ -436,6 +436,11 @@ func TestAgentConfigScript(t *testing.T) {
 	if !strings.Contains(linked, `ln -sf "docs/AI.md" AGENTS.md`) || !strings.Contains(linked, "echo AGENTS.md >> .git/info/exclude") {
 		t.Errorf("script = %s", linked)
 	}
+	none := agentConfigScript("")
+	if strings.Contains(none, "ln -sf") || !strings.Contains(none, "mkdir -p artifacts .apothecary/attachments") ||
+		!strings.Contains(none, "grep -qx artifacts/ .git/info/exclude") || !strings.Contains(none, "grep -qx .apothecary/ .git/info/exclude") {
+		t.Errorf("no agent guide links nothing and keeps the dirs: %s", none)
+	}
 }
 
 func TestGitConfigScript(t *testing.T) {

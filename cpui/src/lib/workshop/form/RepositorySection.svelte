@@ -182,9 +182,9 @@
 			<div class="help">{t('form.project.defaultBranchHelp')}</div>
 		</div>
 		<div class="field">
-			<label for="p-agentsmd">{t('form.project.agentsMd')}</label>
-			<input id="p-agentsmd" class="mono" bind:value={agentsMD} />
-			<div class="help">{t('form.project.agentsMdHelp')}</div>
+			<label for="p-agentsmd">{t('form.project.agentGuide')}</label>
+			<input id="p-agentsmd" class="mono" bind:value={agentsMD} placeholder="AGENTS.md" />
+			<div class="help">{t('form.project.agentGuideHelp')}</div>
 		</div>
 	</div>
 

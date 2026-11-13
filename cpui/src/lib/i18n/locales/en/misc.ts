@@ -415,8 +415,9 @@ export default {
 	'form.project.locatorHelp': 'Its own id where it is hosted (GitLab: the numeric project id).',
 	'form.project.defaultBranch': 'Default branch',
 	'form.project.defaultBranchHelp': 'What tickets fork off unless they pick another.',
-	'form.project.agentsMd': 'AGENTS.md path',
-	'form.project.agentsMdHelp': 'The guide every agent reads first.',
+	'form.project.agentGuide': 'Agent guide (optional)',
+	'form.project.agentGuideHelp':
+		'A repository file every agent is pointed to first, e.g. AGENTS.md. Leave empty for none.',
 	'form.project.extraHead': 'Additional repositories',
 	'form.project.addRepo': 'Add repository',
 	'form.project.extraHelp':

@@ -68,7 +68,8 @@ plan approval and final review.
   and/or subscription login), for codex an OpenAI API key / ChatGPT
   `auth.json`, or for omp provider API keys (`KEY=VALUE` lines) and/or
   subscription logins (CLIProxyAPI credential JSON).
-- A target repository containing `AGENTS.md` (the repo's conventions).
+- A target repository. It may carry an agent guide such as `AGENTS.md` (the
+  repo's conventions), which a project names in its optional *Agent guide*.
   Agents themselves are defined **per project in the UI** (v3 agent
   library) — five defaults (planner, builder, committer, reviewer,
   redactor) ship compiled into the binary and appear in every project;
@@ -417,9 +418,10 @@ lists `k3d-registry.localhost:5111` under `insecure-registries`;
    the agent should only read. The primary's devcontainer must carry their
    toolchains.
 4. **Preflight**, then **Envcheck** on the project page. Preflight checks
-   the configuration without building anything — repository access, AGENTS.md,
-   the devcontainer, the flow's references, and that every agent stage's
-   model is one the harness's credentials can reach. Envcheck provisions a
+   the configuration without building anything — repository access, the
+   agent guide when one is set, the devcontainer, the flow's references, and
+   that every agent stage's model is one the harness's credentials can
+   reach. Envcheck provisions a
    throwaway workspace and proves the whole contract — image, egress
    gateway (a non-allowlisted host is blocked; each derived domain
    reachable; wildcard entries are patterns and skipped), harness binary,
@@ -862,7 +864,8 @@ recipe:
    account of that throwaway instance.
 6. **Flow.** The builder template; `screenshots` needs the project's
    Browser enabled.
-7. Preflight (AGENTS.md and the devcontainer are found) → Envcheck → a ticket.
+7. Preflight (the agent guide `AGENTS.md` and the devcontainer are found) →
+   Envcheck → a ticket.
 
 `AGENTS.md` tells the agent what to run while it iterates (`task check`)
 and what never to run inside a workspace (the release builds).
