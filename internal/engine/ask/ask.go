@@ -15,12 +15,15 @@ import (
 	"unicode/utf8"
 )
 
-// Thread is a run's Ask conversation: the harness session it continues
-// (empty until the first answer) and the model it runs on.
+// Thread is one of a run's Ask conversations (the pane calls it a session):
+// the harness session it continues (empty until its first answer) and the
+// model it runs on. A run holds any number of them.
 type Thread struct {
 	RunID     string    `json:"run_id"`
+	ID        string    `json:"id"`
 	SessionID string    `json:"session_id,omitempty"`
 	Model     string    `json:"model,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -34,7 +37,9 @@ const (
 // the answer it got (with what that answer cost, or why there is none).
 type Message struct {
 	RunID string `json:"-"`
-	// Seq orders a run's messages, from 1.
+	// ThreadID is the thread the message belongs to.
+	ThreadID string `json:"thread_id"`
+	// Seq orders a run's messages, from 1, across all of its threads.
 	Seq     int64     `json:"seq"`
 	ID      string    `json:"id"`
 	Role    string    `json:"role"`
@@ -49,11 +54,16 @@ type Message struct {
 
 // Store keeps threads and messages.
 type Store interface {
-	// AskThread is the run's thread, found or not.
-	AskThread(ctx context.Context, runID string) (Thread, bool, error)
+	// AskThread is one of the run's threads, found or not.
+	AskThread(ctx context.Context, runID, threadID string) (Thread, bool, error)
+	// AskThreads lists the run's threads, oldest first (created_at, then id).
+	AskThreads(ctx context.Context, runID string) ([]Thread, error)
+	// SaveAskThread stores a thread whole, keyed by its run and id: its
+	// created_at is stamped on the first save and kept, its updated_at on
+	// every save.
 	SaveAskThread(ctx context.Context, t Thread) error
-	// AppendAskMessage stores a message, assigning its Seq (the run's next)
-	// and, when zero, its At.
+	// AppendAskMessage stores a message of a thread, assigning its Seq (the
+	// run's next) and, when zero, its At.
 	AppendAskMessage(ctx context.Context, m Message) (Message, error)
 	// AskMessages lists a run's messages after seq, oldest first.
 	AskMessages(ctx context.Context, runID string, afterSeq int64) ([]Message, error)
@@ -63,32 +73,61 @@ type Store interface {
 // and refuses what Postgres does (asktest holds the two together).
 type MemStore struct {
 	mu       sync.Mutex
-	threads  map[string]Thread
+	threads  map[string]map[string]Thread // run → thread id → thread
 	messages map[string][]Message
 }
 
 func NewMemStore() *MemStore {
-	return &MemStore{threads: map[string]Thread{}, messages: map[string][]Message{}}
+	return &MemStore{threads: map[string]map[string]Thread{}, messages: map[string][]Message{}}
 }
 
-func (s *MemStore) AskThread(ctx context.Context, runID string) (Thread, bool, error) {
-	if err := usable(ctx, runID); err != nil {
+func (s *MemStore) AskThread(ctx context.Context, runID, threadID string) (Thread, bool, error) {
+	if err := usable(ctx, runID, threadID); err != nil {
 		return Thread{}, false, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok := s.threads[runID]
+	t, ok := s.threads[runID][threadID]
 	return t, ok, nil
 }
 
-func (s *MemStore) SaveAskThread(ctx context.Context, t Thread) error {
-	if err := usable(ctx, t.RunID, t.SessionID, t.Model); err != nil {
-		return err
+func (s *MemStore) AskThreads(ctx context.Context, runID string) ([]Thread, error) {
+	if err := usable(ctx, runID); err != nil {
+		return nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t.UpdatedAt = stored(time.Now())
-	s.threads[t.RunID] = t
+	var out []Thread
+	for _, t := range s.threads[runID] {
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
+func (s *MemStore) SaveAskThread(ctx context.Context, t Thread) error {
+	if err := usable(ctx, t.RunID, t.ID, t.SessionID, t.Model); err != nil {
+		return err
+	}
+	if t.ID == "" {
+		return fmt.Errorf("ask thread: no id")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := stored(time.Now())
+	t.CreatedAt, t.UpdatedAt = now, now
+	if prev, ok := s.threads[t.RunID][t.ID]; ok {
+		t.CreatedAt = prev.CreatedAt
+	}
+	if s.threads[t.RunID] == nil {
+		s.threads[t.RunID] = map[string]Thread{}
+	}
+	s.threads[t.RunID][t.ID] = t
 	return nil
 }
 
@@ -96,8 +135,11 @@ func (s *MemStore) AppendAskMessage(ctx context.Context, m Message) (Message, er
 	if m.At.IsZero() {
 		m.At = time.Now().UTC()
 	}
-	if err := usable(ctx, m.RunID, m.ID, m.Role, m.Text, m.UserID, m.Model, m.Error); err != nil {
+	if err := usable(ctx, m.RunID, m.ThreadID, m.ID, m.Role, m.Text, m.UserID, m.Model, m.Error); err != nil {
 		return m, err
+	}
+	if m.ThreadID == "" {
+		return m, fmt.Errorf("ask message: no thread")
 	}
 	if m.Role != RoleQuestion && m.Role != RoleAnswer {
 		return m, fmt.Errorf("ask message: role %q", m.Role)

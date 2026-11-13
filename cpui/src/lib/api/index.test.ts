@@ -245,6 +245,12 @@ describe('what each call sends', () => {
 			'setAskModel',
 			{ path: { id: 'r' }, body: { model: 'm' } }
 		],
+		[
+			'the Ask model of a session',
+			() => api.ask.setModel('r', 'm', 's1'),
+			'setAskModel',
+			{ path: { id: 'r' }, body: { model: 'm', thread_id: 's1' } }
+		],
 		['a ticket removal', () => tickets.remove('t'), 'deleteTicket', { path: { id: 't' } }],
 		['a project removal', () => projects.remove('p'), 'deleteProject', { path: { id: 'p' } }],
 		[
@@ -1318,25 +1324,59 @@ describe('the streams', () => {
 			expect(FakeEventSource.last.url).toBe('/api/runs/r/ask/stream?after_seq=4');
 		});
 
-		it('hands on messages, deltas and state as frames', () => {
+		it('hands on messages, deltas, state and sessions as frames', () => {
 			const onFrame = vi.fn();
 			api.ask.stream('r', onFrame);
 			const es = FakeEventSource.last;
 			es.onmessage?.({
-				data: JSON.stringify({ message: { seq: 1, id: 'm', role: 'answer', text: 't', at: 'a' } })
+				data: JSON.stringify({
+					message: { seq: 1, thread_id: 's1', id: 'm', role: 'answer', text: 't', at: 'a' }
+				})
 			});
 			expect(onFrame).toHaveBeenLastCalledWith({
 				kind: 'message',
-				message: expect.objectContaining({ id: 'm', role: 'answer' })
+				sessionId: 's1',
+				message: expect.objectContaining({ id: 'm', role: 'answer', sessionId: 's1' })
 			});
-			es.send('delta', { text: 'x', tool: '' });
-			expect(onFrame).toHaveBeenLastCalledWith({ kind: 'delta', text: 'x', tool: undefined });
+			es.send('delta', { thread_id: 's1', text: 'x', tool: '' });
+			expect(onFrame).toHaveBeenLastCalledWith({
+				kind: 'delta',
+				sessionId: 's1',
+				text: 'x',
+				tool: undefined
+			});
 			es.send('delta', { tool: 'read' });
-			expect(onFrame).toHaveBeenLastCalledWith({ kind: 'delta', text: '', tool: 'read' });
-			es.send('state', { busy: true, model: 'm' });
-			expect(onFrame).toHaveBeenLastCalledWith({ kind: 'state', busy: true, model: 'm' });
+			expect(onFrame).toHaveBeenLastCalledWith({
+				kind: 'delta',
+				sessionId: '',
+				text: '',
+				tool: 'read'
+			});
+			es.send('state', { thread_id: 's2', busy: true, model: 'm' });
+			expect(onFrame).toHaveBeenLastCalledWith({
+				kind: 'state',
+				sessionId: 's2',
+				busy: true,
+				model: 'm'
+			});
 			es.send('state', {});
-			expect(onFrame).toHaveBeenLastCalledWith({ kind: 'state', busy: false, model: undefined });
+			expect(onFrame).toHaveBeenLastCalledWith({
+				kind: 'state',
+				sessionId: '',
+				busy: false,
+				model: undefined
+			});
+			es.send('thread', {
+				thread_id: 's3',
+				thread: { id: 's3', model: 'm', busy: false, created_at: 'a', updated_at: 'a' }
+			});
+			expect(onFrame).toHaveBeenLastCalledWith({
+				kind: 'session',
+				session: { id: 's3', harnessSession: undefined, model: 'm', busy: false, createdAt: 'a' }
+			});
+			onFrame.mockClear();
+			es.send('thread', {});
+			expect(onFrame).not.toHaveBeenCalled();
 		});
 
 		it('ignores a keep-alive with no message', () => {
@@ -1560,6 +1600,20 @@ describe('the rest of the surface', () => {
 			'askRun',
 			answer({}),
 			{ path: { id: 'r' }, body: { text: 'why?' } }
+		],
+		[
+			'ask.send to a session',
+			() => ask.send('r', 'why?', 's1'),
+			'askRun',
+			answer({}),
+			{ path: { id: 'r' }, body: { text: 'why?', thread_id: 's1' } }
+		],
+		[
+			'ask.newSession',
+			() => ask.newSession('r'),
+			'newAskThread',
+			answer({}),
+			{ path: { id: 'r' } }
 		],
 		[
 			'workspace.file',

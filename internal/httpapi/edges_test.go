@@ -207,7 +207,8 @@ main:
 `
 
 // The pane end to end: a question is recorded at once, frames reach the
-// stream, the answer lands, and the model can be picked.
+// stream, the answer lands, the model can be picked, and a second session
+// opened and asked in on its own.
 func TestAskPane(t *testing.T) {
 	x := newEnv(t, engine.Config{}, askFlow)
 	id := x.createTicketFlow(t, "T", "asky")
@@ -216,7 +217,7 @@ func TestAskPane(t *testing.T) {
 
 	res, body := x.do(t, "GET", path, nil, nil)
 	st := decode[ask.AskState](t, body)
-	if res.StatusCode != http.StatusOK || !st.Enabled {
+	if res.StatusCode != http.StatusOK || !st.Enabled || st.Threads == nil {
 		t.Fatalf("state = %d %s", res.StatusCode, body)
 	}
 	if res, body := x.do(t, "PUT", path+"/model", AskModelRequest{Model: "fake/other"}, nil); res.StatusCode != http.StatusNoContent {
@@ -225,8 +226,14 @@ func TestAskPane(t *testing.T) {
 	if res, body := x.do(t, "PUT", path+"/model", AskModelRequest{Model: " "}, nil); res.StatusCode != http.StatusBadRequest {
 		t.Errorf("no model = %d %s", res.StatusCode, body)
 	}
+	if res, body := x.do(t, "PUT", path+"/model", AskModelRequest{Model: "fake/other", ThreadID: "ghost"}, nil); res.StatusCode != http.StatusNotFound {
+		t.Errorf("model of an unknown session = %d %s", res.StatusCode, body)
+	}
 	if res, body := x.do(t, "POST", path, AskRequest{Text: "  "}, nil); res.StatusCode != http.StatusBadRequest {
 		t.Errorf("empty question = %d %s", res.StatusCode, body)
+	}
+	if res, body := x.do(t, "POST", path, AskRequest{Text: "why?", ThreadID: "ghost"}, nil); res.StatusCode != http.StatusNotFound {
+		t.Errorf("question to an unknown session = %d %s", res.StatusCode, body)
 	}
 
 	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -243,18 +250,43 @@ func TestAskPane(t *testing.T) {
 		t.Fatalf("ask = %d %s", res.StatusCode, body)
 	}
 	q := decode[ask.Message](t, body)
-	if q.Role != ask.RoleQuestion || q.Text != "why?" || q.UserID != testUser {
+	if q.Role != ask.RoleQuestion || q.Text != "why?" || q.UserID != testUser || q.ThreadID == "" {
 		t.Errorf("question = %+v", q)
 	}
 	lines := readSSE(t, stream.Body, func(lines []string) bool { return lines[len(lines)-1] == "event: state" })
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, `"text":"why?"`) || !strings.Contains(joined, "id: 1") {
+	if !strings.Contains(joined, `"text":"why?"`) || !strings.Contains(joined, "id: 1") || !strings.Contains(joined, `"thread_id":"`+q.ThreadID+`"`) {
 		t.Errorf("stream:\n%s", joined)
 	}
-	waitFor(t, "the answer", func() bool {
+	idle := func() bool {
 		_, b := x.do(t, "GET", path, nil, nil)
-		return !decode[ask.AskState](t, b).Busy
-	})
+		for _, th := range decode[ask.AskState](t, b).Threads {
+			if th.Busy {
+				return false
+			}
+		}
+		return true
+	}
+	waitFor(t, "the answer", idle)
+
+	res, body = x.do(t, "POST", path+"/threads", nil, nil)
+	th := decode[ask.ThreadState](t, body)
+	if res.StatusCode != http.StatusCreated || th.ID == "" || th.ID == q.ThreadID || th.Model != "fake/other" || th.Busy {
+		t.Fatalf("new session = %d %s", res.StatusCode, body)
+	}
+	res, body = x.do(t, "POST", path, AskRequest{Text: "and here?", ThreadID: th.ID}, nil)
+	if res.StatusCode != http.StatusAccepted {
+		t.Fatalf("ask in the new session = %d %s", res.StatusCode, body)
+	}
+	if m := decode[ask.Message](t, body); m.ThreadID != th.ID {
+		t.Errorf("question = %+v, want it in %s", m, th.ID)
+	}
+	waitFor(t, "the second answer", idle)
+	_, body = x.do(t, "GET", path, nil, nil)
+	st = decode[ask.AskState](t, body)
+	if len(st.Threads) != 2 || st.Threads[0].ID != q.ThreadID || st.Threads[1].ID != th.ID || len(st.Messages) != 4 {
+		t.Errorf("state = %s", body)
+	}
 }
 
 // streamAsk over a store that cannot be read says so instead of opening.

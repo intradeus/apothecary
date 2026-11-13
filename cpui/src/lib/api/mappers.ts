@@ -11,6 +11,7 @@
 import type * as Wire from './generated/types.gen';
 import type {
 	AskMessage,
+	AskSession,
 	AskState,
 	AuthStatus,
 	CliLogin,
@@ -199,6 +200,7 @@ const list = <T>(v: T[] | null | undefined): T[] => v ?? [];
 export function toAskMessage(w: Wire.Message): AskMessage {
 	return {
 		seq: w.seq,
+		sessionId: w.thread_id ?? '',
 		id: w.id,
 		role: w.role === 'answer' ? 'answer' : 'question',
 		text: w.text,
@@ -211,14 +213,24 @@ export function toAskMessage(w: Wire.Message): AskMessage {
 	};
 }
 
+/** The engine's thread is the pane's session. */
+export function toAskSession(w: Wire.ThreadState): AskSession {
+	return {
+		id: w.id,
+		harnessSession: w.session_id || undefined,
+		model: w.model || undefined,
+		busy: !!w.busy,
+		createdAt: w.created_at
+	};
+}
+
 export function toAskState(w: Wire.AskState): AskState {
 	return {
 		enabled: w.enabled,
 		reason: w.reason || undefined,
 		harness: w.harness || undefined,
-		model: w.model || undefined,
 		models: list(w.models),
-		busy: w.busy,
+		sessions: list(w.threads).map(toAskSession),
 		messages: list(w.messages).map(toAskMessage)
 	};
 }

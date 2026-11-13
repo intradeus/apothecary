@@ -4,6 +4,7 @@
 // re-render and would have to restate those rules.
 import type {
 	AskMessage,
+	AskSession,
 	AskState,
 	Attachment,
 	EgressAuditRow,
@@ -83,6 +84,7 @@ export const anAnswer = (seq: number, id: string, payload: Record<string, unknow
 
 export const anAskMessage = (over: Partial<AskMessage> = {}): AskMessage => ({
 	seq: 1,
+	sessionId: 's1',
 	id: 'm1',
 	role: 'question',
 	text: 'Where is the retry?',
@@ -92,12 +94,19 @@ export const anAskMessage = (over: Partial<AskMessage> = {}): AskMessage => ({
 	...over
 });
 
+export const anAskSession = (over: Partial<AskSession> = {}): AskSession => ({
+	id: 's1',
+	model: 'acme/one',
+	busy: false,
+	createdAt: AT,
+	...over
+});
+
 export const anAskState = (over: Partial<AskState> = {}): AskState => ({
 	enabled: true,
 	harness: 'acme',
-	model: 'acme/one',
 	models: [],
-	busy: false,
+	sessions: [anAskSession()],
 	messages: [],
 	...over
 });

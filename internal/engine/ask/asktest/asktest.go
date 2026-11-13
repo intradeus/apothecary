@@ -29,31 +29,70 @@ func RunContract(t *testing.T, open func(t *testing.T) ask.Store) {
 func runThreads(t *testing.T, open func(t *testing.T) ask.Store) {
 	t.Run("a run with no thread has none", func(t *testing.T) {
 		s := open(t)
-		th, ok, err := s.AskThread(context.Background(), "nope")
+		ctx := context.Background()
+		th, ok, err := s.AskThread(ctx, "nope", "t1")
 		if err != nil || ok || th != (ask.Thread{}) {
 			t.Fatalf("thread = %+v, %v, %v", th, ok, err)
 		}
+		if ths, err := s.AskThreads(ctx, "nope"); err != nil || ths != nil {
+			t.Fatalf("threads = %#v, %v", ths, err)
+		}
 	})
 
-	t.Run("a thread round trips and saving replaces it", func(t *testing.T) {
+	t.Run("threads round trip and saving replaces one", func(t *testing.T) {
 		s := open(t)
 		ctx := context.Background()
-		save(t, s, ask.Thread{RunID: "r1", SessionID: "s1", Model: "fake/one"})
-		save(t, s, ask.Thread{RunID: "r2", Model: "fake/other"})
-		check := func(runID, session, model string) {
+		save(t, s, ask.Thread{RunID: "r1", ID: "t1", SessionID: "s1", Model: "fake/one"})
+		save(t, s, ask.Thread{RunID: "r1", ID: "t2", SessionID: "s9", Model: "fake/nine"})
+		save(t, s, ask.Thread{RunID: "r2", ID: "t1", Model: "fake/other"})
+		check := func(runID, id, session, model string) {
 			t.Helper()
-			th, ok, err := s.AskThread(ctx, runID)
-			if err != nil || !ok || th.RunID != runID || th.SessionID != session || th.Model != model || th.UpdatedAt.IsZero() {
-				t.Errorf("%s = %+v, %v, %v", runID, th, ok, err)
+			th, ok, err := s.AskThread(ctx, runID, id)
+			if err != nil || !ok || th.RunID != runID || th.ID != id || th.SessionID != session || th.Model != model ||
+				th.UpdatedAt.IsZero() || th.CreatedAt.IsZero() {
+				t.Errorf("%s/%s = %+v, %v, %v", runID, id, th, ok, err)
 			}
 		}
-		check("r1", "s1", "fake/one")
-		save(t, s, ask.Thread{RunID: "r1", SessionID: "s2", Model: "fake/two"})
-		check("r1", "s2", "fake/two")
-		check("r2", "", "fake/other")
-		// Saving is the whole row: an empty field empties it.
-		save(t, s, ask.Thread{RunID: "r1"})
-		check("r1", "", "")
+		check("r1", "t1", "s1", "fake/one")
+		save(t, s, ask.Thread{RunID: "r1", ID: "t1", SessionID: "s2", Model: "fake/two"})
+		check("r1", "t1", "s2", "fake/two")
+		check("r1", "t2", "s9", "fake/nine")
+		check("r2", "t1", "", "fake/other")
+		// Saving is the whole row: an empty field empties it, in that thread only.
+		save(t, s, ask.Thread{RunID: "r1", ID: "t1"})
+		check("r1", "t1", "", "")
+		check("r1", "t2", "s9", "fake/nine")
+		if th, ok, err := s.AskThread(ctx, "r1", "t3"); err != nil || ok {
+			t.Errorf("unknown thread = %+v, %v, %v", th, ok, err)
+		}
+	})
+
+	t.Run("threads list in creation order, the run's own only", func(t *testing.T) {
+		s := open(t)
+		ctx := context.Background()
+		for _, id := range []string{"c", "a", "b"} {
+			save(t, s, ask.Thread{RunID: "r1", ID: id})
+			time.Sleep(2 * time.Millisecond)
+		}
+		save(t, s, ask.Thread{RunID: "r2", ID: "z"})
+		save(t, s, ask.Thread{RunID: "r1", ID: "c", Model: "fake/later"}) // a save is not a creation
+		ths, err := s.AskThreads(ctx, "r1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, th := range ths {
+			if th.RunID != "r1" {
+				t.Errorf("listed %+v", th)
+			}
+			got = append(got, th.ID)
+		}
+		if want := []string{"c", "a", "b"}; !slices.Equal(got, want) {
+			t.Errorf("threads = %v, want %v", got, want)
+		}
+		if ths[0].Model != "fake/later" {
+			t.Errorf("listed a stale row: %+v", ths[0])
+		}
 	})
 
 	t.Run("the store stamps a thread, whatever the caller says", func(t *testing.T) {
@@ -62,34 +101,41 @@ func runThreads(t *testing.T, open func(t *testing.T) ask.Store) {
 		const skew = time.Minute // the stamp is the database server's clock
 		for _, given := range []time.Time{{}, time.Date(2001, 2, 3, 4, 5, 6, 0, time.UTC), time.Now().Add(24 * time.Hour)} {
 			before := time.Now()
-			save(t, s, ask.Thread{RunID: "r1", Model: "fake/one", UpdatedAt: given})
-			th, ok, err := s.AskThread(ctx, "r1")
+			save(t, s, ask.Thread{RunID: "r1", ID: given.String(), Model: "fake/one", CreatedAt: given, UpdatedAt: given})
+			th, ok, err := s.AskThread(ctx, "r1", given.String())
 			if err != nil || !ok {
 				t.Fatalf("thread = %+v, %v, %v", th, ok, err)
 			}
-			if th.UpdatedAt.Before(before.Add(-skew)) || th.UpdatedAt.After(time.Now().Add(skew)) {
-				t.Errorf("given %v: updated_at = %v", given, th.UpdatedAt)
-			}
-			if th.UpdatedAt.Nanosecond()%1000 != 0 || th.UpdatedAt.Location() != time.Local {
-				t.Errorf("updated_at is not a timestamptz: %v", th.UpdatedAt)
+			for name, at := range map[string]time.Time{"created_at": th.CreatedAt, "updated_at": th.UpdatedAt} {
+				if at.Before(before.Add(-skew)) || at.After(time.Now().Add(skew)) {
+					t.Errorf("given %v: %s = %v", given, name, at)
+				}
+				if at.Nanosecond()%1000 != 0 || at.Location() != time.Local {
+					t.Errorf("%s is not a timestamptz: %v", name, at)
+				}
 			}
 		}
-		first, _, _ := s.AskThread(ctx, "r1")
+		save(t, s, ask.Thread{RunID: "r1", ID: "t1"})
+		first, _, _ := s.AskThread(ctx, "r1", "t1")
 		time.Sleep(2 * time.Millisecond)
-		save(t, s, ask.Thread{RunID: "r1", UpdatedAt: first.UpdatedAt})
-		if second, _, _ := s.AskThread(ctx, "r1"); !second.UpdatedAt.After(first.UpdatedAt) {
+		save(t, s, ask.Thread{RunID: "r1", ID: "t1", CreatedAt: time.Now(), UpdatedAt: first.UpdatedAt})
+		second, _, _ := s.AskThread(ctx, "r1", "t1")
+		if !second.UpdatedAt.After(first.UpdatedAt) {
 			t.Errorf("save kept updated_at: %v, then %v", first.UpdatedAt, second.UpdatedAt)
+		}
+		if !second.CreatedAt.Equal(first.CreatedAt) {
+			t.Errorf("save moved created_at: %v, then %v", first.CreatedAt, second.CreatedAt)
 		}
 	})
 
 	t.Run("threads and messages are separate rows", func(t *testing.T) {
 		s := open(t)
 		ctx := context.Background()
-		appendMsg(t, s, ask.Message{RunID: "r1", ID: "m1", Role: ask.RoleQuestion, Text: "q"})
-		if th, ok, err := s.AskThread(ctx, "r1"); err != nil || ok {
+		appendMsg(t, s, ask.Message{RunID: "r1", ThreadID: "t1", ID: "m1", Role: ask.RoleQuestion, Text: "q"})
+		if th, ok, err := s.AskThread(ctx, "r1", "t1"); err != nil || ok {
 			t.Errorf("a message made a thread: %+v, %v, %v", th, ok, err)
 		}
-		save(t, s, ask.Thread{RunID: "r2"})
+		save(t, s, ask.Thread{RunID: "r2", ID: "t1"})
 		if m, err := s.AskMessages(ctx, "r2", 0); err != nil || m != nil {
 			t.Errorf("a thread made messages: %+v, %v", m, err)
 		}
@@ -101,7 +147,7 @@ func runMessages(t *testing.T, open func(t *testing.T) ask.Store) {
 		s := open(t)
 		ctx := context.Background()
 		at := time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
-		in := ask.Message{RunID: "r1", ID: "m1", Role: ask.RoleAnswer, Text: "because é\n\"quoted\"", UserID: "u1",
+		in := ask.Message{RunID: "r1", ThreadID: "t1", ID: "m1", Role: ask.RoleAnswer, Text: "because é\n\"quoted\"", UserID: "u1",
 			Model: "fake/one", CostUSD: 0.25, Turns: 3, Error: "partial", At: at}
 		out, err := s.AppendAskMessage(ctx, in)
 		if err != nil {
@@ -120,10 +166,10 @@ func runMessages(t *testing.T, open func(t *testing.T) ask.Store) {
 		}
 	})
 
-	t.Run("a question needs no more than its role", func(t *testing.T) {
+	t.Run("a question needs no more than its role and thread", func(t *testing.T) {
 		s := open(t)
 		ctx := context.Background()
-		appendMsg(t, s, ask.Message{RunID: "r1", Role: ask.RoleQuestion})
+		appendMsg(t, s, ask.Message{RunID: "r1", ThreadID: "t1", Role: ask.RoleQuestion})
 		got, err := s.AskMessages(ctx, "r1", 0)
 		if err != nil || len(got) != 1 {
 			t.Fatalf("messages = %+v, %v", got, err)
@@ -137,13 +183,35 @@ func runMessages(t *testing.T, open func(t *testing.T) ask.Store) {
 	t.Run("seq counts each run from 1, whatever the caller says", func(t *testing.T) {
 		s := open(t)
 		for i, want := range []int64{1, 2, 3} {
-			m := appendMsg(t, s, ask.Message{RunID: "r1", ID: fmt.Sprintf("m%d", i), Role: ask.RoleQuestion, Seq: 40})
+			m := appendMsg(t, s, ask.Message{RunID: "r1", ThreadID: "t1", ID: fmt.Sprintf("m%d", i), Role: ask.RoleQuestion, Seq: 40})
 			if m.Seq != want {
 				t.Errorf("r1 seq = %d, want %d", m.Seq, want)
 			}
 		}
-		if m := appendMsg(t, s, ask.Message{RunID: "r2", ID: "o", Role: ask.RoleAnswer}); m.Seq != 1 {
+		if m := appendMsg(t, s, ask.Message{RunID: "r2", ThreadID: "t1", ID: "o", Role: ask.RoleAnswer}); m.Seq != 1 {
 			t.Errorf("r2 seq = %d", m.Seq)
+		}
+	})
+
+	t.Run("a run's threads share its seq, each message keeping its thread", func(t *testing.T) {
+		s := open(t)
+		ctx := context.Background()
+		for i, th := range []string{"t1", "t2", "t1", "t2", "t2"} {
+			if m := appendMsg(t, s, ask.Message{RunID: "r1", ThreadID: th, Role: ask.RoleQuestion}); m.Seq != int64(i+1) || m.ThreadID != th {
+				t.Errorf("append %d = %+v", i, m)
+			}
+		}
+		got, err := s.AskMessages(ctx, "r1", 0)
+		if err != nil || len(got) != 5 {
+			t.Fatalf("messages = %+v, %v", got, err)
+		}
+		checkGapless(t, got)
+		var threads []string
+		for _, m := range got {
+			threads = append(threads, m.ThreadID)
+		}
+		if want := []string{"t1", "t2", "t1", "t2", "t2"}; !slices.Equal(threads, want) {
+			t.Errorf("threads = %v, want %v", threads, want)
 		}
 	})
 
@@ -151,7 +219,7 @@ func runMessages(t *testing.T, open func(t *testing.T) ask.Store) {
 		s := open(t)
 		ctx := context.Background()
 		for _, id := range []string{"same", "same", ""} {
-			if m := appendMsg(t, s, ask.Message{RunID: "r1", ID: id, Role: ask.RoleQuestion}); m.ID != id {
+			if m := appendMsg(t, s, ask.Message{RunID: "r1", ThreadID: "t1", ID: id, Role: ask.RoleQuestion}); m.ID != id {
 				t.Errorf("appended id = %q, want %q", m.ID, id)
 			}
 		}
@@ -165,14 +233,14 @@ func runMessages(t *testing.T, open func(t *testing.T) ask.Store) {
 		s := open(t)
 		ctx := context.Background()
 		before := time.Now()
-		m := appendMsg(t, s, ask.Message{RunID: "r1", Role: ask.RoleQuestion})
+		m := appendMsg(t, s, ask.Message{RunID: "r1", ThreadID: "t1", Role: ask.RoleQuestion})
 		if m.At.Before(before) || m.At.After(time.Now()) || m.At.Location() != time.UTC {
 			t.Errorf("stamped at = %v", m.At)
 		}
 		// Below the microsecond the column has no room: the answer keeps
 		// what it was given, a read what was stored.
 		at := time.Date(2026, 3, 4, 5, 6, 7, 123456789, time.FixedZone("x", 3600))
-		given := appendMsg(t, s, ask.Message{RunID: "r1", Role: ask.RoleQuestion, At: at})
+		given := appendMsg(t, s, ask.Message{RunID: "r1", ThreadID: "t1", Role: ask.RoleQuestion, At: at})
 		if !given.At.Equal(at) {
 			t.Errorf("appended at = %v", given.At)
 		}
@@ -193,9 +261,9 @@ func runMessages(t *testing.T, open func(t *testing.T) ask.Store) {
 		ctx := context.Background()
 		base := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 		for i, at := range []time.Time{base.Add(time.Hour), base, base.Add(-time.Hour)} {
-			appendMsg(t, s, ask.Message{RunID: "r1", ID: fmt.Sprintf("m%d", i), Role: ask.RoleQuestion, At: at})
+			appendMsg(t, s, ask.Message{RunID: "r1", ThreadID: "t1", ID: fmt.Sprintf("m%d", i), Role: ask.RoleQuestion, At: at})
 		}
-		appendMsg(t, s, ask.Message{RunID: "r2", ID: "other", Role: ask.RoleQuestion})
+		appendMsg(t, s, ask.Message{RunID: "r2", ThreadID: "t1", ID: "other", Role: ask.RoleQuestion})
 		for after, want := range map[int64][]string{-1: {"m0", "m1", "m2"}, 0: {"m0", "m1", "m2"}, 1: {"m1", "m2"}, 2: {"m2"}} {
 			got, err := s.AskMessages(ctx, "r1", after)
 			if err != nil {
@@ -224,20 +292,23 @@ func runRefusals(t *testing.T, open func(t *testing.T) ask.Store) {
 	t.Run("a refused message stores nothing and takes no seq", func(t *testing.T) {
 		s := open(t)
 		ctx := context.Background()
-		appendMsg(t, s, ask.Message{RunID: "r1", ID: "m1", Role: ask.RoleQuestion, Text: "q"})
-		good := ask.Message{RunID: "r1", ID: "bad", Role: ask.RoleAnswer}
+		appendMsg(t, s, ask.Message{RunID: "r1", ThreadID: "t1", ID: "m1", Role: ask.RoleQuestion, Text: "q"})
+		good := ask.Message{RunID: "r1", ThreadID: "t1", ID: "bad", Role: ask.RoleAnswer}
 		for name, bad := range map[string]func(*ask.Message){
-			"unknown role":        func(m *ask.Message) { m.Role = "shout" },
-			"no role":             func(m *ask.Message) { m.Role = "" },
-			"NUL in the text":     func(m *ask.Message) { m.Text = "a\x00b" },
-			"NUL in the error":    func(m *ask.Message) { m.Error = "a\x00b" },
-			"NUL in the id":       func(m *ask.Message) { m.ID = "a\x00b" },
-			"NUL in the user":     func(m *ask.Message) { m.UserID = "a\x00b" },
-			"NUL in the model":    func(m *ask.Message) { m.Model = "a\x00b" },
-			"invalid UTF-8 text":  func(m *ask.Message) { m.Text = "a\xffb" },
-			"invalid UTF-8 error": func(m *ask.Message) { m.Error = "a\xffb" },
-			"too many turns":      func(m *ask.Message) { m.Turns = math.MaxInt32 + 1 },
-			"too few turns":       func(m *ask.Message) { m.Turns = math.MinInt32 - 1 },
+			"unknown role":         func(m *ask.Message) { m.Role = "shout" },
+			"no role":              func(m *ask.Message) { m.Role = "" },
+			"no thread":            func(m *ask.Message) { m.ThreadID = "" },
+			"NUL in the thread":    func(m *ask.Message) { m.ThreadID = "a\x00b" },
+			"invalid UTF-8 thread": func(m *ask.Message) { m.ThreadID = "a\xffb" },
+			"NUL in the text":      func(m *ask.Message) { m.Text = "a\x00b" },
+			"NUL in the error":     func(m *ask.Message) { m.Error = "a\x00b" },
+			"NUL in the id":        func(m *ask.Message) { m.ID = "a\x00b" },
+			"NUL in the user":      func(m *ask.Message) { m.UserID = "a\x00b" },
+			"NUL in the model":     func(m *ask.Message) { m.Model = "a\x00b" },
+			"invalid UTF-8 text":   func(m *ask.Message) { m.Text = "a\xffb" },
+			"invalid UTF-8 error":  func(m *ask.Message) { m.Error = "a\xffb" },
+			"too many turns":       func(m *ask.Message) { m.Turns = math.MaxInt32 + 1 },
+			"too few turns":        func(m *ask.Message) { m.Turns = math.MinInt32 - 1 },
 		} {
 			m := good
 			bad(&m)
@@ -251,7 +322,7 @@ func runRefusals(t *testing.T, open func(t *testing.T) ask.Store) {
 		if m := appendMsg(t, s, good); m.Seq != 2 {
 			t.Errorf("next seq = %d, want 2", m.Seq)
 		}
-		if m := appendMsg(t, s, ask.Message{RunID: "r2", Role: ask.RoleAnswer, Turns: math.MaxInt32}); m.Turns != math.MaxInt32 {
+		if m := appendMsg(t, s, ask.Message{RunID: "r2", ThreadID: "t1", Role: ask.RoleAnswer, Turns: math.MaxInt32}); m.Turns != math.MaxInt32 {
 			t.Errorf("turns = %d", m.Turns)
 		}
 	})
@@ -259,20 +330,26 @@ func runRefusals(t *testing.T, open func(t *testing.T) ask.Store) {
 	t.Run("a refused thread stores nothing", func(t *testing.T) {
 		s := open(t)
 		ctx := context.Background()
-		save(t, s, ask.Thread{RunID: "r1", SessionID: "s1", Model: "fake/one"})
+		save(t, s, ask.Thread{RunID: "r1", ID: "t1", SessionID: "s1", Model: "fake/one"})
 		for name, th := range map[string]ask.Thread{
-			"NUL in the session":   {RunID: "r1", SessionID: "a\x00b"},
-			"NUL in the model":     {RunID: "r1", Model: "a\x00b"},
-			"invalid UTF-8 model":  {RunID: "r1", Model: "a\xffb"},
-			"NUL in the run":       {RunID: "r\x00"},
-			"invalid UTF-8 in run": {RunID: "r\xff"},
+			"no id":                   {RunID: "r1", SessionID: "s2"},
+			"NUL in the id":           {RunID: "r1", ID: "t\x00"},
+			"invalid UTF-8 in the id": {RunID: "r1", ID: "t\xff"},
+			"NUL in the session":      {RunID: "r1", ID: "t1", SessionID: "a\x00b"},
+			"NUL in the model":        {RunID: "r1", ID: "t1", Model: "a\x00b"},
+			"invalid UTF-8 model":     {RunID: "r1", ID: "t1", Model: "a\xffb"},
+			"NUL in the run":          {RunID: "r\x00", ID: "t1"},
+			"invalid UTF-8 in run":    {RunID: "r\xff", ID: "t1"},
 		} {
 			if err := s.SaveAskThread(ctx, th); err == nil {
 				t.Errorf("%s: stored", name)
 			}
 		}
-		if th, ok, err := s.AskThread(ctx, "r1"); err != nil || !ok || th.SessionID != "s1" || th.Model != "fake/one" {
+		if th, ok, err := s.AskThread(ctx, "r1", "t1"); err != nil || !ok || th.SessionID != "s1" || th.Model != "fake/one" {
 			t.Errorf("thread = %+v, %v, %v", th, ok, err)
+		}
+		if ths, err := s.AskThreads(ctx, "r1"); err != nil || len(ths) != 1 {
+			t.Errorf("threads = %+v, %v", ths, err)
 		}
 	})
 
@@ -280,8 +357,14 @@ func runRefusals(t *testing.T, open func(t *testing.T) ask.Store) {
 		s := open(t)
 		ctx := context.Background()
 		for _, id := range []string{"a\x00b", "a\xffb"} {
-			if _, _, err := s.AskThread(ctx, id); err == nil {
+			if _, _, err := s.AskThread(ctx, id, "t1"); err == nil {
 				t.Errorf("AskThread(%q) succeeded", id)
+			}
+			if _, _, err := s.AskThread(ctx, "r1", id); err == nil {
+				t.Errorf("AskThread(r1, %q) succeeded", id)
+			}
+			if _, err := s.AskThreads(ctx, id); err == nil {
+				t.Errorf("AskThreads(%q) succeeded", id)
 			}
 			if _, err := s.AskMessages(ctx, id, 0); err == nil {
 				t.Errorf("AskMessages(%q) succeeded", id)
@@ -292,23 +375,26 @@ func runRefusals(t *testing.T, open func(t *testing.T) ask.Store) {
 	t.Run("a dead context does nothing", func(t *testing.T) {
 		s := open(t)
 		live := context.Background()
-		save(t, s, ask.Thread{RunID: "r1", SessionID: "s1"})
-		appendMsg(t, s, ask.Message{RunID: "r1", ID: "m1", Role: ask.RoleQuestion})
+		save(t, s, ask.Thread{RunID: "r1", ID: "t1", SessionID: "s1"})
+		appendMsg(t, s, ask.Message{RunID: "r1", ThreadID: "t1", ID: "m1", Role: ask.RoleQuestion})
 		ctx, cancel := context.WithCancel(live)
 		cancel()
-		if err := s.SaveAskThread(ctx, ask.Thread{RunID: "r1", SessionID: "s2"}); err == nil {
+		if err := s.SaveAskThread(ctx, ask.Thread{RunID: "r1", ID: "t1", SessionID: "s2"}); err == nil {
 			t.Error("SaveAskThread succeeded")
 		}
-		if _, err := s.AppendAskMessage(ctx, ask.Message{RunID: "r1", ID: "m2", Role: ask.RoleQuestion}); err == nil {
+		if _, err := s.AppendAskMessage(ctx, ask.Message{RunID: "r1", ThreadID: "t1", ID: "m2", Role: ask.RoleQuestion}); err == nil {
 			t.Error("AppendAskMessage succeeded")
 		}
-		if th, ok, err := s.AskThread(ctx, "r1"); err == nil || ok {
+		if th, ok, err := s.AskThread(ctx, "r1", "t1"); err == nil || ok {
 			t.Errorf("AskThread = %+v, %v, %v", th, ok, err)
+		}
+		if ths, err := s.AskThreads(ctx, "r1"); err == nil {
+			t.Errorf("AskThreads = %+v", ths)
 		}
 		if m, err := s.AskMessages(ctx, "r1", 0); err == nil {
 			t.Errorf("AskMessages = %+v", m)
 		}
-		if th, _, _ := s.AskThread(live, "r1"); th.SessionID != "s1" {
+		if th, _, _ := s.AskThread(live, "r1", "t1"); th.SessionID != "s1" {
 			t.Errorf("thread = %+v", th)
 		}
 		if m, _ := s.AskMessages(live, "r1", 0); len(m) != 1 {
@@ -327,7 +413,7 @@ func runConcurrent(t *testing.T, open func(t *testing.T) ask.Store) {
 			wg.Go(func() {
 				id := fmt.Sprintf("r%d", r)
 				for range each {
-					if _, err := s.AppendAskMessage(ctx, ask.Message{RunID: id, Role: ask.RoleQuestion}); err != nil {
+					if _, err := s.AppendAskMessage(ctx, ask.Message{RunID: id, ThreadID: "t1", Role: ask.RoleQuestion}); err != nil {
 						t.Errorf("%s: %v", id, err)
 					}
 				}
@@ -343,9 +429,9 @@ func runConcurrent(t *testing.T, open func(t *testing.T) ask.Store) {
 		}
 	})
 
-	// The engine keeps one answer in flight per run. Racing that may lose,
-	// the second insert meeting the first's key; it may never number two
-	// messages alike, leave a gap, or keep a message it refused.
+	// The engine serializes a run's appends, across its threads. Racing that
+	// may lose, the second insert meeting the first's key; it may never number
+	// two messages alike, leave a gap, or keep a message it refused.
 	t.Run("concurrent appends on one run never corrupt the log", func(t *testing.T) {
 		s := open(t)
 		ctx := context.Background()
@@ -359,7 +445,7 @@ func runConcurrent(t *testing.T, open func(t *testing.T) ask.Store) {
 			wg.Go(func() {
 				for i := range each {
 					id := fmt.Sprintf("%d-%d", w, i)
-					m, err := s.AppendAskMessage(ctx, ask.Message{RunID: "r1", ID: id, Role: ask.RoleQuestion})
+					m, err := s.AppendAskMessage(ctx, ask.Message{RunID: "r1", ThreadID: fmt.Sprintf("t%d", w%2), ID: id, Role: ask.RoleQuestion})
 					if err != nil {
 						continue
 					}

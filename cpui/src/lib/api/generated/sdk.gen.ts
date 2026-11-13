@@ -458,6 +458,9 @@ import type {
 	LogoutData,
 	LogoutErrors,
 	LogoutResponses,
+	NewAskThreadData,
+	NewAskThreadErrors,
+	NewAskThreadResponses,
 	OpenEditorData,
 	OpenEditorErrors,
 	OpenEditorResponses,
@@ -3816,9 +3819,9 @@ export const archiveRun = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * The Ask pane: its conversation, model and whether it is on
+ * The Ask pane: its threads, their conversations and models, and whether it is on
  *
- * A flow with an ask: section gives the run a read-only session beside its stages that answers questions about the code. Off (with the reason) when the flow has none, the workspace is gone, or the harness cannot promise a read-only session.
+ * A flow with an ask: section gives the run read-only sessions (threads) beside its stages that answer questions about the code; a run holds any number of them, each with its own harness session, model and messages. Off (with the reason) when the flow has none, the workspace is gone, or the harness cannot promise a read-only session.
  */
 export const getAsk = <ThrowOnError extends boolean = false>(
 	options: Options<GetAskData, ThrowOnError>
@@ -3841,9 +3844,9 @@ export const getAsk = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Ask the run's read-only session a question
+ * Ask one of the run's read-only sessions a question
  *
- * The question is recorded and returned at once; the answer arrives on the pane's stream. 409 when the pane is off or an answer is being written.
+ * The question is recorded in the thread named by thread_id (none: the run's latest, opened when the run has none) and returned at once; the answer arrives on the pane's stream. 404 for an unknown thread; 409 when the pane is off or an answer is being written in that thread.
  */
 export const askRun = <ThrowOnError extends boolean = false>(
 	options: Options<AskRunData, ThrowOnError>
@@ -3870,7 +3873,9 @@ export const askRun = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Pick the model the Ask session answers with
+ * Pick the model an Ask session answers with
+ *
+ * Picks the model of the thread named by thread_id (none: the run's latest, opened when the run has none); its live session is switched over at its next question. 404 for an unknown thread.
  */
 export const setAskModel = <ThrowOnError extends boolean = false>(
 	options: Options<SetAskModelData, ThrowOnError>
@@ -3899,7 +3904,7 @@ export const setAskModel = <ThrowOnError extends boolean = false>(
 /**
  * Server-sent event stream of the Ask pane
  *
- * Replays the messages after after_seq (id = seq), then streams: answers as they are written (delta frames), each message as it lands, the pane's state as it changes.
+ * Replays every thread's messages after after_seq (id = seq), then streams: answers as they are written (delta frames), each message as it lands, a thread's state as it changes, threads as they open (thread frames). Every frame names its thread_id.
  */
 export const streamAsk = <ThrowOnError extends boolean = false>(
 	options: Options<StreamAskData, ThrowOnError, StreamAskResponse>
@@ -3918,6 +3923,31 @@ export const streamAsk = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/runs/{id}/ask/stream',
+		...options
+	});
+
+/**
+ * Open a new Ask session in the run
+ *
+ * The thread starts with no messages and the model of the run's latest thread; its harness session opens with its first answer. 409 when the pane is off.
+ */
+export const newAskThread = <ThrowOnError extends boolean = false>(
+	options: Options<NewAskThreadData, ThrowOnError>
+): RequestResult<NewAskThreadResponses, NewAskThreadErrors, ThrowOnError> =>
+	(options.client ?? client).post<NewAskThreadResponses, NewAskThreadErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/ask/threads',
 		...options
 	});
 

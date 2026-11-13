@@ -343,10 +343,19 @@ describe('the Ask pane', () => {
 	it('reads a message, blanks as absent and costs as zero', () => {
 		expect(
 			map.toAskMessage(
-				wire<Wire.Message>({ seq: 1, id: 'm', role: 'answer', text: 't', at: AT, user_id: '' })
+				wire<Wire.Message>({
+					seq: 1,
+					thread_id: 's1',
+					id: 'm',
+					role: 'answer',
+					text: 't',
+					at: AT,
+					user_id: ''
+				})
 			)
 		).toEqual({
 			seq: 1,
+			sessionId: 's1',
 			id: 'm',
 			role: 'answer',
 			text: 't',
@@ -359,20 +368,47 @@ describe('the Ask pane', () => {
 		});
 	});
 
+	it('reads a message without its thread as of no session', () => {
+		expect(map.toAskMessage(wire<Wire.Message>({ seq: 1 })).sessionId).toBe('');
+	});
+
 	it('reads the pane, null lists as none', () => {
 		expect(
 			map.toAskState(
-				wire<Wire.AskState>({ enabled: true, busy: false, models: null, messages: null })
+				wire<Wire.AskState>({ enabled: true, models: null, threads: null, messages: null })
 			)
 		).toEqual({
 			enabled: true,
 			reason: undefined,
 			harness: undefined,
-			model: undefined,
 			models: [],
-			busy: false,
+			sessions: [],
 			messages: []
 		});
+	});
+
+	it('reads each thread as a session, blanks as absent', () => {
+		expect(
+			map.toAskState(
+				wire<Wire.AskState>({
+					enabled: true,
+					threads: [
+						{
+							id: 's1',
+							session_id: 'h1',
+							model: 'acme/one',
+							busy: true,
+							created_at: AT,
+							updated_at: AT
+						},
+						wire<Wire.ThreadState>({ id: 's2', session_id: '', model: '', created_at: AT })
+					]
+				})
+			).sessions
+		).toEqual([
+			{ id: 's1', harnessSession: 'h1', model: 'acme/one', busy: true, createdAt: AT },
+			{ id: 's2', harnessSession: undefined, model: undefined, busy: false, createdAt: AT }
+		]);
 	});
 });
 
