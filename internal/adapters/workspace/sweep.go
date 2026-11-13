@@ -12,16 +12,18 @@ const markerVar = "APOTHECARY_CMD"
 // first, KILL a second later for whatever ignored it. Processes are found by
 // the marker in their environment (every child inherits it; pgrep cannot
 // match it, /proc can). The sweeping shell skips itself: it carries the
-// marker too, by --remote-env.
+// marker too, by --remote-env. Another user's environ is unreadable, and a
+// failed `<` is reported before a later `2>/dev/null` applies, so the read is
+// grouped and the group silenced.
 func sweepPrelude(marker string) string {
 	return fmt.Sprintf(`__apo_sweep() { local m='%[1]s=%[2]s' d p n=0
   for d in /proc/[0-9]*; do p=${d#/proc/}; [ "$p" = "$$" ] && continue
-    if tr '\0' '\n' < "$d/environ" 2>/dev/null | grep -qxF -- "$m"; then kill -TERM "$p" 2>/dev/null || true; n=1; fi
+    if { tr '\0' '\n' < "$d/environ"; } 2>/dev/null | grep -qxF -- "$m"; then kill -TERM "$p" 2>/dev/null || true; n=1; fi
   done
   [ "$n" = 1 ] || return 0
   sleep 1
   for d in /proc/[0-9]*; do p=${d#/proc/}; [ "$p" = "$$" ] && continue
-    if tr '\0' '\n' < "$d/environ" 2>/dev/null | grep -qxF -- "$m"; then kill -KILL "$p" 2>/dev/null || true; fi
+    if { tr '\0' '\n' < "$d/environ"; } 2>/dev/null | grep -qxF -- "$m"; then kill -KILL "$p" 2>/dev/null || true; fi
   done
 }
 __apo_sweep; unset -f __apo_sweep

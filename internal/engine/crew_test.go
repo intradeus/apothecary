@@ -14,7 +14,7 @@ import (
 )
 
 // The harnesses' spawn tools as their ACP adapters send them (the pinned
-// versions; IMPLEMENTATION_NOTES, "War room").
+// versions; docs/notes, "War room").
 func TestSubagentSpawns(t *testing.T) {
 	cases := []struct {
 		name, title, input string

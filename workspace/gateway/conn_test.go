@@ -270,6 +270,48 @@ func TestHandleNeverReachesProtectedDestinations(t *testing.T) {
 	}
 }
 
+// Every run of a project is a peer on the gateway's one wg0, so the tunnel
+// subnet is protected (main appends it): a run naming an allowlisted host, in
+// deny mode, or inside its provisioning window still never gets the filter to
+// dial another run's address.
+func TestHandleNeverDialsAnotherRun(t *testing.T) {
+	sibling := net.ParseIP("10.90.0.3").To4()
+	_, runLinks, _ := net.ParseCIDR("10.90.0.1/16")
+	cases := []struct {
+		name    string
+		pol     File
+		port    int
+		payload []byte
+		open    bool
+	}{
+		{"allowlisted SNI", File{Mode: ModeAllow, Domains: []string{"github.com"}}, 443, buildClientHello("github.com"), false},
+		{"allowlisted Host", File{Mode: ModeAllow, Domains: []string{"github.com"}}, 80, []byte("GET / HTTP/1.1\r\nHost: github.com\r\n\r\n"), false},
+		{"allowlisted IP", File{Mode: ModeAllow, Domains: []string{sibling.String()}}, 443, garbage, false},
+		{"deny mode", File{Mode: ModeDeny}, 443, buildClientHello("fine.example"), false},
+		{"provisioning window", File{Mode: ModeAllow}, 443, buildClientHello("anything.example"), true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			g := newTestGateway(t)
+			g.protect = []*net.IPNet{runLinks}
+			if err := g.installPolicy(c.pol); err != nil {
+				t.Fatal(err)
+			}
+			if c.open {
+				g.applyRoutes(Routes{RunSubnets: map[string]string{"run-1": "127.0.0.0/8"},
+					Open: map[string]time.Time{"run-1": time.Now().Add(time.Hour)}})
+			}
+			ix := newInterception(t, &net.TCPAddr{IP: sibling, Port: c.port})
+			if got := exchange(t, g, c.payload); len(got) != 0 {
+				t.Errorf("client received %q", got)
+			}
+			if ix.dialed.Load() != 0 {
+				t.Fatal("another run's address was dialed")
+			}
+		})
+	}
+}
+
 // With no policy loaded yet there is nothing to allow by: the gateway drops,
 // and says nothing (there is no verdict to report).
 func TestHandleFailsClosedWithoutAPolicy(t *testing.T) {

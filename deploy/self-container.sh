@@ -32,8 +32,12 @@ case "${1:-}" in
     dir="${2:?usage: deploy/self-container.sh path <dir>}"
     id=$(self)
     if [ -z "$id" ]; then echo "$dir"; exit 0; fi
+    # Mounts are matched by their destination, so a symlink to one resolves
+    # first: an Apothecary workspace's stages run in $HOME/repo, a link to the
+    # bind-mounted checkout.
+    real=$(cd "$dir" 2>/dev/null && pwd -P) || real=$dir
     # The deepest bind mount at or above <dir>, plus the rest of the path.
-    docker inspect "$id" | jq -r --arg d "$dir" '
+    docker inspect "$id" | jq -r --arg d "$real" '
       [.[0].Mounts[] | select(.Type == "bind") | . as $m
        | select($d == $m.Destination or ($d | startswith($m.Destination + "/")))
        | {depth: ($m.Destination | length), src: ($m.Source + ($d | ltrimstr($m.Destination)))}]

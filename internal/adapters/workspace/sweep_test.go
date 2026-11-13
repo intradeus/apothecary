@@ -1,7 +1,9 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -43,5 +45,21 @@ func TestExecMarkerSweepsAndTags(t *testing.T) {
 	}
 	if slices.Contains(plain.args, "--remote-env") || strings.Contains(string(plain.stdin), "__apo_sweep") {
 		t.Errorf("unmarked exec must not sweep or tag: %v\n%s", plain.args, plain.stdin)
+	}
+}
+
+// The sweep reads every process's environ and cannot read another user's
+// (pid 1 as non-root; no /proc at all on macOS): it says nothing about that,
+// which a stage's output would otherwise end with, once per process.
+func TestSweepPreludeIsQuietAboutUnreadableProcesses(t *testing.T) {
+	cmd := exec.Command("bash", "-c", sweepPrelude("run1:none")+"echo swept")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil || strings.TrimSpace(string(out)) != "swept" {
+		t.Fatalf("sweep = %q %v (stderr %q)", out, err, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("the sweep wrote to stderr:\n%s", stderr.String())
 	}
 }

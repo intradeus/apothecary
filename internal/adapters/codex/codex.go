@@ -59,7 +59,7 @@ func (a *Adapter) InstallSkills(ctx context.Context, env envport.EnvID, names []
 // PrepareEnv generates codex-native config (§13): config.toml registering
 // the ask_human MCP server, plus one role file per .apothecary/agents spec —
 // codex has no named-agent registry, so the role prompt is delivered
-// in-band as a prompt preamble (mechanism recorded in IMPLEMENTATION_NOTES).
+// in-band as a prompt preamble (mechanism recorded in docs/notes).
 // A flow's mcp_servers are not here: a stage's ride its ACP session
 // (acpagent), and codex-acp keeps a session's servers to that session, so
 // each agent sees only its own.

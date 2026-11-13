@@ -49,7 +49,8 @@ type gateway struct {
 	gallery *gallery
 	// protect are destinations no run may reach, whatever the policy says —
 	// the cluster's pod and service ranges and link-local metadata, so the
-	// gateway is never a pivot into the network it runs on.
+	// gateway is never a pivot into the network it runs on, and the run
+	// links' own subnet, so no run reaches another of the project's runs.
 	protect []*net.IPNet
 	// wg is the WireGuard run link (Kubernetes); nil on docker.
 	wg *wgLink
@@ -194,6 +195,9 @@ func main() {
 			os.Exit(1)
 		}
 		g.wg = link
+		// Every run of the project is a peer on this wg0: no run reaches
+		// another's address through the gateway (wg.go).
+		g.protect = append(g.protect, link.subnet)
 		slog.Info("gateway: wg0 listening", "addr", wgAddr, "udp", wgListen, "mtu", link.mtu)
 	}
 	g.loadRoutes()
