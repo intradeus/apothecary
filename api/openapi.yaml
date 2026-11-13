@@ -305,6 +305,8 @@ components:
       properties:
         model:
           type: string
+        thread_id:
+          type: string
       required:
         - model
       type: object
@@ -312,13 +314,13 @@ components:
       properties:
         text:
           type: string
+        thread_id:
+          type: string
       required:
         - text
       type: object
     AskState:
       properties:
-        busy:
-          type: boolean
         enabled:
           type: boolean
         harness:
@@ -328,18 +330,21 @@ components:
             $ref: '#/components/schemas/Message'
           nullable: true
           type: array
-        model:
-          type: string
         models:
           items:
             type: string
           type: array
         reason:
           type: string
+        threads:
+          items:
+            $ref: '#/components/schemas/ThreadState'
+          nullable: true
+          type: array
       required:
-        - busy
         - enabled
         - messages
+        - threads
       type: object
     Attachment:
       properties:
@@ -2220,6 +2225,8 @@ components:
           type: integer
         text:
           type: string
+        thread_id:
+          type: string
         turns:
           type: integer
         user_id:
@@ -2230,6 +2237,7 @@ components:
         - role
         - seq
         - text
+        - thread_id
       type: object
     MessageAccepted:
       properties:
@@ -4142,6 +4150,28 @@ components:
         - author
         - body
         - id
+      type: object
+    ThreadState:
+      properties:
+        busy:
+          type: boolean
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        model:
+          type: string
+        session_id:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - busy
+        - created_at
+        - id
+        - updated_at
       type: object
     ThreadsDocument:
       properties:
@@ -9905,7 +9935,7 @@ paths:
         - runs
   /api/runs/{id}/ask:
     get:
-      description: 'A flow with an ask: section gives the run a read-only session beside its stages that answers questions about the code. Off (with the reason) when the flow has none, the workspace is gone, or the harness cannot promise a read-only session.'
+      description: 'A flow with an ask: section gives the run read-only sessions (threads) beside its stages that answer questions about the code; a run holds any number of them, each with its own harness session, model and messages. Off (with the reason) when the flow has none, the workspace is gone, or the harness cannot promise a read-only session.'
       operationId: getAsk
       parameters:
         - in: path
@@ -9939,11 +9969,11 @@ paths:
       security:
         - session: []
         - personalToken: []
-      summary: 'The Ask pane: its conversation, model and whether it is on'
+      summary: 'The Ask pane: its threads, their conversations and models, and whether it is on'
       tags:
         - runs
     post:
-      description: The question is recorded and returned at once; the answer arrives on the pane's stream. 409 when the pane is off or an answer is being written.
+      description: 'The question is recorded in the thread named by thread_id (none: the run''s latest, opened when the run has none) and returned at once; the answer arrives on the pane''s stream. 404 for an unknown thread; 409 when the pane is off or an answer is being written in that thread.'
       operationId: askRun
       parameters:
         - in: path
@@ -9987,11 +10017,12 @@ paths:
       security:
         - session: []
         - personalToken: []
-      summary: Ask the run's read-only session a question
+      summary: Ask one of the run's read-only sessions a question
       tags:
         - runs
   /api/runs/{id}/ask/model:
     put:
+      description: 'Picks the model of the thread named by thread_id (none: the run''s latest, opened when the run has none); its live session is switched over at its next question. 404 for an unknown thread.'
       operationId: setAskModel
       parameters:
         - in: path
@@ -10031,12 +10062,12 @@ paths:
       security:
         - session: []
         - personalToken: []
-      summary: Pick the model the Ask session answers with
+      summary: Pick the model an Ask session answers with
       tags:
         - runs
   /api/runs/{id}/ask/stream:
     get:
-      description: 'Replays the messages after after_seq (id = seq), then streams: answers as they are written (delta frames), each message as it lands, the pane''s state as it changes.'
+      description: 'Replays every thread''s messages after after_seq (id = seq), then streams: answers as they are written (delta frames), each message as it lands, a thread''s state as it changes, threads as they open (thread frames). Every frame names its thread_id.'
       operationId: streamAsk
       parameters:
         - in: path
@@ -10076,6 +10107,49 @@ paths:
         - session: []
         - personalToken: []
       summary: Server-sent event stream of the Ask pane
+      tags:
+        - runs
+  /api/runs/{id}/ask/threads:
+    post:
+      description: The thread starts with no messages and the model of the run's latest thread; its harness session opens with its first answer. 409 when the pane is off.
+      operationId: newAskThread
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThreadState'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Open a new Ask session in the run
       tags:
         - runs
   /api/runs/{id}/auth-broker/{rest...}:

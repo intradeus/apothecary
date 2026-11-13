@@ -18,6 +18,7 @@ import * as map from './mappers';
 import type {
 	AskFrame,
 	AskMessage,
+	AskSession,
 	AskState,
 	AuthStatus,
 	CliLogin,
@@ -424,22 +425,36 @@ export const runs = {
 	release: (id: string) => unwrapVoid(gen.releaseRun({ path: { id } }))
 };
 
-// --- ask (a read-only session beside the run) ---------------------------------
+// --- ask (read-only sessions beside the run) ----------------------------------
 
 export const ask = {
-	/** The pane: on or off (and why), its conversation, model and models. */
+	/** The pane: on or off (and why), its sessions, their conversations and
+	 *  models, and the models it could answer with. */
 	state: async (runId: string): Promise<AskState> =>
 		map.toAskState(await unwrap(gen.getAsk({ path: { id: runId } }))),
-	/** Ask a question; the answer arrives on the stream. Rejects (409) when
-	 *  the pane is off or an answer is being written. */
-	send: async (runId: string, text: string): Promise<AskMessage> =>
-		map.toAskMessage(await unwrap(gen.askRun({ path: { id: runId }, body: { text } }))),
-	setModel: (runId: string, model: string) =>
-		unwrapVoid(gen.setAskModel({ path: { id: runId }, body: { model } })),
-	/** Follow the pane: messages as they land (replayed from afterSeq), an
-	 *  answer's text as it is written, the state as it changes. onReconnect
-	 *  fires when the browser re-opens the stream, so the caller can refetch
-	 *  what a dropped connection may have missed. */
+	/** Ask a question in a session (none: the run's latest, opened when it
+	 *  has none); the answer arrives on the stream. Rejects (409) when the
+	 *  pane is off or the session is writing an answer, (404) for a session
+	 *  the run does not have. */
+	send: async (runId: string, text: string, sessionId?: string): Promise<AskMessage> =>
+		map.toAskMessage(
+			await unwrap(
+				gen.askRun({ path: { id: runId }, body: { text, thread_id: sessionId || undefined } })
+			)
+		),
+	/** Pick the model a session (none: the run's latest) answers with. */
+	setModel: (runId: string, model: string, sessionId?: string) =>
+		unwrapVoid(
+			gen.setAskModel({ path: { id: runId }, body: { model, thread_id: sessionId || undefined } })
+		),
+	/** Open a new session: no messages, the model of the run's latest. */
+	newSession: async (runId: string): Promise<AskSession> =>
+		map.toAskSession(await unwrap(gen.newAskThread({ path: { id: runId } }))),
+	/** Follow the pane: every session's messages as they land (replayed from
+	 *  afterSeq), an answer's text as it is written, a session's state as it
+	 *  changes, sessions as they open. onReconnect fires when the browser
+	 *  re-opens the stream, so the caller can refetch what a dropped
+	 *  connection may have missed. */
 	stream(
 		runId: string,
 		onFrame: (f: AskFrame) => void,
@@ -462,15 +477,38 @@ export const ask = {
 				if (!w.message) return;
 				const message = map.toAskMessage(w.message);
 				after = message.seq;
-				onFrame({ kind: 'message', message });
+				onFrame({ kind: 'message', sessionId: message.sessionId, message });
 			};
 			source.addEventListener('delta', (m) => {
-				const w = JSON.parse((m as MessageEvent).data) as { text?: string; tool?: string };
-				onFrame({ kind: 'delta', text: w.text ?? '', tool: w.tool || undefined });
+				const w = JSON.parse((m as MessageEvent).data) as {
+					thread_id?: string;
+					text?: string;
+					tool?: string;
+				};
+				onFrame({
+					kind: 'delta',
+					sessionId: w.thread_id ?? '',
+					text: w.text ?? '',
+					tool: w.tool || undefined
+				});
 			});
 			source.addEventListener('state', (m) => {
-				const w = JSON.parse((m as MessageEvent).data) as { busy?: boolean; model?: string };
-				onFrame({ kind: 'state', busy: !!w.busy, model: w.model || undefined });
+				const w = JSON.parse((m as MessageEvent).data) as {
+					thread_id?: string;
+					busy?: boolean;
+					model?: string;
+				};
+				onFrame({
+					kind: 'state',
+					sessionId: w.thread_id ?? '',
+					busy: !!w.busy,
+					model: w.model || undefined
+				});
+			});
+			source.addEventListener('thread', (m) => {
+				const w = JSON.parse((m as MessageEvent).data) as { thread?: Wire.ThreadState };
+				if (!w.thread) return;
+				onFrame({ kind: 'session', session: map.toAskSession(w.thread) });
 			});
 			// As runs.events: an error status ends a stream for good.
 			source.onerror = () => {

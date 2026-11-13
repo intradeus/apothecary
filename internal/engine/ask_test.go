@@ -78,31 +78,35 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Harness != "fake" || st.Model != "fake/model" || st.Busy || len(st.Messages) != 0 {
+	if st.Harness != "fake" || len(st.Threads) != 0 || len(st.Messages) != 0 {
 		t.Fatalf("state = %+v", st)
 	}
 	frames, stop := h.askPane().Watch(runID)
 	defer stop()
 
-	q, err := h.askPane().Ask(ctx, runID, "u1", "  where is the entrypoint?  ")
+	q, err := h.askPane().Ask(ctx, runID, "", "u1", "  where is the entrypoint?  ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if q.Role != askstore.RoleQuestion || q.Text != "where is the entrypoint?" || q.UserID != "u1" || q.Seq != 1 {
+	if q.Role != askstore.RoleQuestion || q.Text != "where is the entrypoint?" || q.UserID != "u1" || q.Seq != 1 || q.ThreadID == "" {
 		t.Fatalf("question = %+v", q)
 	}
-	// One at a time: a question while the answer is being written is refused.
+	// One at a time per session: a question while its answer is being
+	// written is refused.
 	waitUntil(t, "the pane to be busy", func() bool {
 		st, _ := h.askPane().State(ctx, runID)
-		return st.Busy
+		return askBusy(st)
 	})
-	if _, err := h.askPane().Ask(ctx, runID, "u1", "and again?"); !errors.Is(err, askstore.ErrBusy) {
+	if st, _ := h.askPane().State(ctx, runID); len(st.Threads) != 1 || st.Threads[0].ID != q.ThreadID || st.Threads[0].Model != "fake/model" {
+		t.Fatalf("threads = %+v", st.Threads)
+	}
+	if _, err := h.askPane().Ask(ctx, runID, q.ThreadID, "u1", "and again?"); !errors.Is(err, askstore.ErrBusy) {
 		t.Errorf("second question while answering = %v, want askstore.ErrBusy", err)
 	}
 	close(askGate)
 	waitUntil(t, "the answer", func() bool {
 		st, _ := h.askPane().State(ctx, runID)
-		return len(st.Messages) == 2 && !st.Busy
+		return len(st.Messages) == 2 && !askBusy(st)
 	})
 	st, _ = h.askPane().State(ctx, runID)
 	a := st.Messages[1]
@@ -125,21 +129,21 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 		}
 	}
 	joined := strings.Join(kinds, " ")
-	if !strings.HasPrefix(joined, "message state") || !strings.Contains(joined, "delta") || strings.Count(joined, "message") < 2 {
+	if !strings.HasPrefix(joined, "thread message state") || !strings.Contains(joined, "delta") || strings.Count(joined, "message") < 2 {
 		t.Errorf("frames = %s", joined)
 	}
 
 	// The next question continues the same session; a model picked in the
 	// pane switches it over first.
-	if err := h.askPane().SetModel(ctx, runID, "other/model"); err != nil {
+	if err := h.askPane().SetModel(ctx, runID, q.ThreadID, "other/model"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.askPane().Ask(ctx, runID, "u1", "sure?"); err != nil {
+	if _, err := h.askPane().Ask(ctx, runID, q.ThreadID, "u1", "sure?"); err != nil {
 		t.Fatal(err)
 	}
 	waitUntil(t, "the second answer", func() bool {
 		st, _ := h.askPane().State(ctx, runID)
-		return len(st.Messages) == 4 && !st.Busy
+		return len(st.Messages) == 4 && !askBusy(st)
 	})
 	mu.Lock()
 	if len(resumes) != 1 || resumes[0].Session != "ask-sess" || resumes[0].Reply != "sure?" || resumes[0].In.Model != "other/model" || !resumes[0].In.ReadOnly {
@@ -147,7 +151,7 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 	}
 	mu.Unlock()
 	st, _ = h.askPane().State(ctx, runID)
-	if st.Model != "other/model" || st.Messages[3].Model != "other/model" || st.Messages[3].Text != "Still main.go." {
+	if st.Threads[0].Model != "other/model" || st.Messages[3].Model != "other/model" || st.Messages[3].Text != "Still main.go." {
 		t.Errorf("state after the switch = %+v", st)
 	}
 	// The stage was never touched: it is still working.
@@ -201,21 +205,21 @@ func TestAskPaneStartsAFreshSessionWhenItsOldOneIsGone(t *testing.T) {
 	})
 	// The thread remembers a session from before the workspace's agent
 	// restarted.
-	if err := h.askPane().Store.SaveAskThread(ctx, askstore.Thread{RunID: runID, SessionID: "gone-sess"}); err != nil {
+	if err := h.askPane().Store.SaveAskThread(ctx, askstore.Thread{RunID: runID, ID: "t1", SessionID: "gone-sess"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.askPane().Ask(ctx, runID, "u1", "where?"); err != nil {
+	if _, err := h.askPane().Ask(ctx, runID, "t1", "u1", "where?"); err != nil {
 		t.Fatal(err)
 	}
 	waitUntil(t, "the answer", func() bool {
 		st, _ := h.askPane().State(ctx, runID)
-		return len(st.Messages) == 2 && !st.Busy
+		return len(st.Messages) == 2 && !askBusy(st)
 	})
 	st, _ := h.askPane().State(ctx, runID)
 	if a := st.Messages[1]; a.Text != "In main.go." || a.Error != "" {
 		t.Errorf("answer = %+v, want one from a fresh session", a)
 	}
-	th, _, _ := h.askPane().Store.AskThread(ctx, runID)
+	th, _, _ := h.askPane().Store.AskThread(ctx, runID, "t1")
 	mu.Lock()
 	if th.SessionID != "new-sess" || fresh != 1 {
 		t.Errorf("thread session = %q after %d fresh sessions, want new-sess after 1", th.SessionID, fresh)
@@ -227,12 +231,12 @@ func TestAskPaneStartsAFreshSessionWhenItsOldOneIsGone(t *testing.T) {
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "Halfway"})
 		return agentport.AgentResult{TurnsUsed: 1}, errors.New("the provider hung up")
 	}
-	if _, err := h.askPane().Ask(ctx, runID, "u1", "and?"); err != nil {
+	if _, err := h.askPane().Ask(ctx, runID, "t1", "u1", "and?"); err != nil {
 		t.Fatal(err)
 	}
 	waitUntil(t, "the second answer", func() bool {
 		st, _ := h.askPane().State(ctx, runID)
-		return len(st.Messages) == 4 && !st.Busy
+		return len(st.Messages) == 4 && !askBusy(st)
 	})
 	st, _ = h.askPane().State(ctx, runID)
 	mu.Lock()
@@ -263,10 +267,10 @@ func TestAskPaneIsOffWithoutASection(t *testing.T) {
 	if st.Enabled || !strings.Contains(st.Reason, "no Ask section") {
 		t.Errorf("state = %+v", st)
 	}
-	if _, err := h.askPane().Ask(ctx, runID, "u1", "hello?"); !errors.Is(err, askstore.ErrOff) {
+	if _, err := h.askPane().Ask(ctx, runID, "", "u1", "hello?"); !errors.Is(err, askstore.ErrOff) {
 		t.Errorf("ask = %v, want askstore.ErrOff", err)
 	}
-	if err := h.askPane().SetModel(ctx, runID, "x/y"); !errors.Is(err, askstore.ErrOff) {
+	if err := h.askPane().SetModel(ctx, runID, "", "x/y"); !errors.Is(err, askstore.ErrOff) {
 		t.Errorf("set model = %v, want askstore.ErrOff", err)
 	}
 	close(gate)
@@ -309,4 +313,14 @@ func TestAskPaneIsOffOnAHarnessThatCannotBeReadOnly(t *testing.T) {
 	}
 	close(gate)
 	h.e.Wait(runID)
+}
+
+// askBusy reports whether any of the pane's sessions is answering.
+func askBusy(st askstore.AskState) bool {
+	for _, th := range st.Threads {
+		if th.Busy {
+			return true
+		}
+	}
+	return false
 }

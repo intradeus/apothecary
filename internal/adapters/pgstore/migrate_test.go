@@ -14,6 +14,7 @@ import (
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/adapters/pgstore/pgtest"
+	"apothecary/internal/engine/ask"
 )
 
 func openDSN(t *testing.T, dsn string) *Store {
@@ -152,6 +153,96 @@ func TestTokenIdleSecondsColumn(t *testing.T) {
 	var null bool
 	if err := s.pool.QueryRow(ctx, `SELECT idle_seconds IS NULL FROM api_tokens WHERE id='t1'`).Scan(&null); err != nil || !null {
 		t.Errorf("no window stored as NULL = %v, %v", null, err)
+	}
+}
+
+// upTo is the shipped migrations up to version last: what an older release
+// shipped.
+func upTo(t *testing.T, last int) fs.FS {
+	t.Helper()
+	src := fstest.MapFS{}
+	migs, err := migrations(migrationsFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range migs {
+		if m.version > last {
+			continue
+		}
+		data, err := fs.ReadFile(migrationsFS, "migrations/"+m.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src["migrations/"+m.name] = &fstest.MapFile{Data: data}
+	}
+	return src
+}
+
+// 0003_ask_threads: what a run's Ask pane held before becomes its first
+// thread — a run with a thread row and messages, one with messages only (a
+// first answer that failed before its thread was saved), one with a thread
+// and no messages — and every message names it, its seq untouched.
+func TestAskThreadsMigration(t *testing.T) {
+	dsn := pgtest.Empty(t)
+	ctx := context.Background()
+	old := openSrc(t, dsn, upTo(t, 2))
+	if _, err := old.pool.Exec(ctx, `
+		INSERT INTO ask_threads (run_id, session_id, model, updated_at) VALUES
+		  ('ra', 's1', 'fake/one', '2026-01-03T00:00:00Z'),
+		  ('rc', '', 'fake/three', '2026-03-03T00:00:00Z');
+		INSERT INTO ask_messages (run_id, seq, id, role, text, at) VALUES
+		  ('ra', 1, 'a1', 'question', 'why?', '2026-01-01T10:05:00Z'),
+		  ('ra', 2, 'a2', 'answer', 'because', '2026-01-01T10:00:00Z'),
+		  ('rb', 1, 'b1', 'question', 'how?', '2026-02-01T00:00:00Z'),
+		  ('rb', 2, 'b2', 'answer', '', '2026-02-02T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	s := openDSN(t, dsn)
+	day := func(s string) time.Time {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	for _, c := range []struct {
+		run, session, model string
+		created, updated    time.Time
+		msgs                []string
+	}{
+		{"ra", "s1", "fake/one", day("2026-01-01T10:00:00Z"), day("2026-01-03T00:00:00Z"), []string{"a1", "a2"}},
+		{"rb", "", "", day("2026-02-01T00:00:00Z"), day("2026-02-02T00:00:00Z"), []string{"b1", "b2"}},
+		{"rc", "", "fake/three", day("2026-03-03T00:00:00Z"), day("2026-03-03T00:00:00Z"), nil},
+	} {
+		ths, err := s.AskThreads(ctx, c.run)
+		if err != nil || len(ths) != 1 {
+			t.Fatalf("%s threads = %+v, %v", c.run, ths, err)
+		}
+		th := ths[0]
+		if th.ID == "" || th.SessionID != c.session || th.Model != c.model || !th.CreatedAt.Equal(c.created) || !th.UpdatedAt.Equal(c.updated) {
+			t.Errorf("%s thread = %+v", c.run, th)
+		}
+		msgs, err := s.AskMessages(ctx, c.run, 0)
+		if err != nil || len(msgs) != len(c.msgs) {
+			t.Fatalf("%s messages = %+v, %v", c.run, msgs, err)
+		}
+		for i, m := range msgs {
+			if m.ID != c.msgs[i] || m.Seq != int64(i+1) || m.ThreadID != th.ID {
+				t.Errorf("%s message %d = %+v", c.run, i, m)
+			}
+		}
+	}
+	// The run's next thread and message sit beside the migrated ones.
+	if err := s.SaveAskThread(ctx, ask.Thread{RunID: "ra", ID: "next"}); err != nil {
+		t.Fatal(err)
+	}
+	if m, err := s.AppendAskMessage(ctx, ask.Message{RunID: "ra", ThreadID: "next", Role: ask.RoleQuestion}); err != nil || m.Seq != 3 {
+		t.Errorf("next message = %+v, %v", m, err)
+	}
+	if ths, err := s.AskThreads(ctx, "ra"); err != nil || len(ths) != 2 || ths[1].ID != "next" {
+		t.Errorf("threads = %+v, %v", ths, err)
 	}
 }
 

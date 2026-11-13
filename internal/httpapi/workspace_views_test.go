@@ -538,7 +538,7 @@ func TestAskStream(t *testing.T) {
 	x.srv.Ask = ask.New(&run.Reader{Store: x.store}, x.srv.Workspaces.Resolver, x.e, store)
 	ctx := context.Background()
 	for _, text := range []string{"one", "two", "three"} {
-		if _, err := store.AppendAskMessage(ctx, ask.Message{RunID: "r1", Role: ask.RoleQuestion, Text: text}); err != nil {
+		if _, err := store.AppendAskMessage(ctx, ask.Message{RunID: "r1", ThreadID: "t1", Role: ask.RoleQuestion, Text: text}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -574,7 +574,7 @@ func TestAskStream(t *testing.T) {
 	}
 	lines := stream("?after_seq=1", nil, 2)
 	joined := strings.Join(lines, "\n")
-	if strings.Contains(joined, `"text":"one"`) || !strings.Contains(joined, "id: 2") || !strings.Contains(joined, `"text":"three"`) {
+	if strings.Contains(joined, `"text":"one"`) || !strings.Contains(joined, "id: 2") || !strings.Contains(joined, `"text":"three"`) || !strings.Contains(joined, `"thread_id":"t1"`) {
 		t.Errorf("after_seq=1 replay:\n%s", joined)
 	}
 	lines = stream("?after_seq=1", map[string]string{"Last-Event-ID": "2"}, 1)
@@ -636,6 +636,9 @@ func TestAskHandlers(t *testing.T) {
 	id := map[string]string{"id": "gone"}
 	if w := call(x.srv.getAsk, "GET", "/", "", testUser, id); w.Code != http.StatusNotFound {
 		t.Errorf("state of nothing = %d %s", w.Code, w.Body)
+	}
+	if w := call(x.srv.postAskThread, "POST", "/", "", testUser, id); w.Code != http.StatusNotFound {
+		t.Errorf("session of nothing = %d %s", w.Code, w.Body)
 	}
 }
 

@@ -40,7 +40,8 @@ func (e *engine) RunToken(string) string                                { return
 type failingStore struct {
 	*MemStore
 	mu      sync.Mutex
-	thread  error
+	thread  error // AskThread and AskThreads
+	reread  bool  // AskThread finds nothing
 	save    error
 	append  error
 	appends int // AppendAskMessage calls to let through before failing
@@ -53,14 +54,24 @@ func (s *failingStore) set(f func(*failingStore)) {
 	f(s)
 }
 
-func (s *failingStore) AskThread(ctx context.Context, id string) (Thread, bool, error) {
+func (s *failingStore) AskThread(ctx context.Context, runID, id string) (Thread, bool, error) {
+	s.mu.Lock()
+	err, reread := s.thread, s.reread
+	s.mu.Unlock()
+	if err != nil || reread {
+		return Thread{}, false, err
+	}
+	return s.MemStore.AskThread(ctx, runID, id)
+}
+
+func (s *failingStore) AskThreads(ctx context.Context, runID string) ([]Thread, error) {
 	s.mu.Lock()
 	err := s.thread
 	s.mu.Unlock()
 	if err != nil {
-		return Thread{}, false, err
+		return nil, err
 	}
-	return s.MemStore.AskThread(ctx, id)
+	return s.MemStore.AskThreads(ctx, runID)
 }
 
 func (s *failingStore) SaveAskThread(ctx context.Context, t Thread) error {
@@ -150,14 +161,14 @@ func counter() func() string {
 	return func() string { return fmt.Sprintf("id-%d", n.Add(1)) }
 }
 
-// answered waits for the pane to go quiet and returns its messages, then
-// checks the detached answer released what it resolved.
+// answered waits for every thread of the pane to go quiet and returns its
+// messages, then checks the detached answers released what they resolved.
 func (r *rig) answered(t *testing.T, want int) []Message {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		st, err := r.svc.State(context.Background(), runID)
-		if err == nil && !st.Busy && len(st.Messages) >= want && r.res.opened.Load() == r.res.closed.Load() {
+		if err == nil && !anyBusy(st) && len(st.Messages) >= want && r.res.opened.Load() == r.res.closed.Load() {
 			return st.Messages
 		}
 		time.Sleep(time.Millisecond)
@@ -165,6 +176,47 @@ func (r *rig) answered(t *testing.T, want int) []Message {
 	st, err := r.svc.State(context.Background(), runID)
 	t.Fatalf("the pane never settled on %d messages: %+v, %v (opened %d, closed %d)", want, st, err, r.res.opened.Load(), r.res.closed.Load())
 	return nil
+}
+
+func anyBusy(st AskState) bool {
+	for _, th := range st.Threads {
+		if th.Busy {
+			return true
+		}
+	}
+	return false
+}
+
+// threads is the run's threads as the store has them.
+func (r *rig) threads(t *testing.T) []Thread {
+	t.Helper()
+	ths, err := r.store.MemStore.AskThreads(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ths
+}
+
+// seed stores a thread of the run.
+func (r *rig) seed(t *testing.T, th Thread) {
+	t.Helper()
+	th.RunID = runID
+	if err := r.store.MemStore.SaveAskThread(context.Background(), th); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Millisecond) // the next seeded thread is later
+}
+
+// threadOf is the thread id of the pane's state.
+func threadOf(t *testing.T, st AskState, id string) ThreadState {
+	t.Helper()
+	for _, th := range st.Threads {
+		if th.ID == id {
+			return th
+		}
+	}
+	t.Fatalf("no thread %s in %+v", id, st.Threads)
+	return ThreadState{}
 }
 
 func TestPaneIsOffAndSaysWhy(t *testing.T) {
@@ -194,14 +246,17 @@ func TestPaneIsOffAndSaysWhy(t *testing.T) {
 			if st.Enabled || !strings.Contains(st.Reason, c.reason) || st.Harness != c.harn {
 				t.Errorf("state = %+v, want off because %q", st, c.reason)
 			}
-			if st.Messages == nil {
-				t.Error("an off pane's messages are null, the API's [] is the contract")
+			if st.Messages == nil || st.Threads == nil {
+				t.Error("an off pane's messages or threads are null, the API's [] is the contract")
 			}
-			if _, err := r.svc.Ask(ctx, runID, "u", "why?"); !errors.Is(err, ErrOff) || !strings.Contains(err.Error(), c.reason) {
+			if _, err := r.svc.Ask(ctx, runID, "", "u", "why?"); !errors.Is(err, ErrOff) || !strings.Contains(err.Error(), c.reason) {
 				t.Errorf("ask = %v", err)
 			}
-			if err := r.svc.SetModel(ctx, runID, "a/b"); !errors.Is(err, ErrOff) {
+			if err := r.svc.SetModel(ctx, runID, "", "a/b"); !errors.Is(err, ErrOff) {
 				t.Errorf("set model = %v", err)
+			}
+			if _, err := r.svc.NewThread(ctx, runID); !errors.Is(err, ErrOff) {
+				t.Errorf("new thread = %v", err)
 			}
 			if o, cl := r.res.opened.Load(), r.res.closed.Load(); o != cl {
 				t.Errorf("resolved %d, released %d", o, cl)
@@ -224,21 +279,25 @@ func TestPaneWithoutAWorkspaceYet(t *testing.T) {
 	}
 }
 
-// A model picked before the pane went off is still shown: the conversation
-// ran on it.
-func TestAnOffPaneShowsTheThreadsModel(t *testing.T) {
+// The models picked before the pane went off are still shown, each thread
+// its own: the conversations ran on them.
+func TestAnOffPaneShowsEveryThreadsModel(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	if err := r.store.SaveAskThread(ctx, Thread{RunID: runID, Model: "acme/picked"}); err != nil {
-		t.Fatal(err)
-	}
+	r.seed(t, Thread{ID: "t1", Model: "acme/picked"})
+	r.seed(t, Thread{ID: "t2", Model: "acme/other"})
+	r.seed(t, Thread{ID: "t3"})
 	r.eng.fl.Ask.Harness = "other"
 	st, err := r.svc.State(ctx, runID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Enabled || st.Model != "acme/picked" {
-		t.Errorf("state = %+v", st)
+	var models []string
+	for _, th := range st.Threads {
+		models = append(models, th.ID+"="+th.Model)
+	}
+	if want := []string{"t1=acme/picked", "t2=acme/other", "t3="}; st.Enabled || !reflect.DeepEqual(models, want) {
+		t.Errorf("state = %+v, models %q", st, models)
 	}
 }
 
@@ -262,11 +321,14 @@ func TestFailuresAreNotOff(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), c.want) || errors.Is(err, ErrOff) {
 				t.Errorf("state = %v", err)
 			}
-			if _, err := r.svc.Ask(ctx, runID, "u", "q"); err == nil || errors.Is(err, ErrOff) {
+			if _, err := r.svc.Ask(ctx, runID, "", "u", "q"); err == nil || errors.Is(err, ErrOff) {
 				t.Errorf("ask = %v", err)
 			}
-			if err := r.svc.SetModel(ctx, runID, "a/b"); err == nil || errors.Is(err, ErrOff) {
+			if err := r.svc.SetModel(ctx, runID, "", "a/b"); err == nil || errors.Is(err, ErrOff) {
 				t.Errorf("set model = %v", err)
+			}
+			if _, err := r.svc.NewThread(ctx, runID); err == nil || errors.Is(err, ErrOff) {
+				t.Errorf("new thread = %v", err)
 			}
 		})
 	}
@@ -296,17 +358,17 @@ func TestStateReportsStoreFailures(t *testing.T) {
 func TestAskRefusesAQuestionItWontPass(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	if _, err := r.svc.Ask(ctx, runID, "u", " \n\t "); err == nil || !strings.Contains(err.Error(), "empty") {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", " \n\t "); err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Errorf("blank question = %v", err)
 	}
-	if _, err := r.svc.Ask(ctx, runID, "u", strings.Repeat("x", maxMessageLen+1)); err == nil || !strings.Contains(err.Error(), "longer than") {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", strings.Repeat("x", maxMessageLen+1)); err == nil || !strings.Contains(err.Error(), "longer than") {
 		t.Errorf("long question = %v", err)
 	}
 	if r.res.opened.Load() != 0 {
 		t.Error("a refused question resolved the project")
 	}
 	// Exactly the limit passes.
-	if _, err := r.svc.Ask(ctx, runID, "u", strings.Repeat("x", maxMessageLen)); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", strings.Repeat("x", maxMessageLen)); err != nil {
 		t.Errorf("a question at the limit = %v", err)
 	}
 	r.answered(t, 2)
@@ -319,23 +381,34 @@ func TestAFailedAskReleasesThePane(t *testing.T) {
 	boom := errors.New("db down")
 	for name, arm := range map[string]func(s *failingStore){
 		"thread": func(s *failingStore) { s.thread = boom },
+		"open":   func(s *failingStore) { s.save = boom },
 		"append": func(s *failingStore) { s.append = boom },
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newRig(t)
 			r.store.set(arm)
-			if _, err := r.svc.Ask(ctx, runID, "u", "q"); !errors.Is(err, boom) {
+			if _, err := r.svc.Ask(ctx, runID, "", "u", "q"); !errors.Is(err, boom) {
 				t.Fatalf("ask = %v", err)
 			}
 			if o, c := r.res.opened.Load(), r.res.closed.Load(); o != c {
 				t.Errorf("resolved %d, released %d", o, c)
 			}
-			r.store.set(func(s *failingStore) { s.thread, s.append = nil, nil })
-			if _, err := r.svc.Ask(ctx, runID, "u", "again"); err != nil {
+			r.store.set(func(s *failingStore) { s.thread, s.save, s.append = nil, nil, nil })
+			if _, err := r.svc.Ask(ctx, runID, "", "u", "again"); err != nil {
 				t.Fatalf("the pane stayed stuck: %v", err)
 			}
 			r.answered(t, 2)
 		})
+	}
+}
+
+// A thread the store cannot give back once saved is an error, not a thread.
+func TestAThreadThatVanishesIsNotOpened(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.store.set(func(s *failingStore) { s.reread = true })
+	if _, err := r.svc.NewThread(ctx, runID); err == nil || !strings.Contains(err.Error(), "gone right after") {
+		t.Errorf("new thread = %v", err)
 	}
 }
 
@@ -350,7 +423,7 @@ func TestBinaryTextReachesTheThreadClean(t *testing.T) {
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "said\x00this"})
 		return agentport.AgentResult{}, errors.New("broke\x00down")
 	}
-	q, err := r.svc.Ask(context.Background(), runID, "u", "why\x00?")
+	q, err := r.svc.Ask(context.Background(), runID, "", "u", "why\x00?")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +450,7 @@ func TestAnswersAndTheirStreamAreScrubbed(t *testing.T) {
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvTool})
 		return agentport.AgentResult{TurnsUsed: 2, Usage: agentport.Usage{CostUSD: 0.25}}, nil
 	}
-	if _, err := r.svc.Ask(ctx, runID, "u", "what is the key?"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "what is the key?"); err != nil {
 		t.Fatal(err)
 	}
 	msgs := r.answered(t, 2)
@@ -388,6 +461,7 @@ func TestAnswersAndTheirStreamAreScrubbed(t *testing.T) {
 	if a.CostUSD != 0.25 || a.Turns != 2 || a.Model != "fake/model" || a.Role != RoleAnswer {
 		t.Errorf("answer = %+v", a)
 	}
+	th := r.threads(t)[0].ID
 
 	var tools []string
 	for {
@@ -399,6 +473,9 @@ func TestAnswersAndTheirStreamAreScrubbed(t *testing.T) {
 			}
 			if strings.Contains(blob, secret) || strings.Contains(blob, token) {
 				t.Errorf("frame leaks: %+v", f)
+			}
+			if f.ThreadID != th || (f.Message != nil && f.Message.ThreadID != th) {
+				t.Errorf("frame of another thread than %s: %+v", th, f)
 			}
 			if f.Tool != "" {
 				tools = append(tools, f.Tool)
@@ -419,7 +496,7 @@ func TestAFailedAnswerRecordsItsScrubbedError(t *testing.T) {
 	r.runner.RunFunc = func(context.Context, fake.RunCall) (agentport.AgentResult, error) {
 		return agentport.AgentResult{}, errors.New("auth failed with " + secret)
 	}
-	if _, err := r.svc.Ask(ctx, runID, "u", "q"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "q"); err != nil {
 		t.Fatal(err)
 	}
 	a := r.answered(t, 2)[1]
@@ -428,7 +505,7 @@ func TestAFailedAnswerRecordsItsScrubbedError(t *testing.T) {
 	}
 	// The pane takes a next question.
 	r.runner.RunFunc = nil
-	if _, err := r.svc.Ask(ctx, runID, "u", "again"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "again"); err != nil {
 		t.Fatalf("after a failed answer: %v", err)
 	}
 	r.answered(t, 4)
@@ -441,7 +518,7 @@ func TestAnswerFallsBackToTheFinalOutput(t *testing.T) {
 	r.runner.RunFunc = func(context.Context, fake.RunCall) (agentport.AgentResult, error) {
 		return agentport.AgentResult{Output: "  final words " + secret + "\n"}, nil
 	}
-	if _, err := r.svc.Ask(ctx, runID, "u", "q"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "q"); err != nil {
 		t.Fatal(err)
 	}
 	a := r.answered(t, 2)[1]
@@ -455,23 +532,24 @@ func TestAnswerFallsBackToTheFinalOutput(t *testing.T) {
 func TestSessionIsSavedAsSoonAsItIsKnown(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
+	r.seed(t, Thread{ID: "t1"})
 	seen := make(chan Thread, 1)
 	r.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: ""}) // nothing yet
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "sess-early"})
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "sess-early"})
-		th, _, _ := r.store.AskThread(ctx, runID)
+		th, _, _ := r.store.AskThread(ctx, runID, "t1")
 		seen <- th
 		return agentport.AgentResult{Session: "sess-final"}, nil
 	}
-	if _, err := r.svc.Ask(ctx, runID, "u", "q"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "t1", "u", "q"); err != nil {
 		t.Fatal(err)
 	}
 	r.answered(t, 2)
 	if th := <-seen; th.SessionID != "sess-early" {
 		t.Errorf("mid-answer thread = %+v", th)
 	}
-	th, ok, err := r.store.AskThread(ctx, runID)
+	th, ok, err := r.store.AskThread(ctx, runID, "t1")
 	if err != nil || !ok || th.SessionID != "sess-final" || th.Model != "fake/model" {
 		t.Errorf("thread = %+v, %v, %v", th, ok, err)
 	}
@@ -481,13 +559,14 @@ func TestSessionIsSavedAsSoonAsItIsKnown(t *testing.T) {
 func TestAnAnswerSurvivesAThreadItCannotSave(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
+	r.seed(t, Thread{ID: "t1"})
 	r.store.set(func(s *failingStore) { s.save = errors.New("db down") })
 	r.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "s1"})
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "answer"})
 		return agentport.AgentResult{}, nil
 	}
-	if _, err := r.svc.Ask(ctx, runID, "u", "q"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "t1", "u", "q"); err != nil {
 		t.Fatal(err)
 	}
 	if a := r.answered(t, 2)[1]; a.Text != "answer" {
@@ -507,7 +586,7 @@ func TestAnAnswerItCannotRecordIsStillDelivered(t *testing.T) {
 	}
 	frames, stop := r.svc.Watch(runID)
 	defer stop()
-	if _, err := r.svc.Ask(ctx, runID, "u", "q"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "q"); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.After(5 * time.Second)
@@ -542,14 +621,14 @@ func TestASameModelResumeDoesNotSwitch(t *testing.T) {
 	}
 	ask := func(n int) {
 		t.Helper()
-		if _, err := r.svc.Ask(ctx, runID, "u", "q"); err != nil {
+		if _, err := r.svc.Ask(ctx, runID, "", "u", "q"); err != nil {
 			t.Fatal(err)
 		}
 		r.answered(t, n)
 	}
 	ask(2) // opens the session
 	ask(4) // same model: nothing to switch
-	if err := r.svc.SetModel(ctx, runID, "acme/other"); err != nil {
+	if err := r.svc.SetModel(ctx, runID, "", "acme/other"); err != nil {
 		t.Fatal(err)
 	}
 	ask(6) // switched
@@ -558,6 +637,228 @@ func TestASameModelResumeDoesNotSwitch(t *testing.T) {
 	defer mu.Unlock()
 	if want := []string{"", "acme/other", ""}; !reflect.DeepEqual(models, want) {
 		t.Errorf("resume models = %q, want %q", models, want)
+	}
+}
+
+// A question naming no thread lands in the run's latest, the first one
+// opening it — once, however many arrive together.
+func TestQuestionsNamingNoThreadShareTheLatest(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	release := make(chan struct{})
+	r.runner.RunFunc = func(context.Context, fake.RunCall) (agentport.AgentResult, error) {
+		<-release
+		return agentport.AgentResult{}, nil
+	}
+	var wg sync.WaitGroup
+	var accepted atomic.Int32
+	for range 8 {
+		wg.Go(func() {
+			if _, err := r.svc.Ask(ctx, runID, "", "u", "q"); err == nil {
+				accepted.Add(1)
+			} else if !errors.Is(err, ErrBusy) {
+				t.Errorf("ask = %v", err)
+			}
+		})
+	}
+	wg.Wait()
+	close(release)
+	if accepted.Load() != 1 {
+		t.Errorf("%d questions accepted at once in one thread", accepted.Load())
+	}
+	r.answered(t, 2)
+	ths := r.threads(t)
+	if len(ths) != 1 {
+		t.Fatalf("threads = %+v", ths)
+	}
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "again"); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range r.answered(t, 4) {
+		if m.ThreadID != ths[0].ID {
+			t.Errorf("message outside the run's thread %s: %+v", ths[0].ID, m)
+		}
+	}
+	if ths := r.threads(t); len(ths) != 1 {
+		t.Errorf("threads = %+v", ths)
+	}
+}
+
+// A new thread has no messages, the model of the run's latest, and becomes
+// the latest itself.
+func TestNewThreadStartsEmptyOnTheLatestModel(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	frames, stop := r.svc.Watch(runID)
+	defer stop()
+	first, err := r.svc.NewThread(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == "" || first.Model != "fake/model" || first.Busy || first.SessionID != "" || first.CreatedAt.IsZero() {
+		t.Errorf("first = %+v", first)
+	}
+	if f := <-frames; f.Kind != "thread" || f.ThreadID != first.ID || f.Thread == nil || *f.Thread != first {
+		t.Errorf("frame = %+v", f)
+	}
+	if err := r.svc.SetModel(ctx, runID, first.ID, "acme/picked"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.svc.Ask(ctx, runID, first.ID, "u", "q"); err != nil {
+		t.Fatal(err)
+	}
+	r.answered(t, 2)
+	second, err := r.svc.NewThread(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID == first.ID || second.Model != "acme/picked" || second.SessionID != "" {
+		t.Errorf("second = %+v", second)
+	}
+	st, err := r.svc.State(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Threads) != 2 || st.Threads[0].ID != first.ID || st.Threads[1].ID != second.ID || st.Threads[0].SessionID == "" {
+		t.Errorf("threads = %+v", st.Threads)
+	}
+	for _, m := range st.Messages {
+		if m.ThreadID != first.ID {
+			t.Errorf("a new thread holds %+v", m)
+		}
+	}
+	if q, err := r.svc.Ask(ctx, runID, "", "u", "q2"); err != nil || q.ThreadID != second.ID {
+		t.Errorf("a question naming none = %+v, %v; want it in the newest", q, err)
+	}
+	r.answered(t, 4)
+
+	boom := errors.New("db down")
+	r.store.set(func(s *failingStore) { s.thread = boom })
+	if _, err := r.svc.NewThread(ctx, runID); !errors.Is(err, boom) {
+		t.Errorf("list failure = %v", err)
+	}
+	r.store.set(func(s *failingStore) { s.thread, s.save = nil, boom })
+	if _, err := r.svc.NewThread(ctx, runID); !errors.Is(err, boom) {
+		t.Errorf("save failure = %v", err)
+	}
+	if o, c := r.res.opened.Load(), r.res.closed.Load(); o != c {
+		t.Errorf("resolved %d, released %d", o, c)
+	}
+}
+
+// Busy is per thread: one thread's answer in flight refuses a second
+// question there, and lets another thread answer beside it.
+func TestThreadsAnswerAtTheSameTime(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.seed(t, Thread{ID: "t1"})
+	r.seed(t, Thread{ID: "t2"})
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	r.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		started <- struct{}{}
+		<-release
+		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "on " + call.In.Prompt})
+		return agentport.AgentResult{}, nil
+	}
+	if _, err := r.svc.Ask(ctx, runID, "t1", "u", "one"); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if _, err := r.svc.Ask(ctx, runID, "t1", "u", "again"); !errors.Is(err, ErrBusy) {
+		t.Errorf("a second question in a busy thread = %v", err)
+	}
+	if _, err := r.svc.Ask(ctx, runID, "t2", "u", "two"); err != nil {
+		t.Fatalf("another thread beside a busy one = %v", err)
+	}
+	<-started
+	st, err := r.svc.State(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !threadOf(t, st, "t1").Busy || !threadOf(t, st, "t2").Busy {
+		t.Errorf("threads = %+v, want both answering", st.Threads)
+	}
+	close(release)
+	msgs := r.answered(t, 4)
+	answers := map[string]string{}
+	for i, m := range msgs {
+		if m.Seq != int64(i+1) {
+			t.Errorf("position %d holds seq %d", i, m.Seq)
+		}
+		if m.Role == RoleAnswer {
+			answers[m.ThreadID] = m.Text
+		}
+	}
+	if want := map[string]string{"t1": "on one", "t2": "on two"}; !reflect.DeepEqual(answers, want) {
+		t.Errorf("answers = %q, want %q", answers, want)
+	}
+}
+
+// Each thread continues its own harness session, and a model picked in one
+// switches that one's session only.
+func TestEachThreadKeepsItsOwnSessionAndModel(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.seed(t, Thread{ID: "t1"})
+	r.seed(t, Thread{ID: "t2"})
+	r.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{Session: agentport.SessionID("sess-" + call.In.Prompt)}, nil
+	}
+	var mu sync.Mutex
+	resumed := map[string]string{} // question → session@switched-to model
+	r.runner.ResumeFunc = func(_ context.Context, call fake.ResumeCall) (agentport.AgentResult, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		resumed[call.Reply] = string(call.Session) + "@" + call.In.Model
+		return agentport.AgentResult{}, nil
+	}
+	ask := func(thread, q string, n int) {
+		t.Helper()
+		if _, err := r.svc.Ask(ctx, runID, thread, "u", q); err != nil {
+			t.Fatal(err)
+		}
+		r.answered(t, n)
+	}
+	ask("t1", "a", 2)
+	ask("t2", "b", 4)
+	if err := r.svc.SetModel(ctx, runID, "t1", "acme/other"); err != nil {
+		t.Fatal(err)
+	}
+	ask("t1", "c", 6)
+	ask("t2", "d", 8)
+	mu.Lock()
+	if want := map[string]string{"c": "sess-a@acme/other", "d": "sess-b@"}; !reflect.DeepEqual(resumed, want) {
+		t.Errorf("resumed = %q, want %q", resumed, want)
+	}
+	mu.Unlock()
+	st, err := r.svc.State(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if t1 := threadOf(t, st, "t1"); t1.SessionID != "sess-a" || t1.Model != "acme/other" {
+		t.Errorf("t1 = %+v", t1)
+	}
+	if t2 := threadOf(t, st, "t2"); t2.SessionID != "sess-b" || t2.Model != "fake/model" {
+		t.Errorf("t2 = %+v", t2)
+	}
+}
+
+// A thread the run does not have is not found, and nothing is opened for it.
+func TestAnUnknownThreadIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	if _, err := r.svc.Ask(ctx, runID, "ghost", "u", "q"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("ask = %v", err)
+	}
+	if err := r.svc.SetModel(ctx, runID, "ghost", "fake/model"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("set model = %v", err)
+	}
+	if ths := r.threads(t); len(ths) != 0 {
+		t.Errorf("threads = %+v", ths)
+	}
+	if o, c := r.res.opened.Load(), r.res.closed.Load(); o != c {
+		t.Errorf("resolved %d, released %d", o, c)
 	}
 }
 
@@ -604,6 +905,7 @@ func TestModelsComeFromTheProviderThenTheAgentAndAreAskedOnce(t *testing.T) {
 	ctx := context.Background()
 	t.Run("provider list wins", func(t *testing.T) {
 		r := newRig(t)
+		r.seed(t, Thread{ID: "t1"})
 		list := &listingRunner{AgentRunner: r.runner, models: []string{"acme/agent"}}
 		r.res.res.Runner = list
 		var asked atomic.Int32
@@ -616,7 +918,7 @@ func TestModelsComeFromTheProviderThenTheAgentAndAreAskedOnce(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(st.Models, []string{"acme/one", "fake/model"}) || st.Model != "fake/model" {
+			if !reflect.DeepEqual(st.Models, []string{"acme/one", "fake/model"}) || threadOf(t, st, "t1").Model != "fake/model" {
 				t.Fatalf("state = %+v", st)
 			}
 		}
@@ -626,6 +928,7 @@ func TestModelsComeFromTheProviderThenTheAgentAndAreAskedOnce(t *testing.T) {
 	})
 	t.Run("provider failure falls back to the agent", func(t *testing.T) {
 		r := newRig(t)
+		r.seed(t, Thread{ID: "t1"})
 		list := &listingRunner{AgentRunner: r.runner, models: []string{"acme/agent"}}
 		r.res.res.Runner = list
 		r.res.res.Models = func(context.Context, string) ([]string, error) { return nil, errors.New("no list") }
@@ -633,19 +936,20 @@ func TestModelsComeFromTheProviderThenTheAgentAndAreAskedOnce(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !reflect.DeepEqual(st.Models, []string{"acme/agent"}) || st.Model != "acme/agent" {
+		if !reflect.DeepEqual(st.Models, []string{"acme/agent"}) || threadOf(t, st, "t1").Model != "acme/agent" {
 			t.Errorf("state = %+v", st)
 		}
 	})
 	t.Run("an agent that cannot say yet is asked again", func(t *testing.T) {
 		r := newRig(t)
+		r.seed(t, Thread{ID: "t1"})
 		list := &listingRunner{AgentRunner: r.runner, err: errors.New("agent still starting")}
 		r.res.res.Runner = list
 		st, err := r.svc.State(ctx, runID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if st.Models != nil || st.Model != "fake/model" {
+		if st.Models != nil || threadOf(t, st, "t1").Model != "fake/model" {
 			t.Errorf("state = %+v", st)
 		}
 		list.mu.Lock()
@@ -669,50 +973,64 @@ func TestSetModel(t *testing.T) {
 	r.res.res.Models = func(context.Context, string) ([]string, error) {
 		return []string{"acme/alpha-large", "acme/alpha-small", "fake/model"}, nil
 	}
-	if err := r.svc.SetModel(ctx, runID, "   "); err == nil || !strings.Contains(err.Error(), "required") {
+	if err := r.svc.SetModel(ctx, runID, "", "   "); err == nil || !strings.Contains(err.Error(), "required") {
 		t.Errorf("blank = %v", err)
 	}
-	err := r.svc.SetModel(ctx, runID, "acme/alpha")
+	err := r.svc.SetModel(ctx, runID, "", "acme/alpha")
 	if err == nil || !strings.Contains(err.Error(), `model "acme/alpha" is not available to harness fake`) || !strings.Contains(err.Error(), "closest: acme/alpha-") {
 		t.Errorf("unreachable model = %v", err)
 	}
-	err = r.svc.SetModel(ctx, runID, "zzzzzz")
+	err = r.svc.SetModel(ctx, runID, "", "zzzzzz")
 	if err == nil || strings.Contains(err.Error(), "closest") {
 		t.Errorf("nothing near = %v", err)
 	}
-	if th, ok, _ := r.store.AskThread(ctx, runID); ok {
-		t.Errorf("a refused model was saved: %+v", th)
+	if ths := r.threads(t); len(ths) != 0 {
+		t.Errorf("a refused model opened or saved a thread: %+v", ths)
 	}
 
+	// A pick on a run with no thread yet opens its first.
 	frames, stop := r.svc.Watch(runID)
 	defer stop()
-	if err := r.svc.SetModel(ctx, runID, " acme/alpha-small "); err != nil {
+	if err := r.svc.SetModel(ctx, runID, "", " acme/alpha-small "); err != nil {
 		t.Fatal(err)
 	}
-	th, _, _ := r.store.AskThread(ctx, runID)
-	if th.Model != "acme/alpha-small" || th.RunID != runID {
-		t.Errorf("thread = %+v", th)
+	ths := r.threads(t)
+	if len(ths) != 1 || ths[0].Model != "acme/alpha-small" || ths[0].RunID != runID {
+		t.Fatalf("threads = %+v", ths)
 	}
-	select {
-	case f := <-frames:
-		if f.Kind != "state" || f.Model != "acme/alpha-small" || f.Busy {
-			t.Errorf("frame = %+v", f)
+	var kinds []string
+	for len(kinds) < 2 {
+		select {
+		case f := <-frames:
+			kinds = append(kinds, f.Kind)
+			if f.ThreadID != ths[0].ID {
+				t.Errorf("frame of another thread: %+v", f)
+			}
+			if f.Kind == "state" && (f.Model != "acme/alpha-small" || f.Busy) {
+				t.Errorf("frame = %+v", f)
+			}
+		default:
+			t.Fatalf("frames = %q, want a thread and a state", kinds)
 		}
-	default:
-		t.Error("no state frame")
 	}
-	if st, _ := r.svc.State(ctx, runID); st.Model != "acme/alpha-small" {
-		t.Errorf("state model = %q", st.Model)
+	if !reflect.DeepEqual(kinds, []string{"thread", "state"}) {
+		t.Errorf("frames = %q", kinds)
+	}
+	if st, _ := r.svc.State(ctx, runID); threadOf(t, st, ths[0].ID).Model != "acme/alpha-small" {
+		t.Errorf("state = %+v", st)
 	}
 
 	boom := errors.New("db down")
 	r.store.set(func(s *failingStore) { s.save = boom })
-	if err := r.svc.SetModel(ctx, runID, "fake/model"); !errors.Is(err, boom) {
+	if err := r.svc.SetModel(ctx, runID, "", "fake/model"); !errors.Is(err, boom) {
 		t.Errorf("save failure = %v", err)
 	}
 	r.store.set(func(s *failingStore) { s.save, s.thread = nil, boom })
-	if err := r.svc.SetModel(ctx, runID, "fake/model"); !errors.Is(err, boom) {
+	if err := r.svc.SetModel(ctx, runID, "", "fake/model"); !errors.Is(err, boom) {
 		t.Errorf("thread failure = %v", err)
+	}
+	if err := r.svc.SetModel(ctx, runID, ths[0].ID, "fake/model"); !errors.Is(err, boom) {
+		t.Errorf("named thread failure = %v", err)
 	}
 }
 
@@ -720,7 +1038,7 @@ func TestMessagesAfterASeq(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	for i := range 3 {
-		if _, err := r.store.AppendAskMessage(ctx, Message{RunID: runID, ID: fmt.Sprint(i), Role: RoleQuestion}); err != nil {
+		if _, err := r.store.AppendAskMessage(ctx, Message{RunID: runID, ThreadID: "t1", ID: fmt.Sprint(i), Role: RoleQuestion}); err != nil {
 			t.Fatal(err)
 		}
 	}

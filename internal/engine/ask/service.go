@@ -49,7 +49,8 @@ type Service struct {
 	NewID func() string
 	Log   *slog.Logger
 
-	// mu guards asks and every askRun field.
+	// mu guards asks, every askRun field but its own locks, and every
+	// askThread field.
 	mu   sync.Mutex
 	asks map[string]*askRun
 	hub  askHub
@@ -73,20 +74,23 @@ func (svc *Service) log() *slog.Logger {
 	return slog.Default()
 }
 
-// THE ASK PANE SERVICE (FLOWLANG §1 ask): a run's read-only session beside its
-// stages, answering questions about the code as it stands. Not a stage —
+// THE ASK PANE SERVICE (FLOWLANG §1 ask): a run's read-only sessions beside
+// its stages, answering questions about the code as it stands. Not a stage —
 // it runs in parallel with whatever stage is working, on the harness the
 // flow's ask: section names, as the agent the engine prepared under the
-// reserved name. Its session persists with the run (the thread remembers
-// it), its model is picked in the pane, and its spend is the
-// conversation's, never a run budget's. Nothing of it is a run event.
+// reserved name. A run holds any number of threads (the pane calls them
+// sessions): each persists with the run and remembers its own harness
+// session and model, picked in the pane, and has at most one answer in
+// flight. Their spend is the conversation's, never a run budget's. Nothing
+// of it is a run event.
 
 var (
 	// ErrOff: the pane is off for this run (no ask: section, no
 	// workspace, a harness that cannot promise a read-only session).
 	ErrOff = errors.New("the Ask pane is off for this run")
-	// ErrBusy: an answer is being written; one question at a time.
-	ErrBusy = errors.New("an answer is being written; wait for it")
+	// ErrBusy: an answer is being written in this thread; one question at a
+	// time per thread.
+	ErrBusy = errors.New("an answer is being written in this session; wait for it")
 )
 
 // askAnswerTimeout bounds one answer.
@@ -98,34 +102,76 @@ type AskState struct {
 	// Reason says why the pane is off, when it is.
 	Reason  string `json:"reason,omitempty"`
 	Harness string `json:"harness,omitempty"`
-	// Model is what the next answer runs on; Models what the harness can
-	// reach (empty: unknown — any model may be named).
-	Model    string    `json:"model,omitempty"`
-	Models   []string  `json:"models,omitempty"`
-	Busy     bool      `json:"busy"`
+	// Models is what the harness can reach (empty: unknown — any model may
+	// be named).
+	Models []string `json:"models,omitempty"`
+	// Threads are the run's conversations, oldest first.
+	Threads []ThreadState `json:"threads"`
+	// Messages are every thread's, in the run's seq order.
 	Messages []Message `json:"messages"`
 }
 
-// AskFrame is one event of the pane's stream: a message landing, an
-// answer's text so far (delta), or the pane's state changing.
+// ThreadState is one thread as the pane shows it.
+type ThreadState struct {
+	ID string `json:"id"`
+	// SessionID is the harness session the thread continues (empty until
+	// its first answer).
+	SessionID string `json:"session_id,omitempty"`
+	// Model is what the thread's next answer runs on.
+	Model     string    `json:"model,omitempty"`
+	Busy      bool      `json:"busy"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// AskFrame is one event of the pane's stream, about one of the run's
+// threads: a message landing, an answer's text so far (delta), the thread's
+// state changing, or a thread opened.
 type AskFrame struct {
-	Kind    string   `json:"kind"` // message|delta|state
-	Message *Message `json:"message,omitempty"`
-	Text    string   `json:"text,omitempty"` // delta: the answer SO FAR (replace, not append)
-	Tool    string   `json:"tool,omitempty"` // delta: what the agent is doing
-	Busy    bool     `json:"busy,omitempty"`
-	Model   string   `json:"model,omitempty"`
+	Kind     string       `json:"kind"` // message|delta|state|thread
+	ThreadID string       `json:"thread_id,omitempty"`
+	Message  *Message     `json:"message,omitempty"`
+	Thread   *ThreadState `json:"thread,omitempty"` // thread: the one opened
+	Text     string       `json:"text,omitempty"`   // delta: the answer SO FAR (replace, not append)
+	Tool     string       `json:"tool,omitempty"`   // delta: what the agent is doing
+	Busy     bool         `json:"busy,omitempty"`
+	Model    string       `json:"model,omitempty"`
 }
 
 // askRun is the service's in-memory state for one run's pane.
 type askRun struct {
-	busy   bool
-	cancel context.CancelFunc
 	// models is the harness's reachable list, asked once per run.
 	models      []string
 	modelsAsked bool
-	// sessionModel is the model the live session was last put on.
+	// threads is each thread's live state, by id.
+	threads map[string]*askThread
+	// appends serializes the run's message appends across its threads: the
+	// store numbers a run's messages as one sequence.
+	appends sync.Mutex
+	// creating serializes finding (or opening) the run's latest thread, so
+	// two first questions open one thread, not two.
+	creating sync.Mutex
+}
+
+// askThread is the service's in-memory state for one thread.
+type askThread struct {
+	busy   bool
+	cancel context.CancelFunc
+	// sessionModel is the model the thread's live session was last put on.
 	sessionModel string
+}
+
+// thread is the live state of the run's thread id; svc.mu must be held.
+func (a *askRun) thread(id string) *askThread {
+	t := a.threads[id]
+	if t == nil {
+		t = &askThread{}
+		if a.threads == nil {
+			a.threads = map[string]*askThread{}
+		}
+		a.threads[id] = t
+	}
+	return t
 }
 
 type askHub struct {
@@ -276,15 +322,27 @@ func askModel(th Thread, fl *flow.Flow, models []string) string {
 	return m
 }
 
-// State is the pane for a run: whether it is on (and why not), its
-// conversation so far, the model it answers with and the ones it could.
+// threadState is a thread as the pane shows it: on an off pane, the model
+// the thread last ran on; on a live one, the model its next answer runs on.
+// Busy is the caller's to fill.
+func threadState(th Thread, s *askSetup, models []string) ThreadState {
+	ts := ThreadState{ID: th.ID, SessionID: th.SessionID, Model: th.Model, CreatedAt: th.CreatedAt, UpdatedAt: th.UpdatedAt}
+	if s.reason == "" {
+		ts.Model = askModel(th, s.fl, models)
+	}
+	return ts
+}
+
+// State is the pane for a run: whether it is on (and why not), its threads
+// (each with the model it answers with), every thread's conversation so
+// far, and the models it could answer with.
 func (svc *Service) State(ctx context.Context, runID string) (AskState, error) {
 	s, err := svc.setup(ctx, runID)
 	if err != nil {
 		return AskState{}, err
 	}
 	defer s.release()
-	st := AskState{Enabled: s.reason == "", Reason: s.reason, Harness: s.harness, Messages: []Message{}}
+	st := AskState{Enabled: s.reason == "", Reason: s.reason, Harness: s.harness, Threads: []ThreadState{}, Messages: []Message{}}
 	msgs, err := svc.Store.AskMessages(ctx, runID, 0)
 	if err != nil {
 		return AskState{}, err
@@ -292,19 +350,21 @@ func (svc *Service) State(ctx context.Context, runID string) (AskState, error) {
 	if msgs != nil {
 		st.Messages = msgs
 	}
-	th, _, err := svc.Store.AskThread(ctx, runID)
+	ths, err := svc.Store.AskThreads(ctx, runID)
 	if err != nil {
 		return AskState{}, err
 	}
 	if st.Enabled {
 		st.Models = svc.models(ctx, s)
-		st.Model = askModel(th, s.fl, st.Models)
-	} else if th.Model != "" {
-		st.Model = th.Model
 	}
 	svc.mu.Lock()
-	if a := svc.asks[runID]; a != nil {
-		st.Busy = a.busy
+	a := svc.asks[runID]
+	for _, th := range ths {
+		ts := threadState(th, s, st.Models)
+		if a != nil && a.threads[th.ID] != nil {
+			ts.Busy = a.threads[th.ID].busy
+		}
+		st.Threads = append(st.Threads, ts)
 	}
 	svc.mu.Unlock()
 	return st, nil
@@ -319,14 +379,100 @@ func (svc *Service) Messages(ctx context.Context, runID string, afterSeq int64) 
 }
 
 // Watch streams a run's pane: messages as they land, an answer's text
-// as it is written, the state as it changes.
+// as it is written, a thread's state as it changes, threads as they open.
 func (svc *Service) Watch(runID string) (<-chan AskFrame, func()) {
 	return svc.hub.subscribe(runID)
 }
 
-// Ask records a question and starts its answer; the question is returned
-// at once and the answer arrives on the stream (and in the next State).
-func (svc *Service) Ask(ctx context.Context, runID, userID, text string) (Message, error) {
+// NewThread opens a thread in the run's pane: no messages, no harness
+// session until its first answer, and the model of the run's latest thread.
+func (svc *Service) NewThread(ctx context.Context, runID string) (ThreadState, error) {
+	s, err := svc.setup(ctx, runID)
+	if err != nil {
+		return ThreadState{}, err
+	}
+	defer s.release()
+	if s.reason != "" {
+		return ThreadState{}, fmt.Errorf("%w: %s", ErrOff, s.reason)
+	}
+	a := svc.state(runID)
+	a.creating.Lock()
+	defer a.creating.Unlock()
+	ths, err := svc.Store.AskThreads(ctx, runID)
+	if err != nil {
+		return ThreadState{}, err
+	}
+	model := ""
+	if len(ths) > 0 {
+		model = ths[len(ths)-1].Model
+	}
+	th, err := svc.openThread(ctx, s, model)
+	if err != nil {
+		return ThreadState{}, err
+	}
+	return threadState(th, s, svc.models(ctx, s)), nil
+}
+
+// openThread stores a new thread of the run and tells the stream; the
+// caller holds the run's creating lock.
+func (svc *Service) openThread(ctx context.Context, s *askSetup, model string) (Thread, error) {
+	runID := s.v.RunID
+	th := Thread{RunID: runID, ID: svc.newID(), Model: model}
+	if err := svc.Store.SaveAskThread(ctx, th); err != nil {
+		return Thread{}, err
+	}
+	// Read back for the stamps the store gave it.
+	saved, ok, err := svc.Store.AskThread(ctx, runID, th.ID)
+	if err != nil {
+		return Thread{}, err
+	}
+	if !ok {
+		return Thread{}, fmt.Errorf("ask session %s of run %s is gone right after it was saved", th.ID, runID)
+	}
+	ts := threadState(saved, s, svc.models(ctx, s))
+	svc.hub.publish(runID, AskFrame{Kind: "thread", ThreadID: saved.ID, Thread: &ts})
+	return saved, nil
+}
+
+// thread is the run's thread the caller names, or — none named — its
+// latest, opened when the run has none yet.
+func (svc *Service) thread(ctx context.Context, s *askSetup, a *askRun, threadID string) (Thread, error) {
+	runID := s.v.RunID
+	if threadID != "" {
+		th, ok, err := svc.Store.AskThread(ctx, runID, threadID)
+		if err != nil {
+			return Thread{}, err
+		}
+		if !ok {
+			return Thread{}, fmt.Errorf("ask session %q of run %s not found", threadID, runID)
+		}
+		return th, nil
+	}
+	a.creating.Lock()
+	defer a.creating.Unlock()
+	ths, err := svc.Store.AskThreads(ctx, runID)
+	if err != nil {
+		return Thread{}, err
+	}
+	if len(ths) > 0 {
+		return ths[len(ths)-1], nil
+	}
+	return svc.openThread(ctx, s, "")
+}
+
+// record appends a message, one at a time per run: the store numbers a
+// run's messages as one sequence across its threads.
+func (svc *Service) record(ctx context.Context, a *askRun, m Message) (Message, error) {
+	a.appends.Lock()
+	defer a.appends.Unlock()
+	return svc.Store.AppendAskMessage(ctx, m)
+}
+
+// Ask records a question in a thread (threadID; empty: the run's latest,
+// opened when there is none) and starts its answer; the question is
+// returned at once and the answer arrives on the stream (and in the next
+// State).
+func (svc *Service) Ask(ctx context.Context, runID, threadID, userID, text string) (Message, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return Message{}, errors.New("the question is empty")
@@ -343,47 +489,45 @@ func (svc *Service) Ask(ctx context.Context, runID, userID, text string) (Messag
 		return Message{}, fmt.Errorf("%w: %s", ErrOff, s.reason)
 	}
 	a := svc.state(runID)
+	th, err := svc.thread(ctx, s, a, threadID)
+	if err != nil {
+		s.release()
+		return Message{}, err
+	}
 	svc.mu.Lock()
-	if a.busy {
+	t := a.thread(th.ID)
+	if t.busy {
 		svc.mu.Unlock()
 		s.release()
 		return Message{}, ErrBusy
 	}
-	a.busy = true
+	t.busy = true
 	svc.mu.Unlock()
-	fail := func(err error) (Message, error) {
+	model := askModel(th, s.fl, svc.models(ctx, s))
+	q, err := svc.record(ctx, a, Message{RunID: runID, ThreadID: th.ID, ID: svc.newID(), Role: RoleQuestion, Text: event.CleanText(text), UserID: userID})
+	if err != nil {
 		svc.mu.Lock()
-		a.busy = false
+		t.busy = false
 		svc.mu.Unlock()
 		s.release()
 		return Message{}, err
 	}
-	th, _, err := svc.Store.AskThread(ctx, runID)
-	if err != nil {
-		return fail(err)
-	}
-	th.RunID = runID
-	model := askModel(th, s.fl, svc.models(ctx, s))
-	q, err := svc.Store.AppendAskMessage(ctx, Message{RunID: runID, ID: svc.newID(), Role: RoleQuestion, Text: event.CleanText(text), UserID: userID})
-	if err != nil {
-		return fail(err)
-	}
-	svc.hub.publish(runID, AskFrame{Kind: "message", Message: &q})
-	svc.hub.publish(runID, AskFrame{Kind: "state", Busy: true, Model: model})
-	go svc.answer(s, a, th, model, text)
+	svc.hub.publish(runID, AskFrame{Kind: "message", ThreadID: th.ID, Message: &q})
+	svc.hub.publish(runID, AskFrame{Kind: "state", ThreadID: th.ID, Busy: true, Model: model})
+	go svc.answer(s, a, t, th, model, text)
 	return q, nil
 }
 
-// answer runs one question through the pane's session — opened on the
-// first, continued after — and records what came back. Detached from the
-// request: the asker may close the page and read the answer later.
-func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question string) {
+// answer runs one question through its thread's session — opened on the
+// thread's first, continued after — and records what came back. Detached
+// from the request: the asker may close the page and read the answer later.
+func (svc *Service) answer(s *askSetup, a *askRun, t *askThread, th Thread, model, question string) {
 	defer s.release()
 	runID := s.v.RunID
 	ctx, cancel := context.WithTimeout(context.Background(), askAnswerTimeout)
 	defer cancel()
 	svc.mu.Lock()
-	a.cancel = cancel
+	t.cancel = cancel
 	svc.mu.Unlock()
 
 	red := redact.ForResolution(s.res, svc.Engine.RunToken(runID))
@@ -397,7 +541,7 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 		}
 		th.SessionID = id
 		if err := svc.Store.SaveAskThread(ctx, th); err != nil {
-			svc.log().Warn("ask: save thread", logs.RunID, runID, "err", err)
+			svc.log().Warn("ask: save thread", logs.RunID, runID, "thread", th.ID, "err", err)
 		}
 	}
 	events := func(ev agentport.AgentEvent) {
@@ -414,14 +558,14 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 			soFar := text.String()
 			mu.Unlock()
 			if due {
-				svc.hub.publish(runID, AskFrame{Kind: "delta", Text: red.Scrub(soFar)})
+				svc.hub.publish(runID, AskFrame{Kind: "delta", ThreadID: th.ID, Text: red.Scrub(soFar)})
 			}
 		case agentport.AgentEvTool:
 			if ev.Tool != nil && ev.Tool.Title != "" && ev.Tool.Status != "completed" && ev.Tool.Status != "failed" {
 				mu.Lock()
 				soFar := text.String()
 				mu.Unlock()
-				svc.hub.publish(runID, AskFrame{Kind: "delta", Text: red.Scrub(soFar), Tool: red.Scrub(ev.Tool.Title)})
+				svc.hub.publish(runID, AskFrame{Kind: "delta", ThreadID: th.ID, Text: red.Scrub(soFar), Tool: red.Scrub(ev.Tool.Title)})
 			}
 		}
 	}
@@ -433,7 +577,7 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 		res, err = runner.Run(ctx, envport.EnvID(s.v.EnvID), spec, in)
 	} else {
 		svc.mu.Lock()
-		if a.sessionModel != "" && a.sessionModel != model {
+		if t.sessionModel != "" && t.sessionModel != model {
 			in.Model = model // switch the live session over first
 		}
 		svc.mu.Unlock()
@@ -446,7 +590,7 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 		// failed before saying anything, the question goes to a fresh
 		// session instead, once. One that failed mid-answer keeps its error.
 		if err != nil && ctx.Err() == nil && silent && res.TurnsUsed == 0 {
-			svc.log().Info("ask: the pane's session is gone; starting a fresh one", logs.RunID, runID, "session", th.SessionID, "err", red.Scrub(err.Error()))
+			svc.log().Info("ask: the thread's session is gone; starting a fresh one", logs.RunID, runID, "thread", th.ID, "session", th.SessionID, "err", red.Scrub(err.Error()))
 			th.SessionID, in.Model = "", ""
 			res, err = runner.Run(ctx, envport.EnvID(s.v.EnvID), spec, in)
 		}
@@ -460,12 +604,12 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 	}
 	th.Model = model
 	if serr := svc.Store.SaveAskThread(sctx, th); serr != nil {
-		svc.log().Warn("ask: save thread", logs.RunID, runID, "err", serr)
+		svc.log().Warn("ask: save thread", logs.RunID, runID, "thread", th.ID, "err", serr)
 	}
 	mu.Lock()
 	said := strings.TrimSpace(text.String())
 	mu.Unlock()
-	ans := Message{RunID: runID, ID: svc.newID(), Role: RoleAnswer, Text: red.Scrub(said),
+	ans := Message{RunID: runID, ThreadID: th.ID, ID: svc.newID(), Role: RoleAnswer, Text: red.Scrub(said),
 		Model: model, CostUSD: res.Usage.CostUSD, Turns: res.TurnsUsed}
 	if err != nil {
 		ans.Error = red.Scrub(err.Error())
@@ -476,25 +620,26 @@ func (svc *Service) answer(s *askSetup, a *askRun, th Thread, model, question st
 		ans.Text = red.Scrub(strings.TrimSpace(res.Output))
 	}
 	ans.Text, ans.Error = event.CleanText(ans.Text), event.CleanText(ans.Error)
-	m, aerr := svc.Store.AppendAskMessage(sctx, ans)
+	m, aerr := svc.record(sctx, a, ans)
 	if aerr != nil {
-		svc.log().Error("ask: record answer", logs.RunID, runID, "err", aerr)
+		svc.log().Error("ask: record answer", logs.RunID, runID, "thread", th.ID, "err", aerr)
 		m = ans
 	}
 	svc.mu.Lock()
-	a.busy = false
-	a.cancel = nil
+	t.busy = false
+	t.cancel = nil
 	if err == nil || th.SessionID != "" {
-		a.sessionModel = model
+		t.sessionModel = model
 	}
 	svc.mu.Unlock()
-	svc.hub.publish(runID, AskFrame{Kind: "message", Message: &m})
-	svc.hub.publish(runID, AskFrame{Kind: "state", Busy: false, Model: model})
+	svc.hub.publish(runID, AskFrame{Kind: "message", ThreadID: th.ID, Message: &m})
+	svc.hub.publish(runID, AskFrame{Kind: "state", ThreadID: th.ID, Busy: false, Model: model})
 }
 
-// SetModel picks the model the pane answers with from here on: the live
-// session is switched over at the next question.
-func (svc *Service) SetModel(ctx context.Context, runID, model string) error {
+// SetModel picks the model a thread (threadID; empty: the run's latest,
+// opened when there is none) answers with from here on: its live session is
+// switched over at its next question.
+func (svc *Service) SetModel(ctx context.Context, runID, threadID, model string) error {
 	model = strings.TrimSpace(model)
 	if model == "" {
 		return errors.New("model is required")
@@ -514,17 +659,18 @@ func (svc *Service) SetModel(ctx context.Context, runID, model string) error {
 		}
 		return errors.New(msg)
 	}
-	th, _, err := svc.Store.AskThread(ctx, runID)
+	a := svc.state(runID)
+	th, err := svc.thread(ctx, s, a, threadID)
 	if err != nil {
 		return err
 	}
-	th.RunID, th.Model = runID, model
+	th.Model = model
 	if err := svc.Store.SaveAskThread(ctx, th); err != nil {
 		return err
 	}
 	svc.mu.Lock()
-	busy := svc.asks[runID] != nil && svc.asks[runID].busy
+	busy := a.thread(th.ID).busy
 	svc.mu.Unlock()
-	svc.hub.publish(runID, AskFrame{Kind: "state", Busy: busy, Model: model})
+	svc.hub.publish(runID, AskFrame{Kind: "state", ThreadID: th.ID, Busy: busy, Model: model})
 	return nil
 }

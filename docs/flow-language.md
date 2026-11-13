@@ -68,7 +68,7 @@ name: builder              # required, slug: the flow's permanent id
 version: 5                 # required int: the grammar this document is written in
 description: "..."         # optional
 operates_on: ticket        # what each run works on: ticket (default) | merge_request (below)
-ask: { harness: opencode } # optional: the Ask pane, a read-only session beside the run (below)
+ask: { harness: opencode } # optional: the Ask pane, read-only sessions beside the run (below)
 parameters:                # the flow's ONE settings block (below): every entry is a knob
   harness: opencode        #   the harness kind stages read as $harness
                            #   model: left out on purpose — no default; the project binds
@@ -100,14 +100,17 @@ ask:
   harness: opencode        # the harness kind it runs on — a kind, or a $parameter
 ```
 
-A flow with an `ask:` section gives every run an **Ask** pane: a session of
+A flow with an `ask:` section gives every run an **Ask** pane: sessions of
 its own in the run's workspace, there from the moment the workspace is up
-until it is destroyed, that answers questions about the code as it stands.
+until it is destroyed, that answer questions about the code as it stands.
 It is not a stage and runs beside whatever stage is working: the engine
 prepares a read-only agent for it (no edit, write or shell tools) and opens
-its session read-only, so it cannot step on the stage's changes. The model is
-picked in the pane, not here — the flow only says which harness. The
-conversation persists with the run.
+its sessions read-only, so they cannot step on the stage's changes. A run
+holds several sessions, picked in the pane: each is its own conversation on
+its own harness session, with its own model, and answers one question at a
+time while another may be answering beside it. Each persists with the run.
+The model is picked in the pane, per session, not here — the flow only says
+which harness.
 
 Each harness keeps the promise its own way: opencode by the agent's tool
 definition, codex by its read-only session mode, omp by a second process

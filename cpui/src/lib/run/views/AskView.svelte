@@ -1,12 +1,14 @@
 <script lang="ts">
-	// Ask (DESIGN §6): a read-only session beside the run that answers
-	// questions about the code as it stands. Its conversation is the run's,
-	// kept with it; the model is picked here. One question at a time: the
-	// answer streams in, then the box is yours again.
+	// Ask (DESIGN §6): read-only sessions beside the run that answer
+	// questions about the code as it stands. A run holds several, each its
+	// own conversation and model, picked at the top right; they are the
+	// run's, kept with it. One question at a time per session: its answer
+	// streams in, then its box is yours again, while another session may be
+	// answering beside it.
 	import { errorMessage } from '$lib/core/errors';
 	import { tick } from 'svelte';
 	import { api } from '$lib/api';
-	import type { AskMessage, AskState } from '$lib/domain';
+	import type { AskMessage, AskSession, AskState } from '$lib/domain';
 	import { fmtClock, fmtCost } from '$lib/core/format';
 	import { t } from '$lib/i18n/index.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
@@ -23,19 +25,47 @@
 	let draft = $state('');
 	let sending = $state(false);
 	let pickingModel = $state(false);
-	/** The answer being written: its text so far, and what the agent is doing. */
-	let live = $state<{ text: string; tool: string } | null>(null);
+	let creating = $state(false);
+	/** The session on screen ('': none yet — the run has no session). */
+	let selected = $state('');
+	/** Each session's answer being written: its text so far, and what the
+	 *  agent is doing. */
+	let lives = $state<Record<string, { text: string; tool: string }>>({});
 	let scroller = $state<HTMLDivElement | null>(null);
 	let ta = $state<HTMLTextAreaElement | null>(null);
 
-	const messages = $derived(pane?.messages ?? []);
+	const sessions = $derived(pane?.sessions ?? []);
+	const current = $derived(sessions.find((s) => s.id === selected) ?? null);
+	const messages = $derived((pane?.messages ?? []).filter((m) => m.sessionId === selected));
+	const live = $derived(lives[selected] ?? null);
 	const enabled = $derived(!!pane?.enabled);
-	const busy = $derived(!!pane?.busy);
+	const busy = $derived(!!current?.busy);
 	const modelOptions = $derived((pane?.models ?? []).map((m) => ({ value: m, label: m })));
+
+	/** A session reads as its first question. */
+	function title(s: AskSession): string {
+		const first = pane?.messages.find((m) => m.sessionId === s.id && m.role === 'question');
+		const text = first?.text.replace(/\s+/g, ' ').trim() ?? '';
+		if (!text) return t('runview.ask.untitled');
+		return text.length > 80 ? `${text.slice(0, 79)}…` : text;
+	}
+
+	const sessionOptions = $derived(
+		sessions.map((s) => ({
+			value: s.id,
+			label: title(s),
+			detail: fmtClock(s.createdAt),
+			dot: s.busy ? ('running' as const) : undefined
+		}))
+	);
 
 	async function load() {
 		try {
-			pane = await api.ask.state(rs.runId);
+			const got = await api.ask.state(rs.runId);
+			// The session on screen stays while the run still has it; else the
+			// latest.
+			if (!got.sessions.some((s) => s.id === selected)) selected = got.sessions.at(-1)?.id ?? '';
+			pane = got;
 			loadError = '';
 		} catch (e) {
 			// A conversation on screen outlives a failed re-read.
@@ -45,6 +75,24 @@
 
 	function toBottom() {
 		tick().then(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
+	}
+
+	/** Adds a session the pane has not seen, or brings one up to date. */
+	function upsert(s: AskSession) {
+		if (!pane) return;
+		const had = pane.sessions.find((x) => x.id === s.id);
+		if (had) {
+			had.model = s.model ?? had.model;
+			had.harnessSession = s.harnessSession ?? had.harnessSession;
+			had.createdAt = s.createdAt;
+		} else {
+			pane.sessions = [...pane.sessions, s];
+		}
+		if (!selected) selected = s.id;
+	}
+
+	function session(id: string): AskSession | undefined {
+		return pane?.sessions.find((s) => s.id === id);
 	}
 
 	// Load when shown; follow the stream while shown.
@@ -59,15 +107,20 @@
 					if (!pane.messages.some((m) => m.seq === f.message.seq)) {
 						pane.messages = [...pane.messages, f.message].sort((a, b) => a.seq - b.seq);
 					}
-					if (f.message.role === 'answer') live = null;
-					toBottom();
+					if (f.message.role === 'answer') delete lives[f.sessionId];
+					if (f.sessionId === selected) toBottom();
 				} else if (f.kind === 'delta') {
-					live = { text: f.text, tool: f.tool ?? '' };
-					toBottom();
+					lives[f.sessionId] = { text: f.text, tool: f.tool ?? '' };
+					if (f.sessionId === selected) toBottom();
 				} else if (f.kind === 'state') {
-					pane.busy = f.busy;
-					if (f.model) pane.model = f.model;
-					if (!f.busy) live = null;
+					const s = session(f.sessionId);
+					if (s) {
+						s.busy = f.busy;
+						if (f.model) s.model = f.model;
+					}
+					if (!f.busy) delete lives[f.sessionId];
+				} else {
+					upsert(f.session);
 				}
 			},
 			() => void load()
@@ -82,9 +135,15 @@
 		error = '';
 		draft = '';
 		try {
-			await api.ask.send(rs.runId, text);
-			if (pane) pane.busy = true;
-			live = { text: '', tool: '' };
+			// No session yet: the first question opens one, and the pane
+			// follows it there.
+			const into = selected;
+			const q = await api.ask.send(rs.runId, text, into || undefined);
+			if (!session(q.sessionId)) upsert({ id: q.sessionId, busy: true, createdAt: q.at });
+			if (!into) selected = q.sessionId;
+			const s = session(q.sessionId);
+			if (s) s.busy = true;
+			lives[q.sessionId] = { text: '', tool: '' };
 			toBottom();
 		} catch (e) {
 			error = errorMessage(e);
@@ -94,13 +153,28 @@
 		}
 	}
 
+	async function newSession() {
+		if (creating || !messages.length) return;
+		creating = true;
+		error = '';
+		try {
+			const s = await api.ask.newSession(rs.runId);
+			upsert(s);
+			selected = s.id;
+		} catch (e) {
+			error = errorMessage(e);
+		} finally {
+			creating = false;
+		}
+	}
+
 	async function pickModel(model: string) {
-		if (!pane || model === pane.model) return;
+		if (!pane || model === (current?.model ?? '')) return;
 		pickingModel = true;
 		error = '';
 		try {
-			await api.ask.setModel(rs.runId, model);
-			pane.model = model;
+			await api.ask.setModel(rs.runId, model, selected || undefined);
+			if (current) current.model = model;
 		} catch (e) {
 			error = errorMessage(e);
 		} finally {
@@ -111,7 +185,7 @@
 	/** The box shows the model in force, not a refused one. */
 	async function typeModel(input: HTMLInputElement) {
 		await pickModel(input.value.trim());
-		input.value = pane?.model ?? '';
+		input.value = current?.model ?? '';
 	}
 
 	function onKey(e: KeyboardEvent) {
@@ -143,19 +217,39 @@
 			<span class="display ttl">{t('runview.ask.title')}</span>
 			{#if pane.harness}<span class="mono faint">{pane.harness}</span>{/if}
 			<span class="spacer"></span>
+			{#if sessions.length}
+				<div class="session">
+					<Select
+						id="ask-session"
+						size="sm"
+						label={t('runview.ask.session')}
+						bind:value={selected}
+						options={sessionOptions}
+					/>
+				</div>
+			{/if}
 			{#if enabled}
+				<button
+					class="btn-ghost btn-sm"
+					onclick={newSession}
+					aria-busy={creating}
+					disabled={creating || !messages.length}>{t('runview.ask.newSession')}</button
+				>
 				{#if modelOptions.length}
 					<Select
 						id="ask-model"
 						size="sm"
-						bind:value={() => pane?.model ?? '', pickModel}
+						label={t('runview.ask.model')}
+						bind:value={() => current?.model ?? '', pickModel}
 						options={modelOptions}
+						placeholder={t('runview.ask.modelPlaceholder')}
 						disabled={pickingModel || busy}
 					/>
 				{:else}
 					<input
 						class="model mono"
-						value={pane.model ?? ''}
+						value={current?.model ?? ''}
+						aria-label={t('runview.ask.model')}
 						placeholder={t('runview.ask.modelPlaceholder')}
 						disabled={pickingModel || busy}
 						onchange={(e) => typeModel(e.currentTarget)}
@@ -250,6 +344,10 @@
 	}
 	.ttl {
 		font-size: var(--fs-section);
+	}
+	.session {
+		flex: 0 1 260px;
+		min-width: 0;
 	}
 	.model {
 		width: 220px;

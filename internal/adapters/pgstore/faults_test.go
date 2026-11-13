@@ -47,9 +47,10 @@ func TestDeadDatabaseIsAnErrorEverywhere(t *testing.T) {
 		"GetPing":            func() error { _, err := s.GetPing(ctx, "p"); return err },
 		"LoadLimits":         func() error { _, _, _, err := s.LoadLimits(ctx); return err },
 		"SaveLimits":         func() error { return s.SaveLimits(ctx, 1, 1) },
-		"AskThread":          func() error { _, _, err := s.AskThread(ctx, "r"); return err },
-		"SaveAskThread":      func() error { return s.SaveAskThread(ctx, ask.Thread{RunID: "r"}) },
-		"AppendAskMessage":   func() error { _, err := s.AppendAskMessage(ctx, ask.Message{RunID: "r"}); return err },
+		"AskThread":          func() error { _, _, err := s.AskThread(ctx, "r", "t"); return err },
+		"AskThreads":         func() error { _, err := s.AskThreads(ctx, "r"); return err },
+		"SaveAskThread":      func() error { return s.SaveAskThread(ctx, ask.Thread{RunID: "r", ID: "t"}) },
+		"AppendAskMessage":   func() error { _, err := s.AppendAskMessage(ctx, ask.Message{RunID: "r", ThreadID: "t"}); return err },
 		"AskMessages":        func() error { _, err := s.AskMessages(ctx, "r", 0); return err },
 		"UpsertEgressAudit": func() error {
 			return s.UpsertEgressAudit(ctx, []egressport.EgressAuditRow{{Run: "r", Host: "h", First: now, Last: now}})

@@ -13,17 +13,24 @@ import (
 	"apothecary/internal/engine/ask"
 )
 
-// The Ask pane: a run's read-only session beside its stages, answering
-// questions about the code (FLOWLANG §1 ask).
+// The Ask pane: a run's read-only sessions beside its stages, answering
+// questions about the code (FLOWLANG §1 ask). A run holds any number of
+// them; the API calls each a thread.
 
-// AskRequest is one question for the run's Ask session.
+// AskRequest is one question for one of the run's Ask threads.
 type AskRequest struct {
 	Text string `json:"text"`
+	// ThreadID names the thread; empty: the run's latest, opened when the
+	// run has none.
+	ThreadID string `json:"thread_id,omitempty"`
 }
 
-// AskModelRequest picks the model the Ask session answers with from here on.
+// AskModelRequest picks the model an Ask thread answers with from here on.
 type AskModelRequest struct {
 	Model string `json:"model"`
+	// ThreadID names the thread; empty: the run's latest, opened when the
+	// run has none.
+	ThreadID string `json:"thread_id,omitempty"`
 }
 
 func (s *Server) getAsk(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +48,7 @@ func (s *Server) postAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	m, err := s.Ask.Ask(r.Context(), r.PathValue("id"), p.User.ID, body.Text)
+	m, err := s.Ask.Ask(r.Context(), r.PathValue("id"), body.ThreadID, p.User.ID, body.Text)
 	if err != nil {
 		writeErr(w, askStatus(err), err.Error())
 		return
@@ -49,12 +56,21 @@ func (s *Server) postAsk(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, m)
 }
 
+func (s *Server) postAskThread(w http.ResponseWriter, r *http.Request) {
+	th, err := s.Ask.NewThread(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, askStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, th)
+}
+
 func (s *Server) putAskModel(w http.ResponseWriter, r *http.Request) {
 	var body AskModelRequest
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if err := s.Ask.SetModel(r.Context(), r.PathValue("id"), body.Model); err != nil {
+	if err := s.Ask.SetModel(r.Context(), r.PathValue("id"), body.ThreadID, body.Model); err != nil {
 		writeErr(w, askStatus(err), err.Error())
 		return
 	}
@@ -71,10 +87,11 @@ func askStatus(err error) int {
 	return http.StatusBadRequest
 }
 
-// streamAsk serves the Ask conversation as server-sent events: the messages
-// after after_seq (id = seq, so a reconnect resumes), then live — an
-// answer's text as it is written (delta frames), each message as it lands,
-// and the pane's state (busy, model) as it changes.
+// streamAsk serves the Ask conversations as server-sent events: the
+// messages of every thread after after_seq (id = seq, so a reconnect
+// resumes), then live — an answer's text as it is written (delta frames),
+// each message as it lands, a thread's state (busy, model) as it changes,
+// and threads as they open; every frame names its thread_id.
 func (s *Server) streamAsk(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var after int64

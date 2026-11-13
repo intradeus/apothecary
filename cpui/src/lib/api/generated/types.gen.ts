@@ -132,20 +132,21 @@ export type Approval = {
 
 export type AskModelRequest = {
 	model: string;
+	thread_id?: string;
 };
 
 export type AskRequest = {
 	text: string;
+	thread_id?: string;
 };
 
 export type AskState = {
-	busy: boolean;
 	enabled: boolean;
 	harness?: string;
 	messages: Array<Message> | null;
-	model?: string;
 	models?: Array<string>;
 	reason?: string;
+	threads: Array<ThreadState> | null;
 };
 
 export type Attachment = {
@@ -979,6 +980,7 @@ export type Message = {
 	role: string;
 	seq: number;
 	text: string;
+	thread_id: string;
 	turns?: number;
 	user_id?: string;
 };
@@ -1818,6 +1820,15 @@ export type ThreadComment = {
 	id: string;
 	new?: boolean;
 	ours?: boolean;
+};
+
+export type ThreadState = {
+	busy: boolean;
+	created_at: string;
+	id: string;
+	model?: string;
+	session_id?: string;
+	updated_at: string;
 };
 
 export type ThreadsDocument = {
@@ -7009,6 +7020,47 @@ export type StreamAskResponses = {
 };
 
 export type StreamAskResponse = StreamAskResponses[keyof StreamAskResponses];
+
+export type NewAskThreadData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/ask/threads';
+};
+
+export type NewAskThreadErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type NewAskThreadResponses = {
+	/**
+	 * Created
+	 */
+	201: ThreadState;
+};
+
+export type NewAskThreadResponse = NewAskThreadResponses[keyof NewAskThreadResponses];
 
 export type AuthBrokerDeleteData = {
 	body?: never;
