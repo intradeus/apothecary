@@ -14,8 +14,9 @@
 	// No docker feature here: in a run the project's "Docker in workspaces"
 	// setting adds it (the engine injects docker-outside-of-docker, bound to
 	// the run's own sandbox daemon). In VS Code, add that feature yourself if
-	// you want the Postgres suites' testcontainers inside the container;
-	// otherwise run `task go:test:pg` on the host.
+	// you want the Postgres suites' testcontainers or the sandbox suites (task
+	// test: k3d and kubectl are in the image) inside the container; otherwise
+	// run them on the host.
 	"forwardPorts": [18080],
 	"portsAttributes": {
 		"18080": { "label": "apothecary (task dev:up)" }

@@ -64,6 +64,10 @@ index.crates.io
 *.crates.io
 *.rubygems.org
 rubygems.org
+# Kubernetes tooling: kubectl (and the other Kubernetes binaries) from the
+# project's release host, helm from its own.
+dl.k8s.io
+get.helm.sh
 
 # GitHub — many dev tools install from GitHub releases REGARDLESS of the
 # project's repository host, so these are useful even for a GitLab-hosted

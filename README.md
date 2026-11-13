@@ -731,8 +731,15 @@ way in is the run's inner docker daemon:
 
 The checks run with exactly CI's tools: Go from `go.mod` (the Taskfile's
 `GOTOOLCHAIN` fetches it), Node and npm from `.nvmrc` (`fnm use`), and helm,
-task and shellcheck at the versions in `.devcontainer/Dockerfile`, which has
-them all. `task` refuses a check on any other version.
+task, shellcheck, k3d and kubectl at the versions in `.devcontainer/Dockerfile`,
+which has them all. `task` refuses a check on any other version.
+
+`task test` and `task ci` also run in the devcontainer, given docker (the
+docker-outside-of-docker feature): a task that finds itself in a container of
+the daemon it drives (`deploy/self-container.sh`) joins the k3d cluster's
+network and reaches the API server by name, offers the live tests' pods its
+own address on that network, and hands `docker run` the checkout's path on
+the daemon's host.
 
 Every CI job (`.github/workflows/ci.yml`, on every pull request and push to
 `main`) is one task with the same name: the go-test job runs `task go:test`,
@@ -766,7 +773,7 @@ task dev                           # the same, on :18080 against a scratch Postg
 task dev:up                        # ...plus the built UI, master key written to deploy/.env if missing
 cd cpui && npm run dev             # UI dev server (proxies /api)
 
-devcontainer up --workspace-folder . && devcontainer exec --workspace-folder . task go:test:run   # the repo's own devcontainer (no docker inside it: the pg suite runs on the host, or add the docker-outside-of-docker feature locally)
+devcontainer up --workspace-folder . && devcontainer exec --workspace-folder . task go:test:run   # the repo's own devcontainer (no docker inside it: the pg and sandbox suites run on the host, or add the docker-outside-of-docker feature locally)
 ```
 
 Development happens on macOS or Linux, and `task go:test:run` and `task
@@ -837,12 +844,13 @@ recipe:
 3. **Project.** Repository `https://github.com/intradeus/apothecary`,
    locator `intradeus/apothecary`, default branch `main`, AGENTS.md path
    left default. Workspace: **Docker in workspaces** on. Commands: `verify` =
-   `task check`; optionally
+   `task check`, or `task ci` to verify each run with everything CI runs
+   but the macOS and Windows builds (below); optionally
    `setup` = `bash .devcontainer/post-create.sh`.
-4. **Egress.** *Add sensible defaults*, then add `get.helm.sh` (helm comes
-   from there) — everything else the build and the hooks dial (Debian, the
-   Go module proxy, npm, GitHub, Docker Hub through the mirror,
-   `download.docker.com` for the feature) is in the defaults.
+4. **Egress.** *Add sensible defaults*: everything the build, the hooks and
+   `task ci` dial is in them (Debian, the Go module proxy, npm, GitHub,
+   Docker Hub, `download.docker.com` for the feature, helm from
+   `get.helm.sh`, kubectl from `dl.k8s.io`).
 5. **Service `default`.** Start `task dev:up`, health
    `http://localhost:18080/healthz`, timeout `15m` (the first start builds
    the UI and compiles the daemon), ports `[{18080, "UI"}]`. A screenshot
@@ -852,8 +860,28 @@ recipe:
    Browser enabled.
 7. Preflight (AGENTS.md and the devcontainer are found) → Envcheck → a ticket.
 
-`AGENTS.md` tells the agent what to run and what never to run inside a
-workspace (the image-building and sandbox-nesting suites).
+`AGENTS.md` tells the agent what to run while it iterates (`task check`)
+and what never to run inside a workspace (the release builds).
+
+**`task ci` in a run.** The run's workspace drives its sandbox's own
+daemon, so the sandbox suites' k3d cluster is a sibling container there
+and the live tests' sandbox pods run inside it: containers within
+containers on the node's one kernel, not VMs. What that needs beyond the
+recipe:
+
+- The kubernetes integration's `storage_size` at `60Gi` or more (default
+  `20Gi`): the sandbox's daemon holds the devcontainer, the five images
+  and the cluster's copy of four of them, about 25 GB at the peak.
+- The `verify` command stage's `timeout` at `60m` or more (flow default
+  `30m`): every run builds the images from cold, its daemon being new.
+- Memory for every suite at once: 16 GB for the sandbox pod. In a 9.4 GB
+  Docker VM `task ci` used all of it and swapped about 3 GB more, and a
+  worker frozen by swap can outlast a UI test's 30 s timeout. CPU is
+  shared, not reserved: under load tests run several times slower, which
+  is why every async wait in the UI tests has a 10 s budget
+  (`cpui/src/test/setup.ts`).
+- Sandboxes under sysbox (the chart's default) or privileged: the k3d
+  nodes are privileged containers of the sandbox's daemon.
 
 ## Security model (short form)
 

@@ -30,7 +30,7 @@ One version each, pinned once:
 |---|---|---|
 | Go | `go.mod` (`go` line) | automatic: the Taskfile sets `GOTOOLCHAIN` to it |
 | Node and npm | `.nvmrc`; npm is the one that Node ships (`cpui/package.json` engines) | `fnm use` / `nvm use` |
-| helm, task, shellcheck | `.devcontainer/Dockerfile` `ARG`s | install those versions |
+| helm, task, shellcheck, k3d, kubectl | `.devcontainer/Dockerfile` `ARG`s | install those versions |
 
 `task` refuses a check on any other version (the `pin:*` tasks), and
 `npm ci` refuses another Node or npm (`cpui/.npmrc` engine-strict). A
@@ -50,11 +50,17 @@ devcontainer).
 | you changed `internal/httpapi/routes.go` | `task api` (regenerates `api/openapi.yaml` + `cpui/src/lib/api/generated`; a stale spec fails a unit test) |
 | bring the app up | `task dev:up` (below) |
 
-## Never run in a workspace
+## The heavy suites
 
-`task ci`, `test`, `sandbox:*`, `engine:image`, `build`,
-`build:images`, `k8s:*`, `deploy/images.sh`: they build multi-gigabyte
-images, nest sandboxes or start a k3d cluster. CI runs them.
+`task ci` (and `test`, `sandbox:*`, `engine:image`, `k8s:*`) build
+multi-gigabyte images and start a k3d cluster: about 25 GB of disk and ten
+minutes or more. They run in a workspace with docker (the project's *Docker
+in workspaces*), the devcontainer included. While you iterate, run `task
+check`; leave `task ci` to the stage that verifies the run, unless your
+change is to the images, the sandbox or the Kubernetes provisioner.
+
+Never run `build`, `build:images` or `deploy/images.sh … --push`: they
+build every platform's binaries or publish images.
 
 ## Hard rules
 
