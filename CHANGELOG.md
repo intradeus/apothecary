@@ -2,6 +2,22 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v3.5.0 (2026-11-13)
+
+### Features
+
+- **tickets**: make the branch name format a per-workshop setting
+- **swarm**: add war room live view of the full agent swarm
+- **engine**: make the agent guide optional with no AGENTS.md default
+- **ask**: support multiple sessions per run in the Ask pane
+
+### Fixes
+
+- **devcontainer**: add failing test sweep fix
+- **devcontainer**: add sensible defaults
+- **devcontainer**: updates and testing the CI tests in sandbox
+- **devcontainer**: add missing k3d dependencies for integration tests in devcontainer
+
 ## v3.4.0 (2026-11-13)
 
 ### Features
