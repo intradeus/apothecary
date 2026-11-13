@@ -292,6 +292,28 @@ func TestCreateRaw(t *testing.T) {
 	}
 }
 
+// A workshop's branch format names a ticket of either kind; a branch given
+// still wins.
+func TestBranchesFollowTheWorkshopFormat(t *testing.T) {
+	ctx := context.Background()
+	f, _ := newFactory(t, devSource())
+	conftest.SeedProject(t, f.Conf, confstore.Project{ID: "prj-2", Name: "q",
+		Repo: confstore.RepoConfig{BranchFormat: "{ticket_number}/{ticket_title}"}})
+
+	hand, err := f.Create(ctx, confstore.Ticket{ProjectID: "prj-2", Title: "Add keys", Goal: "g"}, nil)
+	if err != nil || hand.BaseBranch != "add-keys" {
+		t.Errorf("hand-written = %q (%v), want add-keys", hand.BaseBranch, err)
+	}
+	imported, _, err := f.CreateFromSource(ctx, "int-1", "PROJ-7", confstore.Ticket{ProjectID: "prj-2"}, nil)
+	if err != nil || imported.BaseBranch != "proj-7/add-a-farewell-function" {
+		t.Errorf("imported = %q (%v), want proj-7/add-a-farewell-function", imported.BaseBranch, err)
+	}
+	given, err := f.Create(ctx, confstore.Ticket{ProjectID: "prj-2", Title: "Add keys", Goal: "g", BaseBranch: "mine/keys"}, nil)
+	if err != nil || given.BaseBranch != "mine/keys" {
+		t.Errorf("given = %q (%v), want mine/keys", given.BaseBranch, err)
+	}
+}
+
 // An edit must not disown an imported ticket, even though the edit DTO knows
 // nothing about provenance; and what the tracker owns cannot be edited here.
 func TestUpdateKeepsProvenance(t *testing.T) {

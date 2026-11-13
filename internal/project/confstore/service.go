@@ -15,6 +15,7 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/builtin"
 	"apothecary/internal/platform/secrets"
+	"apothecary/internal/project/branchname"
 )
 
 // Service seals/opens secrets, stamps ids/timestamps and validates writes.
@@ -396,6 +397,13 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 	}
 	// The agent guide is optional: empty means none, never an implicit AGENTS.md.
 	p.Repo.AgentsMDPath = strings.TrimSpace(p.Repo.AgentsMDPath)
+	p.Repo.BranchFormat = strings.TrimSpace(p.Repo.BranchFormat)
+	if p.Repo.BranchFormat == "" {
+		p.Repo.BranchFormat = branchname.Default
+	}
+	if err := branchname.Validate(p.Repo.BranchFormat); err != nil {
+		return invalidf("project: repo.branch_format: %v", err)
+	}
 	seen := map[string]bool{"repo": true} // the primary's own checkout dir
 	for i := range p.Repos {
 		r := &p.Repos[i]

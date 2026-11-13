@@ -202,8 +202,6 @@ export interface SourceTicket {
 	attachments: SourceAttachment[];
 	/** What an import makes of the issue's type. */
 	changeType: ChangeType;
-	/** The base branch an import names from it: {changeType}/{key}-{title}. */
-	branch: string;
 }
 
 export interface SourceAttachment {

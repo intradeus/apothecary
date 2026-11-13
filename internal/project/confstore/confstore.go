@@ -72,6 +72,10 @@ type RepoConfig struct {
 	Locator       string `json:"locator"`
 	DefaultBranch string `json:"default_branch"`
 	AgentsMDPath  string `json:"agents_md_path"`
+	// BranchFormat names a new ticket's base branch from {ticket_type},
+	// {ticket_number} and {ticket_title} (package branchname); saved as
+	// branchname.Default when left empty.
+	BranchFormat string `json:"branch_format,omitempty"`
 }
 
 // ExtraRepo is an additional repository a project's runs check out beside the

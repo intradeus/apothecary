@@ -104,7 +104,8 @@ flowchart LR
        the `todo` step.
 5. **Each type row maps to one change type.**
    - `ChangeType` (`feat/fix/hotfix/perf/docs/chore`) stays closed. It drives
-     branch names (`BranchName`), `run_if: run.ticket.change_type` and the
+     branch names (`{ticket_type}` in the workshop's branch format, package
+     `branchname`), `run_if: run.ticket.change_type` and the
      inspector.
    - Remote types are fetched. `GuessChangeType` only pre-fills a new row.
    - This replaces Jira's free-text `type_map`, just as decision 4 replaces

@@ -27,6 +27,7 @@ import (
 
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/trackerport"
+	"apothecary/internal/project/branchname"
 	"apothecary/internal/project/confstore"
 )
 
@@ -79,15 +80,20 @@ func (f *Factory) log() *slog.Logger {
 // uploads for the TICKET rather than any run. It lands on its owner's
 // internal tracker — in the status holding the todo step and the type of its
 // change type, unless given others (confstore validates them). A base branch
-// not given is named from its change type (a feature by default) and title
-// (BranchName).
+// not given is named by its workshop's branch format (package branchname)
+// from its change type (a feature by default) and title; by the default
+// when the workshop cannot be read (CreateTicket refuses a missing one).
 func (f *Factory) Create(ctx context.Context, in confstore.Ticket, attachmentIDs []string) (confstore.Ticket, error) {
 	in.ChangeType = normalType(in.ChangeType)
 	if in.ChangeType == "" {
 		in.ChangeType = trackerport.ChangeFeat
 	}
 	if strings.TrimSpace(in.BaseBranch) == "" {
-		in.BaseBranch = BranchName(in.ChangeType, "", in.Title)
+		format := ""
+		if p, err := f.Conf.GetProject(ctx, in.ProjectID); err == nil {
+			format = p.Repo.BranchFormat
+		}
+		in.BaseBranch = branchname.Render(format, string(in.ChangeType), "", in.Title)
 	}
 	t, err := f.Conf.CreateTicket(ctx, in)
 	if err != nil {
@@ -125,8 +131,9 @@ func (f *Factory) Delete(ctx context.Context, id string) error {
 // What the tracker owns — title, goal (its body), status, type and so change
 // type, labels, comments — is the issue's (mirror.go), whatever `in` says:
 // the sync would overwrite it anyway. `in` gives what Apothecary owns: the
-// project, the base branch (named from the change type, the key and the
-// title when not given — BranchName), the automation that imported it.
+// project, the base branch (named by the workshop's branch format from the
+// change type, the key and the title when not given), the automation that
+// imported it.
 //
 // One issue is one ticket per user: a second import is *DuplicateError,
 // checked before anything is fetched. Attachments are best-effort: one that
@@ -138,10 +145,11 @@ func (f *Factory) CreateFromSource(ctx context.Context, sourceID, key string, in
 	if err != nil {
 		return confstore.Ticket{}, nil, err
 	}
-	// The copied files and the ticket belong to the project's owner.
-	owner := in.UserID
+	// The copied files and the ticket belong to the project's owner; its
+	// branch format names the base branch.
+	owner, format := in.UserID, ""
 	if p, err := f.Conf.GetProject(ctx, in.ProjectID); err == nil {
-		owner = p.UserID
+		owner, format = p.UserID, p.Repo.BranchFormat
 	}
 	if err := f.checkDuplicate(ctx, owner, sourceID, key); err != nil {
 		return confstore.Ticket{}, nil, err
@@ -180,7 +188,7 @@ func (f *Factory) CreateFromSource(ctx context.Context, sourceID, key string, in
 		t.StatusChangedBy = confstore.ChangedBySync
 	}
 	if strings.TrimSpace(t.BaseBranch) == "" {
-		t.BaseBranch = BranchName(t.ChangeType, remote.Key, t.Title)
+		t.BaseBranch = branchname.Render(format, string(t.ChangeType), remote.Key, t.Title)
 	}
 
 	imported, warnings := f.importAttachments(ctx, owner, src, remote)

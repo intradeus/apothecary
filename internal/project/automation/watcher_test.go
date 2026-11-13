@@ -202,10 +202,16 @@ func (h *harness) get(t *testing.T, id string) confstore.Automation {
 }
 
 // A tracker query imports what it finds as tickets of the project, marked
-// with the automation, and starts one run of its flow per import with its
-// params, by "automation". The next pass finds nothing new to do.
+// with the automation and named by the project's branch format, and starts
+// one run of its flow per import with its params, by "automation". The next
+// pass finds nothing new to do.
 func TestTrackerQueryImportsAndStartsOnce(t *testing.T) {
 	h := newHarness(t)
+	p := h.project
+	p.Repo.BranchFormat = "{ticket_number}/{ticket_title}"
+	if _, err := h.conf.UpdateProject(context.Background(), p.ID, p); err != nil {
+		t.Fatal(err)
+	}
 	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery,
 		SourceID: h.source.ID, Query: "do", Params: map[string]string{"plan_gate": "false"}, Enabled: true})
 	h.pass(t)
@@ -224,6 +230,9 @@ func TestTrackerQueryImportsAndStartsOnce(t *testing.T) {
 	for _, tk := range all {
 		if tk.AutomationID != a.ID || tk.ProjectID != h.project.ID || tk.SourceID != h.source.ID {
 			t.Errorf("ticket = %+v, want the automation's provenance", tk)
+		}
+		if want := strings.ToLower(tk.SourceKey) + "/" + strings.ToLower(tk.Title); tk.BaseBranch != want {
+			t.Errorf("base branch = %q, want %q", tk.BaseBranch, want)
 		}
 	}
 	got := h.get(t, a.ID)

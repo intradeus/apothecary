@@ -18,6 +18,11 @@ vi.mock('$lib/api', () => ({
 }));
 
 const projects = [aProject({ id: 'p1', name: 'billing' }), aProject({ id: 'p2', name: 'web' })];
+/** billing names branches the default way; web by its own format. */
+const formatted = (branchFormat: string) => [
+	projects[0],
+	aProject({ id: 'p2', name: 'web', repo: { ...projects[1].repo, branchFormat } })
+];
 const title = () => screen.getByLabelText('Title');
 const goal = () => screen.getByLabelText('Goal');
 const branch = () => screen.getByLabelText('Base branch');
@@ -30,7 +35,6 @@ const issue = (over: Partial<SourceTicket> = {}): SourceTicket => ({
 	body: 'It rounds wrong.',
 	attachments: [],
 	changeType: 'fix',
-	branch: 'fix/proj-7-bad-invoice',
 	...over
 });
 
@@ -253,6 +257,22 @@ describe('TicketForm, the branch', () => {
 		await userEvent.click(create());
 		expect(lastBody().branch).toBeUndefined();
 	});
+
+	it('follows the selected workshop’s format, and the workshop', async () => {
+		setup({ projects: formatted('team/{ticket_type}_{ticket_title}') });
+		await userEvent.type(title(), 'Add keys');
+		expect(branch()).toHaveValue('team/feat_add-keys');
+
+		await choose('Workshop', 'billing');
+		expect(branch()).toHaveValue('feat/add-keys');
+	});
+
+	it('shows a sample named by the workshop’s format while empty', async () => {
+		setup({ projects: formatted('{ticket_number}/{ticket_title}') });
+		expect(branch()).toHaveAttribute('placeholder', 'proj-123/short-description');
+		await choose('Workshop', 'billing');
+		expect(branch()).toHaveAttribute('placeholder', 'feat/proj-123-short-description');
+	});
 });
 
 describe('TicketForm, editing', () => {
@@ -331,14 +351,14 @@ describe('TicketForm, editing', () => {
 });
 
 describe('TicketForm, importing', () => {
-	async function open(results: SourceTicket[] = [issue()]) {
+	async function open(results: SourceTicket[] = [issue()], over: Record<string, unknown> = {}) {
 		vi.mocked(api.integrations.list).mockResolvedValue([
 			jira,
 			anIntegration({ id: 'other', port: 'repository' })
 		]);
 		vi.mocked(api.integrations.sourceTickets).mockResolvedValue(results);
 		vi.mocked(api.integrations.sourceTicket).mockResolvedValue(issue());
-		setup();
+		setup(over);
 		await screen.findByRole('combobox', { name: 'Tracker' });
 		await choose('Tracker', 'Jira (jira)');
 	}
@@ -412,6 +432,12 @@ describe('TicketForm, importing', () => {
 
 		await choose('Change type', 'chore');
 		expect(branch()).toHaveValue('chore/proj-7-bad-invoice');
+	});
+
+	it('names the import branch by the workshop’s format', async () => {
+		await open([issue()], { projects: formatted('{ticket_title}-{ticket_number}') });
+		await userEvent.click(await result());
+		await waitFor(() => expect(branch()).toHaveValue('bad-invoice-proj-7'));
 	});
 
 	it('names the files that will be copied', async () => {

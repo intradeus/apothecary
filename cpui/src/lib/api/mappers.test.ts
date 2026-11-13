@@ -934,7 +934,6 @@ describe('tickets', () => {
 			key: 'K-1',
 			title: '',
 			changeType: 'chore',
-			branch: '',
 			attachments: [{ filename: 'a.txt' }, { filename: '' }]
 		});
 	});
@@ -948,7 +947,7 @@ describe('projects', () => {
 			repoAccountId: '',
 			provisionerId: '',
 			harnessIds: [],
-			repo: { url: '', locator: '', defaultBranch: '', agentsMdPath: '' },
+			repo: { url: '', locator: '', defaultBranch: '', agentsMdPath: '', branchFormat: '' },
 			repos: [],
 			commands: {},
 			workspace: {

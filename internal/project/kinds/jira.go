@@ -26,9 +26,9 @@ Write-back happens ONLY when a flow runs a tracker action on a ticket imported f
 • ticket_comment — posts a markdown artifact as a comment, ending with a short apothecary trailer (run + stage).
 • ticket_set_field — writes one field by its DISPLAY NAME ("Feature flags"): text, paragraph, number, select, labels, components, versions, priority. Replace or append (comma-separated items merged).
 • ticket_link — attaches the run's merge request(s) as remote issue links.
-• ticket_link_branch — attaches the run's pushed branch as a remote issue link. (Jira's own Development panel needs no write: it lists a branch whose name carries the issue key — feat/proj-123-… is how an imported ticket's branch is named — once your GitHub/GitLab is connected to Jira.)
+• ticket_link_branch — attaches the run's pushed branch as a remote issue link. (Jira's own Development panel needs no write: it lists a branch whose name carries the issue key — feat/proj-123-… is how an imported ticket's branch is named by default (the workshop's branch format) — once your GitHub/GitLab is connected to Jira.)
 
-Each imported issue's type becomes the ticket's change type — feat, fix, hotfix, perf, docs or chore — which its branch is named after: as the type list says. A type new to the list is pre-filled from its name (Hotfix, Incident → hotfix; Bug, Defect → fix; Performance → perf; Documentation → docs; Chore, Maintenance, Tech Debt → chore; anything else → feat).
+Each imported issue's type becomes the ticket's change type — feat, fix, hotfix, perf, docs or chore — which its branch can be named after (the workshop's branch format): as the type list says. A type new to the list is pre-filled from its name (Hotfix, Incident → hotfix; Bug, Defect → fix; Performance → perf; Documentation → docs; Chore, Maintenance, Tech Debt → chore; anything else → feat).
 A flow with none of these never writes. A token without write permissions still imports fine; a run of a flow WITH tracker actions on such a ticket fails at creation with the integration named.
 
 Which Jira is this?

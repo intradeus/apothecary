@@ -1,7 +1,8 @@
 <script lang="ts">
 	// 1 · Repository: the account, a browser of what it can see (picking one
 	// fills the fields below, and the workshop's name if it has none yet), the
-	// primary repository, the additional ones.
+	// primary repository, the format its tickets' branches are named by, the
+	// additional ones.
 	import { errorMessage } from '$lib/core/errors';
 	import { api } from '$lib/api';
 	import type { ExtraRepo, Integration, Repo } from '$lib/domain';
@@ -11,6 +12,12 @@
 	import SearchInput from '$lib/ui/SearchInput.svelte';
 	import { I } from '$lib/design/icons';
 	import { t, th } from '$lib/i18n/index.svelte';
+	import {
+		branchFormatError,
+		DEFAULT_BRANCH_FORMAT,
+		MAX_BRANCH_FORMAT,
+		renderBranch
+	} from '$lib/core/branchname';
 	import FormPane from './FormPane.svelte';
 	import ExtraRepos from './ExtraRepos.svelte';
 
@@ -21,6 +28,7 @@
 		locator = $bindable(),
 		defaultBranch = $bindable(),
 		agentsMD = $bindable(),
+		branchFormat = $bindable(),
 		name = $bindable(),
 		extraRepos = $bindable()
 	}: {
@@ -30,12 +38,35 @@
 		locator: string;
 		defaultBranch: string;
 		agentsMD: string;
+		branchFormat: string;
 		name: string;
 		extraRepos: ExtraRepo[];
 	} = $props();
 
 	const repoAccountOptions = $derived<SelectOption[]>(
 		repoAccounts.map((f) => ({ value: f.id, label: `${f.name} (${f.kind})` }))
+	);
+
+	// The branch format's help and errors show the placeholders as text: as
+	// params, so the catalogue's own {…} never swallows them.
+	const placeholders = {
+		type: '{ticket_type}',
+		number: '{ticket_number}',
+		title: '{ticket_title}'
+	};
+	const formatError = $derived(branchFormatError(branchFormat.trim()));
+	const formatErrorText = $derived(
+		formatError &&
+			t(`form.project.branchFormatError.${formatError.code}`, {
+				...placeholders,
+				max: MAX_BRANCH_FORMAT,
+				name:
+					formatError.code === 'unknown'
+						? `{${formatError.name}}`
+						: formatError.code === 'ref'
+							? formatError.name
+							: ''
+			})
 	);
 
 	function addExtra(r?: Repo) {
@@ -185,6 +216,26 @@
 			<label for="p-agentsmd">{t('form.project.agentGuide')}</label>
 			<input id="p-agentsmd" class="mono" bind:value={agentsMD} placeholder="AGENTS.md" />
 			<div class="help">{t('form.project.agentGuideHelp')}</div>
+		</div>
+		<div class="field wide">
+			<label for="p-branch-format">{t('form.project.branchFormat')}</label>
+			<input
+				id="p-branch-format"
+				class="mono"
+				bind:value={branchFormat}
+				placeholder={DEFAULT_BRANCH_FORMAT}
+				aria-invalid={!!formatError}
+			/>
+			<div class="help">{@html th('form.project.branchFormatHelp', placeholders)}</div>
+			{#if formatErrorText}
+				<div class="error">{formatErrorText}</div>
+			{:else}
+				<div class="help mono">
+					{t('form.project.branchFormatPreview', {
+						name: renderBranch(branchFormat.trim(), 'feat', 'PROJ-123', 'Add footnotes')
+					})}
+				</div>
+			{/if}
 		</div>
 	</div>
 

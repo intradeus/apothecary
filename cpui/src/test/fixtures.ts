@@ -49,7 +49,8 @@ export const aProject = (over: Partial<Project> = {}): Project =>
 			url: 'https://git.test/dev/repo.git',
 			locator: '1',
 			defaultBranch: 'main',
-			agentsMdPath: ''
+			agentsMdPath: '',
+			branchFormat: ''
 		},
 		repos: [],
 		commands: {},

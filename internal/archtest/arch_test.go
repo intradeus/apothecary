@@ -131,6 +131,7 @@ var rules = []rule{
 		"internal/flow/actionspec", "internal/flow/agentspec", "internal/run/event", "internal/flow",
 		"internal/run", "internal/flow/signalspec", "internal/ports/",
 	}},
+	{pkg: "internal/project/branchname", mayImport: []string{"internal/workspace/checkout"}},
 }
 
 // matches reports whether path is the package prefix names: "a/b" matches

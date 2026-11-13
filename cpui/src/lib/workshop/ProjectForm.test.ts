@@ -45,7 +45,8 @@ const stored = (over: Partial<Project> = {}) =>
 			url: 'https://git.test/a.git',
 			locator: '7',
 			defaultBranch: 'trunk',
-			agentsMdPath: 'A.md'
+			agentsMdPath: 'A.md',
+			branchFormat: '{ticket_number}/{ticket_title}'
 		},
 		repos: [],
 		commands: { test: 'make test' },
@@ -132,7 +133,8 @@ describe('ProjectForm, draft()', () => {
 				url: 'https://git.test/a.git',
 				locator: '7',
 				defaultBranch: 'trunk',
-				agentsMdPath: 'A.md'
+				agentsMdPath: 'A.md',
+				branchFormat: '{ticket_number}/{ticket_title}'
 			},
 			repos: [{ name: 'api', url: 'https://x.git', locator: '9', defaultBranch: 'dev' }],
 			commands: { test: 'make test' },
@@ -176,10 +178,18 @@ describe('ProjectForm, draft()', () => {
 		await retype('Locator', ' 8 ');
 		await retype('Default branch', ' dev ');
 		await retype('Agent guide (optional)', ' B.md ');
+		// user-event reads { as a key descriptor: doubled, it is literal.
+		await retype('Branch name format', ' {{ticket_title} ');
 
 		expect(await save()).toMatchObject({
 			name: 'acme',
-			repo: { url: 'https://new.git', locator: '8', defaultBranch: 'dev', agentsMdPath: 'B.md' }
+			repo: {
+				url: 'https://new.git',
+				locator: '8',
+				defaultBranch: 'dev',
+				agentsMdPath: 'B.md',
+				branchFormat: '{ticket_title}'
+			}
 		});
 	});
 
@@ -188,6 +198,12 @@ describe('ProjectForm, draft()', () => {
 		await retype('Agent guide (optional)', '');
 
 		expect((await save()).repo.agentsMdPath).toBe('');
+	});
+
+	it('fills in the default branch format a workshop saved before it had one', async () => {
+		edit({ repo: { ...stored().repo, branchFormat: '' } });
+		await userEvent.click(envcheck());
+		expect((await save()).repo.branchFormat).toBe('{ticket_type}/{ticket_number}-{ticket_title}');
 	});
 
 	it('leaves out commands with no name or no script, keeping scripts as written', async () => {
@@ -565,7 +581,11 @@ describe('ProjectForm, creating', () => {
 			provisionerId: 'prov-1',
 			harnessIds: ['h-a'],
 			defaultFlow: 'mine',
-			repo: { defaultBranch: 'main', agentsMdPath: '' },
+			repo: {
+				defaultBranch: 'main',
+				agentsMdPath: '',
+				branchFormat: '{ticket_type}/{ticket_number}-{ticket_title}'
+			},
 			commands: {},
 			workspace: { egressMode: 'allow', browserEnabled: false, services: [] }
 		});

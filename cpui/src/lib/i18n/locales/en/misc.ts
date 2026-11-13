@@ -333,13 +333,13 @@ export default {
 		'Add a GET /farewell endpoint that returns “goodbye”. Done = the handler, a test, and the route wired up.',
 	'form.ticket.baseBranch': 'Base branch',
 	'form.ticket.edited': 'edited',
-	'form.ticket.autoTitle': 'Go back to the branch named from the type, the issue key and the title',
+	'form.ticket.autoTitle': 'Go back to the branch named by the workshop’s branch format',
 	'form.ticket.auto': 'auto',
 	'form.ticket.changeType': 'Change type',
 	'form.ticket.changeTypeTitle':
-		'What the ticket is — a feature, a fix or a chore. The branch name starts with it, and a flow can run stages only for one kind.',
+		'What the ticket is — a feature, a fix or a chore. The branch name can carry it, and a flow can run stages only for one kind.',
 	'form.ticket.branchHelp':
-		'Named {type}/{issue key}-{title}; the key in the name is what links the branch to the Jira issue. Each run appends a short unique suffix, so runs never share a branch.',
+		'Named by the workshop’s branch format; the issue key in the name is what links the branch to the Jira issue. Each run appends a short unique suffix, so runs never share a branch.',
 	'form.ticket.attachments': 'Attachments',
 	'form.ticket.alreadyAttached': "Already attached — delivered into every run's workspace",
 	'form.ticket.dropLabel': 'Drop documents or images for the agent, or browse',
@@ -418,6 +418,20 @@ export default {
 	'form.project.agentGuide': 'Agent guide (optional)',
 	'form.project.agentGuideHelp':
 		'A repository file every agent is pointed to first, e.g. AGENTS.md. Leave empty for none.',
+	'form.project.branchFormat': 'Branch name format',
+	'form.project.branchFormatHelp':
+		'How a new ticket’s branch is named: <code>{type}</code> is its change type, <code>{number}</code> its issue key (what links the branch to the issue on the tracker), <code>{title}</code> its title.',
+	'form.project.branchFormatPreview': 'e.g. {name}',
+	'form.project.branchFormatError.unknown':
+		'Unknown placeholder {name}: use {type}, {number} or {title}.',
+	'form.project.branchFormatError.unbalanced':
+		'Unbalanced braces: the placeholders are {type}, {number} and {title}.',
+	'form.project.branchFormatError.no_stem':
+		'Needs {number} or {title}, or every ticket would get the same branch.',
+	'form.project.branchFormatError.too_long': 'Longer than {max} characters.',
+	'form.project.branchFormatError.ref': '“{name}” is not a valid branch name.',
+	'form.project.branchFormatError.empty':
+		'A ticket with no issue key would get no branch name: add {title}.',
 	'form.project.extraHead': 'Additional repositories',
 	'form.project.addRepo': 'Add repository',
 	'form.project.extraHelp':

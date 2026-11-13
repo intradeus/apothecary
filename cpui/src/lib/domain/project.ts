@@ -25,6 +25,9 @@ export interface ProjectRepo {
 	locator: string;
 	defaultBranch: string;
 	agentsMdPath: string;
+	/** Names a new ticket's base branch from {ticket_type}, {ticket_number}
+	 *  and {ticket_title} ($lib/core/branchname); '' is the default. */
+	branchFormat: string;
 }
 
 /** An additional repository of a multi-repo project: cloned beside the
