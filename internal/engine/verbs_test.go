@@ -627,6 +627,19 @@ func TestPreflightNamesWhatIsMissing(t *testing.T) {
 			t.Errorf("err = %v", err)
 		}
 	})
+	t.Run("no agent guide checks nothing", func(t *testing.T) {
+		h := newHarness(t, mustFlow(t, loopFlowDoc))
+		h.res.AgentsMDPath = ""
+		h.repoHost.MissingFiles = map[string]bool{"AGENTS.md": true}
+		if err := start(h); err != nil {
+			t.Errorf("err = %v", err)
+		}
+		for _, s := range h.e.PreflightProject(ctx, testProject) {
+			if strings.HasPrefix(s.ID, "repo_file:") {
+				t.Errorf("an unset agent guide has no step: %+v", s)
+			}
+		}
+	})
 	t.Run("a project that does not resolve stops at the first step", func(t *testing.T) {
 		h := newHarness(t, mustFlow(t, loopFlowDoc))
 		h.e.resolver = failingResolver{boom}

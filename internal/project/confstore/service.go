@@ -394,9 +394,8 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 	if p.Repo.DefaultBranch == "" {
 		p.Repo.DefaultBranch = "main"
 	}
-	if p.Repo.AgentsMDPath == "" {
-		p.Repo.AgentsMDPath = "AGENTS.md"
-	}
+	// The agent guide is optional: empty means none, never an implicit AGENTS.md.
+	p.Repo.AgentsMDPath = strings.TrimSpace(p.Repo.AgentsMDPath)
 	seen := map[string]bool{"repo": true} // the primary's own checkout dir
 	for i := range p.Repos {
 		r := &p.Repos[i]

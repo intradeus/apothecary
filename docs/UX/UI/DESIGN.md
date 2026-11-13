@@ -934,7 +934,7 @@ A stepped form with a left step-rail and section anchors: **1 Repository → 2 W
 1. **Repository:**
    - repository account select
    - "Browse repositories" (searchable list; each row has "Use" and "+ extra")
-   - URL, locator, default branch, AGENTS.md path
+   - URL, locator, default branch, agent guide path (optional)
    - additional repos as an editable table (name, URL, locator: empty = read-only, branch), with the note "cloned to ~/repos/\<name\>, one MR each"
 2. **Workshop:** name; commands as a key → script table, each run only by a flow's `run_ref`; default flow.
 3. **Execution:** provisioner select; harness integrations as a multi-select (one per harness kind).

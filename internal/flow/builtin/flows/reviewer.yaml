@@ -61,8 +61,7 @@ agents:
          change (say so in the summary).
       2. Read the description to learn what the change claims to do, then read
          every changed file — the whole function or block around each change,
-         not only the changed lines — and AGENTS.md for the project's
-         conventions.
+         not only the changed lines.
       3. Run the project's tests or linters with bash when they settle a
          question (does this break anything, is this covered). Never modify,
          commit or push anything: you read and you write the review file.

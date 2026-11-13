@@ -84,7 +84,7 @@
 	let repoURL = $state(init?.repo.url ?? '');
 	let locator = $state(init?.repo.locator ?? '');
 	let defaultBranch = $state(init?.repo.defaultBranch ?? 'main');
-	let agentsMD = $state(init?.repo.agentsMdPath ?? 'AGENTS.md');
+	let agentsMD = $state(init?.repo.agentsMdPath ?? '');
 
 	// Commands as editable key → script rows; flows run them by name.
 	const initCommands = Object.entries(init?.commands ?? {});

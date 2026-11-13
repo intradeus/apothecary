@@ -229,7 +229,7 @@ export default {
 	'workshop.overview.repoName': 'repo',
 	'workshop.overview.primary': 'primary',
 	'workshop.overview.locator': 'locator',
-	'workshop.overview.guide': 'guide',
+	'workshop.overview.guide': 'agent guide',
 	'workshop.overview.repoAccount': 'repository account',
 	'workshop.overview.readOnly': 'read-only',
 	'workshop.overview.clonedTo':

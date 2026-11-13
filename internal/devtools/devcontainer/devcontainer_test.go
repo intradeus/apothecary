@@ -159,7 +159,8 @@ func TestDevcontainerLeavesDockerToTheProject(t *testing.T) {
 	}
 }
 
-// Preflight needs AGENTS.md at the repo root.
+// This repo's project sets its agent guide to AGENTS.md (README, "Developing
+// Apothecary with Apothecary"), so its preflight needs the file at the root.
 func TestAgentsMDExists(t *testing.T) {
 	if len(strings.TrimSpace(read(t, "AGENTS.md"))) == 0 {
 		t.Error("AGENTS.md is empty")

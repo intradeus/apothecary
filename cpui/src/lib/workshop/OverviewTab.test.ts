@@ -102,6 +102,18 @@ describe('OverviewTab, repositories', () => {
 		).toHaveTextContent('3');
 		expect(repos.getAllByText('read-only')).toHaveLength(1);
 	});
+
+	it('shows a dash with no agent guide', () => {
+		setup();
+		expect(pane('Repositories').getByText('agent guide').nextElementSibling).toHaveTextContent('—');
+	});
+
+	it('names the agent guide when one is set', () => {
+		setup(project({ repo: { ...project().repo, agentsMdPath: 'docs/AI.md' } }));
+		expect(pane('Repositories').getByText('agent guide').nextElementSibling).toHaveTextContent(
+			'docs/AI.md'
+		);
+	});
 });
 
 describe('OverviewTab, commands', () => {
