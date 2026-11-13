@@ -2,7 +2,7 @@
 
 Status: built (2026-10-29). Supersedes the ad-hoc `auth_json` / `oauth_json` /
 `env` secrets on harness integrations. Where the build differs from this plan,
-and why, is in IMPLEMENTATION_NOTES ("Model providers, logins and the keeper").
+and why, is in docs/notes ("Model providers, logins and the keeper").
 
 ## Why
 
@@ -206,7 +206,7 @@ lifetimes are the provider's.
 5. Security tests (rules 1, 3, 4) — written with the code they guard, listed
    here so they are not skipped.
 6. UI: providers page, integration picker, dropdown tags, preflight verdicts.
-7. Docs + IMPLEMENTATION_NOTES; update the harness/model memory.
+7. Docs + docs/notes; update the harness/model memory.
 
 ## Out of scope, on purpose
 
@@ -216,7 +216,7 @@ lifetimes are the provider's.
 - Running omp's own broker binary engine-side (replaced by the protocol face).
 - Any per-project default harness or model.
 
-## Facts verified while designing (sources in IMPLEMENTATION_NOTES when built)
+## Facts verified while designing (sources in docs/notes when built)
 
 - OpenAI refresh tokens rotate and the old one dies; OpenAI's CI guide says not
   to share `auth.json` across concurrent jobs and to write back the refreshed

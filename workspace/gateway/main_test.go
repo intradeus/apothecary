@@ -119,13 +119,15 @@ func TestMainBootsFromItsStateDirAndEnforces(t *testing.T) {
 	dnsTCP := <-bound
 	dnsUDP := <-boundPC
 
-	// nft got the state dir's mode, the flags' protection and the closed port.
+	// nft got the state dir's mode, the protection and the closed port.
 	mu.Lock()
 	first := rules[0]
 	mu.Unlock()
 	for _, want := range []string{
 		`iifname != "eth0" tcp dport { 80, 443 } redirect to :9999`,
-		`iifname != "eth0" ip daddr { 169.254.0.0/16 } drop`,
+		// The flags' protection, then the run links' subnet: no run reaches
+		// another through the gateway.
+		`iifname != "eth0" ip daddr { 169.254.0.0/16, 10.90.0.0/16 } drop`,
 		`iifname != { "eth0", "lo" } tcp dport ` + strconv.Itoa(controlPort) + ` drop`,
 	} {
 		if !strings.Contains(first, want) {

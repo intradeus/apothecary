@@ -2,7 +2,7 @@
 
 Status: implemented on `refactor/k8s-native-refactoring` (2026-11-11). What
 was decided while building it, and where it deviates from this plan, is in
-`docs/IMPLEMENTATION_NOTES.md`, "Kubernetes only, one chart, tunnels and the
+`docs/notes/`, "Kubernetes only, one chart, tunnels and the
 apothecary client". Not done yet: the k3d tunnel test.
 Owner: the agent implementing it. Read `AGENTS.md` first;
 every rule there applies (conventional commits, no model ids, `task fmt`,
@@ -332,5 +332,5 @@ the tunnel endpoint and read from it; ssh through the tunnel endpoint.
 - A port scan of the deployment finds 443 and nothing else.
 - No reference to the docker provisioner or the compose deployment remains,
   except inner-dockerd and devcontainer compose wording.
-- `task fmt lint test:unit cover:go` green; `docs/IMPLEMENTATION_NOTES.md`
+- `task fmt lint test:unit cover:go` green; `docs/notes/`
   has an entry per decision above.

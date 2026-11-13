@@ -16,7 +16,7 @@ const askHumanTool = "ask_human"
 // content — the tool's own description already says most of it, but the
 // one thing a description cannot say is the name the harness lists the
 // tool under, and that is exactly what made a model conclude the tool was
-// missing (IMPLEMENTATION_NOTES, the opencode namespacing incident).
+// missing (docs/notes, the opencode namespacing incident).
 //
 // listedAs is the name the harness lists the tool under, when the renderer
 // knows it ("" when it does not: the text then says it may be prefixed).

@@ -385,6 +385,7 @@ func TestLiveK8sLifecycle(t *testing.T) {
 		if _, _, code, _ := h.runInner(ctx, name, "sh", []string{"-c", "ip route replace 1.1.1.1/32 via $(cat /run/apo/orig-gw) dev eth0 && curl -sS -m 5 -o /dev/null https://1.1.1.1/"}, nil, nil); code == 0 {
 			t.Error("bypassing the tunnel reached the internet: the network policy is not enforced")
 		}
+		liveNoCrossRun(ctx, t, a, h, name, spec)
 		var audit []egressport.EgressAuditRecord
 		for i := 0; i < 10 && len(audit) == 0; i++ {
 			time.Sleep(time.Second)
@@ -402,4 +403,56 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	if res, err := a.Exec(ctx, env, envport.Command{Script: "echo still-here"}); err != nil || !strings.Contains(res.Output, "still-here") {
 		t.Fatalf("exec after reattach: %+v %v", res, err)
 	}
+}
+
+// liveNoCrossRun: a second run of the same project is a peer on the same
+// gateway's wg0, listening on :443 and on the project's raw-port hatch
+// (9418). The first run reaches neither — not through the forward chain on
+// the allowed port, not by naming an allowlisted host to the filter — while
+// the second answers on its own tunnel address.
+func liveNoCrossRun(ctx context.Context, t *testing.T, a *Adapter, h *k8sHost, name string, spec envport.EnvSpec) {
+	t.Helper()
+	peer := name + "-b"
+	spec.RunID, spec.Name = "01LIVE"+peer, peer
+	env, err := a.Provision(ctx, spec)
+	if err != nil {
+		t.Fatalf("provision the second run: %v", err)
+	}
+	defer func() {
+		if os.Getenv("APOTHECARY_LIVE_KEEP") == "1" {
+			return
+		}
+		dctx, dcancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer dcancel()
+		if err := a.Destroy(dctx, env); err != nil {
+			t.Errorf("destroy the second run: %v", err)
+		}
+	}()
+	sh := func(run, script string) (string, int) {
+		out, stderr, code, err := h.runInner(ctx, run, "sh", []string{"-c", script}, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out) + string(stderr)), code
+	}
+	ip, code := sh(peer, `ip -4 -o addr show dev wg0 | awk '{split($4, a, "/"); print a[1]}'`)
+	if code != 0 || !strings.HasPrefix(ip, "10.90.") {
+		t.Fatalf("the second run's tunnel address = %q (exit %d)", ip, code)
+	}
+	// Each accepted connection appends to the peer's hit log.
+	for _, port := range []string{"443", "9418"} {
+		if out, code := sh(peer, `(setsid sh -c 'while :; do nc -l -p `+port+` </dev/null >/dev/null && echo `+port+` >> /var/tmp/peer-hits; done' >/dev/null 2>&1 &); sleep 1`); code != 0 {
+			t.Fatalf("listen on %s: %s", port, out)
+		}
+	}
+	if out, code := sh(peer, `nc -w 3 `+ip+` 9418 </dev/null; sleep 1; cat /var/tmp/peer-hits && rm /var/tmp/peer-hits`); code != 0 || !strings.Contains(out, "9418") {
+		t.Fatalf("the second run's listener does not answer on its own address: %q (exit %d)", out, code)
+	}
+
+	// github.com is on the project's allowlist and 9418 is its raw-port hatch.
+	sh(name, `curl -sS -m 5 -k --resolve github.com:443:`+ip+` -o /dev/null https://github.com/; nc -w 3 `+ip+` 9418 </dev/null`)
+	if out, _ := sh(peer, `sleep 2; cat /var/tmp/peer-hits 2>/dev/null`); out != "" {
+		t.Fatalf("the first run reached the second through the gateway (ports hit: %q)", out)
+	}
+	t.Log("cross-run: a second run of the project is unreachable from the first through their gateway")
 }

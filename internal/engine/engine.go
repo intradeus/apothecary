@@ -111,7 +111,7 @@ func (c *Config) withDefaults() Config {
 	if out.EngineURL == "" {
 		// Workspaces reach the engine through the provisioner's bridge:
 		// localhost on both ends (deviation from §8's host.docker.internal
-		// path — see IMPLEMENTATION_NOTES).
+		// path — see docs/notes).
 		out.EngineURL = "http://127.0.0.1:8080"
 	}
 	if out.MRPollInterval == 0 {

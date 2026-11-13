@@ -160,7 +160,7 @@ func stationHarness(st *flow.Stage, res *resolution.Resolution) string {
 // subagentSpawns is how many subagents a tool call runs, read from the
 // shape of its title and raw input (agentport.AgentTool) — ACP has no notion
 // of a subagent, so the harnesses' own spawn tools are recognised as they
-// arrive (IMPLEMENTATION_NOTES, "War room"). 0 for an ordinary tool, for
+// arrive (docs/notes, "War room"). 0 for an ordinary tool, for
 // input that is not (or no longer, once truncated) a JSON object, and for
 // any shape not known here: a drone is never counted on a guess.
 func subagentSpawns(title, input string) int {

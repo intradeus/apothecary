@@ -16,7 +16,7 @@ import (
 )
 
 // Ports an integration can implement. The provider port was removed
-// post-M8: the harness owns model auth (see IMPLEMENTATION_NOTES).
+// post-M8: the harness owns model auth (see docs/notes).
 const (
 	PortRepository  = "repository"
 	PortProvisioner = "provisioner"

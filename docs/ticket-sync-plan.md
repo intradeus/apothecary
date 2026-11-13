@@ -2,9 +2,9 @@
 
 Status: built (2026-11-01). Where the build differs from this plan (GitLab's
 type list, backoff and error handling, where the refreshes run, GitHub's
-FetchMany through GraphQL) is recorded in IMPLEMENTATION_NOTES, "Tickets
+FetchMany through GraphQL) is recorded in docs/notes, "Tickets
 follow their tracker (TODO 49)". Reverses the
-"a copy taken once" decision in IMPLEMENTATION_NOTES ("Ticket sources") and
+"a copy taken once" decision in docs/notes ("Ticket sources") and
 narrows the "a ticket without a source skips" rule from TODO 27 ("Tracker
 actions").
 
@@ -350,7 +350,7 @@ Each phase ships on its own and leaves no dead path.
      current ticket row; remove the `StageCondition` auto-skip.
    - Internal-integration list editor, plus ticket status, labels and comments
      in the UI.
-   - Docs: flow-language, `builder.yaml` header, IMPLEMENTATION_NOTES.
+   - Docs: flow-language, `builder.yaml` header, docs/notes.
    - After this phase, TODO 49's "no tracker" half is done.
 2. **One active run per ticket.** Engine rule, 409 + UI, cron skip, `Rerun`.
 3. **Port and adapters.**

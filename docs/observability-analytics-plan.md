@@ -1,7 +1,7 @@
 # Observability and run analytics (TODO 23) — plan
 
 Status: built (2026-11-02). Where the build differs from this plan is
-recorded in IMPLEMENTATION_NOTES, "Observability and run analytics (TODO 23)".
+recorded in docs/notes, "Observability and run analytics (TODO 23)".
 Splits TODO 23 into two products with two audiences:
 
 | | A. Platform observability | B. Run analytics |
@@ -55,7 +55,7 @@ Both feed from the same run event stream; neither changes how runs execute.
 
 Cost is taken as the harness reports it. `$0` is a real value, not
 "unknown": subscription-included usage and free models cost nothing, and
-Codex reporting `0` (`IMPLEMENTATION_NOTES.md:546`) reads the same way. No
+Codex reporting `0` (`docs/notes/2026-10-24-github-repository-host-codex-harness-m10-design2-12-13.md`) reads the same way. No
 price catalog.
 
 ## Decisions
@@ -176,7 +176,7 @@ where they fail, which models people pick — aggregate only.
 - **Dev / demo**: replace `observability/docker-compose.yaml` with the single
   `grafana/otel-lgtm` image (collector + Prometheus + Tempo + Loki + Pyroscope
   + Grafana), pinned by digest, keeping the unusual loopback ports
-  (`IMPLEMENTATION_NOTES.md:271-276`). It is **not production-ready**: its
+  (`docs/notes/2026-07-20-telemetry-dashboards-m6-7.md`). It is **not production-ready**: its
   README says it is "intended for development, demo, and testing
   environments" and points production at Grafana Cloud
   ([docker-otel-lgtm](https://github.com/grafana/docker-otel-lgtm)).
@@ -338,7 +338,7 @@ contract tests in `analytics/analyticstest`, archtest rule, assertion in
   panel.
 - **Charts**: `layerchart` 2.x (Svelte 5 runes, no Tailwind, colours via CSS
   variables so `check-tokens` holds) for every viz; recorded in
-  IMPLEMENTATION_NOTES per the no-new-deps rule.
+  docs/notes per the no-new-deps rule.
 
 ### B4. Scoring (opt-in)
 

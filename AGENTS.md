@@ -17,9 +17,9 @@ Apothecary on this repo (README, "Developing Apothecary with Apothecary").
 - Deployment: the Helm chart, `charts/apothecary` (`ci/*-values.yaml` are
   its tested examples; `task chart:docs` regenerates its README).
 - `Taskfile.yml` holds every dev command; `task --list` shows them.
-- Design decisions and their deviations are appended to
-  `docs/IMPLEMENTATION_NOTES.md` (newest at the bottom); `docs/flow-language.md`
-  is the flow spec; `docs/frontend-standards.md` the UI rules.
+- Design decisions and their deviations are in `docs/notes/`, one file
+  each (below); `docs/flow-language.md` is the flow spec;
+  `docs/frontend-standards.md` the UI rules.
 
 ## Run these (repo root, inside the devcontainer)
 
@@ -82,6 +82,22 @@ build every platform's binaries or publish images.
 - Only `build/` receives build output: a stray binary under `workspace/`
   would ship inside the daemon.
 
+## Implementation notes
+
+A decision the code alone does not explain (a choice between options, a
+deviation from a plan or the spec, a measured limit) gets a note, in the
+commit that makes the change:
+
+- a **new file** `docs/notes/<YYYY-MM-DD>-<slug>.md`: today's date, the
+  title as a lowercase slug; `# <title>` on its first line, then why, what
+  now, and the tests that hold it;
+- edit only the notes your own branch added. A correction to an older note
+  is a new note that names it. No index, no shared file: two branches
+  adding files never conflict;
+- read them with `ls docs/notes` (oldest first) and `grep -ril <term>
+  docs/notes`. `go test ./internal/devtools/...` holds the names and the
+  first lines.
+
 ## Bringing the app up
 
 `task dev:up` builds the UI, then runs the daemon from source with fake
@@ -95,5 +111,5 @@ alone, for UI work with `cd cpui && npm run dev`.
 ## Pointers
 
 `README.md` · `docs/flow-language.md` · `docs/frontend-standards.md` ·
-`docs/IMPLEMENTATION_NOTES.md` · `.github/workflows/ci.yml` (what a release
+`docs/notes/` · `.github/workflows/ci.yml` (what a release
 needs green).

@@ -55,6 +55,9 @@ func TestSetupWGConfiguresTheLink(t *testing.T) {
 	if link.mtu != 1400 {
 		t.Errorf("mtu = %d", link.mtu)
 	}
+	if link.subnet.String() != "10.90.0.0/16" {
+		t.Errorf("subnet = %v, want the run links' 10.90.0.0/16", link.subnet)
+	}
 	want := "ip link show wg0\n" +
 		"wg set wg0 private-key /keys/wg listen-port 51820\n" +
 		"ip address replace 10.90.0.1/16 dev wg0\n" +
@@ -99,6 +102,15 @@ func TestSetupWGStopsAtTheFirstFailure(t *testing.T) {
 			}
 		})
 	}
+	t.Run("address is no CIDR", func(t *testing.T) {
+		log := fakeTools(t)
+		if _, err := setupWG("no-such-uplink", "/keys/wg", 51820, "10.90.0.1", 1400); err == nil || !strings.Contains(err.Error(), `wg address "10.90.0.1"`) {
+			t.Fatalf("err = %v, want the address named", err)
+		}
+		if got := calls(t, log); got != "" {
+			t.Errorf("commands ran before the address was checked:\n%s", got)
+		}
+	})
 	t.Run("device cannot be created", func(t *testing.T) {
 		fakeTools(t)
 		t.Setenv("APO_FAKE_FAIL", "ip link") // show and add both fail

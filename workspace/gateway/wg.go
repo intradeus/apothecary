@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"sort"
@@ -24,12 +25,20 @@ import (
 //
 // Each peer is allowed exactly its /32 (attributed to its run), and cryptokey
 // routing makes it unforgeable — a sandbox cannot send as another run.
+//
+// Nor reach one: every run of the project is a peer on this one wg0, so the
+// tunnel's subnet joins the protected destinations (main) — the forward chain
+// drops a peer's packets addressed to another peer, and the filter never
+// dials one, whatever the policy says.
 
 const wgDev = "wg0"
 
 type wgLink struct {
 	mtu int
-	run func(name string, args ...string) (string, error) // swapped in tests
+	// subnet is wg0's network: the run links' addresses, which no run may
+	// reach through the gateway.
+	subnet *net.IPNet
+	run    func(name string, args ...string) (string, error) // swapped in tests
 }
 
 func runCmd(name string, args ...string) (string, error) {
@@ -71,7 +80,11 @@ func stageWGKey(file, env string) (string, error) {
 // setupWG creates wg0 (idempotently: a restarted container gets a fresh
 // netns, a restarted daemon finds its own wg0 and reuses it).
 func setupWG(ext, keyFile string, listen int, addr string, mtu int) (*wgLink, error) {
-	l := &wgLink{run: runCmd}
+	_, subnet, err := net.ParseCIDR(addr)
+	if err != nil {
+		return nil, fmt.Errorf("wg address %q: %w", addr, err)
+	}
+	l := &wgLink{run: runCmd, subnet: subnet}
 	if mtu <= 0 {
 		mtu = uplinkMTU(ext) - 60 // IPv4 outer header 20 + UDP 8 + WireGuard 32
 	}

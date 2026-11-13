@@ -76,7 +76,7 @@ const (
 	TypeRunCompleted  Type = "run_completed"
 	TypeRunAbandoned  Type = "run_abandoned"
 	TypeRunFailed     Type = "run_failed"
-	TypeRunArchived   Type = "run_archived" // addition over §6 (see IMPLEMENTATION_NOTES): archived is a projected state, so it needs an event
+	TypeRunArchived   Type = "run_archived" // addition over §6 (see docs/notes): archived is a projected state, so it needs an event
 	TypeRunRetried    Type = "run_retried"  // "try again": re-enter a failed stage in the same workspace
 	TypeRunPaused     Type = "run_paused"   // user pressed pause: loop exited cleanly, run parked non-terminal
 	TypeRunUnpaused   Type = "run_unpaused" // user pressed play: loop restarts and re-enters via the recovery path
@@ -421,7 +421,7 @@ type EdgeTaken struct {
 	// Feed is the content carried to the target stage (a failure's last
 	// 8 KB, a verdict's first 32 KB),
 	// persisted so crash recovery never loses feedback. Extension over the
-	// §6 catalog — see IMPLEMENTATION_NOTES.
+	// §6 catalog — see docs/notes.
 	Feed string `json:"feed,omitempty"`
 }
 
