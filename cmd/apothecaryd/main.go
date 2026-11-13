@@ -312,29 +312,31 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 	if len(projects) > 0 {
 		return nil // a real config exists; don't pollute it
 	}
-	mk := func(port, name string) (string, error) {
+	mk := func(port, name string, config map[string]any) (string, error) {
 		in, err := conf.CreateIntegration(ctx, confstore.Integration{
-			Port: port, Kind: "fake", Name: name,
+			Port: port, Kind: "fake", Name: name, Config: config,
 		})
 		if err != nil {
 			return "", err
 		}
 		return in.ID, nil
 	}
-	repoAccountID, err := mk(confstore.PortRepository, "dev-repos")
+	repoAccountID, err := mk(confstore.PortRepository, "dev-repos", nil)
 	if err != nil {
 		return err
 	}
-	provID, err := mk(confstore.PortProvisioner, "dev-workspaces")
+	provID, err := mk(confstore.PortProvisioner, "dev-workspaces", nil)
 	if err != nil {
 		return err
 	}
-	harnessID, err := mk(confstore.PortHarness, "dev-harness")
+	// Demo pacing: each agent turn is acted out over ~30 s, so the war room
+	// has a crew and subagents to show.
+	harnessID, err := mk(confstore.PortHarness, "dev-harness", map[string]any{"demo": "on"})
 	if err != nil {
 		return err
 	}
 	// A fake tracker so the "import a ticket" flow is exercisable in -dev.
-	if _, err := mk(confstore.PortTicketSource, "dev-tracker"); err != nil {
+	if _, err := mk(confstore.PortTicketSource, "dev-tracker", nil); err != nil {
 		return err
 	}
 	p, err := conf.CreateProject(ctx, confstore.Project{

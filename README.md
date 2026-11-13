@@ -431,6 +431,10 @@ lists `k3d-registry.localhost:5111` under `insecure-registries`;
    configured ticket source. Answer the plan gate in the Inbox;
    merge the draft MR/PR at the end (the run completes itself when you
    merge — all of them, for a multi-repo project).
+6. **Watch** the whole swarm on the *War room* page: one live tactical map
+   of every sandbox you have in flight across all your workshops, with
+   their CPU and RAM, the agent on station and its subagents, and a feed
+   of what just happened (fullscreen for a wall screen).
 
 Settings (concurrency, environment caps, reaper) live under *Settings*
 and apply without a restart. Notification mirrors (Matrix, Slack, Discord) live under

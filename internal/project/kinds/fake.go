@@ -3,6 +3,8 @@ package kinds
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -85,6 +87,40 @@ func (FakeProvisioner) New(Config, ProvisionerDeps) (Provisioner, error) {
 	return fakeProvisioner{fake.NewEnvProvisioner()}, nil
 }
 
+// SampleResources gives a dev workspace numbers to graph: synthetic, steady
+// per workspace, drifting with time (envport.ResourceSampler).
+func (fakeProvisioner) SampleResources(_ context.Context, env envport.EnvID) (envport.ResourceSample, error) {
+	return syntheticSample(env, time.Now()), nil
+}
+
+// fakeCPUs / fakeMemLimit are the dev workspace's host: 4 cores, 8 GiB.
+const (
+	fakeCPUs     = 4
+	fakeMemLimit = 8 << 30
+)
+
+// syntheticSample is a plausible reading of env at now: each workspace has
+// its own load (seeded by its id) that swings slowly, never past the host's
+// cores or memory. Net counters only grow.
+func syntheticSample(env envport.EnvID, now time.Time) envport.ResourceSample {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(env))
+	seed := float64(h.Sum32()%1000) / 1000 // 0 ≤ seed < 1, steady per workspace
+	t := float64(now.UnixMilli()) / 1000
+	swing := func(period, phase float64) float64 { // 0..1
+		return (math.Sin(2*math.Pi*(t/period+phase)) + 1) / 2
+	}
+	cpu := fakeCPUs * 100 * (0.05 + 0.6*seed*swing(47, seed) + 0.3*swing(13, 2*seed))
+	mem := fakeMemLimit * (0.1 + 0.5*seed + 0.3*swing(90, seed))
+	secs := now.Unix() % 86400
+	return envport.ResourceSample{
+		CPUPerc: math.Min(cpu, fakeCPUs*100), CPUs: fakeCPUs,
+		MemUsed: int64(math.Min(mem, fakeMemLimit-1)), MemLimit: fakeMemLimit,
+		NetRx: secs * int64(2048+4096*seed), NetTx: secs * int64(512+1024*seed),
+		PIDs: 20 + int(120*seed*swing(31, seed)),
+	}
+}
+
 // --- ticket source ----------------------------------------------------------
 
 type FakeTicketSource struct{}
@@ -141,16 +177,29 @@ var _ TicketSourceKind = FakeTicketSource{}
 type FakeHarness struct{}
 
 func (FakeHarness) Descriptor() Descriptor {
-	return Descriptor{Port: "harness", Kind: "fake", Label: "Fake harness (dev)"}
+	return Descriptor{Port: "harness", Kind: "fake", Label: "Fake harness (dev)", Fields: []Field{
+		{Name: "demo", Label: "Demo pacing", Placeholder: "on",
+			Help: `"on" acts each turn out slowly — tool calls and subagents over about 30 s — so the war room has a crew to show.`},
+	}}
 }
 
-func (FakeHarness) New(_ Config, envp envport.EnvProvisioner) (Harness, error) {
+// demoBeat spaces a demo turn's steps: ten beats, about 30 s in all.
+const demoBeat = 3 * time.Second
+
+func (FakeHarness) New(cfg Config, envp envport.EnvProvisioner) (Harness, error) {
+	demo := cfg.Str("demo", "") == "on"
 	runner := &fake.AgentRunner{}
 	runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
-		select {
-		case <-time.After(200 * time.Millisecond): // a little realism
-		case <-ctx.Done():
-			return agentport.AgentResult{}, ctx.Err()
+		if demo {
+			if err := demoTurn(ctx, call.In.Events, demoBeat); err != nil {
+				return agentport.AgentResult{}, err
+			}
+		} else {
+			select {
+			case <-time.After(200 * time.Millisecond): // a little realism
+			case <-ctx.Done():
+				return agentport.AgentResult{}, ctx.Err()
+			}
 		}
 		// An output with a shape contract gets a document that holds it —
 		// a verdict, an empty review, a reply per thread, a commit message —
@@ -167,6 +216,43 @@ func (FakeHarness) New(_ Config, envp envport.EnvProvisioner) (Harness, error) {
 		return agentport.AgentResult{TurnsUsed: 3, Usage: agentport.Usage{InputTokens: 1000, OutputTokens: 200, CostUSD: 0.01}}, nil
 	}
 	return &fakeHarness{runner: runner}, nil
+}
+
+// demoTurn acts out an agent's turn for the dev war room: a few ordinary
+// tools, one subagent and then a batch of two (the shapes the engine's crew
+// board recognises), a beat apart; the turn's end takes the last tool still
+// in flight with it. No session: the fake has none to resume. ctx ending
+// stops it.
+func demoTurn(ctx context.Context, emit func(agentport.AgentEvent), beat time.Duration) error {
+	if emit == nil {
+		emit = func(agentport.AgentEvent) {}
+	}
+	tool := func(id, title, kind, status, input string) agentport.AgentEvent {
+		return agentport.AgentEvent{Kind: agentport.AgentEvTool, Turn: "demo", Tool: &agentport.AgentTool{ID: id, Title: title,
+			Kind: kind, Status: status, Input: input}}
+	}
+	emit(agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: "demo"})
+	for _, ev := range []agentport.AgentEvent{
+		tool("read", "Read AGENTS.md", "read", "in_progress", `{"path":"AGENTS.md"}`),
+		tool("read", "", "", "completed", ""),
+		tool("scout", "Map the codebase", "other", "in_progress", `{"agent":"explore","task":"Map the codebase","solutionSpace":"read-only"}`),
+		tool("edit", "Edit main.go", "edit", "in_progress", `{"path":"main.go"}`),
+		tool("edit", "", "", "completed", ""),
+		tool("pair", "Build and test in parallel", "other", "in_progress",
+			`{"context":"demo","tasks":[{"name":"Build","task":"build it","solutionSpace":"one fix"},{"name":"Test","task":"test it","solutionSpace":"one fix"}]}`),
+		tool("scout", "", "", "completed", ""),
+		tool("pair", "", "", "completed", ""),
+		tool("test", "go test ./...", "execute", "in_progress", `{"command":"go test ./..."}`),
+		{Kind: agentport.AgentEvTurnEnd, Turn: "demo"},
+	} {
+		select {
+		case <-time.After(beat):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		emit(ev)
+	}
+	return nil
 }
 
 type fakeHarness struct{ runner *fake.AgentRunner }

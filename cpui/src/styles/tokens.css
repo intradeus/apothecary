@@ -158,6 +158,8 @@
 	--loop-bubble: 1.8s; /* bubbles in a flask */
 	--loop-pulse-slow: 2s; /* a waiting dot */
 	--loop-slosh: 2.4s; /* a flask's liquid */
+	--loop-orbit: 6s; /* a war-room unit's drones circling it */
+	--loop-sweep: 8s; /* the war room's radar sweep */
 	--press-scale: 0.97; /* a pressed button */
 	--enter-scale: 0.96; /* a surface materialising from its trigger */
 	--enter-blur: 6px;

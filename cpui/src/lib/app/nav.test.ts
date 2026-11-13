@@ -10,6 +10,7 @@ describe('NAV', () => {
 			'Inbox',
 			'Notices',
 			'Runs',
+			'War room',
 			'Tickets',
 			'Merge requests',
 			'Analytics',
@@ -23,6 +24,7 @@ describe('NAV', () => {
 			'/inbox',
 			'/notices',
 			'/runs',
+			'/war-room',
 			'/tickets',
 			'/merge-requests',
 			'/analytics',
@@ -30,9 +32,10 @@ describe('NAV', () => {
 		]);
 	});
 
-	it('leaves Notices, Merge requests, Analytics and System off the mobile tab bar', () => {
+	it('leaves Notices, the war room, Merge requests, Analytics and System off the mobile tab bar', () => {
 		expect(NAV.filter((n) => !n.mobile).map((n) => n.id)).toEqual([
 			'notices',
+			'warRoom',
 			'mrs',
 			'analytics',
 			'system'
@@ -47,6 +50,7 @@ describe('NAV', () => {
 	it.each([
 		['inbox', '/inbox/01PING'],
 		['runs', '/runs/01RUN'],
+		['warRoom', '/war-room'],
 		['tickets', '/tickets/new'],
 		['mrs', '/merge-requests/01PROJ/12'],
 		['analytics', '/analytics/scorecards'],
@@ -60,6 +64,7 @@ describe('NAV', () => {
 			'/',
 			'/inbox',
 			'/runs/1',
+			'/war-room',
 			'/tickets/1',
 			'/merge-requests',
 			'/analytics/d1',
@@ -78,6 +83,7 @@ describe('navByChord', () => {
 		['d', 'desk'],
 		['i', 'inbox'],
 		['r', 'runs'],
+		['w', 'warRoom'],
 		['t', 'tickets'],
 		['m', 'mrs'],
 		['a', 'analytics']

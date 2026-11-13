@@ -2051,3 +2051,106 @@ describe('analytics', () => {
 		expect(map.toAnalyticsValue({ value: 'v', label: '' })).toEqual({ value: 'v', label: 'v' });
 	});
 });
+
+describe('war room', () => {
+	const aUnit = (over: object = {}) =>
+		wire<Wire.SwarmUnit>({
+			run_id: 'r1',
+			project_id: 'p1',
+			ticket_title: 'T',
+			flow_name: 'f',
+			state: 'running',
+			created_at: AT,
+			updated_at: AT,
+			open_pings: 0,
+			held: false,
+			...over
+		});
+
+	it('reads a unit with its sample, its crew and the subagents in flight', () => {
+		const sw = map.toSwarm(
+			wire<Wire.Swarm>({
+				at: AT,
+				units: [
+					aUnit({
+						current_stage: 'build',
+						phase: 'main',
+						env_status: 'running',
+						open_pings: 2,
+						held: true,
+						resources: {
+							at: AT,
+							cpu_perc: 150,
+							cpus: 4,
+							mem_used: 1,
+							mem_limit: 2,
+							net_rx: 0,
+							net_tx: 0,
+							pids: 9
+						},
+						crew: {
+							stage_id: 'build',
+							iteration: 2,
+							harness: 'omp',
+							agent: 'builder',
+							since: AT,
+							turn_active: true,
+							tool: 'Read go.mod',
+							subagents: [{ tool_call_id: 'c1', title: 'Scouts', count: 2, since: AT }]
+						}
+					})
+				]
+			})
+		);
+		expect(sw.at).toBe(AT);
+		expect(sw.units[0]).toMatchObject({
+			runId: 'r1',
+			projectId: 'p1',
+			title: 'T',
+			state: 'running',
+			currentStage: 'build',
+			phase: 'main',
+			envStatus: 'running',
+			openPings: 2,
+			held: true,
+			resources: { cpuPerc: 150, cpus: 4, pids: 9 },
+			crew: {
+				stageId: 'build',
+				iteration: 2,
+				harness: 'omp',
+				agent: 'builder',
+				turnActive: true,
+				tool: 'Read go.mod',
+				subagents: [{ toolCallId: 'c1', title: 'Scouts', count: 2, since: AT }]
+			}
+		});
+	});
+
+	it('reads absent samples, crews and lists as absent, and an unknown state as pending', () => {
+		const sw = map.toSwarm(
+			wire<Wire.Swarm>({
+				at: AT,
+				units: [
+					aUnit({ state: 'warping' }),
+					aUnit({
+						crew: {
+							stage_id: 's',
+							iteration: 1,
+							harness: 'h',
+							agent: 'a',
+							since: AT,
+							turn_active: false,
+							subagents: null
+						}
+					})
+				]
+			})
+		);
+		expect(sw.units[0]).toMatchObject({ state: 'pending' });
+		expect(sw.units[0].resources).toBeUndefined();
+		expect(sw.units[0].crew).toBeUndefined();
+		expect(sw.units[0].envStatus).toBeUndefined();
+		expect(sw.units[1].crew).toMatchObject({ subagents: [], tool: undefined });
+		expect(map.toSwarm(wire<Wire.Swarm>({ at: AT, units: null })).units).toEqual([]);
+	});
+});

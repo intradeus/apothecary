@@ -1509,6 +1509,34 @@ describe('notices', () => {
 	});
 });
 
+describe('swarm', () => {
+	it('reads the war room’s snapshot in our shape', async () => {
+		reply(
+			'getSwarm',
+			answer({
+				at: 'now',
+				units: [
+					{
+						run_id: 'r1',
+						project_id: 'p1',
+						ticket_title: 'T',
+						flow_name: 'f',
+						state: 'running',
+						created_at: 'c',
+						updated_at: 'u',
+						open_pings: 1,
+						held: false
+					}
+				]
+			})
+		);
+		await expect(api.swarm.get()).resolves.toMatchObject({
+			at: 'now',
+			units: [{ runId: 'r1', projectId: 'p1', title: 'T', state: 'running', openPings: 1 }]
+		});
+	});
+});
+
 // The thin reads and writes: each one reaches its endpoint with its arguments
 // as the path, query or body the contract names, and maps what comes back
 // without choking on a sparse answer.

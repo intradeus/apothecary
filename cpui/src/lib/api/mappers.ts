@@ -145,6 +145,7 @@ import type {
 	WorkspaceFile,
 	WorkspacePolicy
 } from '$lib/domain';
+import type { CrewPresence, Swarm, SwarmUnit } from '$lib/domain';
 
 // --- narrowing ---------------------------------------------------------------
 //
@@ -1701,4 +1702,47 @@ export function toDrillRun(w: Wire.DrillRun): DrillRun {
 
 export function toAnalyticsValue(w: Wire.AnalyticsValue): AnalyticsValue {
 	return { value: w.value, label: w.label || w.value };
+}
+
+// --- war room ----------------------------------------------------------------
+
+export function toCrewPresence(w: Wire.CrewPresence): CrewPresence {
+	return {
+		stageId: w.stage_id,
+		iteration: w.iteration,
+		harness: w.harness,
+		agent: w.agent,
+		since: w.since,
+		turnActive: w.turn_active,
+		tool: w.tool || undefined,
+		subagents: list(w.subagents).map((s) => ({
+			toolCallId: s.tool_call_id,
+			title: s.title,
+			count: s.count,
+			since: s.since
+		}))
+	};
+}
+
+export function toSwarmUnit(w: Wire.SwarmUnit): SwarmUnit {
+	return {
+		runId: w.run_id,
+		projectId: w.project_id,
+		title: w.ticket_title,
+		flowName: w.flow_name,
+		state: oneOf(RUN_STATES, w.state, 'pending'),
+		currentStage: w.current_stage || undefined,
+		phase: w.phase || undefined,
+		envStatus: (w.env_status || undefined) as SwarmUnit['envStatus'],
+		createdAt: w.created_at,
+		updatedAt: w.updated_at,
+		openPings: w.open_pings,
+		held: w.held,
+		resources: w.resources ? toResourceSample(w.resources) : undefined,
+		crew: w.crew ? toCrewPresence(w.crew) : undefined
+	};
+}
+
+export function toSwarm(w: Wire.Swarm): Swarm {
+	return { at: w.at, units: list(w.units).map(toSwarmUnit) };
 }

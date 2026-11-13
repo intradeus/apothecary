@@ -63,7 +63,9 @@ export const to = {
 	// Run analytics (TODO 23): the user's dashboards and scorecards.
 	analytics: () => '/analytics',
 	dashboard: (id: string) => `/analytics/${encodeURIComponent(id)}`,
-	scorecards: () => '/analytics/scorecards'
+	scorecards: () => '/analytics/scorecards',
+	// The war room: every sandbox in flight, across the person's workshops.
+	warRoom: () => '/war-room'
 };
 
 // --- workshop identity ------------------------------------------------------
