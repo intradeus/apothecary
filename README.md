@@ -847,10 +847,10 @@ recipe:
    `task check`, or `task ci` to verify each run with everything CI runs
    but the macOS and Windows builds (below); optionally
    `setup` = `bash .devcontainer/post-create.sh`.
-4. **Egress.** *Add sensible defaults*, then add `get.helm.sh` (helm comes
-   from there) and `dl.k8s.io` (kubectl) — everything else the build and the hooks dial (Debian, the
-   Go module proxy, npm, GitHub, Docker Hub through the mirror,
-   `download.docker.com` for the feature) is in the defaults.
+4. **Egress.** *Add sensible defaults*: everything the build, the hooks and
+   `task ci` dial is in them (Debian, the Go module proxy, npm, GitHub,
+   Docker Hub, `download.docker.com` for the feature, helm from
+   `get.helm.sh`, kubectl from `dl.k8s.io`).
 5. **Service `default`.** Start `task dev:up`, health
    `http://localhost:18080/healthz`, timeout `15m` (the first start builds
    the UI and compiles the daemon), ports `[{18080, "UI"}]`. A screenshot

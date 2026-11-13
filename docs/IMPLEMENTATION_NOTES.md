@@ -7063,8 +7063,9 @@ pg 1).
   - The egress defaults already allow every nested pull: Docker Hub
     directly (k3s's system images and the nested gateway's mirror pull
     with their own containerd, not through the sandbox's mirror), ghcr.io
-    (k3d's images), mcr.microsoft.com (the browser). The devcontainer
-    build adds `dl.k8s.io` (kubectl).
+    (k3d's images), mcr.microsoft.com (the browser). `dl.k8s.io` (kubectl)
+    and `get.helm.sh` (helm), which this repo's devcontainer build fetches
+    and every project had to add by hand, are in the defaults now too.
   - kubectl is now the engine image's v1.34.1 in the devcontainer and CI
     too (it was briefly a second pin, v1.35.5).
   - AGENTS.md: the heavy suites run in a workspace with docker; `task check`
