@@ -184,17 +184,21 @@
 		if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
 			e.preventDefault();
 			void openFind();
-		} else if (finding && findRow?.contains(e.target as Node)) {
-			// Handled here, so the desk's Esc does not also restore the window.
-			if (e.key === 'Escape') {
-				e.preventDefault();
-				closeFind();
-			} else if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
-				e.preventDefault();
-				// Enter before the pause searches at once.
-				if (sought !== query) sought = query;
-				else step(e.shiftKey ? -1 : 1);
-			}
+		} else if (finding && e.key === 'Escape') {
+			// From anywhere inside, the scroll box included; handled here, so
+			// the desk's Esc does not also restore the window.
+			e.preventDefault();
+			closeFind();
+		} else if (
+			finding &&
+			e.key === 'Enter' &&
+			e.target instanceof HTMLInputElement &&
+			findRow?.contains(e.target)
+		) {
+			e.preventDefault();
+			// Enter before the pause searches at once.
+			if (sought !== query) sought = query;
+			else step(e.shiftKey ? -1 : 1);
 		}
 	}
 

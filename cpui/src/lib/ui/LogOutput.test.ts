@@ -389,6 +389,28 @@ describe('LogOutput', () => {
 			expect(btn('Find in the log')).toHaveAttribute('aria-pressed', 'false');
 		});
 
+		it('closes on Esc from the log itself, and keeps the desk from taking it', async () => {
+			const { user, container } = await finding();
+			await user.click(box());
+			expect(box()).toHaveFocus();
+
+			press(box(), { key: 'Enter' });
+			await tick();
+			expect(screen.getByText('1 of 4')).toBeInTheDocument();
+
+			const delivered = press(box(), { key: 'Escape' });
+			await tick();
+
+			expect(delivered).toBe(false);
+			expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
+			expect(marks(container)).toEqual([]);
+		});
+
+		it('leaves Esc to the desk while find is shut', async () => {
+			show({ text: LOG });
+			expect(press(box(), { key: 'Escape' })).toBe(true);
+		});
+
 		it('closes from its close button and from its toggle', async () => {
 			const { user, container } = await finding();
 			await user.click(btn('Close find'));

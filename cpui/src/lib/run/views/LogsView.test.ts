@@ -403,10 +403,19 @@ describe('LogsView', () => {
 	describe('going back', () => {
 		const earlier = () => screen.queryByRole('button', { name: /^Load earlier output/ });
 
-		it('offers what came before the tail, and puts it above', async () => {
+		it('offers what came before the tail, and puts it above, keeping the reader in place', async () => {
 			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('tail line', 3 << 20));
 			await open();
 			expect(earlier()).toHaveTextContent('Load earlier output · 3.0 MB before this');
+			// jsdom has no layout: the box is 600px taller once the older text is in.
+			const log = screen.getByRole('region', { name: 'Log output' });
+			Object.defineProperty(log, 'scrollHeight', {
+				get: () => (log.textContent?.includes('older') ? 1600 : 1000),
+				configurable: true
+			});
+			Object.defineProperty(log, 'clientHeight', { value: 200, configurable: true });
+			log.scrollTop = 300;
+			log.dispatchEvent(new Event('scroll'));
 
 			vi.mocked(api.runs.workspaceLog).mockResolvedValue({
 				text: 'older ',
@@ -419,6 +428,7 @@ describe('LogsView', () => {
 			expect(api.runs.workspaceLog).toHaveBeenLastCalledWith(RUN, { from: 1 << 20, n: 2 << 20 });
 			expect(screen.getByText('older tail line')).toBeInTheDocument();
 			expect(earlier()).toHaveTextContent('1.0 MB before this');
+			expect(log.scrollTop).toBe(900);
 		});
 
 		it('offers nothing once the log is on screen from its first byte', async () => {

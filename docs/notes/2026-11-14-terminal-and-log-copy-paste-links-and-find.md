@@ -26,11 +26,15 @@
   Log anchors are `draggable="false"`, so a drag across one selects text.
   `linkify` (`cpui/src/lib/core/links.ts`, moved out of `IntegrationForm`)
   matches http(s) only, so no `javascript:` link can come out of a log.
+  A quote (`"`, `'`, `` ` ``) ends a URL: logs and shells quote URLs
+  (`git clone "https://…"`), and a raw quote is no part of one. Unlike the
+  copy in `IntegrationForm`, which kept the closing quote in the link.
 - **Find, not filter:** every line stays on screen; matches are
   highlighted with an "n of m" count, and Enter / Shift+Enter or ↑ / ↓ step
   through them, wrapping. Lines around a match are what one reads a log
   for, which a filter would hide. Ctrl/Cmd+F inside a log opens it instead
-  of the browser's find; Esc closes it and calls `preventDefault`, so the
+  of the browser's find; Esc closes it from anywhere inside the log (its
+  field or the focused scroll box) and calls `preventDefault`, so the
   desk's Esc does not also restore a maximised window. As the tail grows,
   the current match stays the same match (it is kept by line and column).
 - **Find on a long log, measured** (production build, headless Chromium,
