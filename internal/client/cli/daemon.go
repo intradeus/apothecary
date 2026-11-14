@@ -170,7 +170,6 @@ func runDaemon(ctx context.Context, env Env) error {
 	logger.Printf("forward daemon %s started (pid %d)", env.Version, os.Getpid())
 	err = srv.Serve(ln)
 	d.closeAll()
-	_ = os.Remove(sock)
 	logger.Printf("forward daemon stopped")
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
