@@ -160,20 +160,27 @@ func runDaemon(ctx context.Context, env Env) error {
 	_ = os.Chmod(sock, 0o600)
 	d := newDaemon(ctx, env, logger, loadAssignments(filepath.Join(dir, "ports.json")))
 	srv := &http.Server{Handler: d.handler(), ReadHeaderTimeout: 10 * time.Second}
+	// Shutdown, not Close: the exit is often decided inside a request (the
+	// last forward stopped or dropped), whose answer must still go out.
+	closed := make(chan struct{})
 	go func() {
+		defer close(closed)
 		select {
 		case <-d.quit:
 		case <-ctx.Done():
 		}
-		_ = srv.Close()
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(sctx)
 	}()
 	logger.Printf("forward daemon %s started (pid %d)", env.Version, os.Getpid())
 	err = srv.Serve(ln)
+	if errors.Is(err, http.ErrServerClosed) {
+		<-closed
+		err = nil
+	}
 	d.closeAll()
 	logger.Printf("forward daemon stopped")
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
-	}
 	return err
 }
 
