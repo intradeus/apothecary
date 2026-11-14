@@ -103,6 +103,7 @@ export default {
 	'runview.services.open': 'open',
 	'runview.services.preview_later': 'Its preview link appears once it is healthy',
 	'runview.services.address_title': 'Its address inside the workspace — what an agent is handed',
+	'runview.services.log_label': 'Log of {name}',
 	'runview.services.log_tail': 'last {n} lines',
 	'runview.services.log_refresh': 'Reload the log',
 	'runview.services.log_empty': 'No output yet.',

@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
+import { toasts } from '$lib/ui/toast.svelte';
 import Terminal from './Terminal.svelte';
 
 vi.mock('$lib/api', () => ({ api: { workspace: { terminalUrl: vi.fn() } } }));
@@ -19,15 +20,27 @@ const xterm = vi.hoisted(() => {
 		disposed = false;
 		dataListener: ((d: string) => void) | null = null;
 		resizeListener: ((r: { cols: number; rows: number }) => void) | null = null;
+		selectionListener: (() => void) | null = null;
+		keyHandler: ((e: KeyboardEvent) => boolean) | null = null;
 		inputDisposed = false;
 		resizeDisposed = false;
-		addon: { fits: number } | null = null;
+		selectionDisposed = false;
+		addons: object[] = [];
+		selection = '';
+		pasted: string[] = [];
+		scrolled: string[] = [];
 		constructor(options: unknown) {
 			this.options = options;
 			FakeTerminal.made.push(this);
 		}
-		loadAddon(addon: { fits: number }) {
-			this.addon = addon;
+		get addon() {
+			return this.addons.find((a): a is FakeFit => a instanceof FakeFit) ?? null;
+		}
+		get links() {
+			return this.addons.find((a): a is FakeLinks => a instanceof FakeLinks) ?? null;
+		}
+		loadAddon(addon: object) {
+			this.addons.push(addon);
 		}
 		open(el: HTMLElement) {
 			this.mountedIn = el;
@@ -46,6 +59,36 @@ const xterm = vi.hoisted(() => {
 			this.resizeListener = fn;
 			return { dispose: () => (this.resizeDisposed = true) };
 		}
+		onSelectionChange(fn: () => void) {
+			this.selectionListener = fn;
+			return { dispose: () => (this.selectionDisposed = true) };
+		}
+		attachCustomKeyEventHandler(fn: (e: KeyboardEvent) => boolean) {
+			this.keyHandler = fn;
+		}
+		/** The reader selects (or clears) text in the terminal. */
+		select(text: string) {
+			this.selection = text;
+			this.selectionListener?.();
+		}
+		hasSelection() {
+			return this.selection !== '';
+		}
+		getSelection() {
+			return this.selection;
+		}
+		clearSelection() {
+			this.select('');
+		}
+		paste(data: string) {
+			this.pasted.push(data);
+		}
+		scrollToTop() {
+			this.scrolled.push('top');
+		}
+		scrollToBottom() {
+			this.scrolled.push('bottom');
+		}
 		dispose() {
 			this.disposed = true;
 		}
@@ -56,10 +99,14 @@ const xterm = vi.hoisted(() => {
 			this.fits++;
 		}
 	}
-	return { FakeTerminal, FakeFit };
+	class FakeLinks {
+		constructor(public open: (e: MouseEvent, uri: string) => void) {}
+	}
+	return { FakeTerminal, FakeFit, FakeLinks };
 });
 vi.mock('@xterm/xterm', () => ({ Terminal: xterm.FakeTerminal }));
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: xterm.FakeFit }));
+vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: xterm.FakeLinks }));
 
 class FakeSocket {
 	static CONNECTING = 0;
@@ -122,13 +169,24 @@ async function connect(props: { runId?: string; repo?: string; dir?: string } = 
 /** Socket events set state outside a user event: let the view catch up. */
 const reads = (word: string) =>
 	vi.waitFor(() => expect(screen.getByText(word)).toBeInTheDocument());
+/** A key as xterm hands it to the terminal's own key handler. */
+const key = (type: 'keydown' | 'keyup', k: string, mods: KeyboardEventInit = {}) =>
+	new KeyboardEvent(type, {
+		key: k,
+		code: `Key${k.toUpperCase()}`,
+		cancelable: true,
+		...mods
+	});
+const btn = (name: RegExp) => screen.getByRole('button', { name });
 
 describe('Terminal', () => {
 	beforeEach(() => {
 		xterm.FakeTerminal.made = [];
 		FakeSocket.made = [];
 		FakeObserver.made = [];
+		toasts.list = [];
 		vi.resetAllMocks();
+		vi.restoreAllMocks();
 		vi.mocked(api.workspace.terminalUrl).mockReturnValue('ws://engine/term');
 	});
 
@@ -281,6 +339,189 @@ describe('Terminal', () => {
 		});
 	});
 
+	describe('links', () => {
+		it('opens a link in a new tab, with no way back to this one', async () => {
+			await connect();
+			const open = vi.spyOn(window, 'open').mockReturnValue(null);
+
+			lastTerm().links!.open(new MouseEvent('click'), 'https://a.test/x');
+
+			expect(open).toHaveBeenCalledExactlyOnceWith(
+				'https://a.test/x',
+				'_blank',
+				'noopener,noreferrer'
+			);
+		});
+	});
+
+	describe('copy and paste', () => {
+		it('copies the selection on Ctrl+Shift+C, and sends the shell nothing', async () => {
+			userEvent.setup();
+			const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+			await connect();
+			lastSocket().opened();
+			lastTerm().select('ls -la');
+
+			const e = key('keydown', 'C', { ctrlKey: true, shiftKey: true });
+			expect(lastTerm().keyHandler!(e)).toBe(false);
+
+			// Chromium would open its inspector on Ctrl+Shift+C otherwise.
+			expect(e.defaultPrevented).toBe(true);
+			expect(write).toHaveBeenCalledExactlyOnceWith('ls -la');
+			await vi.waitFor(() => expect(lastTerm().selection).toBe(''));
+			expect(lastSocket().sent).toEqual([]);
+		});
+
+		it('copies on Ctrl+C when text is selected', async () => {
+			userEvent.setup();
+			const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+			await connect();
+			lastTerm().select('pwd');
+
+			expect(lastTerm().keyHandler!(key('keydown', 'c', { ctrlKey: true }))).toBe(false);
+			expect(write).toHaveBeenCalledExactlyOnceWith('pwd');
+		});
+
+		it('hands Ctrl+C to the shell when nothing is selected', async () => {
+			userEvent.setup();
+			const write = vi.spyOn(navigator.clipboard, 'writeText');
+			await connect();
+
+			const e = key('keydown', 'c', { ctrlKey: true });
+			expect(lastTerm().keyHandler!(e)).toBe(true);
+			expect(e.defaultPrevented).toBe(false);
+			expect(write).not.toHaveBeenCalled();
+		});
+
+		it('copies nothing on Ctrl+Shift+C with nothing selected', async () => {
+			userEvent.setup();
+			const write = vi.spyOn(navigator.clipboard, 'writeText');
+			await connect();
+
+			expect(lastTerm().keyHandler!(key('keydown', 'C', { ctrlKey: true, shiftKey: true }))).toBe(
+				false
+			);
+			expect(write).not.toHaveBeenCalled();
+		});
+
+		it('acts on the keydown only', async () => {
+			userEvent.setup();
+			const write = vi.spyOn(navigator.clipboard, 'writeText');
+			await connect();
+			lastTerm().select('pwd');
+
+			const e = key('keyup', 'C', { ctrlKey: true, shiftKey: true });
+			expect(lastTerm().keyHandler!(e)).toBe(false);
+			expect(e.defaultPrevented).toBe(false);
+			expect(write).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			['Ctrl+V', { ctrlKey: true }],
+			['Ctrl+Shift+V', { ctrlKey: true, shiftKey: true }]
+		])('leaves %s to the browser’s own paste, which xterm takes', async (_, mods) => {
+			await connect();
+
+			const e = key('keydown', 'v', mods);
+			expect(lastTerm().keyHandler!(e)).toBe(false);
+			expect(e.defaultPrevented).toBe(false);
+		});
+
+		it('hands every other key to xterm', async () => {
+			await connect();
+			expect(lastTerm().keyHandler!(key('keydown', 'd', { ctrlKey: true }))).toBe(true);
+		});
+
+		it('offers Copy only while text is selected', async () => {
+			await connect();
+			expect(btn(/^Copy the selection/)).toBeDisabled();
+
+			lastTerm().select('pwd');
+
+			await vi.waitFor(() => expect(btn(/^Copy the selection/)).toBeEnabled());
+			expect(btn(/^Copy the selection/)).toHaveAccessibleName('Copy the selection (Ctrl+Shift+C)');
+		});
+
+		it('copies from its button, and goes back to the shell', async () => {
+			const user = userEvent.setup();
+			const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+			await connect();
+			lastTerm().select('pwd');
+			await vi.waitFor(() => expect(btn(/^Copy the selection/)).toBeEnabled());
+
+			await user.click(btn(/^Copy the selection/));
+
+			expect(write).toHaveBeenCalledExactlyOnceWith('pwd');
+			await vi.waitFor(() => expect(lastTerm().focused).toBe(1));
+		});
+
+		it('says in a toast when the browser refuses the clipboard, and keeps the selection', async () => {
+			userEvent.setup();
+			vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('denied'));
+			await connect();
+			lastTerm().select('pwd');
+
+			lastTerm().keyHandler!(key('keydown', 'C', { ctrlKey: true, shiftKey: true }));
+
+			await vi.waitFor(() =>
+				expect(toasts.list.map((x) => [x.text, x.tone])).toEqual([
+					['Could not copy — the browser refused clipboard access.', 'bad']
+				])
+			);
+			expect(lastTerm().selection).toBe('pwd');
+		});
+
+		it('pastes from its button through xterm, and goes back to the shell', async () => {
+			const user = userEvent.setup();
+			vi.spyOn(navigator.clipboard, 'readText').mockResolvedValue('echo hi');
+			await connect();
+
+			await user.click(btn(/^Paste/));
+
+			expect(lastTerm().pasted).toEqual(['echo hi']);
+			expect(lastTerm().focused).toBe(1);
+			expect(btn(/^Paste/)).toHaveAccessibleName('Paste (Ctrl+Shift+V)');
+		});
+
+		it('pastes nothing from an empty clipboard', async () => {
+			const user = userEvent.setup();
+			vi.spyOn(navigator.clipboard, 'readText').mockResolvedValue('');
+			await connect();
+
+			await user.click(btn(/^Paste/));
+
+			expect(lastTerm().pasted).toEqual([]);
+		});
+
+		it('points at the shortcut when the browser will not hand the clipboard over', async () => {
+			const user = userEvent.setup();
+			vi.spyOn(navigator.clipboard, 'readText').mockRejectedValue(new Error('denied'));
+			await connect();
+
+			await user.click(btn(/^Paste/));
+
+			expect(toasts.list.map((x) => [x.text, x.tone])).toEqual([
+				['The browser would not hand over the clipboard — paste with Ctrl+Shift+V.', 'bad']
+			]);
+			expect(lastTerm().pasted).toEqual([]);
+		});
+	});
+
+	describe('scrolling', () => {
+		it.each([
+			['Scroll to the top', 'top'],
+			['Scroll to the bottom', 'bottom']
+		])('%s, and goes back to the shell', async (name, where) => {
+			const user = userEvent.setup();
+			await connect();
+
+			await user.click(screen.getByRole('button', { name }));
+
+			expect(lastTerm().scrolled).toEqual([where]);
+			expect(lastTerm().focused).toBe(1);
+		});
+	});
+
 	describe('leaving', () => {
 		it('ends the session and cleans up after itself', async () => {
 			const { unmount, container } = await connect();
@@ -296,6 +537,7 @@ describe('Terminal', () => {
 			expect(term.disposed).toBe(true);
 			expect(term.inputDisposed).toBe(true);
 			expect(term.resizeDisposed).toBe(true);
+			expect(term.selectionDisposed).toBe(true);
 			expect(observer.disconnected).toBe(true);
 		});
 

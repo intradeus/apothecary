@@ -95,10 +95,11 @@ Domain components (`lib/run`, `lib/workshop`, `lib/tickets`, …) and pages buil
 | `CopyCommand` (`help`)                                                                                              | A shell command to run elsewhere, with its copy button                                                                                                                                                                    |
 | `CopyButton`                                                                                                        | Just the copy glyph for a shell command, for a row that already says what it is about                                                                                                                                     |
 | `Markdown` (`doc`, `quiet`), `CodeView`                                                                             | Reading material                                                                                                                                                                                                          |
+| `LogOutput` (`fill`, `lineClass`, `bar`, `head`, `placeholder`, bindable `viewport`, `follow()`)                    | Program output as lines: clickable URLs, a find bar (Ctrl/Cmd+F), copy all, to top / to bottom. It follows the bottom unless the reader scrolled up, has text selected in it or is on a match                             |
 | `FileChip`                                                                                                          | One file (thumb, name, size, missing/refused, removable)                                                                                                                                                                  |
 | `Meter`                                                                                                             | Capacity bar                                                                                                                                                                                                              |
 
-Modules: `motion.ts` (springs, `materialize`, `slide`, `scrim`, `indicator`, `bump`, `dragDismiss`, `project`, `rubberband`), `portal.ts` (`use:portal`: under `<body>`, out of a glass pane's clip; `Modal` and `Sheet` always use it), `trap.ts`, `confirm.svelte.ts`, `toast.svelte.ts`, `html.ts` (`esc`), `duration.ts`.
+Modules: `motion.ts` (springs, `materialize`, `slide`, `scrim`, `indicator`, `bump`, `dragDismiss`, `project`, `rubberband`), `portal.ts` (`use:portal`: under `<body>`, out of a glass pane's clip; `Modal` and `Sheet` always use it), `trap.ts`, `confirm.svelte.ts`, `toast.svelte.ts`, `html.ts` (`esc`), `duration.ts`, `logSegments.ts` (`LogOutput`'s find: matches, a line cut into links and marks).
 
 ## App modules
 
@@ -108,6 +109,7 @@ Modules: `motion.ts` (springs, `materialize`, `slide`, `scrim`, `indicator`, `bu
   - `format`: `stateLabel`, `stateHue` (`stateHueClass`: the same as a `.hue-*` class), `shortId`, `ago`, `age`, `fmtCost`, `fmtClock`, `fmtDuration`, `fmtBytes`.
   - `markdown`: the one safe markdown renderer.
   - `errors`: `errorMessage(e)`, what a catch shows.
+  - `links`: `linkify(text)`, plain text split into text and http(s) link parts.
   - `ping`: the ping shape shared by the inbox and the run page.
 - `$lib/app`:
   - `session.svelte`: who is signed in (`session.user`, `session.admin`), the setup/sign-in/sign-out flow. The root layout gates the shell on it.

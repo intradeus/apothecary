@@ -6,6 +6,7 @@
 	// A "credentials" field (a harness) is a pick of the owner's model
 	// provider credentials this kind takes — the harness holds none of its own.
 	import { errorMessage } from '$lib/core/errors';
+	import { linkify } from '$lib/core/links';
 	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { Credential, Integration, KindDescriptor, KindField } from '$lib/domain';
@@ -86,21 +87,7 @@
 
 	// Descriptor help is plain text (it comes from the Go kind), but the URLs in
 	// it are the whole point — "go here to make a token" is useless if you have
-	// to copy it by hand. Split into text/link parts and render anchors.
-	type Part = { text: string; href?: string };
-	function linkify(s: string): Part[] {
-		const parts: Part[] = [];
-		const re = /https?:\/\/[^\s<>()]+[^\s<>().,;:]/g;
-		let last = 0;
-		for (const m of s.matchAll(re)) {
-			const i = m.index ?? 0;
-			if (i > last) parts.push({ text: s.slice(last, i) });
-			parts.push({ text: m[0], href: m[0] });
-			last = i + m[0].length;
-		}
-		if (last < s.length) parts.push({ text: s.slice(last) });
-		return parts;
-	}
+	// to copy it by hand: `linkify` splits it into text/link parts.
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();

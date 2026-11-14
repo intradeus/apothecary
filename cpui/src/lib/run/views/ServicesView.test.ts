@@ -564,6 +564,51 @@ describe('ServicesView', () => {
 			expect(btn('Hide logs')).toHaveAttribute('aria-pressed', 'true');
 		});
 
+		it('shows its lines, one row each, with its URLs as links', async () => {
+			vi.mocked(api.runs.serviceLog).mockResolvedValue(
+				'booting\nlistening on http://0.0.0.0:3000/\n'
+			);
+			await open([aService()]);
+
+			await userEvent.click(btn('Logs'));
+
+			const log = await screen.findByRole('region', { name: 'Log of app' });
+			expect(within(log).getByText('booting').parentElement?.children).toHaveLength(2);
+			expect(within(log).getByRole('link', { name: 'http://0.0.0.0:3000/' })).toHaveAttribute(
+				'target',
+				'_blank'
+			);
+		});
+
+		it('copies the whole tail', async () => {
+			const user = userEvent.setup();
+			const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+			vi.mocked(api.runs.serviceLog).mockResolvedValue('one\ntwo\n');
+			await open([aService()]);
+			await user.click(btn('Logs'));
+			await screen.findByText('one');
+
+			await user.click(btn('Copy the whole log'));
+
+			expect(write).toHaveBeenCalledExactlyOnceWith('one\ntwo\n');
+		});
+
+		it('stays at the bottom of an open log when it is read again', async () => {
+			vi.mocked(api.runs.serviceLog).mockResolvedValue('one');
+			await open([aService()]);
+			await userEvent.click(btn('Logs'));
+			const log = await screen.findByRole('region', { name: 'Log of app' });
+			await within(log).findByText('one');
+			Object.defineProperty(log, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(log, 'clientHeight', { value: 200, configurable: true });
+
+			vi.mocked(api.runs.serviceLog).mockResolvedValue('one\ntwo');
+			await userEvent.click(btn('Reload the log'));
+
+			expect(await within(log).findByText('two')).toBeInTheDocument();
+			expect(log.scrollTop).toBe(1000);
+		});
+
 		it('says it is connecting until the log lands', async () => {
 			vi.mocked(api.runs.serviceLog).mockReturnValue(deferred<string>().promise);
 			await open([aService()]);
