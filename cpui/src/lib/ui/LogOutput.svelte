@@ -85,22 +85,26 @@
 	const matches = $derived(finding ? findMatches(lines, sought) : []);
 	const cur = $derived(matches.length ? (at ? matchFrom(matches, at.line, at.start) : 0) : -1);
 
-	/** The matches on the line of matches[i]: [first, end). */
-	function lineSpan(i: number): [number, number] {
-		const line = matches[i].line;
-		let first = i;
-		let end = i;
-		while (first > 0 && matches[first - 1].line === line) first--;
-		while (end < matches.length && matches[end].line === line) end++;
-		return [first, end];
-	}
-
 	/**
-	 * Lines either side of the current match whose matches are drawn. The count
+	 * The matches either side of the current one that are drawn. The count
 	 * covers every match; drawing them all is a DOM node each, and a broad
-	 * query on a long log is seconds of that (docs/notes, 2026-11-14).
+	 * query on a long log (or one long line) is seconds of that (docs/notes,
+	 * 2026-11-14).
 	 */
 	const MARK_SPAN = 300;
+
+	/** The drawn matches: [lo, hi), around the current one. */
+	const span = $derived<[number, number]>(
+		cur < 0 ? [0, 0] : [Math.max(0, cur - MARK_SPAN), Math.min(matches.length, cur + MARK_SPAN + 1)]
+	);
+
+	/** The drawn matches on the line of matches[i], from i on: its end. */
+	function lineEnd(i: number): number {
+		const line = matches[i].line;
+		let end = i;
+		while (end < span[1] && matches[end].line === line) end++;
+		return end;
+	}
 
 	/** A marked row, by its line's row and where its marks are. */
 	let marking = new Map<Row, { key: string; row: Row }>();
@@ -110,12 +114,9 @@
 			marking = next;
 			return base;
 		}
-		const near = matches[cur].line;
-		let i = cur;
-		while (i > 0 && matches[i - 1].line >= near - MARK_SPAN) i--;
 		const out = base.slice();
-		while (i < matches.length && matches[i].line <= near + MARK_SPAN) {
-			const [, end] = lineSpan(i);
+		for (let i = span[0]; i < span[1];) {
+			const end = lineEnd(i);
 			const plain = base[matches[i].line];
 			const marks = matches.slice(i, end);
 			const key = marks.map((m) => `${m.start}:${m.end}`).join(',');
@@ -132,12 +133,13 @@
 
 	const rows = $derived.by(() => {
 		if (cur < 0) return marked;
-		const [first, end] = lineSpan(cur);
 		const line = matches[cur].line;
+		let first = cur;
+		while (first > span[0] && matches[first - 1].line === line) first--;
 		const out = marked.slice();
 		out[line] = {
 			text: base[line].text,
-			segs: segmentLine(base[line].segs, matches.slice(first, end), cur - first)
+			segs: segmentLine(base[line].segs, matches.slice(first, lineEnd(cur)), cur - first)
 		};
 		return out;
 	});
@@ -203,6 +205,7 @@
 
 	async function copy() {
 		clearTimeout(copyTimer);
+		copied = false;
 		try {
 			await navigator.clipboard.writeText(text ?? '');
 			copied = true;

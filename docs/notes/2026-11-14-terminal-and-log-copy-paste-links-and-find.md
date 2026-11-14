@@ -41,11 +41,13 @@
     re-renders only the rows it changed (a step: about 0.1 s);
   - the search runs once typing pauses for 200 ms, or at once on Enter (the
     plan's allowed fix for typing lag);
-  - the count covers every match, but only the matches within 300 lines of
-    the current one are drawn, and stepping moves that window. The plan
-    allowed only the debounce; the owner chose this when asked, as the
-    debounce does nothing for a broad query. "s" now takes 0.54 s and
-    "harness" 0.17 s.
+  - the count covers every match, but only the 300 matches either side of
+    the current one are drawn, and stepping moves that window. It counts
+    matches, not lines, so one long line with a broad query is held to it
+    too. The plan allowed only the debounce; the owner chose this when
+    asked, as the debounce does nothing for a broad query. "s" now takes
+    0.54 s and "harness" 0.17 s (measured with a 300-line window, which on
+    that log draws at least as many marks as this one).
 - **No following while text is selected,** nor while a match is current:
   `LogOutput` follows the bottom only if the reader is within 40 px of it,
   holds no non-collapsed selection inside the box, and is on no match.
@@ -62,7 +64,7 @@
   Linux and macOS, non-Latin layouts), `run/Terminal.test.ts` (links, key
   handler, Copy / Paste / top / bottom buttons, refusals, cleanup),
   `core/links.test.ts`, `ui/logSegments.test.ts`, `ui/LogOutput.test.ts`
-  (links, copy, find with its pause and its 300-line window, following with
+  (links, copy, find with its pause and its 300-match window, following with
   and without a selection, Esc `defaultPrevented`),
   `run/views/LogsView.test.ts` (a source switch follows
   again) and `run/views/ServicesView.test.ts` (links, copy, following).

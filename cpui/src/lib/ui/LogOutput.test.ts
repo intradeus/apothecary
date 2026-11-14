@@ -127,6 +127,20 @@ describe('LogOutput', () => {
 			]);
 		});
 
+		it('drops the tick when a copy right after one is refused', async () => {
+			const user = userEvent.setup();
+			const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValueOnce();
+			show({ text: 'one' });
+			await user.click(btn('Copy the whole log'));
+			expect(btn('Copied')).toHaveTextContent(I.ok);
+
+			write.mockRejectedValueOnce(new Error('denied'));
+			await user.click(btn('Copied'));
+
+			expect(btn('Copy the whole log')).toHaveTextContent(I.copy);
+			expect(toasts.list.map((x) => x.tone)).toEqual(['bad']);
+		});
+
 		it('has nothing to copy without text', () => {
 			show({ text: null });
 			expect(btn('Copy the whole log')).toBeDisabled();
@@ -410,7 +424,7 @@ describe('LogOutput', () => {
 			expect(current(container)?.parentElement).toHaveTextContent('c err');
 		});
 
-		it('counts every match, and draws those within 300 lines of the current one', async () => {
+		it('counts every match, and draws the 300 either side of the current one', async () => {
 			const text = Array.from({ length: 700 }, (_, i) => `x${i}`).join('\n');
 			const { user, container } = await finding(text, 'x');
 			const markedLines = () =>
@@ -426,6 +440,19 @@ describe('LogOutput', () => {
 			expect(markedLines()).toHaveLength(301);
 			expect(markedLines()[0]).toBe('x399');
 			expect(current(container)?.parentElement).toHaveTextContent('x699');
+		});
+
+		it('draws no more than that on one long line', async () => {
+			const { user, container } = await finding('x'.repeat(1000), 'x');
+
+			expect(screen.getByText('1 of 1,000')).toBeInTheDocument();
+			expect(marks(container)).toHaveLength(301);
+
+			await user.keyboard('{Shift>}{Enter}{/Shift}');
+
+			expect(screen.getByText('1,000 of 1,000')).toBeInTheDocument();
+			expect(marks(container)).toHaveLength(301);
+			expect(current(container)?.parentElement?.lastElementChild).toBe(current(container));
 		});
 	});
 });
