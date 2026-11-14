@@ -744,11 +744,36 @@ describe('the derived state', () => {
 		expect(store(aRun(over)).workspaceLive).toBe(want);
 	});
 
+	it.each<[string, Partial<Run>, boolean]>([
+		['a paused run', { envId: 'e', state: 'paused' }, true],
+		['a failed run', { envId: 'e', state: 'failed' }, true],
+		['a completed run', { envId: 'e', state: 'completed' }, true],
+		['a running run', { envId: 'e', state: 'running' }, false],
+		['an archived run', { envId: 'e', state: 'archived' }, false],
+		['a paused run without a workspace', { state: 'paused' }, false]
+	])('offers a rebuild or not for %s', (_, over, want) => {
+		expect(store(aRun(over)).canRebuild).toBe(want);
+	});
+
+	it.each<[string, Partial<Run>, boolean]>([
+		['a running run', { envId: 'e', state: 'running' }, true],
+		['a run waiting on a human', { envId: 'e', state: 'waiting_on_human' }, true],
+		['a run without a workspace', { state: 'running' }, true],
+		['a paused run', { envId: 'e', state: 'paused' }, false],
+		['a pending run', { state: 'pending' }, false],
+		['a failed run', { envId: 'e', state: 'failed' }, false],
+		['an archived run', { envId: 'e', state: 'archived' }, false]
+	])('offers a pause or not for %s', (_, over, want) => {
+		expect(store(aRun(over)).canPause).toBe(want);
+	});
+
 	it('has no workspace and is not terminal before the run loads', () => {
 		const rs = store(null);
 		expect(rs.hasWorkspace).toBe(false);
 		expect(rs.workspaceLive).toBe(false);
 		expect(rs.terminal).toBe(false);
+		expect(rs.canRebuild).toBe(false);
+		expect(rs.canPause).toBe(false);
 	});
 
 	it.each<[Run['state'], boolean]>([

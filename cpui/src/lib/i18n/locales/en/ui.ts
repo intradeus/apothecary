@@ -26,6 +26,7 @@ export default {
 	'ui.tags.add': 'Add…',
 	'ui.tags.remove': 'Remove {value}',
 	'ui.ws.unreachable': 'Provisioner unreachable — check integration token',
+	'ui.ws.broken': 'Container runtime stopped responding — rebuild to replace it',
 	'ui.ws.tip': 'Workspace: {word}',
 	'ui.ws.tipEnv': 'Workspace: {word} · {env}',
 	'ui.ws.label': 'Workspace',

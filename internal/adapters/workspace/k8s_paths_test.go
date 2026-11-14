@@ -269,6 +269,36 @@ func TestK8sEndedPodIsReplacedAndALiveOneKept(t *testing.T) {
 	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}, discard); err == nil {
 		t.Error("a dead pod could not go, but the provision went on")
 	}
+
+	// A running pod whose runtime refuses exec (sysbox restarted under it)
+	// goes too; its claim stays, with the checkout on it.
+	for storage, says := range map[string]string{"pvc": "its volume and checkout are kept", "emptydir": "its checkout is on an emptyDir and goes with it"} {
+		k := &kubeFake{pod: readyPod("10.42.0.9"), secrets: map[string]string{}, refused: true}
+		_, h := k8sWith(t, k, false)
+		h.cfg.Storage = storage
+		var log strings.Builder
+		plog := func(f string, args ...any) { fmt.Fprintf(&log, f, args...) }
+		if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}, plog); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(k.deleted, []string{"pod/w"}) || k.obj(k.created, "Pod") == nil {
+			t.Errorf("%s: deleted = %v, created pod = %v: a pod refusing exec must be replaced, its claim kept", storage, k.deleted, k.obj(k.created, "Pod") != nil)
+		}
+		if !strings.Contains(log.String(), "it no longer accepts exec") || !strings.Contains(log.String(), says) {
+			t.Errorf("%s: log = %q", storage, log.String())
+		}
+	}
+	// Any other failure to exec proves nothing about the pod: it is reused.
+	k = &kubeFake{pod: readyPod("10.42.0.9"), secrets: map[string]string{}}
+	_, h = k8sWith(t, k, false, kubeRule{match: "exec --pod-running-timeout", stderr: "Unable to connect to the server\n", code: 1})
+	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}, discard); err != nil || len(k.deleted) != 0 || k.obj(k.created, "Pod") != nil {
+		t.Errorf("an API blip replaced the pod: err = %v, deleted = %v", err, k.deleted)
+	}
+	k = &kubeFake{pod: readyPod("10.42.0.9"), secrets: map[string]string{}, refused: true}
+	_, h = k8sWith(t, k, false, kubeRule{match: "delete pod", stderr: "boom", code: 1})
+	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}, discard); err == nil {
+		t.Error("a broken pod could not go, but the provision went on")
+	}
 }
 
 func TestK8sStorageChoices(t *testing.T) {

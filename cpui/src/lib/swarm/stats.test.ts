@@ -35,6 +35,7 @@ describe('a unit', () => {
 		expect(online(aUnit({ state: 'pending' }))).toBe(false);
 		expect(online(aUnit({ state: 'completed' }))).toBe(false);
 		expect(online(aUnit({ envStatus: 'stopped' }))).toBe(false);
+		expect(online(aUnit({ envStatus: 'broken' }))).toBe(false);
 	});
 
 	it('alerts on a question or a failure', () => {

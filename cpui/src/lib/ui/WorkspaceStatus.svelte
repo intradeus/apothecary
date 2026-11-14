@@ -10,6 +10,7 @@
 		| 'error'
 		| 'stopped'
 		| 'unknown'
+		| 'broken'
 		| 'none';
 
 	/** The workspace axis of a run (DESIGN 3.2), reconciled from the run state,
@@ -36,6 +37,8 @@
 				return 'none';
 			case 'unknown':
 				return 'unknown';
+			case 'broken':
+				return 'broken';
 			default:
 				// Not reconciled yet: assume live rather than flash "no workspace".
 				return 'live';
@@ -73,17 +76,18 @@
 				error: 'hue-danger',
 				stopped: 'hue-muted',
 				unknown: 'hue-warning',
+				broken: 'hue-danger',
 				none: 'faint'
 			} as const
 		)[v]
 	);
-	// DESIGN 3.2: live glows, stopped is a ring, unknown/none a dashed ring.
+	// DESIGN 3.2: live glows, stopped is a ring, unknown/broken/none a dashed ring.
 	const dot = $derived(
 		v === 'live'
 			? 'live-dot'
 			: v === 'stopped'
 				? 'ldot hollow'
-				: v === 'unknown' || v === 'none'
+				: v === 'unknown' || v === 'broken' || v === 'none'
 					? 'ldot dashed'
 					: 'ldot flat'
 	);
@@ -91,9 +95,11 @@
 	const tip = $derived(
 		v === 'unknown'
 			? t('ui.ws.unreachable')
-			: envId
-				? t('ui.ws.tipEnv', { word, env: envId })
-				: t('ui.ws.tip', { word })
+			: v === 'broken'
+				? t('ui.ws.broken')
+				: envId
+					? t('ui.ws.tipEnv', { word, env: envId })
+					: t('ui.ws.tip', { word })
 	);
 	const pulsing = $derived(
 		v === 'starting' || v === 'provisioning' || v === 'rebuilding' || v === 'destroying'

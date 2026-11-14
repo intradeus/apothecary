@@ -31,7 +31,8 @@ describe('wsValue', () => {
 		['starting', 'starting'],
 		['stopped', 'stopped'],
 		['absent', 'none'],
-		['unknown', 'unknown']
+		['unknown', 'unknown'],
+		['broken', 'broken']
 	])('reads the engine status %s as %s', (status, value) => {
 		expect(wsValue('running', 'env-1', status)).toBe(value);
 	});
@@ -80,6 +81,16 @@ describe('WorkspaceStatus', () => {
 		).toBeInTheDocument();
 	});
 
+	it('explains a broken runtime on hover, never the integration token', () => {
+		render(WorkspaceStatus, { state: 'running', envId: 'e', envStatus: 'broken' });
+		expect(wsValue('running', 'e', 'broken')).toBe('broken');
+		expect(screen.getByText('broken')).toBeInTheDocument();
+		expect(
+			screen.getByTitle('Container runtime stopped responding — rebuild to replace it')
+		).toBeInTheDocument();
+		expect(screen.queryByTitle(/integration token/)).toBeNull();
+	});
+
 	it.each<[Run['envStatus'], string, string, boolean]>([
 		['running', 'hue-success', '.live-dot', false],
 		['starting', 'hue-running', '.ldot.flat', true],
@@ -87,7 +98,8 @@ describe('WorkspaceStatus', () => {
 		['destroying', 'hue-warning', '.ldot.flat', true],
 		['error', 'hue-danger', '.ldot.flat', false],
 		['stopped', 'hue-muted', '.ldot.hollow', false],
-		['unknown', 'hue-warning', '.ldot.dashed', false]
+		['unknown', 'hue-warning', '.ldot.dashed', false],
+		['broken', 'hue-danger', '.ldot.dashed', false]
 	])('draws %s as DESIGN 3.2 says', (envStatus, hue, dot, pulsing) => {
 		const { container } = render(WorkspaceStatus, { state: 'running', envId: 'e', envStatus });
 		expect(container.firstElementChild).toHaveClass(hue);

@@ -97,6 +97,28 @@ itself, in a namespace of its own:
     --system`), or ship a profile with a `userns,` rule for each such
     binary (it attaches by the binary's path, as the `wg` profile above
     does).
+- **sysbox (and containerd, k3s) must not restart while sandboxes run.**
+  sysbox-fs loses track of the running containers, and every exec into
+  them fails from then on: `OCI runtime exec failed: … unsafe procfs
+  detected: openat2 fsmount:fscontext:proc/thread-self/fd/: operation not
+  permitted`. Ubuntu's `needrestart` restarts services on its own after
+  unattended upgrades (libc, systemd), so exclude them from it
+  (`deploy/k3s/install.sh` writes this file) and restart them only with no
+  run active:
+
+  ```sh
+  sudo mkdir -p /etc/needrestart/conf.d
+  sudo tee /etc/needrestart/conf.d/apothecary.conf <<'EOF'
+  $nrconf{override_rc}{qr(^sysbox)} = 0;
+  $nrconf{override_rc}{qr(^containerd)} = 0;
+  $nrconf{override_rc}{qr(^k3s)} = 0;
+  EOF
+  ```
+
+  If it happens anyway, the run's workspace shows **broken**: Rebuild (or
+  the engine's recovery of a run it restarted under) replaces the pod,
+  keeping its volume — the checkout, agent commits and inner docker state.
+  With `storage: emptydir` the checkout goes with the pod.
 - A **local or block storage class** for workspace volumes: the inner docker
   daemon cannot run on NFS.
 - Clusters whose pod or service ranges differ from k3s's defaults:

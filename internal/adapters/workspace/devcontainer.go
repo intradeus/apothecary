@@ -326,12 +326,16 @@ func (a *Adapter) Provision(ctx context.Context, spec envport.EnvSpec) (envport.
 }
 
 // provision is the shared create-or-recreate core behind Provision and
-// Rebuild. removeExisting adds `--remove-existing-container` so the CLI
-// `docker rm -f`s any container matching the id-labels first (a from-scratch
-// recreate — the Rebuild path); up adds it on its own when the CLI handed
-// back a container it did not create. tee, when non-nil, receives the `up` build
-// output live (Rebuild streams it into exec.log so the run page shows it).
-func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExisting bool, tee io.Writer) (_ envport.EnvID, err error) {
+// Rebuild. rebuild recreates from scratch once the sandbox is up: a compose
+// workspace by emptying the sandbox (the host's resetSandbox) and building
+// into it; any other by `--remove-existing-container`, so the CLI `docker rm
+// -f`s any container matching the id-labels first. Both are decided after
+// prepare: reading the configuration and emptying the daemon exec into the
+// sandbox, and prepare is what replaces one that refuses exec. up adds the
+// flag on its own when the CLI handed back a container it did not create.
+// tee, when non-nil, receives the `up` build output live (Rebuild streams it
+// into exec.log so the run page shows it).
+func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, rebuild bool, tee io.Writer) (_ envport.EnvID, err error) {
 	ctx, cancel := context.WithTimeout(ctx, a.cfg.ProvisionTimeout)
 	defer cancel()
 	// The engine supplies a human-friendly, slug-of-branch name (unique per
@@ -403,6 +407,16 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, removeExi
 	a.recordDefinition(name, p.def)
 	plog("→ workspace definition: %s\n", p.def.Name())
 
+	removeExisting := false
+	if rebuild {
+		if p.def.IsCompose(ctx, a.defEnv(name, p.src)) {
+			if err := a.host.resetSandbox(ctx, name); err != nil {
+				return left, fmt.Errorf("rebuild %s: teardown: %w", name, err)
+			}
+		} else {
+			removeExisting = true
+		}
+	}
 	opts := upOptions{
 		shimDir:        p.shimDir,
 		toolsDir:       p.toolsDir,
@@ -1076,16 +1090,22 @@ func (a *Adapter) status(ctx context.Context, name string) (envport.EnvStatus, e
 		return a.workspaceState(ctx, name) // sandbox up → query the inner workspace
 	case "created", "restarting":
 		return envport.EnvStarting, nil
+	case "broken":
+		return envport.EnvBroken, nil
 	default: // exited, paused, dead, removing
 		return envport.EnvStopped, nil
 	}
 }
 
 // workspaceState maps the workspace container's `docker ps` state for our
-// id-label, on the sandbox's inner daemon.
+// id-label, on the sandbox's inner daemon. A sandbox that refuses the exec is
+// a state, broken, not a failure to answer: the host did answer.
 func (a *Adapter) workspaceState(ctx context.Context, name string) (envport.EnvStatus, error) {
 	stdout, stderr, code, err := a.runInner(ctx, name, a.cfg.DockerBin,
 		[]string{"ps", "-a", "--filter", "label=" + label(name), "--format", "{{.State}}"}, nil, nil)
+	if errors.Is(err, errSandboxBroken) {
+		return envport.EnvBroken, nil
+	}
 	if err != nil {
 		return "", err
 	}
@@ -1327,9 +1347,10 @@ func (a *Adapter) Test(ctx context.Context) error { return a.host.test(ctx) }
 // the inner daemon + image cache warm. Compose: the only total recreate is
 // emptying the sandbox (the host's resetSandbox) and provisioning into it (the
 // flag's single-container scope can't cleanly recreate a multi-service project);
-// never Destroy, which deletes the run folder and the checkout in it. Build
-// output streams into exec.log so the run page's workspace-log poll shows it
-// live.
+// never Destroy, which deletes the run folder and the checkout in it. Either
+// way provision decides it once the sandbox is up, after the host replaced one
+// that refused exec. Build output streams into exec.log so the run page's
+// workspace-log poll shows it live.
 func (a *Adapter) Rebuild(ctx context.Context, spec envport.EnvSpec) error {
 	name := spec.Name
 	if name == "" {
@@ -1338,13 +1359,6 @@ func (a *Adapter) Rebuild(ctx context.Context, spec envport.EnvSpec) error {
 	tee := a.openExecLog(envport.EnvID(name), envport.Command{Script: "# devcontainer rebuild"})
 	if tee != nil {
 		defer tee.Close()
-	}
-	if a.defFor(name).IsCompose(ctx, a.defEnv(name, a.srcDir(name))) {
-		if err := a.host.resetSandbox(ctx, name); err != nil {
-			return fmt.Errorf("rebuild %s: teardown: %w", name, err)
-		}
-		_, err := a.provision(ctx, spec, false, tee)
-		return err
 	}
 	_, err := a.provision(ctx, spec, true, tee)
 	return err

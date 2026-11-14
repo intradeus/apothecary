@@ -23,7 +23,8 @@ export type RunState =
 /**
  * The reconciled live container status, or an in-flight operation overlay
  * (provisioning/rebuilding/destroying) / a recently-failed one (error).
- * 'unknown' = the provisioner could not be reached. undefined = not yet
+ * 'unknown' = the provisioner could not be reached. 'broken' = the sandbox is
+ * up but its runtime refuses exec; a rebuild replaces it. undefined = not yet
  * reconciled, and the badge falls back to whether the run has an env at all.
  */
 export type EnvStatus =
@@ -32,6 +33,7 @@ export type EnvStatus =
 	| 'stopped'
 	| 'absent'
 	| 'unknown'
+	| 'broken'
 	| 'provisioning'
 	| 'rebuilding'
 	| 'destroying'

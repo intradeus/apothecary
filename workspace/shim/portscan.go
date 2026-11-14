@@ -33,7 +33,12 @@ var (
 	procRoot          = "/proc"
 	scanInterval      = 3 * time.Second
 	heartbeatInterval = 30 * time.Second
-	maxReportPorts    = 128
+	// authBackoffBase/authBackoffCap pace retries while the engine answers
+	// 401 (run.env stale after an engine recovery until re-bootstrap): 3s
+	// doubling to 2 min, instead of hammering every scanInterval.
+	authBackoffBase = 3 * time.Second
+	authBackoffCap  = 2 * time.Minute
+	maxReportPorts  = 128
 	// singletonAddr is an abstract unix socket (Linux): held for the process
 	// lifetime, dies with the container — the relay's EADDRINUSE idempotence,
 	// without a stale file to clean up.
@@ -91,6 +96,7 @@ func scanLoop(ctx context.Context, exclude map[int]bool) {
 	var lastSentAt time.Time
 	sentOnce := false
 	backoff := backoffBase
+	authBackoff := authBackoffBase
 
 	for {
 		if ctx.Err() != nil {
@@ -110,8 +116,12 @@ func scanLoop(ctx context.Context, exclude map[int]bool) {
 				backoff = min(backoff*2, backoffCap)
 				continue
 			case res.StatusCode == http.StatusUnauthorized:
-				// Rotated token; re-read next round (readRunEnv is per-report).
+				// Stale token; readRunEnv is per-report, so the next attempt
+				// picks up a rewritten run.env. Back off while it stays stale.
 				drain(res)
+				time.Sleep(authBackoff)
+				authBackoff = min(authBackoff*2, authBackoffCap)
+				continue
 			case res.StatusCode/100 == 2:
 				drain(res)
 				lastSent, lastSentAt, sentOnce = ports, time.Now(), true
@@ -119,7 +129,7 @@ func scanLoop(ctx context.Context, exclude map[int]bool) {
 				drain(res) // engine unhappy (e.g. run finished): retry on heartbeat
 				lastSent, lastSentAt, sentOnce = ports, time.Now(), true
 			}
-			backoff = backoffBase
+			backoff, authBackoff = backoffBase, authBackoffBase
 		}
 		time.Sleep(scanInterval)
 	}

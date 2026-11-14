@@ -87,6 +87,23 @@ func TestRecoveryStopsWhenItCannotProbeTheWorkspace(t *testing.T) {
 	}
 }
 
+// A workspace whose runtime refuses exec (sysbox restarted under it) is an
+// answer, not a provisioner that cannot say: recovery re-provisions it — the
+// provisioner replaces the sandbox, the checkout kept — and the run goes on.
+func TestRecoveryReprovisionsABrokenWorkspace(t *testing.T) {
+	withFastReprobe(t)
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "build", Iteration: 1, Harness: "fake", Model: "fake/model"})
+	h.res.Envp = &wobbleEnvp{EnvProvisioner: h.envp, statuses: []envport.EnvStatus{envport.EnvBroken, envport.EnvBroken}}
+	v := recoverAndSettle(t, h, "r1")
+	if v.State != run.Completed {
+		t.Fatalf("state = %s: %v", v.State, eventTypes(h.events(t, "r1")))
+	}
+	if countType(h.events(t, "r1"), event.TypeEnvReady) != 2 {
+		t.Errorf("a broken workspace was not provisioned again: %v", eventTypes(h.events(t, "r1")))
+	}
+}
+
 func TestRecoveryStopsWhenTheTunnelWillNotComeBack(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
 	h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "build", Iteration: 1, Harness: "fake", Model: "fake/model"})

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -292,8 +293,8 @@ func TestComposeRebuildKeepsTheCheckout(t *testing.T) {
 	}
 }
 
-// Compose: the sandbox is emptied first, then the workspace provisioned into
-// it — never with the single-container flag.
+// Compose: once prepared, the sandbox is emptied, then the workspace
+// provisioned into it — never with the single-container flag.
 func TestRebuildComposeResetsThenProvisions(t *testing.T) {
 	compose := rule{match: "read-configuration", resp: response{stdout: `{"mergedConfiguration":{"dockerComposeFile":"c.yml"}}` + "\n"}}
 	a, r := armedAdapter(t, compose)
@@ -310,6 +311,11 @@ func TestRebuildComposeResetsThenProvisions(t *testing.T) {
 	}
 	if len(h.resets) != 1 || h.resets[0] != "w" || resetsAtBuild != 1 {
 		t.Errorf("resets = %v (%d at the build), want the sandbox reset before the build", h.resets, resetsAtBuild)
+	}
+	// After prepare: on Kubernetes that is what replaces a pod refusing exec,
+	// which the reset (an exec) would otherwise fail on.
+	if !slices.Equal(h.steps, []string{"prepare w", "reset w"}) {
+		t.Errorf("steps = %v, want the reset after prepare", h.steps)
 	}
 	if r.saw("--remove-existing-container") {
 		t.Error("a compose rebuild used the single-container flag")
@@ -344,14 +350,10 @@ func TestRebuildTeardownFailureStopsIt(t *testing.T) {
 }
 
 func TestRebuildFallsBackToTheRunName(t *testing.T) {
-	r := &ruleRunner{}
-	a := newTestAdapter(t, r)
+	a := newTestAdapter(t, &ruleRunner{})
 	err := a.Rebuild(context.Background(), envport.EnvSpec{RunID: "01ABCDEFGH"})
 	if err == nil || !strings.Contains(err.Error(), ".devcontainer/devcontainer.json") {
 		t.Fatalf("err = %v, want the missing definition", err)
-	}
-	if !r.saw(a.srcDir(WorkspaceName("01ABCDEFGH"))) {
-		t.Errorf("calls = %v", r.lines())
 	}
 	mustExist(t, a.folderFor(WorkspaceName("01ABCDEFGH")))
 }

@@ -572,6 +572,7 @@ func TestStatusMapping(t *testing.T) {
 		{"sandbox created", "created", nil, envport.EnvStarting},
 		{"sandbox restarting", "restarting", nil, envport.EnvStarting},
 		{"sandbox exited", "exited", nil, envport.EnvStopped},
+		{"sandbox refusing exec", "broken", nil, envport.EnvBroken},
 		{"sandbox gone → absent", "", nil, envport.EnvAbsent},
 	}
 	for _, c := range cases {

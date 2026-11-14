@@ -32,7 +32,16 @@ type kubeFake struct {
 	pod     string // `get pod` answer ("" = absent)
 	secrets map[string]string
 	exec    func(argv []string, stdin []byte) (string, string, int)
+	// refused: every exec fails the way it does once sysbox restarted under
+	// the pod, until the pod is deleted (its replacement answers).
+	refused bool
 }
+
+// sysboxRefusal is kubectl's stderr for an exec into a pod whose sysbox
+// services restarted under it.
+const sysboxRefusal = "error: Internal error occurred: error executing command in container: failed to exec in container: " +
+	"failed to start exec: OCI runtime exec failed: exec failed: unable to start container process: get handle to " +
+	"/proc/thread-self/fd: unsafe procfs detected: openat2 fsmount:fscontext:proc/thread-self/fd/: operation not permitted: unknown\n"
 
 func (k *kubeFake) Run(_ context.Context, _ string, args []string, stdin []byte, tee io.Writer, _ ...string) ([]byte, []byte, int, error) {
 	k.mu.Lock()
@@ -44,6 +53,9 @@ func (k *kubeFake) Run(_ context.Context, _ string, args []string, stdin []byte,
 	}
 	switch args[0] {
 	case "exec":
+		if k.refused {
+			return nil, []byte(sysboxRefusal), 1, nil
+		}
 		i := slices.Index(args, "--")
 		argv := args[i+1:]
 		if argv[0] == "env" {
@@ -73,6 +85,9 @@ func (k *kubeFake) Run(_ context.Context, _ string, args []string, stdin []byte,
 		k.applied = append(k.applied, m)
 	case "delete":
 		k.deleted = append(k.deleted, args[1]+"/"+args[2])
+		if args[1] == "pod" {
+			k.refused = false
+		}
 	case "get":
 		kind, name := args[2], args[3]
 		switch kind {
@@ -245,6 +260,50 @@ func TestK8sProvisionSequence(t *testing.T) {
 	}
 }
 
+// Rebuild on a pod sysbox restarted under: the pod is replaced (its claim
+// kept), and the rebuild proper — a compose one's daemon reset included —
+// runs on the new pod.
+func TestK8sRebuildReplacesAPodRefusingExec(t *testing.T) {
+	for _, compose := range []bool{false, true} {
+		k := &kubeFake{pod: readyPod("10.42.0.9"), secrets: map[string]string{}, refused: true}
+		var seen []string
+		var stdins [][]byte
+		answer := inPod(&seen, &stdins)
+		k.exec = func(argv []string, stdin []byte) (string, string, int) {
+			if compose && argv[0] == "devcontainer" && argv[1] == "read-configuration" {
+				seen = append(seen, strings.Join(argv, " "))
+				return `{"configuration":{"dockerComposeFile":"c.yml"}}` + "\n", "", 0
+			}
+			return answer(argv, stdin)
+		}
+		a := newK8sTestAdapter(t, k, false)
+		if err := a.Rebuild(context.Background(), envport.EnvSpec{RunID: "01R", Name: "w", RepoURL: "https://git.example/r.git"}); err != nil {
+			t.Fatalf("compose=%v: rebuild: %v\nin-pod: %v", compose, err, seen)
+		}
+		if !slices.Equal(k.deleted, []string{"pod/w"}) || k.obj(k.created, "Pod") == nil {
+			t.Errorf("compose=%v: deleted = %v, pod created = %v: want the pod replaced and its claim kept", compose, k.deleted, k.obj(k.created, "Pod") != nil)
+		}
+		reset, up := -1, -1
+		for i, l := range seen {
+			if strings.HasPrefix(l, "docker rm -f -v") && reset < 0 {
+				reset = i
+			}
+			if strings.HasPrefix(l, "devcontainer up") && up < 0 {
+				up = i
+			}
+		}
+		if up < 0 {
+			t.Fatalf("compose=%v: no build on the new pod: %v", compose, seen)
+		}
+		if compose && (reset < 0 || reset > up) {
+			t.Errorf("compose: the daemon reset = %d, build = %d: want the reset on the new pod, before the build", reset, up)
+		}
+		if !compose && (reset >= 0 || !strings.Contains(seen[up], "--remove-existing-container")) {
+			t.Errorf("single container: reset = %d, up = %s", reset, seen[up])
+		}
+	}
+}
+
 func TestK8sPodWithGatewayIsTunnelled(t *testing.T) {
 	k := &kubeFake{secrets: map[string]string{}}
 	a := newK8sTestAdapter(t, k, true)
@@ -330,32 +389,43 @@ func TestK8sToolsHashMismatchWarnsMissingFails(t *testing.T) {
 	}
 }
 
+// A pod whose runtime refuses exec is broken — an answer, not an error — Ready
+// or not; an unreachable API stays an error (the reconciler's unknown).
 func TestK8sStatusMapping(t *testing.T) {
+	const notReady = `{"status":{"phase":"Running","conditions":[{"type":"Ready","status":"False"}]}}`
 	cases := []struct {
 		pod     string
 		inner   string
+		exec    string // "": answers; "refused": sysbox restarted; "outage": the API is gone
 		want    envport.EnvStatus
 		wantErr bool
 	}{
-		{"", "", envport.EnvAbsent, false},
-		{`{"status":{"phase":"Pending"}}`, "", envport.EnvStarting, false},
-		{`{"status":{"phase":"Running","conditions":[{"type":"Ready","status":"False"}]}}`, "", envport.EnvStarting, false},
-		{readyPod("10.42.0.9"), "running", envport.EnvRunning, false},
-		{readyPod("10.42.0.9"), "exited", envport.EnvStopped, false},
-		{readyPod("10.42.0.9"), "", envport.EnvAbsent, false},
-		{`{"status":{"phase":"Failed"}}`, "", envport.EnvStopped, false},
+		{"", "", "", envport.EnvAbsent, false},
+		{`{"status":{"phase":"Pending"}}`, "", "", envport.EnvStarting, false},
+		{notReady, "", "", envport.EnvStarting, false},
+		{readyPod("10.42.0.9"), "running", "", envport.EnvRunning, false},
+		{readyPod("10.42.0.9"), "exited", "", envport.EnvStopped, false},
+		{readyPod("10.42.0.9"), "", "", envport.EnvAbsent, false},
+		{`{"status":{"phase":"Failed"}}`, "", "", envport.EnvStopped, false},
+		{readyPod("10.42.0.9"), "running", "refused", envport.EnvBroken, false},
+		{notReady, "", "refused", envport.EnvBroken, false},
+		{readyPod("10.42.0.9"), "running", "outage", "", true},
 	}
 	for _, c := range cases {
-		k := &kubeFake{pod: c.pod, exec: func(argv []string, _ []byte) (string, string, int) {
+		k := &kubeFake{pod: c.pod, refused: c.exec == "refused", exec: func(argv []string, _ []byte) (string, string, int) {
 			if argv[0] == "docker" && argv[1] == "ps" {
 				return c.inner + "\n", "", 0
 			}
 			return "", "", 0
 		}}
-		a := newK8sTestAdapter(t, k, false)
+		var rules []kubeRule
+		if c.exec == "outage" {
+			rules = append(rules, kubeRule{match: "exec --pod-running-timeout", stderr: "Unable to connect to the server: dial tcp: i/o timeout\n", code: 1})
+		}
+		a, _ := k8sWith(t, k, false, rules...)
 		got, err := a.Status(context.Background(), "apo-x")
 		if (err != nil) != c.wantErr || got != c.want {
-			t.Errorf("pod %s inner %q: got %s %v, want %s", c.pod, c.inner, got, err, c.want)
+			t.Errorf("pod %s inner %q exec %q: got %s %v, want %s", c.pod, c.inner, c.exec, got, err, c.want)
 		}
 	}
 }

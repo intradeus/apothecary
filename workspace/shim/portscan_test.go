@@ -88,8 +88,9 @@ func TestLocalOrWildcard(t *testing.T) {
 // fastScan compresses intervals and points the env + proc files at fixtures.
 func fastScan(t *testing.T) (setListeners func(hexRows string)) {
 	t.Helper()
-	oldPaths, oldRoot, oldScan, oldBeat, oldBase, oldCap, oldEnv :=
-		procTCPPaths, procRoot, scanInterval, heartbeatInterval, backoffBase, backoffCap, runEnvPath
+	oldPaths, oldRoot, oldScan, oldBeat, oldBase, oldCap, oldAuthBase, oldAuthCap, oldEnv :=
+		procTCPPaths, procRoot, scanInterval, heartbeatInterval, backoffBase, backoffCap,
+		authBackoffBase, authBackoffCap, runEnvPath
 	dir := t.TempDir()
 	tcp := filepath.Join(dir, "tcp")
 	os.WriteFile(tcp, []byte("header\n"), 0o644)
@@ -98,10 +99,12 @@ func fastScan(t *testing.T) (setListeners func(hexRows string)) {
 	scanInterval = time.Millisecond
 	heartbeatInterval = 30 * time.Millisecond
 	backoffBase, backoffCap = time.Millisecond, 5*time.Millisecond
+	authBackoffBase, authBackoffCap = time.Millisecond, 5*time.Millisecond
 	runEnvPath = filepath.Join(dir, "run.env")
 	t.Cleanup(func() {
-		procTCPPaths, procRoot, scanInterval, heartbeatInterval, backoffBase, backoffCap, runEnvPath =
-			oldPaths, oldRoot, oldScan, oldBeat, oldBase, oldCap, oldEnv
+		procTCPPaths, procRoot, scanInterval, heartbeatInterval, backoffBase, backoffCap,
+			authBackoffBase, authBackoffCap, runEnvPath =
+			oldPaths, oldRoot, oldScan, oldBeat, oldBase, oldCap, oldAuthBase, oldAuthCap, oldEnv
 	})
 	return func(hexRows string) { os.WriteFile(tcp, []byte("header\n"+hexRows), 0o644) }
 }
@@ -196,6 +199,65 @@ func testSingleton(t *testing.T) string {
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	return filepath.Join(dir, "singleton.sock")
+}
+
+// A refused token is retried on its own doubling backoff — not scanInterval —
+// re-reading run.env each attempt, so a rewritten token lands next attempt.
+func TestPortScanBacksOffOn401UntilTokenRefreshed(t *testing.T) {
+	setListeners := fastScan(t)
+	setListeners(" 0: 0100007F:1F90 0:0 0A 0 0 0 0 0 1\n")
+	scanInterval = time.Hour // a 401 that waited on this would never retry
+	authBackoffBase, authBackoffCap = 20*time.Millisecond, 80*time.Millisecond
+
+	var mu sync.Mutex
+	var refused []time.Time
+	accepted := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Header.Get("Authorization") != "Bearer fresh" {
+			refused = append(refused, time.Now())
+			w.WriteHeader(401)
+			return
+		}
+		accepted = true
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+	writeTestEnv(t, srv.URL, "stale")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { scanLoop(ctx, map[int]bool{}); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	// 20, 40, 80, 80, 80ms: six attempts prove spacing reached the cap.
+	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return len(refused) >= 6 })
+	mu.Lock()
+	var gaps []time.Duration
+	for i := 1; i < len(refused); i++ {
+		gaps = append(gaps, refused[i].Sub(refused[i-1]))
+	}
+	mu.Unlock()
+	for i, g := range gaps {
+		if g < 15*time.Millisecond {
+			t.Errorf("gap %d = %v, want >= backoff base", i, g)
+		}
+	}
+	if gaps[0] >= 75*time.Millisecond && gaps[1] >= 75*time.Millisecond {
+		t.Errorf("gaps %v: backoff started at the cap, want it to grow", gaps)
+	}
+	if last := gaps[len(gaps)-1]; last < 75*time.Millisecond {
+		t.Errorf("last gap = %v, want backoff grown to cap (80ms); gaps %v", last, gaps)
+	}
+
+	// Shrink scanInterval again so the loop can exit after the 2xx; set under
+	// mu so the handler orders it before the loop's post-report sleep.
+	mu.Lock()
+	scanInterval = time.Millisecond
+	mu.Unlock()
+	writeTestEnv(t, srv.URL, "fresh")
+	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return accepted })
 }
 
 func TestPortScanSingletonGuard(t *testing.T) {

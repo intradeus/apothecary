@@ -352,6 +352,72 @@ describe('RunPage', () => {
 		});
 	});
 
+	describe('a broken workspace', () => {
+		const broken = (state: Run['state']) => aLiveRun({ state, envStatus: 'broken' });
+		const banner = () =>
+			screen.getByText('Workspace broken').closest('[role="alert"]') as HTMLElement;
+
+		it('says why and that the checkout is kept, never the integration token', async () => {
+			await setup(broken('paused'));
+			expect(screen.getByText('Workspace broken')).toBeInTheDocument();
+			expect(
+				within(banner()).getByText(/stopped responding.*checkout is kept/)
+			).toBeInTheDocument();
+			expect(screen.queryByText(/integration token/)).not.toBeInTheDocument();
+			expect(screen.queryByText('Workspace unknown')).not.toBeInTheDocument();
+		});
+
+		it('says nothing of a healthy one', async () => {
+			await setup();
+			expect(screen.queryByText('Workspace broken')).not.toBeInTheDocument();
+		});
+
+		it('rebuilds a paused run, busy in the header too', async () => {
+			const job = deferred<never>();
+			vi.mocked(api.runs.rebuild).mockReturnValue(job.promise);
+			const run = broken('paused');
+			await setup(run);
+			expect(within(banner()).queryByText(/Pause the run/)).not.toBeInTheDocument();
+
+			await userEvent.click(within(banner()).getByRole('button', { name: 'Rebuild' }));
+
+			expect(api.runs.rebuild).toHaveBeenCalledExactlyOnceWith(run.id, false);
+			const header = screen.getByRole('banner');
+			expect(within(header).getByRole('button', { name: /^rebuild\W*$/i })).toHaveAttribute(
+				'aria-busy',
+				'true'
+			);
+			job.resolve(undefined as never);
+		});
+
+		it('pauses a running run first, and says so', async () => {
+			const run = broken('running');
+			await setup(run);
+			expect(within(banner()).getByText(/Pause the run, then rebuild\./)).toBeInTheDocument();
+			expect(within(banner()).queryByRole('button', { name: 'Rebuild' })).not.toBeInTheDocument();
+
+			await userEvent.click(within(banner()).getByRole('button', { name: 'Pause' }));
+
+			expect(api.runs.pause).toHaveBeenCalledExactlyOnceWith(run.id);
+		});
+
+		it('offers nothing it cannot do on an archived run', async () => {
+			await setup(broken('archived'));
+			expect(
+				within(banner())
+					.getAllByRole('button')
+					.map((b) => b.textContent)
+			).toEqual(['Dismiss']);
+			expect(within(banner()).queryByText(/Pause the run/)).not.toBeInTheDocument();
+		});
+
+		it('can be dismissed', async () => {
+			await setup(broken('paused'));
+			await userEvent.click(within(banner()).getByRole('button', { name: /dismiss/i }));
+			expect(screen.queryByText('Workspace broken')).not.toBeInTheDocument();
+		});
+	});
+
 	describe('a failed action', () => {
 		async function fail() {
 			vi.mocked(api.runs.pause).mockRejectedValue(new Error('the engine refused'));

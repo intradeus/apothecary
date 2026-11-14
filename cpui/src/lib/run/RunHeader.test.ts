@@ -11,6 +11,7 @@ import { aProject, aRun } from '$test/fixtures';
 import { aFlow, settled } from '$test/fixtures/run-components';
 import { aLiveRun, aViewStore } from '$test/fixtures/run-views';
 import { deferred } from '$test/helpers';
+import { HeaderActions } from './header/actions.svelte';
 import RunHeader from './RunHeader.svelte';
 
 vi.mock('$lib/api', () => ({
@@ -43,8 +44,9 @@ function setup(run: Run = aLiveRun({ state: 'paused' })) {
 	const rs = aViewStore(run);
 	const desk = new DeskState();
 	const onretried = vi.fn();
-	render(RunHeader, { rs, desk, onretried });
-	return { rs, desk, onretried, run };
+	const actions = new HeaderActions();
+	render(RunHeader, { rs, desk, actions, onretried });
+	return { rs, desk, actions, onretried, run };
 }
 
 const btn = (name: string | RegExp) => screen.getByRole('button', { name });
@@ -128,6 +130,14 @@ describe('RunHeader', () => {
 
 			job.resolve(undefined as never);
 			await waitFor(() => expect(btn(/^play/i)).toBeEnabled());
+		});
+
+		it('reads what is in flight from the actions it was given', async () => {
+			const { actions } = setup();
+			const build = deferred<boolean>();
+			void actions.run('rebuild', () => build.promise);
+			await waitFor(() => expect(rebuild()).toHaveAttribute('aria-busy', 'true'));
+			build.resolve(true);
 		});
 
 		it('goes through the store, so a failed build lands on the page', async () => {

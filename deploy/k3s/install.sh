@@ -32,9 +32,10 @@ unprivileged under sysbox.
   --cluster-only           stop after the smoke test: no Apothecary
   -h, --help               this text
 
-Steps: preflight, kernel, sysbox, k3s, sysbox in k3s, smoke test, then
-Apothecary (cert-manager first with --domain). Logs go to stdout; the
-generated secrets to /root/.apothecary/install.env (root only).
+Steps: preflight, kernel, sysbox (and keeping needrestart from restarting
+it, containerd or k3s), k3s, sysbox in k3s, smoke test, then Apothecary
+(cert-manager first with --domain). Logs go to stdout; the generated
+secrets to /root/.apothecary/install.env (root only).
 EOF
 }
 
@@ -136,6 +137,28 @@ fi
 
 # --- 3. sysbox -------------------------------------------------------------------
 step "sysbox ${SYSBOX_VERSION}"
+# sysbox must never restart under running sandboxes: sysbox-fs forgets the
+# containers it serves and every exec into them fails ("unsafe procfs
+# detected"). Ubuntu's needrestart restarts services after unattended
+# upgrades (libc, systemd) on its own, so it is told to leave sysbox,
+# containerd and k3s alone. Written whether needrestart is installed or not:
+# it reads the file whenever it comes.
+nrconf=/etc/needrestart/conf.d/apothecary.conf
+nrwant=$(cat <<'EOF'
+# Apothecary (deploy/k3s/install.sh): restarting these under running
+# sandboxes breaks every one of them; restart them only with no run active.
+$nrconf{override_rc}{qr(^sysbox)} = 0;
+$nrconf{override_rc}{qr(^containerd)} = 0;
+$nrconf{override_rc}{qr(^k3s)} = 0;
+EOF
+)
+if [ "$(cat "$nrconf" 2>/dev/null)" != "$nrwant" ]; then
+  mkdir -p "$(dirname "$nrconf")"
+  printf '%s\n' "$nrwant" >"$nrconf"
+  note "needrestart will not restart sysbox, containerd or k3s (${nrconf})"
+else
+  note "needrestart already leaves sysbox, containerd and k3s alone"
+fi
 installed=$(sysbox-runc --version 2>/dev/null | awk '/^version:/{print $2}' || true)
 if [ -n "$installed" ] && version_ge "$installed" "$SYSBOX_VERSION"; then
   note "sysbox ${installed} is installed"

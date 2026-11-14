@@ -44,15 +44,16 @@ type Host interface {
 	unprivilegedHint() string
 
 	// runInner runs one CLI invocation against the run's sandbox: its inner
-	// docker daemon, its checkout, its devcontainer CLI.
+	// docker daemon, its checkout, its devcontainer CLI. A sandbox whose
+	// runtime refuses to start the process at all is errSandboxBroken.
 	runInner(ctx context.Context, name, bin string, args []string, stdin []byte, tee io.Writer, extraEnv ...string) ([]byte, []byte, int, error)
 
 	// fs is the run folder as the sandbox sees it (the checkout lives there).
 	fs(name string) sandboxFS
 
 	// sandboxState is the sandbox's state word ("running", "created",
-	// "exited", ...) or "" when there is none. An unreachable host is an
-	// error, never "".
+	// "exited", "broken" — up but refusing exec, ...) or "" when there is
+	// none. An unreachable host is an error, never "".
 	sandboxState(ctx context.Context, name string) (state string, err error)
 	destroySandbox(ctx context.Context, name string) error
 	// resetSandbox empties the sandbox for a compose rebuild: every workspace
@@ -80,6 +81,13 @@ type Host interface {
 	test(ctx context.Context) error
 	close()
 }
+
+// errSandboxBroken is a sandbox that is up but whose container runtime
+// refuses to start any process in it (sysbox restarted under a running pod):
+// nothing run in it will work until the host replaces it. runInner wraps it
+// around such a failure, so the adapter can tell it from an unreachable host
+// without knowing which host it runs on.
+var errSandboxBroken = errors.New("the sandbox's container runtime refuses exec")
 
 // daemonDoorSocket is dockerd's default socket inside the sandbox: what the
 // daemon door hands a docker-outside-of-docker devcontainer.
