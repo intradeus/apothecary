@@ -26,6 +26,9 @@
   Log anchors are `draggable="false"`, so a drag across one selects text.
   `linkify` (`cpui/src/lib/core/links.ts`, moved out of `IntegrationForm`)
   matches http(s) only, so no `javascript:` link can come out of a log.
+  A quote (`"`, `'`, `` ` ``) ends a URL: logs and shells quote URLs
+  (`git clone "https://…"`), and a raw quote is no part of one. Unlike the
+  copy in `IntegrationForm`, which kept the closing quote in the link.
 - **Find, not filter:** every line stays on screen; matches are
   highlighted with an "n of m" count, and Enter / Shift+Enter or ↑ / ↓ step
   through them, wrapping. Lines around a match are what one reads a log
