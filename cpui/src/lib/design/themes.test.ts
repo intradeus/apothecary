@@ -58,6 +58,53 @@ describe('isTheme', () => {
 	});
 });
 
+describe('the Dark theme reads', () => {
+	const body = css.match(/\[data-theme='dark'\]\s*\{([^}]*)\}/)?.[1] ?? '';
+	const tokens = new Map(
+		[...body.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()])
+	);
+	const rgb = (name: string): number[] => {
+		const value = tokens.get(name) ?? '';
+		if (!/^#[0-9a-f]{6}$/i.test(value)) throw new Error(`${name} is not a 6-digit hex: ${value}`);
+		const n = parseInt(value.slice(1), 16);
+		return [n >> 16, (n >> 8) & 255, n & 255];
+	};
+	const luminance = (c: number[]) => {
+		const [r, g, b] = c.map((v) => {
+			const s = v / 255;
+			return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+		});
+		return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+	};
+	const contrast = (a: number[], b: number[]) => {
+		const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+		return (hi + 0.05) / (lo + 0.05);
+	};
+
+	it.each(
+		['--text', '--text-muted', '--text-faint'].flatMap((text) =>
+			['--frame', '--island-bg'].map((bg) => [text, bg])
+		)
+	)('sets %s over %s at 4.5:1 or more', (text, bg) => {
+		expect(contrast(rgb(text), rgb(bg))).toBeGreaterThanOrEqual(4.5);
+	});
+
+	it.each([
+		['text', 1],
+		['muted text', 0.74],
+		['faint text', 0.62]
+	])('sets the ping card %s at 4.5:1 or more', (_, alpha) => {
+		const fill = rgb('--attention-fill');
+		// what color-mix(in srgb, ink p%, transparent) shows over the fill
+		const ink = rgb('--ink').map((c, i) => c * alpha + fill[i] * (1 - alpha));
+		expect(contrast(ink, fill)).toBeGreaterThanOrEqual(4.5);
+	});
+
+	it('labels the ping card button at 4.5:1 or more', () => {
+		expect(contrast(rgb('--on-ink'), rgb('--ink'))).toBeGreaterThanOrEqual(4.5);
+	});
+});
+
 describe('themeById', () => {
 	it('finds a theme', () => {
 		expect(themeById('forest').id).toBe('forest');
