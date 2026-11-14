@@ -221,6 +221,11 @@ func TestForwardRefusals(t *testing.T) {
 	if code := r.run("forward", "rgone"); code != 1 || !strings.Contains(r.err.String(), "no such run") {
 		t.Errorf("gone = %d %q", code, r.err)
 	}
+	// The daemon left with nothing forwarded, its socket gone before it
+	// answered: the next command starts a new one rather than reaching it.
+	if _, err := os.Stat(sockOf(t, r)); err == nil {
+		t.Error("a leaving daemon still has its socket")
+	}
 	// A run whose ports stop being listable mid-way is dropped.
 	if code := r.run("forward", "r1", "3000"); code != 0 {
 		t.Fatal(r.err)
