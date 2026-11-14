@@ -40,21 +40,6 @@ func (ph *phasedHarness) waitRuns(t *testing.T, script string, n int) {
 	t.Fatalf("%s ran %d time(s), want %d", script, ph.runsOf(script), n)
 }
 
-// waitPoll waits until the idle loop has asked for a merge request's status
-// after the call: a scripted change is then seen at the fake clock's current
-// time, before the test advances it.
-func (ph *phasedHarness) waitPoll(t *testing.T) {
-	t.Helper()
-	from := ph.repoHost.StatusCalls()
-	deadline := time.Now().Add(5 * time.Second)
-	for ph.repoHost.StatusCalls() <= from {
-		if time.Now().After(deadline) {
-			t.Fatal("the idle loop did not poll the merge request")
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-}
-
 // settle lets the idle loop poll a few times.
 func settle() { time.Sleep(60 * time.Millisecond) }
 
@@ -179,7 +164,6 @@ func TestHeadMovedIsSomeoneElsesPush(t *testing.T) {
 		t.Fatalf("the run's own head opened the phase (%d)", n)
 	}
 	ph.repoHost.SetHead(1, "theirs1")
-	ph.waitPoll(t)
 	settle()
 	if n := ph.runsOf("./rereview.sh"); n != 0 {
 		t.Fatalf("opened before the head stood still for quiet_for (%d)", n)

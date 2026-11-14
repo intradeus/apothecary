@@ -585,8 +585,6 @@ type RepoHost struct {
 	// ChecksCalls counts MRChecks calls (the engine fetches checks only when
 	// a flow reads them).
 	ChecksCalls int
-	// statusCalls counts MRStatus calls (StatusCalls reads it).
-	statusCalls int
 	// NewHead is the head commit a newly created merge request reports.
 	NewHead string
 	// User is who Whoami says the integration is (default "apothecary").
@@ -636,7 +634,7 @@ func (f *RepoHost) SnapshotUploads() []Upload {
 func (f *RepoHost) Reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.MRs, f.nextID, f.ChecksCalls, f.statusCalls, f.NewHead, f.User, f.Uploads = nil, 0, 0, 0, "", "", nil
+	f.MRs, f.nextID, f.ChecksCalls, f.NewHead, f.User, f.Uploads = nil, 0, 0, "", "", nil
 	f.AccessErr, f.CreateErr, f.MRStateErr, f.FindErr, f.ThreadsErr, f.ReplyErr, f.UploadErr = nil, nil, nil, nil, nil, nil, nil
 	f.LabelErr, f.BranchErr, f.Unpushed, f.MissingFiles = nil, nil, false, nil
 	f.ReplyFailAfter, f.replies = 0, 0
@@ -800,18 +798,9 @@ func (f *RepoHost) mr(iid int) *MR {
 	return nil
 }
 
-// StatusCalls is how many times MRStatus was asked so far: a poll that began
-// after a scripted change counts past the value read after it.
-func (f *RepoHost) StatusCalls() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.statusCalls
-}
-
 func (f *RepoHost) MRStatus(_ context.Context, mr repoport.MRRef) (repoport.MRStatus, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.statusCalls++
 	if f.MRStateErr != nil {
 		return repoport.MRStatus{}, f.MRStateErr
 	}

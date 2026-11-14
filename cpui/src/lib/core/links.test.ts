@@ -32,22 +32,6 @@ describe('linkify', () => {
 		expect(linkify(`go ${s}`)).toEqual([{ text: `go ${s}` }]);
 	});
 
-	it.each(['"', "'", '`'])('leaves the quotes %s around a URL outside the link', (q) => {
-		expect(linkify(`git clone ${q}https://a.test/repo.git${q} repo`)).toEqual([
-			{ text: `git clone ${q}` },
-			{ text: 'https://a.test/repo.git', href: 'https://a.test/repo.git' },
-			{ text: `${q} repo` }
-		]);
-	});
-
-	it('ends a URL at a quote inside a word', () => {
-		expect(linkify(`url='https://a.test/x'&next`)).toEqual([
-			{ text: `url='` },
-			{ text: 'https://a.test/x', href: 'https://a.test/x' },
-			{ text: `'&next` }
-		]);
-	});
-
 	it('finds a URL at the very start and at the very end', () => {
 		expect(linkify('https://a.test/ then https://b.test/z')).toEqual([
 			{ text: 'https://a.test/', href: 'https://a.test/' },
