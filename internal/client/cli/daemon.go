@@ -35,6 +35,9 @@ var (
 	// daemonIdle is how long a daemon with nothing forwarded stays up: the
 	// command that started it is about to ask for something.
 	daemonIdle = 30 * time.Second
+	// daemonShutdown is how long an exiting daemon waits for the answers
+	// still being written.
+	daemonShutdown = 5 * time.Second
 )
 
 // listenLocal opens a port on this machine's loopback, never on its other
@@ -97,6 +100,7 @@ type (
 // daemon holds the forwards.
 type daemon struct {
 	env   Env
+	sock  string
 	log   *log.Logger
 	base  context.Context
 	every time.Duration // followEvery, as it was when the daemon started
@@ -126,8 +130,8 @@ type dport struct {
 	since         time.Time
 }
 
-func newDaemon(ctx context.Context, env Env, logger *log.Logger, assign *assignments) *daemon {
-	d := &daemon{env: env, log: logger, base: ctx, every: followEvery, runs: map[string]*drun{}, assign: assign, quit: make(chan struct{})}
+func newDaemon(ctx context.Context, env Env, sock string, logger *log.Logger, assign *assignments) *daemon {
+	d := &daemon{env: env, sock: sock, log: logger, base: ctx, every: followEvery, runs: map[string]*drun{}, assign: assign, quit: make(chan struct{})}
 	d.idle = time.AfterFunc(daemonIdle, d.exitIfIdle)
 	return d
 }
@@ -157,20 +161,33 @@ func runDaemon(ctx context.Context, env Env) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", sock, err)
 	}
+	// The socket goes when the daemon decides to exit (exit), never when its
+	// listener closes: by then a daemon started meanwhile may own the path.
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
 	_ = os.Chmod(sock, 0o600)
-	d := newDaemon(ctx, env, logger, loadAssignments(filepath.Join(dir, "ports.json")))
+	d := newDaemon(ctx, env, sock, logger, loadAssignments(filepath.Join(dir, "ports.json")))
 	srv := &http.Server{Handler: d.handler(), ReadHeaderTimeout: 10 * time.Second}
+	closed := make(chan struct{})
 	go func() {
+		defer close(closed)
 		select {
 		case <-d.quit:
 		case <-ctx.Done():
 		}
-		_ = srv.Close()
+		d.exit()
+		// Shut down, not closed: the request that asked the daemon to exit
+		// still gets its answer.
+		sctx, cancel := context.WithTimeout(context.Background(), daemonShutdown)
+		defer cancel()
+		if srv.Shutdown(sctx) != nil {
+			_ = srv.Close()
+		}
 	}()
 	logger.Printf("forward daemon %s started (pid %d)", env.Version, os.Getpid())
 	err = srv.Serve(ln)
+	d.exit()
+	<-closed
 	d.closeAll()
-	_ = os.Remove(sock)
 	logger.Printf("forward daemon stopped")
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
@@ -546,7 +563,16 @@ func (d *daemon) exitIfIdle() {
 	}
 }
 
-func (d *daemon) exit() { d.once.Do(func() { close(d.quit) }) }
+// exit ends the daemon. Its socket goes first, while the daemon still
+// answers on it and so still owns it: the next command finds no daemon and
+// starts one, rather than reaching this one as it closes, and this one's
+// closing never removes the new one's socket.
+func (d *daemon) exit() {
+	d.once.Do(func() {
+		_ = os.Remove(d.sock)
+		close(d.quit)
+	})
+}
 
 // assignments remember which local port each run's port got, so forwarding
 // it again lands on the same one when it is free: bookmarks and database
