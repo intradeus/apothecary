@@ -32,7 +32,7 @@ Every colour is in one file: `src/styles/themes.css`. A retheme touches that fil
 This works because of three tiers:
 
 1. **Fixed colours** are the same in every theme (shadows, the terminal).
-2. **Theme blocks** give one set of neutrals and one raw palette per theme: `--ember`, `--sky`, `--gold`, `--green`, `--rose`, `--violet`, `--teal`.
+2. **Theme blocks** give one set of neutrals and one raw palette per theme: `--ember`, `--sky`, `--gold`, `--green`, `--rose`, `--violet`, `--teal`. A block also picks the solid attention card's fill and ink: `--attention-fill`, `--ink` (its text) and `--on-ink` (text on an ink fill). Most themes use sky with dark ink; Dark uses a graphite card with light ink.
 3. **Roles** say what the palette means. Components only ever use these.
 
 | Role | Palette | Means |
@@ -60,7 +60,7 @@ Every role has one family, so code can build the name from a `Hue`:
 
 **Common changes:**
 
-- **Change a colour:** edit its value in the theme block.
+- **Change a colour:** edit its value in the theme block. That includes the ping card's fill and ink (`--attention-fill`, `--ink`, `--on-ink`).
 - **Add a theme:** copy a block in `themes.css`, add one line to `$lib/design/themes` and a `theme.<id>` label. `check-themes` holds every block to the same tokens.
 - **Change what something means:** "warnings are amber now" is one line in tier 3. "Commands are teal now" is one line in `$lib/design/hues`.
 - **Rename a palette colour:** rename it inside `themes.css`. No other file can have noticed.
