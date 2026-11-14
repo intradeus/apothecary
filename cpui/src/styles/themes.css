@@ -3,8 +3,9 @@
  * Three tiers, top to bottom:
  *
  *   1. Fixed colours   the same in every theme (shadows, the terminal)
- *   2. Theme blocks    one per theme: neutrals plus the raw palette
+ *   2. Theme blocks    one per theme: neutrals, the raw palette
  *                      (--ember, --sky, --gold, --green, --rose, --violet, --teal)
+ *                      and the solid-attention fill and ink
  *   3. Roles           what the palette MEANS. Components only ever use these.
  *
  * The palette is private to this file: `npm run lint:tokens` fails if anything
@@ -64,7 +65,9 @@
 /* One block per theme ($lib/design/themes), Ember × Sky the default. Every
  * theme keeps the pairing: ember means something is brewing, sky means you
  * can act. Lines and selection derive from --line-hue (tier 3); only what a
- * theme really changes lives in its block.
+ * theme really changes lives in its block. Each block also picks the solid
+ * attention card's fill and ink (--attention-fill, --ink, --on-ink): sky with
+ * dark ink, unless a theme wants its card another way.
  *
  * The selectors match any element, so a swatch can preview a theme with
  * data-theme="…" (ThemePicker) without the registry repeating its colours. */
@@ -99,6 +102,9 @@
 	--violet: #c3a2ff;
 	--teal: #5fd6cc;
 	--tint-strength: 14%;
+	--attention-fill: var(--sky);
+	--ink: var(--on-brand);
+	--on-ink: color-mix(in srgb, var(--sky) 45%, #fff);
 	--glass-bg: rgba(11, 20, 36, 0.58);
 	--glass-rail-bg: rgba(11, 20, 36, 0.62);
 	--inset-bg: rgba(6, 12, 24, 0.45);
@@ -139,6 +145,9 @@
 	--violet: #7a52d6;
 	--teal: #138a85;
 	--tint-strength: 12%;
+	--attention-fill: var(--sky);
+	--ink: var(--on-brand);
+	--on-ink: color-mix(in srgb, var(--sky) 45%, #fff);
 	--glass-bg: rgba(250, 248, 244, 0.58);
 	--glass-rail-bg: rgba(250, 248, 244, 0.62);
 	--inset-bg: rgba(238, 234, 227, 0.45);
@@ -179,6 +188,9 @@
 	--violet: #9a9ee0;
 	--teal: #4aa3e0;
 	--tint-strength: 14%;
+	--attention-fill: var(--sky);
+	--ink: var(--on-brand);
+	--on-ink: color-mix(in srgb, var(--sky) 45%, #fff);
 	--glass-bg: rgba(0, 43, 54, 0.58);
 	--glass-rail-bg: rgba(0, 43, 54, 0.62);
 	--inset-bg: rgba(0, 24, 31, 0.45);
@@ -219,6 +231,9 @@
 	--violet: #c3a8e8;
 	--teal: #6fd0b8;
 	--tint-strength: 14%;
+	--attention-fill: var(--sky);
+	--ink: var(--on-brand);
+	--on-ink: color-mix(in srgb, var(--sky) 45%, #fff);
 	--glass-bg: rgba(16, 26, 18, 0.58);
 	--glass-rail-bg: rgba(16, 26, 18, 0.62);
 	--inset-bg: rgba(8, 14, 9, 0.45);
@@ -259,6 +274,9 @@
 	--violet: #c8a8f0;
 	--teal: #78cfc0;
 	--tint-strength: 14%;
+	--attention-fill: var(--sky);
+	--ink: var(--on-brand);
+	--on-ink: color-mix(in srgb, var(--sky) 45%, #fff);
 	--glass-bg: rgba(32, 23, 16, 0.58);
 	--glass-rail-bg: rgba(32, 23, 16, 0.62);
 	--inset-bg: rgba(16, 11, 7, 0.45);
@@ -272,7 +290,7 @@
 
 [data-theme='dark'] {
 	color-scheme: dark;
-	--frame: #09090b;
+	--frame: #040405;
 	--text: #eaeaec;
 	--text-muted: #a0a1a8;
 	--text-faint: #85868d;
@@ -282,11 +300,11 @@
 	--brand-light: #e8e9ed;
 	--on-brand: #131417;
 	--link: #c0c3ca;
-	--line-hue: rgb(200, 203, 210);
+	--line-hue: rgb(170, 173, 180);
 	--fill-1: rgba(255, 255, 255, 0.03);
 	--fill-2: rgba(255, 255, 255, 0.05);
-	--code-bg: rgba(8, 8, 10, 0.55);
-	--specular: inset 0 1px 0 rgba(232, 233, 237, 0.08);
+	--code-bg: rgba(3, 3, 4, 0.6);
+	--specular: inset 0 1px 0 rgba(232, 233, 237, 0.05);
 	--ember: #ff6a2b;
 	--ember-2: #ff9150;
 	--ember-text: #ffb488;
@@ -299,14 +317,21 @@
 	--violet: #c3a2ff;
 	--teal: #5fd6cc;
 	--tint-strength: 14%;
-	--glass-bg: rgba(22, 22, 26, 0.58);
-	--glass-rail-bg: rgba(22, 22, 26, 0.62);
-	--inset-bg: rgba(10, 10, 12, 0.45);
-	--island-bg: #0f0f12;
-	--scrim: rgba(8, 8, 10, 0.5);
-	--noise-grain: 0.55;
-	--noise-ember: var(--ember);
-	--noise-sky: var(--sky);
+	/* the ping card turns graphite here: a light-grey slab would be the
+	 * brightest thing on a near-black screen */
+	--attention-fill: #1b1c20;
+	--ink: #e6e7ea;
+	--on-ink: #1b1c20;
+	--glass-bg: rgba(12, 12, 14, 0.62);
+	--glass-rail-bg: rgba(12, 12, 14, 0.66);
+	--inset-bg: rgba(4, 4, 5, 0.5);
+	--island-bg: #0b0b0d;
+	--scrim: rgba(0, 0, 0, 0.6);
+	--noise-grain: 0.3;
+	/* dimmed, as hex (Noise.svelte parses it): the screen blend lightens
+	 * the frame, so the palette at full strength would undo the dark */
+	--noise-ember: #b8501f;
+	--noise-sky: #6e7178;
 	--noise-blend: screen;
 }
 
@@ -339,6 +364,9 @@
 	--violet: #c8a6ff;
 	--teal: #64d6cc;
 	--tint-strength: 14%;
+	--attention-fill: var(--sky);
+	--ink: var(--on-brand);
+	--on-ink: color-mix(in srgb, var(--sky) 45%, #fff);
 	--glass-bg: rgba(34, 17, 25, 0.58);
 	--glass-rail-bg: rgba(34, 17, 25, 0.62);
 	--inset-bg: rgba(16, 8, 12, 0.45);
@@ -433,11 +461,8 @@
 		color-mix(in oklch, var(--running) 8%, transparent)
 	);
 
-	/* solid attention: fill and ink, kept apart from the tokens an
-	 * .attention-card re-points for what sits inside it */
-	--attention-fill: var(--attention);
-	--ink: var(--on-brand);
-	--on-ink: color-mix(in srgb, var(--attention) 45%, #fff);
+	/* solid attention: the fill and ink live in each theme block, apart from
+	 * the tokens an .attention-card re-points for what sits inside it */
 
 	/* avatars and capacity bars */
 	--avatar-bg: linear-gradient(160deg, var(--brand-light), var(--brand));
