@@ -113,8 +113,8 @@ func TestUpdateAndDeleteFailures(t *testing.T) {
 
 func TestCreateFailure(t *testing.T) {
 	w := newWorld(t, devSource())
-	if _, err := w.f.Create(context.Background(), confstore.Ticket{Title: "T", Goal: "g"}, nil); err == nil {
-		t.Error("a ticket with no owner is refused")
+	if _, err := w.f.Create(context.Background(), confstore.Ticket{UserID: owner, Goal: "g"}, nil); !errors.Is(err, confstore.ErrInvalid) {
+		t.Errorf("a ticket with no title is refused: %v", err)
 	}
 }
 
