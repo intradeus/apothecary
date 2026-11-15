@@ -233,28 +233,19 @@ func (s *Issues) uploads(body string, projectID int) (string, []trackerport.Sour
 	return body, out
 }
 
-// Search lists one page (the cursor is the page number) of issues over the
-// configured projects and groups: an issue key looks the issue up directly,
-// empty means "assigned to me", anything else is a text search with a few
-// GitLab-style filters lifted out (searchParams); the done filter is the
-// state. Each scope serves its own page of up to the limit, merged most
-// recently updated first, so a page over several scopes holds up to that
-// many from each and nothing is skipped.
+// Search lists one page of issues over the configured projects and groups:
+// an issue key looks the issue up directly, empty means "assigned to me",
+// anything else is a text search with a few GitLab-style filters lifted out
+// (searchParams); the done filter is the state. The scopes' lists, each most
+// recently updated first, are merged into pages of at most the limit
+// (issueMerge); the cursor is opaque.
 func (s *Issues) Search(ctx context.Context, q trackerport.SearchQuery) (trackerport.SearchPage, error) {
 	limit := q.Limit
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
-	page := 1
-	if q.Cursor != "" {
-		n, err := strconv.Atoi(q.Cursor)
-		if err != nil || n < 1 {
-			return trackerport.SearchPage{}, fmt.Errorf("gitlab: bad search cursor %q", q.Cursor)
-		}
-		page = n
-	}
 	query := strings.TrimSpace(q.Text)
-	if issueKeyRe.MatchString(query) && page == 1 {
+	if issueKeyRe.MatchString(query) && q.Cursor == "" {
 		if t, err := s.Fetch(ctx, query); err == nil {
 			var out trackerport.SearchPage
 			if q.Done == trackerport.DoneAny || (q.Done == trackerport.DoneOnly) == t.Done {
@@ -271,7 +262,6 @@ func (s *Issues) Search(ctx context.Context, q trackerport.SearchQuery) (tracker
 		params.Set("state", "closed")
 	}
 	params.Set("per_page", strconv.Itoa(limit))
-	params.Set("page", strconv.Itoa(page))
 	var scopes []string
 	for _, p := range s.projects {
 		scopes = append(scopes, projectPath(p)+"/issues")
@@ -282,28 +272,11 @@ func (s *Issues) Search(ctx context.Context, q trackerport.SearchQuery) (tracker
 	if len(scopes) == 0 {
 		scopes = []string{"/issues"}
 	}
-	seen := map[string]bool{}
-	var out trackerport.SearchPage
-	more := false
-	for _, scope := range scopes {
-		var rows []issueJSON
-		if _, err := s.a.api(ctx, http.MethodGet, scope+"?"+params.Encode(), nil, &rows); err != nil {
-			return trackerport.SearchPage{}, err
-		}
-		more = more || len(rows) == limit
-		for _, it := range rows {
-			t := s.toTicket(it, "")
-			if !seen[t.Key] {
-				seen[t.Key] = true
-				out.Tickets = append(out.Tickets, t)
-			}
-		}
+	m, err := newIssueMerge(s, scopes, params, limit, q.Cursor)
+	if err != nil {
+		return trackerport.SearchPage{}, err
 	}
-	sort.SliceStable(out.Tickets, func(i, j int) bool { return out.Tickets[i].Updated.After(out.Tickets[j].Updated) })
-	if more {
-		out.Next = strconv.Itoa(page + 1)
-	}
-	return out, nil
+	return m.page(ctx)
 }
 
 // searchParams turns the search box into the issues API's query: the words

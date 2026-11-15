@@ -31,13 +31,17 @@ export interface Automation {
 	updatedAt: string;
 }
 
-/** What the form sends; the server validates it the way a firing would. */
+/** What the form sends; the server validates it the way a firing would. A
+ *  cron's ticket is ticketKey, a key of the workshop's live list (the server
+ *  makes a remote issue's record when it has none), or ticketId, the record
+ *  it already fires. */
 export interface AutomationDraft {
 	name: string;
 	kind: AutomationKind;
 	query?: string;
 	schedule?: string;
 	ticketId?: string;
+	ticketKey?: string;
 	repo?: string;
 	flow: string;
 	params?: Record<string, string>;

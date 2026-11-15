@@ -8,7 +8,9 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strings"
 
+	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
 )
 
@@ -36,9 +38,43 @@ func automationFrom(projectID string, body AutomationRequest) confstore.Automati
 	return a
 }
 
+// automationTicket resolves body's ticket_key — a row of the workshop's live
+// list — into the ticket_id a cron automation fires on, making the remote
+// issue's record when it has none. A key the workshop's source does not know
+// is 400. ok=false means the response is written.
+func (s *Server) automationTicket(w http.ResponseWriter, r *http.Request, body *AutomationRequest) bool {
+	key := strings.TrimSpace(body.TicketKey)
+	if key == "" {
+		return true
+	}
+	if body.Kind != confstore.AutomationCron {
+		writeErr(w, http.StatusBadRequest, "only a cron automation takes ticket_key")
+		return false
+	}
+	if strings.TrimSpace(body.TicketID) != "" {
+		writeErr(w, http.StatusBadRequest, "a cron automation takes ticket_key or ticket_id, not both")
+		return false
+	}
+	ws, ok := s.workshop(w, r)
+	if !ok {
+		return false
+	}
+	_, t, err := s.recordAt(r.Context(), ws, key)
+	if errors.Is(err, trackerport.ErrTicketNotFound) {
+		writeErr(w, http.StatusBadRequest, "ticket_key: "+err.Error())
+		return false
+	}
+	if err != nil {
+		ws.fail(w, err)
+		return false
+	}
+	body.TicketID = t.ID
+	return true
+}
+
 func (s *Server) createAutomation(w http.ResponseWriter, r *http.Request) {
 	var body AutomationRequest
-	if !readJSON(w, r, &body) {
+	if !readJSON(w, r, &body) || !s.automationTicket(w, r, &body) {
 		return
 	}
 	a, err := s.Conf.CreateAutomation(r.Context(), automationFrom(r.PathValue("id"), body))
@@ -77,7 +113,7 @@ func (s *Server) updateAutomation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body AutomationRequest
-	if !readJSON(w, r, &body) {
+	if !readJSON(w, r, &body) || !s.automationTicket(w, r, &body) {
 		return
 	}
 	a, err := s.Conf.UpdateAutomation(r.Context(), r.PathValue("aid"), automationFrom(r.PathValue("id"), body))

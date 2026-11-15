@@ -12,6 +12,7 @@
 		AutomationKind,
 		Integration,
 		Project,
+		TicketRecord,
 		TicketRow
 	} from '$lib/domain';
 	import { ago, fmtAbs } from '$lib/core/format';
@@ -48,15 +49,33 @@
 		void load();
 	});
 
-	// A cron fires one ticket: one with a record, read from the workshop's
-	// source (best effort — without them the picker says there are none).
+	// A cron fires one ticket, picked by its key from the workshop's open
+	// live list: saving makes a remote issue's record when it has none
+	// (best effort — without the list the picker says there are none).
 	let tickets = $state<TicketRow[] | null>(null);
 	$effect(() => {
 		const id = project.id;
-		api.projects.tickets(id, { done: 'any', limit: 100 }).then(
-			(page) => (tickets = page.tickets.filter((tk) => tk.ticketId)),
+		api.projects.tickets(id, { done: 'open', limit: 100 }).then(
+			(page) => (tickets = page.tickets),
 			() => (tickets = [])
 		);
+	});
+
+	// A saved cron's ticket, by its record: its title for the summary and its
+	// key for the picker. Each id is read once; until then, or when it cannot
+	// be read, the id stands in (and the next load asks again).
+	const asked = new Set<string>();
+	let records = $state<Record<string, TicketRecord>>({});
+	$effect(() => {
+		for (const a of rows ?? []) {
+			const id = a.ticketId;
+			if (a.kind !== 'cron' || !id || asked.has(id)) continue;
+			asked.add(id);
+			api.tickets.get(id).then(
+				(r) => (records[id] = r),
+				() => asked.delete(id)
+			);
+		}
 	});
 
 	// A tracker query polls the workshop's own source.
@@ -64,7 +83,7 @@
 	const sourceName = $derived(
 		source ? ticketSourceLabel(source) : t('workshop.automations.theSource')
 	);
-	const ticketTitle = (id: string) => (tickets ?? []).find((tk) => tk.ticketId === id)?.title ?? id;
+	const ticketTitle = (id: string) => records[id]?.ticket.title ?? id;
 	const kindLabel = (k: AutomationKind) =>
 		k === 'cron'
 			? t('workshop.automations.kindCron')
@@ -84,10 +103,6 @@
 	const repoOptions = $derived<SelectOption[]>(
 		repoNames.map((r) => ({ value: r, label: repoLabel(r) }))
 	);
-	const ticketOptions = $derived<SelectOption[]>([
-		{ value: '', label: '—' },
-		...(tickets ?? []).map((tk) => ({ value: tk.ticketId, label: `${tk.key} · ${tk.title}` }))
-	]);
 
 	// --- the form ---
 	let open = $state(false);
@@ -98,6 +113,29 @@
 	let busy = $state(false);
 	let formError = $state('');
 	const flowName = $derived(flowPick || project.defaultFlow);
+
+	// The ticket the edited rule fires now: picking it again keeps its record.
+	const saved = $derived(editing?.ticketId ? records[editing.ticketId] : undefined);
+	const ticketOptions = $derived.by<SelectOption[]>(() => {
+		const opts: SelectOption[] = [
+			{ value: '', label: '—' },
+			...(tickets ?? []).map((tk) => ({ value: tk.key, label: `${tk.key} · ${tk.title}` }))
+		];
+		// No longer open, it is still the rule's.
+		if (saved && !opts.some((o) => o.value === saved.key))
+			opts.push({ value: saved.key, label: `${saved.key} · ${saved.ticket.title}` });
+		return opts;
+	});
+	const ticketPick = $derived(draft.ticketKey ?? (draft.ticketId && saved ? saved.key : ''));
+	function pickTicket(key: string) {
+		if (saved && key === saved.key) {
+			draft.ticketId = editing?.ticketId;
+			draft.ticketKey = undefined;
+		} else {
+			draft.ticketId = undefined;
+			draft.ticketKey = key || undefined;
+		}
+	}
 
 	function blank(): AutomationDraft {
 		return { name: '', kind: 'tracker_query', flow: '', enabled: true };
@@ -151,6 +189,7 @@
 		if (d.kind !== 'cron') {
 			d.schedule = undefined;
 			d.ticketId = undefined;
+			d.ticketKey = undefined;
 		}
 		if (d.kind !== 'merge_request') d.repo = undefined;
 		try {
@@ -339,12 +378,12 @@
 				</div>
 				<div class="field">
 					<label for="au-ticket">{t('workshop.automations.ticket')}</label>
-					{#if tickets?.length}
+					{#if ticketOptions.length > 1}
 						<Select
 							id="au-ticket"
 							options={ticketOptions}
-							value={draft.ticketId ?? ''}
-							onchange={(v) => (draft.ticketId = v)}
+							value={ticketPick}
+							onchange={pickTicket}
 						/>
 					{:else}
 						<div class="help hue-warning">{t('workshop.automations.noTickets')}</div>

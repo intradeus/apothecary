@@ -527,6 +527,8 @@ components:
           type: string
         ticket_id:
           type: string
+        ticket_key:
+          type: string
       required:
         - flow
         - kind

@@ -256,9 +256,10 @@ func trackers(t *testing.T, open opener) {
 		_, err = svc.SetTicketLabels(ctx, k.ID, []string{"x"}, false)
 		is(t, "labels", err, confstore.ErrInvalid)
 		is(t, "link", svc.AddTicketLink(ctx, k.ID, trackerport.TicketLink{URL: "https://example.test"}), confstore.ErrInvalid)
-		_, posted, err := svc.AddTicketComment(ctx, confstore.TicketComment{TicketID: k.ID, Body: "hi", Origin: confstore.CommentUser})
-		ok(t, err)
-		same(t, "a comment is kept on any ticket", posted, true)
+		_, _, err = svc.AddTicketComment(ctx, confstore.TicketComment{TicketID: k.ID, Body: "hi", Origin: confstore.CommentUser})
+		is(t, "comment", err, confstore.ErrInvalid)
+		_, err = svc.TicketComments(ctx, k.ID)
+		is(t, "comments", err, confstore.ErrInvalid)
 	})
 
 	t.Run("a project's ticket source defaults to the internal tracker", func(t *testing.T) {

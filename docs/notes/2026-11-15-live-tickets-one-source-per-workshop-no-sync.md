@@ -28,9 +28,11 @@ is kept locally.
   and fall back to the copy held. A write through the tracker writer drops
   the copies it changes. One daemon is assumed (chart `replicas: 1`).
 - **The record:** a remote issue's `tickets` row is made when something needs
-  it (a run, an automation firing, a base branch), unique by
-  `(source_id, remote_id)`, owned by no workshop, never polled. It keeps the
-  last-seen key, URL, title, goal, type and labels.
+  it (a run, an automation firing, a base branch, a cron automation saved
+  with its `ticket_key`), unique by `(source_id, remote_id)`, owned by no
+  workshop, never polled. It keeps the last-seen key, URL, title, goal, type
+  and labels. Stored comments (`ticket_comments`) are an internal ticket's
+  only: the config store refuses them on a record (`ErrInvalid`).
 - **`ticket_transition` has no built-in status names.** `to:` is required
   free text, the tracker's own status or transition name, or a string
   parameter the workshop binds (`to: $done_status`), which may wait for a
@@ -85,6 +87,11 @@ is kept locally.
   (and `last_error` says why) a pinned ticket of another owner or another
   source than the workshop's, and the migration disables cron automations
   pinned to such a ticket.
+- **GitLab pages over several scopes with an opaque cursor:** the projects'
+  and groups' lists are merged into pages of at most the limit, the cursor
+  holding each scope's position and the issues listed at the page's last
+  update time, so an issue a project and its group both list is listed once
+  even when its two copies fall on different pages of the two lists.
 
 ## Risks
 
@@ -174,4 +181,9 @@ is kept locally.
   refuses deletion, naming the workshop); `crossuser_test.go`:
   `TestWorkshopCannotBorrowATracker`, `TestTicketOfSomeoneElsesTracker`;
   `TestRunStartsFromTheRecordWhileTheTrackerIsDown`,
-  `TestRemoteWriteRefreshesTheRecord` (`ticketsync_test.go`).
+  `TestRemoteWriteRefreshesTheRecord` (`ticketsync_test.go`);
+  `automations_test.go`: `TestCronAutomationByTicketKey`.
+- `internal/adapters/gitlab/issues_test.go`:
+  `TestGitLabIssuesSearchMergesOverlappingScopes`.
+- `cpui/src/routes/w/[workshop]/tickets/[key]/layout.test.ts`: a fresh ticket
+  page for each workshop and each key.

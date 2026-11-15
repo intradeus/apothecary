@@ -1149,6 +1149,15 @@ describe('what each call sends', () => {
 				}
 			});
 		});
+
+		it('sends a picked ticket key rather than the record it replaces', async () => {
+			const fn = reply('createAutomation', answer({ id: 'a' }));
+			await automations.create('p', { ...draft, ticketId: 't', ticketKey: 'g/p#12' });
+			expect(fn).toHaveBeenCalledWith({
+				path: { id: 'p' },
+				body: { ...draft, ticket_key: 'g/p#12' }
+			});
+		});
 	});
 
 	describe('the system', () => {

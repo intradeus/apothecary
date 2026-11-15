@@ -2,10 +2,10 @@ import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
-import type { Automation, Project, TicketRow } from '$lib/domain';
+import type { Automation, Project, TicketRecord, TicketRow } from '$lib/domain';
 import { confirmState } from '$lib/ui/confirm.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
-import { aTicketRow } from '$test/fixtures';
+import { aTicket, aTicketRow } from '$test/fixtures';
 import { aFlow, anIntegration, aWorkshop, choose, confirmed } from '$test/fixtures/app.svelte';
 import WithHeader from '$test/fixtures/WithHeader.svelte';
 import AutomationsTab from './AutomationsTab.svelte';
@@ -15,6 +15,7 @@ vi.mock('$lib/api', () => ({
 		automations: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
 		flows: { list: vi.fn(), get: vi.fn(), binding: vi.fn() },
 		projects: { get: vi.fn(), tickets: vi.fn() },
+		tickets: { get: vi.fn() },
 		integrations: { list: vi.fn(), models: vi.fn() },
 		skillsets: { list: vi.fn(), versions: vi.fn() }
 	}
@@ -39,6 +40,11 @@ const auto = (over: Partial<Automation> = {}): Automation =>
 		enabled: true,
 		...over
 	}) as Automation;
+const record = (id: string, key: string, title: string): TicketRecord => ({
+	ticket: aTicket({ id, sourceKey: key, title }),
+	key,
+	workshops: []
+});
 
 interface Over {
 	tickets?: TicketRow[];
@@ -79,6 +85,7 @@ beforeEach(() => {
 	vi.mocked(api.integrations.list).mockResolvedValue([]);
 	vi.mocked(api.skillsets.list).mockResolvedValue([]);
 	vi.mocked(api.projects.tickets).mockResolvedValue({ tickets: [], next: '' });
+	vi.mocked(api.tickets.get).mockRejectedValue(new Error('not found'));
 	toasts.list = [];
 	confirmState.current = null;
 });
@@ -134,15 +141,15 @@ describe('AutomationsTab, listing', () => {
 		expect(await screen.findByText('the ticket source')).toBeInTheDocument();
 	});
 
-	it('sums up a schedule, with the ticket by name', async () => {
-		setup([auto({ kind: 'cron', schedule: '0 9 * * *', ticketId: 't1' })], {
-			tickets: [aTicketRow({ ticketId: 't1', title: 'Daily sweep' })]
-		});
+	it('sums up a schedule, with the ticket by its record', async () => {
+		vi.mocked(api.tickets.get).mockResolvedValue(record('t1', 'PROJ-1', 'Daily sweep'));
+		setup([auto({ kind: 'cron', schedule: '0 9 * * *', ticketId: 't1' })]);
 		expect(await screen.findByText(/0 9 \* \* \* · Daily sweep/)).toBeInTheDocument();
-		expect(api.projects.tickets).toHaveBeenCalledWith('p1', { done: 'any', limit: 100 });
+		expect(api.tickets.get).toHaveBeenCalledWith('t1');
+		expect(api.projects.tickets).toHaveBeenCalledWith('p1', { done: 'open', limit: 100 });
 	});
 
-	it('sums up a schedule by the ticket id when it is not among those read', async () => {
+	it('sums up a schedule by the ticket id when its record cannot be read', async () => {
 		vi.mocked(api.automations.list).mockResolvedValue([
 			auto({ kind: 'cron', schedule: '0 9 * * *', ticketId: 't9' })
 		]);
@@ -151,6 +158,7 @@ describe('AutomationsTab, listing', () => {
 			props: { page: AutomationsTab, props: { project, integrations: [jira] } }
 		});
 		expect(await screen.findByText(/0 9 \* \* \* · t9/)).toBeInTheDocument();
+		await waitFor(() => expect(api.tickets.get).toHaveBeenCalledWith('t9'));
 	});
 
 	it('sums up a merge request rule', async () => {
@@ -220,7 +228,7 @@ describe('AutomationsTab, a new rule', () => {
 		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 	});
 
-	it('sends only what a schedule takes', async () => {
+	it('sends only what a schedule takes, the ticket by its key', async () => {
 		setup([], {
 			tickets: [
 				aTicketRow({ key: 'PROJ-1', ticketId: 't1', title: 'Sweep' }),
@@ -233,12 +241,12 @@ describe('AutomationsTab, a new rule', () => {
 		await userEvent.type(screen.getByLabelText('Query'), 'left over');
 		await kind('schedule');
 		await userEvent.type(screen.getByLabelText('Schedule'), '0 9 * * *');
-		await userEvent.click(screen.getByRole('combobox', { name: 'Ticket' }));
-		expect(screen.queryByRole('option', { name: /Never run/ })).not.toBeInTheDocument();
-		await userEvent.click(screen.getByRole('option', { name: 'PROJ-1 · Sweep' }));
+		// An issue with no record yet is pickable: saving makes its record.
+		await choose('Ticket', 'PROJ-2 · Never run');
 		await userEvent.click(create());
 
-		expect(sent()).toMatchObject({ kind: 'cron', schedule: '0 9 * * *', ticketId: 't1' });
+		expect(sent()).toMatchObject({ kind: 'cron', schedule: '0 9 * * *', ticketKey: 'PROJ-2' });
+		expect(sent().ticketId).toBeUndefined();
 		expect(sent().query).toBeUndefined();
 	});
 
@@ -273,7 +281,7 @@ describe('AutomationsTab, a new rule', () => {
 		await screen.findByText('No automations yet');
 		await openNew();
 		await kind('schedule');
-		expect(await screen.findByText(/No ticket to pick yet/)).toBeInTheDocument();
+		expect(await screen.findByText(/No ticket to pick/)).toBeInTheDocument();
 	});
 
 	it('copes with integrations and tickets still loading', async () => {
@@ -372,6 +380,67 @@ describe('AutomationsTab, editing', () => {
 		await screen.findByRole('combobox', { name: 'Flow' });
 		await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 		expect(edited().flow).toBe('other');
+	});
+
+	describe('a schedule', () => {
+		const cron = () =>
+			auto({ kind: 'cron', query: undefined, schedule: '0 9 * * *', ticketId: 't1' });
+		const open = async () => {
+			await userEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+			await screen.findByRole('dialog', { name: 'Edit Nightly' });
+			return screen.findByRole('combobox', { name: 'Ticket' });
+		};
+
+		it('keeps its ticket, even one no longer open', async () => {
+			vi.mocked(api.tickets.get).mockResolvedValue(record('t1', 'PROJ-1', 'Done already'));
+			setup([cron()], { tickets: [aTicketRow({ key: 'PROJ-2', title: 'Open' })] });
+			await open();
+			await waitFor(() =>
+				expect(screen.getByRole('combobox', { name: 'Ticket' })).toHaveTextContent('PROJ-1')
+			);
+			await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+			expect(edited()).toMatchObject({ ticketId: 't1' });
+			expect(edited().ticketKey).toBeUndefined();
+		});
+
+		const two = () =>
+			setup([cron()], {
+				tickets: [
+					aTicketRow({ key: 'PROJ-1', ticketId: 't1', title: 'Sweep' }),
+					aTicketRow({ key: 'PROJ-2', ticketId: '', title: 'Other' })
+				]
+			});
+
+		it('moves to another ticket by its key', async () => {
+			vi.mocked(api.tickets.get).mockResolvedValue(record('t1', 'PROJ-1', 'Sweep'));
+			two();
+			await open();
+			await choose('Ticket', 'PROJ-2 · Other');
+			await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+			expect(edited()).toMatchObject({ ticketKey: 'PROJ-2' });
+			expect(edited().ticketId).toBeUndefined();
+		});
+
+		it('picked back, keeps its own record', async () => {
+			vi.mocked(api.tickets.get).mockResolvedValue(record('t1', 'PROJ-1', 'Sweep'));
+			two();
+			await open();
+			await choose('Ticket', 'PROJ-2 · Other');
+			await choose('Ticket', 'PROJ-1 · Sweep');
+			await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+			expect(edited()).toMatchObject({ ticketId: 't1' });
+			expect(edited().ticketKey).toBeUndefined();
+		});
+
+		it('clears its ticket', async () => {
+			vi.mocked(api.tickets.get).mockResolvedValue(record('t1', 'PROJ-1', 'Sweep'));
+			setup([cron()], { tickets: [aTicketRow({ key: 'PROJ-1', ticketId: 't1', title: 'Sweep' })] });
+			await open();
+			await choose('Ticket', '—');
+			await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+			expect(edited().ticketId).toBeUndefined();
+			expect(edited().ticketKey).toBeUndefined();
+		});
 	});
 });
 

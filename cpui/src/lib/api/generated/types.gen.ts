@@ -223,6 +223,7 @@ export type AutomationRequest = {
 	repo?: string;
 	schedule?: string;
 	ticket_id?: string;
+	ticket_key?: string;
 };
 
 export type BranchInfo = {

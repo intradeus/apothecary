@@ -1045,10 +1045,10 @@ func TestIssuesSearchScopesAndLimits(t *testing.T) {
 	if paths[0] != "/api/v4/projects/g%2Fp/issues 25" || paths[1] != "/api/v4/groups/g%2Fsub/issues" || got.Next != "" {
 		t.Errorf("paths = %q, next %q", paths, got.Next)
 	}
-	// Each scope serves its own page: nothing is cut from the merge, and a
-	// scope that filled its page has another.
+	// A page holds at most the limit over every scope, and a scope that
+	// filled its page has another.
 	got, err = s.Search(ctx, trackerport.SearchQuery{Text: "text", Limit: 2})
-	if err != nil || len(got.Tickets) != 3 || got.Tickets[0].Key != "g/p#2" || got.Next != "2" {
+	if err != nil || len(got.Tickets) != 2 || got.Tickets[0].Key != "g/p#2" || got.Tickets[1].Key != "g/p#3" || got.Next == "" {
 		t.Errorf("limited = %+v, %v", got, err)
 	}
 

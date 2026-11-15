@@ -2,12 +2,15 @@ package gitlab
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -291,9 +294,9 @@ func TestGitLabIssuesMetadata(t *testing.T) {
 	}
 }
 
-// Search pages by page number while a scope still serves full pages; the
-// done filter is the state, overriding one typed in the search box, and a
-// closed issue is Done.
+// Search pages a scope by page number while it serves full pages; the done
+// filter is the state, overriding one typed in the search box, and a closed
+// issue is Done.
 func TestGitLabIssuesSearchPagesAndFiltersDone(t *testing.T) {
 	var queries []url.Values
 	mux := http.NewServeMux()
@@ -312,7 +315,7 @@ func TestGitLabIssuesSearchPagesAndFiltersDone(t *testing.T) {
 
 	q := trackerport.SearchQuery{Text: "router is:open", Done: trackerport.DoneOnly, Limit: 2}
 	first, err := s.Search(ctx, q)
-	if err != nil || len(first.Tickets) != 2 || !first.Tickets[0].Done || first.Next != "2" {
+	if err != nil || len(first.Tickets) != 2 || !first.Tickets[0].Done || first.Next == "" {
 		t.Fatalf("first = %+v, %v", first, err)
 	}
 	q.Cursor = first.Next
@@ -325,7 +328,63 @@ func TestGitLabIssuesSearchPagesAndFiltersDone(t *testing.T) {
 			t.Errorf("query %d = %v", i, v)
 		}
 	}
-	if _, err := s.Search(ctx, trackerport.SearchQuery{Cursor: "-1"}); err == nil {
-		t.Error("a cursor that is no page number was accepted")
+	for _, bad := range []string{"-1", "e30", base64.RawURLEncoding.EncodeToString([]byte(`{"at":[0,0]}`))} {
+		if _, err := s.Search(ctx, trackerport.SearchQuery{Cursor: bad}); err == nil {
+			t.Errorf("cursor %q was accepted", bad)
+		}
+	}
+}
+
+// Over a project and a group holding it, a page holds at most the limit and
+// an issue listed through one scope is not listed again through the other —
+// on the same page, or on a later one when its copy is on another page of
+// the other scope's list.
+func TestGitLabIssuesSearchMergesOverlappingScopes(t *testing.T) {
+	row := func(iid int, month int) string {
+		return fmt.Sprintf(`{"id":%d,"iid":%d,"updated_at":"2026-%02d-01T00:00:00Z","references":{"full":"g/p#%d"}}`, 100+iid, iid, month, iid)
+	}
+	lists := map[string][]string{
+		"/api/v4/projects/g%2Fp/issues": {row(4, 4), row(2, 2)},
+		"/api/v4/groups/g/issues":       {row(2, 2), row(1, 1)},
+	}
+	var calls []string
+	serve := func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		per, _ := strconv.Atoi(q.Get("per_page"))
+		page, _ := strconv.Atoi(q.Get("page"))
+		calls = append(calls, r.URL.EscapedPath()+" "+q.Get("page"))
+		all := lists[r.URL.EscapedPath()]
+		from, to := min((page-1)*per, len(all)), min(page*per, len(all))
+		_, _ = w.Write([]byte("[" + strings.Join(all[from:to], ",") + "]"))
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v4/projects/{project}/issues", serve)
+	mux.HandleFunc("GET /api/v4/groups/{group}/issues", serve)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	s := NewIssues(IssuesConfig{BaseURL: ts.URL, Token: "tok", Projects: []string{"g/p"}, Groups: []string{"g"}})
+	ctx := context.Background()
+
+	var pages [][]string
+	q := trackerport.SearchQuery{Text: "x", Limit: 2}
+	for range 4 {
+		got, err := s.Search(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var keys []string
+		for _, it := range got.Tickets {
+			keys = append(keys, it.Key)
+		}
+		pages = append(pages, keys)
+		if got.Next == "" {
+			break
+		}
+		q.Cursor = got.Next
+	}
+	// g/p#2 ends page 1 through the project; its copy heads the group's
+	// list, which page 2 reads from its start.
+	if want := [][]string{{"g/p#4", "g/p#2"}, {"g/p#1"}}; !reflect.DeepEqual(pages, want) {
+		t.Errorf("pages = %v, want %v (calls %v)", pages, want, calls)
 	}
 }

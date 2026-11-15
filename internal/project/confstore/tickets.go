@@ -499,19 +499,28 @@ func (s *Service) SetTicketLabels(ctx context.Context, ticketID string, labels [
 	return s.db.SetTicketLabels(ctx, ticketID, cleanLabels(labels), union, s.now().UTC())
 }
 
-// TicketComments is the ticket's stored comments, oldest first.
+// TicketComments is an internal ticket's stored comments, oldest first. A
+// remote record has none here: its issue's comments are its tracker's
+// (ErrInvalid).
 func (s *Service) TicketComments(ctx context.Context, ticketID string) ([]TicketComment, error) {
+	if _, err := s.internalTicket(ctx, ticketID); err != nil {
+		return nil, err
+	}
 	return s.db.ListTicketComments(ctx, ticketID)
 }
 
-// AddTicketComment records a comment typed in Apothecary (origin user) or
-// posted by a run (origin apothecary, RunID and StageID set). A run's comment
-// is keyed by them: posting it again is a no-op that reports posted=false and
-// returns the comment already there. A missing ticket is ErrNotFound.
+// AddTicketComment records a comment on an internal ticket, typed in
+// Apothecary (origin user) or posted by a run (origin apothecary, RunID and
+// StageID set). A run's comment is keyed by them: posting it again is a no-op
+// that reports posted=false and returns the comment already there. A missing
+// ticket is ErrNotFound; a remote record ErrInvalid (comment on its tracker).
 func (s *Service) AddTicketComment(ctx context.Context, c TicketComment) (TicketComment, bool, error) {
 	event.CleanValue(&c)
 	if strings.TrimSpace(c.Body) == "" {
 		return TicketComment{}, false, invalidf("comment: a body is required")
+	}
+	if _, err := s.internalTicket(ctx, c.TicketID); err != nil {
+		return TicketComment{}, false, err
 	}
 	switch c.Origin {
 	case CommentUser:

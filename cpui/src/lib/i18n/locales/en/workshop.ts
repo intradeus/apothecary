@@ -202,7 +202,7 @@ export default {
 	'workshop.automations.ticket': 'Ticket',
 	'workshop.automations.ticketHelp': 'Each firing starts a new run of this ticket.',
 	'workshop.automations.noTickets':
-		'No ticket to pick yet: a ticket shows here once it was written here or had a run.',
+		'No ticket to pick: the workshop’s ticket source lists no open one.',
 	'workshop.automations.flow': 'Flow',
 	'workshop.automations.defaultFlow': 'Default · {flow}',
 	'workshop.automations.startEnabled': 'Enabled — fires from the next pass',

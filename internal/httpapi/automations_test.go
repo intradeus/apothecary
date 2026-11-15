@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
+
+	"apothecary/internal/project/confstore"
 )
 
 // The automation endpoints: create (validated by the config store), list,
@@ -72,5 +75,61 @@ func TestAutomationAPI(t *testing.T) {
 	}
 	if resp, _ = x.do(t, "GET", base+"/"+a.ID, nil, nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("get after delete = %d", resp.StatusCode)
+	}
+}
+
+// A cron automation names its ticket by a key of the workshop's live list:
+// a remote issue with no record gets one, whose id the automation keeps; an
+// internal ticket's key is its id; a key the source does not have is 400.
+func TestCronAutomationByTicketKey(t *testing.T) {
+	x := newTrackerEnv(t)
+	ctx := context.Background()
+	base := "/api/projects/" + testProject + "/automations"
+	if _, found, _ := x.srv.Conf.TicketByRemote(ctx, "int-1", "101"); found {
+		t.Fatal("a record before the automation")
+	}
+	cron := func(key string) map[string]any {
+		return map[string]any{"name": "nightly", "kind": "cron", "schedule": "0 3 * * *", "ticket_key": key, "flow": "builder"}
+	}
+	res, data := x.do(t, "POST", base, cron("PROJ-8"), nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("create = %d %s", res.StatusCode, data)
+	}
+	rec, found, err := x.srv.Conf.TicketByRemote(ctx, "int-1", "101")
+	if err != nil || !found || rec.SourceKey != "PROJ-8" {
+		t.Fatalf("record = %+v %v %v", rec, found, err)
+	}
+	a := decode[confstore.Automation](t, data)
+	if a.TicketID != rec.ID {
+		t.Errorf("ticket_id = %q, want the record %q", a.TicketID, rec.ID)
+	}
+	// Again on the same issue: the record is reused.
+	res, data = x.do(t, "PUT", base+"/"+a.ID, cron("PROJ-8"), nil)
+	if got := decode[confstore.Automation](t, data); res.StatusCode != http.StatusOK || got.TicketID != rec.ID {
+		t.Errorf("update = %d %s", res.StatusCode, data)
+	}
+
+	for _, bad := range []struct {
+		body map[string]any
+		want string
+	}{
+		{cron("NOPE-1"), "ticket_key"},
+		{map[string]any{"name": "x", "kind": "tracker_query", "ticket_key": "PROJ-8", "flow": "builder"}, "only a cron"},
+		{map[string]any{"name": "x", "kind": "cron", "schedule": "0 3 * * *", "ticket_key": "PROJ-8", "ticket_id": rec.ID, "flow": "builder"}, "not both"},
+	} {
+		if res, data := x.do(t, "POST", base, bad.body, nil); res.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), bad.want) {
+			t.Errorf("create %v = %d %s", bad.body, res.StatusCode, data)
+		}
+	}
+
+	x.useSource(t, x.internal)
+	res, data = x.do(t, "POST", "/api/projects/"+testProject+"/tickets", map[string]any{"title": "Internal"}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("ticket = %d %s", res.StatusCode, data)
+	}
+	id := decode[TicketDetail](t, data).TicketID
+	res, data = x.do(t, "POST", base, cron(id), nil)
+	if got := decode[confstore.Automation](t, data); res.StatusCode != http.StatusCreated || got.TicketID != id {
+		t.Errorf("internal = %d %s", res.StatusCode, data)
 	}
 }

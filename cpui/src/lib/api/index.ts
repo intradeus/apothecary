@@ -1274,7 +1274,7 @@ function automationBody(d: AutomationDraft): Wire.AutomationRequest {
 		enabled: d.enabled,
 		...(d.query ? { query: d.query } : {}),
 		...(d.schedule ? { schedule: d.schedule } : {}),
-		...(d.ticketId ? { ticket_id: d.ticketId } : {}),
+		...(d.ticketKey ? { ticket_key: d.ticketKey } : d.ticketId ? { ticket_id: d.ticketId } : {}),
 		...(d.repo ? { repo: d.repo } : {}),
 		...(d.params && Object.keys(d.params).length ? { params: d.params } : {})
 	};
