@@ -88,7 +88,7 @@ func TestAttachRunAllocatesAndReuses(t *testing.T) {
 		"get secrets":             `{"items":[{"metadata":{"name":"apo-wg-other"},"data":{"wg-ip":"` + b64("10.90.0.2") + `"}}]}`,
 	}}
 	h := &K8sHost{Kube: &kube.Client{Namespace: "ws", R: k}, Image: "gw:1"}
-	att, err := h.AttachRun(context.Background(), "ACME", "", "run1")
+	att, err := h.AttachRun(context.Background(), "ACME", "", "run1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,9 +104,60 @@ func TestAttachRunAllocatesAndReuses(t *testing.T) {
 	// A re-provision of the same run keeps its identity.
 	k.answers["get secrets"] = `{"items":[{"metadata":{"name":"apo-wg-run1"},"data":{"wg-ip":"` + b64("10.90.0.9") +
 		`","wg-private-key":"` + b64("P") + `","wg-public-key":"` + b64("Q") + `"}}]}`
-	att, err = h.AttachRun(context.Background(), "ACME", "", "run1")
+	att, err = h.AttachRun(context.Background(), "ACME", "", "run1", map[string]string{"10.90.0.4": "other"})
 	if err != nil || att.Peer.IP != "10.90.0.9" || att.Peer.PublicKey != "Q" {
 		t.Fatalf("reuse: %+v %v", att, err)
+	}
+}
+
+// A peer outlives its Secret when the Secret goes without the gateway
+// detaching it: the gateway's peers are taken addresses too, or the next run
+// is handed one and one of the two loses its tunnel (no DNS, no egress).
+func TestAttachRunSkipsAddressesTheGatewayHolds(t *testing.T) {
+	k := &kubeScript{answers: map[string]string{
+		"get secret apo-gw-acme":  `{"metadata":{"name":"apo-gw-acme"},"data":{"wg-public-key":"` + b64("GWPUB") + `","wg-private-key":"` + b64("x") + `","control-token":"` + b64("t") + `"}}`,
+		"get service apo-gw-acme": `{"metadata":{"name":"apo-gw-acme"},"spec":{"clusterIP":"10.43.7.7"}}`,
+		"get secrets":             `{"items":[{"metadata":{"name":"apo-wg-live"},"data":{"wg-ip":"` + b64("10.90.0.2") + `"}}]}`,
+	}}
+	h := &K8sHost{Kube: &kube.Client{Namespace: "ws", R: k}}
+	held := map[string]string{"10.90.0.2": "live", "10.90.0.3": "orphan", "10.90.0.4": "orphan2"}
+	att, err := h.AttachRun(context.Background(), "ACME", "", "new", held)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if att.Peer.IP != "10.90.0.5" {
+		t.Fatalf("new run got %s, an address the gateway gives another peer", att.Peer.IP)
+	}
+
+	// A run whose own (kept) address the gateway gives another run is
+	// refused loudly rather than attached with a tunnel that routes nothing.
+	k.answers["get secrets"] = `{"items":[{"metadata":{"name":"apo-wg-new"},"data":{"wg-ip":"` + b64("10.90.0.3") +
+		`","wg-private-key":"` + b64("P") + `","wg-public-key":"` + b64("Q") + `"}}]}`
+	_, err = h.AttachRun(context.Background(), "ACME", "", "new", held)
+	if err == nil || !strings.Contains(err.Error(), "10.90.0.3") || !strings.Contains(err.Error(), "orphan") {
+		t.Fatalf("collision on the run's own address = %v", err)
+	}
+}
+
+func TestRunProjectReadsTheLink(t *testing.T) {
+	ctx := context.Background()
+	k := &kubeScript{answers: map[string]string{
+		"get secret apo-wg-r1": `{"metadata":{"name":"apo-wg-r1","labels":{"apothecary.io/wg-project":"01hzx"}}}`,
+	}}
+	h := &K8sHost{Kube: &kube.Client{R: k}}
+	if p, ok, err := h.RunProject(ctx, "r1"); err != nil || !ok || p != "01hzx" {
+		t.Errorf("RunProject = %q %v %v", p, ok, err)
+	}
+	// The key names the same gateway as the project id it came from.
+	if gwName("01HZX") != gwName("01hzx") {
+		t.Error("a project key does not name its project's gateway")
+	}
+	if _, ok, err := h.RunProject(ctx, "gone"); err != nil || ok {
+		t.Errorf("RunProject(no link) = %v %v", ok, err)
+	}
+	h.Kube.R = failing{kubeScript: k, word: "secret", stderr: "boom"}
+	if _, _, err := h.RunProject(ctx, "r1"); err == nil {
+		t.Error("an API failure read as no link")
 	}
 }
 

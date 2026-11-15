@@ -145,6 +145,11 @@ type gwFake struct {
 	windowErr bool     // the window endpoints answer 500
 	detached  []string
 	att       egressgw.Attachment
+	// runProject is the project a run's link names (RunProject); detachDown
+	// makes the gateway refuse DELETE /runs/{run}.
+	runProject string
+	detachDown bool
+	table      policyfile.Routes // what GET /routes answers
 }
 
 func newGwFake(t *testing.T) *gwFake {
@@ -155,7 +160,16 @@ func newGwFake(t *testing.T) *gwFake {
 	mux.HandleFunc("GET /policy", func(w http.ResponseWriter, _ *http.Request) { json.NewEncoder(w).Encode(g.policy) })
 	mux.HandleFunc("PUT /policy", func(_ http.ResponseWriter, r *http.Request) { json.NewDecoder(r.Body).Decode(&g.policy) })
 	mux.HandleFunc("PUT /runs/{run}", func(_ http.ResponseWriter, r *http.Request) { g.routes = append(g.routes, "+"+r.PathValue("run")) })
-	mux.HandleFunc("DELETE /runs/{run}", func(_ http.ResponseWriter, r *http.Request) { g.routes = append(g.routes, "-"+r.PathValue("run")) })
+	mux.HandleFunc("DELETE /runs/{run}", func(w http.ResponseWriter, r *http.Request) {
+		if g.detachDown {
+			http.Error(w, "detach refused", http.StatusInternalServerError)
+			return
+		}
+		g.routes = append(g.routes, "-"+r.PathValue("run"))
+	})
+	mux.HandleFunc("GET /routes", func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(g.table)
+	})
 	window := func(verb string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if g.windowErr {
@@ -201,14 +215,18 @@ func (g *gwFake) EnsureGateway(context.Context, string, string) (egressgw.Contro
 	return g.control(), g.ensureErr
 }
 
-func (g *gwFake) Control(context.Context, string) (egressgw.Control, bool) {
+func (g *gwFake) Control(context.Context, string) (egressgw.Control, bool, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.control(), g.up
+	return g.control(), g.up, nil
 }
 
-func (g *gwFake) AttachRun(context.Context, string, string, string) (egressgw.Attachment, error) {
+func (g *gwFake) AttachRun(context.Context, string, string, string, map[string]string) (egressgw.Attachment, error) {
 	return g.att, nil
+}
+
+func (g *gwFake) RunProject(context.Context, string) (string, bool, error) {
+	return g.runProject, g.runProject != "", nil
 }
 
 func (g *gwFake) DetachRun(_ context.Context, _, run string) error {

@@ -1,6 +1,7 @@
 <script lang="ts">
 	// The RUN's lifecycle: play, pause and stop while it lives; retry, rerun
-	// and archive once it has ended.
+	// and archive once it has ended — and, on an archived run whose workspace
+	// a failed destroy left behind, destroying it again.
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
 	import { to } from '$lib/core/urls';
@@ -65,6 +66,14 @@
 			});
 	}
 
+	// Archiving an archived run that still has a workspace is the destroy's
+	// retry; a failure comes back as the act's error.
+	async function destroyWorkspace() {
+		const env = run.envId!;
+		if (await act('archive', () => api.runs.archive(run.id)))
+			toast(t('run.destroyWorkspace.done', { env }));
+	}
+
 	async function retry() {
 		// Same run, same workspace: the page re-subscribes once it continues.
 		if (await act('retry', () => api.runs.retry(run.id))) onretried();
@@ -126,6 +135,16 @@
 				disabled={actions.any}
 				aria-busy={actions.has('archive')}
 				onclick={archive}>{t('run.header.archive')}</button
+			>
+		{:else if run.envId}
+			<button
+				class="btn-danger"
+				disabled={actions.any}
+				aria-busy={actions.has('archive')}
+				title={`${t('run.header.destroyWorkspaceTitle', { env: run.envId })}${
+					run.envDestroyError ? ` — ${run.envDestroyError}` : ''
+				}`}
+				onclick={destroyWorkspace}>{t('run.header.destroyWorkspace')}</button
 			>
 		{/if}
 	{/if}

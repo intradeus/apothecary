@@ -1503,6 +1503,7 @@ export type RunView = {
 	checkouts?: Array<RunCheckout>;
 	created_at: string;
 	current_stage?: string;
+	env_destroy_error?: string;
 	env_dirty?: boolean;
 	env_id?: string;
 	env_status?: string;

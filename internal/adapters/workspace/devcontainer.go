@@ -1130,14 +1130,43 @@ func (a *Adapter) Destroy(ctx context.Context, env envport.EnvID) error {
 	if err := a.host.destroySandbox(ctx, name); err != nil {
 		return err
 	}
-	// Tear down this run's egress network (reads the project marker before
+	// Tear down this run's egress link (reads the project marker before
 	// RemoveAll). The project gateway itself stays up — it keeps the warm image
-	// cache for the project's next run.
+	// cache for the project's next run. A link the gateway would not let go
+	// fails the destroy and keeps the run folder: the run's tunnel address
+	// stays reserved, and a retry finds the project marker again.
 	if a.gw != nil {
-		_ = a.gw.DestroyRunEgress(ctx, a.projectFor(name), name)
+		if err := a.gw.DestroyRunEgress(ctx, a.projectFor(name), name); err != nil {
+			return err
+		}
 	}
 	a.host.closeBridge(env)
 	return os.RemoveAll(a.folderFor(name))
+}
+
+// PruneEgress (egressport.EgressPruner) detaches from the project's gateway
+// every run it still routes that live does not name: peers left by a destroy
+// that never reached the gateway, or by a link deleted by hand.
+func (a *Adapter) PruneEgress(ctx context.Context, project string, live func(context.Context) (map[envport.EnvID]bool, error)) ([]envport.EnvID, error) {
+	if a.gw == nil || project == "" {
+		return nil, nil
+	}
+	pruned, err := a.gw.PruneRuns(ctx, project, func(ctx context.Context) (map[string]bool, error) {
+		envs, err := live(ctx)
+		if err != nil {
+			return nil, err
+		}
+		keep := make(map[string]bool, len(envs))
+		for id := range envs {
+			keep[string(id)] = true
+		}
+		return keep, nil
+	})
+	out := make([]envport.EnvID, 0, len(pruned))
+	for _, r := range pruned {
+		out = append(out, envport.EnvID(r))
+	}
+	return out, err
 }
 
 // --- optional capabilities --------------------------------------------------
@@ -1369,6 +1398,7 @@ var _ envport.WorkspaceReattacher = (*Adapter)(nil)
 var _ envport.ExecLogTailer = (*Adapter)(nil)
 var _ egressport.EgressController = (*Adapter)(nil)
 var _ egressport.EgressAuditor = (*Adapter)(nil)
+var _ egressport.EgressPruner = (*Adapter)(nil)
 var _ envport.WorkspacePortExposer = (*Adapter)(nil)
 var _ envport.WorkspaceRebuilder = (*Adapter)(nil)
 var _ envport.EditorStarter = (*Adapter)(nil)

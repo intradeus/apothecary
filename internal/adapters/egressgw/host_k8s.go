@@ -310,27 +310,46 @@ func (h *K8sHost) control(ctx context.Context, project, token string) (Control, 
 	return Control{BaseURL: "http://" + f.Addr(), Token: token}, nil
 }
 
-// Control finds a running gateway's API without creating anything.
-func (h *K8sHost) Control(ctx context.Context, project string) (Control, bool) {
+// Control finds a running gateway's API without creating anything. A
+// cluster that cannot be asked, or a port-forward that does not come up, is
+// an error: the gateway may well be there.
+func (h *K8sHost) Control(ctx context.Context, project string) (Control, bool, error) {
 	var sec kube.Secret
-	if found, err := h.Kube.Get(ctx, "secret", gwName(project), &sec); err != nil || !found {
-		return Control{}, false
+	found, err := h.Kube.Get(ctx, "secret", gwName(project), &sec)
+	if err != nil || !found {
+		return Control{}, false, err
 	}
 	var d kube.Deployment
-	if found, err := h.Kube.Get(ctx, "deployment", gwName(project), &d); err != nil || !found {
-		return Control{}, false
+	if found, err = h.Kube.Get(ctx, "deployment", gwName(project), &d); err != nil || !found {
+		return Control{}, false, err
 	}
 	c, err := h.control(ctx, project, string(sec.Data["control-token"]))
 	if err != nil {
-		return Control{}, false
+		return Control{}, false, err
 	}
-	return c, true
+	return c, true, nil
+}
+
+// RunProject reads the project key off the run's WireGuard Secret. The key
+// names the gateway as the project's id does (gwName(key) == gwName(id)).
+func (h *K8sHost) RunProject(ctx context.Context, run string) (string, bool, error) {
+	var sec kube.Secret
+	found, err := h.Kube.Get(ctx, "secret", WGSecretName(run), &sec)
+	if err != nil || !found {
+		return "", false, err
+	}
+	key := sec.Metadata.Labels[labelWGFor]
+	return key, key != "", nil
 }
 
 // AttachRun gives the run its WireGuard identity: a keypair and the lowest
 // free address in 10.90/16 (both kept across re-provisions of the same run),
-// in a Secret its sandbox pod mounts.
-func (h *K8sHost) AttachRun(ctx context.Context, project, projectName, run string) (Attachment, error) {
+// in a Secret its sandbox pod mounts. Free means no other run's Secret claims
+// it AND the gateway gives it to no other run's peer (held): a peer outlives
+// its Secret when the Secret is deleted without the gateway detaching it.
+// A run whose own address the gateway gives another run's peer is refused,
+// loudly — attached anyway, its tunnel would come up with no routes.
+func (h *K8sHost) AttachRun(ctx context.Context, project, projectName, run string, held map[string]string) (Attachment, error) {
 	gw, err := h.gatewaySecret(ctx, project)
 	if err != nil {
 		return Attachment{}, err
@@ -347,6 +366,9 @@ func (h *K8sHost) AttachRun(ctx context.Context, project, projectName, run strin
 		return Attachment{}, err
 	}
 	used := map[string]bool{wgGatewayIP: true}
+	for ip := range held {
+		used[ip] = true
+	}
 	var mine *kube.Secret
 	for i, s := range list.Items {
 		if s.Metadata.Name == WGSecretName(run) {
@@ -357,6 +379,9 @@ func (h *K8sHost) AttachRun(ctx context.Context, project, projectName, run strin
 	var priv, pub, ip string
 	if mine != nil && len(mine.Data["wg-private-key"]) > 0 {
 		priv, pub, ip = string(mine.Data["wg-private-key"]), string(mine.Data["wg-public-key"]), string(mine.Data["wg-ip"])
+		if other, taken := held[ip]; taken && other != run {
+			return Attachment{}, fmt.Errorf("egressgw: run %s's WireGuard address %s is held on the gateway by run %s's peer: attached anyway, one of the two would lose its tunnel (an orphaned peer is detached by the reaper's next pass)", run, ip, other)
+		}
 	} else {
 		if priv, pub, err = newKeypair(); err != nil {
 			return Attachment{}, err

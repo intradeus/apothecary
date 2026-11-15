@@ -683,6 +683,13 @@ describe('describe', () => {
 		['run_archived', '', {}, 'archived', ''],
 		['env_destroyed', '', {}, 'workspace destroyed', ''],
 		[
+			'env_destroy_failed',
+			'',
+			{ error: 'pod stuck' },
+			'workspace could not be destroyed: pod stuck — the reaper retries it',
+			'bad'
+		],
+		[
 			'service_started',
 			'by a stage',
 			{ service: 'db', by: 'stage', stage_id: 's' },

@@ -286,6 +286,8 @@ func (s *Server) runRoutes() []Route {
 			Handler: s.postPlay, Status: http.StatusAccepted, Scope: ScopeRun},
 		{Method: "POST", Path: "/api/runs/{id}/archive", ID: "archiveRun", Tag: tagRuns,
 			Summary: "Archive a finished run and destroy its workspace",
+			Doc: "The destroy outlives the request. One that fails is recorded on the run (env_destroy_failed, env_destroy_error) " +
+				"and retried by the reaper; archiving an archived run that still has a workspace retries it now, and answers 409 with the reason when it fails again.",
 			Handler: s.postArchive, Status: http.StatusAccepted, Scope: ScopeRun},
 		{Method: "POST", Path: "/api/runs/{id}/retry", ID: "retryRun", Tag: tagRuns,
 			Summary: "Try again: re-enter the failed stage in the same workspace",

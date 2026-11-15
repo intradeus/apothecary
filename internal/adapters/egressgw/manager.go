@@ -23,8 +23,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -62,12 +64,22 @@ type Host interface {
 	// it) and returns its control API once it answers.
 	EnsureGateway(ctx context.Context, project, projectName string) (Control, error)
 	// Control finds a running gateway's API without creating anything; ok is
-	// false when the project has no gateway (never ran, or removed).
-	Control(ctx context.Context, project string) (Control, bool)
-	// AttachRun links a run to the (running) gateway.
-	AttachRun(ctx context.Context, project, projectName, run string) (Attachment, error)
-	// DetachRun undoes AttachRun. Best-effort, idempotent.
+	// false when the project has no gateway (never ran, or removed). An error
+	// is a gateway that may exist but could not be looked up or reached —
+	// never read as absence.
+	Control(ctx context.Context, project string) (Control, bool, error)
+	// AttachRun links a run to the (running) gateway. held maps each tunnel
+	// address the gateway already gives a peer to the run holding it: a new
+	// run is never handed one of those.
+	AttachRun(ctx context.Context, project, projectName, run string, held map[string]string) (Attachment, error)
+	// DetachRun undoes AttachRun: it frees the run's tunnel address, so it
+	// runs only once the gateway no longer gives that address to the run's
+	// peer. Idempotent.
 	DetachRun(ctx context.Context, project, run string) error
+	// RunProject names the project whose gateway a run is linked to, from
+	// the run's own link (a destroy whose run folder lost that record); ok is
+	// false when the run has no link.
+	RunProject(ctx context.Context, run string) (string, bool, error)
 }
 
 // ErrNoGateway: the project has no gateway to ask.
@@ -131,7 +143,22 @@ func (m *Manager) EnsureRunEgress(ctx context.Context, project, projectName, run
 	if err != nil {
 		return Attachment{}, err
 	}
-	att, err := m.host.AttachRun(ctx, project, projectName, run)
+	// The gateway's own peers decide which addresses are taken, not only the
+	// links the host still keeps: a peer whose link was deleted without
+	// detaching it still holds its address, and WireGuard gives an address
+	// to one peer only — a second taker would leave one of the two runs
+	// without a tunnel (no DNS, no egress).
+	var rt policyfile.Routes
+	if err := m.call(ctx, ctl, http.MethodGet, "/routes", nil, &rt); err != nil {
+		return Attachment{}, fmt.Errorf("egressgw: read the gateway's peers: %w", err)
+	}
+	held := map[string]string{}
+	for r, p := range rt.Peers {
+		if r != run && p.IP != "" {
+			held[p.IP] = r
+		}
+	}
+	att, err := m.host.AttachRun(ctx, project, projectName, run, held)
 	if err != nil {
 		return Attachment{}, err
 	}
@@ -155,7 +182,10 @@ func (m *Manager) EnsureRunEgress(ctx context.Context, project, projectName, run
 // window on the gateway's own when CloseRunEgress never comes (an engine
 // killed mid-build).
 func (m *Manager) OpenRunEgress(ctx context.Context, project, run string, until time.Time) error {
-	ctl, ok := m.host.Control(ctx, project)
+	ctl, ok, err := m.host.Control(ctx, project)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return ErrNoGateway
 	}
@@ -169,7 +199,10 @@ func (m *Manager) OpenRunEgress(ctx context.Context, project, run string, until 
 // the project policy alone again. Idempotent; a project without a gateway
 // has nothing to close.
 func (m *Manager) CloseRunEgress(ctx context.Context, project, run string) error {
-	ctl, ok := m.host.Control(ctx, project)
+	ctl, ok, err := m.host.Control(ctx, project)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return nil
 	}
@@ -182,14 +215,91 @@ func (m *Manager) CloseRunEgress(ctx context.Context, project, run string) error
 // DestroyRunEgress drops the run's route and link. The GATEWAY ITSELF IS KEPT:
 // it holds the project's warm image and build caches, far more expensive to
 // rebuild than an idle gateway is to keep.
+//
+// The link goes only once the gateway has let the run's peer go: the link is
+// what reserves the run's tunnel address, and an address freed while the
+// gateway still gives it to this run's peer would be handed to the next run
+// (two peers, one address: one of them loses its tunnel). A gateway that
+// cannot be reached or refuses keeps the link and fails the destroy, so it
+// is retried. project "" (a run folder that lost its record) is read from
+// the run's link.
 func (m *Manager) DestroyRunEgress(ctx context.Context, project, run string) error {
+	if project == "" {
+		p, ok, err := m.host.RunProject(ctx, run)
+		if err != nil {
+			return fmt.Errorf("egressgw: find the gateway of run %s: %w", run, err)
+		}
+		if !ok {
+			return nil // never linked: nothing to detach
+		}
+		project = p
+	}
 	pm := m.projectMu(project)
 	pm.Lock()
 	defer pm.Unlock()
-	if ctl, ok := m.host.Control(ctx, project); ok {
-		_ = m.call(ctx, ctl, http.MethodDelete, "/runs/"+url.PathEscape(run), nil, nil)
+	ctl, ok, err := m.host.Control(ctx, project)
+	if err != nil {
+		return fmt.Errorf("egressgw: reach the gateway to detach run %s (its tunnel address stays reserved): %w", run, err)
+	}
+	if ok {
+		if err := m.call(ctx, ctl, http.MethodDelete, "/runs/"+url.PathEscape(run), nil, nil); err != nil {
+			return fmt.Errorf("egressgw: detach run %s from the gateway (its tunnel address stays reserved): %w", run, err)
+		}
 	}
 	return m.host.DetachRun(ctx, project, run)
+}
+
+// PruneRuns detaches every run the project's gateway still routes that is no
+// longer live: a peer or route left behind by a destroy that never reached
+// the gateway, or a link deleted by hand. live is asked AFTER the gateway's
+// table is read, under the project's lock, so a run attaching meanwhile waits
+// for the prune instead of racing it: every run in the table was attached
+// before live was asked. Returns the runs it detached.
+func (m *Manager) PruneRuns(ctx context.Context, project string, live func(context.Context) (map[string]bool, error)) ([]string, error) {
+	pm := m.projectMu(project)
+	pm.Lock()
+	defer pm.Unlock()
+	ctl, ok, err := m.host.Control(ctx, project)
+	if err != nil || !ok {
+		return nil, err
+	}
+	var rt policyfile.Routes
+	if err := m.call(ctx, ctl, http.MethodGet, "/routes", nil, &rt); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for r := range rt.RunSubnets {
+		seen[r] = true
+	}
+	for r := range rt.Peers {
+		seen[r] = true
+	}
+	for r := range rt.Open {
+		seen[r] = true
+	}
+	if len(seen) == 0 {
+		return nil, nil
+	}
+	keep, err := live(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var pruned []string
+	var errs []error
+	for _, r := range slices.Sorted(maps.Keys(seen)) {
+		if keep[r] {
+			continue
+		}
+		if err := m.call(ctx, ctl, http.MethodDelete, "/runs/"+url.PathEscape(r), nil, nil); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := m.host.DetachRun(ctx, project, r); err != nil {
+			errs = append(errs, err)
+		}
+		pruned = append(pruned, r)
+	}
+	return pruned, errors.Join(errs...)
 }
 
 // --- policy / denials / audit --------------------------------------------
@@ -197,7 +307,10 @@ func (m *Manager) DestroyRunEgress(ctx context.Context, project, run string) err
 // Policy is what the gateway is enforcing right now. A project with no
 // gateway reads as the default deny-all allowlist.
 func (m *Manager) Policy(ctx context.Context, project string) (policyfile.File, error) {
-	ctl, ok := m.host.Control(ctx, project)
+	ctl, ok, err := m.host.Control(ctx, project)
+	if err != nil {
+		return policyfile.File{}, err
+	}
 	if !ok {
 		return policyfile.File{Mode: policyfile.ModeAllow}, nil
 	}
@@ -211,8 +324,8 @@ func (m *Manager) Policy(ctx context.Context, project string) (policyfile.File, 
 
 // Denials returns the run's recorded denials (nil when unknown).
 func (m *Manager) Denials(ctx context.Context, project, run string) []policyfile.Denial {
-	ctl, ok := m.host.Control(ctx, project)
-	if !ok {
+	ctl, ok, err := m.host.Control(ctx, project)
+	if err != nil || !ok {
 		return nil
 	}
 	var df policyfile.DenialsFile
@@ -232,8 +345,8 @@ func (m *Manager) Audit(ctx context.Context, project string) []policyfile.AuditR
 		return s.recs
 	}
 	m.auditMu.Unlock()
-	ctl, ok := m.host.Control(ctx, project)
-	if !ok {
+	ctl, ok, err := m.host.Control(ctx, project)
+	if err != nil || !ok {
 		return nil
 	}
 	var af policyfile.AuditFile
@@ -263,7 +376,10 @@ func (m *Manager) SetRule(ctx context.Context, project, host string, allow bool)
 	pm := m.projectMu(project)
 	pm.Lock()
 	defer pm.Unlock()
-	ctl, ok := m.host.Control(ctx, project)
+	ctl, ok, err := m.host.Control(ctx, project)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return ErrNoGateway
 	}
@@ -369,7 +485,10 @@ func buildCacheRepo(gwIP, project string) string {
 
 // BuildCacheSize reports how many bytes the project's build cache occupies.
 func (m *Manager) BuildCacheSize(ctx context.Context, project string) (int64, error) {
-	ctl, ok := m.host.Control(ctx, project)
+	ctl, ok, err := m.host.Control(ctx, project)
+	if err != nil {
+		return 0, err
+	}
 	if !ok {
 		return 0, ErrNoGateway
 	}
@@ -388,7 +507,10 @@ func (m *Manager) ClearBuildCache(ctx context.Context, project string) error {
 	pm := m.projectMu(project)
 	pm.Lock()
 	defer pm.Unlock()
-	ctl, ok := m.host.Control(ctx, project)
+	ctl, ok, err := m.host.Control(ctx, project)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return ErrNoGateway
 	}

@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/platform/logs"
 	"apothecary/internal/platform/telemetry"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/workspace/bootstrap"
 	"apothecary/internal/workspace/wsname"
@@ -30,6 +31,19 @@ func workspaceLink(links []event.Link) string {
 		}
 	}
 	return ""
+}
+
+// workspaceName is the name the run's workspace is provisioned under (its env
+// id once it exists). It derives from the branch STEM, not the suffixed
+// actual branch: base already ends where the run-id tail begins, so
+// wsname.For re-appending the tail would double it (apo-…-h1-h1). Legacy runs
+// have no base — fall back to the actual branch.
+func workspaceName(v run.View) string {
+	b := v.BranchBase
+	if b == "" {
+		b = v.Branch
+	}
+	return wsname.For(b, v.RunID)
 }
 
 // provisionStopped ends a provisioning the run's context cancelled. An
@@ -134,14 +148,6 @@ func (x *exec) ensureEnv() (err error) {
 			return err
 		}
 	}
-	// The container/workspace name derives from the branch STEM, not the
-	// suffixed actual branch: base already ends where the run-id tail begins,
-	// so wsname.For re-appending the tail would double it (apo-…-h1-h1).
-	// Legacy runs have no base — fall back to the actual branch.
-	nameBranch := rs.View.BranchBase
-	if nameBranch == "" {
-		nameBranch = rs.Branch
-	}
 	spec := envport.EnvSpec{
 		RunID:   rs.RunID,
 		RepoURL: x.res.RepoRef.URL,
@@ -154,7 +160,7 @@ func (x *exec) ensureEnv() (err error) {
 		Branch:       rs.Branch,
 		SourceBranch: bootstrap.SourceBranchOr(rs.SourceBranch, x.res.RepoRef.DefaultBranch),
 		Fetch:        x.primaryFetch(),
-		Name:         wsname.For(nameBranch, rs.RunID),
+		Name:         workspaceName(rs.View),
 		Project:      x.res.ProjectID,
 		// The name is a docker label only; the id keys the gateway and caches.
 		ProjectName:        x.res.ProjectName,

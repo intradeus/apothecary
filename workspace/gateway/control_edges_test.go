@@ -164,6 +164,31 @@ func TestControlRunsEdges(t *testing.T) {
 			t.Fatalf("routes written: %v", err)
 		}
 	})
+	t.Run("a peer address another run holds is refused", func(t *testing.T) {
+		// WireGuard gives an address to one peer only: a second taker would
+		// silently strip the first of its routes.
+		g := newTestGateway(t)
+		h := g.controlHandler("t")
+		if rec := do(t, h, "PUT", "/runs/a", "t", `{"subnet":"10.90.0.3/32","peer":{"public_key":"KA","ip":"10.90.0.3"}}`); rec.Code != http.StatusNoContent {
+			t.Fatalf("PUT a = %d", rec.Code)
+		}
+		rec := do(t, h, "PUT", "/runs/b", "t", `{"subnet":"10.90.0.3/32","peer":{"public_key":"KB","ip":"10.90.0.3"}}`)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "held by run a") {
+			t.Fatalf("PUT b = %d %q", rec.Code, rec.Body.String())
+		}
+		if got := g.currentRoutes(); got.Peers["a"].PublicKey != "KA" || len(got.Peers) != 1 || got.RunSubnets["b"] != "" {
+			t.Fatalf("routes after the refusal = %+v", got)
+		}
+		// The holder itself re-attaching on its own address is no conflict.
+		if rec := do(t, h, "PUT", "/runs/a", "t", `{"subnet":"10.90.0.3/32","peer":{"public_key":"KA","ip":"10.90.0.3"}}`); rec.Code != http.StatusNoContent {
+			t.Fatalf("re-PUT a = %d", rec.Code)
+		}
+		// Once the holder detaches, the address is free.
+		do(t, h, "DELETE", "/runs/a", "t", "")
+		if rec := do(t, h, "PUT", "/runs/b", "t", `{"subnet":"10.90.0.3/32","peer":{"public_key":"KB","ip":"10.90.0.3"}}`); rec.Code != http.StatusNoContent {
+			t.Fatalf("PUT b after detach = %d", rec.Code)
+		}
+	})
 	t.Run("a malformed body is refused", func(t *testing.T) {
 		g := newTestGateway(t)
 		if rec := do(t, g.controlHandler("t"), "PUT", "/runs/r", "t", `nope`); rec.Code != http.StatusBadRequest {

@@ -3424,6 +3424,8 @@ components:
           type: string
         current_stage:
           type: string
+        env_destroy_error:
+          type: string
         env_dirty:
           type: boolean
         env_id:
@@ -10001,6 +10003,7 @@ paths:
         - runs
   /api/runs/{id}/archive:
     post:
+      description: The destroy outlives the request. One that fails is recorded on the run (env_destroy_failed, env_destroy_error) and retried by the reaper; archiving an archived run that still has a workspace retries it now, and answers 409 with the reason when it fails again.
       operationId: archiveRun
       parameters:
         - in: path

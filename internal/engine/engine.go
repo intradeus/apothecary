@@ -29,6 +29,7 @@ import (
 	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/browserport"
+	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
@@ -944,14 +945,16 @@ var ErrEnvCapacity = errors.New("environment capacity reached")
 // checkEnvCapacity counts live environments (env_ready without a later
 // env_destroyed) across all runs; at the cap it refuses and raises a
 // blocker notification, to the would-be run's owner, naming the runs whose
-// archiving would free envs.
+// archiving would free envs — and, apart, the archived runs whose workspace
+// a destroy left behind: archiving those again is the retry, not advice to
+// archive what already is.
 func (e *Engine) checkEnvCapacity(ctx context.Context, userID string) error {
 	ids, err := e.store.RunIDs(ctx)
 	if err != nil {
 		return err
 	}
 	live := 0
-	var archivable []string
+	var archivable, pending []string
 	for _, id := range ids {
 		evs, err := e.store.Events(ctx, id, 0)
 		if err != nil {
@@ -962,7 +965,10 @@ func (e *Engine) checkEnvCapacity(ctx context.Context, userID string) error {
 			continue
 		}
 		live++
-		if v.State.Terminal() {
+		switch {
+		case v.State == run.Archived:
+			pending = append(pending, id)
+		case v.State.Terminal():
 			archivable = append(archivable, id)
 		}
 	}
@@ -971,19 +977,35 @@ func (e *Engine) checkEnvCapacity(ctx context.Context, userID string) error {
 	if !lim.EnvsCapped() || live < maxEnvs {
 		return nil
 	}
+	var advice, body []string
+	if len(archivable) > 0 {
+		advice = append(advice, "archivable runs: "+strings.Join(archivable, ", "))
+		body = append(body, "archive finished runs to free environments: "+strings.Join(archivable, ", "))
+	}
+	if len(pending) > 0 {
+		advice = append(advice, "workspaces pending cleanup (destroy them from the run, or wait for the reaper): "+strings.Join(pending, ", "))
+		body = append(body, "the workspaces of these archived runs could not be destroyed yet — destroy them from the run page, or wait for the reaper's retry: "+strings.Join(pending, ", "))
+	}
 	e.notify(ctx, notifyport.Notification{
 		UserID: userID,
 		Type:   "blocker",
 		Title:  fmt.Sprintf("environment capacity reached (%d/%d)", live, maxEnvs),
-		Body:   "archive finished runs to free environments: " + strings.Join(archivable, ", "),
+		Body:   strings.Join(body, "\n"),
 	})
-	return fmt.Errorf("%w (%d live, max %d); archivable runs: %s",
-		ErrEnvCapacity, live, maxEnvs, strings.Join(archivable, ", "))
+	return fmt.Errorf("%w (%d live, max %d); %s",
+		ErrEnvCapacity, live, maxEnvs, strings.Join(advice, "; "))
 }
 
 // Archive marks a terminal run archived and destroys its environment
 // (§2, §14: archived envs are reclaimed immediately). The run has no writer
 // goroutine anymore, so appending directly is safe.
+//
+// The destroy outlives the request: a client that goes away mid-destroy (a
+// sysbox pod takes seconds to terminate) must not cut the teardown short and
+// strand what comes after the pod. A destroy that fails anyway is on the
+// run's timeline and the reaper retries it; archiving the run again is the
+// manual retry — the one case an archived run may be archived again, and
+// the one that reports the destroy's failure.
 func (e *Engine) Archive(ctx context.Context, runID string) error {
 	e.mu.Lock()
 	_, active := e.handles[runID]
@@ -996,7 +1018,10 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 		return err
 	}
 	if v.State == run.Archived {
-		return fmt.Errorf("run %s is already archived", runID)
+		if v.EnvID == "" {
+			return fmt.Errorf("run %s is already archived", runID)
+		}
+		return e.reclaimEnv(ctx, v)
 	}
 	if !v.State.Terminal() {
 		return fmt.Errorf("run %s is %s; only terminal runs can be archived", runID, v.State)
@@ -1004,15 +1029,14 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 	if err := e.AppendEvents(ctx, runID, &event.RunArchived{}); err != nil {
 		return err
 	}
+	bg := context.WithoutCancel(ctx)
 	if v.EnvID != "" {
-		if err := e.destroyEnv(ctx, v); err != nil {
-			e.log.Warn("archive: env destroy failed", logs.RunID, runID, "env", v.EnvID, "err", err)
-		} else if err := e.AppendEvents(ctx, runID, &event.EnvDestroyed{EnvID: v.EnvID}); err != nil {
-			return err
+		if err := e.reclaimEnv(bg, v); err != nil {
+			e.log.Warn("archive: env destroy failed; the reaper retries it", logs.RunID, runID, "env", v.EnvID, "err", err)
 		}
 	}
 	if e.attachments != nil {
-		if err := e.attachments.DeleteForRun(ctx, runID); err != nil {
+		if err := e.attachments.DeleteForRun(bg, runID); err != nil {
 			e.log.Warn("archive: attachment cleanup failed", logs.RunID, runID, "err", err)
 		}
 	}
@@ -1238,6 +1262,42 @@ func (e *Engine) destroyEnv(ctx context.Context, v run.View) (derr error) {
 		h.BeforeDestroy(ctx, v, res)
 	}
 	return res.Envp.Destroy(ctx, envport.EnvID(v.EnvID))
+}
+
+// envDestroyTimeout bounds one destroy of a run's environment: a pod's
+// termination, its volume, the gateway detach. A variable for tests.
+var envDestroyTimeout = 5 * time.Minute
+
+// reclaimEnv destroys v's environment and records how that went: env_destroyed,
+// or — on the first failure of a streak, not on every retry of it —
+// env_destroy_failed and a notification to the run's owner. The destroy runs
+// on its own deadline, cut loose from ctx's cancellation: half a teardown is
+// worse than a slow one. Every failure is returned, to be retried.
+func (e *Engine) reclaimEnv(ctx context.Context, v run.View) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), envDestroyTimeout)
+	defer cancel()
+	derr := e.destroyEnv(ctx, v)
+	if derr == nil {
+		return e.AppendEvents(ctx, v.RunID, &event.EnvDestroyed{EnvID: v.EnvID})
+	}
+	derr = fmt.Errorf("destroy workspace %s: %w", v.EnvID, derr)
+	if v.EnvDestroyError != "" || errors.Is(derr, envstate.ErrInFlight) {
+		// Already on the timeline and with the owner — or not a failure at
+		// all: a rebuild holds the workspace, and the destroy waits its turn.
+		return derr
+	}
+	if err := e.AppendEvents(ctx, v.RunID, &event.EnvDestroyFailed{EnvID: v.EnvID, Error: derr.Error()}); err != nil {
+		return errors.Join(derr, err)
+	}
+	e.notify(ctx, notifyport.Notification{
+		UserID: v.UserID,
+		RunID:  v.RunID,
+		Type:   string(event.TypeEnvDestroyFailed),
+		Title:  fmt.Sprintf("workspace %s could not be destroyed", v.EnvID),
+		Body: derr.Error() + "\nIt still counts against the environment cap. The reaper retries it; " +
+			"destroying it from the run page retries now.",
+	})
+	return derr
 }
 
 // preflight refuses a run naming the exact missing item (§1, extended by
@@ -2167,7 +2227,11 @@ func (e *Engine) RunToken(runID string) string {
 
 // ReapOnce implements the §14 reaper pass: destroy environments of
 // completed runs older than the window. Abandoned runs are never reaped
-// (inspection material); archived runs lose their env at archive time.
+// (inspection material); archived runs lose their env at archive time, so
+// an archived run that still has one is a destroy that failed: it is retried
+// on every pass, with no window — as is a completed run's failed reap.
+// Then each project's gateway is pruned of the runs it still routes that
+// are not live (pruneEgress).
 // Appending env_destroyed for a terminal run is safe — no writer goroutine
 // exists anymore.
 // Window is the one-window-for-everyone shape of ReapOnce's argument
@@ -2184,28 +2248,86 @@ func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter func(userID
 	var failures []string
 	for _, v := range views {
 		id := v.RunID
-		if v.EnvID == "" || v.State != run.Completed {
+		if v.EnvID == "" {
 			continue
 		}
-		// The window is the run owner's setting: each person decides how
-		// long their finished workspaces stand.
-		if e.clock().Sub(v.UpdatedAt) < destroyCompletedAfter(v.UserID) {
+		switch v.State {
+		case run.Archived:
+		case run.Completed:
+			// The window is the run owner's setting: each person decides how
+			// long their finished workspaces stand. A reap that already
+			// failed is retried at once (its env_destroy_failed moved
+			// UpdatedAt).
+			if v.EnvDestroyError == "" && e.clock().Sub(v.UpdatedAt) < destroyCompletedAfter(v.UserID) {
+				continue
+			}
+		default:
 			continue
 		}
-		if err := e.destroyEnv(ctx, v); err != nil {
+		if err := e.reclaimEnv(ctx, v); err != nil {
 			e.log.Warn("reaper: env destroy failed", logs.RunID, id, "env", v.EnvID, "err", err)
 			failures = append(failures, fmt.Sprintf("run %s (workspace %s): %v", id, v.EnvID, err))
 			continue
 		}
-		if err := e.AppendEvents(ctx, id, &event.EnvDestroyed{EnvID: v.EnvID}); err != nil {
-			return err
-		}
-		e.log.Info("reaper: destroyed env of completed run", logs.RunID, id, "env", v.EnvID)
+		e.log.Info("reaper: destroyed env of "+string(v.State)+" run", logs.RunID, id, "env", v.EnvID)
 	}
 	if e.notices != nil {
 		e.notices.ReaperEnvs(ctx, failures)
 	}
+	e.pruneEgress(ctx, views)
 	return nil
+}
+
+// pruneEgress detaches from each project's gateway the runs it still routes
+// that are not live: a tunnel peer outlives a destroy that never reached the
+// gateway (or a link deleted by hand), holding an address the next run could
+// be given. The projects are those any run belongs to; a gateway has no peer
+// of a project without runs.
+func (e *Engine) pruneEgress(ctx context.Context, views []run.View) {
+	projects := map[string]bool{}
+	for _, v := range views {
+		if v.ProjectID != "" {
+			projects[v.ProjectID] = true
+		}
+	}
+	for _, p := range slices.Sorted(maps.Keys(projects)) {
+		res, err := e.resolver.Resolve(ctx, p)
+		if err != nil {
+			e.log.Debug("reaper: egress prune skipped: project unresolvable", logs.ProjectID, p, "err", err)
+			continue
+		}
+		if pr, ok := res.Envp.(egressport.EgressPruner); ok {
+			pruned, err := pr.PruneEgress(ctx, p, e.liveEnvs)
+			for _, env := range pruned {
+				e.log.Warn("reaper: detached an orphaned gateway peer (a destroy never reached the gateway)", logs.ProjectID, p, "env", env)
+			}
+			if err != nil {
+				e.log.Warn("reaper: egress prune failed", logs.ProjectID, p, "err", err)
+			}
+		}
+		res.Close()
+	}
+}
+
+// liveEnvs names every environment that keeps its gateway route: each run's
+// recorded one (a failed destroy's included: its retry detaches it), and the
+// workspace of each run not over — a run being provisioned is on the
+// gateway before env_ready records its workspace.
+func (e *Engine) liveEnvs(ctx context.Context) (map[envport.EnvID]bool, error) {
+	views, err := e.runs.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	live := map[envport.EnvID]bool{}
+	for _, v := range views {
+		if v.EnvID != "" {
+			live[envport.EnvID(v.EnvID)] = true
+		}
+		if !v.State.Terminal() {
+			live[envport.EnvID(workspaceName(v))] = true
+		}
+	}
+	return live, nil
 }
 
 func (e *Engine) notify(ctx context.Context, n notifyport.Notification) {

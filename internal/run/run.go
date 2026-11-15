@@ -130,6 +130,10 @@ type View struct {
 	// up (or never came back). Retry provisions it again (event.RunRetried
 	// Provision).
 	ProvisionFailed bool `json:"provision_failed,omitempty"`
+	// EnvDestroyError: the last destroy of EnvID failed with this (an
+	// env_destroy_failed no env_destroyed has followed). The environment is
+	// still there: it counts against the cap, and the reaper retries it.
+	EnvDestroyError string `json:"env_destroy_error,omitempty"`
 	// PauseReason/PauseNote say why a paused run is paused (event.RunPaused):
 	// "user" for the button, "budget" when the engine stopped it at the
 	// flow's budget, with the line that tripped. Cleared by play.
@@ -233,6 +237,7 @@ func Apply(v *View, e *event.Event) {
 		v.State = Running
 		v.EnvID = p.EnvID
 		v.ProvisionFailed = false
+		v.EnvDestroyError = ""
 	case *event.EnvFailed:
 		v.State = Failed
 		v.ProvisionFailed = true
@@ -403,6 +408,9 @@ func Apply(v *View, e *event.Event) {
 		}
 	case *event.EnvDestroyed:
 		v.EnvID = ""
+		v.EnvDestroyError = ""
+	case *event.EnvDestroyFailed:
+		v.EnvDestroyError = p.Error
 	case *event.EnvRebuildStarted:
 		// Rebuild recreates the container in place — orthogonal to lifecycle,
 		// so State and EnvID are untouched (a completed run stays completed).

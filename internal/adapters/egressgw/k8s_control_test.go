@@ -209,37 +209,39 @@ func TestK8sControlLookup(t *testing.T) {
 	ctx := context.Background()
 	full := map[string]string{"get secret": secretAnswer, "get deployment": `{"metadata":{"name":"apo-gw-acme"}}`}
 	h := &K8sHost{Kube: &kube.Client{Namespace: "ws", R: &kubeScript{answers: full}}}
-	c, ok := h.Control(ctx, "acme")
-	if !ok || c.Token != "tok" {
-		t.Errorf("found = %+v, %v", c, ok)
+	c, ok, err := h.Control(ctx, "acme")
+	if !ok || err != nil || c.Token != "tok" {
+		t.Errorf("found = %+v, %v, %v", c, ok, err)
 	}
 	// Nothing is created by a lookup.
 	noSecret := &kubeScript{answers: map[string]string{}}
 	h.Kube.R = noSecret
-	if _, ok := h.Control(ctx, "acme"); ok {
-		t.Error("control without a secret")
+	if _, ok, err := h.Control(ctx, "acme"); ok || err != nil {
+		t.Errorf("control without a secret: %v %v", ok, err)
 	}
 	if noSecret.applied("Secret") != nil {
 		t.Error("Control wrote a secret")
 	}
 	h.Kube.R = &kubeScript{answers: map[string]string{"get secret": secretAnswer}}
-	if _, ok := h.Control(ctx, "acme"); ok {
-		t.Error("control without a deployment: the gateway was removed")
+	if _, ok, err := h.Control(ctx, "acme"); ok || err != nil {
+		t.Errorf("control without a deployment (the gateway was removed): %v %v", ok, err)
 	}
+	// An API failure is not an absent gateway: a destroy must not free the
+	// run's address on it.
 	h.Kube.R = failing{kubeScript: &kubeScript{answers: full}, word: "secret", stderr: "boom"}
-	if _, ok := h.Control(ctx, "acme"); ok {
-		t.Error("an API failure found a gateway")
+	if _, ok, err := h.Control(ctx, "acme"); ok || err == nil {
+		t.Errorf("an API failure (secret): %v %v", ok, err)
 	}
 	h.Kube.R = failing{kubeScript: &kubeScript{answers: full}, word: "deployment", stderr: "boom"}
-	if _, ok := h.Control(ctx, "acme"); ok {
-		t.Error("an API failure found a gateway")
+	if _, ok, err := h.Control(ctx, "acme"); ok || err == nil {
+		t.Errorf("an API failure (deployment): %v %v", ok, err)
 	}
-	// A forward that cannot start means no control, not a panic.
+	// A forward that cannot start is an error, not a panic or an absence.
 	cctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
 	h = &K8sHost{Kube: &kube.Client{Bin: filepath.Join(t.TempDir(), "absent"), R: &kubeScript{answers: full}}, Forward: true}
-	if _, ok := h.Control(cctx, "acme"); ok {
-		t.Error("a dead forward found a gateway")
+	if _, ok, err := h.Control(cctx, "acme"); ok || err == nil {
+		t.Errorf("a dead forward: %v %v", ok, err)
 	}
 }
 
@@ -265,7 +267,7 @@ func TestK8sAttachRunFailures(t *testing.T) {
 			r = failing{kubeScript: &kubeScript{answers: c.answers}, word: c.word, stderr: "boom"}
 		}
 		h := &K8sHost{Kube: &kube.Client{R: r}}
-		if att, err := h.AttachRun(ctx, "p", "", "r1"); err == nil {
+		if att, err := h.AttachRun(ctx, "p", "", "r1", nil); err == nil {
 			t.Errorf("%s: attached %+v", c.name, att)
 		}
 	}
