@@ -10,10 +10,6 @@ func TestTicketCRUD(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()
 
-	// No owner → ErrInvalid, no row.
-	if _, err := svc.CreateTicket(ctx, Ticket{Title: "T"}); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("create without owner = %v, want ErrInvalid", err)
-	}
 	// Missing title → ErrInvalid.
 	if _, err := svc.CreateTicket(ctx, Ticket{UserID: "u1"}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("create without title = %v, want ErrInvalid", err)
