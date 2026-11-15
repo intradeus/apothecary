@@ -1279,6 +1279,25 @@ func (s *TicketSource) Fetch(_ context.Context, key string) (trackerport.SourceT
 	return trackerport.SourceTicket{}, fmt.Errorf("fake: no ticket %q: %w", key, trackerport.ErrTicketNotFound)
 }
 
+// FetchByRemoteID finds the ticket by its RemoteID alone (a key is no
+// ticket's id here); none is trackerport.ErrTicketNotFound.
+func (s *TicketSource) FetchByRemoteID(_ context.Context, remoteID string) (trackerport.SourceTicket, error) {
+	if s.Err != nil {
+		return trackerport.SourceTicket{}, s.Err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	remoteID = strings.TrimSpace(remoteID)
+	for i := range s.Tickets {
+		if remoteID != "" && s.Tickets[i].RemoteID == remoteID {
+			out := cloneTicket(s.Tickets[i])
+			out.Done = s.done(out)
+			return out, nil
+		}
+	}
+	return trackerport.SourceTicket{}, fmt.Errorf("fake: no ticket with id %q: %w", remoteID, trackerport.ErrTicketNotFound)
+}
+
 // find matches a key, else a RemoteID; the caller holds mu.
 func (s *TicketSource) find(key string) *trackerport.SourceTicket {
 	key = strings.TrimSpace(key)
@@ -1565,7 +1584,9 @@ func (s *TicketSource) Attach(_ context.Context, key, name, contentType string, 
 
 // ReadOnlyTicketSource is a tracker with no write side — what an adapter
 // that never implemented trackerport.TicketWriter looks like to the resolver (the
-// "this integration cannot write back" path). It serves Src's corpus.
+// "this integration cannot write back" path). It serves Src's corpus, and it
+// cannot fetch by stable id (trackerport.TicketByRemoteID), as GitHub's
+// and GitLab's adapters cannot.
 type ReadOnlyTicketSource struct{ Src *TicketSource }
 
 func (r ReadOnlyTicketSource) Test(ctx context.Context) error { return r.Src.Test(ctx) }
@@ -1590,5 +1611,6 @@ var (
 	_ trackerport.TicketWriter        = (*TicketSource)(nil)
 	_ trackerport.TicketAttacher      = (*TicketSource)(nil)
 	_ trackerport.TicketMetadata      = (*TicketSource)(nil)
+	_ trackerport.TicketByRemoteID    = (*TicketSource)(nil)
 	_ trackerport.TicketSource        = ReadOnlyTicketSource{}
 )

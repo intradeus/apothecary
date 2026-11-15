@@ -60,7 +60,8 @@ type Watcher struct {
 	Notify notifyport.NotificationChannel
 	Clock  func() time.Time
 	Log    *slog.Logger
-	// Limit is how many issues one tracker poll takes; 50 by default.
+	// Limit is how many runs one tracker poll starts (the rest wait for the
+	// next pass) and the page size it reads with; 50 by default.
 	Limit int
 }
 
@@ -142,36 +143,56 @@ func (w *Watcher) pass(ctx context.Context, a confstore.Automation) {
 // a refused run) is fired again; one with runs, or one a person or another
 // automation made, is left alone. On the internal tracker the tickets are
 // the rows themselves, so only this automation's own are ever claimed.
+//
+// It reads page after page until the source has no more: issues already
+// handled stay in the newest-first list, so a match past the first page
+// would otherwise wait forever. The limit caps the runs a pass starts, not
+// the issues it looks at; what is left fires on the next pass.
 func (w *Watcher) pollTracker(ctx context.Context, a confstore.Automation) (bool, error) {
 	p, err := w.Conf.GetProject(ctx, a.ProjectID)
 	if err != nil {
 		return false, fmt.Errorf("workshop: %w", err)
 	}
-	page, err := w.Tickets.Live.List(ctx, p.TicketSourceID,
-		trackerport.SearchQuery{Text: a.Query, Done: trackerport.DoneOpen, Limit: w.limit()}, false)
-	if err != nil {
-		return false, fmt.Errorf("search: %w", err)
-	}
+	q := trackerport.SearchQuery{Text: a.Query, Done: trackerport.DoneOpen, Limit: w.limit()}
 	var errs []string
 	fired := false
-	for _, row := range page.Rows {
-		key := row.Issue.Key
-		t, ok, err := w.claim(ctx, a, p.TicketSourceID, row)
+	claimed := 0
+	read := map[string]bool{}
+	for claimed < w.limit() {
+		page, err := w.Tickets.Live.List(ctx, p.TicketSourceID, q, false)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", key, err))
-			continue
+			errs = append(errs, fmt.Sprintf("search: %v", err))
+			break
 		}
-		if !ok {
-			continue
-		}
-		if _, err := w.start(ctx, a, t); err != nil {
-			if run, busy := activeRun(err); busy {
-				err = fmt.Errorf("ticket busy: run %s", run)
+		for _, row := range page.Rows {
+			if claimed == w.limit() || ctx.Err() != nil {
+				break
 			}
-			errs = append(errs, fmt.Sprintf("%s: %v", key, err))
-			continue
+			key := row.Issue.Key
+			t, ok, err := w.claim(ctx, a, p.TicketSourceID, row)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %v", key, err))
+				continue
+			}
+			if !ok {
+				continue
+			}
+			claimed++
+			if _, err := w.start(ctx, a, t); err != nil {
+				if run, busy := activeRun(err); busy {
+					err = fmt.Errorf("ticket busy: run %s", run)
+				}
+				errs = append(errs, fmt.Sprintf("%s: %v", key, err))
+				continue
+			}
+			fired = true
 		}
-		fired = true
+		// A tracker handing back a cursor it already gave would loop.
+		if page.Next == "" || read[page.Next] || ctx.Err() != nil {
+			break
+		}
+		read[page.Next] = true
+		q.Cursor = page.Next
 	}
 	if len(errs) > 0 {
 		return fired, errors.New(strings.Join(errs, "; "))

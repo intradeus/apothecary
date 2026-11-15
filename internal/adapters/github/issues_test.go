@@ -118,6 +118,12 @@ func TestIssuesSearchAndFetch(t *testing.T) {
 	if _, err := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok"}).Fetch(ctx, "#5"); err == nil {
 		t.Error("a bare number with no configured repo was accepted")
 	}
+	// A bare number is an issue NUMBER here: a stable id (1005, issue 5's)
+	// handed to Fetch would read an unrelated issue, so the adapter offers no
+	// fetch by it and a live read never retries a missing key that way.
+	if _, ok := any(s).(trackerport.TicketByRemoteID); ok {
+		t.Error("GitHub Issues claims a fetch by stable id")
+	}
 }
 
 func TestIssuesTransitionOpenClosedOnly(t *testing.T) {

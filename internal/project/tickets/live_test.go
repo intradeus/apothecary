@@ -323,3 +323,28 @@ func TestStatusesAndCommentsOfARemoteTracker(t *testing.T) {
 		t.Errorf("after Invalidate = %+v", cs)
 	}
 }
+
+// A record whose key the tracker no longer has is retried by its stable id
+// only where the tracker fetches by one (Jira). On a tracker that cannot
+// (GitHub, GitLab), where Fetch reads a bare number as an issue number, the
+// id is never handed to Fetch: the unrelated issue numbered like it is not
+// taken for the moved one.
+func TestAMissingKeyNeverAliasesAnIssueNumberedLikeItsID(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, devSource())
+	rec := w.record(t)
+	// The issue moved; an unrelated one answers to its id as a key.
+	w.src.Tickets[0].Key = "NEW-7"
+	w.src.Tickets = append(w.src.Tickets, trackerport.SourceTicket{RemoteID: "555", Key: rec.RemoteID, Title: "Unrelated"})
+
+	got, err := w.live.IssueOf(ctx, rec, true)
+	if err != nil || got.Key != "NEW-7" || got.RemoteID != rec.RemoteID {
+		t.Errorf("by stable id = %+v (%v), want the moved issue", got, err)
+	}
+	w.live.Invalidate(remote, rec.SourceKey) // no copy to fall back on
+	w.live.sources = stubSources{remote: fake.ReadOnlyTicketSource{Src: w.src.TicketSource}}
+	got, err = w.live.IssueOf(ctx, rec, true)
+	if !errors.Is(err, trackerport.ErrTicketNotFound) {
+		t.Errorf("no stable-id fetch = %+v (%v), want not found", got, err)
+	}
+}

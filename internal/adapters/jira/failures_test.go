@@ -593,6 +593,25 @@ func TestFetchNotFound(t *testing.T) {
 	}
 }
 
+// A fetch by stable id reads /issue/{id}, which Jira serves under the
+// issue's current key; an id that is not numeric is no issue's, and is never
+// sent as a key.
+func TestFetchByRemoteID(t *testing.T) {
+	ctx := context.Background()
+	c := clientFor(answer(t, map[string]reply{
+		"GET /rest/api/3/issue/10007": {200, `{"id":"10007","key":"NEW-7","fields":{"summary":"Moved"}}`},
+	}))
+	got, err := c.FetchByRemoteID(ctx, " 10007 ")
+	if err != nil || got.Key != "NEW-7" || got.RemoteID != "10007" {
+		t.Errorf("by id = %+v (%v)", got, err)
+	}
+	for _, id := range []string{"", "P-1"} {
+		if _, err := c.FetchByRemoteID(ctx, id); !errors.Is(err, trackerport.ErrTicketNotFound) {
+			t.Errorf("id %q = %v, want not found", id, err)
+		}
+	}
+}
+
 func TestWriteFailuresReachTheCaller(t *testing.T) {
 	ctx := context.Background()
 	c := clientFor(answer(t, nil))

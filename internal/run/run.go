@@ -55,10 +55,10 @@ type View struct {
 	// TicketAttachmentIDs are the parent ticket's attachments, snapshotted at
 	// run start; carried for prompt assembly + delivery (not a column).
 	TicketAttachmentIDs []string `json:"-"`
-	// TicketKey/TicketURL name the tracker issue the ticket was imported from
-	// ("PROJ-123" and its page), for the run page; empty on a ticket written
-	// by hand. TicketSourceID/Kind are the integration a tracker action
-	// writes through — engine-side only, like TicketGoal.
+	// TicketKey/TicketURL name the remote tracker issue the ticket stands for
+	// ("PROJ-123" and its page), for the run page; empty on a ticket of the
+	// internal tracker. TicketSourceID/Kind are that issue's integration and
+	// vendor — engine-side only, like TicketGoal.
 	TicketKey        string `json:"ticket_key,omitempty"`
 	TicketURL        string `json:"ticket_url,omitempty"`
 	TicketSourceID   string `json:"-"`

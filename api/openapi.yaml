@@ -8430,7 +8430,7 @@ paths:
       security:
         - session: []
         - personalToken: []
-      summary: Delete an automation (the tickets it imported stay)
+      summary: Delete an automation (the tickets it recorded and their runs stay)
       tags:
         - automations
     get:

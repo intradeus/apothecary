@@ -560,6 +560,18 @@ func (c *Client) Fetch(ctx context.Context, key string) (trackerport.SourceTicke
 	return c.toTicket(issue), nil
 }
 
+// FetchByRemoteID is Fetch by the issue's numeric id, which survives a
+// project move: Jira serves /issue/{id} under the issue's current key. A
+// non-numeric id is no issue's (ErrTicketNotFound), so a key passed by
+// mistake is never read as one.
+func (c *Client) FetchByRemoteID(ctx context.Context, remoteID string) (trackerport.SourceTicket, error) {
+	remoteID = strings.TrimSpace(remoteID)
+	if remoteID == "" || strings.Trim(remoteID, "0123456789") != "" {
+		return trackerport.SourceTicket{}, fmt.Errorf("jira: issue id %q: %w", remoteID, trackerport.ErrTicketNotFound)
+	}
+	return c.Fetch(ctx, remoteID)
+}
+
 // OpenAttachment streams an attachment's bytes. The URL comes from Jira's own
 // response, but it is re-checked against the configured site before the
 // credential is attached — a tracker must not be able to aim an authenticated
@@ -779,6 +791,7 @@ func (c *Client) Types(ctx context.Context) ([]trackerport.RemoteType, error) {
 }
 
 var (
-	_ trackerport.TicketSource   = (*Client)(nil)
-	_ trackerport.TicketMetadata = (*Client)(nil)
+	_ trackerport.TicketSource     = (*Client)(nil)
+	_ trackerport.TicketMetadata   = (*Client)(nil)
+	_ trackerport.TicketByRemoteID = (*Client)(nil)
 )

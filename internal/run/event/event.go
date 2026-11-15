@@ -231,11 +231,11 @@ type RunCreated struct {
 	// so they can reach EVERY run — which is exactly why ForRun cannot see
 	// them, and why their ids must ride on the event.
 	TicketAttachmentIDs []string `json:"ticket_attachment_ids,omitempty"`
-	// TicketSource* snapshot where the ticket was imported from — the
-	// ticketsource integration, its vendor, the issue key and its page — so
-	// a tracker action (FLOWLANG §2) knows which issue to write to without a
-	// lookup the ticket's later deletion could break. Absent on a ticket
-	// written by hand: tracker actions then skip.
+	// TicketSource* snapshot the remote tracker issue the ticket stands for
+	// — the ticketsource integration, its vendor, the issue key and its page
+	// — as the run started from it. Absent on a ticket of the internal
+	// tracker; a tracker action (FLOWLANG §2) resolves its tracker from the
+	// ticket id either way.
 	TicketSourceID   string `json:"ticket_source_id,omitempty"`
 	TicketSourceKind string `json:"ticket_source_kind,omitempty"`
 	TicketSourceKey  string `json:"ticket_source_key,omitempty"`

@@ -1,7 +1,7 @@
 package gitlab
 
 // Issues adapts the ticketsource port — read side for a workshop's live
-// ticket list and the import picker, write side (trackerport.TicketWriter)
+// ticket list, ticket pages and run starts, write side (trackerport.TicketWriter)
 // for a flow's tracker actions — to GitLab issues, reusing the repository
 // host adapter's authenticated client. GitLab is moving issues onto its
 // "work items" framework, whose own API is GraphQL; the REST issues API

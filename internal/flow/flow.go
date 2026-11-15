@@ -446,7 +446,7 @@ type Cond struct {
 }
 
 const (
-	CondTracker    = "run.ticket.tracker"     // the run's ticket mirrors a remote tracker issue (it was imported)
+	CondTracker    = "run.ticket.tracker"     // the run's ticket comes from a remote tracker source (not the internal one)
 	CondSubject    = "run.subject"            // the phase run acts on one merge request
 	CondChangeType = "run.ticket.change_type" // the kind of change the run's ticket is: == / != a CondChangeTypes entry
 	CondNever      = "never"                  // a parameter said no

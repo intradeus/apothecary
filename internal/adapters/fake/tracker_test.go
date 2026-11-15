@@ -78,6 +78,16 @@ func TestSearchAndFetch(t *testing.T) {
 	if again, _ := s.Fetch(bgCtx, "DEV-2"); again.Labels[0] != "ui" {
 		t.Error("Fetch shares the labels")
 	}
+	// FetchByRemoteID takes the stable id alone: a key is no ticket's id.
+	if got, err := s.FetchByRemoteID(bgCtx, "1002"); err != nil || got.Key != "DEV-2" {
+		t.Errorf("fetch by remote id = %+v, %v", got, err)
+	}
+	if _, err := s.FetchByRemoteID(bgCtx, "DEV-2"); !errors.Is(err, trackerport.ErrTicketNotFound) {
+		t.Errorf("a key as an id = %v, want ErrTicketNotFound", err)
+	}
+	if _, err := (&TicketSource{Err: errors.New("down")}).FetchByRemoteID(bgCtx, "1002"); err == nil {
+		t.Error("a failing tracker answered")
+	}
 	if done, _ := s.Fetch(bgCtx, "OPS-3"); !done.Done {
 		t.Errorf("fetch done = %+v", done)
 	}

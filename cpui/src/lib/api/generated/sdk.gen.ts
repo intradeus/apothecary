@@ -2867,7 +2867,7 @@ export const createAutomation = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Delete an automation (the tickets it imported stay)
+ * Delete an automation (the tickets it recorded and their runs stay)
  */
 export const deleteAutomation = <ThrowOnError extends boolean = false>(
 	options: Options<DeleteAutomationData, ThrowOnError>

@@ -92,6 +92,16 @@ is kept locally.
   holding each scope's position and the issues listed at the page's last
   update time, so an issue a project and its group both list is listed once
   even when its two copies fall on different pages of the two lists.
+- **A moved issue is found by its stable id on Jira only:** the retry by
+  `remote_id` goes through an optional `trackerport.TicketByRemoteID`
+  (Jira, the fake), never through `Fetch`: GitHub's and GitLab's `Fetch`
+  read a bare number as an issue number, so a global id would alias an
+  unrelated issue. A moved GitHub or GitLab issue keeps its record's
+  last-seen values until it is found again by key.
+- **A tracker query reads every page:** issues already handled stay ahead in
+  the newest-first list, so the watcher follows the cursor to the source's
+  last page each pass; its limit caps the runs a pass starts (the rest fire
+  on the next pass) and is the page size, not a cap on what it looks at.
 
 ## Risks
 
@@ -126,7 +136,8 @@ is kept locally.
   `TestARateLimitWithNoWaitBacksOff`,
   `TestTheInternalTrackerIsReadFromTheStore`,
   `TestTypesAddTheTrackersNewTypes`,
-  `TestStatusesAndCommentsOfARemoteTracker`.
+  `TestStatusesAndCommentsOfARemoteTracker`,
+  `TestAMissingKeyNeverAliasesAnIssueNumberedLikeItsID`.
 - `internal/project/tickets/runticket_test.go`: `TestTicketNowOfARemoteIssue`,
   `TestRunStartReadsTheIssueAndRecordsIt`, `TestRunStartSurvivesTheTracker`,
   `TestRunStartCopiesTheFilesOnce`, `TestEachWorkshopNamesTheBaseBranch`,
@@ -160,7 +171,8 @@ is kept locally.
   `TestRecordBelongsToTheIntegrationOwner`.
 - `internal/project/automation/watcher_test.go`:
   `TestTrackerQueryRecordsAndStartsOnce`, `TestSomeoneElsesRecordIsLeftAlone`,
-  `TestARecordWithRunsIsNotFiredAgain`, `TestTrackerQueryOnABusyTicket`;
+  `TestARecordWithRunsIsNotFiredAgain`, `TestTrackerQueryReadsPastTheFirstPage`,
+  `TestTrackerQueryOnABusyTicket`;
   `failures_test.go`: `TestAFailedRecordDoesNotStopTheOthers`,
   `TestRefiringNeedsToFindTheRecord`; `watcher_test.go`:
   `TestCronRefusesATicketTheWorkshopNoLongerShows`.
@@ -184,6 +196,11 @@ is kept locally.
   `TestRemoteWriteRefreshesTheRecord` (`ticketsync_test.go`);
   `automations_test.go`: `TestCronAutomationByTicketKey`.
 - `internal/adapters/gitlab/issues_test.go`:
-  `TestGitLabIssuesSearchMergesOverlappingScopes`.
+  `TestGitLabIssuesSearchMergesOverlappingScopes`; `TestGitLabIssuesSearchAndFetch`
+  and GitHub's `TestIssuesSearchAndFetch` (no fetch by stable id);
+  `internal/adapters/jira/failures_test.go`: `TestFetchByRemoteID`.
 - `cpui/src/routes/w/[workshop]/tickets/[key]/layout.test.ts`: a fresh ticket
-  page for each workshop and each key.
+  page for each workshop and each key; `cpui/src/lib/workshop/TicketPage.test.ts`:
+  live load and refresh, internal versus remote actions, run start and its
+  refusals; `cpui/src/routes/tickets/[ticketId]/page.test.ts`: the record
+  route's hinted and first-workshop redirects and its orphan page.

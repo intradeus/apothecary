@@ -38,7 +38,8 @@ type SourceTicket struct {
 	// RemoteID is the tracker's STABLE internal id (Jira's numeric issue id,
 	// a GitHub/GitLab issue's global id). Unlike Key it survives a Jira
 	// project move or a GitHub transfer, so a read that gets a 404 on the key
-	// retries by it (Fetch accepts either where the tracker does).
+	// retries by it — only on a tracker that can fetch by it
+	// (TicketByRemoteID).
 	RemoteID string
 	// Key is the tracker's human-facing identifier ("PROJ-123") — what the
 	// operator searches for and what a ticket's record keeps as its last-seen
@@ -159,13 +160,25 @@ type TicketSource interface {
 	// first. Attachments may be omitted here; Fetch is authoritative for
 	// those.
 	Search(ctx context.Context, q SearchQuery) (SearchPage, error)
-	// Fetch returns one ticket by key, WITH its attachment metadata. Where
-	// the tracker addresses an issue by its stable id too (Jira), Fetch takes
-	// SourceTicket.RemoteID as well. An issue the tracker does not have (a
-	// 404) ⇒ an error wrapping ErrTicketNotFound.
+	// Fetch returns one ticket by key, WITH its attachment metadata. An
+	// issue the tracker does not have (a 404) ⇒ an error wrapping
+	// ErrTicketNotFound. Fetch is never handed a RemoteID: on GitHub and
+	// GitLab a bare number is an issue NUMBER, which a global id would alias.
 	Fetch(ctx context.Context, key string) (SourceTicket, error)
 	// OpenAttachment streams one attachment's bytes; the caller closes.
 	OpenAttachment(ctx context.Context, a SourceAttachment) (io.ReadCloser, error)
+}
+
+// TicketByRemoteID is the OPTIONAL capability of a tracker that addresses an
+// issue by its stable id as well as by its key (Jira: /issue/{idOrKey}). A
+// live read whose stored key is gone (a project move) retries through it; a
+// tracker without it (GitHub, GitLab: a bare number is an issue number there,
+// not a global id) gets no retry, so a missing key cannot alias an unrelated
+// issue.
+type TicketByRemoteID interface {
+	// FetchByRemoteID is Fetch by SourceTicket.RemoteID; the answer carries
+	// the issue's CURRENT key. None ⇒ an error wrapping ErrTicketNotFound.
+	FetchByRemoteID(ctx context.Context, remoteID string) (SourceTicket, error)
 }
 
 // DoneFilter narrows a search by the tracker's own notion of done (Jira
@@ -200,7 +213,8 @@ type SearchPage struct {
 
 // ErrTicketNotFound: the tracker has no issue by that key (a 404). Fetch
 // wraps it (errors.Is), so a live read can tell a moved or deleted issue —
-// retry by RemoteID — from a tracker that is merely unreachable.
+// retry by RemoteID where the tracker can (TicketByRemoteID) — from a
+// tracker that is merely unreachable.
 var ErrTicketNotFound = errors.New("ticket not found")
 
 // ErrRateLimited: the tracker refused the call for its rate limit (an HTTP

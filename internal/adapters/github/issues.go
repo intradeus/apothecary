@@ -1,7 +1,7 @@
 package github
 
 // Issues adapts the ticketsource port — read side for a workshop's live
-// ticket list and the import picker, write side (trackerport.TicketWriter)
+// ticket list, ticket pages and run starts, write side (trackerport.TicketWriter)
 // for a flow's tracker actions — to GitHub Issues, reusing the repository
 // host adapter's authenticated client. An issue's key is "owner/repo#123":
 // GitHub has no site-wide key, so the repository is part of the identity.

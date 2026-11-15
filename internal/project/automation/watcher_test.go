@@ -343,6 +343,50 @@ func TestARecordWithRunsIsNotFiredAgain(t *testing.T) {
 	}
 }
 
+// A match past the first page is found: issues already handled stay in the
+// list ahead of it, so the poll reads on to the source's last page. The
+// limit caps the runs a pass starts; what is left fires on the next pass.
+func TestTrackerQueryReadsPastTheFirstPage(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.src.Tickets = append(h.src.Tickets,
+		trackerport.SourceTicket{Key: "DEV-3", RemoteID: "1003", Title: "Third", Body: "do three"},
+		trackerport.SourceTicket{Key: "DEV-4", RemoteID: "1004", Title: "Fourth", Body: "do four"})
+	h.w.Limit = 2
+	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, Enabled: true})
+	for _, key := range []string{"DEV-1", "DEV-2"} {
+		rec := h.record(t, key, a.ID)
+		if _, err := h.eng.CreateRunWith(ctx, runinput.Ticket{TicketID: rec.ID}, "builder", h.project.ID, runinput.Input{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.pass(t)
+	if n := h.eng.count(); n != 4 || h.eng.calls[2].Ticket.SourceKey != "DEV-3" || h.eng.calls[3].Ticket.SourceKey != "DEV-4" {
+		t.Fatalf("runs = %d (%+v), want DEV-3's and DEV-4's from the second page", n, h.eng.calls)
+	}
+	recs, err := h.conf.TicketsByRemote(ctx, h.source.ID, []string{"1003", "1004"})
+	if err != nil || len(recs) != 2 || recs["1003"].AutomationID != a.ID {
+		t.Errorf("records = %+v (%v), want both recorded as the automation's", recs, err)
+	}
+	if got := h.get(t, a.ID); got.LastError != "" || got.LastFiredAt == nil {
+		t.Errorf("marks = %+v", got)
+	}
+
+	// One run a pass: the second new issue waits for the next.
+	h.src.Tickets = append(h.src.Tickets,
+		trackerport.SourceTicket{Key: "DEV-5", RemoteID: "1005", Title: "Fifth", Body: "do five"},
+		trackerport.SourceTicket{Key: "DEV-6", RemoteID: "1006", Title: "Sixth", Body: "do six"})
+	h.w.Limit = 1 // a new page size: no page the first pass read is reused
+	h.pass(t)
+	if n := h.eng.count(); n != 5 || h.eng.calls[4].Ticket.SourceKey != "DEV-5" {
+		t.Fatalf("runs = %d (%+v), want DEV-5's alone", n, h.eng.calls)
+	}
+	h.pass(t)
+	if n := h.eng.count(); n != 6 || h.eng.calls[5].Ticket.SourceKey != "DEV-6" {
+		t.Errorf("runs = %d (%+v), want DEV-6's on the next pass", n, h.eng.calls)
+	}
+}
+
 // A ticket whose run (in any workshop) is still going is not fired; the
 // automation says so on its last_error and fires it once the run ends.
 func TestTrackerQueryOnABusyTicket(t *testing.T) {

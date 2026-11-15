@@ -111,7 +111,9 @@ describe('ActionStage', () => {
 
 	it('explains a tracker action instead of asking for an integration', () => {
 		setup({ action: 't' }, {}, [anAction('t', { requires: 'tracker' })]);
-		expect(screen.getByText(/Acts on the ticket's tracker issue/)).toBeInTheDocument();
+		expect(
+			screen.getByText(/Acts on the ticket in the workshop's ticket source/)
+		).toBeInTheDocument();
 		expect(screen.queryByText(/integration on the project/)).not.toBeInTheDocument();
 	});
 

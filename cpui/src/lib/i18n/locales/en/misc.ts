@@ -974,7 +974,7 @@ export default {
 	'flow.insp.needsIntegration':
 		'Needs a <span class="mono">{kind}</span> integration on the project running this flow.',
 	'flow.insp.tracker':
-		"Acts on the ticket's tracker issue (Jira, GitHub or GitLab Issues) through the integration it was imported from. A ticket written by hand has none: the stage is skipped.",
+		"Acts on the ticket in the workshop's ticket source: the issue on its tracker (Jira, GitHub or GitLab Issues), or the ticket itself on Apothecary's internal tracker. It is skipped only on a run with no ticket.",
 	'flow.insp.needsMR':
 		'Needs a merge request: place it after a create_mr, in a watcher on a merge request signal, or in a flow started on a merge request.',
 	'flow.insp.textPlaceholder': 'as the tracker spells it',

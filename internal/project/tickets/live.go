@@ -217,8 +217,10 @@ func (l *Live) Issue(ctx context.Context, sourceID, key string, bypass bool) (tr
 
 // IssueOf is the issue a ticket stands for: the internal ticket itself, or a
 // record's issue by its last-seen key — retried by its stable remote id when
-// the tracker no longer has that key (a Jira project move, a GitHub
-// transfer), so the moved issue is still found.
+// the tracker no longer has that key (a Jira project move) and can fetch by
+// that id (trackerport.TicketByRemoteID), so the moved issue is still found.
+// A tracker that cannot (GitHub, GitLab) gets no retry: a global id handed
+// to its Fetch would read as an unrelated issue's number.
 func (l *Live) IssueOf(ctx context.Context, t confstore.Ticket, bypass bool) (trackerport.SourceTicket, error) {
 	return l.issue(ctx, t.SourceID, t.TrackerKey(), t.RemoteID, bypass)
 }
@@ -237,8 +239,9 @@ func (l *Live) issue(ctx context.Context, sourceID, key, remoteID string, bypass
 			return trackerport.SourceTicket{}, err
 		}
 		t, err := src.Fetch(ctx, key)
-		if errors.Is(err, trackerport.ErrTicketNotFound) && remoteID != "" && !strings.EqualFold(remoteID, key) {
-			t, err = src.Fetch(ctx, remoteID)
+		if byID, ok := src.(trackerport.TicketByRemoteID); ok &&
+			errors.Is(err, trackerport.ErrTicketNotFound) && remoteID != "" && !strings.EqualFold(remoteID, key) {
+			t, err = byID.FetchByRemoteID(ctx, remoteID)
 		}
 		if err == nil && t.Key == "" {
 			t.Key = key

@@ -1002,7 +1002,7 @@ func (s *Server) flowRoutes() []Route {
 			Summary: "Replace an automation (its last poll, firing and error are kept)",
 			Handler: s.updateAutomation, Body: AutomationRequest{}, Returns: confstore.Automation{}, Enabled: haveConf, Scope: ScopeProject},
 		{Method: "DELETE", Path: "/api/projects/{id}/automations/{aid}", ID: "deleteAutomation", Tag: tagAutomations,
-			Summary: "Delete an automation (the tickets it imported stay)",
+			Summary: "Delete an automation (the tickets it recorded and their runs stay)",
 			Handler: s.deleteAutomation, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject},
 		{Method: "GET", Path: "/api/projects/{id}/flow-bindings", ID: "listFlowBindings", Tag: tagFlows,
 			Summary: "The project's parameter bindings, one per configured flow",

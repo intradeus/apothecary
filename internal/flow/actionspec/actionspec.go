@@ -15,9 +15,10 @@
 // asserts. Nothing else in the language changes.
 //
 // Tracker actions (ticket_*) are the one family with a per-TICKET
-// prerequisite rather than a per-project one: the tracker is the ticket's —
-// the integration it was imported from, else Apothecary's internal tracker.
-// The engine skips them, visibly, on a run with no ticket.
+// prerequisite rather than a per-project one: the tracker is the ticket's
+// source — a remote tracker integration, or Apothecary's internal tracker
+// for the tickets it holds itself. The engine skips them, visibly, on a run
+// with no ticket.
 //
 // This package is a leaf: stdlib only, no ports. Requires is a port-kind
 // string that the engine matches, keeping the registry free of adapter types.
@@ -134,9 +135,9 @@ const (
 	MRMerge             = "mr_merge"
 	PostReview          = "post_review"
 
-	// Tracker actions: write to the ticket's tracker — the remote issue
-	// (the ticketsource integration the ticket was imported from) or, for a
-	// ticket with no remote source, Apothecary's internal tracker.
+	// Tracker actions: write to the ticket's tracker — the issue on its
+	// remote ticketsource integration or, for a ticket of Apothecary's own,
+	// the internal tracker.
 	TicketTransition = "ticket_transition"
 	TicketComment    = "ticket_comment"
 	TicketSetField   = "ticket_set_field"

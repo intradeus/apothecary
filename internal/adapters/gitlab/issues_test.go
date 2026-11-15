@@ -177,6 +177,12 @@ func TestGitLabIssuesSearchAndFetch(t *testing.T) {
 	if _, err := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok"}).Fetch(ctx, "#5"); err == nil {
 		t.Error("a bare number with no configured project was accepted")
 	}
+	// A bare number is an issue IID here: a stable id (905, issue 5's)
+	// handed to Fetch would read an unrelated issue, so the adapter offers no
+	// fetch by it and a live read never retries a missing key that way.
+	if _, ok := any(s).(trackerport.TicketByRemoteID); ok {
+		t.Error("GitLab Issues claims a fetch by stable id")
+	}
 }
 
 func TestGitLabIssuesTransition(t *testing.T) {
