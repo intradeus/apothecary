@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/flow/harnessspec"
 	"apothecary/internal/flow/signalspec"
@@ -526,8 +527,9 @@ type Param struct {
 	Known       bool      `json:"known,omitempty"`
 	// Required: the declaration gives no default, so the parameter has no
 	// value until a project binds it or a run sets it. Only a parameter read
-	// as a model or a harness may stay unbound — the document still parses;
-	// run creation refuses until a value exists (FLOWLANG §1).
+	// as a model, a harness or a ticket status (an action setting marked
+	// Unbound) may stay unbound — the document still parses; run creation
+	// refuses until a value exists (FLOWLANG §1).
 	Required bool `json:"required,omitempty"`
 	// DefaultRef names the parameter this one's default reads (`default:
 	// $model`): its value follows that one's, bound or not, unless bound
@@ -980,11 +982,11 @@ type Unbound struct {
 	Sites []string `json:"sites"`
 }
 
-// Unbound lists the parameters read as a model or a harness that resolve to
-// nothing in this flow (as parsed, or as bound by Resolve): what a project
-// must bind, or a run set, before the flow can run. A model option under
-// harness_options counts only when its stage runs on that kind. Stable
-// order: by first use.
+// Unbound lists the parameters read as a model, a harness or an action
+// setting that may wait (ticket_transition's to) that resolve to nothing in
+// this flow (as parsed, or as bound by Resolve): what a project must bind, or
+// a run set, before the flow can run. A model option under harness_options
+// counts only when its stage runs on that kind. Stable order: by first use.
 func (f *Flow) Unbound() []Unbound {
 	var out []Unbound
 	idx := map[string]int{}
@@ -999,6 +1001,15 @@ func (f *Flow) Unbound() []Unbound {
 			kind, opt, _ := strings.Cut(r.Input, ".")
 			st := f.Stage(r.Stage)
 			if o := harnessspec.Get(kind).Option(opt); st == nil || st.Harness != kind || o == nil || o.Kind != harnessspec.KindModel {
+				continue
+			}
+			site = r.Stage
+		case "with":
+			st := f.Stage(r.Stage)
+			if st == nil {
+				continue
+			}
+			if act := actionspec.Get(st.Action); act == nil || act.Setting(r.Input) == nil || !act.Setting(r.Input).Unbound {
 				continue
 			}
 			site = r.Stage

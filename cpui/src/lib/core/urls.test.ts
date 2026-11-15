@@ -16,6 +16,8 @@ describe('to', () => {
 		[to.newTicket(), '/tickets/new'],
 		[to.newTicket({ project: 'p1' }), '/tickets/new?project=p1'],
 		[to.ticket('t1'), '/tickets/t1'],
+		[to.ticket('t1', { workshop: 'p1' }), '/tickets/t1?workshop=p1'],
+		[to.workshopTicket('p1', 'PROJ 1'), '/w/p1/tickets/PROJ%201'],
 		[to.mergeRequests(), '/merge-requests'],
 		[to.mergeRequests({ project: 'p1' }), '/merge-requests?project=p1'],
 		[to.mergeRequest('p1', 12), '/merge-requests/p1/12'],

@@ -91,6 +91,7 @@
 				(p) =>
 					p.repoAccountId === i.id ||
 					p.provisionerId === i.id ||
+					p.ticketSourceId === i.id ||
 					(p.harnessIds ?? []).includes(i.id)
 			)
 			.map((p) => p.name);

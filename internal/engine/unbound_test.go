@@ -80,3 +80,42 @@ func TestUnboundModelRefusesTheRunUntilBound(t *testing.T) {
 		t.Errorf("stages ran on %v, want [fake/model fake/other]", models)
 	}
 }
+
+// A ticket status the flow leaves to the workshop waits the same way: the
+// run is refused with the parameter and the stage that reads it, and once
+// bound the ticket moves to the bound status.
+func TestUnboundTicketStatusRefusesTheRunUntilBound(t *testing.T) {
+	doc := `name: status
+version: 5
+parameters: { harness: fake, model: fake/model, done_status: { type: string } }
+main:
+  - { id: finish, type: action, action: ticket_transition, with: { to: $done_status }, on_success: done }
+`
+	bindings := staticBindings{}
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Bindings = bindings }, mustFlow(t, doc))
+	h.tickets.remote.Tickets[0].Status = "In Review"
+	ctx := context.Background()
+	_, err := h.e.CreateRun(ctx, linkedTicket, "status", testProject)
+	if err == nil || !strings.Contains(err.Error(), "preflight: parameters") || !strings.Contains(err.Error(), `"done_status" has no value (read by finish)`) || !strings.Contains(err.Error(), "Configure") {
+		t.Fatalf("err = %v, want the unbound refusal naming the parameter and its stage", err)
+	}
+	if len(h.tickets.remote.Calls) != 0 {
+		t.Errorf("the tracker was called for a refused run: %v", h.tickets.remote.Calls)
+	}
+	if s := stepNamed(h.e.PreflightProject(ctx, testProject), "parameters"); s == nil || s.OK || !strings.Contains(s.Error, `"done_status" has no value`) {
+		t.Errorf("preflight parameters step = %+v", s)
+	}
+
+	bindings["done_status"] = "Done"
+	id, err := h.e.CreateRun(ctx, linkedTicket, "status", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(id)
+	if _, ok := findPayload[*event.RunCompleted](h.events(t, id)); !ok {
+		t.Errorf("run did not complete: %v", eventTypes(h.events(t, id)))
+	}
+	if got := strings.Join(h.tickets.remote.Calls, "; "); got != "transition DEV-1 Done" {
+		t.Errorf("tracker calls = %q", got)
+	}
+}

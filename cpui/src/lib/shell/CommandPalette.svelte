@@ -3,8 +3,12 @@
 	// something — start a new run among them. It
 	// materialises from the top centre over a fading scrim and leaves the same
 	// way; the keyboard-selected row carries a sliding bead. The filter runs on
-	// every keystroke (no debounce): typing never waits for the list.
+	// every keystroke (no debounce): typing never waits for the list. Tickets
+	// are the exception: they live in a tracker, so a typed search asks the
+	// current workshop's source (the first workshop off a workshop's pages),
+	// once the typing pauses.
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { prefs } from '$lib/app/prefs.svelte';
@@ -12,13 +16,18 @@
 	import { THEMES } from '$lib/design/themes';
 	import { to } from '$lib/core/urls';
 	import { shortId, stateLabel, stateTab } from '$lib/core/format';
-	import type { Ticket } from '$lib/domain';
+	import type { Integration, TicketRow } from '$lib/domain';
+	import { isInternal, sourceOf } from '$lib/tickets/tracker';
 	import NewRunDialog from '$lib/run/NewRunDialog.svelte';
 	import { NAV } from '$lib/app/nav';
 	import { trap } from '$lib/ui/trap';
 	import { I } from '$lib/design/icons';
 	import { indicator, materialize, scrim } from '$lib/ui/motion';
 	import Vial from '$lib/ui/Vial.svelte';
+
+	/** How many tickets a search shows, and how long typing pauses before one. */
+	const TICKETS_SHOWN = 20;
+	const SEARCH_PAUSE_MS = 250;
 
 	let { open = $bindable(false) }: { open: boolean } = $props();
 
@@ -46,7 +55,16 @@
 	let query = $state('');
 	let sel = $state(0);
 	let input = $state<HTMLInputElement | null>(null);
-	let tickets = $state<Ticket[]>([]);
+	/** The searched workshop's tickets matching the query, as its source answers. */
+	let tickets = $state<{ projectId: string; rows: TicketRow[] }>({ projectId: '', rows: [] });
+	const ticketsFrom = $derived(page.params.workshop ?? fleet.projects[0]?.id ?? '');
+	/** The integrations, read once per opening: "New ticket" is offered only
+	 *  when that workshop's source is the internal tracker. */
+	let integrations = $state<Integration[] | null>(null);
+	const writesHere = $derived.by(() => {
+		const p = fleet.projectById.get(ticketsFrom);
+		return !!p && isInternal(sourceOf(p, integrations));
+	});
 	/** Every workshop's open merge requests, read from their repositories —
 	 *  only once a search is typed, once per opening: they show only in
 	 *  search results, and each workshop is a call to its repository host. */
@@ -60,10 +78,29 @@
 		query = '';
 		sel = 0;
 		mrsRead = false;
-		api.tickets
+		tickets = { projectId: '', rows: [] };
+		api.integrations
 			.list()
-			.then((list) => (tickets = list))
+			.then((l) => (integrations = l))
 			.catch(() => {});
+	});
+
+	// One search per pause in typing, its answer dropped once the query moved on.
+	$effect(() => {
+		const q = query.trim();
+		const from = ticketsFrom;
+		if (!open || !q || !from) return;
+		let live = true;
+		const timer = setTimeout(() => {
+			api.projects
+				.tickets(from, { q, limit: TICKETS_SHOWN })
+				.then((p) => live && (tickets = { projectId: from, rows: p.tickets }))
+				.catch(() => {});
+		}, SEARCH_PAUSE_MS);
+		return () => {
+			live = false;
+			clearTimeout(timer);
+		};
 	});
 
 	$effect(() => {
@@ -131,12 +168,16 @@
 				glyph: I.add,
 				run: act(() => (newRun = true))
 			},
-			{
-				group: 'do' as const,
-				label: t('shell.palette.newTicket'),
-				glyph: I.add,
-				run: go(to.newTicket())
-			},
+			...(writesHere
+				? [
+						{
+							group: 'do' as const,
+							label: t('shell.palette.newTicket'),
+							glyph: I.add,
+							run: go(to.newTicket({ project: ticketsFrom }))
+						}
+					]
+				: []),
 			{
 				group: 'do' as const,
 				label: t('shell.palette.newWorkshop'),
@@ -184,13 +225,13 @@
 				glyph: I.runs,
 				run: go(to.run(r.id))
 			});
-		for (const tk of tickets.slice(0, 80))
+		for (const tk of tickets.rows)
 			out.push({
 				group: 'tickets' as const,
 				label: tk.title,
-				sub: tk.source?.key ?? fleet.projectName(tk.projectId),
+				sub: `${tk.key} · ${fleet.projectName(tickets.projectId)}`,
 				glyph: I.tickets,
-				run: go(to.ticket(tk.id))
+				run: go(to.workshopTicket(tickets.projectId, tk.key))
 			});
 		for (const mr of mrs.slice(0, 80))
 			out.push({

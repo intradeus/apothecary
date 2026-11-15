@@ -5,17 +5,23 @@ import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import type { Run } from '$lib/domain';
 import { aRun } from '$test/fixtures';
-import { aWorkshop } from '$test/fixtures/app.svelte';
+import { anIntegration, aWorkshop } from '$test/fixtures/app.svelte';
 import WithHeader from '$test/fixtures/WithHeader.svelte';
 import RunsTab from './RunsTab.svelte';
 
 vi.mock('$lib/api', () => ({
-	api: { tickets: { list: vi.fn() }, runs: { get: vi.fn() }, flows: { version: vi.fn() } }
+	api: {
+		projects: { tickets: vi.fn() },
+		integrations: { list: vi.fn() },
+		runs: { get: vi.fn() },
+		flows: { version: vi.fn() }
+	}
 }));
 
-const project = aWorkshop({ id: 'p1' });
-const setup = (runs: Run[] = []) =>
-	render(WithHeader, { props: { page: RunsTab, props: { project, runs } } });
+const project = aWorkshop({ id: 'p1', ticketSourceId: 'src' });
+const internal = [anIntegration({ id: 'src', kind: 'internal', port: 'ticketsource' })];
+const setup = (runs: Run[] = [], integrations = internal) =>
+	render(WithHeader, { props: { page: RunsTab, props: { project, runs, integrations } } });
 const live = aRun({ id: '01LIVERUNABCD', title: 'Live one', branch: 'feat/live' });
 const done = aRun({ id: '01DONERUNWXYZ', title: 'Done one', state: 'completed' });
 const finishedTab = () => screen.getByRole('radio', { name: /Finished/ });
@@ -23,7 +29,8 @@ const search = () => screen.getByPlaceholderText('Search title, id, branch');
 
 beforeEach(() => {
 	vi.resetAllMocks();
-	vi.mocked(api.tickets.list).mockResolvedValue([]);
+	vi.mocked(api.projects.tickets).mockResolvedValue({ tickets: [], next: '' });
+	vi.mocked(api.integrations.list).mockResolvedValue([]);
 	fleet.reset();
 });
 
@@ -89,6 +96,11 @@ describe('RunsTab', () => {
 		);
 	});
 
+	it('offers no New ticket on a remote source', () => {
+		setup([], [anIntegration({ id: 'src', kind: 'jira', port: 'ticketsource' })]);
+		expect(screen.queryByRole('link', { name: /New ticket/ })).not.toBeInTheDocument();
+	});
+
 	it('says none have finished', async () => {
 		setup();
 		await userEvent.click(finishedTab());
@@ -98,7 +110,9 @@ describe('RunsTab', () => {
 	it("opens the new-run dialog from the page header, on this workshop's tickets", async () => {
 		setup();
 		await userEvent.click(screen.getByRole('button', { name: /New run/ }));
-		await waitFor(() => expect(api.tickets.list).toHaveBeenCalledOnce());
+		await waitFor(() =>
+			expect(api.projects.tickets).toHaveBeenCalledExactlyOnceWith('p1', { limit: 50 })
+		);
 		expect(screen.getByRole('dialog')).toBeInTheDocument();
 	});
 });

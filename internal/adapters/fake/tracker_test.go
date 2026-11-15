@@ -21,32 +21,46 @@ func tracker() *TicketSource {
 func TestSearchAndFetch(t *testing.T) {
 	s := tracker()
 	cases := []struct {
-		q     string
-		limit int
-		want  string
+		q      string
+		done   trackerport.DoneFilter
+		limit  int
+		cursor string
+		want   string
+		next   string
 	}{
-		{"", 0, "DEV-1,DEV-2,OPS-3"},
-		{"LOG", 0, "DEV-1,DEV-2"},
-		{"quarterly", 0, "OPS-3"},
-		{"ops-3", 0, "OPS-3"},
-		{"", 2, "DEV-1,DEV-2"},
-		{"nothing", 0, ""},
+		{"", "", 0, "", "DEV-1,DEV-2,OPS-3", ""},
+		{"LOG", "", 0, "", "DEV-1,DEV-2", ""},
+		{"quarterly", "", 0, "", "OPS-3", ""},
+		{"ops-3", "", 0, "", "OPS-3", ""},
+		{"", "", 2, "", "DEV-1,DEV-2", "2"},
+		{"", "", 2, "2", "OPS-3", ""},
+		{"nothing", "", 0, "", "", ""},
+		// OPS-3's "Done" is in the done category.
+		{"", trackerport.DoneOpen, 0, "", "DEV-1,DEV-2", ""},
+		{"", trackerport.DoneOnly, 0, "", "OPS-3", ""},
+		{"", trackerport.DoneOpen, 1, "1", "DEV-2", ""},
 	}
 	for _, c := range cases {
-		got, err := s.Search(bgCtx, c.q, c.limit)
+		got, err := s.Search(bgCtx, trackerport.SearchQuery{Text: c.q, Done: c.done, Limit: c.limit, Cursor: c.cursor})
 		if err != nil {
 			t.Fatal(err)
 		}
 		var keys []string
-		for _, k := range got {
+		for _, k := range got.Tickets {
 			keys = append(keys, k.Key)
 			if k.Attachments != nil {
 				t.Errorf("%q: search carried attachments", c.q)
 			}
+			if k.Done != (k.Key == "OPS-3") {
+				t.Errorf("%s done = %v", k.Key, k.Done)
+			}
 		}
-		if strings.Join(keys, ",") != c.want {
-			t.Errorf("Search(%q, %d) = %v", c.q, c.limit, keys)
+		if strings.Join(keys, ",") != c.want || got.Next != c.next {
+			t.Errorf("Search(%+v) = %v, next %q", c, keys, got.Next)
 		}
+	}
+	if _, err := s.Search(bgCtx, trackerport.SearchQuery{Cursor: "x"}); err == nil {
+		t.Error("a bad cursor was accepted")
 	}
 	got, err := s.Fetch(bgCtx, "dev-1")
 	if err != nil || got.Key != "DEV-1" || len(got.Attachments) != 1 {
@@ -64,9 +78,8 @@ func TestSearchAndFetch(t *testing.T) {
 	if again, _ := s.Fetch(bgCtx, "DEV-2"); again.Labels[0] != "ui" {
 		t.Error("Fetch shares the labels")
 	}
-	many, err := s.FetchMany(bgCtx, []string{"OPS-3", "NOPE", "dev-1"})
-	if err != nil || len(many) != 2 || many[0].Key != "OPS-3" || many[1].Key != "DEV-1" {
-		t.Errorf("fetch many = %+v, %v", many, err)
+	if done, _ := s.Fetch(bgCtx, "OPS-3"); !done.Done {
+		t.Errorf("fetch done = %+v", done)
 	}
 	rc, err := s.OpenAttachment(bgCtx, trackerport.SourceAttachment{ID: "a1"})
 	if err != nil {
@@ -88,16 +101,15 @@ func TestErrFailsEverything(t *testing.T) {
 	ro := ReadOnlyTicketSource{Src: s}
 	ops := map[string]func() error{
 		"test":      func() error { return s.Test(bgCtx) },
-		"search":    func() error { _, err := s.Search(bgCtx, "", 0); return err },
+		"search":    func() error { _, err := s.Search(bgCtx, trackerport.SearchQuery{}); return err },
 		"fetch":     func() error { _, err := s.Fetch(bgCtx, "DEV-1"); return err },
 		"open":      func() error { _, err := s.OpenAttachment(bgCtx, trackerport.SourceAttachment{}); return err },
 		"comments":  func() error { _, err := s.ListComments(bgCtx, "DEV-1"); return err },
-		"many":      func() error { _, err := s.FetchMany(bgCtx, nil); return err },
 		"statuses":  func() error { _, err := s.Statuses(bgCtx); return err },
 		"types":     func() error { _, err := s.Types(bgCtx); return err },
 		"fields":    func() error { _, err := s.Fields(bgCtx, "DEV-1", nil); return err },
 		"ro test":   func() error { return ro.Test(bgCtx) },
-		"ro search": func() error { _, err := ro.Search(bgCtx, "", 0); return err },
+		"ro search": func() error { _, err := ro.Search(bgCtx, trackerport.SearchQuery{}); return err },
 		"ro fetch":  func() error { _, err := ro.Fetch(bgCtx, "DEV-1"); return err },
 		"ro open":   func() error { _, err := ro.OpenAttachment(bgCtx, trackerport.SourceAttachment{}); return err },
 	}
@@ -114,7 +126,7 @@ func TestReadOnlyServesTheCorpus(t *testing.T) {
 	if err := ro.Test(bgCtx); err != nil {
 		t.Error(err)
 	}
-	if got, _ := ro.Search(bgCtx, "rotate", 0); len(got) != 1 {
+	if got, _ := ro.Search(bgCtx, trackerport.SearchQuery{Text: "rotate"}); len(got.Tickets) != 1 {
 		t.Errorf("search = %+v", got)
 	}
 	if got, err := ro.Fetch(bgCtx, "OPS-3"); err != nil || got.Key != "OPS-3" {

@@ -163,10 +163,6 @@ export type Attachment = {
 	user_id?: string;
 };
 
-export type AttachmentList = {
-	attachments: Array<Attachment> | null;
-};
-
 export type AttemptFacts = {
 	active_ms: number;
 	agent?: string;
@@ -211,7 +207,6 @@ export type Automation = {
 	query?: string;
 	repo?: string;
 	schedule?: string;
-	source_id?: string;
 	ticket_id?: string;
 	updated_at: string;
 };
@@ -227,7 +222,6 @@ export type AutomationRequest = {
 	query?: string;
 	repo?: string;
 	schedule?: string;
-	source_id?: string;
 	ticket_id?: string;
 };
 
@@ -1265,6 +1259,7 @@ export type Project = {
 	repo: RepoConfig;
 	repo_account_id: string;
 	repos?: Array<ExtraRepo>;
+	ticket_source_id: string;
 	updated_at: string;
 	user_id: string;
 	workspace: WorkspaceConfig;
@@ -1281,6 +1276,7 @@ export type ProjectRequest = {
 	repo: RepoConfig;
 	repo_account_id: string;
 	repos?: Array<ExtraRepo>;
+	ticket_source_id: string;
 	workspace: WorkspaceConfig;
 };
 
@@ -1331,6 +1327,12 @@ export type RebuildRequest = {
 export type Ref = {
 	id: string;
 	seq?: number;
+};
+
+export type RemoteAttachment = {
+	filename: string;
+	mime?: string;
+	size?: number;
 };
 
 export type RepoConfig = {
@@ -1635,6 +1637,7 @@ export type SettingSig = {
 	kind: string;
 	name: string;
 	required?: boolean;
+	unbound?: boolean;
 	values?: Array<string>;
 };
 
@@ -1769,19 +1772,6 @@ export type Source = {
 	url: string;
 };
 
-export type SourceTicket = {
-	assignee?: string;
-	attachments?: Array<SourceAttachmentJson>;
-	body?: string;
-	change_type: string;
-	key: string;
-	status?: string;
-	title: string;
-	type?: string;
-	updated?: string;
-	url?: string;
-};
-
 export type Spec = {
 	allow_bash?: boolean;
 	description?: string;
@@ -1838,15 +1828,6 @@ export type SwarmUnit = {
 	updated_at: string;
 };
 
-export type SyncCounts = {
-	busy: number;
-	failed: number;
-	gone: number;
-	rate_limited: number;
-	synced: number;
-	tickets: number;
-};
-
 export type TestResult = {
 	error?: string;
 	ok: boolean;
@@ -1878,16 +1859,41 @@ export type ThreadsDocument = {
 	threads: Array<ReviewThread> | null;
 };
 
+export type Ticket = {
+	automation_id?: string;
+	base_branch: string;
+	change_type: string;
+	created_at: string;
+	goal: string;
+	id: string;
+	labels?: Array<string>;
+	remote_id: string;
+	source_id: string;
+	source_key?: string;
+	source_kind: string;
+	source_type?: string;
+	source_url?: string;
+	status_changed_at?: string;
+	status_changed_by?: string;
+	status_id?: string;
+	title: string;
+	type_id?: string;
+	updated_at: string;
+	user_id: string;
+};
+
+export type TicketAttachments = {
+	attachments: Array<Attachment> | null;
+	remote: Array<RemoteAttachment> | null;
+};
+
 export type TicketComment = {
 	author: string;
 	body_md: string;
 	created_at: string;
 	id: string;
-	origin: string;
-	remote_id?: string;
+	origin?: string;
 	run_id?: string;
-	stage_id?: string;
-	ticket_id: string;
 	updated_at: string;
 };
 
@@ -1896,36 +1902,27 @@ export type TicketCommentRequest = {
 };
 
 export type TicketDetail = {
+	active_run_id?: string;
+	assignee?: string;
 	attachment_ids: Array<string> | null;
-	automation_id?: string;
 	base_branch?: string;
+	body?: string;
 	change_type?: string;
-	created_at?: string;
-	goal?: string;
-	id?: string;
-	labels?: Array<string>;
+	done?: boolean;
+	internal: boolean;
+	key?: string;
+	labels?: Array<string> | null;
 	links: Array<TicketLink> | null;
-	project_id?: string;
 	remote_id?: string;
-	remote_updated_at?: string;
-	source_id?: string;
-	source_key?: string;
-	source_kind?: string;
-	source_type?: string;
-	source_url?: string;
-	status?: TicketStatusRef;
-	status_changed_at?: string;
-	status_changed_by?: string;
+	source: TicketSourceRef;
+	status?: string;
 	status_id?: string;
-	sync_error?: string;
-	sync_state?: string;
-	synced_at?: string;
+	ticket_id?: string;
 	title?: string;
-	type?: TicketTypeRef;
+	type?: string;
 	type_id?: string;
 	updated_at?: string;
-	user_id?: string;
-	warnings?: Array<string>;
+	url?: string;
 };
 
 export type TicketLabelsRequest = {
@@ -1938,61 +1935,57 @@ export type TicketLink = {
 	url: string;
 };
 
-export type TicketRequest = {
-	attachment_ids: Array<string> | null;
-	branch: string;
-	change_type: string;
-	goal: string;
-	project_id: string;
-	source_id: string;
-	source_key: string;
-	title: string;
+export type TicketPage = {
+	next: string;
+	tickets: Array<TicketRow> | null;
 };
 
-export type TicketStatusRef = {
-	flow_step?: string;
+export type TicketRecord = {
+	key: string;
+	source?: TicketSourceRef;
+	ticket: Ticket;
+	workshops: Array<WorkshopRef> | null;
+};
+
+export type TicketRequest = {
+	attachment_ids: Array<string> | null;
+	base_branch: string;
+	change_type: string;
+	goal: string;
+	labels?: Array<string>;
+	status_id?: string;
+	title: string;
+	type_id?: string;
+};
+
+export type TicketRow = {
+	active_run_id: string;
+	assignee: string;
+	base_branch: string;
+	body: string;
+	change_type: string;
+	done: boolean;
+	key: string;
+	labels: Array<string> | null;
+	remote_id: string;
+	status: string;
+	status_id: string;
+	ticket_id: string;
+	title: string;
+	type: string;
+	type_id: string;
+	updated_at?: string;
+	url: string;
+};
+
+export type TicketSourceRef = {
 	id: string;
-	is_done: boolean;
+	kind: string;
 	name: string;
 };
 
 export type TicketStatusRequest = {
-	status_id: string;
-};
-
-export type TicketTypeRef = {
-	id: string;
-	name: string;
-};
-
-export type TicketView = {
-	automation_id?: string;
-	base_branch?: string;
-	change_type?: string;
-	created_at?: string;
-	goal?: string;
-	id?: string;
-	labels?: Array<string>;
-	project_id?: string;
-	remote_id?: string;
-	remote_updated_at?: string;
-	source_id?: string;
-	source_key?: string;
-	source_kind?: string;
-	source_type?: string;
-	source_url?: string;
-	status?: TicketStatusRef;
-	status_changed_at?: string;
-	status_changed_by?: string;
-	status_id?: string;
-	sync_error?: string;
-	sync_state?: string;
-	synced_at?: string;
-	title?: string;
-	type?: TicketTypeRef;
-	type_id?: string;
-	updated_at?: string;
-	user_id?: string;
+	status: string;
 };
 
 export type Token = {
@@ -2016,19 +2009,17 @@ export type TokenRequest = {
 };
 
 export type TrackerStatus = {
-	flow_step?: string;
 	id: string;
 	integration_id: string;
 	is_done: boolean;
 	name: string;
 	position: number;
-	remote_category: string;
 	remote_id: string;
 };
 
 export type TrackerStatusList = {
+	read_only: boolean;
 	statuses: Array<TrackerStatus> | null;
-	warnings: Array<string> | null;
 };
 
 export type TrackerStatusesUpdate = {
@@ -2132,6 +2123,11 @@ export type VersionMember = {
 	skill_id: string;
 };
 
+export type WorkshopRef = {
+	id: string;
+	name: string;
+};
+
 export type WorkspaceChangedFile = {
 	additions: number;
 	binary?: boolean;
@@ -2197,12 +2193,6 @@ export type WorkspaceLog = {
 	end: number;
 	size: number;
 	start: number;
-};
-
-export type SourceAttachmentJson = {
-	filename: string;
-	mime?: string;
-	size?: number;
 };
 
 export type ListActionsData = {
@@ -3989,12 +3979,7 @@ export type DeleteIntegrationData = {
 	path: {
 		id: string;
 	};
-	query?: {
-		/**
-		 * 1 = unlink the ticket source's tickets, then delete it
-		 */
-		unlink_tickets?: '1';
-	};
+	query?: never;
 	url: '/api/integrations/{id}';
 };
 
@@ -4193,7 +4178,7 @@ export type ListTrackerStatusesData = {
 	};
 	query?: {
 		/**
-		 * 1 = fetch the list from the remote tracker first
+		 * 1 = read the remote tracker now rather than the cached copy
 		 */
 		refresh?: '1';
 	};
@@ -4271,47 +4256,6 @@ export type PutTrackerStatusesResponses = {
 export type PutTrackerStatusesResponse =
 	PutTrackerStatusesResponses[keyof PutTrackerStatusesResponses];
 
-export type SyncIntegrationData = {
-	body?: never;
-	path: {
-		id: string;
-	};
-	query?: never;
-	url: '/api/integrations/{id}/sync';
-};
-
-export type SyncIntegrationErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	401: unknown;
-	/**
-	 * error
-	 */
-	404: unknown;
-	/**
-	 * error
-	 */
-	409: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type SyncIntegrationResponses = {
-	/**
-	 * OK
-	 */
-	200: SyncCounts;
-};
-
-export type SyncIntegrationResponse = SyncIntegrationResponses[keyof SyncIntegrationResponses];
-
 export type TestIntegrationData = {
 	body?: never;
 	path: {
@@ -4353,91 +4297,6 @@ export type TestIntegrationResponses = {
 
 export type TestIntegrationResponse = TestIntegrationResponses[keyof TestIntegrationResponses];
 
-export type SearchSourceTicketsData = {
-	body?: never;
-	path: {
-		id: string;
-	};
-	query?: {
-		/**
-		 * free-text query
-		 */
-		q?: string;
-		/**
-		 * max results (default 25)
-		 */
-		limit?: number;
-	};
-	url: '/api/integrations/{id}/tickets';
-};
-
-export type SearchSourceTicketsErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	401: unknown;
-	/**
-	 * error
-	 */
-	404: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type SearchSourceTicketsResponses = {
-	/**
-	 * OK
-	 */
-	200: Array<SourceTicket> | null;
-};
-
-export type SearchSourceTicketsResponse =
-	SearchSourceTicketsResponses[keyof SearchSourceTicketsResponses];
-
-export type GetSourceTicketData = {
-	body?: never;
-	path: {
-		id: string;
-		key: string;
-	};
-	query?: never;
-	url: '/api/integrations/{id}/tickets/{key}';
-};
-
-export type GetSourceTicketErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	401: unknown;
-	/**
-	 * error
-	 */
-	404: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type GetSourceTicketResponses = {
-	/**
-	 * OK
-	 */
-	200: SourceTicket;
-};
-
-export type GetSourceTicketResponse = GetSourceTicketResponses[keyof GetSourceTicketResponses];
-
 export type ListTrackerTypesData = {
 	body?: never;
 	path: {
@@ -4445,7 +4304,7 @@ export type ListTrackerTypesData = {
 	};
 	query?: {
 		/**
-		 * 1 = fetch the list from the remote tracker first
+		 * 1 = read the remote tracker now rather than the cached copy
 		 */
 		refresh?: '1';
 	};
@@ -6709,6 +6568,492 @@ export type SetProjectSecretResponses = {
 };
 
 export type SetProjectSecretResponse = SetProjectSecretResponses[keyof SetProjectSecretResponses];
+
+export type ListWorkshopTicketsData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * free-text query
+		 */
+		q?: string;
+		/**
+		 * open (default), done or any
+		 */
+		done?: 'open' | 'done' | 'any';
+		/**
+		 * the previous page's next
+		 */
+		cursor?: string;
+		/**
+		 * page size (default: the tracker's)
+		 */
+		limit?: number;
+		/**
+		 * 1 = read the tracker now rather than the cached copy
+		 */
+		refresh?: '1';
+	};
+	url: '/api/projects/{id}/tickets';
+};
+
+export type ListWorkshopTicketsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListWorkshopTicketsResponses = {
+	/**
+	 * OK
+	 */
+	200: TicketPage;
+};
+
+export type ListWorkshopTicketsResponse =
+	ListWorkshopTicketsResponses[keyof ListWorkshopTicketsResponses];
+
+export type CreateWorkshopTicketData = {
+	body: TicketRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/tickets';
+};
+
+export type CreateWorkshopTicketErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type CreateWorkshopTicketResponses = {
+	/**
+	 * Created
+	 */
+	201: TicketDetail;
+};
+
+export type CreateWorkshopTicketResponse =
+	CreateWorkshopTicketResponses[keyof CreateWorkshopTicketResponses];
+
+export type DeleteWorkshopTicketData = {
+	body?: never;
+	path: {
+		id: string;
+		key: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/tickets/{key}';
+};
+
+export type DeleteWorkshopTicketErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DeleteWorkshopTicketResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type DeleteWorkshopTicketResponse =
+	DeleteWorkshopTicketResponses[keyof DeleteWorkshopTicketResponses];
+
+export type GetWorkshopTicketData = {
+	body?: never;
+	path: {
+		id: string;
+		key: string;
+	};
+	query?: {
+		/**
+		 * 1 = read the tracker now rather than the cached copy
+		 */
+		refresh?: '1';
+	};
+	url: '/api/projects/{id}/tickets/{key}';
+};
+
+export type GetWorkshopTicketErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetWorkshopTicketResponses = {
+	/**
+	 * OK
+	 */
+	200: TicketDetail;
+};
+
+export type GetWorkshopTicketResponse =
+	GetWorkshopTicketResponses[keyof GetWorkshopTicketResponses];
+
+export type UpdateWorkshopTicketData = {
+	body: TicketRequest;
+	path: {
+		id: string;
+		key: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/tickets/{key}';
+};
+
+export type UpdateWorkshopTicketErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type UpdateWorkshopTicketResponses = {
+	/**
+	 * OK
+	 */
+	200: TicketDetail;
+};
+
+export type UpdateWorkshopTicketResponse =
+	UpdateWorkshopTicketResponses[keyof UpdateWorkshopTicketResponses];
+
+export type GetWorkshopTicketAttachmentsData = {
+	body?: never;
+	path: {
+		id: string;
+		key: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/tickets/{key}/attachments';
+};
+
+export type GetWorkshopTicketAttachmentsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetWorkshopTicketAttachmentsResponses = {
+	/**
+	 * OK
+	 */
+	200: TicketAttachments;
+};
+
+export type GetWorkshopTicketAttachmentsResponse =
+	GetWorkshopTicketAttachmentsResponses[keyof GetWorkshopTicketAttachmentsResponses];
+
+export type ListWorkshopTicketCommentsData = {
+	body?: never;
+	path: {
+		id: string;
+		key: string;
+	};
+	query?: {
+		/**
+		 * 1 = read the tracker now rather than the cached copy
+		 */
+		refresh?: '1';
+	};
+	url: '/api/projects/{id}/tickets/{key}/comments';
+};
+
+export type ListWorkshopTicketCommentsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListWorkshopTicketCommentsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<TicketComment> | null;
+};
+
+export type ListWorkshopTicketCommentsResponse =
+	ListWorkshopTicketCommentsResponses[keyof ListWorkshopTicketCommentsResponses];
+
+export type AddWorkshopTicketCommentData = {
+	body: TicketCommentRequest;
+	path: {
+		id: string;
+		key: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/tickets/{key}/comments';
+};
+
+export type AddWorkshopTicketCommentErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type AddWorkshopTicketCommentResponses = {
+	/**
+	 * Created
+	 */
+	201: Array<TicketComment> | null;
+};
+
+export type AddWorkshopTicketCommentResponse =
+	AddWorkshopTicketCommentResponses[keyof AddWorkshopTicketCommentResponses];
+
+export type SetWorkshopTicketLabelsData = {
+	body: TicketLabelsRequest;
+	path: {
+		id: string;
+		key: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/tickets/{key}/labels';
+};
+
+export type SetWorkshopTicketLabelsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type SetWorkshopTicketLabelsResponses = {
+	/**
+	 * OK
+	 */
+	200: TicketDetail;
+};
+
+export type SetWorkshopTicketLabelsResponse =
+	SetWorkshopTicketLabelsResponses[keyof SetWorkshopTicketLabelsResponses];
+
+export type StartWorkshopTicketRunData = {
+	body: StartRunRequest;
+	path: {
+		id: string;
+		key: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/tickets/{key}/runs';
+};
+
+export type StartWorkshopTicketRunErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type StartWorkshopTicketRunResponses = {
+	/**
+	 * Created
+	 */
+	201: RunRef;
+};
+
+export type StartWorkshopTicketRunResponse =
+	StartWorkshopTicketRunResponses[keyof StartWorkshopTicketRunResponses];
+
+export type SetWorkshopTicketStatusData = {
+	body: TicketStatusRequest;
+	path: {
+		id: string;
+		key: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/tickets/{key}/status';
+};
+
+export type SetWorkshopTicketStatusErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type SetWorkshopTicketStatusResponses = {
+	/**
+	 * OK
+	 */
+	200: TicketDetail;
+};
+
+export type SetWorkshopTicketStatusResponse =
+	SetWorkshopTicketStatusResponses[keyof SetWorkshopTicketStatusResponses];
 
 export type ListProvidersData = {
 	body?: never;
@@ -9515,82 +9860,7 @@ export type GetSwarmResponses = {
 
 export type GetSwarmResponse = GetSwarmResponses[keyof GetSwarmResponses];
 
-export type ListTicketsData = {
-	body?: never;
-	path?: never;
-	query?: {
-		/**
-		 * only tickets of this project
-		 */
-		project?: string;
-		/**
-		 * 1 = only tickets in a Done status, 0 = only the others (default: all)
-		 */
-		done?: '0' | '1';
-	};
-	url: '/api/tickets';
-};
-
-export type ListTicketsErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	401: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type ListTicketsResponses = {
-	/**
-	 * OK
-	 */
-	200: Array<TicketView> | null;
-};
-
-export type ListTicketsResponse = ListTicketsResponses[keyof ListTicketsResponses];
-
-export type CreateTicketData = {
-	body: TicketRequest;
-	path?: never;
-	query?: never;
-	url: '/api/tickets';
-};
-
-export type CreateTicketErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	401: unknown;
-	/**
-	 * error
-	 */
-	409: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type CreateTicketResponses = {
-	/**
-	 * Created
-	 */
-	201: TicketDetail;
-};
-
-export type CreateTicketResponse = CreateTicketResponses[keyof CreateTicketResponses];
-
-export type DeleteTicketData = {
+export type GetTicketRecordData = {
 	body?: never;
 	path: {
 		id: string;
@@ -9599,48 +9869,7 @@ export type DeleteTicketData = {
 	url: '/api/tickets/{id}';
 };
 
-export type DeleteTicketErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	401: unknown;
-	/**
-	 * error
-	 */
-	404: unknown;
-	/**
-	 * error
-	 */
-	409: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type DeleteTicketResponses = {
-	/**
-	 * No Content
-	 */
-	204: void;
-};
-
-export type DeleteTicketResponse = DeleteTicketResponses[keyof DeleteTicketResponses];
-
-export type GetTicketData = {
-	body?: never;
-	path: {
-		id: string;
-	};
-	query?: never;
-	url: '/api/tickets/{id}';
-};
-
-export type GetTicketErrors = {
+export type GetTicketRecordErrors = {
 	/**
 	 * error
 	 */
@@ -9659,336 +9888,14 @@ export type GetTicketErrors = {
 	503: unknown;
 };
 
-export type GetTicketResponses = {
+export type GetTicketRecordResponses = {
 	/**
 	 * OK
 	 */
-	200: TicketDetail;
+	200: TicketRecord;
 };
 
-export type GetTicketResponse = GetTicketResponses[keyof GetTicketResponses];
-
-export type UpdateTicketData = {
-	body: TicketRequest;
-	path: {
-		id: string;
-	};
-	query?: never;
-	url: '/api/tickets/{id}';
-};
-
-export type UpdateTicketErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	401: unknown;
-	/**
-	 * error
-	 */
-	404: unknown;
-	/**
-	 * error
-	 */
-	409: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type UpdateTicketResponses = {
-	/**
-	 * OK
-	 */
-	200: TicketDetail;
-};
-
-export type UpdateTicketResponse = UpdateTicketResponses[keyof UpdateTicketResponses];
-
-export type GetTicketAttachmentsData = {
-	body?: never;
-	path: {
-		id: string;
-	};
-	query?: never;
-	url: '/api/tickets/{id}/attachments';
-};
-
-export type GetTicketAttachmentsErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	401: unknown;
-	/**
-	 * error
-	 */
-	404: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type GetTicketAttachmentsResponses = {
-	/**
-	 * OK
-	 */
-	200: AttachmentList;
-};
-
-export type GetTicketAttachmentsResponse =
-	GetTicketAttachmentsResponses[keyof GetTicketAttachmentsResponses];
-
-export type ListTicketCommentsData = {
-	body?: never;
-	path: {
-		id: string;
-	};
-	query?: never;
-	url: '/api/tickets/{id}/comments';
-};
-
-export type ListTicketCommentsErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	401: unknown;
-	/**
-	 * error
-	 */
-	404: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type ListTicketCommentsResponses = {
-	/**
-	 * OK
-	 */
-	200: Array<TicketComment> | null;
-};
-
-export type ListTicketCommentsResponse =
-	ListTicketCommentsResponses[keyof ListTicketCommentsResponses];
-
-export type AddTicketCommentData = {
-	body: TicketCommentRequest;
-	path: {
-		id: string;
-	};
-	query?: never;
-	url: '/api/tickets/{id}/comments';
-};
-
-export type AddTicketCommentErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	401: unknown;
-	/**
-	 * error
-	 */
-	404: unknown;
-	/**
-	 * error
-	 */
-	409: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type AddTicketCommentResponses = {
-	/**
-	 * Created
-	 */
-	201: Array<TicketComment> | null;
-};
-
-export type AddTicketCommentResponse = AddTicketCommentResponses[keyof AddTicketCommentResponses];
-
-export type SetTicketLabelsData = {
-	body: TicketLabelsRequest;
-	path: {
-		id: string;
-	};
-	query?: never;
-	url: '/api/tickets/{id}/labels';
-};
-
-export type SetTicketLabelsErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	401: unknown;
-	/**
-	 * error
-	 */
-	404: unknown;
-	/**
-	 * error
-	 */
-	409: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type SetTicketLabelsResponses = {
-	/**
-	 * OK
-	 */
-	200: TicketDetail;
-};
-
-export type SetTicketLabelsResponse = SetTicketLabelsResponses[keyof SetTicketLabelsResponses];
-
-export type StartTicketRunData = {
-	body: StartRunRequest;
-	path: {
-		id: string;
-	};
-	query?: never;
-	url: '/api/tickets/{id}/runs';
-};
-
-export type StartTicketRunErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	401: unknown;
-	/**
-	 * error
-	 */
-	404: unknown;
-	/**
-	 * error
-	 */
-	409: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type StartTicketRunResponses = {
-	/**
-	 * Created
-	 */
-	201: RunRef;
-};
-
-export type StartTicketRunResponse = StartTicketRunResponses[keyof StartTicketRunResponses];
-
-export type SetTicketStatusData = {
-	body: TicketStatusRequest;
-	path: {
-		id: string;
-	};
-	query?: never;
-	url: '/api/tickets/{id}/status';
-};
-
-export type SetTicketStatusErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	401: unknown;
-	/**
-	 * error
-	 */
-	404: unknown;
-	/**
-	 * error
-	 */
-	409: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type SetTicketStatusResponses = {
-	/**
-	 * OK
-	 */
-	200: TicketDetail;
-};
-
-export type SetTicketStatusResponse = SetTicketStatusResponses[keyof SetTicketStatusResponses];
-
-export type SyncTicketData = {
-	body?: never;
-	path: {
-		id: string;
-	};
-	query?: never;
-	url: '/api/tickets/{id}/sync';
-};
-
-export type SyncTicketErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	401: unknown;
-	/**
-	 * error
-	 */
-	404: unknown;
-	/**
-	 * error
-	 */
-	409: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type SyncTicketResponses = {
-	/**
-	 * OK
-	 */
-	200: TicketDetail;
-};
-
-export type SyncTicketResponse = SyncTicketResponses[keyof SyncTicketResponses];
+export type GetTicketRecordResponse = GetTicketRecordResponses[keyof GetTicketRecordResponses];
 
 export type ListUsersData = {
 	body?: never;

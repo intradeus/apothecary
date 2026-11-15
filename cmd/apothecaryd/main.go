@@ -335,7 +335,8 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 	if err != nil {
 		return err
 	}
-	// A fake tracker so the "import a ticket" flow is exercisable in -dev.
+	// A fake tracker, so a workshop pointed at it lists remote issues live
+	// in -dev; the dev workshop itself starts on the internal tracker.
 	if _, err := mk(confstore.PortTicketSource, "dev-tracker", nil); err != nil {
 		return err
 	}

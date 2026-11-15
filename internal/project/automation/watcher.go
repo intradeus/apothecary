@@ -1,9 +1,10 @@
 // Package automation watches a project's automations (confstore.Automation)
-// and begins runs from them: a tracker query polled into tickets, each
-// started once; a schedule firing a run of one ticket per slot. It lives
-// outside the engine on purpose — an automation is a rule that starts a run
-// of a flow the way a person would, and the run neither knows nor cares (its
-// first phase_started says `by: automation`, nothing else).
+// and begins runs from them: a tracker query polled on the workshop's ticket
+// source, each issue started once; a schedule firing a run of one ticket per
+// slot. It lives outside the engine on purpose — an automation is a rule
+// that starts a run of a flow the way a person would, and the run neither
+// knows nor cares (its first phase_started says `by: automation`, nothing
+// else).
 // One pass (RunOnce) walks every enabled automation; the daemon runs a pass
 // every couple of minutes.
 package automation
@@ -20,6 +21,7 @@ import (
 	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
+	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/schedule"
 	"apothecary/internal/project/tickets"
@@ -133,28 +135,40 @@ func (w *Watcher) pass(ctx context.Context, a confstore.Automation) {
 	}
 }
 
-// pollTracker asks the tracker, imports every issue it finds that is not a
-// ticket yet, and starts one run per import. An issue imported by an earlier
-// pass that never got its run (a crash in between) is adopted; one a person
-// imported is theirs and left alone.
+// pollTracker lists the open issues of the workshop's ticket source matching
+// the automation's query and starts one run per issue it claims: a remote
+// issue seen for the first time is recorded as this automation's and fired.
+// A record of this automation's that never got its run (a crash in between,
+// a refused run) is fired again; one with runs, or one a person or another
+// automation made, is left alone. On the internal tracker the tickets are
+// the rows themselves, so only this automation's own are ever claimed.
 func (w *Watcher) pollTracker(ctx context.Context, a confstore.Automation) (bool, error) {
-	found, err := w.Tickets.Search(ctx, a.SourceID, a.Query, w.limit())
+	p, err := w.Conf.GetProject(ctx, a.ProjectID)
+	if err != nil {
+		return false, fmt.Errorf("workshop: %w", err)
+	}
+	page, err := w.Tickets.Live.List(ctx, p.TicketSourceID,
+		trackerport.SearchQuery{Text: a.Query, Done: trackerport.DoneOpen, Limit: w.limit()}, false)
 	if err != nil {
 		return false, fmt.Errorf("search: %w", err)
 	}
 	var errs []string
 	fired := false
-	for _, remote := range found {
-		t, ok, err := w.importOrAdopt(ctx, a, remote.Key)
+	for _, row := range page.Rows {
+		key := row.Issue.Key
+		t, ok, err := w.claim(ctx, a, p.TicketSourceID, row)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", remote.Key, err))
+			errs = append(errs, fmt.Sprintf("%s: %v", key, err))
 			continue
 		}
 		if !ok {
 			continue
 		}
 		if _, err := w.start(ctx, a, t); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", remote.Key, err))
+			if run, busy := activeRun(err); busy {
+				err = fmt.Errorf("ticket busy: run %s", run)
+			}
+			errs = append(errs, fmt.Sprintf("%s: %v", key, err))
 			continue
 		}
 		fired = true
@@ -165,29 +179,43 @@ func (w *Watcher) pollTracker(ctx context.Context, a confstore.Automation) (bool
 	return fired, nil
 }
 
-func (w *Watcher) importOrAdopt(ctx context.Context, a confstore.Automation, key string) (confstore.Ticket, bool, error) {
-	t, _, err := w.Tickets.CreateFromSource(ctx, a.SourceID, key,
-		confstore.Ticket{ProjectID: a.ProjectID, AutomationID: a.ID}, nil)
-	if err == nil {
-		w.log().Info("automation imported a ticket", "automation", a.ID, "name", a.Name, "ticket", t.ID, "key", key)
-		return t, true, nil
+// claim is the ticket of a listed issue and whether the automation fires on
+// it. A remote issue is recorded (its last-seen columns rewritten) on every
+// pass; the record keeps the automation that first made it.
+func (w *Watcher) claim(ctx context.Context, a confstore.Automation, sourceID string, row tickets.LiveRow) (confstore.Ticket, bool, error) {
+	var t confstore.Ticket
+	if row.Record != nil && row.Record.Internal() {
+		t = *row.Record
+	} else {
+		rec, created, err := w.Tickets.Record(ctx, sourceID, row.Issue, a.ID)
+		if err != nil {
+			return confstore.Ticket{}, false, err
+		}
+		if created {
+			w.log().Info("automation recorded a ticket", "automation", a.ID, "name", a.Name, "ticket", rec.ID, "key", row.Issue.Key)
+			return rec, true, nil
+		}
+		t = rec
 	}
-	var dup *tickets.DuplicateError
-	if !errors.As(err, &dup) {
-		return confstore.Ticket{}, false, err
-	}
-	existing := dup.Ticket
-	if existing.AutomationID != a.ID || existing.ProjectID != a.ProjectID {
+	if t.AutomationID != a.ID {
 		return confstore.Ticket{}, false, nil
 	}
-	runs, err := w.Runs.RunsOf(ctx, ticket.Ref(existing.ProjectID, existing.ID))
+	runs, err := w.Runs.RunsOf(ctx, ticket.Ref(t.ID))
 	if err != nil {
 		return confstore.Ticket{}, false, err
 	}
-	if len(runs) > 0 {
-		return confstore.Ticket{}, false, nil
+	return t, len(runs) == 0, nil
+}
+
+// activeRun recognises the engine's refusal of a run on a ticket that has one
+// going without importing the engine (the layering keeps automation below
+// it), and names that run.
+func activeRun(err error) (string, bool) {
+	var busy interface{ ActiveRunID() string }
+	if errors.As(err, &busy) {
+		return busy.ActiveRunID(), true
 	}
-	return existing, true, nil
+	return "", false
 }
 
 // pollMRs lists the repository's open merge requests and creates a run of
@@ -279,16 +307,34 @@ func (w *Watcher) tick(ctx context.Context, a confstore.Automation) (bool, error
 	if err != nil {
 		return true, fmt.Errorf("ticket %s: %w", a.TicketID, err)
 	}
+	if err := w.pinnedInWorkshop(ctx, a, t); err != nil {
+		return true, err
+	}
 	_, err = w.start(ctx, a, t)
-	// The engine's refusal, recognised without importing the engine (the
-	// layering keeps automation below it).
-	var busy interface{ ActiveRunID() string }
-	if errors.As(err, &busy) {
+	if run, busy := activeRun(err); busy {
 		w.log().Info("automation slot skipped: the ticket's run is still going", "automation", a.ID,
-			"name", a.Name, "ticket", t.ID, logs.RunID, busy.ActiveRunID())
-		return true, fmt.Errorf("ticket busy: run %s", busy.ActiveRunID())
+			"name", a.Name, "ticket", t.ID, logs.RunID, run)
+		return true, fmt.Errorf("ticket busy: run %s", run)
 	}
 	return true, err
+}
+
+// pinnedInWorkshop refuses a pinned ticket the workshop no longer shows: one
+// of another owner, or from a source other than the workshop's ticket
+// source. The pin was checked when the automation was saved, but the
+// workshop's source may have changed since; the slot is spent, not made up.
+func (w *Watcher) pinnedInWorkshop(ctx context.Context, a confstore.Automation, t confstore.Ticket) error {
+	p, err := w.Conf.GetProject(ctx, a.ProjectID)
+	if err != nil {
+		return fmt.Errorf("workshop: %w", err)
+	}
+	if t.UserID != p.UserID {
+		return fmt.Errorf("ticket %s is not the workshop owner's", t.ID)
+	}
+	if t.SourceID != p.TicketSourceID {
+		return fmt.Errorf("ticket %s is from ticket source %s, not the workshop's (%s): pin a ticket of the workshop's source", t.ID, t.SourceID, p.TicketSourceID)
+	}
+	return nil
 }
 
 func (w *Watcher) start(ctx context.Context, a confstore.Automation, t confstore.Ticket) (string, error) {

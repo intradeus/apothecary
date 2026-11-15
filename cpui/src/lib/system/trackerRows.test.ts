@@ -1,69 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { TrackerStatus } from '$lib/domain';
-import {
-	moveRow,
-	namesProblem,
-	NO_STEP,
-	removedRows,
-	statusListProblem,
-	stepOptions
-} from './trackerRows';
+import { moveRow, namesProblem, removedRows } from './trackerRows';
 
 const row = (over: Partial<TrackerStatus>): TrackerStatus => ({
 	id: 's1',
 	integrationId: 'i1',
 	remoteId: '',
 	name: 'To Do',
-	remoteCategory: '',
 	position: 0,
 	isDone: false,
 	...over
-});
-
-describe('stepOptions', () => {
-	const rows = [
-		row({ id: 'a', name: 'To Do', flowStep: 'todo' }),
-		row({ id: 'b', name: 'Doing', flowStep: 'in_progress' }),
-		row({ id: 'c', name: 'Parked' })
-	];
-
-	it('offers every step, then none', () => {
-		expect(stepOptions(rows, 2).map((o) => o.value)).toEqual([
-			'todo',
-			'in_progress',
-			'in_review',
-			'done',
-			'blocked',
-			NO_STEP
-		]);
-	});
-
-	it('disables the steps other rows hold, but not its own', () => {
-		const opts = stepOptions(rows, 0);
-		const disabled = opts.filter((o) => o.disabled).map((o) => o.value);
-		expect(disabled).toEqual(['in_progress']);
-	});
-});
-
-describe('statusListProblem', () => {
-	it('refuses a step held twice', () => {
-		expect(
-			statusListProblem([
-				row({ id: 'a', name: 'A', flowStep: 'done' }),
-				row({ id: 'b', name: 'B', flowStep: 'done' })
-			])
-		).toBe('Only one status can be “done”.');
-	});
-
-	it('accepts a list with each step at most once', () => {
-		expect(
-			statusListProblem([
-				row({ id: 'a', name: 'A', flowStep: 'todo' }),
-				row({ id: 'b', name: 'B' }),
-				row({ id: 'c', name: 'C' })
-			])
-		).toBe('');
-	});
 });
 
 describe('namesProblem', () => {

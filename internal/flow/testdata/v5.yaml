@@ -13,7 +13,8 @@ parameters:
   max_total_turns: 300
   verify: { type: string, default: verify, description: "the project command that runs the tests" }
   review_model: { type: string, default: fake/other, description: "the reviewer's model" }
-  ticket_status: { type: string, default: done, enum: [done, in_review], description: "where the tracker issue goes once the merge request merges" }
+  in_progress_status: { type: string, default: In Progress, description: "the tracker status the ticket moves to as the run starts" }
+  ticket_status: { type: string, default: Done, description: "where the tracker issue goes once the merge request merges" }
 agents:
   - name: planner
     description: explores the repository and writes the implementation plan
@@ -222,10 +223,10 @@ agents:
 
 main:
   # A tracker action needs no workspace: the issue moves seconds in. `to` is
-  # a flow step the ticket's tracker puts on one of its statuses — the
-  # remote issue's, or the internal tracker's for a ticket with no source;
-  # a step no status holds skips the stage.
-  - { id: in_progress, type: action, action: ticket_transition, with: { to: in_progress },
+  # the tracker's own status name — the remote issue's, or the internal
+  # tracker's for a ticket with no source — here read from a parameter the
+  # workshop may rebind.
+  - { id: in_progress, type: action, action: ticket_transition, with: { to: $in_progress_status },
       on_fail: { to: plan, max: 1 } }
   # Every port says where it comes from or goes: the ticket from the run, the
   # plan to the path the rest of the flow reads it from.
@@ -300,9 +301,8 @@ main:
       on_success: push,
       on_reject: abort }
   - { id: mr,         type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }
-  # `status` is the tracker's own word, verbatim — for a column no canonical
-  # status covers.
-  - { id: in_review,  type: action, action: ticket_transition, with: { status: "In Review" },
+  # `to` may also be written in the flow: the tracker's own word, verbatim.
+  - { id: in_review,  type: action, action: ticket_transition, with: { to: "In Review" },
       on_fail: { to: final_gate, max: 1 } }
   # A gate with an explicit on_reject, because a rejection with nowhere to go
   # abandons the run. (`type: wait` is covered by
@@ -310,7 +310,7 @@ main:
   # this fixture's end-to-end walk wait on a signal that must not fire.)
   - { id: final_gate, type: human_gate, question: "Merge when satisfied.", input: { mr: { from: run.mr.url, type: link } },
       on_reject: abort }
-  # Where the issue goes once merged is the project's call: an enum parameter
-  # read at an enum setting (its values within the setting's).
+  # Where the issue goes once merged is the workshop's call: a string
+  # parameter read at a text setting.
   - { id: ticket_done, type: action, action: ticket_transition, with: { to: $ticket_status },
       on_fail: done }

@@ -66,8 +66,8 @@ main:
 	}
 }
 
-// Only a model or a harness may wait for a value: anywhere else a parameter
-// is read it needs one now.
+// Only a model, a harness or a ticket status may wait for a value: anywhere
+// else a parameter is read it needs one now.
 func TestUnboundElsewhereIsRefused(t *testing.T) {
 	doc := unboundHead + `parameters:
   harness: fake

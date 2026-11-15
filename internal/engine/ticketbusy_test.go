@@ -52,7 +52,7 @@ func TestConcurrentStartsOnOneTicketCreateOneRun(t *testing.T) {
 	}
 	for _, err := range errs {
 		var busy workitem.ErrBusy
-		if !errors.As(err, &busy) || busy.RunID != ids[0] || busy.Item != ticket.Ref(testProject, "tk-race") {
+		if !errors.As(err, &busy) || busy.RunID != ids[0] || busy.Item != ticket.Ref("tk-race") {
 			t.Errorf("refusal = %v, want ErrBusy naming %s", err, ids[0])
 		}
 	}
@@ -115,6 +115,36 @@ func TestTicketBusyRule(t *testing.T) {
 	})
 }
 
+// A ticket is one item across workshops: an active run on it in workshop A
+// refuses a run on it in workshop B, naming A's run; once A's run ended, B
+// starts.
+func TestTicketBusySpansWorkshops(t *testing.T) {
+	ctx := context.Background()
+	const workshopA = "prj-a" // testProject is workshop B
+	t.Run("an active run in A refuses a run in B", func(t *testing.T) {
+		h := newHarness(t, mustFlow(t, loopFlowDoc))
+		h.seed(t, "r-a", &event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: workshopA, TicketID: "tk-x"})
+		_, err := h.e.CreateRun(ctx, runinput.Ticket{TicketID: "tk-x", Title: "T"}, "loop", testProject)
+		var busy workitem.ErrBusy
+		if !errors.As(err, &busy) || busy.RunID != "r-a" || busy.Item != ticket.Ref("tk-x") {
+			t.Fatalf("CreateRun in B = %v, want ErrBusy naming r-a", err)
+		}
+		if v := h.view(t, "r-a"); v.State != run.Pending {
+			t.Errorf("A's run was touched: %s", v.State)
+		}
+	})
+	t.Run("a terminal run in A lets B start", func(t *testing.T) {
+		h := newHarness(t, mustFlow(t, loopFlowDoc))
+		h.seed(t, "r-a", &event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: workshopA, TicketID: "tk-x"},
+			&event.RunAbandoned{StalledAt: "build", Reason: "gave up"})
+		id, err := h.e.CreateRun(ctx, runinput.Ticket{TicketID: "tk-x", Title: "T"}, "loop", testProject)
+		if err != nil {
+			t.Fatalf("B refused after A's run ended: %v", err)
+		}
+		h.e.Wait(id)
+	})
+}
+
 // stubTickets is a TicketReader over a fixed answer.
 type stubTickets struct {
 	t     runinput.Ticket
@@ -123,7 +153,7 @@ type stubTickets struct {
 	err   error
 }
 
-func (s *stubTickets) RunTicket(context.Context, string) (runinput.Ticket, bool, error) {
+func (s *stubTickets) RunTicket(context.Context, string, string) (runinput.Ticket, bool, error) {
 	return s.t, s.found, s.err
 }
 

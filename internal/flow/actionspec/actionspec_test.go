@@ -8,7 +8,6 @@ import (
 
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/ports/repoport"
-	"apothecary/internal/ports/trackerport"
 )
 
 // TestRegistryIntegrity: the registry is compiled-in data the flow parser
@@ -183,26 +182,17 @@ func TestTrackerActions(t *testing.T) {
 			t.Errorf("%s must be usable anywhere in a flow (single=%v subject=%v)", slug, a.Single, a.Subject)
 		}
 	}
+	// One required text setting the workshop may bind: the tracker's own
+	// status name, no built-in vocabulary.
 	tr := Get(TicketTransition)
-	if to := tr.Setting("to"); to == nil || to.Kind != KindEnum || to.Required || !slices.Equal(to.Values, Steps) || to.Default != "" {
-		t.Errorf("ticket_transition.to = %+v, want an optional enum over the flow steps with no default", to)
+	if to := tr.Setting("to"); len(tr.Settings) != 1 || to == nil || to.Kind != KindText || !to.Required || !to.Unbound || len(to.Values) != 0 || to.Default != "" {
+		t.Errorf("ticket_transition settings = %+v, want one required text setting to that may wait for a binding", tr.Settings)
 	}
-	if st := tr.Setting("status"); st == nil || st.Kind != KindText || st.Required {
-		t.Errorf("ticket_transition.status = %+v, want an optional text setting", st)
+	if len(tr.ExactlyOne) != 0 {
+		t.Errorf("ticket_transition.exactly_one = %v, want none", tr.ExactlyOne)
 	}
-	if !slices.Equal(tr.ExactlyOne, []string{"to", "status"}) {
-		t.Errorf("ticket_transition.exactly_one = %v, want to / status", tr.ExactlyOne)
-	}
-	// The registry's steps ARE the port's: a flow's `to` is what every
-	// tracker's status list assigns, in the same order.
-	steps := trackerport.FlowSteps()
-	if len(steps) != len(Steps) {
-		t.Fatalf("steps = %v, ports = %v", Steps, steps)
-	}
-	for i, st := range steps {
-		if string(st) != Steps[i] {
-			t.Errorf("step %d = %q, ports %q", i, Steps[i], st)
-		}
+	if b, _ := json.Marshal(tr); !strings.Contains(string(b), `"unbound":true`) {
+		t.Errorf("ticket_transition json lacks unbound:\n%s", b)
 	}
 	if body := Get(TicketComment).Input("body"); body == nil || body.Type != agentspec.TypeFile || !body.Required || body.DefaultPath == "" {
 		t.Errorf("ticket_comment.body = %+v, want a required file input with a conventional path", body)

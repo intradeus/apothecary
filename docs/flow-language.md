@@ -318,15 +318,20 @@ default — `model: { description: "..." }`, or simply left out of the block
 for `harness` and `model`, which exist regardless. It then has **no value**
 until the project binds it or a run sets it, and the document is still valid:
 it parses, it is saved and edited, the editor shows the parameter as *no
-value yet*. Only a parameter read as a **model** or a **harness** may wait
-like this (anywhere else — a `run_ref`, a timeout — the parser demands a
-value now); run creation refuses while one is unbound, naming it, the stages
-reading it, and where a value comes from (*"model" has no value (read by
-build, review): bind it in Workshop → Flows → Configure, or set it when
-starting the run*), and the project's preflight reports the same under its
+value yet*. Only a parameter read as a **model**, a **harness**, or a
+**ticket status** — a string `ticket_transition` reads as `to: $done_status` —
+may wait like this (anywhere else — a `run_ref`, a timeout — the parser
+demands a value now); run creation refuses while one is unbound, naming it,
+the stages reading it, and where a value comes from (*"model" has no value
+(read by build, review): bind it in Workshop → Flows → Configure, or set it
+when starting the run*; *"done_status" has no value (read by ticket_done)*
+likewise), and the project's preflight reports the same under its
 `parameters` step. This is why no template carries a model: model ids change
 under a document that must not, and a run that pinned yesterday's model
-would fail before its first stage.
+would fail before its first stage. Nor does one carry a tracker's status
+names: `builder` and `hands-on` declare `todo_status`, `in_progress_status`,
+`in_review_status` and `done_status` without defaults, and each workshop binds
+its tracker's words.
 
 **A default that reads another parameter.** `default: $name` makes a
 parameter's value follow another's — `review_model: { type: string, default:
@@ -588,12 +593,12 @@ outcomes:
   - id: merged
     on: mr_merged                      # every merge request merged: the ticket is done, and so is the run
     stages:
-      - { id: ticket_done, type: action, action: ticket_transition, with: { to: done }, on_fail: done }
+      - { id: ticket_done, type: action, action: ticket_transition, with: { to: $done_status }, on_fail: done }
   - id: closed
     on: mr_closed                      # closed unmerged: the ticket goes back, the run is abandoned
     then: abort
     stages:
-      - { id: ticket_back, type: action, action: ticket_transition, with: { to: todo }, on_fail: abort }
+      - { id: ticket_back, type: action, action: ticket_transition, with: { to: $todo_status }, on_fail: abort }
 ```
 
 A team whose work is finished when a reviewer approves — the merge is
@@ -928,14 +933,14 @@ the project must have — a repository (GitLab, GitHub) or a tracker:
 | `reply_review_comments` | repository | `replies` (`review_replies`, required) | — | — | a subject action. Posts one reply per entry of a `review_replies` file — every thread the round loaded has one, minus those a person held back at a gate — resolving where it says so; each reply carries an invisible marker with what it did, so a crash between two posts is reconciled from the repository and nothing is posted twice |
 | `post_review` | repository | `review` (`review_threads`, required) | — | — | a subject action. Posts a `review_threads` file: its notes as a review — one on each line it names, its kind as a leading tag, the summary on top — and its replies in the threads they name, resolving where it says so. A note on a line outside the change joins the summary, quoted with its place, rather than failing the review. Never approves nor requests changes — that stays a person's decision. Every part carries a marker (a note's kind in it), so a retry posts only what is missing, a later poll knows the factory's threads, and a review's notes never count as a reviewer's comments (`mr_review_settled`). An empty review posts nothing. GitHub gets one review; GitLab a discussion per note and a note for the summary |
 | `mr_merge` | repository | — | `method` (`merge` \| `squash` \| `rebase`, default `merge`), `branch` (`keep` \| `delete`, default `keep`) | — | a subject action, needing no workspace. Merges the subject merge request at the newest head the chain knows: the tip it pushed, else the head it began on — a head someone else pushed is not merged. The repository's rules apply: a merge it declines (a draft, checks or approvals missing, the head moved) fails the stage with its reason, for `on_fail`. `rebase` is GitHub's; GitLab merges by the project's merge method (fast-forward for a linear history), so it refuses it. The merge is what the `merged` outcome then sees |
-| `ticket_transition` | `tracker` | — | `to` (`todo` \| `in_progress` \| `in_review` \| `done` \| `blocked`) **or** `status` (text), exactly one | — | moves the ticket on its tracker. `to` names a **flow step**: the tracker's status list, edited on its integration, says which of its statuses holds each step — `done` on "Ready for prod" for a Jira team whose Done is a deploy away, GitHub and GitLab Issues' open/closed, the internal tracker's own list — and a step no status holds **skips** the stage with a note. `status` is the tracker's own status or transition name, verbatim (case-insensitive). Already there: nothing happens. Not reachable from the current status: the stage fails with `input_invalid` naming the statuses that are |
+| `ticket_transition` | `tracker` | — | `to` (text, required) | — | moves the ticket on its tracker to the status `to` names: the tracker's own status or transition name ("In Progress", "Ready for prod", GitHub and GitLab Issues' `closed`, a status of the internal tracker's list), matched case-insensitively — written in the flow, or a string parameter the workshop binds (`to: $done_status`), so one flow fits trackers whose words differ. No status name is built in. Already there: nothing happens. Not reachable from the current status: the stage fails with `input_invalid` naming the statuses that are. A parameter left empty fails with `input_missing`, never a move to nowhere |
 | `ticket_comment` | `tracker` | `body` (`file`, required), `attachments` (`files`) | — | — | attaches each file to the issue and links it where the body names its path (the rest listed after it), then posts the markdown artifact as a comment. On a remote issue the comment ends with a short trailer naming the run, the chain run and the stage — also how a crash between posting and recording is reconciled, so nothing is posted twice; on the internal tracker the comment is keyed by the run and the stage occurrence instead, and shows as apothecary's |
 | `ticket_set_field` | `tracker` | `value` (`file`) — exactly one of `value` / `text` | `field` (text, required); `text` (text); `mode` (`replace` \| `append`, default `replace`) | — | writes one field by its display name (`"Feature flags"`, `labels`). `append` merges comma-separated items into the current value (a union: re-applying changes nothing). A field the tracker has no name for, or cannot write from text, fails the stage with `input_invalid`. The internal tracker has only `labels`; any other field skips the stage with a note |
 | `ticket_link` | `tracker` | — | — | — | attaches every merge request the run opened (the subject's on a subject) to the issue — a remote link on Jira, a comment on GitHub, a link on the ticket on the internal tracker — titled with the branch; an upsert, so a re-entry attaches nothing twice. Needs a merge request: `input_missing` without one, and the validator warns when no `create_mr` precedes it |
-| `ticket_link_branch` | `tracker` | — | — | — | attaches the run's branch to the issue — every checkout's that is on its repository host (the subject's on a subject) — as the host's own page for it, titled with the branch; an upsert, like `ticket_link`. Needs no merge request, only the branch pushed: the primary's (or the subject's) not being on the repository host yet fails with `input_missing`, so it goes after a `push_branch`. This is a link on the issue, not Jira's *Development* panel — that panel lists a branch whose **name** carries the issue key (`feat/proj-123-…`, what an imported ticket's branch is named by default), once the repository host is connected to Jira |
+| `ticket_link_branch` | `tracker` | — | — | — | attaches the run's branch to the issue — every checkout's that is on its repository host (the subject's on a subject) — as the host's own page for it, titled with the branch; an upsert, like `ticket_link`. Needs no merge request, only the branch pushed: the primary's (or the subject's) not being on the repository host yet fails with `input_missing`, so it goes after a `push_branch`. This is a link on the issue, not Jira's *Development* panel — that panel lists a branch whose **name** carries the issue key (`feat/proj-123-…`, what a remote ticket's branch is named by default), once the repository host is connected to Jira |
 
 An action's enum setting may read an enum parameter whose values all sit within
-the setting's (`to: $final_status`); a text setting may read a string parameter.
+the setting's; a text setting may read a string parameter (`to: $done_status`).
 
 **Attachments.** `create_mr` and `ticket_comment` take a `files` directory —
 an agent's screenshots — as `attachments`. Each file is uploaded where the
@@ -954,17 +959,17 @@ uploads nothing.
 
 **Tracker actions** (`ticket_*`) write to the run's **ticket's tracker**,
 resolved from the ticket as it is when the stage runs, not as the run started:
-the remote issue an imported ticket mirrors (Jira, GitHub Issues, GitLab
-Issues), else Apothecary's **internal tracker**, which writes the ticket
-itself — its status, labels, comments and links. Every ticket has one, so one
-flow serves every ticket and nothing is skipped for want of a tracker: a
-ticket written by hand moves through the internal tracker's statuses as an
-imported one moves through Jira's. A stage still completes as **skipped** —
-`stage_completed{skipped, note}` on the timeline, `on_success` followed — on
-a run with no ticket at all, for a flow step no status of the tracker holds,
-and for a write with no meaning there (a field the internal tracker does not
-have, a ticket deleted mid-run). After a successful write to a remote issue
-the ticket is refreshed from it, so its page shows the move at once. Run
+the remote issue the ticket is (Jira, GitHub Issues, GitLab Issues, read live
+from the workshop's ticket source), else Apothecary's **internal tracker**,
+which writes the ticket itself — its status, labels, comments and links. Every
+ticket has one, so one flow serves every ticket and nothing is skipped for want
+of a tracker: a ticket written by hand moves through the internal tracker's
+statuses as a remote one moves through Jira's. A stage still completes as
+**skipped** — `stage_completed{skipped, note}` on the timeline, `on_success`
+followed — on a run with no ticket at all, and for a write with no meaning
+there (a field the internal tracker does not have, a ticket deleted mid-run).
+A write to a remote issue drops Apothecary's cached copy of it, so its page
+reads the move at once. Run
 creation refuses a flow with tracker actions when the ticket's tracker cannot
 write (a read-only adapter, a token without write scopes), naming the stage. A
 tracker that errors at stage time — unreachable, refused — is an outcome
@@ -979,12 +984,15 @@ outcome's move never re-provisions a workspace the reaper took.
 meanings to its tracker — one merges and moves it to done, the other's merge
 request closes and moves it back. So a ticket has at most one run that has not
 ended (pending, provisioning, running, waiting on a person, in review or
-paused): starting another — from the ticket page, a rerun, an automation — is
-refused naming the active run (`409` from the API; the automation records the
-skipped firing). Abort it or let it end first. Runs without a ticket are exempt.
+paused), **across workshops**: a ticket belongs to its source, not to a
+workshop, and every workshop sharing that source sees the same ticket and the
+same lock. Starting another — from the ticket page, a rerun, an automation, in
+this workshop or another — is refused naming the active run (`409` from the
+API; the automation records the skipped firing). Abort it or let it end first.
+Runs without a ticket are exempt.
 
 ```yaml
-- { id: kick,   type: action, action: ticket_transition, with: { to: in_progress },
+- { id: kick,   type: action, action: ticket_transition, with: { to: $in_progress_status },
     on_success: plan, on_fail: { to: plan, max: 1 } }   # best effort: a tracker hiccup never blocks the work
 …
 - { id: mr,     type: action, action: create_mr,
@@ -994,13 +1002,13 @@ skipped firing). Abort it or let it end first. Runs without a ticket are exempt.
     input: { value: { from: artifacts/feature_flags.txt, type: file } },
     with: { field: "Feature flags", mode: append },
     on_success: in_review }
-- { id: in_review,   type: action, action: ticket_transition, with: { to: in_review }, on_fail: end }
+- { id: in_review,   type: action, action: ticket_transition, with: { to: $in_review_status }, on_fail: end }
 …
 # the outcome: once every merge request merged, the ticket moves and the run is done
 - id: merged
   on: mr_merged
   stages:
-    - { id: ticket_done, type: action, action: ticket_transition, with: { status: "Ready for prod" }, on_fail: done }
+    - { id: ticket_done, type: action, action: ticket_transition, with: { to: "Ready for prod" }, on_fail: done }
 ```
 
 `artifacts/feature_flags.txt` is an agent's output like any other — a small
@@ -1008,9 +1016,10 @@ agent that reads the diff for the flags it introduced and writes them,
 comma-separated — and the field name is the author's, written in the flow
 where the graph shows it. "Done once the merge request is accepted" is not a
 hook but an outcome (§1): it fires once the merge request merges, and the move
-is its stage. `status: "Ready for prod"` is the one Jira
-spelling written into this flow; `to: done` with the tracker's status list
-putting the `done` step on that status would keep the flow portable.
+is its stage. `to: "Ready for prod"` is the one Jira spelling written into
+this flow; the other moves read string parameters the workshop binds
+(`in_progress_status: { type: string }`, no default), which keeps the flow
+portable across trackers whose words differ.
 
 **Edges on actions.** `on_success` routes normally. An action may carry
 `on_fail`, taken when its *outcome* is wrong in a way an agent, a retry or a
@@ -1189,20 +1198,20 @@ source (§4):
 
 | condition | holds when |
 |---|---|
-| `run.ticket.tracker` | the run's ticket mirrors a **remote** tracker issue (it was imported) — not a ticket on the internal tracker |
+| `run.ticket.tracker` | the run's ticket comes from a **remote** ticket source (Jira, GitHub Issues, GitLab Issues) — not a ticket on the internal tracker |
 | `run.subject` | this chain run acts on a merge request — its *subject* (§3) |
-| `run.ticket.change_type == fix` | the ticket is that kind of change — `feat`, `fix`, `hotfix`, `perf`, `docs` or `chore`, set on the ticket or read from an imported issue's type through its tracker's type list; `!=` for the opposite |
+| `run.ticket.change_type == fix` | the ticket is that kind of change — `feat`, `fix`, `hotfix`, `perf`, `docs` or `chore`, set on a ticket of the internal tracker, or read from a remote issue's type through its source's type list; `!=` for the opposite |
 | `$name` | a bool parameter is true |
 
 Each but the comparison negates as `not x`; only `run.ticket.change_type`
 compares, and only with `==` or `!=`. When it does not hold, the stage completes as
 **skipped** (`stage_completed{skipped, note}` on the timeline) and `on_success`
-follows, so the chain reads the same whether or not the ticket is imported
+follows, so the chain reads the same whether or not the ticket is remote
 or the knob is on. The validator counts what a conditional stage produces as
 produced only on some routes, and a skipped agent stage never silences the
 model check a later one needs. Tracker actions need no `run_if`: every ticket
-has a tracker, the internal one when it mirrors no remote issue;
-`run_if: run.ticket.tracker` keeps a stage to imported tickets.
+has a tracker, the internal one when it comes from no remote source;
+`run_if: run.ticket.tracker` keeps a stage to remote tickets.
 
 ### Timeouts
 
@@ -1400,7 +1409,7 @@ What the names are checked against follows from the stage type:
 | `artifacts/plan.md` | a path some stage of the flow writes (`to:`); nothing writing it is a parse error | the writer's |
 | `repo:docs/spec.md` | a file of the repository nothing in the flow writes | any file type |
 | `run.ticket` | the run's ticket — title, change type, goal, the person's direction for this attempt, the files attached to it, and its key, status and labels as they are when the prompt is built; an agent reading it gets the `# TASK` section | `ticket` |
-| `run.ticket.comments` | the comments on the run's ticket — the remote issue's, synced, or the internal tracker's — read when the prompt is built, right after the ticket is refreshed from its tracker. Options on the port: `limit`, how many of the latest it shows (1–200, default 20), and `exclude_own` (default `true`), which leaves out what apothecary posted (the internal tracker's run comments, and the remote comments signed with its trailer). An agent reading it gets a `# TICKET DISCUSSION` section; no comment left to show, no section | `ticket_comments` |
+| `run.ticket.comments` | the comments on the run's ticket — the remote issue's, read live from its tracker, or the internal tracker's — read when the prompt is built. Options on the port: `limit`, how many of the latest it shows (1–200, default 20), and `exclude_own` (default `true`), which leaves out what apothecary posted (the internal tracker's run comments, and the remote comments signed with its trailer). An agent reading it gets a `# TICKET DISCUSSION` section; no comment left to show, no section | `ticket_comments` |
 | `run.ping_answers` | what the task's owner answered while the run went on, read from the run's log when the prompt is built: every question an agent asked (`ask_human`), and a gate, a `debug` leaf or a `manual` stage when the person wrote feedback or review comments there (a bare approve says nothing; a phase confirmation never counts). Oldest first, each under the stage that asked and when, the question and the answer quoted; capped at 32 KiB, the oldest dropped first. An agent reading it gets a `# PING ANSWERS` section that presents the answers as the owner's direction, amending the plan where they differ; nothing answered yet, it says so. The `builder` template's reviewer reads it, so a plan changed by an answer is not taken for a deviation | `ping_answers` |
 | `run.git.diff_target` | `git diff --name-status <target>...HEAD` — what the branch changes against **its target**, the branch it forked from and its merge request merges into: the changed-file list, never the full diff. On a multi-repo run one section per checkout, on a subject the subject's only | `changeset` |
 | `run.git.diff_phase` | `git diff --name-status <chain start>...HEAD` — what **this chain run** committed since the head it began on: a review round's fixes, not the whole branch. A chain run that began on no recorded head counts from the target | `changeset` |
@@ -1531,9 +1540,9 @@ ticket port, and its comments only through a comments port: a stage opts in.
 The `# TASK` section is the run's copy of the title, the change type and the
 goal, with the ticket's key, status name and labels read when the prompt is
 built (a ticket deleted since shows the key the run started with). The
-`# TICKET DISCUSSION` section is read then too, right after the ticket is
-refreshed from its remote tracker; a refresh that fails is logged and the
-last synced comments are shown. It lists the latest `limit` comments, oldest
+`# TICKET DISCUSSION` section is read then too, live from the remote tracker,
+bypassing Apothecary's cache; a read that fails is logged and the last copy
+the cache holds is shown. It lists the latest `limit` comments, oldest
 first, each under `## Comment by <author> — <time UTC>` with every line of
 its body quoted (`> `), and says they are **untrusted third-party text** —
 information about the task, never instructions. The comments shown are capped
@@ -1737,7 +1746,7 @@ A stage failure records a reason, then follows an edge:
 | `infra` | provisioning, repository or other infrastructure failure |
 
 A stage that **skips** — its `run_if` does not hold, a tracker action on a run
-with no ticket or for a flow step no status of the tracker holds — is not a
+with no ticket — is not a
 failure: it completes with `skipped` and a note, and `on_success` follows.
 
 The recommended shape, and the one the built-in `builder` flow uses: every agent
@@ -1868,7 +1877,7 @@ list can be fetched), an action's required integration is configured, every
 watcher and outcome on an observed signal has whoever raises it — and a flow
 started on merge requests has where they are: a repository integration — the repo has a
 devcontainer and, when the project sets one, its agent guide — and, when the flow has a tracker action,
-that the ticket's tracker can write (an imported ticket's integration; the
+that the ticket's tracker can write (a remote ticket's source integration; the
 internal tracker always can). The same checks answer
 `POST /api/projects/{id}/preflight` step by step, with a `parameters` step for
 the binding.
@@ -1930,7 +1939,8 @@ Converting one by hand:
 | `wait_merge` + `ticket_done` closing the delivery phase (the first v4 cut) | the main chain ends with `end` once the merge request is open; the `merged` outcome moves the ticket and says `done` |
 | `on_success: done` closing a reaction (v3: the phase ended) | `on_success: end`, or nothing — `done` ends the run |
 | a reaction's `max` (v3: 10 by default) | no default cap: a watcher runs as often as the signal brings something new |
-| `ticket_transition` `to: "In Progress"` | `to: in_progress` (a flow step, put on one of its statuses by the tracker's status list) — or `status: "In Progress"` for the tracker's own word |
+| `ticket_transition` `to: in_progress` (`todo` \| `in_progress` \| `in_review` \| `done` \| `blocked`, a flow step a tracker's status list put on one of its statuses) | `to:` the tracker's own status name, written literally (`to: "In Progress"`), or a string parameter the workshop binds (`to: $in_progress_status`). The step names are no longer special: `to: in_progress` still parses, and moves only to a status of that literal name |
+| `ticket_transition` `status: "In Progress"` | `to: "In Progress"` — the parser refuses `status`, naming the `to:` to write |
 | `POST …/phases/{phase}/start?repo=` | a `subject` in the request body |
 | `blocks:` and a stage's `include:` (v4, early v5) | `sequences:` and a stage's `sequence:` — the same chains under one word |
 | a watcher's or an outcome's `run: X` (early v5) | `sequence: X` — `run:` is a command's script |
@@ -1958,7 +1968,7 @@ Older spellings the parser still answers by name rather than with a bare
 
 The built-in `builder` flow, abridged — plan-gated build with cross-vendor
 adversarial review, the debug leaf as every stage's rescue, the ticket's
-tracker following the work through flow steps, and the merge
+tracker following the work through statuses the workshop binds, and the merge
 request's life after it opens. Full text: `internal/flow/builtin/flows/builder.yaml`.
 
 ```yaml
@@ -1978,6 +1988,12 @@ parameters:
   plan_gate:       { default: true, description: "stop for a human to approve the plan before building" }
   conflicts_start: { default: confirm, enum: [auto, confirm, manual] }
   review_start:    { default: auto,    enum: [auto, confirm, manual] }
+  # No default: each workshop names its tracker's status for each move, and
+  # a run waits until all four are bound.
+  todo_status:        { type: string }
+  in_progress_status: { type: string }
+  in_review_status:   { type: string }
+  done_status:        { type: string }
 
 # The agents this flow runs, abridged to two. Their contracts — what each
 # reads and writes, typed, never where — are what the stages below state as
@@ -2013,7 +2029,7 @@ main:
   # The issue moves first — before any workspace exists; the move needs
   # none, so it lands seconds in. A tracker hiccup routes straight on to
   # the plan: bookkeeping never blocks the work.
-  - { id: in_progress, type: action, action: ticket_transition, with: { to: in_progress },
+  - { id: in_progress, type: action, action: ticket_transition, with: { to: $in_progress_status },
       on_success: plan,
       on_fail: { to: plan, max: 1 } }
 
@@ -2100,7 +2116,7 @@ main:
   # Best effort again — a failure ends the chain like a success would.
   # Then the main chain ENDS: the run is in review, the watchers below keep
   # the merge request healthy, and the outcomes at the bottom end the run.
-  - { id: in_review, type: action, action: ticket_transition, with: { to: in_review },
+  - { id: in_review, type: action, action: ticket_transition, with: { to: $in_review_status },
       on_fail: end }
 
 watchers:
@@ -2149,12 +2165,12 @@ outcomes:
   - id: merged
     on: mr_merged
     stages:
-      - { id: ticket_done, type: action, action: ticket_transition, with: { to: done }, on_fail: done }
+      - { id: ticket_done, type: action, action: ticket_transition, with: { to: $done_status }, on_fail: done }
   - id: closed
     on: mr_closed
     then: abort
     stages:
-      - { id: ticket_back, type: action, action: ticket_transition, with: { to: todo }, on_fail: abort }
+      - { id: ticket_back, type: action, action: ticket_transition, with: { to: $todo_status }, on_fail: abort }
 ```
 
 ## §9 Agent-side interactions (ask_human)

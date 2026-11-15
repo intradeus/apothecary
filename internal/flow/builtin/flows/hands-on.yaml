@@ -45,6 +45,10 @@ parameters:
   ci_start:        { type: string, default: confirm, enum: [auto, confirm, manual], description: "how a CI fix begins once a check fails on the merge request" }
   mr_labels:       { type: string, list: true, default: [apothecary], description: "labels the merge request gets once it is open" }
   ai_review:       { type: bool, default: true, description: "an AI reviews what you built before the merge request opens; a rejection comes back to you with its comments" }
+  todo_status:        { type: string, description: "the tracker status a ticket goes back to when its run is abandoned" }
+  in_progress_status: { type: string, description: "the tracker status the ticket moves to as the run starts" }
+  in_review_status:   { type: string, description: "the tracker status the ticket moves to once the merge request is open" }
+  done_status:        { type: string, description: "the tracker status the ticket moves to once the merge request merges" }
 ask: { harness: $harness }  # a read-only Ask pane beside every run, on the flow's harness
 agents:
   - name: committer
@@ -197,7 +201,7 @@ main:
   - id: in_progress
     type: action
     action: ticket_transition
-    with: { to: in_progress }
+    with: { to: $in_progress_status }
     description: "move the ticket to its tracker's in-progress status"
     on_success: build
     on_fail: { to: build, max: 1 }
@@ -299,7 +303,7 @@ main:
   - id: in_review
     type: action
     action: ticket_transition
-    with: { to: in_review }
+    with: { to: $in_review_status }
     description: "move the ticket to its tracker's in-review status"
     on_fail: end
 
@@ -493,7 +497,7 @@ outcomes:
       - id: ticket_done
         type: action
         action: ticket_transition
-        with: { to: done }
+        with: { to: $done_status }
         description: "move the ticket to its tracker's done status"
         on_fail: done
 
@@ -505,6 +509,6 @@ outcomes:
       - id: ticket_back
         type: action
         action: ticket_transition
-        with: { to: todo }
+        with: { to: $todo_status }
         description: "move the ticket back to its tracker's to-do status"
         on_fail: abort

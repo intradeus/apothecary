@@ -6,17 +6,25 @@ version: 5
 # schema coverage: abort terminals, then-chains, on_timeout, unlimited links,
 # a gate whose rejection loops back into the build (which binds $DECISION for
 # it), signals answering a gate both ways, and the ticket's tracker issue
-# moved in canonical statuses (in_progress as the run starts, done once the
-# merge request merges) — moves that skip on a ticket without a tracker.
+# moved through the tracker's own statuses (one as the run starts, another
+# once the merge request merges) — moves that skip on a ticket without a
+# tracker.
 description: expanded-form reference flow (editor output shape)
-# model has no default on purpose: the project binds it (Workshop → Flows →
-# Configure), a run may override it, and every agent stage reads it as $model.
+# model and the ticket statuses have no default on purpose: the workshop binds
+# them (Workshop → Flows → Configure), a run may override them, and the stages
+# read them as $model and $<step>_status.
 parameters:
   timeout: 30m
   harness: opencode
   max_turns: 50
   max_cost_usd: 10
   max_total_turns: 300
+  in_progress_status:
+    type: string
+    description: the tracker status the ticket moves to as the run starts
+  done_status:
+    type: string
+    description: the tracker status the ticket moves to once the merge request merges
 agents:
   - name: planner
     description: explores the repository and writes the implementation plan
@@ -233,7 +241,7 @@ main:
     type: action
     action: ticket_transition
     with:
-      to: in_progress
+      to: $in_progress_status
     on_success: plan
     on_fail:
       to: plan
@@ -440,6 +448,6 @@ main:
     type: action
     action: ticket_transition
     with:
-      to: done
+      to: $done_status
     on_success: done
     on_fail: done

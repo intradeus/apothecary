@@ -9,7 +9,14 @@
 	import { onMount, untrack } from 'svelte';
 	import { replaceState } from '$app/navigation';
 	import { api } from '$lib/api';
-	import type { ExtraRepo, Flow, Integration, Project, ProjectDraft } from '$lib/domain';
+	import {
+		INTERNAL_TRACKER,
+		type ExtraRepo,
+		type Flow,
+		type Integration,
+		type Project,
+		type ProjectDraft
+	} from '$lib/domain';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import SideNav from '$lib/ui/SideNav.svelte';
@@ -25,6 +32,7 @@
 	import { t } from '$lib/i18n/index.svelte';
 	import RepositorySection from './form/RepositorySection.svelte';
 	import WorkshopSection from './form/WorkshopSection.svelte';
+	import TicketSourceSection from './form/TicketSourceSection.svelte';
 	import ExecutionSection from './form/ExecutionSection.svelte';
 	import WorkspaceSection from './form/WorkspaceSection.svelte';
 	import ServicesSection from './form/ServicesSection.svelte';
@@ -55,6 +63,7 @@
 	const repoAccounts = byPort('repository');
 	const provisioners = byPort('provisioner');
 	const harnesses = byPort('harness');
+	const ticketSources = byPort('ticketsource');
 	const flowNames = initFlows.map((f) => f.name);
 	const ownFlows = initFlows.filter((f) => !f.builtin);
 	const templateFlows = initFlows.filter((f) => f.builtin);
@@ -62,6 +71,10 @@
 	let name = $state(init?.name ?? '');
 	let repoAccountId = $state(init?.repoAccountId ?? repoAccounts[0]?.id ?? '');
 	let provisionerId = $state(init?.provisionerId ?? provisioners[0]?.id ?? '');
+	// '' on create is the built-in tracker: the engine makes it on first use.
+	let ticketSourceId = $state(
+		init?.ticketSourceId ?? ticketSources.find((i) => i.kind === INTERNAL_TRACKER)?.id ?? ''
+	);
 	// The workshop's SET of available harness integrations — no default. The
 	// FLOW names the harness kind (defaults.harness / a stage override); the
 	// workshop just needs an integration of that kind (for auth + image
@@ -204,6 +217,7 @@
 			name: name.trim(),
 			repoAccountId,
 			provisionerId,
+			ticketSourceId,
 			harnessIds: harnessSet(),
 			repo: {
 				url: repoURL.trim(),
@@ -379,7 +393,9 @@
 			bind:name
 			bind:defaultFlow
 			bind:commandRows
-		/>
+		>
+			<TicketSourceSection sources={ticketSources} bind:ticketSourceId />
+		</WorkshopSection>
 		<ExecutionSection {provisioners} {harnesses} bind:provisionerId bind:harnessIds />
 		<WorkspaceSection
 			{blockedDomains}

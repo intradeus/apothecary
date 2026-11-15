@@ -17,7 +17,7 @@
 	const project = $derived(run.projectId ? fleet.projectById.get(run.projectId) : undefined);
 	const sid = $derived(shortId(run.id));
 	const [plain, accent] = $derived(accentSplit(run.title));
-	const ticketKey = $derived(rs.ticket?.source?.key);
+	const ticketKey = $derived(rs.ticket?.ticket.sourceKey || run.ticketKey);
 	const crumbs = $derived<Crumb[]>([
 		{ label: t('nav.desk'), href: to.desk() },
 		...(run.projectId
@@ -52,8 +52,8 @@
 		<Breadcrumbs {crumbs} />
 		{#if run.ticketId}
 			<span class="dot-sep">·</span>
-			<a class="link" href={to.ticket(run.ticketId)} title={rs.ticket?.title}
-				>{ticketKey ?? t('run.header.ticket')} {I.external}</a
+			<a class="link" href={rs.ticketHref} title={rs.ticket?.ticket.title}
+				>{ticketKey || t('run.header.ticket')} {I.external}</a
 			>
 		{/if}
 		{#if run.adopted && run.projectId && !run.ticketId}

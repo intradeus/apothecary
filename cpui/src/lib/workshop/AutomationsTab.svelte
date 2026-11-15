@@ -12,9 +12,8 @@
 		AutomationKind,
 		Integration,
 		Project,
-		Ticket
+		TicketRow
 	} from '$lib/domain';
-	import { INTERNAL_TRACKER } from '$lib/domain';
 	import { ago, fmtAbs } from '$lib/core/format';
 	import FlowSelect from '$lib/flow/FlowSelect.svelte';
 	import StartRunOptions from '$lib/run/StartRunOptions.svelte';
@@ -29,12 +28,10 @@
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { I } from '$lib/design/icons';
+	import { ticketSourceLabel } from './form/TicketSourceSection.svelte';
 
-	let {
-		project,
-		tickets,
-		integrations
-	}: { project: Project; tickets: Ticket[] | null; integrations: Integration[] | null } = $props();
+	let { project, integrations }: { project: Project; integrations: Integration[] | null } =
+		$props();
 
 	let rows = $state<Automation[] | null>(null);
 	let error = $state('');
@@ -51,12 +48,23 @@
 		void load();
 	});
 
-	// The internal tracker has nothing to import: it is where tickets written here live.
-	const sources = $derived(
-		(integrations ?? []).filter((i) => i.port === 'ticketsource' && i.kind !== INTERNAL_TRACKER)
+	// A cron fires one ticket: one with a record, read from the workshop's
+	// source (best effort — without them the picker says there are none).
+	let tickets = $state<TicketRow[] | null>(null);
+	$effect(() => {
+		const id = project.id;
+		api.projects.tickets(id, { done: 'any', limit: 100 }).then(
+			(page) => (tickets = page.tickets.filter((tk) => tk.ticketId)),
+			() => (tickets = [])
+		);
+	});
+
+	// A tracker query polls the workshop's own source.
+	const source = $derived((integrations ?? []).find((i) => i.id === project.ticketSourceId));
+	const sourceName = $derived(
+		source ? ticketSourceLabel(source) : t('workshop.automations.theSource')
 	);
-	const ticketTitle = (id: string) => (tickets ?? []).find((tk) => tk.id === id)?.title ?? id;
-	const sourceName = (id: string) => sources.find((s) => s.id === id)?.name ?? id;
+	const ticketTitle = (id: string) => (tickets ?? []).find((tk) => tk.ticketId === id)?.title ?? id;
 	const kindLabel = (k: AutomationKind) =>
 		k === 'cron'
 			? t('workshop.automations.kindCron')
@@ -76,12 +84,9 @@
 	const repoOptions = $derived<SelectOption[]>(
 		repoNames.map((r) => ({ value: r, label: repoLabel(r) }))
 	);
-	const sourceOptions = $derived<SelectOption[]>(
-		sources.map((s) => ({ value: s.id, label: `${s.name} · ${s.kind}` }))
-	);
 	const ticketOptions = $derived<SelectOption[]>([
 		{ value: '', label: '—' },
-		...(tickets ?? []).map((tk) => ({ value: tk.id, label: tk.title }))
+		...(tickets ?? []).map((tk) => ({ value: tk.ticketId, label: `${tk.key} · ${tk.title}` }))
 	]);
 
 	// --- the form ---
@@ -100,7 +105,6 @@
 	function startNew() {
 		editing = null;
 		draft = blank();
-		draft.sourceId = sources[0]?.id;
 		flowPick = '';
 		params = {};
 		formError = '';
@@ -111,7 +115,6 @@
 		draft = {
 			name: a.name,
 			kind: a.kind,
-			sourceId: a.sourceId,
 			query: a.query,
 			schedule: a.schedule,
 			ticketId: a.ticketId,
@@ -128,7 +131,6 @@
 		return {
 			name: a.name,
 			kind: a.kind,
-			sourceId: a.sourceId,
 			query: a.query,
 			schedule: a.schedule,
 			ticketId: a.ticketId,
@@ -145,10 +147,7 @@
 		formError = '';
 		const d: AutomationDraft = { ...draft, flow: flowName, params };
 		// Only what the kind takes travels.
-		if (d.kind !== 'tracker_query') {
-			d.sourceId = undefined;
-			d.query = undefined;
-		}
+		if (d.kind !== 'tracker_query') d.query = undefined;
 		if (d.kind !== 'cron') {
 			d.schedule = undefined;
 			d.ticketId = undefined;
@@ -243,7 +242,7 @@
 						{:else if a.kind === 'merge_request'}
 							{t('workshop.automations.mrSummary', { repo: repoLabel(a.repo ?? '') })}
 						{:else}
-							{sourceName(a.sourceId ?? '')}{a.query ? ` · ${a.query}` : ''}
+							{sourceName}{a.query ? ` · ${a.query}` : ''}
 						{/if}
 					</span>
 					<span class="small">
@@ -309,18 +308,12 @@
 			</div>
 			{#if draft.kind === 'tracker_query'}
 				<div class="field">
-					<label for="au-source">{t('workshop.automations.source')}</label>
-					{#if sources.length}
-						<Select id="au-source" options={sourceOptions} bind:value={draft.sourceId} />
-					{:else}
-						<div class="help hue-warning">{t('workshop.automations.noSources')}</div>
-					{/if}
-					<span class="help">{t('workshop.automations.sourceHelp')}</span>
-				</div>
-				<div class="field">
 					<label for="au-query">{t('workshop.automations.query')}</label>
 					<input id="au-query" class="mono" bind:value={draft.query} />
-					<span class="help">{t('workshop.automations.queryHelp')}</span>
+					<span class="help"
+						>{t('workshop.automations.polls', { source: sourceName })}
+						{t('workshop.automations.queryHelp')}</span
+					>
 				</div>
 			{:else if draft.kind === 'merge_request'}
 				<div class="field">

@@ -1084,7 +1084,7 @@ func TestIssuesSearchFailuresAndScope(t *testing.T) {
 	defer ts.Close()
 
 	for _, limit := range []int{0, -1, 101} {
-		if _, err := issuesFor(ts, "lu/a").Search(ctx, "  ", limit); err != nil {
+		if _, err := issuesFor(ts, "lu/a").Search(ctx, trackerport.SearchQuery{Text: "  ", Done: trackerport.DoneOpen, Limit: limit}); err != nil {
 			t.Fatal(err)
 		}
 		if perPage != "25" {
@@ -1096,16 +1096,16 @@ func TestIssuesSearchFailuresAndScope(t *testing.T) {
 	}
 
 	// A key that fetches nothing is still text to search for.
-	got, err := issuesFor(ts, "lu/a").Search(ctx, "#404", 10)
-	if err != nil || len(got) != 1 || perPage != "10" || q != "is:issue repo:lu/a #404" {
-		t.Fatalf("got %+v, %v, q %q per_page %s", got, err, q, perPage)
+	page, err := issuesFor(ts, "lu/a").Search(ctx, trackerport.SearchQuery{Text: "#404", Limit: 10})
+	if err != nil || len(page.Tickets) != 1 || perPage != "10" || q != "is:issue repo:lu/a #404" {
+		t.Fatalf("got %+v, %v, q %q per_page %s", page, err, q, perPage)
 	}
-	if got[0].Key != "#9" || !got[0].Updated.IsZero() || got[0].Assignee != "" {
-		t.Errorf("sparse issue = %+v", got[0])
+	if got := page.Tickets[0]; got.Key != "#9" || !got.Updated.IsZero() || got.Assignee != "" {
+		t.Errorf("sparse issue = %+v", got)
 	}
 
 	down := answer(t, map[string]reply{"GET /search/issues": {status: 422, body: `{"message":"Validation Failed"}`}})
-	if got, err := issuesFor(down).Search(ctx, "x", 5); err == nil || got != nil {
+	if got, err := issuesFor(down).Search(ctx, trackerport.SearchQuery{Text: "x", Limit: 5}); err == nil || got.Tickets != nil {
 		t.Errorf("failure = %+v, %v", got, err)
 	}
 }

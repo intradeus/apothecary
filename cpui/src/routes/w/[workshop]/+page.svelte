@@ -48,10 +48,6 @@
 	let project = $state<Project | null>(null);
 	let integrations = $state<Integration[] | null>(null);
 	let flows = $state<Flow[] | null>(null);
-	// The workshop's tickets, from the shared fleet poll (null until it lands).
-	const tickets = $derived(
-		fleet.updatedAt === null ? null : fleet.tickets.filter((tk) => tk.projectId === projectId)
-	);
 	let error = $state('');
 	let flowsError = $state('');
 
@@ -91,7 +87,6 @@
 
 	const counts = $derived<Partial<Record<WorkshopTab, number | undefined>>>({
 		runs: live.length || undefined,
-		tickets: tickets?.length,
 		flows: flows ? ownFlows.length : undefined
 	});
 	const LABELS: Record<WorkshopTab, string> = $derived({
@@ -232,15 +227,15 @@
 			{#if tab === 'overview'}
 				<OverviewTab {project} {integrations} {flows} {runs} />
 			{:else if tab === 'runs'}
-				<RunsTab {project} {runs} />
+				<RunsTab {project} {runs} {integrations} />
 			{:else if tab === 'tickets'}
-				<TicketsTab {project} {tickets} error={fleet.error} onretry={() => void fleet.refresh()} />
+				<TicketsTab {project} {integrations} />
 			{:else if tab === 'mrs'}
 				<MergeRequestsTab {project} {flows} />
 			{:else if tab === 'flows'}
 				<FlowsTab {project} {flows} error={flowsError} onreload={loadFlows} />
 			{:else if tab === 'automations'}
-				<AutomationsTab {project} {tickets} {integrations} />
+				<AutomationsTab {project} {integrations} />
 			{:else if tab === 'health'}
 				<HealthTab {project} />
 			{/if}

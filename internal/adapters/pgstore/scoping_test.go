@@ -3,10 +3,12 @@ package pgstore
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/run/event"
 )
@@ -23,7 +25,7 @@ func seedIntegration(t *testing.T, s *Store, id, user string) {
 
 func mkProject(id, name, user, integ string) confstore.Project {
 	return confstore.Project{ID: id, UserID: user, Name: name, RepoAccountID: integ, ProvisionerID: integ,
-		DefaultFlow: "builder", CreatedAt: testNow, UpdatedAt: testNow}
+		TicketSourceID: integ, DefaultFlow: "builder", CreatedAt: testNow, UpdatedAt: testNow}
 }
 
 func seedProject(t *testing.T, s *Store, p confstore.Project) {
@@ -87,13 +89,13 @@ func TestDeleteIntegrationRefusesEveryKindOfReference(t *testing.T) {
 	if err := s.DeleteIntegration(ctx, "ghost"); !errors.Is(err, confstore.ErrNotFound) {
 		t.Fatalf("missing = %v", err)
 	}
-	for _, id := range []string{"repo", "prov", "harn", "free"} {
+	for _, id := range []string{"repo", "prov", "harn", "src", "free"} {
 		seedIntegration(t, s, id, "u1")
 	}
 	p := mkProject("p1", "web", "u1", "repo")
-	p.ProvisionerID, p.HarnessIDs = "prov", []string{"harn"}
+	p.ProvisionerID, p.HarnessIDs, p.TicketSourceID = "prov", []string{"harn"}, "src"
 	seedProject(t, s, p)
-	for _, id := range []string{"repo", "prov", "harn"} {
+	for _, id := range []string{"repo", "prov", "harn", "src"} {
 		if err := s.DeleteIntegration(ctx, id); !errors.Is(err, confstore.ErrReferenced) || !strings.Contains(err.Error(), "web") {
 			t.Errorf("delete %s = %v, want ErrReferenced naming the project", id, err)
 		}
@@ -188,54 +190,156 @@ func TestProjectCannotBorrowAnotherProjectsFlow(t *testing.T) {
 	}
 }
 
+// A ticket belongs to its source, not to a workshop: one record per
+// (source, remote id) across owners, found by remote id, its last-seen
+// columns rewritten in place.
 func TestTicketsScopeAndLifecycle(t *testing.T) {
 	s := openConf(t)
 	ctx := context.Background()
 	seedIntegration(t, s, "i1", "u1")
 	seedIntegration(t, s, "i2", "u2")
-	seedProject(t, s, mkProject("p1", "a", "u1", "i1"))
-	seedProject(t, s, mkProject("p2", "b", "u2", "i2"))
 
 	if _, err := s.GetTicket(ctx, "nope"); !errors.Is(err, confstore.ErrNotFound) {
 		t.Errorf("missing = %v", err)
 	}
-	// One issue is one ticket per owner and tracker: each ticket mirrors its own.
-	mk := func(id, proj, user string, at time.Time) confstore.Ticket {
-		return confstore.Ticket{ID: id, ProjectID: proj, UserID: user, Title: "T " + id, Goal: "g", BaseBranch: "b",
-			SourceID: "src", SourceKind: "jira", SourceKey: "K-" + id, SourceURL: "https://t.local/K-" + id, CreatedAt: at, UpdatedAt: at}
+	mk := func(id, user, remote string, at time.Time) confstore.Ticket {
+		return confstore.Ticket{ID: id, UserID: user, Title: "T " + id, Goal: "g", BaseBranch: "b",
+			SourceID: "src", SourceKind: "jira", SourceKey: "K-" + id, SourceURL: "https://t.local/K-" + id, RemoteID: remote,
+			CreatedAt: at, UpdatedAt: at}
 	}
-	for _, tk := range []confstore.Ticket{mk("t1", "p1", "u1", testNow), mk("t2", "p1", "u1", testNow.Add(time.Hour)), mk("t3", "p2", "u2", testNow)} {
+	for _, tk := range []confstore.Ticket{mk("t1", "u1", "100", testNow), mk("t2", "u1", "200", testNow.Add(time.Hour)), mk("t3", "u2", "300", testNow)} {
 		if err := s.UpsertTicket(ctx, tk); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.UpsertTicket(ctx, mk("t4", "ghost", "u1", testNow)); !errors.Is(err, confstore.ErrInvalid) {
-		t.Errorf("ticket of a missing project = %v", err)
+	// The same issue is one record, whoever records it second.
+	if err := s.UpsertTicket(ctx, mk("t4", "u2", "100", testNow)); !errors.Is(err, confstore.ErrConflict) {
+		t.Errorf("second record of an issue = %v, want ErrConflict", err)
+	}
+	bad := mk("t5", "u1", "500", testNow)
+	bad.StatusID = "ghost"
+	if err := s.UpsertTicket(ctx, bad); !errors.Is(err, confstore.ErrInvalid) {
+		t.Errorf("ticket on a missing status = %v, want ErrInvalid", err)
 	}
 	got, err := s.GetTicket(ctx, "t1")
-	if err != nil || got.SourceKey != "K-t1" || got.SourceKind != "jira" || got.BaseBranch != "b" || got.Goal != "g" {
+	if err != nil || got.SourceKey != "K-t1" || got.SourceKind != "jira" || got.BaseBranch != "b" || got.Goal != "g" || got.RemoteID != "100" {
 		t.Fatalf("roundtrip = %+v, %v", got, err)
 	}
-	mine, err := s.ListTickets(ctx, "u1")
-	if err != nil || len(mine) != 2 || mine[0].ID != "t2" || mine[1].ID != "t1" {
-		t.Errorf("u1's tickets (newest first) = %+v, %v", mine, err)
+	if got, err := s.GetTicketByRemote(ctx, "src", "200"); err != nil || got.ID != "t2" {
+		t.Errorf("by remote = %+v, %v", got, err)
 	}
-	if all, _ := s.ListTickets(ctx, ""); len(all) != 3 {
-		t.Errorf("all = %d", len(all))
+	if _, err := s.GetTicketByRemote(ctx, "other", "200"); !errors.Is(err, confstore.ErrNotFound) {
+		t.Errorf("by remote on another source = %v", err)
 	}
-	// A ticket moved between projects follows the new project's owner.
-	moved := mk("t1", "p2", "u2", testNow)
-	if err := s.UpsertTicket(ctx, moved); err != nil {
+	page, err := s.ListTicketsByRemote(ctx, "src", []string{"100", "300", "999"})
+	ids := []string{}
+	for _, tk := range page {
+		ids = append(ids, tk.ID)
+	}
+	slices.Sort(ids)
+	if err != nil || !slices.Equal(ids, []string{"t1", "t3"}) {
+		t.Errorf("by remote ids = %v, %v", ids, err)
+	}
+	if none, err := s.ListTicketsByRemote(ctx, "src", nil); err != nil || len(none) != 0 {
+		t.Errorf("no remote ids = %+v, %v", none, err)
+	}
+
+	// What was last seen of the issue: the key moved, the type went.
+	at := testNow.Add(2 * time.Hour)
+	seen := confstore.TicketSeen{RemoteID: "100", Key: "NEW-1", URL: "https://t.local/NEW-1", Title: "Renamed", Goal: "g2",
+		Type: "Bug", Labels: []string{"x"}}
+	if err := s.SetTicketSeen(ctx, "t1", seen, "", trackerport.ChangeFix, at); err != nil {
 		t.Fatal(err)
 	}
-	if mine, _ := s.ListTickets(ctx, "u1"); len(mine) != 1 || mine[0].ID != "t2" {
-		t.Errorf("u1 still sees the moved ticket: %+v", mine)
+	got, _ = s.GetTicket(ctx, "t1")
+	if got.SourceKey != "NEW-1" || got.SourceURL != seen.URL || got.Title != "Renamed" || got.Goal != "g2" || got.SourceType != "Bug" ||
+		got.TypeID != "" || got.ChangeType != trackerport.ChangeFix || !slices.Equal(got.Labels, []string{"x"}) ||
+		!got.UpdatedAt.Equal(at) || got.RemoteID != "100" || got.BaseBranch != "b" {
+		t.Errorf("after seen = %+v", got)
 	}
+	if err := s.SetTicketSeen(ctx, "ghost", seen, "", trackerport.ChangeFix, at); !errors.Is(err, confstore.ErrNotFound) {
+		t.Errorf("seen of a missing ticket = %v", err)
+	}
+	if err := s.SetTicketSeen(ctx, "t1", seen, "ghost", trackerport.ChangeFix, at); !errors.Is(err, confstore.ErrInvalid) {
+		t.Errorf("seen with a missing type = %v", err)
+	}
+
 	if err := s.DeleteTicket(ctx, "t1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteTicket(ctx, "t1"); !errors.Is(err, confstore.ErrNotFound) {
 		t.Errorf("second delete = %v", err)
+	}
+}
+
+// The internal tracker's list is read from Postgres: newest first, a stable
+// (created_at, id) cursor, a case-insensitive substring of title, goal or id
+// (LIKE's wildcards taken literally), and done by the status's is_done (no
+// status is open).
+func TestListInternalTickets(t *testing.T) {
+	s := openConf(t)
+	ctx := context.Background()
+	if err := s.UpsertIntegration(ctx, confstore.StoredIntegration{ID: "in1", UserID: "u1", Port: confstore.PortTicketSource,
+		Kind: confstore.KindInternal, Name: "Apothecary tickets", Config: map[string]any{}, CreatedAt: testNow, UpdatedAt: testNow}); err != nil {
+		t.Fatal(err)
+	}
+	for _, st := range []confstore.TrackerStatus{
+		{ID: "in1-todo", IntegrationID: "in1", RemoteID: "in1-todo", Name: "To do"},
+		{ID: "in1-done", IntegrationID: "in1", RemoteID: "in1-done", Name: "Done", Position: 1, IsDone: true},
+	} {
+		if _, err := s.EnsureTrackerStatus(ctx, st); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk := func(id, title, status string, minute int) confstore.Ticket {
+		at := testNow.Add(time.Duration(minute) * time.Minute)
+		return confstore.Ticket{ID: id, UserID: "u1", Title: title, SourceID: "in1", SourceKind: confstore.KindInternal, RemoteID: id,
+			StatusID: status, CreatedAt: at, UpdatedAt: at}
+	}
+	for _, tk := range []confstore.Ticket{
+		mk("a", "Fix login", "in1-todo", 0),
+		mk("b", "100% LOGIN", "in1-done", 1),
+		mk("c", "Docs", "", 2),
+		mk("d", "Logout", "in1-todo", 2), // same instant as c: id breaks the tie
+		{ID: "r", UserID: "u1", Title: "remote login", SourceID: "jira", SourceKind: "jira", RemoteID: "1", CreatedAt: testNow, UpdatedAt: testNow},
+	} {
+		if err := s.UpsertTicket(ctx, tk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list := func(q confstore.InternalTicketQuery) []string {
+		t.Helper()
+		got, err := s.ListInternalTickets(ctx, "in1", q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids := []string{}
+		for _, tk := range got {
+			ids = append(ids, tk.ID)
+		}
+		return ids
+	}
+	for _, c := range []struct {
+		name string
+		q    confstore.InternalTicketQuery
+		want []string
+	}{
+		{"all, newest first", confstore.InternalTicketQuery{}, []string{"d", "c", "b", "a"}},
+		{"open", confstore.InternalTicketQuery{Done: trackerport.DoneOpen}, []string{"d", "c", "a"}},
+		{"done", confstore.InternalTicketQuery{Done: trackerport.DoneOnly}, []string{"b"}},
+		{"text, any case", confstore.InternalTicketQuery{Text: "login"}, []string{"b", "a"}},
+		{"wildcards are literal", confstore.InternalTicketQuery{Text: "0%"}, []string{"b"}},
+		{"underscore is literal", confstore.InternalTicketQuery{Text: "_"}, []string{}},
+		{"by id", confstore.InternalTicketQuery{Text: "D"}, []string{"d", "c"}},
+		{"page", confstore.InternalTicketQuery{Limit: 2}, []string{"d", "c"}},
+		{"after the page", confstore.InternalTicketQuery{Limit: 2,
+			After: &confstore.TicketCursor{CreatedAt: testNow.Add(2 * time.Minute), ID: "c"}}, []string{"b", "a"}},
+		{"after the tie", confstore.InternalTicketQuery{
+			After: &confstore.TicketCursor{CreatedAt: testNow.Add(2 * time.Minute), ID: "d"}}, []string{"c", "b", "a"}},
+	} {
+		if got := list(c.q); !slices.Equal(got, c.want) {
+			t.Errorf("%s = %v, want %v", c.name, got, c.want)
+		}
 	}
 }
 

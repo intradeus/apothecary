@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, linkedTicketsOf } from '$lib/api';
+import { api, isInUse } from '$lib/api';
 import type { KindDescriptor } from '$lib/domain';
 import { confirmState } from '$lib/ui/confirm.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
@@ -21,7 +21,6 @@ vi.mock('$lib/api', () => ({
 		},
 		credentials: { providers: vi.fn(), list: vi.fn() }
 	},
-	linkedTicketsOf: vi.fn(),
 	isInUse: vi.fn()
 }));
 
@@ -233,51 +232,40 @@ describe('IntegrationCard, deleting', () => {
 		expect(toasts.list.at(-1)?.text).toBe('Work deleted');
 	});
 
-	it('warns differently for a ticket source', async () => {
-		setup({ integration: { ...integration, port: 'ticketsource' } });
+	it('names a tracker by its role when a workshop takes its tickets from it', async () => {
+		setup({ integration: { ...integration, port: 'ticketsource' }, usedBy: ['billing'] });
 		await userEvent.click(del());
-		const tickets = await confirmed(false);
-		expect(tickets.body).toContain('Work');
-		expect(tickets.body).not.toBe('');
+		expect(
+			screen.getByText(/Pick another tracker in that workshop’s setup first\./)
+		).toBeInTheDocument();
 	});
 
 	it('shows a refusal on the card', async () => {
-		vi.mocked(api.integrations.remove).mockRejectedValue(new Error('in use'));
+		vi.mocked(api.integrations.remove).mockRejectedValue(new Error('engine down'));
 		const { onchanged } = setup();
 		await userEvent.click(del());
 		await confirmed(true);
 
-		expect(await screen.findByText('in use')).toBeInTheDocument();
+		expect(await screen.findByText('engine down')).toBeInTheDocument();
 		expect(onchanged).not.toHaveBeenCalled();
 	});
 
-	it('asks before unlinking the tickets that mirror a ticket source, then deletes', async () => {
-		const source = { ...integration, port: 'ticketsource' as const, kind: 'jira' };
-		const refusal = new Error('tickets mirror it');
-		vi.mocked(api.integrations.remove).mockRejectedValueOnce(refusal).mockResolvedValue(undefined);
-		vi.mocked(linkedTicketsOf).mockReturnValue({ tickets: 3, activeRuns: 1 });
-		const { onchanged } = setup({ integration: source });
-		await userEvent.click(del());
-		await confirmed(true);
-		const unlink = await confirmed(true);
-
-		expect(unlink.title).toBe('Unlink 3 tickets?');
-		expect(unlink.body).toContain('become Apothecary tickets');
-		expect(unlink.body).toContain('1 run on them is still going');
-		await waitFor(() => expect(onchanged).toHaveBeenCalledOnce());
-		expect(linkedTicketsOf).toHaveBeenCalledWith(refusal);
-		expect(api.integrations.remove).toHaveBeenLastCalledWith('i1', { unlinkTickets: true });
-	});
-
-	it('keeps a ticket source when the unlinking is declined', async () => {
-		vi.mocked(api.integrations.remove).mockRejectedValue(new Error('tickets mirror it'));
-		vi.mocked(linkedTicketsOf).mockReturnValue({ tickets: 1, activeRuns: 0 });
+	it('names the workshops that took it since the page loaded', async () => {
+		const refusal = new Error(
+			'integration i1 is used by project(s) billing, web: still referenced'
+		);
+		vi.mocked(api.integrations.remove).mockRejectedValue(refusal);
+		vi.mocked(isInUse).mockReturnValue(true);
 		const { onchanged } = setup({ integration: { ...integration, port: 'ticketsource' } });
 		await userEvent.click(del());
 		await confirmed(true);
-		await confirmed(false);
-		await Promise.resolve();
 
+		expect(
+			await screen.findByText(
+				'A workshop uses it now: integration i1 is used by project(s) billing, web: still referenced'
+			)
+		).toBeInTheDocument();
+		expect(isInUse).toHaveBeenCalledWith(refusal);
 		expect(api.integrations.remove).toHaveBeenCalledOnce();
 		expect(onchanged).not.toHaveBeenCalled();
 	});
@@ -285,7 +273,7 @@ describe('IntegrationCard, deleting', () => {
 
 describe('IntegrationCard, a ticket tracker', () => {
 	it('opens its statuses and types', async () => {
-		vi.mocked(api.integrations.statuses).mockResolvedValue({ statuses: [], warnings: [] });
+		vi.mocked(api.integrations.statuses).mockResolvedValue({ statuses: [], readOnly: true });
 		vi.mocked(api.integrations.types).mockResolvedValue([]);
 		setup({ integration: { ...integration, port: 'ticketsource', kind: 'jira' } });
 		await userEvent.click(screen.getByRole('button', { name: 'Statuses & types' }));

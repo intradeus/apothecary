@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { goto } from '$app/navigation';
 import { api } from '$lib/api';
-import { to } from '$lib/core/urls';
 import { confirmDialog } from '$lib/ui/confirm.svelte';
 import { toast } from '$lib/ui/toast.svelte';
 import type { RunEvent } from '$lib/domain';
@@ -111,14 +110,14 @@ describe('RunControls: archive', () => {
 	it('asks, naming the workspace it destroys, then archives and offers the ticket', async () => {
 		vi.mocked(confirmDialog).mockResolvedValue(true);
 		vi.mocked(api.runs.archive).mockResolvedValue(undefined as never);
-		setup({ state: 'completed', envId: 'env-1', ticketId: 'tk-1' });
+		setup({ state: 'completed', envId: 'env-1', ticketId: 'tk-1', projectId: 'p1' });
 		await userEvent.click(screen.getByRole('button', { name: /archive/i }));
 		expect(vi.mocked(confirmDialog).mock.calls[0][0].body).toContain('env-1');
 		expect(api.runs.archive).toHaveBeenCalledOnce();
 
 		const [, opts] = vi.mocked(toast).mock.calls[0];
 		opts!.action!.run();
-		expect(goto).toHaveBeenCalledWith(to.ticket('tk-1'));
+		expect(goto).toHaveBeenCalledWith('/tickets/tk-1?workshop=p1');
 	});
 
 	it('offers no ticket when the run has none, and no toast when the engine refused', async () => {

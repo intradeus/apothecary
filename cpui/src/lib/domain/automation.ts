@@ -1,9 +1,9 @@
 // Automations: how runs begin without a person pressing Start. A rule of a
 // workshop naming a flow (one whose operates_on fits its kind) and parameter
 // overrides,
-// plus how it fires — a tracker query polled into tickets and runs, or a
-// schedule for one ticket. The watcher's last poll, firing and error ride
-// along for the list.
+// plus how it fires — a query polled on the workshop's ticket source into
+// runs, or a schedule for one ticket. The watcher's last poll, firing and
+// error ride along for the list.
 
 export type AutomationKind = 'tracker_query' | 'cron' | 'merge_request';
 
@@ -12,8 +12,7 @@ export interface Automation {
 	projectId: string;
 	name: string;
 	kind: AutomationKind;
-	/** tracker_query: the ticket-source integration and its query. */
-	sourceId?: string;
+	/** tracker_query: its query, run against the workshop's ticket source. */
 	query?: string;
 	/** cron: five fields in UTC, and the ticket each firing runs. */
 	schedule?: string;
@@ -36,7 +35,6 @@ export interface Automation {
 export interface AutomationDraft {
 	name: string;
 	kind: AutomationKind;
-	sourceId?: string;
 	query?: string;
 	schedule?: string;
 	ticketId?: string;

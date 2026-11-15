@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -12,17 +13,19 @@ import (
 	"apothecary/internal/project/confstore"
 )
 
-// Trackers (migration 0021, docs/ticket-sync-plan.md): a ticketsource
-// integration's status and type lists, a ticket's tracker state, its
-// comments and links. Every write a run or a person makes to a ticket's state
-// is ONE statement, so two writers at once are last-write-wins and never a
-// torn row.
+// Trackers: a ticketsource integration's type list (and the internal
+// tracker's status list: a remote tracker's statuses are read from it), a
+// ticket's tracker state, its comments and links. A remote issue's tickets
+// row is a record of what Apothecary last saw of it, unique by (source_id,
+// remote_id). Every write a run or a person makes to a ticket's state is ONE
+// statement, so two writers at once are last-write-wins and never a torn
+// row.
 
-const statusCols = `id, integration_id, remote_id, name, remote_category, position, is_done, COALESCE(flow_step, '')`
+const statusCols = `id, integration_id, remote_id, name, position, is_done`
 
 func scanStatus(row pgx.Row) (confstore.TrackerStatus, error) {
 	var s confstore.TrackerStatus
-	err := row.Scan(&s.ID, &s.IntegrationID, &s.RemoteID, &s.Name, &s.RemoteCategory, &s.Position, &s.IsDone, &s.FlowStep)
+	err := row.Scan(&s.ID, &s.IntegrationID, &s.RemoteID, &s.Name, &s.Position, &s.IsDone)
 	return s, err
 }
 
@@ -67,7 +70,7 @@ func listErr(what, integrationID string, err error) error {
 	case err == nil:
 		return nil
 	case isUnique(err):
-		return fmt.Errorf("%s of integration %s: a flow step or remote id is held twice: %w", what, integrationID, confstore.ErrConflict)
+		return fmt.Errorf("%s of integration %s: a remote id is held twice: %w", what, integrationID, confstore.ErrConflict)
 	case isFK(err):
 		return fmt.Errorf("%s of integration %s: one being deleted is still used by a ticket: %w", what, integrationID, confstore.ErrReferenced)
 	}
@@ -108,17 +111,13 @@ func (s *Store) ReplaceTrackerStatuses(ctx context.Context, integrationID string
 	if _, err := tx.Exec(ctx, `DELETE FROM tracker_statuses WHERE integration_id=$1 AND NOT (id = ANY($2::text[]))`, integrationID, ids); err != nil {
 		return listErr("statuses", integrationID, err)
 	}
-	// Steps are re-dealt below: clearing them first lets two statuses swap.
-	if _, err := tx.Exec(ctx, `UPDATE tracker_statuses SET flow_step=NULL WHERE integration_id=$1`, integrationID); err != nil {
-		return err
-	}
 	for _, r := range rows {
 		tag, err := tx.Exec(ctx, `
-			INSERT INTO tracker_statuses (id, integration_id, remote_id, name, remote_category, position, is_done, flow_step)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''))
-			ON CONFLICT (id) DO UPDATE SET remote_id=$3, name=$4, remote_category=$5, position=$6, is_done=$7, flow_step=NULLIF($8,'')
+			INSERT INTO tracker_statuses (id, integration_id, remote_id, name, position, is_done)
+			VALUES ($1,$2,$3,$4,$5,$6)
+			ON CONFLICT (id) DO UPDATE SET remote_id=$3, name=$4, position=$5, is_done=$6
 			WHERE tracker_statuses.integration_id=$2`,
-			r.ID, integrationID, r.RemoteID, r.Name, r.RemoteCategory, r.Position, r.IsDone, string(r.FlowStep))
+			r.ID, integrationID, r.RemoteID, r.Name, r.Position, r.IsDone)
 		if err != nil {
 			return listErr("statuses", integrationID, err)
 		}
@@ -177,24 +176,13 @@ func (s *Store) ReplaceTrackerTypes(ctx context.Context, integrationID string, r
 }
 
 func (s *Store) EnsureTrackerStatus(ctx context.Context, st confstore.TrackerStatus) (confstore.TrackerStatus, error) {
-	ensure := func(step string) (confstore.TrackerStatus, error) {
-		// The step goes to the insert only while no status holds it; a
-		// listed remote id keeps every user-set column.
-		return scanStatus(s.pool.QueryRow(ctx, `
-			INSERT INTO tracker_statuses (id, integration_id, remote_id, name, remote_category, position, is_done, flow_step)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,
-				CASE WHEN $8 = '' OR EXISTS (SELECT 1 FROM tracker_statuses WHERE integration_id=$2 AND flow_step=$8)
-				     THEN NULL ELSE $8 END)
-			ON CONFLICT (integration_id, remote_id) DO UPDATE SET name=EXCLUDED.name,
-				remote_category = CASE WHEN EXCLUDED.remote_category <> '' THEN EXCLUDED.remote_category
-				                       ELSE tracker_statuses.remote_category END
-			RETURNING `+statusCols,
-			st.ID, st.IntegrationID, st.RemoteID, st.Name, st.RemoteCategory, st.Position, st.IsDone, step))
-	}
-	out, err := ensure(string(st.FlowStep))
-	if isUnique(err) && st.FlowStep != "" {
-		out, err = ensure("") // another writer took the step meanwhile
-	}
+	// A listed remote id takes the new name and keeps every user-set column.
+	out, err := scanStatus(s.pool.QueryRow(ctx, `
+		INSERT INTO tracker_statuses (id, integration_id, remote_id, name, position, is_done)
+		VALUES ($1,$2,$3,$4,$5,$6)
+		ON CONFLICT (integration_id, remote_id) DO UPDATE SET name=EXCLUDED.name
+		RETURNING `+statusCols,
+		st.ID, st.IntegrationID, st.RemoteID, st.Name, st.Position, st.IsDone))
 	switch {
 	case isFK(err):
 		return out, fmt.Errorf("status %s references a missing integration: %w", st.Name, confstore.ErrInvalid)
@@ -222,31 +210,67 @@ func (s *Store) EnsureTrackerType(ctx context.Context, t confstore.TrackerType) 
 
 // --- a ticket's tracker state ------------------------------------------------
 
-func (s *Store) GetTicketBySource(ctx context.Context, userID, sourceID, key string) (confstore.Ticket, error) {
-	t, err := scanTicket(s.pool.QueryRow(ctx, `SELECT `+ticketCols+` FROM tickets
-		WHERE user_id=$1 AND source_id=$2 AND source_id <> '' AND lower(source_key)=lower($3)`, userID, sourceID, key))
+func (s *Store) GetTicketByRemote(ctx context.Context, sourceID, remoteID string) (confstore.Ticket, error) {
+	t, err := scanTicket(s.pool.QueryRow(ctx, `SELECT `+ticketCols+` FROM tickets t
+		WHERE t.source_id=$1 AND t.remote_id=$2`, sourceID, remoteID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return t, fmt.Errorf("ticket %s: %w", key, confstore.ErrNotFound)
+		return t, fmt.Errorf("ticket %s/%s: %w", sourceID, remoteID, confstore.ErrNotFound)
 	}
 	return t, err
 }
 
-func (s *Store) GetTicketByProjectKey(ctx context.Context, projectID, key string) (confstore.Ticket, error) {
-	t, err := scanTicket(s.pool.QueryRow(ctx, `SELECT `+ticketCols+` FROM tickets
-		WHERE project_id=$1 AND source_key <> '' AND lower(source_key)=lower($2)
-		ORDER BY created_at, id LIMIT 1`, projectID, key))
+func (s *Store) GetTicketBySourceKey(ctx context.Context, sourceID, key string) (confstore.Ticket, error) {
+	// A placeholder remote id (the live-tickets migration's dup:/legacy:)
+	// stands for no issue: a real record of the key wins over one.
+	t, err := scanTicket(s.pool.QueryRow(ctx, `SELECT `+ticketCols+` FROM tickets t
+		WHERE t.source_id=$1 AND t.source_key=$2 AND $2 <> ''
+		ORDER BY (t.remote_id LIKE 'dup:%' OR t.remote_id LIKE 'legacy:%'), t.created_at DESC, t.id DESC
+		LIMIT 1`, sourceID, key))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return t, fmt.Errorf("ticket %s: %w", key, confstore.ErrNotFound)
+		return t, fmt.Errorf("ticket %s/%s: %w", sourceID, key, confstore.ErrNotFound)
 	}
 	return t, err
 }
 
-func (s *Store) ListTicketsBySource(ctx context.Context, sourceID string, syncable bool) ([]confstore.Ticket, error) {
+func (s *Store) ListTicketsByRemote(ctx context.Context, sourceID string, remoteIDs []string) ([]confstore.Ticket, error) {
+	if len(remoteIDs) == 0 {
+		return nil, nil
+	}
 	rows, err := s.pool.Query(ctx, `SELECT `+ticketCols+` FROM tickets t
-		WHERE source_id=$1 AND source_id <> ''
-		  AND (NOT $2 OR (sync_state <> 'gone' AND NOT EXISTS (
-				SELECT 1 FROM tracker_statuses s WHERE s.id = t.status_id AND s.is_done)))
-		ORDER BY created_at, id`, sourceID, syncable)
+		WHERE t.source_id=$1 AND t.remote_id = ANY($2::text[])`, sourceID, remoteIDs)
+	return collect(rows, err, scanTicket)
+}
+
+// likeEscape makes s a literal inside an ILIKE pattern.
+var likeEscape = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+func (s *Store) ListInternalTickets(ctx context.Context, sourceID string, q confstore.InternalTicketQuery) ([]confstore.Ticket, error) {
+	limit := q.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	var text string
+	if q.Text != "" {
+		text = "%" + likeEscape.Replace(q.Text) + "%"
+	}
+	var afterAt *time.Time
+	var afterID string
+	if q.After != nil {
+		afterAt, afterID = &q.After.CreatedAt, q.After.ID
+	}
+	// Newest first; the cursor is the last row's (created_at, id), so a page
+	// stays put while tickets are added above it. A ticket with no status is
+	// open.
+	rows, err := s.pool.Query(ctx, `SELECT `+ticketCols+` FROM tickets t
+		LEFT JOIN tracker_statuses s ON s.id = t.status_id
+		WHERE t.source_id=$1
+		  AND ($2 = '' OR t.title ILIKE $2 OR t.goal ILIKE $2 OR t.id ILIKE $2)
+		  AND CASE $3 WHEN 'open' THEN NOT COALESCE(s.is_done, false)
+		              WHEN 'done' THEN COALESCE(s.is_done, false)
+		              ELSE true END
+		  AND ($4::timestamptz IS NULL OR (t.created_at, t.id) < ($4, $5))
+		ORDER BY t.created_at DESC, t.id DESC
+		LIMIT $6`, sourceID, text, string(q.Done), afterAt, afterID, limit)
 	return collect(rows, err, scanTicket)
 }
 
@@ -292,43 +316,18 @@ func (s *Store) SetTicketLabels(ctx context.Context, id string, labels []string,
 	return out, err
 }
 
-func (s *Store) MirrorTicket(ctx context.Context, id string, m confstore.TicketMirror, changeType trackerport.ChangeType, at time.Time) (bool, error) {
-	labels := m.Labels
+func (s *Store) SetTicketSeen(ctx context.Context, id string, seen confstore.TicketSeen, typeID string, changeType trackerport.ChangeType, at time.Time) error {
+	labels := seen.Labels
 	if labels == nil {
 		labels = []string{}
 	}
-	var updated *time.Time
-	if !m.RemoteUpdated.IsZero() {
-		updated = &m.RemoteUpdated
-	}
-	// A snapshot older than the one held is dropped: the guard is in the
-	// WHERE, so two syncs racing cannot both win.
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE tickets SET
-			title=$2, goal=$3, source_key=$4, source_url=$5, source_type=$6, remote_id=$7,
-			status_changed_at = CASE WHEN $8 <> '' AND status_id IS DISTINCT FROM $8 THEN $13 ELSE status_changed_at END,
-			status_changed_by = CASE WHEN $8 <> '' AND status_id IS DISTINCT FROM $8 THEN 'sync' ELSE status_changed_by END,
-			status_id = COALESCE(NULLIF($8,''), status_id),
-			type_id = COALESCE(NULLIF($9,''), type_id),
-			change_type=$10, labels=$11,
-			remote_updated_at = COALESCE($12, remote_updated_at),
-			synced_at=$13, sync_state='ok', sync_error='', updated_at=$13
-		 WHERE id=$1 AND ($12::timestamptz IS NULL OR remote_updated_at IS NULL OR remote_updated_at <= $12)`,
-		id, m.Title, m.Goal, m.SourceKey, m.SourceURL, m.SourceType, m.RemoteID,
-		m.StatusID, m.TypeID, changeType, labels, updated, at)
+		UPDATE tickets SET title=$2, goal=$3, source_key=$4, source_url=$5, source_type=$6,
+			type_id=NULLIF($7,''), change_type=$8, labels=$9, updated_at=$10
+		 WHERE id=$1`,
+		id, seen.Title, seen.Goal, seen.Key, seen.URL, seen.Type, typeID, changeType, labels, at)
 	if err != nil {
-		return false, ticketWriteErr(id, err)
-	}
-	if tag.RowsAffected() == 0 {
-		return false, s.ticketExists(ctx, id)
-	}
-	return true, nil
-}
-
-func (s *Store) SetTicketSyncState(ctx context.Context, id, state, msg string) error {
-	tag, err := s.pool.Exec(ctx, `UPDATE tickets SET sync_state=$2, sync_error=$3 WHERE id=$1`, id, state, msg)
-	if err != nil {
-		return err
+		return ticketWriteErr(id, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("ticket %s: %w", id, confstore.ErrNotFound)
@@ -336,50 +335,13 @@ func (s *Store) SetTicketSyncState(ctx context.Context, id, state, msg string) e
 	return nil
 }
 
-func (s *Store) DeleteTicketSource(ctx context.Context, integrationID string, moves []confstore.TicketUnlink, at time.Time) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	ids := make([]string, len(moves))
-	for i, mv := range moves {
-		ids[i] = mv.TicketID
-		if _, err := tx.Exec(ctx, `
-			UPDATE tickets SET
-				status_changed_at = CASE WHEN status_id IS DISTINCT FROM NULLIF($3,'') THEN $6 ELSE status_changed_at END,
-				status_changed_by = CASE WHEN status_id IS DISTINCT FROM NULLIF($3,'') THEN 'user' ELSE status_changed_by END,
-				status_id=NULLIF($3,''), type_id=NULLIF($4,''), change_type=$5,
-				source_id='', source_kind='', source_key='', source_url='', source_type='',
-				remote_id='', remote_updated_at=NULL, synced_at=NULL, sync_state='', sync_error='',
-				updated_at=$6
-			 WHERE id=$1 AND source_id=$2`,
-			mv.TicketID, integrationID, mv.StatusID, mv.TypeID, mv.ChangeType, at); err != nil {
-			return ticketWriteErr(mv.TicketID, err)
-		}
-	}
-	var late string
-	err = tx.QueryRow(ctx, `SELECT id FROM tickets WHERE source_id=$1 AND source_id <> '' AND NOT (id = ANY($2::text[])) LIMIT 1`,
-		integrationID, ids).Scan(&late)
-	if err == nil {
-		return fmt.Errorf("integration %s: ticket %s was linked meanwhile: %w", integrationID, late, confstore.ErrConflict)
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return err
-	}
-	if err := s.deleteIntegration(ctx, tx, integrationID); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
 // --- comments and links ------------------------------------------------------
 
-const commentCols = `id, ticket_id, remote_id, author, body_md, created_at, updated_at, origin, run_id, stage_id`
+const commentCols = `id, ticket_id, author, body_md, created_at, updated_at, origin, run_id, stage_id`
 
 func scanComment(row pgx.Row) (confstore.TicketComment, error) {
 	var c confstore.TicketComment
-	err := row.Scan(&c.ID, &c.TicketID, &c.RemoteID, &c.Author, &c.Body, &c.CreatedAt, &c.UpdatedAt, &c.Origin, &c.RunID, &c.StageID)
+	err := row.Scan(&c.ID, &c.TicketID, &c.Author, &c.Body, &c.CreatedAt, &c.UpdatedAt, &c.Origin, &c.RunID, &c.StageID)
 	return c, err
 }
 
@@ -389,12 +351,12 @@ func (s *Store) ListTicketComments(ctx context.Context, ticketID string) ([]conf
 }
 
 func (s *Store) InsertTicketComment(ctx context.Context, c confstore.TicketComment) (bool, error) {
-	// Any unique key already held — (run, stage), the remote id, the id —
-	// makes this a no-op: the comment is there.
+	// Any unique key already held — (run, stage), the id — makes this a
+	// no-op: the comment is there.
 	tag, err := s.pool.Exec(ctx, `
-		INSERT INTO ticket_comments (`+commentCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		INSERT INTO ticket_comments (`+commentCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		ON CONFLICT DO NOTHING`,
-		c.ID, c.TicketID, c.RemoteID, c.Author, c.Body, c.CreatedAt, c.UpdatedAt, c.Origin, c.RunID, c.StageID)
+		c.ID, c.TicketID, c.Author, c.Body, c.CreatedAt, c.UpdatedAt, c.Origin, c.RunID, c.StageID)
 	if isFK(err) {
 		return false, fmt.Errorf("ticket %s: %w", c.TicketID, confstore.ErrNotFound)
 	}
@@ -402,42 +364,6 @@ func (s *Store) InsertTicketComment(ctx context.Context, c confstore.TicketComme
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
-}
-
-func (s *Store) ReconcileRemoteComments(ctx context.Context, ticketID string, rows []confstore.TicketComment) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	remote := make([]string, 0, len(rows))
-	for _, c := range rows {
-		remote = append(remote, c.RemoteID)
-		_, err := tx.Exec(ctx, `
-			INSERT INTO ticket_comments (`+commentCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,'remote','','')
-			ON CONFLICT (ticket_id, remote_id) WHERE remote_id <> '' DO UPDATE SET
-				author=EXCLUDED.author, body_md=EXCLUDED.body_md, updated_at=EXCLUDED.updated_at`,
-			c.ID, ticketID, c.RemoteID, c.Author, c.Body, c.CreatedAt, c.UpdatedAt)
-		if isFK(err) {
-			return fmt.Errorf("ticket %s: %w", ticketID, confstore.ErrNotFound)
-		}
-		if err != nil {
-			return err
-		}
-	}
-	if _, err := tx.Exec(ctx, `DELETE FROM ticket_comments WHERE ticket_id=$1 AND origin='remote' AND NOT (remote_id = ANY($2::text[]))`,
-		ticketID, remote); err != nil {
-		return err
-	}
-	if len(rows) == 0 {
-		var one int
-		if err := tx.QueryRow(ctx, `SELECT 1 FROM tickets WHERE id=$1`, ticketID).Scan(&one); errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("ticket %s: %w", ticketID, confstore.ErrNotFound)
-		} else if err != nil {
-			return err
-		}
-	}
-	return tx.Commit(ctx)
 }
 
 func (s *Store) UpsertTicketLink(ctx context.Context, l confstore.TicketLink) error {

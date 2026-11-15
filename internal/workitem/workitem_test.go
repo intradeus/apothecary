@@ -116,7 +116,7 @@ func TestStartsOn(t *testing.T) {
 // An item has one run going at a time; the refusal names it and the run.
 func TestIdle(t *testing.T) {
 	r := items.All()
-	tk := ticket.Ref("p", "tk-1")
+	tk := ticket.Ref("tk-1")
 	runs := []run.View{
 		{RunID: "done", ProjectID: "p", TicketID: "tk-1", State: run.Completed},
 		{RunID: "other", ProjectID: "p", TicketID: "tk-2", State: run.Running},
@@ -144,7 +144,7 @@ func TestIdle(t *testing.T) {
 // name them in; the lock is per item.
 func TestLock(t *testing.T) {
 	r := items.All()
-	a, b := ticket.Ref("p", "a"), ticket.Ref("p", "b")
+	a, b := ticket.Ref("a"), ticket.Ref("b")
 	unlock := r.Lock([]workitem.Ref{a, b, a})
 	got := make(chan struct{})
 	go func() {
@@ -157,7 +157,7 @@ func TestLock(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 	// Another item is free meanwhile.
-	r.Lock([]workitem.Ref{ticket.Ref("p", "c")})()
+	r.Lock([]workitem.Ref{ticket.Ref("c")})()
 	unlock()
 	<-got
 

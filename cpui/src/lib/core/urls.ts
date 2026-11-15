@@ -38,7 +38,13 @@ export const to = {
 	run: (runId: string) => `/runs/${runId}`,
 	tickets: (opts?: { project?: string }) => `/tickets${q({ project: opts?.project })}`,
 	newTicket: (opts?: { project?: string }) => `/tickets/new${q({ project: opts?.project })}`,
-	ticket: (ticketId: string) => `/tickets/${ticketId}`,
+	/** A ticket by its record's id; the page redirects to it through a
+	 *  workshop on its source, the hinted one when it is. */
+	ticket: (ticketId: string, opts?: { workshop?: string }) =>
+		`/tickets/${ticketId}${q({ workshop: opts?.workshop })}`,
+	/** A ticket through a workshop on its source: its page. */
+	workshopTicket: (projectId: string, key: string) =>
+		`/w/${projectId}/tickets/${encodeURIComponent(key)}`,
 	// Merge requests, the other thing runs start on: across workshops, and
 	// one of them — where a run is started on it. A repo other than the
 	// primary is a query parameter.

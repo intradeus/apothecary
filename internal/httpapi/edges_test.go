@@ -27,7 +27,6 @@ import (
 	"apothecary/internal/ports/browserport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/repoport"
-	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/kinds"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
@@ -711,10 +710,10 @@ func TestMergeRequestStartRefusals(t *testing.T) {
 	}
 }
 
-func listTickets(t *testing.T, x *confEnv, project string) []confstore.Ticket {
+func listTickets(t *testing.T, x *confEnv, project string) []TicketRow {
 	t.Helper()
-	_, data := x.do(t, "GET", "/api/tickets?project="+project, nil, nil)
-	return decode[[]confstore.Ticket](t, data)
+	_, data := x.do(t, "GET", "/api/projects/"+project+"/tickets?done=any", nil, nil)
+	return decode[TicketPage](t, data).Tickets
 }
 
 // A project with no repository host to ask has nothing to list.

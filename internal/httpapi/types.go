@@ -35,15 +35,10 @@ import (
 
 // ErrorResponse is the one error shape every endpoint uses. RunID is set on
 // the 409 refusing a run on a ticket that already has an active one
-// (engine.ErrTicketBusy): the run to open or abort. Tickets and ActiveRuns
-// are set on the 409 refusing to delete a ticketsource integration whose
-// tickets still mirror its issues: how many would be unlinked, and how many
-// runs on them are still going (?unlink_tickets=1 confirms).
+// (engine.ErrTicketBusy): the run to open or abort.
 type ErrorResponse struct {
-	Error      string `json:"error"`
-	RunID      string `json:"run_id,omitempty"`
-	Tickets    *int   `json:"tickets,omitempty"`
-	ActiveRuns *int   `json:"active_runs,omitempty"`
+	Error string `json:"error"`
+	RunID string `json:"run_id,omitempty"`
 }
 
 // --- runs -------------------------------------------------------------------
@@ -450,8 +445,8 @@ type FlowBindingRequest struct {
 }
 
 // AutomationRequest creates or replaces an automation: a way a run begins
-// without a person pressing Start. kind is tracker_query (poll source_id
-// with query, import what it finds, one run each), cron (schedule, five
+// without a person pressing Start. kind is tracker_query (poll the workshop's
+// ticket source with query, one run on each issue it finds), cron (schedule, five
 // fields in UTC, a new run of ticket_id each firing) or merge_request (watch
 // repo's open merge requests, a run on each one someone else opened, once).
 // flow (one whose operates_on fits: merge_request for a merge_request
@@ -460,7 +455,6 @@ type FlowBindingRequest struct {
 type AutomationRequest struct {
 	Name     string            `json:"name"`
 	Kind     string            `json:"kind"`
-	SourceID string            `json:"source_id,omitempty"`
 	Query    string            `json:"query,omitempty"`
 	Schedule string            `json:"schedule,omitempty"`
 	TicketID string            `json:"ticket_id,omitempty"`

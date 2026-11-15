@@ -23,7 +23,7 @@ const issueBody = `{
     "description": {"type":"doc","version":1,"content":[
       {"type":"paragraph","content":[{"type":"text","text":"The greeter only says hello."}]}
     ]},
-    "status": {"id": "10000", "name": "To Do"},
+    "status": {"id": "10000", "name": "To Do", "statusCategory": {"key": "new"}},
     "issuetype": {"id": "10001", "name": "Story"},
     "labels": ["greeter", "ux"],
     "assignee": {"displayName": "Dev User"},
@@ -60,7 +60,7 @@ func TestFetchMapsIssueAndAttachments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tk.Title != "Add a Farewell function" || tk.Status != "To Do" || tk.Type != "Story" {
+	if tk.Title != "Add a Farewell function" || tk.Status != "To Do" || tk.Type != "Story" || tk.Done {
 		t.Errorf("mapped ticket = %+v", tk)
 	}
 	if tk.RemoteID != "10042" || tk.StatusID != "10000" || tk.TypeID != "10001" || !reflect.DeepEqual(tk.Labels, []string{"greeter", "ux"}) {
@@ -124,14 +124,14 @@ func TestSearchFallsBackToClassicEndpoint(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{BaseURL: srv.URL, Email: "a@b.c", Token: "tok"})
-	got, err := c.Search(context.Background(), "router", 10)
+	page, err := c.Search(context.Background(), trackerport.SearchQuery{Text: "router", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !hitNew || !hitOld {
 		t.Fatalf("endpoints tried: new=%v old=%v", hitNew, hitOld)
 	}
-	if len(got) != 1 || got[0].Key != "PROJ-9" || got[0].Body != "plain text" {
+	if got := page.Tickets; len(got) != 1 || got[0].Key != "PROJ-9" || got[0].Body != "plain text" {
 		t.Fatalf("results = %+v", got)
 	}
 }
@@ -158,7 +158,7 @@ func TestSearchPostsFieldsAndLimit(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{BaseURL: srv.URL, Email: "a@b.c", Token: "tok"})
-	if _, err := c.Search(context.Background(), "proj-7", 5); err != nil {
+	if _, err := c.Search(context.Background(), trackerport.SearchQuery{Text: "proj-7", Limit: 5}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -183,11 +183,11 @@ func TestSearchByBareNumberUsesConfiguredProject(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{BaseURL: srv.URL, Email: "a@b.c", Token: "tok", JQL: "project = PROJ"})
-	got, err := c.Search(context.Background(), "2624", 10)
+	page, err := c.Search(context.Background(), trackerport.SearchQuery{Text: "2624", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Key != "PROJ-2624" {
+	if got := page.Tickets; len(got) != 2 || got[0].Key != "PROJ-2624" {
 		t.Fatalf("results = %+v, want the exact key first then text hits", got)
 	}
 	for _, p := range paths {
@@ -221,14 +221,14 @@ func TestSearchByBareNumberProbesVisibleProjects(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{BaseURL: srv.URL, Email: "a@b.c", Token: "tok"})
-	got, err := c.Search(context.Background(), "#2624", 10)
+	page, err := c.Search(context.Background(), trackerport.SearchQuery{Text: "#2624", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Key != "BBB-2624" {
+	if got := page.Tickets; len(got) != 1 || got[0].Key != "BBB-2624" {
 		t.Fatalf("results = %+v, want only the project that has it", got)
 	}
-	if _, err := c.Search(context.Background(), "2624", 10); err != nil {
+	if _, err := c.Search(context.Background(), trackerport.SearchQuery{Text: "2624", Limit: 10}); err != nil {
 		t.Fatal(err)
 	}
 	if listings != 1 {
@@ -250,8 +250,8 @@ func TestBareNumberSurvivesTextSearchFailure(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{BaseURL: srv.URL, Email: "a@b.c", Token: "tok", JQL: "project = PROJ"})
-	got, err := c.Search(context.Background(), "2624", 10)
-	if err != nil || len(got) != 1 {
+	got, err := c.Search(context.Background(), trackerport.SearchQuery{Text: "2624", Limit: 10})
+	if err != nil || len(got.Tickets) != 1 {
 		t.Fatalf("got %+v, err %v", got, err)
 	}
 }
@@ -283,23 +283,138 @@ func TestProjectKeysFromJQL(t *testing.T) {
 func TestJQL(t *testing.T) {
 	c := New(Config{JQL: "project = PROJ"})
 	for _, tc := range []struct{ query, want string }{
-		{"", `(project = PROJ) AND (assignee = currentUser() AND resolution = Unresolved) ORDER BY updated DESC`},
+		{"", `(project = PROJ) AND (assignee = currentUser()) ORDER BY updated DESC`},
 		{"PROJ-12", `(project = PROJ) AND (key = "PROJ-12") ORDER BY updated DESC`},
 		{"flaky router", `(project = PROJ) AND (text ~ "flaky router*") ORDER BY updated DESC`},
-		{`jql:status = Done ORDER BY created DESC`, `(project = PROJ) AND (status = Done ORDER BY created DESC)`},
+		{`jql:status = Done ORDER BY created DESC`, `(project = PROJ) AND (status = Done) ORDER BY created DESC`},
 		{`say "hi"`, `(project = PROJ) AND (text ~ "say \"hi\"*") ORDER BY updated DESC`},
 		// Typed loosely, still an exact key lookup.
 		{"proj 2624", `(project = PROJ) AND (key = "PROJ-2624") ORDER BY updated DESC`},
 		{"PROJ_2624", `(project = PROJ) AND (key = "PROJ-2624") ORDER BY updated DESC`},
 		{"#PROJ-2624", `(project = PROJ) AND (key = "PROJ-2624") ORDER BY updated DESC`},
 	} {
-		if got := c.JQL(tc.query); got != tc.want {
+		if got := c.JQL(tc.query, trackerport.DoneAny); got != tc.want {
 			t.Errorf("JQL(%q) =\n %q\nwant %q", tc.query, got, tc.want)
 		}
 	}
 	// With no scope filter the clause stands alone.
-	if got := (New(Config{})).JQL("PROJ-1"); got != `key = "PROJ-1" ORDER BY updated DESC` {
+	if got := (New(Config{})).JQL("PROJ-1", trackerport.DoneAny); got != `key = "PROJ-1" ORDER BY updated DESC` {
 		t.Errorf("unscoped JQL = %q", got)
+	}
+}
+
+// The done filter is a statusCategory clause ANDed with the rest, the
+// written ORDER BY (or the scope filter's) kept last.
+func TestJQLDoneFilter(t *testing.T) {
+	c := New(Config{JQL: "project = PROJ ORDER BY rank"})
+	for _, tc := range []struct {
+		query string
+		done  trackerport.DoneFilter
+		want  string
+	}{
+		{"", trackerport.DoneOpen, `(project = PROJ) AND (assignee = currentUser()) AND (statusCategory != Done) ORDER BY rank`},
+		{"router", trackerport.DoneOnly, `(project = PROJ) AND (text ~ "router*") AND (statusCategory = Done) ORDER BY rank`},
+		{`jql:labels = x ORDER BY created`, trackerport.DoneOpen, `(project = PROJ) AND (labels = x) AND (statusCategory != Done) ORDER BY created`},
+	} {
+		if got := c.JQL(tc.query, tc.done); got != tc.want {
+			t.Errorf("JQL(%q, %q) =\n %q\nwant %q", tc.query, tc.done, got, tc.want)
+		}
+	}
+	if got := New(Config{}).JQL("", trackerport.DoneOnly); got != `(assignee = currentUser()) AND (statusCategory = Done) ORDER BY updated DESC` {
+		t.Errorf("unscoped = %q", got)
+	}
+}
+
+// Search pages /search/jql by nextPageToken, and maps the status category
+// to Done.
+func TestSearchPagesByToken(t *testing.T) {
+	var tokens []any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		tokens = append(tokens, body["nextPageToken"])
+		if body["nextPageToken"] == nil {
+			w.Write([]byte(`{"issues":[{"key":"P-1","fields":{"status":{"name":"Done","statusCategory":{"key":"done"}}}}],"nextPageToken":"tok2","isLast":false}`))
+			return
+		}
+		w.Write([]byte(`{"issues":[{"key":"P-2","fields":{"status":{"name":"Open","statusCategory":{"key":"new"}}}}],"isLast":true}`))
+	}))
+	defer srv.Close()
+	c := New(Config{BaseURL: srv.URL, Email: "a@b.c", Token: "tok"})
+	first, err := c.Search(context.Background(), trackerport.SearchQuery{Text: "x"})
+	if err != nil || len(first.Tickets) != 1 || !first.Tickets[0].Done || first.Next == "" {
+		t.Fatalf("first = %+v, %v", first, err)
+	}
+	second, err := c.Search(context.Background(), trackerport.SearchQuery{Text: "x", Cursor: first.Next})
+	if err != nil || len(second.Tickets) != 1 || second.Tickets[0].Key != "P-2" || second.Tickets[0].Done || second.Next != "" {
+		t.Fatalf("second = %+v, %v", second, err)
+	}
+	if !reflect.DeepEqual(tokens, []any{nil, "tok2"}) {
+		t.Errorf("tokens = %v", tokens)
+	}
+	if _, err := c.Search(context.Background(), trackerport.SearchQuery{Cursor: "nonsense"}); err == nil {
+		t.Error("a cursor of no known shape was accepted")
+	}
+}
+
+// On the classic /search a page is an offset: the next starts where this
+// one ended, until total; a later page goes straight to the classic route.
+func TestSearchPagesClassicByStartAt(t *testing.T) {
+	var jqlHits int
+	var starts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rest/api/3/search/jql":
+			jqlHits++
+			w.WriteHeader(http.StatusNotFound)
+		case "/rest/api/3/search":
+			q := r.URL.Query()
+			starts = append(starts, q.Get("startAt"))
+			if !strings.Contains(q.Get("jql"), "statusCategory != Done") || q.Get("maxResults") != "2" {
+				t.Errorf("query = %v", q)
+			}
+			if q.Get("startAt") == "0" {
+				w.Write([]byte(`{"issues":[{"key":"P-1","fields":{}},{"key":"P-2","fields":{}}],"total":3}`))
+				return
+			}
+			w.Write([]byte(`{"issues":[{"key":"P-3","fields":{}}],"total":3}`))
+		}
+	}))
+	defer srv.Close()
+	c := New(Config{BaseURL: srv.URL, Email: "a@b.c", Token: "tok"})
+	q := trackerport.SearchQuery{Text: "x", Done: trackerport.DoneOpen, Limit: 2}
+	first, err := c.Search(context.Background(), q)
+	if err != nil || len(first.Tickets) != 2 || first.Next == "" {
+		t.Fatalf("first = %+v, %v", first, err)
+	}
+	q.Cursor = first.Next
+	second, err := c.Search(context.Background(), q)
+	if err != nil || len(second.Tickets) != 1 || second.Tickets[0].Key != "P-3" || second.Next != "" {
+		t.Fatalf("second = %+v, %v", second, err)
+	}
+	if jqlHits != 1 || !reflect.DeepEqual(starts, []string{"0", "2"}) {
+		t.Errorf("new route hit %d times, startAt %v", jqlHits, starts)
+	}
+}
+
+// A bare number's direct hits obey the done filter too.
+func TestSearchBareNumberObeysDoneFilter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/rest/api/3/issue/PROJ-2624" {
+			w.Write([]byte(`{"key":"PROJ-2624","fields":{"status":{"statusCategory":{"key":"done"}}}}`))
+			return
+		}
+		w.Write([]byte(`{"issues":[]}`))
+	}))
+	defer srv.Close()
+	c := New(Config{BaseURL: srv.URL, Email: "a@b.c", Token: "tok", JQL: "project = PROJ"})
+	open, err := c.Search(context.Background(), trackerport.SearchQuery{Text: "2624", Done: trackerport.DoneOpen})
+	if err != nil || len(open.Tickets) != 0 {
+		t.Errorf("open = %+v, %v", open, err)
+	}
+	done, err := c.Search(context.Background(), trackerport.SearchQuery{Text: "2624", Done: trackerport.DoneOnly})
+	if err != nil || len(done.Tickets) != 1 || !done.Tickets[0].Done {
+		t.Errorf("done = %+v, %v", done, err)
 	}
 }
 

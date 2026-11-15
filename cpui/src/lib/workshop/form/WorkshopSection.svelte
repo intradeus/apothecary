@@ -1,6 +1,8 @@
 <script lang="ts">
 	// 2 · Workshop: its name, the flow runs default to, and the commands flows
-	// run by name (editable key → script rows).
+	// run by name (editable key → script rows), then what the form adds
+	// (its ticket source).
+	import type { Snippet } from 'svelte';
 	import type { Flow } from '$lib/domain';
 	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 	import KeyValueEditor, { type KVRow } from '$lib/ui/KeyValueEditor.svelte';
@@ -15,7 +17,8 @@
 		dupKeys,
 		name = $bindable(),
 		defaultFlow = $bindable(),
-		commandRows = $bindable()
+		commandRows = $bindable(),
+		children
 	}: {
 		ownFlows: Flow[];
 		templateFlows: Flow[];
@@ -25,6 +28,8 @@
 		name: string;
 		defaultFlow: string;
 		commandRows: KVRow[];
+		/** More groups of the pane, after the commands. */
+		children?: Snippet;
 	} = $props();
 
 	const commandCount = $derived(commandRows.filter((r) => r.key.trim()).length);
@@ -79,4 +84,5 @@
 				{t('form.project.dupCommands', { names: [...dupKeys].join(', ') })}
 			</div>{/if}
 	</FormSub>
+	{@render children?.()}
 </FormPane>

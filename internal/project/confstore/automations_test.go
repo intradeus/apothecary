@@ -24,32 +24,34 @@ func TestAutomationValidates(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()
 	p := seedProject(t, svc)
-	other := seedNamedProject(t, svc, "p2")
 	tracker := seedTracker(t, svc)
-	tk, err := svc.CreateTicket(ctx, Ticket{ProjectID: p.ID, Title: "T"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: p.UserID, Title: "T"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	repoHost, _ := svc.GetProject(ctx, p.ID)
+	// A record of another source than the workshop's (its internal tracker).
+	foreign, _, err := svc.RecordTicket(ctx, tracker.ID, TicketSeen{RemoteID: "1", Key: "T-1", Title: "Remote"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name string
 		a    Automation
 		want string
 	}{
-		{"no name", Automation{Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "builder"}, "needs a name"},
+		{"no name", Automation{Kind: AutomationTrackerQuery, Flow: "builder"}, "needs a name"},
 		{"bad kind", Automation{Name: "x", Kind: "webhook", Flow: "builder"}, `kind "webhook"`},
-		{"no source", Automation{Name: "x", Kind: AutomationTrackerQuery, Flow: "builder"}, "needs source_id"},
-		{"wrong port", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: repoHost.RepoAccountID, Flow: "builder"}, "not a ticket source"},
-		{"query with schedule", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Schedule: "0 9 * * *", Flow: "builder"}, "takes no schedule"},
+		{"query with schedule", Automation{Name: "x", Kind: AutomationTrackerQuery, Schedule: "0 9 * * *", Flow: "builder"}, "takes no schedule"},
 		{"bad schedule", Automation{Name: "x", Kind: AutomationCron, Schedule: "soon", TicketID: tk.ID, Flow: "builder"}, "five fields"},
 		{"no ticket", Automation{Name: "x", Kind: AutomationCron, Schedule: "0 9 * * *", Flow: "builder"}, "needs ticket_id"},
-		{"ticket elsewhere", Automation{Name: "x", Kind: AutomationCron, Schedule: "0 9 * * *", TicketID: tk.ID, ProjectID: other.ID, Flow: "builder"}, "another project"},
-		{"no flow", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID}, "needs a flow"},
-		{"no such flow", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "nope"}, "nope"},
-		{"started on merge requests", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "reviewer"}, "starts its runs on a merge request"},
+		{"ticket of another source", Automation{Name: "x", Kind: AutomationCron, Schedule: "0 9 * * *", TicketID: foreign.ID, Flow: "builder"}, "not one of this workshop's"},
+		{"cron with query", Automation{Name: "x", Kind: AutomationCron, Schedule: "0 9 * * *", TicketID: tk.ID, Query: "q", Flow: "builder"}, "takes no query"},
+		{"no flow", Automation{Name: "x", Kind: AutomationTrackerQuery}, "needs a flow"},
+		{"no such flow", Automation{Name: "x", Kind: AutomationTrackerQuery, Flow: "nope"}, "nope"},
+		{"started on merge requests", Automation{Name: "x", Kind: AutomationTrackerQuery, Flow: "reviewer"}, "starts its runs on a merge request"},
 		{"started on tickets", Automation{Name: "x", Kind: AutomationMergeRequest, Flow: "builder"}, "starts its runs on a ticket"},
-		{"bad param", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "builder", Params: map[string]string{"plan_gate": "maybe"}}, "plan_gate"},
-		{"unknown param", Automation{Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "builder", Params: map[string]string{"nope": "1"}}, "nope"},
+		{"bad param", Automation{Name: "x", Kind: AutomationTrackerQuery, Flow: "builder", Params: map[string]string{"plan_gate": "maybe"}}, "plan_gate"},
+		{"unknown param", Automation{Name: "x", Kind: AutomationTrackerQuery, Flow: "builder", Params: map[string]string{"nope": "1"}}, "nope"},
 	} {
 		a := tc.a
 		if a.ProjectID == "" {
@@ -59,11 +61,11 @@ func TestAutomationValidates(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.want)
 		}
-		if tc.name != "ticket elsewhere" && tc.name != "no such flow" && tc.name != "wrong port" && !errors.Is(err, ErrInvalid) {
+		if tc.name != "no such flow" && !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: err = %v, want ErrInvalid", tc.name, err)
 		}
 	}
-	if _, err := svc.CreateAutomation(ctx, Automation{ProjectID: "nope", Name: "x", Kind: AutomationTrackerQuery, SourceID: tracker.ID, Flow: "builder"}); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.CreateAutomation(ctx, Automation{ProjectID: "nope", Name: "x", Kind: AutomationTrackerQuery, Flow: "builder"}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown project: err = %v", err)
 	}
 }
@@ -74,13 +76,12 @@ func TestAutomationLifecycle(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()
 	p := seedProject(t, svc)
-	tracker := seedTracker(t, svc)
-	tk, err := svc.CreateTicket(ctx, Ticket{ProjectID: p.ID, Title: "T"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: p.UserID, Title: "T"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	q, err := svc.CreateAutomation(ctx, Automation{ProjectID: p.ID, Name: " inbox ", Kind: AutomationTrackerQuery,
-		SourceID: tracker.ID, Query: "assignee = me", Flow: "builder",
+		Query: "assignee = me", Flow: "builder",
 		Params: map[string]string{"plan_gate": "false", "verify": " "}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +124,7 @@ func TestAutomationLifecycle(t *testing.T) {
 	// An update replaces the rule and keeps the marks; the project and the
 	// creation time are not the caller's to change.
 	upd, err := svc.UpdateAutomation(ctx, q.ID, Automation{ProjectID: "other", Name: "inbox-2", Kind: AutomationTrackerQuery,
-		SourceID: tracker.ID, Flow: "builder", Enabled: false})
+		Flow: "builder", Enabled: false})
 	if err != nil {
 		t.Fatal(err)
 	}

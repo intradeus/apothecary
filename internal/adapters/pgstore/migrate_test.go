@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"apothecary/internal/account/auth"
 	"apothecary/internal/adapters/pgstore/pgtest"
 	"apothecary/internal/engine/ask"
+	"apothecary/internal/project/confstore"
 )
 
 func openDSN(t *testing.T, dsn string) *Store {
@@ -243,6 +245,161 @@ func TestAskThreadsMigration(t *testing.T) {
 	}
 	if ths, err := s.AskThreads(ctx, "ra"); err != nil || len(ths) != 2 || ths[1].ID != "next" {
 		t.Errorf("threads = %+v, %v", ths, err)
+	}
+}
+
+// 0004_live_tickets: each workshop gets one ticket source — the single
+// remote tracker its tickets and tracker_query automations name, else the
+// owner's internal tracker (made, with its stock lists, when missing) — and
+// the mirror goes: a tracker_query automation polling another tracker is
+// disabled saying why, so is a cron automation pinned to a ticket of another
+// source than its workshop's, sourceless tickets become the internal
+// tracker's, remote records get a remote id unique per source (placeholders
+// for an empty one and for later duplicates), and remote statuses, flow
+// steps and remote comments are dropped.
+func TestLiveTicketsMigration(t *testing.T) {
+	dsn := pgtest.Empty(t)
+	ctx := context.Background()
+	old := openSrc(t, dsn, upTo(t, 3))
+	if _, err := old.pool.Exec(ctx, `
+		INSERT INTO integrations (id, port, kind, name, created_at, updated_at, user_id) VALUES
+		  ('repo1', 'repository', 'github', 'gh', now(), now(), 'u1'),
+		  ('jira1', 'ticketsource', 'jira', 'Apothecary tickets', now(), now(), 'u1'),
+		  ('gh1', 'ticketsource', 'github_issues', 'GH issues', now(), now(), 'u1'),
+		  ('repo2', 'repository', 'github', 'gh', now(), now(), 'u2'),
+		  ('internal-u2', 'ticketsource', 'internal', 'Apothecary tickets', now(), now(), 'u2');
+		INSERT INTO tracker_statuses (id, integration_id, remote_id, name, remote_category, position, is_done, flow_step) VALUES
+		  ('js1', 'jira1', '10', 'Open', 'new', 0, false, 'todo'),
+		  ('internal-u2-todo', 'internal-u2', 'internal-u2-todo', 'To do', 'new', 0, false, 'todo');
+		INSERT INTO projects (id, name, repo_account_id, provisioner_id, repo, default_flow, created_at, updated_at, user_id) VALUES
+		  ('p-single', 'single', 'repo1', 'repo1', '{}', 'builder', now(), now(), 'u1'),
+		  ('p-two', 'two', 'repo1', 'repo1', '{}', 'builder', now(), now(), 'u1'),
+		  ('p-none', 'none', 'repo1', 'repo1', '{}', 'builder', now(), now(), 'u1'),
+		  ('p-u2', 'theirs', 'repo2', 'repo2', '{}', 'builder', now(), now(), 'u2');
+		INSERT INTO tickets (id, project_id, title, source_id, source_kind, source_key, created_at, updated_at, user_id, remote_id, status_id, sync_state) VALUES
+		  ('t1', 'p-single', 'synced', 'jira1', 'jira', 'J-1', '2026-01-01T00:00:00Z', now(), 'u1', '100', 'js1', 'ok'),
+		  ('t2', 'p-two', 'same issue', 'jira1', 'jira', 'J-1', '2026-01-02T00:00:00Z', now(), 'u1', '100', NULL, 'ok'),
+		  ('t3', 'p-two', 'never synced', 'gh1', 'github_issues', '#3', '2026-01-03T00:00:00Z', now(), 'u1', '', NULL, ''),
+		  ('t4', 'p-none', 'hand-written', '', '', '', '2026-01-04T00:00:00Z', now(), 'u1', '', NULL, ''),
+		  ('t5', 'p-none', 'merge request', '', '', 'https://x.local/mr/1', '2026-01-05T00:00:00Z', now(), 'u1', '', NULL, ''),
+		  ('t6', 'p-u2', 'theirs', '', '', '', '2026-01-06T00:00:00Z', now(), 'u2', '', 'internal-u2-todo', '');
+		INSERT INTO ticket_comments (id, ticket_id, remote_id, body_md, created_at, updated_at, origin) VALUES
+		  ('c1', 't1', 'r1', 'mirrored', now(), now(), 'remote'),
+		  ('c2', 't1', '', 'posted by a run', now(), now(), 'apothecary'),
+		  ('c3', 't4', '', 'typed', now(), now(), 'user'),
+		  ('c4', 't4', 'r9', 'stray', now(), now(), 'remote');
+		INSERT INTO automations (id, project_id, name, kind, source_id, query, schedule, ticket_id, flow, created_at, updated_at) VALUES
+		  ('a1', 'p-single', 'poll', 'tracker_query', 'jira1', 'q', '', '', 'builder', now(), now()),
+		  ('a2', 'p-two', 'poll', 'tracker_query', 'gh1', 'q', '', '', 'builder', now(), now()),
+		  ('a3', 'p-two', 'nightly', 'cron', '', '', '0 3 * * *', '', 'builder', now(), now()),
+		  ('a4', 'p-single', 'pinned elsewhere', 'cron', '', '', '0 3 * * *', 't4', 'builder', now(), now()),
+		  ('a5', 'p-single', 'pinned here', 'cron', '', '', '0 3 * * *', 't1', 'builder', now(), now()),
+		  ('a6', 'p-two', 'pinned, ambiguous', 'cron', '', '', '0 3 * * *', 't3', 'builder', now(), now())`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	s := openDSN(t, dsn)
+	// u1 had no internal tracker, and called the Jira one by its name.
+	in, err := s.GetIntegration(ctx, "internal-u1")
+	if err != nil || in.Kind != "internal" || in.Port != confstore.PortTicketSource || in.UserID != "u1" || in.Name != "Apothecary tickets (built in)" {
+		t.Fatalf("u1's internal tracker = %+v, %v", in, err)
+	}
+	sts, _ := s.ListTrackerStatuses(ctx, "internal-u1")
+	var names []string
+	for _, st := range sts {
+		names = append(names, st.Name)
+		if st.RemoteID != st.ID || st.IsDone != (st.Name == "Done") {
+			t.Errorf("seeded status = %+v", st)
+		}
+	}
+	if !slices.Equal(names, []string{"To do", "In progress", "In review", "Done", "Blocked"}) || sts[0].ID != "internal-u1-todo" {
+		t.Errorf("seeded statuses = %+v", sts)
+	}
+	if tys, _ := s.ListTrackerTypes(ctx, "internal-u1"); len(tys) != 6 || tys[0].ID != "internal-u1-feat" || tys[0].Name != "Feature" {
+		t.Errorf("seeded types = %+v", tys)
+	}
+	// u2's tracker was there: kept as it was.
+	if sts, _ := s.ListTrackerStatuses(ctx, "internal-u2"); len(sts) != 1 {
+		t.Errorf("u2's statuses = %+v", sts)
+	}
+	if all, _ := s.ListIntegrations(ctx, "u2"); len(all) != 2 {
+		t.Errorf("u2 got a second internal tracker: %+v", all)
+	}
+
+	for project, want := range map[string]string{
+		"p-single": "jira1",       // one remote tracker, named by its tickets and its automation
+		"p-two":    "internal-u1", // two: ambiguous
+		"p-none":   "internal-u1", // none
+		"p-u2":     "internal-u2",
+	} {
+		if p, err := s.GetProject(ctx, project); err != nil || p.TicketSourceID != want {
+			t.Errorf("%s source = %q, %v; want %s", project, p.TicketSourceID, err, want)
+		}
+	}
+
+	if a, err := s.GetAutomation(ctx, "a1"); err != nil || !a.Enabled || a.LastError != "" {
+		t.Errorf("automation on its workshop's source = %+v, %v", a, err)
+	}
+	if a, err := s.GetAutomation(ctx, "a2"); err != nil || a.Enabled ||
+		!strings.Contains(a.LastError, "GH issues") || !strings.Contains(a.LastError, "Apothecary tickets (built in)") {
+		t.Errorf("automation polling another tracker = %+v, %v", a, err)
+	}
+	if a, err := s.GetAutomation(ctx, "a3"); err != nil || !a.Enabled || a.LastError != "" {
+		t.Errorf("cron automation = %+v, %v", a, err)
+	}
+	// A pinned ticket must be of the workshop's source: a hand-written one
+	// is now the internal tracker's, and an ambiguous workshop went there.
+	if a, err := s.GetAutomation(ctx, "a4"); err != nil || a.Enabled ||
+		!strings.Contains(a.LastError, "ticket t4") || !strings.Contains(a.LastError, "Apothecary tickets (built in)") {
+		t.Errorf("cron pinned to an internal ticket on a remote workshop = %+v, %v", a, err)
+	}
+	if a, err := s.GetAutomation(ctx, "a5"); err != nil || !a.Enabled || a.LastError != "" {
+		t.Errorf("cron pinned to its workshop's source = %+v, %v", a, err)
+	}
+	if a, err := s.GetAutomation(ctx, "a6"); err != nil || a.Enabled ||
+		!strings.Contains(a.LastError, "ticket t3") || !strings.Contains(a.LastError, "GH issues") {
+		t.Errorf("cron pinned to a remote ticket on an ambiguous workshop = %+v, %v", a, err)
+	}
+
+	for _, c := range []struct{ id, source, kind, remote, status string }{
+		{"t1", "jira1", "jira", "100", ""},
+		{"t2", "jira1", "jira", "dup:t2", ""},           // the newer record of one issue
+		{"t3", "gh1", "github_issues", "legacy:t3", ""}, // no remote id kept
+		{"t4", "internal-u1", "internal", "t4", ""},
+		{"t5", "internal-u1", "internal", "t5", ""},
+		{"t6", "internal-u2", "internal", "t6", "internal-u2-todo"},
+	} {
+		tk, err := s.GetTicket(ctx, c.id)
+		if err != nil || tk.SourceID != c.source || tk.SourceKind != c.kind || tk.RemoteID != c.remote || tk.StatusID != c.status {
+			t.Errorf("%s = %+v, %v; want %+v", c.id, tk, err, c)
+		}
+	}
+	if tk, err := s.GetTicketByRemote(ctx, "jira1", "100"); err != nil || tk.ID != "t1" {
+		t.Errorf("the issue's record = %+v, %v", tk, err)
+	}
+	if err := s.UpsertTicket(ctx, confstore.Ticket{ID: "t7", Title: "again", SourceID: "jira1", SourceKind: "jira", RemoteID: "100",
+		CreatedAt: time.Now(), UpdatedAt: time.Now()}); !errors.Is(err, confstore.ErrConflict) {
+		t.Errorf("another record of the issue = %v, want ErrConflict", err)
+	}
+
+	if sts, _ := s.ListTrackerStatuses(ctx, "jira1"); len(sts) != 0 {
+		t.Errorf("remote statuses kept: %+v", sts)
+	}
+	if cs, _ := s.ListTicketComments(ctx, "t1"); len(cs) != 0 {
+		t.Errorf("a remote ticket's comments kept: %+v", cs)
+	}
+	if cs, _ := s.ListTicketComments(ctx, "t4"); len(cs) != 1 || cs[0].ID != "c3" {
+		t.Errorf("internal ticket's comments = %+v", cs)
+	}
+	var left int
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		 WHERE (table_name = 'tickets' AND column_name IN ('project_id', 'remote_updated_at', 'synced_at', 'sync_state', 'sync_error'))
+		    OR (table_name = 'tracker_statuses' AND column_name IN ('flow_step', 'remote_category'))
+		    OR (table_name = 'ticket_comments' AND column_name = 'remote_id')
+		    OR (table_name = 'automations' AND column_name = 'source_id')`).Scan(&left); err != nil || left != 0 {
+		t.Errorf("mirror columns left = %d, %v", left, err)
 	}
 }
 

@@ -31,7 +31,7 @@ func TestIssuesRateLimited(t *testing.T) {
 		t.Fatalf("Retry-After = %v", err)
 	}
 	header = map[string]string{"RateLimit-Reset": strconv.FormatInt(time.Now().Add(time.Minute).Unix(), 10)}
-	if _, err := s.FetchMany(ctx, []string{"lu/greeter#1", "lu/greeter#2"}); !errors.As(err, &rl) || rl.RetryAfter < 50*time.Second || rl.RetryAfter > time.Minute {
+	if _, err := s.Search(ctx, trackerport.SearchQuery{Text: "x"}); !errors.As(err, &rl) || rl.RetryAfter < 50*time.Second || rl.RetryAfter > time.Minute {
 		t.Fatalf("RateLimit-Reset = %v (%+v)", err, rl)
 	}
 }

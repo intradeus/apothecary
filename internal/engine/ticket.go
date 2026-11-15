@@ -3,11 +3,12 @@ package engine
 // Tracker actions (FLOWLANG §2 action, ticket_*): the run writes to its
 // ticket's tracker — moves the ticket, comments on it, fills a field,
 // attaches the merge request or the branch. Every ticket has exactly one
-// tracker, resolved per call from the ticket's CURRENT row
+// tracker, resolved per call from the ticket's CURRENT record
 // (Resolution.TicketTracker), never from the run's snapshot: the remote issue
-// it mirrors (Jira, GitHub, GitLab) when it has a source, else Apothecary's
-// internal tracker, which writes the ticket row itself. A run with no ticket
-// has nothing to write to: those stages complete as SKIPPED, visibly
+// (Jira, GitHub, GitLab), or the owner's internal tracker, which writes the
+// ticket row itself. A remote write drops the issue from the live cache
+// (tickets.Live.Writer), so the ticket page shows it at once. A run with no
+// ticket has nothing to write to: those stages complete as SKIPPED, visibly
 // (stage_completed{skipped, note}), and the run goes on down on_success.
 //
 // Every call runs engine-side like the repository host's, so no tracker
@@ -18,14 +19,13 @@ package engine
 // carries the stage as its actor (resolution.TrackerActor), which the
 // internal tracker records as who moved or commented.
 //
-// A move names a flow STEP (`to: in_progress`, trackerport.FlowStep), which
-// the ticket's tracker's status list resolves to the status holding it
-// (Resolution.TicketStep) — so the same flow moves a Jira issue to "In
-// Progress" and a hand-written ticket to its own — or the tracker's literal
-// status (`status: "Ready for prod"`). A step no status holds is not a
-// failure: the stage completes as SKIPPED with the reason. So is a write
-// with no meaning on this tracker (*trackerport.ErrNotApplicable: a field
-// the internal tracker does not have, a ticket deleted mid-run).
+// A move names the tracker's own status or transition (`to: "In Progress"`,
+// or `to: $in_progress_status`, a parameter the workshop binds — the run is
+// refused until it is), handed to the tracker as written: there is no
+// vocabulary of ours in between, so one flow fits every tracker through its
+// bindings. A write with no meaning on this tracker is not a failure: the
+// stage completes as SKIPPED with the reason (*trackerport.ErrNotApplicable:
+// a field the internal tracker does not have, a ticket deleted mid-run).
 //
 // Failures are OUTCOME failures (actionFail → on_fail, else the run is
 // abandoned): a status the tracker cannot reach, a field it cannot write, a
@@ -61,25 +61,11 @@ func (x *exec) actionSkip(st *flow.Stage, note string) (bool, error) {
 }
 
 // trackerTarget is a resolved tracker action target: the writer, the
-// ticket's key on it, the context its calls carry (the stage as actor), and
-// whether the tracker is a remote one — whose write the ticket's mirror only
-// shows after a refresh (written).
+// ticket's key on it and the context its calls carry (the stage as actor).
 type trackerTarget struct {
-	w      trackerport.TicketWriter
-	key    string
-	ctx    context.Context
-	remote bool
-}
-
-// written settles a successful tracker action: on a remote tracker the
-// ticket's mirror is refreshed so it shows the write now, not at the next
-// poll (best-effort: a failed refresh never fails the stage). The internal
-// tracker wrote the row itself. The stage completes and follows on_success.
-func (x *exec) written(tg trackerTarget) (bool, error) {
-	if tg.remote {
-		x.e.refreshTicket(x.ctx, x.rs.View.TicketID)
-	}
-	return false, nil
+	w   trackerport.TicketWriter
+	key string
+	ctx context.Context
 }
 
 // tracker resolves the run's ticket's tracker. routed=true means the stage
@@ -107,10 +93,7 @@ func (x *exec) tracker(st *flow.Stage) (tg trackerTarget, routed bool, err error
 		return tg, routed, err
 	}
 	ctx := resolution.WithTrackerActor(x.ctx, resolution.TrackerActor{RunID: rs.RunID, Stage: x.stageOccurrence(st)})
-	// The internal tracker keys a run's comments by the actor (and is the
-	// only one that does); every other tracker is a remote issue.
-	_, internal := w.(runKeyedCommenter)
-	return trackerTarget{w: w, key: key, ctx: ctx, remote: !internal}, false, nil
+	return trackerTarget{w: w, key: key, ctx: ctx}, false, nil
 }
 
 // stageOccurrence names this run of the stage: the phase run and the stage
@@ -120,19 +103,18 @@ func (x *exec) stageOccurrence(st *flow.Stage) string {
 	return strings.TrimPrefix(x.roundID(), x.rs.RunID+"/") + "/" + st.ID
 }
 
-// trackerFail routes a tracker error: a step no status holds, or a write
-// with no meaning on this tracker, skips the stage (the flow fits, this
-// tracker cannot say it); a typed refusal (status unreachable, field unknown
-// or unwritable) is the flow's literal not fitting the tracker —
-// input_invalid; anything else is the tracker itself — infra, still routable.
-// A cancelled run is none of these.
+// trackerFail routes a tracker error: a write with no meaning on this
+// tracker skips the stage (the flow fits, this tracker cannot say it); a
+// typed refusal (status unreachable, field unknown or unwritable) is the
+// flow's literal not fitting the tracker — input_invalid; anything else is
+// the tracker itself — infra, still routable. A cancelled run is none of
+// these.
 func (x *exec) trackerFail(st *flow.Stage, err error) (bool, error) {
 	if x.ctx.Err() != nil {
 		return true, context.Cause(x.ctx)
 	}
-	var noStep *trackerport.ErrStatusUnsupported
 	var na *trackerport.ErrNotApplicable
-	if errors.As(err, &noStep) || errors.As(err, &na) {
+	if errors.As(err, &na) {
 		return x.actionSkip(st, st.Action+": "+err.Error())
 	}
 	reason := event.ReasonInfra
@@ -145,29 +127,25 @@ func (x *exec) trackerFail(st *flow.Stage, err error) (bool, error) {
 	return x.actionFail(st, reason, st.Action+": "+err.Error())
 }
 
-// actionTicketTransition moves the ticket — to the status holding a flow
-// step (`to`) or to a literal status (`status`); the parser holds the stage
-// to exactly one. Idempotent by nature: the tracker reads the current status
-// first, and "already there" is a no-op.
+// actionTicketTransition moves the ticket to the status `to` names, as
+// written or as bound. Idempotent by nature: the tracker reads the current
+// status first, and "already there" is a no-op. An empty `to` — a parameter
+// the run started without, which preflight should have refused — is
+// input_missing, never a move to nowhere.
 func (x *exec) actionTicketTransition(st *flow.Stage) (bool, error) {
 	tg, routed, err := x.tracker(st)
 	if routed {
 		return true, err
 	}
-	status := strings.TrimSpace(st.Setting("status", ""))
-	if to := strings.TrimSpace(st.Setting("to", "")); to != "" {
-		if x.res.TicketStep == nil {
-			return x.actionFail(st, event.ReasonInfra, st.Action+": this build cannot resolve a flow step to a status")
-		}
-		if status, err = x.res.TicketStep(tg.ctx, x.rs.View.TicketID, trackerport.FlowStep(to)); err != nil {
-			return x.trackerFail(st, err)
-		}
+	to := strings.TrimSpace(st.Setting("to", ""))
+	if to == "" {
+		return x.actionFail(st, event.ReasonInputMissing, st.Action+": to has no value — bind the status parameter it reads")
 	}
-	if err := tg.w.Transition(tg.ctx, tg.key, status); err != nil {
+	if err := tg.w.Transition(tg.ctx, tg.key, to); err != nil {
 		return x.trackerFail(st, err)
 	}
-	x.e.log.InfoContext(x.bg, "ticket moved", logs.RunID, x.rs.RunID, logs.StageID, st.ID, "ticket", tg.key, "to", status)
-	return x.written(tg)
+	x.e.log.InfoContext(x.bg, "ticket moved", logs.RunID, x.rs.RunID, logs.StageID, st.ID, "ticket", tg.key, "to", to)
+	return false, nil
 }
 
 // ticketTrailer is the line a comment posted to a REMOTE tracker ends with:
@@ -231,7 +209,7 @@ func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 		if posted {
 			x.e.log.InfoContext(x.bg, "adopted a comment posted before an interrupted record",
 				logs.RunID, rs.RunID, logs.StageID, st.ID, "ticket", tg.key)
-			return x.written(tg)
+			return false, nil
 		}
 	}
 	path := inputPath(st, "body")
@@ -276,7 +254,7 @@ func (x *exec) actionTicketComment(st *flow.Stage) (bool, error) {
 	if err := tg.w.Comment(tg.ctx, tg.key, body); err != nil {
 		return x.trackerFail(st, err)
 	}
-	return x.written(tg)
+	return false, nil
 }
 
 // actionTicketSetField writes one field: its value from the bound artifact
@@ -311,7 +289,7 @@ func (x *exec) actionTicketSetField(st *flow.Stage) (bool, error) {
 		return x.trackerFail(st, err)
 	}
 	x.e.log.InfoContext(x.bg, "ticket field set", logs.RunID, rs.RunID, logs.StageID, st.ID, "ticket", tg.key, "field", field)
-	return x.written(tg)
+	return false, nil
 }
 
 // mergeItems is append mode: the union of two comma-separated lists, in order
@@ -359,7 +337,7 @@ func (x *exec) actionTicketLink(st *flow.Stage) (bool, error) {
 		}
 	}
 	x.e.log.InfoContext(x.bg, "ticket linked to merge request(s)", logs.RunID, rs.RunID, logs.StageID, st.ID, "ticket", tg.key, "count", len(mrs))
-	return x.written(tg)
+	return false, nil
 }
 
 // actionTicketLinkBranch attaches the run's branch to the issue — every
@@ -410,5 +388,5 @@ func (x *exec) actionTicketLinkBranch(st *flow.Stage) (bool, error) {
 		return x.actionSkip(st, "no checkout of this run has a repository host to link a branch from")
 	}
 	x.e.log.InfoContext(x.bg, "ticket linked to branch(es)", logs.RunID, rs.RunID, logs.StageID, st.ID, "ticket", tg.key, "count", linked)
-	return x.written(tg)
+	return false, nil
 }

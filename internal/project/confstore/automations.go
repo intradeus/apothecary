@@ -4,9 +4,9 @@ package confstore
 // v4). An automation belongs to a project and names a flow whose
 // operates_on fits it, parameter overrides, plus how it fires:
 //
-//   - tracker_query polls a ticketsource integration with a query ("assigned
-//     to the factory"), imports every issue it finds as a ticket of the
-//     project — once — and starts a run for each;
+//   - tracker_query polls its workshop's ticket source (Project.TicketSourceID)
+//     with a query ("assigned to the factory"), records every issue it finds
+//     — once — and starts a run for each;
 //   - cron fires on a schedule (five-field cron, UTC) for one ticket, a new
 //     run each time;
 //   - merge_request watches a repository's open merge requests and starts a
@@ -19,7 +19,6 @@ package confstore
 
 import (
 	"context"
-	"fmt"
 	"maps"
 	"strings"
 	"time"
@@ -37,20 +36,14 @@ const (
 // AutomationKinds lists the kinds, for messages and the API.
 var AutomationKinds = []string{AutomationTrackerQuery, AutomationCron, AutomationMergeRequest}
 
-// TicketKindMR is the source kind of a ticket a merge_request automation made
-// for a merge request: its key and URL are the merge request's, and it has no
-// remote tracker (no source id), so its tracker is the internal one.
-const TicketKindMR = "merge_request"
-
 type Automation struct {
 	ID        string `json:"id"`
 	ProjectID string `json:"project_id"`
 	Name      string `json:"name"`
 	Kind      string `json:"kind"`
-	// tracker_query: the ticketsource integration polled and the query it is
-	// asked (empty = the adapter's default search).
-	SourceID string `json:"source_id,omitempty"`
-	Query    string `json:"query,omitempty"`
+	// tracker_query: the query the workshop's ticket source is asked (empty =
+	// the adapter's default search).
+	Query string `json:"query,omitempty"`
 	// cron: the five-field schedule (UTC) and the ticket each firing runs.
 	Schedule string `json:"schedule,omitempty"`
 	TicketID string `json:"ticket_id,omitempty"`
@@ -172,7 +165,7 @@ func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 	if err != nil {
 		return err
 	}
-	a.SourceID, a.Query = strings.TrimSpace(a.SourceID), strings.TrimSpace(a.Query)
+	a.Query = strings.TrimSpace(a.Query)
 	a.Schedule, a.TicketID = strings.TrimSpace(a.Schedule), strings.TrimSpace(a.TicketID)
 	a.Repo = strings.TrimSpace(a.Repo)
 	if a.Repo != "" && a.Kind != AutomationMergeRequest {
@@ -180,21 +173,6 @@ func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 	}
 	switch a.Kind {
 	case AutomationTrackerQuery:
-		if a.SourceID == "" {
-			return invalidf("a tracker_query automation needs source_id: the ticketsource integration to poll")
-		}
-		in, err := s.db.GetIntegration(ctx, a.SourceID)
-		if err != nil {
-			return err
-		}
-		// Polled on a schedule with its owner's credentials: someone else's
-		// tracker is not there.
-		if !sameOwner(in.UserID, p.UserID) {
-			return fmt.Errorf("integration %s: %w", a.SourceID, ErrNotFound)
-		}
-		if in.Port != PortTicketSource {
-			return invalidf("integration %s is a %s, not a ticket source", a.SourceID, in.Port)
-		}
 		if a.Schedule != "" || a.TicketID != "" {
 			return invalidf("a tracker_query automation takes no schedule or ticket_id")
 		}
@@ -209,14 +187,15 @@ func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 		if err != nil {
 			return err
 		}
-		if t.ProjectID != a.ProjectID {
-			return invalidf("ticket %s belongs to another project", a.TicketID)
+		// A pinned ticket is the workshop's: its owner's, from its source.
+		if !sameOwner(t.UserID, p.UserID) || t.SourceID != p.TicketSourceID {
+			return invalidf("ticket %s is not one of this workshop's ticket source", a.TicketID)
 		}
-		if a.SourceID != "" || a.Query != "" {
-			return invalidf("a cron automation takes no source_id or query")
+		if a.Query != "" {
+			return invalidf("a cron automation takes no query")
 		}
 	case AutomationMergeRequest:
-		if a.SourceID != "" || a.Query != "" || a.Schedule != "" || a.TicketID != "" {
+		if a.Query != "" || a.Schedule != "" || a.TicketID != "" {
 			return invalidf("a merge-request automation (merge_request) takes only a repo (\"\" = the primary)")
 		}
 		if a.Repo == "repo" {

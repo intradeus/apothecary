@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
-import type { Flow, FlowBinding, ParamDecl } from '$lib/domain';
+import type { ActionSpec, Flow, FlowBinding, ParamDecl, TrackerStatus } from '$lib/domain';
 import { aFlow, anIntegration, aWorkshop } from '$test/fixtures/app.svelte';
 import { deferred } from '$test/helpers';
 import FlowBindingSheet from './FlowBindingSheet.svelte';
@@ -10,13 +10,14 @@ import FlowBindingSheet from './FlowBindingSheet.svelte';
 vi.mock('$lib/api', () => ({
 	api: {
 		flows: { binding: vi.fn(), bind: vi.fn(), unbind: vi.fn() },
-		integrations: { list: vi.fn(), models: vi.fn() }
+		integrations: { list: vi.fn(), models: vi.fn(), statuses: vi.fn() },
+		system: { actions: vi.fn() }
 	}
 }));
 
 const decl = (over: Partial<ParamDecl> & { name: string }) =>
 	({ type: 'string', default: '', known: false, ...over }) as ParamDecl;
-const project = aWorkshop({ id: 'p1', harnessIds: ['h1'] });
+const project = aWorkshop({ id: 'p1', harnessIds: ['h1'], ticketSourceId: 'src1' });
 const flow = (parameters: ParamDecl[] = [decl({ name: 'branch', default: 'main' })]): Flow =>
 	aFlow({ name: 'builder', parameters });
 const binding = (params: Record<string, string>) => ({ params }) as FlowBinding;
@@ -37,6 +38,7 @@ beforeEach(() => {
 	vi.resetAllMocks();
 	vi.mocked(api.flows.binding).mockResolvedValue(null as never);
 	vi.mocked(api.integrations.list).mockResolvedValue([]);
+	vi.mocked(api.system.actions).mockResolvedValue([]);
 });
 
 describe('FlowBindingSheet', () => {
@@ -163,5 +165,73 @@ describe('FlowBindingSheet', () => {
 		await ready();
 		await waitFor(() => expect(api.integrations.models).toHaveBeenCalledWith('h1'));
 		expect(api.integrations.models).toHaveBeenCalledOnce();
+	});
+
+	describe('a parameter read as a tracker status', () => {
+		const transition = {
+			slug: 'ticket_transition',
+			title: 'Move the ticket',
+			single: false,
+			remote: true,
+			inputs: [],
+			outputs: [],
+			settings: [{ name: 'to', kind: 'text', required: true, unbound: true }]
+		} as ActionSpec;
+		const status = (name: string, position: number) =>
+			({
+				id: name,
+				integrationId: 'src1',
+				remoteId: name,
+				name,
+				position,
+				isDone: false
+			}) as TrackerStatus;
+		const reading = (): Flow => ({
+			...flow([decl({ name: 'done_status', required: true })]),
+			yaml: 'name: builder\nmain:\n  - id: close\n    type: action\n    action: ticket_transition\n    with: { to: $done_status }\n'
+		});
+
+		it("suggests the source's statuses in order, shows it unbound and saves any text", async () => {
+			vi.mocked(api.system.actions).mockResolvedValue([transition]);
+			vi.mocked(api.integrations.statuses).mockResolvedValue({
+				statuses: [status('Done', 1), status('To Do', 0)],
+				readOnly: true
+			});
+			vi.mocked(api.flows.bind).mockResolvedValue(binding({ done_status: 'Shipped' }));
+			setup(reading());
+			await ready();
+
+			const input = screen.getByLabelText(/^done_status/);
+			expect(screen.getByText(/no value yet/)).toBeInTheDocument();
+			await waitFor(() =>
+				expect(
+					[...document.querySelectorAll('#fb-done_status-list option')].map((o) =>
+						o.getAttribute('value')
+					)
+				).toEqual(['To Do', 'Done'])
+			);
+			expect(api.integrations.statuses).toHaveBeenCalledWith('src1');
+			await userEvent.type(input, 'Shipped');
+			await userEvent.click(save());
+			expect(api.flows.bind).toHaveBeenCalledWith('p1', 'builder', { done_status: 'Shipped' });
+		});
+
+		it('asks for no statuses when no parameter reads one', async () => {
+			vi.mocked(api.system.actions).mockResolvedValue([transition]);
+			setup();
+			await ready();
+			await waitFor(() => expect(api.system.actions).toHaveBeenCalled());
+			expect(api.integrations.statuses).not.toHaveBeenCalled();
+		});
+
+		it('stays plain text when the statuses cannot be read', async () => {
+			vi.mocked(api.system.actions).mockResolvedValue([transition]);
+			vi.mocked(api.integrations.statuses).mockRejectedValue(new Error('rate limited'));
+			setup(reading());
+			await ready();
+			await waitFor(() => expect(api.integrations.statuses).toHaveBeenCalled());
+			expect(screen.getByLabelText(/^done_status/)).toBeInTheDocument();
+			expect(screen.queryByText('rate limited')).not.toBeInTheDocument();
+		});
 	});
 });

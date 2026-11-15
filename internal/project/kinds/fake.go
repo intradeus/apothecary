@@ -129,10 +129,10 @@ func (FakeTicketSource) Descriptor() Descriptor {
 	return Descriptor{Port: "ticketsource", Kind: "fake", Label: "Fake tracker (dev)"}
 }
 
-// New serves a tiny fixed corpus so the import flow (search → pick → copy,
-// attachments included) and the sync (statuses, types, labels — the ids
-// match fake.DefaultStatuses/DefaultTypes) are exercisable in -dev with no
-// Jira.
+// New serves a tiny fixed corpus so a workshop's live list (search → open,
+// attachments included — the status and type ids match
+// fake.DefaultStatuses/DefaultTypes) and a flow's tracker actions are
+// exercisable in -dev with no Jira.
 func (FakeTicketSource) New(Config) (trackerport.TicketSource, error) {
 	return &fake.TicketSource{
 		Tickets: []trackerport.SourceTicket{

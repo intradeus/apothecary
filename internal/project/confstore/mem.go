@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"apothecary/internal/flow/builtin"
+	"apothecary/internal/ports/trackerport"
 )
 
 // Mem is the in-memory DB used by unit tests and httpapi tests, held to
@@ -120,7 +121,6 @@ func storedTicket(t Ticket) Ticket {
 		t.Labels = nil
 	}
 	t.Labels = slices.Clone(t.Labels)
-	t.RemoteUpdatedAt, t.SyncedAt = pgTimePtr(t.RemoteUpdatedAt), pgTimePtr(t.SyncedAt)
 	t.StatusChangedAt = pgTimePtr(t.StatusChangedAt)
 	t.CreatedAt, t.UpdatedAt = pgTime(t.CreatedAt), pgTime(t.UpdatedAt)
 	return t
@@ -219,7 +219,7 @@ func (m *Mem) deleteIntegration(id string) error {
 	// still reads as referenced.
 	var refs []string
 	for _, p := range m.projects {
-		if p.RepoAccountID == id || p.ProvisionerID == id || slices.Contains(p.HarnessIDs, id) {
+		if p.RepoAccountID == id || p.ProvisionerID == id || p.TicketSourceID == id || slices.Contains(p.HarnessIDs, id) {
 			refs = append(refs, p.Name)
 		}
 	}
@@ -230,10 +230,18 @@ func (m *Mem) deleteIntegration(id string) error {
 	if _, ok := m.integrations[id]; !ok {
 		return notFound("integration", id)
 	}
-	// Parity with the lists' cascade meeting the tickets' FKs.
+	// Parity with the lists' cascade meeting the tickets' FKs: a ticket in
+	// one of its statuses holds it; a ticket of one of its types loses the
+	// type (tickets.source_id has no FK: the records stay).
 	for _, t := range m.tickets {
-		if m.statuses[t.StatusID].IntegrationID == id || m.types[t.TypeID].IntegrationID == id {
+		if m.statuses[t.StatusID].IntegrationID == id {
 			return fmt.Errorf("integration %s: %w", id, ErrReferenced)
+		}
+	}
+	for tid, t := range m.tickets {
+		if t.TypeID != "" && m.types[t.TypeID].IntegrationID == id {
+			t.TypeID = ""
+			m.tickets[tid] = t
 		}
 	}
 	delete(m.integrations, id)
@@ -261,7 +269,7 @@ func (m *Mem) UpsertProject(_ context.Context, p Project) error {
 			return fmt.Errorf("project %s: %w", p.Name, ErrConflict)
 		}
 	}
-	for _, id := range []string{p.RepoAccountID, p.ProvisionerID} {
+	for _, id := range []string{p.RepoAccountID, p.ProvisionerID, p.TicketSourceID} {
 		if _, ok := m.integrations[id]; !ok {
 			return fmt.Errorf("project %s references a missing flow or integration: %w", p.Name, ErrInvalid)
 		}
@@ -326,8 +334,6 @@ func (m *Mem) DeleteProject(_ context.Context, id string) error {
 	}
 	delete(m.projects, id)
 	// Everything under the project goes with it (pg: ON DELETE CASCADE).
-	maps.DeleteFunc(m.tickets, func(_ string, t Ticket) bool { return t.ProjectID == id })
-	m.dropOrphans()
 	maps.DeleteFunc(m.flows, func(_ string, r FlowRow) bool { return r.ProjectID == id })
 	maps.DeleteFunc(m.versions, func(_ string, v FlowVersion) bool { return v.ProjectID == id })
 	maps.DeleteFunc(m.bindings, func(_ string, b FlowBinding) bool { return b.ProjectID == id })
@@ -377,25 +383,19 @@ func (m *Mem) UpsertTicket(_ context.Context, t Ticket) error {
 	t = storedTicket(t)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.projects[t.ProjectID]; !ok {
-		return fmt.Errorf("ticket %s references a missing project, status or type: %w", t.ID, ErrInvalid)
-	}
 	if _, ok := m.statuses[t.StatusID]; t.StatusID != "" && !ok {
-		return fmt.Errorf("ticket %s references a missing project, status or type: %w", t.ID, ErrInvalid)
+		return fmt.Errorf("ticket %s references a missing status or type: %w", t.ID, ErrInvalid)
 	}
 	if _, ok := m.types[t.TypeID]; t.TypeID != "" && !ok {
-		return fmt.Errorf("ticket %s references a missing project, status or type: %w", t.ID, ErrInvalid)
+		return fmt.Errorf("ticket %s references a missing status or type: %w", t.ID, ErrInvalid)
 	}
-	// Parity with tickets_source_key_idx.
-	if t.SourceID != "" {
-		for _, x := range m.tickets {
-			if x.ID != t.ID && x.UserID == t.UserID && x.SourceID == t.SourceID && strings.EqualFold(x.SourceKey, t.SourceKey) {
-				return fmt.Errorf("ticket %s: %s is already ticket %s: %w", t.ID, t.SourceKey, x.ID, ErrConflict)
-			}
+	// Parity with tickets_source_remote_idx.
+	for _, x := range m.tickets {
+		if x.ID != t.ID && x.SourceID == t.SourceID && x.RemoteID == t.RemoteID {
+			return fmt.Errorf("ticket %s: issue %s of %s is already ticket %s: %w", t.ID, t.RemoteID, t.SourceID, x.ID, ErrConflict)
 		}
 	}
-	// Parity with the pg upsert: only created_at survives an update. The owner
-	// is written as given; copying the project's is the Service's job.
+	// Parity with the pg upsert: only created_at survives an update.
 	if old, ok := m.tickets[t.ID]; ok {
 		t.CreatedAt = old.CreatedAt
 	}
@@ -413,17 +413,122 @@ func (m *Mem) GetTicket(_ context.Context, id string) (Ticket, error) {
 	return storedTicket(t), nil
 }
 
-func (m *Mem) ListTickets(_ context.Context, userID string) ([]Ticket, error) {
+func (m *Mem) GetTicketByRemote(_ context.Context, sourceID, remoteID string) (Ticket, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, t := range m.tickets {
+		if t.SourceID == sourceID && t.RemoteID == remoteID {
+			return storedTicket(t), nil
+		}
+	}
+	return Ticket{}, notFound("ticket of "+sourceID, remoteID)
+}
+
+func (m *Mem) GetTicketBySourceKey(_ context.Context, sourceID, key string) (Ticket, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var best *Ticket
+	for _, t := range m.tickets {
+		if t.SourceID != sourceID || t.SourceKey != key || key == "" {
+			continue
+		}
+		if best == nil || keyRecordBefore(t, *best) {
+			best = &t
+		}
+	}
+	if best == nil {
+		return Ticket{}, notFound("ticket of "+sourceID, key)
+	}
+	return storedTicket(*best), nil
+}
+
+// keyRecordBefore orders the records sharing a key as pg does: a real
+// issue's before a placeholder's, then newest first.
+func keyRecordBefore(a, b Ticket) bool {
+	if pa, pb := placeholderRemote(a.RemoteID), placeholderRemote(b.RemoteID); pa != pb {
+		return pb
+	}
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.After(b.CreatedAt)
+	}
+	return a.ID > b.ID
+}
+
+// placeholderRemote reports a remote id the live-tickets migration made up
+// for a record no issue matches.
+func placeholderRemote(id string) bool {
+	return strings.HasPrefix(id, "dup:") || strings.HasPrefix(id, "legacy:")
+}
+
+func (m *Mem) ListTicketsByRemote(_ context.Context, sourceID string, remoteIDs []string) ([]Ticket, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []Ticket
 	for _, t := range m.tickets {
-		if userID == "" || t.UserID == userID {
+		if t.SourceID == sourceID && slices.Contains(remoteIDs, t.RemoteID) {
 			out = append(out, storedTicket(t))
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
+}
+
+func (m *Mem) ListInternalTickets(_ context.Context, sourceID string, q InternalTicketQuery) ([]Ticket, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	limit := q.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	text := strings.ToLower(q.Text)
+	var out []Ticket
+	for _, t := range m.tickets {
+		if t.SourceID != sourceID {
+			continue
+		}
+		done := t.StatusID != "" && m.statuses[t.StatusID].IsDone
+		if (q.Done == trackerport.DoneOpen && done) || (q.Done == trackerport.DoneOnly && !done) {
+			continue
+		}
+		if text != "" && !strings.Contains(strings.ToLower(t.Title), text) &&
+			!strings.Contains(strings.ToLower(t.Goal), text) && !strings.Contains(strings.ToLower(t.ID), text) {
+			continue
+		}
+		if a := q.After; a != nil {
+			at := pgTime(a.CreatedAt)
+			if !(t.CreatedAt.Before(at) || (t.CreatedAt.Equal(at) && t.ID < a.ID)) {
+				continue
+			}
+		}
+		out = append(out, storedTicket(t))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID > out[j].ID
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (m *Mem) SetTicketSeen(_ context.Context, id string, seen TicketSeen, typeID string, changeType trackerport.ChangeType, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.tickets[id]
+	if !ok {
+		return notFound("ticket", id)
+	}
+	if _, ok := m.types[typeID]; typeID != "" && !ok {
+		return fmt.Errorf("ticket %s references a missing type: %w", id, ErrInvalid)
+	}
+	t.Title, t.Goal = seen.Title, seen.Goal
+	t.SourceKey, t.SourceURL, t.SourceType = seen.Key, seen.URL, seen.Type
+	t.TypeID, t.ChangeType, t.Labels = typeID, changeType, seen.Labels
+	t.UpdatedAt = pgTime(at)
+	m.tickets[id] = storedTicket(t)
+	return nil
 }
 
 func (m *Mem) DeleteTicket(_ context.Context, id string) error {

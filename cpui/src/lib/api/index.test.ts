@@ -14,7 +14,6 @@ import {
 	busyRunOf,
 	isInUse,
 	isNotFound,
-	linkedTicketsOf,
 	api,
 	analytics,
 	ask,
@@ -109,7 +108,12 @@ describe('a list the engine answers null', () => {
 		['pings', () => pings.list(), 'listPings'],
 		['pending pings', () => pings.pending(), 'listPings'],
 		['notices', () => notices.list(), 'listNotices'],
-		['tickets', () => tickets.list(), 'listTickets'],
+		['ticket comments', () => tickets.comments('p', 'K-1'), 'listWorkshopTicketComments'],
+		[
+			'an added comment’s thread',
+			() => tickets.addComment('p', 'K-1', 'hi'),
+			'addWorkshopTicketComment'
+		],
 		['projects', () => projects.list(), 'listProjects'],
 		['branches', () => projects.branches('p'), 'listProjectBranches'],
 		['merge requests', () => projects.mergeRequests('p'), 'listProjectMrs'],
@@ -119,7 +123,6 @@ describe('a list the engine answers null', () => {
 		['integrations', () => integrations.list(), 'listIntegrations'],
 		['repos of one', () => integrations.repos('i'), 'listIntegrationRepos'],
 		['models', () => integrations.models('i'), 'listIntegrationModels'],
-		['source tickets', () => integrations.sourceTickets('i'), 'searchSourceTickets'],
 		['all flows', () => flows.listAll(), 'listAllFlows'],
 		['flows', () => flows.list('p'), 'listFlows'],
 		['templates', () => flows.templates(), 'listFlowTemplates'],
@@ -148,10 +151,16 @@ describe('a list the engine answers null', () => {
 	it.each<[string, () => Promise<unknown[]>, SdkName, unknown]>([
 		['resources', () => runs.resources('r'), 'getRunResources', { samples: null }],
 		[
-			'ticket attachments',
-			() => tickets.attachments('t'),
-			'getTicketAttachments',
-			{ attachments: null }
+			'a page of tickets',
+			() => projects.tickets('p').then((p) => p.tickets),
+			'listWorkshopTickets',
+			{ tickets: null }
+		],
+		[
+			'a tracker’s statuses',
+			() => integrations.statuses('i').then((l) => l.statuses),
+			'listTrackerStatuses',
+			{ statuses: null }
 		],
 		['uploads', () => files.upload([]), 'uploadAttachments', { attachments: null }],
 		['egress defaults', () => egress.defaults(), 'getEgressDefaults', { domains: null }]
@@ -251,7 +260,18 @@ describe('what each call sends', () => {
 			'setAskModel',
 			{ path: { id: 'r' }, body: { model: 'm', thread_id: 's1' } }
 		],
-		['a ticket removal', () => tickets.remove('t'), 'deleteTicket', { path: { id: 't' } }],
+		[
+			'a ticket removal, its key one escaped segment',
+			() => tickets.remove('p', 'grp/app#12'),
+			'deleteWorkshopTicket',
+			{ path: { id: 'p', key: 'grp/app#12' } }
+		],
+		[
+			'an integration removal',
+			() => integrations.remove('i'),
+			'deleteIntegration',
+			{ path: { id: 'i' } }
+		],
 		['a project removal', () => projects.remove('p'), 'deleteProject', { path: { id: 'p' } }],
 		[
 			'a check’s cancel',
@@ -391,9 +411,9 @@ describe('what each call sends', () => {
 		// A rerun's [] clears the original's skillsets; absent keeps them.
 		['no skillsets, on purpose', { skillsets: [] }, { skillsets: [] }]
 	])('starts a run with %s', async (_, input, body) => {
-		const start = reply('startTicketRun', answer({ run_id: 'new' }));
-		await expect(tickets.startRun('t', input)).resolves.toBe('new');
-		expect(start).toHaveBeenCalledWith({ path: { id: 't' }, body });
+		const start = reply('startWorkshopTicketRun', answer({ run_id: 'new' }));
+		await expect(tickets.startRun('p', 'K-1', input)).resolves.toBe('new');
+		expect(start).toHaveBeenCalledWith({ path: { id: 'p', key: 'K-1' }, body });
 		const again = reply('rerunRun', answer({ run_id: 'newer' }));
 		await expect(runs.rerun('r', input)).resolves.toBe('newer');
 		expect(again).toHaveBeenCalledWith({ path: { id: 'r' }, body });
@@ -477,48 +497,167 @@ describe('what each call sends', () => {
 	});
 
 	describe('a ticket', () => {
-		it('sends every field: the endpoint replaces the ticket', async () => {
-			const fn = reply('createTicket', answer({ id: 't' }));
-			const draft: TicketDraft = { title: 'T', goal: 'G', projectId: 'p' };
-			await tickets.create(draft);
+		const detail = { key: 'K-1', source: { id: 'i', kind: 'internal', name: 'Mine' } };
+
+		it('creates one on the workshop, every edited field on the wire', async () => {
+			const fn = reply('createWorkshopTicket', answer(detail));
+			const draft: TicketDraft = { title: 'T', goal: 'G' };
+			await expect(tickets.create('p', draft)).resolves.toMatchObject({
+				key: 'K-1',
+				source: { id: 'i', kind: 'internal', name: 'Mine' }
+			});
 			expect(fn).toHaveBeenCalledWith({
+				path: { id: 'p' },
+				body: { title: 'T', goal: 'G', base_branch: '', change_type: '', attachment_ids: [] }
+			});
+		});
+
+		it('sends a status, type and labels only when it has them', async () => {
+			const fn = reply('createWorkshopTicket', answer(detail));
+			await tickets.create('p', {
+				title: 'T',
+				goal: 'G',
+				statusId: 's',
+				typeId: 'y',
+				labels: ['ui']
+			});
+			expect(fn.mock.lastCall?.[0].body).toMatchObject({
+				status_id: 's',
+				type_id: 'y',
+				labels: ['ui']
+			});
+			await tickets.create('p', { title: 'T', goal: 'G', statusId: '', typeId: '', labels: [] });
+			expect(fn.mock.lastCall?.[0].body).toEqual({
+				title: 'T',
+				goal: 'G',
+				base_branch: '',
+				change_type: '',
+				attachment_ids: []
+			});
+		});
+
+		it('edits one by its workshop and key', async () => {
+			const fn = reply('updateWorkshopTicket', answer(detail));
+			await tickets.update('p', 'K-1', {
+				title: 'T',
+				goal: 'G',
+				baseBranch: 'b',
+				changeType: 'fix',
+				attachmentIds: ['a']
+			});
+			expect(fn).toHaveBeenCalledWith({
+				path: { id: 'p', key: 'K-1' },
 				body: {
 					title: 'T',
 					goal: 'G',
-					project_id: 'p',
-					branch: '',
-					change_type: '',
-					attachment_ids: [],
-					source_id: '',
-					source_key: ''
+					base_branch: 'b',
+					change_type: 'fix',
+					attachment_ids: ['a']
 				}
 			});
 		});
 
-		it('turns a create into an import with a source', async () => {
-			const fn = reply('updateTicket', answer({ id: 't' }));
-			await tickets.update('t', {
-				title: 'T',
-				goal: 'G',
-				projectId: 'p',
-				branch: 'b',
-				changeType: 'fix',
-				attachmentIds: ['a'],
-				sourceIntegrationId: 'i',
-				sourceKey: 'K-1'
+		it('moves it by a status name, labels it and comments on it through its tracker', async () => {
+			const status = reply('setWorkshopTicketStatus', answer(detail));
+			await expect(tickets.setStatus('p', 'K-1', 'In Review')).resolves.toMatchObject({
+				key: 'K-1'
+			});
+			expect(status).toHaveBeenCalledWith({
+				path: { id: 'p', key: 'K-1' },
+				body: { status: 'In Review' }
+			});
+			const labels = reply('setWorkshopTicketLabels', answer(detail));
+			await tickets.setLabels('p', 'K-1', ['a', 'b']);
+			expect(labels).toHaveBeenCalledWith({
+				path: { id: 'p', key: 'K-1' },
+				body: { labels: ['a', 'b'] }
+			});
+			const add = reply(
+				'addWorkshopTicketComment',
+				answer([{ id: 'c', author: 'me', body_md: 'hi', created_at: 'a', updated_at: 'a' }])
+			);
+			await expect(tickets.addComment('p', 'K-1', 'hi')).resolves.toMatchObject([
+				{ id: 'c', bodyMd: 'hi', origin: 'remote' }
+			]);
+			expect(add).toHaveBeenCalledWith({ path: { id: 'p', key: 'K-1' }, body: { body: 'hi' } });
+		});
+
+		it('reads its comments, from the tracker now only when asked', async () => {
+			const fn = reply('listWorkshopTicketComments', answer([]));
+			await tickets.comments('p', 'K-1');
+			expect(fn).toHaveBeenLastCalledWith({ path: { id: 'p', key: 'K-1' }, query: undefined });
+			await tickets.comments('p', 'K-1', { refresh: true });
+			expect(fn).toHaveBeenLastCalledWith({
+				path: { id: 'p', key: 'K-1' },
+				query: { refresh: '1' }
+			});
+		});
+
+		it('reads its files, ours and the remote issue’s', async () => {
+			const fn = reply(
+				'getWorkshopTicketAttachments',
+				answer({ attachments: [{ id: 'a' }], remote: [{ filename: 'r.png' }] })
+			);
+			await expect(tickets.attachments('p', 'K-1')).resolves.toMatchObject({
+				attachments: [{ id: 'a' }],
+				remote: [{ filename: 'r.png' }]
+			});
+			expect(fn).toHaveBeenCalledWith({ path: { id: 'p', key: 'K-1' } });
+		});
+
+		it('reads a record by its id, with the workshops it shows in', async () => {
+			const fn = reply(
+				'getTicketRecord',
+				answer({ ticket: { id: 't' }, key: 'K-1', workshops: [{ id: 'p', name: 'shop' }] })
+			);
+			await expect(tickets.get('t')).resolves.toMatchObject({
+				ticket: { id: 't' },
+				key: 'K-1',
+				workshops: [{ id: 'p', name: 'shop' }]
+			});
+			expect(fn).toHaveBeenCalledWith({ path: { id: 't' } });
+		});
+	});
+
+	describe('a workshop’s tickets', () => {
+		it('asks for the first open page by default, nothing else on the wire', async () => {
+			const fn = reply('listWorkshopTickets', answer({ tickets: [{ key: 'K-1' }], next: 'c2' }));
+			await expect(projects.tickets('p')).resolves.toMatchObject({
+				tickets: [{ key: 'K-1' }],
+				next: 'c2'
+			});
+			expect(fn).toHaveBeenCalledWith({ path: { id: 'p' }, query: {} });
+		});
+
+		it('passes the query, done filter, cursor, page size and refresh on', async () => {
+			const fn = reply('listWorkshopTickets', answer({ tickets: null, next: '' }));
+			await projects.tickets('p', {
+				q: 'invoice',
+				done: 'any',
+				cursor: 'c2',
+				limit: 50,
+				refresh: true
 			});
 			expect(fn).toHaveBeenCalledWith({
-				path: { id: 't' },
-				body: {
-					title: 'T',
-					goal: 'G',
-					project_id: 'p',
-					branch: 'b',
-					change_type: 'fix',
-					attachment_ids: ['a'],
-					source_id: 'i',
-					source_key: 'K-1'
-				}
+				path: { id: 'p' },
+				query: { q: 'invoice', done: 'any', cursor: 'c2', limit: 50, refresh: '1' }
+			});
+		});
+
+		it('reads one ticket by its key, from the tracker now only when asked', async () => {
+			const fn = reply(
+				'getWorkshopTicket',
+				answer({ key: 'K-1', internal: true, source: { id: 'i', kind: 'internal', name: 'M' } })
+			);
+			await expect(projects.ticket('p', 'K-1')).resolves.toMatchObject({
+				key: 'K-1',
+				internal: true
+			});
+			expect(fn).toHaveBeenLastCalledWith({ path: { id: 'p', key: 'K-1' }, query: undefined });
+			await projects.ticket('p', 'K-1', { refresh: true });
+			expect(fn).toHaveBeenLastCalledWith({
+				path: { id: 'p', key: 'K-1' },
+				query: { refresh: '1' }
 			});
 		});
 	});
@@ -569,6 +708,7 @@ describe('what each call sends', () => {
 				}
 			},
 			default_flow: 'builder',
+			ticket_source_id: 'jira',
 			created_at: 'c',
 			updated_at: 'u'
 		};
@@ -748,12 +888,6 @@ describe('what each call sends', () => {
 		])('tests %s, warnings defaulting to none', async (_, call, name) => {
 			reply(name, answer({ ok: false, error: 'bad' }));
 			await expect(call('x')).resolves.toEqual({ ok: false, error: 'bad', warnings: [] });
-		});
-
-		it('searches a tracker with a default page', async () => {
-			const fn = reply('searchSourceTickets', answer([]));
-			await integrations.sourceTickets('i');
-			expect(fn).toHaveBeenCalledWith({ path: { id: 'i' }, query: { q: '', limit: 25 } });
 		});
 
 		it('narrows providers to a harness only when told', async () => {
@@ -997,7 +1131,6 @@ describe('what each call sends', () => {
 			const fn = reply('updateAutomation', answer({ id: 'a' }));
 			await automations.update('p', 'a', {
 				...draft,
-				sourceId: 's',
 				query: 'q',
 				schedule: '@daily',
 				ticketId: 't',
@@ -1008,7 +1141,6 @@ describe('what each call sends', () => {
 				path: { id: 'p', aid: 'a' },
 				body: {
 					...draft,
-					source_id: 's',
 					query: 'q',
 					schedule: '@daily',
 					ticket_id: 't',
@@ -1438,31 +1570,43 @@ describe('onUnauthorized', () => {
 	});
 });
 
-describe('ticket sync', () => {
-	it('lists every ticket, done ones included', async () => {
-		const fn = reply('listTickets', answer([]));
-		await tickets.list();
-		expect(fn).toHaveBeenCalledWith();
-	});
-
-	it('moves a ticket, labels it and comments on it through its tracker', async () => {
-		const status = reply('setTicketStatus', answer({ id: 't' }));
-		await tickets.setStatus('t', 's2');
-		expect(status).toHaveBeenCalledWith({ path: { id: 't' }, body: { status_id: 's2' } });
-		const labels = reply('setTicketLabels', answer({ id: 't' }));
-		await tickets.setLabels('t', ['a', 'b']);
-		expect(labels).toHaveBeenCalledWith({ path: { id: 't' }, body: { labels: ['a', 'b'] } });
-		const add = reply('addTicketComment', answer(null));
-		await expect(tickets.addComment('t', 'hi')).resolves.toEqual([]);
-		expect(add).toHaveBeenCalledWith({ path: { id: 't' }, body: { body: 'hi' } });
-	});
-
-	it('refetches a tracker list only when asked', async () => {
-		const fn = reply('listTrackerStatuses', answer({ statuses: null, warnings: null }));
-		await expect(integrations.statuses('i')).resolves.toEqual({ statuses: [], warnings: [] });
+describe('trackers', () => {
+	it('reads a tracker’s statuses, read-only on a remote one, refetched only when asked', async () => {
+		const fn = reply('listTrackerStatuses', answer({ statuses: null, read_only: true }));
+		await expect(integrations.statuses('i')).resolves.toEqual({ statuses: [], readOnly: true });
 		expect(fn).toHaveBeenLastCalledWith({ path: { id: 'i' }, query: undefined });
 		await integrations.statuses('i', true);
 		expect(fn).toHaveBeenLastCalledWith({ path: { id: 'i' }, query: { refresh: '1' } });
+	});
+
+	it('saves the internal tracker’s statuses, replacements only when there are some', async () => {
+		const row = {
+			id: 's',
+			integrationId: 'i',
+			remoteId: '',
+			name: 'To Do',
+			position: 0,
+			isDone: false
+		};
+		const wireRow = {
+			id: 's',
+			integration_id: 'i',
+			remote_id: '',
+			name: 'To Do',
+			position: 0,
+			is_done: false
+		};
+		const fn = reply('putTrackerStatuses', answer({ statuses: [wireRow], read_only: false }));
+		await expect(integrations.saveStatuses('i', [row])).resolves.toEqual({
+			statuses: [row],
+			readOnly: false
+		});
+		expect(fn).toHaveBeenLastCalledWith({ path: { id: 'i' }, body: { statuses: [wireRow] } });
+		await integrations.saveStatuses('i', [], { old: 'new' });
+		expect(fn).toHaveBeenLastCalledWith({
+			path: { id: 'i' },
+			body: { statuses: [], replace_with: { old: 'new' } }
+		});
 	});
 
 	it('sends replacements for deleted rows only when there are some', async () => {
@@ -1475,16 +1619,12 @@ describe('ticket sync', () => {
 			body: { types: [], replace_with: { old: 'new' } }
 		});
 	});
+});
 
-	it('unlinks the tickets of a source only when asked', async () => {
-		const fn = reply('deleteIntegration');
-		await integrations.remove('i', { unlinkTickets: true });
-		expect(fn).toHaveBeenCalledWith({ path: { id: 'i' }, query: { unlink_tickets: '1' } });
-	});
-
-	it('names the run in the way of a start', async () => {
-		reply('startTicketRun', refused({ error: 'busy', run_id: 'r9' }));
-		const e = await tickets.startRun('t').catch((x: unknown) => x);
+describe('refusals', () => {
+	it('names the run in the way of a start, in any workshop', async () => {
+		reply('startWorkshopTicketRun', refused({ error: 'busy', run_id: 'r9' }));
+		const e = await tickets.startRun('p', 'K-1').catch((x: unknown) => x);
 		expect(busyRunOf(e)).toBe('r9');
 		expect(busyRunOf(new Error('busy'))).toBeUndefined();
 	});
@@ -1497,18 +1637,41 @@ describe('ticket sync', () => {
 		expect(isNotFound(new Error('404'))).toBe(false);
 	});
 
-	it('counts what deleting a source would unlink', async () => {
-		reply('deleteIntegration', refused({ error: 'linked', tickets: 4, active_runs: 2 }));
-		const e = await integrations.remove('i').catch((x: unknown) => x);
-		expect(linkedTicketsOf(e)).toEqual({ tickets: 4, activeRuns: 2 });
+	it('reads a 409 on a list save as a row still in use', async () => {
+		reply('putTrackerStatuses', refused({ error: 'in use' }));
+		const e = await integrations.saveStatuses('i', []).catch((x: unknown) => x);
 		expect(isInUse(e)).toBe(true);
 	});
 
 	it('reads anything but a 409 as no conflict', async () => {
-		reply('putTrackerStatuses', refused({ error: 'bad', tickets: 1 }, 400, 'Bad Request'));
+		reply('putTrackerStatuses', refused({ error: 'bad' }, 400, 'Bad Request'));
 		const e = await integrations.saveStatuses('i', []).catch((x: unknown) => x);
 		expect(isInUse(e)).toBe(false);
-		expect(linkedTicketsOf(e)).toBeUndefined();
+	});
+
+	it('says why a source in use cannot go: the engine names the workshops', async () => {
+		reply('deleteIntegration', refused({ error: 'used by workshops: shop, lab' }));
+		await expect(integrations.remove('i')).rejects.toThrow('used by workshops: shop, lab');
+	});
+});
+
+// The SDK escapes path values itself: a key with '/' or '#' must reach the
+// engine as one segment, so the calls above pass it raw.
+describe('a ticket key on the wire', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('is one encodeURIComponent-escaped path segment', async () => {
+		const fetch = vi.fn(async () => new Response('{}', { status: 200 }));
+		vi.stubGlobal('fetch', fetch);
+		await client.get({
+			baseUrl: 'http://engine.test',
+			url: '/api/projects/{id}/tickets/{key}',
+			path: { id: 'p', key: 'grp/app#12' }
+		});
+		const req = (fetch.mock.calls[0] as unknown[])[0] as Request;
+		expect(req.url).toBe('http://engine.test/api/projects/p/tickets/grp%2Fapp%2312');
 	});
 });
 
@@ -1651,8 +1814,7 @@ describe('the rest of the surface', () => {
 			answer({}),
 			{ path: { pid: 'p' } }
 		],
-		['tickets.get', () => tickets.get('t'), 'getTicket', answer({}), { path: { id: 't' } }],
-		['tickets.sync', () => tickets.sync('t'), 'syncTicket', answer({}), { path: { id: 't' } }],
+		['tickets.get', () => tickets.get('t'), 'getTicketRecord', answer({}), { path: { id: 't' } }],
 		[
 			'projects.preflight',
 			() => projects.preflight('p'),
@@ -1694,13 +1856,6 @@ describe('the rest of the surface', () => {
 			'startSignIn',
 			answer({}),
 			{ body: { provider: 'acme' } }
-		],
-		[
-			'integrations.sourceTicket',
-			() => integrations.sourceTicket('i', 'K-1'),
-			'getSourceTicket',
-			answer({}),
-			{ path: { id: 'i', key: 'K-1' } }
 		],
 		['files.limits', () => files.limits(), 'getAttachmentLimits', answer({}), undefined],
 		[
@@ -1777,21 +1932,6 @@ describe('the rest of the surface', () => {
 		await call();
 		if (args === undefined) expect(fn).toHaveBeenCalledOnce();
 		else expect(fn).toHaveBeenCalledWith(args);
-	});
-
-	it('reports a tracker sync in our words', async () => {
-		reply(
-			'syncIntegration',
-			answer({ tickets: 3, synced: 2, gone: 0, failed: 1, busy: false, rate_limited: true })
-		);
-		expect(await integrations.sync('i')).toEqual({
-			tickets: 3,
-			synced: 2,
-			gone: 0,
-			failed: 1,
-			busy: false,
-			rateLimited: true
-		});
 	});
 
 	it('asks a tracker for its types, refreshed only when told', async () => {

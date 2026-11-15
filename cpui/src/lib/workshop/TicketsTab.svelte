@@ -1,106 +1,28 @@
 <script lang="ts">
+	// Workshop tickets tab (DESIGN 7.6): the workshop's source, read live.
+	// Tickets are written here only on the internal tracker; a remote one
+	// takes new issues itself, so the tab links to it instead.
 	import { t } from '$lib/i18n/index.svelte';
-	// Workshop tickets tab (DESIGN 7.6 list, filtered to this workshop): each
-	// ticket's status in its tracker and, apart from it, its latest run.
-	import { isDone, statusNames, withStatus, type Project, type Ticket } from '$lib/domain';
-	import { fleet } from '$lib/app/fleet.svelte';
-	import { to } from '$lib/core/urls';
-	import { stateTab } from '$lib/core/format';
-	import TicketTable from '$lib/tickets/TicketTable.svelte';
-	import EmptyState from '$lib/ui/EmptyState.svelte';
-	import ErrorCard from '$lib/ui/ErrorCard.svelte';
-	import Skeleton from '$lib/ui/Skeleton.svelte';
+	import type { Integration, Project } from '$lib/domain';
+	import TicketList from '$lib/tickets/TicketList.svelte';
+	import NewTicketLink from '$lib/tickets/NewTicketLink.svelte';
 	import HeaderAction from '$lib/ui/HeaderAction.svelte';
-	import SearchInput from '$lib/ui/SearchInput.svelte';
-	import Toggle from '$lib/ui/Toggle.svelte';
-	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
-	import { I } from '$lib/design/icons';
 
-	let {
-		project,
-		tickets,
-		error,
-		onretry
-	}: { project: Project; tickets: Ticket[] | null; error: string; onretry: () => void } = $props();
-
-	let q = $state('');
-	let activeOnly = $state(false);
-	let status = $state('');
-	let showDone = $state(false);
-
-	const hasActive = (tk: Ticket) =>
-		(fleet.runsByTicket.get(tk.id) ?? []).some((r) => stateTab[r.state] === 'active');
-
-	const statusOptions = $derived<SelectOption[]>([
-		{ value: '', label: t('page.tickets.anyStatus') },
-		...statusNames(tickets ?? []).map((s) => ({ value: s, label: s }))
-	]);
-
-	const shown = $derived(
-		withStatus(tickets ?? [], status)
-			.filter((tk) => {
-				const s = q.trim().toLowerCase();
-				if (
-					s &&
-					!tk.title.toLowerCase().includes(s) &&
-					!(tk.source?.key ?? '').toLowerCase().includes(s) &&
-					!tk.goal.toLowerCase().includes(s)
-				)
-					return false;
-				if (!showDone && isDone(tk)) return false;
-				return !activeOnly || hasActive(tk);
-			})
-			.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-	);
+	let { project, integrations }: { project: Project; integrations: Integration[] | null } =
+		$props();
 </script>
 
 <HeaderAction>
-	<a class="btn btn-primary btn-lg" href={to.newTicket({ project: project.id })}
-		>{I.add} {t('workshop.tickets.new')}</a
-	>
+	<NewTicketLink
+		{project}
+		{integrations}
+		label={t('workshop.tickets.new')}
+		cls="btn-primary btn-lg"
+	/>
 </HeaderAction>
 
-<div class="filters">
-	<SearchInput bind:value={q} placeholder={t('workshop.tickets.search')} />
-	<Toggle bind:checked={activeOnly} label={t('page.tickets.hasActive')} />
-	<span class="sel">
-		<Select label={t('page.tickets.filterStatus')} options={statusOptions} bind:value={status} />
-	</span>
-	<Toggle bind:checked={showDone} label={t('page.tickets.showDone')} />
-	<span class="spacer"></span>
-	<a class="btn btn-sm" href={to.tickets({ project: project.id })}
-		>{t('workshop.tickets.openIn')} {I.forward}</a
-	>
-</div>
-
-{#if error && !tickets}
-	<ErrorCard cause={t('workshop.tickets.loadError')} detail={error} {onretry} />
-{:else if !tickets}
-	<Skeleton pane lines={4} />
-{:else if shown.length}
-	<section class="pane">
-		<TicketTable
-			tickets={shown}
-			cols={['title', 'status', 'type', 'source', 'branch', 'runs', 'created']}
-		/>
-	</section>
-{:else if q || activeOnly || status || (!showDone && tickets.length)}
-	<EmptyState
-		compact
-		title={t('workshop.tickets.noMatchTitle')}
-		text={t('workshop.tickets.noMatchText')}
-	/>
-{:else}
-	<EmptyState title={t('workshop.tickets.emptyTitle')} text={t('workshop.tickets.emptyText')}>
-		<a class="btn btn-primary" href={to.newTicket({ project: project.id })}
-			>{I.add} {t('workshop.tickets.new')}</a
-		>
-	</EmptyState>
-{/if}
-
-<style>
-	.sel {
-		display: inline-block;
-		min-width: 150px;
-	}
-</style>
+<TicketList projectId={project.id}>
+	{#snippet empty()}
+		<NewTicketLink {project} {integrations} label={t('workshop.tickets.new')} cls="btn-primary" />
+	{/snippet}
+</TicketList>

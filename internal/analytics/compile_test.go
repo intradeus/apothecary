@@ -54,6 +54,27 @@ func TestEveryGrainIsScopedToTheUser(t *testing.T) {
 	}
 }
 
+// A ticket belongs to its source, not to a workshop: the tickets grain is
+// one row per ticket and workshop that ran it, so a workshop filter keeps
+// each workshop's runs of a shared ticket, and shipping is per workshop.
+func TestTicketsGrainIsPerWorkshop(t *testing.T) {
+	c, err := Compile(Query{Grain: GrainTickets, Measures: []MeasureRef{{Field: "runs", Agg: AggSum}},
+		Filters: []Filter{{Field: "project_id", Op: OpEq, Values: []string{"p1"}}}}, "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"SELECT user_id, ticket_id, project_id,",
+		"PARTITION BY ticket_id, project_id ORDER BY created_at",
+		"GROUP BY user_id, ticket_id, project_id) t",
+		"(t.project_id)::text = $2",
+	} {
+		if !strings.Contains(c.SQL, want) {
+			t.Errorf("SQL lacks %q:\n%s", want, c.SQL)
+		}
+	}
+}
+
 func TestCompileRefusesWhatTheCatalogDoesNot(t *testing.T) {
 	m := func(f string, a Agg) []MeasureRef { return []MeasureRef{{Field: f, Agg: a}} }
 	many := func(n int) []MeasureRef {

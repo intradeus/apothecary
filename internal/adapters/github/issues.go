@@ -1,16 +1,16 @@
 package github
 
-// Issues adapts the ticketsource port — read side for the import picker and
-// the sync, write side (trackerport.TicketWriter) for a flow's tracker
-// actions — to GitHub Issues, reusing the repository host adapter's
-// authenticated client. An issue's key is "owner/repo#123": GitHub has no
-// site-wide key, so the repository is part of the identity. GitHub issues
-// have two states (the integration's whole status list: open, closed), one
-// type and no custom fields; what the write port cannot express is refused
-// by name (Projects v2 columns are not reachable through the issue itself).
+// Issues adapts the ticketsource port — read side for a workshop's live
+// ticket list and the import picker, write side (trackerport.TicketWriter)
+// for a flow's tracker actions — to GitHub Issues, reusing the repository
+// host adapter's authenticated client. An issue's key is "owner/repo#123":
+// GitHub has no site-wide key, so the repository is part of the identity.
+// GitHub issues have two states (the integration's whole status list: open,
+// closed), one type and no custom fields; what the write port cannot express
+// is refused by name (Projects v2 columns are not reachable through the
+// issue itself).
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -130,6 +130,7 @@ func toTicket(in issueJSON, repo string) trackerport.SourceTicket {
 		URL:      in.HTMLURL,
 		Status:   in.State,
 		StatusID: in.State,
+		Done:     in.State == "closed",
 		Type:     issueType.Name,
 		TypeID:   issueType.ID,
 	}
@@ -154,44 +155,72 @@ func parseTime(s string) time.Time {
 	return time.Time{}
 }
 
-// Search runs GitHub's issue search over the configured repositories: an
-// issue key looks the issue up directly, empty means "open and assigned to
-// me", anything else is a text search. Pull requests (which the issues API
-// also returns) are dropped.
-func (s *Issues) Search(ctx context.Context, query string, limit int) ([]trackerport.SourceTicket, error) {
+// searchCap is the most results GitHub's search API serves for one query,
+// however it is paged.
+const searchCap = 1000
+
+// Search runs GitHub's issue search over the configured repositories, one
+// page (the cursor is the page number) at a time: an issue key looks the
+// issue up directly, empty means "assigned to me", anything else is a text
+// search; the done filter is a state qualifier. Pull requests (which the
+// issues API also returns) are dropped.
+func (s *Issues) Search(ctx context.Context, sq trackerport.SearchQuery) (trackerport.SearchPage, error) {
+	limit := sq.Limit
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
-	query = strings.TrimSpace(query)
-	if issueKeyRe.MatchString(query) {
+	page := 1
+	if sq.Cursor != "" {
+		n, err := strconv.Atoi(sq.Cursor)
+		if err != nil || n < 1 {
+			return trackerport.SearchPage{}, fmt.Errorf("github: bad search cursor %q", sq.Cursor)
+		}
+		page = n
+	}
+	query := strings.TrimSpace(sq.Text)
+	if issueKeyRe.MatchString(query) && page == 1 {
 		if t, err := s.Fetch(ctx, query); err == nil {
-			return []trackerport.SourceTicket{t}, nil
+			var out trackerport.SearchPage
+			if sq.Done == trackerport.DoneAny || (sq.Done == trackerport.DoneOnly) == t.Done {
+				out.Tickets = []trackerport.SourceTicket{t}
+			}
+			return out, nil
 		}
 	}
 	q := "is:issue"
 	for _, r := range s.repos {
 		q += " repo:" + r
 	}
+	switch sq.Done {
+	case trackerport.DoneOpen:
+		q += " state:open"
+	case trackerport.DoneOnly:
+		q += " state:closed"
+	}
 	if query == "" {
-		q += " state:open assignee:@me"
+		q += " assignee:@me"
 	} else {
 		q += " " + query
 	}
 	var out struct {
-		Items []issueJSON `json:"items"`
+		TotalCount int         `json:"total_count"`
+		Items      []issueJSON `json:"items"`
 	}
-	p := fmt.Sprintf("/search/issues?q=%s&per_page=%d&sort=updated&order=desc", url.QueryEscape(q), limit)
+	p := fmt.Sprintf("/search/issues?q=%s&per_page=%d&page=%d&sort=updated&order=desc", url.QueryEscape(q), limit, page)
 	if _, err := s.a.api(ctx, http.MethodGet, p, nil, &out); err != nil {
-		return nil, err
+		return trackerport.SearchPage{}, err
 	}
-	var tickets []trackerport.SourceTicket
+	var res trackerport.SearchPage
 	for _, it := range out.Items {
 		if it.PullRequest != nil {
 			continue
 		}
-		tickets = append(tickets, toTicket(it, repoOf(it, "")))
+		res.Tickets = append(res.Tickets, toTicket(it, repoOf(it, "")))
 	}
-	return tickets, nil
+	if end := page * limit; len(out.Items) == limit && end < min(out.TotalCount, searchCap) {
+		res.Next = strconv.Itoa(page + 1)
+	}
+	return res, nil
 }
 
 // Fetch returns one issue; a pull request behind the same number is
@@ -214,131 +243,6 @@ func (s *Issues) Fetch(ctx context.Context, key string) (trackerport.SourceTicke
 		return trackerport.SourceTicket{}, fmt.Errorf("github: %s#%d is a pull request, not an issue", repo, n)
 	}
 	return toTicket(it, repoOf(it, repo)), nil
-}
-
-// fetchBatch is how many issues one FetchMany query names: GitHub's cap on
-// a GraphQL query's nodes keeps a hundred aliases cheap.
-const fetchBatch = 100
-
-// issueFieldsGQL reads, per aliased issue, what the REST issue gives toTicket.
-const issueFieldsGQL = `databaseId number title body url state updatedAt
-  repository{nameWithOwner}
-  labels(first:100){nodes{name}}
-  assignees(first:1){nodes{login}}`
-
-// gqlIssue is one aliased issue of a FetchMany query.
-type gqlIssue struct {
-	DatabaseID int64  `json:"databaseId"`
-	Number     int    `json:"number"`
-	Title      string `json:"title"`
-	Body       string `json:"body"`
-	URL        string `json:"url"`
-	State      string `json:"state"`
-	UpdatedAt  string `json:"updatedAt"`
-	Repository struct {
-		NameWithOwner string `json:"nameWithOwner"`
-	} `json:"repository"`
-	Labels struct {
-		Nodes []struct {
-			Name string `json:"name"`
-		} `json:"nodes"`
-	} `json:"labels"`
-	Assignees struct {
-		Nodes []struct {
-			Login string `json:"login"`
-		} `json:"nodes"`
-	} `json:"assignees"`
-}
-
-// issueJSON is the REST shape toTicket reads, so a batched read maps exactly
-// like Fetch: the REST id is the GraphQL databaseId, the state lower-cased.
-func (g gqlIssue) issueJSON() issueJSON {
-	in := issueJSON{ID: g.DatabaseID, Number: g.Number, Title: g.Title, Body: g.Body, HTMLURL: g.URL,
-		State: strings.ToLower(g.State), UpdatedAt: g.UpdatedAt}
-	for _, l := range g.Labels.Nodes {
-		in.Labels = append(in.Labels, struct {
-			Name string `json:"name"`
-		}{l.Name})
-	}
-	if len(g.Assignees.Nodes) > 0 {
-		in.Assignee = &struct {
-			Login string `json:"login"`
-		}{g.Assignees.Nodes[0].Login}
-	}
-	return in
-}
-
-// FetchMany re-reads issues with one GraphQL query per repository and
-// fetchBatch numbers (an aliased `issue(number:)` each), mapped exactly as
-// Fetch maps the REST issue. An issue the query does not resolve — deleted,
-// transferred (GraphQL follows no redirect), or a pull request's number — is
-// left out of the result; the sync then Fetches it alone to tell which.
-func (s *Issues) FetchMany(ctx context.Context, keys []string) ([]trackerport.SourceTicket, error) {
-	byRepo := map[string][]int{}
-	var repos []string
-	seen := map[string]bool{}
-	for _, k := range keys {
-		repo, n, err := s.parseKey(k)
-		if err != nil {
-			return nil, err
-		}
-		id := fmt.Sprintf("%s#%d", strings.ToLower(repo), n)
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		if _, ok := byRepo[repo]; !ok {
-			repos = append(repos, repo)
-		}
-		byRepo[repo] = append(byRepo[repo], n)
-	}
-	var out []trackerport.SourceTicket
-	for _, repo := range repos {
-		owner, name, _ := strings.Cut(repo, "/")
-		nums := byRepo[repo]
-		for start := 0; start < len(nums); start += fetchBatch {
-			batch := nums[start:min(start+fetchBatch, len(nums))]
-			got, err := s.fetchRepoBatch(ctx, owner, name, batch)
-			if err != nil {
-				return nil, err
-			}
-			for _, g := range got {
-				out = append(out, toTicket(g.issueJSON(), cmp.Or(g.Repository.NameWithOwner, repo)))
-			}
-		}
-	}
-	return out, nil
-}
-
-// fetchRepoBatch is one FetchMany query: the issues of one repository it
-// resolves, in the order asked. NOT_FOUND errors (an issue or the repository
-// itself) only leave their issues out; any other error fails the batch.
-func (s *Issues) fetchRepoBatch(ctx context.Context, owner, name string, nums []int) ([]gqlIssue, error) {
-	var q strings.Builder
-	q.WriteString("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){")
-	for _, n := range nums {
-		fmt.Fprintf(&q, "i%d:issue(number:%d){%s}\n", n, n, issueFieldsGQL)
-	}
-	q.WriteString("}}")
-	var data struct {
-		Repository map[string]*gqlIssue `json:"repository"`
-	}
-	errs, err := s.a.graphqlPartial(ctx, q.String(), map[string]any{"owner": owner, "name": name}, &data)
-	if err != nil {
-		return nil, err
-	}
-	for _, e := range errs {
-		if e.Type != "NOT_FOUND" {
-			return nil, fmt.Errorf("github graphql: %s", e.Message)
-		}
-	}
-	var out []gqlIssue
-	for _, n := range nums {
-		if g := data.Repository["i"+strconv.Itoa(n)]; g != nil {
-			out = append(out, *g)
-		}
-	}
-	return out, nil
 }
 
 // issueType is the one type a GitHub issue has.
@@ -603,5 +507,4 @@ var (
 	_ trackerport.TicketWriter   = (*Issues)(nil)
 	_ trackerport.TicketAttacher = (*Issues)(nil)
 	_ trackerport.TicketMetadata = (*Issues)(nil)
-	_ trackerport.TicketSyncer   = (*Issues)(nil)
 )

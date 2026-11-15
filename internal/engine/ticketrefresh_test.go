@@ -8,140 +8,109 @@ import (
 	"sync"
 	"testing"
 
-	"apothecary/internal/run"
 	"apothecary/internal/run/runinput"
 )
 
-// refreshes records the tickets the engine asked to refresh.
-type refreshes struct {
-	mu  sync.Mutex
-	ids []string
-	err error
+// workshopTickets serves a ticket as tickets.Factory does: the issue as its
+// tracker has it now, its base branch rendered with the asking workshop's
+// branch format. It records the workshop every read was for.
+type workshopTickets struct {
+	mu       sync.Mutex
+	found    bool
+	err      error
+	projects []string
 }
 
-func (r *refreshes) Refresh(_ context.Context, ticketID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.ids = append(r.ids, ticketID)
-	return r.err
+func (w *workshopTickets) RunTicket(_ context.Context, ticketID, projectID string) (runinput.Ticket, bool, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.projects = append(w.projects, projectID)
+	return runinput.Ticket{TicketID: ticketID, Title: "Reopened upstream", Goal: "new goal", ChangeType: "fix",
+		Branch: "fix/" + projectID + "-dev-1", TicketAttachmentIDs: []string{"att-copied"},
+		SourceID: "int-1", SourceKind: "fake", SourceKey: "DEV-1", SourceURL: "https://tracker.local/browse/DEV-1",
+	}, w.found, w.err
 }
 
-func (r *refreshes) got() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return slices.Clone(r.ids)
-}
-
-func refreshHarness(t *testing.T, doc string, rec *refreshes) *harness {
-	t.Helper()
-	return newHarnessWith(t, func(_ *harness, d *Deps) { d.Refresher = rec }, mustFlow(t, doc))
-}
-
-// A ticket stage that wrote to a remote issue refreshes the ticket's mirror,
-// and a failed refresh fails nothing.
-func TestRemoteTicketActionRefreshesTheTicket(t *testing.T) {
-	rec := &refreshes{err: errors.New("tracker down")}
-	h := refreshHarness(t, transitionFirstDoc, rec)
-	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.e.Wait(runID)
-	if v := h.view(t, runID); v.State != run.Completed {
-		t.Fatalf("state = %s", v.State)
-	}
-	if got := rec.got(); !slices.Equal(got, []string{"tk-1"}) {
-		t.Errorf("refreshed = %v, want tk-1 once", got)
-	}
-}
-
-// The internal tracker wrote the row itself: nothing to refresh.
-func TestInternalTicketActionDoesNotRefresh(t *testing.T) {
-	rec := &refreshes{}
-	h := refreshHarness(t, strings.Replace(transitionFirstDoc, "to: in_progress", "to: done", 1), rec)
-	h.tickets.handWritten("tk-2")
-	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{TicketID: "tk-2", Title: "T"}, "tk", testProject)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.e.Wait(runID)
-	if v := h.view(t, runID); v.State != run.Completed {
-		t.Fatalf("state = %s", v.State)
-	}
-	if got := rec.got(); len(got) != 0 {
-		t.Errorf("refreshed = %v, want none", got)
-	}
-}
-
-// rowTickets serves a ticket's current row, as the ticket factory does; the
-// row changes when the ticket is refreshed (a remote edit landing).
-type rowTickets struct {
-	mu  sync.Mutex
-	row runinput.Ticket
-}
-
-func (r *rowTickets) RunTicket(_ context.Context, id string) (runinput.Ticket, bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if id != r.row.TicketID {
-		return runinput.Ticket{}, false, nil
-	}
-	return r.row, true, nil
-}
-
-func (r *rowTickets) TicketNow(context.Context, string) (runinput.TicketNow, bool, error) {
+func (w *workshopTickets) TicketNow(context.Context, string) (runinput.TicketNow, bool, error) {
 	return runinput.TicketNow{}, false, nil
 }
 
-// refreshThen is a refresher that applies a remote edit to the row.
-type refreshThen struct {
-	refreshes
-	apply func()
+func (w *workshopTickets) asked() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.projects)
 }
 
-func (r *refreshThen) Refresh(ctx context.Context, id string) error {
-	r.apply()
-	return r.refreshes.Refresh(ctx, id)
+// A run on a ticket starts from the ticket as the reader has it now: its
+// title, goal, change type, issue and files over the caller's copy, the caller's
+// per-attempt fields kept. Started without a branch, it takes the reader's,
+// rendered for the run's workshop — two workshops, two names — and the
+// reader is asked for exactly that workshop.
+func TestRunStartReadsTheTicketForItsWorkshop(t *testing.T) {
+	const otherWorkshop = "prj-other"
+	reader := &workshopTickets{found: true}
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Tickets = reader }, mustFlow(t, loopFlowDoc))
+	ctx := context.Background()
+	for _, project := range []string{testProject, otherWorkshop} {
+		in := runinput.Ticket{TicketID: "tk-1", Title: "Old title", Goal: "old", RunGoal: "this attempt"}
+		id, err := h.e.CreateRun(ctx, in, "loop", project)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.e.Wait(id)
+		v := h.view(t, id)
+		if v.TicketTitle != "Reopened upstream" || v.TicketGoal != "new goal" || v.TicketChangeType != "fix" ||
+			v.TicketSourceID != "int-1" || v.TicketKey != "DEV-1" || v.RunGoal != "this attempt" ||
+			!slices.Equal(v.TicketAttachmentIDs, []string{"att-copied"}) {
+			t.Errorf("run in %s started from %+v, want the reader's ticket and the caller's run goal", project, v)
+		}
+		if want := "fix/" + project + "-dev-1"; v.BranchBase != want {
+			t.Errorf("run in %s: branch base %q, want %q", project, v.BranchBase, want)
+		}
+	}
+	if got := reader.asked(); !slices.Equal(got, []string{testProject, otherWorkshop}) {
+		t.Errorf("reader asked for workshops %v", got)
+	}
 }
 
-// A run on a remote ticket starts from the ticket as its tracker has it now:
-// refreshed first, the mirrored fields re-read; the caller's own fields stay.
-// A ticket with no source is not refreshed.
-func TestRunStartRefreshesARemoteTicket(t *testing.T) {
-	rows := &rowTickets{row: runinput.Ticket{TicketID: "tk-1", Title: "Old title", Goal: "old", SourceID: "int-1",
-		SourceKind: "fake", SourceKey: "DEV-1", SourceURL: "https://tracker.local/browse/DEV-1"}}
-	rec := &refreshThen{apply: func() {
-		rows.mu.Lock()
-		rows.row.Title, rows.row.Goal = "Reopened upstream", "new goal"
-		rows.mu.Unlock()
-	}}
-	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Refresher, d.Tickets = rec, rows }, mustFlow(t, transitionFirstDoc))
-	in := linkedTicket
-	in.Title, in.RunGoal = "Old title", "this attempt"
-	runID, err := h.e.CreateRun(context.Background(), in, "tk", testProject)
+// A branch the caller gives wins over the reader's.
+func TestRunStartKeepsTheCallersBranch(t *testing.T) {
+	reader := &workshopTickets{found: true}
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Tickets = reader }, mustFlow(t, loopFlowDoc))
+	id, err := h.e.CreateRun(context.Background(), runinput.Ticket{TicketID: "tk-1", Title: "T", Branch: "feat/mine"}, "loop", testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.e.Wait(runID)
-	v := h.view(t, runID)
-	if v.TicketTitle != "Reopened upstream" || v.TicketGoal != "new goal" {
-		t.Errorf("run started from %q / %q, want the refreshed ticket", v.TicketTitle, v.TicketGoal)
+	h.e.Wait(id)
+	if v := h.view(t, id); v.BranchBase != "feat/mine" || v.TicketTitle != "Reopened upstream" {
+		t.Errorf("branch base %q, title %q: want the caller's branch and the reader's title", v.BranchBase, v.TicketTitle)
 	}
-	if got := rec.got(); len(got) == 0 || got[0] != "tk-1" {
-		t.Errorf("refreshed = %v", got)
-	}
+}
 
-	local := &refreshes{}
-	h2 := newHarnessWith(t, func(_ *harness, d *Deps) {
-		d.Refresher, d.Tickets = local, &rowTickets{row: runinput.Ticket{TicketID: "tk-2", Title: "T"}}
-	}, mustFlow(t, strings.Replace(transitionFirstDoc, "to: in_progress", "to: done", 1)))
-	h2.tickets.handWritten("tk-2")
-	runID, err = h2.e.CreateRun(context.Background(), runinput.Ticket{TicketID: "tk-2", Title: "T"}, "tk", testProject)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h2.e.Wait(runID)
-	if got := local.got(); len(got) != 0 {
-		t.Errorf("a sourceless ticket was refreshed: %v", got)
+// A ticket the reader cannot read, or no longer has, never refuses the run:
+// it starts from the caller's copy.
+func TestRunStartFallsBackToTheCallersTicket(t *testing.T) {
+	for name, reader := range map[string]*workshopTickets{
+		"read fails": {found: true, err: errors.New("tracker down")},
+		"not found":  {found: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Tickets = reader }, mustFlow(t, loopFlowDoc))
+			id, err := h.e.CreateRun(context.Background(), runinput.Ticket{TicketID: "tk-1", Title: "Old title", Goal: "old"}, "loop", testProject)
+			if err != nil {
+				t.Fatalf("run refused: %v", err)
+			}
+			h.e.Wait(id)
+			v := h.view(t, id)
+			if v.TicketTitle != "Old title" || v.TicketGoal != "old" || v.TicketSourceID != "" {
+				t.Errorf("run started from %+v, want the caller's copy", v)
+			}
+			if strings.HasPrefix(v.BranchBase, "fix/") {
+				t.Errorf("branch base %q came from the failed read", v.BranchBase)
+			}
+			if got := reader.asked(); !slices.Equal(got, []string{testProject}) {
+				t.Errorf("reader asked for workshops %v", got)
+			}
+		})
 	}
 }

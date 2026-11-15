@@ -186,19 +186,21 @@ func runDerived() []field {
 	}
 }
 
-// ticketsSource is one row per ticket: its runs, whether any shipped
-// (completed), and what it took to ship — the runs up to and including the
-// first success (after marks a run that came after one).
-const ticketsSource = `(SELECT user_id, ticket_id, min(project_id) project_id,
+// ticketsSource is one row per ticket and workshop that ran it (a ticket
+// belongs to its source, and every workshop on that source may run it): its
+// runs there, whether any shipped (completed), and what it took to ship —
+// the runs up to and including the first success (after marks a run that
+// came after one).
+const ticketsSource = `(SELECT user_id, ticket_id, project_id,
   min(ticket_change_type) ticket_change_type, min(created_at) created_at,
   count(*) runs, bool_or(success) shipped,
   count(*) FILTER (WHERE NOT after) runs_to_ship,
   coalesce(sum(cost_usd) FILTER (WHERE NOT after),0) cost_to_ship,
   sum(cost_usd) total_cost_usd
- FROM (SELECT *, coalesce(bool_or(success) OVER (PARTITION BY ticket_id ORDER BY created_at
+ FROM (SELECT *, coalesce(bool_or(success) OVER (PARTITION BY ticket_id, project_id ORDER BY created_at
          ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), false) after
        FROM run_facts WHERE user_id = $1 AND ticket_id <> '') r
- GROUP BY user_id, ticket_id) t
+ GROUP BY user_id, ticket_id, project_id) t
 LEFT JOIN tickets tk ON tk.id = t.ticket_id`
 
 var grains = []*grain{

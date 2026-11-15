@@ -54,8 +54,8 @@ query. Between the start and the end, it does whatever your flow says.
   replies), questions the agent asks mid-run, and a debug stop when a stage
   keeps failing. All of them land in one Inbox.
 - **Any way in.**
-  - Tickets typed by hand, or imported from Jira, GitHub Issues or GitLab
-    Issues and kept in sync.
+  - Tickets typed by hand, or read live from a workshop's Jira, GitHub
+    Issues or GitLab Issues (one ticket source per workshop, no copy).
   - Merge requests.
   - **Automations**: a cron schedule, or a tracker query polled for new
     issues.

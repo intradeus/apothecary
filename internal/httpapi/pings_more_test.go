@@ -442,12 +442,11 @@ func TestOwnsProject(t *testing.T) {
 		hdr  map[string]string
 		want int
 	}{
-		"none named":      {map[string]any{"title": "t"}, nil, http.StatusBadRequest},
-		"nobody's":        {map[string]any{"title": "t", "project_id": "nope"}, nil, http.StatusNotFound},
-		"someone else's":  {map[string]any{"title": "t", "project_id": testProject}, other, http.StatusNotFound},
-		"bad branch name": {map[string]any{"title": "t", "project_id": testProject, "branch": "a..b"}, nil, http.StatusBadRequest},
+		"none named":     {map[string]any{"name": "mine"}, nil, http.StatusBadRequest},
+		"nobody's":       {map[string]any{"name": "mine", "to_project_id": "nope"}, nil, http.StatusNotFound},
+		"someone else's": {map[string]any{"name": "mine", "to_project_id": testProject}, other, http.StatusNotFound},
 	} {
-		if res, body := x.do(t, "POST", "/api/tickets", c.body, c.hdr); res.StatusCode != c.want {
+		if res, body := x.do(t, "POST", "/api/flow-templates/builder/copy", c.body, c.hdr); res.StatusCode != c.want {
 			t.Errorf("%s = %d %s, want %d", name, res.StatusCode, body, c.want)
 		}
 	}

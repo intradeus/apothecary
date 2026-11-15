@@ -204,9 +204,9 @@ func (c *Client) Test(ctx context.Context) error {
 	return nil
 }
 
-// issueFields is the field set search, fetch and FetchMany request. Asking
-// explicitly matters: the new /search/jql endpoint returns only the id + key
-// unless fields are named.
+// issueFields is the field set search and fetch request. Asking explicitly
+// matters: the new /search/jql endpoint returns only the id + key unless
+// fields are named. The status comes with its statusCategory (Done).
 const issueFields = "summary,description,status,issuetype,assignee,updated,labels"
 
 type issueJSON struct {
@@ -220,8 +220,11 @@ type issueJSON struct {
 		Updated     string          `json:"updated"`
 		Labels      []string        `json:"labels"`
 		Status      struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
+			ID             string `json:"id"`
+			Name           string `json:"name"`
+			StatusCategory struct {
+				Key string `json:"key"`
+			} `json:"statusCategory"`
 		} `json:"status"`
 		IssueType struct {
 			ID   string `json:"id"`
@@ -251,6 +254,7 @@ func (c *Client) toTicket(in issueJSON) trackerport.SourceTicket {
 		URL:      c.cfg.BaseURL + "/browse/" + in.Key,
 		Status:   in.Fields.Status.Name,
 		StatusID: in.Fields.Status.ID,
+		Done:     trackerport.StatusCategory(in.Fields.Status.StatusCategory.Key) == trackerport.CategoryDone,
 		Type:     in.Fields.IssueType.Name,
 		TypeID:   in.Fields.IssueType.ID,
 		Labels:   in.Fields.Labels,
@@ -275,118 +279,124 @@ func parseTime(s string) time.Time {
 	return time.Time{}
 }
 
-// Search runs the JQL derived from the operator's free text (see JQL) and
-// returns the matching issues, most recently updated first.
+// Search runs the JQL derived from the operator's free text and done filter
+// (see JQL) and returns one page of the matching issues, most recently
+// updated first.
 //
 // A BARE ISSUE NUMBER ("2624") is resolved first, the way Jira's own quick
 // search does it: JQL has no way to match a key by its number half, so the
 // candidate keys are built from the project(s) in scope and looked up
-// directly. Whatever the text search also finds is appended after.
-func (c *Client) Search(ctx context.Context, query string, limit int) ([]trackerport.SourceTicket, error) {
+// directly. Those lead the first page; whatever the text search also finds
+// follows.
+func (c *Client) Search(ctx context.Context, q trackerport.SearchQuery) (trackerport.SearchPage, error) {
+	limit := q.Limit
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
-	var tickets []trackerport.SourceTicket
-	if n := issueNumber(query); n != "" {
-		tickets = c.byNumber(ctx, n)
+	var page trackerport.SearchPage
+	if n := issueNumber(q.Text); n != "" && q.Cursor == "" {
+		for _, t := range c.byNumber(ctx, n) {
+			if doneMatches(q.Done, t.Done) {
+				page.Tickets = append(page.Tickets, t)
+			}
+		}
 	}
-	issues, _, err := c.search(ctx, c.JQL(query), limit, issueFields)
+	issues, next, err := c.search(ctx, c.JQL(q.Text, q.Done), q.Cursor, limit)
 	if err != nil {
 		// A number that already resolved to a real issue is a good answer on
 		// its own; don't discard it because the text half failed.
-		if len(tickets) > 0 {
-			return tickets, nil
+		if len(page.Tickets) > 0 {
+			return page, nil
 		}
-		return nil, err
+		return trackerport.SearchPage{}, err
 	}
 	seen := map[string]bool{}
-	for _, t := range tickets {
+	for _, t := range page.Tickets {
 		seen[t.Key] = true
 	}
 	for _, i := range issues {
 		if seen[i.Key] {
 			continue
 		}
-		tickets = append(tickets, c.toTicket(i))
+		page.Tickets = append(page.Tickets, c.toTicket(i))
 	}
-	return tickets, nil
+	page.Next = next
+	return page, nil
 }
 
-// search runs one JQL query for up to limit issues with the given fields,
-// and says the status of the call that answered. Cloud's current endpoint
-// first; older deployments (and Data Center) answer 404 or 410 there, so
-// fall back to the classic one rather than reporting a missing route as a
-// search failure.
-func (c *Client) search(ctx context.Context, jql string, limit int, fields string) ([]issueJSON, int, error) {
+// doneMatches reports whether a ticket's done state passes the filter.
+func doneMatches(f trackerport.DoneFilter, done bool) bool {
+	switch f {
+	case trackerport.DoneOpen:
+		return !done
+	case trackerport.DoneOnly:
+		return done
+	}
+	return true
+}
+
+// Search cursors name the endpoint that answered the previous page: the
+// current one pages by token, the classic one by offset.
+const (
+	cursorToken = "t:"
+	cursorStart = "s:"
+)
+
+// search runs one JQL query for a page of up to limit issues, and returns
+// the cursor of the next page ("" on the last). Cloud's current endpoint
+// first; older deployments (and Data Center) answer 404 or 410 there, so a
+// first page falls back to the classic one rather than reporting a missing
+// route as a search failure. A later page stays on the endpoint that served
+// its cursor.
+func (c *Client) search(ctx context.Context, jql, cursor string, limit int) ([]issueJSON, string, error) {
+	fields := strings.Split(issueFields, ",")
+	start := 0
+	switch {
+	case cursor == "" || strings.HasPrefix(cursor, cursorToken):
+		body := map[string]any{"jql": jql, "maxResults": limit, "fields": fields}
+		if token := strings.TrimPrefix(cursor, cursorToken); token != "" {
+			body["nextPageToken"] = token
+		}
+		var out struct {
+			Issues        []issueJSON `json:"issues"`
+			NextPageToken string      `json:"nextPageToken"`
+			IsLast        bool        `json:"isLast"`
+		}
+		status, err := c.api(ctx, http.MethodPost, c.apiBase()+"/search/jql", body, &out)
+		if err == nil {
+			next := ""
+			if out.NextPageToken != "" && !out.IsLast {
+				next = cursorToken + out.NextPageToken
+			}
+			return out.Issues, next, nil
+		}
+		if cursor != "" || (status != http.StatusNotFound && status != http.StatusGone &&
+			status != http.StatusMethodNotAllowed) {
+			return nil, "", err
+		}
+	case strings.HasPrefix(cursor, cursorStart):
+		n, err := strconv.Atoi(strings.TrimPrefix(cursor, cursorStart))
+		if err != nil || n < 0 {
+			return nil, "", fmt.Errorf("jira: bad search cursor %q", cursor)
+		}
+		start = n
+	default:
+		return nil, "", fmt.Errorf("jira: bad search cursor %q", cursor)
+	}
 	var out struct {
 		Issues []issueJSON `json:"issues"`
+		Total  int         `json:"total"`
 	}
-	status, err := c.api(ctx, http.MethodPost, c.apiBase()+"/search/jql", map[string]any{
-		"jql":        jql,
-		"maxResults": limit,
-		"fields":     strings.Split(fields, ","),
-	}, &out)
-	if err != nil && (status == http.StatusNotFound || status == http.StatusGone ||
-		status == http.StatusMethodNotAllowed) {
-		p := fmt.Sprintf("%s/search?jql=%s&maxResults=%d&fields=%s",
-			c.apiBase(), url.QueryEscape(jql), limit, url.QueryEscape(fields))
-		status, err = c.api(ctx, http.MethodGet, p, nil, &out)
+	p := fmt.Sprintf("%s/search?jql=%s&startAt=%d&maxResults=%d&fields=%s",
+		c.apiBase(), url.QueryEscape(jql), start, limit, url.QueryEscape(issueFields))
+	if _, err := c.api(ctx, http.MethodGet, p, nil, &out); err != nil {
+		return nil, "", err
 	}
-	if err != nil {
-		return nil, status, err
+	next := ""
+	if end := start + len(out.Issues); len(out.Issues) > 0 && end < out.Total {
+		next = cursorStart + strconv.Itoa(end)
 	}
-	return out.Issues, status, nil
-}
-
-// fetchBatch is how many keys one FetchMany query names: the most issues a
-// search page returns with fields requested.
-const fetchBatch = 100
-
-// FetchMany re-reads tickets by key (or numeric issue id), fetchBatch at a
-// time, through JQL `key in (…)` — the consistent fields Fetch reads,
-// attachments included. JQL refuses the WHOLE query when one key no longer
-// exists (a deleted or moved issue: 400 "An issue with key … does not
-// exist"), so a refused batch falls back to one Fetch per key; a key Jira
-// does not have is left out of the result, which is how the caller learns
-// it is gone.
-func (c *Client) FetchMany(ctx context.Context, keys []string) ([]trackerport.SourceTicket, error) {
-	var out []trackerport.SourceTicket
-	for start := 0; start < len(keys); start += fetchBatch {
-		var batch []string
-		for _, k := range keys[start:min(start+fetchBatch, len(keys))] {
-			if k = strings.TrimSpace(k); k != "" {
-				batch = append(batch, k)
-			}
-		}
-		if len(batch) == 0 {
-			continue
-		}
-		quoted := make([]string, len(batch))
-		for i, k := range batch {
-			quoted[i] = quoteJQL(k)
-		}
-		issues, status, err := c.search(ctx, "key in ("+strings.Join(quoted, ", ")+")", len(batch), issueFields+",attachment")
-		if status == http.StatusBadRequest {
-			for _, k := range batch {
-				t, err := c.Fetch(ctx, k)
-				if errors.Is(err, trackerport.ErrTicketNotFound) {
-					continue
-				}
-				if err != nil {
-					return nil, err
-				}
-				out = append(out, t)
-			}
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		for _, i := range issues {
-			out = append(out, c.toTicket(i))
-		}
-	}
-	return out, nil
+	return out.Issues, next, nil
 }
 
 var looseKeyRe = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9_]*)[\s_-]+([0-9]+)$`)
@@ -594,20 +604,22 @@ func (c *Client) OpenAttachment(ctx context.Context, a trackerport.SourceAttachm
 
 var issueKeyRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*-[0-9]+$`)
 
-// JQL turns the picker's free text into JQL, scoped by the configured filter:
+// JQL turns the picker's free text and done filter into JQL, scoped by the
+// configured filter:
 //   - an issue key ("PROJ-123") looks that issue up directly;
 //   - a "jql:" prefix passes the rest through verbatim (the power-user hatch);
 //   - anything else is a text search;
-//   - empty means "assigned to me and unresolved" — the useful default when
-//     the operator opens the picker with nothing typed.
+//   - empty means "assigned to me" — the useful default when the operator
+//     opens the picker with nothing typed.
 //
-// An ORDER BY is appended unless the query already carries one.
-func (c *Client) JQL(query string) string {
+// The done filter is ANDed on as a statusCategory clause. An ORDER BY is
+// kept at the end (the written one, else the filter's) or appended.
+func (c *Client) JQL(query string, done trackerport.DoneFilter) string {
 	query = normalizeQuery(query)
 	var clause string
 	switch {
 	case query == "":
-		clause = "assignee = currentUser() AND resolution = Unresolved"
+		clause = "assignee = currentUser()"
 	case issueKeyRe.MatchString(query):
 		clause = "key = " + quoteJQL(strings.ToUpper(query))
 	default:
@@ -617,16 +629,57 @@ func (c *Client) JQL(query string) string {
 		}
 		clause = "text ~ " + quoteJQL(query+"*")
 	}
-	out := clause
-	if f := strings.TrimSpace(c.cfg.JQL); f != "" && clause != "" {
-		out = "(" + f + ") AND (" + clause + ")"
-	} else if f != "" {
-		out = f
+	filter, filterOrder := splitOrderBy(c.cfg.JQL)
+	clause, order := splitOrderBy(clause)
+	if order == "" {
+		order = filterOrder
 	}
-	if !strings.Contains(strings.ToLower(jqlStringRe.ReplaceAllString(out, "")), "order by") {
-		out += " ORDER BY updated DESC"
+	if order == "" {
+		order = "ORDER BY updated DESC"
 	}
-	return out
+	var parts []string
+	for _, p := range []string{filter, clause, doneClause(done)} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	where := ""
+	if len(parts) == 1 {
+		where = parts[0]
+	} else if len(parts) > 1 {
+		where = "(" + strings.Join(parts, ") AND (") + ")"
+	}
+	if where == "" {
+		return order
+	}
+	return where + " " + order
+}
+
+// doneClause is the JQL for a done filter; "" for any.
+func doneClause(f trackerport.DoneFilter) string {
+	switch f {
+	case trackerport.DoneOpen:
+		return "statusCategory != Done"
+	case trackerport.DoneOnly:
+		return "statusCategory = Done"
+	}
+	return ""
+}
+
+// orderByRe finds a JQL ORDER BY once string literals are blanked out.
+var orderByRe = regexp.MustCompile(`(?i)\border\s+by\b`)
+
+// splitOrderBy splits JQL into its condition and its ORDER BY ("" for
+// none), so the condition can be ANDed with others and the order kept last.
+// Text inside a string literal is never an ORDER BY.
+func splitOrderBy(jql string) (where, order string) {
+	jql = strings.TrimSpace(jql)
+	masked := jqlStringRe.ReplaceAllStringFunc(jql, func(s string) string { return strings.Repeat(" ", len(s)) })
+	loc := orderByRe.FindStringIndex(masked)
+	if loc == nil {
+		return jql, ""
+	}
+	return strings.TrimSpace(jql[:loc[0]]), strings.TrimSpace(jql[loc[0]:])
 }
 
 // jqlStringRe matches a JQL string literal: text inside one is never syntax.
@@ -728,5 +781,4 @@ func (c *Client) Types(ctx context.Context) ([]trackerport.RemoteType, error) {
 var (
 	_ trackerport.TicketSource   = (*Client)(nil)
 	_ trackerport.TicketMetadata = (*Client)(nil)
-	_ trackerport.TicketSyncer   = (*Client)(nil)
 )

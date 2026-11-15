@@ -45,7 +45,7 @@ const transitionFirstDoc = `name: tk
 version: 2
 parameters: { harness: fake, model: fake/model }
 main:
-  - { id: kick, type: action, action: ticket_transition, with: { to: in_progress } }
+  - { id: kick, type: action, action: ticket_transition, with: { to: In Progress } }
   - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
 `
 
@@ -87,7 +87,7 @@ func TestModelCheckSurvivesALeadingRemoteStage(t *testing.T) {
 version: 2
 parameters: { harness: fake, model: acme/alpha-1 }
 main:
-  - { id: kick, type: action, action: ticket_transition, with: { to: in_progress } }
+  - { id: kick, type: action, action: ticket_transition, with: { to: In Progress } }
   - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
 `
 	h, _ := trackerHarness(t, doc)
@@ -135,7 +135,7 @@ main:
 // on_fail — here straight to the next stage, which is how "best effort" is
 // written.
 func TestTicketTransitionUnreachableRoutesOnFail(t *testing.T) {
-	h, tracker := trackerHarness(t, fmt.Sprintf(routedDoc, "done"))
+	h, tracker := trackerHarness(t, fmt.Sprintf(routedDoc, "Done"))
 	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "routed", testProject)
 	if err != nil {
 		t.Fatal(err)
@@ -146,14 +146,14 @@ func TestTicketTransitionUnreachableRoutesOnFail(t *testing.T) {
 		t.Fatalf("state = %s, want completed via on_fail: %v", v.State, eventTypes(evs))
 	}
 	sf, ok := findPayload[*event.StageFailed](evs)
-	if !ok || sf.Reason != event.ReasonInputInvalid || !strings.Contains(sf.Error, "reachable: In Progress") {
+	if !ok || sf.Reason != event.ReasonInputInvalid || !strings.Contains(sf.Error, `"Done" is not reachable`) || !strings.Contains(sf.Error, "reachable: In Progress") {
 		t.Errorf("stage_failed = %+v", sf)
 	}
 	if len(tracker.Calls) != 0 {
 		t.Errorf("an unreachable move was recorded as a call: %v", tracker.Calls)
 	}
 	// With no on_fail the stage failure ends the run.
-	h2, _ := trackerHarness(t, strings.Replace(transitionFirstDoc, "to: in_progress", "to: done", 1))
+	h2, _ := trackerHarness(t, strings.Replace(transitionFirstDoc, "to: In Progress", "to: Done", 1))
 	runID2, err := h2.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +167,7 @@ func TestTicketTransitionUnreachableRoutesOnFail(t *testing.T) {
 // A tracker that is down is infra — but still routable, never terminal: the
 // work must not depend on Jira being up.
 func TestTrackerTransportErrorIsRoutable(t *testing.T) {
-	h, tracker := trackerHarness(t, fmt.Sprintf(routedDoc, "in_progress"))
+	h, tracker := trackerHarness(t, fmt.Sprintf(routedDoc, "In Progress"))
 	tracker.WriteErr = errors.New("jira: 503 service unavailable")
 	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "routed", testProject)
 	if err != nil {
@@ -183,57 +183,11 @@ func TestTrackerTransportErrorIsRoutable(t *testing.T) {
 	}
 }
 
-// A flow step is the flow's word; the tracker's status is whichever of its
-// statuses holds the step — here a workflow that calls in_progress "Doing" —
-// so one flow fits workflows that differ.
-func TestFlowStepMovesToTheStatusHoldingIt(t *testing.T) {
-	h, tracker := trackerHarness(t, transitionFirstDoc)
-	h.tickets.steps(map[string]trackerport.FlowStep{"To Do": trackerport.StepTodo, "Doing": trackerport.StepInProgress})
-	tracker.Reachable = map[string][]string{"To Do": {"Doing"}}
-	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.e.Wait(runID)
-	if v := h.view(t, runID); v.State != run.Completed {
-		t.Fatalf("state = %s: %v", v.State, eventTypes(h.events(t, runID)))
-	}
-	if got := strings.Join(tracker.Calls, "; "); got != "transition DEV-1 Doing" {
-		t.Errorf("tracker calls = %q", got)
-	}
-}
-
-// A step no status of the tracker holds — GitHub Issues knows open and
-// closed — skips the stage with the reason: the flow is not wrong, this
-// tracker just cannot say it. Nothing fails, nothing is called.
-func TestStepWithNoStatusSkipsTheStage(t *testing.T) {
-	h, tracker := trackerHarness(t, transitionFirstDoc)
-	tracker.Tickets[0].Status = "open"
-	h.tickets.steps(map[string]trackerport.FlowStep{"open": trackerport.StepTodo, "closed": trackerport.StepDone})
-	tracker.Reachable = nil
-	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.e.Wait(runID)
-	evs := h.events(t, runID)
-	if v := h.view(t, runID); v.State != run.Completed {
-		t.Fatalf("state = %s: %v", v.State, eventTypes(evs))
-	}
-	sc, ok := findPayload[*event.StageCompleted](evs)
-	if !ok || sc.StageID != "kick" || !sc.Skipped || !strings.Contains(sc.Note, `has no status for step "in_progress"`) || !strings.Contains(sc.Note, "todo, done") {
-		t.Errorf("first completion = %+v, want the move skipped with the steps the tracker has in the note", sc)
-	}
-	if countType(evs, event.TypeStageFailed) != 0 || len(tracker.Calls) != 0 {
-		t.Errorf("an unsupported step failed or called: %v / %v", eventTypes(evs), tracker.Calls)
-	}
-}
-
-// `status:` is the tracker's own word, taken verbatim: it moves the issue
-// when the workflow allows, and an unreachable one still fails the stage
-// (input_invalid) — a literal is never skipped.
+// `to` is the tracker's own word, matched case aside: it moves the issue
+// when the workflow allows, and an unreachable one fails the stage
+// (input_invalid) — it is never skipped.
 func TestLiteralStatusMovesOrFails(t *testing.T) {
-	h, tracker := trackerHarness(t, strings.Replace(transitionFirstDoc, "to: in_progress", `status: "in progress"`, 1))
+	h, tracker := trackerHarness(t, strings.Replace(transitionFirstDoc, "to: In Progress", `to: "in progress"`, 1))
 	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
 	if err != nil {
 		t.Fatal(err)
@@ -246,7 +200,7 @@ func TestLiteralStatusMovesOrFails(t *testing.T) {
 		t.Errorf("tracker calls = %q", got)
 	}
 
-	h2, tracker2 := trackerHarness(t, strings.Replace(transitionFirstDoc, "to: in_progress", `status: "Ready for prod"`, 1))
+	h2, tracker2 := trackerHarness(t, strings.Replace(transitionFirstDoc, "to: In Progress", `to: "Ready for prod"`, 1))
 	runID2, err := h2.e.CreateRun(context.Background(), linkedTicket, "tk", testProject)
 	if err != nil {
 		t.Fatal(err)
@@ -256,7 +210,7 @@ func TestLiteralStatusMovesOrFails(t *testing.T) {
 	if v := h2.view(t, runID2); v.State != run.Abandoned {
 		t.Fatalf("state = %s, want abandoned: %v", v.State, eventTypes(evs))
 	}
-	if sf, ok := findPayload[*event.StageFailed](evs); !ok || sf.Reason != event.ReasonInputInvalid || !strings.Contains(sf.Error, `"Ready for prod" is not reachable`) {
+	if sf, ok := findPayload[*event.StageFailed](evs); !ok || sf.Reason != event.ReasonInputInvalid || !strings.Contains(sf.Error, `"Ready for prod" is not reachable`) || !strings.Contains(sf.Error, "In Progress") {
 		t.Errorf("stage_failed = %+v", sf)
 	}
 	if len(tracker2.Calls) != 0 {
@@ -264,11 +218,35 @@ func TestLiteralStatusMovesOrFails(t *testing.T) {
 	}
 }
 
+// `to` read from a string parameter moves the ticket to the bound status:
+// the workshop says what its tracker calls the step.
+func TestBoundStatusParameterMovesTheTicket(t *testing.T) {
+	doc := `name: tkp
+version: 5
+parameters: { harness: fake, model: fake/model, in_progress_status: { type: string } }
+main:
+  - { id: kick, type: action, action: ticket_transition, with: { to: $in_progress_status } }
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder }
+`
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Bindings = staticBindings{"in_progress_status": "in progress"} }, mustFlow(t, doc))
+	runID, err := h.e.CreateRun(context.Background(), linkedTicket, "tkp", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s: %v", v.State, eventTypes(h.events(t, runID)))
+	}
+	if got := strings.Join(h.tickets.remote.Calls, "; "); got != "transition DEV-1 In Progress" {
+		t.Errorf("tracker calls = %q", got)
+	}
+}
+
 // A ticket written by hand is on the internal tracker: `to: done` moves the
-// ticket's own status to the one holding done, and the remote is untouched —
-// so one flow serves every ticket.
+// ticket's own status to the one named Done — the name matched case aside —
+// and the remote is untouched, so one flow serves every ticket.
 func TestTicketTransitionMovesAHandWrittenTicket(t *testing.T) {
-	h, tracker := trackerHarness(t, strings.Replace(transitionFirstDoc, "to: in_progress", "to: done", 1))
+	h, tracker := trackerHarness(t, strings.Replace(transitionFirstDoc, "to: In Progress", "to: done", 1))
 	h.tickets.handWritten("tk-2")
 	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{TicketID: "tk-2", Title: "T"}, "tk", testProject)
 	if err != nil {
@@ -286,7 +264,7 @@ func TestTicketTransitionMovesAHandWrittenTicket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	done, err := h.tickets.status(in.ID, trackerport.StepDone)
+	done, err := h.tickets.status(in.ID, "Done")
 	if err != nil {
 		t.Fatal(err)
 	}

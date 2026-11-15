@@ -1,18 +1,19 @@
 <script lang="ts">
 	// A workshop on the desk (DESIGN 7.2/7.3): its live runs (state dot, title
 	// over "state · stage", stage-type chip, elapsed over cost), its last
-	// finished runs with their MR, and its tickets. Rows slide into their new
+	// finished runs with their MR, and a way to its tickets (read live from
+	// its source, so not counted here). Rows slide into their new
 	// places on the spring when the list reorders.
 	import { flip } from 'svelte/animate';
 	import { t } from '$lib/i18n/index.svelte';
 	import { to } from '$lib/core/urls';
 	import { fmtCost, fmtDuration } from '$lib/core/format';
-	import type { Project, Run } from '$lib/domain';
+	import type { Integration, Project, Run } from '$lib/domain';
 	import StageChip from '$lib/ui/StageChip.svelte';
-	import { I } from '$lib/design/icons';
 	import { ms, spring } from '$lib/ui/motion';
 	import RunRow from '$lib/run/RunRow.svelte';
 	import WorkshopName from '$lib/app/WorkshopName.svelte';
+	import NewTicketLink from '$lib/tickets/NewTicketLink.svelte';
 	import { runFacts, stageType } from '$lib/run/runfacts.svelte';
 
 	let {
@@ -21,7 +22,7 @@
 		finished = [],
 		liveTotal,
 		pings = 0,
-		tickets,
+		integrations = null,
 		now
 	}: {
 		project: Project;
@@ -32,8 +33,8 @@
 		/** All live runs of the workshop, for the head summary. */
 		liveTotal: number;
 		pings?: number;
-		/** Ticket count; undefined while loading. */
-		tickets?: number;
+		/** For where its next ticket is written; null while loading. */
+		integrations?: Integration[] | null;
 		now: number;
 	} = $props();
 
@@ -88,15 +89,9 @@
 	{/if}
 
 	<footer class="pane-foot">
-		<a href={to.tickets({ project: project.id })}
-			>{tickets === undefined
-				? t('deskhome.card.ticketsLoading')
-				: t('deskhome.card.tickets', { count: tickets })}</a
-		>
+		<a href={to.tickets({ project: project.id })}>{t('deskhome.card.tickets')}</a>
 		<span class="spacer"></span>
-		<a class="btn btn-sm" href={to.newTicket({ project: project.id })}
-			>{I.add} {t('deskhome.card.newTicket')}</a
-		>
+		<NewTicketLink {project} {integrations} label={t('deskhome.card.newTicket')} cls="btn-sm" />
 	</footer>
 </article>
 

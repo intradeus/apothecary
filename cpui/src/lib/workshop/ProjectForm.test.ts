@@ -30,7 +30,9 @@ const integrations = [
 	anIntegration({ id: 'prov-2', name: 'K8s', port: 'provisioner', kind: 'kubernetes' }),
 	anIntegration({ id: 'h-a', name: 'Claude A', port: 'harness', kind: 'claude' }),
 	anIntegration({ id: 'h-b', name: 'Claude B', port: 'harness', kind: 'claude' }),
-	anIntegration({ id: 'h-c', name: 'Codex', port: 'harness', kind: 'codex' })
+	anIntegration({ id: 'h-c', name: 'Codex', port: 'harness', kind: 'codex' }),
+	anIntegration({ id: 'src-jira', name: 'Jira', port: 'ticketsource', kind: 'jira' }),
+	anIntegration({ id: 'src-own', name: 'Apothecary', port: 'ticketsource', kind: 'internal' })
 ];
 const flows = [aFlow({ name: 'mine' }), aFlow({ name: 'tpl', builtin: true })];
 
@@ -41,6 +43,7 @@ const stored = (over: Partial<Project> = {}) =>
 		repoAccountId: 'repo-1',
 		provisionerId: 'prov-1',
 		harnessIds: ['h-a'],
+		ticketSourceId: 'src-jira',
 		repo: {
 			url: 'https://git.test/a.git',
 			locator: '7',
@@ -128,6 +131,7 @@ describe('ProjectForm, draft()', () => {
 			name: 'billing',
 			repoAccountId: 'repo-1',
 			provisionerId: 'prov-1',
+			ticketSourceId: 'src-jira',
 			harnessIds: ['h-a'],
 			repo: {
 				url: 'https://git.test/a.git',
@@ -563,6 +567,14 @@ describe('ProjectForm, envcheck after saving', () => {
 	});
 });
 
+describe('ProjectForm, the ticket source', () => {
+	it('switches the workshop to another source', async () => {
+		edit();
+		await choose('Ticket source', 'Apothecary (built-in tracker)');
+		expect((await save()).ticketSourceId).toBe('src-own');
+	});
+});
+
 describe('ProjectForm, creating', () => {
 	async function fill() {
 		await userEvent.type(screen.getByLabelText('Repo URL'), 'https://a.git');
@@ -579,6 +591,7 @@ describe('ProjectForm, creating', () => {
 			name: 'acme',
 			repoAccountId: 'repo-1',
 			provisionerId: 'prov-1',
+			ticketSourceId: 'src-own',
 			harnessIds: ['h-a'],
 			defaultFlow: 'mine',
 			repo: {
@@ -589,6 +602,13 @@ describe('ProjectForm, creating', () => {
 			commands: {},
 			workspace: { egressMode: 'allow', browserEnabled: false, services: [] }
 		});
+	});
+
+	it('leaves the source empty, the built-in tracker, when it does not exist yet', async () => {
+		setup({ integrations: integrations.filter((i) => i.kind !== 'internal') });
+		await fill();
+		await userEvent.click(createBtn());
+		expect(created().ticketSourceId).toBe('');
 	});
 
 	it('creates and hands the workshop to the page', async () => {

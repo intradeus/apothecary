@@ -53,7 +53,7 @@ type Ticket struct {
 // TicketNow is a ticket's tracker-owned facts as an agent's prompt shows
 // them, read when the prompt is built rather than when the run started: its
 // key on the tracker ("" for a ticket written here), the name of its status
-// ("" before its first sync), its labels, and its comments, oldest first.
+// ("" when the tracker could not say), its labels, and its comments, oldest first.
 type TicketNow struct {
 	Key      string
 	Status   string
@@ -63,7 +63,7 @@ type TicketNow struct {
 
 // TicketComment is one comment on a ticket. Own is one apothecary posted to
 // the internal tracker (origin apothecary); one it posted to a remote
-// tracker comes back from a sync as anybody's, and is known by its trailer.
+// tracker is read back live as anybody's, and is known by its trailer.
 type TicketComment struct {
 	Author string
 	Body   string

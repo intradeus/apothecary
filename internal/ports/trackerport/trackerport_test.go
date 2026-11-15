@@ -1,7 +1,6 @@
 package trackerport
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -49,32 +48,6 @@ func TestGuessChangeType(t *testing.T) {
 	}
 }
 
-func TestParseFlowStep(t *testing.T) {
-	for _, st := range FlowSteps() {
-		if got, ok := ParseFlowStep(" " + string(st) + " "); !ok || got != st {
-			t.Errorf("ParseFlowStep(%q) = %q, %v", st, got, ok)
-		}
-	}
-	// A tracker's own word is not a flow step, whatever its case.
-	for _, in := range []string{"", "In Progress", "DONE", "closed"} {
-		if got, ok := ParseFlowStep(in); ok || got != "" {
-			t.Errorf("ParseFlowStep(%q) = %q, %v", in, got, ok)
-		}
-	}
-}
-
-func TestStepNames(t *testing.T) {
-	if got := StepNames([]FlowStep{StepTodo, StepDone}); got != "todo, done" {
-		t.Errorf("names = %q", got)
-	}
-	if got := StepNames(nil); got != "" {
-		t.Errorf("no names = %q", got)
-	}
-	if !reflect.DeepEqual(FlowSteps()[:2], []FlowStep{StepTodo, StepInProgress}) {
-		t.Errorf("steps are in lifecycle order: %v", FlowSteps())
-	}
-}
-
 // A refusal's text is what a flow's failure message shows: it names the fix.
 func TestErrorsNameTheFix(t *testing.T) {
 	for _, tc := range []struct {
@@ -87,10 +60,6 @@ func TestErrorsNameTheFix(t *testing.T) {
 			[]string{`P-1: status "Done" is not reachable from "To Do"`, "reachable: In Progress, Blocked"}, []string{"no transition"}},
 		{"nowhere to go", &ErrStatusUnreachable{Key: "P-1", From: "Done", To: "To Do"},
 			[]string{"no transition is available"}, []string{"reachable:"}},
-		{"unsupported", &ErrStatusUnsupported{Key: "o/r#1", Step: StepInReview, Supported: []FlowStep{StepTodo, StepDone}},
-			[]string{`o/r#1: the tracker has no status for step "in_review"`, "steps with a status: todo, done"}, nil},
-		{"unsupported, nothing known", &ErrStatusUnsupported{Key: "k", Step: StepBlocked},
-			[]string{"the tracker has no status"}, []string{"steps with"}},
 		{"unknown field", &ErrFieldUnknown{Key: "P-1", Field: "Team"}, []string{`no field named "Team"`}, []string{"candidates"}},
 		{"ambiguous field", &ErrFieldUnknown{Key: "P-1", Field: "Team", Candidates: []string{"Team (cf_1)", "Team (cf_2)"}},
 			[]string{"ambiguous or unknown", "candidates: Team (cf_1), Team (cf_2)"}, nil},

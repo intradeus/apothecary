@@ -19,7 +19,6 @@ import (
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/kinds"
 	"apothecary/internal/project/resolution"
-	"apothecary/internal/project/tickets"
 	"apothecary/internal/workspace/envcheck"
 	"apothecary/internal/workspace/wsinfo"
 )
@@ -89,14 +88,14 @@ type IntegrationOps interface {
 	ListBranches(ctx context.Context, projectID string) ([]kinds.BranchInfo, error)
 }
 
-// confErr maps confstore errors to statuses: not found 404, conflicts,
-// referenced-deletes and edits of what a ticket's remote tracker owns 409,
-// validation 400, everything else (DB outages, decryption failures) 500.
+// confErr maps confstore errors to statuses: not found 404, conflicts and
+// referenced-deletes 409, validation 400, everything else (DB outages,
+// decryption failures) 500.
 func confErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, confstore.ErrNotFound):
 		writeErr(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, confstore.ErrConflict), errors.Is(err, confstore.ErrReferenced), errors.Is(err, confstore.ErrRemoteOwned):
+	case errors.Is(err, confstore.ErrConflict), errors.Is(err, confstore.ErrReferenced):
 		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, confstore.ErrInvalid), errors.Is(err, resolution.ErrUnresolvable):
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -185,19 +184,11 @@ func (s *Server) updateIntegration(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toIntegrationJSON(in))
 }
 
-// deleteIntegration deletes an integration nothing references. A
-// ticketsource whose tickets still mirror its issues needs
-// ?unlink_tickets=1 (deleteTicketSource); the internal tracker is refused.
+// deleteIntegration deletes an integration nothing references: one a
+// workshop uses (its ticket source included) is refused naming the
+// workshops, and the internal tracker always is.
 func (s *Server) deleteIntegration(w http.ResponseWriter, r *http.Request) {
-	in, err := s.Conf.GetIntegration(r.Context(), r.PathValue("id"))
-	if err != nil {
-		confErr(w, err)
-		return
-	}
-	if in.Port == confstore.PortTicketSource && in.Kind != confstore.KindInternal && s.deleteTicketSource(w, r, in) {
-		return
-	}
-	if err := s.Conf.DeleteIntegration(r.Context(), in.ID); err != nil {
+	if err := s.Conf.DeleteIntegration(r.Context(), r.PathValue("id")); err != nil {
 		confErr(w, err)
 		return
 	}
@@ -280,6 +271,10 @@ type projectBody struct {
 	Commands    map[string]string         `json:"commands"`
 	Workspace   confstore.WorkspaceConfig `json:"workspace"`
 	DefaultFlow string                    `json:"default_flow"`
+	// TicketSourceID is the workshop's ticket source: a ticketsource
+	// integration of the owner's; empty on a create is the owner's internal
+	// tracker, on an update the current one.
+	TicketSourceID string `json:"ticket_source_id"`
 }
 
 func (b projectBody) toProject() confstore.Project {
@@ -287,6 +282,7 @@ func (b projectBody) toProject() confstore.Project {
 		Name: b.Name, RepoAccountID: b.RepoAccountID, ProvisionerID: b.ProvisionerID,
 		HarnessIDs: b.HarnessIDs, Repo: b.Repo, Repos: b.Repos,
 		Commands: b.Commands, Workspace: b.Workspace, DefaultFlow: b.DefaultFlow,
+		TicketSourceID: b.TicketSourceID,
 	}
 }
 
@@ -825,10 +821,8 @@ func (s *Server) integrationRoutes() []Route {
 			Handler: s.updateIntegration, Body: IntegrationUpdate{}, Returns: integrationJSON{}, Enabled: haveConf, Scope: ScopeIntegration},
 		{Method: "DELETE", Path: "/api/integrations/{id}", ID: "deleteIntegration", Tag: tagIntegrations,
 			Summary: "Delete an integration",
-			Doc: "A ticket source whose tickets still mirror its issues is refused with 409, the error's tickets and active_runs counting them " +
-				"and the runs still going on them; ?unlink_tickets=1 unlinks them onto the internal tracker (status by name, else its done or todo step; " +
-				"type by change type; comments kept) in the same transaction as the delete. The internal tracker cannot be deleted (400).",
-			Query:   []Param{{Name: "unlink_tickets", Doc: "1 = unlink the ticket source's tickets, then delete it", Enum: []string{"1"}}},
+			Doc: "One a workshop uses — its repository account, provisioner, harness or ticket source — is refused with 409 naming the workshops. " +
+				"A deleted ticket source's records stay, and their runs. The internal tracker cannot be deleted (400).",
 			Handler: s.deleteIntegration, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeIntegration},
 		{Method: "POST", Path: "/api/integrations/{id}/test", ID: "testIntegration", Tag: tagIntegrations,
 			Summary: "Check an integration's credentials against the real service",
@@ -839,37 +833,25 @@ func (s *Server) integrationRoutes() []Route {
 		{Method: "GET", Path: "/api/integrations/{id}/models", ID: "listIntegrationModels", Tag: tagIntegrations,
 			Summary: "Models a harness integration's credentials can reach",
 			Handler: s.listIntegrationModels, Returns: []kinds.ModelInfo{}, Enabled: haveConf, Scope: ScopeIntegration},
-		{Method: "GET", Path: "/api/integrations/{id}/tickets", ID: "searchSourceTickets", Tag: tagTickets,
-			Summary: "Search a tracker for tickets to import (read-only)",
-			Query: []Param{
-				{Name: "q", Doc: "free-text query"},
-				{Name: "limit", Doc: "max results (default 25)", Type: "integer"},
-			},
-			Handler: s.searchSourceTickets, Returns: []sourceTicketJSON{}, Enabled: haveConf, Scope: ScopeIntegration},
-		{Method: "GET", Path: "/api/integrations/{id}/tickets/{key}", ID: "getSourceTicket", Tag: tagTickets,
-			Summary: "One tracker ticket by key",
-			Handler: s.getSourceTicket, Returns: sourceTicketJSON{}, Enabled: haveConf, Scope: ScopeIntegration},
-		{Method: "POST", Path: "/api/integrations/{id}/sync", ID: "syncIntegration", Tag: tagIntegrations,
-			Summary: "Re-read every ticket of a ticket source from its tracker, done ones included",
-			Doc:     "Refreshes the status and type lists first. Each ticket's outcome is also on it (sync_state, sync_error).",
-			Handler: s.syncIntegration, Returns: tickets.SyncCounts{}, Enabled: haveConf, Scope: ScopeIntegration},
 		{Method: "GET", Path: "/api/integrations/{id}/statuses", ID: "listTrackerStatuses", Tag: tagIntegrations,
 			Summary: "A ticket source's statuses, in order",
-			Query:   []Param{{Name: "refresh", Doc: "1 = fetch the list from the remote tracker first", Enum: []string{"1"}}},
+			Doc: "The internal tracker's rows, edited here; a remote tracker's list read live from it, read_only (is_done: its done category). " +
+				"A tracker holding off for its rate limit with nothing cached is 503 with Retry-After.",
+			Query:   []Param{{Name: "refresh", Doc: "1 = read the remote tracker now rather than the cached copy", Enum: []string{"1"}}},
 			Handler: s.listTrackerStatuses, Returns: TrackerStatusList{}, Enabled: haveConf, Scope: ScopeIntegration},
 		{Method: "PUT", Path: "/api/integrations/{id}/statuses", ID: "putTrackerStatuses", Tag: tagIntegrations,
-			Summary: "Save a ticket source's statuses",
-			Doc: "A remote tracker's rows are the fetched ones: only is_done and flow_step are taken. The internal tracker's are the user's: " +
-				"a row with no id is new, a missing one is deleted, names are unique, the order given is kept. Each flow step is held at most once (400). " +
-				"Deleting a status tickets use needs replace_with[id] (409 without).",
+			Summary: "Save the internal tracker's statuses",
+			Doc: "A row with no id is new, a missing one is deleted, names are unique, the order given is kept. " +
+				"Deleting a status tickets use needs replace_with[id] (409 without). A remote tracker's statuses are its own (400).",
 			Handler: s.putTrackerStatuses, Body: TrackerStatusesUpdate{}, Returns: TrackerStatusList{}, Enabled: haveConf, Scope: ScopeIntegration},
 		{Method: "GET", Path: "/api/integrations/{id}/types", ID: "listTrackerTypes", Tag: tagIntegrations,
 			Summary: "A ticket source's issue types, in order",
-			Query:   []Param{{Name: "refresh", Doc: "1 = fetch the list from the remote tracker first", Enum: []string{"1"}}},
+			Doc:     "A remote tracker's are read from it first, a type not listed yet added with its change type guessed from its name.",
+			Query:   []Param{{Name: "refresh", Doc: "1 = read the remote tracker now rather than the cached copy", Enum: []string{"1"}}},
 			Handler: s.listTrackerTypes, Returns: TrackerTypeList{}, Enabled: haveConf, Scope: ScopeIntegration},
 		{Method: "PUT", Path: "/api/integrations/{id}/types", ID: "putTrackerTypes", Tag: tagIntegrations,
 			Summary: "Save a ticket source's issue types",
-			Doc: "Like the statuses: a remote tracker's rows only take change_type; the internal tracker's are the user's. Every type needs a change type (400). " +
+			Doc: "A remote tracker's rows only take change_type; the internal tracker's are the user's. Every type needs a change type (400). " +
 				"Deleting a type tickets use needs replace_with[id] (409 without).",
 			Handler: s.putTrackerTypes, Body: TrackerTypesUpdate{}, Returns: TrackerTypeList{}, Enabled: haveConf, Scope: ScopeIntegration},
 	}

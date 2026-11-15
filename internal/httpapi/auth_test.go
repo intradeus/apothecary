@@ -125,6 +125,7 @@ func TestOwnershipIsTheWholeView(t *testing.T) {
 	for _, path := range []string{
 		"/api/runs/" + runID,
 		"/api/projects/" + testProject,
+		"/api/projects/" + testProject + "/tickets",
 		"/api/runs/" + runID + "/events",
 	} {
 		res, body := x.do(t, "GET", path, nil, hdr)
@@ -140,7 +141,7 @@ func TestOwnershipIsTheWholeView(t *testing.T) {
 		t.Errorf("other's projects = %d %s", res.StatusCode, body)
 	}
 	// Nor can they file a ticket into it.
-	res, body := x.do(t, "POST", "/api/tickets", map[string]any{"title": "x", "project_id": testProject}, hdr)
+	res, body := x.do(t, "POST", "/api/projects/"+testProject+"/tickets", map[string]any{"title": "x"}, hdr)
 	if res.StatusCode != http.StatusNotFound {
 		t.Errorf("ticket into someone else's project = %d %s, want 404", res.StatusCode, body)
 	}

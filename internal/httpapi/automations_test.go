@@ -14,22 +14,9 @@ func TestAutomationAPI(t *testing.T) {
 	projectID := x.wizard(t)
 	base := "/api/projects/" + projectID + "/automations"
 
-	resp, data := x.do(t, "POST", "/api/integrations", map[string]any{"port": "ticketsource", "kind": "fake", "name": "tracker"}, nil)
-	var in struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(data, &in); err != nil || resp.StatusCode != http.StatusCreated {
-		t.Fatalf("tracker integration = %d %v: %s", resp.StatusCode, err, data)
-	}
-	resp, data = x.do(t, "POST", "/api/tickets", map[string]any{"project_id": projectID, "title": "Nightly"}, nil)
-	var tk struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(data, &tk); err != nil || resp.StatusCode != http.StatusCreated {
-		t.Fatalf("ticket = %d %v: %s", resp.StatusCode, err, data)
-	}
+	tk := struct{ ID string }{x.newTicketOn(t, projectID, "Nightly", "")}
 
-	resp, data = x.do(t, "GET", base, nil, nil)
+	resp, data := x.do(t, "GET", base, nil, nil)
 	if resp.StatusCode != 200 || strings.TrimSpace(string(data)) != "[]" {
 		t.Fatalf("empty list = %d: %s", resp.StatusCode, data)
 	}
@@ -38,10 +25,10 @@ func TestAutomationAPI(t *testing.T) {
 		body map[string]any
 		want string
 	}{
-		{map[string]any{"name": "x", "kind": "tracker_query", "flow": "builder"}, "source_id"},
-		{map[string]any{"name": "x", "kind": "tracker_query", "source_id": in.ID, "flow": "reviewer"}, "starts its runs on a merge request"},
+		{map[string]any{"name": "x", "kind": "tracker_query", "schedule": "0 3 * * *", "flow": "builder"}, "takes no schedule"},
+		{map[string]any{"name": "x", "kind": "tracker_query", "flow": "reviewer"}, "starts its runs on a merge request"},
 		{map[string]any{"name": "x", "kind": "cron", "schedule": "soon", "ticket_id": tk.ID, "flow": "builder"}, "five fields"},
-		{map[string]any{"name": "x", "kind": "tracker_query", "source_id": in.ID, "flow": "builder", "params": map[string]string{"plan_gate": "maybe"}}, "plan_gate"},
+		{map[string]any{"name": "x", "kind": "tracker_query", "flow": "builder", "params": map[string]string{"plan_gate": "maybe"}}, "plan_gate"},
 	} {
 		resp, data = x.do(t, "POST", base, bad.body, nil)
 		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), bad.want) {
@@ -55,7 +42,7 @@ func TestAutomationAPI(t *testing.T) {
 		Params  map[string]string `json:"params"`
 		Enabled bool              `json:"enabled"`
 	}
-	resp, data = x.do(t, "POST", base, map[string]any{"name": "inbox", "kind": "tracker_query", "source_id": in.ID,
+	resp, data = x.do(t, "POST", base, map[string]any{"name": "inbox", "kind": "tracker_query",
 		"query": "assignee = factory", "flow": "builder", "params": map[string]string{"plan_gate": "false"}}, nil)
 	if err := json.Unmarshal(data, &a); err != nil || resp.StatusCode != http.StatusCreated || a.ID == "" || !a.Enabled || a.Params["plan_gate"] != "false" {
 		t.Fatalf("create = %d %v: %s", resp.StatusCode, err, data)
@@ -72,7 +59,7 @@ func TestAutomationAPI(t *testing.T) {
 	if resp.StatusCode != 200 || !strings.Contains(string(data), `"name":"inbox"`) {
 		t.Fatalf("get = %d: %s", resp.StatusCode, data)
 	}
-	resp, data = x.do(t, "PUT", base+"/"+a.ID, map[string]any{"name": "inbox", "kind": "tracker_query", "source_id": in.ID, "flow": "builder", "enabled": false}, nil)
+	resp, data = x.do(t, "PUT", base+"/"+a.ID, map[string]any{"name": "inbox", "kind": "tracker_query", "flow": "builder", "enabled": false}, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), `"enabled":false`) || strings.Contains(string(data), "plan_gate") {
 		t.Fatalf("update = %d: %s", resp.StatusCode, data)
 	}

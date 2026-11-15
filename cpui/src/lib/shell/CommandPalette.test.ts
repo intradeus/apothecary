@@ -2,17 +2,21 @@ import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { page } from '$app/state';
 import { goto } from '$app/navigation';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import { prefs } from '$lib/app/prefs.svelte';
-import { aPing, aProject, aRun, aTicket } from '$test/fixtures';
-import { bindable } from '$test/fixtures/app.svelte';
+import { aPing, aProject, aRun, aTicketRow } from '$test/fixtures';
+import { anIntegration, bindable } from '$test/fixtures/app.svelte';
 import { anOpenMr } from '$test/fixtures/run-components';
 import CommandPalette from './CommandPalette.svelte';
 
 vi.mock('$lib/api', () => ({
-	api: { tickets: { list: vi.fn() }, projects: { mergeRequests: vi.fn() } }
+	api: {
+		projects: { tickets: vi.fn(), mergeRequests: vi.fn() },
+		integrations: { list: vi.fn() }
+	}
 }));
 
 const setup = (open = true) => {
@@ -26,9 +30,11 @@ const selected = () => screen.getByRole('option', { selected: true });
 
 beforeEach(() => {
 	vi.resetAllMocks();
-	vi.mocked(api.tickets.list).mockResolvedValue([]);
+	vi.mocked(api.projects.tickets).mockResolvedValue({ tickets: [], next: '' });
 	vi.mocked(api.projects.mergeRequests).mockResolvedValue([]);
+	vi.mocked(api.integrations.list).mockResolvedValue([]);
 	fleet.reset();
+	page.params = {};
 	prefs.theme = 'ember-sky';
 	prefs.collapsed = false;
 });
@@ -37,7 +43,7 @@ describe('CommandPalette, opening', () => {
 	it('is nothing while closed, and fetches nothing', () => {
 		setup(false);
 		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-		expect(api.tickets.list).not.toHaveBeenCalled();
+		expect(api.projects.tickets).not.toHaveBeenCalled();
 	});
 
 	it('opens focused on the search, on the first row', async () => {
@@ -47,7 +53,7 @@ describe('CommandPalette, opening', () => {
 		expect(selected()).toHaveTextContent('Desk');
 	});
 
-	it('starts clean each time, with the tickets fresh', async () => {
+	it('starts clean each time', async () => {
 		const { props } = setup();
 		await userEvent.type(search(), 'xyz');
 
@@ -58,11 +64,11 @@ describe('CommandPalette, opening', () => {
 		await tick();
 
 		expect(await screen.findByRole('textbox', { name: 'Search' })).toHaveValue('');
-		expect(api.tickets.list).toHaveBeenCalledTimes(2);
 	});
 
 	it('works without tickets when they fail to load', async () => {
-		vi.mocked(api.tickets.list).mockRejectedValue(new Error('down'));
+		fleet.projects = [aProject({ id: 'p1' })];
+		vi.mocked(api.projects.tickets).mockRejectedValue(new Error('down'));
 		setup();
 		await userEvent.type(search(), 'desk');
 		expect(selected()).toHaveTextContent('Desk');
@@ -73,15 +79,42 @@ describe('CommandPalette, listing', () => {
 	it('offers pages, actions and runs before any search, not workshops or tickets', async () => {
 		fleet.projects = [aProject({ name: 'billing' })];
 		fleet.runs = [aRun({ title: 'Fix the invoice' })];
-		vi.mocked(api.tickets.list).mockResolvedValue([aTicket({ title: 'A ticket' })]);
 		setup();
 		await tick();
 
 		const all = labels().join('|');
-		expect(all).toContain('New ticket');
+		expect(all).toContain('New run');
 		expect(all).toContain('Fix the invoice');
 		expect(all).not.toContain('billing');
 		expect(all).not.toContain('A ticket');
+	});
+
+	it('offers New ticket only where the workshop’s source is the internal tracker', async () => {
+		fleet.projects = [aProject({ id: 'p1', ticketSourceId: 'src' })];
+		vi.mocked(api.integrations.list).mockResolvedValue([
+			anIntegration({ id: 'src', kind: 'internal', port: 'ticketsource' })
+		]);
+		setup();
+		await userEvent.type(search(), 'new ticket');
+		await userEvent.keyboard('{Enter}');
+		expect(goto).toHaveBeenCalledWith('/tickets/new?project=p1');
+	});
+
+	it('offers no New ticket on a remote source', async () => {
+		fleet.projects = [aProject({ id: 'p1', ticketSourceId: 'src' })];
+		vi.mocked(api.integrations.list).mockResolvedValue([
+			anIntegration({ id: 'src', kind: 'jira', port: 'ticketsource' })
+		]);
+		setup();
+		await tick();
+		expect(labels().join('|')).not.toContain('New ticket');
+	});
+
+	it('survives the integrations failing to load', async () => {
+		vi.mocked(api.integrations.list).mockRejectedValue(new Error('down'));
+		setup();
+		await tick();
+		expect(labels().join('|')).not.toContain('New ticket');
 	});
 
 	it('shows the pending count on the inbox and the chord on the others', () => {
@@ -131,13 +164,47 @@ describe('CommandPalette, filtering', () => {
 		expect(selected()).toHaveTextContent('billing');
 	});
 
-	it('finds tickets by title and by their tracker key', async () => {
-		vi.mocked(api.tickets.list).mockResolvedValue([
-			aTicket({ title: 'Imported', source: { key: 'PROJ-7' } as never })
-		]);
+	it('asks the first workshop’s source for tickets once typing pauses', async () => {
+		fleet.projects = [aProject({ id: 'p1', name: 'billing' }), aProject({ id: 'p2' })];
+		vi.mocked(api.projects.tickets).mockResolvedValue({
+			tickets: [aTicketRow({ key: 'PROJ-7', title: 'Imported' })],
+			next: ''
+		});
 		setup();
 		await userEvent.type(search(), 'proj-7');
-		expect(selected()).toHaveTextContent('Imported');
+		await waitFor(() => expect(selected()).toHaveTextContent('Imported'));
+		expect(selected()).toHaveTextContent('PROJ-7 · billing');
+		expect(api.projects.tickets).toHaveBeenCalledExactlyOnceWith('p1', { q: 'proj-7', limit: 20 });
+	});
+
+	it('searches the workshop whose page it is opened on', async () => {
+		fleet.projects = [aProject({ id: 'p1' }), aProject({ id: 'p2' })];
+		page.params = { workshop: 'p2' };
+		setup();
+		await userEvent.type(search(), 'x');
+		await waitFor(() =>
+			expect(api.projects.tickets).toHaveBeenCalledWith('p2', { q: 'x', limit: 20 })
+		);
+	});
+
+	it('asks for no tickets with no workshop to ask', async () => {
+		setup();
+		await userEvent.type(search(), 'desk');
+		await new Promise((r) => setTimeout(r, 300));
+		expect(api.projects.tickets).not.toHaveBeenCalled();
+	});
+
+	it('drops an answer the query has moved past', async () => {
+		fleet.projects = [aProject({ id: 'p1' })];
+		let answer: (v: { tickets: ReturnType<typeof aTicketRow>[]; next: string }) => void = () => {};
+		vi.mocked(api.projects.tickets).mockReturnValueOnce(new Promise((r) => (answer = r)));
+		setup();
+		await userEvent.type(search(), 'old');
+		await waitFor(() => expect(api.projects.tickets).toHaveBeenCalledTimes(1));
+		await userEvent.type(search(), 'er');
+		answer({ tickets: [aTicketRow({ title: 'Stale old' })], next: '' });
+		await waitFor(() => expect(api.projects.tickets).toHaveBeenCalledTimes(2));
+		expect(screen.queryByRole('option', { name: /Stale/ })).not.toBeInTheDocument();
 	});
 
 	it('reaches a whole group by its heading', async () => {
@@ -217,25 +284,21 @@ describe('CommandPalette, doing things', () => {
 	it.each([
 		['workshop', 'billing', '/w/p1'],
 		['run', 'Fix the invoice', '/runs/r1'],
-		['ticket', 'Write docs', '/tickets/t1']
+		['ticket', 'Write docs', '/w/p1/tickets/PROJ-1']
 	])('jumps to a %s', async (_, title, href) => {
 		fleet.projects = [aProject({ id: 'p1', name: 'billing' })];
 		fleet.runs = [aRun({ id: 'r1', title: 'Fix the invoice' })];
-		vi.mocked(api.tickets.list).mockResolvedValue([aTicket({ id: 't1', title: 'Write docs' })]);
+		vi.mocked(api.projects.tickets).mockImplementation((_, query) =>
+			Promise.resolve({
+				tickets:
+					query?.q === 'Write docs' ? [aTicketRow({ key: 'PROJ-1', title: 'Write docs' })] : [],
+				next: ''
+			})
+		);
 		setup();
 		await userEvent.type(search(), title);
-		await userEvent.click(screen.getByRole('option', { name: new RegExp(title) }));
+		await userEvent.click(await screen.findByRole('option', { name: new RegExp(title) }));
 		expect(goto).toHaveBeenCalledWith(href);
-	});
-
-	it('names a ticket by its workshop when it has no tracker key', async () => {
-		fleet.projects = [aProject({ id: 'p1', name: 'billing' })];
-		vi.mocked(api.tickets.list).mockResolvedValue([
-			aTicket({ title: 'Write docs', projectId: 'p1' })
-		]);
-		setup();
-		await userEvent.type(search(), 'write');
-		expect(selected()).toHaveTextContent('billing');
 	});
 
 	it('opens the New run dialog, closing itself', async () => {

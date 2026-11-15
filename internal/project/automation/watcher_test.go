@@ -113,6 +113,9 @@ type harness struct {
 	now     time.Time
 }
 
+// owner owns the harness's integrations and workshop.
+const owner = "u1"
+
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	key, err := secrets.ParseKey(secrets.GenerateKey())
@@ -126,7 +129,7 @@ func newHarness(t *testing.T) *harness {
 		if port != confstore.PortHarness { // a harness holds no secret of its own
 			sec = map[string]string{"token": "t"}
 		}
-		in, err := conf.CreateIntegration(ctx, confstore.Integration{Port: port, Kind: "fake", Name: name, Secrets: sec})
+		in, err := conf.CreateIntegration(ctx, confstore.Integration{UserID: owner, Port: port, Kind: "fake", Name: name, Secrets: sec})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -137,28 +140,55 @@ func newHarness(t *testing.T) *harness {
 	hs := mk(confstore.PortHarness, "h")
 	source := mk(confstore.PortTicketSource, "tracker")
 	p, err := conf.CreateProject(ctx, confstore.Project{
-		Name: "p1", RepoAccountID: repoHost.ID, ProvisionerID: prov.ID, HarnessIDs: []string{hs.ID},
-		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42"},
-		DefaultFlow: "builder",
+		UserID: owner, Name: "p1", RepoAccountID: repoHost.ID, ProvisionerID: prov.ID, HarnessIDs: []string{hs.ID},
+		TicketSourceID: source.ID,
+		Repo:           confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42"},
+		DefaultFlow:    "builder",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	src := &fake.TicketSource{Tickets: []trackerport.SourceTicket{
-		{Key: "DEV-1", Title: "First", Body: "do one", URL: "https://tracker.local/DEV-1"},
-		{Key: "DEV-2", Title: "Second", Body: "do two", URL: "https://tracker.local/DEV-2"},
+		{Key: "DEV-1", RemoteID: "1001", Title: "First", Body: "do one", URL: "https://tracker.local/DEV-1"},
+		{Key: "DEV-2", RemoteID: "1002", Title: "Second", Body: "do two", URL: "https://tracker.local/DEV-2"},
 	}}
 	h := &harness{conf: conf, eng: &fakeEngine{}, src: src, ch: &fakeChannel{}, project: p, source: source,
 		now: time.Date(2026, 10, 23, 8, 0, 0, 0, time.UTC)}
+	sources := fakeSources{src}
 	h.w = &Watcher{
 		Runs:    h.eng,
 		MRs:     h.eng,
-		Tickets: &tickets.Factory{Conf: conf, Sources: fakeSources{src}},
+		Tickets: &tickets.Factory{Conf: conf, Sources: sources, Live: tickets.NewLive(conf, sources)},
 		Conf:    conf,
 		Notify:  h.ch,
 		Clock:   func() time.Time { return h.now },
 	}
 	return h
+}
+
+// record records the tracker's issue key as automationID's ("" = a person's).
+func (h *harness) record(t *testing.T, key, automationID string) confstore.Ticket {
+	t.Helper()
+	ctx := context.Background()
+	issue, err := h.src.Fetch(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, _, err := h.w.Tickets.Record(ctx, h.source.ID, issue, automationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
+// records are the workshop source's records of DEV-1 and DEV-2, by remote id.
+func (h *harness) records(t *testing.T) map[string]confstore.Ticket {
+	t.Helper()
+	got, err := h.conf.TicketsByRemote(context.Background(), h.source.ID, []string{"1001", "1002"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
 }
 
 func (h *harness) automation(t *testing.T, a confstore.Automation) confstore.Automation {
@@ -201,19 +231,13 @@ func (h *harness) get(t *testing.T, id string) confstore.Automation {
 	return a
 }
 
-// A tracker query imports what it finds as tickets of the project, marked
-// with the automation and named by the project's branch format, and starts
-// one run of its flow per import with its params, by "automation". The next
-// pass finds nothing new to do.
-func TestTrackerQueryImportsAndStartsOnce(t *testing.T) {
+// A tracker query records what it finds on the workshop's source, marked
+// with the automation, and starts one run of its flow per new record with
+// its params, by "automation". The next pass finds nothing new to do.
+func TestTrackerQueryRecordsAndStartsOnce(t *testing.T) {
 	h := newHarness(t)
-	p := h.project
-	p.Repo.BranchFormat = "{ticket_number}/{ticket_title}"
-	if _, err := h.conf.UpdateProject(context.Background(), p.ID, p); err != nil {
-		t.Fatal(err)
-	}
 	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery,
-		SourceID: h.source.ID, Query: "do", Params: map[string]string{"plan_gate": "false"}, Enabled: true})
+		Query: "do", Params: map[string]string{"plan_gate": "false"}, Enabled: true})
 	h.pass(t)
 	if n := h.eng.count(); n != 2 {
 		t.Fatalf("runs created = %d, want 2 (last error %q)", n, h.get(t, a.ID).LastError)
@@ -223,46 +247,43 @@ func TestTrackerQueryImportsAndStartsOnce(t *testing.T) {
 		call.Ticket.SourceKey != "DEV-1" || call.Ticket.Title != "First" || call.Ticket.TicketID == "" {
 		t.Errorf("first run = %+v", call)
 	}
-	all, _ := h.conf.ListTickets(context.Background(), "")
-	if len(all) != 2 {
-		t.Fatalf("tickets = %d, want 2", len(all))
+	recs := h.records(t)
+	if len(recs) != 2 {
+		t.Fatalf("records = %d, want 2", len(recs))
 	}
-	for _, tk := range all {
-		if tk.AutomationID != a.ID || tk.ProjectID != h.project.ID || tk.SourceID != h.source.ID {
-			t.Errorf("ticket = %+v, want the automation's provenance", tk)
-		}
-		if want := strings.ToLower(tk.SourceKey) + "/" + strings.ToLower(tk.Title); tk.BaseBranch != want {
-			t.Errorf("base branch = %q, want %q", tk.BaseBranch, want)
+	for _, tk := range recs {
+		if tk.AutomationID != a.ID || tk.SourceID != h.source.ID {
+			t.Errorf("record = %+v, want the automation's provenance", tk)
 		}
 	}
 	got := h.get(t, a.ID)
 	if got.LastPolledAt == nil || got.LastFiredAt == nil || got.LastError != "" {
 		t.Errorf("marks = polled %v fired %v err %q", got.LastPolledAt, got.LastFiredAt, got.LastError)
 	}
-	// Nothing new on the tracker: nothing new here.
+	// Nothing new on the tracker: its records have runs, nothing fires.
 	h.now = h.now.Add(2 * time.Minute)
 	h.pass(t)
 	if n := h.eng.count(); n != 2 {
 		t.Errorf("second pass created runs: %d", n)
 	}
-	if all, _ := h.conf.ListTickets(context.Background(), ""); len(all) != 2 {
-		t.Errorf("second pass imported again: %d tickets", len(all))
+	if recs := h.records(t); len(recs) != 2 {
+		t.Errorf("second pass recorded again: %d records", len(recs))
 	}
 	if len(h.ch.sent) != 0 {
 		t.Errorf("notifications = %+v", h.ch.sent)
 	}
 }
 
-// A refused run is a blocker, told once per streak, and the imported ticket
-// is kept; a later pass that can create runs adopts those tickets instead
-// of importing them twice, and the error clears.
+// A refused run is a blocker, told once per streak, and the record is kept;
+// a later pass that can create runs fires those records instead of making
+// them twice, and the error clears.
 func TestRefusedRunIsNotifiedOnceAndRecovered(t *testing.T) {
 	h := newHarness(t)
 	h.eng.Fail = errors.New("preflight: stage \"test\": run_ref \"verify\" not found in project.commands")
-	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: true})
+	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, Enabled: true})
 	h.pass(t)
-	if all, _ := h.conf.ListTickets(context.Background(), ""); len(all) != 2 {
-		t.Fatalf("tickets = %d, want the imports kept", len(all))
+	if recs := h.records(t); len(recs) != 2 {
+		t.Fatalf("records = %d, want them kept", len(recs))
 	}
 	if got := h.get(t, a.ID); !strings.Contains(got.LastError, "preflight") || got.LastFiredAt != nil {
 		t.Errorf("marks after refusal = %+v", got)
@@ -279,26 +300,66 @@ func TestRefusedRunIsNotifiedOnceAndRecovered(t *testing.T) {
 	if n := h.eng.count(); n != 2 {
 		t.Fatalf("runs after recovery = %d, want 2", n)
 	}
-	if all, _ := h.conf.ListTickets(context.Background(), ""); len(all) != 2 {
-		t.Errorf("recovery imported again: %d tickets", len(all))
+	if recs := h.records(t); len(recs) != 2 {
+		t.Errorf("recovery recorded again: %d records", len(recs))
 	}
 	if got := h.get(t, a.ID); got.LastError != "" || got.LastFiredAt == nil {
 		t.Errorf("marks after recovery = %+v", got)
 	}
 }
 
-// An issue a person imported is theirs: the automation never starts a run
-// for it, however often the query returns it.
-func TestAPersonsImportIsLeftAlone(t *testing.T) {
+// A record someone else made — a person, or another automation — is theirs:
+// the automation never starts a run for it, however often the query returns
+// it, and does not take it over.
+func TestSomeoneElsesRecordIsLeftAlone(t *testing.T) {
 	h := newHarness(t)
-	ctx := context.Background()
-	if _, _, err := h.w.Tickets.CreateFromSource(ctx, h.source.ID, "DEV-1", confstore.Ticket{ProjectID: h.project.ID}, nil); err != nil {
+	other := h.automation(t, confstore.Automation{Name: "other", Kind: confstore.AutomationTrackerQuery, Query: "nothing matches this"})
+	h.record(t, "DEV-1", "")
+	h.record(t, "DEV-2", other.ID)
+	h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, Enabled: true})
+	h.pass(t)
+	h.pass(t)
+	if n := h.eng.count(); n != 0 {
+		t.Errorf("runs = %d (%+v), want none", n, h.eng.calls)
+	}
+	recs := h.records(t)
+	if recs["1001"].AutomationID != "" || recs["1002"].AutomationID != other.ID {
+		t.Errorf("records = %+v, want their makers kept", recs)
+	}
+}
+
+// A record of this automation's whose ticket has a run — whoever started it
+// — is not fired again.
+func TestARecordWithRunsIsNotFiredAgain(t *testing.T) {
+	h := newHarness(t)
+	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, Enabled: true})
+	rec := h.record(t, "DEV-1", a.ID)
+	if _, err := h.eng.CreateRunWith(context.Background(), runinput.Ticket{TicketID: rec.ID}, "builder", h.project.ID, runinput.Input{}); err != nil {
 		t.Fatal(err)
 	}
-	h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: true})
 	h.pass(t)
-	if n := h.eng.count(); n != 1 || h.eng.calls[0].Ticket.SourceKey != "DEV-2" {
-		t.Errorf("runs = %d (%+v), want only DEV-2's", n, h.eng.calls)
+	if n := h.eng.count(); n != 2 || h.eng.calls[1].Ticket.SourceKey != "DEV-2" {
+		t.Errorf("runs = %d (%+v), want only DEV-2's on top", n, h.eng.calls)
+	}
+}
+
+// A ticket whose run (in any workshop) is still going is not fired; the
+// automation says so on its last_error and fires it once the run ends.
+func TestTrackerQueryOnABusyTicket(t *testing.T) {
+	h := newHarness(t)
+	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, Query: "do one", Enabled: true})
+	h.eng.Fail = fmt.Errorf("preflight: %w", busyErr{"r-live"})
+	h.pass(t)
+	if got := h.get(t, a.ID); got.LastError != "DEV-1: ticket busy: run r-live" || got.LastFiredAt != nil {
+		t.Fatalf("busy ticket: marks = fired %v err %q", got.LastFiredAt, got.LastError)
+	}
+	h.eng.Fail = nil
+	h.pass(t)
+	if n := h.eng.count(); n != 1 || h.eng.calls[0].Ticket.SourceKey != "DEV-1" {
+		t.Errorf("after the run ended: runs = %d (%+v)", n, h.eng.calls)
+	}
+	if got := h.get(t, a.ID); got.LastError != "" {
+		t.Errorf("last_error after firing = %q", got.LastError)
 	}
 }
 
@@ -307,11 +368,7 @@ func TestAPersonsImportIsLeftAlone(t *testing.T) {
 // is recorded before the run is created, so a refusal does not re-fire.
 func TestCronFiresOncePerSlot(t *testing.T) {
 	h := newHarness(t)
-	ctx := context.Background()
-	tk, err := h.conf.CreateTicket(ctx, confstore.Ticket{ProjectID: h.project.ID, Title: "Nightly"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	tk := h.record(t, "DEV-1", "")
 	a := h.automation(t, confstore.Automation{Name: "nightly", Kind: confstore.AutomationCron, Schedule: "0 9 * * *", TicketID: tk.ID, Enabled: true})
 	h.pass(t) // 08:00: before the slot
 	if h.eng.count() != 0 {
@@ -366,11 +423,7 @@ func (b busyErr) ActiveRunID() string { return b.run }
 // the run ends; the next slot fires as usual.
 func TestCronSkipsASlotOnABusyTicket(t *testing.T) {
 	h := newHarness(t)
-	ctx := context.Background()
-	tk, err := h.conf.CreateTicket(ctx, confstore.Ticket{ProjectID: h.project.ID, Title: "Nightly"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	tk := h.record(t, "DEV-1", "")
 	a := h.automation(t, confstore.Automation{Name: "nightly", Kind: confstore.AutomationCron, Schedule: "0 9 * * *", TicketID: tk.ID, Enabled: true})
 	h.eng.Fail = fmt.Errorf("preflight: %w", busyErr{"r-live"})
 	h.now = h.now.Add(90 * time.Minute) // 09:30
@@ -396,10 +449,65 @@ func TestCronSkipsASlotOnABusyTicket(t *testing.T) {
 	}
 }
 
+// A pinned ticket the workshop no longer shows — its ticket source changed
+// since the pin, or the ticket is another owner's — is refused: the slot is
+// spent, nothing runs, and last_error says why.
+func TestCronRefusesATicketTheWorkshopNoLongerShows(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	tk := h.record(t, "DEV-1", "")
+	a := h.automation(t, confstore.Automation{Name: "nightly", Kind: confstore.AutomationCron, Schedule: "0 9 * * *", TicketID: tk.ID, Enabled: true})
+
+	p, err := h.conf.GetProject(ctx, h.project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	internal, err := h.conf.InternalTracker(ctx, p.UserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.TicketSourceID = internal.ID
+	if err := h.conf.DB().UpsertProject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	h.now = h.now.Add(90 * time.Minute) // 09:30
+	h.pass(t)
+	got := h.get(t, a.ID)
+	if h.eng.count() != 0 || got.LastFiredAt == nil || !strings.Contains(got.LastError, "not the workshop's") {
+		t.Fatalf("another source: runs %d, fired %v, err %q", h.eng.count(), got.LastFiredAt, got.LastError)
+	}
+
+	// Back on the ticket's source, but the ticket is someone else's.
+	p.TicketSourceID = tk.SourceID
+	if err := h.conf.DB().UpsertProject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	theirs := tk
+	theirs.UserID = "someone-else"
+	if err := h.conf.DB().UpsertTicket(ctx, theirs); err != nil {
+		t.Fatal(err)
+	}
+	h.now = h.now.AddDate(0, 0, 1)
+	h.pass(t)
+	if got := h.get(t, a.ID); h.eng.count() != 0 || !strings.Contains(got.LastError, "not the workshop owner's") {
+		t.Fatalf("another owner: runs %d, err %q", h.eng.count(), got.LastError)
+	}
+
+	// The workshop's own ticket again: the next slot fires.
+	if err := h.conf.DB().UpsertTicket(ctx, tk); err != nil {
+		t.Fatal(err)
+	}
+	h.now = h.now.AddDate(0, 0, 1)
+	h.pass(t)
+	if got := h.get(t, a.ID); h.eng.count() != 1 || got.LastError != "" {
+		t.Errorf("own ticket: runs %d, err %q", h.eng.count(), got.LastError)
+	}
+}
+
 // Disabled automations are not walked.
 func TestDisabledAndStale(t *testing.T) {
 	h := newHarness(t)
-	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: false})
+	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, Enabled: false})
 	h.pass(t)
 	if h.eng.count() != 0 {
 		t.Fatal("a disabled automation fired")
@@ -452,10 +560,7 @@ func TestMergeRequestAutomationStartsOnOthersMergeRequestsOnce(t *testing.T) {
 		c.Ticket.TicketID != "" || !strings.Contains(c.Ticket.Goal, mr(4, "", false).Ref.URL) {
 		t.Errorf("call = %+v", c)
 	}
-	// A run on a merge request belongs to no ticket: none is made for it.
-	if all, _ := h.conf.ListTickets(ctx, ""); len(all) != 0 {
-		t.Errorf("tickets = %+v", all)
-	}
+	// A run on a merge request belongs to no ticket (TicketID "" above).
 	h.pass(t)
 	if n := h.eng.count(); n != 1 {
 		t.Errorf("a second pass started %d more", n-1)
@@ -483,7 +588,7 @@ func TestAutomationOperatesOnKinds(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "starts its runs on a ticket") {
 		t.Errorf("merge_request on the builder flow: %v", err)
 	}
-	_, err = h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "y", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Flow: "rev"})
+	_, err = h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "y", Kind: confstore.AutomationTrackerQuery, Flow: "rev"})
 	if err == nil || !strings.Contains(err.Error(), "starts its runs on a merge request") {
 		t.Errorf("tracker_query on a reviewer flow: %v", err)
 	}

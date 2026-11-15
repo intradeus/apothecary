@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -11,14 +12,14 @@ import (
 )
 
 // ownTrailerMark begins the trailer apothecary signs a comment it posts to
-// a remote tracker with (ticketTrailer): a sync brings that comment back as
+// a remote tracker with (ticketTrailer): a live read returns that comment as
 // anybody's, and this is how a prompt still knows it for the run's own.
 const ownTrailerMark = "— apothecary · run "
 
 // ticketNow reads the ticket's tracker-owned facts for a stage whose prompt
-// shows the ticket or its comments, when the prompt is built. A stage with a
-// run.ticket.comments input refreshes the ticket from its tracker first, so
-// the discussion is the tracker's latest. Nil — the prompt falls back to the
+// shows the ticket or its comments, when the prompt is built: live from a
+// remote tracker (the cached copy when it cannot be reached), so the
+// discussion is the tracker's latest. Nil — the prompt falls back to the
 // run's copy and shows no discussion — for a run without a ticket, an engine
 // without a TicketReader, a deleted ticket or one that cannot be read (the
 // read is logged: a prompt never fails on it).
@@ -27,20 +28,10 @@ func (x *exec) ticketNow(st *flow.Stage) *runinput.TicketNow {
 	if x.e.tickets == nil || ticketID == "" {
 		return nil
 	}
-	shows, comments := false, false
-	for _, in := range st.Inputs {
-		switch in.Value {
-		case flow.SourceTicket:
-			shows = true
-		case flow.SourceTicketComments:
-			shows, comments = true, true
-		}
-	}
-	if !shows {
+	if !slices.ContainsFunc(st.Inputs, func(in flow.Port) bool {
+		return in.Value == flow.SourceTicket || in.Value == flow.SourceTicketComments
+	}) {
 		return nil
-	}
-	if comments {
-		x.e.refreshTicket(x.ctx, ticketID)
 	}
 	now, found, err := x.e.tickets.TicketNow(x.ctx, ticketID)
 	if err != nil {

@@ -23,9 +23,11 @@ type Kind struct{}
 
 var _ workitem.Kind = Kind{}
 
-// Ref names ticket id of a project.
-func Ref(projectID, id string) workitem.Ref {
-	return workitem.Ref{Kind: Name, Project: projectID, Key: id}
+// Ref names ticket id. It carries no project: a ticket is one item wherever
+// it is worked on, so its one-active-run lock and busy check span every
+// workshop (project) — a run on it in one workshop refuses a run in another.
+func Ref(id string) workitem.Ref {
+	return workitem.Ref{Kind: Name, Key: id}
 }
 
 func (Kind) Name() string                   { return Name }
@@ -40,18 +42,18 @@ func (Kind) Required() bool { return false }
 // does — a ticket's run on the merge request it was opened for.
 func (Kind) Accompanies() bool { return true }
 
-func (Kind) Requested(projectID string, t runinput.Ticket, _ runinput.Input) (workitem.Ref, bool) {
+func (Kind) Requested(_ string, t runinput.Ticket, _ runinput.Input) (workitem.Ref, bool) {
 	if t.TicketID == "" {
 		return workitem.Ref{}, false
 	}
-	return Ref(projectID, t.TicketID), true
+	return Ref(t.TicketID), true
 }
 
 func (Kind) Held(v run.View) []workitem.Ref {
 	if v.TicketID == "" {
 		return nil
 	}
-	return []workitem.Ref{Ref(v.ProjectID, v.TicketID)}
+	return []workitem.Ref{Ref(v.TicketID)}
 }
 
 // Prepare gives the run its own branch: the ticket's base — its own, or one

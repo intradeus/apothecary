@@ -33,6 +33,7 @@ func RunContract(t *testing.T, open func(t *testing.T) Fixture) {
 	t.Run("every grain answers only its owner", func(t *testing.T) { runIsolation(t, open(t)) })
 	t.Run("aggregates mean what the catalog says", func(t *testing.T) { runAggregates(t, open(t)) })
 	t.Run("drill and values", func(t *testing.T) { runDrill(t, open(t)) })
+	t.Run("a ticket counts in every workshop that ran it", func(t *testing.T) { runTicketAcrossWorkshops(t, open(t)) })
 	t.Run("dashboards", func(t *testing.T) { runDashboards(t, open(t)) })
 	t.Run("scorecards", func(t *testing.T) { runScorecards(t, open(t)) })
 }
@@ -67,8 +68,13 @@ var seedRuns = []seedRun{
 
 func seed(t *testing.T, f Fixture) {
 	t.Helper()
+	seedOf(t, f, seedRuns)
+}
+
+func seedOf(t *testing.T, f Fixture, runs []seedRun) {
+	t.Helper()
 	ctx := context.Background()
-	for _, r := range seedRuns {
+	for _, r := range runs {
 		evs := []event.Payload{
 			&event.RunCreated{UserID: r.user, ProjectID: r.project, TicketID: r.ticket, TicketTitle: r.title,
 				TicketChangeType: "feat", FlowName: r.flow, FlowHash: r.hash, Skillsets: []event.SkillsetPin{r.skillset}},
@@ -238,6 +244,45 @@ func runAggregates(t *testing.T, f Fixture) {
 	names, err := f.Store.ProjectNames(context.Background(), alice, []string{"p-b"})
 	if err != nil || len(names) != 0 {
 		t.Errorf("names = %v, %v", names, err)
+	}
+}
+
+// A ticket belongs to its source, and every workshop on it may run it: the
+// tickets grain counts it once under each workshop's filter, with that
+// workshop's runs, and shipping is per workshop.
+func runTicketAcrossWorkshops(t *testing.T, f Fixture) {
+	const carol = "u-carol"
+	pin := event.SkillsetPin{ID: "ss-c", Name: "lint", Seq: 1, Hash: "z1"}
+	seedOf(t, f, []seedRun{
+		{id: "cn-1", user: carol, project: "p-x", ticket: "t-c", title: "Shared", flow: "fc", hash: "hc1", skillset: pin, cost: 1},
+		{id: "cn-2", user: carol, project: "p-y", ticket: "t-c", title: "Shared", flow: "fc", hash: "hc1", skillset: pin, cost: 2, completed: true},
+		{id: "cn-3", user: carol, project: "p-x", ticket: "t-c", title: "Shared", flow: "fc", hash: "hc1", skillset: pin, cost: 4, completed: true},
+	})
+	s := service(f)
+	measures := []analytics.MeasureRef{{Field: "runs", Agg: analytics.AggSum}, {Field: "runs_to_ship", Agg: analytics.AggSum},
+		{Field: "cost_to_ship", Agg: analytics.AggSum}, {Field: "ship_rate"}}
+	for _, c := range []struct {
+		project string
+		wants   []float64
+	}{
+		{"p-x", []float64{2, 2, 5, 1}},
+		{"p-y", []float64{1, 1, 2, 1}},
+	} {
+		res := query(t, s, carol, analytics.Query{Grain: analytics.GrainTickets, Measures: measures,
+			Filters: []analytics.Filter{{Field: "project_id", Op: analytics.OpEq, Values: []string{c.project}}}})
+		if len(res.Rows) != 1 || res.Rows[0].N != 1 {
+			t.Fatalf("tickets in %s = %+v, want the shared ticket once", c.project, res.Rows)
+		}
+		for i, want := range c.wants {
+			if got := value(t, res, 0, i); !near(got, want) {
+				t.Errorf("tickets in %s: measure %d = %v, want %v", c.project, i, got, want)
+			}
+		}
+	}
+	res := query(t, s, carol, analytics.Query{Grain: analytics.GrainTickets, GroupBy: []string{"project_id"},
+		Order: &analytics.OrderBy{By: "project_id"}})
+	if len(res.Rows) != 2 || res.Rows[0].Dims[0] != "p-x" || res.Rows[0].N != 1 || res.Rows[1].Dims[0] != "p-y" || res.Rows[1].N != 1 {
+		t.Errorf("tickets by workshop = %+v", res.Rows)
 	}
 }
 

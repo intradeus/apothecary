@@ -1030,29 +1030,30 @@ func TestIssuesSearchScopesAndLimits(t *testing.T) {
 	defer ts.Close()
 
 	s := NewIssues(IssuesConfig{BaseURL: ts.URL, Token: secret, Projects: []string{"g/p"}, Groups: []string{"g/sub/"}})
-	got, err := s.Search(ctx, "text", 500)
+	got, err := s.Search(ctx, trackerport.SearchQuery{Text: "text", Limit: 500})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var keys []string
-	for _, x := range got {
+	for _, x := range got.Tickets {
 		keys = append(keys, x.Key)
 	}
 	// Both scopes searched, the duplicate dropped, newest first.
 	if !reflect.DeepEqual(keys, []string{"g/p#2", "g/p#3", "g/p#1"}) {
 		t.Errorf("keys = %v", keys)
 	}
-	if paths[0] != "/api/v4/projects/g%2Fp/issues 25" || paths[1] != "/api/v4/groups/g%2Fsub/issues" {
-		t.Errorf("paths = %q", paths)
+	if paths[0] != "/api/v4/projects/g%2Fp/issues 25" || paths[1] != "/api/v4/groups/g%2Fsub/issues" || got.Next != "" {
+		t.Errorf("paths = %q, next %q", paths, got.Next)
 	}
-	// Merging the scopes must not outgrow the limit.
-	got, err = s.Search(ctx, "text", 2)
-	if err != nil || len(got) != 2 || got[0].Key != "g/p#2" {
+	// Each scope serves its own page: nothing is cut from the merge, and a
+	// scope that filled its page has another.
+	got, err = s.Search(ctx, trackerport.SearchQuery{Text: "text", Limit: 2})
+	if err != nil || len(got.Tickets) != 3 || got.Tickets[0].Key != "g/p#2" || got.Next != "2" {
 		t.Errorf("limited = %+v, %v", got, err)
 	}
 
 	paths = nil
-	if got, err := NewIssues(IssuesConfig{BaseURL: ts.URL, Token: secret}).Search(ctx, "", 5); err != nil || len(got) != 0 {
+	if got, err := NewIssues(IssuesConfig{BaseURL: ts.URL, Token: secret}).Search(ctx, trackerport.SearchQuery{Limit: 5}); err != nil || len(got.Tickets) != 0 {
 		t.Errorf("unscoped = %+v, %v", got, err)
 	}
 	if !reflect.DeepEqual(paths, []string{"/api/v4/issues"}) {
@@ -1060,7 +1061,7 @@ func TestIssuesSearchScopesAndLimits(t *testing.T) {
 	}
 
 	down := answer(t, map[string]reply{"GET /api/v4/issues": {500, `boom`}})
-	if got, err := issuesFor(down).Search(ctx, "x", 5); err == nil || got != nil {
+	if got, err := issuesFor(down).Search(ctx, trackerport.SearchQuery{Text: "x", Limit: 5}); err == nil || got.Tickets != nil {
 		t.Errorf("failure = %+v, %v", got, err)
 	}
 }

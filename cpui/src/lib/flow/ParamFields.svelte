@@ -8,6 +8,8 @@
 	// names get their pickers by name: the harness from the workshop's set,
 	// the model from what the harness its stages run on lists (the role the
 	// document gives each parameter says which), the timeout as a duration.
+	// A parameter read as a tracker status is free text suggesting the
+	// statuses of the workshop's ticket source.
 	import type { Model, ParamDecl } from '$lib/domain';
 	import DurationInput from '$lib/ui/DurationInput.svelte';
 	import Select from '$lib/ui/Select.svelte';
@@ -22,6 +24,8 @@
 		underLabel = 'workshop',
 		harnesses = [],
 		modelsByKind = {},
+		statusParams = [],
+		statuses = [],
 		idPrefix = 'pf',
 		onchange
 	}: {
@@ -41,17 +45,31 @@
 		/** What each harness kind lists, for the model fields: a model
 		 *  parameter suggests the models of the harness its stages run on. */
 		modelsByKind?: Record<string, Model[]>;
+		/** The parameters read as a tracker status (ticket_transition's to). */
+		statusParams?: string[];
+		/** The status names a status parameter suggests: any text is taken. */
+		statuses?: string[];
 		idPrefix?: string;
 		onchange: (name: string, value: string) => void;
 	} = $props();
 
 	type Kind =
-		'bool' | 'int' | 'float' | 'enum' | 'duration' | 'harness' | 'model' | 'string' | 'list';
+		| 'bool'
+		| 'int'
+		| 'float'
+		| 'enum'
+		| 'duration'
+		| 'harness'
+		| 'model'
+		| 'status'
+		| 'string'
+		| 'list';
 	function kindOf(p: ParamDecl): Kind {
 		if (p.list) return 'list';
 		if (p.role) return p.role;
 		if (p.type !== 'string') return p.type;
 		if (p.enum?.length) return 'enum';
+		if (statusParams.includes(p.name)) return 'status';
 		return 'string';
 	}
 	// The harness a model parameter's models come from, as the form stands.
@@ -171,6 +189,19 @@
 			<div class="help">
 				{hk ? t('flow.fields.modelsOf', { harness: hk }) : t('flow.fields.modelsNoHarness')}
 			</div>
+		{:else if kind === 'status'}
+			<input
+				id={id(p)}
+				list="{id(p)}-list"
+				value={v}
+				placeholder={applies(p)}
+				autocomplete="off"
+				oninput={(e) => onchange(p.name, e.currentTarget.value.trim())}
+			/>
+			<datalist id="{id(p)}-list">
+				{#each statuses as s (s)}<option value={s}></option>{/each}
+			</datalist>
+			<div class="help">{t('flow.fields.statusHelp')}</div>
 		{:else if kind === 'duration'}
 			<div class="dur">
 				<DurationInput

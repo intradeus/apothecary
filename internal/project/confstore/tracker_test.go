@@ -19,9 +19,9 @@ func (r *recListNotices) TrackerListsGrew(_ context.Context, userID, integration
 	r.calls = append(r.calls, listGrowth{userID, integrationID, name, added})
 }
 
-// Every status a tracker adds is told to the integration's owner, one notice
-// per call, the first fill included; a status already listed is not.
-func TestEnsureRemoteStatusesTellsNotices(t *testing.T) {
+// Every type a tracker adds is told to the integration's owner, one notice
+// per call, the first fill included; a type already listed is not.
+func TestEnsureRemoteTypesTellsNotices(t *testing.T) {
 	svc, _ := newSvc(t)
 	rec := &recListNotices{}
 	svc.Notices = rec
@@ -30,26 +30,23 @@ func TestEnsureRemoteStatusesTellsNotices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := []trackerport.RemoteStatus{
-		{ID: "1", Name: "To Do", Category: trackerport.CategoryNew},
-		{ID: "4", Name: "Done", Category: trackerport.CategoryDone},
-	}
-	if _, err := svc.EnsureRemoteStatuses(ctx, in.ID, first); err != nil {
+	first := []trackerport.RemoteType{{ID: "1", Name: "Bug"}, {ID: "2", Name: "Story"}}
+	if _, err := svc.EnsureRemoteTypes(ctx, in.ID, first); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{`status "To Do": flow step todo`, `status "Done": flow step done, Done`}
+	want := []string{`type "Bug": change type fix (guessed)`, `type "Story": change type feat (guessed)`}
 	if len(rec.calls) != 1 || rec.calls[0].userID != "u1" || rec.calls[0].integrationID != in.ID ||
 		rec.calls[0].name != "j" || !slices.Equal(rec.calls[0].added, want) {
 		t.Fatalf("first fill = %+v", rec.calls)
 	}
-	qa := append(first, trackerport.RemoteStatus{ID: "3", Name: "In QA", Category: trackerport.CategoryIndeterminate})
-	if _, err := svc.EnsureRemoteStatuses(ctx, in.ID, qa); err != nil {
+	more := append(first, trackerport.RemoteType{ID: "3", Name: "Chore"})
+	if _, err := svc.EnsureRemoteTypes(ctx, in.ID, more); err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.calls) != 2 || !slices.Equal(rec.calls[1].added, []string{`status "In QA": no flow step`}) {
+	if len(rec.calls) != 2 || !slices.Equal(rec.calls[1].added, []string{`type "Chore": change type chore (guessed)`}) {
 		t.Fatalf("one more = %+v", rec.calls)
 	}
-	if _, err := svc.EnsureRemoteStatuses(ctx, in.ID, qa); err != nil {
+	if _, err := svc.EnsureRemoteTypes(ctx, in.ID, more); err != nil {
 		t.Fatal(err)
 	}
 	if len(rec.calls) != 2 {

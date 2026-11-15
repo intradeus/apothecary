@@ -144,6 +144,10 @@ export interface ActionSetting {
 	required: boolean;
 	values?: string[];
 	defaultValue?: string;
+	/** It may read a string parameter still waiting for a binding — a
+	 *  tracker status the workshop says (ticket_transition's to), like a
+	 *  model: the run waits until it is bound. */
+	unbound?: boolean;
 }
 
 /** What an `action` stage may name. Compiled in, not project data. */
@@ -156,7 +160,7 @@ export interface ActionSpec {
 	/** At most one stage per phase may use it. */
 	single: boolean;
 	/** Inputs or settings of which a stage gives exactly one
-	 *  (ticket_transition's to / status, ticket_set_field's value / text). */
+	 *  (ticket_set_field's value / text). */
 	exactlyOne?: string[];
 	/** Acts on an external service only (the ticket tracker): needs no
 	 *  workspace unless a file input is bound. */

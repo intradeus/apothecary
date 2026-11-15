@@ -690,14 +690,12 @@ func TestCleanedPayloadsAreStorable(t *testing.T) {
 func TestTicketWithBinaryTextIsStored(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	seedIntegration(t, s, "i1", "u1")
-	seedProject(t, s, mkProject("p1", "web", "u1", "i1"))
 	key, err := secrets.ParseKey(secrets.GenerateKey())
 	if err != nil {
 		t.Fatal(err)
 	}
 	svc := confstore.New(s, key)
-	tk, err := svc.CreateTicket(ctx, confstore.Ticket{ProjectID: "p1", Title: "t\x00", Goal: "g\xff"})
+	tk, err := svc.CreateTicket(ctx, confstore.Ticket{UserID: "u1", Title: "t\x00", Goal: "g\xff"})
 	if err != nil {
 		t.Fatal(err)
 	}

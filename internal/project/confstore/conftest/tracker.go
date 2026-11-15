@@ -1,10 +1,8 @@
 package conftest
 
 import (
-	"errors"
 	"slices"
 	"testing"
-	"time"
 
 	platformsecrets "apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/trackerport"
@@ -12,7 +10,8 @@ import (
 )
 
 // service is the config service over a store, for the rules the Service
-// keeps on top of the rows (the internal tracker, remote-owned fields).
+// keeps on top of the rows (the internal tracker, records of remote issues,
+// a workshop's ticket source).
 func service(t *testing.T, s store) *confstore.Service {
 	t.Helper()
 	key, err := platformsecrets.ParseKey(platformsecrets.GenerateKey())
@@ -27,11 +26,29 @@ func statusIDs(t *testing.T, s store, integrationID string) []string {
 	return ids(list, func(r confstore.TrackerStatus) string { return r.ID })
 }
 
-// trackerTicket is a ticket mirroring key on tracker i9, in status.
-func trackerTicket(id, key, status string, n int) confstore.Ticket {
-	k := ticket(id, "p1", "u1", n)
-	k.SourceID, k.SourceKind, k.SourceKey, k.StatusID = "i9", "jira", key, status
-	return k
+// remoteTracker is a remote ticketsource integration of user's, made through
+// the service.
+func remoteTracker(t *testing.T, svc *confstore.Service, user, name string) confstore.Integration {
+	t.Helper()
+	in, err := svc.CreateIntegration(ctx, confstore.Integration{UserID: user, Port: confstore.PortTicketSource, Kind: "jira", Name: name})
+	ok(t, err)
+	return in
+}
+
+// workshop creates a project of user's through the service, with what it
+// cannot go without; sourceID "" leaves the ticket source to the default.
+func workshop(t *testing.T, svc *confstore.Service, user, name, sourceID string) (confstore.Project, error) {
+	t.Helper()
+	refs := map[string]string{}
+	for _, port := range []string{confstore.PortRepository, confstore.PortProvisioner, confstore.PortHarness} {
+		in, err := svc.CreateIntegration(ctx, confstore.Integration{UserID: user, Port: port, Kind: "fake", Name: port + " of " + name})
+		ok(t, err)
+		refs[port] = in.ID
+	}
+	return svc.CreateProject(ctx, confstore.Project{UserID: user, Name: name,
+		RepoAccountID: refs[confstore.PortRepository], ProvisionerID: refs[confstore.PortProvisioner],
+		HarnessIDs: []string{refs[confstore.PortHarness]}, TicketSourceID: sourceID,
+		Repo: confstore.RepoConfig{URL: "https://example.test/g/" + name + ".git"}, DefaultFlow: template()})
 }
 
 func trackers(t *testing.T, open opener) {
@@ -39,8 +56,8 @@ func trackers(t *testing.T, open opener) {
 		s := seeded(t, open)
 		trackerLists(t, s)
 		statuses := []confstore.TrackerStatus{
-			{ID: "st2", IntegrationID: "i9", RemoteID: "2", Name: "Done", RemoteCategory: trackerport.CategoryDone, Position: 0, IsDone: true, FlowStep: trackerport.StepDone},
-			{ID: "st1", IntegrationID: "i9", RemoteID: "1", Name: "To Do", RemoteCategory: trackerport.CategoryNew, Position: 1, FlowStep: trackerport.StepTodo},
+			{ID: "st2", IntegrationID: "i9", RemoteID: "2", Name: "Done", Position: 0, IsDone: true},
+			{ID: "st1", IntegrationID: "i9", RemoteID: "1", Name: "To Do", Position: 1},
 			{ID: "st3", IntegrationID: "i9", RemoteID: "3", Name: "Parked", Position: 2},
 		}
 		ok(t, s.ReplaceTrackerStatuses(ctx, "i9", statuses, nil))
@@ -60,31 +77,32 @@ func trackers(t *testing.T, open opener) {
 		same(t, "another integration's", len(none), 0)
 	})
 
-	t.Run("a flow step is held by one status", func(t *testing.T) {
+	t.Run("a remote id is held by one status", func(t *testing.T) {
 		s := seeded(t, open)
 		trackerLists(t, s)
 		twice := []confstore.TrackerStatus{
-			{ID: "st1", RemoteID: "1", Name: "To Do", FlowStep: trackerport.StepTodo},
-			{ID: "st2", RemoteID: "2", Name: "Done", Position: 1, FlowStep: trackerport.StepTodo},
+			{ID: "st1", RemoteID: "1", Name: "To Do"},
+			{ID: "st2", RemoteID: "1", Name: "Done", Position: 1},
 		}
 		is(t, "store", s.ReplaceTrackerStatuses(ctx, "i9", twice, nil), confstore.ErrConflict)
 		same(t, "after the refusal", statusIDs(t, s, "i9"), []string{"st1", "st2"})
-		svc := service(t, s)
-		list, err := svc.TrackerStatuses(ctx, "i9")
+	})
+
+	t.Run("a listed status takes the name only", func(t *testing.T) {
+		s := seeded(t, open)
+		trackerLists(t, s)
+		got, err := s.EnsureTrackerStatus(ctx, confstore.TrackerStatus{ID: "new", IntegrationID: "i9", RemoteID: "2", Name: "Closed", Position: 7})
 		ok(t, err)
-		list[1].FlowStep = trackerport.StepTodo
-		_, _, err = svc.PutTrackerStatuses(ctx, "i9", list, nil)
-		is(t, "service", err, confstore.ErrInvalid)
-		st, err := s.ListTrackerStatuses(ctx, "i9")
-		ok(t, err)
-		same(t, "steps kept", []trackerport.FlowStep{st[0].FlowStep, st[1].FlowStep}, []trackerport.FlowStep{trackerport.StepTodo, trackerport.StepDone})
+		same(t, "stored", got, confstore.TrackerStatus{ID: "st2", IntegrationID: "i9", RemoteID: "2", Name: "Closed", Position: 1, IsDone: true})
 	})
 
 	t.Run("a status in use goes only with a replacement", func(t *testing.T) {
 		s := seeded(t, open)
 		trackerLists(t, s)
-		ok(t, s.UpsertTicket(ctx, trackerTicket("k1", "PROJ-1", "st1", 1)))
-		keep := []confstore.TrackerStatus{{ID: "st2", RemoteID: "2", Name: "Done", IsDone: true, FlowStep: trackerport.StepDone}}
+		k := ticket("k1", "i9", "u1", 1)
+		k.StatusID = "st1"
+		ok(t, s.UpsertTicket(ctx, k))
+		keep := []confstore.TrackerStatus{{ID: "st2", RemoteID: "2", Name: "Done", IsDone: true}}
 		is(t, "no replacement", s.ReplaceTrackerStatuses(ctx, "i9", keep, nil), confstore.ErrReferenced)
 		same(t, "after the refusal", statusIDs(t, s, "i9"), []string{"st1", "st2"})
 		ok(t, s.ReplaceTrackerStatuses(ctx, "i9", keep, map[string]string{"st1": "st2"}))
@@ -108,11 +126,15 @@ func trackers(t *testing.T, open opener) {
 		}
 		statuses, err := svc.TrackerStatuses(ctx, in.ID)
 		ok(t, err)
-		var steps []trackerport.FlowStep
-		for _, st := range statuses {
-			steps = append(steps, st.FlowStep)
-		}
-		same(t, "seeded steps", steps, trackerport.FlowSteps())
+		// The migrations seed the same ids: keep them in step.
+		p := in.ID + "-"
+		same(t, "seeded statuses", statuses, []confstore.TrackerStatus{
+			{ID: p + "todo", IntegrationID: in.ID, RemoteID: p + "todo", Name: "To do", Position: 0},
+			{ID: p + "in_progress", IntegrationID: in.ID, RemoteID: p + "in_progress", Name: "In progress", Position: 1},
+			{ID: p + "in_review", IntegrationID: in.ID, RemoteID: p + "in_review", Name: "In review", Position: 2},
+			{ID: p + "done", IntegrationID: in.ID, RemoteID: p + "done", Name: "Done", Position: 3, IsDone: true},
+			{ID: p + "blocked", IntegrationID: in.ID, RemoteID: p + "blocked", Name: "Blocked", Position: 4},
+		})
 		types, err := svc.TrackerTypes(ctx, in.ID)
 		ok(t, err)
 		var cts []trackerport.ChangeType
@@ -134,155 +156,150 @@ func trackers(t *testing.T, open opener) {
 		}
 	})
 
-	t.Run("a mirrored ticket refuses edits of what its tracker owns", func(t *testing.T) {
+	t.Run("only the internal tracker's statuses are edited", func(t *testing.T) {
 		s := seeded(t, open)
-		trackerLists(t, s)
-		k := fullTicket()
-		ok(t, s.UpsertTicket(ctx, k))
 		svc := service(t, s)
-		for name, edit := range map[string]func(*confstore.Ticket){
-			"title":  func(u *confstore.Ticket) { u.Title = "Renamed" },
-			"goal":   func(u *confstore.Ticket) { u.Goal = "Other" },
-			"status": func(u *confstore.Ticket) { u.StatusID = "st2" },
-			"labels": func(u *confstore.Ticket) { u.Labels = []string{"x"} },
-		} {
-			upd := k
-			edit(&upd)
-			_, err := svc.UpdateTicket(ctx, k.ID, upd)
-			var owned *confstore.RemoteOwnedError
-			if !errors.As(err, &owned) || !errors.Is(err, confstore.ErrRemoteOwned) {
-				t.Errorf("%s: err = %v, want RemoteOwnedError", name, err)
-			}
-		}
-		same(t, "after the refusals", s.ticket(k.ID), k)
-		upd := k
-		upd.BaseBranch = "fix/two"
-		got, err := svc.UpdateTicket(ctx, k.ID, upd)
+		remote := remoteTracker(t, svc, "u1", "jira")
+		_, err := svc.PutTrackerStatuses(ctx, remote.ID, []confstore.TrackerStatus{{Name: "Open"}}, nil)
+		is(t, "remote", err, confstore.ErrInvalid)
+		same(t, "nothing stored", statusIDs(t, s, remote.ID), []string{})
+		in, err := svc.InternalTracker(ctx, "u1")
 		ok(t, err)
-		same(t, "base branch", got.BaseBranch, "fix/two")
-		same(t, "stored", s.ticket(k.ID).BaseBranch, "fix/two")
+		list, err := svc.TrackerStatuses(ctx, in.ID)
+		ok(t, err)
+		list = append(list[:1], confstore.TrackerStatus{Name: "Parked", IsDone: true})
+		saved, err := svc.PutTrackerStatuses(ctx, in.ID, list, map[string]string{})
+		ok(t, err)
+		same(t, "names", ids(saved, func(r confstore.TrackerStatus) string { return r.Name }), []string{"To do", "Parked"})
+		same(t, "a new row is its own remote", saved[1].RemoteID, saved[1].ID)
 	})
 
-	t.Run("the sync polls tickets neither done nor gone", func(t *testing.T) {
+	t.Run("an internal ticket is its tracker's own issue", func(t *testing.T) {
 		s := seeded(t, open)
-		trackerLists(t, s)
-		ok(t, s.UpsertTicket(ctx, trackerTicket("k1", "PROJ-1", "st1", 1)))
-		ok(t, s.UpsertTicket(ctx, trackerTicket("k2", "PROJ-2", "st2", 2)))
-		gone := trackerTicket("k3", "PROJ-3", "st1", 3)
-		gone.SyncState = confstore.SyncGone
-		ok(t, s.UpsertTicket(ctx, gone))
-		ok(t, s.UpsertTicket(ctx, trackerTicket("k4", "PROJ-4", "", 4)))
-		ok(t, s.UpsertTicket(ctx, ticket("k5", "p1", "u1", 5)))
 		svc := service(t, s)
-		syncable, err := svc.ListSyncable(ctx, "i9")
+		in, err := svc.InternalTracker(ctx, "u1")
 		ok(t, err)
-		same(t, "syncable", ids(syncable, func(k confstore.Ticket) string { return k.ID }), []string{"k1", "k4"})
-		all, err := svc.ListTicketsBySource(ctx, "i9")
+		k, err := svc.CreateTicket(ctx, confstore.Ticket{UserID: "u1", Title: " Fix it ", ChangeType: "fix",
+			SourceID: "ghost", SourceKind: "jira", SourceKey: "X-1", RemoteID: "r", SourceURL: "u", SourceType: "Bug"})
 		ok(t, err)
-		same(t, "all", ids(all, func(k confstore.Ticket) string { return k.ID }), []string{"k1", "k2", "k3", "k4"})
-		none, err := svc.ListSyncable(ctx, "")
-		ok(t, err)
-		same(t, "sourceless", len(none), 0)
+		k = s.ticket(k.ID)
+		same(t, "source", []string{k.SourceID, k.SourceKind, k.RemoteID, k.SourceKey, k.SourceURL, k.SourceType},
+			[]string{in.ID, confstore.KindInternal, k.ID, "", "", ""})
+		same(t, "first status", k.StatusID, in.ID+"-todo")
+		same(t, "title", k.Title, "Fix it")
+		same(t, "key", k.TrackerKey(), k.ID)
+		if !k.Internal() {
+			t.Errorf("an internal ticket reads as remote: %+v", k)
+		}
+		_, err = svc.CreateTicket(ctx, confstore.Ticket{Title: "no owner"})
+		is(t, "no owner", err, confstore.ErrInvalid)
+		ok(t, svc.SetTicketStatus(ctx, k.ID, in.ID+"-done", confstore.ChangedByUser))
+		same(t, "moved", s.ticket(k.ID).StatusID, in.ID+"-done")
 	})
 
-	t.Run("an issue is found by owner, tracker and key, without case", func(t *testing.T) {
+	t.Run("a remote issue's record is made once and follows the issue", func(t *testing.T) {
 		s := seeded(t, open)
-		trackerLists(t, s)
-		ok(t, s.UpsertTicket(ctx, fullTicket()))
 		svc := service(t, s)
-		got, found, err := svc.TicketBySource(ctx, "u1", "i9", "proj-1")
+		remote := remoteTracker(t, svc, "u1", "jira")
+		seen := confstore.TicketSeen{RemoteID: "10001", Key: "PROJ-1", URL: "https://example.test/1", Title: "Crash",
+			Goal: "It crashes", Type: "Bug", TypeRemoteID: "10", Labels: []string{"a"}}
+		k, created, err := svc.RecordTicket(ctx, remote.ID, seen, "auto1")
 		ok(t, err)
-		if !found || got.ID != "k1" {
-			t.Errorf("found = %v, %s", found, got.ID)
-		}
-		for _, miss := range [][3]string{{"u2", "i9", "PROJ-1"}, {"u1", "i8", "PROJ-1"}, {"u1", "i9", "PROJ-2"}, {"u1", "", "PROJ-1"}} {
-			if _, found, err := svc.TicketBySource(ctx, miss[0], miss[1], miss[2]); err != nil || found {
-				t.Errorf("%v: found = %v (%v)", miss, found, err)
-			}
-		}
-		_, err = s.GetTicketBySource(ctx, "u2", "i9", "PROJ-1")
-		is(t, "store miss", err, confstore.ErrNotFound)
+		same(t, "created", created, true)
+		same(t, "stored", s.ticket(k.ID), k)
+		same(t, "provenance", []string{k.UserID, k.SourceID, k.SourceKind, k.RemoteID, k.SourceKey, k.AutomationID, k.StatusID},
+			[]string{"u1", remote.ID, "jira", "10001", "PROJ-1", "auto1", ""})
+		types, err := svc.TrackerTypes(ctx, remote.ID)
+		ok(t, err)
+		same(t, "its type is listed", ids(types, func(r confstore.TrackerType) string { return r.ID }), []string{k.TypeID})
+
+		seen.Key, seen.Title = "MOVED-9", "Crash, moved"
+		again, created, err := svc.RecordTicket(ctx, remote.ID, seen, "auto2")
+		ok(t, err)
+		same(t, "created again", created, false)
+		same(t, "the same record", again.ID, k.ID)
+		same(t, "the key followed", again.SourceKey, "MOVED-9")
+		same(t, "the title followed", again.Title, "Crash, moved")
+		same(t, "the automation stays", again.AutomationID, "auto1")
+		same(t, "one record", len(records(t, svc, remote.ID, "10001")), 1)
+
+		seen.Title = "Seen again"
+		upd, err := svc.SeeTicket(ctx, k.ID, seen)
+		ok(t, err)
+		same(t, "seen", upd.Title, "Seen again")
+		byRemote, found, err := svc.TicketByRemote(ctx, remote.ID, "10001")
+		ok(t, err)
+		same(t, "by remote", found, true)
+		same(t, "by remote row", byRemote, upd)
+		_, found, err = svc.TicketByRemote(ctx, remote.ID, "nope")
+		ok(t, err)
+		same(t, "none", found, false)
+
+		in, err := svc.InternalTracker(ctx, "u1")
+		ok(t, err)
+		_, _, err = svc.RecordTicket(ctx, in.ID, seen, "")
+		is(t, "internal source", err, confstore.ErrInvalid)
+		_, _, err = svc.RecordTicket(ctx, remote.ID, confstore.TicketSeen{Title: "no id"}, "")
+		is(t, "no remote id", err, confstore.ErrInvalid)
 	})
 
-	t.Run("deleting a ticket source unlinks its tickets onto the internal tracker", func(t *testing.T) {
+	t.Run("a record changes only its base branch here", func(t *testing.T) {
 		s := seeded(t, open)
-		trackerLists(t, s)
-		ok(t, s.ReplaceTrackerStatuses(ctx, "i9", []confstore.TrackerStatus{
-			{ID: "st1", IntegrationID: "i9", RemoteID: "1", Name: "TO DO", FlowStep: trackerport.StepTodo},
-			{ID: "st2", IntegrationID: "i9", RemoteID: "2", Name: "Closed", Position: 1, IsDone: true, FlowStep: trackerport.StepDone},
-			{ID: "st3", IntegrationID: "i9", RemoteID: "3", Name: "In QA", Position: 2},
-		}, nil))
-		k1 := trackerTicket("k1", "PROJ-1", "st1", 1)
-		k1.TypeID, k1.ChangeType = "ty1", trackerport.ChangeFix
-		ok(t, s.UpsertTicket(ctx, k1))
-		ok(t, s.UpsertTicket(ctx, trackerTicket("k2", "PROJ-2", "st2", 2)))
-		ok(t, s.UpsertTicket(ctx, trackerTicket("k3", "PROJ-3", "st3", 3)))
-		ok(t, s.UpsertTicket(ctx, trackerTicket("k4", "PROJ-4", "", 4)))
-		_, err := s.InsertTicketComment(ctx, confstore.TicketComment{ID: "c1", TicketID: "k1", RemoteID: "r1", Author: "ann", Body: "hi",
-			Origin: confstore.CommentRemote, CreatedAt: time.Unix(10, 0).UTC(), UpdatedAt: time.Unix(10, 0).UTC()})
-		ok(t, err)
 		svc := service(t, s)
-		internal, err := svc.InternalTracker(ctx, "u1")
+		remote := remoteTracker(t, svc, "u1", "jira")
+		k, _, err := svc.RecordTicket(ctx, remote.ID, confstore.TicketSeen{RemoteID: "1", Key: "P-1", Title: "Remote"}, "")
 		ok(t, err)
-		statuses, err := svc.TrackerStatuses(ctx, internal.ID)
+		upd, err := svc.UpdateTicket(ctx, k.ID, confstore.Ticket{Title: "Mine", Goal: "g", BaseBranch: " feat/x ", Labels: []string{"l"}})
 		ok(t, err)
-		step := map[trackerport.FlowStep]string{}
-		for _, st := range statuses {
-			step[st.FlowStep] = st.ID
-		}
-		types, err := svc.TrackerTypes(ctx, internal.ID)
+		same(t, "base branch", upd.BaseBranch, "feat/x")
+		same(t, "the rest", []string{upd.Title, upd.Goal}, []string{"Remote", ""})
+		same(t, "stored", s.ticket(k.ID).BaseBranch, "feat/x")
+		is(t, "status", svc.SetTicketStatus(ctx, k.ID, "any", confstore.ChangedByUser), confstore.ErrInvalid)
+		_, err = svc.SetTicketLabels(ctx, k.ID, []string{"x"}, false)
+		is(t, "labels", err, confstore.ErrInvalid)
+		is(t, "link", svc.AddTicketLink(ctx, k.ID, trackerport.TicketLink{URL: "https://example.test"}), confstore.ErrInvalid)
+		_, posted, err := svc.AddTicketComment(ctx, confstore.TicketComment{TicketID: k.ID, Body: "hi", Origin: confstore.CommentUser})
 		ok(t, err)
-		fixType := ""
-		for _, ty := range types {
-			if ty.ChangeType == trackerport.ChangeFix {
-				fixType = ty.ID
-			}
-		}
-
-		n, err := svc.DeleteIntegrationUnlinking(ctx, "i9")
-		ok(t, err)
-		same(t, "unlinked", n, 4)
-		_, err = s.GetIntegration(ctx, "i9")
-		is(t, "integration", err, confstore.ErrNotFound)
-		for id, want := range map[string]string{
-			"k1": step[trackerport.StepTodo], // "TO DO" is "To do", case aside
-			"k2": step[trackerport.StepDone], // a Done status named unlike any
-			"k3": step[trackerport.StepTodo], // neither
-			"k4": step[trackerport.StepTodo], // never synced
-		} {
-			k := s.ticket(id)
-			if k.StatusID != want || k.SourceID != "" || k.SourceKey != "" || k.SourceKind != "" || k.RemoteID != "" || k.SyncState != "" {
-				t.Errorf("%s = status %s (want %s), source %q/%q/%q", id, k.StatusID, want, k.SourceID, k.SourceKind, k.SourceKey)
-			}
-		}
-		if k := s.ticket("k1"); k.TypeID != fixType || k.ChangeType != trackerport.ChangeFix {
-			t.Errorf("k1 type = %s %s, want the internal fix type %s", k.TypeID, k.ChangeType, fixType)
-		}
-		comments, err := s.ListTicketComments(ctx, "k1")
-		ok(t, err)
-		if len(comments) != 1 || comments[0].Origin != confstore.CommentRemote {
-			t.Errorf("comments = %+v, want the remote history kept", comments)
-		}
-		_, err = svc.DeleteIntegrationUnlinking(ctx, internal.ID)
-		is(t, "internal", err, confstore.ErrInvalid)
+		same(t, "a comment is kept on any ticket", posted, true)
 	})
 
-	t.Run("an unlink naming too few tickets changes nothing", func(t *testing.T) {
+	t.Run("a project's ticket source defaults to the internal tracker", func(t *testing.T) {
 		s := seeded(t, open)
-		trackerLists(t, s)
-		ok(t, s.UpsertTicket(ctx, trackerTicket("k1", "PROJ-1", "st1", 1)))
-		ok(t, s.UpsertTicket(ctx, trackerTicket("k2", "PROJ-2", "st1", 2)))
 		svc := service(t, s)
-		internal, err := svc.InternalTracker(ctx, "u1")
+		in, err := svc.InternalTracker(ctx, "u1")
 		ok(t, err)
-		statuses, err := svc.TrackerStatuses(ctx, internal.ID)
+		p, err := workshop(t, svc, "u1", "web2", "")
 		ok(t, err)
-		err = s.DeleteTicketSource(ctx, "i9", []confstore.TicketUnlink{{TicketID: "k1", StatusID: statuses[0].ID, ChangeType: trackerport.ChangeFeat}}, time.Unix(20, 0).UTC())
-		is(t, "late ticket", err, confstore.ErrConflict)
-		if k := s.ticket("k1"); k.SourceID != "i9" || k.StatusID != "st1" {
-			t.Errorf("k1 = %s %s, want untouched", k.SourceID, k.StatusID)
-		}
-		_, err = s.GetIntegration(ctx, "i9")
+		same(t, "default", p.TicketSourceID, in.ID)
+		same(t, "stored", s.project(p.ID).TicketSourceID, in.ID)
+
+		remote := remoteTracker(t, svc, "u1", "jira")
+		p.TicketSourceID = remote.ID
+		p, err = svc.UpdateProject(ctx, p.ID, p)
 		ok(t, err)
+		same(t, "switched", p.TicketSourceID, remote.ID)
+		p.TicketSourceID = ""
+		p, err = svc.UpdateProject(ctx, p.ID, p)
+		ok(t, err)
+		same(t, "an empty one keeps it", p.TicketSourceID, remote.ID)
+
+		theirs := remoteTracker(t, svc, "u2", "jira")
+		_, err = workshop(t, svc, "u1", "api1", theirs.ID)
+		is(t, "another user's", err, confstore.ErrInvalid)
+		_, err = workshop(t, svc, "u1", "api2", p.RepoAccountID)
+		is(t, "not a ticket source", err, confstore.ErrInvalid)
+		_, err = workshop(t, svc, "u1", "api3", "ghost")
+		is(t, "missing", err, confstore.ErrInvalid)
+
+		err = svc.DeleteIntegration(ctx, remote.ID)
+		is(t, "in use", err, confstore.ErrReferenced)
+		names(t, "in use", err, "web2")
 	})
+}
+
+func records(t *testing.T, svc *confstore.Service, sourceID string, remoteIDs ...string) map[string]confstore.Ticket {
+	t.Helper()
+	m, err := svc.TicketsByRemote(ctx, sourceID, remoteIDs)
+	ok(t, err)
+	return m
 }

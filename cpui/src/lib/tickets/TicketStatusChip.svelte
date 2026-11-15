@@ -1,32 +1,22 @@
 <script lang="ts">
-	// A ticket's status in its tracker — the tracker's own name, tinted by the
-	// flow step it stands for. Not a run state: that is StatusChip's.
-	import type { FlowStep, TicketStatusRef } from '$lib/domain';
-	import type { Hue } from '$lib/design/hues';
+	// A ticket's status in its tracker — the tracker's own name, tinted by
+	// whether the tracker counts it done. Not a run state: that is StatusChip's.
 	import { t } from '$lib/i18n/index.svelte';
 
-	let { status, size = 'sm' }: { status?: TicketStatusRef; size?: 'sm' | 'md' } = $props();
-
-	const STEP_HUE: Record<FlowStep, Hue> = {
-		todo: 'muted',
-		in_progress: 'running',
-		in_review: 'attention',
-		done: 'success',
-		blocked: 'danger'
-	};
-	const hue = $derived<Hue>(
-		status?.flowStep ? STEP_HUE[status.flowStep] : status?.isDone ? 'success' : 'muted'
-	);
+	let {
+		status,
+		done,
+		size = 'sm'
+	}: { status: string; done: boolean; size?: 'sm' | 'md' } = $props();
 </script>
 
 {#if status}
 	<span
-		class="pill flat tint-{hue}"
+		class="pill flat {done ? 'tint-success' : 'tint-muted'}"
 		class:sm={size === 'sm'}
-		title={status.isDone
-			? t('tickets.statusDone', { name: status.name })
-			: t('tickets.status', { name: status.name })}>{status.name}</span
+		title={done ? t('tickets.statusDone', { name: status }) : t('tickets.status', { name: status })}
+		>{status}</span
 	>
 {:else}
-	<span class="faint" title={t('tickets.notSyncedHelp')}>{t('tickets.notSynced')}</span>
+	<span class="faint" title={t('tickets.noStatusHelp')}>—</span>
 {/if}

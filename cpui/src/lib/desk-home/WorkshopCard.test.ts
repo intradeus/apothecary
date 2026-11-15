@@ -3,13 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import { aProject, aRun } from '$test/fixtures';
+import { anIntegration } from '$test/fixtures/app.svelte';
 import WorkshopCard from './WorkshopCard.svelte';
 
 vi.mock('$lib/api', () => ({
 	api: { runs: { get: vi.fn() }, flows: { version: vi.fn() } }
 }));
 
-const project = aProject({ id: 'p1', name: 'billing' });
+const project = aProject({ id: 'p1', name: 'billing', ticketSourceId: 'src' });
 const now = new Date('2026-10-31T12:00:00Z').getTime();
 const props = { project, live: [], liveTotal: 0, now };
 
@@ -92,7 +93,7 @@ describe('WorkshopCard, its runs', () => {
 });
 
 describe('WorkshopCard, the foot', () => {
-	it('reads Tickets until the count loads', () => {
+	it('leads to its tickets, uncounted: they live in its source', () => {
 		render(WorkshopCard, props);
 		expect(screen.getByRole('link', { name: 'Tickets' })).toHaveAttribute(
 			'href',
@@ -100,16 +101,19 @@ describe('WorkshopCard, the foot', () => {
 		);
 	});
 
-	it('counts tickets once loaded', () => {
-		render(WorkshopCard, { ...props, tickets: 7 });
-		expect(screen.getByRole('link', { name: '7 tickets' })).toBeInTheDocument();
-	});
-
-	it('starts a ticket in this workshop', () => {
-		render(WorkshopCard, props);
+	it('starts a ticket in this workshop on the internal tracker', () => {
+		render(WorkshopCard, {
+			...props,
+			integrations: [anIntegration({ id: 'src', kind: 'internal', port: 'ticketsource' })]
+		});
 		expect(screen.getByRole('link', { name: /New ticket/ })).toHaveAttribute(
 			'href',
 			'/tickets/new?project=p1'
 		);
+	});
+
+	it('offers no New ticket until it knows the source', () => {
+		render(WorkshopCard, props);
+		expect(screen.queryByRole('link', { name: /New ticket/ })).not.toBeInTheDocument();
 	});
 });

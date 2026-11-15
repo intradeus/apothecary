@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import type { KVRow } from '$lib/ui/KeyValueEditor.svelte';
 import { aFlow, bindable } from '$test/fixtures/app.svelte';
+import { text } from '$test/helpers';
 import WorkshopSection from './WorkshopSection.svelte';
 
 const setup = (over: Record<string, unknown> = {}) => {
@@ -21,6 +22,11 @@ const setup = (over: Record<string, unknown> = {}) => {
 };
 
 describe('WorkshopSection', () => {
+	it('ends with what the form adds to the pane', () => {
+		setup({ children: text('the ticket source') });
+		expect(screen.getByText('the ticket source')).toBeInTheDocument();
+	});
+
 	it('binds the name', async () => {
 		const props = setup();
 		await userEvent.type(screen.getByLabelText('Workshop name'), 'billing');

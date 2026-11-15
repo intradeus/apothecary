@@ -210,6 +210,20 @@ describe('ParamFields', () => {
 		});
 	});
 
+	it('a tracker status: free text suggesting the source’s statuses', async () => {
+		const { onchange } = setup(aParam('done_status', { required: true }), {
+			statusParams: ['done_status'],
+			statuses: ['Done', 'Closed']
+		});
+		const input = screen.getByLabelText(/^done_status/);
+		expect(screen.getByText(/no value yet/)).toBeInTheDocument();
+		expect(input).toHaveAttribute('list', 'pf-done_status-list');
+		const options = document.querySelectorAll('#pf-done_status-list option');
+		expect([...options].map((o) => o.getAttribute('value'))).toEqual(['Done', 'Closed']);
+		await fill(input, 'Shipped ');
+		expect(onchange).toHaveBeenLastCalledWith('done_status', 'Shipped');
+	});
+
 	it('keeps ids apart between forms', () => {
 		setup(aParam('region'), { idPrefix: 'run' });
 		expect(screen.getByLabelText(/^region/)).toHaveAttribute('id', 'run-region');

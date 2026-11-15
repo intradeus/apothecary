@@ -10,7 +10,6 @@ import (
 const (
 	KindLoginSignedOut      = "login_signed_out"
 	KindLoginExpired        = "login_expired"
-	KindTrackerUnreachable  = "tracker_unreachable"
 	KindTrackerMapping      = "tracker_mapping"
 	KindChannelFailing      = "channel_failing" // never mirrored: it is about the mirror
 	KindK8sImageDrift       = "k8s_image_drift"
@@ -53,22 +52,6 @@ func (s *Service) LoginExpired(ctx context.Context, userID, credentialID, name s
 func (s *Service) LoginRefreshed(ctx context.Context, credentialID string) {
 	s.Clear(ctx, KindLoginSignedOut+":"+credentialID)
 	s.Clear(ctx, KindLoginExpired+":"+credentialID)
-}
-
-// TrackerSync: whether the ticket poll could read an integration's tracker
-// (nil err clears).
-func (s *Service) TrackerSync(ctx context.Context, userID, integrationID, name string, err error) {
-	key := KindTrackerUnreachable + ":" + integrationID
-	if err == nil {
-		s.Clear(ctx, key)
-		return
-	}
-	s.Raise(ctx, Raise{
-		To: []string{userID}, Kind: KindTrackerUnreachable, Key: key,
-		Title: fmt.Sprintf("Cannot sync tickets from %s", name),
-		Body:  err.Error(),
-		Link:  linkIntegrations,
-	})
 }
 
 // TrackerListsGrew: an integration's tracker statuses or types gained rows,

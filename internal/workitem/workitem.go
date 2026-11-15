@@ -36,7 +36,9 @@ import (
 const MaxBranchSlug = 200
 
 // Ref names one work item: its kind, the project it belongs to, and its key
-// within that kind (a ticket's id; a merge request's repo!iid).
+// within that kind (a ticket's id; a merge request's repo!iid). Project is
+// "" for a kind whose items span projects (a ticket): such an item locks and
+// is busy across every project.
 type Ref struct {
 	Kind    string `json:"kind"`
 	Project string `json:"project"`

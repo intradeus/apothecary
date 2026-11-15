@@ -167,21 +167,21 @@ func TestCanonicalV5(t *testing.T) {
 	if f.Index("in_progress") != 0 || f.Index("ticket_done") != len(ids)-1 || f.Index("nope") != -1 {
 		t.Error("Index misbehaves")
 	}
-	// The tracker stages: a flow step, the tracker's own word, and a flow
-	// step read from an enum parameter — settings, not ports.
-	if st := f.Stage("in_progress"); st.Setting("to", "") != "in_progress" || len(st.Inputs) != 0 {
+	// The tracker stages: the tracker's own word, written in the flow or read
+	// from a string parameter — settings, not ports.
+	if st := f.Stage("in_progress"); st.Setting("to", "") != "In Progress" || len(st.Inputs) != 0 {
 		t.Errorf("in_progress = %+v", st.Settings)
 	}
-	if v := f.Stage("in_review").Setting("status", ""); v != "In Review" {
-		t.Errorf("in_review.status = %q", v)
+	if v := f.Stage("in_review").Setting("to", ""); v != "In Review" {
+		t.Errorf("in_review.to = %q", v)
 	}
-	if v := f.Stage("ticket_done").Setting("to", ""); v != "done" {
+	if v := f.Stage("ticket_done").Setting("to", ""); v != "Done" {
 		t.Errorf("ticket_done.to = %q", v)
 	}
 	for _, w := range f.Warnings {
 		t.Errorf("warning: %s", w)
 	}
-	if p := f.Param("ticket_status"); p == nil || p.Known || strings.Join(p.Enum, ",") != "done,in_review" {
+	if p := f.Param("ticket_status"); p == nil || p.Known || p.Type != ParamString || len(p.Enum) != 0 || p.Default != "Done" {
 		t.Errorf("ticket_status = %+v", p)
 	}
 }
@@ -1228,16 +1228,15 @@ func TestCommandTimeout(t *testing.T) {
 	wantErr(t, header+"main:\n  - { id: s, type: command, run: x, timeout: soon }\n", "invalid timeout", 5)
 }
 
-// Tracker actions: ticket_transition names a flow step (`to`, an enum the
-// tracker's status list resolves — readable from an enum parameter within it) OR
-// the tracker's own word (`status`, a text setting: only blankness is a parse
-// error, and quoting is the author's choice), exactly one; ticket_set_field
-// takes its value from a file OR the flow; ticket_link warns when no merge
-// request precedes it.
+// Tracker actions: ticket_transition's `to` is the tracker's own word — a
+// text setting (only blankness is a parse error, and quoting is the author's
+// choice), or a string parameter that may wait for the workshop's binding
+// like a model; ticket_set_field takes its value from a file OR the flow;
+// ticket_link warns when no merge request precedes it.
 func TestTrackerActionSettings(t *testing.T) {
 	head := "name: tk\nversion: 5\nparameters: { harness: fake, model: fake/m }\nagents: []\nmain:\n"
-	plain := head + "  - { id: s, type: action, action: ticket_transition, with: { status: In Progress } }\n"
-	quoted := head + "  - { id: s, type: action, action: ticket_transition, with: { status: \"In Progress\" } }\n"
+	plain := head + "  - { id: s, type: action, action: ticket_transition, with: { to: In Progress } }\n"
+	quoted := head + "  - { id: s, type: action, action: ticket_transition, with: { to: \"In Progress\" } }\n"
 	fp, err := Parse("t.yaml", []byte(plain))
 	if err != nil {
 		t.Fatal(err)
@@ -1246,38 +1245,40 @@ func TestTrackerActionSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v := fp.Stages[0].Setting("status", ""); v != "In Progress" || v != fq.Stages[0].Setting("status", "") {
+	if v := fp.Stages[0].Setting("to", ""); v != "In Progress" || v != fq.Stages[0].Setting("to", "") {
 		t.Errorf("plain/quoted text settings differ: %+v vs %+v", fp.Stages[0].Settings, fq.Stages[0].Settings)
 	}
-	step, err := Parse("t.yaml", []byte(head+"  - { id: s, type: action, action: ticket_transition, with: { to: in_review } }\n"))
+	// The status may come from a string parameter the workshop binds: with
+	// no default the flow parses, says what is missing, and runs once bound.
+	withParam := strings.Replace(head, "model: fake/m", "model: fake/m, done_status: { type: string }", 1)
+	viaParam, err := Parse("t.yaml", []byte(withParam+"  - { id: s, type: action, action: ticket_transition, with: { to: $done_status } }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st := step.Stages[0]; st.Setting("to", "") != "in_review" || st.Setting("status", "") != "" {
-		t.Errorf("flow step setting = %+v", st.Settings)
+	if v := viaParam.Stages[0].Setting("to", ""); v != "" {
+		t.Errorf("to via unbound $done_status = %q", v)
 	}
-	// The flow step may come from an enum parameter within the steps — a
-	// project decides where its issues go once merged.
-	withParam := strings.Replace(head, "model: fake/m", "model: fake/m, final: { type: string, default: done, enum: [done, in_review] }", 1)
-	viaParam, err := Parse("t.yaml", []byte(withParam+"  - { id: s, type: action, action: ticket_transition, with: { to: $final } }\n"))
-	if err != nil {
-		t.Fatal(err)
+	ub := viaParam.Unbound()
+	if len(ub) != 1 || ub[0].Param != "done_status" || strings.Join(ub[0].Sites, ",") != "s" {
+		t.Fatalf("unbound = %+v", ub)
 	}
-	if v := viaParam.Stages[0].Setting("to", ""); v != "done" {
-		t.Errorf("to via $final = %+v", viaParam.Stages[0].Settings)
+	if err := UnboundError(ub); err == nil || !strings.Contains(err.Error(), `"done_status" has no value (read by s)`) {
+		t.Errorf("message = %v", err)
 	}
-	if bound, err := viaParam.Resolve(map[string]string{"final": "in_review"}); err != nil || bound.Stages[0].Setting("to", "") != "in_review" {
-		t.Errorf("to via $final bound = %+v, %v", bound, err)
+	bound, err := viaParam.Resolve(map[string]string{"done_status": "Closed"})
+	if err != nil || bound.Stages[0].Setting("to", "") != "Closed" || len(bound.Unbound()) != 0 {
+		t.Errorf("to via $done_status bound = %+v, %v", bound, err)
+	}
+	// Bound, the value must still say something.
+	if _, err := viaParam.Resolve(map[string]string{"done_status": " "}); err == nil || !strings.Contains(err.Error(), `with "to": a value is required (parameter "done_status")`) {
+		t.Errorf("blank binding: err = %v", err)
 	}
 	for _, tc := range []struct{ doc, substr string }{
-		{head + "  - { id: s, type: action, action: ticket_transition, with: { to: \"In Progress\" } }\n", `with "to": "In Progress" is not one of todo | in_progress | in_review | done | blocked`},
-		{head + "  - { id: s, type: action, action: ticket_transition, with: { status: \"  \" } }\n", `with "status": a value is required`},
-		{head + "  - { id: s, type: action, action: ticket_transition }\n", `takes exactly one of to / status`},
-		{head + "  - { id: s, type: action, action: ticket_transition, with: { to: done, status: Done } }\n", `takes exactly one of to / status`},
-		{strings.Replace(head, "model: fake/m", "model: fake/m, wide: { type: string, default: done }", 1) +
-			"  - { id: s, type: action, action: ticket_transition, with: { to: $wide } }\n", `parameter "wide" needs an enum within todo | in_progress`},
-		{strings.Replace(head, "model: fake/m", "model: fake/m, wide: { type: string, default: done, enum: [done, closed] }", 1) +
-			"  - { id: s, type: action, action: ticket_transition, with: { to: $wide } }\n", `parameter "wide" allows "closed", which this field does not`},
+		{head + "  - { id: s, type: action, action: ticket_transition, with: { to: \"  \" } }\n", `with "to": a value is required`},
+		{head + "  - { id: s, type: action, action: ticket_transition }\n", `requires with "to"`},
+		{head + "  - { id: s, type: action, action: ticket_transition, with: { status: Done } }\n", `with "status" is retired: to names the tracker's status itself (to: Done)`},
+		{strings.Replace(head, "model: fake/m", "model: fake/m, steps: { type: int, default: 2 }", 1) +
+			"  - { id: s, type: action, action: ticket_transition, with: { to: $steps } }\n", `parameter "steps" is an int, and this field takes a string`},
 		{head + "  - { id: s, type: action, action: ticket_set_field, with: { field: Team } }\n", "exactly one of value"},
 		{head + "  - { id: s, type: action, action: ticket_set_field, input: { value: { from: repo:t.txt, type: file } }, with: { field: Team, text: Platform } }\n", "exactly one of value"},
 		{head + "  - { id: s, type: action, action: ticket_set_field, with: { field: Team, text: Platform, mode: merge } }\n", "not one of replace | append"},

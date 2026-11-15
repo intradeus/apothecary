@@ -11,8 +11,8 @@ import (
 	"apothecary/internal/ports/trackerport"
 )
 
-// A 429 is typed with its Retry-After — seconds or an HTTP date — so the
-// sync waits instead of recording the tickets in error.
+// A 429 is typed with its Retry-After — seconds or an HTTP date — so a
+// caller can wait instead of hammering the tracker.
 func TestRateLimitedRetryAfter(t *testing.T) {
 	retryAfter := "30"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -29,7 +29,7 @@ func TestRateLimitedRetryAfter(t *testing.T) {
 		t.Fatalf("seconds = %v", err)
 	}
 	retryAfter = time.Now().Add(2 * time.Minute).UTC().Format(http.TimeFormat)
-	if _, err := c.FetchMany(ctx, []string{"PROJ-1", "PROJ-2"}); !errors.As(err, &rl) || rl.RetryAfter < 110*time.Second || rl.RetryAfter > 2*time.Minute {
+	if _, err := c.Search(ctx, trackerport.SearchQuery{Text: "x"}); !errors.As(err, &rl) || rl.RetryAfter < 110*time.Second || rl.RetryAfter > 2*time.Minute {
 		t.Fatalf("HTTP date = %v (%+v)", err, rl)
 	}
 	retryAfter = ""

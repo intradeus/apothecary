@@ -16,7 +16,7 @@
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { ago, age, fmtAbs, fmtCost, shortId } from '$lib/core/format';
 	import { answerMeta, answerSummary, pingHeadline } from '$lib/core/ping';
-	import type { FormContent, Ping, Ticket } from '$lib/domain';
+	import type { FormContent, Ping } from '$lib/domain';
 	import PingCard from '$lib/pings/PingCard.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
@@ -51,7 +51,6 @@
 	let answered = $state<Ping[]>([]);
 	let answeredLoaded = $state(false);
 	let answeredErr = $state('');
-	let tickets = $state<Map<string, Ticket>>(new Map());
 
 	async function loadAnswered() {
 		try {
@@ -65,10 +64,6 @@
 	}
 
 	onMount(() => {
-		api.tickets
-			.list()
-			.then((ts) => (tickets = new Map(ts.map((tk) => [tk.id, tk]))))
-			.catch(() => {});
 		const timer = setInterval(() => {
 			if (tab === 'answered' && !document.hidden) void loadAnswered();
 		}, 8000);
@@ -184,10 +179,6 @@
 
 	const run = $derived(current ? fleet.runById.get(current.runId) : undefined);
 	const facts = $derived(run ? runFacts(run) : undefined);
-	const ticketOf = (runId: string) => {
-		const tid = fleet.runById.get(runId)?.ticketId;
-		return tid ? tickets.get(tid) : undefined;
-	};
 	const move = { duration: ms('--dur-spring', 450), easing: spring };
 </script>
 
@@ -249,7 +240,6 @@
 						{#each shownGroups as g, i (g[0].runId)}
 							{@const p = g[0]}
 							{@const r = fleet.runById.get(p.runId)}
-							{@const tk = ticketOf(p.runId)}
 							<button
 								class="rowbtn card"
 								class:on={current?.id === p.id}
@@ -270,7 +260,7 @@
 								<span class="q truncate">{pingHeadline(p.question)}</span>
 								<span class="l3">
 									<span class="rt truncate">{r?.title ?? shortId(p.runId)}</span>
-									{#if tk?.source?.key}<span class="tag">{tk.source.key}</span>{/if}
+									{#if r?.ticketKey}<span class="tag">{r.ticketKey}</span>{/if}
 									{#if r?.projectId}<span class="wsn"><WorkshopName projectId={r.projectId} /></span
 										>{/if}
 								</span>
@@ -320,8 +310,7 @@
 								busy={busy[current.id] ?? false}
 								onanswer={(a, n, ids, content) => answer(current, a, n, ids, content)}
 								runTitle={run?.title}
-								ticketKey={ticketOf(current.runId)?.source?.key}
-								ticketTitle={ticketOf(current.runId)?.title}
+								ticketKey={run?.ticketKey}
 							/>
 						{/key}
 						{#if currentGroup.length > 1}

@@ -1,16 +1,15 @@
 // Package trackerport is the issue-tracker port (Jira, GitHub Issues,
 // GitLab issues, and Apothecary's own internal tracker): the thin
-// intersection of what every tracker serves when a ticket is imported and
-// kept in sync, the change type that names a ticket's branch, the flow steps
-// a run moves a ticket through, the status and type lists a tracker offers,
-// and writing back — status, fields, comments, attachments.
+// intersection of what every tracker serves when a workshop lists or opens
+// its tickets, the change type that names a ticket's branch, the status and
+// type lists a tracker offers, and writing back — status, fields, comments,
+// attachments.
 //
-// Every internal ticket has exactly one tracker: its remote issue when it was
-// imported, the built-in internal tracker otherwise. The remote is the single
-// source of truth for a sourced ticket — the internal row is a mirror that a
-// sync overwrites — so everything here is shaped for reading a tracker
-// repeatedly (stable ids, comment identity, batched fetch) as well as for
-// writing to it.
+// A workshop has exactly one ticket source: a remote tracker or its owner's
+// internal tracker. A remote issue is read live (paged, filtered search;
+// fetch by key or stable id) and never mirrored locally — Apothecary keeps
+// only a small record of the issues its runs point at — so everything here is
+// shaped for reading a tracker on demand as well as for writing to it.
 package trackerport
 
 import (
@@ -29,21 +28,21 @@ import (
 // SourceTicket is one unit of work as an EXTERNAL tracker reports it (Jira,
 // GitHub Issues). It is deliberately the thin intersection every tracker can
 // serve — identity, title, body, state, attachments. Everything
-// apothecary-specific (project, base branch, flow) is decided on import; a
-// tracker never dictates them. The sync copies the tracker-owned fields
-// (title, body, status, type, labels) onto the internal ticket on every pass.
+// apothecary-specific (project, base branch, flow) is decided locally; a
+// tracker never dictates them. The tracker-owned fields (title, body,
+// status, type, labels) are read live and never stored.
 //
 // Body is plain markdown: adapters convert their vendor's markup (Jira's ADF)
 // before it crosses this boundary, so nothing downstream parses vendor JSON.
 type SourceTicket struct {
 	// RemoteID is the tracker's STABLE internal id (Jira's numeric issue id,
 	// a GitHub/GitLab issue's global id). Unlike Key it survives a Jira
-	// project move or a GitHub transfer, so a sync that gets a 404 on the key
+	// project move or a GitHub transfer, so a read that gets a 404 on the key
 	// retries by it (Fetch accepts either where the tracker does).
 	RemoteID string
 	// Key is the tracker's human-facing identifier ("PROJ-123") — what the
-	// operator searches for and what the imported ticket records as its
-	// provenance.
+	// operator searches for and what a ticket's record keeps as its last-seen
+	// key.
 	Key   string
 	Title string
 	Body  string
@@ -51,10 +50,13 @@ type SourceTicket struct {
 	URL string
 	// Status is the status's display name; StatusID the tracker's id for it
 	// (Jira's status id; GitHub "open"/"closed"; GitLab "opened"/"closed"),
-	// which the sync resolves against the integration's status list
-	// (RemoteStatus.ID) so a renamed status still matches.
+	// resolved against the integration's status list (RemoteStatus.ID) so a
+	// renamed status still matches.
 	Status   string
 	StatusID string
+	// Done: the tracker files the status as done (Jira's statusCategory
+	// Done; a closed GitHub/GitLab issue).
+	Done bool
 	// Type is the issue type's display name; TypeID its id (Jira's issuetype
 	// id; "issue" for GitHub/GitLab), resolved like StatusID against the
 	// integration's type list (RemoteType.ID), which carries the change type.
@@ -62,8 +64,7 @@ type SourceTicket struct {
 	TypeID string
 	// Labels are the issue's labels as the tracker spells them.
 	Labels []string
-	// Assignee/Updated are display context; Updated also guards a sync
-	// against applying a snapshot older than the one it already holds.
+	// Assignee/Updated are display context.
 	Assignee    string
 	Updated     time.Time
 	Attachments []SourceAttachment
@@ -72,7 +73,7 @@ type SourceTicket struct {
 // ChangeType is a CANONICAL kind of change — what a ticket is: a feature, a
 // fix, an urgent fix to production, a performance change, documentation,
 // upkeep. A ticket carries one, and its base branch is named after it
-// (feat/proj-123-…). The set is fixed, like FlowStep, so a flow can rely
+// (feat/proj-123-…). The set is fixed, so a flow can rely
 // on it whatever the tracker; each tracker's own issue types ("Bug",
 // "Story", "Spike") are mapped onto it by the integration's type list, a
 // new row of which GuessChangeType pre-fills.
@@ -141,24 +142,23 @@ type SourceAttachment struct {
 	URL      string
 }
 
-// TicketSource is the ticket-tracker READ boundary: what the ticket factory
-// imports work from and what the sync re-reads to keep an imported ticket's
-// mirror current. It is config-plane-shaped rather than run-shaped — import
-// and sync read it, and nothing in a run blocks on it, so an unreachable
-// tracker can never stall a run on its own.
+// TicketSource is the ticket-tracker READ boundary: what a workshop's ticket
+// list, ticket page, tracker_query automations and a run's start read live.
+// It is config-plane-shaped rather than run-shaped — a run's start falls
+// back to a cached copy or the ticket's record, so an unreachable tracker can
+// never stall a run on its own.
 //
 // Writing back is a separate, OPTIONAL capability (TicketWriter): a flow
 // opts into it stage by stage with a tracker action, and only those stages
 // ever call it. Listing the tracker's statuses and types (TicketMetadata)
-// and batched re-reads (TicketSyncer) are optional too.
+// is optional too.
 type TicketSource interface {
 	// Test probes credentials (the UI's "Test" button).
 	Test(ctx context.Context) error
-	// Search returns tickets matching a free-text query, most recently updated
-	// first. An empty query means "what should I be working on" — the adapter's
-	// own sensible default. Attachments may be omitted here; Fetch is
-	// authoritative for those.
-	Search(ctx context.Context, query string, limit int) ([]SourceTicket, error)
+	// Search returns one page of tickets matching q, most recently updated
+	// first. Attachments may be omitted here; Fetch is authoritative for
+	// those.
+	Search(ctx context.Context, q SearchQuery) (SearchPage, error)
 	// Fetch returns one ticket by key, WITH its attachment metadata. Where
 	// the tracker addresses an issue by its stable id too (Jira), Fetch takes
 	// SourceTicket.RemoteID as well. An issue the tracker does not have (a
@@ -168,17 +168,45 @@ type TicketSource interface {
 	OpenAttachment(ctx context.Context, a SourceAttachment) (io.ReadCloser, error)
 }
 
+// DoneFilter narrows a search by the tracker's own notion of done (Jira
+// statusCategory Done; closed on GitHub/GitLab).
+type DoneFilter string
+
+const (
+	DoneAny  DoneFilter = ""     // both
+	DoneOpen DoneFilter = "open" // not done
+	DoneOnly DoneFilter = "done" // done only
+)
+
+// SearchQuery is one page request of TicketSource.Search.
+type SearchQuery struct {
+	// Text is a free-text query; "" means "what should I be working on" —
+	// the adapter's own default (assigned to me), with no done clause of its
+	// own: Done carries that.
+	Text string
+	Done DoneFilter
+	// Cursor is opaque, from SearchPage.Next; "" is the first page.
+	Cursor string
+	// Limit is the page size; <= 0 is the adapter's default.
+	Limit int
+}
+
+// SearchPage is one page of TicketSource.Search.
+type SearchPage struct {
+	Tickets []SourceTicket
+	// Next is the cursor of the following page; "" on the last one.
+	Next string
+}
+
 // ErrTicketNotFound: the tracker has no issue by that key (a 404). Fetch
-// wraps it (errors.Is), so the sync can tell a moved or deleted issue —
-// retry by RemoteID, else mark the mirror gone — from a tracker that is
-// merely unreachable.
+// wraps it (errors.Is), so a live read can tell a moved or deleted issue —
+// retry by RemoteID — from a tracker that is merely unreachable.
 var ErrTicketNotFound = errors.New("ticket not found")
 
 // ErrRateLimited: the tracker refused the call for its rate limit (an HTTP
 // 429, or GitHub's 403 with no requests remaining). RetryAfter is how long
-// it asked to be left alone — 0 when it did not say. The sync skips the
-// integration for that long instead of recording the tickets in error
-// (errors.As).
+// it asked to be left alone — 0 when it did not say. The live reads hold the
+// integration for that long, serving what they have cached (errors.As).
 type ErrRateLimited struct {
 	// Tracker names who refused ("jira GET /rest/api/3/search"), Detail what
 	// it said, for the message.
@@ -225,8 +253,8 @@ func ResetAfter(value string, now time.Time) time.Duration {
 
 // StatusCategory is the coarse bucket a tracker files a status under —
 // Jira's statusCategory key; GitHub/GitLab's open state is "new", closed
-// "done". It only pre-fills an integration's status list (Done checked,
-// the todo/done flow steps); the user's columns decide afterwards.
+// "done". A remote ticket's Done is read from it; the live status list
+// carries it for display.
 type StatusCategory string
 
 const (
@@ -253,70 +281,13 @@ type RemoteType struct {
 }
 
 // TicketMetadata is an OPTIONAL TicketSource capability: the tracker lists
-// its statuses and issue types, which fill the integration's status and
-// type lists (where the user marks Done, picks each flow step's status and
-// each type's change type). Jira reads them from the instance; GitHub and
+// its statuses (read live for the ticket page and the status bindings) and
+// issue types (which fill the integration's type list, where the user maps
+// each to its change type). Jira reads them from the instance; GitHub and
 // GitLab issues have a fixed open/closed pair and a single "issue" type.
 type TicketMetadata interface {
 	Statuses(ctx context.Context) ([]RemoteStatus, error)
 	Types(ctx context.Context) ([]RemoteType, error)
-}
-
-// TicketSyncer is an OPTIONAL TicketSource capability: re-read many tickets
-// in few calls, for the periodic sync. Each ticket is what Fetch returns,
-// attachment metadata INCLUDED — unlike Search — since the sync copies the
-// files an issue gained from it (Jira asks for the attachment field, GitLab
-// lists the description's uploads, GitHub issues have none). The result is
-// in no particular order; a key absent from it was not found (the caller
-// falls back to Fetch to tell a moved issue from a deleted one). A tracker
-// without it is synced with one Fetch per ticket.
-type TicketSyncer interface {
-	FetchMany(ctx context.Context, keys []string) ([]SourceTicket, error)
-}
-
-// FlowStep is a CANONICAL step of a ticket's lifecycle: one of the few
-// points a flow moves work through, whatever the tracker calls them. A flow
-// names these (ticket_transition's `to`), so the same flow moves a Jira
-// issue to "In Progress" and closes a GitHub issue without spelling either.
-// Each tracker integration's status list says which of its statuses holds
-// each step (at most one per step); the caller — not the adapter — resolves
-// the step to that status's name and moves there with Transition. A step no
-// status holds is *ErrStatusUnsupported, which the engine turns into a
-// skipped stage rather than a failure. A tracker's literal status name
-// still travels through Transition when a flow wants exactly that word.
-type FlowStep string
-
-const (
-	StepTodo       FlowStep = "todo"
-	StepInProgress FlowStep = "in_progress"
-	StepInReview   FlowStep = "in_review"
-	StepDone       FlowStep = "done"
-	StepBlocked    FlowStep = "blocked"
-)
-
-// FlowSteps lists every FlowStep, in lifecycle order.
-func FlowSteps() []FlowStep {
-	return []FlowStep{StepTodo, StepInProgress, StepInReview, StepDone, StepBlocked}
-}
-
-// ParseFlowStep reads a flow step name; ok is false for anything else (a
-// tracker's own status name belongs to Transition, not here).
-func ParseFlowStep(s string) (FlowStep, bool) {
-	for _, st := range FlowSteps() {
-		if string(st) == strings.TrimSpace(s) {
-			return st, true
-		}
-	}
-	return "", false
-}
-
-// StepNames renders steps for a message ("todo, done").
-func StepNames(list []FlowStep) string {
-	names := make([]string, len(list))
-	for i, st := range list {
-		names[i] = string(st)
-	}
-	return strings.Join(names, ", ")
 }
 
 // TicketLink is one outbound link attached to a tracker issue (the run's
@@ -337,9 +308,9 @@ type Comment struct {
 	Updated time.Time
 }
 
-// CommentLister reads an issue's comments, oldest first: the sync's
-// comment mirror and the reconciliation read for a Comment whose completion
-// was not recorded.
+// CommentLister reads an issue's comments, oldest first: what a prompt and
+// the ticket page show, and the reconciliation read for a Comment whose
+// completion was not recorded.
 type CommentLister interface {
 	ListComments(ctx context.Context, key string) ([]Comment, error)
 }
@@ -348,14 +319,13 @@ type CommentLister interface {
 // §2 action: ticket_transition, ticket_comment, ticket_set_field,
 // ticket_link, ticket_link_branch). Every ticket has one: a remote source
 // adapter offers it as an OPTIONAL capability (discovered by type assertion,
-// so one integration — one credential — serves import, sync and
-// write-back), and a ticket without a remote source writes to the internal
-// tracker, which implements it over the ticket row.
+// so one integration — one credential — serves reads and write-back), and
+// the internal tracker implements it over the ticket row.
 //
 // Everything here speaks the tracker's OWN vocabulary (a status name, a
 // field's display name, markdown that the adapter renders to vendor markup);
-// a flow step is resolved to a status name by the caller, from the
-// integration's status list. No vendor types cross the boundary; what the
+// a flow names a status literally (or through a string parameter its
+// workshop binds). No vendor types cross the boundary; what the
 // engine needs to explain a refusal travels as the typed errors below, so a
 // flow's $FAILURE can say "not reachable from X; reachable: A, B" without
 // parsing vendor text.
@@ -410,31 +380,9 @@ func (e *ErrStatusUnreachable) Error() string {
 	return fmt.Sprintf("%s: status %q is not reachable from %q; reachable: %s", e.Key, e.To, e.From, strings.Join(e.Reachable, ", "))
 }
 
-// ErrStatusUnsupported: no status of the ticket's tracker holds the flow
-// step a flow named — GitHub Issues has nothing for "in review" unless the
-// user gives that step a status. Supported lists the steps that do have a
-// status, so a flow author can tell "this tracker cannot say it" from "the
-// workflow forbids it" (ErrStatusUnreachable). Raised by the caller that
-// resolves the step against the integration's status list, not by an
-// adapter.
-type ErrStatusUnsupported struct {
-	Key       string
-	Step      FlowStep
-	Supported []FlowStep
-}
-
-func (e *ErrStatusUnsupported) Error() string {
-	msg := fmt.Sprintf("%s: the tracker has no status for step %q", e.Key, string(e.Step))
-	if len(e.Supported) > 0 {
-		msg += "; steps with a status: " + StepNames(e.Supported)
-	}
-	return msg
-}
-
 // ErrNotApplicable: the write has no meaning on this ticket's tracker — a
 // field the internal tracker does not have, a ticket deleted mid-run. Not a
-// failure: the engine completes the stage as skipped with Reason, as for
-// *ErrStatusUnsupported.
+// failure: the engine completes the stage as skipped with Reason.
 type ErrNotApplicable struct{ Key, Reason string }
 
 func (e *ErrNotApplicable) Error() string { return e.Key + ": " + e.Reason }

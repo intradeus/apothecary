@@ -1,74 +1,330 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
-	"apothecary/internal/account/auth"
 	"apothecary/internal/engine"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
-	"apothecary/internal/project/resolution"
 	"apothecary/internal/project/tickets"
+	"apothecary/internal/run"
 	"apothecary/internal/run/runinput"
 	"apothecary/internal/workspace/checkout"
 )
 
-// ticketBody is the create/update DTO. Branch is the ticket's BASE branch;
-// each run derives its own actual branch (base + per-run tail).
-//
-// SourceID+SourceKey turn a create into an IMPORT: the tracker supplies title,
-// goal and attachments, and anything sent here overrides them (the operator
-// may have edited the prefilled form). They are create-only — provenance never
-// changes on update.
+// A workshop reads its tickets live from its one ticket source (the
+// project's ticket_source_id): a remote tracker, or its owner's internal
+// tracker. The routes are keyed by the workshop and the tracker's key — on
+// the internal tracker the ticket's id. A remote issue has a local record
+// only once something needs one (a run, an automation, a base branch); a row
+// says which, and every workshop on the same source sees the same record.
+
+// ticketBody creates an internal ticket, or edits one. BaseBranch is the
+// ticket's BASE branch ("" = each run names it by its workshop's branch
+// format); each run derives its own branch from it. On a remote issue an
+// edit takes BaseBranch only: everything else is its tracker's.
 type ticketBody struct {
-	ProjectID string `json:"project_id"`
-	Title     string `json:"title"`
-	Goal      string `json:"goal"`
-	Branch    string `json:"branch"`
-	// ChangeType is a trackerport.ChangeType; empty on a create is the source
-	// issue's (an import) or feat, on an update feat.
-	ChangeType    string   `json:"change_type"`
+	Title      string `json:"title"`
+	Goal       string `json:"goal"`
+	BaseBranch string `json:"base_branch"`
+	// ChangeType is a trackerport.ChangeType; empty is feat.
+	ChangeType string `json:"change_type"`
+	// StatusID / TypeID place a new ticket (the tracker's first status, and
+	// the first type of its change type, when empty); an edit takes TypeID.
+	StatusID      string   `json:"status_id,omitempty"`
+	TypeID        string   `json:"type_id,omitempty"`
+	Labels        []string `json:"labels,omitempty"`
 	AttachmentIDs []string `json:"attachment_ids"`
-	SourceID      string   `json:"source_id"`
-	SourceKey     string   `json:"source_key"`
 }
 
-func (b ticketBody) toTicket() confstore.Ticket {
-	return confstore.Ticket{
-		ProjectID: b.ProjectID, Title: b.Title, Goal: b.Goal,
-		BaseBranch: b.Branch, ChangeType: trackerport.ChangeType(b.ChangeType),
-	}
+// TicketRow is one issue of a workshop's ticket source as its list shows it,
+// joined to its record when Apothecary has one.
+type TicketRow struct {
+	// Key is the tracker's key ("PROJ-123"); an internal ticket's id.
+	Key string `json:"key"`
+	// RemoteID is the tracker's stable id for the issue.
+	RemoteID string `json:"remote_id"`
+	Title    string `json:"title"`
+	// Body is markdown: the issue's description, an internal ticket's goal.
+	Body string `json:"body"`
+	// URL is the issue's page on its tracker; "" on the internal tracker.
+	URL      string `json:"url"`
+	Status   string `json:"status"`
+	StatusID string `json:"status_id"`
+	// Done: the status is in the tracker's done category.
+	Done   bool   `json:"done"`
+	Type   string `json:"type"`
+	TypeID string `json:"type_id"`
+	// ChangeType is the issue's type read through the source's type list
+	// (an internal ticket's own).
+	ChangeType trackerport.ChangeType `json:"change_type"`
+	Labels     []string               `json:"labels"`
+	Assignee   string                 `json:"assignee"`
+	UpdatedAt  *time.Time             `json:"updated_at,omitempty"`
+	// TicketID is the local record's id; "" while the issue has none.
+	TicketID string `json:"ticket_id"`
+	// BaseBranch is the record's user-set base branch; "" = each run names it.
+	BaseBranch string `json:"base_branch"`
+	// ActiveRunID is the record's active run, in any workshop; "" when none.
+	ActiveRunID string `json:"active_run_id"`
 }
 
-// ticketResp is a ticket — its status and type resolved — plus its
-// attachments, its links and anything the import could not carry over: a
-// skipped attachment is a fact the operator must see, and silence would read
-// as "everything came across".
-type ticketResp struct {
-	TicketView
-	// AttachmentIDs are the ticket's claimed attachments (rows, not a stored
-	// column), for the edit form's re-send semantics.
+// TicketPage is one page of a workshop's ticket list.
+type TicketPage struct {
+	Tickets []TicketRow `json:"tickets"`
+	// Next is the following page's cursor; "" on the last one.
+	Next string `json:"next"`
+}
+
+// TicketSourceRef names a ticket source integration.
+type TicketSourceRef struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+}
+
+// TicketDetail is one issue of a workshop's source: its row, the source it
+// is read from, and the record's attachments and links.
+type TicketDetail struct {
+	TicketRow
+	Source TicketSourceRef `json:"source"`
+	// Internal: the source is the internal tracker, so the ticket is edited
+	// here (a remote issue takes only its base branch).
+	Internal bool `json:"internal"`
+	// AttachmentIDs are the record's claimed attachments, for the edit
+	// form's re-send semantics.
 	AttachmentIDs []string `json:"attachment_ids"`
 	// Links are the internal tracker's links on the ticket (ticket_link,
 	// ticket_link_branch); a remote issue keeps its own.
-	Links    []confstore.TicketLink `json:"links"`
-	Warnings []string               `json:"warnings,omitempty"`
+	Links []confstore.TicketLink `json:"links"`
+}
+
+// RemoteAttachment is a file on a remote issue, metadata only: a run's start
+// copies it onto the record.
+type RemoteAttachment struct {
+	Filename string `json:"filename"`
+	Mime     string `json:"mime,omitempty"`
+	Size     int64  `json:"size,omitempty"`
+}
+
+// TicketAttachments is what a ticket page lists: the record's files
+// (uploaded, or copied from the tracker at a run's start) and the files the
+// remote issue has now.
+type TicketAttachments struct {
+	Attachments []filestore.Attachment `json:"attachments"`
+	Remote      []RemoteAttachment     `json:"remote"`
+}
+
+// WorkshopRef names a workshop.
+type WorkshopRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// TicketRecord is a ticket record by id — what a run links to — with the
+// key it is opened by, its source (absent once the integration is gone)
+// and the owner's workshops that read that source.
+type TicketRecord struct {
+	Ticket    confstore.Ticket `json:"ticket"`
+	Key       string           `json:"key"`
+	Source    *TicketSourceRef `json:"source,omitempty"`
+	Workshops []WorkshopRef    `json:"workshops"`
+}
+
+// tickets builds the ticket factory from the server's collaborators.
+func (s *Server) tickets() *tickets.Factory {
+	return &tickets.Factory{
+		Conf: s.Conf, Attachments: s.Attachments, Sources: s.Sources, Live: s.Live, Log: s.Log,
+	}
+}
+
+// workshop is a route's workshop and the ticket source it reads.
+type workshop struct {
+	project confstore.Project
+	source  confstore.Integration
+}
+
+func (ws workshop) internal() bool { return ws.source.Kind == confstore.KindInternal }
+
+func (ws workshop) sourceRef() TicketSourceRef {
+	return TicketSourceRef{ID: ws.source.ID, Kind: ws.source.Kind, Name: ws.source.Name}
+}
+
+// workshop loads the route's workshop (the guard made sure it is the
+// caller's) and its ticket source.
+func (s *Server) workshop(w http.ResponseWriter, r *http.Request) (workshop, bool) {
+	if s.Live == nil {
+		writeErr(w, http.StatusServiceUnavailable, "ticket sources are not wired")
+		return workshop{}, false
+	}
+	p, err := s.Conf.GetProject(r.Context(), r.PathValue("id"))
+	if err != nil {
+		confErr(w, err)
+		return workshop{}, false
+	}
+	in, err := s.Conf.GetIntegration(r.Context(), p.TicketSourceID)
+	if err != nil {
+		confErr(w, err)
+		return workshop{}, false
+	}
+	return workshop{project: p, source: in}, true
+}
+
+// issueAt reads the source's issue at key, and its record when it has one.
+// An internal ticket of another tracker is not found.
+func (s *Server) issueAt(ctx context.Context, ws workshop, key string, bypass bool) (trackerport.SourceTicket, *confstore.Ticket, error) {
+	issue, err := s.Live.Issue(ctx, ws.source.ID, key, bypass)
+	if err != nil {
+		return issue, nil, err
+	}
+	if ws.internal() {
+		t, err := s.Conf.GetTicket(ctx, issue.Key)
+		if err != nil {
+			return issue, nil, err
+		}
+		return issue, &t, nil
+	}
+	if issue.RemoteID == "" {
+		return issue, nil, nil
+	}
+	t, found, err := s.Conf.TicketByRemote(ctx, ws.source.ID, issue.RemoteID)
+	if err != nil || !found {
+		return issue, nil, err
+	}
+	return issue, &t, nil
+}
+
+// recordAt is issueAt with the record made now when the issue has none.
+func (s *Server) recordAt(ctx context.Context, ws workshop, key string) (trackerport.SourceTicket, confstore.Ticket, error) {
+	issue, rec, err := s.issueAt(ctx, ws, key, false)
+	if err != nil {
+		return issue, confstore.Ticket{}, err
+	}
+	if ws.internal() {
+		return issue, *rec, nil
+	}
+	t, _, err := s.tickets().Record(ctx, ws.source.ID, issue, "")
+	return issue, t, err
+}
+
+// runRecord is the record a run starts on: recordAt, or — when the tracker
+// cannot be read (down, rate-limited, nothing cached) — the record already
+// last seen under key, so a tracker problem never stops a run on an issue
+// Apothecary already knows; the engine starts it from the record as last
+// seen. Only an issue with no record needs the tracker.
+func (s *Server) runRecord(ctx context.Context, ws workshop, key string) (confstore.Ticket, error) {
+	_, t, err := s.recordAt(ctx, ws, key)
+	if err == nil || ws.internal() {
+		return t, err
+	}
+	rec, found, ferr := s.Conf.TicketBySourceKey(ctx, ws.source.ID, key)
+	if ferr != nil || !found {
+		return t, err
+	}
+	s.Log.Warn("ticket run: tracker unread, starting from the record", "integration", ws.source.ID, "key", key, "ticket", rec.ID, "err", err)
+	return rec, nil
+}
+
+// ticketRows renders a page's rows: change types through the source's type
+// list, and each record's active run.
+func (s *Server) ticketRows(ctx context.Context, ws workshop, rows []tickets.LiveRow) ([]TicketRow, error) {
+	changeTypes := map[string]trackerport.ChangeType{}
+	if !ws.internal() && len(rows) > 0 {
+		// A type list that cannot be read now leaves each row to its record
+		// or a guess from its type's name: the list still shows.
+		types, err := s.Live.Types(ctx, ws.source.ID, false)
+		if err != nil {
+			s.Log.Warn("ticket source types", "integration", ws.source.ID, "err", err)
+		}
+		for _, ty := range types {
+			changeTypes[ty.RemoteID] = ty.ChangeType
+		}
+	}
+	var ids []string
+	for _, row := range rows {
+		if row.Record != nil {
+			ids = append(ids, row.Record.ID)
+		}
+	}
+	active, err := s.activeTicketRuns(ctx, ws.project.UserID, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TicketRow, len(rows))
+	for i, row := range rows {
+		is := row.Issue
+		out[i] = TicketRow{
+			Key: is.Key, RemoteID: is.RemoteID, Title: is.Title, Body: is.Body, URL: is.URL,
+			Status: is.Status, StatusID: is.StatusID, Done: is.Done, Type: is.Type, TypeID: is.TypeID,
+			Labels: is.Labels, Assignee: is.Assignee,
+		}
+		if out[i].Labels == nil {
+			out[i].Labels = []string{}
+		}
+		if !is.Updated.IsZero() {
+			at := is.Updated.UTC()
+			out[i].UpdatedAt = &at
+		}
+		typeID := strings.TrimSpace(is.TypeID)
+		if typeID == "" {
+			typeID = strings.TrimSpace(is.Type)
+		}
+		ct, listed := changeTypes[typeID]
+		switch {
+		case listed && !ws.internal():
+			out[i].ChangeType = ct
+		case row.Record != nil:
+			out[i].ChangeType = row.Record.ChangeType
+		default:
+			out[i].ChangeType = tickets.SourceChangeType(is)
+		}
+		if rec := row.Record; rec != nil {
+			out[i].TicketID, out[i].BaseBranch, out[i].ActiveRunID = rec.ID, rec.BaseBranch, active[rec.ID]
+		}
+	}
+	return out, nil
+}
+
+// activeTicketRuns is the active run of each of the records, by record id:
+// one read of the owner's runs. A record's runs are its owner's, in whichever
+// workshop on its source they started.
+func (s *Server) activeTicketRuns(ctx context.Context, owner string, ticketIDs []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(ticketIDs) == 0 {
+		return out, nil
+	}
+	want := make(map[string]bool, len(ticketIDs))
+	for _, id := range ticketIDs {
+		want[id] = true
+	}
+	views, err := (&run.Reader{Store: s.Store}).List(ctx, run.ListFilter{UserID: owner})
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range views {
+		if want[v.TicketID] && !v.State.Terminal() && out[v.TicketID] == "" {
+			out[v.TicketID] = v.RunID
+		}
+	}
+	return out, nil
 }
 
 // ticketAttachmentIDs lists the ids claimed by a ticket (for responses and
 // run starts). Empty slice, never nil.
-func (s *Server) ticketAttachmentIDs(r *http.Request, ticketID string) []string {
+func (s *Server) ticketAttachmentIDs(ctx context.Context, ticketID string) []string {
 	ids := []string{}
 	if s.Attachments == nil {
 		return ids
 	}
-	atts, err := s.Attachments.ForTicket(r.Context(), ticketID)
+	atts, err := s.Attachments.ForTicket(ctx, ticketID)
 	if err != nil {
 		s.Log.Warn("ticket attachments", "ticket", ticketID, "err", err)
 		return ids
@@ -79,281 +335,249 @@ func (s *Server) ticketAttachmentIDs(r *http.Request, ticketID string) []string 
 	return ids
 }
 
-// tickets builds the ticket factory from the server's collaborators: the one
-// path a ticket is created through, hand-written or imported.
-func (s *Server) tickets() *tickets.Factory {
-	return &tickets.Factory{
-		Conf: s.Conf, Attachments: s.Attachments, Sources: s.Sources, Log: s.Log,
-	}
-}
-
-// listTickets is one's tickets, status and type resolved. ?project= keeps one
-// project's; ?done=1 keeps those in a Done status, ?done=0 the others (a
-// ticket not synced yet has no status, and is not done).
-func (s *Server) listTickets(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.Conf.ListTickets(r.Context(), auth.UserID(r.Context()))
+// ticketDetail is the one-ticket response.
+func (s *Server) ticketDetail(ctx context.Context, ws workshop, issue trackerport.SourceTicket, rec *confstore.Ticket) (TicketDetail, error) {
+	rows, err := s.ticketRows(ctx, ws, []tickets.LiveRow{{Issue: issue, Record: rec}})
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+		return TicketDetail{}, err
 	}
-	// Optional ?project= filter, mirroring the runs list.
-	if pid := r.URL.Query().Get("project"); pid != "" {
-		filtered := rows[:0]
-		for _, t := range rows {
-			if t.ProjectID == pid {
-				filtered = append(filtered, t)
-			}
-		}
-		rows = filtered
+	out := TicketDetail{TicketRow: rows[0], Source: ws.sourceRef(), Internal: ws.internal(),
+		AttachmentIDs: []string{}, Links: []confstore.TicketLink{}}
+	if rec == nil {
+		return out, nil
 	}
-	views, err := s.ticketViews(r.Context(), rows)
-	if err != nil {
-		confErr(w, err)
-		return
-	}
-	if done := r.URL.Query().Get("done"); done == "0" || done == "1" {
-		filtered := views[:0]
-		for _, v := range views {
-			if (v.Status != nil && v.Status.IsDone) == (done == "1") {
-				filtered = append(filtered, v)
-			}
-		}
-		views = filtered
-	}
-	writeJSON(w, http.StatusOK, views)
-}
-
-// createTicket creates a ticket from scratch or, with {source_id, source_key},
-// imports one from a tracker (title/goal/attachments copied over). Both go
-// through the same factory, so the resulting ticket is the same kind of thing.
-func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
-	var body ticketBody
-	if !readJSON(w, r, &body) {
-		return
-	}
-	if body.Branch != "" {
-		if err := checkout.CheckBranch(body.Branch); err != nil {
-			writeErr(w, http.StatusBadRequest, fmt.Sprintf("branch %q: %v", body.Branch, err))
-			return
-		}
-	}
-	// The project is in the body, so the guard could not check it: a
-	// ticket lands only in one of the caller's own projects.
-	if !s.ownsProject(w, r, body.ProjectID) {
-		return
-	}
-	if body.SourceID != "" || body.SourceKey != "" {
-		s.importTicket(w, r, body)
-		return
-	}
-	t, err := s.tickets().Create(r.Context(), body.toTicket(), body.AttachmentIDs)
-	if err != nil {
-		confErr(w, err)
-		return
-	}
-	s.writeTicket(w, r, http.StatusCreated, t, nil)
-}
-
-func (s *Server) importTicket(w http.ResponseWriter, r *http.Request, body ticketBody) {
-	if body.SourceID == "" || body.SourceKey == "" {
-		writeErr(w, http.StatusBadRequest, "importing a ticket needs both source_id and source_key")
-		return
-	}
-	if !s.ownsIntegration(w, r, body.SourceID) {
-		return
-	}
-	t, warnings, err := s.tickets().CreateFromSource(r.Context(), body.SourceID, body.SourceKey, body.toTicket(), body.AttachmentIDs)
-	switch {
-	case errors.Is(err, tickets.ErrNoSources):
-		writeErr(w, http.StatusServiceUnavailable, err.Error())
-	case errors.Is(err, tickets.ErrDuplicate):
-		writeErr(w, http.StatusConflict, err.Error())
-	case errors.Is(err, confstore.ErrNotFound), errors.Is(err, confstore.ErrInvalid),
-		errors.Is(err, resolution.ErrUnresolvable):
-		confErr(w, err)
-	case err != nil:
-		// The tracker itself failed (unreachable, bad credentials, no such
-		// issue) — an upstream problem, not a bad request.
-		writeErr(w, http.StatusBadGateway, err.Error())
-	default:
-		s.writeTicket(w, r, http.StatusCreated, t, warnings)
-	}
-}
-
-// --- ticket sources (import picker) -----------------------------------------
-
-// sourceTicketJSON is one tracker issue as the picker renders it. Attachments
-// are counted rather than listed in search results (the tracker's list
-// endpoint doesn't carry them); the single-issue route has the real list.
-type sourceTicketJSON struct {
-	Key         string                 `json:"key"`
-	Title       string                 `json:"title"`
-	Body        string                 `json:"body,omitempty"`
-	URL         string                 `json:"url,omitempty"`
-	Status      string                 `json:"status,omitempty"`
-	Type        string                 `json:"type,omitempty"`
-	Assignee    string                 `json:"assignee,omitempty"`
-	Updated     string                 `json:"updated,omitempty"`
-	Attachments []sourceAttachmentJSON `json:"attachments,omitempty"`
-	// ChangeType is what an import makes of this issue — the ticket's change
-	// type — for the form to prefill. The form names the branch itself, by
-	// the workshop's branch format, which this integration-level view knows
-	// nothing of.
-	ChangeType trackerport.ChangeType `json:"change_type"`
-}
-
-type sourceAttachmentJSON struct {
-	Filename string `json:"filename"`
-	Mime     string `json:"mime,omitempty"`
-	Size     int64  `json:"size,omitempty"`
-}
-
-func toSourceTicketJSON(t trackerport.SourceTicket) sourceTicketJSON {
-	out := sourceTicketJSON{
-		Key: t.Key, Title: t.Title, Body: t.Body, URL: t.URL,
-		Status: t.Status, Type: t.Type, Assignee: t.Assignee,
-		ChangeType: tickets.SourceChangeType(t),
-	}
-	if !t.Updated.IsZero() {
-		out.Updated = t.Updated.UTC().Format(time.RFC3339)
-	}
-	for _, a := range t.Attachments {
-		out.Attachments = append(out.Attachments, sourceAttachmentJSON{
-			Filename: a.Filename, Mime: a.Mime, Size: a.Size,
-		})
-	}
-	return out
-}
-
-// searchSourceTickets serves the picker: GET /api/integrations/{id}/tickets?q=
-func (s *Server) searchSourceTickets(w http.ResponseWriter, r *http.Request) {
-	limit := 25
-	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 {
-		limit = n
-	}
-	found, err := s.tickets().Search(r.Context(), r.PathValue("id"), r.URL.Query().Get("q"), limit)
-	if err != nil {
-		sourceErr(w, err)
-		return
-	}
-	out := make([]sourceTicketJSON, 0, len(found))
-	for _, t := range found {
-		out = append(out, toSourceTicketJSON(t))
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-// getSourceTicket previews one issue (with its attachment list) so the ticket
-// form can prefill and say what an import will copy.
-func (s *Server) getSourceTicket(w http.ResponseWriter, r *http.Request) {
-	t, err := s.tickets().Fetch(r.Context(), r.PathValue("id"), r.PathValue("key"))
-	if err != nil {
-		sourceErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, toSourceTicketJSON(t))
-}
-
-// sourceErr separates "this deployment can't do that" and "you asked for
-// something that isn't there" from "the tracker answered badly" (502) — the
-// last is the tracker's fault and says so.
-func sourceErr(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, tickets.ErrNoSources):
-		writeErr(w, http.StatusServiceUnavailable, err.Error())
-	case errors.Is(err, confstore.ErrNotFound), errors.Is(err, confstore.ErrInvalid),
-		errors.Is(err, resolution.ErrUnresolvable):
-		confErr(w, err)
-	default:
-		writeErr(w, http.StatusBadGateway, err.Error())
-	}
-}
-
-// getTicketArtifacts lists a ticket's attachments (uploaded by hand or copied
-// from the tracker) so both the ticket page and the edit form can show what
-// is actually attached. Metadata only — bytes come from the byte route. The
-// rows ARE the link now (attachments.ticket_id), so this is one query.
-func (s *Server) getTicketAttachments(w http.ResponseWriter, r *http.Request) {
-	t, err := s.Conf.GetTicket(r.Context(), r.PathValue("id"))
-	if err != nil {
-		confErr(w, err)
-		return
-	}
-	out := []filestore.Attachment{}
-	if s.Attachments != nil {
-		atts, err := s.Attachments.ForTicket(r.Context(), t.ID)
+	out.AttachmentIDs = s.ticketAttachmentIDs(ctx, rec.ID)
+	if ws.internal() {
+		links, err := s.Conf.TicketLinks(ctx, rec.ID)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
+			return TicketDetail{}, err
 		}
-		out = append(out, atts...)
+		if links != nil {
+			out.Links = links
+		}
 	}
-	writeJSON(w, http.StatusOK, AttachmentList{Attachments: out})
+	return out, nil
 }
 
-func (s *Server) getTicket(w http.ResponseWriter, r *http.Request) {
-	t, err := s.Conf.GetTicket(r.Context(), r.PathValue("id"))
+func (s *Server) writeDetail(w http.ResponseWriter, r *http.Request, status int, ws workshop, issue trackerport.SourceTicket, rec *confstore.Ticket) {
+	d, err := s.ticketDetail(r.Context(), ws, issue, rec)
 	if err != nil {
 		confErr(w, err)
 		return
 	}
-	s.writeTicket(w, r, http.StatusOK, t, nil)
+	writeJSON(w, status, d)
 }
 
-func (s *Server) updateTicket(w http.ResponseWriter, r *http.Request) {
+// writeTicketAt answers with the issue at key as it reads now.
+func (s *Server) writeTicketAt(w http.ResponseWriter, r *http.Request, status int, ws workshop, key string) {
+	issue, rec, err := s.issueAt(r.Context(), ws, key, false)
+	if err != nil {
+		ws.fail(w, err)
+		return
+	}
+	s.writeDetail(w, r, status, ws, issue, s.seen(r.Context(), ws, issue, rec))
+}
+
+// seen writes what the issue shows now to its record (its last-seen
+// columns), when it has one: a read, or the reread after a write, keeps the
+// record current. A failure is logged and the record answered as it was.
+func (s *Server) seen(ctx context.Context, ws workshop, issue trackerport.SourceTicket, rec *confstore.Ticket) *confstore.Ticket {
+	if rec == nil || ws.internal() {
+		return rec
+	}
+	t, err := s.tickets().Seen(ctx, rec.ID, issue)
+	if err != nil {
+		s.Log.Warn("ticket record: last seen", "ticket", rec.ID, "err", err)
+		return rec
+	}
+	return &t
+}
+
+// listWorkshopTickets is one page of the workshop's source, live.
+func (s *Server) listWorkshopTickets(w http.ResponseWriter, r *http.Request) {
+	ws, ok := s.workshop(w, r)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	sq := trackerport.SearchQuery{Text: q.Get("q"), Done: trackerport.DoneOpen, Cursor: q.Get("cursor")}
+	switch q.Get("done") {
+	case "", "open":
+	case "done":
+		sq.Done = trackerport.DoneOnly
+	case "any":
+		sq.Done = trackerport.DoneAny
+	default:
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("done %q: open, done or any", q.Get("done")))
+		return
+	}
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("limit %q: a positive number", v))
+			return
+		}
+		sq.Limit = n
+	}
+	page, err := s.Live.List(r.Context(), ws.source.ID, sq, q.Get("refresh") == "1")
+	if err != nil {
+		ws.fail(w, err)
+		return
+	}
+	rows, err := s.ticketRows(r.Context(), ws, page.Rows)
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, TicketPage{Tickets: rows, Next: page.Next})
+}
+
+// checkBaseBranch refuses a base branch git would refuse.
+func checkBaseBranch(w http.ResponseWriter, branch string) bool {
+	if branch == "" {
+		return true
+	}
+	if err := checkout.CheckBranch(branch); err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("base branch %q: %v", branch, err))
+		return false
+	}
+	return true
+}
+
+// notInternal refuses a write only the internal tracker takes.
+func notInternal(w http.ResponseWriter, ws workshop, what string) {
+	writeErr(w, http.StatusBadRequest, fmt.Sprintf("workshop %s reads its tickets from %s (%s): %s there",
+		ws.project.Name, ws.source.Name, ws.source.Kind, what))
+}
+
+// createWorkshopTicket writes a ticket on the workshop's internal tracker
+// and claims its uploads for the ticket.
+func (s *Server) createWorkshopTicket(w http.ResponseWriter, r *http.Request) {
 	var body ticketBody
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if body.Branch != "" {
-		if err := checkout.CheckBranch(body.Branch); err != nil {
-			writeErr(w, http.StatusBadRequest, fmt.Sprintf("branch %q: %v", body.Branch, err))
-			return
-		}
-	}
-	// The project is in the body here too, and it decides the ticket's owner.
-	if !s.ownsProject(w, r, body.ProjectID) {
+	ws, ok := s.workshop(w, r)
+	if !ok || !checkBaseBranch(w, body.BaseBranch) {
 		return
 	}
-	// The factory claims any newly-attached uploads; provenance (source_*) is
-	// preserved by the store, so an edit never disowns an imported ticket. On
-	// a ticket mirroring a remote issue, a change to what its tracker owns
-	// (title, goal, change type) is refused with 409.
-	t, err := s.tickets().Update(r.Context(), r.PathValue("id"), body.toTicket(), body.AttachmentIDs)
+	if !ws.internal() {
+		notInternal(w, ws, "a ticket is created")
+		return
+	}
+	t, err := s.tickets().Create(r.Context(), confstore.Ticket{
+		UserID: ws.project.UserID, Title: body.Title, Goal: body.Goal, BaseBranch: body.BaseBranch,
+		ChangeType: trackerport.ChangeType(body.ChangeType), StatusID: body.StatusID, TypeID: body.TypeID, Labels: body.Labels,
+	}, body.AttachmentIDs)
 	if err != nil {
 		confErr(w, err)
 		return
 	}
-	s.writeTicket(w, r, http.StatusOK, t, nil)
+	s.writeTicketAt(w, r, http.StatusCreated, ws, t.ID)
 }
 
-// deleteTicket routes through the factory so the ticket's attachments go
-// with it — the fix for the old leak (DESIGN-FILES §12 #3).
-func (s *Server) deleteTicket(w http.ResponseWriter, r *http.Request) {
-	if err := s.tickets().Delete(r.Context(), r.PathValue("id")); err != nil {
+// getWorkshopTicket is one issue, live, with its record; a record takes
+// what the issue shows now (its last-seen columns).
+func (s *Server) getWorkshopTicket(w http.ResponseWriter, r *http.Request) {
+	ws, ok := s.workshop(w, r)
+	if !ok {
+		return
+	}
+	issue, rec, err := s.issueAt(r.Context(), ws, r.PathValue("key"), r.URL.Query().Get("refresh") == "1")
+	if err != nil {
+		ws.fail(w, err)
+		return
+	}
+	s.writeDetail(w, r, http.StatusOK, ws, issue, s.seen(r.Context(), ws, issue, rec))
+}
+
+// updateWorkshopTicket edits an internal ticket, or sets a remote issue's
+// base branch — making its record when it has none.
+func (s *Server) updateWorkshopTicket(w http.ResponseWriter, r *http.Request) {
+	var body ticketBody
+	if !readJSON(w, r, &body) {
+		return
+	}
+	ws, ok := s.workshop(w, r)
+	if !ok || !checkBaseBranch(w, body.BaseBranch) {
+		return
+	}
+	ctx := r.Context()
+	if !ws.internal() {
+		_, rec, err := s.recordAt(ctx, ws, r.PathValue("key"))
+		if err != nil {
+			ws.fail(w, err)
+			return
+		}
+		if _, err := s.tickets().Update(ctx, rec.ID, confstore.Ticket{BaseBranch: body.BaseBranch}, nil); err != nil {
+			confErr(w, err)
+			return
+		}
+		s.writeTicketAt(w, r, http.StatusOK, ws, r.PathValue("key"))
+		return
+	}
+	_, rec, err := s.issueAt(ctx, ws, r.PathValue("key"), false)
+	if err != nil {
+		ws.fail(w, err)
+		return
+	}
+	// The factory claims any newly-attached uploads.
+	if _, err := s.tickets().Update(ctx, rec.ID, confstore.Ticket{
+		Title: body.Title, Goal: body.Goal, BaseBranch: body.BaseBranch,
+		ChangeType: trackerport.ChangeType(body.ChangeType), TypeID: body.TypeID,
+	}, body.AttachmentIDs); err != nil {
+		confErr(w, err)
+		return
+	}
+	s.writeTicketAt(w, r, http.StatusOK, ws, rec.ID)
+}
+
+// deleteWorkshopTicket deletes an internal ticket and its attachment rows.
+func (s *Server) deleteWorkshopTicket(w http.ResponseWriter, r *http.Request) {
+	ws, ok := s.workshop(w, r)
+	if !ok {
+		return
+	}
+	if !ws.internal() {
+		notInternal(w, ws, "a ticket is deleted")
+		return
+	}
+	_, rec, err := s.issueAt(r.Context(), ws, r.PathValue("key"), false)
+	if err != nil {
+		ws.fail(w, err)
+		return
+	}
+	if err := s.tickets().Delete(r.Context(), rec.ID); err != nil {
 		confErr(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// startTicketRun starts a new run (attempt) under a ticket. Everything in the
-// body is per-attempt and optional: {flow} overrides the project default,
-// while {goal, artifact_ids} add direction and files for THIS try on top of
-// the ticket's own (they never modify the ticket). The run derives its own
-// unique branch from the ticket's base branch. A ticket has one active run at
-// a time: 409 with run_id naming it while another is going (runStartErr).
-func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
-	t, err := s.Conf.GetTicket(r.Context(), r.PathValue("id"))
-	if err != nil {
-		confErr(w, err)
+// startWorkshopTicketRun starts a new run (attempt) on an issue of the
+// workshop's source, in this workshop, making its record first when it has
+// none. Everything in the body is per-attempt and optional: {flow} overrides
+// the workshop's default, while {goal, attachment_ids} add direction and
+// files for THIS try on top of the ticket's own. The engine reads the
+// ticket now at the start and names the base branch by this workshop's
+// format unless the record has one. A ticket has one active run at a time,
+// across workshops: 409 with run_id naming it (runStartErr).
+func (s *Server) startWorkshopTicketRun(w http.ResponseWriter, r *http.Request) {
+	ws, ok := s.workshop(w, r)
+	if !ok {
 		return
 	}
-	// Body is optional (empty ⇒ project default flow, no direction).
+	// Body is optional (empty ⇒ workshop default flow, no direction).
 	var body StartRunRequest
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
 
-	runID, err := s.Runs.CreateRunWith(r.Context(), runinput.Ticket{
+	ctx := r.Context()
+	t, err := s.runRecord(ctx, ws, r.PathValue("key"))
+	if err != nil {
+		ws.fail(w, err)
+		return
+	}
+	in := runinput.Ticket{
 		TicketID:     t.ID,
 		Title:        t.Title,
 		Goal:         t.Goal,
@@ -364,18 +588,81 @@ func (s *Server) startTicketRun(w http.ResponseWriter, r *http.Request) {
 		// This attempt's own uploads bind to the run; the ticket's are shared
 		// by every run and only pinned here (run_created).
 		AttachmentIDs:       body.AttachmentIDs,
-		TicketAttachmentIDs: s.ticketAttachmentIDs(r, t.ID),
-		// Where the ticket came from, for the flow's tracker actions.
-		SourceID:   t.SourceID,
-		SourceKind: t.SourceKind,
-		SourceKey:  t.SourceKey,
-		SourceURL:  t.SourceURL,
-	}, body.Flow, t.ProjectID, runinput.Input{Params: body.Params, MR: body.MR, Skillsets: body.Skillsets})
+		TicketAttachmentIDs: s.ticketAttachmentIDs(ctx, t.ID),
+	}
+	if !t.Internal() {
+		// Where the issue lives, for the flow's tracker actions.
+		in.SourceID, in.SourceKind, in.SourceKey, in.SourceURL = t.SourceID, t.SourceKind, t.SourceKey, t.SourceURL
+	}
+	runID, err := s.Runs.CreateRunWith(ctx, in, body.Flow, ws.project.ID,
+		runinput.Input{Params: body.Params, MR: body.MR, Skillsets: body.Skillsets})
 	if err != nil {
 		runStartErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, RunRef{RunID: runID})
+}
+
+// getWorkshopTicketAttachments lists the record's files (none for a remote
+// issue without one) and the remote issue's own. Metadata only — bytes come
+// from the byte route.
+func (s *Server) getWorkshopTicketAttachments(w http.ResponseWriter, r *http.Request) {
+	ws, ok := s.workshop(w, r)
+	if !ok {
+		return
+	}
+	issue, rec, err := s.issueAt(r.Context(), ws, r.PathValue("key"), false)
+	if err != nil {
+		ws.fail(w, err)
+		return
+	}
+	out := TicketAttachments{Attachments: []filestore.Attachment{}, Remote: []RemoteAttachment{}}
+	if rec != nil && s.Attachments != nil {
+		atts, err := s.Attachments.ForTicket(r.Context(), rec.ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		out.Attachments = append(out.Attachments, atts...)
+	}
+	if !ws.internal() {
+		for _, a := range issue.Attachments {
+			out.Remote = append(out.Remote, RemoteAttachment{Filename: a.Filename, Mime: a.Mime, Size: a.Size})
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// getTicketRecord is a record by id, for links from runs: the UI opens it in
+// a workshop on its source.
+func (s *Server) getTicketRecord(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	t, err := s.Conf.GetTicket(ctx, r.PathValue("id"))
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	out := TicketRecord{Ticket: t, Key: t.TrackerKey(), Workshops: []WorkshopRef{}}
+	in, err := s.Conf.GetIntegration(ctx, t.SourceID)
+	switch {
+	case errors.Is(err, confstore.ErrNotFound):
+	case err != nil:
+		confErr(w, err)
+		return
+	default:
+		out.Source = &TicketSourceRef{ID: in.ID, Kind: in.Kind, Name: in.Name}
+	}
+	projects, err := s.Conf.ListProjects(ctx, t.UserID)
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	for _, p := range projects {
+		if p.TicketSourceID == t.SourceID {
+			out.Workshops = append(out.Workshops, WorkshopRef{ID: p.ID, Name: p.Name})
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // runBusy is a start refused for a run in the way: a work item's active
@@ -401,58 +688,71 @@ func runStartErr(w http.ResponseWriter, err error) {
 	}
 }
 
-// ticketRoutes is tickets.
+// ticketRoutes is a workshop's tickets, and a ticket record by id.
 func (s *Server) ticketRoutes() []Route {
+	const one = "/api/projects/{id}/tickets/{key}"
+	refresh := Param{Name: "refresh", Doc: "1 = read the tracker now rather than the cached copy", Enum: []string{"1"}}
 	return []Route{
-		{Method: "GET", Path: "/api/tickets", ID: "listTickets", Tag: tagTickets,
-			Summary: "One's tickets",
+		{Method: "GET", Path: "/api/projects/{id}/tickets", ID: "listWorkshopTickets", Tag: tagTickets,
+			Summary: "One page of a workshop's tickets, read live from its ticket source",
+			Doc: "Each row carries its local record's id, base branch and active run (in any workshop) when the issue has a record. " +
+				"A tracker holding off for its rate limit with nothing cached is 503 with Retry-After.",
 			Query: []Param{
-				{Name: "project", Doc: "only tickets of this project"},
-				{Name: "done", Doc: "1 = only tickets in a Done status, 0 = only the others (default: all)", Enum: []string{"0", "1"}},
+				{Name: "q", Doc: "free-text query"},
+				{Name: "done", Doc: "open (default), done or any", Enum: []string{"open", "done", "any"}},
+				{Name: "cursor", Doc: "the previous page's next"},
+				{Name: "limit", Doc: "page size (default: the tracker's)", Type: "integer"},
+				refresh,
 			},
-			Handler: s.listTickets, Returns: []TicketView{}, Enabled: haveConf},
-		{Method: "POST", Path: "/api/tickets", ID: "createTicket", Tag: tagTickets,
-			Summary: "Create a ticket",
-			Handler: s.createTicket, Body: ticketBody{}, Returns: ticketResp{},
-			Status: http.StatusCreated, Enabled: haveConf},
-		{Method: "GET", Path: "/api/tickets/{id}", ID: "getTicket", Tag: tagTickets,
-			Summary: "One ticket", Handler: s.getTicket, Returns: ticketResp{}, Enabled: haveConf, Scope: ScopeTicket},
-		{Method: "PUT", Path: "/api/tickets/{id}", ID: "updateTicket", Tag: tagTickets,
-			Summary: "Replace a ticket",
-			Doc:     "On a ticket mirroring a remote issue, changing what its tracker owns (title, goal, change type) is refused with 409.",
-			Handler: s.updateTicket, Body: ticketBody{}, Returns: ticketResp{}, Enabled: haveConf, Scope: ScopeTicket},
-		{Method: "DELETE", Path: "/api/tickets/{id}", ID: "deleteTicket", Tag: tagTickets,
-			Summary: "Delete a ticket", Handler: s.deleteTicket, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeTicket},
-		{Method: "GET", Path: "/api/tickets/{id}/attachments", ID: "getTicketAttachments", Tag: tagTickets,
-			Summary: "Files attached to a ticket",
-			Handler: s.getTicketAttachments, Returns: AttachmentList{}, Enabled: haveConf, Scope: ScopeTicket},
-		{Method: "POST", Path: "/api/tickets/{id}/runs", ID: "startTicketRun", Tag: tagTickets,
-			Summary: "Start one attempt on a ticket",
-			Doc:     "A ticket has at most one active (non-terminal) run: while one is going the start is refused with 409, the error's run_id naming it.",
-			Handler: s.startTicketRun, Body: StartRunRequest{}, Returns: RunRef{},
-			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeTicket},
-		{Method: "POST", Path: "/api/tickets/{id}/sync", ID: "syncTicket", Tag: tagTickets,
-			Summary: "Re-read a ticket from its remote tracker",
-			Doc: "Done or not. A tracker that cannot be read is recorded on the ticket (sync_state error, sync_error), which the answer carries; " +
-				"a ticket with no source is answered as it is.",
-			Handler: s.syncTicket, Returns: ticketResp{}, Enabled: haveConf, Scope: ScopeTicket},
-		{Method: "POST", Path: "/api/tickets/{id}/status", ID: "setTicketStatus", Tag: tagTickets,
-			Summary: "Move a ticket to one of its tracker's statuses",
-			Doc: "Through the ticket's tracker: the remote issue (then the mirror is refreshed), else the internal tracker. " +
-				"A status not in the tracker's list is 400; one the issue cannot reach from where it is 409; the remote failing 502.",
-			Handler: s.setTicketStatus, Body: TicketStatusRequest{}, Returns: ticketResp{}, Enabled: haveConf, Scope: ScopeTicket},
-		{Method: "PUT", Path: "/api/tickets/{id}/labels", ID: "setTicketLabels", Tag: tagTickets,
-			Summary: "Replace a ticket's labels",
-			Doc:     "Through the ticket's tracker, like the status.",
-			Handler: s.setTicketLabels, Body: TicketLabelsRequest{}, Returns: ticketResp{}, Enabled: haveConf, Scope: ScopeTicket},
-		{Method: "GET", Path: "/api/tickets/{id}/comments", ID: "listTicketComments", Tag: tagTickets,
+			Handler: s.listWorkshopTickets, Returns: TicketPage{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "POST", Path: "/api/projects/{id}/tickets", ID: "createWorkshopTicket", Tag: tagTickets,
+			Summary: "Create a ticket on a workshop's internal tracker",
+			Doc:     "A workshop reading a remote tracker creates its tickets there (400).",
+			Handler: s.createWorkshopTicket, Body: ticketBody{}, Returns: TicketDetail{},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: one, ID: "getWorkshopTicket", Tag: tagTickets,
+			Summary: "One ticket of a workshop's source, by its key",
+			Doc:     "Read live; a record takes what the issue shows now. An issue the tracker does not have is 404.",
+			Query:   []Param{refresh},
+			Handler: s.getWorkshopTicket, Returns: TicketDetail{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "PUT", Path: one, ID: "updateWorkshopTicket", Tag: tagTickets,
+			Summary: "Edit a ticket",
+			Doc: "An internal ticket takes title, goal, base_branch, change_type, type_id and attachment_ids. " +
+				"A remote issue takes base_branch only (the rest is its tracker's), its record made when it has none.",
+			Handler: s.updateWorkshopTicket, Body: ticketBody{}, Returns: TicketDetail{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "DELETE", Path: one, ID: "deleteWorkshopTicket", Tag: tagTickets,
+			Summary: "Delete an internal ticket",
+			Doc:     "A remote issue is its tracker's (400).",
+			Handler: s.deleteWorkshopTicket, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: one + "/attachments", ID: "getWorkshopTicketAttachments", Tag: tagTickets,
+			Summary: "Files of a ticket: its record's, and the remote issue's",
+			Handler: s.getWorkshopTicketAttachments, Returns: TicketAttachments{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "POST", Path: one + "/runs", ID: "startWorkshopTicketRun", Tag: tagTickets,
+			Summary: "Start one attempt on a ticket, in this workshop",
+			Doc: "The issue's record is made first when it has none; an issue that has one starts from it even while its tracker cannot be read. " +
+				"A ticket has at most one active (non-terminal) run across workshops: while one is going the start is refused with 409, the error's run_id naming it.",
+			Handler: s.startWorkshopTicketRun, Body: StartRunRequest{}, Returns: RunRef{},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "POST", Path: one + "/status", ID: "setWorkshopTicketStatus", Tag: tagTickets,
+			Summary: "Move a ticket to a status of its tracker, by name",
+			Doc:     "A status the issue cannot reach is 400, naming those it can; the remote tracker failing 502.",
+			Handler: s.setTicketStatus, Body: TicketStatusRequest{}, Returns: TicketDetail{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "PUT", Path: one + "/labels", ID: "setWorkshopTicketLabels", Tag: tagTickets,
+			Summary: "Replace a ticket's labels on its tracker",
+			Handler: s.setTicketLabels, Body: TicketLabelsRequest{}, Returns: TicketDetail{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: one + "/comments", ID: "listWorkshopTicketComments", Tag: tagTickets,
 			Summary: "A ticket's comments, oldest first",
-			Handler: s.listTicketComments, Returns: []confstore.TicketComment{}, Enabled: haveConf, Scope: ScopeTicket},
-		{Method: "POST", Path: "/api/tickets/{id}/comments", ID: "addTicketComment", Tag: tagTickets,
-			Summary: "Comment on a ticket",
-			Doc: "Through the ticket's tracker, like the status: on a remote issue the comment comes back with the refresh (origin remote), " +
-				"on the internal tracker it is the person's (origin user). Answers with the ticket's comments.",
-			Handler: s.addTicketComment, Body: TicketCommentRequest{}, Returns: []confstore.TicketComment{},
-			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeTicket},
+			Doc:     "A remote issue's are read live.",
+			Query:   []Param{refresh},
+			Handler: s.listTicketComments, Returns: []TicketComment{}, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "POST", Path: one + "/comments", ID: "addWorkshopTicketComment", Tag: tagTickets,
+			Summary: "Comment on a ticket, on its tracker",
+			Doc:     "Answers with the ticket's comments.",
+			Handler: s.addTicketComment, Body: TicketCommentRequest{}, Returns: []TicketComment{},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject},
+		{Method: "GET", Path: "/api/tickets/{id}", ID: "getTicketRecord", Tag: tagTickets,
+			Summary: "A ticket record by id, for links from runs",
+			Doc:     "With the key it is opened by, its source (absent once the integration is deleted) and the workshops that read that source.",
+			Handler: s.getTicketRecord, Returns: TicketRecord{}, Enabled: haveConf, Scope: ScopeTicket},
 	}
 }

@@ -1,16 +1,17 @@
 package gitlab
 
-// Issues adapts the ticketsource port — read side for the import picker and
-// the sync, write side (trackerport.TicketWriter) for a flow's tracker
-// actions — to GitLab issues, reusing the repository host adapter's
-// authenticated client. GitLab is moving issues onto its "work items"
-// framework, whose own API is GraphQL; the REST issues API still serves
-// every issue-type work item (issues, incidents, tasks, test cases — the
-// integration's type list) and is what the rest of this package speaks, so
-// it is what this speaks too. An issue's key is GitLab's own full reference,
-// "group/project#123": an iid is only unique within its project. An issue is
-// opened or closed (the integration's whole status list) and has no custom
-// fields; what the write port cannot express is refused by name.
+// Issues adapts the ticketsource port — read side for a workshop's live
+// ticket list and the import picker, write side (trackerport.TicketWriter)
+// for a flow's tracker actions — to GitLab issues, reusing the repository
+// host adapter's authenticated client. GitLab is moving issues onto its
+// "work items" framework, whose own API is GraphQL; the REST issues API
+// still serves every issue-type work item (issues, incidents, tasks, test
+// cases — the integration's type list) and is what the rest of this package
+// speaks, so it is what this speaks too. An issue's key is GitLab's own full
+// reference, "group/project#123": an iid is only unique within its project.
+// An issue is opened or closed (the integration's whole status list) and
+// has no custom fields; what the write port cannot express is refused by
+// name.
 
 import (
 	"context"
@@ -157,6 +158,7 @@ func (s *Issues) toTicket(in issueJSON, project string) trackerport.SourceTicket
 		URL:      in.WebURL,
 		Status:   in.State,
 		StatusID: in.State,
+		Done:     in.State == "closed",
 		Type:     typ.Name,
 		TypeID:   typ.ID,
 		Labels:   in.Labels,
@@ -231,22 +233,45 @@ func (s *Issues) uploads(body string, projectID int) (string, []trackerport.Sour
 	return body, out
 }
 
-// Search lists issues over the configured projects and groups: an issue key
-// looks the issue up directly, empty means "open and assigned to me",
-// anything else is a text search with a few GitLab-style filters lifted out
-// (searchParams).
-func (s *Issues) Search(ctx context.Context, query string, limit int) ([]trackerport.SourceTicket, error) {
+// Search lists one page (the cursor is the page number) of issues over the
+// configured projects and groups: an issue key looks the issue up directly,
+// empty means "assigned to me", anything else is a text search with a few
+// GitLab-style filters lifted out (searchParams); the done filter is the
+// state. Each scope serves its own page of up to the limit, merged most
+// recently updated first, so a page over several scopes holds up to that
+// many from each and nothing is skipped.
+func (s *Issues) Search(ctx context.Context, q trackerport.SearchQuery) (trackerport.SearchPage, error) {
+	limit := q.Limit
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
-	query = strings.TrimSpace(query)
-	if issueKeyRe.MatchString(query) {
+	page := 1
+	if q.Cursor != "" {
+		n, err := strconv.Atoi(q.Cursor)
+		if err != nil || n < 1 {
+			return trackerport.SearchPage{}, fmt.Errorf("gitlab: bad search cursor %q", q.Cursor)
+		}
+		page = n
+	}
+	query := strings.TrimSpace(q.Text)
+	if issueKeyRe.MatchString(query) && page == 1 {
 		if t, err := s.Fetch(ctx, query); err == nil {
-			return []trackerport.SourceTicket{t}, nil
+			var out trackerport.SearchPage
+			if q.Done == trackerport.DoneAny || (q.Done == trackerport.DoneOnly) == t.Done {
+				out.Tickets = []trackerport.SourceTicket{t}
+			}
+			return out, nil
 		}
 	}
 	params := searchParams(query)
+	switch q.Done {
+	case trackerport.DoneOpen:
+		params.Set("state", "opened")
+	case trackerport.DoneOnly:
+		params.Set("state", "closed")
+	}
 	params.Set("per_page", strconv.Itoa(limit))
+	params.Set("page", strconv.Itoa(page))
 	var scopes []string
 	for _, p := range s.projects {
 		scopes = append(scopes, projectPath(p)+"/issues")
@@ -258,25 +283,27 @@ func (s *Issues) Search(ctx context.Context, query string, limit int) ([]tracker
 		scopes = []string{"/issues"}
 	}
 	seen := map[string]bool{}
-	var tickets []trackerport.SourceTicket
+	var out trackerport.SearchPage
+	more := false
 	for _, scope := range scopes {
 		var rows []issueJSON
 		if _, err := s.a.api(ctx, http.MethodGet, scope+"?"+params.Encode(), nil, &rows); err != nil {
-			return nil, err
+			return trackerport.SearchPage{}, err
 		}
+		more = more || len(rows) == limit
 		for _, it := range rows {
 			t := s.toTicket(it, "")
 			if !seen[t.Key] {
 				seen[t.Key] = true
-				tickets = append(tickets, t)
+				out.Tickets = append(out.Tickets, t)
 			}
 		}
 	}
-	sort.SliceStable(tickets, func(i, j int) bool { return tickets[i].Updated.After(tickets[j].Updated) })
-	if len(tickets) > limit {
-		tickets = tickets[:limit]
+	sort.SliceStable(out.Tickets, func(i, j int) bool { return out.Tickets[i].Updated.After(out.Tickets[j].Updated) })
+	if more {
+		out.Next = strconv.Itoa(page + 1)
 	}
-	return tickets, nil
+	return out, nil
 }
 
 // searchParams turns the search box into the issues API's query: the words
@@ -287,7 +314,6 @@ func searchParams(query string) url.Values {
 	v := url.Values{"order_by": {"updated_at"}, "sort": {"desc"}, "scope": {"all"}}
 	if query == "" {
 		v.Set("scope", "assigned_to_me")
-		v.Set("state", "opened")
 		return v
 	}
 	var labels, text []string
@@ -364,49 +390,6 @@ func (s *Issues) Fetch(ctx context.Context, key string) (trackerport.SourceTicke
 		return trackerport.SourceTicket{}, err
 	}
 	return s.toTicket(it, project), nil
-}
-
-// fetchBatch is how many iids one FetchMany request names: a full page.
-const fetchBatch = 100
-
-// FetchMany re-reads issues one request per project and fetchBatch iids
-// (GET /projects/:id/issues?iids[]=…). An issue — or a whole project — GitLab
-// no longer has is left out of the result.
-func (s *Issues) FetchMany(ctx context.Context, keys []string) ([]trackerport.SourceTicket, error) {
-	var order []string
-	byProject := map[string][]int{}
-	for _, k := range keys {
-		project, iid, err := s.parseKey(k)
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := byProject[project]; !ok {
-			order = append(order, project)
-		}
-		byProject[project] = append(byProject[project], iid)
-	}
-	var out []trackerport.SourceTicket
-	for _, project := range order {
-		iids := byProject[project]
-		for start := 0; start < len(iids); start += fetchBatch {
-			v := url.Values{"per_page": {strconv.Itoa(fetchBatch)}, "scope": {"all"}, "state": {"all"}}
-			for _, iid := range iids[start:min(start+fetchBatch, len(iids))] {
-				v.Add("iids[]", strconv.Itoa(iid))
-			}
-			var rows []issueJSON
-			status, err := s.a.api(ctx, http.MethodGet, projectPath(project)+"/issues?"+v.Encode(), nil, &rows)
-			if status == http.StatusNotFound {
-				break
-			}
-			if err != nil {
-				return nil, err
-			}
-			for _, it := range rows {
-				out = append(out, s.toTicket(it, project))
-			}
-		}
-	}
-	return out, nil
 }
 
 // Statuses: an issue is opened or closed — that is the whole list.
@@ -721,5 +704,4 @@ var (
 	_ trackerport.TicketWriter   = (*Issues)(nil)
 	_ trackerport.TicketAttacher = (*Issues)(nil)
 	_ trackerport.TicketMetadata = (*Issues)(nil)
-	_ trackerport.TicketSyncer   = (*Issues)(nil)
 )

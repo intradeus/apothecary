@@ -17,6 +17,7 @@ import (
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/integrations"
 	"apothecary/internal/project/kinds"
+	"apothecary/internal/project/tickets"
 	"apothecary/internal/run/event"
 )
 
@@ -80,6 +81,9 @@ func newConfEnvWith(t *testing.T, opt func(*engine.Deps)) *confEnv {
 	srv.Conf = conf
 	srv.Kinds = reg
 	srv.Ops = resolver
+	// The ticket reads and writes as cmd/apothecaryd wires them.
+	resolver.Live = tickets.NewLive(conf, resolver)
+	srv.Sources, srv.Live, srv.Trackers = resolver, resolver.Live, resolver
 	x := &env{e: e, store: store, srv: srv, reg: chreg}
 	x.signIn(t)
 	x.ts = httptest.NewServer(srv.Handler())

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -68,26 +70,30 @@ func TestIssuesSearchAndFetch(t *testing.T) {
 	s := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok", Repos: []string{"lu/greeter"}})
 	ctx := context.Background()
 
-	got, err := s.Search(ctx, "router", 10)
+	got, err := s.Search(ctx, trackerport.SearchQuery{Text: "router", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Key != "lu/greeter#5" || got[0].Assignee != "lu" || got[0].Status != "open" {
+	if len(got.Tickets) != 1 || got.Tickets[0].Key != "lu/greeter#5" || got.Tickets[0].Assignee != "lu" || got.Tickets[0].Status != "open" || got.Tickets[0].Done {
 		t.Errorf("search = %+v (the pull request must be dropped)", got)
 	}
 	if (*queries)[0] != "is:issue repo:lu/greeter router" {
 		t.Errorf("query = %q", (*queries)[0])
 	}
-	if _, err := s.Search(ctx, "", 10); err != nil {
+	if _, err := s.Search(ctx, trackerport.SearchQuery{Done: trackerport.DoneOpen, Limit: 10}); err != nil {
 		t.Fatal(err)
 	}
 	if (*queries)[1] != "is:issue repo:lu/greeter state:open assignee:@me" {
 		t.Errorf("empty query = %q", (*queries)[1])
 	}
 	// A key looks the issue up directly; a bare number uses the one repo.
-	byKey, err := s.Search(ctx, "#5", 10)
-	if err != nil || len(byKey) != 1 || byKey[0].Key != "lu/greeter#5" {
+	byKey, err := s.Search(ctx, trackerport.SearchQuery{Text: "#5", Limit: 10})
+	if err != nil || len(byKey.Tickets) != 1 || byKey.Tickets[0].Key != "lu/greeter#5" {
 		t.Errorf("search by key = %+v, %v", byKey, err)
+	}
+	// ...and the done filter holds for it: issue 5 is open.
+	if closed, err := s.Search(ctx, trackerport.SearchQuery{Text: "#5", Done: trackerport.DoneOnly}); err != nil || len(closed.Tickets) != 0 {
+		t.Errorf("closed by key = %+v, %v", closed, err)
 	}
 	if len(*queries) != 2 {
 		t.Errorf("a key search still hit the search endpoint: %q", *queries)
@@ -137,8 +143,7 @@ func TestIssuesTransitionOpenClosedOnly(t *testing.T) {
 	}
 }
 
-// An issue's whole status list is open/closed, its type list one "issue"
-// (FetchMany: issues_fetchmany_test.go).
+// An issue's whole status list is open/closed, its type list one "issue".
 func TestIssuesMetadataAndComments(t *testing.T) {
 	srv, _, _ := issuesStub(t)
 	s := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok"})
@@ -228,5 +233,84 @@ func TestIssuesAttachUploadsForTheIssueRepository(t *testing.T) {
 	att, err := s.Attach(context.Background(), "lu/tracker#4", "home.png", "image/png", []byte("x"))
 	if err != nil || query != "99" || att.URL != "https://github.com/user-attachments/assets/1" {
 		t.Fatalf("att %+v err %v repository_id %q", att, err, query)
+	}
+}
+
+// Search pages by page number while GitHub has more, closed issues are
+// Done, and the 1000-result cap of the search API ends the paging.
+func TestIssuesSearchPagesAndFiltersDone(t *testing.T) {
+	var pages, queries []string
+	total := 5
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /search/issues", func(w http.ResponseWriter, r *http.Request) {
+		pages = append(pages, r.URL.Query().Get("page"))
+		queries = append(queries, r.URL.Query().Get("q"))
+		_, _ = fmt.Fprintf(w, `{"total_count":%d,"items":[{"number":1,"state":"closed","repository_url":"https://api.github.com/repos/lu/a"},{"number":2,"state":"closed","repository_url":"https://api.github.com/repos/lu/a"}]}`, total)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	s := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok", Repos: []string{"lu/a"}})
+	ctx := context.Background()
+
+	q := trackerport.SearchQuery{Text: "router", Done: trackerport.DoneOnly, Limit: 2}
+	first, err := s.Search(ctx, q)
+	if err != nil || len(first.Tickets) != 2 || !first.Tickets[0].Done || first.Next != "2" {
+		t.Fatalf("first = %+v, %v", first, err)
+	}
+	q.Cursor = first.Next
+	second, err := s.Search(ctx, q)
+	if err != nil || second.Next != "3" {
+		t.Fatalf("second = %+v, %v", second, err)
+	}
+	q.Cursor = second.Next
+	if third, err := s.Search(ctx, q); err != nil || third.Next != "" {
+		t.Fatalf("third (5 of 5 read) = %+v, %v", third, err)
+	}
+	if strings.Join(pages, ",") != "1,2,3" || queries[0] != "is:issue repo:lu/a state:closed router" {
+		t.Errorf("pages %v, query %q", pages, queries[0])
+	}
+
+	// GitHub serves no result past the thousandth, whatever total it reports.
+	total = 5000
+	if last, err := s.Search(ctx, trackerport.SearchQuery{Text: "x", Limit: 2, Cursor: "500"}); err != nil || last.Next != "" {
+		t.Errorf("at the cap = %+v, %v", last, err)
+	}
+	if _, err := s.Search(ctx, trackerport.SearchQuery{Cursor: "zero"}); err == nil {
+		t.Error("a cursor that is no page number was accepted")
+	}
+}
+
+// Rate limits come back typed with how long to wait: a 429's Retry-After, a
+// spent quota's reset time, GraphQL's RATE_LIMITED error.
+func TestIssuesRateLimited(t *testing.T) {
+	reset := strconv.FormatInt(time.Now().Add(90*time.Second).Unix(), 10)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/lu/greeter/issues/1", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	mux.HandleFunc("GET /repos/lu/greeter/issues/2", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Ratelimit-Remaining", "0")
+		w.Header().Set("X-Ratelimit-Reset", reset)
+		w.WriteHeader(http.StatusForbidden)
+	})
+	mux.HandleFunc("POST /graphql", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Ratelimit-Reset", reset)
+		_, _ = w.Write([]byte(`{"data":null,"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded"}]}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	s := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok"})
+	ctx := context.Background()
+
+	var rl *trackerport.ErrRateLimited
+	if _, err := s.Fetch(ctx, "lu/greeter#1"); !errors.As(err, &rl) || rl.RetryAfter != 2*time.Minute {
+		t.Errorf("429 = %v", err)
+	}
+	if _, err := s.Fetch(ctx, "lu/greeter#2"); !errors.As(err, &rl) || rl.RetryAfter < 80*time.Second || rl.RetryAfter > 90*time.Second {
+		t.Errorf("spent quota = %v (%+v)", err, rl)
+	}
+	if err := s.a.graphql(ctx, "query{viewer{login}}", nil, nil); !errors.As(err, &rl) || rl.RetryAfter < 80*time.Second || rl.RetryAfter > 90*time.Second {
+		t.Errorf("RATE_LIMITED = %v (%+v)", err, rl)
 	}
 }

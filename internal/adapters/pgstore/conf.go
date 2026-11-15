@@ -102,20 +102,20 @@ func (s *Store) ListIntegrations(ctx context.Context, userID string) ([]confstor
 	return out, rows.Err()
 }
 
+// DeleteIntegration refuses while a project uses the integration. A ticket
+// source no workshop uses goes with its lists; its tickets stay (runs point
+// at them, and tickets.source_id has no FK), losing only their type, in the
+// same transaction.
 func (s *Store) DeleteIntegration(ctx context.Context, id string) error {
-	return s.deleteIntegration(ctx, s.pool, id)
-}
-
-// deleteIntegration is DeleteIntegration on q: the pool, or a transaction
-// that unlinked the integration's tickets first (DeleteTicketSource).
-func (s *Store) deleteIntegration(ctx context.Context, q interface {
-	Query(context.Context, string, ...any) (pgx.Rows, error)
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, id string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var refs []string
-	rows, err := q.Query(ctx, `
+	rows, err := tx.Query(ctx, `
 		SELECT name FROM projects
-		WHERE repo_account_id=$1 OR provisioner_id=$1 OR harnesses ? $1
+		WHERE repo_account_id=$1 OR provisioner_id=$1 OR ticket_source_id=$1 OR harnesses ? $1
 		ORDER BY name`, id)
 	if err != nil {
 		return err
@@ -134,10 +134,16 @@ func (s *Store) deleteIntegration(ctx context.Context, q interface {
 	if len(refs) > 0 {
 		return fmt.Errorf("integration %s is used by project(s) %s: %w", id, strings.Join(refs, ", "), confstore.ErrReferenced)
 	}
-	tag, err := q.Exec(ctx, `DELETE FROM integrations WHERE id=$1`, id)
+	if _, err := tx.Exec(ctx, `
+		UPDATE tickets SET type_id=NULL
+		 WHERE type_id IN (SELECT y.id FROM tracker_types y WHERE y.integration_id=$1)`, id); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM integrations WHERE id=$1`, id)
 	if isFK(err) {
-		// Its statuses and types cascade, and a ticket still points at one.
-		return fmt.Errorf("integration %s: tickets still use its statuses or types: %w", id, confstore.ErrReferenced)
+		// A project took it meanwhile, or a ticket still holds one of its
+		// statuses (they cascade).
+		return fmt.Errorf("integration %s is still referenced by a project or a ticket's status: %w", id, confstore.ErrReferenced)
 	}
 	if err != nil {
 		return err
@@ -145,7 +151,7 @@ func (s *Store) deleteIntegration(ctx context.Context, q interface {
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("integration %s: %w", id, confstore.ErrNotFound)
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
@@ -188,21 +194,24 @@ func (s *Store) UpsertProject(ctx context.Context, p confstore.Project) error {
 	// The owner (user_id) is set at insert and never by an update.
 	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO projects (id, name, repo_account_id, provisioner_id,
-		                      repo, commands, workspace, default_flow, created_at, updated_at, harnesses, repos, user_id)
-		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$13,$14
+		                      repo, commands, workspace, default_flow, created_at, updated_at, harnesses, repos, user_id,
+		                      ticket_source_id)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$13,$14,$15
 		WHERE EXISTS (SELECT 1 FROM flows WHERE project_id=$1 AND name=$8) OR $8 = ANY($12)
 		ON CONFLICT (id) DO UPDATE SET
 			name=$2, repo_account_id=$3, provisioner_id=$4,
-			repo=$5, commands=$6, workspace=$7, default_flow=$8, updated_at=$10, harnesses=$11, repos=$13`,
+			repo=$5, commands=$6, workspace=$7, default_flow=$8, updated_at=$10, harnesses=$11, repos=$13,
+			ticket_source_id=$15`,
 		p.ID, p.Name, p.RepoAccountID, p.ProvisionerID,
 		repo, cmds, ws, p.DefaultFlow, p.CreatedAt, p.UpdatedAt, harnesses,
-		builtin.FlowNames(), repos, p.UserID)
+		builtin.FlowNames(), repos, p.UserID, p.TicketSourceID)
 	if isUnique(err) {
 		return fmt.Errorf("project %s: %w", p.Name, confstore.ErrConflict)
 	}
 	if isFK(err) {
-		// FK backstop: a referenced integration (repository host/provisioner)
-		// vanished between the service-layer validation and this write.
+		// FK backstop: a referenced integration (repository host,
+		// provisioner, ticket source) vanished between the service-layer
+		// validation and this write.
 		return fmt.Errorf("project %s references a missing flow or integration: %w", p.Name, confstore.ErrInvalid)
 	}
 	if err != nil {
@@ -218,7 +227,7 @@ func scanProject(row pgx.Row) (confstore.Project, error) {
 	var p confstore.Project
 	var repo, cmds, ws, harnesses, repos []byte
 	err := row.Scan(&p.ID, &p.Name, &p.RepoAccountID, &p.ProvisionerID,
-		&repo, &cmds, &ws, &p.DefaultFlow, &p.CreatedAt, &p.UpdatedAt, &harnesses, &repos, &p.UserID)
+		&repo, &cmds, &ws, &p.DefaultFlow, &p.CreatedAt, &p.UpdatedAt, &harnesses, &repos, &p.UserID, &p.TicketSourceID)
 	if err != nil {
 		return p, err
 	}
@@ -245,7 +254,7 @@ func scanProject(row pgx.Row) (confstore.Project, error) {
 }
 
 const projectCols = `id, name, repo_account_id, provisioner_id,
-	repo, commands, workspace, default_flow, created_at, updated_at, harnesses, repos, user_id`
+	repo, commands, workspace, default_flow, created_at, updated_at, harnesses, repos, user_id, ticket_source_id`
 
 func (s *Store) GetProject(ctx context.Context, id string) (confstore.Project, error) {
 	p, err := scanProject(s.pool.QueryRow(ctx,
@@ -360,33 +369,34 @@ func (s *Store) DeleteProjectSecret(ctx context.Context, projectID, name string)
 
 // --- tickets ----------------------------------------------------------------
 
-const ticketCols = `id, project_id, title, goal, base_branch, ` +
-	`source_id, source_kind, source_key, source_url, automation_id, created_at, updated_at, user_id, ` +
-	`change_type, source_type, COALESCE(status_id, ''), COALESCE(type_id, ''), labels, remote_id, ` +
-	`remote_updated_at, synced_at, sync_state, sync_error, status_changed_at, status_changed_by`
+// ticketCols reads a tickets row aliased t (the lists join tracker_statuses).
+const ticketCols = `t.id, t.title, t.goal, t.base_branch, ` +
+	`t.source_id, t.source_kind, t.source_key, t.source_url, t.automation_id, t.created_at, t.updated_at, t.user_id, ` +
+	`t.change_type, t.source_type, COALESCE(t.status_id, ''), COALESCE(t.type_id, ''), t.labels, t.remote_id, ` +
+	`t.status_changed_at, t.status_changed_by`
 
 func scanTicket(row pgx.Row) (confstore.Ticket, error) {
 	var t confstore.Ticket
-	err := row.Scan(&t.ID, &t.ProjectID, &t.Title, &t.Goal, &t.BaseBranch,
+	err := row.Scan(&t.ID, &t.Title, &t.Goal, &t.BaseBranch,
 		&t.SourceID, &t.SourceKind, &t.SourceKey, &t.SourceURL, &t.AutomationID,
 		&t.CreatedAt, &t.UpdatedAt, &t.UserID, &t.ChangeType, &t.SourceType,
 		&t.StatusID, &t.TypeID, &t.Labels, &t.RemoteID,
-		&t.RemoteUpdatedAt, &t.SyncedAt, &t.SyncState, &t.SyncError, &t.StatusChangedAt, &t.StatusChangedBy)
+		&t.StatusChangedAt, &t.StatusChangedBy)
 	if len(t.Labels) == 0 {
 		t.Labels = nil
 	}
 	return t, err
 }
 
-// ticketWriteErr maps a ticket write's constraint failures: the unique source
-// key is a second copy of one issue, an FK a project, status or type that
-// vanished between the service-layer validation and this write.
+// ticketWriteErr maps a ticket write's constraint failures: the unique
+// (source_id, remote_id) is a second record of one issue, an FK a status or
+// type that vanished between the service-layer validation and this write.
 func ticketWriteErr(id string, err error) error {
 	if isUnique(err) {
-		return fmt.Errorf("ticket %s: its issue is already another ticket's: %w", id, confstore.ErrConflict)
+		return fmt.Errorf("ticket %s: that issue already has a record: %w", id, confstore.ErrConflict)
 	}
 	if isFK(err) {
-		return fmt.Errorf("ticket %s references a missing project, status or type: %w", id, confstore.ErrInvalid)
+		return fmt.Errorf("ticket %s references a missing status or type: %w", id, confstore.ErrInvalid)
 	}
 	return err
 }
@@ -396,51 +406,31 @@ func (s *Store) UpsertTicket(ctx context.Context, t confstore.Ticket) error {
 	if labels == nil {
 		labels = []string{}
 	}
-	// user_id follows the project (the service copies it on validation);
-	// written on update too, so a ticket moved between projects follows.
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO tickets (id, project_id, title, goal, base_branch,
+		INSERT INTO tickets (id, title, goal, base_branch,
 			source_id, source_kind, source_key, source_url, automation_id, created_at, updated_at, user_id,
 			change_type, source_type, status_id, type_id, labels, remote_id,
-			remote_updated_at, synced_at, sync_state, sync_error, status_changed_at, status_changed_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NULLIF($16,''),NULLIF($17,''),$18,$19,$20,$21,$22,$23,$24,$25)
+			status_changed_at, status_changed_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULLIF($15,''),NULLIF($16,''),$17,$18,$19,$20)
 		ON CONFLICT (id) DO UPDATE SET
-			project_id=$2, title=$3, goal=$4, base_branch=$5,
-			source_id=$6, source_kind=$7, source_key=$8, source_url=$9, automation_id=$10, updated_at=$12, user_id=$13,
-			change_type=$14, source_type=$15, status_id=NULLIF($16,''), type_id=NULLIF($17,''), labels=$18, remote_id=$19,
-			remote_updated_at=$20, synced_at=$21, sync_state=$22, sync_error=$23, status_changed_at=$24, status_changed_by=$25`,
-		t.ID, t.ProjectID, t.Title, t.Goal, t.BaseBranch,
+			title=$2, goal=$3, base_branch=$4,
+			source_id=$5, source_kind=$6, source_key=$7, source_url=$8, automation_id=$9, updated_at=$11, user_id=$12,
+			change_type=$13, source_type=$14, status_id=NULLIF($15,''), type_id=NULLIF($16,''), labels=$17, remote_id=$18,
+			status_changed_at=$19, status_changed_by=$20`,
+		t.ID, t.Title, t.Goal, t.BaseBranch,
 		t.SourceID, t.SourceKind, t.SourceKey, t.SourceURL, t.AutomationID, t.CreatedAt, t.UpdatedAt, t.UserID,
 		t.ChangeType, t.SourceType, t.StatusID, t.TypeID, labels, t.RemoteID,
-		t.RemoteUpdatedAt, t.SyncedAt, t.SyncState, t.SyncError, t.StatusChangedAt, t.StatusChangedBy)
+		t.StatusChangedAt, t.StatusChangedBy)
 	return ticketWriteErr(t.ID, err)
 }
 
 func (s *Store) GetTicket(ctx context.Context, id string) (confstore.Ticket, error) {
 	t, err := scanTicket(s.pool.QueryRow(ctx,
-		`SELECT `+ticketCols+` FROM tickets WHERE id=$1`, id))
+		`SELECT `+ticketCols+` FROM tickets t WHERE t.id=$1`, id))
 	if err == pgx.ErrNoRows {
 		return t, fmt.Errorf("ticket %s: %w", id, confstore.ErrNotFound)
 	}
 	return t, err
-}
-
-func (s *Store) ListTickets(ctx context.Context, userID string) ([]confstore.Ticket, error) {
-	where, args := ownerClause(userID, 1)
-	rows, err := s.pool.Query(ctx, `SELECT `+ticketCols+` FROM tickets`+where+` ORDER BY created_at DESC`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []confstore.Ticket
-	for rows.Next() {
-		t, err := scanTicket(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
 }
 
 func (s *Store) DeleteTicket(ctx context.Context, id string) error {
@@ -648,13 +638,13 @@ func (s *Store) DeleteFlowBinding(ctx context.Context, projectID, flowName strin
 
 // --- automations ------------------------------------------------------------
 
-const automationCols = `id, project_id, name, kind, source_id, query, schedule, ticket_id, flow, params, ` +
+const automationCols = `id, project_id, name, kind, query, schedule, ticket_id, flow, params, ` +
 	`enabled, last_polled_at, last_fired_at, last_error, created_at, updated_at, repo`
 
 func scanAutomation(row pgx.Row) (confstore.Automation, error) {
 	var a confstore.Automation
 	var params []byte
-	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Kind, &a.SourceID, &a.Query, &a.Schedule, &a.TicketID,
+	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Kind, &a.Query, &a.Schedule, &a.TicketID,
 		&a.Flow, &params, &a.Enabled, &a.LastPolledAt, &a.LastFiredAt, &a.LastError, &a.CreatedAt, &a.UpdatedAt, &a.Repo)
 	if err != nil {
 		return a, err
@@ -679,13 +669,13 @@ func (s *Store) UpsertAutomation(ctx context.Context, a confstore.Automation) er
 		params = []byte("{}")
 	}
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO automations (id, project_id, name, kind, source_id, query, schedule, ticket_id, flow, params,
+		INSERT INTO automations (id, project_id, name, kind, query, schedule, ticket_id, flow, params,
 			enabled, last_polled_at, last_fired_at, last_error, created_at, updated_at, repo)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		ON CONFLICT (id) DO UPDATE SET
-			name=$3, kind=$4, source_id=$5, query=$6, schedule=$7, ticket_id=$8, flow=$9, params=$10,
-			enabled=$11, last_polled_at=$12, last_fired_at=$13, last_error=$14, updated_at=$16, repo=$17`,
-		a.ID, a.ProjectID, a.Name, a.Kind, a.SourceID, a.Query, a.Schedule, a.TicketID, a.Flow, params,
+			name=$3, kind=$4, query=$5, schedule=$6, ticket_id=$7, flow=$8, params=$9,
+			enabled=$10, last_polled_at=$11, last_fired_at=$12, last_error=$13, updated_at=$15, repo=$16`,
+		a.ID, a.ProjectID, a.Name, a.Kind, a.Query, a.Schedule, a.TicketID, a.Flow, params,
 		a.Enabled, a.LastPolledAt, a.LastFiredAt, a.LastError, a.CreatedAt, a.UpdatedAt, a.Repo)
 	if isFK(err) {
 		return fmt.Errorf("automation %s references a missing project: %w", a.ID, confstore.ErrInvalid)

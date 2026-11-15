@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
 	// Workshop runs tab: the runs list (DESIGN 7.4), filtered to this workshop.
-	import type { Project, Run } from '$lib/domain';
+	import type { Integration, Project, Run } from '$lib/domain';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { to } from '$lib/core/urls';
 	import { shortId, stateTab } from '$lib/core/format';
 	import NewRunDialog from '$lib/run/NewRunDialog.svelte';
+	import NewTicketLink from '$lib/tickets/NewTicketLink.svelte';
 	import RunTable from '$lib/run/RunTable.svelte';
 	import HeaderAction from '$lib/ui/HeaderAction.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
@@ -14,7 +15,11 @@
 	import Updated from '$lib/ui/Updated.svelte';
 	import { I } from '$lib/design/icons';
 
-	let { project, runs }: { project: Project; runs: Run[] } = $props();
+	let {
+		project,
+		runs,
+		integrations
+	}: { project: Project; runs: Run[]; integrations: Integration[] | null } = $props();
 
 	let tab = $state<'active' | 'finished'>('active');
 	let q = $state('');
@@ -80,9 +85,12 @@
 	/>
 {:else if tab === 'active'}
 	<EmptyState title={t('workshop.runs.shelfTitle')} text={t('workshop.runs.shelfText')}>
-		<a class="btn btn-primary" href={to.newTicket({ project: project.id })}
-			>{I.add} {t('workshop.runs.newTicket')}</a
-		>
+		<NewTicketLink
+			{project}
+			{integrations}
+			label={t('workshop.runs.newTicket')}
+			cls="btn-primary"
+		/>
 		<a class="btn" href={to.workshop(project.id, 'tickets')}>{t('workshop.runs.tickets')}</a>
 	</EmptyState>
 {:else}

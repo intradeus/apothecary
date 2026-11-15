@@ -201,6 +201,8 @@ func (w *world) address(rt Route) string {
 			return id
 		case "pid":
 			return w.ping
+		case "key":
+			return w.ticket
 		case "iid", "seq":
 			return "1"
 		case "rest":
@@ -707,7 +709,7 @@ func TestHandlersReportTheAccountStoreFailing(t *testing.T) {
 func TestListsAreEachPersonsOwn(t *testing.T) {
 	w := newWorld(t)
 	for _, path := range []string{
-		"/api/runs", "/api/tickets", "/api/projects", "/api/integrations", "/api/credentials",
+		"/api/runs", "/api/projects", "/api/integrations", "/api/credentials",
 		"/api/skills", "/api/skillsets", "/api/channels", "/api/flows", "/api/pings?status=all",
 	} {
 		res, body := w.do(t, "GET", path, nil, w.other)

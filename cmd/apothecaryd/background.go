@@ -9,23 +9,18 @@ import (
 	"apothecary/internal/platform/logs"
 	"apothecary/internal/project/automation"
 	"apothecary/internal/project/confstore"
-	"apothecary/internal/project/tickets"
 )
 
-// reapEvery, automationEvery and ticketSyncEvery are the periods of the
-// passes below, variables so a test can watch one run.
+// reapEvery and automationEvery are the periods of the passes below,
+// variables so a test can watch one run.
 var (
 	reapEvery       = time.Hour
 	automationEvery = 2 * time.Minute
-	// ticketSyncEvery is the poll of the tickets mirroring remote issues
-	// (docs/ticket-sync-plan.md § Sync): every not-done, not-gone one.
-	ticketSyncEvery = 5 * time.Minute
 )
 
 // background starts the daemon's loops — reaper, login keeper, outcomes,
-// workspace reconciler, resource sampler, egress audit ingest, automations,
-// ticket sync — all on ctx, which serve cancels before it shuts the engine
-// down.
+// workspace reconciler, resource sampler, egress audit ingest, automations —
+// all on ctx, which serve cancels before it shuts the engine down.
 func (a *app) background(ctx context.Context) {
 	go func() {
 		t := time.NewTicker(reapEvery)
@@ -126,13 +121,12 @@ func (a *app) background(ctx context.Context) {
 	// Cheap — only active runs, not full history — so it can run often.
 	go a.egressSvc.Run(ctx, 5*time.Second)
 
-	// Automations: tracker queries polled into tickets and runs, schedules
-	// firing runs — the ways a run begins without a person (flow v4). A
-	// pass walks every enabled automation; each one's failure is recorded
-	// on it, never on the pass.
+	// Automations: tracker queries read live into records and runs,
+	// schedules firing runs — the ways a run begins without a person (flow
+	// v4). A pass walks every enabled automation; each one's failure is
+	// recorded on it, never on the pass.
 	watcher := &automation.Watcher{
-		Runs: a.e, MRs: a.mrSvc, Conf: a.conf, Notify: a.chreg, Log: a.log,
-		Tickets: &tickets.Factory{Conf: a.conf, Attachments: a.attachments, Sources: a.resolver, Log: a.log},
+		Runs: a.e, MRs: a.mrSvc, Conf: a.conf, Notify: a.chreg, Log: a.log, Tickets: a.tickets,
 	}
 	go func() {
 		t := time.NewTicker(automationEvery)
@@ -143,29 +137,6 @@ func (a *app) background(ctx context.Context) {
 				if err := watcher.RunOnce(ctx); err != nil && ctx.Err() == nil {
 					a.log.Error("automation pass failed", "err", err)
 				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	// The ticket sync: every ticket mirroring a remote issue, not done and
-	// not gone, re-read from its tracker. A first pass at boot catches up on
-	// whatever moved while the daemon was down; an integration that cannot
-	// be read is backed off (tickets.DefaultErrorBackoff).
-	go func() {
-		pass := func() {
-			if err := a.syncer.RunOnce(ctx); err != nil && ctx.Err() == nil {
-				a.log.Error("ticket sync pass failed", "err", err)
-			}
-		}
-		pass()
-		t := time.NewTicker(ticketSyncEvery)
-		defer t.Stop()
-		for {
-			select {
-			case <-t.C:
-				pass()
 			case <-ctx.Done():
 				return
 			}

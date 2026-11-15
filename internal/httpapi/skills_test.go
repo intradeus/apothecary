@@ -186,7 +186,7 @@ func TestStartRunWithSkillsets(t *testing.T) {
 	set := decode[skillstore.Skillset](t, data)
 
 	ticket := x.newTicket(t, "T", "")
-	resp, data := x.do(t, "POST", "/api/tickets/"+ticket+"/runs", map[string]any{"skillsets": []map[string]any{{"id": set.ID}}}, nil)
+	resp, data := x.do(t, "POST", ticketPath(testProject, ticket)+"/runs", map[string]any{"skillsets": []map[string]any{{"id": set.ID}}}, nil)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("start = %d: %s", resp.StatusCode, data)
 	}
@@ -206,7 +206,7 @@ func TestStartRunWithSkillsets(t *testing.T) {
 		t.Errorf("tree in workspace: %q %v", md, err)
 	}
 	// An unknown skillset refuses the run.
-	resp, data = x.do(t, "POST", "/api/tickets/"+ticket+"/runs", map[string]any{"skillsets": []map[string]any{{"id": "nope"}}}, nil)
+	resp, data = x.do(t, "POST", ticketPath(testProject, ticket)+"/runs", map[string]any{"skillsets": []map[string]any{{"id": "nope"}}}, nil)
 	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), "skillset nope") {
 		t.Errorf("unknown skillset = %d: %s", resp.StatusCode, data)
 	}

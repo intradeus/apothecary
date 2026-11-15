@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/engine"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
+	"apothecary/internal/project/tickets"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 )
@@ -35,20 +35,16 @@ func TestTicketAttachmentsClaimedAndShared(t *testing.T) {
 	}
 
 	// Create a ticket carrying the shared attachment.
-	resp, data := x.do(t, "POST", "/api/tickets", map[string]any{
-		"title": "T", "goal": "g", "project_id": testProject,
-		"attachment_ids": []string{tickUp.ID},
+	resp, data := x.do(t, "POST", "/api/projects/"+testProject+"/tickets", map[string]any{
+		"title": "T", "goal": "g", "attachment_ids": []string{tickUp.ID},
 	}, nil)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create ticket = %d: %s", resp.StatusCode, data)
 	}
-	var tk struct {
-		ID            string   `json:"id"`
-		AttachmentIDs []string `json:"attachment_ids"`
-	}
-	_ = json.Unmarshal(data, &tk)
-	if len(tk.AttachmentIDs) != 1 || tk.AttachmentIDs[0] != tickUp.ID {
-		t.Fatalf("ticket response attachment_ids = %v", tk.AttachmentIDs)
+	created := decode[TicketDetail](t, data)
+	tk := struct{ ID string }{created.TicketID}
+	if len(created.AttachmentIDs) != 1 || created.AttachmentIDs[0] != tickUp.ID {
+		t.Fatalf("ticket response attachment_ids = %v", created.AttachmentIDs)
 	}
 
 	// Claimed for the ticket: not unclaimed, not bound to a run.
@@ -57,7 +53,7 @@ func TestTicketAttachmentsClaimedAndShared(t *testing.T) {
 	}
 
 	// Start a run with its OWN direction + attachment.
-	resp, data = x.do(t, "POST", "/api/tickets/"+tk.ID+"/runs", map[string]any{
+	resp, data = x.do(t, "POST", ticketPath(testProject, tk.ID)+"/runs", map[string]any{
 		"flow": "loop", "goal": "avoid the cache",
 		"attachment_ids": []string{runUp.ID},
 	}, nil)
@@ -91,7 +87,7 @@ func TestTicketAttachmentsClaimedAndShared(t *testing.T) {
 	// run claimed it, leaving later runs with nothing). It starts once the
 	// first has ended: a ticket has one active run at a time.
 	x.e.Wait(out.RunID)
-	resp, data = x.do(t, "POST", "/api/tickets/"+tk.ID+"/runs", map[string]any{"flow": "loop"}, nil)
+	resp, data = x.do(t, "POST", ticketPath(testProject, tk.ID)+"/runs", map[string]any{"flow": "loop"}, nil)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("second run = %d: %s", resp.StatusCode, data)
 	}
@@ -106,8 +102,16 @@ func TestTicketAttachmentsClaimedAndShared(t *testing.T) {
 	// on; leaving it in flight races the directory's removal.
 	x.e.Wait(second.RunID)
 
+	// The ticket lists its own attachments — bytes stay on the ordinary
+	// artifact route.
+	resp, data = x.do(t, "GET", ticketPath(testProject, tk.ID)+"/attachments", nil, nil)
+	if got := decode[TicketAttachments](t, data); resp.StatusCode != http.StatusOK || len(got.Attachments) != 1 ||
+		got.Attachments[0].ID != tickUp.ID || len(got.Remote) != 0 {
+		t.Fatalf("ticket attachments = %d: %s", resp.StatusCode, data)
+	}
+
 	// Deleting the ticket removes its attachment rows — the leak fix.
-	resp, data = x.do(t, "DELETE", "/api/tickets/"+tk.ID, nil, nil)
+	resp, data = x.do(t, "DELETE", ticketPath(testProject, tk.ID), nil, nil)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete ticket = %d: %s", resp.StatusCode, data)
 	}
@@ -147,136 +151,36 @@ func (s stubSources) TicketSourceKind(context.Context, string) (string, error) {
 	return "faketracker", nil
 }
 
-// The import route is the whole point of the tracker integration: search it,
-// then create a ticket that carries the issue's title, body, provenance and
-// attachment bytes — with the attachment claimed for the ticket like any
-// hand-uploaded file.
-func TestImportTicketFromSource(t *testing.T) {
-	files := newTestFiles(t, 1<<20, []string{"text/*"})
-	x := newEnvWith(t, engine.Config{}, files.deps)
-	x.seedIntegration(t, "int-1", confstore.PortTicketSource)
-	files.serve(x)
-	att := files.att
-	x.srv.Sources = stubSources{src: &fake.TicketSource{
-		Tickets: []trackerport.SourceTicket{{
-			Key: "PROJ-7", Title: "Add a Farewell function",
-			Body: "The greeter only says hello.", URL: "https://tracker.test/browse/PROJ-7",
-			Status: "To Do", Type: "Story", Updated: time.Now(),
-			Attachments: []trackerport.SourceAttachment{
-				{ID: "a1", Filename: "spec.md", Mime: "text/markdown", Size: 5},
-			},
-		}},
-		Blobs: map[string][]byte{"a1": []byte("hello")},
-	}}
-
-	// Search the tracker (the picker).
-	resp, data := x.do(t, "GET", "/api/integrations/int-1/tickets?q=farewell", nil, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("search = %d: %s", resp.StatusCode, data)
-	}
-	var found []struct {
-		Key, Title, Status string
-	}
-	if err := json.Unmarshal(data, &found); err != nil {
-		t.Fatal(err)
-	}
-	if len(found) != 1 || found[0].Key != "PROJ-7" || found[0].Status != "To Do" {
-		t.Fatalf("search results = %s", data)
-	}
-
-	// Preview one issue: the attachment list is what the form promises to copy.
-	_, data = x.do(t, "GET", "/api/integrations/int-1/tickets/PROJ-7", nil, nil)
-	var preview struct {
-		Attachments []struct{ Filename string } `json:"attachments"`
-	}
-	_ = json.Unmarshal(data, &preview)
-	if len(preview.Attachments) != 1 || preview.Attachments[0].Filename != "spec.md" {
-		t.Fatalf("preview attachments = %s", data)
-	}
-
-	// Import it.
-	resp, data = x.do(t, "POST", "/api/tickets", map[string]any{
-		"project_id": testProject, "source_id": "int-1", "source_key": "PROJ-7",
-	}, nil)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("import = %d: %s", resp.StatusCode, data)
-	}
-	var tk struct {
-		ID            string   `json:"id"`
-		Title         string   `json:"title"`
-		Goal          string   `json:"goal"`
-		SourceKey     string   `json:"source_key"`
-		SourceKind    string   `json:"source_kind"`
-		SourceURL     string   `json:"source_url"`
-		AttachmentIDs []string `json:"attachment_ids"`
-		Warnings      []string `json:"warnings"`
-	}
-	if err := json.Unmarshal(data, &tk); err != nil {
-		t.Fatal(err)
-	}
-	if tk.Title != "Add a Farewell function" || tk.Goal != "The greeter only says hello." {
-		t.Errorf("imported ticket = %+v", tk)
-	}
-	if tk.SourceKey != "PROJ-7" || tk.SourceKind != "faketracker" || tk.SourceURL == "" {
-		t.Errorf("provenance = %+v", tk)
-	}
-	if len(tk.Warnings) != 0 {
-		t.Errorf("warnings = %v, want none", tk.Warnings)
-	}
-	if len(tk.AttachmentIDs) != 1 {
-		t.Fatalf("attachment_ids = %v", tk.AttachmentIDs)
-	}
-	if got, err := att.Get(context.Background(), tk.AttachmentIDs[0]); err != nil ||
-		got.Filename != "spec.md" || got.TicketID != tk.ID || got.RunID != "" {
-		t.Errorf("imported attachment = %+v (%v), want spec.md claimed for the ticket", got, err)
-	}
-
-	// The ticket lists its own attachments (what both the ticket page and the
-	// edit form render) — bytes stay on the ordinary artifact route.
-	resp, data = x.do(t, "GET", "/api/tickets/"+tk.ID+"/attachments", nil, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("ticket attachments = %d: %s", resp.StatusCode, data)
-	}
-	var listed struct {
-		Attachments []struct {
-			ID, Filename, Mime, TicketID string `json:"-"`
-		} `json:"attachments"`
-	}
-	var envl struct {
-		Attachments []map[string]any `json:"attachments"`
-	}
-	_ = listed
-	if err := json.Unmarshal(data, &envl); err != nil {
-		t.Fatal(err)
-	}
-	if len(envl.Attachments) != 1 || envl.Attachments[0]["filename"] != "spec.md" ||
-		envl.Attachments[0]["ticket_id"] != tk.ID {
-		t.Fatalf("ticket attachments = %s", data)
-	}
-
-	// A second import of the same issue is refused, naming the existing one.
-	resp, data = x.do(t, "POST", "/api/tickets", map[string]any{
-		"project_id": testProject, "source_id": "int-1", "source_key": "PROJ-7",
-	}, nil)
-	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(data), tk.ID) {
-		t.Fatalf("duplicate import = %d: %s", resp.StatusCode, data)
-	}
-}
-
 // Without ticket-source wiring the routes report that plainly (503) rather
 // than 404ing or pretending the tracker is empty.
-func TestTicketSourceRoutesWithoutWiring(t *testing.T) {
+func TestTicketRoutesWithoutWiring(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	x.seedIntegration(t, "int-1", confstore.PortTicketSource)
-	resp, data := x.do(t, "GET", "/api/integrations/int-1/tickets", nil, nil)
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("search = %d: %s", resp.StatusCode, data)
+	ctx := context.Background()
+	p, err := x.srv.Conf.GetProject(ctx, testProject)
+	if err != nil {
+		t.Fatal(err)
 	}
-	resp, data = x.do(t, "POST", "/api/tickets", map[string]any{
-		"project_id": testProject, "source_id": "int-1", "source_key": "PROJ-7",
-	}, nil)
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("import = %d: %s", resp.StatusCode, data)
+	p.TicketSourceID = "int-1"
+	if _, err := x.srv.Conf.UpdateProject(ctx, testProject, p); err != nil {
+		t.Fatal(err)
+	}
+	// A Live with no sources reads no remote tracker.
+	if resp, data := x.do(t, "GET", "/api/projects/"+testProject+"/tickets", nil, nil); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("list = %d: %s", resp.StatusCode, data)
+	}
+	if resp, data := x.do(t, "GET", "/api/integrations/int-1/statuses", nil, nil); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("statuses = %d: %s", resp.StatusCode, data)
+	}
+	// No Live at all: every workshop ticket route says so.
+	x.srv.Live = nil
+	if resp, data := x.do(t, "GET", ticketPath(testProject, "PROJ-7"), nil, nil); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("ticket = %d: %s", resp.StatusCode, data)
+	}
+	// Writes to a remote tracker need its writer.
+	x.srv.Live = tickets.NewLive(x.srv.Conf, stubSources{src: &fake.TicketSource{Tickets: []trackerport.SourceTicket{{RemoteID: "1", Key: "PROJ-7", Title: "t"}}}})
+	if resp, data := x.do(t, "POST", ticketPath(testProject, "PROJ-7")+"/comments", TicketCommentRequest{Body: "x"}, nil); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("comment = %d: %s", resp.StatusCode, data)
 	}
 }
 
