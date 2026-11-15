@@ -564,6 +564,29 @@ func (s *Store) Events(ctx context.Context, runID string, afterSeq int64) ([]eve
 	return out, rows.Err()
 }
 
+// Tail reads the run's last n events (newest first off the primary key,
+// returned oldest first).
+func (s *Store) Tail(ctx context.Context, runID string, n int) ([]event.Event, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT run_id, seq, ts, type, payload FROM (
+		   SELECT run_id, seq, ts, type, payload FROM events WHERE run_id=$1 ORDER BY seq DESC LIMIT $2
+		 ) t ORDER BY seq`,
+		runID, max(n, 0))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []event.Event
+	for rows.Next() {
+		e, err := decodeEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // decodeEvent reads one `run_id, seq, ts, type, payload` row.
 func decodeEvent(rows pgx.Rows) (event.Event, error) {
 	var e event.Event

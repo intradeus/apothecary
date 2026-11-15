@@ -14,6 +14,7 @@ import type {
 	EgressDenial,
 	EgressStatus,
 	FormContent,
+	LiveDelta,
 	ObservedPort,
 	ResourceSample,
 	Run,
@@ -30,13 +31,18 @@ import { t } from '$lib/i18n/index.svelte';
 import { applyDelta, emptyLive, pruneLive, type LiveState } from '$lib/run/transcriptItems';
 import { currentStage, envLinks, pingsOf, totals, workingSince, type StageDef } from './derive';
 
+/** How long the stream's messages gather before they land: about a frame. */
+export const STREAM_BATCH_MS = 16;
+
 export class RunStore {
 	readonly runId: string;
 
 	run = $state<Run | null>(null);
-	events = $state<RunEvent[]>([]);
+	/** The log, replaced whole on each batch (raw: a long log must not be
+	 *  proxied event by event on every read). */
+	events = $state.raw<RunEvent[]>([]);
 	/** The agent's in-flight progress, superseded by persisted events. */
-	live = $state<LiveState>(emptyLive());
+	live = $state.raw<LiveState>(emptyLive());
 	loadError = $state('');
 	/** The last action's failure, shown under the header. */
 	error = $state('');
@@ -84,6 +90,9 @@ export class RunStore {
 	/** Reads of the run in the order they were asked, and the latest shown. */
 	#runAsked = 0;
 	#runShown = 0;
+	/** What the stream delivered since the last commit, in arrival order. */
+	#inbox: ({ ev: RunEvent } | { d: LiveDelta })[] = [];
+	#inboxTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(runId: string) {
 		this.runId = runId;
@@ -185,35 +194,74 @@ export class RunStore {
 		const stop = api.runs.events(
 			this.runId,
 			0,
-			(ev) => {
-				// A replay must not count twice (the totals, the pings).
-				if (ev.seq <= (this.events.at(-1)?.seq ?? 0)) return;
-				this.events = [...this.events, ev];
-				this.live = pruneLive(this.live, ev);
-				// State-changing events refresh the header.
-				if (ev.type === 'hold_released') this.releasing = false;
-				if (
-					ev.type.startsWith('run_') ||
-					ev.type.startsWith('ping_') ||
-					ev.type.startsWith('env_') ||
-					ev.type.startsWith('hold_')
-				) {
-					void this.refreshRun();
-					if (ev.type.startsWith('run_') || ev.type.startsWith('ping_')) void fleet.refresh();
-				}
-				// A capture (or an answer, which may carry files) adds a record row.
-				if (ev.type === 'snapshot_captured' || ev.type === 'ping_answered')
-					void this.refreshFiles();
-				// A service started, came up, stopped or failed.
-				if (ev.type.startsWith('service_')) void this.refreshServices();
-			},
-			(d) => (this.live = applyDelta(this.live, d))
+			(ev) => this.#receive({ ev }),
+			(d) => this.#receive({ d })
 		);
 
 		return () => {
 			timers.forEach(clearInterval);
+			clearTimeout(this.#inboxTimer);
+			this.#inbox = [];
 			stop();
 		};
+	}
+
+	/** The stream delivers one message at a time — a long run's replay is
+	 *  thousands — and each commit re-derives the whole page from the log.
+	 *  So messages wait for the next frame and land together. */
+	#receive(m: { ev: RunEvent } | { d: LiveDelta }) {
+		this.#inbox.push(m);
+		this.#inboxTimer ??= setTimeout(() => this.flush(), STREAM_BATCH_MS);
+	}
+
+	/** Commit what the stream delivered: one new log, one live state, and
+	 *  each refresh the batch calls for asked once. */
+	flush() {
+		clearTimeout(this.#inboxTimer);
+		this.#inboxTimer = undefined;
+		const inbox = this.#inbox;
+		if (!inbox.length) return;
+		this.#inbox = [];
+		const added: RunEvent[] = [];
+		let last = this.events.at(-1)?.seq ?? 0;
+		let live = this.live;
+		let run = false;
+		let fleetToo = false;
+		let files = false;
+		let services = false;
+		for (const m of inbox) {
+			if ('d' in m) {
+				live = applyDelta(live, m.d);
+				continue;
+			}
+			const ev = m.ev;
+			// A replay must not count twice (the totals, the pings).
+			if (ev.seq <= last) continue;
+			last = ev.seq;
+			added.push(ev);
+			live = pruneLive(live, ev);
+			// State-changing events refresh the header.
+			if (ev.type === 'hold_released') this.releasing = false;
+			if (
+				ev.type.startsWith('run_') ||
+				ev.type.startsWith('ping_') ||
+				ev.type.startsWith('env_') ||
+				ev.type.startsWith('hold_')
+			) {
+				run = true;
+				if (ev.type.startsWith('run_') || ev.type.startsWith('ping_')) fleetToo = true;
+			}
+			// A capture (or an answer, which may carry files) adds a record row.
+			if (ev.type === 'snapshot_captured' || ev.type === 'ping_answered') files = true;
+			// A service started, came up, stopped or failed.
+			if (ev.type.startsWith('service_')) services = true;
+		}
+		if (added.length) this.events = this.events.concat(added);
+		this.live = live;
+		if (run) void this.refreshRun();
+		if (fleetToo) void fleet.refresh();
+		if (files) void this.refreshFiles();
+		if (services) void this.refreshServices();
 	}
 
 	async refreshRun() {

@@ -51,16 +51,20 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, views)
 }
 
+// runDetailTail is how much of its log a run's detail carries.
+const runDetailTail = 100
+
 func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
-	evs, ok := s.runEvents(w, r, r.PathValue("id"))
+	id := r.PathValue("id")
+	v, ok := s.runView(w, r, id)
 	if !ok {
 		return
 	}
-	last := evs
-	if len(last) > 100 {
-		last = last[len(last)-100:]
+	last, err := s.Store.Tail(r.Context(), id, runDetailTail)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	v := run.Reduce(evs)
 	if st, ok := s.EnvState.Badges()[v.RunID]; ok {
 		v.EnvStatus = st
 	}

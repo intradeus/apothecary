@@ -23,6 +23,9 @@ type Store interface {
 	Append(ctx context.Context, runID string, payloads ...Payload) ([]Event, error)
 	// Events returns a run's events with Seq > afterSeq, in order.
 	Events(ctx context.Context, runID string, afterSeq int64) ([]Event, error)
+	// Tail returns a run's last n events, in order: a long log's end
+	// without reading the whole of it.
+	Tail(ctx context.Context, runID string, n int) ([]Event, error)
 	// RunIDs lists every run that has at least one event (boot replay).
 	RunIDs(ctx context.Context) ([]string, error)
 	// Watch replays events after afterSeq and then streams live appends
@@ -119,6 +122,23 @@ func (s *MemStore) Events(ctx context.Context, runID string, afterSeq int64) ([]
 	i := sort.Search(len(all), func(i int) bool { return all[i].seq > afterSeq })
 	rows := all[i:]
 	s.mu.Unlock()
+	return decodeRows(runID, rows)
+}
+
+func (s *MemStore) Tail(ctx context.Context, runID string, n int) ([]Event, error) {
+	if err := usable(ctx, runID); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	rows := s.rows[runID]
+	rows = rows[len(rows)-min(max(n, 0), len(rows)):]
+	s.mu.Unlock()
+	return decodeRows(runID, rows)
+}
+
+// decodeRows is what a reader gets of stored rows: each payload decoded
+// afresh, so nothing it holds aliases the store.
+func decodeRows(runID string, rows []row) ([]Event, error) {
 	var out []Event
 	for _, r := range rows {
 		p, err := UnmarshalPayload(r.typ, r.payload)
