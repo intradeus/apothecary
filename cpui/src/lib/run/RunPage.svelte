@@ -3,6 +3,7 @@
 	// a decision, and the window desk with the run's fifteen views.
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { api } from '$lib/api';
 	import { t } from '$lib/i18n/index.svelte';
 	import { to } from '$lib/core/urls';
 	import { shortId, times } from '$lib/core/format';
@@ -30,6 +31,8 @@
 	import ServicesView from './views/ServicesView.svelte';
 	import VitalsView from './views/VitalsView.svelte';
 	import { TRANSCRIPT_TYPES } from './derive';
+	import { HeaderActions, type HeaderAct } from './header/actions.svelte';
+	import { rebuild } from './header/rebuild';
 	import { RunStore } from './store.svelte';
 
 	let { runId, onretried }: { runId: string; onretried: () => void } = $props();
@@ -37,6 +40,10 @@
 	// svelte-ignore state_referenced_locally
 	const rs = new RunStore(runId);
 	const desk = new DeskState();
+	// The header's in-flight set, shared with the banners: a rebuild started
+	// from either shows busy in both.
+	const actions = new HeaderActions();
+	const act: HeaderAct = (which, fn) => actions.run(which, () => rs.act(fn));
 
 	// A phone (or any page this narrow) gets the focus layout — one window,
 	// every view a tab — and the page itself scrolls: the header scrolls away
@@ -67,6 +74,7 @@
 	});
 
 	let unknownDismissed = $state(false);
+	let brokenDismissed = $state(false);
 
 	const timelineCount = $derived(rs.events.filter((e) => !TRANSCRIPT_TYPES.has(e.type)).length);
 	const fileCount = $derived(rs.snapshots.length + rs.attachments.length);
@@ -147,6 +155,23 @@
 
 	const showDenials = $derived(rs.newDenials.length > 0 && rs.hasWorkspace && !rs.terminal);
 	const showUnknown = $derived(rs.run?.envStatus === 'unknown' && !unknownDismissed);
+	// The sandbox is up but its runtime refuses exec (sysbox restarted under
+	// it): only a rebuild, which replaces it, brings it back. A live run must
+	// pause first, since the engine refuses to rebuild under one.
+	const showBroken = $derived(rs.run?.envStatus === 'broken' && !brokenDismissed);
+	const brokenAction = $derived(
+		rs.canRebuild
+			? {
+					label: t('run.rebuild.button'),
+					run: () => rebuild(rs.run!.id, false, { act, desk })
+				}
+			: rs.canPause
+				? {
+						label: t('run.header.pause'),
+						run: () => act('pause', () => api.runs.pause(rs.run!.id))
+					}
+				: undefined
+	);
 </script>
 
 <svelte:head>
@@ -164,7 +189,7 @@
 	style:--desk-h="{Math.max(320, pageH - 22)}px"
 >
 	{#if rs.run}
-		<RunHeader {rs} {desk} {onretried} />
+		<RunHeader {rs} {desk} {actions} {onretried} />
 
 		{#if showDenials}
 			<div class="bn">
@@ -191,6 +216,20 @@
 					action={t('run.page.integrations')}
 					onaction={() => goto(to.system('integrations'))}
 					ondismiss={() => (unknownDismissed = true)}
+				/>
+			</div>
+		{/if}
+		{#if showBroken}
+			<div class="bn">
+				<Banner
+					tone="danger"
+					title={t('run.page.wsBroken')}
+					items={!rs.canRebuild && rs.canPause
+						? [t('run.page.wsBrokenWhy'), t('run.page.wsBrokenPauseFirst')]
+						: [t('run.page.wsBrokenWhy')]}
+					action={brokenAction?.label}
+					onaction={brokenAction?.run}
+					ondismiss={() => (brokenDismissed = true)}
 				/>
 			</div>
 		{/if}

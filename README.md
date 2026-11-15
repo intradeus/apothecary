@@ -166,7 +166,9 @@ A repo that asks for a closed door is refused before anything is built.
 
 Any Kubernetes cluster, k3s included, with:
 - **sysbox** on the nodes that run sandboxes: sysbox ≥ 0.7, containerd ≥
-  2.0.5, kernel ≥ 6.3. Recent Ubuntu also needs two AppArmor overrides.
+  2.0.5, kernel ≥ 6.3. Recent Ubuntu also needs two AppArmor overrides, and
+  sysbox and containerd must not restart under running sandboxes
+  ([why](docs/kubernetes.md#cluster-requirements)).
 - **NetworkPolicy enforcement**, and the **`wireguard`** kernel module.
 - A **local or block storage class**, not NFS.
 

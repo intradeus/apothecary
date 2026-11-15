@@ -55,6 +55,12 @@ starting over. `--help` lists the options.
    releases (default 0.7.0, `--sysbox-version`, or `SYSBOX_DEB_URL` for
    another `.deb`), and checks the service runs. sysbox runs each sandbox
    unprivileged, in a user namespace, while still nesting a docker daemon.
+   First it writes `/etc/needrestart/conf.d/apothecary.conf`, so that
+   Ubuntu's `needrestart` never restarts sysbox, containerd or k3s after an
+   unattended upgrade: restarted under running sandboxes, sysbox-fs forgets
+   them and every exec into them fails until their pods are replaced
+   ([why](../../docs/kubernetes.md#cluster-requirements)). Restart those
+   services yourself only with no run active.
 4. **k3s.** Installs k3s from its release channel (default `stable`) and
    waits for the node. It refuses Kubernetes older than 1.33 (user
    namespaces for pods are on by default from 1.33) and containerd older

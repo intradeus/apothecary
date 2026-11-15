@@ -1,12 +1,11 @@
 <script lang="ts">
 	// The rebuild menu: the workspace from its image cache, or from scratch.
-	import { api } from '$lib/api';
 	import { t } from '$lib/i18n/index.svelte';
-	import { toast } from '$lib/ui/toast.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
 	import type { DeskState } from '$lib/desk/deskState.svelte';
 	import type { RunStore } from '../store.svelte';
 	import type { HeaderAct } from './actions.svelte';
+	import { rebuild as rebuildRun } from './rebuild';
 
 	let {
 		rs,
@@ -24,15 +23,9 @@
 
 	const run = $derived(rs.run!);
 
-	async function rebuild(noCache: boolean) {
+	function rebuild(noCache: boolean) {
 		open = false;
-		// The request blocks for the whole build; the badge and the Logs tail
-		// show progress meanwhile.
-		toast(noCache ? t('run.rebuild.startedNoCache') : t('run.rebuild.started'), {
-			tone: 'info',
-			action: { label: t('run.rebuild.watchLogs'), run: () => desk.reveal('logs') }
-		});
-		if (await act('rebuild', () => api.runs.rebuild(run.id, noCache))) toast(t('run.rebuild.done'));
+		return rebuildRun(run.id, noCache, { act, desk });
 	}
 </script>
 

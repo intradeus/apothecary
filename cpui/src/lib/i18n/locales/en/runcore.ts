@@ -212,6 +212,10 @@ export default {
 	'run.page.review': 'Review',
 	'run.page.wsUnknown': 'Workspace unknown',
 	'run.page.provisionerDown': 'Provisioner unreachable — check the integration token',
+	'run.page.wsBroken': 'Workspace broken',
+	'run.page.wsBrokenWhy':
+		"The workspace's container runtime stopped responding (was sysbox restarted?). Rebuild to replace it — your checkout is kept.",
+	'run.page.wsBrokenPauseFirst': 'Pause the run, then rebuild.',
 	'run.page.integrations': 'Integrations',
 	'run.page.loadError': 'This run could not be loaded.',
 	'run.page.connecting': 'Connecting…',

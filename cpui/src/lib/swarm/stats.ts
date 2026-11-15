@@ -42,7 +42,8 @@ const DOWN: Partial<Record<EnvStatus, true>> = {
 	absent: true,
 	stopped: true,
 	destroying: true,
-	error: true
+	error: true,
+	broken: true
 };
 
 /** The run has a sandbox up: started, not over, its workspace not down. */

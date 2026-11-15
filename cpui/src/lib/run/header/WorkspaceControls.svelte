@@ -28,9 +28,7 @@
 	} = $props();
 
 	const run = $derived(rs.run!);
-	const canRebuild = $derived(
-		!!run.envId && run.state !== 'archived' && (rs.terminal || run.state === 'paused')
-	);
+	const canRebuild = $derived(rs.canRebuild);
 	// The engine's word as well as ours: a build outlives this page, so a
 	// reload or a second tab must not offer a rebuild on top of it.
 	const rebuilding = $derived(actions.has('rebuild') || run.envStatus === 'rebuilding');

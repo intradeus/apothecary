@@ -102,6 +102,22 @@ export class RunStore {
 	readonly workspaceLive = $derived(
 		this.hasWorkspace || (this.run !== null && this.run.state === 'provisioning')
 	);
+	/** A rebuild is on offer: a workspace to rebuild, and a run that is not
+	 *  using it (paused, or over but not archived). The header and the broken
+	 *  banner both ask this, so they never disagree. */
+	readonly canRebuild = $derived(
+		this.run !== null &&
+			!!this.run.envId &&
+			this.run.state !== 'archived' &&
+			(this.terminal || this.run.state === 'paused')
+	);
+	/** The run can be paused: it lives, has started and is not paused yet. */
+	readonly canPause = $derived(
+		this.run !== null &&
+			!this.terminal &&
+			this.run.state !== 'paused' &&
+			this.run.state !== 'pending'
+	);
 	readonly totals = $derived(totals(this.events));
 	readonly pings = $derived(pingsOf(this.events, this.run));
 	/** Newest first: each answer reveals the next-earlier one. */

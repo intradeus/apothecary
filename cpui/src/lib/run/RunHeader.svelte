@@ -17,9 +17,20 @@
 	import RunMrs from './header/RunMrs.svelte';
 	import RunTitle from './header/RunTitle.svelte';
 	import WorkspaceControls from './header/WorkspaceControls.svelte';
-	import { HeaderActions, type HeaderAct } from './header/actions.svelte';
+	import type { HeaderAct, HeaderActions } from './header/actions.svelte';
 
-	let { rs, desk, onretried }: { rs: RunStore; desk: DeskState; onretried: () => void } = $props();
+	let {
+		rs,
+		desk,
+		actions,
+		onretried
+	}: {
+		rs: RunStore;
+		desk: DeskState;
+		/** What is in flight: the page's, so its banners share the busy set. */
+		actions: HeaderActions;
+		onretried: () => void;
+	} = $props();
 
 	const run = $derived(rs.run!);
 	const sid = $derived(shortId(run.id));
@@ -32,7 +43,6 @@
 	let envOpen = $state(false);
 	let rebuildOpen = $state(false);
 	let rerunOpen = $state(false);
-	const actions = new HeaderActions();
 	const act: HeaderAct = (which, fn) => actions.run(which, () => rs.act(fn));
 </script>
 

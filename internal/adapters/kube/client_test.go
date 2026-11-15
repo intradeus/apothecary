@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -294,6 +295,36 @@ func TestPodRunnerRemoteFailureMentioningATransportSign(t *testing.T) {
 	_, errb, code, err := PodRunner{C: &Client{R: s}, Pod: "p"}.Run(context.Background(), "sh", nil, nil, nil)
 	if err != nil || code != 7 || string(errb) != "curl: connection refused\n" {
 		t.Errorf("errb=%q code=%d err=%v", errb, code, err)
+	}
+}
+
+// Only kubectl reporting that the runtime refused the exec is "refused"; a
+// generic transport failure, or a command whose own output carries the
+// words, is not — and the classification survives wrapping.
+func TestIsExecRefused(t *testing.T) {
+	const refused = "error: Internal error occurred: error executing command in container: failed to exec in container: " +
+		"failed to start exec \"x\": OCI runtime exec failed: exec failed: unable to start container process: " +
+		"get handle to /proc/thread-self/fd: unsafe procfs detected: openat2 fsmount:fscontext:proc/thread-self/fd/: operation not permitted: unknown\n"
+	run := func(errb string, code int) error {
+		s := &script{resps: []resp{{errb: errb, code: code}}}
+		_, _, _, err := PodRunner{C: &Client{R: s}, Pod: "p"}.Run(context.Background(), "true", nil, nil, nil)
+		return err
+	}
+	err := run(refused, 1)
+	if !IsExecRefused(err) {
+		t.Errorf("runtime refusal: IsExecRefused(%v) = false", err)
+	}
+	if !IsExecRefused(fmt.Errorf("docker ps -a: %w", err)) {
+		t.Error("a wrapped refusal must still classify")
+	}
+	if err := run("Unable to connect to the server: dial tcp: i/o timeout\n", 1); err == nil || IsExecRefused(err) {
+		t.Errorf("API outage: err = %v, must be a transport error that is not a refusal", err)
+	}
+	if err := run("OCI runtime exec failed\ncommand terminated with exit code 1\n", 1); err != nil || IsExecRefused(err) {
+		t.Errorf("a command printing the words is a result: err = %v", err)
+	}
+	if IsExecRefused(nil) || IsExecRefused(errors.New("OCI runtime exec failed")) {
+		t.Error("only a TransportError can be a refusal")
 	}
 }
 

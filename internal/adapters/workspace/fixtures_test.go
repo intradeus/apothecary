@@ -259,6 +259,7 @@ type testHost struct {
 	destroyErr error
 	resets     []string
 	resetErr   error
+	steps      []string // "prepare <name>", "reset <name>": what ran, in order
 	shimErr    error
 	bridged    map[envport.EnvID]bool
 	bridgeErr  error
@@ -306,6 +307,7 @@ func (h *testHost) prepare(ctx context.Context, name string, spec envport.EnvSpe
 	if err := os.MkdirAll(shimDir, 0o755); err != nil {
 		return prep{}, err
 	}
+	h.steps = append(h.steps, "prepare "+name)
 	return prep{src: src, shimDir: shimDir, toolsDir: filepath.Join(folder, "tools"), gwIP: att.GatewayIP, def: def}, nil
 }
 
@@ -336,6 +338,7 @@ func (h *testHost) destroySandbox(_ context.Context, name string) error {
 
 func (h *testHost) resetSandbox(_ context.Context, name string) error {
 	h.resets = append(h.resets, name)
+	h.steps = append(h.steps, "reset "+name)
 	return h.resetErr
 }
 

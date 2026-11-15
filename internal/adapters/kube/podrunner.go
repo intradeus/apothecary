@@ -3,6 +3,7 @@ package kube
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -36,6 +37,21 @@ type TransportError struct {
 
 func (e *TransportError) Error() string {
 	return fmt.Sprintf("kubectl exec: exit %d: %s", e.Code, strings.TrimSpace(e.Stderr))
+}
+
+// execRefusedSign is the container runtime refusing to start the exec'd
+// process inside a running container — what every exec into a sysbox pod
+// reads once the sysbox services restarted under it ("unsafe procfs
+// detected"). kubectl wraps it in "Internal error occurred", a transport sign.
+const execRefusedSign = "OCI runtime exec failed"
+
+// IsExecRefused reports whether err is kubectl's exec failing because the
+// container runtime refused to start the process: the pod and the API are
+// fine, the container is not. Only a TransportError (anywhere in err's
+// chain) qualifies; a command that merely printed the words is a result.
+func IsExecRefused(err error) bool {
+	var te *TransportError
+	return errors.As(err, &te) && strings.Contains(te.Stderr, execRefusedSign)
 }
 
 var exitMarkerRE = regexp.MustCompile(`(?m)^command terminated with exit code (\d+)\r?\n?$`)

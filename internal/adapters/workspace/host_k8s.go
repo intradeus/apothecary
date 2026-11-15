@@ -135,9 +135,22 @@ func (h *k8sHost) podRunner(name string) kube.PodRunner {
 // runInner: every inner call is a `kubectl exec` into the sandbox container,
 // where the devcontainer CLI, docker CLI and git run against the pod's own
 // dockerd. Through runWith, so a kubectl transport failure is retried like a
-// failed spawn.
+// failed spawn; one still refused by the container runtime after the retries
+// is errSandboxBroken.
 func (h *k8sHost) runInner(ctx context.Context, name, bin string, args []string, stdin []byte, tee io.Writer, extraEnv ...string) ([]byte, []byte, int, error) {
-	return h.a.runWith(ctx, h.podRunner(name), bin, args, stdin, tee, extraEnv...)
+	out, errb, code, err := h.a.runWith(ctx, h.podRunner(name), bin, args, stdin, tee, extraEnv...)
+	if kube.IsExecRefused(err) {
+		err = fmt.Errorf("%w: %w", errSandboxBroken, err)
+	}
+	return out, errb, code, err
+}
+
+// refusesExec probes the pod with a trivial exec: true only when its
+// container runtime refuses to start the process. Any other failure (the API
+// unreachable, the container not started yet) proves nothing about the pod.
+func (h *k8sHost) refusesExec(ctx context.Context, name string) bool {
+	_, _, _, err := h.runInner(ctx, name, "true", nil, nil, nil)
+	return errors.Is(err, errSandboxBroken)
 }
 
 func (h *k8sHost) fs(name string) sandboxFS { return execFS{h: h, name: name} }
@@ -238,8 +251,9 @@ func (h *k8sHost) labels(name, project string) map[string]string {
 
 // ensurePod creates the run's claim, network policy and pod as needed and
 // waits for the pod to be Ready (its dockerd answering). A pod that ended
-// (Failed/Succeeded) is replaced — the claim, and with it the checkout and the
-// inner daemon's images and containers, survives.
+// (Failed/Succeeded) is replaced, and so is a running one whose container
+// runtime refuses exec (sysbox restarted under it) — the claim, and with it
+// the checkout and the inner daemon's images and containers, survives.
 func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSpec, att egressgw.Attachment, plog func(string, ...any)) error {
 	k := h.cfg.Kube
 	if _, err := h.relayToken(ctx, name, true, spec.Project); err != nil {
@@ -271,6 +285,16 @@ func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSp
 	}
 	if found && (pod.Status.Phase == "Failed" || pod.Status.Phase == "Succeeded") {
 		plog("→ replacing the sandbox pod: the last one ended (%s); its volume and checkout are kept\n", pod.Status.Phase)
+		if err := k.Delete(ctx, "pod", name, true); err != nil {
+			return err
+		}
+		found = false
+	} else if found && pod.Status.Phase == "Running" && h.refusesExec(ctx, name) {
+		kept := "its volume and checkout are kept"
+		if h.cfg.Storage == "emptydir" {
+			kept = "its checkout is on an emptyDir and goes with it"
+		}
+		plog("→ replacing the sandbox pod: it no longer accepts exec (container runtime restarted?); %s\n", kept)
 		if err := k.Delete(ctx, "pod", name, true); err != nil {
 			return err
 		}
@@ -663,6 +687,11 @@ func (h *k8sHost) sandboxState(ctx context.Context, name string) (string, error)
 		if pod.Status.Ready() {
 			return "running", nil
 		}
+		// kubelet's exec readiness probe may take a pod whose runtime refuses
+		// exec out of Ready: tell it from one still coming up.
+		if h.refusesExec(ctx, name) {
+			return "broken", nil
+		}
 		return "created", nil
 	case "Pending":
 		return "created", nil
@@ -695,7 +724,9 @@ func (h *k8sHost) destroySandbox(ctx context.Context, name string) error {
 
 // resetSandbox empties the pod's daemon and leaves the pod: the checkout is on
 // the volume under it, which an emptyDir would lose with the pod, and a live
-// pod keeps its tunnel to the gateway. An ended pod has nothing to empty.
+// pod keeps its tunnel to the gateway. It runs after prepare, whose ensurePod
+// has already replaced a pod that refused exec. An ended pod has nothing to
+// empty.
 func (h *k8sHost) resetSandbox(ctx context.Context, name string) error {
 	state, err := h.sandboxState(ctx, name)
 	if err != nil || state != "running" {
