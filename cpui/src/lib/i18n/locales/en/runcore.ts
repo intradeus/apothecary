@@ -319,6 +319,11 @@ export default {
 	'run.terminal.reconnect': 'Reconnect',
 	'run.terminal.hint': 'ends when you leave this tab',
 	'run.terminal.sessionClosed': 'session closed',
+	'run.terminal.copy': 'Copy the selection ({keys})',
+	'run.terminal.paste': 'Paste ({keys})',
+	'run.terminal.top': 'Scroll to the top',
+	'run.terminal.bottom': 'Scroll to the bottom',
+	'run.terminal.pasteRefused': 'The browser would not hand over the clipboard — paste with {keys}.',
 
 	// Composer
 	'run.composer.placeholder': 'The agent is in your hands. Say what to change…',

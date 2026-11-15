@@ -30,6 +30,14 @@ vi.mock('@xterm/xterm', () => ({
 		dispose() {}
 		onData = () => ({ dispose() {} });
 		onResize = () => ({ dispose() {} });
+		attachCustomKeyEventHandler() {}
+		onSelectionChange = () => ({ dispose() {} });
+		getSelection = () => '';
+		hasSelection = () => false;
+		clearSelection() {}
+		paste() {}
+		scrollToTop() {}
+		scrollToBottom() {}
 	}
 }));
 vi.mock('@xterm/addon-fit', () => ({
@@ -37,6 +45,7 @@ vi.mock('@xterm/addon-fit', () => ({
 		fit() {}
 	}
 }));
+vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }));
 
 const RUN = '01TESTRUN0000000000000ABCD';
 const primary: RunCheckout = {

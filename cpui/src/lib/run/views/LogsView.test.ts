@@ -403,10 +403,19 @@ describe('LogsView', () => {
 	describe('going back', () => {
 		const earlier = () => screen.queryByRole('button', { name: /^Load earlier output/ });
 
-		it('offers what came before the tail, and puts it above', async () => {
+		it('offers what came before the tail, and puts it above, keeping the reader in place', async () => {
 			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('tail line', 3 << 20));
 			await open();
 			expect(earlier()).toHaveTextContent('Load earlier output · 3.0 MB before this');
+			// jsdom has no layout: the box is 600px taller once the older text is in.
+			const log = screen.getByRole('region', { name: 'Log output' });
+			Object.defineProperty(log, 'scrollHeight', {
+				get: () => (log.textContent?.includes('older') ? 1600 : 1000),
+				configurable: true
+			});
+			Object.defineProperty(log, 'clientHeight', { value: 200, configurable: true });
+			log.scrollTop = 300;
+			log.dispatchEvent(new Event('scroll'));
 
 			vi.mocked(api.runs.workspaceLog).mockResolvedValue({
 				text: 'older ',
@@ -419,6 +428,7 @@ describe('LogsView', () => {
 			expect(api.runs.workspaceLog).toHaveBeenLastCalledWith(RUN, { from: 1 << 20, n: 2 << 20 });
 			expect(screen.getByText('older tail line')).toBeInTheDocument();
 			expect(earlier()).toHaveTextContent('1.0 MB before this');
+			expect(log.scrollTop).toBe(900);
 		});
 
 		it('offers nothing once the log is on screen from its first byte', async () => {
@@ -465,53 +475,28 @@ describe('LogsView', () => {
 	});
 
 	describe('following the bottom', () => {
-		function scrollable(el: HTMLElement) {
-			Object.defineProperty(el, 'scrollHeight', { value: 1000, configurable: true });
+		function scrollable(el: HTMLElement, height: number) {
+			Object.defineProperty(el, 'scrollHeight', { value: height, configurable: true });
 			Object.defineProperty(el, 'clientHeight', { value: 200, configurable: true });
 		}
 
-		beforeEach(() => {
-			vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+		it('follows again on another source, after the reader scrolled up', async () => {
 			vi.mocked(api.runs.workspaceLog).mockResolvedValue(logOf('first'));
-		});
-
-		it('stays at the bottom as the tail grows', async () => {
-			await open();
-			const log = screen.getByText('first').parentElement!;
-			scrollable(log);
-
-			await vi.advanceTimersByTimeAsync(2500);
-			await tick();
-
-			expect(log.scrollTop).toBe(1000);
-		});
-
-		it('leaves a reader who scrolled up where they are', async () => {
-			await open();
-			const log = screen.getByText('first').parentElement!;
-			scrollable(log);
+			const { rs } = await open(live({ events: stageEvents }));
+			const log = screen.getByRole('region', { name: 'Log output' });
+			scrollable(log, 1000);
 			log.scrollTop = 100;
 			log.dispatchEvent(new Event('scroll'));
 
-			await vi.advanceTimersByTimeAsync(2500);
+			const plan = deferred<string>();
+			vi.mocked(api.runs.stageLog).mockReturnValue(plan.promise);
+			rs.logSource = 'plan';
 			await tick();
+			scrollable(log, 1500);
+			plan.resolve('plan output');
 
-			expect(log.scrollTop).toBe(100);
-		});
-
-		it('follows again once the reader returns to the bottom', async () => {
-			await open();
-			const log = screen.getByText('first').parentElement!;
-			scrollable(log);
-			log.scrollTop = 100;
-			log.dispatchEvent(new Event('scroll'));
-			log.scrollTop = 790;
-			log.dispatchEvent(new Event('scroll'));
-
-			await vi.advanceTimersByTimeAsync(2500);
-			await tick();
-
-			expect(log.scrollTop).toBe(1000);
+			expect(await screen.findByText('plan output')).toBeInTheDocument();
+			expect(log.scrollTop).toBe(1500);
 		});
 	});
 });

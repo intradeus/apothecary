@@ -16,6 +16,7 @@
 	import { ago, fmtAbs } from '$lib/core/format';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
+	import LogOutput from '$lib/ui/LogOutput.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { I } from '$lib/design/icons';
@@ -147,7 +148,6 @@
 		loading: boolean;
 	}
 	let logs = $state<Record<string, Log | undefined>>({});
-	const outs: Record<string, HTMLDivElement | undefined> = $state({});
 
 	async function loadLog(name: string, following = false) {
 		const cur = logs[name];
@@ -156,14 +156,7 @@
 		try {
 			const text = await api.runs.serviceLog(rs.runId, name, LOG_TAIL);
 			if (!logs[name]) return;
-			const el = outs[name];
-			const stick = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 40;
 			logs[name] = { text, note: '', loading: false };
-			if (stick)
-				requestAnimationFrame(() => {
-					const o = outs[name];
-					if (o) o.scrollTop = o.scrollHeight;
-				});
 		} catch (e) {
 			const last = logs[name];
 			if (!last) return;
@@ -422,28 +415,28 @@
 					{/if}
 
 					{#if log}
-						<div class="logbar">
-							<span class="caption">{t('runview.services.log_tail', { n: LOG_TAIL })}</span>
-							<span class="spacer"></span>
-							<button
-								class="btn-icon"
-								title={t('runview.services.log_refresh')}
-								aria-label={t('runview.services.log_refresh')}
-								aria-busy={log.loading}
-								onclick={() => loadLog(s.name)}>{I.retry}</button
-							>
-						</div>
-						<div class="log out" bind:this={outs[s.name]}>
-							{#if log.text === null}
-								{#if log.note}<div class="empty-line">{log.note}</div>{:else}<Loading
-										text={t('runview.connecting')}
-									/>{/if}
-							{:else if !log.text}
-								<div class="empty-line">{t('runview.services.log_empty')}</div>
-							{:else}
-								<pre>{log.text}</pre>
-							{/if}
-						</div>
+						<LogOutput text={log.text} label={t('runview.services.log_label', { name: s.name })}>
+							{#snippet bar()}
+								<span class="caption">{t('runview.services.log_tail', { n: LOG_TAIL })}</span>
+								<span class="spacer"></span>
+								<button
+									class="btn-icon"
+									title={t('runview.services.log_refresh')}
+									aria-label={t('runview.services.log_refresh')}
+									aria-busy={log.loading}
+									onclick={() => loadLog(s.name)}>{I.retry}</button
+								>
+							{/snippet}
+							{#snippet placeholder()}
+								{#if log.text === null}
+									{#if log.note}<div class="empty-line">{log.note}</div>{:else}<Loading
+											text={t('runview.connecting')}
+										/>{/if}
+								{:else}
+									<div class="empty-line">{t('runview.services.log_empty')}</div>
+								{/if}
+							{/snippet}
+						</LogOutput>
 					{/if}
 				</article>
 			{/each}
@@ -555,26 +548,6 @@
 		padding: 5px 8px;
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
-	}
-	.logbar {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		margin-top: 2px;
-	}
-	.out {
-		max-height: 260px;
-		line-height: 1.65;
-	}
-	.out pre {
-		margin: 0;
-		font: inherit;
-		white-space: pre-wrap;
-		word-break: break-all;
-	}
-	.out > .empty-line {
-		font-family: var(--font-body);
-		padding: 0;
 	}
 	.foot {
 		padding: 10px 12px;
