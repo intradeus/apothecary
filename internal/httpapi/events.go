@@ -21,7 +21,8 @@ import (
 
 func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, ok := s.runEvents(w, r, id); !ok {
+	// Whether the run exists, without reading the log the replay reads next.
+	if _, ok := s.runView(w, r, id); !ok {
 		return
 	}
 	after := int64(0)

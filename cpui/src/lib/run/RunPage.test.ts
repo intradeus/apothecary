@@ -12,6 +12,7 @@ import { DESK_KEY, sizeDesk, tab, windows } from '$test/fixtures/desk';
 import { aLiveRun, anEvent, aRaise } from '$test/fixtures/run-views';
 import { deferred } from '$test/helpers';
 import RunPage from './RunPage.svelte';
+import { STREAM_BATCH_MS } from './store.svelte';
 
 // Every call a test does not set stays unanswered, so the fifteen real views
 // sit in their loading states and what is left to see is the page's own work.
@@ -55,7 +56,11 @@ async function setup(run: Run | null = aLiveRun()) {
 	const onretried = vi.fn();
 	const view = render(RunPage, { runId: run?.id ?? 'missing', onretried });
 	await settled();
-	const emit = (e: RunEvent) => vi.mocked(api.runs.events).mock.calls[0][2](e);
+	// Resolves once the stream's batch has landed on the page.
+	const emit = (e: RunEvent) => {
+		vi.mocked(api.runs.events).mock.calls[0][2](e);
+		return new Promise((r) => setTimeout(r, STREAM_BATCH_MS + 1));
+	};
 	return { ...view, onretried, emit };
 }
 
@@ -406,8 +411,8 @@ describe('RunPage', () => {
 			'opens the log once it has %s',
 			async (type) => {
 				const { emit } = await setup(inRecipe());
-				emit(started);
-				emit(anEvent(2, type, { stage_id: 'build', duration_ms: 1000 }));
+				void emit(started);
+				await emit(anEvent(2, type, { stage_id: 'build', duration_ms: 1000 }));
 
 				await userEvent.click(await pill());
 

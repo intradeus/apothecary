@@ -7,7 +7,7 @@ import { aRun, aTicket, aProject } from '$test/fixtures';
 import { aToolCall, settled } from '$test/fixtures/run-components';
 import { aLiveRun, anAnswer, anEvent, aRaise, NOW } from '$test/fixtures/run-views';
 import { deferred } from '$test/helpers';
-import { RunStore } from './store.svelte';
+import { RunStore, STREAM_BATCH_MS } from './store.svelte';
 import { buildTranscript } from './transcriptItems';
 
 vi.mock('$lib/api', () => ({
@@ -64,14 +64,23 @@ async function live(run: Run | null = aLiveRun()) {
 	const rs = new RunStore(run?.id ?? 'missing');
 	const stop = rs.start();
 	await settled();
-	const [, , emit, delta] = vi.mocked(api.runs.events).mock.calls[0];
+	const [, , onEvent, onDelta] = vi.mocked(api.runs.events).mock.calls[0];
+	// Each message lands at once (flushed): the batching has its own tests.
+	const emit = (e: RunEvent) => {
+		onEvent(e);
+		rs.flush();
+	};
+	const delta = (d: LiveDelta) => {
+		onDelta!(d);
+		rs.flush();
+	};
 	vi.mocked(api.runs.get).mockClear();
 	vi.mocked(api.runs.files).mockClear();
 	vi.mocked(api.runs.ports).mockClear();
 	vi.mocked(api.runs.services).mockClear();
 	vi.mocked(api.egress.denials).mockClear();
 	vi.mocked(fleet.refresh).mockClear();
-	return { rs, stop, emit, delta: delta as (d: LiveDelta) => void };
+	return { rs, stop, emit, delta, onEvent, onDelta: onDelta! };
 }
 
 /** A store with a run in hand and nothing started. */
@@ -228,6 +237,68 @@ describe('the event stream', () => {
 			emit(anEvent(1, 'hold_released'));
 			expect(rs.releasing).toBe(false);
 			stop();
+		});
+	});
+
+	describe('a burst of messages (a long replay)', () => {
+		const said = (segment: string, text: string) =>
+			({ kind: 'message', segment, text }) as LiveDelta;
+
+		it('lands together a frame later, in the order it arrived', async () => {
+			const { rs, stop, onEvent } = await live();
+			vi.useFakeTimers();
+			onEvent(anEvent(1, 'stage_started', { stage_id: 'a' }));
+			onEvent(anEvent(2, 'agent_message', { segment: 's', text: 'Hi' }));
+			expect(rs.events).toEqual([]);
+			vi.advanceTimersByTime(STREAM_BATCH_MS);
+			expect(rs.events.map((e) => e.seq)).toEqual([1, 2]);
+			stop();
+		});
+
+		it('asks each refresh it calls for once', async () => {
+			const { stop, onEvent } = await live();
+			vi.useFakeTimers();
+			onEvent(anEvent(1, 'run_started'));
+			onEvent(aRaise(2, 'p1'));
+			onEvent(anAnswer(3, 'p1'));
+			onEvent(anEvent(4, 'env_ready'));
+			onEvent(anEvent(5, 'snapshot_captured'));
+			onEvent(anEvent(6, 'service_ready'));
+			onEvent(anEvent(7, 'service_stopped'));
+			vi.advanceTimersByTime(STREAM_BATCH_MS);
+			expect(api.runs.get).toHaveBeenCalledOnce();
+			expect(fleet.refresh).toHaveBeenCalledOnce();
+			expect(api.runs.files).toHaveBeenCalledOnce();
+			expect(api.runs.services).toHaveBeenCalledOnce();
+			stop();
+		});
+
+		it('keeps deltas in step with the events around them', async () => {
+			const { rs, stop, onEvent, onDelta } = await live();
+			vi.useFakeTimers();
+			onDelta(said('s1', 'Hel'));
+			onEvent(anEvent(1, 'agent_message', { segment: 's1', text: 'Hello' }));
+			onDelta(said('s2', 'Next'));
+			vi.advanceTimersByTime(STREAM_BATCH_MS);
+			expect([...rs.live.messages.keys()]).toEqual(['s2']);
+			expect(rs.events).toHaveLength(1);
+			stop();
+		});
+
+		it('drops what had not landed when the page lets go', async () => {
+			const { rs, stop, onEvent } = await live();
+			vi.useFakeTimers();
+			onEvent(anEvent(1, 'run_started'));
+			stop();
+			vi.advanceTimersByTime(STREAM_BATCH_MS);
+			expect(rs.events).toEqual([]);
+			expect(api.runs.get).not.toHaveBeenCalled();
+		});
+
+		it('has nothing to do when nothing arrived', () => {
+			const rs = store();
+			rs.flush();
+			expect(rs.events).toEqual([]);
 		});
 	});
 

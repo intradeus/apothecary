@@ -30,6 +30,7 @@ import (
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/kinds"
 	"apothecary/internal/project/tickets"
+	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/skills/skillstore"
 	"apothecary/internal/workspace/envcheck"
@@ -222,6 +223,27 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 // runEvents loads a run's full event history, or 404s.
+// runView is the run's view, or a 404 written: the store's row when it
+// keeps one, so a long run's log is not read and reduced on every request,
+// else its log reduced.
+func (s *Server) runView(w http.ResponseWriter, r *http.Request, id string) (run.View, bool) {
+	if vl, ok := s.Store.(run.ViewLookup); ok {
+		v, found, err := vl.RunView(r.Context(), id)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return run.View{}, false
+		}
+		if found {
+			return v, true
+		}
+	}
+	evs, ok := s.runEvents(w, r, id)
+	if !ok {
+		return run.View{}, false
+	}
+	return run.Reduce(evs), true
+}
+
 func (s *Server) runEvents(w http.ResponseWriter, r *http.Request, id string) ([]event.Event, bool) {
 	evs, err := s.Store.Events(r.Context(), id, 0)
 	if err != nil {
