@@ -2,6 +2,23 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v3.5.1 (2026-11-15)
+
+### Fixes
+
+- **workspace**: archived runs should be properly destroyed
+- **workspace**: report a sandbox that refuses exec as broken and replace it
+- **cli**: remove the forward daemon's socket before it exits
+- **cpui**: darken the Dark theme and its ping card
+
+### Performance
+
+- **run**: performance upgrades for session events loading in UI
+
+### Reverts
+
+- **cli**: remove the forward daemon's socket before it exits
+
 ## v3.5.0 (2026-11-13)
 
 ### Features
