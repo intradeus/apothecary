@@ -3797,6 +3797,8 @@ export const abortRun = <ThrowOnError extends boolean = false>(
 
 /**
  * Archive a finished run and destroy its workspace
+ *
+ * The destroy outlives the request. One that fails is recorded on the run (env_destroy_failed, env_destroy_error) and retried by the reaper; archiving an archived run that still has a workspace retries it now, and answers 409 with the reason when it fails again.
  */
 export const archiveRun = <ThrowOnError extends boolean = false>(
 	options: Options<ArchiveRunData, ThrowOnError>

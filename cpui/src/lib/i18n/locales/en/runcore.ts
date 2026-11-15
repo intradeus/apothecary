@@ -36,6 +36,9 @@ export default {
 	'run.header.rerunTitle':
 		'A fresh run of the same ticket: new workspace, new branch — with direction, files and a flow of your choosing',
 	'run.header.archive': 'Archive…',
+	'run.header.destroyWorkspace': 'Destroy workspace',
+	'run.header.destroyWorkspaceTitle':
+		'Workspace {env} outlived the archive and still counts against the environment cap. The reaper retries it; this retries now.',
 	'run.header.editor': 'Editor',
 	'run.header.editorTitle':
 		"VS Code (code-server) in the browser on this workspace — the repo, the agent's commits, a terminal",
@@ -58,6 +61,7 @@ export default {
 	'run.archive.action': 'Archive run',
 	'run.archive.done': 'Run {id} archived',
 	'run.archive.openTicket': 'Open ticket',
+	'run.destroyWorkspace.done': 'Workspace {env} destroyed',
 
 	// Rebuild
 	'run.rebuild.button': 'Rebuild',
@@ -507,6 +511,7 @@ export default {
 	'run.event.play': 'play — continuing where it left off',
 	'run.event.archived': 'archived',
 	'run.event.destroyed': 'workspace destroyed',
+	'run.event.destroyFailed': 'workspace could not be destroyed: {error} — the reaper retries it',
 
 	// Store
 	'run.store.answerSent': 'Answer sent — the run picks it up from here'

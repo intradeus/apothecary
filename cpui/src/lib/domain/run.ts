@@ -90,6 +90,9 @@ export interface Run {
 	/** The run ended because its workspace failed to come up: a retry
 	 *  provisions it again. */
 	provisionFailed: boolean;
+	/** The last destroy of the workspace failed with this: it is still there,
+	 *  counted against the cap, and the reaper retries it. */
+	envDestroyError?: string;
 	createdAt: string;
 	updatedAt: string;
 	/** What the run has spent and how its time went, folded from its events. */

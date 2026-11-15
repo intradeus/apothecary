@@ -136,6 +136,33 @@ describe('RunControls: archive', () => {
 	it('is not offered once the run is archived', () => {
 		setup({ state: 'archived' });
 		expect(screen.queryByRole('button', { name: /archive/i })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /destroy workspace/i })).not.toBeInTheDocument();
+	});
+});
+
+// An archived run whose destroy failed still has its workspace: destroying it
+// again is the retry, with no second question (the archive asked), and why
+// the last attempt failed is on the button.
+describe('RunControls: destroy a stranded workspace', () => {
+	it('retries the destroy and says it went', async () => {
+		vi.mocked(api.runs.archive).mockResolvedValueOnce(undefined as never);
+		setup({ state: 'archived', envId: 'env-1', envDestroyError: 'delete pod: exit -1' });
+		const destroy = screen.getByRole('button', { name: /destroy workspace/i });
+		expect(destroy).toHaveAttribute('title', expect.stringContaining('env-1'));
+		expect(destroy).toHaveAttribute('title', expect.stringContaining('delete pod: exit -1'));
+		await userEvent.click(destroy);
+		expect(confirmDialog).not.toHaveBeenCalled();
+		expect(api.runs.archive).toHaveBeenCalledOnce();
+		expect(vi.mocked(toast).mock.calls[0][0]).toContain('env-1');
+	});
+
+	it('says nothing went when the engine refused, and names no reason it has not got', async () => {
+		vi.mocked(api.runs.archive).mockRejectedValueOnce(new Error('still stuck'));
+		setup({ state: 'archived', envId: 'env-1' });
+		const destroy = screen.getByRole('button', { name: /destroy workspace/i });
+		expect(destroy.getAttribute('title')).not.toContain(' — ');
+		await userEvent.click(destroy);
+		expect(toast).not.toHaveBeenCalled();
 	});
 });
 

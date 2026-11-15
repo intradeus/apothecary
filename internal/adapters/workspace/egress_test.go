@@ -271,6 +271,67 @@ func TestDestroyDropsTheRunsEgress(t *testing.T) {
 	mustNotExist(t, a.folderFor("w"))
 }
 
+// A gateway that will not let the run's peer go fails the destroy, keeps the
+// run's link (its tunnel address stays reserved) and keeps the run folder, so
+// the retry finds the project marker again.
+func TestDestroyFailsWhileTheGatewayKeepsThePeer(t *testing.T) {
+	a := newTestAdapter(t, &ruleRunner{})
+	g := withGateway(t, a)
+	g.detachDown = true
+	if err := a.Destroy(context.Background(), "w"); err == nil || !strings.Contains(err.Error(), "detach refused") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(g.detached) != 0 {
+		t.Errorf("link deleted while the gateway still holds the peer: %v", g.detached)
+	}
+	mustExist(t, a.folderFor("w"))
+	g.detachDown = false
+	if err := a.Destroy(context.Background(), "w"); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.detached) != 1 {
+		t.Errorf("detached = %v", g.detached)
+	}
+	mustNotExist(t, a.folderFor("w"))
+}
+
+// A run folder without its project marker still detaches from the gateway:
+// the run's link names the project.
+func TestDestroyWithoutTheMarkerAsksTheLink(t *testing.T) {
+	a := newTestAdapter(t, &ruleRunner{})
+	g := withGateway(t, a)
+	os.Remove(filepath.Join(a.folderFor("w"), "gwproject"))
+	g.runProject = "P1"
+	if err := a.Destroy(context.Background(), "w"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(g.routes, []string{"-w"}) || len(g.detached) != 1 {
+		t.Errorf("routes = %v, detached = %v", g.routes, g.detached)
+	}
+}
+
+func TestPruneEgressKeepsTheLive(t *testing.T) {
+	a := newTestAdapter(t, &ruleRunner{})
+	ctx := context.Background()
+	live := func(context.Context) (map[envport.EnvID]bool, error) { return map[envport.EnvID]bool{"w": true}, nil }
+	if p, err := a.PruneEgress(ctx, "P1", live); err != nil || p != nil {
+		t.Errorf("no gateway = %v %v", p, err)
+	}
+	g := withGateway(t, a)
+	g.table = policyfile.Routes{RunSubnets: map[string]string{"w": "10.90.0.2/32", "old": "10.90.0.3/32"}}
+	if p, err := a.PruneEgress(ctx, "", live); err != nil || p != nil {
+		t.Errorf("no project = %v %v", p, err)
+	}
+	p, err := a.PruneEgress(ctx, "P1", live)
+	if err != nil || !slices.Equal(p, []envport.EnvID{"old"}) || !slices.Equal(g.routes, []string{"-old"}) {
+		t.Errorf("pruned %v %v, routes %v", p, err, g.routes)
+	}
+	boom := errors.New("boom")
+	if _, err := a.PruneEgress(ctx, "P1", func(context.Context) (map[envport.EnvID]bool, error) { return nil, boom }); !errors.Is(err, boom) {
+		t.Errorf("live failure = %v", err)
+	}
+}
+
 // A rebuild keeps the checkout: agent commits live there and nothing else has
 // them yet. Compose takes the sandbox-reset road, and the promise holds on it
 // too.

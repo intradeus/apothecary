@@ -652,6 +652,8 @@ export function describe(e: RunEvent): Described {
 			return { text: t('run.event.archived'), tone: '' };
 		case 'env_destroyed':
 			return { text: t('run.event.destroyed'), tone: '' };
+		case 'env_destroy_failed':
+			return { text: t('run.event.destroyFailed', { error: String(p.error) }), tone: 'bad' };
 		case 'service_started': {
 			const by =
 				p.by === 'stage' && p.stage_id

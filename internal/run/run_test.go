@@ -101,6 +101,26 @@ func TestReduceFailurePaths(t *testing.T) {
 	}
 }
 
+// A failed destroy leaves the environment the run's (it still counts, the
+// reaper retries it) and says why; a destroy that then succeeds clears it.
+func TestEnvDestroyFailureKeepsTheEnv(t *testing.T) {
+	v := Reduce(appendAll(t, &event.RunCreated{}, &event.EnvRequested{}, &event.EnvReady{EnvID: "apo-x"},
+		&event.RunCompleted{}, &event.RunArchived{}, &event.EnvDestroyFailed{EnvID: "apo-x", Error: "pod stuck"}))
+	if v.State != Archived || v.EnvID != "apo-x" || v.EnvDestroyError != "pod stuck" {
+		t.Fatalf("after a failed destroy: state %s env %q error %q", v.State, v.EnvID, v.EnvDestroyError)
+	}
+	v = Reduce(appendAll(t, &event.RunCreated{}, &event.EnvReady{EnvID: "apo-x"}, &event.RunArchived{},
+		&event.EnvDestroyFailed{EnvID: "apo-x", Error: "pod stuck"}, &event.EnvDestroyed{EnvID: "apo-x"}))
+	if v.EnvID != "" || v.EnvDestroyError != "" {
+		t.Fatalf("after the retry: env %q error %q", v.EnvID, v.EnvDestroyError)
+	}
+	v = Reduce(appendAll(t, &event.RunCreated{}, &event.EnvReady{EnvID: "apo-x"},
+		&event.EnvDestroyFailed{EnvID: "apo-x", Error: "pod stuck"}, &event.EnvReady{EnvID: "apo-x"}))
+	if v.EnvDestroyError != "" {
+		t.Fatalf("a workspace back up still reads as failing to go: %q", v.EnvDestroyError)
+	}
+}
+
 func TestTerminal(t *testing.T) {
 	for st, want := range map[State]bool{
 		Pending: false, Provisioning: false, Running: false, WaitingOnHuman: false,

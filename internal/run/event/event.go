@@ -81,6 +81,9 @@ const (
 	TypeRunPaused     Type = "run_paused"   // user pressed pause: loop exited cleanly, run parked non-terminal
 	TypeRunUnpaused   Type = "run_unpaused" // user pressed play: loop restarts and re-enters via the recovery path
 	TypeEnvDestroyed  Type = "env_destroyed"
+	// A destroy of the run's environment that did not finish: what is left
+	// still counts against the cap, and the reaper retries it.
+	TypeEnvDestroyFailed Type = "env_destroy_failed"
 	// Rebuild recreates a run's container in place (keeps the run + checkout);
 	// orthogonal to the run's lifecycle State — these never change it.
 	TypeEnvRebuildStarted   Type = "env_rebuild_started"
@@ -931,6 +934,15 @@ type EnvDestroyed struct {
 	EnvID string `json:"env_id"`
 }
 
+// EnvDestroyFailed: destroying the environment failed part-way (a pod that
+// would not go, a gateway that would not let the run's tunnel peer go). The
+// environment is still the run's (View.EnvID): it counts against the cap and
+// the reaper retries until an EnvDestroyed. Recorded once per failure streak.
+type EnvDestroyFailed struct {
+	EnvID string `json:"env_id"`
+	Error string `json:"error"`
+}
+
 type EnvRebuildStarted struct {
 	EnvID string `json:"env_id"`
 }
@@ -984,6 +996,7 @@ func (*RunRetried) EventType() Type          { return TypeRunRetried }
 func (*RunPaused) EventType() Type           { return TypeRunPaused }
 func (*RunUnpaused) EventType() Type         { return TypeRunUnpaused }
 func (*EnvDestroyed) EventType() Type        { return TypeEnvDestroyed }
+func (*EnvDestroyFailed) EventType() Type    { return TypeEnvDestroyFailed }
 
 func (*EnvRebuildStarted) EventType() Type   { return TypeEnvRebuildStarted }
 func (*EnvRebuildCompleted) EventType() Type { return TypeEnvRebuildCompleted }

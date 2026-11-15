@@ -702,13 +702,21 @@ func (h *k8sHost) sandboxState(ctx context.Context, name string) (string, error)
 
 func (h *k8sHost) destroySandbox(ctx context.Context, name string) error {
 	k := h.cfg.Kube
+	// Every object is tried, whatever the one before it did: a pod delete
+	// that timed out (its pod often goes anyway) must not leave the volume,
+	// the network policy and the relay secret behind. Absent objects are
+	// success (--ignore-not-found), so a retry finishes what this left.
+	var errs []error
 	if err := k.Delete(ctx, "pod", name, true); err != nil {
-		return err
+		errs = append(errs, fmt.Errorf("delete pod %s: %w", name, err))
 	}
 	for _, obj := range [][2]string{{"persistentvolumeclaim", dataClaimName(name)}, {"networkpolicy", runSecretName(name)}, {"secret", runSecretName(name)}} {
 		if err := k.Delete(ctx, obj[0], obj[1], false); err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("delete %s %s: %w", obj[0], obj[1], err))
 		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return err
 	}
 	h.forgetPod(name)
 	h.mu.Lock()

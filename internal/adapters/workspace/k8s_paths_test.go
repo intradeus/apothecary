@@ -596,6 +596,30 @@ func TestK8sDestroyFailures(t *testing.T) {
 	}
 }
 
+// A pod delete that fails (kubectl killed by a cancelled request, a sysbox pod
+// slow to terminate) must not strand the rest: the volume, the network policy
+// and the relay secret are still deleted, and the error still reported.
+func TestK8sDestroyGoesPastAFailedPodDelete(t *testing.T) {
+	k := &kubeFake{}
+	a, _ := k8sWith(t, k, false, kubeRule{match: "delete pod", err: context.Canceled, code: -1})
+	os.MkdirAll(a.folderFor("w"), 0o755)
+	err := a.Destroy(context.Background(), "w")
+	if err == nil || !strings.Contains(err.Error(), "delete pod w") {
+		t.Fatalf("err = %v", err)
+	}
+	want := []string{"persistentvolumeclaim/w-data", "networkpolicy/apo-run-w", "secret/apo-run-w"}
+	if !slices.Equal(k.deleted, want) {
+		t.Errorf("deleted %v, want %v", k.deleted, want)
+	}
+	mustExist(t, a.folderFor("w"))
+	// The retry finds the rest absent (--ignore-not-found) and finishes.
+	a.host.(*k8sHost).cfg.Kube.R = k
+	if err := a.Destroy(context.Background(), "w"); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	mustNotExist(t, a.folderFor("w"))
+}
+
 func TestK8sDestroyForgetsTheRun(t *testing.T) {
 	a, h := k8sWith(t, &kubeFake{}, false)
 	h.tokens["w"], h.podIPs["w"], h.stats["w"] = "t", "1.2.3.4", cgroupSample{}

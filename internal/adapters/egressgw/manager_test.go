@@ -101,6 +101,7 @@ func newFakeGateway(t *testing.T) *fakeGateway {
 		delete(g.routes.RunSubnets, r.PathValue("run"))
 		delete(g.routes.Peers, r.PathValue("run"))
 	})
+	mux.HandleFunc("GET /routes", func(w http.ResponseWriter, _ *http.Request) { json.NewEncoder(w).Encode(g.routes) })
 	mux.HandleFunc("GET /denials", func(w http.ResponseWriter, r *http.Request) {
 		var out []policyfile.Denial
 		for _, d := range g.denials {
@@ -140,21 +141,26 @@ type fakeHost struct {
 	att      Attachment
 	attached []string
 	detached []string
+	held     map[string]string
 }
 
 func (h *fakeHost) EnsureGateway(context.Context, string, string) (Control, error) {
 	h.up = true
 	return h.gw.control(), nil
 }
-func (h *fakeHost) Control(context.Context, string) (Control, bool) { return h.gw.control(), h.up }
-func (h *fakeHost) AttachRun(_ context.Context, _, _, run string) (Attachment, error) {
+func (h *fakeHost) Control(context.Context, string) (Control, bool, error) {
+	return h.gw.control(), h.up, nil
+}
+func (h *fakeHost) AttachRun(_ context.Context, _, _, run string, held map[string]string) (Attachment, error) {
 	h.attached = append(h.attached, run)
+	h.held = held
 	return h.att, nil
 }
 func (h *fakeHost) DetachRun(_ context.Context, _, run string) error {
 	h.detached = append(h.detached, run)
 	return nil
 }
+func (h *fakeHost) RunProject(context.Context, string) (string, bool, error) { return "", false, nil }
 
 func TestEnsureRunEgressRegistersRouteAndPolicy(t *testing.T) {
 	gw := newFakeGateway(t)
@@ -271,5 +277,97 @@ func TestDestroyRunEgressKeepsGateway(t *testing.T) {
 	}
 	if !h.up {
 		t.Error("gateway taken down")
+	}
+}
+
+// The host allocates against the gateway's own peers (other runs' only): a
+// peer whose link was deleted without a detach still holds its address.
+func TestEnsureRunEgressHandsTheHostTheGatewaysPeers(t *testing.T) {
+	gw := newFakeGateway(t)
+	gw.routes.Peers["orphan"] = policyfile.Peer{PublicKey: "O", IP: "10.90.0.3"}
+	gw.routes.Peers["run1"] = policyfile.Peer{PublicKey: "K", IP: "10.90.0.2"}
+	h := &fakeHost{gw: gw, att: Attachment{Subnet: "10.90.0.4/32", Peer: &policyfile.Peer{PublicKey: "K", IP: "10.90.0.4"}}}
+	if _, err := NewManager(h).EnsureRunEgress(context.Background(), "acme", "", "run1", policyfile.File{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.held) != 1 || h.held["10.90.0.3"] != "orphan" {
+		t.Errorf("held = %v (the run's own peer is not someone else's)", h.held)
+	}
+}
+
+// The prune detaches what the gateway routes for runs that are not live, and
+// asks which runs are live only after reading the table, under the project's
+// lock, so a run that attaches meanwhile is never pruned.
+func TestPruneRunsDetachesWhatIsNotLive(t *testing.T) {
+	gw := newFakeGateway(t)
+	gw.routes.RunSubnets["live"] = "10.90.0.2/32"
+	gw.routes.Peers["live"] = policyfile.Peer{IP: "10.90.0.2"}
+	gw.routes.RunSubnets["gone"] = "10.90.0.3/32"
+	gw.routes.Peers["gone"] = policyfile.Peer{IP: "10.90.0.3"}
+	gw.routes.Peers["peer-only"] = policyfile.Peer{IP: "10.90.0.4"}
+	h := &fakeHost{gw: gw, up: true}
+	m := NewManager(h)
+	ctx := context.Background()
+	var askedAfterRead bool
+	pruned, err := m.PruneRuns(ctx, "acme", func(context.Context) (map[string]bool, error) {
+		askedAfterRead = slices.Contains(gw.requests, "GET /routes")
+		return map[string]bool{"live": true}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !askedAfterRead {
+		t.Error("live was asked before the gateway's table was read")
+	}
+	if !slices.Equal(pruned, []string{"gone", "peer-only"}) || !slices.Equal(h.detached, pruned) {
+		t.Errorf("pruned %v, detached %v", pruned, h.detached)
+	}
+	if _, ok := gw.routes.Peers["live"]; !ok || len(gw.routes.Peers) != 1 || len(gw.routes.RunSubnets) != 1 {
+		t.Errorf("routes = %+v", gw.routes)
+	}
+
+	// A failing liveness read prunes nothing.
+	gw.routes.Peers["gone"] = policyfile.Peer{IP: "10.90.0.3"}
+	if p, err := m.PruneRuns(ctx, "acme", func(context.Context) (map[string]bool, error) {
+		return nil, errors.New("store down")
+	}); err == nil || len(p) != 0 {
+		t.Errorf("prune on a failed liveness read = %v, %v", p, err)
+	}
+	// An empty table does not even ask; no gateway has nothing to prune.
+	if p, err := NewManager(&fakeHost{gw: newFakeGateway(t), up: true}).PruneRuns(ctx, "acme", func(context.Context) (map[string]bool, error) {
+		t.Error("asked for an empty table")
+		return nil, nil
+	}); err != nil || p != nil {
+		t.Errorf("empty table = %v, %v", p, err)
+	}
+	if p, err := NewManager(&fakeHost{gw: gw}).PruneRuns(ctx, "acme", nil); err != nil || p != nil {
+		t.Errorf("no gateway = %v, %v", p, err)
+	}
+}
+
+func TestPruneRunsReportsGatewayFailures(t *testing.T) {
+	ctx := context.Background()
+	live := func(context.Context) (map[string]bool, error) { return nil, nil }
+	if _, err := NewManager(&scriptedHost{controlErr: errors.New("boom")}).PruneRuns(ctx, "p", live); err == nil {
+		t.Error("lookup failure swallowed")
+	}
+	refused, _ := gatewayAnswering(t, http.StatusInternalServerError, "no")
+	if _, err := NewManager(&scriptedHost{ctl: refused, up: true}).PruneRuns(ctx, "p", live); err == nil {
+		t.Error("table read failure swallowed")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			json.NewEncoder(w).Encode(policyfile.Routes{RunSubnets: map[string]string{"a": "x", "b": "y"}})
+			return
+		}
+		if r.URL.Path == "/runs/a" {
+			http.Error(w, "no", http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+	h := &scriptedHost{ctl: Control{BaseURL: srv.URL}, up: true, detachErr: errors.New("secret stuck")}
+	pruned, err := NewManager(h).PruneRuns(ctx, "p", live)
+	if err == nil || !slices.Equal(pruned, []string{"b"}) || h.detaches != 1 {
+		t.Errorf("pruned %v, err %v, detaches %d (a refused detach keeps its link)", pruned, err, h.detaches)
 	}
 }

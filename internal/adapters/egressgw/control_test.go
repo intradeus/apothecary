@@ -23,16 +23,29 @@ type scriptedHost struct {
 	attachErr error
 	detachErr error
 	att       Attachment
+
+	controlErr    error
+	detaches      int
+	runProject    string
+	runProjectErr error
 }
 
 func (h *scriptedHost) EnsureGateway(context.Context, string, string) (Control, error) {
 	return h.ctl, h.ensureErr
 }
-func (h *scriptedHost) Control(context.Context, string) (Control, bool) { return h.ctl, h.up }
-func (h *scriptedHost) AttachRun(context.Context, string, string, string) (Attachment, error) {
+func (h *scriptedHost) Control(context.Context, string) (Control, bool, error) {
+	return h.ctl, h.up, h.controlErr
+}
+func (h *scriptedHost) AttachRun(context.Context, string, string, string, map[string]string) (Attachment, error) {
 	return h.att, h.attachErr
 }
-func (h *scriptedHost) DetachRun(context.Context, string, string) error { return h.detachErr }
+func (h *scriptedHost) DetachRun(context.Context, string, string) error {
+	h.detaches++
+	return h.detachErr
+}
+func (h *scriptedHost) RunProject(context.Context, string) (string, bool, error) {
+	return h.runProject, h.runProject != "", h.runProjectErr
+}
 
 // gatewayAnswering is a control API answering every request the same way.
 func gatewayAnswering(t *testing.T, status int, body string) (Control, *atomic.Int64) {
@@ -59,21 +72,39 @@ func TestEnsureRunEgressStopsAtTheFirstFailure(t *testing.T) {
 	if _, err := NewManager(&scriptedHost{ctl: ctl, attachErr: boom}).EnsureRunEgress(ctx, "p", "", "r", policyfile.File{}); !errors.Is(err, boom) {
 		t.Errorf("attach failure = %v", err)
 	}
-	if hits.Load() != 0 {
-		t.Errorf("a run that never attached reached the gateway %d times", hits.Load())
+	if hits.Load() != 1 {
+		t.Errorf("a run that never attached made %d gateway calls, want only the peer read", hits.Load())
+	}
+
+	// Without the gateway's peers there is no telling which addresses are
+	// free: the attach does not guess.
+	refused, _ := gatewayAnswering(t, http.StatusInternalServerError, "disk full")
+	_, err := NewManager(&scriptedHost{ctl: refused}).EnsureRunEgress(ctx, "p", "", "r", policyfile.File{})
+	if err == nil || !strings.Contains(err.Error(), "read the gateway's peers") || !strings.Contains(err.Error(), "disk full") {
+		t.Errorf("peer read failure = %v", err)
 	}
 
 	// A sandbox must not start on a gateway that has no policy for it: both
 	// control calls are fatal, and they say which one failed.
-	refused, _ := gatewayAnswering(t, http.StatusInternalServerError, "disk full")
-	_, err := NewManager(&scriptedHost{ctl: refused}).EnsureRunEgress(ctx, "p", "", "r", policyfile.File{})
-	if err == nil || !strings.Contains(err.Error(), "register run route") || !strings.Contains(err.Error(), "disk full") {
+	routeDown := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/runs/") {
+			http.Error(w, "peer address 10.90.0.3 is held by run a", http.StatusConflict)
+			return
+		}
+		io.WriteString(w, "{}")
+	}))
+	defer routeDown.Close()
+	_, err = NewManager(&scriptedHost{ctl: Control{BaseURL: routeDown.URL}}).EnsureRunEgress(ctx, "p", "", "r", policyfile.File{})
+	if err == nil || !strings.Contains(err.Error(), "register run route") || !strings.Contains(err.Error(), "held by run a") {
 		t.Errorf("route failure = %v", err)
 	}
 
 	policyDown := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/policy" {
+		switch r.URL.Path {
+		case "/policy":
 			http.Error(w, "no", http.StatusForbidden)
+		case "/routes":
+			io.WriteString(w, "{}")
 		}
 	}))
 	defer policyDown.Close()
@@ -87,10 +118,11 @@ func TestEnsureRunEgressStopsAtTheFirstFailure(t *testing.T) {
 func TestRunNamesAreEscapedInControlPaths(t *testing.T) {
 	var paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.Method+" "+r.URL.EscapedPath())
 		if r.Method == http.MethodGet {
 			io.WriteString(w, `{"denials":[]}`)
+			return
 		}
+		paths = append(paths, r.Method+" "+r.URL.EscapedPath())
 	}))
 	defer srv.Close()
 	m := NewManager(&scriptedHost{ctl: Control{BaseURL: srv.URL}, up: true})
@@ -106,21 +138,61 @@ func TestRunNamesAreEscapedInControlPaths(t *testing.T) {
 	}
 }
 
-// Detaching goes on even when the gateway is unreachable: the run's network
-// must not leak because the gateway is down, and the host's own failure is
-// the one reported.
-func TestDestroyRunEgressSurvivesTheGateway(t *testing.T) {
+// The run's link (its WireGuard Secret) is what reserves its tunnel address:
+// it goes only once the gateway let the run's peer go. Freed while the peer
+// lives on, the address goes to the next run and one of the two loses its
+// tunnel. So a gateway that refuses, or cannot be found for an error, fails
+// the destroy with the link kept, and the destroy is retried.
+func TestDestroyRunEgressKeepsTheLinkUntilTheGatewayLetsGo(t *testing.T) {
 	ctx := context.Background()
 	down, _ := gatewayAnswering(t, http.StatusBadGateway, "")
-	if err := NewManager(&scriptedHost{ctl: down, up: true}).DestroyRunEgress(ctx, "p", "r"); err != nil {
-		t.Errorf("gateway down = %v", err)
+	h := &scriptedHost{ctl: down, up: true}
+	if err := NewManager(h).DestroyRunEgress(ctx, "p", "r"); err == nil || !strings.Contains(err.Error(), "stays reserved") {
+		t.Errorf("gateway refusing = %v", err)
 	}
-	if err := NewManager(&scriptedHost{}).DestroyRunEgress(ctx, "p", "r"); err != nil {
-		t.Errorf("no gateway = %v", err)
+	if h.detaches != 0 {
+		t.Error("the link went while the gateway still holds the peer")
 	}
+	h = &scriptedHost{controlErr: errors.New("cluster unreachable")}
+	if err := NewManager(h).DestroyRunEgress(ctx, "p", "r"); err == nil || h.detaches != 0 {
+		t.Errorf("gateway lookup failing = %v, detaches %d", err, h.detaches)
+	}
+	// No gateway at all holds no peer: the link goes.
+	h = &scriptedHost{}
+	if err := NewManager(h).DestroyRunEgress(ctx, "p", "r"); err != nil || h.detaches != 1 {
+		t.Errorf("no gateway = %v, detaches %d", err, h.detaches)
+	}
+	ok, _ := gatewayAnswering(t, http.StatusNoContent, "")
 	boom := errors.New("boom")
-	if err := NewManager(&scriptedHost{detachErr: boom}).DestroyRunEgress(ctx, "p", "r"); !errors.Is(err, boom) {
+	if err := NewManager(&scriptedHost{ctl: ok, up: true, detachErr: boom}).DestroyRunEgress(ctx, "p", "r"); !errors.Is(err, boom) {
 		t.Errorf("detach failure = %v", err)
+	}
+}
+
+// A run folder that lost its project record still finds the run's gateway,
+// from the run's own link: skipping the gateway there is how a peer leaked.
+func TestDestroyRunEgressFindsTheProjectFromTheLink(t *testing.T) {
+	ctx := context.Background()
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.Method+" "+r.URL.Path)
+	}))
+	defer srv.Close()
+	h := &scriptedHost{ctl: Control{BaseURL: srv.URL}, up: true, runProject: "p"}
+	if err := NewManager(h).DestroyRunEgress(ctx, "", "r"); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 1 || asked[0] != "DELETE /runs/r" || h.detaches != 1 {
+		t.Errorf("asked %v, detaches %d", asked, h.detaches)
+	}
+	// No link: nothing was ever attached.
+	h = &scriptedHost{ctl: Control{BaseURL: srv.URL}, up: true}
+	if err := NewManager(h).DestroyRunEgress(ctx, "", "r"); err != nil || h.detaches != 0 {
+		t.Errorf("no link = %v, detaches %d", err, h.detaches)
+	}
+	h = &scriptedHost{runProjectErr: errors.New("boom")}
+	if err := NewManager(h).DestroyRunEgress(ctx, "", "r"); err == nil {
+		t.Error("a failed link lookup read as no link")
 	}
 }
 

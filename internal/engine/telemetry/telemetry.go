@@ -272,7 +272,7 @@ func (t *Telemetry) OnEvent(e event.Event) {
 // on its workspace and its archiving. A retry is not one: it is new work.
 func landsAfterTheEnd(p event.Payload) bool {
 	switch p.(type) {
-	case *event.EnvDestroyed, *event.RunArchived,
+	case *event.EnvDestroyed, *event.EnvDestroyFailed, *event.RunArchived,
 		*event.EnvRebuildStarted, *event.EnvRebuildCompleted, *event.EnvRebuildFailed:
 		return true
 	}

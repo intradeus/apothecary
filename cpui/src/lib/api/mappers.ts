@@ -296,6 +296,7 @@ export function toRun(w: Wire.RunView): Run {
 		envDirty: w.env_dirty ?? false,
 		pause: w.pause_reason ? { reason: w.pause_reason, note: w.pause_note || undefined } : undefined,
 		provisionFailed: w.provision_failed ?? false,
+		envDestroyError: w.env_destroy_error || undefined,
 		createdAt: w.created_at,
 		updatedAt: w.updated_at,
 		facts: toRunFacts(w.facts)

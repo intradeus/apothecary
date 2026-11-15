@@ -90,6 +90,16 @@ type EgressAuditor interface {
 	EgressAudit(ctx context.Context, env envport.EnvID) []EgressAuditRecord
 }
 
+// EgressPruner is an OPTIONAL EnvProvisioner capability: detach from the
+// project's gateway every run it still routes that is not live — a tunnel peer
+// left by a destroy that never reached the gateway holds its address, and the
+// next run handed that address has no tunnel. live is asked after the
+// gateway's table is read, with attaches held off, and names every
+// environment that must keep its route. project is the project's id.
+type EgressPruner interface {
+	PruneEgress(ctx context.Context, project string, live func(context.Context) (map[envport.EnvID]bool, error)) ([]envport.EnvID, error)
+}
+
 // EgressPolicy is the firewall policy the gateway enforces RIGHT NOW (read
 // back from the hot-reloaded policy file). The UI renders a host's current
 // rule from it — as opposed to the audit trail, whose verdicts are records

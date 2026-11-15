@@ -24,7 +24,8 @@ import (
 //	GET  /policy               the policy being enforced
 //	PUT  /policy               replace it (applied before the response)
 //	GET  /routes               run routes and WireGuard peers
-//	PUT  /runs/{run}           attach a run: {subnet, peer?}
+//	PUT  /runs/{run}           attach a run: {subnet, peer?}; 409 when its
+//	                           peer address is another run's
 //	DELETE /runs/{run}         detach it
 //	PUT  /runs/{run}/open      open its egress while it provisions: {until}
 //	DELETE /runs/{run}/open    close that window
@@ -108,14 +109,25 @@ func (g *gateway) controlHandler(token string) http.Handler {
 			http.Error(w, "subnet: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		g.updateRoutes(w, func(rt *Routes) {
+		g.updateRoutes(w, func(rt *Routes) error {
 			run := r.PathValue("run")
+			if rr.Peer != nil {
+				// WireGuard lets one peer hold an address: a second one takes
+				// it from the first, silently, and one of the two runs loses
+				// its tunnel. Refuse instead; the engine detaches the holder.
+				for other, p := range rt.Peers {
+					if other != run && p.IP == rr.Peer.IP {
+						return routeConflict("peer address " + p.IP + " is held by run " + other)
+					}
+				}
+			}
 			rt.RunSubnets[run] = rr.Subnet
 			if rr.Peer != nil {
 				rt.Peers[run] = *rr.Peer
 			} else {
 				delete(rt.Peers, run)
 			}
+			return nil
 		})
 	})
 	mux.HandleFunc("PUT /runs/{run}/open", func(w http.ResponseWriter, r *http.Request) {
@@ -123,23 +135,25 @@ func (g *gateway) controlHandler(token string) http.Handler {
 		if !readBody(w, r, &o) {
 			return
 		}
-		g.updateRoutes(w, func(rt *Routes) {
+		g.updateRoutes(w, func(rt *Routes) error {
 			if time.Now().Before(o.Until) {
 				rt.Open[r.PathValue("run")] = o.Until
 			} else {
 				delete(rt.Open, r.PathValue("run"))
 			}
+			return nil
 		})
 	})
 	mux.HandleFunc("DELETE /runs/{run}", func(w http.ResponseWriter, r *http.Request) {
-		g.updateRoutes(w, func(rt *Routes) {
+		g.updateRoutes(w, func(rt *Routes) error {
 			delete(rt.RunSubnets, r.PathValue("run"))
 			delete(rt.Peers, r.PathValue("run"))
 			delete(rt.Open, r.PathValue("run"))
+			return nil
 		})
 	})
 	mux.HandleFunc("DELETE /runs/{run}/open", func(w http.ResponseWriter, r *http.Request) {
-		g.updateRoutes(w, func(rt *Routes) { delete(rt.Open, r.PathValue("run")) })
+		g.updateRoutes(w, func(rt *Routes) error { delete(rt.Open, r.PathValue("run")); return nil })
 	})
 	mux.HandleFunc("GET /denials", func(w http.ResponseWriter, r *http.Request) {
 		run := r.URL.Query().Get("run")
@@ -206,11 +220,20 @@ func (g *gateway) currentRoutes() Routes {
 	return rt
 }
 
-func (g *gateway) updateRoutes(w http.ResponseWriter, mutate func(*Routes)) {
+// routeConflict is a route change that would take what another run holds
+// (409): nothing is written.
+type routeConflict string
+
+func (c routeConflict) Error() string { return string(c) }
+
+func (g *gateway) updateRoutes(w http.ResponseWriter, mutate func(*Routes) error) {
 	g.cmu.Lock()
 	defer g.cmu.Unlock()
 	rt := g.currentRoutes()
-	mutate(&rt)
+	if err := mutate(&rt); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
 	if err := g.persist(g.routesPath, rt); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

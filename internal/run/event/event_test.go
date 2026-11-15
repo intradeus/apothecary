@@ -116,6 +116,7 @@ func TestJSONKeysMatchSpec(t *testing.T) {
 		{&RunPaused{StageID: "build"}, `{"stage_id":"build"}`},
 		{&RunUnpaused{}, `{}`},
 		{&EnvDestroyed{EnvID: "e"}, `{"env_id":"e"}`},
+		{&EnvDestroyFailed{EnvID: "e", Error: "boom"}, `{"env_id":"e","error":"boom"}`},
 	}
 	for _, tc := range cases {
 		got, err := json.Marshal(tc.p)
@@ -197,7 +198,7 @@ func TestEveryRegisteredTypeRoundTrips(t *testing.T) {
 		&PhaseStarted{}, &PhaseCompleted{}, &PhaseParked{}, &PhaseResumed{}, &PhaseDeclined{},
 		&ReviewCommentsLoaded{}, &ReviewRepliesPosted{}, &ReviewPosted{}, &ReviewCurated{}, &MRMerged{},
 		&TargetSynced{}, &BranchPushed{}, &RunCompleted{}, &RunAbandoned{}, &RunFailed{}, &RunArchived{},
-		&RunRetried{}, &RunPaused{}, &RunUnpaused{}, &EnvDestroyed{}, &EnvRebuildStarted{},
+		&RunRetried{}, &RunPaused{}, &RunUnpaused{}, &EnvDestroyed{}, &EnvDestroyFailed{}, &EnvRebuildStarted{},
 		&EnvRebuildCompleted{}, &EnvRebuildFailed{}, &ServiceStarted{}, &ServiceReady{}, &ServiceStopped{},
 		&ServiceFailed{}, &AgentSession{}, &AgentPrompted{}, &AgentMessage{}, &AgentTool{}, &AgentPlan{},
 		&AgentNotice{}, &MessageQueued{}, &MessageDelivered{}, &HoldTaken{}, &HoldReleased{},
