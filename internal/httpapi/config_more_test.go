@@ -1027,15 +1027,7 @@ func TestTicketRoutes(t *testing.T) {
 func TestTicketSourceFailures(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	x.seedIntegration(t, "src", confstore.PortTicketSource)
-	ctx := context.Background()
-	p, err := x.srv.Conf.GetProject(ctx, testProject)
-	if err != nil {
-		t.Fatal(err)
-	}
-	p.TicketSourceID = "src"
-	if _, err := x.srv.Conf.UpdateProject(ctx, testProject, p); err != nil {
-		t.Fatal(err)
-	}
+	x.useSource(t, "src")
 	x.srv.Live = tickets.NewLive(x.srv.Conf, stubSources{src: failingSource{errors.New("tracker down")}})
 	for _, path := range []string{"/api/projects/" + testProject + "/tickets", ticketPath(testProject, "K-1"), ticketPath(testProject, "K-1") + "/comments"} {
 		if res, data := x.do(t, "GET", path, nil, nil); res.StatusCode != http.StatusBadGateway {

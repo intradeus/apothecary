@@ -117,15 +117,13 @@ type InternalTicketQuery struct {
 	Limit int // <= 0 = 50
 }
 
-// CreateTicket validates and inserts a ticket of the owner's (t.UserID)
-// internal tracker. Branch-format validation is the caller's job (the httpapi
-// layer runs checkout.CheckBranch, which confstore cannot import). The ticket
-// lands in the first status unless told otherwise, and the first type of its
-// change type unless told otherwise.
+// CreateTicket validates and inserts a ticket of the owner's (t.UserID; ""
+// is the ownerless scope, as for a project) internal tracker. Branch-format
+// validation is the caller's job (the httpapi layer runs
+// checkout.CheckBranch, which confstore cannot import). The ticket lands in
+// the first status unless told otherwise, and the first type of its change
+// type unless told otherwise.
 func (s *Service) CreateTicket(ctx context.Context, t Ticket) (Ticket, error) {
-	if t.UserID == "" {
-		return Ticket{}, invalidf("ticket: user_id is required")
-	}
 	in, err := s.InternalTracker(ctx, t.UserID)
 	if err != nil {
 		return Ticket{}, err

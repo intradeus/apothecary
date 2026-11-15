@@ -6,6 +6,7 @@ import { api } from '$lib/api';
 import { confirmDialog } from '$lib/ui/confirm.svelte';
 import { toast } from '$lib/ui/toast.svelte';
 import type { RunEvent } from '$lib/domain';
+import type { RunStore } from '$lib/run/store.svelte';
 import { aRun, aRunStore } from '$test/fixtures';
 import { deferred } from '$test/helpers';
 import { HeaderActions, type HeaderAct } from './actions.svelte';
@@ -17,8 +18,8 @@ vi.mock('$lib/api', () => ({
 vi.mock('$lib/ui/confirm.svelte', () => ({ confirmDialog: vi.fn() }));
 vi.mock('$lib/ui/toast.svelte', () => ({ toast: vi.fn() }));
 
-function setup(state: Parameters<typeof aRun>[0]) {
-	const rs = aRunStore(aRun(state));
+function setup(state: Parameters<typeof aRun>[0], over: Partial<RunStore> = {}) {
+	const rs = aRunStore(aRun(state), over);
 	const actions = new HeaderActions();
 	const act: HeaderAct = (which, fn) => actions.run(which, () => rs.act(fn));
 	const onretried = vi.fn();
@@ -110,14 +111,17 @@ describe('RunControls: archive', () => {
 	it('asks, naming the workspace it destroys, then archives and offers the ticket', async () => {
 		vi.mocked(confirmDialog).mockResolvedValue(true);
 		vi.mocked(api.runs.archive).mockResolvedValue(undefined as never);
-		setup({ state: 'completed', envId: 'env-1', ticketId: 'tk-1', projectId: 'p1' });
+		setup(
+			{ state: 'completed', envId: 'env-1', ticketId: 'tk-1', projectId: 'p1' },
+			{ ticketHref: '/w/p1/tickets/K-1' }
+		);
 		await userEvent.click(screen.getByRole('button', { name: /archive/i }));
 		expect(vi.mocked(confirmDialog).mock.calls[0][0].body).toContain('env-1');
 		expect(api.runs.archive).toHaveBeenCalledOnce();
 
 		const [, opts] = vi.mocked(toast).mock.calls[0];
 		opts!.action!.run();
-		expect(goto).toHaveBeenCalledWith('/tickets/tk-1?workshop=p1');
+		expect(goto).toHaveBeenCalledWith('/w/p1/tickets/K-1');
 	});
 
 	it('offers no ticket when the run has none, and no toast when the engine refused', async () => {

@@ -63,7 +63,7 @@ describe('TicketList', () => {
 
 	it('searches on Enter, and shows everything again once cleared', async () => {
 		setup();
-		const box = await screen.findByRole('textbox', { name: 'Search the tracker' });
+		const box = await screen.findByRole('searchbox', { name: 'Search the tracker' });
 		await userEvent.type(box, ' keys {Enter}');
 		await waitFor(() =>
 			expect(list()).toHaveBeenLastCalledWith('p1', expect.objectContaining({ q: 'keys' }))

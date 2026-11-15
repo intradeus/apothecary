@@ -12,9 +12,12 @@ const setup = (over: Record<string, unknown> = {}) => {
 	render(TicketSourceSection, props);
 	return props;
 };
+// Each option's label, without the mark the selected one carries.
 const options = async () => {
 	await userEvent.click(screen.getByRole('combobox', { name: 'Ticket source' }));
-	return (await screen.findAllByRole('option')).map((o) => o.textContent?.trim());
+	return (await screen.findAllByRole('option')).map((o) =>
+		o.querySelector('.truncate')?.textContent?.trim()
+	);
 };
 
 describe('TicketSourceSection', () => {

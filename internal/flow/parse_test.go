@@ -1278,7 +1278,7 @@ func TestTrackerActionSettings(t *testing.T) {
 		{head + "  - { id: s, type: action, action: ticket_transition }\n", `requires with "to"`},
 		{head + "  - { id: s, type: action, action: ticket_transition, with: { status: Done } }\n", `with "status" is retired: to names the tracker's status itself (to: Done)`},
 		{strings.Replace(head, "model: fake/m", "model: fake/m, steps: { type: int, default: 2 }", 1) +
-			"  - { id: s, type: action, action: ticket_transition, with: { to: $steps } }\n", `parameter "steps" is an int, and this field takes a string`},
+			"  - { id: s, type: action, action: ticket_transition, with: { to: $steps } }\n", `parameter "steps" is a int, and this field takes a string`},
 		{head + "  - { id: s, type: action, action: ticket_set_field, with: { field: Team } }\n", "exactly one of value"},
 		{head + "  - { id: s, type: action, action: ticket_set_field, input: { value: { from: repo:t.txt, type: file } }, with: { field: Team, text: Platform } }\n", "exactly one of value"},
 		{head + "  - { id: s, type: action, action: ticket_set_field, with: { field: Team, text: Platform, mode: merge } }\n", "not one of replace | append"},

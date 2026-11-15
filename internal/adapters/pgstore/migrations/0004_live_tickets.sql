@@ -97,7 +97,10 @@ ALTER TABLE automations DROP COLUMN source_id;
 -- --- 4. sourceless tickets are the internal tracker's -------------------------
 
 -- Hand-written and merge-request tickets: their id is their id on the
--- internal tracker.
+-- internal tracker. The old one-copy-per-key index goes first: a user's
+-- hand-written tickets all share the empty key.
+DROP INDEX tickets_source_key_idx;
+
 UPDATE tickets t
    SET source_id = i.id, source_kind = 'internal', remote_id = t.id
   FROM integrations i
@@ -173,7 +176,6 @@ ALTER TABLE ticket_comments
 DROP INDEX tickets_project_idx;
 DROP INDEX tickets_project_key_idx;
 DROP INDEX tickets_sync_idx;
-DROP INDEX tickets_source_key_idx;
 ALTER TABLE tickets
     DROP COLUMN project_id,
     DROP COLUMN remote_updated_at,

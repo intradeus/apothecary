@@ -49,20 +49,28 @@ func newTrackerEnv(t *testing.T) *trackerEnv {
 	x.srv.Sources = sources
 	x.srv.Trackers = stubWriters{src: src}
 	x.srv.Live = tickets.NewLive(x.srv.Conf, sources)
+	x.useSource(t, "int-1")
+	in, err := x.srv.Conf.InternalTracker(context.Background(), testUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &trackerEnv{env: x, src: src, internal: in.ID}
+}
+
+// useSource points the test workshop at a ticket source. The seeded
+// project has no repository URL, which the service's validation wants, so
+// it is written to the store directly.
+func (x *env) useSource(t *testing.T, sourceID string) {
+	t.Helper()
 	ctx := context.Background()
 	p, err := x.srv.Conf.GetProject(ctx, testProject)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.TicketSourceID = "int-1"
-	if _, err := x.srv.Conf.UpdateProject(ctx, testProject, p); err != nil {
+	p.TicketSourceID = sourceID
+	if err := x.srv.Conf.DB().UpsertProject(ctx, p); err != nil {
 		t.Fatal(err)
 	}
-	in, err := x.srv.Conf.InternalTracker(ctx, testUser)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &trackerEnv{env: x, src: src, internal: in.ID}
 }
 
 // page lists the test workshop's tickets.

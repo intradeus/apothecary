@@ -278,11 +278,12 @@ func TestLiveTicketsMigration(t *testing.T) {
 		  ('p-u2', 'theirs', 'repo2', 'repo2', '{}', 'builder', now(), now(), 'u2');
 		INSERT INTO tickets (id, project_id, title, source_id, source_kind, source_key, created_at, updated_at, user_id, remote_id, status_id, sync_state) VALUES
 		  ('t1', 'p-single', 'synced', 'jira1', 'jira', 'J-1', '2026-01-01T00:00:00Z', now(), 'u1', '100', 'js1', 'ok'),
-		  ('t2', 'p-two', 'same issue', 'jira1', 'jira', 'J-1', '2026-01-02T00:00:00Z', now(), 'u1', '100', NULL, 'ok'),
+		  ('t2', 'p-two', 'same issue, moved', 'jira1', 'jira', 'K-1', '2026-01-02T00:00:00Z', now(), 'u1', '100', NULL, 'ok'),
 		  ('t3', 'p-two', 'never synced', 'gh1', 'github_issues', '#3', '2026-01-03T00:00:00Z', now(), 'u1', '', NULL, ''),
 		  ('t4', 'p-none', 'hand-written', '', '', '', '2026-01-04T00:00:00Z', now(), 'u1', '', NULL, ''),
 		  ('t5', 'p-none', 'merge request', '', '', 'https://x.local/mr/1', '2026-01-05T00:00:00Z', now(), 'u1', '', NULL, ''),
-		  ('t6', 'p-u2', 'theirs', '', '', '', '2026-01-06T00:00:00Z', now(), 'u2', '', 'internal-u2-todo', '');
+		  ('t6', 'p-u2', 'theirs', '', '', '', '2026-01-06T00:00:00Z', now(), 'u2', '', 'internal-u2-todo', ''),
+		  ('t8', 'p-none', 'hand-written too', '', '', '', '2026-01-08T00:00:00Z', now(), 'u1', '', NULL, '');
 		INSERT INTO ticket_comments (id, ticket_id, remote_id, body_md, created_at, updated_at, origin) VALUES
 		  ('c1', 't1', 'r1', 'mirrored', now(), now(), 'remote'),
 		  ('c2', 't1', '', 'posted by a run', now(), now(), 'apothecary'),
@@ -369,6 +370,7 @@ func TestLiveTicketsMigration(t *testing.T) {
 		{"t4", "internal-u1", "internal", "t4", ""},
 		{"t5", "internal-u1", "internal", "t5", ""},
 		{"t6", "internal-u2", "internal", "t6", "internal-u2-todo"},
+		{"t8", "internal-u1", "internal", "t8", ""}, // shares t4's empty key
 	} {
 		tk, err := s.GetTicket(ctx, c.id)
 		if err != nil || tk.SourceID != c.source || tk.SourceKind != c.kind || tk.RemoteID != c.remote || tk.StatusID != c.status {

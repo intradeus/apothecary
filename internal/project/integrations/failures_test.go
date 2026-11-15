@@ -810,7 +810,7 @@ func TestTicketTracker(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, err = b.r.TicketTracker(ctx, rec.ID)
-	if !errors.Is(err, confstore.ErrNotFound) || !strings.Contains(err.Error(), remote) || strings.Contains(err.Error(), "unlink") {
+	if !errors.Is(err, resolution.ErrUnresolvable) || !strings.Contains(err.Error(), remote) || strings.Contains(err.Error(), "unlink") {
 		t.Errorf("gone source = %v", err)
 	}
 

@@ -1121,7 +1121,6 @@ func TestValidateTicket(t *testing.T) {
 		want string
 	}{
 		{"no title", Ticket{UserID: "u1", Title: " "}, "title is required"},
-		{"no owner", Ticket{Title: "t"}, "user_id is required"},
 		{"bad change type", Ticket{UserID: "u1", Title: "t", ChangeType: "mend"}, `change type "mend"`},
 		{"another tracker's status", Ticket{UserID: "u1", Title: "t", StatusID: "ghost"}, "not one of its tracker's"},
 	} {

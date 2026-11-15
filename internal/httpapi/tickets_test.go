@@ -156,15 +156,7 @@ func (s stubSources) TicketSourceKind(context.Context, string) (string, error) {
 func TestTicketRoutesWithoutWiring(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	x.seedIntegration(t, "int-1", confstore.PortTicketSource)
-	ctx := context.Background()
-	p, err := x.srv.Conf.GetProject(ctx, testProject)
-	if err != nil {
-		t.Fatal(err)
-	}
-	p.TicketSourceID = "int-1"
-	if _, err := x.srv.Conf.UpdateProject(ctx, testProject, p); err != nil {
-		t.Fatal(err)
-	}
+	x.useSource(t, "int-1")
 	// A Live with no sources reads no remote tracker.
 	if resp, data := x.do(t, "GET", "/api/projects/"+testProject+"/tickets", nil, nil); resp.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("list = %d: %s", resp.StatusCode, data)

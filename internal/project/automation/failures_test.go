@@ -411,7 +411,7 @@ func TestStartCarriesTheTicketsAttachments(t *testing.T) {
 	h := newHarness(t)
 	att := filestore.NewAttachments(filestore.NewMem(), filestore.NewBlobs(t.TempDir()), 1<<20, []string{"text/*"})
 	h.w.Tickets.Attachments = att
-	up, err := att.Save(ctx, "", "spec.md", "text/markdown", strings.NewReader("# s"))
+	up, err := att.Save(ctx, owner, "spec.md", "text/markdown", strings.NewReader("# s"))
 	if err != nil {
 		t.Fatal(err)
 	}

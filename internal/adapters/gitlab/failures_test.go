@@ -975,7 +975,7 @@ func TestSearchParams(t *testing.T) {
 		query string
 		want  map[string]string
 	}{
-		{"", map[string]string{"scope": "assigned_to_me", "state": "opened"}},
+		{"", map[string]string{"scope": "assigned_to_me"}},
 		{"flaky test", map[string]string{"scope": "all", "search": "flaky test"}},
 		{"~bug label:~p1 labels:x", map[string]string{"scope": "all", "labels": "bug,p1,x"}},
 		{"state:open", map[string]string{"scope": "all", "state": "opened"}},

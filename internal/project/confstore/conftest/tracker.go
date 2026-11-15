@@ -191,8 +191,6 @@ func trackers(t *testing.T, open opener) {
 		if !k.Internal() {
 			t.Errorf("an internal ticket reads as remote: %+v", k)
 		}
-		_, err = svc.CreateTicket(ctx, confstore.Ticket{Title: "no owner"})
-		is(t, "no owner", err, confstore.ErrInvalid)
 		ok(t, svc.SetTicketStatus(ctx, k.ID, in.ID+"-done", confstore.ChangedByUser))
 		same(t, "moved", s.ticket(k.ID).StatusID, in.ID+"-done")
 	})
