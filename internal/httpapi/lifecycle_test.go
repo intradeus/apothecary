@@ -192,6 +192,26 @@ func TestRunDetailTailsLongLogs(t *testing.T) {
 	}
 }
 
+// A store that keeps run rows answers the detail from the row: a long run's
+// log is not read and reduced on every request (the page asks often).
+func TestRunDetailReadsTheRowNotTheLog(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	x.seedLiveRun(t, "r1")
+	row := run.View{RunID: "r1", UserID: testUser, TicketTitle: "from the row"}
+	x.srv.Store = viewStore{
+		Store: brokenStore{Store: x.store, events: errors.New("the log was read")},
+		view:  row, found: true,
+	}
+	w := call(x.srv.getRun, "GET", "/", "", testUser, map[string]string{"id": "r1"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("detail = %d %s", w.Code, w.Body)
+	}
+	d := decode[RunDetail](t, w.Body.Bytes())
+	if d.Run.TicketTitle != "from the row" || len(d.Events) == 0 {
+		t.Errorf("detail = %+v", d)
+	}
+}
+
 // rebuildEnv is a provisioner that can recreate a workspace in place.
 type rebuildEnv struct {
 	*fake.EnvProvisioner

@@ -774,7 +774,14 @@ func itoa(n int64) string {
 // brokenStore fails its reads, for what the routes do past the guard.
 type brokenStore struct {
 	event.Store
-	events, watch, ids error
+	events, watch, ids, tail error
+}
+
+func (b brokenStore) Tail(ctx context.Context, id string, n int) ([]event.Event, error) {
+	if b.tail != nil {
+		return nil, b.tail
+	}
+	return b.Store.Tail(ctx, id, n)
 }
 
 func (b brokenStore) Events(ctx context.Context, id string, after int64) ([]event.Event, error) {
@@ -818,6 +825,18 @@ func TestStoreOutagesReadAs500(t *testing.T) {
 	}
 	if w := call(s.streamEvents, "GET", "/", "", testUser, id); w.Code != http.StatusInternalServerError {
 		t.Errorf("streamEvents = %d %s", w.Code, w.Body)
+	}
+	s.Store = brokenStore{Store: x.store, tail: boom}
+	if w := call(s.getRun, "GET", "/", "", testUser, id); w.Code != http.StatusInternalServerError {
+		t.Errorf("getRun, tail = %d %s", w.Code, w.Body)
+	}
+	// The projection row failing is the store's outage too.
+	s.Store = viewStore{Store: x.store, err: boom}
+	if w := call(s.getRun, "GET", "/", "", testUser, id); w.Code != http.StatusInternalServerError {
+		t.Errorf("getRun, row = %d %s", w.Code, w.Body)
+	}
+	if w := call(s.streamEvents, "GET", "/", "", testUser, id); w.Code != http.StatusInternalServerError {
+		t.Errorf("streamEvents, row = %d %s", w.Code, w.Body)
 	}
 	s.Store = brokenStore{Store: x.store, ids: boom}
 	if res, body := x.do(t, "GET", "/api/runs", nil, nil); res.StatusCode != http.StatusInternalServerError {

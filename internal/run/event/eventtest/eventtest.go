@@ -239,6 +239,34 @@ func runRead(t *testing.T, open func(t *testing.T) event.Store) {
 		}
 	})
 
+	t.Run("tail is the log's last n events, in order", func(t *testing.T) {
+		s := open(t)
+		ctx := context.Background()
+		for i := range 5 {
+			mustAppend(t, s, "r1", &event.RunCreated{TicketTitle: fmt.Sprint(i)})
+		}
+		mustAppend(t, s, "r2", &event.RunCreated{TicketTitle: "other"})
+		for _, c := range []struct {
+			n    int
+			want []int64
+		}{{3, []int64{3, 4, 5}}, {5, []int64{1, 2, 3, 4, 5}}, {9, []int64{1, 2, 3, 4, 5}}, {0, nil}, {-1, nil}} {
+			got, err := s.Tail(ctx, "r1", c.n)
+			if err != nil {
+				t.Fatalf("tail %d: %v", c.n, err)
+			}
+			if ss := seqs(got); !slices.Equal(ss, c.want) {
+				t.Errorf("tail %d = %v, want %v", c.n, ss, c.want)
+			}
+		}
+		if got, err := s.Tail(ctx, "r1", 1); err != nil || got[0].RunID != "r1" ||
+			got[0].Payload.(*event.RunCreated).TicketTitle != "4" {
+			t.Errorf("tail 1 = %+v, %v", got, err)
+		}
+		if got, err := s.Tail(ctx, "nope", 3); err != nil || len(got) != 0 {
+			t.Errorf("unknown run = %+v, %v", got, err)
+		}
+	})
+
 	t.Run("a retired type stays inert history", func(t *testing.T) {
 		s := open(t)
 		ctx := context.Background()
