@@ -72,7 +72,8 @@ parameters:
 # error fed back, then escalates to the debug leaf (`then: debug`) — a human
 # opens the workspace (terminal/IDE), fixes what agents can't, and continue
 # re-runs exactly the stage that escalated (the success chain replays from
-# there, so no stage is ever skipped). No chain ends without a person: once
+# there, so no stage is ever skipped), every retry chain given its budget
+# back. No chain ends without a person: once
 # its retries are spent, every route reaches the debug leaf rather than
 # abandoning the run unasked. The human decides when to stop — giving up in
 # the main chain abandons the run, in a watcher it ends that round; plan_gate

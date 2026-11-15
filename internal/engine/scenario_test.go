@@ -1608,6 +1608,43 @@ func TestDebugLeaf(t *testing.T) {
 	}
 }
 
+// TestDebugContinueRestoresRetries: a person's continue gives the failing
+// stage its retries back. The test keeps failing past the fix: it goes back
+// to build (its on_fail, 1 of 1 again) before it asks again, instead of
+// landing straight back on the leaf — and the second visit is numbered 2/∞.
+func TestDebugContinueRestoresRetries(t *testing.T) {
+	h := newHarness(t, mustFlow(t, debugLeafDoc))
+	h.envp.ExecFunc = func(env *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
+		if strings.Contains(cmd.Script, "make lint") {
+			return envport.ExecResult{ExitCode: 1, Output: "still red"}, nil
+		}
+		return envport.ExecResult{ExitCode: 0}, nil
+	}
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "dbg", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := h.waitPing(t, PingDebug)
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	p2 := h.waitPing(t, PingDebug, p.ID)
+	if err := h.e.AnswerPing(p2.ID, PingAnswer{Answer: "reject"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	var route []string
+	for _, e := range h.events(t, runID) {
+		if et, ok := e.Payload.(*event.EdgeTaken); ok && et.From == "test" {
+			route = append(route, fmt.Sprintf("%s %d", et.To, et.Count))
+		}
+	}
+	if got, want := strings.Join(route, ", "), "build 1, debug 1, build 1, debug 2"; got != want {
+		t.Errorf("test's failures went %s, want %s", got, want)
+	}
+}
+
 // A run parked at the debug leaf survives a restart: the log ends in the
 // open ping, recovery leaves it parked (nothing to do), the ping is still
 // answerable, and the answer sends the run back into the stage. The crash

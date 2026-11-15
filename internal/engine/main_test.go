@@ -67,8 +67,8 @@ func checkFoldInvariant(x *exec) {
 	if rep.Ph == runcore.PhDebug && x.rs.Ph == runcore.PhStart && x.rs.Pos == rep.Pos {
 		// The third: continuing from the debug leaf (routeDebug), recorded
 		// by the stage's next stage_started.
-		rep.Ph, rep.GateAnswer = runcore.PhStart, nil
-		rep.Feed, rep.FeedSentinel, rep.FeedAttempts = "", "", 0
+		rep.ContinueFromDebug()
+		rep.GateAnswer = nil
 	}
 	if x.rs.Pos >= len(rep.Flow.Stages) && !rep.Idle && rep.Pos >= 0 && rep.Pos < len(rep.Flow.Stages) {
 		// Another: a phase whose end was decided (EndPhase — a watcher's

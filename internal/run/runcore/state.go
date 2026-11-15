@@ -251,6 +251,39 @@ func ChainKey(from, kind string, depth int) string {
 	return fmt.Sprintf("%s|%s|%d", from, kind, depth)
 }
 
+// ContinueFromDebug is a person's "continue" at the debug leaf (FLOWLANG
+// §3): the cursor never left the stage that escalated, which re-enters as a
+// fresh attempt — no feed — and every retry chain of its phase has its
+// budget back. The person has just changed the workspace; a stage that
+// fails again past their fix gets its retries before it asks them again,
+// instead of landing straight back on the leaf. The debug links' own
+// counters are kept, so the timeline still numbers each visit (n/∞).
+// The engine calls it as it routes the answer; replay, at the stage_started
+// that records it — every executor appends one on entry from PhStart, a
+// skipped stage's included (skipStage).
+func (rs *State) ContinueFromDebug() {
+	rs.Ph = PhStart
+	rs.Feed, rs.FeedSentinel, rs.FeedAttempts = "", "", 0
+	if rs.Flow == nil || rs.Pos < 0 || rs.Pos >= len(rs.Flow.Stages) {
+		return
+	}
+	ph := rs.Flow.PhaseOf(&rs.Flow.Stages[rs.Pos])
+	if ph == nil {
+		return
+	}
+	for i := ph.First; i <= ph.Last; i++ {
+		st := &rs.Flow.Stages[i]
+		for kind, edge := range st.Edges {
+			depth := 0
+			for e := edge; e != nil; e, depth = e.Then, depth+1 {
+				if e.To != flow.ReservedDebug {
+					delete(rs.EdgeCounts, ChainKey(st.ID, kind, depth))
+				}
+			}
+		}
+	}
+}
+
 func GatePingType(t string) bool   { return t == event.PingGate }
 func DebugPingType(t string) bool  { return t == event.PingDebug }
 func ManualPingType(t string) bool { return t == event.PingManual }
@@ -481,9 +514,9 @@ func (rs *State) Apply(ev *event.Event) {
 		}
 	case *event.StageStarted:
 		if rs.Ph == PhDebug {
-			// Continued from the debug leaf: back into the stage fresh, the
-			// failure that parked it spent (the engine's routeDebug).
-			rs.Feed, rs.FeedSentinel, rs.FeedAttempts = "", "", 0
+			// Continued from the debug leaf: as the engine's routeDebug
+			// decided before appending this.
+			rs.ContinueFromDebug()
 		}
 		rs.AnyStarted = true
 		rs.VerdictRecorded = false
