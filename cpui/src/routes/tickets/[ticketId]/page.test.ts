@@ -68,7 +68,7 @@ describe('a ticket by its record id', () => {
 			'href',
 			'https://tracker.test/browse/PROJ-7'
 		);
-		expect(screen.getByText(/last seen/)).toBeInTheDocument();
+		expect(screen.getByText(/^last seen/)).toBeInTheDocument();
 		expect(goto).not.toHaveBeenCalled();
 	});
 

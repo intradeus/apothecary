@@ -94,10 +94,9 @@ describe('TicketPage, reading the ticket', () => {
 			await screen.findByRole('heading', { name: 'Add idempotency keys' })
 		).toBeInTheDocument();
 		expect(api.projects.ticket).toHaveBeenCalledWith('p1', 'PROJ-7');
-		expect(screen.getByRole('link', { name: /Open in Jira/ })).toHaveAttribute(
-			'href',
-			'https://tracker.test/browse/PROJ-7'
-		);
+		// The header and the tracker pane both link the issue.
+		for (const link of screen.getAllByRole('link', { name: /Open in Jira/ }))
+			expect(link).toHaveAttribute('href', 'https://tracker.test/browse/PROJ-7');
 		expect(screen.getByText('Make the webhook safe to retry.')).toBeInTheDocument();
 		expect(await screen.findByText('trace.png')).toBeInTheDocument();
 		expect(api.tickets.attachments).toHaveBeenCalledWith('p1', 'PROJ-7');
