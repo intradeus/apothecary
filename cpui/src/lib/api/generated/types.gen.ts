@@ -892,6 +892,12 @@ export type IntegrationUpdate = {
 	};
 };
 
+export type JournalEntry = {
+	file?: string;
+	id: string;
+	text: string;
+};
+
 export type KindDescriptor = {
 	fields: Array<Field> | null;
 	help?: string;
@@ -7634,6 +7640,82 @@ export type TakeOverRunResponses = {
 	 */
 	202: unknown;
 };
+
+export type ReadRunJournalData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/journal';
+};
+
+export type ReadRunJournalErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ReadRunJournalResponses = {
+	/**
+	 * OK
+	 */
+	200: JournalEntry;
+};
+
+export type ReadRunJournalResponse = ReadRunJournalResponses[keyof ReadRunJournalResponses];
+
+export type ReadRunJournalEntryData = {
+	body?: never;
+	path: {
+		id: string;
+		entry: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/journal/{entry}';
+};
+
+export type ReadRunJournalEntryErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ReadRunJournalEntryResponses = {
+	/**
+	 * OK
+	 */
+	200: JournalEntry;
+};
+
+export type ReadRunJournalEntryResponse =
+	ReadRunJournalEntryResponses[keyof ReadRunJournalEntryResponses];
 
 export type GetStageLogData = {
 	body?: never;

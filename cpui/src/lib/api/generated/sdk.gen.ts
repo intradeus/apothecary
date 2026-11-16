@@ -491,6 +491,12 @@ import type {
 	RaisePingData,
 	RaisePingErrors,
 	RaisePingResponses,
+	ReadRunJournalData,
+	ReadRunJournalEntryData,
+	ReadRunJournalEntryErrors,
+	ReadRunJournalEntryResponses,
+	ReadRunJournalErrors,
+	ReadRunJournalResponses,
 	RebuildWorkspaceData,
 	RebuildWorkspaceErrors,
 	RebuildWorkspaceResponses,
@@ -4268,6 +4274,50 @@ export const takeOverRun = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/runs/{id}/hold',
+		...options
+	});
+
+/**
+ * Every record of the run's journal (journal_read with no id)
+ *
+ * Every owner decision whole and every pass's record with its verdict, no logs: one file for the tool to write.
+ */
+export const readRunJournal = <ThrowOnError extends boolean = false>(
+	options: Options<ReadRunJournalData, ThrowOnError>
+): RequestResult<ReadRunJournalResponses, ReadRunJournalErrors, ThrowOnError> =>
+	(options.client ?? client).get<ReadRunJournalResponses, ReadRunJournalErrors, ThrowOnError>({
+		security: [
+			{
+				key: 'runToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/journal',
+		...options
+	});
+
+/**
+ * One entry of the run's journal: a pass whole, or a decision
+ *
+ * A pass (<stage>-<n>) is its record, its outputs and its full log, as one file; a decision (decision-<n>) is inline unless long. 404 for an id the run has not.
+ */
+export const readRunJournalEntry = <ThrowOnError extends boolean = false>(
+	options: Options<ReadRunJournalEntryData, ThrowOnError>
+): RequestResult<ReadRunJournalEntryResponses, ReadRunJournalEntryErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		ReadRunJournalEntryResponses,
+		ReadRunJournalEntryErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				key: 'runToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/journal/{entry}',
 		...options
 	});
 

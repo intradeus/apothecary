@@ -326,7 +326,7 @@ func TestServeMCPFraming(t *testing.T) {
 		t.Errorf("initialize echoed %v", init["protocolVersion"])
 	}
 	tools := byID[`"two"`]["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 1 || tools[0].(map[string]any)["name"] != "ask_human" {
+	if len(tools) != 2 || tools[0].(map[string]any)["name"] != "ask_human" || tools[1].(map[string]any)["name"] != "journal_read" {
 		t.Errorf("tools/list = %v", tools)
 	}
 	call := byID["3"]["result"].(map[string]any)
@@ -747,7 +747,7 @@ func TestRunAskHuman(t *testing.T) {
 		return m["result"].(map[string]any)
 	}
 	tools := rpc(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)["tools"].([]any)
-	if len(tools) != 1 {
+	if len(tools) != 2 { // ask_human and journal_read
 		t.Fatalf("tools = %v", tools)
 	}
 	call := rpc(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ask_human","arguments":{"type":"blocker","question":"q"}}}`)

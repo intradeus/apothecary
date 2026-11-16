@@ -140,7 +140,7 @@ agents:
     inputs:
       - { name: ticket, type: ticket, description: "the ticket the change is for" }
       - { name: plan, type: file, description: "the approved implementation plan to execute" }
-      - { name: answers, type: ping_answers, optional: true, description: "what the task's owner answered during the run — it amends the plan where they differ" }
+      - { name: journal, type: journal, optional: true, description: "what has happened in the run — the owner's decisions amend the plan where they differ; check a change against it before redoing work" }
       - { name: rejection, type: verdict, optional: true, description: "why the last attempt was turned down — a reviewer's comments or a human's feedback" }
       - { name: failure, type: failure, optional: true, description: "what the failing stage printed (test output, a command's error)" }
       - { name: comments, type: mr_threads, optional: true, description: "the review threads on the open merge request this round fixes — each with its comments, the ones newer than the last reply marked new" }
@@ -213,7 +213,7 @@ agents:
     inputs:
       - { name: ticket, type: ticket, description: "the ticket the change is for" }
       - { name: plan, type: file, description: "the approved plan to check the change set against" }
-      - { name: answers, type: ping_answers, description: "what the task's owner answered during the run — each answer amends the plan" }
+      - { name: journal, type: journal, description: "what has happened in the run — each owner decision amends the plan, and a correction they discarded stays discarded" }
       - { name: changes, type: changeset, description: "the set of changed files in this branch to review" }
       - { name: failure, type: failure, optional: true, description: "what the previous attempt printed when it failed" }
     outputs:
@@ -226,11 +226,12 @@ agents:
       failed to find a substantive problem.
 
       Review the branch's changes against three sources of truth, in order:
-      1. The approved plan provided in your prompt, as the task owner's answers
-         amend it: is everything implemented, and nothing beyond it? The
-         answers came after the plan was approved and win where they differ —
-         work that follows an answer is not a plan deviation, and work that
-         ignores one is.
+      1. The approved plan provided in your prompt, as the owner decisions in
+         the run journal amend it: is everything implemented, and nothing
+         beyond it? The decisions came after the plan was approved and win
+         where they differ — work that follows one is not a plan deviation,
+         and work that ignores one is. A correction the owner discarded (an
+         overruled verdict) is not yours to ask for again.
       2. The project's conventions and DDD/SOLID standards: layer
          boundaries respected, dependencies point inward, single responsibility,
          no vendor types leaking across interfaces.
@@ -251,7 +252,7 @@ agents:
     inputs:
       - { name: ticket, type: ticket, description: "the ticket the change is for" }
       - { name: changes, type: changeset, description: "the set of changed files to describe for whoever reads the merge request" }
-      - { name: answers, type: ping_answers, optional: true, description: "what the task's owner decided during the run, for the reader to know why the change differs from the ticket" }
+      - { name: journal, type: journal, optional: true, description: "what has happened in the run — the owner's decisions say why the change differs from the ticket" }
       - { name: shots, type: files, optional: true, description: "screenshots of the change, when they were taken" }
       - { name: failure, type: failure, optional: true, description: "what the previous attempt printed when it failed" }
     outputs:
@@ -458,7 +459,7 @@ main:
     input:
       ticket:    { from: run.ticket, type: ticket }
       plan:      { from: artifacts/plan.md, type: file }
-      answers:   { from: run.ping_answers, type: ping_answers }
+      journal:   { from: run.journal, type: journal }
       rejection: { from: edge.verdict, type: verdict, optional: true }
       failure:   { from: edge.failure, type: failure, optional: true }
     on_success: commit_msg
@@ -515,7 +516,7 @@ main:
     input:
       ticket:  { from: run.ticket, type: ticket }
       plan:    { from: artifacts/plan.md, type: file }
-      answers: { from: run.ping_answers, type: ping_answers }
+      journal: { from: run.journal, type: journal }
       changes: { from: run.git.diff_target, type: changeset }
       failure: { from: edge.failure, type: failure, optional: true }
     output:
@@ -565,7 +566,7 @@ main:
     input:
       ticket:  { from: run.ticket, type: ticket }
       changes: { from: run.git.diff_target, type: changeset }
-      answers: { from: run.ping_answers, type: ping_answers }
+      journal: { from: run.journal, type: journal }
       shots:   { from: artifacts/shots/, type: files, optional: true }
       failure: { from: edge.failure, type: failure, optional: true }
     output:
@@ -682,7 +683,7 @@ watchers:
         input:
           ticket:   { from: run.ticket, type: ticket }
           plan:     { from: artifacts/plan.md, type: file }
-          answers:  { from: run.ping_answers, type: ping_answers }
+          journal:  { from: run.journal, type: journal }
           comments: { from: artifacts/threads.yaml, type: mr_threads }
           failure:  { from: edge.failure, type: failure, optional: true }
         on_success: fix_commit_msg

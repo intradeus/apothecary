@@ -180,7 +180,7 @@ describe('the small vocabulary', () => {
 	it.each([
 		['run.ticket', 'ticket'],
 		['run.ticket.comments', 'ticket_comments'],
-		['run.ping_answers', 'ping_answers'],
+		['run.journal', 'journal'],
 		['run.git.status', 'changeset'],
 		['run.git.diff_target', 'changeset'],
 		['run.git.diff_phase', 'changeset'],
@@ -214,7 +214,7 @@ describe('the small vocabulary', () => {
 		['files', false],
 		['ticket', false],
 		['ticket_comments', false],
-		['ping_answers', false],
+		['journal', false],
 		['changeset', false],
 		['failure', false],
 		['link', false]

@@ -715,7 +715,7 @@ flow is written against, and no binding names them:
 | run identity | run id and its bearer token, for the ask_human channel |
 
 A flow declares none of it because none of it varies per stage. `run.ticket`,
-`run.ticket.comments`, `run.ping_answers`, `run.git.*`, `run.mr.url`, `run.workspace` and `run.service.<name>` (§4) are how a stage reaches into
+`run.ticket.comments`, `run.journal`, `run.git.*`, `run.mr.url`, `run.workspace` and `run.service.<name>` (§4) are how a stage reaches into
 this context explicitly, and those *are* declared, as ports.
 
 ---
@@ -1352,9 +1352,8 @@ the person needs the verdict, not the checkout. They choose one of three:
 
 A chain that is the impasse alone (`on_reject: impasse`) has nowhere to send
 the rejection, so its ping offers `skip` and `give_up` only. The answer may
-carry a note; the engine records it with the decision (`ping_answered{by}`)
-and, until the run journal lands, an agent reads it through
-`run.ping_answers`. Like `debug` it takes no `max` or `then`: the person
+carry a note; the engine records it with the decision (`ping_answered{by}`),
+and an agent reads it in the run journal (`run.journal`, §4). Like `debug` it takes no `max` or `then`: the person
 decides when to stop, and their answer says what follows. Because a stage
 reaching the impasse may be skipped, what it produces is produced only on
 some routes — like a `run_if` stage's (§2), a later required read of it is a
@@ -1439,7 +1438,7 @@ What the names are checked against follows from the stage type:
 | `repo:docs/spec.md` | a file of the repository nothing in the flow writes | any file type |
 | `run.ticket` | the run's ticket — title, change type, goal, the person's direction for this attempt, the files attached to it, and its key, status and labels as they are when the prompt is built; an agent reading it gets the `# TASK` section | `ticket` |
 | `run.ticket.comments` | the comments on the run's ticket — the remote issue's, synced, or the internal tracker's — read when the prompt is built, right after the ticket is refreshed from its tracker. Options on the port: `limit`, how many of the latest it shows (1–200, default 20), and `exclude_own` (default `true`), which leaves out what apothecary posted (the internal tracker's run comments, and the remote comments signed with its trailer). An agent reading it gets a `# TICKET DISCUSSION` section; no comment left to show, no section | `ticket_comments` |
-| `run.ping_answers` | what the task's owner answered while the run went on, read from the run's log when the prompt is built: every question an agent asked (`ask_human`), and a gate, a `debug` leaf or a `manual` stage when the person wrote feedback or review comments there (a bare approve says nothing; a phase confirmation never counts); an `impasse` decision when it carried a note, and a skip always. Oldest first, each under the stage that asked and when, the question and the answer quoted; capped at 32 KiB, the oldest dropped first. An agent reading it gets a `# PING ANSWERS` section that presents the answers as the owner's direction, amending the plan where they differ; nothing answered yet, it says so. The `builder` template's reviewer reads it, so a plan changed by an answer is not taken for a deviation | `ping_answers` |
+| `run.journal` | the run so far, read from the run's log when the prompt is built. An agent reading it gets a `# RUN JOURNAL` section — a ledger, not the whole record — in three parts. **Owner decisions**: every question an agent asked (`ask_human`); a gate, a `debug` leaf or a `manual` stage when the person wrote feedback or review comments there (a bare approve says nothing; a phase confirmation or a selection never counts); every `impasse` answer, with the verdict it answered. Oldest first, each under the stage and pass that asked and when, the question and the decision quoted, presented as the owner's direction that amends the plan where they differ — a correction they overruled is not to be asked for again. None is ever dropped: a body past 1500 bytes shows its head, cut on a line, and names the call that gives all of it. **Passes**: per stage, how many and how the latest went (its end, its verdict, the edge it took). **Reading more**: the `journal_read` tool (§9). Every entry carries an id — `decision-<n>`, or a pass's `<stage>-<n>` (pass numbers never repeat in a run). The `builder` template's agents read it, so a plan changed by an answer is not taken for a deviation | `journal` |
 | `run.git.diff_target` | `git diff --name-status <target>...HEAD` — what the branch changes against **its target**, the branch it forked from and its merge request merges into: the changed-file list, never the full diff. On a multi-repo run one section per checkout, on a subject the subject's only | `changeset` |
 | `run.git.diff_phase` | `git diff --name-status <chain start>...HEAD` — what **this chain run** committed since the head it began on: a review round's fixes, not the whole branch. A chain run that began on no recorded head counts from the target | `changeset` |
 | `run.git.status` | `git status --short` — staged, unstaged and untracked files, what a commit would record right now (the diffs compare commits, so they cannot see this); scoped per checkout like the diffs | `changeset` |
@@ -1560,7 +1559,7 @@ path is the stage's to say.
 
 The prompt is assembled, never templated, from the stage's ports: each input
 renders by its type — a `ticket` as the `# TASK` section, `ticket_comments` as
-the `# TICKET DISCUSSION` section, `ping_answers` as the `# PING ANSWERS` section, a file as `# INPUT: <name> — <description>
+the `# TICKET DISCUSSION` section, `journal` as the `# RUN JOURNAL` section, a file as `# INPUT: <name> — <description>
 (file: <path>)` and its content, a changeset as its file list, a failure or a
 verdict as what the edge carried — and the outputs as the `# OUTPUT
 CONTRACT`, each path with its shape. An agent sees the ticket only through a
@@ -1596,7 +1595,7 @@ input:
 | `review_replies` | a review round's answers (below): a list of `{thread, did, reply, resolve, rationale, evidence}` | `reply_review_comments`, a curating `human_gate` |
 | `mr_threads` | what is on the merge request, as `load_review_comments` read it (below): every thread with its comments, and the notes a person dropped at a gate | the reviewing and fixing agents, the curation page, the engine's own guards |
 | `commit_message` | `{"subject": "...", "body": "..."}` — a one-line subject (at most 100 characters), an optional body | `commit` |
-| `ticket`, `ticket_comments`, `ping_answers`, `changeset`, `failure`, `link` | values the engine provides — and `verdict`, from `edge.verdict` | inputs only |
+| `ticket`, `ticket_comments`, `journal`, `changeset`, `failure`, `link` | values the engine provides — and `verdict`, from `edge.verdict` | inputs only |
 
 **Why these, and nothing else.** A file type exists for a structure something
 *built in* reads — the router, an action — and the action's port names it, so
@@ -2276,6 +2275,29 @@ form and decline semantics. A prompt therefore states only its stage's
 policy — "if the ticket is ambiguous in a way that changes the design, ask
 the human (type=clarification) before writing the plan" — and nothing about
 the tool. The flow editor's "what a stage adds" preview lists the section.
+
+**Reading the run journal: `journal_read`.** The shim's server carries a
+second tool beside `ask_human`, offered to the same agents (opencode lists it
+as `ask_human_journal_read`), read-only by nature and so a read-only agent's
+too. It reads the run journal whose ledger a `run.journal` input (§4) puts in
+the prompt — the ledger is the list; this reads the rest:
+
+| Call | Gives |
+|---|---|
+| `journal_read(id: "<stage>-<n>")` | everything that pass left — its record, its verdict, each output (text embedded, anything else listed by name and size) and its full log — written to one file |
+| `journal_read(id: "decision-<n>")` | that decision whole, inline (in a file past 8 KiB) |
+| `journal_read()` | every record of the run — each decision whole, each pass's record with its verdict, no logs — written to one file |
+
+A file goes to `.apothecary/journal/<id>.md` in the checkout (`records.md` for
+every record; git-excluded like the attachments), and the result says where,
+how many bytes and lines: the agent reads and searches it with its own tools,
+and nothing large reaches its context through the tool. No paging, no cache:
+each call writes the file afresh from the engine, over whatever was there.
+The engine serves it from the event log and the snapshots — what a pass left
+is its snapshot, scrubbed of secrets when captured; one dropped by retention
+reads "no longer kept", and the pass running now holds nothing until it ends —
+behind `GET /api/runs/{run}/journal[/{id}]` under the run's own token, so a
+run reads its own journal and no other. Every id the ledger prints resolves.
 
 A gate (§2) and an ask_human ping are the same machinery pointed the other way:
 a gate is the *flow* stopping to ask at a declared point, a ping is the *agent*

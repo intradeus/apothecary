@@ -127,7 +127,7 @@ describe('AgentEditor', () => {
 			setup({
 				inputs: [
 					{ name: 'ticket', type: 'ticket' },
-					{ name: 'answers', type: 'ping_answers' },
+					{ name: 'journal', type: 'journal' },
 					{ name: 'fb', type: 'failure' },
 					{ name: 'v', type: 'verdict' },
 					{ name: 'diff', type: 'changeset' },
@@ -143,7 +143,7 @@ describe('AgentEditor', () => {
 				]
 			});
 			const text = adds();
-			expect(text).toContain('# PING ANSWERS — what the task’s owner answered during the run');
+			expect(text).toContain('# RUN JOURNAL — the owner’s decisions during the run, oldest first');
 			expect(text).toContain('# INPUT: fb — the failure the edge carried');
 			expect(text).toContain('# INPUT: v — the verdict the edge carried');
 			expect(text).toContain('# INPUT: diff — the changed files, listed (never the diff)');

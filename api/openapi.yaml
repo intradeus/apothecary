@@ -2035,6 +2035,18 @@ components:
       required:
         - name
       type: object
+    JournalEntry:
+      properties:
+        file:
+          type: string
+        id:
+          type: string
+        text:
+          type: string
+      required:
+        - id
+        - text
+      type: object
     KindDescriptor:
       properties:
         fields:
@@ -10817,6 +10829,87 @@ paths:
         - session: []
         - personalToken: []
       summary: Take over the running agent's session
+      tags:
+        - runs
+  /api/runs/{id}/journal:
+    get:
+      description: 'Every owner decision whole and every pass''s record with its verdict, no logs: one file for the tool to write.'
+      operationId: readRunJournal
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JournalEntry'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - runToken: []
+      summary: Every record of the run's journal (journal_read with no id)
+      tags:
+        - runs
+  /api/runs/{id}/journal/{entry}:
+    get:
+      description: A pass (<stage>-<n>) is its record, its outputs and its full log, as one file; a decision (decision-<n>) is inline unless long. 404 for an id the run has not.
+      operationId: readRunJournalEntry
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: entry
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JournalEntry'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - runToken: []
+      summary: 'One entry of the run''s journal: a pass whole, or a decision'
       tags:
         - runs
   /api/runs/{id}/logs/{stage}:
