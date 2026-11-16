@@ -70,7 +70,7 @@ is kept locally.
   gets `dup:<id>`. No issue ever matches either, so their runs still resolve
   and the oldest record stays the issue's.
 - **The ticket lock moved off the project:** a ticket's `workitem.Ref` has no
-  project, so `engine.ErrTicketBusy` holds across every workshop sharing the
+  project, so `workitem.ErrBusy` holds across every workshop sharing the
   source (lock keys and `ErrBusy.Item` changed with it).
 - **Existing base branches count as user-set:** every ticket keeps its stored
   `base_branch`, so an existing remote ticket does not follow a second
@@ -193,7 +193,9 @@ is kept locally.
   refuses deletion, naming the workshop); `crossuser_test.go`:
   `TestWorkshopCannotBorrowATracker`, `TestTicketOfSomeoneElsesTracker`;
   `TestRunStartsFromTheRecordWhileTheTrackerIsDown`,
-  `TestRemoteWriteRefreshesTheRecord` (`ticketsync_test.go`);
+  `TestRemoteWriteRefreshesTheRecord`,
+  `TestARemoteIssueIsOneRecordAndOneLockAcrossWorkshops` (one record and one
+  lock for two workshops on one source) (`ticketsync_test.go`);
   `automations_test.go`: `TestCronAutomationByTicketKey`.
 - `internal/adapters/gitlab/issues_test.go`:
   `TestGitLabIssuesSearchMergesOverlappingScopes`; `TestGitLabIssuesSearchAndFetch`

@@ -130,23 +130,6 @@ func remoteIDOr(id, name string) string {
 	return strings.TrimSpace(name)
 }
 
-// Search serves a source's list and the run dialog's picker: one page of its
-// issues, each joined to its record.
-func (f *Factory) Search(ctx context.Context, sourceID string, q trackerport.SearchQuery) (LivePage, error) {
-	if f.Live == nil {
-		return LivePage{}, ErrNoSources
-	}
-	return f.Live.List(ctx, sourceID, q, false)
-}
-
-// Fetch serves one issue with its attachment list.
-func (f *Factory) Fetch(ctx context.Context, sourceID, key string) (trackerport.SourceTicket, error) {
-	if f.Live == nil {
-		return trackerport.SourceTicket{}, ErrNoSources
-	}
-	return f.Live.Issue(ctx, sourceID, key, false)
-}
-
 // attachmentSkip is a remote file that did not land, and why.
 type attachmentSkip struct {
 	file, mime string

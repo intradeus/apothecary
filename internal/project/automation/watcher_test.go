@@ -456,7 +456,7 @@ func TestCronFiresOncePerSlot(t *testing.T) {
 }
 
 // busyErr is the engine's refusal of a run on a ticket that has one going
-// (engine.ErrTicketBusy), as the watcher sees it: an error naming the run.
+// (workitem.ErrBusy), as the watcher sees it: an error naming the run.
 type busyErr struct{ run string }
 
 func (b busyErr) Error() string       { return "ticket is busy: run " + b.run + " is still active" }
