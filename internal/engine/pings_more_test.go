@@ -25,7 +25,7 @@ import (
 func (h *harness) parkedOn(t *testing.T, runID, pingID, kind string) {
 	t.Helper()
 	h.seedLive(t, runID, "loop",
-		&event.StageStarted{StageID: "build", Iteration: 1},
+		&event.StageStarted{StageID: "build", Attempt: 1},
 		&event.PingRaised{PingID: pingID, Type: event.PingClarification, Question: "which?", AnswerKind: kind, StageID: "build",
 			Files: []string{"artifacts/plan.md"},
 			Form:  &event.Form{Fields: []event.Field{{ID: AnswerField, Type: event.FieldString, Required: true}}}},
@@ -442,9 +442,9 @@ func TestAParkedHold(t *testing.T) {
 	seed := func(t *testing.T, tail ...event.Payload) *harness {
 		h := newHarness(t, mustFlow(t, loopFlowDoc))
 		ps := append([]event.Payload{
-			&event.StageStarted{StageID: "build", Iteration: 1},
-			&event.HoldTaken{StageID: "build", Iteration: 1, UserID: "u1"},
-			&event.StagePaused{StageID: "build", Iteration: 1, Reason: event.PauseHeld, Hold: spent},
+			&event.StageStarted{StageID: "build", Attempt: 1},
+			&event.HoldTaken{StageID: "build", Attempt: 1, UserID: "u1"},
+			&event.StagePaused{StageID: "build", Attempt: 1, Reason: event.PauseHeld, Hold: spent},
 			&event.RunPaused{StageID: "build", Reason: event.PauseWaiting},
 		}, tail...)
 		h.seedLive(t, "r1", "loop", ps...)

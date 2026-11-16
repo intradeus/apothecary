@@ -46,7 +46,7 @@ export const aCatalog = (): Catalog => ({
 			id: 'attempts',
 			label: 'Stage attempts',
 			timeField: 'started_at',
-			dimensions: [f('stage_id', 'Stage', 'text'), f('iteration', 'Iteration', 'text')],
+			dimensions: [f('stage_id', 'Stage', 'text'), f('attempt', 'Attempt', 'text')],
 			measures: [f('cost_usd', 'Cost', 'usd', ['sum'])],
 			derived: []
 		}

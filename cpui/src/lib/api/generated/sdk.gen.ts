@@ -491,6 +491,12 @@ import type {
 	RaisePingData,
 	RaisePingErrors,
 	RaisePingResponses,
+	ReadRunJournalData,
+	ReadRunJournalEntryData,
+	ReadRunJournalEntryErrors,
+	ReadRunJournalEntryResponses,
+	ReadRunJournalErrors,
+	ReadRunJournalResponses,
 	RebuildWorkspaceData,
 	RebuildWorkspaceErrors,
 	RebuildWorkspaceResponses,
@@ -4533,6 +4539,50 @@ export const takeOverRun = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/runs/{id}/hold',
+		...options
+	});
+
+/**
+ * Every record of the run's journal (journal_read with no reference)
+ *
+ * Every decision and note whole and every attempt's record with its verdict, no logs: one file for the tool to write (run.md).
+ */
+export const readRunJournal = <ThrowOnError extends boolean = false>(
+	options: Options<ReadRunJournalData, ThrowOnError>
+): RequestResult<ReadRunJournalResponses, ReadRunJournalErrors, ThrowOnError> =>
+	(options.client ?? client).get<ReadRunJournalResponses, ReadRunJournalErrors, ThrowOnError>({
+		security: [
+			{
+				key: 'runToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/journal',
+		...options
+	});
+
+/**
+ * One entry of the run's journal, by its reference: an attempt whole, a decision or a note
+ *
+ * The reference is <stage>#<n> (review#5), <stage>#<n>/decision#<k>, <stage>#<n>/note#<k>, run, or run/decision#<k>, its # sent as %23. An attempt (review#5) is its record, its outputs and its full log, as one file (review#5.md); a decision (build#3/decision#1) or a note (build#3/note#2) is inline unless past 8 KiB, then a file at its reference (build#3/decision#1.md); run is every record. An attempt's outputs that are not text are listed in beside; ?file=<name> gives one's bytes, as application/octet-stream, for the tool to write beside the attempt's file. 400 for what is not a reference, 404 for one the run has not, 410 for an output whose bytes are no longer kept.
+ */
+export const readRunJournalEntry = <ThrowOnError extends boolean = false>(
+	options: Options<ReadRunJournalEntryData, ThrowOnError>
+): RequestResult<ReadRunJournalEntryResponses, ReadRunJournalEntryErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		ReadRunJournalEntryResponses,
+		ReadRunJournalEntryErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				key: 'runToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/journal/{ref...}',
 		...options
 	});
 

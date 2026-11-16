@@ -47,6 +47,13 @@ describe('Dossier', () => {
 		expect(screen.getByText('Reading the schema')).toBeInTheDocument();
 	});
 
+	it('names the agent’s attempt by its reference', () => {
+		mount(aUnit({ crew: aCrew({ stageId: 'settle.resolve', attempt: 2 }) }));
+		expect(
+			screen.getByRole('button', { name: 'Copy reference settle.resolve#2' })
+		).toHaveTextContent('settle.resolve#2');
+	});
+
 	it('lists the drones the agent launched, with their counts', () => {
 		mount();
 		expect(screen.getByText('Scout the API')).toBeInTheDocument();

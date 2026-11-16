@@ -123,10 +123,10 @@ describe('RoutesSection', () => {
 			expect(stage.on_reject).toEqual({ to: 'other', max: 3 });
 		});
 
-		it('sends a lone gate to a person', async () => {
+		it('sends a lone gate’s rejection to a person, at the impasse', async () => {
 			const { stage } = setup(aStage('gate', 'human_gate'));
 			await userEvent.click(screen.getByRole('button', { name: /on_reject$/ }));
-			expect(stage.on_reject).toEqual({ to: 'debug' });
+			expect(stage.on_reject).toEqual({ to: 'impasse' });
 		});
 	});
 
@@ -180,6 +180,26 @@ describe('RoutesSection', () => {
 		it('offers fail only in a sequence', async () => {
 			inSequence(0, { on_fail: { to: 'debug' } });
 			expect(await optionsOf(onFail)).toContain('fail — the sequence stage’s on_fail');
+		});
+
+		it('offers the impasse to a rejection only', async () => {
+			setup(
+				aStage('a', 'agent', {
+					on_fail: { to: 'debug' },
+					on_reject: { to: 'a', max: 2 }
+				})
+			);
+			const impasse = 'impasse — a person keeps going, skips or gives up';
+			expect(await optionsOf(/^on_reject$/)).toContain(impasse);
+			expect(await optionsOf(onFail)).not.toContain(impasse);
+		});
+
+		it('drops the limit and what follows on the impasse', async () => {
+			const { stage } = setup(
+				aStage('a', 'agent', { on_reject: { to: 'a', max: 2, then: { to: 'debug' } } })
+			);
+			await pick(/^on_reject$/, 'impasse — a person keeps going, skips or gives up');
+			expect(stage.on_reject).toEqual({ to: 'impasse', max: undefined, then: undefined });
 		});
 
 		it('offers no fail in a chain', async () => {
@@ -253,6 +273,12 @@ describe('RoutesSection', () => {
 			expect(stage.on_fail?.then?.then).toEqual({ to: 'debug' });
 			expect(onchange).toHaveBeenCalledOnce();
 			expect(screen.getByRole('combobox', { name: 'on_fail · then #2' })).toBeInTheDocument();
+		});
+
+		it('adds the impasse after a rejection’s last link', async () => {
+			const { stage } = setup(aStage('a', 'agent', { on_reject: { to: 'a', max: 5 } }));
+			await userEvent.click(screen.getByRole('button', { name: /then$/ }));
+			expect(stage.on_reject).toEqual({ to: 'a', max: 5, then: { to: 'impasse' } });
 		});
 
 		it('offers nothing after a reserved target', () => {

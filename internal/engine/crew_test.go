@@ -60,7 +60,7 @@ func TestCrewBoard(t *testing.T) {
 	if len(b.snapshot()) != 0 {
 		t.Fatal("an unboarded run reached the board")
 	}
-	b.board("r1", Crew{StageID: "build", Iteration: 1, Harness: "fake", Agent: "builder", Since: at})
+	b.board("r1", Crew{StageID: "build", Attempt: 1, Harness: "fake", Agent: "builder", Since: at})
 	b.turn("r1", true)
 	b.tool("r1", "t1", "Read go.mod", "in_progress", 0, at)
 	b.tool("r1", "s1", "task", "pending", 0, at)              // a spawn tool before its input arrived
@@ -140,7 +140,7 @@ func TestCrewFollowsTheAgent(t *testing.T) {
 		return c.Drones() == 2 && c.Tool == "Read go.mod"
 	})
 	c, _ := crew()
-	if c.StageID != "build" || c.Iteration != 1 || c.Harness != "fake" || c.Agent != "builder" || !c.TurnActive || c.Since.IsZero() {
+	if c.StageID != "build" || c.Attempt != 1 || c.Harness != "fake" || c.Agent != "builder" || !c.TurnActive || c.Since.IsZero() {
 		t.Errorf("on station = %+v", c)
 	}
 	if title := c.Subagents[0].Title; strings.Contains(title, token) || !strings.HasPrefix(title, "Scout with ") {

@@ -36,8 +36,8 @@ func (x *exec) stageManual(st *flow.Stage) error {
 		p = x.openYesNo(st, PingManual)
 	}
 	if p == nil {
-		iter := rs.Iters[st.ID] + 1
-		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
+		iter := rs.Attempts[st.ID] + 1
+		if err := x.append(&event.StageStarted{StageID: st.ID, Attempt: iter}); err != nil {
 			return err
 		}
 		brief := x.manualBrief(st, iter)

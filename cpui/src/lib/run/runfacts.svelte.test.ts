@@ -41,7 +41,7 @@ describe('runFacts', () => {
 				turns: 5,
 				wallMs: 60_000,
 				attempts: 4,
-				open: { build: { iteration: 3, startedAt: AT, outcome: 'running' } }
+				open: { build: { attempt: 3, startedAt: AT, outcome: 'running' } }
 			}
 		});
 

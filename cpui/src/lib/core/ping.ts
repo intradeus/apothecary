@@ -15,6 +15,7 @@ import type {
 	FormContent,
 	FormValue,
 	PingField,
+	PingChoice,
 	PingForm,
 	PingOption,
 	ReviewComment
@@ -27,6 +28,13 @@ export const GATE_TYPE = 'gate';
 /** The flow's debug leaf: a parked stage, facts only — the card is the wording. */
 export const DEBUG_TYPE = 'debug';
 export const isDebug = (type: string) => type === DEBUG_TYPE;
+/** A stage rejected past its on_reject budget: a person decides. */
+export const IMPASSE_TYPE = 'impasse';
+export const isImpasse = (type: string) => type === IMPASSE_TYPE;
+/** The impasse's choices, as the engine names them. */
+export const KEEP_GOING = 'keep_going';
+export const SKIP = 'skip';
+export const GIVE_UP = 'give_up';
 export const PHASE_CONFIRM_TYPE = 'phase_confirm';
 export const SELECT_TYPE = 'select';
 export const isPhaseConfirm = (type: string) => type === PHASE_CONFIRM_TYPE;
@@ -69,13 +77,39 @@ export function toReviewComment(o: unknown): ReviewComment {
 	};
 }
 
-/** The declared answer kind; absent, as the engine reads it: the engine's
- *  own decisions are yes/no, anything else a form. */
+/** The declared answer kind; absent, as the engine reads it: the impasse
+ *  is a choice, the engine's other decisions are yes/no, anything else a
+ *  form. */
 export function answerKindOf(kind: unknown, type: string): AnswerKind {
-	if (kind === 'yes_no' || kind === 'form') return kind;
+	if (kind === 'yes_no' || kind === 'form' || kind === 'choice') return kind;
+	if (type === IMPASSE_TYPE) return 'choice';
 	return type === 'gate' || type === 'phase_confirm' || type === 'debug' || type === 'manual'
 		? 'yes_no'
 		: 'form';
+}
+
+/** A choice ping's choices as the wire or a ping_raised payload carries
+ *  them, in the frontend's shape; the ones without an id are dropped. */
+export function toPingChoices(o: unknown): PingChoice[] {
+	if (!Array.isArray(o)) return [];
+	return o
+		.map((raw) => (raw ?? {}) as { id?: unknown; note_required?: unknown })
+		.filter((r) => typeof r.id === 'string' && r.id !== '')
+		.map((r) => ({ id: r.id as string, noteRequired: r.note_required === true }));
+}
+
+/** A choice as a person reads it, once made: kept going, skipped, gave up;
+ *  a choice the card does not know reads as its id. */
+export function choiceText(id: string): string {
+	switch (id) {
+		case KEEP_GOING:
+			return t('ping.verdict.keptGoing');
+		case SKIP:
+			return t('ping.verdict.skipped');
+		case GIVE_UP:
+			return t('ping.verdict.gaveUp');
+	}
+	return id;
 }
 
 const FIELD_TYPES: FieldType[] = ['string', 'number', 'integer', 'boolean', 'array'];
@@ -224,6 +258,7 @@ export function fieldAnswerText(f: PingField, v: FormValue | undefined): string 
 export function answerSummary(
 	p: Pick<PingLike, 'answerKind' | 'form' | 'answer' | 'content' | 'feedback'>
 ): string {
+	if (p.answerKind === 'choice') return choiceText(p.answer ?? '');
 	if (p.answerKind !== 'form') return p.answer ?? '';
 	if (p.answer === 'decline') return t('ping.verdict.declined');
 	const fields = p.form?.fields ?? [];
@@ -252,6 +287,8 @@ export interface PingLike {
 	primaryRef?: string;
 	/** What a form ping asks. */
 	form?: PingForm;
+	/** What a choice ping offers. */
+	choices?: PingChoice[];
 	status?: string; // pending | answered | withdrawn
 	answer?: string;
 	feedback?: string;
@@ -265,6 +302,9 @@ export interface PingLike {
 	// Optional: shown in the card head when present.
 	stageId?: string;
 	raisedAt?: string;
+	/** Its reference, as the engine recorded it (build#3/decision#1): never
+	 *  built here, absent where the engine sent none. */
+	ref?: string;
 	// The phase the ping belongs to; on a debug ping, endsPhase says giving
 	// up ends that phase run, not the run.
 	phase?: string;
@@ -294,7 +334,7 @@ export function pingCta(
 		const name = primaryFile(p).split('/').pop();
 		return name ? t('ping.cta.reviewFile', { name }) : t('ping.cta.review');
 	}
-	if (p.type === 'permission' || p.answerKind === 'yes_no') return t('ping.cta.decide');
+	if (p.type === 'permission' || p.answerKind !== 'form') return t('ping.cta.decide');
 	return t('ping.cta.answer');
 }
 
@@ -330,5 +370,9 @@ export function answerMeta(p: Pick<PingLike, 'status' | 'answer'>): {
 		return { glyph: I.loop, word: t('ping.verdict.rejected'), hue: 'warning' };
 	if (p.answer === 'decline')
 		return { glyph: I.none, word: t('ping.verdict.declined'), hue: 'warning' };
+	if (p.answer === KEEP_GOING)
+		return { glyph: I.loop, word: choiceText(KEEP_GOING), hue: 'warning' };
+	if (p.answer === SKIP) return { glyph: I.forward, word: choiceText(SKIP), hue: 'muted' };
+	if (p.answer === GIVE_UP) return { glyph: I.none, word: choiceText(GIVE_UP), hue: 'danger' };
 	return { glyph: I.ok, word: t('ping.verdict.answered'), hue: 'success' };
 }

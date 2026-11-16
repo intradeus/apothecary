@@ -22,7 +22,7 @@ const (
 	TypeStageCompleted Type = "stage_completed"
 	TypeStageFailed    Type = "stage_failed"
 	// TypeStagePaused / TypeStageResumed bracket an attempt that stopped
-	// mid-flight and picked up again LATER IN THE SAME ATTEMPT: the iteration
+	// mid-flight and picked up again LATER IN THE SAME ATTEMPT: the attempt
 	// does not advance, no stage_completed/stage_failed sits between them, and
 	// everything the harness had already done still stands. Today's producer
 	// is an agent that ended its turn on an unanswered ask_human — the engine
@@ -50,7 +50,11 @@ const (
 	// they point at can be any size — which is what makes "the plan the human
 	// rejected at attempt 1" answerable after the workspace is long gone.
 	TypeSnapshotCaptured Type = "snapshot_captured"
-	TypeMRCreated        Type = "mr_created"
+	// TypeHandEdits records what a person changed in the workspace at the
+	// debug leaf before they continued: the paths, per checkout (FLOWLANG §3,
+	// the run journal). Best effort, said so when it could not be known.
+	TypeHandEdits Type = "hand_edits"
+	TypeMRCreated Type = "mr_created"
 	// Phases (PLAN6): a phase run starting on one merge request (its
 	// subject), ending, or a human declining to start one.
 	TypePhaseStarted   Type = "phase_started"
@@ -339,10 +343,10 @@ type EnvFailed struct {
 }
 
 type StageStarted struct {
-	StageID   string `json:"stage_id"`
-	Iteration int    `json:"iteration"`
-	Harness   string `json:"harness,omitempty"`
-	Model     string `json:"model,omitempty"`
+	StageID string `json:"stage_id"`
+	Attempt int    `json:"attempt"`
+	Harness string `json:"harness,omitempty"`
+	Model   string `json:"model,omitempty"`
 	// Agent/AgentHash pin the agent-library entry and its exact content
 	// version (DESIGN3 §1): outcome events become joinable to the prompt
 	// version that produced them.
@@ -362,6 +366,10 @@ type StageCompleted struct {
 	// the timeline. Engine-authored text, never workspace output.
 	Skipped bool   `json:"skipped,omitempty"`
 	Note    string `json:"note,omitempty"`
+	// By is who skipped the stage, when a person did (the impasse's skip):
+	// the account that answered. Empty for a skip the engine decided
+	// (run_if).
+	By string `json:"by,omitempty"`
 	// Feed is the verdict an approval carries to on_success (≤32 KB): a
 	// gate's review, a verdict's comments (flow.GivesVerdict). Persisted like
 	// EdgeTaken.Feed, so recovery hands it on.
@@ -385,9 +393,9 @@ type StageFailed struct {
 // resumes — and SessionID is what the resume re-enters, persisted HERE so a
 // pause survives an engine restart (a held-open pipe never could).
 type StagePaused struct {
-	StageID   string `json:"stage_id"`
-	Iteration int    `json:"iteration,omitempty"`
-	Reason    string `json:"reason"` // ask_human|held
+	StageID string `json:"stage_id"`
+	Attempt int    `json:"attempt,omitempty"`
+	Reason  string `json:"reason"` // ask_human|held
 	// PingIDs are the open questions the attempt is waiting on: what has to
 	// be answered before a stage_resumed can follow.
 	PingIDs   []string `json:"ping_ids,omitempty"`
@@ -400,12 +408,12 @@ type StagePaused struct {
 	Hold *HoldSpend `json:"hold,omitempty"`
 }
 
-// StageResumed is the other half: the same stage and the same iteration
+// StageResumed is the other half: the same stage and the same attempt
 // picking up where StagePaused left it. PingIDs name the answers being
 // delivered to the agent.
 type StageResumed struct {
 	StageID   string   `json:"stage_id"`
-	Iteration int      `json:"iteration,omitempty"`
+	Attempt   int      `json:"attempt,omitempty"`
 	Reason    string   `json:"reason"` // answered|engine_restart
 	PingIDs   []string `json:"ping_ids,omitempty"`
 	SessionID string   `json:"session_id,omitempty"`
@@ -444,6 +452,13 @@ const (
 	// a person's hands; approve (Done) follows on_success, reject (give up)
 	// is a dead end. StageID is the manual stage, Context its brief.
 	PingManual = "manual"
+	// PingImpasse is the impasse (FLOWLANG §3): a stage's on_reject chain
+	// ran out into `impasse`, and the run is parked for a person's decision
+	// on it. StageID is the rejected stage, Context the verdict that spent
+	// the chain; the question is a bare label — the card is the UI's.
+	// Answered by a choice (ChoiceKeepGoing, ChoiceSkip, ChoiceGiveUp).
+	// Engine-raised and wanted, like a gate.
+	PingImpasse = "impasse"
 	// PingPhaseConfirm asks a human whether a phase may start (a phase with
 	// `confirm: true`). Answered like a gate — approve | reject — but it
 	// belongs to no stage: it is raised while the run is between phases.
@@ -460,8 +475,16 @@ const (
 	//   yes_no    approve | reject (+ feedback)        gates, phase confirmations, the debug leaf
 	//   form      accept + content | decline + note    every question (Form): an agent's, a
 	//                                                  harness's own over ACP, which threads to fix
+	//   choice    one of the ping's Choices (+ note)   the impasse
+	// They differ in meaning (FLOWLANG §9): yes_no is a judgement with a
+	// polarity — approve is the good outcome (on_success), reject the bad one
+	// (on_reject, its budget spent, the words carried as edge.verdict); form is
+	// information for the asker, approving nothing; choice is a decision among
+	// actions none of which is good or bad — no on_reject fires, no budget is
+	// spent, no verdict is carried — and it cannot be declined.
 	AnswerYesNo       = "yes_no"
 	AnswerForm        = "form"
+	AnswerChoice      = "choice"
 	PingClarification = "clarification"
 	PingBlocker       = "blocker"
 	PingPermission    = "permission"
@@ -496,6 +519,10 @@ type PingRaised struct {
 	Form *Form `json:"form,omitempty"`
 	// AnswerKind is the shape of the answer (the Answer* constants).
 	AnswerKind string `json:"answer_kind,omitempty"`
+	// Choices is what a choice ping may be answered (AnswerChoice): the
+	// answer names one by id. The engine sends no wording; the clients label
+	// each id.
+	Choices []Choice `json:"choices,omitempty"`
 	// Phase, Subject and TriggerKey identify what a phase_confirm ping asks
 	// to start: which phase, on which checkout's merge request, for which
 	// occurrence of its trigger. A debug ping carries Phase too: the phase
@@ -507,6 +534,33 @@ type PingRaised struct {
 	// goes back to waiting — the phase is a watcher (FLOWLANG §3). False:
 	// giving up abandons the run.
 	EndsPhase bool `json:"ends_phase,omitempty"`
+	// Trees, on a debug ping: each checkout's working copy as the run parked,
+	// as a git tree (uncommitted and new files included, ignored ones not),
+	// by checkout name — what hand_edits compares the continue against. A
+	// checkout whose tree could not be taken is absent.
+	Trees map[string]string `json:"trees,omitempty"`
+	// Ref is the ping's reference (apothecary/internal/run/ref): the n-th
+	// ping raised in or about its stage's latest attempt, whatever its type
+	// (build#3/decision#1), or run/decision#n outside any attempt. Set by the
+	// engine as the ping is recorded; a person and an agent quote it.
+	Ref string `json:"ref,omitempty"`
+}
+
+// HandEdits: the files a person changed at the debug leaf, between the run
+// parking (PingRaised.Trees) and their continue. One entry per checkout;
+// Unknown says why a checkout's changes could not be determined (its
+// workspace recreated while parked, git failing), and then Paths is empty.
+type HandEdits struct {
+	PingID    string          `json:"ping_id"`
+	StageID   string          `json:"stage_id"`
+	Checkouts []CheckoutEdits `json:"checkouts"`
+}
+
+// CheckoutEdits is one checkout's hand edits.
+type CheckoutEdits struct {
+	Checkout string   `json:"checkout"`
+	Paths    []string `json:"paths,omitempty"`
+	Unknown  string   `json:"unknown,omitempty"`
 }
 
 // PhaseStarted: a phase run begins. Subject is the checkout whose merge
@@ -741,7 +795,7 @@ func OptionIDs(opts []Option) []string {
 }
 
 // Kind is the ping's answer kind: a gate, phase confirmation, debug leaf or
-// manual stage is a yes/no, anything else a form.
+// manual stage is a yes/no, the impasse a choice, anything else a form.
 func (p *PingRaised) Kind() string {
 	if p.AnswerKind != "" {
 		return p.AnswerKind
@@ -749,14 +803,50 @@ func (p *PingRaised) Kind() string {
 	switch p.Type {
 	case PingGate, PingPhaseConfirm, PingDebug, PingManual:
 		return AnswerYesNo
+	case PingImpasse:
+		return AnswerChoice
 	}
 	return AnswerForm
 }
 
+// Choice is one answer a choice ping offers (AnswerChoice). NoteRequired:
+// the answer must say why.
+type Choice struct {
+	ID           string `json:"id"`
+	NoteRequired bool   `json:"note_required,omitempty"`
+}
+
+// The impasse's choices (PingImpasse). Keep going takes the rejected stage's
+// on_reject chain again from its first link, that chain's budget back; skip
+// completes the stage as skipped and follows on_success; give up is a dead
+// end (FLOWLANG §3).
+const (
+	ChoiceKeepGoing = "keep_going"
+	ChoiceSkip      = "skip"
+	ChoiceGiveUp    = "give_up"
+)
+
+// ImpasseChoices is what an impasse ping offers, in the order shown.
+func ImpasseChoices() []Choice {
+	return []Choice{{ID: ChoiceKeepGoing}, {ID: ChoiceSkip}, {ID: ChoiceGiveUp}}
+}
+
+// ChoiceIDs lists the choices' ids.
+func ChoiceIDs(cs []Choice) []string {
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		out[i] = c.ID
+	}
+	return out
+}
+
 type PingAnswered struct {
 	PingID   string `json:"ping_id"`
-	Answer   string `json:"answer"` // approve|reject (yes_no), accept|decline (form)
+	Answer   string `json:"answer"` // approve|reject (yes_no), accept|decline (form), a choice's id (choice)
 	Feedback string `json:"feedback,omitempty"`
+	// By is who answered: the account that sent the answer. Empty in logs
+	// that predate it, and for an answer no person sent.
+	By string `json:"by,omitempty"`
 	// Content is an accepted form's values, by field id: a string, number,
 	// bool, or (array) a list of option ids.
 	Content map[string]any `json:"content,omitempty"`
@@ -804,7 +894,7 @@ type VerdictReceived struct {
 // rebuild needs to reconstruct the row, minus the bytes.
 type SnapshotCaptured struct {
 	StageID    string `json:"stage_id"`
-	Iteration  int    `json:"iteration,omitempty"`
+	Attempt    int    `json:"attempt,omitempty"`
 	Kind       string `json:"kind"`
 	Name       string `json:"name,omitempty"`    // output role ('plan'); outputs only
 	Path       string `json:"path,omitempty"`    // workspace path; outputs + ping files
@@ -815,6 +905,11 @@ type SnapshotCaptured struct {
 	SHA256     string `json:"sha256,omitempty"`
 	Size       int64  `json:"size,omitempty"`
 	Truncated  bool   `json:"truncated,omitempty"`
+	// PortType is the output port's type as the flow declared it when the
+	// attempt ran ('verdict', 'journal_notes'); outputs only. What reads
+	// the snapshot later — the run journal — types it from here, never from
+	// a flow it would have to load again.
+	PortType string `json:"port_type,omitempty"`
 }
 
 // ActionStarted is the pre-effect intent marker for an action stage.
@@ -973,6 +1068,7 @@ func (*VerdictReceived) EventType() Type { return TypeVerdictReceived }
 func (*ActionStarted) EventType() Type   { return TypeActionStarted }
 
 func (*SnapshotCaptured) EventType() Type { return TypeSnapshotCaptured }
+func (*HandEdits) EventType() Type        { return TypeHandEdits }
 func (*MRCreated) EventType() Type        { return TypeMRCreated }
 func (*PhaseStarted) EventType() Type     { return TypePhaseStarted }
 func (*PhaseCompleted) EventType() Type   { return TypePhaseCompleted }

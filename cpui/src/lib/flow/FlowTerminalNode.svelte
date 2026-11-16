@@ -14,6 +14,10 @@
 	//    workspace, then the stage that sent the run here runs again. Drawn
 	//    once per stage that escalates to it, beside that stage, so its source
 	//    handle carries the return edge.
+	//  - impasse (amber, dashed): a stage rejected past its budget — a person
+	//    chooses: keep going, skip the stage, or give up. Drawn once per stage
+	//    whose on_reject chain ends there, beside it; it has no source handle,
+	//    because the choice, not the drawing, says what follows.
 	//  - exit (grn) and failexit (ros), in a sequence's view only: the ways
 	//    out of the sequence, back to the stage that runs it — its success,
 	//    and `fail` (its on_fail). data.label names where each one goes.
@@ -28,7 +32,16 @@
 	let { type, data }: NodeProps = $props();
 
 	type Tone =
-		'start' | 'trigger' | 'outcome' | 'end' | 'done' | 'abort' | 'debug' | 'exit' | 'failexit';
+		| 'start'
+		| 'trigger'
+		| 'outcome'
+		| 'end'
+		| 'done'
+		| 'abort'
+		| 'debug'
+		| 'impasse'
+		| 'exit'
+		| 'failexit';
 	const tone = $derived<Tone>(
 		type === 'start'
 			? data?.entry
@@ -36,7 +49,11 @@
 				: data?.outcome
 					? 'outcome'
 					: 'trigger'
-			: type === 'abort' || type === 'debug' || type === 'end' || type === 'exit'
+			: type === 'abort' ||
+				  type === 'debug' ||
+				  type === 'impasse' ||
+				  type === 'end' ||
+				  type === 'exit'
 				? type
 				: type === 'failexit'
 					? 'failexit'
@@ -52,6 +69,7 @@
 		done: 'success',
 		abort: 'danger',
 		debug: 'attention',
+		impasse: 'warning',
 		exit: 'success',
 		failexit: 'danger'
 	};
@@ -63,6 +81,7 @@
 		done: I.ok,
 		abort: I.bad,
 		debug: I.retry,
+		impasse: I.branch,
 		exit: I.forward,
 		failexit: I.forward
 	};
@@ -74,6 +93,7 @@
 		done: () => t('flow.term.done'),
 		abort: () => t('flow.term.abort'),
 		debug: () => t('flow.term.debug'),
+		impasse: () => t('flow.term.impasse'),
 		exit: () => t('flow.term.exit'),
 		failexit: () => t('flow.term.failexit')
 	};

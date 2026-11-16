@@ -29,7 +29,7 @@ export default {
 	'run.header.theFailedStage': 'the failed stage',
 	'run.header.retryProvision': 'Retry provisioning',
 	'run.header.retryProvisionTitle':
-		'The workspace never came up: provision it again — afresh, picking up what the failed attempt left — then carry on from where the run stopped',
+		'The workspace never came up: provision it again — afresh, picking up what the failed provisioning left — then carry on from where the run stopped',
 	'run.header.retryTitle':
 		'Re-run {stage} in the same workspace — keeps its files and commits; only retries what failed',
 	'run.header.rerun': 'New run from this…',
@@ -163,8 +163,8 @@ export default {
 	'run.rerun.title': 'New run from {id}',
 	'run.rerun.lead':
 		'A fresh run of the same ticket in a <b>new workspace</b> on a <b>new branch</b>. This run and its workspace are left as they are.',
-	'run.rerun.direction': 'Direction for the new attempt',
-	'run.rerun.directionPh': 'e.g. The last attempt broke the router — use the existing middleware.',
+	'run.rerun.direction': 'Direction for the new run',
+	'run.rerun.directionPh': 'e.g. The last run broke the router — use the existing middleware.',
 	'run.rerun.directionHelp': "Optional. Added to the ticket's goal for this run only.",
 	'run.rerun.attach': 'Attach files for the new run',
 	'run.rerun.flow': 'Flow',
@@ -356,7 +356,6 @@ export default {
 	'run.table.branch': 'Branch',
 	'run.table.mr': 'MR',
 	'run.table.updated': 'Updated',
-	'run.table.attempt': 'attempt {n}',
 
 	// Tool calls
 	'run.tool.read': 'Read',
@@ -400,8 +399,10 @@ export default {
 	// Stage rows
 	'run.stage.done': 'done',
 	'run.stage.skipped': 'skipped — nothing to act on',
+	'run.stage.skippedByHand': 'skipped by a person',
 	'run.stage.parked': 'failed — parked for you to check why',
 	'run.stage.manual': 'in your hands',
+	'run.stage.impasse': 'rejected — your call',
 	'run.stage.byHand': 'by hand',
 	'run.stage.waiting': 'waiting on you',
 	'run.stage.pausedReenter': 'paused — will re-enter',
@@ -459,6 +460,7 @@ export default {
 	'run.event.thenDepth': '(then #{depth})',
 	'run.event.parkedDebug': '{stage} failed — parked for debugging',
 	'run.event.manualRaised': '{stage} — handed to you',
+	'run.event.impasseRaised': '{stage} rejected past its budget — your call',
 	'run.event.ping': 'ping [{type}]: {question}',
 	'run.event.answered': 'answered: {answer}',
 	'run.event.approve': 'verdict: approve',

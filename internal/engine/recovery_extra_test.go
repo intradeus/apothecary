@@ -25,9 +25,9 @@ func TestCrashAfterFailureRoutesWithoutReexec(t *testing.T) {
 		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
-		&event.StageStarted{StageID: "build", Iteration: 1},
+		&event.StageStarted{StageID: "build", Attempt: 1},
 		&event.StageCompleted{StageID: "build", TurnsUsed: 1},
-		&event.StageStarted{StageID: "test", Iteration: 1},
+		&event.StageStarted{StageID: "test", Attempt: 1},
 		&event.StageFailed{StageID: "test", Reason: event.ReasonExitNonzero, Error: "FAIL: persisted output tail"},
 		// kill -9 here, before edge_taken
 	} {
@@ -78,9 +78,9 @@ func TestCrashAfterEdgeKeepsFeed(t *testing.T) {
 		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
-		&event.StageStarted{StageID: "build", Iteration: 1},
+		&event.StageStarted{StageID: "build", Attempt: 1},
 		&event.StageCompleted{StageID: "build"},
-		&event.StageStarted{StageID: "test", Iteration: 1},
+		&event.StageStarted{StageID: "test", Attempt: 1},
 		&event.StageFailed{StageID: "test", Reason: event.ReasonExitNonzero, Error: "FAIL: x"},
 		&event.EdgeTaken{From: "test", To: "build", Edge: "on_fail", Count: 1, Max: 5, Feed: "FAIL: x"},
 		// kill -9 here
@@ -124,7 +124,7 @@ func TestRecoveryRefreshesRunEnvToken(t *testing.T) {
 		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
-		&event.StageStarted{StageID: "build", Iteration: 1},
+		&event.StageStarted{StageID: "build", Attempt: 1},
 	} {
 		if _, err := h.store.Append(ctx, "r-t", p); err != nil {
 			t.Fatal(err)

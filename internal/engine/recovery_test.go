@@ -58,9 +58,9 @@ func TestRecoveredResumeRoutesTheRecordedGateAnswer(t *testing.T) {
 	h := newHarness(t, fl)
 	seedRun(t, h, "r-d8", "gated", fl.Hash,
 		&event.PhaseStarted{Phase: "main", By: "human"},
-		&event.StageStarted{StageID: "plan", Iteration: 1},
+		&event.StageStarted{StageID: "plan", Attempt: 1},
 		&event.StageCompleted{StageID: "plan", TurnsUsed: 1},
-		&event.StageStarted{StageID: "plan_gate", Iteration: 1},
+		&event.StageStarted{StageID: "plan_gate", Attempt: 1},
 		&event.PingRaised{PingID: "ping-d8", Type: PingGate, Question: "Approve the plan?", StageID: "plan_gate", Files: []string{"artifacts/plan.md"}},
 		&event.PhaseParked{Phase: "main", StageID: "plan_gate", PingID: "ping-d8"},
 		&event.PingAnswered{PingID: "ping-d8", Answer: "approve"},
@@ -101,9 +101,9 @@ func TestRecoveryLeavesARunParkedOnItsHolder(t *testing.T) {
 	h := newHarness(t, fl)
 	seedRun(t, h, "r-d10", "ask", fl.Hash,
 		&event.PhaseStarted{Phase: "main", By: "human"},
-		&event.StageStarted{StageID: "build", Iteration: 1},
-		&event.HoldTaken{StageID: "build", Iteration: 1, UserID: "u1"},
-		&event.StagePaused{StageID: "build", Iteration: 1, Reason: event.PauseHeld},
+		&event.StageStarted{StageID: "build", Attempt: 1},
+		&event.HoldTaken{StageID: "build", Attempt: 1, UserID: "u1"},
+		&event.StagePaused{StageID: "build", Attempt: 1, Reason: event.PauseHeld},
 		&event.RunPaused{StageID: "build", Reason: event.PauseWaiting},
 	)
 	before := len(h.events(t, "r-d10"))
@@ -179,7 +179,7 @@ main:
 		h := newHarness(t, fl)
 		env := seedRun(t, h, "r-d1", "rv", fl.Hash,
 			&event.PhaseStarted{Phase: "main", By: "human"},
-			&event.StageStarted{StageID: "review", Iteration: 1},
+			&event.StageStarted{StageID: "review", Attempt: 1},
 			&event.StageCompleted{StageID: "review", TurnsUsed: 1, Usage: &event.Usage{CostUSD: cost}},
 		)
 		h.writeFile(t, env, "artifacts/verdict.json", `{"verdict": "APPROVE", "summary": "fine"}`)
@@ -212,7 +212,7 @@ main:
 // it gets its whole prompt, rejection included, on a clean slate, not a
 // "carry on" that would lose them.
 func TestARetryCrashedBeforeItsPromptGetsItsPrompt(t *testing.T) {
-	retried := retryWorld(t, []event.Payload{&event.StageStarted{StageID: "plan", Iteration: 2}})
+	retried := retryWorld(t, []event.Payload{&event.StageStarted{StageID: "plan", Attempt: 2}})
 	if retried.stale {
 		t.Error("the attempt started on the rejected attempt's output")
 	}
@@ -222,8 +222,8 @@ func TestARetryCrashedBeforeItsPromptGetsItsPrompt(t *testing.T) {
 // agent read it, so it is sent again rather than told to carry on.
 func TestARetryCrashedAfterItsPromptGetsItAgain(t *testing.T) {
 	retryWorld(t, []event.Payload{
-		&event.StageStarted{StageID: "plan", Iteration: 2},
-		&event.AgentPrompted{StageID: "plan", Iteration: 2, Kind: event.PromptStage, Text: "plan it, better"},
+		&event.StageStarted{StageID: "plan", Attempt: 2},
+		&event.AgentPrompted{StageID: "plan", Attempt: 2, Kind: event.PromptStage, Text: "plan it, better"},
 	})
 }
 
@@ -246,10 +246,10 @@ func retryWorld(t *testing.T, tail []event.Payload) retried {
 	}
 	env := seedRun(t, h, "r-d11", "gated", fl.Hash, append([]event.Payload{
 		&event.PhaseStarted{Phase: "main", By: "human"},
-		&event.StageStarted{StageID: "plan", Iteration: 1},
-		&event.AgentPrompted{StageID: "plan", Iteration: 1, Kind: event.PromptStage, Text: "plan it"},
+		&event.StageStarted{StageID: "plan", Attempt: 1},
+		&event.AgentPrompted{StageID: "plan", Attempt: 1, Kind: event.PromptStage, Text: "plan it"},
 		&event.StageCompleted{StageID: "plan", TurnsUsed: 1, SessionID: "first-attempt"},
-		&event.StageStarted{StageID: "plan_gate", Iteration: 1},
+		&event.StageStarted{StageID: "plan_gate", Attempt: 1},
 		&event.PingRaised{PingID: "ping-d11", Type: PingGate, Question: "Approve the plan?", StageID: "plan_gate"},
 		&event.PingAnswered{PingID: "ping-d11", Answer: "reject", Feedback: "too vague"},
 		&event.EdgeTaken{From: "plan_gate", Edge: flow.EdgeReject, To: "plan", Feed: "too vague"},
@@ -282,7 +282,7 @@ main:
 	h := newHarness(t, fl)
 	env := seedRun(t, h, "r-stale", "stale", fl.Hash,
 		&event.PhaseStarted{Phase: "main", By: "human"},
-		&event.StageStarted{StageID: "gen", Iteration: 2},
+		&event.StageStarted{StageID: "gen", Attempt: 2},
 	)
 	h.writeFile(t, env, "artifacts/report.md", "an earlier attempt's report\n")
 	if err := h.e.Recover(context.Background()); err != nil {

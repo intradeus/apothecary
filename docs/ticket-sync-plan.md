@@ -321,7 +321,7 @@ column has no FK by design, which is why unlinking is explicit:
 |---|---|---|
 | G1 | **Flip-flop.** Jira's search index lags, so a poll right after a stage moved the issue can return the old status | the post-stage refresh uses `Fetch` by key (consistent), not search. The monotonic `remote_updated_at` guard drops stale batches |
 | G2 | **GitHub/GitLab expose only open/closed** | accepted: the mirror shows two statuses, and `to: in_progress` skips unless the user gives that step a status. No label-backed statuses |
-| G3 | **Users can edit an imported ticket's title and goal today** | refused on sourced tickets (API 409 on `PUT` for remote-owned fields; UI read-only). The first sync overwrites earlier hand edits (pre-1.0, no carry-over). Per-attempt direction stays in the run goal |
+| G3 | **Users can edit an imported ticket's title and goal today** | refused on sourced tickets (API 409 on `PUT` for remote-owned fields; UI read-only). The first sync overwrites earlier hand edits (pre-1.0, no carry-over). Per-run direction stays in the run goal |
 | G4 | **`Rerun` copies the previous run's ticket** (`engine.go:1052-1066`) | `Rerun` rebuilds `runinput.Ticket` from the current row, after the run-start refresh |
 | G5 | **Closed enums are duplicated in Go and TypeScript** (`CanonicalStatuses`, `actionspec.Statuses`, `CondChangeTypes`, `domain/ticket.ts`, `inspector.ts`) | they stay closed, as flow steps and change types. Only the lists are dynamic, and the UI reads them per integration |
 | G6 | **Deleting an internal status or type that tickets use** | the delete takes a `replace_with` id from the same integration |

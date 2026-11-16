@@ -181,6 +181,20 @@ func TestDefaultFlowPhilosophy(t *testing.T) {
 	if st := f.Stage("review"); st == nil || st.TypedOutput(agentspec.TypeVerdict) == nil {
 		t.Error("the review stage must state where its verdict goes, or on_reject has nothing to read")
 	}
+	// A rejection is a verdict, not a failure: five rounds back to the
+	// builder, then a person decides at the impasse — never the debug leaf.
+	if re := f.Stage("review").Edge(flow.EdgeReject); re == nil || re.To != "build" || re.Max != 5 ||
+		re.Then == nil || re.Then.To != flow.ReservedImpasse {
+		t.Errorf("review.on_reject = %+v, want five rounds to build then the impasse", re)
+	}
+	for i := range f.Stages {
+		s := &f.Stages[i]
+		for e := s.Edge(flow.EdgeReject); e != nil; e = e.Then {
+			if e.To == flow.ReservedDebug {
+				t.Errorf("stage %s: a rejection reaches the debug leaf; it goes to the impasse", s.ID)
+			}
+		}
+	}
 }
 
 // showsWorkspace reports whether a gate hands the human the workspace links.
@@ -255,7 +269,7 @@ func TestFlowSourceLayering(t *testing.T) {
 // run, nor is it capped.
 func TestDefaultFlowNeverDropsARunUnasked(t *testing.T) {
 	f := Flow(builderFlow)
-	reserved := map[string]bool{flow.TerminalEnd: true, flow.TerminalDone: true, flow.TerminalAbort: true, flow.ReservedDebug: true}
+	reserved := map[string]bool{flow.TerminalEnd: true, flow.TerminalDone: true, flow.TerminalAbort: true, flow.ReservedDebug: true, flow.ReservedImpasse: true}
 	// A chain can only run out on a stage that runs more than once in a
 	// phase run: one on a cycle of routes. A one-shot stage's max-1 detour
 	// (a best-effort tracker move going on to the next stage) never exhausts.
@@ -307,7 +321,7 @@ func TestDefaultFlowNeverDropsARunUnasked(t *testing.T) {
 			}
 			if !reserved[link.To] && link.Max != flow.UnlimitedMax {
 				if tgt := f.Stage(link.To); tgt == nil || tgt.Type != flow.StageHumanGate {
-					t.Errorf("stage %s: %s runs out after %d at %s with nowhere to go — end the chain with then: debug", st.ID, kind, link.Max, link.To)
+					t.Errorf("stage %s: %s runs out after %d at %s with nowhere to go — end the chain with then: debug (then: impasse for a rejection)", st.ID, kind, link.Max, link.To)
 				}
 			}
 		}
@@ -644,4 +658,43 @@ func TestFlowYAMLAndNames(t *testing.T) {
 	if Flow("no-such-flow") != nil {
 		t.Error("a flow for an unknown name")
 	}
+}
+
+// Every built-in stage that keeps journal notes must write the file — empty
+// when there is nothing to note — so the run knows its agent considered it.
+func TestBuiltinJournalNotesAreRequired(t *testing.T) {
+	var noted []string
+	for _, name := range FlowNames() {
+		fl := Flow(name)
+		for _, st := range fl.Stages {
+			for _, o := range st.Outputs {
+				if o.Type != agentspec.TypeJournalNotes {
+					continue
+				}
+				noted = append(noted, name+"/"+st.ID)
+				if o.Optional {
+					t.Errorf("%s/%s: its notes are optional", name, st.ID)
+				}
+			}
+		}
+	}
+	if want := "builder/build builder/resolve builder/fix builder/ci_repair conflict-resolver/settle.resolve conflict-resolver/resettle.resolve"; !sameSet(noted, strings.Fields(want)) {
+		t.Errorf("stages keeping notes = %v, want %s", noted, want)
+	}
+}
+
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[string]int{}
+	for _, s := range a {
+		seen[s]++
+	}
+	for _, s := range b {
+		if seen[s]--; seen[s] < 0 {
+			return false
+		}
+	}
+	return true
 }

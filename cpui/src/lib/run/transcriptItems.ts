@@ -21,7 +21,7 @@ export type ChatItem =
 			kind: 'stage';
 			key: string;
 			stageId: string;
-			iteration: number;
+			attempt: number;
 			/** An agent stage (else a command, gate, action or wait). */
 			agentic: boolean;
 			agent?: string;
@@ -174,7 +174,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					kind: 'stage',
 					key,
 					stageId: String(p.stage_id),
-					iteration: Number(p.iteration ?? 1),
+					attempt: Number(p.attempt ?? 1),
 					agentic: Boolean(p.agent || p.harness),
 					agent: p.agent as string | undefined,
 					model: p.model as string | undefined,
@@ -409,7 +409,8 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					p.type === 'gate' ||
 					p.type === 'phase_confirm' ||
 					p.type === 'debug' ||
-					p.type === 'manual'
+					p.type === 'manual' ||
+					p.type === 'impasse'
 				)
 					break;
 				{

@@ -286,11 +286,11 @@ func TestRetryRefusals(t *testing.T) {
 	h.seed(t, "nostage", created(testProject), &event.RunFailed{Reason: "x"})
 	wantErrText(t, h.e.RetryRun(ctx, "nostage"), "has no stage to retry")
 
-	h.seed(t, "noenv", created(testProject), &event.StageStarted{StageID: "build", Iteration: 1}, &event.RunFailed{Reason: "x"})
+	h.seed(t, "noenv", created(testProject), &event.StageStarted{StageID: "build", Attempt: 1}, &event.RunFailed{Reason: "x"})
 	wantErrText(t, h.e.RetryRun(ctx, "noenv"), "has no workspace to retry in")
 
 	// The flow moved on and no longer has the stage it stalled at.
-	h.seed(t, "gone", created(testProject), &event.EnvReady{EnvID: "e"}, &event.StageStarted{StageID: "vanished", Iteration: 1},
+	h.seed(t, "gone", created(testProject), &event.EnvReady{EnvID: "e"}, &event.StageStarted{StageID: "vanished", Attempt: 1},
 		&event.RunAbandoned{StalledAt: "vanished", Reason: "x"})
 	wantErrText(t, h.e.RetryRun(ctx, "gone"), `flow "loop" no longer has a stage "vanished"`)
 	for _, id := range []string{"done", "nostage", "noenv", "gone"} {
@@ -349,7 +349,7 @@ func TestAbortOfARunWithNoLoop(t *testing.T) {
 			t.Fatal(err)
 		}
 		h.seed(t, "r1", created(testProject), &event.EnvReady{EnvID: string(env)},
-			&event.StageStarted{StageID: "build", Iteration: 1}, &event.RunPaused{StageID: "build", Reason: event.PauseUser})
+			&event.StageStarted{StageID: "build", Attempt: 1}, &event.RunPaused{StageID: "build", Reason: event.PauseUser})
 		if err := h.e.Abort("r1"); err != nil {
 			t.Fatal(err)
 		}

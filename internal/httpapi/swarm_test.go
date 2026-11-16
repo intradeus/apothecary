@@ -134,7 +134,7 @@ func TestGetSwarm(t *testing.T) {
 		t.Errorf("live unit resources = %+v", u.Resources)
 	}
 	c := u.Crew
-	if c.StageID != "build" || c.Iteration != 1 || c.Harness != "fake" || c.Agent != "builder" || !c.TurnActive ||
+	if c.StageID != "build" || c.Attempt != 1 || c.Harness != "fake" || c.Agent != "builder" || !c.TurnActive ||
 		c.Tool != "Explore" || c.Subagents[0].ToolCallID != "c1" || c.Subagents[0].Count != 1 {
 		t.Errorf("crew = %+v", c)
 	}

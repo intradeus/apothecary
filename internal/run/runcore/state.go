@@ -33,6 +33,7 @@ const (
 	PhAfterComplete                   // stage_completed appended, routing not yet recorded
 	PhAfterFail                       // stage_failed appended, edge decision not yet recorded (recovery: re-execute)
 	PhDebug                           // parked on the debug leaf: the stage at pos failed, a human has the workspace (continue re-enters it)
+	PhImpasse                         // at the impasse: the stage at pos was rejected past its budget, a person decides (keep going, skip, give up)
 )
 
 // State is a run's working state, owned by its single-writer goroutine in
@@ -84,7 +85,7 @@ type State struct {
 	AbortReason string
 	EndReason   string
 
-	Iters      map[string]int // stage id -> times started
+	Attempts   map[string]int // stage id -> times started
 	EdgeCounts map[string]int // "from|kind|depth" -> times that chain link was taken
 	// ActionPending marks action stages whose intent was recorded but whose
 	// effect was never confirmed (PLAN5 M20) — the crash window between a
@@ -102,7 +103,7 @@ type State struct {
 	// derived from the edge kind — the target binds one of them or neither.
 	Feed         string
 	FeedSentinel string
-	FeedAttempts int // total allowed attempts, for the "(iteration n of m)" line
+	FeedAttempts int // total allowed attempts, for the "(attempt n of m)" line
 	// CompletedFeed is the verdict the last replayed stage_completed
 	// carries (an approval's), for recovery's routing of it.
 	CompletedFeed string
@@ -251,9 +252,57 @@ func ChainKey(from, kind string, depth int) string {
 	return fmt.Sprintf("%s|%s|%d", from, kind, depth)
 }
 
-func GatePingType(t string) bool   { return t == event.PingGate }
-func DebugPingType(t string) bool  { return t == event.PingDebug }
-func ManualPingType(t string) bool { return t == event.PingManual }
+// ContinueFromDebug is a person's "continue" at the debug leaf (FLOWLANG
+// §3): the cursor never left the stage that escalated, which re-enters as a
+// fresh attempt — no feed — and every retry chain of its phase has its
+// budget back. The person has just changed the workspace; a stage that
+// fails again past their fix gets its retries before it asks them again,
+// instead of landing straight back on the leaf. The debug links' own
+// counters are kept, so the timeline still numbers each visit (n/∞).
+// The engine calls it as it routes the answer; replay, at the stage_started
+// that records it — every executor appends one on entry from PhStart, a
+// skipped stage's included (skipStage).
+func (rs *State) ContinueFromDebug() {
+	rs.Ph = PhStart
+	rs.Feed, rs.FeedSentinel, rs.FeedAttempts = "", "", 0
+	if rs.Flow == nil || rs.Pos < 0 || rs.Pos >= len(rs.Flow.Stages) {
+		return
+	}
+	ph := rs.Flow.PhaseOf(&rs.Flow.Stages[rs.Pos])
+	if ph == nil {
+		return
+	}
+	for i := ph.First; i <= ph.Last; i++ {
+		st := &rs.Flow.Stages[i]
+		for kind, edge := range st.Edges {
+			depth := 0
+			for e := edge; e != nil; e, depth = e.Then, depth+1 {
+				if e.To != flow.ReservedDebug {
+					delete(rs.EdgeCounts, ChainKey(st.ID, kind, depth))
+				}
+			}
+		}
+	}
+}
+
+// RestoreRejectBudget is keep going at the impasse (FLOWLANG §3): st's
+// on_reject chain has its budget back, and that chain only — st's other
+// chains, the phase's other stages and other phases keep theirs. The
+// impasse links keep their count, so the timeline numbers each visit.
+// Folded from the ping_answered that records the choice (Apply).
+func (rs *State) RestoreRejectBudget(st *flow.Stage) {
+	depth := 0
+	for e := st.Edge(flow.EdgeReject); e != nil; e, depth = e.Then, depth+1 {
+		if e.To != flow.ReservedImpasse {
+			delete(rs.EdgeCounts, ChainKey(st.ID, flow.EdgeReject, depth))
+		}
+	}
+}
+
+func GatePingType(t string) bool    { return t == event.PingGate }
+func DebugPingType(t string) bool   { return t == event.PingDebug }
+func ImpassePingType(t string) bool { return t == event.PingImpasse }
+func ManualPingType(t string) bool  { return t == event.PingManual }
 
 // DecidesHere reports whether an answer to this ping is the routing decision
 // the stage at pos is waiting for: its gate's or manual stage's ping while
@@ -263,7 +312,8 @@ func (rs *State) DecidesHere(r *event.PingRaised) bool {
 	if rs.Flow == nil || rs.Pos < 0 || rs.Pos >= len(rs.Flow.Stages) || r.StageID != rs.Flow.Stages[rs.Pos].ID {
 		return false
 	}
-	return ((GatePingType(r.Type) || ManualPingType(r.Type)) && rs.Ph == PhIn) || (DebugPingType(r.Type) && rs.Ph == PhDebug)
+	return ((GatePingType(r.Type) || ManualPingType(r.Type)) && rs.Ph == PhIn) ||
+		(DebugPingType(r.Type) && rs.Ph == PhDebug) || (ImpassePingType(r.Type) && rs.Ph == PhImpasse)
 }
 
 // AttemptBegun reports whether the agent stage's attempt in progress reached
@@ -405,7 +455,7 @@ func (rs *State) StartPhase(p *event.PhaseStarted, fl *flow.Flow) {
 func NewState(fl *flow.Flow) *State {
 	return &State{
 		Flow:          fl,
-		Iters:         map[string]int{},
+		Attempts:      map[string]int{},
 		EdgeCounts:    map[string]int{},
 		ActionPending: map[string]bool{},
 		Sessions:      map[string]agentport.SessionID{},
@@ -473,17 +523,17 @@ func (rs *State) Apply(ev *event.Event) {
 		}
 	case *event.SnapshotCaptured:
 		// Keeps pseudo-stage counters monotonic across restarts: the
-		// provisioning log has no stage_started to replay its iteration
+		// provisioning log has no stage_started to replay its attempt
 		// from. A real stage's snapshots never exceed its started count,
 		// so this is a no-op for them.
-		if p.Iteration > rs.Iters[p.StageID] {
-			rs.Iters[p.StageID] = p.Iteration
+		if p.Attempt > rs.Attempts[p.StageID] {
+			rs.Attempts[p.StageID] = p.Attempt
 		}
 	case *event.StageStarted:
 		if rs.Ph == PhDebug {
-			// Continued from the debug leaf: back into the stage fresh, the
-			// failure that parked it spent (the engine's routeDebug).
-			rs.Feed, rs.FeedSentinel, rs.FeedAttempts = "", "", 0
+			// Continued from the debug leaf: as the engine's routeDebug
+			// decided before appending this.
+			rs.ContinueFromDebug()
 		}
 		rs.AnyStarted = true
 		rs.VerdictRecorded = false
@@ -494,8 +544,8 @@ func (rs *State) Apply(ev *event.Event) {
 			rs.Pos = rs.Flow.Index(p.StageID)
 		}
 		rs.Ph = PhIn
-		if p.Iteration > rs.Iters[p.StageID] {
-			rs.Iters[p.StageID] = p.Iteration
+		if p.Attempt > rs.Attempts[p.StageID] {
+			rs.Attempts[p.StageID] = p.Attempt
 		}
 		rs.GateAnswer = nil
 		rs.LastFailure = nil
@@ -577,6 +627,19 @@ func (rs *State) Apply(ev *event.Event) {
 			rs.EndsRun = p.To == flow.TerminalDone
 			rs.Ph = PhStart
 			rs.Feed, rs.FeedSentinel, rs.FeedAttempts = "", "", 0
+			break
+		}
+		if p.To == flow.ReservedImpasse {
+			// The impasse: the cursor stays on the rejected stage, parked
+			// for a person's decision (the engine's stageImpasse). The
+			// verdict stays the feed: keep going carries it on.
+			if rs.Flow != nil {
+				rs.Pos = rs.Flow.Index(p.From)
+			}
+			rs.Ph = PhImpasse
+			rs.Feed = p.Feed
+			rs.FeedSentinel = flow.FeedSource(p.Edge)
+			rs.FeedAttempts = 0
 			break
 		}
 		if p.To == flow.ReservedDebug {
@@ -663,6 +726,12 @@ func (rs *State) Apply(ev *event.Event) {
 		}
 		if r, ok := rs.RaisedPings[p.PingID]; ok && rs.DecidesHere(r) {
 			rs.GateAnswer = p
+			if ImpassePingType(r.Type) && p.Answer == event.ChoiceKeepGoing {
+				// The record of keep going is this answer: the reset is
+				// folded here, live and in replay alike, before the
+				// rejection is routed again.
+				rs.RestoreRejectBudget(&rs.Flow.Stages[rs.Pos])
+			}
 		}
 	case *event.ActionStarted:
 		// Intent recorded, effect not yet confirmed. Cleared by the
@@ -797,7 +866,7 @@ func (rs *State) AnyWorkspaceStageStarted() bool {
 		return true
 	}
 	for i := range rs.Flow.Stages {
-		if st := &rs.Flow.Stages[i]; NeedsWorkspace(st) && rs.Iters[st.ID] > 0 && !rs.Elided[st.ID] {
+		if st := &rs.Flow.Stages[i]; NeedsWorkspace(st) && rs.Attempts[st.ID] > 0 && !rs.Elided[st.ID] {
 			return true
 		}
 	}

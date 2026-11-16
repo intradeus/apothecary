@@ -167,12 +167,12 @@ export type AttemptFacts = {
 	active_ms: number;
 	agent?: string;
 	agent_hash?: string;
+	attempt: number;
 	cost_usd: number;
 	ended_at?: string;
 	failure_reason?: string;
 	harness?: string;
 	input_tokens: number;
-	iteration: number;
 	model?: string;
 	outcome: string;
 	output_tokens: number;
@@ -323,6 +323,11 @@ export type Checks = {
 	state: string;
 };
 
+export type Choice = {
+	id: string;
+	note_required?: boolean;
+};
+
 export type CopyFlowRequest = {
 	name?: string;
 	to_project_id: string;
@@ -363,8 +368,8 @@ export type CredentialRequest = {
 
 export type CrewPresence = {
 	agent: string;
+	attempt: number;
 	harness: string;
-	iteration: number;
 	since: string;
 	stage_id: string;
 	subagents: Array<SwarmSubagent> | null;
@@ -813,8 +818,8 @@ export type Health = {
 };
 
 export type HoldView = {
+	attempt?: number;
 	cost_usd?: number;
-	iteration?: number;
 	messages?: number;
 	since: string;
 	stage_id: string;
@@ -880,6 +885,19 @@ export type IntegrationUpdate = {
 	secrets?: {
 		[key: string]: string;
 	};
+};
+
+export type JournalEntry = {
+	beside?: Array<JournalFile>;
+	file?: string;
+	ref: string;
+	text: string;
+};
+
+export type JournalFile = {
+	mime?: string;
+	name: string;
+	size: number;
 };
 
 export type KindDescriptor = {
@@ -1189,6 +1207,7 @@ export type PingView = {
 	answer_attachment_ids?: Array<string>;
 	answer_kind: string;
 	answered_at?: string;
+	choices?: Array<Choice>;
 	content?: {
 		[key: string]: unknown;
 	};
@@ -1209,6 +1228,7 @@ export type PingView = {
 	ping_id: string;
 	question: string;
 	raised_at: string;
+	ref?: string;
 	review?: Array<ReviewComment>;
 	run_id: string;
 	stage_id?: string;
@@ -1745,10 +1765,10 @@ export type SkillsetRequest = {
 };
 
 export type Snapshot = {
+	attempt?: number;
 	created_at: string;
 	filename: string;
 	id: string;
-	iteration?: number;
 	kind: string;
 	mime: string;
 	name?: string;
@@ -7974,6 +7994,86 @@ export type TakeOverRunResponses = {
 	 */
 	202: unknown;
 };
+
+export type ReadRunJournalData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/journal';
+};
+
+export type ReadRunJournalErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ReadRunJournalResponses = {
+	/**
+	 * OK
+	 */
+	200: JournalEntry;
+};
+
+export type ReadRunJournalResponse = ReadRunJournalResponses[keyof ReadRunJournalResponses];
+
+export type ReadRunJournalEntryData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * an output the attempt lists in beside, by its name: its bytes instead of the entry
+		 */
+		file?: string;
+	};
+	url: '/api/runs/{id}/journal/{ref...}';
+};
+
+export type ReadRunJournalEntryErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ReadRunJournalEntryResponses = {
+	/**
+	 * OK
+	 */
+	200: JournalEntry;
+};
+
+export type ReadRunJournalEntryResponse =
+	ReadRunJournalEntryResponses[keyof ReadRunJournalEntryResponses];
 
 export type GetStageLogData = {
 	body?: never;

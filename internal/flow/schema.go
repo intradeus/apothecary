@@ -51,11 +51,11 @@ func schema() obj {
 		actionSlugs = append(actionSlugs, a.Slug)
 	}
 	starts := []string{string(StartAuto), string(StartConfirm), string(StartManual)}
-	terminals := []string{TerminalEnd, TerminalDone, TerminalAbort, ReservedDebug, ReservedFail}
+	terminals := []string{TerminalEnd, TerminalDone, TerminalAbort, ReservedDebug, ReservedImpasse, ReservedFail}
 
 	// A route: a bare target (`on_fail: debug`) or a chain of links.
 	edge := obj{
-		"description": "where the run goes: a stage of the same chain (with max), or end, done, abort, debug — fail inside a sequence",
+		"description": "where the run goes: a stage of the same chain (with max), or end, done, abort, debug, impasse (on_reject only) — fail inside a sequence",
 		"anyOf": []any{
 			obj{"type": "string", "examples": terminals},
 			obj{
@@ -63,7 +63,7 @@ func schema() obj {
 				"additionalProperties": false,
 				"required":             []string{"to"},
 				"properties": obj{
-					"to":   str("a stage of the same chain, or end, done, abort, debug — fail inside a sequence"),
+					"to":   str("a stage of the same chain, or end, done, abort, debug, impasse (on_reject only) — fail inside a sequence"),
 					"max":  obj{"type": "integer", "description": "how many times this link may send the run there (-1: no limit, where a person decides each time)"},
 					"then": obj{"$ref": "#/$defs/edge", "description": "where the run goes once this link is spent"},
 				},
@@ -94,6 +94,7 @@ func schema() obj {
 			"type":        stringsOf("what the file is", agentspec.FileTypes...),
 			"schema":      str("a schema declared under schemas, which the file holds"),
 			"description": str("what it is for — documentation"),
+			"optional":    obj{"type": "boolean", "description": "the stage may leave it unwritten (never a verdict, nor an action's output); a reader of it reads it optional"},
 		},
 	}
 	stage := obj{
@@ -216,7 +217,7 @@ func schema() obj {
 				"properties": obj{
 					"name":        str("the output's name"),
 					"description": str("what it is — the agent reads this"),
-					"type":        stringsOf("what the file is: any file, or a structure something built in reads — a verdict (routed by on_reject), a review to post, a review round's replies, a commit message", agentspec.FileTypes...),
+					"type":        stringsOf("what the file is: any file, or a structure something built in reads — a verdict (routed by on_reject), a review to post, a review round's replies, a commit message, notes for the run journal", agentspec.FileTypes...),
 					"schema":      str("a schema declared under schemas, which the file holds (beside a type it narrows it)"),
 				},
 				"anyOf": typeOrSchema,

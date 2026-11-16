@@ -100,6 +100,11 @@ type OutputDecl struct {
 //     (reviewfile.Threads).
 //   - TypeCommitMessage is a commit's message, which commit reads:
 //     {subject, body?}.
+//   - TypeJournalNotes is an agent's notes for the run journal, which the
+//     journal reads: a list of {did, why, files?} — what the agent did
+//     differently from its direction (the plan, the ticket, a verdict it was
+//     sent) on its own, without asking. Written only when there is one, so a
+//     port of it is optional.
 //   - TypeFiles is a directory of files (its path ends in "/"): screenshots,
 //     a report's pages. It holds at least one file; create_mr and
 //     ticket_comment attach one. Unlike the others it is not one file, so
@@ -109,8 +114,8 @@ type OutputDecl struct {
 // structure only the flow's own stages pass around is a flow schema.
 //
 // A value type is what the engine provides (run.*, edge.*): a ticket, the
-// ticket's comments (ticket_comments), what the task's owner answered during
-// the run (ping_answers), a changeset (git's list of changed files), a
+// ticket's comments (ticket_comments), the run journal (journal: what has
+// happened in the run, the owner's decisions first), a changeset (git's list of changed files), a
 // failure, a link — and a verdict, from edge.verdict.
 // Only a source of the engine gives one, and only an input reads one.
 const (
@@ -120,11 +125,12 @@ const (
 	TypeReviewReplies = "review_replies"
 	TypeMRThreads     = "mr_threads"
 	TypeCommitMessage = "commit_message"
+	TypeJournalNotes  = "journal_notes"
 	TypeFiles         = "files"
 
 	TypeTicket         = "ticket"
 	TypeTicketComments = "ticket_comments"
-	TypePingAnswers    = "ping_answers"
+	TypeJournal        = "journal"
 	TypeChangeset      = "changeset"
 	TypeFailure        = "failure"
 	TypeLink           = "link"
@@ -132,8 +138,8 @@ const (
 
 // FileTypes and ValueTypes list the port types by kind.
 var (
-	FileTypes  = []string{TypeFile, TypeVerdict, TypeReviewThreads, TypeReviewReplies, TypeMRThreads, TypeCommitMessage, TypeFiles}
-	ValueTypes = []string{TypeTicket, TypeTicketComments, TypePingAnswers, TypeChangeset, TypeFailure, TypeLink}
+	FileTypes  = []string{TypeFile, TypeVerdict, TypeReviewThreads, TypeReviewReplies, TypeMRThreads, TypeCommitMessage, TypeJournalNotes, TypeFiles}
+	ValueTypes = []string{TypeTicket, TypeTicketComments, TypeJournal, TypeChangeset, TypeFailure, TypeLink}
 )
 
 // IsFileType reports whether t is what a file holds.

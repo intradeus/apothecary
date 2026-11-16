@@ -75,12 +75,17 @@ parameters:
 # error fed back, then escalates to the debug leaf (`then: debug`) — a human
 # opens the workspace (terminal/IDE), fixes what agents can't, and continue
 # re-runs exactly the stage that escalated (the success chain replays from
-# there, so no stage is ever skipped). No chain ends without a person: once
-# its retries are spent, every route reaches the debug leaf rather than
-# abandoning the run unasked. The human decides when to stop — giving up in
-# the main chain abandons the run, in a watcher it ends that round; plan_gate
-# rejections are unlimited too (each rejection IS a human decision). Timeouts
-# fall back to on_fail unless a stage declares on_timeout.
+# there, so no stage is ever skipped), every retry chain given its budget
+# back. A rejection is not a failure: the reviewer saying no is a verdict, so
+# when its rounds run out the run goes to the impasse instead (`then:
+# impasse`) — a person reads the last verdict and keeps going (five more
+# rounds), skips the review, or gives up. No chain ends without a person:
+# once its retries are spent, every route reaches the debug leaf or the
+# impasse rather than abandoning the run unasked. The human decides when to
+# stop — giving up in the main chain abandons the run, in a watcher it ends
+# that round; plan_gate rejections are unlimited too (each rejection IS a
+# human decision). Timeouts fall back to on_fail unless a stage declares
+# on_timeout.
 #
 # Dataflow is declared, never implied: every stage states each value it reads
 # — from: a path some stage writes, or what the engine provides (run.*) —
@@ -138,10 +143,12 @@ agents:
     inputs:
       - { name: ticket, type: ticket, description: "the ticket the change is for" }
       - { name: plan, type: file, description: "the approved implementation plan to execute" }
-      - { name: answers, type: ping_answers, optional: true, description: "what the task's owner answered during the run — it amends the plan where they differ" }
+      - { name: journal, type: journal, optional: true, description: "what has happened in the run — the owner's decisions amend the plan where they differ; check a change against it before redoing work" }
       - { name: rejection, type: verdict, optional: true, description: "why the last attempt was turned down — a reviewer's comments or a human's feedback" }
       - { name: failure, type: failure, optional: true, description: "what the failing stage printed (test output, a command's error)" }
       - { name: comments, type: mr_threads, optional: true, description: "the review threads on the open merge request this round fixes — each with its comments, the ones newer than the last reply marked new" }
+    outputs:
+      - { name: notes, type: journal_notes, description: "significant departures from your direction, for the run journal" }
     prompt: |
       You are the building agent of a software factory. You implement the
       approved plan provided in your prompt — nothing more, nothing less.
@@ -160,12 +167,19 @@ agents:
       - Mirror the style of the surrounding code.
       - Do NOT run `git commit`, `git add` or `git push`. Leave your changes in
         the working tree — a dedicated commit stage records them for you.
-      - Run the project's tests and linters after each step; leave the tree
-        green. If your prompt carries a rejection or a failure from a previous
-        attempt, address every point in it before anything else.
+      - Run the project's linters after each step; run only the tests you need to; 
+       leave the tree green. If your prompt carries a rejection or a failure from a 
+       previous attempt, address every point in it before anything else.
       - Never write to .apothecary/ or artifacts/ — other stages own those, and
-        everything you need is already in your prompt. Leave CI configuration
-        alone unless the plan explicitly says otherwise.
+        everything you need is already in your prompt — but for the notes
+        file your OUTPUT CONTRACT names. Leave CI configuration alone unless
+        the plan explicitly says otherwise.
+      - When you depart from the plan, the ticket or a verdict in a way that
+        matters — a step that could not work as written, scope you narrowed
+        or widened, a verdict point you did not apply — say so in your notes,
+        with why. The choices any build makes within its plan (a name, a
+        helper, the order of the work) need no note, nor does what a person
+        answered you.
   - name: committer
     description: writes a one-line commit message for the build's uncommitted work
     read_only: true
@@ -211,7 +225,7 @@ agents:
     inputs:
       - { name: ticket, type: ticket, description: "the ticket the change is for" }
       - { name: plan, type: file, description: "the approved plan to check the change set against" }
-      - { name: answers, type: ping_answers, description: "what the task's owner answered during the run — each answer amends the plan" }
+      - { name: journal, type: journal, description: "what has happened in the run — each owner decision amends the plan, and a correction they discarded stays discarded" }
       - { name: changes, type: changeset, description: "the set of changed files in this branch to review" }
       - { name: failure, type: failure, optional: true, description: "what the previous attempt printed when it failed" }
     outputs:
@@ -224,20 +238,21 @@ agents:
       failed to find a substantive problem.
 
       Review the branch's changes against three sources of truth, in order:
-      1. The approved plan provided in your prompt, as the task owner's answers
-         amend it: is everything implemented, and nothing beyond it? The
-         answers came after the plan was approved and win where they differ —
-         work that follows an answer is not a plan deviation, and work that
-         ignores one is.
-      2. The project's conventions and DDD/SOLID standards: layer
-         boundaries respected, dependencies point inward, single responsibility,
+      1. The approved plan provided in your prompt, as the owner decisions in
+         the run journal amend it: is everything implemented, and nothing
+         beyond it? The decisions came after the plan was approved and win
+         where they differ — work that follows one is not a plan deviation,
+         and work that ignores one is. A correction the owner discarded (an
+         overruled verdict) is not yours to ask for again.
+      2. The project's conventions and standards: layer
+         boundaries respected, layout respected, architecture respected,
          no vendor types leaking across interfaces.
       3. Correctness: read the changed code, run the test suite yourself via
          bash, and hunt for unhandled edge cases, racy constructs, and tests
          that assert too little.
 
-      You may run tests and linters, but you never modify repo files — your only
-      deliverable is the verdict file named in the OUTPUT CONTRACT section.
+      You may run tests and linters, but only focused to what you're checking and you must never modify repo files 
+      — your only deliverable is the verdict file named in the OUTPUT CONTRACT section.
       Comments must be actionable: name the file,
       the problem, and what would resolve it. Style nits without substance are
       not grounds for rejection; missing tests, plan deviations, and broken
@@ -249,7 +264,7 @@ agents:
     inputs:
       - { name: ticket, type: ticket, description: "the ticket the change is for" }
       - { name: changes, type: changeset, description: "the set of changed files to describe for whoever reads the merge request" }
-      - { name: answers, type: ping_answers, optional: true, description: "what the task's owner decided during the run, for the reader to know why the change differs from the ticket" }
+      - { name: journal, type: journal, optional: true, description: "what has happened in the run — the owner's decisions say why the change differs from the ticket" }
       - { name: shots, type: files, optional: true, description: "screenshots of the change, when they were taken" }
       - { name: failure, type: failure, optional: true, description: "what the previous attempt printed when it failed" }
     outputs:
@@ -356,6 +371,8 @@ agents:
       - { name: plan, type: file, description: "the approved plan, for what this branch's change is meant to do" }
       - { name: ci, type: failure, description: "which CI checks failed: each one's CI file, job and failed steps — no log" }
       - { name: failure, type: failure, optional: true, description: "what the project's tests printed when your last fix still failed them" }
+    outputs:
+      - { name: notes, type: journal_notes, description: "significant departures from your direction, for the run journal" }
     prompt: |
       You are the CI fixer of a software factory. A CI check failed on the
       merge request's head; your prompt names each failed check, the CI file
@@ -373,10 +390,11 @@ agents:
         check, or loosen a test to make it pass — unless the failure IS in
         the CI configuration itself (a typo, a removed path).
       - A check you cannot run here (it needs a secret, a service or another
-        platform): say so in a short note and fix only what you can see.
+        platform): say so in your notes and fix only what you can see.
       - Do NOT run `git commit`, `git add` or `git push`. Leave your changes
         in the working tree — a commit stage records them.
-      - Never write to .apothecary/ or artifacts/.
+      - Never write to .apothecary/ or artifacts/, but for the notes file your
+        OUTPUT CONTRACT names.
   - name: resolver
     description: settles a paused merge's conflicts by editing the files — never with git
     read_only: false
@@ -384,6 +402,8 @@ agents:
     inputs:
       - { name: plan, type: file, description: "the approved plan, for what this branch's change is meant to do" }
       - { name: conflict, type: failure, optional: true, description: "which files carry conflict markers, and what is being merged" }
+    outputs:
+      - { name: notes, type: journal_notes, description: "significant departures from your direction, for the run journal" }
     prompt: |
       You are the conflict resolver of a software factory. The engine is
       merging the merge request's target branch into its branch and stopped
@@ -456,9 +476,11 @@ main:
     input:
       ticket:    { from: run.ticket, type: ticket }
       plan:      { from: artifacts/plan.md, type: file }
-      answers:   { from: run.ping_answers, type: ping_answers }
+      journal:   { from: run.journal, type: journal }
       rejection: { from: edge.verdict, type: verdict, optional: true }
       failure:   { from: edge.failure, type: failure, optional: true }
+    output:
+      notes:     { to: artifacts/journal-notes.yaml, type: journal_notes }
     on_success: commit_msg
     on_fail: { to: build, max: 2, then: debug }
 
@@ -498,8 +520,10 @@ main:
     on_timeout: { to: test, max: 1, then: { to: build, max: 2, then: debug } }
 
   # The reviewer's verdict is what makes on_reject reachable here; a REJECT
-  # carries its comments back to the builder as edge.verdict. Three
-  # rejected rounds, and a human looks rather than the run being dropped.
+  # carries its comments back to the builder as edge.verdict. Five rejected
+  # rounds, and a person decides at the impasse rather than the run being
+  # dropped. Nothing downstream reads the verdict, so the review may be
+  # skipped there.
   - id: review
     type: agent
     harness: $harness
@@ -511,13 +535,13 @@ main:
     input:
       ticket:  { from: run.ticket, type: ticket }
       plan:    { from: artifacts/plan.md, type: file }
-      answers: { from: run.ping_answers, type: ping_answers }
+      journal: { from: run.journal, type: journal }
       changes: { from: run.git.diff_target, type: changeset }
       failure: { from: edge.failure, type: failure, optional: true }
     output:
       verdict: { to: artifacts/verdict.yaml, type: verdict }
     on_success: app_up
-    on_reject: { to: build, max: 3, then: debug }
+    on_reject: { to: build, max: 5, then: impasse }
     on_fail: { to: review, max: 1, then: debug }
 
   # Screenshots ($screenshots). An app that will not come up never holds the
@@ -561,7 +585,7 @@ main:
     input:
       ticket:  { from: run.ticket, type: ticket }
       changes: { from: run.git.diff_target, type: changeset }
-      answers: { from: run.ping_answers, type: ping_answers }
+      journal: { from: run.journal, type: journal }
       shots:   { from: artifacts/shots/, type: files, optional: true }
       failure: { from: edge.failure, type: failure, optional: true }
     output:
@@ -636,8 +660,10 @@ watchers:
         input:
           plan:     { from: artifacts/plan.md, type: file }
           conflict: { from: edge.failure, type: failure, optional: true }
+        output:
+          notes:   { to: artifacts/journal-notes.yaml, type: journal_notes }
         on_success: sync
-        on_fail: debug
+        on_fail: { to: resolve, max: 2, then: debug }
 
       - id: sync_test
         type: command
@@ -678,9 +704,11 @@ watchers:
         input:
           ticket:   { from: run.ticket, type: ticket }
           plan:     { from: artifacts/plan.md, type: file }
-          answers:  { from: run.ping_answers, type: ping_answers }
+          journal:  { from: run.journal, type: journal }
           comments: { from: artifacts/threads.yaml, type: mr_threads }
           failure:  { from: edge.failure, type: failure, optional: true }
+        output:
+          notes:   { to: artifacts/journal-notes.yaml, type: journal_notes }
         on_success: fix_commit_msg
         on_fail: { to: fix, max: 2, then: debug }
 
@@ -778,6 +806,8 @@ watchers:
           plan:    { from: artifacts/plan.md, type: file }
           ci:      { from: run.ci.failure, type: failure }
           failure: { from: edge.failure, type: failure, optional: true }
+        output:
+          notes:   { to: artifacts/journal-notes.yaml, type: journal_notes }
         on_success: ci_commit_msg
         on_fail: { to: ci_repair, max: 2, then: debug }
 

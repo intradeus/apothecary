@@ -18,6 +18,7 @@
 	import { pingMeta } from '$lib/ui/PingPill.svelte';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import FileChip from '$lib/ui/FileChip.svelte';
+	import RefChip from '$lib/ui/RefChip.svelte';
 	import { I } from '$lib/design/icons';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import { openRunEditor } from '$lib/app/editor';
@@ -30,8 +31,11 @@
 		formDefaults,
 		formMissing,
 		formShape,
+		GIVE_UP,
 		isAgentPing,
 		isDocumentPing,
+		KEEP_GOING,
+		SKIP,
 		primaryFile,
 		isPhaseConfirm,
 		type PingLike
@@ -145,13 +149,40 @@
 	const manual = $derived(ping.type === 'manual');
 	/** Both hand the workspace over: giving up is a dead end. */
 	const leaf = $derived(debug || manual);
+	/** Continuing from the debug leaf says what the person did: the agents
+	 *  read it in the run journal, beside the files they changed. */
+	const summarise = $derived(debug && !noteOpen);
+	/** A stage rejected past its budget: keep going, skip it, or give up. */
+	const impasse = $derived(ping.type === 'impasse');
 	/** A gate over a review document: the page curates it; inline, the card
 	 *  can only approve it as written. */
 	const cur = $derived(curatable(ping));
 	// Giving up at a watcher's debug leaf ends that round, not the run: the
 	// engine says which on the ping, and the buttons say what will happen.
-	const endsRound = $derived(leaf && ping.endsPhase);
+	const endsRound = $derived((leaf || impasse) && ping.endsPhase);
 	const phaseName = $derived(ping.phase ?? '');
+	// A choice ping names its choices by id; the card words them. A choice
+	// the card does not know reads as its id, with no help line.
+	const choices = $derived(ping.choices ?? []);
+	function choiceLabel(id: string): string {
+		if (id === KEEP_GOING) return t('ping.choice.keep_going');
+		if (id === SKIP) return t('ping.choice.skip', { stage: stageId ?? '' });
+		if (id === GIVE_UP)
+			return endsRound
+				? t('ping.choice.give_upRound', { phase: phaseName })
+				: t('ping.choice.give_up');
+		return id;
+	}
+	function choiceHelp(id: string): string {
+		if (id === KEEP_GOING) return t('ping.impasseHelp.keep_going', { stage: stageId ?? '' });
+		if (id === SKIP) return t('ping.impasseHelp.skip', { stage: stageId ?? '' });
+		if (id === GIVE_UP)
+			return endsRound
+				? t('ping.impasseHelp.give_upRound', { phase: phaseName })
+				: t('ping.impasseHelp.give_up');
+		return '';
+	}
+	const helps = $derived(choices.map((c) => choiceHelp(c.id)).filter(Boolean));
 	const aside = $derived(
 		ping.type === 'gate'
 			? t('ping.aside.gate')
@@ -159,9 +190,11 @@
 				? t('ping.aside.debug')
 				: manual
 					? t('ping.aside.manual')
-					: unwanted
-						? t('ping.aside.agent')
-						: ''
+					: impasse
+						? t('ping.aside.impasse')
+						: unwanted
+							? t('ping.aside.agent')
+							: ''
 	);
 
 	// A manual card opens the workspace: code-server, or desktop VS Code
@@ -223,6 +256,7 @@
 		<span class="hue-{verdict.hue} glyph">{verdict.glyph}</span>
 		<span class="ty">{meta.label}</span>
 		{#if stageId}<span class="mono faint">{stageId}</span>{/if}
+		{#if ping.ref}<RefChip ref={ping.ref} />{/if}
 		<span class="truncate grow what">
 			{#if status === 'withdrawn'}
 				{t('ping.withdrawn')}
@@ -244,6 +278,7 @@
 			<span class="ty">{meta.label}</span>
 			{#if aside}<span class="aside">{aside}</span>{/if}
 			<span class="spacer"></span>
+			{#if ping.ref}<RefChip ref={ping.ref} />{/if}
 			<span class="when">
 				{#if stageId}<span class="mono">{stageId}</span
 					>{/if}{#if stageId && ping.raisedAt}{' · '}{/if}{#if ping.raisedAt}<span
@@ -272,6 +307,7 @@
 				{#if ping.context}<pre class="log out">{ping.context}</pre>{/if}
 			{:else}
 				<div class="q"><Markdown src={ping.question} /></div>
+				{#if ping.context && impasse}<div class="faint lbl">{t('ping.impasseVerdict')}</div>{/if}
 				{#if ping.context}<Markdown src={ping.context} quiet />{/if}
 			{/if}
 			{#if manual}
@@ -329,7 +365,14 @@
 				</div>
 				<p class="help">{t('ping.notNowHelp')}</p>
 			{:else if kind === 'yes_no'}
-				{#if noteOpen}
+				{#if summarise}
+					<textarea
+						aria-label={t('ping.debugSummaryPlaceholder')}
+						bind:value={note}
+						rows="3"
+						placeholder={t('ping.debugSummaryPlaceholder')}
+						onkeydown={(e) => keys(e, () => note.trim() && !off && submit('approve'))}></textarea>
+				{:else if noteOpen}
 					<textarea
 						aria-label={leaf
 							? endsRound
@@ -348,7 +391,7 @@
 				<div class="acts">
 					<button
 						class="{cur ? 'btn-hot-outline' : 'btn-hot'} btn-md"
-						disabled={off}
+						disabled={off || (summarise && !note.trim())}
 						aria-busy={busyOn('approve')}
 						onclick={() => submit('approve')}
 						>{debug
@@ -383,6 +426,30 @@
 					{/if}
 					{@render attachBtn()}
 				</div>
+			{:else if kind === 'choice'}
+				<textarea
+					aria-label={t('ping.impasseNote')}
+					bind:value={note}
+					rows="2"
+					placeholder={t('ping.impasseNote')}></textarea>
+				<div class="acts">
+					{#each choices as c, i (c.id)}
+						{@const unsaid = c.noteRequired && !note.trim()}
+						<button
+							class="{i === 0 ? 'btn-hot' : 'btn-hot-outline'} btn-md"
+							disabled={off || unsaid}
+							aria-busy={busyOn(c.id)}
+							title={unsaid ? t('ping.impasseNoteRequired', { choice: choiceLabel(c.id) }) : ''}
+							onclick={() => submit(c.id)}>{choiceLabel(c.id)}</button
+						>
+					{/each}
+					{@render attachBtn()}
+				</div>
+				{#if helps.length}
+					<ul class="help choices">
+						{#each helps as h (h)}<li>{h}</li>{/each}
+					</ul>
+				{/if}
 			{:else if declining}
 				<textarea
 					aria-label={t('ping.declinePlaceholder')}
@@ -600,6 +667,12 @@
 	}
 	.help {
 		margin: 0;
+	}
+	ul.choices {
+		padding-left: 18px;
+	}
+	.lbl {
+		font-size: var(--fs-label);
 	}
 	/* answered / withdrawn */
 	.pc-done {

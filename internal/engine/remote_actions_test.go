@@ -484,7 +484,7 @@ func (h *harness) seedMRRun(t *testing.T, runID, flowName string, stages ...stri
 		&event.EnvReady{EnvID: string(env)},
 	}
 	for i, st := range stages {
-		ps = append(ps, &event.StageStarted{StageID: st, Iteration: 1})
+		ps = append(ps, &event.StageStarted{StageID: st, Attempt: 1})
 		if i == len(stages)-1 {
 			break
 		}
@@ -600,8 +600,8 @@ func TestACommentReentryThatCannotTell(t *testing.T) {
 	h.seed(t, "r1", &event.RunCreated{TicketTitle: "T", FlowName: "tk", FlowHash: h.flows["tk"].Hash, ProjectID: testProject,
 		Branch: "feat/x", TicketSourceID: "int-1", TicketSourceKey: "DEV-1", TicketID: "tk-1"},
 		&event.PhaseStarted{Phase: flow.MainPhase}, &event.EnvReady{EnvID: string(env)},
-		&event.StageStarted{StageID: "w", Iteration: 1}, &event.StageCompleted{StageID: "w"},
-		&event.StageStarted{StageID: "act", Iteration: 1}, &event.ActionStarted{StageID: "act", Action: "ticket_comment"})
+		&event.StageStarted{StageID: "w", Attempt: 1}, &event.StageCompleted{StageID: "w"},
+		&event.StageStarted{StageID: "act", Attempt: 1}, &event.ActionStarted{StageID: "act", Action: "ticket_comment"})
 	tr.Err = errors.New("tracker down")
 	v := recoverAndSettle(t, h, "r1")
 	sf, _ := findPayload[*event.StageFailed](h.events(t, "r1"))

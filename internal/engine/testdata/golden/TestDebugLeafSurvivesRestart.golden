@@ -12,6 +12,7 @@ run_paused stage=test reason=waiting_on_human
 ping_answered
 run_unpaused
 phase_started phase=main
+hand_edits stage=test
 stage_started stage=test
 stage_completed stage=test
 phase_completed phase=main
@@ -29,6 +30,7 @@ ping_raised stage=test ping=debug
 run_paused stage=test reason=waiting_on_human
 ping_answered
 phase_started phase=main
+hand_edits stage=test
 stage_started stage=test
 stage_completed stage=test
 phase_completed phase=main

@@ -47,6 +47,29 @@ const (
 
 var slugRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
+// ReservedRef is the character references use (review#5: attempt 5 of
+// review; apothecary/internal/run/ref): no id, port name or path a flow
+// defines may hold it, so nothing can pass for a reference. A repo: path is
+// exempt — it names a file the repository already has.
+const ReservedRef = "#"
+
+// refReserved says why a name or path holding ReservedRef is refused, or "".
+func refReserved(what, v string) string {
+	if !strings.Contains(v, ReservedRef) {
+		return ""
+	}
+	return fmt.Sprintf("%s %q holds %q, which is reserved for references (review#5 is attempt 5 of review)", what, v, ReservedRef)
+}
+
+// notSlug is why an id is not a slug, naming the reservation when that is
+// the reason.
+func notSlug(id string) string {
+	if why := refReserved("id", id); why != "" {
+		return why
+	}
+	return "id is not a slug (lowercase [a-z0-9_-], starting with a letter)"
+}
+
 // idPathRe matches a stage id as the parser may produce it: a slug, or a
 // sequence path of slugs joined by dots (make.ship.test).
 var idPathRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$`)
@@ -705,7 +728,7 @@ func (e *DocEdge) UnmarshalYAML(n *yaml.Node) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("line %d: edge must be a mapping, or one of %q, %q, %q, %q", n.Line, TerminalEnd, TerminalDone, TerminalAbort, ReservedDebug)
+	return fmt.Errorf("line %d: edge must be a mapping, or one of %q, %q, %q, %q, %q", n.Line, TerminalEnd, TerminalDone, TerminalAbort, ReservedDebug, ReservedImpasse)
 }
 
 // IOPair is one named literal in an action stage's `with:` — one value, or
@@ -2218,6 +2241,9 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	if raw.OnSuccess == ReservedDebug {
 		return fail("on_success cannot be %q — only an edge (on_fail/on_reject/on_timeout) parks for a human", ReservedDebug)
 	}
+	if raw.OnSuccess == ReservedImpasse {
+		return fail("on_success cannot be %q — only an on_reject chain parks for a person's decision", ReservedImpasse)
+	}
 	if raw.OnSuccess != "" && !routeTerminal(raw.OnSuccess) && !idPathRe.MatchString(raw.OnSuccess) {
 		return fail("on_success %q must be a stage id, %q (the phase ends), %q (the run is done) or %q (the run is abandoned)", raw.OnSuccess, TerminalEnd, TerminalDone, TerminalAbort)
 	}
@@ -2388,6 +2414,21 @@ func (p *parser) buildEdgeLink(raw *DocEdge, kind string, s *Stage, line, depth 
 			return fail("then does not apply when to is %q (continuing re-enters this stage; nothing else follows)", ReservedDebug)
 		}
 		return &Edge{To: ReservedDebug}, nil
+	}
+	if raw.To == ReservedImpasse {
+		// The impasse: rejections ran out, and a person decides — keep
+		// going, skip the stage, or give up. Only a rejection reaches it (a
+		// failure has the debug leaf), and like the debug leaf it is
+		// unlimited and nothing follows it.
+		switch {
+		case kind != EdgeReject:
+			return fail("%q is reached only from on_reject — a rejection is a verdict a person can overrule; a failure goes to %q", ReservedImpasse, ReservedDebug)
+		case raw.Max != nil:
+			return fail("max does not apply when to is %q (the person decides when to stop)", ReservedImpasse)
+		case raw.Then != nil:
+			return fail("then does not apply when to is %q (the person's answer says what follows)", ReservedImpasse)
+		}
+		return &Edge{To: ReservedImpasse}, nil
 	}
 	if raw.Max == nil {
 		return fail("max is required")
@@ -2601,7 +2642,7 @@ func (p *parser) buildPhases(srcs []phaseSrc, f *Flow) ([]Phase, []DocStage, err
 			case rp.id == "":
 				return fail("id is required")
 			case !slugRe.MatchString(rp.id):
-				return fail("id is not a slug (lowercase [a-z0-9_-], starting with a letter)")
+				return fail("%s", notSlug(rp.id))
 			case rp.id == MainPhase:
 				return fail("id %q is the main chain's", MainPhase)
 			}

@@ -272,12 +272,12 @@ func TestLogsServeTheLatestAttempt(t *testing.T) {
 	x.seedLiveRun(t, "r1")
 	ctx := context.Background()
 	for i, text := range []string{"zero", "one", "two"} {
-		if _, err := files.snaps.Capture(ctx, filestore.Snapshot{RunID: "r1", StageID: "build", Kind: filestore.KindLog, Iteration: i},
+		if _, err := files.snaps.Capture(ctx, filestore.Snapshot{RunID: "r1", StageID: "build", Kind: filestore.KindLog, Attempt: i},
 			func(s string) string { return s }, []byte(text)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := files.snaps.Capture(ctx, filestore.Snapshot{RunID: "r1", StageID: "other", Kind: filestore.KindLog, Iteration: 9},
+	if _, err := files.snaps.Capture(ctx, filestore.Snapshot{RunID: "r1", StageID: "other", Kind: filestore.KindLog, Attempt: 9},
 		func(s string) string { return s }, []byte("not this stage")); err != nil {
 		t.Fatal(err)
 	}

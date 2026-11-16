@@ -109,7 +109,7 @@ export interface RunFacts {
 	attempts: number;
 	endedAt?: string;
 	/** Stage id → its attempt that has not ended yet. */
-	open: Record<string, { iteration: number; startedAt: string; outcome: string }>;
+	open: Record<string, { attempt: number; startedAt: string; outcome: string }>;
 }
 
 /** A take-over as the run page shows it: who holds the agent's session,

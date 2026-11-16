@@ -73,6 +73,11 @@
 
 	type Row = DocPort & { key: string; value: string; decl?: IODecl };
 	const isInput = $derived(field === 'input');
+	// An output the stage may leave unwritten: an agent's or a command's,
+	// never a verdict (it routes the stage) nor an action's (it writes what
+	// it writes).
+	const mayOmit = (r: Row) =>
+		!isInput && stage.type !== 'action' && (r.type ?? r.decl?.type) !== 'verdict';
 
 	function load(): Row[] {
 		const ports = stage[field] ?? {};
@@ -99,7 +104,7 @@
 			if (r.type) p.type = r.type;
 			if (r.schema) p.schema = r.schema;
 			if (r.description) p.description = r.description;
-			if (isInput && r.optional) p.optional = true;
+			if (r.optional && (isInput || mayOmit(r))) p.optional = true;
 			out[key] = p;
 		}
 		stage[field] = Object.keys(out).length ? out : undefined;
@@ -265,6 +270,16 @@
 				}}
 			/>
 			{#if isEdgeSource(r.value.trim())}<div class="help">{t('flow.insp.feedHelp')}</div>{/if}
+		{:else if mayOmit(r)}
+			<Toggle
+				checked={!!r.optional}
+				label={t('flow.insp.optional')}
+				title={t('flow.insp.outputOptionalTitle')}
+				onchange={(v) => {
+					r.optional = v || undefined;
+					write();
+				}}
+			/>
 		{/if}
 	</div>
 {/each}

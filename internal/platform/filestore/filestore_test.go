@@ -210,7 +210,7 @@ func TestCaptureKinds(t *testing.T) {
 	ctx := context.Background()
 
 	out, err := snaps.Capture(ctx, Snapshot{
-		RunID: "r1", Kind: KindOutput, StageID: "plan", Iteration: 1,
+		RunID: "r1", Kind: KindOutput, StageID: "plan", Attempt: 1,
 		Name: "plan", Path: "artifacts/plan.md", Filename: "plan.md",
 	}, ident, []byte("# plan"))
 	if err != nil {
@@ -221,7 +221,7 @@ func TestCaptureKinds(t *testing.T) {
 	}
 
 	if _, err := snaps.Capture(ctx, Snapshot{
-		RunID: "r1", Kind: KindLog, StageID: "plan", Iteration: 1, Filename: "plan-1.log",
+		RunID: "r1", Kind: KindLog, StageID: "plan", Attempt: 1, Filename: "plan-1.log",
 	}, ident, []byte("log line")); err != nil {
 		t.Fatal(err)
 	}
@@ -269,13 +269,13 @@ func TestCaptureScrubs(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := snaps.Capture(ctx, Snapshot{
-		RunID: "r", Kind: KindLog, StageID: "s", Iteration: 1,
+		RunID: "r", Kind: KindLog, StageID: "s", Attempt: 1,
 	}, nil, []byte("x")); err == nil {
 		t.Fatal("nil scrub accepted")
 	}
 	scrub := func(s string) string { return strings.ReplaceAll(s, "sk-secret", "[REDACTED]") }
 	snap, err := snaps.Capture(ctx, Snapshot{
-		RunID: "r", Kind: KindLog, StageID: "s", Iteration: 1, Filename: "s-1.log",
+		RunID: "r", Kind: KindLog, StageID: "s", Attempt: 1, Filename: "s-1.log",
 	}, scrub, []byte("token sk-secret leaked"))
 	if err != nil {
 		t.Fatal(err)
@@ -293,7 +293,7 @@ func TestCaptureTruncatesWithMarkerAndFlag(t *testing.T) {
 
 	long := strings.Repeat("y", 500) + "TAIL"
 	snap, err := snaps.Capture(context.Background(), Snapshot{
-		RunID: "r", Kind: KindLog, StageID: "s", Iteration: 1, Filename: "s.log",
+		RunID: "r", Kind: KindLog, StageID: "s", Attempt: 1, Filename: "s.log",
 	}, ident, []byte(long))
 	if err != nil {
 		t.Fatal(err)
@@ -316,7 +316,7 @@ func TestCaptureDedupsAcrossAttempts(t *testing.T) {
 	ctx := context.Background()
 	for iter := 1; iter <= 3; iter++ {
 		if _, err := snaps.Capture(ctx, Snapshot{
-			RunID: "r", Kind: KindOutput, StageID: "plan", Iteration: iter,
+			RunID: "r", Kind: KindOutput, StageID: "plan", Attempt: iter,
 			Name: "plan", Path: "artifacts/plan.md", Filename: "plan.md",
 		}, ident, []byte("same plan every time")); err != nil {
 			t.Fatal(err)
@@ -338,7 +338,7 @@ func TestSnapshotContentExpiry(t *testing.T) {
 	ctx := context.Background()
 
 	snap, _ := snaps.Capture(ctx, Snapshot{
-		RunID: "r", Kind: KindLog, StageID: "s", Iteration: 1, Filename: "s.log",
+		RunID: "r", Kind: KindLog, StageID: "s", Attempt: 1, Filename: "s.log",
 	}, ident, []byte("old log"))
 	ageBlobs(t, blobs)
 

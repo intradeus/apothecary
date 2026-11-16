@@ -5,6 +5,8 @@ import {
 	DEBUG,
 	DONE,
 	edgeOf,
+	IMPASSE,
+	isReservedTarget,
 	setEdge,
 	setEntry,
 	START,
@@ -21,7 +23,11 @@ export function rewire(doc: FlowDoc, source: string, handle: string, target: str
 	if (source === START) {
 		// Dragging the entry marker onto a stage makes it the entry (moves
 		// it to document front); terminals can't be an entry.
-		return target !== DONE && target !== ABORT && target !== DEBUG && setEntry(doc, target)
+		return target !== DONE &&
+			target !== ABORT &&
+			target !== DEBUG &&
+			target !== IMPASSE &&
+			setEntry(doc, target)
 			? 'changed'
 			: 'same';
 	}
@@ -33,7 +39,8 @@ export function rewire(doc: FlowDoc, source: string, handle: string, target: str
 	if (dest && (dest.phase ?? '') !== (s.phase ?? '')) return { from: s.id, to: dest.id };
 	if (handle === 'success') {
 		// success never aborts or parks
-		if (target !== s.id && target !== ABORT && target !== DEBUG) s.on_success = target;
+		if (target !== s.id && target !== ABORT && target !== DEBUG && target !== IMPASSE)
+			s.on_success = target;
 	} else {
 		const kind = handle as EdgeKind;
 		if (target === DONE) return 'same'; // recoverable edges point at stages or abort, not done
@@ -42,6 +49,14 @@ export function rewire(doc: FlowDoc, source: string, handle: string, target: str
 			// Dragging onto the abort terminal replaces the chain's first link
 			// with the immediate stop (no max; nothing runs after abort).
 			setEdge(s, kind, { to: ABORT });
+		} else if (target === IMPASSE) {
+			// Only a rejection reaches the impasse (a failure goes to debug).
+			// Like the debug leaf, it is what follows a finite chain.
+			if (kind !== 'on_reject') return 'same';
+			const links = chainLinks(existing);
+			const last = links[links.length - 1];
+			if (last && !isReservedTarget(last.to) && last.max !== -1) last.then = { to: IMPASSE };
+			else setEdge(s, kind, { to: IMPASSE });
 		} else if (target === DEBUG) {
 			// Dragging onto the debug leaf almost always means "and then a
 			// human": it is appended after an existing finite chain. An empty

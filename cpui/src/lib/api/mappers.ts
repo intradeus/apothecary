@@ -55,6 +55,7 @@ import { BUCKETS, DIRECTIONS, PANEL_WIDTHS, VIZES } from '$lib/domain';
 import { normalizeDoc, PHASE_KINDS, OPERATES_ON, type OperatesOn } from '$lib/domain/flowdoc';
 import {
 	answerKindOf,
+	toPingChoices,
 	toCuratedMap,
 	toFormContent,
 	toPingForm,
@@ -176,6 +177,7 @@ const PING_TYPES: PingType[] = [
 	'gate',
 	'debug',
 	'manual',
+	'impasse',
 	'phase_confirm',
 	'select',
 	'clarification',
@@ -319,7 +321,7 @@ export function toRunFacts(w: Wire.Facts): RunFacts {
 		open: Object.fromEntries(
 			Object.entries(w.open ?? {}).map(([id, a]) => [
 				id,
-				{ iteration: a.iteration, startedAt: a.started_at, outcome: a.outcome }
+				{ attempt: a.attempt, startedAt: a.started_at, outcome: a.outcome }
 			])
 		)
 	};
@@ -546,6 +548,7 @@ export function toPing(w: Wire.PingView): Ping {
 		type: oneOf(PING_TYPES, w.type, 'clarification'),
 		status: oneOf(PING_STATUSES, w.status, 'pending'),
 		stageId: w.stage_id,
+		ref: w.ref || undefined,
 		question: w.question,
 		context: w.context,
 		files: list(w.files),
@@ -554,6 +557,7 @@ export function toPing(w: Wire.PingView): Ping {
 		primaryRef: w.payload_ref,
 		answerKind: answerKindOf(w.answer_kind, w.type),
 		form: toPingForm(w.form),
+		choices: toPingChoices(w.choices),
 		phase: w.phase || undefined,
 		endsPhase: w.ends_phase ?? false,
 		answer: w.answer,
@@ -971,7 +975,7 @@ export function toSnapshot(w: Wire.Snapshot): Snapshot {
 		runId: w.run_id ?? '',
 		kind: oneOf(SNAPSHOT_KINDS, w.kind, 'output'),
 		stageId: w.stage_id ?? '',
-		iteration: w.iteration,
+		attempt: w.attempt,
 		pingId: w.ping_id,
 		name: w.name,
 		path: w.path,
@@ -1442,7 +1446,7 @@ export function toLiveDelta(raw: Record<string, unknown>): LiveDelta | null {
 	if (!deltaKinds.includes(kind)) return null;
 	return {
 		stageId: String(raw.stage_id ?? ''),
-		iteration: Number(raw.iteration ?? 0),
+		attempt: Number(raw.attempt ?? 0),
 		turn: (raw.turn as string | undefined) || undefined,
 		kind,
 		segment: (raw.segment as string | undefined) || undefined,
@@ -1749,7 +1753,7 @@ export function toAnalyticsValue(w: Wire.AnalyticsValue): AnalyticsValue {
 export function toCrewPresence(w: Wire.CrewPresence): CrewPresence {
 	return {
 		stageId: w.stage_id,
-		iteration: w.iteration,
+		attempt: w.attempt,
 		harness: w.harness,
 		agent: w.agent,
 		since: w.since,

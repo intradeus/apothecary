@@ -16,11 +16,12 @@
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { ago, age, fmtAbs, fmtCost, shortId } from '$lib/core/format';
 	import { answerMeta, answerSummary, pingHeadline } from '$lib/core/ping';
-	import type { FormContent, Ping } from '$lib/domain';
+	import { attemptRef, type FormContent, type Ping } from '$lib/domain';
 	import PingCard from '$lib/pings/PingCard.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import PingPill, { pingMeta } from '$lib/ui/PingPill.svelte';
+	import RefChip from '$lib/ui/RefChip.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import StageFlask from '$lib/ui/StageFlask.svelte';
 	import WorkspaceStatus from '$lib/ui/WorkspaceStatus.svelte';
@@ -254,6 +255,7 @@
 								<span class="l1">
 									<PingPill type={p.type} />
 									{#if p.stageId}<span class="mono muted st truncate">{p.stageId}</span>{/if}
+									{#if p.ref}<RefChip ref={p.ref} plain />{/if}
 									<span class="spacer"></span>
 									<span class="mono muted age" title={fmtAbs(p.raisedAt)}>{age(p.raisedAt)}</span>
 								</span>
@@ -287,7 +289,7 @@
 										<span class="mono">{run.currentStage}</span>
 										{#if facts?.attempt}<span class="faint"
 												>{t('inbox.attempt', { n: facts.attempt })}</span
-											>{/if}
+											><RefChip ref={attemptRef(run.currentStage, facts.attempt)} />{/if}
 									</span>
 								{/if}
 								{#if facts?.cost}<span class="mono muted">{fmtCost(facts.cost)}</span>{/if}
@@ -354,6 +356,7 @@
 							<span class="truncate muted hide-sm"
 								>{fleet.runById.get(p.runId)?.title ?? shortId(p.runId)}{#if p.stageId}<span
 										class="mono faint">{' · '}{p.stageId}</span
+									>{/if}{#if p.ref}{' '}<span class="over-stretch"><RefChip ref={p.ref} /></span
 									>{/if}</span
 							>
 							<span class="ans truncate hide-sm"

@@ -4,6 +4,7 @@ import { aRun } from '$test/fixtures';
 import { anAnswer, anEvent, aRaise, NOW } from '$test/fixtures/run-views';
 import {
 	accentSplit,
+	attemptRefs,
 	CODE_SERVER_PORT,
 	currentStage,
 	describe as describeEvent,
@@ -20,7 +21,7 @@ import {
 } from './derive';
 
 const started = (seq: number, id: string, payload = {}) =>
-	anEvent(seq, 'stage_started', { stage_id: id, iteration: 1, ...payload });
+	anEvent(seq, 'stage_started', { stage_id: id, attempt: 1, ...payload });
 const completed = (seq: number, id: string, payload = {}) =>
 	anEvent(seq, 'stage_completed', { stage_id: id, duration_ms: 2000, ...payload });
 const stage = (id: string, type = 'agent', phase?: string): StageDef => ({ id, type, phase });
@@ -67,6 +68,14 @@ describe('pingsOf', () => {
 	it('keeps an answer on a finished run', () => {
 		const [p] = pingsOf([aRaise(1, 'p1'), anAnswer(2, 'p1')], aRun({ state: 'completed' }));
 		expect(p.status).toBe('answered');
+	});
+
+	it('carries the reference the engine recorded, and none when it recorded none', () => {
+		const [p, q] = pingsOf(
+			[aRaise(1, 'p1', { ref: 'build#3/decision#1' }), aRaise(2, 'p2', { ref: '' })],
+			aRun()
+		);
+		expect([p.ref, q.ref]).toEqual(['build#3/decision#1', undefined]);
 	});
 
 	it('reads a ping as pending before the run has loaded', () => {
@@ -116,6 +125,7 @@ describe('pingsOf', () => {
 		['gate', undefined, 'yes_no'],
 		['phase_confirm', undefined, 'yes_no'],
 		['debug', undefined, 'yes_no'],
+		['impasse', undefined, 'choice'],
 		['clarification', undefined, 'form'],
 		['clarification', 'yes_no', 'yes_no']
 	])('reads a %s ping declared %s as %s', (type, answer_kind, kind) => {
@@ -145,6 +155,19 @@ describe('pingsOf', () => {
 			fileTypes: { 'a.md': 'review_threads' }
 		});
 		expect(p.form?.fields[0].options.map((o) => o.label)).toEqual(['dev', 'prod']);
+		expect(p.choices).toEqual([]);
+	});
+
+	it("reads an impasse's choices", () => {
+		const raise = aRaise(1, 'p1', {
+			type: 'impasse',
+			answer_kind: 'choice',
+			choices: [{ id: 'skip' }, { id: 'give_up', note_required: true }]
+		});
+		expect(pingsOf([raise], aRun())[0].choices).toEqual([
+			{ id: 'skip', noteRequired: false },
+			{ id: 'give_up', noteRequired: true }
+		]);
 	});
 
 	it('takes only a real true as ending the phase, and no empty phase', () => {
@@ -284,7 +307,7 @@ describe('stageRows', () => {
 	});
 
 	it('shows a running stage with its attempt and clock', () => {
-		const r = row([started(1, 'a', { iteration: 2 })], 'running', NOW + 61_000);
+		const r = row([started(1, 'a', { attempt: 2 })], 'running', NOW + 61_000);
 		expect(r).toMatchObject({ status: 'running', attempt: 2, line: 'attempt 2 · 1:00' });
 	});
 
@@ -345,6 +368,44 @@ describe('stageRows', () => {
 		});
 	});
 
+	describe('a stage rejected to its impasse', () => {
+		const stuck = [
+			started(1, 'a'),
+			completed(2, 'a'),
+			anEvent(3, 'edge_taken', { edge: 'on_reject', from: 'a', to: 'impasse', count: 1, max: -1 }),
+			aRaise(4, 'i1', { type: 'impasse', stage_id: 'a' })
+		];
+
+		it('waits on a person while the impasse is open', () => {
+			expect(row(stuck, 'waiting_on_human')).toMatchObject({
+				status: 'waiting',
+				line: 'rejected — your call'
+			});
+		});
+
+		it('is done once answered', () => {
+			const r = row([...stuck, anAnswer(5, 'i1', { answer: 'give_up' })], 'running');
+			expect(r.status).toBe('done');
+		});
+
+		it('is done once the run is over', () => {
+			expect(row(stuck, 'abandoned').status).toBe('done');
+		});
+
+		it('reads as skipped once skipped', () => {
+			const skipped = [
+				...stuck,
+				anAnswer(5, 'i1', { answer: 'skip' }),
+				started(6, 'a'),
+				completed(7, 'a', { skipped: true, by: 'u1', duration_ms: 0 })
+			];
+			expect(row(skipped, 'running')).toMatchObject({
+				status: 'done',
+				line: 'skipped by a person'
+			});
+		});
+	});
+
 	it('waits after a pause', () => {
 		const events = [started(1, 'a'), anEvent(2, 'stage_paused', { stage_id: 'a' })];
 		expect(row(events)).toMatchObject({ status: 'waiting', line: 'waiting on you' });
@@ -375,7 +436,7 @@ describe('stageRows', () => {
 	});
 
 	it('shows a stage started again as running, not done', () => {
-		const events = [started(1, 'a'), completed(2, 'a'), started(3, 'a', { iteration: 2 })];
+		const events = [started(1, 'a'), completed(2, 'a'), started(3, 'a', { attempt: 2 })];
 		expect(row(events)).toMatchObject({ status: 'running', attempt: 2 });
 	});
 
@@ -407,7 +468,7 @@ describe('stageRows', () => {
 		});
 
 		it('keeps the target running once it restarts, marked as looped', () => {
-			const events = [...first, edge(7, 'review', 'build'), started(8, 'build', { iteration: 2 })];
+			const events = [...first, edge(7, 'review', 'build'), started(8, 'build', { attempt: 2 })];
 			const [, build, review] = rows(events);
 			expect(build).toMatchObject({ status: 'running', attempt: 2, looped: true });
 			expect(review.status).toBe('pending');
@@ -477,6 +538,13 @@ describe('describe', () => {
 			'debug',
 			{ type: 'debug', stage_id: 's' },
 			's failed — parked for debugging',
+			'warn'
+		],
+		[
+			'ping_raised',
+			'impasse',
+			{ type: 'impasse', stage_id: 's' },
+			's rejected past its budget — your call',
 			'warn'
 		],
 		['ping_raised', 'question', { type: 'gate', question: 'Q?' }, 'ping [gate]: Q?', 'warn'],
@@ -737,11 +805,11 @@ describe('describe', () => {
 		[
 			'stage_started',
 			'with a model',
-			{ iteration: 2, model: 'fake/m' },
+			{ attempt: 2, model: 'fake/m' },
 			's started (attempt 2) · fake/m',
 			'info'
 		],
-		['stage_started', 'without', { iteration: 1 }, 's started (attempt 1)', 'info'],
+		['stage_started', 'without', { attempt: 1 }, 's started (attempt 1)', 'info'],
 		[
 			'stage_completed',
 			'with everything',
@@ -829,9 +897,9 @@ describe('describe', () => {
 	});
 
 	it.each([
-		[{ kind: 'log', stage_id: 's', iteration: 2 }, 's (attempt 2) captured log'],
+		[{ kind: 'log', stage_id: 's', attempt: 2 }, 's (attempt 2) captured log'],
 		[
-			{ kind: 'output', stage_id: 's', iteration: 1, name: 'plan', path: 'plan.md' },
+			{ kind: 'output', stage_id: 's', attempt: 1, name: 'plan', path: 'plan.md' },
 			's (attempt 1) captured output plan — plan.md'
 		],
 		[{ kind: 'output', stage_id: 's' }, 's (attempt 0) captured output'],
@@ -866,6 +934,46 @@ describe('hasLog', () => {
 	it.each(['env_ready', 'env_failed'])('leaves the request plain once %s has it', (type) => {
 		const events = [...noLog, anEvent(2, type)];
 		expect(hasLog(events[0], PROVISION_STAGE, events, true)).toBe(false);
+	});
+});
+
+describe('attemptRefs', () => {
+	it('names the attempt of each event about one', () => {
+		const events = [
+			anEvent(1, 'run_created'),
+			started(2, 'review', { attempt: 5 }),
+			anEvent(3, 'stage_paused', { stage_id: 'review', attempt: 5, reason: 'ask_human' }),
+			anEvent(4, 'snapshot_captured', { stage_id: 'review', attempt: 5, kind: 'log' }),
+			completed(5, 'review'),
+			started(6, 'settle.resolve', { attempt: 2 }),
+			anEvent(7, 'stage_failed', { stage_id: 'settle.resolve', reason: 'exit' })
+		];
+		expect(Object.fromEntries(attemptRefs(events))).toEqual({
+			2: 'review#5',
+			3: 'review#5',
+			4: 'review#5',
+			5: 'review#5',
+			6: 'settle.resolve#2',
+			7: 'settle.resolve#2'
+		});
+	});
+
+	it('names no attempt for a stage that never ran one', () => {
+		const events = [
+			completed(1, 'docs', { skipped: true }),
+			anEvent(2, 'stage_failed', { stage_id: 'build', reason: 'exit' }),
+			anEvent(3, 'ping_raised', { stage_id: 'build', type: 'blocker' }),
+			anEvent(4, 'action_started', { stage_id: '', action: 'x' })
+		];
+		expect(attemptRefs(events).size).toBe(0);
+	});
+
+	it('closes an attempt at its end, so a later end names none', () => {
+		const events = [started(1, 'a'), completed(2, 'a'), completed(3, 'a')];
+		expect([...attemptRefs(events)]).toEqual([
+			[1, 'a#1'],
+			[2, 'a#1']
+		]);
 	});
 });
 

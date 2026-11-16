@@ -25,7 +25,7 @@ export interface Snapshot {
 	runId: string;
 	kind: SnapshotKind;
 	stageId: string;
-	iteration?: number;
+	attempt?: number;
 	pingId?: string;
 	/** Output role ('plan', 'verdict'). */
 	name?: string;

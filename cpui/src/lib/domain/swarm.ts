@@ -16,7 +16,7 @@ export interface Subagent {
 /** The agent on station in a run's agent stage. */
 export interface CrewPresence {
 	stageId: string;
-	iteration: number;
+	attempt: number;
 	/** The harness kind running the stage. */
 	harness: string;
 	/** The stage's agent binding. */

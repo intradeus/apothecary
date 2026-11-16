@@ -21,7 +21,7 @@ vi.mock('$lib/api', () => ({
 
 const RUN = '01TESTRUN0000000000000ABCD';
 const HOLD: RunHold = { stageId: 'build', since: AT, turns: 0, messages: 0, costUsd: 0 };
-const agentStage = anEvent(1, 'stage_started', { stage_id: 'build', iteration: 1, agent: 'dev' });
+const agentStage = anEvent(1, 'stage_started', { stage_id: 'build', attempt: 1, agent: 'dev' });
 const said = (seq: number, text: string) =>
 	anEvent(seq, 'agent_message', { text, segment: `s${seq}` });
 const phaseDone = (seq: number) => anEvent(seq, 'phase_completed', { phase: 'main' });

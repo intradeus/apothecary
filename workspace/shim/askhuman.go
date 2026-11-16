@@ -2,8 +2,8 @@ package main
 
 // ask_human MCP stdio server (DESIGN.md §10).
 //
-// Exposes one tool: ask_human{type, question, context?, fields?,
-// artifacts?}. Its fields are ACP's elicitation form — the same kinds of
+// Exposes ask_human{type, question, context?, fields?, artifacts?} — and
+// journal_read (journal.go), the run journal's tool, to the same agents. Its fields are ACP's elicitation form — the same kinds of
 // question a harness's own question tool asks over ACP (elicitation.go), so
 // both reach the human as one kind of ping. The tool call BLOCKS until the human answers: the agent runs
 // as a long-lived ACP session the engine follows, so nothing needs the turn
@@ -498,22 +498,42 @@ func serveMCP(in io.Reader, offered bool) {
 		case "tools/list":
 			tools := []any{}
 			if offered {
-				tools = append(tools, toolDef)
+				tools = append(tools, toolDef, journalToolDef)
 			}
 			reply(msg.ID, map[string]any{"tools": tools})
 		case "tools/call":
 			var p struct {
-				Name      string  `json:"name"`
-				Arguments askArgs `json:"arguments"`
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
 				Meta      struct {
 					ProgressToken json.RawMessage `json:"progressToken"`
 				} `json:"_meta"`
 			}
 			_ = json.Unmarshal(msg.Params, &p)
+			if p.Name == "journal_read" && offered {
+				var args struct {
+					Ref string `json:"ref"`
+				}
+				_ = json.Unmarshal(p.Arguments, &args)
+				go func(id json.RawMessage) {
+					text, err := journalRead(args.Ref)
+					if err != nil {
+						reply(id, map[string]any{
+							"content": []any{map[string]any{"type": "text", "text": err.Error()}},
+							"isError": true,
+						})
+						return
+					}
+					reply(id, map[string]any{"content": []any{map[string]any{"type": "text", "text": text}}})
+				}(msg.ID)
+				continue
+			}
 			if p.Name != "ask_human" || !offered {
 				replyErr(msg.ID, -32602, "unknown tool "+p.Name)
 				continue
 			}
+			var ask askArgs
+			_ = json.Unmarshal(p.Arguments, &ask)
 			// Concurrent calls allowed; send() serializes the stdout frames.
 			done := calls.add(string(msg.ID))
 			go func(id json.RawMessage, args askArgs, token json.RawMessage) {
@@ -544,7 +564,7 @@ func serveMCP(in io.Reader, offered bool) {
 				reply(id, map[string]any{
 					"content": []any{map[string]any{"type": "text", "text": ans.Text}},
 				})
-			}(msg.ID, p.Arguments, p.Meta.ProgressToken)
+			}(msg.ID, ask, p.Meta.ProgressToken)
 		case "ping":
 			reply(msg.ID, map[string]any{})
 		default:

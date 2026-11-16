@@ -35,6 +35,9 @@ export default {
 	'ping.verdict.rejected': 'Changes requested',
 	'ping.verdict.answered': 'Answered',
 	'ping.verdict.declined': 'Declined',
+	'ping.verdict.keptGoing': 'Kept going',
+	'ping.verdict.skipped': 'Skipped',
+	'ping.verdict.gaveUp': 'Gave up',
 	'diff.unchanged_one': '… {count} unchanged line',
 	'diff.unchanged_other': '… {count} unchanged lines',
 	'api.unreachable': 'the engine could not be reached',
@@ -153,6 +156,10 @@ export default {
 	'flow.term.abort': 'The run stops deliberately',
 	'flow.term.debug':
 		'A stop, not an end: the run parks for a human to fix the workspace, then goes back into the stage that sent it here',
+	'flow.term.impasse':
+		'A stop for a decision: the stage was rejected past its budget — a person keeps going, skips the stage or gives up',
+	'flow.term.impasseFor':
+		'A stop for a decision: {stage} was rejected past its budget — a person keeps going (the rejection’s route again), skips {stage} or gives up',
 	'flow.term.debugFor':
 		'A stop, not an end: the run parks for a human to fix the workspace, then {stage} runs again',
 	// system
@@ -610,6 +617,7 @@ export default {
 	'ping.aside.gate': 'the bench awaits your seal',
 	'ping.aside.debug': 'the bench is yours — mend it, then continue',
 	'ping.aside.manual': 'the workspace is yours — work there, then press Done',
+	'ping.aside.impasse': 'rejected round after round — your call',
 	'ping.aside.agent': 'a note from the agent',
 	'ping.withdrawn': 'withdrawn',
 	'ping.answeredAgo': 'answered {ago} —',
@@ -626,6 +634,8 @@ export default {
 	'ping.runIt': 'Run it',
 	'ping.notNow': 'Not now',
 	'ping.notNowHelp': 'Not now: it is offered again only when what it reacts to changes.',
+	'ping.debugSummaryPlaceholder':
+		'What did you do? Required to continue, even “nothing” — the agents read it in the run journal, with the files you changed.',
 	'ping.debugReasonPlaceholder': 'Why stop here? Recorded as the reason the run was abandoned.',
 	'ping.debugEndPlaceholder':
 		'Why stop here? Recorded as the reason {phase} ended; the run goes back to waiting.',
@@ -656,6 +666,21 @@ export default {
 	'ping.sendHint': 'send',
 	'ping.attachToAnswer': 'Attach files to your answer',
 	'ping.uploadFailed': 'Upload failed: {error}',
+	'ping.impasseVerdict': 'The last verdict',
+	'ping.impasseNote':
+		'Optional note — recorded with your choice; the agents that read your answers see it.',
+	'ping.impasseNoteRequired': 'Why? Required for {choice}.',
+	'ping.choice.keep_going': 'Keep going',
+	'ping.choice.skip': 'Skip {stage}',
+	'ping.choice.give_up': 'Give up — abandon the run',
+	'ping.choice.give_upRound': 'Give up — end {phase}, the run keeps waiting',
+	'ping.impasseHelp.keep_going':
+		'Keep going: the rejection takes its route again, with a fresh budget for {stage}.',
+	'ping.impasseHelp.skip':
+		'Skip: {stage} counts as done with no output, and the flow moves on past it.',
+	'ping.impasseHelp.give_up': 'Give up: the run is abandoned.',
+	'ping.impasseHelp.give_upRound':
+		'Give up: this round of {phase} ends; the run goes back to waiting.',
 	'ping.attach': 'Attach',
 	'ping.curate': 'Curate & post',
 	'ping.approveAsWritten': 'Approve as written',
@@ -1031,6 +1056,7 @@ export default {
 		'Timeouts route via on_timeout when declared, else fall back to on_fail.',
 	'flow.insp.abortOption': 'abort — stop the run',
 	'flow.insp.debugOption': 'debug — a person fixes it, then again',
+	'flow.insp.impasseOption': 'impasse — a person keeps going, skips or gives up',
 	'flow.insp.noLimit': 'No limit (∞)',
 	'flow.insp.noLimitTitle': 'Every firing costs a human decision',
 	'flow.insp.noLimitTitleGate':
@@ -1151,6 +1177,8 @@ export default {
 	'flow.insp.noType': 'no type',
 	'flow.insp.portOptionalTitle':
 		'It may be empty: an edge source, or a file not written on every route that reaches this stage',
+	'flow.insp.outputOptionalTitle':
+		'The stage may leave it unwritten — a stage reading it then reads it optional',
 	'flow.insp.portDescPlaceholder': 'what it is (the agent reads this)',
 	'flow.insp.optionalTitle': 'A stage may leave it unbound',
 	'flow.insp.removePort': 'Remove',
@@ -1193,11 +1221,11 @@ export default {
 	'flow.agents.addsHelp':
 		'The prompt is followed by a section per input and the output contract, from the ports of the stage that runs it — paths and contents filled in at run time — and by the standing rules on asking the human.',
 	'flow.agents.addsTask':
-		'# TASK — the ticket: title, key, status, labels, goal, direction for this attempt, attached files',
+		'# TASK — the ticket: title, key, status, labels, goal, direction for this run, attached files',
 	'flow.agents.addsDiscussion':
 		'# TICKET DISCUSSION — the latest comments on the ticket, oldest first, quoted as untrusted text (omitted when there are none)',
-	'flow.agents.addsAnswers':
-		'# PING ANSWERS — what the task’s owner answered during the run, oldest first, as direction that amends the plan',
+	'flow.agents.addsJournal':
+		'# RUN JOURNAL — the owner’s decisions during the run, oldest first, as direction that amends the plan; each stage’s passes; and the journal_read tool for the rest',
 	'flow.agents.addsFeed': 'the {type} the edge carried, when one entered (attempt n of m)',
 	'flow.agents.addsChangeset': 'the changed files, listed (never the diff)',
 	'flow.agents.addsLink': 'the link',
@@ -1307,7 +1335,7 @@ export default {
 	'flow.insp.deleteSequenceBody_other':
 		'The sequence <b>{id}</b> and its {count} stages are removed from this draft.',
 	'flow.insp.canvasHelp':
-		"Click a node or edge to edit it. Drag from a node's coloured handles to rewire control flow: green = success, rose = on_fail, teal = on_timeout, amber = on_reject. Edges may target the abort terminal to stop the run deliberately, or the debug leaf to park it for a human and then run the stage again. The faint dashed lines are dataflow — they are derived from the artifact paths stages read and write, so you change them by editing an input or output, not by dragging.",
+		"Click a node or edge to edit it. Drag from a node's coloured handles to rewire control flow: green = success, rose = on_fail, teal = on_timeout, amber = on_reject. Edges may target the abort terminal to stop the run deliberately, the debug leaf to park it for a human and then run the stage again, or — a rejection only — the impasse leaf, where a person keeps going, skips the stage or gives up. The faint dashed lines are dataflow — they are derived from the artifact paths stages read and write, so you change them by editing an input or output, not by dragging.",
 	// PlanReview
 	'doc.noFiles': 'this ping has no attached files',
 	'doc.notCaptured': '{path} was not captured when the ping was raised',

@@ -170,7 +170,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			e.pings[op.PingID] = &Ping{
 				ID: op.PingID, RunID: runID, Type: op.Type, Question: op.Question,
 				Context: op.Context, Files: op.Files, FileTypes: op.FileTypes, Link: op.Link, StageID: op.StageID,
-				Form: op.Form, AnswerKind: op.Kind(), key: op.Key,
+				Form: op.Form, AnswerKind: op.Kind(), Choices: op.Choices, key: op.Key,
 				Phase: op.Phase, EndsPhase: op.EndsPhase,
 				RaisedAt: e.clock(), done: make(chan struct{}),
 			}
@@ -227,6 +227,10 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			// Parked on the debug leaf: a human has the workspace. Like a
 			// gate this never provisions; continuing re-enters st below.
 			err = x.stageDebug(st)
+		case runcore.StepImpasse:
+			// At the impasse: ask, and park like a gate — or route an
+			// answer recorded before the chain could park.
+			err = x.stageImpasse(st)
 		case runcore.StepRouteComplete:
 			err = x.routeAfterComplete(st)
 		case runcore.StepRouteFail:
@@ -304,11 +308,11 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 // attempt runs one step of st's attempt with x.ctx and x.bg on the
 // attempt's own trace (telemetry.StageSpanContext): the queries, outbound
 // calls, agent invocation and log lines of the attempt land in it, under the
-// attempt span the telemetry sink exports from stage_started. The iteration
+// attempt span the telemetry sink exports from stage_started. The attempt
 // is the one the step records: the next on a fresh entry, the recorded one
 // on a re-entry (the stage functions' own rule).
 func (x *exec) attempt(st *flow.Stage, step func() error) error {
-	iter := x.rs.Iters[st.ID]
+	iter := x.rs.Attempts[st.ID]
 	if x.rs.Ph != runcore.PhIn {
 		iter++
 	}
@@ -359,7 +363,7 @@ func (x *exec) endHolds() {
 		var spent event.HoldSpend
 		spent.Add(h.Banked)
 		spent.Add(x.cutLeg)
-		_ = x.append(&event.HoldReleased{StageID: id, Iteration: x.rs.Iters[id], UserID: h.Taken.UserID,
+		_ = x.append(&event.HoldReleased{StageID: id, Attempt: x.rs.Attempts[id], UserID: h.Taken.UserID,
 			Reason: event.HoldEndedWithStage, DurationMS: max(x.e.clock().Sub(h.TakenAt).Milliseconds(), 0), HoldSpend: spent})
 	}
 }
@@ -445,6 +449,18 @@ func (x *exec) append(ps ...event.Payload) error {
 		}
 	}
 	event.Clean(ps...)
+	// A ping is recorded with its reference (build#3/decision#1), and the
+	// live one carries it too.
+	x.rs.PingRefs(ps)
+	for _, p := range ps {
+		if v, ok := p.(*event.PingRaised); ok {
+			x.e.mu.Lock()
+			if live := x.e.pings[v.PingID]; live != nil {
+				live.Ref = v.Ref
+			}
+			x.e.mu.Unlock()
+		}
+	}
 	unlock := x.e.appendLock(x.rs.RunID)
 	evs, err := x.e.store.Append(x.bg, x.rs.RunID, ps...)
 	unlock()
@@ -527,6 +543,12 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 		// workspace (stageDebug). Counted like any link — the timeline
 		// shows n/∞ — but never exhausted: the human decides when to stop.
 		return x.append(&event.EdgeTaken{From: st.ID, To: flow.ReservedDebug, Edge: kind, Count: ch.Count,
+			Max: flow.UnlimitedMax, Depth: ch.Depth, Feed: feedTail(feedContent)})
+	case runcore.EdgeImpasse:
+		// The impasse: the rejections ran out and a person decides
+		// (stageImpasse). Counted like the debug leaf, never exhausted. The
+		// verdict rides along: keep going hands it on.
+		return x.append(&event.EdgeTaken{From: st.ID, To: flow.ReservedImpasse, Edge: kind, Count: ch.Count,
 			Max: flow.UnlimitedMax, Depth: ch.Depth, Feed: feedTail(feedContent)})
 	}
 	// The content always rides along; whether the target renders it is the
@@ -665,7 +687,7 @@ func (x *exec) processAnswer(ar answerReq) (handled bool, err error) {
 	ar.p.answer = &ans
 	x.e.mu.Unlock()
 
-	recorded := &event.PingAnswered{PingID: ar.p.ID, Answer: ar.ans.Answer, Feedback: ar.ans.Feedback,
+	recorded := &event.PingAnswered{PingID: ar.p.ID, Answer: ar.ans.Answer, Feedback: ar.ans.Feedback, By: ar.ans.By,
 		Content: ar.ans.Content, AttachmentIDs: ar.ans.AttachmentIDs, Review: ar.ans.Review, Curated: ar.ans.Curated}
 	if err := x.append(recorded); err != nil {
 		// Roll the in-memory claim back so a retried answer can succeed

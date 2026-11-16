@@ -47,13 +47,13 @@ const (
 
 type AgentSession struct {
 	StageID   string `json:"stage_id"`
-	Iteration int    `json:"iteration,omitempty"`
+	Attempt   int    `json:"attempt,omitempty"`
 	SessionID string `json:"session_id"`
 }
 
 type AgentPrompted struct {
 	StageID   string `json:"stage_id"`
-	Iteration int    `json:"iteration,omitempty"`
+	Attempt   int    `json:"attempt,omitempty"`
 	Kind      string `json:"kind"`
 	Text      string `json:"text"`
 	Truncated bool   `json:"truncated,omitempty"`
@@ -63,20 +63,20 @@ type AgentPrompted struct {
 // of its visible reasoning). Segment is stable across the live deltas that
 // preceded it, so a viewer can replace its streamed draft with this.
 type AgentMessage struct {
-	StageID   string `json:"stage_id"`
-	Iteration int    `json:"iteration,omitempty"`
-	Turn      string `json:"turn,omitempty"`
-	Segment   string `json:"segment"`
-	Text      string `json:"text"`
-	Thought   bool   `json:"thought,omitempty"`
-	Cursor    string `json:"cursor,omitempty"`
+	StageID string `json:"stage_id"`
+	Attempt int    `json:"attempt,omitempty"`
+	Turn    string `json:"turn,omitempty"`
+	Segment string `json:"segment"`
+	Text    string `json:"text"`
+	Thought bool   `json:"thought,omitempty"`
+	Cursor  string `json:"cursor,omitempty"`
 }
 
 // AgentTool is one tool call in its final state (or its last known state,
 // when the turn ended before it finished).
 type AgentTool struct {
 	StageID    string      `json:"stage_id"`
-	Iteration  int         `json:"iteration,omitempty"`
+	Attempt    int         `json:"attempt,omitempty"`
 	Turn       string      `json:"turn,omitempty"`
 	ToolCallID string      `json:"tool_call_id"`
 	Title      string      `json:"title,omitempty"`
@@ -96,11 +96,11 @@ type AgentDiff struct {
 }
 
 type AgentPlan struct {
-	StageID   string      `json:"stage_id"`
-	Iteration int         `json:"iteration,omitempty"`
-	Turn      string      `json:"turn,omitempty"`
-	Entries   []PlanEntry `json:"entries"`
-	Cursor    string      `json:"cursor,omitempty"`
+	StageID string      `json:"stage_id"`
+	Attempt int         `json:"attempt,omitempty"`
+	Turn    string      `json:"turn,omitempty"`
+	Entries []PlanEntry `json:"entries"`
+	Cursor  string      `json:"cursor,omitempty"`
 }
 
 type PlanEntry struct {
@@ -112,10 +112,10 @@ type PlanEntry struct {
 // AgentNotice is something about the agent session itself rather than its
 // work: the process exited, a permission was auto-approved, a turn errored.
 type AgentNotice struct {
-	StageID   string `json:"stage_id"`
-	Iteration int    `json:"iteration,omitempty"`
-	Text      string `json:"text"`
-	Cursor    string `json:"cursor,omitempty"`
+	StageID string `json:"stage_id"`
+	Attempt int    `json:"attempt,omitempty"`
+	Text    string `json:"text"`
+	Cursor  string `json:"cursor,omitempty"`
 }
 
 type MessageQueued struct {
@@ -127,16 +127,16 @@ type MessageQueued struct {
 type MessageDelivered struct {
 	MessageIDs []string `json:"message_ids"`
 	StageID    string   `json:"stage_id,omitempty"`
-	Iteration  int      `json:"iteration,omitempty"`
+	Attempt    int      `json:"attempt,omitempty"`
 }
 
 // HoldTaken: a human took over the agent stage's live session. From here
 // the agent's turns end into a wait for the holder, not into the stage's
 // output check.
 type HoldTaken struct {
-	StageID   string `json:"stage_id"`
-	Iteration int    `json:"iteration,omitempty"`
-	UserID    string `json:"user_id,omitempty"`
+	StageID string `json:"stage_id"`
+	Attempt int    `json:"attempt,omitempty"`
+	UserID  string `json:"user_id,omitempty"`
 }
 
 // HoldReleased closes a hold with its account: how long it lasted (from
@@ -146,7 +146,7 @@ type HoldTaken struct {
 // (a harness error, a timeout, an abort).
 type HoldReleased struct {
 	StageID    string `json:"stage_id"`
-	Iteration  int    `json:"iteration,omitempty"`
+	Attempt    int    `json:"attempt,omitempty"`
 	UserID     string `json:"user_id,omitempty"`
 	Reason     string `json:"reason"` // released|stage_ended
 	DurationMS int64  `json:"duration_ms"`

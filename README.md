@@ -88,7 +88,7 @@ apothecaryd (the engine: flow interpreter, event log, API + UI)
 per-run sandbox pod (its own docker daemon) ── egress only via the workshop's gateway
   └─ the repo's own devcontainer (the workspace)
        └─ shim sidecar: the coding agent (long-lived, spoken to over ACP),
-          file and git views, terminals, the ask_human tool, port discovery
+          file and git views, terminals, the ask_human and journal_read tools, port discovery
 ```
 
 - **The engine drives every step.** Command stages are execs. Agent stages

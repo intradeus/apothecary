@@ -161,21 +161,25 @@ describe('RunTable', () => {
 				facts: {
 					...aRun().facts,
 					open: {
-						build: { iteration: 3, startedAt: '2026-10-31T11:00:00Z', outcome: 'running' },
-						plan: { iteration: 7, startedAt: '2026-10-31T10:00:00Z', outcome: 'paused' }
+						build: { attempt: 3, startedAt: '2026-10-31T11:00:00Z', outcome: 'running' },
+						plan: { attempt: 7, startedAt: '2026-10-31T10:00:00Z', outcome: 'paused' }
 					}
 				}
 			});
 			render(RunTable, { runs: [run], cols: ['stage'] });
 			await tick();
-			expect(screen.getByText('#3')).toHaveAttribute('title', 'attempt 3');
-			expect(screen.queryByText('#7')).not.toBeInTheDocument();
+			const ref = screen.getByRole('button', { name: 'Copy reference build#3' });
+			expect(ref).toHaveTextContent('build#3');
+			// Above the row's link, so a click copies rather than opens the run.
+			expect(ref.parentElement).toHaveClass('over-stretch');
+			expect(screen.queryByText(/#7/)).not.toBeInTheDocument();
 			expect(api.runs.get).not.toHaveBeenCalled();
 		});
 
 		it('shows no attempt when the current stage has none open', () => {
 			render(RunTable, { runs: [aRun({ currentStage: 'build' })], cols: ['stage'] });
-			expect(screen.queryByText(/^#/)).not.toBeInTheDocument();
+			expect(screen.getByText('build')).toBeInTheDocument();
+			expect(screen.queryByText(/#/)).not.toBeInTheDocument();
 		});
 	});
 

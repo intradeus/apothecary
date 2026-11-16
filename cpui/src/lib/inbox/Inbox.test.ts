@@ -116,6 +116,15 @@ describe('Inbox, the pending tab', () => {
 		expect(await card.findByText('PROJ-7')).toBeInTheDocument();
 	});
 
+	it('names the ping by its reference on its card, inside the card’s own button', () => {
+		loaded([ping('a', 'r1', 1, { stageId: 'build', ref: 'build#3/decision#1' })]);
+		render(Inbox);
+
+		const card = within(cards()[0]);
+		expect(card.getByTitle('Reference build#3/decision#1')).toHaveTextContent('build#3/decision#1');
+		expect(card.queryByRole('button')).not.toBeInTheDocument();
+	});
+
 	it('falls back to a short id for a run the fleet does not have', () => {
 		loaded([ping('a', '01GONERUNWXYZ', 1)], []);
 		render(Inbox);
@@ -219,6 +228,22 @@ describe('Inbox, the selected ping', () => {
 		const detail = screen.getByRole('link', { name: /Open run/ });
 		expect(detail).toHaveAttribute('href', '/runs/r1');
 		expect(screen.getAllByText('build').length).toBeGreaterThan(0);
+	});
+
+	it('names the open attempt in the run strip by its reference', () => {
+		const run = aRun({ id: 'r1', currentStage: 'build', state: 'waiting_on_human' });
+		run.facts = {
+			...run.facts,
+			open: { build: { attempt: 3, startedAt: at(1), outcome: 'paused' } }
+		};
+		loaded([ping('a', 'r1', 1, { ref: 'build#3/decision#1' })], [run]);
+		render(Inbox);
+
+		expect(screen.getByText('· attempt 3')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Copy reference build#3' })).toBeInTheDocument();
+		expect(
+			screen.getByRole('button', { name: 'Copy reference build#3/decision#1' })
+		).toBeInTheDocument();
 	});
 
 	it('lists what queues behind it', () => {
@@ -354,6 +379,18 @@ describe('Inbox, the answered tab', () => {
 		expect(await screen.findByText(/reject/)).toBeInTheDocument();
 		expect(screen.getByText(/not yet/)).toBeInTheDocument();
 		expect(screen.getByText(/Fix the invoice/)).toBeInTheDocument();
+	});
+
+	it('names an answered ping by its reference, above the row’s link', async () => {
+		vi.mocked(api.pings.list).mockResolvedValue([
+			aPing({ id: 'x', runId: 'r1', status: 'answered', ref: 'plan#1/decision#2' }),
+			aPing({ id: 'y', runId: 'r1', status: 'answered' })
+		]);
+		render(Inbox, { initialTab: 'answered' });
+
+		const ref = await screen.findByRole('button', { name: 'Copy reference plan#1/decision#2' });
+		expect(ref.parentElement).toHaveClass('over-stretch');
+		expect(screen.getAllByRole('button', { name: /^Copy reference/ })).toHaveLength(1);
 	});
 
 	it('offers a retry when the history fails', async () => {

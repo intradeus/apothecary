@@ -13,7 +13,7 @@ const item = <K extends ChatItem['kind']>(kind: K, over: Of<K>, key = kind as st
 	({ kind, key, ...over }) as unknown as ChatItem;
 
 const stage = (over: Partial<Of<'stage'>> = {}) =>
-	item('stage', { stageId: 'build', iteration: 2, agentic: true, ts: AT, ...over });
+	item('stage', { stageId: 'build', attempt: 2, agentic: true, ts: AT, ...over });
 const message = (text: string, over: Partial<Of<'message'>> = {}, key = text) =>
 	item('message', { text, thought: false, live: false, ...over }, key);
 const user = (text: string, over: Partial<Of<'user'>> = {}, key = text) =>
@@ -54,6 +54,13 @@ describe('Transcript', () => {
 		it('says "stage" for one with no agent', () => {
 			const { container } = show([stage({ agentic: false })]);
 			expect(container).toHaveTextContent(`attempt 2 · stage · ${fmtTime(AT)}`);
+		});
+
+		it('gives the attempt its reference, to quote and copy', () => {
+			show([stage({ stageId: 'settle.resolve' })]);
+			expect(
+				screen.getByRole('button', { name: 'Copy reference settle.resolve#2' })
+			).toHaveTextContent('settle.resolve#2');
 		});
 	});
 

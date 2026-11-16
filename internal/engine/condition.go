@@ -18,8 +18,8 @@ import (
 // skipped, so the timeline shows it, then on to on_success.
 func (x *exec) skipStage(st *flow.Stage, note string) error {
 	rs := x.rs
-	iter := rs.Iters[st.ID] + 1
-	if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
+	iter := rs.Attempts[st.ID] + 1
+	if err := x.append(&event.StageStarted{StageID: st.ID, Attempt: iter}); err != nil {
 		return err
 	}
 	if err := x.append(&event.StageCompleted{StageID: st.ID, Skipped: true, Note: note}); err != nil {

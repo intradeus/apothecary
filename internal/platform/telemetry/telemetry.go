@@ -122,21 +122,21 @@ func RunSpanID(runID string) trace.SpanID {
 }
 
 // StageTraceID is one stage attempt's own trace: stable for a (stage,
-// iteration), so the engine's work under the attempt and the attempt span
+// attempt), so the engine's work under the attempt and the attempt span
 // the sink exports from the event stream meet in it, across restarts too.
-func StageTraceID(runID, stageID string, iteration int) trace.TraceID {
-	sum := stageSum(runID, stageID, iteration)
+func StageTraceID(runID, stageID string, attempt int) trace.TraceID {
+	sum := stageSum(runID, stageID, attempt)
 	return trace.TraceID(sum[0:16])
 }
 
 // StageSpanID is the root span of the attempt's trace.
-func StageSpanID(runID, stageID string, iteration int) trace.SpanID {
-	sum := stageSum(runID, stageID, iteration)
+func StageSpanID(runID, stageID string, attempt int) trace.SpanID {
+	sum := stageSum(runID, stageID, attempt)
 	return trace.SpanID(sum[16:24])
 }
 
-func stageSum(runID, stageID string, iteration int) [32]byte {
-	return sha256.Sum256([]byte(runID + "\x00" + stageID + "\x00" + strconv.Itoa(iteration)))
+func stageSum(runID, stageID string, attempt int) [32]byte {
+	return sha256.Sum256([]byte(runID + "\x00" + stageID + "\x00" + strconv.Itoa(attempt)))
 }
 
 // RunSpanContext is the run marker span, as a link target or remote parent.
@@ -145,8 +145,8 @@ func RunSpanContext(runID string) trace.SpanContext {
 }
 
 // StageSpanContext is a stage attempt's root span as a remote parent.
-func StageSpanContext(runID, stageID string, iteration int) trace.SpanContext {
-	return remote(StageTraceID(runID, stageID, iteration), StageSpanID(runID, stageID, iteration))
+func StageSpanContext(runID, stageID string, attempt int) trace.SpanContext {
+	return remote(StageTraceID(runID, stageID, attempt), StageSpanID(runID, stageID, attempt))
 }
 
 func remote(tid trace.TraceID, sid trace.SpanID) trace.SpanContext {

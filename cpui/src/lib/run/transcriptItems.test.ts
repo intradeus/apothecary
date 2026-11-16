@@ -157,14 +157,14 @@ describe('buildTranscript', () => {
 		it('opens an agent stage with what runs it', () => {
 			const e = anEvent(1, 'stage_started', {
 				stage_id: 'build',
-				iteration: 2,
+				attempt: 2,
 				agent: 'dev',
 				model: 'fake/m'
 			});
 			expect(only([e])).toMatchObject({
 				kind: 'stage',
 				stageId: 'build',
-				iteration: 2,
+				attempt: 2,
 				agentic: true,
 				agent: 'dev',
 				model: 'fake/m',
@@ -179,7 +179,7 @@ describe('buildTranscript', () => {
 
 		it('reads a stage with neither as a plain one, first attempt', () => {
 			const e = anEvent(1, 'stage_started', { stage_id: 'a' });
-			expect(only([e])).toMatchObject({ agentic: false, iteration: 1 });
+			expect(only([e])).toMatchObject({ agentic: false, attempt: 1 });
 		});
 	});
 
@@ -477,9 +477,12 @@ describe('buildTranscript', () => {
 		const asked = (payload = {}) =>
 			aRaise(1, 'p1', { type: 'clarification', answer_kind: 'form', question: 'Q?', ...payload });
 
-		it.each(['gate', 'phase_confirm', 'debug'])('keeps a %s out of the chat', (type) => {
-			expect(buildTranscript([aRaise(1, 'p1', { type })], emptyLive())).toEqual([]);
-		});
+		it.each(['gate', 'phase_confirm', 'debug', 'manual', 'impasse'])(
+			'keeps a %s out of the chat',
+			(type) => {
+				expect(buildTranscript([aRaise(1, 'p1', { type })], emptyLive())).toEqual([]);
+			}
+		);
 
 		it('offers the options of a lone field', () => {
 			expect(only([asked({ form })])).toMatchObject({

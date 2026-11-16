@@ -58,7 +58,7 @@ export interface FileDiff {
  *  segment / toolCallId). */
 export interface LiveDelta {
 	stageId: string;
-	iteration: number;
+	attempt: number;
 	turn?: string;
 	kind: 'message' | 'thought' | 'tool' | 'turn_start' | 'turn_end';
 	segment?: string;

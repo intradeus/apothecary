@@ -655,7 +655,7 @@ sequences:
           input: { failure: { from: edge.failure, type: failure, optional: true } },
           on_fail: { to: build, max: 2, then: debug } }
       - { id: ship,   sequence: ship, on_fail: { to: build, max: 5, then: debug } }
-      - { id: review, type: agent, harness: $harness, model: $model, agent: reviewer, on_reject: { to: build, max: 3, then: debug } }
+      - { id: review, type: agent, harness: $harness, model: $model, agent: reviewer, on_reject: { to: build, max: 5, then: impasse } }
 
 main:
   - { id: plan, type: agent, harness: $harness, model: $model, agent: planner }
@@ -711,7 +711,7 @@ flow is written against, and no binding names them:
 | context | what it is |
 |---|---|
 | the ticket | title, goal and change type as the run started; key, status, labels and comments as they are when a prompt is built — the prompt's `# TASK` section through a `run.ticket` port, its comments through a `run.ticket.comments` one |
-| the run goal | extra direction for *this* attempt, its own prompt section |
+| the run goal | extra direction for *this* run (a try of the ticket), its own prompt section |
 | the repository | the project's repo, cloned into the workspace — plus, for a multi-repo project, its *additional* repositories beside it (`~/repos/<name>`), each on the same branch name |
 | the branch | the ticket's base branch (`apothecary/<slug>` unless the ticket names one) with the run's id tail appended, forked from the run's source branch — or, for a run created on a merge request someone opened, that merge request's own branch, at its head. The workspace's checkout is put on the run's branch before its devcontainer is built, so the devcontainer the run starts in is its own branch's |
 | the workspace | one checkout shared by every agent and command stage |
@@ -720,15 +720,84 @@ flow is written against, and no binding names them:
 | run identity | run id and its bearer token, for the ask_human channel |
 
 A flow declares none of it because none of it varies per stage. `run.ticket`,
-`run.ticket.comments`, `run.ping_answers`, `run.git.*`, `run.mr.url`, `run.workspace` and `run.service.<name>` (§4) are how a stage reaches into
+`run.ticket.comments`, `run.journal`, `run.git.*`, `run.mr.url`, `run.workspace` and `run.service.<name>` (§4) are how a stage reaches into
 this context explicitly, and those *are* declared, as ports.
+
+### References: naming an attempt and what it holds
+
+Every attempt of a stage, and every decision and note in it, has a
+**reference**: one readable name, the same in the agent's prompt, the
+journal's files, the delivered attachments, the logs and the run page, so a
+person can tell an agent "look at review#5" in words both of them share. Two
+characters carry it, one meaning each: `#` is "number *n* of", `/` is
+"inside".
+
+```
+reference := attempt [ "/" entry ]
+           | "run" [ "/" decision ]
+attempt   := stage-id "#" n
+entry     := decision | note
+decision  := "decision#" k
+note      := "note#" k
+n, k      := 1, 2, 3, …   (decimal, no leading zero)
+stage-id  := a stage's id as the flow has it: a slug, or a sequence path of
+             slugs joined by dots (settle.resolve)
+```
+
+| Reference | Is |
+|---|---|
+| `review#5` | review's fifth attempt |
+| `stage-2#3` | the third attempt of `stage-2` (a stage id may end in a digit) |
+| `settle.resolve#2` | the second attempt of the `resolve` stage of the `settle` sequence |
+| `build#3/decision#1` | the first ping raised in or about build's third attempt: a question its agent asked, or the debug, impasse, gate or manual decision on it |
+| `build#3/note#2` | the second note in that attempt's notes (`journal_notes`, §4) |
+| `run` | the run as a whole: every record of its journal |
+| `run/decision#1` | the first ping raised outside any attempt (a phase confirmation, a selection) |
+
+- **A decision's number** is its place among *every* ping raised in its
+  attempt, in the order they were raised, whatever their type. The attempt a
+  ping belongs to is its stage's latest attempt when it is raised: a debug or
+  an impasse ping comes after the attempt ended, and is about that one. A
+  ping with no stage, or whose stage has not started an attempt, is
+  `run/decision#k`. The engine records it on `ping_raised.ref` as it raises
+  the ping; a ping raised again after a crash keeps it, and a replay gives
+  the same.
+- **A note's number** is its place in its own attempt's notes. An attempt
+  keeps one capture per output (the last), so a capture taken again after a
+  crash adds no notes, and another attempt's notes being dropped moves none.
+- **An attempt number never repeats** in a run: a loop back, a restored
+  budget, a Try again — the next attempt is the next number.
+- **`#` is reserved**: no name the flow defines or the engine stores holds
+  it — stage, agent, sequence, service and port names, parameter names,
+  output paths (`to:`) and the `artifacts/` paths read from them (§6
+  *Document rules*). A file a person or an agent names (an attachment, a
+  file in a `files` output) is stored with its `#` turned to `-`. Only a
+  file of the repository read with `repo:` keeps its name: it never becomes
+  a reference. `run` and `ticket` carry no `#`, so a stage named `run`,
+  `decision` or `note` is as good as any other: `run#1/decision#1` is a
+  decision in its first attempt.
+- **Two files with one name** in one folder: the second is `name-2.ext`, the
+  third `name-3.ext` — never `#`.
+
+Where references appear:
+
+| Where | What |
+|---|---|
+| the run journal (`run.journal`, §4; `journal_read`, §9) | every entry ends with its reference in brackets; the tool takes one, and writes its files at `.apothecary/journal/<reference>.md` (`run.md` for the whole run) |
+| attachments (§9) | an answer's files are delivered under `.apothecary/attachments/<ping's reference>/` (`build#3/decision#1/screenshot.png`); the task's under `.apothecary/attachments/ticket/` |
+| logs | an attempt's log is `<stage>#<n>.log` (`review#5.log`; the provisioning log `_provision#1.log`) |
+| the run page | a chip that copies the reference, wherever an attempt or a ping is named: the timeline, the transcript, the record, the inbox and the ping card, the run table, the flow view, the dossier |
+
+A reference names; it is not an id. The run, ping and snapshot ids the API
+and the database key on stay opaque, and a reference is never parsed for
+one.
 
 ---
 
 ## §2 Stages
 
 ```yaml
-- id: build                # required, slug, unique; `end`/`done`/`abort`/`debug`/`start`/`fail` reserved
+- id: build                # required, slug, unique; `end`/`done`/`abort`/`debug`/`impasse`/`start`/`fail` reserved
   type: agent              # agent | command | human_gate | action | wait | service
   description: "..."       # optional note; documentation only, reaches no prompt
   run_if: $plan_gate         # optional condition (below); false ⇒ the stage completes as skipped
@@ -1207,8 +1276,9 @@ Each but the comparison negates as `not x`; only `run.ticket.change_type`
 compares, and only with `==` or `!=`. When it does not hold, the stage completes as
 **skipped** (`stage_completed{skipped, note}` on the timeline) and `on_success`
 follows, so the chain reads the same whether or not the ticket is remote
-or the knob is on. The validator counts what a conditional stage produces as
-produced only on some routes, and a skipped agent stage never silences the
+or the knob is on. The validator counts what a conditional stage produces —
+a `run_if` stage's, or one whose rejections reach the `impasse`, where a
+person may skip it (§3) — as produced only on some routes, and a skipped agent stage never silences the
 model check a later one needs. Tracker actions need no `run_if`: every ticket
 has a tracker, the internal one when it comes from no remote source;
 `run_if: run.ticket.tracker` keeps a stage to remote tickets.
@@ -1251,6 +1321,7 @@ on_success: build            # a stage id, `end`, `done` or `abort`
 on_success: done             # the run is done
 on_fail:    { to: build, max: 5, then: debug }
 on_reject:  { to: build, max: 3 }
+on_reject:  { to: build, max: 5, then: impasse }   # then a person decides
 on_timeout: { to: test,  max: 1 }
 on_reject:  abort            # scalar sugar for the deliberate stop
 on_fail:    debug            # scalar sugar for the debug leaf
@@ -1277,9 +1348,14 @@ times that link has been taken **over one chain run**. It does not reset when
 the source stage later succeeds: `max` bounds total spend on a loop, which is
 what makes it a budget rather than a per-visit allowance. Counters are
 persisted in the `edge_taken` events, so they survive a restart exactly, and
-pause/play leaves them untouched. **"Try again"** (`run_retried`) is the only
-thing that clears them: a human deciding to retry a dead run restores every
-stage's budget from the resume point.
+pause/play leaves them untouched. Only a person gives a budget back, and
+always on a recorded decision: **"Try again"** (`run_retried`) restores every
+stage's budget from the resume point of a dead run; **continuing from the
+`debug` leaf** restores every retry chain of the parked stage's phase; and
+**keep going at the `impasse`** restores the `on_reject` chain of the stage
+that reached it, and nothing else. A restored budget is not a new attempt:
+the stage's attempt number (`stage_started.attempt`, the timeline's attempt,
+its reference and its `<stage>#<n>.log`, §1 *References*) keeps counting.
 
 There is deliberately no backoff: every agent/command loop must carry a finite
 `max` or a human gate on the link, so no edge can spin unbounded.
@@ -1309,7 +1385,8 @@ effort", the chain ends either way — and such a link takes no `max`, `feed` or
 `done` — a stage's success or edge, or an outcome's `then: done`.
 
 **Dead ends.** A failure with nowhere to go — no edge for it, or its edge
-chain exhausted — or a person giving up at the debug leaf is a dead end. In
+chain exhausted — or a person giving up at the debug leaf or the impasse is
+a dead end. In
 the main chain or an outcome it abandons the run: the work failed, or its end
 did. In a watcher — opened by its signal or by hand — it ends that round
 only: its `phase_completed` records why, and the run goes back to waiting,
@@ -1322,16 +1399,55 @@ has the workspace — the decision is attributed to the stage that took the link
 with what it printed and the workspace link — and nothing is spent while they
 look. Unlike a gate it **holds the workspace**: no other chain runs while a
 person has the checkout. *Continue* re-enters that same stage as a fresh
-attempt (the success chain replays from there, so no stage is skipped);
-*giving up* is a dead end — the run is abandoned in the main chain or an
+attempt (the success chain replays from there, so no stage is skipped) with
+every retry chain of its phase given its budget back — the person has just
+changed the workspace, so a stage that fails again past their fix retries as
+it did the first time before it asks again, rather than landing straight back
+on the leaf (the debug links keep their count: the timeline numbers each
+visit). A continue carries **a summary of what the person did** — required,
+even "nothing" — and the engine records **which files they changed**: each
+checkout's working copy is fingerprinted as a git tree when the run parks and
+again at the continue (a temporary index, so the person's own index, stash
+and files are never touched; git-ignored and excluded files, `artifacts/`
+and `.apothecary/` among them, do not count), and the paths that differ are
+recorded per checkout (`hand_edits`) — names, never the diff. Best effort: a
+workspace recreated while parked, or git failing or taking longer than 30
+seconds, records that the changes could not be determined, and the summary stands alone. Both reach the agents
+in the run journal (`run.journal`, §4), with the decision. *Giving up* is a
+dead end — the run is abandoned in the main chain or an
 outcome, a watcher's round ends, and the inbox card says which before you
 click. Like
 `abort` it takes no `max` or `then`: it is unlimited by nature, bounded by
 human attention, and nothing can follow it but the stage itself. It is
 written `then: debug` at the end of a retry chain, or `on_fail: debug` on its
-own. Stage ids may not shadow `end`, `done`, `abort`, `debug`, `start` or `fail`. Because the leaf is that stage's pause rather than a place runs go
+own. Stage ids may not shadow `end`, `done`, `abort`, `debug`, `impasse`, `start` or `fail`. Because the leaf is that stage's pause rather than a place runs go
 to, the editor draws one per stage that escalates to it, beside the stage,
 with the return edge — never a shared sink.
+
+**The `impasse` leaf** is the fourth reserved edge target, and reached from
+**`on_reject` only**: a rejection is a verdict a person can overrule, where a
+failure is something to mend (the `debug` leaf). Taking an `impasse` link
+parks the chain on a decision — the ping (`impasse`, answer kind `choice`)
+names the stage, how many rejections in a row brought it there, and carries
+the verdict that spent the chain. Like a gate it **releases the workspace**:
+the person needs the verdict, not the checkout. They choose one of three:
+
+| choice | what follows |
+|---|---|
+| `keep_going` | the stage's own `on_reject` chain gets its budget back — that chain only, no other stage's, no other kind's — and the rejection takes it again from its first link, carrying the same verdict. The attempt number keeps counting |
+| `skip` | the stage completes as **skipped** (`stage_completed{skipped, note, by}`: who skipped it and their note), its outputs cleared — a REJECT left on disk must never read as current — and `on_success` follows with nothing carried |
+| `give_up` | a dead end, as at the debug leaf: the run is abandoned in the main chain or an outcome, a watcher's round ends |
+
+A chain that is the impasse alone (`on_reject: impasse`) has nowhere to send
+the rejection, so its ping offers `skip` and `give_up` only. The answer may
+carry a note; the engine records it with the decision (`ping_answered{by}`),
+and an agent reads it in the run journal (`run.journal`, §4). Like `debug` it takes no `max` or `then`: the person
+decides when to stop, and their answer says what follows. Because a stage
+reaching the impasse may be skipped, what it produces is produced only on
+some routes — like a `run_if` stage's (§2), a later required read of it is a
+parse error; read it `optional: true`. The editor draws the leaf once per
+stage whose rejections end there, beside the stage, with no edge out of it:
+which way the run goes is the person's choice.
 
 A run ends in one of three states, and the distinction is reporting, not
 capability (`resume` accepts the last two):
@@ -1386,7 +1502,11 @@ recent.
 ```
 
 An input is `{from, type | schema, description?, optional?}`, an output
-`{to, type | schema, description?}`. A port is always this mapping — a bare
+`{to, type | schema, description?, optional?}`. An `optional` output may be
+left unwritten — an agent's or a command's, never a `verdict` (it routes the
+stage) nor an action's (it writes what it writes); the agent's OUTPUT
+CONTRACT lists it under what it *may* write, and one written must still hold
+its shape. A port is always this mapping — a bare
 value (`plan: artifacts/plan.md`) is a parse error that spells the fix. An
 action's literal choices are not ports: they are its **settings**, under
 `with:` (§2 action). One source takes options on the port itself: a
@@ -1408,9 +1528,9 @@ What the names are checked against follows from the stage type:
 |---|---|---|
 | `artifacts/plan.md` | a path some stage of the flow writes (`to:`); nothing writing it is a parse error | the writer's |
 | `repo:docs/spec.md` | a file of the repository nothing in the flow writes | any file type |
-| `run.ticket` | the run's ticket — title, change type, goal, the person's direction for this attempt, the files attached to it, and its key, status and labels as they are when the prompt is built; an agent reading it gets the `# TASK` section | `ticket` |
+| `run.ticket` | the run's ticket — title, change type, goal, the person's direction for this run, the files attached to it, and its key, status and labels as they are when the prompt is built; an agent reading it gets the `# TASK` section | `ticket` |
 | `run.ticket.comments` | the comments on the run's ticket — the remote issue's, read live from its tracker, or the internal tracker's — read when the prompt is built. Options on the port: `limit`, how many of the latest it shows (1–200, default 20), and `exclude_own` (default `true`), which leaves out what apothecary posted (the internal tracker's run comments, and the remote comments signed with its trailer). An agent reading it gets a `# TICKET DISCUSSION` section; no comment left to show, no section | `ticket_comments` |
-| `run.ping_answers` | what the task's owner answered while the run went on, read from the run's log when the prompt is built: every question an agent asked (`ask_human`), and a gate, a `debug` leaf or a `manual` stage when the person wrote feedback or review comments there (a bare approve says nothing; a phase confirmation never counts). Oldest first, each under the stage that asked and when, the question and the answer quoted; capped at 32 KiB, the oldest dropped first. An agent reading it gets a `# PING ANSWERS` section that presents the answers as the owner's direction, amending the plan where they differ; nothing answered yet, it says so. The `builder` template's reviewer reads it, so a plan changed by an answer is not taken for a deviation | `ping_answers` |
+| `run.journal` | the run so far, read from the run's log when the prompt is built. An agent reading it gets a `# RUN JOURNAL` section — a ledger, not the whole record — in four parts. **Owner decisions**: every question an agent asked (`ask_human`); a gate, a `debug` leaf or a `manual` stage when the person wrote feedback or review comments there (a bare approve says nothing; a phase confirmation or a selection never counts); every `impasse` answer, with the verdict it answered (a skip also names the outputs the stage did not write); a gate's with the files and link it showed; a debug continue with the end of the failure's output, the person's summary and the files they changed. Oldest first, each under the stage it was about and when, the question and the decision quoted, presented as the owner's direction that amends the plan where they differ — a correction they overruled is not to be asked for again. None is ever dropped: a body past 1500 bytes shows its head, cut on a line, and names the call that gives all of it. **Agent notes**: what agents wrote in their `journal_notes` outputs, one line each — this chain run's latest 30, the rest and earlier rounds' counted (`journal_read()` writes them all) — presented as the agent's claims to check against the work, never as direction: a note explains a change, it does not excuse it. **Attempts**: per stage, how many and how the latest went (its end, its verdict, the edge it took) — `review: 5 attempts (review#1 to review#5); the latest: …`. **Reading more**: the `journal_read` tool (§9). Every entry ends with its reference in brackets (§1 *References*): `build#3/decision#1`, `build#3/note#2`, `run/decision#1`, or an attempt's `review#5`. The `builder` template's agents read it, so a plan changed by an answer is not taken for a deviation | `journal` |
 | `run.git.diff_target` | `git diff --name-status <target>...HEAD` — what the branch changes against **its target**, the branch it forked from and its merge request merges into: the changed-file list, never the full diff. On a multi-repo run one section per checkout, on a subject the subject's only | `changeset` |
 | `run.git.diff_phase` | `git diff --name-status <chain start>...HEAD` — what **this chain run** committed since the head it began on: a review round's fixes, not the whole branch. A chain run that began on no recorded head counts from the target | `changeset` |
 | `run.git.status` | `git status --short` — staged, unstaged and untracked files, what a commit would record right now (the diffs compare commits, so they cannot see this); scoped per checkout like the diffs | `changeset` |
@@ -1477,12 +1597,14 @@ When the flow is saved — every one an error that refuses the document:
    that shape satisfies every reader's. A stage cannot write one path twice.
 4. **Written before it is read.** On every route through the edges that reaches
    a reader, a writer of its path runs first — what another chain wrote counts
-   as written. An `optional` input is exempt: its stage does without it.
+   as written. An `optional` input is exempt: its stage does without it. An
+   `optional` output is no writer here: a stage reading one reads it
+   `optional`.
 
 When the run executes, before any stage — agent, command, action — every file
 it reads must be there (`input_missing`, unless the port is optional) and hold
 its type or schema (`input_invalid`); after an agent or a command, every file
-it writes must be there (`output_contract`) and hold its shape
+it writes must be there (`output_contract`, unless the port is optional) and hold its shape
 (`output_invalid`, the violations handed to the retry as `edge.failure`) — its
 schema first, then what only the round knows (a review's replies name loaded
 threads; its notes repeat neither an open thread of the factory's nor a note a
@@ -1531,7 +1653,7 @@ path is the stage's to say.
 
 The prompt is assembled, never templated, from the stage's ports: each input
 renders by its type — a `ticket` as the `# TASK` section, `ticket_comments` as
-the `# TICKET DISCUSSION` section, `ping_answers` as the `# PING ANSWERS` section, a file as `# INPUT: <name> — <description>
+the `# TICKET DISCUSSION` section, `journal` as the `# RUN JOURNAL` section, a file as `# INPUT: <name> — <description>
 (file: <path>)` and its content, a changeset as its file list, a failure or a
 verdict as what the edge carried — and the outputs as the `# OUTPUT
 CONTRACT`, each path with its shape. An agent sees the ticket only through a
@@ -1567,7 +1689,8 @@ input:
 | `review_replies` | a review round's answers (below): a list of `{thread, did, reply, resolve, rationale, evidence}` | `reply_review_comments`, a curating `human_gate` |
 | `mr_threads` | what is on the merge request, as `load_review_comments` read it (below): every thread with its comments, and the notes a person dropped at a gate | the reviewing and fixing agents, the curation page, the engine's own guards |
 | `commit_message` | `{"subject": "...", "body": "..."}` — a one-line subject (at most 100 characters), an optional body | `commit` |
-| `ticket`, `ticket_comments`, `ping_answers`, `changeset`, `failure`, `link` | values the engine provides — and `verdict`, from `edge.verdict` | inputs only |
+| `journal_notes` | an agent's notes for the run journal: `notes:` over a list of `{did, why, files?}` — each significant departure from its direction (the plan, the ticket, a verdict it was sent) it made on its own, without asking: a step not followed or done another way, scope dropped or added, a verdict point not applied — never the choices any work makes within its direction. The built-in flows' port is required: an attempt with nothing to note — most attempts — writes `notes: []` (or `notes:` alone; `{"notes": []}` in JSON), so the run knows the agent considered it — an empty file is not notes; a port may still be `optional: true` | the run journal (`run.journal`, §4): its ledger lists them as the agent's claims |
+| `ticket`, `ticket_comments`, `journal`, `changeset`, `failure`, `link` | values the engine provides — and `verdict`, from `edge.verdict` | inputs only |
 
 **Why these, and nothing else.** A file type exists for a structure something
 *built in* reads — the router, an action — and the action's port names it, so
@@ -1658,7 +1781,7 @@ artifacts/plan.md
 1. [§ Steps, lines 3–4]
    > Step one.
    say what each step changes
-   attached: .apothecary/attachments/ping-…/step.txt
+   attached: .apothecary/attachments/gate#1/decision#1/step.txt
 
 artifacts/shots/home.png
 2. [the whole image]
@@ -1746,16 +1869,20 @@ A stage failure records a reason, then follows an edge:
 | `infra` | provisioning, repository or other infrastructure failure |
 
 A stage that **skips** — its `run_if` does not hold, a tracker action on a run
-with no ticket — is not a
+with no ticket, a person skipping it at its `impasse` (§3) — is not a
 failure: it completes with `skipped` and a note, and `on_success` follows.
 
 The recommended shape, and the one the built-in `builder` flow uses: every agent
 and command stage first retries itself with its error fed back, then escalates
 to the `debug` leaf (`then: debug`). A human opens the workspace, fixes what the
 agents could not, and continuing re-runs exactly the stage that escalated — the
-success chain replays from there, so no stage is skipped. The leaf is unlimited:
+success chain replays from there, so no stage is skipped, and the phase's
+retry chains start over. The leaf is unlimited:
 the human decides when to stop, and giving up there is a dead end (§3) — the
 run is abandoned in the main chain or an outcome, a watcher's round ends.
+A **rejection** is not a failure and does not go there: a reviewer's REJECT
+goes back to the builder a few rounds, then to the `impasse` (`then:
+impasse`), where a person keeps going, skips the review or gives up.
 
 Budget exhaustion and cancellation are **run-level** outcomes, not stage
 failures: exceeding `max_cost_usd` or `max_total_turns` **pauses** the run —
@@ -1767,7 +1894,8 @@ spend at that play — and abort/pause act on the run as a whole (§3).
 the engine captures its declared outputs and its full log as **snapshots** and
 links them to the run's timeline with `snapshot_captured` events. The events
 carry references, never bytes, so they stay replay-cheap while the content can
-be any size. Two consequences worth relying on: attempt 1's plan stays
+be any size; an output's carries its port's type, so what reads it later (the
+run journal) knows it as the attempt declared it. Two consequences worth relying on: attempt 1's plan stays
 readable after attempt 2 overwrites the file, and the 8 KB tails in
 `stage_failed` / `edge.failure` are a *preview* — the whole log is one link away.
 Snapshots outlive the run they describe (archiving keeps them) and are
@@ -1807,7 +1935,10 @@ a watcher `max` of 0; `max` on an outcome; a route to `end` inside an outcome;
 no route to `done` anywhere; a route leaving its chain; a success chain that
 reaches none of `end`, `done`, `abort`; `create_mr` twice in one chain; a
 `rebase` without a `push_branch` in its chain; `timeout` on a gate or an action; `max`
-or `then` on a link to `end`, `done`, `abort` or `debug`; `max: -1` without a
+or `then` on a link to `end`, `done`, `abort`, `debug` or `impasse`; `impasse`
+reached from anything but `on_reject` (an `on_success`, an `on_fail`, an
+`on_timeout`); a required read of what a stage that may be skipped at its
+impasse produces; `max: -1` without a
 gate on the link. For sequences: a sequence stage naming no sequence, carrying
 anything but `id`/`description`/`on_success`/`on_fail`, or reusing an id; a
 sequence's route that leaves it other than by its last stage or `fail`;
@@ -1832,14 +1963,14 @@ agent's or the action's left unstated, a port whose shape does not satisfy its
 declaration's; `on_reject` on a stage that writes no verdict. And every
 **port**: a bare value, an unknown key, an input with `to:` or an output with
 `from:`, no type and no schema, an unknown type, `file` beside a schema, a
-value type on a file or on an output, an engine source with another type, an
-edge source not `optional` or that no edge of its kind enters, a command or an
+value type on a file or on an output, an `optional` verdict or action
+output, an engine source with another type, an edge source not `optional` or that no edge of its kind enters, a command or an
 action reading `run.*` or `edge.*`, a gate shown anything but a file or a
 link, a destination outside the repository or under `repo:`, one stage writing
 a path twice; a path nothing in the flow writes (unless `repo:`) or a `repo:`
 path a stage writes; writers of one path stating different shapes, or a shape
 that does not satisfy a reader's; a non-optional input not written on every
-route that reaches it. And for structures: a schema whose name is not a slug
+route that reaches it, or that reads an `optional` output as required. And for structures: a schema whose name is not a slug
 or is declared twice, with no `json_schema` or one JSON Schema refuses, or a
 `$ref` outside it; a port or a declaration naming a schema the flow does not
 declare; a file with a schema or a structured type whose path is not `.json`,
@@ -1902,13 +2033,17 @@ Normative, and enforced by the parser:
   links deep.
 - **Paths** are repo-root-relative POSIX paths: no leading `/`, no `.` or `..`
   segment, no leading `$` (that space belongs to parameters); a destination
-  never `repo:`.
+  never `repo:`. An output path (`to:`), and so an `artifacts/` path read from
+  one, holds no `#` (§1 *References*); a `repo:` source may.
   Beyond the lexical rule, the engine resolves symlinks before reading or
   writing an artifact and refuses anything landing outside the checkout — so
   an agent-authored `artifacts/plan.md -> /apothecary/run.env` cannot smuggle
   the run token into a prompt.
 - **Parameter names** are `[a-z][a-z0-9_]*`; a reference is `$` + name. The
   engine-known six are reserved.
+- **`#` is reserved** for references (§1): a stage, sequence or port name, an
+  output path or a path read from another stage that holds one is refused,
+  saying why.
 
 ---
 
@@ -2104,7 +2239,7 @@ main:
     output:
       verdict: { to: artifacts/verdict.yaml, type: verdict }
     on_success: redact
-    on_reject: { to: build, max: 3, then: debug }
+    on_reject: { to: build, max: 5, then: impasse }
     on_fail: { to: review, max: 1, then: debug }
 
   - { id: push, type: action, action: push_branch, on_success: mr, on_fail: debug }
@@ -2211,18 +2346,31 @@ harness, owns the exchange:
 - **The human may decline** instead of answering, with a note: the tool then
   returns `declined —` and their reason. "None of these fit" is a decline,
   never an option the agent declares.
-- **Every ping declares the shape of its answer** — `ping_raised.answer_kind`:
-  `yes_no` (approve | reject: a gate, a watcher's or outcome's
-  confirmation, the debug leaf) or `form` (accept with `content`, the value
-  of each field, or decline with a note: every question — an agent's, a
-  harness's own, a review round's thread selection). The inbox renders that
-  shape and the engine validates against it; nothing is inferred from a
-  ping's type.
+- **Every ping declares the shape of its answer** — `ping_raised.answer_kind`.
+  The inbox renders that shape and the engine validates against it; nothing
+  is inferred from a ping's type. Every answer records who gave it
+  (`ping_answered.by`). The three kinds differ in what the answer *means*,
+  not only in how it looks:
+
+  | kind | the answer | what it means | asked by |
+  |---|---|---|---|
+  | `yes_no` | `approve` or `reject`, with feedback | a **judgement with a polarity**: approve is the good outcome and follows `on_success`; reject is the bad one — it follows `on_reject`, counts against that route's budget, and carries the person's words on as `edge.verdict` | a gate, a watcher's or outcome's confirmation, the debug leaf, a manual stage |
+  | `form` | `accept` with `content` (a value for each field), or `decline` with the reason | **information for the asker**: the values are what was asked for; nothing is approved or rejected, and decline ("none of this fits") is always open | every question — an agent's, a harness's own, a review round's thread selection |
+  | `choice` | one of the ping's `choices`, by id, with a note (required where the choice says `note_required`) | **a decision among actions, none good or bad**: each id names what the engine does next, and none of them is an approval or a rejection — no `on_reject` fires, no budget is spent, no verdict is carried. No decline: one of them must be picked. The engine sends ids only; the clients word them | the impasse |
+
+  So a choice is never a `yes_no` with more buttons: "skip this stage" is
+  neither the work passing nor the work failing, and the flow must not read
+  it as either.
 - **Secrets are never asked.** A field a harness marks secret is not put to
   the human (an answer is kept in the run's log); the agent is told to have
   it configured as a project secret.
 - **Answers can carry files**, delivered into the workspace under
-  `.apothecary/attachments/`, kept separate from the agent's own `artifacts/`.
+  `.apothecary/attachments/<the ping's reference>/` (§1 *References*:
+  `build#3/decision#1/screenshot.png`), kept separate from the agent's own
+  `artifacts/`; the task's files are under `.apothecary/attachments/ticket/`.
+  Each keeps its stored name; a second with the same name in one folder is
+  `name-2.ext`, in the order they were attached, so a re-delivery after a
+  restart lands every file where the agent was told.
 - If the engine is unreachable for more than 10 minutes the tool returns an
   error string and the agent proceeds — a broken control plane stalls the work
   but never wedges it forever.
@@ -2238,6 +2386,37 @@ form and decline semantics. A prompt therefore states only its stage's
 policy — "if the ticket is ambiguous in a way that changes the design, ask
 the human (type=clarification) before writing the plan" — and nothing about
 the tool. The flow editor's "what a stage adds" preview lists the section.
+
+**Reading the run journal: `journal_read`.** The shim's server carries a
+second tool beside `ask_human`, offered to the same agents (opencode lists it
+as `ask_human_journal_read`), read-only by nature and so a read-only agent's
+too. It reads the run journal whose ledger a `run.journal` input (§4) puts in
+the prompt — the ledger is the list; this reads the rest:
+
+| Call | Gives | Written to |
+|---|---|---|
+| `journal_read(ref: "review#5")` | everything that attempt left — its record, its verdict, each output and its full log, in one file. A text output is embedded; one that is not text (a screenshot) is written as itself in a folder beside the file, named by its stored name (a second with the same name `-2`) | `review#5.md`, and `review#5/shot.png` |
+| `journal_read(ref: "build#3/decision#1")` | that decision whole, inline — in a file past 8 KiB | `build#3/decision#1.md` |
+| `journal_read(ref: "build#3/note#2")` | that note whole, inline — in a file past 8 KiB | `build#3/note#2.md` |
+| `journal_read()` | every record of the run — every answered ping whole (those the ledger leaves out too), every note, each attempt's record with its verdict, no logs — in one file | `run.md` |
+
+The reference is one the ledger printed (§1 *References*); one the run has
+not is refused saying so, and anything that is not a reference is refused
+with the grammar. A file goes to `.apothecary/journal/<reference>.md` in the
+checkout (git-excluded like the attachments), and the result gives its path,
+quoted, how many bytes and lines: the agent reads and searches it with its
+own tools, and nothing large reaches its context through the tool. No
+paging, no cache: each call writes the files afresh from the engine, over
+whatever was there, and the folder is emptied as each agent attempt starts,
+so no stage finds another's copy. The shim writes only a relative path of at
+most two segments, each of `[A-Za-z0-9._#-]` and not starting with a dot.
+The engine serves it from the event log and the snapshots — what an attempt
+left is its snapshot, scrubbed of secrets when captured; one dropped by
+retention reads "no longer kept" (and is not written beside the file), and
+the attempt running now holds nothing until it ends — behind
+`GET /api/runs/{run}/journal[/{ref}]` (its `#` sent as `%23`; `?file=<name>`
+gives an output's bytes) under the run's own token, so a run reads its own
+journal and no other. Every reference the ledger prints resolves.
 
 A gate (§2) and an ask_human ping are the same machinery pointed the other way:
 a gate is the *flow* stopping to ask at a declared point, a ping is the *agent*

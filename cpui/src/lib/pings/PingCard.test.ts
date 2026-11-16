@@ -38,6 +38,7 @@ const question = (over: Partial<PingLike> = {}): Partial<PingLike> => ({
 const btn = (name: string | RegExp) => screen.getByRole('button', { name });
 const noBtn = (name: string | RegExp) => screen.queryByRole('button', { name });
 const box = (name: string | RegExp) => screen.getByRole('textbox', { name });
+const noBox = (name: string | RegExp) => screen.queryByRole('textbox', { name });
 
 const FIELD_NOTE = /what should change/i;
 const REASON = /why none of this fits/i;
@@ -67,6 +68,11 @@ describe('an answered ping', () => {
 		expect(screen.queryByRole('button')).not.toBeInTheDocument();
 	});
 
+	it('keeps its reference on the one line', () => {
+		setup({ ...answered, ref: 'run/decision#3' });
+		expect(btn('Copy reference run/decision#3')).toHaveTextContent('run/decision#3');
+	});
+
 	it('says when and what', () => {
 		setup({ ...answered, answeredAt: FIVE_MIN_AGO });
 		expect(screen.getByText(/answered 5m ago —/)).toBeInTheDocument();
@@ -87,6 +93,20 @@ describe('an answered ping', () => {
 		const form = aForm({ id: 'env', options: [{ id: 'p', label: 'Production' }] });
 		setup(question({ status: 'answered', answer: 'accept', content: { env: 'p' }, form }));
 		expect(screen.getByText('Production')).toBeInTheDocument();
+	});
+
+	it.each([
+		['keep_going', 'Kept going'],
+		['skip', 'Skipped'],
+		['give_up', 'Gave up']
+	])('reads an impasse answered %s as %s', (answer, word) => {
+		const { container } = setup({
+			type: 'impasse',
+			answerKind: 'choice',
+			status: 'answered',
+			answer
+		});
+		expect(container).toHaveTextContent(word);
 	});
 
 	it('reads a declined form as declined', () => {
@@ -134,6 +154,16 @@ describe('the head', () => {
 		setup({ stageId: 'plan', raisedAt: FIVE_MIN_AGO });
 		expect(screen.getByText('plan')).toBeInTheDocument();
 		expect(screen.getByText('raised 5m ago')).toBeInTheDocument();
+	});
+
+	it('gives the ping its reference, as the engine sent it', () => {
+		setup({ stageId: 'plan', ref: 'plan#2/decision#1' });
+		expect(btn('Copy reference plan#2/decision#1')).toHaveTextContent('plan#2/decision#1');
+	});
+
+	it('shows no reference the engine did not send', () => {
+		setup({ stageId: 'plan' });
+		expect(noBtn(/^Copy reference/)).not.toBeInTheDocument();
 	});
 
 	it('takes the stage prop over the ping’s own', () => {
@@ -360,9 +390,28 @@ describe('a parked stage', () => {
 		expect(container.querySelector('img')).toBeNull();
 	});
 
-	it('continues by re-running the stage', async () => {
+	it('continues by re-running the stage, once it is told what the person did', async () => {
 		const { onanswer } = setup(debug);
+		expect(btn('Continue — re-run build')).toBeDisabled();
+		await userEvent.type(box(/what did you do\? required to continue/i), '  ');
+		expect(btn('Continue — re-run build')).toBeDisabled();
+		await userEvent.type(box(/what did you do/i), 'Pinned the lockfile');
 		await userEvent.click(btn('Continue — re-run build'));
+		expect(onanswer.mock.calls[0].slice(0, 2)).toEqual(['approve', '  Pinned the lockfile']);
+	});
+
+	it('continues on Ctrl+Enter in the summary, once it says something', async () => {
+		const { onanswer } = setup(debug);
+		await userEvent.type(box(/what did you do/i), '{Control>}{Enter}{/Control}');
+		expect(onanswer).not.toHaveBeenCalled();
+		await userEvent.type(box(/what did you do/i), 'nothing{Control>}{Enter}{/Control}');
+		expect(onanswer.mock.calls[0].slice(0, 2)).toEqual(['approve', 'nothing']);
+	});
+
+	it('asks no summary to continue past a manual stage', async () => {
+		const { onanswer } = setup({ ...debug, type: 'manual' });
+		expect(noBox(/what did you do/i)).not.toBeInTheDocument();
+		await userEvent.click(btn('Done — continue'));
 		expect(onanswer.mock.calls[0][0]).toBe('approve');
 	});
 
@@ -385,6 +434,135 @@ describe('a parked stage', () => {
 		await userEvent.click(btn('End review — the run keeps waiting'));
 		expect(onanswer.mock.calls[0].slice(0, 2)).toEqual(['reject', 'Enough']);
 		expect(noBtn('Abandon the run')).not.toBeInTheDocument();
+	});
+});
+
+describe('an impasse', () => {
+	const three = [
+		{ id: 'keep_going', noteRequired: false },
+		{ id: 'skip', noteRequired: false },
+		{ id: 'give_up', noteRequired: false }
+	];
+	const impasse: Partial<PingLike> = {
+		type: 'impasse',
+		answerKind: 'choice',
+		stageId: 'review',
+		question: 'review rejected 6 times',
+		context: 'REJECT — the **migration** is missing',
+		choices: three
+	};
+
+	it('shows the last verdict, and a button for each choice', () => {
+		const { container } = setup(impasse);
+		expect(container).toHaveTextContent('rejected round after round — your call');
+		expect(container).toHaveTextContent('The last verdict');
+		expect(screen.getByText('migration').tagName).toBe('STRONG');
+		expect(
+			screen
+				.getAllByRole('button')
+				.map((b) => b.textContent?.trim())
+				.slice(0, 3)
+		).toEqual(['Keep going', 'Skip review', 'Give up — abandon the run']);
+	});
+
+	it('says what each choice does', () => {
+		const { container } = setup(impasse);
+		expect(container).toHaveTextContent(
+			'Keep going: the rejection takes its route again, with a fresh budget for review.'
+		);
+		expect(container).toHaveTextContent(
+			'Skip: review counts as done with no output, and the flow moves on past it.'
+		);
+		expect(container).toHaveTextContent('Give up: the run is abandoned.');
+	});
+
+	it.each([
+		['Keep going', 'keep_going'],
+		['Skip review', 'skip'],
+		['Give up — abandon the run', 'give_up']
+	])('%s answers %s, the note riding along', async (name, answer) => {
+		const { onanswer } = setup(impasse);
+		await userEvent.type(box(/optional note/i), 'the reviewer is wrong');
+		await userEvent.click(btn(name));
+		expect(onanswer).toHaveBeenCalledExactlyOnceWith(
+			answer,
+			'the reviewer is wrong',
+			undefined,
+			undefined
+		);
+	});
+
+	it('needs no note by default', async () => {
+		const { onanswer } = setup(impasse);
+		await userEvent.click(btn('Skip review'));
+		expect(onanswer).toHaveBeenCalledExactlyOnceWith('skip', '', undefined, undefined);
+	});
+
+	it("ends only the round at a watcher's impasse, and says so", () => {
+		const { container } = setup({ ...impasse, endsPhase: true, phase: 'fixes' });
+		expect(btn('Give up — end fixes, the run keeps waiting')).toBeEnabled();
+		expect(container).toHaveTextContent(
+			'Give up: this round of fixes ends; the run goes back to waiting.'
+		);
+		expect(noBtn('Give up — abandon the run')).not.toBeInTheDocument();
+	});
+
+	it('offers only the choices the ping carries', () => {
+		setup({ ...impasse, choices: three.slice(1) });
+		expect(noBtn('Keep going')).not.toBeInTheDocument();
+		expect(btn('Skip review')).toBeEnabled();
+	});
+
+	it('holds a choice that needs a note until there is one', async () => {
+		const { onanswer } = setup({
+			...impasse,
+			choices: [
+				{ id: 'skip', noteRequired: true },
+				{ id: 'give_up', noteRequired: false }
+			]
+		});
+		expect(btn('Skip review')).toBeDisabled();
+		expect(btn('Skip review')).toHaveAttribute('title', 'Why? Required for Skip review.');
+		expect(btn('Give up — abandon the run')).toBeEnabled();
+		await userEvent.type(box(/optional note/i), 'out of scope');
+		expect(btn('Skip review')).toHaveAttribute('title', '');
+		await userEvent.click(btn('Skip review'));
+		expect(onanswer.mock.calls[0].slice(0, 2)).toEqual(['skip', 'out of scope']);
+	});
+
+	it('names a choice it does not know by its id, with no help', () => {
+		const { container } = setup({ ...impasse, choices: [{ id: 'later', noteRequired: false }] });
+		expect(btn('later')).toBeEnabled();
+		expect(container.querySelector('ul.choices')).toBeNull();
+	});
+
+	it('reads with no stage, no verdict and no choices', () => {
+		const { container } = setup({
+			type: 'impasse',
+			answerKind: 'choice',
+			question: 'rejected',
+			stageId: undefined,
+			context: undefined,
+			choices: undefined
+		});
+		expect(container).not.toHaveTextContent('The last verdict');
+		expect(container.querySelector('ul.choices')).toBeNull();
+	});
+
+	it('words its choices with no stage named', () => {
+		const { container } = setup({ ...impasse, stageId: undefined });
+		expect(btn('Skip')).toBeEnabled();
+		expect(container).toHaveTextContent('Keep going: the rejection takes its route again');
+		expect(container).toHaveTextContent('Skip: counts as done with no output');
+	});
+
+	it('holds every choice while one is on its way', async () => {
+		const { rerender } = setup(impasse);
+		await userEvent.click(btn('Keep going'));
+		await rerender({ busy: true });
+		expect(btn('Keep going')).toHaveAttribute('aria-busy', 'true');
+		expect(btn('Skip review')).toBeDisabled();
+		expect(btn('Skip review')).toHaveAttribute('aria-busy', 'false');
 	});
 });
 

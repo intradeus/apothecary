@@ -93,23 +93,40 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 	outs := st.Outputs
 	if len(outs) > 0 {
 		b.WriteString("# OUTPUT CONTRACT\n")
-		b.WriteString("Before finishing you MUST write these files (relative to repo root):\n")
+		var must, may []flow.Port
 		for _, o := range outs {
-			switch {
-			case o.Name == "":
-				fmt.Fprintf(&b, "- %s\n", o.Value)
-			case agentspec.IsStructuredType(o.Type):
-				// A structured file names its type beside its role: what its
-				// schema below is the shape of.
-				fmt.Fprintf(&b, "- %s — %s (%s)%s\n", o.Value, o.Name, o.Type, outputDesc(spec, o.Name))
-			default:
-				fmt.Fprintf(&b, "- %s — %s%s\n", o.Value, o.Name, outputDesc(spec, o.Name))
+			if o.Optional {
+				may = append(may, o)
+			} else {
+				must = append(must, o)
 			}
+		}
+		if len(must) > 0 {
+			b.WriteString("Before finishing you MUST write these files (relative to repo root):\n")
+			writeOutputLines(&b, spec, must)
+		}
+		if len(may) > 0 {
+			b.WriteString("You MAY also write these, only when they apply — leaving one out is fine, but one you write must hold its shape:\n")
+			writeOutputLines(&b, spec, may)
 		}
 		// A files output is a directory the agent fills.
 		for _, o := range outs {
 			if o.Type == agentspec.TypeFiles {
-				fmt.Fprintf(&b, "%s is a directory: write one or more files into it (it starts empty). Leaving it empty fails the stage.\n", o.Value)
+				if o.Optional {
+					fmt.Fprintf(&b, "%s is a directory: write one or more files into it (it starts empty), or none.\n", o.Value)
+				} else {
+					fmt.Fprintf(&b, "%s is a directory: write one or more files into it (it starts empty). Leaving it empty fails the stage.\n", o.Value)
+				}
+			}
+		}
+		// Notes for the run journal: what goes in, and what does not.
+		for _, o := range outs {
+			if o.Type == agentspec.TypeJournalNotes {
+				fmt.Fprintf(&b, "%s holds your notes for the run journal: only the significant departures from your direction — the plan, the ticket, a verdict you were sent — that you made on your own, without asking: "+
+					"a step you could not follow or did another way, scope you dropped or added, a point of a verdict you did not apply. For each: what you did, why, and the files. "+
+					"Not the choices any work makes within its direction (a name, a helper, the order of the steps): most attempts have no note, and then you still write the file, holding %s — it is how the run knows you considered it. "+
+					"Not what a person answered you: their answer is in the journal already. Not the work itself, which was asked for. "+
+					"The stages after you read each note as your claim, and check it against the work: a note explains, it does not excuse.\n", o.Value, noNotes(o.Value))
 			}
 		}
 		// A verdict output is a file like any other, plus a shape contract
@@ -132,6 +149,23 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 		}
 	}
 	return b.String()
+}
+
+// writeOutputLines lists outputs in the OUTPUT CONTRACT: each path, its
+// role, a structured file's type, its description.
+func writeOutputLines(b *strings.Builder, spec *agentspec.Spec, outs []flow.Port) {
+	for _, o := range outs {
+		switch {
+		case o.Name == "":
+			fmt.Fprintf(b, "- %s\n", o.Value)
+		case agentspec.IsStructuredType(o.Type):
+			// A structured file names its type beside its role: what its
+			// schema below is the shape of.
+			fmt.Fprintf(b, "- %s — %s (%s)%s\n", o.Value, o.Name, o.Type, outputDesc(spec, o.Name))
+		default:
+			fmt.Fprintf(b, "- %s — %s%s\n", o.Value, o.Name, outputDesc(spec, o.Name))
+		}
+	}
 }
 
 // guideSection renders the project's agent guide: a section naming the file
@@ -182,8 +216,8 @@ func (x *exec) writeInputs(b *strings.Builder, st *flow.Stage, iter int, desc fu
 				b.WriteString(ticketDiscussion(in.Name, desc(in), now.Comments, in.Limit, in.ExcludeOwn))
 			}
 			continue
-		case flow.SourcePingAnswers:
-			b.WriteString(x.pingAnswersSection(in.Name, desc(in)))
+		case flow.SourceJournal:
+			b.WriteString(x.journalSection(in.Name, desc(in)))
 			continue
 		case flow.SourceCIFailure:
 			fmt.Fprintf(b, "# INPUT: %s%s (what failed in CI)\n%s", in.Name, desc(in), ciFailureText(rs.CI))
@@ -259,7 +293,7 @@ func humanSize(n int64) string {
 }
 
 // ticketSection renders a ticket port: the TASK — its title, key, status,
-// labels and goal — with the human's direction for this attempt and the
+// labels and goal — with the human's direction for this run and the
 // files attached to it.
 func (x *exec) ticketSection(b *strings.Builder, now *runinput.TicketNow) {
 	rs := x.rs
@@ -269,15 +303,16 @@ func (x *exec) ticketSection(b *strings.Builder, now *runinput.TicketNow) {
 		fmt.Fprintf(b, "Change type: %s\n", rs.View.TicketChangeType)
 	}
 	fmt.Fprintf(b, "\n%s\n", rs.View.TicketGoal)
-	// Per-attempt direction from the human (ticket goal stays the spec; this
+	// Per-run direction from the human (ticket goal stays the spec; this
 	// is additive — "last try broke the router, use the middleware instead").
 	if rs.View.RunGoal != "" {
-		fmt.Fprintf(b, "\n# ADDITIONAL DIRECTION FOR THIS ATTEMPT\n%s\n", rs.View.RunGoal)
+		fmt.Fprintf(b, "\n# ADDITIONAL DIRECTION FOR THIS RUN\n%s\n", rs.View.RunGoal)
 	}
 	if goals := x.goalAttachments(); len(goals) > 0 {
 		b.WriteString("# ATTACHED FILES\nThe human attached these files to the task; read them with your tools:\n")
-		for _, a := range goals {
-			fmt.Fprintf(b, "- %s (%s, %s)\n", attachmentPath(a), a.Filename, a.Mime)
+		paths := attachmentPaths(goals, x.pingRef)
+		for i, a := range goals {
+			fmt.Fprintf(b, "- %s (%s, %s)\n", paths[i], a.Filename, a.Mime)
 		}
 	}
 }
@@ -479,4 +514,13 @@ func (x *exec) checkoutSections(render func(co event.Checkout) string) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// noNotes is how a journal_notes file says there is nothing to note: its
+// key, with an empty list.
+func noNotes(path string) string {
+	if strings.HasSuffix(path, ".json") {
+		return `{"notes": []}`
+	}
+	return "notes: []"
 }

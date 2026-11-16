@@ -63,16 +63,17 @@ const (
 
 	SourceTicket         = "run.ticket"          // the run's ticket
 	SourceTicketComments = "run.ticket.comments" // its comments, read as the prompt is built (limit, exclude_own on the port)
-	// SourcePingAnswers is what the task's owner answered while the run went
-	// on — an agent's questions, and what a person said at a gate — read
-	// from the run's log as the prompt is built: a later stage (a reviewer)
-	// learns what changed the plan.
-	SourcePingAnswers = "run.ping_answers"
-	SourceStatus      = "run.git.status"      // git status: staged, unstaged, untracked
-	SourceDiffTarget  = "run.git.diff_target" // what the branch changes against its target
-	SourceDiffPhase   = "run.git.diff_phase"  // what this phase run committed since it began
-	SourceMRURL       = "run.mr.url"          // the run's merge request (create_mr)
-	SourceWorkspace   = "run.workspace"       // the workspace's app link (its first exposed port)
+	// SourceJournal is the run journal: what has happened in the run so far —
+	// every decision the task's owner made, the agents' notes, each stage's
+	// passes — read from the run's log as the prompt is built (the ledger),
+	// the rest through the journal_read tool. A later stage (a reviewer)
+	// learns what changed the plan and which corrections were discarded.
+	SourceJournal    = "run.journal"
+	SourceStatus     = "run.git.status"      // git status: staged, unstaged, untracked
+	SourceDiffTarget = "run.git.diff_target" // what the branch changes against its target
+	SourceDiffPhase  = "run.git.diff_phase"  // what this phase run committed since it began
+	SourceMRURL      = "run.mr.url"          // the run's merge request (create_mr)
+	SourceWorkspace  = "run.workspace"       // the workspace's app link (its first exposed port)
 	// SourceFailure and SourceVerdict are what the edge that entered the
 	// stage carried: a failing stage's reason and output; a verdict — an
 	// agent's, a person's review at a gate — on a rejection, or on an
@@ -90,7 +91,7 @@ const (
 var engineSources = map[string]string{
 	SourceTicket:         agentspec.TypeTicket,
 	SourceTicketComments: agentspec.TypeTicketComments,
-	SourcePingAnswers:    agentspec.TypePingAnswers,
+	SourceJournal:        agentspec.TypeJournal,
 	SourceStatus:         agentspec.TypeChangeset,
 	SourceDiffTarget:     agentspec.TypeChangeset,
 	SourceDiffPhase:      agentspec.TypeChangeset,
@@ -102,7 +103,7 @@ var engineSources = map[string]string{
 }
 
 // EngineSources lists the engine's sources, in display order.
-var EngineSources = []string{SourceTicket, SourceTicketComments, SourcePingAnswers, SourceStatus, SourceDiffTarget, SourceDiffPhase,
+var EngineSources = []string{SourceTicket, SourceTicketComments, SourceJournal, SourceStatus, SourceDiffTarget, SourceDiffPhase,
 	SourceMRURL, SourceWorkspace, SourceCIFailure, SourceFailure, SourceVerdict}
 
 // A ticket_comments input's options: how many of the latest comments a
@@ -114,10 +115,6 @@ const (
 	MaxCommentsLimit     = 200
 	CommentsBudget       = 32 << 10
 )
-
-// PingAnswersBudget caps a run.ping_answers input: the latest answers that
-// fit, the oldest dropped first.
-const PingAnswersBudget = 32 << 10
 
 // IsEngineSource reports whether v is a value the engine provides rather
 // than a file.
@@ -229,22 +226,30 @@ const (
 // the link, and giving up ends the run in the main chain or an outcome, and
 // a watcher's round in a watcher.
 //
+// ReservedImpasse is the impasse leaf, reachable only from an on_reject
+// chain: NOT a terminal either — the phase parks for a person's decision on a
+// stage whose rejections ran out. Keep going takes the stage's on_reject
+// chain again from its first link, with that chain's budget back; skip
+// completes the stage as skipped and follows on_success; giving up is a dead
+// end, as at the debug leaf.
+//
 // ReservedFail exists only inside a sequence: an edge to it is the sequence
 // stage's on_fail, spliced in by the parser. No parsed flow carries it.
 const (
-	TerminalEnd   = "end"
-	TerminalDone  = "done"
-	TerminalAbort = "abort"
-	ReservedStart = "start"
-	ReservedDebug = "debug"
-	ReservedFail  = "fail"
+	TerminalEnd     = "end"
+	TerminalDone    = "done"
+	TerminalAbort   = "abort"
+	ReservedStart   = "start"
+	ReservedDebug   = "debug"
+	ReservedImpasse = "impasse"
+	ReservedFail    = "fail"
 )
 
 // routeTerminal reports whether a route target is reserved rather than a
-// stage: the two ends, the deliberate stop, or the debug leaf.
+// stage: the two ends, the deliberate stop, the debug leaf or the impasse.
 func routeTerminal(to string) bool {
 	switch to {
-	case TerminalEnd, TerminalDone, TerminalAbort, ReservedDebug:
+	case TerminalEnd, TerminalDone, TerminalAbort, ReservedDebug, ReservedImpasse:
 		return true
 	}
 	return false
@@ -295,7 +300,9 @@ const UnlimitedMax = -1
 // and ends that round in a watcher. To may be TerminalEnd: the phase ends there,
 // TerminalDone: the run completes, TerminalAbort: the run is abandoned, or
 // ReservedDebug: the phase parks for a human and comes back to this stage on
-// continue (none of the four takes max/then — there is no target stage).
+// continue, or ReservedImpasse (on_reject only): the phase parks for a
+// person's decision on the rejected stage (none of the five takes max/then —
+// there is no target stage).
 //
 // An edge does not say what it carries: the content it brings is always
 // available to its target as $DECISION or $FAILURE (FeedSentinel), and the
@@ -855,6 +862,19 @@ func (s *Stage) Setting(name, def string) string {
 
 // Edge returns the stage's edge of the given kind, or nil.
 func (s *Stage) Edge(kind string) *Edge { return s.Edges[kind] }
+
+// Skippable reports whether a person may skip s: its on_reject chain reaches
+// the impasse, whose answers include skipping the stage (FLOWLANG §3). What a
+// skippable stage writes is produced only on some routes, like a run_if
+// stage's.
+func (s *Stage) Skippable() bool {
+	for e := s.Edges[EdgeReject]; e != nil; e = e.Then {
+		if e.To == ReservedImpasse {
+			return true
+		}
+	}
+	return false
+}
 
 type Flow struct {
 	Name        string

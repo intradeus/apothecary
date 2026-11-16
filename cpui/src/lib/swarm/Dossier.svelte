@@ -7,11 +7,12 @@
 	import { errorMessage } from '$lib/core/errors';
 	import { to } from '$lib/core/urls';
 	import { I } from '$lib/design/icons';
-	import type { ResourceSample, SwarmUnit } from '$lib/domain';
+	import { attemptRef, type ResourceSample, type SwarmUnit } from '$lib/domain';
 	import { t } from '$lib/i18n/index.svelte';
 	import ResourceGraphs from '$lib/run/ResourceGraphs.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
+	import RefChip from '$lib/ui/RefChip.svelte';
 
 	let {
 		unit,
@@ -99,8 +100,10 @@
 				<dd class="mono">{crew.harness}</dd>
 				<dt>{t('swarm.dossier.agent')}</dt>
 				<dd class="mono">{crew.agent}</dd>
-				<dt>{t('swarm.dossier.iteration')}</dt>
-				<dd>{crew.iteration}</dd>
+				<dt>{t('swarm.dossier.attempt')}</dt>
+				<dd class="att">
+					{crew.attempt}<RefChip ref={attemptRef(crew.stageId, crew.attempt)} />
+				</dd>
 				<dt>{t('swarm.dossier.since')}</dt>
 				<dd>{ago(crew.since)}</dd>
 				<dt>{t('swarm.dossier.turn')}</dt>
@@ -142,6 +145,11 @@
 </aside>
 
 <style>
+	.att {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
 	.dossier {
 		display: flex;
 		flex-direction: column;

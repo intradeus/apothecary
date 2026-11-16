@@ -26,6 +26,8 @@ type PingView struct {
 	Files      []string `json:"files,omitempty"`
 	Link       string   `json:"link,omitempty"`
 	PayloadRef string   `json:"payload_ref,omitempty"`
+	// Ref is the ping's reference (ping_raised.ref): build#3/decision#1.
+	Ref string `json:"ref,omitempty"`
 	// FileTypes is each shown file's port type, by path, for the files with
 	// a structured type: what the page renders keys on it (a review is
 	// curated, a document is read).
@@ -33,6 +35,8 @@ type PingView struct {
 	Form      *event.Form       `json:"form,omitempty"`
 	// AnswerKind is the shape of the answer the ping takes (event.Answer*).
 	AnswerKind string `json:"answer_kind"`
+	// Choices is what a choice ping may be answered (event.AnswerChoice).
+	Choices []event.Choice `json:"choices,omitempty"`
 	// Phase is the phase the ping belongs to (a confirmation's phase to
 	// start, the debug leaf's phase); EndsPhase, on a debug ping, says giving
 	// up ends that phase run and the run goes back to waiting, rather than
@@ -79,10 +83,10 @@ func ReducePings(evs []event.Event) []PingView {
 		case *event.PingRaised:
 			idx[p.PingID] = len(out)
 			out = append(out, PingView{
-				PingID: p.PingID, RunID: evs[i].RunID, UserID: owner, Type: p.Type, StageID: p.StageID,
+				PingID: p.PingID, RunID: evs[i].RunID, UserID: owner, Type: p.Type, StageID: p.StageID, Ref: p.Ref,
 				Question: p.Question, Context: p.Context,
 				Files: p.Files, FileTypes: p.FileTypes, Link: p.Link, PayloadRef: Primary(p.Files, p.Link),
-				Form: p.Form, AnswerKind: p.Kind(), Phase: p.Phase, EndsPhase: p.EndsPhase,
+				Form: p.Form, AnswerKind: p.Kind(), Choices: p.Choices, Phase: p.Phase, EndsPhase: p.EndsPhase,
 				Status: "pending", RaisedAt: evs[i].TS,
 			})
 		case *event.PingAnswered:

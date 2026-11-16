@@ -17,8 +17,8 @@ import (
 func (x *exec) stageAction(st *flow.Stage) error {
 	rs := x.rs
 	if rs.Ph != runcore.PhIn {
-		iter := rs.Iters[st.ID] + 1
-		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
+		iter := rs.Attempts[st.ID] + 1
+		if err := x.append(&event.StageStarted{StageID: st.ID, Attempt: iter}); err != nil {
 			return err
 		}
 		// What it reads must be there and hold its shape, as for any stage:

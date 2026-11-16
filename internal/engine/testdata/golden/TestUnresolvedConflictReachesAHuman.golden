@@ -41,6 +41,7 @@ ping_raised stage=sync ping=debug
 run_paused stage=sync reason=waiting_on_human
 ping_answered
 run_unpaused
+hand_edits stage=sync
 stage_started stage=sync
 target_synced stage=sync
 stage_completed stage=sync

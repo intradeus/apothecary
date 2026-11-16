@@ -14,6 +14,7 @@ import {
 	END,
 	FAIL,
 	HUB,
+	impasseKey,
 	MAIN,
 	MANUAL,
 	markerKey,
@@ -23,6 +24,7 @@ import {
 	sectionKey,
 	showsSections,
 	START,
+	stopsAtImpasse,
 	terminalKey,
 	triggerLabel,
 	type DocPhase,
@@ -31,7 +33,7 @@ import {
 	type FlowDoc,
 	type Terminal
 } from '$lib/domain/flowdoc';
-import { debugNodeID, EXIT } from '$lib/flow/graph/ids';
+import { debugNodeID, EXIT, impasseNodeID } from '$lib/flow/graph/ids';
 import type { Layout, Scene } from '$lib/flow/graph/scene';
 
 /** How a stage's id changed since the last build. */
@@ -353,6 +355,30 @@ function debugNodes({ doc, layout, bandOf, hidden }: Scene): Node[] {
 	});
 }
 
+// The impasse leaf, like the debug leaf, is drawn once per stage whose
+// rejections end there, beside that stage (after its debug leaf). It draws no
+// edge of its own: what follows is the person's choice — the rejection's
+// route again, the stage's success, or a dead end.
+function impasseNodes({ doc, layout, bandOf, hidden }: Scene): Node[] {
+	return doc.stages.filter(stopsAtImpasse).map((s) => {
+		const at = layout[s.id] ?? { x: 0, y: 0 };
+		return {
+			id: impasseNodeID(s.id),
+			type: 'impasse',
+			position: layout[impasseKey(s.id)] ?? {
+				x: at.x + 24 + (parksOnDebug(s) ? 130 : 0),
+				y: at.y + 170
+			},
+			hidden: hidden(s.phase),
+			data: {
+				stage: s.id,
+				band: bandOf(s.phase),
+				title: t('flow.term.impasseFor', { stage: s.id })
+			}
+		};
+	});
+}
+
 /** Everything that is not a stage. */
 export function chromeNodes(sc: Scene, placed: Layout, width: Width): Node[] {
 	return [
@@ -363,6 +389,7 @@ export function chromeNodes(sc: Scene, placed: Layout, width: Width): Node[] {
 		...exitNodes(sc),
 		...sharedEndNodes(sc),
 		...chainEndNodes(sc, placed, width),
-		...debugNodes(sc)
+		...debugNodes(sc),
+		...impasseNodes(sc)
 	];
 }

@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { Connection } from '@xyflow/svelte';
 import { aFlow, aStage, readDoc } from '$test/fixtures/logic';
-import { debugNodeID, edgeSelection, EXIT, isMarker, linkOf, nodeKey, nodeSelection } from './ids';
+import {
+	debugNodeID,
+	edgeSelection,
+	EXIT,
+	impasseNodeID,
+	isMarker,
+	linkOf,
+	nodeKey,
+	nodeSelection
+} from './ids';
 
 const conn = (over: Partial<Connection>): Connection =>
 	({ source: 'a', target: 'b', sourceHandle: null, targetHandle: null, ...over }) as Connection;
@@ -28,6 +37,10 @@ describe('names on the canvas', () => {
 		expect(debugNodeID('build')).toBe('__debug:build');
 	});
 
+	it('names a stage’s impasse leaf', () => {
+		expect(impasseNodeID('review')).toBe('__impasse:review');
+	});
+
 	it.each([
 		['__start', true],
 		['__trigger:w', true],
@@ -45,6 +58,7 @@ describe('names on the canvas', () => {
 		['__start', 'start'],
 		['__hub', 'hub'],
 		['__debug:a', 'debug:a'],
+		['__impasse:a', 'impasse:a'],
 		['__trigger:w', 'trigger:w'],
 		['__section:watcher', 'section:watcher'],
 		['__end:w', 'end:w'],
@@ -61,6 +75,7 @@ describe('linkOf', () => {
 		['no source', { source: '' }],
 		['no target', { target: '' }],
 		['a debug leaf’s own handle', { source: '__debug:a' }],
+		['an impasse leaf', { source: '__impasse:a' }],
 		['a dataflow dot, out', { sourceHandle: 'out:plan' }],
 		['a dataflow dot, in', { sourceHandle: 'in:plan' }]
 	])('asks nothing of %s', (_, over) => {
@@ -76,7 +91,8 @@ describe('linkOf', () => {
 		['__done:w', 'done'],
 		['__abort:w', 'abort'],
 		['__hub', 'end'],
-		['__debug:a', 'debug']
+		['__debug:a', 'debug'],
+		['__impasse:a', 'impasse']
 	])('reads a drop on %s as %s', (target, to) => {
 		expect(linkOf(conn({ target, sourceHandle: 'on_fail' }))).toEqual({
 			source: 'a',
@@ -102,6 +118,7 @@ describe('nodeSelection', () => {
 	it.each<[string, unknown]>([
 		['a', { kind: 'stage', id: 'a' }],
 		['__debug:a', { kind: 'stage', id: 'a' }],
+		['__impasse:a', { kind: 'stage', id: 'a' }],
 		['__trigger:w', { kind: 'phase', id: 'w' }],
 		['__end:w', { kind: 'phase', id: 'w' }],
 		['__done:o', { kind: 'phase', id: 'o' }],

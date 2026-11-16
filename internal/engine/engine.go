@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -238,13 +239,14 @@ type runHandle struct {
 	done        chan struct{}
 }
 
-// PingGate, PingDebug and PingManual are re-exported for the engine's
-// callers (the HTTP layer and tests); the vocabulary itself belongs to the
-// event catalog.
+// PingGate, PingDebug, PingManual and PingImpasse are re-exported for the
+// engine's callers (the HTTP layer and tests); the vocabulary itself belongs
+// to the event catalog.
 const (
-	PingGate   = event.PingGate
-	PingDebug  = event.PingDebug
-	PingManual = event.PingManual
+	PingGate    = event.PingGate
+	PingDebug   = event.PingDebug
+	PingManual  = event.PingManual
+	PingImpasse = event.PingImpasse
 )
 
 // Ping is an open (or answered) human interaction. Gate pings are raised by
@@ -268,12 +270,20 @@ type Ping struct {
 	// AnswerKind is the shape of the answer this ping takes (event.Answer*):
 	// what the UI renders and the one thing validation reads.
 	AnswerKind string
+	// Choices is what a choice ping may be answered (event.AnswerChoice).
+	Choices []event.Choice
 	// Phase is the phase the ping belongs to; EndsPhase, on a debug ping,
 	// says giving up ends that phase run rather than the run (the card
 	// words its button by it).
 	Phase     string
 	EndsPhase bool
-	RaisedAt  time.Time
+	// Trees, on a debug ping: each checkout's working copy as the run
+	// parked (handedits.go).
+	Trees map[string]string
+	// Ref is the ping's reference (build#3/decision#1), set as it is
+	// recorded (runcore.State.PingRefs).
+	Ref      string
+	RaisedAt time.Time
 
 	key            string       // the raiser's idempotency key (RaisePing)
 	answered       bool         // guarded by Engine.mu
@@ -318,8 +328,10 @@ func (p *Ping) Primary() string {
 func (p *Ping) DeliveredArtifacts() []string { return answerPaths(p.deliveredFiles) }
 
 type PingAnswer struct {
-	Answer   string // approve|reject (yes_no), accept|decline (form)
+	Answer   string // approve|reject (yes_no), accept|decline (form), a choice's id (choice)
 	Feedback string
+	// By is who answered: the account that sent it (event.PingAnswered.By).
+	By string
 	// Content is an accepted form's values, by field id (validateForm).
 	Content map[string]any
 	// AttachmentIDs are the answer's attached files (claimed for the ping by
@@ -634,6 +646,9 @@ type SnapshotStore interface {
 	Capture(ctx context.Context, s filestore.Snapshot, scrub func(string) string, data []byte) (filestore.Snapshot, error)
 	ForPing(ctx context.Context, pingID string) ([]filestore.Snapshot, error)
 	Bytes(ctx context.Context, id string) ([]byte, filestore.Snapshot, error)
+	// Open is a verified handle on a snapshot's bytes; ErrContentGone when
+	// retention swept them.
+	Open(ctx context.Context, id string) (*os.File, filestore.Snapshot, error)
 }
 
 // PingLookup reads the DURABLE ping projection. The engine needs it because a
@@ -752,7 +767,7 @@ func (e *Engine) CreateRun(ctx context.Context, t runinput.Ticket, flowName, pro
 // configuration and, if it passes, appends run_created and starts the run's
 // writer goroutine. flowName "" means the project's default flow; in.MR the
 // merge request a flow with operates_on: merge_request is started on, and
-// in.Params this attempt's parameter overrides, on top of the project's
+// in.Params this run's parameter overrides, on top of the project's
 // bindings. The flow
 // is resolved with those values before preflight, so a bound harness, model
 // or run_ref is checked exactly like a literal one. Preflight failures
@@ -1962,17 +1977,34 @@ func (e *Engine) AnswerPing(pingID string, ans PingAnswer) error {
 
 // validateAnswer enforces the answer contract: a yes/no takes
 // approve|reject, a form accept with its fields or decline with a note
-// (validateForm, which tidies the content in place). One implementation,
+// (validateForm, which tidies the content in place), a choice one of the
+// ping's choices, with a note where the choice requires one. A continue at
+// the debug leaf says what the person did (the plan's D13): the agents read
+// it in the run journal, beside the files they changed. One implementation,
 // because the live and dormant paths must not be able to disagree about what
 // a valid answer is.
-func validateAnswer(kind string, form *event.Form, ans *PingAnswer) error {
+func validateAnswer(typ, kind string, form *event.Form, choices []event.Choice, ans *PingAnswer) error {
 	switch kind {
 	case event.AnswerYesNo:
 		if ans.Answer != "approve" && ans.Answer != "reject" {
 			return fmt.Errorf("this question is answered approve|reject")
 		}
+		if typ == event.PingDebug && ans.Answer == "approve" && strings.TrimSpace(ans.Feedback) == "" {
+			return fmt.Errorf("continuing needs a summary of what you did — even \"nothing\": the agents read it in the run journal")
+		}
 	case event.AnswerForm:
 		return validateForm(form, ans)
+	case event.AnswerChoice:
+		for _, c := range choices {
+			if c.ID != ans.Answer {
+				continue
+			}
+			if c.NoteRequired && strings.TrimSpace(ans.Feedback) == "" {
+				return fmt.Errorf("answering %s needs a note saying why", c.ID)
+			}
+			return nil
+		}
+		return fmt.Errorf("this question is answered %s", strings.Join(event.ChoiceIDs(choices), "|"))
 	}
 	return nil
 }
@@ -1998,7 +2030,7 @@ func (e *Engine) answerLive(pingID string, ans PingAnswer) error {
 	if !active {
 		return errNoLoop
 	}
-	if err := validateAnswer(p.AnswerKind, p.Form, &ans); err != nil {
+	if err := validateAnswer(p.Type, p.AnswerKind, p.Form, p.Choices, &ans); err != nil {
 		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
 	if err := validateReview(p.Files, ans); err != nil {
@@ -2079,7 +2111,7 @@ func (e *Engine) answerDormant(ctx context.Context, pingID string, ans PingAnswe
 		// The run ended without it; the projection already says so.
 		return fmt.Errorf("run %s: %w", v.RunID, ErrRunNotActive)
 	}
-	if err := validateAnswer(v.AnswerKind, v.Form, &ans); err != nil {
+	if err := validateAnswer(v.Type, v.AnswerKind, v.Form, v.Choices, &ans); err != nil {
 		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
 	if err := validateReview(v.Files, ans); err != nil {
@@ -2113,7 +2145,7 @@ func (e *Engine) answerDormant(ctx context.Context, pingID string, ans PingAnswe
 	}
 
 	payloads := []event.Payload{&event.PingAnswered{PingID: pingID, Answer: ans.Answer,
-		Feedback: ans.Feedback, Content: ans.Content, AttachmentIDs: ans.AttachmentIDs, Review: ans.Review, Curated: ans.Curated}}
+		Feedback: ans.Feedback, By: ans.By, Content: ans.Content, AttachmentIDs: ans.AttachmentIDs, Review: ans.Review, Curated: ans.Curated}}
 	// Wake only when this was the last thing the run was waiting for, and only
 	// if a human has not deliberately parked it: an agent may have asked two
 	// questions, and pause means pause.

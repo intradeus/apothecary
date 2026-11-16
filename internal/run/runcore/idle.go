@@ -290,6 +290,9 @@ const (
 	ResumeWaitTimedOut
 	// ResumeGateAnswered: a gate's ping has its answer on the record.
 	ResumeGateAnswered
+	// ResumeImpasseAnswered: the impasse's ping has its answer on the
+	// record (Answer).
+	ResumeImpasseAnswered
 )
 
 // ResumePlan is the parked chain's wait point, settled.
@@ -298,20 +301,29 @@ type ResumePlan struct {
 	Stage *flow.Stage
 	// Why is the failure a wait that will not hold reports.
 	Why string
-	// Answer is the recorded answer of ResumeGateAnswered.
+	// Answer is the recorded answer of ResumeGateAnswered and
+	// ResumeImpasseAnswered.
 	Answer *event.PingAnswered
 }
 
 // PlanResume checks the parked chain's wait point against the latest
 // observation: a wait whose signal holds completes, one whose signal can no
-// longer hold or that timed out fails (on_fail / on_timeout), a gate routes
-// its answer.
+// longer hold or that timed out fails (on_fail / on_timeout), a gate or the
+// impasse routes its answer.
 func (rs *State) PlanResume(obs []MRObservation, now time.Time) ResumePlan {
 	pr := rs.Parked
 	if pr == nil || rs.Pos < 0 || rs.Pos >= len(rs.Flow.Stages) {
 		return ResumePlan{}
 	}
 	st := &rs.Flow.Stages[rs.Pos]
+	if rs.Ph == PhImpasse {
+		// Parked at the impasse, whatever the stage's type (a gate's
+		// rejections may reach it too): only its own answer moves it.
+		if ans := rs.AnsweredPings[pr.Ping]; ans != nil {
+			return ResumePlan{Kind: ResumeImpasseAnswered, Stage: st, Answer: ans}
+		}
+		return ResumePlan{}
+	}
 	switch st.Type {
 	case flow.StageWait:
 		holds, impossible, why := rs.WaitState(st.WaitFor, rs.Subject, obs, now)

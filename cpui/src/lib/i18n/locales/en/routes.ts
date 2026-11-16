@@ -442,7 +442,7 @@ export default {
 	'page.ticket.direction': 'Direction',
 	'page.ticket.optional': 'optional',
 	'page.ticket.directionPlaceholder':
-		'e.g. Last attempt broke the router — use the existing middleware.',
+		'e.g. The last run broke the router — use the existing middleware.',
 	'page.ticket.directionHelp': "Added to the ticket's goal for this run only; never replaces it.",
 	'page.ticket.runFiles': 'Files for this run only',
 	'page.ticket.flow': 'Flow',
