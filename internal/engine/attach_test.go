@@ -105,25 +105,25 @@ func TestFilesOutputLeftEmptyFailsTheStage(t *testing.T) {
 		}
 	}
 	if len(captured) != 1 || captured[0].Name != "shots" || captured[0].Path != "artifacts/shots/home.png" ||
-		captured[0].Iteration != 2 || captured[0].Mime != "image/png" || snapshotBody(t, snaps, captured[0].ID) != png {
+		captured[0].Attempt != 2 || captured[0].Mime != "image/png" || snapshotBody(t, snaps, captured[0].ID) != png {
 		t.Errorf("snapshots = %+v", captured)
 	}
 }
 
-// A pass that loops back does not add to the last one's files: the second
+// An attempt that loops back does not add to the last one's files: the second
 // attempt starts from an empty directory, so a reader — the merge request's
 // attachments among them — sees only what the attempt that succeeded wrote.
-func TestFilesOutputIsEmptiedBetweenPasses(t *testing.T) {
+func TestFilesOutputIsEmptiedBetweenAttempts(t *testing.T) {
 	att, snaps, _ := newFiles(t)
 	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, shotsDoc))
 	var mu sync.Mutex
-	var passes int
+	var attempts int
 	var viewer string
 	h.agentScript(map[string]func(fake.RunCall) (agentport.AgentResult, error){
 		"shooter": func(c fake.RunCall) (agentport.AgentResult, error) {
 			mu.Lock()
-			passes++
-			n := passes
+			attempts++
+			n := attempts
 			mu.Unlock()
 			if n == 1 {
 				h.writeFile(t, c.Env, "artifacts/shots/sc1.png", png)
@@ -146,8 +146,8 @@ func TestFilesOutputIsEmptiedBetweenPasses(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.e.Wait(runID)
-	if v := h.view(t, runID); v.State != run.Completed || passes != 2 {
-		t.Fatalf("state = %s after %d passes, events %v", v.State, passes, eventTypes(h.events(t, runID)))
+	if v := h.view(t, runID); v.State != run.Completed || attempts != 2 {
+		t.Fatalf("state = %s after %d attempts, events %v", v.State, attempts, eventTypes(h.events(t, runID)))
 	}
 	want := "(files: artifacts/shots/)\n- artifacts/shots/sc3.png (18 B)\n- artifacts/shots/sc4.png (18 B)\n"
 	if !strings.Contains(viewer, want) || strings.Contains(viewer, "sc1.png") || strings.Contains(viewer, "sc2.png") {
@@ -155,12 +155,12 @@ func TestFilesOutputIsEmptiedBetweenPasses(t *testing.T) {
 	}
 	var second []string
 	for _, sn := range snapshotsFor(t, snaps, runID) {
-		if sn.StageID == "shoot" && sn.Kind == filestore.KindOutput && sn.Iteration == 2 {
+		if sn.StageID == "shoot" && sn.Kind == filestore.KindOutput && sn.Attempt == 2 {
 			second = append(second, sn.Path)
 		}
 	}
 	if strings.Join(second, ",") != "artifacts/shots/sc3.png,artifacts/shots/sc4.png" {
-		t.Errorf("the second pass captured %v", second)
+		t.Errorf("the second attempt captured %v", second)
 	}
 }
 

@@ -458,7 +458,7 @@ describe('RunPage', () => {
 		const RECIPE = 'name: f\nversion: 5\nmain:\n  - { id: build, type: agent }\n';
 		const inRecipe = () => aLiveRun({ projectId: 'p1' });
 		const pill = () => screen.findByTitle(/build · agent/);
-		const started = anEvent(1, 'stage_started', { stage_id: 'build', iteration: 1 });
+		const started = anEvent(1, 'stage_started', { stage_id: 'build', attempt: 1 });
 
 		beforeEach(() => {
 			vi.mocked(api.flows.version).mockResolvedValue({ yaml: RECIPE } as never);

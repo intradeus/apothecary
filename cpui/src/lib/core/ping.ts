@@ -302,6 +302,9 @@ export interface PingLike {
 	// Optional: shown in the card head when present.
 	stageId?: string;
 	raisedAt?: string;
+	/** Its reference, as the engine recorded it (build#3/decision#1): never
+	 *  built here, absent where the engine sent none. */
+	ref?: string;
 	// The phase the ping belongs to; on a debug ping, endsPhase says giving
 	// up ends that phase run, not the run.
 	phase?: string;

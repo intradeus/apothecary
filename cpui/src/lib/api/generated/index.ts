@@ -768,6 +768,7 @@ export type {
 	IntegrationUpdate,
 	IoPair,
 	JournalEntry,
+	JournalFile,
 	KindDescriptor,
 	LimitsInfo,
 	ListActionsData,

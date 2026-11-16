@@ -547,9 +547,9 @@ func seedLiveAttempt(t *testing.T, h *harness, runID string, extra ...event.Payl
 		&event.RunCreated{TicketTitle: "T", FlowName: "ask", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
-		&event.StageStarted{StageID: "build", Iteration: 1},
-		&event.AgentSession{StageID: "build", Iteration: 1, SessionID: "sess-r"},
-		&event.AgentMessage{StageID: "build", Iteration: 1, Segment: "build.1.1", Text: "working", Cursor: "b:5"},
+		&event.StageStarted{StageID: "build", Attempt: 1},
+		&event.AgentSession{StageID: "build", Attempt: 1, SessionID: "sess-r"},
+		&event.AgentMessage{StageID: "build", Attempt: 1, Segment: "build.1.1", Text: "working", Cursor: "b:5"},
 	}
 	for _, p := range append(base, extra...) {
 		if _, err := h.store.Append(ctx, runID, p); err != nil {

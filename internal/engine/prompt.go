@@ -124,7 +124,7 @@ func (x *exec) assemblePrompt(st *flow.Stage, iter int) string {
 			if o.Type == agentspec.TypeJournalNotes {
 				fmt.Fprintf(&b, "%s holds your notes for the run journal: only the significant departures from your direction — the plan, the ticket, a verdict you were sent — that you made on your own, without asking: "+
 					"a step you could not follow or did another way, scope you dropped or added, a point of a verdict you did not apply. For each: what you did, why, and the files. "+
-					"Not the choices any work makes within its direction (a name, a helper, the order of the steps): most passes have no note, and then you still write the file, holding %s — it is how the run knows you considered it. "+
+					"Not the choices any work makes within its direction (a name, a helper, the order of the steps): most attempts have no note, and then you still write the file, holding %s — it is how the run knows you considered it. "+
 					"Not what a person answered you: their answer is in the journal already. Not the work itself, which was asked for. "+
 					"The stages after you read each note as your claim, and check it against the work: a note explains, it does not excuse.\n", o.Value, noNotes(o.Value))
 			}
@@ -293,7 +293,7 @@ func humanSize(n int64) string {
 }
 
 // ticketSection renders a ticket port: the TASK — its title, key, status,
-// labels and goal — with the human's direction for this attempt and the
+// labels and goal — with the human's direction for this run and the
 // files attached to it.
 func (x *exec) ticketSection(b *strings.Builder, now *runinput.TicketNow) {
 	rs := x.rs
@@ -303,15 +303,16 @@ func (x *exec) ticketSection(b *strings.Builder, now *runinput.TicketNow) {
 		fmt.Fprintf(b, "Change type: %s\n", rs.View.TicketChangeType)
 	}
 	fmt.Fprintf(b, "\n%s\n", rs.View.TicketGoal)
-	// Per-attempt direction from the human (ticket goal stays the spec; this
+	// Per-run direction from the human (ticket goal stays the spec; this
 	// is additive — "last try broke the router, use the middleware instead").
 	if rs.View.RunGoal != "" {
-		fmt.Fprintf(b, "\n# ADDITIONAL DIRECTION FOR THIS ATTEMPT\n%s\n", rs.View.RunGoal)
+		fmt.Fprintf(b, "\n# ADDITIONAL DIRECTION FOR THIS RUN\n%s\n", rs.View.RunGoal)
 	}
 	if goals := x.goalAttachments(); len(goals) > 0 {
 		b.WriteString("# ATTACHED FILES\nThe human attached these files to the task; read them with your tools:\n")
-		for _, a := range goals {
-			fmt.Fprintf(b, "- %s (%s, %s)\n", attachmentPath(a), a.Filename, a.Mime)
+		paths := attachmentPaths(goals, x.pingRef)
+		for i, a := range goals {
+			fmt.Fprintf(b, "- %s (%s, %s)\n", paths[i], a.Filename, a.Mime)
 		}
 	}
 }

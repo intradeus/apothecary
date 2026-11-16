@@ -7,6 +7,8 @@
 	import { to } from '$lib/core/urls';
 	import { fmtAbs, fmtBytes, fmtClock } from '$lib/core/format';
 	import Segmented from '$lib/ui/Segmented.svelte';
+	import RefChip from '$lib/ui/RefChip.svelte';
+	import { attemptRef } from '$lib/domain';
 	import type { Hue } from '$lib/design/hues';
 	import { I } from '$lib/design/icons';
 	import type { RunStore } from '../store.svelte';
@@ -19,6 +21,8 @@
 		filename: string;
 		kind: Kind;
 		snapshot: boolean;
+		/** The attempt that captured it (review#5). */
+		ref?: string;
 		label: string;
 		source: string;
 		href?: string;
@@ -34,6 +38,7 @@
 			filename: sn.filename,
 			kind: sn.kind === 'log' ? 'log' : 'output',
 			snapshot: true,
+			ref: sn.stageId && sn.attempt ? attemptRef(sn.stageId, sn.attempt) : undefined,
 			label:
 				sn.kind === 'log'
 					? t('runview.record.lbl_log')
@@ -43,7 +48,7 @@
 			source:
 				sn.kind === 'ping_file'
 					? t('runview.record.src_ping')
-					: t('runview.record.src_stage', { stage: sn.stageId, n: sn.iteration ?? 0 }),
+					: t('runview.record.src_stage', { stage: sn.stageId, n: sn.attempt ?? 0 }),
 			href: sn.pingId ? to.ping(sn.pingId) : undefined,
 			size: sn.size,
 			at: sn.createdAt
@@ -104,12 +109,14 @@
 					? api.files.snapshotUrl(r.id, true)
 					: api.files.attachmentUrl(r.id, true)}
 				<div class="r">
-					<a
-						class="nm mono truncate text-primary"
-						href={url}
-						target="_blank"
-						rel="noreferrer"
-						title={r.filename}>{r.filename}</a
+					<span class="nmc"
+						>{#if r.ref}<RefChip ref={r.ref} />{/if}<a
+							class="nm mono truncate text-primary"
+							href={url}
+							target="_blank"
+							rel="noreferrer"
+							title={r.filename}>{r.filename}</a
+						></span
 					>
 					<span><span class="pill sm flat sq tint-{hue[r.kind]}">{r.label}</span></span>
 					<span class="muted truncate"
@@ -156,6 +163,12 @@
 	}
 	.r .nm {
 		font-size: var(--fs-meta);
+	}
+	.nmc {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
 	}
 	.src {
 		color: inherit;

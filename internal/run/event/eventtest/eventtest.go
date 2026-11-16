@@ -761,7 +761,7 @@ func runCapabilities(t *testing.T, open func(t *testing.T) event.Store) {
 			Params: map[string]string{"model": "fake/one"}, By: "human",
 		}, &event.EnvRequested{})
 		mustAppend(t, s, "r1", &event.EnvReady{EnvID: "env-1", Links: []event.Link{{Kind: "app", URL: "http://x.local"}}})
-		mustAppend(t, s, "r1", &event.StageStarted{StageID: "plan", Iteration: 1}, &event.PingRaised{PingID: "p-1", Type: event.PingGate, Question: "ok?"})
+		mustAppend(t, s, "r1", &event.StageStarted{StageID: "plan", Attempt: 1}, &event.PingRaised{PingID: "p-1", Type: event.PingGate, Question: "ok?"})
 		mustAppend(t, s, "r1", &event.PingAnswered{PingID: "p-1", Answer: "approve"}, &event.MRCreated{MRURL: "https://x.local/mr/1", MRIID: 1, Branch: "feat/login-r1"})
 		mustAppend(t, s, "r1", &event.EnvRebuildStarted{})
 		mustAppend(t, s, "r2", &event.RunCreated{UserID: "u2", TicketTitle: "Other"})
@@ -956,7 +956,7 @@ func payloadCases() []payloadCase {
 		same("no fields", func() event.Payload { return &event.EnvRequested{} }),
 		same("nil list keeps its null", func() event.Payload { return &event.EnvReady{EnvID: "e"} }),
 		same("snapshot", func() event.Payload {
-			return &event.SnapshotCaptured{SnapshotID: "s", StageID: "b", Iteration: 2, Kind: "output", Name: "plan", Path: "p.md",
+			return &event.SnapshotCaptured{SnapshotID: "s", StageID: "b", Attempt: 2, Kind: "output", Name: "plan", Path: "p.md",
 				Filename: "p.md", Mime: "text/markdown", SHA256: "ee", Size: 9, Truncated: true}
 		}),
 		same("agent tool", func() event.Payload {

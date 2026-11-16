@@ -18,6 +18,7 @@
 	import { pingMeta } from '$lib/ui/PingPill.svelte';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import FileChip from '$lib/ui/FileChip.svelte';
+	import RefChip from '$lib/ui/RefChip.svelte';
 	import { I } from '$lib/design/icons';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import { openRunEditor } from '$lib/app/editor';
@@ -255,6 +256,7 @@
 		<span class="hue-{verdict.hue} glyph">{verdict.glyph}</span>
 		<span class="ty">{meta.label}</span>
 		{#if stageId}<span class="mono faint">{stageId}</span>{/if}
+		{#if ping.ref}<RefChip ref={ping.ref} />{/if}
 		<span class="truncate grow what">
 			{#if status === 'withdrawn'}
 				{t('ping.withdrawn')}
@@ -276,6 +278,7 @@
 			<span class="ty">{meta.label}</span>
 			{#if aside}<span class="aside">{aside}</span>{/if}
 			<span class="spacer"></span>
+			{#if ping.ref}<RefChip ref={ping.ref} />{/if}
 			<span class="when">
 				{#if stageId}<span class="mono">{stageId}</span
 					>{/if}{#if stageId && ping.raisedAt}{' · '}{/if}{#if ping.raisedAt}<span

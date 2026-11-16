@@ -22,7 +22,7 @@ const (
 	TypeStageCompleted Type = "stage_completed"
 	TypeStageFailed    Type = "stage_failed"
 	// TypeStagePaused / TypeStageResumed bracket an attempt that stopped
-	// mid-flight and picked up again LATER IN THE SAME ATTEMPT: the iteration
+	// mid-flight and picked up again LATER IN THE SAME ATTEMPT: the attempt
 	// does not advance, no stage_completed/stage_failed sits between them, and
 	// everything the harness had already done still stands. Today's producer
 	// is an agent that ended its turn on an unanswered ask_human — the engine
@@ -343,10 +343,10 @@ type EnvFailed struct {
 }
 
 type StageStarted struct {
-	StageID   string `json:"stage_id"`
-	Iteration int    `json:"iteration"`
-	Harness   string `json:"harness,omitempty"`
-	Model     string `json:"model,omitempty"`
+	StageID string `json:"stage_id"`
+	Attempt int    `json:"attempt"`
+	Harness string `json:"harness,omitempty"`
+	Model   string `json:"model,omitempty"`
 	// Agent/AgentHash pin the agent-library entry and its exact content
 	// version (DESIGN3 §1): outcome events become joinable to the prompt
 	// version that produced them.
@@ -393,9 +393,9 @@ type StageFailed struct {
 // resumes — and SessionID is what the resume re-enters, persisted HERE so a
 // pause survives an engine restart (a held-open pipe never could).
 type StagePaused struct {
-	StageID   string `json:"stage_id"`
-	Iteration int    `json:"iteration,omitempty"`
-	Reason    string `json:"reason"` // ask_human|held
+	StageID string `json:"stage_id"`
+	Attempt int    `json:"attempt,omitempty"`
+	Reason  string `json:"reason"` // ask_human|held
 	// PingIDs are the open questions the attempt is waiting on: what has to
 	// be answered before a stage_resumed can follow.
 	PingIDs   []string `json:"ping_ids,omitempty"`
@@ -408,12 +408,12 @@ type StagePaused struct {
 	Hold *HoldSpend `json:"hold,omitempty"`
 }
 
-// StageResumed is the other half: the same stage and the same iteration
+// StageResumed is the other half: the same stage and the same attempt
 // picking up where StagePaused left it. PingIDs name the answers being
 // delivered to the agent.
 type StageResumed struct {
 	StageID   string   `json:"stage_id"`
-	Iteration int      `json:"iteration,omitempty"`
+	Attempt   int      `json:"attempt,omitempty"`
 	Reason    string   `json:"reason"` // answered|engine_restart
 	PingIDs   []string `json:"ping_ids,omitempty"`
 	SessionID string   `json:"session_id,omitempty"`
@@ -539,6 +539,11 @@ type PingRaised struct {
 	// by checkout name — what hand_edits compares the continue against. A
 	// checkout whose tree could not be taken is absent.
 	Trees map[string]string `json:"trees,omitempty"`
+	// Ref is the ping's reference (apothecary/internal/run/ref): the n-th
+	// ping raised in or about its stage's latest attempt, whatever its type
+	// (build#3/decision#1), or run/decision#n outside any attempt. Set by the
+	// engine as the ping is recorded; a person and an agent quote it.
+	Ref string `json:"ref,omitempty"`
 }
 
 // HandEdits: the files a person changed at the debug leaf, between the run
@@ -889,7 +894,7 @@ type VerdictReceived struct {
 // rebuild needs to reconstruct the row, minus the bytes.
 type SnapshotCaptured struct {
 	StageID    string `json:"stage_id"`
-	Iteration  int    `json:"iteration,omitempty"`
+	Attempt    int    `json:"attempt,omitempty"`
 	Kind       string `json:"kind"`
 	Name       string `json:"name,omitempty"`    // output role ('plan'); outputs only
 	Path       string `json:"path,omitempty"`    // workspace path; outputs + ping files

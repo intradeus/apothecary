@@ -148,7 +148,7 @@ export const aSnapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
 	runId: RUN_ID,
 	kind: 'output',
 	stageId: 'build',
-	iteration: 2,
+	attempt: 2,
 	name: 'plan',
 	filename: 'plan.md',
 	mime: 'text/markdown',

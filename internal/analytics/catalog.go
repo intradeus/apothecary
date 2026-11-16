@@ -236,7 +236,7 @@ var grains = []*grain{
 		runID: "a.run_id",
 		dims: []field{
 			dim("stage_id", "Stage", TypeText, "a.stage_id"),
-			dim("iteration", "Iteration", TypeCount, "a.iteration"),
+			dim("attempt", "Attempt", TypeCount, "a.attempt"),
 			dim("harness", "Harness", TypeText, "a.harness"),
 			dim("model", "Model", TypeText, "a.model"),
 			dim("agent", "Agent", TypeText, "a.agent"),

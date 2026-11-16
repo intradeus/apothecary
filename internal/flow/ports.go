@@ -10,6 +10,7 @@ package flow
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -254,6 +255,9 @@ func (p *parser) buildPorts(raw *DocPorts, dir portDir, st StageType, stage stri
 func (p *parser) buildPort(pr DocPortPair, dir portDir, st StageType, stage string) (Port, error) {
 	d := pr.Port
 	port := Port{Name: pr.Name, Type: d.Type, Schema: d.Schema, Description: d.Description, Optional: d.Optional}
+	if why := refReserved("name", pr.Name); why != "" {
+		return port, errors.New(why)
+	}
 	if !agentspec.ValidName(pr.Name) {
 		return port, fmt.Errorf("name must match [a-z0-9][a-z0-9._-]* (lowercase slug)")
 	}
@@ -282,6 +286,9 @@ func (p *parser) buildPort(pr DocPortPair, dir portDir, st StageType, stage stri
 		if err := notAParam(d.To); err != nil {
 			return port, err
 		}
+		if why := refReserved("to:", d.To); why != "" {
+			return port, errors.New(why)
+		}
 		if strings.HasPrefix(d.To, RepoPrefix) || IsEngineSource(d.To) || !validPortPath(d.To) {
 			return port, fmt.Errorf("to: %q must be a repo-relative path (no repo:, no leading /, no . or .. segments)", d.To)
 		}
@@ -303,6 +310,11 @@ func (p *parser) buildPort(pr DocPortPair, dir portDir, st StageType, stage stri
 	}
 	if err := notAParam(d.From); err != nil {
 		return port, err
+	}
+	// A repo: file is the repository's own and keeps its name (c#.md); a
+	// path the flow writes never holds the reserved character.
+	if why := refReserved("from:", d.From); why != "" && !strings.HasPrefix(d.From, RepoPrefix) {
+		return port, errors.New(why)
 	}
 	from, err := p.resolveServiceSource(d.From, stage, pr.Name)
 	if err != nil {

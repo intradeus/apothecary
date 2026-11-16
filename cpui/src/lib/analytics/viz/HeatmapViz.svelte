@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Two dimensions as a grid (stage × iteration): the first across, the
+	// Two dimensions as a grid (stage × attempt): the first across, the
 	// second down, each cell the accent at an opacity rising with its value.
 	// A cell opens the runs behind it.
 	import { Axis, Chart, Rect, Svg } from 'layerchart';

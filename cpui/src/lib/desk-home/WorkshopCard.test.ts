@@ -67,7 +67,7 @@ describe('WorkshopCard, its runs', () => {
 			facts: {
 				...aRun().facts,
 				costUsd: 1.5,
-				open: { build: { iteration: 2, startedAt: '', outcome: 'running' } }
+				open: { build: { attempt: 2, startedAt: '', outcome: 'running' } }
 			}
 		});
 

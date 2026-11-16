@@ -71,7 +71,7 @@ func (e *Engine) Release(runID, userID string) error {
 		}
 	}
 	return e.wakeHeld(context.Background(), runID, func(v run.View) []event.Payload {
-		rel := &event.HoldReleased{StageID: v.Hold.StageID, Iteration: v.Hold.Iteration, UserID: userID,
+		rel := &event.HoldReleased{StageID: v.Hold.StageID, Attempt: v.Hold.Attempt, UserID: userID,
 			Reason: event.HoldReleasedByUser, DurationMS: max(e.clock().Sub(v.Hold.Since).Milliseconds(), 0),
 			HoldSpend: event.HoldSpend{Turns: v.Hold.Turns, Messages: v.Hold.Messages}}
 		if v.Hold.CostUSD > 0 {
@@ -198,7 +198,7 @@ type holdReq struct {
 
 // takeHold records a take-over of the stage's live session.
 func (x *exec) takeHold(st *flow.Stage, iter int, userID string) error {
-	taken := &event.HoldTaken{StageID: st.ID, Iteration: iter, UserID: userID}
+	taken := &event.HoldTaken{StageID: st.ID, Attempt: iter, UserID: userID}
 	return x.append(taken)
 }
 
@@ -211,7 +211,7 @@ func (x *exec) releaseHold(st *flow.Stage, iter int, h *runcore.HeldState, by, r
 	if by == "" && h.Taken != nil {
 		by = h.Taken.UserID
 	}
-	rel := &event.HoldReleased{StageID: st.ID, Iteration: iter, UserID: by, Reason: reason,
+	rel := &event.HoldReleased{StageID: st.ID, Attempt: iter, UserID: by, Reason: reason,
 		DurationMS: max(x.e.clock().Sub(h.TakenAt).Milliseconds(), 0), HoldSpend: total}
 	return x.append(rel)
 }
@@ -271,7 +271,7 @@ func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner ag
 func (x *exec) parkOnHold(st *flow.Stage, iter int, session agentport.SessionID) error {
 	x.h.parking.Store(true)
 	if !x.rs.PausedHold[st.ID] {
-		if err := x.append(&event.StagePaused{StageID: st.ID, Iteration: iter, Reason: event.PauseHeld,
+		if err := x.append(&event.StagePaused{StageID: st.ID, Attempt: iter, Reason: event.PauseHeld,
 			SessionID: string(session)}); err != nil {
 			return err
 		}

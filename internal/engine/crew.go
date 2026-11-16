@@ -16,8 +16,8 @@ import (
 // lives in memory only, and an engine restart empties it until the loop is
 // back in the stage.
 type Crew struct {
-	StageID   string
-	Iteration int
+	StageID string
+	Attempt int
 	// Harness is the harness kind running the stage: the stage's own, or
 	// the resolution's fallback for a stage that pins none. Never empty.
 	Harness string

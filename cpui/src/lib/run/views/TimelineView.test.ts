@@ -79,12 +79,23 @@ describe('TimelineView', () => {
 					snapshot_id: 'snap-1',
 					kind: 'log',
 					stage_id: 'build',
-					iteration: 1
+					attempt: 1
 				})
 			]);
 			const link = screen.getByRole('link', { name: /open/ });
 			expect(link).toHaveAttribute('href', '/snap/snap-1');
 			expect(link).toHaveAttribute('target', '_blank');
+		});
+		it('names the attempt a row is about, and copies it', async () => {
+			const user = userEvent.setup();
+			const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+			show([
+				anEvent(1, 'stage_started', { stage_id: 'review', attempt: 5 }),
+				anEvent(2, 'run_archived')
+			]);
+			await user.click(screen.getByRole('button', { name: 'Copy reference review#5' }));
+			expect(write).toHaveBeenCalledWith('review#5');
+			expect(screen.getAllByRole('button', { name: /^Copy reference/ })).toHaveLength(1);
 		});
 	});
 
@@ -105,7 +116,7 @@ describe('TimelineView', () => {
 		});
 
 		it('offers none on a start: the attempt has no log yet', () => {
-			show([anEvent(1, 'stage_started', { stage_id: 'build', iteration: 1 })]);
+			show([anEvent(1, 'stage_started', { stage_id: 'build', attempt: 1 })]);
 			expect(noLog()).not.toBeInTheDocument();
 		});
 

@@ -802,9 +802,9 @@ main:
 		&event.RunCreated{TicketTitle: "T", FlowName: "gated", ProjectID: testProject, FlowHash: fl.Hash, Branch: "apothecary/r-gate-t"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
-		&event.StageStarted{StageID: "plan", Iteration: 1},
+		&event.StageStarted{StageID: "plan", Attempt: 1},
 		&event.StageCompleted{StageID: "plan", TurnsUsed: 1},
-		&event.StageStarted{StageID: "plan_gate", Iteration: 1},
+		&event.StageStarted{StageID: "plan_gate", Attempt: 1},
 		&event.PingRaised{PingID: "ping-gate", Type: PingGate, Question: "plan_approval: T", StageID: "plan_gate", Files: []string{"artifacts/plan.md"}},
 	} {
 		if _, err := h.store.Append(ctx, "r-gate", p); err != nil {
@@ -948,7 +948,7 @@ main:
 }
 
 // TestCrashRecoveryResumesViaResume simulates kill -9 mid-build: the event
-// log ends inside build iteration 2, with that attempt's session recorded.
+// log ends inside build attempt 2, with that attempt's session recorded.
 // Recovery must Resume, not re-Run, and finish.
 func TestCrashRecoveryResumesViaResume(t *testing.T) {
 	fl := mustFlow(t, loopFlowDoc)
@@ -964,13 +964,13 @@ func TestCrashRecoveryResumesViaResume(t *testing.T) {
 		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "apothecary/r-crash-t"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
-		&event.StageStarted{StageID: "build", Iteration: 1},
-		&event.StageCompleted{StageID: "build", TurnsUsed: 10, Usage: usage, SessionID: "sess-iteration-1"},
-		&event.StageStarted{StageID: "test", Iteration: 1},
+		&event.StageStarted{StageID: "build", Attempt: 1},
+		&event.StageCompleted{StageID: "build", TurnsUsed: 10, Usage: usage, SessionID: "sess-attempt-1"},
+		&event.StageStarted{StageID: "test", Attempt: 1},
 		&event.StageFailed{StageID: "test", Reason: event.ReasonExitNonzero},
 		&event.EdgeTaken{From: "test", To: "build", Edge: "on_fail", Count: 1, Max: 5},
-		&event.StageStarted{StageID: "build", Iteration: 2},
-		&event.AgentSession{StageID: "build", Iteration: 2, SessionID: "sess-before-crash"},
+		&event.StageStarted{StageID: "build", Attempt: 2},
+		&event.AgentSession{StageID: "build", Attempt: 2, SessionID: "sess-before-crash"},
 		// kill -9 here
 	} {
 		if _, err := h.store.Append(ctx, "r-crash", p); err != nil {
@@ -1025,7 +1025,7 @@ func TestCrashRecoveryWithoutSessionReRuns(t *testing.T) {
 		&event.RunCreated{TicketTitle: "T", FlowName: "loop", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
-		&event.StageStarted{StageID: "build", Iteration: 1},
+		&event.StageStarted{StageID: "build", Attempt: 1},
 		// kill -9 here: no session ever recorded
 	} {
 		if _, err := h.store.Append(ctx, "r-c2", p); err != nil {
@@ -1151,10 +1151,10 @@ outcomes:
 		&event.RunCreated{TicketTitle: "T", FlowName: "ac", ProjectID: testProject, FlowHash: fl.Hash, Branch: "apothecary/r-ac"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: "env-ac"},
-		&event.StageStarted{StageID: "mr", Iteration: 1},
+		&event.StageStarted{StageID: "mr", Attempt: 1},
 		&event.MRCreated{MRURL: ref.URL, MRIID: ref.IID, Branch: "apothecary/r-ac"},
 		&event.StageCompleted{StageID: "mr"},
-		&event.StageStarted{StageID: "gate", Iteration: 1},
+		&event.StageStarted{StageID: "gate", Attempt: 1},
 		&event.PingRaised{PingID: "ping-ac", Type: PingGate, Question: "final_review: T", Link: ref.URL, StageID: "gate"},
 	} {
 		if _, err := h.store.Append(ctx, "r-ac", p); err != nil {
@@ -1662,9 +1662,9 @@ func TestDebugLeafSurvivesRestart(t *testing.T) {
 			&event.RunCreated{TicketTitle: "T", FlowName: "dbg", ProjectID: testProject, FlowHash: fl.Hash, Branch: "apothecary/" + runID},
 			&event.EnvRequested{},
 			&event.EnvReady{EnvID: string(envID), Links: []event.Link{{Kind: "app", URL: "http://ws/" + runID + "/app"}}},
-			&event.StageStarted{StageID: "build", Iteration: 1},
+			&event.StageStarted{StageID: "build", Attempt: 1},
 			&event.StageCompleted{StageID: "build", SessionID: "sess-1"},
-			&event.StageStarted{StageID: "test", Iteration: 1},
+			&event.StageStarted{StageID: "test", Attempt: 1},
 			&event.StageFailed{StageID: "test", Reason: event.ReasonExitNonzero, Error: "segfault"},
 			&event.EdgeTaken{From: "test", To: "debug", Edge: "on_fail", Count: 1, Max: -1, Feed: "segfault"},
 			&event.PingRaised{PingID: "dbg-" + runID, Type: event.PingDebug, Question: "test failed", Context: "segfault",
@@ -2547,7 +2547,7 @@ func TestUnparseableFlowFailsRunTerminally(t *testing.T) {
 		&event.RunCreated{TicketTitle: "T", FlowName: fl.Name, ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: "env-1"},
-		&event.StageStarted{StageID: "build", Iteration: 1},
+		&event.StageStarted{StageID: "build", Attempt: 1},
 	} {
 		if _, err := h.store.Append(ctx, "r-brk", p); err != nil {
 			t.Fatal(err)
@@ -2838,7 +2838,7 @@ main:
 		&event.RunCreated{TicketTitle: "T", FlowName: "rec", ProjectID: testProject, FlowHash: fl.Hash, Branch: "apothecary/r-rec"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: "env-rec"},
-		&event.StageStarted{StageID: "mr", Iteration: 1},
+		&event.StageStarted{StageID: "mr", Attempt: 1},
 		&event.ActionStarted{StageID: "mr", Action: "create_mr"},
 	} {
 		if _, err := h.store.Append(ctx, "r-rec", p); err != nil {
@@ -2881,7 +2881,7 @@ main:
 		&event.RunCreated{TicketTitle: "T", FlowName: "recerr", ProjectID: testProject, FlowHash: fl.Hash, Branch: "apothecary/r-recerr"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: "env-recerr"},
-		&event.StageStarted{StageID: "mr", Iteration: 1},
+		&event.StageStarted{StageID: "mr", Attempt: 1},
 		&event.ActionStarted{StageID: "mr", Action: "create_mr"},
 	} {
 		if _, err := h.store.Append(ctx, "r-recerr", p); err != nil {

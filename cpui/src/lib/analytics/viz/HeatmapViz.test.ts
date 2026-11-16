@@ -8,7 +8,7 @@ const grid = (over: Partial<AnalyticsResult> = {}) =>
 	aResult({
 		dims: [
 			{ id: 'stage_id', label: 'Stage', type: 'text', aggs: [] },
-			{ id: 'iteration', label: 'Iteration', type: 'text', aggs: [] }
+			{ id: 'attempt', label: 'Attempt', type: 'text', aggs: [] }
 		],
 		measures: [],
 		rows: [

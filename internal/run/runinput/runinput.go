@@ -76,7 +76,7 @@ type TicketComment struct {
 // attachments.
 type Input struct {
 	Flow string // "" = the ticket/original run's flow
-	Goal string // extra direction for this attempt
+	Goal string // extra direction for this run (a try of the ticket)
 	// SourceBranch overrides the branch the restarted run forks off from;
 	// "" reuses the original run's source branch.
 	SourceBranch  string

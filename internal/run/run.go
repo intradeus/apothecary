@@ -149,13 +149,13 @@ type View struct {
 
 // HoldView is a take-over as the run page and the runs list show it.
 type HoldView struct {
-	StageID   string    `json:"stage_id"`
-	Iteration int       `json:"iteration,omitempty"`
-	UserID    string    `json:"user_id,omitempty"`
-	Since     time.Time `json:"since"`
-	Turns     int       `json:"turns,omitempty"`
-	Messages  int       `json:"messages,omitempty"`
-	CostUSD   float64   `json:"cost_usd,omitempty"`
+	StageID  string    `json:"stage_id"`
+	Attempt  int       `json:"attempt,omitempty"`
+	UserID   string    `json:"user_id,omitempty"`
+	Since    time.Time `json:"since"`
+	Turns    int       `json:"turns,omitempty"`
+	Messages int       `json:"messages,omitempty"`
+	CostUSD  float64   `json:"cost_usd,omitempty"`
 }
 
 // MRView is one merge request as the run page shows it.
@@ -373,7 +373,7 @@ func Apply(v *View, e *event.Event) {
 			v.State = Running
 		}
 	case *event.HoldTaken:
-		v.Hold = &HoldView{StageID: p.StageID, Iteration: p.Iteration, UserID: p.UserID, Since: e.TS}
+		v.Hold = &HoldView{StageID: p.StageID, Attempt: p.Attempt, UserID: p.UserID, Since: e.TS}
 	case *event.HoldReleased:
 		v.Hold = nil
 	case *event.RunPaused:

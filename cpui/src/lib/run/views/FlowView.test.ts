@@ -47,7 +47,7 @@ describe('FlowView', () => {
 		it('falls back to what the log shows when the recipe is unknown', () => {
 			show(WIDE, {
 				stageDefs: null,
-				events: [anEvent(1, 'stage_started', { stage_id: 'build', iteration: 1 })]
+				events: [anEvent(1, 'stage_started', { stage_id: 'build', attempt: 1 })]
 			});
 			expect(stageBtn('build')).toBeInTheDocument();
 		});
@@ -117,7 +117,7 @@ describe('FlowView', () => {
 		it('shows what finished, with what it cost and how long it took', () => {
 			show(WIDE, {
 				events: [
-					anEvent(1, 'stage_started', { stage_id: 'plan', iteration: 1 }),
+					anEvent(1, 'stage_started', { stage_id: 'plan', attempt: 1 }),
 					anEvent(2, 'stage_completed', {
 						stage_id: 'plan',
 						usage: { cost_usd: 0.25 },
@@ -133,7 +133,7 @@ describe('FlowView', () => {
 		it('shows what failed and why', () => {
 			show(WIDE, {
 				events: [
-					anEvent(1, 'stage_started', { stage_id: 'plan', iteration: 1 }),
+					anEvent(1, 'stage_started', { stage_id: 'plan', attempt: 1 }),
 					anEvent(2, 'stage_failed', { stage_id: 'plan', reason: 'budget_exceeded' })
 				]
 			});
@@ -144,7 +144,7 @@ describe('FlowView', () => {
 		it('shows the attempt and clock of what is running', () => {
 			show(WIDE, {
 				now: NOW + 66_000,
-				events: [anEvent(1, 'stage_started', { stage_id: 'plan', iteration: 2 })]
+				events: [anEvent(1, 'stage_started', { stage_id: 'plan', attempt: 2 })]
 			});
 			expect(stageBtn('plan')).toHaveTextContent('● agent · attempt 2');
 			expect(stageBtn('plan')).toHaveTextContent('attempt 2 · 1:05');
@@ -153,26 +153,28 @@ describe('FlowView', () => {
 		it('says when a stage waits on you', () => {
 			show(WIDE, {
 				events: [
-					anEvent(1, 'stage_started', { stage_id: 'plan', iteration: 1 }),
+					anEvent(1, 'stage_started', { stage_id: 'plan', attempt: 1 }),
 					anEvent(2, 'stage_paused', { stage_id: 'plan', reason: 'ask_human' })
 				]
 			});
 			expect(stageBtn('plan')).toHaveTextContent('waiting on you');
 		});
 
-		it('tells the tooltip the agent and the attempt', () => {
+		it('tells the tooltip the agent, the attempt and its reference', () => {
 			show(WIDE, {
-				events: [anEvent(1, 'stage_started', { stage_id: 'plan', iteration: 3 })]
+				events: [anEvent(1, 'stage_started', { stage_id: 'plan', attempt: 3 })]
 			});
-			expect(stageBtn('plan').title).toBe('plan · agent · planner · attempt 3 — open its log');
+			expect(stageBtn('plan').title).toBe(
+				'plan · agent · planner · attempt 3 · plan#3 — open its log'
+			);
 		});
 
 		it('says on the recipe that a looped-back stage runs again', () => {
 			show(TALL, {
 				events: [
-					anEvent(1, 'stage_started', { stage_id: 'plan', iteration: 1 }),
+					anEvent(1, 'stage_started', { stage_id: 'plan', attempt: 1 }),
 					anEvent(2, 'stage_completed', { stage_id: 'plan', duration_ms: 1000 }),
-					anEvent(3, 'stage_started', { stage_id: 'build', iteration: 1 }),
+					anEvent(3, 'stage_started', { stage_id: 'build', attempt: 1 }),
 					anEvent(4, 'stage_failed', { stage_id: 'build', reason: 'exit' }),
 					anEvent(5, 'edge_taken', { from: 'build', to: 'plan', edge: 'on_fail' })
 				]

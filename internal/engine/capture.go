@@ -12,7 +12,6 @@ package engine
 // partial outputs are exactly what the human debugging it wants (§4).
 
 import (
-	"fmt"
 	"path"
 
 	"apothecary/internal/flow"
@@ -21,6 +20,7 @@ import (
 	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/event"
+	"apothecary/internal/run/ref"
 )
 
 // capture is the one funnel: scrub → store → snapshot_captured. portType is
@@ -38,7 +38,7 @@ func (x *exec) capture(snap filestore.Snapshot, portType string, data []byte) {
 	}
 	if err := x.append(&event.SnapshotCaptured{
 		StageID:    stored.StageID,
-		Iteration:  stored.Iteration,
+		Attempt:    stored.Attempt,
 		Kind:       string(stored.Kind),
 		Name:       stored.Name,
 		PortType:   portType,
@@ -76,7 +76,7 @@ func (x *exec) publishOutputs(st *flow.Stage, iter int, bindings []flow.Port) {
 			continue // never written: the output contract reports it
 		}
 		x.capture(filestore.Snapshot{
-			Kind: filestore.KindOutput, StageID: st.ID, Iteration: iter,
+			Kind: filestore.KindOutput, StageID: st.ID, Attempt: iter,
 			Name: b.Name, Path: b.Value, Filename: path.Base(b.Value),
 		}, b.Type, data)
 	}
@@ -107,7 +107,7 @@ func (x *exec) publishDir(st *flow.Stage, iter int, b flow.Port) {
 			continue
 		}
 		x.capture(filestore.Snapshot{
-			Kind: filestore.KindOutput, StageID: st.ID, Iteration: iter,
+			Kind: filestore.KindOutput, StageID: st.ID, Attempt: iter,
 			Name: b.Name, Path: f.Path, Filename: path.Base(f.Path),
 		}, b.Type, data)
 	}
@@ -117,13 +117,15 @@ func (x *exec) publishDir(st *flow.Stage, iter int, b flow.Port) {
 // only on failure: a passing attempt's log is part of the record. The 8 KB
 // tails on stage_failed / edge_taken stay what they are — a replay-cheap
 // inline preview and the prompt feed — with the whole log one link away.
-func (x *exec) publishLog(stageID string, iter int, output string) {
+// It is named after its attempt's reference (review#5.log; the provisioning
+// log _provision#1.log).
+func (x *exec) publishLog(stageID string, attempt int, output string) {
 	if x.e.snapshots == nil || output == "" {
 		return
 	}
 	x.capture(filestore.Snapshot{
-		Kind: filestore.KindLog, StageID: stageID, Iteration: iter,
-		Filename: fmt.Sprintf("%s-%d.log", stageID, iter),
+		Kind: filestore.KindLog, StageID: stageID, Attempt: attempt,
+		Filename: ref.Attempt(stageID, attempt) + ".log",
 	}, "", []byte(output))
 }
 
@@ -162,7 +164,7 @@ func (x *exec) publishProvisionLog(envName string) {
 	}
 	// The next provisioning log's number; its snapshot_captured records it
 	// (the fold keeps the pseudo-stage's counter from there).
-	x.publishLog(provisionLogStage, x.rs.Iters[provisionLogStage]+1, string(out))
+	x.publishLog(provisionLogStage, x.rs.Attempts[provisionLogStage]+1, string(out))
 }
 
 // publishPingFiles snapshots the workspace files attached to a ping, at the

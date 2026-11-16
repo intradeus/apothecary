@@ -71,14 +71,14 @@ func appendFactsLog(t *testing.T, s *Store, runID string, t0 time.Time) {
 			By: "u1", TicketSourceKind: "jira", Skillsets: []event.SkillsetPin{{ID: "k1", Name: "kit", Seq: 2, Hash: "kh"}}}},
 		{1, &event.EnvRequested{}},
 		{3, &event.EnvReady{EnvID: "env-1"}},
-		{3, &event.StageStarted{StageID: "build", Iteration: 1, Harness: "claude", Model: "m1"}},
+		{3, &event.StageStarted{StageID: "build", Attempt: 1, Harness: "claude", Model: "m1"}},
 		{5, &event.PingRaised{PingID: runID + "-p1", Type: event.PingClarification, StageID: "build"}},
 		{9, &event.PingAnswered{PingID: runID + "-p1", Answer: "accept"}},
 		{10, &event.StageFailed{StageID: "build", Reason: event.ReasonExitNonzero, TurnsUsed: 2, Usage: &event.Usage{InputTokens: 10, OutputTokens: 5, CostUSD: 0.2}}},
 		{10, &event.EdgeTaken{From: "build", To: "build", Edge: "on_fail", Count: 1, Max: 3}},
-		{10, &event.StageStarted{StageID: "build", Iteration: 2, Harness: "claude", Model: "m1"}},
-		{11, &event.HoldTaken{StageID: "build", Iteration: 2, UserID: "u1"}},
-		{13, &event.HoldReleased{StageID: "build", Iteration: 2}},
+		{10, &event.StageStarted{StageID: "build", Attempt: 2, Harness: "claude", Model: "m1"}},
+		{11, &event.HoldTaken{StageID: "build", Attempt: 2, UserID: "u1"}},
+		{13, &event.HoldReleased{StageID: "build", Attempt: 2}},
 		{15, &event.StageCompleted{StageID: "build", TurnsUsed: 3, Usage: &event.Usage{InputTokens: 20, OutputTokens: 7, CostUSD: 0.3}}},
 		{15, &event.RunCompleted{}},
 	}
@@ -150,14 +150,14 @@ func TestRunFactsProjection(t *testing.T) {
 		}
 	}
 
-	rows, err := s.pool.Query(ctx, `SELECT seq, iteration, outcome, failure_reason, cost_usd, active_ms, waiting_ms, user_id, flow_hash
+	rows, err := s.pool.Query(ctx, `SELECT seq, attempt, outcome, failure_reason, cost_usd, active_ms, waiting_ms, user_id, flow_hash
 		FROM stage_attempts ORDER BY seq`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	type attempt struct {
 		seq             int64
-		iteration       int
+		attempt         int
 		outcome, reason string
 		cost            float64
 		active, waiting int64
@@ -166,7 +166,7 @@ func TestRunFactsProjection(t *testing.T) {
 	var got []attempt
 	for rows.Next() {
 		var a attempt
-		if err := rows.Scan(&a.seq, &a.iteration, &a.outcome, &a.reason, &a.cost, &a.active, &a.waiting, &a.user, &a.flowHash); err != nil {
+		if err := rows.Scan(&a.seq, &a.attempt, &a.outcome, &a.reason, &a.cost, &a.active, &a.waiting, &a.user, &a.flowHash); err != nil {
 			t.Fatal(err)
 		}
 		got = append(got, a)

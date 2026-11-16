@@ -111,7 +111,7 @@ func TestAFlowThatIsGone(t *testing.T) {
 func TestAFlowEditedUnderTheRun(t *testing.T) {
 	t.Run("its stage is gone", func(t *testing.T) {
 		h := newHarness(t, mustFlow(t, loopFlowDoc))
-		h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "vanished", Iteration: 1})
+		h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "vanished", Attempt: 1})
 		v := recoverAndSettle(t, h, "r1")
 		rf, _ := findPayload[*event.RunFailed](h.events(t, "r1"))
 		if v.State != run.Failed || rf == nil || !strings.Contains(rf.Reason, "current stage no longer exists") {
@@ -272,7 +272,7 @@ main:
 `
 	seed := func(t *testing.T) *harness {
 		h := newHarness(t, mustFlow(t, doc))
-		h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "review", Iteration: 1, Harness: "fake", Model: "fake/model"},
+		h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "review", Attempt: 1, Harness: "fake", Model: "fake/model"},
 			&event.StageCompleted{StageID: "review", TurnsUsed: 1})
 		return h
 	}

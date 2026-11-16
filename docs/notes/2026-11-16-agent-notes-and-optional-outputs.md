@@ -1,6 +1,6 @@
 # Agent notes and optional outputs
 
-Why: the journal held what the owner decided and how each pass went, but
+Why: the journal held what the owner decided and how each attempt went, but
 not what an agent chose on its own — a plan step it could not follow as
 written, a scope it narrowed, a CI check it could not run. The next agent
 then found the change differing from the plan with nothing to say why, and
@@ -28,12 +28,12 @@ What now:
   what goes in — only a significant departure from its direction made on
   its own: a step not followed or done another way, scope dropped or added,
   a verdict point not applied — what does not (the choices any work makes
-  within its direction, so most passes have none; a person's answer,
+  within its direction, so most attempts have none; a person's answer,
   already in the journal; the work that was asked for), and that the next
   stages read each note as a claim to check. The bar is high on purpose: a
   journal filled with small choices hides the departures that matter.
 - **Required in the built-in flows, written with no note when there is
-  none.** A pass with nothing to note still writes the file, `notes: []`:
+  none.** An attempt with nothing to note still writes the file, `notes: []`:
   an agent that never wrote it may never have read what it was for. An
   empty file is not enough — `touch` makes one, and so does an agent that
   never read the contract — while the key says it read the format and
@@ -47,17 +47,18 @@ What now:
   `conflict-resolver`'s), which went straight to `debug`, now has
   `on_fail: { to: resolve, max: 2, then: debug }`, like `fix` and
   `ci_repair`.
-- **In the journal**, notes are read from each pass's snapshot when the
-  journal is built (`loadNotes`) and numbered `note-<n>` in pass order. The
-  ledger has an **Agent notes** part between the decisions and the passes,
+- **In the journal**, notes are read from each attempt's snapshot when the
+  journal is built (`loadNotes`) and numbered within their attempt
+  (`build#3/note#2`, `2026-11-16-one-naming-standard-for-attempts.md`). The
+  ledger has an **Agent notes** part between the decisions and the attempts,
   worded as claims, not direction: this chain run's latest 30 notes one line
   each (oldest of them first, each cut to 300 bytes) — the latest are what
   the next agent works on — the rest and the earlier rounds' counted, with
   the call that writes them all (the plan's I4). The bound is the prompt's
   only: the tool does not page. `journal_read` gives a
-  note whole, inline; the records file has every note; a pass's record names
-  its notes, or says why they could not be read (swept, a store down, not a
-  list) — the other passes' notes stand.
+  note whole, inline; the records file has every note; an attempt's record
+  names its notes, or says why they could not be read (swept, a store down,
+  not a list) — the other attempts' notes stand.
 - **Built-in flows** (the plan's I2): the agents that edit code declare
   `notes` and every stage running them writes `artifacts/journal-notes.yaml`
   — `builder`'s `builder` (its `build` and the review watcher's
@@ -79,14 +80,14 @@ empty file, `{}`, a bare list, an unknown key do not), `ports_test.go` (an optio
 action's optional output refused), `schema_test.go` (the editor schema
 matches the grammar); `internal/engine/journal_test.go` —
 `TestAgentNotesReachTheJournal` (the builder's contract, the note in the
-next stage's ledger as a claim under its pass, read whole, in the records
-and the pass record), `TestAgentNotesRequiredButMayBeEmpty` (none written
+next stage's ledger as a claim with its reference, read whole, in the
+records and the attempt's record), `TestAgentNotesRequiredButMayBeEmpty` (none written
 fails `output_contract`; `notes: []`, `notes:` and `{"notes": []}` are no
-note in the ledger or the pass record; an empty file, a bare list or a
+note in the ledger or the attempt's record; an empty file, a bare list or a
 malformed note fails `output_invalid`),
 `TestOptionalOutputsInTheContract` (an optional output listed apart, under
 what the agent may write, and left out without failing), `TestNotesBlock`,
-`TestLoadNotesUnreadable`; `internal/project/kinds/fake_test.go` (the dev
+`TestLoadNotesUnreadable`, `TestNoteReferencesStand`; `internal/project/kinds/fake_test.go` (the dev
 fake writes `notes: []`); `internal/flow/builtin/builtin_test.go` —
 `TestBuiltinJournalNotesAreRequired` (which stages keep notes, none
 optional); `cpui/src/lib/flow/PortRows.test.ts` (a notes row

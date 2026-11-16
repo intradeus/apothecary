@@ -85,7 +85,7 @@ type State struct {
 	AbortReason string
 	EndReason   string
 
-	Iters      map[string]int // stage id -> times started
+	Attempts   map[string]int // stage id -> times started
 	EdgeCounts map[string]int // "from|kind|depth" -> times that chain link was taken
 	// ActionPending marks action stages whose intent was recorded but whose
 	// effect was never confirmed (PLAN5 M20) — the crash window between a
@@ -103,7 +103,7 @@ type State struct {
 	// derived from the edge kind — the target binds one of them or neither.
 	Feed         string
 	FeedSentinel string
-	FeedAttempts int // total allowed attempts, for the "(iteration n of m)" line
+	FeedAttempts int // total allowed attempts, for the "(attempt n of m)" line
 	// CompletedFeed is the verdict the last replayed stage_completed
 	// carries (an approval's), for recovery's routing of it.
 	CompletedFeed string
@@ -455,7 +455,7 @@ func (rs *State) StartPhase(p *event.PhaseStarted, fl *flow.Flow) {
 func NewState(fl *flow.Flow) *State {
 	return &State{
 		Flow:          fl,
-		Iters:         map[string]int{},
+		Attempts:      map[string]int{},
 		EdgeCounts:    map[string]int{},
 		ActionPending: map[string]bool{},
 		Sessions:      map[string]agentport.SessionID{},
@@ -523,11 +523,11 @@ func (rs *State) Apply(ev *event.Event) {
 		}
 	case *event.SnapshotCaptured:
 		// Keeps pseudo-stage counters monotonic across restarts: the
-		// provisioning log has no stage_started to replay its iteration
+		// provisioning log has no stage_started to replay its attempt
 		// from. A real stage's snapshots never exceed its started count,
 		// so this is a no-op for them.
-		if p.Iteration > rs.Iters[p.StageID] {
-			rs.Iters[p.StageID] = p.Iteration
+		if p.Attempt > rs.Attempts[p.StageID] {
+			rs.Attempts[p.StageID] = p.Attempt
 		}
 	case *event.StageStarted:
 		if rs.Ph == PhDebug {
@@ -544,8 +544,8 @@ func (rs *State) Apply(ev *event.Event) {
 			rs.Pos = rs.Flow.Index(p.StageID)
 		}
 		rs.Ph = PhIn
-		if p.Iteration > rs.Iters[p.StageID] {
-			rs.Iters[p.StageID] = p.Iteration
+		if p.Attempt > rs.Attempts[p.StageID] {
+			rs.Attempts[p.StageID] = p.Attempt
 		}
 		rs.GateAnswer = nil
 		rs.LastFailure = nil
@@ -866,7 +866,7 @@ func (rs *State) AnyWorkspaceStageStarted() bool {
 		return true
 	}
 	for i := range rs.Flow.Stages {
-		if st := &rs.Flow.Stages[i]; NeedsWorkspace(st) && rs.Iters[st.ID] > 0 && !rs.Elided[st.ID] {
+		if st := &rs.Flow.Stages[i]; NeedsWorkspace(st) && rs.Attempts[st.ID] > 0 && !rs.Elided[st.ID] {
 			return true
 		}
 	}

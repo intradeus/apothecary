@@ -46,7 +46,7 @@ The note travels through `run.ping_answers` until the run journal (the plan's
 Part 2) lands: an impasse answer counts there when it has a note, a skip
 always.
 
-Pass numbers are not budgets: `stage_started.iteration` keeps counting
+Attempt numbers are not budgets: `stage_started.attempt` keeps counting
 through a restored budget, so the timeline's attempt and the stage's
 `<n>.log` never repeat. The spec's "What `max` counts" now lists every
 restore — try again, continue at debug, keep going at the impasse.

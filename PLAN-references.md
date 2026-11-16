@@ -1,7 +1,7 @@
 # Plan: one naming standard for attempts and what they hold
 
-Status: agreed in discussion, not implemented. Not meant to be committed as
-is. Once it lands, the standard lives in `docs/flow-language.md` and the
+Status: implemented on this branch (Parts 1–8). Not meant to be committed
+as is. Once it lands, the standard lives in `docs/flow-language.md` and the
 reasoning in a note in `docs/notes/`.
 
 Builds on the run journal (`PLAN-impasse-and-run-journal.md`, Part 2), on

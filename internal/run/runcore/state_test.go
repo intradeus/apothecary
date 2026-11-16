@@ -33,12 +33,12 @@ func TestReplayParksAndResumes(t *testing.T) {
 	evs := []event.Event{
 		ev(&event.RunCreated{TicketTitle: "t", FlowName: "park", By: "human"}),
 		ev(&event.PhaseStarted{Phase: flow.MainPhase, By: "human"}),
-		ev(&event.StageStarted{StageID: "build", Iteration: 1}),
+		ev(&event.StageStarted{StageID: "build", Attempt: 1}),
 		ev(&event.StageCompleted{StageID: "build"}),
-		ev(&event.StageStarted{StageID: "mr", Iteration: 1}),
+		ev(&event.StageStarted{StageID: "mr", Attempt: 1}),
 		ev(&event.MRCreated{Repo: "repo", Branch: "b", Target: "main", MRURL: "https://x/1", MRIID: 1}),
 		ev(&event.StageCompleted{StageID: "mr"}),
-		ev(&event.StageStarted{StageID: "merged", Iteration: 1}),
+		ev(&event.StageStarted{StageID: "merged", Attempt: 1}),
 		ev(&event.PhaseParked{Phase: flow.MainPhase, StageID: "merged"}),
 	}
 	rs := Replay(evs, fl)
@@ -64,7 +64,7 @@ func TestAnOutcomeTakesTheCursorFromAParkedChain(t *testing.T) {
 	rs := Replay([]event.Event{
 		ev(&event.RunCreated{TicketTitle: "t", FlowName: "park", By: "human"}),
 		ev(&event.PhaseStarted{Phase: flow.MainPhase, By: "human"}),
-		ev(&event.StageStarted{StageID: "merged", Iteration: 1}),
+		ev(&event.StageStarted{StageID: "merged", Attempt: 1}),
 		ev(&event.PhaseParked{Phase: flow.MainPhase, StageID: "merged"}),
 		ev(&event.PhaseStarted{Phase: "shipped", Subject: "repo", Key: "k", By: "signal"}),
 	}, fl)
@@ -95,7 +95,7 @@ func TestReplayPinsThePhaseRunsNewestHead(t *testing.T) {
 		t.Fatalf("after its push: tip %q head %q — run.git.diff_phase still counts from t1, a merge pins p2", rs.PhaseTip, rs.PhaseHead)
 	}
 	evs = append(evs,
-		ev(&event.StageStarted{StageID: "sync", Iteration: 1}),
+		ev(&event.StageStarted{StageID: "sync", Attempt: 1}),
 		ev(&event.PhaseParked{Phase: "conflicts", Subject: "repo", StageID: "sync"}),
 		ev(&event.PhaseResumed{Phase: "conflicts", Subject: "repo", StageID: "sync"}),
 	)
@@ -187,17 +187,17 @@ func TestContinueFromDebugRestoresThePhasesRetryBudgets(t *testing.T) {
 	evs := []event.Event{
 		ev(&event.RunCreated{TicketTitle: "t", FlowName: "dbg", By: "human"}),
 		ev(&event.PhaseStarted{Phase: flow.MainPhase, By: "human"}),
-		ev(&event.StageStarted{StageID: "build", Iteration: 1}),
+		ev(&event.StageStarted{StageID: "build", Attempt: 1}),
 		ev(&event.StageFailed{StageID: "build", Error: "x"}),
 		ev(&event.EdgeTaken{From: "build", To: "build", Edge: flow.EdgeFail, Count: 1, Max: 2}),
-		ev(&event.StageStarted{StageID: "build", Iteration: 2}),
+		ev(&event.StageStarted{StageID: "build", Attempt: 2}),
 		ev(&event.StageCompleted{StageID: "build"}),
-		ev(&event.StageStarted{StageID: "test", Iteration: 1}),
+		ev(&event.StageStarted{StageID: "test", Attempt: 1}),
 		ev(&event.StageFailed{StageID: "test", Error: "red"}),
 		ev(&event.EdgeTaken{From: "test", To: "build", Edge: flow.EdgeFail, Count: 5, Max: 5}),
-		ev(&event.StageStarted{StageID: "build", Iteration: 3}),
+		ev(&event.StageStarted{StageID: "build", Attempt: 3}),
 		ev(&event.StageCompleted{StageID: "build"}),
-		ev(&event.StageStarted{StageID: "test", Iteration: 2}),
+		ev(&event.StageStarted{StageID: "test", Attempt: 2}),
 		ev(&event.StageFailed{StageID: "test", Error: "red"}),
 		ev(&event.EdgeTaken{From: "test", To: flow.ReservedDebug, Edge: flow.EdgeFail, Count: 3, Max: flow.UnlimitedMax, Depth: 1}),
 	}
@@ -237,5 +237,5 @@ func TestContinueFromDebugRestoresThePhasesRetryBudgets(t *testing.T) {
 		t.Error("live: a watcher's chain was reset by the main chain's debug leaf")
 	}
 	check("live", live)
-	check("replayed", Replay(append(evs, ev(&event.StageStarted{StageID: "test", Iteration: 3})), fl))
+	check("replayed", Replay(append(evs, ev(&event.StageStarted{StageID: "test", Attempt: 3})), fl))
 }

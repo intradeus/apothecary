@@ -76,7 +76,7 @@ type Facts struct {
 type AttemptFacts struct {
 	Seq           int64      `json:"seq"` // the StageStarted event's seq: the attempt's key
 	StageID       string     `json:"stage_id"`
-	Iteration     int        `json:"iteration"`
+	Attempt       int        `json:"attempt"`
 	Harness       string     `json:"harness,omitempty"`
 	Model         string     `json:"model,omitempty"`
 	Agent         string     `json:"agent,omitempty"`
@@ -210,7 +210,7 @@ func (f *Facts) observe(v *View, e *event.Event) {
 		if f.Open == nil {
 			f.Open = map[string]*AttemptFacts{}
 		}
-		f.Open[p.StageID] = &AttemptFacts{Seq: e.Seq, StageID: p.StageID, Iteration: p.Iteration,
+		f.Open[p.StageID] = &AttemptFacts{Seq: e.Seq, StageID: p.StageID, Attempt: p.Attempt,
 			Harness: p.Harness, Model: p.Model, Agent: p.Agent, AgentHash: p.AgentHash,
 			Outcome: OutcomeRunning, StartedAt: ts}
 	case *event.StageCompleted:
@@ -281,7 +281,7 @@ func (f *Facts) observe(v *View, e *event.Event) {
 }
 
 // bank adds an invocation's spend to the run and to the stage's attempt in
-// flight; spend on a later iteration is rework.
+// flight; spend on a later attempt is rework.
 func (f *Facts) bank(stageID string, turns int, u *event.Usage) {
 	var in, out int
 	var cost float64
@@ -300,7 +300,7 @@ func (f *Facts) bank(stageID string, turns int, u *event.Usage) {
 	a.InputTokens += in
 	a.OutputTokens += out
 	a.CostUSD += cost
-	if a.Iteration > 1 {
+	if a.Attempt > 1 {
 		f.ReworkCostUSD += cost
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -281,7 +282,10 @@ type Ping struct {
 	EndsPhase bool
 	// Trees, on a debug ping: each checkout's working copy as the run
 	// parked (handedits.go).
-	Trees    map[string]string
+	Trees map[string]string
+	// Ref is the ping's reference (build#3/decision#1), set as it is
+	// recorded (runcore.State.PingRefs).
+	Ref      string
 	RaisedAt time.Time
 
 	key            string       // the raiser's idempotency key (RaisePing)
@@ -650,6 +654,9 @@ type SnapshotStore interface {
 	Capture(ctx context.Context, s filestore.Snapshot, scrub func(string) string, data []byte) (filestore.Snapshot, error)
 	ForPing(ctx context.Context, pingID string) ([]filestore.Snapshot, error)
 	Bytes(ctx context.Context, id string) ([]byte, filestore.Snapshot, error)
+	// Open is a verified handle on a snapshot's bytes; ErrContentGone when
+	// retention swept them.
+	Open(ctx context.Context, id string) (*os.File, filestore.Snapshot, error)
 }
 
 // PingLookup reads the DURABLE ping projection. The engine needs it because a
@@ -768,7 +775,7 @@ func (e *Engine) CreateRun(ctx context.Context, t runinput.Ticket, flowName, pro
 // configuration and, if it passes, appends run_created and starts the run's
 // writer goroutine. flowName "" means the project's default flow; in.MR the
 // merge request a flow with operates_on: merge_request is started on, and
-// in.Params this attempt's parameter overrides, on top of the project's
+// in.Params this run's parameter overrides, on top of the project's
 // bindings. The flow
 // is resolved with those values before preflight, so a bound harness, model
 // or run_ref is checked exactly like a literal one. Preflight failures

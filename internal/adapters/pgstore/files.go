@@ -156,13 +156,13 @@ func (s *Store) DeleteAttachments(ctx context.Context, ids []string) error {
 
 // --- snapshots --------------------------------------------------------------
 
-const snapshotCols = `id, run_id, kind, stage_id, iteration, ping_id, name, path, filename, mime, size, sha256, truncated, created_at`
+const snapshotCols = `id, run_id, kind, stage_id, attempt, ping_id, name, path, filename, mime, size, sha256, truncated, created_at`
 
 func scanSnapshot(row pgx.Row) (filestore.Snapshot, error) {
 	var sn filestore.Snapshot
 	var kind string
 	var ping, name, path sql.NullString
-	err := row.Scan(&sn.ID, &sn.RunID, &kind, &sn.StageID, &sn.Iteration,
+	err := row.Scan(&sn.ID, &sn.RunID, &kind, &sn.StageID, &sn.Attempt,
 		&ping, &name, &path, &sn.Filename, &sn.Mime, &sn.Size, &sn.SHA256,
 		&sn.Truncated, &sn.CreatedAt)
 	if err != nil {
@@ -194,7 +194,7 @@ func (s *Store) InsertSnapshot(ctx context.Context, sn filestore.Snapshot) error
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO snapshots (`+snapshotCols+`)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-		sn.ID, sn.RunID, string(sn.Kind), sn.StageID, sn.Iteration,
+		sn.ID, sn.RunID, string(sn.Kind), sn.StageID, sn.Attempt,
 		nullStr(sn.PingID), nullStr(sn.Name), nullStr(sn.Path),
 		sn.Filename, sn.Mime, sn.Size, sn.SHA256, sn.Truncated, sn.CreatedAt)
 	return err
@@ -211,7 +211,7 @@ func (s *Store) GetSnapshot(ctx context.Context, id string) (filestore.Snapshot,
 
 func (s *Store) SnapshotsForRun(ctx context.Context, runID string) ([]filestore.Snapshot, error) {
 	return s.querySnapshots(ctx,
-		`SELECT `+snapshotCols+` FROM snapshots WHERE run_id=$1 ORDER BY stage_id, iteration, created_at, id`, runID)
+		`SELECT `+snapshotCols+` FROM snapshots WHERE run_id=$1 ORDER BY stage_id, attempt, created_at, id`, runID)
 }
 
 func (s *Store) SnapshotsForPing(ctx context.Context, pingID string) ([]filestore.Snapshot, error) {

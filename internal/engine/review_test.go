@@ -167,14 +167,18 @@ func TestGateReviewsAFolderAndCarriesTheReview(t *testing.T) {
 	if len(writes) != 2 {
 		t.Fatalf("writer ran %d times", len(writes))
 	}
-	attDir := ".apothecary/attachments/ping-" + g.ID + "/"
+	// Under the gate ping's reference: the first ping about the gate's attempt.
+	if !strings.HasSuffix(g.Ref, "/decision#1") {
+		t.Errorf("gate ping ref = %q", g.Ref)
+	}
+	attDir := ".apothecary/attachments/" + g.Ref + "/"
 	for _, part := range []string{
 		"REJECTED at gate gate.\n\nClose, two things.\n\n2 comments, on 2 files:\n",
 		// In the order the gate showed the files, whatever order they were made in.
-		"\nartifacts/plan.md\n1. [§ Plan, lines 3–4]\n   > Step one.\n   > Step two.\n   say what each step changes\n   attached: " + attDir + onStep[:8] + "/step.txt\n",
+		"\nartifacts/plan.md\n1. [§ Plan, lines 3–4]\n   > Step one.\n   > Step two.\n   say what each step changes\n   attached: " + attDir + "step.txt\n",
 		"\nartifacts/shots/home.png\n2. [the whole image]\n   the header is cut off\n",
 		// What no comment names is listed after them.
-		"read them with your tools:\n- " + attDir + general[:8] + "/general.txt\n",
+		"read them with your tools:\n- " + attDir + "general.txt\n",
 	} {
 		if !strings.Contains(writes[1], part) {
 			t.Errorf("the rejection the writer reads lacks %q:\n%s", part, writes[1])
@@ -221,20 +225,20 @@ func TestAnApprovalsDecisionSurvivesRecovery(t *testing.T) {
 	fl := mustFlow(t, reviewFlowDoc)
 	evs := []event.Event{
 		{Payload: &event.RunCreated{TicketTitle: "T"}},
-		{Payload: &event.StageStarted{StageID: "write", Iteration: 1}},
+		{Payload: &event.StageStarted{StageID: "write", Attempt: 1}},
 		{Payload: &event.StageCompleted{StageID: "write"}},
-		{Payload: &event.StageStarted{StageID: "gate", Iteration: 1}},
+		{Payload: &event.StageStarted{StageID: "gate", Attempt: 1}},
 		{Payload: &event.PingRaised{PingID: "g1", Type: event.PingGate, StageID: "gate"}},
 		{Payload: &event.PingAnswered{PingID: "g1", Answer: "reject", Feedback: "no"}},
 		{Payload: &event.EdgeTaken{From: "gate", To: "write", Edge: flow.EdgeReject, Count: 1, Max: 1, Feed: "REJECTED at gate gate.\n"}},
-		{Payload: &event.StageStarted{StageID: "write", Iteration: 2}},
+		{Payload: &event.StageStarted{StageID: "write", Attempt: 2}},
 		{Payload: &event.StageCompleted{StageID: "write"}},
 	}
 	if rs := runcore.Replay(evs, fl); rs.Feed != "" {
 		t.Errorf("the rejection outlived the stage it entered: %q", rs.Feed)
 	}
 	evs = append(evs,
-		event.Event{Payload: &event.StageStarted{StageID: "gate", Iteration: 2}},
+		event.Event{Payload: &event.StageStarted{StageID: "gate", Attempt: 2}},
 		event.Event{Payload: &event.PingRaised{PingID: "g2", Type: event.PingGate, StageID: "gate"}},
 		event.Event{Payload: &event.PingAnswered{PingID: "g2", Answer: "approve", Feedback: "ship it"}},
 		event.Event{Payload: &event.StageCompleted{StageID: "gate", Feed: "APPROVED at gate gate.\n\nship it\n"}},
@@ -243,7 +247,7 @@ func TestAnApprovalsDecisionSurvivesRecovery(t *testing.T) {
 	if rs.Ph != runcore.PhAfterComplete || rs.CompletedFeed != "APPROVED at gate gate.\n\nship it\n" {
 		t.Fatalf("ph = %v, completedFeed = %q", rs.Ph, rs.CompletedFeed)
 	}
-	evs = append(evs, event.Event{Payload: &event.StageStarted{StageID: "build", Iteration: 1}})
+	evs = append(evs, event.Event{Payload: &event.StageStarted{StageID: "build", Attempt: 1}})
 	if rs := runcore.Replay(evs, fl); rs.FeedSentinel != flow.SourceVerdict || !strings.Contains(rs.Feed, "ship it") {
 		t.Errorf("build re-entered with feed %q (%s)", rs.Feed, rs.FeedSentinel)
 	}
@@ -300,9 +304,9 @@ func TestAnAnswerCarriesItsReview(t *testing.T) {
 	got := composeAnswerText(event.AnswerForm, form, PingAnswer{Answer: "accept", Content: map[string]any{AnswerField: "Mostly right."},
 		Review: []event.ReviewComment{{Path: "docs/a.md", StartLine: 2, EndLine: 2, Body: "this is wrong", AttachmentIDs: []string{"a1"}}}},
 		[]string{"docs/a.md"},
-		[]answerFile{{id: "a1", path: ".apothecary/attachments/ping-p/a1/fix.txt"}, {id: "a2", path: ".apothecary/attachments/ping-p/a2/more.txt"}})
-	want := "Mostly right.\n\n1 comment, on 1 file:\n\ndocs/a.md\n1. [line 2]\n   this is wrong\n   attached: .apothecary/attachments/ping-p/a1/fix.txt" +
-		"\n\nThe human attached these files — read them with your tools:\n- .apothecary/attachments/ping-p/a2/more.txt\n"
+		[]answerFile{{id: "a1", path: ".apothecary/attachments/review#1/decision#1/fix.txt"}, {id: "a2", path: ".apothecary/attachments/review#1/decision#1/more.txt"}})
+	want := "Mostly right.\n\n1 comment, on 1 file:\n\ndocs/a.md\n1. [line 2]\n   this is wrong\n   attached: .apothecary/attachments/review#1/decision#1/fix.txt" +
+		"\n\nThe human attached these files — read them with your tools:\n- .apothecary/attachments/review#1/decision#1/more.txt\n"
 	if got != want {
 		t.Errorf("got:\n%q\nwant:\n%q", got, want)
 	}

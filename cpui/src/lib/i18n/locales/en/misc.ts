@@ -1259,7 +1259,7 @@ export default {
 	'flow.agents.addsHelp':
 		'The prompt is followed by a section per input and the output contract, from the ports of the stage that runs it — paths and contents filled in at run time — and by the standing rules on asking the human.',
 	'flow.agents.addsTask':
-		'# TASK — the ticket: title, key, status, labels, goal, direction for this attempt, attached files',
+		'# TASK — the ticket: title, key, status, labels, goal, direction for this run, attached files',
 	'flow.agents.addsDiscussion':
 		'# TICKET DISCUSSION — the latest comments on the ticket, oldest first, quoted as untrusted text (omitted when there are none)',
 	'flow.agents.addsJournal':

@@ -9,6 +9,7 @@ package engine
 
 import (
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,44 +21,82 @@ import (
 
 const attachmentDeliverTimeout = 30 * time.Second
 
-// attachmentPath is the repo-relative destination for one delivered
-// attachment. The per-attachment <id8> subdir guarantees uniqueness without
-// collision logic.
-func attachmentPath(a filestore.Attachment) string {
-	name := a.Filename
-	if name == "" {
-		name = "file"
+// attachmentsDir is where the human's files are delivered, in the primary
+// checkout.
+const attachmentsDir = ".apothecary/attachments"
+
+// ticketFolder holds the task's files: the ticket's, and those a person
+// attached to the run's own direction.
+const ticketFolder = "ticket"
+
+// attachmentFolder is the folder an attachment is delivered to, under
+// attachmentsDir: its ping's reference (build#3/decision#1 — an answer's
+// files, its review comments' among them), or ticketFolder for the task's.
+// A ping the run has no reference for keeps its id: never the case for a
+// ping the engine recorded.
+func attachmentFolder(a filestore.Attachment, pingRef func(pingID string) string) string {
+	if a.PingID == "" {
+		return ticketFolder
 	}
-	id8 := a.ID
-	if len(id8) > 8 {
-		id8 = id8[:8]
+	if r := pingRef(a.PingID); r != "" {
+		return r
 	}
-	if a.PingID != "" {
-		return ".apothecary/attachments/ping-" + a.PingID + "/" + id8 + "/" + name
-	}
-	return ".apothecary/attachments/goal/" + id8 + "/" + name
+	return a.PingID
 }
 
-func attachmentPaths(atts []filestore.Attachment) []string {
-	out := make([]string, 0, len(atts))
-	for _, a := range atts {
-		out = append(out, attachmentPath(a))
+// attachmentPaths is the repo-relative path each attachment is delivered
+// to, in the order given: attachmentsDir/<folder>/<stored name>, a second
+// file with the same name in one folder name-2.ext. Names are given in the
+// order the files were created (then by id), so a path never depends on the
+// order a caller passes them in, and a re-delivery after a restart gives the
+// same ones. Every caller passes each folder whole: a ping's files, or all
+// of the task's.
+func attachmentPaths(atts []filestore.Attachment, pingRef func(pingID string) string) []string {
+	order := make([]int, len(atts))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		a, b := atts[order[i]], atts[order[j]]
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Before(b.CreatedAt)
+		}
+		return a.ID < b.ID
+	})
+	taken := map[string]map[string]bool{}
+	out := make([]string, len(atts))
+	for _, i := range order {
+		a := atts[i]
+		folder := attachmentFolder(a, pingRef)
+		if taken[folder] == nil {
+			taken[folder] = map[string]bool{}
+		}
+		out[i] = attachmentsDir + "/" + folder + "/" + filestore.UniqueName(filestore.SafeName(a.Filename), taken[folder])
 	}
 	return out
 }
 
+// pingRef is a ping's reference, as the run recorded it ("" for one it has
+// not raised).
+func (x *exec) pingRef(pingID string) string {
+	if p := x.rs.RaisedPings[pingID]; p != nil {
+		return p.Ref
+	}
+	return ""
+}
+
 // deliverAttachments writes each attachment into the live workspace
 // (best-effort) and returns their repo-relative paths. Paths are
-// deterministic from the ids, so they are safe to reference even before the
-// workspace exists (EnvID == ""): ensureEnv re-delivers on the
-// ready/recovery path.
+// deterministic from the log and the files (attachmentPaths), so they are
+// safe to reference even before the workspace exists (EnvID == ""):
+// ensureEnv re-delivers on the ready/recovery path.
 //
 // Files land 0444 read-only: the human's words must not be rewritten in
 // place by a prompt-injected agent that then "quotes" them. Re-delivery
 // removes the old copy first, since the workspace user cannot overwrite a
 // read-only file.
 func (x *exec) deliverAttachments(atts []filestore.Attachment) []string {
-	paths := attachmentPaths(atts)
+	paths := attachmentPaths(atts, x.pingRef)
 	if x.e.attachments == nil || x.rs.EnvID == "" || len(atts) == 0 {
 		return paths
 	}
@@ -174,7 +213,7 @@ func (x *exec) pingAnswerFiles(pingID string) []answerFile {
 // reads it gets them with the workspace (deliverRunAttachments).
 func (x *exec) answerFileRefs(pingID string) []answerFile {
 	atts := x.pingAnswerAttachments(pingID)
-	return answerFilesOf(atts, attachmentPaths(atts))
+	return answerFilesOf(atts, attachmentPaths(atts, x.pingRef))
 }
 
 func (x *exec) pingAnswerAttachments(pingID string) []filestore.Attachment {

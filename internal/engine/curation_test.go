@@ -454,7 +454,7 @@ func TestCurationReplays(t *testing.T) {
 	evs := []event.Event{
 		{Payload: &event.RunCreated{TicketTitle: "T"}},
 		{Payload: &event.PhaseStarted{Phase: flow.MainPhase, Subject: "repo"}},
-		{Payload: &event.StageStarted{StageID: "review.gate", Iteration: 1}},
+		{Payload: &event.StageStarted{StageID: "review.gate", Attempt: 1}},
 		{Payload: &event.PingRaised{PingID: "g1", Type: event.PingGate, StageID: "review.gate", Files: []string{"artifacts/review.yaml"},
 			FileTypes: map[string]string{"artifacts/review.yaml": agentspec.TypeReviewThreads}}},
 		{Payload: &event.PingAnswered{PingID: "g1", Answer: "approve", Curated: map[string]reviewfile.Curation{
@@ -467,10 +467,10 @@ func TestCurationReplays(t *testing.T) {
 		t.Fatalf("after the curation: seen %v curated %v dropped %v", rs.CuratedSeen, rs.Curated, rs.Dropped)
 	}
 	// A reader starting keeps it waiting; a writer starting drops it.
-	if rs := runcore.Replay(append(evs, event.Event{Payload: &event.StageStarted{StageID: "review.post", Iteration: 1}}), fl); rs.Curated["artifacts/review.yaml"] == nil {
+	if rs := runcore.Replay(append(evs, event.Event{Payload: &event.StageStarted{StageID: "review.post", Attempt: 1}}), fl); rs.Curated["artifacts/review.yaml"] == nil {
 		t.Error("the stage that reads the path forgot the curation")
 	}
-	if rs := runcore.Replay(append(evs, event.Event{Payload: &event.StageStarted{StageID: "review.read", Iteration: 2}}), fl); rs.Curated["artifacts/review.yaml"] != nil || len(rs.Dropped) != 1 {
+	if rs := runcore.Replay(append(evs, event.Event{Payload: &event.StageStarted{StageID: "review.read", Attempt: 2}}), fl); rs.Curated["artifacts/review.yaml"] != nil || len(rs.Dropped) != 1 {
 		t.Error("the stage that writes the path kept the curation, or the drop was forgotten")
 	}
 	// A rejection's curation records the drop and nothing to write.

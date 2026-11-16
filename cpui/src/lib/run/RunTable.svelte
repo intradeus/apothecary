@@ -10,10 +10,11 @@
 	import { to } from '$lib/core/urls';
 	import { t } from '$lib/i18n/index.svelte';
 	import { ago, fmtAbs, shortId } from '$lib/core/format';
-	import type { Run } from '$lib/domain';
+	import { attemptRef, type Run } from '$lib/domain';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import WorkspaceStatus from '$lib/ui/WorkspaceStatus.svelte';
 	import StageFlask from '$lib/ui/StageFlask.svelte';
+	import RefChip from '$lib/ui/RefChip.svelte';
 	import WorkshopName from '$lib/app/WorkshopName.svelte';
 	import MrLink from './MrLink.svelte';
 	import { runFacts, stageStatus } from './runfacts.svelte';
@@ -114,11 +115,10 @@
 					<span class="stage hide-sm">
 						{#if r.currentStage}
 							<StageFlask status={stageStatus(r.state)} size="sm" />
-							<span class="mono truncate">{r.currentStage}</span>
-							{#if f.attempt}<span
-									class="faint att"
-									title={t('run.table.attempt', { n: f.attempt })}>#{f.attempt}</span
-								>{/if}
+							<!-- The open attempt names the stage too: build#3 says both. -->
+							{#if f.attempt}<span class="over-stretch att"
+									><RefChip ref={attemptRef(r.currentStage, f.attempt)} /></span
+								>{:else}<span class="mono truncate">{r.currentStage}</span>{/if}
 						{:else}<span class="faint">—</span>{/if}
 					</span>
 				{:else if c === 'workshop'}
@@ -195,9 +195,8 @@
 		font-size: var(--fs-help);
 	}
 	.att {
-		font-family: var(--font-code);
-		font-size: var(--fs-id);
-		flex: none;
+		display: flex;
+		min-width: 0;
 	}
 	.upd,
 	.right {

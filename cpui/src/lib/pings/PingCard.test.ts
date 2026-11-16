@@ -68,6 +68,11 @@ describe('an answered ping', () => {
 		expect(screen.queryByRole('button')).not.toBeInTheDocument();
 	});
 
+	it('keeps its reference on the one line', () => {
+		setup({ ...answered, ref: 'run/decision#3' });
+		expect(btn('Copy reference run/decision#3')).toHaveTextContent('run/decision#3');
+	});
+
 	it('says when and what', () => {
 		setup({ ...answered, answeredAt: FIVE_MIN_AGO });
 		expect(screen.getByText(/answered 5m ago —/)).toBeInTheDocument();
@@ -149,6 +154,16 @@ describe('the head', () => {
 		setup({ stageId: 'plan', raisedAt: FIVE_MIN_AGO });
 		expect(screen.getByText('plan')).toBeInTheDocument();
 		expect(screen.getByText('raised 5m ago')).toBeInTheDocument();
+	});
+
+	it('gives the ping its reference, as the engine sent it', () => {
+		setup({ stageId: 'plan', ref: 'plan#2/decision#1' });
+		expect(btn('Copy reference plan#2/decision#1')).toHaveTextContent('plan#2/decision#1');
+	});
+
+	it('shows no reference the engine did not send', () => {
+		setup({ stageId: 'plan' });
+		expect(noBtn(/^Copy reference/)).not.toBeInTheDocument();
 	});
 
 	it('takes the stage prop over the ping’s own', () => {

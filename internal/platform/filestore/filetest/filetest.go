@@ -32,8 +32,8 @@ func upload(id, user string, at time.Time) filestore.Attachment {
 	return filestore.Attachment{ID: id, UserID: user, Filename: id + ".txt", Mime: "text/plain", Size: 3, SHA256: "sha-" + id, CreatedAt: at}
 }
 
-func logOf(id, run, stage string, iteration int, at time.Time) filestore.Snapshot {
-	return filestore.Snapshot{ID: id, RunID: run, Kind: filestore.KindLog, StageID: stage, Iteration: iteration,
+func logOf(id, run, stage string, attempt int, at time.Time) filestore.Snapshot {
+	return filestore.Snapshot{ID: id, RunID: run, Kind: filestore.KindLog, StageID: stage, Attempt: attempt,
 		Filename: "f.log", Mime: "text/plain", Size: 1, SHA256: "sha-" + id, CreatedAt: at}
 }
 
@@ -619,7 +619,7 @@ func RunContract(t *testing.T, open func(t *testing.T) DB, seedTicket func(t *te
 
 	t.Run("snapshot roundtrip, each kind", func(t *testing.T) {
 		db := open(t)
-		output := filestore.Snapshot{ID: "s1", RunID: "r1", Kind: filestore.KindOutput, StageID: "plan", Iteration: 3,
+		output := filestore.Snapshot{ID: "s1", RunID: "r1", Kind: filestore.KindOutput, StageID: "plan", Attempt: 3,
 			Name: "plan", Path: "artifacts/plan.md", Filename: "plan.md", Mime: "text/markdown", Size: 1 << 40, SHA256: "ab", Truncated: true, CreatedAt: t0}
 		log := logOf("s2", "r1", "_provision", 0, t0)
 		ping := pingFile("s3", "r1", "p1", t0)
@@ -695,7 +695,7 @@ func RunContract(t *testing.T, open func(t *testing.T) DB, seedTicket func(t *te
 		}
 	})
 
-	t.Run("snapshots for a run: stage, iteration, time, id", func(t *testing.T) {
+	t.Run("snapshots for a run: stage, attempt, time, id", func(t *testing.T) {
 		db := open(t)
 		captureAll(t, db,
 			logOf("z", "r1", "plan", 2, t0),

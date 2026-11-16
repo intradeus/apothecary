@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -75,6 +76,20 @@ func TestHandEditsRecordWhatThePersonChanged(t *testing.T) {
 	raised, _ := findPayload[*event.PingRaised](evs)
 	if raised == nil || raised.Trees["repo"] != treeParked {
 		t.Fatalf("ping_raised trees = %+v", raised)
+	}
+	// The debug ping is recorded with its reference: the first ping about
+	// the attempt that failed.
+	failed := 0
+	for _, e := range evs {
+		if s, ok := e.Payload.(*event.StageStarted); ok && s.StageID == "test" {
+			failed = s.Attempt
+		}
+		if e.Payload == raised {
+			break
+		}
+	}
+	if want := fmt.Sprintf("test#%d/decision#1", failed); raised.Ref != want {
+		t.Errorf("debug ping ref = %q, want %q", raised.Ref, want)
 	}
 	var edits *event.HandEdits
 	for i, e := range evs {

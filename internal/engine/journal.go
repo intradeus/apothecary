@@ -3,28 +3,29 @@ package engine
 // The run journal (FLOWLANG §4 run.journal): what has happened in a run, as
 // its agents read it, so none repeats a mistake or reopens a correction the
 // task's owner discarded. It is a view, never a file: buildJournal reads the
-// event log, and an entry's bodies — a pass's outputs and log — are read
+// event log, and an entry's bodies — an attempt's outputs and log — are read
 // from the snapshots captured as each attempt ended, when the entry is
 // rendered. Two renderings share the one model, so they cannot disagree:
 //
 //   - the ledger (renderLedger), pushed into the prompt of a stage that binds
 //     run.journal: every owner decision, the agents' notes as claims, a short
-//     history — each line ending with its id;
-//   - the tool's files (journalPassFile, journalRecords) and inline entries
-//     (journalDecisionText), behind the journal routes the shim's
+//     history — each line ending with its reference;
+//   - the tool's files (journalAttemptFile, journalRecords) and inline entries
+//     (journalDecisionText, noteText), behind the journal routes the shim's
 //     journal_read calls.
 //
-// Ids come from the log, so they are stable across restarts: a pass is its
-// stage and pass number (review-5, as its log file is named), a decision is
-// decision-<n> in the order the decisions were made.
+// Every entry is named by its reference (apothecary/internal/run/ref), from
+// the log, so it is stable across restarts: an attempt is review#5, a
+// decision the ping's own reference (build#3/decision#1, recorded as it was
+// raised), a note its place in its attempt's notes (build#3/note#2).
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"math"
+	"path"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -38,6 +39,8 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
+	"apothecary/internal/run/ref"
+	"apothecary/internal/run/runcore"
 )
 
 // JournalTool is the shim's tool that reads the journal
@@ -46,7 +49,7 @@ const JournalTool = "journal_read"
 
 const (
 	// journalHead bounds a long body in the ledger — a verdict, an answer, a
-	// question: its head is shown, and its id says where the rest is.
+	// question: its head is shown, and its reference says where the rest is.
 	journalHead = 1500
 	// journalNotesListed bounds the agent notes the ledger lists one line
 	// each; the rest are counted, with the call that reads them.
@@ -57,11 +60,13 @@ const (
 
 // journal is a run's record, built from its log (buildJournal).
 type journal struct {
+	// decisions are the run's answered pings, in the order they were
+	// answered; the ledger shows those that decide something (decides).
 	decisions []*jDecision
-	passes    []*jPass
-	byPass    map[string]*jPass
+	attempts  []*jAttempt
+	byAttempt map[string]*jAttempt
 	byDec     map[string]*jDecision
-	// notes are the agents' notes (journal_notes outputs), in pass order,
+	// notes are the agents' notes (journal_notes outputs), in attempt order,
 	// filled from the snapshots by loadNotes.
 	notes  []*jNote
 	byNote map[string]*jNote
@@ -70,12 +75,12 @@ type journal struct {
 	chainRun int
 }
 
-// jPass is one pass of a stage: an attempt, from its stage_started.
-type jPass struct {
-	id    string
+// jAttempt is one attempt of a stage, from its stage_started.
+type jAttempt struct {
+	ref   string // review#5
 	stage string
 	n     int
-	// chainRun is the chain run the pass belongs to (journal.chainRun).
+	// chainRun is the chain run the attempt belongs to (journal.chainRun).
 	chainRun int
 	at       time.Time
 	// end is how it ended: completed, skipped, failed, paused, or "" while
@@ -86,11 +91,13 @@ type jPass struct {
 	why   string // a failure's reason
 	err   string // a failure's error text
 	turns int
-	// verdict is the pass's verdict, when it rendered one.
+	// verdict is the attempt's verdict, when it rendered one.
 	verdict  *bool
 	comments int
 	// routed is where its edge sent the run: "on_reject → build (2/5)".
-	routed  string
+	routed string
+	// outputs are what it left, one capture per output (port and path): a
+	// capture taken again after a crash replaces the first.
 	outputs []jSnap
 	log     *jSnap
 	// notesErr says why its notes could not be read, when they could not.
@@ -100,29 +107,31 @@ type jPass struct {
 // jNote is one note an agent left for the journal: what it did differently
 // from its direction, on its own — its claim, never the owner's direction.
 type jNote struct {
-	id    string // note-<n>, in the order the passes left them
-	pass  *jPass
-	did   string
-	why   string
-	files []string
+	ref     string // build#3/note#2: its place in its attempt's notes
+	attempt *jAttempt
+	did     string
+	why     string
+	files   []string
 }
 
-// jSnap is one snapshot a pass left: an output (its port's name and type)
-// or its log.
+// jSnap is one snapshot an attempt left: an output (its port's name and
+// type) or its log.
 type jSnap struct {
-	name, typ, path, id, mime string
-	size                      int64
-	truncated                 bool
+	name, typ, path, id, mime, filename string
+	size                                int64
+	truncated                           bool
 }
 
-// jDecision is one owner decision: an answered ping that says something
-// about the work (journalDecides).
+// jDecision is one answered ping.
 type jDecision struct {
-	id   string
+	ref  string // build#3/decision#1, as ping_raised recorded it
 	ping run.PingView
-	// pass is the pass that asked — or, for a gate, a debug leaf, a manual
-	// stage or the impasse, the stage's pass the decision is about.
-	pass string
+	// attempt is the attempt it was raised in or about ("" for the run's
+	// own: a phase confirmation, a selection).
+	attempt string
+	// decides: it says something about the work (journalDecides) — what
+	// the ledger shows.
+	decides bool
 	// files are the paths the answer's attachments were delivered to.
 	files []answerFile
 	// edits, on a debug continue: which files the person changed there.
@@ -132,82 +141,83 @@ type jDecision struct {
 	unwritten []string
 }
 
-// passID names a pass: its stage and its number.
-func passID(stage string, n int) string { return stage + "-" + strconv.Itoa(n) }
-
-// splitPassID reads a pass id back: the stage is everything before the last
-// dash, so a stage id with dashes (fix-ci-2 is pass 2 of fix-ci) reads right.
-func splitPassID(id string) (string, int, bool) {
-	i := strings.LastIndexByte(id, '-')
-	if i <= 0 {
-		return "", 0, false
+// owner is the decisions the ledger shows: those that decide something.
+func (j *journal) owner() []*jDecision {
+	var out []*jDecision
+	for _, d := range j.decisions {
+		if d.decides {
+			out = append(out, d)
+		}
 	}
-	n, err := strconv.Atoi(id[i+1:])
-	if err != nil || n < 1 {
-		return "", 0, false
-	}
-	return id[:i], n, true
+	return out
 }
 
 // buildJournal reads a run's log into its journal. An output's type is the
 // one its snapshot_captured records; fl types an output whose event carries
 // none, and names what a skipped stage did not write (nil: neither). atts
-// finds what an answer attached (nil: none).
-func buildJournal(evs []event.Event, fl *flow.Flow, atts func(pingID string) []answerFile) *journal {
-	j := &journal{byPass: map[string]*jPass{}, byDec: map[string]*jDecision{}, byNote: map[string]*jNote{}}
-	latest := map[string]*jPass{} // stage → its latest pass
-	asked := map[string]string{}  // ping → the pass it was raised in
+// finds what an answer attached, and where it was delivered — under the
+// ping's reference (nil: none).
+func buildJournal(evs []event.Event, fl *flow.Flow, atts func(pingID, ref string) []answerFile) *journal {
+	j := &journal{byAttempt: map[string]*jAttempt{}, byDec: map[string]*jDecision{}, byNote: map[string]*jNote{}}
+	latest := map[string]*jAttempt{} // stage → its latest attempt
 	edits := map[string]*event.HandEdits{}
+	// A ping is named by the reference it was recorded with; one recorded
+	// without (a log seeded straight into the store) is numbered by the
+	// engine's own rule, from the same events.
+	refs := runcore.NewState(nil)
+	refOf := map[string]string{} // ping → its reference
 	for _, e := range evs {
 		switch p := e.Payload.(type) {
 		case *event.PhaseStarted:
 			j.chainRun++
 		case *event.StageStarted:
-			id := passID(p.StageID, p.Iteration)
-			ps := j.byPass[id]
-			if ps == nil {
-				ps = &jPass{id: id, stage: p.StageID, n: p.Iteration, chainRun: j.chainRun, at: e.TS}
-				j.byPass[id] = ps
-				j.passes = append(j.passes, ps)
+			refs.Apply(&e)
+			r := ref.Attempt(p.StageID, p.Attempt)
+			a := j.byAttempt[r]
+			if a == nil {
+				a = &jAttempt{ref: r, stage: p.StageID, n: p.Attempt, chainRun: j.chainRun, at: e.TS}
+				j.byAttempt[r] = a
+				j.attempts = append(j.attempts, a)
 			}
-			ps.end, ps.why, ps.err = "", "", ""
-			latest[p.StageID] = ps
+			a.end, a.why, a.err = "", "", ""
+			latest[p.StageID] = a
 		case *event.StageCompleted:
-			if ps := latest[p.StageID]; ps != nil {
-				ps.end, ps.turns = "completed", p.TurnsUsed
+			if a := latest[p.StageID]; a != nil {
+				a.end, a.turns = "completed", p.TurnsUsed
 				if p.Skipped {
-					ps.end, ps.note, ps.by = "skipped", p.Note, p.By
+					a.end, a.note, a.by = "skipped", p.Note, p.By
 				}
 			}
 		case *event.StageFailed:
-			if ps := latest[p.StageID]; ps != nil {
-				ps.end, ps.why, ps.err, ps.turns = "failed", p.Reason, p.Error, p.TurnsUsed
+			if a := latest[p.StageID]; a != nil {
+				a.end, a.why, a.err, a.turns = "failed", p.Reason, p.Error, p.TurnsUsed
 			}
 		case *event.StagePaused:
-			if ps := latest[p.StageID]; ps != nil {
-				ps.end = "paused"
+			if a := latest[p.StageID]; a != nil {
+				a.end = "paused"
 			}
 		case *event.StageResumed:
-			if ps := latest[p.StageID]; ps != nil {
-				ps.end = ""
+			if a := latest[p.StageID]; a != nil {
+				a.end = ""
 			}
 		case *event.VerdictReceived:
-			if ps := latest[p.StageID]; ps != nil {
+			if a := latest[p.StageID]; a != nil {
 				approve := p.Approve
-				ps.verdict, ps.comments = &approve, p.NComments
+				a.verdict, a.comments = &approve, p.NComments
 			}
 		case *event.EdgeTaken:
-			if ps := latest[p.From]; ps != nil {
-				ps.routed = edgeWords(p)
+			if a := latest[p.From]; a != nil {
+				a.routed = edgeWords(p)
 			}
 		case *event.SnapshotCaptured:
-			ps := j.byPass[passID(p.StageID, p.Iteration)]
-			if ps == nil || (p.Kind != string(filestore.KindOutput) && p.Kind != string(filestore.KindLog)) {
+			refs.Apply(&e)
+			a := j.byAttempt[ref.Attempt(p.StageID, p.Attempt)]
+			if a == nil || (p.Kind != string(filestore.KindOutput) && p.Kind != string(filestore.KindLog)) {
 				continue
 			}
-			s := jSnap{name: p.Name, path: p.Path, id: p.SnapshotID, mime: p.Mime, size: p.Size, truncated: p.Truncated}
+			s := jSnap{name: p.Name, path: p.Path, id: p.SnapshotID, mime: p.Mime, filename: p.Filename, size: p.Size, truncated: p.Truncated}
 			if p.Kind == string(filestore.KindLog) {
-				ps.log = &s
+				a.log = &s
 				continue
 			}
 			// The type the attempt ran with, recorded on the event; the flow
@@ -215,28 +225,41 @@ func buildJournal(evs []event.Event, fl *flow.Flow, atts func(pingID string) []a
 			if s.typ = p.PortType; s.typ == "" {
 				s.typ = outputType(fl, p.StageID, p.Name)
 			}
-			ps.outputs = append(ps.outputs, s)
-		case *event.PingRaised:
-			if ps := latest[p.StageID]; ps != nil {
-				asked[p.PingID] = ps.id
+			if i := slices.IndexFunc(a.outputs, func(o jSnap) bool { return o.name == s.name && o.path == s.path }); i >= 0 {
+				a.outputs[i] = s
+				continue
 			}
+			a.outputs = append(a.outputs, s)
+		case *event.PingRaised:
+			if p.Ref == "" {
+				cp := *p
+				refs.PingRefs([]event.Payload{&cp})
+				ev := e
+				ev.Payload = &cp
+				refs.Apply(&ev)
+				refOf[p.PingID] = cp.Ref
+				continue
+			}
+			refs.Apply(&e)
+			refOf[p.PingID] = p.Ref
 		case *event.HandEdits:
 			edits[p.PingID] = p // a continue recorded again after a crash: the last stands
 		}
 	}
 	for _, p := range answeredInOrder(evs) {
-		if !journalDecides(p) {
-			continue
-		}
-		d := &jDecision{id: "decision-" + strconv.Itoa(len(j.decisions)+1), ping: p, pass: asked[p.PingID], edits: edits[p.PingID]}
+		// Listed whatever its reference: no decision is ever dropped (one
+		// the log names oddly reads as the run's).
+		r := refOf[p.PingID]
+		parsed, _ := ref.Parse(r)
+		d := &jDecision{ref: r, ping: p, attempt: parsed.AttemptRef(), decides: journalDecides(p), edits: edits[p.PingID]}
 		if p.Type == event.PingImpasse && p.Answer == event.ChoiceSkip {
 			d.unwritten = declaredOutputs(fl, p.StageID)
 		}
 		if atts != nil && len(p.AnswerAttachmentIDs) > 0 {
-			d.files = atts(p.PingID)
+			d.files = atts(p.PingID, r)
 		}
 		j.decisions = append(j.decisions, d)
-		j.byDec[d.id] = d
+		j.byDec[d.ref] = d
 	}
 	return j
 }
@@ -329,24 +352,26 @@ func journalDecides(p run.PingView) bool {
 // --- the ledger ---------------------------------------------------------------
 
 // renderLedger is the # RUN JOURNAL section of a prompt: every owner
-// decision in full (a long body by its head and its id), the agents' notes
-// as claims to check, a short history, and how to read more. Never empty: a
-// prompt that names the input never meets a silence it has to interpret.
+// decision in full (a long body by its head and its reference), the agents'
+// notes as claims to check, a short history, and how to read more. Never
+// empty: a prompt that names the input never meets a silence it has to
+// interpret.
 func renderLedger(j *journal, name, desc string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# RUN JOURNAL (input: %s%s)\n", name, desc)
 	b.WriteString("The engine's record of this run so far. Before you ask for a change or redo work, check it against this section: " +
-		"what the task's owner decided stands, and a correction they discarded stays discarded. Each entry ends with its id [in brackets]; " +
+		"what the task's owner decided stands, and a correction they discarded stays discarded. Each entry ends with its reference [in brackets]: " +
+		"review#5 is attempt 5 of the review stage, review#5/decision#1 the first decision in it; " +
 		"the last part of this section says how to read more.\n")
 
 	b.WriteString("\n## Owner decisions\n")
-	if len(j.decisions) == 0 {
+	if owner := j.owner(); len(owner) == 0 {
 		b.WriteString("None yet: the task's owner has decided nothing during this run.\n")
 	} else {
 		fmt.Fprintf(&b, "The %d decision(s) the task's owner made during this run, oldest first. They are the owner's direction: "+
 			"where one differs from the plan or another input, it stands, and a later one stands over an earlier one. "+
-			"Work done to follow one is not a deviation from the plan.\n", len(j.decisions))
-		for _, d := range j.decisions {
+			"Work done to follow one is not a deviation from the plan.\n", len(owner))
+		for _, d := range owner {
 			b.WriteString(decisionBlock(d, journalHead))
 		}
 	}
@@ -355,10 +380,11 @@ func renderLedger(j *journal, name, desc string) string {
 	b.WriteString(historyBlock(j))
 
 	fmt.Fprintf(&b, "\n## Reading more\n"+
-		"Call the %[1]s tool (your harness may list it with a prefix, such as ask_human_%[1]s). "+
-		"%[1]s(id: \"<pass id>\") writes everything a pass left — its record, its verdict, its outputs and its full log — to one file and gives you its path; "+
-		"%[1]s(id: \"decision-<n>\") gives a decision in full, %[1]s(id: \"note-<n>\") a note; %[1]s() with no id writes one file holding every record of the run "+
-		"(decisions, notes, each pass and its verdict; no logs). Read the files with your own tools.\n", JournalTool)
+		"Call the %[1]s tool (your harness may list it with a prefix, such as ask_human_%[1]s) with a reference from this section. "+
+		"%[1]s(ref: \"<stage>#<n>\") writes everything that attempt left — its record, its verdict, its outputs and its full log — to one file and gives you its path; "+
+		"%[1]s(ref: \"<stage>#<n>/decision#<k>\") gives a decision in full, %[1]s(ref: \"<stage>#<n>/note#<k>\") a note; "+
+		"%[1]s() with no reference writes one file holding every record of the run "+
+		"(decisions, notes, each attempt and its verdict; no logs). Read the files with your own tools.\n", JournalTool)
 	return b.String()
 }
 
@@ -372,7 +398,7 @@ func notesBlock(j *journal) string {
 	b.WriteString("\n## Agent notes\n")
 	var now []*jNote
 	for _, n := range j.notes {
-		if n.pass.chainRun == j.chainRun {
+		if n.attempt.chainRun == j.chainRun {
 			now = append(now, n)
 		}
 	}
@@ -388,7 +414,7 @@ func notesBlock(j *journal) string {
 		b.WriteString("None this round.\n")
 	}
 	for _, n := range listed {
-		b.WriteString("- " + noteLine(n) + " [" + n.id + "]\n")
+		b.WriteString("- " + noteLine(n) + " [" + n.ref + "]\n")
 	}
 	if more := len(now) - len(listed); more > 0 || earlier > 0 {
 		var parts []string
@@ -403,10 +429,10 @@ func notesBlock(j *journal) string {
 	return b.String()
 }
 
-// noteLine is a note on one line, cut to journalNoteLine: its pass, what was
-// done, why, the files.
+// noteLine is a note on one line, cut to journalNoteLine: what was done,
+// why, the files (its reference, which follows, names its attempt).
 func noteLine(n *jNote) string {
-	line := n.pass.id + ": " + oneLine(n.did) + " — why: " + oneLine(n.why)
+	line := oneLine(n.did) + " — why: " + oneLine(n.why)
 	if len(n.files) > 0 {
 		line += " (files: " + strings.Join(n.files, ", ") + ")"
 	}
@@ -426,7 +452,7 @@ func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 // noteText is one note whole.
 func noteText(n *jNote) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "### note from %s [%s]\nDid:\n%sWhy:\n%s", n.pass.id, n.id, quoteLines(n.did), quoteLines(n.why))
+	fmt.Fprintf(&b, "### note from %s [%s]\nDid:\n%sWhy:\n%s", n.attempt.ref, n.ref, quoteLines(n.did), quoteLines(n.why))
 	if len(n.files) > 0 {
 		b.WriteString("Files: " + strings.Join(n.files, ", ") + "\n")
 	}
@@ -444,14 +470,11 @@ func decisionBlock(d *jDecision, room int) string {
 	if p.StageID != "" {
 		b.WriteString(" at " + p.StageID)
 	}
-	if d.pass != "" {
-		b.WriteString(" (" + d.pass + ")")
-	}
 	if p.AnsweredAt != nil {
 		b.WriteString(" — " + p.AnsweredAt.UTC().Format("2006-01-02 15:04 UTC"))
 	}
-	b.WriteString(" [" + d.id + "]\n")
-	more := fmt.Sprintf("%s(id: %q)", JournalTool, d.id)
+	b.WriteString(" [" + d.ref + "]\n")
+	more := fmt.Sprintf("%s(ref: %q)", JournalTool, d.ref)
 	if p.Type == event.PingImpasse {
 		b.WriteString(impasseAsked(p))
 		if v := strings.TrimSpace(p.Context); v != "" {
@@ -579,62 +602,66 @@ func impasseChoiceWords(choice, stage string, endsPhase bool) string {
 	return choice
 }
 
-// historyBlock is the passes in short: per stage, how many and how the
-// latest ended — the ids of every pass follow from the count.
+// historyBlock is the attempts in short: per stage, how many and how the
+// latest ended — the references of every attempt follow from the count.
 func historyBlock(j *journal) string {
 	var b strings.Builder
-	b.WriteString("\n## Passes\n")
-	if len(j.passes) == 0 {
+	b.WriteString("\n## Attempts\n")
+	if len(j.attempts) == 0 {
 		b.WriteString("No stage has run yet.\n")
 		return b.String()
 	}
-	b.WriteString("Each stage, how many passes it has had and how the latest went. A pass's id is its stage and number: " +
-		"build with 3 passes has build-1 to build-3.\n")
+	b.WriteString("Each stage, how many attempts it has had and how the latest went, ending with the latest's reference.\n")
 	var order []string
-	last := map[string]*jPass{}
+	last := map[string]*jAttempt{}
 	count := map[string]int{}
-	for _, ps := range j.passes {
-		if count[ps.stage] == 0 {
-			order = append(order, ps.stage)
+	for _, a := range j.attempts {
+		if count[a.stage] == 0 {
+			order = append(order, a.stage)
 		}
-		count[ps.stage]++
-		last[ps.stage] = ps
+		count[a.stage]++
+		last[a.stage] = a
 	}
 	for _, st := range order {
-		ps := last[st]
-		fmt.Fprintf(&b, "- %s: %d pass(es); the latest, %s: %s\n", st, count[st], ps.id, passOutcome(ps))
+		a := last[st]
+		if count[st] == 1 {
+			fmt.Fprintf(&b, "- %s: 1 attempt; %s [%s]\n", st, attemptOutcome(a), a.ref)
+			continue
+		}
+		first := j.attempts[slices.IndexFunc(j.attempts, func(x *jAttempt) bool { return x.stage == st })]
+		fmt.Fprintf(&b, "- %s: %d attempts (%s to %s); the latest: %s [%s]\n", st, count[st], first.ref, a.ref, attemptOutcome(a), a.ref)
 	}
 	return b.String()
 }
 
-// passOutcome is how a pass went, in a few words.
-func passOutcome(ps *jPass) string {
+// attemptOutcome is how an attempt went, in a few words.
+func attemptOutcome(a *jAttempt) string {
 	var parts []string
-	switch ps.end {
+	switch a.end {
 	case "completed":
 		parts = append(parts, "completed")
 	case "skipped":
-		if ps.by != "" {
+		if a.by != "" {
 			parts = append(parts, "skipped by the owner")
 		} else {
 			parts = append(parts, "skipped")
 		}
 	case "failed":
-		parts = append(parts, "failed ("+strings.ReplaceAll(ps.why, "_", " ")+")")
+		parts = append(parts, "failed ("+strings.ReplaceAll(a.why, "_", " ")+")")
 	case "paused":
 		parts = append(parts, "paused")
 	default:
 		parts = append(parts, "running now — not in the journal until it ends")
 	}
-	if ps.verdict != nil {
+	if a.verdict != nil {
 		v := "REJECT"
-		if *ps.verdict {
+		if *a.verdict {
 			v = "APPROVE"
 		}
-		parts = append(parts, fmt.Sprintf("verdict %s, %d comment(s)", v, ps.comments))
+		parts = append(parts, fmt.Sprintf("verdict %s, %d comment(s)", v, a.comments))
 	}
-	if ps.routed != "" {
-		parts = append(parts, "then "+ps.routed)
+	if a.routed != "" {
+		parts = append(parts, "then "+a.routed)
 	}
 	return strings.Join(parts, "; ")
 }
@@ -671,7 +698,7 @@ func (e *Engine) journalOf(ctx context.Context, runID string, fl *flow.Flow) (*j
 	if err != nil {
 		return nil, err
 	}
-	j := buildJournal(evs, fl, func(pingID string) []answerFile {
+	j := buildJournal(evs, fl, func(pingID, r string) []answerFile {
 		if e.attachments == nil {
 			return nil
 		}
@@ -679,17 +706,20 @@ func (e *Engine) journalOf(ctx context.Context, runID string, fl *flow.Flow) (*j
 		if err != nil {
 			return nil
 		}
-		return answerFilesOf(atts, attachmentPaths(atts))
+		return answerFilesOf(atts, attachmentPaths(atts, func(string) string { return r }))
 	})
 	e.loadNotes(ctx, j)
 	return j, nil
 }
 
-// loadNotes reads every pass's journal_notes outputs from their snapshots,
-// numbering the notes in pass order. A pass whose notes cannot be read keeps
-// why, and its record says so.
+// loadNotes reads every attempt's journal_notes outputs from their
+// snapshots, numbering each attempt's notes from 1: a note's reference
+// depends on its own attempt alone, so another attempt's notes being dropped
+// or captured again never moves it. An attempt whose notes cannot be read
+// keeps why, and its record says so.
 func (e *Engine) loadNotes(ctx context.Context, j *journal) {
-	for _, ps := range j.passes {
+	for _, ps := range j.attempts {
+		k := 0
 		for _, o := range ps.outputs {
 			if o.typ != agentspec.TypeJournalNotes {
 				continue
@@ -715,9 +745,10 @@ func (e *Engine) loadNotes(ctx context.Context, j *journal) {
 				continue
 			}
 			for _, n := range file.Notes {
-				note := &jNote{id: "note-" + strconv.Itoa(len(j.notes)+1), pass: ps, did: n.Did, why: n.Why, files: n.Files}
+				k++
+				note := &jNote{ref: ref.In(ps.ref, ref.Note, k), attempt: ps, did: n.Did, why: n.Why, files: n.Files}
 				j.notes = append(j.notes, note)
-				j.byNote[note.id] = note
+				j.byNote[note.ref] = note
 			}
 		}
 	}
@@ -755,43 +786,100 @@ func (x *exec) clearJournalFiles() {
 
 // --- the tool's entries -------------------------------------------------------
 
-// JournalEntry is what journal_read gives for one id: an entry to return
-// inline, or — File set — a file for the tool to write under
-// .apothecary/journal/ and point the agent at.
+// JournalEntry is what journal_read gives for one reference: an entry to
+// return inline, or — File set — a file for the tool to write under
+// .apothecary/journal/ and point the agent at, and — for an attempt — the
+// outputs that are not text, for the tool to fetch (JournalBeside) and write
+// as themselves beside it.
 type JournalEntry struct {
-	// ID is the entry: a pass id, decision-<n>, note-<n>, or "records" for
-	// every record.
-	ID string `json:"id"`
-	// File is the name to write Text under ("review-5.md"); empty for an
-	// entry short enough to return inline.
+	// Ref is the entry's reference: an attempt (review#5), a decision or a
+	// note in one (build#3/decision#1, build#3/note#2), run/decision#<k>, or
+	// run for every record.
+	Ref string `json:"ref"`
+	// File is where to write Text, relative to the journal's folder: the
+	// reference and .md (review#5.md, build#3/decision#1.md, run.md); empty
+	// for an entry short enough to return inline.
 	File string `json:"file,omitempty"`
 	Text string `json:"text"`
+	// Beside are an attempt's outputs that are not text and are still
+	// kept, to write in the folder named after the attempt (review#5/).
+	Beside []JournalFile `json:"beside,omitempty"`
 }
 
-// ErrJournalEntryNotFound: the id names no pass and no decision of the run.
+// JournalFile is an output written beside its attempt's file.
+type JournalFile struct {
+	// Name is its file name in the attempt's folder: the stored name, a
+	// second with the same name name-2.ext (besideFiles).
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+	Mime string `json:"mime,omitempty"`
+}
+
+// jBeside is an attempt's output that is not text, by the name it is
+// written under.
+type jBeside struct {
+	name string
+	snap jSnap
+}
+
+// besideFiles names an attempt's outputs that are not text, as the tool
+// writes them beside the attempt's file: in output order, each by its stored
+// file name (no #: filestore.SafeName), a second with the same name as
+// name-2.ext. Every one is named whether or not its bytes are still kept,
+// and the names depend on the log alone, so the attempt's file and the
+// fetches that follow it always agree.
+func besideFiles(a *jAttempt) []jBeside {
+	taken := map[string]bool{}
+	var out []jBeside
+	for _, o := range a.outputs {
+		if textual(o) {
+			continue
+		}
+		name := o.filename
+		if name == "" {
+			name = path.Base(o.path)
+		}
+		out = append(out, jBeside{name: filestore.UniqueName(filestore.SafeName(name), taken), snap: o})
+	}
+	return out
+}
+
+// ErrJournalEntryNotFound: a well-formed reference the run has no entry for.
 var ErrJournalEntryNotFound = errors.New("no such journal entry")
 
 // journalInline bounds a decision or a note returned inline; a longer one
-// is written to a file like a pass, so it never lands whole in the agent's
-// context (a note's did and why have no length limit).
+// is written to a file like an attempt, so it never lands whole in the
+// agent's context (a note's did and why have no length limit).
 const journalInline = 8 << 10
+
+// journalFile is where an entry is written: its reference, as a path.
+func journalFile(r string) string { return r + ".md" }
 
 // inlineOrFile is an entry returned inline, or written to its file when it
 // is longer than journalInline.
-func inlineOrFile(id, text string) JournalEntry {
+func inlineOrFile(r, text string) JournalEntry {
 	if len(text) <= journalInline {
-		return JournalEntry{ID: id, Text: text}
+		return JournalEntry{Ref: r, Text: text}
 	}
-	return JournalEntry{ID: id, File: id + ".md", Text: text}
+	return JournalEntry{Ref: r, File: journalFile(r), Text: text}
 }
 
-// JournalRead renders one journal entry of a run for the journal_read tool:
-// id "" is every record of the run, a pass id that pass whole (its record,
-// its outputs, its log), decision-<n> that decision whole. The outputs are
-// typed from the log, as the ledger's are; the run's flow is a fallback for
-// what the log does not say (buildJournal), and one that cannot be loaded
-// is logged and done without.
-func (e *Engine) JournalRead(ctx context.Context, runID, id string) (JournalEntry, error) {
+// JournalRead renders one journal entry of a run for the journal_read tool,
+// by its reference: "" or run is every record of the run, an attempt that
+// attempt whole (its record, its outputs, its log), a decision or a note
+// that entry whole. A reference that is not one wraps ref.ErrMalformed; one
+// the run has no entry for, ErrJournalEntryNotFound. The outputs are typed
+// from the log, as the ledger's are; the run's flow is a fallback for what
+// the log does not say (buildJournal), and one that cannot be loaded is
+// logged and done without.
+func (e *Engine) JournalRead(ctx context.Context, runID, reference string) (JournalEntry, error) {
+	var r ref.Ref
+	if reference != "" {
+		var err error
+		if r, err = ref.Parse(reference); err != nil {
+			return JournalEntry{}, err
+		}
+	}
 	fl, err := e.journalFlow(ctx, runID)
 	if err != nil {
 		e.log.WarnContext(ctx, "journal: loading the run's flow", logs.RunID, runID, "err", err)
@@ -800,17 +888,47 @@ func (e *Engine) JournalRead(ctx context.Context, runID, id string) (JournalEntr
 	if err != nil {
 		return JournalEntry{}, err
 	}
+	key := r.String()
 	switch {
-	case id == "":
-		return JournalEntry{ID: "records", File: "records.md", Text: e.journalRecords(ctx, j)}, nil
-	case j.byDec[id] != nil:
-		return inlineOrFile(id, journalDecisionText(j.byDec[id])), nil
-	case j.byNote[id] != nil:
-		return inlineOrFile(id, noteText(j.byNote[id])), nil
-	case j.byPass[id] != nil:
-		return JournalEntry{ID: id, File: id + ".md", Text: e.journalPassFile(ctx, j, j.byPass[id])}, nil
+	case key == ref.Run:
+		return JournalEntry{Ref: ref.Run, File: journalFile(ref.Run), Text: e.journalRecords(ctx, j)}, nil
+	case j.byDec[key] != nil:
+		return inlineOrFile(key, journalDecisionText(j.byDec[key])), nil
+	case j.byNote[key] != nil:
+		return inlineOrFile(key, noteText(j.byNote[key])), nil
+	case r.Kind == "" && j.byAttempt[key] != nil:
+		text, beside := e.journalAttemptFile(ctx, j, j.byAttempt[key])
+		return JournalEntry{Ref: key, File: journalFile(key), Text: text, Beside: beside}, nil
 	}
-	return JournalEntry{}, fmt.Errorf("%w: %q (a pass is <stage>-<n>, a decision decision-<n>, a note note-<n>)", ErrJournalEntryNotFound, id)
+	what := map[string]string{"": "attempt", ref.Decision: "answered decision", ref.Note: "note"}[r.Kind]
+	return JournalEntry{}, fmt.Errorf("%w: the run has no %s %s (the references in your RUN JOURNAL section are the ones it has)",
+		ErrJournalEntryNotFound, what, key)
+}
+
+// JournalBeside finds an output written beside an attempt's file
+// (JournalEntry.Beside) by its name: the snapshot that holds its bytes.
+// ErrJournalEntryNotFound for a name the attempt has not; a reference that
+// is not an attempt wraps ref.ErrMalformed.
+func (e *Engine) JournalBeside(ctx context.Context, runID, reference, name string) (string, error) {
+	r, err := ref.Parse(reference)
+	if err == nil && (r.Kind != "" || r.IsRun()) {
+		err = fmt.Errorf("%w: %q is not an attempt (<stage>#<n>): only an attempt has outputs", ref.ErrMalformed, reference)
+	}
+	if err != nil {
+		return "", err
+	}
+	evs, err := e.store.Events(ctx, runID, 0)
+	if err != nil {
+		return "", err
+	}
+	if a := buildJournal(evs, nil, nil).byAttempt[r.String()]; a != nil {
+		for _, b := range besideFiles(a) {
+			if b.name == name {
+				return b.snap.id, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("%w: %s has no output named %q", ErrJournalEntryNotFound, r, name)
 }
 
 // journalFlow is the run's flow, resolved with its parameters.
@@ -827,15 +945,15 @@ func journalDecisionText(d *jDecision) string {
 	return strings.TrimPrefix(decisionBlock(d, math.MaxInt), "\n")
 }
 
-// passRecord is a pass's record: when it ran, how it ended, its verdict and
-// edge, the decisions made about it, what it left.
-func passRecord(j *journal, ps *jPass) string {
+// attemptRecord is an attempt's record: when it ran, how it ended, its
+// verdict and edge, the decisions made in or about it, what it left.
+func attemptRecord(j *journal, ps *jAttempt) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "### %s — pass %d of %s\n", ps.id, ps.n, ps.stage)
+	fmt.Fprintf(&b, "### %s — attempt %d of %s\n", ps.ref, ps.n, ps.stage)
 	if !ps.at.IsZero() {
 		fmt.Fprintf(&b, "Started: %s\n", ps.at.UTC().Format("2006-01-02 15:04 UTC"))
 	}
-	b.WriteString("Ended: " + passOutcome(ps) + "\n")
+	b.WriteString("Ended: " + attemptOutcome(ps) + "\n")
 	if ps.end == "failed" && ps.err != "" {
 		b.WriteString("Error:\n" + quoteLines(ps.err))
 	}
@@ -847,8 +965,8 @@ func passRecord(j *journal, ps *jPass) string {
 	}
 	var decided []string
 	for _, d := range j.decisions {
-		if d.pass == ps.id {
-			decided = append(decided, d.id)
+		if d.attempt == ps.ref {
+			decided = append(decided, d.ref)
 		}
 	}
 	if len(decided) > 0 {
@@ -856,8 +974,8 @@ func passRecord(j *journal, ps *jPass) string {
 	}
 	var noted []string
 	for _, n := range j.notes {
-		if n.pass == ps {
-			noted = append(noted, n.id)
+		if n.attempt == ps {
+			noted = append(noted, n.ref)
 		}
 	}
 	if len(noted) > 0 {
@@ -894,32 +1012,64 @@ func snapWords(s jSnap) string {
 	return w
 }
 
-// journalPassFile is everything a pass left, in one file: its record, each
-// output (text embedded, anything else listed), then its full log.
-func (e *Engine) journalPassFile(ctx context.Context, j *journal, ps *jPass) string {
+// journalAttemptFile is everything an attempt left, in one file: its
+// record, each output, then its full log. A text output is embedded; one
+// that is not text is written as itself beside the file (besideFiles) — the
+// file names where, and the list is what the tool fetches — or said no
+// longer kept.
+func (e *Engine) journalAttemptFile(ctx context.Context, j *journal, ps *jAttempt) (string, []JournalFile) {
+	beside := map[string]string{} // snapshot → its name beside the file
+	for _, f := range besideFiles(ps) {
+		beside[f.snap.id] = f.name
+	}
+	var files []JournalFile
 	var b strings.Builder
-	fmt.Fprintf(&b, "# RUN JOURNAL — pass %s\n\n", ps.id)
-	b.WriteString(passRecord(j, ps))
+	fmt.Fprintf(&b, "# RUN JOURNAL — %s\n\n", ps.ref)
+	b.WriteString(attemptRecord(j, ps))
 	if ps.end == "" {
-		b.WriteString("\nThis pass is running now: what it leaves is in the journal once it ends.\n")
+		b.WriteString("\nThis attempt is running now: what it leaves is in the journal once it ends.\n")
 	}
 	for _, o := range ps.outputs {
 		fmt.Fprintf(&b, "\n## Output: %s\n\n", snapWords(o))
-		b.WriteString(e.snapBody(ctx, o))
+		name, ok := beside[o.id]
+		if !ok {
+			b.WriteString(e.snapBody(ctx, o))
+			continue
+		}
+		if lost := e.snapKept(ctx, o); lost != "" {
+			fmt.Fprintf(&b, "(not text — %s: %s)\n", o.mime, lost)
+			continue
+		}
+		fmt.Fprintf(&b, "Not text (%s): written beside this file, as %s/%s/%s — open it with your own tools.\n", o.mime, journalFilesDir, ps.ref, name)
+		files = append(files, JournalFile{Name: name, Size: o.size, Mime: o.mime})
 	}
 	if ps.log != nil {
 		fmt.Fprintf(&b, "\n## Log (%d bytes)\n\n", ps.log.size)
 		b.WriteString(e.snapBody(ctx, *ps.log))
 	}
-	return b.String()
+	return b.String(), files
 }
 
-// journalRecords is every record of the run in one file: every decision
-// whole, then every pass's record with its verdict — no logs, no other
-// output.
+// snapKept says why a snapshot's bytes cannot be had ("" when they can).
+func (e *Engine) snapKept(ctx context.Context, s jSnap) string {
+	if e.snapshots == nil {
+		return "no longer kept"
+	}
+	f, _, err := e.snapshots.Open(ctx, s.id)
+	if err != nil {
+		return e.snapLost(ctx, s, err)
+	}
+	_ = f.Close()
+	return ""
+}
+
+// journalRecords is every record of the run in one file: every answered
+// ping whole — the ones the ledger leaves out too, so every reference an
+// attempt's record names is here — every note, then every attempt's record
+// with its verdict: no logs, no other output.
 func (e *Engine) journalRecords(ctx context.Context, j *journal) string {
 	var b strings.Builder
-	b.WriteString("# RUN JOURNAL — every record\n\n## Owner decisions\n")
+	b.WriteString("# RUN JOURNAL — every record\n\n## Decisions\n")
 	if len(j.decisions) == 0 {
 		b.WriteString("None.\n")
 	}
@@ -933,12 +1083,12 @@ func (e *Engine) journalRecords(ctx context.Context, j *journal) string {
 	for _, n := range j.notes {
 		b.WriteString("\n" + noteText(n))
 	}
-	b.WriteString("\n## Passes\n")
-	if len(j.passes) == 0 {
+	b.WriteString("\n## Attempts\n")
+	if len(j.attempts) == 0 {
 		b.WriteString("None.\n")
 	}
-	for _, ps := range j.passes {
-		b.WriteString("\n" + passRecord(j, ps))
+	for _, ps := range j.attempts {
+		b.WriteString("\n" + attemptRecord(j, ps))
 		for _, o := range ps.outputs {
 			if o.typ == verdictType {
 				b.WriteString("Verdict:\n" + quoteLines(strings.TrimRight(e.snapBody(ctx, o), "\n")))
@@ -999,5 +1149,5 @@ func textual(s jSnap) bool {
 	return s.mime != "application/octet-stream" && s.mime != "application/zip" && s.mime != "application/pdf"
 }
 
-// verdictType is the port type whose snapshot a pass's verdict is.
+// verdictType is the port type whose snapshot an attempt's verdict is.
 const verdictType = agentspec.TypeVerdict

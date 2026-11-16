@@ -33,8 +33,8 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 	}
 	fresh := rs.Ph != runcore.PhIn
 	if fresh { // §2: on recovery, open command stages re-execute without a new attempt
-		iter := rs.Iters[st.ID] + 1
-		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
+		iter := rs.Attempts[st.ID] + 1
+		if err := x.append(&event.StageStarted{StageID: st.ID, Attempt: iter}); err != nil {
 			return err
 		}
 	}
@@ -115,8 +115,8 @@ func (x *exec) stageCommand(st *flow.Stage) error {
 		}
 		return x.fail("infrastructure error: " + err.Error())
 	}
-	x.publishLog(st.ID, rs.Iters[st.ID], res.Output)
-	x.publishOutputs(st, rs.Iters[st.ID], st.Outputs)
+	x.publishLog(st.ID, rs.Attempts[st.ID], res.Output)
+	x.publishOutputs(st, rs.Attempts[st.ID], st.Outputs)
 	obs := runcore.AttemptObservation{ExitCode: res.ExitCode, Output: shell.Tail(res.Output, 8<<10)}
 	if res.ExitCode == 0 {
 		// A command that exits 0 without writing what it declared has not done

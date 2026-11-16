@@ -47,6 +47,29 @@ const (
 
 var slugRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
+// ReservedRef is the character references use (review#5: attempt 5 of
+// review; apothecary/internal/run/ref): no id, port name or path a flow
+// defines may hold it, so nothing can pass for a reference. A repo: path is
+// exempt — it names a file the repository already has.
+const ReservedRef = "#"
+
+// refReserved says why a name or path holding ReservedRef is refused, or "".
+func refReserved(what, v string) string {
+	if !strings.Contains(v, ReservedRef) {
+		return ""
+	}
+	return fmt.Sprintf("%s %q holds %q, which is reserved for references (review#5 is attempt 5 of review)", what, v, ReservedRef)
+}
+
+// notSlug is why an id is not a slug, naming the reservation when that is
+// the reason.
+func notSlug(id string) string {
+	if why := refReserved("id", id); why != "" {
+		return why
+	}
+	return "id is not a slug (lowercase [a-z0-9_-], starting with a letter)"
+}
+
 // idPathRe matches a stage id as the parser may produce it: a slug, or a
 // sequence path of slugs joined by dots (make.ship.test).
 var idPathRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$`)
@@ -2610,7 +2633,7 @@ func (p *parser) buildPhases(srcs []phaseSrc, f *Flow) ([]Phase, []DocStage, err
 			case rp.id == "":
 				return fail("id is required")
 			case !slugRe.MatchString(rp.id):
-				return fail("id is not a slug (lowercase [a-z0-9_-], starting with a letter)")
+				return fail("%s", notSlug(rp.id))
 			case rp.id == MainPhase:
 				return fail("id %q is the main chain's", MainPhase)
 			}

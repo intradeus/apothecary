@@ -399,6 +399,8 @@ components:
           type: string
         agent_hash:
           type: string
+        attempt:
+          type: integer
         cost_usd:
           format: double
           type: number
@@ -410,8 +412,6 @@ components:
         harness:
           type: string
         input_tokens:
-          type: integer
-        iteration:
           type: integer
         model:
           type: string
@@ -436,9 +436,9 @@ components:
           type: integer
       required:
         - active_ms
+        - attempt
         - cost_usd
         - input_tokens
-        - iteration
         - outcome
         - output_tokens
         - pings
@@ -852,10 +852,10 @@ components:
       properties:
         agent:
           type: string
+        attempt:
+          type: integer
         harness:
           type: string
-        iteration:
-          type: integer
         since:
           format: date-time
           type: string
@@ -872,8 +872,8 @@ components:
           type: boolean
       required:
         - agent
+        - attempt
         - harness
-        - iteration
         - since
         - stage_id
         - subagents
@@ -1894,11 +1894,11 @@ components:
       type: object
     HoldView:
       properties:
+        attempt:
+          type: integer
         cost_usd:
           format: double
           type: number
-        iteration:
-          type: integer
         messages:
           type: integer
         since:
@@ -2037,15 +2037,32 @@ components:
       type: object
     JournalEntry:
       properties:
+        beside:
+          items:
+            $ref: '#/components/schemas/JournalFile'
+          type: array
         file:
           type: string
-        id:
+        ref:
           type: string
         text:
           type: string
       required:
-        - id
+        - ref
         - text
+      type: object
+    JournalFile:
+      properties:
+        mime:
+          type: string
+        name:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - name
+        - size
       type: object
     KindDescriptor:
       properties:
@@ -2767,6 +2784,8 @@ components:
           type: string
         raised_at:
           format: date-time
+          type: string
+        ref:
           type: string
         review:
           items:
@@ -4000,6 +4019,8 @@ components:
       type: object
     Snapshot:
       properties:
+        attempt:
+          type: integer
         created_at:
           format: date-time
           type: string
@@ -4007,8 +4028,6 @@ components:
           type: string
         id:
           type: string
-        iteration:
-          type: integer
         kind:
           type: string
         mime:
@@ -10833,7 +10852,7 @@ paths:
         - runs
   /api/runs/{id}/journal:
     get:
-      description: 'Every owner decision whole and every pass''s record with its verdict, no logs: one file for the tool to write.'
+      description: 'Every decision and note whole and every attempt''s record with its verdict, no logs: one file for the tool to write (run.md).'
       operationId: readRunJournal
       parameters:
         - in: path
@@ -10866,12 +10885,12 @@ paths:
           description: error
       security:
         - runToken: []
-      summary: Every record of the run's journal (journal_read with no id)
+      summary: Every record of the run's journal (journal_read with no reference)
       tags:
         - runs
-  /api/runs/{id}/journal/{entry}:
+  /api/runs/{id}/journal/{ref...}:
     get:
-      description: A pass (<stage>-<n>) is its record, its outputs and its full log, as one file; a decision (decision-<n>) or a note (note-<n>) is inline unless past 8 KiB, then a file. 404 for an id the run has not.
+      description: 'The reference is <stage>#<n> (review#5), <stage>#<n>/decision#<k>, <stage>#<n>/note#<k>, run, or run/decision#<k>, its # sent as %23. An attempt (review#5) is its record, its outputs and its full log, as one file (review#5.md); a decision (build#3/decision#1) or a note (build#3/note#2) is inline unless past 8 KiB, then a file at its reference (build#3/decision#1.md); run is every record. An attempt''s outputs that are not text are listed in beside; ?file=<name> gives one''s bytes, as application/octet-stream, for the tool to write beside the attempt''s file. 400 for what is not a reference, 404 for one the run has not, 410 for an output whose bytes are no longer kept.'
       operationId: readRunJournalEntry
       parameters:
         - in: path
@@ -10879,9 +10898,9 @@ paths:
           required: true
           schema:
             type: string
-        - in: path
-          name: entry
-          required: true
+        - description: 'an output the attempt lists in beside, by its name: its bytes instead of the entry'
+          in: query
+          name: file
           schema:
             type: string
       responses:
@@ -10909,7 +10928,7 @@ paths:
           description: error
       security:
         - runToken: []
-      summary: 'One entry of the run''s journal: a pass whole, a decision or a note'
+      summary: 'One entry of the run''s journal, by its reference: an attempt whole, a decision or a note'
       tags:
         - runs
   /api/runs/{id}/logs/{stage}:

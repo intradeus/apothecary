@@ -31,7 +31,7 @@ export function runFacts(run: Run): RunGlance {
 	return {
 		cost: run.facts.costUsd,
 		turns: run.facts.turns,
-		attempt: open?.iteration,
+		attempt: open?.attempt,
 		stageStartedAt: open?.startedAt
 	};
 }

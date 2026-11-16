@@ -13,9 +13,10 @@ aliased: the old name was never released). It renders a `# RUN JOURNAL`
 section in three parts, built from the event log as the prompt is built
 (`internal/engine/journal.go`):
 
-- **Owner decisions**, oldest first, each with its id `decision-<n>`, the
-  stage and pass (`<stage>-<n>`) that asked, when, the question and the
-  decision. What counts is what `run.ping_answers` counted, with one change:
+- **Owner decisions**, oldest first, each with its reference
+  (`build#3/decision#1`, the naming standard of
+  `2026-11-16-one-naming-standard-for-attempts.md`), the stage it was about,
+  when, the question and the decision. What counts is what `run.ping_answers` counted, with one change:
   every impasse answer is a decision now, with the verdict it answered in
   place of a question, since a skip or a keep going overrules or upholds a
   verdict whether or not a note was written. A gate's reject reads "sent it
@@ -28,17 +29,18 @@ section in three parts, built from the event log as the prompt is built
   `run_if`'s plain "skipped"), as an account id tells an agent nothing.
   None is ever dropped: the 32 KiB cap is gone, and a body past
   1500 bytes shows its head, cut on a line, and names the
-  `journal_read(id: "decision-<n>")` call that gives all of it.
-- **Passes**: per stage, how many and how the latest went — its end
+  `journal_read(ref: "build#3/decision#1")` call that gives all of it.
+- **Attempts**: per stage, how many and how the latest went — its end
   (completed, skipped by the owner, failed and why, paused, running now),
   its verdict, the edge it took. A short summary rather than an index: the
-  ids of every pass follow from the count, since pass numbers never repeat.
+  references of every attempt follow from the count and the range shown
+  (`review#1 to review#5`), since attempt numbers never repeat.
 - **Reading more**: the `journal_read` tool and its three calls. The tool
   itself is the next step on this branch; until it lands, the section names
   a tool the agent does not have.
 
 The journal is one fold (`buildJournal`) over the log, with snapshot
-metadata (outputs and logs per pass) and the decisions' delivered
+metadata (outputs and logs per attempt) and the decisions' delivered
 attachments, so the ledger and the tool's routes cannot disagree.
 
 The `builder` flow's builder, reviewer and redactor read `run.journal` where
@@ -50,13 +52,13 @@ the journal as context, not as a list to report.
 Tests: `internal/engine/journal_test.go` — the ledger an agent reads after
 a gate's feedback, two forms, an unanswered question and a skip at the
 impasse (`TestTheLedgerCarriesTheOwnersDecisions`); three hundred 20 KB
-decisions, none dropped and each cut with its id
+decisions, none dropped and each cut with its reference
 (`TestTheLedgerDropsNoDecision`); which pings count (`TestJournalDecides`);
-each pass's end, verdict and edge read off the log
-(`TestBuildJournalReadsEachPass`); the decision words; the pass ids round
-trip; an attachment named in its decision; an unreadable log said so;
+each attempt's end, verdict and edge read off the log, one capture per
+output (`TestBuildJournalReadsEachAttempt`); the decision words; an
+attachment named in its decision, at its delivered path; an unreadable log said so;
 `TestDecisionsCarryWhatTheyAnswer` (a gate's files and link, a failure's
-output, a skip's unwritten outputs); `TestALongRun` (3000 passes and their
-notes leave the ledger a line per stage and 30 notes, under 16 KiB, and a
-5 MiB log is written to its pass's file whole). The
+output, a skip's unwritten outputs); `TestALongRun` (3000 attempts and
+their notes leave the ledger a line per stage and 30 notes, under 16 KiB,
+and a 5 MiB log is written to its attempt's file whole). The
 UI's agent editor previews the section under its new name.

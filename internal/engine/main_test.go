@@ -130,7 +130,7 @@ func diffState(live, rep *runcore.State) []string {
 		{"abortAt", live.AbortAt, rep.AbortAt},
 		{"abortReason", live.AbortReason, rep.AbortReason},
 		{"endReason", live.EndReason, rep.EndReason},
-		{"iters", live.Iters, rep.Iters},
+		{"iters", live.Attempts, rep.Attempts},
 		{"edgeCounts", live.EdgeCounts, rep.EdgeCounts},
 		{"actionPending", live.ActionPending, rep.ActionPending},
 		{"sessions", live.Sessions, rep.Sessions},

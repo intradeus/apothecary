@@ -195,14 +195,14 @@ func (t *Telemetry) OnEvent(e event.Event) {
 		// The attempt roots its own trace under derived IDs, so the
 		// agent.invoke the engine starts under StageSpanContext is its child;
 		// the link leads back to the run.
-		start := ptel.WithIDs(context.Background(), ptel.StageTraceID(e.RunID, p.StageID, p.Iteration), ptel.StageSpanID(e.RunID, p.StageID, p.Iteration))
+		start := ptel.WithIDs(context.Background(), ptel.StageTraceID(e.RunID, p.StageID, p.Attempt), ptel.StageSpanID(e.RunID, p.StageID, p.Attempt))
 		_, span := t.tracer.Start(start, p.StageID,
 			trace.WithTimestamp(e.TS),
 			trace.WithLinks(trace.Link{SpanContext: ptel.RunSpanContext(e.RunID)}),
 			trace.WithAttributes(
 				attribute.String("apothecary.run_id", e.RunID),
 				attribute.String("apothecary.stage", p.StageID),
-				attribute.Int("apothecary.iteration", p.Iteration),
+				attribute.Int("apothecary.attempt", p.Attempt),
 				attribute.String("apothecary.harness", p.Harness),
 				attribute.String("apothecary.model", p.Model),
 				attribute.String("gen_ai.request.model", p.Model),

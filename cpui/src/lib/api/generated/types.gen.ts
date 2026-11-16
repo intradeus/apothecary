@@ -171,12 +171,12 @@ export type AttemptFacts = {
 	active_ms: number;
 	agent?: string;
 	agent_hash?: string;
+	attempt: number;
 	cost_usd: number;
 	ended_at?: string;
 	failure_reason?: string;
 	harness?: string;
 	input_tokens: number;
-	iteration: number;
 	model?: string;
 	outcome: string;
 	output_tokens: number;
@@ -373,8 +373,8 @@ export type CredentialRequest = {
 
 export type CrewPresence = {
 	agent: string;
+	attempt: number;
 	harness: string;
-	iteration: number;
 	since: string;
 	stage_id: string;
 	subagents: Array<SwarmSubagent> | null;
@@ -823,8 +823,8 @@ export type Health = {
 };
 
 export type HoldView = {
+	attempt?: number;
 	cost_usd?: number;
-	iteration?: number;
 	messages?: number;
 	since: string;
 	stage_id: string;
@@ -893,9 +893,16 @@ export type IntegrationUpdate = {
 };
 
 export type JournalEntry = {
+	beside?: Array<JournalFile>;
 	file?: string;
-	id: string;
+	ref: string;
 	text: string;
+};
+
+export type JournalFile = {
+	mime?: string;
+	name: string;
+	size: number;
 };
 
 export type KindDescriptor = {
@@ -1226,6 +1233,7 @@ export type PingView = {
 	ping_id: string;
 	question: string;
 	raised_at: string;
+	ref?: string;
 	review?: Array<ReviewComment>;
 	run_id: string;
 	stage_id?: string;
@@ -1753,10 +1761,10 @@ export type SkillsetRequest = {
 };
 
 export type Snapshot = {
+	attempt?: number;
 	created_at: string;
 	filename: string;
 	id: string;
-	iteration?: number;
 	kind: string;
 	mime: string;
 	name?: string;
@@ -7682,10 +7690,14 @@ export type ReadRunJournalEntryData = {
 	body?: never;
 	path: {
 		id: string;
-		entry: string;
 	};
-	query?: never;
-	url: '/api/runs/{id}/journal/{entry}';
+	query?: {
+		/**
+		 * an output the attempt lists in beside, by its name: its bytes instead of the entry
+		 */
+		file?: string;
+	};
+	url: '/api/runs/{id}/journal/{ref...}';
 };
 
 export type ReadRunJournalEntryErrors = {

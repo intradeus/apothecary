@@ -512,11 +512,11 @@ func serveMCP(in io.Reader, offered bool) {
 			_ = json.Unmarshal(msg.Params, &p)
 			if p.Name == "journal_read" && offered {
 				var args struct {
-					ID string `json:"id"`
+					Ref string `json:"ref"`
 				}
 				_ = json.Unmarshal(p.Arguments, &args)
 				go func(id json.RawMessage) {
-					text, err := journalRead(args.ID)
+					text, err := journalRead(args.Ref)
 					if err != nil {
 						reply(id, map[string]any{
 							"content": []any{map[string]any{"type": "text", "text": err.Error()}},

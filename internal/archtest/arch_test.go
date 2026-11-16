@@ -59,6 +59,8 @@ var rules = []rule{
 	{pkg: "internal/project/integrations", importedOnlyBy: []string{"cmd/"}},
 	{pkg: "internal/run/runinput", mayImport: []string{"internal/skills"}},
 	{pkg: "internal/run/event", denyImport: outerLayers},
+	// The naming standard stands alone: anything may read a reference.
+	{pkg: "internal/run/ref", mayImport: []string{}},
 	{pkg: "internal/run", denyImport: outerLayers},
 	// Run analytics stands alone: the query compiler and its catalog know
 	// only SQL over the fact tables, never the domain that writes them.
@@ -111,7 +113,7 @@ var rules = []rule{
 	}},
 	{pkg: "internal/run/runcore", mayImport: []string{
 		"internal/flow/actionspec", "internal/flow/agentspec", "internal/run/event", "internal/flow",
-		"internal/flow/reviewfile", "internal/run", "internal/flow/signalspec", "internal/ports/",
+		"internal/flow/reviewfile", "internal/run", "internal/run/ref", "internal/flow/signalspec", "internal/ports/",
 	}},
 	// Work items: the contract every kind meets, the kinds, and the one
 	// list that registers them. The contract names no kind; a kind knows

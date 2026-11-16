@@ -55,7 +55,7 @@ func idProblem(id string) string {
 	case id == "":
 		return "id is required"
 	case !slugRe.MatchString(id):
-		return "id is not a slug (lowercase [a-z0-9_-], starting with a letter)"
+		return notSlug(id)
 	case id == TerminalEnd:
 		return fmt.Sprintf("id %q is reserved (the end of a chain: the run goes back to waiting)", TerminalEnd)
 	case id == TerminalDone:
@@ -124,7 +124,7 @@ func (p *parser) buildSequences(raw []DocSequence) error {
 			return fail("id is required")
 		}
 		if !slugRe.MatchString(s.ID) {
-			return fail("id is not a slug (lowercase [a-z0-9_-], starting with a letter)")
+			return fail("%s", notSlug(s.ID))
 		}
 		if err := notAParam(s.Description); err != nil {
 			return fail("description: %v", err)

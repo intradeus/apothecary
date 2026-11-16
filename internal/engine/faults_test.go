@@ -61,7 +61,7 @@ func withFastReprobe(t *testing.T) {
 func TestRecoveryRidesOutAContainerRestarting(t *testing.T) {
 	withFastReprobe(t)
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "build", Iteration: 1, Harness: "fake", Model: "fake/model"})
+	h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "build", Attempt: 1, Harness: "fake", Model: "fake/model"})
 	h.res.Envp = &wobbleEnvp{EnvProvisioner: h.envp, statuses: []envport.EnvStatus{envport.EnvStarting}}
 	v := recoverAndSettle(t, h, "r1")
 	if v.State != run.Completed {
@@ -76,7 +76,7 @@ func TestRecoveryRidesOutAContainerRestarting(t *testing.T) {
 // next boot, whatever the workspace holds is left alone.
 func TestRecoveryStopsWhenItCannotProbeTheWorkspace(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "build", Iteration: 1, Harness: "fake", Model: "fake/model"})
+	h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "build", Attempt: 1, Harness: "fake", Model: "fake/model"})
 	h.res.Envp = &wobbleEnvp{EnvProvisioner: h.envp, err: errors.New("daemon down")}
 	v := recoverAndSettle(t, h, "r1")
 	if v.State.Terminal() {
@@ -93,7 +93,7 @@ func TestRecoveryStopsWhenItCannotProbeTheWorkspace(t *testing.T) {
 func TestRecoveryReprovisionsABrokenWorkspace(t *testing.T) {
 	withFastReprobe(t)
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "build", Iteration: 1, Harness: "fake", Model: "fake/model"})
+	h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "build", Attempt: 1, Harness: "fake", Model: "fake/model"})
 	h.res.Envp = &wobbleEnvp{EnvProvisioner: h.envp, statuses: []envport.EnvStatus{envport.EnvBroken, envport.EnvBroken}}
 	v := recoverAndSettle(t, h, "r1")
 	if v.State != run.Completed {
@@ -106,7 +106,7 @@ func TestRecoveryReprovisionsABrokenWorkspace(t *testing.T) {
 
 func TestRecoveryStopsWhenTheTunnelWillNotComeBack(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "build", Iteration: 1, Harness: "fake", Model: "fake/model"})
+	h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "build", Attempt: 1, Harness: "fake", Model: "fake/model"})
 	h.res.Envp = &wobbleEnvp{EnvProvisioner: h.envp, reattach: errors.New("no route")}
 	v := recoverAndSettle(t, h, "r1")
 	if v.State.Terminal() || len(h.runner.SnapshotRunCalls()) != 0 {
@@ -117,7 +117,7 @@ func TestRecoveryStopsWhenTheTunnelWillNotComeBack(t *testing.T) {
 // Credentials that cannot be put back: the run does not go on without them.
 func TestRecoveryStopsWhenCredentialsCannotBeReseeded(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "build", Iteration: 1, Harness: "fake", Model: "fake/model"})
+	h.seedLive(t, "r1", "loop", &event.StageStarted{StageID: "build", Attempt: 1, Harness: "fake", Model: "fake/model"})
 	h.res.SeedAuth = func(context.Context, envport.EnvID, func(string)) error { return errors.New("keychain locked") }
 	v := recoverAndSettle(t, h, "r1")
 	if v.State.Terminal() || len(h.runner.SnapshotRunCalls()) != 0 {

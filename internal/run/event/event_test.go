@@ -84,8 +84,8 @@ func TestJSONKeysMatchSpec(t *testing.T) {
 			`{"ticket_title":"t","ticket_goal":"g","flow_name":"v1","flow_hash":"h","repo_url":"u","branch":"b"}`},
 		{&EnvReady{EnvID: "e", Links: []Link{{Kind: "app", URL: "u"}}},
 			`{"env_id":"e","links":[{"kind":"app","url":"u"}]}`},
-		{&StageStarted{StageID: "build", Iteration: 1, Harness: "opencode", Model: "a/b"},
-			`{"stage_id":"build","iteration":1,"harness":"opencode","model":"a/b"}`},
+		{&StageStarted{StageID: "build", Attempt: 1, Harness: "opencode", Model: "a/b"},
+			`{"stage_id":"build","attempt":1,"harness":"opencode","model":"a/b"}`},
 		{&StageCompleted{StageID: "build", DurationMS: 5, TurnsUsed: 3, Usage: &Usage{InputTokens: 1, OutputTokens: 2, CostUSD: 0.5}, SessionID: "s"},
 			`{"stage_id":"build","duration_ms":5,"turns_used":3,"usage":{"input_tokens":1,"output_tokens":2,"cost_usd":0.5},"session_id":"s"}`},
 		{&StageFailed{StageID: "test", Reason: ReasonExitNonzero, ExitCode: &exit},
@@ -105,9 +105,9 @@ func TestJSONKeysMatchSpec(t *testing.T) {
 		{&PingAnswered{PingID: "p", Answer: "approve", AttachmentIDs: []string{"a1"},
 			Review: []ReviewComment{{Path: "artifacts/plan.md", StartLine: 2, EndLine: 3, Quote: "q", Body: "b", AttachmentIDs: []string{"a1"}}}},
 			`{"ping_id":"p","answer":"approve","attachment_ids":["a1"],"review":[{"path":"artifacts/plan.md","start_line":2,"end_line":3,"quote":"q","body":"b","attachment_ids":["a1"]}]}`},
-		{&SnapshotCaptured{StageID: "plan", Iteration: 2, Kind: "output", Name: "plan", Path: "artifacts/plan.md",
+		{&SnapshotCaptured{StageID: "plan", Attempt: 2, Kind: "output", Name: "plan", Path: "artifacts/plan.md",
 			SnapshotID: "sn1", Filename: "plan.md", Mime: "text/markdown", SHA256: "aa", Size: 5, PortType: "file"},
-			`{"stage_id":"plan","iteration":2,"kind":"output","name":"plan","path":"artifacts/plan.md","snapshot_id":"sn1","filename":"plan.md","mime":"text/markdown","sha256":"aa","size":5,"port_type":"file"}`},
+			`{"stage_id":"plan","attempt":2,"kind":"output","name":"plan","path":"artifacts/plan.md","snapshot_id":"sn1","filename":"plan.md","mime":"text/markdown","sha256":"aa","size":5,"port_type":"file"}`},
 		{&VerdictReceived{StageID: "review", Approve: false, NComments: 2},
 			`{"stage_id":"review","approve":false,"n_comments":2}`},
 		{&MRCreated{MRURL: "u", MRIID: 7, Branch: "b"},
@@ -170,7 +170,7 @@ func TestUnmarshalPayloadUnknownType(t *testing.T) {
 // and outlives any codec. The raw payload round-trips verbatim so SSE replay
 // shows old events untouched.
 func TestUnknownEventTypeDecodesInert(t *testing.T) {
-	raw := []byte(`{"stage_id":"plan","iteration":1,"scope":"stage_output","artifact_id":"cap1"}`)
+	raw := []byte(`{"stage_id":"plan","attempt":1,"scope":"stage_output","artifact_id":"cap1"}`)
 	p, err := UnmarshalPayload("artifact_published", raw)
 	if err != nil {
 		t.Fatalf("retired type errored: %v", err)

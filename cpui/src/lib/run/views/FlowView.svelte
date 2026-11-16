@@ -9,6 +9,7 @@
 	import { STAGE_WORD } from '$lib/design/hues';
 	import Loading from '$lib/ui/Loading.svelte';
 	import { stateLabel } from '$lib/core/format';
+	import { attemptRef } from '$lib/domain';
 	import { shownStages, stageRows } from '../derive';
 	import type { RunStore } from '../store.svelte';
 
@@ -53,7 +54,8 @@
 							: r.type
 					: '',
 				r.agent ?? '',
-				r.attempt ? t('runview.flow.tip_attempt', { n: r.attempt }) : ''
+				r.attempt ? t('runview.flow.tip_attempt', { n: r.attempt }) : '',
+				r.attempt ? attemptRef(r.id, r.attempt) : ''
 			]
 				.filter(Boolean)
 				.join(' · ')
