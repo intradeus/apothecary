@@ -198,7 +198,7 @@ k3d cluster.
 
    ```sh
    apothecary login https://apothecary.example.com   # approve in the browser
-   apothecary ssh-config                             # once: ssh <workspace>.apothecary
+   apothecary ssh-config                             # once: a key, registered; ssh <workspace>.apothecary
    ```
 
 To upgrade, run `helm upgrade` with the new `--version`, then
