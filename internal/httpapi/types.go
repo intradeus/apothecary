@@ -35,7 +35,7 @@ import (
 
 // ErrorResponse is the one error shape every endpoint uses. RunID is set on
 // the 409 refusing a run on a ticket that already has an active one
-// (engine.ErrTicketBusy): the run to open or abort.
+// (workitem.ErrBusy): the run to open or abort.
 type ErrorResponse struct {
 	Error string `json:"error"`
 	RunID string `json:"run_id,omitempty"`

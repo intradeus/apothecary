@@ -209,7 +209,7 @@ func (m *Mem) SetTicketStatus(_ context.Context, id, statusID, by string, at tim
 		return notFound("ticket", id)
 	}
 	if _, ok := m.statuses[statusID]; !ok {
-		return fmt.Errorf("ticket %s references a missing project, status or type: %w", id, ErrInvalid)
+		return fmt.Errorf("ticket %s references a missing status or type: %w", id, ErrInvalid)
 	}
 	if t.StatusID == statusID {
 		return nil

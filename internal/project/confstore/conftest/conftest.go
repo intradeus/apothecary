@@ -924,7 +924,7 @@ func tickets(t *testing.T, open opener) {
 		same(t, "after update", s.ticket("k1"), want)
 	})
 
-	// tickets_source_remote_idx: one record of an issue per tracker, whoever
+	// tickets_source_remote_key: one record of an issue per tracker, whoever
 	// holds it; another tracker's issue of the same id is another record.
 	t.Run("an issue is one record per tracker, across owners", func(t *testing.T) {
 		s := seeded(t, open)

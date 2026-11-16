@@ -311,34 +311,11 @@ func TestDeleteReclaimsAttachments(t *testing.T) {
 	}
 }
 
-// Search and Fetch read through Live: a page joined to its records, one
-// issue with its files.
-func TestSearchAndFetchReadLive(t *testing.T) {
-	w := newWorld(t, devSource())
-	ctx := context.Background()
-	rec := w.record(t)
-	page, err := w.f.Search(ctx, remote, trackerport.SearchQuery{Text: "farewell", Limit: 5})
-	if err != nil || len(page.Rows) != 1 || page.Rows[0].Issue.Key != "PROJ-7" || page.Rows[0].Record == nil || page.Rows[0].Record.ID != rec.ID {
-		t.Errorf("search = %+v, %v", page, err)
-	}
-	got, err := w.f.Fetch(ctx, remote, "PROJ-7")
-	if err != nil || len(got.Attachments) != 1 {
-		t.Errorf("fetch = %+v, %v", got, err)
-	}
-}
-
-// With no tracker wired at all, a remote read says so instead of failing
+// With no tracker wired at all, a live read says so instead of failing
 // obscurely.
 func TestReadsWithoutSourcesAreHonest(t *testing.T) {
 	w := newWorld(t, devSource())
 	ctx := context.Background()
-	w.f.Live = nil
-	if _, err := w.f.Search(ctx, remote, trackerport.SearchQuery{Limit: 10}); !errors.Is(err, ErrNoSources) {
-		t.Errorf("search err = %v, want ErrNoSources", err)
-	}
-	if _, err := w.f.Fetch(ctx, remote, "PROJ-7"); !errors.Is(err, ErrNoSources) {
-		t.Errorf("fetch err = %v, want ErrNoSources", err)
-	}
 	bare := NewLive(w.conf, nil)
 	if _, err := bare.List(ctx, remote, trackerport.SearchQuery{}, false); !errors.Is(err, ErrNoSources) {
 		t.Errorf("live list err = %v, want ErrNoSources", err)

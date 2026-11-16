@@ -14,6 +14,7 @@ import (
 	"apothecary/internal/engine"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
+	"apothecary/internal/project/confstore/conftest"
 	"apothecary/internal/project/tickets"
 	"apothecary/internal/run/event"
 )
@@ -287,6 +288,39 @@ func TestRunStartsFromTheRecordWhileTheTrackerIsDown(t *testing.T) {
 	}
 	if res, data := x.do(t, "POST", ticketPath(testProject, "PROJ-8")+"/runs", nil, nil); res.StatusCode != http.StatusBadGateway {
 		t.Errorf("a run on an issue with no record = %d %s", res.StatusCode, data)
+	}
+}
+
+// Two workshops on one source share a remote issue: one record, whichever
+// workshop made it, and one lock — a run going in one workshop refuses a
+// run in the other.
+func TestARemoteIssueIsOneRecordAndOneLockAcrossWorkshops(t *testing.T) {
+	x := newTrackerEnv(t)
+	const other = "prj-other"
+	conftest.SeedProject(t, x.srv.Conf, confstore.Project{ID: other, UserID: testUser, Name: "other", TicketSourceID: "int-1"})
+	res, data := x.do(t, "PUT", ticketPath(testProject, "PROJ-7"), map[string]any{"base_branch": "fix/rounding"}, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("base branch = %d %s", res.StatusCode, data)
+	}
+	rec := decode[TicketDetail](t, data).TicketID
+	res, data = x.do(t, "GET", ticketPath(other, "PROJ-7"), nil, nil)
+	if got := decode[TicketDetail](t, data); res.StatusCode != http.StatusOK || got.TicketID != rec || got.BaseBranch != "fix/rounding" {
+		t.Fatalf("the other workshop's detail = %d %s, want record %s", res.StatusCode, data, rec)
+	}
+	if _, err := x.store.Append(context.Background(), "r-live",
+		&event.RunCreated{TicketTitle: "Remote one", FlowName: "loop", ProjectID: other, UserID: testUser, TicketID: rec}); err != nil {
+		t.Fatal(err)
+	}
+	resp, data := x.startRun(t, "PROJ-7", "loop")
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("start while the other workshop runs = %d: %s", resp.StatusCode, data)
+	}
+	if got := decode[ErrorResponse](t, data); got.RunID != "r-live" || !strings.Contains(got.Error, "run r-live is still active") {
+		t.Errorf("409 body = %s", data)
+	}
+	got, found, err := x.srv.Conf.TicketByRemote(context.Background(), "int-1", "100")
+	if err != nil || !found || got.ID != rec {
+		t.Errorf("record = %+v %v %v, want the one record %s", got, found, err, rec)
 	}
 }
 

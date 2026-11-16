@@ -389,7 +389,7 @@ func (m *Mem) UpsertTicket(_ context.Context, t Ticket) error {
 	if _, ok := m.types[t.TypeID]; t.TypeID != "" && !ok {
 		return fmt.Errorf("ticket %s references a missing status or type: %w", t.ID, ErrInvalid)
 	}
-	// Parity with tickets_source_remote_idx.
+	// Parity with tickets_source_remote_key.
 	for _, x := range m.tickets {
 		if x.ID != t.ID && x.SourceID == t.SourceID && x.RemoteID == t.RemoteID {
 			return fmt.Errorf("ticket %s: issue %s of %s is already ticket %s: %w", t.ID, t.RemoteID, t.SourceID, x.ID, ErrConflict)

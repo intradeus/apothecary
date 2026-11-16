@@ -261,7 +261,7 @@ export default {
 	'page.integrations.harnessSub': 'the coding agent, and which of your model providers it uses',
 	'page.integrations.ticketsource': 'Ticket source',
 	'page.integrations.ticketsourceSub':
-		'trackers tickets mirror, and your own built-in one — statuses and types per tracker',
+		'trackers workshops read their tickets from, and your own built-in one — statuses and types per tracker',
 	'page.integrations.loadError': 'Couldn’t load integrations',
 	'page.integrations.noKinds': 'No kinds registered',
 	'page.integrations.noKindsText': 'This engine build reports no integration kinds.',
