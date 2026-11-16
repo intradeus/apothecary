@@ -153,24 +153,42 @@ func runDaemon(ctx context.Context, env Env) error {
 		return nil
 	}
 	_ = os.Remove(sock)
-	ln, err := net.Listen("unix", sock)
+	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: sock, Net: "unix"})
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", sock, err)
 	}
+	// The socket stays until this daemon is done, not only until it stops
+	// listening: a socket gone means no daemon.
+	ln.SetUnlinkOnClose(false)
 	_ = os.Chmod(sock, 0o600)
+	ours, _ := os.Stat(sock)
 	d := newDaemon(ctx, env, logger, loadAssignments(filepath.Join(dir, "ports.json")))
 	srv := &http.Server{Handler: d.handler(), ReadHeaderTimeout: 10 * time.Second}
+	// Shutdown, not Close: the answer being written when the daemon is told
+	// to go (the /stop that ended its last forward) still reaches its caller.
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		select {
 		case <-d.quit:
 		case <-ctx.Done():
 		}
-		_ = srv.Close()
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if srv.Shutdown(sctx) != nil {
+			_ = srv.Close()
+		}
 	}()
 	logger.Printf("forward daemon %s started (pid %d)", env.Version, os.Getpid())
 	err = srv.Serve(ln)
+	if errors.Is(err, http.ErrServerClosed) {
+		<-stopped
+	}
 	d.closeAll()
-	_ = os.Remove(sock)
+	// A daemon started meanwhile keeps its own socket.
+	if cur, err := os.Stat(sock); err == nil && os.SameFile(ours, cur) {
+		_ = os.Remove(sock)
+	}
 	logger.Printf("forward daemon stopped")
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
