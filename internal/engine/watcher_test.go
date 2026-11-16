@@ -449,7 +449,7 @@ func TestUnresolvedConflictReachesAHuman(t *testing.T) {
 	rh.git.mu.Lock()
 	rh.git.markers = nil
 	rh.git.mu.Unlock()
-	if err := rh.e.AnswerPing(gate.ID, PingAnswer{Answer: "approve"}); err != nil {
+	if err := rh.e.AnswerPing(gate.ID, PingAnswer{Answer: "approve", Feedback: "removed the markers"}); err != nil {
 		t.Fatal(err)
 	}
 	rh.waitPhaseRuns(t, runID, "conflicts", 1)

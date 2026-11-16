@@ -27,11 +27,11 @@ func TestReduceFullLifecycle(t *testing.T) {
 		{&event.RunCreated{TicketTitle: "Add login", TicketGoal: "goal", FlowName: "v1", FlowHash: "abc"}, Pending},
 		{&event.EnvRequested{}, Provisioning},
 		{&event.EnvReady{EnvID: "env-1"}, Running},
-		{&event.StageStarted{StageID: "plan", Iteration: 1}, Running},
+		{&event.StageStarted{StageID: "plan", Attempt: 1}, Running},
 		{&event.StageCompleted{StageID: "plan"}, Running},
 		{&event.PingRaised{PingID: "p1", Type: event.PingGate}, WaitingOnHuman},
 		{&event.PingAnswered{PingID: "p1", Answer: "approve"}, Running},
-		{&event.StageStarted{StageID: "build", Iteration: 1}, Running},
+		{&event.StageStarted{StageID: "build", Attempt: 1}, Running},
 		{&event.MRCreated{MRURL: "https://gitlab.local/mr/1", MRIID: 1}, Running},
 		{&event.RunCompleted{}, Completed},
 		{&event.RunArchived{}, Archived},
@@ -156,7 +156,7 @@ func TestStageStartedLeavesPending(t *testing.T) {
 	v := Reduce([]event.Event{
 		{RunID: "r", Seq: 1, Type: event.TypeRunCreated, Payload: &event.RunCreated{TicketTitle: "T",
 			TicketSourceID: "int-1", TicketSourceKind: "jira", TicketSourceKey: "PROJ-1", TicketSourceURL: "https://j/browse/PROJ-1"}},
-		{RunID: "r", Seq: 2, Type: event.TypeStageStarted, Payload: &event.StageStarted{StageID: "start", Iteration: 1}},
+		{RunID: "r", Seq: 2, Type: event.TypeStageStarted, Payload: &event.StageStarted{StageID: "start", Attempt: 1}},
 	})
 	if v.State != Running {
 		t.Errorf("state = %s, want running", v.State)

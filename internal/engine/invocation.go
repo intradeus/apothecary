@@ -136,7 +136,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 	// goes to the transcript. session says it was a new session.
 	record := func(ev agentport.AgentEvent) (session bool, err error) {
 		if ev.Kind == agentport.AgentEvSession && ev.Text != "" && x.rs.Sessions[st.ID] != agentport.SessionID(ev.Text) {
-			if err := x.append(&event.AgentSession{StageID: st.ID, Iteration: io.tr.iter, SessionID: ev.Text}); err != nil {
+			if err := x.append(&event.AgentSession{StageID: st.ID, Attempt: io.tr.iter, SessionID: ev.Text}); err != nil {
 				return false, err
 			}
 			return true, nil

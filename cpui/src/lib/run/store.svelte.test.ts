@@ -137,7 +137,7 @@ describe('the event stream', () => {
 
 	it('folds a stage through a question and back into what the page reads', async () => {
 		const { rs, stop, emit } = await live();
-		const start = anEvent(1, 'stage_started', { stage_id: 'build', iteration: 1 });
+		const start = anEvent(1, 'stage_started', { stage_id: 'build', attempt: 1 });
 
 		emit(start);
 		expect(rs.current?.seq).toBe(1);

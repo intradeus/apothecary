@@ -109,14 +109,14 @@ func TestSnapshotGetAndKinds(t *testing.T) {
 	}
 	// A log has neither role nor path; empty strings must map to NULL or the
 	// CHECKs refuse it.
-	lg := filestore.Snapshot{ID: "s1", RunID: "r1", Kind: filestore.KindLog, StageID: "build", Iteration: 2,
+	lg := filestore.Snapshot{ID: "s1", RunID: "r1", Kind: filestore.KindLog, StageID: "build", Attempt: 2,
 		Filename: "build.log", Mime: "text/plain", Size: 9, SHA256: "aa", Truncated: true, CreatedAt: testNow}
 	if err := s.InsertSnapshot(ctx, lg); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetSnapshot(ctx, "s1")
 	if err != nil || got.Kind != filestore.KindLog || got.Name != "" || got.Path != "" || got.PingID != "" ||
-		!got.Truncated || got.Iteration != 2 || !got.CreatedAt.Equal(testNow) {
+		!got.Truncated || got.Attempt != 2 || !got.CreatedAt.Equal(testNow) {
 		t.Fatalf("log = %+v, %v", got, err)
 	}
 	pingless := filestore.Snapshot{ID: "s2", RunID: "r1", Kind: filestore.KindPingFile, StageID: "b", Path: "p",

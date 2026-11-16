@@ -18,7 +18,7 @@ vi.mock('$lib/api', () => ({
 const kind = (name: RegExp) => screen.getByRole('radio', { name });
 const fileLink = (name: string) => screen.getByRole('link', { name });
 /** The table row a file sits on. */
-const rowOf = (name: string) => within(fileLink(name).parentElement!);
+const rowOf = (name: string) => within(fileLink(name).closest<HTMLElement>('.r')!);
 
 function show(over: Parameters<typeof aViewStore>[1] = {}) {
 	render(RecordView, { rs: aViewStore(undefined, over) });
@@ -60,9 +60,23 @@ describe('RecordView', () => {
 		});
 
 		it('names an output by its role, and its stage attempt', () => {
-			show({ snapshots: [aSnapshot({ name: 'plan', stageId: 'build', iteration: 2 })] });
+			show({ snapshots: [aSnapshot({ name: 'plan', stageId: 'build', attempt: 2 })] });
 			expect(rowOf('plan.md').getByText('plan')).toBeInTheDocument();
 			expect(rowOf('plan.md').getByText('build · attempt 2')).toBeInTheDocument();
+		});
+
+		it('puts the attempt’s reference before the file it captured', () => {
+			show({ snapshots: [aSnapshot({ stageId: 'review', attempt: 5 })] });
+			const ref = rowOf('plan.md').getByRole('button', { name: 'Copy reference review#5' });
+			expect(ref).toHaveTextContent('review#5');
+			expect(ref.compareDocumentPosition(fileLink('plan.md'))).toBe(
+				Node.DOCUMENT_POSITION_FOLLOWING
+			);
+		});
+
+		it('names no attempt for a snapshot without one, nor for an attachment', () => {
+			show({ snapshots: [aSnapshot({ attempt: undefined })], attachments: [anAttachment()] });
+			expect(screen.queryByRole('button', { name: /^Copy reference/ })).not.toBeInTheDocument();
 		});
 
 		it('calls an unnamed output an output', () => {

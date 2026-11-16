@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -279,7 +280,13 @@ type Ping struct {
 	// words its button by it).
 	Phase     string
 	EndsPhase bool
-	RaisedAt  time.Time
+	// Trees, on a debug ping: each checkout's working copy as the run
+	// parked (handedits.go).
+	Trees map[string]string
+	// Ref is the ping's reference (build#3/decision#1), set as it is
+	// recorded (runcore.State.PingRefs).
+	Ref      string
+	RaisedAt time.Time
 
 	key            string       // the raiser's idempotency key (RaisePing)
 	answered       bool         // guarded by Engine.mu
@@ -647,6 +654,9 @@ type SnapshotStore interface {
 	Capture(ctx context.Context, s filestore.Snapshot, scrub func(string) string, data []byte) (filestore.Snapshot, error)
 	ForPing(ctx context.Context, pingID string) ([]filestore.Snapshot, error)
 	Bytes(ctx context.Context, id string) ([]byte, filestore.Snapshot, error)
+	// Open is a verified handle on a snapshot's bytes; ErrContentGone when
+	// retention swept them.
+	Open(ctx context.Context, id string) (*os.File, filestore.Snapshot, error)
 }
 
 // PingLookup reads the DURABLE ping projection. The engine needs it because a
@@ -765,7 +775,7 @@ func (e *Engine) CreateRun(ctx context.Context, t runinput.Ticket, flowName, pro
 // configuration and, if it passes, appends run_created and starts the run's
 // writer goroutine. flowName "" means the project's default flow; in.MR the
 // merge request a flow with operates_on: merge_request is started on, and
-// in.Params this attempt's parameter overrides, on top of the project's
+// in.Params this run's parameter overrides, on top of the project's
 // bindings. The flow
 // is resolved with those values before preflight, so a bound harness, model
 // or run_ref is checked exactly like a literal one. Preflight failures
@@ -1998,14 +2008,19 @@ func (e *Engine) AnswerPing(pingID string, ans PingAnswer) error {
 // validateAnswer enforces the answer contract: a yes/no takes
 // approve|reject, a form accept with its fields or decline with a note
 // (validateForm, which tidies the content in place), a choice one of the
-// ping's choices, with a note where the choice requires one. One
-// implementation, because the live and dormant paths must not be able to
-// disagree about what a valid answer is.
-func validateAnswer(kind string, form *event.Form, choices []event.Choice, ans *PingAnswer) error {
+// ping's choices, with a note where the choice requires one. A continue at
+// the debug leaf says what the person did (the plan's D13): the agents read
+// it in the run journal, beside the files they changed. One implementation,
+// because the live and dormant paths must not be able to disagree about what
+// a valid answer is.
+func validateAnswer(typ, kind string, form *event.Form, choices []event.Choice, ans *PingAnswer) error {
 	switch kind {
 	case event.AnswerYesNo:
 		if ans.Answer != "approve" && ans.Answer != "reject" {
 			return fmt.Errorf("this question is answered approve|reject")
+		}
+		if typ == event.PingDebug && ans.Answer == "approve" && strings.TrimSpace(ans.Feedback) == "" {
+			return fmt.Errorf("continuing needs a summary of what you did — even \"nothing\": the agents read it in the run journal")
 		}
 	case event.AnswerForm:
 		return validateForm(form, ans)
@@ -2045,7 +2060,7 @@ func (e *Engine) answerLive(pingID string, ans PingAnswer) error {
 	if !active {
 		return errNoLoop
 	}
-	if err := validateAnswer(p.AnswerKind, p.Form, p.Choices, &ans); err != nil {
+	if err := validateAnswer(p.Type, p.AnswerKind, p.Form, p.Choices, &ans); err != nil {
 		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
 	if err := validateReview(p.Files, ans); err != nil {
@@ -2126,7 +2141,7 @@ func (e *Engine) answerDormant(ctx context.Context, pingID string, ans PingAnswe
 		// The run ended without it; the projection already says so.
 		return fmt.Errorf("run %s: %w", v.RunID, ErrRunNotActive)
 	}
-	if err := validateAnswer(v.AnswerKind, v.Form, v.Choices, &ans); err != nil {
+	if err := validateAnswer(v.Type, v.AnswerKind, v.Form, v.Choices, &ans); err != nil {
 		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
 	if err := validateReview(v.Files, ans); err != nil {

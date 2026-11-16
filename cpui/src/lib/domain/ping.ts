@@ -90,6 +90,9 @@ export interface Ping {
 	type: PingType;
 	status: PingStatus;
 	stageId?: string;
+	/** Its reference, as the engine recorded it (build#3/decision#1,
+	 *  run/decision#2): the name agents and people share for it. */
+	ref?: string;
 	question: string;
 	context?: string;
 	/** Attached workspace paths; the first is the primary reviewed document. */

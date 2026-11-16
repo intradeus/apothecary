@@ -51,7 +51,7 @@ type SwarmUnit struct {
 // CrewPresence is the agent on station in a run (engine.Crew).
 type CrewPresence struct {
 	StageID    string    `json:"stage_id"`
-	Iteration  int       `json:"iteration"`
+	Attempt    int       `json:"attempt"`
 	Harness    string    `json:"harness"`
 	Agent      string    `json:"agent"`
 	Since      time.Time `json:"since"`
@@ -106,7 +106,7 @@ func (s *Server) getSwarm(w http.ResponseWriter, r *http.Request) {
 }
 
 func crewPresence(c engine.Crew) *CrewPresence {
-	p := &CrewPresence{StageID: c.StageID, Iteration: c.Iteration, Harness: c.Harness, Agent: c.Agent,
+	p := &CrewPresence{StageID: c.StageID, Attempt: c.Attempt, Harness: c.Harness, Agent: c.Agent,
 		Since: c.Since, TurnActive: c.TurnActive, Tool: c.Tool, Subagents: make([]SwarmSubagent, 0, len(c.Subagents))}
 	for _, a := range c.Subagents {
 		p.Subagents = append(p.Subagents, SwarmSubagent{ToolCallID: a.ToolCallID, Title: a.Title, Count: a.Count, Since: a.Since})

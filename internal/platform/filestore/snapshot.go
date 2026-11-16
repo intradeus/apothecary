@@ -32,7 +32,7 @@ type Snapshot struct {
 	RunID     string       `json:"run_id"`
 	Kind      SnapshotKind `json:"kind"`
 	StageID   string       `json:"stage_id"`
-	Iteration int          `json:"iteration,omitempty"`
+	Attempt   int          `json:"attempt,omitempty"`
 	PingID    string       `json:"ping_id,omitempty"` // KindPingFile only
 	Name      string       `json:"name,omitempty"`    // output role; "" otherwise
 	Path      string       `json:"path,omitempty"`    // workspace path; "" for logs
@@ -127,7 +127,12 @@ func (s *Snapshots) Capture(ctx context.Context, snap Snapshot, scrub func(strin
 	if snap.Filename == "" {
 		snap.Filename = "file"
 	}
-	snap.Filename = SafeName(snap.Filename)
+	if snap.Kind == KindLog {
+		// A log is named by the engine, after its attempt (review#5.log).
+		snap.Filename = engineName(snap.Filename)
+	} else {
+		snap.Filename = SafeName(snap.Filename)
+	}
 	if snap.Mime == "" {
 		snap.Mime = detectMimeBytes(data, snap.Filename)
 	}

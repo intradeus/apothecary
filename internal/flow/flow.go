@@ -62,16 +62,17 @@ const (
 
 	SourceTicket         = "run.ticket"          // the run's ticket
 	SourceTicketComments = "run.ticket.comments" // its comments, read as the prompt is built (limit, exclude_own on the port)
-	// SourcePingAnswers is what the task's owner answered while the run went
-	// on — an agent's questions, and what a person said at a gate — read
-	// from the run's log as the prompt is built: a later stage (a reviewer)
-	// learns what changed the plan.
-	SourcePingAnswers = "run.ping_answers"
-	SourceStatus      = "run.git.status"      // git status: staged, unstaged, untracked
-	SourceDiffTarget  = "run.git.diff_target" // what the branch changes against its target
-	SourceDiffPhase   = "run.git.diff_phase"  // what this phase run committed since it began
-	SourceMRURL       = "run.mr.url"          // the run's merge request (create_mr)
-	SourceWorkspace   = "run.workspace"       // the workspace's app link (its first exposed port)
+	// SourceJournal is the run journal: what has happened in the run so far —
+	// every decision the task's owner made, the agents' notes, each stage's
+	// passes — read from the run's log as the prompt is built (the ledger),
+	// the rest through the journal_read tool. A later stage (a reviewer)
+	// learns what changed the plan and which corrections were discarded.
+	SourceJournal    = "run.journal"
+	SourceStatus     = "run.git.status"      // git status: staged, unstaged, untracked
+	SourceDiffTarget = "run.git.diff_target" // what the branch changes against its target
+	SourceDiffPhase  = "run.git.diff_phase"  // what this phase run committed since it began
+	SourceMRURL      = "run.mr.url"          // the run's merge request (create_mr)
+	SourceWorkspace  = "run.workspace"       // the workspace's app link (its first exposed port)
 	// SourceFailure and SourceVerdict are what the edge that entered the
 	// stage carried: a failing stage's reason and output; a verdict — an
 	// agent's, a person's review at a gate — on a rejection, or on an
@@ -89,7 +90,7 @@ const (
 var engineSources = map[string]string{
 	SourceTicket:         agentspec.TypeTicket,
 	SourceTicketComments: agentspec.TypeTicketComments,
-	SourcePingAnswers:    agentspec.TypePingAnswers,
+	SourceJournal:        agentspec.TypeJournal,
 	SourceStatus:         agentspec.TypeChangeset,
 	SourceDiffTarget:     agentspec.TypeChangeset,
 	SourceDiffPhase:      agentspec.TypeChangeset,
@@ -101,7 +102,7 @@ var engineSources = map[string]string{
 }
 
 // EngineSources lists the engine's sources, in display order.
-var EngineSources = []string{SourceTicket, SourceTicketComments, SourcePingAnswers, SourceStatus, SourceDiffTarget, SourceDiffPhase,
+var EngineSources = []string{SourceTicket, SourceTicketComments, SourceJournal, SourceStatus, SourceDiffTarget, SourceDiffPhase,
 	SourceMRURL, SourceWorkspace, SourceCIFailure, SourceFailure, SourceVerdict}
 
 // A ticket_comments input's options: how many of the latest comments a
@@ -113,10 +114,6 @@ const (
 	MaxCommentsLimit     = 200
 	CommentsBudget       = 32 << 10
 )
-
-// PingAnswersBudget caps a run.ping_answers input: the latest answers that
-// fit, the oldest dropped first.
-const PingAnswersBudget = 32 << 10
 
 // IsEngineSource reports whether v is a value the engine provides rather
 // than a file.

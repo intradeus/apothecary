@@ -104,7 +104,9 @@ func TestPrepareEnvGeneratesConfigs(t *testing.T) {
 	}
 	// Never per tool: in opencode, `write: true` re-allows every edit.
 	front, _, _ := strings.Cut(strings.TrimPrefix(string(planner), "---\n"), "---\n")
-	for _, never := range []string{"edit: false", "patch:", "write:"} {
+	// The shim's server stays on: a read-only agent asks the human and reads
+	// the run journal (ask_human_journal_read) like any other.
+	for _, never := range []string{"edit: false", "patch:", "write:", "ask_human"} {
 		if strings.Contains(front, never) {
 			t.Errorf("planner.md has %q:\n%s", never, front)
 		}

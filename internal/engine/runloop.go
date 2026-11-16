@@ -308,11 +308,11 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 // attempt runs one step of st's attempt with x.ctx and x.bg on the
 // attempt's own trace (telemetry.StageSpanContext): the queries, outbound
 // calls, agent invocation and log lines of the attempt land in it, under the
-// attempt span the telemetry sink exports from stage_started. The iteration
+// attempt span the telemetry sink exports from stage_started. The attempt
 // is the one the step records: the next on a fresh entry, the recorded one
 // on a re-entry (the stage functions' own rule).
 func (x *exec) attempt(st *flow.Stage, step func() error) error {
-	iter := x.rs.Iters[st.ID]
+	iter := x.rs.Attempts[st.ID]
 	if x.rs.Ph != runcore.PhIn {
 		iter++
 	}
@@ -363,7 +363,7 @@ func (x *exec) endHolds() {
 		var spent event.HoldSpend
 		spent.Add(h.Banked)
 		spent.Add(x.cutLeg)
-		_ = x.append(&event.HoldReleased{StageID: id, Iteration: x.rs.Iters[id], UserID: h.Taken.UserID,
+		_ = x.append(&event.HoldReleased{StageID: id, Attempt: x.rs.Attempts[id], UserID: h.Taken.UserID,
 			Reason: event.HoldEndedWithStage, DurationMS: max(x.e.clock().Sub(h.TakenAt).Milliseconds(), 0), HoldSpend: spent})
 	}
 }
@@ -449,6 +449,18 @@ func (x *exec) append(ps ...event.Payload) error {
 		}
 	}
 	event.Clean(ps...)
+	// A ping is recorded with its reference (build#3/decision#1), and the
+	// live one carries it too.
+	x.rs.PingRefs(ps)
+	for _, p := range ps {
+		if v, ok := p.(*event.PingRaised); ok {
+			x.e.mu.Lock()
+			if live := x.e.pings[v.PingID]; live != nil {
+				live.Ref = v.Ref
+			}
+			x.e.mu.Unlock()
+		}
+	}
 	unlock := x.e.appendLock(x.rs.RunID)
 	evs, err := x.e.store.Append(x.bg, x.rs.RunID, ps...)
 	unlock()

@@ -193,7 +193,7 @@ func TestRunIDsAreDerivedFromTheRunID(t *testing.T) {
 		t.Errorf("stage span id = %s", got)
 	}
 	if StageTraceID("r1", "build", 1) == StageTraceID("r1", "build", 2) {
-		t.Error("iterations share a trace")
+		t.Error("attempts share a trace")
 	}
 	for _, c := range []struct {
 		sc  trace.SpanContext

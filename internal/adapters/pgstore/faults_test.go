@@ -342,7 +342,7 @@ func TestAppendRollsBackWithItsProjection(t *testing.T) {
 	s := openDSN(t, pgtest.Empty(t))
 	ctx := context.Background()
 	if _, err := s.Append(ctx, "r1", &event.RunCreated{}, &event.PingRaised{PingID: "p0", Type: "blocker"},
-		&event.StageStarted{StageID: "s", Iteration: 1}); err != nil {
+		&event.StageStarted{StageID: "s", Attempt: 1}); err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct {
@@ -355,7 +355,7 @@ func TestAppendRollsBackWithItsProjection(t *testing.T) {
 		{"pings", &event.RunFailed{Reason: "x"}},
 		{"ping_review_comments", &event.PingAnswered{PingID: "p0", Answer: "x", Review: []event.ReviewComment{{Path: "a", Body: "b"}}}},
 		{"snapshots", &event.SnapshotCaptured{SnapshotID: "s", Kind: "log", Filename: "f", Mime: "m"}},
-		{"run_facts", &event.StageStarted{StageID: "t", Iteration: 1}},
+		{"run_facts", &event.StageStarted{StageID: "t", Attempt: 1}},
 		{"stage_attempts", &event.StageCompleted{StageID: "s"}},
 		{"run_skillsets", &event.RunCreated{Skillsets: []event.SkillsetPin{{ID: "k", Name: "kit", Seq: 1, Hash: "h"}}}},
 	}

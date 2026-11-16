@@ -32,7 +32,7 @@ function open(over: Partial<Run> = {}) {
 	return { rs, props, onstarted };
 }
 const startBtn = () => screen.getByRole('button', { name: 'Start new run' });
-const direction = () => screen.getByRole('textbox', { name: 'Direction for the new attempt' });
+const direction = () => screen.getByRole('textbox', { name: 'Direction for the new run' });
 const flowPicker = () => screen.findByRole('combobox', { name: 'Flow' });
 const fileInput = () => document.querySelector<HTMLInputElement>('input[type="file"]')!;
 const sent = () => vi.mocked(api.runs.rerun).mock.calls[0][1]!;

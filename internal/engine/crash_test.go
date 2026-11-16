@@ -657,7 +657,7 @@ func checkOnce(t *testing.T, evs []event.Event) {
 	for _, ev := range evs {
 		switch p := ev.Payload.(type) {
 		case *event.StageStarted:
-			iter[p.StageID] = p.Iteration
+			iter[p.StageID] = p.Attempt
 		case *event.StageCompleted:
 			once(fmt.Sprintf("stage_completed %s#%d", p.StageID, iter[p.StageID]))
 		case *event.PingRaised:

@@ -18,7 +18,7 @@ export const aSample = (over: Partial<ResourceSample> = {}): ResourceSample => (
 
 export const aCrew = (over: Partial<CrewPresence> = {}): CrewPresence => ({
 	stageId: 'build',
-	iteration: 1,
+	attempt: 1,
 	harness: 'omp',
 	agent: 'builder',
 	since: AT,

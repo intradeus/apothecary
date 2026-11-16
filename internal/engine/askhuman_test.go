@@ -118,9 +118,9 @@ func TestAgentEndingTurnOnOpenQuestionPausesAttempt(t *testing.T) {
 	if !ok || resumed.Reason != event.ResumeAnswered || resumed.StageID != "build" {
 		t.Errorf("stage_resumed = %+v (ok=%v)", resumed, ok)
 	}
-	// One attempt, not two: the iteration never moved.
-	if resumed.Iteration != paused.Iteration || paused.Iteration != 1 {
-		t.Errorf("iterations: paused=%d resumed=%d, want both 1", paused.Iteration, resumed.Iteration)
+	// One attempt, not two: the attempt never moved.
+	if resumed.Attempt != paused.Attempt || paused.Attempt != 1 {
+		t.Errorf("attempts: paused=%d resumed=%d, want both 1", paused.Attempt, resumed.Attempt)
 	}
 	if n := len(h.runner.SnapshotRunCalls()); n != 1 {
 		t.Errorf("run calls = %d, want 1 (the resume is not a new attempt)", n)
@@ -177,9 +177,9 @@ func TestPausedAttemptResumesAfterRestart(t *testing.T) {
 		&event.RunCreated{TicketTitle: "T", FlowName: "ask", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
-		&event.StageStarted{StageID: "build", Iteration: 1},
+		&event.StageStarted{StageID: "build", Attempt: 1},
 		&event.PingRaised{PingID: "p-1", Type: "clarification", Question: "one endpoint or two?", StageID: "build", Form: textForm(), AnswerKind: event.AnswerForm},
-		&event.StagePaused{StageID: "build", Iteration: 1, Reason: event.PauseAskHuman,
+		&event.StagePaused{StageID: "build", Attempt: 1, Reason: event.PauseAskHuman,
 			PingIDs: []string{"p-1"}, TurnsUsed: 2, SessionID: "sess-x"},
 		// kill -9 here, with the human still thinking
 	} {
@@ -244,9 +244,9 @@ func TestAnswerWithNoSessionToResumeFailsTheAttempt(t *testing.T) {
 		&event.RunCreated{TicketTitle: "T", FlowName: "ask", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
-		&event.StageStarted{StageID: "build", Iteration: 1},
+		&event.StageStarted{StageID: "build", Attempt: 1},
 		&event.PingRaised{PingID: "p-2", Type: "clarification", Question: "which db?", StageID: "build", Form: textForm(), AnswerKind: event.AnswerForm},
-		&event.StagePaused{StageID: "build", Iteration: 1, Reason: event.PauseAskHuman, PingIDs: []string{"p-2"}},
+		&event.StagePaused{StageID: "build", Attempt: 1, Reason: event.PauseAskHuman, PingIDs: []string{"p-2"}},
 	} {
 		if _, err := h.store.Append(ctx, "r-n", p); err != nil {
 			t.Fatal(err)
@@ -537,9 +537,9 @@ func TestRecoverAdmitsAParkedRunWhoseAnswerLanded(t *testing.T) {
 		&event.RunCreated{TicketTitle: "T", FlowName: "ask", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
-		&event.StageStarted{StageID: "build", Iteration: 1},
+		&event.StageStarted{StageID: "build", Attempt: 1},
 		&event.PingRaised{PingID: "p-w", Type: "clarification", Question: "which db?", StageID: "build", Form: textForm(), AnswerKind: event.AnswerForm},
-		&event.StagePaused{StageID: "build", Iteration: 1, Reason: event.PauseAskHuman,
+		&event.StagePaused{StageID: "build", Attempt: 1, Reason: event.PauseAskHuman,
 			PingIDs: []string{"p-w"}, TurnsUsed: 1, SessionID: "sess-w"},
 		&event.RunPaused{StageID: "build", Reason: event.PauseWaiting},
 		&event.PingAnswered{PingID: "p-w", Answer: "text", Feedback: "postgres"},
@@ -580,9 +580,9 @@ func TestRecoverLeavesAnUnansweredParkedRunAlone(t *testing.T) {
 		&event.RunCreated{TicketTitle: "T", FlowName: "ask", ProjectID: testProject, FlowHash: fl.Hash, Branch: "b"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: string(envID)},
-		&event.StageStarted{StageID: "build", Iteration: 1},
+		&event.StageStarted{StageID: "build", Attempt: 1},
 		&event.PingRaised{PingID: "p-u", Type: "clarification", Question: "which db?", StageID: "build", Form: textForm(), AnswerKind: event.AnswerForm},
-		&event.StagePaused{StageID: "build", Iteration: 1, Reason: event.PauseAskHuman,
+		&event.StagePaused{StageID: "build", Attempt: 1, Reason: event.PauseAskHuman,
 			PingIDs: []string{"p-u"}, TurnsUsed: 1, SessionID: "sess-u"},
 		&event.RunPaused{StageID: "build", Reason: event.PauseWaiting},
 	} {

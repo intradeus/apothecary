@@ -512,6 +512,22 @@ func TestPingAnswerKindFallsBackToTheType(t *testing.T) {
 	}
 }
 
+// A ping keeps its reference in the projection, as the reduced view has it:
+// the inbox and the ping card show it.
+func TestPingRefIsProjected(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	evs, err := s.Append(ctx, "r1", &event.RunCreated{},
+		&event.PingRaised{PingID: "q", Type: event.PingClarification, StageID: "build", Ref: "build#3/decision#1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetPing(ctx, "q")
+	if err != nil || got.Ref != "build#3/decision#1" || run.ReducePings(evs)[0].Ref != got.Ref {
+		t.Errorf("ref = %q (%v), reduced %q", got.Ref, err, run.ReducePings(evs)[0].Ref)
+	}
+}
+
 // A choice ping keeps its choices in the projection, in order — the inbox
 // draws a button for each, so a choice ping read back without them could not
 // be answered there — and a ping that offers none reads back with none.

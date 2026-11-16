@@ -241,7 +241,7 @@ Write-path rules (see § Scale):
 | Dimensions | `flow_name`, `flow_hash`, `ticket_change_type`, `ticket_source_type`, `tracker_kind`, `started_by` (human/automation), `state`, `end_reason` (abandon edge / fail reason), `retry_of` (try-again chain), `created_at`, `ended_at` |
 | Time (ms) | `wall`, `queued`, `provisioning`, `agent_active`, `waiting_human` (pending pings, `ask_human` pauses, parked phases), `held` (takeovers), `paused` (user pause) |
 | Spend | `cost_usd`, `input_tokens`, `output_tokens`, `turns`, `ask_cost_usd` (ask pane, `ask_messages`) |
-| Work | `stages_run`, `attempts`, `failed_attempts`, `retries` (`edge_taken` on_fail/on_reject/on_timeout), `rework_cost_usd` (spend in iterations > 1) |
+| Work | `stages_run`, `attempts`, `failed_attempts`, `retries` (`edge_taken` on_fail/on_reject/on_timeout), `rework_cost_usd` (spend in attempts > 1) |
 | Humans | `pings`, `pings_wanted`, `pings_unwanted`, `gates_rejected`, `human_response_ms` (sum), `holds` |
 | Outcome | `success` (`state = completed`; abandoned / failed are not), `mr_opened`, `first_pass` (completed, no retries, no unwanted pings), `egress_denials` |
 
@@ -249,7 +249,7 @@ Write-path rules (see § Scale):
 a run pins several skillsets, so this is its own grain.
 
 **`stage_attempts`** — one row per `stage_started`: `run_id`, `user_id`,
-`stage_id`, `iteration`, `harness`, `model`, `agent`, `agent_hash`,
+`stage_id`, `attempt`, `harness`, `model`, `agent`, `agent_hash`,
 `outcome` (completed / failed / paused / skipped / abandoned),
 `failure_reason`, `started_at`, `ended_at`, `active_ms`, `waiting_ms`,
 `cost_usd`, tokens, `turns`, `pings` by kind.
@@ -326,7 +326,7 @@ contract tests in `analytics/analyticstest`, archtest rule, assertion in
      `n`. ("flow #1 median 15 min, flow #2 7 min".)
   3. **Compare skillset versions** — same, on `run_skillsets`.
   4. **Stages** — where time and money go: cost and time per stage, retry
-     heatmap (stage × iteration), failure reasons, model per stage.
+     heatmap (stage × attempt), failure reasons, model per stage.
   5. **Humans** — pings by type and stage, response latency, gate reject
      rate, takeovers.
   6. **Tickets** — runs per ticket, cost to ship, by change type and source
@@ -379,7 +379,7 @@ B1.
 |---|---|---|---|
 | Compare flows, all time (median, p90, avg cost, success) | 3 ms | 22 ms | 417 ms |
 | Weekly overview, last 90 days | 1 ms | 3 ms | 129 ms |
-| Stage × model × iteration, all time | 17 ms | 69 ms | 683 ms |
+| Stage × model × attempt, all time | 17 ms | 69 ms | 683 ms |
 | Cost to ship per ticket (window function), all time | 5 ms | 60 ms | 634 ms |
 | Compare skillset versions (join), all time | 5 ms | 51 ms | 486 ms |
 | Compare flows, light user | 0.4 ms | 2 ms | 19 ms |

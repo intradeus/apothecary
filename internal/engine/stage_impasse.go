@@ -101,7 +101,7 @@ func (x *exec) routeImpasse(st *flow.Stage, ans *event.PingAnswered) error {
 		if note != "" {
 			why += ": " + shell.Tail(note, 2<<10)
 		}
-		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: rs.Iters[st.ID] + 1}); err != nil {
+		if err := x.append(&event.StageStarted{StageID: st.ID, Attempt: rs.Attempts[st.ID] + 1}); err != nil {
 			return err
 		}
 		if err := x.append(&event.StageCompleted{StageID: st.ID, Skipped: true, Note: why, By: ans.By}); err != nil {

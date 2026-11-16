@@ -8,13 +8,17 @@
 	import { I } from '$lib/design/icons';
 	import Loading from '$lib/ui/Loading.svelte';
 	import StatusMark from '$lib/ui/StatusMark.svelte';
-	import { TRANSCRIPT_TYPES, describe, hasLog } from '../derive';
+	import RefChip from '$lib/ui/RefChip.svelte';
+	import { TRANSCRIPT_TYPES, attemptRefs, describe, hasLog } from '../derive';
 	import type { RunStore } from '../store.svelte';
 
 	let { rs }: { rs: RunStore } = $props();
 
+	const refs = $derived(attemptRefs(rs.events));
 	const rows = $derived(
-		rs.events.filter((e) => !TRANSCRIPT_TYPES.has(e.type)).map((e) => ({ e, d: describe(e) }))
+		rs.events
+			.filter((e) => !TRANSCRIPT_TYPES.has(e.type))
+			.map((e) => ({ e, d: describe(e), ref: refs.get(e.seq) }))
 	);
 
 	let logSeq = $state<number | null>(null);
@@ -43,11 +47,13 @@
 	{#if rows.length === 0}
 		<Loading text={t('runview.connecting')} />
 	{/if}
-	{#each rows as { e, d } (e.seq)}
+	{#each rows as { e, d, ref } (e.seq)}
 		<div class="r">
 			<span class="t mono faint" title={fmtAbs(e.ts)}>{fmtTime(e.ts)}</span>
 			<StatusMark tone={d.tone || 'muted'} />
-			<span class="x">{d.text}</span>
+			<span class="x"
+				>{#if ref}<RefChip {ref} />{' '}{/if}{d.text}</span
+			>
 			<span class="a">
 				{#if hasLog(e, d.stage, rs.events, rs.terminal)}
 					<button

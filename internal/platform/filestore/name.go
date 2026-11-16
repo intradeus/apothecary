@@ -10,18 +10,45 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 )
 
+// unsafeChars are the characters no stored file name keeps.
+const unsafeChars = `/\:*?"<>|`
+
 // SafeName reduces an uploaded filename to a single safe path component,
 // preserving the extension where possible. Used for both the stored metadata
-// and the in-workspace delivery path.
-func SafeName(name string) string {
+// and the in-workspace delivery path. `#` is reserved for references
+// (review#5, apothecary/internal/run/ref): a name from a person or an agent
+// never carries one, so a file can never pass for a reference.
+func SafeName(name string) string { return safeName(name, unsafeChars+"#") }
+
+// engineName is SafeName for a name the engine built from a reference
+// (review#5.log): its `#` is the reference's, and stays.
+func engineName(name string) string { return safeName(name, unsafeChars) }
+
+// UniqueName is name, or — when taken already holds it — name-2.ext,
+// name-3.ext and so on: two files of one folder never share a name, and the
+// suffix needs no reserved character. It marks what it returns as taken, so
+// names given in a fixed order come out the same every time.
+func UniqueName(name string, taken map[string]bool) string {
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	out := name
+	for n := 2; taken[out]; n++ {
+		out = base + "-" + strconv.Itoa(n) + ext
+	}
+	taken[out] = true
+	return out
+}
+
+func safeName(name, unsafe string) string {
 	name = filepath.Base(filepath.FromSlash(name))
 	name = strings.Map(func(r rune) rune {
-		if r < 0x20 || strings.ContainsRune(`/\:*?"<>|`, r) {
+		if r < 0x20 || strings.ContainsRune(unsafe, r) {
 			return '-'
 		}
 		return r

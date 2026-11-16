@@ -157,14 +157,14 @@ describe('buildTranscript', () => {
 		it('opens an agent stage with what runs it', () => {
 			const e = anEvent(1, 'stage_started', {
 				stage_id: 'build',
-				iteration: 2,
+				attempt: 2,
 				agent: 'dev',
 				model: 'fake/m'
 			});
 			expect(only([e])).toMatchObject({
 				kind: 'stage',
 				stageId: 'build',
-				iteration: 2,
+				attempt: 2,
 				agentic: true,
 				agent: 'dev',
 				model: 'fake/m',
@@ -179,7 +179,7 @@ describe('buildTranscript', () => {
 
 		it('reads a stage with neither as a plain one, first attempt', () => {
 			const e = anEvent(1, 'stage_started', { stage_id: 'a' });
-			expect(only([e])).toMatchObject({ agentic: false, iteration: 1 });
+			expect(only([e])).toMatchObject({ agentic: false, attempt: 1 });
 		});
 	});
 

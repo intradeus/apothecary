@@ -117,6 +117,7 @@ func (s *Server) routes() []Route {
 		s.serviceRoutes(),
 		s.authBrokerRoutes(),
 		s.pingRoutes(),
+		s.journalRoutes(),
 		s.fileRoutes(),
 		s.channelRoutes(),
 		s.noticeRoutes(),

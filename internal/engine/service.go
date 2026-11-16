@@ -52,8 +52,8 @@ func (x *exec) stageService(st *flow.Stage) error {
 	rs := x.rs
 	fresh := rs.Ph != runcore.PhIn
 	if fresh {
-		iter := rs.Iters[st.ID] + 1
-		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter}); err != nil {
+		iter := rs.Attempts[st.ID] + 1
+		if err := x.append(&event.StageStarted{StageID: st.ID, Attempt: iter}); err != nil {
 			return err
 		}
 	}
@@ -134,7 +134,7 @@ func (x *exec) stageService(st *flow.Stage) error {
 	if lerr != nil {
 		logTail = "(its log could not be read: " + lerr.Error() + ")"
 	}
-	x.publishLog(st.ID, rs.Iters[st.ID], logTail)
+	x.publishLog(st.ID, rs.Attempts[st.ID], logTail)
 	feed := shell.Tail(fmt.Sprintf("service %s did not come up: %s\n--- its output ---\n%s", svc.Name, why, logTail), 8<<10)
 	if aerr := x.append(&event.ServiceFailed{Service: svc.Name, StageID: st.ID, Reason: why, ExitCode: code}); aerr != nil {
 		return aerr

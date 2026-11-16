@@ -30,6 +30,8 @@ func TestSafeName(t *testing.T) {
 		".hidden":                "hidden",
 		"trailing.":              "trailing",
 		"日本語.md":                 "日本語.md",
+		"c#.md":                  "c-.md",
+		"shot#2.png":             "shot-2.png",
 		strings.Repeat("a", 200): strings.Repeat("a", 128),
 	} {
 		if got := SafeName(in); got != want {
@@ -40,6 +42,35 @@ func TestSafeName(t *testing.T) {
 	long := SafeName(strings.Repeat("a", 200) + ".tar.gz")
 	if len(long) != 128 || !strings.HasSuffix(long, ".tar.gz") {
 		t.Errorf("long name = %q", long)
+	}
+}
+
+// `#` is reserved for references (review#5): a file name a person or an
+// agent gave loses it when stored, and only a log — named by the engine after
+// its attempt — keeps it.
+func TestHashIsReservedInStoredNames(t *testing.T) {
+	snaps := NewSnapshots(NewMem(), NewBlobs(t.TempDir()), 1<<20)
+	ctx := context.Background()
+	for _, c := range []struct {
+		kind       SnapshotKind
+		name, want string
+	}{
+		{KindLog, "review#5.log", "review#5.log"},
+		{KindLog, "../x/review#5.log", "review#5.log"},
+		{KindOutput, "shot#2.png", "shot-2.png"},
+		{KindPingFile, "c#.md", "c-.md"},
+	} {
+		snap := Snapshot{RunID: "r", Kind: c.kind, StageID: "review", Attempt: 5, Filename: c.name}
+		switch c.kind {
+		case KindOutput:
+			snap.Name, snap.Path = "shot", "artifacts/"+c.name
+		case KindPingFile:
+			snap.PingID, snap.Path = "p", c.name
+		}
+		got, err := snaps.Capture(ctx, snap, func(s string) string { return s }, []byte("x"))
+		if err != nil || got.Filename != c.want {
+			t.Errorf("%s %q stored as %q (%v), want %q", c.kind, c.name, got.Filename, err, c.want)
+		}
 	}
 }
 
@@ -403,7 +434,7 @@ func TestSnapshotReads(t *testing.T) {
 	if a.Filename != "file" {
 		t.Errorf("default filename = %q", a.Filename)
 	}
-	b, err := snaps.Capture(ctx, Snapshot{RunID: "r", StageID: "s", Iteration: 1, Kind: KindPingFile, PingID: "p", Path: "b.md", Filename: "b.md"}, id, []byte("two"))
+	b, err := snaps.Capture(ctx, Snapshot{RunID: "r", StageID: "s", Attempt: 1, Kind: KindPingFile, PingID: "p", Path: "b.md", Filename: "b.md"}, id, []byte("two"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,5 +480,18 @@ func TestNewIDsAreDistinctHex(t *testing.T) {
 	a, b := newID(), newID()
 	if len(a) != 32 || a == b {
 		t.Errorf("ids = %q %q", a, b)
+	}
+}
+
+// A name already taken in a folder gets the next free -n before its
+// extension, in the order the names are given.
+func TestUniqueName(t *testing.T) {
+	taken := map[string]bool{}
+	var got []string
+	for _, n := range []string{"shot.png", "shot.png", "shot-2.png", "shot.png", "notes", "notes", "a.tar.gz", "a.tar.gz"} {
+		got = append(got, UniqueName(n, taken))
+	}
+	if want := "shot.png shot-2.png shot-2-2.png shot-3.png notes notes-2 a.tar.gz a.tar-2.gz"; strings.Join(got, " ") != want {
+		t.Errorf("names = %v, want %s", got, want)
 	}
 }

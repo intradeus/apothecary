@@ -65,7 +65,7 @@ export default {
 	'swarm.dossier.noCrew': 'No agent on station.',
 	'swarm.dossier.harness': 'Harness',
 	'swarm.dossier.agent': 'Agent',
-	'swarm.dossier.iteration': 'Iteration',
+	'swarm.dossier.attempt': 'Attempt',
 	'swarm.dossier.since': 'On station',
 	'swarm.dossier.tool': 'Tool',
 	'swarm.dossier.turn': 'Turn',

@@ -676,6 +676,8 @@ export default {
 	'ping.runIt': 'Run it',
 	'ping.notNow': 'Not now',
 	'ping.notNowHelp': 'Not now: it is offered again only when what it reacts to changes.',
+	'ping.debugSummaryPlaceholder':
+		'What did you do? Required to continue, even “nothing” — the agents read it in the run journal, with the files you changed.',
 	'ping.debugReasonPlaceholder': 'Why stop here? Recorded as the reason the run was abandoned.',
 	'ping.debugEndPlaceholder':
 		'Why stop here? Recorded as the reason {phase} ended; the run goes back to waiting.',
@@ -1213,6 +1215,8 @@ export default {
 	'flow.insp.noType': 'no type',
 	'flow.insp.portOptionalTitle':
 		'It may be empty: an edge source, or a file not written on every route that reaches this stage',
+	'flow.insp.outputOptionalTitle':
+		'The stage may leave it unwritten — a stage reading it then reads it optional',
 	'flow.insp.portDescPlaceholder': 'what it is (the agent reads this)',
 	'flow.insp.optionalTitle': 'A stage may leave it unbound',
 	'flow.insp.removePort': 'Remove',
@@ -1255,11 +1259,11 @@ export default {
 	'flow.agents.addsHelp':
 		'The prompt is followed by a section per input and the output contract, from the ports of the stage that runs it — paths and contents filled in at run time — and by the standing rules on asking the human.',
 	'flow.agents.addsTask':
-		'# TASK — the ticket: title, key, status, labels, goal, direction for this attempt, attached files',
+		'# TASK — the ticket: title, key, status, labels, goal, direction for this run, attached files',
 	'flow.agents.addsDiscussion':
 		'# TICKET DISCUSSION — the latest comments on the ticket, oldest first, quoted as untrusted text (omitted when there are none)',
-	'flow.agents.addsAnswers':
-		'# PING ANSWERS — what the task’s owner answered during the run, oldest first, as direction that amends the plan',
+	'flow.agents.addsJournal':
+		'# RUN JOURNAL — the owner’s decisions during the run, oldest first, as direction that amends the plan; each stage’s passes; and the journal_read tool for the rest',
 	'flow.agents.addsFeed': 'the {type} the edge carried, when one entered (attempt n of m)',
 	'flow.agents.addsChangeset': 'the changed files, listed (never the diff)',
 	'flow.agents.addsLink': 'the link',

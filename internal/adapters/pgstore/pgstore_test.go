@@ -71,7 +71,7 @@ func TestRunsProjectionUpdatedInTx(t *testing.T) {
 		&event.RunCreated{TicketTitle: "Add login", FlowName: "v1", FlowHash: "h"},
 		&event.EnvRequested{},
 		&event.EnvReady{EnvID: "env-9"},
-		&event.StageStarted{StageID: "plan", Iteration: 1},
+		&event.StageStarted{StageID: "plan", Attempt: 1},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestRunsProjectionRoundTripsWhatApplyReads(t *testing.T) {
 	steps := [][]event.Payload{
 		{&event.RunCreated{TicketTitle: "t", ProjectID: "p", Branch: "feat/x", TicketID: "tk-1"},
 			&event.EnvRequested{}, &event.EnvReady{EnvID: "env-1"},
-			&event.StageStarted{StageID: "build", Iteration: 1}},
+			&event.StageStarted{StageID: "build", Attempt: 1}},
 		{&event.PingRaised{PingID: "q1", Type: "blocker", Question: "which db?"}},
 		// The engine parks the run: no loop, waiting on the human.
 		{&event.RunPaused{StageID: "build", Reason: event.PauseWaiting}},
@@ -305,7 +305,7 @@ func TestRebuildProjections(t *testing.T) {
 		if _, err := s.Append(ctx, id,
 			&event.RunCreated{TicketTitle: id},
 			&event.PingRaised{PingID: "p-" + id, Type: "blocker", Question: "q"},
-			&event.SnapshotCaptured{StageID: "build", Iteration: 1, Kind: "log",
+			&event.SnapshotCaptured{StageID: "build", Attempt: 1, Kind: "log",
 				SnapshotID: "sn-" + id, Filename: "build-1.log", Mime: "text/plain",
 				SHA256: "ee55", Size: 9},
 		); err != nil {
@@ -459,7 +459,7 @@ func TestSnapshotsCRUDAndProjection(t *testing.T) {
 	ctx := context.Background()
 	sn := filestore.Snapshot{
 		ID: "sn1", RunID: "run1", Kind: filestore.KindOutput, StageID: "plan",
-		Iteration: 1, Name: "plan", Path: "artifacts/plan.md",
+		Attempt: 1, Name: "plan", Path: "artifacts/plan.md",
 		Filename: "plan.md", Mime: "text/markdown", Size: 6, SHA256: "cd34",
 		CreatedAt: time.Now().UTC(),
 	}

@@ -976,7 +976,7 @@ The geek view: one live tactical map of every sandbox the signed-in person has i
   - an alert marker when a question is open or the run failed.
   - Each unit is a keyboard-reachable button whose label says the run, its state, its agent and its drones. Click or Enter opens the dossier.
 - **Kill feed:** a polite live list, newest first, at most 50 lines: deployed, cleared a stage, needs you, in review, completed, failed, abandoned, launched a drone — each in its role. A unit that ends stays on the map for five minutes so its outcome can be seen, then leaves.
-- **Dossier:** the selected unit's details — workshop, flow, state, stage and phase, workspace status, pings, take-over; the agent's harness, agent, iteration, current tool and subagent titles — with the run page's resource sparklines (4.16) and a link to the run. Esc closes it.
+- **Dossier:** the selected unit's details — workshop, flow, state, stage and phase, workspace status, pings, take-over; the agent's harness, agent, attempt, current tool and subagent titles — with the run page's resource sparklines (4.16) and a link to the run. Esc closes it.
 - **Motion:** radar rotation, ring pulse, drone orbit and the feed's slide-in are CSS keyframes on token durations. All of it stops under `prefers-reduced-motion: reduce`, and while the tab is hidden (polling pauses then too, and shows "paused" until the first refresh lands, 4.17).
 - **States:** loading (skeleton), empty ("No units deployed"), error with no snapshot (`ErrorCard` with Retry); an error after a snapshot keeps the map and says so inline.
 

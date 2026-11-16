@@ -22,14 +22,14 @@ func factsLog() []event.Event {
 		{0, &event.RunCreated{UserID: "u1", ProjectID: "p1", TicketID: "t1", FlowName: "f", FlowHash: "h", TicketSourceKind: "jira"}},
 		{1, &event.EnvRequested{}},
 		{3, &event.EnvReady{EnvID: "env-1"}},
-		{3, &event.StageStarted{StageID: "build", Iteration: 1, Harness: "claude", Model: "m1"}},
+		{3, &event.StageStarted{StageID: "build", Attempt: 1, Harness: "claude", Model: "m1"}},
 		{5, &event.PingRaised{PingID: "p1", Type: event.PingClarification, StageID: "build"}},
 		{9, &event.PingAnswered{PingID: "p1", Answer: "accept"}},
 		{10, &event.StageFailed{StageID: "build", Reason: event.ReasonExitNonzero, TurnsUsed: 2, Usage: &event.Usage{InputTokens: 10, OutputTokens: 5, CostUSD: 0.2}}},
 		{10, &event.EdgeTaken{From: "build", To: "build", Edge: "on_fail", Count: 1, Max: 3}},
-		{10, &event.StageStarted{StageID: "build", Iteration: 2, Harness: "claude", Model: "m1"}},
-		{11, &event.HoldTaken{StageID: "build", Iteration: 2, UserID: "u1"}},
-		{13, &event.HoldReleased{StageID: "build", Iteration: 2}},
+		{10, &event.StageStarted{StageID: "build", Attempt: 2, Harness: "claude", Model: "m1"}},
+		{11, &event.HoldTaken{StageID: "build", Attempt: 2, UserID: "u1"}},
+		{13, &event.HoldReleased{StageID: "build", Attempt: 2}},
 		{15, &event.StageCompleted{StageID: "build", TurnsUsed: 3, Usage: &event.Usage{InputTokens: 20, OutputTokens: 7, CostUSD: 0.3}}},
 		{15, &event.RunCompleted{}},
 	}
@@ -83,11 +83,11 @@ func TestFactsOfARun(t *testing.T) {
 		t.Fatalf("ended attempts = %+v", f.Ended)
 	}
 	a, b := f.Ended[0], f.Ended[1]
-	if a.Seq != 4 || a.Outcome != OutcomeFailed || a.FailureReason != event.ReasonExitNonzero || a.Iteration != 1 ||
+	if a.Seq != 4 || a.Outcome != OutcomeFailed || a.FailureReason != event.ReasonExitNonzero || a.Attempt != 1 ||
 		a.ActiveMS != 3*m || a.WaitingMS != 4*m || a.CostUSD != 0.2 || a.Turns != 2 || a.Pings != 1 || a.Model != "m1" {
 		t.Errorf("first attempt = %+v", a)
 	}
-	if b.Seq != 9 || b.Outcome != OutcomeCompleted || b.Iteration != 2 || b.ActiveMS != 3*m || b.WaitingMS != 2*m ||
+	if b.Seq != 9 || b.Outcome != OutcomeCompleted || b.Attempt != 2 || b.ActiveMS != 3*m || b.WaitingMS != 2*m ||
 		b.CostUSD != 0.3 || b.InputTokens != 20 || b.EndedAt == nil || !b.EndedAt.Equal(t0.Add(15*time.Minute)) {
 		t.Errorf("second attempt = %+v", b)
 	}
@@ -132,15 +132,15 @@ func TestFactsEdges(t *testing.T) {
 			at(0, 1, &event.RunCreated{}),
 			at(0, 2, &event.EnvRequested{}),
 			at(0, 3, &event.EnvReady{}),
-			at(0, 4, &event.StageStarted{StageID: "a", Iteration: 1}),
+			at(0, 4, &event.StageStarted{StageID: "a", Attempt: 1}),
 			at(1, 5, &event.StagePaused{StageID: "a", Reason: event.PauseAskHuman, TurnsUsed: 1, Usage: &event.Usage{CostUSD: 0.1}}),
 			at(2, 6, &event.StageResumed{StageID: "a", Reason: event.ResumeMessage}),
 			at(3, 7, &event.StageCompleted{StageID: "a", Skipped: true}),
-			at(3, 8, &event.StageStarted{StageID: "g", Iteration: 1}),
+			at(3, 8, &event.StageStarted{StageID: "g", Attempt: 1}),
 			at(3, 9, &event.PingRaised{PingID: "g1", Type: event.PingGate, StageID: "g"}),
 			at(5, 10, &event.PingAnswered{PingID: "g1", Answer: "reject"}),
 			at(5, 11, &event.PingAnswered{PingID: "nope", Answer: "approve"}), // no clock: ignored
-			at(5, 12, &event.StageStarted{StageID: "g", Iteration: 2}),        // restarts: the first is abandoned
+			at(5, 12, &event.StageStarted{StageID: "g", Attempt: 2}),          // restarts: the first is abandoned
 			at(5, 13, &event.MRCreated{MRURL: "u"}),
 			at(6, 14, &event.RunPaused{Reason: "user"}),
 			at(8, 15, &event.RunUnpaused{}),
@@ -171,7 +171,7 @@ func TestFactsEdges(t *testing.T) {
 	t.Run("paused attempt and failure end", func(t *testing.T) {
 		evs := []event.Event{
 			at(0, 1, &event.RunCreated{}),
-			at(0, 2, &event.StageStarted{StageID: "a", Iteration: 1}),
+			at(0, 2, &event.StageStarted{StageID: "a", Attempt: 1}),
 			at(1, 3, &event.StagePaused{StageID: "a", Reason: event.PauseAskHuman}),
 		}
 		v := Reduce(evs)
@@ -186,7 +186,7 @@ func TestFactsEdges(t *testing.T) {
 	t.Run("archive closes what is open", func(t *testing.T) {
 		v := Reduce([]event.Event{
 			at(0, 1, &event.RunCreated{}),
-			at(0, 2, &event.StageStarted{StageID: "a", Iteration: 1}),
+			at(0, 2, &event.StageStarted{StageID: "a", Attempt: 1}),
 			at(1, 3, &event.RunArchived{}),
 		})
 		if v.Facts.EndedAt == nil || len(v.Facts.Open) != 0 || v.Facts.Ended[0].Outcome != OutcomeAbandoned {
@@ -210,12 +210,12 @@ func TestSideEventsDoNotSplitIntervals(t *testing.T) {
 	}
 	plain := Reduce([]event.Event{
 		ev(ms(0), 1, &event.RunCreated{}),
-		ev(ms(0), 2, &event.StageStarted{StageID: "a", Iteration: 1}),
+		ev(ms(0), 2, &event.StageStarted{StageID: "a", Attempt: 1}),
 		ev(ms(3.2), 3, &event.StageCompleted{StageID: "a"}),
 	})
 	sided := Reduce([]event.Event{
 		ev(ms(0), 1, &event.RunCreated{}),
-		ev(ms(0), 2, &event.StageStarted{StageID: "a", Iteration: 1}),
+		ev(ms(0), 2, &event.StageStarted{StageID: "a", Attempt: 1}),
 		ev(ms(1.6), 3, &event.ServiceReady{Service: "db"}),
 		ev(ms(3.2), 4, &event.StageCompleted{StageID: "a"}),
 	})

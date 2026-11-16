@@ -24,6 +24,8 @@
 	import { ms } from '$lib/ui/motion';
 	import { token } from '$lib/design/tokens';
 	import PingPill from '$lib/ui/PingPill.svelte';
+	import RefChip from '$lib/ui/RefChip.svelte';
+	import { attemptRef } from '$lib/domain';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import StatusMark, { type MarkTone } from '$lib/ui/StatusMark.svelte';
@@ -104,8 +106,9 @@
 		<div class="divider" use:arrive={a}>
 			<span class="hl l"></span>
 			<span class="sname display">{it.stageId}</span>
+			<RefChip ref={attemptRef(it.stageId, it.attempt)} />
 			<span class="smeta truncate"
-				>{t('run.transcript.attempt', { n: it.iteration })}{#if it.agent}&nbsp;· {it.agent}{/if}{#if it.model}&nbsp;·
+				>{t('run.transcript.attempt', { n: it.attempt })}{#if it.agent}&nbsp;· {it.agent}{/if}{#if it.model}&nbsp;·
 					{it.model}{/if}{#if !it.agentic}&nbsp;·
 					{t('run.transcript.stage')}{/if} · <span class="mono">{fmtTime(it.ts)}</span></span
 			>

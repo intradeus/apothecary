@@ -114,7 +114,7 @@ func spanAttr(s tracetest.SpanStub, key string) (string, bool) {
 func TestStageAttemptIsItsOwnTraceLinkedToTheRun(t *testing.T) {
 	r := newRig(t)
 	r.OnEvent(ev("r1", 0, &event.RunCreated{FlowName: "delivery", TicketTitle: "add login"}))
-	r.OnEvent(ev("r1", time.Second, &event.StageStarted{StageID: "build", Iteration: 2, Harness: "fake", Model: "fake/model"}))
+	r.OnEvent(ev("r1", time.Second, &event.StageStarted{StageID: "build", Attempt: 2, Harness: "fake", Model: "fake/model"}))
 	r.OnEvent(ev("r1", 3*time.Second, &event.StageCompleted{StageID: "build", TurnsUsed: 4, Usage: &event.Usage{CostUSD: 0.5}}))
 	r.OnEvent(ev("r1", 4*time.Second, &event.RunCompleted{}))
 
@@ -139,7 +139,7 @@ func TestStageAttemptIsItsOwnTraceLinkedToTheRun(t *testing.T) {
 	}
 	for k, want := range map[string]string{
 		"apothecary.stage": "build", "apothecary.harness": "fake", "apothecary.model": "fake/model",
-		"apothecary.iteration": "2", "apothecary.run_id": "r1",
+		"apothecary.attempt": "2", "apothecary.run_id": "r1",
 	} {
 		if got, _ := spanAttr(stage, k); got != want {
 			t.Errorf("stage %s = %q, want %q", k, got, want)
@@ -250,14 +250,14 @@ func TestRunsEndWithTheirState(t *testing.T) {
 // the next one, not leaked until the run ends.
 func TestANewAttemptClosesTheOneLeftOpen(t *testing.T) {
 	r := newRig(t)
-	r.OnEvent(ev("r1", 0, &event.StageStarted{StageID: "build", Iteration: 1}))
-	r.OnEvent(ev("r1", time.Second, &event.StageStarted{StageID: "build", Iteration: 2}))
+	r.OnEvent(ev("r1", 0, &event.StageStarted{StageID: "build", Attempt: 1}))
+	r.OnEvent(ev("r1", time.Second, &event.StageStarted{StageID: "build", Attempt: 2}))
 	spans := r.spans.GetSpans()
 	if len(spans) != 1 {
 		t.Fatalf("ended spans = %v, want the abandoned attempt", r.spanNames())
 	}
-	if got, _ := spanAttr(spans[0], "apothecary.iteration"); got != "1" {
-		t.Errorf("ended iteration %s, want the first", got)
+	if got, _ := spanAttr(spans[0], "apothecary.attempt"); got != "1" {
+		t.Errorf("ended attempt %s, want the first", got)
 	}
 	if !spans[0].EndTime.Equal(at.Add(time.Second)) {
 		t.Errorf("ended at %v", spans[0].EndTime)
@@ -286,7 +286,7 @@ func TestCompletionWithoutAnOpenStage(t *testing.T) {
 func TestRecoveredRunLinksItsAttemptsToTheMarker(t *testing.T) {
 	r := newRig(t)
 	r.OnEvent(ev("r1", time.Hour, &event.PingRaised{Type: "human_input"}))
-	r.OnEvent(ev("r1", 2*time.Hour, &event.StageStarted{StageID: "build", Iteration: 3}))
+	r.OnEvent(ev("r1", 2*time.Hour, &event.StageStarted{StageID: "build", Attempt: 3}))
 	r.OnEvent(ev("r1", 3*time.Hour, &event.StageCompleted{StageID: "build"}))
 	r.OnEvent(ev("r1", 3*time.Hour, &event.RunCompleted{}))
 	if got := r.spanNames(); len(got) != 1 || got[0] != "build" {
@@ -403,7 +403,7 @@ func TestSpansTakeTheRunsDerivedIDs(t *testing.T) {
 	r := newRig(t)
 	r.OnEvent(ev("r1", 0, &event.RunCreated{FlowName: "delivery", FlowHash: "h1", ProjectID: "p1", UserID: "u1",
 		TicketID: "t1", TicketChangeType: "feature", By: "human", Skillsets: []event.SkillsetPin{{Name: "go", Seq: 3}}}))
-	r.OnEvent(ev("r1", time.Second, &event.StageStarted{StageID: "build", Iteration: 2, Model: "m", Agent: "coder", AgentHash: "ah"}))
+	r.OnEvent(ev("r1", time.Second, &event.StageStarted{StageID: "build", Attempt: 2, Model: "m", Agent: "coder", AgentHash: "ah"}))
 	// What the engine starts under the attempt before the sink exports it.
 	_, invoke := r.tracer.Start(trace.ContextWithRemoteSpanContext(context.Background(), ptel.StageSpanContext("r1", "build", 2)), "agent.invoke")
 	invoke.End()
@@ -472,14 +472,14 @@ func TestLifecycleMetrics(t *testing.T) {
 	r.OnEvent(ev("r1", 0, &event.RunCreated{}))
 	r.OnEvent(ev("r1", 2*time.Second, &event.EnvRequested{}))
 	r.OnEvent(ev("r1", 5*time.Second, &event.EnvReady{}))
-	r.OnEvent(ev("r1", 6*time.Second, &event.StageStarted{StageID: "build", Iteration: 1, Harness: "h", Model: "m"}))
+	r.OnEvent(ev("r1", 6*time.Second, &event.StageStarted{StageID: "build", Attempt: 1, Harness: "h", Model: "m"}))
 	r.OnEvent(ev("r1", 7*time.Second, &event.PingRaised{PingID: "p1", Type: "gate"}))
 	r.OnEvent(ev("r1", 10*time.Second, &event.PingAnswered{PingID: "p1"}))
 	r.OnEvent(ev("r1", 11*time.Second, &event.StagePaused{StageID: "build", Usage: &event.Usage{InputTokens: 1, OutputTokens: 2, CostUSD: 0.1}}))
 	r.OnEvent(ev("r1", 12*time.Second, &event.HoldTaken{}))
 	r.OnEvent(ev("r1", 16*time.Second, &event.StageFailed{StageID: "build", Reason: "timeout", Usage: &event.Usage{InputTokens: 3, OutputTokens: 4, CostUSD: 0.2}}))
 	r.OnEvent(ev("r1", 16*time.Second, &event.EdgeTaken{Edge: "on_fail"}))
-	r.OnEvent(ev("r1", 17*time.Second, &event.StageStarted{StageID: "build", Iteration: 2, Harness: "h", Model: "m"}))
+	r.OnEvent(ev("r1", 17*time.Second, &event.StageStarted{StageID: "build", Attempt: 2, Harness: "h", Model: "m"}))
 	r.OnEvent(ev("r1", 18*time.Second, &event.StageCompleted{StageID: "build", Skipped: true}))
 	r.OnEvent(ev("r1", 18*time.Second, &event.RunPaused{Reason: event.PauseBudget, Note: "budget exceeded: $1"}))
 	r.OnEvent(ev("r1", 18*time.Second, &event.RunUnpaused{}))

@@ -11,6 +11,7 @@ import (
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/event"
+	"apothecary/internal/run/ref"
 	"apothecary/internal/run/runinput"
 )
 
@@ -88,7 +89,7 @@ func TestGoalAttachmentsDeliveredAndPrompted(t *testing.T) {
 		t.Fatalf("attachment not claimed for the run: %+v (%v)", got, err)
 	}
 
-	wantPath := ".apothecary/attachments/goal/" + up.ID[:8] + "/spec.pdf"
+	wantPath := ".apothecary/attachments/ticket/spec.pdf"
 	// The builder prompt lists the attachment (path + filename + mime).
 	var prompt string
 	for _, c := range h.runner.RunCalls {
@@ -121,8 +122,8 @@ func TestProvisionLogPublished(t *testing.T) {
 	var log string
 	for _, sn := range snapshotsFor(t, snaps, runID) {
 		if sn.StageID == provisionLogStage && sn.Kind == filestore.KindLog {
-			if sn.Iteration != 1 {
-				t.Errorf("provision log iteration = %d, want 1", sn.Iteration)
+			if sn.Attempt != 1 || sn.Filename != "_provision#1.log" {
+				t.Errorf("provision log attempt = %d, named %q; want 1, _provision#1.log", sn.Attempt, sn.Filename)
 			}
 			log = snapshotBody(t, snaps, sn.ID)
 		}
@@ -213,7 +214,7 @@ main:
 	found := map[int]string{}
 	for _, sn := range snapshotsFor(t, snaps, runID) {
 		if sn.StageID == "plan" && sn.Kind == filestore.KindOutput {
-			found[sn.Iteration] = snapshotBody(t, snaps, sn.ID)
+			found[sn.Attempt] = snapshotBody(t, snaps, sn.ID)
 			if sn.Name != "plan" || sn.Path != "artifacts/plan.md" {
 				t.Errorf("snapshot name/path = %q/%q, want plan/artifacts/plan.md", sn.Name, sn.Path)
 			}
@@ -230,6 +231,9 @@ main:
 	for _, sn := range snapshotsFor(t, snaps, runID) {
 		if sn.StageID == "check" && sn.Kind == filestore.KindLog {
 			log = snapshotBody(t, snaps, sn.ID)
+			if want := ref.Attempt("check", sn.Attempt) + ".log"; sn.Filename != want {
+				t.Errorf("check log named %q, want %q", sn.Filename, want)
+			}
 		}
 	}
 	if !strings.Contains(log, "boom") {

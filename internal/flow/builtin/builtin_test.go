@@ -624,3 +624,42 @@ func TestFlowYAMLAndNames(t *testing.T) {
 		t.Error("a flow for an unknown name")
 	}
 }
+
+// Every built-in stage that keeps journal notes must write the file — empty
+// when there is nothing to note — so the run knows its agent considered it.
+func TestBuiltinJournalNotesAreRequired(t *testing.T) {
+	var noted []string
+	for _, name := range FlowNames() {
+		fl := Flow(name)
+		for _, st := range fl.Stages {
+			for _, o := range st.Outputs {
+				if o.Type != agentspec.TypeJournalNotes {
+					continue
+				}
+				noted = append(noted, name+"/"+st.ID)
+				if o.Optional {
+					t.Errorf("%s/%s: its notes are optional", name, st.ID)
+				}
+			}
+		}
+	}
+	if want := "builder/build builder/resolve builder/fix builder/ci_repair conflict-resolver/settle.resolve conflict-resolver/resettle.resolve"; !sameSet(noted, strings.Fields(want)) {
+		t.Errorf("stages keeping notes = %v, want %s", noted, want)
+	}
+}
+
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[string]int{}
+	for _, s := range a {
+		seen[s]++
+	}
+	for _, s := range b {
+		if seen[s]--; seen[s] < 0 {
+			return false
+		}
+	}
+	return true
+}

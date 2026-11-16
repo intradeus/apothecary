@@ -39,7 +39,7 @@ main:
 	var iters []int
 	for _, e := range h.events(t, runID) {
 		if p, ok := e.Payload.(*event.StageStarted); ok {
-			iters = append(iters, p.Iteration)
+			iters = append(iters, p.Attempt)
 		}
 	}
 	if len(seen) != 2 || len(iters) != 2 {

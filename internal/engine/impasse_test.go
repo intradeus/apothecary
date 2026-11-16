@@ -148,11 +148,11 @@ func TestImpasseKeepGoing(t *testing.T) {
 	var iters []int
 	for _, e := range evs {
 		if s, ok := e.Payload.(*event.StageStarted); ok && s.StageID == "review" {
-			iters = append(iters, s.Iteration)
+			iters = append(iters, s.Attempt)
 		}
 	}
 	if fmt.Sprint(iters) != "[1 2 3 4 5]" {
-		t.Errorf("review iterations = %v", iters)
+		t.Errorf("review attempts = %v", iters)
 	}
 	if rc, _ := findPayload[*event.RunCompleted](evs); rc.UnwantedPings != 0 {
 		t.Errorf("unwanted_pings = %d, want 0 (the impasse is asked on purpose)", rc.UnwantedPings)
@@ -186,7 +186,7 @@ func TestImpasseSkip(t *testing.T) {
 			}
 		case *event.StageStarted:
 			if p.StageID == "review" {
-				reviewIters = append(reviewIters, p.Iteration)
+				reviewIters = append(reviewIters, p.Attempt)
 			}
 		}
 	}
@@ -194,7 +194,7 @@ func TestImpasseSkip(t *testing.T) {
 		t.Fatalf("review's skip = %+v, want skipped by u1 with the note", skip)
 	}
 	if fmt.Sprint(reviewIters) != "[1 2 3]" {
-		t.Errorf("review iterations = %v, want the skip as pass 3", reviewIters)
+		t.Errorf("review attempts = %v, want the skip as attempt 3", reviewIters)
 	}
 	ready, _ := findPayload[*event.EnvReady](evs)
 	if _, held := h.envp.Env(envport.EnvID(ready.EnvID)).Files["artifacts/verdict.json"]; held {
@@ -335,15 +335,15 @@ func TestImpasseAcrossRestart(t *testing.T) {
 				&event.PhaseStarted{Phase: flow.MainPhase, By: "human"},
 				&event.EnvRequested{},
 				&event.EnvReady{EnvID: string(envID)},
-				&event.StageStarted{StageID: "build", Iteration: 1},
+				&event.StageStarted{StageID: "build", Attempt: 1},
 				&event.StageCompleted{StageID: "build", SessionID: "s-b"},
-				&event.StageStarted{StageID: "review", Iteration: 1},
+				&event.StageStarted{StageID: "review", Attempt: 1},
 				&event.StageCompleted{StageID: "review", SessionID: "s-r"},
 				&event.VerdictReceived{StageID: "review", NComments: 1},
 				&event.EdgeTaken{From: "review", To: "build", Edge: flow.EdgeReject, Count: 1, Max: 1, Feed: "round 1"},
-				&event.StageStarted{StageID: "build", Iteration: 2},
+				&event.StageStarted{StageID: "build", Attempt: 2},
 				&event.StageCompleted{StageID: "build", SessionID: "s-b"},
-				&event.StageStarted{StageID: "review", Iteration: 2},
+				&event.StageStarted{StageID: "review", Attempt: 2},
 				&event.StageCompleted{StageID: "review", SessionID: "s-r"},
 				&event.VerdictReceived{StageID: "review", NComments: 1},
 				&event.EdgeTaken{From: "review", To: flow.ReservedImpasse, Edge: flow.EdgeReject, Count: 1, Max: flow.UnlimitedMax, Depth: 1, Feed: "round 2"},

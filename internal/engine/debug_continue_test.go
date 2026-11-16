@@ -64,7 +64,7 @@ func TestContinueFromDebugRestoresEveryChainOfThePhase(t *testing.T) {
 				live := parked()
 				live.ContinueFromDebug()
 				replayed := parked()
-				started := &event.StageStarted{StageID: esc.ID, Iteration: 3}
+				started := &event.StageStarted{StageID: esc.ID, Attempt: 3}
 				replayed.Apply(&event.Event{RunID: "r", Type: started.EventType(), Payload: started})
 				if fmt.Sprint(live.EdgeCounts) != fmt.Sprint(replayed.EdgeCounts) {
 					t.Fatalf("live and replay disagree:\n live   %v\n replay %v", live.EdgeCounts, replayed.EdgeCounts)
@@ -135,14 +135,14 @@ func TestDebugContinueRestoresRetriesAcrossRestart(t *testing.T) {
 				&event.PhaseStarted{Phase: flow.MainPhase, By: "human"},
 				&event.EnvRequested{},
 				&event.EnvReady{EnvID: string(envID)},
-				&event.StageStarted{StageID: "build", Iteration: 1},
+				&event.StageStarted{StageID: "build", Attempt: 1},
 				&event.StageCompleted{StageID: "build", SessionID: "sess-1"},
-				&event.StageStarted{StageID: "test", Iteration: 1},
+				&event.StageStarted{StageID: "test", Attempt: 1},
 				&event.StageFailed{StageID: "test", Reason: event.ReasonExitNonzero, Error: "red"},
 				&event.EdgeTaken{From: "test", To: "build", Edge: flow.EdgeFail, Count: 1, Max: 1, Feed: "red"},
-				&event.StageStarted{StageID: "build", Iteration: 2},
+				&event.StageStarted{StageID: "build", Attempt: 2},
 				&event.StageCompleted{StageID: "build", SessionID: "sess-1"},
-				&event.StageStarted{StageID: "test", Iteration: 2},
+				&event.StageStarted{StageID: "test", Attempt: 2},
 				&event.StageFailed{StageID: "test", Reason: event.ReasonExitNonzero, Error: "red"},
 				&event.EdgeTaken{From: "test", To: flow.ReservedDebug, Edge: flow.EdgeFail, Count: 1, Max: flow.UnlimitedMax, Depth: 1, Feed: "red"},
 				&event.PingRaised{PingID: pingID, Type: event.PingDebug, Question: "test failed", Context: "red",
@@ -152,7 +152,7 @@ func TestDebugContinueRestoresRetriesAcrossRestart(t *testing.T) {
 				&event.RunUnpaused{Reason: "answered"},
 			}
 			if window == "recorded" {
-				evs = append(evs, &event.StageStarted{StageID: "test", Iteration: 3})
+				evs = append(evs, &event.StageStarted{StageID: "test", Attempt: 3})
 			}
 			for _, p := range evs {
 				if _, err := h.store.Append(ctx, runID, p); err != nil {

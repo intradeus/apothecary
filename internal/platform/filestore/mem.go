@@ -291,7 +291,7 @@ func (m *Mem) SnapshotsForRun(_ context.Context, runID string) ([]Snapshot, erro
 			out = append(out, s)
 		}
 	}
-	// Mirror the SQL ordering: stage, iteration, then capture time. The
+	// Mirror the SQL ordering: stage, attempt, then capture time. The
 	// stage compares as en_US.utf8 does (Postgres's default collation here):
 	// punctuation does not weigh, so _provision sorts among the p's.
 	unpunctuated := strings.NewReplacer("-", "", "_", "")
@@ -303,8 +303,8 @@ func (m *Mem) SnapshotsForRun(_ context.Context, runID string) ([]Snapshot, erro
 		if a.StageID != b.StageID {
 			return a.StageID < b.StageID
 		}
-		if a.Iteration != b.Iteration {
-			return a.Iteration < b.Iteration
+		if a.Attempt != b.Attempt {
+			return a.Attempt < b.Attempt
 		}
 		if !a.CreatedAt.Equal(b.CreatedAt) {
 			return a.CreatedAt.Before(b.CreatedAt)

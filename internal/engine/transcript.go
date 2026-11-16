@@ -118,13 +118,13 @@ func formatMessages(msgs []agentport.UserMessage) string {
 // supersedes it (same Segment / ToolCallID). Viewers that miss deltas lose
 // nothing but liveness.
 type LiveDelta struct {
-	StageID   string           `json:"stage_id"`
-	Iteration int              `json:"iteration,omitempty"`
-	Turn      string           `json:"turn,omitempty"`
-	Kind      string           `json:"kind"` // message|thought|tool|turn_start|turn_end
-	Segment   string           `json:"segment,omitempty"`
-	Text      string           `json:"text,omitempty"` // the segment's text SO FAR (replace, not append)
-	Tool      *event.AgentTool `json:"tool,omitempty"`
+	StageID string           `json:"stage_id"`
+	Attempt int              `json:"attempt,omitempty"`
+	Turn    string           `json:"turn,omitempty"`
+	Kind    string           `json:"kind"` // message|thought|tool|turn_start|turn_end
+	Segment string           `json:"segment,omitempty"`
+	Text    string           `json:"text,omitempty"` // the segment's text SO FAR (replace, not append)
+	Tool    *event.AgentTool `json:"tool,omitempty"`
 }
 
 type liveHub struct {
@@ -205,7 +205,7 @@ func (x *exec) newTranscript(stageID string, iter int) *transcript {
 }
 
 func (t *transcript) publish(d LiveDelta) {
-	d.StageID, d.Iteration = t.st, t.iter
+	d.StageID, d.Attempt = t.st, t.iter
 	t.x.e.live.publish(t.x.rs.RunID, d)
 }
 
@@ -246,7 +246,7 @@ func (t *transcript) handle(ev agentport.AgentEvent) error {
 		}
 		cur := t.tools[ev.Tool.ID]
 		if cur == nil {
-			cur = &event.AgentTool{StageID: t.st, Iteration: t.iter, ToolCallID: ev.Tool.ID}
+			cur = &event.AgentTool{StageID: t.st, Attempt: t.iter, ToolCallID: ev.Tool.ID}
 			t.tools[ev.Tool.ID] = cur
 			t.order = append(t.order, ev.Tool.ID)
 		}
@@ -265,7 +265,7 @@ func (t *transcript) handle(ev agentport.AgentEvent) error {
 		if err := t.flushText(); err != nil {
 			return err
 		}
-		p := &event.AgentPlan{StageID: t.st, Iteration: t.iter, Turn: ev.Turn, Cursor: t.cursor}
+		p := &event.AgentPlan{StageID: t.st, Attempt: t.iter, Turn: ev.Turn, Cursor: t.cursor}
 		var sig strings.Builder
 		for _, e := range ev.Plan {
 			p.Entries = append(p.Entries, event.PlanEntry{Content: e.Content, Status: e.Status, Priority: e.Priority})
@@ -284,7 +284,7 @@ func (t *transcript) handle(ev agentport.AgentEvent) error {
 		if ev.Tool != nil && ev.Tool.Title != "" {
 			title = ev.Tool.Title
 		}
-		return t.x.append(&event.AgentNotice{StageID: t.st, Iteration: t.iter, Cursor: t.cursor,
+		return t.x.append(&event.AgentNotice{StageID: t.st, Attempt: t.iter, Cursor: t.cursor,
 			Text: fmt.Sprintf("Permission requested for %s: %s", title, ev.Text)})
 	case agentport.AgentEvTurnStart:
 		t.publish(LiveDelta{Kind: "turn_start", Turn: ev.Turn})
@@ -297,7 +297,7 @@ func (t *transcript) handle(ev agentport.AgentEvent) error {
 		t.publish(LiveDelta{Kind: "turn_end", Turn: ev.Turn})
 		t.x.e.crew.turn(t.x.rs.RunID, false)
 		if ev.Error != "" {
-			return t.x.append(&event.AgentNotice{StageID: t.st, Iteration: t.iter, Cursor: t.cursor,
+			return t.x.append(&event.AgentNotice{StageID: t.st, Attempt: t.iter, Cursor: t.cursor,
 				Text: "The turn ended with an error: " + ev.Error})
 		}
 		return nil
@@ -314,7 +314,7 @@ func (t *transcript) handle(ev agentport.AgentEvent) error {
 		if len(ids) == 0 {
 			return nil // engine-composed text (the handback) is recorded as agent_prompted
 		}
-		if err := t.x.append(&event.MessageDelivered{MessageIDs: ids, StageID: t.st, Iteration: t.iter}); err != nil {
+		if err := t.x.append(&event.MessageDelivered{MessageIDs: ids, StageID: t.st, Attempt: t.iter}); err != nil {
 			return err
 		}
 		return nil
@@ -322,7 +322,7 @@ func (t *transcript) handle(ev agentport.AgentEvent) error {
 		if err := t.flushAll(); err != nil {
 			return err
 		}
-		return t.x.append(&event.AgentNotice{StageID: t.st, Iteration: t.iter, Cursor: t.cursor, Text: ev.Text})
+		return t.x.append(&event.AgentNotice{StageID: t.st, Attempt: t.iter, Cursor: t.cursor, Text: ev.Text})
 	}
 	return nil
 }
@@ -369,7 +369,7 @@ func (t *transcript) flushText() error {
 	if len(text) > limit {
 		text = text[:limit] + "\n… [truncated]"
 	}
-	m := &event.AgentMessage{StageID: t.st, Iteration: t.iter, Turn: t.segTurn, Segment: t.seg,
+	m := &event.AgentMessage{StageID: t.st, Attempt: t.iter, Turn: t.segTurn, Segment: t.seg,
 		Text: text, Thought: t.segThink, Cursor: t.cursor}
 	t.seg = ""
 	t.buf.Reset()
@@ -410,7 +410,7 @@ func (t *transcript) flushAll() error {
 
 // prompted records what the engine sent the agent.
 func (x *exec) prompted(stageID string, iter int, kind, text string) error {
-	p := &event.AgentPrompted{StageID: stageID, Iteration: iter, Kind: kind, Text: text}
+	p := &event.AgentPrompted{StageID: stageID, Attempt: iter, Kind: kind, Text: text}
 	if len(p.Text) > maxPromptText {
 		p.Text, p.Truncated = p.Text[:maxPromptText], true
 	}

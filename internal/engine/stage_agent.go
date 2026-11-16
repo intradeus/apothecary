@@ -57,16 +57,16 @@ type invocation struct {
 func (x *exec) stageAgent(st *flow.Stage) error {
 	rs := x.rs
 	reenter := rs.Ph == runcore.PhIn
-	iter := rs.Iters[st.ID]
+	iter := rs.Attempts[st.ID]
 	if !reenter {
 		iter++
-		if err := x.append(&event.StageStarted{StageID: st.ID, Iteration: iter, Harness: st.Harness, Model: st.Model,
+		if err := x.append(&event.StageStarted{StageID: st.ID, Attempt: iter, Harness: st.Harness, Model: st.Model,
 			Agent: st.Agent, AgentHash: x.rs.Flow.AgentHash(st.Agent)}); err != nil {
 			return err
 		}
 	}
 	// A crash between stage_started and the first prompt asked nothing of the
-	// agent: that attempt begins now, under the iteration already recorded.
+	// agent: that attempt begins now, under the attempt already recorded.
 	if reenter = reenter && rs.AttemptBegun(st.ID); !reenter {
 		// What the agent reads with a schema is a precondition, like a
 		// command's inputs: an agent handed a malformed file would build on
@@ -79,8 +79,10 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			return x.takeEdge(st, flow.EdgeFail, msg)
 		}
 		// A fresh attempt starts from a clean slate, so the output contract
-		// below cannot be satisfied by an earlier attempt's file (M18).
+		// below cannot be satisfied by an earlier attempt's file (M18), and
+		// finds no journal file journal_read wrote for an earlier one.
 		x.clearOutputs(st.Outputs)
+		x.clearJournalFiles()
 	}
 	started := x.e.clock()
 
@@ -96,7 +98,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	}
 	// The agent is on station (the war room's crew board) for as long as
 	// this attempt has it in a session; every way out of here leaves.
-	x.e.crew.board(rs.RunID, Crew{StageID: st.ID, Iteration: iter, Harness: stationHarness(st, x.res),
+	x.e.crew.board(rs.RunID, Crew{StageID: st.ID, Attempt: iter, Harness: stationHarness(st, x.res),
 		Agent: st.Agent, Since: x.e.clock()})
 	defer x.e.crew.leave(rs.RunID)
 
@@ -175,7 +177,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			// running (or the one that finished while nobody listened)
 			// instead of starting another.
 			if ra, ok := runner.(agentport.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.EnvID, session, rs.AgentCursor[st.ID]) {
-				if err := x.append(&event.StageResumed{StageID: st.ID, Iteration: iter, Reason: event.ResumeRestart,
+				if err := x.append(&event.StageResumed{StageID: st.ID, Attempt: iter, Reason: event.ResumeRestart,
 					SessionID: string(session)}); err != nil {
 					return err
 				}
@@ -229,7 +231,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 					reason = event.ResumeRestart
 				}
 			}
-			if err := x.append(&event.StageResumed{StageID: st.ID, Iteration: iter, Reason: reason,
+			if err := x.append(&event.StageResumed{StageID: st.ID, Attempt: iter, Reason: reason,
 				PingIDs: askIDs(asks), SessionID: string(session)}); err != nil {
 				return err
 			}
@@ -410,7 +412,7 @@ func (x *exec) pauseAttempt(st *flow.Stage, iter int, inv invocation) (stop bool
 	if inv.holdPark {
 		reason = event.PauseHeld
 	}
-	paused := &event.StagePaused{StageID: st.ID, Iteration: iter, Reason: reason,
+	paused := &event.StagePaused{StageID: st.ID, Attempt: iter, Reason: reason,
 		PingIDs: pingIDs(inv.open), TurnsUsed: inv.res.r.TurnsUsed, SessionID: string(inv.res.r.Session)}
 	if inv.res.r.Usage != (agentport.Usage{}) {
 		paused.Usage = &event.Usage{InputTokens: inv.res.r.Usage.InputTokens,
@@ -481,7 +483,7 @@ func (x *exec) withPendingMessages(st *flow.Stage, iter int, text string) (strin
 		msgs = append(msgs, agentport.UserMessage{ID: m.MessageID, Text: m.Text})
 		ids = append(ids, m.MessageID)
 	}
-	if err := x.append(&event.MessageDelivered{MessageIDs: ids, StageID: st.ID, Iteration: iter}); err != nil {
+	if err := x.append(&event.MessageDelivered{MessageIDs: ids, StageID: st.ID, Attempt: iter}); err != nil {
 		return text, err
 	}
 	return text + "\n\n---\n\n" + formatMessages(msgs), nil

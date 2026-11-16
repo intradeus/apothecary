@@ -169,7 +169,7 @@ func (s *Server) getLog(w http.ResponseWriter, r *http.Request) {
 		if sn.Kind != filestore.KindLog || sn.StageID != stage {
 			continue
 		}
-		if best == nil || sn.Iteration > best.Iteration {
+		if best == nil || sn.Attempt > best.Attempt {
 			best = sn
 		}
 	}

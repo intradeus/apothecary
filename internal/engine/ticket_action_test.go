@@ -408,9 +408,9 @@ func TestTicketCommentReconcilesAfterCrashOrFailedAttempt(t *testing.T) {
 					TicketID: linkedTicket.TicketID, TicketSourceID: "int-1", TicketSourceKind: "fake", TicketSourceKey: "DEV-1"},
 				&event.EnvRequested{},
 				&event.EnvReady{EnvID: "env-cm"},
-				&event.StageStarted{StageID: "write", Iteration: 1},
+				&event.StageStarted{StageID: "write", Attempt: 1},
 				&event.StageCompleted{StageID: "write"},
-				&event.StageStarted{StageID: "post", Iteration: 1},
+				&event.StageStarted{StageID: "post", Attempt: 1},
 				&event.ActionStarted{StageID: "post", Action: "ticket_comment"},
 			}
 			for _, p := range append(history, tc.tail...) {

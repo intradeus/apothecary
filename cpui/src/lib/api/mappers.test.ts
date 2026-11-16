@@ -154,7 +154,7 @@ describe('runs', () => {
 				facts: aFacts({
 					ended_at: AT,
 					open: {
-						build: { iteration: 3, started_at: AT, outcome: 'paused', stage_id: 'build' }
+						build: { attempt: 3, started_at: AT, outcome: 'paused', stage_id: 'build' }
 					}
 				})
 			})
@@ -165,7 +165,7 @@ describe('runs', () => {
 			wallMs: 65433,
 			attempts: 2,
 			endedAt: AT,
-			open: { build: { iteration: 3, startedAt: AT, outcome: 'paused' } }
+			open: { build: { attempt: 3, startedAt: AT, outcome: 'paused' } }
 		});
 	});
 
@@ -577,6 +577,8 @@ describe('pings', () => {
 		[{ type: 'mystery' }, { type: 'clarification', answerKind: 'form' }],
 		[{ status: 'mystery' }, { status: 'pending' }],
 		[{ type: 'clarification', answer_kind: 'yes_no' }, { answerKind: 'yes_no' }],
+		[{ ref: 'build#3/decision#1' }, { ref: 'build#3/decision#1' }],
+		[{ ref: '' }, { ref: undefined }],
 		[{ payload_ref: 'a.md' }, { primaryRef: 'a.md' }],
 		[{ phase: '' }, { phase: undefined }],
 		[{ ends_phase: true }, { endsPhase: true }],
@@ -1707,13 +1709,13 @@ describe('the live agent stream', () => {
 			map.toLiveDelta({
 				kind: 'tool',
 				stage_id: 's',
-				iteration: '2',
+				attempt: '2',
 				text: '',
 				tool: { title: 't' }
 			})
 		).toMatchObject({
 			stageId: 's',
-			iteration: 2,
+			attempt: 2,
 			text: '',
 			tool: { title: 't' },
 			turn: undefined,
@@ -1721,7 +1723,7 @@ describe('the live agent stream', () => {
 		});
 		expect(map.toLiveDelta({ kind: 'message' })).toMatchObject({
 			stageId: '',
-			iteration: 0,
+			attempt: 0,
 			text: undefined,
 			tool: undefined
 		});
@@ -2133,7 +2135,7 @@ describe('war room', () => {
 						},
 						crew: {
 							stage_id: 'build',
-							iteration: 2,
+							attempt: 2,
 							harness: 'omp',
 							agent: 'builder',
 							since: AT,
@@ -2159,7 +2161,7 @@ describe('war room', () => {
 			resources: { cpuPerc: 150, cpus: 4, pids: 9 },
 			crew: {
 				stageId: 'build',
-				iteration: 2,
+				attempt: 2,
 				harness: 'omp',
 				agent: 'builder',
 				turnActive: true,
@@ -2178,7 +2180,7 @@ describe('war room', () => {
 					aUnit({
 						crew: {
 							stage_id: 's',
-							iteration: 1,
+							attempt: 1,
 							harness: 'h',
 							agent: 'a',
 							since: AT,

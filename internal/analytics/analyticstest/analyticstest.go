@@ -72,7 +72,7 @@ func seed(t *testing.T, f Fixture) {
 		evs := []event.Payload{
 			&event.RunCreated{UserID: r.user, ProjectID: r.project, TicketID: r.ticket, TicketTitle: r.title,
 				TicketChangeType: "feat", FlowName: r.flow, FlowHash: r.hash, Skillsets: []event.SkillsetPin{r.skillset}},
-			&event.StageStarted{StageID: "build", Iteration: 1, Harness: "fake", Model: "m-" + r.user},
+			&event.StageStarted{StageID: "build", Attempt: 1, Harness: "fake", Model: "m-" + r.user},
 		}
 		if r.ping != "" {
 			evs = append(evs, &event.PingRaised{PingID: r.id + "-p", Type: r.ping, Question: "ok?", StageID: "build"})

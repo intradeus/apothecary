@@ -1,7 +1,7 @@
 // What the run page reads out of a run's event log. Pure functions: the
 // store holds the events, the views render what comes out of here.
 
-import type { Run, RunEvent, ServiceStatus } from '$lib/domain';
+import { attemptRef, type Run, type RunEvent, type ServiceStatus } from '$lib/domain';
 import { MAIN } from '$lib/domain/flowdoc';
 import { fmtClockDuration, fmtCost, fmtDuration, isTerminal } from '$lib/core/format';
 import { t } from '$lib/i18n/index.svelte';
@@ -74,6 +74,8 @@ export function pingsOf(events: RunEvent[], run: Run | null): RunPing[] {
 				phase: (p.phase as string | undefined) || undefined,
 				endsPhase: p.ends_phase === true,
 				stageId: p.stage_id as string | undefined,
+				// As the engine recorded it on ping_raised (build#3/decision#1).
+				ref: (p.ref as string | undefined) || undefined,
 				raisedAt: e.ts,
 				seq: e.seq,
 				status: a ? 'answered' : over ? 'withdrawn' : 'pending',
@@ -199,7 +201,7 @@ export function stageRows(
 		const start = mine.findLast((e) => e.type === 'stage_started');
 		const base = { ...d, attempt: 0, looped: false, endSeq: -1, startSeq: -1 };
 		if (!start) return { ...base, status: 'pending' as StageStatus, line: '' };
-		const attempt = Number(start.payload.iteration ?? 1);
+		const attempt = Number(start.payload.attempt ?? 1);
 		const end = mine
 			.filter((e) => e.seq > start.seq)
 			.findLast((e) =>
@@ -317,7 +319,7 @@ export function describe(e: RunEvent): Described {
 			return {
 				text: t('run.event.captured', {
 					stage: String(p.stage_id),
-					attempt: Number(p.iteration ?? 0),
+					attempt: Number(p.attempt ?? 0),
 					what,
 					where
 				}),
@@ -365,7 +367,7 @@ export function describe(e: RunEvent): Described {
 			};
 		case 'stage_started':
 			return {
-				text: `${t('run.event.stageStarted', { stage: String(p.stage_id), attempt: Number(p.iteration) })}${p.model ? ` · ${p.model}` : ''}`,
+				text: `${t('run.event.stageStarted', { stage: String(p.stage_id), attempt: Number(p.attempt) })}${p.model ? ` · ${p.model}` : ''}`,
 				tone: 'info',
 				stage: p.stage_id as string
 			};
@@ -714,6 +716,25 @@ export function describe(e: RunEvent): Described {
 		default:
 			return { text: e.type.replace(/_/g, ' '), tone: '' };
 	}
+}
+
+/** The attempt each event is about (review#5), by seq: the events that carry
+ *  their attempt, and a stage's end, which closes the attempt its start
+ *  opened. A skipped stage ran no attempt. */
+export function attemptRefs(events: RunEvent[]): Map<number, string> {
+	const refs = new Map<number, string>();
+	const open = new Map<string, number>();
+	for (const e of events) {
+		const p = e.payload;
+		if (typeof p.stage_id !== 'string' || !p.stage_id) continue;
+		const ends = e.type === 'stage_completed' || e.type === 'stage_failed';
+		const n = Number(p.attempt ?? 0);
+		if (e.type === 'stage_started' && n > 0) open.set(p.stage_id, n);
+		const at = n > 0 ? n : ends && !p.skipped ? open.get(p.stage_id) : undefined;
+		if (at) refs.set(e.seq, attemptRef(p.stage_id, at));
+		if (ends) open.delete(p.stage_id);
+	}
+	return refs;
 }
 
 /** Transcript events have their own view; the timeline keeps to the run's

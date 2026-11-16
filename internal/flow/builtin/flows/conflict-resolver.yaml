@@ -37,6 +37,8 @@ agents:
     inputs:
       - { name: changes, type: changeset, description: "the files the merge request changes against its target branch" }
       - { name: conflict, type: failure, optional: true, description: "which files carry conflict markers, and what is being taken in" }
+    outputs:
+      - { name: notes, type: journal_notes, description: "significant departures from your direction, for the run journal" }
     prompt: |
       You resolve merge conflicts in a merge request someone else wrote. The
       TASK section is the merge request: its title and its author's
@@ -77,9 +79,10 @@ sequences:
       - { id: resolve, type: agent, harness: $harness, model: $model, agent: resolver, max_turns: 30,
           input: { changes:  { from: run.git.diff_target, type: changeset },
                    conflict: { from: edge.failure, type: failure, optional: true } },
+          output: { notes: { to: artifacts/journal-notes.yaml, type: journal_notes } },
           description: "remove the conflict markers, keeping both intents — no git",
           on_success: sync,
-          on_fail: debug }
+          on_fail: { to: resolve, max: 2, then: debug } }
       - { id: test, type: command, run_ref: $verify,
           description: "the project's tests, on the merge request as it now stands",
           on_success: push,

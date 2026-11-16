@@ -35,7 +35,7 @@ func TestRunGoalRendersAdditionalDirection(t *testing.T) {
 	h.e.Wait(runID)
 
 	prompt := lastPrompt(h)
-	if !strings.Contains(prompt, "# ADDITIONAL DIRECTION FOR THIS ATTEMPT") ||
+	if !strings.Contains(prompt, "# ADDITIONAL DIRECTION FOR THIS RUN") ||
 		!strings.Contains(prompt, "use the existing middleware") {
 		t.Errorf("prompt missing the run direction:\n%s", prompt)
 	}
@@ -72,7 +72,7 @@ func TestTicketAttachmentsReachEveryRun(t *testing.T) {
 	if err := att.ClaimForTicket(context.Background(), "", []string{up.ID}, "tk-shared"); err != nil {
 		t.Fatal(err)
 	}
-	wantPath := ".apothecary/attachments/goal/" + up.ID[:8] + "/design.md"
+	wantPath := ".apothecary/attachments/ticket/design.md"
 
 	for attempt := 1; attempt <= 2; attempt++ {
 		runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{

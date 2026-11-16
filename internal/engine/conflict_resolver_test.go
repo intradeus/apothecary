@@ -41,6 +41,10 @@ func TestBuiltinConflictResolverTemplateRuns(t *testing.T) {
 			git.mu.Lock()
 			git.markers = nil // the resolver edits the markers away
 			git.mu.Unlock()
+			// It departed from nothing: its notes file says so.
+			if err := ph.envp.WriteFile(ctx, call.Env, "artifacts/journal-notes.yaml", []byte("notes: []\n"), 0o644); err != nil {
+				return agentport.AgentResult{}, err
+			}
 		}
 		return inner(ctx, call)
 	}
