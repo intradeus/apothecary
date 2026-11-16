@@ -2241,16 +2241,21 @@ harness, owns the exchange:
 - **The human may decline** instead of answering, with a note: the tool then
   returns `declined —` and their reason. "None of these fit" is a decline,
   never an option the agent declares.
-- **Every ping declares the shape of its answer** — `ping_raised.answer_kind`:
-  `yes_no` (approve | reject: a gate, a watcher's or outcome's
-  confirmation, the debug leaf), `form` (accept with `content`, the value
-  of each field, or decline with a note: every question — an agent's, a
-  harness's own, a review round's thread selection) or `choice` (one of the
-  ping's `choices` by id, each of which may say `note_required`: the
-  impasse). The engine sends no wording for a choice; the clients label
-  them. The inbox renders that shape and the engine validates against it;
-  nothing is inferred from a ping's type. Every answer records who gave it
-  (`ping_answered.by`).
+- **Every ping declares the shape of its answer** — `ping_raised.answer_kind`.
+  The inbox renders that shape and the engine validates against it; nothing
+  is inferred from a ping's type. Every answer records who gave it
+  (`ping_answered.by`). The three kinds differ in what the answer *means*,
+  not only in how it looks:
+
+  | kind | the answer | what it means | asked by |
+  |---|---|---|---|
+  | `yes_no` | `approve` or `reject`, with feedback | a **judgement with a polarity**: approve is the good outcome and follows `on_success`; reject is the bad one — it follows `on_reject`, counts against that route's budget, and carries the person's words on as `edge.verdict` | a gate, a watcher's or outcome's confirmation, the debug leaf, a manual stage |
+  | `form` | `accept` with `content` (a value for each field), or `decline` with the reason | **information for the asker**: the values are what was asked for; nothing is approved or rejected, and decline ("none of this fits") is always open | every question — an agent's, a harness's own, a review round's thread selection |
+  | `choice` | one of the ping's `choices`, by id, with a note (required where the choice says `note_required`) | **a decision among actions, none good or bad**: each id names what the engine does next, and none of them is an approval or a rejection — no `on_reject` fires, no budget is spent, no verdict is carried. No decline: one of them must be picked. The engine sends ids only; the clients word them | the impasse |
+
+  So a choice is never a `yes_no` with more buttons: "skip this stage" is
+  neither the work passing nor the work failing, and the flow must not read
+  it as either.
 - **Secrets are never asked.** A field a harness marks secret is not put to
   the human (an answer is kept in the run's log); the agent is told to have
   it configured as a project secret.

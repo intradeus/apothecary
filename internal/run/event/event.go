@@ -472,6 +472,12 @@ const (
 	//   form      accept + content | decline + note    every question (Form): an agent's, a
 	//                                                  harness's own over ACP, which threads to fix
 	//   choice    one of the ping's Choices (+ note)   the impasse
+	// They differ in meaning (FLOWLANG §9): yes_no is a judgement with a
+	// polarity — approve is the good outcome (on_success), reject the bad one
+	// (on_reject, its budget spent, the words carried as edge.verdict); form is
+	// information for the asker, approving nothing; choice is a decision among
+	// actions none of which is good or bad — no on_reject fires, no budget is
+	// spent, no verdict is carried — and it cannot be declined.
 	AnswerYesNo       = "yes_no"
 	AnswerForm        = "form"
 	AnswerChoice      = "choice"

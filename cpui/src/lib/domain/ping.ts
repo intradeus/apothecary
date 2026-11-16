@@ -25,7 +25,11 @@ export type PingStatus = 'pending' | 'answered' | 'withdrawn';
  *  the card, validated by the engine from the same vocabulary:
  *  yes_no = approve | reject (+ feedback); form = accept with a value per
  *  field | decline (+ the reason, in feedback); choice = one of the ping's
- *  choices, by id (+ a note, required where the choice says so). */
+ *  choices, by id (+ a note, required where the choice says so).
+ *  They differ in meaning (FLOWLANG §9): yes_no is a judgement with a
+ *  polarity — approve good, reject bad (it follows on_reject); form is
+ *  information for the asker; choice is a decision among actions, none of
+ *  them good or bad, and none of them a decline. */
 export type AnswerKind = 'yes_no' | 'form' | 'choice';
 
 /** One answer a choice ping offers: the id is what the answer names (the

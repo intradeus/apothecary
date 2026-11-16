@@ -15,7 +15,13 @@ from `on_reject` only — the parser refuses it on `on_success`, `on_fail` and
 `PlanResume`) on a ping of type `impasse` and a new answer kind, `choice`:
 the ping lists its choices by id (`keep_going`, `skip`, `give_up`; each may
 say `note_required`) and the engine sends no wording — the clients label
-them. The question says which stage and how many rejections in a row; the
+them. Not a `yes_no`: that kind carries a polarity (approve is the good
+outcome, reject the bad one that fires `on_reject` and spends its budget),
+and none of the impasse's answers is either — skipping a stage is neither
+the work passing nor failing. Not a `form`: a form is information for the
+asker, always declinable, its pick buried in `content`; the impasse must be
+decided, and its decision is the answer itself. FLOWLANG §9 now sets the
+three kinds side by side. The question says which stage and how many rejections in a row; the
 context is the verdict that spent the chain.
 
 - **keep going** restores the rejected stage's `on_reject` chain only — no
