@@ -39,7 +39,7 @@ func authorizedLine(pub ssh.PublicKey, comment string) string {
 // by its owner only. Its .pub is (re)written when missing or not its own.
 func loadOrCreateKey(dir, comment string) (machineKey, error) {
 	k := machineKey{path: filepath.Join(dir, sshKeyFile), comment: comment}
-	f, err := os.Open(k.path)
+	f, err := openPrivate(k.path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		k.pub, err = createKey(k.path, comment)
@@ -65,7 +65,7 @@ func loadOrCreateKey(dir, comment string) (machineKey, error) {
 }
 
 // createKey writes a new key to path, which must not exist (a planted
-// symlink is refused too), owner-only before a byte of it is written.
+// symlink is refused too), owner-only from its creation.
 func createKey(path, comment string) (ssh.PublicKey, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -75,14 +75,11 @@ func createKey(path, comment string) (ssh.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	f, err := createPrivate(path)
 	if err != nil {
 		return nil, err
 	}
-	_, err = restrictToOwner(f)
-	if err == nil {
-		_, err = f.Write(pem.EncodeToMemory(block))
-	}
+	_, err = f.Write(pem.EncodeToMemory(block))
 	if err == nil {
 		err = f.Sync()
 	}

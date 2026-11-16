@@ -36,10 +36,12 @@ type fakeEngine struct {
 	deny    bool // the sign-in is denied
 	status  int  // device-login status calls
 	// keys are the account's SSH keys, by fingerprint; adds the POSTed
-	// (name, line) pairs; keysAt answers the list (0: fine), addAt a POST.
+	// (name, line) pairs; keysAt answers the list (0: fine), addAt a POST;
+	// raced: a POST finds its key put on this account meanwhile (409).
 	keys          map[string]string
 	adds          [][2]string
 	keysAt, addAt int
+	raced         bool
 	srv           *httptest.Server
 }
 
@@ -191,6 +193,10 @@ func newFakeEngine(t *testing.T) *fakeEngine {
 		case err != nil:
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "not an OpenSSH public key"})
+		case e.raced:
+			e.keys[ssh.FingerprintSHA256(pk)] = "laptop (the other run)"
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "this key is already registered"})
 		case e.addAt != 0:
 			w.WriteHeader(e.addAt)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "this key is already registered"})
@@ -500,6 +506,29 @@ func TestSSHConfigWhenTheKeyIsAnotherAccounts(t *testing.T) {
 	e.addAt = http.StatusBadGateway
 	if code := r.run("ssh-config"); code != 1 || strings.Contains(r.err.String(), "another account") {
 		t.Errorf("any other refusal is the engine's: %d %q", code, r.err)
+	}
+}
+
+// A 409 for a key put on this account between the list and the POST
+// (another ssh-config, the UI) is not another account's: the key is
+// registered, and the config is written.
+func TestSSHConfigWhenTheKeyIsRegisteredMeanwhile(t *testing.T) {
+	e := newFakeEngine(t)
+	r := newRig(t)
+	r.signIn(t, e)
+	e.raced = true
+	if code := r.run("ssh-config"); code != 0 {
+		t.Fatalf("ssh-config = %d: %s", code, r.err)
+	}
+	if !strings.Contains(r.out.String(), `Already registered on your account as "laptop (the other run)"`) {
+		t.Errorf("out = %q", r.out)
+	}
+	if len(e.adds) != 1 || len(e.keys) != 1 {
+		t.Errorf("adds = %d, keys = %v", len(e.adds), e.keys)
+	}
+	config, err := os.ReadFile(filepath.Join(r.env.Home, ".ssh", "config"))
+	if err != nil || !strings.Contains(string(config), "IdentitiesOnly yes") {
+		t.Errorf("config = %q, %v", config, err)
 	}
 }
 

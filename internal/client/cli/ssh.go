@@ -93,15 +93,24 @@ func cmdSSHConfig(ctx context.Context, env Env, p *printer) error {
 // keys registered there already. A key on another account is not taken
 // over, removed or replaced: the person says which.
 func register(ctx context.Context, c *api.Client, registered []api.SSHKey, key machineKey, fp, engine, name string, p *printer) error {
-	for _, k := range registered {
-		if k.Fingerprint == fp {
-			p.say("Already registered on your account as %q.", k.Name)
-			return nil
-		}
+	if k, ok := findKey(registered, fp); ok {
+		p.say("Already registered on your account as %q.", k.Name)
+		return nil
 	}
 	k, err := c.AddSSHKey(ctx, name, authorizedLine(key.pub, key.comment))
 	var refused *api.Error
 	if errors.As(err, &refused) && refused.Status == http.StatusConflict {
+		// The engine refuses any fingerprint it holds, this account's too:
+		// another ssh-config, or the UI, may have registered the key since
+		// the list.
+		again, lerr := c.SSHKeys(ctx)
+		if lerr != nil {
+			return lerr
+		}
+		if k, ok := findKey(again, fp); ok {
+			p.say("Already registered on your account as %q.", k.Name)
+			return nil
+		}
 		return fmt.Errorf("%s is registered on another account of %s (%v): remove it there (Account → SSH keys), or move %s* aside and run apothecary ssh-config again", key.path, engine, err, key.path)
 	}
 	if err != nil {
@@ -109,6 +118,16 @@ func register(ctx context.Context, c *api.Client, registered []api.SSHKey, key m
 	}
 	p.say("Registered it on your account as %q.", k.Name)
 	return nil
+}
+
+// findKey is the key of keys with fingerprint fp.
+func findKey(keys []api.SSHKey, fp string) (api.SSHKey, bool) {
+	for _, k := range keys {
+		if k.Fingerprint == fp {
+			return k, true
+		}
+	}
+	return api.SSHKey{}, false
 }
 
 // keyComment is the key's comment: who made it, on which machine.
