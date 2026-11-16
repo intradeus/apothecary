@@ -207,10 +207,10 @@ func (x *exec) stageDebug(st *flow.Stage) error {
 func (x *exec) routeDebug(st *flow.Stage, ans PingAnswer) error {
 	rs := x.rs
 	if ans.Answer == "approve" {
-		// Continue: back into st, fresh — pos never moved. What advance does
-		// after a gate's approval, by hand: no feed, no "attempt n of m".
-		rs.Ph = runcore.PhStart
-		rs.Feed, rs.FeedSentinel, rs.FeedAttempts = "", "", 0
+		// Continue: back into st, fresh — pos never moved — with the
+		// phase's retry budgets restored (runcore.ContinueFromDebug); the
+		// stage_started that follows records it for replay.
+		rs.ContinueFromDebug()
 		return nil
 	}
 	reason := fmt.Sprintf("debug rejected at stage %s", st.ID)

@@ -1313,8 +1313,12 @@ has the workspace — the decision is attributed to the stage that took the link
 with what it printed and the workspace link — and nothing is spent while they
 look. Unlike a gate it **holds the workspace**: no other chain runs while a
 person has the checkout. *Continue* re-enters that same stage as a fresh
-attempt (the success chain replays from there, so no stage is skipped);
-*giving up* is a dead end — the run is abandoned in the main chain or an
+attempt (the success chain replays from there, so no stage is skipped) with
+every retry chain of its phase given its budget back — the person has just
+changed the workspace, so a stage that fails again past their fix retries as
+it did the first time before it asks again, rather than landing straight back
+on the leaf (the debug links keep their count: the timeline numbers each
+visit); *giving up* is a dead end — the run is abandoned in the main chain or an
 outcome, a watcher's round ends, and the inbox card says which before you
 click. Like
 `abort` it takes no `max` or `then`: it is unlimited by nature, bounded by
@@ -1744,7 +1748,8 @@ The recommended shape, and the one the built-in `builder` flow uses: every agent
 and command stage first retries itself with its error fed back, then escalates
 to the `debug` leaf (`then: debug`). A human opens the workspace, fixes what the
 agents could not, and continuing re-runs exactly the stage that escalated — the
-success chain replays from there, so no stage is skipped. The leaf is unlimited:
+success chain replays from there, so no stage is skipped, and the phase's
+retry chains start over. The leaf is unlimited:
 the human decides when to stop, and giving up there is a dead end (§3) — the
 run is abandoned in the main chain or an outcome, a watcher's round ends.
 

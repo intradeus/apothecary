@@ -160,3 +160,82 @@ func TestReplayIgnoresAPartialWorkspace(t *testing.T) {
 		}
 	}
 }
+
+const debugBudgetFlowDoc = `name: dbg
+version: 5
+parameters: { harness: fake, model: fake/model }
+main:
+  - { id: build, type: command, run: "true", on_fail: { to: build, max: 2, then: debug } }
+  - { id: test,  type: command, run: "true", on_success: done, on_fail: { to: build, max: 5, then: debug } }
+watchers:
+  - id: conflicts
+    on: mr_conflicts
+    stages:
+      - { id: sync, type: command, run: "true", on_fail: { to: sync, max: 1, then: debug } }
+`
+
+// Continuing from the debug leaf gives every retry chain of the stage's
+// phase its budget back — the person just changed the workspace, so a stage
+// failing again past their fix retries before it asks again — and keeps the
+// debug links' own counts, so the timeline numbers each visit. Another
+// phase's chains are its own: they reset when it starts. The live decision
+// (the engine calls ContinueFromDebug) and replay (stage_started while
+// parked) land on the same state.
+func TestContinueFromDebugRestoresThePhasesRetryBudgets(t *testing.T) {
+	fl := mustFlow(t, debugBudgetFlowDoc)
+	ev := func(p event.Payload) event.Event { return event.Event{RunID: "r", Type: p.EventType(), Payload: p} }
+	evs := []event.Event{
+		ev(&event.RunCreated{TicketTitle: "t", FlowName: "dbg", By: "human"}),
+		ev(&event.PhaseStarted{Phase: flow.MainPhase, By: "human"}),
+		ev(&event.StageStarted{StageID: "build", Iteration: 1}),
+		ev(&event.StageFailed{StageID: "build", Error: "x"}),
+		ev(&event.EdgeTaken{From: "build", To: "build", Edge: flow.EdgeFail, Count: 1, Max: 2}),
+		ev(&event.StageStarted{StageID: "build", Iteration: 2}),
+		ev(&event.StageCompleted{StageID: "build"}),
+		ev(&event.StageStarted{StageID: "test", Iteration: 1}),
+		ev(&event.StageFailed{StageID: "test", Error: "red"}),
+		ev(&event.EdgeTaken{From: "test", To: "build", Edge: flow.EdgeFail, Count: 5, Max: 5}),
+		ev(&event.StageStarted{StageID: "build", Iteration: 3}),
+		ev(&event.StageCompleted{StageID: "build"}),
+		ev(&event.StageStarted{StageID: "test", Iteration: 2}),
+		ev(&event.StageFailed{StageID: "test", Error: "red"}),
+		ev(&event.EdgeTaken{From: "test", To: flow.ReservedDebug, Edge: flow.EdgeFail, Count: 3, Max: flow.UnlimitedMax, Depth: 1}),
+	}
+	parked := Replay(evs, fl)
+	parked.EdgeCounts[ChainKey("sync", flow.EdgeFail, 0)] = 1 // a watcher's, untouched here
+	test := &fl.Stages[fl.Index("test")]
+	if ch := parked.ChooseEdge(test, flow.EdgeFail); ch.Kind != EdgeDebug {
+		t.Fatalf("parked: a failing test goes %v, want straight to the debug leaf", ch.Kind)
+	}
+
+	check := func(name string, rs *State) {
+		t.Helper()
+		if rs.Ph == PhDebug || rs.Pos != fl.Index("test") || rs.Feed != "" {
+			t.Errorf("%s: ph %v pos %d feed %q, want test re-entered fresh", name, rs.Ph, rs.Pos, rs.Feed)
+		}
+		for key, want := range map[string]int{
+			ChainKey("test", flow.EdgeFail, 0):  0, // retries back
+			ChainKey("build", flow.EdgeFail, 0): 0, // the whole phase's
+			ChainKey("test", flow.EdgeFail, 1):  3, // the debug visits kept
+		} {
+			if got := rs.EdgeCounts[key]; got != want {
+				t.Errorf("%s: %s = %d, want %d", name, key, got, want)
+			}
+		}
+		if ch := rs.ChooseEdge(test, flow.EdgeFail); ch.Kind != EdgeLink || ch.Edge.To != "build" || ch.Count != 1 {
+			t.Errorf("%s: a failing test goes %v to %v (count %d), want back to build, 1 of 5", name, ch.Kind, ch.Edge, ch.Count)
+		}
+	}
+
+	live := Replay(evs, fl)
+	live.EdgeCounts[ChainKey("sync", flow.EdgeFail, 0)] = 1
+	live.ContinueFromDebug()
+	if live.Ph != PhStart {
+		t.Errorf("live: ph %v, want PhStart", live.Ph)
+	}
+	if live.EdgeCounts[ChainKey("sync", flow.EdgeFail, 0)] != 1 {
+		t.Error("live: a watcher's chain was reset by the main chain's debug leaf")
+	}
+	check("live", live)
+	check("replayed", Replay(append(evs, ev(&event.StageStarted{StageID: "test", Iteration: 3})), fl))
+}
