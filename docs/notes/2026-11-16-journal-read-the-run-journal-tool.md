@@ -10,19 +10,34 @@ What now: a second tool, `journal_read`, on the shim's MCP server beside
 `ask_human` (`workspace/shim/journal.go`), and two read-only routes under the
 run's own token (`internal/httpapi/journal.go`):
 `GET /api/runs/{run}/journal` (every record) and `…/journal/{id}` (a pass, a
-decision). The engine renders both from the same fold as the ledger
-(`Engine.JournalRead`), so every id the ledger prints resolves.
+decision, a note). The engine renders both from the same fold as the
+ledger (`Engine.JournalRead`), so every id the ledger prints resolves.
+
+- Outputs are typed from the log: `snapshot_captured` records the port's
+  type (`port_type`) as the attempt ran, and the journal reads it there
+  rather than from the flow. Before, the ledger typed them with the run's
+  live flow and the tool with a flow it loaded again — and a run whose
+  pinned version was gone loads the project's current document, or none,
+  so the tool could miss notes and verdicts the ledger listed. The flow is
+  now a fallback for an event with no type, and names what a skipped stage
+  did not write; one that cannot be loaded is logged, not ignored.
 
 - A pass is one file: its record, each output — text embedded, a binary
-  listed by name and size — and its full log. A decision is inline unless
-  past 8 KiB (the plan's I4), then a file. No id: every decision whole and
+  listed by name and size — and its full log. A decision or a note is
+  inline unless past 8 KiB (the plan's I4), then a file: a note's `did`
+  and `why` have no length limit, and the tool never puts a long entry in
+  the agent's context. The tool's description names all three kinds of id. No id: every decision whole and
   every pass's record with its verdict, no logs.
 - Files are written by the shim to `.apothecary/journal/<id>.md` in the
   primary checkout (`$HOME/repo`, the sidecar's default root): the result
   says the path, bytes and lines, so nothing large enters the agent's
   context. Each call removes and rewrites the file, a read-only copy
   included; the engine names the file and the shim refuses a name that
-  would leave the directory.
+  would leave the directory. The engine empties the folder as each fresh
+  agent attempt starts (`clearJournalFiles`, beside `clearOutputs`; not on
+  re-entering one): the plan said nothing could go stale, but a file one
+  stage fetched would otherwise sit there for the next agent to find by
+  searching instead of calling the tool.
 - A snapshot swept by retention (`ErrNotFound`, `ErrContentGone`) reads "no
   longer kept"; a store that fails reads "could not be read just now", not
   taken for a sweep. A truncated capture carries its own marker.
@@ -50,7 +65,13 @@ Tests: `internal/engine/journal_test.go` — `TestJournalRead` (a pass whole,
 its text, binary and swept outputs and its log; a running pass; every
 record with verdicts and no log; a decision inline and a long one in a
 file; unknown ids refused), `TestEveryLedgerIDResolves`,
-`TestSnapBodyStoreDown`, `TestPassRecordWords`;
+`TestSnapBodyStoreDown`, `TestPassRecordWords`,
+`TestJournalFilesClearedEachAttempt` (the next agent finds no earlier
+file, and only the journal's folder goes),
+`TestJournalTypesOutputsFromTheLog` (a run whose flow is gone still gives
+its notes and verdicts; an untyped event takes the flow's type; a long
+note in a file), `TestAgentNotesReachTheJournal` (a capture records its
+port type);
 `internal/httpapi/journal_test.go` — `TestJournalRoutes` (records, a pass, a
 decision, a 404, another run's token and none refused);
 `workspace/shim/journal_test.go` — the file written and rewritten over a

@@ -18,8 +18,8 @@ func (s *Server) journalRoutes() []Route {
 			Handler: s.getJournal, Returns: engine.JournalEntry{},
 			Auth: AccessRunToken},
 		{Method: "GET", Path: "/api/runs/{id}/journal/{entry}", ID: "readRunJournalEntry", Tag: tagRuns,
-			Summary: "One entry of the run's journal: a pass whole, or a decision",
-			Doc:     "A pass (<stage>-<n>) is its record, its outputs and its full log, as one file; a decision (decision-<n>) is inline unless long. 404 for an id the run has not.",
+			Summary: "One entry of the run's journal: a pass whole, a decision or a note",
+			Doc:     "A pass (<stage>-<n>) is its record, its outputs and its full log, as one file; a decision (decision-<n>) or a note (note-<n>) is inline unless past 8 KiB, then a file. 404 for an id the run has not.",
 			Handler: s.getJournal, Returns: engine.JournalEntry{},
 			Auth: AccessRunToken},
 	}

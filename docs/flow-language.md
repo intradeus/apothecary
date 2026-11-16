@@ -1333,8 +1333,8 @@ again at the continue (a temporary index, so the person's own index, stash
 and files are never touched; git-ignored and excluded files, `artifacts/`
 and `.apothecary/` among them, do not count), and the paths that differ are
 recorded per checkout (`hand_edits`) — names, never the diff. Best effort: a
-workspace recreated while parked, or git failing, records that the changes
-could not be determined, and the summary stands alone. Both reach the agents
+workspace recreated while parked, or git failing or taking longer than 30
+seconds, records that the changes could not be determined, and the summary stands alone. Both reach the agents
 in the run journal (`run.journal`, §4), with the decision. *Giving up* is a
 dead end — the run is abandoned in the main chain or an
 outcome, a watcher's round ends, and the inbox card says which before you
@@ -1817,7 +1817,8 @@ spend at that play — and abort/pause act on the run as a whole (§3).
 the engine captures its declared outputs and its full log as **snapshots** and
 links them to the run's timeline with `snapshot_captured` events. The events
 carry references, never bytes, so they stay replay-cheap while the content can
-be any size. Two consequences worth relying on: attempt 1's plan stays
+be any size; an output's carries its port's type, so what reads it later (the
+run journal) knows it as the attempt declared it. Two consequences worth relying on: attempt 1's plan stays
 readable after attempt 2 overwrites the file, and the 8 KB tails in
 `stage_failed` / `edge.failure` are a *preview* — the whole log is one link away.
 Snapshots outlive the run they describe (archiving keeps them) and are
@@ -2303,14 +2304,16 @@ the prompt — the ledger is the list; this reads the rest:
 |---|---|
 | `journal_read(id: "<stage>-<n>")` | everything that pass left — its record, its verdict, each output (text embedded, anything else listed by name and size) and its full log — written to one file |
 | `journal_read(id: "decision-<n>")` | that decision whole, inline (in a file past 8 KiB) |
-| `journal_read(id: "note-<n>")` | that note whole, inline |
+| `journal_read(id: "note-<n>")` | that note whole, inline (in a file past 8 KiB) |
 | `journal_read()` | every record of the run — each decision whole, every note, each pass's record with its verdict, no logs — written to one file |
 
 A file goes to `.apothecary/journal/<id>.md` in the checkout (`records.md` for
 every record; git-excluded like the attachments), and the result says where,
 how many bytes and lines: the agent reads and searches it with its own tools,
 and nothing large reaches its context through the tool. No paging, no cache:
-each call writes the file afresh from the engine, over whatever was there.
+each call writes the file afresh from the engine, over whatever was there,
+and the folder is emptied as each agent attempt starts, so no stage finds
+another's copy.
 The engine serves it from the event log and the snapshots — what a pass left
 is its snapshot, scrubbed of secrets when captured; one dropped by retention
 reads "no longer kept", and the pass running now holds nothing until it ends —

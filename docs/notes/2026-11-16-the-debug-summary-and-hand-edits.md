@@ -28,6 +28,11 @@ What now:
   list cannot be had says why: its tree was not recorded as the run parked,
   could not be read at the continue, or the parked tree is gone (the
   workspace was recreated while parked). The summary stands either way.
+  Each git call runs under 30 seconds (`handEditsTimeout`), not the
+  stage's timeout: the park's runs before the debug ping is raised, in a
+  workspace that may be what broke, and a hung git must not keep the
+  person from learning the run needs them. One that runs out reads as not
+  determined.
 - **In the journal**, the debug decision shows the end of the failure's
   output under its question, and reads "continued: the failing stage ran
   again", then "What they did:" and the summary, then the files they
@@ -45,7 +50,8 @@ re-recorded: the only change is the `hand_edits` line after each continue.
 
 Tests: `internal/engine/handedits_test.go` —
 `TestHandEditsRecordWhatThePersonChanged` (the parked tree on the ping, the
-paths recorded before the re-run, the decision's words),
+paths recorded before the re-run, the decision's words, every git call
+under `handEditsTimeout`),
 `TestHandEditsBestEffort` (nothing changed, no tree at the park or at the
 continue, a parked tree gone — each said so), `TestHandEditsWords` (several
 checkouts, a long list cut, an older log with none),

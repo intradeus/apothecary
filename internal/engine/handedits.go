@@ -14,10 +14,24 @@ package engine
 import (
 	"regexp"
 	"strings"
+	"time"
 
 	"apothecary/internal/flow"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/event"
 )
+
+// handEditsTimeout bounds each git call hand edits make, far below a
+// stage's timeout: the park's runs before the debug ping is raised, in a
+// workspace that may be what broke, and a person must never wait on a hung
+// git to learn the run needs them. One that runs out reads as not known.
+const handEditsTimeout = 30 * time.Second
+
+// gitBrief runs a hand-edits git script in a checkout under
+// handEditsTimeout.
+func (x *exec) gitBrief(dir, script string) (envport.ExecResult, error) {
+	return x.res.Envp.Exec(x.ctx, x.rs.EnvID, envport.Command{Script: script, Dir: dir, Timeout: handEditsTimeout, Scrub: x.redact.Scrub})
+}
 
 // workTreeScript prints a checkout's working copy as a git tree, from a copy
 // of its index so the real one is never written.
@@ -50,7 +64,7 @@ func (x *exec) workTrees() map[string]string {
 	}
 	out := map[string]string{}
 	for _, co := range x.runCheckouts() {
-		res, err := x.gitIn(co.Dir, workTreeScript)
+		res, err := x.gitBrief(co.Dir, workTreeScript)
 		if err != nil || res.ExitCode != 0 {
 			continue
 		}
@@ -83,7 +97,7 @@ func (x *exec) handEdits(st *flow.Stage, pingID string) *event.HandEdits {
 		case after == "":
 			ed.Unknown = "its working copy could not be read at the continue"
 		case before != after:
-			res, err := x.gitIn(co.Dir, "git diff-tree -r --no-renames --name-only "+before+" "+after)
+			res, err := x.gitBrief(co.Dir, "git diff-tree -r --no-renames --name-only "+before+" "+after)
 			if err != nil || res.ExitCode != 0 {
 				ed.Unknown = "the working copy it parked with is gone — the workspace was recreated while parked"
 				break

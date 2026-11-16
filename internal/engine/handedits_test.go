@@ -28,6 +28,11 @@ func debugWith(t *testing.T, trees []string, diff string, diffFails bool) ([]eve
 	var verifies, treeCalls atomic.Int32
 	var scripts []string
 	h.envp.ExecFunc = func(_ *fake.Env, cmd envport.Command) (envport.ExecResult, error) {
+		if (strings.Contains(cmd.Script, "git write-tree") || strings.Contains(cmd.Script, "git diff-tree")) && cmd.Timeout != handEditsTimeout {
+			// The park's runs before the ping: a hung git must not hold it
+			// for a stage's whole timeout.
+			t.Errorf("%q ran under %s, want %s", cmd.Script, cmd.Timeout, handEditsTimeout)
+		}
 		switch {
 		case strings.Contains(cmd.Script, "make lint"):
 			if verifies.Add(1) <= 2 {

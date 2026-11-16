@@ -57,7 +57,7 @@ func TestJournalReadWritesAPassToItsFile(t *testing.T) {
 }
 
 // No id reads every record into one file; a short decision comes back
-// inline and writes nothing.
+// inline and writes nothing; a long decision or note is written to its file.
 func TestJournalReadRecordsAndInline(t *testing.T) {
 	fastProtocol(t)
 	repo := withRepo(t)
@@ -69,6 +69,8 @@ func TestJournalReadRecordsAndInline(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"decision-3","text":"### clarification [decision-3]\n"}`))
 		case "/api/runs/run1/journal/decision-4":
 			_, _ = w.Write([]byte(`{"id":"decision-4","file":"decision-4.md","text":"long\n"}`))
+		case "/api/runs/run1/journal/note-2":
+			_, _ = w.Write([]byte(`{"id":"note-2","file":"note-2.md","text":"long\n"}`))
 		}
 	}))
 	defer srv.Close()
@@ -83,8 +85,11 @@ func TestJournalReadRecordsAndInline(t *testing.T) {
 	if got, err := journalRead("decision-4"); err != nil || !strings.HasPrefix(got, "Wrote decision-4 to ") {
 		t.Errorf("long decision = %q, %v", got, err)
 	}
+	if got, err := journalRead("note-2"); err != nil || !strings.HasPrefix(got, "Wrote note-2 to ") {
+		t.Errorf("long note = %q, %v", got, err)
+	}
 	entries, _ := os.ReadDir(filepath.Join(repo, ".apothecary", "journal"))
-	if len(entries) != 2 {
+	if len(entries) != 3 {
 		t.Errorf("files = %v", entries)
 	}
 }

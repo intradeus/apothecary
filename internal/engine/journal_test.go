@@ -555,6 +555,66 @@ func TestJournalRead(t *testing.T) {
 	}
 }
 
+// Outputs are typed from the log, as the attempt ran: a run whose flow can no
+// longer be loaded still gives its notes and its verdicts through the tool,
+// so every note id the ledger printed resolves. The flow types only an event
+// that carries no type. A note past journalInline is written to a file.
+func TestJournalTypesOutputsFromTheLog(t *testing.T) {
+	att, snaps, _ := newFiles(t)
+	fl := mustFlow(t, readFlowDoc)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, fl)
+	ctx := context.Background()
+	capture := func(name, path, data string) string {
+		s, err := snaps.Capture(ctx, filestore.Snapshot{RunID: "r1", Kind: filestore.KindOutput, StageID: "review", Iteration: 1,
+			Name: name, Path: path, Filename: filepath.Base(path)}, func(s string) string { return s }, []byte(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s.ID
+	}
+	long := strings.Repeat("x", journalInline)
+	notes := capture("notes", "artifacts/journal-notes.yaml",
+		"notes:\n  - did: kept the old endpoint\n    why: a client calls it\n  - did: "+long+"\n    why: long\n")
+	verdict := capture("verdict", "artifacts/verdict.json", "REJECT\n- rename the cart service")
+	h.seed(t, "r1",
+		&event.RunCreated{TicketTitle: "T", FlowName: "a-flow-since-deleted", ProjectID: testProject, Branch: "feat/x"},
+		&event.PhaseStarted{Phase: "main"},
+		&event.StageStarted{StageID: "review", Iteration: 1},
+		&event.StageCompleted{StageID: "review", TurnsUsed: 1},
+		&event.SnapshotCaptured{StageID: "review", Iteration: 1, Kind: "output", Name: "notes", Path: "artifacts/journal-notes.yaml",
+			SnapshotID: notes, Mime: "application/yaml", PortType: agentspec.TypeJournalNotes},
+		&event.SnapshotCaptured{StageID: "review", Iteration: 1, Kind: "output", Name: "verdict", Path: "artifacts/verdict.json",
+			SnapshotID: verdict, Mime: "application/json", PortType: agentspec.TypeVerdict},
+	)
+	if _, err := h.e.journalFlow(ctx, "r1"); err == nil {
+		t.Fatal("the run's flow loaded: the test needs one that does not")
+	}
+	if n, err := h.e.JournalRead(ctx, "r1", "note-1"); err != nil || n.File != "" || !strings.Contains(n.Text, "kept the old endpoint") {
+		t.Errorf("note-1 = %+v, %v", n, err)
+	}
+	if n, err := h.e.JournalRead(ctx, "r1", "note-2"); err != nil || n.File != "note-2.md" || !strings.Contains(n.Text, long) {
+		t.Errorf("long note = %q, %v", n.File, err)
+	}
+	all, err := h.e.JournalRead(ctx, "r1", "")
+	if err != nil || !strings.Contains(all.Text, "Verdict:\n> REJECT\n> - rename the cart service\n") ||
+		!strings.Contains(all.Text, "### note from review-1 [note-1]") {
+		t.Errorf("records = %v:\n%s", err, all.Text)
+	}
+
+	// An event with no type: the flow's, when there is one.
+	evs := []event.Event{
+		{Payload: &event.StageStarted{StageID: "review", Iteration: 1}},
+		{Payload: &event.SnapshotCaptured{StageID: "review", Iteration: 1, Kind: "output", Name: "verdict", SnapshotID: "v"}},
+		{Payload: &event.SnapshotCaptured{StageID: "review", Iteration: 1, Kind: "output", Name: "shot", SnapshotID: "s", PortType: "file"}},
+	}
+	if got := buildJournal(evs, fl, nil).passes[0].outputs; got[0].typ != verdictType || got[1].typ != "file" {
+		t.Errorf("typed = %+v", got)
+	}
+	if got := buildJournal(evs, nil, nil).passes[0].outputs; got[0].typ != "" || got[1].typ != "file" {
+		t.Errorf("no flow, typed = %+v", got)
+	}
+}
+
 // Every id the ledger prints, journal_read resolves.
 func TestEveryLedgerIDResolves(t *testing.T) {
 	h := newHarness(t, mustFlow(t, journalFlowDoc))
@@ -701,7 +761,13 @@ func runNoted(t *testing.T, notes []byte) (*harness, string, []event.Event) {
 // journal_read gives it whole. The builder's own contract said it may write
 // it, and what goes in.
 func TestAgentNotesReachTheJournal(t *testing.T) {
-	h, id, _ := runNoted(t, []byte("notes:\n  - did: kept the old endpoint beside the new one\n    why: the mobile client still calls it\n    files: [api/routes.go]\n"))
+	h, id, evs := runNoted(t, []byte("notes:\n  - did: kept the old endpoint beside the new one\n    why: the mobile client still calls it\n    files: [api/routes.go]\n"))
+	// The capture records the port's type: what the journal types it by.
+	for _, e := range evs {
+		if s, ok := e.Payload.(*event.SnapshotCaptured); ok && s.Kind == "output" && s.PortType != agentspec.TypeJournalNotes {
+			t.Errorf("snapshot_captured %s: port_type = %q", s.Name, s.PortType)
+		}
+	}
 	var build, look string
 	for _, c := range h.runner.RunCalls {
 		if c.Spec.Agent == "builder" {
@@ -743,6 +809,47 @@ func TestAgentNotesReachTheJournal(t *testing.T) {
 	pass, _ := h.e.JournalRead(context.Background(), id, "build-1")
 	if !strings.Contains(all.Text, "## Agent notes\n") || !strings.Contains(all.Text, "### note from build-1 [note-1]") || !strings.Contains(pass.Text, "Its notes: note-1\n") {
 		t.Errorf("records:\n%s\npass:\n%s", all.Text, pass.Text)
+	}
+}
+
+// A fresh attempt finds no file journal_read wrote for an earlier one: an
+// agent that searches .apothecary/journal/ instead of calling the tool must
+// not read another stage's stale copy. Only the journal's folder goes.
+func TestJournalFilesClearedEachAttempt(t *testing.T) {
+	h := newHarness(t, mustFlow(t, notesFlowDoc))
+	var found []string
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		for _, f := range []string{".apothecary/journal/records.md", ".apothecary/other"} {
+			if _, err := h.envp.ReadFile(ctx, call.Env, f); err == nil {
+				found = append(found, call.Spec.Agent+" found "+f)
+			}
+		}
+		// What the tool, and something else under .apothecary/, leave behind.
+		files := map[string]string{".apothecary/journal/records.md": "stale", ".apothecary/other": "kept"}
+		if call.Spec.Agent == "builder" {
+			files["artifacts/journal-notes.yaml"] = "notes: []\n"
+		}
+		for f, body := range files {
+			if err := h.envp.WriteFile(ctx, call.Env, f, []byte(body), 0o644); err != nil {
+				return agentport.AgentResult{}, err
+			}
+		}
+		return agentport.AgentResult{TurnsUsed: 1}, nil
+	}
+	id, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "noted", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(id)
+	if got := strings.Join(found, "; "); got != "looker found .apothecary/other" {
+		t.Errorf("found = %q, want only the file outside the journal", got)
+	}
+	var cleared bool
+	for _, c := range h.envp.ExecCalls {
+		cleared = cleared || (c.Cmd.Script == "rm -rf -- "+journalFilesDir && c.Cmd.Dir == event.PrimaryCheckoutDir)
+	}
+	if !cleared {
+		t.Error("the journal's folder was never cleared in the primary checkout")
 	}
 }
 

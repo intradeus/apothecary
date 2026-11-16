@@ -79,8 +79,10 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			return x.takeEdge(st, flow.EdgeFail, msg)
 		}
 		// A fresh attempt starts from a clean slate, so the output contract
-		// below cannot be satisfied by an earlier attempt's file (M18).
+		// below cannot be satisfied by an earlier attempt's file (M18), and
+		// finds no journal file journal_read wrote for an earlier one.
 		x.clearOutputs(st.Outputs)
+		x.clearJournalFiles()
 	}
 	started := x.e.clock()
 

@@ -4298,9 +4298,9 @@ export const readRunJournal = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * One entry of the run's journal: a pass whole, or a decision
+ * One entry of the run's journal: a pass whole, a decision or a note
  *
- * A pass (<stage>-<n>) is its record, its outputs and its full log, as one file; a decision (decision-<n>) is inline unless long. 404 for an id the run has not.
+ * A pass (<stage>-<n>) is its record, its outputs and its full log, as one file; a decision (decision-<n>) or a note (note-<n>) is inline unless past 8 KiB, then a file. 404 for an id the run has not.
  */
 export const readRunJournalEntry = <ThrowOnError extends boolean = false>(
 	options: Options<ReadRunJournalEntryData, ThrowOnError>

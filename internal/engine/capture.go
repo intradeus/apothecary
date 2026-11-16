@@ -23,9 +23,10 @@ import (
 	"apothecary/internal/run/event"
 )
 
-// capture is the one funnel: scrub → store → snapshot_captured. Both failure
-// modes are warn-only.
-func (x *exec) capture(snap filestore.Snapshot, data []byte) {
+// capture is the one funnel: scrub → store → snapshot_captured. portType is
+// an output's port type, recorded on the event ("" for a log or a ping
+// file). Both failure modes are warn-only.
+func (x *exec) capture(snap filestore.Snapshot, portType string, data []byte) {
 	if x.e.snapshots == nil {
 		return
 	}
@@ -40,6 +41,7 @@ func (x *exec) capture(snap filestore.Snapshot, data []byte) {
 		Iteration:  stored.Iteration,
 		Kind:       string(stored.Kind),
 		Name:       stored.Name,
+		PortType:   portType,
 		Path:       stored.Path,
 		PingID:     stored.PingID,
 		SnapshotID: stored.ID,
@@ -76,7 +78,7 @@ func (x *exec) publishOutputs(st *flow.Stage, iter int, bindings []flow.Port) {
 		x.capture(filestore.Snapshot{
 			Kind: filestore.KindOutput, StageID: st.ID, Iteration: iter,
 			Name: b.Name, Path: b.Value, Filename: path.Base(b.Value),
-		}, data)
+		}, b.Type, data)
 	}
 }
 
@@ -107,7 +109,7 @@ func (x *exec) publishDir(st *flow.Stage, iter int, b flow.Port) {
 		x.capture(filestore.Snapshot{
 			Kind: filestore.KindOutput, StageID: st.ID, Iteration: iter,
 			Name: b.Name, Path: f.Path, Filename: path.Base(f.Path),
-		}, data)
+		}, b.Type, data)
 	}
 }
 
@@ -122,7 +124,7 @@ func (x *exec) publishLog(stageID string, iter int, output string) {
 	x.capture(filestore.Snapshot{
 		Kind: filestore.KindLog, StageID: stageID, Iteration: iter,
 		Filename: fmt.Sprintf("%s-%d.log", stageID, iter),
-	}, []byte(output))
+	}, "", []byte(output))
 }
 
 // provisionLogStage is the pseudo-stage id the provisioning log is filed
@@ -182,6 +184,6 @@ func (x *exec) publishPingFiles(p *Ping, stageID string) {
 		x.capture(filestore.Snapshot{
 			Kind: filestore.KindPingFile, StageID: stageID, PingID: p.ID,
 			Path: ref, Filename: path.Base(ref),
-		}, data)
+		}, "", data)
 	}
 }

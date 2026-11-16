@@ -29,17 +29,18 @@ import (
 var journalToolDef = map[string]any{
 	"name": "journal_read",
 	"description": "Read the run journal: what has happened in this run so far. Your prompt's RUN " +
-		"JOURNAL section lists it — the owner's decisions and each stage's passes, each with " +
-		"an id. With a pass id (<stage>-<n>, e.g. \"review-2\") it writes everything that pass " +
-		"left — its record, its verdict, its outputs and its full log — to one file and returns " +
-		"the file's path; with a decision id (\"decision-3\") it returns that decision whole; " +
-		"with no id it writes every record of the run (decisions and each pass with its " +
+		"JOURNAL section lists it — the owner's decisions, the agents' notes and each stage's " +
+		"passes, each with an id. With a pass id (<stage>-<n>, e.g. \"review-2\") it writes " +
+		"everything that pass left — its record, its verdict, its outputs and its full log — to " +
+		"one file and returns the file's path; with a decision id (\"decision-3\") or a note id " +
+		"(\"note-1\") it returns that entry whole, or writes it to a file when it is long; with " +
+		"no id it writes every record of the run (decisions, notes and each pass with its " +
 		"verdict, no logs) to one file. Read and search the files with your own tools. Each " +
 		"call writes the file afresh.",
 	"inputSchema": map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"id": map[string]any{"type": "string", "description": "a pass (<stage>-<n>) or a decision (decision-<n>); omit for every record"},
+			"id": map[string]any{"type": "string", "description": "a pass (<stage>-<n>), a decision (decision-<n>) or a note (note-<n>); omit for every record"},
 		},
 	},
 }
@@ -119,7 +120,7 @@ func writeJournalFile(entry journalEntry) (string, error) {
 	switch {
 	case entry.ID == "records":
 		what = "every record of the run"
-	case strings.HasPrefix(entry.ID, "decision-"):
+	case strings.HasPrefix(entry.ID, "decision-"), strings.HasPrefix(entry.ID, "note-"):
 		what = entry.ID
 	}
 	return fmt.Sprintf("Wrote %s to %s (%s/%s in the checkout): %d bytes, %d lines. Read and search it with your own tools.",

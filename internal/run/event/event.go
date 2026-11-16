@@ -900,6 +900,11 @@ type SnapshotCaptured struct {
 	SHA256     string `json:"sha256,omitempty"`
 	Size       int64  `json:"size,omitempty"`
 	Truncated  bool   `json:"truncated,omitempty"`
+	// PortType is the output port's type as the flow declared it when the
+	// attempt ran ('verdict', 'journal_notes'); outputs only. What reads
+	// the snapshot later — the run journal — types it from here, never from
+	// a flow it would have to load again.
+	PortType string `json:"port_type,omitempty"`
 }
 
 // ActionStarted is the pre-effect intent marker for an action stage.

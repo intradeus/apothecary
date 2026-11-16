@@ -660,7 +660,7 @@ watchers:
         output:
           notes:   { to: artifacts/journal-notes.yaml, type: journal_notes }
         on_success: sync
-        on_fail: debug
+        on_fail: { to: resolve, max: 2, then: debug }
 
       - id: sync_test
         type: command

@@ -34,6 +34,8 @@ import (
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/platform/filestore"
+	"apothecary/internal/platform/logs"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 )
@@ -147,9 +149,10 @@ func splitPassID(id string) (string, int, bool) {
 	return id[:i], n, true
 }
 
-// buildJournal reads a run's log into its journal. fl types the outputs (a
-// stage the flow no longer has keeps its outputs untyped); atts finds what
-// an answer attached (nil: none).
+// buildJournal reads a run's log into its journal. An output's type is the
+// one its snapshot_captured records; fl types an output whose event carries
+// none, and names what a skipped stage did not write (nil: neither). atts
+// finds what an answer attached (nil: none).
 func buildJournal(evs []event.Event, fl *flow.Flow, atts func(pingID string) []answerFile) *journal {
 	j := &journal{byPass: map[string]*jPass{}, byDec: map[string]*jDecision{}, byNote: map[string]*jNote{}}
 	latest := map[string]*jPass{} // stage → its latest pass
@@ -207,7 +210,11 @@ func buildJournal(evs []event.Event, fl *flow.Flow, atts func(pingID string) []a
 				ps.log = &s
 				continue
 			}
-			s.typ = outputType(fl, p.StageID, p.Name)
+			// The type the attempt ran with, recorded on the event; the flow
+			// only for an event that does not carry it.
+			if s.typ = p.PortType; s.typ == "" {
+				s.typ = outputType(fl, p.StageID, p.Name)
+			}
 			ps.outputs = append(ps.outputs, s)
 		case *event.PingRaised:
 			if ps := latest[p.StageID]; ps != nil {
@@ -726,13 +733,34 @@ func (x *exec) journalSection(name, desc string) string {
 	return renderLedger(j, name, desc)
 }
 
+// journalFilesDir is where the journal_read tool writes its files, in the
+// primary checkout (workspace/shim/journal.go, journalDir).
+const journalFilesDir = ".apothecary/journal"
+
+// clearJournalFiles removes the files journal_read wrote for an earlier
+// attempt, before a fresh one: each was the tool's answer at the time, and
+// an agent that searches the folder instead of calling the tool must find
+// nothing rather than another stage's stale copy. Like clearOutputs, never
+// on re-entering an attempt — a resumed session may still be reading one —
+// and best effort.
+func (x *exec) clearJournalFiles() {
+	if _, err := x.res.Envp.Exec(x.ctx, x.rs.EnvID, envport.Command{
+		Script:  "rm -rf -- " + journalFilesDir,
+		Dir:     event.PrimaryCheckoutDir,
+		Timeout: time.Minute,
+	}); err != nil {
+		x.e.log.WarnContext(x.bg, "clearing the journal's files failed", logs.RunID, x.rs.RunID, "err", err)
+	}
+}
+
 // --- the tool's entries -------------------------------------------------------
 
 // JournalEntry is what journal_read gives for one id: an entry to return
 // inline, or — File set — a file for the tool to write under
 // .apothecary/journal/ and point the agent at.
 type JournalEntry struct {
-	// ID is the entry: a pass id, decision-<n>, or "records" for every record.
+	// ID is the entry: a pass id, decision-<n>, note-<n>, or "records" for
+	// every record.
 	ID string `json:"id"`
 	// File is the name to write Text under ("review-5.md"); empty for an
 	// entry short enough to return inline.
@@ -743,18 +771,30 @@ type JournalEntry struct {
 // ErrJournalEntryNotFound: the id names no pass and no decision of the run.
 var ErrJournalEntryNotFound = errors.New("no such journal entry")
 
-// journalInline bounds a decision returned inline; a longer one is written
-// to a file like a pass.
+// journalInline bounds a decision or a note returned inline; a longer one
+// is written to a file like a pass, so it never lands whole in the agent's
+// context (a note's did and why have no length limit).
 const journalInline = 8 << 10
+
+// inlineOrFile is an entry returned inline, or written to its file when it
+// is longer than journalInline.
+func inlineOrFile(id, text string) JournalEntry {
+	if len(text) <= journalInline {
+		return JournalEntry{ID: id, Text: text}
+	}
+	return JournalEntry{ID: id, File: id + ".md", Text: text}
+}
 
 // JournalRead renders one journal entry of a run for the journal_read tool:
 // id "" is every record of the run, a pass id that pass whole (its record,
-// its outputs, its log), decision-<n> that decision whole. The run's flow
-// types the outputs; one that cannot be loaded leaves them untyped.
+// its outputs, its log), decision-<n> that decision whole. The outputs are
+// typed from the log, as the ledger's are; the run's flow is a fallback for
+// what the log does not say (buildJournal), and one that cannot be loaded
+// is logged and done without.
 func (e *Engine) JournalRead(ctx context.Context, runID, id string) (JournalEntry, error) {
-	var fl *flow.Flow
-	if v, err := e.runs.View(ctx, runID); err == nil {
-		fl, _ = e.RunFlow(ctx, v)
+	fl, err := e.journalFlow(ctx, runID)
+	if err != nil {
+		e.log.WarnContext(ctx, "journal: loading the run's flow", logs.RunID, runID, "err", err)
 	}
 	j, err := e.journalOf(ctx, runID, fl)
 	if err != nil {
@@ -764,17 +804,22 @@ func (e *Engine) JournalRead(ctx context.Context, runID, id string) (JournalEntr
 	case id == "":
 		return JournalEntry{ID: "records", File: "records.md", Text: e.journalRecords(ctx, j)}, nil
 	case j.byDec[id] != nil:
-		text := journalDecisionText(j.byDec[id])
-		if len(text) <= journalInline {
-			return JournalEntry{ID: id, Text: text}, nil
-		}
-		return JournalEntry{ID: id, File: id + ".md", Text: text}, nil
+		return inlineOrFile(id, journalDecisionText(j.byDec[id])), nil
 	case j.byNote[id] != nil:
-		return JournalEntry{ID: id, Text: noteText(j.byNote[id])}, nil
+		return inlineOrFile(id, noteText(j.byNote[id])), nil
 	case j.byPass[id] != nil:
 		return JournalEntry{ID: id, File: id + ".md", Text: e.journalPassFile(ctx, j, j.byPass[id])}, nil
 	}
 	return JournalEntry{}, fmt.Errorf("%w: %q (a pass is <stage>-<n>, a decision decision-<n>, a note note-<n>)", ErrJournalEntryNotFound, id)
+}
+
+// journalFlow is the run's flow, resolved with its parameters.
+func (e *Engine) journalFlow(ctx context.Context, runID string) (*flow.Flow, error) {
+	v, err := e.runs.View(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	return e.RunFlow(ctx, v)
 }
 
 // journalDecisionText is one decision whole: nothing cut.

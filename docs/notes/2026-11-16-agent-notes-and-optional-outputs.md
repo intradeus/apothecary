@@ -41,7 +41,12 @@ What now:
   empty or without its key fails it as malformed (`output_invalid`). `optional:` stays in the
   language for any output, notes included; the built-in flows do not use
   it for notes, and the flow editor no longer starts a notes row optional.
-  The dev fake writes `notes: []`.
+  The dev fake writes `notes: []`. Since a forgotten or malformed notes
+  file fails the stage, every stage that writes one has a retry before
+  the debug leaf: `resolve` (the `conflicts` watcher's and
+  `conflict-resolver`'s), which went straight to `debug`, now has
+  `on_fail: { to: resolve, max: 2, then: debug }`, like `fix` and
+  `ci_repair`.
 - **In the journal**, notes are read from each pass's snapshot when the
   journal is built (`loadNotes`) and numbered `note-<n>` in pass order. The
   ledger has an **Agent notes** part between the decisions and the passes,
