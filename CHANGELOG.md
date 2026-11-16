@@ -2,6 +2,39 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v3.6.0 (2026-11-16)
+
+### Features
+
+- **engine**: add port type to outputs
+- **engine**: agent notes, the debug summary and the files a person changed
+- **engine**: add new journal tool, replace run.ping_answers with run.journal
+- **engine**: support for 'impasses' after budgetted verdict rejection
+- **engine**: support for 'impasses' after budgetted verdict rejection
+
+### Fixes
+
+- **engine**: reset budget on debug continuation
+- **cpui**: close log find on Esc from the log and end URLs at quotes
+- **cli**: close the forward daemon's socket as soon as it exits
+- **cli**: let the forward daemon answer its last request on exit
+- **cli**: leave socket removal to the forward daemon's listener
+- **cpui**: end a linkified URL at a quote
+- **cpui**: cap log find marks by match count and reset copy tick
+- **cpui**: ease copy/paste, links, find and scrolling in terminal and logs
+
+### Refactors
+
+- **artifacts**: refactor of the artifact's name standard
+
+### Chores
+
+- **global**: cleanup plan files
+
+### Docs
+
+- **design**: say log find highlights 300 matches either side
+
 ## v3.5.1 (2026-11-15)
 
 ### Fixes
