@@ -20,6 +20,7 @@ describe('FlowTerminalNode', () => {
 		['the run’s done', 'done', {}, 'tone-success', 'done'],
 		['an abort', 'abort', {}, 'tone-danger', 'abort'],
 		['a debug stop', 'debug', {}, 'tone-attention', 'debug'],
+		['an impasse', 'impasse', {}, 'tone-warning', 'impasse'],
 		['a sequence’s way out', 'exit', {}, 'tone-success', 'exit'],
 		['a sequence’s failure', 'failexit', {}, 'tone-danger', 'failexit']
 	])('wears the hue of %s', (_, type, data, hue, label) => {
@@ -69,6 +70,11 @@ describe('FlowTerminalNode', () => {
 		it('debug comes back: in and out', () => {
 			setup('debug');
 			expect(handles()).toEqual(['target:', 'source:']);
+		});
+
+		it('an impasse draws nothing out: the choice says what follows', () => {
+			setup('impasse');
+			expect(handles()).toEqual(['target:']);
 		});
 	});
 });

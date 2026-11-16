@@ -117,6 +117,10 @@ func TestAnswerSaysSomething(t *testing.T) {
 		{run.PingView{Type: event.PingGate, Status: "answered", Review: []event.ReviewComment{{Body: "x"}}}, true},
 		{run.PingView{Type: event.PingDebug, Status: "answered", Feedback: "fixed the env"}, true},
 		{run.PingView{Type: event.PingManual, Status: "answered", Feedback: "done by hand"}, true},
+		{run.PingView{Type: event.PingImpasse, Status: "answered", Answer: event.ChoiceSkip}, true},
+		{run.PingView{Type: event.PingImpasse, Status: "answered", Answer: event.ChoiceKeepGoing}, false},
+		{run.PingView{Type: event.PingImpasse, Status: "answered", Answer: event.ChoiceKeepGoing, Feedback: "ignore the naming point"}, true},
+		{run.PingView{Type: event.PingImpasse, Status: "pending", Answer: event.ChoiceSkip}, false},
 		{run.PingView{Type: event.PingPhaseConfirm, Status: "answered", Feedback: "go"}, false},
 		{run.PingView{Type: event.PingSelect, Status: "answered", Feedback: "that one"}, false},
 	} {

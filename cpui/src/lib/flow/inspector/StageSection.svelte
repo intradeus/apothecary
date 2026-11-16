@@ -21,6 +21,7 @@
 	import {
 		ABORT,
 		DEBUG,
+		IMPASSE,
 		DONE,
 		EDGE_KINDS,
 		END,
@@ -77,7 +78,7 @@
 		if (
 			!newId ||
 			newId === oldId ||
-			[END, DONE, ABORT, DEBUG, START, FAIL].includes(newId) ||
+			[END, DONE, ABORT, DEBUG, IMPASSE, START, FAIL].includes(newId) ||
 			!/^[a-z][a-z0-9_-]*$/.test(newId)
 		)
 			return false;

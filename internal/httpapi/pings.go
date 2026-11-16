@@ -102,6 +102,7 @@ type pingJSON struct {
 	PayloadRef string            `json:"payload_ref,omitempty"`
 	Form       *event.Form       `json:"form,omitempty"`
 	AnswerKind string            `json:"answer_kind"`
+	Choices    []event.Choice    `json:"choices,omitempty"`
 	Phase      string            `json:"phase,omitempty"`
 	EndsPhase  bool              `json:"ends_phase,omitempty"`
 	Status     string            `json:"status"`
@@ -112,7 +113,7 @@ func toPingJSON(p *engine.Ping) pingJSON {
 	return pingJSON{
 		PingID: p.ID, RunID: p.RunID, Type: p.Type, StageID: p.StageID, Question: p.Question,
 		Context: p.Context, Files: p.Files, FileTypes: p.FileTypes, Link: p.Link, PayloadRef: p.Primary(),
-		Form: p.Form, AnswerKind: p.AnswerKind, Phase: p.Phase, EndsPhase: p.EndsPhase,
+		Form: p.Form, AnswerKind: p.AnswerKind, Choices: p.Choices, Phase: p.Phase, EndsPhase: p.EndsPhase,
 		Status: "pending", RaisedAt: p.RaisedAt,
 	}
 }
@@ -242,7 +243,7 @@ func (s *Server) answerPing(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	err := s.Runs.AnswerPing(pid, engine.PingAnswer{Answer: body.Answer, Feedback: body.Feedback,
-		Content: body.Content, AttachmentIDs: body.AttachmentIDs, Review: body.Review, Curated: body.Curated})
+		By: auth.UserID(r.Context()), Content: body.Content, AttachmentIDs: body.AttachmentIDs, Review: body.Review, Curated: body.Curated})
 	switch {
 	case errors.Is(err, engine.ErrPingNotFound):
 		writeErr(w, http.StatusNotFound, err.Error())

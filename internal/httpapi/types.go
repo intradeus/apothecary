@@ -271,6 +271,9 @@ type PingHold struct {
 // AnswerPingRequest answers a question: approve|reject for a gate, accept
 // with the form's content or decline with a note for a form.
 type AnswerPingRequest struct {
+	// Answer is approve|reject (a yes/no), accept|decline (a form), or the
+	// id of one of the ping's choices (a choice: the impasse's keep_going,
+	// skip, give_up).
 	Answer   string `json:"answer"`
 	Feedback string `json:"feedback,omitempty"`
 	// Content is an accepted form's values, by field id: a string, number,

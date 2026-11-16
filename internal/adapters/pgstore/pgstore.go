@@ -354,18 +354,21 @@ func (s *Store) projectTx(ctx context.Context, tx pgx.Tx, runID string, evs []ev
 			if p.Form != nil {
 				form, _ = json.Marshal(p.Form)
 			}
-			var files, fileTypes []byte
+			var files, fileTypes, choices []byte
 			if len(p.Files) > 0 {
 				files, _ = json.Marshal(p.Files)
 			}
 			if len(p.FileTypes) > 0 {
 				fileTypes, _ = json.Marshal(p.FileTypes)
 			}
+			if len(p.Choices) > 0 {
+				choices, _ = json.Marshal(p.Choices)
+			}
 			b.Queue(`
-				INSERT INTO pings (ping_id, run_id, type, question, context, files, link, stage_id, form, answer_kind, phase, ends_phase, status, raised_at, user_id, file_types)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15)
+				INSERT INTO pings (ping_id, run_id, type, question, context, files, link, stage_id, form, answer_kind, phase, ends_phase, status, raised_at, user_id, file_types, choices)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16)
 				ON CONFLICT (ping_id) DO NOTHING`,
-				p.PingID, runID, p.Type, p.Question, p.Context, files, p.Link, p.StageID, form, p.Kind(), p.Phase, p.EndsPhase, evs[i].TS, v.UserID, fileTypes)
+				p.PingID, runID, p.Type, p.Question, p.Context, files, p.Link, p.StageID, form, p.Kind(), p.Phase, p.EndsPhase, evs[i].TS, v.UserID, fileTypes, choices)
 		case *event.PingAnswered:
 			var ids, content, curated []byte
 			if len(p.AttachmentIDs) > 0 {
@@ -938,7 +941,7 @@ func (s *Store) LoadExposedPorts(ctx context.Context) (map[string]map[int]int, e
 
 const pingCols = `ping_id, run_id, user_id, type, stage_id, question, context, files, link,
 	             form, answer_kind, phase, ends_phase, status, answer, feedback, content, answer_attachment_ids, raised_at, answered_at,
-	             file_types, curated`
+	             file_types, curated, choices`
 
 // ListPings reads the pings projection (PLAN4 M15): the durable
 // request/response surface, one user's ("" = everyone's). status filters
@@ -1036,14 +1039,17 @@ var ErrPingNotFound = errors.New("ping not found")
 
 func scanPing(row pgx.Row) (run.PingView, error) {
 	var v run.PingView
-	var form, files, content, ansIDs, fileTypes, curated []byte
+	var form, files, content, ansIDs, fileTypes, curated, choices []byte
 	var link sql.NullString
 	err := row.Scan(&v.PingID, &v.RunID, &v.UserID, &v.Type, &v.StageID, &v.Question, &v.Context,
 		&files, &link, &form, &v.AnswerKind, &v.Phase, &v.EndsPhase, &v.Status, &v.Answer, &v.Feedback, &content, &ansIDs, &v.RaisedAt, &v.AnsweredAt,
-		&fileTypes, &curated)
+		&fileTypes, &curated, &choices)
 	if err == nil {
 		if len(form) > 0 {
 			_ = json.Unmarshal(form, &v.Form)
+		}
+		if len(choices) > 0 {
+			_ = json.Unmarshal(choices, &v.Choices)
 		}
 		if len(fileTypes) > 0 {
 			_ = json.Unmarshal(fileTypes, &v.FileTypes)

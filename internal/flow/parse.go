@@ -705,7 +705,7 @@ func (e *DocEdge) UnmarshalYAML(n *yaml.Node) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("line %d: edge must be a mapping, or one of %q, %q, %q, %q", n.Line, TerminalEnd, TerminalDone, TerminalAbort, ReservedDebug)
+	return fmt.Errorf("line %d: edge must be a mapping, or one of %q, %q, %q, %q, %q", n.Line, TerminalEnd, TerminalDone, TerminalAbort, ReservedDebug, ReservedImpasse)
 }
 
 // IOPair is one named literal in an action stage's `with:` — one value, or
@@ -2209,6 +2209,9 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 	if raw.OnSuccess == ReservedDebug {
 		return fail("on_success cannot be %q — only an edge (on_fail/on_reject/on_timeout) parks for a human", ReservedDebug)
 	}
+	if raw.OnSuccess == ReservedImpasse {
+		return fail("on_success cannot be %q — only an on_reject chain parks for a person's decision", ReservedImpasse)
+	}
 	if raw.OnSuccess != "" && !routeTerminal(raw.OnSuccess) && !idPathRe.MatchString(raw.OnSuccess) {
 		return fail("on_success %q must be a stage id, %q (the phase ends), %q (the run is done) or %q (the run is abandoned)", raw.OnSuccess, TerminalEnd, TerminalDone, TerminalAbort)
 	}
@@ -2379,6 +2382,21 @@ func (p *parser) buildEdgeLink(raw *DocEdge, kind string, s *Stage, line, depth 
 			return fail("then does not apply when to is %q (continuing re-enters this stage; nothing else follows)", ReservedDebug)
 		}
 		return &Edge{To: ReservedDebug}, nil
+	}
+	if raw.To == ReservedImpasse {
+		// The impasse: rejections ran out, and a person decides — keep
+		// going, skip the stage, or give up. Only a rejection reaches it (a
+		// failure has the debug leaf), and like the debug leaf it is
+		// unlimited and nothing follows it.
+		switch {
+		case kind != EdgeReject:
+			return fail("%q is reached only from on_reject — a rejection is a verdict a person can overrule; a failure goes to %q", ReservedImpasse, ReservedDebug)
+		case raw.Max != nil:
+			return fail("max does not apply when to is %q (the person decides when to stop)", ReservedImpasse)
+		case raw.Then != nil:
+			return fail("then does not apply when to is %q (the person's answer says what follows)", ReservedImpasse)
+		}
+		return &Edge{To: ReservedImpasse}, nil
 	}
 	if raw.Max == nil {
 		return fail("max is required")

@@ -5,11 +5,14 @@
  *  asks lives in its question). 'debug' is the flow's debug leaf: the failing
  *  stage is parked for you — continue re-runs it, reject abandons the run.
  *  'manual' is a manual stage: the run's workspace is in your hands — Done
- *  follows on_success, give up is a dead end. The rest are raised by agents. */
+ *  follows on_success, give up is a dead end. 'impasse' is a stage rejected
+ *  past its on_reject budget: keep going, skip the stage, or give up. The
+ *  rest are raised by agents. */
 export type PingType =
 	| 'gate'
 	| 'debug'
 	| 'manual'
+	| 'impasse'
 	| 'phase_confirm'
 	| 'select'
 	| 'clarification'
@@ -21,8 +24,20 @@ export type PingStatus = 'pending' | 'answered' | 'withdrawn';
 /** The shape of the answer a ping takes — declared on the ping, rendered by
  *  the card, validated by the engine from the same vocabulary:
  *  yes_no = approve | reject (+ feedback); form = accept with a value per
- *  field | decline (+ the reason, in feedback). */
-export type AnswerKind = 'yes_no' | 'form';
+ *  field | decline (+ the reason, in feedback); choice = one of the ping's
+ *  choices, by id (+ a note, required where the choice says so).
+ *  They differ in meaning (FLOWLANG §9): yes_no is a judgement with a
+ *  polarity — approve good, reject bad (it follows on_reject); form is
+ *  information for the asker; choice is a decision among actions, none of
+ *  them good or bad, and none of them a decline. */
+export type AnswerKind = 'yes_no' | 'form' | 'choice';
+
+/** One answer a choice ping offers: the id is what the answer names (the
+ *  card words it); noteRequired, the answer must say why. */
+export interface PingChoice {
+	id: string;
+	noteRequired: boolean;
+}
 
 /** A form field's type — ACP's elicitation form (MCP elicitation's JSON
  *  Schema): string (free text; with options, pick one), array (with
@@ -90,6 +105,8 @@ export interface Ping {
 	answerKind: AnswerKind;
 	/** What a form ping asks. */
 	form?: PingForm;
+	/** What a choice ping offers, in the order shown. */
+	choices: PingChoice[];
 	/** The phase the ping belongs to (a confirmation's phase to start, the
 	 *  debug leaf's phase). */
 	phase?: string;
@@ -97,7 +114,8 @@ export interface Ping {
 	 *  to waiting — the phase is a watcher. False: giving up abandons the
 	 *  run. */
 	endsPhase: boolean;
-	/** approve | reject (yes_no), accept | decline (form). */
+	/** approve | reject (yes_no), accept | decline (form), a choice's id
+	 *  (choice). */
 	answer?: string;
 	/** The answer's note — a decline's reason; on a review of the files
 	 *  shown, its summary. */

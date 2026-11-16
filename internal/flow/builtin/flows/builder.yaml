@@ -73,12 +73,16 @@ parameters:
 # opens the workspace (terminal/IDE), fixes what agents can't, and continue
 # re-runs exactly the stage that escalated (the success chain replays from
 # there, so no stage is ever skipped), every retry chain given its budget
-# back. No chain ends without a person: once
-# its retries are spent, every route reaches the debug leaf rather than
-# abandoning the run unasked. The human decides when to stop — giving up in
-# the main chain abandons the run, in a watcher it ends that round; plan_gate
-# rejections are unlimited too (each rejection IS a human decision). Timeouts
-# fall back to on_fail unless a stage declares on_timeout.
+# back. A rejection is not a failure: the reviewer saying no is a verdict, so
+# when its rounds run out the run goes to the impasse instead (`then:
+# impasse`) — a person reads the last verdict and keeps going (five more
+# rounds), skips the review, or gives up. No chain ends without a person:
+# once its retries are spent, every route reaches the debug leaf or the
+# impasse rather than abandoning the run unasked. The human decides when to
+# stop — giving up in the main chain abandons the run, in a watcher it ends
+# that round; plan_gate rejections are unlimited too (each rejection IS a
+# human decision). Timeouts fall back to on_fail unless a stage declares
+# on_timeout.
 #
 # Dataflow is declared, never implied: every stage states each value it reads
 # — from: a path some stage writes, or what the engine provides (run.*) —
@@ -496,8 +500,10 @@ main:
     on_timeout: { to: test, max: 1, then: { to: build, max: 2, then: debug } }
 
   # The reviewer's verdict is what makes on_reject reachable here; a REJECT
-  # carries its comments back to the builder as edge.verdict. Three
-  # rejected rounds, and a human looks rather than the run being dropped.
+  # carries its comments back to the builder as edge.verdict. Five rejected
+  # rounds, and a person decides at the impasse rather than the run being
+  # dropped. Nothing downstream reads the verdict, so the review may be
+  # skipped there.
   - id: review
     type: agent
     harness: $harness
@@ -515,7 +521,7 @@ main:
     output:
       verdict: { to: artifacts/verdict.yaml, type: verdict }
     on_success: app_up
-    on_reject: { to: build, max: 3, then: debug }
+    on_reject: { to: build, max: 5, then: impasse }
     on_fail: { to: review, max: 1, then: debug }
 
   # Screenshots ($screenshots). An app that will not come up never holds the

@@ -5,6 +5,7 @@ import {
 	answerKindOf,
 	answerMeta,
 	answerSummary,
+	choiceText,
 	curatable,
 	fieldAnswerText,
 	fieldLabel,
@@ -15,6 +16,7 @@ import {
 	isAgentPing,
 	isDebug,
 	isDocumentPing,
+	isImpasse,
 	isPhaseConfirm,
 	isWantedPing,
 	pingCta,
@@ -23,6 +25,7 @@ import {
 	toCuratedMap,
 	toCuration,
 	toFormContent,
+	toPingChoices,
 	toPingForm,
 	toPingOption,
 	toReviewComment
@@ -45,6 +48,7 @@ describe('what a ping is', () => {
 	it.each<[string, boolean, boolean, boolean, boolean]>([
 		['gate', false, false, false, true],
 		['debug', true, false, false, true],
+		['impasse', false, false, false, true],
 		['phase_confirm', false, true, false, true],
 		['select', false, false, false, true],
 		['clarification', false, false, true, false],
@@ -55,11 +59,15 @@ describe('what a ping is', () => {
 		expect(isPhaseConfirm(type)).toBe(confirm);
 		expect(isAgentPing(type)).toBe(agent);
 		expect(isWantedPing(type)).toBe(wanted);
+		expect(isImpasse(type)).toBe(type === 'impasse');
 	});
 
 	it.each<[unknown, string, string]>([
 		['yes_no', 'clarification', 'yes_no'],
 		['form', 'gate', 'form'],
+		['choice', 'gate', 'choice'],
+		[undefined, 'impasse', 'choice'],
+		[undefined, 'manual', 'yes_no'],
 		[undefined, 'gate', 'yes_no'],
 		[undefined, 'phase_confirm', 'yes_no'],
 		[undefined, 'debug', 'yes_no'],
@@ -72,6 +80,21 @@ describe('what a ping is', () => {
 });
 
 describe('reading the wire', () => {
+	it.each<[unknown, object[]]>([
+		[undefined, []],
+		[null, []],
+		['skip', []],
+		[
+			[{ id: 'keep_going' }, { id: 'skip', note_required: true }, null, { id: '' }, { id: 3 }],
+			[
+				{ id: 'keep_going', noteRequired: false },
+				{ id: 'skip', noteRequired: true }
+			]
+		]
+	])('reads choices %j', (wire, out) => {
+		expect(toPingChoices(wire)).toEqual(out);
+	});
+
 	it.each<[unknown, object]>([
 		['older', { id: 'older', label: 'older' }],
 		[
@@ -395,6 +418,14 @@ describe('answerSummary', () => {
 		expect(answerSummary({ answerKind: 'yes_no' })).toBe('');
 	});
 
+	it('words a choice', () => {
+		expect(answerSummary({ answerKind: 'choice', answer: 'skip' })).toBe('Skipped');
+		expect(answerSummary({ answerKind: 'choice' })).toBe('');
+		expect(choiceText('keep_going')).toBe('Kept going');
+		expect(choiceText('give_up')).toBe('Gave up');
+		expect(choiceText('later')).toBe('later');
+	});
+
 	it('says a form was declined', () => {
 		expect(answerSummary({ answerKind: 'form', answer: 'decline', content: {} })).toBe('Declined');
 	});
@@ -449,6 +480,7 @@ describe('documents and calls to action', () => {
 		],
 		['a primary ref', { type: 'gate', answerKind: 'yes_no', primaryRef: 'a.md' }, 'Review a.md'],
 		['a yes/no', { type: 'gate', answerKind: 'yes_no' }, 'Decide'],
+		['a choice', { type: 'impasse', answerKind: 'choice' }, 'Decide'],
 		['a link', { type: 'gate', answerKind: 'yes_no', link: 'u', primaryRef: 'u' }, 'Decide'],
 		['a permission', { type: 'permission', answerKind: 'form' }, 'Decide'],
 		['a question', { type: 'clarification', answerKind: 'form' }, 'Answer'],
@@ -508,6 +540,9 @@ describe('answerMeta', () => {
 		[{ answer: 'reject' }, I.loop, 'Changes requested', 'warning'],
 		[{ answer: 'decline' }, I.none, 'Declined', 'warning'],
 		[{ answer: 'accept' }, I.ok, 'Answered', 'success'],
+		[{ answer: 'keep_going' }, I.loop, 'Kept going', 'warning'],
+		[{ answer: 'skip' }, I.forward, 'Skipped', 'muted'],
+		[{ answer: 'give_up' }, I.none, 'Gave up', 'danger'],
 		[{}, I.ok, 'Answered', 'success']
 	])('reads %j', (p, glyph, word, hue) => {
 		expect(answerMeta(p)).toEqual({ glyph, word, hue });

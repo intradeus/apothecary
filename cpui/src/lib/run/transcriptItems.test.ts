@@ -477,9 +477,12 @@ describe('buildTranscript', () => {
 		const asked = (payload = {}) =>
 			aRaise(1, 'p1', { type: 'clarification', answer_kind: 'form', question: 'Q?', ...payload });
 
-		it.each(['gate', 'phase_confirm', 'debug'])('keeps a %s out of the chat', (type) => {
-			expect(buildTranscript([aRaise(1, 'p1', { type })], emptyLive())).toEqual([]);
-		});
+		it.each(['gate', 'phase_confirm', 'debug', 'manual', 'impasse'])(
+			'keeps a %s out of the chat',
+			(type) => {
+				expect(buildTranscript([aRaise(1, 'p1', { type })], emptyLive())).toEqual([]);
+			}
+		);
 
 		it('offers the options of a lone field', () => {
 			expect(only([asked({ form })])).toMatchObject({

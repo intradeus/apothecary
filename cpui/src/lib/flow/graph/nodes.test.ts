@@ -365,6 +365,47 @@ describe('debug leaves', () => {
 	});
 });
 
+describe('impasse leaves', () => {
+	const rejecting = (over: object = {}) =>
+		aFlow([
+			aStage({
+				id: 'r',
+				type: 'agent',
+				on_reject: { to: 'r', max: 5, then: { to: 'impasse' } },
+				...over
+			}),
+			aStage({ id: 'b' })
+		]);
+	const leaves = (doc: FlowDoc, over: Partial<SceneInput> = {}) =>
+		chrome(doc, { layout: { r: { x: 10, y: 20 } }, ...over }).chrome.filter(
+			(n) => n.type === 'impasse' || n.type === 'debug'
+		);
+
+	it('draws one for each stage whose rejections end there, under it', () => {
+		const nodes = leaves(rejecting());
+		expect(ids(nodes)).toEqual(['__impasse:r']);
+		expect(nodes[0].position).toEqual({ x: 34, y: 190 });
+		expect(nodes[0].data).toMatchObject({ stage: 'r', band: 'main' });
+		expect(nodes[0].data.title).toContain('r was rejected past its budget');
+	});
+
+	it('sits after the stage’s debug leaf', () => {
+		const nodes = leaves(rejecting({ on_fail: { to: 'debug' } }));
+		expect(ids(nodes)).toEqual(['__debug:r', '__impasse:r']);
+		expect(byId(nodes, '__impasse:r').position).toEqual({ x: 164, y: 190 });
+	});
+
+	it('keeps its own place when it has one', () => {
+		const nodes = leaves(rejecting(), { layout: { 'impasse:r': { x: 1, y: 2 } } });
+		expect(byId(nodes, '__impasse:r').position).toEqual({ x: 1, y: 2 });
+	});
+
+	it('takes the origin for a stage with no place yet', () => {
+		const nodes = leaves(rejecting(), { layout: {} });
+		expect(byId(nodes, '__impasse:r').position).toEqual({ x: 24, y: 170 });
+	});
+});
+
 describe('a sequence’s ways out', () => {
 	const seqDoc = (over: object = {}): FlowDoc => ({
 		name: 'f',

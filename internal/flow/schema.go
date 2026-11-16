@@ -51,11 +51,11 @@ func schema() obj {
 		actionSlugs = append(actionSlugs, a.Slug)
 	}
 	starts := []string{string(StartAuto), string(StartConfirm), string(StartManual)}
-	terminals := []string{TerminalEnd, TerminalDone, TerminalAbort, ReservedDebug, ReservedFail}
+	terminals := []string{TerminalEnd, TerminalDone, TerminalAbort, ReservedDebug, ReservedImpasse, ReservedFail}
 
 	// A route: a bare target (`on_fail: debug`) or a chain of links.
 	edge := obj{
-		"description": "where the run goes: a stage of the same chain (with max), or end, done, abort, debug — fail inside a sequence",
+		"description": "where the run goes: a stage of the same chain (with max), or end, done, abort, debug, impasse (on_reject only) — fail inside a sequence",
 		"anyOf": []any{
 			obj{"type": "string", "examples": terminals},
 			obj{
@@ -63,7 +63,7 @@ func schema() obj {
 				"additionalProperties": false,
 				"required":             []string{"to"},
 				"properties": obj{
-					"to":   str("a stage of the same chain, or end, done, abort, debug — fail inside a sequence"),
+					"to":   str("a stage of the same chain, or end, done, abort, debug, impasse (on_reject only) — fail inside a sequence"),
 					"max":  obj{"type": "integer", "description": "how many times this link may send the run there (-1: no limit, where a person decides each time)"},
 					"then": obj{"$ref": "#/$defs/edge", "description": "where the run goes once this link is spent"},
 				},

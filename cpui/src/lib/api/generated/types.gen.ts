@@ -328,6 +328,11 @@ export type Checks = {
 	state: string;
 };
 
+export type Choice = {
+	id: string;
+	note_required?: boolean;
+};
+
 export type CopyFlowRequest = {
 	name?: string;
 	to_project_id: string;
@@ -1194,6 +1199,7 @@ export type PingView = {
 	answer_attachment_ids?: Array<string>;
 	answer_kind: string;
 	answered_at?: string;
+	choices?: Array<Choice>;
 	content?: {
 		[key: string]: unknown;
 	};

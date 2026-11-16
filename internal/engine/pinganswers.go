@@ -17,9 +17,10 @@ import (
 // answer longer than the budget cut).
 //
 // What counts as an answer is what said something about the work: every
-// question an agent asked (ask_human), and a gate, a debug leaf or a manual
-// stage only when the person wrote feedback or review comments there — a
-// bare approve says nothing a plan does not. A phase confirmation and a
+// question an agent asked (ask_human), a gate, a debug leaf, a manual stage
+// or the impasse when the person wrote feedback or review comments there — a
+// bare approve says nothing a plan does not — and a skip at the impasse
+// always: a stage that did not run is a change from the plan. A phase confirmation and a
 // selection decide what runs, not what is built: never.
 //
 // The person answering owns the task, so unlike a ticket's comments these are
@@ -57,7 +58,9 @@ func answerSaysSomething(p run.PingView) bool {
 	switch {
 	case run.AgentPingType(p.Type):
 		return true
-	case p.Type == event.PingGate, p.Type == event.PingDebug, p.Type == event.PingManual:
+	case p.Type == event.PingImpasse && p.Answer == event.ChoiceSkip:
+		return true
+	case p.Type == event.PingGate, p.Type == event.PingDebug, p.Type == event.PingManual, p.Type == event.PingImpasse:
 		return strings.TrimSpace(p.Feedback) != "" || len(p.Review) > 0
 	}
 	return false

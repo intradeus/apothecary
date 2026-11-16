@@ -8,6 +8,8 @@ import {
 	DONE,
 	END,
 	HUB,
+	IMPASSE,
+	impasseKey,
 	MAIN,
 	phaseEntry,
 	START,
@@ -20,6 +22,12 @@ export const EXIT = '__exit';
 
 /** A stage's debug leaf on the canvas. */
 export const debugNodeID = (stage: string) => `__debug:${stage}`;
+
+/** A stage's impasse leaf on the canvas. */
+export const impasseNodeID = (stage: string) => `__impasse:${stage}`;
+
+/** The stage whose leaf (debug or impasse) a node id names, or undefined. */
+const leafStage = (id: string) => /^__(?:debug|impasse):(.+)$/.exec(id)?.[1];
 
 /** A chain's marker: dragging it takes the chain along. */
 export const isMarker = (id: string) => id === '__start' || id.startsWith('__trigger:');
@@ -34,13 +42,15 @@ export const nodeKey = (id: string) =>
 				? ABORT
 				: id.startsWith('__debug:')
 					? debugKey(id.slice('__debug:'.length))
-					: id === '__start'
-						? START
-						: id === '__hub'
-							? HUB
-							: /^__(trigger|section|end|done|abort):/.test(id)
-								? id.slice(2)
-								: id;
+					: id.startsWith('__impasse:')
+						? impasseKey(id.slice('__impasse:'.length))
+						: id === '__start'
+							? START
+							: id === '__hub'
+								? HUB
+								: /^__(trigger|section|end|done|abort):/.test(id)
+									? id.slice(2)
+									: id;
 
 /** What a finished connection asks of the document, or null when it asks
  *  nothing: the arguments of FlowGraph's onlink. */
@@ -48,8 +58,9 @@ export function linkOf(
 	conn: Connection
 ): { source: string; handle: string; target: string } | null {
 	if (!conn.source || !conn.target) return null;
-	// A debug leaf's own handle carries the drawn return edge only.
-	if (conn.source.startsWith('__debug:')) return null;
+	// A debug leaf's own handle carries the drawn return edge only; an
+	// impasse leaf has none.
+	if (leafStage(conn.source)) return null;
 	// Dataflow dots are not rewireable: an artifact path is what connects two
 	// stages, so a drag from one must not be read as a control-flow rewire
 	// (setEdge's fallthrough would silently overwrite on_timeout).
@@ -64,7 +75,9 @@ export function linkOf(
 				? end
 				: conn.target.startsWith('__debug:')
 					? DEBUG
-					: conn.target;
+					: conn.target.startsWith('__impasse:')
+						? IMPASSE
+						: conn.target;
 	if (isMarker(conn.source)) return { source: START, handle: 'entry', target }; // re-point the (phase's) entry
 	return { source: conn.source, handle: conn.sourceHandle ?? 'success', target };
 }
@@ -73,8 +86,9 @@ export function linkOf(
 export function nodeSelection(doc: FlowDoc, id: string): Selection {
 	// A watcher's or an outcome's own end opens its panel.
 	const own = /^__(?:end|done|abort):(.+)$/.exec(id)?.[1];
-	return id.startsWith('__debug:')
-		? { kind: 'stage', id: id.slice('__debug:'.length) }
+	const leaf = leafStage(id);
+	return leaf
+		? { kind: 'stage', id: leaf }
 		: id.startsWith('__trigger:')
 			? { kind: 'phase', id: id.slice('__trigger:'.length) }
 			: own

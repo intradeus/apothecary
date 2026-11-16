@@ -76,13 +76,18 @@ func TestValidateAnswerByKind(t *testing.T) {
 		{"decline with note", event.AnswerForm, "decline", "none of these fit", "", true},
 		{"decline without note", event.AnswerForm, "decline", " ", "", false},
 		{"form other word", event.AnswerForm, "other", "x", "", false},
+		{"one of the choices", event.AnswerChoice, "skip", "", "", true},
+		{"a choice with its note", event.AnswerChoice, "explain", "because", "", true},
+		{"a choice missing its note", event.AnswerChoice, "explain", "  ", "", false},
+		{"not a choice", event.AnswerChoice, "approve", "", "", false},
 	}
+	choices := []event.Choice{{ID: "skip"}, {ID: "explain", NoteRequired: true}}
 	for _, c := range cases {
 		ans := PingAnswer{Answer: c.answer, Feedback: c.feedback}
 		if c.content != "" {
 			ans.Content = content(t, c.content)
 		}
-		err := validateAnswer(c.kind, testForm(), &ans)
+		err := validateAnswer(c.kind, testForm(), choices, &ans)
 		if (err == nil) != c.ok {
 			t.Errorf("%s: err=%v, want ok=%v", c.name, err, c.ok)
 		}
@@ -95,7 +100,7 @@ func TestValidateFormTidiesContent(t *testing.T) {
 	ans := PingAnswer{Answer: "accept", Content: content(t, `{"db":" pg ","why":"","tests":["t1","t1"]}`)}
 	f := testForm()
 	f.Fields[1].MaxItems = nil
-	if err := validateAnswer(event.AnswerForm, f, &ans); err != nil {
+	if err := validateAnswer(event.AnswerForm, f, nil, &ans); err != nil {
 		t.Fatal(err)
 	}
 	if ans.Content["db"] != "pg" {

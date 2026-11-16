@@ -19,11 +19,12 @@ import {
 	feedDots,
 	feedSourceFor,
 	givesVerdict,
+	IMPASSE,
 	parksOnDebug,
 	phaseEntry,
 	SOURCE_VERDICT
 } from '$lib/domain/flowdoc';
-import { debugNodeID, EXIT } from '$lib/flow/graph/ids';
+import { debugNodeID, EXIT, impasseNodeID } from '$lib/flow/graph/ids';
 import { chainHue, type Scene } from '$lib/flow/graph/scene';
 import type { Selection } from '$lib/flow/graph/selection';
 
@@ -152,17 +153,20 @@ function stageEdges(sc: Scene, pick: (sel: Selection) => void): Edge[] {
 						? '__fail'
 						: link.to === DEBUG
 							? debugNodeID(s.id)
-							: link.to === END || link.to === DONE || link.to === ABORT
-								? termNode(s.phase, link.to)
-								: link.to,
+							: link.to === IMPASSE
+								? impasseNodeID(s.id)
+								: link.to === END || link.to === DONE || link.to === ABORT
+									? termNode(s.phase, link.to)
+									: link.to,
 				targetHandle: dot ? `in:${dot}` : undefined,
 				type: 'labeled',
 				data: { row, pick: () => pick({ kind: 'edge', stage: s.id, edge: kind }) },
 				// "fail ×3": the word as well as the hue, so colour is never the
-				// only signal; "then#1" marks a fallback link. A debug link
-				// names no target: its leaf sits right under the stage.
+				// only signal; "then#1" marks a fallback link. A debug or an
+				// impasse link names no target: its leaf sits right under the
+				// stage.
 				label:
-					link.to === DEBUG
+					link.to === DEBUG || link.to === IMPASSE
 						? `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''}`
 						: link.to === ABORT || link.to === END || link.to === DONE || link.to === FAIL
 							? `${word(kind)}${depth > 0 ? ` · then#${depth}` : ''} ${I.forward} ${link.to}`

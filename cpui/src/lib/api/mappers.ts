@@ -55,6 +55,7 @@ import { BUCKETS, DIRECTIONS, PANEL_WIDTHS, VIZES } from '$lib/domain';
 import { normalizeDoc, PHASE_KINDS, OPERATES_ON, type OperatesOn } from '$lib/domain/flowdoc';
 import {
 	answerKindOf,
+	toPingChoices,
 	toCuratedMap,
 	toFormContent,
 	toPingForm,
@@ -171,6 +172,7 @@ const PING_TYPES: PingType[] = [
 	'gate',
 	'debug',
 	'manual',
+	'impasse',
 	'phase_confirm',
 	'select',
 	'clarification',
@@ -549,6 +551,7 @@ export function toPing(w: Wire.PingView): Ping {
 		primaryRef: w.payload_ref,
 		answerKind: answerKindOf(w.answer_kind, w.type),
 		form: toPingForm(w.form),
+		choices: toPingChoices(w.choices),
 		phase: w.phase || undefined,
 		endsPhase: w.ends_phase ?? false,
 		answer: w.answer,
