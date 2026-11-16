@@ -98,6 +98,10 @@ func TestJSONKeysMatchSpec(t *testing.T) {
 			`{"ping_id":"p","type":"clarification","question":"q","context":"ctx","files":["artifacts/plan.md"]}`},
 		{&PingRaised{PingID: "g", Type: "gate", Question: "q", Link: "https://git.local/mr/1"},
 			`{"ping_id":"g","type":"gate","question":"q","link":"https://git.local/mr/1"}`},
+		{&PingRaised{PingID: "d", Type: "debug", Question: "q", Trees: map[string]string{"repo": "aa"}},
+			`{"ping_id":"d","type":"debug","question":"q","trees":{"repo":"aa"}}`},
+		{&HandEdits{PingID: "d", StageID: "test", Checkouts: []CheckoutEdits{{Checkout: "repo", Paths: []string{"go.sum"}}, {Checkout: "lib", Unknown: "gone"}}},
+			`{"ping_id":"d","stage_id":"test","checkouts":[{"checkout":"repo","paths":["go.sum"]},{"checkout":"lib","unknown":"gone"}]}`},
 		{&PingAnswered{PingID: "p", Answer: "approve", AttachmentIDs: []string{"a1"},
 			Review: []ReviewComment{{Path: "artifacts/plan.md", StartLine: 2, EndLine: 3, Quote: "q", Body: "b", AttachmentIDs: []string{"a1"}}}},
 			`{"ping_id":"p","answer":"approve","attachment_ids":["a1"],"review":[{"path":"artifacts/plan.md","start_line":2,"end_line":3,"quote":"q","body":"b","attachment_ids":["a1"]}]}`},
@@ -201,7 +205,7 @@ func TestEveryRegisteredTypeRoundTrips(t *testing.T) {
 		&RunRetried{}, &RunPaused{}, &RunUnpaused{}, &EnvDestroyed{}, &EnvDestroyFailed{}, &EnvRebuildStarted{},
 		&EnvRebuildCompleted{}, &EnvRebuildFailed{}, &ServiceStarted{}, &ServiceReady{}, &ServiceStopped{},
 		&ServiceFailed{}, &AgentSession{}, &AgentPrompted{}, &AgentMessage{}, &AgentTool{}, &AgentPlan{},
-		&AgentNotice{}, &MessageQueued{}, &MessageDelivered{}, &HoldTaken{}, &HoldReleased{},
+		&AgentNotice{}, &MessageQueued{}, &MessageDelivered{}, &HoldTaken{}, &HoldReleased{}, &HandEdits{},
 	}
 	seen := map[Type]bool{}
 	for _, p := range payloads {

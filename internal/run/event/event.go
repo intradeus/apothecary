@@ -50,7 +50,11 @@ const (
 	// they point at can be any size — which is what makes "the plan the human
 	// rejected at attempt 1" answerable after the workspace is long gone.
 	TypeSnapshotCaptured Type = "snapshot_captured"
-	TypeMRCreated        Type = "mr_created"
+	// TypeHandEdits records what a person changed in the workspace at the
+	// debug leaf before they continued: the paths, per checkout (FLOWLANG §3,
+	// the run journal). Best effort, said so when it could not be known.
+	TypeHandEdits Type = "hand_edits"
+	TypeMRCreated Type = "mr_created"
 	// Phases (PLAN6): a phase run starting on one merge request (its
 	// subject), ending, or a human declining to start one.
 	TypePhaseStarted   Type = "phase_started"
@@ -530,6 +534,28 @@ type PingRaised struct {
 	// goes back to waiting — the phase is a watcher (FLOWLANG §3). False:
 	// giving up abandons the run.
 	EndsPhase bool `json:"ends_phase,omitempty"`
+	// Trees, on a debug ping: each checkout's working copy as the run parked,
+	// as a git tree (uncommitted and new files included, ignored ones not),
+	// by checkout name — what hand_edits compares the continue against. A
+	// checkout whose tree could not be taken is absent.
+	Trees map[string]string `json:"trees,omitempty"`
+}
+
+// HandEdits: the files a person changed at the debug leaf, between the run
+// parking (PingRaised.Trees) and their continue. One entry per checkout;
+// Unknown says why a checkout's changes could not be determined (its
+// workspace recreated while parked, git failing), and then Paths is empty.
+type HandEdits struct {
+	PingID    string          `json:"ping_id"`
+	StageID   string          `json:"stage_id"`
+	Checkouts []CheckoutEdits `json:"checkouts"`
+}
+
+// CheckoutEdits is one checkout's hand edits.
+type CheckoutEdits struct {
+	Checkout string   `json:"checkout"`
+	Paths    []string `json:"paths,omitempty"`
+	Unknown  string   `json:"unknown,omitempty"`
 }
 
 // PhaseStarted: a phase run begins. Subject is the checkout whose merge
@@ -1032,6 +1058,7 @@ func (*VerdictReceived) EventType() Type { return TypeVerdictReceived }
 func (*ActionStarted) EventType() Type   { return TypeActionStarted }
 
 func (*SnapshotCaptured) EventType() Type { return TypeSnapshotCaptured }
+func (*HandEdits) EventType() Type        { return TypeHandEdits }
 func (*MRCreated) EventType() Type        { return TypeMRCreated }
 func (*PhaseStarted) EventType() Type     { return TypePhaseStarted }
 func (*PhaseCompleted) EventType() Type   { return TypePhaseCompleted }

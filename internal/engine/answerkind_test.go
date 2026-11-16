@@ -87,9 +87,30 @@ func TestValidateAnswerByKind(t *testing.T) {
 		if c.content != "" {
 			ans.Content = content(t, c.content)
 		}
-		err := validateAnswer(c.kind, testForm(), choices, &ans)
+		err := validateAnswer(event.PingClarification, c.kind, testForm(), choices, &ans)
 		if (err == nil) != c.ok {
 			t.Errorf("%s: err=%v, want ok=%v", c.name, err, c.ok)
+		}
+	}
+}
+
+// A continue at the debug leaf says what the person did; giving up, and a
+// gate's approval, need no word.
+func TestDebugContinueNeedsASummary(t *testing.T) {
+	for _, c := range []struct {
+		typ, answer, feedback string
+		ok                    bool
+	}{
+		{event.PingDebug, "approve", "", false},
+		{event.PingDebug, "approve", "  \n", false},
+		{event.PingDebug, "approve", "nothing: a flaky test", true},
+		{event.PingDebug, "reject", "", true},
+		{event.PingGate, "approve", "", true},
+		{event.PingManual, "approve", "", true},
+	} {
+		err := validateAnswer(c.typ, event.AnswerYesNo, nil, nil, &PingAnswer{Answer: c.answer, Feedback: c.feedback})
+		if (err == nil) != c.ok {
+			t.Errorf("%s %s %q: %v, want ok=%v", c.typ, c.answer, c.feedback, err, c.ok)
 		}
 	}
 }
@@ -100,7 +121,7 @@ func TestValidateFormTidiesContent(t *testing.T) {
 	ans := PingAnswer{Answer: "accept", Content: content(t, `{"db":" pg ","why":"","tests":["t1","t1"]}`)}
 	f := testForm()
 	f.Fields[1].MaxItems = nil
-	if err := validateAnswer(event.AnswerForm, f, nil, &ans); err != nil {
+	if err := validateAnswer(event.PingClarification, event.AnswerForm, f, nil, &ans); err != nil {
 		t.Fatal(err)
 	}
 	if ans.Content["db"] != "pg" {

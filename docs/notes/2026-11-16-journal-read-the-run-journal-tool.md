@@ -56,4 +56,11 @@ decision, a 404, another run's token and none refused);
 `workspace/shim/journal_test.go` — the file written and rewritten over a
 read-only copy, records and inline, every failure a tool error, a rotated
 token retried, and the tool listed and called over MCP only below an agent;
-`TestServeMCPFraming` and `TestRunAskHuman` list both tools.
+`TestServeMCPFraming` and `TestRunAskHuman` list both tools. The plan's
+"one test per harness adapter that the tool is registered" is held in two
+halves, since an adapter registers the shim's server, never its tools one
+by one: each adapter's own test asserts the server for every agent, a
+read-only one's included (codex's config, omp's sessions, opencode's
+config and a read-only agent's front matter), and the shim's tests that
+the server lists `journal_read`. No adapter filters the server's tools but
+for the Ask pane.

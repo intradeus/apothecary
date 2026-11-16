@@ -26,9 +26,11 @@ func TestDevFakeWritesWhatTheContractAsks(t *testing.T) {
 		"- artifacts/review.yaml — review (review_threads): the review\n" +
 		"- artifacts/replies.yaml — replies (review_replies)\n" +
 		"- artifacts/commit.json — message (commit_message): the commit\n" +
+		"- artifacts/journal-notes.yaml — notes (journal_notes): significant departures\n" +
+		"- artifacts/notes.json — notes (journal_notes)\n" +
 		"artifacts/review/verdict.yaml is your verdict: APPROVE or REJECT.\n"
 	outs := declaredOutputs(prompt)
-	if len(outs) != 5 || outs[0] != (declaredOutput{path: "artifacts/plan.md"}) || outs[1] != (declaredOutput{path: "artifacts/review/verdict.yaml", typ: "verdict"}) ||
+	if len(outs) != 7 || outs[5] != (declaredOutput{path: "artifacts/journal-notes.yaml", typ: "journal_notes"}) || outs[0] != (declaredOutput{path: "artifacts/plan.md"}) || outs[1] != (declaredOutput{path: "artifacts/review/verdict.yaml", typ: "verdict"}) ||
 		outs[2].typ != "review_threads" || outs[3].typ != "review_replies" || outs[4] != (declaredOutput{path: "artifacts/commit.json", typ: "commit_message"}) {
 		t.Fatalf("declared = %+v", outs)
 	}
@@ -42,7 +44,7 @@ func TestDevFakeWritesWhatTheContractAsks(t *testing.T) {
 		got[out.path] = string(b)
 	}
 	if !strings.HasPrefix(got["artifacts/plan.md"], "# Dev stub") || !strings.Contains(got["artifacts/review/verdict.yaml"], "verdict: APPROVE") ||
-		!strings.HasPrefix(got["artifacts/commit.json"], "{") {
+		!strings.HasPrefix(got["artifacts/commit.json"], "{") || got["artifacts/journal-notes.yaml"] != "notes: []\n" || got["artifacts/notes.json"] != "{\n  \"notes\": []\n}\n" {
 		t.Errorf("stubs = %q", got)
 	}
 	if rev, err := reviewfile.ParseReview("artifacts/review.yaml", []byte(got["artifacts/review.yaml"])); err != nil || rev.Summary == "" || len(rev.Notes) != 0 {

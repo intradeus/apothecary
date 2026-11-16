@@ -270,8 +270,10 @@ func (p *parser) buildPort(pr DocPortPair, dir portDir, st StageType, stage stri
 		switch {
 		case d.From != "":
 			return port, fmt.Errorf("an output goes somewhere: to: a path, not from:")
-		case d.Optional:
-			return port, fmt.Errorf("optional is an input's: an output is always written")
+		case d.Optional && st == StageAction:
+			return port, fmt.Errorf("optional is an agent's or a command's output: an action writes what it writes")
+		case d.Optional && d.Type == agentspec.TypeVerdict:
+			return port, fmt.Errorf("a verdict routes its stage, so it is always written — it cannot be optional")
 		case d.Limit != nil || d.ExcludeOwn != nil:
 			return port, fmt.Errorf("limit and exclude_own are a %s input's", SourceTicketComments)
 		case d.To == "":

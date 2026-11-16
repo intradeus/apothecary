@@ -287,9 +287,45 @@ describe('PortRows', () => {
 			expect(stage.input?.a.optional).toBeUndefined();
 		});
 
-		it('is an input’s only', () => {
-			output({ output: { a: { to: 'x' } } });
+		it('lets an agent’s or a command’s output be left unwritten', async () => {
+			const { stage } = output({ output: { a: { to: 'x', type: 'file' } } });
+			await userEvent.click(optional());
+			expect(stage.output?.a).toEqual({ to: 'x', type: 'file', optional: true });
+			await userEvent.click(optional());
+			expect(stage.output?.a.optional).toBeUndefined();
+		});
+
+		it('keeps an output’s optional through an edit', async () => {
+			const { stage } = output({ output: { a: { to: 'x', type: 'file', optional: true } } });
+			await fill(screen.getByLabelText(/^To/), 'y');
+			expect(stage.output?.a).toEqual({ to: 'y', type: 'file', optional: true });
+		});
+
+		it('is never a verdict’s, nor an action’s output', () => {
+			output({ output: { v: { to: 'v.json', type: 'verdict' } } });
 			expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+		});
+
+		it('is never an action’s output', () => {
+			const stage = live(
+				aStage('l', 'action', {
+					output: { t: { to: 't.yaml', type: 'mr_threads', optional: true } }
+				})
+			);
+			render(PortRows, { stage, field: 'output', onchange: handlers().onchange });
+			expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+		});
+
+		it('starts journal notes required: an agent with none writes the file empty', async () => {
+			const { stage } = output(
+				{},
+				{ declared: [{ name: 'notes', type: 'journal_notes', required: true }] }
+			);
+			await fill(screen.getByLabelText(/^To/), 'artifacts/journal-notes.yaml');
+			expect(stage.output?.notes).toEqual({
+				to: 'artifacts/journal-notes.yaml',
+				type: 'journal_notes'
+			});
 		});
 	});
 

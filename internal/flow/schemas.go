@@ -316,8 +316,8 @@ func describeViolations(err error) string {
 // builtinTypeSchemas are the shapes of the structured built-in types, each
 // shown verbatim in the agent's OUTPUT CONTRACT and checked like a flow
 // schema: the verdict the router reads, the commit message the commit
-// action reads, and the three review documents (reviewfile), which the
-// review actions post and load.
+// action reads, the notes the run journal reads, and the three review
+// documents (reviewfile), which the review actions post and load.
 var builtinTypeSchemas = map[string]*DataSchema{}
 
 func init() {
@@ -348,6 +348,27 @@ func init() {
     }
   },
   "required": ["verdict"],
+  "additionalProperties": false
+}`,
+		agentspec.TypeJournalNotes: `{
+  "type": "object",
+  "properties": {
+    "notes": {
+      "type": ["array", "null"],
+      "description": "your notes, one per departure: [] (or nothing after the key) when there is none",
+      "items": {
+        "type": "object",
+        "properties": {
+          "did": {"type": "string", "minLength": 1, "description": "the significant departure from your direction — the plan, the ticket, a verdict you were sent — that you made on your own: a step not followed or done another way, scope dropped or added, a verdict point not applied"},
+          "why": {"type": "string", "minLength": 1, "description": "why you did it"},
+          "files": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "optional: the files it touched, relative to the repository root"}
+        },
+        "required": ["did", "why"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["notes"],
   "additionalProperties": false
 }`,
 		agentspec.TypeCommitMessage: `{

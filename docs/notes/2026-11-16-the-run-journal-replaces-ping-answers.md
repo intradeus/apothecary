@@ -20,7 +20,13 @@ section in three parts, built from the event log as the prompt is built
   place of a question, since a skip or a keep going overrules or upholds a
   verdict whether or not a note was written. A gate's reject reads "sent it
   back", a debug continue "continued", in words rather than `approve` /
-  `reject`. None is ever dropped: the 32 KiB cap is gone, and a body past
+  `reject`. Each carries what it answers (the plan's 2.1): a gate's, the
+  files and link it showed; a skip at the impasse, the outputs the stage
+  declares and did not write — what a later stage will not find; a debug
+  continue, the end of the failure's output. Who decided is not named: the
+  journal says "the owner" (a skip, "skipped by the owner" against a
+  `run_if`'s plain "skipped"), as an account id tells an agent nothing.
+  None is ever dropped: the 32 KiB cap is gone, and a body past
   1500 bytes shows its head, cut on a line, and names the
   `journal_read(id: "decision-<n>")` call that gives all of it.
 - **Passes**: per stage, how many and how the latest went — its end
@@ -48,5 +54,9 @@ decisions, none dropped and each cut with its id
 (`TestTheLedgerDropsNoDecision`); which pings count (`TestJournalDecides`);
 each pass's end, verdict and edge read off the log
 (`TestBuildJournalReadsEachPass`); the decision words; the pass ids round
-trip; an attachment named in its decision; an unreadable log said so. The
+trip; an attachment named in its decision; an unreadable log said so;
+`TestDecisionsCarryWhatTheyAnswer` (a gate's files and link, a failure's
+output, a skip's unwritten outputs); `TestALongRun` (3000 passes and their
+notes leave the ledger a line per stage and 30 notes, under 16 KiB, and a
+5 MiB log is written to its pass's file whole). The
 UI's agent editor previews the section under its new name.

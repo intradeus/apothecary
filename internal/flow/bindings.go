@@ -259,8 +259,8 @@ func definitelyProduced(f *Flow, consumer *Stage, path string) bool {
 			return false // a conditional producer, or one a person may skip at its impasse
 		}
 		for _, o := range st.Outputs {
-			if o.Value == path {
-				return true
+			if o.Value == path && !o.Optional {
+				return true // an optional output may be left unwritten
 			}
 		}
 		return false
@@ -492,6 +492,10 @@ func sourceHolds(f *Flow, st *Stage, in Port, warnf func(string, ...any)) error 
 	if !in.Optional && !definitelyProduced(f, st, in.Value) {
 		why := ""
 		for _, w := range ws {
+			if w.port.Optional {
+				why = fmt.Sprintf("; stage %q's output %q is optional", w.stage.ID, w.port.Name)
+				break
+			}
 			if w.stage.Skippable() {
 				why = fmt.Sprintf("; stage %q may be skipped at its %s", w.stage.ID, ReservedImpasse)
 				break

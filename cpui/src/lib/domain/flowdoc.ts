@@ -156,6 +156,7 @@ export const FILE_TYPES = [
 	'review_replies',
 	'mr_threads',
 	'commit_message',
+	'journal_notes',
 	'files'
 ];
 /** A verdict is also what edge.verdict gives: the one file type an engine

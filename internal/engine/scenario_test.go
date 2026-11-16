@@ -1625,7 +1625,7 @@ func TestDebugContinueRestoresRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := h.waitPing(t, PingDebug)
-	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err != nil {
+	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve", Feedback: "fixed the env"}); err != nil {
 		t.Fatal(err)
 	}
 	p2 := h.waitPing(t, PingDebug, p.ID)
@@ -1691,7 +1691,7 @@ func TestDebugLeafSurvivesRestart(t *testing.T) {
 	if v := h.view(t, "r-dbg"); v.State != run.WaitingOnHuman || !v.Dormant {
 		t.Fatalf("after boot: state %s dormant %v, want parked on the debug stop", v.State, v.Dormant)
 	}
-	if err := h.e.AnswerPing("dbg-r-dbg", PingAnswer{Answer: "approve"}); err != nil {
+	if err := h.e.AnswerPing("dbg-r-dbg", PingAnswer{Answer: "approve", Feedback: "fixed the env"}); err != nil {
 		t.Fatal(err)
 	}
 	h.e.Wait("r-dbg")

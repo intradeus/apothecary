@@ -100,6 +100,11 @@ type OutputDecl struct {
 //     (reviewfile.Threads).
 //   - TypeCommitMessage is a commit's message, which commit reads:
 //     {subject, body?}.
+//   - TypeJournalNotes is an agent's notes for the run journal, which the
+//     journal reads: a list of {did, why, files?} — what the agent did
+//     differently from its direction (the plan, the ticket, a verdict it was
+//     sent) on its own, without asking. Written only when there is one, so a
+//     port of it is optional.
 //   - TypeFiles is a directory of files (its path ends in "/"): screenshots,
 //     a report's pages. It holds at least one file; create_mr and
 //     ticket_comment attach one. Unlike the others it is not one file, so
@@ -120,6 +125,7 @@ const (
 	TypeReviewReplies = "review_replies"
 	TypeMRThreads     = "mr_threads"
 	TypeCommitMessage = "commit_message"
+	TypeJournalNotes  = "journal_notes"
 	TypeFiles         = "files"
 
 	TypeTicket         = "ticket"
@@ -132,7 +138,7 @@ const (
 
 // FileTypes and ValueTypes list the port types by kind.
 var (
-	FileTypes  = []string{TypeFile, TypeVerdict, TypeReviewThreads, TypeReviewReplies, TypeMRThreads, TypeCommitMessage, TypeFiles}
+	FileTypes  = []string{TypeFile, TypeVerdict, TypeReviewThreads, TypeReviewReplies, TypeMRThreads, TypeCommitMessage, TypeJournalNotes, TypeFiles}
 	ValueTypes = []string{TypeTicket, TypeTicketComments, TypeJournal, TypeChangeset, TypeFailure, TypeLink}
 )
 

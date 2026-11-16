@@ -9,11 +9,16 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
+	"apothecary/internal/adapters/fake"
+	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/platform/filestore"
+	"apothecary/internal/ports/agentport"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runcore"
+	"apothecary/internal/run/runinput"
 )
 
 // journalFlowDoc: build, then a review and a last look that read the run
@@ -280,7 +285,7 @@ func TestDecisionWords(t *testing.T) {
 		want string
 	}{
 		{run.PingView{Type: event.PingGate, Answer: "approve", Feedback: "fine"}, "approved\n(note: fine)"},
-		{run.PingView{Type: event.PingDebug, Answer: "approve", Feedback: "fixed"}, "continued: the failing stage ran again\n(note: fixed)"},
+		{run.PingView{Type: event.PingDebug, Answer: "approve", Feedback: "fixed"}, "continued: the failing stage ran again\nWhat they did: fixed"},
 		{run.PingView{Type: event.PingDebug, Answer: "reject", Feedback: "no"}, "gave up\n(note: no)"},
 		{run.PingView{Type: event.PingManual, Answer: "approve", Feedback: "did it"}, "done by hand\n(note: did it)"},
 		{run.PingView{Type: event.PingManual, Answer: "reject", Feedback: "no"}, "gave up\n(note: no)"},
@@ -298,6 +303,40 @@ func TestDecisionWords(t *testing.T) {
 	d := &jDecision{id: "decision-1", ping: run.PingView{Type: event.PingImpasse, StageID: "review", Question: "review rejected once"}}
 	if got := decisionBlock(d, 100); strings.Contains(got, "The verdict it answers") || !strings.Contains(got, "### impasse at review [decision-1]\n") {
 		t.Errorf("an impasse with no verdict on record:\n%s", got)
+	}
+}
+
+// A decision carries what it answers (the plan's 2.1): a gate, the files
+// and the link it showed; a debug continue, the end of the failure's output;
+// a skip at the impasse, the outputs the stage did not write — what a later
+// stage will not find.
+func TestDecisionsCarryWhatTheyAnswer(t *testing.T) {
+	evs := []event.Event{
+		{Payload: &event.PingRaised{PingID: "g", Type: event.PingGate, StageID: "plan_gate", Question: "Approve the plan?",
+			Files: []string{"artifacts/plan.md"}, Link: "https://git.local/mr/1"}},
+		{Payload: &event.PingAnswered{PingID: "g", Answer: "reject", Feedback: "smaller steps"}},
+		{Payload: &event.PingRaised{PingID: "d", Type: event.PingDebug, StageID: "test", Question: "test failed", Context: "FAIL: TestCart\nexit status 1\n"}},
+		{Payload: &event.PingAnswered{PingID: "d", Answer: "approve", Feedback: "restarted the db"}},
+		{Payload: &event.PingRaised{PingID: "i", Type: event.PingImpasse, StageID: "review", Question: "review rejected 5 times",
+			AnswerKind: event.AnswerChoice, Choices: event.ImpasseChoices()}},
+		{Payload: &event.PingAnswered{PingID: "i", Answer: event.ChoiceSkip}},
+		{Payload: &event.PingRaised{PingID: "bare", Type: event.PingGate, StageID: "plan_gate", Question: "Again?"}},
+		{Payload: &event.PingAnswered{PingID: "bare", Answer: "reject", Feedback: "no"}},
+	}
+	got := renderLedger(buildJournal(evs, impasseFlow(t, "{ to: build, max: 2, then: impasse }"), nil), "journal", "")
+	for _, want := range []string{
+		"Asked:\n> Approve the plan?\nIt showed: artifacts/plan.md, https://git.local/mr/1\nDecided:\n> sent it back\n",
+		"Asked:\n> test failed\nWhat failed (the end of its output):\n> FAIL: TestCart\n> exit status 1\nDecided:\n> continued",
+		"\n> It would have written, and did not: verdict (artifacts/verdict.json)\n",
+		"Asked:\n> Again?\nDecided:\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("ledger missing %q:\n%s", want, got)
+		}
+	}
+	// A skip of a stage the flow no longer has names no outputs.
+	if got := renderLedger(buildJournal(evs, nil, nil), "journal", ""); strings.Contains(got, "would have written") {
+		t.Errorf("outputs named with no flow:\n%s", got)
 	}
 }
 
@@ -603,7 +642,320 @@ func TestPassRecordWords(t *testing.T) {
 	if got := snapWords(jSnap{size: 9, truncated: true}); got != "(unnamed), 9 bytes, captured truncated" {
 		t.Errorf("snapWords = %q", got)
 	}
-	if got := (&Engine{}).journalRecords(context.Background(), j); got != "# RUN JOURNAL — every record\n\n## Owner decisions\nNone.\n\n## Passes\nNone.\n" {
+	if got := (&Engine{}).journalRecords(context.Background(), j); got != "# RUN JOURNAL — every record\n\n## Owner decisions\nNone.\n\n## Agent notes\n"+
+		"What agents said they did differently from their direction — their claims, to check against the work.\nNone.\n\n## Passes\nNone.\n" {
 		t.Errorf("empty records = %q", got)
+	}
+}
+
+// notesFlowDoc: a builder that may leave notes, then a last look that reads
+// the journal.
+const notesFlowDoc = `name: noted
+version: 5
+parameters: { harness: fake, model: fake/model }
+agents:
+  - name: builder
+    prompt: build it
+    outputs:
+      - { name: notes, type: journal_notes, description: "what you did differently" }
+  - name: looker
+    prompt: look at it
+    inputs:
+      - { name: journal, type: journal }
+main:
+  - { id: build, type: agent, harness: $harness, model: $model, agent: builder,
+      output: { notes: { to: artifacts/journal-notes.yaml, type: journal_notes } } }
+  - { id: look, type: agent, harness: $harness, model: $model, agent: looker,
+      input: { journal: { from: run.journal, type: journal } } }
+`
+
+// runNoted runs notesFlowDoc with the builder writing notes (nil: none) and
+// returns its harness, the run and its events.
+func runNoted(t *testing.T, notes []byte) (*harness, string, []event.Event) {
+	t.Helper()
+	att, snaps, _ := newFiles(t)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, notesFlowDoc))
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		if call.Spec.Agent == "builder" && notes != nil {
+			if err := h.envp.WriteFile(ctx, call.Env, "artifacts/journal-notes.yaml", notes, 0o644); err != nil {
+				return agentport.AgentResult{}, err
+			}
+		}
+		return agentport.AgentResult{TurnsUsed: 1}, nil
+	}
+	ctx := context.Background()
+	id, err := h.e.CreateRun(ctx, runinput.Ticket{Title: "T"}, "noted", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(id)
+	evs, err := h.store.Events(ctx, id, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h, id, evs
+}
+
+// A builder that notes doing something differently: the next stage's ledger
+// lists the note as the builder's claim, under its pass and with its id, and
+// journal_read gives it whole. The builder's own contract said it may write
+// it, and what goes in.
+func TestAgentNotesReachTheJournal(t *testing.T) {
+	h, id, _ := runNoted(t, []byte("notes:\n  - did: kept the old endpoint beside the new one\n    why: the mobile client still calls it\n    files: [api/routes.go]\n"))
+	var build, look string
+	for _, c := range h.runner.RunCalls {
+		if c.Spec.Agent == "builder" {
+			build = c.In.Prompt
+		} else {
+			look = c.In.Prompt
+		}
+	}
+	for _, want := range []string{
+		"Before finishing you MUST write these files (relative to repo root):\n- artifacts/journal-notes.yaml — notes (journal_notes): what you did differently\n",
+		"artifacts/journal-notes.yaml holds your notes for the run journal: only the significant departures from your direction",
+		"Not the choices any work makes within its direction (a name, a helper, the order of the steps): most passes have no note, and then you still write the file, holding notes: [] — it is how the run knows you considered it.",
+		"Not what a person answered you",
+		"artifacts/journal-notes.yaml must be YAML satisfying this JSON Schema",
+	} {
+		if !strings.Contains(build, want) {
+			t.Errorf("builder prompt missing %q:\n%s", want, build)
+		}
+	}
+	for _, want := range []string{
+		"\n## Agent notes\nWhat agents said they did differently from their direction, on their own. These are their claims, not the owner's direction",
+		"- build-1: kept the old endpoint beside the new one — why: the mobile client still calls it (files: api/routes.go) [note-1]\n",
+		"journal_read(id: \"note-<n>\") a note",
+	} {
+		if !strings.Contains(look, want) {
+			t.Errorf("ledger missing %q:\n%s", want, look)
+		}
+	}
+	_, decisions, _ := strings.Cut(look, "## Owner decisions")
+	decisions, _, _ = strings.Cut(decisions, "## Agent notes")
+	if decisions == "" || strings.Contains(decisions, "kept the old endpoint") {
+		t.Errorf("a note is listed among the owner's decisions:\n%s", decisions)
+	}
+	n, err := h.e.JournalRead(context.Background(), id, "note-1")
+	if err != nil || n.File != "" || n.Text != "### note from build-1 [note-1]\nDid:\n> kept the old endpoint beside the new one\nWhy:\n> the mobile client still calls it\nFiles: api/routes.go\n" {
+		t.Errorf("note = %+v, %v", n, err)
+	}
+	all, _ := h.e.JournalRead(context.Background(), id, "")
+	pass, _ := h.e.JournalRead(context.Background(), id, "build-1")
+	if !strings.Contains(all.Text, "## Agent notes\n") || !strings.Contains(all.Text, "### note from build-1 [note-1]") || !strings.Contains(pass.Text, "Its notes: note-1\n") {
+		t.Errorf("records:\n%s\npass:\n%s", all.Text, pass.Text)
+	}
+}
+
+// Notes are required: every pass writes the file, its key included, so the
+// run knows the agent considered it. None written fails the stage
+// (output_contract); the key with an empty list, or with nothing after it,
+// is no note; an empty file, or notes out of shape, fail it (output_invalid).
+func TestAgentNotesRequiredButMayBeEmpty(t *testing.T) {
+	failure := func(evs []event.Event) *event.StageFailed {
+		for _, e := range evs {
+			if f, ok := e.Payload.(*event.StageFailed); ok && f.StageID == "build" {
+				return f
+			}
+		}
+		return nil
+	}
+	if f := failure(func() []event.Event { _, _, evs := runNoted(t, nil); return evs }()); f == nil || f.Reason != event.ReasonOutputContract {
+		t.Errorf("no notes file: %+v", f)
+	}
+	for _, empty := range []string{"notes: []\n", "notes:\n", `{"notes": []}`} {
+		h, id, evs := runNoted(t, []byte(empty))
+		if f := failure(evs); f != nil {
+			t.Errorf("%q failed the stage: %+v", empty, f)
+		}
+		var look string
+		for _, c := range h.runner.RunCalls {
+			if c.Spec.Agent == "looker" {
+				look = c.In.Prompt
+			}
+		}
+		if !strings.Contains(look, "None: no agent has noted doing anything differently from its direction.") {
+			t.Errorf("%q: notes in the ledger:\n%s", empty, look)
+		}
+		if pass, err := h.e.JournalRead(context.Background(), id, "build-1"); err != nil || strings.Contains(pass.Text, "Its notes") {
+			t.Errorf("%q: pass record = %v\n%s", empty, err, pass.Text)
+		}
+	}
+	for _, bad := range []string{"", "[]\n", "did: just one thing\n", "notes:\n  - did: x\n"} {
+		if f := failure(func() []event.Event { _, _, evs := runNoted(t, []byte(bad)); return evs }()); f == nil || f.Reason != event.ReasonOutputInvalid {
+			t.Errorf("%q: %+v", bad, f)
+		}
+	}
+	if noNotes("artifacts/notes.json") != `{"notes": []}` || noNotes("artifacts/journal-notes.yaml") != "notes: []" {
+		t.Error("how a notes file says there is none")
+	}
+}
+
+// The ledger lists this round's notes, up to its bound, and counts the rest
+// and the earlier rounds'; a long note is cut on one line; notes that cannot
+// be read are said so in their pass's record.
+func TestNotesBlock(t *testing.T) {
+	old := &jPass{id: "build-1", chainRun: 1}
+	now := &jPass{id: "fix-2", chainRun: 2}
+	j := &journal{chainRun: 2}
+	j.notes = append(j.notes, &jNote{id: "note-1", pass: old, did: "a", why: "b"})
+	for i := range journalNotesListed + 2 {
+		j.notes = append(j.notes, &jNote{id: fmt.Sprintf("note-%d", i+2), pass: now, did: "did\nthis", why: "why"})
+	}
+	got := notesBlock(j)
+	// The latest are listed: this round's first two (note-2, note-3) and the
+	// earlier round's are counted.
+	if strings.Count(got, "\n- fix-2: did this — why: why [note-") != journalNotesListed ||
+		strings.Contains(got, "[note-1]") || strings.Contains(got, "[note-2]") || strings.Contains(got, "[note-3]") ||
+		!strings.Contains(got, "[note-4]\n") || !strings.Contains(got, fmt.Sprintf("[note-%d]\n(", journalNotesListed+3)) {
+		t.Errorf("listed:\n%s", got)
+	}
+	if !strings.Contains(got, "(2 earlier from this round and 1 from earlier rounds: journal_read() writes them all.)\n") {
+		t.Errorf("counted:\n%s", got)
+	}
+	if got := notesBlock(&journal{chainRun: 2, notes: j.notes[:1]}); !strings.Contains(got, "None this round.\n(1 from earlier rounds: journal_read() writes them all.)\n") {
+		t.Errorf("only earlier:\n%s", got)
+	}
+	if got := notesBlock(&journal{}); got != "\n## Agent notes\nNone: no agent has noted doing anything differently from its direction.\n" {
+		t.Errorf("none = %q", got)
+	}
+	long := noteLine(&jNote{pass: now, did: strings.Repeat("é", 400), why: "y"})
+	if len(long) > journalNoteLine+len("…") || !strings.HasSuffix(long, "…") || !utf8.ValidString(long) {
+		t.Errorf("a long note = %d bytes, %q…", len(long), long[:20])
+	}
+}
+
+// Notes that cannot be read — swept, a store down, not notes — leave their
+// pass's record saying so, and the other passes' notes stand.
+func TestLoadNotesUnreadable(t *testing.T) {
+	h := newHarness(t, mustFlow(t, journalFlowDoc))
+	notesOf := func(id string) *jPass {
+		return &jPass{id: "b-1", outputs: []jSnap{{id: id, typ: agentspec.TypeJournalNotes}}}
+	}
+	for _, c := range []struct {
+		e    *Engine
+		want string
+	}{
+		{&Engine{log: h.e.log}, "no longer kept"},
+		{&Engine{log: h.e.log, snapshots: downSnapshots{}}, "could not be read just now"},
+		{&Engine{log: h.e.log, snapshots: binarySnapshots{}}, "not a notes file"},
+	} {
+		ps := notesOf("x")
+		j := &journal{passes: []*jPass{ps}, byNote: map[string]*jNote{}}
+		c.e.loadNotes(context.Background(), j)
+		if !strings.HasPrefix(ps.notesErr, c.want) || len(j.notes) != 0 {
+			t.Errorf("%T: %q", c.e.snapshots, ps.notesErr)
+		}
+		if rec := passRecord(j, ps); !strings.Contains(rec, "Its notes could not be read: "+c.want) {
+			t.Errorf("record:\n%s", rec)
+		}
+	}
+}
+
+// A long run (the plan's 2.7): thousands of passes and notes leave the
+// ledger the same size — a line per stage, the notes listed to their bound —
+// and a multi-megabyte pass is written to its file whole.
+func TestALongRun(t *testing.T) {
+	evs := []event.Event{{Payload: &event.PhaseStarted{Phase: "main"}}}
+	for i := 1; i <= 1000; i++ {
+		for _, st := range []string{"build", "review", "test"} {
+			evs = append(evs,
+				event.Event{Payload: &event.StageStarted{StageID: st, Iteration: i}},
+				event.Event{Payload: &event.StageCompleted{StageID: st, TurnsUsed: 3}},
+				event.Event{Payload: &event.SnapshotCaptured{StageID: st, Iteration: i, Kind: "log", SnapshotID: fmt.Sprintf("L%s%d", st, i), Size: 1 << 20}},
+				event.Event{Payload: &event.EdgeTaken{From: st, To: "build", Edge: "on_fail", Count: 1, Max: 5}})
+		}
+	}
+	j := buildJournal(evs, nil, nil)
+	for i, ps := range j.passes {
+		n := &jNote{id: fmt.Sprintf("note-%d", i+1), pass: ps, did: strings.Repeat("did ", 100), why: strings.Repeat("why ", 100)}
+		j.notes = append(j.notes, n)
+		j.byNote[n.id] = n
+	}
+	got := renderLedger(j, "journal", "")
+	if len(evs) < 4000 || len(j.passes) != 3000 {
+		t.Fatalf("events %d, passes %d", len(evs), len(j.passes))
+	}
+	_, passes, _ := strings.Cut(got, "\n## Passes\n")
+	if n := strings.Count(passes, "\n- "); n != 3 || !strings.Contains(passes, "- review: 1000 pass(es); the latest, review-1000: completed") {
+		t.Errorf("passes (%d lines):\n%s", n, passes)
+	}
+	if n := strings.Count(got, " [note-"); n > journalNotesListed {
+		t.Errorf("%d notes listed, bound %d", n, journalNotesListed)
+	}
+	if !strings.Contains(got, "- test-1000: did did") || strings.Contains(got, "[note-1]") ||
+		!strings.Contains(got, "(2970 earlier from this round: journal_read() writes them all.)") {
+		t.Errorf("not the latest listed, the rest counted:\n%.3000s", got)
+	}
+	if len(got) > 16<<10 {
+		t.Errorf("ledger is %d bytes after %d events", len(got), len(evs))
+	}
+
+	// A pass whose log is megabytes is written to its file whole.
+	mem := filestore.NewMem()
+	snaps := filestore.NewSnapshots(mem, filestore.NewBlobs(t.TempDir()), 8<<20)
+	fl := mustFlow(t, readFlowDoc)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Snapshots = snaps }, fl)
+	ctx := context.Background()
+	line := strings.Repeat("x", 79) + "\n"
+	big := strings.Repeat(line, 5<<20/len(line)) // 5 MiB
+	s, err := snaps.Capture(ctx, filestore.Snapshot{RunID: "r1", Kind: filestore.KindLog, StageID: "review", Iteration: 1, Filename: "review-1.log"},
+		func(s string) string { return s }, []byte(big))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.seed(t, "r1",
+		&event.RunCreated{TicketTitle: "T", FlowName: "read", FlowHash: fl.Hash, ProjectID: testProject, Branch: "feat/x"},
+		&event.PhaseStarted{Phase: "main"},
+		&event.StageStarted{StageID: "review", Iteration: 1},
+		&event.StageCompleted{StageID: "review"},
+		&event.SnapshotCaptured{StageID: "review", Iteration: 1, Kind: "log", SnapshotID: s.ID, Size: int64(len(big))},
+	)
+	pass, err := h.e.JournalRead(ctx, "r1", "review-1")
+	if err != nil || pass.File != "review-1.md" || !strings.Contains(pass.Text, "\n\n"+big) || strings.Contains(pass.Text, "truncated") {
+		t.Errorf("pass = %s, %d bytes, %v", pass.File, len(pass.Text), err)
+	}
+}
+
+// An optional output is listed apart in the contract, under what the agent
+// may write; a files one may be left empty.
+func TestOptionalOutputsInTheContract(t *testing.T) {
+	h := newHarness(t, mustFlow(t, `name: opt
+version: 5
+parameters: { harness: fake, model: fake/model }
+agents:
+  - name: maker
+    prompt: make it
+    outputs:
+      - { name: plan, type: file, description: "the plan" }
+      - { name: extra, type: file, description: "anything worth keeping" }
+      - { name: shots, type: files, description: "screenshots" }
+main:
+  - { id: make, type: agent, harness: $harness, model: $model, agent: maker,
+      output: { plan: { to: artifacts/plan.md, type: file },
+                extra: { to: artifacts/extra.md, type: file, optional: true },
+                shots: { to: artifacts/shots/, type: files, optional: true } } }
+`))
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{TurnsUsed: 1}, h.envp.WriteFile(ctx, call.Env, "artifacts/plan.md", []byte("p"), 0o644)
+	}
+	id, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "opt", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(id)
+	got := lastPrompt(h)
+	for _, want := range []string{
+		"Before finishing you MUST write these files (relative to repo root):\n- artifacts/plan.md — plan: the plan\n",
+		"You MAY also write these, only when they apply — leaving one out is fine, but one you write must hold its shape:\n- artifacts/extra.md — extra: anything worth keeping\n- artifacts/shots/ — shots: screenshots\n",
+		"artifacts/shots/ is a directory: write one or more files into it (it starts empty), or none.\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("contract missing %q:\n%s", want, got)
+		}
+	}
+	for _, e := range h.events(t, id) {
+		if f, ok := e.Payload.(*event.StageFailed); ok {
+			t.Errorf("optional outputs left out failed the stage: %+v", f)
+		}
 	}
 }

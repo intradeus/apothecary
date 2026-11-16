@@ -676,6 +676,8 @@ export default {
 	'ping.runIt': 'Run it',
 	'ping.notNow': 'Not now',
 	'ping.notNowHelp': 'Not now: it is offered again only when what it reacts to changes.',
+	'ping.debugSummaryPlaceholder':
+		'What did you do? Required to continue, even “nothing” — the agents read it in the run journal, with the files you changed.',
 	'ping.debugReasonPlaceholder': 'Why stop here? Recorded as the reason the run was abandoned.',
 	'ping.debugEndPlaceholder':
 		'Why stop here? Recorded as the reason {phase} ended; the run goes back to waiting.',
@@ -1213,6 +1215,8 @@ export default {
 	'flow.insp.noType': 'no type',
 	'flow.insp.portOptionalTitle':
 		'It may be empty: an edge source, or a file not written on every route that reaches this stage',
+	'flow.insp.outputOptionalTitle':
+		'The stage may leave it unwritten — a stage reading it then reads it optional',
 	'flow.insp.portDescPlaceholder': 'what it is (the agent reads this)',
 	'flow.insp.optionalTitle': 'A stage may leave it unbound',
 	'flow.insp.removePort': 'Remove',

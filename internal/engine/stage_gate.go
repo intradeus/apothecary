@@ -160,7 +160,7 @@ func (x *exec) raiseYesNo(p *Ping) error {
 	x.e.mu.Unlock()
 	raised := &event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, Context: p.Context,
 		Files: p.Files, FileTypes: p.FileTypes, Link: p.Link, StageID: p.StageID, AnswerKind: p.AnswerKind,
-		Choices: p.Choices, Phase: p.Phase, EndsPhase: p.EndsPhase}
+		Choices: p.Choices, Phase: p.Phase, EndsPhase: p.EndsPhase, Trees: p.Trees}
 	if err := x.append(raised); err != nil {
 		return err
 	}
@@ -184,12 +184,15 @@ func (x *exec) stageDebug(st *flow.Stage) error {
 	if rs.GateAnswer != nil {
 		ans := rs.GateAnswer
 		rs.GateAnswer = nil
-		return x.routeDebug(st, PingAnswer{Answer: ans.Answer, Feedback: ans.Feedback})
+		return x.routeDebug(st, ans.PingID, PingAnswer{Answer: ans.Answer, Feedback: ans.Feedback})
 	}
 	if x.openYesNo(st, PingDebug) == nil {
 		p := &Ping{Type: PingDebug, Question: st.ID + " failed", Context: shell.Tail(rs.Feed, 4<<10),
 			Link: workspaceLink(rs.Links), StageID: st.ID, AnswerKind: event.AnswerYesNo,
-			Phase: rs.Phase, EndsPhase: !x.endsRunAtDeadEnd()}
+			Phase: rs.Phase, EndsPhase: !x.endsRunAtDeadEnd(),
+			// The working copy as the person finds it: what their continue
+			// is compared against (hand_edits).
+			Trees: x.workTrees()}
 		if err := x.raiseYesNo(p); err != nil {
 			return err
 		}
@@ -203,10 +206,14 @@ func (x *exec) stageDebug(st *flow.Stage) error {
 	return errWaitingOnHuman
 }
 
-// routeDebug acts on the human's decision at the debug leaf.
-func (x *exec) routeDebug(st *flow.Stage, ans PingAnswer) error {
+// routeDebug acts on the human's decision at the debug leaf. A continue
+// first records which files the person changed (hand_edits).
+func (x *exec) routeDebug(st *flow.Stage, pingID string, ans PingAnswer) error {
 	rs := x.rs
 	if ans.Answer == "approve" {
+		if err := x.append(x.handEdits(st, pingID)); err != nil {
+			return err
+		}
 		// Continue: back into st, fresh — pos never moved — with the
 		// phase's retry budgets restored (runcore.ContinueFromDebug); the
 		// stage_started that follows records it for replay.

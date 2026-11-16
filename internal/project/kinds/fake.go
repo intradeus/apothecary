@@ -345,6 +345,9 @@ func stubOutput(out declaredOutput, call fake.RunCall) ([]byte, error) {
 		return reviewfile.Encode(out.path, replies)
 	case agentspec.TypeCommitMessage:
 		return reviewfile.Encode(out.path, map[string]any{"subject": "dev stub: " + call.Spec.Agent})
+	case agentspec.TypeJournalNotes:
+		// Nothing to note: the key, with an empty list.
+		return reviewfile.Encode(out.path, map[string]any{"notes": []any{}})
 	}
 	return []byte(fmt.Sprintf("# Dev stub: %s\n\nWritten by the dev-mode agent %q.\n", out.path, call.Spec.Agent)), nil
 }

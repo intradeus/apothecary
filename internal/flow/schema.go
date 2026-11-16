@@ -94,6 +94,7 @@ func schema() obj {
 			"type":        stringsOf("what the file is", agentspec.FileTypes...),
 			"schema":      str("a schema declared under schemas, which the file holds"),
 			"description": str("what it is for — documentation"),
+			"optional":    obj{"type": "boolean", "description": "the stage may leave it unwritten (never a verdict, nor an action's output); a reader of it reads it optional"},
 		},
 	}
 	stage := obj{
@@ -216,7 +217,7 @@ func schema() obj {
 				"properties": obj{
 					"name":        str("the output's name"),
 					"description": str("what it is — the agent reads this"),
-					"type":        stringsOf("what the file is: any file, or a structure something built in reads — a verdict (routed by on_reject), a review to post, a review round's replies, a commit message", agentspec.FileTypes...),
+					"type":        stringsOf("what the file is: any file, or a structure something built in reads — a verdict (routed by on_reject), a review to post, a review round's replies, a commit message, notes for the run journal", agentspec.FileTypes...),
 					"schema":      str("a schema declared under schemas, which the file holds (beside a type it narrows it)"),
 				},
 				"anyOf": typeOrSchema,

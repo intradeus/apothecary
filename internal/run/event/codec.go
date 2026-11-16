@@ -25,6 +25,7 @@ var registry = map[Type]func() Payload{
 	TypeVerdictReceived:      func() Payload { return &VerdictReceived{} },
 	TypeActionStarted:        func() Payload { return &ActionStarted{} },
 	TypeSnapshotCaptured:     func() Payload { return &SnapshotCaptured{} },
+	TypeHandEdits:            func() Payload { return &HandEdits{} },
 	TypeMRCreated:            func() Payload { return &MRCreated{} },
 	TypePhaseStarted:         func() Payload { return &PhaseStarted{} },
 	TypePhaseCompleted:       func() Payload { return &PhaseCompleted{} },

@@ -38,6 +38,7 @@ const question = (over: Partial<PingLike> = {}): Partial<PingLike> => ({
 const btn = (name: string | RegExp) => screen.getByRole('button', { name });
 const noBtn = (name: string | RegExp) => screen.queryByRole('button', { name });
 const box = (name: string | RegExp) => screen.getByRole('textbox', { name });
+const noBox = (name: string | RegExp) => screen.queryByRole('textbox', { name });
 
 const FIELD_NOTE = /what should change/i;
 const REASON = /why none of this fits/i;
@@ -374,9 +375,28 @@ describe('a parked stage', () => {
 		expect(container.querySelector('img')).toBeNull();
 	});
 
-	it('continues by re-running the stage', async () => {
+	it('continues by re-running the stage, once it is told what the person did', async () => {
 		const { onanswer } = setup(debug);
+		expect(btn('Continue — re-run build')).toBeDisabled();
+		await userEvent.type(box(/what did you do\? required to continue/i), '  ');
+		expect(btn('Continue — re-run build')).toBeDisabled();
+		await userEvent.type(box(/what did you do/i), 'Pinned the lockfile');
 		await userEvent.click(btn('Continue — re-run build'));
+		expect(onanswer.mock.calls[0].slice(0, 2)).toEqual(['approve', '  Pinned the lockfile']);
+	});
+
+	it('continues on Ctrl+Enter in the summary, once it says something', async () => {
+		const { onanswer } = setup(debug);
+		await userEvent.type(box(/what did you do/i), '{Control>}{Enter}{/Control}');
+		expect(onanswer).not.toHaveBeenCalled();
+		await userEvent.type(box(/what did you do/i), 'nothing{Control>}{Enter}{/Control}');
+		expect(onanswer.mock.calls[0].slice(0, 2)).toEqual(['approve', 'nothing']);
+	});
+
+	it('asks no summary to continue past a manual stage', async () => {
+		const { onanswer } = setup({ ...debug, type: 'manual' });
+		expect(noBox(/what did you do/i)).not.toBeInTheDocument();
+		await userEvent.click(btn('Done — continue'));
 		expect(onanswer.mock.calls[0][0]).toBe('approve');
 	});
 

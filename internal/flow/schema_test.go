@@ -99,7 +99,6 @@ func TestSchemaRefusesMistakes(t *testing.T) {
 		"port key":             head + "main:\n  - { id: a, type: command, run: x, output: { r: { to: a.json, type: file, shape: s } } }\n",
 		"port without a shape": head + "main:\n  - { id: a, type: command, run: x, output: { r: { to: a.json } } }\n",
 		"input going to":       head + "main:\n  - { id: a, type: command, run: x, input: { r: { to: a.md, type: file } } }\n",
-		"optional output":      head + "main:\n  - { id: a, type: command, run: x, output: { r: { to: a.md, type: file, optional: true } } }\n",
 		"value type written":   head + "main:\n  - { id: a, type: command, run: x, output: { r: { to: a.md, type: ticket } } }\n",
 		"port type":            head + "main:\n  - { id: a, type: command, run: x, input: { r: { from: repo:a.md, type: pdf } } }\n",
 		"agent output path":    head + "agents:\n  - { name: w, prompt: p, outputs: [ { name: o, type: file, path: a.md } ] }\nmain:\n  - { id: a, type: command, run: x }\n",
@@ -205,8 +204,8 @@ func TestSchemaMatchesTheGrammar(t *testing.T) {
 		}
 	}
 	// A port is read by hand; its keys are DocPort's. An input has no
-	// destination, an output no source, is never optional and takes no
-	// ticket_comments options.
+	// destination, an output no source and takes no ticket_comments
+	// options.
 	port := jsonKeys(reflect.TypeOf(flow.DocPort{}))
 	without := func(drop ...string) []string {
 		return slices.DeleteFunc(slices.Clone(port), func(k string) bool { return slices.Contains(drop, k) })
@@ -214,7 +213,7 @@ func TestSchemaMatchesTheGrammar(t *testing.T) {
 	if got, want := props(defs["port_in"]), without("to"); !slices.Equal(got, want) {
 		t.Errorf("port_in: the parser reads %v, the schema names %v", want, got)
 	}
-	if got, want := props(defs["port_out"]), without("from", "optional", "limit", "exclude_own"); !slices.Equal(got, want) {
+	if got, want := props(defs["port_out"]), without("from", "limit", "exclude_own"); !slices.Equal(got, want) {
 		t.Errorf("port_out: the parser reads %v, the schema names %v", want, got)
 	}
 	stage := defs["stage"].(map[string]any)["properties"].(map[string]any)
