@@ -116,6 +116,7 @@ describe('pingsOf', () => {
 		['gate', undefined, 'yes_no'],
 		['phase_confirm', undefined, 'yes_no'],
 		['debug', undefined, 'yes_no'],
+		['impasse', undefined, 'choice'],
 		['clarification', undefined, 'form'],
 		['clarification', 'yes_no', 'yes_no']
 	])('reads a %s ping declared %s as %s', (type, answer_kind, kind) => {
@@ -145,6 +146,19 @@ describe('pingsOf', () => {
 			fileTypes: { 'a.md': 'review_threads' }
 		});
 		expect(p.form?.fields[0].options.map((o) => o.label)).toEqual(['dev', 'prod']);
+		expect(p.choices).toEqual([]);
+	});
+
+	it("reads an impasse's choices", () => {
+		const raise = aRaise(1, 'p1', {
+			type: 'impasse',
+			answer_kind: 'choice',
+			choices: [{ id: 'skip' }, { id: 'give_up', note_required: true }]
+		});
+		expect(pingsOf([raise], aRun())[0].choices).toEqual([
+			{ id: 'skip', noteRequired: false },
+			{ id: 'give_up', noteRequired: true }
+		]);
 	});
 
 	it('takes only a real true as ending the phase, and no empty phase', () => {
@@ -345,6 +359,44 @@ describe('stageRows', () => {
 		});
 	});
 
+	describe('a stage rejected to its impasse', () => {
+		const stuck = [
+			started(1, 'a'),
+			completed(2, 'a'),
+			anEvent(3, 'edge_taken', { edge: 'on_reject', from: 'a', to: 'impasse', count: 1, max: -1 }),
+			aRaise(4, 'i1', { type: 'impasse', stage_id: 'a' })
+		];
+
+		it('waits on a person while the impasse is open', () => {
+			expect(row(stuck, 'waiting_on_human')).toMatchObject({
+				status: 'waiting',
+				line: 'rejected — your call'
+			});
+		});
+
+		it('is done once answered', () => {
+			const r = row([...stuck, anAnswer(5, 'i1', { answer: 'give_up' })], 'running');
+			expect(r.status).toBe('done');
+		});
+
+		it('is done once the run is over', () => {
+			expect(row(stuck, 'abandoned').status).toBe('done');
+		});
+
+		it('reads as skipped once skipped', () => {
+			const skipped = [
+				...stuck,
+				anAnswer(5, 'i1', { answer: 'skip' }),
+				started(6, 'a'),
+				completed(7, 'a', { skipped: true, by: 'u1', duration_ms: 0 })
+			];
+			expect(row(skipped, 'running')).toMatchObject({
+				status: 'done',
+				line: 'skipped by a person'
+			});
+		});
+	});
+
 	it('waits after a pause', () => {
 		const events = [started(1, 'a'), anEvent(2, 'stage_paused', { stage_id: 'a' })];
 		expect(row(events)).toMatchObject({ status: 'waiting', line: 'waiting on you' });
@@ -477,6 +529,13 @@ describe('describe', () => {
 			'debug',
 			{ type: 'debug', stage_id: 's' },
 			's failed — parked for debugging',
+			'warn'
+		],
+		[
+			'ping_raised',
+			'impasse',
+			{ type: 'impasse', stage_id: 's' },
+			's rejected past its budget — your call',
 			'warn'
 		],
 		['ping_raised', 'question', { type: 'gate', question: 'Q?' }, 'ping [gate]: Q?', 'warn'],

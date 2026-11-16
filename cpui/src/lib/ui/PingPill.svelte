@@ -24,6 +24,13 @@
 			hue: 'attention',
 			wanted: true
 		},
+		impasse: {
+			get label() {
+				return t('ui.ping.impasse');
+			},
+			hue: 'warning',
+			wanted: true
+		},
 		phase_confirm: {
 			get label() {
 				return t('ui.ping.phase_confirm');

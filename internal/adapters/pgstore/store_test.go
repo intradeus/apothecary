@@ -2,6 +2,7 @@ package pgstore
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -508,6 +509,31 @@ func TestPingAnswerKindFallsBackToTheType(t *testing.T) {
 	want := (&event.PingRaised{Type: event.PingGate}).Kind()
 	if err != nil || got.AnswerKind != want || want == "" {
 		t.Errorf("kind = %q, %v; want %q", got.AnswerKind, err, want)
+	}
+}
+
+// A choice ping keeps its choices in the projection, in order — the inbox
+// draws a button for each, so a choice ping read back without them could not
+// be answered there — and a ping that offers none reads back with none.
+func TestPingChoicesAreProjected(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	choices := []event.Choice{{ID: event.ChoiceSkip, NoteRequired: true}, {ID: event.ChoiceGiveUp}}
+	evs, err := s.Append(ctx, "r1", &event.RunCreated{},
+		&event.PingRaised{PingID: "i", Type: event.PingImpasse, StageID: "review", Choices: choices},
+		&event.PingRaised{PingID: "g", Type: event.PingGate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetPing(ctx, "i")
+	if err != nil || got.AnswerKind != event.AnswerChoice || !reflect.DeepEqual(got.Choices, choices) {
+		t.Errorf("impasse = kind %q choices %+v (%v); want choice %+v", got.AnswerKind, got.Choices, err, choices)
+	}
+	if !reflect.DeepEqual(run.ReducePings(evs)[0].Choices, got.Choices) {
+		t.Errorf("projected %+v, reduced %+v", got.Choices, run.ReducePings(evs)[0].Choices)
+	}
+	if g, err := s.GetPing(ctx, "g"); err != nil || g.Choices != nil {
+		t.Errorf("gate choices = %+v (%v), want none", g.Choices, err)
 	}
 }
 

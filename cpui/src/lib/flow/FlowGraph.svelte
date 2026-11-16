@@ -93,6 +93,7 @@
 		done: FlowTerminalNode,
 		abort: FlowTerminalNode,
 		debug: FlowTerminalNode,
+		impasse: FlowTerminalNode,
 		start: FlowTerminalNode,
 		exit: FlowTerminalNode,
 		failexit: FlowTerminalNode,

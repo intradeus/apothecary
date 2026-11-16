@@ -160,7 +160,7 @@ func (x *exec) raiseYesNo(p *Ping) error {
 	x.e.mu.Unlock()
 	raised := &event.PingRaised{PingID: p.ID, Type: p.Type, Question: p.Question, Context: p.Context,
 		Files: p.Files, FileTypes: p.FileTypes, Link: p.Link, StageID: p.StageID, AnswerKind: p.AnswerKind,
-		Phase: p.Phase, EndsPhase: p.EndsPhase}
+		Choices: p.Choices, Phase: p.Phase, EndsPhase: p.EndsPhase}
 	if err := x.append(raised); err != nil {
 		return err
 	}

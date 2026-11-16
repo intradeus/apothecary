@@ -241,13 +241,14 @@ type runHandle struct {
 	done        chan struct{}
 }
 
-// PingGate, PingDebug and PingManual are re-exported for the engine's
-// callers (the HTTP layer and tests); the vocabulary itself belongs to the
-// event catalog.
+// PingGate, PingDebug, PingManual and PingImpasse are re-exported for the
+// engine's callers (the HTTP layer and tests); the vocabulary itself belongs
+// to the event catalog.
 const (
-	PingGate   = event.PingGate
-	PingDebug  = event.PingDebug
-	PingManual = event.PingManual
+	PingGate    = event.PingGate
+	PingDebug   = event.PingDebug
+	PingManual  = event.PingManual
+	PingImpasse = event.PingImpasse
 )
 
 // Ping is an open (or answered) human interaction. Gate pings are raised by
@@ -271,6 +272,8 @@ type Ping struct {
 	// AnswerKind is the shape of the answer this ping takes (event.Answer*):
 	// what the UI renders and the one thing validation reads.
 	AnswerKind string
+	// Choices is what a choice ping may be answered (event.AnswerChoice).
+	Choices []event.Choice
 	// Phase is the phase the ping belongs to; EndsPhase, on a debug ping,
 	// says giving up ends that phase run rather than the run (the card
 	// words its button by it).
@@ -321,8 +324,10 @@ func (p *Ping) Primary() string {
 func (p *Ping) DeliveredArtifacts() []string { return answerPaths(p.deliveredFiles) }
 
 type PingAnswer struct {
-	Answer   string // approve|reject (yes_no), accept|decline (form)
+	Answer   string // approve|reject (yes_no), accept|decline (form), a choice's id (choice)
 	Feedback string
+	// By is who answered: the account that sent it (event.PingAnswered.By).
+	By string
 	// Content is an accepted form's values, by field id (validateForm).
 	Content map[string]any
 	// AttachmentIDs are the answer's attached files (claimed for the ping by
@@ -1992,10 +1997,11 @@ func (e *Engine) AnswerPing(pingID string, ans PingAnswer) error {
 
 // validateAnswer enforces the answer contract: a yes/no takes
 // approve|reject, a form accept with its fields or decline with a note
-// (validateForm, which tidies the content in place). One implementation,
-// because the live and dormant paths must not be able to disagree about what
-// a valid answer is.
-func validateAnswer(kind string, form *event.Form, ans *PingAnswer) error {
+// (validateForm, which tidies the content in place), a choice one of the
+// ping's choices, with a note where the choice requires one. One
+// implementation, because the live and dormant paths must not be able to
+// disagree about what a valid answer is.
+func validateAnswer(kind string, form *event.Form, choices []event.Choice, ans *PingAnswer) error {
 	switch kind {
 	case event.AnswerYesNo:
 		if ans.Answer != "approve" && ans.Answer != "reject" {
@@ -2003,6 +2009,17 @@ func validateAnswer(kind string, form *event.Form, ans *PingAnswer) error {
 		}
 	case event.AnswerForm:
 		return validateForm(form, ans)
+	case event.AnswerChoice:
+		for _, c := range choices {
+			if c.ID != ans.Answer {
+				continue
+			}
+			if c.NoteRequired && strings.TrimSpace(ans.Feedback) == "" {
+				return fmt.Errorf("answering %s needs a note saying why", c.ID)
+			}
+			return nil
+		}
+		return fmt.Errorf("this question is answered %s", strings.Join(event.ChoiceIDs(choices), "|"))
 	}
 	return nil
 }
@@ -2028,7 +2045,7 @@ func (e *Engine) answerLive(pingID string, ans PingAnswer) error {
 	if !active {
 		return errNoLoop
 	}
-	if err := validateAnswer(p.AnswerKind, p.Form, &ans); err != nil {
+	if err := validateAnswer(p.AnswerKind, p.Form, p.Choices, &ans); err != nil {
 		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
 	if err := validateReview(p.Files, ans); err != nil {
@@ -2109,7 +2126,7 @@ func (e *Engine) answerDormant(ctx context.Context, pingID string, ans PingAnswe
 		// The run ended without it; the projection already says so.
 		return fmt.Errorf("run %s: %w", v.RunID, ErrRunNotActive)
 	}
-	if err := validateAnswer(v.AnswerKind, v.Form, &ans); err != nil {
+	if err := validateAnswer(v.AnswerKind, v.Form, v.Choices, &ans); err != nil {
 		return fmt.Errorf("ping %s: %w", pingID, err)
 	}
 	if err := validateReview(v.Files, ans); err != nil {
@@ -2143,7 +2160,7 @@ func (e *Engine) answerDormant(ctx context.Context, pingID string, ans PingAnswe
 	}
 
 	payloads := []event.Payload{&event.PingAnswered{PingID: pingID, Answer: ans.Answer,
-		Feedback: ans.Feedback, Content: ans.Content, AttachmentIDs: ans.AttachmentIDs, Review: ans.Review, Curated: ans.Curated}}
+		Feedback: ans.Feedback, By: ans.By, Content: ans.Content, AttachmentIDs: ans.AttachmentIDs, Review: ans.Review, Curated: ans.Curated}}
 	// Wake only when this was the last thing the run was waiting for, and only
 	// if a human has not deliberately parked it: an agent may have asked two
 	// questions, and pause means pause.

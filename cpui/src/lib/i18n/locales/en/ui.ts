@@ -69,6 +69,7 @@ export default {
 	'ui.ping.gate': 'Gate',
 	'ui.ping.debug': 'Debug',
 	'ui.ping.manual': 'Your turn',
+	'ui.ping.impasse': 'Impasse',
 	'ui.ping.phase_confirm': 'Start',
 	'ui.ping.select': 'Select',
 	'ui.ping.clarification': 'Clarification',

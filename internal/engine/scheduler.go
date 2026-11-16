@@ -70,6 +70,8 @@ func (x *exec) resumeParked(p runcore.ResumePlan) error {
 			return err
 		}
 		return x.takeEdge(st, runcore.FailEdgeKind(st, event.ReasonTimeout), "")
+	case runcore.ResumeImpasseAnswered:
+		return x.routeImpasse(st, p.Answer)
 	}
 	return x.routeGate(st, p.Answer, at.Since)
 }

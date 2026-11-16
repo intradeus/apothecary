@@ -409,7 +409,8 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					p.type === 'gate' ||
 					p.type === 'phase_confirm' ||
 					p.type === 'debug' ||
-					p.type === 'manual'
+					p.type === 'manual' ||
+					p.type === 'impasse'
 				)
 					break;
 				{

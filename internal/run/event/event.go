@@ -362,6 +362,10 @@ type StageCompleted struct {
 	// the timeline. Engine-authored text, never workspace output.
 	Skipped bool   `json:"skipped,omitempty"`
 	Note    string `json:"note,omitempty"`
+	// By is who skipped the stage, when a person did (the impasse's skip):
+	// the account that answered. Empty for a skip the engine decided
+	// (run_if).
+	By string `json:"by,omitempty"`
 	// Feed is the verdict an approval carries to on_success (≤32 KB): a
 	// gate's review, a verdict's comments (flow.GivesVerdict). Persisted like
 	// EdgeTaken.Feed, so recovery hands it on.
@@ -444,6 +448,13 @@ const (
 	// a person's hands; approve (Done) follows on_success, reject (give up)
 	// is a dead end. StageID is the manual stage, Context its brief.
 	PingManual = "manual"
+	// PingImpasse is the impasse (FLOWLANG §3): a stage's on_reject chain
+	// ran out into `impasse`, and the run is parked for a person's decision
+	// on it. StageID is the rejected stage, Context the verdict that spent
+	// the chain; the question is a bare label — the card is the UI's.
+	// Answered by a choice (ChoiceKeepGoing, ChoiceSkip, ChoiceGiveUp).
+	// Engine-raised and wanted, like a gate.
+	PingImpasse = "impasse"
 	// PingPhaseConfirm asks a human whether a phase may start (a phase with
 	// `confirm: true`). Answered like a gate — approve | reject — but it
 	// belongs to no stage: it is raised while the run is between phases.
@@ -460,8 +471,10 @@ const (
 	//   yes_no    approve | reject (+ feedback)        gates, phase confirmations, the debug leaf
 	//   form      accept + content | decline + note    every question (Form): an agent's, a
 	//                                                  harness's own over ACP, which threads to fix
+	//   choice    one of the ping's Choices (+ note)   the impasse
 	AnswerYesNo       = "yes_no"
 	AnswerForm        = "form"
+	AnswerChoice      = "choice"
 	PingClarification = "clarification"
 	PingBlocker       = "blocker"
 	PingPermission    = "permission"
@@ -496,6 +509,10 @@ type PingRaised struct {
 	Form *Form `json:"form,omitempty"`
 	// AnswerKind is the shape of the answer (the Answer* constants).
 	AnswerKind string `json:"answer_kind,omitempty"`
+	// Choices is what a choice ping may be answered (AnswerChoice): the
+	// answer names one by id. The engine sends no wording; the clients label
+	// each id.
+	Choices []Choice `json:"choices,omitempty"`
 	// Phase, Subject and TriggerKey identify what a phase_confirm ping asks
 	// to start: which phase, on which checkout's merge request, for which
 	// occurrence of its trigger. A debug ping carries Phase too: the phase
@@ -741,7 +758,7 @@ func OptionIDs(opts []Option) []string {
 }
 
 // Kind is the ping's answer kind: a gate, phase confirmation, debug leaf or
-// manual stage is a yes/no, anything else a form.
+// manual stage is a yes/no, the impasse a choice, anything else a form.
 func (p *PingRaised) Kind() string {
 	if p.AnswerKind != "" {
 		return p.AnswerKind
@@ -749,14 +766,50 @@ func (p *PingRaised) Kind() string {
 	switch p.Type {
 	case PingGate, PingPhaseConfirm, PingDebug, PingManual:
 		return AnswerYesNo
+	case PingImpasse:
+		return AnswerChoice
 	}
 	return AnswerForm
 }
 
+// Choice is one answer a choice ping offers (AnswerChoice). NoteRequired:
+// the answer must say why.
+type Choice struct {
+	ID           string `json:"id"`
+	NoteRequired bool   `json:"note_required,omitempty"`
+}
+
+// The impasse's choices (PingImpasse). Keep going takes the rejected stage's
+// on_reject chain again from its first link, that chain's budget back; skip
+// completes the stage as skipped and follows on_success; give up is a dead
+// end (FLOWLANG §3).
+const (
+	ChoiceKeepGoing = "keep_going"
+	ChoiceSkip      = "skip"
+	ChoiceGiveUp    = "give_up"
+)
+
+// ImpasseChoices is what an impasse ping offers, in the order shown.
+func ImpasseChoices() []Choice {
+	return []Choice{{ID: ChoiceKeepGoing}, {ID: ChoiceSkip}, {ID: ChoiceGiveUp}}
+}
+
+// ChoiceIDs lists the choices' ids.
+func ChoiceIDs(cs []Choice) []string {
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		out[i] = c.ID
+	}
+	return out
+}
+
 type PingAnswered struct {
 	PingID   string `json:"ping_id"`
-	Answer   string `json:"answer"` // approve|reject (yes_no), accept|decline (form)
+	Answer   string `json:"answer"` // approve|reject (yes_no), accept|decline (form), a choice's id (choice)
 	Feedback string `json:"feedback,omitempty"`
+	// By is who answered: the account that sent the answer. Empty in logs
+	// that predate it, and for an answer no person sent.
+	By string `json:"by,omitempty"`
 	// Content is an accepted form's values, by field id: a string, number,
 	// bool, or (array) a list of option ids.
 	Content map[string]any `json:"content,omitempty"`

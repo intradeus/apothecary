@@ -170,7 +170,7 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			e.pings[op.PingID] = &Ping{
 				ID: op.PingID, RunID: runID, Type: op.Type, Question: op.Question,
 				Context: op.Context, Files: op.Files, FileTypes: op.FileTypes, Link: op.Link, StageID: op.StageID,
-				Form: op.Form, AnswerKind: op.Kind(), key: op.Key,
+				Form: op.Form, AnswerKind: op.Kind(), Choices: op.Choices, key: op.Key,
 				Phase: op.Phase, EndsPhase: op.EndsPhase,
 				RaisedAt: e.clock(), done: make(chan struct{}),
 			}
@@ -227,6 +227,10 @@ func (e *Engine) runLoop(ctx context.Context, runID string, h *runHandle) {
 			// Parked on the debug leaf: a human has the workspace. Like a
 			// gate this never provisions; continuing re-enters st below.
 			err = x.stageDebug(st)
+		case runcore.StepImpasse:
+			// At the impasse: ask, and park like a gate — or route an
+			// answer recorded before the chain could park.
+			err = x.stageImpasse(st)
 		case runcore.StepRouteComplete:
 			err = x.routeAfterComplete(st)
 		case runcore.StepRouteFail:
@@ -528,6 +532,12 @@ func (x *exec) takeEdge(st *flow.Stage, kind, feedContent string) error {
 		// shows n/∞ — but never exhausted: the human decides when to stop.
 		return x.append(&event.EdgeTaken{From: st.ID, To: flow.ReservedDebug, Edge: kind, Count: ch.Count,
 			Max: flow.UnlimitedMax, Depth: ch.Depth, Feed: feedTail(feedContent)})
+	case runcore.EdgeImpasse:
+		// The impasse: the rejections ran out and a person decides
+		// (stageImpasse). Counted like the debug leaf, never exhausted. The
+		// verdict rides along: keep going hands it on.
+		return x.append(&event.EdgeTaken{From: st.ID, To: flow.ReservedImpasse, Edge: kind, Count: ch.Count,
+			Max: flow.UnlimitedMax, Depth: ch.Depth, Feed: feedTail(feedContent)})
 	}
 	// The content always rides along; whether the target renders it is the
 	// target's choice (it binds edge.verdict or edge.failure, or it does not).
@@ -665,7 +675,7 @@ func (x *exec) processAnswer(ar answerReq) (handled bool, err error) {
 	ar.p.answer = &ans
 	x.e.mu.Unlock()
 
-	recorded := &event.PingAnswered{PingID: ar.p.ID, Answer: ar.ans.Answer, Feedback: ar.ans.Feedback,
+	recorded := &event.PingAnswered{PingID: ar.p.ID, Answer: ar.ans.Answer, Feedback: ar.ans.Feedback, By: ar.ans.By,
 		Content: ar.ans.Content, AttachmentIDs: ar.ans.AttachmentIDs, Review: ar.ans.Review, Curated: ar.ans.Curated}
 	if err := x.append(recorded); err != nil {
 		// Roll the in-memory claim back so a retried answer can succeed

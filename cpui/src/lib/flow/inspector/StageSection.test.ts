@@ -63,6 +63,7 @@ describe('StageSection', () => {
 			['done', 'done'],
 			['abort', 'abort'],
 			['debug', 'debug'],
+			['impasse', 'impasse'],
 			['start', 'start'],
 			['fail', 'fail'],
 			['nothing', '']

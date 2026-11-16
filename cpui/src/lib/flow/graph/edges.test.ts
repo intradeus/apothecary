@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Edge } from '@xyflow/svelte';
-import { ABORT, DEBUG, DONE, END, FAIL, type FlowDoc } from '$lib/domain/flowdoc';
+import { ABORT, DEBUG, DONE, END, FAIL, IMPASSE, type FlowDoc } from '$lib/domain/flowdoc';
 import { aFlow, aStage, readDoc } from '$test/fixtures/logic';
 import { buildEdges } from './edges';
 import { sceneOf, type SceneInput } from './scene';
@@ -194,6 +194,28 @@ describe('failure edges', () => {
 		const doc = aFlow([aStage({ id: 'a', on_fail: { to: 'a', max: 1 } })]);
 		(byId(edges(doc, {}, pick), 'on_fail|a|0').data?.pick as () => void)();
 		expect(pick).toHaveBeenCalledWith({ kind: 'edge', stage: 'a', edge: 'on_fail' });
+	});
+});
+
+describe('a rejection’s impasse', () => {
+	const list = () =>
+		edges(
+			aFlow([
+				aStage({ id: 'a', on_reject: { to: 'a', max: 5, then: { to: IMPASSE } } }),
+				aStage({ id: 'b', on_reject: { to: IMPASSE } })
+			])
+		);
+
+	it('lands on the stage’s own leaf, naming no target', () => {
+		expect(byId(list(), 'on_reject|a|1')).toMatchObject({
+			target: '__impasse:a',
+			label: 'reject · then#1'
+		});
+		expect(byId(list(), 'on_reject|b|0')).toMatchObject({ target: '__impasse:b', label: 'reject' });
+	});
+
+	it('draws no way back: the person’s choice says what follows', () => {
+		expect(list().filter((e) => e.source.startsWith('__impasse:'))).toEqual([]);
 	});
 });
 

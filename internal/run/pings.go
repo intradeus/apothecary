@@ -33,6 +33,8 @@ type PingView struct {
 	Form      *event.Form       `json:"form,omitempty"`
 	// AnswerKind is the shape of the answer the ping takes (event.Answer*).
 	AnswerKind string `json:"answer_kind"`
+	// Choices is what a choice ping may be answered (event.AnswerChoice).
+	Choices []event.Choice `json:"choices,omitempty"`
 	// Phase is the phase the ping belongs to (a confirmation's phase to
 	// start, the debug leaf's phase); EndsPhase, on a debug ping, says giving
 	// up ends that phase run and the run goes back to waiting, rather than
@@ -82,7 +84,7 @@ func ReducePings(evs []event.Event) []PingView {
 				PingID: p.PingID, RunID: evs[i].RunID, UserID: owner, Type: p.Type, StageID: p.StageID,
 				Question: p.Question, Context: p.Context,
 				Files: p.Files, FileTypes: p.FileTypes, Link: p.Link, PayloadRef: Primary(p.Files, p.Link),
-				Form: p.Form, AnswerKind: p.Kind(), Phase: p.Phase, EndsPhase: p.EndsPhase,
+				Form: p.Form, AnswerKind: p.Kind(), Choices: p.Choices, Phase: p.Phase, EndsPhase: p.EndsPhase,
 				Status: "pending", RaisedAt: evs[i].TS,
 			})
 		case *event.PingAnswered:

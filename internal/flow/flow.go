@@ -228,22 +228,30 @@ const (
 // the link, and giving up ends the run in the main chain or an outcome, and
 // a watcher's round in a watcher.
 //
+// ReservedImpasse is the impasse leaf, reachable only from an on_reject
+// chain: NOT a terminal either — the phase parks for a person's decision on a
+// stage whose rejections ran out. Keep going takes the stage's on_reject
+// chain again from its first link, with that chain's budget back; skip
+// completes the stage as skipped and follows on_success; giving up is a dead
+// end, as at the debug leaf.
+//
 // ReservedFail exists only inside a sequence: an edge to it is the sequence
 // stage's on_fail, spliced in by the parser. No parsed flow carries it.
 const (
-	TerminalEnd   = "end"
-	TerminalDone  = "done"
-	TerminalAbort = "abort"
-	ReservedStart = "start"
-	ReservedDebug = "debug"
-	ReservedFail  = "fail"
+	TerminalEnd     = "end"
+	TerminalDone    = "done"
+	TerminalAbort   = "abort"
+	ReservedStart   = "start"
+	ReservedDebug   = "debug"
+	ReservedImpasse = "impasse"
+	ReservedFail    = "fail"
 )
 
 // routeTerminal reports whether a route target is reserved rather than a
-// stage: the two ends, the deliberate stop, or the debug leaf.
+// stage: the two ends, the deliberate stop, the debug leaf or the impasse.
 func routeTerminal(to string) bool {
 	switch to {
-	case TerminalEnd, TerminalDone, TerminalAbort, ReservedDebug:
+	case TerminalEnd, TerminalDone, TerminalAbort, ReservedDebug, ReservedImpasse:
 		return true
 	}
 	return false
@@ -294,7 +302,9 @@ const UnlimitedMax = -1
 // and ends that round in a watcher. To may be TerminalEnd: the phase ends there,
 // TerminalDone: the run completes, TerminalAbort: the run is abandoned, or
 // ReservedDebug: the phase parks for a human and comes back to this stage on
-// continue (none of the four takes max/then — there is no target stage).
+// continue, or ReservedImpasse (on_reject only): the phase parks for a
+// person's decision on the rejected stage (none of the five takes max/then —
+// there is no target stage).
 //
 // An edge does not say what it carries: the content it brings is always
 // available to its target as $DECISION or $FAILURE (FeedSentinel), and the
@@ -853,6 +863,19 @@ func (s *Stage) Setting(name, def string) string {
 
 // Edge returns the stage's edge of the given kind, or nil.
 func (s *Stage) Edge(kind string) *Edge { return s.Edges[kind] }
+
+// Skippable reports whether a person may skip s: its on_reject chain reaches
+// the impasse, whose answers include skipping the stage (FLOWLANG §3). What a
+// skippable stage writes is produced only on some routes, like a run_if
+// stage's.
+func (s *Stage) Skippable() bool {
+	for e := s.Edges[EdgeReject]; e != nil; e = e.Then {
+		if e.To == ReservedImpasse {
+			return true
+		}
+	}
+	return false
+}
 
 type Flow struct {
 	Name        string

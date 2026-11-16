@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ABORT, DEBUG, DONE, END, START, type FlowDoc } from '$lib/domain/flowdoc';
+import { ABORT, DEBUG, DONE, END, IMPASSE, START, type FlowDoc } from '$lib/domain/flowdoc';
 import { readDoc } from '$test/fixtures/logic';
 import { rewire } from './rewire';
 
@@ -24,11 +24,14 @@ describe('the entry marker', () => {
 		expect(doc.stages[0].id).toBe('b');
 	});
 
-	it.each([DONE, ABORT, DEBUG, 'a', 'nowhere'])('changes nothing dropped on %s', (target) => {
-		const doc = flow();
-		expect(rewire(doc, START, 'entry', target)).toBe('same');
-		expect(doc.stages.map((s) => s.id)).toEqual(['a', 'b', 'c', 'x']);
-	});
+	it.each([DONE, ABORT, DEBUG, IMPASSE, 'a', 'nowhere'])(
+		'changes nothing dropped on %s',
+		(target) => {
+			const doc = flow();
+			expect(rewire(doc, START, 'entry', target)).toBe('same');
+			expect(doc.stages.map((s) => s.id)).toEqual(['a', 'b', 'c', 'x']);
+		}
+	);
 });
 
 describe('a success route', () => {
@@ -38,7 +41,7 @@ describe('a success route', () => {
 		expect(stage(doc, 'a').on_success).toBe(target);
 	});
 
-	it.each(['a', ABORT, DEBUG])('never goes to %s', (target) => {
+	it.each(['a', ABORT, DEBUG, IMPASSE])('never goes to %s', (target) => {
 		const doc = flow();
 		rewire(doc, 'a', 'success', target);
 		expect(stage(doc, 'a').on_success).toBe('b');
@@ -90,6 +93,35 @@ describe('a failure route', () => {
 		stage(doc, 'b').on_fail = existing;
 		rewire(doc, 'b', 'on_fail', DEBUG);
 		expect(stage(doc, 'b').on_fail).toEqual({ to: DEBUG });
+	});
+});
+
+describe('the impasse', () => {
+	it('is reached from a rejection only', () => {
+		const doc = flow();
+		expect(rewire(doc, 'a', 'on_fail', IMPASSE)).toBe('same');
+		expect(rewire(doc, 'b', 'on_timeout', IMPASSE)).toBe('same');
+		expect(stage(doc, 'a').on_fail).toEqual({ to: 'b', max: 2, then: { to: 'c', max: 1 } });
+		expect(stage(doc, 'b').on_timeout).toBeUndefined();
+	});
+
+	it('follows a rejection’s finite chain', () => {
+		const doc = flow();
+		stage(doc, 'a').on_reject = { to: 'b', max: 5 };
+		expect(rewire(doc, 'a', 'on_reject', IMPASSE)).toBe('changed');
+		expect(stage(doc, 'a').on_reject).toEqual({ to: 'b', max: 5, then: { to: IMPASSE } });
+	});
+
+	it.each([
+		['no chain', undefined],
+		['an unlimited chain', { to: 'b', max: -1 }],
+		['a chain ending in debug', { to: 'b', max: 1, then: { to: DEBUG } }],
+		['a chain already at the impasse', { to: IMPASSE }]
+	])('makes %s the bare leaf', (_, existing) => {
+		const doc = flow();
+		stage(doc, 'b').on_reject = existing;
+		rewire(doc, 'b', 'on_reject', IMPASSE);
+		expect(stage(doc, 'b').on_reject).toEqual({ to: IMPASSE });
 	});
 });
 

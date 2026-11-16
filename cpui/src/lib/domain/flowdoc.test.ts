@@ -43,9 +43,12 @@ import {
 	hasHub,
 	hasMain,
 	HUB,
+	IMPASSE,
+	impasseKey,
 	isEdgeSource,
 	isEngineSource,
 	isReservedTarget,
+	leafKeys,
 	mcpKind,
 	mcpUsers,
 	markerKey,
@@ -74,6 +77,7 @@ import {
 	routableFrom,
 	schemaUsers,
 	sectionKey,
+	stopsAtImpasse,
 	sequenceUsers,
 	serviceSource,
 	setChainSequence,
@@ -126,7 +130,7 @@ outcomes:
 `);
 
 describe('the small vocabulary', () => {
-	it.each([END, DONE, ABORT, DEBUG, FAIL])('reserves %s as a route target', (to) => {
+	it.each([END, DONE, ABORT, DEBUG, IMPASSE, FAIL])('reserves %s as a route target', (to) => {
 		expect(isReservedTarget(to)).toBe(true);
 	});
 
@@ -861,6 +865,24 @@ outcomes:
 		expect(parksOnDebug(aStage({ id: 'a', ...over }))).toBe(parks);
 	});
 
+	it.each<[Partial<DocStage>, boolean]>([
+		[{}, false],
+		[{ on_reject: { to: 'x', max: 5 } }, false],
+		[{ on_reject: { to: IMPASSE } }, true],
+		[{ on_reject: { to: 'x', max: 5, then: { to: IMPASSE } } }, true]
+	])('knows whether a stage stops at its impasse: %j', (over, stops) => {
+		expect(stopsAtImpasse(aStage({ id: 'a', ...over }))).toBe(stops);
+	});
+
+	it.each<[Partial<DocStage>, string[]]>([
+		[{}, []],
+		[{ on_fail: { to: DEBUG } }, ['debug:a']],
+		[{ on_reject: { to: IMPASSE } }, ['impasse:a']],
+		[{ on_reject: { to: IMPASSE }, on_fail: { to: DEBUG } }, ['debug:a', 'impasse:a']]
+	])('lists the leaves a stage draws, debug first: %j', (over, keys) => {
+		expect(leafKeys(aStage({ id: 'a', ...over }))).toEqual(keys);
+	});
+
 	it('finds what ends a chain, in end, done, abort order', () => {
 		const doc = readDoc(`
 name: f
@@ -972,6 +994,7 @@ describe('questions about the document', () => {
 		expect(terminalKey(ABORT, watcher)).toBe('abort:w');
 		expect(sectionKey('outcome')).toBe('section:outcome');
 		expect(debugKey('a')).toBe('debug:a');
+		expect(impasseKey('a')).toBe('impasse:a');
 	});
 });
 
@@ -1105,9 +1128,12 @@ describe('docToYaml', () => {
 		const edgeOut = (e: DocEdge) =>
 			written(aFlow([aStage({ id: 'a', on_fail: e })])).main[0].on_fail;
 
-		it.each([END, DONE, ABORT, DEBUG, FAIL])('writes a link to %s as the bare word', (to) => {
-			expect(edgeOut({ to })).toBe(to);
-		});
+		it.each([END, DONE, ABORT, DEBUG, IMPASSE, FAIL])(
+			'writes a link to %s as the bare word',
+			(to) => {
+				expect(edgeOut({ to })).toBe(to);
+			}
+		);
 
 		it('writes a stage link as a mapping, its fallback nested', () => {
 			expect(edgeOut({ to: 'a', max: 2, then: { to: 'b', max: 1, then: { to: DEBUG } } })).toEqual({
@@ -2092,6 +2118,16 @@ watchers:
 		expect(pos[debugKey('a')].y).toBeGreaterThan(pos.a.y + 120);
 	});
 
+	it('sets an impasse leaf under its stage, beside the debug leaf', () => {
+		const doc = aFlow([
+			aStage({ id: 'a', on_fail: { to: DEBUG }, on_reject: { to: IMPASSE } }),
+			aStage({ id: 'b', on_reject: { to: IMPASSE } })
+		]);
+		const pos = autoLayout(doc, { [debugKey('a')]: { width: 90, height: 40 } });
+		expect(pos[impasseKey('a')]).toEqual({ x: pos.a.x + 24 + 90 + 14, y: pos[debugKey('a')].y });
+		expect(pos[impasseKey('b')].x).toBe(pos.b.x + 24);
+	});
+
 	it('stacks the main chain’s ends right of the widest chain, or of main beside a hub', () => {
 		const lone = autoLayout(aFlow([aStage({ id: 'a' }), aStage({ id: 'b' })]));
 		expect(lone[END].x).toBeGreaterThan(lone.b.x);
@@ -2152,6 +2188,18 @@ watchers:
 			expect(layout.z.y).toBeGreaterThan(layout[stage].y);
 			expect(layout['trigger:o'].y - before['trigger:o'].y).toBe(layout.z.y - before.z.y);
 			expect(layout[sectionKey('outcome')].y).toBeGreaterThan(before[sectionKey('outcome')].y);
+		});
+
+		it('moves a later chain’s leaves down with it', () => {
+			const { doc, layout } = laidOut();
+			layout[impasseKey('z')] = { x: layout.z.x, y: layout.z.y + 100 };
+			layout[debugKey('z')] = { x: layout.z.x, y: layout.z.y + 100 };
+			const before = structuredClone(layout);
+			placeChain(doc, layout, addWatcher(doc).id);
+			const moved = layout.z.y - before.z.y;
+			expect(moved).toBeGreaterThan(0);
+			expect(layout[impasseKey('z')].y - before[impasseKey('z')].y).toBe(moved);
+			expect(layout[debugKey('z')].y - before[debugKey('z')].y).toBe(moved);
 		});
 
 		it('lines the new chain’s stages up with the others’ first', () => {
@@ -2225,6 +2273,19 @@ watchers:
 			};
 			const pos = columnLayout(doc, { a: { width: 300, height: 100 } });
 			expect(pos[debugKey('a')]).toEqual({ x: 356, y: 50 });
+		});
+
+		it('sets an impasse leaf right of its stage, after its debug leaf', () => {
+			const doc: FlowDoc = {
+				name: 'f',
+				parameters: {},
+				stages: [aStage({ id: 'a', on_fail: { to: DEBUG }, on_reject: { to: IMPASSE } })]
+			};
+			const pos = columnLayout(doc, {
+				a: { width: 300, height: 100 },
+				[debugKey('a')]: { width: 80, height: 40 }
+			});
+			expect(pos[impasseKey('a')]).toEqual({ x: 356 + 80 + 28, y: 50 });
 		});
 
 		it('leaves room under a stage for its edge labels', () => {

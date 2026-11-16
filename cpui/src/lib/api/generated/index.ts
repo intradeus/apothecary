@@ -307,6 +307,7 @@ export type {
 	Check,
 	Checks,
 	CheckStep,
+	Choice,
 	ClearBuildCacheData,
 	ClearBuildCacheErrors,
 	ClearBuildCacheResponse,

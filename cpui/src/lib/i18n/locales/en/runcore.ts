@@ -400,8 +400,10 @@ export default {
 	// Stage rows
 	'run.stage.done': 'done',
 	'run.stage.skipped': 'skipped — nothing to act on',
+	'run.stage.skippedByHand': 'skipped by a person',
 	'run.stage.parked': 'failed — parked for you to check why',
 	'run.stage.manual': 'in your hands',
+	'run.stage.impasse': 'rejected — your call',
 	'run.stage.byHand': 'by hand',
 	'run.stage.waiting': 'waiting on you',
 	'run.stage.pausedReenter': 'paused — will re-enter',
@@ -459,6 +461,7 @@ export default {
 	'run.event.thenDepth': '(then #{depth})',
 	'run.event.parkedDebug': '{stage} failed — parked for debugging',
 	'run.event.manualRaised': '{stage} — handed to you',
+	'run.event.impasseRaised': '{stage} rejected past its budget — your call',
 	'run.event.ping': 'ping [{type}]: {question}',
 	'run.event.answered': 'answered: {answer}',
 	'run.event.approve': 'verdict: approve',

@@ -66,6 +66,7 @@ const (
 	EdgeEnd                             // a link to end or done
 	EdgeAbort                           // a link to abort
 	EdgeDebug                           // a link to the debug leaf
+	EdgeImpasse                         // a link to the impasse
 	EdgeLink                            // a link to a stage
 )
 
@@ -82,7 +83,8 @@ type EdgeChoice struct {
 // on_timeout). The edge is a chain: each link carries its own cumulative
 // max, and a full link falls through to its then fallback
 // (retry-then-escalate). end, done and abort are taken at once; the debug
-// leaf is counted but never exhausted (the human decides when to stop).
+// leaf and the impasse are counted but never exhausted (a person decides
+// when to stop).
 func (rs *State) ChooseEdge(st *flow.Stage, kind string) EdgeChoice {
 	edge := st.Edge(kind)
 	if edge == nil {
@@ -99,6 +101,9 @@ func (rs *State) ChooseEdge(st *flow.Stage, kind string) EdgeChoice {
 		count := rs.EdgeCounts[ChainKey(st.ID, kind, depth)] + 1
 		if e.To == flow.ReservedDebug {
 			return EdgeChoice{Kind: EdgeDebug, Edge: e, Depth: depth, Count: count}
+		}
+		if e.To == flow.ReservedImpasse {
+			return EdgeChoice{Kind: EdgeImpasse, Edge: e, Depth: depth, Count: count}
 		}
 		if e.Max != flow.UnlimitedMax && count > e.Max {
 			continue // this link is exhausted; fall through to then
@@ -151,6 +156,7 @@ const (
 	StepGone                      // the current phase no longer exists in the flow
 	StepChainOver                 // past the chain: end the phase, or the run
 	StepDebug                     // parked on the debug leaf
+	StepImpasse                   // at the impasse: raise its question, or route its answer
 	StepRouteComplete             // a stage completed, its routing not yet recorded
 	StepRouteFail                 // a stage failed, its edge not yet recorded
 	StepSkip                      // the stage's condition does not hold
@@ -172,6 +178,8 @@ func (rs *State) NextStep() (Step, *flow.Stage, string) {
 	switch {
 	case rs.Ph == PhDebug:
 		return StepDebug, st, ""
+	case rs.Ph == PhImpasse:
+		return StepImpasse, st, ""
 	case rs.Ph == PhAfterComplete:
 		return StepRouteComplete, st, ""
 	case rs.Ph == PhAfterFail && st.Type != flow.StageAction:

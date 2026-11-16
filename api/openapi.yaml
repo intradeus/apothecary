@@ -760,6 +760,15 @@ components:
         - items
         - state
       type: object
+    Choice:
+      properties:
+        id:
+          type: string
+        note_required:
+          type: boolean
+      required:
+        - id
+      type: object
     CopyFlowRequest:
       properties:
         name:
@@ -2707,6 +2716,10 @@ components:
         answered_at:
           format: date-time
           type: string
+        choices:
+          items:
+            $ref: '#/components/schemas/Choice'
+          type: array
         content:
           additionalProperties: {}
           type: object

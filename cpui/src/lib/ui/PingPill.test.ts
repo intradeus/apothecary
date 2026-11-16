@@ -9,6 +9,8 @@ describe('PingPill', () => {
 	it.each([
 		['gate', 'Gate', 'tint-success', WANTED],
 		['debug', 'Debug', 'tint-attention', WANTED],
+		['manual', 'Your turn', 'tint-attention', WANTED],
+		['impasse', 'Impasse', 'tint-warning', WANTED],
 		['phase_confirm', 'Start', 'tint-success', WANTED],
 		['select', 'Select', 'tint-accent-2', WANTED],
 		['clarification', 'Clarification', 'tint-attention', RAISED],

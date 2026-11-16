@@ -562,6 +562,7 @@ describe('pings', () => {
 			files: [],
 			fileTypes: {},
 			answerKind: 'yes_no',
+			choices: [],
 			endsPhase: false,
 			answerAttachmentIds: [],
 			review: [],
@@ -578,7 +579,11 @@ describe('pings', () => {
 		[{ type: 'clarification', answer_kind: 'yes_no' }, { answerKind: 'yes_no' }],
 		[{ payload_ref: 'a.md' }, { primaryRef: 'a.md' }],
 		[{ phase: '' }, { phase: undefined }],
-		[{ ends_phase: true }, { endsPhase: true }]
+		[{ ends_phase: true }, { endsPhase: true }],
+		[
+			{ type: 'impasse', answer_kind: 'choice', choices: [{ id: 'skip', note_required: true }] },
+			{ type: 'impasse', answerKind: 'choice', choices: [{ id: 'skip', noteRequired: true }] }
+		]
 	])('narrows %j', (over, out) => {
 		expect(map.toPing(aPingView(over))).toMatchObject(out);
 	});

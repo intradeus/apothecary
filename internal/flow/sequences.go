@@ -64,6 +64,8 @@ func idProblem(id string) string {
 		return fmt.Sprintf("id %q is reserved (the deliberate-stop edge terminal)", TerminalAbort)
 	case id == ReservedDebug:
 		return fmt.Sprintf("id %q is reserved (the debug leaf: `then: debug` parks the run for a human and re-enters the failing stage)", ReservedDebug)
+	case id == ReservedImpasse:
+		return fmt.Sprintf("id %q is reserved (the impasse: `then: impasse` on an on_reject chain parks the run for a person's decision)", ReservedImpasse)
 	case id == ReservedStart:
 		return fmt.Sprintf("id %q is reserved (the graph editor's start marker)", ReservedStart)
 	case id == ReservedFail:

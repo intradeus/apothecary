@@ -19,6 +19,11 @@ export const ABORT = 'abort';
 // workspace and comes BACK to the stage that took it — a leaf on the canvas,
 // not a terminal. Like abort it carries no max/then.
 export const DEBUG = 'debug';
+// IMPASSE is the reserved target an on_reject chain may end on: the stage was
+// rejected past its budget and a person decides — keep going (the chain
+// again, its budget back), skip the stage, or give up. A leaf on the canvas,
+// reached from on_reject only; it carries no max/then.
+export const IMPASSE = 'impasse';
 // START is the main chain's marker layout/link key (the canvas's solid
 // beginning marker); it is never serialized.
 export const START = 'start';
@@ -27,10 +32,10 @@ export const START = 'start';
 export const FAIL = 'fail';
 
 /** Whether a route target is reserved rather than a stage: the two ends, the
- *  deliberate stop, the debug leaf — and, inside a sequence, `fail`. None of
- *  them takes max or then. */
+ *  deliberate stop, the debug and impasse leaves — and, inside a sequence,
+ *  `fail`. None of them takes max or then. */
 export const isReservedTarget = (to: string) =>
-	to === END || to === DONE || to === ABORT || to === DEBUG || to === FAIL;
+	to === END || to === DONE || to === ABORT || to === DEBUG || to === IMPASSE || to === FAIL;
 export const EDGE_KINDS = ['on_fail', 'on_reject', 'on_timeout'] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
 
@@ -45,7 +50,8 @@ export const CURRENT_VERSION = 5;
 
 // An edge is a chain: when a link's max is exhausted the next failure
 // falls through to `then` (retry-then-escalate). A link with to: abort
-// stops the run, one with to: debug parks it for a human; both carry no
+// stops the run, one with to: debug parks it for a human, one with to:
+// impasse (on_reject only) asks a person what follows; none carries
 // max/then.
 //
 // An edge does not say what it carries: its kind decides that (edge.verdict
@@ -1074,8 +1080,8 @@ function edgeToYamlValue(e: DocEdge): unknown {
 
 /** A node's rendered size, as Svelte Flow measured it. FlowGraph reports them
  *  keyed the way `layout` is: stage ids, START/END/DONE/ABORT, HUB,
- *  `trigger:<phase>`, `end|done|abort:<phase>`, `section:<kind>` and
- *  `debug:<stage>`. */
+ *  `trigger:<phase>`, `end|done|abort:<phase>`, `section:<kind>`,
+ *  `debug:<stage>` and `impasse:<stage>`. */
 export interface NodeSize {
 	width: number;
 	height: number;
@@ -1156,6 +1162,23 @@ export function parksOnDebug(s: DocStage): boolean {
 	return EDGE_KINDS.some((k) => chainLinks(edgeOf(s, k)).some((l) => l.to === DEBUG));
 }
 
+/** The layout key of a stage's impasse leaf (one per stage whose on_reject
+ *  chain ends there). */
+export const impasseKey = (stage: string) => `impasse:${stage}`;
+
+/** stopsAtImpasse reports whether the stage's on_reject chain reaches the
+ *  impasse — the stage then draws its own leaf. */
+export function stopsAtImpasse(s: DocStage): boolean {
+	return chainLinks(edgeOf(s, 'on_reject')).some((l) => l.to === IMPASSE);
+}
+
+/** The layout keys of the leaves a stage draws beside it, in the order they
+ *  sit: its debug leaf, then its impasse leaf. */
+export const leafKeys = (s: DocStage): string[] => [
+	...(parksOnDebug(s) ? [debugKey(s.id)] : []),
+	...(stopsAtImpasse(s) ? [impasseKey(s.id)] : [])
+];
+
 // autoLayout places nodes left-to-right along the success chain, dropping
 // off-chain stages into a lane below (used when no stored layout exists, and
 // by the auto-arrange button). Each chain gets one band, top to bottom, its
@@ -1216,17 +1239,20 @@ export function autoLayout(
 		for (const s of phaseOrder(doc, phase)) (chain.has(s.id) ? onChain : offChain).push(s);
 		// Under a row: first the label rows of its stages' failure edges (each
 		// label hangs under the handle it leaves from), then a strip for the
-		// debug leaves of the stages that escalate there — each beside its own
-		// stage. Returns the row's new bottom edge.
+		// leaves of the stages that park there (debug, impasse) — each under
+		// its own stage, side by side. Returns the row's new bottom edge.
 		const leaves = (row: DocStage[], bottom: number): number => {
 			const lines = Math.max(0, ...row.map((s) => edgeLinks(s).length));
 			const under = lines ? bottom + LABEL_PAD + lines * LABEL_ROW : bottom;
 			let h = 0;
 			for (const s of row) {
-				if (!parksOnDebug(s)) continue;
-				const key = debugKey(s.id);
-				pos[key] = { x: pos[s.id].x + 24, y: under + LEAF_GAP };
-				h = Math.max(h, size(key, GUESS_TERMINAL).height);
+				let lx = pos[s.id].x + 24;
+				for (const key of leafKeys(s)) {
+					const sz = size(key, GUESS_TERMINAL);
+					pos[key] = { x: lx, y: under + LEAF_GAP };
+					lx += sz.width + LEAF_GAP;
+					h = Math.max(h, sz.height);
+				}
 			}
 			return h ? under + LEAF_GAP + h : under;
 		};
@@ -1298,11 +1324,11 @@ export function placeChain(
 	const others = (doc.phases ?? []).filter((p) => p.id !== id && layout[markerKey(p)]);
 	const keysOf = (p: DocPhase) => [
 		markerKey(p),
-		...stagesOf(doc, p.id).flatMap((s) => [s.id, debugKey(s.id)]),
+		...stagesOf(doc, p.id).flatMap((s) => [s.id, debugKey(s.id), impasseKey(s.id)]),
 		...([END, DONE, ABORT] as Terminal[]).map((to) => terminalKey(to, p))
 	];
 	const height = (key: string) =>
-		key === START || /^(trigger|debug|end|done|abort):/.test(key)
+		key === START || /^(trigger|debug|impasse|end|done|abort):/.test(key)
 			? GUESS_TERMINAL.height
 			: GUESS.height;
 	const rank = PHASE_KINDS.indexOf(ph.kind);
@@ -1352,8 +1378,8 @@ export function placeChain(
 
 // columnLayout stacks a sequence's stages top to bottom, in document order —
 // a sequence is a short chain, read best down a narrow pane beside its flow.
-// The marker sits above the first stage, each stage's debug leaf to its
-// right, and the sequence's two exits (keys END and DONE, which a sequence
+// The marker sits above the first stage, each stage's leaves (debug, then
+// impasse) to its right, and the sequence's two exits (keys END and DONE, which a sequence
 // view draws as its ways out) under the last stage.
 export function columnLayout(
 	doc: FlowDoc,
@@ -1366,7 +1392,11 @@ export function columnLayout(
 	for (const s of doc.stages) {
 		const { width, height } = size(s.id);
 		pos[s.id] = { x: 0, y };
-		if (parksOnDebug(s)) pos[debugKey(s.id)] = { x: width + GAP_X, y: y + height / 2 };
+		let lx = width + GAP_X;
+		for (const key of leafKeys(s)) {
+			pos[key] = { x: lx, y: y + height / 2 };
+			lx += size(key, GUESS_TERMINAL).width + GAP_X / 2;
+		}
 		const labels = edgeLinks(s).length;
 		y += height + GAP_Y / 2 + (labels ? LABEL_PAD + labels * LABEL_ROW : 0);
 	}

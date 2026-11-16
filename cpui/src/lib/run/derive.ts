@@ -7,6 +7,7 @@ import { fmtClockDuration, fmtCost, fmtDuration, isTerminal } from '$lib/core/fo
 import { t } from '$lib/i18n/index.svelte';
 import {
 	answerKindOf,
+	toPingChoices,
 	toCuratedMap,
 	toFormContent,
 	toPingForm,
@@ -69,6 +70,7 @@ export function pingsOf(events: RunEvent[], run: Run | null): RunPing[] {
 				// else the first file. With files, PingCard offers review.
 				primaryRef: (p.link as string | undefined) || files?.[0],
 				form: toPingForm(p.form),
+				choices: toPingChoices(p.choices),
 				phase: (p.phase as string | undefined) || undefined,
 				endsPhase: p.ends_phase === true,
 				stageId: p.stage_id as string | undefined,
@@ -164,11 +166,14 @@ export function stageRows(
 	const over = state ? isTerminal(state) : false;
 
 	// Stages parked on the debug leaf: a pending debug ping names its stage.
-	// A manual stage is in the person's hands while its ping is pending.
+	// A manual stage is in the person's hands while its ping is pending, a
+	// stage rejected past its budget while its impasse ping is.
 	const parked = new Set<string>();
 	const debugStage = new Map<string, string>();
 	const handed = new Set<string>();
 	const manualStage = new Map<string, string>();
+	const stuck = new Set<string>();
+	const impasseStage = new Map<string, string>();
 	for (const e of events) {
 		if (e.type === 'ping_raised' && e.payload.type === 'debug') {
 			debugStage.set(String(e.payload.ping_id), String(e.payload.stage_id));
@@ -176,11 +181,16 @@ export function stageRows(
 		} else if (e.type === 'ping_raised' && e.payload.type === 'manual') {
 			manualStage.set(String(e.payload.ping_id), String(e.payload.stage_id));
 			handed.add(String(e.payload.stage_id));
+		} else if (e.type === 'ping_raised' && e.payload.type === 'impasse') {
+			impasseStage.set(String(e.payload.ping_id), String(e.payload.stage_id));
+			stuck.add(String(e.payload.stage_id));
 		} else if (e.type === 'ping_answered') {
 			const sid = debugStage.get(String(e.payload.ping_id));
 			if (sid) parked.delete(sid);
 			const mid = manualStage.get(String(e.payload.ping_id));
 			if (mid) handed.delete(mid);
+			const iid = impasseStage.get(String(e.payload.ping_id));
+			if (iid) stuck.delete(iid);
 		}
 	}
 
@@ -196,10 +206,19 @@ export function stageRows(
 				['stage_completed', 'stage_failed', 'stage_paused', 'stage_resumed'].includes(e.type)
 			);
 		const r = { ...base, attempt, startSeq: start.seq, endSeq: end?.seq ?? start.seq };
+		// Rejected past its budget: its verdict is in, a person decides.
+		if (!over && end?.type === 'stage_completed' && stuck.has(d.id))
+			return { ...r, status: 'waiting' as StageStatus, line: t('run.stage.impasse') };
 		if (end?.type === 'stage_completed') {
 			const u = end.payload.usage as { cost_usd?: number } | undefined;
 			const bits = [
-				end.payload.skipped ? t('run.stage.skipped') : t('run.stage.done'),
+				// A stage a person skipped (at its impasse) names who did, not a
+				// run_if that found nothing to act on.
+				end.payload.skipped
+					? end.payload.by
+						? t('run.stage.skippedByHand')
+						: t('run.stage.skipped')
+					: t('run.stage.done'),
 				u?.cost_usd ? fmtCost(u.cost_usd) : '',
 				end.payload.duration_ms ? fmtDuration(Number(end.payload.duration_ms)) : ''
 			].filter(Boolean);
@@ -457,6 +476,8 @@ export function describe(e: RunEvent): Described {
 				return { text: t('run.event.parkedDebug', { stage: String(p.stage_id) }), tone: 'warn' };
 			if (p.type === 'manual')
 				return { text: t('run.event.manualRaised', { stage: String(p.stage_id) }), tone: 'warn' };
+			if (p.type === 'impasse')
+				return { text: t('run.event.impasseRaised', { stage: String(p.stage_id) }), tone: 'warn' };
 			return {
 				text: t('run.event.ping', { type: String(p.type), question: String(p.question) }),
 				tone: 'warn'

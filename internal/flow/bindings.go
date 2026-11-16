@@ -255,8 +255,8 @@ func inSubjectPhase(f *Flow, st *Stage) bool {
 // already run its producer at least once — or never will.
 func definitelyProduced(f *Flow, consumer *Stage, path string) bool {
 	return everyRouteSatisfies(f, consumer, func(st *Stage) bool {
-		if st.RunIf != nil {
-			return false // a conditional producer may be skipped
+		if st.RunIf != nil || st.Skippable() {
+			return false // a conditional producer, or one a person may skip at its impasse
 		}
 		for _, o := range st.Outputs {
 			if o.Value == path {
@@ -490,7 +490,14 @@ func sourceHolds(f *Flow, st *Stage, in Port, warnf func(string, ...any)) error 
 		return fmt.Errorf("stage %q writes %q as %s; the port reads %s", ws[0].stage.ID, in.Value, shapeOf(ws[0].port), shapeOf(in))
 	}
 	if !in.Optional && !definitelyProduced(f, st, in.Value) {
-		return fmt.Errorf("%q is not written on every route reaching this stage (written by %s) — mark the port optional: true if the stage does without it", in.Value, writerList(ws))
+		why := ""
+		for _, w := range ws {
+			if w.stage.Skippable() {
+				why = fmt.Sprintf("; stage %q may be skipped at its %s", w.stage.ID, ReservedImpasse)
+				break
+			}
+		}
+		return fmt.Errorf("%q is not written on every route reaching this stage (written by %s%s) — mark the port optional: true if the stage does without it", in.Value, writerList(ws), why)
 	}
 	return nil
 }

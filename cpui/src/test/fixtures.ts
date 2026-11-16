@@ -33,6 +33,7 @@ export const aPing = (over: Partial<Ping> = {}): Ping =>
 		files: [],
 		fileTypes: {},
 		answerKind: 'yes_no',
+		choices: [],
 		endsPhase: false,
 		createdAt: AT,
 		...over

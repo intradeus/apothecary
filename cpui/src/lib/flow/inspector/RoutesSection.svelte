@@ -13,6 +13,7 @@
 		DONE,
 		END,
 		FAIL,
+		IMPASSE,
 		chainLinks,
 		edgeKindsFor,
 		edgeOf,
@@ -69,9 +70,14 @@
 		const mine = routable;
 		const feeder = mine.find((x) => x.on_success === s.id && x.id !== s.id);
 		const to = s.type === 'human_gate' ? (feeder ?? mine.find((x) => x.id !== s.id))?.id : s.id;
-		setEdge(s, kind, to ? { to, max: 3 } : { to: DEBUG });
+		setEdge(s, kind, to ? { to, max: 3 } : { to: fallback(kind) });
 		onchange();
 	}
+
+	// The usual fallback once a route's budget is spent: a rejection — a
+	// verdict a person can overrule — asks them at the impasse; a failure or
+	// a timeout hands them the workspace at the debug leaf.
+	const fallback = (kind: EdgeKind) => (kind === 'on_reject' ? IMPASSE : DEBUG);
 
 	const targetsHuman = (id: string) =>
 		['human_gate', 'manual'].includes(scopeStages.find((x) => x.id === id)?.type ?? '');
@@ -80,7 +86,7 @@
 	const unlimitedOK = (to: string) => s.type === 'human_gate' || targetsHuman(to);
 
 	// retarget switches one chain link's target, normalizing the link's other
-	// fields: links to a reserved target (end, done, abort, debug) carry no
+	// fields: links to a reserved target (end, done, abort, debug, impasse) carry no
 	// max/then; stage links need a max, and -1 survives only while a gate
 	// remains on the link.
 	function retarget(link: DocEdge, to: string) {
@@ -95,12 +101,11 @@
 	}
 
 	// appendLink adds a fallback ("then") after the chain's last link.
-	function appendLink(e: DocEdge) {
+	function appendLink(e: DocEdge, kind: EdgeKind) {
 		let last = e;
 		while (last.then) last = last.then;
 		if (isReservedTarget(last.to) || last.max === -1) return; // nothing follows a reserved target or an unlimited link
-		// The usual fallback once retries are spent: a human with the workspace.
-		last.then = { to: DEBUG };
+		last.then = { to: fallback(kind) };
 		onchange();
 	}
 
@@ -201,7 +206,11 @@
 									{ value: END, label: t('flow.insp.endOption') },
 									{ value: DONE, label: t('flow.insp.doneOption') },
 									{ value: ABORT, label: t('flow.insp.abortOption') },
-									{ value: DEBUG, label: t('flow.insp.debugOption') }
+									{ value: DEBUG, label: t('flow.insp.debugOption') },
+									// Only a rejection reaches the impasse.
+									...(kind === 'on_reject'
+										? [{ value: IMPASSE, label: t('flow.insp.impasseOption') }]
+										: [])
 								]}
 								onchange={(v) => retarget(link, v)}
 							/>
@@ -246,7 +255,7 @@
 					</div>
 				{/each}
 				{#if !isReservedTarget(last.to) && last.max !== -1}
-					<button class="btn-sm btn-ghost add-then" onclick={() => appendLink(e)}
+					<button class="btn-sm btn-ghost add-then" onclick={() => appendLink(e, kind)}
 						>{I.add} {t('flow.insp.thenLink')}</button
 					>
 				{/if}
