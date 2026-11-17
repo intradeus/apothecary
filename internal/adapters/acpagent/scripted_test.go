@@ -1002,6 +1002,75 @@ func TestARefusedStopRequestFailsAtOnce(t *testing.T) {
 	}
 }
 
+// A stopped turn that ends on its own while the stop request is still on its
+// way does not let the holder's turn start before that request lands:
+// /agent/cancel names the session, and a late one would stop the holder's turn.
+func TestALateStopRequestCannotHitTheHoldersTurn(t *testing.T) {
+	f := newSideFake(t)
+	openTurns(f, false)
+	gate := make(chan struct{})
+	open := sync.OnceFunc(func() { close(gate) })
+	t.Cleanup(open) // before the server's Close waits on the handler
+	entered := make(chan struct{})
+	promptsAtCancel := -1
+	f.onCancel = func() {
+		close(entered)
+		<-gate
+		f.mu.Lock()
+		promptsAtCancel = len(f.prompts) // the moment the sidecar would cancel
+		f.mu.Unlock()
+	}
+	rec := newRecorder()
+	turn := make(chan string, 1)
+	var once sync.Once
+	events := func(ev agentport.AgentEvent) {
+		rec.on(ev)
+		if ev.Kind == agentport.AgentEvTurnStart {
+			once.Do(func() {
+				rec.hold(true)
+				rec.stop(ev.Turn)
+				turn <- ev.Turn
+			})
+		}
+	}
+	r := scripted(f, Profile{})
+	r.cancelGrace = time.Hour
+	type result struct {
+		res agentport.AgentResult
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		res, err := r.Run(bg, "e", agentport.AgentSpec{}, agentport.AgentInput{Inbox: rec, Events: events})
+		done <- result{res, err}
+	}()
+	id := <-turn
+	<-entered
+	rec.push(agentport.UserMessage{Text: "use sqlite"})
+	f.push(sidecar.Event{Session: "s1", Turn: id, Type: "turn_end", StopReason: "end_turn"})
+	waitTurnEnd(t, rec)
+	time.Sleep(20 * time.Millisecond)
+	if n, _ := f.counts(); n != 1 {
+		t.Fatalf("prompts = %d while the stop request was still on its way", n)
+	}
+	open()
+	waitUntilT(t, "the holder's turn", func() bool { n, _ := f.counts(); return n == 2 })
+	rec.hold(false)
+	select {
+	case r := <-done:
+		if r.err != nil || r.res.TurnsUsed != 2 {
+			t.Fatalf("= %+v, %v", r.res, r.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the runner did not return after the release")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if promptsAtCancel != 1 || f.cancels != 1 {
+		t.Errorf("the stop request landed with %d prompts sent (cancels = %d), want 1", promptsAtCancel, f.cancels)
+	}
+}
+
 func waitUntilT(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

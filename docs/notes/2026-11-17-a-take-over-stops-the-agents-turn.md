@@ -31,7 +31,10 @@ What now:
   idle while it works.
 - The ACP runner cancels that turn (`session/cancel`), follows it to its
   end, and carries on as at any turn's end: the same session waits for the
-  holder. A stop that does not end within the cancel grace fails the
+  holder. `/agent/cancel` names the session, not the turn, so the next
+  prompt waits for the stop request's answer: a request still on its way
+  when the turn ended on its own would stop the holder's turn. A stop that
+  does not end (or is not answered) within the cancel grace fails the
   invocation, as a harness error. A runner that cannot stop a turn ignores
   the request and behaves as before.
 - Exception: a turn waiting on the agent's own question (`ask_human` open)
@@ -60,7 +63,8 @@ Held by: `TestPlanHoldRequest` (runcore); `TestAForcedTakeOverStopsTheAgentsTurn
 `TestRestartForcedTakeOverStopsTheReattachedTurn` (engine);
 `TestReattachability`, `TestReattachFollowsTheTurnInFlight`,
 `TestStoppingATurnKeepsTheSession`, `TestAStopForAnotherTurnIsIgnored`,
-`TestAStoppedTurnThatNeverEndsGivesUp` (acpagent); `TestDemoTurnStopsWhenTakenOver`,
+`TestAStoppedTurnThatNeverEndsGivesUp`, `TestALateStopRequestCannotHitTheHoldersTurn`
+(acpagent); `TestDemoTurnStopsWhenTakenOver`,
 `TestFakeHarnessServesATakeOver`, `TestFakeHarnessWithoutAHoldReturnsAfterItsTurn`
 (kinds); `TestTakeOverForce` (httpapi); `Composer.test.ts` (the box is
 checked again for the next take-over, after a passive one is released),

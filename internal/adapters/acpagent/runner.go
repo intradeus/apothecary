@@ -503,8 +503,8 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 	var deadline <-chan time.Time
 	// askStop asks the agent to stop its turn without blocking the loop: the
 	// request and the turn's wind-down share the one cancelGrace deadline, so
-	// a wedged /agent/cancel cannot hold up a turn_end, a message or a
-	// release. stopRes carries the request's answer.
+	// a wedged /agent/cancel cannot hold up a turn_end; the next prompt waits
+	// for its answer (bounded by the same grace). stopRes carries the answer.
 	var stopRes <-chan error
 	askStop := func() {
 		res := make(chan error, 1)
@@ -641,7 +641,22 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 			return done(ctx.Err())
 		}
 		if stopping {
-			// Stopped for the holder: carry on as at any turn's end.
+			// Stopped for the holder: carry on as at any turn's end, once
+			// the stop request has its answer. /agent/cancel names the
+			// session, not the turn: a request still on its way (the turn
+			// ended on its own first) would stop the holder's next turn.
+			if stopRes != nil {
+				select {
+				case err := <-stopRes:
+					if err != nil {
+						return done(fmt.Errorf("%s: could not stop the turn for the take-over: %w", r.p.Harness, err))
+					}
+				case <-ctxDone:
+					return done(ctx.Err())
+				case err := <-perr:
+					return done(fmt.Errorf("%s: %w", r.p.Harness, err))
+				}
+			}
 			stopping, deadline, stopRes = false, nil, nil
 		}
 		if in.Inbox == nil {
