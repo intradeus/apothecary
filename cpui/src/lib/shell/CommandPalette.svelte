@@ -208,7 +208,7 @@
 				run: go(to.workshop(p.id))
 			});
 		const runs = [...fleet.runs]
-			.filter((r) => r.state !== 'archived')
+			.filter((r) => !r.archivedAt)
 			.sort((a, b) =>
 				stateTab[a.state] !== stateTab[b.state]
 					? stateTab[a.state] === 'active'

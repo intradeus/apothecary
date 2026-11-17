@@ -46,7 +46,7 @@ class Fleet {
 	readonly queued = $derived(this.runs.filter((r) => r.state === 'pending'));
 	/** Runs holding an environment (what the max-environments cap counts). */
 	readonly envs = $derived(
-		this.runs.filter((r) => !!r.envId && r.envStatus !== 'absent' && r.state !== 'archived')
+		this.runs.filter((r) => !!r.envId && r.envStatus !== 'absent' && !r.archivedAt)
 	);
 	readonly runById = $derived(new Map(this.runs.map((r) => [r.id, r])));
 	readonly projectById = $derived(new Map(this.projects.map((p) => [p.id, p])));

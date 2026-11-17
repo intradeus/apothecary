@@ -1253,6 +1253,8 @@ components:
       type: object
     DrillRun:
       properties:
+        archived:
+          type: boolean
         cost_usd:
           format: double
           type: number
@@ -2211,6 +2213,8 @@ components:
       type: object
     MRRun:
       properties:
+        archived:
+          type: boolean
         created_at:
           format: date-time
           type: string
@@ -3465,6 +3469,9 @@ components:
       properties:
         adopted:
           $ref: '#/components/schemas/AdoptedMR'
+        archived_at:
+          format: date-time
+          type: string
         branch:
           type: string
         branch_base:

@@ -27,7 +27,9 @@ describe('NoWorkspace', () => {
 	});
 
 	it('puts the destruction before the archive', () => {
-		const rs = aRunStore(aRun({ state: 'archived' }), { destroyedAt: '2026-10-31T09:00:00Z' });
+		const rs = aRunStore(aRun({ state: 'completed', archivedAt: '2026-10-31T10:00:00Z' }), {
+			destroyedAt: '2026-10-31T09:00:00Z'
+		});
 		render(NoWorkspace, { rs, onrecord: vi.fn() });
 
 		expect(screen.getByText('Workspace destroyed 3h ago')).toBeInTheDocument();
@@ -35,7 +37,8 @@ describe('NoWorkspace', () => {
 	});
 
 	it('says an archived run took its workspace along', () => {
-		render(NoWorkspace, { rs: aRunStore(aRun({ state: 'archived' })), onrecord: vi.fn() });
+		const run = aRun({ state: 'failed', archivedAt: '2026-10-31T10:00:00Z' });
+		render(NoWorkspace, { rs: aRunStore(run), onrecord: vi.fn() });
 
 		expect(screen.getByText('Workspace archived away')).toBeInTheDocument();
 		expect(screen.getByText(KEEPS)).toBeInTheDocument();

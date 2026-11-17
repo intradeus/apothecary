@@ -11,7 +11,7 @@
 	const title = $derived(
 		rs.destroyedAt
 			? t('run.noWorkspace.destroyed', { ago: ago(rs.destroyedAt) })
-			: rs.run?.state === 'archived'
+			: rs.run?.archivedAt
 				? t('run.noWorkspace.archived')
 				: rs.run && !rs.run.envId && !rs.terminal
 					? t('run.noWorkspace.none')

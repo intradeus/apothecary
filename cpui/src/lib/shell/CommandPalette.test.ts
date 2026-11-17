@@ -136,7 +136,13 @@ describe('CommandPalette, listing', () => {
 			aRun({ id: 'a', title: 'Done', state: 'completed', updatedAt: '2026-10-31T12:00:00Z' }),
 			aRun({ id: 'b', title: 'Older live', updatedAt: '2026-10-01T12:00:00Z' }),
 			aRun({ id: 'c', title: 'Newer live', updatedAt: '2026-10-02T12:00:00Z' }),
-			aRun({ id: 'd', title: 'Shelved', state: 'archived' })
+			aRun({
+				id: 'd',
+				title: 'Shelved',
+				state: 'completed',
+				updatedAt: '2026-11-01T12:00:00Z',
+				archivedAt: '2026-11-01T12:00:00Z'
+			})
 		];
 		setup();
 		await userEvent.type(search(), 'runs');

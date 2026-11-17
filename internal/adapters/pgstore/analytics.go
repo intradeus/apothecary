@@ -74,7 +74,7 @@ func (s *Store) RunQuery(ctx context.Context, c analytics.Compiled) ([]analytics
 func (s *Store) Drill(ctx context.Context, c analytics.Compiled) ([]analytics.DrillRun, error) {
 	var out []analytics.DrillRun
 	var d analytics.DrillRun
-	err := s.analyticsQuery(ctx, c, []any{&d.RunID, &d.Title, &d.FlowName, &d.FlowHash, &d.State, &d.CreatedAt, &d.WallMS, &d.CostUSD},
+	err := s.analyticsQuery(ctx, c, []any{&d.RunID, &d.Title, &d.FlowName, &d.FlowHash, &d.State, &d.Archived, &d.CreatedAt, &d.WallMS, &d.CostUSD},
 		func() error { out = append(out, d); return nil })
 	return out, err
 }

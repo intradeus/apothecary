@@ -972,7 +972,7 @@ func (e *Engine) checkEnvCapacity(ctx context.Context, userID string) error {
 		}
 		live++
 		switch {
-		case v.State == run.Archived:
+		case v.ArchivedAt != nil:
 			pending = append(pending, id)
 		case v.State.Terminal():
 			archivable = append(archivable, id)
@@ -1023,7 +1023,7 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 	if err != nil {
 		return err
 	}
-	if v.State == run.Archived {
+	if v.ArchivedAt != nil {
 		if v.EnvID == "" {
 			return fmt.Errorf("run %s is already archived", runID)
 		}
@@ -1147,9 +1147,10 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in runinput.Input) (st
 // in the SAME workspace ("try again"): the plan/build/earlier stages and
 // the agent's commits are reused; only the failed stage re-runs, with
 // retry budgets reset. Distinct from Rerun (a fresh run from stage
-// one). Refused when the run is active, not terminal, completed/archived,
-// has no stalled stage, or its workspace is gone — except a run that failed
-// provisioning its workspace: retrying it provisions the workspace again.
+// one). Refused when the run is active, not terminal, completed, archived
+// (its workspace is gone and the run moved out of the way), has no stalled
+// stage, or its workspace is gone — except a run that failed provisioning
+// its workspace: retrying it provisions the workspace again.
 func (e *Engine) RetryRun(ctx context.Context, runID string) error {
 	e.mu.Lock()
 	_, active := e.handles[runID]
@@ -1163,6 +1164,9 @@ func (e *Engine) RetryRun(ctx context.Context, runID string) error {
 	}
 	if v.State != run.Abandoned && v.State != run.Failed {
 		return fmt.Errorf("run %s is %s; only abandoned or failed runs can be retried (completed runs have nothing to retry)", runID, v.State)
+	}
+	if v.ArchivedAt != nil {
+		return fmt.Errorf("run %s is archived; rerun it as a new run instead", runID)
 	}
 	if v.ProvisionFailed {
 		// The workspace is what failed: trying again is provisioning it
@@ -2253,9 +2257,10 @@ func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter func(userID
 		if v.EnvID == "" {
 			continue
 		}
-		switch v.State {
-		case run.Archived:
-		case run.Completed:
+		switch {
+		case v.ArchivedAt != nil:
+			// Archived whatever its outcome: the destroy is retried at once.
+		case v.State == run.Completed:
 			// The window is the run owner's setting: each person decides how
 			// long their finished workspaces stand. A reap that already
 			// failed is retried at once (its env_destroy_failed moved

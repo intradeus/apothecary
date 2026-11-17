@@ -295,7 +295,7 @@ func (s *Store) ListProjects(ctx context.Context, userID string) ([]confstore.Pr
 func (s *Store) DeleteProject(ctx context.Context, id string) error {
 	var blocking []string
 	rows, err := s.pool.Query(ctx,
-		`SELECT run_id FROM runs WHERE project_id=$1 AND state <> 'archived' ORDER BY run_id`, id)
+		`SELECT run_id FROM runs WHERE project_id=$1 AND archived_at IS NULL ORDER BY run_id`, id)
 	if err != nil {
 		return err
 	}

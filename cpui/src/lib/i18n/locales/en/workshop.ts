@@ -78,7 +78,8 @@ export default {
 	'workshop.runs.newTicket': 'New ticket',
 	'workshop.runs.tickets': 'Tickets',
 	'workshop.runs.noneFinishedTitle': 'No finished runs yet',
-	'workshop.runs.noneFinishedText': 'Completed, failed and archived runs land here.',
+	'workshop.runs.noneFinishedText':
+		'Completed, abandoned and failed runs land here, archived ones too.',
 
 	// --- flows tab
 	'workshop.flows.lede':

@@ -83,7 +83,7 @@ func (s *Server) getSwarm(w http.ResponseWriter, r *http.Request) {
 	}
 	out := Swarm{At: now, Units: []SwarmUnit{}}
 	for _, v := range views {
-		if v.State == run.Archived || v.State.Terminal() && now.Sub(v.UpdatedAt) > swarmAfterglow {
+		if v.ArchivedAt != nil || v.State.Terminal() && now.Sub(v.UpdatedAt) > swarmAfterglow {
 			continue
 		}
 		u := SwarmUnit{

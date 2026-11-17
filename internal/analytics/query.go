@@ -125,6 +125,7 @@ type DrillRun struct {
 	FlowName  string    `json:"flow_name"`
 	FlowHash  string    `json:"flow_hash"`
 	State     string    `json:"state"`
+	Archived  bool      `json:"archived,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	WallMS    int64     `json:"wall_ms"`
 	CostUSD   float64   `json:"cost_usd"`

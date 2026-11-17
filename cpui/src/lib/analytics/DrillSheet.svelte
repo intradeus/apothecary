@@ -82,7 +82,7 @@
 						<a class="stretch truncate" href={to.run(r.runId)}
 							>{r.title || t('analytics.drill.untitled')}</a
 						>
-						<StatusChip state={r.state} size="sm" />
+						<StatusChip state={r.state} archived={r.archived} size="sm" />
 						<span class="mono faint truncate">{r.flowName}</span>
 						<span class="num muted">{fmtCost(r.costUsd)}</span>
 						<span class="num muted">{fmtDuration(r.wallMs)}</span>

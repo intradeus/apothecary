@@ -82,7 +82,7 @@
 	const pings = $derived(fleet.pingsByProject.get(projectId) ?? 0);
 	/** Runs that still hold the workshop: it can only be deleted once every
 	 *  one of them is archived. */
-	const blocking = $derived(runs.filter((r) => r.state !== 'archived'));
+	const blocking = $derived(runs.filter((r) => !r.archivedAt));
 	const ownFlows = $derived((flows ?? []).filter((f) => !f.builtin));
 
 	const counts = $derived<Partial<Record<WorkshopTab, number | undefined>>>({

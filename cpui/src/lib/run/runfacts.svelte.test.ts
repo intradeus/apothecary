@@ -154,8 +154,7 @@ describe('stageStatus', () => {
 		['failed', 'failed'],
 		['completed', 'done'],
 		['paused', 'paused'],
-		['abandoned', 'paused'],
-		['archived', 'paused']
+		['abandoned', 'paused']
 	])('shows a %s run as %s', (state, want) => {
 		expect(stageStatus(state)).toBe(want);
 	});

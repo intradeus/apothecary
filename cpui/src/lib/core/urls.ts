@@ -33,8 +33,14 @@ export const to = {
 	inbox: () => '/inbox',
 	notices: () => '/notices',
 	ping: (pingId: string) => `/inbox/${pingId}`,
-	runs: (opts?: { project?: string; tab?: 'active' | 'finished' }) =>
-		`/runs${q({ project: opts?.project, tab: opts?.tab })}`,
+	/** The runs list; `outcome` and `archived` narrow its Finished tab. */
+	runs: (opts?: {
+		project?: string;
+		tab?: 'active' | 'finished';
+		outcome?: 'completed' | 'abandoned' | 'failed';
+		archived?: 'no' | 'yes';
+	}) =>
+		`/runs${q({ project: opts?.project, tab: opts?.tab, outcome: opts?.outcome, archived: opts?.archived })}`,
 	run: (runId: string) => `/runs/${runId}`,
 	tickets: (opts?: { project?: string }) => `/tickets${q({ project: opts?.project })}`,
 	newTicket: (opts?: { project?: string }) => `/tickets/new${q({ project: opts?.project })}`,

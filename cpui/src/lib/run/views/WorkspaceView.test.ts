@@ -139,7 +139,10 @@ describe('WorkspaceView', () => {
 		});
 
 		it('says an archived run’s went with it', () => {
-			show('terminal', aViewStore(aLiveRun({ state: 'archived' })));
+			show(
+				'terminal',
+				aViewStore(aLiveRun({ state: 'completed', archivedAt: '2026-10-31T12:00:00Z' }))
+			);
 			expect(screen.getByText('Workspace archived away')).toBeInTheDocument();
 		});
 

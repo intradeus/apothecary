@@ -79,7 +79,16 @@ describe('OverviewTab, runs', () => {
 				updatedAt: `2026-10-0${d}T00:00:00Z`
 			})
 		);
-		setup(project(), [...finished, aRun({ id: 'x', title: 'Shelved', state: 'archived' })]);
+		setup(project(), [
+			...finished,
+			aRun({
+				id: 'x',
+				title: 'Shelved',
+				state: 'completed',
+				updatedAt: '2026-10-09T00:00:00Z',
+				archivedAt: '2026-10-09T00:00:00Z'
+			})
+		]);
 
 		expect(screen.getByText('Recently finished')).toBeInTheDocument();
 		expect(screen.queryByRole('link', { name: 'Done 1' })).not.toBeInTheDocument();

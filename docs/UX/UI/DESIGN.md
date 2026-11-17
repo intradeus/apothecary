@@ -294,11 +294,11 @@ Pill (999px), 12px / 600, `padding:3px 11px 3px 9px`, 7px leading dot.
 | `completed` | green tint | ✓ | — |
 | `abandoned` | gold **tint** | static | — |
 | `failed` | rose tint, "✕ Failed" | — | "· batch spoiled" |
-| `archived` | transparent, dashed `--line-strong` border, `--text-faint` text | — | — |
+| *(archived)* | an extra marker beside the outcome chip, "Archived": transparent, dashed `--line-strong` border, `--text-faint` text — not a state: the chip keeps how the run ended (completed, abandoned, failed) and the marker says it was archived | — | — |
 
 `in_review` is the run idling between phases with its merge requests open: reviewers have it, and reaction phases start when their triggers hold. It holds no concurrency slot.
 
-Groups: **Active** = pending, provisioning, running, waiting_on_human, in_review, paused. **Finished** = completed, abandoned, failed, archived.
+Groups: **Active** = pending, provisioning, running, waiting_on_human, in_review, paused. **Finished** = completed, abandoned, failed, archived or not. The runs lists filter the Finished group on outcome and on archived, apart.
 
 ### 3.2 Workspace status (separate axis, never merged with the run chip)
 

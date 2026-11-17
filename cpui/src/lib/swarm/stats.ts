@@ -15,8 +15,7 @@ export const UNIT_HUE: Record<RunState, Hue> = {
 	paused: 'muted',
 	completed: 'success',
 	abandoned: 'warning',
-	failed: 'danger',
-	archived: 'muted'
+	failed: 'danger'
 };
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));

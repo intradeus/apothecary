@@ -1,7 +1,8 @@
 <script lang="ts">
 	// The RUN's lifecycle: play, pause and stop while it lives; retry, rerun
 	// and archive once it has ended — and, on an archived run whose workspace
-	// a failed destroy left behind, destroying it again.
+	// a failed destroy left behind, destroying it again. An archived run is not
+	// retried (the engine refuses); a rerun starts a new one.
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
 	import { t, th } from '$lib/i18n/index.svelte';
@@ -106,7 +107,7 @@
 			><TransportIcon kind="stop" /> {t('run.header.stop')}</button
 		>
 	{:else}
-		{#if run.state === 'failed' || run.state === 'abandoned'}
+		{#if !run.archivedAt && (run.state === 'failed' || run.state === 'abandoned')}
 			<button
 				class="btn-primary"
 				disabled={actions.any}
@@ -128,7 +129,7 @@
 		<button disabled={actions.any} onclick={() => onrerun()} title={t('run.header.rerunTitle')}
 			>{t('run.header.rerun')}</button
 		>
-		{#if run.state !== 'archived'}
+		{#if !run.archivedAt}
 			<button
 				class="btn-danger"
 				disabled={actions.any}

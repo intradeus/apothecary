@@ -90,13 +90,23 @@ describe('RunRow', () => {
 		it.each([
 			['completed', 'Completed'],
 			['failed', 'Failed'],
-			['abandoned', 'Abandoned'],
-			['archived', 'Archived']
+			['abandoned', 'Abandoned']
 		] as const)('marks a %s run and says how long ago', (state, word) => {
 			const { container } = finished({ state, updatedAt: hoursAgo(5) });
 
 			expect(screen.getByRole('img', { name: word })).toBeInTheDocument();
 			expect(second(container)).toHaveTextContent(`${word} · 5h ago`);
+		});
+
+		it('reads an archived run by its outcome, marked archived', () => {
+			const { container } = finished({
+				state: 'abandoned',
+				archivedAt: hoursAgo(1),
+				updatedAt: hoursAgo(5)
+			});
+
+			expect(screen.getByRole('img', { name: 'Abandoned · archived' })).toHaveClass('muted');
+			expect(second(container)).toHaveTextContent('Abandoned · archived · 5h ago');
 		});
 
 		it('picks the mark from the outcome', () => {

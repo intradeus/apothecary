@@ -18,6 +18,8 @@ vi.mock('$lib/api', () => ({
 vi.mock('$lib/ui/confirm.svelte', () => ({ confirmDialog: vi.fn() }));
 vi.mock('$lib/ui/toast.svelte', () => ({ toast: vi.fn() }));
 
+const ARCHIVED = '2026-10-31T12:00:00Z';
+
 function setup(state: Parameters<typeof aRun>[0], over: Partial<RunStore> = {}) {
 	const rs = aRunStore(aRun(state), over);
 	const actions = new HeaderActions();
@@ -137,9 +139,15 @@ describe('RunControls: archive', () => {
 	});
 
 	it('is not offered once the run is archived', () => {
-		setup({ state: 'archived' });
+		setup({ state: 'completed', archivedAt: ARCHIVED });
 		expect(screen.queryByRole('button', { name: /archive/i })).not.toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: /destroy workspace/i })).not.toBeInTheDocument();
+	});
+
+	it('offers no retry on an archived failed run, only a rerun', () => {
+		setup({ state: 'failed', archivedAt: ARCHIVED });
+		expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /new run from this/i })).toBeInTheDocument();
 	});
 });
 
@@ -149,7 +157,13 @@ describe('RunControls: archive', () => {
 describe('RunControls: destroy a stranded workspace', () => {
 	it('retries the destroy and says it went', async () => {
 		vi.mocked(api.runs.archive).mockResolvedValueOnce(undefined as never);
-		setup({ state: 'archived', envId: 'env-1', envDestroyError: 'delete pod: exit -1' });
+		setup({
+			state: 'failed',
+			archivedAt: ARCHIVED,
+			envId: 'env-1',
+			envDestroyError: 'delete pod: exit -1'
+		});
+		expect(screen.queryByRole('button', { name: /^archive$/i })).not.toBeInTheDocument();
 		const destroy = screen.getByRole('button', { name: /destroy workspace/i });
 		expect(destroy).toHaveAttribute('title', expect.stringContaining('env-1'));
 		expect(destroy).toHaveAttribute('title', expect.stringContaining('delete pod: exit -1'));
@@ -161,7 +175,7 @@ describe('RunControls: destroy a stranded workspace', () => {
 
 	it('says nothing went when the engine refused, and names no reason it has not got', async () => {
 		vi.mocked(api.runs.archive).mockRejectedValueOnce(new Error('still stuck'));
-		setup({ state: 'archived', envId: 'env-1' });
+		setup({ state: 'completed', archivedAt: ARCHIVED, envId: 'env-1' });
 		const destroy = screen.getByRole('button', { name: /destroy workspace/i });
 		expect(destroy.getAttribute('title')).not.toContain(' — ');
 		await userEvent.click(destroy);

@@ -282,7 +282,7 @@
 					{#if current}
 						{#if run}
 							<div class="strip glass">
-								<StatusChip state={run.state} size="sm" />
+								<StatusChip state={run.state} archived={!!run.archivedAt} size="sm" />
 								{#if run.currentStage}
 									<span class="stg">
 										<StageFlask status={stageStatus(run.state)} size="sm" />

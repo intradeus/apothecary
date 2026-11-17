@@ -39,8 +39,8 @@ func RunContract(t *testing.T, open func(t *testing.T) Fixture) {
 }
 
 // The seeded people: alice has three runs on one ticket (an abandoned
-// attempt, the one that shipped, one after it), bob one run of his own with
-// values alice's never have.
+// attempt, the one that shipped — archived since —, one after it), bob one
+// run of his own with values alice's never have.
 const (
 	alice = "u-alice"
 	bob   = "u-bob"
@@ -53,13 +53,14 @@ type seedRun struct {
 	ping                                         string // type; "" for none
 	answer                                       string
 	completed                                    bool
+	archived                                     bool
 }
 
 var seedRuns = []seedRun{
 	{id: "an-a1", user: alice, project: "p-a", ticket: "t-a", title: "Alice one", flow: "fa", hash: "ha1",
 		skillset: event.SkillsetPin{ID: "ss-a", Name: "lint", Seq: 1, Hash: "x1"}, cost: 1, ping: "gate", answer: "reject"},
 	{id: "an-a2", user: alice, project: "p-a", ticket: "t-a", title: "Alice one", flow: "fa", hash: "ha1",
-		skillset: event.SkillsetPin{ID: "ss-a", Name: "lint", Seq: 1, Hash: "x1"}, cost: 2, ping: "gate", answer: "approve", completed: true},
+		skillset: event.SkillsetPin{ID: "ss-a", Name: "lint", Seq: 1, Hash: "x1"}, cost: 2, ping: "gate", answer: "approve", completed: true, archived: true},
 	{id: "an-a3", user: alice, project: "p-a", ticket: "t-a", title: "Alice one", flow: "fa", hash: "ha2",
 		skillset: event.SkillsetPin{ID: "ss-a", Name: "lint", Seq: 2, Hash: "x2"}, cost: 4, completed: true},
 	{id: "an-b1", user: bob, project: "p-b", ticket: "t-b", title: "Bob one", flow: "fb", hash: "hb1",
@@ -91,6 +92,9 @@ func seedOf(t *testing.T, f Fixture, runs []seedRun) {
 			evs = append(evs, &event.RunCompleted{})
 		} else {
 			evs = append(evs, &event.RunAbandoned{StalledAt: "build", Reason: "gave up"})
+		}
+		if r.archived {
+			evs = append(evs, &event.RunArchived{})
 		}
 		// One append per event, as the engine writes them: each lands in its
 		// own transaction with its projection.
@@ -209,8 +213,39 @@ func runAggregates(t *testing.T, f Fixture) {
 			}
 		}
 	}
+	// Archived is apart from how a run ended: archiving the run that shipped
+	// left success_rate above, and each dimension filters on its own, on
+	// every grain that has both (a skillsets row is one run's pin, so its
+	// counts are the runs').
+	for _, grain := range []analytics.Grain{analytics.GrainRuns, analytics.GrainSkillsets} {
+		for _, c := range []struct {
+			filters []analytics.Filter
+			n       int64
+		}{
+			{[]analytics.Filter{{Field: "archived", Op: analytics.OpEq, Values: []string{"true"}}}, 1},
+			{[]analytics.Filter{{Field: "state", Op: analytics.OpEq, Values: []string{"completed"}}}, 2},
+			{[]analytics.Filter{{Field: "state", Op: analytics.OpEq, Values: []string{"completed"}},
+				{Field: "archived", Op: analytics.OpEq, Values: []string{"true"}}}, 1},
+			{[]analytics.Filter{{Field: "state", Op: analytics.OpEq, Values: []string{"completed"}},
+				{Field: "archived", Op: analytics.OpEq, Values: []string{"false"}}}, 1},
+			{[]analytics.Filter{{Field: "state", Op: analytics.OpEq, Values: []string{"abandoned"}},
+				{Field: "archived", Op: analytics.OpEq, Values: []string{"true"}}}, 0},
+			{[]analytics.Filter{{Field: "state", Op: analytics.OpEq, Values: []string{"abandoned"}},
+				{Field: "archived", Op: analytics.OpEq, Values: []string{"false"}}}, 1},
+		} {
+			if res := query(t, s, alice, analytics.Query{Grain: grain, Filters: c.filters}); res.Rows[0].N != c.n {
+				t.Errorf("%s filtered by %+v = %d, want %d", grain, c.filters, res.Rows[0].N, c.n)
+			}
+		}
+	}
+	// The archived skillset pin is the shipped run's: lint v1.
+	res := query(t, s, alice, analytics.Query{Grain: analytics.GrainSkillsets, GroupBy: []string{"skillset_version"},
+		Filters: []analytics.Filter{{Field: "archived", Op: analytics.OpEq, Values: []string{"true"}}}})
+	if len(res.Rows) != 1 || res.Rows[0].Dims[0] != "lint v1" || res.Rows[0].N != 1 {
+		t.Errorf("archived skillsets by version = %+v", res.Rows)
+	}
 	// Grouped and bucketed: per flow version, then per day.
-	res := query(t, s, alice, analytics.Query{Grain: analytics.GrainRuns, GroupBy: []string{"flow_hash"},
+	res = query(t, s, alice, analytics.Query{Grain: analytics.GrainRuns, GroupBy: []string{"flow_hash"},
 		Measures: []analytics.MeasureRef{m("cost_usd", analytics.AggSum)}, Order: &analytics.OrderBy{By: "flow_hash"}})
 	if len(res.Rows) != 2 || res.Rows[0].Dims[0] != "ha1" || !near(value(t, res, 0, 0), 3) || !near(value(t, res, 1, 0), 4) {
 		t.Errorf("by flow_hash = %+v", res.Rows)
@@ -303,8 +338,12 @@ func runDrill(t *testing.T, f Fixture) {
 		t.Fatalf("drill ha1 = %v, %v", ids(runs), err)
 	}
 	r := runs[0]
-	if r.Title != "Alice one" || r.FlowName != "fa" || r.FlowHash != "ha1" || r.State != "completed" || !near(r.CostUSD, 2) || r.CreatedAt.IsZero() {
+	if r.Title != "Alice one" || r.FlowName != "fa" || r.FlowHash != "ha1" || r.State != "completed" || !r.Archived ||
+		!near(r.CostUSD, 2) || r.CreatedAt.IsZero() {
 		t.Errorf("drill row = %+v", r)
+	}
+	if runs[1].State != "abandoned" || runs[1].Archived {
+		t.Errorf("drill row = %+v", runs[1])
 	}
 	for _, g := range []struct {
 		grain   analytics.Grain

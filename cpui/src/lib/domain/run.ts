@@ -17,8 +17,7 @@ export type RunState =
 	| 'paused'
 	| 'completed'
 	| 'abandoned'
-	| 'failed'
-	| 'archived';
+	| 'failed';
 
 /**
  * The reconciled live container status, or an in-flight operation overlay
@@ -93,6 +92,9 @@ export interface Run {
 	/** The last destroy of the workspace failed with this: it is still there,
 	 *  counted against the cap, and the reaper retries it. */
 	envDestroyError?: string;
+	/** When the run was archived: its workspace is destroyed (or being
+	 *  retried) and it is filed away; `state` still holds its outcome. */
+	archivedAt?: string;
 	createdAt: string;
 	updatedAt: string;
 	/** What the run has spent and how its time went, folded from its events. */
@@ -264,7 +266,7 @@ export interface MergeRequestRow {
 	/** The open merge request whose branch it targets: it merges there. */
 	stackedOn?: MergeRequestBase;
 	/** The newest run that went through it. */
-	run?: { id: string; state: RunState; flow: string; createdAt: string };
+	run?: { id: string; state: RunState; archived?: boolean; flow: string; createdAt: string };
 	/** How many runs have it in their data: started on it, or opened it. A
 	 *  merge request belongs to no ticket; its runs are found this way. */
 	runs: number;

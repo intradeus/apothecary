@@ -42,6 +42,17 @@ describe('DrillSheet', () => {
 		expect(api.analytics.drill).toHaveBeenCalledWith('runs', [], {});
 	});
 
+	it('reads an archived run by its outcome, marked archived', async () => {
+		vi.mocked(api.analytics.drill).mockResolvedValue([
+			aDrillRun({ state: 'failed', archived: true }),
+			aDrillRun({ runId: 'r2', state: 'completed' })
+		]);
+		render(DrillSheet, props);
+		expect(await screen.findByText('Failed')).toBeInTheDocument();
+		expect(screen.getByText('Completed')).toBeInTheDocument();
+		expect(screen.getAllByText('archived')).toHaveLength(1);
+	});
+
 	it('names the clicked row under the title', async () => {
 		const r = aResult();
 		render(DrillSheet, { ...props, result: r, row: r.rows[0] });

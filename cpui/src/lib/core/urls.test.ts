@@ -10,6 +10,10 @@ describe('to', () => {
 		[to.runs({ project: 'p1' }), '/runs?project=p1'],
 		[to.runs({ tab: 'finished' }), '/runs?tab=finished'],
 		[to.runs({ project: 'p1', tab: 'active' }), '/runs?project=p1&tab=active'],
+		[
+			to.runs({ tab: 'finished', outcome: 'failed', archived: 'yes' }),
+			'/runs?tab=finished&outcome=failed&archived=yes'
+		],
 		[to.run('r1'), '/runs/r1'],
 		[to.tickets(), '/tickets'],
 		[to.tickets({ project: 'p1' }), '/tickets?project=p1'],
