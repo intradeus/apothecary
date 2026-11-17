@@ -193,22 +193,43 @@ func runDaemon(ctx context.Context, env Env) error {
 	_ = os.Chmod(sock, 0o600)
 	d := newDaemon(ctx, env, logger, loadAssignments(filepath.Join(dir, "ports.json")))
 	srv := &http.Server{Handler: d.handler(), ReadHeaderTimeout: 10 * time.Second}
+	logger.Printf("forward daemon %s started (pid %d)", env.Version, os.Getpid())
+	// Shutting down closes ln, which unlinks the socket before a successor
+	// can listen there: removing it again here, later, could delete the
+	// successor's.
+	err = serve(ctx, srv, ln, d.quit)
+	d.closeAll()
+	logger.Printf("forward daemon stopped")
+	return err
+}
+
+// daemonShutdown is how long a stopping daemon waits for the requests in
+// flight to be answered before it cuts them.
+const daemonShutdown = 5 * time.Second
+
+// serve serves ln until quit closes or ctx ends. It shuts down rather than
+// closes: the request that emptied the daemon, and so made it quit, is
+// still being answered, and a close would cut its reply.
+func serve(ctx context.Context, srv *http.Server, ln net.Listener, quit <-chan struct{}) error {
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		select {
-		case <-d.quit:
+		case <-quit:
 		case <-ctx.Done():
 		}
-		_ = srv.Close()
+		sctx, cancel := context.WithTimeout(context.Background(), daemonShutdown)
+		defer cancel()
+		if srv.Shutdown(sctx) != nil {
+			_ = srv.Close()
+		}
 	}()
-	logger.Printf("forward daemon %s started (pid %d)", env.Version, os.Getpid())
-	err = srv.Serve(ln)
-	d.closeAll()
-	_ = os.Remove(sock)
-	logger.Printf("forward daemon stopped")
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	err := srv.Serve(ln)
+	if !errors.Is(err, http.ErrServerClosed) {
+		return err
 	}
-	return err
+	<-stopped
+	return nil
 }
 
 func (d *daemon) handler() http.Handler {
