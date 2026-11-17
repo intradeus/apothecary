@@ -13,8 +13,7 @@ describe('StatusChip', () => {
 		['paused', 'Paused', 'tint-muted'],
 		['completed', 'Completed', 'tint-success'],
 		['abandoned', 'Abandoned', 'tint-warning'],
-		['failed', 'Failed', 'tint-danger'],
-		['archived', 'Archived', 'archived']
+		['failed', 'Failed', 'tint-danger']
 	])('labels %s as "%s" with its tone', (state, label, tone) => {
 		render(StatusChip, { state });
 		expect(screen.getByText(label)).toHaveClass(tone);
@@ -30,9 +29,23 @@ describe('StatusChip', () => {
 		expect(container.querySelector('.live-dot')).toBeNull();
 	});
 
-	it('draws neither glyph nor dot on an archived run', () => {
-		const { container } = render(StatusChip, { state: 'archived' });
-		expect(container.querySelector('.g, .live-dot')).toBeNull();
+	it('keeps the outcome of an archived run and marks it archived beside it', () => {
+		render(StatusChip, { state: 'failed', archived: true });
+		expect(screen.getByText('Failed')).toHaveClass('tint-danger');
+		expect(screen.getByText('✕')).toBeInTheDocument();
+		expect(screen.getByText('archived')).toHaveClass('archived');
+	});
+
+	it('marks nothing on a run that is not archived', () => {
+		render(StatusChip, { state: 'failed' });
+		expect(screen.queryByText('archived')).toBeNull();
+	});
+
+	it('names an archived run’s compact dot for its outcome and the archiving', () => {
+		render(StatusChip, { state: 'completed', compact: true, archived: true });
+		const dot = screen.getByRole('img', { name: 'Completed · archived' });
+		expect(dot).toHaveClass('hue-success');
+		expect(dot).toHaveClass('dashed');
 	});
 
 	it('lets only the running dot glow; waiting pulses flat', () => {

@@ -124,6 +124,13 @@ describe('RunTable', () => {
 	it('shows the state', () => {
 		render(RunTable, { runs: [aRun({ state: 'failed' })] });
 		expect(screen.getByText('Failed')).toBeInTheDocument();
+		expect(screen.queryByText('archived')).not.toBeInTheDocument();
+	});
+
+	it('shows an archived run’s outcome, marked archived', () => {
+		render(RunTable, { runs: [aRun({ state: 'failed', archivedAt: '2026-10-31T12:00:00Z' })] });
+		expect(screen.getByText('Failed')).toBeInTheDocument();
+		expect(screen.getByText('archived')).toBeInTheDocument();
 	});
 
 	it('shows the workspace status beside it', () => {

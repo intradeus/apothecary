@@ -294,11 +294,11 @@ Pill (999px), 12px / 600, `padding:3px 11px 3px 9px`, 7px leading dot.
 | `completed` | green tint | ✓ | — |
 | `abandoned` | gold **tint** | static | — |
 | `failed` | rose tint, "✕ Failed" | — | "· batch spoiled" |
-| `archived` | transparent, dashed `--line-strong` border, `--text-faint` text | — | — |
+| *(archived)* | an extra marker beside the outcome chip, "Archived": transparent, dashed `--line-strong` border, `--text-faint` text — not a state: the chip keeps how the run ended (completed, abandoned, failed) and the marker says it was archived | — | — |
 
 `in_review` is the run idling between phases with its merge requests open: reviewers have it, and reaction phases start when their triggers hold. It holds no concurrency slot.
 
-Groups: **Active** = pending, provisioning, running, waiting_on_human, in_review, paused. **Finished** = completed, abandoned, failed, archived.
+Groups: **Active** = pending, provisioning, running, waiting_on_human, in_review, paused. **Finished** = completed, abandoned, failed, archived or not. The runs lists filter the Finished group on outcome and on archived, apart.
 
 ### 3.2 Workspace status (separate axis, never merged with the run chip)
 
@@ -741,6 +741,7 @@ The run page body is a **user-arrangeable tiling desk**, like an IDE.
 | Session | Transcript (4.10) + ping card + composer. Auto-follows the bottom. |
 | Ask | A read-only session beside the run (a flow's `ask:` section) that answers questions about the code as it stands. Head: display "Ask", the harness in mono, a model select (the harness's reachable models; a free field when unknown). Thread: your questions as right-aligned brand bubbles ("you · 14:05"), answers as markdown with "model · $0.012 · 14:05" under each; the answer being written streams in with a pulsing "thinking…" / "Read main.go…" line. One question at a time: the box and Ask button wait while an answer is written. Off state: an empty state with the reason (no `ask:` section, no workspace, a harness that cannot be read-only). The conversation persists with the run and outlives it while the workspace does. |
 | Pings | All pings raised by this run (ping cards); summary "1 pending · 2 answered". |
+| Watchers | The flow's chains, one `.card-in` each, under a `SectionHeader` per kind with a count and a one-line sub, in order **Main chain → Watchers → Outcomes** (a kind the flow lacks is left out); a `.card-grid` (`--min` 280px) drops to one column in a narrow leaf. Above them, a strip of the open merge requests with their status. A card has a 3px top accent in its chain marker's hue (7.8: main brand, watcher violet, outcome green for done, rose for abort), the mono id, an outcome's "ends the run: done" / "abandons the run" pill, and one status pill (running ember pulse / parked at X gold / pending solid sky / max reached / idle); then the chain's description, a `dl.kv` of **Opens on** (signal title, quiet time, or "only when you start it"), **Starts** (its start policy), **Runs** (used/max, or "once"), and the reasons its signal holds right now (new ones only). Its foot: a watcher's **▶ Run now** (`.btn-md`; primary only while it can start and its signal is pending) with the reason it can or cannot start beside it; an outcome's "happens on the repository"; the main chain's "it ran when the run started". Several open merge requests: Run now asks which one in a popover. A finished run keeps the cards without the buttons. |
 | Timeline | Event rows: 24h time (mono), a tone dot (ok grn / bad ros / warn sky / info emb), text, and inline "log" / "open" actions. |
 | Record | Snapshots and attachments table: name, kind chip, source ("build · attempt 2", "ping answer", "run goal"), size, time, open/download. Kind filter segmented control. Note "Kept after the workspace is destroyed". |
 | Changes | Repo segmented picker (primary ★). Summary "branch vs main · fork a1b2c3 · 7 files +212 −48 · 3 commits", collapsible commits, List / Tree switch (4.13), file list (4.13) + unified diff; it opens on the first file shown. "Refreshes every 5s". |

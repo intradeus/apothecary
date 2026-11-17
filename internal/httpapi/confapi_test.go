@@ -69,6 +69,10 @@ func newConfEnvWith(t *testing.T, opt func(*engine.Deps)) *confEnv {
 	kinds.RegisterFakes(reg)
 	conf := confstore.New(confstore.NewMem(), key)
 	conf.KindValid = reg.Valid
+	// The instance's provisioner, as the daemon ensures it at boot.
+	if _, err := conf.EnsureProvisioner(t.Context(), "fake", "workspaces"); err != nil {
+		t.Fatal(err)
+	}
 	resolver := integrations.New(conf, reg, "", 8080, "")
 	t.Cleanup(resolver.Close)
 
@@ -132,7 +136,6 @@ func (x *confEnv) wizard(t *testing.T) string {
 		return out.ID
 	}
 	repoAccountID := mk("repository", "f", map[string]string{"token": "glpat-PLANTED-repo-token"})
-	provID := mk("provisioner", "c", nil)
 	// Model auth is a provider credential the harness references: the second
 	// planted secret is one, created through its own API, exercising the
 	// real credential path (and its listing, which must never echo it).
@@ -154,7 +157,7 @@ func (x *confEnv) wizard(t *testing.T) string {
 	}
 
 	resp, data = x.do(t, "POST", "/api/projects", map[string]any{
-		"name": "web", "repo_account_id": repoAccountID, "provisioner_id": provID,
+		"name": "web", "repo_account_id": repoAccountID,
 		"harness_ids": []string{harnessID},
 		"repo": map[string]string{
 			"url": repos[0].URL, "locator": repos[0].Locator, "default_branch": repos[0].DefaultBranch,

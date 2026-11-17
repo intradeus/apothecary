@@ -85,24 +85,39 @@ func (s *Service) CreateIntegration(ctx context.Context, in Integration) (Integr
 	return in, nil
 }
 
-// EnsureProvisioner gives a user with no provisioner integration one of kind
-// kind, every field empty — what a deployment that knows its own sandbox
-// host (Kubernetes, from its APOTHECARY_K8S_* settings) hands each new
-// account, so a fresh install can run a workspace without a form. A user who
-// has any provisioner keeps theirs. The integration made is returned, or the
-// zero value when there was one already.
-func (s *Service) EnsureProvisioner(ctx context.Context, userID, kind, name string) (Integration, error) {
-	rows, err := s.db.ListIntegrations(ctx, userID)
+// InstanceOwner owns what belongs to the instance rather than to a person:
+// its provisioner. No account has this id, so no one reaches the row through
+// the per-person integration routes; an admin edits it through the
+// instance's own (System → Provisioner).
+const InstanceOwner = ""
+
+// EnsureProvisioner gives the instance a provisioner of kind kind, every
+// field empty, when it has none — what a deployment that knows its own
+// sandbox host (Kubernetes, from its APOTHECARY_K8S_* settings) runs at boot,
+// so a fresh install can run a workspace without a form. The integration
+// made is returned, or the zero value when there was one already.
+func (s *Service) EnsureProvisioner(ctx context.Context, kind, name string) (Integration, error) {
+	if _, err := s.InstanceProvisioner(ctx); !errors.Is(err, ErrNotFound) {
+		return Integration{}, err
+	}
+	return s.CreateIntegration(ctx, Integration{UserID: InstanceOwner, Port: PortProvisioner, Kind: kind, Name: name,
+		Config: map[string]any{}, Secrets: map[string]string{}})
+}
+
+// InstanceProvisioner is the instance's provisioner: where every workshop's
+// workspaces are built unless it names another. ErrNotFound when the
+// instance has none yet.
+func (s *Service) InstanceProvisioner(ctx context.Context) (Integration, error) {
+	rows, err := s.db.ListIntegrations(ctx, InstanceOwner)
 	if err != nil {
 		return Integration{}, err
 	}
 	for _, r := range rows {
-		if r.Port == PortProvisioner && r.UserID == userID {
-			return Integration{}, nil
+		if r.Port == PortProvisioner && r.UserID == InstanceOwner {
+			return s.open(r)
 		}
 	}
-	return s.CreateIntegration(ctx, Integration{UserID: userID, Port: PortProvisioner, Kind: kind, Name: name,
-		Config: map[string]any{}, Secrets: map[string]string{}})
+	return Integration{}, fmt.Errorf("the instance's provisioner: %w", ErrNotFound)
 }
 
 // UpdateIntegration applies the §3 write semantics: config replaces whole;
@@ -261,6 +276,16 @@ func (s *Service) validateIntegration(ctx context.Context, in *Integration) erro
 // CreateProject saves a new workshop. Its ticket source defaults to the
 // owner's internal tracker.
 func (s *Service) CreateProject(ctx context.Context, p Project) (Project, error) {
+	if p.ProvisionerID == "" {
+		in, err := s.InstanceProvisioner(ctx)
+		if errors.Is(err, ErrNotFound) {
+			return Project{}, invalidf("project: the instance has no provisioner yet — an admin sets it in System → Provisioner")
+		}
+		if err != nil {
+			return Project{}, err
+		}
+		p.ProvisionerID = in.ID
+	}
 	if p.TicketSourceID == "" {
 		in, err := s.InternalTracker(ctx, p.UserID)
 		if err != nil {
@@ -290,6 +315,9 @@ func (s *Service) UpdateProject(ctx context.Context, id string, upd Project) (Pr
 	upd.CreatedAt = cur.CreatedAt
 	if upd.TicketSourceID == "" {
 		upd.TicketSourceID = cur.TicketSourceID
+	}
+	if upd.ProvisionerID == "" {
+		upd.ProvisionerID = cur.ProvisionerID
 	}
 	if err := s.validateProject(ctx, &upd); err != nil {
 		return Project{}, err
@@ -431,7 +459,9 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 			return invalidf("project: %s is required", r.field)
 		}
 		in, err := s.db.GetIntegration(ctx, r.id)
-		if errors.Is(err, ErrNotFound) || (err == nil && !sameOwner(in.UserID, p.UserID)) {
+		// The instance's provisioner is everyone's to build on.
+		mine := err == nil && (sameOwner(in.UserID, p.UserID) || (r.port == PortProvisioner && in.UserID == InstanceOwner))
+		if errors.Is(err, ErrNotFound) || (err == nil && !mine) {
 			// A dangling reference on a write is a validation failure (400),
 			// not a 404 on the project route. Someone else's integration is
 			// dangling too: a person's credentials are theirs alone.
@@ -602,6 +632,21 @@ func (s *Service) flowText(ctx context.Context, projectID, name string) (string,
 		return src, nil
 	}
 	return "", err
+}
+
+// ParsedFlow is the project's flow name as a run would start it — its own
+// document, else the built-in of that name — parsed. A document that does
+// not parse is an invalid request, not a missing flow.
+func (s *Service) ParsedFlow(ctx context.Context, projectID, name string) (*flow.Flow, error) {
+	src, err := s.flowText(ctx, projectID, name)
+	if err != nil {
+		return nil, err
+	}
+	f, err := flow.Parse(name, []byte(src))
+	if err != nil {
+		return nil, invalidf("flow %q does not parse: %v", name, err)
+	}
+	return f, nil
 }
 
 func (s *Service) GetFlow(ctx context.Context, projectID, name string) (FlowRow, error) {

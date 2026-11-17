@@ -35,8 +35,7 @@ const STATES: RunState[] = [
 	'paused',
 	'completed',
 	'abandoned',
-	'failed',
-	'archived'
+	'failed'
 ];
 const SEC = 1000;
 const MIN = 60 * SEC;
@@ -53,8 +52,7 @@ describe('run states', () => {
 		['paused', false],
 		['completed', true],
 		['abandoned', true],
-		['failed', true],
-		['archived', true]
+		['failed', true]
 	])('says whether %s is over', (state, over) => {
 		expect(isTerminal(state)).toBe(over);
 		expect(stateTab[state]).toBe(over ? 'finished' : 'active');
@@ -69,8 +67,7 @@ describe('run states', () => {
 		['paused', 'Paused', 'var(--text-muted)', 'hue-muted'],
 		['completed', 'Completed', 'var(--success)', 'hue-success'],
 		['abandoned', 'Abandoned', 'var(--warning)', 'hue-warning'],
-		['failed', 'Failed', 'var(--danger)', 'hue-danger'],
-		['archived', 'Archived', 'var(--text-faint)', 'faint']
+		['failed', 'Failed', 'var(--danger)', 'hue-danger']
 	])('words and colours %s', (state, label, hue, hueClass) => {
 		expect(stateLabel[state]).toBe(label);
 		expect(stateHue[state]).toBe(hue);

@@ -78,7 +78,8 @@ export default {
 	'workshop.runs.newTicket': 'New ticket',
 	'workshop.runs.tickets': 'Tickets',
 	'workshop.runs.noneFinishedTitle': 'No finished runs yet',
-	'workshop.runs.noneFinishedText': 'Completed, failed and archived runs land here.',
+	'workshop.runs.noneFinishedText':
+		'Completed, abandoned and failed runs land here, archived ones too.',
 
 	// --- flows tab
 	'workshop.flows.lede':
@@ -199,6 +200,12 @@ export default {
 	'workshop.automations.schedule': 'Schedule',
 	'workshop.automations.scheduleHelp':
 		'Five cron fields, UTC: minute hour day-of-month month day-of-week. “0 9 * * 1-5” is weekday mornings at nine.',
+	'workshop.automations.cronOn': 'Each run works on',
+	'workshop.automations.cronOnTicket': 'A ticket',
+	'workshop.automations.cronOnNothing': 'Nothing',
+	'workshop.automations.cronOnNothingHelp':
+		'Each firing starts a run of its own, with no ticket, of a flow whose runs are started on nothing. A slot is skipped while the previous run is still going.',
+	'workshop.automations.cronNoTicket': 'no ticket',
 	'workshop.automations.ticket': 'Ticket',
 	'workshop.automations.ticketHelp': 'Each firing starts a new run of this ticket.',
 	'workshop.automations.noTickets':
@@ -258,7 +265,6 @@ export default {
 	'workshop.overview.noExtraHosts': 'No extra hosts — only the derived allowlist applies.',
 	'workshop.overview.forceBlocked': 'Force-blocked · from the run’s Egress window',
 	'workshop.overview.workspace': 'Workspace',
-	'workshop.overview.provisioner': 'provisioner',
 	'workshop.overview.harnesses': 'harnesses',
 	'workshop.overview.docker': 'docker in workspaces',
 	'workshop.overview.on': 'on',

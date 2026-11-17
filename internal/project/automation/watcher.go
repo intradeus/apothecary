@@ -40,6 +40,8 @@ const By = "automation"
 type Runs interface {
 	CreateRunWith(ctx context.Context, t runinput.Ticket, flowName, projectID string, in runinput.Input) (string, error)
 	RunsOf(ctx context.Context, item workitem.Ref) ([]run.View, error)
+	// AutomationRuns are the runs an automation created.
+	AutomationRuns(ctx context.Context, automationID string) ([]run.View, error)
 }
 
 // MRs is what a merge_request automation reads: a repository's open merge
@@ -284,7 +286,7 @@ func (w *Watcher) pollMRs(ctx context.Context, a confstore.Automation) (bool, er
 
 // startOn creates the automation's run on a merge request.
 func (w *Watcher) startOn(ctx context.Context, a confstore.Automation, mr repoport.MRInfo) (string, error) {
-	id, err := w.Runs.CreateRunWith(ctx, mergerequest.Work(mr), a.Flow, a.ProjectID, runinput.Input{Params: maps.Clone(a.Params), By: By,
+	id, err := w.Runs.CreateRunWith(ctx, mergerequest.Work(mr), a.Flow, a.ProjectID, runinput.Input{Params: maps.Clone(a.Params), By: By, Automation: a.ID,
 		MR: &runinput.MR{Repo: a.Repo, IID: mr.Ref.IID}})
 	if err != nil {
 		return "", err
@@ -304,6 +306,13 @@ func (w *Watcher) startOn(ctx context.Context, a confstore.Automation, mr repopo
 // falls while the ticket's previous run is still going is skipped, recorded
 // as "ticket busy: run <id>", and not made up later — the same policy as a
 // slot missed while the daemon was down.
+//
+// With no ticket pinned the flow starts its runs on nothing (the save
+// checked it): each firing is a run of its own, named after the automation
+// and the slot. Such a run holds no work item to be busy on, so the
+// automation is: a slot that falls while its previous run is still going is
+// skipped the same way — a flow that waits on a person would otherwise fill
+// the instance, one workspace a slot.
 func (w *Watcher) tick(ctx context.Context, a confstore.Automation) (bool, error) {
 	c, err := schedule.Parse(a.Schedule)
 	if err != nil {
@@ -323,6 +332,9 @@ func (w *Watcher) tick(ctx context.Context, a confstore.Automation) (bool, error
 	}
 	if err := w.Conf.MarkAutomation(ctx, a.ID, confstore.AutomationMark{FiredAt: now, Err: a.LastError}); err != nil {
 		return false, err
+	}
+	if a.TicketID == "" {
+		return true, w.startOnNothing(ctx, a, now)
 	}
 	t, err := w.Conf.GetTicket(ctx, a.TicketID)
 	if err != nil {
@@ -358,6 +370,29 @@ func (w *Watcher) pinnedInWorkshop(ctx context.Context, a confstore.Automation, 
 	return nil
 }
 
+// startOnNothing starts a scheduled run of a flow whose runs are started on
+// nothing, unless the automation's previous run is still going.
+func (w *Watcher) startOnNothing(ctx context.Context, a confstore.Automation, now time.Time) error {
+	prev, err := w.Runs.AutomationRuns(ctx, a.ID)
+	if err != nil {
+		return fmt.Errorf("the automation's runs: %w", err)
+	}
+	for _, v := range prev {
+		if !v.State.Terminal() {
+			w.log().Info("automation slot skipped: its previous run is still going", "automation", a.ID,
+				"name", a.Name, logs.RunID, v.RunID)
+			return fmt.Errorf("previous run still going: run %s", v.RunID)
+		}
+	}
+	id, err := w.Runs.CreateRunWith(ctx, runinput.Ticket{Title: a.Name + " - " + now.UTC().Format("2006-01-02 15:04")},
+		a.Flow, a.ProjectID, runinput.Input{Params: maps.Clone(a.Params), By: By, Automation: a.ID})
+	if err != nil {
+		return err
+	}
+	w.log().Info("automation started a run", "automation", a.ID, "name", a.Name, logs.RunID, id, "flow", a.Flow)
+	return nil
+}
+
 func (w *Watcher) start(ctx context.Context, a confstore.Automation, t confstore.Ticket) (string, error) {
 	var attIDs []string
 	if w.Tickets != nil && w.Tickets.Attachments != nil {
@@ -372,7 +407,7 @@ func (w *Watcher) start(ctx context.Context, a confstore.Automation, t confstore
 		ChangeType:          string(t.ChangeType),
 		TicketAttachmentIDs: attIDs,
 		SourceID:            t.SourceID, SourceKind: t.SourceKind, SourceKey: t.SourceKey, SourceURL: t.SourceURL,
-	}, a.Flow, a.ProjectID, runinput.Input{Params: maps.Clone(a.Params), By: By})
+	}, a.Flow, a.ProjectID, runinput.Input{Params: maps.Clone(a.Params), By: By, Automation: a.ID})
 	if err != nil {
 		return "", err
 	}

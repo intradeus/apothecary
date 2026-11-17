@@ -10,6 +10,10 @@ describe('to', () => {
 		[to.runs({ project: 'p1' }), '/runs?project=p1'],
 		[to.runs({ tab: 'finished' }), '/runs?tab=finished'],
 		[to.runs({ project: 'p1', tab: 'active' }), '/runs?project=p1&tab=active'],
+		[
+			to.runs({ tab: 'finished', outcome: 'failed', archived: 'yes' }),
+			'/runs?tab=finished&outcome=failed&archived=yes'
+		],
 		[to.run('r1'), '/runs/r1'],
 		[to.tickets(), '/tickets'],
 		[to.tickets({ project: 'p1' }), '/tickets?project=p1'],
@@ -27,17 +31,19 @@ describe('to', () => {
 		[to.workshop('p1'), '/w/p1'],
 		[to.workshop('p1', 'overview'), '/w/p1'],
 		[to.workshop('p1', 'flows'), '/w/p1?tab=flows'],
-		[to.workshopSettings('p1'), '/w/p1/settings'],
+		[to.workshopSettings('p1'), '/w/p1?tab=settings'],
 		[to.flow('p1', 'builder'), '/w/p1/flows/builder'],
 		[to.system(), '/system/integrations'],
-		[to.system('limits'), '/system/limits'],
+		[to.system('provisioner'), '/system/provisioner'],
+		[to.limits(), '/system/provisioner#limits'],
+		[to.integrations('harness'), '/system/integrations/harness'],
 		[to.account(), '/system/account'],
 		[to.users(), '/system/users'],
-		[to.skills(), '/system/skills'],
-		[to.newSkill(), '/system/skills/new'],
-		[to.skill('s1'), '/system/skills/s1'],
-		[to.newSkillset(), '/system/skills/sets/new'],
-		[to.skillset('s1'), '/system/skills/sets/s1'],
+		[to.skills(), '/skills'],
+		[to.newSkill(), '/skills/new'],
+		[to.skill('s1'), '/skills/s1'],
+		[to.newSkillset(), '/skills/sets/new'],
+		[to.skillset('s1'), '/skills/sets/s1'],
 		[to.warRoom(), '/war-room']
 	])('builds %s', (built, url) => {
 		expect(built).toBe(url);

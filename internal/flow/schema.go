@@ -35,6 +35,9 @@ func schema() obj {
 	intOrParam := func(desc string) obj {
 		return obj{"description": desc, "anyOf": []any{obj{"type": "integer"}, paramRef}}
 	}
+	boolOrParam := func(desc string) obj {
+		return obj{"description": desc, "anyOf": []any{obj{"type": "boolean"}, paramRef}}
+	}
 	stringsOf := func(desc string, values ...string) obj {
 		return obj{"type": "string", "enum": values, "description": desc}
 	}
@@ -113,6 +116,7 @@ func schema() obj {
 			"harness_options": harnessOptionsSchema(),
 			"max_turns":       intOrParam("agent: the turn budget (default: the max_turns parameter)"),
 			"reuse_session":   obj{"type": "boolean", "description": "agent: an attempt sent back to this stage continues its session, so the agent remembers (default true); false opens a new one each attempt, for a look unswayed by the last"},
+			"start_held":      boolOrParam("agent: every attempt opens in the run owner's hands — the agent answers the stage prompt, then waits for the owner's messages until they release it (default false); true, false or a bool $parameter"),
 			"timeout":         str("how long it may take: a duration (30m) or a $parameter — agent and command (default: the timeout parameter), wait (default: forever), service (how long a start may take to be healthy; default: the service's own)"),
 			"input":           ports("what it reads, each port with where it comes from and what it is (a human_gate: the files and folders the person reviews, and at most one link)", "port_in"),
 			"output":          ports("what it writes, each port with where it goes and what it is", "port_out"),
@@ -235,7 +239,7 @@ func schema() obj {
 			"name":        withDesc(slug, "the flow's name"),
 			"version":     obj{"const": CurrentVersion, "description": "the grammar this document is written in"},
 			"description": str("what the flow does"),
-			"operates_on": stringsOf("what each run works on — picked by whoever starts it (default: ticket)", OperatesOnTicket, OperatesOnMR),
+			"operates_on": stringsOf("what each run works on — picked by whoever starts it (default: ticket); nothing is a workspace on a branch with no ticket or merge request behind it", OperatesOnTicket, OperatesOnMR, OperatesOnNothing),
 			"ask": obj{
 				"type":                 "object",
 				"description":          "the Ask pane: a read-only session beside the run that answers questions about the code; its model is picked in the pane",

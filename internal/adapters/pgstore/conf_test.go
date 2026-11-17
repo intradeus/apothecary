@@ -323,8 +323,13 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 	if err := s.DeleteProject(ctx, "prj1"); !errors.Is(err, confstore.ErrReferenced) {
 		t.Fatalf("project delete with run = %v", err)
 	}
-	if _, err := s.Append(ctx, "r1", &event.RunFailed{Reason: "x"}); err != nil {
+	// Ended is not enough: only archiving lets the project go, and archiving
+	// keeps the outcome, so the guard reads the flag, not the state.
+	if _, err := s.Append(ctx, "r1", &event.RunCompleted{}); err != nil {
 		t.Fatal(err)
+	}
+	if err := s.DeleteProject(ctx, "prj1"); !errors.Is(err, confstore.ErrReferenced) {
+		t.Fatalf("project delete with a completed, unarchived run = %v", err)
 	}
 	if _, err := s.Append(ctx, "r1", &event.RunArchived{}); err != nil {
 		t.Fatal(err)

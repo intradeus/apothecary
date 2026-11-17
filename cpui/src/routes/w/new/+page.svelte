@@ -34,9 +34,7 @@
 	onMount(load);
 
 	const missing = $derived(
-		(['repository', 'provisioner', 'harness'] as const).filter(
-			(p) => !integrations.some((i) => i.port === p)
-		)
+		(['repository', 'harness'] as const).filter((p) => !integrations.some((i) => i.port === p))
 	);
 </script>
 

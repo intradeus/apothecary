@@ -213,13 +213,22 @@ type runHandle struct {
 	mailbox chan raiseReq  // agent-raised pings (ask_human shim path)
 	answers chan answerReq // answers for any of this run's open pings
 	// messages carries a human's messages to the running agent. Unbuffered:
-	// a send succeeds only when an agent invocation is there to take it.
+	// a send succeeds only when an agent invocation, or a start hold's
+	// opening prompt (promptOpening), is there to take it.
 	messages chan msgReq
 	// holds carries a take-over (or its release) to the running agent's
 	// invocation, unbuffered for the same reason.
 	holds chan holdReq
-	// agentLive is set while an agent invocation runs (messages can land).
+	// agentLive is set while an agent invocation runs (messages can land),
+	// and while a start hold's opening invocation is still on its way, from
+	// just before its hold_taken (admitOpening): a send then waits for it.
 	agentLive atomic.Bool
+	// opening is held by the loop from the drain of a start hold's opening
+	// messages until its stage prompt is on the log (promptOpening). A send
+	// reads agentLive under it: one that comes while the prompt is being
+	// fixed waits until it is written, then reaches the opening invocation
+	// like any message to a turn in progress — never the prompt it missed.
+	opening sync.Mutex
 	// parking is set while the loop goes from an invocation towards parked:
 	// from the decision until the next invocation, or until it is gone. It
 	// takes no delivery in between; liveLoop waits to see which way it went.
@@ -650,6 +659,13 @@ type AttachmentStore interface {
 	// ClaimForRun binds still-unclaimed uploads to a run (goal files) or,
 	// with a pingID, to an answer within that run. One-shot per attachment.
 	ClaimForRun(ctx context.Context, userID string, ids []string, runID, pingID string) error
+	// ClaimForChat binds userID's uploads to one of the run's chats
+	// (filestore.ChatTakeOver, ChatAsk), all or nothing:
+	// filestore.ErrNotClaimable when any id is not theirs to send.
+	ClaimForChat(ctx context.Context, userID string, ids []string, runID, chat string) error
+	// UnclaimForChat gives back a chat claim whose message was refused
+	// after it: the files are the sender's unsent uploads again.
+	UnclaimForChat(ctx context.Context, userID string, ids []string, runID, chat string) error
 	// Get resolves one attachment by id — ticket attachments belong to the
 	// ticket, not the run, so ForRun cannot find them; the ids ride on
 	// run_created.
@@ -896,8 +912,10 @@ func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName,
 		return "", fmt.Errorf("preflight: %w", err)
 	}
 	if st.Branch == "" {
-		st.Base = ""
-		st.Branch = fmt.Sprintf("apothecary/%s-%s", strings.ToLower(runID), wsname.Slug(t.Title, workitem.MaxBranchSlug))
+		// A start on a bare name: the name plus the run's tail, the shape a
+		// ticket's run gets, so the branch and the workspace read alike.
+		st.Base = "apothecary/" + cmp.Or(wsname.Slug(t.Title, workitem.MaxBranchSlug), "run")
+		st.Branch = st.Base + "-" + wsname.RunIDTail(runID)
 	} else if err := checkout.CheckBranch(st.Branch); err != nil {
 		return "", fmt.Errorf("branch %q: %v", st.Branch, err)
 	}
@@ -937,6 +955,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName,
 		TicketSourceURL:     t.SourceURL,
 		Params:              params,
 		By:                  by,
+		Automation:          in.Automation,
 		MR:                  adopted,
 		Skillsets:           pins,
 	}); err != nil {
@@ -995,7 +1014,7 @@ func (e *Engine) checkEnvCapacity(ctx context.Context, userID string) error {
 		}
 		live++
 		switch {
-		case v.State == run.Archived:
+		case v.ArchivedAt != nil:
 			pending = append(pending, id)
 		case v.State.Terminal():
 			archivable = append(archivable, id)
@@ -1046,7 +1065,7 @@ func (e *Engine) Archive(ctx context.Context, runID string) error {
 	if err != nil {
 		return err
 	}
-	if v.State == run.Archived {
+	if v.ArchivedAt != nil {
 		if v.EnvID == "" {
 			return fmt.Errorf("run %s is already archived", runID)
 		}
@@ -1155,8 +1174,12 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in runinput.Input) (st
 		t.SourceBranch, t.RunGoal, t.AttachmentIDs = sourceBranch, in.Goal, in.AttachmentIDs
 		return e.CreateRunWith(ctx, t, flowName, v.ProjectID, next)
 	}
+	// A branch the engine named after the run (its base plus the run's
+	// tail; before, the run's whole id) is named again for the new run. One
+	// the start chose — a run on nothing working on main itself — is kept.
 	branch := v.Branch
-	if branch == "" || strings.HasPrefix(branch, "apothecary/"+strings.ToLower(runID)+"-") {
+	if branch == "" || strings.HasPrefix(branch, "apothecary/"+strings.ToLower(runID)+"-") ||
+		(v.BranchBase != "" && branch == v.BranchBase+"-"+wsname.RunIDTail(runID)) {
 		branch = ""
 	}
 	return e.CreateRunWith(ctx, runinput.Ticket{
@@ -1170,9 +1193,10 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in runinput.Input) (st
 // in the SAME workspace ("try again"): the plan/build/earlier stages and
 // the agent's commits are reused; only the failed stage re-runs, with
 // retry budgets reset. Distinct from Rerun (a fresh run from stage
-// one). Refused when the run is active, not terminal, completed/archived,
-// has no stalled stage, or its workspace is gone — except a run that failed
-// provisioning its workspace: retrying it provisions the workspace again.
+// one). Refused when the run is active, not terminal, completed, archived
+// (its workspace is gone and the run moved out of the way), has no stalled
+// stage, or its workspace is gone — except a run that failed provisioning
+// its workspace: retrying it provisions the workspace again.
 func (e *Engine) RetryRun(ctx context.Context, runID string) error {
 	e.mu.Lock()
 	_, active := e.handles[runID]
@@ -1186,6 +1210,9 @@ func (e *Engine) RetryRun(ctx context.Context, runID string) error {
 	}
 	if v.State != run.Abandoned && v.State != run.Failed {
 		return fmt.Errorf("run %s is %s; only abandoned or failed runs can be retried (completed runs have nothing to retry)", runID, v.State)
+	}
+	if v.ArchivedAt != nil {
+		return fmt.Errorf("run %s is archived; rerun it as a new run instead", runID)
 	}
 	if v.ProvisionFailed {
 		// The workspace is what failed: trying again is provisioning it
@@ -1467,6 +1494,23 @@ func (e *Engine) RunsOf(ctx context.Context, item workitem.Ref) ([]run.View, err
 	var out []run.View
 	for _, v := range all {
 		if e.items.Holds(v, item) {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
+// AutomationRuns lists the runs an automation created, in the order the
+// store keeps them: what a scheduled run on nothing asks before a slot
+// starts another, since such a run holds no work item to be busy on.
+func (e *Engine) AutomationRuns(ctx context.Context, automationID string) ([]run.View, error) {
+	all, err := e.runs.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []run.View
+	for _, v := range all {
+		if automationID != "" && v.AutomationID == automationID {
 			out = append(out, v)
 		}
 	}
@@ -2295,9 +2339,10 @@ func (e *Engine) ReapOnce(ctx context.Context, destroyCompletedAfter func(userID
 		if v.EnvID == "" {
 			continue
 		}
-		switch v.State {
-		case run.Archived:
-		case run.Completed:
+		switch {
+		case v.ArchivedAt != nil:
+			// Archived whatever its outcome: the destroy is retried at once.
+		case v.State == run.Completed:
 			// The window is the run owner's setting: each person decides how
 			// long their finished workspaces stand. A reap that already
 			// failed is retried at once (its env_destroy_failed moved

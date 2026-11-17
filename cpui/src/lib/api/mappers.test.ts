@@ -67,6 +67,7 @@ describe('runs', () => {
 				pause_note: 'budget exceeded: cost 1.20 USD > max 1.00',
 				provision_failed: true,
 				env_destroy_error: 'delete pod: exit -1',
+				archived_at: AT,
 				idle: true,
 				phase: 'w',
 				phase_subject: 'sub',
@@ -95,6 +96,7 @@ describe('runs', () => {
 			pause: { reason: 'budget', note: 'budget exceeded: cost 1.20 USD > max 1.00' },
 			provisionFailed: true,
 			envDestroyError: 'delete pod: exit -1',
+			archivedAt: AT,
 			idle: true,
 			phase: 'w',
 			phaseSubject: 'sub',
@@ -114,6 +116,7 @@ describe('runs', () => {
 			pause: undefined,
 			provisionFailed: false,
 			envDestroyError: undefined,
+			archivedAt: undefined,
 			phase: undefined,
 			phaseSubject: undefined,
 			params: undefined,
@@ -142,10 +145,13 @@ describe('runs', () => {
 		'paused',
 		'completed',
 		'abandoned',
-		'failed',
-		'archived'
+		'failed'
 	])('keeps the state %s', (state) => {
 		expect(map.toRun(aRunView({ state })).state).toBe(state);
+	});
+
+	it('no longer reads archived as a state: archiving is a flag beside the outcome', () => {
+		expect(map.toRun(aRunView({ state: 'archived' })).state).toBe('pending');
 	});
 
 	it('sums the six time buckets into wall time and keeps the open attempts', () => {
@@ -373,8 +379,19 @@ describe('the Ask pane', () => {
 			costUsd: 0,
 			turns: 0,
 			error: undefined,
+			attachmentIds: [],
 			at: AT
 		});
+	});
+
+	it('reads a question’s files, null as none', () => {
+		expect(map.toAskMessage(wire<Wire.Message>({ attachment_ids: ['a1'] })).attachmentIds).toEqual([
+			'a1'
+		]);
+		expect(
+			map.toAskMessage(wire<Wire.Message>({ attachment_ids: null as unknown as string[] }))
+				.attachmentIds
+		).toEqual([]);
 	});
 
 	it('reads a message without its thread as of no session', () => {
@@ -465,14 +482,14 @@ describe('merge requests', () => {
 				mr: { ...info, body: 'why' },
 				runs: 2,
 				stacked_on: { iid: 1, url: 'u', title: 't', branch: 'b' },
-				run: { id: 'r', state: 'failed', flow: 'f', created_at: AT }
+				run: { id: 'r', state: 'failed', archived: true, flow: 'f', created_at: AT }
 			})
 		);
 		expect(row).toMatchObject({
 			mr: { body: 'why' },
 			runs: 2,
 			stackedOn: { iid: 1, branch: 'b' },
-			run: { id: 'r', state: 'failed', flow: 'f', createdAt: AT }
+			run: { id: 'r', state: 'failed', archived: true, flow: 'f', createdAt: AT }
 		});
 	});
 
@@ -1268,6 +1285,10 @@ describe('files', () => {
 			sha256: '',
 			createdAt: ''
 		});
+		expect(map.toAttachment(wire<Wire.Attachment>({ chat: 'ask' })).chat).toBe('ask');
+		expect(map.toAttachment(wire<Wire.Attachment>({ chat: 'takeover' })).chat).toBe('takeover');
+		expect(map.toAttachment(wire<Wire.Attachment>({ chat: '' })).chat).toBeUndefined();
+		expect(map.toAttachment(wire<Wire.Attachment>({ chat: 'odd' }))).not.toHaveProperty('chat');
 		expect(map.toSnapshot(wire<Wire.Snapshot>({ kind: 'mystery' }))).toMatchObject({
 			kind: 'output',
 			truncated: false,
@@ -1320,6 +1341,7 @@ describe('flows', () => {
 		['', undefined],
 		['ticket', 'ticket'],
 		['merge_request', 'merge_request'],
+		['nothing', 'nothing'],
 		['mystery', 'ticket']
 	])('reads operates_on %j as %j', (operates_on, out) => {
 		expect(map.toFlow(wire<Wire.Flow>({ operates_on })).operatesOn).toBe(out);
@@ -2225,6 +2247,7 @@ describe('analytics', () => {
 					flow_name: 'f',
 					flow_hash: 'h',
 					state: 'completed',
+					archived: true,
 					created_at: AT,
 					wall_ms: 60000,
 					cost_usd: 0.25
@@ -2236,6 +2259,7 @@ describe('analytics', () => {
 			flowName: 'f',
 			flowHash: 'h',
 			state: 'completed',
+			archived: true,
 			createdAt: AT,
 			wallMs: 60000,
 			costUsd: 0.25

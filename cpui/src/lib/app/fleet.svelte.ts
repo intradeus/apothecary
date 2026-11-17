@@ -10,7 +10,7 @@
 
 import { errorMessage } from '$lib/core/errors';
 import { api } from '$lib/api';
-import { stateTab } from '$lib/core/format';
+import { isTerminal, stateTab } from '$lib/core/format';
 import type { Limits, Notice, Ping, Project, Run } from '$lib/domain';
 
 const POLL_MS = 4000;
@@ -46,9 +46,19 @@ class Fleet {
 	readonly queued = $derived(this.runs.filter((r) => r.state === 'pending'));
 	/** Runs holding an environment (what the max-environments cap counts). */
 	readonly envs = $derived(
-		this.runs.filter((r) => !!r.envId && r.envStatus !== 'absent' && r.state !== 'archived')
+		this.runs.filter((r) => !!r.envId && r.envStatus !== 'absent' && !r.archivedAt)
 	);
 	readonly runById = $derived(new Map(this.runs.map((r) => [r.id, r])));
+	/** Live runs whose agent session is in someone's hands (a take-over, or a
+	 *  stage that starts held): each waits on its holder, so the inbox lists
+	 *  it beside the pings, oldest hold first. */
+	readonly held = $derived(
+		this.runs
+			.filter((r) => !!r.hold && !isTerminal(r.state) && !r.archivedAt)
+			.sort((a, b) => a.hold!.since.localeCompare(b.hold!.since))
+	);
+	/** What the inbox badge counts: pending pings and held runs. */
+	readonly inboxCount = $derived(this.pending.length + this.held.length);
 	readonly projectById = $derived(new Map(this.projects.map((p) => [p.id, p])));
 
 	/** A workshop's name, or a short id while projects are loading (or for

@@ -2,6 +2,8 @@
 	// The inbox (DESIGN 7.5): a list of runs waiting on you (one card per run,
 	// its newest pending ping first — answering it reveals the next-earlier
 	// one), the selected ping at full size beside it, and the answered history.
+	// Above them, the runs in your hands: an agent session held (a take-over,
+	// or a stage that starts held) waits on its holder the way a ping does.
 	//
 	// Pending pings come from the shared fleet poll; the answered history is
 	// fetched here. Selection mirrors ?ping= (shallow, no navigation) so a
@@ -181,6 +183,16 @@
 	const run = $derived(current ? fleet.runById.get(current.runId) : undefined);
 	const facts = $derived(run ? runFacts(run) : undefined);
 	const move = { duration: ms('--dur-spring', 450), easing: spring };
+	const summary = $derived(
+		[
+			fleet.pending.length
+				? t('inbox.pendingSummary', { count: fleet.pending.length, runs: groups.length })
+				: '',
+			fleet.held.length ? t('inbox.heldSummary', { count: fleet.held.length }) : ''
+		]
+			.filter(Boolean)
+			.join(' · ') || t('inbox.nothingPending')
+	);
 </script>
 
 <PageHeader
@@ -189,11 +201,7 @@
 	accent={t('inbox.accent')}
 >
 	{#snippet meta()}
-		<span>
-			{fleet.pending.length
-				? t('inbox.pendingSummary', { count: fleet.pending.length, runs: groups.length })
-				: t('inbox.nothingPending')}
-		</span>
+		<span>{summary}</span>
 	{/snippet}
 </PageHeader>
 
@@ -203,7 +211,7 @@
 			bind:value={tab}
 			label={t('inbox.crumb')}
 			options={[
-				{ value: 'pending', label: t('inbox.tab.pending'), count: fleet.pending.length },
+				{ value: 'pending', label: t('inbox.tab.pending'), count: fleet.inboxCount },
 				{
 					value: 'answered',
 					label: t('inbox.tab.answered'),
@@ -217,6 +225,24 @@
 	</div>
 
 	{#if tab === 'pending'}
+		{#if fleet.held.length}
+			<section class="held glass pane" aria-labelledby="inbox-held">
+				<div class="caption" id="inbox-held">{t('inbox.held.title')}</div>
+				<div class="help">{t('inbox.held.help')}</div>
+				{#each fleet.held as r (r.id)}
+					<a class="hrow rowbtn" href={to.run(r.id)}>
+						<span class="mono st">{r.hold!.stageId}</span>
+						<span class="rt truncate">{r.title}</span>
+						{#if r.ticketKey}<span class="tag">{r.ticketKey}</span>{/if}
+						<span class="spacer"></span>
+						<span class="mono muted age" title={fmtAbs(r.hold!.since)}
+							>{t('inbox.held.since', { ago: ago(r.hold!.since) })}</span
+						>
+						<span class="go">{t('inbox.openRun')} {I.forward}</span>
+					</a>
+				{/each}
+			</section>
+		{/if}
 		<div class="ib">
 			{#if !fleet.updatedAt && fleet.error}
 				<div class="full glass pane">
@@ -230,11 +256,13 @@
 				<Skeleton pane lines={5} />
 				<Skeleton pane lines={4} />
 			{:else if groups.length === 0}
-				<div class="full glass pane">
-					<EmptyState title={t('inbox.empty.title')} text={t('inbox.empty.text')}>
-						<a class="btn" href={to.runs()}>{t('inbox.openRuns')}</a>
-					</EmptyState>
-				</div>
+				{#if !fleet.held.length}
+					<div class="full glass pane">
+						<EmptyState title={t('inbox.empty.title')} text={t('inbox.empty.text')}>
+							<a class="btn" href={to.runs()}>{t('inbox.openRuns')}</a>
+						</EmptyState>
+					</div>
+				{/if}
 			{:else}
 				<aside class="list glass pane">
 					<div class="scroll" use:indicator>
@@ -282,7 +310,7 @@
 					{#if current}
 						{#if run}
 							<div class="strip glass">
-								<StatusChip state={run.state} size="sm" />
+								<StatusChip state={run.state} archived={!!run.archivedAt} size="sm" />
 								{#if run.currentStage}
 									<span class="stg">
 										<StageFlask status={stageStatus(run.state)} size="sm" />
@@ -383,6 +411,30 @@
 		grid-template-rows: minmax(0, 1fr);
 		gap: var(--shell-gap);
 	}
+	.held {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: var(--shell-gap);
+		margin-bottom: var(--shell-gap);
+		flex: none;
+	}
+	.hrow {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		min-width: 0;
+		padding: 8px 12px;
+		border-radius: var(--r-card);
+		font-size: var(--fs-ui);
+		color: var(--text);
+		text-decoration: none;
+	}
+	.hrow .go {
+		flex: none;
+		font-size: var(--fs-help);
+		color: var(--text-muted);
+	}
 	.full {
 		grid-column: 1 / -1;
 		grid-row: 1 / -1;
@@ -407,7 +459,7 @@
 	.scroll > :global(.ind) {
 		border-radius: var(--r-card);
 	}
-	.card {
+	.scroll > .card {
 		flex-direction: column;
 		align-items: stretch;
 		gap: 5px;

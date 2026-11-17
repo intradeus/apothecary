@@ -96,6 +96,29 @@ describe('MergeRequestList', () => {
 		render(MergeRequestList, { projectId: 'p1' });
 		expect(await screen.findByText('processed by apothecary 2 times')).toBeInTheDocument();
 		expect(screen.getByText(/reviewer ·/)).toBeInTheDocument();
+		expect(screen.getByText('Completed')).toBeInTheDocument();
+		expect(screen.queryByText('archived')).not.toBeInTheDocument();
+	});
+
+	it('marks an archived last run beside its outcome', async () => {
+		vi.mocked(api.projects.mergeRequests).mockResolvedValue([
+			row(
+				{ iid: 3, title: 'Reviewed' },
+				{
+					runs: 1,
+					run: {
+						id: 'r1',
+						state: 'abandoned',
+						archived: true,
+						flow: 'reviewer',
+						createdAt: '2026-11-01T00:00:00Z'
+					}
+				}
+			)
+		]);
+		render(MergeRequestList, { projectId: 'p1' });
+		expect(await screen.findByText('Abandoned')).toBeInTheDocument();
+		expect(screen.getByText('archived')).toBeInTheDocument();
 	});
 
 	it('names a workshop whose repository will not answer, and still shows the rest', async () => {

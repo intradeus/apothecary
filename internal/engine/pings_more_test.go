@@ -373,12 +373,12 @@ func TestABrokenSettingsSourceAdmitsOnDefaults(t *testing.T) {
 func TestMessagesAndHoldsWithNoAgentToTalkTo(t *testing.T) {
 	long := strings.Repeat("x", maxMessageLen+1)
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	_, err := h.e.SendMessage("r1", "   ")
+	_, err := h.e.SendMessage("r1", "u1", "   ", nil)
 	wantErrText(t, err, "message is empty")
-	_, err = h.e.SendMessage("r1", long)
+	_, err = h.e.SendMessage("r1", "u1", long, nil)
 	wantErrText(t, err, "longer than")
 
-	if _, err := h.e.SendMessage("ghost", "hello"); err == nil || !strings.Contains(err.Error(), "run ghost not found") {
+	if _, err := h.e.SendMessage("ghost", "u1", "hello", nil); err == nil || !strings.Contains(err.Error(), "run ghost not found") {
 		t.Errorf("unknown run: %v", err)
 	}
 	if err := h.e.TakeOver("ghost", "u1", true); err == nil || !strings.Contains(err.Error(), "run ghost not found") {
@@ -386,14 +386,14 @@ func TestMessagesAndHoldsWithNoAgentToTalkTo(t *testing.T) {
 	}
 
 	h.seed(t, "over", created(testProject), &event.RunCompleted{})
-	if _, err := h.e.SendMessage("over", "hello"); !errors.Is(err, ErrRunNotActive) {
+	if _, err := h.e.SendMessage("over", "u1", "hello", nil); !errors.Is(err, ErrRunNotActive) {
 		t.Errorf("a finished run: %v", err)
 	}
 	if err := h.e.TakeOver("over", "u1", true); !errors.Is(err, ErrNoAgentRunning) {
 		t.Errorf("take over of a finished run: %v", err)
 	}
 	h.seed(t, "nohold", created(testProject), &event.RunPaused{Reason: event.PauseWaiting})
-	if _, err := h.e.SendMessage("nohold", "hello"); !errors.Is(err, ErrNoAgentRunning) {
+	if _, err := h.e.SendMessage("nohold", "u1", "hello", nil); !errors.Is(err, ErrNoAgentRunning) {
 		t.Errorf("no hold: %v", err)
 	}
 	if err := h.e.Release("nohold", "u1"); !errors.Is(err, ErrNoAgentRunning) {
@@ -421,7 +421,7 @@ main:
 		t.Fatal(err)
 	}
 	<-started
-	if _, err := h2.e.SendMessage(id, "hello"); !errors.Is(err, ErrNoAgentRunning) {
+	if _, err := h2.e.SendMessage(id, "u1", "hello", nil); !errors.Is(err, ErrNoAgentRunning) {
 		t.Errorf("message during a command: %v", err)
 	}
 	if err := h2.e.TakeOver(id, "u1", true); !errors.Is(err, ErrNoAgentRunning) {
@@ -472,14 +472,14 @@ func TestAParkedHold(t *testing.T) {
 	})
 	t.Run("a pause holds it", func(t *testing.T) {
 		h := seed(t, &event.RunPaused{StageID: "build", Reason: event.PauseUser})
-		_, err := h.e.SendMessage("r1", "hello")
+		_, err := h.e.SendMessage("r1", "u1", "hello", nil)
 		if !errors.Is(err, ErrRunNotActive) || !strings.Contains(err.Error(), "play it first") {
 			t.Errorf("err = %v", err)
 		}
 	})
 	t.Run("mid-admission it waits", func(t *testing.T) {
 		h := seed(t, &event.RunUnpaused{Reason: event.UnpauseHold})
-		if _, err := h.e.SendMessage("r1", "hello"); !errors.Is(err, errRunBusy) {
+		if _, err := h.e.SendMessage("r1", "u1", "hello", nil); !errors.Is(err, errRunBusy) {
 			t.Errorf("err = %v", err)
 		}
 		if err := h.e.Release("r1", "u1"); !errors.Is(err, errRunBusy) {

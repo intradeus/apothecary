@@ -312,6 +312,10 @@ components:
       type: object
     AskRequest:
       properties:
+        attachment_ids:
+          items:
+            type: string
+          type: array
         text:
           type: string
         thread_id:
@@ -348,6 +352,10 @@ components:
       type: object
     Attachment:
       properties:
+        chat:
+          type: string
+        chat_name:
+          type: string
         created_at:
           format: date-time
           type: string
@@ -987,6 +995,10 @@ components:
       required:
         - harness
       type: object
+    DocBool:
+      oneOf:
+        - type: boolean
+        - type: string
     DocEdge:
       properties:
         feed:
@@ -1209,6 +1221,8 @@ components:
           type: string
         service:
           type: string
+        start_held:
+          $ref: '#/components/schemas/DocBool'
         timeout:
           type: string
         type:
@@ -1253,6 +1267,8 @@ components:
       type: object
     DrillRun:
       properties:
+        archived:
+          type: boolean
         cost_usd:
           format: double
           type: number
@@ -2211,6 +2227,8 @@ components:
       type: object
     MRRun:
       properties:
+        archived:
+          type: boolean
         created_at:
           format: date-time
           type: string
@@ -2266,6 +2284,10 @@ components:
         at:
           format: date-time
           type: string
+        attachment_ids:
+          items:
+            type: string
+          type: array
         cost_usd:
           format: double
           type: number
@@ -2312,6 +2334,27 @@ components:
       required:
         - id
         - name
+      type: object
+    NothingRunRequest:
+      properties:
+        branch:
+          type: string
+        flow:
+          type: string
+        new_branch:
+          type: string
+        on_branch:
+          type: boolean
+        params:
+          additionalProperties:
+            type: string
+          type: object
+        skillsets:
+          items:
+            $ref: '#/components/schemas/Ref'
+          type: array
+        title:
+          type: string
       type: object
     Notice:
       properties:
@@ -3465,6 +3508,11 @@ components:
       properties:
         adopted:
           $ref: '#/components/schemas/AdoptedMR'
+        archived_at:
+          format: date-time
+          type: string
+        automation_id:
+          type: string
         branch:
           type: string
         branch_base:
@@ -3655,6 +3703,10 @@ components:
       type: object
     SendMessageRequest:
       properties:
+        attachment_ids:
+          items:
+            type: string
+          type: array
         text:
           type: string
       required:
@@ -6946,6 +6998,7 @@ paths:
       tags:
         - integrations
     post:
+      description: Repositories, harnesses and ticket sources; a provisioner is the instance's (PUT /api/provisioner), 400 here.
       operationId: createIntegration
       requestBody:
         content:
@@ -8402,7 +8455,7 @@ paths:
       tags:
         - automations
     post:
-      description: 'Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves and its operates_on fits the kind (merge_request for a merge_request automation, ticket otherwise), the params are ones it accepts.'
+      description: 'Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves and its operates_on fits the kind (merge_request for a merge_request automation, ticket otherwise — or nothing for a cron automation, which then takes no ticket_id: each slot starts a run of its own, skipped while the previous one is still going), the params are ones it accepts.'
       operationId: createAutomation
       parameters:
         - in: path
@@ -9629,6 +9682,55 @@ paths:
       summary: Check a project is ready to run, step by step
       tags:
         - projects
+  /api/projects/{id}/runs:
+    post:
+      description: 'Starts a run of a flow whose runs are started on nothing (operates_on: nothing; the project''s default flow unless the body names another): 400 for a flow started on a ticket or a merge request. Everything in the body is optional: a title ("manual run - " and the time when left out), the branch to start from (the repository''s default), new_branch to name the fresh branch forked from it (named after the run when left out), or on_branch to work on the branch itself, with nothing forked. Any number may run at once, up to the environment cap (409).'
+      operationId: startNothingRun
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NothingRunRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunRef'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'Start a run on nothing: a workspace on a branch, with no ticket or merge request'
+      tags:
+        - projects
   /api/projects/{id}/secrets:
     get:
       description: What a flow's MCP servers read where they say ${secrets.<name>}. Names and when each was last set — never a value.
@@ -10385,6 +10487,113 @@ paths:
       summary: The model providers apothecary manages credentials for
       tags:
         - integrations
+  /api/provisioner:
+    get:
+      description: Every workshop's workspaces are built on it. 404 while the instance has none (a deployment without APOTHECARY_K8S_NAMESPACE).
+      operationId: getProvisioner
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Integration'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: The instance's provisioner (secrets masked)
+      tags:
+        - integrations
+    put:
+      description: An empty field takes the deployment's value (APOTHECARY_K8S_*). Runs pick the change up on their next workspace.
+      operationId: updateProvisioner
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntegrationUpdate'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Integration'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'Change the instance''s provisioner (admin; secrets merge: present replaces, "" deletes, absent keeps)'
+      tags:
+        - integrations
+  /api/provisioner/test:
+    post:
+      operationId: testProvisioner
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestResult'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Check the instance's provisioner reaches its cluster (admin)
+      tags:
+        - integrations
   /api/runs:
     get:
       operationId: listRuns
@@ -10582,7 +10791,7 @@ paths:
       tags:
         - runs
     post:
-      description: 'The question is recorded in the thread named by thread_id (none: the run''s latest, opened when the run has none) and returned at once; the answer arrives on the pane''s stream. 404 for an unknown thread; 409 when the pane is off or an answer is being written in that thread.'
+      description: 'The question is recorded in the thread named by thread_id (none: the run''s latest, opened when the run has none) and returned at once; the answer arrives on the pane''s stream. A question may carry files you uploaded (attachment_ids, at most 8; text is then optional): they are delivered read-only under .apothecary/attachments/ask/ and the question names them. 400 when any of them is not one of your unsent uploads, and nothing is recorded. 404 for an unknown thread; 409 when the pane is off or an answer is being written in that thread.'
       operationId: askRun
       parameters:
         - in: path
@@ -11231,6 +11440,41 @@ paths:
       summary: 'Everything filed under a run: human uploads and engine captures'
       tags:
         - files
+  /api/runs/{id}/files.zip:
+    get:
+      description: outputs/<stage>-<attempt>/, logs/<stage>-<attempt>/ and attachments/. A file whose content is no longer stored is left out and named in MISSING.txt.
+      operationId: downloadRunFiles
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Everything on a run's Record, in one zip
+      tags:
+        - files
   /api/runs/{id}/hold:
     delete:
       description: Closes the take-over on the record (duration, turns, cost) and sends the session the handback prompt — when the turn in flight ends, if one is. The stage ends as usual once that turn does. 409 when nobody holds it.
@@ -11445,7 +11689,7 @@ paths:
         - runs
   /api/runs/{id}/messages:
     post:
-      description: 'Delivered into the agent''s live session when its turn ends. 409 without a take-over: nobody else talks to the agent. A run parked on the holder of a take-over is woken by it.'
+      description: 'Delivered into the agent''s live session when its turn ends. 409 without a take-over: nobody else talks to the agent. A run parked on the holder of a take-over is woken by it. A message may carry files you uploaded (attachment_ids, at most 8; text is then optional): they are delivered read-only under .apothecary/attachments/takeover/ and the message names them. 400 when any of them is not one of your unsent uploads, and nothing is recorded.'
       operationId: sendRunMessage
       parameters:
         - in: path

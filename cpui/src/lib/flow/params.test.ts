@@ -240,6 +240,12 @@ describe('paramRefs', () => {
 	it('finds another parameter’s default reading it', () => {
 		expect(paramRefs(flow(), 'h')).toContain('ref.default');
 	});
+
+	it('finds an agent stage starting held on a bool', () => {
+		const doc = flow();
+		doc.stages[0].start_held = '$gate';
+		expect(paramRefs(doc, 'gate')).toContain('top.start_held');
+	});
 });
 
 describe('renameParam', () => {
@@ -314,5 +320,12 @@ describe('renameParam', () => {
 
 	it('renames another parameter’s default reading it', () => {
 		expect(renamed('h', 'kind').parameters.ref.default).toBe('$kind');
+	});
+
+	it('renames the bool an agent stage starts held on', () => {
+		const doc = flow();
+		doc.stages[0].start_held = '$gate';
+		renameParam(doc, 'gate', 'check');
+		expect(doc.stages[0].start_held).toBe('$check');
 	});
 });

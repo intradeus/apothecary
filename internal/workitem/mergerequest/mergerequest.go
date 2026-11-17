@@ -76,6 +76,9 @@ func (Kind) Required() bool { return true }
 // Accompanies is false: a flow on tickets does not take a merge request.
 func (Kind) Accompanies() bool { return false }
 
+// Alone is false: a run on a merge request names it.
+func (Kind) Alone() bool { return false }
+
 func (Kind) Requested(projectID string, _ runinput.Ticket, in runinput.Input) (workitem.Ref, bool) {
 	if in.MR == nil {
 		return workitem.Ref{}, false

@@ -85,9 +85,11 @@
 								class="mono over-stretch"
 								href={to.run(tk.activeRunId)}
 								title={t('tickets.activeRun')}
-								>{#if run}<StatusChip state={run.state} size="sm" />{:else}{shortId(
-										tk.activeRunId
-									)}{/if}</a
+								>{#if run}<StatusChip
+										state={run.state}
+										archived={!!run.archivedAt}
+										size="sm"
+									/>{:else}{shortId(tk.activeRunId)}{/if}</a
 							>
 						{:else}
 							<span class="faint">{t('tickets.noActiveRun')}</span>

@@ -149,6 +149,8 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 	// The agent's turn and a stop asked of it are over with the invocation:
 	// the agent's next questions are for whoever runs next.
 	defer x.endTurns()
+	// opening: the turn in flight is a start hold's opening one.
+	opening := false
 	// record files one agent event: a new harness session is recorded the
 	// moment it exists, so a crash mid-invocation resumes (or reattaches
 	// to) it, not a new one — whichever path meets the event, the loop's
@@ -379,9 +381,15 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				turnOpen, openTurn = true, ev.Turn
 				if hold != nil {
 					// A turn starting under the hold is the holder's: it is
-					// what their message prompted.
+					// what their message prompted — but for a start hold's
+					// opening turn, which answers the stage prompt.
 					busyAgain()
-					hold.leg.TurnStarted(ev.Turn)
+					if hold.opening {
+						hold.opening = false
+						opening = true
+					} else {
+						hold.leg.TurnStarted(ev.Turn)
+					}
 				}
 			case agentport.AgentEvTurnEnd:
 				turnOpen, openTurn = false, ""
@@ -389,12 +397,23 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				// this clears one asked while the loop was behind its end.
 				x.dropStop(ev.Turn)
 				if hold == nil {
+					opening = false
 					if x.rs.HandbackOwed[st.ID] {
 						if err := owedHandback(); err != nil {
 							return invocation{}, err
 						}
 					}
 					break
+				}
+				// The opening turn ends here — the one this invocation saw
+				// start, or, followed after a restart, the one already
+				// running when it was reattached to.
+				ended := opening || hold.opening
+				opening, hold.opening = false, false
+				if ended {
+					if err := x.append(&event.HoldOpened{StageID: st.ID, Attempt: io.tr.iter}); err != nil {
+						return invocation{}, err
+					}
 				}
 				hold.leg.TurnEnded(ev.Turn, ev.Usage)
 				if ownQuestion(open, ev.Turn) {
@@ -425,6 +444,15 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					}
 				case !hold.releasing && !io.inbox.pending() && !hold.leg.Waiting():
 					idleOnHolder()
+					if ended {
+						// A start hold's opening turn is over and the session
+						// waits for the run's owner: tell them, once.
+						x.e.notify(x.bg, notifyport.Notification{
+							RunID: x.rs.RunID, Type: notifyHeld,
+							Title: fmt.Sprintf("%s waits for you: %s", st.ID, x.rs.View.TicketTitle),
+							Body:  "The agent answered the stage prompt; your messages are its next turns, and releasing it ends the stage.",
+						})
+					}
 				}
 			}
 		case req := <-x.h.messages:
@@ -432,12 +460,21 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				req.ack <- ErrNotHeld
 				continue
 			}
-			q := &event.MessageQueued{MessageID: req.msg.ID, Text: req.msg.Text, StageID: st.ID}
+			// Accepted: its files are claimed now, all or nothing, so a
+			// refused message leaves them its sender's and records nothing.
+			paths, err := x.takeOverFiles(req.userID, req.attachmentIDs)
+			if err != nil {
+				req.ack <- err
+				continue
+			}
+			q := &event.MessageQueued{MessageID: req.msg.ID, Text: req.msg.Text, StageID: st.ID, AttachmentIDs: req.attachmentIDs}
 			if err := x.append(q); err != nil {
 				req.ack <- err
 				return invocation{}, err
 			}
-			io.inbox.push(req.msg)
+			msg := req.msg
+			msg.Text = withFilesNote(msg.Text, paths)
+			io.inbox.push(msg)
 			hold.leg.MessageQueued()
 			req.ack <- nil
 		case req := <-x.h.holds:
@@ -448,11 +485,12 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			// still on its way to this loop, so a forced take-over leaves its
 			// turn alone and a release waits on that turn. The stop is only
 			// asked here; a question raised before the runner takes it up
-			// (acceptStop) keeps the turn.
+			// (acceptStop) keeps the turn. A start hold's opening turn not
+			// started yet is owed all the same: a release follows it.
 			x.e.mu.Lock()
 			move := runcore.PlanHoldRequest(runcore.HoldRequest{Take: req.take, Force: req.force,
 				Held: held, Releasing: releasing, TurnOpen: turnOpen,
-				Queued:       io.inbox.pending() || held && hold.leg.Waiting(),
+				Queued:       io.inbox.pending() || held && (hold.leg.Waiting() || hold.opening),
 				QuestionOpen: len(open) > 0 || x.h.raising > 0})
 			if move == runcore.HoldTakeAndStop {
 				x.h.stopAsked = openTurn

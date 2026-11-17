@@ -7,7 +7,17 @@ import { fleet } from '$lib/app/fleet.svelte';
 import type { Run, RunHold } from '$lib/domain';
 import { applyDelta, emptyLive } from '$lib/run/transcriptItems';
 import { aRun } from '$test/fixtures';
-import { AT, aLiveRun, aRaise, anAnswer, anEvent, aViewStore } from '$test/fixtures/run-views';
+import {
+	AT,
+	aLiveRun,
+	aRaise,
+	anAnswer,
+	anAttachment,
+	anEvent,
+	aViewStore
+} from '$test/fixtures/run-views';
+import { settled } from '$test/fixtures/run-components';
+import { aFile } from '$test/fixtures/run.svelte';
 import { deferred } from '$test/helpers';
 import SessionView from './SessionView.svelte';
 
@@ -15,7 +25,7 @@ vi.mock('$lib/api', () => ({
 	api: {
 		runs: { sendMessage: vi.fn(), takeOver: vi.fn(), release: vi.fn(), get: vi.fn() },
 		pings: { answer: vi.fn() },
-		files: { upload: vi.fn() }
+		files: { upload: vi.fn(), limits: vi.fn(), attachmentUrl: vi.fn((id: string) => `/a/${id}`) }
 	}
 }));
 
@@ -47,6 +57,13 @@ describe('SessionView', () => {
 		vi.resetAllMocks();
 		vi.spyOn(fleet, 'refresh').mockResolvedValue();
 		vi.mocked(api.runs.get).mockImplementation(async () => ({ run: aLiveRun(), events: [] }));
+		vi.mocked(api.files.limits).mockResolvedValue({
+			maxBytes: 1024,
+			maxFiles: 8,
+			mimeAllow: ['image/*']
+		});
+		vi.mocked(api.files.attachmentUrl).mockImplementation((id: string) => `/a/${id}`);
+		URL.createObjectURL = vi.fn(() => 'blob:preview'); // jsdom has none
 	});
 
 	describe('the conversation', () => {
@@ -208,7 +225,7 @@ describe('SessionView', () => {
 
 			await userEvent.type(composerBox(), 'Use the other API{Enter}');
 
-			expect(api.runs.sendMessage).toHaveBeenCalledExactlyOnceWith(RUN, 'Use the other API');
+			expect(api.runs.sendMessage).toHaveBeenCalledExactlyOnceWith(RUN, 'Use the other API', []);
 			expect(screen.getByText('Use the other API')).toBeInTheDocument();
 			expect(screen.getByText('sending…')).toBeInTheDocument();
 		});
@@ -233,6 +250,50 @@ describe('SessionView', () => {
 			await userEvent.type(composerBox(), 'Go on{Enter}');
 
 			expect(screen.getByText('sending…')).toBeInTheDocument();
+		});
+
+		it('shows the files a message carried, named from the run’s files', () => {
+			show(
+				{
+					attachments: [anAttachment({ id: 'att-1', filename: 'shot.png', mime: 'image/png' })],
+					events: [
+						anEvent(1, 'message_queued', {
+							message_id: 'm1',
+							text: '',
+							attachment_ids: ['att-1', 'att-unknown']
+						})
+					]
+				},
+				held()
+			);
+			const chip = screen.getByRole('link', { name: /shot\.png/ });
+			expect(chip).toHaveAttribute('href', '/a/att-1');
+			expect(screen.getAllByRole('link')).toHaveLength(1);
+		});
+
+		it('pairs two files-only messages with their own echoes', async () => {
+			vi.mocked(api.runs.sendMessage).mockResolvedValue('m');
+			vi.mocked(api.files.upload)
+				.mockResolvedValueOnce([anAttachment({ id: 'att-1' })])
+				.mockResolvedValueOnce([anAttachment({ id: 'att-2' })]);
+			const { rs } = show({}, held());
+			await settled();
+			for (const name of ['a.png', 'b.png']) {
+				fireEvent.paste(composerBox(), {
+					clipboardData: { files: [aFile(name, 'image/png')] }
+				});
+				await userEvent.type(composerBox(), '{Enter}');
+				await vi.waitFor(() => expect(screen.queryByText(name)).not.toBeInTheDocument());
+			}
+			await vi.waitFor(() => expect(screen.getAllByText('sending…')).toHaveLength(2));
+
+			rs.events = [anEvent(1, 'message_queued', { message_id: 'm1', text: '' })];
+			await tick();
+			expect(screen.getAllByText('sending…')).toHaveLength(1);
+
+			rs.events = [...rs.events, anEvent(2, 'message_queued', { message_id: 'm2', text: '' })];
+			await tick();
+			expect(screen.queryByText('sending…')).not.toBeInTheDocument();
 		});
 
 		it('goes when the engine refuses it, and the words come back', async () => {
@@ -312,6 +373,62 @@ describe('SessionView', () => {
 			show({}, null);
 			expect(screen.queryByText('The bottle is corked')).not.toBeInTheDocument();
 			expect(takeOverBtn()).not.toBeInTheDocument();
+		});
+	});
+
+	describe('a long run', () => {
+		/** An attempt, then n messages: n + 1 items. */
+		const long = (n: number, from = 2) =>
+			Array.from({ length: n }, (_, i) => said(from + i, `line ${from + i}`));
+		const earlier = () => screen.queryByRole('button', { name: /Show earlier/ });
+
+		it('shows only its tail, and says how much is above', () => {
+			show({ events: [agentStage, ...long(250)] });
+			expect(screen.getByText('line 251')).toBeInTheDocument();
+			expect(screen.getByText('line 52')).toBeInTheDocument();
+			expect(screen.queryByText('line 51')).not.toBeInTheDocument();
+			expect(earlier()).toHaveTextContent('Show earlier · 51 more items');
+		});
+
+		it('starts at an attempt when one begins within reach', () => {
+			const second = anEvent(200, 'stage_started', { stage_id: 'build', attempt: 2, agent: 'dev' });
+			show({ events: [agentStage, ...long(198), second, ...long(60, 201)] });
+			expect(screen.queryByText('line 199')).not.toBeInTheDocument();
+			expect(screen.getByText('line 201')).toBeInTheDocument();
+			expect(earlier()).toHaveTextContent('Show earlier · 199 more items');
+		});
+
+		it('reaches back a window at a time, keeping the place', async () => {
+			const { container } = show({ events: [agentStage, ...long(450)] });
+			const el = container.querySelector<HTMLElement>('.scroll')!;
+			await userEvent.click(earlier()!);
+			expect(screen.getByText('line 52')).toBeInTheDocument();
+			expect(earlier()).toHaveTextContent('Show earlier · 51 more items');
+			await userEvent.click(earlier()!);
+			expect(screen.getByText('line 2')).toBeInTheDocument();
+			expect(earlier()).not.toBeInTheDocument();
+			expect(el).toBeInTheDocument();
+		});
+
+		it('holds still under a reader who scrolled up, and slides again at the bottom', async () => {
+			const { container, rs } = show({ events: [agentStage, ...long(250)] });
+			const el = container.querySelector<HTMLElement>('.scroll')!;
+			Object.defineProperty(el, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(el, 'clientHeight', { value: 200, configurable: true });
+			el.scrollTop = 800;
+			await fireEvent.scroll(el);
+			el.scrollTop = 300;
+			await fireEvent.scroll(el);
+
+			rs.events = [...rs.events, ...long(10, 252)];
+			await tick();
+			expect(screen.getByText('line 52')).toBeInTheDocument();
+
+			el.scrollTop = 800;
+			await fireEvent.scroll(el);
+			await tick();
+			expect(screen.queryByText('line 52')).not.toBeInTheDocument();
+			expect(screen.getByText('line 261')).toBeInTheDocument();
 		});
 	});
 

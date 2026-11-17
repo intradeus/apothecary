@@ -19,7 +19,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -527,7 +526,6 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 		authErr(w, err)
 		return
 	}
-	s.newAccount(r.Context(), u.ID)
 	s.signIn(w, r, u, http.StatusCreated)
 }
 
@@ -753,18 +751,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		authErr(w, err)
 		return
 	}
-	s.newAccount(r.Context(), u.ID)
 	writeJSON(w, http.StatusCreated, u)
-}
-
-// newAccount runs the NewAccount hook for an account just made.
-func (s *Server) newAccount(ctx context.Context, userID string) {
-	if s.NewAccount == nil {
-		return
-	}
-	if err := s.NewAccount(ctx, userID); err != nil {
-		slog.Warn("new account: the deployment's defaults were not applied", logs.UserID, userID, "err", err)
-	}
 }
 
 func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {

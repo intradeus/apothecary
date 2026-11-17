@@ -7,9 +7,15 @@
 	// Following glides (a smooth scroll that retargets as text streams in);
 	// scrolling up hands control to the reader and the "Follow" pill
 	// materialises; sending snaps straight back to the bottom.
+	//
+	// A long run (many attempts) shows only its tail: the last WINDOW items,
+	// from a stage divider when one is in reach. "Show earlier" reaches back
+	// another WINDOW at a time. While following, the window slides with the
+	// run; once the reader scrolls up it holds still, so nothing they are
+	// reading moves.
 	import { t } from '$lib/i18n/index.svelte';
 	import { tick } from 'svelte';
-	import { buildTranscript } from '$lib/run/transcriptItems';
+	import { buildTranscript, windowStart } from '$lib/run/transcriptItems';
 	import { I } from '$lib/design/icons';
 	import { materialize } from '$lib/ui/motion';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
@@ -32,6 +38,15 @@
 	} = $props();
 
 	const items = $derived(buildTranscript(rs.events, rs.live));
+	const WINDOW = 200;
+	/** The first item shown while the window holds still (the reader is up
+	 *  the page, or reached back); null while it slides with the run. */
+	let held = $state<string | null>(null);
+	const start = $derived.by(() => {
+		const at = held === null ? -1 : items.findIndex((it) => it.key === held);
+		return at >= 0 ? at : windowStart(items, items.length, WINDOW);
+	});
+	const shown = $derived(start > 0 ? items.slice(start) : items);
 	const ping = $derived(rs.terminal ? undefined : rs.pendingPings[0]);
 	const run = $derived(rs.run);
 	// An agent stage in flight is what can be taken over.
@@ -61,14 +76,35 @@
 		if (!el) return;
 		el.scrollTo({ top: el.scrollHeight, behavior: smooth && !reduced() ? 'smooth' : 'instant' });
 	}
+	let lastHeight = 0;
 	function onScroll() {
 		const el = scroller;
 		if (!el) return;
+		// The content changed under the reader (the window slid, dropping
+		// items above, and the browser kept the view in place): not a move
+		// of theirs.
+		const moved = el.scrollHeight === lastHeight;
+		lastHeight = el.scrollHeight;
 		// Near the bottom: following. Moving UP: the reader took over. (A
 		// smooth follow only ever moves down, so it never unsticks itself.)
-		if (el.scrollHeight - el.scrollTop - el.clientHeight < 60) stick = true;
-		else if (el.scrollTop < lastTop - 2) stick = false;
+		if (el.scrollHeight - el.scrollTop - el.clientHeight < 60) {
+			stick = true;
+			held = null;
+		} else if (moved && el.scrollTop < lastTop - 2) {
+			stick = false;
+			held ??= items[start]?.key ?? null;
+		}
 		lastTop = el.scrollTop;
+	}
+	/** Reach back another window, keeping what is on screen where it is. */
+	function earlier() {
+		const el = scroller;
+		const fromBottom = el ? el.scrollHeight - el.scrollTop : 0;
+		stick = false;
+		held = items[windowStart(items, start, WINDOW)]?.key ?? null;
+		tick().then(() => {
+			if (el) el.scrollTop = lastTop = el.scrollHeight - fromBottom;
+		});
 	}
 	function follow(smooth = true) {
 		stick = true;
@@ -87,6 +123,7 @@
 	// scroll up to read. Re-pin (instantly) when the view comes back on screen.
 	$effect(() => {
 		void items.length;
+		void start;
 		void rs.live;
 		void ping?.id;
 		if (stick && scroller) tick().then(() => toBottom(settled));
@@ -115,7 +152,19 @@
 					{/if}
 				</div>
 			{/if}
-			<Transcript {items} {sending} over={rs.terminal} {onlog} onanswer={() => follow()} />
+			{#if start > 0}
+				<button class="linklike earlier" onclick={earlier}
+					>{I.caret} {t('runview.session.earlier', { count: start })}</button
+				>
+			{/if}
+			<Transcript
+				items={shown}
+				{sending}
+				attachments={rs.attachments}
+				over={rs.terminal}
+				{onlog}
+				onanswer={() => follow()}
+			/>
 			{#if showNudge}
 				<div class="nudge" transition:materialize={{ origin: 'center bottom', y: 6 }}>
 					<span class="muted">{t('runview.session.betweenPhases')}</span>
@@ -156,7 +205,10 @@
 			<Composer
 				runId={rs.runId}
 				onsent={(text) => {
-					sending = [...sending, { text, echoes: echoes(text) }];
+					// Sends still unechoed count too: two of the same (two
+					// files-only messages, both '') each wait for their own echo.
+					const ahead = sending.filter((s) => s.text === text).length;
+					sending = [...sending, { text, echoes: echoes(text) + ahead }];
 					follow(false);
 				}}
 				onfailed={(text) => (sending = sending.filter((s) => s.text !== text))}
@@ -223,6 +275,11 @@
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
+	}
+	.earlier {
+		align-self: center;
+		font-size: var(--fs-ui);
+		color: var(--text-muted);
 	}
 	.noconv {
 		color: var(--text-muted);

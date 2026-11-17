@@ -84,7 +84,7 @@ export function stageStatus(state: RunState): StageStatus {
 		case 'completed':
 			return 'done';
 		default:
-			// paused, in review, abandoned, archived: parked, not progressing.
+			// paused, in review, abandoned: parked, not progressing.
 			return 'paused';
 	}
 }

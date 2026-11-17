@@ -90,6 +90,7 @@
 					id="nr-flow"
 					projectId={rs.run.projectId}
 					bind:value={flow}
+					exclude={rs.run.ticketId || rs.run.adopted ? 'nothing' : undefined}
 					fallbackLabel={t('run.rerun.sameFlow', { flow: rs.run.flowName })}
 				/>
 			{:else}

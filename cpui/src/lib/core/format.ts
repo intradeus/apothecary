@@ -19,7 +19,8 @@ const PORT_WORDS: Record<string, MessageKey> = {
 /** Tab grouping for the runs list. Exhaustive over RunState, so adding a
  *  state without classifying it is a type error. Active = still moving or
  *  waiting on someone; finished = terminal (completed and abandoned runs keep
- *  their workspace until archived, but the run itself is done). */
+ *  their workspace until archived, but the run itself is done). Archiving is
+ *  a flag beside the outcome (`Run.archivedAt`), not a state. */
 export type RunTab = 'active' | 'finished';
 
 export const stateTab: Record<RunState, RunTab> = {
@@ -31,8 +32,7 @@ export const stateTab: Record<RunState, RunTab> = {
 	paused: 'active',
 	completed: 'finished',
 	abandoned: 'finished',
-	failed: 'finished',
-	archived: 'finished'
+	failed: 'finished'
 };
 
 export const isTerminal = (s: RunState) => stateTab[s] === 'finished';
@@ -47,10 +47,9 @@ export const stateHue: Record<RunState, string> = {
 	paused: 'var(--text-muted)',
 	completed: 'var(--success)',
 	abandoned: 'var(--warning)',
-	failed: 'var(--danger)',
-	archived: 'var(--text-faint)'
+	failed: 'var(--danger)'
 };
-/** The same, as a text-colour class (`.hue-*`; `.fnt` for archived). */
+/** The same, as a text-colour class (`.hue-*`). */
 export const stateHueClass: Record<RunState, string> = {
 	pending: 'hue-muted',
 	provisioning: 'hue-running',
@@ -60,8 +59,7 @@ export const stateHueClass: Record<RunState, string> = {
 	paused: 'hue-muted',
 	completed: 'hue-success',
 	abandoned: 'hue-warning',
-	failed: 'hue-danger',
-	archived: 'faint'
+	failed: 'hue-danger'
 };
 /** @deprecated use stateHue. */
 export const stateColors = stateHue;
@@ -94,9 +92,6 @@ export const stateLabel: Record<RunState, string> = {
 	},
 	get failed() {
 		return t('state.failed');
-	},
-	get archived() {
-		return t('state.archived');
 	}
 };
 

@@ -450,6 +450,14 @@ describe('what each call sends', () => {
 		await expect(runs.exposePort('r', 80)).resolves.toEqual({ port: 80, url: 'u' });
 		reply('sendRunMessage', answer({ message_id: 'm' }));
 		await expect(runs.sendMessage('r', 'hi')).resolves.toBe('m');
+		const send = reply('sendRunMessage', answer({ message_id: 'm' }));
+		await runs.sendMessage('r', 'hi', []);
+		expect(send).toHaveBeenLastCalledWith({ path: { id: 'r' }, body: { text: 'hi' } });
+		await runs.sendMessage('r', '', ['a1']);
+		expect(send).toHaveBeenLastCalledWith({
+			path: { id: 'r' },
+			body: { text: '', attachment_ids: ['a1'] }
+		});
 		reply('openEditor', answer({ url: 'e' }));
 		await expect(runs.openEditor('r')).resolves.toBe('e');
 	});
@@ -779,6 +787,42 @@ describe('what each call sends', () => {
 			});
 			await projects.startRunOnMR('p', 12, { params: {} });
 			expect(fn).toHaveBeenLastCalledWith({ path: { id: 'p', iid: '12' }, body: {} });
+		});
+
+		it('starts a run on nothing, sending only what was said', async () => {
+			const fn = reply('startNothingRun', answer({ run_id: 'r' }));
+			await expect(
+				projects.startRunOnNothing('p', {
+					flow: 'sandbox',
+					title: '  Poke at it ',
+					branch: 'dev',
+					onBranch: true,
+					params: { a: '1' },
+					skillsets: [{ id: 's1', seq: 2 }, { id: 's2' }]
+				})
+			).resolves.toEqual({ runId: 'r' });
+			expect(fn).toHaveBeenCalledWith({
+				path: { id: 'p' },
+				body: {
+					flow: 'sandbox',
+					title: 'Poke at it',
+					branch: 'dev',
+					on_branch: true,
+					params: { a: '1' },
+					skillsets: [{ id: 's1', seq: 2 }, { id: 's2' }]
+				}
+			});
+			await projects.startRunOnNothing('p', { title: '  ', params: {}, onBranch: false });
+			expect(fn).toHaveBeenLastCalledWith({ path: { id: 'p' }, body: {} });
+			await projects.startRunOnNothing('p', { newBranch: ' spike/cache ' });
+			expect(fn).toHaveBeenLastCalledWith({
+				path: { id: 'p' },
+				body: { new_branch: 'spike/cache' }
+			});
+			await projects.startRunOnNothing('p', { newBranch: '  ' });
+			expect(fn).toHaveBeenLastCalledWith({ path: { id: 'p' }, body: {} });
+			await projects.startRunOnNothing('p');
+			expect(fn).toHaveBeenLastCalledWith({ path: { id: 'p' }, body: {} });
 		});
 
 		it('reads one merge request, by repository only when told', async () => {
@@ -1194,6 +1238,20 @@ describe('what each call sends', () => {
 			expect(out.snapshotsAfter).toBe('30d');
 		});
 
+		it('reads, patches and tests the instance’s provisioner', async () => {
+			reply('getProvisioner', answer({ id: 'p', port: 'provisioner', name: 'Kubernetes' }));
+			await expect(system.provisioner()).resolves.toMatchObject({ id: 'p', name: 'Kubernetes' });
+			const fn = reply('updateProvisioner', answer({ id: 'p' }));
+			await system.saveProvisioner({ config: { namespace: 'ws' } });
+			expect(fn).toHaveBeenLastCalledWith({ body: { name: '', config: { namespace: 'ws' } } });
+			reply('testProvisioner', answer({ ok: true }));
+			await expect(system.testProvisioner()).resolves.toEqual({
+				ok: true,
+				error: undefined,
+				warnings: []
+			});
+		});
+
 		it('saves no cap as -1', async () => {
 			const fn = reply('setLimits', answer({ max_concurrent_runs: -1, max_environments: 2 }));
 			await expect(
@@ -1281,6 +1339,7 @@ describe('what each call sends', () => {
 			[files.attachmentUrl('a'), '/api/attachments/a'],
 			[files.attachmentUrl('a', true), '/api/attachments/a?download=1'],
 			[files.snapshotUrl('s'), '/api/snapshots/s'],
+			[files.runZipUrl('r1'), '/api/runs/r1/files.zip'],
 			[files.snapshotUrl('s', true), '/api/snapshots/s?download=1']
 		])('links %s', (url, out) => {
 			expect(url).toBe(out);
@@ -1799,6 +1858,20 @@ describe('the rest of the surface', () => {
 			'askRun',
 			answer({}),
 			{ path: { id: 'r' }, body: { text: 'why?', thread_id: 's1' } }
+		],
+		[
+			'ask.send with files',
+			() => ask.send('r', '', 's1', ['a1']),
+			'askRun',
+			answer({}),
+			{ path: { id: 'r' }, body: { text: '', thread_id: 's1', attachment_ids: ['a1'] } }
+		],
+		[
+			'ask.send with no files',
+			() => ask.send('r', 'why?', undefined, []),
+			'askRun',
+			answer({}),
+			{ path: { id: 'r' }, body: { text: 'why?' } }
 		],
 		[
 			'ask.newSession',

@@ -55,6 +55,8 @@ export type ChatItem =
 			key: string;
 			id: string;
 			text: string;
+			/** Files sent with it (uploads owned by the run). */
+			attachmentIds: string[];
 			delivered: boolean;
 			ts: string;
 			deliveredAt?: string;
@@ -144,6 +146,19 @@ const dur = (ms: unknown) => {
 	return s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`;
 };
 
+/** A later report of a call: what it says replaces, what it leaves out
+ *  stays (the engine's own merge, on the wire's fields). */
+function mergeCall(into: AgentToolCall, u: AgentToolCall, raw: Record<string, unknown>) {
+	if (u.title) into.title = u.title;
+	if (raw.kind) into.kind = u.kind;
+	if (u.status) into.status = u.status;
+	if (u.input) into.input = u.input;
+	if (u.output) into.output = u.output;
+	if (u.locations.length) into.locations = u.locations;
+	if (u.diffs.length) into.diffs = u.diffs;
+	if (u.turn) into.turn = u.turn;
+}
+
 export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[] {
 	const items: ChatItem[] = [];
 	const delivered = new Map<string, string>();
@@ -164,12 +179,17 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 	}
 
 	let planAt = -1; // index of the current attempt's plan item (one per attempt)
+	// The attempt's tool calls by id: a harness may report a call again after
+	// it completed (its fuller output), and older runs hold that report as a
+	// second record. It updates the call already shown, never a second row.
+	let calls = new Map<string, AgentToolCall>();
 	for (const e of events) {
 		const p = e.payload;
 		const key = `e${e.seq}`;
 		switch (e.type) {
 			case 'stage_started':
 				planAt = -1;
+				calls = new Map();
 				items.push({
 					kind: 'stage',
 					key,
@@ -264,6 +284,15 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					key,
 					glyph: I.hold,
 					text: t('transcript.holdTaken'),
+					tone: 'warn'
+				});
+				break;
+			case 'hold_opened':
+				items.push({
+					kind: 'status',
+					key,
+					glyph: I.hold,
+					text: t('transcript.holdOpened'),
 					tone: 'warn'
 				});
 				break;
@@ -374,6 +403,12 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 				break;
 			case 'agent_tool': {
 				const call = toAgentToolCall(p);
+				const seen = calls.get(call.toolCallId);
+				if (seen) {
+					mergeCall(seen, call, p);
+					break;
+				}
+				calls.set(call.toolCallId, call);
 				const last = items[items.length - 1];
 				if (last?.kind === 'tools' && !last.live) last.calls.push(call);
 				else items.push({ kind: 'tools', key, calls: [call], live: false });
@@ -399,6 +434,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					key,
 					id: String(p.message_id),
 					text: String(p.text ?? ''),
+					attachmentIds: Array.isArray(p.attachment_ids) ? p.attachment_ids.map(String) : [],
 					delivered: delivered.has(String(p.message_id)),
 					deliveredAt: delivered.get(String(p.message_id)),
 					ts: e.ts
@@ -473,4 +509,15 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 		}
 	}
 	return items;
+}
+
+/** Where a long transcript's window starts, for the `budget` items before
+ *  `end`: at the first stage divider in reach, so an attempt shows from its
+ *  start, or at the cut itself when the attempt is longer than the budget.
+ *  A run with hundreds of attempts' worth of items renders only its tail. */
+export function windowStart(items: ChatItem[], end: number, budget: number): number {
+	if (end <= budget) return 0;
+	const cut = end - budget;
+	for (let i = cut; i < end; i++) if (items[i].kind === 'stage') return i;
+	return cut;
 }

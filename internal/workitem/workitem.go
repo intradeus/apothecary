@@ -5,7 +5,8 @@
 // A kind is a value of a flow's operates_on (FLOWLANG §1). Its package
 // (workitem/ticket, workitem/mergerequest) says how a start names one of its
 // items, which runs hold one, and how a new run is pointed at it; the kinds
-// are registered once (workitem/items). Nothing that starts, guards or lists
+// are registered once (workitem/items). workitem/nothing is the kind with
+// no items at all: a run started on a bare name. Nothing that starts, guards or lists
 // runs names a kind: a new kind is its package, one registration, and its
 // operates_on value in the language.
 //
@@ -61,6 +62,9 @@ type Kind interface {
 	// Accompanies: one of its items may come with a run of a flow of
 	// another kind — a ticket's work behind a run on a merge request.
 	Accompanies() bool
+	// Alone: a run of a flow of this kind is started on no item at all —
+	// none of its own, and none of another kind along.
+	Alone() bool
 	// Requested is the item of this kind a start names, if any.
 	Requested(projectID string, t runinput.Ticket, in runinput.Input) (Ref, bool)
 	// Held are the items of this kind a run holds, read from its view: the
@@ -164,6 +168,12 @@ func (r *Registry) StartsOn(flowName, kind string, items []Ref) error {
 	k, ok := r.by[kind]
 	if !ok {
 		return fmt.Errorf("flow %q operates on %q, which is no kind of work item", flowName, kind)
+	}
+	if k.Alone() {
+		if len(items) > 0 {
+			return fmt.Errorf("flow %q starts its runs on nothing (operates_on: %s), not on a %s: start it from New run, with no %s", flowName, kind, r.noun(items[0].Kind), r.noun(items[0].Kind))
+		}
+		return nil
 	}
 	named := slices.ContainsFunc(items, func(i Ref) bool { return i.Kind == kind })
 	if k.Required() && !named {

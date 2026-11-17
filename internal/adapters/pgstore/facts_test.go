@@ -197,6 +197,33 @@ func TestRunFactsProjection(t *testing.T) {
 	}
 }
 
+// Archiving is a dimension of its own: a first-pass success archived is
+// still a first-pass success, and a failure archived is still a failure.
+func TestRunFactsArchivedKeepsTheOutcome(t *testing.T) {
+	s := openDSN(t, pgtest.Empty(t))
+	ctx := context.Background()
+	for id, end := range map[string]event.Payload{"done": &event.RunCompleted{}, "broke": &event.RunFailed{Reason: "boom"}} {
+		if _, err := s.Append(ctx, id, &event.RunCreated{UserID: "u1", ProjectID: "p1", FlowName: "f"}, &event.EnvReady{EnvID: "e-" + id},
+			&event.StageStarted{StageID: "build", Attempt: 1}, &event.StageCompleted{StageID: "build"}, end, &event.RunArchived{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for id, want := range map[string]struct {
+		state             string
+		success, firstRun bool
+	}{"done": {"completed", true, true}, "broke": {"failed", false, false}} {
+		var state string
+		var success, firstPass, archived bool
+		if err := s.pool.QueryRow(ctx, `SELECT state, success, first_pass, archived FROM run_facts WHERE run_id=$1`, id).Scan(
+			&state, &success, &firstPass, &archived); err != nil {
+			t.Fatal(err)
+		}
+		if state != want.state || success != want.success || firstPass != want.firstRun || !archived {
+			t.Errorf("%s: state %s success %v first_pass %v archived %v", id, state, success, firstPass, archived)
+		}
+	}
+}
+
 // Rebuild streams the log run by run: every run comes back, each folded
 // from its own events only.
 func TestRebuildProjectsEveryRun(t *testing.T) {

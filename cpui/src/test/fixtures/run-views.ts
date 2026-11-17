@@ -90,6 +90,7 @@ export const anAskMessage = (over: Partial<AskMessage> = {}): AskMessage => ({
 	text: 'Where is the retry?',
 	costUsd: 0,
 	turns: 0,
+	attachmentIds: [],
 	at: AT,
 	...over
 });

@@ -260,7 +260,7 @@ func compileValues(g Grain, fieldID string, t TimeRange, userID string) (Compile
 }
 
 // drillCols are a DrillRun's columns, in its field order.
-const drillCols = `f.run_id, coalesce(r.ticket_title, ''), f.flow_name, f.flow_hash, f.state, f.created_at, f.wall_ms, f.cost_usd`
+const drillCols = `f.run_id, coalesce(r.ticket_title, ''), f.flow_name, f.flow_hash, f.state, f.archived, f.created_at, f.wall_ms, f.cost_usd`
 
 // compileDrill is the runs behind a group: every run a matching row of the
 // grain belongs to, newest first.

@@ -60,7 +60,13 @@
 				kind: 'attachment',
 				snapshot: false,
 				label: t('runview.record.lbl_attachment'),
-				source: a.pingId ? t('runview.record.src_ping_answer') : t('runview.record.src_goal'),
+				source: a.pingId
+					? t('runview.record.src_ping_answer')
+					: a.chat === 'takeover'
+						? t('runview.record.src_takeover')
+						: a.chat === 'ask'
+							? t('runview.record.src_ask')
+							: t('runview.record.src_goal'),
 				href: a.pingId ? to.ping(a.pingId) : undefined,
 				size: a.size,
 				at: a.createdAt
@@ -87,6 +93,14 @@
 			]}
 		/>
 		<span class="hint">{t('runview.record.kept')}</span>
+		{#if all.length && rs.run}
+			<a
+				class="btn btn-sm"
+				href={api.files.runZipUrl(rs.run.id)}
+				download
+				title={t('runview.record.downloadAllTitle')}>{I.follow} {t('runview.record.downloadAll')}</a
+			>
+		{/if}
 	</div>
 	{#if all.length === 0}
 		<div class="empty-line">

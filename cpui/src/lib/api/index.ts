@@ -419,8 +419,15 @@ export const runs = {
 
 	/** Send a message to the agent you took over. Delivered into its live
 	 *  session when the current turn ends. Rejects (409) without a take-over. */
-	sendMessage: async (id: string, text: string): Promise<string> =>
-		(await unwrap(gen.sendRunMessage({ path: { id }, body: { text } }))).message_id,
+	sendMessage: async (id: string, text: string, attachmentIds?: string[]): Promise<string> =>
+		(
+			await unwrap(
+				gen.sendRunMessage({
+					path: { id },
+					body: { text, ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}) }
+				})
+			)
+		).message_id,
 
 	/** Take over the running agent's session: its turns no longer end the
 	 *  stage, they wait for your next message — until you release. force
@@ -445,10 +452,22 @@ export const ask = {
 	 *  has none); the answer arrives on the stream. Rejects (409) when the
 	 *  pane is off or the session is writing an answer, (404) for a session
 	 *  the run does not have. */
-	send: async (runId: string, text: string, sessionId?: string): Promise<AskMessage> =>
+	send: async (
+		runId: string,
+		text: string,
+		sessionId?: string,
+		attachmentIds?: string[]
+	): Promise<AskMessage> =>
 		map.toAskMessage(
 			await unwrap(
-				gen.askRun({ path: { id: runId }, body: { text, thread_id: sessionId || undefined } })
+				gen.askRun({
+					path: { id: runId },
+					body: {
+						text,
+						thread_id: sessionId || undefined,
+						...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {})
+					}
+				})
 			)
 		),
 	/** Pick the model a session (none: the run's latest) answers with. */
@@ -890,6 +909,47 @@ export const projects = {
 		);
 		return { runId: r.run_id };
 	},
+	/** Start a run on nothing (the flow's operates_on must be nothing): a
+	 *  workspace on a branch, with no ticket or merge request. Everything is
+	 *  optional — the engine names an unnamed run "manual run - <time>" and
+	 *  starts from the repository's default branch. newBranch names the fresh
+	 *  branch forked from it (after the run when left out); onBranch works on
+	 *  the branch itself instead. */
+	startRunOnNothing: async (
+		id: string,
+		opts?: {
+			flow?: string;
+			title?: string;
+			branch?: string;
+			onBranch?: boolean;
+			newBranch?: string;
+			params?: Record<string, string>;
+			skillsets?: SkillsetRef[];
+		}
+	): Promise<{ runId: string }> => {
+		const r = await unwrap(
+			gen.startNothingRun({
+				path: { id },
+				body: {
+					...(opts?.flow ? { flow: opts.flow } : {}),
+					...(opts?.title?.trim() ? { title: opts.title.trim() } : {}),
+					...(opts?.branch ? { branch: opts.branch } : {}),
+					...(opts?.onBranch ? { on_branch: true } : {}),
+					...(opts?.newBranch?.trim() ? { new_branch: opts.newBranch.trim() } : {}),
+					...(opts?.params && Object.keys(opts.params).length ? { params: opts.params } : {}),
+					...(opts?.skillsets?.length
+						? {
+								skillsets: opts.skillsets.map((s) => ({
+									id: s.id,
+									...(s.seq ? { seq: s.seq } : {})
+								}))
+							}
+						: {})
+				}
+			})
+		);
+		return { runId: r.run_id };
+	},
 
 	preflight: async (id: string): Promise<Preflight> =>
 		map.toPreflight(await unwrap(gen.preflightProject({ path: { id } }))),
@@ -991,6 +1051,20 @@ export const credentials = {
 
 // --- integrations ------------------------------------------------------------
 
+/** An integration's edit: config replaces whole; secrets merge (a key
+ *  present replaces, "" deletes, absent keeps). */
+export interface IntegrationPatch {
+	name?: string;
+	config?: Record<string, unknown>;
+	secrets?: Record<string, string>;
+}
+type TestOutcome = { ok: boolean; error?: string; warnings: string[] };
+const toTestOutcome = (r: { ok: boolean; error?: string; warnings?: string[] }): TestOutcome => ({
+	ok: r.ok,
+	error: r.error,
+	warnings: r.warnings ?? []
+});
+
 export const integrations = {
 	list: async (): Promise<Integration[]> =>
 		many(await unwrap(gen.listIntegrations()), map.toIntegration),
@@ -998,10 +1072,7 @@ export const integrations = {
 	create: async (draft: IntegrationDraft): Promise<Integration> =>
 		map.toIntegration(await unwrap(gen.createIntegration({ body: { ...draft } }))),
 
-	update: async (
-		id: string,
-		patch: { name?: string; config?: Record<string, unknown>; secrets?: Record<string, string> }
-	): Promise<Integration> =>
+	update: async (id: string, patch: IntegrationPatch): Promise<Integration> =>
 		map.toIntegration(
 			await unwrap(
 				gen.updateIntegration({ path: { id }, body: { name: patch.name ?? '', ...patch } })
@@ -1069,10 +1140,8 @@ export const integrations = {
 		),
 
 	/** Check the credentials against the real service. */
-	test: async (id: string): Promise<{ ok: boolean; error?: string; warnings: string[] }> => {
-		const r = await unwrap(gen.testIntegration({ path: { id } }));
-		return { ok: r.ok, error: r.error, warnings: r.warnings ?? [] };
-	},
+	test: async (id: string): Promise<TestOutcome> =>
+		toTestOutcome(await unwrap(gen.testIntegration({ path: { id } }))),
 
 	repos: async (id: string): Promise<Repo[]> =>
 		many(await unwrap(gen.listIntegrationRepos({ path: { id } })), map.toRepo),
@@ -1223,7 +1292,9 @@ export const files = {
 	attachmentUrl: (id: string, download = false) =>
 		`/api/attachments/${id}${download ? '?download=1' : ''}`,
 	snapshotUrl: (id: string, download = false) =>
-		`/api/snapshots/${id}${download ? '?download=1' : ''}`
+		`/api/snapshots/${id}${download ? '?download=1' : ''}`,
+	/** Everything on a run's Record, in one zip. */
+	runZipUrl: (runId: string) => `/api/runs/${runId}/files.zip`
 };
 
 // --- system ------------------------------------------------------------------
@@ -1245,6 +1316,21 @@ export const system = {
 
 	saveSettings: async (s: Settings): Promise<Settings> =>
 		map.toSettings(await unwrap(gen.updateSettings({ body: map.fromSettings(s) }))),
+
+	/** The instance's provisioner: what every workshop's workspaces are built
+	 *  on (secrets masked). */
+	provisioner: async (): Promise<Integration> =>
+		map.toIntegration(await unwrap(gen.getProvisioner())),
+
+	/** Change it (admin); an empty field takes the deployment's value. */
+	saveProvisioner: async (patch: IntegrationPatch): Promise<Integration> =>
+		map.toIntegration(
+			await unwrap(gen.updateProvisioner({ body: { name: patch.name ?? '', ...patch } }))
+		),
+
+	/** Check it reaches its cluster (admin). */
+	testProvisioner: async (): Promise<TestOutcome> =>
+		toTestOutcome(await unwrap(gen.testProvisioner())),
 
 	/** The instance's capacity caps (null = no cap). */
 	limits: async (): Promise<Limits> => map.toLimits(await unwrap(gen.getLimits())),

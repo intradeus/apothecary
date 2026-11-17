@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -50,6 +51,8 @@ type Message struct {
 	Turns   int       `json:"turns,omitempty"`
 	Error   string    `json:"error,omitempty"` // an answer that failed
 	At      time.Time `json:"at"`
+	// AttachmentIDs are the files a question carried (delivered under ask/).
+	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 }
 
 // Store keeps threads and messages.
@@ -65,6 +68,10 @@ type Store interface {
 	// AppendAskMessage stores a message of a thread, assigning its Seq (the
 	// run's next) and, when zero, its At.
 	AppendAskMessage(ctx context.Context, m Message) (Message, error)
+	// OpenAskThread stores a new thread with its first message (a message
+	// of that thread): both or neither. It returns them as stored — the
+	// thread stamped, the message given its Seq (and At, when zero).
+	OpenAskThread(ctx context.Context, t Thread, first Message) (Thread, Message, error)
 	// AskMessages lists a run's messages after seq, oldest first.
 	AskMessages(ctx context.Context, runID string, afterSeq int64) ([]Message, error)
 }
@@ -111,14 +118,17 @@ func (s *MemStore) AskThreads(ctx context.Context, runID string) ([]Thread, erro
 }
 
 func (s *MemStore) SaveAskThread(ctx context.Context, t Thread) error {
-	if err := usable(ctx, t.RunID, t.ID, t.SessionID, t.Model); err != nil {
+	if err := checkThread(ctx, t); err != nil {
 		return err
-	}
-	if t.ID == "" {
-		return fmt.Errorf("ask thread: no id")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.saveThread(t)
+	return nil
+}
+
+// saveThread stores t, stamped; the caller holds s.mu.
+func (s *MemStore) saveThread(t Thread) Thread {
 	now := stored(time.Now())
 	t.CreatedAt, t.UpdatedAt = now, now
 	if prev, ok := s.threads[t.RunID][t.ID]; ok {
@@ -128,32 +138,81 @@ func (s *MemStore) SaveAskThread(ctx context.Context, t Thread) error {
 		s.threads[t.RunID] = map[string]Thread{}
 	}
 	s.threads[t.RunID][t.ID] = t
-	return nil
+	return t
 }
 
 func (s *MemStore) AppendAskMessage(ctx context.Context, m Message) (Message, error) {
 	if m.At.IsZero() {
 		m.At = time.Now().UTC()
 	}
-	if err := usable(ctx, m.RunID, m.ThreadID, m.ID, m.Role, m.Text, m.UserID, m.Model, m.Error); err != nil {
+	if err := checkMessage(ctx, m); err != nil {
 		return m, err
-	}
-	if m.ThreadID == "" {
-		return m, fmt.Errorf("ask message: no thread")
-	}
-	if m.Role != RoleQuestion && m.Role != RoleAnswer {
-		return m, fmt.Errorf("ask message: role %q", m.Role)
-	}
-	if m.Turns < math.MinInt32 || m.Turns > math.MaxInt32 {
-		return m, fmt.Errorf("ask message: %d turns", m.Turns)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.appendMessage(m), nil
+}
+
+func (s *MemStore) OpenAskThread(ctx context.Context, t Thread, first Message) (Thread, Message, error) {
+	if first.At.IsZero() {
+		first.At = time.Now().UTC()
+	}
+	if err := checkThread(ctx, t); err != nil {
+		return Thread{}, Message{}, err
+	}
+	if err := checkMessage(ctx, first); err != nil {
+		return Thread{}, Message{}, err
+	}
+	if first.RunID != t.RunID || first.ThreadID != t.ID {
+		return Thread{}, Message{}, fmt.Errorf("ask thread %s: a first message of thread %s", t.ID, first.ThreadID)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.threads[t.RunID][t.ID]; ok {
+		return Thread{}, Message{}, fmt.Errorf("ask thread %s of run %s exists", t.ID, t.RunID)
+	}
+	return s.saveThread(t), s.appendMessage(first), nil
+}
+
+// appendMessage stores m as the run's next message; the caller holds s.mu.
+func (s *MemStore) appendMessage(m Message) Message {
 	m.Seq = int64(len(s.messages[m.RunID])) + 1
 	row := m
 	row.At = stored(m.At)
+	row.AttachmentIDs = nil // none reads back as none, like an empty array
+	if len(m.AttachmentIDs) > 0 {
+		row.AttachmentIDs = slices.Clone(m.AttachmentIDs)
+	}
 	s.messages[m.RunID] = append(s.messages[m.RunID], row)
-	return m, nil
+	return m
+}
+
+// checkThread refuses a thread Postgres would.
+func checkThread(ctx context.Context, t Thread) error {
+	if err := usable(ctx, t.RunID, t.ID, t.SessionID, t.Model); err != nil {
+		return err
+	}
+	if t.ID == "" {
+		return fmt.Errorf("ask thread: no id")
+	}
+	return nil
+}
+
+// checkMessage refuses a message Postgres would.
+func checkMessage(ctx context.Context, m Message) error {
+	if err := usable(ctx, append([]string{m.RunID, m.ThreadID, m.ID, m.Role, m.Text, m.UserID, m.Model, m.Error}, m.AttachmentIDs...)...); err != nil {
+		return err
+	}
+	if m.ThreadID == "" {
+		return fmt.Errorf("ask message: no thread")
+	}
+	if m.Role != RoleQuestion && m.Role != RoleAnswer {
+		return fmt.Errorf("ask message: role %q", m.Role)
+	}
+	if m.Turns < math.MinInt32 || m.Turns > math.MaxInt32 {
+		return fmt.Errorf("ask message: %d turns", m.Turns)
+	}
+	return nil
 }
 
 func (s *MemStore) AskMessages(ctx context.Context, runID string, afterSeq int64) ([]Message, error) {

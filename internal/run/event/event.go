@@ -80,7 +80,7 @@ const (
 	TypeRunCompleted  Type = "run_completed"
 	TypeRunAbandoned  Type = "run_abandoned"
 	TypeRunFailed     Type = "run_failed"
-	TypeRunArchived   Type = "run_archived" // addition over §6 (see docs/notes): archived is a projected state, so it needs an event
+	TypeRunArchived   Type = "run_archived" // addition over §6 (see docs/notes): archiving is a flag on the run (run.View.ArchivedAt), so it needs an event
 	TypeRunRetried    Type = "run_retried"  // "try again": re-enter a failed stage in the same workspace
 	TypeRunPaused     Type = "run_paused"   // user pressed pause: loop exited cleanly, run parked non-terminal
 	TypeRunUnpaused   Type = "run_unpaused" // user pressed play: loop restarts and re-enters via the recovery path
@@ -251,6 +251,10 @@ type RunCreated struct {
 	// created it: human, or automation.
 	Params map[string]string `json:"params,omitempty"`
 	By     string            `json:"by,omitempty"`
+	// Automation is the id of the automation that created the run, when one
+	// did: what tells a scheduled run on nothing its previous one is still
+	// going.
+	Automation string `json:"automation,omitempty"`
 	// MR is the merge request someone opened that the run was started on (a
 	// flow with operates_on: merge_request): the run works on its branch, and
 	// it is the run's merge request from the start. Nil for a run that opens

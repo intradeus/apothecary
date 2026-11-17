@@ -170,8 +170,7 @@ const RUN_STATES: RunState[] = [
 	'paused',
 	'completed',
 	'abandoned',
-	'failed',
-	'archived'
+	'failed'
 ];
 const PING_TYPES: PingType[] = [
 	'gate',
@@ -216,6 +215,7 @@ export function toAskMessage(w: Wire.Message): AskMessage {
 		costUsd: w.cost_usd ?? 0,
 		turns: w.turns ?? 0,
 		error: w.error || undefined,
+		attachmentIds: list(w.attachment_ids),
 		at: w.at
 	};
 }
@@ -304,6 +304,7 @@ export function toRun(w: Wire.RunView): Run {
 		pause: w.pause_reason ? { reason: w.pause_reason, note: w.pause_note || undefined } : undefined,
 		provisionFailed: w.provision_failed ?? false,
 		envDestroyError: w.env_destroy_error || undefined,
+		archivedAt: w.archived_at || undefined,
 		createdAt: w.created_at,
 		updatedAt: w.updated_at,
 		facts: toRunFacts(w.facts)
@@ -360,6 +361,7 @@ export function toMergeRequestRow(w: Wire.MrRow): MergeRequestRow {
 			? {
 					id: w.run.id,
 					state: w.run.state as RunState,
+					archived: w.run.archived || undefined,
 					flow: w.run.flow,
 					createdAt: w.run.created_at
 				}
@@ -972,7 +974,8 @@ export function toAttachment(w: Wire.Attachment): Attachment {
 		mime: w.mime ?? '',
 		size: w.size ?? 0,
 		sha256: w.sha256 ?? '',
-		createdAt: w.created_at ?? ''
+		createdAt: w.created_at ?? '',
+		...(w.chat === 'takeover' || w.chat === 'ask' ? { chat: w.chat } : {})
 	};
 }
 
@@ -1745,6 +1748,7 @@ export function toDrillRun(w: Wire.DrillRun): DrillRun {
 		flowName: w.flow_name,
 		flowHash: w.flow_hash,
 		state: oneOf(RUN_STATES, w.state, 'pending'),
+		archived: w.archived || undefined,
 		createdAt: w.created_at,
 		wallMs: w.wall_ms,
 		costUsd: w.cost_usd

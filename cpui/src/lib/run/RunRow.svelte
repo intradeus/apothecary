@@ -28,18 +28,24 @@
 	const mark = $derived(
 		run.state === 'completed' ? 'ok' : run.state === 'failed' ? 'bad' : ('muted' as const)
 	);
+	const said = $derived(
+		run.archivedAt
+			? t('ui.status.archivedTitle', { state: stateLabel[run.state] })
+			: stateLabel[run.state]
+	);
 </script>
 
 <div class="rr rowlink">
 	{#if variant === 'finished'}
-		<StatusMark tone={mark} size="sm" title={stateLabel[run.state]} />
+		<StatusMark tone={mark} size="sm" title={said} />
 	{:else}
-		<StatusChip state={run.state} compact />
+		<StatusChip state={run.state} archived={!!run.archivedAt} compact />
 	{/if}
 	<span class="mid">
 		<a class="t truncate stretch" href={to.run(run.id)}>{run.title || t('run.row.untitled')}</a>
 		<span class="s truncate"
-			><span class={stateHueClass[run.state]}>{stateLabel[run.state]}</span>
+			><span class={stateHueClass[run.state]}>{stateLabel[run.state]}</span
+			>{#if run.archivedAt}{' · '}<span class="faint">{t('ui.status.archived')}</span>{/if}
 			{#if variant === 'finished'}
 				· <span title={fmtAbs(run.updatedAt)}>{ago(run.updatedAt)}</span>
 			{:else if detail ?? run.currentStage}

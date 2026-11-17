@@ -110,21 +110,51 @@ func TestMigrateSurfacesAnUnreadableLedger(t *testing.T) {
 
 // The projection rebuild after a migration that asks for one is part of
 // Open: a log it cannot replay fails the boot instead of serving stale read
-// models.
+// models. The failed boot has applied the migration, yet the rebuild stays
+// pending: the next boot replays before it serves, and a boot after that
+// one leaves the projections alone.
 func TestOpenFailsWhenThePostMigrationRebuildFails(t *testing.T) {
 	dsn := pgtest.Empty(t)
 	ctx := context.Background()
 	s := openDSN(t, dsn)
-	if _, err := s.Append(ctx, "r1", &event.RunCreated{}); err != nil {
+	if _, err := s.Append(ctx, "r1", &event.RunCreated{TicketTitle: "T"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.pool.Exec(ctx, `UPDATE events SET payload='[]'`); err != nil {
+	var payload []byte
+	if err := s.pool.QueryRow(ctx, `SELECT payload FROM events`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE events SET payload='[]'; UPDATE runs SET ticket_title='stale'`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
 	src := withMigrations(t, map[string]string{"9001_rebuild.sql": "-- rebuild: projections\nSELECT 1;"})
 	if _, err := openWith(ctx, dsn, src); err == nil || !strings.Contains(err.Error(), "rebuild projections after migrating") {
 		t.Fatalf("Open = %v", err)
+	}
+
+	conn := openRaw(t, dsn)
+	if _, err := conn.Exec(ctx, `UPDATE events SET payload=$1`, payload); err != nil {
+		t.Fatal(err)
+	}
+	title := func(s *Store) string {
+		t.Helper()
+		var got string
+		if err := s.pool.QueryRow(ctx, `SELECT ticket_title FROM runs WHERE run_id='r1'`).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	s = openSrc(t, dsn, src)
+	if got := title(s); got != "T" {
+		t.Fatalf("the boot after a failed rebuild served without replaying (title %q)", got)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE runs SET ticket_title='stale'`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if got := title(openSrc(t, dsn, src)); got != "stale" {
+		t.Errorf("a settled rebuild replayed again (title %q)", got)
 	}
 }
 

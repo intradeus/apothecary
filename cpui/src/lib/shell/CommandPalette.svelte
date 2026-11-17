@@ -138,7 +138,7 @@
 				glyph: n.icon,
 				sub:
 					n.id === 'inbox'
-						? t('shell.palette.pending', { count: fleet.pending.length })
+						? t('shell.palette.pending', { count: fleet.inboxCount })
 						: n.chord
 							? `G ${n.chord.toUpperCase()}`
 							: undefined,
@@ -158,9 +158,9 @@
 			},
 			{
 				group: 'go' as const,
-				label: t('shell.palette.limits'),
-				glyph: I.limits,
-				run: go(to.system('limits'))
+				label: t('shell.palette.provisioner'),
+				glyph: I.provisioner,
+				run: go(to.system('provisioner'))
 			},
 			{
 				group: 'do' as const,
@@ -208,7 +208,7 @@
 				run: go(to.workshop(p.id))
 			});
 		const runs = [...fleet.runs]
-			.filter((r) => r.state !== 'archived')
+			.filter((r) => !r.archivedAt)
 			.sort((a, b) =>
 				stateTab[a.state] !== stateTab[b.state]
 					? stateTab[a.state] === 'active'

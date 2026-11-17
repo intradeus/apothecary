@@ -121,6 +121,26 @@ describe('MergeRequestsTab, listing', () => {
 		expect(screen.getByText(/reviewer/)).toBeInTheDocument();
 	});
 
+	it('marks an archived last run beside its outcome', async () => {
+		setup([
+			row(
+				{},
+				{
+					run: {
+						id: 'r1',
+						state: 'completed',
+						archived: true,
+						flow: 'reviewer',
+						createdAt: '2026-10-31T12:00:00Z'
+					},
+					runs: 1
+				}
+			)
+		]);
+		expect(await screen.findByText('Completed')).toBeInTheDocument();
+		expect(screen.getByText('archived')).toBeInTheDocument();
+	});
+
 	it('reads again every thirty seconds, unless the tab is hidden', async () => {
 		vi.useFakeTimers();
 		vi.mocked(api.projects.mergeRequests).mockResolvedValue([]);

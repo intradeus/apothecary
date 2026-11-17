@@ -326,10 +326,6 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 	if err != nil {
 		return err
 	}
-	provID, err := mk(confstore.PortProvisioner, "dev-workspaces", nil)
-	if err != nil {
-		return err
-	}
 	// Demo pacing: each agent turn is acted out over ~30 s, so the war room
 	// has a crew and subagents to show.
 	harnessID, err := mk(confstore.PortHarness, "dev-harness", map[string]any{"demo": "on"})
@@ -344,7 +340,6 @@ func seedDevProject(ctx context.Context, conf *confstore.Service) error {
 	p, err := conf.CreateProject(ctx, confstore.Project{
 		Name:          "dev",
 		RepoAccountID: repoAccountID,
-		ProvisionerID: provID,
 		HarnessIDs:    []string{harnessID},
 		Repo: confstore.RepoConfig{
 			URL: "https://git.local/dev/fake-repo.git", Locator: "1",

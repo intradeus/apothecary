@@ -17,6 +17,7 @@
 		fallbackLabel,
 		id,
 		operatesOn,
+		exclude,
 		fallbackFlow
 	}: {
 		projectId: string;
@@ -26,6 +27,9 @@
 		id?: string;
 		/** Only the flows whose runs are started on this (operates_on). */
 		operatesOn?: OperatesOn;
+		/** Not the flows whose runs are started on this: beside a ticket, a
+		 *  flow that starts on nothing could never be started. */
+		exclude?: OperatesOn;
 		/** The flow '' stands for, when the caller knows it: left out when its
 		 *  runs are not started on operatesOn. */
 		fallbackFlow?: string;
@@ -49,13 +53,17 @@
 			});
 	});
 
-	const fits = $derived((flows ?? []).filter((f) => !operatesOn || f.operatesOn === operatesOn));
+	const fits = $derived(
+		(flows ?? []).filter(
+			(f) => (!operatesOn || f.operatesOn === operatesOn) && (!exclude || f.operatesOn !== exclude)
+		)
+	);
 	const fallbackFits = $derived(
 		!operatesOn || !fallbackFlow || fits.some((f) => f.name === fallbackFlow)
 	);
 	// A choice the kind no longer fits moves to one it does.
 	$effect(() => {
-		if (!flows || !operatesOn) return;
+		if (!flows || !(operatesOn || exclude)) return;
 		const ok = value === '' ? fallbackFits : fits.some((f) => f.name === value);
 		if (!ok) value = fallbackFits ? '' : (fits[0]?.name ?? '');
 	});

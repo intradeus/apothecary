@@ -221,12 +221,15 @@ describe('the event stream', () => {
 			stop();
 		});
 
-		it.each(['snapshot_captured', 'ping_answered'])('re-reads the record on %s', async (type) => {
-			const { stop, emit } = await live();
-			emit(anEvent(1, type));
-			expect(api.runs.files).toHaveBeenCalledOnce();
-			stop();
-		});
+		it.each(['snapshot_captured', 'ping_answered', 'message_queued'])(
+			're-reads the record on %s',
+			async (type) => {
+				const { stop, emit } = await live();
+				emit(anEvent(1, type));
+				expect(api.runs.files).toHaveBeenCalledOnce();
+				stop();
+			}
+		);
 
 		it('leaves the record alone otherwise', async () => {
 			const { stop, emit } = await live();
@@ -750,6 +753,24 @@ describe('feeds', () => {
 		expect(rs.observed).toEqual(observed);
 	});
 
+	// The stream's message_queued, start() and the Ask pane each start a read.
+	it('keeps the newer files when an older read lands last', async () => {
+		const rs = store();
+		const older = deferred<unknown>();
+		const newer = deferred<unknown>();
+		vi.mocked(api.runs.files).mockReturnValueOnce(older.promise as never);
+		vi.mocked(api.runs.files).mockReturnValueOnce(newer.promise as never);
+
+		const first = rs.refreshFiles();
+		const second = rs.refreshFiles();
+		newer.resolve({ snapshots: [], attachments: [{ id: 'a1' }, { id: 'a2' }] } as never);
+		await second;
+		older.resolve({ snapshots: [], attachments: [{ id: 'a1' }] } as never);
+		await first;
+
+		expect(rs.attachments.map((a) => a.id)).toEqual(['a1', 'a2']);
+	});
+
 	it('shows a failed services read and clears it on the next good one', async () => {
 		const rs = store();
 		rs.services = noServices;
@@ -827,7 +848,11 @@ describe('the derived state', () => {
 		['a status not reconciled yet', { envId: 'e', envStatus: 'unknown' }, true],
 		['no container', {}, false],
 		['an absent container', { envId: 'e', envStatus: 'absent' }, false],
-		['an archived run', { envId: 'e', state: 'archived' }, false]
+		[
+			'an archived run',
+			{ envId: 'e', state: 'completed', archivedAt: '2026-10-31T12:00:00Z' },
+			false
+		]
 	])('has a workspace or not for %s', (_, over, want) => {
 		expect(store(aRun(over)).hasWorkspace).toBe(want);
 	});
@@ -845,7 +870,7 @@ describe('the derived state', () => {
 		['a failed run', { envId: 'e', state: 'failed' }, true],
 		['a completed run', { envId: 'e', state: 'completed' }, true],
 		['a running run', { envId: 'e', state: 'running' }, false],
-		['an archived run', { envId: 'e', state: 'archived' }, false],
+		['an archived run', { envId: 'e', state: 'failed', archivedAt: '2026-10-31T12:00:00Z' }, false],
 		['a paused run without a workspace', { state: 'paused' }, false]
 	])('offers a rebuild or not for %s', (_, over, want) => {
 		expect(store(aRun(over)).canRebuild).toBe(want);
@@ -858,7 +883,11 @@ describe('the derived state', () => {
 		['a paused run', { envId: 'e', state: 'paused' }, false],
 		['a pending run', { state: 'pending' }, false],
 		['a failed run', { envId: 'e', state: 'failed' }, false],
-		['an archived run', { envId: 'e', state: 'archived' }, false]
+		[
+			'an archived run',
+			{ envId: 'e', state: 'abandoned', archivedAt: '2026-10-31T12:00:00Z' },
+			false
+		]
 	])('offers a pause or not for %s', (_, over, want) => {
 		expect(store(aRun(over)).canPause).toBe(want);
 	});
@@ -877,8 +906,7 @@ describe('the derived state', () => {
 		['paused', false],
 		['completed', true],
 		['failed', true],
-		['abandoned', true],
-		['archived', true]
+		['abandoned', true]
 	])('reads %s as terminal: %s', (state, want) => {
 		expect(store(aRun({ state })).terminal).toBe(want);
 	});

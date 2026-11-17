@@ -77,7 +77,8 @@ beforeEach(() => {
 	vi.mocked(api.flows.list).mockResolvedValue([
 		aFlow({ name: 'builder', operatesOn: 'ticket' }),
 		aFlow({ name: 'other', operatesOn: 'ticket' }),
-		aFlow({ name: 'reviewer', operatesOn: 'merge_request' })
+		aFlow({ name: 'reviewer', operatesOn: 'merge_request' }),
+		aFlow({ name: 'workspace-only', operatesOn: 'nothing', builtin: true })
 	]);
 	vi.mocked(api.flows.get).mockResolvedValue(aFlow());
 	vi.mocked(api.flows.binding).mockResolvedValue(null as never);
@@ -147,6 +148,14 @@ describe('AutomationsTab, listing', () => {
 		expect(await screen.findByText(/0 9 \* \* \* · Daily sweep/)).toBeInTheDocument();
 		expect(api.tickets.get).toHaveBeenCalledWith('t1');
 		expect(api.projects.tickets).toHaveBeenCalledWith('p1', { done: 'open', limit: 100 });
+	});
+
+	it('sums up a schedule on nothing as one with no ticket', async () => {
+		setup([
+			auto({ kind: 'cron', schedule: '0 3 * * *', ticketId: undefined, flow: 'workspace-only' })
+		]);
+		expect(await screen.findByText(/0 3 \* \* \* · no ticket/)).toBeInTheDocument();
+		expect(api.tickets.get).not.toHaveBeenCalled();
 	});
 
 	it('sums up a schedule by the ticket id when its record cannot be read', async () => {
@@ -248,6 +257,32 @@ describe('AutomationsTab, a new rule', () => {
 		expect(sent()).toMatchObject({ kind: 'cron', schedule: '0 9 * * *', ticketKey: 'PROJ-2' });
 		expect(sent().ticketId).toBeUndefined();
 		expect(sent().query).toBeUndefined();
+	});
+
+	it('schedules a flow whose runs are started on nothing, with no ticket', async () => {
+		setup([], { tickets: [aTicketRow({ key: 'PROJ-1', ticketId: 't1', title: 'Sweep' })] });
+		await screen.findByText('No automations yet');
+		await openNew();
+		await userEvent.type(screen.getByLabelText('Name'), 'Nightly chore');
+		await kind('schedule');
+		await userEvent.type(screen.getByLabelText('Schedule'), '0 3 * * *');
+		await choose('Ticket', 'PROJ-1 · Sweep');
+		await kind('Nothing');
+
+		// No ticket to pick, and only the flows that start on nothing.
+		expect(screen.queryByRole('combobox', { name: 'Ticket' })).not.toBeInTheDocument();
+		expect(
+			screen.getByText(/A slot is skipped while the previous run is still going/)
+		).toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.getByRole('combobox', { name: 'Flow' })).toHaveTextContent('workspace-only')
+		);
+		await userEvent.click(create());
+
+		expect(sent()).toMatchObject({ kind: 'cron', schedule: '0 3 * * *', flow: 'workspace-only' });
+		// The ticket picked before the switch does not travel.
+		expect(sent().ticketKey).toBeUndefined();
+		expect(sent().ticketId).toBeUndefined();
 	});
 
 	it('sends only what a merge request rule takes', async () => {
@@ -430,6 +465,20 @@ describe('AutomationsTab, editing', () => {
 			await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 			expect(edited()).toMatchObject({ ticketId: 't1' });
 			expect(edited().ticketKey).toBeUndefined();
+		});
+
+		it('opens one on nothing as such, and can be given a ticket', async () => {
+			setup(
+				[auto({ kind: 'cron', query: undefined, schedule: '0 3 * * *', flow: 'workspace-only' })],
+				{ tickets: [aTicketRow({ key: 'PROJ-1', ticketId: 't1', title: 'Sweep' })] }
+			);
+			await userEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+			await screen.findByRole('dialog', { name: 'Edit Nightly' });
+			expect(screen.getByRole('radio', { name: 'Nothing' })).toBeChecked();
+			expect(screen.queryByRole('combobox', { name: 'Ticket' })).not.toBeInTheDocument();
+
+			await kind('A ticket');
+			expect(await screen.findByRole('combobox', { name: 'Ticket' })).toBeInTheDocument();
 		});
 
 		it('clears its ticket', async () => {

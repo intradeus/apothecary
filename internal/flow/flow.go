@@ -260,11 +260,13 @@ func routeTerminal(to string) bool {
 const MainPhase = "main"
 
 // What a run is started on (FLOWLANG §1 operates_on): a ticket — the run
-// makes its own branch and opens its merge request — or a merge request
-// someone opened, which the run works on from the start.
+// makes its own branch and opens its merge request — a merge request
+// someone opened, which the run works on from the start, or nothing: a
+// workspace on a branch, with no ticket and no merge request behind it.
 const (
-	OperatesOnTicket = "ticket"
-	OperatesOnMR     = "merge_request"
+	OperatesOnTicket  = "ticket"
+	OperatesOnMR      = "merge_request"
+	OperatesOnNothing = "nothing"
 )
 
 // PhaseKind is which section of the document a phase comes from.
@@ -370,6 +372,10 @@ type Stage struct {
 	// instead of continuing the stage's, so what it concluded before cannot
 	// colour its next look.
 	FreshSession bool
+	// StartHeld (start_held): every attempt opens as a take-over held by
+	// the run's owner — the agent answers the stage prompt, then waits for
+	// them instead of ending the stage (FLOWLANG §2 agent).
+	StartHeld bool
 	// HarnessOptions are the options of the harness the stage runs on — its
 	// kind's block of harness_options, resolved; nil when none apply or the
 	// harness is unbound.
@@ -1159,6 +1165,10 @@ func (f *Flow) WorkspaceAgents() []*agentspec.Spec {
 // OperatesOnMR reports whether the flow's runs are started on a merge request
 // someone opened.
 func (f *Flow) OperatesOnMR() bool { return f.OperatesOn == OperatesOnMR }
+
+// OperatesOnNothing reports whether the flow's runs are started on no work
+// item at all (operates_on: nothing): no ticket to read or write.
+func (f *Flow) OperatesOnNothing() bool { return f.OperatesOn == OperatesOnNothing }
 
 // Main is the flow's main chain, the phase every run begins with; nil for a
 // flow that only watches (a caretaker, started idle on a merge request).

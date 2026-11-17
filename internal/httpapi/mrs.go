@@ -38,6 +38,7 @@ type MRRow struct {
 type MRRun struct {
 	ID        string    `json:"id"`
 	State     run.State `json:"state"`
+	Archived  bool      `json:"archived,omitempty"`
 	Flow      string    `json:"flow"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -111,7 +112,7 @@ func mrRow(mr repoport.MRInfo, open []repoport.MRInfo, runs []run.View) MRRow {
 	row := MRRow{MR: mr, StackedOn: repoport.StackedOn(mr.Target, open), Runs: len(runs)}
 	for _, v := range runs {
 		if row.Run == nil || v.CreatedAt.After(row.Run.CreatedAt) {
-			row.Run = &MRRun{ID: v.RunID, State: v.State, Flow: v.FlowName, CreatedAt: v.CreatedAt}
+			row.Run = &MRRun{ID: v.RunID, State: v.State, Archived: v.ArchivedAt != nil, Flow: v.FlowName, CreatedAt: v.CreatedAt}
 		}
 	}
 	return row

@@ -44,7 +44,8 @@ type Automation struct {
 	// tracker_query: the query the workshop's ticket source is asked (empty =
 	// the adapter's default search).
 	Query string `json:"query,omitempty"`
-	// cron: the five-field schedule (UTC) and the ticket each firing runs.
+	// cron: the five-field schedule (UTC) and the ticket each firing runs
+	// ("" for a flow whose runs are started on nothing).
 	Schedule string `json:"schedule,omitempty"`
 	TicketID string `json:"ticket_id,omitempty"`
 	// merge_request: the repository watched ("" = the project's primary, else
@@ -180,16 +181,17 @@ func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 		if _, err := schedule.Parse(a.Schedule); err != nil {
 			return invalidf("%v", err)
 		}
-		if a.TicketID == "" {
-			return invalidf("a cron automation needs ticket_id: the ticket each firing runs")
-		}
-		t, err := s.db.GetTicket(ctx, a.TicketID)
-		if err != nil {
-			return err
-		}
-		// A pinned ticket is the workshop's: its owner's, from its source.
-		if !sameOwner(t.UserID, p.UserID) || t.SourceID != p.TicketSourceID {
-			return invalidf("ticket %s is not one of this workshop's ticket source", a.TicketID)
+		// Whether it needs a ticket is the flow's to say (below): one whose
+		// runs are started on nothing takes none.
+		if a.TicketID != "" {
+			t, err := s.db.GetTicket(ctx, a.TicketID)
+			if err != nil {
+				return err
+			}
+			// A pinned ticket is the workshop's: its owner's, from its source.
+			if !sameOwner(t.UserID, p.UserID) || t.SourceID != p.TicketSourceID {
+				return invalidf("ticket %s is not one of this workshop's ticket source", a.TicketID)
+			}
 		}
 		if a.Query != "" {
 			return invalidf("a cron automation takes no query")
@@ -226,8 +228,15 @@ func (s *Service) validateAutomation(ctx context.Context, a *Automation) error {
 		return invalidf("flow %q does not parse: %v", a.Flow, err)
 	}
 	// The flow's runs must be started on what the automation finds: a
-	// merge request (merge_request), or a ticket.
+	// merge request (merge_request), or a ticket — or on nothing, which only
+	// a schedule starts: each firing is a run of its own, with no ticket.
 	switch onMR := a.Kind == AutomationMergeRequest; {
+	case f.OperatesOnNothing() && a.Kind != AutomationCron:
+		return invalidf("flow %q starts its runs on nothing (operates_on: %s): a %s automation starts runs on what it finds — only a cron automation starts this flow", a.Flow, flow.OperatesOnNothing, a.Kind)
+	case f.OperatesOnNothing() && a.TicketID != "":
+		return invalidf("flow %q starts its runs on nothing (operates_on: %s): a cron automation of it takes no ticket_id", a.Flow, flow.OperatesOnNothing)
+	case a.Kind == AutomationCron && !f.OperatesOnNothing() && a.TicketID == "":
+		return invalidf("a cron automation needs ticket_id: the ticket each firing runs (only a flow whose runs are started on nothing, operates_on: %s, takes none)", flow.OperatesOnNothing)
 	case onMR && !f.OperatesOnMR():
 		return invalidf("flow %q starts its runs on a ticket (operates_on: %s): a merge_request automation starts flows whose runs are started on a merge request", a.Flow, flow.OperatesOnTicket)
 	case !onMR && f.OperatesOnMR():

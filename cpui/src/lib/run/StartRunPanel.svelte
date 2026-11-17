@@ -89,6 +89,7 @@
 				id="{idPrefix}-flow"
 				{projectId}
 				{operatesOn}
+				exclude={operatesOn ? undefined : 'nothing'}
 				fallbackFlow={operatesOn ? project?.defaultFlow : undefined}
 				bind:value={flow}
 				fallbackLabel={t('page.ticket.defaultFlow', {

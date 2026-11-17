@@ -28,8 +28,9 @@
 	let {
 		files = $bindable([]),
 		label,
-		compact = false
-	}: { files?: File[]; label?: string; compact?: boolean } = $props();
+		compact = false,
+		disabled = false
+	}: { files?: File[]; label?: string; compact?: boolean; disabled?: boolean } = $props();
 
 	let inputEl = $state<HTMLInputElement | null>(null);
 	let refused = $state<{ name: string; size: number; why: string }[]>([]);
@@ -71,7 +72,9 @@
 		);
 	}
 
+	// Disabled (its files are on their way): the selection stands as it is.
 	function take(list: FileList | File[] | null | undefined) {
+		if (disabled) return;
 		refused = [];
 		if (!list) return;
 		const add: File[] = [];
@@ -103,6 +106,12 @@
 		refused = no;
 	}
 
+	/** Offer files from elsewhere (a composer's paste): the same checks as a
+	 *  drop or a pick. */
+	export function add(list: File[] | FileList) {
+		take(list);
+	}
+
 	function onPick(e: Event) {
 		take((e.target as HTMLInputElement).files);
 		if (inputEl) inputEl.value = ''; // allow re-picking the same file
@@ -121,6 +130,7 @@
 		class="btn-dashed drop"
 		class:over
 		class:compact
+		{disabled}
 		onclick={() => inputEl?.click()}
 		ondragover={(e) => {
 			e.preventDefault();
@@ -145,7 +155,7 @@
 					name={f.name}
 					size={f.size}
 					thumb={f.type.startsWith('image/') ? preview(f) : undefined}
-					onremove={() => remove(i)}
+					onremove={disabled ? undefined : () => remove(i)}
 				/>
 			{/each}
 			{#each refused as r, i (i)}

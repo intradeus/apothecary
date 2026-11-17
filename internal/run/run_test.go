@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"apothecary/internal/run/event"
 )
@@ -34,8 +35,8 @@ func TestReduceFullLifecycle(t *testing.T) {
 		{&event.StageStarted{StageID: "build", Attempt: 1}, Running},
 		{&event.MRCreated{MRURL: "https://gitlab.local/mr/1", MRIID: 1}, Running},
 		{&event.RunCompleted{}, Completed},
-		{&event.RunArchived{}, Archived},
-		{&event.EnvDestroyed{EnvID: "env-1"}, Archived},
+		{&event.RunArchived{}, Completed},
+		{&event.EnvDestroyed{EnvID: "env-1"}, Completed},
 	}
 
 	var ps []event.Payload
@@ -60,6 +61,9 @@ func TestReduceFullLifecycle(t *testing.T) {
 	}
 	if v.EnvID != "" {
 		t.Errorf("env_id should be cleared after destroy, got %q", v.EnvID)
+	}
+	if v.ArchivedAt == nil || !v.ArchivedAt.Equal(evs[len(evs)-2].TS) {
+		t.Errorf("archived_at = %v, want the run_archived timestamp", v.ArchivedAt)
 	}
 	if v.CreatedAt.IsZero() || v.UpdatedAt.Before(v.CreatedAt) {
 		t.Errorf("timestamps: created %v updated %v", v.CreatedAt, v.UpdatedAt)
@@ -101,12 +105,47 @@ func TestReduceFailurePaths(t *testing.T) {
 	}
 }
 
+// Archiving is cleanup, not an outcome: whatever the run ended as, it still
+// reads that after run_archived, with the flag set at the archive's time. A
+// second run_archived (the destroy's retry) keeps the first time.
+func TestArchiveKeepsTheOutcome(t *testing.T) {
+	t0 := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	ev := func(min int, p event.Payload) event.Event {
+		return event.Event{RunID: "r1", Seq: int64(min + 1), Type: p.EventType(), TS: t0.Add(time.Duration(min) * time.Minute), Payload: p}
+	}
+	for name, end := range map[string]struct {
+		p    event.Payload
+		want State
+	}{
+		"completed": {&event.RunCompleted{}, Completed},
+		"abandoned": {&event.RunAbandoned{Reason: "edge exhausted"}, Abandoned},
+		"failed":    {&event.RunFailed{Reason: "aborted"}, Failed},
+	} {
+		t.Run(name, func(t *testing.T) {
+			v := Reduce([]event.Event{
+				ev(0, &event.RunCreated{}), ev(1, &event.EnvReady{EnvID: "env-1"}), ev(3, end.p), ev(4, &event.RunArchived{}),
+			})
+			if v.State != end.want || v.ArchivedAt == nil || !v.ArchivedAt.Equal(t0.Add(4*time.Minute)) {
+				t.Fatalf("state %s archived_at %v", v.State, v.ArchivedAt)
+			}
+			again := ev(9, &event.RunArchived{})
+			Apply(&v, &again)
+			if v.State != end.want || !v.ArchivedAt.Equal(t0.Add(4*time.Minute)) {
+				t.Errorf("archived again: state %s archived_at %v", v.State, v.ArchivedAt)
+			}
+		})
+	}
+	if v := Reduce([]event.Event{ev(0, &event.RunCreated{}), ev(1, &event.RunCompleted{})}); v.ArchivedAt != nil {
+		t.Errorf("a run never archived reads archived at %v", v.ArchivedAt)
+	}
+}
+
 // A failed destroy leaves the environment the run's (it still counts, the
 // reaper retries it) and says why; a destroy that then succeeds clears it.
 func TestEnvDestroyFailureKeepsTheEnv(t *testing.T) {
 	v := Reduce(appendAll(t, &event.RunCreated{}, &event.EnvRequested{}, &event.EnvReady{EnvID: "apo-x"},
 		&event.RunCompleted{}, &event.RunArchived{}, &event.EnvDestroyFailed{EnvID: "apo-x", Error: "pod stuck"}))
-	if v.State != Archived || v.EnvID != "apo-x" || v.EnvDestroyError != "pod stuck" {
+	if v.State != Completed || v.ArchivedAt == nil || v.EnvID != "apo-x" || v.EnvDestroyError != "pod stuck" {
 		t.Fatalf("after a failed destroy: state %s env %q error %q", v.State, v.EnvID, v.EnvDestroyError)
 	}
 	v = Reduce(appendAll(t, &event.RunCreated{}, &event.EnvReady{EnvID: "apo-x"}, &event.RunArchived{},
@@ -124,7 +163,7 @@ func TestEnvDestroyFailureKeepsTheEnv(t *testing.T) {
 func TestTerminal(t *testing.T) {
 	for st, want := range map[State]bool{
 		Pending: false, Provisioning: false, Running: false, WaitingOnHuman: false,
-		Completed: true, Abandoned: true, Failed: true, Archived: true,
+		Completed: true, Abandoned: true, Failed: true,
 	} {
 		if st.Terminal() != want {
 			t.Errorf("%s.Terminal() = %v", st, !want)

@@ -14,6 +14,8 @@ export interface Attachment {
 	size: number;
 	sha256: string;
 	createdAt: string;
+	/** The chat a run-owned file came in on, when it did. */
+	chat?: 'takeover' | 'ask';
 }
 
 export type SnapshotKind = 'output' | 'log' | 'ping_file';

@@ -42,6 +42,9 @@ func (Kind) Required() bool { return false }
 // does — a ticket's run on the merge request it was opened for.
 func (Kind) Accompanies() bool { return true }
 
+// Alone is false: a ticket flow's run names a ticket, or starts on a title.
+func (Kind) Alone() bool { return false }
+
 func (Kind) Requested(_ string, t runinput.Ticket, _ runinput.Input) (workitem.Ref, bool) {
 	if t.TicketID == "" {
 		return workitem.Ref{}, false

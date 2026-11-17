@@ -16,6 +16,7 @@ import {
 	END,
 	EDGE_KINDS,
 	MAIN,
+	OPERATES_ON,
 	allStages,
 	chainLinks,
 	edgeOf,
@@ -37,8 +38,11 @@ export const renamed = (el: HTMLInputElement, current: string, took: boolean) =>
 	if (!took) el.value = current;
 };
 
+/** Sets what the flow's runs are started on; the default, a ticket, is
+ *  left unwritten. */
 export function setOperatesOn(doc: FlowDoc, v: string) {
-	doc.operates_on = v === 'merge_request' ? 'merge_request' : undefined;
+	const picked = OPERATES_ON.find((o) => o === v);
+	doc.operates_on = picked && picked !== 'ticket' ? picked : undefined;
 }
 
 // A chain's kind in the marker's hue: main brand, watchers violet, an

@@ -51,6 +51,15 @@ describe('Popover', () => {
 		await gone();
 	});
 
+	it('leaves and arrives at once when instant', async () => {
+		const { rerender } = show({ open: false, instant: true });
+		await rerender({ open: true });
+		expect(pop().getAttribute('style') ?? '').not.toMatch(/animation|opacity/);
+
+		await rerender({ open: false });
+		expect(queryPop()).toBeNull();
+	});
+
 	it('takes the role, id and width it is given', () => {
 		show({ role: 'menu', id: 'env-menu', width: 240 });
 		const menu = screen.getByRole('menu');
@@ -284,18 +293,6 @@ describe('Popover', () => {
 			expect(onclose).not.toHaveBeenCalled();
 		});
 
-		it('stays open on a press outside when sticky, but Esc still closes it', async () => {
-			const onclose = vi.fn();
-			show({ anchor: anAnchor(), sticky: true, onclose });
-
-			await userEvent.pointer({ target: document.body, keys: '[MouseLeft]' });
-			expect(onclose).not.toHaveBeenCalled();
-
-			await userEvent.keyboard('{Escape}');
-			await gone();
-			expect(onclose).toHaveBeenCalledOnce();
-		});
-
 		it('closes on Esc and gives the focus back to its anchor', async () => {
 			const onclose = vi.fn();
 			const anchor = anAnchor();
@@ -329,8 +326,8 @@ describe('Popover', () => {
 		it('closes only the top one on Esc, then the one under it', async () => {
 			const first = vi.fn();
 			const second = vi.fn();
-			show({ anchor: anAnchor(), sticky: true, onclose: first });
-			show({ anchor: anAnchor(), sticky: true, onclose: second });
+			show({ anchor: anAnchor(), onclose: first });
+			show({ anchor: anAnchor(), onclose: second });
 
 			await userEvent.keyboard('{Escape}');
 			expect(second).toHaveBeenCalledOnce();
@@ -353,8 +350,8 @@ describe('Popover', () => {
 
 		it('gives way on the stack when unmounted while open', async () => {
 			const under = vi.fn();
-			show({ anchor: anAnchor(), sticky: true, onclose: under });
-			const top = show({ anchor: anAnchor(), sticky: true });
+			show({ anchor: anAnchor(), onclose: under });
+			const top = show({ anchor: anAnchor() });
 
 			top.unmount();
 			await userEvent.keyboard('{Escape}');

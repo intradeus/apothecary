@@ -29,7 +29,7 @@
 	);
 	const finished = $derived(
 		runs
-			.filter((r) => stateTab[r.state] === 'finished' && r.state !== 'archived')
+			.filter((r) => stateTab[r.state] === 'finished' && !r.archivedAt)
 			.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 			.slice(0, 4)
 	);
@@ -236,8 +236,6 @@
 			</div>
 			<div class="pane-body">
 				<dl class="kv">
-					<dt>{t('workshop.overview.provisioner')}</dt>
-					<dd>{intName(project.provisionerId)}</dd>
 					<dt>{t('workshop.overview.harnesses')}</dt>
 					<dd>{(project.harnessIds ?? []).map(intName).join(', ') || '—'}</dd>
 					<dt>{t('workshop.overview.docker')}</dt>

@@ -196,6 +196,8 @@ export interface DrillRun {
 	flowName: string;
 	flowHash: string;
 	state: RunState;
+	/** Filed away; `state` still holds its outcome. */
+	archived?: boolean;
 	createdAt: string;
 	wallMs: number;
 	costUsd: number;

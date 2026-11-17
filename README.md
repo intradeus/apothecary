@@ -46,7 +46,8 @@ query. Between the start and the end, it does whatever your flow says.
   - `reviewer`: reviews someone's merge request, and again after each push.
   - `conflict-resolver`: settles a merge request's conflicts.
   - `hands-on`: you build; agents commit, review and open the merge request.
-  - `workspace-only`: a durable workspace, nothing else.
+  - `workspace-only`: a durable workspace, nothing else — started from
+    *New run* with no ticket (`operates_on: nothing`).
 
   Each flow carries its own agents. *Configure* binds a built-in flow's
   harness and model per workshop; *Copy to edit* makes it yours.
@@ -214,7 +215,8 @@ Everything is configured in the UI and stored encrypted in the database.
 
 1. **System → Providers:** your model credentials (API keys or subscription
    logins).
-2. **System → Integrations:** add each, then **Test** it.
+2. **System → Integrations:** one page per kind (repositories, ticket
+   sources, harnesses); add each, then **Test** it.
    - **Repository account:**
      - GitHub: a PAT with `repo`, or fine-grained Contents and Pull
        requests read/write.
@@ -223,7 +225,9 @@ Everything is configured in the UI and stored encrypted in the database.
    - **Ticket source** (optional): Jira, GitHub Issues or GitLab Issues; see
      [docs/ticket-sources.md](docs/ticket-sources.md).
 
-   The Kubernetes provisioner is already there, filled from the chart.
+   The provisioner is the instance's, not an integration: **System →
+   Provisioner** shows it, filled from the chart, beside the limits, the
+   reaper and storage. An admin can override any field there.
 3. **New workshop** (a workshop is one repository's project). The form walks
    through:
    - **Repository:** the account, the repository, extra repositories.
@@ -233,7 +237,8 @@ Everything is configured in the UI and stored encrypted in the database.
      built-in tracker (the default) or a ticket source integration. Several
      workshops may share one; see
      [docs/ticket-sources.md](docs/ticket-sources.md).
-   - **Execution:** the provisioner and the harnesses.
+   - **Execution:** the harnesses (workspaces are built on the instance's
+     provisioner).
    - **Workspace:** egress, Docker in workspaces.
    - **Services**, **Browser** and **Secrets**.
 

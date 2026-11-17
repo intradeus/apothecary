@@ -30,15 +30,20 @@
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import StatusMark, { type MarkTone } from '$lib/ui/StatusMark.svelte';
 	import ToolCalls from './ToolCalls.svelte';
+	import FileChips, { type StoredFile } from '$lib/artifacts/FileChips.svelte';
+	import type { Attachment } from '$lib/domain';
 
 	let {
 		items,
 		sending = [],
 		over = false,
+		attachments = [],
 		onlog,
 		onanswer
 	}: {
 		items: ChatItem[];
+		/** The run's files, to name what your messages carried. */
+		attachments?: Attachment[];
 		/** Messages you sent that the run has not echoed back yet. */
 		sending?: Sending[];
 		/** The run is finished: an unanswered question was withdrawn with it. */
@@ -48,6 +53,15 @@
 		/** Jump to where a pending question is answered. */
 		onanswer: () => void;
 	} = $props();
+
+	/** A message's files, as far as the run's list knows them yet. */
+	const filesOf = (ids: string[]): StoredFile[] =>
+		ids.flatMap((id) => {
+			const a = attachments.find((x) => x.id === id);
+			return a
+				? [{ id, filename: a.filename, mime: a.mime, size: a.size, kind: 'attachment' }]
+				: [];
+		});
 
 	const planDone = (es: { status: string }[]) => es.filter((e) => e.status === 'completed').length;
 	const planTone = (s: string): MarkTone =>
@@ -86,6 +100,9 @@
 	// it, through the messages that keep arriving and the live thought giving
 	// way to the recorded one (the same segment, another key).
 	let toggled: Record<string, boolean> = $state({});
+	// A prompt's text (tens of kB each, one per turn) is built only once its
+	// fold is opened: a long run holds dozens of them.
+	let promptOpen: Record<string, boolean> = $state({});
 
 	function arrive(node: HTMLElement, on: boolean) {
 		if (!armed || !on) return;
@@ -131,12 +148,18 @@
 			/>
 		</div>
 	{:else if it.kind === 'prompt'}
-		<details class="card-in prompt" use:arrive={a}>
+		<details
+			class="card-in prompt"
+			use:arrive={a}
+			ontoggle={(e) => (promptOpen[it.key] = e.currentTarget.open)}
+		>
 			<summary class="disclosure">
 				<span class="b">{promptLabel(it.promptKind)}</span>
 				<span class="pv muted truncate">{it.text.split('\n').find((l) => l.trim()) ?? ''}</span>
 			</summary>
-			<pre>{it.text}{it.truncated ? `\n… [${t('run.transcript.truncated')}]` : ''}</pre>
+			{#if promptOpen[it.key]}
+				<pre>{it.text}{it.truncated ? `\n… [${t('run.transcript.truncated')}]` : ''}</pre>
+			{/if}
 		</details>
 	{:else if it.kind === 'message'}
 		{#if it.thought}
@@ -153,7 +176,7 @@
 					)}
 					{I.menu}</summary
 				>
-				<div class="tt">{it.text}</div>
+				{#if open}<div class="tt">{it.text}</div>{/if}
 			</details>
 		{:else}
 			<div class="agent" use:arrive={a}>
@@ -186,7 +209,8 @@
 		<div class="notice muted" use:arrive={a}>{it.text}</div>
 	{:else if it.kind === 'user'}
 		<div class="user" use:arrive={a}>
-			<div class="bubble" class:queued={!it.delivered}>{it.text}</div>
+			{#if it.text}<div class="bubble" class:queued={!it.delivered}>{it.text}</div>{/if}
+			<FileChips items={filesOf(it.attachmentIds)} />
 			<div class="um">
 				{#if it.delivered}{t('run.transcript.delivered', {
 						at: fmtClock(it.deliveredAt ?? it.ts)
@@ -219,7 +243,7 @@
 
 {#each unechoed as s, i (i + s.text)}
 	<div class="user" use:arrive={true}>
-		<div class="bubble queued">{s.text}</div>
+		{#if s.text}<div class="bubble queued">{s.text}</div>{/if}
 		<div class="um">
 			{t('run.transcript.sending')}
 		</div>

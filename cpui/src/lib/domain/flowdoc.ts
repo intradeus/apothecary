@@ -247,6 +247,9 @@ export interface DocStage {
 	max_turns?: number | string;
 	/** Absent means true: the editor writes it only to turn it off. */
 	reuse_session?: boolean;
+	/** Every attempt opens in the run owner's hands: true, or a bool
+	 *  $parameter. Absent means off: the editor writes only an on. */
+	start_held?: boolean | string;
 	timeout?: string;
 	input?: StagePorts;
 	output?: StagePorts;
@@ -325,8 +328,9 @@ export const MANUAL = 'manual';
 export const START_POLICIES = ['auto', 'confirm', 'manual'] as const;
 export type StartPolicy = (typeof START_POLICIES)[number];
 /** What a flow's runs are started on (`operates_on:`): a ticket, the default,
- *  or a merge request someone opened. */
-export const OPERATES_ON = ['ticket', 'merge_request'] as const;
+ *  a merge request someone opened, or nothing — a workspace on a branch with
+ *  neither behind it. */
+export const OPERATES_ON = ['ticket', 'merge_request', 'nothing'] as const;
 export type OperatesOn = (typeof OPERATES_ON)[number];
 
 /** One parameter of the flow's `parameters:` block (FLOWLANG §1): what it
@@ -941,6 +945,8 @@ export function docToYaml(doc: FlowDoc): string {
 		if (ho) o.harness_options = ho;
 		if (s.max_turns != null) o.max_turns = s.max_turns;
 		if (s.reuse_session === false) o.reuse_session = false;
+		if (s.start_held === true || (typeof s.start_held === 'string' && s.start_held))
+			o.start_held = s.start_held;
 		if (s.timeout) o.timeout = s.timeout;
 		// input/output are three-way unions; emit only a non-empty one. Guarding
 		// on `.length` alone would silently drop the named form (objects have no
