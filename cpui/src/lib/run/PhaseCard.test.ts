@@ -83,7 +83,11 @@ describe('PhaseCard', () => {
 			[
 				'an abandoning outcome',
 				{ kind: 'outcome', signal: 'mr_closed', then: 'abort', start: 'manual' },
-				{ opens: 'mr_closed', starts: 'when you click Run now', runs: 'once' }
+				{
+					opens: 'mr_closed',
+					starts: 'never by itself: its signal shows here when it holds',
+					runs: 'once'
+				}
 			],
 			[
 				'an outcome you confirm',
@@ -120,6 +124,14 @@ describe('PhaseCard', () => {
 			expect(fact('Starts')).toBe('after you confirm it in the inbox');
 			for (const el of card().querySelectorAll('[title]'))
 				expect(el.getAttribute('title')).not.toMatch(/by itself/);
+		});
+
+		it('does not send you to a Run now an outcome does not have', () => {
+			show({ kind: 'outcome', signal: 'mr_closed', then: 'abort', start: 'manual' });
+
+			expect(fact('Starts')).not.toMatch(/Run now/);
+			expect(card()).not.toHaveTextContent(/Run now/);
+			expect(within(card()).queryByRole('button')).toBeNull();
 		});
 	});
 

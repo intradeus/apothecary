@@ -270,6 +270,7 @@ export default {
 	'run.phases.start.auto': 'by itself',
 	'run.phases.start.confirm': 'after you confirm it in the inbox',
 	'run.phases.start.manual': 'when you click Run now',
+	'run.phases.outcomeManual': 'never by itself: its signal shows here when it holds',
 	'run.phases.usage': '{used}/{max} runs',
 	'run.phases.running': 'running now',
 	'run.phases.parkedAt': 'parked at {stage}',

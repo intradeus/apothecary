@@ -72,6 +72,12 @@
 			? t('run.phases.usage', { used: phase.total, max: phase.max === -1 ? '∞' : phase.max })
 			: t('run.phases.once')
 	);
+	// An outcome has no Run now (below), so its manual policy cannot point at one.
+	const starts = $derived(
+		phase.kind === 'outcome' && phase.start === 'manual'
+			? t('run.phases.outcomeManual')
+			: t(`run.phases.start.${phase.start}`)
+	);
 	const status = $derived(
 		phase.live
 			? {
@@ -122,7 +128,7 @@
 		<dd>{opens}</dd>
 		{#if phase.kind !== 'main' && !byHand}
 			<dt>{t('run.phases.k.starts')}</dt>
-			<dd>{t(`run.phases.start.${phase.start}`)}</dd>
+			<dd>{starts}</dd>
 		{/if}
 		<dt>{t('run.phases.k.runs')}</dt>
 		<dd>{runs}</dd>
