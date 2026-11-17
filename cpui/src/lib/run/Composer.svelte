@@ -13,6 +13,7 @@
 	import { fmtClockDuration } from '$lib/core/format';
 	import { t } from '$lib/i18n/index.svelte';
 	import type { RunHold } from '$lib/domain';
+	import AttachFiles from '$lib/artifacts/AttachFiles.svelte';
 
 	let {
 		runId,
@@ -41,9 +42,14 @@
 
 	let draft = $state('');
 	let sending = $state(false);
+	/** The message's files are going up: the box and its files are locked,
+	 *  so what is sent is what was on screen at Enter. */
+	let uploading = $state(false);
 	let holding = $state(false);
 	let error = $state('');
 	let ta = $state<HTMLTextAreaElement | null>(null);
+	let files = $state<File[]>([]);
+	let picker = $state<ReturnType<typeof AttachFiles> | null>(null);
 
 	const held = $derived(!!hold);
 	const heldFor = $derived(hold ? fmtClockDuration(now - new Date(hold.since).getTime()) : '');
@@ -71,13 +77,29 @@
 
 	async function send() {
 		const text = draft.trim();
-		if (!text || sending) return;
+		if ((!text && !files.length) || sending) return;
 		sending = true;
 		error = '';
+		// Files go up first; if they cannot, nothing is sent and the draft
+		// and its files stay put.
+		let ids: string[] = [];
+		if (files.length) {
+			uploading = true;
+			try {
+				ids = (await api.files.upload(files)).map((a) => a.id);
+			} catch (e) {
+				error = errorMessage(e);
+				sending = false;
+				return;
+			} finally {
+				uploading = false;
+			}
+		}
 		draft = '';
+		files = [];
 		onsent(text);
 		try {
-			await api.runs.sendMessage(runId, text);
+			await api.runs.sendMessage(runId, text, ids);
 		} catch (e) {
 			error = errorMessage(e);
 			onfailed?.(text);
@@ -93,6 +115,15 @@
 			e.preventDefault();
 			void send();
 		}
+	}
+
+	// A pasted screenshot (or copied files) joins the message; pasted text
+	// is left to the browser.
+	function onPaste(e: ClipboardEvent) {
+		const pasted = e.clipboardData?.files;
+		if (!pasted?.length) return;
+		e.preventDefault();
+		picker?.add(pasted);
 	}
 
 	// Grow with the text, up to a third of the window.
@@ -118,12 +149,23 @@
 			bind:this={ta}
 			bind:value={draft}
 			rows="1"
+			readonly={uploading}
 			placeholder={t('run.composer.placeholder')}
 			onkeydown={onKey}
+			onpaste={onPaste}
 			aria-label={t('run.composer.aria')}></textarea>
 	{/if}
 	<div class="foot">
 		{#if held}
+			<span class="files">
+				<AttachFiles
+					bind:this={picker}
+					bind:files
+					compact
+					disabled={uploading}
+					label={t('run.composer.attach')}
+				/>
+			</span>
 			<span class="keys">
 				<span><span class="k">↵</span> {t('run.composer.keySend')}</span>
 				<span class="nl"><span class="k">⇧↵</span> {t('run.composer.keyNewline')}</span>
@@ -146,7 +188,7 @@
 				class="btn-primary btn-md"
 				onclick={send}
 				aria-busy={sending}
-				disabled={sending || !draft.trim()}
+				disabled={sending || (!draft.trim() && !files.length)}
 				title={t('run.composer.sendTitle')}>{t('run.composer.send')}</button
 			>
 		{:else}
@@ -205,6 +247,10 @@
 		padding: 6px 6px 6px 14px;
 		font-size: var(--fs-meta);
 		color: var(--text-faint);
+		min-width: 0;
+	}
+	.files {
+		flex: 0 1 auto;
 		min-width: 0;
 	}
 	.keys {

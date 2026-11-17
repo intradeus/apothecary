@@ -205,7 +205,8 @@ func TestEveryRegisteredTypeRoundTrips(t *testing.T) {
 		&RunRetried{}, &RunPaused{}, &RunUnpaused{}, &EnvDestroyed{}, &EnvDestroyFailed{}, &EnvRebuildStarted{},
 		&EnvRebuildCompleted{}, &EnvRebuildFailed{}, &ServiceStarted{}, &ServiceReady{}, &ServiceStopped{},
 		&ServiceFailed{}, &AgentSession{}, &AgentPrompted{}, &AgentMessage{}, &AgentTool{}, &AgentPlan{},
-		&AgentNotice{}, &MessageQueued{}, &MessageDelivered{}, &HoldTaken{}, &HoldReleased{}, &HandEdits{},
+		&AgentNotice{}, &MessageQueued{}, &MessageDelivered{}, &HoldTaken{Start: true}, &HoldReleased{}, &HoldOpened{},
+		&HandEdits{},
 	}
 	seen := map[Type]bool{}
 	for _, p := range payloads {

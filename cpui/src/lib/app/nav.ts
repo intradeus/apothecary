@@ -9,7 +9,16 @@ import { WORK_ITEMS } from './workItems';
 
 export interface NavItem {
 	id:
-		'desk' | 'inbox' | 'notices' | 'runs' | 'warRoom' | 'tickets' | 'mrs' | 'analytics' | 'system';
+		| 'desk'
+		| 'inbox'
+		| 'notices'
+		| 'runs'
+		| 'warRoom'
+		| 'tickets'
+		| 'mrs'
+		| 'skills'
+		| 'analytics'
+		| 'system';
 	label: string;
 	icon: string;
 	href: () => string;
@@ -88,6 +97,16 @@ export const NAV: readonly NavItem[] = [
 		mobile: w.mobile,
 		match: w.match
 	})),
+	{
+		id: 'skills',
+		get label() {
+			return t('nav.skills');
+		},
+		icon: I.skills,
+		href: () => to.skills(),
+		mobile: false,
+		match: (p) => p.startsWith(to.skills())
+	},
 	{
 		id: 'analytics',
 		get label() {

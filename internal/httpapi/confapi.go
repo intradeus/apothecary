@@ -149,6 +149,10 @@ func (s *Server) createIntegration(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
+	if body.Port == confstore.PortProvisioner {
+		writeErr(w, http.StatusBadRequest, "the provisioner is the instance's, not a person's: an admin sets it in System → Provisioner (PUT /api/provisioner)")
+		return
+	}
 	in, err := s.Conf.CreateIntegration(r.Context(), confstore.Integration{
 		UserID: auth.UserID(r.Context()),
 		Port:   body.Port, Kind: body.Kind, Name: body.Name,
@@ -196,16 +200,63 @@ func (s *Server) deleteIntegration(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) testIntegration(w http.ResponseWriter, r *http.Request) {
+	s.test(w, r, r.PathValue("id"))
+}
+
+func (s *Server) test(w http.ResponseWriter, r *http.Request, id string) {
 	if s.Ops == nil {
 		writeErr(w, http.StatusServiceUnavailable, "integration testing is not wired")
 		return
 	}
-	warnings, err := s.Ops.TestIntegration(r.Context(), r.PathValue("id"))
+	warnings, err := s.Ops.TestIntegration(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusOK, TestResult{Error: err.Error(), Warnings: warnings})
 		return
 	}
 	writeJSON(w, http.StatusOK, TestResult{OK: true, Warnings: warnings})
+}
+
+// --- the instance's provisioner ----------------------------------------------
+
+// getProvisioner is the instance's provisioner (secrets masked): what every
+// workshop's workspaces are built on.
+func (s *Server) getProvisioner(w http.ResponseWriter, r *http.Request) {
+	in, err := s.Conf.InstanceProvisioner(r.Context())
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toIntegrationJSON(in))
+}
+
+// updateProvisioner changes it (admin), with the integrations' write rules:
+// config replaces whole, secrets merge.
+func (s *Server) updateProvisioner(w http.ResponseWriter, r *http.Request) {
+	var body IntegrationUpdate
+	if !readJSON(w, r, &body) {
+		return
+	}
+	cur, err := s.Conf.InstanceProvisioner(r.Context())
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	in, err := s.Conf.UpdateIntegration(r.Context(), cur.ID, body.Name, body.Config, body.Secrets)
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toIntegrationJSON(in))
+}
+
+// testProvisioner checks it can reach its cluster (admin).
+func (s *Server) testProvisioner(w http.ResponseWriter, r *http.Request) {
+	cur, err := s.Conf.InstanceProvisioner(r.Context())
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	s.test(w, r, cur.ID)
 }
 
 func (s *Server) listIntegrationRepos(w http.ResponseWriter, r *http.Request) {
@@ -811,6 +862,7 @@ func (s *Server) integrationRoutes() []Route {
 			Handler: s.listIntegrations, Returns: []integrationJSON{}, Enabled: haveConf},
 		{Method: "POST", Path: "/api/integrations", ID: "createIntegration", Tag: tagIntegrations,
 			Summary: "Configure an integration",
+			Doc:     "Repositories, harnesses and ticket sources; a provisioner is the instance's (PUT /api/provisioner), 400 here.",
 			Handler: s.createIntegration, Body: IntegrationRequest{}, Returns: integrationJSON{},
 			Status: http.StatusCreated, Enabled: haveConf},
 		{Method: "GET", Path: "/api/integrations/{id}", ID: "getIntegration", Tag: tagIntegrations,
@@ -849,6 +901,17 @@ func (s *Server) integrationRoutes() []Route {
 			Doc:     "A remote tracker's are read from it first, a type not listed yet added with its change type guessed from its name.",
 			Query:   []Param{{Name: "refresh", Doc: "1 = read the remote tracker now rather than the cached copy", Enum: []string{"1"}}},
 			Handler: s.listTrackerTypes, Returns: TrackerTypeList{}, Enabled: haveConf, Scope: ScopeIntegration},
+		{Method: "GET", Path: "/api/provisioner", ID: "getProvisioner", Tag: tagIntegrations,
+			Summary: "The instance's provisioner (secrets masked)",
+			Doc:     "Every workshop's workspaces are built on it. 404 while the instance has none (a deployment without APOTHECARY_K8S_NAMESPACE).",
+			Handler: s.getProvisioner, Returns: integrationJSON{}, Enabled: haveConf},
+		{Method: "PUT", Path: "/api/provisioner", ID: "updateProvisioner", Tag: tagIntegrations,
+			Summary: "Change the instance's provisioner (admin; secrets merge: present replaces, \"\" deletes, absent keeps)",
+			Doc:     "An empty field takes the deployment's value (APOTHECARY_K8S_*). Runs pick the change up on their next workspace.",
+			Handler: s.updateProvisioner, Body: IntegrationUpdate{}, Returns: integrationJSON{}, Enabled: haveConf, Auth: AccessAdmin},
+		{Method: "POST", Path: "/api/provisioner/test", ID: "testProvisioner", Tag: tagIntegrations,
+			Summary: "Check the instance's provisioner reaches its cluster (admin)",
+			Handler: s.testProvisioner, Returns: TestResult{}, Enabled: haveConf, Auth: AccessAdmin},
 		{Method: "PUT", Path: "/api/integrations/{id}/types", ID: "putTrackerTypes", Tag: tagIntegrations,
 			Summary: "Save a ticket source's issue types",
 			Doc: "A remote tracker's rows only take change_type; the internal tracker's are the user's. Every type needs a change type (400). " +

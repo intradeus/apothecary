@@ -70,14 +70,14 @@ func (e *Engine) Release(runID, userID string) error {
 			return err
 		}
 	}
-	return e.wakeHeld(context.Background(), runID, func(v run.View) []event.Payload {
+	return e.wakeHeld(context.Background(), runID, func(v run.View) ([]event.Payload, error) {
 		rel := &event.HoldReleased{StageID: v.Hold.StageID, Attempt: v.Hold.Attempt, UserID: userID,
 			Reason: event.HoldReleasedByUser, DurationMS: max(e.clock().Sub(v.Hold.Since).Milliseconds(), 0),
 			HoldSpend: event.HoldSpend{Turns: v.Hold.Turns, Messages: v.Hold.Messages}}
 		if v.Hold.CostUSD > 0 {
 			rel.Usage = &event.Usage{CostUSD: v.Hold.CostUSD}
 		}
-		return []event.Payload{rel}
+		return []event.Payload{rel}, nil
 	})
 }
 
@@ -127,8 +127,9 @@ func (e *Engine) dormantView(ctx context.Context, runID string) (run.View, error
 // it a loop again — the message or the release it was waiting for. Like
 // answerDormant, it is the one path that writes to a dormant run's log from
 // outside its goroutine, serialized by wakeMu; a loop that appeared in the
-// meantime owns the log, and refusing beats writing behind it.
-func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View) []event.Payload) error {
+// meantime owns the log, and refusing beats writing behind it. build runs
+// once the run is found waiting on its holder; its error appends nothing.
+func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View) ([]event.Payload, error)) error {
 	e.wakeMu.Lock()
 	defer e.wakeMu.Unlock()
 
@@ -154,7 +155,11 @@ func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View
 		// own): the loop that is owed, or the answer, is what moves it.
 		return fmt.Errorf("run %s: %w", runID, errRunBusy)
 	}
-	payloads := append(build(v), &event.RunUnpaused{Reason: event.UnpauseHold})
+	payloads, err := build(v)
+	if err != nil {
+		return err
+	}
+	payloads = append(payloads, &event.RunUnpaused{Reason: event.UnpauseHold})
 	if err := e.AppendEvents(ctx, runID, payloads...); err != nil {
 		return err
 	}
@@ -169,13 +174,18 @@ func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View
 // liveHold is the engine's in-flight view of a take-over during one
 // invocation: what the holder's messages spent so far (leg), whether the agent sits idle waiting on the holder (the stage clock is
 // suspended then, as for a pending question), and a release waiting for the
-// turn in flight to end.
+// turn in flight to end. A start hold still owed its opening turn (on the
+// log: hold_taken start, no hold_opened) opens on the agent's own turn —
+// not the holder's, so off the hold's account — whether it is sent now or
+// followed after a restart; its end is recorded, and the owner is told
+// when it leaves the session waiting on them.
 type liveHold struct {
 	st        *runcore.HeldState
 	leg       runcore.HoldLeg
 	idle      bool
 	releasing bool
 	releaseBy string
+	opening   bool
 }
 
 func (x *exec) liveHold(st *flow.Stage) *liveHold {
@@ -183,10 +193,14 @@ func (x *exec) liveHold(st *flow.Stage) *liveHold {
 	if h == nil {
 		return nil
 	}
-	l := &liveHold{st: h, leg: runcore.NewHoldLeg()}
+	l := &liveHold{st: h, leg: runcore.NewHoldLeg(), opening: h.Opening}
 	l.leg.Spend.Messages, x.heldMessages = x.heldMessages, 0
 	return l
 }
+
+// notifyHeld is the Type of the notification telling a run's owner that a
+// stage which starts held (start_held) is waiting for them.
+const notifyHeld = "held"
 
 // holdReq is a take-over request on its way into the run loop: take, or
 // release (the handback follows).
@@ -200,6 +214,107 @@ type holdReq struct {
 func (x *exec) takeHold(st *flow.Stage, iter int, userID string) error {
 	taken := &event.HoldTaken{StageID: st.ID, Attempt: iter, UserID: userID}
 	return x.append(taken)
+}
+
+// takeStartHold opens an attempt of a stage that starts held (start_held)
+// in the run owner's hands, before its stage prompt goes out. A hold in
+// force already is this attempt's, taken before a crash: not taken twice.
+func (x *exec) takeStartHold(st *flow.Stage, iter int) error {
+	if !st.StartHeld || x.rs.AttemptBegun(st.ID) || x.rs.Holds[st.ID] != nil {
+		return nil
+	}
+	return x.append(&event.HoldTaken{StageID: st.ID, Attempt: iter, UserID: x.rs.View.UserID, Start: true})
+}
+
+// admitOpening lets the run's owner reach an attempt of a stage that starts
+// held before the invocation carrying its opening turn runs: from just
+// before hold_taken is written (the run shows in their hands as soon as it
+// is) until the stage prompt goes out. A message or a release then waits on
+// the loop's channel instead of being refused. A message admitted before
+// the stage prompt is on the log rides with it (promptOpening); a release,
+// or a message sent once the prompt is being written, waits for the opening
+// invocation, which takes it as it would mid-turn — the release follows the
+// opening turn, the message is the owner's turn after it.
+func (x *exec) admitOpening(st *flow.Stage) {
+	if !st.StartHeld {
+		return
+	}
+	if h := x.rs.Holds[st.ID]; h != nil && h.Opening || h == nil && !x.rs.AttemptBegun(st.ID) {
+		x.h.agentLive.Store(true)
+	}
+}
+
+// promptOpening fixes and records the prompt of the invocation about to
+// start: text with the human messages nobody has delivered yet. While a
+// start hold's opening turn is owed it does so under the run's opening lock
+// (runHandle.opening), from taking what the owner sent while the prompt was
+// on its way (takeOpeningMessages) until the prompt is on the log, and in
+// one write: those messages' message_queued, the delivery of everything the
+// prompt carries and its agent_prompted land together or not at all, so no
+// message is ever delivered to a prompt the log does not have. Every message
+// admitted before then rides with it exactly once; a send that comes
+// meanwhile waits for the write, then reaches the opening invocation. A
+// stage prompt sent again — a restart before its session was on record —
+// carries again what the first one did (HeldState.OpeningMsgs).
+func (x *exec) promptOpening(st *flow.Stage, iter int, kind, text string) (string, error) {
+	h := x.rs.Holds[st.ID]
+	if h == nil || !h.Opening {
+		text, err := x.withPendingMessages(st, iter, text)
+		if err != nil {
+			return "", err
+		}
+		return text, x.prompted(st.ID, iter, kind, text)
+	}
+	x.h.opening.Lock()
+	defer x.h.opening.Unlock()
+	var msgs []agentport.UserMessage
+	if kind == event.PromptStage {
+		for _, m := range h.OpeningMsgs {
+			msgs = append(msgs, agentport.UserMessage{ID: m.MessageID, Text: m.Text})
+		}
+	}
+	sent := x.takeOpeningMessages()
+	var batch []event.Payload
+	var ids []string
+	for _, m := range x.rs.PendingMsgs {
+		msgs = append(msgs, agentport.UserMessage{ID: m.MessageID, Text: m.Text})
+		ids = append(ids, m.MessageID)
+	}
+	for _, req := range sent {
+		batch = append(batch, &event.MessageQueued{MessageID: req.msg.ID, Text: req.msg.Text, StageID: st.ID})
+		msgs = append(msgs, req.msg)
+		ids = append(ids, req.msg.ID)
+	}
+	if len(ids) > 0 {
+		batch = append(batch, &event.MessageDelivered{MessageIDs: ids, StageID: st.ID, Attempt: iter})
+	}
+	if len(msgs) > 0 {
+		text += "\n\n---\n\n" + formatMessages(msgs)
+	}
+	// The holder's words a prompt carries while the hold is opening are
+	// banked on its account by the fold, as they land.
+	err := x.append(append(batch, promptedEvent(st.ID, iter, kind, text))...)
+	for _, req := range sent {
+		req.ack <- err
+	}
+	if err != nil {
+		return "", err
+	}
+	return text, nil
+}
+
+// takeOpeningMessages takes what the run's owner sent while a start hold's
+// opening prompt was on its way (admitOpening), for that prompt to carry.
+func (x *exec) takeOpeningMessages() []msgReq {
+	var sent []msgReq
+	for {
+		select {
+		case req := <-x.h.messages:
+			sent = append(sent, req)
+		default:
+			return sent
+		}
+	}
 }
 
 // releaseHold closes a take-over with its account: every leg's spend, the
@@ -244,6 +359,13 @@ func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner ag
 	case rs.HandbackOwed[st.ID]:
 		return holdReentry{reply: handbackPrompt, kind: event.PromptHandback, reason: event.ResumeReleased}, nil
 	case rs.Holds[st.ID] == nil:
+		return holdReentry{}, nil
+	case rs.Holds[st.ID].Opening:
+		// A start hold still owed its opening turn: the stage prompt not
+		// sent yet, sent with no session recorded, or its turn in flight
+		// at a restart. The attempt's own path sends it (or follows it,
+		// or asks the session to carry on), and messages queued meanwhile
+		// ride with that prompt.
 		return holdReentry{}, nil
 	case len(rs.PendingMsgs) > 0:
 		n := len(rs.PendingMsgs)

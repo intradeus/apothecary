@@ -288,6 +288,15 @@ describe('buildTranscript', () => {
 			}
 		],
 		[
+			'hold_opened',
+			'',
+			{},
+			{
+				text: 'The agent answered the stage prompt — your messages are its next turns; release it to end the stage',
+				tone: 'warn'
+			}
+		],
+		[
 			'hold_released',
 			'by hand',
 			{ duration_ms: 90_000, turns: 2, messages: 1, usage: { cost_usd: 0.5 } },
@@ -486,10 +495,20 @@ describe('buildTranscript', () => {
 				kind: 'user',
 				id: 'm1',
 				text: 'Try again',
+				attachmentIds: [],
 				delivered: false,
 				deliveredAt: undefined,
 				ts: queued.ts
 			});
+		});
+
+		it('carries the files sent with it', () => {
+			const withFiles = anEvent(1, 'message_queued', {
+				message_id: 'm1',
+				text: '',
+				attachment_ids: ['a1', 'a2']
+			});
+			expect(only([withFiles])).toMatchObject({ text: '', attachmentIds: ['a1', 'a2'] });
 		});
 
 		it('takes its delivery from any later event naming it', () => {

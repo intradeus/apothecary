@@ -8,7 +8,8 @@ import {
 	aWatcher,
 	fill,
 	handlers,
-	MAIN_PHASE
+	MAIN_PHASE,
+	pick
 } from '$test/fixtures/flow.svelte';
 import type { DocAgent, DocStage, FlowDoc } from '$lib/domain/flowdoc';
 import type { HarnessSpec } from '$lib/domain';
@@ -104,6 +105,35 @@ describe('AgentStage', () => {
 		await userEvent.click(toggle);
 		expect(stage.reuse_session).toBeUndefined();
 		expect(onchange).toHaveBeenCalledTimes(2);
+	});
+
+	describe('start in your hands', () => {
+		const params = { parameters: { collab: { default: false }, mode: { default: 'x' } } };
+
+		it('writes true, a bool parameter, and nothing for off', async () => {
+			const { stage, onchange } = setup({}, [planner], params);
+			await pick('Start in your hands', 'Yes — every attempt');
+			expect(stage.start_held).toBe(true);
+			await pick('Start in your hands', '$collab');
+			expect(stage.start_held).toBe('$collab');
+			await pick('Start in your hands', 'No — the agent works alone');
+			expect(stage.start_held).toBeUndefined();
+			expect(onchange).toHaveBeenCalledTimes(3);
+		});
+
+		it('offers only the bool parameters', async () => {
+			setup({}, [planner], params);
+			await userEvent.click(screen.getByRole('combobox', { name: 'Start in your hands' }));
+			expect(await screen.findByRole('option', { name: '$collab' })).toBeInTheDocument();
+			expect(screen.queryByRole('option', { name: '$mode' })).not.toBeInTheDocument();
+		});
+
+		it('keeps a parameter it reads that is not a bool one', () => {
+			setup({ start_held: '$gone' }, [planner], params);
+			expect(screen.getByRole('combobox', { name: 'Start in your hands' })).toHaveTextContent(
+				'$gone'
+			);
+		});
 	});
 
 	describe('the agent it runs', () => {

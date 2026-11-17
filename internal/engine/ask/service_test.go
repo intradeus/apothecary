@@ -27,14 +27,48 @@ const (
 	token   = "run-bearer-token-value"
 )
 
-// engine is the two things the pane reads from the real one.
+// engine is what the pane reads from the real one, and the files it has it
+// deliver.
 type engine struct {
 	fl  *flow.Flow
 	err error
+
+	mu         sync.Mutex
+	deliveries []delivery
+	undone     [][]string // the ids of each delivery undone
+	deliverErr error
+}
+
+// delivery is one DeliverAskFiles call.
+type delivery struct {
+	envID, runID, userID string
+	ids                  []string
 }
 
 func (e *engine) RunFlow(context.Context, run.View) (*flow.Flow, error) { return e.fl, e.err }
 func (e *engine) RunToken(string) string                                { return token }
+
+func (e *engine) DeliverAskFiles(_ context.Context, _ envport.EnvProvisioner, envID, runID, userID string, ids []string) ([]string, func(), error) {
+	if len(ids) == 0 {
+		return nil, func() {}, nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.deliveries = append(e.deliveries, delivery{envID, runID, userID, ids})
+	if e.deliverErr != nil {
+		return nil, nil, e.deliverErr
+	}
+	paths := make([]string, len(ids))
+	for i, id := range ids {
+		paths[i] = ".apothecary/attachments/ask/" + id + ".png"
+	}
+	undo := func() {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		e.undone = append(e.undone, ids)
+	}
+	return paths, undo, nil
+}
 
 // failingStore fails the named Store call; everything else reaches the MemStore.
 type failingStore struct {
@@ -96,6 +130,24 @@ func (s *failingStore) AppendAskMessage(ctx context.Context, m Message) (Message
 		return Message{}, err
 	}
 	return s.MemStore.AppendAskMessage(ctx, m)
+}
+
+// OpenAskThread fails as a save or an append would: either half refused.
+func (s *failingStore) OpenAskThread(ctx context.Context, t Thread, first Message) (Thread, Message, error) {
+	s.mu.Lock()
+	err := s.append
+	if s.appends > 0 {
+		s.appends--
+		err = nil
+	}
+	if s.save != nil {
+		err = s.save
+	}
+	s.mu.Unlock()
+	if err != nil {
+		return Thread{}, Message{}, err
+	}
+	return s.MemStore.OpenAskThread(ctx, t, first)
 }
 
 func (s *failingStore) AskMessages(ctx context.Context, id string, after int64) ([]Message, error) {
@@ -249,7 +301,7 @@ func TestPaneIsOffAndSaysWhy(t *testing.T) {
 			if st.Messages == nil || st.Threads == nil {
 				t.Error("an off pane's messages or threads are null, the API's [] is the contract")
 			}
-			if _, err := r.svc.Ask(ctx, runID, "", "u", "why?"); !errors.Is(err, ErrOff) || !strings.Contains(err.Error(), c.reason) {
+			if _, err := r.svc.Ask(ctx, runID, "", "u", "why?", nil); !errors.Is(err, ErrOff) || !strings.Contains(err.Error(), c.reason) {
 				t.Errorf("ask = %v", err)
 			}
 			if err := r.svc.SetModel(ctx, runID, "", "a/b"); !errors.Is(err, ErrOff) {
@@ -321,7 +373,7 @@ func TestFailuresAreNotOff(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), c.want) || errors.Is(err, ErrOff) {
 				t.Errorf("state = %v", err)
 			}
-			if _, err := r.svc.Ask(ctx, runID, "", "u", "q"); err == nil || errors.Is(err, ErrOff) {
+			if _, err := r.svc.Ask(ctx, runID, "", "u", "q", nil); err == nil || errors.Is(err, ErrOff) {
 				t.Errorf("ask = %v", err)
 			}
 			if err := r.svc.SetModel(ctx, runID, "", "a/b"); err == nil || errors.Is(err, ErrOff) {
@@ -358,47 +410,171 @@ func TestStateReportsStoreFailures(t *testing.T) {
 func TestAskRefusesAQuestionItWontPass(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	if _, err := r.svc.Ask(ctx, runID, "", "u", " \n\t "); err == nil || !strings.Contains(err.Error(), "empty") {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", " \n\t ", nil); err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Errorf("blank question = %v", err)
 	}
-	if _, err := r.svc.Ask(ctx, runID, "", "u", strings.Repeat("x", maxMessageLen+1)); err == nil || !strings.Contains(err.Error(), "longer than") {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", strings.Repeat("x", maxMessageLen+1), nil); err == nil || !strings.Contains(err.Error(), "longer than") {
 		t.Errorf("long question = %v", err)
 	}
 	if r.res.opened.Load() != 0 {
 		t.Error("a refused question resolved the project")
 	}
 	// Exactly the limit passes.
-	if _, err := r.svc.Ask(ctx, runID, "", "u", strings.Repeat("x", maxMessageLen)); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", strings.Repeat("x", maxMessageLen), nil); err != nil {
 		t.Errorf("a question at the limit = %v", err)
 	}
 	r.answered(t, 2)
 }
 
-// A question that fails to record leaves the pane free: not stuck busy, and
-// the resolution released.
+// A question that fails to record leaves the pane free: not stuck busy, the
+// resolution released, no thread opened for it and no message — and the
+// files it delivered taken back, the asker's to send again.
 func TestAFailedAskReleasesThePane(t *testing.T) {
 	ctx := context.Background()
 	boom := errors.New("db down")
-	for name, arm := range map[string]func(s *failingStore){
-		"thread": func(s *failingStore) { s.thread = boom },
-		"open":   func(s *failingStore) { s.save = boom },
-		"append": func(s *failingStore) { s.append = boom },
+	for name, c := range map[string]struct {
+		arm       func(s *failingStore)
+		threads   int // the run has, before and after
+		delivered int // deliveries made, each to be undone
+	}{
+		"thread":            {func(s *failingStore) { s.thread = boom }, 0, 0},
+		"open":              {func(s *failingStore) { s.save = boom }, 0, 1},
+		"append, the first": {func(s *failingStore) { s.append = boom }, 0, 1},
+		"append, a thread":  {func(s *failingStore) { s.append = boom }, 1, 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newRig(t)
-			r.store.set(arm)
-			if _, err := r.svc.Ask(ctx, runID, "", "u", "q"); !errors.Is(err, boom) {
+			if c.threads > 0 {
+				r.seed(t, Thread{ID: "t1"})
+			}
+			r.store.set(c.arm)
+			files := []string{"a1", "a2"}
+			if _, err := r.svc.Ask(ctx, runID, "", "u", "q", files); !errors.Is(err, boom) {
 				t.Fatalf("ask = %v", err)
 			}
-			if o, c := r.res.opened.Load(), r.res.closed.Load(); o != c {
-				t.Errorf("resolved %d, released %d", o, c)
+			if opened, closed := r.res.opened.Load(), r.res.closed.Load(); opened != closed {
+				t.Errorf("resolved %d, released %d", opened, closed)
+			}
+			r.eng.mu.Lock()
+			delivered, undone := len(r.eng.deliveries), r.eng.undone
+			r.eng.mu.Unlock()
+			if delivered != c.delivered || len(undone) != c.delivered {
+				t.Errorf("delivered %d, undone %v; want %d of each", delivered, undone, c.delivered)
+			}
+			if ths := r.threads(t); len(ths) != c.threads {
+				t.Errorf("threads = %+v, want %d", ths, c.threads)
+			}
+			if msgs, _ := r.store.MemStore.AskMessages(ctx, runID, 0); len(msgs) != 0 {
+				t.Errorf("recorded %+v", msgs)
 			}
 			r.store.set(func(s *failingStore) { s.thread, s.save, s.append = nil, nil, nil })
-			if _, err := r.svc.Ask(ctx, runID, "", "u", "again"); err != nil {
+			if _, err := r.svc.Ask(ctx, runID, "", "u", "again", files); err != nil {
 				t.Fatalf("the pane stayed stuck: %v", err)
 			}
 			r.answered(t, 2)
+			if ths := r.threads(t); len(ths) != 1 {
+				t.Errorf("threads = %+v, want one", ths)
+			}
 		})
+	}
+}
+
+// A question's files reach the workspace before it is recorded, and the
+// session is told where they are. A question may be files alone.
+func TestAQuestionCarriesFiles(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	var mu sync.Mutex
+	var prompts []string
+	r.runner.ResumeFunc = func(_ context.Context, call fake.ResumeCall) (agentport.AgentResult, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		prompts = append(prompts, call.In.Prompt)
+		return agentport.AgentResult{TurnsUsed: 1}, nil
+	}
+	q, err := r.svc.Ask(ctx, runID, "", "u", "  what is on this screen?  ", []string{"a1", "a2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Text != "what is on this screen?" || !reflect.DeepEqual(q.AttachmentIDs, []string{"a1", "a2"}) {
+		t.Errorf("question = %+v", q)
+	}
+	msgs := r.answered(t, 2)
+	if !reflect.DeepEqual(msgs[0].AttachmentIDs, []string{"a1", "a2"}) {
+		t.Errorf("recorded = %+v", msgs[0])
+	}
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "", []string{"a3"}); err != nil {
+		t.Fatalf("files alone = %v", err)
+	}
+	r.answered(t, 4)
+	r.eng.mu.Lock()
+	got := r.eng.deliveries
+	r.eng.mu.Unlock()
+	want := []delivery{{"env-1", runID, "u", []string{"a1", "a2"}}, {"env-1", runID, "u", []string{"a3"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("deliveries = %+v, want %+v", got, want)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, c := range r.runner.SnapshotRunCalls() {
+		prompts = append([]string{c.In.Prompt}, prompts...)
+	}
+	wantPrompts := []string{
+		"what is on this screen?\n\nThe human attached these files — read them with your tools:\n- .apothecary/attachments/ask/a1.png\n- .apothecary/attachments/ask/a2.png",
+		"The human attached these files — read them with your tools:\n- .apothecary/attachments/ask/a3.png",
+	}
+	if !reflect.DeepEqual(prompts, wantPrompts) {
+		t.Errorf("prompts = %q", prompts)
+	}
+}
+
+// Files that cannot be delivered refuse their question: nothing is
+// recorded — not even the thread a run's first question would open — and
+// the thread is free for the next one.
+func TestAQuestionWhoseFilesAreRefusedIsNotAsked(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	frames, stop := r.svc.Watch(runID)
+	defer stop()
+	refused := errors.New("an attachment is not one of your unsent uploads")
+	r.eng.deliverErr = refused
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "look", []string{"theirs"}); !errors.Is(err, refused) {
+		t.Fatalf("ask = %v", err)
+	}
+	if msgs, _ := r.store.MemStore.AskMessages(ctx, runID, 0); len(msgs) != 0 {
+		t.Errorf("a refused question was recorded: %+v", msgs)
+	}
+	if ths := r.threads(t); len(ths) != 0 {
+		t.Errorf("a refused first question opened a thread: %+v", ths)
+	}
+	select {
+	case f := <-frames:
+		t.Errorf("a refused question told the stream %+v", f)
+	default:
+	}
+	if o, c := r.res.opened.Load(), r.res.closed.Load(); o != c {
+		t.Errorf("resolved %d, released %d", o, c)
+	}
+	if n := len(r.runner.SnapshotRunCalls()); n != 0 {
+		t.Errorf("%d sessions ran", n)
+	}
+	// Refused in a thread the run has, the thread stays free.
+	r.eng.deliverErr = nil
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "look", nil); err != nil {
+		t.Fatalf("ask = %v", err)
+	}
+	r.answered(t, 2)
+	r.eng.deliverErr = refused
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "again", []string{"theirs"}); !errors.Is(err, refused) {
+		t.Fatalf("ask = %v", err)
+	}
+	r.eng.deliverErr = nil
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "again", nil); err != nil {
+		t.Fatalf("the thread stayed busy: %v", err)
+	}
+	r.answered(t, 4)
+	if ths := r.threads(t); len(ths) != 1 {
+		t.Errorf("threads = %+v, want the one", ths)
 	}
 }
 
@@ -423,7 +599,7 @@ func TestBinaryTextReachesTheThreadClean(t *testing.T) {
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "said\x00this"})
 		return agentport.AgentResult{}, errors.New("broke\x00down")
 	}
-	q, err := r.svc.Ask(context.Background(), runID, "", "u", "why\x00?")
+	q, err := r.svc.Ask(context.Background(), runID, "", "u", "why\x00?", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,7 +626,7 @@ func TestAnswersAndTheirStreamAreScrubbed(t *testing.T) {
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvTool})
 		return agentport.AgentResult{TurnsUsed: 2, Usage: agentport.Usage{CostUSD: 0.25}}, nil
 	}
-	if _, err := r.svc.Ask(ctx, runID, "", "u", "what is the key?"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "what is the key?", nil); err != nil {
 		t.Fatal(err)
 	}
 	msgs := r.answered(t, 2)
@@ -496,7 +672,7 @@ func TestAFailedAnswerRecordsItsScrubbedError(t *testing.T) {
 	r.runner.RunFunc = func(context.Context, fake.RunCall) (agentport.AgentResult, error) {
 		return agentport.AgentResult{}, errors.New("auth failed with " + secret)
 	}
-	if _, err := r.svc.Ask(ctx, runID, "", "u", "q"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "q", nil); err != nil {
 		t.Fatal(err)
 	}
 	a := r.answered(t, 2)[1]
@@ -505,7 +681,7 @@ func TestAFailedAnswerRecordsItsScrubbedError(t *testing.T) {
 	}
 	// The pane takes a next question.
 	r.runner.RunFunc = nil
-	if _, err := r.svc.Ask(ctx, runID, "", "u", "again"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "again", nil); err != nil {
 		t.Fatalf("after a failed answer: %v", err)
 	}
 	r.answered(t, 4)
@@ -518,7 +694,7 @@ func TestAnswerFallsBackToTheFinalOutput(t *testing.T) {
 	r.runner.RunFunc = func(context.Context, fake.RunCall) (agentport.AgentResult, error) {
 		return agentport.AgentResult{Output: "  final words " + secret + "\n"}, nil
 	}
-	if _, err := r.svc.Ask(ctx, runID, "", "u", "q"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "q", nil); err != nil {
 		t.Fatal(err)
 	}
 	a := r.answered(t, 2)[1]
@@ -542,7 +718,7 @@ func TestSessionIsSavedAsSoonAsItIsKnown(t *testing.T) {
 		seen <- th
 		return agentport.AgentResult{Session: "sess-final"}, nil
 	}
-	if _, err := r.svc.Ask(ctx, runID, "t1", "u", "q"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "t1", "u", "q", nil); err != nil {
 		t.Fatal(err)
 	}
 	r.answered(t, 2)
@@ -566,7 +742,7 @@ func TestAnAnswerSurvivesAThreadItCannotSave(t *testing.T) {
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "answer"})
 		return agentport.AgentResult{}, nil
 	}
-	if _, err := r.svc.Ask(ctx, runID, "t1", "u", "q"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "t1", "u", "q", nil); err != nil {
 		t.Fatal(err)
 	}
 	if a := r.answered(t, 2)[1]; a.Text != "answer" {
@@ -586,7 +762,7 @@ func TestAnAnswerItCannotRecordIsStillDelivered(t *testing.T) {
 	}
 	frames, stop := r.svc.Watch(runID)
 	defer stop()
-	if _, err := r.svc.Ask(ctx, runID, "", "u", "q"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "q", nil); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.After(5 * time.Second)
@@ -621,7 +797,7 @@ func TestASameModelResumeDoesNotSwitch(t *testing.T) {
 	}
 	ask := func(n int) {
 		t.Helper()
-		if _, err := r.svc.Ask(ctx, runID, "", "u", "q"); err != nil {
+		if _, err := r.svc.Ask(ctx, runID, "", "u", "q", nil); err != nil {
 			t.Fatal(err)
 		}
 		r.answered(t, n)
@@ -654,7 +830,7 @@ func TestQuestionsNamingNoThreadShareTheLatest(t *testing.T) {
 	var accepted atomic.Int32
 	for range 8 {
 		wg.Go(func() {
-			if _, err := r.svc.Ask(ctx, runID, "", "u", "q"); err == nil {
+			if _, err := r.svc.Ask(ctx, runID, "", "u", "q", nil); err == nil {
 				accepted.Add(1)
 			} else if !errors.Is(err, ErrBusy) {
 				t.Errorf("ask = %v", err)
@@ -671,7 +847,7 @@ func TestQuestionsNamingNoThreadShareTheLatest(t *testing.T) {
 	if len(ths) != 1 {
 		t.Fatalf("threads = %+v", ths)
 	}
-	if _, err := r.svc.Ask(ctx, runID, "", "u", "again"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "again", nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, m := range r.answered(t, 4) {
@@ -704,7 +880,7 @@ func TestNewThreadStartsEmptyOnTheLatestModel(t *testing.T) {
 	if err := r.svc.SetModel(ctx, runID, first.ID, "acme/picked"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.svc.Ask(ctx, runID, first.ID, "u", "q"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, first.ID, "u", "q", nil); err != nil {
 		t.Fatal(err)
 	}
 	r.answered(t, 2)
@@ -727,7 +903,7 @@ func TestNewThreadStartsEmptyOnTheLatestModel(t *testing.T) {
 			t.Errorf("a new thread holds %+v", m)
 		}
 	}
-	if q, err := r.svc.Ask(ctx, runID, "", "u", "q2"); err != nil || q.ThreadID != second.ID {
+	if q, err := r.svc.Ask(ctx, runID, "", "u", "q2", nil); err != nil || q.ThreadID != second.ID {
 		t.Errorf("a question naming none = %+v, %v; want it in the newest", q, err)
 	}
 	r.answered(t, 4)
@@ -761,14 +937,14 @@ func TestThreadsAnswerAtTheSameTime(t *testing.T) {
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "on " + call.In.Prompt})
 		return agentport.AgentResult{}, nil
 	}
-	if _, err := r.svc.Ask(ctx, runID, "t1", "u", "one"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "t1", "u", "one", nil); err != nil {
 		t.Fatal(err)
 	}
 	<-started
-	if _, err := r.svc.Ask(ctx, runID, "t1", "u", "again"); !errors.Is(err, ErrBusy) {
+	if _, err := r.svc.Ask(ctx, runID, "t1", "u", "again", nil); !errors.Is(err, ErrBusy) {
 		t.Errorf("a second question in a busy thread = %v", err)
 	}
-	if _, err := r.svc.Ask(ctx, runID, "t2", "u", "two"); err != nil {
+	if _, err := r.svc.Ask(ctx, runID, "t2", "u", "two", nil); err != nil {
 		t.Fatalf("another thread beside a busy one = %v", err)
 	}
 	<-started
@@ -815,7 +991,7 @@ func TestEachThreadKeepsItsOwnSessionAndModel(t *testing.T) {
 	}
 	ask := func(thread, q string, n int) {
 		t.Helper()
-		if _, err := r.svc.Ask(ctx, runID, thread, "u", q); err != nil {
+		if _, err := r.svc.Ask(ctx, runID, thread, "u", q, nil); err != nil {
 			t.Fatal(err)
 		}
 		r.answered(t, n)
@@ -848,7 +1024,7 @@ func TestEachThreadKeepsItsOwnSessionAndModel(t *testing.T) {
 func TestAnUnknownThreadIsNotFound(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	if _, err := r.svc.Ask(ctx, runID, "ghost", "u", "q"); err == nil || !strings.Contains(err.Error(), "not found") {
+	if _, err := r.svc.Ask(ctx, runID, "ghost", "u", "q", nil); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("ask = %v", err)
 	}
 	if err := r.svc.SetModel(ctx, runID, "ghost", "fake/model"); err == nil || !strings.Contains(err.Error(), "not found") {

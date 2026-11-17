@@ -129,6 +129,8 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		return event.HoldSpend{}
 	}
 	turnOpen := false
+	// opening: the turn in flight is a start hold's opening one.
+	opening := false
 	// record files one agent event: a new harness session is recorded the
 	// moment it exists, so a crash mid-invocation resumes (or reattaches
 	// to) it, not a new one — whichever path meets the event, the loop's
@@ -277,14 +279,31 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				turnOpen = true
 				if hold != nil {
 					// A turn starting under the hold is the holder's: it is
-					// what their message prompted.
+					// what their message prompted — but for a start hold's
+					// opening turn, which answers the stage prompt.
 					busyAgain()
-					hold.leg.TurnStarted(ev.Turn)
+					if hold.opening {
+						hold.opening = false
+						opening = true
+					} else {
+						hold.leg.TurnStarted(ev.Turn)
+					}
 				}
 			case agentport.AgentEvTurnEnd:
 				turnOpen = false
 				if hold == nil {
+					opening = false
 					break
+				}
+				// The opening turn ends here — the one this invocation saw
+				// start, or, followed after a restart, the one already
+				// running when it was reattached to.
+				ended := opening || hold.opening
+				opening, hold.opening = false, false
+				if ended {
+					if err := x.append(&event.HoldOpened{StageID: st.ID, Attempt: io.tr.iter}); err != nil {
+						return invocation{}, err
+					}
 				}
 				hold.leg.TurnEnded(ev.Turn, ev.Usage)
 				if len(open) > 0 {
@@ -305,6 +324,15 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					}
 				} else if !io.inbox.pending() {
 					idleOnHolder()
+					if ended {
+						// A start hold's opening turn is over and the session
+						// waits for the run's owner: tell them, once.
+						x.e.notify(x.bg, notifyport.Notification{
+							RunID: x.rs.RunID, Type: notifyHeld,
+							Title: fmt.Sprintf("%s waits for you: %s", st.ID, x.rs.View.TicketTitle),
+							Body:  "The agent answered the stage prompt; your messages are its next turns, and releasing it ends the stage.",
+						})
+					}
 				}
 			}
 		case req := <-x.h.messages:
@@ -312,17 +340,29 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				req.ack <- ErrNotHeld
 				continue
 			}
-			q := &event.MessageQueued{MessageID: req.msg.ID, Text: req.msg.Text, StageID: st.ID}
+			// Accepted: its files are claimed now, all or nothing, so a
+			// refused message leaves them its sender's and records nothing.
+			paths, err := x.takeOverFiles(req.userID, req.attachmentIDs)
+			if err != nil {
+				req.ack <- err
+				continue
+			}
+			q := &event.MessageQueued{MessageID: req.msg.ID, Text: req.msg.Text, StageID: st.ID, AttachmentIDs: req.attachmentIDs}
 			if err := x.append(q); err != nil {
 				req.ack <- err
 				return invocation{}, err
 			}
-			io.inbox.push(req.msg)
+			msg := req.msg
+			msg.Text = withFilesNote(msg.Text, paths)
+			io.inbox.push(msg)
 			req.ack <- nil
 		case req := <-x.h.holds:
 			var err error
 			held, releasing := hold != nil, hold != nil && hold.releasing
-			switch runcore.PlanHoldRequest(req.take, held, releasing, turnOpen || io.inbox.pending()) {
+			// A start hold's opening turn not started yet is owed all the
+			// same: a release follows it.
+			busy := turnOpen || io.inbox.pending() || (held && hold.opening)
+			switch runcore.PlanHoldRequest(req.take, held, releasing, busy) {
 			case runcore.HoldRefuseTaken:
 				err = ErrAlreadyHeld
 			case runcore.HoldTake:

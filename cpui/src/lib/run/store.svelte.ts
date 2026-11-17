@@ -93,6 +93,9 @@ export class RunStore {
 	/** Reads of the run in the order they were asked, and the latest shown. */
 	#runAsked = 0;
 	#runShown = 0;
+	/** Reads of the run's files in the order they were asked, and the latest shown. */
+	#filesAsked = 0;
+	#filesShown = 0;
 	/** What the stream delivered since the last commit, in arrival order. */
 	#inbox: ({ ev: RunEvent } | { d: LiveDelta })[] = [];
 	#inboxTimer: ReturnType<typeof setTimeout> | undefined;
@@ -262,8 +265,14 @@ export class RunStore {
 				run = true;
 				if (ev.type.startsWith('run_') || ev.type.startsWith('ping_')) fleetToo = true;
 			}
-			// A capture (or an answer, which may carry files) adds a record row.
-			if (ev.type === 'snapshot_captured' || ev.type === 'ping_answered') files = true;
+			// A capture (or an answer or a take-over message, which may carry
+			// files) adds a record row.
+			if (
+				ev.type === 'snapshot_captured' ||
+				ev.type === 'ping_answered' ||
+				ev.type === 'message_queued'
+			)
+				files = true;
 			// A service started, came up, stopped or failed.
 			if (ev.type.startsWith('service_')) services = true;
 		}
@@ -289,8 +298,11 @@ export class RunStore {
 	}
 
 	async refreshFiles() {
+		const asked = ++this.#filesAsked;
 		try {
 			const f = await api.runs.files(this.runId);
+			if (asked < this.#filesShown) return;
+			this.#filesShown = asked;
 			this.snapshots = f.snapshots;
 			this.attachments = f.attachments;
 		} catch {

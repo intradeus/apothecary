@@ -17,7 +17,7 @@ const stage = (over: Partial<Of<'stage'>> = {}) =>
 const message = (text: string, over: Partial<Of<'message'>> = {}, key = text) =>
 	item('message', { text, thought: false, live: false, ...over }, key);
 const user = (text: string, over: Partial<Of<'user'>> = {}, key = text) =>
-	item('user', { id: 'u1', text, delivered: true, ts: AT, ...over }, key);
+	item('user', { id: 'u1', text, attachmentIds: [], delivered: true, ts: AT, ...over }, key);
 const question = (over: Partial<Of<'question'>> = {}) =>
 	item('question', { pingId: 'p1', type: 'debug', question: 'Which DB?', options: [], ...over });
 

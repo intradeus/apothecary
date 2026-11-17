@@ -364,6 +364,7 @@ server's `env` or `headers` (above) — at these sites only:
 | an agent stage's `harness_options` | a string — a model option a string that may wait for a value, like `model`; an enum option an enum parameter whose values all sit within the option's |
 | an action setting (`with:`) | a string — an enum setting needs an enum parameter whose values all sit within the setting's; a list setting (`create_mr`'s `labels`) a list of strings |
 | a watcher's or an outcome's `on.start`, a watcher's `on.quiet_for`, `on.max` | an enum within `auto \| confirm \| manual`; a duration; an int |
+| an agent stage's `start_held` | a bool |
 | a stage's `run_if` | a bool |
 | a source `run.service.$name` | a string |
 
@@ -556,7 +557,9 @@ chain never resumes, and its open questions are withdrawn when the run ends.
 Four things go first:
 
 - **A take-over.** A person has the agent, and an outcome never takes it from
-  them: it fires once they let go.
+  them: it fires once they let go. A stage that starts held (`start_held`,
+  §2 *agent*) is one from its first turn, so an outcome waits for its release
+  too — through the agent's opening turn and the wait for the owner.
 - **A `wait` the signal settles,** so a chain that has something to do after the
   merge still does it.
 - **A chain that merged the merge request itself** (`mr_merge`) goes on to its
@@ -811,7 +814,7 @@ Where references appear:
 | Where | What |
 |---|---|
 | the run journal (`run.journal`, §4; `journal_read`, §9) | every entry ends with its reference in brackets; the tool takes one, and writes its files at `.apothecary/journal/<reference>.md` (`run.md` for the whole run) |
-| attachments (§9) | an answer's files are delivered under `.apothecary/attachments/<ping's reference>/` (`build#3/decision#1/screenshot.png`); the task's under `.apothecary/attachments/ticket/` |
+| attachments (§9) | an answer's files are delivered under `.apothecary/attachments/<ping's reference>/` (`build#3/decision#1/screenshot.png`); the task's under `.apothecary/attachments/ticket/`; a take-over message's under `.apothecary/attachments/takeover/`, an Ask question's under `.apothecary/attachments/ask/` |
 | files | none: a file keeps a name of its own, and the reference stands beside it — the folder it is delivered in, the chip beside it on the record. An attempt's log is `<stage>.log` (`review.log`; the provisioning log `_provision.log`), whatever its attempt; no stored file name carries `#` |
 | the run page | a chip that copies the reference, wherever an attempt or a ping is named: the timeline, the transcript, the record, the inbox and the ping card, the run table, the flow view, the dossier |
 
@@ -832,7 +835,7 @@ one.
 
 | type | what it does | key fields |
 |---|---|---|
-| `agent` | runs an agent this flow declares (§1) | `agent`, `input`, `output`, `model`, `harness`, `harness_options`, `max_turns`, `timeout`, `reuse_session` |
+| `agent` | runs an agent this flow declares (§1) | `agent`, `input`, `output`, `model`, `harness`, `harness_options`, `max_turns`, `timeout`, `reuse_session`, `start_held` |
 | `command` | runs a shell script in the workspace | `run` **or** `run_ref`, `input`, `output`, `timeout`, `each_repo` |
 | `human_gate` | parks the phase on a human decision | `question`, `input` |
 | `action` | invokes a built-in apothecary integration | `action`, `input`, `output`, `with` |
@@ -861,6 +864,7 @@ command, `question` on an agent, and so on).
     omp: { advisor: $advisor_model, advisor_review: agent-end }
   max_turns: 80                         # optional overrides of the flow's parameters —
   timeout: 45m                          #   a literal, or a parameter of the right type
+  start_held: true                      # optional: every attempt opens in the run owner's hands
 ```
 
 An agent stage **states its harness and its model**; neither falls back to a
@@ -896,6 +900,26 @@ declares what it reads and writes (§1, §4). The stage states that contract as
 ports, saying where each comes from and goes; it cannot invent ports the agent
 does not declare, leave out an output or a required input, or change a type,
 and the parser refuses the document if it tries.
+
+**`start_held: true`** opens every attempt of the stage in the run owner's
+hands, for work done turn by turn with a person: collaborative planning, a
+design back-and-forth. It is a take-over the engine takes when the attempt
+starts, before its prompt, for the run's owner (the project's owner on a run an
+automation started), on the record as `hold_taken` (`start: true`) like one
+taken by hand. The agent answers the stage prompt as usual — a restart before
+that turn ends sends or follows it, never parks on the owner — and when it ends
+(`hold_opened`) the session waits for the owner instead of ending the stage,
+and the owner is told — the inbox lists the run under *In your hands*, and a
+notification goes to their channels.
+From there it is the take-over: each message of theirs is a turn in the same
+session, a quiet owner parks the run and gives its slot back until their next
+message, and the release sends the handback prompt, after which the output
+contract applies. Every attempt starts held — a retry, and a redo an
+`on_reject` sends back, as much as the first. The opening turn answers the
+stage prompt, so it is the agent's, not on the hold's account; every turn
+counts against the run's budget (`max_total_turns`, `max_cost_usd`) as any
+other does. It takes `true`, `false` or a bool `$parameter`; on any other
+stage type it is a parse error.
 
 ### command
 
@@ -1654,7 +1678,8 @@ costs the agent that memory, not the stage: the attempt opens a new one.
 `reuse_session: false` makes every attempt open a new session, for a stage that
 should look afresh, such as an adversarial review unswayed by its last verdict.
 It concerns new attempts only: an answered question, a take-over and crash
-recovery are the same attempt, and stay in its session.
+recovery are the same attempt, and stay in its session — a `start_held` hold
+included, which is a take-over from the attempt's first turn.
 
 Before every fresh attempt the engine deletes the stage's outputs, so the check
 after it cannot be satisfied by a file an earlier attempt left behind. (Crash
@@ -2407,6 +2432,12 @@ harness, owns the exchange:
   `.apothecary/attachments/<the ping's reference>/` (§1 *References*:
   `build#3/decision#1/screenshot.png`), kept separate from the agent's own
   `artifacts/`; the task's files are under `.apothecary/attachments/ticket/`.
+  A message in the run's two chats can carry files too: a take-over
+  message's land under `.apothecary/attachments/takeover/`, an Ask
+  question's under `.apothecary/attachments/ask/`. The message names their
+  paths, and they are not among the task's files a later prompt lists. A
+  chat's file is named when its message is accepted, after the chat's
+  earlier ones, and keeps that path whatever is sent later.
   Each keeps its stored name; a second with the same name in one folder is
   `name-2.ext`, in the order they were attached, so a re-delivery after a
   restart lands every file where the agent was told.

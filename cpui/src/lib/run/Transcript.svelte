@@ -30,15 +30,20 @@
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import StatusMark, { type MarkTone } from '$lib/ui/StatusMark.svelte';
 	import ToolCalls from './ToolCalls.svelte';
+	import FileChips, { type StoredFile } from '$lib/artifacts/FileChips.svelte';
+	import type { Attachment } from '$lib/domain';
 
 	let {
 		items,
 		sending = [],
 		over = false,
+		attachments = [],
 		onlog,
 		onanswer
 	}: {
 		items: ChatItem[];
+		/** The run's files, to name what your messages carried. */
+		attachments?: Attachment[];
 		/** Messages you sent that the run has not echoed back yet. */
 		sending?: Sending[];
 		/** The run is finished: an unanswered question was withdrawn with it. */
@@ -48,6 +53,15 @@
 		/** Jump to where a pending question is answered. */
 		onanswer: () => void;
 	} = $props();
+
+	/** A message's files, as far as the run's list knows them yet. */
+	const filesOf = (ids: string[]): StoredFile[] =>
+		ids.flatMap((id) => {
+			const a = attachments.find((x) => x.id === id);
+			return a
+				? [{ id, filename: a.filename, mime: a.mime, size: a.size, kind: 'attachment' }]
+				: [];
+		});
 
 	const planDone = (es: { status: string }[]) => es.filter((e) => e.status === 'completed').length;
 	const planTone = (s: string): MarkTone =>
@@ -195,7 +209,8 @@
 		<div class="notice muted" use:arrive={a}>{it.text}</div>
 	{:else if it.kind === 'user'}
 		<div class="user" use:arrive={a}>
-			<div class="bubble" class:queued={!it.delivered}>{it.text}</div>
+			{#if it.text}<div class="bubble" class:queued={!it.delivered}>{it.text}</div>{/if}
+			<FileChips items={filesOf(it.attachmentIds)} />
 			<div class="um">
 				{#if it.delivered}{t('run.transcript.delivered', {
 						at: fmtClock(it.deliveredAt ?? it.ts)
@@ -228,7 +243,7 @@
 
 {#each unechoed as s, i (i + s.text)}
 	<div class="user" use:arrive={true}>
-		<div class="bubble queued">{s.text}</div>
+		{#if s.text}<div class="bubble queued">{s.text}</div>{/if}
 		<div class="um">
 			{t('run.transcript.sending')}
 		</div>

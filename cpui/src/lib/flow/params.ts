@@ -11,7 +11,15 @@ import {
 } from '$lib/domain/flowdoc';
 
 // The stage fields a parameter may stand for, whole.
-const PARAM_FIELDS = ['model', 'harness', 'run_ref', 'timeout', 'max_turns', 'service'] as const;
+const PARAM_FIELDS = [
+	'model',
+	'harness',
+	'run_ref',
+	'timeout',
+	'max_turns',
+	'service',
+	'start_held'
+] as const;
 
 // A condition reads a parameter whole, negated or not: never a prefix of a
 // longer name.

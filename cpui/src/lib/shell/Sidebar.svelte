@@ -41,10 +41,11 @@
 	const toggleMenu = () => (menuOpen = !menuOpen);
 
 	const path = $derived(page.url.pathname);
-	/** A destination's count: pending pings on the inbox, live runs on runs. */
+	/** A destination's count: pending pings and held runs on the inbox, live
+	 *  runs on runs. */
 	const count = (n: NavItem) =>
 		n.id === 'inbox'
-			? fleet.pending.length
+			? fleet.inboxCount
 			: n.id === 'notices'
 				? fleet.notices.length
 				: n.id === 'runs'

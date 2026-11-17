@@ -55,6 +55,8 @@ export type ChatItem =
 			key: string;
 			id: string;
 			text: string;
+			/** Files sent with it (uploads owned by the run). */
+			attachmentIds: string[];
 			delivered: boolean;
 			ts: string;
 			deliveredAt?: string;
@@ -285,6 +287,15 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					tone: 'warn'
 				});
 				break;
+			case 'hold_opened':
+				items.push({
+					kind: 'status',
+					key,
+					glyph: I.hold,
+					text: t('transcript.holdOpened'),
+					tone: 'warn'
+				});
+				break;
 			case 'hold_released':
 				items.push({
 					kind: 'status',
@@ -423,6 +434,7 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					key,
 					id: String(p.message_id),
 					text: String(p.text ?? ''),
+					attachmentIds: Array.isArray(p.attachment_ids) ? p.attachment_ids.map(String) : [],
 					delivered: delivered.has(String(p.message_id)),
 					deliveredAt: delivered.get(String(p.message_id)),
 					ts: e.ts

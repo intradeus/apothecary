@@ -14,7 +14,55 @@ const links = [
 	{ id: 'keys', label: 'Keys', href: '/system/keys', count: 0 }
 ];
 
+const nested = [
+	{ id: 'general', label: 'General', href: '/system/general' },
+	{
+		id: 'integrations',
+		label: 'Integrations',
+		href: '/system/integrations',
+		children: [
+			{
+				id: 'integrations/repository',
+				label: 'Repositories',
+				href: '/system/integrations/repository'
+			},
+			{ id: 'integrations/harness', label: 'Harnesses', href: '/system/integrations/harness' }
+		]
+	}
+];
+
 describe('SideNav', () => {
+	describe('a second level', () => {
+		it('stays folded while neither the item nor a child is active', () => {
+			render(SideNav, { items: nested, active: 'general' });
+			expect(screen.getByRole('link', { name: 'Integrations' })).toBeInTheDocument();
+			expect(screen.queryByRole('link', { name: 'Repositories' })).not.toBeInTheDocument();
+		});
+
+		it('opens under the active child, which is the current page', () => {
+			render(SideNav, { items: nested, active: 'integrations/harness' });
+			const parent = screen.getByRole('link', { name: 'Integrations' });
+			expect(parent).not.toHaveAttribute('aria-current');
+			expect(parent).toHaveClass('open');
+			const harness = screen.getByRole('link', { name: 'Harnesses' });
+			expect(harness).toHaveAttribute('aria-current', 'page');
+			expect(harness).toHaveClass('child');
+			expect(screen.getByRole('link', { name: 'Repositories' })).toHaveAttribute(
+				'href',
+				'/system/integrations/repository'
+			);
+		});
+
+		it('opens under the item itself when it is the active one', () => {
+			render(SideNav, { items: nested, active: 'integrations' });
+			expect(screen.getByRole('link', { name: 'Integrations' })).toHaveAttribute(
+				'aria-current',
+				'page'
+			);
+			expect(screen.getByRole('link', { name: 'Repositories' })).toBeInTheDocument();
+		});
+	});
+
 	it('is a navigation landmark, "Sections" unless named', async () => {
 		const { rerender } = render(SideNav, { items: links, active: 'general' });
 		expect(screen.getByRole('navigation', { name: 'Sections' })).toBeInTheDocument();

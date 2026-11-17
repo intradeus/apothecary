@@ -1,12 +1,23 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { createEvent, fireEvent, render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
-import { aHold } from '$test/fixtures/run-components';
+import { aHold, settled } from '$test/fixtures/run-components';
+import { aFile } from '$test/fixtures/run.svelte';
 import { deferred } from '$test/helpers';
 import Composer from './Composer.svelte';
 
-vi.mock('$lib/api', () => ({ api: { runs: { sendMessage: vi.fn() } } }));
+vi.mock('$lib/api', () => ({
+	api: { runs: { sendMessage: vi.fn() }, files: { upload: vi.fn(), limits: vi.fn() } }
+}));
+
+const LIMITS = { maxBytes: 1024, maxFiles: 8, mimeAllow: ['image/*', 'text/plain'] };
+const shot = () => aFile('shot.png', 'image/png');
+function paste(...files: File[]) {
+	const e = createEvent.paste(box(), { clipboardData: { files } });
+	fireEvent(box(), e);
+	return e;
+}
 
 const box = () => screen.getByRole('textbox', { name: 'Message the agent' });
 const sendBtn = () => screen.getByRole('button', { name: 'Send' });
@@ -22,6 +33,9 @@ describe('Composer', () => {
 	beforeEach(() => {
 		vi.resetAllMocks();
 		vi.mocked(api.runs.sendMessage).mockResolvedValue(undefined as never);
+		vi.mocked(api.files.limits).mockResolvedValue(LIMITS);
+		vi.mocked(api.files.upload).mockResolvedValue([{ id: 'att-1' }] as never);
+		URL.createObjectURL = vi.fn(() => 'blob:preview'); // jsdom has none
 	});
 
 	describe('before a take-over', () => {
@@ -157,7 +171,7 @@ describe('Composer', () => {
 			await userEvent.type(box(), '  use the middleware  {Enter}');
 
 			expect(onsent).toHaveBeenCalledExactlyOnceWith('use the middleware');
-			expect(api.runs.sendMessage).toHaveBeenCalledExactlyOnceWith('r1', 'use the middleware');
+			expect(api.runs.sendMessage).toHaveBeenCalledExactlyOnceWith('r1', 'use the middleware', []);
 			expect(box()).toHaveValue('');
 			leaving.resolve();
 		});
@@ -169,7 +183,7 @@ describe('Composer', () => {
 			await userEvent.click(sendBtn());
 
 			expect(onsent).toHaveBeenCalledExactlyOnceWith('go on');
-			expect(api.runs.sendMessage).toHaveBeenCalledExactlyOnceWith('r1', 'go on');
+			expect(api.runs.sendMessage).toHaveBeenCalledExactlyOnceWith('r1', 'go on', []);
 		});
 
 		it('makes a newline of Shift+Enter', async () => {
@@ -264,6 +278,99 @@ describe('Composer', () => {
 			await userEvent.click(screen.getByRole('button', { name: 'Release' }));
 
 			await vi.waitFor(() => expect(screen.queryByText('nope')).not.toBeInTheDocument());
+		});
+	});
+
+	describe('files', () => {
+		it('takes a pasted image as a chip, not as text', async () => {
+			held();
+			await settled();
+			const e = paste(shot());
+			expect(e.defaultPrevented).toBe(true);
+			expect(await screen.findByText('shot.png')).toBeInTheDocument();
+			expect(box()).toHaveValue('');
+		});
+
+		it('leaves a paste without files to the browser', async () => {
+			held();
+			await settled();
+			expect(paste().defaultPrevented).toBe(false);
+		});
+
+		it('uploads first, then sends the ids with the text', async () => {
+			const { onsent } = held();
+			await settled();
+			paste(shot());
+			await userEvent.type(box(), 'see this{Enter}');
+			await vi.waitFor(() =>
+				expect(api.runs.sendMessage).toHaveBeenCalledExactlyOnceWith('r1', 'see this', ['att-1'])
+			);
+			expect(api.files.upload).toHaveBeenCalledExactlyOnceWith([expect.any(File)]);
+			expect(onsent).toHaveBeenCalledExactlyOnceWith('see this');
+			expect(screen.queryByText('shot.png')).not.toBeInTheDocument();
+		});
+
+		it('sends files alone', async () => {
+			const { onsent } = held();
+			await settled();
+			paste(shot());
+			await vi.waitFor(() => expect(sendBtn()).toBeEnabled());
+			await userEvent.click(sendBtn());
+			await vi.waitFor(() =>
+				expect(api.runs.sendMessage).toHaveBeenCalledExactlyOnceWith('r1', '', ['att-1'])
+			);
+			expect(onsent).toHaveBeenCalledExactlyOnceWith('');
+		});
+
+		it('refuses an oversized paste, which never goes up', async () => {
+			held();
+			await settled();
+			paste(aFile('big.png', 'image/png', 2048));
+			expect(await screen.findByText('over the 1 KB limit')).toBeInTheDocument();
+			expect(sendBtn()).toBeDisabled();
+			await userEvent.type(box(), '{Enter}');
+			expect(api.files.upload).not.toHaveBeenCalled();
+		});
+
+		it('sends nothing when the upload fails, keeping draft and files', async () => {
+			vi.mocked(api.files.upload).mockRejectedValue(new Error('too big for the server'));
+			const { onsent } = held();
+			await settled();
+			paste(shot());
+			await userEvent.type(box(), 'see this{Enter}');
+			expect(await screen.findByText('too big for the server')).toBeInTheDocument();
+			expect(api.runs.sendMessage).not.toHaveBeenCalled();
+			expect(onsent).not.toHaveBeenCalled();
+			expect(box()).toHaveValue('see this');
+			expect(screen.getByText('shot.png')).toBeInTheDocument();
+			expect(sendBtn()).toBeEnabled();
+		});
+
+		it('holds the words and files as sent while they go up', async () => {
+			const up = deferred<never>();
+			vi.mocked(api.files.upload).mockReturnValue(up.promise);
+			const { onsent } = held();
+			await settled();
+			paste(shot());
+			await userEvent.type(box(), 'see this{Enter}');
+			await vi.waitFor(() => expect(box()).toHaveAttribute('readonly'));
+
+			await userEvent.type(box(), ' and more');
+			paste(aFile('later.png', 'image/png'));
+			expect(box()).toHaveValue('see this');
+			expect(screen.queryByText('later.png')).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'Remove shot.png' })).not.toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /Attach$/ })).toBeDisabled();
+
+			up.resolve([{ id: 'att-1' }] as never);
+			await vi.waitFor(() =>
+				expect(api.runs.sendMessage).toHaveBeenCalledExactlyOnceWith('r1', 'see this', ['att-1'])
+			);
+			expect(onsent).toHaveBeenCalledExactlyOnceWith('see this');
+			expect(box()).not.toHaveAttribute('readonly');
+			await userEvent.type(box(), 'next');
+			expect(box()).toHaveValue('next');
+			expect(screen.getByRole('button', { name: /Attach$/ })).toBeEnabled();
 		});
 	});
 

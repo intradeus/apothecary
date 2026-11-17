@@ -1549,6 +1549,10 @@ func TestNoParamWhereNoneIsRead(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), refused) {
 				t.Errorf("err = %v, want %q", err, refused)
 			}
+			// It names where a parameter is read, the bool site included.
+			if err != nil && !strings.Contains(err.Error(), "an agent stage's start_held") {
+				t.Errorf("err = %v, want it to name start_held among the sites that read a parameter", err)
+			}
 		})
 	}
 	// A declared parameter named inside a script or a prompt is not read
@@ -1932,5 +1936,70 @@ func TestOperatesOnNothingHasNoTicket(t *testing.T) {
 	// The same stages stand in a flow started on a ticket.
 	if _, err := Parse("t.yaml", []byte(header+"main:\n  - { id: s, type: command, run: x, run_if: run.ticket.tracker }\n")); err != nil {
 		t.Errorf("on a ticket: %v", err)
+	}
+}
+
+// start_held is an agent stage's: true, false or a bool parameter.
+func TestStartHeld(t *testing.T) {
+	const agents = "agents:\n  - { name: a, prompt: p }\nmain:\n"
+	agent := func(field string) string {
+		return agents + "  - { id: s, type: agent, harness: fake, model: fake/m, agent: a" + field + " }\n"
+	}
+	for field, want := range map[string]bool{"": false, ", start_held: true": true, ", start_held: false": false} {
+		f, err := Parse("t.yaml", []byte(header+agent(field)))
+		if err != nil {
+			t.Fatalf("%q: %v", field, err)
+		}
+		if got := f.Stage("s").StartHeld; got != want {
+			t.Errorf("%q: StartHeld = %v, want %v", field, got, want)
+		}
+	}
+
+	// A bool parameter: its default, or what a project or a run binds.
+	const withParam = "name: t\nversion: 5\nparameters: { harness: fake, model: fake/model, collab: { type: bool, default: false }, mode: { type: string, default: x } }\n"
+	doc := []byte(withParam + agent(", start_held: $collab"))
+	f, err := Parse("t.yaml", doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Stage("s").StartHeld {
+		t.Error("the parameter's default false did not take")
+	}
+	if !slices.Contains(f.Refs, ParamRef{Param: "collab", Phase: MainPhase, Stage: "s", Field: "start_held"}) {
+		t.Errorf("refs = %+v", f.Refs)
+	}
+	if f, err = ParseBound("t.yaml", doc, map[string]string{"collab": "true"}); err != nil || !f.Stage("s").StartHeld {
+		t.Errorf("bound true: %v", err)
+	}
+
+	for name, c := range map[string]struct{ doc, want string }{
+		"command":    {header + "main:\n  - { id: s, type: command, run: x, start_held: true }\n", `"start_held" does not apply to type command`},
+		"human_gate": {header + "main:\n  - { id: s, type: human_gate, question: q, start_held: true }\n", `"start_held" does not apply to type human_gate`},
+		"action":     {header + "main:\n  - { id: s, type: action, action: create_mr, start_held: true }\n", `"start_held" does not apply to type action`},
+		"string":     {withParam + agent(", start_held: $mode"), "is a string, and this field takes a bool"},
+		"undeclared": {header + agent(", start_held: $nope"), "nope"},
+		"literal":    {header + agent(", start_held: yes please"), "is not true, false or a $parameter"},
+		"number":     {header + agent(", start_held: 1"), "is not true, false or a $parameter"},
+		"sequence": {header + "sequences:\n  - { id: q, stages: [ { id: c, type: command, run: x } ] }\n" +
+			"main:\n  - { id: s, sequence: q, start_held: true }\n", "start_held"},
+	} {
+		if _, err := Parse("t.yaml", []byte(c.doc)); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want %q", name, err, c.want)
+		}
+	}
+
+	// The editor's document keeps it as written.
+	for _, field := range []string{"true", `"$collab"`} {
+		d, err := ParseDoc("t.yaml", []byte(withParam+agent(", start_held: "+strings.Trim(field, `"`))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := json.Marshal(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), `"start_held":`+field) {
+			t.Errorf("the editor's document lost %s: %s", field, b)
+		}
 	}
 }

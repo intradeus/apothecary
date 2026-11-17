@@ -136,6 +136,7 @@ export type AskModelRequest = {
 };
 
 export type AskRequest = {
+	attachment_ids?: Array<string>;
 	text: string;
 	thread_id?: string;
 };
@@ -150,6 +151,8 @@ export type AskState = {
 };
 
 export type Attachment = {
+	chat?: string;
+	chat_name?: string;
 	created_at: string;
 	filename: string;
 	id: string;
@@ -424,6 +427,8 @@ export type DocAsk = {
 	harness: string;
 };
 
+export type DocBool = boolean | string;
+
 export type DocEdge = {
 	feed?: string;
 	max?: number | null;
@@ -531,6 +536,7 @@ export type DocStage = {
 	run_ref?: string;
 	sequence?: string;
 	service?: string;
+	start_held?: DocBool;
 	timeout?: string;
 	type?: string;
 	with?: DocIo;
@@ -999,6 +1005,7 @@ export type Me = {
 
 export type Message = {
 	at: string;
+	attachment_ids?: Array<string>;
 	cost_usd?: number;
 	error?: string;
 	id: string;
@@ -1617,6 +1624,7 @@ export type ScorecardTerm = {
 };
 
 export type SendMessageRequest = {
+	attachment_ids?: Array<string>;
 	text: string;
 };
 
@@ -7173,6 +7181,116 @@ export type ListProvidersResponses = {
 
 export type ListProvidersResponse = ListProvidersResponses[keyof ListProvidersResponses];
 
+export type GetProvisionerData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/provisioner';
+};
+
+export type GetProvisionerErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetProvisionerResponses = {
+	/**
+	 * OK
+	 */
+	200: Integration;
+};
+
+export type GetProvisionerResponse = GetProvisionerResponses[keyof GetProvisionerResponses];
+
+export type UpdateProvisionerData = {
+	body: IntegrationUpdate;
+	path?: never;
+	query?: never;
+	url: '/api/provisioner';
+};
+
+export type UpdateProvisionerErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type UpdateProvisionerResponses = {
+	/**
+	 * OK
+	 */
+	200: Integration;
+};
+
+export type UpdateProvisionerResponse =
+	UpdateProvisionerResponses[keyof UpdateProvisionerResponses];
+
+export type TestProvisionerData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/provisioner/test';
+};
+
+export type TestProvisionerErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type TestProvisionerResponses = {
+	/**
+	 * OK
+	 */
+	200: TestResult;
+};
+
+export type TestProvisionerResponse = TestProvisionerResponses[keyof TestProvisionerResponses];
+
 export type ListRunsData = {
 	body?: never;
 	path?: never;
@@ -7977,6 +8095,43 @@ export type GetRunFilesResponses = {
 };
 
 export type GetRunFilesResponse = GetRunFilesResponses[keyof GetRunFilesResponses];
+
+export type DownloadRunFilesData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/files.zip';
+};
+
+export type DownloadRunFilesErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DownloadRunFilesResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type DownloadRunFilesResponse = DownloadRunFilesResponses[keyof DownloadRunFilesResponses];
 
 export type ReleaseRunData = {
 	body?: never;

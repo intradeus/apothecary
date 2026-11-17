@@ -62,6 +62,8 @@ export default {
 	'transcript.resumedReleased': 'Resumed — handed back',
 	'transcript.holdTaken':
 		'You took over — the agent waits for your word between turns; the stage cannot end until you release it',
+	'transcript.holdOpened':
+		'The agent answered the stage prompt — your messages are its next turns; release it to end the stage',
 	'transcript.holdReleased': 'Handed back — the agent finishes its task',
 	'transcript.holdEnded': 'Take-over ended with the attempt',
 	'transcript.messages_one': '{count} message',
@@ -109,6 +111,12 @@ export default {
 	'inbox.pendingSummary_one': '{count} pending across {runs} run',
 	'inbox.pendingSummary_other': '{count} pending across {runs} runs',
 	'inbox.nothingPending': 'nothing pending',
+	'inbox.heldSummary_one': '{count} run in your hands',
+	'inbox.heldSummary_other': '{count} runs in your hands',
+	'inbox.held.title': 'In your hands',
+	'inbox.held.help':
+		'An agent waiting for you: your messages are its turns, and the stage ends when you release it.',
+	'inbox.held.since': 'held {ago}',
 	'inbox.tab.pending': 'Pending',
 	'inbox.tab.answered': 'Answered',
 	'inbox.loadErr': 'Could not load pings',
@@ -184,6 +192,8 @@ export default {
 	'system.int.deleted': '{name} deleted',
 	'system.int.usedBy': 'used by {workshops}',
 	'system.int.unused': 'not used by any workshop',
+	'system.int.instanceSub':
+		'every workshop builds on it · an empty field takes the deployment’s value',
 	'system.int.testing': 'testing…',
 	'system.int.errorLabel': 'error',
 	'system.int.okUnverified': 'ok, unverified',
@@ -428,10 +438,7 @@ export default {
 	'form.project.ticketSource.help':
 		'Where this workshop’s tickets live, read live from the tracker. Several workshops may share one; switching hides the old source’s tickets here, their runs stay. Add a tracker under <a class="link" href="{href}">Integrations</a>.',
 	'form.project.executionHead': 'Execution',
-	'form.project.executionSub': 'where workspaces run, and which coding agents may run in them',
-	'form.project.provisioner': 'Provisioner',
-	'form.project.noProvisioner':
-		'No provisioner yet — add one under <a class="link" href="{href}">Integrations</a>.',
+	'form.project.executionSub': 'which coding agents may run in the workshop’s workspaces',
 	'form.project.harnesses': 'Harness integrations',
 	'form.project.harnessesHelp':
 		'The harnesses this workshop provides (auth and tooling). A flow names which kind it runs on; one integration per kind.',
@@ -965,6 +972,11 @@ export default {
 	'flow.insp.reuseSession': 'Remember earlier attempts',
 	'flow.insp.reuseSessionTitle':
 		'An attempt sent back to this stage continues its session. Turn off for a stage that should look afresh each time, such as an adversarial review.',
+	'flow.insp.startHeld': 'Start in your hands',
+	'flow.insp.startHeldOff': 'No — the agent works alone',
+	'flow.insp.startHeldOn': 'Yes — every attempt',
+	'flow.insp.startHeldHelp':
+		'Every attempt, retries included, answers the stage prompt once, then waits for the run’s owner as a take-over: their messages are its turns, and releasing it ends the stage. Or a bool $parameter.',
 	'flow.insp.eachRepo': 'Run in each repository',
 	'flow.insp.eachRepoTitle':
 		'Multi-repo runs: run once per checkout instead of once in the primary (what git commit / push want)',
@@ -1104,7 +1116,7 @@ export default {
 		'It is read in {count} place(s): {where}. Those fields will no longer resolve.',
 	'flow.insp.addParam': '+ parameter',
 	'flow.insp.paramsReadHelp':
-		'Read a parameter where $name appears: a stage\u2019s model, harness, run_ref, max_turns or timeout, an action input, a service stage\u2019s service, a run.service.$name source, a watcher\u2019s start or max, a stage\u2019s condition.',
+		'Read a parameter where $name appears: a stage\u2019s model, harness, run_ref, max_turns, timeout or start_held, an action input, a service stage\u2019s service, a run.service.$name source, a watcher\u2019s start or max, a stage\u2019s condition.',
 	'flow.insp.addStageMain': 'Add a stage to the main chain',
 	'flow.insp.addStageTo': 'Add a stage to {id}',
 	'flow.insp.addToChain': 'Add a stage to this chain',

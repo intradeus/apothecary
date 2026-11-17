@@ -8,6 +8,7 @@ import { prefs } from '$lib/app/prefs.svelte';
 import { session } from '$lib/app/session.svelte';
 import type { Limits, Me } from '$lib/domain';
 import { aPing, aProject, aRun } from '$test/fixtures';
+import { aHold } from '$test/fixtures/run-components';
 import Sidebar from './Sidebar.svelte';
 
 vi.mock('$lib/api', () => ({ api: { auth: { logout: vi.fn() } } }));
@@ -39,12 +40,13 @@ describe('Sidebar, full', () => {
 		expect(nav().getByRole('link', { name: /Inbox/ })).toHaveAttribute('aria-current', 'page');
 	});
 
-	it('counts pending pings on the inbox and live runs on runs', () => {
-		fleet.runs = [liveRun, aRun({ id: 'b', state: 'completed' })];
+	it('counts pending pings and held runs on the inbox and live runs on runs', () => {
+		const held = aRun({ id: 'h', hold: aHold({ stageId: 'plan' }) });
+		fleet.runs = [liveRun, held, aRun({ id: 'b', state: 'completed' })];
 		fleet.pending = [aPing({ id: '1' }), aPing({ id: '2' })];
 		render(Sidebar, { onsearch: vi.fn() });
-		expect(nav().getByRole('link', { name: /Inbox/ })).toHaveTextContent('2');
-		expect(nav().getByRole('link', { name: /Runs/ })).toHaveTextContent('1');
+		expect(nav().getByRole('link', { name: /Inbox/ })).toHaveTextContent('3');
+		expect(nav().getByRole('link', { name: /Runs/ })).toHaveTextContent('2');
 		expect(nav().getByRole('link', { name: /Tickets/ })).not.toHaveTextContent(/\d/);
 	});
 

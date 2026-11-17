@@ -44,7 +44,7 @@
 		</div>
 	</div>
 	<div class="end">
-		<a href={to.system('limits')}>{t('deskhome.cap.limits')} {I.forward}</a>
+		<a href={to.limits()}>{t('deskhome.cap.limits')} {I.forward}</a>
 		<Updated at={fleet.updatedAt} paused={fleet.paused} />
 	</div>
 </section>

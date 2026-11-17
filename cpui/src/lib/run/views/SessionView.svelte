@@ -157,7 +157,14 @@
 					>{I.caret} {t('runview.session.earlier', { count: start })}</button
 				>
 			{/if}
-			<Transcript items={shown} {sending} over={rs.terminal} {onlog} onanswer={() => follow()} />
+			<Transcript
+				items={shown}
+				{sending}
+				attachments={rs.attachments}
+				over={rs.terminal}
+				{onlog}
+				onanswer={() => follow()}
+			/>
 			{#if showNudge}
 				<div class="nudge" transition:materialize={{ origin: 'center bottom', y: 6 }}>
 					<span class="muted">{t('runview.session.betweenPhases')}</span>
@@ -198,7 +205,10 @@
 			<Composer
 				runId={rs.runId}
 				onsent={(text) => {
-					sending = [...sending, { text, echoes: echoes(text) }];
+					// Sends still unechoed count too: two of the same (two
+					// files-only messages, both '') each wait for their own echo.
+					const ahead = sending.filter((s) => s.text === text).length;
+					sending = [...sending, { text, echoes: echoes(text) + ahead }];
 					follow(false);
 				}}
 				onfailed={(text) => (sending = sending.filter((s) => s.text !== text))}

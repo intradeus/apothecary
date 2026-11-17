@@ -379,8 +379,19 @@ describe('the Ask pane', () => {
 			costUsd: 0,
 			turns: 0,
 			error: undefined,
+			attachmentIds: [],
 			at: AT
 		});
+	});
+
+	it('reads a question’s files, null as none', () => {
+		expect(map.toAskMessage(wire<Wire.Message>({ attachment_ids: ['a1'] })).attachmentIds).toEqual([
+			'a1'
+		]);
+		expect(
+			map.toAskMessage(wire<Wire.Message>({ attachment_ids: null as unknown as string[] }))
+				.attachmentIds
+		).toEqual([]);
 	});
 
 	it('reads a message without its thread as of no session', () => {
@@ -1274,6 +1285,10 @@ describe('files', () => {
 			sha256: '',
 			createdAt: ''
 		});
+		expect(map.toAttachment(wire<Wire.Attachment>({ chat: 'ask' })).chat).toBe('ask');
+		expect(map.toAttachment(wire<Wire.Attachment>({ chat: 'takeover' })).chat).toBe('takeover');
+		expect(map.toAttachment(wire<Wire.Attachment>({ chat: '' })).chat).toBeUndefined();
+		expect(map.toAttachment(wire<Wire.Attachment>({ chat: 'odd' }))).not.toHaveProperty('chat');
 		expect(map.toSnapshot(wire<Wire.Snapshot>({ kind: 'mystery' }))).toMatchObject({
 			kind: 'output',
 			truncated: false,

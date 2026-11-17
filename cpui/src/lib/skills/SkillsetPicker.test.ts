@@ -46,10 +46,7 @@ describe('SkillsetPicker', () => {
 	it('points to the library when there is nothing to pick', async () => {
 		vi.mocked(api.skillsets.list).mockResolvedValue([]);
 		setup();
-		expect(await screen.findByRole('link', { name: 'Skills' })).toHaveAttribute(
-			'href',
-			'/system/skills'
-		);
+		expect(await screen.findByRole('link', { name: 'Skills' })).toHaveAttribute('href', '/skills');
 	});
 
 	it('shows a failure to list', async () => {

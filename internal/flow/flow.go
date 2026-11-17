@@ -372,6 +372,10 @@ type Stage struct {
 	// instead of continuing the stage's, so what it concluded before cannot
 	// colour its next look.
 	FreshSession bool
+	// StartHeld (start_held): every attempt opens as a take-over held by
+	// the run's owner — the agent answers the stage prompt, then waits for
+	// them instead of ending the stage (FLOWLANG §2 agent).
+	StartHeld bool
 	// HarnessOptions are the options of the harness the stage runs on — its
 	// kind's block of harness_options, resolved; nil when none apply or the
 	// harness is unbound.
