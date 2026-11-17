@@ -75,8 +75,9 @@ func (e *Engine) TakeOver(runID, userID string, force bool) error {
 
 // Release hands the task back: the hold is closed with its account and the
 // session is sent the handback prompt — at once when the agent is idle,
-// when its turn in flight ends otherwise. A run parked on its holder is
-// woken for it.
+// when its turn in flight ends otherwise. A turn that parks on the agent's
+// own question instead closes the hold as the run parks, and the handback
+// follows the answer's turn. A run parked on its holder is woken for it.
 func (e *Engine) Release(runID, userID string) error {
 	if h := e.liveLoop(runID); h != nil {
 		if !h.agentLive.Load() {

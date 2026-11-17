@@ -550,6 +550,9 @@ func (rs *State) Apply(ev *event.Event) {
 		rs.GateAnswer = nil
 		rs.LastFailure = nil
 		delete(rs.PausedAsks, p.StageID)
+		// A handback still owed (a release the attempt parked under, its
+		// answer's turn never ended) went with the attempt it was owed to.
+		delete(rs.HandbackOwed, p.StageID)
 		// A stage keeps its session across attempts, the agent sent back
 		// remembering what it did, unless it asks to look afresh. What is
 		// new is the attempt.

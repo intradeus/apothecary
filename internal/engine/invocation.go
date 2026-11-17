@@ -77,8 +77,10 @@ func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, init
 	io := newInvIO(tr)
 	// Before the agent starts: one resumed under a take-over can finish its
 	// turn at once, and if it saw no hold it would end the stage under the
-	// holder.
-	if x.rs.Holds[st.ID] != nil {
+	// holder. A handback owed after an answer (a release that came while
+	// the agent's own question parked the run) keeps it waiting the same
+	// way, for the handback queued when the answer's turn ends.
+	if x.rs.Holds[st.ID] != nil || x.rs.HandbackOwed[st.ID] {
 		io.inbox.setHeld(true)
 	}
 	resCh := make(chan agentRes, 1)
@@ -230,6 +232,37 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		io.inbox.setHeld(false)
 		return nil
 	}
+	// owedHandback serves a release the attempt parked under (releaseOnPark)
+	// once the answer's turn ends: the handback is queued as the session's
+	// next turn, as handBack does. A turn ending on another question of the
+	// agent's leaves it owed, for the turn that answer resumes.
+	owedHandback := func() error {
+		if len(open) == 0 {
+			if err := x.prompted(st.ID, io.tr.iter, event.PromptHandback, handbackPrompt); err != nil {
+				return err
+			}
+			io.inbox.push(agentport.UserMessage{Text: handbackPrompt, Verbatim: true})
+		}
+		io.inbox.setHeld(false)
+		return nil
+	}
+	// releaseOnPark closes a hold whose release was waiting on a turn the
+	// agent's own question parks: the parked invocation's live state goes,
+	// so the release is put on the record now, with the holder's messages
+	// still queued (they ride into the answer's prompt) on its account. The
+	// handback it owes follows the answer's turn (owedHandback).
+	releaseOnPark := func() error {
+		if hold == nil || !hold.releasing {
+			return nil
+		}
+		leg := hold.leg.Spend
+		leg.Messages += len(x.rs.PendingMsgs)
+		if err := x.releaseHold(st, io.tr.iter, hold.st, hold.releaseBy, event.HoldReleasedByUser, leg); err != nil {
+			return err
+		}
+		hold = nil
+		return nil
+	}
 
 	// collect waits for a cancelled invocation to wind down, still recording
 	// its transcript — but doesn't trust the harness to honor the
@@ -300,6 +333,9 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			out := outcomeReturned
 			if runcore.EndedOnQuestions(len(open), res.err) {
 				out = outcomePaused
+				if err := releaseOnPark(); err != nil {
+					return invocation{}, err
+				}
 			}
 			return invocation{res: res, outcome: out, open: open, left: left(), holdSpend: holdLeg()}, nil
 		case ev := <-io.events:
@@ -326,6 +362,11 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				turnOpen, openTurn = false, ""
 				x.endStop() // the stopped turn has ended: the agent may ask again
 				if hold == nil {
+					if x.rs.HandbackOwed[st.ID] {
+						if err := owedHandback(); err != nil {
+							return invocation{}, err
+						}
+					}
 					break
 				}
 				hold.leg.TurnEnded(ev.Turn, ev.Usage)
@@ -333,7 +374,12 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					// The turn ended on the agent's own open question. The
 					// holder is the one to answer it, but the tool call it came
 					// in on is gone: park on the question as any attempt does,
-					// and resume with the answer under the same hold.
+					// and resume with the answer under the same hold — or, with
+					// a release already asked for, under none, the handback to
+					// follow the answer's turn.
+					if err := releaseOnPark(); err != nil {
+						return invocation{}, err
+					}
 					for _, p := range open {
 						p.handedBack.Store(true)
 					}
@@ -441,6 +487,10 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			// Nobody answered while the turn stayed live: park. The open
 			// questions are handed back first, so an answer racing the
 			// cancel is delivered by resume rather than lost in the tool call.
+			// A release asked for meanwhile goes on the record first.
+			if err := releaseOnPark(); err != nil {
+				return invocation{}, err
+			}
 			for _, p := range open {
 				p.handedBack.Store(true)
 			}

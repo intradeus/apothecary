@@ -239,3 +239,31 @@ func TestContinueFromDebugRestoresThePhasesRetryBudgets(t *testing.T) {
 	check("live", live)
 	check("replayed", Replay(append(evs, ev(&event.StageStarted{StageID: "test", Attempt: 3})), fl))
 }
+
+// A handback is owed from a release until the session is sent it — and no
+// longer than the attempt it was owed to: a new attempt starts with its own
+// prompt, not with the handback of a hold its predecessor parked under.
+func TestAHandbackIsOwedUntilSentOrTheAttemptEnds(t *testing.T) {
+	fl := mustFlow(t, parkFlowDoc)
+	ev := func(p event.Payload) event.Event { return event.Event{RunID: "r", Type: p.EventType(), Payload: p} }
+	evs := []event.Event{
+		ev(&event.RunCreated{TicketTitle: "t", FlowName: "park", By: "human"}),
+		ev(&event.PhaseStarted{Phase: flow.MainPhase, By: "human"}),
+		ev(&event.StageStarted{StageID: "build", Attempt: 1}),
+		ev(&event.HoldTaken{StageID: "build", Attempt: 1, UserID: "u"}),
+		ev(&event.HoldReleased{StageID: "build", Attempt: 1, UserID: "u", Reason: event.HoldReleasedByUser}),
+	}
+	if !Replay(evs, fl).HandbackOwed["build"] {
+		t.Fatal("a release owes the session its handback")
+	}
+	sent := append(append([]event.Event(nil), evs...), ev(&event.AgentPrompted{StageID: "build", Attempt: 1, Kind: event.PromptHandback}))
+	if Replay(sent, fl).HandbackOwed["build"] {
+		t.Error("still owed once sent")
+	}
+	retried := append(append([]event.Event(nil), evs...),
+		ev(&event.StageFailed{StageID: "build", Reason: event.ReasonHarnessError}),
+		ev(&event.StageStarted{StageID: "build", Attempt: 2}))
+	if Replay(retried, fl).HandbackOwed["build"] {
+		t.Error("a new attempt inherited the handback")
+	}
+}

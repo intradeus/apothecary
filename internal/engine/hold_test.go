@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -794,6 +795,92 @@ func TestAForcedTakeOverLeavesATurnWaitingOnItsQuestion(t *testing.T) {
 	}
 	if v := h.view(t, runID); v.State != run.Completed || v.Hold != nil {
 		t.Errorf("final view = %s hold=%+v", v.State, v.Hold)
+	}
+}
+
+// A release asked for while the agent's own question holds its turn open is
+// not lost when that turn parks on the question: the hold closes as the run
+// parks, and the handback follows the answer's turn in the same session —
+// no second release. Whether the turn ends on the question or waits on it
+// past the live hold.
+func TestAReleaseBeforeAQuestionParksHandsBackAfterTheAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		ended bool // Q1 ends on its question; otherwise the live hold runs out
+	}{{"turn ends on the question", true}, {"question outwaits the live hold", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, mustFlow(t, askFlowDoc))
+			if !tc.ended {
+				h.e.cfg.AskHumanHold = 50 * time.Millisecond
+			}
+			runIDCh := make(chan string, 1)
+			endQ1 := make(chan struct{})
+			h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+				emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: "Q1"},
+					agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "s"})
+				if _, err := h.e.RaisePing(<-runIDCh, "clarification", "which db?", "", nil, nil); err != nil {
+					return agentport.AgentResult{}, err
+				}
+				if tc.ended {
+					<-endQ1
+					call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "Q1", StopReason: "end_turn"})
+				}
+				<-ctx.Done()
+				return agentport.AgentResult{Session: "s"}, ctx.Err()
+			}
+			r := &heldRunner{}
+			var resumes atomic.Int32
+			h.runner.ResumeFunc = func(ctx context.Context, call fake.ResumeCall) (agentport.AgentResult, error) {
+				resumes.Add(1)
+				// Waiting for the handback from its first instruction: a
+				// session let go of before it is queued would end the stage
+				// without it.
+				if !call.In.Inbox.Held() {
+					t.Error("the answer's session was let go of before its handback")
+				}
+				r.turn(call.In, "with the answer", nil)
+				return r.drive(ctx, call.In)
+			}
+			runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runIDCh <- runID
+			p := h.waitPing(t, "clarification")
+			takeOverWhenLive(t, h, runID, "u1", true)
+			if err := h.e.Release(runID, "u1"); err != nil {
+				t.Fatalf("release while the question is open: %v", err)
+			}
+			close(endQ1)
+			waitUntil(t, "the run to park on its question", func() bool { return h.view(t, runID).Dormant })
+			if v := h.view(t, runID); v.Hold != nil || v.State != run.WaitingOnHuman {
+				t.Fatalf("parked = %s, hold %+v", v.State, v.Hold)
+			}
+
+			if err := h.e.AnswerPing(p.ID, textAnswer("postgres")); err != nil {
+				t.Fatal(err)
+			}
+			waitDone(t, h, runID)
+			evs := h.events(t, runID)
+			if v := h.view(t, runID); v.State != run.Completed || v.Hold != nil {
+				t.Errorf("final view = %s hold=%+v", v.State, v.Hold)
+			}
+			want := "agent_prompted:" + event.PromptStage + " hold_taken hold_released agent_prompted:" +
+				event.PromptAnswer + " agent_prompted:" + event.PromptHandback + " stage_completed"
+			if got := holdOrder(evs); got != want {
+				t.Errorf("order = %s\nwant    %s", got, want)
+			}
+			rel, _ := findPayload[*event.HoldReleased](evs)
+			if rel == nil || rel.Reason != event.HoldReleasedByUser || rel.UserID != "u1" || rel.Turns != 0 || rel.Messages != 0 {
+				t.Errorf("hold account = %+v", rel)
+			}
+			if n := resumes.Load(); n != 1 {
+				t.Errorf("resumed %d times, want once", n)
+			}
+			if b := r.delivered(); len(b) != 1 || len(b[0]) != 1 || b[0][0].Text != handbackPrompt {
+				t.Errorf("delivered after the answer = %+v", b)
+			}
+		})
 	}
 }
 

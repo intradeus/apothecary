@@ -53,7 +53,7 @@ What now:
   release's handback get a short reply turn — so `task dev:up` can show a
   forced take, a passive one, messages and the release.
 
-Release, reviewed: one fix. It hands back at once when the agent waits on
+Release, reviewed: two fixes. It hands back at once when the agent waits on
 the holder, and otherwise after the turn in flight. After a forced take-over
 that turn is only the stopped one still winding down, or the holder's own (the
 design of `2026-10-28-take-over.md`); re-admitting a parked run cannot be
@@ -69,11 +69,23 @@ on them, and hands back at the end of their turn. `Inbox.Take` now says a
 runner reports what it took as a `user_message` before the turn it starts,
 as every runner here already did.
 
+The second: a release waiting on a turn that parks on the agent's own
+question (the turn ends on it, or it outwaits the live hold) was forgotten
+with the invocation — the answer resumed the session still held, and the
+holder had to release again. The release now goes on the record as the run
+parks (`hold_released`, with the holder's messages still queued on its
+account; they ride into the answer's prompt). The handback it owes
+(`HandbackOwed`) follows the answer's turn in the same invocation: the session
+is resumed held until that turn ends, then sent the handback and let go of —
+or, ending on another question, parks again with the handback still owed. A
+new attempt of the stage owes nothing (`stage_started` clears it).
+
 This narrows what `2026-10-31-nobody-talks-to-an-agent-without-taking-it-over.md`
 removed: no message interrupts the agent; only a forced take-over can stop a
 turn, and it names that turn.
 
-Held by: `TestPlanHoldRequest`, `TestHoldLegWaitsUntilTheHoldersMessagesGetTheirTurn`
+Held by: `TestPlanHoldRequest`, `TestHoldLegWaitsUntilTheHoldersMessagesGetTheirTurn`,
+`TestAHandbackIsOwedUntilSentOrTheAttemptEnds`
 (runcore); `TestAForcedTakeOverStopsTheAgentsTurn`,
 `TestAPassiveTakeOverLetsTheTurnFinish`, `TestReleaseRightAfterAForcedTakeIsPrompt`,
 `TestAForcedTakeOverLeavesATurnWaitingOnItsQuestion`,
@@ -82,6 +94,7 @@ Held by: `TestPlanHoldRequest`, `TestHoldLegWaitsUntilTheHoldersMessagesGetTheir
 `TestAQuestionFromAStoppingTurnIsRefused`,
 `TestAReleaseBehindAQueuedMessageWaitsForItsTurn`,
 `TestAReleaseBetweenDeliveryAndTurnStartWaitsForTheTurn`,
+`TestAReleaseBeforeAQuestionParksHandsBackAfterTheAnswer`,
 `TestRestartForcedTakeOverStopsTheReattachedTurn` (engine);
 `TestReattachability`, `TestReattachFollowsTheTurnInFlight`,
 `TestStoppingATurnKeepsTheSession`, `TestAStopForAnotherTurnIsIgnored`,
