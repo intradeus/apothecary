@@ -226,7 +226,10 @@ var errAttachmentsOff = errors.New("attachments are off on this server")
 
 // DeliverAskFiles claims a question's files into the run's Ask chat, all or
 // nothing, and writes them into its workspace (envp, envID: the run's, as
-// the Ask pane resolved them), returning the paths the question names.
+// the Ask pane resolved them), returning the paths the question names. A
+// question whose files cannot be delivered is refused, and leaves nothing
+// behind: what was written is removed and the claim given back, so the
+// files are the asker's to send again.
 func (e *Engine) DeliverAskFiles(ctx context.Context, envp envport.EnvProvisioner, envID, runID, userID string, ids []string) ([]string, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -244,9 +247,34 @@ func (e *Engine) DeliverAskFiles(ctx context.Context, envp envport.EnvProvisione
 		err = writeAttachmentFiles(ctx, envp, envport.EnvID(envID), e.attachments, atts, paths)
 	}
 	if err != nil {
+		e.undeliverAskFiles(context.WithoutCancel(ctx), envp, envport.EnvID(envID), runID, userID, ids, paths)
 		return nil, fmt.Errorf("delivering the files: %w", err)
 	}
 	return paths, nil
+}
+
+// undeliverAskFiles undoes a refused question's delivery: its files leave
+// the workspace and go back to the asker. Best-effort, on a fresh deadline —
+// the delivery's may be what ran out; what it cannot undo it logs.
+func (e *Engine) undeliverAskFiles(ctx context.Context, envp envport.EnvProvisioner, envID envport.EnvID, runID, userID string, ids, paths []string) {
+	ctx, cancel := context.WithTimeout(ctx, attachmentDeliverTimeout)
+	defer cancel()
+	if len(paths) > 0 {
+		rm := make([]string, 0, len(paths))
+		for _, p := range paths {
+			rm = append(rm, shell.Quote(p))
+		}
+		if _, err := envp.Exec(ctx, envID, envport.Command{
+			Script:  "rm -f -- " + strings.Join(rm, " "),
+			Dir:     "repo",
+			Timeout: attachmentDeliverTimeout,
+		}); err != nil {
+			e.log.WarnContext(ctx, "ask files: removing a refused question's files", logs.RunID, runID, "err", err)
+		}
+	}
+	if err := e.attachments.UnclaimForChat(ctx, userID, ids, runID, filestore.ChatAsk); err != nil {
+		e.log.WarnContext(ctx, "ask files: giving back a refused question's files", logs.RunID, runID, "err", err)
+	}
 }
 
 // ticketAttachments resolves the parent ticket's attachments by id. They are

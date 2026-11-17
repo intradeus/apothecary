@@ -204,6 +204,19 @@ func (m *Mem) ClaimAttachmentsForChat(_ context.Context, userID string, ids []st
 	return nil
 }
 
+func (m *Mem) UnclaimAttachmentsForChat(_ context.Context, userID string, ids []string, runID, chat string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, id := range ids {
+		a, ok := m.attachments[id]
+		if ok && a.UserID == userID && a.RunID == runID && a.Chat == chat && chat != "" && a.TicketID == "" && a.PingID == "" {
+			a.RunID, a.Chat = "", ""
+			m.attachments[id] = a
+		}
+	}
+	return nil
+}
+
 func (m *Mem) list(match func(Attachment) bool) []Attachment {
 	m.mu.Lock()
 	defer m.mu.Unlock()

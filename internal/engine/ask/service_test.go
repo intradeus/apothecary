@@ -480,10 +480,13 @@ func TestAQuestionCarriesFiles(t *testing.T) {
 }
 
 // Files that cannot be delivered refuse their question: nothing is
-// recorded, and the thread is free for the next one.
+// recorded — not even the thread a run's first question would open — and
+// the thread is free for the next one.
 func TestAQuestionWhoseFilesAreRefusedIsNotAsked(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
+	frames, stop := r.svc.Watch(runID)
+	defer stop()
 	refused := errors.New("an attachment is not one of your unsent uploads")
 	r.eng.deliverErr = refused
 	if _, err := r.svc.Ask(ctx, runID, "", "u", "look", []string{"theirs"}); !errors.Is(err, refused) {
@@ -492,17 +495,38 @@ func TestAQuestionWhoseFilesAreRefusedIsNotAsked(t *testing.T) {
 	if msgs, _ := r.store.MemStore.AskMessages(ctx, runID, 0); len(msgs) != 0 {
 		t.Errorf("a refused question was recorded: %+v", msgs)
 	}
+	if ths := r.threads(t); len(ths) != 0 {
+		t.Errorf("a refused first question opened a thread: %+v", ths)
+	}
+	select {
+	case f := <-frames:
+		t.Errorf("a refused question told the stream %+v", f)
+	default:
+	}
 	if o, c := r.res.opened.Load(), r.res.closed.Load(); o != c {
 		t.Errorf("resolved %d, released %d", o, c)
 	}
 	if n := len(r.runner.SnapshotRunCalls()); n != 0 {
 		t.Errorf("%d sessions ran", n)
 	}
+	// Refused in a thread the run has, the thread stays free.
 	r.eng.deliverErr = nil
 	if _, err := r.svc.Ask(ctx, runID, "", "u", "look", nil); err != nil {
-		t.Fatalf("the thread stayed busy: %v", err)
+		t.Fatalf("ask = %v", err)
 	}
 	r.answered(t, 2)
+	r.eng.deliverErr = refused
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "again", []string{"theirs"}); !errors.Is(err, refused) {
+		t.Fatalf("ask = %v", err)
+	}
+	r.eng.deliverErr = nil
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "again", nil); err != nil {
+		t.Fatalf("the thread stayed busy: %v", err)
+	}
+	r.answered(t, 4)
+	if ths := r.threads(t); len(ths) != 1 {
+		t.Errorf("threads = %+v, want the one", ths)
+	}
 }
 
 // A thread the store cannot give back once saved is an error, not a thread.

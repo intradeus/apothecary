@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -32,15 +33,21 @@ main:
   - { id: build, type: agent, harness: $harness, model: $model, agent: builder, input: { ticket: { from: run.ticket, type: ticket } } }
 `
 
-// modeEnvp records the mode each file is written with (the fake keeps none).
+// modeEnvp records the mode each file is written with (the fake keeps none),
+// and refuses a write to failOn.
 type modeEnvp struct {
 	*fake.EnvProvisioner
-	mu    sync.Mutex
-	modes map[string]fs.FileMode
+	mu     sync.Mutex
+	modes  map[string]fs.FileMode
+	failOn string
 }
 
 func (m *modeEnvp) WriteFile(ctx context.Context, id envport.EnvID, path string, data []byte, mode fs.FileMode) error {
 	m.mu.Lock()
+	if path == m.failOn {
+		m.mu.Unlock()
+		return errors.New("disk full")
+	}
 	if m.modes == nil {
 		m.modes = map[string]fs.FileMode{}
 	}
@@ -280,10 +287,37 @@ func TestDeliverAskFiles(t *testing.T) {
 	if paths, err := h.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", nil); paths != nil || err != nil {
 		t.Errorf("no files = %v, %v", paths, err)
 	}
-	// A workspace that cannot take them refuses the question.
+	// A workspace that cannot take them refuses the question, and gives the
+	// files back.
 	again := uploadAs(t, att, "u1", "b.png", pngBytes)
 	if _, err := h.e.DeliverAskFiles(ctx, envp, "gone", "r1", "u1", []string{again.ID}); err == nil || !strings.Contains(err.Error(), "delivering the files") {
 		t.Errorf("no workspace = %v", err)
+	}
+	if got, _ := att.Get(ctx, again.ID); !got.Unclaimed() || got.Chat != "" {
+		t.Errorf("an undelivered question kept its file: %+v", got)
+	}
+	// One file written before the next failed is taken away again.
+	envp.failOn = ".apothecary/attachments/ask/c.png"
+	third := uploadAs(t, att, "u1", "c.png", pngBytes)
+	if _, err := h.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", []string{again.ID, third.ID}); err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("a failed write = %v", err)
+	}
+	if _, err := h.envp.ReadFile(ctx, env, ".apothecary/attachments/ask/b.png"); err == nil {
+		t.Error("a refused question left its file in the workspace")
+	}
+	for _, id := range []string{again.ID, third.ID} {
+		if got, _ := att.Get(ctx, id); !got.Unclaimed() || got.Chat != "" {
+			t.Errorf("a refused question kept %+v", got)
+		}
+	}
+	if paths, _ := att.ForRun(ctx, "r1"); len(paths) != 1 {
+		t.Errorf("the run's files = %+v, want the one delivered", paths)
+	}
+	// Given back, they can be asked with again.
+	envp.failOn = ""
+	paths, err = h.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", []string{again.ID, third.ID})
+	if err != nil || !slices.Equal(paths, []string{".apothecary/attachments/ask/b.png", ".apothecary/attachments/ask/c.png"}) {
+		t.Errorf("asked again = %v, %v", paths, err)
 	}
 	off := newHarness(t, mustFlow(t, askFlowDoc))
 	if _, err := off.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", []string{"a"}); !errors.Is(err, errAttachmentsOff) {

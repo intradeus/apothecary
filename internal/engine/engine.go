@@ -631,6 +631,9 @@ type AttachmentStore interface {
 	// (filestore.ChatTakeOver, ChatAsk), all or nothing:
 	// filestore.ErrNotClaimable when any id is not theirs to send.
 	ClaimForChat(ctx context.Context, userID string, ids []string, runID, chat string) error
+	// UnclaimForChat gives back a chat claim whose message was refused
+	// after it: the files are the sender's unsent uploads again.
+	UnclaimForChat(ctx context.Context, userID string, ids []string, runID, chat string) error
 	// Get resolves one attachment by id — ticket attachments belong to the
 	// ticket, not the run, so ForRun cannot find them; the ids ride on
 	// run_created.

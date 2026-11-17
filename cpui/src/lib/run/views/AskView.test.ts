@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
-import type { AskFrame, AskMessage, AskState } from '$lib/domain';
+import type { AskFrame, AskMessage, AskState, Attachment } from '$lib/domain';
 import { fmtClock } from '$lib/core/format';
 import {
 	AT,
@@ -764,6 +764,59 @@ describe('AskView', () => {
 			);
 			expect(screen.getByRole('link', { name: /shot\.png/ })).toHaveAttribute('href', '/a/att-1');
 			expect(screen.getAllByRole('link')).toHaveLength(1);
+		});
+
+		it('shows the files of a question asked elsewhere, re-reading the run’s files for them', async () => {
+			const rs = aViewStore(undefined, {
+				attachments: [anAttachment({ id: 'att-1', filename: 'known.png', mime: 'image/png' })]
+			});
+			const refresh = vi.spyOn(rs, 'refreshFiles').mockImplementation(async () => {
+				rs.attachments = [
+					...rs.attachments,
+					anAttachment({ id: 'att-9', filename: 'theirs.png', mime: 'image/png' })
+				];
+			});
+			const { frame } = await open(withSession(), rs);
+			// Files the run's list already holds, or none, need no re-read.
+			await frame({
+				kind: 'message',
+				sessionId: 's1',
+				message: anAskMessage({ seq: 1, text: 'mine', attachmentIds: ['att-1'] })
+			});
+			await frame({
+				kind: 'message',
+				sessionId: 's1',
+				message: anAskMessage({ seq: 2, role: 'answer', text: 'An answer.' })
+			});
+			expect(refresh).not.toHaveBeenCalled();
+
+			await frame({
+				kind: 'message',
+				sessionId: 's1',
+				message: anAskMessage({ seq: 3, text: 'and this?', attachmentIds: ['att-9'] })
+			});
+			expect(refresh).toHaveBeenCalledOnce();
+			expect(await screen.findByRole('link', { name: /theirs\.png/ })).toHaveAttribute(
+				'href',
+				'/a/att-9'
+			);
+		});
+
+		it('asks in the session it was sent from, whichever is picked while the files go up', async () => {
+			const up = deferred<Attachment[]>();
+			vi.mocked(api.files.upload).mockReturnValue(up.promise);
+			vi.mocked(api.ask.send).mockResolvedValue(anAskMessage({ seq: 3, sessionId: 's2' }));
+			await open(twoSessions());
+			await settled();
+			paste(shot());
+			await userEvent.type(box(), 'More?{Enter}');
+			await choose(sessionPicker(), /^First thing/);
+
+			up.resolve([anAttachment({ id: 'att-1' })]);
+			await vi.waitFor(() =>
+				expect(api.ask.send).toHaveBeenCalledExactlyOnceWith(RUN, 'More?', 's2', ['att-1'])
+			);
+			expect(bubble('First thing')).toBeInTheDocument();
 		});
 	});
 });

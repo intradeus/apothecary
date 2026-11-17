@@ -375,6 +375,42 @@ func RunContract(t *testing.T, open func(t *testing.T) DB, seedTicket func(t *te
 		}
 	})
 
+	t.Run("a chat unclaim gives back exactly that claim", func(t *testing.T) {
+		db := open(t)
+		insertAll(t, db, upload("mine", "u1", t0), upload("other-run", "u1", t0), upload("other-chat", "u1", t0),
+			upload("theirs", "u2", t0), upload("goal", "u1", t0))
+		claim := func(user, id, runID, chat string) {
+			t.Helper()
+			if err := db.ClaimAttachmentsForChat(ctx, user, []string{id}, runID, chat); err != nil {
+				t.Fatal(err)
+			}
+		}
+		claim("u1", "mine", "r1", filestore.ChatAsk)
+		claim("u1", "other-run", "r2", filestore.ChatAsk)
+		claim("u1", "other-chat", "r1", filestore.ChatTakeOver)
+		claim("u2", "theirs", "r1", filestore.ChatAsk)
+		if err := db.ClaimAttachments(ctx, "u1", []string{"goal"}, "", "r1", ""); err != nil {
+			t.Fatal(err)
+		}
+		all := []string{"mine", "other-run", "other-chat", "theirs", "goal", "ghost"}
+		if err := db.UnclaimAttachmentsForChat(ctx, "u1", all, "r1", filestore.ChatAsk); err != nil {
+			t.Fatalf("unclaim = %v", err)
+		}
+		if got := get(t, db, "mine"); !got.Unclaimed() || got.Chat != "" {
+			t.Errorf("mine = %+v, want unclaimed", got)
+		}
+		for id, want := range map[string][2]string{
+			"other-run": {"r2", filestore.ChatAsk}, "other-chat": {"r1", filestore.ChatTakeOver},
+			"theirs": {"r1", filestore.ChatAsk}, "goal": {"r1", ""},
+		} {
+			if got := get(t, db, id); got.RunID != want[0] || got.Chat != want[1] {
+				t.Errorf("%s = %+v, want run %q chat %q", id, got, want[0], want[1])
+			}
+		}
+		// Given back, it can be sent again.
+		claim("u1", "mine", "r1", filestore.ChatAsk)
+	})
+
 	t.Run("a chat claim names its run and one of its chats", func(t *testing.T) {
 		db := open(t)
 		insertAll(t, db, upload("a1", "u1", t0))

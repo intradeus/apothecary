@@ -70,6 +70,10 @@ type AttachmentDB interface {
 	// the user's unclaimed uploads, none is claimed (ErrNotClaimable). An
 	// unknown chat or no run is refused whatever the ids match.
 	ClaimAttachmentsForChat(ctx context.Context, userID string, ids []string, runID, chat string) error
+	// UnclaimAttachmentsForChat undoes that claim: userID's files among ids
+	// that the run's chat holds are unclaimed again. Rows of anyone else,
+	// another run or another chat are left as they are.
+	UnclaimAttachmentsForChat(ctx context.Context, userID string, ids []string, runID, chat string) error
 	AttachmentsForTicket(ctx context.Context, ticketID string) ([]Attachment, error)
 	// AdoptRemoteAttachment gives a ticket's attachment that has no remote
 	// id yet the tracker's id for it (a file imported before remote ids were
@@ -188,6 +192,16 @@ func (s *Attachments) ClaimForChat(ctx context.Context, userID string, ids []str
 		return fmt.Errorf("a message carries at most %d files", MaxUploadFiles)
 	}
 	return s.db.ClaimAttachmentsForChat(ctx, userID, ids, runID, chat)
+}
+
+// UnclaimForChat gives back a chat claim whose message was then refused
+// (its files could not be delivered): they are the sender's unsent uploads
+// again, to send once more or for the orphan sweep.
+func (s *Attachments) UnclaimForChat(ctx context.Context, userID string, ids []string, runID, chat string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.db.UnclaimAttachmentsForChat(ctx, userID, ids, runID, chat)
 }
 
 func (s *Attachments) Get(ctx context.Context, id string) (Attachment, error) {

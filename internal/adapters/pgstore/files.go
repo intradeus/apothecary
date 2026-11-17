@@ -120,6 +120,15 @@ func (s *Store) ClaimAttachmentsForChat(ctx context.Context, userID string, ids 
 	return tx.Commit(ctx)
 }
 
+func (s *Store) UnclaimAttachmentsForChat(ctx context.Context, userID string, ids []string, runID, chat string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE attachments SET run_id=NULL, chat=NULL
+		WHERE id = ANY($1) AND user_id = $2 AND run_id = $3 AND chat = $4
+		  AND ticket_id IS NULL AND ping_id IS NULL`,
+		ids, userID, runID, chat)
+	return err
+}
+
 func (s *Store) AttachmentsForTicket(ctx context.Context, ticketID string) ([]filestore.Attachment, error) {
 	return s.queryAttachments(ctx,
 		`SELECT `+attachmentCols+` FROM attachments WHERE ticket_id=$1 ORDER BY created_at, id`, ticketID)

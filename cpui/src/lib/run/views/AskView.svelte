@@ -111,6 +111,11 @@
 					if (!pane.messages.some((m) => m.seq === f.message.seq)) {
 						pane.messages = [...pane.messages, f.message].sort((a, b) => a.seq - b.seq);
 					}
+					// A question asked elsewhere brings files this run's list
+					// has not seen yet.
+					if (f.message.attachmentIds.some((id) => !rs.attachments.some((a) => a.id === id))) {
+						void rs.refreshFiles();
+					}
 					if (f.message.role === 'answer') delete lives[f.sessionId];
 					if (f.sessionId === selected) toBottom();
 				} else if (f.kind === 'delta') {
@@ -137,6 +142,10 @@
 		if ((!text && !files.length) || sending || busy || !enabled) return;
 		sending = true;
 		error = '';
+		// The session it is asked in is the one on screen now, whichever is
+		// picked while the files go up. None yet: the first question opens
+		// one, and the pane follows it there.
+		const into = selected;
 		// Files go up first; if they cannot, nothing is asked and the draft
 		// and its files stay put.
 		let ids: string[] = [];
@@ -151,9 +160,6 @@
 		}
 		draft = '';
 		try {
-			// No session yet: the first question opens one, and the pane
-			// follows it there.
-			const into = selected;
 			const q = await api.ask.send(rs.runId, text, into || undefined, ids);
 			files = [];
 			// The question's files join the run's record.

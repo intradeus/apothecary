@@ -409,7 +409,7 @@ func (svc *Service) NewThread(ctx context.Context, runID string) (ThreadState, e
 	if len(ths) > 0 {
 		model = ths[len(ths)-1].Model
 	}
-	th, err := svc.openThread(ctx, s, model)
+	th, err := svc.openThread(ctx, s, Thread{RunID: runID, ID: svc.newID(), Model: model})
 	if err != nil {
 		return ThreadState{}, err
 	}
@@ -418,9 +418,8 @@ func (svc *Service) NewThread(ctx context.Context, runID string) (ThreadState, e
 
 // openThread stores a new thread of the run and tells the stream; the
 // caller holds the run's creating lock.
-func (svc *Service) openThread(ctx context.Context, s *askSetup, model string) (Thread, error) {
+func (svc *Service) openThread(ctx context.Context, s *askSetup, th Thread) (Thread, error) {
 	runID := s.v.RunID
-	th := Thread{RunID: runID, ID: svc.newID(), Model: model}
 	if err := svc.Store.SaveAskThread(ctx, th); err != nil {
 		return Thread{}, err
 	}
@@ -440,27 +439,42 @@ func (svc *Service) openThread(ctx context.Context, s *askSetup, model string) (
 // thread is the run's thread the caller names, or — none named — its
 // latest, opened when the run has none yet.
 func (svc *Service) thread(ctx context.Context, s *askSetup, a *askRun, threadID string) (Thread, error) {
+	th, fresh, err := svc.findThread(ctx, s, a, threadID)
+	if err != nil || !fresh {
+		return th, err
+	}
+	defer a.creating.Unlock()
+	return svc.openThread(ctx, s, th)
+}
+
+// findThread is the run's thread the caller names, or — none named — its
+// latest. When the run has none yet, it is a new one, fresh: not stored, and
+// the run's creating lock left held, for the caller to store it
+// (openThread) or forget it, then unlock — so two first questions still
+// open one thread, not two.
+func (svc *Service) findThread(ctx context.Context, s *askSetup, a *askRun, threadID string) (Thread, bool, error) {
 	runID := s.v.RunID
 	if threadID != "" {
 		th, ok, err := svc.Store.AskThread(ctx, runID, threadID)
 		if err != nil {
-			return Thread{}, err
+			return Thread{}, false, err
 		}
 		if !ok {
-			return Thread{}, fmt.Errorf("ask session %q of run %s not found", threadID, runID)
+			return Thread{}, false, fmt.Errorf("ask session %q of run %s not found", threadID, runID)
 		}
-		return th, nil
+		return th, false, nil
 	}
 	a.creating.Lock()
-	defer a.creating.Unlock()
 	ths, err := svc.Store.AskThreads(ctx, runID)
 	if err != nil {
-		return Thread{}, err
+		a.creating.Unlock()
+		return Thread{}, false, err
 	}
 	if len(ths) > 0 {
-		return ths[len(ths)-1], nil
+		a.creating.Unlock()
+		return ths[len(ths)-1], false, nil
 	}
-	return svc.openThread(ctx, s, "")
+	return Thread{RunID: runID, ID: svc.newID()}, true, nil
 }
 
 // record appends a message, one at a time per run: the store numbers a
@@ -494,10 +508,15 @@ func (svc *Service) Ask(ctx context.Context, runID, threadID, userID, text strin
 		return Message{}, fmt.Errorf("%w: %s", ErrOff, s.reason)
 	}
 	a := svc.state(runID)
-	th, err := svc.thread(ctx, s, a, threadID)
+	th, fresh, err := svc.findThread(ctx, s, a, threadID)
 	if err != nil {
 		s.release()
 		return Message{}, err
+	}
+	if fresh {
+		// A run's first thread is stored with its first question: one
+		// refused leaves the pane as it was.
+		defer a.creating.Unlock()
 	}
 	svc.mu.Lock()
 	t := a.thread(th.ID)
@@ -511,6 +530,9 @@ func (svc *Service) Ask(ctx context.Context, runID, threadID, userID, text strin
 	free := func() {
 		svc.mu.Lock()
 		t.busy = false
+		if fresh {
+			delete(a.threads, th.ID)
+		}
 		svc.mu.Unlock()
 		s.release()
 	}
@@ -519,6 +541,12 @@ func (svc *Service) Ask(ctx context.Context, runID, threadID, userID, text strin
 	if err != nil {
 		free()
 		return Message{}, err
+	}
+	if fresh {
+		if th, err = svc.openThread(ctx, s, th); err != nil {
+			free()
+			return Message{}, err
+		}
 	}
 	q, err := svc.record(ctx, a, Message{RunID: runID, ThreadID: th.ID, ID: svc.newID(), Role: RoleQuestion, Text: event.CleanText(text), UserID: userID, AttachmentIDs: attachmentIDs})
 	if err != nil {
