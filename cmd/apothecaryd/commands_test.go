@@ -357,6 +357,9 @@ func TestEnvcheckOfAnUnresolvableProject(t *testing.T) {
 	}
 	conf := confstore.New(openDSN(t, dsn), key)
 	conf.KindValid = registry(true, nil).Valid
+	if _, err := conf.EnsureProvisioner(context.Background(), "fake", "dev-workspaces"); err != nil {
+		t.Fatal(err)
+	}
 	if err := seedDevProject(context.Background(), conf); err != nil {
 		t.Fatal(err)
 	}

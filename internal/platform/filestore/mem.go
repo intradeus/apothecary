@@ -3,6 +3,7 @@ package filestore
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -53,11 +54,43 @@ func ownerChecks(ticketID, runID, pingID string) error {
 	return nil
 }
 
+// chatChecks are the attachments table's CHECKs on chat and chat_name.
+func chatChecks(chat, chatName, runID, pingID string) error {
+	if (chat == "") != (chatName == "") {
+		return fmt.Errorf("attachment: a chat file has a name in its chat, and no other does")
+	}
+	if chat == "" {
+		return nil
+	}
+	if !ValidChat(chat) {
+		return fmt.Errorf("attachment: unknown chat %q", chat)
+	}
+	if runID == "" || pingID != "" {
+		return fmt.Errorf("attachment: a chat file is its run's, and no answer's")
+	}
+	return nil
+}
+
+// chatNames is attachments_chat_name_idx's view of a run's chat: the names
+// its files are delivered as. Caller holds mu.
+func (m *Mem) chatNames(runID, chat string) map[string]bool {
+	taken := map[string]bool{}
+	for _, x := range m.attachments {
+		if x.RunID == runID && x.Chat == chat {
+			taken[x.ChatName] = true
+		}
+	}
+	return taken
+}
+
 func (m *Mem) InsertAttachment(_ context.Context, a Attachment) error {
-	if err := storable(a.ID, a.UserID, a.TicketID, a.RunID, a.PingID, a.Filename, a.Mime, a.SHA256, a.RemoteID); err != nil {
+	if err := storable(a.ID, a.UserID, a.TicketID, a.RunID, a.PingID, a.Filename, a.Mime, a.SHA256, a.RemoteID, a.Chat, a.ChatName); err != nil {
 		return err
 	}
 	if err := ownerChecks(a.TicketID, a.RunID, a.PingID); err != nil {
+		return err
+	}
+	if err := chatChecks(a.Chat, a.ChatName, a.RunID, a.PingID); err != nil {
 		return err
 	}
 	m.mu.Lock()
@@ -67,6 +100,9 @@ func (m *Mem) InsertAttachment(_ context.Context, a Attachment) error {
 	}
 	if m.remoteTaken(a.TicketID, a.RemoteID, nil) {
 		return fmt.Errorf("attachment %s: ticket %s already holds remote file %s", a.ID, a.TicketID, a.RemoteID)
+	}
+	if a.Chat != "" && m.chatNames(a.RunID, a.Chat)[a.ChatName] {
+		return fmt.Errorf("attachment %s: run %s's %s chat already holds %s", a.ID, a.RunID, a.Chat, a.ChatName)
 	}
 	a.CreatedAt = instant(a.CreatedAt)
 	m.attachments[a.ID] = a
@@ -159,6 +195,47 @@ func (m *Mem) ClaimAttachments(_ context.Context, userID string, ids []string, t
 		a := m.attachments[id]
 		a.TicketID, a.RunID, a.PingID = ticketID, runID, pingID
 		m.attachments[id] = a
+	}
+	return nil
+}
+
+// ClaimAttachmentsForChat mirrors the SQL transaction: every distinct id must
+// be the user's unclaimed upload, or none is claimed; each is named past the
+// chat's names, in the order ids gives them.
+func (m *Mem) ClaimAttachmentsForChat(_ context.Context, userID string, ids []string, runID, chat string) error {
+	if runID == "" || !ValidChat(chat) {
+		return fmt.Errorf("claim: a chat file names its run and one of its chats, not %q", chat)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var distinct []string
+	for _, id := range ids {
+		a, ok := m.attachments[id]
+		if !ok || !a.Unclaimed() || a.UserID != userID {
+			return ErrNotClaimable
+		}
+		if !slices.Contains(distinct, id) {
+			distinct = append(distinct, id)
+		}
+	}
+	taken := m.chatNames(runID, chat)
+	for _, id := range distinct {
+		a := m.attachments[id]
+		a.RunID, a.Chat, a.ChatName = runID, chat, ChatFileName(a.Filename, taken)
+		m.attachments[id] = a
+	}
+	return nil
+}
+
+func (m *Mem) UnclaimAttachmentsForChat(_ context.Context, userID string, ids []string, runID, chat string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, id := range ids {
+		a, ok := m.attachments[id]
+		if ok && a.UserID == userID && a.RunID == runID && a.Chat == chat && chat != "" && a.TicketID == "" && a.PingID == "" {
+			a.RunID, a.Chat, a.ChatName = "", "", ""
+			m.attachments[id] = a
+		}
 	}
 	return nil
 }

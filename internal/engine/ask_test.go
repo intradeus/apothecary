@@ -84,7 +84,7 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 	frames, stop := h.askPane().Watch(runID)
 	defer stop()
 
-	q, err := h.askPane().Ask(ctx, runID, "", "u1", "  where is the entrypoint?  ")
+	q, err := h.askPane().Ask(ctx, runID, "", "u1", "  where is the entrypoint?  ", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 	if st, _ := h.askPane().State(ctx, runID); len(st.Threads) != 1 || st.Threads[0].ID != q.ThreadID || st.Threads[0].Model != "fake/model" {
 		t.Fatalf("threads = %+v", st.Threads)
 	}
-	if _, err := h.askPane().Ask(ctx, runID, q.ThreadID, "u1", "and again?"); !errors.Is(err, askstore.ErrBusy) {
+	if _, err := h.askPane().Ask(ctx, runID, q.ThreadID, "u1", "and again?", nil); !errors.Is(err, askstore.ErrBusy) {
 		t.Errorf("second question while answering = %v, want askstore.ErrBusy", err)
 	}
 	close(askGate)
@@ -138,7 +138,7 @@ func TestAskPaneAnswersBesideTheRunningStage(t *testing.T) {
 	if err := h.askPane().SetModel(ctx, runID, q.ThreadID, "other/model"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.askPane().Ask(ctx, runID, q.ThreadID, "u1", "sure?"); err != nil {
+	if _, err := h.askPane().Ask(ctx, runID, q.ThreadID, "u1", "sure?", nil); err != nil {
 		t.Fatal(err)
 	}
 	waitUntil(t, "the second answer", func() bool {
@@ -208,7 +208,7 @@ func TestAskPaneStartsAFreshSessionWhenItsOldOneIsGone(t *testing.T) {
 	if err := h.askPane().Store.SaveAskThread(ctx, askstore.Thread{RunID: runID, ID: "t1", SessionID: "gone-sess"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.askPane().Ask(ctx, runID, "t1", "u1", "where?"); err != nil {
+	if _, err := h.askPane().Ask(ctx, runID, "t1", "u1", "where?", nil); err != nil {
 		t.Fatal(err)
 	}
 	waitUntil(t, "the answer", func() bool {
@@ -231,7 +231,7 @@ func TestAskPaneStartsAFreshSessionWhenItsOldOneIsGone(t *testing.T) {
 		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "Halfway"})
 		return agentport.AgentResult{TurnsUsed: 1}, errors.New("the provider hung up")
 	}
-	if _, err := h.askPane().Ask(ctx, runID, "t1", "u1", "and?"); err != nil {
+	if _, err := h.askPane().Ask(ctx, runID, "t1", "u1", "and?", nil); err != nil {
 		t.Fatal(err)
 	}
 	waitUntil(t, "the second answer", func() bool {
@@ -267,7 +267,7 @@ func TestAskPaneIsOffWithoutASection(t *testing.T) {
 	if st.Enabled || !strings.Contains(st.Reason, "no Ask section") {
 		t.Errorf("state = %+v", st)
 	}
-	if _, err := h.askPane().Ask(ctx, runID, "", "u1", "hello?"); !errors.Is(err, askstore.ErrOff) {
+	if _, err := h.askPane().Ask(ctx, runID, "", "u1", "hello?", nil); !errors.Is(err, askstore.ErrOff) {
 		t.Errorf("ask = %v, want askstore.ErrOff", err)
 	}
 	if err := h.askPane().SetModel(ctx, runID, "", "x/y"); !errors.Is(err, askstore.ErrOff) {

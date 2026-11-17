@@ -71,10 +71,13 @@ func (b *inbox) Take() []agentport.UserMessage {
 	return q
 }
 
-// msgReq is a human message on its way into the run loop.
+// msgReq is a human message on its way into the run loop, with the files
+// its sender attached (claimed by the loop once it accepts the message).
 type msgReq struct {
-	msg agentport.UserMessage
-	ack chan error
+	msg           agentport.UserMessage
+	userID        string
+	attachmentIDs []string
+	ack           chan error
 }
 
 // formatMessages renders human messages for the agent. Kept identical to

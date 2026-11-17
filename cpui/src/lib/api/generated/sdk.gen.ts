@@ -161,6 +161,9 @@ import type {
 	DownloadAttachmentData,
 	DownloadAttachmentErrors,
 	DownloadAttachmentResponses,
+	DownloadRunFilesData,
+	DownloadRunFilesErrors,
+	DownloadRunFilesResponses,
 	DownloadSnapshotData,
 	DownloadSnapshotErrors,
 	DownloadSnapshotResponses,
@@ -254,6 +257,9 @@ import type {
 	GetProjectMrErrors,
 	GetProjectMrResponses,
 	GetProjectResponses,
+	GetProvisionerData,
+	GetProvisionerErrors,
+	GetProvisionerResponses,
 	GetReadyzData,
 	GetReadyzErrors,
 	GetReadyzResponses,
@@ -595,6 +601,9 @@ import type {
 	TestIntegrationData,
 	TestIntegrationErrors,
 	TestIntegrationResponses,
+	TestProvisionerData,
+	TestProvisionerErrors,
+	TestProvisionerResponses,
 	UpdateAutomationData,
 	UpdateAutomationErrors,
 	UpdateAutomationResponses,
@@ -613,6 +622,9 @@ import type {
 	UpdateProjectData,
 	UpdateProjectErrors,
 	UpdateProjectResponses,
+	UpdateProvisionerData,
+	UpdateProvisionerErrors,
+	UpdateProvisionerResponses,
 	UpdateScorecardData,
 	UpdateScorecardErrors,
 	UpdateScorecardResponses,
@@ -1873,6 +1885,8 @@ export const listIntegrations = <ThrowOnError extends boolean = false>(
 
 /**
  * Configure an integration
+ *
+ * Repositories, harnesses and ticket sources; a provisioner is the instance's (PUT /api/provisioner), 400 here.
  */
 export const createIntegration = <ThrowOnError extends boolean = false>(
 	options: Options<CreateIntegrationData, ThrowOnError>
@@ -3998,6 +4012,85 @@ export const listProviders = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * The instance's provisioner (secrets masked)
+ *
+ * Every workshop's workspaces are built on it. 404 while the instance has none (a deployment without APOTHECARY_K8S_NAMESPACE).
+ */
+export const getProvisioner = <ThrowOnError extends boolean = false>(
+	options?: Options<GetProvisionerData, ThrowOnError>
+): RequestResult<GetProvisionerResponses, GetProvisionerErrors, ThrowOnError> =>
+	(options?.client ?? client).get<GetProvisionerResponses, GetProvisionerErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/provisioner',
+		...options
+	});
+
+/**
+ * Change the instance's provisioner (admin; secrets merge: present replaces, "" deletes, absent keeps)
+ *
+ * An empty field takes the deployment's value (APOTHECARY_K8S_*). Runs pick the change up on their next workspace.
+ */
+export const updateProvisioner = <ThrowOnError extends boolean = false>(
+	options: Options<UpdateProvisionerData, ThrowOnError>
+): RequestResult<UpdateProvisionerResponses, UpdateProvisionerErrors, ThrowOnError> =>
+	(options.client ?? client).put<UpdateProvisionerResponses, UpdateProvisionerErrors, ThrowOnError>(
+		{
+			security: [
+				{
+					in: 'cookie',
+					name: 'apothecary_session',
+					type: 'apiKey'
+				},
+				{
+					key: 'personalToken',
+					scheme: 'bearer',
+					type: 'http'
+				}
+			],
+			url: '/api/provisioner',
+			...options,
+			headers: {
+				'Content-Type': 'application/json',
+				...options.headers
+			}
+		}
+	);
+
+/**
+ * Check the instance's provisioner reaches its cluster (admin)
+ */
+export const testProvisioner = <ThrowOnError extends boolean = false>(
+	options?: Options<TestProvisionerData, ThrowOnError>
+): RequestResult<TestProvisionerResponses, TestProvisionerErrors, ThrowOnError> =>
+	(options?.client ?? client).post<TestProvisionerResponses, TestProvisionerErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/provisioner/test',
+		...options
+	});
+
+/**
  * List one's runs, newest first
  */
 export const listRuns = <ThrowOnError extends boolean = false>(
@@ -4119,7 +4212,7 @@ export const getAsk = <ThrowOnError extends boolean = false>(
 /**
  * Ask one of the run's read-only sessions a question
  *
- * The question is recorded in the thread named by thread_id (none: the run's latest, opened when the run has none) and returned at once; the answer arrives on the pane's stream. 404 for an unknown thread; 409 when the pane is off or an answer is being written in that thread.
+ * The question is recorded in the thread named by thread_id (none: the run's latest, opened when the run has none) and returned at once; the answer arrives on the pane's stream. A question may carry files you uploaded (attachment_ids, at most 8; text is then optional): they are delivered read-only under .apothecary/attachments/ask/ and the question names them. 400 when any of them is not one of your unsent uploads, and nothing is recorded. 404 for an unknown thread; 409 when the pane is off or an answer is being written in that thread.
  */
 export const askRun = <ThrowOnError extends boolean = false>(
 	options: Options<AskRunData, ThrowOnError>
@@ -4493,6 +4586,31 @@ export const getRunFiles = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * Everything on a run's Record, in one zip
+ *
+ * outputs/<stage>-<attempt>/, logs/<stage>-<attempt>/ and attachments/. A file whose content is no longer stored is left out and named in MISSING.txt.
+ */
+export const downloadRunFiles = <ThrowOnError extends boolean = false>(
+	options: Options<DownloadRunFilesData, ThrowOnError>
+): RequestResult<DownloadRunFilesResponses, DownloadRunFilesErrors, ThrowOnError> =>
+	(options.client ?? client).get<DownloadRunFilesResponses, DownloadRunFilesErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/files.zip',
+		...options
+	});
+
+/**
  * Hand the task back to the agent
  *
  * Closes the take-over on the record (duration, turns, cost) and sends the session the handback prompt — when the turn in flight ends, if one is. The stage ends as usual once that turn does. 409 when nobody holds it.
@@ -4612,7 +4730,7 @@ export const getStageLog = <ThrowOnError extends boolean = false>(
 /**
  * Send a message to the agent you took over
  *
- * Delivered into the agent's live session when its turn ends. 409 without a take-over: nobody else talks to the agent. A run parked on the holder of a take-over is woken by it.
+ * Delivered into the agent's live session when its turn ends. 409 without a take-over: nobody else talks to the agent. A run parked on the holder of a take-over is woken by it. A message may carry files you uploaded (attachment_ids, at most 8; text is then optional): they are delivered read-only under .apothecary/attachments/takeover/ and the message names them. 400 when any of them is not one of your unsent uploads, and nothing is recorded.
  */
 export const sendRunMessage = <ThrowOnError extends boolean = false>(
 	options: Options<SendRunMessageData, ThrowOnError>

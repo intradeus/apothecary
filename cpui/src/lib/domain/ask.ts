@@ -17,6 +17,8 @@ export interface AskMessage {
 	turns: number;
 	/** An answer that failed: why. */
 	error?: string;
+	/** A question's files (uploads owned by the run). */
+	attachmentIds: string[];
 	at: string;
 }
 

@@ -234,7 +234,8 @@ func TestDevBootRunsAFlowAndRecoversIt(t *testing.T) {
 		}
 	}
 
-	// The seed is ownerless; a dev hands it to the first account by hand.
+	// The seed is ownerless; a dev hands it to the first account by hand —
+	// all but the provisioner, which stays the instance's.
 	u, err := a.store.GetUserByLogin(ctx, "lu")
 	if err != nil {
 		t.Fatal(err)
@@ -244,8 +245,11 @@ func TestDevBootRunsAFlowAndRecoversIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close(ctx)
-	for _, table := range []string{"projects", "integrations"} {
-		if _, err := db.Exec(ctx, "UPDATE "+table+" SET user_id=$1", u.ID); err != nil {
+	for _, stmt := range []string{
+		"UPDATE projects SET user_id=$1",
+		"UPDATE integrations SET user_id=$1 WHERE port <> 'provisioner'",
+	} {
+		if _, err := db.Exec(ctx, stmt, u.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -533,10 +537,18 @@ func TestSeedDevProject(t *testing.T) {
 	conf := confstore.New(store, key)
 	conf.KindValid = reg.Valid
 	ctx := context.Background()
+	// Boot ensures the instance's provisioner before it seeds.
+	prov, err := conf.EnsureProvisioner(ctx, "fake", "dev-workspaces")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := seedDevProject(ctx, conf); err != nil {
 		t.Fatal(err)
 	}
 	p, err := conf.GetProjectByName(ctx, "", "dev")
+	if err == nil && p.ProvisionerID != prov.ID {
+		t.Errorf("dev builds on %q, want the instance's %q", p.ProvisionerID, prov.ID)
+	}
 	if err != nil || p.DefaultFlow != "dev" {
 		t.Fatalf("seeded = %+v, %v", p, err)
 	}

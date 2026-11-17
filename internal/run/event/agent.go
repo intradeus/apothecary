@@ -126,6 +126,9 @@ type MessageQueued struct {
 	MessageID string `json:"message_id"`
 	Text      string `json:"text"`
 	StageID   string `json:"stage_id,omitempty"`
+	// AttachmentIDs are the files the holder attached to the message: owned
+	// by the run in its take-over chat, delivered under takeover/.
+	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 }
 
 type MessageDelivered struct {

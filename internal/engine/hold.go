@@ -70,14 +70,14 @@ func (e *Engine) Release(runID, userID string) error {
 			return err
 		}
 	}
-	return e.wakeHeld(context.Background(), runID, func(v run.View) []event.Payload {
+	return e.wakeHeld(context.Background(), runID, func(v run.View) ([]event.Payload, error) {
 		rel := &event.HoldReleased{StageID: v.Hold.StageID, Attempt: v.Hold.Attempt, UserID: userID,
 			Reason: event.HoldReleasedByUser, DurationMS: max(e.clock().Sub(v.Hold.Since).Milliseconds(), 0),
 			HoldSpend: event.HoldSpend{Turns: v.Hold.Turns, Messages: v.Hold.Messages}}
 		if v.Hold.CostUSD > 0 {
 			rel.Usage = &event.Usage{CostUSD: v.Hold.CostUSD}
 		}
-		return []event.Payload{rel}
+		return []event.Payload{rel}, nil
 	})
 }
 
@@ -127,8 +127,9 @@ func (e *Engine) dormantView(ctx context.Context, runID string) (run.View, error
 // it a loop again — the message or the release it was waiting for. Like
 // answerDormant, it is the one path that writes to a dormant run's log from
 // outside its goroutine, serialized by wakeMu; a loop that appeared in the
-// meantime owns the log, and refusing beats writing behind it.
-func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View) []event.Payload) error {
+// meantime owns the log, and refusing beats writing behind it. build runs
+// once the run is found waiting on its holder; its error appends nothing.
+func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View) ([]event.Payload, error)) error {
 	e.wakeMu.Lock()
 	defer e.wakeMu.Unlock()
 
@@ -154,7 +155,11 @@ func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View
 		// own): the loop that is owed, or the answer, is what moves it.
 		return fmt.Errorf("run %s: %w", runID, errRunBusy)
 	}
-	payloads := append(build(v), &event.RunUnpaused{Reason: event.UnpauseHold})
+	payloads, err := build(v)
+	if err != nil {
+		return err
+	}
+	payloads = append(payloads, &event.RunUnpaused{Reason: event.UnpauseHold})
 	if err := e.AppendEvents(ctx, runID, payloads...); err != nil {
 		return err
 	}

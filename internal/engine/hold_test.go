@@ -141,7 +141,7 @@ func TestTakeOverKeepsTheSessionOpenUntilReleased(t *testing.T) {
 
 	// The turn ends under the hold: the stage does NOT complete. The holder's
 	// message is the next turn.
-	id, err := h.e.SendMessage(runID, "use sqlite")
+	id, err := h.e.SendMessage(runID, "u1", "use sqlite", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestHoldParksOnAQuietHolderAndWakesOnTheirMessage(t *testing.T) {
 	h.e.Wait(runID)
 	h.e.cfg.AskHumanHold = time.Hour
 
-	id, err := h.e.SendMessage(runID, "switch to sqlite")
+	id, err := h.e.SendMessage(runID, "u1", "switch to sqlite", nil)
 	if err != nil {
 		t.Fatalf("message to a parked hold: %v", err)
 	}
@@ -498,7 +498,7 @@ func TestStartHeldOpensInTheOwnersHands(t *testing.T) {
 	}
 
 	// The owner's message is the next turn, in the same session.
-	id, err := h.e.SendMessage(runID, "smaller, please")
+	id, err := h.e.SendMessage(runID, "owner", "smaller, please", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -619,7 +619,7 @@ func TestStartHeldAdmitsTheOwnerBeforeItsPrompt(t *testing.T) {
 		}
 		var id string
 		inOpeningWindow(t, h, s, runID, func() (err error) {
-			id, err = h.e.SendMessage(runID, "smaller, please")
+			id, err = h.e.SendMessage(runID, "owner", "smaller, please", nil)
 			return err
 		})
 		waitHeldNotices(t, h, 1)
@@ -661,7 +661,7 @@ func TestStartHeldAdmitsTheOwnerBeforeItsPrompt(t *testing.T) {
 		}
 		var id string
 		inOpeningWindow(t, h, s, runID, func() (err error) {
-			if id, err = h.e.SendMessage(runID, "smaller, please"); err != nil {
+			if id, err = h.e.SendMessage(runID, "owner", "smaller, please", nil); err != nil {
 				return err
 			}
 			evs, err := h.e.store.Events(context.Background(), runID, 0)
@@ -802,7 +802,7 @@ func TestStartHeldParksOnAQuietOwner(t *testing.T) {
 		t.Errorf("held notifications = %d, want one", n)
 	}
 
-	if _, err := h.e.SendMessage(runID, "go on"); err != nil {
+	if _, err := h.e.SendMessage(runID, "owner", "go on", nil); err != nil {
 		t.Fatalf("message to a parked start hold: %v", err)
 	}
 	if res := waitEvent[*event.StageResumed](t, h, runID); res.Reason != event.ResumeMessage {
@@ -966,7 +966,7 @@ func TestStartHeldOpeningPromptLandsWhole(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = inWindow(t, s, func() error {
-		_, err := h.e.SendMessage(runID, "smaller, please")
+		_, err := h.e.SendMessage(runID, "owner", "smaller, please", nil)
 		return err
 	})
 	if err == nil || !strings.Contains(err.Error(), "db down") {
@@ -1058,7 +1058,7 @@ func TestRecoveredStartHoldFollowsTheOpeningTurn(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitHeldNotices(t, h, 1)
-			if _, err := h.e.SendMessage("r-sr", "smaller, please"); err != nil {
+			if _, err := h.e.SendMessage("r-sr", "owner", "smaller, please", nil); err != nil {
 				t.Fatal(err)
 			}
 			waitUntil(t, "the owner's turn to end", func() bool {

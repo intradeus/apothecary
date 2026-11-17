@@ -788,7 +788,7 @@ Where references appear:
 | Where | What |
 |---|---|
 | the run journal (`run.journal`, §4; `journal_read`, §9) | every entry ends with its reference in brackets; the tool takes one, and writes its files at `.apothecary/journal/<reference>.md` (`run.md` for the whole run) |
-| attachments (§9) | an answer's files are delivered under `.apothecary/attachments/<ping's reference>/` (`build#3/decision#1/screenshot.png`); the task's under `.apothecary/attachments/ticket/` |
+| attachments (§9) | an answer's files are delivered under `.apothecary/attachments/<ping's reference>/` (`build#3/decision#1/screenshot.png`); the task's under `.apothecary/attachments/ticket/`; a take-over message's under `.apothecary/attachments/takeover/`, an Ask question's under `.apothecary/attachments/ask/` |
 | files | none: a file keeps a name of its own, and the reference stands beside it — the folder it is delivered in, the chip beside it on the record. An attempt's log is `<stage>.log` (`review.log`; the provisioning log `_provision.log`), whatever its attempt; no stored file name carries `#` |
 | the run page | a chip that copies the reference, wherever an attempt or a ping is named: the timeline, the transcript, the record, the inbox and the ping card, the run table, the flow view, the dossier |
 
@@ -2402,6 +2402,12 @@ harness, owns the exchange:
   `.apothecary/attachments/<the ping's reference>/` (§1 *References*:
   `build#3/decision#1/screenshot.png`), kept separate from the agent's own
   `artifacts/`; the task's files are under `.apothecary/attachments/ticket/`.
+  A message in the run's two chats can carry files too: a take-over
+  message's land under `.apothecary/attachments/takeover/`, an Ask
+  question's under `.apothecary/attachments/ask/`. The message names their
+  paths, and they are not among the task's files a later prompt lists. A
+  chat's file is named when its message is accepted, after the chat's
+  earlier ones, and keeps that path whatever is sent later.
   Each keeps its stored name; a second with the same name in one folder is
   `name-2.ext`, in the order they were attached, so a re-delivery after a
   restart lands every file where the agent was told.

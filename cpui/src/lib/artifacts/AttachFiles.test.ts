@@ -144,6 +144,43 @@ describe('AttachFiles', () => {
 		});
 	});
 
+	describe('adding from elsewhere', () => {
+		it('takes what add() offers, as a drop would', async () => {
+			const { component, props } = await setup();
+			const file = aFile('shot.png', 'image/png');
+			flushSync(() => component.add([file]));
+			expect(props.files).toEqual([file]);
+		});
+
+		it('refuses through add() what a drop refuses', async () => {
+			limits.maxFiles = 8;
+			const eight = Array.from({ length: 8 }, (_, i) => aFile(`f${i}.txt`));
+			const { component, props } = await setup(eight);
+			flushSync(() =>
+				component.add([
+					aFile('big.txt', 'text/plain', 2048),
+					aFile('x.zip', 'application/zip'),
+					aFile('ninth.txt')
+				])
+			);
+			expect(props.files).toEqual(eight);
+			expect(screen.getByText('over the 1 KB limit')).toBeInTheDocument();
+			expect(screen.getByText('application/zip is not allowed')).toBeInTheDocument();
+			expect(screen.getByText('ninth.txt')).toBeInTheDocument();
+		});
+
+		it('holds its selection as it is while disabled', async () => {
+			const first = aFile('a.txt');
+			const { component, props } = await setup([first], { disabled: true });
+			flushSync(() => component.add([aFile('b.txt'), aFile('big.txt', 'text/plain', 2048)]));
+			await drop(aFile('c.txt'));
+			expect(props.files).toEqual([first]);
+			expect(screen.queryByText('over the 1 KB limit')).not.toBeInTheDocument();
+			expect(zone()).toBeDisabled();
+			expect(screen.queryByRole('button', { name: 'Remove a.txt' })).not.toBeInTheDocument();
+		});
+	});
+
 	describe('refusing a file', () => {
 		it('refuses one over the size limit, with the limit', async () => {
 			const { input, props } = await setup();

@@ -158,9 +158,9 @@
 			},
 			{
 				group: 'go' as const,
-				label: t('shell.palette.limits'),
-				glyph: I.limits,
-				run: go(to.system('limits'))
+				label: t('shell.palette.provisioner'),
+				glyph: I.provisioner,
+				run: go(to.system('provisioner'))
 			},
 			{
 				group: 'do' as const,

@@ -345,6 +345,36 @@ func TestClaimNeedsExactlyOneOwner(t *testing.T) {
 	}
 }
 
+// A chat message carries as many files as one upload request, and one with
+// none claims nothing.
+func TestClaimForChatLimits(t *testing.T) {
+	ctx := context.Background()
+	att, _, mem, _ := newStores(t)
+	if err := att.ClaimForChat(ctx, "u", nil, "", ""); err != nil {
+		t.Errorf("no ids = %v", err)
+	}
+	var ids []string
+	for range MaxUploadFiles + 1 {
+		a, err := att.Save(ctx, "u", "a.txt", "text/plain", strings.NewReader("a"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, a.ID)
+	}
+	if err := att.ClaimForChat(ctx, "u", ids, "r1", ChatTakeOver); err == nil || !strings.Contains(err.Error(), "at most 8 files") {
+		t.Errorf("too many = %v", err)
+	}
+	if rows, _ := mem.AttachmentsForRun(ctx, "r1"); len(rows) != 0 {
+		t.Errorf("a refused claim took %d files", len(rows))
+	}
+	if err := att.ClaimForChat(ctx, "u", ids[:MaxUploadFiles], "r1", ChatTakeOver); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ := mem.AttachmentsForRun(ctx, "r1"); len(rows) != MaxUploadFiles || rows[0].Chat != ChatTakeOver {
+		t.Errorf("claimed = %+v", rows)
+	}
+}
+
 // The lifecycle of an upload's rows, by owner: bytes come back, a run's rows
 // go with it, the ping link holds.
 func TestAttachmentOwnersAndBytes(t *testing.T) {

@@ -23,6 +23,9 @@ type AskRequest struct {
 	// ThreadID names the thread; empty: the run's latest, opened when the
 	// run has none.
 	ThreadID string `json:"thread_id,omitempty"`
+	// AttachmentIDs are files you uploaded (POST /api/attachments), delivered
+	// into the workspace under ask/ for the session to read.
+	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 }
 
 // AskModelRequest picks the model an Ask thread answers with from here on.
@@ -48,7 +51,7 @@ func (s *Server) postAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	m, err := s.Ask.Ask(r.Context(), r.PathValue("id"), body.ThreadID, p.User.ID, body.Text)
+	m, err := s.Ask.Ask(r.Context(), r.PathValue("id"), body.ThreadID, p.User.ID, body.Text, body.AttachmentIDs)
 	if err != nil {
 		writeErr(w, askStatus(err), err.Error())
 		return

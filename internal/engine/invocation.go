@@ -340,12 +340,21 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				req.ack <- ErrNotHeld
 				continue
 			}
-			q := &event.MessageQueued{MessageID: req.msg.ID, Text: req.msg.Text, StageID: st.ID}
+			// Accepted: its files are claimed now, all or nothing, so a
+			// refused message leaves them its sender's and records nothing.
+			paths, err := x.takeOverFiles(req.userID, req.attachmentIDs)
+			if err != nil {
+				req.ack <- err
+				continue
+			}
+			q := &event.MessageQueued{MessageID: req.msg.ID, Text: req.msg.Text, StageID: st.ID, AttachmentIDs: req.attachmentIDs}
 			if err := x.append(q); err != nil {
 				req.ack <- err
 				return invocation{}, err
 			}
-			io.inbox.push(req.msg)
+			msg := req.msg
+			msg.Text = withFilesNote(msg.Text, paths)
+			io.inbox.push(msg)
 			req.ack <- nil
 		case req := <-x.h.holds:
 			var err error

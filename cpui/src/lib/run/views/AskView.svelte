@@ -15,6 +15,8 @@
 	import Loading from '$lib/ui/Loading.svelte';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import Select from '$lib/ui/Select.svelte';
+	import AttachFiles from '$lib/artifacts/AttachFiles.svelte';
+	import FileChips, { type StoredFile } from '$lib/artifacts/FileChips.svelte';
 	import type { RunStore } from '../store.svelte';
 
 	let { rs, visible }: { rs: RunStore; visible: boolean } = $props();
@@ -24,6 +26,9 @@
 	let error = $state('');
 	let draft = $state('');
 	let sending = $state(false);
+	/** The question's files are going up: the box and its files are locked,
+	 *  so what is asked is what was on screen at Enter. */
+	let uploading = $state(false);
 	let pickingModel = $state(false);
 	let creating = $state(false);
 	/** The session on screen ('': none yet — the run has no session). */
@@ -33,6 +38,8 @@
 	let lives = $state<Record<string, { text: string; tool: string }>>({});
 	let scroller = $state<HTMLDivElement | null>(null);
 	let ta = $state<HTMLTextAreaElement | null>(null);
+	let files = $state<File[]>([]);
+	let picker = $state<ReturnType<typeof AttachFiles> | null>(null);
 
 	const sessions = $derived(pane?.sessions ?? []);
 	const current = $derived(sessions.find((s) => s.id === selected) ?? null);
@@ -59,6 +66,10 @@
 		}))
 	);
 
+	/** Whether some of these files are ones the run's list has not seen yet
+	 *  (a question asked elsewhere since it was read). */
+	const unseen = (ids: string[]) => ids.some((id) => !rs.attachments.some((a) => a.id === id));
+
 	async function load() {
 		try {
 			const got = await api.ask.state(rs.runId);
@@ -67,6 +78,7 @@
 			if (!got.sessions.some((s) => s.id === selected)) selected = got.sessions.at(-1)?.id ?? '';
 			pane = got;
 			loadError = '';
+			if (got.messages.some((m) => unseen(m.attachmentIds))) void rs.refreshFiles();
 		} catch (e) {
 			// A conversation on screen outlives a failed re-read.
 			if (!pane) loadError = errorMessage(e);
@@ -107,6 +119,9 @@
 					if (!pane.messages.some((m) => m.seq === f.message.seq)) {
 						pane.messages = [...pane.messages, f.message].sort((a, b) => a.seq - b.seq);
 					}
+					// A question asked elsewhere brings files this run's list
+					// has not seen yet.
+					if (unseen(f.message.attachmentIds)) void rs.refreshFiles();
 					if (f.message.role === 'answer') delete lives[f.sessionId];
 					if (f.sessionId === selected) toBottom();
 				} else if (f.kind === 'delta') {
@@ -130,15 +145,37 @@
 
 	async function send() {
 		const text = draft.trim();
-		if (!text || sending || busy || !enabled) return;
+		if ((!text && !files.length) || sending || busy || !enabled) return;
 		sending = true;
 		error = '';
+		// The session it is asked in is the one on screen now, whichever is
+		// picked while the files go up. None yet: the first question opens
+		// one, and the pane follows it there.
+		const into = selected;
+		// Files go up first; if they cannot, nothing is asked and the draft
+		// and its files stay put.
+		let ids: string[] = [];
+		const sent = files;
+		if (sent.length) {
+			uploading = true;
+			try {
+				ids = (await api.files.upload(sent)).map((a) => a.id);
+			} catch (e) {
+				error = errorMessage(e);
+				sending = false;
+				return;
+			} finally {
+				uploading = false;
+			}
+		}
 		draft = '';
 		try {
-			// No session yet: the first question opens one, and the pane
-			// follows it there.
-			const into = selected;
-			const q = await api.ask.send(rs.runId, text, into || undefined);
+			const q = await api.ask.send(rs.runId, text, into || undefined, ids);
+			// Only the files it carried: any picked while it was on its way
+			// are the next question's.
+			files = files.filter((f) => !sent.includes(f));
+			// The question's files join the run's record.
+			if (ids.length) void rs.refreshFiles();
 			if (!session(q.sessionId)) upsert({ id: q.sessionId, busy: true, createdAt: q.at });
 			if (!into) selected = q.sessionId;
 			const s = session(q.sessionId);
@@ -194,6 +231,24 @@
 			void send();
 		}
 	}
+
+	// A pasted screenshot (or copied files) joins the question; pasted text
+	// is left to the browser.
+	function onPaste(e: ClipboardEvent) {
+		const pasted = e.clipboardData?.files;
+		if (!pasted?.length) return;
+		e.preventDefault();
+		picker?.add(pasted);
+	}
+
+	/** A question's files, as far as the run's list knows them yet. */
+	const filesOf = (ids: string[]): StoredFile[] =>
+		ids.flatMap((id) => {
+			const a = rs.attachments.find((x) => x.id === id);
+			return a
+				? [{ id, filename: a.filename, mime: a.mime, size: a.size, kind: 'attachment' }]
+				: [];
+		});
 
 	$effect(() => {
 		void draft;
@@ -266,7 +321,8 @@
 			{#each messages as m (m.seq)}
 				{#if m.role === 'question'}
 					<div class="q">
-						<div class="bubble">{m.text}</div>
+						{#if m.text}<div class="bubble">{m.text}</div>{/if}
+						<FileChips items={filesOf(m.attachmentIds)} />
 						<div class="um">{asker(m)} · {fmtClock(m.at)}</div>
 					</div>
 				{:else}
@@ -302,9 +358,20 @@
 					rows="1"
 					placeholder={t('runview.ask.placeholder')}
 					onkeydown={onKey}
+					onpaste={onPaste}
 					disabled={busy}
+					readonly={uploading}
 					aria-label={t('runview.ask.title')}></textarea>
 				<div class="foot">
+					<span class="files">
+						<AttachFiles
+							bind:this={picker}
+							bind:files
+							compact
+							disabled={uploading}
+							label={t('runview.ask.attach')}
+						/>
+					</span>
 					<span class="keys"
 						><span><span class="k">↵</span> {t('runview.ask.keySend')}</span>
 						<span><span class="k">⇧↵</span> {t('runview.ask.keyNewline')}</span></span
@@ -315,7 +382,7 @@
 						class="btn-primary btn-md"
 						onclick={send}
 						aria-busy={sending}
-						disabled={sending || busy || !draft.trim()}
+						disabled={sending || busy || (!draft.trim() && !files.length)}
 						>{t(busy ? 'runview.ask.answering' : 'runview.ask.send')}</button
 					>
 				</div>
@@ -426,6 +493,10 @@
 		padding: 6px 6px 6px 14px;
 		font-size: var(--fs-meta);
 		color: var(--text-faint);
+		min-width: 0;
+	}
+	.files {
+		flex: 0 1 auto;
 		min-width: 0;
 	}
 	.keys {
