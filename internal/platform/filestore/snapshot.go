@@ -127,12 +127,7 @@ func (s *Snapshots) Capture(ctx context.Context, snap Snapshot, scrub func(strin
 	if snap.Filename == "" {
 		snap.Filename = "file"
 	}
-	if snap.Kind == KindLog {
-		// A log is named by the engine, after its attempt (review#5.log).
-		snap.Filename = engineName(snap.Filename)
-	} else {
-		snap.Filename = SafeName(snap.Filename)
-	}
+	snap.Filename = SafeName(snap.Filename)
 	if snap.Mime == "" {
 		snap.Mime = detectMimeBytes(data, snap.Filename)
 	}

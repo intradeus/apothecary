@@ -786,7 +786,7 @@ Where references appear:
 |---|---|
 | the run journal (`run.journal`, §4; `journal_read`, §9) | every entry ends with its reference in brackets; the tool takes one, and writes its files at `.apothecary/journal/<reference>.md` (`run.md` for the whole run) |
 | attachments (§9) | an answer's files are delivered under `.apothecary/attachments/<ping's reference>/` (`build#3/decision#1/screenshot.png`); the task's under `.apothecary/attachments/ticket/` |
-| logs | an attempt's log is `<stage>#<n>.log` (`review#5.log`; the provisioning log `_provision#1.log`) |
+| files | none: a file keeps a name of its own, and the reference stands beside it — the folder it is delivered in, the chip beside it on the record. An attempt's log is `<stage>.log` (`review.log`; the provisioning log `_provision.log`), whatever its attempt; no stored file name carries `#` |
 | the run page | a chip that copies the reference, wherever an attempt or a ping is named: the timeline, the transcript, the record, the inbox and the ping card, the run table, the flow view, the dossier |
 
 A reference names; it is not an id. The run, ping and snapshot ids the API
@@ -1364,7 +1364,7 @@ stage's budget from the resume point of a dead run; **continuing from the
 **keep going at the `impasse`** restores the `on_reject` chain of the stage
 that reached it, and nothing else. A restored budget is not a new attempt:
 the stage's attempt number (`stage_started.attempt`, the timeline's attempt,
-its reference and its `<stage>#<n>.log`, §1 *References*) keeps counting.
+and its reference, §1 *References*) keeps counting.
 
 There is deliberately no backoff: every agent/command loop must carry a finite
 `max` or a human gate on the link, so no edge can spin unbounded.

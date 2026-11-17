@@ -45,9 +45,8 @@ func TestSafeName(t *testing.T) {
 	}
 }
 
-// `#` is reserved for references (review#5): a file name a person or an
-// agent gave loses it when stored, and only a log — named by the engine after
-// its attempt — keeps it.
+// `#` is reserved for references (review#5): no stored file name keeps it,
+// whoever gave it — a person, an agent or the engine.
 func TestHashIsReservedInStoredNames(t *testing.T) {
 	snaps := NewSnapshots(NewMem(), NewBlobs(t.TempDir()), 1<<20)
 	ctx := context.Background()
@@ -55,8 +54,8 @@ func TestHashIsReservedInStoredNames(t *testing.T) {
 		kind       SnapshotKind
 		name, want string
 	}{
-		{KindLog, "review#5.log", "review#5.log"},
-		{KindLog, "../x/review#5.log", "review#5.log"},
+		{KindLog, "review#5.log", "review-5.log"},
+		{KindLog, "../x/review.log", "review.log"},
 		{KindOutput, "shot#2.png", "shot-2.png"},
 		{KindPingFile, "c#.md", "c-.md"},
 	} {

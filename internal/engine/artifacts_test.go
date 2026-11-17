@@ -11,7 +11,6 @@ import (
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/event"
-	"apothecary/internal/run/ref"
 	"apothecary/internal/run/runinput"
 )
 
@@ -122,8 +121,8 @@ func TestProvisionLogPublished(t *testing.T) {
 	var log string
 	for _, sn := range snapshotsFor(t, snaps, runID) {
 		if sn.StageID == provisionLogStage && sn.Kind == filestore.KindLog {
-			if sn.Attempt != 1 || sn.Filename != "_provision#1.log" {
-				t.Errorf("provision log attempt = %d, named %q; want 1, _provision#1.log", sn.Attempt, sn.Filename)
+			if sn.Attempt != 1 || sn.Filename != "_provision.log" {
+				t.Errorf("provision log attempt = %d, named %q; want 1, _provision.log", sn.Attempt, sn.Filename)
 			}
 			log = snapshotBody(t, snaps, sn.ID)
 		}
@@ -231,8 +230,8 @@ main:
 	for _, sn := range snapshotsFor(t, snaps, runID) {
 		if sn.StageID == "check" && sn.Kind == filestore.KindLog {
 			log = snapshotBody(t, snaps, sn.ID)
-			if want := ref.Attempt("check", sn.Attempt) + ".log"; sn.Filename != want {
-				t.Errorf("check log named %q, want %q", sn.Filename, want)
+			if sn.Filename != "check.log" {
+				t.Errorf("check log named %q, want check.log", sn.Filename)
 			}
 		}
 	}
