@@ -114,8 +114,9 @@ which harness.
 
 Each harness keeps the promise its own way: opencode by the agent's tool
 definition, codex by its read-only session mode, omp by a second process
-that loads only reading tools. A harness that can promise none of that
-keeps the pane off, with the reason shown; an unknown harness kind is
+that loads only reading tools, Claude Code by its plan mode. A harness
+that can promise none of that keeps the pane off, with the reason shown;
+an unknown harness kind is
 refused at run creation like a stage's. The name `ask` is the pane's agent: a flow with `ask:` cannot
 declare an agent by that name.
 

@@ -128,7 +128,7 @@ func TestDescriptorsFlagSecretsAndRequired(t *testing.T) {
 			}
 		})
 	}
-	for _, d := range []Descriptor{Opencode{}.Descriptor(), Codex{}.Descriptor(), Omp{}.Descriptor()} {
+	for _, d := range []Descriptor{Opencode{}.Descriptor(), Codex{}.Descriptor(), Omp{}.Descriptor(), ClaudeCode{}.Descriptor()} {
 		if len(d.Fields) != 1 || d.Fields[0].Name != "credential_ids" || d.Fields[0].Type != "credentials" || !d.Fields[0].Required {
 			t.Errorf("%s fields = %+v", d.Kind, d.Fields)
 		}

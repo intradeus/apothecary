@@ -22,6 +22,7 @@ func TestSubagentSpawns(t *testing.T) {
 	}{
 		{"opencode task", "Find auth code", `{"description":"Find auth code","prompt":"Locate the auth code","subagent_type":"explore"}`, 1},
 		{"opencode task, pending with no input yet", "task", `{}`, 0},
+		{"claude code Task", "Explore auth", `{"description":"Explore auth","prompt":"Find where sessions are checked","subagent_type":"Explore"}`, 1},
 		{"codex spawn_agent", "spawnAgent", `{"prompt":"Investigate failing test","senderThreadId":"019a","receiverThreadIds":[],"agentsStates":{},"model":null,"reasoningEffort":null,"status":"inProgress"}`, 1},
 		{"codex wait", "wait", `{"prompt":null,"senderThreadId":"019a","receiverThreadIds":["019b"],"agentsStates":{}}`, 0},
 		{"omp task, one assignment", "Map auth flow", `{"agent":"explore","task":"Map auth flow","solutionSpace":"read-only"}`, 1},

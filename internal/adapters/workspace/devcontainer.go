@@ -797,9 +797,10 @@ func (a *Adapter) projectFor(name string) string {
 // probing for musl's loader; the links are absolute container paths into the
 // mount, so they stay valid across engine upgrades (the mount target never
 // changes) and Rebuild simply relinks. Each harness entry is a wrapper that
-// loads provider.env at launch, so a human running omp/codex/opencode in a
-// terminal has the run's API keys and omp's broker, as the agent does, for as
-// long as the run holds them (the end-of-run scrub deletes the file). The
+// loads provider.env at launch, so a human running a harness (omp, codex,
+// opencode, claude) in a terminal has the run's API keys and omp's broker,
+// as the agent does, for as long as the run holds them (the end-of-run
+// scrub deletes the file). The
 // editor stays a plain link: code-server lives on past that scrub, and keys
 // in its environment would too. /opt/apothecary is APPENDED to every
 // Exec'd PATH, so an image that ships its own harness still wins. A musl

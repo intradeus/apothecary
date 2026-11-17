@@ -150,6 +150,7 @@ func registry(dev bool, boot *config.Boot) *kinds.Registry {
 	reg.RegisterHarness(kinds.Opencode{})
 	reg.RegisterHarness(kinds.Codex{})
 	reg.RegisterHarness(kinds.Omp{})
+	reg.RegisterHarness(kinds.ClaudeCode{})
 	reg.RegisterTicketSource(kinds.Jira{})
 	reg.RegisterTicketSource(kinds.GitHubIssues{})
 	reg.RegisterTicketSource(kinds.GitLabIssues{})
