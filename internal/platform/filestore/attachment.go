@@ -35,6 +35,12 @@ type Attachment struct {
 	// for every other: a chat file is the run's, but neither a goal file nor
 	// an answer's.
 	Chat string `json:"chat,omitempty"`
+	// ChatName is the name a chat file is delivered as in its chat's folder
+	// (image.png, image-2.png): given when its message is accepted, past the
+	// names the run's chat holds already, and never changed after — so the
+	// path the agent was told is the file's for good, whatever is sent later.
+	// Unique in the run's chat; '' for a file in no chat.
+	ChatName string `json:"chat_name,omitempty"`
 }
 
 // The run's chats a file can come in on.
@@ -50,6 +56,13 @@ var ErrNotClaimable = errors.New("an attachment is not one of your unsent upload
 
 // ValidChat reports a chat a file can come in on.
 func ValidChat(chat string) bool { return chat == ChatTakeOver || chat == ChatAsk }
+
+// ChatFileName is the name a file claimed into a chat is delivered as: its
+// stored name, or name-2.ext and so on past the names taken holds (the
+// chat's, then the message's earlier files'). taken gains it.
+func ChatFileName(filename string, taken map[string]bool) string {
+	return UniqueName(SafeName(filename), taken)
+}
 
 // Unclaimed reports a fresh upload no owner has claimed yet.
 func (a Attachment) Unclaimed() bool { return a.TicketID == "" && a.RunID == "" }
@@ -68,11 +81,15 @@ type AttachmentDB interface {
 	// ClaimAttachmentsForChat binds userID's uploads to a run's chat
 	// (ChatTakeOver, ChatAsk), all or nothing: when any id is not one of
 	// the user's unclaimed uploads, none is claimed (ErrNotClaimable). An
-	// unknown chat or no run is refused whatever the ids match.
+	// unknown chat or no run is refused whatever the ids match. Each file
+	// gets its ChatName in the same step, in the order ids gives them
+	// (ChatFileName past the names the run's chat holds); two claims into
+	// one chat name their files one after the other, never alike.
 	ClaimAttachmentsForChat(ctx context.Context, userID string, ids []string, runID, chat string) error
 	// UnclaimAttachmentsForChat undoes that claim: userID's files among ids
-	// that the run's chat holds are unclaimed again. Rows of anyone else,
-	// another run or another chat are left as they are.
+	// that the run's chat holds are unclaimed again, their ChatName given
+	// up. Rows of anyone else, another run or another chat are left as they
+	// are.
 	UnclaimAttachmentsForChat(ctx context.Context, userID string, ids []string, runID, chat string) error
 	AttachmentsForTicket(ctx context.Context, ticketID string) ([]Attachment, error)
 	// AdoptRemoteAttachment gives a ticket's attachment that has no remote

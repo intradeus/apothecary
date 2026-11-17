@@ -2380,7 +2380,9 @@ harness, owns the exchange:
   A message in the run's two chats can carry files too: a take-over
   message's land under `.apothecary/attachments/takeover/`, an Ask
   question's under `.apothecary/attachments/ask/`. The message names their
-  paths, and they are not among the task's files a later prompt lists.
+  paths, and they are not among the task's files a later prompt lists. A
+  chat's file is named when its message is accepted, after the chat's
+  earlier ones, and keeps that path whatever is sent later.
   Each keeps its stored name; a second with the same name in one folder is
   `name-2.ext`, in the order they were attached, so a re-delivery after a
   restart lands every file where the agent was told.

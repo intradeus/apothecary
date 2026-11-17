@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -18,7 +19,7 @@ import (
 
 // --- attachments ------------------------------------------------------------
 
-const attachmentCols = `id, ticket_id, run_id, ping_id, filename, mime, size, sha256, created_at, user_id, remote_id, chat`
+const attachmentCols = `id, ticket_id, run_id, ping_id, filename, mime, size, sha256, created_at, user_id, remote_id, chat, chat_name`
 
 // nullStr maps Go's zero-string convention to the schema's NULLs: the CHECKs
 // reason about NULL, not ”.
@@ -31,12 +32,12 @@ func nullStr(s string) any {
 
 func scanAttachment(row pgx.Row) (filestore.Attachment, error) {
 	var a filestore.Attachment
-	var ticket, run, ping, chat sql.NullString
-	err := row.Scan(&a.ID, &ticket, &run, &ping, &a.Filename, &a.Mime, &a.Size, &a.SHA256, &a.CreatedAt, &a.UserID, &a.RemoteID, &chat)
+	var ticket, run, ping, chat, chatName sql.NullString
+	err := row.Scan(&a.ID, &ticket, &run, &ping, &a.Filename, &a.Mime, &a.Size, &a.SHA256, &a.CreatedAt, &a.UserID, &a.RemoteID, &chat, &chatName)
 	if err != nil {
 		return a, err
 	}
-	a.TicketID, a.RunID, a.PingID, a.Chat = ticket.String, run.String, ping.String, chat.String
+	a.TicketID, a.RunID, a.PingID, a.Chat, a.ChatName = ticket.String, run.String, ping.String, chat.String, chatName.String
 	return a, nil
 }
 
@@ -60,9 +61,9 @@ func (s *Store) queryAttachments(ctx context.Context, q string, args ...any) ([]
 func (s *Store) InsertAttachment(ctx context.Context, a filestore.Attachment) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO attachments (`+attachmentCols+`)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 		a.ID, nullStr(a.TicketID), nullStr(a.RunID), nullStr(a.PingID),
-		a.Filename, a.Mime, a.Size, a.SHA256, a.CreatedAt, a.UserID, a.RemoteID, nullStr(a.Chat))
+		a.Filename, a.Mime, a.Size, a.SHA256, a.CreatedAt, a.UserID, a.RemoteID, nullStr(a.Chat), nullStr(a.ChatName))
 	return err
 }
 
@@ -89,15 +90,20 @@ func (s *Store) ClaimAttachments(ctx context.Context, userID string, ids []strin
 	return err
 }
 
-// ClaimAttachmentsForChat is all or nothing: one UPDATE of the user's
-// unclaimed rows among ids, rolled back unless it took every distinct one.
+// ClaimAttachmentsForChat is all or nothing: one transaction that names the
+// user's unclaimed rows among ids past the names the run's chat holds, in
+// the order ids gives them, and rolls back unless it took every distinct
+// one. Claims into one chat queue on a transaction lock, so two never read
+// the same names taken.
 func (s *Store) ClaimAttachmentsForChat(ctx context.Context, userID string, ids []string, runID, chat string) error {
 	if runID == "" || !filestore.ValidChat(chat) {
 		return fmt.Errorf("claim: a chat file names its run and one of its chats, not %q", chat)
 	}
-	distinct := map[string]bool{}
+	var distinct []string
 	for _, id := range ids {
-		distinct[id] = true
+		if !slices.Contains(distinct, id) {
+			distinct = append(distinct, id)
+		}
 	}
 	if len(distinct) == 0 {
 		return nil
@@ -107,10 +113,49 @@ func (s *Store) ClaimAttachmentsForChat(ctx context.Context, userID string, ids 
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		"attachments.chat_name "+runID+" "+chat); err != nil {
+		return err
+	}
+	// The files to claim, and the names the chat holds already.
+	rows, err := tx.Query(ctx, `
+		SELECT id, filename, chat_name FROM attachments
+		WHERE (id = ANY($1) AND user_id = $2 AND ticket_id IS NULL AND run_id IS NULL)
+		   OR (run_id = $3 AND chat = $4)`,
+		distinct, userID, runID, chat)
+	if err != nil {
+		return err
+	}
+	filenames := map[string]string{}
+	taken := map[string]bool{}
+	for rows.Next() {
+		var id, filename string
+		var name sql.NullString
+		if err := rows.Scan(&id, &filename, &name); err != nil {
+			rows.Close()
+			return err
+		}
+		if name.Valid {
+			taken[name.String] = true
+		} else {
+			filenames[id] = filename
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(filenames) != len(distinct) {
+		return filestore.ErrNotClaimable
+	}
+	names := make([]string, len(distinct))
+	for i, id := range distinct {
+		names[i] = filestore.ChatFileName(filenames[id], taken)
+	}
 	tag, err := tx.Exec(ctx, `
-		UPDATE attachments SET run_id=$1, chat=$2
-		WHERE id = ANY($3) AND user_id = $4 AND ticket_id IS NULL AND run_id IS NULL`,
-		runID, chat, ids, userID)
+		UPDATE attachments a SET run_id=$1, chat=$2, chat_name=n.name
+		FROM unnest($3::text[], $4::text[]) AS n(id, name)
+		WHERE a.id = n.id AND a.user_id = $5 AND a.ticket_id IS NULL AND a.run_id IS NULL`,
+		runID, chat, distinct, names, userID)
 	if err != nil {
 		return err
 	}
@@ -122,7 +167,7 @@ func (s *Store) ClaimAttachmentsForChat(ctx context.Context, userID string, ids 
 
 func (s *Store) UnclaimAttachmentsForChat(ctx context.Context, userID string, ids []string, runID, chat string) error {
 	_, err := s.pool.Exec(ctx, `
-		UPDATE attachments SET run_id=NULL, chat=NULL
+		UPDATE attachments SET run_id=NULL, chat=NULL, chat_name=NULL
 		WHERE id = ANY($1) AND user_id = $2 AND run_id = $3 AND chat = $4
 		  AND ticket_id IS NULL AND ping_id IS NULL`,
 		ids, userID, runID, chat)

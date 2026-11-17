@@ -8,6 +8,7 @@ package filetest
 import (
 	"context"
 	"errors"
+	"maps"
 	"reflect"
 	"slices"
 	"testing"
@@ -396,7 +397,7 @@ func RunContract(t *testing.T, open func(t *testing.T) DB, seedTicket func(t *te
 		if err := db.UnclaimAttachmentsForChat(ctx, "u1", all, "r1", filestore.ChatAsk); err != nil {
 			t.Fatalf("unclaim = %v", err)
 		}
-		if got := get(t, db, "mine"); !got.Unclaimed() || got.Chat != "" {
+		if got := get(t, db, "mine"); !got.Unclaimed() || got.Chat != "" || got.ChatName != "" {
 			t.Errorf("mine = %+v, want unclaimed", got)
 		}
 		for id, want := range map[string][2]string{
@@ -409,6 +410,56 @@ func RunContract(t *testing.T, open func(t *testing.T) DB, seedTicket func(t *te
 		}
 		// Given back, it can be sent again.
 		claim("u1", "mine", "r1", filestore.ChatAsk)
+	})
+
+	t.Run("a chat claim names each file for good, past the chat's names", func(t *testing.T) {
+		db := open(t)
+		shot := func(id string, minute int) filestore.Attachment {
+			a := upload(id, "u1", t0.Add(time.Duration(minute)*time.Minute))
+			a.Filename = "image.png"
+			return a
+		}
+		insertAll(t, db, shot("older", 0), shot("newer", 1), shot("x", 2), shot("y", 3), shot("asked", 4), shot("elsewhere", 5))
+		claim := func(runID, chat string, ids ...string) {
+			t.Helper()
+			if err := db.ClaimAttachmentsForChat(ctx, "u1", ids, runID, chat); err != nil {
+				t.Fatal(err)
+			}
+		}
+		names := func() map[string]string {
+			out := map[string]string{}
+			for _, id := range []string{"older", "newer", "x", "y", "asked", "elsewhere"} {
+				out[id] = get(t, db, id).ChatName
+			}
+			return out
+		}
+		// Sent the other way round from how they were made: the first sent
+		// keeps image.png when the older one follows.
+		claim("r1", filestore.ChatTakeOver, "newer")
+		claim("r1", filestore.ChatTakeOver, "older")
+		// One message's files, in the order it gives them.
+		claim("r1", filestore.ChatTakeOver, "y", "x", "y")
+		// Each chat of each run has names of its own.
+		claim("r1", filestore.ChatAsk, "asked")
+		claim("r2", filestore.ChatTakeOver, "elsewhere")
+		want := map[string]string{"newer": "image.png", "older": "image-2.png", "y": "image-3.png", "x": "image-4.png",
+			"asked": "image.png", "elsewhere": "image.png"}
+		if got := names(); !maps.Equal(got, want) {
+			t.Errorf("names = %v, want %v", got, want)
+		}
+		// A name given back is free again; the others stay as they were.
+		if err := db.UnclaimAttachmentsForChat(ctx, "u1", []string{"older"}, "r1", filestore.ChatTakeOver); err != nil {
+			t.Fatal(err)
+		}
+		insertAll(t, db, shot("again", 6))
+		claim("r1", filestore.ChatTakeOver, "again")
+		if got := get(t, db, "again").ChatName; got != "image-2.png" {
+			t.Errorf("after a name was given back = %q", got)
+		}
+		want["older"] = ""
+		if got := names(); !maps.Equal(got, want) {
+			t.Errorf("names after = %v, want %v", got, want)
+		}
 	})
 
 	t.Run("a chat claim names its run and one of its chats", func(t *testing.T) {
@@ -429,15 +480,20 @@ func RunContract(t *testing.T, open func(t *testing.T) DB, seedTicket func(t *te
 	t.Run("a chat file is its run's and no answer's", func(t *testing.T) {
 		db := open(t)
 		ok := upload("ok", "u1", t0)
-		ok.RunID, ok.Chat = "r1", filestore.ChatTakeOver
+		ok.RunID, ok.Chat, ok.ChatName = "r1", filestore.ChatTakeOver, "ok.txt"
 		insertAll(t, db, ok)
-		if got := get(t, db, "ok"); got.Chat != filestore.ChatTakeOver || got.RunID != "r1" {
+		if got := get(t, db, "ok"); got.Chat != filestore.ChatTakeOver || got.RunID != "r1" || got.ChatName != "ok.txt" {
 			t.Errorf("read = %+v", got)
 		}
 		for name, bad := range map[string]func(*filestore.Attachment){
-			"unknown chat": func(a *filestore.Attachment) { a.RunID, a.Chat = "r1", "shout" },
-			"no run":       func(a *filestore.Attachment) { a.Chat = filestore.ChatAsk },
-			"an answer's":  func(a *filestore.Attachment) { a.RunID, a.PingID, a.Chat = "r1", "p1", filestore.ChatAsk },
+			"unknown chat": func(a *filestore.Attachment) { a.RunID, a.Chat, a.ChatName = "r1", "shout", "b.txt" },
+			"no run":       func(a *filestore.Attachment) { a.Chat, a.ChatName = filestore.ChatAsk, "b.txt" },
+			"an answer's": func(a *filestore.Attachment) {
+				a.RunID, a.PingID, a.Chat, a.ChatName = "r1", "p1", filestore.ChatAsk, "b.txt"
+			},
+			"no name in its chat": func(a *filestore.Attachment) { a.RunID, a.Chat = "r1", filestore.ChatAsk },
+			"a name in no chat":   func(a *filestore.Attachment) { a.RunID, a.ChatName = "r1", "b.txt" },
+			"a name its chat has": func(a *filestore.Attachment) { a.RunID, a.Chat, a.ChatName = "r1", filestore.ChatTakeOver, "ok.txt" },
 		} {
 			a := upload("bad", "u1", t0)
 			bad(&a)

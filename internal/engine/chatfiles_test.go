@@ -324,3 +324,69 @@ func TestDeliverAskFiles(t *testing.T) {
 		t.Errorf("attachments off = %v", err)
 	}
 }
+
+// A chat file keeps the path it was announced at. Two screenshots both named
+// image.png, sent the other way round from how they were uploaded: the
+// first sent is image.png, and stays so — its contents too — once the older
+// one follows as image-2.png, and after a restart re-delivers the run's
+// files.
+func TestAChatFileKeepsItsPath(t *testing.T) {
+	ctx := context.Background()
+	for _, chat := range []string{filestore.ChatTakeOver, filestore.ChatAsk} {
+		t.Run(chat, func(t *testing.T) {
+			att, snaps, _ := newFiles(t)
+			h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, chatFlowDoc))
+			env, err := h.envp.Provision(ctx, envport.EnvSpec{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			x := &exec{e: h.e, ctx: ctx, bg: ctx, res: h.res, rs: replayFor(env)}
+			send := func(id string) []string {
+				t.Helper()
+				var paths []string
+				if chat == filestore.ChatTakeOver {
+					paths, err = x.takeOverFiles("u1", []string{id})
+				} else {
+					paths, err = h.e.DeliverAskFiles(ctx, h.envp, string(env), x.rs.RunID, "u1", []string{id})
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				return paths
+			}
+			has := func(when, path, body string) {
+				t.Helper()
+				if data, err := h.envp.ReadFile(ctx, env, path); err != nil || string(data) != body {
+					t.Errorf("%s: %s = %q, %v; want %q", when, path, data, err, body)
+				}
+			}
+			older := uploadAs(t, att, "u1", "image.png", "older")
+			newer := uploadAs(t, att, "u1", "image.png", "newer")
+			first := ".apothecary/attachments/" + chat + "/image.png"
+			second := ".apothecary/attachments/" + chat + "/image-2.png"
+
+			if got := send(newer.ID); !slices.Equal(got, []string{first}) {
+				t.Fatalf("first sent = %v, want %s", got, first)
+			}
+			has("first sent", first, "newer")
+			if got := send(older.ID); !slices.Equal(got, []string{second}) {
+				t.Fatalf("second sent = %v, want %s", got, second)
+			}
+			has("second sent", first, "newer")
+			has("second sent", second, "older")
+
+			// A restart re-delivers every file where it was told.
+			if _, err := h.envp.Exec(ctx, env, envport.Command{Script: "rm -rf .apothecary", Dir: "repo"}); err != nil {
+				t.Fatal(err)
+			}
+			x.deliverRunAttachments()
+			has("re-delivered", first, "newer")
+			has("re-delivered", second, "older")
+			if chat == filestore.ChatTakeOver {
+				if got := x.takeOverFilePaths([]string{newer.ID, older.ID}); !slices.Equal(got, []string{first, second}) {
+					t.Errorf("paths named on resume = %v", got)
+				}
+			}
+		})
+	}
+}

@@ -354,6 +354,8 @@ components:
       properties:
         chat:
           type: string
+        chat_name:
+          type: string
         created_at:
           format: date-time
           type: string

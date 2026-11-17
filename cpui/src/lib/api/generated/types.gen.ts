@@ -152,6 +152,7 @@ export type AskState = {
 
 export type Attachment = {
 	chat?: string;
+	chat_name?: string;
 	created_at: string;
 	filename: string;
 	id: string;

@@ -54,12 +54,13 @@ func attachmentFolder(a filestore.Attachment, pingRef func(pingID string) string
 }
 
 // attachmentPaths is the repo-relative path each attachment is delivered
-// to, in the order given: attachmentsDir/<folder>/<stored name>, a second
-// file with the same name in one folder name-2.ext. Names are given in the
-// order the files were created (then by id), so a path never depends on the
-// order a caller passes them in, and a re-delivery after a restart gives the
-// same ones. Every caller passes each folder whole: a ping's files, a chat's,
-// or all of the task's.
+// to, in the order given: attachmentsDir/<folder>/<name>. A chat's file is
+// delivered as the ChatName its claim gave it, for good. Any other keeps its
+// stored name, a second file with the same name in one folder name-2.ext:
+// names are given in the order the files were created (then by id), so a
+// path never depends on the order a caller passes them in, and a
+// re-delivery after a restart gives the same ones. Every caller passes each
+// such folder whole: a ping's files, or all of the task's.
 func attachmentPaths(atts []filestore.Attachment, pingRef func(pingID string) string) []string {
 	order := make([]int, len(atts))
 	for i := range order {
@@ -77,6 +78,10 @@ func attachmentPaths(atts []filestore.Attachment, pingRef func(pingID string) st
 	for _, i := range order {
 		a := atts[i]
 		folder := attachmentFolder(a, pingRef)
+		if a.Chat != "" {
+			out[i] = attachmentsDir + "/" + folder + "/" + a.ChatName
+			continue
+		}
 		if taken[folder] == nil {
 			taken[folder] = map[string]bool{}
 		}
@@ -117,9 +122,8 @@ func (x *exec) writeAttachments(atts []filestore.Attachment, paths []string) {
 }
 
 // writeAttachmentFiles writes atts[i] at paths[i] in a workspace: any subset
-// of the run's files, at the paths attachmentPaths gave them over their
-// whole folders. One file that cannot be read or written does not stop the
-// others; the error names each.
+// of the run's files, at the paths attachmentPaths gives them. One file that
+// cannot be read or written does not stop the others; the error names each.
 //
 // Files land 0444 read-only: the human's words must not be rewritten in
 // place by a prompt-injected agent that then "quotes" them. Re-delivery
@@ -159,30 +163,22 @@ func writeAttachmentFiles(ctx context.Context, envp envport.EnvProvisioner, envI
 }
 
 // chatFiles resolves ids among a run's files in one of its chats, with the
-// path each is delivered to — computed over the chat's whole folder, so a
-// file keeps the name it had when the agent was first told it. Ids the chat
-// does not hold are left out.
+// path each is delivered to: its ChatName, given when it was claimed, so a
+// file keeps the path the agent was first told whatever the chat gets
+// later. Ids the chat does not hold are left out.
 func chatFiles(ctx context.Context, store AttachmentStore, runID, chat string, ids []string) ([]filestore.Attachment, []string, error) {
 	all, err := store.ForRun(ctx, runID)
 	if err != nil {
 		return nil, nil, err
 	}
-	var folder []filestore.Attachment
-	for _, a := range all {
-		if a.Chat == chat {
-			folder = append(folder, a)
-		}
-	}
-	paths := attachmentPaths(folder, func(string) string { return "" })
 	var atts []filestore.Attachment
-	var out []string
 	for _, id := range ids {
-		i := slices.IndexFunc(folder, func(a filestore.Attachment) bool { return a.ID == id })
-		if i >= 0 && !slices.Contains(out, paths[i]) {
-			atts, out = append(atts, folder[i]), append(out, paths[i])
+		i := slices.IndexFunc(all, func(a filestore.Attachment) bool { return a.ID == id && a.Chat == chat })
+		if i >= 0 && !slices.ContainsFunc(atts, func(a filestore.Attachment) bool { return a.ID == id }) {
+			atts = append(atts, all[i])
 		}
 	}
-	return atts, out, nil
+	return atts, attachmentPaths(atts, func(string) string { return "" }), nil
 }
 
 // takeOverFiles claims a holder's message's files into the run's take-over
