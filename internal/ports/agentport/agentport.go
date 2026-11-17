@@ -207,8 +207,10 @@ type AgentRunner interface {
 type AgentReattacher interface {
 	// Reattachable reports, quickly, whether Reattach has something to
 	// follow: a turn of s still running, or one that finished after cursor
-	// while nobody was listening.
-	Reattachable(ctx context.Context, env envport.EnvID, s SessionID, cursor string) bool
+	// while nobody was listening. turn is that turn's id (AgentEvent.Turn):
+	// its turn_start may lie before cursor, so the engine learns from here
+	// which turn is open — the one a forced take-over stops.
+	Reattachable(ctx context.Context, env envport.EnvID, s SessionID, cursor string) (turn string, ok bool)
 	Reattach(ctx context.Context, env envport.EnvID, s SessionID, cursor string, in AgentInput) (res AgentResult, ok bool, err error)
 }
 

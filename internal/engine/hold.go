@@ -265,8 +265,10 @@ func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner ag
 	case rs.PausedHold[st.ID]:
 		return holdReentry{park: true}, nil
 	case mayReattach:
-		if ra, ok := runner.(agentport.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.EnvID, session, rs.AgentCursor[st.ID]) {
-			return holdReentry{}, nil // the crashed path follows the live turn
+		if ra, ok := runner.(agentport.AgentReattacher); ok {
+			if _, ok := ra.Reattachable(x.ctx, rs.EnvID, session, rs.AgentCursor[st.ID]); ok {
+				return holdReentry{}, nil // the crashed path follows the live turn
+			}
 		}
 		return holdReentry{park: true}, nil
 	default:

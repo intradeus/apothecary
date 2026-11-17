@@ -522,18 +522,26 @@ type reattachRunner struct {
 	*fake.AgentRunner
 	mu       sync.Mutex
 	can      bool
+	turn     string   // the turn Reattachable names
 	attached []string // "session@cursor"
 	result   agentport.AgentResult
+	// follow, when set, is the turn still live: Reattach runs it instead of
+	// replaying one that finished meanwhile.
+	follow func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error)
 }
 
-func (r *reattachRunner) Reattachable(_ context.Context, _ envport.EnvID, _ agentport.SessionID, _ string) bool {
-	return r.can
+func (r *reattachRunner) Reattachable(_ context.Context, _ envport.EnvID, _ agentport.SessionID, _ string) (string, bool) {
+	return r.turn, r.can
 }
 
-func (r *reattachRunner) Reattach(_ context.Context, _ envport.EnvID, s agentport.SessionID, cursor string, in agentport.AgentInput) (agentport.AgentResult, bool, error) {
+func (r *reattachRunner) Reattach(ctx context.Context, _ envport.EnvID, s agentport.SessionID, cursor string, in agentport.AgentInput) (agentport.AgentResult, bool, error) {
 	r.mu.Lock()
 	r.attached = append(r.attached, string(s)+"@"+cursor)
 	r.mu.Unlock()
+	if r.follow != nil {
+		res, err := r.follow(ctx, in)
+		return res, true, err
+	}
 	in.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "finished while you were away", Cursor: "b:9"})
 	return r.result, true, nil
 }
@@ -583,6 +591,40 @@ func TestRestartReattachesToTheTurnInFlight(t *testing.T) {
 	}
 	if _, ok := findPayload[*event.AgentPrompted](evs); ok {
 		t.Error("reattaching sent the agent a prompt")
+	}
+}
+
+// The turn followed after a restart started before the recorded cursor, so
+// its turn_start never reaches the engine again: a forced take-over still
+// stops it, by the id the runner named when asked whether it could attach.
+func TestRestartForcedTakeOverStopsTheReattachedTurn(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	hr := &heldRunner{stoppable: true, turns: 1} // T1: the turn in flight
+	never := make(chan struct{})
+	h.res.Runner = &reattachRunner{AgentRunner: h.runner, can: true, turn: "T1",
+		follow: func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
+			in.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Turn: "T1", Text: "still at it", Cursor: "b:7"})
+			stop := "end_turn"
+			if !hr.await(in, "T1", never) {
+				stop = "cancelled"
+			}
+			in.Events(agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "T1", StopReason: stop})
+			return hr.drive(ctx, in)
+		}}
+	seedLiveAttempt(t, h, "r-t")
+	if err := h.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	takeOverWhenLive(t, h, "r-t", "u1", true)
+	waitUntil(t, "the reattached turn to be stopped", func() bool {
+		return strings.Join(hr.stoppedTurns(), ",") == "T1"
+	})
+	if err := h.e.Release("r-t", "u1"); err != nil {
+		t.Fatal(err)
+	}
+	waitEvent[*event.RunCompleted](t, h, "r-t")
+	if d := hr.delivered(); len(d) != 1 || d[0][0].Text != handbackPrompt {
+		t.Errorf("delivered = %+v, want the handback alone", d)
 	}
 }
 

@@ -305,16 +305,16 @@ func (r *Runner) attachable(ctx context.Context, c *sidecar.Client, s, cursor st
 	return turn, st.Sessions[s], turn != ""
 }
 
-func (r *Runner) Reattachable(ctx context.Context, env envport.EnvID, s agentport.SessionID, cursor string) bool {
+func (r *Runner) Reattachable(ctx context.Context, env envport.EnvID, s agentport.SessionID, cursor string) (string, bool) {
 	if s == "" {
-		return false
+		return "", false
 	}
 	c, err := r.client(ctx, env)
 	if err != nil {
-		return false
+		return "", false
 	}
-	_, _, ok := r.attachable(ctx, c, string(s), cursor)
-	return ok
+	turn, _, ok := r.attachable(ctx, c, string(s), cursor)
+	return turn, ok
 }
 
 func (r *Runner) Reattach(ctx context.Context, env envport.EnvID, s agentport.SessionID, cursor string, in agentport.AgentInput) (agentport.AgentResult, bool, error) {

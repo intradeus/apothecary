@@ -62,8 +62,9 @@ func (io *invIO) drain(record func(agentport.AgentEvent) (bool, error)) error {
 }
 
 // invoke runs one harness invocation to its end, servicing pings, messages
-// and the transcript while it runs.
-func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, initialOpen []*Ping, prompt string,
+// and the transcript while it runs. attached is the turn a reattached
+// invocation follows (AgentReattacher.Reattachable), open from the start.
+func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, initialOpen []*Ping, prompt, attached string,
 	call func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error)) (invocation, error) {
 	// x.ctx is the attempt's (exec.attempt): the invocation is a child of the
 	// attempt span the telemetry sink exports from the event stream.
@@ -88,7 +89,7 @@ func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, init
 	}()
 	x.h.agentLive.Store(true)
 	x.h.parking.Store(false)
-	inv, err := x.awaitAgent(st, resCh, cancelRun, budget, io, initialOpen)
+	inv, err := x.awaitAgent(st, resCh, cancelRun, budget, io, initialOpen, attached)
 	x.h.agentLive.Store(false)
 	cancelRun(nil)
 	close(io.done)
@@ -113,7 +114,7 @@ func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, init
 // the human answers. Letting it through instead is what silently turned an
 // unanswered clarification into an approved-looking plan.
 func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun context.CancelCauseFunc, budget time.Duration,
-	io *invIO, initialOpen []*Ping) (invocation, error) {
+	io *invIO, initialOpen []*Ping, attached string) (invocation, error) {
 	remaining := budget
 	open := append([]*Ping(nil), initialOpen...)
 	timer := time.NewTimer(remaining)
@@ -128,8 +129,9 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		}
 		return event.HoldSpend{}
 	}
-	turnOpen := false
-	openTurn := "" // the open turn's id: what a forced take-over stops
+	// The open turn's id: what a forced take-over stops. A reattached
+	// turn is open before any event of it arrives.
+	turnOpen, openTurn := attached != "", attached
 	// record files one agent event: a new harness session is recorded the
 	// moment it exists, so a crash mid-invocation resumes (or reattaches
 	// to) it, not a new one — whichever path meets the event, the loop's

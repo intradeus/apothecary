@@ -23,6 +23,12 @@ What now:
   `turn_start` gave. It asks the runner through the inbox:
   `agentport.Inbox.Interrupted(turn)`, signalled on `Wake`. Naming the turn
   keeps a request that arrives late from stopping the holder's next one.
+- After an engine restart the turn followed (`AgentReattacher.Reattach`)
+  may have started before the recorded cursor, so its `turn_start` never
+  comes again. `Reattachable` now also returns that turn's id, and the
+  engine holds it as the open turn from the invocation's start: a forced
+  take-over stops it too, and a passive one no longer reads the agent as
+  idle while it works.
 - The ACP runner cancels that turn (`session/cancel`), follows it to its
   end, and carries on as at any turn's end: the same session waits for the
   holder. A stop that does not end within the cancel grace fails the
@@ -50,9 +56,12 @@ turn, and it names that turn.
 
 Held by: `TestPlanHoldRequest` (runcore); `TestAForcedTakeOverStopsTheAgentsTurn`,
 `TestAPassiveTakeOverLetsTheTurnFinish`, `TestReleaseRightAfterAForcedTakeIsPrompt`,
-`TestAForcedTakeOverLeavesATurnWaitingOnItsQuestion` (engine);
+`TestAForcedTakeOverLeavesATurnWaitingOnItsQuestion`,
+`TestRestartForcedTakeOverStopsTheReattachedTurn` (engine);
+`TestReattachability`, `TestReattachFollowsTheTurnInFlight`,
 `TestStoppingATurnKeepsTheSession`, `TestAStopForAnotherTurnIsIgnored`,
 `TestAStoppedTurnThatNeverEndsGivesUp` (acpagent); `TestDemoTurnStopsWhenTakenOver`,
 `TestFakeHarnessServesATakeOver`, `TestFakeHarnessWithoutAHoldReturnsAfterItsTurn`
-(kinds); `TestTakeOverForce` (httpapi); `Composer.test.ts`,
+(kinds); `TestTakeOverForce` (httpapi); `Composer.test.ts` (the box is
+checked again for the next take-over, after a passive one is released),
 `store.svelte.test.ts`, `SessionView.test.ts`, `api/index.test.ts`.

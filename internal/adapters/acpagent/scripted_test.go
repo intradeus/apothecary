@@ -253,7 +253,7 @@ func TestNoSidecarIsAnError(t *testing.T) {
 	if err := r.StopAgent(bg, "e"); err == nil {
 		t.Error("StopAgent went ahead")
 	}
-	if r.Reattachable(bg, "e", "s", "") {
+	if _, ok := r.Reattachable(bg, "e", "s", ""); ok {
 		t.Error("Reattachable with no sidecar")
 	}
 	if _, ok, err := r.Reattach(bg, "e", "s", "", agentport.AgentInput{}); ok || err != nil {
@@ -499,7 +499,7 @@ func TestAgentModelsAndStop(t *testing.T) {
 
 func TestReattachability(t *testing.T) {
 	r := func(f *sideFake) *Runner { return scripted(f, Profile{}) }
-	if r(newSideFake(t)).Reattachable(bg, "e", "", "") {
+	if _, ok := r(newSideFake(t)).Reattachable(bg, "e", "", ""); ok {
 		t.Error("no session is not reattachable")
 	}
 	if _, ok, _ := r(newSideFake(t)).Reattach(bg, "e", "", "", agentport.AgentInput{}); ok {
@@ -508,39 +508,39 @@ func TestReattachability(t *testing.T) {
 	t.Run("status failure", func(t *testing.T) {
 		f := newSideFake(t)
 		f.fail["/agent/status"] = 500
-		if r(f).Reattachable(bg, "e", "s1", "") {
+		if _, ok := r(f).Reattachable(bg, "e", "s1", ""); ok {
 			t.Error("reattachable on no information")
 		}
 	})
 	t.Run("turn in flight", func(t *testing.T) {
 		f := newSideFake(t)
 		f.status.Turns = []sidecar.TurnStatus{{ID: "t1", Session: "s1"}}
-		if !r(f).Reattachable(bg, "e", "s1", "") {
+		if turn, ok := r(f).Reattachable(bg, "e", "s1", ""); !ok || turn != "t1" {
 			t.Error("a live turn must be reattachable")
 		}
 	})
 	t.Run("the sidecar restarted", func(t *testing.T) {
 		f := newSideFake(t)
 		f.buffered = []sidecar.Event{{Session: "s1", Turn: "t1", Type: "turn_end"}}
-		if r(f).Reattachable(bg, "e", "s1", "old-boot:3") {
+		if _, ok := r(f).Reattachable(bg, "e", "s1", "old-boot:3"); ok {
 			t.Error("a turn from another boot does not survive")
 		}
 	})
 	t.Run("no cursor reads the whole buffer", func(t *testing.T) {
 		f := newSideFake(t)
 		f.buffered = []sidecar.Event{{Session: "other", Turn: "x", Type: "turn_end"}, {Session: "s1", Turn: "t1", Type: "turn_start"}, {Session: "s1", Type: "message"}}
-		if !r(f).Reattachable(bg, "e", "s1", "") {
+		if turn, ok := r(f).Reattachable(bg, "e", "s1", ""); !ok || turn != "t1" {
 			t.Error("a buffered turn must be reattachable")
 		}
 		f.buffered = f.buffered[:1]
-		if r(f).Reattachable(bg, "e", "s1", "") {
+		if _, ok := r(f).Reattachable(bg, "e", "s1", ""); ok {
 			t.Error("another session's turn matched")
 		}
 	})
 	t.Run("look-back refused", func(t *testing.T) {
 		f := newSideFake(t)
 		f.fail["/agent/events"] = 500
-		if r(f).Reattachable(bg, "e", "s1", "b1:0") {
+		if _, ok := r(f).Reattachable(bg, "e", "s1", "b1:0"); ok {
 			t.Error("reattachable on a refused look-back")
 		}
 	})

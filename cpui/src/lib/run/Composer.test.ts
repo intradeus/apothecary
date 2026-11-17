@@ -64,6 +64,20 @@ describe('Composer', () => {
 			expect(ontakeover).toHaveBeenCalledExactlyOnceWith(false);
 		});
 
+		it('stops the agent again on the next take-over, after a passive one is released', async () => {
+			const ontakeover = vi.fn(async () => true);
+			const { rerender } = render(Composer, { runId: 'r1', onsent: vi.fn(), ontakeover });
+			await userEvent.click(stopNow()!);
+			await userEvent.click(screen.getByRole('button', { name: 'Take over' }));
+			expect(ontakeover).toHaveBeenLastCalledWith(false);
+
+			await rerender({ hold: aHold() });
+			await rerender({ hold: undefined });
+			expect(stopNow()).toBeChecked();
+			await userEvent.click(screen.getByRole('button', { name: 'Take over' }));
+			expect(ontakeover).toHaveBeenLastCalledWith(true);
+		});
+
 		it('offers the button again when a take-over is refused', async () => {
 			const ontakeover = vi.fn(async () => false);
 			render(Composer, { runId: 'r1', onsent: vi.fn(), ontakeover });

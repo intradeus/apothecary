@@ -52,6 +52,11 @@
 
 	const held = $derived(!!hold);
 	const heldFor = $derived(hold ? fmtClockDuration(now - new Date(hold.since).getTime()) : '');
+	// Checked by default, not remembered: the next take-over (the composer
+	// stays mounted through a hold and its release) starts from a stop.
+	$effect(() => {
+		if (held) force = true;
+	});
 
 	async function takeOver() {
 		if (!ontakeover || holding) return;

@@ -176,13 +176,20 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			// the workspace and may have outlived it: follow the turn still
 			// running (or the one that finished while nobody listened)
 			// instead of starting another.
-			if ra, ok := runner.(agentport.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.EnvID, session, rs.AgentCursor[st.ID]) {
+			// The turn followed is open from the start: its turn_start may
+			// lie before the cursor, and a forced take-over stops it.
+			ra, can := runner.(agentport.AgentReattacher)
+			var turn string
+			if can {
+				turn, can = ra.Reattachable(x.ctx, rs.EnvID, session, rs.AgentCursor[st.ID])
+			}
+			if can {
 				if err := x.append(&event.StageResumed{StageID: st.ID, Attempt: iter, Reason: event.ResumeRestart,
 					SessionID: string(session)}); err != nil {
 					return err
 				}
 				var err error
-				inv, err = x.invoke(st, budget, tr, x.liveAsks(st), "",
+				inv, err = x.invoke(st, budget, tr, x.liveAsks(st), "", turn,
 					func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
 						in.MCPServers = mcp
 						in.HarnessOptions = st.HarnessOptions
@@ -249,7 +256,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		if err := x.prompted(st.ID, iter, kind, text); err != nil {
 			return err
 		}
-		inv, err = x.invoke(st, budget, tr, nil, text,
+		inv, err = x.invoke(st, budget, tr, nil, text, "",
 			func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
 				in.MCPServers = mcp
 				in.HarnessOptions = st.HarnessOptions
