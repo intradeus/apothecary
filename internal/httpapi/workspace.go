@@ -51,11 +51,20 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 // The body is optional: none is a forced take-over. A length of -1 is a body
 // of unknown length (chunked, or HTTP/2 without Content-Length), not an
 // absent one, so every body but a declared-empty one is decoded; a stream
-// that turns out empty counts as none.
+// that turns out empty counts as none. A body is one JSON value: anything
+// after it is a 400.
 func (s *Server) postHold(w http.ResponseWriter, r *http.Request) {
 	var body TakeOverRequest
 	if r.ContentLength != 0 {
-		err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+		err := dec.Decode(&body)
+		if err == nil {
+			if err = dec.Decode(&json.RawMessage{}); err == nil {
+				err = errors.New("more than one JSON value")
+			} else if errors.Is(err, io.EOF) {
+				err = nil
+			}
+		}
 		if err != nil && !errors.Is(err, io.EOF) {
 			writeErr(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 			return
