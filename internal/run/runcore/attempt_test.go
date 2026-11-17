@@ -100,3 +100,24 @@ func TestHoldLegCountsOnlyTheHoldersSpend(t *testing.T) {
 		t.Fatalf("spend = %+v usage %+v", s, s.Usage)
 	}
 }
+
+func TestHoldLegWaitsUntilTheHoldersMessagesAreDelivered(t *testing.T) {
+	l := NewHoldLeg()
+	if l.Waiting() {
+		t.Fatal("a new leg waits on nothing")
+	}
+	l.MessageQueued()
+	l.MessageQueued()
+	l.MessagesDelivered([]agentport.UserMessage{{Text: "one"}, {Text: "handback", Verbatim: true}})
+	if !l.Waiting() {
+		t.Fatal("one of two messages delivered, and a handback, must still wait")
+	}
+	l.MessagesDelivered([]agentport.UserMessage{{Text: "two"}, {Text: "carried from a re-entry"}})
+	if l.Waiting() {
+		t.Fatal("every message delivered, still waiting")
+	}
+	l.MessageQueued()
+	if !l.Waiting() {
+		t.Fatal("a delivery past the queue must not cover the next message")
+	}
+}

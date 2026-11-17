@@ -615,6 +615,72 @@ func TestReleaseRightAfterAForcedTakeIsPrompt(t *testing.T) {
 	}
 }
 
+// A release that lands behind a holder's message hands back only after that
+// message's own turn, even when the runner takes the message only once the
+// engine has seen the stopped turn end: the agent gets the holder's words and
+// the handback as two prompts, and the hold accounts for the message and its
+// turn.
+func TestAReleaseBehindAQueuedMessageWaitsForItsTurn(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	r := &heldRunner{turns: 1} // the stage's own turn is T1; the holder's start at T2
+	stopped, endTurn, take := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		in := call.In
+		in.Events(agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: "T1"})
+		in.Events(agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "s"})
+		for !in.Inbox.Interrupted("T1") {
+			<-in.Inbox.Wake()
+		}
+		close(stopped)
+		<-endTurn
+		in.Events(agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "T1", StopReason: "cancelled",
+			Usage: &agentport.Usage{InputTokens: 10, OutputTokens: 5, CostUSD: turnCost}})
+		// Read behind the turn's end: once on the record, the engine has
+		// handled that end, and the runner has not taken the queue yet.
+		in.Events(agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "s2"})
+		<-take
+		return r.drive(ctx, in)
+	}
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitEvent[*event.AgentSession](t, h, runID) // the turn is open
+	takeOverWhenLive(t, h, runID, "u1", true)
+	<-stopped
+	if _, err := h.e.SendMessage(runID, "use sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.e.Release(runID, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	close(endTurn)
+	waitUntil(t, "the stopped turn's end to be handled", func() bool {
+		return logHas(h.events(t, runID), func(s *event.AgentSession) bool { return s.SessionID == "s2" })
+	})
+	if _, ok := findPayload[*event.HoldReleased](h.events(t, runID)); ok {
+		t.Fatal("handed back ahead of the holder's queued message")
+	}
+	close(take)
+	waitDone(t, h, runID)
+
+	evs := h.events(t, runID)
+	want := "agent_prompted:stage hold_taken message_delivered hold_released agent_prompted:handback stage_completed"
+	if got := holdOrder(evs); got != want {
+		t.Errorf("order = %s\nwant    %s", got, want)
+	}
+	batches := r.delivered()
+	if len(batches) != 2 || len(batches[0]) != 1 || batches[0][0].Text != "use sqlite" ||
+		len(batches[1]) != 1 || !batches[1][0].Verbatim || batches[1][0].Text != handbackPrompt {
+		t.Errorf("delivered = %+v, want the holder's message, then the handback alone", batches)
+	}
+	rel, _ := findPayload[*event.HoldReleased](evs)
+	if rel == nil || rel.Messages != 1 || rel.Turns != 1 || rel.Usage == nil ||
+		rel.Usage.CostUSD < turnCost-1e-9 || rel.Usage.CostUSD > turnCost+1e-9 {
+		t.Errorf("hold account = %+v", rel)
+	}
+}
+
 // A turn waiting on the agent's own question is not working: even a forced
 // take-over leaves it for the holder to answer, and it runs on under the hold.
 func TestAForcedTakeOverLeavesATurnWaitingOnItsQuestion(t *testing.T) {

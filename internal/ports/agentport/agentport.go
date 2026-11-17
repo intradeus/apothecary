@@ -101,7 +101,8 @@ type Inbox interface {
 	// when a hold ends and when a forced take-over asks to stop a turn.
 	Wake() <-chan struct{}
 	// Take removes and returns every queued message: taking IS delivering,
-	// so a runner takes only what it is about to send.
+	// so a runner takes only what it is about to send, and reports it as a
+	// user_message before the turn it starts (a hold's release waits on it).
 	Take() []UserMessage
 	// Held reports whether a human holds the session (a take-over). While
 	// held, a turn that ends with nothing queued is not the invocation's

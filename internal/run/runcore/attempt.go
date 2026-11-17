@@ -118,7 +118,8 @@ type HoldRequest struct {
 	Force bool
 	// Held: a hold is in force; Releasing: it is already handing back.
 	Held, Releasing bool
-	// TurnOpen: a turn is in flight; Queued: a message is queued to start one.
+	// TurnOpen: a turn is in flight; Queued: a message is still to be
+	// delivered, queued or taken by the runner, and will start one.
 	TurnOpen, Queued bool
 	// QuestionOpen: the agent's own question is waiting on a human.
 	QuestionOpen bool
@@ -153,10 +154,19 @@ type HoldLeg struct {
 	Spend event.HoldSpend
 	// turns are the ones started under the hold: only those are the holder's.
 	turns map[string]bool
+	// waiting counts the holder's messages queued but not yet delivered.
+	waiting int
 }
 
 // NewHoldLeg starts a leg with nothing spent.
 func NewHoldLeg() HoldLeg { return HoldLeg{turns: map[string]bool{}} }
+
+// MessageQueued counts a holder's message waiting for the agent.
+func (l *HoldLeg) MessageQueued() { l.waiting++ }
+
+// Waiting reports whether a holder's message is queued or taken but not yet
+// delivered: its turn is still to come, even once the runner has taken it.
+func (l *HoldLeg) Waiting() bool { return l.waiting > 0 }
 
 // MessagesDelivered counts the holder's words reaching the agent. The
 // engine's own — a verbatim handback — are not theirs.
@@ -164,6 +174,7 @@ func (l *HoldLeg) MessagesDelivered(msgs []agentport.UserMessage) {
 	for _, m := range msgs {
 		if !m.Verbatim {
 			l.Spend.Messages++
+			l.waiting = max(l.waiting-1, 0)
 		}
 	}
 }

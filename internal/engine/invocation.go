@@ -341,11 +341,15 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					cancelRun(errParked)
 					return collect(outcomePaused)
 				}
-				if hold.releasing {
+				// A release hands back once the holder's messages are all in:
+				// one queued before it (even one the runner has already
+				// taken) gets its own turn first, and the handback the next.
+				switch {
+				case hold.releasing && !hold.leg.Waiting():
 					if err := handBack(hold.releaseBy); err != nil {
 						return invocation{}, err
 					}
-				} else if !io.inbox.pending() {
+				case !hold.releasing && !io.inbox.pending() && !hold.leg.Waiting():
 					idleOnHolder()
 				}
 			}
@@ -360,6 +364,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				return invocation{}, err
 			}
 			io.inbox.push(req.msg)
+			hold.leg.MessageQueued()
 			req.ack <- nil
 		case req := <-x.h.holds:
 			var err error
@@ -370,7 +375,8 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			// turn alone; one raised after a stop is decided is refused.
 			x.e.mu.Lock()
 			move := runcore.PlanHoldRequest(runcore.HoldRequest{Take: req.take, Force: req.force,
-				Held: held, Releasing: releasing, TurnOpen: turnOpen, Queued: io.inbox.pending(),
+				Held: held, Releasing: releasing, TurnOpen: turnOpen,
+				Queued:       io.inbox.pending() || held && hold.leg.Waiting(),
 				QuestionOpen: len(open) > 0 || x.h.raising > 0})
 			if move == runcore.HoldTakeAndStop {
 				x.h.stopping = openTurn

@@ -53,23 +53,33 @@ What now:
   release's handback get a short reply turn — so `task dev:up` can show a
   forced take, a passive one, messages and the release.
 
-Release, reviewed: no change. It hands back at once when the agent waits on
+Release, reviewed: one fix. It hands back at once when the agent waits on
 the holder, and otherwise after the turn in flight. After a forced take-over
 that turn is only the stopped one still winding down, or the holder's own (the
 design of `2026-10-28-take-over.md`); re-admitting a parked run cannot be
 avoided. After a passive take-over it can still be the agent's own turn, which
-is what passive means.
+is what passive means. The fix: a release behind a holder's message handed
+back at the end of the turn in flight, even with that message still to be
+delivered — once the runner had taken it, the engine no longer saw it queued —
+so the agent got the message and the handback in one prompt, and the hold
+counted neither. The hold's leg now counts the holder's messages queued and
+not yet reported delivered (`HoldLeg.Waiting`); the release waits on them, and
+hands back at the end of their turn. `Inbox.Take` now says a runner reports
+what it took as a `user_message` before the turn it starts, as every runner
+here already did.
 
 This narrows what `2026-10-31-nobody-talks-to-an-agent-without-taking-it-over.md`
 removed: no message interrupts the agent; only a forced take-over can stop a
 turn, and it names that turn.
 
-Held by: `TestPlanHoldRequest` (runcore); `TestAForcedTakeOverStopsTheAgentsTurn`,
+Held by: `TestPlanHoldRequest`, `TestHoldLegWaitsUntilTheHoldersMessagesAreDelivered`
+(runcore); `TestAForcedTakeOverStopsTheAgentsTurn`,
 `TestAPassiveTakeOverLetsTheTurnFinish`, `TestReleaseRightAfterAForcedTakeIsPrompt`,
 `TestAForcedTakeOverLeavesATurnWaitingOnItsQuestion`,
 `TestAForcedTakeOverBesideAQueuedQuestionLeavesTheTurn`,
 `TestAForcedTakeOverBesideARegisteredQuestionLeavesTheTurn`,
 `TestAQuestionFromAStoppingTurnIsRefused`,
+`TestAReleaseBehindAQueuedMessageWaitsForItsTurn`,
 `TestRestartForcedTakeOverStopsTheReattachedTurn` (engine);
 `TestReattachability`, `TestReattachFollowsTheTurnInFlight`,
 `TestStoppingATurnKeepsTheSession`, `TestAStopForAnotherTurnIsIgnored`,
