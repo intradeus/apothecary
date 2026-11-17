@@ -213,14 +213,15 @@ type runHandle struct {
 	mailbox chan raiseReq  // agent-raised pings (ask_human shim path)
 	answers chan answerReq // answers for any of this run's open pings
 	// messages carries a human's messages to the running agent. Unbuffered:
-	// a send succeeds only when an agent invocation is there to take it.
+	// a send succeeds only when an agent invocation, or a start hold's
+	// opening prompt (takeOpeningMessages), is there to take it.
 	messages chan msgReq
 	// holds carries a take-over (or its release) to the running agent's
 	// invocation, unbuffered for the same reason.
 	holds chan holdReq
 	// agentLive is set while an agent invocation runs (messages can land),
-	// and from a start hold's record on while its opening invocation is
-	// still on its way (admitOpening): a send then waits for it.
+	// and while a start hold's opening invocation is still on its way, from
+	// just before its hold_taken (admitOpening): a send then waits for it.
 	agentLive atomic.Bool
 	// parking is set while the loop goes from an invocation towards parked:
 	// from the decision until the next invocation, or until it is gone. It

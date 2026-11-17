@@ -577,9 +577,9 @@ func heldOrder(evs []event.Event) string {
 }
 
 // The run shows in the owner's hands from hold_taken on, while the opening
-// prompt is still being written: what they do then reaches the attempt. A
-// message is delivered once, as the turn after the opening one; a release
-// follows the opening turn.
+// prompt is still on its way: what they do then reaches the attempt. A
+// message is delivered once, with the stage prompt; a release follows the
+// opening turn.
 func TestStartHeldAdmitsTheOwnerBeforeItsPrompt(t *testing.T) {
 	finish := func(t *testing.T, h *harness, runID string) []event.Event {
 		t.Helper()
@@ -593,9 +593,9 @@ func TestStartHeldAdmitsTheOwnerBeforeItsPrompt(t *testing.T) {
 		}
 		return h.events(t, runID)
 	}
-	// inPromptWindow acts while the opening prompt's write is stalled, once
-	// the run shows the hold.
-	inPromptWindow := func(t *testing.T, h *harness, s *stallStore, runID string, act func() error) {
+	// inOpeningWindow acts while the loop is stalled on its way to the
+	// opening prompt, once the run shows the hold.
+	inOpeningWindow := func(t *testing.T, h *harness, s *stallStore, runID string, act func() error) {
 		t.Helper()
 		err := inWindow(t, s, func() error {
 			if v, err := h.e.store.Events(context.Background(), runID, 0); err != nil {
@@ -611,25 +611,23 @@ func TestStartHeldAdmitsTheOwnerBeforeItsPrompt(t *testing.T) {
 	}
 
 	t.Run("message", func(t *testing.T) {
-		s, store := stallAt(event.TypeAgentPrompted)
+		s, store := stallAfter(event.TypeHoldTaken)
 		h, r := startHeldHarnessOn(t, store, nil)
 		runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "held", testProject)
 		if err != nil {
 			t.Fatal(err)
 		}
 		var id string
-		inPromptWindow(t, h, s, runID, func() (err error) {
+		inOpeningWindow(t, h, s, runID, func() (err error) {
 			id, err = h.e.SendMessage(runID, "smaller, please")
 			return err
 		})
-		waitUntil(t, "the owner's turn to end", func() bool {
-			return countType(h.events(t, runID), event.TypeAgentMessage) >= 2
-		})
+		waitHeldNotices(t, h, 1)
 		if err := h.e.Release(runID, "owner"); err != nil {
 			t.Fatal(err)
 		}
 		evs := finish(t, h, runID)
-		want := "hold_taken agent_prompted:stage hold_opened message_delivered hold_released agent_prompted:handback stage_completed"
+		want := "hold_taken message_delivered agent_prompted:stage hold_opened hold_released agent_prompted:handback stage_completed"
 		if got := heldOrder(evs); got != want {
 			t.Errorf("order = %s\nwant    %s", got, want)
 		}
@@ -639,11 +637,15 @@ func TestStartHeldAdmitsTheOwnerBeforeItsPrompt(t *testing.T) {
 		if d, ok := findPayload[*event.MessageDelivered](evs); !ok || len(d.MessageIDs) != 1 || d.MessageIDs[0] != id {
 			t.Errorf("message_delivered = %+v", d)
 		}
-		if b := r.delivered(); len(b) != 2 || len(b[0]) != 1 || b[0][0].Text != "smaller, please" || b[1][0].Text != handbackPrompt {
-			t.Errorf("delivered = %+v", b)
+		if p, _ := findPayload[*event.AgentPrompted](evs); p == nil || p.Kind != event.PromptStage ||
+			!strings.HasPrefix(p.Text, "# OUTPUT CONTRACT") || !strings.HasSuffix(p.Text, "smaller, please") {
+			t.Errorf("stage prompt = %+v, want the message riding with it", p)
 		}
-		if rel, _ := findPayload[*event.HoldReleased](evs); rel == nil || rel.Turns != 1 || rel.Messages != 1 {
-			t.Errorf("hold_released = %+v, want the owner's turn alone", rel)
+		if b := r.delivered(); len(b) != 1 || b[0][0].Text != handbackPrompt {
+			t.Errorf("delivered = %+v, want the handback alone after the opening turn", b)
+		}
+		if rel, _ := findPayload[*event.HoldReleased](evs); rel == nil || rel.Turns != 0 || rel.Messages != 1 {
+			t.Errorf("hold_released = %+v, want the owner's message and no turn of theirs", rel)
 		}
 	})
 
@@ -654,7 +656,7 @@ func TestStartHeldAdmitsTheOwnerBeforeItsPrompt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		inPromptWindow(t, h, s, runID, func() error { return h.e.Release(runID, "owner") })
+		inOpeningWindow(t, h, s, runID, func() error { return h.e.Release(runID, "owner") })
 		evs := finish(t, h, runID)
 		want := "hold_taken agent_prompted:stage hold_opened hold_released agent_prompted:handback stage_completed"
 		if got := heldOrder(evs); got != want {

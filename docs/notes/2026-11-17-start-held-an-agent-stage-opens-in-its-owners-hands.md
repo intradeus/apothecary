@@ -48,14 +48,18 @@ What now:
   run shows in their hands, but the invocation that takes messages and
   releases starts only after the stage prompt is written; in between,
   `SendMessage` said "no agent is running" and `Release` "nobody holds"
-  (review). `admitOpening` sets the run's `agentLive` as soon as a hold
-  owed its opening turn is in force (and again before each invocation of
-  such an attempt), so a message or a release waits on the loop's channel
-  for that invocation instead of being refused. A message is pushed to its
-  inbox — delivered once, as the turn after the opening one, not appended to
-  the stage prompt the plan named, which may already be on the log by then.
-  A release while the opening turn is still owed (not started, or in
-  flight) waits for it: the handback follows the opening turn.
+  (review). `admitOpening` sets the run's `agentLive` just before
+  `hold_taken` is written (and again before each invocation of an attempt
+  still owed its opening turn), so a message or a release waits on the
+  loop's channel instead of being refused. Right before the stage prompt is
+  fixed, `takeOpeningMessages` drains the messages waiting there, records
+  each (`message_queued`) and lets `withPendingMessages` append them to the
+  stage prompt: delivered once, with it, on the hold's account as messages
+  (the opening turn still is not the holder's). One that reaches the loop
+  after that point — the prompt already fixed — is taken by the opening
+  invocation as any mid-turn message is, and is the next turn. A release
+  while the opening turn is still owed (not started, or in flight) waits for
+  it: the handback follows the opening turn.
 - **The owner is told** when that opening turn ends with nothing queued and
   the session goes idle on them: one `Engine.notify` with `Type: "held"` to
   the run owner's channels, sent after `hold_opened` is recorded. A later
@@ -81,8 +85,9 @@ handback, the account excluding the opening turn),
 `TestStartHeldHoldsEveryAttempt` (an `output_contract` retry and an
 `on_reject` redo each take a hold before their prompt),
 `TestStartHeldParksOnAQuietOwner`,
-`TestStartHeldAdmitsTheOwnerBeforeItsPrompt` (a message and a release while
-the opening prompt's write is stalled, the hold already on the log),
+`TestStartHeldAdmitsTheOwnerBeforeItsPrompt` (a message while `hold_taken`
+is on the log and the prompt not yet written rides with the stage prompt;
+a release while the prompt's write is stalled follows the opening turn),
 `TestRecoveredStartHoldSendsTheStagePrompt`
 (a crash before the prompt, and after it with no session: the prompt is
 sent, not parked on), `TestRecoveredStartHoldFollowsTheOpeningTurn` (a
@@ -91,7 +96,8 @@ the account); `internal/run/event` `TestEveryRegisteredTypeRoundTrips`
 (`hold_opened`); CPUI `derive.test.ts` and `transcriptItems.test.ts`
 (`hold_opened`);
 `internal/engine/outcomes_test.go` `TestAnOutcomeWaitsForAStartHold`;
-`internal/flow` `TestStartHeld`, `TestDocBoolJSON`; CPUI
+`internal/flow` `TestStartHeld`, `TestDocBoolCodec` (JSON and YAML, both
+ways); CPUI
 `AgentStage.test.ts` (start in your hands), `flowdoc.test.ts` (the trip),
 `Inbox.test.ts` (in your hands), `fleet.svelte.test.ts` (`fleet.held`), and
 the inbox counts in `Sidebar.test.ts` and `CommandPalette.test.ts`.

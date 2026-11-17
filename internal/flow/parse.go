@@ -605,6 +605,15 @@ func (d *DocBool) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
+// MarshalYAML emits the bool, or the "$name" scalar when the field reads a
+// parameter: the scalar UnmarshalYAML reads back.
+func (d DocBool) MarshalYAML() (any, error) {
+	if d.Ref != "" {
+		return d.Ref, nil
+	}
+	return d.Bool, nil
+}
+
 // MarshalJSON emits the bool, or the "$name" string when the field reads a
 // parameter.
 func (d DocBool) MarshalJSON() ([]byte, error) {

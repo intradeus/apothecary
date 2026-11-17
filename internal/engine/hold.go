@@ -221,15 +221,45 @@ func (x *exec) takeStartHold(st *flow.Stage, iter int) error {
 	return x.append(&event.HoldTaken{StageID: st.ID, Attempt: iter, UserID: x.rs.View.UserID, Start: true})
 }
 
-// admitOpening lets the run's owner reach an attempt whose start hold is
-// still owed its opening turn before the invocation carrying it runs: the
-// hold is on the record — the run shows in their hands — while the prompt
-// is still being written. A message or a release then waits on the loop's
-// channel for that invocation, which takes it as it would mid-turn: the
-// message is the session's next turn, the release follows the opening one.
+// admitOpening lets the run's owner reach an attempt of a stage that starts
+// held before the invocation carrying its opening turn runs: from just
+// before hold_taken is written (the run shows in their hands as soon as it
+// is) until the stage prompt goes out. A message or a release then waits on
+// the loop's channel instead of being refused. A message sent before the
+// stage prompt is fixed rides with it (takeOpeningMessages); a release, or
+// a message too late for the prompt, waits for the opening invocation,
+// which takes it as it would mid-turn — the release follows the opening
+// turn.
 func (x *exec) admitOpening(st *flow.Stage) {
-	if h := x.rs.Holds[st.ID]; h != nil && h.Opening {
+	if !st.StartHeld {
+		return
+	}
+	if h := x.rs.Holds[st.ID]; h != nil && h.Opening || h == nil && !x.rs.AttemptBegun(st.ID) {
 		x.h.agentLive.Store(true)
+	}
+}
+
+// takeOpeningMessages records what the run's owner sent while a start
+// hold's opening prompt was on its way (admitOpening), so that prompt
+// carries it (withPendingMessages): delivered once, with the stage prompt,
+// on the hold's account as the holder's words.
+func (x *exec) takeOpeningMessages(st *flow.Stage) error {
+	if h := x.rs.Holds[st.ID]; h == nil || !h.Opening {
+		return nil
+	}
+	for {
+		select {
+		case req := <-x.h.messages:
+			q := &event.MessageQueued{MessageID: req.msg.ID, Text: req.msg.Text, StageID: st.ID}
+			if err := x.append(q); err != nil {
+				req.ack <- err
+				return err
+			}
+			x.heldMessages++
+			req.ack <- nil
+		default:
+			return nil
+		}
 	}
 }
 

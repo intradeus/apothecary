@@ -103,12 +103,14 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	defer x.e.crew.leave(rs.RunID)
 	// START HELD: the attempt opens in the run owner's hands, past every
 	// early way out above so none leaves a hold behind. The stage prompt
-	// still goes first; its turn ends on the owner, not the stage.
+	// still goes first; its turn ends on the owner, not the stage. The owner
+	// is admitted before the hold is on the record, so nothing they do once
+	// the run shows it in their hands is refused.
+	x.admitOpening(st)
+	defer x.h.agentLive.Store(false)
 	if err := x.takeStartHold(st, iter); err != nil {
 		return err
 	}
-	x.admitOpening(st)
-	defer x.h.agentLive.Store(false)
 
 	// ONE STAGE, ONE SESSION. A new stage opens a session of its own, and an
 	// attempt sent back to the stage continues it, so the agent remembers
@@ -250,6 +252,11 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		text, kind := prompt, event.PromptStage
 		if resuming {
 			text, kind = reply, replyKind
+		}
+		// What the owner sent while a start hold's opening prompt was on
+		// its way rides with that prompt.
+		if err := x.takeOpeningMessages(st); err != nil {
+			return err
 		}
 		text, err := x.withPendingMessages(st, iter, text)
 		if err != nil {

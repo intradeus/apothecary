@@ -18,10 +18,12 @@ import (
 // window open. What arrives in it must act on the parked run — never reach a
 // loop that is leaving, which would drop it or refuse it for no reason.
 
-// stallStore stops the first write of one event type until let go.
+// stallStore stops the first write of one event type until let go: before
+// it lands, or (after) once it is on the log.
 type stallStore struct {
 	event.Store
 	typ     event.Type
+	after   bool
 	once    sync.Once
 	reached chan struct{}
 	letGo   chan struct{}
@@ -35,16 +37,33 @@ func stallAt(typ event.Type) (*stallStore, func(*event.MemStore) event.Store) {
 	}
 }
 
+// stallAfter is stallAt with the write on the log while it stalls.
+func stallAfter(typ event.Type) (*stallStore, func(*event.MemStore) event.Store) {
+	s, store := stallAt(typ)
+	s.after = true
+	return s, store
+}
+
 func (s *stallStore) Append(ctx context.Context, runID string, ps ...event.Payload) ([]event.Event, error) {
+	hit := false
 	for _, p := range ps {
-		if p.EventType() == s.typ {
-			s.once.Do(func() {
-				close(s.reached)
-				<-s.letGo
-			})
-		}
+		hit = hit || p.EventType() == s.typ
 	}
-	return s.Store.Append(ctx, runID, ps...)
+	if hit && !s.after {
+		s.stall()
+	}
+	evs, err := s.Store.Append(ctx, runID, ps...)
+	if hit && s.after {
+		s.stall()
+	}
+	return evs, err
+}
+
+func (s *stallStore) stall() {
+	s.once.Do(func() {
+		close(s.reached)
+		<-s.letGo
+	})
 }
 
 // inWindow runs act while the loop is stalled writing run_paused, lets the
