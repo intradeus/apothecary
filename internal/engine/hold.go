@@ -26,7 +26,12 @@ import (
 // the holder at once — unless that turn is waiting on the agent's own
 // question: the agent is not working then, and the holder answers it. A
 // passive one lets the turn finish first. Either way the stopped (or
-// finished) turn is the agent's, not on the hold's account.
+// finished) turn is the agent's, not on the hold's account. The stop is
+// decided under the lock the agent's questions are registered under: a
+// question registered first (even one still on its way to the loop) keeps
+// its turn, and one raised once the stop is decided is refused
+// (ErrTurnStopping) until the stopped turn ends — never opened on a turn
+// about to end, which would park the run.
 //
 // The hold is on the record: hold_taken, and hold_released with its
 // duration, turns and cost (every leg of it, across any park). A holder who
@@ -39,6 +44,9 @@ var (
 	ErrAlreadyHeld = errors.New("someone already holds this agent's session")
 	// ErrNotHeld: a release or a message with no take-over in force.
 	ErrNotHeld = errors.New("nobody holds this agent's session")
+	// ErrTurnStopping: a question raised by a turn a forced take-over is
+	// stopping.
+	ErrTurnStopping = errors.New("the session was taken over and this turn is being stopped; the person holding it talks to you next")
 )
 
 // TakeOver puts the run's live agent session in userID's hands. force stops
@@ -209,6 +217,15 @@ type holdReq struct {
 func (x *exec) takeHold(st *flow.Stage, iter int, userID string) error {
 	taken := &event.HoldTaken{StageID: st.ID, Attempt: iter, UserID: userID}
 	return x.append(taken)
+}
+
+// endStop clears the stop a forced take-over asked of the agent's turn: that
+// turn has ended (or the invocation has), and the agent's questions are
+// welcome again.
+func (x *exec) endStop() {
+	x.e.mu.Lock()
+	x.h.stopping = ""
+	x.e.mu.Unlock()
 }
 
 // releaseHold closes a take-over with its account: every leg's spend, the

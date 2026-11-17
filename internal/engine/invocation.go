@@ -132,6 +132,9 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 	// The open turn's id: what a forced take-over stops. A reattached
 	// turn is open before any event of it arrives.
 	turnOpen, openTurn := attached != "", attached
+	// A stop asked of a turn is over with the invocation: the agent's next
+	// questions are for whoever runs next.
+	defer x.endStop()
 	// record files one agent event: a new harness session is recorded the
 	// moment it exists, so a crash mid-invocation resumes (or reattaches
 	// to) it, not a new one — whichever path meets the event, the loop's
@@ -258,6 +261,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 	admit := func(req raiseReq) error {
 		x.e.mu.Lock()
 		req.p.StageID = st.ID // the stage whose agent asked (PLAN4 M15)
+		x.h.raising--         // out of the mailbox: counted in open from here
 		x.e.mu.Unlock()
 		raised := &event.PingRaised{PingID: req.p.ID, Type: req.p.Type,
 			Question: req.p.Question, Context: req.p.Context, Key: req.p.key,
@@ -285,19 +289,6 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		open = append(open, req.p)
 		close(req.ack)
 		return nil
-	}
-	// admitQueued admits every raise already waiting in the mailbox.
-	admitQueued := func() error {
-		for {
-			select {
-			case req := <-x.h.mailbox:
-				if err := admit(req); err != nil {
-					return err
-				}
-			default:
-				return nil
-			}
-		}
 	}
 
 	for {
@@ -333,6 +324,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				}
 			case agentport.AgentEvTurnEnd:
 				turnOpen, openTurn = false, ""
+				x.endStop() // the stopped turn has ended: the agent may ask again
 				if hold == nil {
 					break
 				}
@@ -370,18 +362,20 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			io.inbox.push(req.msg)
 			req.ack <- nil
 		case req := <-x.h.holds:
-			// A question the agent has already raised is open even while its
-			// raise waits in the mailbox: fold those in first, so a forced
-			// take-over never stops a turn that is waiting on its question.
-			if err := admitQueued(); err != nil {
-				req.ack <- err
-				return invocation{}, err
-			}
 			var err error
 			held, releasing := hold != nil, hold != nil && hold.releasing
+			// Planned under the lock the agent's questions are registered
+			// under: a question registered first is open, even while it is
+			// still on its way to this loop, so a forced take-over leaves its
+			// turn alone; one raised after a stop is decided is refused.
+			x.e.mu.Lock()
 			move := runcore.PlanHoldRequest(runcore.HoldRequest{Take: req.take, Force: req.force,
 				Held: held, Releasing: releasing, TurnOpen: turnOpen, Queued: io.inbox.pending(),
-				QuestionOpen: len(open) > 0})
+				QuestionOpen: len(open) > 0 || x.h.raising > 0})
+			if move == runcore.HoldTakeAndStop {
+				x.h.stopping = openTurn
+			}
+			x.e.mu.Unlock()
 			switch move {
 			case runcore.HoldRefuseTaken:
 				err = ErrAlreadyHeld

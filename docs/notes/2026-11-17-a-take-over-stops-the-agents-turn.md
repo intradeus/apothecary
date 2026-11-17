@@ -40,7 +40,14 @@ What now:
 - Exception: a turn waiting on the agent's own question (`ask_human` open)
   is not stopped, even forced. The agent is not working then, and a turn
   ending on an open question parks the run under the hold; the holder
-  answers it instead.
+  answers it instead. The stop is decided under `Engine.mu`, the lock
+  `RaiseQuestion` registers a question under: a question counts as open
+  from its registration (`runHandle.raising`, until the invocation admits
+  it), not only once the loop has taken it from the mailbox; and once a stop
+  is decided (`runHandle.stopping`, until a turn or the invocation ends) a
+  question is refused, `ErrTurnStopping` (409), rather than opened on a turn
+  about to end. A runner that ignores the stop therefore has its turn's
+  questions refused until that turn ends; every runner here honours it.
 - The dev fake harness fakes a take-over: its demo turn ends, cancelled, when
   stopped, and it serves a held session — each holder message and the
   release's handback get a short reply turn — so `task dev:up` can show a
@@ -60,6 +67,9 @@ turn, and it names that turn.
 Held by: `TestPlanHoldRequest` (runcore); `TestAForcedTakeOverStopsTheAgentsTurn`,
 `TestAPassiveTakeOverLetsTheTurnFinish`, `TestReleaseRightAfterAForcedTakeIsPrompt`,
 `TestAForcedTakeOverLeavesATurnWaitingOnItsQuestion`,
+`TestAForcedTakeOverBesideAQueuedQuestionLeavesTheTurn`,
+`TestAForcedTakeOverBesideARegisteredQuestionLeavesTheTurn`,
+`TestAQuestionFromAStoppingTurnIsRefused`,
 `TestRestartForcedTakeOverStopsTheReattachedTurn` (engine);
 `TestReattachability`, `TestReattachFollowsTheTurnInFlight`,
 `TestStoppingATurnKeepsTheSession`, `TestAStopForAnotherTurnIsIgnored`,

@@ -291,9 +291,10 @@ func (f *faultReads) MRChecks(context.Context, repoport.MRRef, string) (repoport
 	return repoport.Checks{}, f.err
 }
 
-// An agent under a take-over can still ask its own question: the turn ends on
-// it, the attempt parks on the question with the hold in force, an outcome
-// leaves it alone, and the answer resumes the same session under the hold.
+// An agent under a passive take-over (its turn runs on) can still ask its
+// own question: the turn ends on it, the attempt parks on the question with
+// the hold in force, an outcome leaves it alone, and the answer resumes the
+// same session under the hold.
 func TestAQuestionUnderATakeOverParksWithTheHoldInForce(t *testing.T) {
 	ph := newPhasedHarness(t, overrideDoc)
 	runID := ph.start(t)
@@ -325,7 +326,7 @@ func TestAQuestionUnderATakeOverParksWithTheHoldInForce(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitEvent[*event.AgentSession](t, ph.harness, runID)
-	takeOverWhenLive(t, ph.harness, runID, "u1", true)
+	takeOverWhenLive(t, ph.harness, runID, "u1", false)
 	close(asked)
 	p := ph.waitPing(t, event.PingClarification)
 	waitUntil(t, "the run to park on its question", func() bool { return ph.view(t, runID).Dormant })

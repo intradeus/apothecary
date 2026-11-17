@@ -681,9 +681,8 @@ func askingRunner(h *harness, runIDCh <-chan string, inbox chan<- agentport.Inbo
 // A question the agent has raised counts as open while its raise still waits
 // for the run's loop: a forced take-over arriving beside it leaves the turn
 // alone. The loop is held busy writing the session while the agent raises
-// and the take-over comes in, so both are queued when it comes back;
-// whichever it picks first, the question is opened before the hold is
-// planned. Several runs, as the pick is random.
+// and the take-over comes in, so both are queued when it comes back; it may
+// pick either first. Several runs, as the pick is random.
 func TestAForcedTakeOverBesideAQueuedQuestionLeavesTheTurn(t *testing.T) {
 	for i := range 16 {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
@@ -719,10 +718,6 @@ func TestAForcedTakeOverBesideAQueuedQuestionLeavesTheTurn(t *testing.T) {
 			if in.Interrupted("Q1") {
 				t.Fatal("a forced take-over stopped a turn whose question was queued")
 			}
-			evs := h.events(t, runID)
-			if i, j := indexOf(eventTypes(evs), string(event.TypePingRaised)), indexOf(eventTypes(evs), string(event.TypeHoldTaken)); i < 0 || j < 0 || i > j {
-				t.Fatalf("events = %v; the question opens before the hold", eventTypes(evs))
-			}
 			p := h.waitPing(t, "clarification")
 			if err := h.e.AnswerPing(p.ID, textAnswer("postgres")); err != nil {
 				t.Fatal(err)
@@ -736,5 +731,107 @@ func TestAForcedTakeOverBesideAQueuedQuestionLeavesTheTurn(t *testing.T) {
 				t.Error("the question parked the run")
 			}
 		})
+	}
+}
+
+// A question counts as open from the moment it is registered, before its
+// raise reaches the run's loop: a forced take-over planned in between leaves
+// the turn alone, and the question opens under the hold.
+func TestAForcedTakeOverBesideARegisteredQuestionLeavesTheTurn(t *testing.T) {
+	registered, letGo := make(chan struct{}), make(chan struct{})
+	prev := raiseRegistered
+	raiseRegistered = func(*Ping) { close(registered); <-letGo }
+	t.Cleanup(func() { raiseRegistered = prev })
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	runIDCh := make(chan string, 1)
+	inbox := make(chan agentport.Inbox, 1)
+	h.runner.RunFunc = askingRunner(h, runIDCh, inbox)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := <-inbox
+	runIDCh <- runID
+	select {
+	case <-registered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the question was never registered")
+	}
+	waitEvent[*event.AgentSession](t, h, runID) // the turn is open
+	takeOverWhenLive(t, h, runID, "u1", true)   // planned with the raise short of the loop
+	if in.Interrupted("Q1") {
+		t.Fatal("a forced take-over stopped a turn whose question was registered")
+	}
+	close(letGo)
+	p := h.waitPing(t, "clarification")
+	if err := h.e.AnswerPing(p.ID, textAnswer("postgres")); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the turn to run on", func() bool { return agentSaid(h.events(t, runID), "with the answer") })
+	if err := h.e.Release(runID, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, h, runID)
+	evs := h.events(t, runID)
+	if _, ok := findPayload[*event.StagePaused](evs); ok {
+		t.Error("the question parked the run")
+	}
+	if v := h.view(t, runID); v.State != run.Completed || v.Hold != nil {
+		t.Errorf("final view = %s hold=%+v", v.State, v.Hold)
+	}
+}
+
+// Once a forced take-over has decided to stop the agent's turn, a question
+// that turn raises is refused rather than opened on a turn about to end
+// (which would park the run); the agent waits on the holder as after any
+// stop.
+func TestAQuestionFromAStoppingTurnIsRefused(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	runIDCh := make(chan string, 1)
+	asked := make(chan error, 1)
+	r := &heldRunner{}
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: "Q1"},
+			agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "s"})
+		for !call.In.Inbox.Interrupted("Q1") {
+			select {
+			case <-call.In.Inbox.Wake():
+			case <-ctx.Done():
+				return agentport.AgentResult{}, ctx.Err()
+			}
+		}
+		// The agent asks before its harness sees the stop.
+		_, err := h.e.RaisePing(<-runIDCh, "clarification", "which db?", "", nil, nil)
+		asked <- err
+		emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "Q1", StopReason: "cancelled"})
+		return r.drive(ctx, call.In)
+	}
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runIDCh <- runID
+	waitEvent[*event.AgentSession](t, h, runID) // the turn is open
+	takeOverWhenLive(t, h, runID, "u1", true)
+	if err := <-asked; !errors.Is(err, ErrTurnStopping) {
+		t.Fatalf("raise from the stopping turn = %v", err)
+	}
+	if _, err := h.e.SendMessage(runID, "use sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the message to be answered", func() bool { return agentSaid(h.events(t, runID), "answer: use sqlite") })
+	if err := h.e.Release(runID, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, h, runID)
+	evs := h.events(t, runID)
+	if _, ok := findPayload[*event.PingRaised](evs); ok {
+		t.Error("the stopping turn's question was opened")
+	}
+	if _, ok := findPayload[*event.StagePaused](evs); ok {
+		t.Error("the run parked")
+	}
+	if v := h.view(t, runID); v.State != run.Completed || v.Hold != nil {
+		t.Errorf("final view = %s hold=%+v", v.State, v.Hold)
 	}
 }

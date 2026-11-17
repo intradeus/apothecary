@@ -230,6 +230,14 @@ type runHandle struct {
 	// relaunch: the loop left for an outcome's chain, and the next one runs
 	// it (finish). Set and read on the loop's own goroutine.
 	relaunch bool
+	// raising (under Engine.mu) counts the agent's questions registered by
+	// RaiseQuestion and not yet opened by the invocation (admit): a forced
+	// take-over counts them as open.
+	raising int
+	// stopping (under Engine.mu) is the turn a forced take-over asked to
+	// stop, until a turn ends or the invocation does: RaiseQuestion refuses
+	// meanwhile.
+	stopping string
 	// idle is set while the run sits between phases with its merge requests
 	// open (PLAN6): the loop only polls the repository host, so it does not
 	// hold a concurrency slot.
@@ -1903,13 +1911,21 @@ func (e *Engine) RaiseQuestion(runID string, q Question) (*Ping, error) {
 		e.mu.Unlock()
 		return nil, fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
 	}
+	if h.stopping != "" {
+		// A forced take-over decided to stop the turn this question comes
+		// from: opened, it would park the run as that turn ends.
+		e.mu.Unlock()
+		return nil, fmt.Errorf("run %s: %w", runID, ErrTurnStopping)
+	}
 	p := &Ping{
 		ID: e.newID(), RunID: runID, Type: ptype, Question: question, Context: context_,
 		Form: form, AnswerKind: event.AnswerForm, Files: refs, key: key,
 		RaisedAt: e.clock(), done: make(chan struct{}),
 	}
 	e.pings[p.ID] = p
+	h.raising++ // on its way to the loop: open to a take-over from here
 	e.mu.Unlock()
+	raiseRegistered(p)
 
 	req := raiseReq{p: p, ack: make(chan struct{})}
 	// The mailbox is only drained while an agent stage is executing. Never
@@ -1920,25 +1936,34 @@ func (e *Engine) RaiseQuestion(runID string, q Question) (*Ping, error) {
 	select {
 	case h.mailbox <- req:
 	case <-h.done:
-		e.dropPing(p.ID)
+		e.dropPing(h, p.ID, false)
 		return nil, fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
 	case <-timeout.C:
-		e.dropPing(p.ID)
+		e.dropPing(h, p.ID, false)
 		return nil, fmt.Errorf("run %s is not in an agent stage; ask_human is unavailable right now", runID)
 	}
 	select {
 	case <-req.ack:
 	case <-h.done:
-		e.dropPing(p.ID)
+		e.dropPing(h, p.ID, true)
 		return nil, fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
 	}
 	return p, nil
 }
 
-// dropPing withdraws a never-delivered ping (RaisePing failure paths).
-func (e *Engine) dropPing(id string) {
+// raiseRegistered is called once RaiseQuestion has registered a question,
+// before it hands it to the run's loop. A variable for tests.
+var raiseRegistered = func(*Ping) {}
+
+// dropPing withdraws a never-delivered ping (RaiseQuestion failure paths).
+// One that never reached the mailbox is no longer on its way to the loop;
+// one that did is the mailbox's, counted until it is taken out (admit).
+func (e *Engine) dropPing(h *runHandle, id string, queued bool) {
 	e.mu.Lock()
 	delete(e.pings, id)
+	if !queued {
+		h.raising--
+	}
 	e.mu.Unlock()
 }
 

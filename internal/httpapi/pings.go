@@ -143,7 +143,7 @@ func (s *Server) postPing(w http.ResponseWriter, r *http.Request) {
 	p, err := s.Runs.RaiseQuestion(runID, engine.Question{Key: body.Key, Type: body.Type, Question: body.Question,
 		Context: body.Context, Fields: body.Fields, Artifacts: refs})
 	switch {
-	case errors.Is(err, engine.ErrRunNotActive):
+	case errors.Is(err, engine.ErrRunNotActive), errors.Is(err, engine.ErrTurnStopping):
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	case err != nil:
