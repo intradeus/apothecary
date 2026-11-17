@@ -20,13 +20,17 @@ import (
 	"apothecary/internal/workitem"
 )
 
-// brokenRuns answers RunsOf with an error.
+// brokenRuns cannot say which runs there are.
 type brokenRuns struct {
 	*fakeEngine
 	err error
 }
 
 func (b brokenRuns) RunsOf(context.Context, workitem.Ref) ([]run.View, error) {
+	return nil, b.err
+}
+
+func (b brokenRuns) AutomationRuns(context.Context, string) ([]run.View, error) {
 	return nil, b.err
 }
 

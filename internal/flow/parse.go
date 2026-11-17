@@ -1210,15 +1210,17 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 		return nil, p.errf(p.keyLine("blocks"), "blocks: is now sequences: — the same list under its new name; a stage runs one with sequence:")
 	}
 	if raw.LegacyRunStart.Kind != 0 {
-		return nil, p.errf(p.keyLine("run_start"), "run_start: is now operates_on: — what a run of the flow works on, %s or %s; whoever starts the run picks which one", OperatesOnTicket, OperatesOnMR)
+		return nil, p.errf(p.keyLine("run_start"), "run_start: is now operates_on: — what a run of the flow works on, %s, %s or %s; whoever starts the run picks which one", OperatesOnTicket, OperatesOnMR, OperatesOnNothing)
 	}
 	switch raw.OperatesOn {
 	case "", OperatesOnTicket:
 		f.OperatesOn = OperatesOnTicket
 	case OperatesOnMR:
 		f.OperatesOn = OperatesOnMR
+	case OperatesOnNothing:
+		f.OperatesOn = OperatesOnNothing
 	default:
-		return nil, p.errf(p.keyLine("operates_on"), "operates_on %q must be %s (the default: a run works on a ticket) or %s (a run works on a merge request someone opened)", raw.OperatesOn, OperatesOnTicket, OperatesOnMR)
+		return nil, p.errf(p.keyLine("operates_on"), "operates_on %q must be %s (the default: a run works on a ticket), %s (a run works on a merge request someone opened) or %s (a run is a workspace on a branch, with no ticket or merge request behind it)", raw.OperatesOn, OperatesOnTicket, OperatesOnMR, OperatesOnNothing)
 	}
 
 	var err error
@@ -1336,6 +1338,9 @@ func (p *parser) build(raw *Doc) (*Flow, error) {
 		return nil, err
 	}
 	if err := p.validatePhases(f, ids); err != nil {
+		return nil, err
+	}
+	if err := p.validateNothing(f); err != nil {
 		return nil, err
 	}
 	if err := p.deriveParamRoles(f); err != nil {
@@ -2451,6 +2456,34 @@ func (p *parser) buildEdgeLink(raw *DocEdge, kind string, s *Stage, line, depth 
 }
 
 // validateFlow holds the cross-stage rules (DESIGN3 §2.1: explicit graph).
+// validateNothing holds a flow whose runs are started on nothing
+// (operates_on: nothing) to what such a run has: no ticket. Reading one,
+// branching on one or writing to its tracker could never do anything, so
+// each is refused where it is written rather than skipped at every run.
+func (p *parser) validateNothing(f *Flow) error {
+	if !f.OperatesOnNothing() {
+		return nil
+	}
+	const why = "this flow's runs are started on nothing (operates_on: nothing), so they have no ticket"
+	for i := range f.Stages {
+		s := &f.Stages[i]
+		for _, in := range s.Inputs {
+			if in.Value == SourceTicket || in.Value == SourceTicketComments {
+				return p.errf(s.Line, "stage %q: input %q reads %s, but %s", s.ID, in.Name, in.Value, why)
+			}
+		}
+		if c := s.RunIf; c != nil && (c.Fact == CondTracker || c.Fact == CondChangeType) {
+			return p.errf(s.Line, "stage %q: run_if reads %s, but %s", s.ID, c.Fact, why)
+		}
+		if s.Type == StageAction {
+			if act := actionspec.Get(s.Action); act != nil && act.Requires == actionspec.RequiresTracker {
+				return p.errf(s.Line, "stage %q: action %s writes to the ticket's tracker, but %s", s.ID, s.Action, why)
+			}
+		}
+	}
+	return nil
+}
+
 func (p *parser) validateFlow(f *Flow, ids map[string]int) error {
 	// Actions marked Single may appear once per phase (a phase run opens one
 	// merge request).

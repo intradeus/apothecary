@@ -73,6 +73,8 @@ type View struct {
 	// created it (both from run_created).
 	Params    map[string]string `json:"params,omitempty"`
 	StartedBy string            `json:"started_by,omitempty"`
+	// AutomationID is the automation that created the run ("" = none did).
+	AutomationID string `json:"automation_id,omitempty"`
 	// Skillsets are the skillset versions the run installs (run_created).
 	// In the view JSON so the skill library can tell a pinned skillset from
 	// a deletable one.
@@ -213,6 +215,7 @@ func Apply(v *View, e *event.Event) {
 		v.SourceBranch = p.SourceBranch
 		v.Params = p.Params
 		v.StartedBy = p.By
+		v.AutomationID = p.Automation
 		if len(p.Skillsets) > 0 {
 			v.Skillsets = append([]event.SkillsetPin(nil), p.Skillsets...)
 		}

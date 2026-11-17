@@ -32,9 +32,11 @@ type fakeEngine struct {
 		Flow   string
 		In     runinput.Input
 	}
-	// runs are the runs created on each work item.
-	runs map[workitem.Ref][]run.View
-	next int
+	// runs are the runs created on each work item, byAutomation those each
+	// automation created (a test ends one by setting its State).
+	runs         map[workitem.Ref][]run.View
+	byAutomation map[string][]*run.View
+	next         int
 	// MRs is what ListMRs reports (merge_request).
 	MRs []repoport.MRInfo
 }
@@ -53,6 +55,13 @@ func (f *fakeEngine) CreateRunWith(_ context.Context, t runinput.Ticket, flowNam
 	for _, item := range items.All().Requested(projectID, t, in) {
 		f.runs[item] = append(f.runs[item], run.View{RunID: id, TicketID: t.TicketID})
 	}
+	if in.Automation != "" {
+		if f.byAutomation == nil {
+			f.byAutomation = map[string][]*run.View{}
+		}
+		f.byAutomation[in.Automation] = append(f.byAutomation[in.Automation],
+			&run.View{RunID: id, State: run.Running, AutomationID: in.Automation})
+	}
 	f.calls = append(f.calls, struct {
 		Ticket runinput.Ticket
 		Flow   string
@@ -65,6 +74,16 @@ func (f *fakeEngine) RunsOf(_ context.Context, item workitem.Ref) ([]run.View, e
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.runs[item], nil
+}
+
+func (f *fakeEngine) AutomationRuns(_ context.Context, automationID string) ([]run.View, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []run.View
+	for _, v := range f.byAutomation[automationID] {
+		out = append(out, *v)
+	}
+	return out, nil
 }
 
 func (f *fakeEngine) ListMRs(context.Context, string, string) ([]repoport.MRInfo, error) {
@@ -639,5 +658,71 @@ func TestAutomationOperatesOnKinds(t *testing.T) {
 	_, err = h.conf.CreateAutomation(ctx, confstore.Automation{ProjectID: h.project.ID, Name: "z", Kind: confstore.AutomationMergeRequest, Flow: "rev", Repo: "ghost"})
 	if err == nil || !strings.Contains(err.Error(), `no repository "ghost"`) {
 		t.Errorf("unknown repo: %v", err)
+	}
+}
+
+// nothingFlow is a flow whose runs are started on nothing.
+const nothingFlow = "name: sandbox\nversion: 5\noperates_on: nothing\nparameters: {}\nmain:\n  - { id: work, type: manual, question: \"yours\" }\n"
+
+// A schedule may start a flow whose runs are started on nothing: no ticket
+// is pinned, each firing is a run of its own named after the automation and
+// the slot, and a slot that falls while the previous run is still going is
+// skipped — the run holds no work item to be busy on, so the automation is.
+func TestCronOnNothing(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.conf.SaveFlow(ctx, h.project.ID, "sandbox", nothingFlow, nil); err != nil {
+		t.Fatal(err)
+	}
+	a := h.automation(t, confstore.Automation{Name: "nightly", Kind: confstore.AutomationCron, Schedule: "0 9 * * *", Flow: "sandbox", Enabled: true})
+	h.now = h.now.Add(90 * time.Minute) // 09:30
+	h.pass(t)
+	if n := h.eng.count(); n != 1 {
+		t.Fatalf("runs at 09:30 = %d (%+v)", n, h.eng.calls)
+	}
+	c := h.eng.calls[0]
+	if c.Ticket.TicketID != "" || c.Ticket.Title != "nightly - 2026-10-23 09:30" || c.Flow != "sandbox" || c.In.By != By || c.In.Automation != a.ID {
+		t.Errorf("started = %+v", c)
+	}
+	// The next slot, with that run still going: skipped, and said.
+	h.now = h.now.AddDate(0, 0, 1)
+	h.pass(t)
+	if h.eng.count() != 1 {
+		t.Fatalf("a second run beside the first: %d", h.eng.count())
+	}
+	if got := h.get(t, a.ID); !strings.Contains(got.LastError, "previous run still going: run r1") || !got.LastFiredAt.Equal(h.now) {
+		t.Errorf("skipped slot: marks = %+v", got)
+	}
+	// Once it has ended, the next slot starts another.
+	h.eng.byAutomation[a.ID][0].State = run.Completed
+	h.now = h.now.AddDate(0, 0, 1)
+	h.pass(t)
+	if h.eng.count() != 2 || h.eng.calls[1].Ticket.Title != "nightly - 2026-10-25 09:30" {
+		t.Errorf("after it ended: %+v", h.eng.calls)
+	}
+	if got := h.get(t, a.ID); got.LastError != "" {
+		t.Errorf("last_error = %q", got.LastError)
+	}
+}
+
+// A refusal, or runs that cannot be read, spends the slot and is recorded.
+func TestCronOnNothingFailures(t *testing.T) {
+	h := newHarness(t)
+	if _, err := h.conf.SaveFlow(context.Background(), h.project.ID, "sandbox", nothingFlow, nil); err != nil {
+		t.Fatal(err)
+	}
+	a := h.automation(t, confstore.Automation{Name: "nightly", Kind: confstore.AutomationCron, Schedule: "0 9 * * *", Flow: "sandbox", Enabled: true})
+	h.eng.Fail = errors.New("environment capacity reached")
+	h.now = h.now.Add(90 * time.Minute)
+	h.pass(t)
+	if got := h.get(t, a.ID); !strings.Contains(got.LastError, "capacity") || got.LastFiredAt == nil {
+		t.Errorf("refused: marks = %+v", got)
+	}
+	h.eng.Fail = nil
+	h.w.Runs = brokenRuns{h.eng, errors.New("runs unreadable")}
+	h.now = h.now.AddDate(0, 0, 1)
+	h.pass(t)
+	if got := h.get(t, a.ID); !strings.Contains(got.LastError, "the automation's runs: runs unreadable") || h.eng.count() != 0 {
+		t.Errorf("unreadable: marks = %+v, runs %d", got, h.eng.count())
 	}
 }

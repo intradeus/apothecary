@@ -43,7 +43,10 @@ func TestAutomationValidates(t *testing.T) {
 		{"bad kind", Automation{Name: "x", Kind: "webhook", Flow: "builder"}, `kind "webhook"`},
 		{"query with schedule", Automation{Name: "x", Kind: AutomationTrackerQuery, Schedule: "0 9 * * *", Flow: "builder"}, "takes no schedule"},
 		{"bad schedule", Automation{Name: "x", Kind: AutomationCron, Schedule: "soon", TicketID: tk.ID, Flow: "builder"}, "five fields"},
-		{"no ticket", Automation{Name: "x", Kind: AutomationCron, Schedule: "0 9 * * *", Flow: "builder"}, "needs ticket_id"},
+		{"no ticket", Automation{Name: "x", Kind: AutomationCron, Schedule: "0 9 * * *", Flow: "builder"}, "needs ticket_id: the ticket each firing runs (only a flow whose runs are started on nothing"},
+		{"a ticket for a flow started on nothing", Automation{Name: "x", Kind: AutomationCron, Schedule: "0 9 * * *", TicketID: tk.ID, Flow: "workspace-only"}, "takes no ticket_id"},
+		{"a query for a flow started on nothing", Automation{Name: "x", Kind: AutomationTrackerQuery, Flow: "workspace-only"}, "only a cron automation starts this flow"},
+		{"merge requests for a flow started on nothing", Automation{Name: "x", Kind: AutomationMergeRequest, Flow: "workspace-only"}, "starts its runs on nothing (operates_on: nothing)"},
 		{"ticket of another source", Automation{Name: "x", Kind: AutomationCron, Schedule: "0 9 * * *", TicketID: foreign.ID, Flow: "builder"}, "not one of this workshop's"},
 		{"cron with query", Automation{Name: "x", Kind: AutomationCron, Schedule: "0 9 * * *", TicketID: tk.ID, Query: "q", Flow: "builder"}, "takes no query"},
 		{"no flow", Automation{Name: "x", Kind: AutomationTrackerQuery}, "needs a flow"},
@@ -67,6 +70,11 @@ func TestAutomationValidates(t *testing.T) {
 	}
 	if _, err := svc.CreateAutomation(ctx, Automation{ProjectID: "nope", Name: "x", Kind: AutomationTrackerQuery, Flow: "builder"}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown project: err = %v", err)
+	}
+	// A schedule alone starts a flow whose runs are started on nothing.
+	a, err := svc.CreateAutomation(ctx, Automation{ProjectID: p.ID, Name: "nightly", Kind: AutomationCron, Schedule: "0 9 * * *", Flow: "workspace-only"})
+	if err != nil || a.TicketID != "" {
+		t.Errorf("cron on nothing = %+v, %v", a, err)
 	}
 }
 

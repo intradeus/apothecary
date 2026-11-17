@@ -84,6 +84,18 @@ describe('FlowSelect', () => {
 		expect(api.flows.list).toHaveBeenLastCalledWith('p2');
 	});
 
+	it('leaves out the flows started on what it is told to exclude', async () => {
+		vi.mocked(api.flows.list).mockResolvedValue([
+			...flows,
+			aFlow({ name: 'workspace-only', builtin: true, operatesOn: 'nothing' })
+		]);
+		setup({ exclude: 'nothing', value: 'workspace-only' });
+		// The choice that no longer fits moves to the default, and is not offered.
+		await vi.waitFor(() => expect(field()).toHaveTextContent(LABEL));
+		expect(await optionsOf(/.*/)).not.toContain('workspace-only');
+		expect(await optionsOf(/.*/)).toContain('reviewer');
+	});
+
 	describe('narrowed to what its runs are started on', () => {
 		const narrowed = { operatesOn: 'merge_request' as const };
 

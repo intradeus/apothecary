@@ -770,6 +770,42 @@ describe('what each call sends', () => {
 			expect(fn).toHaveBeenLastCalledWith({ path: { id: 'p', iid: '12' }, body: {} });
 		});
 
+		it('starts a run on nothing, sending only what was said', async () => {
+			const fn = reply('startNothingRun', answer({ run_id: 'r' }));
+			await expect(
+				projects.startRunOnNothing('p', {
+					flow: 'sandbox',
+					title: '  Poke at it ',
+					branch: 'dev',
+					onBranch: true,
+					params: { a: '1' },
+					skillsets: [{ id: 's1', seq: 2 }, { id: 's2' }]
+				})
+			).resolves.toEqual({ runId: 'r' });
+			expect(fn).toHaveBeenCalledWith({
+				path: { id: 'p' },
+				body: {
+					flow: 'sandbox',
+					title: 'Poke at it',
+					branch: 'dev',
+					on_branch: true,
+					params: { a: '1' },
+					skillsets: [{ id: 's1', seq: 2 }, { id: 's2' }]
+				}
+			});
+			await projects.startRunOnNothing('p', { title: '  ', params: {}, onBranch: false });
+			expect(fn).toHaveBeenLastCalledWith({ path: { id: 'p' }, body: {} });
+			await projects.startRunOnNothing('p', { newBranch: ' spike/cache ' });
+			expect(fn).toHaveBeenLastCalledWith({
+				path: { id: 'p' },
+				body: { new_branch: 'spike/cache' }
+			});
+			await projects.startRunOnNothing('p', { newBranch: '  ' });
+			expect(fn).toHaveBeenLastCalledWith({ path: { id: 'p' }, body: {} });
+			await projects.startRunOnNothing('p');
+			expect(fn).toHaveBeenLastCalledWith({ path: { id: 'p' }, body: {} });
+		});
+
 		it('reads one merge request, by repository only when told', async () => {
 			const info = { ref: { IID: 3, URL: 'u' }, title: 't', author: 'a', source: 's', target: 'm' };
 			const fn = reply('getProjectMr', answer({ mr: { ...info, body: 'why' }, runs: 1 }));

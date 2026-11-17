@@ -109,6 +109,14 @@
 	let editing = $state<Automation | null>(null);
 	let draft = $state<AutomationDraft>(blank());
 	let flowPick = $state(''); // '' = the workshop's default flow
+	// What a schedule's runs are started on: a ticket picked here, or
+	// nothing — a flow whose runs need none (operates_on: nothing).
+	let cronOn = $state<'ticket' | 'nothing'>('ticket');
+	const CRON_ON = $derived<{ value: 'ticket' | 'nothing'; label: string }[]>([
+		{ value: 'ticket', label: t('workshop.automations.cronOnTicket') },
+		{ value: 'nothing', label: t('workshop.automations.cronOnNothing') }
+	]);
+	const onNothing = $derived(draft.kind === 'cron' && cronOn === 'nothing');
 	let params = $state<Record<string, string>>({});
 	let busy = $state(false);
 	let formError = $state('');
@@ -144,6 +152,7 @@
 		editing = null;
 		draft = blank();
 		flowPick = '';
+		cronOn = 'ticket';
 		params = {};
 		formError = '';
 		open = true;
@@ -161,6 +170,7 @@
 			enabled: a.enabled
 		};
 		flowPick = a.flow === project.defaultFlow ? '' : a.flow;
+		cronOn = a.kind === 'cron' && !a.ticketId ? 'nothing' : 'ticket';
 		params = { ...a.params };
 		formError = '';
 		open = true;
@@ -186,8 +196,8 @@
 		const d: AutomationDraft = { ...draft, flow: flowName, params };
 		// Only what the kind takes travels.
 		if (d.kind !== 'tracker_query') d.query = undefined;
-		if (d.kind !== 'cron') {
-			d.schedule = undefined;
+		if (d.kind !== 'cron') d.schedule = undefined;
+		if (d.kind !== 'cron' || onNothing) {
 			d.ticketId = undefined;
 			d.ticketKey = undefined;
 		}
@@ -277,7 +287,9 @@
 					</span>
 					<span class="mono small fires">
 						{#if a.kind === 'cron'}
-							{a.schedule} · {ticketTitle(a.ticketId ?? '')}
+							{a.schedule} · {a.ticketId
+								? ticketTitle(a.ticketId)
+								: t('workshop.automations.cronNoTicket')}
 						{:else if a.kind === 'merge_request'}
 							{t('workshop.automations.mrSummary', { repo: repoLabel(a.repo ?? '') })}
 						{:else}
@@ -377,19 +389,35 @@
 					<span class="help">{t('workshop.automations.scheduleHelp')}</span>
 				</div>
 				<div class="field">
-					<label for="au-ticket">{t('workshop.automations.ticket')}</label>
-					{#if ticketOptions.length > 1}
-						<Select
-							id="au-ticket"
-							options={ticketOptions}
-							value={ticketPick}
-							onchange={pickTicket}
-						/>
-					{:else}
-						<div class="help hue-warning">{t('workshop.automations.noTickets')}</div>
+					<span class="caption">{t('workshop.automations.cronOn')}</span>
+					<Segmented
+						options={CRON_ON}
+						value={cronOn}
+						size="sm"
+						glass={false}
+						label={t('workshop.automations.cronOn')}
+						onchange={(v) => (cronOn = v)}
+					/>
+					{#if onNothing}
+						<span class="help">{t('workshop.automations.cronOnNothingHelp')}</span>
 					{/if}
-					<span class="help">{t('workshop.automations.ticketHelp')}</span>
 				</div>
+				{#if !onNothing}
+					<div class="field">
+						<label for="au-ticket">{t('workshop.automations.ticket')}</label>
+						{#if ticketOptions.length > 1}
+							<Select
+								id="au-ticket"
+								options={ticketOptions}
+								value={ticketPick}
+								onchange={pickTicket}
+							/>
+						{:else}
+							<div class="help hue-warning">{t('workshop.automations.noTickets')}</div>
+						{/if}
+						<span class="help">{t('workshop.automations.ticketHelp')}</span>
+					</div>
+				{/if}
 			{/if}
 			<div class="field">
 				<label for="au-flow">{t('workshop.automations.flow')}</label>
@@ -398,7 +426,11 @@
 					projectId={project.id}
 					bind:value={flowPick}
 					fallbackLabel={t('workshop.automations.defaultFlow', { flow: project.defaultFlow })}
-					operatesOn={draft.kind === 'merge_request' ? 'merge_request' : 'ticket'}
+					operatesOn={draft.kind === 'merge_request'
+						? 'merge_request'
+						: onNothing
+							? 'nothing'
+							: 'ticket'}
 					fallbackFlow={project.defaultFlow}
 				/>
 			</div>

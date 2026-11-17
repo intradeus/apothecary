@@ -2,19 +2,35 @@ import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { tick } from 'svelte';
 import { goto } from '$app/navigation';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import { aProject, aTicketRow } from '$test/fixtures';
-import { anIntegration } from '$test/fixtures/app.svelte';
+import { toasts } from '$lib/ui/toast.svelte';
+import { aFlow, anIntegration } from '$test/fixtures/app.svelte';
 import { anOpenMr, bound } from '$test/fixtures/run-components';
 import { deferred } from '$test/helpers';
 import NewRunDialog from './NewRunDialog.svelte';
+import { branchTail } from './manualRunName';
+import type * as ManualRunName from './manualRunName';
 
+// The tail a fresh branch's written name ends on is drawn at random.
+vi.mock('./manualRunName', async (original) => ({
+	...(await original<typeof ManualRunName>()),
+	branchTail: vi.fn(() => 'gxjj')
+}));
 vi.mock('$lib/api', () => ({
 	api: {
-		projects: { tickets: vi.fn(), mergeRequests: vi.fn() },
-		integrations: { list: vi.fn() }
+		projects: {
+			tickets: vi.fn(),
+			mergeRequests: vi.fn(),
+			get: vi.fn(),
+			branches: vi.fn(),
+			startRunOnNothing: vi.fn()
+		},
+		flows: { list: vi.fn(), get: vi.fn(), binding: vi.fn() },
+		integrations: { list: vi.fn(), models: vi.fn() },
+		skillsets: { list: vi.fn(), versions: vi.fn() }
 	}
 }));
 
@@ -302,6 +318,198 @@ describe('NewRunDialog', () => {
 			await picker();
 			await userEvent.click(mrTab());
 			expect(screen.getByRole('status')).toHaveTextContent('Loading…');
+		});
+	});
+	describe('on nothing', () => {
+		const sandbox = aFlow({ name: 'workspace-only', builtin: true, operatesOn: 'nothing' });
+		const nothingTab = () => screen.getByRole('tab', { name: 'Nothing' });
+		const startBtn = () => screen.getByRole('button', { name: 'Start run' });
+		const started = () => vi.mocked(api.projects.startRunOnNothing).mock.calls.at(-1)!;
+
+		beforeEach(() => {
+			vi.useFakeTimers({ toFake: ['Date'] });
+			vi.setSystemTime(new Date(2026, 10, 17, 18, 40));
+			vi.mocked(api.flows.list).mockResolvedValue([sandbox, aFlow({ name: 'builder' })]);
+			vi.mocked(api.flows.get).mockResolvedValue(sandbox);
+			vi.mocked(api.flows.binding).mockResolvedValue({
+				projectId: 'p1',
+				flowName: 'workspace-only',
+				params: {},
+				updatedAt: ''
+			});
+			vi.mocked(api.projects.get).mockResolvedValue(aProject({ id: 'p1' }));
+			vi.mocked(api.projects.branches).mockResolvedValue([
+				{ name: 'main', isDefault: true },
+				{ name: 'dev', isDefault: false }
+			]);
+			vi.mocked(api.skillsets.list).mockResolvedValue([]);
+			vi.mocked(api.projects.startRunOnNothing).mockResolvedValue({
+				runId: '01NEWRUN00000000000000ZZZZ'
+			});
+			vi.spyOn(fleet, 'refresh').mockResolvedValue();
+			toasts.list = [];
+		});
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('says what such a run is, and reads no ticket or merge request for it', async () => {
+			open({ projectId: 'p1' });
+			await picker();
+			vi.mocked(api.projects.tickets).mockClear();
+			await userEvent.click(nothingTab());
+
+			expect(screen.getByText(/with no ticket and no merge request behind it/)).toBeInTheDocument();
+			expect(await screen.findByRole('combobox', { name: 'Start from' })).toHaveTextContent('main');
+			expect(api.projects.tickets).not.toHaveBeenCalled();
+			expect(api.projects.mergeRequests).not.toHaveBeenCalled();
+		});
+
+		it('starts one in a click: named for the time, on a fresh branch off the default', async () => {
+			const props = open();
+			await userEvent.click(nothingTab());
+			await screen.findByRole('combobox', { name: 'Start from' });
+			await waitFor(() =>
+				expect(screen.getByRole('combobox', { name: 'Flow' })).toHaveTextContent('workspace-only')
+			);
+			await userEvent.click(startBtn());
+
+			await waitFor(() => expect(goto).toHaveBeenCalledWith('/runs/01NEWRUN00000000000000ZZZZ'));
+			expect(started()).toEqual([
+				'p1',
+				{
+					flow: 'workspace-only',
+					title: 'manual run - 2026-11-17 18:40',
+					branch: 'main',
+					onBranch: false,
+					newBranch: 'apothecary/manual-run-2026-11-17-18-40-gxjj',
+					params: {},
+					skillsets: []
+				}
+			]);
+			expect(props.open).toBe(false);
+			expect(fleet.refresh).toHaveBeenCalled();
+			expect(toasts.list.at(-1)?.text).toMatch(/^Run .* started$/);
+		});
+
+		it('sends the name, the branch and working on it itself, in the workshop picked', async () => {
+			open();
+			await userEvent.click(nothingTab());
+			await userEvent.click(screen.getByRole('combobox', { name: 'Workshop' }));
+			await userEvent.click(screen.getByRole('option', { name: 'docs' }));
+			await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), ' Poke at it ');
+			await userEvent.click(await screen.findByRole('combobox', { name: 'Start from' }));
+			await userEvent.click(screen.getByRole('option', { name: 'dev' }));
+			await userEvent.click(screen.getByRole('checkbox', { name: 'Checkout branch dev' }));
+			await userEvent.click(startBtn());
+
+			await waitFor(() => expect(api.projects.startRunOnNothing).toHaveBeenCalled());
+			expect(started()[0]).toBe('p2');
+			expect(started()[1]).toMatchObject({ title: 'Poke at it', branch: 'dev', onBranch: true });
+			// Checked out itself, the run has no fresh branch to name.
+			expect(started()[1]?.newBranch).toBeUndefined();
+		});
+
+		it('names the run and its fresh branch as the form showed them', async () => {
+			open({ projectId: 'p1' });
+			await userEvent.click(nothingTab());
+			await screen.findByRole('combobox', { name: 'Start from' });
+			expect(screen.getByRole('textbox', { name: 'New branch' })).toHaveValue(
+				'apothecary/manual-run-2026-11-17-18-40-gxjj'
+			);
+			// A minute later the name is still the one shown.
+			vi.setSystemTime(new Date(2026, 10, 17, 18, 41));
+			await userEvent.click(startBtn());
+			await waitFor(() => expect(api.projects.startRunOnNothing).toHaveBeenCalled());
+			expect(started()[1]).toMatchObject({
+				title: 'manual run - 2026-11-17 18:40',
+				newBranch: 'apothecary/manual-run-2026-11-17-18-40-gxjj'
+			});
+		});
+
+		it('leaves the fresh branch to the engine when the person emptied its name', async () => {
+			open({ projectId: 'p1' });
+			await userEvent.click(nothingTab());
+			await screen.findByRole('combobox', { name: 'Start from' });
+			const field = screen.getByRole('textbox', { name: 'New branch' });
+			await userEvent.clear(field);
+			await userEvent.click(startBtn());
+			await waitFor(() => expect(api.projects.startRunOnNothing).toHaveBeenCalled());
+			// Emptied: the engine names it.
+			expect(started()[1]?.newBranch).toBeUndefined();
+		});
+
+		it('sends the name the person wrote for the fresh branch', async () => {
+			open({ projectId: 'p1' });
+			await userEvent.click(nothingTab());
+			await screen.findByRole('combobox', { name: 'Start from' });
+			const field = screen.getByRole('textbox', { name: 'New branch' });
+			await userEvent.clear(field);
+			await userEvent.type(field, ' spike/cache ');
+			await userEvent.click(startBtn());
+			await waitFor(() => expect(api.projects.startRunOnNothing).toHaveBeenCalled());
+			expect(started()[1]).toMatchObject({
+				branch: 'main',
+				onBranch: false,
+				newBranch: 'spike/cache'
+			});
+		});
+
+		it('does not start on a fresh branch named like one the repository holds', async () => {
+			open({ projectId: 'p1' });
+			await userEvent.click(nothingTab());
+			await screen.findByRole('combobox', { name: 'Start from' });
+			const field = screen.getByRole('textbox', { name: 'New branch' });
+			await userEvent.clear(field);
+			await userEvent.type(field, 'dev');
+
+			await waitFor(() => expect(startBtn()).toBeDisabled());
+			expect(screen.getByText(/^dev already exists/)).toBeInTheDocument();
+			await userEvent.type(field, '-2');
+			await waitFor(() => expect(startBtn()).toBeEnabled());
+		});
+
+		it('says why a run was not started, and stays open', async () => {
+			vi.mocked(api.projects.startRunOnNothing).mockRejectedValue(
+				new Error('environment capacity reached')
+			);
+			const props = open({ projectId: 'p1' });
+			await userEvent.click(nothingTab());
+			await userEvent.click(startBtn());
+
+			expect(await screen.findByText('environment capacity reached')).toBeInTheDocument();
+			expect(screen.getByRole('alert')).toHaveTextContent('The run was not started');
+			expect(props.open).toBe(true);
+			expect(goto).not.toHaveBeenCalled();
+		});
+
+		it('starts the form afresh each time it opens', async () => {
+			const props = open({ projectId: 'p1' });
+			await userEvent.click(nothingTab());
+			await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), 'half typed');
+			props.open = false;
+			await tick();
+			props.open = true;
+			await tick();
+
+			expect(await screen.findByRole('textbox', { name: 'Name' })).toHaveValue('');
+		});
+
+		it('writes the fresh branch’s name anew each time it opens', async () => {
+			const props = open({ projectId: 'p1' });
+			await userEvent.click(nothingTab());
+			const field = () => screen.findByRole('textbox', { name: 'New branch' });
+			await userEvent.clear(await field());
+			await userEvent.type(await field(), 'half/typed');
+			props.open = false;
+			await tick();
+			vi.mocked(branchTail).mockReturnValueOnce('0a1b');
+			props.open = true;
+			await tick();
+
+			await waitFor(async () =>
+				expect(await field()).toHaveValue('apothecary/manual-run-2026-11-17-18-40-0a1b')
+			);
 		});
 	});
 });

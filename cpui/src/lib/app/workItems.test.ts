@@ -15,10 +15,12 @@ describe('WORK_ITEMS', () => {
 	});
 
 	// The kinds are the language's operates_on values, in its order: a kind
-	// the language cannot name could never start a run.
-	it('has one kind per operates_on value', () => {
-		expect(WORK_ITEMS.map((w) => w.kind)).toEqual([...OPERATES_ON]);
-		for (const k of OPERATES_ON) expect(workItem(k).kind).toBe(k);
+	// the language cannot name could never start a run. `nothing` is the one
+	// value with no kind: a run on it has no work item to list or pick.
+	it('has one kind per operates_on value that names a work item', () => {
+		const named = OPERATES_ON.filter((k) => k !== 'nothing');
+		expect(WORK_ITEMS.map((w) => w.kind)).toEqual(named);
+		for (const k of named) expect(workItem(k).kind).toBe(k);
 	});
 
 	it('names each for the sidebar and the dialog', () => {

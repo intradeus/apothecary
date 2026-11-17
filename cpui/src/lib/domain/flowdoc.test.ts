@@ -1011,7 +1011,8 @@ describe('docToYaml', () => {
 
 	it.each([
 		['ticket', undefined],
-		['merge_request', 'merge_request']
+		['merge_request', 'merge_request'],
+		['nothing', 'nothing']
 	] as const)('writes operates_on %s only when it is not the default', (on, out) => {
 		expect(written({ ...aFlow([]), operates_on: on }).operates_on).toBe(out);
 	});

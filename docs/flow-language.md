@@ -67,7 +67,7 @@ is one of a few things:
 name: builder              # required, slug: the flow's permanent id
 version: 5                 # required int: the grammar this document is written in
 description: "..."         # optional
-operates_on: ticket        # what each run works on: ticket (default) | merge_request (below)
+operates_on: ticket        # what each run works on: ticket (default) | merge_request | nothing (below)
 ask: { harness: opencode } # optional: the Ask pane, read-only sessions beside the run (below)
 parameters:                # the flow's ONE settings block (below): every entry is a knob
   harness: opencode        #   the harness kind stages read as $harness
@@ -405,7 +405,7 @@ sections, each a list of chains of stages (§2):
   merge request.
 
 ```yaml
-operates_on: ticket                                      # what each run works on: ticket (default) | merge_request
+operates_on: ticket                                      # what each run works on: ticket (default) | merge_request | nothing
 main:                                                    # runs once, when the run is started
   - { id: in_progress, … }                               # in_progress, plan … mr, in_review — ends: the run is in review
 watchers:
@@ -437,6 +437,7 @@ one namespace, and `main` is taken.
   `tracker_query` or `cron` automation — or `merge_request`, a merge request
   someone opened — named on the start-run form (the open ones are listed),
   picked on the Repositories tab, or by a `merge_request` automation.
+  Or `nothing` (below): no ticket and no merge request at all.
   Starting a run is always someone's decision; the automations are the
   listeners. A run started on the other kind of thing is refused. (The key
   was `run_start:`; that spelling is refused with this one.)
@@ -465,6 +466,31 @@ one namespace, and `main` is taken.
   against the head the chain began on — run by its main chain and again by a
   watcher on `mr_conflicts` (`start: $again_start`, `confirm` by default). A
   fork's merge request cannot be pushed to: its push fails to `debug`.
+- **On nothing.** With `operates_on: nothing` a run is a workspace on a
+  branch and nothing more behind it: a person's own sandbox, or a chore a
+  schedule runs. It is started from *New run* — or by a `cron` automation
+  with no ticket pinned — and everything about the start is optional: a
+  name (`manual run - <time>` when left out; an automation's runs are named
+  after it and the slot), the branch to start from (the repository's
+  default), what its own branch is called, and whether to work on the branch
+  it starts from itself. By default the run gets a branch of its own, forked
+  from the one it starts from — `apothecary/<name>-<run tail>`, or the name
+  the start gives, used as written: it exists only in the workspace until a
+  `push_branch` stage or the person pushes it. On the branch itself nothing
+  is forked — the workspace switches to it, `push_branch` pushes to it, and
+  `create_mr` has nothing to open when it is the target. Such a run holds no
+  work item, so
+  any number run at once (the environment cap still applies); a schedule
+  skips a slot while its previous run is still going. The flow has no
+  ticket, and the parser holds it to that: an input from `run.ticket` or
+  `run.ticket.comments`, a `run_if` on `run.ticket.tracker` or
+  `run.ticket.change_type`, and the tracker actions (`ticket_transition`
+  and the others that write to the ticket's tracker) are refused where they
+  are written. Everything else stands — agent stages, whose prompts are what
+  they are given; `commit`, `push_branch`, `create_mr`; watchers and
+  outcomes on the merge request the run opens. It needs its `main` chain.
+  The built-in `workspace-only` is this shape: one `manual` stage, and Done
+  ends the run.
 - **Watchers.** `on:` a signal the engine observes (§2 *wait*), or `manual`.
   An observed signal runs the watcher on the merge request its occurrence
   carries — the chain's *subject* — under its `start` policy. The order
@@ -1931,7 +1957,11 @@ inputs, an action's "exactly one" group bound twice or not at all, malformed
 edges, `each_repo` outside a command, success cycles, unreachable stages, and
 for the chains and wait points: v4's `phases:` or top-level `stages:` (each
 named with its v5 spelling); `run_start:` (now `operates_on:`); an `operates_on`
-other than `ticket` or `merge_request`; no `main` in a flow whose runs are started on a ticket; a
+other than `ticket`, `merge_request` or `nothing`; no `main` in a flow whose
+runs are started on a ticket or on nothing; in a flow started on nothing,
+anything that reads or writes the ticket it does not have (an input from
+`run.ticket` or `run.ticket.comments`, a `run_if` on `run.ticket.*`, a
+tracker action); a
 flow with neither `main` nor a watcher; a watcher or an outcome whose `id` is
 missing, not a slug, `main`, or another's (watchers and outcomes are one
 namespace); a watcher with neither `run` nor `stages`, or both; `then` on a
@@ -2465,8 +2495,9 @@ over one workspace. Additive, no grammar break:
   the same park, the same inbox, a different question shape.
 - **An automation** — a new way to *begin* runs lives outside the run: a rule
   (a tracker query, a schedule, the merge requests others open) that starts a
-  run of a flow whose `operates_on` matches it — `ticket`, or `merge_request`
-  for one watching merge requests — with its parameters, recorded as
+  run of a flow whose `operates_on` matches it — `ticket`, `merge_request`
+  for one watching merge requests, or `nothing` for a schedule with no
+  ticket pinned — with its parameters, recorded as
   `phase_started{by: automation}`. The flow is untouched.
 - **An action** — one `actionspec` registry entry, one executor case, one
   `requires` port string. Everything else (parsing, binding, the editor's

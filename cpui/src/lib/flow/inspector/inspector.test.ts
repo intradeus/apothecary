@@ -61,7 +61,9 @@ outcomes:
 describe('small questions', () => {
 	it.each([
 		['merge_request', 'merge_request'],
+		['nothing', 'nothing'],
 		['ticket', undefined],
+		['repository', undefined],
 		['', undefined]
 	])('takes %j as what runs operate on', (v, out) => {
 		const doc = flow();

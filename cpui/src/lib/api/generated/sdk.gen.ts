@@ -563,6 +563,9 @@ import type {
 	StartMrRunData,
 	StartMrRunErrors,
 	StartMrRunResponses,
+	StartNothingRunData,
+	StartNothingRunErrors,
+	StartNothingRunResponses,
 	StartPhaseData,
 	StartPhaseErrors,
 	StartPhaseResponses,
@@ -2846,7 +2849,7 @@ export const listAutomations = <ThrowOnError extends boolean = false>(
 /**
  * Create an automation
  *
- * Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves and its operates_on fits the kind (merge_request for a merge_request automation, ticket otherwise), the params are ones it accepts.
+ * Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves and its operates_on fits the kind (merge_request for a merge_request automation, ticket otherwise — or nothing for a cron automation, which then takes no ticket_id: each slot starts a run of its own, skipped while the previous one is still going), the params are ones it accepts.
  */
 export const createAutomation = <ThrowOnError extends boolean = false>(
 	options: Options<CreateAutomationData, ThrowOnError>
@@ -3538,6 +3541,35 @@ export const preflightProject = <ThrowOnError extends boolean = false>(
 		],
 		url: '/api/projects/{id}/preflight',
 		...options
+	});
+
+/**
+ * Start a run on nothing: a workspace on a branch, with no ticket or merge request
+ *
+ * Starts a run of a flow whose runs are started on nothing (operates_on: nothing; the project's default flow unless the body names another): 400 for a flow started on a ticket or a merge request. Everything in the body is optional: a title ("manual run - " and the time when left out), the branch to start from (the repository's default), new_branch to name the fresh branch forked from it (named after the run when left out), or on_branch to work on the branch itself, with nothing forked. Any number may run at once, up to the environment cap (409).
+ */
+export const startNothingRun = <ThrowOnError extends boolean = false>(
+	options: Options<StartNothingRunData, ThrowOnError>
+): RequestResult<StartNothingRunResponses, StartNothingRunErrors, ThrowOnError> =>
+	(options.client ?? client).post<StartNothingRunResponses, StartNothingRunErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/runs',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
 	});
 
 /**

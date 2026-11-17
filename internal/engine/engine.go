@@ -873,8 +873,10 @@ func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName,
 		return "", fmt.Errorf("preflight: %w", err)
 	}
 	if st.Branch == "" {
-		st.Base = ""
-		st.Branch = fmt.Sprintf("apothecary/%s-%s", strings.ToLower(runID), wsname.Slug(t.Title, workitem.MaxBranchSlug))
+		// A start on a bare name: the name plus the run's tail, the shape a
+		// ticket's run gets, so the branch and the workspace read alike.
+		st.Base = "apothecary/" + cmp.Or(wsname.Slug(t.Title, workitem.MaxBranchSlug), "run")
+		st.Branch = st.Base + "-" + wsname.RunIDTail(runID)
 	} else if err := checkout.CheckBranch(st.Branch); err != nil {
 		return "", fmt.Errorf("branch %q: %v", st.Branch, err)
 	}
@@ -914,6 +916,7 @@ func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName,
 		TicketSourceURL:     t.SourceURL,
 		Params:              params,
 		By:                  by,
+		Automation:          in.Automation,
 		MR:                  adopted,
 		Skillsets:           pins,
 	}); err != nil {
@@ -1132,8 +1135,12 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in runinput.Input) (st
 		t.SourceBranch, t.RunGoal, t.AttachmentIDs = sourceBranch, in.Goal, in.AttachmentIDs
 		return e.CreateRunWith(ctx, t, flowName, v.ProjectID, next)
 	}
+	// A branch the engine named after the run (its base plus the run's
+	// tail; before, the run's whole id) is named again for the new run. One
+	// the start chose — a run on nothing working on main itself — is kept.
 	branch := v.Branch
-	if branch == "" || strings.HasPrefix(branch, "apothecary/"+strings.ToLower(runID)+"-") {
+	if branch == "" || strings.HasPrefix(branch, "apothecary/"+strings.ToLower(runID)+"-") ||
+		(v.BranchBase != "" && branch == v.BranchBase+"-"+wsname.RunIDTail(runID)) {
 		branch = ""
 	}
 	return e.CreateRunWith(ctx, runinput.Ticket{
@@ -1448,6 +1455,23 @@ func (e *Engine) RunsOf(ctx context.Context, item workitem.Ref) ([]run.View, err
 	var out []run.View
 	for _, v := range all {
 		if e.items.Holds(v, item) {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
+// AutomationRuns lists the runs an automation created, in the order the
+// store keeps them: what a scheduled run on nothing asks before a slot
+// starts another, since such a run holds no work item to be busy on.
+func (e *Engine) AutomationRuns(ctx context.Context, automationID string) ([]run.View, error) {
+	all, err := e.runs.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []run.View
+	for _, v := range all {
+		if automationID != "" && v.AutomationID == automationID {
 			out = append(out, v)
 		}
 	}

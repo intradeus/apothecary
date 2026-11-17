@@ -1,6 +1,10 @@
 name: workspace-only
 version: 5
-description: "a raw, durable workspace: the run provisions it and hands it to you — no agent runs; Done ends the run"
+description: "a raw, durable workspace: the run provisions it and hands it to you — no ticket, no agent; Done ends the run"
+# A run is started on nothing: no ticket and no merge request, from New run
+# (or on a schedule). It works on a fresh branch forked from the one picked
+# at the start, or on that branch itself.
+operates_on: nothing
 # No agent runs, so the flow has no settings of its own.
 parameters: {}
 main:
@@ -8,5 +12,3 @@ main:
     type: manual
     description: "the workspace is yours until you press Done"
     question: "The workspace is yours: open the editor, connect your desktop VS Code over SSH, use the AI CLIs installed there. Nothing else runs; pressing Done ends the run, and its workspace is reclaimed after your reaper window."
-    input:
-      ticket: { from: run.ticket, type: ticket }

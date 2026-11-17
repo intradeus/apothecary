@@ -604,6 +604,21 @@ func (s *Service) flowText(ctx context.Context, projectID, name string) (string,
 	return "", err
 }
 
+// ParsedFlow is the project's flow name as a run would start it — its own
+// document, else the built-in of that name — parsed. A document that does
+// not parse is an invalid request, not a missing flow.
+func (s *Service) ParsedFlow(ctx context.Context, projectID, name string) (*flow.Flow, error) {
+	src, err := s.flowText(ctx, projectID, name)
+	if err != nil {
+		return nil, err
+	}
+	f, err := flow.Parse(name, []byte(src))
+	if err != nil {
+		return nil, invalidf("flow %q does not parse: %v", name, err)
+	}
+	return f, nil
+}
+
 func (s *Service) GetFlow(ctx context.Context, projectID, name string) (FlowRow, error) {
 	return s.db.GetFlow(ctx, projectID, name)
 }

@@ -70,6 +70,26 @@ export default {
 	'page.runs.newNoMR': 'This workshop’s repository has no open merge request.',
 	'page.runs.newMRLoadError': 'Could not list the merge requests',
 	'page.runs.newContinue': 'Continue',
+	'page.runs.newModeNothing': 'Nothing',
+	'page.runs.newIntroNothing':
+		'A workspace on a branch, with no ticket and no merge request behind it: yours to work in, or whatever the flow does with it.',
+	'page.runs.nothingName': 'Name',
+	'page.runs.nothingNameHelp': 'Optional. Left empty, the run is named as shown.',
+	'page.runs.nothingBranch': 'Start from',
+	'page.runs.nothingOnBranch': 'Checkout branch {branch}',
+	'page.runs.nothingOnDefaultBranch': 'Checkout the default branch',
+	'page.runs.nothingNewBranch': 'New branch',
+	'page.runs.nothingNewBranchPlaceholder': 'named after the run',
+	'page.runs.nothingNewBranchHelp':
+		'Named after the run unless you write your own. Left empty, the engine names it.',
+	'page.runs.nothingNewBranchExists':
+		'{branch} already exists. To work on it, pick it under “Start from” and tick the checkbox.',
+	'page.runs.nothingForkHelp':
+		'The run gets a fresh branch of its own, forked from {branch}. It stays in the workspace until something pushes it.',
+	'page.runs.nothingOnBranchHelp':
+		'Nothing is forked: the workspace is on {branch}, and a commit or a push from it goes to {branch}.',
+	'page.runs.nothingBranchesFailed': 'The branches could not be listed.',
+	'page.runs.nothingStartFail': 'The run was not started',
 	'page.runs.newNone': 'A run works on a ticket, and there is none yet. Write one first.',
 	'page.runs.newLoadError': 'Could not load tickets',
 	'page.runs.search': 'Search title, id, stage…',
