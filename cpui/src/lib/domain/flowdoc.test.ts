@@ -1034,6 +1034,8 @@ describe('docToYaml', () => {
 			['max_turns', { max_turns: '$turns' }],
 			['max_turns', { max_turns: 0 }],
 			['reuse_session', { reuse_session: false }],
+			['start_held', { start_held: true }],
+			['start_held', { start_held: '$collab' }],
 			['timeout', { timeout: '5m' }],
 			['input', { input: { a: { from: 'x' } } }],
 			['output', { output: { a: { to: 'x' } } }],
@@ -1055,6 +1057,8 @@ describe('docToYaml', () => {
 
 		it.each<[string, Partial<DocStage>]>([
 			['reuse_session', { reuse_session: true }],
+			['start_held', { start_held: false }],
+			['start_held', { start_held: '' }],
 			['input', { input: {} }],
 			['output', { output: {} }],
 			['with', { with: {} }],

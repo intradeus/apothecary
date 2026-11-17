@@ -5,7 +5,7 @@
 	import type { HarnessSpec } from '$lib/domain';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import Select from '$lib/ui/Select.svelte';
-	import { enumParamsWithin, isParamRef } from '$lib/flow/params';
+	import { boolParams, enumParamsWithin, isParamRef } from '$lib/flow/params';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import PortRows from '$lib/flow/PortRows.svelte';
 	import Group from '$lib/flow/inspector/Group.svelte';
@@ -75,6 +75,27 @@
 		if (Object.keys(block).length) all[kind] = block;
 		else delete all[kind];
 		s.harness_options = Object.keys(all).length ? all : undefined;
+		onchange();
+	}
+
+	// ---- start_held: off, on, or a bool $parameter -------------------------
+	// What it says already stays listed when it is none of those.
+	const heldValue = $derived(
+		s.start_held === true ? 'true' : typeof s.start_held === 'string' ? s.start_held : ''
+	);
+	const heldOptions = $derived.by(() => {
+		const params = boolParams(doc).map((p) => '$' + p);
+		return [
+			{ value: '', label: t('flow.insp.startHeldOff') },
+			{ value: 'true', label: t('flow.insp.startHeldOn') },
+			...params.map((p) => ({ value: p, label: p })),
+			...(heldValue && heldValue !== 'true' && !params.includes(heldValue)
+				? [{ value: heldValue, label: heldValue }]
+				: [])
+		];
+	});
+	function setHeld(v: string) {
+		s.start_held = v === '' ? undefined : v === 'true' ? true : v;
 		onchange();
 	}
 
@@ -172,6 +193,11 @@
 		onchange();
 	}}
 />
+<div class="field">
+	<label for="st-held">{t('flow.insp.startHeld')}</label>
+	<Select id="st-held" value={heldValue} options={heldOptions} onchange={setHeld} />
+	<div class="help">{t('flow.insp.startHeldHelp')}</div>
+</div>
 <div class="field">
 	<label for="st-timeout">{t('flow.insp.timeout')}</label>
 	<input

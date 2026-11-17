@@ -438,6 +438,12 @@ export function describe(e: RunEvent): Described {
 				tone: 'warn',
 				stage: p.stage_id as string
 			};
+		case 'hold_opened':
+			return {
+				text: t('run.event.holdOpened', { stage: String(p.stage_id) }),
+				tone: 'warn',
+				stage: p.stage_id as string
+			};
 		case 'hold_released': {
 			const u = p.usage as { cost_usd?: number } | undefined;
 			const bits = [

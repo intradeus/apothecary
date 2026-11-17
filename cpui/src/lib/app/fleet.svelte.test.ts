@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import type { Limits } from '$lib/domain';
 import { aPing, aProject, aRun } from '$test/fixtures';
+import { aHold } from '$test/fixtures/run-components';
 import { visibility } from '$test/fixtures/app.svelte';
 import { deferred } from '$test/helpers';
 import { fleet } from './fleet.svelte';
@@ -403,5 +404,30 @@ describe('fleet views', () => {
 		];
 		expect(fleet.pingsByProject.get('p1')).toBe(2);
 		expect(fleet.pingsByProject.size).toBe(1);
+	});
+});
+
+describe('fleet.held', () => {
+	const hold = (since: string) => aHold({ stageId: 'plan', userId: 'u1', since });
+
+	it('lists live runs in someone’s hands, the oldest hold first', () => {
+		fleet.runs = [
+			aRun({ id: 'late', hold: hold('2026-10-02T00:00:00Z') }),
+			aRun({ id: 'early', state: 'waiting_on_human', hold: hold('2026-10-01T00:00:00Z') }),
+			aRun({ id: 'free' }),
+			aRun({ id: 'over', state: 'completed', hold: hold('2026-10-01T00:00:00Z') }),
+			aRun({
+				id: 'shelved',
+				hold: hold('2026-10-01T00:00:00Z'),
+				archivedAt: '2026-10-31T12:00:00Z'
+			})
+		];
+		expect(fleet.held.map((r) => r.id)).toEqual(['early', 'late']);
+	});
+
+	it('counts held runs in the inbox beside the pending pings', () => {
+		fleet.runs = [aRun({ id: 'r1', hold: hold('2026-10-01T00:00:00Z') }), aRun({ id: 'r2' })];
+		fleet.pending = [aPing({ id: '1', runId: 'r2' })];
+		expect(fleet.inboxCount).toBe(2);
 	});
 });

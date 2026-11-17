@@ -101,6 +101,16 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	x.e.crew.board(rs.RunID, Crew{StageID: st.ID, Attempt: iter, Harness: stationHarness(st, x.res),
 		Agent: st.Agent, Since: x.e.clock()})
 	defer x.e.crew.leave(rs.RunID)
+	// START HELD: the attempt opens in the run owner's hands, past every
+	// early way out above so none leaves a hold behind. The stage prompt
+	// still goes first; its turn ends on the owner, not the stage. The owner
+	// is admitted before the hold is on the record, so nothing they do once
+	// the run shows it in their hands is refused.
+	x.admitOpening(st)
+	defer x.h.agentLive.Store(false)
+	if err := x.takeStartHold(st, iter); err != nil {
+		return err
+	}
 
 	// ONE STAGE, ONE SESSION. A new stage opens a session of its own, and an
 	// attempt sent back to the stage continues it, so the agent remembers
@@ -128,6 +138,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	budget := st.Timeout
 	var inv invocation
 	for {
+		x.admitOpening(st) // each invocation's own clears it as it ends
 		if len(asks) > 0 {
 			if unanswered(asks) {
 				// Still nothing to do but wait. Park the run and give the
@@ -242,11 +253,11 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		if resuming {
 			text, kind = reply, replyKind
 		}
-		text, err := x.withPendingMessages(st, iter, text)
+		// What the owner sent while a start hold's opening prompt was on
+		// its way rides with that prompt; a send while it is being written
+		// waits for it.
+		text, err := x.promptOpening(st, iter, kind, text)
 		if err != nil {
-			return err
-		}
-		if err := x.prompted(st.ID, iter, kind, text); err != nil {
 			return err
 		}
 		inv, err = x.invoke(st, budget, tr, nil, text,

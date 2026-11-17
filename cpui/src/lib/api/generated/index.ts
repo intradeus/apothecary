@@ -467,6 +467,7 @@ export type {
 	DismissNoticeResponse,
 	DismissNoticeResponses,
 	DocAsk,
+	DocBool,
 	DocEdge,
 	DocInt,
 	DocIo,

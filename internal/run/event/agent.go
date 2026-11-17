@@ -34,6 +34,10 @@ const (
 	// hold: who, how long, how many turns, what it cost.
 	TypeHoldTaken    Type = "hold_taken"
 	TypeHoldReleased Type = "hold_released"
+	// TypeHoldOpened: the opening turn of a hold that opened its attempt
+	// (start_held) ended — the agent's own answer to the stage prompt. Every
+	// turn after it is the holder's.
+	TypeHoldOpened Type = "hold_opened"
 )
 
 // AgentPrompted kinds: why the engine sent the agent this text.
@@ -135,11 +139,20 @@ type MessageDelivered struct {
 
 // HoldTaken: a human took over the agent stage's live session. From here
 // the agent's turns end into a wait for the holder, not into the stage's
-// output check.
+// output check. Start marks a hold the attempt opened in (start_held),
+// taken before its stage prompt: the agent owes it an opening turn of its
+// own, until hold_opened.
 type HoldTaken struct {
 	StageID string `json:"stage_id"`
 	Attempt int    `json:"attempt,omitempty"`
 	UserID  string `json:"user_id,omitempty"`
+	Start   bool   `json:"start,omitempty"`
+}
+
+// HoldOpened: a start hold's opening turn is over (TypeHoldOpened).
+type HoldOpened struct {
+	StageID string `json:"stage_id"`
+	Attempt int    `json:"attempt,omitempty"`
 }
 
 // HoldReleased closes a hold with its account: how long it lasted (from
@@ -194,6 +207,7 @@ func (*MessageQueued) EventType() Type    { return TypeMessageQueued }
 func (*MessageDelivered) EventType() Type { return TypeMessageDelivered }
 func (*HoldTaken) EventType() Type        { return TypeHoldTaken }
 func (*HoldReleased) EventType() Type     { return TypeHoldReleased }
+func (*HoldOpened) EventType() Type       { return TypeHoldOpened }
 
 func init() {
 	registry[TypeAgentSession] = func() Payload { return &AgentSession{} }
@@ -206,4 +220,5 @@ func init() {
 	registry[TypeMessageDelivered] = func() Payload { return &MessageDelivered{} }
 	registry[TypeHoldTaken] = func() Payload { return &HoldTaken{} }
 	registry[TypeHoldReleased] = func() Payload { return &HoldReleased{} }
+	registry[TypeHoldOpened] = func() Payload { return &HoldOpened{} }
 }

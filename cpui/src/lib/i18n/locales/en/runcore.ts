@@ -469,6 +469,7 @@ export default {
 	'run.event.resumedReleased': '{stage} resumed — handed back',
 	'run.event.quietHolder': 'in your hands, waiting for your word',
 	'run.event.holdTaken': '{stage}: you took over the agent',
+	'run.event.holdOpened': '{stage}: the agent answered the stage prompt — your turn',
 	'run.event.holdReleased': '{stage}: handed back ({bits})',
 	'run.event.holdEnded': '{stage}: take-over ended with the attempt ({bits})',
 	'run.event.messages_one': '{count} message',

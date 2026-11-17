@@ -269,6 +269,15 @@ export function buildTranscript(events: RunEvent[], live: LiveState): ChatItem[]
 					tone: 'warn'
 				});
 				break;
+			case 'hold_opened':
+				items.push({
+					kind: 'status',
+					key,
+					glyph: I.hold,
+					text: t('transcript.holdOpened'),
+					tone: 'warn'
+				});
+				break;
 			case 'hold_released':
 				items.push({
 					kind: 'status',

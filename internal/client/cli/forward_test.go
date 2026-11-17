@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -177,6 +179,36 @@ func TestForwardEveryPortOnceRunsInParallel(t *testing.T) {
 	e.mu.Unlock()
 	if code := r.run("forward", "r1"); code != 1 {
 		t.Errorf("listing fails = %d %q", code, r.err)
+	}
+}
+
+// The request that makes the daemon quit still gets its reply: the server
+// shuts down, waiting for it, rather than cutting it.
+func TestServeAnswersTheRequestThatQuitsIt(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	quit := make(chan struct{})
+	srv := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(quit)
+		time.Sleep(50 * time.Millisecond)
+		_, _ = io.WriteString(w, "stopped")
+	})}
+	done := make(chan error, 1)
+	go func() { done <- serve(context.Background(), srv, ln, quit) }()
+	req, _ := http.NewRequestWithContext(context.Background(), "POST", "http://"+ln.Addr().String()+"/stop", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("the request that quits = %v", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil || string(body) != "stopped" {
+		t.Errorf("reply = %q, %v", body, err)
+	}
+	if err := <-done; err != nil {
+		t.Errorf("serve = %v", err)
 	}
 }
 

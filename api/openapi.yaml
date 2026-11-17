@@ -995,6 +995,10 @@ components:
       required:
         - harness
       type: object
+    DocBool:
+      oneOf:
+        - type: boolean
+        - type: string
     DocEdge:
       properties:
         feed:
@@ -1217,6 +1221,8 @@ components:
           type: string
         service:
           type: string
+        start_held:
+          $ref: '#/components/schemas/DocBool'
         timeout:
           type: string
         type:

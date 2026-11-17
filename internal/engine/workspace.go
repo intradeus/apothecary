@@ -43,7 +43,10 @@ func (e *Engine) SendMessage(runID, userID, text string, attachmentIDs []string)
 		return "", errAttachmentsOff
 	}
 	if h := e.liveLoop(runID); h != nil {
-		if !h.agentLive.Load() {
+		h.opening.Lock()
+		live := h.agentLive.Load()
+		h.opening.Unlock()
+		if !live {
 			return "", ErrNoAgentRunning
 		}
 		req := msgReq{msg: agentport.UserMessage{ID: e.newID(), Text: text}, userID: userID,
