@@ -941,6 +941,67 @@ func TestAStoppedTurnThatNeverEndsGivesUp(t *testing.T) {
 	}
 }
 
+// A stop request the sidecar never answers is bounded by the same
+// cancelGrace as the turn's wind-down, not by the client's HTTP timeout.
+func TestAWedgedStopRequestGivesUpWithinTheGrace(t *testing.T) {
+	f := newSideFake(t)
+	openTurns(f, false)
+	gate := make(chan struct{})
+	t.Cleanup(func() { close(gate) }) // before the server's Close waits on the handler
+	f.onCancel = func() { <-gate }
+	rec := newRecorder()
+	events := func(ev agentport.AgentEvent) {
+		if ev.Kind == agentport.AgentEvTurnStart {
+			rec.hold(true)
+			rec.stop(ev.Turn)
+		}
+	}
+	r := scripted(f, Profile{})
+	r.cancelGrace = 50 * time.Millisecond
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.Run(bg, "e", agentport.AgentSpec{}, agentport.AgentInput{Inbox: rec, Events: events})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "take-over") {
+			t.Errorf("err = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a wedged stop request held the runner past its grace")
+	}
+}
+
+// A stop request the sidecar refuses fails the take-over at once.
+func TestARefusedStopRequestFailsAtOnce(t *testing.T) {
+	f := newSideFake(t)
+	openTurns(f, false)
+	f.fail["/agent/cancel"] = http.StatusInternalServerError
+	rec := newRecorder()
+	events := func(ev agentport.AgentEvent) {
+		if ev.Kind == agentport.AgentEvTurnStart {
+			rec.hold(true)
+			rec.stop(ev.Turn)
+		}
+	}
+	r := scripted(f, Profile{})
+	r.cancelGrace = time.Hour
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.Run(bg, "e", agentport.AgentSpec{}, agentport.AgentInput{Inbox: rec, Events: events})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "could not stop the turn for the take-over") {
+			t.Errorf("err = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a refused stop waited for the grace")
+	}
+}
+
 func waitUntilT(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

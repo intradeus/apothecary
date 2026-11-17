@@ -501,6 +501,21 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 	cancelled := false
 	stopping := false // a take-over asked to stop the turn in flight
 	var deadline <-chan time.Time
+	// askStop asks the agent to stop its turn without blocking the loop: the
+	// request and the turn's wind-down share the one cancelGrace deadline, so
+	// a wedged /agent/cancel cannot hold up a turn_end, a message or a
+	// release. stopRes carries the request's answer.
+	var stopRes <-chan error
+	askStop := func() {
+		res := make(chan error, 1)
+		rctx, release := context.WithTimeout(sctx, r.cancelGrace)
+		go func() {
+			defer release()
+			res <- c.Cancel(rctx, sid)
+		}()
+		stopRes = res
+		deadline = time.After(r.cancelGrace)
+	}
 	lastWasTool := false
 	for {
 		turn := attachTurn
@@ -528,15 +543,21 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 				// Cancelled by the engine (timeout, park, abort): ask the
 				// agent to stop, then follow the turn to its end for a while.
 				ctxDone, cancelled = nil, true
-				_ = c.Cancel(sctx, sid)
-				deadline = time.After(r.cancelGrace)
+				askStop()
 			case <-wake:
 				// A forced take-over: stop this turn, keep the session. A
 				// wake for anything else is read again at the turn's end.
 				if !stopping && !cancelled && in.Inbox.Interrupted(turn) {
 					stopping = true
-					_ = c.Cancel(sctx, sid)
-					deadline = time.After(r.cancelGrace)
+					askStop()
+				}
+			case err := <-stopRes:
+				stopRes = nil
+				// A take-over whose stop the agent refused fails now rather
+				// than at the deadline. An engine cancel follows the turn on
+				// regardless, as it always has.
+				if err != nil && stopping && !cancelled {
+					return done(fmt.Errorf("%s: could not stop the turn for the take-over: %w", r.p.Harness, err))
 				}
 			case <-deadline:
 				if !cancelled {
@@ -621,7 +642,7 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 		}
 		if stopping {
 			// Stopped for the holder: carry on as at any turn's end.
-			stopping, deadline = false, nil
+			stopping, deadline, stopRes = false, nil, nil
 		}
 		if in.Inbox == nil {
 			return done(nil)
