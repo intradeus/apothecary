@@ -215,6 +215,7 @@ export function toAskMessage(w: Wire.Message): AskMessage {
 		costUsd: w.cost_usd ?? 0,
 		turns: w.turns ?? 0,
 		error: w.error || undefined,
+		attachmentIds: list(w.attachment_ids),
 		at: w.at
 	};
 }
@@ -973,7 +974,8 @@ export function toAttachment(w: Wire.Attachment): Attachment {
 		mime: w.mime ?? '',
 		size: w.size ?? 0,
 		sha256: w.sha256 ?? '',
-		createdAt: w.created_at ?? ''
+		createdAt: w.created_at ?? '',
+		...(w.chat === 'takeover' || w.chat === 'ask' ? { chat: w.chat } : {})
 	};
 }
 

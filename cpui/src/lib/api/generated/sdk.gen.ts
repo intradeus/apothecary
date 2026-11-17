@@ -4212,7 +4212,7 @@ export const getAsk = <ThrowOnError extends boolean = false>(
 /**
  * Ask one of the run's read-only sessions a question
  *
- * The question is recorded in the thread named by thread_id (none: the run's latest, opened when the run has none) and returned at once; the answer arrives on the pane's stream. 404 for an unknown thread; 409 when the pane is off or an answer is being written in that thread.
+ * The question is recorded in the thread named by thread_id (none: the run's latest, opened when the run has none) and returned at once; the answer arrives on the pane's stream. A question may carry files you uploaded (attachment_ids, at most 8; text is then optional): they are delivered read-only under .apothecary/attachments/ask/ and the question names them. 400 when any of them is not one of your unsent uploads, and nothing is recorded. 404 for an unknown thread; 409 when the pane is off or an answer is being written in that thread.
  */
 export const askRun = <ThrowOnError extends boolean = false>(
 	options: Options<AskRunData, ThrowOnError>
@@ -4730,7 +4730,7 @@ export const getStageLog = <ThrowOnError extends boolean = false>(
 /**
  * Send a message to the agent you took over
  *
- * Delivered into the agent's live session when its turn ends. 409 without a take-over: nobody else talks to the agent. A run parked on the holder of a take-over is woken by it.
+ * Delivered into the agent's live session when its turn ends. 409 without a take-over: nobody else talks to the agent. A run parked on the holder of a take-over is woken by it. A message may carry files you uploaded (attachment_ids, at most 8; text is then optional): they are delivered read-only under .apothecary/attachments/takeover/ and the message names them. 400 when any of them is not one of your unsent uploads, and nothing is recorded.
  */
 export const sendRunMessage = <ThrowOnError extends boolean = false>(
 	options: Options<SendRunMessageData, ThrowOnError>

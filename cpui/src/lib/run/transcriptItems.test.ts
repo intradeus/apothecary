@@ -444,10 +444,20 @@ describe('buildTranscript', () => {
 				kind: 'user',
 				id: 'm1',
 				text: 'Try again',
+				attachmentIds: [],
 				delivered: false,
 				deliveredAt: undefined,
 				ts: queued.ts
 			});
+		});
+
+		it('carries the files sent with it', () => {
+			const withFiles = anEvent(1, 'message_queued', {
+				message_id: 'm1',
+				text: '',
+				attachment_ids: ['a1', 'a2']
+			});
+			expect(only([withFiles])).toMatchObject({ text: '', attachmentIds: ['a1', 'a2'] });
 		});
 
 		it('takes its delivery from any later event naming it', () => {

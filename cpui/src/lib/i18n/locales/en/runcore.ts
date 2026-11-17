@@ -351,6 +351,7 @@ export default {
 	'run.composer.aria': 'Message the agent',
 	'run.composer.keySend': 'send',
 	'run.composer.keyNewline': 'newline',
+	'run.composer.attach': 'Attach',
 	'run.composer.send': 'Send',
 	'run.composer.sendTitle': 'Delivered when the agent finishes its current turn',
 

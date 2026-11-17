@@ -3,6 +3,7 @@ package pgstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -65,21 +66,59 @@ func (s *Store) SaveAskThread(ctx context.Context, t ask.Thread) error {
 }
 
 func (s *Store) AppendAskMessage(ctx context.Context, m ask.Message) (ask.Message, error) {
+	return appendAskMessage(ctx, s.pool, m)
+}
+
+// appendAskMessage inserts m through q: the pool, or a transaction.
+func appendAskMessage(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, m ask.Message) (ask.Message, error) {
 	if m.At.IsZero() {
 		m.At = time.Now().UTC()
 	}
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO ask_messages (run_id, seq, id, role, text, user_id, model, cost_usd, turns, error, at, thread_id)
+	files := m.AttachmentIDs
+	if files == nil {
+		files = []string{}
+	}
+	err := q.QueryRow(ctx, `
+		INSERT INTO ask_messages (run_id, seq, id, role, text, user_id, model, cost_usd, turns, error, at, thread_id, attachment_ids)
 		VALUES ($1, COALESCE((SELECT MAX(seq) FROM ask_messages WHERE run_id = $1), 0) + 1,
-		        $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		        $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING seq`,
-		m.RunID, m.ID, m.Role, m.Text, m.UserID, m.Model, m.CostUSD, m.Turns, m.Error, m.At, m.ThreadID).Scan(&m.Seq)
+		m.RunID, m.ID, m.Role, m.Text, m.UserID, m.Model, m.CostUSD, m.Turns, m.Error, m.At, m.ThreadID, files).Scan(&m.Seq)
 	return m, err
+}
+
+// OpenAskThread inserts the thread and its first message in one
+// transaction: a message refused rolls the thread back with it.
+func (s *Store) OpenAskThread(ctx context.Context, t ask.Thread, first ask.Message) (ask.Thread, ask.Message, error) {
+	if first.RunID != t.RunID || first.ThreadID != t.ID {
+		return ask.Thread{}, ask.Message{}, fmt.Errorf("ask thread %s: a first message of thread %s", t.ID, first.ThreadID)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ask.Thread{}, ask.Message{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO ask_threads (run_id, id, session_id, model, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, now(), now())
+		RETURNING created_at, updated_at`, t.RunID, t.ID, t.SessionID, t.Model).Scan(&t.CreatedAt, &t.UpdatedAt); err != nil {
+		return ask.Thread{}, ask.Message{}, err
+	}
+	m, err := appendAskMessage(ctx, tx, first)
+	if err != nil {
+		return ask.Thread{}, ask.Message{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ask.Thread{}, ask.Message{}, err
+	}
+	return t, m, nil
 }
 
 func (s *Store) AskMessages(ctx context.Context, runID string, afterSeq int64) ([]ask.Message, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT seq, thread_id, id, role, text, user_id, model, cost_usd, turns, error, at
+		SELECT seq, thread_id, id, role, text, user_id, model, cost_usd, turns, error, at, attachment_ids
 		FROM ask_messages WHERE run_id = $1 AND seq > $2 ORDER BY seq`, runID, afterSeq)
 	if err != nil {
 		return nil, err
@@ -88,8 +127,11 @@ func (s *Store) AskMessages(ctx context.Context, runID string, afterSeq int64) (
 	var out []ask.Message
 	for rows.Next() {
 		m := ask.Message{RunID: runID}
-		if err := rows.Scan(&m.Seq, &m.ThreadID, &m.ID, &m.Role, &m.Text, &m.UserID, &m.Model, &m.CostUSD, &m.Turns, &m.Error, &m.At); err != nil {
+		if err := rows.Scan(&m.Seq, &m.ThreadID, &m.ID, &m.Role, &m.Text, &m.UserID, &m.Model, &m.CostUSD, &m.Turns, &m.Error, &m.At, &m.AttachmentIDs); err != nil {
 			return nil, err
+		}
+		if len(m.AttachmentIDs) == 0 {
+			m.AttachmentIDs = nil
 		}
 		out = append(out, m)
 	}

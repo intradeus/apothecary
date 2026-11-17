@@ -419,8 +419,15 @@ export const runs = {
 
 	/** Send a message to the agent you took over. Delivered into its live
 	 *  session when the current turn ends. Rejects (409) without a take-over. */
-	sendMessage: async (id: string, text: string): Promise<string> =>
-		(await unwrap(gen.sendRunMessage({ path: { id }, body: { text } }))).message_id,
+	sendMessage: async (id: string, text: string, attachmentIds?: string[]): Promise<string> =>
+		(
+			await unwrap(
+				gen.sendRunMessage({
+					path: { id },
+					body: { text, ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}) }
+				})
+			)
+		).message_id,
 
 	/** Take over the running agent's session: its turns no longer end the
 	 *  stage, they wait for your next message — until you release. Rejects
@@ -442,10 +449,22 @@ export const ask = {
 	 *  has none); the answer arrives on the stream. Rejects (409) when the
 	 *  pane is off or the session is writing an answer, (404) for a session
 	 *  the run does not have. */
-	send: async (runId: string, text: string, sessionId?: string): Promise<AskMessage> =>
+	send: async (
+		runId: string,
+		text: string,
+		sessionId?: string,
+		attachmentIds?: string[]
+	): Promise<AskMessage> =>
 		map.toAskMessage(
 			await unwrap(
-				gen.askRun({ path: { id: runId }, body: { text, thread_id: sessionId || undefined } })
+				gen.askRun({
+					path: { id: runId },
+					body: {
+						text,
+						thread_id: sessionId || undefined,
+						...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {})
+					}
+				})
 			)
 		),
 	/** Pick the model a session (none: the run's latest) answers with. */
