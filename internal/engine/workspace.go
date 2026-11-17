@@ -32,7 +32,10 @@ func (e *Engine) SendMessage(runID, text string) (string, error) {
 		return "", fmt.Errorf("message is longer than %d bytes", maxMessageLen)
 	}
 	if h := e.liveLoop(runID); h != nil {
-		if !h.agentLive.Load() {
+		h.opening.Lock()
+		live := h.agentLive.Load()
+		h.opening.Unlock()
+		if !live {
 			return "", ErrNoAgentRunning
 		}
 		req := msgReq{msg: agentport.UserMessage{ID: e.newID(), Text: text}, ack: make(chan error, 1)}

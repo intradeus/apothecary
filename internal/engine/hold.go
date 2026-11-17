@@ -225,11 +225,11 @@ func (x *exec) takeStartHold(st *flow.Stage, iter int) error {
 // held before the invocation carrying its opening turn runs: from just
 // before hold_taken is written (the run shows in their hands as soon as it
 // is) until the stage prompt goes out. A message or a release then waits on
-// the loop's channel instead of being refused. A message sent before the
-// stage prompt is fixed rides with it (takeOpeningMessages); a release, or
-// a message too late for the prompt, waits for the opening invocation,
-// which takes it as it would mid-turn — the release follows the opening
-// turn.
+// the loop's channel instead of being refused. A message admitted before
+// the stage prompt is on the log rides with it (promptOpening); a release,
+// or a message sent once the prompt is being written, waits for the opening
+// invocation, which takes it as it would mid-turn — the release follows the
+// opening turn, the message is the owner's turn after it.
 func (x *exec) admitOpening(st *flow.Stage) {
 	if !st.StartHeld {
 		return
@@ -239,14 +239,33 @@ func (x *exec) admitOpening(st *flow.Stage) {
 	}
 }
 
+// promptOpening fixes and records the prompt of the invocation about to
+// start: text with the human messages nobody has delivered yet. While a
+// start hold's opening turn is owed it does so under the run's opening lock
+// (runHandle.opening), from taking what the owner sent while the prompt was
+// on its way (takeOpeningMessages) until the prompt is on the log: every
+// message admitted before then rides with it exactly once, and a send that
+// comes meanwhile waits for the write, then reaches the opening invocation.
+func (x *exec) promptOpening(st *flow.Stage, iter int, kind, text string) (string, error) {
+	if h := x.rs.Holds[st.ID]; h != nil && h.Opening {
+		x.h.opening.Lock()
+		defer x.h.opening.Unlock()
+		if err := x.takeOpeningMessages(st); err != nil {
+			return "", err
+		}
+	}
+	text, err := x.withPendingMessages(st, iter, text)
+	if err != nil {
+		return "", err
+	}
+	return text, x.prompted(st.ID, iter, kind, text)
+}
+
 // takeOpeningMessages records what the run's owner sent while a start
 // hold's opening prompt was on its way (admitOpening), so that prompt
 // carries it (withPendingMessages): delivered once, with the stage prompt,
 // on the hold's account as the holder's words.
 func (x *exec) takeOpeningMessages(st *flow.Stage) error {
-	if h := x.rs.Holds[st.ID]; h == nil || !h.Opening {
-		return nil
-	}
 	for {
 		select {
 		case req := <-x.h.messages:

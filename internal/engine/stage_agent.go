@@ -254,15 +254,10 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			text, kind = reply, replyKind
 		}
 		// What the owner sent while a start hold's opening prompt was on
-		// its way rides with that prompt.
-		if err := x.takeOpeningMessages(st); err != nil {
-			return err
-		}
-		text, err := x.withPendingMessages(st, iter, text)
+		// its way rides with that prompt; a send while it is being written
+		// waits for it.
+		text, err := x.promptOpening(st, iter, kind, text)
 		if err != nil {
-			return err
-		}
-		if err := x.prompted(st.ID, iter, kind, text); err != nil {
 			return err
 		}
 		inv, err = x.invoke(st, budget, tr, nil, text,

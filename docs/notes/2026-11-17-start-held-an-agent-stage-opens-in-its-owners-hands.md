@@ -51,13 +51,18 @@ What now:
   (review). `admitOpening` sets the run's `agentLive` just before
   `hold_taken` is written (and again before each invocation of an attempt
   still owed its opening turn), so a message or a release waits on the
-  loop's channel instead of being refused. Right before the stage prompt is
-  fixed, `takeOpeningMessages` drains the messages waiting there, records
-  each (`message_queued`) and lets `withPendingMessages` append them to the
-  stage prompt: delivered once, with it, on the hold's account as messages
-  (the opening turn still is not the holder's). One that reaches the loop
-  after that point — the prompt already fixed — is taken by the opening
-  invocation as any mid-turn message is, and is the next turn. A release
+  loop's channel instead of being refused. `promptOpening` fixes the stage
+  prompt under the run's opening lock (`runHandle.opening`): it drains the
+  messages waiting there (`takeOpeningMessages`), records each
+  (`message_queued`), lets `withPendingMessages` append them to the stage
+  prompt and writes `agent_prompted`, all before letting go: delivered once,
+  with it, on the hold's account as messages (the opening turn still is not
+  the holder's). A send reads `agentLive` under the same lock, so one that
+  comes while the prompt is being written waits until it is on the log; the
+  review asked for such a message to ride with the prompt too, which cannot
+  be (the prompt's text is fixed before its write starts), and the owner
+  chose this boundary: it is taken by the opening invocation as any mid-turn
+  message is, and is the owner's turn after the opening one. A release
   while the opening turn is still owed (not started, or in flight) waits for
   it: the handback follows the opening turn.
 - **The owner is told** when that opening turn ends with nothing queued and
@@ -87,7 +92,9 @@ handback, the account excluding the opening turn),
 `TestStartHeldParksOnAQuietOwner`,
 `TestStartHeldAdmitsTheOwnerBeforeItsPrompt` (a message while `hold_taken`
 is on the log and the prompt not yet written rides with the stage prompt;
-a release while the prompt's write is stalled follows the opening turn),
+one sent while the prompt's write is stalled waits for it and is the owner's
+turn after the opening one; a release while the prompt's write is stalled
+follows the opening turn),
 `TestRecoveredStartHoldSendsTheStagePrompt`
 (a crash before the prompt, and after it with no session: the prompt is
 sent, not parked on), `TestRecoveredStartHoldFollowsTheOpeningTurn` (a

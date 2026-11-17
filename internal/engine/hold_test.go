@@ -649,6 +649,58 @@ func TestStartHeldAdmitsTheOwnerBeforeItsPrompt(t *testing.T) {
 		}
 	})
 
+	// A message sent while the stage prompt is being written missed it: the
+	// send waits for the write, and the message is the owner's turn after
+	// the opening one — admitted once, never half in the prompt.
+	t.Run("message while the prompt is written", func(t *testing.T) {
+		s, store := stallAt(event.TypeAgentPrompted)
+		h, r := startHeldHarnessOn(t, store, nil)
+		runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "held", testProject)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var id string
+		inOpeningWindow(t, h, s, runID, func() (err error) {
+			if id, err = h.e.SendMessage(runID, "smaller, please"); err != nil {
+				return err
+			}
+			evs, err := h.e.store.Events(context.Background(), runID, 0)
+			if err != nil {
+				return err
+			}
+			if _, ok := findPayload[*event.AgentPrompted](evs); !ok {
+				return errors.New("the send came back before the stage prompt was written")
+			}
+			return nil
+		})
+		waitUntil(t, "the owner's turn to end", func() bool {
+			return countType(h.events(t, runID), event.TypeAgentMessage) >= 2
+		})
+		if err := h.e.Release(runID, "owner"); err != nil {
+			t.Fatal(err)
+		}
+		evs := finish(t, h, runID)
+		want := "hold_taken agent_prompted:stage hold_opened message_delivered hold_released agent_prompted:handback stage_completed"
+		if got := heldOrder(evs); got != want {
+			t.Errorf("order = %s\nwant    %s", got, want)
+		}
+		if n := countType(evs, event.TypeMessageQueued); n != 1 {
+			t.Errorf("message_queued = %d, want one", n)
+		}
+		if p, _ := findPayload[*event.AgentPrompted](evs); p == nil || p.Kind != event.PromptStage || strings.Contains(p.Text, "smaller, please") {
+			t.Errorf("stage prompt = %+v, want it without the message it missed", p)
+		}
+		if d, ok := findPayload[*event.MessageDelivered](evs); !ok || len(d.MessageIDs) != 1 || d.MessageIDs[0] != id {
+			t.Errorf("message_delivered = %+v", d)
+		}
+		if b := r.delivered(); len(b) != 2 || b[0][0].Text != "smaller, please" || b[1][0].Text != handbackPrompt {
+			t.Errorf("delivered = %+v, want the message after the opening turn, then the handback", b)
+		}
+		if rel, _ := findPayload[*event.HoldReleased](evs); rel == nil || rel.Turns != 1 || rel.Messages != 1 {
+			t.Errorf("hold_released = %+v, want the owner's message and their one turn", rel)
+		}
+	})
+
 	t.Run("release", func(t *testing.T) {
 		s, store := stallAt(event.TypeAgentPrompted)
 		h, r := startHeldHarnessOn(t, store, nil)
