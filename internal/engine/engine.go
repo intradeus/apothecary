@@ -234,7 +234,7 @@ type runHandle struct {
 	// RaiseQuestion and not yet opened by the invocation (admit): a forced
 	// take-over counts them as open.
 	raising int
-	// stopAsked and stopping (under Engine.mu), until a turn ends or the
+	// stopAsked and stopping (under Engine.mu), until that turn ends or the
 	// invocation does: stopAsked is the turn a forced take-over asked to
 	// stop, which a question RaiseQuestion registers first withdraws;
 	// stopping is that turn once the runner has taken the stop up
@@ -242,6 +242,10 @@ type runHandle struct {
 	// cannot stop a turn never takes it up: its questions stay welcome.
 	stopAsked string
 	stopping  string
+	// agentTurn (under Engine.mu) is the turn the runner last reported
+	// started and not yet ended, as it reports it (ahead of the loop, which
+	// may be behind on its events): the turn a question raised now is from.
+	agentTurn string
 	// idle is set while the run sits between phases with its merge requests
 	// open (PLAN6): the loop only polls the repository host, so it does not
 	// hold a concurrency slot.
@@ -298,6 +302,7 @@ type Ping struct {
 	RaisedAt time.Time
 
 	key            string       // the raiser's idempotency key (RaisePing)
+	turn           string       // the agent's turn that raised it (runHandle.agentTurn); "" unknown
 	answered       bool         // guarded by Engine.mu
 	queued         bool         // an answer is on its way to the loop; guarded by Engine.mu
 	answer         *PingAnswer  // set before done closes; read only after <-done
@@ -1925,7 +1930,7 @@ func (e *Engine) RaiseQuestion(runID string, q Question) (*Ping, error) {
 	h.stopAsked = ""
 	p := &Ping{
 		ID: e.newID(), RunID: runID, Type: ptype, Question: question, Context: context_,
-		Form: form, AnswerKind: event.AnswerForm, Files: refs, key: key,
+		Form: form, AnswerKind: event.AnswerForm, Files: refs, key: key, turn: h.agentTurn,
 		RaisedAt: e.clock(), done: make(chan struct{}),
 	}
 	e.pings[p.ID] = p

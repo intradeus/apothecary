@@ -236,12 +236,42 @@ func (x *exec) acceptStop(turn string) bool {
 	return true
 }
 
-// endStop clears the stop a forced take-over asked of the agent's turn: that
-// turn has ended (or the invocation has), and the agent's questions are
-// welcome again.
-func (x *exec) endStop() {
+// turnStarted and turnEnded follow the agent's turns as its runner reports
+// them (Events), on the runner's goroutine and so ahead of the loop, which
+// may be behind on its events: a question raised meanwhile is the turn's
+// the runner is in (Ping.turn), and the holder's turn after a stopped one
+// may ask before the loop has read that the stopped turn ended. A turn's end
+// clears the stop asked of it, and only of it: a later stop is another
+// turn's.
+func (x *exec) turnStarted(turn string) {
 	x.e.mu.Lock()
-	x.h.stopAsked, x.h.stopping = "", ""
+	x.h.agentTurn = turn
+	x.e.mu.Unlock()
+}
+
+func (x *exec) turnEnded(turn string) {
+	if turn == "" {
+		return
+	}
+	x.e.mu.Lock()
+	if x.h.agentTurn == turn {
+		x.h.agentTurn = ""
+	}
+	if x.h.stopAsked == turn {
+		x.h.stopAsked = ""
+	}
+	if x.h.stopping == turn {
+		x.h.stopping = ""
+	}
+	x.e.mu.Unlock()
+}
+
+// endTurns forgets the agent's turn and whatever stop a forced take-over
+// asked of it: the invocation has ended, and the agent's questions are for
+// whoever runs next.
+func (x *exec) endTurns() {
+	x.e.mu.Lock()
+	x.h.agentTurn, x.h.stopAsked, x.h.stopping = "", "", ""
 	x.e.mu.Unlock()
 }
 

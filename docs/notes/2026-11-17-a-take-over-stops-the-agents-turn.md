@@ -51,10 +51,15 @@ What now:
   (`StopTurn`, under the same lock) makes it `runHandle.stopping`. A
   question registered in between withdraws the request, so `StopTurn`
   answers false and the turn runs on with its question. Once a stop is
-  taken up, until a turn or the invocation ends, a question is refused,
+  taken up, until that turn or the invocation ends, a question is refused,
   `ErrTurnStopping` (409), rather than opened on a turn about to end. A
   runner that cannot stop a turn never takes it up, so its questions stay
-  welcome.
+  welcome. The turn's end is the runner reporting it (`Events`), not the
+  loop reading that report: the loop may be behind, writing the transcript,
+  while the runner has already started the holder's turn, which may ask.
+  For the same reason a question carries the turn the runner was in when it
+  was raised (`runHandle.agentTurn`), and a turn ends on a question (parking
+  the run) only if it is that turn's.
 - The dev fake harness fakes a take-over: its demo turn ends, cancelled, when
   stopped, and it serves a held session — each holder message and the
   release's handback get a short reply turn — so `task dev:up` can show a
@@ -98,7 +103,8 @@ Held by: `TestPlanHoldRequest`, `TestHoldLegWaitsUntilTheHoldersMessagesGetTheir
 `TestAForcedTakeOverLeavesATurnWaitingOnItsQuestion`,
 `TestAForcedTakeOverBesideAQueuedQuestionLeavesTheTurn`,
 `TestAForcedTakeOverBesideARegisteredQuestionLeavesTheTurn`,
-`TestAQuestionFromAStoppingTurnIsRefused`, `TestARunnerThatCannotStopKeepsItsQuestions`,
+`TestAQuestionFromAStoppingTurnIsRefused`, `TestTheHoldersTurnMayAskWhileTheLoopIsBehindTheStop`,
+`TestARunnerThatCannotStopKeepsItsQuestions`,
 `TestAQuestionBeforeTheStopIsTakenUpKeepsTheTurn`,
 `TestAReleaseBehindAQueuedMessageWaitsForItsTurn`,
 `TestAReleaseBetweenDeliveryAndTurnStartWaitsForTheTurn`,

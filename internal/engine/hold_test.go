@@ -1064,6 +1064,106 @@ func TestAQuestionFromAStoppingTurnIsRefused(t *testing.T) {
 	}
 }
 
+// A stop ends with the stopped turn, not with the loop catching up on it: the
+// holder's next turn may ask while the loop is still writing the stopped
+// turn's transcript, and its question is opened, not refused — nor taken for
+// the stopped turn's, which would park the run as the loop reads that turn's
+// end. Once let go, the loop may read the question or the turn's end first;
+// several runs, as the pick is random.
+func TestTheHoldersTurnMayAskWhileTheLoopIsBehindTheStop(t *testing.T) {
+	for i := range 16 {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			s, store := stallAt(event.TypeAgentNotice)
+			h := newHarnessOn(t, store, mustFlow(t, askFlowDoc))
+			letGo := sync.OnceFunc(func() { close(s.letGo) })
+			t.Cleanup(letGo)
+			runIDCh := make(chan string, 1)
+			asked := make(chan error, 1)
+			r := &heldRunner{}
+			h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+				runID := <-runIDCh
+				emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: "Q1"},
+					agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "s"})
+				for !call.In.Inbox.StopTurn("Q1") {
+					select {
+					case <-call.In.Inbox.Wake():
+					case <-ctx.Done():
+						return agentport.AgentResult{}, ctx.Err()
+					}
+				}
+				var msgs []agentport.UserMessage
+				for msgs = call.In.Inbox.Take(); len(msgs) == 0; msgs = call.In.Inbox.Take() {
+					select {
+					case <-call.In.Inbox.Wake():
+					case <-ctx.Done():
+						return agentport.AgentResult{}, ctx.Err()
+					}
+				}
+				// The loop stalls on the notice; the stopped turn ends behind
+				// it and the holder's turn starts and asks, all before the
+				// loop reads them.
+				emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvNotice, Text: "stopping"},
+					agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "Q1", StopReason: "cancelled"},
+					agentport.AgentEvent{Kind: agentport.AgentEvUserMessage, Messages: msgs},
+					agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: "Q2"})
+				p, err := h.e.RaisePing(runID, "clarification", "which db?", "", nil, nil)
+				asked <- err
+				if err != nil {
+					return agentport.AgentResult{}, err
+				}
+				if _, ok := p.Await(ctx); !ok {
+					return agentport.AgentResult{}, ctx.Err()
+				}
+				emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvMessage, Turn: "Q2", Text: "with the answer"},
+					agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "Q2", StopReason: "end_turn"})
+				return r.drive(ctx, call.In)
+			}
+			runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runIDCh <- runID
+			waitEvent[*event.AgentSession](t, h, runID) // the turn is open
+			takeOverWhenLive(t, h, runID, "u1", true)
+			if _, err := h.e.SendMessage(runID, "use sqlite"); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-s.reached:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the loop never wrote the notice")
+			}
+			h.e.mu.Lock()
+			hd := h.e.handles[runID]
+			h.e.mu.Unlock()
+			// Refused at once, or registered and queued for the stalled loop.
+			waitUntil(t, "the holder's turn to ask", func() bool { return len(asked) > 0 || len(hd.mailbox) == 1 })
+			if len(asked) > 0 {
+				t.Fatalf("raise from the holder's turn = %v", <-asked)
+			}
+			letGo()
+			if err := <-asked; err != nil {
+				t.Fatalf("raise from the holder's turn = %v", err)
+			}
+			p := h.waitPing(t, "clarification")
+			if err := h.e.AnswerPing(p.ID, textAnswer("postgres")); err != nil {
+				t.Fatal(err)
+			}
+			waitUntil(t, "the turn to run on", func() bool { return agentSaid(h.events(t, runID), "with the answer") })
+			if err := h.e.Release(runID, "u1"); err != nil {
+				t.Fatal(err)
+			}
+			waitDone(t, h, runID)
+			if _, ok := findPayload[*event.StagePaused](h.events(t, runID)); ok {
+				t.Error("the question parked the run")
+			}
+			if v := h.view(t, runID); v.State != run.Completed || v.Hold != nil {
+				t.Errorf("final view = %s hold=%+v", v.State, v.Hold)
+			}
+		})
+	}
+}
+
 // A runner that cannot stop a turn never takes a forced take-over's stop up:
 // its turn runs on as under a passive take-over, and the questions it raises
 // meanwhile are still opened, answered and carried on from under the hold.

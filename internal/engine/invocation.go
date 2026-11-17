@@ -26,10 +26,11 @@ type invIO struct {
 	done   chan struct{} // closed when the loop stops listening
 	inbox  *inbox
 	tr     *transcript
+	x      *exec
 }
 
-func newInvIO(tr *transcript, acceptStop func(turn string) bool) *invIO {
-	return &invIO{events: make(chan agentport.AgentEvent, 256), done: make(chan struct{}), inbox: newInbox(acceptStop), tr: tr}
+func newInvIO(tr *transcript, x *exec) *invIO {
+	return &invIO{events: make(chan agentport.AgentEvent, 256), done: make(chan struct{}), inbox: newInbox(x.acceptStop), tr: tr, x: x}
 }
 
 func (io *invIO) input(prompt string) agentport.AgentInput {
@@ -38,10 +39,20 @@ func (io *invIO) input(prompt string) agentport.AgentInput {
 		Inbox:  io.inbox,
 		// Blocks while the loop is listening (ordering: everything the
 		// runner emitted is queued before its result is), never after.
+		// Turn boundaries are followed here too, while the loop listens, on
+		// the runner's goroutine (exec.turnStarted): ahead of the loop,
+		// which may be behind.
 		Events: func(ev agentport.AgentEvent) {
 			select {
 			case io.events <- ev:
 			case <-io.done:
+				return
+			}
+			switch ev.Kind {
+			case agentport.AgentEvTurnStart:
+				io.x.turnStarted(ev.Turn)
+			case agentport.AgentEvTurnEnd:
+				io.x.turnEnded(ev.Turn)
 			}
 		},
 	}
@@ -74,7 +85,8 @@ func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, init
 	))
 	defer span.End()
 	runCtx, cancelRun := context.WithCancelCause(spanCtx)
-	io := newInvIO(tr, x.acceptStop)
+	io := newInvIO(tr, x)
+	x.turnStarted(attached) // a reattached turn is under way already
 	// Before the agent starts: one resumed under a take-over can finish its
 	// turn at once, and if it saw no hold it would end the stage under the
 	// holder. A handback owed after an answer (a release that came while
@@ -134,9 +146,9 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 	// The open turn's id: what a forced take-over stops. A reattached
 	// turn is open before any event of it arrives.
 	turnOpen, openTurn := attached != "", attached
-	// A stop asked of a turn is over with the invocation: the agent's next
-	// questions are for whoever runs next.
-	defer x.endStop()
+	// The agent's turn and a stop asked of it are over with the invocation:
+	// the agent's next questions are for whoever runs next.
+	defer x.endTurns()
 	// record files one agent event: a new harness session is recorded the
 	// moment it exists, so a crash mid-invocation resumes (or reattaches
 	// to) it, not a new one — whichever path meets the event, the loop's
@@ -360,7 +372,9 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				}
 			case agentport.AgentEvTurnEnd:
 				turnOpen, openTurn = false, ""
-				x.endStop() // the stopped turn has ended: the agent may ask again
+				// The runner has cleared this turn's stop already (Events);
+				// this clears one asked while the loop was behind its end.
+				x.turnEnded(ev.Turn)
 				if hold == nil {
 					if x.rs.HandbackOwed[st.ID] {
 						if err := owedHandback(); err != nil {
@@ -370,7 +384,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					break
 				}
 				hold.leg.TurnEnded(ev.Turn, ev.Usage)
-				if len(open) > 0 {
+				if ownQuestion(open, ev.Turn) {
 					// The turn ended on the agent's own open question. The
 					// holder is the one to answer it, but the tool call it came
 					// in on is gone: park on the question as any attempt does,

@@ -114,7 +114,8 @@ type Inbox interface {
 	// on a Wake. True: a stop was asked for and still stands, and the
 	// runner, having taken it up, must end that turn and carry on as at any
 	// turn end, so the same session waits for the holder; the engine
-	// refuses the turn's questions (ask_human) from then until it ends.
+	// refuses the turn's questions (ask_human) from then until the runner
+	// reports its turn_end (Events), which it must before starting another.
 	// False: no stop for that turn — none was asked, or a question the turn
 	// raised first keeps it running. A runner that cannot stop a turn never
 	// calls it, and its turn runs on, questions and all. Naming the turn
