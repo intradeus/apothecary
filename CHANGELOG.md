@@ -2,6 +2,86 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v4.0.0 (2026-11-17)
+
+### BREAKING CHANGE
+
+- ticket_transition takes free-text `to:` (a tracker
+status name or a bound string parameter); `status:` and the step names
+are gone. The built-in builder and hands-on flows refuse to run until a
+workshop binds todo_status, in_progress_status, in_review_status and
+done_status. Migration 0004 is one-way: it drops remote comments,
+remote status rows and the sync columns, and disables tracker_query
+automations whose source disagrees with their workshop's. The sync and
+unlink routes are removed.
+
+### Features
+
+- **records**: add a download all record button
+- **run**: let take-over and Ask chat messages carry files
+- **flow**: add start_held so an agent stage opens in its owner's hands
+- **run**: make archived a run flag so archiving keeps the outcome
+- **run**: give each chain its own card in the Watchers pane
+- **kinds**: add the Claude Code harness
+- **cli**: make ssh-config create, register and use its own SSH key
+- **BREAKING** **tickets**: read one ticket source per workshop live, drop sync
+
+### Fixes
+
+- **ui**: move skills to sidebar instead of settings
+- **ui**: update the settings UI and reviewer UI for some QoL upgrades
+- **ask**: give files back and open no thread when a question fails
+- **run**: lock the chat composers while their files upload
+- **run**: name a chat file when it is claimed and keep that path
+- **ask**: leave no files or thread behind when a question is refused
+- **cli**: let the forward daemon answer the request that stops it
+- **engine**: write a start hold's opening prompt and its messages at once
+- **engine**: hold a start hold's sends until its stage prompt is written
+- **cli**: stop the forward daemon deleting a successor's socket
+- **engine**: send a start hold's early messages with its stage prompt
+- **engine**: let the owner message or release a start hold before its prompt
+- **engine**: record a start hold's opening turn so restarts keep it
+- **flow**: count start_held among the fields a parameter is read in
+- **flow**: add a new operates_on 'nothing' - to start run without any workitem
+- **pgstore**: keep a migration's rebuild pending until it commits
+- **run**: stop a manual outcome's card pointing at a Run now
+- **run**: show a chain's quiet time to the second and fix outcome hint
+- **cli**: let a stopping forward daemon finish its answers before exit
+- **engine**: hold a release while the agent's question is open
+- **engine**: keep the stage clock stopped on a question under a hold
+- **engine**: count queued messages when releasing a question-parked hold
+- **engine**: park on a live question after a restart past a release
+- **engine**: keep a holder's question asked before its turn start is reported
+- **engine**: let the holder's turn ask while the loop trails a stop
+- **engine**: keep a turn whose question precedes the runner's stop
+- **engine**: keep a release made before a question parks the run
+- **engine**: hold a release until a delivered message's turn starts
+- **engine**: hand a release back only after the holder's messages
+- **engine**: decide a take-over's stop under the question lock
+- **engine**: leave a turn alone whose question is queued at take-over
+- **acpagent**: answer a take-over's stop before the holder's prompt
+- **engine**: keep a pending ping's choices when read from the projection
+- **cli**: let the forward daemon answer its stop request before closing
+- **acpagent**: bound a take-over's stop request by the cancel grace
+- **httpapi**: reject trailing data after a take-over body
+- **engine**: stop a reattached turn on a forced take-over
+- **httpapi**: read a take-over body of unknown length
+- **engine**: stop the agent's turn in flight on a take-over
+- **records**: remove journal naming attempt number
+- **ci**: force ci pass before merge main
+- **services**: update how services ports are passed to stage
+- **cli**: forward port only if no other port conflict with it
+- **cli**: create the ssh-config key owner-only and survive a 409 race
+- **cli**: shut the forward daemon down gracefully and keep its socket
+- **db**: add migration sum
+- **tickets**: retry a moved issue by its stable id on Jira only
+- **tickets**: let a cron automation pick its ticket from the live list
+- **tickets**: migrate a user's hand-written tickets sharing one key
+
+### Performance
+
+- **session**: improve loading performance of session tab
+
 ## v3.6.0 (2026-11-16)
 
 ### Features
