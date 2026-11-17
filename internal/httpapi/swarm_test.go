@@ -42,6 +42,9 @@ func TestGetSwarm(t *testing.T) {
 	seed("r-old", testUser, testProject, &event.RunCompleted{})
 	shift.Store(0)
 	seed("r-ended", testUser, testProject, &event.RunFailed{Reason: "boom"})
+	// Ended as recently, but archived since: off the board, though the
+	// archive moved its last update into the afterglow.
+	seed("r-archived", testUser, testProject, &event.RunCompleted{}, &event.RunArchived{})
 	seed("r-other-workshop", testUser, "prj-second", &event.EnvRequested{}, &event.EnvReady{EnvID: "env-x"},
 		&event.PingRaised{PingID: "p1", Type: "clarification", Question: "?"})
 	seed("r-not-mine", "usr-someone-else", testProject)
@@ -99,6 +102,9 @@ func TestGetSwarm(t *testing.T) {
 	}
 	if _, ok := units["r-old"]; ok {
 		t.Error("a run that ended ten minutes ago is still on the board")
+	}
+	if _, ok := units["r-archived"]; ok {
+		t.Error("an archived run is on the board")
 	}
 	if u, ok := units["r-ended"]; !ok || u.State != "failed" {
 		t.Errorf("a run that just ended = %+v (on the board: %v), want it with its outcome", u, ok)

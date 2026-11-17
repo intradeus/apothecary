@@ -122,7 +122,7 @@
 					<span class="small last">
 						{#if row.run}
 							<a href={to.run(row.run.id)} class="linklike" title={fmtAbs(row.run.createdAt)}
-								><StatusChip state={row.run.state} size="sm" /></a
+								><StatusChip state={row.run.state} archived={row.run.archived} size="sm" /></a
 							>
 							<span class="faint truncate">{row.run.flow} · {ago(row.run.createdAt)}</span>
 						{:else}

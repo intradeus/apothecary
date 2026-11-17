@@ -5,7 +5,7 @@ import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import type { Run } from '$lib/domain';
 import { aRun } from '$test/fixtures';
-import { anIntegration, aWorkshop } from '$test/fixtures/app.svelte';
+import { anIntegration, aWorkshop, choose } from '$test/fixtures/app.svelte';
 import WithHeader from '$test/fixtures/WithHeader.svelte';
 import RunsTab from './RunsTab.svelte';
 
@@ -99,6 +99,60 @@ describe('RunsTab', () => {
 	it('offers no New ticket on a remote source', () => {
 		setup([], [anIntegration({ id: 'src', kind: 'jira', port: 'ticketsource' })]);
 		expect(screen.queryByRole('link', { name: /New ticket/ })).not.toBeInTheDocument();
+	});
+
+	describe('the finished filters', () => {
+		const AT = '2026-10-31T12:00:00Z';
+		const runs = [
+			aRun({ id: 'c', title: 'Kept done', state: 'completed' }),
+			aRun({ id: 'f', title: 'Shelved failure', state: 'failed', archivedAt: AT }),
+			aRun({ id: 'a', title: 'Kept abandon', state: 'abandoned' })
+		];
+		const titles = () =>
+			screen
+				.getAllByRole('link', { name: /Kept|Shelved/ })
+				.map((l) => l.textContent?.match(/Kept done|Shelved failure|Kept abandon/)?.[0])
+				.sort();
+
+		it('shows every finished run, archived ones too, until narrowed', async () => {
+			setup([live, ...runs]);
+			expect(screen.queryByRole('combobox', { name: 'Outcome' })).not.toBeInTheDocument();
+			await userEvent.click(finishedTab());
+			expect(titles()).toEqual(['Kept abandon', 'Kept done', 'Shelved failure']);
+			expect(screen.getByText('archived')).toBeInTheDocument();
+		});
+
+		it('narrows by outcome and by archiving, independently, and the link follows', async () => {
+			setup(runs);
+			await userEvent.click(finishedTab());
+
+			await choose('Archived', 'Not archived');
+			expect(titles()).toEqual(['Kept abandon', 'Kept done']);
+			expect(finishedTab()).toHaveTextContent('2');
+
+			await choose('Outcome', 'Failed');
+			expect(screen.getByText('No finished run matches')).toBeInTheDocument();
+
+			await choose('Archived', 'Archived only');
+			expect(titles()).toEqual(['Shelved failure']);
+			expect(screen.getByRole('link', { name: /Open in Runs/ })).toHaveAttribute(
+				'href',
+				'/runs?project=p1&tab=finished&outcome=failed&archived=yes'
+			);
+
+			await choose('Archived', 'Archived or not');
+			await choose('Outcome', 'Completed');
+			expect(titles()).toEqual(['Kept done']);
+		});
+
+		it('clears the filters when nothing passes them', async () => {
+			setup(runs);
+			await userEvent.click(finishedTab());
+			await choose('Outcome', 'Abandoned');
+			await choose('Archived', 'Archived only');
+			await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+			expect(titles()).toHaveLength(3);
+		});
 	});
 
 	it('says none have finished', async () => {

@@ -71,6 +71,5 @@ describe('the kill feed', () => {
 		expect(
 			diffSwarm(aSwarm([]), aSwarm([aUnit({ state: 'completed' })])).map((e) => e.kind)
 		).toEqual(['completed']);
-		expect(diffSwarm(aSwarm([]), aSwarm([aUnit({ state: 'archived' })]))).toEqual([]);
 	});
 });

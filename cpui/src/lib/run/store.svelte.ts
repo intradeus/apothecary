@@ -104,10 +104,7 @@ export class RunStore {
 	readonly terminal = $derived(this.run !== null && isTerminal(this.run.state));
 	/** A container is (probably) up behind the workspace views. */
 	readonly hasWorkspace = $derived(
-		this.run !== null &&
-			!!this.run.envId &&
-			this.run.state !== 'archived' &&
-			this.run.envStatus !== 'absent'
+		this.run !== null && !!this.run.envId && !this.run.archivedAt && this.run.envStatus !== 'absent'
 	);
 	/** A workspace is up or on its way: from the moment provisioning starts,
 	 *  its exec log streams and its egress gateway answers. */
@@ -120,7 +117,7 @@ export class RunStore {
 	readonly canRebuild = $derived(
 		this.run !== null &&
 			!!this.run.envId &&
-			this.run.state !== 'archived' &&
+			!this.run.archivedAt &&
 			(this.terminal || this.run.state === 'paused')
 	);
 	/** The run can be paused: it lives, has started and is not paused yet. */

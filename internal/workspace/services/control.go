@@ -155,7 +155,7 @@ func (c *Control) serviceRun(ctx context.Context, runID string) (run.View, *reso
 	return v, res, nil
 }
 
-func hasWorkspace(v run.View) bool { return v.EnvID != "" && v.State != run.Archived }
+func hasWorkspace(v run.View) bool { return v.EnvID != "" && v.ArchivedAt == nil }
 
 // RunServices lists the project's services with how each stands in the
 // run's workspace. Healthy ones get their preview links (exposed on demand,

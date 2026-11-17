@@ -100,7 +100,7 @@ func TestArchiveDestroyOutlivesTheRequest(t *testing.T) {
 	if countType(evs, event.TypeEnvDestroyed) != 1 || countType(evs, event.TypeEnvDestroyFailed) != 0 {
 		t.Fatalf("events = %v", eventTypes(evs))
 	}
-	if v := h.view(t, id); v.State != run.Archived || v.EnvID != "" {
+	if v := h.view(t, id); v.State != run.Completed || v.ArchivedAt == nil || v.EnvID != "" {
 		t.Errorf("view = %s env %q", v.State, v.EnvID)
 	}
 	if len(h.envp.Destroyed) != 1 || string(h.envp.Destroyed[0]) != env {
@@ -123,7 +123,7 @@ func TestArchiveDestroyFailureIsRecordedAndRetried(t *testing.T) {
 		t.Fatalf("archive itself succeeded, its destroy is the timeline's: %v", err)
 	}
 	v := h.view(t, id)
-	if v.State != run.Archived || v.EnvID == "" || !strings.Contains(v.EnvDestroyError, "exit -1") {
+	if v.State != run.Completed || v.ArchivedAt == nil || v.EnvID == "" || !strings.Contains(v.EnvDestroyError, "exit -1") {
 		t.Fatalf("view = %s env %q error %q", v.State, v.EnvID, v.EnvDestroyError)
 	}
 	sent := sentOfType(h, string(event.TypeEnvDestroyFailed))
@@ -180,6 +180,34 @@ func TestReaperRetriesAFailedReapAtOnce(t *testing.T) {
 	}
 }
 
+// An archived run's leftover workspace is reclaimed on the next pass whatever
+// the run ended as, with no window: archiving keeps the outcome, and the
+// reaper reads the flag, not the state.
+func TestReaperReclaimsArchivedLeftoversWhateverTheOutcome(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	ends := map[string]event.Payload{
+		"completed": &event.RunCompleted{},
+		"abandoned": &event.RunAbandoned{Reason: "edge exhausted"},
+		"failed":    &event.RunFailed{Reason: "aborted"},
+	}
+	for name, end := range ends {
+		h.seed(t, name, created(testProject), &event.EnvReady{EnvID: "e-" + name}, end, &event.RunArchived{})
+	}
+	h.seed(t, "fresh", created(testProject), &event.EnvReady{EnvID: "e-fresh"}, &event.RunCompleted{})
+	if err := h.e.ReapOnce(ctx, Window(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for name := range ends {
+		if v := h.view(t, name); v.EnvID != "" || v.State != run.State(name) {
+			t.Errorf("%s: env %q state %s", name, v.EnvID, v.State)
+		}
+	}
+	if v := h.view(t, "fresh"); v.EnvID != "e-fresh" {
+		t.Errorf("a completed run inside its window was reaped: env %q", v.EnvID)
+	}
+}
+
 // The cap's message never tells anyone to archive what already is: an
 // archived run whose workspace is left is a cleanup pending, said apart.
 func TestEnvironmentCapacityNamesPendingCleanup(t *testing.T) {
@@ -201,7 +229,7 @@ func TestEnvironmentCapacityNamesPendingCleanup(t *testing.T) {
 	// Only stranded workspaces: no archiving advice at all.
 	h = newHarness(t, mustFlow(t, loopFlowDoc))
 	h.settings.L.MaxEnvironments = 1
-	h.seed(t, "stranded", created(testProject), &event.EnvReady{EnvID: "e2"}, &event.RunCompleted{}, &event.RunArchived{})
+	h.seed(t, "stranded", created(testProject), &event.EnvReady{EnvID: "e2"}, &event.RunFailed{Reason: "x"}, &event.RunArchived{})
 	_, err = h.e.CreateRun(ctx, runinput.Ticket{Title: "T"}, "loop", testProject)
 	wantErrText(t, err, "(1 live, max 1); workspaces pending cleanup")
 	if strings.Contains(err.Error(), "archivable") {

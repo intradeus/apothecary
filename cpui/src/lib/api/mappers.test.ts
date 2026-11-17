@@ -67,6 +67,7 @@ describe('runs', () => {
 				pause_note: 'budget exceeded: cost 1.20 USD > max 1.00',
 				provision_failed: true,
 				env_destroy_error: 'delete pod: exit -1',
+				archived_at: AT,
 				idle: true,
 				phase: 'w',
 				phase_subject: 'sub',
@@ -95,6 +96,7 @@ describe('runs', () => {
 			pause: { reason: 'budget', note: 'budget exceeded: cost 1.20 USD > max 1.00' },
 			provisionFailed: true,
 			envDestroyError: 'delete pod: exit -1',
+			archivedAt: AT,
 			idle: true,
 			phase: 'w',
 			phaseSubject: 'sub',
@@ -114,6 +116,7 @@ describe('runs', () => {
 			pause: undefined,
 			provisionFailed: false,
 			envDestroyError: undefined,
+			archivedAt: undefined,
 			phase: undefined,
 			phaseSubject: undefined,
 			params: undefined,
@@ -142,10 +145,13 @@ describe('runs', () => {
 		'paused',
 		'completed',
 		'abandoned',
-		'failed',
-		'archived'
+		'failed'
 	])('keeps the state %s', (state) => {
 		expect(map.toRun(aRunView({ state })).state).toBe(state);
+	});
+
+	it('no longer reads archived as a state: archiving is a flag beside the outcome', () => {
+		expect(map.toRun(aRunView({ state: 'archived' })).state).toBe('pending');
 	});
 
 	it('sums the six time buckets into wall time and keeps the open attempts', () => {
@@ -465,14 +471,14 @@ describe('merge requests', () => {
 				mr: { ...info, body: 'why' },
 				runs: 2,
 				stacked_on: { iid: 1, url: 'u', title: 't', branch: 'b' },
-				run: { id: 'r', state: 'failed', flow: 'f', created_at: AT }
+				run: { id: 'r', state: 'failed', archived: true, flow: 'f', created_at: AT }
 			})
 		);
 		expect(row).toMatchObject({
 			mr: { body: 'why' },
 			runs: 2,
 			stackedOn: { iid: 1, branch: 'b' },
-			run: { id: 'r', state: 'failed', flow: 'f', createdAt: AT }
+			run: { id: 'r', state: 'failed', archived: true, flow: 'f', createdAt: AT }
 		});
 	});
 
@@ -2225,6 +2231,7 @@ describe('analytics', () => {
 					flow_name: 'f',
 					flow_hash: 'h',
 					state: 'completed',
+					archived: true,
 					created_at: AT,
 					wall_ms: 60000,
 					cost_usd: 0.25
@@ -2236,6 +2243,7 @@ describe('analytics', () => {
 			flowName: 'f',
 			flowHash: 'h',
 			state: 'completed',
+			archived: true,
 			createdAt: AT,
 			wallMs: 60000,
 			costUsd: 0.25

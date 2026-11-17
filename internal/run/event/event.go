@@ -80,7 +80,7 @@ const (
 	TypeRunCompleted  Type = "run_completed"
 	TypeRunAbandoned  Type = "run_abandoned"
 	TypeRunFailed     Type = "run_failed"
-	TypeRunArchived   Type = "run_archived" // addition over §6 (see docs/notes): archived is a projected state, so it needs an event
+	TypeRunArchived   Type = "run_archived" // addition over §6 (see docs/notes): archiving is a flag on the run (run.View.ArchivedAt), so it needs an event
 	TypeRunRetried    Type = "run_retried"  // "try again": re-enter a failed stage in the same workspace
 	TypeRunPaused     Type = "run_paused"   // user pressed pause: loop exited cleanly, run parked non-terminal
 	TypeRunUnpaused   Type = "run_unpaused" // user pressed play: loop restarts and re-enters via the recovery path

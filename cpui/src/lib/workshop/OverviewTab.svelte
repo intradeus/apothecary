@@ -29,7 +29,7 @@
 	);
 	const finished = $derived(
 		runs
-			.filter((r) => stateTab[r.state] === 'finished' && r.state !== 'archived')
+			.filter((r) => stateTab[r.state] === 'finished' && !r.archivedAt)
 			.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 			.slice(0, 4)
 	);

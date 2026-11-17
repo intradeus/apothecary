@@ -415,14 +415,14 @@ func (s *Store) projectTx(ctx context.Context, tx pgx.Tx, runID string, evs []ev
 	}
 	b := &pgx.Batch{}
 	b.Queue(`
-		INSERT INTO runs (run_id, project_id, state, ticket_title, flow_name, flow_hash, current_stage, mr_url, env_id, created_at, updated_at, view, dormant, rebuilding, user_id, ticket_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+		INSERT INTO runs (run_id, project_id, state, ticket_title, flow_name, flow_hash, current_stage, mr_url, env_id, created_at, updated_at, view, dormant, rebuilding, user_id, ticket_id, archived_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		ON CONFLICT (run_id) DO UPDATE SET
 			project_id=$2, state=$3, ticket_title=$4, flow_name=$5, flow_hash=$6,
 			current_stage=$7, mr_url=$8, env_id=$9, created_at=$10, updated_at=$11,
-			view=$12, dormant=$13, rebuilding=$14, user_id=$15, ticket_id=$16`,
+			view=$12, dormant=$13, rebuilding=$14, user_id=$15, ticket_id=$16, archived_at=$17`,
 		v.RunID, v.ProjectID, string(v.State), v.TicketTitle, v.FlowName, v.FlowHash,
-		v.CurrentStage, v.MRURL, v.EnvID, v.CreatedAt, v.UpdatedAt, view, v.Dormant, v.Rebuilding, v.UserID, v.TicketID)
+		v.CurrentStage, v.MRURL, v.EnvID, v.CreatedAt, v.UpdatedAt, view, v.Dormant, v.Rebuilding, v.UserID, v.TicketID, v.ArchivedAt)
 	for i := range evs {
 		switch p := evs[i].Payload.(type) {
 		case *event.PingRaised:
@@ -526,7 +526,7 @@ var (
 		"wall_ms", "queued_ms", "provisioning_ms", "active_ms", "waiting_human_ms", "held_ms", "paused_ms", "human_response_ms",
 		"cost_usd", "rework_cost_usd", "input_tokens", "output_tokens", "turns", "stages", "attempts", "failed_attempts",
 		"retries", "try_agains", "pings", "pings_unwanted", "pings_answered", "gates_rejected", "holds", "mrs_created",
-		"success", "first_pass"}
+		"success", "first_pass", "archived"}
 	attemptCols = []string{"run_id", "seq", "user_id", "project_id", "flow_name", "flow_hash", "ticket_change_type",
 		"stage_id", "attempt", "harness", "model", "agent", "agent_hash", "outcome", "failure_reason",
 		"started_at", "ended_at", "active_ms", "waiting_ms", "cost_usd", "input_tokens", "output_tokens", "turns", "pings"}
@@ -561,7 +561,7 @@ func queueFacts(b *pgx.Batch, v *run.View, ended []run.AttemptFacts) {
 		f.WallMS(), f.QueuedMS, f.ProvisioningMS, f.ActiveMS, f.WaitingHumanMS, f.HeldMS, f.PausedMS, f.HumanResponseMS,
 		f.CostUSD, f.ReworkCostUSD, f.InputTokens, f.OutputTokens, f.Turns, len(f.Stages), f.Attempts, f.FailedAttempts,
 		f.Retries, f.TryAgains, f.Pings, f.PingsUnwanted, f.PingsAnswered, f.GatesRejected, f.Holds, f.MRsCreated,
-		success, firstPass)...)
+		success, firstPass, v.ArchivedAt != nil)...)
 	attempt := func(a *run.AttemptFacts) {
 		b.Queue(attemptUpsert, textArgs(
 			v.RunID, a.Seq, v.UserID, v.ProjectID, v.FlowName, v.FlowHash, v.TicketChangeType,

@@ -320,12 +320,12 @@ describe('fleet.reset', () => {
 });
 
 describe('fleet views', () => {
-	it('splits runs into active and finished by state', () => {
+	it('splits runs into active and finished by state, an archived run by its outcome', () => {
 		fleet.runs = [
 			aRun({ id: 'a', state: 'waiting_on_human' }),
 			aRun({ id: 'b', state: 'paused' }),
 			aRun({ id: 'c', state: 'completed' }),
-			aRun({ id: 'd', state: 'archived' })
+			aRun({ id: 'd', state: 'completed', archivedAt: '2026-10-31T12:00:00Z' })
 		];
 		expect(fleet.active.map((r) => r.id)).toEqual(['a', 'b']);
 		expect(fleet.finished.map((r) => r.id)).toEqual(['c', 'd']);
@@ -352,7 +352,7 @@ describe('fleet views', () => {
 			aRun({ id: 'a', envId: 'e1' }),
 			aRun({ id: 'b', envId: 'e2', state: 'paused' }),
 			aRun({ id: 'c', envId: 'e3', envStatus: 'absent' }),
-			aRun({ id: 'd', envId: 'e4', state: 'archived' }),
+			aRun({ id: 'd', envId: 'e4', state: 'failed', archivedAt: '2026-10-31T12:00:00Z' }),
 			aRun({ id: 'e' })
 		];
 		expect(fleet.envs.map((r) => r.id)).toEqual(['a', 'b']);

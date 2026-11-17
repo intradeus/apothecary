@@ -114,7 +114,7 @@ export const aTicket = (over: Partial<Ticket> = {}): Ticket => ({
 /** The slice of RunStore the run's components read. `act` runs what it's given
  *  and answers like the real one: false on a failure. */
 export const aRunStore = (run: Run = aRun(), over: Partial<RunStore> = {}): RunStore => {
-	const terminal = ['completed', 'failed', 'abandoned', 'archived'].includes(run.state);
+	const terminal = ['completed', 'failed', 'abandoned'].includes(run.state);
 	return {
 		runId: run.id,
 		run,
@@ -123,7 +123,7 @@ export const aRunStore = (run: Run = aRun(), over: Partial<RunStore> = {}): RunS
 		links: [],
 		terminal,
 		hasWorkspace: !!run.envId,
-		canRebuild: !!run.envId && run.state !== 'archived' && (terminal || run.state === 'paused'),
+		canRebuild: !!run.envId && !run.archivedAt && (terminal || run.state === 'paused'),
 		canPause: !terminal && run.state !== 'paused' && run.state !== 'pending',
 		act: vi.fn(async (fn: () => Promise<unknown>) => {
 			try {

@@ -553,6 +553,7 @@ export type DocWatcher = {
 };
 
 export type DrillRun = {
+	archived?: boolean;
 	cost_usd: number;
 	created_at: string;
 	flow_hash: string;
@@ -971,6 +972,7 @@ export type MrRow = {
 };
 
 export type MrRun = {
+	archived?: boolean;
 	created_at: string;
 	flow: string;
 	id: string;
@@ -1523,6 +1525,7 @@ export type RunServices = {
 
 export type RunView = {
 	adopted?: AdoptedMr;
+	archived_at?: string;
 	branch?: string;
 	branch_base?: string;
 	checkouts?: Array<RunCheckout>;

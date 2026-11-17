@@ -1,6 +1,7 @@
 <!-- Runs list (DESIGN 7.4). Runs start from tickets, so "New run" picks one.
-     Reads the shared fleet poll (4s); the workshop filter and tab mirror
-     ?project= and ?tab= so links from a workshop land pre-filtered. -->
+     Reads the shared fleet poll (4s); the workshop filter, the tab and the
+     Finished tab's filters mirror ?project=, ?tab=, ?outcome= and ?archived=
+     so links from a workshop land pre-filtered. -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -18,20 +19,33 @@
 	import SearchInput from '$lib/ui/SearchInput.svelte';
 	import NewRunDialog from '$lib/run/NewRunDialog.svelte';
 	import RunTable from '$lib/run/RunTable.svelte';
+	import FinishedFilters from '$lib/run/FinishedFilters.svelte';
+	import {
+		finishedParams,
+		matchesFinished,
+		readFinishedFilter,
+		ANY_FINISHED,
+		type FinishedFilter
+	} from '$lib/run/filter';
 	import WorkshopFilter from '$lib/shell/WorkshopFilter.svelte';
 
 	const projectFilter = $derived(page.url.searchParams.get('project') ?? '');
 	const tab = $derived<RunTab>(
 		page.url.searchParams.get('tab') === 'finished' ? 'finished' : 'active'
 	);
+	const filter = $derived(readFinishedFilter(page.url.searchParams));
 	let q = $state('');
 	let newRun = $state(false);
 
-	function setParams(next: { project?: string; tab?: RunTab }) {
+	function setParams(next: { project?: string; tab?: RunTab; filter?: FinishedFilter }) {
 		const project = next.project ?? projectFilter;
 		const tb = next.tab ?? tab;
 		void goto(
-			to.runs({ project: project || undefined, tab: tb === 'finished' ? 'finished' : undefined }),
+			to.runs({
+				project: project || undefined,
+				tab: tb === 'finished' ? 'finished' : undefined,
+				...finishedParams(next.filter ?? filter)
+			}),
 			{
 				replaceState: true,
 				keepFocus: true,
@@ -53,9 +67,10 @@
 		);
 	});
 	const active = $derived(searched.filter((r) => stateTab[r.state] === 'active'));
+	const allFinished = $derived(searched.filter((r) => stateTab[r.state] === 'finished'));
 	const finished = $derived(
-		searched
-			.filter((r) => stateTab[r.state] === 'finished')
+		allFinished
+			.filter((r) => matchesFinished(r, filter))
 			.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 	);
 	const shown = $derived(tab === 'active' ? active : finished);
@@ -101,6 +116,9 @@
 				{ value: 'finished', label: t('page.runs.tabFinished'), count: finished.length }
 			]}
 		/>
+		{#if tab === 'finished'}
+			<FinishedFilters value={filter} onchange={(f) => setParams({ filter: f })} />
+		{/if}
 	</div>
 
 	{#if !fleet.updatedAt && fleet.error}
@@ -136,6 +154,10 @@
 					href={to.tickets(projectFilter ? { project: projectFilter } : undefined)}
 					>{t('page.runs.openTickets')}</a
 				>
+			</EmptyState>
+		{:else if allFinished.length}
+			<EmptyState compact title={t('run.filter.noMatch')} text={t('run.filter.noMatchText')}>
+				<button onclick={() => setParams({ filter: ANY_FINISHED })}>{t('run.filter.clear')}</button>
 			</EmptyState>
 		{:else}
 			<EmptyState

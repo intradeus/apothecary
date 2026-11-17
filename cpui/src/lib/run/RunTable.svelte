@@ -101,7 +101,7 @@
 						<a class="mono idl stretch" href={to.run(r.id)} title={r.id}>{shortId(r.id)}</a>
 					{/if}
 				{:else if c === 'state'}
-					<span class="st"><StatusChip state={r.state} size="sm" /></span>
+					<span class="st"><StatusChip state={r.state} archived={!!r.archivedAt} size="sm" /></span>
 				{:else if c === 'ws'}
 					<span class="hide-sm ws"
 						><WorkspaceStatus

@@ -242,7 +242,7 @@ func (svc *Service) setup(ctx context.Context, runID string) (*askSetup, error) 
 		return s, nil
 	}
 	s.harness = fl.Ask.Harness
-	if v.EnvID == "" || v.State == run.Archived {
+	if v.EnvID == "" || v.ArchivedAt != nil {
 		s.reason = "The run has no workspace to ask about."
 		return s, nil
 	}

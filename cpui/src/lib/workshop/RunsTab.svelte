@@ -8,6 +8,8 @@
 	import NewRunDialog from '$lib/run/NewRunDialog.svelte';
 	import NewTicketLink from '$lib/tickets/NewTicketLink.svelte';
 	import RunTable from '$lib/run/RunTable.svelte';
+	import FinishedFilters from '$lib/run/FinishedFilters.svelte';
+	import { ANY_FINISHED, finishedParams, matchesFinished } from '$lib/run/filter';
 	import HeaderAction from '$lib/ui/HeaderAction.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import SearchInput from '$lib/ui/SearchInput.svelte';
@@ -22,11 +24,13 @@
 	}: { project: Project; runs: Run[]; integrations: Integration[] | null } = $props();
 
 	let tab = $state<'active' | 'finished'>('active');
+	let filter = $state(ANY_FINISHED);
 	let q = $state('');
 	let newRun = $state(false);
 
 	const active = $derived(runs.filter((r) => stateTab[r.state] === 'active'));
-	const finished = $derived(runs.filter((r) => stateTab[r.state] === 'finished'));
+	const allFinished = $derived(runs.filter((r) => stateTab[r.state] === 'finished'));
+	const finished = $derived(allFinished.filter((r) => matchesFinished(r, filter)));
 	const shown = $derived(
 		(tab === 'active' ? active : finished)
 			.filter((r) => {
@@ -60,10 +64,18 @@
 		]}
 		bind:value={tab}
 	/>
+	{#if tab === 'finished'}
+		<FinishedFilters value={filter} onchange={(f) => (filter = f)} />
+	{/if}
 	<span class="spacer"></span>
 	<Updated at={fleet.updatedAt} paused={fleet.paused} />
-	<a class="btn btn-sm" href={to.runs({ project: project.id, tab })}
-		>{t('workshop.runs.openIn')} {I.forward}</a
+	<a
+		class="btn btn-sm"
+		href={to.runs({
+			project: project.id,
+			tab,
+			...(tab === 'finished' ? finishedParams(filter) : {})
+		})}>{t('workshop.runs.openIn')} {I.forward}</a
 	>
 </div>
 
@@ -92,6 +104,10 @@
 			cls="btn-primary"
 		/>
 		<a class="btn" href={to.workshop(project.id, 'tickets')}>{t('workshop.runs.tickets')}</a>
+	</EmptyState>
+{:else if allFinished.length}
+	<EmptyState compact title={t('run.filter.noMatch')} text={t('run.filter.noMatchText')}>
+		<button onclick={() => (filter = ANY_FINISHED)}>{t('run.filter.clear')}</button>
 	</EmptyState>
 {:else}
 	<EmptyState

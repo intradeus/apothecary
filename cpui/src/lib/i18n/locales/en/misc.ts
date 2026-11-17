@@ -11,7 +11,6 @@ export default {
 	'state.completed': 'Completed',
 	'state.abandoned': 'Abandoned',
 	'state.failed': 'Failed',
-	'state.archived': 'Archived',
 	'fmt.justNow': 'just now',
 	'fmt.agoS': '{n}s ago',
 	'fmt.agoM': '{n}m ago',

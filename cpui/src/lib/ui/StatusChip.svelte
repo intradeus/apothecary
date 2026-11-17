@@ -11,8 +11,16 @@
 		suffix = false,
 		size = 'md',
 		/** Just the dot (8px) with the state in a tooltip, for dense rows. */
-		compact = false
-	}: { state: RunState; suffix?: boolean; size?: 'sm' | 'md'; compact?: boolean } = $props();
+		compact = false,
+		/** The run is filed away: its outcome chip gets an "archived" marker. */
+		archived = false
+	}: {
+		state: RunState;
+		suffix?: boolean;
+		size?: 'sm' | 'md';
+		compact?: boolean;
+		archived?: boolean;
+	} = $props();
 
 	// DESIGN 3.1: a tinted .pill per state; waiting is the solid sky .t-hot.
 	const tone = $derived(
@@ -26,8 +34,7 @@
 				paused: 'tint-muted',
 				completed: 'tint-success',
 				abandoned: 'tint-warning',
-				failed: 'tint-danger',
-				archived: 'archived'
+				failed: 'tint-danger'
 			} as const
 		)[state]
 	);
@@ -43,16 +50,20 @@
 					? t('ui.status.spoiled')
 					: ''
 	);
+	const name = $derived(
+		archived ? t('ui.status.archivedTitle', { state: stateLabel[state] }) : stateLabel[state]
+	);
 </script>
 
 {#if compact}
 	<span
 		class="live-dot {stateHueClass[state]}"
-		class:flat={state === 'archived' || state === 'pending' || state === 'paused'}
+		class:flat={archived || state === 'pending' || state === 'paused'}
+		class:dashed={archived}
 		class:pulse={live}
-		title={stateLabel[state]}
+		title={name}
 		role="img"
-		aria-label={stateLabel[state]}
+		aria-label={name}
 	></span>
 {:else}
 	<span class="pill sc {tone}" class:dense={size === 'sm'} title={state}>
@@ -62,13 +73,16 @@
 			<span class="g">✕</span>
 		{:else if state === 'paused'}
 			<span class="g">❚❚</span>
-		{:else if state !== 'archived'}
+		{:else}
 			<!-- Only the running/provisioning dot glows; waiting's ink dot just pulses. -->
 			<span class="live-dot" class:flat={tone !== 'tint-running'} class:pulse={live}></span>
 		{/if}
 		{stateLabel[state]}
 		{#if aside}<span class="display aside">· {aside}</span>{/if}
 	</span>
+	{#if archived}
+		<span class="pill sc archived" class:dense={size === 'sm'}>{t('ui.status.archived')}</span>
+	{/if}
 {/if}
 
 <style>
@@ -98,7 +112,9 @@
 		font-size: var(--fs-aside);
 		opacity: 0.85;
 	}
+	/* The archived marker beside the outcome: faint and dashed, filed away. */
 	.archived {
+		margin-left: 4px;
 		background: transparent;
 		color: var(--text-faint);
 		border: 1px dashed var(--line-strong);

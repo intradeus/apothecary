@@ -81,7 +81,7 @@ func (s *Service) Workspace(ctx context.Context, runID, repo string) (*sidecar.C
 	if v.ProjectID == "" || v.EnvID == "" {
 		return nil, Checkout{}, fmt.Errorf("run %s: %w", runID, ErrNoSidecar)
 	}
-	if v.State == run.Archived {
+	if v.ArchivedAt != nil {
 		return nil, Checkout{}, fmt.Errorf("run %s is archived; its workspace is gone: %w", runID, ErrNoSidecar)
 	}
 	if repo == "" {

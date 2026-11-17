@@ -104,7 +104,11 @@
 {#if row}
 	<PageHeader {crumbs} title={row.mr.title}>
 		{#snippet chip()}
-			{#if runs.length}<StatusChip state={runs[0].state} suffix />{/if}
+			{#if runs.length}<StatusChip
+					state={runs[0].state}
+					archived={!!runs[0].archivedAt}
+					suffix
+				/>{/if}
 		{/snippet}
 		{#snippet meta()}
 			<span class="src">

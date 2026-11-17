@@ -59,7 +59,7 @@
 					title="{r.title} — {stateLabel[r.state]}"
 					onclick={onnavigate}
 				>
-					<StatusChip state={r.state} compact />
+					<StatusChip state={r.state} archived={!!r.archivedAt} compact />
 					<span class="grow truncate">{r.title}</span>
 					<span class="rid mono">{shortId(r.id)}</span>
 				</a>

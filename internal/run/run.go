@@ -27,12 +27,12 @@ const (
 	Completed State = "completed"
 	Abandoned State = "abandoned"
 	Failed    State = "failed"
-	Archived  State = "archived"
 )
 
-// Terminal reports whether the state can only move to Archived.
+// Terminal reports whether the state is an outcome: the run has ended and
+// only archiving (View.ArchivedAt, a flag beside the state) is left to it.
 func (s State) Terminal() bool {
-	return s == Completed || s == Abandoned || s == Failed || s == Archived
+	return s == Completed || s == Abandoned || s == Failed
 }
 
 // View is the runs read-model row (§6): a projection, updated in the same
@@ -134,6 +134,10 @@ type View struct {
 	// env_destroy_failed no env_destroyed has followed). The environment is
 	// still there: it counts against the cap, and the reaper retries it.
 	EnvDestroyError string `json:"env_destroy_error,omitempty"`
+	// ArchivedAt: when the run was archived (event.RunArchived) — its
+	// workspace destroyed and the run moved out of the way. A flag beside
+	// State, which keeps the outcome; nil while the run is not archived.
+	ArchivedAt *time.Time `json:"archived_at,omitempty"`
 	// PauseReason/PauseNote say why a paused run is paused (event.RunPaused):
 	// "user" for the button, "budget" when the engine stopped it at the
 	// flow's budget, with the line that tripped. Cleared by play.
@@ -334,7 +338,13 @@ func Apply(v *View, e *event.Event) {
 		v.State = Failed
 		v.Hold = nil
 	case *event.RunArchived:
-		v.State = Archived
+		// Archiving is cleanup, not an outcome: State keeps how the run
+		// ended. The first archive is when it was archived; a retry of the
+		// destroy re-archives without moving it.
+		if v.ArchivedAt == nil {
+			ts := e.TS
+			v.ArchivedAt = &ts
+		}
 		v.Hold = nil
 	case *event.RunRetried:
 		// Back to work: re-entering StageID in the same workspace. The env

@@ -83,7 +83,8 @@ export default {
 	'page.runs.noActiveIn': 'No active runs in {name}. Start one from a ticket.',
 	'page.runs.noActive': 'No active runs. Start one from a ticket.',
 	'page.runs.nothingFinished': 'Nothing finished yet',
-	'page.runs.nothingFinishedText': 'Completed, failed and archived runs land here.',
+	'page.runs.nothingFinishedText':
+		'Completed, abandoned and failed runs land here, archived ones too.',
 	'page.workshops.new': 'New workshop',
 	'page.workshops.title': 'Workshops',
 	'page.workshops.accent': 'at the bench',

@@ -79,7 +79,12 @@
 		{plain}{#if accent}{' '}<span class="accent">{accent}</span>{/if}
 	</h1>
 	<div class="status">
-		<StatusChip state={run.state} size="sm" suffix={run.state === 'failed'} />
+		<StatusChip
+			state={run.state}
+			archived={!!run.archivedAt}
+			size="sm"
+			suffix={run.state === 'failed'}
+		/>
 		{#if (run.hold || handed) && !rs.terminal}
 			<span
 				class="pill sm tint-attention"

@@ -416,7 +416,7 @@ describe('RunPage', () => {
 		});
 
 		it('offers nothing it cannot do on an archived run', async () => {
-			await setup(broken('archived'));
+			await setup({ ...broken('failed'), archivedAt: '2026-10-31T12:00:00Z' });
 			expect(
 				within(banner())
 					.getAllByRole('button')

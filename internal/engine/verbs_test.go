@@ -128,7 +128,7 @@ func TestArchive(t *testing.T) {
 			t.Fatal(err)
 		}
 		v := h.view(t, "r1")
-		if v.State != run.Archived || v.EnvID != "env-1" {
+		if v.State != run.Completed || v.ArchivedAt == nil || v.EnvID != "env-1" {
 			t.Errorf("view = %s env %q: an env not destroyed must stay on record", v.State, v.EnvID)
 		}
 	})
@@ -141,7 +141,7 @@ func TestArchive(t *testing.T) {
 			t.Fatalf("a failed cleanup must not fail the archive: %v", err)
 		}
 		v := h.view(t, id)
-		if v.State != run.Archived || v.EnvID != "" {
+		if v.State != run.Completed || v.ArchivedAt == nil || v.EnvID != "" {
 			t.Errorf("view = %s env %q", v.State, v.EnvID)
 		}
 		if len(h.envp.Destroyed) != 1 || string(h.envp.Destroyed[0]) != env {
@@ -155,10 +155,26 @@ func TestArchive(t *testing.T) {
 		if err := h.e.Archive(ctx, id); err != nil {
 			t.Fatal(err)
 		}
-		if v := h.view(t, id); v.State != run.Archived || v.EnvID == "" {
+		if v := h.view(t, id); v.ArchivedAt == nil || v.EnvID == "" {
 			t.Errorf("view = %+v", v)
 		}
 	})
+	// Archiving keeps how the run ended: only the flag says it was archived.
+	for _, end := range []struct {
+		p    event.Payload
+		want run.State
+	}{{&event.RunAbandoned{Reason: "edge exhausted"}, run.Abandoned}, {&event.RunFailed{Reason: "aborted"}, run.Failed}} {
+		t.Run("keeps "+string(end.want), func(t *testing.T) {
+			h := newHarness(t, mustFlow(t, loopFlowDoc))
+			h.seed(t, "r1", created(testProject), end.p)
+			if err := h.e.Archive(ctx, "r1"); err != nil {
+				t.Fatal(err)
+			}
+			if v := h.view(t, "r1"); v.State != end.want || v.ArchivedAt == nil {
+				t.Errorf("view = %s archived %v", v.State, v.ArchivedAt)
+			}
+		})
+	}
 }
 
 type failingAttachments struct{ *filestore.Attachments }
@@ -293,7 +309,15 @@ func TestRetryRefusals(t *testing.T) {
 	h.seed(t, "gone", created(testProject), &event.EnvReady{EnvID: "e"}, &event.StageStarted{StageID: "vanished", Attempt: 1},
 		&event.RunAbandoned{StalledAt: "vanished", Reason: "x"})
 	wantErrText(t, h.e.RetryRun(ctx, "gone"), `flow "loop" no longer has a stage "vanished"`)
-	for _, id := range []string{"done", "nostage", "noenv", "gone"} {
+
+	// Archived keeps the outcome, failed included: an archived run is moved
+	// out of the way, never tried again — not even its provisioning.
+	h.seed(t, "archived", created(testProject), &event.EnvReady{EnvID: "e"}, &event.StageStarted{StageID: "build", Attempt: 1},
+		&event.RunFailed{Reason: "x"}, &event.RunArchived{})
+	wantErrText(t, h.e.RetryRun(ctx, "archived"), "is archived")
+	h.seed(t, "archivedprov", created(testProject), &event.EnvRequested{}, &event.EnvFailed{Error: "boom"}, &event.RunArchived{})
+	wantErrText(t, h.e.RetryRun(ctx, "archivedprov"), "is archived")
+	for _, id := range []string{"done", "nostage", "noenv", "gone", "archived", "archivedprov"} {
 		if countType(h.events(t, id), event.TypeRunRetried) != 0 {
 			t.Errorf("%s: a refused retry reached the log", id)
 		}

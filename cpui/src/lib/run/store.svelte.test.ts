@@ -827,7 +827,11 @@ describe('the derived state', () => {
 		['a status not reconciled yet', { envId: 'e', envStatus: 'unknown' }, true],
 		['no container', {}, false],
 		['an absent container', { envId: 'e', envStatus: 'absent' }, false],
-		['an archived run', { envId: 'e', state: 'archived' }, false]
+		[
+			'an archived run',
+			{ envId: 'e', state: 'completed', archivedAt: '2026-10-31T12:00:00Z' },
+			false
+		]
 	])('has a workspace or not for %s', (_, over, want) => {
 		expect(store(aRun(over)).hasWorkspace).toBe(want);
 	});
@@ -845,7 +849,7 @@ describe('the derived state', () => {
 		['a failed run', { envId: 'e', state: 'failed' }, true],
 		['a completed run', { envId: 'e', state: 'completed' }, true],
 		['a running run', { envId: 'e', state: 'running' }, false],
-		['an archived run', { envId: 'e', state: 'archived' }, false],
+		['an archived run', { envId: 'e', state: 'failed', archivedAt: '2026-10-31T12:00:00Z' }, false],
 		['a paused run without a workspace', { state: 'paused' }, false]
 	])('offers a rebuild or not for %s', (_, over, want) => {
 		expect(store(aRun(over)).canRebuild).toBe(want);
@@ -858,7 +862,11 @@ describe('the derived state', () => {
 		['a paused run', { envId: 'e', state: 'paused' }, false],
 		['a pending run', { state: 'pending' }, false],
 		['a failed run', { envId: 'e', state: 'failed' }, false],
-		['an archived run', { envId: 'e', state: 'archived' }, false]
+		[
+			'an archived run',
+			{ envId: 'e', state: 'abandoned', archivedAt: '2026-10-31T12:00:00Z' },
+			false
+		]
 	])('offers a pause or not for %s', (_, over, want) => {
 		expect(store(aRun(over)).canPause).toBe(want);
 	});
@@ -877,8 +885,7 @@ describe('the derived state', () => {
 		['paused', false],
 		['completed', true],
 		['failed', true],
-		['abandoned', true],
-		['archived', true]
+		['abandoned', true]
 	])('reads %s as terminal: %s', (state, want) => {
 		expect(store(aRun({ state })).terminal).toBe(want);
 	});

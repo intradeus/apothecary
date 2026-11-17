@@ -525,6 +525,56 @@ func TestLiveTicketsMigration(t *testing.T) {
 	}
 }
 
+// 0007_run_archived_flag: a run archived before the flag read state
+// 'archived', its outcome lost. The migration's rebuild replays the log, so
+// each archived run gets back how it ended, and the flag besides.
+func TestRunArchivedFlagMigration(t *testing.T) {
+	dsn := pgtest.Empty(t)
+	ctx := context.Background()
+	old := openSrc(t, dsn, upTo(t, 6))
+	if _, err := old.pool.Exec(ctx, `
+		INSERT INTO events (run_id, seq, ts, type, payload) VALUES
+		  ('ra', 1, '2026-07-01T10:00:00Z', 'run_created', '{"project_id":"p1","ticket_title":"A"}'),
+		  ('ra', 2, '2026-07-01T11:00:00Z', 'run_completed', '{}'),
+		  ('ra', 3, '2026-07-02T09:00:00Z', 'run_archived', '{}'),
+		  ('rb', 1, '2026-07-01T10:00:00Z', 'run_created', '{"project_id":"p1","ticket_title":"B"}'),
+		  ('rb', 2, '2026-07-01T10:30:00Z', 'run_failed', '{"reason":"boom"}'),
+		  ('rb', 3, '2026-07-03T09:00:00Z', 'run_archived', '{}'),
+		  ('rc', 1, '2026-07-01T10:00:00Z', 'run_created', '{"project_id":"p1","ticket_title":"C"}'),
+		  ('rc', 2, '2026-07-01T10:30:00Z', 'run_completed', '{}');
+		INSERT INTO runs (run_id, project_id, state, created_at, updated_at) VALUES
+		  ('ra', 'p1', 'archived', '2026-07-01T10:00:00Z', '2026-07-02T09:00:00Z'),
+		  ('rb', 'p1', 'archived', '2026-07-01T10:00:00Z', '2026-07-03T09:00:00Z'),
+		  ('rc', 'p1', 'completed', '2026-07-01T10:00:00Z', '2026-07-01T10:30:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	s := openDSN(t, dsn)
+	for _, c := range []struct {
+		run, state string
+		archived   *time.Time
+		success    bool
+	}{
+		{"ra", "completed", new(time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)), true},
+		{"rb", "failed", new(time.Date(2026, 7, 3, 9, 0, 0, 0, time.UTC)), false},
+		{"rc", "completed", nil, true},
+	} {
+		var state, factState string
+		var archivedAt *time.Time
+		var success, archived bool
+		if err := s.pool.QueryRow(ctx, `SELECT r.state, r.archived_at, f.state, f.success, f.archived
+			FROM runs r JOIN run_facts f USING (run_id) WHERE run_id=$1`, c.run).Scan(
+			&state, &archivedAt, &factState, &success, &archived); err != nil {
+			t.Fatalf("%s: %v", c.run, err)
+		}
+		sameTime := archivedAt == nil && c.archived == nil || archivedAt != nil && c.archived != nil && archivedAt.Equal(*c.archived)
+		if state != c.state || factState != c.state || !sameTime || success != c.success || archived != (c.archived != nil) {
+			t.Errorf("%s: state %s/%s archived_at %v success %v archived %v", c.run, state, factState, archivedAt, success, archived)
+		}
+	}
+}
+
 // TestInitMigrationIsFrozen: 0001_init.sql is the v1.0.0 schema, and every
 // database out there has applied version 1. An edit to the file reaches NONE
 // of them (the runner never re-runs an applied version), so the daemon boots

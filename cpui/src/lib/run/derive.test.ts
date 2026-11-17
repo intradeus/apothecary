@@ -57,7 +57,6 @@ describe('pingsOf', () => {
 		['completed', 'withdrawn'],
 		['failed', 'withdrawn'],
 		['abandoned', 'withdrawn'],
-		['archived', 'withdrawn'],
 		['running', 'pending'],
 		['paused', 'pending'],
 		['waiting_on_human', 'pending']

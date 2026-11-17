@@ -54,7 +54,7 @@ export default {
 	'run.stop.action': 'Abort run',
 	'run.archive.title': 'Archive run {id}?',
 	'run.archive.lead':
-		'<span class="tx">The run is filed away as <b>archived</b> and leaves the lists; its record and timeline are kept.</span>',
+		'<span class="tx">The run is filed away as <b>archived</b>, keeping its outcome; its record and timeline are kept. It can no longer be retried, only run anew.</span>',
 	'run.archive.envDestroyed':
 		'Workspace <span class="mono">{env}</span> is <b>destroyed</b> — anything not committed or captured is gone.',
 	'run.archive.noEnv': 'It has no workspace left to destroy.',
@@ -347,6 +347,15 @@ export default {
 	// Runs list / table
 	'run.row.untitled': 'Untitled run',
 	'run.row.held': 'in your hands',
+	'run.filter.outcome': 'Outcome',
+	'run.filter.anyOutcome': 'Any outcome',
+	'run.filter.archived': 'Archived',
+	'run.filter.anyArchived': 'Archived or not',
+	'run.filter.notArchived': 'Not archived',
+	'run.filter.onlyArchived': 'Archived only',
+	'run.filter.noMatch': 'No finished run matches',
+	'run.filter.noMatchText': 'Nothing finished passes the outcome and archived filters.',
+	'run.filter.clear': 'Clear filters',
 	'run.table.run': 'Run',
 	'run.table.id': 'Id',
 	'run.table.state': 'State',

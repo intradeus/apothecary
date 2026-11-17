@@ -186,7 +186,7 @@
 		{#snippet chip()}
 			<TicketStatusChip status={ticket!.status} done={ticket!.done} size="md" />
 			{#if runs.length}<span title={t('page.ticket.latestRun')}
-					><StatusChip state={runs[0].state} suffix /></span
+					><StatusChip state={runs[0].state} archived={!!runs[0].archivedAt} suffix /></span
 				>{/if}
 		{/snippet}
 		{#snippet meta()}

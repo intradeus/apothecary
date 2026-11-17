@@ -49,7 +49,7 @@ func (s *Service) SSHTarget(ctx context.Context, workspace string) (SSHTarget, e
 	if err != nil {
 		return SSHTarget{}, err
 	}
-	if !ok || v.ProjectID == "" || v.EnvID != workspace || v.State == run.Archived {
+	if !ok || v.ProjectID == "" || v.EnvID != workspace || v.ArchivedAt != nil {
 		return SSHTarget{}, ErrNoWorkspace
 	}
 	if st, known := s.EnvState.Statuses()[v.RunID]; known && (st == envport.EnvStopped || st == envport.EnvAbsent) {
@@ -121,7 +121,7 @@ func (s *Service) SSHInfo(ctx context.Context, runID string) (SSHInfo, error) {
 	if err != nil {
 		return SSHInfo{}, err
 	}
-	if v.ProjectID == "" || v.EnvID == "" || v.State == run.Archived {
+	if v.ProjectID == "" || v.EnvID == "" || v.ArchivedAt != nil {
 		return SSHInfo{}, fmt.Errorf("run %s: %w", runID, ErrNoWorkspace)
 	}
 	info := SSHInfo{Workspace: v.EnvID}
