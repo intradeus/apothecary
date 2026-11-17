@@ -62,6 +62,8 @@ export default {
 	'transcript.resumedReleased': 'Resumed — handed back',
 	'transcript.holdTaken':
 		'You took over — the agent waits for your word between turns; the stage cannot end until you release it',
+	'transcript.holdOpened':
+		'The agent answered the stage prompt — your messages are its next turns; release it to end the stage',
 	'transcript.holdReleased': 'Handed back — the agent finishes its task',
 	'transcript.holdEnded': 'Take-over ended with the attempt',
 	'transcript.messages_one': '{count} message',

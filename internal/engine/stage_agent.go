@@ -255,7 +255,6 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		if err := x.prompted(st.ID, iter, kind, text); err != nil {
 			return err
 		}
-		x.openingTurn = kind == event.PromptStage && st.StartHeld && rs.Holds[st.ID] != nil
 		inv, err = x.invoke(st, budget, tr, nil, text,
 			func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
 				in.MCPServers = mcp

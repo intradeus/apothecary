@@ -879,10 +879,12 @@ and the parser refuses the document if it tries.
 hands, for work done turn by turn with a person: collaborative planning, a
 design back-and-forth. It is a take-over the engine takes when the attempt
 starts, before its prompt, for the run's owner (the project's owner on a run an
-automation started), on the record as `hold_taken` like one taken by hand. The
-agent answers the stage prompt as usual; when that turn ends the session waits
-for the owner instead of ending the stage, and the owner is told — the inbox
-lists the run under *In your hands*, and a notification goes to their channels.
+automation started), on the record as `hold_taken` (`start: true`) like one
+taken by hand. The agent answers the stage prompt as usual — a restart before
+that turn ends sends or follows it, never parks on the owner — and when it ends
+(`hold_opened`) the session waits for the owner instead of ending the stage,
+and the owner is told — the inbox lists the run under *In your hands*, and a
+notification goes to their channels.
 From there it is the take-over: each message of theirs is a turn in the same
 session, a quiet owner parks the run and gives its slot back until their next
 message, and the release sends the handback prompt, after which the output

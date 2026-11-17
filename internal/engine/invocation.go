@@ -291,10 +291,19 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				}
 			case agentport.AgentEvTurnEnd:
 				turnOpen = false
-				ended := opening
-				opening = false
 				if hold == nil {
+					opening = false
 					break
+				}
+				// The opening turn ends here — the one this invocation saw
+				// start, or, followed after a restart, the one already
+				// running when it was reattached to.
+				ended := opening || hold.opening
+				opening, hold.opening = false, false
+				if ended {
+					if err := x.append(&event.HoldOpened{StageID: st.ID, Attempt: io.tr.iter}); err != nil {
+						return invocation{}, err
+					}
 				}
 				hold.leg.TurnEnded(ev.Turn, ev.Usage)
 				if len(open) > 0 {

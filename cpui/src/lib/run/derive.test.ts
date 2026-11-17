@@ -856,6 +856,7 @@ describe('describe', () => {
 		['stage_resumed', 'released', { reason: 'released' }, 's resumed — handed back', 'info'],
 		['stage_resumed', 'answer', {}, 's resumed — the answer landed', 'info'],
 		['hold_taken', '', {}, 's: you took over the agent', 'warn'],
+		['hold_opened', '', {}, 's: the agent answered the stage prompt — your turn', 'warn'],
 		[
 			'hold_released',
 			'by hand',

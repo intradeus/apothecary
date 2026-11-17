@@ -246,6 +246,15 @@ describe('buildTranscript', () => {
 			}
 		],
 		[
+			'hold_opened',
+			'',
+			{},
+			{
+				text: 'The agent answered the stage prompt — your messages are its next turns; release it to end the stage',
+				tone: 'warn'
+			}
+		],
+		[
 			'hold_released',
 			'by hand',
 			{ duration_ms: 90_000, turns: 2, messages: 1, usage: { cost_usd: 0.5 } },

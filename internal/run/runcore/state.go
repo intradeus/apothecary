@@ -239,10 +239,15 @@ type State struct {
 
 // HeldState is a take-over as replay knows it: who took it, when, and the
 // spend of every leg that parked (each stage_paused{held} banks its own).
+// Opening: a start hold whose opening turn — the agent's own answer to the
+// stage prompt — has not ended yet (hold_taken start, no hold_opened): a
+// re-entry runs or follows that turn rather than parking, and it stays off
+// the hold's account.
 type HeldState struct {
 	Taken   *event.HoldTaken
 	TakenAt time.Time
 	Banked  event.HoldSpend
+	Opening bool
 }
 
 // ChainKey identifies one link of an edge chain: depth 0 is the edge
@@ -789,7 +794,11 @@ func (rs *State) Apply(ev *event.Event) {
 	case *event.MessageDelivered:
 		rs.Delivered(p.MessageIDs)
 	case *event.HoldTaken:
-		rs.Holds[p.StageID] = &HeldState{Taken: p, TakenAt: ev.TS}
+		rs.Holds[p.StageID] = &HeldState{Taken: p, TakenAt: ev.TS, Opening: p.Start}
+	case *event.HoldOpened:
+		if h := rs.Holds[p.StageID]; h != nil {
+			h.Opening = false
+		}
 	case *event.HoldReleased:
 		delete(rs.Holds, p.StageID)
 		if p.Reason == event.HoldReleasedByUser {

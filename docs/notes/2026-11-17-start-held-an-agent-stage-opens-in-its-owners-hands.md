@@ -22,24 +22,34 @@ What now:
   prompt. It is the run's owner's, `run.View.UserID` — on a run an
   automation started that is the project's owner (the resolver's
   `UserID: p.UserID`), the person the automation's blocker notices already
-  go to. `holdReentry` sends nothing while the attempt has not begun, so the
-  stage prompt goes first (any message queued meanwhile rides with it, via
-  `withPendingMessages`) instead of parking on the owner before the agent
-  has said anything. Every attempt starts held: a retry and an `on_reject`
-  redo are new attempts, and the previous one's hold was closed when it
-  ended.
+  go to. Every attempt starts held: a retry and an `on_reject` redo are new
+  attempts, and the previous one's hold was closed when it ended.
+- **The opening turn is on the record.** The plan had nothing new
+  persisted, and kept "this is the opening turn" in the `exec` alone; review
+  found two crash windows that lost it. A crash after `agent_prompted:stage`
+  but before the harness recorded a session made the attempt look begun, so
+  re-entry parked on the owner without the agent having answered; and a
+  restart that reattached to the opening turn in flight counted it as the
+  holder's and told nobody. So the hold says what it is owed:
+  `hold_taken` carries `start: true`, and a new `hold_opened` event records
+  the opening turn's end. Replay folds them into `HeldState.Opening`. While
+  it is set, `holdReentry` sends nothing and never parks — the attempt's own
+  path sends the stage prompt (no session yet), follows the live turn
+  (reattach), or asks the session to carry on (restart) — and the
+  invocation's `liveHold` opens on the agent's turn, whether this invocation
+  saw that turn start or only its end.
 - **The opening turn is the agent's.** It answers the stage prompt, so the
-  hold's account (`hold_released` turns, messages, cost) leaves it out:
-  `exec.openingTurn` marks the invocation that sends the stage prompt under
-  a start hold, and its first `turn_start` is not added to the leg. From
-  there the take-over is unchanged: parking, wake on message, release, the
-  handback prompt, the output contract, and outcomes waiting for the
-  release.
+  hold's account (`hold_released` turns, messages, cost) leaves it out. From
+  `hold_opened` on, the take-over is unchanged: parking, wake on message,
+  release, the handback prompt, the output contract, and outcomes waiting
+  for the release. The timeline and the transcript show `hold_opened` as the
+  agent having answered the stage prompt, the owner's turn next.
 - **The owner is told** when that opening turn ends with nothing queued and
   the session goes idle on them: one `Engine.notify` with `Type: "held"` to
-  the run owner's channels. A later turn, a woken one or a crash re-entry
-  says nothing (the opening turn is past); like every channel send it is
-  best-effort.
+  the run owner's channels, sent after `hold_opened` is recorded. A later
+  turn, a woken one or a re-entry after `hold_opened` says nothing; like
+  every channel send it is best-effort, and a crash between the record and
+  the send loses it (the inbox still lists the run).
 - **The inbox entry is derived**, not a ping (the owner's choice at
   planning): the CPUI inbox lists `fleet.held` — live, unarchived runs with
   a `hold` — under *In your hands*, linking each run, and the inbox badge
@@ -58,7 +68,13 @@ Tests: `internal/engine/hold_test.go` — `TestStartHeldOpensInTheOwnersHands`
 handback, the account excluding the opening turn),
 `TestStartHeldHoldsEveryAttempt` (an `output_contract` retry and an
 `on_reject` redo each take a hold before their prompt),
-`TestStartHeldParksOnAQuietOwner`, `TestRecoveredStartHoldSendsTheStagePrompt`;
+`TestStartHeldParksOnAQuietOwner`, `TestRecoveredStartHoldSendsTheStagePrompt`
+(a crash before the prompt, and after it with no session: the prompt is
+sent, not parked on), `TestRecoveredStartHoldFollowsTheOpeningTurn` (a
+reattached opening turn, its start seen or not, notifies once and stays off
+the account); `internal/run/event` `TestEveryRegisteredTypeRoundTrips`
+(`hold_opened`); CPUI `derive.test.ts` and `transcriptItems.test.ts`
+(`hold_opened`);
 `internal/engine/outcomes_test.go` `TestAnOutcomeWaitsForAStartHold`;
 `internal/flow` `TestStartHeld`, `TestDocBoolJSON`; CPUI
 `AgentStage.test.ts` (start in your hands), `flowdoc.test.ts` (the trip),

@@ -169,10 +169,11 @@ func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View
 // liveHold is the engine's in-flight view of a take-over during one
 // invocation: what the holder's messages spent so far (leg), whether the agent sits idle waiting on the holder (the stage clock is
 // suspended then, as for a pending question), and a release waiting for the
-// turn in flight to end. Under a start hold the invocation that sends the
-// stage prompt opens on the agent's own turn — not the holder's, so off
-// the hold's account — and the owner is told when it leaves the session
-// waiting on them.
+// turn in flight to end. A start hold still owed its opening turn (on the
+// log: hold_taken start, no hold_opened) opens on the agent's own turn —
+// not the holder's, so off the hold's account — whether it is sent now or
+// followed after a restart; its end is recorded, and the owner is told
+// when it leaves the session waiting on them.
 type liveHold struct {
 	st        *runcore.HeldState
 	leg       runcore.HoldLeg
@@ -183,13 +184,11 @@ type liveHold struct {
 }
 
 func (x *exec) liveHold(st *flow.Stage) *liveHold {
-	opening := x.openingTurn
-	x.openingTurn = false
 	h := x.rs.Holds[st.ID]
 	if h == nil {
 		return nil
 	}
-	l := &liveHold{st: h, leg: runcore.NewHoldLeg(), opening: opening}
+	l := &liveHold{st: h, leg: runcore.NewHoldLeg(), opening: h.Opening}
 	l.leg.Spend.Messages, x.heldMessages = x.heldMessages, 0
 	return l
 }
@@ -219,7 +218,7 @@ func (x *exec) takeStartHold(st *flow.Stage, iter int) error {
 	if !st.StartHeld || x.rs.AttemptBegun(st.ID) || x.rs.Holds[st.ID] != nil {
 		return nil
 	}
-	return x.takeHold(st, iter, x.rs.View.UserID)
+	return x.append(&event.HoldTaken{StageID: st.ID, Attempt: iter, UserID: x.rs.View.UserID, Start: true})
 }
 
 // releaseHold closes a take-over with its account: every leg's spend, the
@@ -265,9 +264,12 @@ func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner ag
 		return holdReentry{reply: handbackPrompt, kind: event.PromptHandback, reason: event.ResumeReleased}, nil
 	case rs.Holds[st.ID] == nil:
 		return holdReentry{}, nil
-	case !rs.AttemptBegun(st.ID):
-		// A start hold taken before the stage prompt went out: the prompt
-		// is owed first, and messages queued meanwhile ride with it.
+	case rs.Holds[st.ID].Opening:
+		// A start hold still owed its opening turn: the stage prompt not
+		// sent yet, sent with no session recorded, or its turn in flight
+		// at a restart. The attempt's own path sends it (or follows it,
+		// or asks the session to carry on), and messages queued meanwhile
+		// ride with that prompt.
 		return holdReentry{}, nil
 	case len(rs.PendingMsgs) > 0:
 		n := len(rs.PendingMsgs)
