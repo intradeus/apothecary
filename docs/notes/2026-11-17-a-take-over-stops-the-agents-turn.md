@@ -10,12 +10,14 @@ What now:
 
 - A take-over carries `force`, on by default: `Engine.TakeOver(run, user,
   force)`, `POST /api/runs/{id}/hold` with an optional `{"force": bool}`
-  (no body, or no field, is `true`), and a "Stop the agent now" checkbox
-  beside Take over, checked by default and not remembered. `force: false`
-  is a passive take-over, exactly the old behaviour; it stays for a later
-  feature. `force` is not on the record: it only decides what happens at the
-  moment of taking, and the stopped turn is already there as a `turn_end`
-  with stop reason `cancelled`.
+  (no body, an empty one, or no field, is `true`; a body of unknown length,
+  chunked or HTTP/2 without `Content-Length`, is decoded like any other, so
+  a chunked `force: false` stays passive), and a "Stop the agent now"
+  checkbox beside Take over, checked by default and not remembered.
+  `force: false` is a passive take-over, exactly the old behaviour; it stays
+  for a later feature. `force` is not on the record: it only decides what
+  happens at the moment of taking, and the stopped turn is already there as
+  a `turn_end` with stop reason `cancelled`.
 - The engine decides (`runcore.PlanHoldRequest` → `HoldTakeAndStop`): a
   forced take with one of the agent's turns open, by the id its
   `turn_start` gave. It asks the runner through the inbox:

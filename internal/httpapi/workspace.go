@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -46,11 +48,18 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 // postHold takes over the run's live agent session for the signed-in user.
-// The body is optional: none is a forced take-over.
+// The body is optional: none is a forced take-over. A length of -1 is a body
+// of unknown length (chunked, or HTTP/2 without Content-Length), not an
+// absent one, so every body but a declared-empty one is decoded; a stream
+// that turns out empty counts as none.
 func (s *Server) postHold(w http.ResponseWriter, r *http.Request) {
 	var body TakeOverRequest
-	if r.ContentLength > 0 && !readJSON(w, r, &body) {
-		return
+	if r.ContentLength != 0 {
+		err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
+		if err != nil && !errors.Is(err, io.EOF) {
+			writeErr(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+			return
+		}
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
 	err := s.Runs.TakeOver(r.PathValue("id"), p.User.ID, body.Force == nil || *body.Force)
