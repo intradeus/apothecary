@@ -234,10 +234,14 @@ type runHandle struct {
 	// RaiseQuestion and not yet opened by the invocation (admit): a forced
 	// take-over counts them as open.
 	raising int
-	// stopping (under Engine.mu) is the turn a forced take-over asked to
-	// stop, until a turn ends or the invocation does: RaiseQuestion refuses
-	// meanwhile.
-	stopping string
+	// stopAsked and stopping (under Engine.mu), until a turn ends or the
+	// invocation does: stopAsked is the turn a forced take-over asked to
+	// stop, which a question RaiseQuestion registers first withdraws;
+	// stopping is that turn once the runner has taken the stop up
+	// (acceptStop), and RaiseQuestion refuses meanwhile. A runner that
+	// cannot stop a turn never takes it up: its questions stay welcome.
+	stopAsked string
+	stopping  string
 	// idle is set while the run sits between phases with its merge requests
 	// open (PLAN6): the loop only polls the repository host, so it does not
 	// hold a concurrency slot.
@@ -1912,11 +1916,13 @@ func (e *Engine) RaiseQuestion(runID string, q Question) (*Ping, error) {
 		return nil, fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
 	}
 	if h.stopping != "" {
-		// A forced take-over decided to stop the turn this question comes
-		// from: opened, it would park the run as that turn ends.
+		// The runner is stopping the turn this question comes from, for a
+		// forced take-over: opened, it would park the run as that turn ends.
 		e.mu.Unlock()
 		return nil, fmt.Errorf("run %s: %w", runID, ErrTurnStopping)
 	}
+	// A stop asked for and not yet taken up: the question keeps its turn.
+	h.stopAsked = ""
 	p := &Ping{
 		ID: e.newID(), RunID: runID, Type: ptype, Question: question, Context: context_,
 		Form: form, AnswerKind: event.AnswerForm, Files: refs, key: key,

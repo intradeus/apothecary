@@ -340,7 +340,7 @@ func TestTakeOverForce(t *testing.T) {
 		for {
 			select {
 			case <-call.In.Inbox.Wake():
-				if !call.In.Inbox.Interrupted("t1") {
+				if !call.In.Inbox.StopTurn("t1") {
 					continue
 				}
 				stopped <- true

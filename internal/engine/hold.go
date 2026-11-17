@@ -29,9 +29,12 @@ import (
 // finished) turn is the agent's, not on the hold's account. The stop is
 // decided under the lock the agent's questions are registered under: a
 // question registered first (even one still on its way to the loop) keeps
-// its turn, and one raised once the stop is decided is refused
-// (ErrTurnStopping) until the stopped turn ends — never opened on a turn
-// about to end, which would park the run.
+// its turn. The engine only asks for the stop (Inbox.StopTurn); a question
+// raised before the runner takes it up keeps the turn too, and one raised
+// after is refused (ErrTurnStopping) until the stopped turn ends — never
+// opened on a turn about to end, which would park the run. A runner that
+// cannot stop a turn never takes the stop up: its turn runs on as under a
+// passive take-over, questions and all.
 //
 // The hold is on the record: hold_taken, and hold_released with its
 // duration, turns and cost (every leg of it, across any park). A holder who
@@ -44,8 +47,8 @@ var (
 	ErrAlreadyHeld = errors.New("someone already holds this agent's session")
 	// ErrNotHeld: a release or a message with no take-over in force.
 	ErrNotHeld = errors.New("nobody holds this agent's session")
-	// ErrTurnStopping: a question raised by a turn a forced take-over is
-	// stopping.
+	// ErrTurnStopping: a question raised by a turn the runner is stopping
+	// for a forced take-over.
 	ErrTurnStopping = errors.New("the session was taken over and this turn is being stopped; the person holding it talks to you next")
 )
 
@@ -220,12 +223,25 @@ func (x *exec) takeHold(st *flow.Stage, iter int, userID string) error {
 	return x.append(taken)
 }
 
+// acceptStop is the runner taking up the stop a forced take-over asked of
+// turn (Inbox.StopTurn): false once a question the turn raised has withdrawn
+// it. From true on, the turn's questions are refused until it ends.
+func (x *exec) acceptStop(turn string) bool {
+	x.e.mu.Lock()
+	defer x.e.mu.Unlock()
+	if turn == "" || turn != x.h.stopAsked && turn != x.h.stopping {
+		return false
+	}
+	x.h.stopAsked, x.h.stopping = "", turn
+	return true
+}
+
 // endStop clears the stop a forced take-over asked of the agent's turn: that
 // turn has ended (or the invocation has), and the agent's questions are
 // welcome again.
 func (x *exec) endStop() {
 	x.e.mu.Lock()
-	x.h.stopping = ""
+	x.h.stopAsked, x.h.stopping = "", ""
 	x.e.mu.Unlock()
 }
 

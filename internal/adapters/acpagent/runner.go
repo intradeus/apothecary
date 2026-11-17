@@ -432,12 +432,12 @@ func (s *stream) pump(out chan<- sidecar.Event, errc chan<- error) {
 
 // drive runs turns in one session until the agent has nothing left to do:
 // the first turn is text (or, when attaching, the turn already in flight),
-// and each human message queued meanwhile becomes the next turn. A forced
-// take-over's request to stop the turn in flight (Inbox.Interrupted) cancels
-// that turn alone: its end is then any turn's end, and the session waits on
-// the holder. proc is the agent process the session runs in: another
-// process's exit (a second harness in the same workspace) is not this
-// session's news.
+// and each human message queued meanwhile becomes the next turn. It can stop
+// a turn: it takes up a forced take-over's request to stop the turn in
+// flight (Inbox.StopTurn) and cancels that turn alone: its end is then any
+// turn's end, and the session waits on the holder. proc is the agent process
+// the session runs in: another process's exit (a second harness in the same
+// workspace) is not this session's news.
 func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string, costBase float64,
 	text, attachTurn, cursor string, in agentport.AgentInput) (agentport.AgentResult, error) {
 	res := agentport.AgentResult{Session: agentport.SessionID(sid)}
@@ -545,9 +545,10 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 				ctxDone, cancelled = nil, true
 				askStop()
 			case <-wake:
-				// A forced take-over: stop this turn, keep the session. A
-				// wake for anything else is read again at the turn's end.
-				if !stopping && !cancelled && in.Inbox.Interrupted(turn) {
+				// A forced take-over: stop this turn, keep the session —
+				// unless a question the turn raised first keeps it. A wake
+				// for anything else is read again at the turn's end.
+				if !stopping && !cancelled && in.Inbox.StopTurn(turn) {
 					stopping = true
 					askStop()
 				}

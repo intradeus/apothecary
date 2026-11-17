@@ -199,7 +199,7 @@ func (r *recorder) stop(turn string) {
 	}
 }
 
-func (r *recorder) Interrupted(turn string) bool {
+func (r *recorder) StopTurn(turn string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return turn != "" && turn == r.stopped

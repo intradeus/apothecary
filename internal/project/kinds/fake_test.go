@@ -208,7 +208,7 @@ func (b *testInbox) Held() bool {
 	defer b.mu.Unlock()
 	return b.held
 }
-func (b *testInbox) Interrupted(turn string) bool {
+func (b *testInbox) StopTurn(turn string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return turn != "" && turn == b.stopped

@@ -20,9 +20,11 @@ What now:
   a `turn_end` with stop reason `cancelled`.
 - The engine decides (`runcore.PlanHoldRequest` → `HoldTakeAndStop`): a
   forced take with one of the agent's turns open, by the id its
-  `turn_start` gave. It asks the runner through the inbox:
-  `agentport.Inbox.Interrupted(turn)`, signalled on `Wake`. Naming the turn
-  keeps a request that arrives late from stopping the holder's next one.
+  `turn_start` gave. It asks the runner through the inbox, signalled on
+  `Wake`; a runner that can stop a turn takes the request up with
+  `agentport.Inbox.StopTurn(turn)` (true: stop that turn now), and one that
+  cannot never calls it. Naming the turn keeps a request that arrives late
+  from stopping the holder's next one.
 - After an engine restart the turn followed (`AgentReattacher.Reattach`)
   may have started before the recorded cursor, so its `turn_start` never
   comes again. `Reattachable` now also returns that turn's id, and the
@@ -35,19 +37,24 @@ What now:
   prompt waits for the stop request's answer: a request still on its way
   when the turn ended on its own would stop the holder's turn. A stop that
   does not end (or is not answered) within the cancel grace fails the
-  invocation, as a harness error. A runner that cannot stop a turn ignores
-  the request and behaves as before.
+  invocation, as a harness error. A runner that cannot stop a turn never
+  takes the request up and behaves as before: its turn runs on, as under a
+  passive take-over.
 - Exception: a turn waiting on the agent's own question (`ask_human` open)
   is not stopped, even forced. The agent is not working then, and a turn
   ending on an open question parks the run under the hold; the holder
   answers it instead. The stop is decided under `Engine.mu`, the lock
   `RaiseQuestion` registers a question under: a question counts as open
   from its registration (`runHandle.raising`, until the invocation admits
-  it), not only once the loop has taken it from the mailbox; and once a stop
-  is decided (`runHandle.stopping`, until a turn or the invocation ends) a
-  question is refused, `ErrTurnStopping` (409), rather than opened on a turn
-  about to end. A runner that ignores the stop therefore has its turn's
-  questions refused until that turn ends; every runner here honours it.
+  it), not only once the loop has taken it from the mailbox. The decision
+  only asks for the stop (`runHandle.stopAsked`); the runner taking it up
+  (`StopTurn`, under the same lock) makes it `runHandle.stopping`. A
+  question registered in between withdraws the request, so `StopTurn`
+  answers false and the turn runs on with its question. Once a stop is
+  taken up, until a turn or the invocation ends, a question is refused,
+  `ErrTurnStopping` (409), rather than opened on a turn about to end. A
+  runner that cannot stop a turn never takes it up, so its questions stay
+  welcome.
 - The dev fake harness fakes a take-over: its demo turn ends, cancelled, when
   stopped, and it serves a held session — each holder message and the
   release's handback get a short reply turn — so `task dev:up` can show a
@@ -91,7 +98,8 @@ Held by: `TestPlanHoldRequest`, `TestHoldLegWaitsUntilTheHoldersMessagesGetTheir
 `TestAForcedTakeOverLeavesATurnWaitingOnItsQuestion`,
 `TestAForcedTakeOverBesideAQueuedQuestionLeavesTheTurn`,
 `TestAForcedTakeOverBesideARegisteredQuestionLeavesTheTurn`,
-`TestAQuestionFromAStoppingTurnIsRefused`,
+`TestAQuestionFromAStoppingTurnIsRefused`, `TestARunnerThatCannotStopKeepsItsQuestions`,
+`TestAQuestionBeforeTheStopIsTakenUpKeepsTheTurn`,
 `TestAReleaseBehindAQueuedMessageWaitsForItsTurn`,
 `TestAReleaseBetweenDeliveryAndTurnStartWaitsForTheTurn`,
 `TestAReleaseBeforeAQuestionParksHandsBackAfterTheAnswer`,

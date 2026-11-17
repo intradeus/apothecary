@@ -50,8 +50,8 @@ type AgentInput struct {
 	// deliver them mid-invocation takes them at the end of each turn; one
 	// that cannot simply never takes them, and the engine carries them into
 	// the next prompt. It also carries a forced take-over's request to stop
-	// the turn in flight (Interrupted), which a runner that cannot stop a
-	// turn ignores.
+	// the turn in flight, which only a runner that can stop a turn takes up
+	// (StopTurn); one that cannot never calls it.
 	// nil = no messages.
 	Inbox Inbox
 	// ReadOnly: the session must not change the workspace (the Ask pane's
@@ -109,12 +109,17 @@ type Inbox interface {
 	// end: the runner waits for the holder's next message (Wake) and keeps
 	// going in the same session. The hold ends with a Wake and Held false.
 	Held() bool
-	// Interrupted reports whether a forced take-over asked to stop the turn
-	// with this id (AgentEvent.Turn). A runner that can stop a turn ends it
-	// and carries on as at any turn end, so the same session waits for the
-	// holder; one that cannot ignores it. Naming the turn keeps a request
-	// that arrives late from stopping the holder's next one.
-	Interrupted(turn string) bool
+	// StopTurn is how a runner that can stop a turn takes up a forced
+	// take-over's request to stop the turn with this id (AgentEvent.Turn),
+	// on a Wake. True: a stop was asked for and still stands, and the
+	// runner, having taken it up, must end that turn and carry on as at any
+	// turn end, so the same session waits for the holder; the engine
+	// refuses the turn's questions (ask_human) from then until it ends.
+	// False: no stop for that turn — none was asked, or a question the turn
+	// raised first keeps it running. A runner that cannot stop a turn never
+	// calls it, and its turn runs on, questions and all. Naming the turn
+	// keeps a request that arrives late from stopping the holder's next one.
+	StopTurn(turn string) bool
 }
 
 // AgentEvent kinds.

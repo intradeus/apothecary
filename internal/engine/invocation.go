@@ -28,8 +28,8 @@ type invIO struct {
 	tr     *transcript
 }
 
-func newInvIO(tr *transcript) *invIO {
-	return &invIO{events: make(chan agentport.AgentEvent, 256), done: make(chan struct{}), inbox: newInbox(), tr: tr}
+func newInvIO(tr *transcript, acceptStop func(turn string) bool) *invIO {
+	return &invIO{events: make(chan agentport.AgentEvent, 256), done: make(chan struct{}), inbox: newInbox(acceptStop), tr: tr}
 }
 
 func (io *invIO) input(prompt string) agentport.AgentInput {
@@ -74,7 +74,7 @@ func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, init
 	))
 	defer span.End()
 	runCtx, cancelRun := context.WithCancelCause(spanCtx)
-	io := newInvIO(tr)
+	io := newInvIO(tr, x.acceptStop)
 	// Before the agent starts: one resumed under a take-over can finish its
 	// turn at once, and if it saw no hold it would end the stage under the
 	// holder. A handback owed after an answer (a release that came while
@@ -419,14 +419,15 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			// Planned under the lock the agent's questions are registered
 			// under: a question registered first is open, even while it is
 			// still on its way to this loop, so a forced take-over leaves its
-			// turn alone; one raised after a stop is decided is refused.
+			// turn alone. The stop is only asked here; a question raised
+			// before the runner takes it up (acceptStop) keeps the turn.
 			x.e.mu.Lock()
 			move := runcore.PlanHoldRequest(runcore.HoldRequest{Take: req.take, Force: req.force,
 				Held: held, Releasing: releasing, TurnOpen: turnOpen,
 				Queued:       io.inbox.pending() || held && hold.leg.Waiting(),
 				QuestionOpen: len(open) > 0 || x.h.raising > 0})
 			if move == runcore.HoldTakeAndStop {
-				x.h.stopping = openTurn
+				x.h.stopAsked = openTurn
 			}
 			x.e.mu.Unlock()
 			switch move {
@@ -437,8 +438,10 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					hold = x.liveHold(st)
 					io.inbox.setHeld(true)
 					if move == runcore.HoldTakeAndStop {
-						// The agent's own turn: stopped, it ends as any turn
-						// does and the agent waits on the holder.
+						// The agent's own turn: a runner that takes the stop
+						// up ends it as any turn ends, and the agent waits on
+						// the holder; one that cannot lets it run on, as a
+						// passive take-over would.
 						io.inbox.interrupt(openTurn)
 					} else if !turnOpen && !io.inbox.pending() {
 						idleOnHolder()

@@ -269,7 +269,7 @@ func demoTurn(ctx context.Context, emit func(agentport.AgentEvent), inbox agentp
 			case <-next.C:
 				waiting = false
 			case <-wake:
-				if inbox.Interrupted("demo") {
+				if inbox.StopTurn("demo") {
 					next.Stop()
 					emit(agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "demo", StopReason: "cancelled"})
 					return nil
