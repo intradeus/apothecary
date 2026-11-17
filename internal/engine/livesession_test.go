@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -615,5 +616,53 @@ func TestRestartWithALiveQuestionButNoTurnParksOnIt(t *testing.T) {
 	}
 	if len(rr.attached) != 0 {
 		t.Errorf("reattached to nothing: %v", rr.attached)
+	}
+}
+
+// A harness may report a call once more after it completed (the fuller
+// output). That report folds into the one record; the call stays where it
+// began among the others; a report after the call is on the log is
+// dropped, never a second record of it.
+func TestTranscriptRecordsACallOnce(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	tool := func(id, status, title, output string) agentport.AgentEvent {
+		return agentport.AgentEvent{Kind: agentport.AgentEvTool, Turn: "T1",
+			Tool: &agentport.AgentTool{ID: id, Title: title, Kind: "execute", Status: status, Output: output}}
+	}
+	h.runner.RunFunc = func(_ context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		emitAll(call.In,
+			agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: "T1"},
+			tool("a", "in_progress", "$ task check", ""),
+			tool("b", "in_progress", "$ ls", ""),
+			tool("a", "completed", "", "ok"),
+			tool("b", "completed", "", "x.go"),
+			tool("a", "completed", "", "ok\nexit 0"), // the late report
+			agentport.AgentEvent{Kind: agentport.AgentEvMessage, Turn: "T1", Text: "Checked."},
+			tool("b", "completed", "", "x.go\ny.go"), // after b is on the log
+			agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "T1", StopReason: "end_turn"},
+		)
+		return agentport.AgentResult{TurnsUsed: 1, Output: "Checked."}, nil
+	}
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	var got []string
+	for _, ev := range h.events(t, runID) {
+		switch p := ev.Payload.(type) {
+		case *event.AgentTool:
+			got = append(got, fmt.Sprintf("tool %s %q %q", p.ToolCallID, p.Title, p.Output))
+		case *event.AgentMessage:
+			got = append(got, "message "+p.Text)
+		}
+	}
+	want := []string{
+		`tool a "$ task check" "ok\nexit 0"`,
+		`tool b "$ ls" "x.go"`,
+		"message Checked.",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("transcript =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }

@@ -807,6 +807,7 @@ export default {
 		'The main chain: it runs once, when a person or an automation starts a run — each run operates on {on}, the one they picked. Drag this handle onto a stage of the chain to start it there',
 	'flow.graph.operatesOn.ticket': 'a ticket',
 	'flow.graph.operatesOn.merge_request': 'a merge request',
+	'flow.graph.operatesOn.nothing': 'nothing',
 	'flow.graph.outcomeLabel': '{phase}: on {trigger} → {then}',
 	'flow.graph.section.main': 'main',
 	'flow.graph.section.watcher': 'watchers',
@@ -864,8 +865,9 @@ export default {
 	'flow.insp.operatesOn': 'Operates on',
 	'flow.insp.operatesOn.ticket': 'a ticket',
 	'flow.insp.operatesOn.merge_request': 'a merge request someone opened',
+	'flow.insp.operatesOn.nothing': 'nothing — a workspace on a branch',
 	'flow.insp.operatesOnHelp':
-		'What each run works on — its branch, and the merge request its watchers follow. It is not what starts a run: a person picks one when starting it (from the ticket’s page, or a merge request on the Repositories tab), or an automation does. A run that operates on a merge request checks out that merge request’s branch and acts on it from the start.',
+		'What each run works on — its branch, and the merge request its watchers follow. It is not what starts a run: a person picks one when starting it (from the ticket’s page, or a merge request on the Repositories tab), or an automation does. A run that operates on a merge request checks out that merge request’s branch and acts on it from the start. A run that operates on nothing has no ticket and no merge request behind it: it is started from New run, or by a schedule, and its stages may not read or write a ticket.',
 	'flow.insp.firesOn': 'Fires on',
 	'flow.insp.addChain': 'Add a chain',
 	'flow.insp.addWatcher': 'watcher',

@@ -239,7 +239,7 @@ func schema() obj {
 			"name":        withDesc(slug, "the flow's name"),
 			"version":     obj{"const": CurrentVersion, "description": "the grammar this document is written in"},
 			"description": str("what the flow does"),
-			"operates_on": stringsOf("what each run works on — picked by whoever starts it (default: ticket)", OperatesOnTicket, OperatesOnMR),
+			"operates_on": stringsOf("what each run works on — picked by whoever starts it (default: ticket); nothing is a workspace on a branch with no ticket or merge request behind it", OperatesOnTicket, OperatesOnMR, OperatesOnNothing),
 			"ask": obj{
 				"type":                 "object",
 				"description":          "the Ask pane: a read-only session beside the run that answers questions about the code; its model is picked in the pane",

@@ -906,6 +906,47 @@ export const projects = {
 		);
 		return { runId: r.run_id };
 	},
+	/** Start a run on nothing (the flow's operates_on must be nothing): a
+	 *  workspace on a branch, with no ticket or merge request. Everything is
+	 *  optional — the engine names an unnamed run "manual run - <time>" and
+	 *  starts from the repository's default branch. newBranch names the fresh
+	 *  branch forked from it (after the run when left out); onBranch works on
+	 *  the branch itself instead. */
+	startRunOnNothing: async (
+		id: string,
+		opts?: {
+			flow?: string;
+			title?: string;
+			branch?: string;
+			onBranch?: boolean;
+			newBranch?: string;
+			params?: Record<string, string>;
+			skillsets?: SkillsetRef[];
+		}
+	): Promise<{ runId: string }> => {
+		const r = await unwrap(
+			gen.startNothingRun({
+				path: { id },
+				body: {
+					...(opts?.flow ? { flow: opts.flow } : {}),
+					...(opts?.title?.trim() ? { title: opts.title.trim() } : {}),
+					...(opts?.branch ? { branch: opts.branch } : {}),
+					...(opts?.onBranch ? { on_branch: true } : {}),
+					...(opts?.newBranch?.trim() ? { new_branch: opts.newBranch.trim() } : {}),
+					...(opts?.params && Object.keys(opts.params).length ? { params: opts.params } : {}),
+					...(opts?.skillsets?.length
+						? {
+								skillsets: opts.skillsets.map((s) => ({
+									id: s.id,
+									...(s.seq ? { seq: s.seq } : {})
+								}))
+							}
+						: {})
+				}
+			})
+		);
+		return { runId: r.run_id };
+	},
 
 	preflight: async (id: string): Promise<Preflight> =>
 		map.toPreflight(await unwrap(gen.preflightProject({ path: { id } }))),

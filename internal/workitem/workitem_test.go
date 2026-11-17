@@ -18,13 +18,13 @@ import (
 	"apothecary/internal/workitem/ticket"
 )
 
-// probe is a kind a test shapes: required or not, accompanying or not, and
-// recording the order it prepares in.
+// probe is a kind a test shapes: required or not, accompanying or not,
+// alone or not, and recording the order it prepares in.
 type probe struct {
-	name                  string
-	required, accompanies bool
-	prepared              *[]string
-	fail                  error
+	name                         string
+	required, accompanies, alone bool
+	prepared                     *[]string
+	fail                         error
 }
 
 func (p probe) Name() string                   { return p.name }
@@ -32,6 +32,7 @@ func (p probe) Noun() string                   { return p.name + " thing" }
 func (p probe) Describe(r workitem.Ref) string { return p.name + " " + r.Key }
 func (p probe) Required() bool                 { return p.required }
 func (p probe) Accompanies() bool              { return p.accompanies }
+func (p probe) Alone() bool                    { return p.alone }
 func (p probe) Requested(project string, t runinput.Ticket, _ runinput.Input) (workitem.Ref, bool) {
 	return workitem.Ref{Kind: p.name, Project: project, Key: t.Title}, t.Title != ""
 }
@@ -91,6 +92,7 @@ func TestStartsOn(t *testing.T) {
 	r, _ := workitem.NewRegistry(
 		probe{name: "loose", accompanies: true},
 		probe{name: "strict", required: true},
+		probe{name: "bare", alone: true},
 	)
 	loose, strict := workitem.Ref{Kind: "loose"}, workitem.Ref{Kind: "strict"}
 	for _, c := range []struct {
@@ -105,6 +107,8 @@ func TestStartsOn(t *testing.T) {
 		{"a loose kind with an item that cannot come", "loose", []workitem.Ref{strict}, `starts its runs on a loose thing (operates_on: loose), not on a strict thing`},
 		{"an unknown item", "loose", []workitem.Ref{{Kind: "ghost"}}, `not on a ghost`},
 		{"an unknown kind", "ghost", nil, `operates on "ghost", which is no kind`},
+		{"a kind that starts alone, on nothing", "bare", nil, ""},
+		{"a kind that starts alone, with an item that accompanies others", "bare", []workitem.Ref{loose}, `starts its runs on nothing (operates_on: bare), not on a loose thing`},
 	} {
 		err := r.StartsOn("f", c.kind, c.items)
 		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
@@ -178,7 +182,7 @@ func TestKindsAreTheLanguagesOperatesOn(t *testing.T) {
 	for _, k := range items.All().Kinds() {
 		names = append(names, k.Name())
 	}
-	want := []string{flow.OperatesOnTicket, flow.OperatesOnMR}
+	want := []string{flow.OperatesOnTicket, flow.OperatesOnMR, flow.OperatesOnNothing}
 	if !slices.Equal(names, want) {
 		t.Errorf("kinds = %v, operates_on = %v", names, want)
 	}

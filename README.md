@@ -46,7 +46,8 @@ query. Between the start and the end, it does whatever your flow says.
   - `reviewer`: reviews someone's merge request, and again after each push.
   - `conflict-resolver`: settles a merge request's conflicts.
   - `hands-on`: you build; agents commit, review and open the merge request.
-  - `workspace-only`: a durable workspace, nothing else.
+  - `workspace-only`: a durable workspace, nothing else — started from
+    *New run* with no ticket (`operates_on: nothing`).
 
   Each flow carries its own agents. *Configure* binds a built-in flow's
   harness and model per workshop; *Copy to edit* makes it yours.

@@ -251,6 +251,10 @@ type RunCreated struct {
 	// created it: human, or automation.
 	Params map[string]string `json:"params,omitempty"`
 	By     string            `json:"by,omitempty"`
+	// Automation is the id of the automation that created the run, when one
+	// did: what tells a scheduled run on nothing its previous one is still
+	// going.
+	Automation string `json:"automation,omitempty"`
 	// MR is the merge request someone opened that the run was started on (a
 	// flow with operates_on: merge_request): the run works on its branch, and
 	// it is the run's merge request from the start. Nil for a run that opens

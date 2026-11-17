@@ -28,6 +28,8 @@ export default {
 	'runview.session.noconv_pending':
 		'No conversation yet. When an agent stage starts, its prompt, replies and tool calls appear here as they happen.',
 	'runview.session.follow': 'Follow',
+	'runview.session.earlier_one': 'Show earlier · {count} more item',
+	'runview.session.earlier_other': 'Show earlier · {count} more items',
 	'runview.session.betweenPhases': 'The run is waiting on what its watchers watch.',
 	'runview.session.openPhases': 'See the watchers',
 	'runview.session.dismissNudge': 'Dismiss — it comes back after the next chain',

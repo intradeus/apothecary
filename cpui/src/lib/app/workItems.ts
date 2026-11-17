@@ -3,6 +3,10 @@
 // package registers the same list). The sidebar, the New run dialog and the
 // command palette read this list, so a new kind is one entry here and its
 // pages: nothing that lists, picks or starts runs names a kind.
+//
+// operates_on has one more value, `nothing`: a run with no work item behind
+// it. It has no items to list or pick, so it is not here — the New run
+// dialog starts such a run itself (NothingRunForm).
 
 import { api } from '$lib/api';
 import { to } from '$lib/core/urls';
@@ -20,9 +24,12 @@ export interface WorkItemOption {
 	href: string;
 }
 
+/** The operates_on values that name a kind of work item: all but `nothing`. */
+export type WorkItemName = Exclude<OperatesOn, 'nothing'>;
+
 export interface WorkItemKind {
 	/** The flow language's operates_on value. */
-	kind: OperatesOn;
+	kind: WorkItemName;
 	/** Its sidebar destination's id. */
 	navId: 'tickets' | 'mrs';
 	/** Plural, for the sidebar and its list page. */
@@ -129,4 +136,4 @@ export const WORK_ITEMS: readonly WorkItemKind[] = [
 ];
 
 /** The kind operates_on names. */
-export const workItem = (kind: OperatesOn) => WORK_ITEMS.find((w) => w.kind === kind)!;
+export const workItem = (kind: WorkItemName) => WORK_ITEMS.find((w) => w.kind === kind)!;

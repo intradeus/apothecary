@@ -1341,6 +1341,7 @@ describe('flows', () => {
 		['', undefined],
 		['ticket', 'ticket'],
 		['merge_request', 'merge_request'],
+		['nothing', 'nothing'],
 		['mystery', 'ticket']
 	])('reads operates_on %j as %j', (operates_on, out) => {
 		expect(map.toFlow(wire<Wire.Flow>({ operates_on })).operatesOn).toBe(out);

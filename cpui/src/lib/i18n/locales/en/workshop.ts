@@ -200,6 +200,12 @@ export default {
 	'workshop.automations.schedule': 'Schedule',
 	'workshop.automations.scheduleHelp':
 		'Five cron fields, UTC: minute hour day-of-month month day-of-week. “0 9 * * 1-5” is weekday mornings at nine.',
+	'workshop.automations.cronOn': 'Each run works on',
+	'workshop.automations.cronOnTicket': 'A ticket',
+	'workshop.automations.cronOnNothing': 'Nothing',
+	'workshop.automations.cronOnNothingHelp':
+		'Each firing starts a run of its own, with no ticket, of a flow whose runs are started on nothing. A slot is skipped while the previous run is still going.',
+	'workshop.automations.cronNoTicket': 'no ticket',
 	'workshop.automations.ticket': 'Ticket',
 	'workshop.automations.ticketHelp': 'Each firing starts a new run of this ticket.',
 	'workshop.automations.noTickets':

@@ -1027,6 +1027,18 @@ export type ModelInfo = {
 	name: string;
 };
 
+export type NothingRunRequest = {
+	branch?: string;
+	flow?: string;
+	new_branch?: string;
+	on_branch?: boolean;
+	params?: {
+		[key: string]: string;
+	};
+	skillsets?: Array<Ref>;
+	title?: string;
+};
+
 export type Notice = {
 	body?: string;
 	count: number;
@@ -1533,6 +1545,7 @@ export type RunServices = {
 export type RunView = {
 	adopted?: AdoptedMr;
 	archived_at?: string;
+	automation_id?: string;
 	branch?: string;
 	branch_base?: string;
 	checkouts?: Array<RunCheckout>;
@@ -6481,6 +6494,47 @@ export type PreflightProjectResponses = {
 };
 
 export type PreflightProjectResponse = PreflightProjectResponses[keyof PreflightProjectResponses];
+
+export type StartNothingRunData = {
+	body: NothingRunRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/runs';
+};
+
+export type StartNothingRunErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type StartNothingRunResponses = {
+	/**
+	 * Created
+	 */
+	201: RunRef;
+};
+
+export type StartNothingRunResponse = StartNothingRunResponses[keyof StartNothingRunResponses];
 
 export type ListProjectSecretsData = {
 	body?: never;

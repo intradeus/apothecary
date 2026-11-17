@@ -452,6 +452,10 @@ func TestHandsOnTemplate(t *testing.T) {
 	if len(w.Stages) != 1 || w.Stages[0].Type != flow.StageManual || w.Stages[0].OnSuccess != flow.TerminalDone {
 		t.Errorf("workspace stages = %+v, want one manual stage ending the run", w.Stages)
 	}
+	// It needs no ticket: a run of it is started on nothing.
+	if !w.OperatesOnNothing() || len(w.Stages[0].Inputs) != 0 {
+		t.Errorf("workspace-only operates on %q with inputs %+v, want nothing and none", w.OperatesOn, w.Stages[0].Inputs)
+	}
 }
 
 // TestBuiltinFlowsCarryNoModel: a template names no model — model ids change

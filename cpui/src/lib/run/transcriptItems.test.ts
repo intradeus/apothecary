@@ -8,6 +8,7 @@ import {
 	emptyLive,
 	promptLabel,
 	pruneLive,
+	windowStart,
 	type ChatItem,
 	type LiveState
 } from './transcriptItems';
@@ -134,6 +135,47 @@ describe('promptLabel', () => {
 });
 
 describe('buildTranscript', () => {
+	it('folds a call reported again after it completed into the one shown', () => {
+		const items = buildTranscript(
+			[
+				anEvent(1, 'stage_started', { stage_id: 'build', attempt: 1 }),
+				anEvent(2, 'agent_tool', {
+					tool_call_id: 't1',
+					title: '$ task check',
+					kind: 'execute',
+					status: 'completed',
+					input: 'task check',
+					output: 'ok'
+				}),
+				agentTool(3, 't2'),
+				// The harness's late report: the fuller output, nothing else.
+				anEvent(4, 'agent_tool', { tool_call_id: 't1', status: 'completed', output: 'ok\nexit 0' })
+			],
+			emptyLive()
+		);
+		const group = items.find((i) => i.kind === 'tools');
+		expect(group?.kind === 'tools' && group.calls.map((c) => c.toolCallId)).toEqual(['t1', 't2']);
+		expect(group?.kind === 'tools' && group.calls[0]).toMatchObject({
+			title: '$ task check',
+			kind: 'execute',
+			input: 'task check',
+			output: 'ok\nexit 0'
+		});
+	});
+
+	it('takes the same id in a new attempt for a new call', () => {
+		const items = buildTranscript(
+			[
+				anEvent(1, 'stage_started', { stage_id: 'build', attempt: 1 }),
+				agentTool(2, 't1'),
+				anEvent(3, 'stage_started', { stage_id: 'build', attempt: 2 }),
+				agentTool(4, 't1')
+			],
+			emptyLive()
+		);
+		expect(items.filter((i) => i.kind === 'tools')).toHaveLength(2);
+	});
+
 	it('is empty for no events and nothing live', () => {
 		expect(buildTranscript([], emptyLive())).toEqual([]);
 	});
@@ -589,5 +631,30 @@ describe('buildTranscript', () => {
 			const live = { ...emptyLive(), order: ['m:gone', 't:gone'] };
 			expect(buildTranscript([], live)).toEqual([]);
 		});
+	});
+});
+
+describe('windowStart', () => {
+	const run = (kinds: string) =>
+		[...kinds].map((k, i) =>
+			k === 's'
+				? ({ kind: 'stage', key: `k${i}` } as ChatItem)
+				: ({ kind: 'notice', key: `k${i}`, text: '' } as ChatItem)
+		);
+
+	it('shows everything that fits', () => {
+		expect(windowStart(run('s....'), 5, 10)).toBe(0);
+	});
+
+	it('starts at the first stage divider within the budget', () => {
+		expect(windowStart(run('s...s...s..'), 11, 6)).toBe(8);
+	});
+
+	it('cuts inside an attempt longer than the budget', () => {
+		expect(windowStart(run('s.........'), 10, 4)).toBe(6);
+	});
+
+	it('reaches back from an earlier end', () => {
+		expect(windowStart(run('s..s..s..'), 6, 3)).toBe(3);
 	});
 });

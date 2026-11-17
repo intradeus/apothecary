@@ -328,8 +328,9 @@ export const MANUAL = 'manual';
 export const START_POLICIES = ['auto', 'confirm', 'manual'] as const;
 export type StartPolicy = (typeof START_POLICIES)[number];
 /** What a flow's runs are started on (`operates_on:`): a ticket, the default,
- *  or a merge request someone opened. */
-export const OPERATES_ON = ['ticket', 'merge_request'] as const;
+ *  a merge request someone opened, or nothing — a workspace on a branch with
+ *  neither behind it. */
+export const OPERATES_ON = ['ticket', 'merge_request', 'nothing'] as const;
 export type OperatesOn = (typeof OPERATES_ON)[number];
 
 /** One parameter of the flow's `parameters:` block (FLOWLANG §1): what it

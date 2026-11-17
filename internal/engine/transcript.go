@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -201,10 +202,19 @@ type transcript struct {
 	tools   map[string]*event.AgentTool
 	order   []string
 	lastPln string
+	// finished holds calls that reported completed (or failed) but are not
+	// recorded yet: a harness may send one more report after that (the
+	// fuller output), and it folds in. They are recorded before anything
+	// else is, so the log keeps the order things happened in.
+	finished map[string]bool
+	// recorded is every call already on the log: a report that comes later
+	// still is dropped, never a second record of the same call.
+	recorded map[string]bool
 }
 
 func (x *exec) newTranscript(stageID string, iter int) *transcript {
-	return &transcript{x: x, st: stageID, iter: iter, tools: map[string]*event.AgentTool{}}
+	return &transcript{x: x, st: stageID, iter: iter, tools: map[string]*event.AgentTool{},
+		finished: map[string]bool{}, recorded: map[string]bool{}}
 }
 
 func (t *transcript) publish(d LiveDelta) {
@@ -244,7 +254,7 @@ func (t *transcript) handle(ev agentport.AgentEvent) error {
 		if err := t.flushText(); err != nil {
 			return err
 		}
-		if ev.Tool == nil || ev.Tool.ID == "" {
+		if ev.Tool == nil || ev.Tool.ID == "" || t.recorded[ev.Tool.ID] {
 			return nil
 		}
 		cur := t.tools[ev.Tool.ID]
@@ -261,11 +271,11 @@ func (t *transcript) handle(ev agentport.AgentEvent) error {
 		t.x.e.crew.tool(t.x.rs.RunID, cur.ToolCallID, t.x.redact.Scrub(cur.Title), cur.Status,
 			subagentSpawns(cur.Title, cur.Input), t.x.e.clock())
 		if cur.Status == "completed" || cur.Status == "failed" {
-			return t.flushTool(ev.Tool.ID)
+			t.finished[ev.Tool.ID] = true
 		}
 		return nil
 	case agentport.AgentEvPlan:
-		if err := t.flushText(); err != nil {
+		if err := t.settle(); err != nil {
 			return err
 		}
 		p := &event.AgentPlan{StageID: t.st, Attempt: t.iter, Turn: ev.Turn, Cursor: t.cursor}
@@ -280,7 +290,7 @@ func (t *transcript) handle(ev agentport.AgentEvent) error {
 		t.lastPln = sig.String()
 		return t.x.append(p)
 	case agentport.AgentEvPermission:
-		if err := t.flushText(); err != nil {
+		if err := t.settle(); err != nil {
 			return err
 		}
 		title := "a tool call"
@@ -360,9 +370,14 @@ func mergeTool(cur *event.AgentTool, u *agentport.AgentTool, turn string) {
 	}
 }
 
+// flushText records the open text segment — after the calls that finished
+// before it began.
 func (t *transcript) flushText() error {
 	if t.seg == "" {
 		return nil
+	}
+	if err := t.flushFinished(); err != nil {
+		return err
 	}
 	text := t.buf.String()
 	limit := maxMessageText
@@ -382,12 +397,35 @@ func (t *transcript) flushText() error {
 	return t.x.append(m)
 }
 
+// settle records what is done before something else goes on the log: the
+// finished calls, then the text.
+func (t *transcript) settle() error {
+	if err := t.flushText(); err != nil {
+		return err
+	}
+	return t.flushFinished()
+}
+
+// flushFinished records the calls that have finished, in the order they began.
+func (t *transcript) flushFinished() error {
+	for _, id := range slices.Clone(t.order) {
+		if t.finished[id] {
+			if err := t.flushTool(id); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (t *transcript) flushTool(id string) error {
 	cur := t.tools[id]
 	if cur == nil {
 		return nil
 	}
 	delete(t.tools, id)
+	delete(t.finished, id)
+	t.recorded[id] = true
 	for i, o := range t.order {
 		if o == id {
 			t.order = append(t.order[:i], t.order[i+1:]...)

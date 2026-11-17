@@ -84,9 +84,10 @@ type Input struct {
 	AttachmentIDs []string
 	// Params override the project's parameter bindings for this attempt;
 	// By records who created the run on run_created ("" = a person,
-	// "automation" for an automation).
-	Params map[string]string
-	By     string
+	// "automation" for an automation), and Automation which one (its id).
+	Params     map[string]string
+	By         string
+	Automation string
 	// MR starts the run on a merge request someone opened, for a flow with
 	// operates_on: merge_request: Repo is the checkout it belongs to ("" =
 	// the primary), IID its number.
