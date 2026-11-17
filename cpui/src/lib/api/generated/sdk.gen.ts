@@ -4520,7 +4520,7 @@ export const releaseRun = <ThrowOnError extends boolean = false>(
 /**
  * Take over the running agent's session
  *
- * While held, the end of the agent's turn is not the end of the stage: it waits for your next message, each message a turn in the same session, until you release. 409 when no agent is running, or someone already holds it.
+ * While held, the end of the agent's turn is not the end of the stage: it waits for your next message, each message a turn in the same session, until you release. force (default true) stops the agent's turn in flight so it waits on you at once — unless that turn is waiting on the agent's own question; force false lets the turn finish first. The body is optional. 409 when no agent is running, or someone already holds it.
  */
 export const takeOverRun = <ThrowOnError extends boolean = false>(
 	options: Options<TakeOverRunData, ThrowOnError>
@@ -4539,7 +4539,11 @@ export const takeOverRun = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/runs/{id}/hold',
-		...options
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
 	});
 
 /**

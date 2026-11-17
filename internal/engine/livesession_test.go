@@ -134,7 +134,7 @@ func TestTranscriptIsRecordedCoalescedAndRedacted(t *testing.T) {
 // sendHeld takes the agent over, then sends it a message.
 func sendHeld(t *testing.T, h *harness, runID, text string) string {
 	t.Helper()
-	takeOverWhenLive(t, h, runID, "u1")
+	takeOverWhenLive(t, h, runID, "u1", true)
 	id, err := h.e.SendMessage(runID, text)
 	if err != nil {
 		t.Fatalf("send message: %v", err)

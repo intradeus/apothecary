@@ -381,7 +381,7 @@ func TestMessagesAndHoldsWithNoAgentToTalkTo(t *testing.T) {
 	if _, err := h.e.SendMessage("ghost", "hello"); err == nil || !strings.Contains(err.Error(), "run ghost not found") {
 		t.Errorf("unknown run: %v", err)
 	}
-	if err := h.e.TakeOver("ghost", "u1"); err == nil || !strings.Contains(err.Error(), "run ghost not found") {
+	if err := h.e.TakeOver("ghost", "u1", true); err == nil || !strings.Contains(err.Error(), "run ghost not found") {
 		t.Errorf("take over of an unknown run: %v", err)
 	}
 
@@ -389,7 +389,7 @@ func TestMessagesAndHoldsWithNoAgentToTalkTo(t *testing.T) {
 	if _, err := h.e.SendMessage("over", "hello"); !errors.Is(err, ErrRunNotActive) {
 		t.Errorf("a finished run: %v", err)
 	}
-	if err := h.e.TakeOver("over", "u1"); !errors.Is(err, ErrNoAgentRunning) {
+	if err := h.e.TakeOver("over", "u1", true); !errors.Is(err, ErrNoAgentRunning) {
 		t.Errorf("take over of a finished run: %v", err)
 	}
 	h.seed(t, "nohold", created(testProject), &event.RunPaused{Reason: event.PauseWaiting})
@@ -424,7 +424,7 @@ main:
 	if _, err := h2.e.SendMessage(id, "hello"); !errors.Is(err, ErrNoAgentRunning) {
 		t.Errorf("message during a command: %v", err)
 	}
-	if err := h2.e.TakeOver(id, "u1"); !errors.Is(err, ErrNoAgentRunning) {
+	if err := h2.e.TakeOver(id, "u1", true); !errors.Is(err, ErrNoAgentRunning) {
 		t.Errorf("take over during a command: %v", err)
 	}
 	if err := h2.e.Release(id, "u1"); !errors.Is(err, ErrNotHeld) {
@@ -452,7 +452,7 @@ func TestAParkedHold(t *testing.T) {
 	}
 	t.Run("someone else cannot take it", func(t *testing.T) {
 		h := seed(t)
-		if err := h.e.TakeOver("r1", "u2"); !errors.Is(err, ErrAlreadyHeld) {
+		if err := h.e.TakeOver("r1", "u2", true); !errors.Is(err, ErrAlreadyHeld) {
 			t.Errorf("err = %v", err)
 		}
 	})

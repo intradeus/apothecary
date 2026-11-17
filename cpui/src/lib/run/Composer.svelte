@@ -3,7 +3,9 @@
 	// over, so until then it is only the Take over button. Take over holds the
 	// agent's session: while held (sky), its turns wait for your next message
 	// instead of ending the stage, and Release hands the task back — the stage
-	// can only end after that.
+	// can only end after that. By default a take-over stops the agent's turn
+	// in flight, so it waits on you at once; unchecking "Stop the agent now"
+	// takes over passively, the agent finishing its turn first.
 	//
 	// ↵ sends, delivered when the agent's turn ends; ⇧↵ is a newline. Sending
 	// is optimistic: the box clears and the bubble shows at once; if the engine
@@ -13,6 +15,7 @@
 	import { fmtClockDuration } from '$lib/core/format';
 	import { t } from '$lib/i18n/index.svelte';
 	import type { RunHold } from '$lib/domain';
+	import Checkbox from '$lib/ui/Checkbox.svelte';
 
 	let {
 		runId,
@@ -35,13 +38,15 @@
 		releasing?: boolean;
 		/** A ticking clock, for the hold's duration. */
 		now?: number;
-		ontakeover?: () => Promise<boolean>;
+		/** force: stop the agent's turn in flight. */
+		ontakeover?: (force: boolean) => Promise<boolean>;
 		onrelease?: () => Promise<boolean>;
 	} = $props();
 
 	let draft = $state('');
 	let sending = $state(false);
 	let holding = $state(false);
+	let force = $state(true);
 	let error = $state('');
 	let ta = $state<HTMLTextAreaElement | null>(null);
 
@@ -53,7 +58,7 @@
 		holding = true;
 		error = '';
 		try {
-			await ontakeover();
+			await ontakeover(force);
 		} finally {
 			holding = false;
 		}
@@ -150,6 +155,13 @@
 				title={t('run.composer.sendTitle')}>{t('run.composer.send')}</button
 			>
 		{:else}
+			<Checkbox
+				size="sm"
+				bind:checked={force}
+				disabled={holding}
+				label={t('run.composer.stopNow')}
+				title={t('run.composer.stopNowTitle')}
+			/>
 			<button
 				class="btn-md"
 				onclick={takeOver}

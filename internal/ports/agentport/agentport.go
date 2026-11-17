@@ -49,7 +49,9 @@ type AgentInput struct {
 	// Inbox holds the human's messages for this invocation. A runner that can
 	// deliver them mid-invocation takes them at the end of each turn; one
 	// that cannot simply never takes them, and the engine carries them into
-	// the next prompt.
+	// the next prompt. It also carries a forced take-over's request to stop
+	// the turn in flight (Interrupted), which a runner that cannot stop a
+	// turn ignores.
 	// nil = no messages.
 	Inbox Inbox
 	// ReadOnly: the session must not change the workspace (the Ask pane's
@@ -95,8 +97,8 @@ type UserMessage struct {
 
 // Inbox is the engine-owned queue of human messages for one invocation.
 type Inbox interface {
-	// Wake is signalled (buffered, coalescing) whenever a message is queued
-	// — and when a hold ends.
+	// Wake is signalled (buffered, coalescing) whenever a message is queued,
+	// when a hold ends and when a forced take-over asks to stop a turn.
 	Wake() <-chan struct{}
 	// Take removes and returns every queued message: taking IS delivering,
 	// so a runner takes only what it is about to send.
@@ -106,6 +108,12 @@ type Inbox interface {
 	// end: the runner waits for the holder's next message (Wake) and keeps
 	// going in the same session. The hold ends with a Wake and Held false.
 	Held() bool
+	// Interrupted reports whether a forced take-over asked to stop the turn
+	// with this id (AgentEvent.Turn). A runner that can stop a turn ends it
+	// and carries on as at any turn end, so the same session waits for the
+	// holder; one that cannot ignores it. Naming the turn keeps a request
+	// that arrives late from stopping the holder's next one.
+	Interrupted(turn string) bool
 }
 
 // AgentEvent kinds.

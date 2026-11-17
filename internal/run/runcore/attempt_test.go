@@ -60,21 +60,29 @@ func TestEndedOnQuestions(t *testing.T) {
 
 func TestPlanHoldRequest(t *testing.T) {
 	tests := []struct {
-		take, held, releasing, busy bool
-		want                        HoldMove
+		req  HoldRequest
+		want HoldMove
 	}{
-		{take: true, want: HoldTake},
-		{take: true, busy: true, want: HoldTake},
-		{take: true, held: true, want: HoldRefuseTaken},
-		{want: HoldRefuseNotHeld},
-		{busy: true, want: HoldRefuseNotHeld},
-		{held: true, releasing: true, busy: true, want: HoldAlreadyReleasing},
-		{held: true, busy: true, want: HoldReleaseAfterTurn},
-		{held: true, want: HoldHandBack},
+		{HoldRequest{Take: true}, HoldTake},
+		{HoldRequest{Take: true, TurnOpen: true}, HoldTake}, // passive: the turn runs on
+		{HoldRequest{Take: true, Queued: true}, HoldTake},
+		{HoldRequest{Take: true, Force: true}, HoldTake},                                     // nothing in flight
+		{HoldRequest{Take: true, Force: true, Queued: true}, HoldTake},                       // no turn yet to stop
+		{HoldRequest{Take: true, Force: true, TurnOpen: true, QuestionOpen: true}, HoldTake}, // waiting on a human
+		{HoldRequest{Take: true, Force: true, TurnOpen: true}, HoldTakeAndStop},
+		{HoldRequest{Take: true, Force: true, TurnOpen: true, Queued: true}, HoldTakeAndStop},
+		{HoldRequest{Take: true, Held: true}, HoldRefuseTaken},
+		{HoldRequest{Take: true, Force: true, Held: true, TurnOpen: true}, HoldRefuseTaken},
+		{HoldRequest{}, HoldRefuseNotHeld},
+		{HoldRequest{TurnOpen: true}, HoldRefuseNotHeld},
+		{HoldRequest{Held: true, Releasing: true, TurnOpen: true}, HoldAlreadyReleasing},
+		{HoldRequest{Held: true, TurnOpen: true}, HoldReleaseAfterTurn},
+		{HoldRequest{Held: true, Queued: true}, HoldReleaseAfterTurn},
+		{HoldRequest{Held: true}, HoldHandBack},
 	}
 	for _, tt := range tests {
-		if got := PlanHoldRequest(tt.take, tt.held, tt.releasing, tt.busy); got != tt.want {
-			t.Errorf("%+v: got %v", tt, got)
+		if got := PlanHoldRequest(tt.req); got != tt.want {
+			t.Errorf("%+v: got %v, want %v", tt.req, got, tt.want)
 		}
 	}
 }

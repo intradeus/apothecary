@@ -129,12 +129,13 @@ func (h *harness) runner() *Runner {
 
 // recorder collects events and serves as the inbox.
 type recorder struct {
-	mu     sync.Mutex
-	events []agentport.AgentEvent
-	queue  []agentport.UserMessage
-	held   bool
-	wake   chan struct{}
-	onText func(string)
+	mu      sync.Mutex
+	events  []agentport.AgentEvent
+	queue   []agentport.UserMessage
+	held    bool
+	stopped string
+	wake    chan struct{}
+	onText  func(string)
 }
 
 func newRecorder() *recorder { return &recorder{wake: make(chan struct{}, 1)} }
@@ -184,6 +185,24 @@ func (r *recorder) hold(held bool) {
 		default:
 		}
 	}
+}
+
+// stop records a forced take-over's request to stop a turn and wakes the
+// runner.
+func (r *recorder) stop(turn string) {
+	r.mu.Lock()
+	r.stopped = turn
+	r.mu.Unlock()
+	select {
+	case r.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (r *recorder) Interrupted(turn string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return turn != "" && turn == r.stopped
 }
 
 func (r *recorder) kinds() string {

@@ -1,0 +1,56 @@
+# A take-over stops the agent's turn
+
+Why: a take-over felt slow. The hold was taken at once, but the ACP runner
+read its inbox only when a turn ended, so the agent finished whatever it was
+doing — minutes, at times — before it waited on the holder, and their first
+message waited with it. Release looked slow for the same reason: right after a
+take-over, the turn in flight it waits for was usually the agent's own.
+
+What now:
+
+- A take-over carries `force`, on by default: `Engine.TakeOver(run, user,
+  force)`, `POST /api/runs/{id}/hold` with an optional `{"force": bool}`
+  (no body, or no field, is `true`), and a "Stop the agent now" checkbox
+  beside Take over, checked by default and not remembered. `force: false`
+  is a passive take-over, exactly the old behaviour; it stays for a later
+  feature. `force` is not on the record: it only decides what happens at the
+  moment of taking, and the stopped turn is already there as a `turn_end`
+  with stop reason `cancelled`.
+- The engine decides (`runcore.PlanHoldRequest` → `HoldTakeAndStop`): a
+  forced take with one of the agent's turns open, by the id its
+  `turn_start` gave. It asks the runner through the inbox:
+  `agentport.Inbox.Interrupted(turn)`, signalled on `Wake`. Naming the turn
+  keeps a request that arrives late from stopping the holder's next one.
+- The ACP runner cancels that turn (`session/cancel`), follows it to its
+  end, and carries on as at any turn's end: the same session waits for the
+  holder. A stop that does not end within the cancel grace fails the
+  invocation, as a harness error. A runner that cannot stop a turn ignores
+  the request and behaves as before.
+- Exception: a turn waiting on the agent's own question (`ask_human` open)
+  is not stopped, even forced. The agent is not working then, and a turn
+  ending on an open question parks the run under the hold; the holder
+  answers it instead.
+- The dev fake harness fakes a take-over: its demo turn ends, cancelled, when
+  stopped, and it serves a held session — each holder message and the
+  release's handback get a short reply turn — so `task dev:up` can show a
+  forced take, a passive one, messages and the release.
+
+Release, reviewed: no change. It hands back at once when the agent waits on
+the holder, and otherwise after the turn in flight. After a forced take-over
+that turn is only the stopped one still winding down, or the holder's own (the
+design of `2026-10-28-take-over.md`); re-admitting a parked run cannot be
+avoided. After a passive take-over it can still be the agent's own turn, which
+is what passive means.
+
+This narrows what `2026-10-31-nobody-talks-to-an-agent-without-taking-it-over.md`
+removed: no message interrupts the agent; only a forced take-over can stop a
+turn, and it names that turn.
+
+Held by: `TestPlanHoldRequest` (runcore); `TestAForcedTakeOverStopsTheAgentsTurn`,
+`TestAPassiveTakeOverLetsTheTurnFinish`, `TestReleaseRightAfterAForcedTakeIsPrompt`,
+`TestAForcedTakeOverLeavesATurnWaitingOnItsQuestion` (engine);
+`TestStoppingATurnKeepsTheSession`, `TestAStopForAnotherTurnIsIgnored`,
+`TestAStoppedTurnThatNeverEndsGivesUp` (acpagent); `TestDemoTurnStopsWhenTakenOver`,
+`TestFakeHarnessServesATakeOver`, `TestFakeHarnessWithoutAHoldReturnsAfterItsTurn`
+(kinds); `TestTakeOverForce` (httpapi); `Composer.test.ts`,
+`store.svelte.test.ts`, `SessionView.test.ts`, `api/index.test.ts`.

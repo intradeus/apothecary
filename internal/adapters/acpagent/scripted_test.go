@@ -798,6 +798,160 @@ func TestCancelledTurnThatNeverEndsGivesUp(t *testing.T) {
 	}
 }
 
+// openTurns scripts prompts whose first turn starts and never ends on its own
+// (until cancelled, when cancel is set); every later one ends cleanly.
+func openTurns(f *sideFake, cancel bool) {
+	var first sidecar.PromptRequest
+	f.onPrompt = func(p sidecar.PromptRequest) {
+		if first.Turn == "" {
+			first = p // before its start is seen, and so before any cancel
+			f.push(sidecar.Event{Session: p.SessionID, Turn: p.Turn, Type: "turn_start"})
+			return
+		}
+		f.push(sidecar.Event{Session: p.SessionID, Turn: p.Turn, Type: "turn_start"},
+			sidecar.Event{Session: p.SessionID, Turn: p.Turn, Type: "turn_end", StopReason: "end_turn"})
+	}
+	if cancel {
+		f.onCancel = func() {
+			f.push(sidecar.Event{Session: first.SessionID, Turn: first.Turn, Type: "turn_end", StopReason: "cancelled"})
+		}
+	}
+}
+
+func (f *sideFake) counts() (prompts, cancels int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.prompts), f.cancels
+}
+
+// A forced take-over stops the turn in flight and keeps the session: the
+// holder's message and then the handback are its next turns.
+func TestStoppingATurnKeepsTheSession(t *testing.T) {
+	f := newSideFake(t)
+	openTurns(f, true)
+	rec := newRecorder()
+	var once sync.Once
+	events := func(ev agentport.AgentEvent) {
+		rec.on(ev)
+		if ev.Kind == agentport.AgentEvTurnStart {
+			once.Do(func() {
+				rec.hold(true)
+				rec.stop(ev.Turn)
+			})
+		}
+	}
+	type result struct {
+		res agentport.AgentResult
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		res, err := scripted(f, Profile{}).Run(bg, "e", agentport.AgentSpec{}, agentport.AgentInput{Inbox: rec, Events: events})
+		done <- result{res, err}
+	}()
+	waitTurnEnd(t, rec)
+	select {
+	case r := <-done:
+		t.Fatalf("the runner returned on the stopped turn: %+v, %v", r.res, r.err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if _, cancels := f.counts(); cancels != 1 {
+		t.Fatalf("cancels = %d, want 1", cancels)
+	}
+	rec.push(agentport.UserMessage{Text: "use sqlite"})
+	waitUntilT(t, "the holder's turn", func() bool { n, _ := f.counts(); return n == 2 })
+	rec.push(agentport.UserMessage{Text: "handback", Verbatim: true})
+	rec.hold(false)
+	select {
+	case r := <-done:
+		if r.err != nil || r.res.TurnsUsed != 3 {
+			t.Fatalf("= %+v, %v", r.res, r.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the runner did not return after the release")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.prompts) != 3 || !strings.HasSuffix(f.prompts[1].Text, "use sqlite") || f.prompts[2].Text != "handback" || f.cancels != 1 ||
+		f.prompts[1].SessionID != f.prompts[0].SessionID || f.prompts[2].SessionID != f.prompts[0].SessionID {
+		t.Errorf("prompts = %+v, cancels = %d", f.prompts, f.cancels)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	var ends []string
+	for _, ev := range rec.events {
+		if ev.Kind == agentport.AgentEvTurnEnd {
+			ends = append(ends, ev.StopReason)
+		}
+	}
+	if strings.Join(ends, " ") != "cancelled end_turn end_turn" {
+		t.Errorf("turn ends = %v", ends)
+	}
+}
+
+// A stop that names another turn (a late request) stops nothing.
+func TestAStopForAnotherTurnIsIgnored(t *testing.T) {
+	f := newSideFake(t)
+	openTurns(f, false)
+	rec := newRecorder()
+	turn := make(chan string, 1)
+	events := func(ev agentport.AgentEvent) {
+		rec.on(ev)
+		if ev.Kind == agentport.AgentEvTurnStart {
+			turn <- ev.Turn
+		}
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := scripted(f, Profile{}).Run(bg, "e", agentport.AgentSpec{}, agentport.AgentInput{Inbox: rec, Events: events})
+		done <- err
+	}()
+	id := <-turn
+	rec.stop("stale")
+	time.Sleep(20 * time.Millisecond)
+	if _, cancels := f.counts(); cancels != 0 {
+		t.Fatalf("cancels = %d for a stale stop", cancels)
+	}
+	f.push(sidecar.Event{Session: "s1", Turn: id, Type: "turn_end", StopReason: "end_turn"})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the turn never ended")
+	}
+}
+
+func TestAStoppedTurnThatNeverEndsGivesUp(t *testing.T) {
+	f := newSideFake(t)
+	openTurns(f, false)
+	rec := newRecorder()
+	events := func(ev agentport.AgentEvent) {
+		if ev.Kind == agentport.AgentEvTurnStart {
+			rec.hold(true)
+			rec.stop(ev.Turn)
+		}
+	}
+	r := scripted(f, Profile{})
+	r.cancelGrace = 20 * time.Millisecond
+	_, err := r.Run(bg, "e", agentport.AgentSpec{}, agentport.AgentInput{Inbox: rec, Events: events})
+	if err == nil || !strings.Contains(err.Error(), "did not stop within") || !strings.Contains(err.Error(), "take-over") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func waitUntilT(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 // A release queues the handback and lets go in one breath: the runner's last
 // look must catch it.
 func TestReleaseRacingTheTurnEndStillPrompts(t *testing.T) {

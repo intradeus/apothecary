@@ -254,7 +254,7 @@ func TestAnOutcomeLeavesATakeOverAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitEvent[*event.AgentSession](t, ph.harness, runID)
-	takeOverWhenLive(t, ph.harness, runID, "u1")
+	takeOverWhenLive(t, ph.harness, runID, "u1", true)
 	ph.repoHost.SetMRState(1, repoport.MRMerged)
 	if err := ph.e.OutcomesOnce(context.Background()); err != nil {
 		t.Fatal(err)

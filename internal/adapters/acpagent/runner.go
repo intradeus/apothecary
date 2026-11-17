@@ -432,9 +432,12 @@ func (s *stream) pump(out chan<- sidecar.Event, errc chan<- error) {
 
 // drive runs turns in one session until the agent has nothing left to do:
 // the first turn is text (or, when attaching, the turn already in flight),
-// and each human message queued meanwhile becomes the next turn. proc is
-// the agent process the session runs in: another process's exit (a second
-// harness in the same workspace) is not this session's news.
+// and each human message queued meanwhile becomes the next turn. A forced
+// take-over's request to stop the turn in flight (Inbox.Interrupted) cancels
+// that turn alone: its end is then any turn's end, and the session waits on
+// the holder. proc is the agent process the session runs in: another
+// process's exit (a second harness in the same workspace) is not this
+// session's news.
 func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string, costBase float64,
 	text, attachTurn, cursor string, in agentport.AgentInput) (agentport.AgentResult, error) {
 	res := agentport.AgentResult{Session: agentport.SessionID(sid)}
@@ -496,6 +499,7 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 	}
 	ctxDone := ctx.Done()
 	cancelled := false
+	stopping := false // a take-over asked to stop the turn in flight
 	var deadline <-chan time.Time
 	lastWasTool := false
 	for {
@@ -526,7 +530,18 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 				ctxDone, cancelled = nil, true
 				_ = c.Cancel(sctx, sid)
 				deadline = time.After(r.cancelGrace)
+			case <-wake:
+				// A forced take-over: stop this turn, keep the session. A
+				// wake for anything else is read again at the turn's end.
+				if !stopping && !cancelled && in.Inbox.Interrupted(turn) {
+					stopping = true
+					_ = c.Cancel(sctx, sid)
+					deadline = time.After(r.cancelGrace)
+				}
 			case <-deadline:
+				if !cancelled {
+					return done(fmt.Errorf("%s: turn did not stop within %s of the take-over", r.p.Harness, r.cancelGrace))
+				}
 				return done(fmt.Errorf("%s: turn did not end within %s of being cancelled", r.p.Harness, r.cancelGrace))
 			case ev := <-evc:
 				if ev.Session != "" && ev.Session != sid {
@@ -603,6 +618,10 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 		}
 		if cancelled {
 			return done(ctx.Err())
+		}
+		if stopping {
+			// Stopped for the holder: carry on as at any turn's end.
+			stopping, deadline = false, nil
 		}
 		if in.Inbox == nil {
 			return done(nil)

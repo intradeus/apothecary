@@ -176,7 +176,7 @@ describe('SessionView', () => {
 
 			await userEvent.click(takeOverBtn()!);
 
-			expect(api.runs.takeOver).toHaveBeenCalledExactlyOnceWith(RUN);
+			expect(api.runs.takeOver).toHaveBeenCalledExactlyOnceWith(RUN, true);
 		});
 
 		it('keeps the composer on a held run with no stage in flight', () => {

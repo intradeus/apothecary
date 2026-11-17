@@ -129,6 +129,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		return event.HoldSpend{}
 	}
 	turnOpen := false
+	openTurn := "" // the open turn's id: what a forced take-over stops
 	// record files one agent event: a new harness session is recorded the
 	// moment it exists, so a crash mid-invocation resumes (or reattaches
 	// to) it, not a new one — whichever path meets the event, the loop's
@@ -274,7 +275,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					hold.leg.MessagesDelivered(ev.Messages)
 				}
 			case agentport.AgentEvTurnStart:
-				turnOpen = true
+				turnOpen, openTurn = true, ev.Turn
 				if hold != nil {
 					// A turn starting under the hold is the holder's: it is
 					// what their message prompted.
@@ -282,7 +283,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					hold.leg.TurnStarted(ev.Turn)
 				}
 			case agentport.AgentEvTurnEnd:
-				turnOpen = false
+				turnOpen, openTurn = false, ""
 				if hold == nil {
 					break
 				}
@@ -322,14 +323,21 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		case req := <-x.h.holds:
 			var err error
 			held, releasing := hold != nil, hold != nil && hold.releasing
-			switch runcore.PlanHoldRequest(req.take, held, releasing, turnOpen || io.inbox.pending()) {
+			move := runcore.PlanHoldRequest(runcore.HoldRequest{Take: req.take, Force: req.force,
+				Held: held, Releasing: releasing, TurnOpen: turnOpen, Queued: io.inbox.pending(),
+				QuestionOpen: len(open) > 0})
+			switch move {
 			case runcore.HoldRefuseTaken:
 				err = ErrAlreadyHeld
-			case runcore.HoldTake:
+			case runcore.HoldTake, runcore.HoldTakeAndStop:
 				if err = x.takeHold(st, io.tr.iter, req.userID); err == nil {
 					hold = x.liveHold(st)
 					io.inbox.setHeld(true)
-					if !turnOpen && !io.inbox.pending() {
+					if move == runcore.HoldTakeAndStop {
+						// The agent's own turn: stopped, it ends as any turn
+						// does and the agent waits on the holder.
+						io.inbox.interrupt(openTurn)
+					} else if !turnOpen && !io.inbox.pending() {
 						idleOnHolder()
 					}
 				}

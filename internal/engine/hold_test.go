@@ -25,11 +25,15 @@ import (
 // heldRunner scripts a runner that honours the inbox the way the ACP runner
 // does: it takes messages at every turn end and, while held, waits for the
 // next one instead of returning. Each turn it runs reports a fixed spend.
+// A stoppable one also ends its gated turn, cancelled, when a forced
+// take-over asks to stop it; otherwise it ignores the request.
 type heldRunner struct {
-	mu       sync.Mutex
-	turns    int
-	batches  [][]agentport.UserMessage
-	firstEnd chan struct{} // the stage's own turn ends only once this is closed
+	mu        sync.Mutex
+	turns     int
+	batches   [][]agentport.UserMessage
+	firstEnd  chan struct{} // the stage's own turn ends only once this is closed
+	stoppable bool
+	stopped   []string // the turns it stopped
 }
 
 const turnCost = 0.1
@@ -40,16 +44,49 @@ func (r *heldRunner) turn(in agentport.AgentInput, text string, gate <-chan stru
 	id := fmt.Sprintf("T%d", r.turns)
 	r.mu.Unlock()
 	in.Events(agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: id})
+	stop := "end_turn"
 	if gate != nil {
 		// Logged in order behind the turn's start, so a test can see the
 		// engine read it: a take-over ahead of that would count the turn as
 		// held.
 		in.Events(agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "s"})
-		<-gate
+		if !r.await(in, id, gate) {
+			stop = "cancelled"
+		}
 	}
-	in.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Turn: id, Text: text})
-	in.Events(agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: id, StopReason: "end_turn",
+	if stop == "end_turn" {
+		in.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Turn: id, Text: text})
+	}
+	in.Events(agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: id, StopReason: stop,
 		Usage: &agentport.Usage{InputTokens: 10, OutputTokens: 5, CostUSD: turnCost}})
+}
+
+// await holds turn id until its gate opens (true) or, stoppable, until a
+// forced take-over stops it (false).
+func (r *heldRunner) await(in agentport.AgentInput, id string, gate <-chan struct{}) bool {
+	if !r.stoppable {
+		<-gate
+		return true
+	}
+	for {
+		select {
+		case <-gate:
+			return true
+		case <-in.Inbox.Wake():
+			if in.Inbox.Interrupted(id) {
+				r.mu.Lock()
+				r.stopped = append(r.stopped, id)
+				r.mu.Unlock()
+				return false
+			}
+		}
+	}
+}
+
+func (r *heldRunner) stoppedTurns() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.stopped...)
 }
 
 // drive is the ACP runner's inbox loop: deliver what is queued, wait while
@@ -88,11 +125,11 @@ func (r *heldRunner) delivered() [][]agentport.UserMessage {
 }
 
 // takeOverWhenLive retries until the agent invocation is up to be taken.
-func takeOverWhenLive(t *testing.T, h *harness, runID, user string) {
+func takeOverWhenLive(t *testing.T, h *harness, runID, user string, force bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		err := h.e.TakeOver(runID, user)
+		err := h.e.TakeOver(runID, user, force)
 		if err == nil {
 			return
 		}
@@ -128,8 +165,8 @@ func TestTakeOverKeepsTheSessionOpenUntilReleased(t *testing.T) {
 	}
 	// Nothing to release yet; a second take is refused.
 	waitEvent[*event.AgentSession](t, h, runID) // the turn is open
-	takeOverWhenLive(t, h, runID, "u1")
-	if err := h.e.TakeOver(runID, "u2"); !errors.Is(err, ErrAlreadyHeld) {
+	takeOverWhenLive(t, h, runID, "u1", true)
+	if err := h.e.TakeOver(runID, "u2", true); !errors.Is(err, ErrAlreadyHeld) {
 		t.Errorf("second take over = %v, want ErrAlreadyHeld", err)
 	}
 	waitEvent[*event.HoldTaken](t, h, runID)
@@ -195,7 +232,7 @@ func TestTakeOverKeepsTheSessionOpenUntilReleased(t *testing.T) {
 		t.Errorf("final view = %s hold=%+v", v.State, v.Hold)
 	}
 	// Nothing to hold or release once the run is over.
-	if err := h.e.TakeOver(runID, "u1"); err == nil {
+	if err := h.e.TakeOver(runID, "u1", true); err == nil {
 		t.Error("a finished run accepted a take over")
 	}
 	if err := h.e.Release(runID, "u1"); err == nil {
@@ -235,7 +272,7 @@ func TestHoldEndsWithTheAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	takeOverWhenLive(t, h, runID, "u1")
+	takeOverWhenLive(t, h, runID, "u1", true)
 	close(taken)
 	h.e.Wait(runID)
 	evs := h.events(t, runID)
@@ -277,7 +314,7 @@ func TestHoldParksOnAQuietHolderAndWakesOnTheirMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitEvent[*event.AgentSession](t, h, runID) // the turn is open
-	takeOverWhenLive(t, h, runID, "u1")
+	takeOverWhenLive(t, h, runID, "u1", true)
 	close(r.firstEnd)
 
 	paused := waitEvent[*event.StagePaused](t, h, runID)
@@ -289,7 +326,7 @@ func TestHoldParksOnAQuietHolderAndWakesOnTheirMessage(t *testing.T) {
 		t.Fatalf("parked view = %s hold=%+v", v.State, v.Hold)
 	}
 	// Still held while parked.
-	if err := h.e.TakeOver(runID, "u2"); !errors.Is(err, ErrAlreadyHeld) {
+	if err := h.e.TakeOver(runID, "u2", true); !errors.Is(err, ErrAlreadyHeld) {
 		t.Errorf("take over while parked = %v, want ErrAlreadyHeld", err)
 	}
 	// One park is the case: the holder stays quiet after the resumed turn
@@ -374,7 +411,7 @@ func TestReleasingAParkedHoldResumesWithTheHandback(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitEvent[*event.AgentSession](t, h, runID) // the turn is open
-	takeOverWhenLive(t, h, runID, "u1")
+	takeOverWhenLive(t, h, runID, "u1", true)
 	close(r.firstEnd)
 	waitEvent[*event.StagePaused](t, h, runID)
 
@@ -410,6 +447,225 @@ func TestReleasingAParkedHoldResumesWithTheHandback(t *testing.T) {
 	want := "hold_released run_unpaused stage_resumed agent_prompted:handback stage_completed"
 	if got := strings.Join(kinds, " "); got != want {
 		t.Errorf("order = %s\nwant    %s", got, want)
+	}
+	if v := h.view(t, runID); v.State != run.Completed || v.Hold != nil {
+		t.Errorf("final view = %s hold=%+v", v.State, v.Hold)
+	}
+}
+
+// holdOrder is the take-over's path on the record.
+func holdOrder(evs []event.Event) string {
+	var kinds []string
+	for _, ev := range evs {
+		switch p := ev.Payload.(type) {
+		case *event.HoldTaken, *event.HoldReleased, *event.MessageDelivered, *event.StageCompleted:
+			kinds = append(kinds, string(ev.Type))
+		case *event.AgentPrompted:
+			kinds = append(kinds, "agent_prompted:"+p.Kind)
+		}
+	}
+	return strings.Join(kinds, " ")
+}
+
+// agentSaid reports whether the agent's transcript holds text.
+func agentSaid(evs []event.Event, text string) bool {
+	return logHas(evs, func(m *event.AgentMessage) bool { return m.Text == text })
+}
+
+// waitDone fails the test unless the run ends within a few seconds.
+func waitDone(t *testing.T, h *harness, runID string) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { h.e.Wait(runID); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run did not end")
+	}
+}
+
+// A forced take-over stops the agent's own turn at once: the agent waits on
+// the holder without finishing its work, and the stopped turn is not on the
+// hold's account.
+func TestAForcedTakeOverStopsTheAgentsTurn(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	r := &heldRunner{firstEnd: make(chan struct{}), stoppable: true} // the gate never opens
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		r.turn(call.In, "working on it", r.firstEnd)
+		return r.drive(ctx, call.In)
+	}
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitEvent[*event.AgentSession](t, h, runID) // the turn is open
+	takeOverWhenLive(t, h, runID, "u1", true)
+	waitUntil(t, "the agent's turn to stop", func() bool { return len(r.stoppedTurns()) == 1 })
+	if got := r.stoppedTurns(); got[0] != "T1" {
+		t.Fatalf("stopped = %v, want the agent's own turn", got)
+	}
+	time.Sleep(20 * time.Millisecond) // the stopped turn ends; nothing completes
+	if v := h.view(t, runID); v.State != run.Running || v.Hold == nil {
+		t.Fatalf("after the stop = %s hold=%+v", v.State, v.Hold)
+	}
+	if _, ok := findPayload[*event.StageCompleted](h.events(t, runID)); ok {
+		t.Fatal("a stopped turn completed the stage")
+	}
+
+	if _, err := h.e.SendMessage(runID, "use sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the message to be answered", func() bool { return agentSaid(h.events(t, runID), "answer: use sqlite") })
+	if err := h.e.Release(runID, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, h, runID)
+	evs := h.events(t, runID)
+	want := "agent_prompted:stage hold_taken message_delivered hold_released agent_prompted:handback stage_completed"
+	if got := holdOrder(evs); got != want {
+		t.Errorf("order = %s\nwant    %s", got, want)
+	}
+	if agentSaid(evs, "working on it") {
+		t.Error("the stopped turn finished its work")
+	}
+	rel, _ := findPayload[*event.HoldReleased](evs)
+	if rel == nil || rel.Turns != 1 || rel.Messages != 1 || rel.Usage == nil ||
+		rel.Usage.CostUSD < turnCost-1e-9 || rel.Usage.CostUSD > turnCost+1e-9 {
+		t.Errorf("hold account = %+v", rel)
+	}
+	if v := h.view(t, runID); v.State != run.Completed || v.Hold != nil {
+		t.Errorf("final view = %s hold=%+v", v.State, v.Hold)
+	}
+}
+
+// A passive take-over leaves the agent's turn alone: it runs to its end, and
+// only then does the agent wait on the holder.
+func TestAPassiveTakeOverLetsTheTurnFinish(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	r := &heldRunner{firstEnd: make(chan struct{}), stoppable: true}
+	inbox := make(chan agentport.Inbox, 1)
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		inbox <- call.In.Inbox
+		r.turn(call.In, "working on it", r.firstEnd)
+		return r.drive(ctx, call.In)
+	}
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := <-inbox
+	waitEvent[*event.AgentSession](t, h, runID) // the turn is open
+	takeOverWhenLive(t, h, runID, "u1", false)
+	waitEvent[*event.HoldTaken](t, h, runID)
+	time.Sleep(20 * time.Millisecond)
+	if in.Interrupted("T1") || len(r.stoppedTurns()) != 0 {
+		t.Fatal("a passive take-over stopped the agent's turn")
+	}
+	if agentSaid(h.events(t, runID), "working on it") {
+		t.Fatal("the turn ended before its gate opened")
+	}
+
+	close(r.firstEnd)
+	waitUntil(t, "the agent's turn to finish", func() bool { return agentSaid(h.events(t, runID), "working on it") })
+	time.Sleep(20 * time.Millisecond) // the turn ended under the hold; nothing completes
+	if v := h.view(t, runID); v.State != run.Running || v.Hold == nil {
+		t.Fatalf("after the turn = %s hold=%+v", v.State, v.Hold)
+	}
+	if err := h.e.Release(runID, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, h, runID)
+	evs := h.events(t, runID)
+	if got, want := holdOrder(evs), "agent_prompted:stage hold_taken hold_released agent_prompted:handback stage_completed"; got != want {
+		t.Errorf("order = %s\nwant    %s", got, want)
+	}
+	if rel, _ := findPayload[*event.HoldReleased](evs); rel == nil || rel.Turns != 0 {
+		t.Errorf("hold account = %+v", rel)
+	}
+}
+
+// A release right after a forced take-over hands back as soon as the stopped
+// turn ends: nothing waits on the agent's own work.
+func TestReleaseRightAfterAForcedTakeIsPrompt(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	r := &heldRunner{firstEnd: make(chan struct{}), stoppable: true} // the gate never opens
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		r.turn(call.In, "working on it", r.firstEnd)
+		return r.drive(ctx, call.In)
+	}
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitEvent[*event.AgentSession](t, h, runID) // the turn is open
+	takeOverWhenLive(t, h, runID, "u1", true)
+	if err := h.e.Release(runID, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, h, runID)
+	evs := h.events(t, runID)
+	if got, want := holdOrder(evs), "agent_prompted:stage hold_taken hold_released agent_prompted:handback stage_completed"; got != want {
+		t.Errorf("order = %s\nwant    %s", got, want)
+	}
+	if got := r.stoppedTurns(); len(got) != 1 || got[0] != "T1" {
+		t.Errorf("stopped = %v", got)
+	}
+	if batches := r.delivered(); len(batches) != 1 || batches[0][0].Text != handbackPrompt {
+		t.Errorf("delivered = %+v", batches)
+	}
+}
+
+// A turn waiting on the agent's own question is not working: even a forced
+// take-over leaves it for the holder to answer, and it runs on under the hold.
+func TestAForcedTakeOverLeavesATurnWaitingOnItsQuestion(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	r := &heldRunner{}
+	runIDCh := make(chan string, 1)
+	inbox := make(chan agentport.Inbox, 1)
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		inbox <- call.In.Inbox
+		emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: "Q1"},
+			agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "s"})
+		p, err := h.e.RaisePing(<-runIDCh, "clarification", "which db?", "", nil, nil)
+		if err != nil {
+			return agentport.AgentResult{}, err
+		}
+		// The ask_human call blocks, as the shim's long-poll does.
+		if _, ok := p.Await(ctx); !ok {
+			return agentport.AgentResult{}, ctx.Err()
+		}
+		emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvMessage, Turn: "Q1", Text: "with the answer"},
+			agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "Q1", StopReason: "end_turn"})
+		return r.drive(ctx, call.In)
+	}
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runIDCh <- runID
+	in := <-inbox
+	p := h.waitPing(t, "clarification")
+	takeOverWhenLive(t, h, runID, "u1", true)
+	waitEvent[*event.HoldTaken](t, h, runID)
+	time.Sleep(20 * time.Millisecond)
+	if in.Interrupted("Q1") {
+		t.Fatal("a forced take-over stopped a turn waiting on its question")
+	}
+	if err := h.e.AnswerPing(p.ID, textAnswer("postgres")); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the turn to run on", func() bool { return agentSaid(h.events(t, runID), "with the answer") })
+	time.Sleep(20 * time.Millisecond) // the turn ended under the hold; nothing completes
+	if v := h.view(t, runID); v.State != run.Running || v.Hold == nil {
+		t.Fatalf("after the answer = %s hold=%+v", v.State, v.Hold)
+	}
+	if err := h.e.Release(runID, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, h, runID)
+	evs := h.events(t, runID)
+	if _, ok := findPayload[*event.StagePaused](evs); ok {
+		t.Error("the question parked the run")
 	}
 	if v := h.view(t, runID); v.State != run.Completed || v.Hold != nil {
 		t.Errorf("final view = %s hold=%+v", v.State, v.Hold)

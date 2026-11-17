@@ -15,10 +15,11 @@ import (
 // inbox is one invocation's queue of human messages (agentport.Inbox). The run
 // loop pushes; the runner takes from its own goroutine.
 type inbox struct {
-	mu   sync.Mutex
-	q    []agentport.UserMessage
-	held bool
-	wake chan struct{}
+	mu      sync.Mutex
+	q       []agentport.UserMessage
+	held    bool
+	stopped string // the turn a forced take-over asked to stop
+	wake    chan struct{}
 }
 
 func newInbox() *inbox { return &inbox{wake: make(chan struct{}, 1)} }
@@ -52,6 +53,20 @@ func (b *inbox) Held() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.held
+}
+
+// interrupt asks the runner to stop the turn in flight: a forced take-over.
+func (b *inbox) interrupt(turn string) {
+	b.mu.Lock()
+	b.stopped = turn
+	b.mu.Unlock()
+	b.signal()
+}
+
+func (b *inbox) Interrupted(turn string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return turn != "" && turn == b.stopped
 }
 
 // pending reports whether anything is queued and not yet taken.

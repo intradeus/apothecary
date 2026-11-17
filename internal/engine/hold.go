@@ -22,6 +22,12 @@ import (
 // releases — the session is then sent the handback prompt, and when THAT turn
 // ends the stage's output contract applies as usual.
 //
+// A forced take-over stops the agent's turn in flight, so the agent waits on
+// the holder at once — unless that turn is waiting on the agent's own
+// question: the agent is not working then, and the holder answers it. A
+// passive one lets the turn finish first. Either way the stopped (or
+// finished) turn is the agent's, not on the hold's account.
+//
 // The hold is on the record: hold_taken, and hold_released with its
 // duration, turns and cost (every leg of it, across any park). A holder who
 // goes quiet past the live hold parks the run (stage_paused held) the way
@@ -35,15 +41,17 @@ var (
 	ErrNotHeld = errors.New("nobody holds this agent's session")
 )
 
-// TakeOver puts the run's live agent session in userID's hands. 409-class
+// TakeOver puts the run's live agent session in userID's hands. force stops
+// the agent's turn in flight (not one waiting on its own question); without
+// it the turn runs to its end before the agent waits on the holder. 409-class
 // errors: no agent is running to take over (a command stage, a gate, between
 // stages, parked), or someone already holds it.
-func (e *Engine) TakeOver(runID, userID string) error {
+func (e *Engine) TakeOver(runID, userID string, force bool) error {
 	if h := e.liveLoop(runID); h != nil {
 		if !h.agentLive.Load() {
 			return ErrNoAgentRunning
 		}
-		if err := e.holdLive(h, holdReq{take: true, userID: userID}); !errors.Is(err, errNoLoop) {
+		if err := e.holdLive(h, holdReq{take: true, force: force, userID: userID}); !errors.Is(err, errNoLoop) {
 			return err
 		}
 	}
@@ -188,10 +196,11 @@ func (x *exec) liveHold(st *flow.Stage) *liveHold {
 	return l
 }
 
-// holdReq is a take-over request on its way into the run loop: take, or
-// release (the handback follows).
+// holdReq is a take-over request on its way into the run loop: take (force:
+// stopping the turn in flight), or release (the handback follows).
 type holdReq struct {
 	take   bool
+	force  bool
 	userID string
 	ack    chan error
 }

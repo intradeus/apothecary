@@ -325,7 +325,7 @@ func TestAQuestionUnderATakeOverParksWithTheHoldInForce(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitEvent[*event.AgentSession](t, ph.harness, runID)
-	takeOverWhenLive(t, ph.harness, runID, "u1")
+	takeOverWhenLive(t, ph.harness, runID, "u1", true)
 	close(asked)
 	p := ph.waitPing(t, event.PingClarification)
 	waitUntil(t, "the run to park on its question", func() bool { return ph.view(t, runID).Dormant })

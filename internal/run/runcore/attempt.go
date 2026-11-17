@@ -94,6 +94,9 @@ type HoldMove int
 const (
 	// HoldTake: the session goes into the requester's hands.
 	HoldTake HoldMove = iota
+	// HoldTakeAndStop: the session goes into the requester's hands and the
+	// agent's own turn in flight is stopped, so it waits on them at once.
+	HoldTakeAndStop
 	// HoldRefuseTaken: someone already holds it.
 	HoldRefuseTaken
 	// HoldRefuseNotHeld: a release with nothing to release.
@@ -107,20 +110,38 @@ const (
 	HoldHandBack
 )
 
-// PlanHoldRequest reads a take (or else a release) against the hold in force:
-// whether one is, whether it is already releasing, and whether the agent is
-// busy — a turn in flight, or a message queued to start one.
-func PlanHoldRequest(take, held, releasing, busy bool) HoldMove {
+// HoldRequest is a take (or else a release) and what it lands on.
+type HoldRequest struct {
+	// Take is a take-over; false is a release.
+	Take bool
+	// Force is a take-over that stops the agent's turn in flight.
+	Force bool
+	// Held: a hold is in force; Releasing: it is already handing back.
+	Held, Releasing bool
+	// TurnOpen: a turn is in flight; Queued: a message is queued to start one.
+	TurnOpen, Queued bool
+	// QuestionOpen: the agent's own question is waiting on a human.
+	QuestionOpen bool
+}
+
+// PlanHoldRequest reads a take (or else a release) against the hold in force.
+// A forced take stops the turn in flight unless that turn waits on its own
+// question: the agent is not working then, and a turn ending on an open
+// question parks the run. A release waits while the agent is busy — a turn
+// in flight, or a message queued to start one.
+func PlanHoldRequest(r HoldRequest) HoldMove {
 	switch {
-	case take && held:
+	case r.Take && r.Held:
 		return HoldRefuseTaken
-	case take:
+	case r.Take && r.Force && r.TurnOpen && !r.QuestionOpen:
+		return HoldTakeAndStop
+	case r.Take:
 		return HoldTake
-	case !held:
+	case !r.Held:
 		return HoldRefuseNotHeld
-	case releasing:
+	case r.Releasing:
 		return HoldAlreadyReleasing
-	case busy:
+	case r.TurnOpen || r.Queued:
 		return HoldReleaseAfterTurn
 	}
 	return HoldHandBack
