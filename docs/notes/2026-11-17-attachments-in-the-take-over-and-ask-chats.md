@@ -51,6 +51,15 @@ What now:
 - **Files alone are a message**: text is required only with no files.
   `message_queued` and an Ask question record their `attachment_ids`, so
   the transcript and the Ask pane show the files as chips after a reload.
+- **A composer uploads before it sends, and locks while it does.** The
+  box is read-only and the picker disabled (no pick, drop, paste or chip
+  removal) until the files are up, so what is sent is what was on screen
+  at Enter; merging edits made during the upload into a message already
+  leaving has no right answer. Once they are up the box is free again: the
+  Ask pane then clears only the files it sent, so files picked while the
+  question is on its way stay for the next one. The Ask pane re-reads the
+  run's files when a loaded question names one its list lacks, since the
+  stream's replay can land before the pane exists and be dropped.
 
 Tests: `filetest` (the chat claim all or nothing, its run and chat, its
 names past the chat's whatever the creation order, the unclaim of exactly
@@ -65,7 +74,7 @@ ATTACHED FILES, `DeliverAskFiles`, a failed write undone) and in
 `httpapi` (400 on a refused id, nothing
 recorded, files alone), `ask/service_test.go` (delivery before recording,
 the prompt's note, a refusal frees the thread and opens none); in the UI
-`AttachFiles.test.ts` (`add()`), `Composer.test.ts`,
-`AskView.test.ts`, `SessionView.test.ts` (chips on a take-over message),
+`AttachFiles.test.ts` (`add()`, disabled), `Composer.test.ts` and
+`AskView.test.ts` (the upload lock, the load re-read), `SessionView.test.ts` (chips on a take-over message),
 `transcriptItems.test.ts`, `store.svelte.test.ts`, `RecordView.test.ts`,
 `index.test.ts`, `mappers.test.ts`.

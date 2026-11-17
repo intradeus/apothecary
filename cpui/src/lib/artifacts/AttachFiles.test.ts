@@ -168,6 +168,17 @@ describe('AttachFiles', () => {
 			expect(screen.getByText('application/zip is not allowed')).toBeInTheDocument();
 			expect(screen.getByText('ninth.txt')).toBeInTheDocument();
 		});
+
+		it('holds its selection as it is while disabled', async () => {
+			const first = aFile('a.txt');
+			const { component, props } = await setup([first], { disabled: true });
+			flushSync(() => component.add([aFile('b.txt'), aFile('big.txt', 'text/plain', 2048)]));
+			await drop(aFile('c.txt'));
+			expect(props.files).toEqual([first]);
+			expect(screen.queryByText('over the 1 KB limit')).not.toBeInTheDocument();
+			expect(zone()).toBeDisabled();
+			expect(screen.queryByRole('button', { name: 'Remove a.txt' })).not.toBeInTheDocument();
+		});
 	});
 
 	describe('refusing a file', () => {

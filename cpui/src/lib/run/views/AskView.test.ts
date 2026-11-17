@@ -755,6 +755,7 @@ describe('AskView', () => {
 			const rs = aViewStore(undefined, {
 				attachments: [anAttachment({ id: 'att-1', filename: 'shot.png', mime: 'image/png' })]
 			});
+			const refresh = vi.spyOn(rs, 'refreshFiles').mockResolvedValue();
 			await open(
 				{
 					...withSession(),
@@ -764,6 +765,40 @@ describe('AskView', () => {
 			);
 			expect(screen.getByRole('link', { name: /shot\.png/ })).toHaveAttribute('href', '/a/att-1');
 			expect(screen.getAllByRole('link')).toHaveLength(1);
+			// One the run's list lacks may be newer than it: the list is re-read.
+			expect(refresh).toHaveBeenCalledOnce();
+		});
+
+		it('re-reads nothing on load when the run’s list holds every file', async () => {
+			const rs = aViewStore(undefined, {
+				attachments: [anAttachment({ id: 'att-1', filename: 'shot.png', mime: 'image/png' })]
+			});
+			const refresh = vi.spyOn(rs, 'refreshFiles').mockResolvedValue();
+			await open({ ...withSession(), messages: [anAskMessage({ attachmentIds: ['att-1'] })] }, rs);
+			expect(screen.getByRole('link', { name: /shot\.png/ })).toBeInTheDocument();
+			expect(refresh).not.toHaveBeenCalled();
+		});
+
+		it('shows the files of a question replayed before the pane loaded', async () => {
+			const rs = aViewStore(undefined, { attachments: [] });
+			vi.spyOn(rs, 'refreshFiles').mockImplementation(async () => {
+				rs.attachments = [anAttachment({ id: 'att-9', filename: 'theirs.png', mime: 'image/png' })];
+			});
+			const state = deferred<AskState>();
+			vi.mocked(api.ask.state).mockReturnValue(state.promise);
+			vi.mocked(api.ask.stream).mockReturnValue(vi.fn());
+			render(AskView, { rs, visible: true });
+
+			// The replay lands first, and is dropped: there is no pane yet.
+			const question = anAskMessage({ seq: 1, text: 'and this?', attachmentIds: ['att-9'] });
+			const [, onFrame] = vi.mocked(api.ask.stream).mock.calls[0];
+			onFrame({ kind: 'message', sessionId: 's1', message: question });
+			state.resolve(anAskState({ ...withSession(), messages: [question] }));
+
+			expect(await screen.findByRole('link', { name: /theirs\.png/ })).toHaveAttribute(
+				'href',
+				'/a/att-9'
+			);
 		});
 
 		it('shows the files of a question asked elsewhere, re-reading the run’s files for them', async () => {
@@ -817,6 +852,41 @@ describe('AskView', () => {
 				expect(api.ask.send).toHaveBeenCalledExactlyOnceWith(RUN, 'More?', 's2', ['att-1'])
 			);
 			expect(bubble('First thing')).toBeInTheDocument();
+		});
+
+		it('holds the question as asked while its files go up, keeping what comes after', async () => {
+			const up = deferred<Attachment[]>();
+			vi.mocked(api.files.upload).mockReturnValue(up.promise);
+			const sent = deferred<AskMessage>();
+			vi.mocked(api.ask.send).mockReturnValue(sent.promise);
+			await open(withSession());
+			await settled();
+			paste(shot());
+			await userEvent.type(box(), 'what is this?{Enter}');
+			await vi.waitFor(() => expect(box()).toHaveAttribute('readonly'));
+
+			// While the files go up, neither the words nor the files move.
+			await userEvent.type(box(), ' and more');
+			paste(aFile('early.png', 'image/png'));
+			expect(box()).toHaveValue('what is this?');
+			expect(screen.queryByText('early.png')).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'Remove shot.png' })).not.toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /Attach$/ })).toBeDisabled();
+
+			// Once they are up, the box is the next question's.
+			up.resolve([anAttachment({ id: 'att-1' })]);
+			await vi.waitFor(() =>
+				expect(api.ask.send).toHaveBeenCalledExactlyOnceWith(RUN, 'what is this?', 's1', ['att-1'])
+			);
+			expect(box()).not.toHaveAttribute('readonly');
+			await userEvent.type(box(), 'next');
+			paste(aFile('later.png', 'image/png'));
+			expect(await screen.findByText('later.png')).toBeInTheDocument();
+
+			sent.resolve(anAskMessage({ seq: 9, sessionId: 's1' }));
+			await vi.waitFor(() => expect(screen.queryByText('shot.png')).not.toBeInTheDocument());
+			expect(screen.getByText('later.png')).toBeInTheDocument();
+			expect(box()).toHaveValue('next');
 		});
 	});
 });

@@ -26,6 +26,9 @@
 	let error = $state('');
 	let draft = $state('');
 	let sending = $state(false);
+	/** The question's files are going up: the box and its files are locked,
+	 *  so what is asked is what was on screen at Enter. */
+	let uploading = $state(false);
 	let pickingModel = $state(false);
 	let creating = $state(false);
 	/** The session on screen ('': none yet — the run has no session). */
@@ -63,6 +66,10 @@
 		}))
 	);
 
+	/** Whether some of these files are ones the run's list has not seen yet
+	 *  (a question asked elsewhere since it was read). */
+	const unseen = (ids: string[]) => ids.some((id) => !rs.attachments.some((a) => a.id === id));
+
 	async function load() {
 		try {
 			const got = await api.ask.state(rs.runId);
@@ -71,6 +78,7 @@
 			if (!got.sessions.some((s) => s.id === selected)) selected = got.sessions.at(-1)?.id ?? '';
 			pane = got;
 			loadError = '';
+			if (got.messages.some((m) => unseen(m.attachmentIds))) void rs.refreshFiles();
 		} catch (e) {
 			// A conversation on screen outlives a failed re-read.
 			if (!pane) loadError = errorMessage(e);
@@ -113,9 +121,7 @@
 					}
 					// A question asked elsewhere brings files this run's list
 					// has not seen yet.
-					if (f.message.attachmentIds.some((id) => !rs.attachments.some((a) => a.id === id))) {
-						void rs.refreshFiles();
-					}
+					if (unseen(f.message.attachmentIds)) void rs.refreshFiles();
 					if (f.message.role === 'answer') delete lives[f.sessionId];
 					if (f.sessionId === selected) toBottom();
 				} else if (f.kind === 'delta') {
@@ -149,19 +155,25 @@
 		// Files go up first; if they cannot, nothing is asked and the draft
 		// and its files stay put.
 		let ids: string[] = [];
-		if (files.length) {
+		const sent = files;
+		if (sent.length) {
+			uploading = true;
 			try {
-				ids = (await api.files.upload(files)).map((a) => a.id);
+				ids = (await api.files.upload(sent)).map((a) => a.id);
 			} catch (e) {
 				error = errorMessage(e);
 				sending = false;
 				return;
+			} finally {
+				uploading = false;
 			}
 		}
 		draft = '';
 		try {
 			const q = await api.ask.send(rs.runId, text, into || undefined, ids);
-			files = [];
+			// Only the files it carried: any picked while it was on its way
+			// are the next question's.
+			files = files.filter((f) => !sent.includes(f));
 			// The question's files join the run's record.
 			if (ids.length) void rs.refreshFiles();
 			if (!session(q.sessionId)) upsert({ id: q.sessionId, busy: true, createdAt: q.at });
@@ -348,10 +360,17 @@
 					onkeydown={onKey}
 					onpaste={onPaste}
 					disabled={busy}
+					readonly={uploading}
 					aria-label={t('runview.ask.title')}></textarea>
 				<div class="foot">
 					<span class="files">
-						<AttachFiles bind:this={picker} bind:files compact label={t('runview.ask.attach')} />
+						<AttachFiles
+							bind:this={picker}
+							bind:files
+							compact
+							disabled={uploading}
+							label={t('runview.ask.attach')}
+						/>
 					</span>
 					<span class="keys"
 						><span><span class="k">↵</span> {t('runview.ask.keySend')}</span>

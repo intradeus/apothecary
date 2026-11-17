@@ -42,6 +42,9 @@
 
 	let draft = $state('');
 	let sending = $state(false);
+	/** The message's files are going up: the box and its files are locked,
+	 *  so what is sent is what was on screen at Enter. */
+	let uploading = $state(false);
 	let holding = $state(false);
 	let error = $state('');
 	let ta = $state<HTMLTextAreaElement | null>(null);
@@ -81,12 +84,15 @@
 		// and its files stay put.
 		let ids: string[] = [];
 		if (files.length) {
+			uploading = true;
 			try {
 				ids = (await api.files.upload(files)).map((a) => a.id);
 			} catch (e) {
 				error = errorMessage(e);
 				sending = false;
 				return;
+			} finally {
+				uploading = false;
 			}
 		}
 		draft = '';
@@ -143,6 +149,7 @@
 			bind:this={ta}
 			bind:value={draft}
 			rows="1"
+			readonly={uploading}
 			placeholder={t('run.composer.placeholder')}
 			onkeydown={onKey}
 			onpaste={onPaste}
@@ -151,7 +158,13 @@
 	<div class="foot">
 		{#if held}
 			<span class="files">
-				<AttachFiles bind:this={picker} bind:files compact label={t('run.composer.attach')} />
+				<AttachFiles
+					bind:this={picker}
+					bind:files
+					compact
+					disabled={uploading}
+					label={t('run.composer.attach')}
+				/>
 			</span>
 			<span class="keys">
 				<span><span class="k">↵</span> {t('run.composer.keySend')}</span>

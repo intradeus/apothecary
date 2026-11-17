@@ -345,6 +345,33 @@ describe('Composer', () => {
 			expect(screen.getByText('shot.png')).toBeInTheDocument();
 			expect(sendBtn()).toBeEnabled();
 		});
+
+		it('holds the words and files as sent while they go up', async () => {
+			const up = deferred<never>();
+			vi.mocked(api.files.upload).mockReturnValue(up.promise);
+			const { onsent } = held();
+			await settled();
+			paste(shot());
+			await userEvent.type(box(), 'see this{Enter}');
+			await vi.waitFor(() => expect(box()).toHaveAttribute('readonly'));
+
+			await userEvent.type(box(), ' and more');
+			paste(aFile('later.png', 'image/png'));
+			expect(box()).toHaveValue('see this');
+			expect(screen.queryByText('later.png')).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'Remove shot.png' })).not.toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /Attach$/ })).toBeDisabled();
+
+			up.resolve([{ id: 'att-1' }] as never);
+			await vi.waitFor(() =>
+				expect(api.runs.sendMessage).toHaveBeenCalledExactlyOnceWith('r1', 'see this', ['att-1'])
+			);
+			expect(onsent).toHaveBeenCalledExactlyOnceWith('see this');
+			expect(box()).not.toHaveAttribute('readonly');
+			await userEvent.type(box(), 'next');
+			expect(box()).toHaveValue('next');
+			expect(screen.getByRole('button', { name: /Attach$/ })).toBeEnabled();
+		});
 	});
 
 	it('grows with the text, up to its cap', async () => {
