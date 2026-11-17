@@ -18,9 +18,6 @@ import (
 // real one would in its own: commands reach it over its socket.
 func forwarding(t *testing.T) (*rig, *fakeEngine) {
 	t.Helper()
-	old := followEvery
-	followEvery = 10 * time.Millisecond
-	t.Cleanup(func() { followEvery = old })
 	e := newFakeEngine(t)
 	r := newRig(t)
 	r.signIn(t, e)
@@ -136,23 +133,30 @@ func TestForwardAPortInTheBackground(t *testing.T) {
 	_ = r.run("forward", "stop", "--all")
 }
 
-// A run forwarded whole follows its ports: new ones land on free ports as
-// they open, gone ones close, and two runs forward side by side.
-func TestForwardFollowsRunsInParallel(t *testing.T) {
+// A run forwarded whole forwards the ports it listens on then, once: one
+// opened later is forwarded by asking again, and nothing closes by itself.
+// Two runs forward side by side; a run listening on nothing is refused.
+func TestForwardEveryPortOnceRunsInParallel(t *testing.T) {
 	r, e := forwarding(t)
-	e.listen(3000, 5432)
-	if code := r.run("forward", "r1"); code != 0 || !strings.Contains(r.out.String(), "New ports are forwarded as the run opens them") {
-		t.Fatalf("forward = %d %q %q", code, r.out, r.err)
+	e.listen()
+	if code := r.run("forward", "r1"); code != 1 || !strings.Contains(r.err.String(), "listens on no port yet") {
+		t.Errorf("nothing listening = %d %q", code, r.err)
 	}
-	if localOf(t, r, 3000) == 0 || localOf(t, r, 5432) == 0 {
-		t.Fatal("both ports forwarded at once")
+	e.listen(3000, 5432)
+	if code := r.run("forward", "r1"); code != 0 || localOf(t, r, 3000) == 0 || localOf(t, r, 5432) == 0 {
+		t.Fatalf("forward = %d %q %q", code, r.out, r.err)
 	}
 	if code := r.run("forward", "r2", "8080"); code != 0 {
 		t.Fatalf("second run = %d %q", code, r.err)
 	}
 	e.listen(5432, 9000)
-	waitFor(t, func() bool { return localOf(t, r, 9000) != 0 && localOf(t, r, 3000) == 0 })
-	if code := r.run("forward", "status"); code != 0 || !strings.Contains(r.out.String(), "Fix r2") || !strings.Contains(r.out.String(), "following") {
+	if localOf(t, r, 9000) != 0 || localOf(t, r, 3000) == 0 {
+		t.Error("a forward does not follow the run")
+	}
+	if code := r.run("forward", "r1"); code != 0 || localOf(t, r, 9000) == 0 || localOf(t, r, 3000) == 0 {
+		t.Errorf("again = %d %q", code, r.err)
+	}
+	if code := r.run("forward", "status"); code != 0 || !strings.Contains(r.out.String(), "Fix r2") || strings.Contains(r.out.String(), "following") {
 		t.Errorf("status = %d %q", code, r.out)
 	}
 	if code := r.run("forward", "stop", "r1"); code != 0 || strings.Contains(r.out.String(), "Nothing else") {
@@ -167,48 +171,172 @@ func TestForwardFollowsRunsInParallel(t *testing.T) {
 	if code := r.run("forward", "stop", "--all"); code != 0 || !strings.Contains(r.out.String(), "Stopped every forward") {
 		t.Errorf("stop all = %d %q", code, r.out)
 	}
+	// A run whose ports cannot be listed is not forwarded.
+	e.mu.Lock()
+	e.portsAt = 502
+	e.mu.Unlock()
+	if code := r.run("forward", "r1"); code != 1 {
+		t.Errorf("listing fails = %d %q", code, r.err)
+	}
 }
 
-// --same keeps the run's port numbers; a taken one is refused when named,
-// and moves to a free port when followed. A named local port is used as is.
-func TestForwardSameAndNamedPorts(t *testing.T) {
-	r, e := forwarding(t)
+// offered is a listener that says it is on the port asked for: the ports a
+// test offers are free whatever this machine runs.
+type offered struct {
+	net.Listener
+	port int
+}
+
+func (l offered) Addr() net.Addr { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: l.port} }
+
+// takenPorts makes taken ports refused, and ports in [lo, hi) free.
+func takenPorts(t *testing.T, lo, hi int, taken ...int) {
+	t.Helper()
 	old := listenLocal
 	t.Cleanup(func() { listenLocal = old })
-	taken := map[int]bool{4000: true, 4001: true}
+	set := map[int]bool{}
+	for _, p := range taken {
+		set[p] = true
+	}
 	listenLocal = func(port int) (net.Listener, error) {
-		if taken[port] {
+		if set[port] {
+			return nil, errors.New("address in use")
+		}
+		if port >= lo && port < hi {
+			ln, err := old(0)
+			if err != nil {
+				return nil, err
+			}
+			return offered{ln, port}, nil
+		}
+		return old(port)
+	}
+}
+
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// --same keeps the run's port numbers and a named local port is used as
+// is; one taken refuses the whole command, which forwards nothing and
+// offers itself again with only the taken ports moved to free ones.
+func TestForwardSameAndNamedPorts(t *testing.T) {
+	r, e := forwarding(t)
+	takenPorts(t, 4000, 6000, 4000, 4001, 5001)
+	same := freePort(t)
+	if code := r.run("forward", "r1", strconv.Itoa(same), "--same"); code != 0 || localOf(t, r, same) != same {
+		t.Fatalf("--same = %d %q, local %d", code, r.err, localOf(t, r, same))
+	}
+	if code := r.run("forward", "r1", "4000", "--same"); code != 1 || !strings.Contains(r.err.String(), "localhost:4000 is taken") ||
+		!strings.Contains(r.err.String(), "nothing was forwarded") || !strings.Contains(r.out.String(), "apothecary forward r1 4000:4002 --same\n") {
+		t.Errorf("--same taken = %d %q %q", code, r.err, r.out)
+	}
+	if code := r.run("forward", "r1", "5000:4500"); code != 0 || localOf(t, r, 5000) != 4500 {
+		t.Errorf("named local = %d, local %d", code, localOf(t, r, 5000))
+	}
+	if code := r.run("forward", "r1", "5001:4001"); code != 1 || !strings.Contains(r.err.String(), "localhost:4001 is taken") ||
+		!strings.Contains(r.out.String(), "apothecary forward r1 5001:4002\n") {
+		t.Errorf("named taken = %d %q %q", code, r.err, r.out)
+	}
+	// Several named, two taken: none forwarded, both offered in place.
+	ok := freePort(t)
+	if code := r.run("forward", "apo-r1", "6000:4000", strconv.Itoa(ok), "4001", "--same"); code != 1 || localOf(t, r, ok) != 0 ||
+		!strings.Contains(r.out.String(), "apothecary forward apo-r1 6000:4002 "+strconv.Itoa(ok)+" 4001:4003 --same\n") {
+		t.Errorf("two taken = %d %q %q", code, r.err, r.out)
+	}
+	// A port forwarded already, elsewhere than asked: refused, nothing offered.
+	if code := r.run("forward", "r1", "5000:4600"); code != 1 || !strings.Contains(r.err.String(), "forwarded to localhost:4500 already (apothecary forward stop apo-r1 5000 first)") ||
+		strings.Contains(r.out.String(), "free now") {
+		t.Errorf("forwarded elsewhere = %d %q %q", code, r.err, r.out)
+	}
+	// The whole run with --same, one port taken: the others are let go, and
+	// the command offered names only the taken one, as an exception.
+	other := freePort(t)
+	e.listen(other, 4000)
+	if code := r.run("forward", "r2", "--same"); code != 1 || localOf(t, r, other) != 0 ||
+		!strings.Contains(r.out.String(), "apothecary forward r2 --same 4000:4002\n") || strings.Contains(r.out.String(), "Fix r2") {
+		t.Errorf("whole run, one taken = %d %q %q", code, r.err, r.out)
+	}
+	// The exception taken too: another one offered.
+	if code := r.run("forward", "r2", "--same", "4000:5001"); code != 1 || localOf(t, r, other) != 0 ||
+		!strings.Contains(r.out.String(), "apothecary forward r2 --same 4000:5002\n") {
+		t.Errorf("exception taken = %d %q %q", code, r.err, r.out)
+	}
+	if code := r.run("forward", "r2", "--same", "4000:4002"); code != 0 || localOf(t, r, other) != other || localOf(t, r, 4000) != 4002 {
+		t.Errorf("as offered = %d %q, locals %d %d", code, r.err, localOf(t, r, other), localOf(t, r, 4000))
+	}
+	if code := r.run("forward", "r2", "--same", "4000:4002"); code != 0 {
+		t.Errorf("as offered, again = %d %q", code, r.err)
+	}
+	_ = r.run("forward", "stop", "--all")
+}
+
+// The free ports offered are the nearest above the taken one, none twice
+// and none to avoid, else any free one; with none at all, the bare port.
+func TestFreeInstead(t *testing.T) {
+	takenPorts(t, 7000, 7100)
+	old := listenLocal
+	listenLocal = func(port int) (net.Listener, error) {
+		if port > 7000 && port <= 7002+suggestSpan && port != 7003 && port != 7004 {
 			return nil, errors.New("address in use")
 		}
 		return old(port)
 	}
-	free := func() int {
-		ln, _ := net.Listen("tcp", "127.0.0.1:0")
-		defer ln.Close()
-		return ln.Addr().(*net.TCPAddr).Port
+	if freeInstead(nil, nil) != nil {
+		t.Error("nothing taken, nothing offered")
 	}
-	same := free()
-	if code := r.run("forward", "r1", strconv.Itoa(same), "--same"); code != 0 || localOf(t, r, same) != same {
-		t.Fatalf("--same = %d %q, local %d", code, r.err, localOf(t, r, same))
+	// 7003 and 7004 are the free ones near 7000 and 7002; 7004 is to be
+	// avoided, so the second gets any.
+	got := freeInstead([]mapping{{1, 7000}, {2, 7002}}, map[int]bool{7004: true})
+	if len(got) != 2 || got[0] != (mapping{1, 7003}) || got[1].Remote != 2 || got[1].Local == 0 || (got[1].Local > 7000 && got[1].Local < 7100) {
+		t.Errorf("offered %+v", got)
 	}
-	if code := r.run("forward", "r1", "4000", "--same"); code != 1 || !strings.Contains(r.err.String(), "localhost:4000 is taken") {
-		t.Errorf("--same taken = %d %q", code, r.err)
+	listenLocal = func(int) (net.Listener, error) { return nil, errors.New("no ports") }
+	if got := freeInstead([]mapping{{1, 65535}}, nil); got[0].Local != 0 {
+		t.Errorf("with no free port, offered %+v", got)
 	}
-	named := free()
-	if code := r.run("forward", "r1", "5000:"+strconv.Itoa(named)); code != 0 || localOf(t, r, 5000) != named {
-		t.Errorf("named local = %d, local %d", code, localOf(t, r, 5000))
+	for _, c := range []struct {
+		args  []string
+		taken []mapping
+		want  string
+	}{
+		{[]string{"apo-w", "--same"}, []mapping{{5000, 5001}}, "apothecary forward apo-w --same 5000:5001"},
+		{[]string{"apo-w", "5432:2345", "3000", "8080", "--same"}, []mapping{{5432, 2346}, {8080, 8081}}, "apothecary forward apo-w 5432:2346 3000 8080:8081 --same"},
+		{[]string{"3000", "3000"}, []mapping{{3000, 0}}, "apothecary forward 3000 3000"},
+	} {
+		if got := retryCommand(c.args, c.taken); got != c.want {
+			t.Errorf("retry %v = %q, want %q", c.args, got, c.want)
+		}
 	}
-	if code := r.run("forward", "r1", "5001:4001"); code != 1 || !strings.Contains(r.err.String(), "localhost:4001 is taken") {
-		t.Errorf("named taken = %d %q", code, r.err)
+}
+
+// A port another process listens on is taken even where the loopback bind
+// alone would succeed: macOS and Windows allow 127.0.0.1:p beside another
+// process's wildcard :p, which still answers localhost over IPv6.
+func TestListenLocalRefusesAnsweredPort(t *testing.T) {
+	for _, addr := range []string{":0", "127.0.0.1:0"} {
+		other, err := net.Listen("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := other.Addr().(*net.TCPAddr).Port
+		if ln, err := listenLocal(port); err == nil {
+			ln.Close()
+			t.Errorf("listenLocal(%d) beside a listener on %s succeeded", port, addr)
+		}
+		other.Close()
 	}
-	e.listen(4000)
-	if code := r.run("forward", "r2", "--same"); code != 0 {
-		t.Fatalf("follow --same = %d %q", code, r.err)
+	ln, err := listenLocal(0)
+	if err != nil {
+		t.Fatalf("a free port: %v", err)
 	}
-	if got := localOf(t, r, 4000); got == 0 || got == 4000 {
-		t.Errorf("a taken port followed with --same goes to a free one: %d", got)
-	}
-	_ = r.run("forward", "stop", "--all")
+	ln.Close()
 }
 
 // What the engine refuses ends the forward: an unknown run, a run that is
@@ -334,10 +462,16 @@ func TestParseForwardAndHelpers(t *testing.T) {
 			t.Errorf("%q must be refused", bad)
 		}
 	}
+	if _, err := parseForward([]string{"apo-w", "5432", "5432:1"}); err == nil || !strings.Contains(err.Error(), "port 5432 is named twice") {
+		t.Errorf("a port twice = %v", err)
+	}
+	if runRef("apo-w", "r1") != "apo-w" || runRef("", "r1") != "r1" {
+		t.Error("run refs")
+	}
 	if shortID("01M75S79PPDGDYTCTNQ3SZDAAR") != "01M7…DAAR" || shortID("r1") != "r1" {
 		t.Error("short ids")
 	}
-	if joinInts([]int{1, 2}) != "1, 2" || joinNotes(nil) != "nothing forwarded" || joinNotes([]string{"a", "b"}) != "a; b" {
+	if joinInts([]int{1, 2}) != "1, 2" {
 		t.Error("joins")
 	}
 	a := loadAssignments(filepath.Join(t.TempDir(), "ports.json"))
@@ -359,34 +493,30 @@ func TestPrintRun(t *testing.T) {
 	out := &lockedBuffer{}
 	p := &printer{out: out, err: out}
 	printRun(p, runState{ID: "r1", Label: "L", Ports: []portState{{Remote: 1, Local: 2, Active: 1}, {Remote: 3, Local: 4, Active: 2}}})
-	printRun(p, runState{ID: "r2", Label: "M"})
-	for _, want := range []string{"1 connection ", "2 connections", "nothing listening yet"} {
+	for _, want := range []string{"1 connection ", "2 connections"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("out lacks %q: %q", want, out.String())
 		}
 	}
 }
 
-// A followed run whose listing fails is retried; one that is gone is
-// dropped, and the daemon with nothing left leaves.
-func TestFollowRetriesThenDrops(t *testing.T) {
+// A connection to a run that is gone drops its forwards, and the daemon
+// with nothing left leaves.
+func TestForwardToARunGone(t *testing.T) {
 	r, e := forwarding(t)
-	e.listen(3000)
-	if code := r.run("forward", "r1"); code != 0 {
+	if code := r.run("forward", "r1", "3000"); code != 0 {
 		t.Fatal(r.err)
-	}
-	e.mu.Lock()
-	e.portsAt = 502
-	e.mu.Unlock()
-	time.Sleep(50 * time.Millisecond) // a few failed listings
-	if localOf(t, r, 3000) == 0 {
-		t.Fatal("a failed listing must keep the forwards")
 	}
 	e.mu.Lock()
 	e.portsAt = 404
 	e.mu.Unlock()
+	if c, err := net.Dial("tcp", "127.0.0.1:"+strconv.Itoa(localOf(t, r, 3000))); err == nil {
+		_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+		_, _ = c.Read(make([]byte, 1))
+		c.Close()
+	}
 	waitFor(t, func() bool { _, err := os.Stat(sockOf(t, r)); return err != nil })
-	if code := r.run("forward", "logs"); code != 0 || !strings.Contains(r.out.String(), "retrying") || !strings.Contains(r.out.String(), "stopped (no such run)") {
+	if code := r.run("forward", "logs"); code != 0 || !strings.Contains(r.out.String(), "stopped (no such run)") {
 		t.Errorf("logs = %q", r.out)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -92,7 +93,7 @@ func (a *Apps) wrap(s *Server, api http.Handler) http.Handler {
 }
 
 func (a *Apps) serveApp(s *Server, w http.ResponseWriter, r *http.Request) {
-	run, _, pc, ok := a.Relay.Lookup(r.Host)
+	run, port, pc, ok := a.Relay.Lookup(r.Host)
 	if !ok {
 		http.Error(w, "apothecary: nothing is exposed at "+r.Host, http.StatusNotFound)
 		return
@@ -130,10 +131,24 @@ func (a *Apps) serveApp(s *Server, w http.ResponseWriter, r *http.Request) {
 			ResponseHeaderTimeout: 5 * time.Minute,
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, "apothecary: the workspace did not answer on "+r.Host+": "+err.Error(), http.StatusBadGateway)
+			http.Error(w, noHTTPAnswer(run, port, err), http.StatusBadGateway)
 		},
 	}
 	rp.ServeHTTP(w, r)
+}
+
+// noHTTPAnswer is the app host's 502. The two causes cannot be told apart
+// from here — the workspace's relay accepts the connection and closes it when
+// nothing listens, just as a database closes on an HTTP request — so it names
+// both, and the way to reach a port that is not a web app.
+func noHTTPAnswer(run string, port int, err error) string {
+	p := strconv.Itoa(port)
+	return "apothecary: port " + p + " of this run gave no HTTP answer (" + err.Error() + ").\n\n" +
+		"Either nothing listens on it, or it is not a web server (is it a database, a cache, any other TCP service ?)\n" +
+		"An exposed port opens in the browser, so it only serves web apps. " +
+		"To reach anything else from your own machine, forward it:\n\n" +
+		"    apothecary forward " + run + " " + p + "\n\n" +
+		"then connect to the local port it prints.\n"
 }
 
 // allowed: an app cookie granted for this host's run.

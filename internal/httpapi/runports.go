@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/workspace/portrelay"
 	"apothecary/internal/workspace/runports"
 )
 
@@ -99,17 +98,20 @@ func (s *Server) postObservedPorts(w http.ResponseWriter, r *http.Request) {
 // engine-process-scoped).
 func (s *Server) getRunPorts(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	exposed := s.Ports.List(id)
-	if exposed == nil {
-		exposed = []portrelay.Exposure{}
+	scanned := s.Ports.ObservedPorts(id)
+	byPort := map[int]envport.ObservedPort{}
+	for _, p := range scanned {
+		byPort[p.Port] = p
 	}
+	exposed := []RunPort{}
 	live := map[int]bool{}
-	for i, e := range exposed {
+	for _, e := range s.Ports.List(id) {
 		live[e.Port] = true
-		exposed[i].URL = s.reach(r, e.URL)
+		p := byPort[e.Port] // what the scanner saw on it: the port keeps its name
+		exposed = append(exposed, RunPort{Port: e.Port, URL: s.reach(r, e.URL), Process: p.Process, Service: p.Service})
 	}
 	observed := []envport.ObservedPort{}
-	for _, p := range s.Ports.ObservedPorts(id) {
+	for _, p := range scanned {
 		if !live[p.Port] { // an exposed port graduates out of the discovered list
 			observed = append(observed, p)
 		}

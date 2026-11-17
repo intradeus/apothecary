@@ -308,7 +308,9 @@ main:
   - { id: first, type: command, run: "./first.sh" }
 `
 	h, svcs := serviceHarness(t, doc)
-	h.res.Services = append(h.res.Services, resolution.Service{Name: "worker", Start: "w", Health: resolution.ServiceHealth{Command: "true"}})
+	h.res.Services = append(h.res.Services, resolution.Service{Name: "worker", Start: "w", Health: resolution.ServiceHealth{Command: "true"}},
+		resolution.Service{Name: "shop", Start: "s", Ports: []resolution.ServicePort{
+			{Port: 3000, Label: "Shop front"}, {Port: 3001, Label: "Admin frontend", Path: "/admin"}, {Port: 5432, Protocol: resolution.ProtocolTCP}}})
 	ctx := context.Background()
 	env, err := h.envp.Provision(ctx, envport.EnvSpec{})
 	if err != nil {
@@ -322,11 +324,11 @@ main:
 	if got := x.serviceInput("default"); !strings.Contains(got, "is not running") {
 		t.Errorf("not started: %q", got)
 	}
-	if got := x.serviceLink("default"); got != "" {
-		t.Errorf("a link to a service that is down: %q", got)
+	if got, lines := x.serviceLinks("default"); got != "" || lines != nil {
+		t.Errorf("a link to a service that is down: %q %q", got, lines)
 	}
-	if got := x.serviceLink("gone"); got != "" {
-		t.Errorf("a link to no service: %q", got)
+	if got, lines := x.serviceLinks("gone"); got != "" || lines != nil {
+		t.Errorf("a link to no service: %q %q", got, lines)
 	}
 	start := func(name string) {
 		t.Helper()
@@ -336,8 +338,31 @@ main:
 	}
 	start("default")
 	start("worker")
+	start("shop")
 	if got := x.serviceInput("default"); !strings.Contains(got, "is running and healthy") {
 		t.Errorf("up: %q (%v)", got, svcs.Snapshot())
+	}
+	// Every port, for the agent to pick from: not the first one alone.
+	want := `The project's service "shop" is running and healthy. Its ports in your workspace:
+- Shop front - http://localhost:3000/
+- Admin frontend - http://localhost:3001/admin
+- port 5432 (tcp) - localhost:5432`
+	if got := x.serviceInput("shop"); got != want {
+		t.Errorf("every port:\n%s\nwant:\n%s", got, want)
+	}
+	// No browser links on this engine: a person forwards every port.
+	link, lines := x.serviceLinks("shop")
+	wantLines := []string{"- Shop front - `apothecary forward " + string(env) + " 3000`", "- Admin frontend - `apothecary forward " + string(env) + " 3001`",
+		"- port 5432 (tcp) - `apothecary forward " + string(env) + " 5432`"}
+	if link != "" || strings.Join(lines, "\n") != strings.Join(wantLines, "\n") {
+		t.Errorf("links = %q %q", link, lines)
+	}
+	gate := &flow.Stage{ID: "look", Inputs: []flow.Port{{Name: "app", Value: "run.service.shop", Type: "link"}}}
+	if got := x.gateServiceList(gate); !strings.HasPrefix(got, `The service "shop", port by port:`+"\n"+wantLines[0]) {
+		t.Errorf("gate list = %q", got)
+	}
+	if got := x.gateServiceList(&flow.Stage{ID: "plan", Inputs: []flow.Port{{Name: "plan", Value: "artifacts/plan.md", Type: "file"}}}); got != "" {
+		t.Errorf("a gate with no service lists one: %q", got)
 	}
 	if got := x.serviceInput("worker"); !strings.Contains(got, "it declares no port") {
 		t.Errorf("no port: %q", got)

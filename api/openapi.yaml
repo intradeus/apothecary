@@ -2798,16 +2798,6 @@ components:
         - status
         - type
       type: object
-    PortExposure:
-      properties:
-        port:
-          type: integer
-        url:
-          type: string
-      required:
-        - port
-        - url
-      type: object
     PortSig:
       properties:
         default_path:
@@ -3372,6 +3362,20 @@ components:
         - repo
         - url
       type: object
+    RunPort:
+      properties:
+        port:
+          type: integer
+        process:
+          type: string
+        service:
+          type: string
+        url:
+          type: string
+      required:
+        - port
+        - url
+      type: object
     RunPorts:
       properties:
         links:
@@ -3383,7 +3387,7 @@ components:
           type: array
         ports:
           items:
-            $ref: '#/components/schemas/PortExposure'
+            $ref: '#/components/schemas/RunPort'
           nullable: true
           type: array
       required:
@@ -3746,6 +3750,8 @@ components:
           type: string
         port:
           type: integer
+        protocol:
+          type: string
       required:
         - port
       type: object
@@ -3759,11 +3765,14 @@ components:
           type: string
         port:
           type: integer
+        protocol:
+          type: string
         url:
           type: string
       required:
         - address
         - port
+        - protocol
       type: object
     SettingSig:
       properties:

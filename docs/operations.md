@@ -29,7 +29,7 @@ address:
 | command | purpose |
 |---|---|
 | `apothecary login <url>` | sign in: the page opens, you approve the code it shows, and this machine gets a sign-in that lasts while you use it (expires after 7 days unused). `--token <personal token>` signs in with a token from **Account → API tokens** instead, for scripts and CI; `--no-browser` only prints the page's address |
-| `apothecary forward <run> [port[:local]]... [--same]` | a run's ports on free local ports (`--same`: the same numbers), in the background until stopped; with no port, every port it listens on, kept in step |
+| `apothecary forward <run> [port[:local]]... [--same]` | a run's ports on free local ports, in the background until stopped; with no port, every port it listens on now (a port it opens later: forward again). `--same`: each on its own number, a `port:local` the exception (`--same 5000:5001`). A local port asked for — named, or the run's own with `--same` — that is taken here refuses the whole command: nothing is forwarded, and it offers the same command with only the taken ports moved to free local ports |
 | `apothecary forward status` | what is forwarded, run by run |
 | `apothecary forward stop <run> [port]...` or `--all` | stop forwarding |
 | `apothecary forward logs` | the background forwarder's log |
@@ -241,22 +241,61 @@ The version follows the conventional commits since the last tag (rules in
 Every commit message follows that convention: the `commit-msg` hook
 (`lefthook.yml`) checks it, and it is registered on its own by `npm ci` in
 `cpui` — nothing else to install. A pull request's title becomes the
-squashed commit, so the `pr-title` workflow checks it the same way.
+squashed commit and nothing checks it: write it the same way, or the release reads a commit outside the convention.
 
 ```sh
 task commit             # write one interactively (needs commitizen: brew install commitizen)
 task release:preview    # the version and changelog the next release would get (same)
 ```
 
-No GitHub setup is needed: the release job pushes its commit and tag to
-`main` with the workflow's own token, so `main` must not refuse pushes from
-GitHub Actions (no ruleset or branch protection blocking them).
+A pull request merges only once `ci` passed: a ruleset on `main` requires
+its `passed` job, which fails when any job failed (a skipped job counts as
+passed). The release commit has no `ci` run of its own, so the release job
+pushes it with a deploy key, the ruleset's one bypass. Set it up once:
+
+1. Generate the key, with no passphrase:
+   `ssh-keygen -t ed25519 -N '' -C manual-release -f release_key`.
+2. **Settings** → **Deploy keys** → **Add deploy key**: paste
+   `release_key.pub`, tick **Allow write access**.
+3. **Settings** → **Secrets and variables** → **Actions** → **New repository
+   secret**: `RELEASE_DEPLOY_KEY`, the contents of `release_key`. Then delete
+   both files. Without the secret, `manual-release` stops before it builds
+   anything.
+4. The ruleset, with the GitHub CLI as a repository admin:
+
+   ```sh
+   gh api -X POST repos/intradeus/apothecary/rulesets --input - <<'EOF'
+   {
+     "name": "main: ci must pass",
+     "target": "branch",
+     "enforcement": "active",
+     "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
+     "bypass_actors": [{ "actor_type": "DeployKey", "bypass_mode": "always" }],
+     "rules": [{
+       "type": "required_status_checks",
+       "parameters": {
+         "strict_required_status_checks_policy": false,
+         "required_status_checks": [{ "context": "passed", "integration_id": 15368 }]
+       }
+     }]
+   }
+   EOF
+   ```
+
+   Or by hand: **Settings** → **Rules** → **Rulesets** → **New branch
+   ruleset**; target the default branch; under *Bypass list* add **Deploy
+   keys**; tick **Require status checks to pass** and add `passed` (from
+   GitHub Actions). `integration_id` 15368 is GitHub Actions: only its
+   `passed` counts. *Require branches to be up to date* stays off — `ci`
+   already tests a pull request merged into its base.
+
+A private repository needs a paid plan for GitHub to enforce a ruleset.
 
 Optional, if you merge pull requests by squashing: on the repository page,
 the **Settings** tab (repository admins only) → **General** → scroll to the
 **Pull Requests** section → under **Allow squash merging**, set *Default
 commit message* to **Pull request title**. The squashed commit then carries
-the title `pr-title` checked.
+the pull request's title.
 
 ### Deploying a release
 

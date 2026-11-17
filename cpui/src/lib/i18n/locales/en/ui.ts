@@ -3,6 +3,7 @@ export default {
 	'ui.copy.label': 'copy',
 	'ui.copy.done': 'copied',
 	'ui.copy.aria': 'Copy {command}',
+	'ui.copy.aria_labelled': '{label}: copy {command}',
 	'ui.copy.failed': 'Could not copy — the browser refused clipboard access.',
 	'ui.ref.copy': 'Copy reference {ref}',
 	'ui.ref.label': 'Reference {ref}',

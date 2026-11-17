@@ -69,7 +69,7 @@ build every platform's binaries or publish images.
 - **Conventional commits**: `<type>(<scope>)!: subject`, a blank line before
   any body; types build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test.
   The lefthook `commit-msg` hook (installed by `npm ci` in `cpui`) rejects
-  anything else; so does the PR-title check.
+  anything else.
 - **Vocabulary**: "repository", never "forge"; "sequence", never "block";
   flow grammar words are `verdict`, `yes_no`, `run_if` (`docs/flow-language.md`).
 - **Migrations**: `internal/adapters/pgstore/migrations/0001_init.sql` is

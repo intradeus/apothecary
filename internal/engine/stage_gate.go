@@ -39,9 +39,10 @@ func (x *exec) stageGate(st *flow.Stage) error {
 		p = &Ping{
 			Type:     PingGate,
 			Question: gateQuestion(st, rs.View.TicketTitle),
-			// A gate over several merge requests lists them all; the link
-			// stays the first (the primary repository's).
-			Context: x.mrListMarkdown(),
+			// A gate over several merge requests lists them all, and one
+			// over a service every port of it; the link stays the first
+			// (the primary repository's, the service's first web port's).
+			Context: joinContext(x.mrListMarkdown(), x.gateServiceList(st)),
 			Files:   files, FileTypes: types, Link: link, StageID: st.ID, AnswerKind: event.AnswerYesNo,
 		}
 		if err := x.raiseYesNo(p); err != nil {
@@ -131,9 +132,24 @@ func (x *exec) sourceLink(v string) string {
 		return workspaceLink(x.rs.Links)
 	}
 	if name := flow.SourceService(v); name != "" {
-		return x.serviceLink(name)
+		link, _ := x.serviceLinks(name)
+		return link
 	}
 	return ""
+}
+
+// joinContext is a gate's context from its parts, the empty ones left out.
+func joinContext(parts ...string) string {
+	var kept []string
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, strings.TrimSuffix(p, "\n"))
+		}
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	return strings.Join(kept, "\n\n") + "\n"
 }
 
 // openYesNo returns the live Ping for a still-open yes/no question of this stage

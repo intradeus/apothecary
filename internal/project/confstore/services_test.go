@@ -15,14 +15,15 @@ func TestProjectServicesValidate(t *testing.T) {
 	app := ServiceConfig{Name: "default", Start: "npm run dev",
 		Health: ServiceHealth{HTTP: "http://localhost:3000/health", Timeout: "2m"},
 		Ports:  []ServicePort{{Port: 3000, Label: "app"}, {Port: 6006, Label: "storybook", Path: "/docs"}}}
-	db := ServiceConfig{Name: "db", Start: "docker compose up -d db", Stop: "docker compose stop db", Health: ServiceHealth{TCP: 5432}}
+	db := ServiceConfig{Name: "db", Start: "docker compose up -d db", Stop: "docker compose stop db", Health: ServiceHealth{TCP: 5432},
+		Ports: []ServicePort{{Port: 5432, Label: "postgres", Protocol: "tcp"}}}
 
 	p.Workspace.Services = []ServiceConfig{app, db}
 	got, err := svc.UpdateProject(ctx, p.ID, p)
 	if err != nil {
 		t.Fatalf("valid services refused: %v", err)
 	}
-	if len(got.Workspace.Services) != 2 || got.Workspace.Services[1].Stop == "" {
+	if len(got.Workspace.Services) != 2 || got.Workspace.Services[1].Stop == "" || got.Workspace.Services[1].Ports[0].Protocol != "tcp" {
 		t.Errorf("services = %+v", got.Workspace.Services)
 	}
 	if h := got.Workspace.Services[0].Health; h.TimeoutOr() != 2*time.Minute || h.IntervalOr() != DefaultServiceInterval {
@@ -46,6 +47,8 @@ func TestProjectServicesValidate(t *testing.T) {
 		{"bad port", func(s *ServiceConfig) { s.Ports[0].Port = 0 }, "port 0"},
 		{"repeated port", func(s *ServiceConfig) { s.Ports[1].Port = 3000 }, "listed twice"},
 		{"relative path", func(s *ServiceConfig) { s.Ports[1].Path = "docs" }, "must start with /"},
+		{"unknown protocol", func(s *ServiceConfig) { s.Ports[0].Protocol = "udp" }, "must be http or tcp"},
+		{"tcp with a path", func(s *ServiceConfig) { s.Ports[1].Protocol = "tcp" }, "takes no path"},
 	} {
 		bad := app
 		bad.Ports = append([]ServicePort(nil), app.Ports...)

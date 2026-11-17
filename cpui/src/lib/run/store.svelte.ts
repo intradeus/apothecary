@@ -13,6 +13,7 @@ import type {
 	Attachment,
 	EgressDenial,
 	EgressStatus,
+	ExposedPort,
 	FormContent,
 	LiveDelta,
 	ObservedPort,
@@ -58,7 +59,7 @@ export class RunStore {
 	opensMRs = $state(false);
 	denials = $state<EgressDenial[]>([]);
 	dismissed = $state<Set<string>>(new Set());
-	exposed = $state<{ port: number; url: string }[]>([]);
+	exposed = $state<ExposedPort[]>([]);
 	observed = $state<ObservedPort[]>([]);
 	/** Whether ports get browser links (RunPorts.links); until the feed says. */
 	portLinks = $state(true);

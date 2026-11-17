@@ -205,7 +205,8 @@ const serviceBody = (s: ServiceConfig): Wire.ServiceConfig => {
 					ports: s.ports.map((p) => ({
 						port: p.port,
 						...(p.label ? { label: p.label } : {}),
-						...(p.path ? { path: p.path } : {})
+						...(p.path ? { path: p.path } : {}),
+						...(p.protocol === 'tcp' ? { protocol: 'tcp' } : {})
 					}))
 				}
 			: {})

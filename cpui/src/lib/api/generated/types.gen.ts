@@ -1237,11 +1237,6 @@ export type PingView = {
 	user_id?: string;
 };
 
-export type PortExposure = {
-	port: number;
-	url: string;
-};
-
 export type PortSig = {
 	default_path?: string;
 	description?: string;
@@ -1483,10 +1478,17 @@ export type RunMergeRequest = {
 	url: string;
 };
 
+export type RunPort = {
+	port: number;
+	process?: string;
+	service?: string;
+	url: string;
+};
+
 export type RunPorts = {
 	links: boolean;
 	observed: Array<ObservedPort> | null;
-	ports: Array<PortExposure> | null;
+	ports: Array<RunPort> | null;
 };
 
 export type RunRef = {
@@ -1642,6 +1644,7 @@ export type ServicePort = {
 	label?: string;
 	path?: string;
 	port: number;
+	protocol?: string;
 };
 
 export type ServicePortInfo = {
@@ -1649,6 +1652,7 @@ export type ServicePortInfo = {
 	label?: string;
 	path?: string;
 	port: number;
+	protocol: string;
 	url?: string;
 };
 

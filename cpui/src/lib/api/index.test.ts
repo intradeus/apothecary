@@ -692,7 +692,10 @@ describe('what each call sends', () => {
 						description: 'd',
 						stop: 'halt',
 						health: { http: '/h', tcp: 80, command: 'c', timeout: '1s', interval: '2s' },
-						ports: [{ port: 80, label: 'l', path: '/p' }]
+						ports: [
+							{ port: 80, label: 'l', path: '/p' },
+							{ port: 5432, protocol: 'tcp' }
+						]
 					}
 				],
 				browser: { enabled: true },

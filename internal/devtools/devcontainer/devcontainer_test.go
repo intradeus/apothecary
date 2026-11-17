@@ -77,7 +77,7 @@ func TestOneNodeEverywhere(t *testing.T) {
 	if !strings.Contains(read(t, "cpui/.npmrc"), "engine-strict=true") {
 		t.Error("cpui/.npmrc must set engine-strict=true, so another Node or npm refuses to install")
 	}
-	for _, wf := range []string{"ci.yml", "manual-release.yml", "pr-title.yml"} {
+	for _, wf := range []string{"ci.yml", "manual-release.yml"} {
 		y := read(t, ".github/workflows/"+wf)
 		if regexp.MustCompile(`(?m)^\s+node-version:`).MatchString(y) {
 			t.Errorf("%s names a Node version: use node-version-file: .nvmrc", wf)

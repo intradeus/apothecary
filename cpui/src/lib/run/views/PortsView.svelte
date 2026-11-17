@@ -1,20 +1,25 @@
 <script lang="ts">
-	// Ports (DESIGN §6): the commands that bring the workspace's ports onto
-	// the person's own machine (`apothecary forward`, which always works:
-	// every port on free local ports, or `--same` port numbers), the
-	// listeners the workspace scanner found — each with its own one-port
-	// command to copy — and, when the engine hands out browser links (an
-	// apps domain), click-to-expose, what is already exposed, and a manual
-	// "expose a port". The CLI takes the workspace's name (the one ssh and
-	// the Env menu use) or, before there is a workspace, the run id.
+	// Ports (DESIGN §6): one table of the workspace's ports (PortTable, the
+	// Services view's too), a row each —
+	// who listens (its service, else its process), the port, whether it has
+	// a browser link yet, the `apothecary forward` line that brings it onto
+	// the person's own machine (any port, any protocol), and, when the
+	// engine hands out browser links (an apps domain), "open" in the
+	// browser, which exposes it first. The link is a web proxy, so it only
+	// serves web apps; the table says so, a database being the usual
+	// mistake. Under it: opening a port the scanner has not found, and the
+	// two forwards of the whole workspace (free local ports, or `--same`
+	// numbers) — of the ports it listens on when run, once, so offered only
+	// while it listens on some (the CLI refuses a workspace listening on
+	// none). The CLI takes the workspace's name (the one ssh and the Env
+	// menu use) or, before there is a workspace, the run id.
 	import { errorMessage } from '$lib/core/errors';
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
 	import { CODE_SERVER_PORT } from '../derive';
-	import { I } from '$lib/design/icons';
 	import { toast } from '$lib/ui/toast.svelte';
 	import CopyCommand from '$lib/ui/CopyCommand.svelte';
-	import CopyButton from '$lib/ui/CopyButton.svelte';
+	import PortTable, { type PortRow } from '../PortTable.svelte';
 	import type { RunStore } from '../store.svelte';
 
 	let { rs, visible }: { rs: RunStore; visible: boolean } = $props();
@@ -36,7 +41,7 @@
 		const w = window.open('', '_blank');
 		try {
 			const res = await api.runs.exposePort(rs.runId, port);
-			await rs.refreshPorts(); // the now-exposed port drops off the detected list
+			await rs.refreshPorts(); // the row now has its link
 			if (w) w.location.href = res.url;
 			else window.open(res.url, '_blank');
 			toast(t('runview.ports.toast_exposed', { port: String(port) }), {
@@ -59,74 +64,53 @@
 		if (!error) input = '';
 	}
 
-	const exposed = $derived(rs.exposed.filter((p) => p.port !== CODE_SERVER_PORT));
+	const exposedRow = (p: { port: number; url: string; service?: string; process?: string }) => ({
+		port: p.port,
+		name: p.service ?? p.process,
+		url: p.url,
+		status: t('runview.ports.status_exposed'),
+		exposed: true
+	});
+	/** Every port once, by number: exposed ones with their link, then what
+	 *  the scanner found (the engine lists a port in one or the other). The
+	 *  editor's port has its own button. */
+	const rows = $derived.by(() => {
+		const out: PortRow[] = rs.exposed.filter((p) => p.port !== CODE_SERVER_PORT).map(exposedRow);
+		for (const p of rs.observed) {
+			if (!out.some((r) => r.port === p.port)) {
+				out.push({
+					port: p.port,
+					name: p.service ?? p.process,
+					status: t('runview.ports.status_listening'),
+					exposed: false
+				});
+			}
+		}
+		return out.sort((a, b) => a.port - b.port);
+	});
 	/** What `apothecary forward` is told: the workspace, else the run. */
 	const ws = $derived(rs.run?.envId || rs.runId);
 	const forwardOne = (port: number) => `apothecary forward ${ws} ${port}`;
 </script>
 
 <div class="view pt">
-	{#if !rs.terminal}
-		<div class="caption">{t('runview.ports.forward')}</div>
-		<CopyCommand command={`apothecary forward ${ws}`} help={t('runview.ports.forward_help')} />
-		<CopyCommand
-			command={`apothecary forward ${ws} --same`}
-			help={t('runview.ports.forward_same_help')}
-		/>
-	{/if}
-	<div class="caption">{t('runview.ports.detected')}</div>
-	{#if rs.observed.length === 0}
-		<div class="help">{t('runview.ports.nothing_new')}</div>
-	{:else if !rs.portLinks}
-		<div class="chips">
-			{#each rs.observed as p (p.port)}
-				<span class="pill mono"
-					><span class="pn">:{p.port}</span>
-					{p.service ?? p.process ?? ''}{#if !rs.terminal}<CopyButton
-							command={forwardOne(p.port)}
-						/>{/if}</span
-				>
-			{/each}
-		</div>
+	<div class="caption">{t('runview.ports.title')}</div>
+	{#if rows.length === 0}
+		<div class="help">{t('runview.ports.nothing')}</div>
 	{:else}
-		<div class="list">
-			{#each rs.observed as p (p.port)}
-				<span class="one">
-					<button
-						class="btn-md port"
-						disabled={busy !== null || rs.terminal}
-						aria-busy={busy === p.port}
-						title={p.service
-							? t('runview.ports.title_service', { service: p.service })
-							: p.process
-								? t('runview.ports.title_process', { process: p.process })
-								: t('runview.ports.title_plain')}
-						onclick={() => expose(p.port)}
-					>
-						<span class="pn mono">:{p.port}</span>
-						{p.service ?? p.process ?? ''}
-						{I.external}
-					</button>
-					{#if !rs.terminal}<CopyButton command={forwardOne(p.port)} />{/if}
-				</span>
-			{/each}
-		</div>
-	{/if}
-	{#if exposed.length}
-		<div class="caption">{t('runview.ports.exposed')}</div>
-		<div class="list">
-			{#each exposed as p (p.port)}
-				<span class="one">
-					<a class="btn btn-md port" href={p.url} target="_blank" rel="noreferrer" title={p.url}
-						><span class="pn mono">:{p.port}</span> {t('runview.ports.open')} {I.external}</a
-					>
-					{#if !rs.terminal}<CopyButton command={forwardOne(p.port)} />{/if}
-				</span>
-			{/each}
-		</div>
+		<PortTable
+			{rows}
+			nameHeader={t('runview.ports.col_service')}
+			forward={rs.terminal ? undefined : forwardOne}
+			links={rs.portLinks}
+			onopen={rs.terminal ? undefined : expose}
+			{busy}
+		/>
+		{#if !rs.terminal}<div class="help">{t('runview.ports.forward_hint')}</div>{/if}
+		{#if rs.portLinks}<div class="help">{t('runview.ports.web_only')}</div>{/if}
 	{/if}
 	{#if !rs.terminal && rs.portLinks}
-		<div class="caption">{t('runview.ports.expose_a_port')}</div>
+		<div class="caption">{t('runview.ports.another')}</div>
 		<div class="ex">
 			<input
 				class="mono"
@@ -139,15 +123,20 @@
 			<button
 				class="btn-primary btn-md"
 				disabled={busy !== null || !input}
-				aria-busy={busy !== null && !rs.observed.some((p) => p.port === busy)}
-				onclick={exposeInput}>{t('runview.ports.expose_btn')}</button
+				aria-busy={busy !== null && !rows.some((r) => r.port === busy)}
+				onclick={exposeInput}>{t('runview.ports.open_btn')}</button
 			>
-		</div>
-		<div class="help">
-			{t('runview.ports.help')}
 		</div>
 	{/if}
 	{#if error}<div class="error">{error}</div>{/if}
+	{#if !rs.terminal && rows.length > 0}
+		<div class="caption">{t('runview.ports.forward_all')}</div>
+		<CopyCommand command={`apothecary forward ${ws}`} help={t('runview.ports.forward_help')} />
+		<CopyCommand
+			command={`apothecary forward ${ws} --same`}
+			help={t('runview.ports.forward_same_help')}
+		/>
+	{/if}
 </div>
 
 <style>
@@ -160,25 +149,6 @@
 	}
 	.caption:not(:first-child) {
 		margin-top: 6px;
-	}
-	.list {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 6px;
-	}
-	.one {
-		display: inline-flex;
-		align-items: center;
-		gap: 2px;
-	}
-	.chips .pill {
-		gap: 4px;
-	}
-	.port:hover {
-		border-color: var(--accent-2);
-	}
-	.pn {
-		color: var(--accent-2-text);
 	}
 	.ex {
 		display: flex;

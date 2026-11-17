@@ -29,19 +29,38 @@ import (
 // daemonCommand is the hidden command the daemon runs as.
 const daemonCommand = "__forward-daemon"
 
-var (
-	// followEvery is how often a followed run's ports are listed.
-	followEvery = 3 * time.Second
-	// daemonIdle is how long a daemon with nothing forwarded stays up: the
-	// command that started it is about to ask for something.
-	daemonIdle = 30 * time.Second
-)
+// daemonIdle is how long a daemon with nothing forwarded stays up: the
+// command that started it is about to ask for something.
+var daemonIdle = 30 * time.Second
 
 // listenLocal opens a port on this machine's loopback, never on its other
-// interfaces: what a run serves stays the person's. Port 0 is a free one.
-// A var for tests.
+// interfaces: what a run serves stays the person's. Port 0 is a free one;
+// a named port that something on this machine already answers on is
+// taken, even when the bind alone would succeed. A var for tests.
 var listenLocal = func(port int) (net.Listener, error) {
+	if port > 0 && localAnswers(port) {
+		return nil, fmt.Errorf("localhost:%d already answers", port)
+	}
 	return net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+}
+
+// localProbe is how long a loopback dial may take: a listener accepts at
+// once, and a closed port refuses at once everywhere but Windows, which
+// retries for seconds.
+const localProbe = 200 * time.Millisecond
+
+// localAnswers says whether something accepts connections on port at either
+// loopback address. The bind cannot tell: macOS and Windows let 127.0.0.1:p
+// be bound beside another process's 0.0.0.0:p or [::]:p, and that process
+// still answers [::1]:p — where a client resolving localhost to IPv6 lands.
+func localAnswers(port int) bool {
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		if c, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), localProbe); err == nil {
+			c.Close()
+			return true
+		}
+	}
+	return false
 }
 
 // forwardDir holds the daemon's socket, its log and the remembered local
@@ -65,10 +84,15 @@ type (
 		Remote int `json:"remote"`
 		Local  int `json:"local,omitempty"`
 	}
+	// forwardRequest is one forward, done whole or not at all. Ports with
+	// no local port pick which of the run's ports are forwarded; none
+	// picked, every port it listens on now. With Same each lands on its own
+	// number, except a port:local, which is an exception to Same rather
+	// than a pick (`--same 5000:5001`: every port, 5000 on 5001).
 	forwardRequest struct {
 		Run   string    `json:"run"`
-		Ports []mapping `json:"ports,omitempty"` // none: every port the run listens on, kept in step
-		Same  bool      `json:"same,omitempty"`  // local port = the run's
+		Ports []mapping `json:"ports,omitempty"`
+		Same  bool      `json:"same,omitempty"`
 	}
 	stopRequest struct {
 		Run   string `json:"run,omitempty"`
@@ -85,21 +109,31 @@ type (
 		ID        string      `json:"id"`
 		Label     string      `json:"label"`
 		Workspace string      `json:"workspace,omitempty"`
-		Follow    bool        `json:"follow,omitempty"`
-		Same      bool        `json:"same,omitempty"`
 		Ports     []portState `json:"ports"`
-		// Notes are what the request could not do as asked (a port taken,
-		// a port the run does not listen on).
+		// Notes say why a forward was refused (a port taken, a port already
+		// forwarded elsewhere): one refused port refuses the whole request,
+		// and nothing of it is forwarded.
 		Notes []string `json:"notes,omitempty"`
+		// Taken are the refused ports whose local port was taken, each with
+		// a local port free when the daemon answered (0: none found): what
+		// to ask for instead.
+		Taken []mapping `json:"taken,omitempty"`
 	}
 )
 
+// takenError is a port refused because the local port it was to land on —
+// named, or its own with --same — is taken.
+type takenError struct{ remote, local int }
+
+func (e *takenError) Error() string {
+	return fmt.Sprintf("port %d: localhost:%d is taken", e.remote, e.local)
+}
+
 // daemon holds the forwards.
 type daemon struct {
-	env   Env
-	log   *log.Logger
-	base  context.Context
-	every time.Duration // followEvery, as it was when the daemon started
+	env  Env
+	log  *log.Logger
+	base context.Context
 
 	mu     sync.Mutex
 	runs   map[string]*drun
@@ -112,22 +146,21 @@ type daemon struct {
 // drun is one run's forwards.
 type drun struct {
 	info   api.Run
-	follow bool
-	same   bool
 	ports  map[int]*dport
-	cancel context.CancelFunc // stops following
+	cancel context.CancelFunc // ends its connections' dials
 	ctx    context.Context
 }
 
 type dport struct {
 	remote, local int
 	ln            net.Listener
+	free          bool // the daemon chose the local port: remembered
 	active        atomic.Int32
 	since         time.Time
 }
 
 func newDaemon(ctx context.Context, env Env, logger *log.Logger, assign *assignments) *daemon {
-	d := &daemon{env: env, log: logger, base: ctx, every: followEvery, runs: map[string]*drun{}, assign: assign, quit: make(chan struct{})}
+	d := &daemon{env: env, log: logger, base: ctx, runs: map[string]*drun{}, assign: assign, quit: make(chan struct{})}
 	d.idle = time.AfterFunc(daemonIdle, d.exitIfIdle)
 	return d
 }
@@ -230,7 +263,8 @@ func (d *daemon) client() (*api.Client, error) {
 	return c, err
 }
 
-// forward adds what req asks for and says where the run's ports landed.
+// forward does what req asks for, whole or not at all, and says where the
+// run's ports landed — or, refused, why, with free ports to ask for instead.
 func (d *daemon) forward(ctx context.Context, req forwardRequest) (runState, error) {
 	c, err := d.client()
 	if err != nil {
@@ -240,6 +274,16 @@ func (d *daemon) forward(ctx context.Context, req forwardRequest) (runState, err
 	if err != nil {
 		return runState{}, err
 	}
+	want := req.Ports
+	if !picks(req.Ports) {
+		ports, err := c.Ports(ctx, info.ID)
+		if err != nil {
+			return runState{}, err
+		}
+		if want = everyPort(ports.Listening(), req.Ports); len(want) == 0 {
+			return runState{}, fmt.Errorf("%s listens on no port yet: forward it once it does", info.Label())
+		}
+	}
 	d.mu.Lock()
 	r := d.runs[info.ID]
 	if r == nil {
@@ -248,92 +292,186 @@ func (d *daemon) forward(ctx context.Context, req forwardRequest) (runState, err
 		d.runs[info.ID] = r
 	}
 	r.info = info
-	if req.Same {
-		r.same = true
-	}
-	var notes []string
-	if len(req.Ports) > 0 {
-		for _, m := range req.Ports {
-			if r.ports[m.Remote] != nil {
-				continue
-			}
-			if err := d.open(r, m.Remote, m.Local, req.Same, false); err != nil {
-				notes = append(notes, err.Error())
-			}
+	bound, notes, taken := d.bindAll(r, want, req.Same)
+	if len(notes) == 0 {
+		for _, p := range bound {
+			d.commit(r, p)
 		}
+		st := r.state()
+		d.mu.Unlock()
+		d.noteBusy()
+		return st, nil
 	}
-	startFollow := len(req.Ports) == 0 && !r.follow
-	if startFollow {
-		r.follow = true
+	// Refused: nothing of it stays. The ports it did bind are kept from
+	// the offer, the command offered binding them again.
+	avoid := map[int]bool{}
+	for _, p := range bound {
+		p.ln.Close()
+		avoid[p.local] = true
 	}
+	empty := len(r.ports) == 0
 	d.mu.Unlock()
-	if startFollow {
-		// The first listing before answering, so the answer has the ports.
-		if err := d.sync(r); err != nil {
-			d.drop(info.ID, err.Error())
-			return runState{}, err
-		}
-		go d.followRun(r)
-	}
-	st := d.snapshot(info.ID)
-	if len(st) == 0 {
+	if empty {
 		d.drop(info.ID, "nothing forwarded")
-		return runState{ID: info.ID, Label: info.Label(), Workspace: info.Workspace, Notes: notes}, errors.New(joinNotes(notes))
 	}
-	st[0].Notes = notes
-	d.noteBusy()
-	return st[0], nil
+	// Outside the lock: a probe may take a while.
+	return runState{ID: info.ID, Label: info.Label(), Workspace: info.Workspace, Ports: []portState{}, Notes: notes, Taken: freeInstead(taken, avoid)}, nil
 }
 
-func joinNotes(notes []string) string {
-	if len(notes) == 0 {
-		return "nothing forwarded"
+// picks says whether ports pick which of the run's ports are forwarded: one
+// of them has no local port. Only port:local ones are exceptions to --same.
+func picks(ports []mapping) bool {
+	for _, m := range ports {
+		if m.Local == 0 {
+			return true
+		}
 	}
-	out := notes[0]
-	for _, n := range notes[1:] {
-		out += "; " + n
+	return false
+}
+
+// everyPort is each port the run listens on, by number, with the
+// exceptions asked for (their local port; one the run does not listen on
+// is still forwarded: it was named).
+func everyPort(listening []api.Port, exceptions []mapping) []mapping {
+	local := map[int]int{}
+	for _, m := range exceptions {
+		local[m.Remote] = m.Local
+	}
+	var out []mapping
+	for _, p := range listening {
+		out = append(out, mapping{Remote: p.Port, Local: local[p.Port]})
+		delete(local, p.Port)
+	}
+	for _, m := range exceptions {
+		if _, left := local[m.Remote]; left {
+			out = append(out, m)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Remote < out[j].Remote })
+	return out
+}
+
+// bindAll binds a local port for each of want the run does not forward
+// yet, every one tried so a refusal names them all: the bound ports, why
+// the others were refused, and which of those were refused as taken.
+// Called with d.mu held.
+func (d *daemon) bindAll(r *drun, want []mapping, same bool) (bound []*dport, notes []string, taken []mapping) {
+	for _, m := range want {
+		asked := m.Local
+		if asked == 0 && same {
+			asked = m.Remote
+		}
+		if p := r.ports[m.Remote]; p != nil {
+			if asked > 0 && p.local != asked {
+				notes = append(notes, fmt.Sprintf("port %d is forwarded to localhost:%d already (apothecary forward stop %s %d first)", m.Remote, p.local, runRef(r.info.Workspace, r.info.ID), m.Remote))
+			}
+			continue
+		}
+		p, err := d.bind(r, m.Remote, asked)
+		if err != nil {
+			notes = append(notes, err.Error())
+			var te *takenError
+			if errors.As(err, &te) {
+				taken = append(taken, mapping{Remote: te.remote, Local: te.local})
+			}
+			continue
+		}
+		bound = append(bound, p)
+	}
+	return bound, notes, taken
+}
+
+// runRef is how a person names a run: its workspace, else its id.
+func runRef(workspace, id string) string {
+	if workspace != "" {
+		return workspace
+	}
+	return id
+}
+
+// suggestSpan is how many ports above a taken one are tried before any
+// free port is offered.
+const suggestSpan = 20
+
+// freeInstead gives each taken port a local port free now: the nearest
+// above the one asked for (5432 offers 5433), so the number still reads as
+// the service's, else any free one. None is offered twice, nor one in
+// avoid. Each is probed and let go: a suggestion, which something may take
+// before it is asked for.
+func freeInstead(taken []mapping, avoid map[int]bool) []mapping {
+	if len(taken) == 0 {
+		return nil
+	}
+	used := map[int]bool{}
+	for p := range avoid {
+		used[p] = true
+	}
+	out := make([]mapping, 0, len(taken))
+	for _, m := range taken {
+		out = append(out, mapping{Remote: m.Remote, Local: freeNear(m.Local, used)})
 	}
 	return out
 }
 
-// open listens locally for one of the run's ports: on local when it is
-// named, on the run's own port with same, else on a free port — the one
-// this run's port had last time when it is free. Called with d.mu held.
-func (d *daemon) open(r *drun, remote, local int, same, follow bool) error {
+// freeNear is a free local port near from, not in used (and now in it);
+// 0 when even the system has none to give.
+func freeNear(from int, used map[int]bool) int {
+	try := func(port int) int {
+		ln, err := listenLocal(port)
+		if err != nil {
+			return 0
+		}
+		got := port
+		if got == 0 {
+			got = ln.Addr().(*net.TCPAddr).Port
+		}
+		ln.Close()
+		used[got] = true
+		return got
+	}
+	for port := from + 1; port <= min(from+suggestSpan, 65535); port++ {
+		if used[port] {
+			continue
+		}
+		if got := try(port); got > 0 {
+			return got
+		}
+	}
+	return try(0)
+}
+
+// bind listens locally for one of the run's ports: on local when it is
+// named (taken: refused), else on a free port — the one this run's port
+// had last time when it is free. Called with d.mu held.
+func (d *daemon) bind(r *drun, remote, local int) (*dport, error) {
 	var ln net.Listener
 	var err error
-	switch {
-	case local > 0:
+	if local > 0 {
 		if ln, err = listenLocal(local); err != nil {
-			return fmt.Errorf("port %d: localhost:%d is taken", remote, local)
+			return nil, &takenError{remote: remote, local: local}
 		}
-	case same:
-		if ln, err = listenLocal(remote); err != nil {
-			if !follow {
-				return fmt.Errorf("port %d: localhost:%d is taken (forward it without --same, or name a local port: %d:<local>)", remote, remote, remote)
-			}
-			d.log.Printf("run %s: localhost:%d is taken; port %d goes to a free port", r.info.ID, remote, remote)
-			ln, err = listenLocal(0)
-		}
-	default:
+	} else {
 		if prev := d.assign.get(r.info.ID, remote); prev > 0 {
-			ln, err = listenLocal(prev)
+			ln, _ = listenLocal(prev)
 		}
 		if ln == nil {
-			ln, err = listenLocal(0)
+			if ln, err = listenLocal(0); err != nil {
+				return nil, fmt.Errorf("port %d: %w", remote, err)
+			}
 		}
 	}
-	if err != nil {
-		return fmt.Errorf("port %d: %w", remote, err)
+	return &dport{remote: remote, local: ln.Addr().(*net.TCPAddr).Port, ln: ln, free: local == 0}, nil
+}
+
+// commit starts forwarding a bound port. Called with d.mu held.
+func (d *daemon) commit(r *drun, p *dport) {
+	p.since = time.Now()
+	r.ports[p.remote] = p
+	if p.free {
+		d.assign.set(r.info.ID, p.remote, p.local)
 	}
-	p := &dport{remote: remote, local: ln.Addr().(*net.TCPAddr).Port, ln: ln, since: time.Now()}
-	r.ports[remote] = p
-	if local == 0 && !same {
-		d.assign.set(r.info.ID, remote, p.local)
-	}
-	d.log.Printf("run %s: port %d → localhost:%d", r.info.ID, remote, p.local)
+	d.log.Printf("run %s: port %d → localhost:%d", r.info.ID, p.remote, p.local)
 	go d.accept(r, p)
-	return nil
 }
 
 func (d *daemon) accept(r *drun, p *dport) {
@@ -360,66 +498,6 @@ func (d *daemon) accept(r *drun, p *dport) {
 			}
 		}()
 	}
-}
-
-// followRun keeps a run's forwards in step with what it listens on until
-// it is stopped, or the run or the sign-in is gone.
-func (d *daemon) followRun(r *drun) {
-	for {
-		select {
-		case <-r.ctx.Done():
-			return
-		case <-time.After(d.every):
-		}
-		if err := d.sync(r); err != nil {
-			if api.IsUnauthorized(err) || isNotFound(err) {
-				d.drop(r.info.ID, err.Error())
-				return
-			}
-			d.log.Printf("run %s: listing its ports: %v (retrying)", r.info.ID, err)
-		}
-	}
-}
-
-// sync opens what the run listens on and closes what it stopped listening on.
-func (d *daemon) sync(r *drun) error {
-	c, err := d.client()
-	if err != nil {
-		return err
-	}
-	ports, err := c.Ports(r.ctx, r.info.ID)
-	if err != nil {
-		return err
-	}
-	want := map[int]bool{}
-	for _, p := range ports.Listening() {
-		want[p.Port] = true
-	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.runs[r.info.ID] != r {
-		return nil // stopped meanwhile
-	}
-	for remote, p := range r.ports {
-		if !want[remote] {
-			p.ln.Close()
-			delete(r.ports, remote)
-			d.log.Printf("run %s: port %d stopped listening; localhost:%d closed", r.info.ID, remote, p.local)
-		}
-	}
-	added := make([]int, 0, len(want))
-	for remote := range want {
-		if r.ports[remote] == nil {
-			added = append(added, remote)
-		}
-	}
-	sort.Ints(added)
-	for _, remote := range added {
-		if err := d.open(r, remote, 0, r.same, true); err != nil {
-			d.log.Printf("run %s: %v", r.info.ID, err)
-		}
-	}
-	return nil
 }
 
 // drop ends a run's forwards, saying why in the log.
@@ -474,8 +552,8 @@ func (d *daemon) stop(req stopRequest) ([]runState, error) {
 			p.ln.Close()
 			delete(r.ports, remote)
 		}
-		// The ports named were all it had, and it is not following: done.
-		if len(r.ports) == 0 && !r.follow {
+		// The ports named were all it had: done.
+		if len(r.ports) == 0 {
 			d.closeRun(r)
 			delete(d.runs, r.info.ID)
 		}
@@ -502,6 +580,16 @@ func (d *daemon) find(ref string) *drun {
 	return nil
 }
 
+// state is the run's forwards, by port. Called with d.mu held.
+func (r *drun) state() runState {
+	st := runState{ID: r.info.ID, Label: r.info.Label(), Workspace: r.info.Workspace, Ports: []portState{}}
+	for _, p := range r.ports {
+		st.Ports = append(st.Ports, portState{Remote: p.remote, Local: p.local, Active: int(p.active.Load()), Since: p.since})
+	}
+	sort.Slice(st.Ports, func(i, j int) bool { return st.Ports[i].Remote < st.Ports[j].Remote })
+	return st
+}
+
 // snapshot is every run's forwards (or one run's), by label.
 func (d *daemon) snapshot(runID string) []runState {
 	d.mu.Lock()
@@ -511,12 +599,8 @@ func (d *daemon) snapshot(runID string) []runState {
 		if runID != "" && id != runID {
 			continue
 		}
-		st := runState{ID: id, Label: r.info.Label(), Workspace: r.info.Workspace, Follow: r.follow, Same: r.same, Ports: []portState{}}
-		for _, p := range r.ports {
-			st.Ports = append(st.Ports, portState{Remote: p.remote, Local: p.local, Active: int(p.active.Load()), Since: p.since})
-		}
-		sort.Slice(st.Ports, func(i, j int) bool { return st.Ports[i].Remote < st.Ports[j].Remote })
-		if len(st.Ports) == 0 && !st.Follow {
+		st := r.state()
+		if len(st.Ports) == 0 {
 			continue
 		}
 		out = append(out, st)

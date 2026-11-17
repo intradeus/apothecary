@@ -19,6 +19,20 @@ describe('CopyButton', () => {
 		expect(screen.queryByText(CMD)).not.toBeInTheDocument();
 	});
 
+	it('says what the command is for when labelled, still naming the command', async () => {
+		const user = userEvent.setup();
+		const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+		render(CopyButton, { command: CMD, label: 'forward' });
+		const labelled = screen.getByRole('button', { name: `forward: copy ${CMD}` });
+		expect(labelled.textContent).toBe(`${I.copy}\u00a0forward`);
+		expect(labelled).toHaveAttribute('title', CMD);
+
+		await user.click(labelled);
+
+		expect(write).toHaveBeenCalledExactlyOnceWith(CMD);
+		expect(labelled.textContent).toBe(`${I.ok}\u00a0forward`);
+	});
+
 	it('copies the command, ticks, then goes back', async () => {
 		const user = userEvent.setup();
 		const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();

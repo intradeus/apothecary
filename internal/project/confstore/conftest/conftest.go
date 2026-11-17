@@ -177,7 +177,7 @@ func fullProject() confstore.Project {
 			Editor: confstore.EditorConfig{Theme: "dark", FontSize: 13, TabSize: 2, FormatOnSave: true, WordWrap: true, TrustWorkspace: true},
 			Services: []confstore.ServiceConfig{{Name: "default", Description: "the app", Start: "make up", Stop: "make down",
 				Health: confstore.ServiceHealth{HTTP: "http://localhost:3000", TCP: 3000, Command: "true", Timeout: "1m", Interval: "5s"},
-				Ports:  []confstore.ServicePort{{Port: 3000, Label: "web", Path: "/app"}}}},
+				Ports:  []confstore.ServicePort{{Port: 3000, Label: "web", Path: "/app", Protocol: "http"}}}},
 			Browser: confstore.BrowserConfig{Enabled: true},
 			Docker:  true,
 		},

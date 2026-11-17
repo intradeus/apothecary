@@ -195,6 +195,13 @@ func TestServiceAddressesAndProbes(t *testing.T) {
 	if got := (&Service{}).Address(); got != "" {
 		t.Errorf("no port = %q", got)
 	}
+	tcp := ServicePort{Port: 5432, Protocol: ProtocolTCP}
+	if got := tcp.Address(); got != "localhost:5432" || tcp.Web() || tcp.Proto() != "tcp" || tcp.Name() != "port 5432" {
+		t.Errorf("a tcp port = %q web %v proto %q name %q", got, tcp.Web(), tcp.Proto(), tcp.Name())
+	}
+	if web := (ServicePort{Port: 3000, Label: "web"}); !web.Web() || web.Proto() != "http" || web.Name() != "web" {
+		t.Errorf("a port with no protocol is a web one: %+v", web)
+	}
 	if got := (&Service{Ports: []ServicePort{{Port: 1}, {Port: 2}}}).Address(); got != "http://localhost:1/" {
 		t.Errorf("first port = %q", got)
 	}

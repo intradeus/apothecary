@@ -28,7 +28,6 @@ import (
 	"apothecary/internal/run/runinput"
 	"apothecary/internal/skills"
 	"apothecary/internal/skills/skillstore"
-	"apothecary/internal/workspace/portrelay"
 )
 
 // --- errors -----------------------------------------------------------------
@@ -192,13 +191,23 @@ type EgressRuleResult struct {
 // the relay, Observed are listeners the in-workspace scanner found and nobody
 // has exposed yet.
 type RunPorts struct {
-	Ports    []portrelay.Exposure   `json:"ports"`
+	Ports    []RunPort              `json:"ports"`
 	Observed []envport.ObservedPort `json:"observed"`
 	// Links says whether this engine hands out browser links to workspace
 	// ports (an apps domain, or a listener per port in the dev loop). False on
 	// a cluster without an apps domain: ports are then reached with
 	// `apothecary forward`, which works either way.
 	Links bool `json:"links"`
+}
+
+// RunPort is one exposed port: its browser URL, and who listens on it when
+// the scanner saw it (the process, or the compose sibling), so a port keeps
+// its name once exposed.
+type RunPort struct {
+	Port    int    `json:"port"`
+	URL     string `json:"url"`
+	Process string `json:"process,omitempty"`
+	Service string `json:"service,omitempty"`
 }
 
 // ObservedPortsRequest is the in-workspace scanner's listener snapshot.

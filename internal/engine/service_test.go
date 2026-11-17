@@ -189,6 +189,10 @@ func TestChainEndStopsStageServicesOnly(t *testing.T) {
 	relay := portrelay.New("127.0.0.1")
 	defer relay.CloseAll()
 	h.setRelay(relay)
+	// A database first: the gate's link is the first web port's, and its
+	// context lists every port — the tcp one as the forward that reaches it.
+	h.res.Services[0].Ports = []resolution.ServicePort{{Port: 5432, Label: "db", Protocol: resolution.ProtocolTCP},
+		{Port: 3000, Label: "Shop front"}, {Port: 3001, Label: "Admin frontend", Path: "/admin"}}
 	every := services.WatchEvery
 	services.WatchEvery = time.Millisecond
 	t.Cleanup(func() { services.WatchEvery = every })
@@ -199,8 +203,14 @@ func TestChainEndStopsStageServicesOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := h.waitPing(t, PingGate)
-	if !strings.HasPrefix(p.Link, "http://127.0.0.1:") {
-		t.Errorf("gate link = %q, want the app's preview", p.Link)
+	if !strings.HasPrefix(p.Link, "http://127.0.0.1:") || strings.HasSuffix(p.Link, "/admin") {
+		t.Errorf("gate link = %q, want the shop front's preview", p.Link)
+	}
+	for _, want := range []string{`The service "default", port by port:`, "- db (tcp) - `apothecary forward ", " 5432`",
+		"- Shop front - " + p.Link + "\n", "- Admin frontend - http://127.0.0.1:", "/admin\n"} {
+		if !strings.Contains(p.Context, want) {
+			t.Errorf("gate context lacks %q:\n%s", want, p.Context)
+		}
 	}
 	waitEvent[*event.PhaseParked](t, h, runID) // the human acts once the gate has parked
 
@@ -213,8 +223,9 @@ func TestChainEndStopsStageServicesOnly(t *testing.T) {
 	if err != nil || !list.Workspace || len(list.Services) != 2 {
 		t.Fatalf("RunServices = %+v, %v", list, err)
 	}
-	if s := list.Services[0]; !s.Healthy || s.By != event.ServiceByStage || s.StageID != "up" || len(s.Ports) != 1 ||
-		s.Ports[0].Address != "http://localhost:3000/" || !strings.HasPrefix(s.Ports[0].URL, "http://127.0.0.1:") {
+	if s := list.Services[0]; !s.Healthy || s.By != event.ServiceByStage || s.StageID != "up" || len(s.Ports) != 3 ||
+		s.Ports[0].Protocol != "tcp" || s.Ports[0].URL != "" ||
+		s.Ports[1].Address != "http://localhost:3000/" || !strings.HasPrefix(s.Ports[1].URL, "http://127.0.0.1:") {
 		t.Errorf("default = %+v", s)
 	}
 	if s := list.Services[1]; !s.Healthy || s.By != event.ServiceByHuman || s.Probe != "tcp 5432" {

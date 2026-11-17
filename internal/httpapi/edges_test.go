@@ -517,11 +517,36 @@ func TestAppLandingStaysOnTheHost(t *testing.T) {
 	}
 }
 
+// No HTTP answer is a 502 naming both causes (nothing listens, or no web
+// server: a database closes on an HTTP request) and the forward that reaches
+// a port of any kind.
 func TestAppWorkspaceNotAnswering(t *testing.T) {
-	a := newAppWorld(t, "http://ui.test", tcpConn{"127.0.0.1:1"})
-	cookie, _ := a.grant(t, a.appURL)
-	if res, body := a.get(t, a.appURL, cookie); res.StatusCode != http.StatusBadGateway || !strings.Contains(body, "did not answer") {
-		t.Errorf("dead workspace = %d %s", res.StatusCode, body)
+	db, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	go func() {
+		for {
+			c, err := db.Accept()
+			if err != nil {
+				return
+			}
+			c.Close() // what Postgres does with "GET / HTTP/1.1"
+		}
+	}()
+	for name, conn := range map[string]tcpConn{"nothing listens": {"127.0.0.1:1"}, "not a web server": {db.Addr().String()}} {
+		a := newAppWorld(t, "http://ui.test", conn)
+		cookie, _ := a.grant(t, a.appURL)
+		res, body := a.get(t, a.appURL, cookie)
+		if res.StatusCode != http.StatusBadGateway {
+			t.Errorf("%s = %d %s", name, res.StatusCode, body)
+		}
+		for _, want := range []string{"port 3000 of this run gave no HTTP answer", "not a web server", "apothecary forward r1 3000"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: the 502 lacks %q:\n%s", name, want, body)
+			}
+		}
 	}
 }
 
@@ -573,11 +598,14 @@ func TestExposeThroughARelay(t *testing.T) {
 	if res.StatusCode != http.StatusOK || got.Port != 3000 || got.URL == "" {
 		t.Fatalf("expose = %d %s", res.StatusCode, body)
 	}
-	x.srv.Ports.ReportObservedPorts("r1", []envport.ObservedPort{{Port: 3000}, {Port: 4000}})
+	x.srv.Ports.ReportObservedPorts("r1", []envport.ObservedPort{{Port: 3000, Process: "node", Service: "web"}, {Port: 4000}})
 	_, body = x.do(t, "GET", "/api/runs/r1/ports", nil, nil)
 	ports := decode[RunPorts](t, body)
 	if len(ports.Ports) != 1 || len(ports.Observed) != 1 || ports.Observed[0].Port != 4000 {
 		t.Errorf("an exposed port stayed in the discovered list: %s", body)
+	}
+	if len(ports.Ports) == 1 && (ports.Ports[0].Service != "web" || ports.Ports[0].Process != "node") {
+		t.Errorf("an exposed port lost the name the scanner gave it: %s", body)
 	}
 	if !ports.Links {
 		t.Error("a relay hands out browser links")

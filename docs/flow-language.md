@@ -926,8 +926,9 @@ Every gate is the **same machine**: approve follows `on_success`, reject follows
 particular gate means ("approve the plan", "merge when satisfied") is said in its
 `question`, and what it hands over is its `input`: the files to review — a `file`
 port each, a `files` port's folder file by file (the first 20, none over 10 MB) —
-and at most one link (`run.mr.url`, `run.workspace`, `run.service.<name>`). Both
-are optional; a gate with no question is labelled by its stage id. The one
+and at most one link (`run.mr.url`, `run.workspace`, `run.service.<name>`) — a
+link that stands for several lists them all under the question: every merge
+request of a multi-repo run, every port of a service. Both are optional; a gate with no question is labelled by its stage id. The one
 decision every flow needs — "the workspace is parked, fix it, then run the stage
 again" — is not a gate you write but the `debug` leaf (§3).
 
@@ -1225,7 +1226,10 @@ project that knows how its app starts — declared in Workshop → Settings →
 Services: a `start` script run in the primary checkout, an optional `stop`, a
 health probe (an HTTP URL answering 2xx/3xx, a TCP port accepting, or a
 command exiting 0) with how long a start may take and how often it is probed
-after, and the ports it listens on. A start that keeps running *is* the
+after, and the ports it listens on — each with a label, a path its link opens,
+and a protocol: `http` (the default), a web app opened in a browser, or `tcp`
+(a database, a cache), which gets no browser link and is reached by
+forwarding it (`apothecary forward`). A start that keeps running *is* the
 service; one that exits 0 started it in the background (`docker compose up
 -d`, `make dev-up`) and its `stop` brings it down. A flow names a service,
 usually through a parameter, so one flow serves projects that call their app
@@ -1247,9 +1251,13 @@ A service a stage started is stopped when its chain ends — every one, when the
 run does; one a person started from the run page stays up until a person stops
 it or the workspace goes (a stage that restarts it makes it the stage's). The
 timeline records each start, readiness, stop and failure (`service_started`,
-`service_ready`, `service_stopped`, `service_failed`) and who did it. Its ports get preview links on the run page either way, and
-`run.service.<name>` (§4) is its address — `http://localhost:<port>` — for an
-agent, and the preview link for a gate. Run creation refuses a flow naming a
+`service_ready`, `service_stopped`, `service_failed`) and who did it. Its web ports get preview links on the run page either way, and
+`run.service.<name>` (§4) is every port it declares, one line each, `- <label> -
+<address>`: for an agent, where each answers in the workspace
+(`- Admin frontend - http://localhost:4321/admin`, `- Postgres (tcp) -
+localhost:5432`), so it picks the page it needs; for a gate, each web port's
+preview link (the first is the gate's link) and the `apothecary forward`
+command of the rest. Run creation refuses a flow naming a
 service the project does not declare.
 
 ### run_if
@@ -1537,7 +1545,7 @@ What the names are checked against follows from the stage type:
 | `run.git.status` | `git status --short` — staged, unstaged and untracked files, what a commit would record right now (the diffs compare commits, so they cannot see this); scoped per checkout like the diffs | `changeset` |
 | `run.mr.url` | the run's merge request link (create_mr's); the first when a multi-repo run opened several — a gate then lists them all; on a subject, the subject's | `link` |
 | `run.workspace` | the workspace's app link — the first port it exposed at provision (a devcontainer's `forwardPorts`), nothing when it declared none; the `debug` leaf hands it out by itself. Getting into the workspace is the run page's business: its terminal, its editor, the SSH door | `link` |
-| `run.service.<name>` | a project service's address while it runs: `http://localhost:<port>` for an agent (its first port), its preview link for a gate; not running, the agent is told so. The name may be a parameter: `run.service.$app` | `link` |
+| `run.service.<name>` | a project service's ports while it runs, every one, `- <label> - <address>` a line: for an agent, each address in the workspace (`http://localhost:<port><path>`, a tcp port's `localhost:<port>`); for a gate, each web port's preview link — the first is the gate's link — and the forward command of a tcp port. Not running, the agent is told so. The name may be a parameter: `run.service.$app` | `link` |
 | `run.ci.failure` | what failed in CI on the merge request a `ci_failed` watcher opened on — each failed check with the CI file that declares it, its job (and GitLab stage), its failed steps (GitHub Actions) and its link; a check another app reports, its name and summary. Never a log: the agent finds the job's script and runs it. Read once as the chain starts and kept on its `phase_started`. Only a `ci_failed` watcher's stages read it | `failure` |
 | `edge.failure` | what the failing stage printed — the last 8 KB, every secret the engine injected replaced by `[redacted:<kind>]` | `failure` |
 | `edge.verdict` | the last verdict on the stage before: an agent's, or a person's review at a gate — the summary and the comments, file by file. A rejection always carries one; an approval when it said something | `verdict` |

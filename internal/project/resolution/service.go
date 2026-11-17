@@ -31,14 +31,48 @@ type ServiceHealth struct {
 	Interval time.Duration
 }
 
+// ServicePort is one port a service listens on. Protocol says what a person
+// and an agent reach it with: "http" (the default, "" too) is a web app,
+// opened in a browser through its preview link; "tcp" is anything else (a
+// database, a cache), reached by forwarding it — never exposed, no link.
 type ServicePort struct {
-	Port  int
-	Label string
-	Path  string
+	Port     int
+	Label    string
+	Path     string
+	Protocol string
+}
+
+// The protocols a service port declares.
+const (
+	ProtocolHTTP = "http"
+	ProtocolTCP  = "tcp"
+)
+
+// Web says whether the port serves a web app: it gets a preview link.
+func (p ServicePort) Web() bool { return p.Protocol != ProtocolTCP }
+
+// Proto is the port's protocol, the default spelled out.
+func (p ServicePort) Proto() string {
+	if p.Web() {
+		return ProtocolHTTP
+	}
+	return ProtocolTCP
+}
+
+// Name is how the port is listed: its label, else its number.
+func (p ServicePort) Name() string {
+	if p.Label != "" {
+		return p.Label
+	}
+	return "port " + strconv.Itoa(p.Port)
 }
 
 // Address is where the port answers in the workspace: what an agent opens.
+// A tcp port has no scheme or path: localhost:5432.
 func (p ServicePort) Address() string {
+	if !p.Web() {
+		return "localhost:" + strconv.Itoa(p.Port)
+	}
 	path := p.Path
 	if path == "" {
 		path = "/"
@@ -46,7 +80,8 @@ func (p ServicePort) Address() string {
 	return "http://localhost:" + strconv.Itoa(p.Port) + path
 }
 
-// Address is the service's own: its first port's.
+// Address is the service's own: its first port's (its service_ready event
+// says it). A flow's run.service.<name> reads every port (Ports).
 func (s *Service) Address() string {
 	if len(s.Ports) == 0 {
 		return ""
