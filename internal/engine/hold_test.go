@@ -884,6 +884,81 @@ func TestAReleaseBeforeAQuestionParksHandsBackAfterTheAnswer(t *testing.T) {
 	}
 }
 
+// A release that comes once a question of the agent's has parked a held run
+// counts the holder's message still queued behind that question: it rides
+// into the answer's prompt, ahead of the handback that follows that turn.
+func TestReleasingAQuestionParkedHoldCountsItsQueuedMessage(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	runIDCh := make(chan string, 1)
+	endQ1 := make(chan struct{})
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: "Q1"},
+			agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "s"})
+		if _, err := h.e.RaisePing(<-runIDCh, "clarification", "which db?", "", nil, nil); err != nil {
+			return agentport.AgentResult{}, err
+		}
+		<-endQ1
+		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "Q1", StopReason: "end_turn"})
+		<-ctx.Done()
+		return agentport.AgentResult{Session: "s"}, ctx.Err()
+	}
+	r := &heldRunner{}
+	answerPrompt := make(chan string, 1)
+	h.runner.ResumeFunc = func(ctx context.Context, call fake.ResumeCall) (agentport.AgentResult, error) {
+		answerPrompt <- call.Reply
+		r.turn(call.In, "with the answer", nil)
+		return r.drive(ctx, call.In)
+	}
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runIDCh <- runID
+	p := h.waitPing(t, "clarification")
+	takeOverWhenLive(t, h, runID, "u1", true)
+	if _, err := h.e.SendMessage(runID, "use the test database"); err != nil {
+		t.Fatal(err)
+	}
+	close(endQ1)
+	waitUntil(t, "the run to park on its question", func() bool { return h.view(t, runID).Dormant })
+	if v := h.view(t, runID); v.Hold == nil || v.State != run.WaitingOnHuman {
+		t.Fatalf("parked = %s, hold %+v", v.State, v.Hold)
+	}
+	if err := h.e.Release(runID, "u1"); err != nil {
+		t.Fatalf("release of the parked hold: %v", err)
+	}
+	rel, _ := findPayload[*event.HoldReleased](h.events(t, runID))
+	if rel == nil || rel.Reason != event.HoldReleasedByUser || rel.Messages != 1 || rel.Turns != 0 {
+		t.Fatalf("hold account = %+v", rel)
+	}
+
+	if err := h.e.AnswerPing(p.ID, textAnswer("postgres")); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, h, runID)
+	evs := h.events(t, runID)
+	if v := h.view(t, runID); v.State != run.Completed || v.Hold != nil {
+		t.Errorf("final view = %s hold=%+v", v.State, v.Hold)
+	}
+	if got := <-answerPrompt; !strings.Contains(got, "use the test database") {
+		t.Errorf("the answer's prompt = %q", got)
+	}
+	want := "agent_prompted:" + event.PromptStage + " hold_taken hold_released message_delivered agent_prompted:" +
+		event.PromptAnswer + " agent_prompted:" + event.PromptHandback + " stage_completed"
+	if got := holdOrder(evs); got != want {
+		t.Errorf("order = %s\nwant    %s", got, want)
+	}
+	n := 0
+	for _, ev := range evs {
+		if _, ok := ev.Payload.(*event.HoldReleased); ok {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("released %d times", n)
+	}
+}
+
 // askingRunner scripts an agent whose turn Q1 asks a question and waits on
 // it, as the ask_human call does, then runs on with the answer and serves
 // the inbox as the ACP runner does.

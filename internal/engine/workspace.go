@@ -43,7 +43,7 @@ func (e *Engine) SendMessage(runID, text string) (string, error) {
 	// No loop: a run parked on the holder of a take-over is woken by their
 	// next message, as a run parked on a question is by its answer.
 	id := e.newID()
-	err := e.wakeHeld(context.Background(), runID, func(run.View) []event.Payload {
+	err := e.wakeHeld(context.Background(), runID, func(run.View, []event.Event) []event.Payload {
 		return []event.Payload{&event.MessageQueued{MessageID: id, Text: text}}
 	})
 	if err != nil {

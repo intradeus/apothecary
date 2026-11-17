@@ -66,7 +66,7 @@ func (e *Engine) TakeOver(runID, userID string, force bool) error {
 			return err
 		}
 	}
-	v, err := e.dormantView(context.Background(), runID)
+	v, _, err := e.dormantView(context.Background(), runID)
 	if err != nil {
 		return err
 	}
@@ -80,7 +80,10 @@ func (e *Engine) TakeOver(runID, userID string, force bool) error {
 // session is sent the handback prompt — at once when the agent is idle,
 // when its turn in flight ends otherwise. A turn that parks on the agent's
 // own question instead closes the hold as the run parks, and the handback
-// follows the answer's turn. A run parked on its holder is woken for it.
+// follows the answer's turn. A run parked with the hold in force — on its
+// holder, or on the agent's question — is woken for it; either way the
+// account includes the holder's messages still queued (they ride into the
+// next prompt), as releaseOnPark's does.
 func (e *Engine) Release(runID, userID string) error {
 	if h := e.liveLoop(runID); h != nil {
 		if !h.agentLive.Load() {
@@ -90,15 +93,31 @@ func (e *Engine) Release(runID, userID string) error {
 			return err
 		}
 	}
-	return e.wakeHeld(context.Background(), runID, func(v run.View) []event.Payload {
+	return e.wakeHeld(context.Background(), runID, func(v run.View, evs []event.Event) []event.Payload {
 		rel := &event.HoldReleased{StageID: v.Hold.StageID, Attempt: v.Hold.Attempt, UserID: userID,
 			Reason: event.HoldReleasedByUser, DurationMS: max(e.clock().Sub(v.Hold.Since).Milliseconds(), 0),
-			HoldSpend: event.HoldSpend{Turns: v.Hold.Turns, Messages: v.Hold.Messages}}
+			HoldSpend: event.HoldSpend{Turns: v.Hold.Turns, Messages: v.Hold.Messages + pendingMessages(evs)}}
 		if v.Hold.CostUSD > 0 {
 			rel.Usage = &event.Usage{CostUSD: v.Hold.CostUSD}
 		}
 		return []event.Payload{rel}
 	})
+}
+
+// pendingMessages counts the holder's messages queued and not yet delivered
+// (runcore.State.PendingMsgs): a parked leg's banked spend counts only the
+// delivered ones.
+func pendingMessages(evs []event.Event) int {
+	var rs runcore.State
+	for i := range evs {
+		switch p := evs[i].Payload.(type) {
+		case *event.MessageQueued:
+			rs.PendingMsgs = append(rs.PendingMsgs, p)
+		case *event.MessageDelivered:
+			rs.Delivered(p.MessageIDs)
+		}
+	}
+	return len(rs.PendingMsgs)
 }
 
 // holdLive hands a take-over request to the run's loop and waits to hear
@@ -131,16 +150,16 @@ func (e *Engine) holdLive(h *runHandle, req holdReq) error {
 	}
 }
 
-// dormantView is the log's view of a run with no loop.
-func (e *Engine) dormantView(ctx context.Context, runID string) (run.View, error) {
+// dormantView is the log's view of a run with no loop, and the log.
+func (e *Engine) dormantView(ctx context.Context, runID string) (run.View, []event.Event, error) {
 	evs, err := e.store.Events(ctx, runID, 0)
 	if err != nil {
-		return run.View{}, err
+		return run.View{}, nil, err
 	}
 	if len(evs) == 0 {
-		return run.View{}, fmt.Errorf("run %s not found", runID)
+		return run.View{}, nil, fmt.Errorf("run %s not found", runID)
 	}
-	return run.Reduce(evs), nil
+	return run.Reduce(evs), evs, nil
 }
 
 // wakeHeld appends to a run parked on the holder of a take-over and gives
@@ -148,7 +167,7 @@ func (e *Engine) dormantView(ctx context.Context, runID string) (run.View, error
 // answerDormant, it is the one path that writes to a dormant run's log from
 // outside its goroutine, serialized by wakeMu; a loop that appeared in the
 // meantime owns the log, and refusing beats writing behind it.
-func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View) []event.Payload) error {
+func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View, []event.Event) []event.Payload) error {
 	e.wakeMu.Lock()
 	defer e.wakeMu.Unlock()
 
@@ -158,7 +177,7 @@ func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View
 	if active {
 		return fmt.Errorf("run %s: %w", runID, errRunBusy)
 	}
-	v, err := e.dormantView(ctx, runID)
+	v, evs, err := e.dormantView(ctx, runID)
 	if err != nil {
 		return err
 	}
@@ -174,7 +193,7 @@ func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View
 		// own): the loop that is owed, or the answer, is what moves it.
 		return fmt.Errorf("run %s: %w", runID, errRunBusy)
 	}
-	payloads := append(build(v), &event.RunUnpaused{Reason: event.UnpauseHold})
+	payloads := append(build(v, evs), &event.RunUnpaused{Reason: event.UnpauseHold})
 	if err := e.AppendEvents(ctx, runID, payloads...); err != nil {
 		return err
 	}

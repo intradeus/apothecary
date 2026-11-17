@@ -99,7 +99,10 @@ new attempt of the stage owes nothing (`stage_started` clears it). A restart
 between that `hold_released` and the `stage_paused` that follows it finds the
 handback owed beside the question still open live: the question comes first
 there too — its turn is followed if it survived, or the attempt parks on it —
-and the handback follows the answer's turn.
+and the handback follows the answer's turn. A release that comes only once
+the question has parked the run with the hold in force (no loop: `Release`'s
+dormant path) counts those still-queued messages the same way; the parked
+leg's banked spend counts only delivered ones.
 
 This narrows what `2026-10-31-nobody-talks-to-an-agent-without-taking-it-over.md`
 removed: no message interrupts the agent; only a forced take-over can stop a
@@ -119,6 +122,7 @@ Held by: `TestPlanHoldRequest`, `TestHoldLegWaitsUntilTheHoldersMessagesGetTheir
 `TestAReleaseBehindAQueuedMessageWaitsForItsTurn`,
 `TestAReleaseBetweenDeliveryAndTurnStartWaitsForTheTurn`,
 `TestAReleaseBeforeAQuestionParksHandsBackAfterTheAnswer`,
+`TestReleasingAQuestionParkedHoldCountsItsQueuedMessage`,
 `TestRestartBetweenAReleaseAndItsQuestionParkParksOnTheQuestion`,
 `TestRestartForcedTakeOverStopsTheReattachedTurn` (engine);
 `TestReattachability`, `TestReattachFollowsTheTurnInFlight`,
