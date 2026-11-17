@@ -201,9 +201,10 @@ func runDaemon(ctx context.Context, env Env) error {
 		_ = srv.Close()
 	}()
 	logger.Printf("forward daemon %s started (pid %d)", env.Version, os.Getpid())
+	// Serve closes ln, and closing a unix listener unlinks its socket: a
+	// Remove here, after closeAll, could delete a successor daemon's socket.
 	err = srv.Serve(ln)
 	d.closeAll()
-	_ = os.Remove(sock)
 	logger.Printf("forward daemon stopped")
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
