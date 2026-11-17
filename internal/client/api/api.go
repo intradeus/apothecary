@@ -276,6 +276,29 @@ func (c *Client) RevokeToken(ctx context.Context, id string) error {
 	return c.do(ctx, c.http, "DELETE", "/api/me/tokens/"+url.PathEscape(id), nil, nil)
 }
 
+// SSHKey is a public key registered on the signed-in person's account.
+type SSHKey struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+// SSHKeys lists the signed-in person's SSH keys.
+func (c *Client) SSHKeys(ctx context.Context) ([]SSHKey, error) {
+	var keys []SSHKey
+	err := c.do(ctx, c.http, "GET", "/api/me/ssh-keys", nil, &keys)
+	return keys, err
+}
+
+// AddSSHKey registers a public key (an authorized_keys line) on the
+// signed-in person's account under name. A key already registered, on this
+// account or another, is refused with a 409.
+func (c *Client) AddSSHKey(ctx context.Context, name, publicKey string) (SSHKey, error) {
+	var k SSHKey
+	err := c.do(ctx, c.http, "POST", "/api/me/ssh-keys", map[string]string{"name": name, "public_key": publicKey}, &k)
+	return k, err
+}
+
 // Port is one port of a run's workspace: published (with a browser URL) or
 // seen listening.
 type Port struct {

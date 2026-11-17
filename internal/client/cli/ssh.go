@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/crypto/ssh"
+
+	"apothecary/internal/client/api"
 	"apothecary/internal/platform/wstunnel"
 )
 
@@ -19,22 +23,46 @@ const (
 	sshBlockEnd   = "# <<< apothecary <<<"
 )
 
-// cmdSSHConfig writes the block of ~/.ssh/config that sends every host named
-// <workspace>.apothecary through this client to the engine's SSH door: once,
-// and then ssh and VS Code Remote-SSH reach any workspace by name. The door
-// has one host key for every workspace, pinned once under one alias. Run
-// again, it replaces its own block and nothing else.
-func cmdSSHConfig(env Env, p *printer) error {
-	_, cfg, err := signedIn(env)
+// cmdSSHConfig sets this machine up for the engine's SSH door, once: its
+// own key (~/.ssh/apothecary_ed25519, made unless it is there), registered
+// on the signed-in person's account, and the block of ~/.ssh/config that
+// sends every host named <workspace>.apothecary through this client to the
+// door with that key; then ssh and VS Code Remote-SSH reach any workspace
+// by name. The door has one host key for every workspace, pinned once
+// under one alias. Run again, it reuses the key and replaces its own block
+// and nothing else. Nothing is written before the engine takes the
+// sign-in.
+func cmdSSHConfig(ctx context.Context, env Env, p *printer) error {
+	c, cfg, err := signedIn(env)
 	if err != nil {
 		return err
 	}
 	if env.Home == "" || env.Executable == "" {
 		return errors.New("cannot tell where ~/.ssh or this program is")
 	}
+	registered, err := c.SSHKeys(ctx)
+	if err != nil {
+		return err
+	}
 	u, _ := url.Parse(cfg.URL)
 	dir := filepath.Join(env.Home, ".ssh")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	key, err := loadOrCreateKey(dir, keyComment(env.Hostname))
+	if err != nil {
+		return err
+	}
+	fp := ssh.FingerprintSHA256(key.pub)
+	how := "reused"
+	if key.created {
+		how = "created"
+	}
+	p.say("Key %s (%s): %s.", key.path, fp, how)
+	if key.tightened {
+		p.say("Others could read it: it is now readable by you only.")
+	}
+	if err := register(ctx, c, registered, key, fp, cfg.URL, keyName(env.Hostname), p); err != nil {
 		return err
 	}
 	path := filepath.Join(dir, "config")
@@ -48,6 +76,8 @@ func cmdSSHConfig(env Env, p *printer) error {
 		"Host *" + wstunnel.SSHHostSuffix,
 		"    ProxyCommand " + quoteArg(env.Executable) + " ssh-proxy %h",
 		"    User apothecary",
+		"    IdentityFile " + identityFileArg(key.path),
+		"    IdentitiesOnly yes",
 		"    HostKeyAlias apothecary-" + u.Hostname(),
 		"    StrictHostKeyChecking accept-new",
 		sshBlockEnd,
@@ -57,6 +87,69 @@ func cmdSSHConfig(env Env, p *printer) error {
 	}
 	p.say("Wrote %s: ssh <workspace>%s now reaches a run's workspace through %s.", path, wstunnel.SSHHostSuffix, cfg.URL)
 	return nil
+}
+
+// register puts the key on the person's account unless it is among the
+// keys registered there already. A key on another account is not taken
+// over, removed or replaced: the person says which.
+func register(ctx context.Context, c *api.Client, registered []api.SSHKey, key machineKey, fp, engine, name string, p *printer) error {
+	if k, ok := findKey(registered, fp); ok {
+		p.say("Already registered on your account as %q.", k.Name)
+		return nil
+	}
+	k, err := c.AddSSHKey(ctx, name, authorizedLine(key.pub, key.comment))
+	var refused *api.Error
+	if errors.As(err, &refused) && refused.Status == http.StatusConflict {
+		// The engine refuses any fingerprint it holds, this account's too:
+		// another ssh-config, or the UI, may have registered the key since
+		// the list.
+		again, lerr := c.SSHKeys(ctx)
+		if lerr != nil {
+			return lerr
+		}
+		if k, ok := findKey(again, fp); ok {
+			p.say("Already registered on your account as %q.", k.Name)
+			return nil
+		}
+		return fmt.Errorf("%s is registered on another account of %s (%v): remove it there (Account → SSH keys), or move %s* aside and run apothecary ssh-config again", key.path, engine, err, key.path)
+	}
+	if err != nil {
+		return err
+	}
+	p.say("Registered it on your account as %q.", k.Name)
+	return nil
+}
+
+// findKey is the key of keys with fingerprint fp.
+func findKey(keys []api.SSHKey, fp string) (api.SSHKey, bool) {
+	for _, k := range keys {
+		if k.Fingerprint == fp {
+			return k, true
+		}
+	}
+	return api.SSHKey{}, false
+}
+
+// keyComment is the key's comment: who made it, on which machine.
+func keyComment(hostname string) string {
+	if hostname == "" {
+		return "apothecary"
+	}
+	return "apothecary@" + hostname
+}
+
+// keyName is the key's name on the account: the machine's, within the
+// engine's 64 characters.
+func keyName(hostname string) string {
+	if hostname == "" {
+		return "apothecary ssh-config"
+	}
+	const suffix = " (apothecary ssh-config)"
+	name := []rune(hostname + suffix)
+	if len(name) > 64 {
+		name = name[:64]
+	}
+	return strings.TrimSpace(string(name))
 }
 
 // withBlock is the config with our block replaced, or appended at the end

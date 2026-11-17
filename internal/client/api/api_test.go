@@ -99,6 +99,26 @@ func newEngine(t *testing.T) (*engine, *httptest.Server) {
 			w.WriteHeader(http.StatusNoContent)
 		}
 	})
+	mux.HandleFunc("GET /api/me/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
+		if bearer(w, r) {
+			_ = json.NewEncoder(w).Encode([]auth.SSHKey{{ID: "k1", Name: "laptop", Type: "ssh-ed25519", PublicKey: "ssh-ed25519 AAAA", Fingerprint: "SHA256:abc"}})
+		}
+	})
+	mux.HandleFunc("POST /api/me/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
+		if !bearer(w, r) {
+			return
+		}
+		var body httpapi.SSHKeyRequest
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		e.saw("add " + body.Name + ": " + body.PublicKey)
+		if body.Name == "taken" {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "this key is already registered"})
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(auth.SSHKey{ID: "k2", Name: body.Name, Type: "ssh-ed25519", PublicKey: body.PublicKey, Fingerprint: "SHA256:def"})
+	})
 	mux.HandleFunc("GET /api/runs/{id}/ports", func(w http.ResponseWriter, r *http.Request) {
 		if !bearer(w, r) {
 			return
@@ -179,6 +199,29 @@ func TestMeAndRevoke(t *testing.T) {
 	}
 	if err := client(t, srv, "good").RevokeToken(context.Background(), "t1"); err != nil || e.seen[0] != "revoke t1" {
 		t.Errorf("revoke = %v %v", err, e.seen)
+	}
+}
+
+// The client reads the engine's own encoding of one's SSH keys and sends a
+// key in the engine's request shape; a refusal keeps its status.
+func TestSSHKeys(t *testing.T) {
+	e, srv := newEngine(t)
+	c := client(t, srv, "good")
+	keys, err := c.SSHKeys(context.Background())
+	if err != nil || len(keys) != 1 || keys[0] != (SSHKey{ID: "k1", Name: "laptop", Fingerprint: "SHA256:abc"}) {
+		t.Fatalf("keys = %+v, %v", keys, err)
+	}
+	k, err := c.AddSSHKey(context.Background(), "desk", "ssh-ed25519 AAAA x@desk")
+	if err != nil || k != (SSHKey{ID: "k2", Name: "desk", Fingerprint: "SHA256:def"}) || e.seen[0] != "add desk: ssh-ed25519 AAAA x@desk" {
+		t.Errorf("add = %+v, %v, %v", k, err, e.seen)
+	}
+	_, err = c.AddSSHKey(context.Background(), "taken", "ssh-ed25519 AAAA")
+	var ae *Error
+	if !errors.As(err, &ae) || ae.Status != http.StatusConflict || ae.Message != "this key is already registered" {
+		t.Errorf("conflict = %v", err)
+	}
+	if _, err := client(t, srv, "stale").SSHKeys(context.Background()); !IsUnauthorized(err) {
+		t.Errorf("stale token = %v", err)
 	}
 }
 

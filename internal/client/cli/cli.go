@@ -68,8 +68,10 @@ usage: apothecary <command> [arguments]
   forward stop <run> [port]... | --all
                                stop forwarding
   forward logs                 the background forwarder's log
-  ssh-config                   route ssh <workspace>.apothecary (and VS Code
-                               Remote-SSH) through the engine, once
+  ssh-config                   set up ssh <workspace>.apothecary (and VS Code
+                               Remote-SSH) through the engine, once: creates
+                               this machine's key, registers it on your
+                               account and routes those hosts with it
   ssh-proxy <host>             the ssh ProxyCommand ssh-config installs
   update                       install the client release matching the engine
   version                      print the client's version
@@ -108,7 +110,7 @@ func Run(ctx context.Context, args []string, env Env) int {
 		err = runDaemon(ctx, env)
 	case "ssh-config":
 		warnDrift(ctx, env, p)
-		err = cmdSSHConfig(env, p)
+		err = cmdSSHConfig(ctx, env, p)
 	case "ssh-proxy":
 		err = cmdSSHProxy(ctx, args[1:], env)
 	case "update":
