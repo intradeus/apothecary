@@ -214,24 +214,38 @@ func runAggregates(t *testing.T, f Fixture) {
 		}
 	}
 	// Archived is apart from how a run ended: archiving the run that shipped
-	// left success_rate above, and each dimension filters on its own.
-	for _, c := range []struct {
-		filters []analytics.Filter
-		n       int64
-	}{
-		{[]analytics.Filter{{Field: "archived", Op: analytics.OpEq, Values: []string{"true"}}}, 1},
-		{[]analytics.Filter{{Field: "state", Op: analytics.OpEq, Values: []string{"completed"}}}, 2},
-		{[]analytics.Filter{{Field: "state", Op: analytics.OpEq, Values: []string{"completed"}},
-			{Field: "archived", Op: analytics.OpEq, Values: []string{"false"}}}, 1},
-		{[]analytics.Filter{{Field: "state", Op: analytics.OpEq, Values: []string{"abandoned"}},
-			{Field: "archived", Op: analytics.OpEq, Values: []string{"true"}}}, 0},
-	} {
-		if res := query(t, s, alice, analytics.Query{Grain: analytics.GrainRuns, Filters: c.filters}); res.Rows[0].N != c.n {
-			t.Errorf("runs filtered by %+v = %d, want %d", c.filters, res.Rows[0].N, c.n)
+	// left success_rate above, and each dimension filters on its own, on
+	// every grain that has both (a skillsets row is one run's pin, so its
+	// counts are the runs').
+	for _, grain := range []analytics.Grain{analytics.GrainRuns, analytics.GrainSkillsets} {
+		for _, c := range []struct {
+			filters []analytics.Filter
+			n       int64
+		}{
+			{[]analytics.Filter{{Field: "archived", Op: analytics.OpEq, Values: []string{"true"}}}, 1},
+			{[]analytics.Filter{{Field: "state", Op: analytics.OpEq, Values: []string{"completed"}}}, 2},
+			{[]analytics.Filter{{Field: "state", Op: analytics.OpEq, Values: []string{"completed"}},
+				{Field: "archived", Op: analytics.OpEq, Values: []string{"true"}}}, 1},
+			{[]analytics.Filter{{Field: "state", Op: analytics.OpEq, Values: []string{"completed"}},
+				{Field: "archived", Op: analytics.OpEq, Values: []string{"false"}}}, 1},
+			{[]analytics.Filter{{Field: "state", Op: analytics.OpEq, Values: []string{"abandoned"}},
+				{Field: "archived", Op: analytics.OpEq, Values: []string{"true"}}}, 0},
+			{[]analytics.Filter{{Field: "state", Op: analytics.OpEq, Values: []string{"abandoned"}},
+				{Field: "archived", Op: analytics.OpEq, Values: []string{"false"}}}, 1},
+		} {
+			if res := query(t, s, alice, analytics.Query{Grain: grain, Filters: c.filters}); res.Rows[0].N != c.n {
+				t.Errorf("%s filtered by %+v = %d, want %d", grain, c.filters, res.Rows[0].N, c.n)
+			}
 		}
 	}
+	// The archived skillset pin is the shipped run's: lint v1.
+	res := query(t, s, alice, analytics.Query{Grain: analytics.GrainSkillsets, GroupBy: []string{"skillset_version"},
+		Filters: []analytics.Filter{{Field: "archived", Op: analytics.OpEq, Values: []string{"true"}}}})
+	if len(res.Rows) != 1 || res.Rows[0].Dims[0] != "lint v1" || res.Rows[0].N != 1 {
+		t.Errorf("archived skillsets by version = %+v", res.Rows)
+	}
 	// Grouped and bucketed: per flow version, then per day.
-	res := query(t, s, alice, analytics.Query{Grain: analytics.GrainRuns, GroupBy: []string{"flow_hash"},
+	res = query(t, s, alice, analytics.Query{Grain: analytics.GrainRuns, GroupBy: []string{"flow_hash"},
 		Measures: []analytics.MeasureRef{m("cost_usd", analytics.AggSum)}, Order: &analytics.OrderBy{By: "flow_hash"}})
 	if len(res.Rows) != 2 || res.Rows[0].Dims[0] != "ha1" || !near(value(t, res, 0, 0), 3) || !near(value(t, res, 1, 0), 4) {
 		t.Errorf("by flow_hash = %+v", res.Rows)

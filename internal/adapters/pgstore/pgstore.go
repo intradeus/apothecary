@@ -70,7 +70,10 @@ type sub struct {
 // projections are derived data by design — rebuildable from events alone.
 // It costs one pass over every run's events, once, at the boot that applies
 // such a migration; a migration that touches no projection opts out by
-// leaving the header off.
+// leaving the header off. The request is durable: schema_migrations keeps it
+// (rebuild_pending) from the transaction that applies the migration until a
+// rebuild commits, so a boot whose rebuild fails or is cut short leaves it
+// for the next boot, which replays before serving.
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	return openWith(ctx, dsn, migrationsFS)
 }
@@ -207,7 +210,8 @@ func needsRebuild(sql []byte) bool {
 }
 
 // migrate applies src's pending migrations, reporting how many it applied
-// and whether any of them asked for a projections rebuild.
+// and whether a projections rebuild is pending: asked for by one of them, or
+// by a migration an earlier boot applied whose rebuild never committed.
 func (s *Store) migrate(ctx context.Context, src fs.FS) (applied int, rebuild bool, err error) {
 	migs, err := migrations(src)
 	if err != nil {
@@ -230,7 +234,10 @@ func (s *Store) migrate(ctx context.Context, src fs.FS) (applied int, rebuild bo
 	if _, err := s.pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (version int PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now(), name text, checksum text);
 		-- A ledger made before the names and checksums were recorded.
-		ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS name text, ADD COLUMN IF NOT EXISTS checksum text`); err != nil {
+		ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS name text, ADD COLUMN IF NOT EXISTS checksum text;
+		-- A migration whose projections rebuild has not committed yet: a
+		-- ledger from before it kept one has none pending.
+		ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS rebuild_pending boolean NOT NULL DEFAULT false`); err != nil {
 		return 0, false, fmt.Errorf("migrations table: %w", err)
 	}
 	done, err := s.appliedMigrations(ctx)
@@ -263,6 +270,7 @@ func (s *Store) migrate(ctx context.Context, src fs.FS) (applied int, rebuild bo
 		if !ok {
 			continue
 		}
+		rebuild = rebuild || a.rebuild
 		sum := checksum(sqls[i])
 		const reset = "reset it if it is a development database, else run the apothecaryd that migrated it"
 		switch {
@@ -291,7 +299,7 @@ func (s *Store) migrate(ctx context.Context, src fs.FS) (applied int, rebuild bo
 			_ = tx.Rollback(ctx)
 			return applied, rebuild, fmt.Errorf("migration %s: %w", m.name, err)
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version, name, checksum) VALUES ($1, $2, $3)`, m.version, m.name, checksum(sqls[i])); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version, name, checksum, rebuild_pending) VALUES ($1, $2, $3, $4)`, m.version, m.name, checksum(sqls[i]), needsRebuild(sqls[i])); err != nil {
 			_ = tx.Rollback(ctx)
 			return applied, rebuild, err
 		}
@@ -305,18 +313,22 @@ func (s *Store) migrate(ctx context.Context, src fs.FS) (applied int, rebuild bo
 }
 
 // appliedMigration is a schema_migrations row's file name and checksum, both
-// empty on a row from before the ledger kept them.
-type appliedMigration struct{ name, checksum string }
+// empty on a row from before the ledger kept them, and whether the
+// projections rebuild it asked for is still to commit.
+type appliedMigration struct {
+	name, checksum string
+	rebuild        bool
+}
 
 func (s *Store) appliedMigrations(ctx context.Context) (map[int]appliedMigration, error) {
-	rows, err := s.pool.Query(ctx, `SELECT version, coalesce(name, ''), coalesce(checksum, '') FROM schema_migrations`)
+	rows, err := s.pool.Query(ctx, `SELECT version, coalesce(name, ''), coalesce(checksum, ''), rebuild_pending FROM schema_migrations`)
 	if err != nil {
 		return nil, fmt.Errorf("read migrations table: %w", err)
 	}
 	applied := map[int]appliedMigration{}
 	var v int
 	var a appliedMigration
-	if _, err := pgx.ForEachRow(rows, []any{&v, &a.name, &a.checksum}, func() error {
+	if _, err := pgx.ForEachRow(rows, []any{&v, &a.name, &a.checksum, &a.rebuild}, func() error {
 		applied[v] = a
 		return nil
 	}); err != nil {
@@ -765,7 +777,9 @@ func (s *Store) unsubscribe(runID string, sb *sub) {
 // RebuildProjections truncates every projection (runs, pings, snapshots,
 // the run analytics) and replays every run's events through the same
 // projection code the append path uses. Snapshot BLOBS are untouched —
-// rebuilt rows re-point at them by sha (DESIGN-FILES §3.3).
+// rebuilt rows re-point at them by sha (DESIGN-FILES §3.3). The same
+// transaction clears every migration's pending rebuild (migrate), so the
+// request is settled exactly when a replay commits.
 //
 // The log is read as one stream in (run_id, seq) order on its own
 // connection, each run projected as its last row goes by: one query for the
@@ -784,7 +798,8 @@ func (s *Store) RebuildProjections(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `TRUNCATE runs, pings, ping_review_comments, snapshots, run_facts, stage_attempts, run_skillsets`); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE schema_migrations SET rebuild_pending = false WHERE rebuild_pending;
+		TRUNCATE runs, pings, ping_review_comments, snapshots, run_facts, stage_attempts, run_skillsets`); err != nil {
 		return 0, err
 	}
 	readCtx, cancel := context.WithCancel(ctx)

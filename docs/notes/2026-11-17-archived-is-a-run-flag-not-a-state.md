@@ -41,6 +41,15 @@ What now:
   always follows the event that ended the run) and fills both columns. No
   data fix. A saved filter on `state = archived` matches nothing after it;
   the `archived` dimension replaces it.
+- **The rebuild request is durable.** Until now `migrate` committed a
+  migration and its ledger row, and `Open` rebuilt afterwards: a boot whose
+  rebuild failed or was cut short left the migration applied and the next
+  boot served unrebuilt rows — for 0007, `state = 'archived'` with no flag.
+  `schema_migrations.rebuild_pending` (a column the ledger code adds, like
+  `name` and `checksum`) is set in the transaction that applies a
+  migration with the header, and cleared in the transaction of the rebuild
+  that replays it, so every boot rebuilds before serving while one is
+  pending.
 - **CPUI**: the status chip shows the outcome plus an "Archived" marker
   (DESIGN §3.1); the runs lists filter Finished on outcome and on archived
   apart, both "any" by default so the list reads as before.
@@ -54,6 +63,8 @@ engine `TestArchive`, `TestRetryRefusals`,
 `TestEnvironmentCapacityNamesPendingCleanup`; httpapi `TestGetSwarm`;
 pgstore `TestRunArchivedFlagMigration`,
 `TestRunFactsArchivedKeepsTheOutcome`, `TestConfCRUDRoundtrip` (project
-deletion); the analytics contract (`archived` and `state` filter apart,
-success rate unchanged by an archive, drill rows carry the flag); and the
-CPUI's `run/filter.test.ts` and `StatusChip.test.ts`.
+deletion), `TestOpenFailsWhenThePostMigrationRebuildFails` (the boot after
+a failed rebuild replays, the one after that does not); the analytics
+contract (`archived` and `state` filter apart on the runs and skillsets
+grains, success rate unchanged by an archive, drill rows carry the flag);
+and the CPUI's `run/filter.test.ts` and `StatusChip.test.ts`.
