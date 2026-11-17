@@ -13,6 +13,7 @@ describe('NAV', () => {
 			'War room',
 			'Tickets',
 			'Merge requests',
+			'Skills',
 			'Analytics',
 			'System'
 		]);
@@ -27,6 +28,7 @@ describe('NAV', () => {
 			'/war-room',
 			'/tickets',
 			'/merge-requests',
+			'/skills',
 			'/analytics',
 			'/system/integrations'
 		]);
@@ -37,6 +39,7 @@ describe('NAV', () => {
 			'notices',
 			'warRoom',
 			'mrs',
+			'skills',
 			'analytics',
 			'system'
 		]);
@@ -54,7 +57,8 @@ describe('NAV', () => {
 		['tickets', '/tickets/new'],
 		['mrs', '/merge-requests/01PROJ/12'],
 		['analytics', '/analytics/scorecards'],
-		['system', '/system/skills/abc']
+		['skills', '/skills/sets/abc'],
+		['system', '/system/integrations/harness']
 	])('keeps %s lit on the pages inside it', (id, path) => {
 		expect(item(id).match(path)).toBe(true);
 	});
@@ -68,6 +72,7 @@ describe('NAV', () => {
 			'/tickets/1',
 			'/merge-requests',
 			'/analytics/d1',
+			'/skills/abc',
 			'/system/provisioner'
 		])
 			expect(NAV.filter((n) => n.match(path))).toHaveLength(1);

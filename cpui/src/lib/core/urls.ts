@@ -19,14 +19,7 @@ export type WorkshopTab =
 export const INTEGRATION_PORTS = ['repository', 'ticketsource', 'harness'] as const;
 export type IntegrationPort = (typeof INTEGRATION_PORTS)[number];
 export type SystemSection =
-	| 'integrations'
-	| 'providers'
-	| 'skills'
-	| 'channels'
-	| 'account'
-	| 'users'
-	| 'provisioner'
-	| 'observability';
+	'integrations' | 'providers' | 'channels' | 'account' | 'users' | 'provisioner' | 'observability';
 
 /** Route builders. */
 export const to = {
@@ -70,12 +63,13 @@ export const to = {
 	limits: () => '/system/provisioner#limits',
 	account: () => '/system/account',
 	users: () => '/system/users',
-	// The skill library (TODO 38): one's skills and skillsets, under System.
-	skills: () => '/system/skills',
-	newSkill: () => '/system/skills/new',
-	skill: (skillId: string) => `/system/skills/${skillId}`,
-	newSkillset: () => '/system/skills/sets/new',
-	skillset: (skillsetId: string) => `/system/skills/sets/${skillsetId}`,
+	// The skill library (TODO 38): one's skills and skillsets, a section of
+	// its own in the sidebar.
+	skills: () => '/skills',
+	newSkill: () => '/skills/new',
+	skill: (skillId: string) => `/skills/${skillId}`,
+	newSkillset: () => '/skills/sets/new',
+	skillset: (skillsetId: string) => `/skills/sets/${skillsetId}`,
 	// Run analytics (TODO 23): the user's dashboards and scorecards.
 	analytics: () => '/analytics',
 	dashboard: (id: string) => `/analytics/${encodeURIComponent(id)}`,

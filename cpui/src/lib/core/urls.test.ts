@@ -39,11 +39,11 @@ describe('to', () => {
 		[to.integrations('harness'), '/system/integrations/harness'],
 		[to.account(), '/system/account'],
 		[to.users(), '/system/users'],
-		[to.skills(), '/system/skills'],
-		[to.newSkill(), '/system/skills/new'],
-		[to.skill('s1'), '/system/skills/s1'],
-		[to.newSkillset(), '/system/skills/sets/new'],
-		[to.skillset('s1'), '/system/skills/sets/s1'],
+		[to.skills(), '/skills'],
+		[to.newSkill(), '/skills/new'],
+		[to.skill('s1'), '/skills/s1'],
+		[to.newSkillset(), '/skills/sets/new'],
+		[to.skillset('s1'), '/skills/sets/s1'],
 		[to.warRoom(), '/war-room']
 	])('builds %s', (built, url) => {
 		expect(built).toBe(url);

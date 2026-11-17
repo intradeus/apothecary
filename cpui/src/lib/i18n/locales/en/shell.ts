@@ -7,6 +7,7 @@ export default {
 	'nav.runs': 'Runs',
 	'nav.tickets': 'Tickets',
 	'nav.mrs': 'Merge requests',
+	'nav.skills': 'Skills',
 	'nav.analytics': 'Analytics',
 	'nav.system': 'System',
 

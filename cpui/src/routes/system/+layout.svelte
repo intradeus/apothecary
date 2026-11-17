@@ -37,7 +37,6 @@
 	const SECTIONS: Section[] = $derived([
 		section('providers', I.providers),
 		section('integrations', I.integrations),
-		section('skills', I.skills),
 		section('channels', I.channels),
 		section('account', I.members),
 		...(session.admin ? [section('users', I.members), section('observability', I.info)] : []),
