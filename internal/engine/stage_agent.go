@@ -156,7 +156,12 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		// A take-over in force (or its handback owed) decides what the
 		// session gets next, ahead of the restart reply: the holder's words,
 		// the handback — or nothing yet, and the attempt parks on them.
-		if len(asks) == 0 {
+		// The agent's own questions still open live after a crash come
+		// first (a crash between a release's hold_released and the
+		// stage_paused of the question it waited on leaves both): their
+		// turn is followed, or the attempt parks on them below, and the
+		// hold's words or handback follow the answer's turn.
+		if len(asks) == 0 && !(crashed && haveSession && len(x.liveAsks(st)) > 0) {
 			hr, err := x.holdReentry(st, iter, crashed && haveSession, runner, session)
 			if err != nil {
 				return err

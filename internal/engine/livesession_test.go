@@ -659,3 +659,42 @@ func TestRestartWithALiveQuestionButNoTurnParksOnIt(t *testing.T) {
 		t.Errorf("reattached to nothing: %v", rr.attached)
 	}
 }
+
+// A release that waited on a turn the agent's own question parked is put on
+// the record (hold_released) before the attempt parks on the question
+// (stage_paused). A crash between the two leaves a handback owed beside a
+// question still open live: the question comes first — the attempt parks on
+// it, and the session is resumed with the answer, not the handback.
+func TestRestartBetweenAReleaseAndItsQuestionParkParksOnTheQuestion(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	rr := &reattachRunner{AgentRunner: h.runner, can: false}
+	h.res.Runner = rr
+	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{Session: "sess-r", TurnsUsed: 1}, nil
+	}
+	seedLiveAttempt(t, h, "r-w",
+		&event.HoldTaken{StageID: "build", Attempt: 1, UserID: "u1"},
+		&event.PingRaised{PingID: "p-live", Type: "clarification", Question: "rename it?", StageID: "build", Form: textForm(), AnswerKind: event.AnswerForm},
+		&event.HoldReleased{StageID: "build", Attempt: 1, UserID: "u1", Reason: event.HoldReleasedByUser})
+	if err := h.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	paused := waitEvent[*event.StagePaused](t, h, "r-w")
+	if len(paused.PingIDs) != 1 || paused.PingIDs[0] != "p-live" {
+		t.Fatalf("stage_paused = %+v", paused)
+	}
+	h.e.Wait("r-w")
+	if r := h.runner.ResumeCalls; len(r) != 0 {
+		t.Fatalf("resumed before the answer: %+v", r)
+	}
+	if p, ok := findPayload[*event.AgentPrompted](h.events(t, "r-w")); ok {
+		t.Fatalf("prompted before the answer: %+v", p)
+	}
+	if err := h.e.AnswerPing("p-live", textAnswer("yes")); err != nil {
+		t.Fatal(err)
+	}
+	waitEvent[*event.RunCompleted](t, h, "r-w")
+	if r := h.runner.ResumeCalls; len(r) == 0 || !strings.Contains(r[0].Reply, "yes") || strings.Contains(r[0].Reply, handbackPrompt) {
+		t.Fatalf("resume calls = %+v, want the answer first", r)
+	}
+}
