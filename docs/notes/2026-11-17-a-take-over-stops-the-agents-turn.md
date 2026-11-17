@@ -102,7 +102,11 @@ there too â€” its turn is followed if it survived, or the attempt parks on it â€
 and the handback follows the answer's turn. A release that comes only once
 the question has parked the run with the hold in force (no loop: `Release`'s
 dormant path) counts those still-queued messages the same way; the parked
-leg's banked spend counts only delivered ones.
+leg's banked spend counts only delivered ones. A release also waits on an
+open question of the agent's, one registered while its `turn_start` is still
+on its way to the loop included (`HoldRequest.QuestionOpen`): handing back
+at once would send the handback into the session about to park on that
+question, and the answer's resumed session would never get it.
 
 This narrows what `2026-10-31-nobody-talks-to-an-agent-without-taking-it-over.md`
 removed: no message interrupts the agent; only a forced take-over can stop a
@@ -122,6 +126,7 @@ Held by: `TestPlanHoldRequest`, `TestHoldLegWaitsUntilTheHoldersMessagesGetTheir
 `TestAReleaseBehindAQueuedMessageWaitsForItsTurn`,
 `TestAReleaseBetweenDeliveryAndTurnStartWaitsForTheTurn`,
 `TestAReleaseBeforeAQuestionParksHandsBackAfterTheAnswer`,
+`TestAReleaseBesideARegisteredQuestionHandsBackAfterTheAnswer`,
 `TestReleasingAQuestionParkedHoldCountsItsQueuedMessage`,
 `TestRestartBetweenAReleaseAndItsQuestionParkParksOnTheQuestion`,
 `TestRestartForcedTakeOverStopsTheReattachedTurn` (engine);

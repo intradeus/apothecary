@@ -103,8 +103,9 @@ const (
 	HoldRefuseNotHeld
 	// HoldAlreadyReleasing: already handing back when the turn in flight ends.
 	HoldAlreadyReleasing
-	// HoldReleaseAfterTurn: the handback follows the turn in flight, or the
-	// one the queued message is about to start.
+	// HoldReleaseAfterTurn: the handback follows the turn in flight, the
+	// one the queued message is about to start, or the one the agent's open
+	// question is from.
 	HoldReleaseAfterTurn
 	// HoldHandBack: the agent is idle, the handback goes now.
 	HoldHandBack
@@ -129,7 +130,9 @@ type HoldRequest struct {
 // A forced take stops the turn in flight unless that turn waits on its own
 // question: the agent is not working then, and a turn ending on an open
 // question parks the run. A release waits while the agent is busy — a turn
-// in flight, or a message queued to start one.
+// in flight, a message queued to start one, or a question of its own, whose
+// turn either runs on with the answer or parks the run, the handback then
+// owed to the session the answer resumes.
 func PlanHoldRequest(r HoldRequest) HoldMove {
 	switch {
 	case r.Take && r.Held:
@@ -142,7 +145,7 @@ func PlanHoldRequest(r HoldRequest) HoldMove {
 		return HoldRefuseNotHeld
 	case r.Releasing:
 		return HoldAlreadyReleasing
-	case r.TurnOpen || r.Queued:
+	case r.TurnOpen || r.Queued || r.QuestionOpen:
 		return HoldReleaseAfterTurn
 	}
 	return HoldHandBack

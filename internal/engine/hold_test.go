@@ -1159,6 +1159,74 @@ func TestALateTurnStartKeepsTheClockStoppedOnAnOpenQuestion(t *testing.T) {
 	}
 }
 
+// A release that comes while the agent's question is registered and its
+// turn's start has not reached the run's loop waits for that turn, as for
+// any turn in flight: the turn then parks on its question, and the handback
+// follows the answer's turn in the session it resumes, not the parked one.
+func TestAReleaseBesideARegisteredQuestionHandsBackAfterTheAnswer(t *testing.T) {
+	registered, letGo := make(chan struct{}), make(chan struct{})
+	prev := raiseRegistered
+	raiseRegistered = func(*Ping) { close(registered); <-letGo }
+	t.Cleanup(func() { raiseRegistered = prev })
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	runIDCh := make(chan string, 1)
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		if _, err := h.e.RaisePing(<-runIDCh, "clarification", "which db?", "", nil, nil); err != nil {
+			return agentport.AgentResult{}, err
+		}
+		// The turn's start, behind its question, and its end on it.
+		emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: "Q1"},
+			agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "s"},
+			agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "Q1", StopReason: "end_turn"})
+		<-ctx.Done()
+		return agentport.AgentResult{Session: "s"}, ctx.Err()
+	}
+	r := &heldRunner{}
+	h.runner.ResumeFunc = func(ctx context.Context, call fake.ResumeCall) (agentport.AgentResult, error) {
+		r.turn(call.In, "with the answer", nil)
+		return r.drive(ctx, call.In)
+	}
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runIDCh <- runID
+	select {
+	case <-registered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the question was never registered")
+	}
+	takeOverWhenLive(t, h, runID, "u1", true) // no turn open yet
+	if err := h.e.Release(runID, "u1"); err != nil {
+		t.Fatalf("release beside the question: %v", err)
+	}
+	if logHas(h.events(t, runID), func(p *event.AgentPrompted) bool { return p.Kind == event.PromptHandback }) {
+		t.Fatal("handed back into a session about to park on its question")
+	}
+	close(letGo)
+	p := h.waitPing(t, "clarification")
+	waitUntil(t, "the run to park on its question", func() bool { return h.view(t, runID).Dormant })
+	if v := h.view(t, runID); v.Hold != nil || v.State != run.WaitingOnHuman {
+		t.Fatalf("parked = %s, hold %+v", v.State, v.Hold)
+	}
+
+	if err := h.e.AnswerPing(p.ID, textAnswer("postgres")); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, h, runID)
+	if v := h.view(t, runID); v.State != run.Completed || v.Hold != nil {
+		t.Errorf("final view = %s hold=%+v", v.State, v.Hold)
+	}
+	want := "agent_prompted:" + event.PromptStage + " hold_taken hold_released agent_prompted:" +
+		event.PromptAnswer + " agent_prompted:" + event.PromptHandback + " stage_completed"
+	if got := holdOrder(h.events(t, runID)); got != want {
+		t.Errorf("order = %s\nwant    %s", got, want)
+	}
+	if b := r.delivered(); len(b) != 1 || len(b[0]) != 1 || b[0][0].Text != handbackPrompt {
+		t.Errorf("delivered after the answer = %+v", b)
+	}
+}
+
 // Once a forced take-over has decided to stop the agent's turn, a question
 // that turn raises is refused rather than opened on a turn about to end
 // (which would park the run); the agent waits on the holder as after any

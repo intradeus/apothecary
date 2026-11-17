@@ -78,6 +78,7 @@ func TestPlanHoldRequest(t *testing.T) {
 		{HoldRequest{Held: true, Releasing: true, TurnOpen: true}, HoldAlreadyReleasing},
 		{HoldRequest{Held: true, TurnOpen: true}, HoldReleaseAfterTurn},
 		{HoldRequest{Held: true, Queued: true}, HoldReleaseAfterTurn},
+		{HoldRequest{Held: true, QuestionOpen: true}, HoldReleaseAfterTurn}, // its turn_start still on its way
 		{HoldRequest{Held: true}, HoldHandBack},
 	}
 	for _, tt := range tests {

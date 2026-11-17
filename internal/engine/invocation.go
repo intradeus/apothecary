@@ -446,8 +446,9 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			// Planned under the lock the agent's questions are registered
 			// under: a question registered first is open, even while it is
 			// still on its way to this loop, so a forced take-over leaves its
-			// turn alone. The stop is only asked here; a question raised
-			// before the runner takes it up (acceptStop) keeps the turn.
+			// turn alone and a release waits on that turn. The stop is only
+			// asked here; a question raised before the runner takes it up
+			// (acceptStop) keeps the turn.
 			x.e.mu.Lock()
 			move := runcore.PlanHoldRequest(runcore.HoldRequest{Take: req.take, Force: req.force,
 				Held: held, Releasing: releasing, TurnOpen: turnOpen,
