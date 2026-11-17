@@ -1101,9 +1101,15 @@ func TestTheHoldersTurnMayAskWhileTheLoopIsBehindTheStop(t *testing.T) {
 				}
 				// The loop stalls on the notice; the stopped turn ends behind
 				// it and the holder's turn starts and asks, all before the
-				// loop reads them.
-				emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvNotice, Text: "stopping"},
-					agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "Q1", StopReason: "cancelled"},
+				// loop reads them. Only once it is stalled: a loop free to
+				// pick would take the question before the notice.
+				emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvNotice, Text: "stopping"})
+				select {
+				case <-s.reached:
+				case <-ctx.Done():
+					return agentport.AgentResult{}, ctx.Err()
+				}
+				emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "Q1", StopReason: "cancelled"},
 					agentport.AgentEvent{Kind: agentport.AgentEvUserMessage, Messages: msgs},
 					agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: "Q2"})
 				p, err := h.e.RaisePing(runID, "clarification", "which db?", "", nil, nil)
@@ -1207,9 +1213,15 @@ func TestTheHoldersTurnMayAskBeforeItsStartIsReported(t *testing.T) {
 				}
 				// The loop stalls on the notice; the stopped turn's end is
 				// reported behind it, then the holder's turn asks, and only
-				// then is its start reported.
-				emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvNotice, Text: "stopping"},
-					agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "Q1", StopReason: "cancelled"},
+				// then is its start reported. Only once it is stalled: a loop
+				// free to pick would take the question before the notice.
+				emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvNotice, Text: "stopping"})
+				select {
+				case <-s.reached:
+				case <-ctx.Done():
+					return agentport.AgentResult{}, ctx.Err()
+				}
+				emitAll(call.In, agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "Q1", StopReason: "cancelled"},
 					agentport.AgentEvent{Kind: agentport.AgentEvUserMessage, Messages: msgs})
 				raised := make(chan *Ping, 1)
 				go func() {
