@@ -64,7 +64,7 @@ is kept locally.
 
 - **A remote ticket stores no status:** `status_id` is NULL on every remote
   record, since no remote status rows exist any more; the status is read live.
-- **Placeholder remote ids** (migration `0004_live_tickets.sql`): a remote
+- **Placeholder remote ids** (migration `0006_live_tickets.sql`): a remote
   ticket imported before `remote_id` was kept gets `legacy:<id>`, and the
   younger of two records of one issue (two users or workshops imported it)
   gets `dup:<id>`. No issue ever matches either, so their runs still resolve

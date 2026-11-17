@@ -380,6 +380,14 @@ tasks:
       - rm -rf package swagger-ui-dist-*.tgz
       - echo "vendored $(du -sh . | cut -f1) of Swagger UI"
 
+  # --- migrations --------------------------------------------------------------
+  # migrations.sum lists every migration's name and checksum under a total, so
+  # two branches that each add one conflict on it in git (pgstore.MigrationsSum).
+  migrations:sum:
+    desc: 'Write internal/adapters/pgstore/migrations/migrations.sum after adding, renaming or renumbering a migration (a stale one fails a unit test)'
+    cmds:
+      - go run ./cmd/migrationsum
+
   # --- checks: each CI job is one task, named after it -------------------------
   # .github/workflows/ci.yml's jobs are <side>-<check>; each runs the task
   # <side>:<check>, so `task go:test` is exactly what the go-test job runs.

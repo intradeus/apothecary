@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -139,6 +141,124 @@ func TestMigrateAppliesALaterMigrationOnce(t *testing.T) {
 	}
 }
 
+// The committed migrations.sum is what makes two branches that each add a
+// migration conflict in git; one that fell behind the directory protects
+// nothing. Regenerate with `task migrations:sum`.
+func TestCommittedMigrationsSumIsCurrent(t *testing.T) {
+	have, err := os.ReadFile(filepath.Join("migrations", "migrations.sum"))
+	if err != nil {
+		t.Fatalf("%v — run `task migrations:sum`", err)
+	}
+	want, err := MigrationsSum()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(have) != string(want) {
+		t.Error("migrations/migrations.sum is out of date with the migrations — run `task migrations:sum`")
+	}
+}
+
+// The total line is the one every change to the migrations rewrites: adding
+// one, renaming or renumbering it, editing it. Two branches doing any of
+// these both change that line, which is the conflict.
+func TestMigrationsSumTotalChangesWithEveryMigration(t *testing.T) {
+	total := func(src fs.FS) string {
+		t.Helper()
+		sum, err := migrationsSum(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for line := range strings.Lines(string(sum)) {
+			if strings.HasPrefix(line, "total ") {
+				return line
+			}
+		}
+		t.Fatalf("no total line in %s", sum)
+		return ""
+	}
+	base := total(withMigrations(t, nil))
+	seen := map[string]string{base: "the shipped migrations"}
+	for what, extra := range map[string]map[string]string{
+		"one added":            {"0099_widgets.sql": "CREATE TABLE widgets (id int);"},
+		"another added":        {"0099_gadgets.sql": "CREATE TABLE gadgets (id int);"},
+		"one renumbered":       {"0100_widgets.sql": "CREATE TABLE widgets (id int);"},
+		"one edited":           {"0099_widgets.sql": "CREATE TABLE widgets (id bigint);"},
+		"a shipped one edited": {"0001_init.sql": "-- squashed again"},
+	} {
+		got := total(withMigrations(t, extra))
+		if prev, dup := seen[got]; dup {
+			t.Errorf("%s has the same total as %s", what, prev)
+		}
+		seen[got] = what
+	}
+	if _, err := migrationsSum(fstest.MapFS{"migrations/widgets.sql": {}}); err == nil {
+		t.Error("an unnumbered migration summed")
+	}
+}
+
+// A database that applied a migration under one number refuses a binary that
+// ships another file under it: the branch-renumbering case, where the
+// database would otherwise skip the new file and run its own migration again.
+func TestMigrateRefusesARenumberedMigration(t *testing.T) {
+	dsn := pgtest.Empty(t)
+	ctx := context.Background()
+	openSrc(t, dsn, withMigrations(t, map[string]string{"0099_widgets.sql": `CREATE TABLE widgets (id int);`})).Close()
+	renumbered := withMigrations(t, map[string]string{
+		"0099_gadgets.sql": `CREATE TABLE gadgets (id int);`,
+		"0100_widgets.sql": `CREATE TABLE widgets (id int);`,
+	})
+	_, err := openWith(ctx, dsn, renumbered)
+	if err == nil || !strings.Contains(err.Error(), "applied 0099_widgets.sql as migration 99, where this apothecaryd ships 0099_gadgets.sql") {
+		t.Fatalf("Open = %v, want a refusal naming both files", err)
+	}
+	var gadgets *string
+	if err := openRaw(t, dsn).QueryRow(ctx, `SELECT to_regclass('gadgets')::text`).Scan(&gadgets); err != nil || gadgets != nil {
+		t.Errorf("a refused database ran a pending migration: %v, %v", gadgets, err)
+	}
+}
+
+// An applied migration whose file changed afterwards is refused: the edit
+// never reached this database, so its schema is not the one the code expects.
+func TestMigrateRefusesAnEditedMigration(t *testing.T) {
+	dsn := pgtest.Empty(t)
+	openSrc(t, dsn, withMigrations(t, map[string]string{"0099_widgets.sql": `CREATE TABLE widgets (id int);`})).Close()
+	_, err := openWith(context.Background(), dsn, withMigrations(t, map[string]string{"0099_widgets.sql": `CREATE TABLE widgets (id bigint);`}))
+	if err == nil || !strings.Contains(err.Error(), "migration 0099_widgets.sql changed after this database applied it") {
+		t.Fatalf("Open = %v, want a refusal naming the edited file", err)
+	}
+}
+
+// A ledger from before names and checksums were kept takes the shipped
+// files' at the next boot, and is held to them from then on.
+func TestMigrateAdoptsALedgerWithoutChecksums(t *testing.T) {
+	dsn := pgtest.Empty(t)
+	ctx := context.Background()
+	openDSN(t, dsn).Close()
+	if _, err := openRaw(t, dsn).Exec(ctx, `ALTER TABLE schema_migrations DROP COLUMN name, DROP COLUMN checksum`); err != nil {
+		t.Fatal(err)
+	}
+	s := openDSN(t, dsn)
+	var name, sum string
+	if err := s.pool.QueryRow(ctx, `SELECT name, checksum FROM schema_migrations WHERE version = 1`).Scan(&name, &sum); err != nil {
+		t.Fatal(err)
+	}
+	initSQL, err := migrationsFS.ReadFile("migrations/0001_init.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "0001_init.sql" || sum != checksum(initSQL) {
+		t.Errorf("adopted = %s %s", name, sum)
+	}
+	var unnamed int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations WHERE name IS NULL OR checksum IS NULL`).Scan(&unnamed); err != nil || unnamed != 0 {
+		t.Errorf("rows left without a name or checksum = %d, %v", unnamed, err)
+	}
+	s.Close()
+	if _, err := openWith(ctx, dsn, withMigrations(t, map[string]string{"0001_init.sql": `-- squashed again`})); err == nil || !strings.Contains(err.Error(), "0001_init.sql changed") {
+		t.Fatalf("Open = %v, want the adopted checksum held", err)
+	}
+}
+
 // 0002_token_idle: a token without an inactivity window is stored as NULL,
 // what every token made before the column has (the round trip itself is the
 // auth contract's).
@@ -248,7 +368,7 @@ func TestAskThreadsMigration(t *testing.T) {
 	}
 }
 
-// 0004_live_tickets: each workshop gets one ticket source — the single
+// 0006_live_tickets: each workshop gets one ticket source — the single
 // remote tracker its tickets and tracker_query automations name, else the
 // owner's internal tracker (made, with its stock lists, when missing) — and
 // the mirror goes: a tracker_query automation polling another tracker is
@@ -260,7 +380,7 @@ func TestAskThreadsMigration(t *testing.T) {
 func TestLiveTicketsMigration(t *testing.T) {
 	dsn := pgtest.Empty(t)
 	ctx := context.Background()
-	old := openSrc(t, dsn, upTo(t, 3))
+	old := openSrc(t, dsn, upTo(t, 5))
 	if _, err := old.pool.Exec(ctx, `
 		INSERT INTO integrations (id, port, kind, name, created_at, updated_at, user_id) VALUES
 		  ('repo1', 'repository', 'github', 'gh', now(), now(), 'u1'),
