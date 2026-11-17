@@ -38,10 +38,33 @@ var (
 )
 
 // listenLocal opens a port on this machine's loopback, never on its other
-// interfaces: what a run serves stays the person's. Port 0 is a free one.
-// A var for tests.
+// interfaces: what a run serves stays the person's. Port 0 is a free one;
+// a named port that something on this machine already answers on is
+// taken, even when the bind alone would succeed. A var for tests.
 var listenLocal = func(port int) (net.Listener, error) {
+	if port > 0 && localAnswers(port) {
+		return nil, fmt.Errorf("localhost:%d already answers", port)
+	}
 	return net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+}
+
+// localProbe is how long a loopback dial may take: a listener accepts at
+// once, and a closed port refuses at once everywhere but Windows, which
+// retries for seconds.
+const localProbe = 200 * time.Millisecond
+
+// localAnswers says whether something accepts connections on port at either
+// loopback address. The bind cannot tell: macOS and Windows let 127.0.0.1:p
+// be bound beside another process's 0.0.0.0:p or [::]:p, and that process
+// still answers [::1]:p — where a client resolving localhost to IPv6 lands.
+func localAnswers(port int) bool {
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		if c, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), localProbe); err == nil {
+			c.Close()
+			return true
+		}
+	}
+	return false
 }
 
 // forwardDir holds the daemon's socket, its log and the remembered local

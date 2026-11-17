@@ -211,6 +211,29 @@ func TestForwardSameAndNamedPorts(t *testing.T) {
 	_ = r.run("forward", "stop", "--all")
 }
 
+// A port another process listens on is taken even where the loopback bind
+// alone would succeed: macOS and Windows allow 127.0.0.1:p beside another
+// process's wildcard :p, which still answers localhost over IPv6.
+func TestListenLocalRefusesAnsweredPort(t *testing.T) {
+	for _, addr := range []string{":0", "127.0.0.1:0"} {
+		other, err := net.Listen("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := other.Addr().(*net.TCPAddr).Port
+		if ln, err := listenLocal(port); err == nil {
+			ln.Close()
+			t.Errorf("listenLocal(%d) beside a listener on %s succeeded", port, addr)
+		}
+		other.Close()
+	}
+	ln, err := listenLocal(0)
+	if err != nil {
+		t.Fatalf("a free port: %v", err)
+	}
+	ln.Close()
+}
+
 // What the engine refuses ends the forward: an unknown run, a run that is
 // gone, a sign-in that is.
 func TestForwardRefusals(t *testing.T) {
