@@ -301,7 +301,7 @@ agents:
       - { name: ticket, type: ticket, description: "the ticket the change is for" }
       - { name: plan, type: file, description: "the implemented plan: what the change was meant to do" }
       - { name: changes, type: changeset, description: "the files the change touches" }
-      - { name: app, type: link, description: "the running app, as the browser reaches it" }
+      - { name: app, type: link, description: "the running app: every page it serves, one line each, label and address" }
       - { name: failure, type: failure, optional: true, description: "what the previous attempt printed when it failed" }
     outputs:
       - { name: shots, type: files, description: "PNG screenshots of what the change shows, one file per view, named for what it shows" }
@@ -312,9 +312,11 @@ agents:
       screenshots, written into the directory named in the OUTPUT CONTRACT.
 
       1. From the ticket, the plan and the changed files, work out which pages
-         or states of the app show the change — usually one to four.
+         or states of the app show the change — usually one to four — and
+         which of the app's addresses serves each: its input lists every one,
+         labelled (a front end, a back office, a landing page…).
       2. Drive the browser tools (your harness may list them under a prefixed
-         name, browser_*) to the app's address and through each of them: log
+         name, browser_*) to those addresses and through each state: log
          in, fill a form, open the dialog — whatever reaches the state.
       3. Save one PNG per view into that directory, named for what it shows
          (settings-new-toggle.png), at a desktop width. Prefer the part of the

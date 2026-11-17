@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"apothecary/internal/flow"
@@ -210,8 +211,10 @@ func (e *Engine) stopStageServices(ctx context.Context, res *resolution.Resoluti
 	}
 }
 
-// serviceInput renders a run.service.<name> input for an agent: its
-// address in the workspace while it is up, else plainly that it is not.
+// serviceInput renders a run.service.<name> input for an agent: every port
+// it declares, with its address in the workspace, while it is up — the
+// agent picks the page it needs (a front end, a back office, a landing
+// page) or the database it queries — else plainly that it is not.
 func (x *exec) serviceInput(name string) string {
 	svc := x.res.Service(name)
 	if svc == nil {
@@ -227,22 +230,70 @@ func (x *exec) serviceInput(name string) string {
 			msg += " — " + st.LastError
 		}
 		return msg + ")"
-	case svc.Address() == "":
+	case len(svc.Ports) == 0:
 		return fmt.Sprintf("(the service %q is running; it declares no port)", name)
 	}
-	return svc.Address() + fmt.Sprintf("\nThe project's service %q is running and healthy at this address in your workspace.", name)
+	var b strings.Builder
+	fmt.Fprintf(&b, "The project's service %q is running and healthy. Its ports in your workspace:", name)
+	for _, p := range svc.Ports {
+		fmt.Fprintf(&b, "\n- %s - %s", portName(p), p.Address())
+	}
+	return b.String()
 }
 
-// serviceLink is a run.service.<name> source for a human: the preview link
-// of its first port while it is up, else "".
-func (x *exec) serviceLink(name string) string {
+// portName is how a port is listed for an agent or a person — "- <name> -
+// <address>", one line each: its label (or number), a tcp one marked so.
+func portName(p resolution.ServicePort) string {
+	if p.Web() {
+		return p.Name()
+	}
+	return p.Name() + " (tcp)"
+}
+
+// serviceLinks is a run.service.<name> source for a human while the service
+// is up: its first web port's preview link — a gate's link — and every port
+// as a line of markdown: a web port's preview link (exposed on demand), else
+// the forward that brings it onto the person's machine (a tcp port; a web
+// one when this engine hands out no links). Down: nothing.
+func (x *exec) serviceLinks(name string) (primary string, lines []string) {
 	svc := x.res.Service(name)
 	if svc == nil || len(svc.Ports) == 0 {
-		return ""
+		return "", nil
 	}
 	if st, err := services.State(x.ctx, x.res.Envp, x.rs.EnvID, name); err != nil || st.Phase != services.PhaseHealthy {
-		return ""
+		return "", nil
 	}
 	urls := services.Expose(x.ctx, x.e.runPorts, x.rs.RunID, svc, x.e.log)
-	return urls[svc.Ports[0].Port]
+	ws := string(x.rs.EnvID)
+	if ws == "" {
+		ws = x.rs.RunID
+	}
+	for _, p := range svc.Ports {
+		if u := urls[p.Port]; u != "" {
+			if primary == "" {
+				primary = u
+			}
+			lines = append(lines, fmt.Sprintf("- %s - %s", portName(p), u))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- %s - `apothecary forward %s %d`", portName(p), ws, p.Port))
+	}
+	return primary, lines
+}
+
+// gateServiceList is what a gate showing a service adds to its context:
+// every port of it, when there is more to it than its one link.
+func (x *exec) gateServiceList(st *flow.Stage) string {
+	for _, in := range st.Inputs {
+		name := flow.SourceService(in.Value)
+		if name == "" {
+			continue
+		}
+		primary, lines := x.serviceLinks(name)
+		if len(lines) == 0 || (len(lines) == 1 && primary != "") {
+			return ""
+		}
+		return fmt.Sprintf("The service %q, port by port:\n%s\n", name, strings.Join(lines, "\n"))
+	}
+	return ""
 }

@@ -285,13 +285,19 @@ describe('runs', () => {
 		expect(
 			map.toRunPorts(
 				wire<Wire.RunPorts>({
-					ports: [{ port: 80, url: 'u' }],
+					ports: [
+						{ port: 80, url: 'u' },
+						{ port: 82, url: 'v', process: 'node', service: '' }
+					],
 					observed: [{ port: 81, process: 'p', service: 's' }],
 					links: true
 				})
 			)
 		).toEqual({
-			exposed: [{ port: 80, url: 'u' }],
+			exposed: [
+				{ port: 80, url: 'u', process: undefined, service: undefined },
+				{ port: 82, url: 'v', process: 'node', service: undefined }
+			],
 			observed: [{ port: 81, process: 'p', service: 's' }],
 			links: true
 		});
@@ -528,7 +534,10 @@ describe('services', () => {
 				healthy: false,
 				by: 'robot',
 				exit_code: 0,
-				ports: [{ port: 80, label: '', path: '/x', address: 'a', url: '' }]
+				ports: [
+					{ port: 80, label: '', path: '/x', address: 'a', url: '' },
+					{ port: 5432, protocol: 'tcp', address: 'localhost:5432' }
+				]
 			})
 		);
 		expect(s).toMatchObject({
@@ -536,7 +545,10 @@ describe('services', () => {
 			state: 'unknown',
 			by: undefined,
 			exitCode: 0,
-			ports: [{ port: 80, label: undefined, path: '/x', address: 'a', url: undefined }]
+			ports: [
+				{ port: 80, label: undefined, path: '/x', protocol: 'http', address: 'a', url: undefined },
+				{ port: 5432, protocol: 'tcp', address: 'localhost:5432' }
+			]
 		});
 	});
 
@@ -1007,7 +1019,11 @@ describe('projects', () => {
 							stop: '',
 							description: 'd',
 							health: { http: '/h', timeout: '5s' },
-							ports: [{ port: 80, label: 'l', path: '' }]
+							ports: [
+								{ port: 80, label: 'l', path: '' },
+								{ port: 5432, protocol: 'tcp' },
+								{ port: 81, protocol: 'http' }
+							]
 						},
 						{ name: 'quiet', start: 'run', health: {} }
 					]
@@ -1045,7 +1061,11 @@ describe('projects', () => {
 				timeout: '5s',
 				interval: undefined
 			},
-			ports: [{ port: 80, label: 'l', path: undefined }]
+			ports: [
+				{ port: 80, label: 'l', path: undefined, protocol: undefined },
+				{ port: 5432, protocol: 'tcp' },
+				{ port: 81, protocol: undefined }
+			]
 		});
 		expect(p.workspace.services[1].health).toBeUndefined();
 	});

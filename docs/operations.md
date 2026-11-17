@@ -29,7 +29,7 @@ address:
 | command | purpose |
 |---|---|
 | `apothecary login <url>` | sign in: the page opens, you approve the code it shows, and this machine gets a sign-in that lasts while you use it (expires after 7 days unused). `--token <personal token>` signs in with a token from **Account → API tokens** instead, for scripts and CI; `--no-browser` only prints the page's address |
-| `apothecary forward <run> [port[:local]]... [--same]` | a run's ports on free local ports (`--same`: the same numbers), in the background until stopped; with no port, every port it listens on, kept in step |
+| `apothecary forward <run> [port[:local]]... [--same]` | a run's ports on free local ports, in the background until stopped; with no port, every port it listens on now (a port it opens later: forward again). `--same`: each on its own number, a `port:local` the exception (`--same 5000:5001`). A local port asked for — named, or the run's own with `--same` — that is taken here refuses the whole command: nothing is forwarded, and it offers the same command with only the taken ports moved to free local ports |
 | `apothecary forward status` | what is forwarded, run by run |
 | `apothecary forward stop <run> [port]...` or `--all` | stop forwarding |
 | `apothecary forward logs` | the background forwarder's log |

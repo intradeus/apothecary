@@ -19,12 +19,15 @@ import (
 )
 
 const forwardUsage = `usage: apothecary forward <run> [port[:local]]... [--same]
+       (no port: every port the run listens on now; --same: each on its own
+       number, a port:local the exception)
        apothecary forward status | logs
        apothecary forward stop <run> [port]... | --all`
 
 // cmdForward hands the forwards to the background daemon (starting it when
 // none runs) and says where the ports landed; it returns at once, and the
-// forwards run until `apothecary forward stop`.
+// forwards run until `apothecary forward stop`. Refused, it forwards
+// nothing and says the command to run instead.
 func cmdForward(ctx context.Context, args []string, env Env, p *printer) error {
 	if len(args) == 0 {
 		return errUsage(forwardUsage)
@@ -52,27 +55,25 @@ func cmdForward(ctx context.Context, args []string, env Env, p *printer) error {
 	if err := daemonCall(ctx, hc, "POST", "/forward", req, &st); err != nil {
 		return err
 	}
-	printRun(p, st)
-	for _, n := range st.Notes {
-		p.fail("%s", n)
-	}
-	who := st.Workspace
-	if who == "" {
-		who = st.ID
-	}
-	if st.Follow {
-		p.say("New ports are forwarded as the run opens them.")
-	}
-	p.say("Forwarding in the background. apothecary forward status lists it; apothecary forward stop %s ends it.", who)
 	if len(st.Notes) > 0 {
-		return errors.New("some ports were not forwarded")
+		for _, n := range st.Notes {
+			p.fail("%s", n)
+		}
+		if len(st.Taken) > 0 {
+			p.say("These local ports are free now; to forward there instead:\n  %s", retryCommand(args, st.Taken))
+		}
+		return errors.New("nothing was forwarded")
 	}
+	printRun(p, st)
+	p.say("Forwarding in the background. apothecary forward status lists it; apothecary forward stop %s ends it.", runRef(st.Workspace, st.ID))
 	return nil
 }
 
-// parseForward reads `<run> [port[:local]]... [--same]`.
+// parseForward reads `<run> [port[:local]]... [--same]`, a port at most
+// once.
 func parseForward(args []string) (forwardRequest, error) {
 	var req forwardRequest
+	seen := map[int]bool{}
 	for _, a := range args {
 		switch {
 		case a == "--same" || a == "-same":
@@ -86,6 +87,10 @@ func parseForward(args []string) (forwardRequest, error) {
 			if err != nil {
 				return req, err
 			}
+			if seen[m.Remote] {
+				return req, errUsage(fmt.Sprintf("port %d is named twice", m.Remote))
+			}
+			seen[m.Remote] = true
 			req.Ports = append(req.Ports, m)
 		}
 	}
@@ -111,15 +116,49 @@ func parseMapping(a string) (mapping, error) {
 	return mapping{Remote: r, Local: l}, nil
 }
 
+// retryCommand is the command typed (args, after `forward`) with each
+// taken port on its offered local port: a port typed is rewritten in
+// place, one --same chose is added. 0 offered (this machine has no free
+// port at all): the bare port.
+func retryCommand(args []string, taken []mapping) string {
+	offer := map[int]int{}
+	for _, m := range taken {
+		offer[m.Remote] = m.Local
+	}
+	out := []string{"apothecary", "forward"}
+	run := false
+	for _, a := range args {
+		if m, err := parseMapping(a); err == nil && run && !strings.HasPrefix(a, "-") {
+			if local, ok := offer[m.Remote]; ok {
+				a = portArg(m.Remote, local)
+				delete(offer, m.Remote)
+			}
+		} else if !strings.HasPrefix(a, "-") {
+			run = true
+		}
+		out = append(out, a)
+	}
+	for _, m := range taken {
+		if local, ok := offer[m.Remote]; ok {
+			out = append(out, portArg(m.Remote, local))
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+func portArg(remote, local int) string {
+	if local == 0 {
+		return strconv.Itoa(remote)
+	}
+	return fmt.Sprintf("%d:%d", remote, local)
+}
+
 func printRun(p *printer, st runState) {
 	head := st.Label
 	if st.Workspace != "" {
 		head += "   " + st.Workspace
 	}
 	p.say("%s   (run %s)", head, shortID(st.ID))
-	if len(st.Ports) == 0 {
-		p.say("  nothing listening yet")
-	}
 	for _, port := range st.Ports {
 		activity := "idle"
 		if port.Active == 1 {
@@ -156,9 +195,6 @@ func forwardStatus(ctx context.Context, env Env, p *printer) error {
 	}
 	for _, st := range runs {
 		printRun(p, st)
-		if st.Follow {
-			p.say("  following: new ports are forwarded as they open")
-		}
 	}
 	return nil
 }

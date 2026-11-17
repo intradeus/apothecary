@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { ServiceConfig } from '$lib/domain';
+	import type { PortProtocol, ServiceConfig } from '$lib/domain';
 	import { parseGoDuration } from '$lib/ui/duration';
 
 	export type ProbeKind = 'none' | 'http' | 'tcp' | 'command';
@@ -18,7 +18,7 @@
 		command: string;
 		timeout: string;
 		interval: string;
-		ports: { port: number | ''; label: string; path: string }[];
+		ports: { port: number | ''; label: string; path: string; protocol: PortProtocol }[];
 	}
 
 	let KEY = 0;
@@ -54,7 +54,12 @@
 				command: h?.command ?? '',
 				timeout: h?.timeout ?? '',
 				interval: h?.interval ?? '',
-				ports: s.ports.map((p) => ({ port: p.port, label: p.label ?? '', path: p.path ?? '' }))
+				ports: s.ports.map((p) => ({
+					port: p.port,
+					label: p.label ?? '',
+					path: p.path ?? '',
+					protocol: p.protocol ?? 'http'
+				}))
 			};
 		});
 	}
@@ -88,7 +93,9 @@
 					.map((p) => ({
 						port: Number(p.port),
 						label: p.label.trim() || undefined,
-						path: p.path.trim() || undefined
+						// A tcp port opens no page: its path, if one was typed, goes.
+						path: (p.protocol === 'http' && p.path.trim()) || undefined,
+						protocol: p.protocol === 'tcp' ? ('tcp' as const) : undefined
 					}))
 			};
 		});
@@ -140,7 +147,8 @@
 				if (!isPort(p.port)) bad.push(`port${i}`);
 				else if (ports.has(p.port)) bad.push(`portdup${i}`);
 				else ports.add(p.port);
-				if (p.path.trim() && !p.path.trim().startsWith('/')) bad.push(`path${i}`);
+				if (p.protocol === 'http' && p.path.trim() && !p.path.trim().startsWith('/'))
+					bad.push(`path${i}`);
 			});
 			if (bad.length) out.set(r.key, bad);
 		}
@@ -461,7 +469,8 @@
 							<button
 								type="button"
 								class="btn-sm"
-								onclick={() => (r.ports = [...r.ports, { port: '', label: '', path: '' }])}
+								onclick={() =>
+									(r.ports = [...r.ports, { port: '', label: '', path: '', protocol: 'http' }])}
 								>{I.add} {t('form.services.addPort')}</button
 							>
 						</div>
@@ -484,11 +493,20 @@
 											placeholder={t('form.services.labelPh')}
 											aria-label={t('form.services.labelAria')}
 										/>
+										<select
+											bind:value={p.protocol}
+											aria-label={t('form.services.protocolAria')}
+											title={t('form.services.protocolTitle')}
+										>
+											<option value="http">{t('form.services.protocol.http')}</option>
+											<option value="tcp">{t('form.services.protocol.tcp')}</option>
+										</select>
 										<input
 											class="mono"
 											class:invalid={has(r, `path${j}`)}
 											bind:value={p.path}
-											placeholder="/"
+											placeholder={p.protocol === 'tcp' ? '—' : '/'}
+											disabled={p.protocol === 'tcp'}
 											aria-label={t('form.services.pathAria')}
 											spellcheck="false"
 										/>
@@ -599,7 +617,7 @@
 	}
 	.pr {
 		display: grid;
-		grid-template-columns: 110px minmax(0, 1fr) 140px 28px;
+		grid-template-columns: 110px minmax(0, 1fr) 80px 140px 28px;
 		gap: 6px;
 		align-items: center;
 	}
@@ -610,7 +628,8 @@
 		.pr {
 			grid-template-columns: 90px minmax(0, 1fr) 28px;
 		}
-		.pr > :nth-child(3) {
+		.pr > :nth-child(3),
+		.pr > :nth-child(4) {
 			grid-column: 1 / 3;
 		}
 	}

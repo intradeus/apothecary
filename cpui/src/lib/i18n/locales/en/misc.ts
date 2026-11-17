@@ -595,12 +595,17 @@ export default {
 	'form.services.labelPh': 'label (web, api)',
 	'form.services.labelAria': 'label',
 	'form.services.pathAria': 'path its link opens',
+	'form.services.protocolAria': 'protocol',
+	'form.services.protocolTitle':
+		'http: a web app, opened in the browser. tcp: anything else (a database, a cache), reached by forwarding it.',
+	'form.services.protocol.http': 'http',
+	'form.services.protocol.tcp': 'tcp',
 	'form.services.removePort': 'Remove port {port}',
 	'form.services.badPort': 'A port is 1–65535.',
 	'form.services.dupPort': 'Port {port} is listed twice.',
 	'form.services.badPath': 'A path starts with /.',
 	'form.services.portsHelp':
-		'Where it listens in the workspace. The first is its address, <code>run.service.{name}</code>; each gets a preview link on the run page while it is healthy.',
+		'Where it listens in the workspace. Every port is in <code>run.service.{name}</code>: an agent is handed each address, a gate each link. An http port gets a preview link on the run page while it is healthy; a tcp port (a database, a cache) gets none — it is reached by forwarding it.',
 	// Browser
 	'form.browser.head': 'Browser',
 	'form.browser.sub': 'a Chromium for the agents, looking at the run’s own services',

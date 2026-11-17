@@ -47,7 +47,7 @@ describe('serviceRows', () => {
 	it('fills what is missing with empty fields', () => {
 		const [r] = serviceRows([config({ ports: [{ port: 80 }] })]);
 		expect(r).toMatchObject({ description: '', stop: '', http: '', tcp: '', timeout: '' });
-		expect(r.ports).toEqual([{ port: 80, label: '', path: '' }]);
+		expect(r.ports).toEqual([{ port: 80, label: '', path: '', protocol: 'http' }]);
 	});
 });
 
@@ -60,7 +60,10 @@ describe('serviceConfigs', () => {
 				start: 'npm start',
 				stop: 'npm stop',
 				health: { http: 'http://localhost/health', timeout: '5m', interval: '10s' },
-				ports: [{ port: 3000, label: 'web', path: '/' }]
+				ports: [
+					{ port: 3000, label: 'web', path: '/' },
+					{ port: 5432, label: 'db', protocol: 'tcp' }
+				]
 			}
 		];
 		expect(serviceConfigs(serviceRows(stored))).toEqual(stored);
@@ -96,12 +99,19 @@ describe('serviceConfigs', () => {
 		const [c] = serviceConfigs([
 			row({
 				ports: [
-					{ port: '', label: '', path: '' },
-					{ port: 3000, label: ' web ', path: '' }
+					{ port: '', label: '', path: '', protocol: 'http' },
+					{ port: 3000, label: ' web ', path: '', protocol: 'http' }
 				]
 			})
 		]);
 		expect(c.ports).toEqual([{ port: 3000, label: 'web', path: undefined }]);
+	});
+
+	it('sends a tcp port without the path it opens no page at', () => {
+		const [c] = serviceConfigs([
+			row({ ports: [{ port: 5432, label: '', path: '/x', protocol: 'tcp' }] })
+		]);
+		expect(c.ports).toEqual([{ port: 5432, protocol: 'tcp' }]);
 	});
 });
 
@@ -151,10 +161,10 @@ describe('serviceIssues', () => {
 		const bad = issues(
 			row({
 				ports: [
-					{ port: 80, label: '', path: '' },
-					{ port: 70000, label: '', path: '' },
-					{ port: 80, label: '', path: '' },
-					{ port: 81, label: '', path: 'nope' }
+					{ port: 80, label: '', path: '', protocol: 'http' },
+					{ port: 70000, label: '', path: '', protocol: 'http' },
+					{ port: 80, label: '', path: '', protocol: 'http' },
+					{ port: 81, label: '', path: 'nope', protocol: 'http' }
 				]
 			})
 		);
@@ -162,8 +172,12 @@ describe('serviceIssues', () => {
 	});
 
 	it('flags a port row with a label but no port, and ignores an empty one', () => {
-		expect(issues(row({ ports: [{ port: '', label: 'web', path: '' }] }))).toEqual(['port0']);
-		expect(issues(row({ ports: [{ port: '', label: '', path: '' }] }))).toBeUndefined();
+		expect(
+			issues(row({ ports: [{ port: '', label: 'web', path: '', protocol: 'http' }] }))
+		).toEqual(['port0']);
+		expect(
+			issues(row({ ports: [{ port: '', label: '', path: '', protocol: 'http' }] }))
+		).toBeUndefined();
 	});
 });
 
@@ -210,7 +224,7 @@ describe('ServicesEditor', () => {
 					start: 'npm start\nmore',
 					probe: 'tcp',
 					tcp: 80,
-					ports: [{ port: 3000, label: '', path: '' }]
+					ports: [{ port: 3000, label: '', path: '', protocol: 'http' }]
 				}),
 				row({ name: 'db' })
 			],
@@ -287,7 +301,7 @@ describe('ServicesEditor', () => {
 		await userEvent.click(screen.getByRole('button', { name: /Add port/ }));
 		await userEvent.type(screen.getByRole('spinbutton', { name: 'port' }), '3000');
 		await userEvent.type(screen.getByRole('textbox', { name: 'label' }), 'web');
-		expect(props.rows[0].ports).toEqual([{ port: 3000, label: 'web', path: '' }]);
+		expect(props.rows[0].ports).toEqual([{ port: 3000, label: 'web', path: '', protocol: 'http' }]);
 
 		await userEvent.click(screen.getByRole('button', { name: /Remove port/ }));
 		expect(props.rows[0].ports).toEqual([]);
@@ -298,8 +312,8 @@ describe('ServicesEditor', () => {
 		setup([
 			row({
 				ports: [
-					{ port: 3000, label: '', path: '' },
-					{ port: 3000, label: '', path: '' }
+					{ port: 3000, label: '', path: '', protocol: 'http' },
+					{ port: 3000, label: '', path: '', protocol: 'http' }
 				]
 			})
 		]);
@@ -307,12 +321,31 @@ describe('ServicesEditor', () => {
 		expect(screen.getAllByRole('button', { name: 'Remove port 3000' })).toHaveLength(2);
 	});
 
+	it('takes no path on a tcp port, so flags none', () => {
+		expect(
+			serviceIssues([row({ ports: [{ port: 5432, label: '', path: 'nope', protocol: 'tcp' }] })])
+				.size
+		).toBe(0);
+	});
+
+	it('picks a port’s protocol, and a tcp port takes no path', async () => {
+		const props = setup([row({ ports: [{ port: 5432, label: '', path: '', protocol: 'http' }] })]);
+		const proto = screen.getByRole('combobox', { name: 'protocol' });
+		expect(proto).toHaveValue('http');
+		expect(screen.getByRole('textbox', { name: 'path its link opens' })).toBeEnabled();
+
+		await userEvent.selectOptions(proto, 'tcp');
+
+		expect(props.rows[0].ports[0].protocol).toBe('tcp');
+		expect(screen.getByRole('textbox', { name: 'path its link opens' })).toBeDisabled();
+	});
+
 	it('names port errors', async () => {
 		setup([
 			row({
 				ports: [
-					{ port: 80, label: '', path: 'x' },
-					{ port: 80, label: '', path: '' }
+					{ port: 80, label: '', path: 'x', protocol: 'http' },
+					{ port: 80, label: '', path: '', protocol: 'http' }
 				]
 			})
 		]);

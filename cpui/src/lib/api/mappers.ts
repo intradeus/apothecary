@@ -444,7 +444,12 @@ export function toResourceSample(w: Wire.ResourceSample): ResourceSample {
 
 export function toRunPorts(w: Wire.RunPorts): RunPorts {
 	return {
-		exposed: list(w.ports).map((p) => ({ port: p.port, url: p.url })),
+		exposed: list(w.ports).map((p) => ({
+			port: p.port,
+			url: p.url,
+			process: p.process || undefined,
+			service: p.service || undefined
+		})),
 		observed: list(w.observed).map((p) => ({
 			port: p.port,
 			process: p.process,
@@ -495,6 +500,7 @@ export function toServiceStatus(w: Wire.ServiceInfo): ServiceStatus {
 			port: p.port,
 			label: p.label || undefined,
 			path: p.path || undefined,
+			protocol: p.protocol === 'tcp' ? 'tcp' : 'http',
 			address: p.address,
 			url: p.url || undefined
 		}))
@@ -529,7 +535,8 @@ function toServiceConfig(w: Wire.ServiceConfig): ServiceConfig {
 		ports: list(w.ports).map((p) => ({
 			port: p.port,
 			label: p.label || undefined,
-			path: p.path || undefined
+			path: p.path || undefined,
+			protocol: p.protocol === 'tcp' ? 'tcp' : undefined
 		}))
 	};
 }

@@ -154,6 +154,14 @@ func newFakeEngine(t *testing.T) *fakeEngine {
 		_, _ = io.Copy(c, c)
 	}
 	mux.HandleFunc("GET /api/runs/{id}/ports/{port}/tunnel", func(w http.ResponseWriter, r *http.Request) {
+		e.mu.Lock()
+		gone := e.portsAt == http.StatusNotFound
+		e.mu.Unlock()
+		if gone {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"error":"no such run"}`)
+			return
+		}
 		echo(w, r, "port "+r.PathValue("port"))
 	})
 	mux.HandleFunc("GET /api/ssh/tunnel", func(w http.ResponseWriter, r *http.Request) {

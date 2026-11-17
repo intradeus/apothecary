@@ -52,8 +52,9 @@ type Exposer interface {
 	Expose(ctx context.Context, runID string, port int) (string, error)
 }
 
-// Expose publishes the service's ports for humans, the way the Ports view
-// exposes any port, and returns each one's preview link (path included).
+// Expose publishes the service's web ports for humans, the way the Ports
+// view exposes any port, and returns each one's preview link (path
+// included). A tcp port is never exposed: a browser link cannot carry it.
 // Best effort: no exposure, no links.
 func Expose(ctx context.Context, exposer Exposer, runID string, svc *resolution.Service, log *slog.Logger) map[int]string {
 	out := map[int]string{}
@@ -64,6 +65,9 @@ func Expose(ctx context.Context, exposer Exposer, runID string, svc *resolution.
 		return out
 	}
 	for _, p := range svc.Ports {
+		if !p.Web() {
+			continue
+		}
 		url, err := exposer.Expose(ctx, runID, p.Port)
 		if err != nil {
 			// Read on every look at the pane: a provisioner that cannot
@@ -116,14 +120,16 @@ type ServiceInfo struct {
 	Ports       []ServicePortInfo `json:"ports"`
 }
 
-// ServicePortInfo is one port of a service: its address in the workspace
-// and, while the service is healthy, the human's preview link.
+// ServicePortInfo is one port of a service: its protocol (http|tcp), its
+// address in the workspace and, while the service is healthy, the human's
+// preview link (a web port's only).
 type ServicePortInfo struct {
-	Port    int    `json:"port"`
-	Label   string `json:"label,omitempty"`
-	Path    string `json:"path,omitempty"`
-	Address string `json:"address"`
-	URL     string `json:"url,omitempty"`
+	Port     int    `json:"port"`
+	Label    string `json:"label,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Protocol string `json:"protocol"`
+	Address  string `json:"address"`
+	URL      string `json:"url,omitempty"`
 }
 
 // RunServices is the run page's Services pane: every project service with
@@ -197,7 +203,7 @@ func serviceInfo(svc *resolution.Service, st sidecar.ServiceState, urls map[int]
 		LastProbeOK: st.LastProbeOK, LastError: st.LastError, Ports: []ServicePortInfo{}}
 	for _, p := range svc.Ports {
 		info.Ports = append(info.Ports, ServicePortInfo{Port: p.Port, Label: p.Label, Path: p.Path,
-			Address: p.Address(), URL: urls[p.Port]})
+			Protocol: p.Proto(), Address: p.Address(), URL: urls[p.Port]})
 	}
 	return info
 }

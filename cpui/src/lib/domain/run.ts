@@ -315,6 +315,9 @@ export interface ResourceSample {
 export interface ExposedPort {
 	port: number;
 	url: string;
+	/** Who listens on it, when the scanner saw it: kept once it is exposed. */
+	process?: string;
+	service?: string;
 }
 
 /** A listener the in-workspace scanner found that nobody has exposed yet. */

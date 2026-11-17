@@ -836,7 +836,7 @@ func services(in []confstore.ServiceConfig) []resolution.Service {
 			Health: resolution.ServiceHealth{HTTP: s.Health.HTTP, TCP: s.Health.TCP, Command: s.Health.Command,
 				Timeout: s.Health.TimeoutOr(), Interval: s.Health.IntervalOr()}}
 		for _, p := range s.Ports {
-			sv.Ports = append(sv.Ports, resolution.ServicePort{Port: p.Port, Label: p.Label, Path: p.Path})
+			sv.Ports = append(sv.Ports, resolution.ServicePort{Port: p.Port, Label: p.Label, Path: p.Path, Protocol: p.Protocol})
 		}
 		out = append(out, sv)
 	}

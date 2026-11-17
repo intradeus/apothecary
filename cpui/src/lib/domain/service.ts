@@ -31,11 +31,17 @@ export interface ServiceHealth {
 	interval?: string;
 }
 
+/** What a port serves: a web app (http, the default), opened in a browser,
+ *  or anything else (tcp: a database, a cache), reached by forwarding it. */
+export type PortProtocol = 'http' | 'tcp';
+
 export interface ServicePort {
 	port: number;
 	label?: string;
-	/** What its link opens, "/" by default. */
+	/** What its link opens, "/" by default (http only). */
 	path?: string;
+	/** Absent = http. */
+	protocol?: PortProtocol;
 }
 
 /** stopped with no startedAt = never started in this workspace. */
@@ -70,9 +76,10 @@ export interface ServicePortStatus {
 	port: number;
 	label?: string;
 	path?: string;
-	/** Its address inside the workspace (http://localhost:3000/). */
+	protocol: PortProtocol;
+	/** Its address inside the workspace (http://localhost:3000/, localhost:5432). */
 	address: string;
-	/** The preview link for a person, present while the service is healthy. */
+	/** The preview link for a person: a web port's, while the service is healthy. */
 	url?: string;
 }
 

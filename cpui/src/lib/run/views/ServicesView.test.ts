@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import { to } from '$lib/core/urls';
-import type { RunServices, ServiceStatus } from '$lib/domain';
+import type { RunServices, ServicePortStatus, ServiceStatus } from '$lib/domain';
 import { confirmState } from '$lib/ui/confirm.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
 import { aProject, aRun } from '$test/fixtures';
@@ -30,6 +30,11 @@ const HOUR_AGO = new Date(NOW - 3_600_000).toISOString();
 const btn = (name: string | RegExp) => screen.getByRole('button', { name });
 const noBtn = (name: string | RegExp) => screen.queryByRole('button', { name });
 const card = (name: string) => within(screen.getByText(name).closest('article')!);
+/** A port's row in a service's ports table, as its cells read. */
+const cells = (port: number) =>
+	within(screen.getByText(`:${port}`).closest('tr')!)
+		.getAllByRole('cell')
+		.map((c) => c.textContent?.trim());
 
 interface Opts {
 	rs?: ReturnType<typeof aViewStore>;
@@ -313,40 +318,123 @@ describe('ServicesView', () => {
 			expect(screen.getByText('none — up as soon as it started')).toBeInTheDocument();
 		});
 
-		it('links a port once it has a preview', async () => {
+		it('lists its ports in the ports table, a link once it has a preview', async () => {
 			await open([
 				aService({
 					ports: [
-						{ port: 3000, label: 'web', address: 'http://localhost:3000/', url: 'https://p.test/' }
+						{
+							port: 3000,
+							label: 'web',
+							protocol: 'http',
+							address: 'http://localhost:3000/',
+							url: 'https://p.test/'
+						},
+						{ port: 5432, protocol: 'http', address: 'http://localhost:5432/' }
 					]
 				})
 			]);
-			const link = screen.getByRole('link', { name: /:3000 web/ });
+			expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
+				'Label',
+				'Port',
+				'Status',
+				'Your machine',
+				'Browser'
+			]);
+			const link = screen.getByRole('link', { name: 'Open :3000 in the browser' });
 			expect(link).toHaveAttribute('href', 'https://p.test/');
 			expect(link).toHaveAttribute('target', '_blank');
-			expect(screen.getByText('http://localhost:3000/')).toBeInTheDocument();
+			expect(cells(3000).slice(0, 3)).toEqual(['web', ':3000', 'exposed']);
+			expect(cells(5432).slice(0, 3)).toEqual(['—', ':5432', 'up']);
+			expect(screen.getByText(':3000')).toHaveAttribute(
+				'title',
+				'Inside the workspace at http://localhost:3000/: what an agent is handed'
+			);
 		});
 
-		it('calls an unlabelled preview "open"', async () => {
+		it('leaves the label column out when no port has one', async () => {
 			await open([
 				aService({
-					ports: [{ port: 3000, address: 'http://localhost:3000/', url: 'https://p.test/' }]
+					ports: [
+						{
+							port: 3000,
+							protocol: 'http',
+							address: 'http://localhost:3000/',
+							url: 'https://p.test/'
+						}
+					]
 				})
 			]);
-			expect(screen.getByRole('link', { name: /:3000 open/ })).toBeInTheDocument();
+			expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
+				'Port',
+				'Status',
+				'Your machine',
+				'Browser'
+			]);
 		});
 
-		it('explains a port with no preview yet', async () => {
+		it('explains a port with no preview yet, and offers no open', async () => {
 			await open([
 				aService({
 					state: 'starting',
-					ports: [{ port: 3000, label: 'web', address: 'http://localhost:3000/' }]
+					ports: [{ port: 3000, label: 'web', protocol: 'http', address: 'http://localhost:3000/' }]
 				})
 			]);
-			expect(screen.getByText(':3000 web').title).toBe(
+			expect(screen.getByText('not up')).toHaveAttribute(
+				'title',
 				'Its preview link appears once it is healthy'
 			);
 			expect(screen.queryByRole('link', { name: /:3000/ })).not.toBeInTheDocument();
+			expect(noBtn(/in the browser/)).not.toBeInTheDocument();
+		});
+
+		it('reaches a tcp port by forwarding it: no link, no promise of one', async () => {
+			await open([
+				aService({
+					state: 'starting',
+					ports: [{ port: 5432, label: 'db', protocol: 'tcp', address: 'localhost:5432' }]
+				})
+			]);
+			expect(cells(5432).slice(0, 3)).toEqual(['db', ':5432', 'not up']);
+			expect(screen.getByText('not up')).not.toHaveAttribute('title');
+			expect(btn('forward: copy apothecary forward env-1 5432')).toBeInTheDocument();
+			expect(screen.queryByRole('link')).not.toBeInTheDocument();
+		});
+
+		it('drops the browser column and its hint without browser links', async () => {
+			const rs = aViewStore(aLiveRun());
+			rs.portLinks = false;
+			await open(
+				[
+					aService({
+						state: 'starting',
+						ports: [{ port: 5432, protocol: 'http', address: 'http://localhost:5432/' }]
+					})
+				],
+				{
+					rs
+				}
+			);
+			expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).not.toContain(
+				'Browser'
+			);
+			expect(screen.getByText('not up')).not.toHaveAttribute('title');
+			expect(screen.queryByText(/^open is for web apps only/)).not.toBeInTheDocument();
+			expect(screen.getByText(/^forward copies the command/)).toBeInTheDocument();
+		});
+
+		it('says once, under the list, that forward reaches any port and open only web apps', async () => {
+			const ports: ServicePortStatus[] = [
+				{ port: 3000, protocol: 'http', address: 'http://localhost:3000/' }
+			];
+			await open([aService({ name: 'a', ports }), aService({ name: 'b', ports })]);
+			expect(screen.getAllByText(/^forward copies the command/)).toHaveLength(1);
+			expect(screen.getAllByText(/^open is for web apps only/)).toHaveLength(1);
+		});
+
+		it('says nothing of ports when no service declares one', async () => {
+			await open([aService()]);
+			expect(screen.queryByRole('table')).not.toBeInTheDocument();
+			expect(screen.queryByText(/^forward copies the command/)).not.toBeInTheDocument();
 		});
 
 		it('copies the command that forwards each port, naming the workspace', async () => {
@@ -355,25 +443,34 @@ describe('ServicesView', () => {
 			await open([
 				aService({
 					ports: [
-						{ port: 3000, label: 'web', address: 'http://localhost:3000/', url: 'https://p.test/' },
-						{ port: 5432, address: 'localhost:5432' }
+						{
+							port: 3000,
+							label: 'web',
+							protocol: 'http',
+							address: 'http://localhost:3000/',
+							url: 'https://p.test/'
+						},
+						{ port: 5432, protocol: 'tcp', address: 'localhost:5432' }
 					]
 				})
 			]);
-			expect(btn('Copy apothecary forward env-1 3000')).toBeInTheDocument();
-			await user.click(btn('Copy apothecary forward env-1 5432'));
+			expect(btn('forward: copy apothecary forward env-1 3000')).toBeInTheDocument();
+			await user.click(btn('forward: copy apothecary forward env-1 5432'));
 			expect(write).toHaveBeenCalledExactlyOnceWith('apothecary forward env-1 5432');
 		});
 
 		it('names the run when it has no workspace id, and offers nothing without a workspace', async () => {
 			const rs = aViewStore(aRun({ envId: undefined }));
-			const ports = [{ port: 3000, address: 'http://localhost:3000/' }];
+			const ports: ServicePortStatus[] = [
+				{ port: 3000, protocol: 'http', address: 'http://localhost:3000/' }
+			];
 			const view = await open([aService({ ports })], { rs });
-			expect(btn(`Copy apothecary forward ${RUN} 3000`)).toBeInTheDocument();
+			expect(btn(`forward: copy apothecary forward ${RUN} 3000`)).toBeInTheDocument();
 			view.unmount();
 
 			await open([aService({ state: 'stopped', ports })], { workspace: false });
-			expect(noBtn(/^Copy apothecary forward/)).not.toBeInTheDocument();
+			expect(noBtn(/apothecary forward/)).not.toBeInTheDocument();
+			expect(screen.queryByText(/^forward copies the command/)).not.toBeInTheDocument();
 		});
 
 		it('shows its description and its last error', async () => {

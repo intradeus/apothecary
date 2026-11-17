@@ -178,6 +178,9 @@ type ServicePort struct {
 	Label string `json:"label,omitempty"`
 	// Path is what its link opens: "/" by default.
 	Path string `json:"path,omitempty"`
+	// Protocol is "http" (a web app, the default when empty) or "tcp"
+	// (anything else: a database, a cache), which gets no browser link.
+	Protocol string `json:"protocol,omitempty"`
 }
 
 // BrowserConfig turns the project's browser on.

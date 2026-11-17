@@ -364,6 +364,20 @@ func TestExposeHelper(t *testing.T) {
 			t.Errorf("a failed port got a URL: %v", got)
 		}
 	})
+	t.Run("never exposes a tcp port", func(t *testing.T) {
+		db := &resolution.Service{Name: "db", Ports: []resolution.ServicePort{{Port: 5432, Protocol: resolution.ProtocolTCP}}}
+		exp := &fakeExposer{urls: map[int]string{5432: "http://host:40001/"}}
+		if got := Expose(ctx, exp, "r1", db, log); len(got) != 0 || exp.count() != 0 {
+			t.Errorf("a tcp port was exposed: %v (%d calls)", got, exp.count())
+		}
+		info := serviceInfo(db, sidecar.ServiceState{Name: "db", Phase: PhaseHealthy}, nil)
+		if p := info.Ports[0]; p.Protocol != "tcp" || p.Address != "localhost:5432" || p.URL != "" {
+			t.Errorf("a tcp port's info = %+v", p)
+		}
+		if p := serviceInfo(svc, sidecar.ServiceState{}, nil).Ports[0]; p.Protocol != "http" {
+			t.Errorf("a port with no protocol is http: %+v", p)
+		}
+	})
 	t.Run("an exposer that is off is not asked", func(t *testing.T) {
 		exp := &offExposer{}
 		if got := Expose(ctx, exp, "r1", svc, log); len(got) != 0 {

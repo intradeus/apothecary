@@ -92,6 +92,15 @@ func validateServices(svcs []ServiceConfig) error {
 			if p.Path != "" && !strings.HasPrefix(p.Path, "/") {
 				return invalidf("project: service %q: port %d: path %q must start with /", s.Name, p.Port, p.Path)
 			}
+			switch p.Protocol {
+			case "", "http":
+			case "tcp":
+				if p.Path != "" {
+					return invalidf("project: service %q: port %d: a tcp port opens no page, so it takes no path", s.Name, p.Port)
+				}
+			default:
+				return invalidf("project: service %q: port %d: protocol %q must be http or tcp", s.Name, p.Port, p.Protocol)
+			}
 		}
 	}
 	return nil

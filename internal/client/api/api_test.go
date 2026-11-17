@@ -16,7 +16,6 @@ import (
 	"apothecary/internal/httpapi"
 	"apothecary/internal/platform/wstunnel"
 	"apothecary/internal/ports/envport"
-	"apothecary/internal/workspace/portrelay"
 )
 
 // engine is a stand-in for the API: what the client reads, as the engine
@@ -124,7 +123,7 @@ func newEngine(t *testing.T) (*engine, *httptest.Server) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(httpapi.RunPorts{
-			Ports:    []portrelay.Exposure{{Port: 3000, URL: "https://3000-x.apps.test/"}},
+			Ports:    []httpapi.RunPort{{Port: 3000, URL: "https://3000-x.apps.test/"}},
 			Observed: []envport.ObservedPort{{Port: 3000}, {Port: 5432, Service: "db"}, {Port: 0}},
 			Links:    true,
 		})

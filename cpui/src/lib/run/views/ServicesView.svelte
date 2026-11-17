@@ -2,9 +2,9 @@
 	// Services: the workshop's long-running processes (its app, a database)
 	// as they stand in this run's workspace — up or not, who started each
 	// (a stage, or a person here) and since when, its probe and how that last
-	// went, its ports with their preview links — and Start / Restart / Stop
-	// by hand, with each one's output a click away. Each port also copies
-	// the `apothecary forward` line that brings it onto one's own machine.
+	// went, its declared ports in the Ports view's table (PortTable: the
+	// `apothecary forward` line, and its preview link once it is up) — and
+	// Start / Restart / Stop by hand, with each one's output a click away.
 	//
 	// Live: polled every 3s while on screen (a health flip carries no event),
 	// and refetched by the store on every service_* event of the stream.
@@ -21,7 +21,7 @@
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { I } from '$lib/design/icons';
 	import TransportIcon from '$lib/ui/TransportIcon.svelte';
-	import CopyButton from '$lib/ui/CopyButton.svelte';
+	import PortTable, { type PortRow } from '../PortTable.svelte';
 	import type { Hue } from '$lib/design/hues';
 	import type { ServiceStatus } from '$lib/domain';
 	import type { RunStore } from '../store.svelte';
@@ -46,6 +46,29 @@
 	const upCount = $derived(list.filter((s) => s.state === 'healthy').length);
 	/** What `apothecary forward` is told: the workspace, else the run. */
 	const ws = $derived(rs.run?.envId || rs.runId);
+	const forwardOne = (port: number) => `apothecary forward ${ws} ${port}`;
+
+	/** A service's declared ports as the shared table shows them: a web
+	 *  port's link once it is up (its declared path included), its address
+	 *  inside the workspace — what an agent is handed — on hover. */
+	const portRows = (s: ServiceStatus): PortRow[] =>
+		s.ports.map((p) => ({
+			port: p.port,
+			name: p.label,
+			url: p.url,
+			exposed: !!p.url,
+			status: p.url
+				? t('runview.services.port_exposed')
+				: s.state === 'healthy'
+					? t('runview.services.port_up')
+					: t('runview.services.port_down'),
+			// A tcp port never gets a link: it is reached by forwarding it.
+			statusTitle:
+				!p.url && rs.portLinks && p.protocol === 'http'
+					? t('runview.services.preview_later')
+					: undefined,
+			portTitle: t('runview.services.address_title', { address: p.address })
+		}));
 
 	/** Whether the workspace runs it right now (or is bringing it up/down). */
 	const running = (s: ServiceStatus) =>
@@ -377,38 +400,18 @@
 								<span class="faint">{t('runview.services.no_probe')}</span>
 							{/if}
 						</dd>
-						{#if s.ports.length}
-							<dt>{t('runview.services.k_ports')}</dt>
-							<dd class="ports">
-								{#each s.ports as p (p.port)}
-									<span class="port">
-										{#if p.url}
-											<a
-												class="btn btn-sm"
-												href={p.url}
-												target="_blank"
-												rel="noreferrer"
-												title={p.url}
-												><span class="pn mono">:{p.port}</span>
-												{p.label || t('runview.services.open')}
-												{I.external}</a
-											>
-										{:else}
-											<span
-												class="pill sm mono tint-muted"
-												title={t('runview.services.preview_later')}
-												>:{p.port}{p.label ? ` ${p.label}` : ''}</span
-											>
-										{/if}
-										<span class="mono faint addr" title={t('runview.services.address_title')}
-											>{p.address}</span
-										>
-										{#if canAct}<CopyButton command={`apothecary forward ${ws} ${p.port}`} />{/if}
-									</span>
-								{/each}
-							</dd>
-						{/if}
 					</dl>
+
+					{#if s.ports.length}
+						<PortTable
+							rows={portRows(s)}
+							nameHeader={s.ports.some((p) => p.label)
+								? t('runview.services.col_label')
+								: undefined}
+							forward={canAct ? forwardOne : undefined}
+							links={rs.portLinks}
+						/>
+					{/if}
 
 					{#if s.lastError}
 						<div class="lasterr mono">{s.lastError}</div>
@@ -441,6 +444,12 @@
 				</article>
 			{/each}
 		</div>
+		{#if list.some((s) => s.ports.length)}
+			<div class="hints">
+				{#if canAct}<div class="help">{t('runview.ports.forward_hint')}</div>{/if}
+				{#if rs.portLinks}<div class="help">{t('runview.ports.web_only')}</div>{/if}
+			</div>
+		{/if}
 		<div class="foot">{@render linked('runview.services.foot')}</div>
 	{/if}
 </div>
@@ -520,24 +529,11 @@
 	.probe {
 		font-size: var(--fs-meta);
 	}
-	.ports {
+	.hints {
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
-	}
-	.port {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		flex-wrap: wrap;
-		min-width: 0;
-	}
-	.pn {
-		color: var(--accent-2-text);
-	}
-	.addr {
-		font-size: var(--fs-meta);
-		overflow-wrap: anywhere;
+		padding: 10px 12px 0;
 	}
 	.lasterr {
 		font-size: var(--fs-meta);
