@@ -59,6 +59,27 @@ func TestSinkConflicts(t *testing.T) {
 	}
 }
 
+// Claude Code takes Anthropic both ways, and an integration may hold only one
+// of the two: it prefers the key, so a login beside one would never be used.
+func TestClaudeCodeTakesAnthropicOnce(t *testing.T) {
+	anthropic, _ := Get("anthropic")
+	key, okKey := anthropic.Native(ClaudeCode, KindAPIKey)
+	login, okLogin := anthropic.Native(ClaudeCode, KindOAuth)
+	if !okKey || key.ID != "anthropic" || key.Env != "ANTHROPIC_API_KEY" || !okLogin || login.ID != "anthropic" {
+		t.Errorf("key %+v (%v), login %+v (%v)", key, okKey, login, okLogin)
+	}
+	if s := Sink(ClaudeCode, anthropic, KindAPIKey); s == "" || s != Sink(ClaudeCode, anthropic, KindOAuth) {
+		t.Errorf("key sink %q, login sink %q: they must collide", s, Sink(ClaudeCode, anthropic, KindOAuth))
+	}
+	openai, _ := Get("openai")
+	if Sink(ClaudeCode, openai, KindAPIKey) != "" {
+		t.Error("Claude Code does not take OpenAI")
+	}
+	if got := For(ClaudeCode); len(got) != 1 || got[0].ID != "anthropic" {
+		t.Errorf("providers = %+v", got)
+	}
+}
+
 func jwt(claims map[string]any) string {
 	b, _ := json.Marshal(claims)
 	return "e30." + base64.RawURLEncoding.EncodeToString(b) + ".sig"

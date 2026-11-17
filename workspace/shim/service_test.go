@@ -41,6 +41,27 @@ func newSvcShim(t *testing.T) *svcShim {
 	return s
 }
 
+// deadPort is a loopback port that refuses every connection for the whole
+// test: a socket holds it bound but never listens. A port freePort released
+// is only free for an instant: under load another listener may take it, or
+// a probe's own dial may pick it as its source port and connect to itself.
+func deadPort(t *testing.T) int {
+	t.Helper()
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Close(fd) })
+	if err := syscall.Bind(fd, &syscall.SockaddrInet4{Addr: [4]byte{127, 0, 0, 1}}); err != nil {
+		t.Fatal(err)
+	}
+	sa, err := syscall.Getsockname(fd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sa.(*syscall.SockaddrInet4).Port
+}
+
 // fastSvcShim is one whose supervisors notice things in milliseconds.
 func fastSvcShim(t *testing.T) *svcShim {
 	t.Helper()
@@ -167,7 +188,7 @@ func TestServiceDaemonizes(t *testing.T) {
 // log.
 func TestServiceStartFails(t *testing.T) {
 	s := newSvcShim(t)
-	st := s.state(&serviceRequest{Name: "app", Start: "echo boom >&2; exit 3", Health: serviceHealth{TCP: freePort(t)}}, "start", "--wait")
+	st := s.state(&serviceRequest{Name: "app", Start: "echo boom >&2; exit 3", Health: serviceHealth{TCP: deadPort(t)}}, "start", "--wait")
 	if st.Phase != svcExited || st.ExitCode == nil || *st.ExitCode != 3 || !strings.Contains(st.LastError, "exited with 3") {
 		t.Fatalf("start = %+v", st)
 	}
@@ -180,7 +201,7 @@ func TestServiceStartFails(t *testing.T) {
 // of an unhealthy service starts it again.
 func TestServiceNeverHealthy(t *testing.T) {
 	s := newSvcShim(t)
-	req := &serviceRequest{Name: "app", Start: "exec sleep 60", Health: serviceHealth{TCP: freePort(t)}, Timeout: "2s"}
+	req := &serviceRequest{Name: "app", Start: "exec sleep 60", Health: serviceHealth{TCP: deadPort(t)}, Timeout: "2s"}
 	st := s.state(req, "start", "--wait")
 	if st.Phase != svcUnhealthy || !strings.Contains(st.LastError, "not healthy within 2s") {
 		t.Fatalf("start = %+v", st)
@@ -253,7 +274,7 @@ func TestProbeService(t *testing.T) {
 	if ok, err := probeService(serviceRequest{Health: serviceHealth{TCP: port}}); !ok {
 		t.Errorf("tcp: %v", err)
 	}
-	if ok, _ := probeService(serviceRequest{Health: serviceHealth{TCP: freePort(t)}}); ok {
+	if ok, _ := probeService(serviceRequest{Health: serviceHealth{TCP: deadPort(t)}}); ok {
 		t.Error("tcp on a closed port is not healthy")
 	}
 	dir := t.TempDir()
@@ -695,7 +716,7 @@ func TestProbeServiceFailures(t *testing.T) {
 	if ok || !strings.HasSuffix(err.Error(), "the end") || len(err.Error()) > 560 {
 		t.Errorf("long failure: %v, %q", ok, err)
 	}
-	if ok, err := probeService(serviceRequest{Health: serviceHealth{HTTP: "http://127.0.0.1:" + strconv.Itoa(freePort(t))}}); ok || err == nil {
+	if ok, err := probeService(serviceRequest{Health: serviceHealth{HTTP: "http://127.0.0.1:" + strconv.Itoa(deadPort(t))}}); ok || err == nil {
 		t.Errorf("nothing listening: %v, %v", ok, err)
 	}
 }

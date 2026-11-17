@@ -8,8 +8,8 @@
 // which is the whole point of holding logins engine-side.
 //
 // Every mapping here is taken from the pinned harness's own source (opencode
-// 1.17.8 auth plugins, codex 0.160.1, omp 18.13.1 rules/auth/*.kdl), not from
-// documentation.
+// 1.17.8 auth plugins, codex 0.160.1, omp 18.13.1 rules/auth/*.kdl,
+// claude-agent-acp 0.101.0), not from documentation.
 package providers
 
 import (
@@ -41,9 +41,10 @@ const (
 
 // Harness kinds the table maps (kinds.* descriptors' Kind).
 const (
-	Opencode = "opencode"
-	Codex    = "codex"
-	Omp      = "omp"
+	Opencode   = "opencode"
+	Codex      = "codex"
+	Omp        = "omp"
+	ClaudeCode = "claude-code"
 )
 
 // Native is how one harness consumes one provider.
@@ -127,8 +128,9 @@ var table = []Provider{
 		Domains: []string{"api.anthropic.com"},
 		Harnesses: map[string]Native{
 			// opencode 1.17.8 ships no Claude Pro/Max login: key only.
-			Opencode: {ID: "anthropic", Key: true},
-			Omp:      {ID: "anthropic", Env: "ANTHROPIC_API_KEY", Key: true, OAuth: true},
+			Opencode:   {ID: "anthropic", Key: true},
+			Omp:        {ID: "anthropic", Env: "ANTHROPIC_API_KEY", Key: true, OAuth: true},
+			ClaudeCode: {ID: "anthropic", Env: "ANTHROPIC_API_KEY", Key: true, OAuth: true},
 		},
 	},
 	{
@@ -240,6 +242,9 @@ func ByEnv(harness, env string) (Provider, bool) {
 // sink would overwrite each other (opencode's auth.json entry "openai" for
 // both an API key and a ChatGPT login; omp's OPENCODE_API_KEY for both
 // OpenCode gateways). An integration may reference at most one per sink.
+//
+// Claude Code's key and login share one: it prefers ANTHROPIC_API_KEY over
+// a login, so a login held beside a key would silently never be used.
 func Sink(harness string, p Provider, kind Kind) string {
 	n, ok := p.Native(harness, kind)
 	if !ok {
@@ -248,6 +253,8 @@ func Sink(harness string, p Provider, kind Kind) string {
 	switch {
 	case harness == Opencode:
 		return "auth.json:" + n.ID
+	case harness == ClaudeCode:
+		return "auth:" + n.ID
 	case kind == KindAPIKey && n.Env != "":
 		return "env:" + n.Env
 	case harness == Codex && kind == KindOAuth:

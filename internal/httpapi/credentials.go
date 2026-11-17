@@ -94,7 +94,7 @@ func (s *Server) listProviders(w http.ResponseWriter, r *http.Request) {
 	out := make([]ProviderInfo, 0, len(list))
 	for _, p := range list {
 		info := ProviderInfo{ID: p.ID, Name: p.Name, Key: p.Key, Login: p.Flow != "", SignIn: signInFlow(p.Flow), Harnesses: []string{}}
-		for _, h := range []string{providers.Codex, providers.Omp, providers.Opencode} {
+		for _, h := range []string{providers.ClaudeCode, providers.Codex, providers.Omp, providers.Opencode} {
 			if _, ok := p.Harnesses[h]; ok {
 				info.Harnesses = append(info.Harnesses, h)
 			}

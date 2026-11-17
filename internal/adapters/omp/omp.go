@@ -127,15 +127,10 @@ func (a *Adapter) AuthFilePath(ctx context.Context, env envport.EnvID) string {
 // on `omp acp`; checked on 18.12.2.
 func (a *Adapter) Profile() acpagent.Profile {
 	return acpagent.Profile{
-		Harness:  "omp",
-		Command:  "env OMP_MCP_TIMEOUT_MS=0 OMP_SKIP_SETUP=1 omp acp --yolo",
-		Preamble: acpagent.RolePreamble(a.envp, "omp"),
-		MCPServers: []agentport.MCPServer{
-			// The agent marker, explicitly: ask-human offers its tool only
-			// below an agent, and this does not hang on omp passing its
-			// own environment down (session-only, so no human's omp sees it).
-			{Name: "ask_human", Command: []string{"/opt/apothecary/shim", "ask-human"}, Env: map[string]string{"APOTHECARY_AGENT": "1"}},
-		},
+		Harness:         "omp",
+		Command:         "env OMP_MCP_TIMEOUT_MS=0 OMP_SKIP_SETUP=1 omp acp --yolo",
+		Preamble:        acpagent.RolePreamble(a.envp, "omp"),
+		MCPServers:      []agentport.MCPServer{acpagent.AskHumanServer()},
 		ReadOnlyBy:      acpagent.ReadOnlyByProcess,
 		ReadOnlyCommand: "env OMP_MCP_TIMEOUT_MS=0 OMP_SKIP_SETUP=1 omp acp --tools=" + readOnlyTools + " --approval-mode=always-ask",
 		OptionArgs:      a.options,

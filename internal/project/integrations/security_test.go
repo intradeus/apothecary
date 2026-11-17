@@ -30,6 +30,7 @@ func TestNoRefreshTokenReachesAWorkspace(t *testing.T) {
 	reg.RegisterHarness(kinds.Opencode{})
 	reg.RegisterHarness(kinds.Codex{})
 	reg.RegisterHarness(kinds.Omp{})
+	reg.RegisterHarness(kinds.ClaudeCode{})
 	svc.KindValid = reg.Valid
 	ctx := context.Background()
 
@@ -77,6 +78,7 @@ func TestNoRefreshTokenReachesAWorkspace(t *testing.T) {
 			harness("opencode", "oc", chatgpt, openrouter),
 			harness("codex", "cx", chatgpt, openai),
 			harness("omp", "omp", anthropic, gemini, chatgpt),
+			harness("claude-code", "cc", anthropic),
 		},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.example.com/g/p.git", Locator: "1"},
 		DefaultFlow: "builder",
@@ -120,7 +122,7 @@ func TestNoRefreshTokenReachesAWorkspace(t *testing.T) {
 		}
 	}
 	// What the workspace does hold, it was told about first.
-	for _, want := range []string{"chatgpt-access", "chatgpt-id-token", "sk-or-key"} {
+	for _, want := range []string{"chatgpt-access", "chatgpt-id-token", "sk-or-key", "anthropic-access"} {
 		found := false
 		for _, s := range registered {
 			found = found || s == want

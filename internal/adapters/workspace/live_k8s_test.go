@@ -243,8 +243,9 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	// The tools bundle, seeded onto the run volume and linked into
 	// /opt/apothecary; the browser editor, started through Exec with the
 	// project's extension installed through the gateway's gallery.
-	if res, err := a.Exec(ctx, env, envport.Command{Script: `command -v opencode codex-acp omp code-server && opencode --version && codex --version`}); err != nil || res.ExitCode != 0 ||
-		!strings.Contains(res.Output, "/opt/apothecary/opencode") || !strings.Contains(res.Output, "/opt/apothecary/code-server") {
+	if res, err := a.Exec(ctx, env, envport.Command{Script: `command -v opencode codex-acp omp claude-agent-acp claude code-server && opencode --version && codex --version`}); err != nil || res.ExitCode != 0 ||
+		!strings.Contains(res.Output, "/opt/apothecary/opencode") || !strings.Contains(res.Output, "/opt/apothecary/claude-agent-acp") ||
+		!strings.Contains(res.Output, "/opt/apothecary/code-server") {
 		t.Fatalf("tools bundle: %+v %v", res, err)
 	} else {
 		t.Logf("tools: %s", strings.TrimSpace(res.Output))

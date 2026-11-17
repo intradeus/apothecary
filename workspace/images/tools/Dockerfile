@@ -1,14 +1,17 @@
-# The tools bundle: the harness CLIs (opencode, codex + codex-acp, omp) and
-# code-server as standalone builds for ONE architecture and BOTH libcs, so a
-# repo-authored workspace image needs no Node, npm, apt or egress of its own
-# to run an agent or the browser editor. Build context: this directory.
+# The tools bundle: the harness CLIs (opencode, codex + codex-acp, omp,
+# claude + claude-agent-acp) and code-server as standalone builds for ONE
+# architecture and BOTH libcs, so a repo-authored workspace image needs no
+# Node, npm, apt or egress of its own to run an agent or the browser editor.
+# Build context: this directory.
 #
 # CI publishes it as the apothecary/tools image a sandbox pod's tools-seed
 # init container copies onto the run volume (seed.sh), mounted into every
 # workspace at /opt/apothecary/tools. Layout under /tools:
 #
-#   gnu/bin/   opencode codex codex-acp omp code-server   (glibc images)
-#   musl/bin/  opencode codex codex-acp omp               (Alpine images)
+#   gnu/bin/   opencode codex codex-acp omp claude claude-agent-acp
+#              code-server                                (glibc images)
+#   musl/bin/  opencode codex codex-acp omp claude claude-agent-acp
+#                                                         (Alpine images)
 #   musl/lib/  libstdc++.so.6 libgcc_s.so.1  (the bun-built binaries need them;
 #              the musl wrappers add them only when the image lacks its own)
 #   code-server/  the standalone tree (bundles its own node; glibc only)
@@ -27,6 +30,7 @@ ARG TARGETARCH
 ARG OPENCODE_VERSION=1.17.8
 ARG CODEX_VERSION=0.160.1
 ARG OMP_VERSION=18.13.1
+ARG CLAUDE_AGENT_ACP_VERSION=0.101.0
 ARG CODE_SERVER_VERSION=4.143.1
 RUN apk add --no-cache curl tar
 COPY fetch.sh /fetch.sh

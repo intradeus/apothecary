@@ -847,6 +847,223 @@ func TestOpencodeCheckAuthVerdicts(t *testing.T) {
 	checkResult(t, res, "", "opencode: model catalog: 500")
 }
 
+// --- claude-code ---------------------------------------------------------------
+
+func TestClaudeCodeNeedsACredential(t *testing.T) {
+	h, _ := ClaudeCode{}.New(Config{}, nil)
+	if err := h.Test(context.Background()); err == nil || !strings.Contains(err.Error(), "an Anthropic API key or a Claude login") {
+		t.Errorf("none = %v", err)
+	}
+	if got := h.EgressDomains(); len(got) != 0 {
+		t.Errorf("egress with no credential = %v", got)
+	}
+	// A credential Claude Code does not take is no credential.
+	other, _ := ClaudeCode{}.New(withCreds(apiKey("openai", "k")), nil)
+	if err := other.Test(context.Background()); err == nil {
+		t.Error("an OpenAI key is nothing Claude Code runs on")
+	}
+	for _, c := range []providers.Credential{apiKey("anthropic", "k"), login("anthropic", "a", nil)} {
+		h, _ := ClaudeCode{}.New(withCreds(c), nil)
+		if err := h.Test(context.Background()); err != nil {
+			t.Errorf("%s: %v", c.Kind, err)
+		}
+	}
+}
+
+func TestClaudeCodeCredentialRouting(t *testing.T) {
+	envp, id := newEnv(t)
+	ctx := context.Background()
+	key, _ := ClaudeCode{}.New(withCreds(apiKey("anthropic", "sk-ant")), envp)
+	if got := key.EnvVars(); len(got) != 1 || got["ANTHROPIC_API_KEY"] != "sk-ant" {
+		t.Errorf("env = %v", got)
+	}
+	if got := key.(SecretHolder).SecretValues(); got != nil {
+		t.Errorf("a key is the env var's to track: %v", got)
+	}
+	if err := key.SeedAuth(ctx, id, func(string) { t.Error("a key writes no credentials file") }); err != nil {
+		t.Error(err)
+	}
+	if len(envp.Env(id).Files) != 0 {
+		t.Errorf("a key wrote %v", envp.Env(id).Files)
+	}
+	if key.Binary() != "claude-agent-acp" {
+		t.Errorf("binary = %q", key.Binary())
+	}
+	if got := key.EgressDomains(); !slices.Equal(got, []string{"api.anthropic.com"}) {
+		t.Errorf("egress = %v", got)
+	}
+	if got := key.(AuthLocator).AuthFiles(ctx, id); !slices.Equal(got, []string{"/home/apothecary/.claude/.credentials.json"}) {
+		t.Errorf("auth files = %v", got)
+	}
+
+	withLogin, _ := ClaudeCode{}.New(withCreds(login("anthropic", "acc", nil)), envp)
+	if got := withLogin.EnvVars(); got != nil {
+		t.Errorf("a login rides no env var: %v", got)
+	}
+	if got := withLogin.(SecretHolder).SecretValues(); !slices.Equal(got, []string{"acc"}) {
+		t.Errorf("secrets = %v", got)
+	}
+	if got := withLogin.EgressDomains(); !slices.Equal(got, []string{"api.anthropic.com"}) {
+		t.Errorf("egress = %v", got)
+	}
+}
+
+// The login becomes Claude Code's .credentials.json: the CURRENT access
+// token, an empty refresh token, expiresAt in ms — registered with the
+// redactor before it is written, and nothing Claude Code could redeem.
+func TestClaudeCodeSeedsTheFreshLogin(t *testing.T) {
+	envp, id := newEnv(t)
+	ctx := context.Background()
+	stale := login("anthropic", "stale", nil)
+	current := login("anthropic", "current", nil)
+	cfg := Config{Credentials: Credentials{Snapshot: []providers.Credential{stale},
+		Fresh: func(context.Context) ([]providers.Credential, error) { return []providers.Credential{current}, nil }}}
+	h, _ := ClaudeCode{}.New(cfg, envp)
+	file := h.(AuthLocator).AuthFiles(ctx, id)[0]
+	var registered []string
+	if err := h.SeedAuth(ctx, id, func(s string) {
+		if _, written := envp.Env(id).Files[file]; written {
+			t.Errorf("%s registered after the file was written", s)
+		}
+		registered = append(registered, s)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(registered, []string{"current"}) {
+		t.Errorf("registered = %v", registered)
+	}
+	data, err := envp.ReadFile(ctx, id, file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		OAuth struct {
+			Access    string   `json:"accessToken"`
+			Refresh   *string  `json:"refreshToken"`
+			ExpiresAt int64    `json:"expiresAt"`
+			Scopes    []string `json:"scopes"`
+		} `json:"claudeAiOauth"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.OAuth.Access != "current" || doc.OAuth.Refresh == nil || *doc.OAuth.Refresh != "" ||
+		doc.OAuth.ExpiresAt != current.Expires.UnixMilli() || !slices.Contains(doc.OAuth.Scopes, "user:inference") {
+		t.Errorf(".credentials.json = %s", data)
+	}
+	if strings.Contains(string(data), "stale") || strings.Contains(string(data), current.Refresh) {
+		t.Errorf("stale or refresh token in %s", data)
+	}
+
+	boom := errors.New("keeper down")
+	broken, _ := ClaudeCode{}.New(Config{Credentials: Credentials{Snapshot: []providers.Credential{stale},
+		Fresh: func(context.Context) ([]providers.Credential, error) { return nil, boom }}}, envp)
+	if err := broken.SeedAuth(ctx, id, noRegister); !errors.Is(err, boom) {
+		t.Errorf("keeper failure = %v", err)
+	}
+	// The login gone since the snapshot: nothing to seed, and no failure.
+	gone, _ := ClaudeCode{}.New(Config{Credentials: Credentials{Snapshot: []providers.Credential{stale},
+		Fresh: func(context.Context) ([]providers.Credential, error) { return nil, nil }}}, envp)
+	if err := gone.SeedAuth(ctx, id, func(string) { t.Error("nothing was seeded") }); err != nil {
+		t.Errorf("gone = %v", err)
+	}
+}
+
+// A token with no expiry is never expired to Claude Code (null), not one
+// that expired in 1970.
+func TestRenderClaudeCredentialsWithoutExpiry(t *testing.T) {
+	c := login("anthropic", "acc", nil)
+	c.Expires = time.Time{}
+	data, err := renderClaudeCredentials(bind(providers.ClaudeCode, []providers.Credential{c})[0])
+	if err != nil || !strings.Contains(string(data), `"expiresAt":null`) {
+		t.Errorf("rendered = %s, %v", data, err)
+	}
+}
+
+func TestClaudeCodePrepareAndSkills(t *testing.T) {
+	envp, id := newEnv(t)
+	ctx := context.Background()
+	h, _ := ClaudeCode{}.New(withCreds(apiKey("anthropic", "k")), envp)
+	if err := h.Prepare(ctx, id, []*agentspec.Spec{{Name: "builder", Prompt: "Build."}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := envp.ReadFile(ctx, id, "/home/apothecary/.claude/settings.json"); err != nil {
+		t.Errorf("settings.json: %v", err)
+	}
+	if err := h.InstallSkills(ctx, id, []string{"pdf"}); err != nil {
+		t.Fatal(err)
+	}
+	calls := envp.Execs()
+	if len(calls) == 0 || !strings.Contains(calls[len(calls)-1].Cmd.Script, "/.claude/skills/pdf") {
+		t.Errorf("execs = %+v", calls)
+	}
+}
+
+func TestClaudeCodeModels(t *testing.T) {
+	ctx := context.Background()
+	h, _ := ClaudeCode{}.New(withCreds(login("anthropic", "a", nil)), nil)
+	stubCatalog(t, `{"anthropic":{"name":"Anthropic","models":{"zeta":{"name":""},"alpha":{"name":"Alpha"}}},
+	  "openai":{"name":"OpenAI","models":{"gamma":{}}}}`)
+	got, err := h.Models(ctx)
+	want := []ModelInfo{{ID: "anthropic/alpha", Name: "Anthropic · Alpha"}, {ID: "anthropic/zeta", Name: "Anthropic · zeta"}}
+	if err != nil || !slices.Equal(got, want) {
+		t.Errorf("models = %+v, %v", got, err)
+	}
+	stubCatalog(t, `{"other":{"name":"Other"}}`)
+	if _, err := h.Models(ctx); err == nil || !strings.Contains(err.Error(), "no anthropic provider") {
+		t.Errorf("no anthropic = %v", err)
+	}
+	breakCatalog(t, 500, ``)
+	if _, err := h.Models(ctx); err == nil || !strings.Contains(err.Error(), "model catalog: 500") {
+		t.Errorf("catalog down = %v", err)
+	}
+}
+
+func TestClaudeCodeCheckCredentials(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name       string
+		cred       providers.Credential
+		problems   map[string]string
+		answer     func(*http.Request) (int, string)
+		rejected   string
+		unverified string
+	}{
+		{name: "key accepted", cred: apiKey("anthropic", "sk"), answer: func(r *http.Request) (int, string) {
+			if r.URL.Host != "api.anthropic.com" || r.Header.Get("x-api-key") != "sk" {
+				t.Errorf("probe = %s %v", r.URL, r.Header)
+			}
+			return 200, `{}`
+		}},
+		{name: "key rejected", cred: apiKey("anthropic", "sk"),
+			answer:   func(*http.Request) (int, string) { return 401, `{"error":{"message":"invalid x-api-key"}}` },
+			rejected: "claude-code Anthropic key: credential rejected (401 invalid x-api-key) — fix it under System → Model providers"},
+		{name: "key unprobeable", cred: apiKey("anthropic", "sk"),
+			answer: func(*http.Request) (int, string) { return 503, `` }, unverified: "claude-code Anthropic key: inconclusive (503)"},
+		{name: "a login is the keeper's to prove", cred: login("anthropic", "a", nil),
+			answer: func(*http.Request) (int, string) { t.Error("a login is not probed"); return 500, `` }},
+		{name: "a disabled credential is a verdict", cred: login("anthropic", "a", nil),
+			problems: map[string]string{"c1": "credential c1 is disabled"},
+			answer:   func(*http.Request) (int, string) { return 200, `` }, rejected: "claude-code: credential c1 is disabled"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubVendors(t, tc.answer)
+			h, _ := ClaudeCode{}.New(Config{Credentials: Credentials{Snapshot: []providers.Credential{tc.cred}, Problems: tc.problems}}, nil)
+			checkResult(t, h.(AuthChecker).CheckCredentials(ctx), tc.rejected, tc.unverified)
+		})
+	}
+
+	vendorsDown(t, errors.New("network is down"))
+	h, _ := ClaudeCode{}.New(withCreds(apiKey("anthropic", "sk")), nil)
+	checkResult(t, h.(AuthChecker).CheckCredentials(ctx), "", "network is down")
+	// A flow with no model on this harness probes nothing; one with a model
+	// probes the key.
+	if res := h.(AuthChecker).CheckAuth(ctx, nil); len(res.Rejected)+len(res.Unverified) != 0 {
+		t.Errorf("no models = %+v", res)
+	}
+	checkResult(t, h.(AuthChecker).CheckAuth(ctx, []string{"anthropic/m"}), "", "network is down")
+}
+
 // --- omp ---------------------------------------------------------------------
 
 func TestOmpNeedsACredential(t *testing.T) {

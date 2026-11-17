@@ -17,10 +17,11 @@ func TestToolsDockerfilePinsMatchKinds(t *testing.T) {
 		pins[m[1]] = m[2]
 	}
 	for arg, want := range map[string]string{
-		"OPENCODE_VERSION":  OpencodeVersion,
-		"CODEX_VERSION":     CodexVersion,
-		"CODEX_ACP_VERSION": CodexACPVersion,
-		"OMP_VERSION":       OmpVersion,
+		"OPENCODE_VERSION":         OpencodeVersion,
+		"CODEX_VERSION":            CodexVersion,
+		"CODEX_ACP_VERSION":        CodexACPVersion,
+		"OMP_VERSION":              OmpVersion,
+		"CLAUDE_AGENT_ACP_VERSION": ClaudeAgentACPVersion,
 	} {
 		if got := pins[arg]; got != want {
 			t.Errorf("workspace/images/tools/Dockerfile ARG %s=%q, internal/project/kinds pins %q", arg, got, want)

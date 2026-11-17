@@ -508,7 +508,7 @@ func TestRegistry(t *testing.T) {
 		return false
 	}
 	real := registry(false, &config.Boot{})
-	for _, kind := range []string{"gitlab", "github", "kubernetes", "opencode", "codex", "omp", "jira"} {
+	for _, kind := range []string{"gitlab", "github", "kubernetes", "opencode", "codex", "omp", "claude-code", "jira"} {
 		if !has(real, kind) {
 			t.Errorf("%s is missing", kind)
 		}
