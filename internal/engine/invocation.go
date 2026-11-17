@@ -183,31 +183,42 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		lastArm = time.Now()
 		timer.Reset(remaining)
 	}
+	// The stage clock stops, and the park timer runs, while the agent waits
+	// on a person: its own open question, or the holder (hold.idle). The
+	// two overlap — a question admitted while the holder is idle, a turn
+	// starting under the hold while a question is open — so they are one
+	// state, and settle moves the clock only when that state flips.
+	waiting := false
+	var park *time.Timer
+	var parkC <-chan time.Time
+	settle := func() {
+		now := len(open) > 0 || hold != nil && hold.idle
+		switch {
+		case now && !waiting:
+			suspend()
+			park = time.NewTimer(x.e.cfg.AskHumanHold)
+			parkC = park.C
+		case !now && waiting:
+			resume()
+			park.Stop()
+			park, parkC = nil, nil
+		}
+		waiting = now
+	}
+	defer func() {
+		if park != nil {
+			park.Stop()
+		}
+	}()
 	// left is what the caller carries to the next invocation: the timer is
-	// already stopped-and-debited whenever a ping is open.
+	// already stopped-and-debited while the agent waits on a person.
 	left := func() time.Duration {
-		if len(open) > 0 || (hold != nil && hold.idle) {
+		if waiting {
 			return remaining
 		}
 		return remaining - time.Since(lastArm)
 	}
-	var park *time.Timer
-	var parkC <-chan time.Time
-	armPark := func() {
-		park = time.NewTimer(x.e.cfg.AskHumanHold)
-		parkC = park.C
-	}
-	disarmPark := func() {
-		if park != nil {
-			park.Stop()
-			park, parkC = nil, nil
-		}
-	}
-	defer disarmPark()
-	if len(open) > 0 {
-		suspend()
-		armPark()
-	}
+	settle()
 	// idleOnHolder: the agent's turn ended with nothing queued while someone
 	// holds the session. The clock stops for the holder's thinking time,
 	// and past the live hold the run parks on them.
@@ -216,16 +227,16 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			return
 		}
 		hold.idle = true
-		suspend()
-		armPark()
+		settle()
 	}
+	// busyAgain: the agent is in a turn again; the clock runs unless one of
+	// its questions is still open.
 	busyAgain := func() {
 		if hold == nil || !hold.idle {
 			return
 		}
 		hold.idle = false
-		resume()
-		disarmPark()
+		settle()
 	}
 	// handBack ends the hold: its account is recorded, the handback prompt
 	// is queued as the session's next turn (before the runner is let go of,
@@ -327,11 +338,13 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			Title: fmt.Sprintf("%s: %s", req.p.Type, x.rs.View.TicketTitle),
 			Body:  req.p.Question,
 		})
-		if len(open) == 0 {
-			suspend()
-			armPark()
-		}
 		open = append(open, req.p)
+		if hold != nil {
+			// A question comes from a turn: the agent waits on it, not on
+			// the holder, even when its turn_start is still behind it.
+			hold.idle = false
+		}
+		settle()
 		close(req.ack)
 		return nil
 	}
@@ -486,10 +499,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			// so the ping stays open and the attempt pauses on it below.
 			if handled && run.AgentPingType(ar.p.Type) && !ar.p.handedBack.Load() {
 				open = dropPing(open, ar.p)
-				if len(open) == 0 {
-					resume()
-					disarmPark()
-				}
+				settle()
 			}
 		case <-parkC:
 			parkC = nil
