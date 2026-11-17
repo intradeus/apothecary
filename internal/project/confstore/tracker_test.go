@@ -2,7 +2,9 @@ package confstore
 
 import (
 	"context"
+	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"apothecary/internal/ports/trackerport"
@@ -54,25 +56,77 @@ func TestEnsureRemoteTypesTellsNotices(t *testing.T) {
 	}
 }
 
-// A new account gets the deployment's provisioner once; one it has already
-// (made by hand, or a second call) is kept.
+// The instance gets the deployment's provisioner once; a second call, or a
+// person's own provisioner, leaves it alone.
 func TestEnsureProvisioner(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()
-	in, err := svc.EnsureProvisioner(ctx, "u1", "fake", "Kubernetes")
-	if err != nil || in.ID == "" || in.Port != PortProvisioner || in.Kind != "fake" || in.Name != "Kubernetes" || in.UserID != "u1" {
+	if _, err := svc.InstanceProvisioner(ctx); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("none yet = %v", err)
+	}
+	// A person's own provisioner is not the instance's.
+	if _, err := svc.CreateIntegration(ctx, Integration{UserID: "u1", Port: PortProvisioner, Kind: "fake", Name: "mine"}); err != nil {
+		t.Fatal(err)
+	}
+	in, err := svc.EnsureProvisioner(ctx, "fake", "Kubernetes")
+	if err != nil || in.ID == "" || in.Port != PortProvisioner || in.Kind != "fake" || in.Name != "Kubernetes" || in.UserID != InstanceOwner {
 		t.Fatalf("made = %+v, %v", in, err)
 	}
-	again, err := svc.EnsureProvisioner(ctx, "u1", "fake", "Kubernetes")
+	again, err := svc.EnsureProvisioner(ctx, "fake", "Kubernetes")
 	if err != nil || again.ID != "" {
 		t.Errorf("a second call made %+v, %v", again, err)
 	}
-	// Another user's provisioner is not this user's.
-	if other, err := svc.EnsureProvisioner(ctx, "u2", "fake", "Kubernetes"); err != nil || other.ID == "" {
-		t.Errorf("u2 = %+v, %v", other, err)
+	if got, err := svc.InstanceProvisioner(ctx); err != nil || got.ID != in.ID {
+		t.Errorf("instance provisioner = %+v, %v", got, err)
 	}
+	// No one lists it among their own.
 	list, _ := svc.ListIntegrations(ctx, "u1")
-	if len(list) != 1 {
-		t.Errorf("u1 has %d integrations", len(list))
+	if len(list) != 1 || list[0].Name != "mine" {
+		t.Errorf("u1 lists %+v", list)
+	}
+}
+
+// A workshop builds on the instance's provisioner unless it names another
+// of its owner's; an edit that names none keeps the one it had.
+func TestProjectProvisioner(t *testing.T) {
+	svc, _ := newSvc(t)
+	ctx := context.Background()
+	mk := func(owner, port, name string) Integration {
+		in, err := svc.CreateIntegration(ctx, Integration{UserID: owner, Port: port, Kind: "fake", Name: name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return in
+	}
+	repo := mk("u1", PortRepository, "gl")
+	harness := mk("u1", PortHarness, "oc")
+	draft := Project{
+		UserID: "u1", Name: "p1", RepoAccountID: repo.ID, HarnessIDs: []string{harness.ID},
+		Repo: RepoConfig{URL: "https://git.test/g/p.git"}, DefaultFlow: "builder",
+	}
+	if _, err := svc.CreateProject(ctx, draft); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "System → Provisioner") {
+		t.Fatalf("no instance provisioner = %v", err)
+	}
+	inst, err := svc.EnsureProvisioner(ctx, "fake", "Kubernetes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := svc.CreateProject(ctx, draft)
+	if err != nil || p.ProvisionerID != inst.ID {
+		t.Fatalf("created on %q, %v; want the instance's %q", p.ProvisionerID, err, inst.ID)
+	}
+
+	own := mk("u1", PortProvisioner, "vm")
+	p.ProvisionerID = own.ID
+	if p, err = svc.UpdateProject(ctx, p.ID, p); err != nil || p.ProvisionerID != own.ID {
+		t.Fatalf("own provisioner = %q, %v", p.ProvisionerID, err)
+	}
+	p.ProvisionerID = ""
+	if p, err = svc.UpdateProject(ctx, p.ID, p); err != nil || p.ProvisionerID != own.ID {
+		t.Errorf("an edit naming none kept %q, %v", p.ProvisionerID, err)
+	}
+	p.ProvisionerID = mk("u2", PortProvisioner, "theirs").ID
+	if _, err := svc.UpdateProject(ctx, p.ID, p); !errors.Is(err, ErrInvalid) {
+		t.Errorf("someone else's provisioner = %v", err)
 	}
 }

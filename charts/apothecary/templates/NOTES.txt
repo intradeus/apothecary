@@ -10,8 +10,8 @@ Apothecary is starting in {{ .Release.Namespace }}; workspaces will run in {{ .V
    then open http://localhost:8080/ and create the first account.
    (Set access.http.ingress or access.publicURL to give it an address.)
 {{- end }}
-   Each account gets a Kubernetes provisioner with this deployment's
-   settings; nothing to fill in.
+   The instance's Kubernetes provisioner takes this deployment's settings;
+   nothing to fill in (an admin can override them in System → Provisioner).
 
 2. On your machine, install the apothecary CLI (the release's binaries) and
    sign in once:

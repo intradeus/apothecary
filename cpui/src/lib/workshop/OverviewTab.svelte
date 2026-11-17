@@ -236,8 +236,6 @@
 			</div>
 			<div class="pane-body">
 				<dl class="kv">
-					<dt>{t('workshop.overview.provisioner')}</dt>
-					<dd>{intName(project.provisionerId)}</dd>
 					<dt>{t('workshop.overview.harnesses')}</dt>
 					<dd>{(project.harnessIds ?? []).map(intName).join(', ') || '—'}</dd>
 					<dt>{t('workshop.overview.docker')}</dt>

@@ -68,7 +68,7 @@ describe('NAV', () => {
 			'/tickets/1',
 			'/merge-requests',
 			'/analytics/d1',
-			'/system/limits'
+			'/system/provisioner'
 		])
 			expect(NAV.filter((n) => n.match(path))).toHaveLength(1);
 	});

@@ -105,7 +105,7 @@ describe('OverviewTab, repositories', () => {
 		expect(repos.getByText('Gitlab')).toBeInTheDocument();
 		expect(repos.getByRole('link', { name: 'Edit' })).toHaveAttribute(
 			'href',
-			'/w/p1/settings#repository'
+			'/w/p1?tab=settings#repository'
 		);
 	});
 
@@ -253,10 +253,10 @@ describe('OverviewTab, egress', () => {
 });
 
 describe('OverviewTab, workspace', () => {
-	it('names the provisioner and harnesses', () => {
+	it('names the harnesses, and no provisioner (the instance’s)', () => {
 		setup();
 		const ws = pane('Workspace');
-		expect(ws.getByText('Docker')).toBeInTheDocument();
+		expect(ws.queryByText('provisioner')).not.toBeInTheDocument();
 		expect(ws.getByText('Claude')).toBeInTheDocument();
 	});
 

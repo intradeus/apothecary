@@ -184,6 +184,8 @@ export default {
 	'system.int.deleted': '{name} deleted',
 	'system.int.usedBy': 'used by {workshops}',
 	'system.int.unused': 'not used by any workshop',
+	'system.int.instanceSub':
+		'every workshop builds on it · an empty field takes the deployment’s value',
 	'system.int.testing': 'testing…',
 	'system.int.errorLabel': 'error',
 	'system.int.okUnverified': 'ok, unverified',
@@ -428,10 +430,7 @@ export default {
 	'form.project.ticketSource.help':
 		'Where this workshop’s tickets live, read live from the tracker. Several workshops may share one; switching hides the old source’s tickets here, their runs stay. Add a tracker under <a class="link" href="{href}">Integrations</a>.',
 	'form.project.executionHead': 'Execution',
-	'form.project.executionSub': 'where workspaces run, and which coding agents may run in them',
-	'form.project.provisioner': 'Provisioner',
-	'form.project.noProvisioner':
-		'No provisioner yet — add one under <a class="link" href="{href}">Integrations</a>.',
+	'form.project.executionSub': 'which coding agents may run in the workshop’s workspaces',
 	'form.project.harnesses': 'Harness integrations',
 	'form.project.harnessesHelp':
 		'The harnesses this workshop provides (auth and tooling). A flow names which kind it runs on; one integration per kind.',

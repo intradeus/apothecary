@@ -11,7 +11,7 @@
 	// fixed child), `matchWidth` and `flip` (opens upward when there is more
 	// room above).
 	import { tick, untrack, type Snippet } from 'svelte';
-	import { materialize } from './motion';
+	import { materialize, type MaterializeParams } from './motion';
 	import { portal as toBody } from './portal';
 	import { layers } from './trap';
 
@@ -25,8 +25,8 @@
 		children,
 		/** Explicit fixed position, overriding the anchor. */
 		at,
-		/** Stay open on outside clicks (a floating composer); Esc still closes. */
-		sticky = false,
+		/** Appear and leave at once, with no materialise (a floating composer). */
+		instant = false,
 		/** Render under <body>, above everything that opened it. */
 		portal = false,
 		/** At least as wide as the anchor. */
@@ -45,7 +45,7 @@
 		legend?: string;
 		children: Snippet;
 		at?: { left?: number; top?: number; right?: number; bottom?: number };
-		sticky?: boolean;
+		instant?: boolean;
 		portal?: boolean;
 		matchWidth?: boolean;
 		flip?: boolean;
@@ -70,6 +70,9 @@
 			} as const
 		)[side];
 	});
+
+	const enter = (node: Element, p: MaterializeParams) =>
+		instant ? { duration: 0 } : materialize(node, p);
 
 	function close() {
 		open = false;
@@ -132,10 +135,10 @@
 		if (flip) void tick().then(place);
 		const down = (e: PointerEvent) => {
 			const t = e.target as Node;
-			if (sticky || el?.contains(t) || anchor?.contains(t)) return;
+			if (el?.contains(t) || anchor?.contains(t)) return;
 			close();
 		};
-		// Esc closes only the top layer, so a menu inside a sticky composer
+		// Esc closes only the top layer, so a menu inside a composer
 		// doesn't take the composer with it. A dialog under it may call this
 		// once per open dialog for the same key, hence the guard.
 		const me = {
@@ -176,7 +179,7 @@
 		class:top={portal}
 		{role}
 		use:toBody={portal}
-		transition:materialize={motion}
+		transition:enter={motion}
 		style:left={pos.left !== undefined ? `${pos.left}px` : null}
 		style:top={pos.top !== undefined ? `${pos.top}px` : null}
 		style:right={pos.right !== undefined ? `${pos.right}px` : null}

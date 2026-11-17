@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -158,11 +157,6 @@ func TestSessionsAndSetup(t *testing.T) {
 	svc := authtest.New(auth.NewMem())
 	x := newEnv(t, engine.Config{})
 	x.srv.Auth = svc
-	var made []string
-	x.srv.NewAccount = func(_ context.Context, userID string) error {
-		made = append(made, userID)
-		return errors.New("logged, not the account's problem")
-	}
 	ts := httptest.NewServer(x.srv.Handler())
 	t.Cleanup(ts.Close)
 	client := &http.Client{}
@@ -201,10 +195,6 @@ func TestSessionsAndSetup(t *testing.T) {
 	res, body := post("/api/auth/setup", `{"handle":"Lu","email":"Lu@Example.test","name":"Lu","password":"correct horse"}`, "same-origin")
 	if res.StatusCode != http.StatusCreated || !strings.Contains(body, `"admin":true`) || !strings.Contains(body, `"handle":"lu"`) {
 		t.Fatalf("setup = %d %s", res.StatusCode, body)
-	}
-	// The account got the deployment's defaults, even though they failed.
-	if len(made) != 1 || !strings.Contains(body, made[0]) {
-		t.Errorf("new account hook = %v", made)
 	}
 	// The cookie is the session now: me answers.
 	if res, body := get("/api/me"); res.StatusCode != http.StatusOK || !strings.Contains(body, `"password"`) {

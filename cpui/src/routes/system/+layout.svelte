@@ -1,10 +1,11 @@
 <script lang="ts">
 	// The System hub (DESIGN 7.10): one's integrations, channels, account
 	// and policy — and, for an admin, the instance's accounts. A section nav
-	// on the left, the section on the right.
+	// on the left, the section on the right. Integrations opens a second
+	// level under it: a page per kind (repositories, ticket sources, harnesses).
 	import type { Snippet } from 'svelte';
 	import { page } from '$app/state';
-	import { to, type SystemSection } from '$lib/core/urls';
+	import { INTEGRATION_PORTS, to, type SystemSection } from '$lib/core/urls';
 	import { session } from '$lib/app/session.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import { provideHeaderSlot } from '$lib/ui/headerSlot.svelte';
@@ -40,9 +41,7 @@
 		section('channels', I.channels),
 		section('account', I.members),
 		...(session.admin ? [section('users', I.members), section('observability', I.info)] : []),
-		section('limits', I.limits),
-		section('reaper', I.reaper),
-		section('storage', I.storage)
+		section('provisioner', I.provisioner)
 	]);
 
 	// A section's pages may nest (a skill under Skills): the section is the
@@ -53,18 +52,33 @@
 				page.url.pathname === `/system/${s.id}` || page.url.pathname.startsWith(`/system/${s.id}/`)
 		) ?? SECTIONS[0]
 	);
+
+	// Integrations' second level: one page per kind.
+	const PORTS = $derived(
+		INTEGRATION_PORTS.map((p) => ({
+			id: `integrations/${p}`,
+			label: t(`page.integrations.${p}`),
+			sub: t(`page.integrations.${p}Sub`),
+			href: to.integrations(p)
+		}))
+	);
+	const port = $derived(
+		current.id === 'integrations' ? PORTS.find((p) => page.url.pathname === p.href) : undefined
+	);
 </script>
 
 <PageHeader
 	crumbs={[
 		{ label: t('nav.desk'), href: to.desk() },
 		{ label: t('page.system.crumb'), href: to.system() },
-		{ label: current.label }
+		...(port
+			? [{ label: current.label, href: to.system(current.id) }, { label: port.label }]
+			: [{ label: current.label }])
 	]}
 	title={current.title}
 	accent={current.accent}
 >
-	{#snippet meta()}<span>{current.sub}</span>{/snippet}
+	{#snippet meta()}<span>{port?.sub ?? current.sub}</span>{/snippet}
 	{#snippet actions()}{@render slot.action?.()}{/snippet}
 </PageHeader>
 
@@ -73,8 +87,17 @@
 		fill
 		title={t('page.system.crumb')}
 		label={t('page.system.sections')}
-		active={current.id}
-		items={SECTIONS.map((s) => ({ id: s.id, label: s.label, icon: s.icon, href: to.system(s.id) }))}
+		active={port?.id ?? current.id}
+		items={SECTIONS.map((s) => ({
+			id: s.id,
+			label: s.label,
+			icon: s.icon,
+			href: to.system(s.id),
+			children:
+				s.id === 'integrations'
+					? PORTS.map(({ id, label, href }) => ({ id, label, href }))
+					: undefined
+		}))}
 	/>
 	<div class="body glass">
 		<div class="inner readable">{@render children()}</div>

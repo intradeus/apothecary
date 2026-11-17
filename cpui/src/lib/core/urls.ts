@@ -14,7 +14,10 @@ const q = (params: Record<string, string | undefined>) => {
 };
 
 export type WorkshopTab =
-	'overview' | 'runs' | 'tickets' | 'mrs' | 'flows' | 'automations' | 'health';
+	'overview' | 'runs' | 'tickets' | 'mrs' | 'flows' | 'automations' | 'health' | 'settings';
+/** The kinds of integration System lists, each on its own page, in nav order. */
+export const INTEGRATION_PORTS = ['repository', 'ticketsource', 'harness'] as const;
+export type IntegrationPort = (typeof INTEGRATION_PORTS)[number];
 export type SystemSection =
 	| 'integrations'
 	| 'providers'
@@ -22,9 +25,7 @@ export type SystemSection =
 	| 'channels'
 	| 'account'
 	| 'users'
-	| 'limits'
-	| 'reaper'
-	| 'storage'
+	| 'provisioner'
 	| 'observability';
 
 /** Route builders. */
@@ -61,9 +62,12 @@ export const to = {
 	newWorkshop: () => '/w/new',
 	workshop: (projectId: string, tab?: WorkshopTab) =>
 		`/w/${projectId}${tab && tab !== 'overview' ? `?tab=${tab}` : ''}`,
-	workshopSettings: (projectId: string) => `/w/${projectId}/settings`,
+	workshopSettings: (projectId: string) => `/w/${projectId}?tab=settings`,
 	flow: (projectId: string, name: string) => `/w/${projectId}/flows/${encodeURIComponent(name)}`,
 	system: (section: SystemSection = 'integrations') => `/system/${section}`,
+	integrations: (port: IntegrationPort) => `/system/integrations/${port}`,
+	/** The instance's caps, on System → Provisioner. */
+	limits: () => '/system/provisioner#limits',
 	account: () => '/system/account',
 	users: () => '/system/users',
 	// The skill library (TODO 38): one's skills and skillsets, under System.

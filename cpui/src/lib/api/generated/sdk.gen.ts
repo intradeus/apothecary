@@ -254,6 +254,9 @@ import type {
 	GetProjectMrErrors,
 	GetProjectMrResponses,
 	GetProjectResponses,
+	GetProvisionerData,
+	GetProvisionerErrors,
+	GetProvisionerResponses,
 	GetReadyzData,
 	GetReadyzErrors,
 	GetReadyzResponses,
@@ -595,6 +598,9 @@ import type {
 	TestIntegrationData,
 	TestIntegrationErrors,
 	TestIntegrationResponses,
+	TestProvisionerData,
+	TestProvisionerErrors,
+	TestProvisionerResponses,
 	UpdateAutomationData,
 	UpdateAutomationErrors,
 	UpdateAutomationResponses,
@@ -613,6 +619,9 @@ import type {
 	UpdateProjectData,
 	UpdateProjectErrors,
 	UpdateProjectResponses,
+	UpdateProvisionerData,
+	UpdateProvisionerErrors,
+	UpdateProvisionerResponses,
 	UpdateScorecardData,
 	UpdateScorecardErrors,
 	UpdateScorecardResponses,
@@ -1873,6 +1882,8 @@ export const listIntegrations = <ThrowOnError extends boolean = false>(
 
 /**
  * Configure an integration
+ *
+ * Repositories, harnesses and ticket sources; a provisioner is the instance's (PUT /api/provisioner), 400 here.
  */
 export const createIntegration = <ThrowOnError extends boolean = false>(
 	options: Options<CreateIntegrationData, ThrowOnError>
@@ -3994,6 +4005,85 @@ export const listProviders = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/providers',
+		...options
+	});
+
+/**
+ * The instance's provisioner (secrets masked)
+ *
+ * Every workshop's workspaces are built on it. 404 while the instance has none (a deployment without APOTHECARY_K8S_NAMESPACE).
+ */
+export const getProvisioner = <ThrowOnError extends boolean = false>(
+	options?: Options<GetProvisionerData, ThrowOnError>
+): RequestResult<GetProvisionerResponses, GetProvisionerErrors, ThrowOnError> =>
+	(options?.client ?? client).get<GetProvisionerResponses, GetProvisionerErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/provisioner',
+		...options
+	});
+
+/**
+ * Change the instance's provisioner (admin; secrets merge: present replaces, "" deletes, absent keeps)
+ *
+ * An empty field takes the deployment's value (APOTHECARY_K8S_*). Runs pick the change up on their next workspace.
+ */
+export const updateProvisioner = <ThrowOnError extends boolean = false>(
+	options: Options<UpdateProvisionerData, ThrowOnError>
+): RequestResult<UpdateProvisionerResponses, UpdateProvisionerErrors, ThrowOnError> =>
+	(options.client ?? client).put<UpdateProvisionerResponses, UpdateProvisionerErrors, ThrowOnError>(
+		{
+			security: [
+				{
+					in: 'cookie',
+					name: 'apothecary_session',
+					type: 'apiKey'
+				},
+				{
+					key: 'personalToken',
+					scheme: 'bearer',
+					type: 'http'
+				}
+			],
+			url: '/api/provisioner',
+			...options,
+			headers: {
+				'Content-Type': 'application/json',
+				...options.headers
+			}
+		}
+	);
+
+/**
+ * Check the instance's provisioner reaches its cluster (admin)
+ */
+export const testProvisioner = <ThrowOnError extends boolean = false>(
+	options?: Options<TestProvisionerData, ThrowOnError>
+): RequestResult<TestProvisionerResponses, TestProvisionerErrors, ThrowOnError> =>
+	(options?.client ?? client).post<TestProvisionerResponses, TestProvisionerErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/provisioner/test',
 		...options
 	});
 

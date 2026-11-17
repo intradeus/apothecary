@@ -1,20 +1,16 @@
 import { render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { anIntegration, bindable, choose } from '$test/fixtures/app.svelte';
+import { anIntegration, bindable } from '$test/fixtures/app.svelte';
 import ExecutionSection from './ExecutionSection.svelte';
 
-const docker = anIntegration({ id: 'd', name: 'Docker', port: 'provisioner', kind: 'docker' });
-const k8s = anIntegration({ id: 'k', name: 'K8s', port: 'provisioner', kind: 'kubernetes' });
 const claudeA = anIntegration({ id: 'a', name: 'Claude A', port: 'harness', kind: 'claude' });
 const claudeB = anIntegration({ id: 'b', name: 'Claude B', port: 'harness', kind: 'claude' });
 const codex = anIntegration({ id: 'c', name: 'Codex', port: 'harness', kind: 'codex' });
 
 const setup = (over: Record<string, unknown> = {}) => {
 	const props = bindable({
-		provisioners: [docker, k8s],
 		harnesses: [claudeA, claudeB, codex],
-		provisionerId: 'd',
 		harnessIds: ['a'],
 		...over
 	});
@@ -24,16 +20,9 @@ const setup = (over: Record<string, unknown> = {}) => {
 const box = (name: RegExp) => screen.getByRole('checkbox', { name });
 
 describe('ExecutionSection', () => {
-	it('binds the provisioner', async () => {
-		const props = setup();
-		await choose('Provisioner', 'K8s (kubernetes)');
-		expect(props.provisionerId).toBe('k');
-	});
-
-	it('links to the integrations with no provisioner', () => {
-		setup({ provisioners: [], provisionerId: '' });
-		const links = screen.getAllByRole('link');
-		expect(links[0]).toHaveAttribute('href', '/system/integrations');
+	it('offers no provisioner: workspaces are built on the instance’s', () => {
+		setup();
+		expect(screen.queryByText(/provisioner/i)).not.toBeInTheDocument();
 	});
 
 	it('links to the integrations with no harness', () => {

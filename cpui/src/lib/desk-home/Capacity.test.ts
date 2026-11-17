@@ -40,7 +40,10 @@ describe('Capacity', () => {
 
 	it('links to the limits', () => {
 		render(Capacity);
-		expect(screen.getByRole('link', { name: /Limits/ })).toHaveAttribute('href', '/system/limits');
+		expect(screen.getByRole('link', { name: /Limits/ })).toHaveAttribute(
+			'href',
+			'/system/provisioner#limits'
+		);
 	});
 
 	it('says the numbers are paused while the tab was away', () => {

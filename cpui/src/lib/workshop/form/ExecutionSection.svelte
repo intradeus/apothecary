@@ -1,26 +1,21 @@
 <script lang="ts">
-	// 3 · Execution: the provisioner and the workshop's SET of available
-	// harness integrations, no default. The FLOW names the harness kind
+	// 3 · Execution: the workshop's SET of available harness integrations, no
+	// default (workspaces are built on the instance's provisioner). The FLOW names the harness kind
 	// (defaults.harness / a stage override); the workshop just needs an
 	// integration of that kind (for auth + image layers). At most one per
 	// kind so kind→integration is unambiguous.
 	import type { Integration } from '$lib/domain';
 	import { to } from '$lib/core/urls';
-	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 	import StatusMark from '$lib/ui/StatusMark.svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import FormPane from './FormPane.svelte';
 	import FormSub from './FormSub.svelte';
 
 	let {
-		provisioners,
 		harnesses,
-		provisionerId = $bindable(),
 		harnessIds = $bindable()
 	}: {
-		provisioners: Integration[];
 		harnesses: Integration[];
-		provisionerId: string;
 		harnessIds: string[];
 	} = $props();
 
@@ -32,10 +27,6 @@
 			? harnessIds.filter((id) => id !== h.id)
 			: [...harnessIds, h.id];
 	}
-
-	const provisionerOptions = $derived<SelectOption[]>(
-		provisioners.map((p) => ({ value: p.id, label: `${p.name} (${p.kind})` }))
-	);
 </script>
 
 <FormPane
@@ -44,17 +35,6 @@
 	title={t('form.project.executionHead')}
 	lead={t('form.project.executionSub')}
 >
-	<div class="grid2">
-		<div class="field">
-			<label for="p-prov">{t('form.project.provisioner')}</label>
-			<Select id="p-prov" options={provisionerOptions} bind:value={provisionerId} required />
-			{#if provisioners.length === 0}
-				<div class="error">
-					{@html th('form.project.noProvisioner', { href: to.system('integrations') })}
-				</div>
-			{/if}
-		</div>
-	</div>
 	<FormSub>
 		<div class="row">
 			<h3>{t('form.project.harnesses')}</h3>

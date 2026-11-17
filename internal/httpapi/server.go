@@ -85,11 +85,6 @@ type Server struct {
 	// answers every user route 503 — a server without it is misconfigured,
 	// never open.
 	Auth *auth.Service
-	// NewAccount runs once an account exists (the instance claimed, or an
-	// admin adding one): the deployment's defaults for it, such as its
-	// provisioner. Best-effort: a failure is logged, never the account's.
-	// nil = nothing.
-	NewAccount func(ctx context.Context, userID string) error
 	// SSH is the engine's SSH door (TODO 46), for the run page's connection
 	// facts and for ending a disabled account's sessions; nil = no door.
 	SSH SSHAccess

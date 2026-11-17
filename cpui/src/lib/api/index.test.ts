@@ -1183,6 +1183,20 @@ describe('what each call sends', () => {
 			expect(out.snapshotsAfter).toBe('30d');
 		});
 
+		it('reads, patches and tests the instance’s provisioner', async () => {
+			reply('getProvisioner', answer({ id: 'p', port: 'provisioner', name: 'Kubernetes' }));
+			await expect(system.provisioner()).resolves.toMatchObject({ id: 'p', name: 'Kubernetes' });
+			const fn = reply('updateProvisioner', answer({ id: 'p' }));
+			await system.saveProvisioner({ config: { namespace: 'ws' } });
+			expect(fn).toHaveBeenLastCalledWith({ body: { name: '', config: { namespace: 'ws' } } });
+			reply('testProvisioner', answer({ ok: true }));
+			await expect(system.testProvisioner()).resolves.toEqual({
+				ok: true,
+				error: undefined,
+				warnings: []
+			});
+		});
+
 		it('saves no cap as -1', async () => {
 			const fn = reply('setLimits', answer({ max_concurrent_runs: -1, max_environments: 2 }));
 			await expect(

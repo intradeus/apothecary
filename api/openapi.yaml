@@ -6947,6 +6947,7 @@ paths:
       tags:
         - integrations
     post:
+      description: Repositories, harnesses and ticket sources; a provisioner is the instance's (PUT /api/provisioner), 400 here.
       operationId: createIntegration
       requestBody:
         content:
@@ -10384,6 +10385,113 @@ paths:
         - session: []
         - personalToken: []
       summary: The model providers apothecary manages credentials for
+      tags:
+        - integrations
+  /api/provisioner:
+    get:
+      description: Every workshop's workspaces are built on it. 404 while the instance has none (a deployment without APOTHECARY_K8S_NAMESPACE).
+      operationId: getProvisioner
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Integration'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: The instance's provisioner (secrets masked)
+      tags:
+        - integrations
+    put:
+      description: An empty field takes the deployment's value (APOTHECARY_K8S_*). Runs pick the change up on their next workspace.
+      operationId: updateProvisioner
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntegrationUpdate'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Integration'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'Change the instance''s provisioner (admin; secrets merge: present replaces, "" deletes, absent keeps)'
+      tags:
+        - integrations
+  /api/provisioner/test:
+    post:
+      operationId: testProvisioner
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestResult'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Check the instance's provisioner reaches its cluster (admin)
       tags:
         - integrations
   /api/runs:

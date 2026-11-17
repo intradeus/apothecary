@@ -19,8 +19,7 @@ describe('the icon vocabulary', () => {
 		['dark', I.dark],
 		['light', I.light],
 		['channels', I.channels],
-		['members', I.members],
-		['reaper', I.reaper]
+		['members', I.members]
 	])('forces %s, a glyph with an emoji form, to text', (_, glyph) => {
 		expect(glyph.endsWith(TEXT)).toBe(true);
 	});

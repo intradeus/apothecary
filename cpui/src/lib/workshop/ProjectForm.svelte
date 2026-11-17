@@ -6,7 +6,7 @@
 	// saving"). Secrets are saved one by one as they are set, not by Save.
 	import { errorMessage } from '$lib/core/errors';
 	import { DEFAULT_BRANCH_FORMAT } from '$lib/core/branchname';
-	import { onMount, untrack } from 'svelte';
+	import { onMount, untrack, type Snippet } from 'svelte';
 	import { replaceState } from '$app/navigation';
 	import { api } from '$lib/api';
 	import {
@@ -45,7 +45,8 @@
 		flows,
 		existing = null,
 		onsaved,
-		oncancel
+		oncancel,
+		after
 	}: {
 		integrations: Integration[];
 		flows: Flow[];
@@ -53,6 +54,8 @@
 		/** envcheck: a check was started after saving (the caller shows it). */
 		onsaved: (p: Project, envcheck: boolean) => void;
 		oncancel: () => void;
+		/** Below the last section, above the save bar (the settings tab's delete). */
+		after?: Snippet;
 	} = $props();
 
 	// Snapshot the props once: this form deliberately captures initial values
@@ -61,7 +64,6 @@
 	const initFlows = untrack(() => flows);
 	const byPort = (port: string) => untrack(() => integrations).filter((i) => i.port === port);
 	const repoAccounts = byPort('repository');
-	const provisioners = byPort('provisioner');
 	const harnesses = byPort('harness');
 	const ticketSources = byPort('ticketsource');
 	const flowNames = initFlows.map((f) => f.name);
@@ -70,7 +72,9 @@
 
 	let name = $state(init?.name ?? '');
 	let repoAccountId = $state(init?.repoAccountId ?? repoAccounts[0]?.id ?? '');
-	let provisionerId = $state(init?.provisionerId ?? provisioners[0]?.id ?? '');
+	// Not chosen here: '' builds on the instance's provisioner, and an edit
+	// keeps the one the workshop has.
+	const provisionerId = init?.provisionerId ?? '';
 	// '' on create is the built-in tracker: the engine makes it on first use.
 	let ticketSourceId = $state(
 		init?.ticketSourceId ?? ticketSources.find((i) => i.kind === INTERNAL_TRACKER)?.id ?? ''
@@ -299,7 +303,7 @@
 			id: 'execution',
 			n: 3,
 			label: t('form.project.step.execution'),
-			done: !!provisionerId && harnessIds.length > 0,
+			done: harnessIds.length > 0,
 			sub: t('form.project.step.harnesses', { count: harnessIds.length })
 		},
 		{
@@ -396,7 +400,7 @@
 		>
 			<TicketSourceSection sources={ticketSources} bind:ticketSourceId />
 		</WorkshopSection>
-		<ExecutionSection {provisioners} {harnesses} bind:provisionerId bind:harnessIds />
+		<ExecutionSection {harnesses} bind:harnessIds />
 		<WorkspaceSection
 			{blockedDomains}
 			bind:egressMode
@@ -412,6 +416,8 @@
 		{#if existing}
 			<SecretsSection projectId={existing.id} />
 		{/if}
+
+		{@render after?.()}
 
 		{#if error}<ErrorCard cause={t('form.project.saveFail')} detail={error} />{/if}
 

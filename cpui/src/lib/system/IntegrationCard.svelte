@@ -21,6 +21,8 @@
 		descriptor,
 		usedBy = [],
 		credentialNames = {},
+		instance = false,
+		editable = true,
 		onchanged
 	}: {
 		integration: Integration;
@@ -29,6 +31,11 @@
 		credentialNames?: Record<string, string>;
 		/** Workshops that reference it, by name. */
 		usedBy?: string[];
+		/** The instance's provisioner: tested and saved through the instance's
+		 *  own routes, never deleted, built on by every workshop. */
+		instance?: boolean;
+		/** Test and Edit are offered (an instance's integration: to an admin). */
+		editable?: boolean;
 		onchanged: () => void;
 	} = $props();
 
@@ -63,7 +70,7 @@
 	async function test() {
 		testing = true;
 		try {
-			const r = await api.integrations.test(i.id);
+			const r = instance ? await api.system.testProvisioner() : await api.integrations.test(i.id);
 			result = { ok: r.ok, error: r.error, warnings: r.warnings, at: Date.now() };
 		} catch (e) {
 			result = { ok: false, error: errorMessage(e), at: Date.now() };
@@ -118,13 +125,15 @@
 	{summary}
 	{error}
 	open={panel !== ''}
-	sub={usedBy.length
-		? t('system.int.usedBy', { workshops: usedBy.join(', ') })
-		: internal
-			? t('system.int.internalSub')
-			: !tracker
-				? t('system.int.unused')
-				: undefined}
+	sub={instance
+		? t('system.int.instanceSub')
+		: usedBy.length
+			? t('system.int.usedBy', { workshops: usedBy.join(', ') })
+			: internal
+				? t('system.int.internalSub')
+				: !tracker
+					? t('system.int.unused')
+					: undefined}
 >
 	{#snippet status()}
 		{#if internal}
@@ -148,7 +157,7 @@
 		{/if}
 	{/snippet}
 	{#snippet actions()}
-		{#if !internal}
+		{#if !internal && editable}
 			<button class="btn-sm" onclick={test} disabled={testing} aria-busy={testing}
 				>{t('system.int.test')}</button
 			>
@@ -168,7 +177,7 @@
 				onclick={() => toggle('lists')}>{t('system.int.lists')}</button
 			>
 		{/if}
-		{#if !internal}
+		{#if !internal && !instance}
 			<span class="spacer"></span>
 			<button class="btn-danger btn-sm" onclick={remove} aria-busy={removing}
 				>{t('system.int.delete')}</button
@@ -181,6 +190,7 @@
 		<IntegrationForm
 			{descriptor}
 			existing={i}
+			save={instance ? (patch) => api.system.saveProvisioner(patch) : undefined}
 			onsaved={() => {
 				panel = '';
 				onchanged();
