@@ -22,6 +22,20 @@ import (
 // releases — the session is then sent the handback prompt, and when THAT turn
 // ends the stage's output contract applies as usual.
 //
+// A forced take-over stops the agent's turn in flight, so the agent waits on
+// the holder at once — unless that turn is waiting on the agent's own
+// question: the agent is not working then, and the holder answers it. A
+// passive one lets the turn finish first. Either way the stopped (or
+// finished) turn is the agent's, not on the hold's account. The stop is
+// decided under the lock the agent's questions are registered under: a
+// question registered first (even one still on its way to the loop) keeps
+// its turn. The engine only asks for the stop (Inbox.StopTurn); a question
+// raised before the runner takes it up keeps the turn too, and one raised
+// after is refused (ErrTurnStopping) until the stopped turn ends — never
+// opened on a turn about to end, which would park the run. A runner that
+// cannot stop a turn never takes the stop up: its turn runs on as under a
+// passive take-over, questions and all.
+//
 // The hold is on the record: hold_taken, and hold_released with its
 // duration, turns and cost (every leg of it, across any park). A holder who
 // goes quiet past the live hold parks the run (stage_paused held) the way
@@ -33,21 +47,26 @@ var (
 	ErrAlreadyHeld = errors.New("someone already holds this agent's session")
 	// ErrNotHeld: a release or a message with no take-over in force.
 	ErrNotHeld = errors.New("nobody holds this agent's session")
+	// ErrTurnStopping: a question raised by a turn the runner is stopping
+	// for a forced take-over.
+	ErrTurnStopping = errors.New("the session was taken over and this turn is being stopped; the person holding it talks to you next")
 )
 
-// TakeOver puts the run's live agent session in userID's hands. 409-class
+// TakeOver puts the run's live agent session in userID's hands. force stops
+// the agent's turn in flight (not one waiting on its own question); without
+// it the turn runs to its end before the agent waits on the holder. 409-class
 // errors: no agent is running to take over (a command stage, a gate, between
 // stages, parked), or someone already holds it.
-func (e *Engine) TakeOver(runID, userID string) error {
+func (e *Engine) TakeOver(runID, userID string, force bool) error {
 	if h := e.liveLoop(runID); h != nil {
 		if !h.agentLive.Load() {
 			return ErrNoAgentRunning
 		}
-		if err := e.holdLive(h, holdReq{take: true, userID: userID}); !errors.Is(err, errNoLoop) {
+		if err := e.holdLive(h, holdReq{take: true, force: force, userID: userID}); !errors.Is(err, errNoLoop) {
 			return err
 		}
 	}
-	v, err := e.dormantView(context.Background(), runID)
+	v, _, err := e.dormantView(context.Background(), runID)
 	if err != nil {
 		return err
 	}
@@ -59,8 +78,12 @@ func (e *Engine) TakeOver(runID, userID string) error {
 
 // Release hands the task back: the hold is closed with its account and the
 // session is sent the handback prompt — at once when the agent is idle,
-// when its turn in flight ends otherwise. A run parked on its holder is
-// woken for it.
+// when its turn in flight ends otherwise. A turn that parks on the agent's
+// own question instead closes the hold as the run parks, and the handback
+// follows the answer's turn. A run parked with the hold in force — on its
+// holder, or on the agent's question — is woken for it; either way the
+// account includes the holder's messages still queued (they ride into the
+// next prompt), as releaseOnPark's does.
 func (e *Engine) Release(runID, userID string) error {
 	if h := e.liveLoop(runID); h != nil {
 		if !h.agentLive.Load() {
@@ -70,15 +93,31 @@ func (e *Engine) Release(runID, userID string) error {
 			return err
 		}
 	}
-	return e.wakeHeld(context.Background(), runID, func(v run.View) ([]event.Payload, error) {
+	return e.wakeHeld(context.Background(), runID, func(v run.View, evs []event.Event) ([]event.Payload, error) {
 		rel := &event.HoldReleased{StageID: v.Hold.StageID, Attempt: v.Hold.Attempt, UserID: userID,
 			Reason: event.HoldReleasedByUser, DurationMS: max(e.clock().Sub(v.Hold.Since).Milliseconds(), 0),
-			HoldSpend: event.HoldSpend{Turns: v.Hold.Turns, Messages: v.Hold.Messages}}
+			HoldSpend: event.HoldSpend{Turns: v.Hold.Turns, Messages: v.Hold.Messages + pendingMessages(evs)}}
 		if v.Hold.CostUSD > 0 {
 			rel.Usage = &event.Usage{CostUSD: v.Hold.CostUSD}
 		}
 		return []event.Payload{rel}, nil
 	})
+}
+
+// pendingMessages counts the holder's messages queued and not yet delivered
+// (runcore.State.PendingMsgs): a parked leg's banked spend counts only the
+// delivered ones.
+func pendingMessages(evs []event.Event) int {
+	var rs runcore.State
+	for i := range evs {
+		switch p := evs[i].Payload.(type) {
+		case *event.MessageQueued:
+			rs.PendingMsgs = append(rs.PendingMsgs, p)
+		case *event.MessageDelivered:
+			rs.Delivered(p.MessageIDs)
+		}
+	}
+	return len(rs.PendingMsgs)
 }
 
 // holdLive hands a take-over request to the run's loop and waits to hear
@@ -111,16 +150,16 @@ func (e *Engine) holdLive(h *runHandle, req holdReq) error {
 	}
 }
 
-// dormantView is the log's view of a run with no loop.
-func (e *Engine) dormantView(ctx context.Context, runID string) (run.View, error) {
+// dormantView is the log's view of a run with no loop, and the log.
+func (e *Engine) dormantView(ctx context.Context, runID string) (run.View, []event.Event, error) {
 	evs, err := e.store.Events(ctx, runID, 0)
 	if err != nil {
-		return run.View{}, err
+		return run.View{}, nil, err
 	}
 	if len(evs) == 0 {
-		return run.View{}, fmt.Errorf("run %s not found", runID)
+		return run.View{}, nil, fmt.Errorf("run %s not found", runID)
 	}
-	return run.Reduce(evs), nil
+	return run.Reduce(evs), evs, nil
 }
 
 // wakeHeld appends to a run parked on the holder of a take-over and gives
@@ -129,7 +168,7 @@ func (e *Engine) dormantView(ctx context.Context, runID string) (run.View, error
 // outside its goroutine, serialized by wakeMu; a loop that appeared in the
 // meantime owns the log, and refusing beats writing behind it. build runs
 // once the run is found waiting on its holder; its error appends nothing.
-func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View) ([]event.Payload, error)) error {
+func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View, []event.Event) ([]event.Payload, error)) error {
 	e.wakeMu.Lock()
 	defer e.wakeMu.Unlock()
 
@@ -139,7 +178,7 @@ func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View
 	if active {
 		return fmt.Errorf("run %s: %w", runID, errRunBusy)
 	}
-	v, err := e.dormantView(ctx, runID)
+	v, evs, err := e.dormantView(ctx, runID)
 	if err != nil {
 		return err
 	}
@@ -155,7 +194,7 @@ func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View
 		// own): the loop that is owed, or the answer, is what moves it.
 		return fmt.Errorf("run %s: %w", runID, errRunBusy)
 	}
-	payloads, err := build(v)
+	payloads, err := build(v, evs)
 	if err != nil {
 		return err
 	}
@@ -202,10 +241,11 @@ func (x *exec) liveHold(st *flow.Stage) *liveHold {
 // stage which starts held (start_held) is waiting for them.
 const notifyHeld = "held"
 
-// holdReq is a take-over request on its way into the run loop: take, or
-// release (the handback follows).
+// holdReq is a take-over request on its way into the run loop: take (force:
+// stopping the turn in flight), or release (the handback follows).
 type holdReq struct {
 	take   bool
+	force  bool
 	userID string
 	ack    chan error
 }
@@ -214,6 +254,74 @@ type holdReq struct {
 func (x *exec) takeHold(st *flow.Stage, iter int, userID string) error {
 	taken := &event.HoldTaken{StageID: st.ID, Attempt: iter, UserID: userID}
 	return x.append(taken)
+}
+
+// acceptStop is the runner taking up the stop a forced take-over asked of
+// turn (Inbox.StopTurn): false once a question the turn raised has withdrawn
+// it. From true on, the turn's questions are refused until it ends.
+func (x *exec) acceptStop(turn string) bool {
+	x.e.mu.Lock()
+	defer x.e.mu.Unlock()
+	if turn == "" || turn != x.h.stopAsked && turn != x.h.stopping {
+		return false
+	}
+	x.h.stopAsked, x.h.stopping = "", turn
+	return true
+}
+
+// turnStarted and turnEnded follow the agent's turns as its runner reports
+// them (Events), on the runner's goroutine and so ahead of the loop, which
+// may be behind on its events: a question raised meanwhile is the turn's
+// the runner is in (Ping.turn), or one after the turn it last ended
+// (Ping.after), and the holder's turn after a stopped one may ask before
+// the loop has read that the stopped turn ended. A turn's end clears the
+// stop asked of it, and only of it: a later stop is another turn's.
+func (x *exec) turnStarted(turn string) {
+	x.e.mu.Lock()
+	x.h.agentTurn = turn
+	x.e.mu.Unlock()
+}
+
+func (x *exec) turnEnded(turn string) {
+	if turn == "" {
+		return
+	}
+	x.e.mu.Lock()
+	if x.h.agentTurn == turn {
+		x.h.agentTurn = ""
+	}
+	x.h.endedTurn = turn
+	x.dropStopLocked(turn)
+	x.e.mu.Unlock()
+}
+
+// dropStop clears a stop asked of turn while the loop was behind the
+// runner's report of its end (turnEnded), as the loop reads that end.
+func (x *exec) dropStop(turn string) {
+	x.e.mu.Lock()
+	x.dropStopLocked(turn)
+	x.e.mu.Unlock()
+}
+
+func (x *exec) dropStopLocked(turn string) {
+	if turn == "" {
+		return
+	}
+	if x.h.stopAsked == turn {
+		x.h.stopAsked = ""
+	}
+	if x.h.stopping == turn {
+		x.h.stopping = ""
+	}
+}
+
+// endTurns forgets the agent's turns and whatever stop a forced take-over
+// asked of one: the invocation has ended, and the agent's questions are for
+// whoever runs next.
+func (x *exec) endTurns() {
+	x.e.mu.Lock()
+	x.h.agentTurn, x.h.endedTurn, x.h.stopAsked, x.h.stopping = "", "", "", ""
+	x.e.mu.Unlock()
 }
 
 // takeStartHold opens an attempt of a stage that starts held (start_held)
@@ -378,8 +486,10 @@ func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner ag
 	case rs.PausedHold[st.ID]:
 		return holdReentry{park: true}, nil
 	case mayReattach:
-		if ra, ok := runner.(agentport.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.EnvID, session, rs.AgentCursor[st.ID]) {
-			return holdReentry{}, nil // the crashed path follows the live turn
+		if ra, ok := runner.(agentport.AgentReattacher); ok {
+			if _, ok := ra.Reattachable(x.ctx, rs.EnvID, session, rs.AgentCursor[st.ID]); ok {
+				return holdReentry{}, nil // the crashed path follows the live turn
+			}
 		}
 		return holdReentry{park: true}, nil
 	default:

@@ -26,10 +26,11 @@ type invIO struct {
 	done   chan struct{} // closed when the loop stops listening
 	inbox  *inbox
 	tr     *transcript
+	x      *exec
 }
 
-func newInvIO(tr *transcript) *invIO {
-	return &invIO{events: make(chan agentport.AgentEvent, 256), done: make(chan struct{}), inbox: newInbox(), tr: tr}
+func newInvIO(tr *transcript, x *exec) *invIO {
+	return &invIO{events: make(chan agentport.AgentEvent, 256), done: make(chan struct{}), inbox: newInbox(x.acceptStop), tr: tr, x: x}
 }
 
 func (io *invIO) input(prompt string) agentport.AgentInput {
@@ -38,10 +39,20 @@ func (io *invIO) input(prompt string) agentport.AgentInput {
 		Inbox:  io.inbox,
 		// Blocks while the loop is listening (ordering: everything the
 		// runner emitted is queued before its result is), never after.
+		// Turn boundaries are followed here too, while the loop listens, on
+		// the runner's goroutine (exec.turnStarted): ahead of the loop,
+		// which may be behind.
 		Events: func(ev agentport.AgentEvent) {
 			select {
 			case io.events <- ev:
 			case <-io.done:
+				return
+			}
+			switch ev.Kind {
+			case agentport.AgentEvTurnStart:
+				io.x.turnStarted(ev.Turn)
+			case agentport.AgentEvTurnEnd:
+				io.x.turnEnded(ev.Turn)
 			}
 		},
 	}
@@ -62,8 +73,9 @@ func (io *invIO) drain(record func(agentport.AgentEvent) (bool, error)) error {
 }
 
 // invoke runs one harness invocation to its end, servicing pings, messages
-// and the transcript while it runs.
-func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, initialOpen []*Ping, prompt string,
+// and the transcript while it runs. attached is the turn a reattached
+// invocation follows (AgentReattacher.Reattachable), open from the start.
+func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, initialOpen []*Ping, prompt, attached string,
 	call func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error)) (invocation, error) {
 	// x.ctx is the attempt's (exec.attempt): the invocation is a child of the
 	// attempt span the telemetry sink exports from the event stream.
@@ -73,11 +85,14 @@ func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, init
 	))
 	defer span.End()
 	runCtx, cancelRun := context.WithCancelCause(spanCtx)
-	io := newInvIO(tr)
+	io := newInvIO(tr, x)
+	x.turnStarted(attached) // a reattached turn is under way already
 	// Before the agent starts: one resumed under a take-over can finish its
 	// turn at once, and if it saw no hold it would end the stage under the
-	// holder.
-	if x.rs.Holds[st.ID] != nil {
+	// holder. A handback owed after an answer (a release that came while
+	// the agent's own question parked the run) keeps it waiting the same
+	// way, for the handback queued when the answer's turn ends.
+	if x.rs.Holds[st.ID] != nil || x.rs.HandbackOwed[st.ID] {
 		io.inbox.setHeld(true)
 	}
 	resCh := make(chan agentRes, 1)
@@ -88,7 +103,7 @@ func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, init
 	}()
 	x.h.agentLive.Store(true)
 	x.h.parking.Store(false)
-	inv, err := x.awaitAgent(st, resCh, cancelRun, budget, io, initialOpen)
+	inv, err := x.awaitAgent(st, resCh, cancelRun, budget, io, initialOpen, attached)
 	x.h.agentLive.Store(false)
 	cancelRun(nil)
 	close(io.done)
@@ -113,7 +128,7 @@ func (x *exec) invoke(st *flow.Stage, budget time.Duration, tr *transcript, init
 // the human answers. Letting it through instead is what silently turned an
 // unanswered clarification into an approved-looking plan.
 func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun context.CancelCauseFunc, budget time.Duration,
-	io *invIO, initialOpen []*Ping) (invocation, error) {
+	io *invIO, initialOpen []*Ping, attached string) (invocation, error) {
 	remaining := budget
 	open := append([]*Ping(nil), initialOpen...)
 	timer := time.NewTimer(remaining)
@@ -128,7 +143,12 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		}
 		return event.HoldSpend{}
 	}
-	turnOpen := false
+	// The open turn's id: what a forced take-over stops. A reattached
+	// turn is open before any event of it arrives.
+	turnOpen, openTurn := attached != "", attached
+	// The agent's turn and a stop asked of it are over with the invocation:
+	// the agent's next questions are for whoever runs next.
+	defer x.endTurns()
 	// opening: the turn in flight is a start hold's opening one.
 	opening := false
 	// record files one agent event: a new harness session is recorded the
@@ -165,31 +185,42 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		lastArm = time.Now()
 		timer.Reset(remaining)
 	}
+	// The stage clock stops, and the park timer runs, while the agent waits
+	// on a person: its own open question, or the holder (hold.idle). The
+	// two overlap — a question admitted while the holder is idle, a turn
+	// starting under the hold while a question is open — so they are one
+	// state, and settle moves the clock only when that state flips.
+	waiting := false
+	var park *time.Timer
+	var parkC <-chan time.Time
+	settle := func() {
+		now := len(open) > 0 || hold != nil && hold.idle
+		switch {
+		case now && !waiting:
+			suspend()
+			park = time.NewTimer(x.e.cfg.AskHumanHold)
+			parkC = park.C
+		case !now && waiting:
+			resume()
+			park.Stop()
+			park, parkC = nil, nil
+		}
+		waiting = now
+	}
+	defer func() {
+		if park != nil {
+			park.Stop()
+		}
+	}()
 	// left is what the caller carries to the next invocation: the timer is
-	// already stopped-and-debited whenever a ping is open.
+	// already stopped-and-debited while the agent waits on a person.
 	left := func() time.Duration {
-		if len(open) > 0 || (hold != nil && hold.idle) {
+		if waiting {
 			return remaining
 		}
 		return remaining - time.Since(lastArm)
 	}
-	var park *time.Timer
-	var parkC <-chan time.Time
-	armPark := func() {
-		park = time.NewTimer(x.e.cfg.AskHumanHold)
-		parkC = park.C
-	}
-	disarmPark := func() {
-		if park != nil {
-			park.Stop()
-			park, parkC = nil, nil
-		}
-	}
-	defer disarmPark()
-	if len(open) > 0 {
-		suspend()
-		armPark()
-	}
+	settle()
 	// idleOnHolder: the agent's turn ended with nothing queued while someone
 	// holds the session. The clock stops for the holder's thinking time,
 	// and past the live hold the run parks on them.
@@ -198,16 +229,16 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			return
 		}
 		hold.idle = true
-		suspend()
-		armPark()
+		settle()
 	}
+	// busyAgain: the agent is in a turn again; the clock runs unless one of
+	// its questions is still open.
 	busyAgain := func() {
 		if hold == nil || !hold.idle {
 			return
 		}
 		hold.idle = false
-		resume()
-		disarmPark()
+		settle()
 	}
 	// handBack ends the hold: its account is recorded, the handback prompt
 	// is queued as the session's next turn (before the runner is let go of,
@@ -224,6 +255,37 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		busyAgain()
 		hold = nil
 		io.inbox.setHeld(false)
+		return nil
+	}
+	// owedHandback serves a release the attempt parked under (releaseOnPark)
+	// once the answer's turn ends: the handback is queued as the session's
+	// next turn, as handBack does. A turn ending on another question of the
+	// agent's leaves it owed, for the turn that answer resumes.
+	owedHandback := func() error {
+		if len(open) == 0 {
+			if err := x.prompted(st.ID, io.tr.iter, event.PromptHandback, handbackPrompt); err != nil {
+				return err
+			}
+			io.inbox.push(agentport.UserMessage{Text: handbackPrompt, Verbatim: true})
+		}
+		io.inbox.setHeld(false)
+		return nil
+	}
+	// releaseOnPark closes a hold whose release was waiting on a turn the
+	// agent's own question parks: the parked invocation's live state goes,
+	// so the release is put on the record now, with the holder's messages
+	// still queued (they ride into the answer's prompt) on its account. The
+	// handback it owes follows the answer's turn (owedHandback).
+	releaseOnPark := func() error {
+		if hold == nil || !hold.releasing {
+			return nil
+		}
+		leg := hold.leg.Spend
+		leg.Messages += len(x.rs.PendingMsgs)
+		if err := x.releaseHold(st, io.tr.iter, hold.st, hold.releaseBy, event.HoldReleasedByUser, leg); err != nil {
+			return err
+		}
+		hold = nil
 		return nil
 	}
 
@@ -252,6 +314,43 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		}
 	}
 
+	// admit opens a question the agent raised: on the record, published,
+	// notified, and the stage clock stopped while it waits.
+	admit := func(req raiseReq) error {
+		x.e.mu.Lock()
+		req.p.StageID = st.ID // the stage whose agent asked (PLAN4 M15)
+		x.h.raising--         // out of the mailbox: counted in open from here
+		x.e.mu.Unlock()
+		raised := &event.PingRaised{PingID: req.p.ID, Type: req.p.Type,
+			Question: req.p.Question, Context: req.p.Context, Key: req.p.key,
+			Files: req.p.Files, Link: req.p.Link, StageID: st.ID, Form: req.p.Form, AnswerKind: req.p.AnswerKind}
+		if err := x.append(raised); err != nil {
+			close(req.ack)
+			return err
+		}
+		// Keep the working state a mirror of what replay would build, so
+		// a resume reads the same whether the answer arrived in this
+		// process or was found in the log after a restart.
+		// Snapshot the attached files as they are RIGHT NOW: the agent
+		// resumes the moment this ping is answered, and the record must
+		// keep what the human was actually shown.
+		x.publishPingFiles(req.p, st.ID)
+		x.e.notify(x.bg, notifyport.Notification{
+			RunID: x.rs.RunID, PingID: req.p.ID, Type: req.p.Type,
+			Title: fmt.Sprintf("%s: %s", req.p.Type, x.rs.View.TicketTitle),
+			Body:  req.p.Question,
+		})
+		open = append(open, req.p)
+		if hold != nil {
+			// A question comes from a turn: the agent waits on it, not on
+			// the holder, even when its turn_start is still behind it.
+			hold.idle = false
+		}
+		settle()
+		close(req.ack)
+		return nil
+	}
+
 	for {
 		select {
 		case res := <-resCh:
@@ -261,6 +360,9 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			out := outcomeReturned
 			if runcore.EndedOnQuestions(len(open), res.err) {
 				out = outcomePaused
+				if err := releaseOnPark(); err != nil {
+					return invocation{}, err
+				}
 			}
 			return invocation{res: res, outcome: out, open: open, left: left(), holdSpend: holdLeg()}, nil
 		case ev := <-io.events:
@@ -276,7 +378,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					hold.leg.MessagesDelivered(ev.Messages)
 				}
 			case agentport.AgentEvTurnStart:
-				turnOpen = true
+				turnOpen, openTurn = true, ev.Turn
 				if hold != nil {
 					// A turn starting under the hold is the holder's: it is
 					// what their message prompted — but for a start hold's
@@ -290,9 +392,17 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					}
 				}
 			case agentport.AgentEvTurnEnd:
-				turnOpen = false
+				turnOpen, openTurn = false, ""
+				// The runner has cleared this turn's stop already (Events);
+				// this clears one asked while the loop was behind its end.
+				x.dropStop(ev.Turn)
 				if hold == nil {
 					opening = false
+					if x.rs.HandbackOwed[st.ID] {
+						if err := owedHandback(); err != nil {
+							return invocation{}, err
+						}
+					}
 					break
 				}
 				// The opening turn ends here — the one this invocation saw
@@ -306,11 +416,16 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					}
 				}
 				hold.leg.TurnEnded(ev.Turn, ev.Usage)
-				if len(open) > 0 {
+				if ownQuestion(open, ev.Turn) {
 					// The turn ended on the agent's own open question. The
 					// holder is the one to answer it, but the tool call it came
 					// in on is gone: park on the question as any attempt does,
-					// and resume with the answer under the same hold.
+					// and resume with the answer under the same hold — or, with
+					// a release already asked for, under none, the handback to
+					// follow the answer's turn.
+					if err := releaseOnPark(); err != nil {
+						return invocation{}, err
+					}
 					for _, p := range open {
 						p.handedBack.Store(true)
 					}
@@ -318,11 +433,16 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					cancelRun(errParked)
 					return collect(outcomePaused)
 				}
-				if hold.releasing {
+				// A release hands back once the holder's messages have all had
+				// their turn: one queued before it (even one the runner has
+				// already taken or delivered) gets its own turn first, and the
+				// handback the next.
+				switch {
+				case hold.releasing && !hold.leg.Waiting():
 					if err := handBack(hold.releaseBy); err != nil {
 						return invocation{}, err
 					}
-				} else if !io.inbox.pending() {
+				case !hold.releasing && !io.inbox.pending() && !hold.leg.Waiting():
 					idleOnHolder()
 					if ended {
 						// A start hold's opening turn is over and the session
@@ -355,21 +475,41 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			msg := req.msg
 			msg.Text = withFilesNote(msg.Text, paths)
 			io.inbox.push(msg)
+			hold.leg.MessageQueued()
 			req.ack <- nil
 		case req := <-x.h.holds:
 			var err error
 			held, releasing := hold != nil, hold != nil && hold.releasing
-			// A start hold's opening turn not started yet is owed all the
-			// same: a release follows it.
-			busy := turnOpen || io.inbox.pending() || (held && hold.opening)
-			switch runcore.PlanHoldRequest(req.take, held, releasing, busy) {
+			// Planned under the lock the agent's questions are registered
+			// under: a question registered first is open, even while it is
+			// still on its way to this loop, so a forced take-over leaves its
+			// turn alone and a release waits on that turn. The stop is only
+			// asked here; a question raised before the runner takes it up
+			// (acceptStop) keeps the turn. A start hold's opening turn not
+			// started yet is owed all the same: a release follows it.
+			x.e.mu.Lock()
+			move := runcore.PlanHoldRequest(runcore.HoldRequest{Take: req.take, Force: req.force,
+				Held: held, Releasing: releasing, TurnOpen: turnOpen,
+				Queued:       io.inbox.pending() || held && (hold.leg.Waiting() || hold.opening),
+				QuestionOpen: len(open) > 0 || x.h.raising > 0})
+			if move == runcore.HoldTakeAndStop {
+				x.h.stopAsked = openTurn
+			}
+			x.e.mu.Unlock()
+			switch move {
 			case runcore.HoldRefuseTaken:
 				err = ErrAlreadyHeld
-			case runcore.HoldTake:
+			case runcore.HoldTake, runcore.HoldTakeAndStop:
 				if err = x.takeHold(st, io.tr.iter, req.userID); err == nil {
 					hold = x.liveHold(st)
 					io.inbox.setHeld(true)
-					if !turnOpen && !io.inbox.pending() {
+					if move == runcore.HoldTakeAndStop {
+						// The agent's own turn: a runner that takes the stop
+						// up ends it as any turn ends, and the agent waits on
+						// the holder; one that cannot lets it run on, as a
+						// passive take-over would.
+						io.inbox.interrupt(openTurn)
+					} else if !turnOpen && !io.inbox.pending() {
 						idleOnHolder()
 					}
 				}
@@ -385,34 +525,9 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				return invocation{}, err
 			}
 		case req := <-x.h.mailbox:
-			x.e.mu.Lock()
-			req.p.StageID = st.ID // the stage whose agent asked (PLAN4 M15)
-			x.e.mu.Unlock()
-			raised := &event.PingRaised{PingID: req.p.ID, Type: req.p.Type,
-				Question: req.p.Question, Context: req.p.Context, Key: req.p.key,
-				Files: req.p.Files, Link: req.p.Link, StageID: st.ID, Form: req.p.Form, AnswerKind: req.p.AnswerKind}
-			if err := x.append(raised); err != nil {
-				close(req.ack)
+			if err := admit(req); err != nil {
 				return invocation{}, err
 			}
-			// Keep the working state a mirror of what replay would build, so
-			// a resume reads the same whether the answer arrived in this
-			// process or was found in the log after a restart.
-			// Snapshot the attached files as they are RIGHT NOW: the agent
-			// resumes the moment this ping is answered, and the record must
-			// keep what the human was actually shown.
-			x.publishPingFiles(req.p, st.ID)
-			x.e.notify(x.bg, notifyport.Notification{
-				RunID: x.rs.RunID, PingID: req.p.ID, Type: req.p.Type,
-				Title: fmt.Sprintf("%s: %s", req.p.Type, x.rs.View.TicketTitle),
-				Body:  req.p.Question,
-			})
-			if len(open) == 0 {
-				suspend()
-				armPark()
-			}
-			open = append(open, req.p)
-			close(req.ack)
 		case ar := <-x.h.answers:
 			handled, err := x.processAnswer(ar)
 			if err != nil {
@@ -423,10 +538,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			// so the ping stays open and the attempt pauses on it below.
 			if handled && run.AgentPingType(ar.p.Type) && !ar.p.handedBack.Load() {
 				open = dropPing(open, ar.p)
-				if len(open) == 0 {
-					resume()
-					disarmPark()
-				}
+				settle()
 			}
 		case <-parkC:
 			parkC = nil
@@ -441,6 +553,10 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			// Nobody answered while the turn stayed live: park. The open
 			// questions are handed back first, so an answer racing the
 			// cancel is delivered by resume rather than lost in the tool call.
+			// A release asked for meanwhile goes on the record first.
+			if err := releaseOnPark(); err != nil {
+				return invocation{}, err
+			}
 			for _, p := range open {
 				p.handedBack.Store(true)
 			}

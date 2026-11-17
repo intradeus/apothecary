@@ -215,7 +215,7 @@
 				hold={rs.run.hold}
 				releasing={rs.releasing}
 				now={rs.now}
-				ontakeover={() => rs.takeOver()}
+				ontakeover={(force) => rs.takeOver(force)}
 				onrelease={() => rs.release()}
 			/>
 		{/if}

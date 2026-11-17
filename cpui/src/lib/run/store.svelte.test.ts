@@ -1067,10 +1067,10 @@ describe('act', () => {
 });
 
 describe('take-over', () => {
-	it('takes over this run', async () => {
+	it.each([true, false])('takes over this run, force %s', async (force) => {
 		const run = aRun();
-		await expect(store(run).takeOver()).resolves.toBe(true);
-		expect(api.runs.takeOver).toHaveBeenCalledWith(run.id);
+		await expect(store(run).takeOver(force)).resolves.toBe(true);
+		expect(api.runs.takeOver).toHaveBeenCalledWith(run.id, force);
 	});
 
 	it('stays in "handing back" after a good release: the engine closes it', async () => {

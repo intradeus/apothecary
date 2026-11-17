@@ -20,6 +20,7 @@ function paste(...files: File[]) {
 }
 
 const box = () => screen.getByRole('textbox', { name: 'Message the agent' });
+const stopNow = () => screen.queryByRole('checkbox', { name: 'Stop the agent now' });
 const sendBtn = () => screen.getByRole('button', { name: 'Send' });
 
 function held(over: Partial<Parameters<typeof render<typeof Composer>>[1]> = {}) {
@@ -39,29 +40,56 @@ describe('Composer', () => {
 	});
 
 	describe('before a take-over', () => {
-		it('is only the Take over button', () => {
+		it('is only the Take over button, stopping the agent by default', () => {
 			render(Composer, { runId: 'r1', onsent: vi.fn() });
 
 			expect(screen.getByText('Take over to talk to the agent')).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Take over' })).toBeEnabled();
+			expect(stopNow()).toBeChecked();
 			expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
 			expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument();
 			expect(screen.queryByRole('button', { name: 'Release' })).not.toBeInTheDocument();
 		});
 
-		it('holds the button while the take-over is on its way', async () => {
+		it('holds the button and the box while the take-over is on its way', async () => {
 			const taking = deferred<boolean>();
 			const ontakeover = vi.fn(() => taking.promise);
 			render(Composer, { runId: 'r1', onsent: vi.fn(), ontakeover });
 			const btn = screen.getByRole('button', { name: 'Take over' });
 
 			await userEvent.click(btn);
-			expect(ontakeover).toHaveBeenCalledOnce();
+			expect(ontakeover).toHaveBeenCalledExactlyOnceWith(true);
 			expect(btn).toBeDisabled();
 			expect(btn).toHaveAttribute('aria-busy', 'true');
+			expect(stopNow()).toBeDisabled();
 
 			taking.resolve(false);
 			await vi.waitFor(() => expect(btn).toBeEnabled());
+			expect(stopNow()).toBeEnabled();
+		});
+
+		it('takes over passively with the box unchecked', async () => {
+			const ontakeover = vi.fn(async () => true);
+			render(Composer, { runId: 'r1', onsent: vi.fn(), ontakeover });
+
+			await userEvent.click(stopNow()!);
+			expect(stopNow()).not.toBeChecked();
+			await userEvent.click(screen.getByRole('button', { name: 'Take over' }));
+			expect(ontakeover).toHaveBeenCalledExactlyOnceWith(false);
+		});
+
+		it('stops the agent again on the next take-over, after a passive one is released', async () => {
+			const ontakeover = vi.fn(async () => true);
+			const { rerender } = render(Composer, { runId: 'r1', onsent: vi.fn(), ontakeover });
+			await userEvent.click(stopNow()!);
+			await userEvent.click(screen.getByRole('button', { name: 'Take over' }));
+			expect(ontakeover).toHaveBeenLastCalledWith(false);
+
+			await rerender({ hold: aHold() });
+			await rerender({ hold: undefined });
+			expect(stopNow()).toBeChecked();
+			await userEvent.click(screen.getByRole('button', { name: 'Take over' }));
+			expect(ontakeover).toHaveBeenLastCalledWith(true);
 		});
 
 		it('offers the button again when a take-over is refused', async () => {
@@ -90,6 +118,7 @@ describe('Composer', () => {
 				'The agent is in your hands. Say what to change…'
 			);
 			expect(screen.queryByRole('button', { name: 'Take over' })).not.toBeInTheDocument();
+			expect(stopNow()).not.toBeInTheDocument();
 		});
 
 		it('counts no messages until there is one, then one in the singular', async () => {

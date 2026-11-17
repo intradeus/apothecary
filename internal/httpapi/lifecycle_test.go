@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/engine"
@@ -313,6 +315,113 @@ func TestHoldRoutes(t *testing.T) {
 	}
 	if res, _ := x.bare(t, "POST", "/api/runs/"+id+"/messages", "{", map[string]string{"Authorization": "Bearer " + x.token}); res.StatusCode != http.StatusBadRequest {
 		t.Errorf("malformed message = %d", res.StatusCode)
+	}
+}
+
+// A take-over stops the agent's turn unless the body says force: false; no
+// body at all is the forced default, a malformed one a 400 — trailing data
+// after the JSON value included. A chunked body (length unknown) is read like
+// any other, not taken for an absent one.
+func TestTakeOverForce(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	stopped := make(chan bool, 1)
+	var mu sync.Mutex
+	seen := map[envport.EnvID]bool{}
+	x.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		mu.Lock()
+		first := !seen[call.Env]
+		seen[call.Env] = true
+		mu.Unlock()
+		if !first { // the run's later stages: nothing to take over
+			return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, nil
+		}
+		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: "t1"})
+		call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvSession, Text: "s"}) // the turn is open
+		for {
+			select {
+			case <-call.In.Inbox.Wake():
+				if !call.In.Inbox.StopTurn("t1") {
+					continue
+				}
+				stopped <- true
+				call.In.Events(agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "t1", StopReason: "cancelled"})
+			case <-ctx.Done():
+				stopped <- false
+			}
+			return agentport.AgentResult{TurnsUsed: 1, Session: "s"}, nil
+		}
+	}
+	auth := map[string]string{"Authorization": "Bearer " + x.token, "Content-Type": "application/json"}
+	take := func(id, body string, chunked bool) int {
+		t.Helper()
+		waitFor(t, "the open turn", func() bool {
+			evs, _ := x.store.Events(context.Background(), id, 0)
+			for _, ev := range evs {
+				if ev.Type == event.TypeAgentSession {
+					return true
+				}
+			}
+			return false
+		})
+		req, err := http.NewRequest("POST", x.ts.URL+"/api/runs/"+id+"/hold", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for k, v := range auth {
+			req.Header.Set(k, v)
+		}
+		if chunked {
+			req.ContentLength = -1
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := readBody(res)
+		if res.StatusCode != http.StatusAccepted && res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("hold %q (chunked %v) = %d %s", body, chunked, res.StatusCode, out)
+		}
+		return res.StatusCode
+	}
+	type hold struct {
+		body    string
+		chunked bool
+	}
+	for _, h := range []hold{{"", false}, {`{}`, false}, {`{"force":true}`, false}, {`{"force":true}`, true}} {
+		id := x.createTicket(t, "T")
+		if take(id, h.body, h.chunked) != http.StatusAccepted {
+			t.Fatalf("hold %+v refused", h)
+		}
+		if !<-stopped {
+			t.Errorf("hold %+v did not stop the turn", h)
+		}
+		x.e.Wait(id)
+	}
+
+	for _, chunked := range []bool{false, true} {
+		id := x.createTicket(t, "T")
+		for _, bad := range []string{"{", `{"force":false}garbage`, `{"force":false}{"force":true}`, `{"force":false}{`} {
+			if code := take(id, bad, chunked); code != http.StatusBadRequest {
+				t.Errorf("malformed hold %q (chunked %v) = %d", bad, chunked, code)
+			}
+		}
+		if take(id, "{\"force\":false}\n", chunked) != http.StatusAccepted { // trailing whitespace is no second value
+			t.Fatalf("passive hold (chunked %v) refused", chunked)
+		}
+		evs, _ := x.store.Events(context.Background(), id, 0)
+		if run.Reduce(evs).Hold == nil {
+			t.Fatalf("passive hold (chunked %v) not taken", chunked)
+		}
+		select {
+		case <-stopped:
+			t.Fatalf("a passive take-over (chunked %v) stopped the turn", chunked)
+		case <-time.After(50 * time.Millisecond):
+		}
+		if err := x.e.Abort(id); err != nil {
+			t.Fatal(err)
+		}
+		<-stopped
+		x.e.Wait(id)
 	}
 }
 

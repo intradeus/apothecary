@@ -340,7 +340,10 @@ export default {
 	'run.composer.takeOver': 'Take over',
 	'run.composer.takeOverHint': 'Take over to talk to the agent',
 	'run.composer.takeOverTitle':
-		"Hold the agent's session: its turns wait for your next message, and the stage cannot end until you release it",
+		"Hold the agent's session: it stops its turn in flight (unless you uncheck the box) and waits for your next message, and the stage cannot end until you release it",
+	'run.composer.stopNow': 'Stop the agent now',
+	'run.composer.stopNowTitle':
+		'Stop the turn in flight so the agent waits on you at once. Unchecked, the agent finishes its turn first',
 	'run.composer.release': 'Release',
 	'run.composer.releasing': 'Handing back…',
 	'run.composer.releaseTitle':

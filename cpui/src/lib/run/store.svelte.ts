@@ -409,9 +409,10 @@ export class RunStore {
 		}
 	}
 
-	/** Take over the running agent's session (the composer's Take over). */
-	takeOver(): Promise<boolean> {
-		return this.act(() => api.runs.takeOver(this.runId));
+	/** Take over the running agent's session (the composer's Take over);
+	 *  force stops its turn in flight. */
+	takeOver(force: boolean): Promise<boolean> {
+		return this.act(() => api.runs.takeOver(this.runId, force));
 	}
 
 	/** Hand the task back. The hold closes when the agent's turn in flight

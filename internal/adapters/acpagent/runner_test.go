@@ -129,12 +129,13 @@ func (h *harness) runner() *Runner {
 
 // recorder collects events and serves as the inbox.
 type recorder struct {
-	mu     sync.Mutex
-	events []agentport.AgentEvent
-	queue  []agentport.UserMessage
-	held   bool
-	wake   chan struct{}
-	onText func(string)
+	mu      sync.Mutex
+	events  []agentport.AgentEvent
+	queue   []agentport.UserMessage
+	held    bool
+	stopped string
+	wake    chan struct{}
+	onText  func(string)
 }
 
 func newRecorder() *recorder { return &recorder{wake: make(chan struct{}, 1)} }
@@ -184,6 +185,24 @@ func (r *recorder) hold(held bool) {
 		default:
 		}
 	}
+}
+
+// stop records a forced take-over's request to stop a turn and wakes the
+// runner.
+func (r *recorder) stop(turn string) {
+	r.mu.Lock()
+	r.stopped = turn
+	r.mu.Unlock()
+	select {
+	case r.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (r *recorder) StopTurn(turn string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return turn != "" && turn == r.stopped
 }
 
 func (r *recorder) kinds() string {
@@ -450,6 +469,11 @@ func TestReattachFollowsTheTurnInFlight(t *testing.T) {
 	}
 	st, _ := c.Status(ctx)
 	cursor := sidecar.Cursor(st.Boot, 0)
+	// The engine learns which turn it follows before it follows it: that
+	// turn's start lies before the cursor it hands back.
+	if turn, ok := r.Reattachable(ctx, "e", agentport.SessionID(sess.SessionID), cursor); !ok || turn != "old-turn" {
+		t.Fatalf("reattachable = %q %v", turn, ok)
+	}
 
 	rec := newRecorder()
 	res, ok, err := r.Reattach(ctx, "e", agentport.SessionID(sess.SessionID), cursor, agentport.AgentInput{Events: rec.on})
@@ -466,7 +490,7 @@ func TestReattachFollowsTheTurnInFlight(t *testing.T) {
 	// caller resumes normally.
 	st, _ = c.Status(ctx)
 	end := sidecar.Cursor(st.Boot, st.LastSeq)
-	if r.Reattachable(ctx, "e", agentport.SessionID(sess.SessionID), end) {
+	if _, ok := r.Reattachable(ctx, "e", agentport.SessionID(sess.SessionID), end); ok {
 		t.Error("reattachable with nothing new")
 	}
 	if _, ok, _ := r.Reattach(ctx, "e", agentport.SessionID(sess.SessionID), end, agentport.AgentInput{}); ok {
@@ -501,7 +525,7 @@ func TestReattachReplaysATurnThatFinishedMeanwhile(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if !r.Reattachable(ctx, "e", agentport.SessionID(sess.SessionID), before) {
+	if turn, ok := r.Reattachable(ctx, "e", agentport.SessionID(sess.SessionID), before); !ok || turn != "done-turn" {
 		t.Fatal("a turn that finished after the cursor is reattachable")
 	}
 	rec := newRecorder()

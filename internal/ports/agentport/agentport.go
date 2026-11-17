@@ -30,7 +30,9 @@ type AgentInput struct {
 	// Events receives the invocation's transcript AS IT HAPPENS — message
 	// text, tool calls, plans, turn boundaries. nil = nobody is listening.
 	// Called from the runner's goroutine; implementations must not block for
-	// long (the engine buffers).
+	// long (the engine buffers). A turn's turn_end is reported before the
+	// runner prompts its next turn: the engine takes a question raised with
+	// no turn reported open for one after the turn last ended.
 	Events func(AgentEvent)
 	// MCPServers are the MCP servers the stage's agent may call (its `mcp:`
 	// list, FLOWLANG §1), resolved for this run: secrets filled, the builtin
@@ -49,7 +51,9 @@ type AgentInput struct {
 	// Inbox holds the human's messages for this invocation. A runner that can
 	// deliver them mid-invocation takes them at the end of each turn; one
 	// that cannot simply never takes them, and the engine carries them into
-	// the next prompt.
+	// the next prompt. It also carries a forced take-over's request to stop
+	// the turn in flight, which only a runner that can stop a turn takes up
+	// (StopTurn); one that cannot never calls it.
 	// nil = no messages.
 	Inbox Inbox
 	// ReadOnly: the session must not change the workspace (the Ask pane's
@@ -95,17 +99,30 @@ type UserMessage struct {
 
 // Inbox is the engine-owned queue of human messages for one invocation.
 type Inbox interface {
-	// Wake is signalled (buffered, coalescing) whenever a message is queued
-	// — and when a hold ends.
+	// Wake is signalled (buffered, coalescing) whenever a message is queued,
+	// when a hold ends and when a forced take-over asks to stop a turn.
 	Wake() <-chan struct{}
 	// Take removes and returns every queued message: taking IS delivering,
-	// so a runner takes only what it is about to send.
+	// so a runner takes only what it is about to send, and reports it as a
+	// user_message before the turn it starts (a hold's release waits on it).
 	Take() []UserMessage
 	// Held reports whether a human holds the session (a take-over). While
 	// held, a turn that ends with nothing queued is not the invocation's
 	// end: the runner waits for the holder's next message (Wake) and keeps
 	// going in the same session. The hold ends with a Wake and Held false.
 	Held() bool
+	// StopTurn is how a runner that can stop a turn takes up a forced
+	// take-over's request to stop the turn with this id (AgentEvent.Turn),
+	// on a Wake. True: a stop was asked for and still stands, and the
+	// runner, having taken it up, must end that turn and carry on as at any
+	// turn end, so the same session waits for the holder; the engine
+	// refuses the turn's questions (ask_human) from then until the runner
+	// reports its turn_end (Events), which it must before starting another.
+	// False: no stop for that turn — none was asked, or a question the turn
+	// raised first keeps it running. A runner that cannot stop a turn never
+	// calls it, and its turn runs on, questions and all. Naming the turn
+	// keeps a request that arrives late from stopping the holder's next one.
+	StopTurn(turn string) bool
 }
 
 // AgentEvent kinds.
@@ -199,8 +216,10 @@ type AgentRunner interface {
 type AgentReattacher interface {
 	// Reattachable reports, quickly, whether Reattach has something to
 	// follow: a turn of s still running, or one that finished after cursor
-	// while nobody was listening.
-	Reattachable(ctx context.Context, env envport.EnvID, s SessionID, cursor string) bool
+	// while nobody was listening. turn is that turn's id (AgentEvent.Turn):
+	// its turn_start may lie before cursor, so the engine learns from here
+	// which turn is open — the one a forced take-over stops.
+	Reattachable(ctx context.Context, env envport.EnvID, s SessionID, cursor string) (turn string, ok bool)
 	Reattach(ctx context.Context, env envport.EnvID, s SessionID, cursor string, in AgentInput) (res AgentResult, ok bool, err error)
 }
 

@@ -430,9 +430,12 @@ export const runs = {
 		).message_id,
 
 	/** Take over the running agent's session: its turns no longer end the
-	 *  stage, they wait for your next message — until you release. Rejects
-	 *  (409) when no agent is running, or someone already holds it. */
-	takeOver: (id: string) => unwrapVoid(gen.takeOverRun({ path: { id } })),
+	 *  stage, they wait for your next message — until you release. force
+	 *  stops the agent's turn in flight so it waits on you at once; without
+	 *  it the turn finishes first. Rejects (409) when no agent is running, or
+	 *  someone already holds it. */
+	takeOver: (id: string, force: boolean) =>
+		unwrapVoid(gen.takeOverRun({ path: { id }, body: { force } })),
 	/** Hand the task back: the hold closes on the record and the agent gets
 	 *  the handback prompt (after its turn in flight, if one). */
 	release: (id: string) => unwrapVoid(gen.releaseRun({ path: { id } }))

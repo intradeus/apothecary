@@ -222,7 +222,18 @@ describe('what each call sends', () => {
 		['play', () => runs.play('r'), 'playRun', { path: { id: 'r' } }],
 		['archive', () => runs.archive('r'), 'archiveRun', { path: { id: 'r' } }],
 		['retry', () => runs.retry('r'), 'retryRun', { path: { id: 'r' } }],
-		['take over', () => runs.takeOver('r'), 'takeOverRun', { path: { id: 'r' } }],
+		[
+			'a take-over',
+			() => runs.takeOver('r', true),
+			'takeOverRun',
+			{ path: { id: 'r' }, body: { force: true } }
+		],
+		[
+			'a passive take-over',
+			() => runs.takeOver('r', false),
+			'takeOverRun',
+			{ path: { id: 'r' }, body: { force: false } }
+		],
 		['release', () => runs.release('r'), 'releaseRun', { path: { id: 'r' } }],
 		[
 			'a rebuild',

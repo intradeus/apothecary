@@ -151,7 +151,7 @@ func parkOnHolder(t *testing.T, store func(*event.MemStore) event.Store) (*harne
 		t.Fatal(err)
 	}
 	waitEvent[*event.AgentSession](t, h, runID) // the turn is open
-	takeOverWhenLive(t, h, runID, "u1")
+	takeOverWhenLive(t, h, runID, "u1", true)
 	close(r.firstEnd)
 	return h, runID
 }

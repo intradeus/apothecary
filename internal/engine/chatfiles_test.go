@@ -105,7 +105,7 @@ func TestATakeOverMessageCarriesFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitEvent[*event.AgentSession](t, h, runID)
-	takeOverWhenLive(t, h, runID, "u1")
+	takeOverWhenLive(t, h, runID, "u1", true)
 	close(r.firstEnd)
 
 	shot := uploadAs(t, att, "u1", "image.png", pngBytes)
@@ -194,7 +194,7 @@ func TestAParkedTakeOverWakesWithFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitEvent[*event.AgentSession](t, h, runID)
-	takeOverWhenLive(t, h, runID, "u1")
+	takeOverWhenLive(t, h, runID, "u1", true)
 	close(r.firstEnd)
 	waitUntil(t, "the run to park", func() bool { return h.view(t, runID).Dormant })
 	h.e.Wait(runID)

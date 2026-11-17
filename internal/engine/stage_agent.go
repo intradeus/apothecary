@@ -167,7 +167,12 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		// A take-over in force (or its handback owed) decides what the
 		// session gets next, ahead of the restart reply: the holder's words,
 		// the handback — or nothing yet, and the attempt parks on them.
-		if len(asks) == 0 {
+		// The agent's own questions still open live after a crash come
+		// first (a crash between a release's hold_released and the
+		// stage_paused of the question it waited on leaves both): their
+		// turn is followed, or the attempt parks on them below, and the
+		// hold's words or handback follow the answer's turn.
+		if len(asks) == 0 && !(crashed && haveSession && len(x.liveAsks(st)) > 0) {
 			hr, err := x.holdReentry(st, iter, crashed && haveSession, runner, session)
 			if err != nil {
 				return err
@@ -187,13 +192,20 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 			// the workspace and may have outlived it: follow the turn still
 			// running (or the one that finished while nobody listened)
 			// instead of starting another.
-			if ra, ok := runner.(agentport.AgentReattacher); ok && ra.Reattachable(x.ctx, rs.EnvID, session, rs.AgentCursor[st.ID]) {
+			// The turn followed is open from the start: its turn_start may
+			// lie before the cursor, and a forced take-over stops it.
+			ra, can := runner.(agentport.AgentReattacher)
+			var turn string
+			if can {
+				turn, can = ra.Reattachable(x.ctx, rs.EnvID, session, rs.AgentCursor[st.ID])
+			}
+			if can {
 				if err := x.append(&event.StageResumed{StageID: st.ID, Attempt: iter, Reason: event.ResumeRestart,
 					SessionID: string(session)}); err != nil {
 					return err
 				}
 				var err error
-				inv, err = x.invoke(st, budget, tr, x.liveAsks(st), "",
+				inv, err = x.invoke(st, budget, tr, x.liveAsks(st), "", turn,
 					func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
 						in.MCPServers = mcp
 						in.HarnessOptions = st.HarnessOptions
@@ -260,7 +272,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		if err != nil {
 			return err
 		}
-		inv, err = x.invoke(st, budget, tr, nil, text,
+		inv, err = x.invoke(st, budget, tr, nil, text, "",
 			func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
 				in.MCPServers = mcp
 				in.HarnessOptions = st.HarnessOptions
@@ -558,6 +570,19 @@ func dropPing(ps []*Ping, p *Ping) []*Ping {
 		}
 	}
 	return ps
+}
+
+// ownQuestion reports whether a question in ps was raised by turn. One the
+// runner raised in a turn it began after it (asked before the loop read that
+// turn's end) is not: reported in that later turn, or with no turn reported
+// open but after turn's end (Ping.after). Where nothing tells, it counts.
+func ownQuestion(ps []*Ping, turn string) bool {
+	for _, p := range ps {
+		if turn == "" || p.turn == turn || p.turn == "" && p.after != turn {
+			return true
+		}
+	}
+	return false
 }
 
 func pingIDs(ps []*Ping) []string {

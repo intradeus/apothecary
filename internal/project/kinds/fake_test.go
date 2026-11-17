@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -84,7 +85,7 @@ func TestFakeSamplesStayInBounds(t *testing.T) {
 // a batch) play out, the turn closes.
 func TestDemoTurn(t *testing.T) {
 	var evs []agentport.AgentEvent
-	if err := demoTurn(context.Background(), func(ev agentport.AgentEvent) { evs = append(evs, ev) }, 0); err != nil {
+	if err := demoTurn(context.Background(), func(ev agentport.AgentEvent) { evs = append(evs, ev) }, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	if len(evs) < 3 || evs[0].Kind != agentport.AgentEvTurnStart || evs[len(evs)-1].Kind != agentport.AgentEvTurnEnd {
@@ -114,7 +115,7 @@ func TestDemoTurnHonoursCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	start := time.Now()
-	if err := demoTurn(ctx, nil, time.Hour); !errors.Is(err, context.Canceled) {
+	if err := demoTurn(ctx, nil, nil, time.Hour); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 	if time.Since(start) > time.Second {
@@ -149,5 +150,224 @@ func TestFakeHarnessDemoIsOptIn(t *testing.T) {
 	evs, err := run(Config{Values: map[string]any{"demo": "on"}}, ctx)
 	if !errors.Is(err, context.DeadlineExceeded) || len(evs) != 1 || evs[0].Kind != agentport.AgentEvTurnStart {
 		t.Errorf("demo fake under a short deadline: %+v, %v", evs, err)
+	}
+}
+
+// testInbox is an engine inbox for the fake: messages, the hold, a stop.
+type testInbox struct {
+	mu      sync.Mutex
+	q       []agentport.UserMessage
+	held    bool
+	stopped string
+	wake    chan struct{}
+}
+
+func newTestInbox(held bool) *testInbox {
+	return &testInbox{held: held, wake: make(chan struct{}, 1)}
+}
+
+func (b *testInbox) signal() {
+	select {
+	case b.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (b *testInbox) push(m agentport.UserMessage) {
+	b.mu.Lock()
+	b.q = append(b.q, m)
+	b.mu.Unlock()
+	b.signal()
+}
+
+func (b *testInbox) release(handback string) {
+	b.mu.Lock()
+	b.q = append(b.q, agentport.UserMessage{Text: handback, Verbatim: true})
+	b.held = false
+	b.mu.Unlock()
+	b.signal()
+}
+
+func (b *testInbox) stop(turn string) {
+	b.mu.Lock()
+	b.stopped = turn
+	b.mu.Unlock()
+	b.signal()
+}
+
+func (b *testInbox) Wake() <-chan struct{} { return b.wake }
+func (b *testInbox) Take() []agentport.UserMessage {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	q := b.q
+	b.q = nil
+	return q
+}
+func (b *testInbox) Held() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.held
+}
+func (b *testInbox) StopTurn(turn string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return turn != "" && turn == b.stopped
+}
+
+// eventLog collects a run's events from the runner's goroutine.
+type eventLog struct {
+	mu  sync.Mutex
+	evs []agentport.AgentEvent
+}
+
+func (l *eventLog) on(ev agentport.AgentEvent) {
+	l.mu.Lock()
+	l.evs = append(l.evs, ev)
+	l.mu.Unlock()
+}
+
+// ended reports whether turn has ended, and how.
+func (l *eventLog) ended(turn string) (string, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, ev := range l.evs {
+		if ev.Kind == agentport.AgentEvTurnEnd && ev.Turn == turn {
+			return ev.StopReason, true
+		}
+	}
+	return "", false
+}
+
+func (l *eventLog) wait(t *testing.T, turn string) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if how, ok := l.ended(turn); ok {
+			return how
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("turn %s never ended", turn)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// A forced take-over ends the demo turn at once, cancelled; a stop for any
+// other turn leaves it playing.
+func TestDemoTurnStopsWhenTakenOver(t *testing.T) {
+	in := newTestInbox(true)
+	in.stop("other")
+	var log eventLog
+	done := make(chan error, 1)
+	go func() { done <- demoTurn(context.Background(), log.on, in, time.Hour) }()
+	time.Sleep(10 * time.Millisecond)
+	if _, ok := log.ended("demo"); ok {
+		t.Fatal("a stop for another turn ended the demo turn")
+	}
+	in.stop("demo")
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the demo turn played on")
+	}
+	if len(log.evs) != 2 || log.evs[0].Kind != agentport.AgentEvTurnStart || log.evs[1].Kind != agentport.AgentEvTurnEnd ||
+		log.evs[1].StopReason != "cancelled" {
+		t.Errorf("events = %+v", log.evs)
+	}
+}
+
+// The fake serves a take-over end to end: its turn stops, each holder
+// message and then the release's handback get a reply turn, and only then
+// does it write its outputs and return.
+func TestFakeHarnessServesATakeOver(t *testing.T) {
+	envp := fake.NewEnvProvisioner()
+	env, err := envp.Provision(context.Background(), envport.EnvSpec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := newFakeRunner(envp, true, 5*time.Millisecond)
+	in := newTestInbox(true)
+	in.stop("demo")
+	var log eventLog
+	prompt := "you MUST write these files (relative to repo root):\n- artifacts/plan.md — plan: the plan\n\nrest"
+	type result struct {
+		res agentport.AgentResult
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		res, err := runner.Run(context.Background(), env, agentport.AgentSpec{Agent: "dev"},
+			agentport.AgentInput{Prompt: prompt, Inbox: in, Events: log.on})
+		done <- result{res, err}
+	}()
+	if how := log.wait(t, "demo"); how != "cancelled" {
+		t.Fatalf("demo turn ended %q", how)
+	}
+	in.push(agentport.UserMessage{Text: "use sqlite"})
+	if how := log.wait(t, "reply-1"); how != "end_turn" {
+		t.Fatalf("reply ended %q", how)
+	}
+	select {
+	case r := <-done:
+		t.Fatalf("the fake returned under the hold: %+v, %v", r.res, r.err)
+	default:
+	}
+	if _, err := envp.ReadFile(context.Background(), env, "artifacts/plan.md"); err == nil {
+		t.Fatal("outputs written under the hold")
+	}
+	in.release("Hand back.\nThe rest.")
+	var r result
+	select {
+	case r = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the fake did not return after the release")
+	}
+	if r.err != nil || r.res.TurnsUsed != 5 {
+		t.Fatalf("= %+v, %v", r.res, r.err)
+	}
+	if _, err := envp.ReadFile(context.Background(), env, "artifacts/plan.md"); err != nil {
+		t.Errorf("outputs: %v", err)
+	}
+	var got []string
+	for _, ev := range log.evs {
+		switch ev.Kind {
+		case agentport.AgentEvUserMessage:
+			got = append(got, "user:"+ev.Messages[0].Text)
+		case agentport.AgentEvTurnStart:
+			got = append(got, "start:"+ev.Turn)
+		case agentport.AgentEvMessage:
+			got = append(got, "say:"+ev.Text)
+		}
+	}
+	want := "start:demo|user:use sqlite|start:reply-1|say:(fake agent) Received: use sqlite|" +
+		"user:Hand back.\nThe rest.|start:reply-2|say:(fake agent) Received: Hand back.…"
+	if g := strings.Join(got, "|"); g != want {
+		t.Errorf("events = %q\nwant      %q", g, want)
+	}
+}
+
+// Nobody holding the session, the fake returns after its turn.
+func TestFakeHarnessWithoutAHoldReturnsAfterItsTurn(t *testing.T) {
+	envp := fake.NewEnvProvisioner()
+	env, err := envp.Provision(context.Background(), envport.EnvSpec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var log eventLog
+	res, err := newFakeRunner(envp, true, time.Millisecond).Run(context.Background(), env, agentport.AgentSpec{Agent: "dev"},
+		agentport.AgentInput{Inbox: newTestInbox(false), Events: log.on})
+	if err != nil || res.TurnsUsed != 3 {
+		t.Fatalf("= %+v, %v", res, err)
+	}
+	if how, ok := log.ended("demo"); !ok || how != "" {
+		t.Errorf("demo turn ended %q (%v)", how, ok)
+	}
+	for _, ev := range log.evs {
+		if ev.Kind == agentport.AgentEvUserMessage {
+			t.Errorf("a reply turn without a hold: %+v", ev)
+		}
 	}
 }

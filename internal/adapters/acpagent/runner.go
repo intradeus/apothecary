@@ -305,16 +305,16 @@ func (r *Runner) attachable(ctx context.Context, c *sidecar.Client, s, cursor st
 	return turn, st.Sessions[s], turn != ""
 }
 
-func (r *Runner) Reattachable(ctx context.Context, env envport.EnvID, s agentport.SessionID, cursor string) bool {
+func (r *Runner) Reattachable(ctx context.Context, env envport.EnvID, s agentport.SessionID, cursor string) (string, bool) {
 	if s == "" {
-		return false
+		return "", false
 	}
 	c, err := r.client(ctx, env)
 	if err != nil {
-		return false
+		return "", false
 	}
-	_, _, ok := r.attachable(ctx, c, string(s), cursor)
-	return ok
+	turn, _, ok := r.attachable(ctx, c, string(s), cursor)
+	return turn, ok
 }
 
 func (r *Runner) Reattach(ctx context.Context, env envport.EnvID, s agentport.SessionID, cursor string, in agentport.AgentInput) (agentport.AgentResult, bool, error) {
@@ -432,9 +432,12 @@ func (s *stream) pump(out chan<- sidecar.Event, errc chan<- error) {
 
 // drive runs turns in one session until the agent has nothing left to do:
 // the first turn is text (or, when attaching, the turn already in flight),
-// and each human message queued meanwhile becomes the next turn. proc is
-// the agent process the session runs in: another process's exit (a second
-// harness in the same workspace) is not this session's news.
+// and each human message queued meanwhile becomes the next turn. It can stop
+// a turn: it takes up a forced take-over's request to stop the turn in
+// flight (Inbox.StopTurn) and cancels that turn alone: its end is then any
+// turn's end, and the session waits on the holder. proc is the agent process
+// the session runs in: another process's exit (a second harness in the same
+// workspace) is not this session's news.
 func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string, costBase float64,
 	text, attachTurn, cursor string, in agentport.AgentInput) (agentport.AgentResult, error) {
 	res := agentport.AgentResult{Session: agentport.SessionID(sid)}
@@ -496,7 +499,23 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 	}
 	ctxDone := ctx.Done()
 	cancelled := false
+	stopping := false // a take-over asked to stop the turn in flight
 	var deadline <-chan time.Time
+	// askStop asks the agent to stop its turn without blocking the loop: the
+	// request and the turn's wind-down share the one cancelGrace deadline, so
+	// a wedged /agent/cancel cannot hold up a turn_end; the next prompt waits
+	// for its answer (bounded by the same grace). stopRes carries the answer.
+	var stopRes <-chan error
+	askStop := func() {
+		res := make(chan error, 1)
+		rctx, release := context.WithTimeout(sctx, r.cancelGrace)
+		go func() {
+			defer release()
+			res <- c.Cancel(rctx, sid)
+		}()
+		stopRes = res
+		deadline = time.After(r.cancelGrace)
+	}
 	lastWasTool := false
 	for {
 		turn := attachTurn
@@ -524,9 +543,27 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 				// Cancelled by the engine (timeout, park, abort): ask the
 				// agent to stop, then follow the turn to its end for a while.
 				ctxDone, cancelled = nil, true
-				_ = c.Cancel(sctx, sid)
-				deadline = time.After(r.cancelGrace)
+				askStop()
+			case <-wake:
+				// A forced take-over: stop this turn, keep the session —
+				// unless a question the turn raised first keeps it. A wake
+				// for anything else is read again at the turn's end.
+				if !stopping && !cancelled && in.Inbox.StopTurn(turn) {
+					stopping = true
+					askStop()
+				}
+			case err := <-stopRes:
+				stopRes = nil
+				// A take-over whose stop the agent refused fails now rather
+				// than at the deadline. An engine cancel follows the turn on
+				// regardless, as it always has.
+				if err != nil && stopping && !cancelled {
+					return done(fmt.Errorf("%s: could not stop the turn for the take-over: %w", r.p.Harness, err))
+				}
 			case <-deadline:
+				if !cancelled {
+					return done(fmt.Errorf("%s: turn did not stop within %s of the take-over", r.p.Harness, r.cancelGrace))
+				}
 				return done(fmt.Errorf("%s: turn did not end within %s of being cancelled", r.p.Harness, r.cancelGrace))
 			case ev := <-evc:
 				if ev.Session != "" && ev.Session != sid {
@@ -603,6 +640,25 @@ func (r *Runner) drive(ctx context.Context, c *sidecar.Client, proc, sid string,
 		}
 		if cancelled {
 			return done(ctx.Err())
+		}
+		if stopping {
+			// Stopped for the holder: carry on as at any turn's end, once
+			// the stop request has its answer. /agent/cancel names the
+			// session, not the turn: a request still on its way (the turn
+			// ended on its own first) would stop the holder's next turn.
+			if stopRes != nil {
+				select {
+				case err := <-stopRes:
+					if err != nil {
+						return done(fmt.Errorf("%s: could not stop the turn for the take-over: %w", r.p.Harness, err))
+					}
+				case <-ctxDone:
+					return done(ctx.Err())
+				case err := <-perr:
+					return done(fmt.Errorf("%s: %w", r.p.Harness, err))
+				}
+			}
+			stopping, deadline, stopRes = false, nil, nil
 		}
 		if in.Inbox == nil {
 			return done(nil)

@@ -239,6 +239,27 @@ type runHandle struct {
 	// relaunch: the loop left for an outcome's chain, and the next one runs
 	// it (finish). Set and read on the loop's own goroutine.
 	relaunch bool
+	// raising (under Engine.mu) counts the agent's questions registered by
+	// RaiseQuestion and not yet opened by the invocation (admit): a forced
+	// take-over counts them as open.
+	raising int
+	// stopAsked and stopping (under Engine.mu), until that turn ends or the
+	// invocation does: stopAsked is the turn a forced take-over asked to
+	// stop, which a question RaiseQuestion registers first withdraws;
+	// stopping is that turn once the runner has taken the stop up
+	// (acceptStop), and RaiseQuestion refuses meanwhile. A runner that
+	// cannot stop a turn never takes it up: its questions stay welcome.
+	stopAsked string
+	stopping  string
+	// agentTurn (under Engine.mu) is the turn the runner last reported
+	// started and not yet ended, as it reports it (ahead of the loop, which
+	// may be behind on its events): the turn a question raised now is from.
+	// endedTurn is the turn it last reported ended. A runner reports a
+	// turn's end before it prompts the next, but may report the next one's
+	// start only after that prompt has run tools: a question raised with no
+	// turn reported open comes after endedTurn, and is not that turn's.
+	agentTurn string
+	endedTurn string
 	// idle is set while the run sits between phases with its merge requests
 	// open (PLAN6): the loop only polls the repository host, so it does not
 	// hold a concurrency slot.
@@ -295,6 +316,8 @@ type Ping struct {
 	RaisedAt time.Time
 
 	key            string       // the raiser's idempotency key (RaisePing)
+	turn           string       // the agent's turn that raised it (runHandle.agentTurn); "" unknown
+	after          string       // with turn unknown, the turn reported ended before it was raised (runHandle.endedTurn): not its turn
 	answered       bool         // guarded by Engine.mu
 	queued         bool         // an answer is on its way to the loop; guarded by Engine.mu
 	answer         *PingAnswer  // set before done closes; read only after <-done
@@ -1947,13 +1970,23 @@ func (e *Engine) RaiseQuestion(runID string, q Question) (*Ping, error) {
 		e.mu.Unlock()
 		return nil, fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
 	}
+	if h.stopping != "" {
+		// The runner is stopping the turn this question comes from, for a
+		// forced take-over: opened, it would park the run as that turn ends.
+		e.mu.Unlock()
+		return nil, fmt.Errorf("run %s: %w", runID, ErrTurnStopping)
+	}
+	// A stop asked for and not yet taken up: the question keeps its turn.
+	h.stopAsked = ""
 	p := &Ping{
 		ID: e.newID(), RunID: runID, Type: ptype, Question: question, Context: context_,
-		Form: form, AnswerKind: event.AnswerForm, Files: refs, key: key,
+		Form: form, AnswerKind: event.AnswerForm, Files: refs, key: key, turn: h.agentTurn, after: h.endedTurn,
 		RaisedAt: e.clock(), done: make(chan struct{}),
 	}
 	e.pings[p.ID] = p
+	h.raising++ // on its way to the loop: open to a take-over from here
 	e.mu.Unlock()
+	raiseRegistered(p)
 
 	req := raiseReq{p: p, ack: make(chan struct{})}
 	// The mailbox is only drained while an agent stage is executing. Never
@@ -1964,25 +1997,34 @@ func (e *Engine) RaiseQuestion(runID string, q Question) (*Ping, error) {
 	select {
 	case h.mailbox <- req:
 	case <-h.done:
-		e.dropPing(p.ID)
+		e.dropPing(h, p.ID, false)
 		return nil, fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
 	case <-timeout.C:
-		e.dropPing(p.ID)
+		e.dropPing(h, p.ID, false)
 		return nil, fmt.Errorf("run %s is not in an agent stage; ask_human is unavailable right now", runID)
 	}
 	select {
 	case <-req.ack:
 	case <-h.done:
-		e.dropPing(p.ID)
+		e.dropPing(h, p.ID, true)
 		return nil, fmt.Errorf("run %s: %w", runID, ErrRunNotActive)
 	}
 	return p, nil
 }
 
-// dropPing withdraws a never-delivered ping (RaisePing failure paths).
-func (e *Engine) dropPing(id string) {
+// raiseRegistered is called once RaiseQuestion has registered a question,
+// before it hands it to the run's loop. A variable for tests.
+var raiseRegistered = func(*Ping) {}
+
+// dropPing withdraws a never-delivered ping (RaiseQuestion failure paths).
+// One that never reached the mailbox is no longer on its way to the loop;
+// one that did is the mailbox's, counted until it is taken out (admit).
+func (e *Engine) dropPing(h *runHandle, id string, queued bool) {
 	e.mu.Lock()
 	delete(e.pings, id)
+	if !queued {
+		h.raising--
+	}
 	e.mu.Unlock()
 }
 

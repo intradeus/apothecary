@@ -1877,6 +1877,10 @@ export type SwarmUnit = {
 	updated_at: string;
 };
 
+export type TakeOverRequest = {
+	force?: boolean | null;
+};
+
 export type TestResult = {
 	error?: string;
 	ok: boolean;
@@ -8173,7 +8177,7 @@ export type ReleaseRunResponses = {
 };
 
 export type TakeOverRunData = {
-	body?: never;
+	body: TakeOverRequest;
 	path: {
 		id: string;
 	};

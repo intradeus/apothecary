@@ -1207,6 +1207,7 @@ export type {
 	Swarm,
 	SwarmSubagent,
 	SwarmUnit,
+	TakeOverRequest,
 	TakeOverRunData,
 	TakeOverRunErrors,
 	TakeOverRunResponses,

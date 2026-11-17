@@ -179,7 +179,7 @@ type FakeHarness struct{}
 func (FakeHarness) Descriptor() Descriptor {
 	return Descriptor{Port: "harness", Kind: "fake", Label: "Fake harness (dev)", Fields: []Field{
 		{Name: "demo", Label: "Demo pacing", Placeholder: "on",
-			Help: `"on" acts each turn out slowly — tool calls and subagents over about 30 s — so the war room has a crew to show.`},
+			Help: `"on" acts each turn out slowly — tool calls and subagents over about 30 s — so the war room has a crew to show, and a take-over has a turn to stop.`},
 	}}
 }
 
@@ -187,19 +187,32 @@ func (FakeHarness) Descriptor() Descriptor {
 const demoBeat = 3 * time.Second
 
 func (FakeHarness) New(cfg Config, envp envport.EnvProvisioner) (Harness, error) {
-	demo := cfg.Str("demo", "") == "on"
+	if cfg.Str("demo", "") == "on" {
+		return &fakeHarness{runner: newFakeRunner(envp, true, demoBeat)}, nil
+	}
+	return &fakeHarness{runner: newFakeRunner(envp, false, 200*time.Millisecond)}, nil // a little realism
+}
+
+// newFakeRunner is the dev fake's agent: one turn (acted out, with demo),
+// then a held session served as a real runner does, then the declared
+// outputs. beat paces the turns.
+func newFakeRunner(envp envport.EnvProvisioner, demo bool, beat time.Duration) *fake.AgentRunner {
 	runner := &fake.AgentRunner{}
 	runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
 		if demo {
-			if err := demoTurn(ctx, call.In.Events, demoBeat); err != nil {
+			if err := demoTurn(ctx, call.In.Events, call.In.Inbox, beat); err != nil {
 				return agentport.AgentResult{}, err
 			}
 		} else {
 			select {
-			case <-time.After(200 * time.Millisecond): // a little realism
+			case <-time.After(beat):
 			case <-ctx.Done():
 				return agentport.AgentResult{}, ctx.Err()
 			}
+		}
+		replies, err := serveHeld(ctx, call.In, beat)
+		if err != nil {
+			return agentport.AgentResult{}, err
 		}
 		// An output with a shape contract gets a document that holds it —
 		// a verdict, an empty review, a reply per thread, a commit message —
@@ -213,19 +226,24 @@ func (FakeHarness) New(cfg Config, envp envport.EnvProvisioner) (Harness, error)
 				return agentport.AgentResult{}, err
 			}
 		}
-		return agentport.AgentResult{TurnsUsed: 3, Usage: agentport.Usage{InputTokens: 1000, OutputTokens: 200, CostUSD: 0.01}}, nil
+		return agentport.AgentResult{TurnsUsed: 3 + replies, Usage: agentport.Usage{InputTokens: 1000, OutputTokens: 200, CostUSD: 0.01}}, nil
 	}
-	return &fakeHarness{runner: runner}, nil
+	return runner
 }
 
 // demoTurn acts out an agent's turn for the dev war room: a few ordinary
 // tools, one subagent and then a batch of two (the shapes the engine's crew
 // board recognises), a beat apart; the turn's end takes the last tool still
 // in flight with it. No session: the fake has none to resume. ctx ending
-// stops it.
-func demoTurn(ctx context.Context, emit func(agentport.AgentEvent), beat time.Duration) error {
+// stops it; a forced take-over (inbox, nil-safe) ends the turn at once,
+// cancelled, and the invocation carries on.
+func demoTurn(ctx context.Context, emit func(agentport.AgentEvent), inbox agentport.Inbox, beat time.Duration) error {
 	if emit == nil {
 		emit = func(agentport.AgentEvent) {}
+	}
+	var wake <-chan struct{}
+	if inbox != nil {
+		wake = inbox.Wake()
 	}
 	tool := func(id, title, kind, status, input string) agentport.AgentEvent {
 		return agentport.AgentEvent{Kind: agentport.AgentEvTool, Turn: "demo", Tool: &agentport.AgentTool{ID: id, Title: title,
@@ -245,14 +263,77 @@ func demoTurn(ctx context.Context, emit func(agentport.AgentEvent), beat time.Du
 		tool("test", "go test ./...", "execute", "in_progress", `{"command":"go test ./..."}`),
 		{Kind: agentport.AgentEvTurnEnd, Turn: "demo"},
 	} {
-		select {
-		case <-time.After(beat):
-		case <-ctx.Done():
-			return ctx.Err()
+		next := time.NewTimer(beat)
+		for waiting := true; waiting; {
+			select {
+			case <-next.C:
+				waiting = false
+			case <-wake:
+				if inbox.StopTurn("demo") {
+					next.Stop()
+					emit(agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "demo", StopReason: "cancelled"})
+					return nil
+				}
+			case <-ctx.Done():
+				next.Stop()
+				return ctx.Err()
+			}
 		}
 		emit(ev)
 	}
 	return nil
+}
+
+// serveHeld serves a held session by the Inbox contract, as the ACP runner
+// does: what is queued is delivered, and while a human holds the session and
+// nothing is queued it waits for their next word. Each batch — the release's
+// handback included — gets a short reply turn of its own. It returns the
+// reply turns once nobody holds the session and nothing is queued.
+func serveHeld(ctx context.Context, in agentport.AgentInput, beat time.Duration) (int, error) {
+	if in.Inbox == nil {
+		return 0, nil
+	}
+	emit := in.Events
+	if emit == nil {
+		emit = func(agentport.AgentEvent) {}
+	}
+	for turns := 0; ; {
+		msgs := in.Inbox.Take()
+		for len(msgs) == 0 {
+			if !in.Inbox.Held() {
+				// One last look: a release queues the handback and lets go
+				// in the same breath.
+				if msgs = in.Inbox.Take(); len(msgs) == 0 {
+					return turns, nil
+				}
+				break
+			}
+			select {
+			case <-in.Inbox.Wake():
+			case <-ctx.Done():
+				return turns, ctx.Err()
+			}
+			msgs = in.Inbox.Take()
+		}
+		turns++
+		id := fmt.Sprintf("reply-%d", turns)
+		emit(agentport.AgentEvent{Kind: agentport.AgentEvUserMessage, Messages: msgs})
+		emit(agentport.AgentEvent{Kind: agentport.AgentEvTurnStart, Turn: id})
+		select {
+		case <-time.After(beat):
+		case <-ctx.Done():
+			return turns, ctx.Err()
+		}
+		// Echo the first line of the last message, briefly.
+		said := msgs[len(msgs)-1].Text
+		first, _, cut := strings.Cut(said, "\n")
+		if r := []rune(first); cut || len(r) > 80 {
+			said = strings.TrimSpace(string(r[:min(len(r), 80)])) + "…"
+		}
+		emit(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Turn: id, Text: "(fake agent) Received: " + said})
+		emit(agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: id, StopReason: "end_turn",
+			Usage: &agentport.Usage{InputTokens: 100, OutputTokens: 20, CostUSD: 0.001}})
+	}
 }
 
 type fakeHarness struct{ runner *fake.AgentRunner }

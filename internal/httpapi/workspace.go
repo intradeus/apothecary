@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -19,6 +21,12 @@ import (
 type SendMessageRequest struct {
 	Text          string   `json:"text"`
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+}
+
+// TakeOverRequest is a take-over's options. Force (default true) stops the
+// agent's turn in flight; false lets it finish first (a passive take-over).
+type TakeOverRequest struct {
+	Force *bool `json:"force,omitempty"`
 }
 
 type MessageAccepted struct {
@@ -43,9 +51,30 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 // postHold takes over the run's live agent session for the signed-in user.
+// The body is optional: none is a forced take-over. A length of -1 is a body
+// of unknown length (chunked, or HTTP/2 without Content-Length), not an
+// absent one, so every body but a declared-empty one is decoded; a stream
+// that turns out empty counts as none. A body is one JSON value: anything
+// after it is a 400.
 func (s *Server) postHold(w http.ResponseWriter, r *http.Request) {
+	var body TakeOverRequest
+	if r.ContentLength != 0 {
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+		err := dec.Decode(&body)
+		if err == nil {
+			if err = dec.Decode(&json.RawMessage{}); err == nil {
+				err = errors.New("more than one JSON value")
+			} else if errors.Is(err, io.EOF) {
+				err = nil
+			}
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			writeErr(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+			return
+		}
+	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	err := s.Runs.TakeOver(r.PathValue("id"), p.User.ID)
+	err := s.Runs.TakeOver(r.PathValue("id"), p.User.ID, body.Force == nil || *body.Force)
 	switch {
 	case errors.Is(err, engine.ErrRunNotActive), errors.Is(err, engine.ErrNoAgentRunning), errors.Is(err, engine.ErrAlreadyHeld):
 		writeErr(w, http.StatusConflict, err.Error())
@@ -214,8 +243,8 @@ func (s *Server) workspaceRoutes() []Route {
 			Handler: s.postMessage, Body: SendMessageRequest{}, Returns: MessageAccepted{}, Status: http.StatusAccepted, Scope: ScopeRun},
 		{Method: "POST", Path: "/api/runs/{id}/hold", ID: "takeOverRun", Tag: tagRuns,
 			Summary: "Take over the running agent's session",
-			Doc:     "While held, the end of the agent's turn is not the end of the stage: it waits for your next message, each message a turn in the same session, until you release. 409 when no agent is running, or someone already holds it.",
-			Handler: s.postHold, Status: http.StatusAccepted, Scope: ScopeRun},
+			Doc:     "While held, the end of the agent's turn is not the end of the stage: it waits for your next message, each message a turn in the same session, until you release. force (default true) stops the agent's turn in flight so it waits on you at once — unless that turn is waiting on the agent's own question; force false lets the turn finish first. The body is optional. 409 when no agent is running, or someone already holds it.",
+			Handler: s.postHold, Body: TakeOverRequest{}, Status: http.StatusAccepted, Scope: ScopeRun},
 		{Method: "DELETE", Path: "/api/runs/{id}/hold", ID: "releaseRun", Tag: tagRuns,
 			Summary: "Hand the task back to the agent",
 			Doc:     "Closes the take-over on the record (duration, turns, cost) and sends the session the handback prompt — when the turn in flight ends, if one is. The stage ends as usual once that turn does. 409 when nobody holds it.",

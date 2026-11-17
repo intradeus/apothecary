@@ -60,21 +60,30 @@ func TestEndedOnQuestions(t *testing.T) {
 
 func TestPlanHoldRequest(t *testing.T) {
 	tests := []struct {
-		take, held, releasing, busy bool
-		want                        HoldMove
+		req  HoldRequest
+		want HoldMove
 	}{
-		{take: true, want: HoldTake},
-		{take: true, busy: true, want: HoldTake},
-		{take: true, held: true, want: HoldRefuseTaken},
-		{want: HoldRefuseNotHeld},
-		{busy: true, want: HoldRefuseNotHeld},
-		{held: true, releasing: true, busy: true, want: HoldAlreadyReleasing},
-		{held: true, busy: true, want: HoldReleaseAfterTurn},
-		{held: true, want: HoldHandBack},
+		{HoldRequest{Take: true}, HoldTake},
+		{HoldRequest{Take: true, TurnOpen: true}, HoldTake}, // passive: the turn runs on
+		{HoldRequest{Take: true, Queued: true}, HoldTake},
+		{HoldRequest{Take: true, Force: true}, HoldTake},                                     // nothing in flight
+		{HoldRequest{Take: true, Force: true, Queued: true}, HoldTake},                       // no turn yet to stop
+		{HoldRequest{Take: true, Force: true, TurnOpen: true, QuestionOpen: true}, HoldTake}, // waiting on a human
+		{HoldRequest{Take: true, Force: true, TurnOpen: true}, HoldTakeAndStop},
+		{HoldRequest{Take: true, Force: true, TurnOpen: true, Queued: true}, HoldTakeAndStop},
+		{HoldRequest{Take: true, Held: true}, HoldRefuseTaken},
+		{HoldRequest{Take: true, Force: true, Held: true, TurnOpen: true}, HoldRefuseTaken},
+		{HoldRequest{}, HoldRefuseNotHeld},
+		{HoldRequest{TurnOpen: true}, HoldRefuseNotHeld},
+		{HoldRequest{Held: true, Releasing: true, TurnOpen: true}, HoldAlreadyReleasing},
+		{HoldRequest{Held: true, TurnOpen: true}, HoldReleaseAfterTurn},
+		{HoldRequest{Held: true, Queued: true}, HoldReleaseAfterTurn},
+		{HoldRequest{Held: true, QuestionOpen: true}, HoldReleaseAfterTurn}, // its turn_start still on its way
+		{HoldRequest{Held: true}, HoldHandBack},
 	}
 	for _, tt := range tests {
-		if got := PlanHoldRequest(tt.take, tt.held, tt.releasing, tt.busy); got != tt.want {
-			t.Errorf("%+v: got %v", tt, got)
+		if got := PlanHoldRequest(tt.req); got != tt.want {
+			t.Errorf("%+v: got %v, want %v", tt.req, got, tt.want)
 		}
 	}
 }
@@ -90,5 +99,38 @@ func TestHoldLegCountsOnlyTheHoldersSpend(t *testing.T) {
 	s := l.Spend
 	if s.Messages != 1 || s.Turns != 1 || s.Usage == nil || s.Usage.CostUSD != 1.5 || s.Usage.InputTokens != 2 || s.Usage.OutputTokens != 3 {
 		t.Fatalf("spend = %+v usage %+v", s, s.Usage)
+	}
+}
+
+func TestHoldLegWaitsUntilTheHoldersMessagesGetTheirTurn(t *testing.T) {
+	l := NewHoldLeg()
+	if l.Waiting() {
+		t.Fatal("a new leg waits on nothing")
+	}
+	l.MessageQueued()
+	l.MessageQueued()
+	l.MessagesDelivered([]agentport.UserMessage{{Text: "one"}, {Text: "handback", Verbatim: true}})
+	if !l.Waiting() {
+		t.Fatal("one of two messages delivered, and a handback, must still wait")
+	}
+	l.MessagesDelivered([]agentport.UserMessage{{Text: "two"}, {Text: "carried from a re-entry"}})
+	if !l.Waiting() {
+		t.Fatal("every message delivered but their turn not started: must still wait")
+	}
+	l.TurnStarted("t1")
+	if l.Waiting() {
+		t.Fatal("every message delivered and its turn started, still waiting")
+	}
+	l.MessagesDelivered([]agentport.UserMessage{{Text: "handback", Verbatim: true}})
+	if l.Waiting() {
+		t.Fatal("the engine's own handback is no turn of the holder's to wait for")
+	}
+	l.MessageQueued()
+	if !l.Waiting() {
+		t.Fatal("a delivery past the queue must not cover the next message")
+	}
+	l.TurnStarted("t2")
+	if !l.Waiting() {
+		t.Fatal("a turn starting before the message is delivered must not cover it")
 	}
 }

@@ -59,7 +59,7 @@ func (e *Engine) SendMessage(runID, userID, text string, attachmentIDs []string)
 	// next message, as a run parked on a question is by its answer. Its
 	// files reach the workspace with the run's others when it resumes.
 	id := e.newID()
-	err := e.wakeHeld(context.Background(), runID, func(run.View) ([]event.Payload, error) {
+	err := e.wakeHeld(context.Background(), runID, func(run.View, []event.Event) ([]event.Payload, error) {
 		if len(attachmentIDs) > 0 {
 			if err := e.attachments.ClaimForChat(context.Background(), userID, attachmentIDs, runID, filestore.ChatTakeOver); err != nil {
 				return nil, err

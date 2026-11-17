@@ -135,7 +135,7 @@ func TestTranscriptIsRecordedCoalescedAndRedacted(t *testing.T) {
 // sendHeld takes the agent over, then sends it a message.
 func sendHeld(t *testing.T, h *harness, runID, text string) string {
 	t.Helper()
-	takeOverWhenLive(t, h, runID, "u1")
+	takeOverWhenLive(t, h, runID, "u1", true)
 	id, err := h.e.SendMessage(runID, "u1", text, nil)
 	if err != nil {
 		t.Fatalf("send message: %v", err)
@@ -523,18 +523,26 @@ type reattachRunner struct {
 	*fake.AgentRunner
 	mu       sync.Mutex
 	can      bool
+	turn     string   // the turn Reattachable names
 	attached []string // "session@cursor"
 	result   agentport.AgentResult
+	// follow, when set, is the turn still live: Reattach runs it instead of
+	// replaying one that finished meanwhile.
+	follow func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error)
 }
 
-func (r *reattachRunner) Reattachable(_ context.Context, _ envport.EnvID, _ agentport.SessionID, _ string) bool {
-	return r.can
+func (r *reattachRunner) Reattachable(_ context.Context, _ envport.EnvID, _ agentport.SessionID, _ string) (string, bool) {
+	return r.turn, r.can
 }
 
-func (r *reattachRunner) Reattach(_ context.Context, _ envport.EnvID, s agentport.SessionID, cursor string, in agentport.AgentInput) (agentport.AgentResult, bool, error) {
+func (r *reattachRunner) Reattach(ctx context.Context, _ envport.EnvID, s agentport.SessionID, cursor string, in agentport.AgentInput) (agentport.AgentResult, bool, error) {
 	r.mu.Lock()
 	r.attached = append(r.attached, string(s)+"@"+cursor)
 	r.mu.Unlock()
+	if r.follow != nil {
+		res, err := r.follow(ctx, in)
+		return res, true, err
+	}
 	in.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Text: "finished while you were away", Cursor: "b:9"})
 	return r.result, true, nil
 }
@@ -587,6 +595,40 @@ func TestRestartReattachesToTheTurnInFlight(t *testing.T) {
 	}
 }
 
+// The turn followed after a restart started before the recorded cursor, so
+// its turn_start never reaches the engine again: a forced take-over still
+// stops it, by the id the runner named when asked whether it could attach.
+func TestRestartForcedTakeOverStopsTheReattachedTurn(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	hr := &heldRunner{stoppable: true, turns: 1} // T1: the turn in flight
+	never := make(chan struct{})
+	h.res.Runner = &reattachRunner{AgentRunner: h.runner, can: true, turn: "T1",
+		follow: func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
+			in.Events(agentport.AgentEvent{Kind: agentport.AgentEvMessage, Turn: "T1", Text: "still at it", Cursor: "b:7"})
+			stop := "end_turn"
+			if !hr.await(in, "T1", never) {
+				stop = "cancelled"
+			}
+			in.Events(agentport.AgentEvent{Kind: agentport.AgentEvTurnEnd, Turn: "T1", StopReason: stop})
+			return hr.drive(ctx, in)
+		}}
+	seedLiveAttempt(t, h, "r-t")
+	if err := h.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	takeOverWhenLive(t, h, "r-t", "u1", true)
+	waitUntil(t, "the reattached turn to be stopped", func() bool {
+		return strings.Join(hr.stoppedTurns(), ",") == "T1"
+	})
+	if err := h.e.Release("r-t", "u1"); err != nil {
+		t.Fatal(err)
+	}
+	waitEvent[*event.RunCompleted](t, h, "r-t")
+	if d := hr.delivered(); len(d) != 1 || d[0][0].Text != handbackPrompt {
+		t.Errorf("delivered = %+v, want the handback alone", d)
+	}
+}
+
 // The turn is gone (the container restarted with the engine), but it had
 // asked a question: that question is still answerable — the attempt parks on
 // it and the session resumes with the answer.
@@ -616,6 +658,45 @@ func TestRestartWithALiveQuestionButNoTurnParksOnIt(t *testing.T) {
 	}
 	if len(rr.attached) != 0 {
 		t.Errorf("reattached to nothing: %v", rr.attached)
+	}
+}
+
+// A release that waited on a turn the agent's own question parked is put on
+// the record (hold_released) before the attempt parks on the question
+// (stage_paused). A crash between the two leaves a handback owed beside a
+// question still open live: the question comes first — the attempt parks on
+// it, and the session is resumed with the answer, not the handback.
+func TestRestartBetweenAReleaseAndItsQuestionParkParksOnTheQuestion(t *testing.T) {
+	h := newHarness(t, mustFlow(t, askFlowDoc))
+	rr := &reattachRunner{AgentRunner: h.runner, can: false}
+	h.res.Runner = rr
+	h.runner.ResumeFunc = func(_ context.Context, _ fake.ResumeCall) (agentport.AgentResult, error) {
+		return agentport.AgentResult{Session: "sess-r", TurnsUsed: 1}, nil
+	}
+	seedLiveAttempt(t, h, "r-w",
+		&event.HoldTaken{StageID: "build", Attempt: 1, UserID: "u1"},
+		&event.PingRaised{PingID: "p-live", Type: "clarification", Question: "rename it?", StageID: "build", Form: textForm(), AnswerKind: event.AnswerForm},
+		&event.HoldReleased{StageID: "build", Attempt: 1, UserID: "u1", Reason: event.HoldReleasedByUser})
+	if err := h.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	paused := waitEvent[*event.StagePaused](t, h, "r-w")
+	if len(paused.PingIDs) != 1 || paused.PingIDs[0] != "p-live" {
+		t.Fatalf("stage_paused = %+v", paused)
+	}
+	h.e.Wait("r-w")
+	if r := h.runner.ResumeCalls; len(r) != 0 {
+		t.Fatalf("resumed before the answer: %+v", r)
+	}
+	if p, ok := findPayload[*event.AgentPrompted](h.events(t, "r-w")); ok {
+		t.Fatalf("prompted before the answer: %+v", p)
+	}
+	if err := h.e.AnswerPing("p-live", textAnswer("yes")); err != nil {
+		t.Fatal(err)
+	}
+	waitEvent[*event.RunCompleted](t, h, "r-w")
+	if r := h.runner.ResumeCalls; len(r) == 0 || !strings.Contains(r[0].Reply, "yes") || strings.Contains(r[0].Reply, handbackPrompt) {
+		t.Fatalf("resume calls = %+v, want the answer first", r)
 	}
 }
 
