@@ -1,6 +1,6 @@
 # Commit convention and release rules (commitizen; `task commit`,
 # `task release:preview`). manual-release.yml cuts each release from these;
-# the commit-msg hook (lefthook.yml) and pr-title.yml check messages with
+# the commit-msg hook (lefthook.yml) checks messages with
 # .lefthook/commit-msg/conventional.sh, which schema_pattern must agree with
 # (internal/devtools/commitmsg).
 #

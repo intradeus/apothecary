@@ -1,7 +1,7 @@
 # CI, on every pull request and every push to main. A release is cut by hand
 # (manual-release.yml), only from a main commit this workflow passed: the next
 # semver tag, CHANGELOG.md, the images and the chart on GHCR, the client
-# binaries. A pull request's title is checked by pr-title.yml.
+# binaries.
 #
 # Every job is named <side>-<check> and runs the task <side>:<check> (the
 # Taskfile's checks section): `task go:test` locally is the go-test job, and
@@ -507,15 +507,28 @@ jobs:
         env:
           CACHE: gha
 
-  # On a pull request, once every job passed or was skipped: the tree this
-  # run tested (the pull request merged into its base), for main to find
-  # once it is merged as is (header).
+  # On a pull request: the one check a merge requires (the repository's
+  # ruleset on main). It fails when any job failed or was cancelled, never
+  # skips — a required check that is skipped counts as passed. Once every
+  # job passed or was skipped, it records the tree this run tested (the pull
+  # request merged into its base), for main to find once it is merged as is
+  # (header).
   passed:
     needs: [changes, go-test, ui-test, go-lint, repo-lint, ui-lint, sandbox-images, sandbox-test, engine-image]
-    if: github.event_name == 'pull_request' && !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    if: github.event_name == 'pull_request' && !cancelled()
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          case " $RESULTS " in
+            *" failure "* | *" cancelled "*)
+              echo "::error title=passed::a job failed or was cancelled ($RESULTS)"
+              exit 1
+              ;;
+          esac
       - id: tree
         env:
           GH_TOKEN: ${{ github.token }}

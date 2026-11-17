@@ -17,6 +17,10 @@
 #            chart's install command and the apothecary client's binaries)
 #
 # The release commit carries [skip ci], so it starts no ci run of its own.
+#
+# main's ruleset requires ci's `passed` check, which a release commit never
+# has: the release job pushes with a deploy key (secret RELEASE_DEPLOY_KEY,
+# write access), the ruleset's one bypass. Setup: docs/operations.md.
 name: manual-release
 
 on:
@@ -87,15 +91,27 @@ jobs:
       # Never cancel: a release can be partway through pushing.
       cancel-in-progress: false
     permissions:
-      contents: write # push the release commit and tag to main
+      contents: write # create the GitHub Release (the push goes with the deploy key)
       packages: write # push to ghcr
     env:
       SHA: ${{ github.sha }}
     steps:
+      # Before anything is built: without the key, the push to main is refused.
+      - name: Require the release deploy key
+        env:
+          KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error title=manual-release::secret RELEASE_DEPLOY_KEY is not set: main's ruleset refuses the release push without it (docs/operations.md)"
+            exit 1
+          fi
+      # The deploy key, not the workflow's token: main's ruleset lets it
+      # push the release commit, which has no ci run of its own.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
       - run: pipx install "commitizen==${COMMITIZEN_VERSION}"
       # Check the state again: main can move between the two jobs.
       - id: plan
