@@ -410,9 +410,15 @@ func (t *transcript) flushAll() error {
 
 // prompted records what the engine sent the agent.
 func (x *exec) prompted(stageID string, iter int, kind, text string) error {
+	return x.append(promptedEvent(stageID, iter, kind, text))
+}
+
+// promptedEvent is the agent_prompted recording text, cut to what the log
+// keeps.
+func promptedEvent(stageID string, iter int, kind, text string) *event.AgentPrompted {
 	p := &event.AgentPrompted{StageID: stageID, Attempt: iter, Kind: kind, Text: text}
 	if len(p.Text) > maxPromptText {
 		p.Text, p.Truncated = p.Text[:maxPromptText], true
 	}
-	return x.append(p)
+	return p
 }

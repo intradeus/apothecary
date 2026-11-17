@@ -11,6 +11,7 @@ package runcore
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -243,11 +244,17 @@ type State struct {
 // stage prompt — has not ended yet (hold_taken start, no hold_opened): a
 // re-entry runs or follows that turn rather than parking, and it stays off
 // the hold's account.
+// OpeningMsgs: the messages prompts delivered while the hold was Opening —
+// the opening stage prompt's above all — which a stage prompt sent again (a
+// restart before its session was on record) carries again. Those queued for
+// the stage are the holder's words, banked on the hold's account here: no
+// invocation's leg sees a message its prompt carried.
 type HeldState struct {
-	Taken   *event.HoldTaken
-	TakenAt time.Time
-	Banked  event.HoldSpend
-	Opening bool
+	Taken       *event.HoldTaken
+	TakenAt     time.Time
+	Banked      event.HoldSpend
+	Opening     bool
+	OpeningMsgs []*event.MessageQueued
 }
 
 // ChainKey identifies one link of an edge chain: depth 0 is the edge
@@ -792,6 +799,17 @@ func (rs *State) Apply(ev *event.Event) {
 	case *event.MessageQueued:
 		rs.PendingMsgs = append(rs.PendingMsgs, p)
 	case *event.MessageDelivered:
+		if h := rs.Holds[p.StageID]; h != nil && h.Opening {
+			for _, m := range rs.PendingMsgs {
+				if !slices.Contains(p.MessageIDs, m.MessageID) {
+					continue
+				}
+				h.OpeningMsgs = append(h.OpeningMsgs, m)
+				if m.StageID == p.StageID {
+					h.Banked.Messages++
+				}
+			}
+		}
 		rs.Delivered(p.MessageIDs)
 	case *event.HoldTaken:
 		rs.Holds[p.StageID] = &HeldState{Taken: p, TakenAt: ev.TS, Opening: p.Start}

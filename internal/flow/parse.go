@@ -2423,7 +2423,7 @@ func (p *parser) buildHarnessOptions(raw *DocStage, harness string) (map[string]
 }
 
 // paramFields names where a $parameter is read (FLOWLANG §1 Parameters).
-const paramFields = "a stage's model, harness, harness_options, max_turns, timeout, run_ref and run_if, an action's settings (with), a service stage's service, a run.service.$name source, and a watcher's or an outcome's start, quiet_for and max"
+const paramFields = "a stage's model, harness, harness_options, max_turns, timeout, run_ref and run_if, an agent stage's start_held, an action's settings (with), a service stage's service, a run.service.$name source, and a watcher's or an outcome's start, quiet_for and max"
 
 // notAParam refuses a $parameter in a field that reads none: written there,
 // $name would stay the text "$name" — never the parameter's value.

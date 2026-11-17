@@ -904,6 +904,105 @@ func TestRecoveredStartHoldSendsTheStagePrompt(t *testing.T) {
 	}
 }
 
+// A crash after the opening prompt went out with an owner's message, before
+// the harness recorded a session: the stage prompt sent again carries that
+// message again, and it stays on the hold's account — once.
+func TestRecoveredStartHoldKeepsTheOpeningMessage(t *testing.T) {
+	fl := mustFlow(t, startHeldDoc)
+	h, r := startHeldHarness(t, nil)
+	seedRun(t, h, "r-sm", "held", fl.Hash,
+		&event.PhaseStarted{Phase: "main", By: "human"},
+		&event.StageStarted{StageID: "plan", Attempt: 1},
+		&event.HoldTaken{StageID: "plan", Attempt: 1, UserID: "owner", Start: true},
+		&event.MessageQueued{MessageID: "m1", Text: "smaller, please", StageID: "plan"},
+		&event.MessageDelivered{MessageIDs: []string{"m1"}, StageID: "plan", Attempt: 1},
+		&event.AgentPrompted{StageID: "plan", Attempt: 1, Kind: event.PromptStage, Text: "plan it with me\n\n---\n\nsmaller, please"},
+	)
+	if err := h.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitHeldNotices(t, h, 1)
+	if calls := h.runner.SnapshotRunCalls(); len(calls) != 1 || !strings.Contains(calls[0].In.Prompt, "smaller, please") {
+		t.Errorf("run calls = %+v, want the stage prompt with the owner's message", calls)
+	}
+	if err := h.e.Release("r-sm", "owner"); err != nil {
+		t.Fatal(err)
+	}
+	gate := h.waitPing(t, PingGate)
+	if err := h.e.AnswerPing(gate.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait("r-sm")
+	evs := h.events(t, "r-sm")
+	if v := h.view(t, "r-sm"); v.State != run.Completed {
+		t.Fatalf("state = %s: %v", v.State, eventTypes(evs))
+	}
+	if n := countType(evs, event.TypeMessageDelivered); n != 1 {
+		t.Errorf("message_delivered = %d, want the one before the crash", n)
+	}
+	if b := r.delivered(); len(b) != 1 || b[0][0].Text != handbackPrompt {
+		t.Errorf("delivered = %+v, want the handback alone after the opening turn", b)
+	}
+	if rel, _ := findPayload[*event.HoldReleased](evs); rel == nil || rel.Messages != 1 || rel.Turns != 0 {
+		t.Errorf("hold_released = %+v, want the owner's message and no turn of theirs", rel)
+	}
+}
+
+// The opening prompt lands with the messages it carries or not at all: a
+// write that fails leaves no message delivered to a prompt the log lacks,
+// and the owner hears their send was not taken.
+func TestStartHeldOpeningPromptLandsWhole(t *testing.T) {
+	s, stall := stallAfter(event.TypeHoldTaken)
+	flaky := &flakyStore{typ: event.TypeAgentPrompted}
+	flaky.left.Store(1)
+	h, _ := startHeldHarnessOn(t, func(m *event.MemStore) event.Store {
+		flaky.Store = m
+		stall(m)
+		s.Store = flaky
+		return s
+	}, nil)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "held", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = inWindow(t, s, func() error {
+		_, err := h.e.SendMessage(runID, "smaller, please")
+		return err
+	})
+	if err == nil || !strings.Contains(err.Error(), "db down") {
+		t.Fatalf("send = %v, want the failed write", err)
+	}
+	h.e.Wait(runID)
+	evs := h.events(t, runID)
+	for _, typ := range []event.Type{event.TypeMessageQueued, event.TypeMessageDelivered, event.TypeAgentPrompted} {
+		if n := countType(evs, typ); n != 0 {
+			t.Errorf("%s = %d after the failed write: %v", typ, n, eventTypes(evs))
+		}
+	}
+	if err := h.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitHeldNotices(t, h, 1)
+	if err := h.e.Release(runID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	gate := h.waitPing(t, PingGate)
+	if err := h.e.AnswerPing(gate.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	evs = h.events(t, runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s: %v", v.State, eventTypes(evs))
+	}
+	if p, _ := findPayload[*event.AgentPrompted](evs); p == nil || strings.Contains(p.Text, "smaller, please") {
+		t.Errorf("stage prompt = %+v, want it without the send that was refused", p)
+	}
+	if rel, _ := findPayload[*event.HoldReleased](evs); rel == nil || rel.Messages != 0 {
+		t.Errorf("hold_released = %+v, want no message of theirs", rel)
+	}
+}
+
 // heldReattacher is a harness whose agent outlived an engine restart in the
 // middle of a start hold's opening turn. Reattached, it ends that turn —
 // seen from its start, or only from its end when the start lay before the

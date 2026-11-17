@@ -243,41 +243,71 @@ func (x *exec) admitOpening(st *flow.Stage) {
 // start: text with the human messages nobody has delivered yet. While a
 // start hold's opening turn is owed it does so under the run's opening lock
 // (runHandle.opening), from taking what the owner sent while the prompt was
-// on its way (takeOpeningMessages) until the prompt is on the log: every
-// message admitted before then rides with it exactly once, and a send that
-// comes meanwhile waits for the write, then reaches the opening invocation.
+// on its way (takeOpeningMessages) until the prompt is on the log, and in
+// one write: those messages' message_queued, the delivery of everything the
+// prompt carries and its agent_prompted land together or not at all, so no
+// message is ever delivered to a prompt the log does not have. Every message
+// admitted before then rides with it exactly once; a send that comes
+// meanwhile waits for the write, then reaches the opening invocation. A
+// stage prompt sent again — a restart before its session was on record —
+// carries again what the first one did (HeldState.OpeningMsgs).
 func (x *exec) promptOpening(st *flow.Stage, iter int, kind, text string) (string, error) {
-	if h := x.rs.Holds[st.ID]; h != nil && h.Opening {
-		x.h.opening.Lock()
-		defer x.h.opening.Unlock()
-		if err := x.takeOpeningMessages(st); err != nil {
+	h := x.rs.Holds[st.ID]
+	if h == nil || !h.Opening {
+		text, err := x.withPendingMessages(st, iter, text)
+		if err != nil {
 			return "", err
 		}
+		return text, x.prompted(st.ID, iter, kind, text)
 	}
-	text, err := x.withPendingMessages(st, iter, text)
+	x.h.opening.Lock()
+	defer x.h.opening.Unlock()
+	var msgs []agentport.UserMessage
+	if kind == event.PromptStage {
+		for _, m := range h.OpeningMsgs {
+			msgs = append(msgs, agentport.UserMessage{ID: m.MessageID, Text: m.Text})
+		}
+	}
+	sent := x.takeOpeningMessages()
+	var batch []event.Payload
+	var ids []string
+	for _, m := range x.rs.PendingMsgs {
+		msgs = append(msgs, agentport.UserMessage{ID: m.MessageID, Text: m.Text})
+		ids = append(ids, m.MessageID)
+	}
+	for _, req := range sent {
+		batch = append(batch, &event.MessageQueued{MessageID: req.msg.ID, Text: req.msg.Text, StageID: st.ID})
+		msgs = append(msgs, req.msg)
+		ids = append(ids, req.msg.ID)
+	}
+	if len(ids) > 0 {
+		batch = append(batch, &event.MessageDelivered{MessageIDs: ids, StageID: st.ID, Attempt: iter})
+	}
+	if len(msgs) > 0 {
+		text += "\n\n---\n\n" + formatMessages(msgs)
+	}
+	// The holder's words a prompt carries while the hold is opening are
+	// banked on its account by the fold, as they land.
+	err := x.append(append(batch, promptedEvent(st.ID, iter, kind, text))...)
+	for _, req := range sent {
+		req.ack <- err
+	}
 	if err != nil {
 		return "", err
 	}
-	return text, x.prompted(st.ID, iter, kind, text)
+	return text, nil
 }
 
-// takeOpeningMessages records what the run's owner sent while a start
-// hold's opening prompt was on its way (admitOpening), so that prompt
-// carries it (withPendingMessages): delivered once, with the stage prompt,
-// on the hold's account as the holder's words.
-func (x *exec) takeOpeningMessages(st *flow.Stage) error {
+// takeOpeningMessages takes what the run's owner sent while a start hold's
+// opening prompt was on its way (admitOpening), for that prompt to carry.
+func (x *exec) takeOpeningMessages() []msgReq {
+	var sent []msgReq
 	for {
 		select {
 		case req := <-x.h.messages:
-			q := &event.MessageQueued{MessageID: req.msg.ID, Text: req.msg.Text, StageID: st.ID}
-			if err := x.append(q); err != nil {
-				req.ack <- err
-				return err
-			}
-			x.heldMessages++
-			req.ack <- nil
+			sent = append(sent, req)
 		default:
-			return nil
+			return sent
 		}
 	}
 }

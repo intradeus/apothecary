@@ -1549,6 +1549,10 @@ func TestNoParamWhereNoneIsRead(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), refused) {
 				t.Errorf("err = %v, want %q", err, refused)
 			}
+			// It names where a parameter is read, the bool site included.
+			if err != nil && !strings.Contains(err.Error(), "an agent stage's start_held") {
+				t.Errorf("err = %v, want it to name start_held among the sites that read a parameter", err)
+			}
 		})
 	}
 	// A declared parameter named inside a script or a prompt is not read

@@ -53,11 +53,18 @@ What now:
   still owed its opening turn), so a message or a release waits on the
   loop's channel instead of being refused. `promptOpening` fixes the stage
   prompt under the run's opening lock (`runHandle.opening`): it drains the
-  messages waiting there (`takeOpeningMessages`), records each
-  (`message_queued`), lets `withPendingMessages` append them to the stage
-  prompt and writes `agent_prompted`, all before letting go: delivered once,
-  with it, on the hold's account as messages (the opening turn still is not
-  the holder's). A send reads `agentLive` under the same lock, so one that
+  messages waiting there (`takeOpeningMessages`), appends them and any
+  pending ones to the stage prompt, and writes their `message_queued`, one
+  `message_delivered` and the `agent_prompted` in a single append, before
+  letting go: they land together or not at all (review), so no message is
+  delivered to a prompt the log lacks, and a send whose write failed hears
+  so. The replay keeps what a prompt delivered while the hold is opening
+  (`HeldState.OpeningMsgs`): a stage prompt sent again — a restart after the
+  prompt but before its session was on record — carries those messages
+  again, since the replay no longer has them pending. The same fold banks
+  the ones queued for the stage on the hold's account, so the count
+  survives a restart (the opening turn still is not the holder's). A send
+  reads `agentLive` under the same lock, so one that
   comes while the prompt is being written waits until it is on the log; the
   review asked for such a message to ride with the prompt too, which cannot
   be (the prompt's text is fixed before its write starts), and the owner
@@ -97,7 +104,12 @@ turn after the opening one; a release while the prompt's write is stalled
 follows the opening turn),
 `TestRecoveredStartHoldSendsTheStagePrompt`
 (a crash before the prompt, and after it with no session: the prompt is
-sent, not parked on), `TestRecoveredStartHoldFollowsTheOpeningTurn` (a
+sent, not parked on), `TestRecoveredStartHoldKeepsTheOpeningMessage` (a
+crash after a prompt carrying the owner's message, no session: the prompt
+sent again carries it, and the account counts it once),
+`TestStartHeldOpeningPromptLandsWhole` (a failed prompt write leaves no
+message queued or delivered, and the send reports it),
+`TestRecoveredStartHoldFollowsTheOpeningTurn` (a
 reattached opening turn, its start seen or not, notifies once and stays off
 the account); `internal/run/event` `TestEveryRegisteredTypeRoundTrips`
 (`hold_opened`); CPUI `derive.test.ts` and `transcriptItems.test.ts`
