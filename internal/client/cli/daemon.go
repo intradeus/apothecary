@@ -33,6 +33,10 @@ const daemonCommand = "__forward-daemon"
 // command that started it is about to ask for something.
 var daemonIdle = 30 * time.Second
 
+// daemonShutdownGrace bounds how long a daemon told to stop waits for the
+// requests in flight (the stop's own answer among them) before it closes.
+const daemonShutdownGrace = 5 * time.Second
+
 // listenLocal opens a port on this machine's loopback, never on its other
 // interfaces: what a run serves stays the person's. Port 0 is a free one;
 // a named port that something on this machine already answers on is
@@ -196,6 +200,11 @@ func runDaemon(ctx context.Context, env Env) error {
 	go func() {
 		select {
 		case <-d.quit:
+			// Told to stop by a request (the last forward stopped): let that
+			// request's answer out before the server goes.
+			sctx, cancel := context.WithTimeout(ctx, daemonShutdownGrace)
+			defer cancel()
+			_ = srv.Shutdown(sctx)
 		case <-ctx.Done():
 		}
 		_ = srv.Close()
