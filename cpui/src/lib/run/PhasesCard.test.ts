@@ -26,11 +26,12 @@ async function show(
 ) {
 	load(phases, mrs);
 	const view = render(PhasesCard, { runId: 'r1', idle: true, ...props });
-	await screen.findByText('Watchers');
+	await screen.findByRole('article', { name: phases[0].id });
 	return view;
 }
 const runNow = () => screen.getByRole('button', { name: 'Run now' });
-const line = (id: string) => screen.getByText(id).closest('.phase') as HTMLElement;
+const chain = (id: string) => screen.getByRole('article', { name: id });
+const section = (name: string) => screen.queryByRole('region', { name });
 
 describe('PhasesCard', () => {
 	beforeEach(() => {
@@ -79,33 +80,36 @@ describe('PhasesCard', () => {
 		});
 	});
 
-	describe('what opens each one', () => {
-		it.each([
-			['the main chain', { kind: 'main', signal: '' }, 'when the run starts · once'],
-			['by hand', { signal: 'manual', max: 2, total: 1 }, 'only when you start it · 1/2 runs'],
-			[
-				'a watcher',
-				{ signal: 'ci_failed', start: 'confirm', max: -1, total: 2 },
-				'on ci_failed · asks you first · 2/∞ runs'
-			],
-			[
-				'a watcher with a quiet time',
-				{ signal: 'review_comment', quietForS: 300, start: 'auto', total: 0, max: 3 },
-				'on review_comment, quiet for 5m · starts by itself · 0/3 runs'
-			],
-			[
-				'an outcome',
-				{ kind: 'outcome', signal: 'mr_merged', then: 'done', start: 'auto' },
-				'ends the run on mr_merged · starts by itself · once'
-			],
-			[
-				'an abandoning outcome',
-				{ kind: 'outcome', signal: 'mr_closed', then: 'abort', start: 'manual' },
-				'abandons the run on mr_closed · waits for you to start it · once'
-			]
-		] as const)('words %s', async (_, over, words) => {
-			await show([aPhase({ id: 'p', ...over })]);
-			expect(within(line('p')).getByText(words)).toBeInTheDocument();
+	describe('one card per chain, by kind', () => {
+		it('puts each chain under its kind, main chain first, then watchers, then outcomes', async () => {
+			await show([
+				aPhase({ id: 'merged', kind: 'outcome', signal: 'mr_merged', then: 'done' }),
+				aPhase({ id: 'fix-ci' }),
+				aPhase({ id: 'main', kind: 'main', signal: '' }),
+				aPhase({ id: 'address-review', signal: 'review_comment' })
+			]);
+
+			expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual([
+				'Main chain',
+				'Watchers',
+				'Outcomes'
+			]);
+			const cards = (name: string) =>
+				within(section(name)!)
+					.getAllByRole('article')
+					.map((a) => a.getAttribute('aria-label'));
+			expect(cards('Main chain')).toEqual(['main']);
+			expect(cards('Watchers')).toEqual(['fix-ci', 'address-review']);
+			expect(cards('Outcomes')).toEqual(['merged']);
+			expect(within(section('Watchers')!).getByText('2')).toBeInTheDocument();
+		});
+
+		it('leaves out a kind the flow has none of', async () => {
+			await show([aPhase({ id: 'fix-ci' })]);
+
+			expect(section('Watchers')).toBeInTheDocument();
+			expect(section('Main chain')).not.toBeInTheDocument();
+			expect(section('Outcomes')).not.toBeInTheDocument();
 		});
 
 		it('uses the signals’ titles once they are in', async () => {
@@ -114,73 +118,18 @@ describe('PhasesCard', () => {
 			] as never);
 			await show([aPhase({ id: 'p' })]);
 
-			expect(await screen.findByText(/^on CI failing/)).toBeInTheDocument();
+			expect(await within(chain('p')).findByText('CI failing')).toBeInTheDocument();
 		});
 
 		it('keeps the raw names when the titles cannot be read', async () => {
 			vi.mocked(api.system.signals).mockRejectedValue(new Error('nope'));
 			await show([aPhase({ id: 'p' })]);
 
-			expect(screen.getByText(/^on ci_failed/)).toBeInTheDocument();
-		});
-	});
-
-	describe('where each one stands', () => {
-		it('says it is running', async () => {
-			await show([aPhase({ id: 'p', live: {} })]);
-			expect(within(line('p')).getByText('running now')).toBeInTheDocument();
-		});
-
-		it('says where it is parked', async () => {
-			await show([aPhase({ id: 'p', live: { parkedAt: 'review' } })]);
-			expect(within(line('p')).getByText('parked at review')).toBeInTheDocument();
-		});
-
-		const hold = (why: string, seen: boolean) => ({
-			subject: 'repo',
-			key: why,
-			why,
-			seen,
-			observedAt: ''
-		});
-
-		it('flags a signal that holds, with why', async () => {
-			await show([aPhase({ id: 'p', holds: [hold('lint', false), hold('unit', false)] })]);
-			expect(within(line('p')).getByText('pending')).toHaveAttribute('title', 'lint\nunit');
-		});
-
-		it('flags only what is new', async () => {
-			await show([aPhase({ id: 'p', holds: [hold('lint', true), hold('unit', false)] })]);
-			expect(within(line('p')).getByText('pending')).toHaveAttribute('title', 'unit');
-		});
-
-		it('flags nothing when every hold was seen', async () => {
-			await show([aPhase({ id: 'p', holds: [hold('lint', true)] })]);
-			expect(screen.queryByText('pending')).not.toBeInTheDocument();
+			expect(within(chain('p')).getByText('ci_failed')).toBeInTheDocument();
 		});
 	});
 
 	describe('Run now', () => {
-		it('never offers it for the main chain', async () => {
-			await show([aPhase({ id: 'main', kind: 'main', signal: '' })]);
-			expect(screen.queryByRole('button')).not.toBeInTheDocument();
-		});
-
-		it('never offers it for an outcome: that happens on the repository', async () => {
-			await show([aPhase({ id: 'p', kind: 'outcome' })]);
-
-			expect(screen.queryByRole('button')).not.toBeInTheDocument();
-			expect(screen.getByText('happens on the repository')).toBeInTheDocument();
-			expect(screen.getByText('outcome')).toBeInTheDocument();
-		});
-
-		it('offers nothing to start once the run is over', async () => {
-			await show([aPhase({ id: 'p' }), aPhase({ id: 'q', kind: 'outcome' })], [], { ended: true });
-
-			expect(screen.queryByRole('button')).not.toBeInTheDocument();
-			expect(screen.queryByText('happens on the repository')).not.toBeInTheDocument();
-		});
-
 		it('starts a watcher when no chain holds the run', async () => {
 			await show([aPhase({ id: 'fix-ci' })]);
 			expect(runNow()).toBeEnabled();

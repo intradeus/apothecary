@@ -11,7 +11,7 @@
 	const run = $derived(rs.run);
 </script>
 
-<div class="pv">
+<div class="view pv">
 	{#if run}
 		{#key `${run.idle}|${run.phase ?? ''}|${rs.terminal}`}<PhasesCard
 				runId={rs.runId}
@@ -23,9 +23,6 @@
 
 <style>
 	.pv {
-		flex: 1;
-		min-height: 0;
-		overflow: auto;
-		padding: 12px 14px;
+		padding: 10px 12px 14px;
 	}
 </style>

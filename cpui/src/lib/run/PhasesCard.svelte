@@ -1,19 +1,22 @@
 <script lang="ts">
-	// The flow's chains (FLOWLANG §1): the main chain the run started with,
-	// the watchers — what opens each one, a signal under its start policy or
-	// you, how often it ran, whether it is live or parked, which signals hold
-	// right now — and the outcomes that end the run. Any watcher can be
-	// started by hand while no chain holds the run's one cursor.
+	// The flow's chains (FLOWLANG §1), one card each under its kind: the main
+	// chain the run started with, the watchers and the outcomes that end the
+	// run (PhaseCard). Any watcher can be started by hand while no chain
+	// holds the run's one cursor; this reads the run, starts one and asks on
+	// which merge request when several are open.
 	import { errorMessage } from '$lib/core/errors';
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
 	import type { MergeRequestLive, RunPhase } from '$lib/domain';
+	import { PHASE_KINDS } from '$lib/domain/flowdoc';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { I } from '$lib/design/icons';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
+	import SectionHeader from '$lib/ui/SectionHeader.svelte';
 	import MrStatus from './MrStatus.svelte';
+	import PhaseCard from './PhaseCard.svelte';
 
 	let {
 		runId,
@@ -75,43 +78,11 @@
 		start(p.id);
 	}
 
-	/** "on conflicts with its target · asks you first" — the wait point in a few words. */
-	const opens = (p: RunPhase) => {
-		if (p.kind === 'main') return t('run.phases.main');
-		if (p.signal === 'manual') return t('run.phases.byHand');
-		const signal = titles[p.signal] ?? p.signal;
-		if (p.kind === 'outcome') {
-			// An outcome opens once and ends the run: done, or abandoned.
-			const ends =
-				p.then === 'abort'
-					? t('run.phases.abandonsOn', { signal })
-					: t('run.phases.endsOn', { signal });
-			return `${ends} · ${t(`run.phases.start.${p.start}`)}`;
-		}
-		const quiet = p.quietForS
-			? t('run.phases.quiet', { minutes: Math.round(p.quietForS / 60) })
-			: '';
-		return `${t('run.phases.on', { signal })}${quiet} · ${t(`run.phases.start.${p.start}`)}`;
-	};
-	/** "2/∞ runs" — or, for the main chain and an outcome, that it happens once. */
-	const usage = (p: RunPhase) =>
-		p.kind !== 'watcher'
-			? t('run.phases.once')
-			: t('run.phases.usage', { used: p.total, max: p.max === -1 ? '∞' : p.max });
-	const pending = (p: RunPhase) => p.holds.filter((h) => !h.seen);
 	const spent = (p: RunPhase) =>
 		p.max !== -1 &&
 		(open.length ? open.every((m) => (p.runs[m.repo] ?? 0) >= p.max) : (p.runs[''] ?? 0) >= p.max);
 	// One cursor: a chain parked at a wait point still holds it.
 	const free = $derived(idle && !phases.some((p) => p.live));
-	const disabledWhy = (p: RunPhase) =>
-		p.live
-			? t('run.phases.live')
-			: spent(p)
-				? t('run.phases.spent')
-				: free
-					? t('run.phases.startNow')
-					: t('run.phases.otherRunning');
 
 	onMount(() => {
 		load();
@@ -125,68 +96,49 @@
 </script>
 
 {#if phases.length}
-	<div class="rc card-in">
-		<div class="hd">
-			<span class="t display">{t('run.phases.title')}</span>
-			<span class="sub">{t('run.phases.sub')}</span>
-		</div>
-		{#each open as mr (mr.repo + mr.branch)}
-			<div class="mrh">
-				<a href={mr.url} target="_blank" rel="noreferrer" class="mono linklike brand"
-					>{mr.repo === 'repo' ? mr.branch : `${mr.repo}: ${mr.branch}`} {I.external}</a
-				>
-				<MrStatus {mr} long />
+	<div class="pc">
+		{#if open.length}
+			<div class="mrs card-in">
+				<span class="caption">{t('run.phases.mrs')}</span>
+				{#each open as mr (mr.repo + mr.branch)}
+					<span class="mr">
+						<a href={mr.url} target="_blank" rel="noreferrer" class="mono linklike brand"
+							>{mr.repo === 'repo' ? mr.branch : `${mr.repo}: ${mr.branch}`} {I.external}</a
+						>
+						<MrStatus {mr} long />
+					</span>
+				{/each}
 			</div>
-		{/each}
-		<div class="list">
-			{#each phases as p (p.id)}
-				{@const waits = pending(p)}
-				<div class="phase" class:islive={!!p.live}>
-					<div class="who">
-						<span class="mono pid" title={p.kind === 'main' ? t('run.phases.mainTitle') : undefined}
-							>{p.id}</span
-						>
-						{#if p.kind === 'outcome'}<span
-								class="pill sm tint-muted"
-								title={t('run.phases.outcomeTitle')}>{t('run.phases.outcomePill')}</span
-							>{/if}
-						{#if waits.length}<span
-								class="pill sm tint-hot"
-								title={waits.map((h) => h.why).join('\n')}>{t('run.phases.pending')}</span
-							>{/if}
-					</div>
-					<span class="muted truncate"
-						>{opens(p)} · {usage(p)}{#if p.live}
-							· <span class="text-primary"
-								>{p.live.parkedAt
-									? t('run.phases.parkedAt', { stage: p.live.parkedAt })
-									: t('run.phases.running')}</span
-							>{/if}</span
-					>
-					{#if ended || p.kind === 'main'}
-						<!-- the run is over, or the main chain: it runs once, when the run starts -->
-						<span></span>
-					{:else if p.kind === 'outcome'}
-						<!-- An outcome happens on the repository; starting one by hand would
-						     end the run from a button beside the ones that do not. -->
-						<span class="faint small" title={t('run.phases.outcomeTitle')}
-							>{t('run.phases.onTheRepo')}</span
-						>
-					{:else}
-						<button
-							class="btn-sm"
-							aria-busy={busy === p.id}
-							disabled={!free || spent(p) || busy !== ''}
-							title={disabledWhy(p)}
-							onclick={(ev) => run(p, ev)}>{t('run.phases.runNow')}</button
-						>
-					{/if}
-				</div>
-			{/each}
-		</div>
+		{/if}
 		{#if error}{@render failure()}{/if}
+		{#each PHASE_KINDS as kind (kind)}
+			{@const list = phases.filter((p) => p.kind === kind)}
+			{#if list.length}
+				<section aria-label={t(`run.phases.section.${kind}`)}>
+					<SectionHeader
+						title={t(`run.phases.section.${kind}`)}
+						count={list.length}
+						sub={t(`run.phases.sectionSub.${kind}`)}
+					/>
+					<div class="card-grid" style:--min="280px">
+						{#each list as p (p.id)}
+							<PhaseCard
+								phase={p}
+								{titles}
+								{ended}
+								{free}
+								spent={spent(p)}
+								busy={busy === p.id}
+								locked={busy !== ''}
+								onrun={(ev) => run(p, ev)}
+							/>
+						{/each}
+					</div>
+				</section>
+			{/if}
+		{/each}
 	</div>
-	<Popover {anchor} bind:open={pickOpen} placement="below-end">
+	<Popover {anchor} bind:open={pickOpen}>
 		<div class="pickbox">
 			<span class="muted faint">{t('run.phases.runOn')}</span>
 			{#each open as mr (mr.repo + mr.branch)}
@@ -201,63 +153,33 @@
 {/if}
 
 {#snippet failure()}
-	<div class="ec">
-		<ErrorCard {cause} detail={error} onretry={load} ondismiss={() => (error = '')} />
-	</div>
+	<ErrorCard {cause} detail={error} onretry={load} ondismiss={() => (error = '')} />
 {/snippet}
 
 <style>
-	.rc {
+	.pc,
+	section {
 		display: flex;
 		flex-direction: column;
-	}
-	.hd {
-		padding: 10px 14px 8px;
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-	.t {
-		font-size: var(--fs-section);
-	}
-	.sub {
-		font-size: var(--fs-label);
-		color: var(--text-muted);
-		text-wrap: pretty;
-	}
-	.mrh {
-		border-top: 1px solid var(--line);
-		padding: 8px 14px;
-		display: flex;
 		gap: 10px;
+	}
+	.pc {
+		gap: 16px;
+	}
+	.mrs {
+		display: flex;
+		gap: 6px 16px;
 		align-items: baseline;
 		flex-wrap: wrap;
+		padding: 8px 12px;
 		font-size: var(--fs-label);
 	}
-	.list {
-		border-top: 1px solid var(--line);
-		padding: 6px 14px 8px;
-		display: flex;
-		flex-direction: column;
-		gap: 5px;
-	}
-	.phase {
-		display: grid;
-		grid-template-columns: auto minmax(0, 1fr) auto;
-		gap: 10px;
-		align-items: center;
-		font-size: var(--fs-label);
-	}
-	.phase.islive .pid {
-		color: var(--link);
-	}
-	.who {
-		display: flex;
-		gap: 6px;
-		align-items: center;
-	}
-	.pid {
-		font-size: var(--fs-help);
+	.mr {
+		display: inline-flex;
+		gap: 8px;
+		align-items: baseline;
+		flex-wrap: wrap;
+		min-width: 0;
 	}
 	.pickbox {
 		display: flex;
@@ -265,8 +187,5 @@
 		gap: 6px;
 		padding: 8px;
 		min-width: 200px;
-	}
-	.ec {
-		padding: 0 14px 10px;
 	}
 </style>
