@@ -101,7 +101,7 @@ func TestHoldLegCountsOnlyTheHoldersSpend(t *testing.T) {
 	}
 }
 
-func TestHoldLegWaitsUntilTheHoldersMessagesAreDelivered(t *testing.T) {
+func TestHoldLegWaitsUntilTheHoldersMessagesGetTheirTurn(t *testing.T) {
 	l := NewHoldLeg()
 	if l.Waiting() {
 		t.Fatal("a new leg waits on nothing")
@@ -113,11 +113,23 @@ func TestHoldLegWaitsUntilTheHoldersMessagesAreDelivered(t *testing.T) {
 		t.Fatal("one of two messages delivered, and a handback, must still wait")
 	}
 	l.MessagesDelivered([]agentport.UserMessage{{Text: "two"}, {Text: "carried from a re-entry"}})
+	if !l.Waiting() {
+		t.Fatal("every message delivered but their turn not started: must still wait")
+	}
+	l.TurnStarted("t1")
 	if l.Waiting() {
-		t.Fatal("every message delivered, still waiting")
+		t.Fatal("every message delivered and its turn started, still waiting")
+	}
+	l.MessagesDelivered([]agentport.UserMessage{{Text: "handback", Verbatim: true}})
+	if l.Waiting() {
+		t.Fatal("the engine's own handback is no turn of the holder's to wait for")
 	}
 	l.MessageQueued()
 	if !l.Waiting() {
 		t.Fatal("a delivery past the queue must not cover the next message")
+	}
+	l.TurnStarted("t2")
+	if !l.Waiting() {
+		t.Fatal("a turn starting before the message is delivered must not cover it")
 	}
 }

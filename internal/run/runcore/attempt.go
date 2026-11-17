@@ -156,6 +156,9 @@ type HoldLeg struct {
 	turns map[string]bool
 	// waiting counts the holder's messages queued but not yet delivered.
 	waiting int
+	// due: the holder's words have reached the agent but the turn they
+	// prompt has not started yet.
+	due bool
 }
 
 // NewHoldLeg starts a leg with nothing spent.
@@ -164,17 +167,20 @@ func NewHoldLeg() HoldLeg { return HoldLeg{turns: map[string]bool{}} }
 // MessageQueued counts a holder's message waiting for the agent.
 func (l *HoldLeg) MessageQueued() { l.waiting++ }
 
-// Waiting reports whether a holder's message is queued or taken but not yet
-// delivered: its turn is still to come, even once the runner has taken it.
-func (l *HoldLeg) Waiting() bool { return l.waiting > 0 }
+// Waiting reports whether a holder's message still has its turn to come:
+// queued, taken but not yet delivered, or delivered with its turn not yet
+// started.
+func (l *HoldLeg) Waiting() bool { return l.waiting > 0 || l.due }
 
 // MessagesDelivered counts the holder's words reaching the agent. The
-// engine's own — a verbatim handback — are not theirs.
+// engine's own — a verbatim handback — are not theirs. The holder's are due
+// a turn until the next one starts.
 func (l *HoldLeg) MessagesDelivered(msgs []agentport.UserMessage) {
 	for _, m := range msgs {
 		if !m.Verbatim {
 			l.Spend.Messages++
 			l.waiting = max(l.waiting-1, 0)
+			l.due = true
 		}
 	}
 }
@@ -182,6 +188,7 @@ func (l *HoldLeg) MessagesDelivered(msgs []agentport.UserMessage) {
 // TurnStarted counts a turn starting under the hold, once: it is what the
 // holder's message prompted.
 func (l *HoldLeg) TurnStarted(turn string) {
+	l.due = false
 	if !l.turns[turn] {
 		l.turns[turn] = true
 		l.Spend.Turns++

@@ -341,9 +341,10 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					cancelRun(errParked)
 					return collect(outcomePaused)
 				}
-				// A release hands back once the holder's messages are all in:
-				// one queued before it (even one the runner has already
-				// taken) gets its own turn first, and the handback the next.
+				// A release hands back once the holder's messages have all had
+				// their turn: one queued before it (even one the runner has
+				// already taken or delivered) gets its own turn first, and the
+				// handback the next.
 				switch {
 				case hold.releasing && !hold.leg.Waiting():
 					if err := handBack(hold.releaseBy); err != nil {

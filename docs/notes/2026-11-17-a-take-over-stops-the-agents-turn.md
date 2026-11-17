@@ -63,16 +63,17 @@ back at the end of the turn in flight, even with that message still to be
 delivered — once the runner had taken it, the engine no longer saw it queued —
 so the agent got the message and the handback in one prompt, and the hold
 counted neither. The hold's leg now counts the holder's messages queued and
-not yet reported delivered (`HoldLeg.Waiting`); the release waits on them, and
-hands back at the end of their turn. `Inbox.Take` now says a runner reports
-what it took as a `user_message` before the turn it starts, as every runner
-here already did.
+not yet reported delivered, and those delivered whose turn has not started
+yet (`HoldLeg.Waiting`, cleared at the next `turn_start`); the release waits
+on them, and hands back at the end of their turn. `Inbox.Take` now says a
+runner reports what it took as a `user_message` before the turn it starts,
+as every runner here already did.
 
 This narrows what `2026-10-31-nobody-talks-to-an-agent-without-taking-it-over.md`
 removed: no message interrupts the agent; only a forced take-over can stop a
 turn, and it names that turn.
 
-Held by: `TestPlanHoldRequest`, `TestHoldLegWaitsUntilTheHoldersMessagesAreDelivered`
+Held by: `TestPlanHoldRequest`, `TestHoldLegWaitsUntilTheHoldersMessagesGetTheirTurn`
 (runcore); `TestAForcedTakeOverStopsTheAgentsTurn`,
 `TestAPassiveTakeOverLetsTheTurnFinish`, `TestReleaseRightAfterAForcedTakeIsPrompt`,
 `TestAForcedTakeOverLeavesATurnWaitingOnItsQuestion`,
@@ -80,6 +81,7 @@ Held by: `TestPlanHoldRequest`, `TestHoldLegWaitsUntilTheHoldersMessagesAreDeliv
 `TestAForcedTakeOverBesideARegisteredQuestionLeavesTheTurn`,
 `TestAQuestionFromAStoppingTurnIsRefused`,
 `TestAReleaseBehindAQueuedMessageWaitsForItsTurn`,
+`TestAReleaseBetweenDeliveryAndTurnStartWaitsForTheTurn`,
 `TestRestartForcedTakeOverStopsTheReattachedTurn` (engine);
 `TestReattachability`, `TestReattachFollowsTheTurnInFlight`,
 `TestStoppingATurnKeepsTheSession`, `TestAStopForAnotherTurnIsIgnored`,
