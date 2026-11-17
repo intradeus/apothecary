@@ -223,6 +223,8 @@ export default {
 	'runview.record.src_goal': 'run goal',
 	'runview.record.open': 'Open',
 	'runview.record.download': 'Download {name}',
+	'runview.record.downloadAll': 'Download all',
+	'runview.record.downloadAllTitle': 'Every file on this record in one zip, by kind and attempt',
 	'runview.logs.source': 'Log source',
 	'runview.logs.workspace': 'Workspace',
 	'runview.logs.workspace_live': 'Workspace · live',

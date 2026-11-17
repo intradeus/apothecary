@@ -161,6 +161,9 @@ import type {
 	DownloadAttachmentData,
 	DownloadAttachmentErrors,
 	DownloadAttachmentResponses,
+	DownloadRunFilesData,
+	DownloadRunFilesErrors,
+	DownloadRunFilesResponses,
 	DownloadSnapshotData,
 	DownloadSnapshotErrors,
 	DownloadSnapshotResponses,
@@ -4579,6 +4582,31 @@ export const getRunFiles = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/runs/{id}/files',
+		...options
+	});
+
+/**
+ * Everything on a run's Record, in one zip
+ *
+ * outputs/<stage>-<attempt>/, logs/<stage>-<attempt>/ and attachments/. A file whose content is no longer stored is left out and named in MISSING.txt.
+ */
+export const downloadRunFiles = <ThrowOnError extends boolean = false>(
+	options: Options<DownloadRunFilesData, ThrowOnError>
+): RequestResult<DownloadRunFilesResponses, DownloadRunFilesErrors, ThrowOnError> =>
+	(options.client ?? client).get<DownloadRunFilesResponses, DownloadRunFilesErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/files.zip',
 		...options
 	});
 

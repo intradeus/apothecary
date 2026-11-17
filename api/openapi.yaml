@@ -11340,6 +11340,41 @@ paths:
       summary: 'Everything filed under a run: human uploads and engine captures'
       tags:
         - files
+  /api/runs/{id}/files.zip:
+    get:
+      description: outputs/<stage>-<attempt>/, logs/<stage>-<attempt>/ and attachments/. A file whose content is no longer stored is left out and named in MISSING.txt.
+      operationId: downloadRunFiles
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Everything on a run's Record, in one zip
+      tags:
+        - files
   /api/runs/{id}/hold:
     delete:
       description: Closes the take-over on the record (duration, turns, cost) and sends the session the handback prompt — when the turn in flight ends, if one is. The stage ends as usual once that turn does. 409 when nobody holds it.

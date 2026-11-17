@@ -10,7 +10,8 @@ vi.mock('$lib/api', () => ({
 	api: {
 		files: {
 			snapshotUrl: (id: string, dl = false) => `/snap/${id}${dl ? '?download' : ''}`,
-			attachmentUrl: (id: string, dl = false) => `/att/${id}${dl ? '?download' : ''}`
+			attachmentUrl: (id: string, dl = false) => `/att/${id}${dl ? '?download' : ''}`,
+			runZipUrl: (id: string) => `/zip/${id}`
 		}
 	}
 }));
@@ -30,6 +31,21 @@ describe('RecordView', () => {
 			show();
 			expect(screen.getByText(/^Nothing on the record yet\./)).toBeInTheDocument();
 			expect(screen.queryByText('Name')).not.toBeInTheDocument();
+		});
+
+		it('offers no download of an empty record', () => {
+			show();
+			expect(screen.queryByRole('link', { name: /Download all/ })).not.toBeInTheDocument();
+		});
+
+		it('downloads the whole record as one zip, whatever the filter shows', async () => {
+			const rs = aViewStore(undefined, { snapshots: [aSnapshot()], attachments: [anAttachment()] });
+			render(RecordView, { rs });
+			const all = screen.getByRole('link', { name: /Download all/ });
+			expect(all).toHaveAttribute('href', `/zip/${rs.run!.id}`);
+			expect(all).toHaveAttribute('download');
+			await userEvent.click(kind(/Logs/));
+			expect(screen.getByRole('link', { name: /Download all/ })).toBe(all);
 		});
 
 		it('promises the record outlives the workspace', () => {

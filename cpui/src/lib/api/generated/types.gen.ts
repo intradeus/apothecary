@@ -8034,6 +8034,43 @@ export type GetRunFilesResponses = {
 
 export type GetRunFilesResponse = GetRunFilesResponses[keyof GetRunFilesResponses];
 
+export type DownloadRunFilesData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/files.zip';
+};
+
+export type DownloadRunFilesErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DownloadRunFilesResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type DownloadRunFilesResponse = DownloadRunFilesResponses[keyof DownloadRunFilesResponses];
+
 export type ReleaseRunData = {
 	body?: never;
 	path: {

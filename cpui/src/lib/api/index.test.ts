@@ -1284,6 +1284,7 @@ describe('what each call sends', () => {
 			[files.attachmentUrl('a'), '/api/attachments/a'],
 			[files.attachmentUrl('a', true), '/api/attachments/a?download=1'],
 			[files.snapshotUrl('s'), '/api/snapshots/s'],
+			[files.runZipUrl('r1'), '/api/runs/r1/files.zip'],
 			[files.snapshotUrl('s', true), '/api/snapshots/s?download=1']
 		])('links %s', (url, out) => {
 			expect(url).toBe(out);

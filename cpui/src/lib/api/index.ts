@@ -1229,7 +1229,9 @@ export const files = {
 	attachmentUrl: (id: string, download = false) =>
 		`/api/attachments/${id}${download ? '?download=1' : ''}`,
 	snapshotUrl: (id: string, download = false) =>
-		`/api/snapshots/${id}${download ? '?download=1' : ''}`
+		`/api/snapshots/${id}${download ? '?download=1' : ''}`,
+	/** Everything on a run's Record, in one zip. */
+	runZipUrl: (runId: string) => `/api/runs/${runId}/files.zip`
 };
 
 // --- system ------------------------------------------------------------------
