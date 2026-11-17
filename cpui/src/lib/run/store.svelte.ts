@@ -21,9 +21,10 @@ import type {
 	RunEvent,
 	RunServices,
 	Snapshot,
-	Ticket
+	TicketRecord
 } from '$lib/domain';
 import { fleet } from '$lib/app/fleet.svelte';
+import { to } from '$lib/core/urls';
 import { expandDoc, normalizeDoc, successOrder } from '$lib/domain/flowdoc';
 import { isTerminal } from '$lib/core/format';
 import { toast } from '$lib/ui/toast.svelte';
@@ -46,7 +47,8 @@ export class RunStore {
 	loadError = $state('');
 	/** The last action's failure, shown under the header. */
 	error = $state('');
-	ticket = $state<Ticket | null>(null);
+	/** The run's ticket's record, with the workshops it shows through. */
+	ticket = $state<TicketRecord | null>(null);
 	/** The workshop's name (the fleet's copy may not have landed yet). */
 	projectName = $state('');
 	/** The pinned recipe's stages, every phase's, in order; null until loaded
@@ -141,6 +143,17 @@ export class RunStore {
 	);
 	/** When the workspace went away, for the "destroyed 2h ago" states. */
 	readonly destroyedAt = $derived(this.events.findLast((e) => e.type === 'env_destroyed')?.ts);
+	/** The ticket's page: through the run's workshop when that one is on the
+	 *  ticket's source, else the record's address, which redirects. */
+	readonly ticketHref = $derived.by(() => {
+		const id = this.run?.ticketId;
+		if (!id) return '';
+		const pid = this.run?.projectId;
+		const rec = this.ticket;
+		return pid && rec?.workshops.some((w) => w.id === pid)
+			? to.workshopTicket(pid, rec.key)
+			: to.ticket(id, { workshop: pid });
+	});
 
 	start(): () => void {
 		const timers: ReturnType<typeof setInterval>[] = [];

@@ -69,8 +69,6 @@ export default {
 	'deskhome.card.pings_other': '{count} pings',
 	'deskhome.card.attempt': 'attempt {n}',
 	'deskhome.card.lastFinished': 'Last finished',
-	'deskhome.card.ticketsLoading': 'Tickets',
-	'deskhome.card.tickets_one': '{count} ticket',
-	'deskhome.card.tickets_other': '{count} tickets',
+	'deskhome.card.tickets': 'Tickets',
 	'deskhome.card.newTicket': 'New ticket'
 } as const;

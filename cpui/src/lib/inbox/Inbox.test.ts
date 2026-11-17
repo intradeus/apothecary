@@ -5,7 +5,7 @@ import { goto, replaceState } from '$app/navigation';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
-import { aPing, aProject, aRun, aTicket } from '$test/fixtures';
+import { aPing, aProject, aRun } from '$test/fixtures';
 import { deferred } from '$test/helpers';
 import Inbox from './Inbox.svelte';
 
@@ -13,7 +13,6 @@ vi.mock('$lib/api', () => ({
 	api: {
 		notices: { list: vi.fn() },
 		pings: { list: vi.fn(), answer: vi.fn(), pending: vi.fn() },
-		tickets: { list: vi.fn() },
 		runs: { get: vi.fn(), list: vi.fn() },
 		projects: { list: vi.fn() },
 		system: { limits: vi.fn() },
@@ -42,7 +41,6 @@ const approve = () => screen.getByRole('button', { name: 'Approve' });
 
 beforeEach(() => {
 	vi.resetAllMocks();
-	vi.mocked(api.tickets.list).mockResolvedValue([]);
 	vi.mocked(api.pings.list).mockResolvedValue([]);
 	vi.mocked(api.projects.list).mockResolvedValue([]);
 	vi.mocked(api.system.limits).mockResolvedValue(null as never);
@@ -98,12 +96,17 @@ describe('Inbox, the pending tab', () => {
 
 	it('names the run, its tracker key and its workshop on a card', async () => {
 		fleet.projects = [aProject({ id: 'p1', name: 'billing' })];
-		vi.mocked(api.tickets.list).mockResolvedValue([
-			aTicket({ id: 't1', source: { key: 'PROJ-7' } as never })
-		]);
 		loaded(
 			[ping('a', 'r1', 1)],
-			[aRun({ id: 'r1', title: 'Fix the invoice', projectId: 'p1', ticketId: 't1' })]
+			[
+				aRun({
+					id: 'r1',
+					title: 'Fix the invoice',
+					projectId: 'p1',
+					ticketId: 't1',
+					ticketKey: 'PROJ-7'
+				})
+			]
 		);
 		render(Inbox);
 

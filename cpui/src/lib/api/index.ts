@@ -110,12 +110,15 @@ import type {
 	ServiceStatus,
 	Settings,
 	SignalSpec,
-	SourceTicket,
-	Ticket,
+	TicketAttachments,
 	TicketComment,
+	TicketDetail,
 	TicketDraft,
+	TicketPage,
+	TicketQuery,
+	TicketRecord,
 	TrackerStatus,
-	TrackerSyncCounts,
+	TrackerStatusList,
 	TrackerType,
 	UploadLimits,
 	WorkspaceChanges,
@@ -163,23 +166,22 @@ const skillsetBody = (d: SkillsetDraft): Wire.SkillsetRequest => ({
 	skill_ids: d.skillIds
 });
 
-// Every field always travels: the endpoint replaces the ticket, so an absent
-// key and an empty one would mean the same thing anyway — saying so is honest.
+// Every field always travels: an internal ticket's edit replaces it, so an
+// absent key and an empty one would mean the same thing anyway — saying so
+// is honest. A remote issue takes only base_branch.
 const ticketBody = (t: TicketDraft): Wire.TicketRequest => ({
 	title: t.title,
 	goal: t.goal,
-	project_id: t.projectId,
-	branch: t.branch ?? '',
+	base_branch: t.baseBranch ?? '',
 	change_type: t.changeType ?? '',
 	attachment_ids: t.attachmentIds ?? [],
-	source_id: t.sourceIntegrationId ?? '',
-	source_key: t.sourceKey ?? ''
+	...(t.statusId ? { status_id: t.statusId } : {}),
+	...(t.typeId ? { type_id: t.typeId } : {}),
+	...(t.labels?.length ? { labels: t.labels } : {})
 });
 
-const trackerStatuses = (r: Wire.TrackerStatusList) => ({
-	statuses: many(r.statuses, map.toTrackerStatus),
-	warnings: r.warnings ?? []
-});
+/** `refresh=1` reads the tracker now rather than the cached copy. */
+const refreshQuery = (refresh?: boolean) => (refresh ? { refresh: '1' as const } : undefined);
 
 // Empty optionals stay off the wire: the engine reads an absent probe as
 // "up once started", and the name check is the engine's.
@@ -251,7 +253,8 @@ const projectBody = (p: ProjectDraft): Wire.ProjectRequest => ({
 			trust_workspace: p.workspace.editor?.trustWorkspace
 		}
 	},
-	default_flow: p.defaultFlow
+	default_flow: p.defaultFlow,
+	ticket_source_id: p.ticketSourceId
 });
 
 // --- runs --------------------------------------------------------------------
@@ -683,56 +686,89 @@ export const pings = {
 
 // --- tickets -----------------------------------------------------------------
 
+// A ticket is addressed by its workshop and its key in the workshop's
+// source (the ticket's id on the internal tracker). The SDK escapes path
+// values with encodeURIComponent, so a key with '/' or '#' in it (GitLab's
+// 'group/project#12') stays one segment. See projects.tickets / .ticket for
+// the reads.
 export const tickets = {
-	/** Every ticket, done ones included, with its tracker status (the fleet
-	 *  poll; lists filter it). */
-	list: async (): Promise<Ticket[]> => many(await unwrap(gen.listTickets()), map.toTicket),
+	/** A ticket's local record by its id (what runs point at), with the
+	 *  workshops on its source: where a link from a run lands. */
+	get: async (id: string): Promise<TicketRecord> =>
+		map.toTicketRecord(await unwrap(gen.getTicketRecord({ path: { id } }))),
 
-	get: async (id: string): Promise<Ticket> =>
-		map.toTicket(await unwrap(gen.getTicket({ path: { id } }))),
-
-	create: async (draft: TicketDraft): Promise<Ticket> =>
-		map.toTicket(await unwrap(gen.createTicket({ body: ticketBody(draft) }))),
-
-	/** Refused (409) on a sourced ticket when title, goal or change type
-	 *  differ: the tracker owns those. */
-	update: async (id: string, draft: TicketDraft): Promise<Ticket> =>
-		map.toTicket(await unwrap(gen.updateTicket({ path: { id }, body: ticketBody(draft) }))),
-
-	remove: (id: string) => unwrapVoid(gen.deleteTicket({ path: { id } })),
-
-	/** Re-read the ticket from its tracker now. A failed fetch is not thrown:
-	 *  it lands on the ticket's syncState / syncError. */
-	sync: async (id: string): Promise<Ticket> =>
-		map.toTicket(await unwrap(gen.syncTicket({ path: { id } }))),
-
-	/** Move the ticket in its tracker (the remote issue, or the internal one). */
-	setStatus: async (id: string, statusId: string): Promise<Ticket> =>
-		map.toTicket(
-			await unwrap(gen.setTicketStatus({ path: { id }, body: { status_id: statusId } }))
+	/** A new ticket on the workshop's internal tracker; a remote source is
+	 *  refused (400). */
+	create: async (projectId: string, draft: TicketDraft): Promise<TicketDetail> =>
+		map.toTicketDetail(
+			await unwrap(gen.createWorkshopTicket({ path: { id: projectId }, body: ticketBody(draft) }))
 		),
 
-	setLabels: async (id: string, labels: string[]): Promise<Ticket> =>
-		map.toTicket(await unwrap(gen.setTicketLabels({ path: { id }, body: { labels } }))),
+	/** An internal ticket takes the whole draft; a remote issue only its base
+	 *  branch (which makes its record). */
+	update: async (projectId: string, key: string, draft: TicketDraft): Promise<TicketDetail> =>
+		map.toTicketDetail(
+			await unwrap(
+				gen.updateWorkshopTicket({ path: { id: projectId, key }, body: ticketBody(draft) })
+			)
+		),
+
+	/** Internal tickets only. */
+	remove: (projectId: string, key: string) =>
+		unwrapVoid(gen.deleteWorkshopTicket({ path: { id: projectId, key } })),
+
+	/** Move the ticket in its tracker, to a status or transition named as the
+	 *  tracker names it. One it cannot reach is refused (400) naming those it
+	 *  can. */
+	setStatus: async (projectId: string, key: string, status: string): Promise<TicketDetail> =>
+		map.toTicketDetail(
+			await unwrap(gen.setWorkshopTicketStatus({ path: { id: projectId, key }, body: { status } }))
+		),
+
+	setLabels: async (projectId: string, key: string, labels: string[]): Promise<TicketDetail> =>
+		map.toTicketDetail(
+			await unwrap(gen.setWorkshopTicketLabels({ path: { id: projectId, key }, body: { labels } }))
+		),
 
 	/** Oldest first. */
-	comments: async (id: string): Promise<TicketComment[]> =>
-		many(await unwrap(gen.listTicketComments({ path: { id } })), map.toTicketComment),
+	comments: async (
+		projectId: string,
+		key: string,
+		opts?: { refresh?: boolean }
+	): Promise<TicketComment[]> =>
+		many(
+			await unwrap(
+				gen.listWorkshopTicketComments({
+					path: { id: projectId, key },
+					query: refreshQuery(opts?.refresh)
+				})
+			),
+			map.toTicketComment
+		),
 
 	/** Posts to the ticket's tracker; resolves to the whole updated thread. */
-	addComment: async (id: string, body: string): Promise<TicketComment[]> =>
-		many(await unwrap(gen.addTicketComment({ path: { id }, body: { body } })), map.toTicketComment),
+	addComment: async (projectId: string, key: string, body: string): Promise<TicketComment[]> =>
+		many(
+			await unwrap(gen.addWorkshopTicketComment({ path: { id: projectId, key }, body: { body } })),
+			map.toTicketComment
+		),
 
-	/** A ticket's attachments — shared by every run of it, so they hang off the
-	 *  ticket rather than a run. */
-	attachments: async (id: string): Promise<Attachment[]> =>
-		many((await unwrap(gen.getTicketAttachments({ path: { id } }))).attachments, map.toAttachment),
+	/** A ticket's files: those uploaded here (shared by every run of it, so
+	 *  they hang off the ticket rather than a run) and the remote issue's own. */
+	attachments: async (projectId: string, key: string): Promise<TicketAttachments> =>
+		map.toTicketAttachments(
+			await unwrap(gen.getWorkshopTicketAttachments({ path: { id: projectId, key } }))
+		),
 
 	/** Start one attempt. The input is per-attempt and never modifies the
 	 *  ticket. Returns the new run's id. A ticket has one active run at a
-	 *  time: see busyRunOf for the refusal. */
-	startRun: async (id: string, opts?: RunInput): Promise<string> =>
-		(await unwrap(gen.startTicketRun({ path: { id }, body: runInputBody(opts) }))).run_id
+	 *  time across every workshop: see busyRunOf for the refusal. */
+	startRun: async (projectId: string, key: string, opts?: RunInput): Promise<string> =>
+		(
+			await unwrap(
+				gen.startWorkshopTicketRun({ path: { id: projectId, key }, body: runInputBody(opts) })
+			)
+		).run_id
 };
 
 /** The 409 body of a refusal, when the error is one. */
@@ -754,17 +790,6 @@ export function busyRunOf(e: unknown): string | undefined {
 	return typeof runId === 'string' && runId ? runId : undefined;
 }
 
-/** What deleting a ticket source would unlink, when the delete was refused
- *  because tickets still mirror its issues. */
-export function linkedTicketsOf(e: unknown): { tickets: number; activeRuns: number } | undefined {
-	const body = conflictBody(e);
-	if (!body || typeof body.tickets !== 'number') return undefined;
-	return {
-		tickets: body.tickets,
-		activeRuns: typeof body.active_runs === 'number' ? body.active_runs : 0
-	};
-}
-
 /** A tracker list save refused because a deleted row is still in use: it
  *  needs a replacement. */
 export const isInUse = (e: unknown): boolean => conflictBody(e) !== undefined;
@@ -784,6 +809,33 @@ export const projects = {
 		map.toProject(await unwrap(gen.updateProject({ path: { id }, body: projectBody(draft) }))),
 
 	remove: (id: string) => unwrapVoid(gen.deleteProject({ path: { id } })),
+
+	/** One page of the workshop's tickets, read live from its source. done
+	 *  defaults to open; pass the last page's next as cursor for the one
+	 *  after it. A tracker holding off for its rate limit with nothing cached
+	 *  answers 503. */
+	tickets: async (id: string, query: TicketQuery = {}): Promise<TicketPage> =>
+		map.toTicketPage(
+			await unwrap(
+				gen.listWorkshopTickets({
+					path: { id },
+					query: {
+						...(query.q ? { q: query.q } : {}),
+						...(query.done ? { done: query.done } : {}),
+						...(query.cursor ? { cursor: query.cursor } : {}),
+						...(query.limit ? { limit: query.limit } : {}),
+						...refreshQuery(query.refresh)
+					}
+				})
+			)
+		),
+
+	/** One ticket of the workshop's source by its key (on the internal
+	 *  tracker, its id), live, with its record. */
+	ticket: async (id: string, key: string, opts?: { refresh?: boolean }): Promise<TicketDetail> =>
+		map.toTicketDetail(
+			await unwrap(gen.getWorkshopTicket({ path: { id, key }, query: refreshQuery(opts?.refresh) }))
+		),
 
 	/** Branches of the project's repository, for the source-branch picker. */
 	branches: async (id: string): Promise<Branch[]> =>
@@ -952,50 +1004,26 @@ export const integrations = {
 			)
 		),
 
-	/** A ticket source whose tickets still mirror it is refused (see
-	 *  linkedTicketsOf) unless unlinkTickets moves them onto the internal
-	 *  tracker in the same step. */
-	remove: (id: string, opts?: { unlinkTickets?: boolean }) =>
-		unwrapVoid(
-			gen.deleteIntegration({
-				path: { id },
-				query: opts?.unlinkTickets ? { unlink_tickets: '1' } : undefined
-			})
+	/** One a workshop uses (its ticket source included) is refused (409)
+	 *  naming the workshops; the internal tracker always is (400). */
+	remove: (id: string) => unwrapVoid(gen.deleteIntegration({ path: { id } })),
+
+	/** A tracker's statuses: a remote one's read live (refresh reads the
+	 *  tracker now rather than the cached copy) and read-only. */
+	statuses: async (id: string, refresh = false): Promise<TrackerStatusList> =>
+		map.toTrackerStatusList(
+			await unwrap(gen.listTrackerStatuses({ path: { id }, query: refreshQuery(refresh) }))
 		),
 
-	/** Re-read every ticket of a tracker now, done ones included. */
-	sync: async (id: string): Promise<TrackerSyncCounts> => {
-		const r = await unwrap(gen.syncIntegration({ path: { id } }));
-		return {
-			tickets: r.tickets,
-			synced: r.synced,
-			gone: r.gone,
-			failed: r.failed,
-			busy: r.busy,
-			rateLimited: r.rate_limited
-		};
-	},
-
-	/** A tracker's statuses; refresh refetches them from the remote first. */
-	statuses: async (
-		id: string,
-		refresh = false
-	): Promise<{ statuses: TrackerStatus[]; warnings: string[] }> =>
-		trackerStatuses(
-			await unwrap(
-				gen.listTrackerStatuses({ path: { id }, query: refresh ? { refresh: '1' } : undefined })
-			)
-		),
-
-	/** Remote tracker: only isDone/flowStep are taken. Internal: the list as
-	 *  given (no id = new, missing = deleted). replaceWith maps a deleted
-	 *  status in use to the one its tickets move to (see isInUse). */
+	/** The internal tracker's list as given (no id = new, missing = deleted).
+	 *  replaceWith maps a deleted status in use to the one its tickets move
+	 *  to (see isInUse). */
 	saveStatuses: async (
 		id: string,
 		statuses: TrackerStatus[],
 		replaceWith?: Record<string, string>
-	): Promise<{ statuses: TrackerStatus[]; warnings: string[] }> =>
-		trackerStatuses(
+	): Promise<TrackerStatusList> =>
+		map.toTrackerStatusList(
 			await unwrap(
 				gen.putTrackerStatuses({
 					path: { id },
@@ -1007,17 +1035,15 @@ export const integrations = {
 			)
 		),
 
+	/** refresh reads a remote tracker's types now rather than the cached copy. */
 	types: async (id: string, refresh = false): Promise<TrackerType[]> =>
 		many(
-			(
-				await unwrap(
-					gen.listTrackerTypes({ path: { id }, query: refresh ? { refresh: '1' } : undefined })
-				)
-			).types,
+			(await unwrap(gen.listTrackerTypes({ path: { id }, query: refreshQuery(refresh) }))).types,
 			map.toTrackerType
 		),
 
-	/** Like saveStatuses; a remote tracker's rows only take changeType. */
+	/** The internal tracker's list as given, like saveStatuses; a remote
+	 *  tracker's rows only take changeType. */
 	saveTypes: async (
 		id: string,
 		types: TrackerType[],
@@ -1048,18 +1074,7 @@ export const integrations = {
 		many(await unwrap(gen.listIntegrationRepos({ path: { id } })), map.toRepo),
 
 	models: async (id: string): Promise<Model[]> =>
-		many(await unwrap(gen.listIntegrationModels({ path: { id } })), map.toModel),
-
-	/** Browse a tracker to import from. An empty query means the tracker's own
-	 *  default; a "jql:" prefix passes raw JQL through. */
-	sourceTickets: async (id: string, q = '', limit = 25): Promise<SourceTicket[]> =>
-		many(
-			await unwrap(gen.searchSourceTickets({ path: { id }, query: { q, limit } })),
-			map.toSourceTicket
-		),
-
-	sourceTicket: async (id: string, key: string): Promise<SourceTicket> =>
-		map.toSourceTicket(await unwrap(gen.getSourceTicket({ path: { id, key } })))
+		many(await unwrap(gen.listIntegrationModels({ path: { id } })), map.toModel)
 };
 
 // --- flows -------------------------------------------------------------------
@@ -1257,10 +1272,9 @@ function automationBody(d: AutomationDraft): Wire.AutomationRequest {
 		kind: d.kind,
 		flow: d.flow,
 		enabled: d.enabled,
-		...(d.sourceId ? { source_id: d.sourceId } : {}),
 		...(d.query ? { query: d.query } : {}),
 		...(d.schedule ? { schedule: d.schedule } : {}),
-		...(d.ticketId ? { ticket_id: d.ticketId } : {}),
+		...(d.ticketKey ? { ticket_key: d.ticketKey } : d.ticketId ? { ticket_id: d.ticketId } : {}),
 		...(d.repo ? { repo: d.repo } : {}),
 		...(d.params && Object.keys(d.params).length ? { params: d.params } : {})
 	};

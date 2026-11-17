@@ -22,7 +22,7 @@ import type {
 	User
 } from '$lib/domain';
 import type { Credential, Notice, ProviderInfo, SignInPending } from '$lib/domain';
-import { asChangeType, asFlowStep } from '$lib/domain';
+import { asChangeType } from '$lib/domain';
 import type {
 	Skill,
 	SkillDetail,
@@ -134,12 +134,17 @@ import type {
 	Settings,
 	Snapshot,
 	SnapshotKind,
-	SourceTicket,
-	SyncState,
 	Ticket,
+	TicketAttachments,
 	TicketComment,
+	TicketDetail,
+	TicketPage,
+	TicketRecord,
+	TicketRow,
+	TicketSourceRef,
 	CommentOrigin,
 	TrackerStatus,
+	TrackerStatusList,
 	TrackerType,
 	UploadLimits,
 	WorkspaceChanges,
@@ -680,51 +685,84 @@ export function toPingPayload(w: Wire.PingFiles): PingPayload {
 
 // --- tickets -----------------------------------------------------------------
 
-/** The list endpoint returns the ticket alone; get/create/update return it
- *  with its attachments and any import warnings. One domain type either way —
- *  the extras are simply empty on a summary. */
-export function toTicket(w: Wire.TicketView | Wire.TicketDetail): Ticket {
-	const detail = w as Wire.TicketDetail;
+/** One issue of a workshop's source, live. The record fields come back ''
+ *  when the issue has no record, as the engine sends them. */
+export function toTicketRow(w: Wire.TicketRow | Wire.TicketDetail): TicketRow {
+	return {
+		key: w.key ?? '',
+		remoteId: w.remote_id ?? '',
+		title: w.title ?? '',
+		body: w.body ?? '',
+		url: w.url ?? '',
+		status: w.status ?? '',
+		statusId: w.status_id ?? '',
+		done: w.done ?? false,
+		type: w.type ?? '',
+		typeId: w.type_id ?? '',
+		changeType: asChangeType(w.change_type),
+		labels: list(w.labels),
+		assignee: w.assignee ?? '',
+		updatedAt: w.updated_at || undefined,
+		ticketId: w.ticket_id ?? '',
+		baseBranch: w.base_branch ?? '',
+		activeRunId: w.active_run_id ?? ''
+	};
+}
+
+export function toTicketPage(w: Wire.TicketPage): TicketPage {
+	return { tickets: list(w.tickets).map(toTicketRow), next: w.next ?? '' };
+}
+
+const toTicketSourceRef = (w: Wire.TicketSourceRef | undefined): TicketSourceRef => ({
+	id: w?.id ?? '',
+	kind: w?.kind ?? '',
+	name: w?.name ?? ''
+});
+
+export function toTicketDetail(w: Wire.TicketDetail): TicketDetail {
+	return {
+		...toTicketRow(w),
+		source: toTicketSourceRef(w.source),
+		internal: w.internal ?? false,
+		attachmentIds: list(w.attachment_ids),
+		links: list(w.links).map((l) => ({ ticketId: l.ticket_id, url: l.url, title: l.title }))
+	};
+}
+
+/** A record alone; a sparse one reads as empty fields. */
+export function toTicket(w: Partial<Wire.Ticket>): Ticket {
 	return {
 		id: w.id ?? '',
-		projectId: w.project_id ?? '',
+		sourceId: w.source_id ?? '',
+		sourceKind: w.source_kind ?? '',
+		remoteId: w.remote_id ?? '',
+		sourceKey: w.source_key || undefined,
+		sourceUrl: w.source_url || undefined,
+		sourceType: w.source_type || undefined,
 		title: w.title ?? '',
 		goal: w.goal ?? '',
 		baseBranch: w.base_branch ?? '',
 		changeType: asChangeType(w.change_type),
-		attachmentIds: list(detail.attachment_ids),
-		source: w.source_id
-			? {
-					integrationId: w.source_id,
-					kind: w.source_kind ?? '',
-					key: w.source_key ?? '',
-					url: w.source_url,
-					type: w.source_type || undefined
-				}
-			: undefined,
-		status: w.status
-			? {
-					id: w.status.id,
-					name: w.status.name,
-					isDone: w.status.is_done,
-					flowStep: asFlowStep(w.status.flow_step)
-				}
-			: undefined,
-		type: w.type ? { id: w.type.id, name: w.type.name } : undefined,
+		statusId: w.status_id || undefined,
+		typeId: w.type_id || undefined,
 		labels: list(w.labels),
-		links: list(detail.links).map((l) => ({ url: l.url, title: l.title })),
-		syncState: oneOf(SYNC_STATES, w.sync_state, ''),
-		syncError: w.sync_error || undefined,
-		syncedAt: w.synced_at || undefined,
+		automationId: w.automation_id || undefined,
 		statusChangedAt: w.status_changed_at || undefined,
 		statusChangedBy: w.status_changed_by || undefined,
-		warnings: list(detail.warnings),
 		createdAt: w.created_at ?? '',
 		updatedAt: w.updated_at ?? ''
 	};
 }
 
-const SYNC_STATES: readonly SyncState[] = ['', 'ok', 'error', 'gone'];
+export function toTicketRecord(w: Wire.TicketRecord): TicketRecord {
+	return {
+		ticket: toTicket(w.ticket ?? {}),
+		key: w.key ?? '',
+		source: w.source ? toTicketSourceRef(w.source) : undefined,
+		workshops: list(w.workshops).map((s) => ({ id: s.id, name: s.name }))
+	};
+}
+
 const COMMENT_ORIGINS: readonly CommentOrigin[] = ['remote', 'user', 'apothecary'];
 
 export function toTicketComment(w: Wire.TicketComment): TicketComment {
@@ -732,12 +770,19 @@ export function toTicketComment(w: Wire.TicketComment): TicketComment {
 		id: w.id,
 		author: w.author,
 		bodyMd: w.body_md,
-		// Unknown reads as remote: it came from somewhere other than here.
+		// A remote tracker's say nothing ('') and read as remote: they came
+		// from somewhere other than here.
 		origin: oneOf(COMMENT_ORIGINS, w.origin, 'remote'),
 		runId: w.run_id || undefined,
-		stageId: w.stage_id || undefined,
 		createdAt: w.created_at,
 		updatedAt: w.updated_at
+	};
+}
+
+export function toTicketAttachments(w: Wire.TicketAttachments): TicketAttachments {
+	return {
+		attachments: list(w.attachments).map(toAttachment),
+		remote: list(w.remote).map((a) => ({ filename: a.filename ?? '', mime: a.mime, size: a.size }))
 	};
 }
 
@@ -747,11 +792,13 @@ export function toTrackerStatus(w: Wire.TrackerStatus): TrackerStatus {
 		integrationId: w.integration_id,
 		remoteId: w.remote_id,
 		name: w.name,
-		remoteCategory: w.remote_category,
 		position: w.position,
-		isDone: w.is_done,
-		flowStep: asFlowStep(w.flow_step)
+		isDone: w.is_done
 	};
+}
+
+export function toTrackerStatusList(w: Wire.TrackerStatusList): TrackerStatusList {
+	return { statuses: list(w.statuses).map(toTrackerStatus), readOnly: w.read_only ?? false };
 }
 
 export function fromTrackerStatus(s: TrackerStatus): Wire.TrackerStatus {
@@ -760,10 +807,8 @@ export function fromTrackerStatus(s: TrackerStatus): Wire.TrackerStatus {
 		integration_id: s.integrationId,
 		remote_id: s.remoteId,
 		name: s.name,
-		remote_category: s.remoteCategory,
 		position: s.position,
-		is_done: s.isDone,
-		...(s.flowStep ? { flow_step: s.flowStep } : {})
+		is_done: s.isDone
 	};
 }
 
@@ -786,25 +831,6 @@ export function fromTrackerType(t: TrackerType): Wire.TrackerType {
 		name: t.name,
 		change_type: t.changeType,
 		position: t.position
-	};
-}
-
-export function toSourceTicket(w: Wire.SourceTicket): SourceTicket {
-	return {
-		key: w.key ?? '',
-		title: w.title ?? '',
-		body: w.body,
-		url: w.url,
-		status: w.status,
-		type: w.type,
-		assignee: w.assignee,
-		updated: w.updated,
-		attachments: list(w.attachments).map((a) => ({
-			filename: a.filename ?? '',
-			mime: a.mime,
-			size: a.size
-		})),
-		changeType: asChangeType(w.change_type)
 	};
 }
 
@@ -858,6 +884,7 @@ export function toProject(w: Wire.Project): Project {
 		commands: w.commands ?? {},
 		workspace: toWorkspacePolicy(w.workspace),
 		defaultFlow: w.default_flow ?? '',
+		ticketSourceId: w.ticket_source_id ?? '',
 		createdAt: w.created_at ?? '',
 		updatedAt: w.updated_at ?? ''
 	};
@@ -1000,7 +1027,6 @@ export function toAutomation(w: Wire.Automation): Automation {
 		projectId: w.project_id ?? '',
 		name: w.name ?? '',
 		kind: oneOf(['tracker_query', 'cron', 'merge_request'] as const, w.kind, 'tracker_query'),
-		sourceId: w.source_id || undefined,
 		query: w.query || undefined,
 		schedule: w.schedule || undefined,
 		ticketId: w.ticket_id || undefined,
@@ -1111,7 +1137,8 @@ function toActionSetting(w: Wire.SettingSig): ActionSetting {
 		kind: oneOf(['enum', 'text', 'list'] as const, w.kind, 'text'),
 		required: w.required ?? false,
 		values: w.values ?? undefined,
-		defaultValue: w.default || undefined
+		defaultValue: w.default || undefined,
+		unbound: w.unbound || undefined
 	};
 }
 

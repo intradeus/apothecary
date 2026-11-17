@@ -161,7 +161,9 @@
 					placeholder={t('flow.insp.textPlaceholder')}
 					oninput={(e) => setSetting(d.name, e.currentTarget.value.trim())}
 				/>
-				<div class="help">{t('flow.insp.textInputHelp')}</div>
+				<div class="help">
+					{t(d.unbound ? 'flow.insp.textParamHelp' : 'flow.insp.textInputHelp')}
+				</div>
 			{/if}
 		</div>
 	{/each}

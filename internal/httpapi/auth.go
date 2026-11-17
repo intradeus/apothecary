@@ -384,7 +384,7 @@ func (s *Server) runOwner(ctx context.Context, id string) (string, error) {
 }
 
 // ownsProject is the in-handler check for a project named in a request
-// BODY (a ticket's project, a flow copy's target): the guard covers paths
+// BODY (a flow copy's target): the guard covers paths
 // only. Answers like the guard: not theirs is not found.
 func (s *Server) ownsProject(w http.ResponseWriter, r *http.Request, projectID string) bool {
 	if projectID == "" {
@@ -394,17 +394,6 @@ func (s *Server) ownsProject(w http.ResponseWriter, r *http.Request, projectID s
 	owner, err := s.projectOwner(r.Context(), projectID)
 	if err != nil || owner != auth.UserID(r.Context()) {
 		writeErr(w, http.StatusNotFound, "project "+projectID+" not found")
-		return false
-	}
-	return true
-}
-
-// ownsIntegration is ownsProject for an integration named in a BODY (the
-// tracker a ticket is imported through): those are its owner's credentials.
-func (s *Server) ownsIntegration(w http.ResponseWriter, r *http.Request, id string) bool {
-	owner, err := s.ownerOf(r.Context(), ScopeIntegration, id)
-	if err != nil || owner != auth.UserID(r.Context()) {
-		writeErr(w, http.StatusNotFound, "integration "+id+" not found")
 		return false
 	}
 	return true

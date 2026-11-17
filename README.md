@@ -54,8 +54,8 @@ query. Between the start and the end, it does whatever your flow says.
   replies), questions the agent asks mid-run, and a debug stop when a stage
   keeps failing. All of them land in one Inbox.
 - **Any way in.**
-  - Tickets typed by hand, or imported from Jira, GitHub Issues or GitLab
-    Issues and kept in sync.
+  - Tickets typed by hand, or read live from a workshop's Jira, GitHub
+    Issues or GitLab Issues (one ticket source per workshop, no copy).
   - Merge requests.
   - **Automations**: a cron schedule, or a tracker query polled for new
     issues.
@@ -229,13 +229,21 @@ Everything is configured in the UI and stored encrypted in the database.
    - **Repository:** the account, the repository, extra repositories.
    - **Workshop:** name, default flow, and commands (`verify` is what test
      stages run, `setup` is optional).
+   - **Ticket source:** where the workshop's tickets live, read live: your
+     built-in tracker (the default) or a ticket source integration. Several
+     workshops may share one; see
+     [docs/ticket-sources.md](docs/ticket-sources.md).
    - **Execution:** the provisioner and the harnesses.
    - **Workspace:** egress, Docker in workspaces.
    - **Services**, **Browser** and **Secrets**.
 
    The repository needs an `AGENTS.md` and a `.devcontainer/`.
 4. **Workshop → Flows:** *Configure* a built-in flow (bind its harness and
-   model), or copy one to edit.
+   model), or copy one to edit. `builder` and `hands-on` also bind the
+   statuses they move a ticket to, each your source's own name:
+   `todo_status`, `in_progress_status`, `in_review_status` and `done_status`
+   (`To do`, `In progress`, `In review`, `Done` on the built-in tracker).
+   Until all four are bound, their runs are refused.
 5. **Workshop → Health:** **Preflight** checks the configuration without
    building anything. **Envcheck** provisions a throwaway workspace and proves
    it end to end, egress included.

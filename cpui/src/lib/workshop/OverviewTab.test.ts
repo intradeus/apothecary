@@ -15,6 +15,7 @@ const project = (over: Partial<Project> = {}) =>
 		provisionerId: 'd',
 		harnessIds: ['h'],
 		defaultFlow: 'builder',
+		ticketSourceId: 'src',
 		...over
 	});
 const workspace = (over: Partial<Project['workspace']>) => ({
@@ -23,7 +24,8 @@ const workspace = (over: Partial<Project['workspace']>) => ({
 const integrations = [
 	anIntegration({ id: 'r', name: 'Gitlab' }),
 	anIntegration({ id: 'd', name: 'Docker' }),
-	anIntegration({ id: 'h', name: 'Claude' })
+	anIntegration({ id: 'h', name: 'Claude' }),
+	anIntegration({ id: 'src', name: 'Mine', kind: 'internal', port: 'ticketsource' })
 ];
 const setup = (p: Project = project(), runs: Run[] = [], over: Record<string, unknown> = {}) =>
 	render(OverviewTab, { project: p, integrations, flows: [], runs, ...over });
@@ -38,6 +40,22 @@ describe('OverviewTab, runs', () => {
 			'href',
 			'/tickets/new?project=p1'
 		);
+	});
+
+	it('links a remote source’s tracker instead of a New ticket', () => {
+		setup(project(), [], {
+			integrations: [
+				anIntegration({
+					id: 'src',
+					name: 'Jira',
+					kind: 'jira',
+					port: 'ticketsource',
+					config: { base_url: 'https://acme.atlassian.net' }
+				})
+			]
+		});
+		expect(screen.queryByRole('link', { name: /New ticket/ })).not.toBeInTheDocument();
+		expect(screen.getByRole('link', { name: /Open in Jira/ })).toBeInTheDocument();
 	});
 
 	it('lists live runs newest first, with a count', () => {

@@ -154,33 +154,6 @@ func (s *Service) IntegrationConfig(ctx context.Context, id string) (map[string]
 	return r.Config, nil
 }
 
-// DropIntegrationConfig removes config keys from an integration, its sealed
-// secrets kept exactly as stored (never opened and resealed) — a one-off
-// cleanup such as Jira's legacy status_map / type_map once the tracker lists
-// have taken them over. Keys it does not have are no change.
-func (s *Service) DropIntegrationConfig(ctx context.Context, id string, keys ...string) error {
-	r, err := s.db.GetIntegration(ctx, id)
-	if err != nil {
-		return err
-	}
-	cfg := make(map[string]any, len(r.Config))
-	for k, v := range r.Config {
-		cfg[k] = v
-	}
-	changed := false
-	for _, k := range keys {
-		if _, ok := cfg[k]; ok {
-			delete(cfg, k)
-			changed = true
-		}
-	}
-	if !changed {
-		return nil
-	}
-	r.Config, r.UpdatedAt = cfg, s.now().UTC()
-	return s.db.UpsertIntegration(ctx, r)
-}
-
 func (s *Service) GetIntegration(ctx context.Context, id string) (Integration, error) {
 	r, err := s.db.GetIntegration(ctx, id)
 	if err != nil {
@@ -207,8 +180,9 @@ func (s *Service) ListIntegrations(ctx context.Context, userID string) ([]Integr
 	return out, nil
 }
 
-// DeleteIntegration removes an integration nothing references. The internal
-// tracker is never deleted: every ticket without a source lives on it.
+// DeleteIntegration removes an integration nothing references (the DB
+// refuses one a workshop uses, as its ticket source too). The internal
+// tracker is never deleted: every internal ticket lives on it.
 func (s *Service) DeleteIntegration(ctx context.Context, id string) error {
 	r, err := s.db.GetIntegration(ctx, id)
 	if err != nil && !errors.Is(err, ErrNotFound) {
@@ -284,7 +258,16 @@ func (s *Service) validateIntegration(ctx context.Context, in *Integration) erro
 
 // --- projects ---------------------------------------------------------------
 
+// CreateProject saves a new workshop. Its ticket source defaults to the
+// owner's internal tracker.
 func (s *Service) CreateProject(ctx context.Context, p Project) (Project, error) {
+	if p.TicketSourceID == "" {
+		in, err := s.InternalTracker(ctx, p.UserID)
+		if err != nil {
+			return Project{}, err
+		}
+		p.TicketSourceID = in.ID
+	}
 	if err := s.validateProject(ctx, &p); err != nil {
 		return Project{}, err
 	}
@@ -305,6 +288,9 @@ func (s *Service) UpdateProject(ctx context.Context, id string, upd Project) (Pr
 	upd.ID = cur.ID
 	upd.UserID = cur.UserID // ownership never changes through an edit
 	upd.CreatedAt = cur.CreatedAt
+	if upd.TicketSourceID == "" {
+		upd.TicketSourceID = cur.TicketSourceID
+	}
 	if err := s.validateProject(ctx, &upd); err != nil {
 		return Project{}, err
 	}
@@ -438,6 +424,7 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 	refs := []struct{ id, port, field string }{
 		{p.RepoAccountID, PortRepository, "repo_account_id"},
 		{p.ProvisionerID, PortProvisioner, "provisioner_id"},
+		{p.TicketSourceID, PortTicketSource, "ticket_source_id"},
 	}
 	for _, r := range refs {
 		if r.id == "" {

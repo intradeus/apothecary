@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -34,6 +35,7 @@ import (
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/confstore/conftest"
 	"apothecary/internal/project/resolution"
+	"apothecary/internal/project/tickets"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/workspace/envcheck"
@@ -181,6 +183,7 @@ func newEnvWith(t *testing.T, cfg engine.Config, opt func(*engine.Deps), docs ..
 	}
 	x.srv.Conf = confstore.New(confstore.NewMem(), key)
 	conftest.SeedProject(t, x.srv.Conf, confstore.Project{ID: testProject, UserID: testUser, Name: "test"})
+	x.srv.Live = tickets.NewLive(x.srv.Conf, nil)
 	x.srv.Notices = &notices.Service{Store: notices.NewMemStore()}
 	x.signIn(t)
 	x.ts = httptest.NewServer(x.srv.Handler())
@@ -282,36 +285,59 @@ func (x *env) do(t *testing.T, method, path string, body any, hdr map[string]str
 	return resp, data
 }
 
-// newTicket creates a ticket (no run) and returns its id. branch "" = default.
+// newTicket creates a ticket on the test workshop's internal tracker (no
+// run) and returns its id — its key too. branch "" = none.
 func (x *env) newTicket(t *testing.T, title, branch string) string {
 	t.Helper()
-	body := map[string]string{"title": title, "goal": "g", "project_id": testProject}
-	if branch != "" {
-		body["branch"] = branch
-	}
-	resp, data := x.do(t, "POST", "/api/tickets", body, nil)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("POST /api/tickets = %d: %s", resp.StatusCode, data)
-	}
-	var out struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(data, &out); err != nil || out.ID == "" {
-		t.Fatalf("bad ticket response: %s", data)
-	}
-	return out.ID
+	return x.newTicketOn(t, testProject, title, branch)
 }
 
-// startRun starts a run under a ticket, returning the raw response (some tests
-// assert the capacity 409 here — capacity is checked at run start, not ticket
-// creation).
-func (x *env) startRun(t *testing.T, ticketID, flow string) (*http.Response, []byte) {
+// newTicketOn is newTicket on another workshop of the test user's.
+func (x *env) newTicketOn(t *testing.T, projectID, title, branch string) string {
+	t.Helper()
+	body := map[string]string{"title": title, "goal": "g"}
+	if branch != "" {
+		body["base_branch"] = branch
+	}
+	resp, data := x.do(t, "POST", "/api/projects/"+projectID+"/tickets", body, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create ticket = %d: %s", resp.StatusCode, data)
+	}
+	got := decode[TicketDetail](t, data)
+	if got.TicketID == "" || got.Key != got.TicketID {
+		t.Fatalf("bad ticket response: %s", data)
+	}
+	return got.TicketID
+}
+
+// ticketPath is a ticket's route on a workshop.
+func ticketPath(projectID, key string) string {
+	return "/api/projects/" + projectID + "/tickets/" + url.PathEscape(key)
+}
+
+// startRun starts a run under a ticket of the test workshop, returning the
+// raw response (some tests assert the capacity 409 here — capacity is
+// checked at run start, not ticket creation).
+func (x *env) startRun(t *testing.T, key, flow string) (*http.Response, []byte) {
 	t.Helper()
 	var body any
 	if flow != "" {
 		body = map[string]string{"flow": flow}
 	}
-	return x.do(t, "POST", "/api/tickets/"+ticketID+"/runs", body, nil)
+	return x.do(t, "POST", ticketPath(testProject, key)+"/runs", body, nil)
+}
+
+// startedRun reads a run start's answer.
+func startedRun(t *testing.T, resp *http.Response, data []byte) string {
+	t.Helper()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start run = %d: %s", resp.StatusCode, data)
+	}
+	out := decode[RunRef](t, data)
+	if out.RunID == "" {
+		t.Fatalf("bad run response: %s", data)
+	}
+	return out.RunID
 }
 
 // createTicketFlow files a ticket and starts a run on a named flow, returning
@@ -319,48 +345,21 @@ func (x *env) startRun(t *testing.T, ticketID, flow string) (*http.Response, []b
 func (x *env) createTicketFlow(t *testing.T, title, flow string) string {
 	t.Helper()
 	resp, data := x.startRun(t, x.newTicket(t, title, ""), flow)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start run = %d: %s", resp.StatusCode, data)
-	}
-	var out struct {
-		RunID string `json:"run_id"`
-	}
-	if err := json.Unmarshal(data, &out); err != nil || out.RunID == "" {
-		t.Fatalf("bad run response: %s", data)
-	}
-	return out.RunID
+	return startedRun(t, resp, data)
 }
 
 func (x *env) createTicket(t *testing.T, title string) string {
 	return x.createTicketFlow(t, title, "loop")
 }
 
-// runOnProject creates a ticket on an arbitrary project (confEnv tests use a
-// wizard-created project, not testProject) and starts its run, returning the
-// run id.
+// runOnProject creates a ticket on an arbitrary workshop (confEnv tests use
+// a wizard-created one, not testProject) and starts its run there,
+// returning the run id.
 func (x *env) runOnProject(t *testing.T, projectID, title string) string {
 	t.Helper()
-	resp, data := x.do(t, "POST", "/api/tickets", map[string]string{"title": title, "goal": "g", "project_id": projectID}, nil)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("POST /api/tickets = %d: %s", resp.StatusCode, data)
-	}
-	var tk struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(data, &tk); err != nil || tk.ID == "" {
-		t.Fatalf("bad ticket response: %s", data)
-	}
-	resp, data = x.do(t, "POST", "/api/tickets/"+tk.ID+"/runs", nil, nil)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start run = %d: %s", resp.StatusCode, data)
-	}
-	var out struct {
-		RunID string `json:"run_id"`
-	}
-	if err := json.Unmarshal(data, &out); err != nil || out.RunID == "" {
-		t.Fatalf("bad run response: %s", data)
-	}
-	return out.RunID
+	key := x.newTicketOn(t, projectID, title, "")
+	resp, data := x.do(t, "POST", ticketPath(projectID, key)+"/runs", nil, nil)
+	return startedRun(t, resp, data)
 }
 
 // TestTicketEntityFlow drives the ticket-first path end to end: create a
@@ -371,15 +370,17 @@ func TestTicketEntityFlow(t *testing.T) {
 
 	tid := x.newTicket(t, "Add a health endpoint", "fix/task-9")
 
-	// The ticket is a real, gettable entity carrying the base branch.
-	resp, data := x.do(t, "GET", "/api/tickets/"+tid, nil, nil)
-	if resp.StatusCode != http.StatusOK {
+	// The ticket is a real, gettable entity carrying the base branch, by
+	// its key on the workshop and as a record by id.
+	resp, data := x.do(t, "GET", ticketPath(testProject, tid), nil, nil)
+	if got := decode[TicketDetail](t, data); resp.StatusCode != http.StatusOK || got.BaseBranch != "fix/task-9" || !got.Internal {
 		t.Fatalf("get ticket = %d: %s", resp.StatusCode, data)
 	}
-	var raw map[string]any
-	_ = json.Unmarshal(data, &raw)
-	if raw["base_branch"] != "fix/task-9" || raw["project_id"] != testProject {
-		t.Fatalf("ticket = %s", data)
+	resp, data = x.do(t, "GET", "/api/tickets/"+tid, nil, nil)
+	rec := decode[TicketRecord](t, data)
+	if resp.StatusCode != http.StatusOK || rec.Ticket.BaseBranch != "fix/task-9" || rec.Key != tid ||
+		len(rec.Workshops) != 1 || rec.Workshops[0].ID != testProject || rec.Source == nil || rec.Source.Kind != confstore.KindInternal {
+		t.Fatalf("ticket record = %s", data)
 	}
 
 	// Start a run under it; the run derives its suffixed branch and links back.

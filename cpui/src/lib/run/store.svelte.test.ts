@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
-import type { EgressDenial, LiveDelta, Run, RunEvent, RunServices } from '$lib/domain';
+import type {
+	EgressDenial,
+	LiveDelta,
+	Run,
+	RunEvent,
+	RunServices,
+	TicketRecord
+} from '$lib/domain';
 import { toasts } from '$lib/ui/toast.svelte';
 import { aRun, aTicket, aProject } from '$test/fixtures';
 import { aToolCall, settled } from '$test/fixtures/run-components';
@@ -30,6 +37,13 @@ vi.mock('$lib/api', () => ({
 	}
 }));
 vi.mock('$lib/app/fleet.svelte', () => ({ fleet: { refresh: vi.fn() } }));
+
+/** A ticket's record, shown through the given workshops. */
+const aRecord = (workshops: string[] = []): TicketRecord => ({
+	ticket: aTicket({ title: 'The ticket' }),
+	key: 'PROJ-7',
+	workshops: workshops.map((id) => ({ id, name: id }))
+});
 
 const RECIPE = `name: builder
 version: 5
@@ -100,7 +114,7 @@ beforeEach(() => {
 	vi.mocked(api.runs.resources).mockResolvedValue([]);
 	vi.mocked(api.egress.denials).mockResolvedValue([]);
 	vi.mocked(api.projects.get).mockResolvedValue(aProject());
-	vi.mocked(api.tickets.get).mockResolvedValue(aTicket());
+	vi.mocked(api.tickets.get).mockResolvedValue(aRecord());
 	vi.mocked(api.flows.version).mockResolvedValue({ yaml: RECIPE } as never);
 	vi.mocked(api.flows.get).mockResolvedValue({ yaml: RECIPE } as never);
 	vi.mocked(fleet.refresh).mockResolvedValue();
@@ -418,12 +432,13 @@ describe('start', () => {
 	it('loads what the page shows around the run', async () => {
 		const run = aLiveRun({ projectId: 'proj', ticketId: 'tick' });
 		vi.mocked(api.projects.get).mockResolvedValue(aProject({ name: 'dev shop' }));
-		const ticket = aTicket({ title: 'The ticket' });
+		const ticket = aRecord(['proj']);
 		vi.mocked(api.tickets.get).mockResolvedValue(ticket);
 		const { rs, stop } = await live(run);
 		expect(rs.run).toEqual(run);
 		expect(rs.projectName).toBe('dev shop');
 		expect(rs.ticket).toEqual(ticket);
+		expect(rs.ticketHref).toBe('/w/proj/tickets/PROJ-7');
 		expect(rs.stageDefs?.length).toBeGreaterThan(0);
 		stop();
 	});
@@ -476,14 +491,24 @@ describe('start', () => {
 		const { rs, stop } = await live(aLiveRun({ projectId: 'proj', ticketId: 'tick' }));
 		expect(rs.projectName).toBe('');
 		expect(rs.ticket).toBeNull();
+		expect(rs.ticketHref).toBe('/tickets/tick?workshop=proj');
 		expect(rs.loadError).toBe('');
 		stop();
 	});
 
 	it('skips what the run does not point at', async () => {
-		const { stop } = await live(aLiveRun());
+		const { rs, stop } = await live(aLiveRun());
 		expect(api.projects.get).not.toHaveBeenCalled();
 		expect(api.tickets.get).not.toHaveBeenCalled();
+		expect(rs.ticketHref).toBe('');
+		stop();
+	});
+
+	it('links a ticket off the run’s workshop’s source through its record', async () => {
+		vi.mocked(api.tickets.get).mockResolvedValue(aRecord(['other']));
+		const { rs, stop } = await live(aLiveRun({ projectId: 'proj', ticketId: 'tick' }));
+		await vi.waitFor(() => expect(rs.ticket).not.toBeNull());
+		expect(rs.ticketHref).toBe('/tickets/tick?workshop=proj');
 		stop();
 	});
 });

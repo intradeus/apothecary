@@ -347,8 +347,8 @@ func TestJiraConfigReachesTheAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := src.Search(context.Background(), "x", 5)
-	if err != nil || len(got) != 1 || got[0].TypeID != "7" || got[0].RemoteID != "100" || !slices.Equal(got[0].Labels, []string{"ops"}) {
+	page, err := src.Search(context.Background(), trackerport.SearchQuery{Text: "x", Limit: 5})
+	if got := page.Tickets; err != nil || len(got) != 1 || got[0].TypeID != "7" || got[0].RemoteID != "100" || !slices.Equal(got[0].Labels, []string{"ops"}) {
 		t.Fatalf("search = %+v, %v", got, err)
 	}
 	if path == "" || !strings.HasPrefix(jql, "(project = P)") {

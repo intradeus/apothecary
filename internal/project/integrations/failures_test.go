@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"apothecary/internal/account/providers"
+	"apothecary/internal/adapters/fake"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/envport"
@@ -19,6 +20,8 @@ import (
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/kinds"
 	"apothecary/internal/project/resolution"
+	"apothecary/internal/project/tickets"
+	"apothecary/internal/project/tickets/internaltracker"
 )
 
 // --- scriptable kinds ---------------------------------------------------------
@@ -725,6 +728,95 @@ func TestTicketSources(t *testing.T) {
 	}
 	if _, err := b.r.TicketWriter(ctx, b.integration(confstore.PortTicketSource, "no-source")); !errors.Is(err, errKind) {
 		t.Errorf("unbuildable = %v", err)
+	}
+}
+
+// countingSource is a fake tracker counting the issue reads it serves.
+type countingSource struct {
+	*fake.TicketSource
+	fetches *atomic.Int32
+}
+
+func (s countingSource) Fetch(ctx context.Context, key string) (trackerport.SourceTicket, error) {
+	s.fetches.Add(1)
+	return s.TicketSource.Fetch(ctx, key)
+}
+
+// sharedSource is a ticketsource kind whose every adapter is src: reads and
+// writes reach one tracker.
+type sharedSource struct {
+	kinds.FakeTicketSource
+	src countingSource
+}
+
+func (sharedSource) Descriptor() kinds.Descriptor {
+	return kinds.Descriptor{Port: "ticketsource", Kind: "shared"}
+}
+func (k sharedSource) New(kinds.Config) (trackerport.TicketSource, error) { return k.src, nil }
+
+// A ticket's tracker is its source's: the internal tracker by the source's
+// kind, else the remote integration's writer — through Live, so a write
+// drops the cached issue and the next read asks the tracker again.
+func TestTicketTracker(t *testing.T) {
+	ctx := context.Background()
+	b := newBench(t)
+	src := countingSource{TicketSource: &fake.TicketSource{Tickets: []trackerport.SourceTicket{
+		{Key: "DEV-1", RemoteID: "1001", Title: "First"},
+	}}, fetches: &atomic.Int32{}}
+	b.reg.RegisterTicketSource(sharedSource{src: src})
+	b.r.Live = tickets.NewLive(b.svc, b.r)
+
+	mine, err := b.svc.CreateTicket(ctx, confstore.Ticket{UserID: "u1", Title: "Mine"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, key, err := b.r.TicketTracker(ctx, mine.ID)
+	if _, ok := w.(*internaltracker.Tracker); err != nil || !ok || key != mine.ID {
+		t.Errorf("internal = %T %q, %v", w, key, err)
+	}
+
+	remote := b.integration(confstore.PortTicketSource, "shared")
+	rec, _, err := b.svc.RecordTicket(ctx, remote, confstore.TicketSeen{RemoteID: "1001", Key: "DEV-1", Title: "First"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := b.r.Live.Issue(ctx, remote, "DEV-1", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := src.fetches.Load(); n != 1 {
+		t.Fatalf("fetches before the write = %d, want 1 (cached)", n)
+	}
+	w, key, err = b.r.TicketTracker(ctx, rec.ID)
+	if err != nil || key != "DEV-1" {
+		t.Fatalf("remote = %q, %v", key, err)
+	}
+	if err := w.Comment(ctx, key, "started"); err != nil {
+		t.Fatal(err)
+	}
+	if got := src.Posted["DEV-1"]; len(got) != 1 || got[0] != "started" {
+		t.Errorf("posted = %v", got)
+	}
+	if _, err := b.r.Live.Issue(ctx, remote, "DEV-1", false); err != nil {
+		t.Fatal(err)
+	}
+	if n := src.fetches.Load(); n != 2 {
+		t.Errorf("fetches after the write = %d, want 2 (the write dropped the cached issue)", n)
+	}
+
+	// The source is gone: the error names it; nothing to unlink any more.
+	if err := b.svc.DB().DeleteIntegration(ctx, remote); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = b.r.TicketTracker(ctx, rec.ID)
+	if !errors.Is(err, resolution.ErrUnresolvable) || !strings.Contains(err.Error(), remote) || strings.Contains(err.Error(), "unlink") {
+		t.Errorf("gone source = %v", err)
+	}
+
+	var na *trackerport.ErrNotApplicable
+	if _, _, err := b.r.TicketTracker(ctx, "missing"); !errors.As(err, &na) {
+		t.Errorf("deleted ticket = %v", err)
 	}
 }
 

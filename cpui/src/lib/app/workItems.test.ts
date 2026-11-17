@@ -1,19 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
-import { fleet } from '$lib/app/fleet.svelte';
 import { OPERATES_ON } from '$lib/domain/flowdoc';
-import { aProject, aTicket } from '$test/fixtures';
+import { aTicketRow } from '$test/fixtures';
 import { anOpenMr } from '$test/fixtures/run-components';
 import { WORK_ITEMS, workItem } from './workItems';
 
 vi.mock('$lib/api', () => ({
-	api: { tickets: { list: vi.fn() }, projects: { mergeRequests: vi.fn() } }
+	api: { projects: { tickets: vi.fn(), mergeRequests: vi.fn() } }
 }));
 
 describe('WORK_ITEMS', () => {
 	beforeEach(() => {
 		vi.resetAllMocks();
-		fleet.projects = [aProject({ id: 'p1', name: 'ledger' })];
 	});
 
 	// The kinds are the language's operates_on values, in its order: a kind
@@ -32,18 +30,16 @@ describe('WORK_ITEMS', () => {
 		expect(workItem('ticket').match('/merge-requests')).toBe(false);
 	});
 
-	it('offers tickets newest first, across workshops or within one', async () => {
-		vi.mocked(api.tickets.list).mockResolvedValue([
-			aTicket({ id: 'old', projectId: 'p1', title: 'Old', createdAt: '2026-10-01T00:00:00Z' }),
-			aTicket({ id: 'new', projectId: 'p2', title: 'New', createdAt: '2026-10-20T00:00:00Z' })
-		]);
-		expect(await workItem('ticket').options('')).toEqual([
-			{ value: 'new', label: 'New', detail: 'p2', href: '/tickets/new' },
-			{ value: 'old', label: 'Old', detail: 'ledger', href: '/tickets/old' }
-		]);
+	it('offers a workshop’s live tickets, each to its page there', async () => {
+		vi.mocked(api.projects.tickets).mockResolvedValue({
+			tickets: [aTicketRow({ key: 'PROJ-1', title: 'Fix login' })],
+			next: ''
+		});
 		expect(await workItem('ticket').options('p1')).toEqual([
-			{ value: 'old', label: 'Old', detail: undefined, href: '/tickets/old' }
+			{ value: 'PROJ-1', label: 'Fix login', detail: 'PROJ-1', href: '/w/p1/tickets/PROJ-1' }
 		]);
+		expect(api.projects.tickets).toHaveBeenCalledWith('p1', { limit: 50 });
+		expect(workItem('ticket').perWorkshop).toBe(true);
 	});
 
 	it('offers a workshop’s merge requests, each to its page', async () => {
@@ -57,11 +53,8 @@ describe('WORK_ITEMS', () => {
 		expect(workItem('merge_request').perWorkshop).toBe(true);
 	});
 
-	it('says where to write a ticket, the workshop carried', () => {
-		const create = workItem('ticket').create!;
-		expect(create.label).toBe('New ticket');
-		expect(create.href('p1')).toBe('/tickets/new?project=p1');
-		expect(create.href('')).toBe('/tickets/new');
+	it('names how to write a ticket', () => {
+		expect(workItem('ticket').create!.label).toBe('New ticket');
 		expect(workItem('merge_request').create).toBeUndefined();
 	});
 });

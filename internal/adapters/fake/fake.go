@@ -13,6 +13,7 @@ import (
 	"net"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1145,8 +1146,10 @@ func (c *Channel) Sent() []notifyport.Notification {
 // --- TicketSource -----------------------------------------------------------
 
 // TicketSource is an in-memory tracker: Tickets is the whole corpus, searched
-// by a case-insensitive substring of key/title/body and fetched by key or
-// RemoteID. Attachment bytes come from Blobs, keyed by attachment id.
+// by a case-insensitive substring of key/title/body (paged by an offset
+// cursor, filtered by done: a ticket whose status is in a done category, or
+// that says Done itself) and fetched by key or RemoteID. Attachment bytes
+// come from Blobs, keyed by attachment id.
 //
 // It also implements the write side (trackerport.TicketWriter), so engine scenarios
 // can script a flow's tracker actions: Reachable says which statuses a
@@ -1199,30 +1202,65 @@ var DefaultTypes = []trackerport.RemoteType{
 
 func (s *TicketSource) Test(context.Context) error { return s.Err }
 
-func (s *TicketSource) Search(_ context.Context, query string, limit int) ([]trackerport.SourceTicket, error) {
+func (s *TicketSource) Search(_ context.Context, sq trackerport.SearchQuery) (trackerport.SearchPage, error) {
 	if s.Err != nil {
-		return nil, s.Err
+		return trackerport.SearchPage{}, s.Err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	limit := sq.Limit
 	if limit <= 0 {
 		limit = 25
 	}
-	q := strings.ToLower(strings.TrimSpace(query))
-	var out []trackerport.SourceTicket
+	start := 0
+	if sq.Cursor != "" {
+		n, err := strconv.Atoi(sq.Cursor)
+		if err != nil || n < 0 {
+			return trackerport.SearchPage{}, fmt.Errorf("fake: bad search cursor %q", sq.Cursor)
+		}
+		start = n
+	}
+	q := strings.ToLower(strings.TrimSpace(sq.Text))
+	var page trackerport.SearchPage
+	seen := 0
 	for _, t := range s.Tickets {
 		hay := strings.ToLower(t.Key + " " + t.Title + " " + t.Body)
-		if q == "" || strings.Contains(hay, q) {
-			// Search results carry no attachments (Fetch is authoritative),
-			// mirroring what a real tracker's list endpoint returns.
-			t.Attachments = nil
-			out = append(out, t)
+		if q != "" && !strings.Contains(hay, q) {
+			continue
 		}
-		if len(out) >= limit {
+		t.Done = s.done(t)
+		if sq.Done == trackerport.DoneOpen && t.Done || sq.Done == trackerport.DoneOnly && !t.Done {
+			continue
+		}
+		seen++
+		if seen <= start {
+			continue
+		}
+		if len(page.Tickets) == limit {
+			page.Next = strconv.Itoa(start + limit)
 			break
 		}
+		// Search results carry no attachments (Fetch is authoritative),
+		// as a real tracker's list endpoint returns.
+		t = cloneTicket(t)
+		t.Attachments = nil
+		page.Tickets = append(page.Tickets, t)
 	}
-	return out, nil
+	return page, nil
+}
+
+// done: the ticket says so, or its status (by id, else name) is in a done
+// category; the caller holds mu.
+func (s *TicketSource) done(t trackerport.SourceTicket) bool {
+	if t.Done {
+		return true
+	}
+	for _, st := range s.statuses() {
+		if (t.StatusID != "" && st.ID == t.StatusID) || (t.StatusID == "" && t.Status != "" && strings.EqualFold(st.Name, t.Status)) {
+			return st.Category == trackerport.CategoryDone
+		}
+	}
+	return false
 }
 
 // Fetch finds the ticket by key or by RemoteID; none is
@@ -1234,25 +1272,30 @@ func (s *TicketSource) Fetch(_ context.Context, key string) (trackerport.SourceT
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if t := s.find(key); t != nil {
-		return cloneTicket(*t), nil
+		out := cloneTicket(*t)
+		out.Done = s.done(out)
+		return out, nil
 	}
 	return trackerport.SourceTicket{}, fmt.Errorf("fake: no ticket %q: %w", key, trackerport.ErrTicketNotFound)
 }
 
-// FetchMany serves every key it has; the others are left out.
-func (s *TicketSource) FetchMany(_ context.Context, keys []string) ([]trackerport.SourceTicket, error) {
+// FetchByRemoteID finds the ticket by its RemoteID alone (a key is no
+// ticket's id here); none is trackerport.ErrTicketNotFound.
+func (s *TicketSource) FetchByRemoteID(_ context.Context, remoteID string) (trackerport.SourceTicket, error) {
 	if s.Err != nil {
-		return nil, s.Err
+		return trackerport.SourceTicket{}, s.Err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var out []trackerport.SourceTicket
-	for _, k := range keys {
-		if t := s.find(k); t != nil {
-			out = append(out, cloneTicket(*t))
+	remoteID = strings.TrimSpace(remoteID)
+	for i := range s.Tickets {
+		if remoteID != "" && s.Tickets[i].RemoteID == remoteID {
+			out := cloneTicket(s.Tickets[i])
+			out.Done = s.done(out)
+			return out, nil
 		}
 	}
-	return out, nil
+	return trackerport.SourceTicket{}, fmt.Errorf("fake: no ticket with id %q: %w", remoteID, trackerport.ErrTicketNotFound)
 }
 
 // find matches a key, else a RemoteID; the caller holds mu.
@@ -1375,6 +1418,7 @@ func (s *TicketSource) Transition(_ context.Context, key, status string) error {
 	s.record("transition %s %s", t.Key, target)
 	t.Status = target
 	t.StatusID = ""
+	t.Done = false // the new status's category says, not the seed
 	for _, st := range s.statuses() {
 		if strings.EqualFold(st.Name, target) {
 			t.StatusID = st.ID
@@ -1540,12 +1584,14 @@ func (s *TicketSource) Attach(_ context.Context, key, name, contentType string, 
 
 // ReadOnlyTicketSource is a tracker with no write side — what an adapter
 // that never implemented trackerport.TicketWriter looks like to the resolver (the
-// "this integration cannot write back" path). It serves Src's corpus.
+// "this integration cannot write back" path). It serves Src's corpus, and it
+// cannot fetch by stable id (trackerport.TicketByRemoteID), as GitHub's
+// and GitLab's adapters cannot.
 type ReadOnlyTicketSource struct{ Src *TicketSource }
 
 func (r ReadOnlyTicketSource) Test(ctx context.Context) error { return r.Src.Test(ctx) }
-func (r ReadOnlyTicketSource) Search(ctx context.Context, q string, limit int) ([]trackerport.SourceTicket, error) {
-	return r.Src.Search(ctx, q, limit)
+func (r ReadOnlyTicketSource) Search(ctx context.Context, q trackerport.SearchQuery) (trackerport.SearchPage, error) {
+	return r.Src.Search(ctx, q)
 }
 func (r ReadOnlyTicketSource) Fetch(ctx context.Context, key string) (trackerport.SourceTicket, error) {
 	return r.Src.Fetch(ctx, key)
@@ -1565,6 +1611,6 @@ var (
 	_ trackerport.TicketWriter        = (*TicketSource)(nil)
 	_ trackerport.TicketAttacher      = (*TicketSource)(nil)
 	_ trackerport.TicketMetadata      = (*TicketSource)(nil)
-	_ trackerport.TicketSyncer        = (*TicketSource)(nil)
+	_ trackerport.TicketByRemoteID    = (*TicketSource)(nil)
 	_ trackerport.TicketSource        = ReadOnlyTicketSource{}
 )

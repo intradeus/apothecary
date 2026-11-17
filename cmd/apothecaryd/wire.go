@@ -84,7 +84,7 @@ type app struct {
 	sampler     *resources.Sampler
 	egressSvc   *egress.Service
 	mrSvc       *mrs.Service
-	syncer      *tickets.Syncer
+	tickets     *tickets.Factory
 	notes       *notices.Service
 }
 
@@ -290,10 +290,15 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		browserPort = browsers
 	}
 	browserSvc := browsermcp.New(runs, resolver, browserPort)
-	// The ticket sync (docs/ticket-sync-plan.md § Sync): one Syncer, so the
-	// poll, the API's refreshes and the engine's are single-flight together.
-	// It copies the files an issue gained into the same attachment store.
-	syncer := &tickets.Syncer{Conf: conf, Sources: resolver, Attachments: attachments, Log: log, Notices: notes}
+	// One Live reads every ticket source, so every workshop on a source and
+	// every reader — the API, the engine's run starts and prompts, the
+	// automations — share its cached copies and its rate-limit holds. The
+	// resolver wraps each remote writer with it, so a write drops the copies
+	// it changed. One Factory over it copies an issue's files into the same
+	// attachment store at a run's start.
+	live := tickets.NewLive(conf, resolver, tickets.WithLog(log))
+	resolver.Live = live
+	ticketFactory := &tickets.Factory{Conf: conf, Attachments: attachments, Sources: resolver, Live: live, Log: log}
 
 	e := engine.New(engine.Deps{
 		Config:   ecfg,
@@ -311,12 +316,10 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		Attachments: attachments,
 		Snapshots:   snapshots,
 		Skills:      skillLib,
-		// A rerun starts from its ticket's current row, not the old run's
-		// copy.
-		Tickets: &tickets.Factory{Conf: conf, Attachments: attachments, Sources: resolver, Log: log},
-		// A ticket mirroring a remote issue is re-read after a ticket stage
-		// wrote to it and when a run starts on it.
-		Refresher: syncer,
+		// A run starts from its ticket as it is now (a remote issue read
+		// live), its base branch named by the run's workshop; a rerun too,
+		// not from the old run's copy.
+		Tickets: ticketFactory,
 		// The durable ping projection. A run parked on a human has no loop
 		// and no in-memory ping, so this is what makes its question listable
 		// and answerable — the SQL view, rather than the engine folding every
@@ -424,9 +427,9 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	api.Conf = conf
 	api.Kinds = reg
 	api.Ops = resolver
-	api.Sources = resolver // ticket sources for the import factory (Jira)
+	api.Sources = resolver // ticket sources the API's ticket factory reads
+	api.Live = live        // the same cache the engine and the automations read
 	api.Trackers = resolver
-	api.Syncer = syncer
 	api.Pings = store // durable request/response projection (PLAN4 M15)
 	api.DB = store    // the readiness probe's database check
 	api.GrafanaURL = boot.GrafanaURL
@@ -454,6 +457,6 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	return &app{
 		log: log, store: store, conf: conf, resolver: resolver, chreg: chreg, e: e, srv: srv,
 		keeper: keeper, attachments: attachments, blobs: blobs,
-		envSt: envSt, sampler: sampler, egressSvc: egressSvc, mrSvc: mrSvc, syncer: syncer, notes: notes,
+		envSt: envSt, sampler: sampler, egressSvc: egressSvc, mrSvc: mrSvc, tickets: ticketFactory, notes: notes,
 	}, closeAll, nil
 }

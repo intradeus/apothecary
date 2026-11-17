@@ -81,7 +81,7 @@ func TestMergeRequestsListAndStartARun(t *testing.T) {
 		t.Errorf("alice's row after the start = %+v", r)
 	}
 	// No ticket: the run carries the merge request as its work.
-	if resp, data := x.do(t, "GET", "/api/tickets", nil, nil); resp.StatusCode != 200 || strings.Contains(string(data), "!1 by alice") {
+	if resp, data := x.do(t, "GET", "/api/projects/"+pid+"/tickets?done=any", nil, nil); resp.StatusCode != 200 || strings.Contains(string(data), "!1 by alice") {
 		t.Errorf("tickets = %d: %s", resp.StatusCode, data)
 	}
 	resp, data = x.do(t, "GET", "/api/runs/"+started.RunID, nil, nil)

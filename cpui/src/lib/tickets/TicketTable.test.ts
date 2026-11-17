@@ -1,15 +1,17 @@
 import { render, screen } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fleet } from '$lib/app/fleet.svelte';
-import { aProject, aRun, aTicket } from '$test/fixtures';
+import { aRun, aTicketRow } from '$test/fixtures';
 import TicketTable from './TicketTable.svelte';
 
 vi.mock('$lib/api', () => ({ api: {} }));
 
+const setup = (props: Partial<Parameters<typeof TicketTable>[1]> = {}) =>
+	render(TicketTable, { projectId: 'p1', tickets: [], ...props });
+
 beforeEach(() => {
 	vi.useFakeTimers({ now: new Date('2026-10-31T12:00:00Z') });
 	fleet.reset();
-	fleet.projects = [aProject({ id: 'p1', name: 'billing' })];
 });
 afterEach(() => {
 	vi.useRealTimers();
@@ -17,80 +19,76 @@ afterEach(() => {
 
 describe('TicketTable', () => {
 	it('has a head for each column, in the order given', () => {
-		const { container } = render(TicketTable, { tickets: [], cols: ['type', 'title'] });
+		const { container } = setup({ cols: ['type', 'title'] });
 		expect(container).toHaveTextContent(/^TypeTitle$/);
 	});
 
 	it('shows every column by default', () => {
-		const { container } = render(TicketTable, { tickets: [] });
-		expect(container).toHaveTextContent(
-			/^TitleStatusTypeSourceWorkshopBase branchLatest runCreated$/
-		);
+		const { container } = setup();
+		expect(container).toHaveTextContent(/^KeyTitleStatusTypeBase branchActive runUpdated$/);
 	});
 
-	it('links a ticket and shows its facts', () => {
-		render(TicketTable, {
+	it('links a ticket to its page in the workshop, and shows its facts', () => {
+		setup({
 			tickets: [
-				aTicket({
-					id: 't1',
+				aTicketRow({
+					key: 'group/app#12',
 					title: 'Add keys',
-					projectId: 'p1',
 					changeType: 'fix',
 					baseBranch: 'fix/keys'
 				})
 			]
 		});
-		expect(screen.getByRole('link', { name: 'Add keys' })).toHaveAttribute('href', '/tickets/t1');
+		expect(screen.getByRole('link', { name: 'Add keys' })).toHaveAttribute(
+			'href',
+			'/w/p1/tickets/group%2Fapp%2312'
+		);
+		expect(screen.getByText('group/app#12')).toBeInTheDocument();
 		expect(screen.getByText('fix')).toBeInTheDocument();
-		expect(screen.getByText('billing')).toBeInTheDocument();
 		expect(screen.getByText('fix/keys')).toBeInTheDocument();
 	});
 
-	it('shows a tracker key with where it came from, a dash for one written here', () => {
-		render(TicketTable, {
+	it("tints the tracker status by whether it's done", () => {
+		setup({
 			tickets: [
-				aTicket({ id: 'a', source: { key: 'PROJ-7', kind: 'jira' } as never }),
-				aTicket({ id: 'b' })
-			],
-			cols: ['source']
-		});
-		expect(screen.getByText('PROJ-7')).toHaveAttribute('title', 'Mirrors an issue in jira');
-		expect(screen.getByText('—')).toBeInTheDocument();
-	});
-
-	it("shows the ticket's tracker status, apart from its runs", () => {
-		render(TicketTable, {
-			tickets: [
-				aTicket({ id: 'a', status: { id: 's', name: 'In Review', isDone: false } }),
-				aTicket({ id: 'b' })
+				aTicketRow({ key: 'a', status: 'In Review' }),
+				aTicketRow({ key: 'b', status: 'Closed', done: true })
 			],
 			cols: ['status']
 		});
-		expect(screen.getByText('In Review')).toBeInTheDocument();
-		expect(screen.getByText('not synced yet')).toBeInTheDocument();
+		expect(screen.getByText('In Review')).toHaveClass('tint-muted');
+		expect(screen.getByText('Closed')).toHaveClass('tint-success');
 	});
 
-	it('reads no runs before there are any', () => {
-		render(TicketTable, { tickets: [aTicket()], cols: ['runs'] });
-		expect(screen.getByText('no runs')).toBeInTheDocument();
+	it('reads no active run when there is none', () => {
+		setup({ tickets: [aTicketRow()], cols: ['run'] });
+		expect(screen.getByText('none running')).toBeInTheDocument();
 	});
 
-	it("shows the latest run's state, and how many there were", () => {
-		fleet.runs = [
-			aRun({ id: 'old', ticketId: 't1', state: 'failed', createdAt: '2026-10-01T00:00:00Z' }),
-			aRun({ id: 'new', ticketId: 't1', state: 'completed', createdAt: '2026-10-02T00:00:00Z' })
-		];
-		render(TicketTable, { tickets: [aTicket({ id: 't1' })], cols: ['runs'] });
-		expect(screen.getByText(/completed/i)).toBeInTheDocument();
-		expect(screen.queryByText(/failed/i)).not.toBeInTheDocument();
-		expect(screen.getByText('×2')).toBeInTheDocument();
+	it('links the active run, with its state once the fleet has it', () => {
+		fleet.runs = [aRun({ id: 'r1', state: 'paused' })];
+		setup({
+			tickets: [
+				aTicketRow({ key: 'a', activeRunId: 'r1' }),
+				aTicketRow({ key: 'b', activeRunId: '01TESTRUN00000000000000XYZ' })
+			],
+			cols: ['run']
+		});
+		const links = screen.getAllByRole('link');
+		expect(links[0]).toHaveAttribute('href', '/runs/r1');
+		expect(links[0]).toHaveTextContent(/paused/i);
+		expect(links[1]).toHaveAttribute('href', '/runs/01TESTRUN00000000000000XYZ');
 	});
 
-	it('says how long ago it was created', () => {
-		render(TicketTable, {
-			tickets: [aTicket({ createdAt: '2026-10-29T12:00:00Z' })],
-			cols: ['created']
+	it('says how long ago the tracker last changed it, a dash when it does not say', () => {
+		setup({
+			tickets: [
+				aTicketRow({ key: 'a', updatedAt: '2026-10-29T12:00:00Z' }),
+				aTicketRow({ key: 'b', updatedAt: undefined })
+			],
+			cols: ['updated']
 		});
 		expect(screen.getByText('2d ago')).toBeInTheDocument();
+		expect(screen.getByText('—')).toBeInTheDocument();
 	});
 });

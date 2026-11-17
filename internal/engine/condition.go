@@ -1,9 +1,9 @@
 package engine
 
 // Stage conditions (FLOWLANG §2 run_if). A stage whose condition does not
-// hold completes as skipped — visibly, the way a tracker action on a ticket
-// written by hand always did — and the chain follows on_success. The facts
-// a condition reads are the run's: whether its ticket has a tracker issue,
+// hold completes as skipped — visibly, the way a tracker action on a run
+// with no ticket does — and the chain follows on_success. The facts
+// a condition reads are the run's: whether its ticket has a remote tracker issue,
 // whether this phase run acts on one merge request, and the ticket's change
 // type (runcore.State.StageCondition). Parameters folded at parse time, so the
 // engine never sees them.

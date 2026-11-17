@@ -5,11 +5,13 @@
 	import { onMount } from 'svelte';
 	import { flip } from 'svelte/animate';
 	import { to } from '$lib/core/urls';
+	import { api } from '$lib/api';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { session } from '$lib/app/session.svelte';
-	import { api } from '$lib/api';
 	import { t } from '$lib/i18n/index.svelte';
-	import type { Run } from '$lib/domain';
+	import type { Integration, Run } from '$lib/domain';
+	import { isInternal, sourceOf } from '$lib/tickets/tracker';
+	import NewTicketLink from '$lib/tickets/NewTicketLink.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import SectionHeader from '$lib/ui/SectionHeader.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
@@ -26,18 +28,17 @@
 	let filter = $state<Filter>('all');
 
 	let now = $state(Date.now());
-	let ticketCounts = $state<Map<string, number> | null>(null);
+	// Which workshops write tickets here (an internal source): New ticket
+	// shows only for those. One read per visit.
+	let integrations = $state<Integration[] | null>(null);
+	const writable = $derived(fleet.projects.find((p) => isInternal(sourceOf(p, integrations))));
 
 	onMount(() => {
 		const tick = setInterval(() => (now = Date.now()), 1000);
-		api.tickets
+		api.integrations
 			.list()
-			.then((ts) => {
-				const m = new Map<string, number>();
-				for (const tk of ts) m.set(tk.projectId, (m.get(tk.projectId) ?? 0) + 1);
-				ticketCounts = m;
-			})
-			.catch(() => (ticketCounts = new Map()));
+			.then((l) => (integrations = l))
+			.catch(() => (integrations = []));
 		return () => clearInterval(tick);
 	});
 
@@ -124,7 +125,11 @@
 			{greeting}, {session.user?.name ?? ''}. <span class="accent">{headline}</span>
 		</h1>
 	</div>
-	<a class="btn btn-primary btn-lg" href={to.newTicket()}>{I.add} {t('page.desk.newTicket')}</a>
+	{#if writable}
+		<a class="btn btn-primary btn-lg" href={to.newTicket({ project: writable.id })}
+			>{I.add} {t('page.desk.newTicket')}</a
+		>
+	{/if}
 </header>
 
 <div class="page glass">
@@ -201,7 +206,7 @@
 										liveTotal={c.all.length}
 										finished={lastFinished.get(c.project.id) ?? []}
 										pings={fleet.pingsByProject.get(c.project.id) ?? 0}
-										tickets={ticketCounts?.get(c.project.id) ?? (ticketCounts ? 0 : undefined)}
+										{integrations}
 										{now}
 									/>
 								</div>
@@ -220,9 +225,12 @@
 											href={to.workshop(p.id)}>{p.name}</a
 										>{/each}
 								</span>
-								<a class="btn btn-sm" href={to.newTicket({ project: quiet[0].id })}
-									>{I.add} {t('page.desk.newTicket')}</a
-								>
+								<NewTicketLink
+									project={quiet[0]}
+									{integrations}
+									label={t('page.desk.newTicket')}
+									cls="btn-sm"
+								/>
 							</EmptyState>
 						{/if}
 						{#if !cards.length && filter !== 'all' && !quiet.length}

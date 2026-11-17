@@ -32,7 +32,7 @@ agents:
       - { name: value, type: file }
       - { name: mr, type: file }
 main:
-  - { id: kick, type: action, action: ticket_transition, with: { to: in_progress } }
+  - { id: kick, type: action, action: ticket_transition, with: { to: In Progress } }
   - { id: write, type: agent, harness: $harness, model: $model, agent: writer,
       output: { note: { to: artifacts/note.md, type: file }, value: { to: artifacts/value.txt, type: file }, mr: { to: artifacts/mr.md, type: file } } }
   - { id: comment, type: action, action: ticket_comment, input: { body: { from: artifacts/note.md, type: file } } }
@@ -40,7 +40,7 @@ main:
   - { id: branch, type: action, action: ticket_link_branch }
   - { id: mr, type: action, action: create_mr, input: { body: { from: artifacts/mr.md, type: file } } }
   - { id: link, type: action, action: ticket_link }
-  - { id: finish, type: action, action: ticket_transition, with: { to: done }, on_success: done }
+  - { id: finish, type: action, action: ticket_transition, with: { to: Done }, on_success: done }
 `
 
 func trackerWorld(tracker **fake.TicketSource) func(h *harness) {

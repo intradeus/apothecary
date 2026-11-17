@@ -1389,10 +1389,10 @@ func (p *parser) buildParameters(f *Flow, raw *DocParams) error {
 		pr := Param{Name: e.Name, Type: e.Param.Type, List: e.Param.List,
 			Description: e.Param.Description, Enum: e.Param.Enum, Line: e.Line}
 		// No default: the parameter has no value until a project binds it or
-		// a run sets it — allowed only where a model or a harness is read,
-		// which the site checks (lookup). A default of $name reads another
-		// parameter's value instead (checked below, once every one is
-		// declared).
+		// a run sets it — allowed only where a model, a harness or a ticket
+		// status is read, which the site checks (lookup). A default of $name
+		// reads another parameter's value instead (checked below, once every
+		// one is declared).
 		if !e.Param.Default.Set {
 			pr.Required = true
 		} else if !e.Param.Default.IsList && IsParamRef(e.Param.Default.Text) {
@@ -1632,8 +1632,8 @@ type paramSite struct {
 	// takes one value.
 	list bool
 	// unbound: the site may read a parameter with no value yet (a model, a
-	// harness — Flow.Unbound reports it; run creation refuses until bound).
-	// Every other site needs the value now.
+	// harness, a ticket status — Flow.Unbound reports it; run creation
+	// refuses until bound). Every other site needs the value now.
 	unbound bool
 }
 
@@ -1675,7 +1675,7 @@ func (p *parser) lookup(raw string, site paramSite) (value, via string, err erro
 	via = fmt.Sprintf(" (parameter %q)", name)
 	v, ok := resolveParamValue(p.plist, p.bindings, name)
 	if !ok && !site.unbound {
-		return "", "", fmt.Errorf("parameter %q has no value: give it a default, or bind it — only a model or a harness may wait for one", name)
+		return "", "", fmt.Errorf("parameter %q has no value: give it a default, or bind it — only a model, a harness or a ticket status may wait for one", name)
 	}
 	return v, via, nil
 }
@@ -2104,6 +2104,9 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		}
 		if raw.With != nil {
 			for _, pr := range raw.With.Pairs {
+				if act.Slug == actionspec.TicketTransition && pr.Name == "status" {
+					return fail(`with "status" is retired: to names the tracker's status itself (to: %s), or a string parameter the workshop binds (to: $done_status)`, pr.Value)
+				}
 				sig := act.Setting(pr.Name)
 				if sig == nil {
 					if act.Input(pr.Name) != nil {
@@ -2127,7 +2130,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 				if sig.Kind == actionspec.KindEnum {
 					values = sig.Values
 				}
-				v, via, err := p.lookup(pr.Value, paramSite{stage: raw.ID, field: "with", input: pr.Name, typ: ParamString, values: values})
+				v, via, err := p.lookup(pr.Value, paramSite{stage: raw.ID, field: "with", input: pr.Name, typ: ParamString, values: values, unbound: sig.Unbound})
 				if err != nil {
 					return fail("with %q: %v", pr.Name, err)
 				}
@@ -2135,8 +2138,14 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 					return fail("with %q: %q%s is not one of %s", pr.Name, v, via, strings.Join(sig.Values, " | "))
 				}
 				// A text setting is the tracker's vocabulary, not ours: only
-				// blankness is checkable here.
-				if sig.Kind == actionspec.KindText && strings.TrimSpace(v) == "" {
+				// blankness is checkable here — and not while the parameter it
+				// reads waits for a binding (Flow.Unbound reports that).
+				waiting := false
+				if via != "" {
+					_, bound := resolveParamValue(p.plist, p.bindings, pr.Value[1:])
+					waiting = !bound
+				}
+				if sig.Kind == actionspec.KindText && !waiting && strings.TrimSpace(v) == "" {
 					return fail("with %q: a value is required%s (%s)", pr.Name, via, sig.Description)
 				}
 				given[pr.Name] = true

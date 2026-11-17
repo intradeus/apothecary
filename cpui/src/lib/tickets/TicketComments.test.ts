@@ -32,7 +32,7 @@ describe('TicketComments', () => {
 	it('says it is loading, then that there are none', async () => {
 		const d = deferred<TicketComment[]>();
 		vi.mocked(api.tickets.comments).mockReturnValue(d.promise);
-		render(TicketComments, { ticketId: 't1' });
+		render(TicketComments, { projectId: 'p1', ticketKey: 'P-1' });
 		expect(screen.getByText('Loading comments…')).toBeInTheDocument();
 		d.resolve([]);
 		expect(await screen.findByText('No comments yet.')).toBeInTheDocument();
@@ -49,7 +49,7 @@ describe('TicketComments', () => {
 				runId: '01RUN000000000000000ABCDEF'
 			})
 		]);
-		render(TicketComments, { ticketId: 't1' });
+		render(TicketComments, { projectId: 'p1', ticketKey: 'P-1' });
 
 		expect(await screen.findByText('ann')).toBeInTheDocument();
 		expect(screen.getAllByText('good')[0].tagName).toBe('STRONG');
@@ -66,12 +66,12 @@ describe('TicketComments', () => {
 	it('posts a comment and shows the thread the tracker answers with', async () => {
 		vi.mocked(api.tickets.comments).mockResolvedValue([]);
 		vi.mocked(api.tickets.addComment).mockResolvedValue([comment({ bodyMd: 'on it' })]);
-		render(TicketComments, { ticketId: 't1' });
+		render(TicketComments, { projectId: 'p1', ticketKey: 'P-1' });
 		const box = screen.getByRole('textbox', { name: 'Add a comment' });
 		await userEvent.type(box, '  on it ');
 		await userEvent.click(screen.getByRole('button', { name: 'Comment' }));
 
-		expect(api.tickets.addComment).toHaveBeenCalledWith('t1', 'on it');
+		expect(api.tickets.addComment).toHaveBeenCalledWith('p1', 'P-1', 'on it');
 		expect(await screen.findByText('on it')).toBeInTheDocument();
 		expect(box).toHaveValue('');
 	});
@@ -79,7 +79,7 @@ describe('TicketComments', () => {
 	it('keeps the draft when the tracker refuses it', async () => {
 		vi.mocked(api.tickets.comments).mockResolvedValue([]);
 		vi.mocked(api.tickets.addComment).mockRejectedValue(new Error('tracker down'));
-		render(TicketComments, { ticketId: 't1' });
+		render(TicketComments, { projectId: 'p1', ticketKey: 'P-1' });
 		const box = screen.getByRole('textbox', { name: 'Add a comment' });
 		await userEvent.type(box, 'hello');
 		await userEvent.click(screen.getByRole('button', { name: 'Comment' }));
@@ -90,15 +90,25 @@ describe('TicketComments', () => {
 
 	it('does not post an empty comment', () => {
 		vi.mocked(api.tickets.comments).mockResolvedValue([]);
-		render(TicketComments, { ticketId: 't1' });
+		render(TicketComments, { projectId: 'p1', ticketKey: 'P-1' });
 		expect(screen.getByRole('button', { name: 'Comment' })).toBeDisabled();
 	});
 
-	it('reloads the thread when the ticket syncs again', async () => {
+	it('reads the thread from the cache first, then from the tracker on a refresh', async () => {
 		vi.mocked(api.tickets.comments).mockResolvedValue([]);
-		const { rerender } = render(TicketComments, { ticketId: 't1', syncedAt: 'a' });
-		await waitFor(() => expect(api.tickets.comments).toHaveBeenCalledOnce());
-		await rerender({ ticketId: 't1', syncedAt: 'b' });
-		await waitFor(() => expect(api.tickets.comments).toHaveBeenCalledTimes(2));
+		const { rerender } = render(TicketComments, { projectId: 'p1', ticketKey: 'P-1' });
+		await waitFor(() =>
+			expect(api.tickets.comments).toHaveBeenCalledWith('p1', 'P-1', { refresh: false })
+		);
+		await rerender({ projectId: 'p1', ticketKey: 'P-1', refreshed: 1 });
+		await waitFor(() =>
+			expect(api.tickets.comments).toHaveBeenLastCalledWith('p1', 'P-1', { refresh: true })
+		);
+	});
+
+	it('says when the thread could not be read', async () => {
+		vi.mocked(api.tickets.comments).mockRejectedValue(new Error('rate limited'));
+		render(TicketComments, { projectId: 'p1', ticketKey: 'P-1' });
+		expect(await screen.findByText('rate limited')).toBeInTheDocument();
 	});
 });

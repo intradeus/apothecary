@@ -359,27 +359,15 @@ func TestChannelsCRUD(t *testing.T) {
 	}
 }
 
-// mustSeedProjectAndTicket satisfies the tickets FK chain for attachment
-// claims (attachments.ticket_id REFERENCES tickets).
-func mustSeedProjectAndTicket(t *testing.T, s *Store, ticketID string) {
+// mustSeedTicket satisfies the tickets FK for attachment claims
+// (attachments.ticket_id REFERENCES tickets): an internal tracker's ticket.
+func mustSeedTicket(t *testing.T, s *Store, ticketID string) {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	if err := s.UpsertIntegration(ctx, confstore.StoredIntegration{
-		ID: "fint1", Port: "repository", Kind: "gitlab", Name: "gl-files",
-		Config: map[string]any{}, Sealed: []byte{1}, CreatedAt: now, UpdatedAt: now,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.UpsertProject(ctx, confstore.Project{
-		ID: "fprj1", Name: "files-prj", RepoAccountID: "fint1", ProvisionerID: "fint1",
-		HarnessIDs: []string{"fint1"}, DefaultFlow: "builder",
-		CreatedAt: now, UpdatedAt: now,
-	}); err != nil {
-		t.Fatal(err)
-	}
 	if err := s.UpsertTicket(ctx, confstore.Ticket{
-		ID: ticketID, ProjectID: "fprj1", Title: "T", CreatedAt: now, UpdatedAt: now,
+		ID: ticketID, Title: "T", SourceID: "fint1", SourceKind: confstore.KindInternal, RemoteID: ticketID,
+		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +377,7 @@ func TestAttachmentsCRUD(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 	// The FK backstop needs a real ticket row for ticket claims.
-	mustSeedProjectAndTicket(t, s, "tick1")
+	mustSeedTicket(t, s, "tick1")
 
 	mk := func(id string) filestore.Attachment {
 		return filestore.Attachment{ID: id, Filename: id + ".txt", Mime: "text/plain",

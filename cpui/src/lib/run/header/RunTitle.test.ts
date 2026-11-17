@@ -62,15 +62,25 @@ describe('RunTitle', () => {
 
 	describe('the links beside it', () => {
 		it('links the ticket by a generic name until its key is known', () => {
-			setup({ ticketId: 't1' });
-			expect(link(/^ticket/)).toHaveAttribute('href', '/tickets/t1');
+			setup({ ticketId: 't1', projectId: 'p1' });
+			expect(link(/^ticket/)).toHaveAttribute('href', '/tickets/t1?workshop=p1');
 		});
 
-		it('names the ticket by its tracker key, with its title on hover', () => {
-			const rs = aViewStore(aRun({ ticketId: 't1' }));
-			rs.ticket = aTicket({ title: 'The title', source: { key: 'ABC-12' } as never });
+		it('names the ticket by the key the run carries', () => {
+			setup({ ticketId: 't1', ticketKey: 'ABC-9' });
+			expect(link(/^ABC-9/)).toBeInTheDocument();
+		});
+
+		it('names the ticket by its tracker key, with its title on hover, in the run’s workshop', () => {
+			const rs = aViewStore(aRun({ ticketId: 't1', projectId: 'p1' }));
+			rs.ticket = {
+				ticket: aTicket({ title: 'The title', sourceKey: 'ABC-12' }),
+				key: 'ABC-12',
+				workshops: [{ id: 'p1', name: 'billing' }]
+			};
 			render(RunTitle, { rs });
 			expect(link(/^ABC-12/)).toHaveAttribute('title', 'The title');
+			expect(link(/^ABC-12/)).toHaveAttribute('href', '/w/p1/tickets/ABC-12');
 		});
 
 		it('has no ticket link without a ticket', () => {

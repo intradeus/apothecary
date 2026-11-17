@@ -71,7 +71,7 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 		{method: "GET", path: "/api/attachments/limits", want: 503},
 		{method: "GET", path: "/api/channels", want: 200},
 		{method: "GET", path: "/api/projects", want: 200},
-		{method: "GET", path: "/api/tickets", want: 200},
+		{method: "GET", path: "/api/projects/" + testProject + "/tickets", want: 200},
 		{method: "GET", path: "/api/integrations", want: 200},
 		{method: "GET", path: "/api/flows", want: 200},
 		{method: "GET", path: "/api/projects/" + testProject + "/flow-bindings", want: 200},

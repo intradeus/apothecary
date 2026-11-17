@@ -500,6 +500,41 @@ func TestBuiltinFlowsCarryNoModel(t *testing.T) {
 	}
 }
 
+// TestBuiltinFlowsLeaveTicketStatusesToTheWorkshop: a template names no
+// tracker status — they are the workshop's tracker's words. The flows that
+// move the ticket declare the four status parameters as strings with no
+// default, and every move reads one of them.
+func TestBuiltinFlowsLeaveTicketStatusesToTheWorkshop(t *testing.T) {
+	for _, name := range []string{"builder", "hands-on"} {
+		t.Run(name, func(t *testing.T) {
+			f := Flow(name)
+			for _, p := range []string{"todo_status", "in_progress_status", "in_review_status", "done_status"} {
+				if pr := f.Param(p); pr == nil || pr.Type != flow.ParamString || !pr.Required || pr.Default != "" || pr.DefaultRef != "" || pr.Description == "" {
+					t.Errorf("%s = %+v, want a described string parameter with no default", p, pr)
+				}
+			}
+			moves := 0
+			for i := range f.Stages {
+				st := &f.Stages[i]
+				if st.Action != actionspec.TicketTransition {
+					continue
+				}
+				moves++
+				if st.Setting("to", "") != "" {
+					t.Errorf("stage %q moves to %q, want a status parameter", st.ID, st.Setting("to", ""))
+				}
+			}
+			ub := map[string]bool{}
+			for _, u := range f.Unbound() {
+				ub[u.Param] = true
+			}
+			if moves != 4 || !ub["todo_status"] || !ub["in_progress_status"] || !ub["in_review_status"] || !ub["done_status"] {
+				t.Errorf("moves = %d, unbound = %v: want four moves, each status waiting for the workshop", moves, ub)
+			}
+		})
+	}
+}
+
 // builder's adversarial review reads the code afresh each round; every other
 // agent stage remembers what it did.
 func TestBuilderReviewsAfresh(t *testing.T) {

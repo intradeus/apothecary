@@ -15,9 +15,10 @@
 // asserts. Nothing else in the language changes.
 //
 // Tracker actions (ticket_*) are the one family with a per-TICKET
-// prerequisite rather than a per-project one: the tracker is the ticket's —
-// the integration it was imported from, else Apothecary's internal tracker.
-// The engine skips them, visibly, on a run with no ticket.
+// prerequisite rather than a per-project one: the tracker is the ticket's
+// source — a remote tracker integration, or Apothecary's internal tracker
+// for the tickets it holds itself. The engine skips them, visibly, on a run
+// with no ticket.
 //
 // This package is a leaf: stdlib only, no ports. Requires is a port-kind
 // string that the engine matches, keeping the registry free of adapter types.
@@ -73,6 +74,10 @@ type SettingSig struct {
 	// when the stage does not give it.
 	Values  []string `json:"values,omitempty"`
 	Default string   `json:"default,omitempty"`
+	// Unbound: the setting may read a string parameter still waiting for a
+	// binding — a tracker's status name is the workshop's to say, like a
+	// model. The flow parses; run creation refuses until it is bound.
+	Unbound bool `json:"unbound,omitempty"`
 }
 
 // Action is one registered action.
@@ -119,9 +124,6 @@ type Action struct {
 	Settings []SettingSig `json:"settings,omitempty"`
 }
 
-// Steps lists the flow steps (ticket_transition's `to`) in lifecycle order.
-var Steps = []string{StepTodo, StepInProgress, StepInReview, StepDone, StepBlocked}
-
 // Action slugs and the port kinds they require.
 const (
 	CreateMR            = "create_mr"
@@ -133,9 +135,9 @@ const (
 	MRMerge             = "mr_merge"
 	PostReview          = "post_review"
 
-	// Tracker actions: write to the ticket's tracker — the remote issue
-	// (the ticketsource integration the ticket was imported from) or, for a
-	// ticket with no remote source, Apothecary's internal tracker.
+	// Tracker actions: write to the ticket's tracker — the issue on its
+	// remote ticketsource integration or, for a ticket of Apothecary's own,
+	// the internal tracker.
 	TicketTransition = "ticket_transition"
 	TicketComment    = "ticket_comment"
 	TicketSetField   = "ticket_set_field"
@@ -167,17 +169,6 @@ const (
 	MethodRebase = "rebase"
 	BranchKeep   = "keep"
 	BranchDelete = "delete"
-
-	// Flow steps (ticket_transition's `to`): the flow's words for where the
-	// work is. Each tracker integration's status list says which of its
-	// statuses holds each step. They mirror trackerport.FlowSteps — the
-	// registry stays free of the ports package, and a test holds the two
-	// lists equal.
-	StepTodo       = "todo"
-	StepInProgress = "in_progress"
-	StepInReview   = "in_review"
-	StepDone       = "done"
-	StepBlocked    = "blocked"
 
 	RequiresRepository = "repository"
 	// RequiresTracker: the stage writes to the ticket's tracker. Every ticket
@@ -286,19 +277,15 @@ var registry = []Action{{
 }, {
 	Slug:        TicketTransition,
 	Title:       "Move the ticket",
-	Description: "Moves the ticket on its tracker — the remote issue, or the internal tracker for a ticket with no remote source. `to` names a flow step (todo, in_progress, in_review, done, blocked); the tracker integration's status list says which of its statuses holds that step, so one flow fits every tracker; a step no status holds skips the stage with a note. `status` names the tracker's own status or transition verbatim (matched case-insensitively). Exactly one of the two. Already there: nothing happens. Not reachable from the current status: the stage fails with the statuses that are, for on_fail to route.",
+	Description: "Moves the ticket on its tracker — the remote issue, or the internal tracker for a ticket with no remote source. `to` names the tracker's own status or transition, matched case-insensitively: written in the flow, or a string parameter the workshop binds (to: $done_status). Already there: nothing happens. Not reachable from the current status: the stage fails with the statuses that are, for on_fail to route.",
 	Requires:    RequiresTracker,
 	Remote:      true,
-	ExactlyOne:  []string{"to", "status"},
 	Settings: []SettingSig{{
 		Name:        "to",
-		Description: "a flow step, moved to the status of the ticket's tracker that holds it; a step no status holds skips the stage. Exactly one of to / status",
-		Kind:        KindEnum,
-		Values:      Steps,
-	}, {
-		Name:        "status",
-		Description: "the tracker's own status (or transition) name, verbatim. Exactly one of to / status",
+		Description: "the tracker's status (or transition) name, or a string parameter the workshop binds",
 		Kind:        KindText,
+		Required:    true,
+		Unbound:     true,
 	}},
 }, {
 	Slug:        TicketComment,

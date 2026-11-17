@@ -493,16 +493,16 @@ func TestTicketAttachmentListFailures(t *testing.T) {
 	x, files := newFilesEnv(t)
 	ticket := x.newTicket(t, "t", "")
 	x.srv.Attachments = filestore.NewAttachments(failingFileDB{files.mem, errors.New("db down")}, filestore.NewBlobs(t.TempDir()), 64, nil)
-	if res, body := x.do(t, "GET", "/api/tickets/"+ticket+"/attachments", nil, nil); res.StatusCode != http.StatusInternalServerError {
+	if res, body := x.do(t, "GET", ticketPath(testProject, ticket)+"/attachments", nil, nil); res.StatusCode != http.StatusInternalServerError {
 		t.Errorf("list = %d %s", res.StatusCode, body)
 	}
 	// The ticket itself still answers, its ids empty rather than an error.
-	res, body := x.do(t, "GET", "/api/tickets/"+ticket, nil, nil)
+	res, body := x.do(t, "GET", ticketPath(testProject, ticket), nil, nil)
 	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"attachment_ids":[]`) {
 		t.Errorf("ticket = %d %s", res.StatusCode, body)
 	}
 	x.srv.Attachments = nil
-	res, body = x.do(t, "GET", "/api/tickets/"+ticket+"/attachments", nil, nil)
+	res, body = x.do(t, "GET", ticketPath(testProject, ticket)+"/attachments", nil, nil)
 	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"attachments":[]`) {
 		t.Errorf("no store = %d %s", res.StatusCode, body)
 	}

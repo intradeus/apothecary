@@ -49,8 +49,8 @@ export interface Run {
 	projectId?: string;
 	/** Parent ticket; a ticket owns many runs. */
 	ticketId?: string;
-	/** The tracker issue the ticket was imported from ("PROJ-123") and its
-	 *  page; absent on a ticket written by hand. */
+	/** The remote tracker issue the ticket stands for ("PROJ-123") and its
+	 *  page; absent on a ticket of the internal tracker. */
 	ticketKey?: string;
 	ticketUrl?: string;
 	/** Extra direction for THIS attempt, additive to the ticket's goal. */

@@ -73,7 +73,11 @@ build every platform's binaries or publish images.
 - **Vocabulary**: "repository", never "forge"; "sequence", never "block";
   flow grammar words are `verdict`, `yes_no`, `run_if` (`docs/flow-language.md`).
 - **Migrations**: `internal/adapters/pgstore/migrations/0001_init.sql` is
-  frozen. A schema change is a new numbered file, never a rewrite.
+  frozen, and so is every migration once a database has applied it (boot
+  refuses one renamed or edited after it ran). A schema change is a new
+  numbered file, then `task migrations:sum`. A conflict on
+  `migrations.sum` means another branch added a migration: renumber yours
+  after it and run `task migrations:sum` again.
 - **Postgres tests** go through `internal/adapters/pgstore/pgtest` (a
   database per test on a throwaway server), never a fixed dev port or the
   dev database.

@@ -4,7 +4,6 @@
 	// a failed destroy left behind, destroying it again.
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
-	import { to } from '$lib/core/urls';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import { shortId } from '$lib/core/format';
 	import { I } from '$lib/design/icons';
@@ -61,7 +60,7 @@
 		if (ok && (await act('archive', () => api.runs.archive(run.id))))
 			toast(t('run.archive.done', { id: sid }), {
 				action: run.ticketId
-					? { label: t('run.archive.openTicket'), run: () => goto(to.ticket(run.ticketId!)) }
+					? { label: t('run.archive.openTicket'), run: () => goto(rs.ticketHref) }
 					: undefined
 			});
 	}

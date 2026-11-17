@@ -16,6 +16,10 @@ export interface Project {
 	commands: Record<string, string>;
 	workspace: WorkspacePolicy;
 	defaultFlow: string;
+	/** The ticket-source integration the workshop's tickets come from: a
+	 *  remote tracker or the owner's internal one. Several workshops may
+	 *  share one. '' on a draft = the owner's internal tracker. */
+	ticketSourceId: string;
 	createdAt: string;
 	updatedAt: string;
 }

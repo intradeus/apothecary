@@ -10,15 +10,14 @@ import (
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
-	"apothecary/internal/project/confstore/conftest"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/project/tickets/internaltracker"
 )
 
-const testProject = "prj-1"
+const owner = "u1"
 
-// world is a config store holding one project and a hand-written ticket on
-// its owner's internal tracker.
+// world is a config store holding a hand-written ticket on its owner's
+// internal tracker.
 type world struct {
 	conf *confstore.Service
 	tr   *internaltracker.Tracker
@@ -32,8 +31,7 @@ func newWorld(t *testing.T) world {
 		t.Fatal(err)
 	}
 	conf := confstore.New(confstore.NewMem(), key)
-	conftest.SeedProject(t, conf, confstore.Project{ID: testProject, Name: "p"})
-	tk, err := conf.CreateTicket(context.Background(), confstore.Ticket{ProjectID: testProject, Title: "T", Goal: "g",
+	tk, err := conf.CreateTicket(context.Background(), confstore.Ticket{UserID: owner, Title: "T", Goal: "g",
 		ChangeType: trackerport.ChangeFeat})
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +80,7 @@ func wantNotApplicable(t *testing.T, what string, err error) {
 	}
 }
 
-// A hand-written ticket starts in the status holding todo; a move names a
+// A hand-written ticket starts in the tracker's first status; a move names a
 // status of the tracker, case aside, and records who made it.
 func TestTransitionByName(t *testing.T) {
 	w := newWorld(t)
@@ -116,41 +114,6 @@ func TestTransitionToAnUnknownNameNamesTheStatuses(t *testing.T) {
 	}
 	if got := w.statusName(t); got != "To do" {
 		t.Errorf("status moved to %q", got)
-	}
-}
-
-// A step no status holds is ErrStatusUnsupported, naming the steps that do
-// have one in lifecycle order: the engine skips the stage.
-func TestStepWithNoStatusIsUnsupported(t *testing.T) {
-	w := newWorld(t)
-	ctx := context.Background()
-	in, err := w.conf.InternalTracker(ctx, w.ticket(t).UserID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	list, err := w.conf.TrackerStatuses(ctx, in.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := range list {
-		if list[i].FlowStep == trackerport.StepBlocked {
-			list[i].FlowStep = ""
-		}
-	}
-	if _, _, err := w.conf.PutTrackerStatuses(ctx, in.ID, list, nil); err != nil {
-		t.Fatal(err)
-	}
-	if st, err := w.conf.StepStatus(ctx, w.id, trackerport.StepDone); err != nil || st.Name != "Done" {
-		t.Errorf("done = %+v (%v)", st, err)
-	}
-	_, err = w.conf.StepStatus(ctx, w.id, trackerport.StepBlocked)
-	var us *trackerport.ErrStatusUnsupported
-	if !errors.As(err, &us) {
-		t.Fatalf("err = %v, want ErrStatusUnsupported", err)
-	}
-	want := []trackerport.FlowStep{trackerport.StepTodo, trackerport.StepInProgress, trackerport.StepInReview, trackerport.StepDone}
-	if us.Key != w.id || us.Step != trackerport.StepBlocked || !slices.Equal(us.Supported, want) {
-		t.Errorf("err = %+v, want key %s and supported %v", us, w.id, want)
 	}
 }
 
@@ -261,8 +224,8 @@ func TestAddLinkUpsertsOnURL(t *testing.T) {
 	}
 }
 
-// A ticket deleted under a run, or one linked to a remote issue meanwhile,
-// is no longer this tracker's: every write is the skip-class refusal.
+// A ticket deleted under a run is no longer this tracker's: every write is
+// the skip-class refusal.
 func TestAGoneTicketIsNotApplicable(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -275,4 +238,29 @@ func TestAGoneTicketIsNotApplicable(t *testing.T) {
 	wantNotApplicable(t, "link", w.tr.AddLink(ctx, w.id, trackerport.TicketLink{URL: "https://x"}))
 	_, err := w.tr.ListComments(ctx, w.id)
 	wantNotApplicable(t, "list comments", err)
+}
+
+// A remote issue's record is held by its own tracker, whatever its key: the
+// internal tracker refuses to write it, and names the issue.
+func TestARemoteRecordIsNotThisTrackers(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	if err := w.conf.DB().UpsertIntegration(ctx, confstore.StoredIntegration{ID: "jira-1", UserID: owner,
+		Port: confstore.PortTicketSource, Kind: "jira", Name: "jira", Config: map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	rec, _, err := w.conf.RecordTicket(ctx, "jira-1", confstore.TicketSeen{RemoteID: "10001", Key: "PROJ-1", Title: "Remote"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = w.tr.Transition(ctx, rec.ID, "Done")
+	wantNotApplicable(t, "transition", err)
+	if err == nil || !strings.Contains(err.Error(), "PROJ-1") {
+		t.Errorf("err = %v, want it to name the issue", err)
+	}
+	wantNotApplicable(t, "comment", w.tr.Comment(ctx, rec.ID, "x"))
+	wantNotApplicable(t, "set", w.tr.SetFields(ctx, rec.ID, map[string]string{"labels": "a"}))
+	if _, err := w.tr.Fields(ctx, rec.ID, []string{"labels"}); err == nil {
+		t.Error("fields of a remote record were read")
+	}
 }

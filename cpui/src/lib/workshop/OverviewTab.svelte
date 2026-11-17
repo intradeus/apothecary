@@ -8,6 +8,7 @@
 	import { stateTab } from '$lib/core/format';
 	import { I } from '$lib/design/icons';
 	import RunRow from '$lib/run/RunRow.svelte';
+	import NewTicketLink from '$lib/tickets/NewTicketLink.svelte';
 
 	let {
 		project,
@@ -77,9 +78,12 @@
 			{#if !live.length}
 				<div class="pane-body row">
 					<span class="muted small">{t('workshop.overview.runsStart')}</span>
-					<a class="btn btn-sm" href={to.newTicket({ project: project.id })}
-						>{I.add} {t('workshop.overview.newTicket')}</a
-					>
+					<NewTicketLink
+						{project}
+						{integrations}
+						label={t('workshop.overview.newTicket')}
+						cls="btn-sm"
+					/>
 				</div>
 			{/if}
 			{#if finished.length}

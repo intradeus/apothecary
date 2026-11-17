@@ -235,14 +235,14 @@ main:
 			t.Error("a rerun rewrote its original")
 		}
 		// The ticket's runs, oldest to newest attempt, all found.
-		runs, err := h.e.RunsOf(ctx, ticket.Ref(testProject, "tk-1"))
+		runs, err := h.e.RunsOf(ctx, ticket.Ref("tk-1"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(runs) != 3 {
 			t.Errorf("runs of the ticket = %d", len(runs))
 		}
-		if none, err := h.e.RunsOf(ctx, ticket.Ref(testProject, "tk-2")); err != nil || len(none) != 0 {
+		if none, err := h.e.RunsOf(ctx, ticket.Ref("tk-2")); err != nil || len(none) != 0 {
 			t.Errorf("runs of another ticket = %v, %v", none, err)
 		}
 	})
@@ -748,7 +748,7 @@ func TestReapOnceReportsItsFailures(t *testing.T) {
 	if err := h.e.Recover(ctx); err == nil || !strings.Contains(err.Error(), "db down") {
 		t.Errorf("recover = %v", err)
 	}
-	if _, err := h.e.RunsOf(ctx, ticket.Ref(testProject, "t")); err == nil {
+	if _, err := h.e.RunsOf(ctx, ticket.Ref("t")); err == nil {
 		t.Error("runs of a ticket swallowed the failure")
 	}
 	if _, err := h.e.ItemRuns(ctx, testProject, ticket.Name); err == nil {

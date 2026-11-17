@@ -2,9 +2,10 @@
 // notification channels.
 
 /** Model auth is harness-owned, so there is no provider port. 'ticketsource'
- *  is a ticket tracker: a remote one tickets mirror, or the user's built-in
- *  internal one (kind 'internal'). Unlike the others it is not referenced by
- *  a project — a remote one is picked per import. */
+ *  is a ticket tracker: a remote one (Jira, GitHub, GitLab issues) read
+ *  live, or the user's built-in internal one (kind 'internal'). Each
+ *  workshop names one as its ticket source (Project.ticketSourceId), and
+ *  several workshops may share it. */
 export type Port = 'repository' | 'provisioner' | 'harness' | 'ticketsource';
 
 export interface Integration {

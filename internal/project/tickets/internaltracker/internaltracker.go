@@ -1,9 +1,9 @@
 // Package internaltracker is Apothecary's own ticket tracker: the tracker of
-// every ticket with no remote source (hand-written, or made for a merge
-// request). It implements trackerport.TicketWriter over the ticket row, so a
-// flow's tracker actions — and the UI — write to it exactly as they write to
-// Jira, and a hand-written ticket's `ticket_transition to: done` really moves
-// it (docs/ticket-sync-plan.md § Write path).
+// every ticket whose source is its owner's internal integration (kind
+// internal: hand-written, or made for a merge request). It implements
+// trackerport.TicketWriter over the ticket row, so a flow's tracker actions —
+// and the UI — write to it exactly as they write to Jira, and a hand-written
+// ticket's `ticket_transition to: Done` really moves it.
 //
 // A ticket's key on this tracker is its id. The writes:
 //
@@ -47,27 +47,24 @@ func New(conf *confstore.Service) *Tracker { return &Tracker{Conf: conf} }
 // fieldLabels is the one field the internal tracker has.
 const fieldLabels = "labels"
 
-// gone is the refusal for a ticket that no longer exists, or that is no
-// longer this tracker's.
+// gone is the refusal for a ticket that no longer exists.
 func gone(key string, err error) error {
 	if errors.Is(err, confstore.ErrNotFound) {
 		return &trackerport.ErrNotApplicable{Key: key, Reason: "the ticket was deleted"}
-	}
-	if errors.Is(err, confstore.ErrRemoteOwned) {
-		return &trackerport.ErrNotApplicable{Key: key, Reason: "the ticket mirrors a remote issue now; the internal tracker no longer holds it"}
 	}
 	return err
 }
 
 // ticket reads the ticket the key names, refusing one this tracker does not
-// hold.
+// hold: a remote issue's record is written through its own tracker.
 func (t *Tracker) ticket(ctx context.Context, key string) (confstore.Ticket, error) {
 	tk, err := t.Conf.GetTicket(ctx, key)
 	if err != nil {
 		return confstore.Ticket{}, gone(key, err)
 	}
-	if tk.SourceID != "" {
-		return confstore.Ticket{}, gone(key, confstore.ErrRemoteOwned)
+	if !tk.Internal() {
+		return confstore.Ticket{}, &trackerport.ErrNotApplicable{Key: key,
+			Reason: fmt.Sprintf("the ticket is %s issue %s; the internal tracker does not hold it", tk.SourceKind, tk.SourceKey)}
 	}
 	return tk, nil
 }

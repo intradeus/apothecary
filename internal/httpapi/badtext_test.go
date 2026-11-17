@@ -18,16 +18,17 @@ func authHeader(x *env) map[string]string {
 // saying so, never a 500 quoting the SQL.
 func TestBadTextIsRefusedAtTheEdge(t *testing.T) {
 	x := newEnv(t, engine.Config{})
+	list := "/api/projects/" + testProject + "/tickets"
 	for name, c := range map[string]struct{ method, path, body string }{
-		"ticket body":      {"POST", "/api/tickets", `{"title":"t\u0000","project_id":"` + testProject + `"}`},
-		"a key":            {"POST", "/api/tickets", `{"title":"t","project_id":"` + testProject + `","x\u0000":1}`},
-		"nested":           {"POST", "/api/tickets", `{"title":"t","project_id":"` + testProject + `","params":{"a":["\u0000"]}}`},
-		"an optional body": {"POST", "/api/tickets/nope/runs", `{"goal":"g\u0000"}`},
+		"ticket body":      {"POST", list, `{"title":"t\u0000"}`},
+		"a key":            {"POST", list, `{"title":"t","x\u0000":1}`},
+		"nested":           {"POST", list, `{"title":"t","params":{"a":["\u0000"]}}`},
+		"an optional body": {"POST", list + "/nope/runs", `{"goal":"g\u0000"}`},
 		"sign-in":          {"POST", "/api/auth/login", `{"login":"lu\u0000","proof":"correct horse"}`},
 		"path":             {"GET", "/api/attachments/a%00b", ""},
 		"path, utf-8":      {"GET", "/api/attachments/a%ffb", ""},
-		"query":            {"GET", "/api/tickets?project=a%00b", ""},
-		"query key":        {"GET", "/api/tickets?a%ff=b", ""},
+		"query":            {"GET", list + "?q=a%00b", ""},
+		"query key":        {"GET", list + "?a%ff=b", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			res, body := x.bare(t, c.method, c.path, c.body, authHeader(x))
@@ -41,7 +42,7 @@ func TestBadTextIsRefusedAtTheEdge(t *testing.T) {
 // Text that only reads like one is text: a goal can quote the escape.
 func TestALiteralBackslashIsNotANUL(t *testing.T) {
 	x := newEnv(t, engine.Config{})
-	res, body := x.bare(t, "POST", "/api/tickets", `{"title":"the \\u0000 byte","project_id":"`+testProject+`"}`, authHeader(x))
+	res, body := x.bare(t, "POST", "/api/projects/"+testProject+"/tickets", `{"title":"the \\u0000 byte"}`, authHeader(x))
 	if res.StatusCode != http.StatusCreated || !strings.Contains(body, `\\u0000`) {
 		t.Errorf("ticket = %d %s", res.StatusCode, body)
 	}
@@ -51,14 +52,15 @@ func TestALiteralBackslashIsNotANUL(t *testing.T) {
 // leaves the body readable for it.
 func TestTheScanLeavesTheBodyToItsHandler(t *testing.T) {
 	x := newEnv(t, engine.Config{})
-	if res, body := x.bare(t, "POST", "/api/tickets", `{"title":"t","project_id":"`+testProject+`"}`, authHeader(x)); res.StatusCode != http.StatusCreated {
+	list := "/api/projects/" + testProject + "/tickets"
+	if res, body := x.bare(t, "POST", list, `{"title":"t"}`, authHeader(x)); res.StatusCode != http.StatusCreated {
 		t.Errorf("a body the scan read = %d %s", res.StatusCode, body)
 	}
-	if res, body := x.bare(t, "POST", "/api/tickets", `{"title":`, authHeader(x)); res.StatusCode != http.StatusBadRequest || !strings.Contains(body, "invalid JSON") {
+	if res, body := x.bare(t, "POST", list, `{"title":`, authHeader(x)); res.StatusCode != http.StatusBadRequest || !strings.Contains(body, "invalid JSON") {
 		t.Errorf("malformed = %d %s", res.StatusCode, body)
 	}
-	big := `{"title":"` + strings.Repeat("x", maxScannedBody) + `","project_id":"` + testProject + `"}`
-	if res, body := x.bare(t, "POST", "/api/tickets", big, authHeader(x)); res.StatusCode != http.StatusBadRequest || !strings.Contains(body, "invalid JSON") {
+	big := `{"title":"` + strings.Repeat("x", maxScannedBody) + `"}`
+	if res, body := x.bare(t, "POST", list, big, authHeader(x)); res.StatusCode != http.StatusBadRequest || !strings.Contains(body, "invalid JSON") {
 		t.Errorf("past the handler's limit = %d %.200s", res.StatusCode, body)
 	}
 }

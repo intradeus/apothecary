@@ -37,11 +37,16 @@ const sync = anAction('sync', {
 		{ name: 'status', kind: 'text', required: true, description: 'As the tracker spells it.' }
 	]
 });
+const move = anAction('ticket_transition', {
+	title: 'Move the ticket',
+	requires: 'tracker',
+	settings: [{ name: 'to', kind: 'text', required: true, unbound: true }]
+});
 
 const setup = (
 	over: Partial<DocStage> = {},
 	doc: Partial<FlowDoc> = {},
-	actions: ActionSpec[] = [commit, label, sync]
+	actions: ActionSpec[] = [commit, label, sync, move]
 ) => {
 	const d = aDoc({ stages: [aStage('act', 'action', over)], ...doc });
 	const { onchange } = handlers();
@@ -95,18 +100,20 @@ describe('ActionStage', () => {
 			description: 'Does it.',
 			requires: 'repository',
 			needs: 'merge_request',
-			exactlyOne: ['to', 'status']
+			exactlyOne: ['value', 'text']
 		});
 		setup({ action: 'strict' }, {}, [strict]);
 		expect(screen.getByText('Does it.')).toBeInTheDocument();
 		expect(screen.getByText(/integration on the project running this flow/)).toBeInTheDocument();
 		expect(screen.getByText(/Needs a merge request/)).toBeInTheDocument();
-		expect(screen.getByText('Bind exactly one of to / status.')).toBeInTheDocument();
+		expect(screen.getByText('Bind exactly one of value / text.')).toBeInTheDocument();
 	});
 
 	it('explains a tracker action instead of asking for an integration', () => {
 		setup({ action: 't' }, {}, [anAction('t', { requires: 'tracker' })]);
-		expect(screen.getByText(/Acts on the ticket's tracker issue/)).toBeInTheDocument();
+		expect(
+			screen.getByText(/Acts on the ticket in the workshop's ticket source/)
+		).toBeInTheDocument();
 		expect(screen.queryByText(/integration on the project/)).not.toBeInTheDocument();
 	});
 
@@ -189,6 +196,23 @@ describe('ActionStage', () => {
 			await pick(/labels/, 'written here');
 			expect(stage.with).toBeUndefined();
 			expect(screen.getByRole('textbox', { name: 'labels' })).toBeInTheDocument();
+		});
+
+		it('takes a status as written, or a string parameter it suggests', async () => {
+			const { stage } = setup({ action: 'ticket_transition' });
+			const to = screen.getByLabelText(/^to/);
+			expect(to).toHaveAttribute('list', 'flow-params');
+			expect(screen.getByText(/One with no default waits for the workshop/)).toBeInTheDocument();
+			await fill(to, 'In Progress');
+			expect(stage.with).toEqual({ to: 'In Progress' });
+			await fill(to, '$done_status');
+			expect(stage.with).toEqual({ to: '$done_status' });
+		});
+
+		it('keeps the plain help on a setting that cannot wait', () => {
+			setup({ action: 'sync' });
+			expect(screen.getByText('A literal written in the flow, not a file.')).toBeInTheDocument();
+			expect(screen.queryByText(/waits for the workshop/)).not.toBeInTheDocument();
 		});
 	});
 });

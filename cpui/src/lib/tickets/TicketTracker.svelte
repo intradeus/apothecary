@@ -1,41 +1,49 @@
 <script lang="ts">
-	// A ticket as its tracker holds it: the status (changed through the
-	// tracker — the remote issue, or the user's internal tracker), the labels,
-	// the links, and how fresh the mirror is.
+	// A ticket as its tracker holds it, read live: the status (changed
+	// through the tracker, by name — a remote one's list is read-only but its
+	// statuses are still reachable), the labels and the links; and the one
+	// thing kept here, the base branch.
 	import { untrack } from 'svelte';
 	import { api } from '$lib/api';
-	import {
-		statusOptions,
-		trackerIdOf,
-		type Ticket,
-		type TicketStatusRef,
-		type TrackerStatus
-	} from '$lib/domain';
+	import { statusOptions, type TicketDetail, type TrackerStatus } from '$lib/domain';
+	import { renderBranch } from '$lib/core/branchname';
 	import { errorMessage } from '$lib/core/errors';
-	import { ago, fmtAbs } from '$lib/core/format';
 	import { I } from '$lib/design/icons';
 	import { t } from '$lib/i18n/index.svelte';
 	import Select from '$lib/ui/Select.svelte';
 	import TicketStatusChip from './TicketStatusChip.svelte';
 
-	let { ticket, onchange }: { ticket: Ticket; onchange: (tk: Ticket) => void } = $props();
+	let {
+		projectId,
+		ticket,
+		branchFormat = '',
+		onchange
+	}: {
+		/** The workshop the ticket is read through. */
+		projectId: string;
+		ticket: TicketDetail;
+		/** The workshop's branch format: what an empty base branch becomes. */
+		branchFormat?: string;
+		onchange: (tk: TicketDetail) => void;
+	} = $props();
 
 	let statuses = $state<TrackerStatus[]>([]);
 	let error = $state('');
-	let busy = $state<'' | 'status' | 'labels' | 'sync'>('');
+	let busy = $state<'' | 'status' | 'labels' | 'branch' | 'refresh'>('');
 	let newLabel = $state('');
+	// svelte-ignore state_referenced_locally
+	let branch = $state(ticket.baseBranch);
 
-	// Reload only when the tracker changes, not on every update of the ticket.
-	const trackerKey = $derived(ticket.source?.integrationId ?? '');
+	// Reload only when the source changes, not on every update of the ticket.
+	const sourceId = $derived(ticket.source.id);
 	$effect(() => {
-		void trackerKey;
-		untrack(() => void loadStatuses());
+		const id = sourceId;
+		untrack(() => void loadStatuses(id));
 	});
 
-	async function loadStatuses() {
+	async function loadStatuses(id: string) {
 		try {
-			const id = trackerIdOf(ticket, ticket.source ? [] : await api.integrations.list());
-			statuses = id ? (await api.integrations.statuses(id)).statuses : [];
+			statuses = (await api.integrations.statuses(id)).statuses;
 		} catch {
 			// The select then offers only the current status: changing it is
 			// what failed, not the ticket.
@@ -44,18 +52,20 @@
 	}
 
 	const options = $derived(
-		statusOptions(statuses, ticket.status).map((s: TicketStatusRef) => ({
-			value: s.id,
+		statusOptions(statuses, ticket).map((s) => ({
+			value: s.name,
 			label: s.name,
 			detail: s.isDone ? t('tickets.doneMark') : undefined
 		}))
 	);
 
-	async function run(what: 'status' | 'labels' | 'sync', call: () => Promise<Ticket>) {
+	async function run(what: typeof busy, call: () => Promise<TicketDetail>) {
 		busy = what;
 		error = '';
 		try {
-			onchange(await call());
+			const tk = await call();
+			branch = tk.baseBranch;
+			onchange(tk);
 		} catch (e) {
 			error = errorMessage(e);
 		} finally {
@@ -63,12 +73,12 @@
 		}
 	}
 
-	const setStatus = (statusId: string) =>
-		statusId !== ticket.status?.id &&
-		run('status', () => api.tickets.setStatus(ticket.id, statusId));
+	const setStatus = (name: string) =>
+		name !== ticket.status &&
+		run('status', () => api.tickets.setStatus(projectId, ticket.key, name));
 
 	const setLabels = (labels: string[]) =>
-		run('labels', () => api.tickets.setLabels(ticket.id, labels));
+		run('labels', () => api.tickets.setLabels(projectId, ticket.key, labels));
 
 	function addLabel(e: SubmitEvent) {
 		e.preventDefault();
@@ -81,28 +91,35 @@
 		newLabel = '';
 		void setLabels([...ticket.labels, l]);
 	}
+
+	// A remote issue takes only the base branch; an internal ticket takes the
+	// whole draft, so the rest goes back as it is.
+	function saveBranch(e: SubmitEvent) {
+		e.preventDefault();
+		void run('branch', () =>
+			api.tickets.update(projectId, ticket.key, {
+				title: ticket.title,
+				goal: ticket.body,
+				baseBranch: branch.trim(),
+				changeType: ticket.changeType,
+				typeId: ticket.typeId || undefined,
+				attachmentIds: ticket.attachmentIds
+			})
+		);
+	}
 </script>
 
 <section class="glass pane tracker" aria-label={t('tickets.tracker')}>
-	{#if ticket.syncState === 'gone'}
-		<div class="banner tint-danger" role="alert">
-			{t('tickets.gone', { kind: ticket.source?.kind ?? '' })}
-		</div>
-	{:else if ticket.syncState === 'error'}
-		<div class="banner tint-warning" role="alert">
-			{t('tickets.syncFailed', { error: ticket.syncError ?? '' })}
-		</div>
-	{/if}
 	<div class="pane-body rows">
 		<div class="line">
 			<span class="field-label">{t('tickets.col.status')}</span>
-			<TicketStatusChip status={ticket.status} size="md" />
+			<TicketStatusChip status={ticket.status} done={ticket.done} size="md" />
 			{#if options.length}
 				<span class="sel">
 					<Select
 						size="sm"
 						{options}
-						value={ticket.status?.id}
+						value={ticket.status}
 						placeholder={t('tickets.setStatus')}
 						label={t('tickets.setStatus')}
 						disabled={busy !== ''}
@@ -111,18 +128,18 @@
 				</span>
 			{/if}
 			<span class="spacer"></span>
-			{#if ticket.source}
-				<span class="muted small" title={ticket.syncedAt ? fmtAbs(ticket.syncedAt) : undefined}
-					>{ticket.syncedAt
-						? t('tickets.syncedAgo', { ago: ago(ticket.syncedAt) })
-						: t('tickets.neverSynced')}</span
+			{#if ticket.url}
+				<a class="btn btn-sm" href={ticket.url} target="_blank" rel="noreferrer"
+					>{t('tickets.openIn', { name: ticket.source.name })} {I.external}</a
 				>
 			{/if}
 			<button
 				class="btn-sm"
+				title={t('tickets.refreshHelp')}
 				disabled={busy !== ''}
-				aria-busy={busy === 'sync'}
-				onclick={() => run('sync', () => api.tickets.sync(ticket.id))}
+				aria-busy={busy === 'refresh'}
+				onclick={() =>
+					run('refresh', () => api.projects.ticket(projectId, ticket.key, { refresh: true }))}
 				>{I.retry} {t('tickets.refresh')}</button
 			>
 		</div>
@@ -152,6 +169,28 @@
 				/>
 			</form>
 		</div>
+
+		<form class="line" onsubmit={saveBranch}>
+			<label class="field-label" for="tk-branch">{t('tickets.baseBranch')}</label>
+			<input
+				id="tk-branch"
+				class="mono small branch"
+				bind:value={branch}
+				placeholder={renderBranch(
+					branchFormat,
+					ticket.changeType,
+					ticket.internal ? '' : ticket.key,
+					ticket.title
+				)}
+				disabled={busy !== ''}
+			/>
+			{#if branch.trim() !== ticket.baseBranch}
+				<button class="btn-sm" type="submit" aria-busy={busy === 'branch'} disabled={busy !== ''}
+					>{t('tickets.saveBranch')}</button
+				>
+			{/if}
+			<span class="help">{t('tickets.branchHelp')}</span>
+		</form>
 
 		{#if ticket.links.length}
 			<div class="line">
@@ -184,6 +223,7 @@
 	}
 	.line > .field-label {
 		min-width: 64px;
+		margin: 0;
 	}
 	.sel {
 		min-width: 160px;
@@ -196,6 +236,10 @@
 	.add input {
 		width: 14ch;
 	}
+	.branch {
+		flex: 1;
+		min-width: 18ch;
+	}
 	.links {
 		list-style: none;
 		margin: 0;
@@ -203,10 +247,5 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 4px 14px;
-	}
-	.banner {
-		padding: 8px 14px;
-		border-bottom-width: 1px;
-		border-bottom-style: solid;
 	}
 </style>

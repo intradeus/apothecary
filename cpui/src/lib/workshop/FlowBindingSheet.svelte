@@ -3,13 +3,15 @@
 	// document declares. The document stays as it is and its defaults stay
 	// the fallback; a run may still override any value. A template is
 	// configurable without being copied — copying is only for changing its
-	// stages.
+	// stages. A parameter read as a tracker status is bound as free text, the
+	// workshop's ticket source's statuses suggested.
 	import { errorMessage } from '$lib/core/errors';
 	import { api } from '$lib/api';
 	import type { Flow, FlowBinding, Integration, Model, ParamDecl, Project } from '$lib/domain';
 	import { KNOWN_PARAMS } from '$lib/domain/flowdoc';
 	import ParamFields from '$lib/flow/ParamFields.svelte';
 	import { modelHarnessKinds } from '$lib/flow/paramValues';
+	import { statusParams } from './statusParams';
 	import Modal from '$lib/ui/Modal.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
@@ -34,6 +36,8 @@
 	let stale = $state<string[]>([]);
 	let integrations = $state<Integration[]>([]);
 	let modelsByKind = $state<Record<string, Model[]>>({});
+	let statusNames = $state<string[]>([]);
+	let readsStatus = $state<string[]>([]);
 	let loading = $state(true);
 	let busy = $state(false);
 	let error = $state('');
@@ -75,7 +79,21 @@
 		} finally {
 			loading = false;
 		}
+		void loadStatuses();
 	});
+
+	// The status parameters and the source's statuses they suggest — best
+	// effort: without them the field is plain text.
+	async function loadStatuses() {
+		try {
+			readsStatus = statusParams(flow.yaml, await api.system.actions());
+			if (!readsStatus.length) return;
+			const list = await api.integrations.statuses(project.ticketSourceId);
+			statusNames = [...list.statuses].sort((a, b) => a.position - b.position).map((x) => x.name);
+		} catch {
+			// Suggestions only.
+		}
+	}
 
 	// Each model field suggests what its harness lists — best effort: a
 	// harness that cannot list leaves the field free text. Fetched once per
@@ -143,6 +161,8 @@
 				{values}
 				{harnesses}
 				{modelsByKind}
+				statusParams={readsStatus}
+				statuses={statusNames}
 				idPrefix="fb"
 				onchange={(n, v) => (values[n] = v)}
 			/>
@@ -154,6 +174,8 @@
 					{values}
 					{harnesses}
 					{modelsByKind}
+					statusParams={readsStatus}
+					statuses={statusNames}
 					idPrefix="fb"
 					onchange={(n, v) => (values[n] = v)}
 				/>

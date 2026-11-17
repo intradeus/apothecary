@@ -26,6 +26,10 @@ parameters:
   screenshots:     { type: bool, default: false, description: "bring the app up and attach screenshots of the change to the merge request (needs a project service and the project's browser)" }
   app:             { type: string, default: default, description: "the project service screenshots are taken of (Workshop → Settings → Services)" }
   mr_labels:       { type: string, list: true, default: [apothecary], description: "labels the merge request gets once it is open" }
+  todo_status:        { type: string, description: "the tracker status a ticket goes back to when its run is abandoned" }
+  in_progress_status: { type: string, description: "the tracker status the ticket moves to as the run starts" }
+  in_review_status:   { type: string, description: "the tracker status the ticket moves to once the merge request is open" }
+  done_status:        { type: string, description: "the tracker status the ticket moves to once the merge request merges" }
 # A run is started on a ticket — by a person, or by an automation — and its
 # MAIN chain runs: plan, build, review, open the merge request — and ends:
 # the run is in review. From there the run is idle, and the WATCHERS run
@@ -58,15 +62,14 @@ parameters:
 # the cursor, so a watcher starts only once that chain has ended. Only an
 # outcome takes the cursor from a parked chain.
 #
-# The ticket follows the work through FLOW STEPS — in_progress as the run
-# starts, in_review once the merge request is open, done once it merges —
-# on its tracker: the remote issue for an imported ticket, Apothecary's
-# internal tracker for one written by hand (or opened for a merge request).
-# Each tracker integration's status list says which of its statuses holds
-# each step ("done = Ready for prod" for a Jira team whose Done is a deploy
-# away; GitHub Issues' closed). A step no status of the ticket's tracker
-# holds skips the stage. The ticket also gets the branch as a link once it
-# is pushed. All of it is best effort: bookkeeping never blocks the work.
+# The ticket follows the work through its tracker's own statuses — one as
+# the run starts, another once the merge request is open, another once it
+# merges — on the workshop's ticket source: a remote tracker, or Apothecary's
+# internal one. Which status each is the workshop's to say: the four
+# *_status parameters have no default, so a run waits until they are bound
+# ("Ready for prod" for a Jira team whose Done is a deploy away; GitHub
+# Issues' closed). The ticket also gets the branch as a link once it is
+# pushed. All of it is best effort: bookkeeping never blocks the work.
 #
 # Failure philosophy: every agent/command stage first retries itself with its
 # error fed back, then escalates to the debug leaf (`then: debug`) — a human
@@ -431,7 +434,7 @@ main:
   - id: in_progress
     type: action
     action: ticket_transition
-    with: { to: in_progress }
+    with: { to: $in_progress_status }
     description: "move the ticket to its tracker's in-progress status"
     on_success: plan
     on_fail: { to: plan, max: 1 }
@@ -601,7 +604,7 @@ main:
 
   # The issue gets the pushed branch as a link — best effort, like every
   # tracker move. (Jira's Development panel finds the branch by itself when
-  # its name carries the issue key, which an imported ticket's does.)
+  # its name carries the issue key, which a remote ticket's default does.)
   - id: link_branch
     type: action
     action: ticket_link_branch
@@ -626,7 +629,7 @@ main:
   - id: in_review
     type: action
     action: ticket_transition
-    with: { to: in_review }
+    with: { to: $in_review_status }
     description: "move the ticket to its tracker's in-review status"
     on_fail: end
 
@@ -855,7 +858,7 @@ outcomes:
       - id: ticket_done
         type: action
         action: ticket_transition
-        with: { to: done }
+        with: { to: $done_status }
         description: "move the ticket to its tracker's done status"
         on_fail: done
 
@@ -867,6 +870,6 @@ outcomes:
       - id: ticket_back
         type: action
         action: ticket_transition
-        with: { to: todo }
+        with: { to: $todo_status }
         description: "move the ticket back to its tracker's to-do status"
         on_fail: abort

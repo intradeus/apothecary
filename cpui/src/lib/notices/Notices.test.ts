@@ -13,7 +13,6 @@ vi.mock('$lib/api', () => ({
 		pings: { pending: vi.fn() },
 		runs: { list: vi.fn() },
 		projects: { list: vi.fn() },
-		tickets: { list: vi.fn() },
 		system: { limits: vi.fn() }
 	}
 }));
@@ -42,7 +41,6 @@ beforeEach(() => {
 	vi.mocked(api.runs.list).mockResolvedValue([]);
 	vi.mocked(api.pings.pending).mockResolvedValue([]);
 	vi.mocked(api.projects.list).mockResolvedValue([]);
-	vi.mocked(api.tickets.list).mockResolvedValue([]);
 	vi.mocked(api.system.limits).mockResolvedValue(null as never);
 	vi.mocked(api.notices.list).mockResolvedValue([]);
 	fleet.reset();

@@ -13,8 +13,7 @@ vi.mock('$lib/api', () => ({
 			statuses: vi.fn(),
 			types: vi.fn(),
 			saveStatuses: vi.fn(),
-			saveTypes: vi.fn(),
-			sync: vi.fn()
+			saveTypes: vi.fn()
 		}
 	},
 	isInUse: vi.fn()
@@ -25,7 +24,6 @@ const status = (over: Partial<TrackerStatus>): TrackerStatus => ({
 	integrationId: 'i1',
 	remoteId: '1',
 	name: 'To Do',
-	remoteCategory: 'new',
 	position: 0,
 	isDone: false,
 	...over
@@ -40,7 +38,7 @@ const type = (over: Partial<TrackerType>): TrackerType => ({
 	...over
 });
 
-const jira = anIntegration({ id: 'i1', name: 'Jira', port: 'ticketsource', kind: 'jira' });
+const jira = anIntegration({ id: 'remote', name: 'Jira', port: 'ticketsource', kind: 'jira' });
 const own = anIntegration({ id: 'i1', name: 'Apothecary', port: 'ticketsource', kind: 'internal' });
 
 const statuses = () => within(screen.getByRole('region', { name: 'Statuses' }));
@@ -54,53 +52,29 @@ const setup = async (integration: typeof jira) => {
 beforeEach(() => {
 	vi.resetAllMocks();
 	toasts.list = [];
-	vi.mocked(api.integrations.statuses).mockResolvedValue({
+	vi.mocked(api.integrations.statuses).mockImplementation(async (id) => ({
 		statuses: [
-			status({ id: 's1', name: 'To Do', flowStep: 'todo' }),
+			status({ id: 's1', name: 'To Do' }),
 			status({ id: 's2', name: 'Done', position: 1 })
 		],
-		warnings: []
-	});
+		readOnly: id === 'remote'
+	}));
 	vi.mocked(api.integrations.types).mockResolvedValue([type({})]);
 });
 
 describe('TrackerLists, a remote tracker', () => {
-	it("shows the tracker's rows with their names fixed", async () => {
+	it("shows the tracker's statuses read-only", async () => {
 		await setup(jira);
 		expect(await statuses().findByText('To Do')).toBeInTheDocument();
+		expect(statuses().getByText(/read live/)).toBeInTheDocument();
 		expect(statuses().queryByRole('textbox')).not.toBeInTheDocument();
+		expect(statuses().queryByRole('button', { name: 'Move up' })).not.toBeInTheDocument();
+		expect(statuses().queryByRole('button', { name: 'Delete row' })).not.toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: '+ Status' })).not.toBeInTheDocument();
+		expect(screen.getByRole('checkbox', { name: 'Done is done' })).toBeDisabled();
+		expect(screen.queryByRole('button', { name: 'Save statuses' })).not.toBeInTheDocument();
 		expect(types().getByText('Bug')).toBeInTheDocument();
-	});
-
-	it('saves Done and the flow step', async () => {
-		vi.mocked(api.integrations.saveStatuses).mockImplementation(async (_, rows) => ({
-			statuses: rows,
-			warnings: []
-		}));
-		await setup(jira);
-		await userEvent.click(screen.getByRole('checkbox', { name: 'Done is done' }));
-		await choose('Flow step of Done', 'done');
-		await userEvent.click(screen.getByRole('button', { name: 'Save statuses' }));
-
-		expect(api.integrations.saveStatuses).toHaveBeenCalledWith(
-			'i1',
-			[
-				expect.objectContaining({ id: 's1', flowStep: 'todo' }),
-				expect.objectContaining({ id: 's2', isDone: true, flowStep: 'done' })
-			],
-			undefined
-		);
-		await waitFor(() => expect(toasts.list.at(-1)?.text).toBe('Jira saved'));
-	});
-
-	it('offers a step another status holds, but disabled', async () => {
-		await setup(jira);
-		await userEvent.click(screen.getByRole('combobox', { name: 'Flow step of Done' }));
-		expect(await screen.findByRole('option', { name: 'to do' })).toHaveAttribute(
-			'aria-disabled',
-			'true'
-		);
+		expect(types().queryByRole('textbox')).not.toBeInTheDocument();
 	});
 
 	it('saves a change type', async () => {
@@ -110,54 +84,44 @@ describe('TrackerLists, a remote tracker', () => {
 		await choose('Change type of Bug', 'chore');
 		await userEvent.click(screen.getByRole('button', { name: 'Save types' }));
 		expect(api.integrations.saveTypes).toHaveBeenCalledWith(
-			'i1',
+			'remote',
 			[expect.objectContaining({ id: 'y1', changeType: 'chore' })],
 			undefined
 		);
+		await waitFor(() => expect(toasts.list.at(-1)?.text).toBe('Jira saved'));
 	});
 
-	it('refreshes the lists from the tracker, showing its warnings', async () => {
+	it('refreshes the lists from the tracker', async () => {
 		await setup(jira);
 		vi.mocked(api.integrations.statuses).mockResolvedValue({
-			statuses: [],
-			warnings: ['status_map entry “Old” matched nothing']
+			statuses: [status({ id: 's3', name: 'Shipped' })],
+			readOnly: true
 		});
 		await userEvent.click(screen.getByRole('button', { name: 'Refresh from tracker' }));
 
-		expect(api.integrations.statuses).toHaveBeenLastCalledWith('i1', true);
-		expect(api.integrations.types).toHaveBeenLastCalledWith('i1', true);
-		expect(await screen.findByText('status_map entry “Old” matched nothing')).toBeInTheDocument();
+		expect(api.integrations.statuses).toHaveBeenLastCalledWith('remote', true);
+		expect(api.integrations.types).toHaveBeenLastCalledWith('remote', true);
+		expect(await statuses().findByText('Shipped')).toBeInTheDocument();
 	});
 
-	it('syncs its tickets now', async () => {
-		vi.mocked(api.integrations.sync).mockResolvedValue({
-			tickets: 5,
-			synced: 4,
-			gone: 1,
-			failed: 0,
-			busy: 0,
-			rateLimited: 0
-		});
+	it('shows a list that would not load', async () => {
+		vi.mocked(api.integrations.statuses).mockRejectedValue(new Error('rate limited'));
 		render(TrackerLists, { integration: jira });
-		await userEvent.click(screen.getByRole('button', { name: 'Sync now' }));
-		await waitFor(() =>
-			expect(toasts.list.at(-1)?.text).toMatch(/^Synced 4 of 5 tickets · 1 gone/)
-		);
+		expect(await screen.findByText('rate limited')).toBeInTheDocument();
 	});
 });
 
 describe('TrackerLists, the internal tracker', () => {
-	it('has no tracker to refresh from or sync', async () => {
+	it('has no tracker to refresh from', async () => {
 		await setup(own);
 		await statuses().findByDisplayValue('To Do');
-		expect(screen.queryByRole('button', { name: 'Sync now' })).not.toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Refresh from tracker' })).not.toBeInTheDocument();
 	});
 
 	it('adds, renames and reorders statuses', async () => {
 		vi.mocked(api.integrations.saveStatuses).mockImplementation(async (_, rows) => ({
 			statuses: rows,
-			warnings: []
+			readOnly: false
 		}));
 		await setup(own);
 		const first = await statuses().findByDisplayValue('To Do');
@@ -189,7 +153,7 @@ describe('TrackerLists, the internal tracker', () => {
 		const inUse = new Error('in use');
 		vi.mocked(api.integrations.saveStatuses)
 			.mockRejectedValueOnce(inUse)
-			.mockImplementation(async (_, rows) => ({ statuses: rows, warnings: [] }));
+			.mockImplementation(async (_, rows) => ({ statuses: rows, readOnly: false }));
 		vi.mocked(isInUse).mockImplementation((e) => e === inUse);
 		await setup(own);
 		await statuses().findByDisplayValue('To Do');

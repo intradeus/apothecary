@@ -40,10 +40,11 @@ type Ticket struct {
 	// ticket, delivered to every run of it. Snapshotted onto run_created;
 	// NOT associated to this run.
 	TicketAttachmentIDs []string
-	// Source* snapshot the tracker issue the ticket was imported from — the
+	// Source* snapshot the remote tracker issue the ticket stands for — the
 	// ticketsource integration id, its vendor, the issue key and its page —
-	// so a flow's tracker actions (FLOWLANG §2) know what to write to. All
-	// empty for a ticket written by hand: those stages then skip.
+	// for the run page and the prompt. All empty for a ticket of the
+	// internal tracker. A tracker action resolves its tracker from the
+	// ticket id either way.
 	SourceID   string
 	SourceKind string
 	SourceKey  string
@@ -53,7 +54,7 @@ type Ticket struct {
 // TicketNow is a ticket's tracker-owned facts as an agent's prompt shows
 // them, read when the prompt is built rather than when the run started: its
 // key on the tracker ("" for a ticket written here), the name of its status
-// ("" before its first sync), its labels, and its comments, oldest first.
+// ("" when the tracker could not say), its labels, and its comments, oldest first.
 type TicketNow struct {
 	Key      string
 	Status   string
@@ -63,7 +64,7 @@ type TicketNow struct {
 
 // TicketComment is one comment on a ticket. Own is one apothecary posted to
 // the internal tracker (origin apothecary); one it posted to a remote
-// tracker comes back from a sync as anybody's, and is known by its trailer.
+// tracker is read back live as anybody's, and is known by its trailer.
 type TicketComment struct {
 	Author string
 	Body   string

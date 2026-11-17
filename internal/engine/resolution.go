@@ -13,8 +13,8 @@ import (
 )
 
 // preflightTicket is the per-TICKET half of preflight: a tracker action
-// writes to the ticket's tracker — its remote issue's integration, or the
-// internal tracker for a ticket with no source — so whether that tracker
+// writes to the ticket's tracker — its source's integration: a remote
+// tracker, or its owner's internal tracker — so whether that tracker
 // resolves and can write is checked here, where the ticket is known, rather
 // than in preflight (per project, also run without a ticket by
 // PreflightProject). A run with no ticket passes (the engine skips those

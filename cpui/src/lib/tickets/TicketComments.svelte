@@ -11,12 +11,16 @@
 	import Markdown from '$lib/ui/Markdown.svelte';
 
 	let {
-		ticketId,
-		syncedAt
+		projectId,
+		ticketKey,
+		refreshed = 0
 	}: {
-		ticketId: string;
-		/** Reloads the thread when the ticket was synced again. */
-		syncedAt?: string;
+		/** The workshop the ticket is read through, and its key there. */
+		projectId: string;
+		ticketKey: string;
+		/** Bumped when the page refreshes the ticket: the thread is read from
+		 *  the tracker again too. */
+		refreshed?: number;
 	} = $props();
 
 	let comments = $state<TicketComment[] | null>(null);
@@ -37,15 +41,15 @@
 		})[o];
 
 	$effect(() => {
-		const id = ticketId;
-		void syncedAt;
+		const key = ticketKey;
+		const refresh = refreshed > 0;
 		api.tickets
-			.comments(id)
+			.comments(projectId, key, { refresh })
 			.then((c) => {
-				if (id === ticketId) comments = c;
+				if (key === ticketKey) comments = c;
 			})
 			.catch((e) => {
-				if (id === ticketId) error = errorMessage(e);
+				if (key === ticketKey) error = errorMessage(e);
 			});
 	});
 
@@ -55,7 +59,7 @@
 		posting = true;
 		error = '';
 		try {
-			comments = await api.tickets.addComment(ticketId, body.trim());
+			comments = await api.tickets.addComment(projectId, ticketKey, body.trim());
 			body = '';
 		} catch (err) {
 			error = errorMessage(err);

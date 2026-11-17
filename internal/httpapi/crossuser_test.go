@@ -121,22 +121,21 @@ func TestRunCannotInstallSomeoneElsesSkillset(t *testing.T) {
 	}
 	set := decode[skillstore.Skillset](t, data)
 	project := x.makeProject(t, "bobs", bob)
-	res, data = x.do(t, "POST", "/api/tickets", map[string]any{"title": "t", "project_id": project}, bob)
+	res, data = x.do(t, "POST", "/api/projects/"+project+"/tickets", map[string]any{"title": "t"}, bob)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("ticket = %d %s", res.StatusCode, data)
 	}
-	ticket := decode[confstore.Ticket](t, data).ID
-	res, data = x.do(t, "POST", "/api/tickets/"+ticket+"/runs", map[string]any{"skillsets": []map[string]any{{"id": set.ID}}}, bob)
+	ticket := decode[TicketDetail](t, data).Key
+	res, data = x.do(t, "POST", ticketPath(project, ticket)+"/runs", map[string]any{"skillsets": []map[string]any{{"id": set.ID}}}, bob)
 	if res.StatusCode != http.StatusBadRequest {
 		t.Errorf("run with someone's skillset = %d %s, want 400", res.StatusCode, data)
 	}
 }
 
-// A tracker integration is a person's credentials too: an import names it in
-// the body, past the guard, and must still be the importer's own.
-func TestImportCannotBorrowATracker(t *testing.T) {
+// A tracker integration is a person's credentials: a workshop reads only
+// its owner's.
+func TestWorkshopCannotBorrowATracker(t *testing.T) {
 	x := newConfEnv(t)
-	x.srv.Sources = x.resolver
 	bob := x.addUser(t, "bob", false)
 	project := x.makeProject(t, "bobs", bob)
 	res, data := x.do(t, "POST", "/api/integrations", map[string]any{"port": "ticketsource", "kind": "fake", "name": "mine"}, nil)
@@ -145,77 +144,83 @@ func TestImportCannotBorrowATracker(t *testing.T) {
 	}
 	tracker := decode[integrationJSON](t, data).ID
 
-	// DEV-1 is an issue the fake tracker really holds.
-	res, data = x.do(t, "POST", "/api/tickets", map[string]any{"project_id": project, "source_id": tracker, "source_key": "DEV-1"}, bob)
-	if res.StatusCode != http.StatusNotFound && res.StatusCode != http.StatusBadRequest {
-		t.Errorf("import through someone's tracker = %d %s, want it refused", res.StatusCode, data)
+	_, data = x.do(t, "GET", "/api/projects/"+project, nil, bob)
+	full := decode[map[string]any](t, data)
+	full["ticket_source_id"] = tracker
+	res, data = x.do(t, "PUT", "/api/projects/"+project, full, bob)
+	if res.StatusCode != http.StatusBadRequest && res.StatusCode != http.StatusNotFound {
+		t.Errorf("a workshop on someone's tracker = %d %s, want it refused", res.StatusCode, data)
 	}
-	if strings.Contains(string(data), "Farewell") {
-		t.Errorf("the tracker's issue reached another user: %s", data)
+	// DEV-1 is an issue the fake tracker really holds.
+	res, data = x.do(t, "GET", ticketPath(project, "DEV-1"), nil, bob)
+	if res.StatusCode != http.StatusNotFound || strings.Contains(string(data), "Farewell") {
+		t.Errorf("the tracker's issue reached another user: %d %s", res.StatusCode, data)
 	}
 }
 
-// An automation polls its source with its owner's credentials on a schedule,
-// so it must be the project owner's to name.
-func TestAutomationCannotBorrowATracker(t *testing.T) {
+// An automation pins a ticket only of its owner's.
+func TestAutomationCannotPinSomeoneElsesTicket(t *testing.T) {
 	x := newConfEnv(t)
 	bob := x.addUser(t, "bob", false)
 	project := x.makeProject(t, "bobs", bob)
-	res, data := x.do(t, "POST", "/api/integrations", map[string]any{"port": "ticketsource", "kind": "fake", "name": "mine"}, nil)
-	if res.StatusCode != http.StatusCreated {
-		t.Fatalf("tracker = %d %s", res.StatusCode, data)
-	}
-	tracker := decode[integrationJSON](t, data).ID
-
-	res, data = x.do(t, "POST", "/api/projects/"+project+"/automations", map[string]any{
-		"name": "steal", "kind": "tracker_query", "source_id": tracker, "query": "project = SECRET", "flow": "builder",
+	mine := x.newTicketOn(t, x.makeProject(t, "mine", nil), "mine", "")
+	res, data := x.do(t, "POST", "/api/projects/"+project+"/automations", map[string]any{
+		"name": "steal", "kind": "cron", "schedule": "0 * * * *", "ticket_id": mine, "flow": "builder",
 	}, bob)
 	if res.StatusCode != http.StatusBadRequest && res.StatusCode != http.StatusNotFound {
-		t.Errorf("automation on someone's tracker = %d %s, want it refused", res.StatusCode, data)
+		t.Errorf("automation on someone's ticket = %d %s, want it refused", res.StatusCode, data)
 	}
 }
 
-// A ticket stays in a project its owner owns: an edit is a body too.
-func TestTicketCannotMoveIntoSomeoneElsesProject(t *testing.T) {
+// A ticket is read and written only through its owner's workshops.
+func TestTicketOfSomeoneElsesTracker(t *testing.T) {
 	x := newConfEnv(t)
 	bob := x.addUser(t, "bob", false)
 	mine := x.makeProject(t, "mine", nil)
 	theirs := x.makeProject(t, "theirs", bob)
-	res, data := x.do(t, "POST", "/api/tickets", map[string]any{"title": "t", "project_id": theirs}, bob)
+	res, data := x.do(t, "POST", "/api/projects/"+theirs+"/tickets", map[string]any{"title": "t"}, bob)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("ticket = %d %s", res.StatusCode, data)
 	}
-	ticket := decode[confstore.Ticket](t, data).ID
+	ticket := decode[TicketDetail](t, data).Key
 
-	res, data = x.do(t, "PUT", "/api/tickets/"+ticket, map[string]any{"title": "t", "project_id": mine}, bob)
-	if res.StatusCode != http.StatusNotFound {
-		t.Errorf("moving a ticket into someone's project = %d %s, want 404", res.StatusCode, data)
+	for _, c := range []struct{ method, path string }{
+		{"GET", ticketPath(mine, ticket)},
+		{"PUT", ticketPath(mine, ticket)},
+		{"POST", ticketPath(mine, ticket) + "/runs"},
+		{"POST", ticketPath(mine, ticket) + "/status"},
+		{"GET", ticketPath(mine, ticket) + "/comments"},
+		{"GET", ticketPath(theirs, ticket)},
+		{"GET", "/api/tickets/" + ticket},
+	} {
+		res, data := x.do(t, c.method, c.path, map[string]any{"title": "mine now", "status": "Done"}, nil)
+		if res.StatusCode != http.StatusNotFound {
+			t.Errorf("%s %s = %d %s, want 404", c.method, c.path, res.StatusCode, data)
+		}
 	}
-	if got, err := x.conf.GetTicket(t.Context(), ticket); err != nil || got.ProjectID != theirs || got.UserID != "bob" {
-		t.Errorf("ticket after the attempt = %+v, %v", got, err)
+	if got, err := x.conf.GetTicket(t.Context(), ticket); err != nil || got.UserID != "bob" || got.Title != "t" {
+		t.Errorf("ticket after the attempts = %+v, %v", got, err)
 	}
-	if _, data := x.do(t, "GET", "/api/tickets", nil, nil); strings.Contains(string(data), ticket) {
+	if _, data := x.do(t, "GET", "/api/projects/"+mine+"/tickets", nil, nil); strings.Contains(string(data), ticket) {
 		t.Errorf("the ticket landed in my list: %s", data)
 	}
 }
 
-// Moving a ticket between one's own projects is fine, and an edit never
-// changes who owns it.
+// Two workshops on one internal tracker share its tickets, and an edit
+// through either never changes who owns one.
 func TestTicketEditKeepsItsOwner(t *testing.T) {
 	x := newConfEnv(t)
 	first, second := x.makeProject(t, "first", nil), x.makeProject(t, "second", nil)
-	res, data := x.do(t, "POST", "/api/tickets", map[string]any{"title": "t", "project_id": first}, nil)
-	if res.StatusCode != http.StatusCreated {
-		t.Fatalf("ticket = %d %s", res.StatusCode, data)
-	}
-	ticket := decode[confstore.Ticket](t, data).ID
-	res, data = x.do(t, "PUT", "/api/tickets/"+ticket, map[string]any{"title": "renamed", "project_id": second}, nil)
+	ticket := x.newTicketOn(t, first, "t", "")
+	res, data := x.do(t, "PUT", ticketPath(second, ticket), map[string]any{"title": "renamed"}, nil)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("edit = %d %s", res.StatusCode, data)
 	}
-	got := decode[ticketResp](t, data)
-	if got.ProjectID != second || got.UserID != testUser || got.Title != "renamed" {
-		t.Errorf("edited = %+v", got.Ticket)
+	if got := decode[TicketDetail](t, data); got.TicketID != ticket || got.Title != "renamed" {
+		t.Errorf("edited = %+v", got)
+	}
+	if got, err := x.conf.GetTicket(t.Context(), ticket); err != nil || got.UserID != testUser {
+		t.Errorf("owner = %+v, %v", got, err)
 	}
 }
 
@@ -234,11 +239,11 @@ func TestAttachmentCannotBeClaimedByAnotherUser(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, data := x.do(t, "POST", "/api/tickets", map[string]any{"title": "t", "project_id": "prj-bob", "attachment_ids": []string{mine.ID}}, bob)
+	res, data := x.do(t, "POST", "/api/projects/prj-bob/tickets", map[string]any{"title": "t", "attachment_ids": []string{mine.ID}}, bob)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("ticket = %d %s", res.StatusCode, data)
 	}
-	if got := decode[ticketResp](t, data); len(got.AttachmentIDs) != 0 {
+	if got := decode[TicketDetail](t, data); len(got.AttachmentIDs) != 0 {
 		t.Errorf("bob's ticket claimed my upload: %+v", got.AttachmentIDs)
 	}
 	if a, err := files.att.Get(context.Background(), mine.ID); err != nil || !a.Unclaimed() {
@@ -249,7 +254,7 @@ func TestAttachmentCannotBeClaimedByAnotherUser(t *testing.T) {
 // A body's list of ids, whatever else it is, is JSON of the right shape.
 func TestBodyIDsMustBeStrings(t *testing.T) {
 	x := newEnv(t, engine.Config{})
-	res, body := x.bare(t, "POST", "/api/tickets", `{"title":"t","project_id":"`+testProject+`","attachment_ids":[1]}`,
+	res, body := x.bare(t, "POST", "/api/projects/"+testProject+"/tickets", `{"title":"t","attachment_ids":[1]}`,
 		map[string]string{"Authorization": "Bearer " + x.token})
 	if res.StatusCode != http.StatusBadRequest || !strings.Contains(body, "invalid JSON") {
 		t.Errorf("non-string ids = %d %s", res.StatusCode, body)

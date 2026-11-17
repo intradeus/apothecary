@@ -97,18 +97,18 @@ func TestAdminsFailingStillReachesTheOwner(t *testing.T) {
 func TestOnlyANewNoticeIsMirrored(t *testing.T) {
 	s, rec := newService()
 	ctx := context.Background()
-	s.TrackerSync(ctx, "alice", "int1", "Jira", errors.New("401"))
-	s.TrackerSync(ctx, "alice", "int1", "Jira", errors.New("401 again"))
+	s.LoginExpired(ctx, "alice", "c1", "Codex", errors.New("401"))
+	s.LoginExpired(ctx, "alice", "c1", "Codex", errors.New("401 again"))
 	sent := rec.waitSent(t, 1)
-	if sent[0].UserID != "alice" || sent[0].Type != notices.KindTrackerUnreachable || sent[0].Title != "Cannot sync tickets from Jira" {
+	if sent[0].UserID != "alice" || sent[0].Type != notices.KindLoginExpired || sent[0].Title != `Login "Codex" has expired` {
 		t.Errorf("sent = %+v", sent[0])
 	}
-	if got := list(t, s, "alice"); len(got) != 1 || got[0].Count != 2 || got[0].Body != "401 again" {
+	if got := list(t, s, "alice"); len(got) != 1 || got[0].Count != 2 || !strings.HasSuffix(got[0].Body, "401 again") {
 		t.Errorf("alice = %+v", got)
 	}
 	// Once cleared, the next failure is new, and mirrored again.
-	s.TrackerSync(ctx, "alice", "int1", "Jira", nil)
-	s.TrackerSync(ctx, "alice", "int1", "Jira", errors.New("401"))
+	s.LoginRefreshed(ctx, "c1")
+	s.LoginExpired(ctx, "alice", "c1", "Codex", errors.New("401"))
 	rec.waitSent(t, 2)
 	if got := list(t, s, "alice"); len(got) != 2 {
 		t.Errorf("alice = %+v", got)
@@ -161,9 +161,6 @@ func TestEachProblemRepeatsUntilItClears(t *testing.T) {
 		{notices.KindLoginExpired,
 			func(ctx context.Context, s *notices.Service) { s.LoginExpired(ctx, "alice", "c1", "Codex", boom) },
 			func(ctx context.Context, s *notices.Service) { s.LoginRefreshed(ctx, "c1") }},
-		{notices.KindTrackerUnreachable,
-			func(ctx context.Context, s *notices.Service) { s.TrackerSync(ctx, "alice", "i1", "Jira", boom) },
-			func(ctx context.Context, s *notices.Service) { s.TrackerSync(ctx, "alice", "i1", "Jira", nil) }},
 		{notices.KindChannelFailing,
 			func(ctx context.Context, s *notices.Service) { s.ChannelSent(ctx, "ch1", "alice", "slack", boom) },
 			func(ctx context.Context, s *notices.Service) { s.ChannelSent(ctx, "ch1", "alice", "slack", nil) }},
@@ -207,10 +204,10 @@ func TestTrackerListGrowthIsANoticePerBatch(t *testing.T) {
 	s, _ := newService()
 	ctx := context.Background()
 	s.TrackerListsGrew(ctx, "alice", "i1", "Jira", nil)
-	s.TrackerListsGrew(ctx, "alice", "i1", "Jira", []string{`status "To Do": flow step todo`, `status "Done": flow step done, Done`})
+	s.TrackerListsGrew(ctx, "alice", "i1", "Jira", []string{`type "Story": change type feat (guessed)`, `type "Spike": change type chore (guessed)`})
 	s.TrackerListsGrew(ctx, "alice", "i1", "Jira", []string{`type "Bug": change type fix (guessed)`})
 	got := list(t, s, "alice")
-	if len(got) != 2 || got[1].Body != "status \"To Do\": flow step todo\nstatus \"Done\": flow step done, Done" ||
+	if len(got) != 2 || got[1].Body != "type \"Story\": change type feat (guessed)\ntype \"Spike\": change type chore (guessed)" ||
 		got[0].Title != "Jira has new tracker statuses or types to map" {
 		t.Errorf("alice = %+v", got)
 	}
@@ -231,11 +228,11 @@ func TestFailuresAreLoggedNotReturned(t *testing.T) {
 		Log:    slog.New(slog.NewTextHandler(&buf, nil)),
 		Clock:  func() time.Time { return time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC) },
 	}
-	s.TrackerSync(context.Background(), "alice", "i1", "Jira", errors.New("401"))
+	s.LoginExpired(context.Background(), "alice", "c1", "Codex", errors.New("401"))
 	dead, cancel := context.WithCancel(context.Background())
 	cancel()
-	s.TrackerSync(dead, "alice", "i2", "GitHub", errors.New("401"))
-	s.TrackerSync(dead, "alice", "i2", "GitHub", nil)
+	s.LoginExpired(dead, "alice", "c2", "Claude", errors.New("401"))
+	s.LoginRefreshed(dead, "c2")
 	for deadline := time.Now().Add(2 * time.Second); !strings.Contains(buf.String(), "notice mirror failed") && time.Now().Before(deadline); {
 		time.Sleep(5 * time.Millisecond)
 	}

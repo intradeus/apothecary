@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -246,8 +245,8 @@ func TestSearchFallbacksAndFailures(t *testing.T) {
 			"POST /rest/api/3/search/jql": {status, `{"errorMessages":["gone"]}`},
 			"GET /rest/api/3/search":      {body: `{"issues":[{"key":"P-1","fields":{"summary":"s"}}]}`},
 		})
-		got, err := clientFor(ts).Search(ctx, "text", 5)
-		if err != nil || len(got) != 1 || got[0].Key != "P-1" {
+		got, err := clientFor(ts).Search(ctx, trackerport.SearchQuery{Text: "text", Limit: 5})
+		if err != nil || len(got.Tickets) != 1 || got.Tickets[0].Key != "P-1" {
 			t.Errorf("%d: %+v, %v", status, got, err)
 		}
 	}
@@ -258,7 +257,7 @@ func TestSearchFallbacksAndFailures(t *testing.T) {
 		"POST /rest/api/3/search/jql": {404, `{"errorMessages":["gone"]}`},
 		"GET /rest/api/3/search":      {500, `{"errorMessages":["classic down"]}`},
 	})
-	if got, err := clientFor(both).Search(ctx, "text", 5); err == nil || got != nil || !strings.Contains(err.Error(), "classic down") {
+	if got, err := clientFor(both).Search(ctx, trackerport.SearchQuery{Text: "text", Limit: 5}); err == nil || got.Tickets != nil || !strings.Contains(err.Error(), "classic down") {
 		t.Errorf("both down = %+v, %v", got, err)
 	}
 	var classic atomic.Int32
@@ -270,8 +269,8 @@ func TestSearchFallbacksAndFailures(t *testing.T) {
 	mux.HandleFunc("GET /rest/api/3/search", func(w http.ResponseWriter, _ *http.Request) { classic.Add(1) })
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
-	got, err := clientFor(ts).Search(ctx, "jql: bad (", 0)
-	if err == nil || got != nil || !strings.Contains(err.Error(), "Error in the JQL Query") {
+	got, err := clientFor(ts).Search(ctx, trackerport.SearchQuery{Text: "jql: bad ("})
+	if err == nil || got.Tickets != nil || !strings.Contains(err.Error(), "Error in the JQL Query") {
 		t.Errorf("bad JQL = %+v, %v", got, err)
 	}
 	if classic.Load() != 0 {
@@ -292,7 +291,7 @@ func TestSearchClampsTheLimit(t *testing.T) {
 	defer ts.Close()
 	c := clientFor(ts)
 	for _, limit := range []int{-1, 0, 101} {
-		if _, err := c.Search(context.Background(), "x", limit); err != nil {
+		if _, err := c.Search(context.Background(), trackerport.SearchQuery{Text: "x", Limit: limit}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -313,19 +312,19 @@ func TestSearchBareNumberKeepsOrderAndDeduplicates(t *testing.T) {
 		"POST /rest/api/3/search/jql": {body: `{"issues":[{"key":"C-7","fields":{"summary":"dup"}},{"key":"D-1","fields":{"summary":"text hit"}}]}`},
 	})
 	c := New(Config{BaseURL: ts.URL, Email: "a@b", Token: secret, JQL: "project in (a, b, c)"})
-	got, err := c.Search(context.Background(), "#7", 10)
+	got, err := c.Search(context.Background(), trackerport.SearchQuery{Text: "#7", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var keys []string
-	for _, x := range got {
+	for _, x := range got.Tickets {
 		keys = append(keys, x.Key)
 	}
 	if !reflect.DeepEqual(keys, []string{"B-7", "C-7", "D-1"}) {
 		t.Errorf("keys = %v", keys)
 	}
-	if got[1].Title != "third" {
-		t.Errorf("the direct fetch wins over the text hit: %+v", got[1])
+	if got.Tickets[1].Title != "third" {
+		t.Errorf("the direct fetch wins over the text hit: %+v", got.Tickets[1])
 	}
 }
 
@@ -507,14 +506,14 @@ func TestJQLEdges(t *testing.T) {
 		q    string
 		want string
 	}{
-		{plain, "jql:", " ORDER BY updated DESC"},
+		{plain, "jql:", "ORDER BY updated DESC"},
 		{scoped, "jql:", "project = P ORDER BY updated DESC"},
-		{scoped, "jql: status = Done ORDER BY created", "(project = P) AND (status = Done ORDER BY created)"},
+		{scoped, "jql: status = Done ORDER BY created", "(project = P) AND (status = Done) ORDER BY created"},
 		{plain, "proj 12", `key = "PROJ-12" ORDER BY updated DESC`},
 		{plain, "#PROJ_12", `key = "PROJ-12" ORDER BY updated DESC`},
 		{plain, `say "hi"\`, `text ~ "say \"hi\"\\*" ORDER BY updated DESC`},
 	} {
-		if got := tc.c.JQL(tc.q); got != tc.want {
+		if got := tc.c.JQL(tc.q, trackerport.DoneAny); got != tc.want {
 			t.Errorf("JQL(%q) = %q, want %q", tc.q, got, tc.want)
 		}
 	}
@@ -522,7 +521,7 @@ func TestJQLEdges(t *testing.T) {
 
 // Text a person typed is not a query's ORDER BY.
 func TestJQLOrdersATextSearchForTheWordsOrderBy(t *testing.T) {
-	if got, want := New(Config{}).JQL("order by date"), `text ~ "order by date*" ORDER BY updated DESC`; got != want {
+	if got, want := New(Config{}).JQL("order by date", trackerport.DoneAny), `text ~ "order by date*" ORDER BY updated DESC`; got != want {
 		t.Errorf("JQL = %q, want %q", got, want)
 	}
 	// Written JQL keeps its own order, and a quoted one is not one.
@@ -532,7 +531,7 @@ func TestJQLOrdersATextSearchForTheWordsOrderBy(t *testing.T) {
 		`jql:summary ~ 'order by' ORDER BY rank`: `summary ~ 'order by' ORDER BY rank`,
 		`jql:summary ~ "a \" order by b"`:        `summary ~ "a \" order by b" ORDER BY updated DESC`,
 	} {
-		if got := New(Config{}).JQL(q); got != want {
+		if got := New(Config{}).JQL(q, trackerport.DoneAny); got != want {
 			t.Errorf("JQL(%q) = %q, want %q", q, got, want)
 		}
 	}
@@ -591,6 +590,25 @@ func TestFetchNotFound(t *testing.T) {
 	_, err = clientFor(answer(t, map[string]reply{"GET /rest/api/3/issue/P-1": {500, `boom`}})).Fetch(ctx, "P-1")
 	if err == nil || errors.Is(err, trackerport.ErrTicketNotFound) {
 		t.Errorf("500 = %v", err)
+	}
+}
+
+// A fetch by stable id reads /issue/{id}, which Jira serves under the
+// issue's current key; an id that is not numeric is no issue's, and is never
+// sent as a key.
+func TestFetchByRemoteID(t *testing.T) {
+	ctx := context.Background()
+	c := clientFor(answer(t, map[string]reply{
+		"GET /rest/api/3/issue/10007": {200, `{"id":"10007","key":"NEW-7","fields":{"summary":"Moved"}}`},
+	}))
+	got, err := c.FetchByRemoteID(ctx, " 10007 ")
+	if err != nil || got.Key != "NEW-7" || got.RemoteID != "10007" {
+		t.Errorf("by id = %+v (%v)", got, err)
+	}
+	for _, id := range []string{"", "P-1"} {
+		if _, err := c.FetchByRemoteID(ctx, id); !errors.Is(err, trackerport.ErrTicketNotFound) {
+			t.Errorf("id %q = %v, want not found", id, err)
+		}
 	}
 }
 
@@ -732,69 +750,6 @@ func TestStatusesAndTypes(t *testing.T) {
 	}
 	if _, err := failing.Types(context.Background()); err == nil {
 		t.Error("types: a 404 is an error")
-	}
-}
-
-// FetchMany asks for every key in one JQL query, a hundred at a time; a
-// batch JQL refuses (one key no longer exists) is fetched key by key, and
-// the missing key is simply absent.
-func TestFetchMany(t *testing.T) {
-	var jqls []string
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /rest/api/3/search/jql", func(w http.ResponseWriter, r *http.Request) {
-		var b struct {
-			JQL        string   `json:"jql"`
-			MaxResults int      `json:"maxResults"`
-			Fields     []string `json:"fields"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&b)
-		jqls = append(jqls, b.JQL)
-		if strings.Contains(b.JQL, `"P-GONE"`) {
-			w.WriteHeader(400)
-			_, _ = w.Write([]byte(`{"errorMessages":["An issue with key 'P-GONE' does not exist for field 'key'."]}`))
-			return
-		}
-		if !slices.Contains(b.Fields, "labels") || !slices.Contains(b.Fields, "attachment") {
-			t.Errorf("fields = %v", b.Fields)
-		}
-		n := strings.Count(b.JQL, `"`) / 2
-		var issues []string
-		for i := range n {
-			issues = append(issues, fmt.Sprintf(`{"id":"%d","key":"P-%d","fields":{"labels":["l"]}}`, i, i))
-		}
-		_, _ = fmt.Fprintf(w, `{"issues":[%s]}`, strings.Join(issues, ","))
-	})
-	mux.HandleFunc("GET /rest/api/3/issue/{key}", func(w http.ResponseWriter, r *http.Request) {
-		if r.PathValue("key") == "P-GONE" {
-			w.WriteHeader(404)
-			_, _ = w.Write([]byte(`{"errorMessages":["Issue does not exist"]}`))
-			return
-		}
-		_, _ = fmt.Fprintf(w, `{"id":"1","key":%q,"fields":{}}`, r.PathValue("key"))
-	})
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-	c := clientFor(ts)
-	keys := make([]string, 150)
-	for i := range keys {
-		keys[i] = fmt.Sprintf("P-%d", i)
-	}
-	got, err := c.FetchMany(context.Background(), keys)
-	if err != nil || len(got) != 150 || len(jqls) != 2 || !strings.HasPrefix(jqls[0], `key in ("P-0", "P-1"`) {
-		t.Fatalf("got %d, jqls %d (%.40q), %v", len(got), len(jqls), jqls, err)
-	}
-	if !reflect.DeepEqual(got[0].Labels, []string{"l"}) {
-		t.Errorf("first = %+v", got[0])
-	}
-	got, err = c.FetchMany(context.Background(), []string{"P-1", " ", "P-GONE"})
-	if err != nil || len(got) != 1 || got[0].Key != "P-1" {
-		t.Errorf("refused batch: %+v, %v", got, err)
-	}
-	if got, err := c.FetchMany(context.Background(), nil); err != nil || got != nil {
-		t.Errorf("no keys: %v, %v", got, err)
-	}
-	if _, err := clientFor(answer(t, map[string]reply{"POST /rest/api/3/search/jql": {500, `boom`}})).FetchMany(context.Background(), []string{"P-1"}); err == nil {
-		t.Error("a failing search is an error")
 	}
 }
 

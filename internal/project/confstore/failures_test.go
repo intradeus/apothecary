@@ -661,7 +661,7 @@ func TestDeleteProject(t *testing.T) {
 	if _, err := svc.PutFlowBinding(ctx, p.ID, "v1", map[string]string{"model": "fake/other"}); err != nil {
 		t.Fatal(err)
 	}
-	tk, err := svc.CreateTicket(ctx, Ticket{ProjectID: p.ID, Title: "t"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: p.UserID, Title: "t"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1115,16 +1115,14 @@ func TestBindingNeedsAProject(t *testing.T) {
 func TestValidateTicket(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newSvc(t)
-	p := seedProject(t, svc)
 	for _, tc := range []struct {
 		name string
 		in   Ticket
 		want string
 	}{
-		{"no title", Ticket{ProjectID: p.ID, Title: " "}, "title is required"},
-		{"no project", Ticket{Title: "t"}, "project_id is required"},
-		{"unknown project", Ticket{ProjectID: "gone", Title: "t"}, "project gone not found"},
-		{"bad change type", Ticket{ProjectID: p.ID, Title: "t", ChangeType: "mend"}, `change type "mend"`},
+		{"no title", Ticket{UserID: "u1", Title: " "}, "title is required"},
+		{"bad change type", Ticket{UserID: "u1", Title: "t", ChangeType: "mend"}, `change type "mend"`},
+		{"another tracker's status", Ticket{UserID: "u1", Title: "t", StatusID: "ghost"}, "not one of its tracker's"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := svc.CreateTicket(ctx, tc.in)
@@ -1134,14 +1132,14 @@ func TestValidateTicket(t *testing.T) {
 			}
 		})
 	}
-	got, err := svc.CreateTicket(ctx, Ticket{ProjectID: p.ID, Title: " t ", BaseBranch: " b ", ChangeType: " FIX "})
+	got, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: " t ", BaseBranch: " b ", ChangeType: " FIX "})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Title != "t" || got.BaseBranch != "b" || got.ChangeType != trackerport.ChangeFix {
 		t.Errorf("normalised = %+v", got)
 	}
-	plain, err := svc.CreateTicket(ctx, Ticket{ProjectID: p.ID, Title: "t"})
+	plain, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "t"})
 	if err != nil || plain.ChangeType != trackerport.ChangeFeat {
 		t.Errorf("default = %+v, %v", plain, err)
 	}
@@ -1150,8 +1148,7 @@ func TestValidateTicket(t *testing.T) {
 func TestTicketStoreFailures(t *testing.T) {
 	ctx := context.Background()
 	svc, db := newBroken(t)
-	p := seedProject(t, svc)
-	tk, err := svc.CreateTicket(ctx, Ticket{ProjectID: p.ID, Title: "t"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "t"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1162,33 +1159,37 @@ func TestTicketStoreFailures(t *testing.T) {
 	_, err = svc.UpdateTicket(ctx, tk.ID, bad)
 	wantErr(t, "invalid", err, ErrInvalid)
 	db.fail["UpsertTicket"] = true
-	_, err = svc.CreateTicket(ctx, Ticket{ProjectID: p.ID, Title: "t"})
+	_, err = svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "t"})
 	wantErr(t, "create", err, errDB)
 	_, err = svc.UpdateTicket(ctx, tk.ID, tk)
 	wantErr(t, "update", err, errDB)
 }
 
-func TestTicketsByOwner(t *testing.T) {
+// A remote issue's record belongs to the integration's owner, whoever asks.
+func TestRecordBelongsToTheIntegrationOwner(t *testing.T) {
 	ctx := context.Background()
-	svc, mem := newSvc(t)
-	a, err := svc.CreateProject(ctx, goodProject(t, svc, "o1"))
+	svc, _ := newSvc(t)
+	in, err := svc.CreateIntegration(ctx, Integration{UserID: "o1", Port: PortTicketSource, Kind: "jira", Name: "j"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	tk, err := svc.CreateTicket(ctx, Ticket{ProjectID: a.ID, Title: "t", UserID: "someone else"})
+	tk, created, err := svc.RecordTicket(ctx, in.ID, TicketSeen{RemoteID: "1", Key: "J-1", Title: "t"}, "")
+	if err != nil || !created || tk.UserID != "o1" {
+		t.Errorf("record = %+v, %v, %v", tk, created, err)
+	}
+	if _, _, err := svc.RecordTicket(ctx, "gone", TicketSeen{RemoteID: "1"}, ""); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing source = %v", err)
+	}
+	repo, err := svc.CreateIntegration(ctx, Integration{UserID: "o1", Port: PortRepository, Kind: "fake", Name: "r"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tk.UserID != "o1" {
-		t.Errorf("a ticket belongs to its project's owner: %+v", tk)
+	if _, _, err := svc.RecordTicket(ctx, repo.ID, TicketSeen{RemoteID: "1"}, ""); !errors.Is(err, ErrInvalid) {
+		t.Errorf("not a ticket source = %v", err)
 	}
-	if got, _ := svc.ListTickets(ctx, "o1"); len(got) != 1 {
-		t.Errorf("mine = %+v", got)
+	if _, err := svc.SeeTicket(ctx, "missing", TicketSeen{}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("see missing = %v", err)
 	}
-	if got, _ := svc.ListTickets(ctx, "o2"); len(got) != 0 {
-		t.Errorf("theirs = %+v", got)
-	}
-	wantErr(t, "missing project", mem.UpsertTicket(ctx, Ticket{ID: "x", ProjectID: "gone"}), ErrInvalid)
 	wantErr(t, "missing ticket", svc.DeleteTicket(ctx, "missing"), ErrNotFound)
 }
 
@@ -1197,18 +1198,25 @@ func TestTicketsByOwner(t *testing.T) {
 func TestTicketTextIsStoredClean(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newSvc(t)
-	p := seedProject(t, svc)
-	tk, err := svc.CreateTicket(ctx, Ticket{ProjectID: p.ID, Title: "t\x00", Goal: "g\xff", SourceKey: "K\x00"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "t\x00", Goal: "g\xff"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got, err := svc.GetTicket(ctx, tk.ID)
-	if err != nil || got.Title != "t\uFFFD" || got.Goal != "g\uFFFD" || got.SourceKey != "K\uFFFD" {
+	if err != nil || got.Title != "t\uFFFD" || got.Goal != "g\uFFFD" {
 		t.Errorf("ticket = %+v, %v", got, err)
 	}
 	// A title that was nothing but NUL is still a title: not silently empty.
-	if _, err := svc.CreateTicket(ctx, Ticket{ProjectID: p.ID, Title: "\x00"}); err != nil {
+	if _, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "\x00"}); err != nil {
 		t.Errorf("title of a NUL = %v", err)
+	}
+	in, err := svc.CreateIntegration(ctx, Integration{UserID: "u1", Port: PortTicketSource, Kind: "jira", Name: "j"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, _, err := svc.RecordTicket(ctx, in.ID, TicketSeen{RemoteID: "1", Key: "K\x00", Title: "r\x00"}, "")
+	if err != nil || rec.SourceKey != "K\uFFFD" || rec.Title != "r\uFFFD" {
+		t.Errorf("record = %+v, %v", rec, err)
 	}
 }
 
@@ -1217,12 +1225,11 @@ func TestTicketTextIsStoredClean(t *testing.T) {
 func TestUpdateTicketKeepsTheAutomation(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newSvc(t)
-	p := seedProject(t, svc)
-	tk, err := svc.CreateTicket(ctx, Ticket{ProjectID: p.ID, Title: "t", AutomationID: "auto-1"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "t", AutomationID: "auto-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := svc.UpdateTicket(ctx, tk.ID, Ticket{ProjectID: p.ID, Title: "edited"})
+	got, err := svc.UpdateTicket(ctx, tk.ID, Ticket{Title: "edited"})
 	if err != nil || got.AutomationID != "auto-1" {
 		t.Errorf("ticket = %+v, %v", got, err)
 	}
@@ -1722,10 +1729,6 @@ func TestValidateAutomation(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newSvc(t)
 	p := seedProject(t, svc)
-	other, err := svc.CreateProject(ctx, goodProject(t, svc, ""))
-	if err != nil {
-		t.Fatal(err)
-	}
 	if _, err := svc.SaveFlow(ctx, p.ID, "rev", onMRFlow, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -1736,16 +1739,17 @@ func TestValidateAutomation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tk, err := svc.CreateTicket(ctx, Ticket{ProjectID: p.ID, Title: "t"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: p.UserID, Title: "t"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreignTicket, err := svc.CreateTicket(ctx, Ticket{ProjectID: other.ID, Title: "t"})
+	// A record of another source than the workshop's.
+	foreignTicket, _, err := svc.RecordTicket(ctx, source.ID, TicketSeen{RemoteID: "1", Key: "K-1", Title: "t"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	query := func(a Automation) Automation {
-		a.ProjectID, a.Name, a.Kind, a.SourceID, a.Flow = p.ID, "a", AutomationTrackerQuery, source.ID, "v1"
+		a.ProjectID, a.Name, a.Kind, a.Flow = p.ID, "a", AutomationTrackerQuery, "v1"
 		return a
 	}
 	cron := func(a Automation) Automation {
@@ -1765,16 +1769,14 @@ func TestValidateAutomation(t *testing.T) {
 		{"no name", Automation{ProjectID: p.ID}, ErrInvalid, "needs a name"},
 		{"no project", Automation{ProjectID: "gone", Name: "a"}, ErrNotFound, "project"},
 		{"a repo on another kind", func() Automation { a := query(Automation{}); a.Repo = "x"; return a }(), ErrInvalid, "watches a repository"},
-		{"query without a source", func() Automation { a := query(Automation{}); a.SourceID = ""; return a }(), ErrInvalid, "needs source_id"},
-		{"query with a missing source", func() Automation { a := query(Automation{}); a.SourceID = "gone"; return a }(), ErrNotFound, "gone"},
-		{"query on the wrong port", func() Automation { a := query(Automation{}); a.SourceID = p.RepoAccountID; return a }(), ErrInvalid, "not a ticket source"},
+		{"query with a ticket", query(Automation{TicketID: tk.ID}), ErrInvalid, "takes no schedule or ticket_id"},
 		{"query with a schedule", query(Automation{Schedule: "0 9 * * *"}), ErrInvalid, "takes no schedule"},
 		{"bad schedule", cron(Automation{}), nil, ""},
 		{"cron with a bad schedule", func() Automation { a := cron(Automation{}); a.Schedule = "whenever"; return a }(), ErrInvalid, ""},
 		{"cron without a ticket", func() Automation { a := cron(Automation{}); a.TicketID = ""; return a }(), ErrInvalid, "needs ticket_id"},
 		{"cron with a missing ticket", func() Automation { a := cron(Automation{}); a.TicketID = "gone"; return a }(), ErrNotFound, "gone"},
-		{"cron with another project's ticket", func() Automation { a := cron(Automation{}); a.TicketID = foreignTicket.ID; return a }(), ErrInvalid, "another project"},
-		{"cron with a source", cron(Automation{SourceID: "x"}), ErrInvalid, "takes no source_id"},
+		{"cron with another source's ticket", func() Automation { a := cron(Automation{}); a.TicketID = foreignTicket.ID; return a }(), ErrInvalid, "not one of this workshop's"},
+		{"cron with a query", cron(Automation{Query: "x"}), ErrInvalid, "takes no query"},
 		{"merge request with a query", mr(Automation{Query: "x"}), ErrInvalid, "takes only a repo"},
 		{"merge request on an unknown repo", mr(Automation{Repo: "ghost"}), ErrInvalid, `no repository "ghost"`},
 		{"unknown kind", Automation{ProjectID: p.ID, Name: "a", Kind: "telepathy"}, ErrInvalid, `kind "telepathy"`},
@@ -1839,7 +1841,7 @@ func TestUpdateAutomationKeepsWhatTheWatcherMarked(t *testing.T) {
 	ctx := context.Background()
 	svc, db := newBroken(t)
 	p := seedProject(t, svc)
-	tk, err := svc.CreateTicket(ctx, Ticket{ProjectID: p.ID, Title: "t"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: p.UserID, Title: "t"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1895,12 +1897,8 @@ func TestAutomationLists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := svc.CreateIntegration(ctx, Integration{Port: PortTicketSource, Kind: "k", Name: "tracker"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	mk := func(project, name string, enabled bool) Automation {
-		a, err := svc.CreateAutomation(ctx, Automation{ProjectID: project, Name: name, Kind: AutomationTrackerQuery, SourceID: source.ID, Flow: "builder", Enabled: enabled})
+		a, err := svc.CreateAutomation(ctx, Automation{ProjectID: project, Name: name, Kind: AutomationTrackerQuery, Flow: "builder", Enabled: enabled})
 		if err != nil {
 			t.Fatal(err)
 		}

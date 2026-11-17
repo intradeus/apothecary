@@ -16,7 +16,7 @@ func TestTicketKind(t *testing.T) {
 		t.Error("kind")
 	}
 	ref, ok := k.Requested("p", runinput.Ticket{TicketID: "tk"}, runinput.Input{})
-	if !ok || ref != Ref("p", "tk") || k.Describe(ref) != "ticket tk" {
+	if !ok || ref != Ref("tk") || k.Describe(ref) != "ticket tk" {
 		t.Errorf("requested = %v %v", ref, ok)
 	}
 	if _, ok := k.Requested("p", runinput.Ticket{Title: "bare"}, runinput.Input{}); ok {
@@ -24,6 +24,10 @@ func TestTicketKind(t *testing.T) {
 	}
 	if held := k.Held(run.View{ProjectID: "p", TicketID: "tk"}); len(held) != 1 || held[0] != ref {
 		t.Errorf("held = %v", held)
+	}
+	// A ticket is one item across workshops: a run in another project holds it.
+	if held := k.Held(run.View{ProjectID: "q", TicketID: "tk"}); len(held) != 1 || held[0] != ref || ref.Project != "" {
+		t.Errorf("held across projects = %v (ref %v)", held, ref)
 	}
 	if held := k.Held(run.View{ProjectID: "p"}); held != nil {
 		t.Errorf("a ticketless run held %v", held)
@@ -35,18 +39,18 @@ func TestTicketKind(t *testing.T) {
 func TestTicketPrepare(t *testing.T) {
 	ctx := context.Background()
 	s := &workitem.Start{RunID: "01RUNABCD", Title: "Fix the login form"}
-	if err := (Kind{}).Prepare(ctx, s, Ref("p", "tk")); err != nil {
+	if err := (Kind{}).Prepare(ctx, s, Ref("tk")); err != nil {
 		t.Fatal(err)
 	}
 	if s.Base != "apothecary/fix-the-login-form" || s.Branch != "apothecary/fix-the-login-form-abcd" {
 		t.Errorf("branch = %q base %q", s.Branch, s.Base)
 	}
 	s = &workitem.Start{RunID: "01RUNABCD", Title: "x", Base: "feat/DEV-1"}
-	if err := (Kind{}).Prepare(ctx, s, Ref("p", "tk")); err != nil || s.Branch != "feat/DEV-1-abcd" {
+	if err := (Kind{}).Prepare(ctx, s, Ref("tk")); err != nil || s.Branch != "feat/DEV-1-abcd" {
 		t.Errorf("own base: %q, %v", s.Branch, err)
 	}
 	s = &workitem.Start{RunID: "r", Title: "x", Base: "bad..base"}
-	if err := (Kind{}).Prepare(ctx, s, Ref("p", "tk")); err == nil || !strings.Contains(err.Error(), `branch "bad..base-r"`) {
+	if err := (Kind{}).Prepare(ctx, s, Ref("tk")); err == nil || !strings.Contains(err.Error(), `branch "bad..base-r"`) {
 		t.Errorf("a bad base = %v", err)
 	}
 }

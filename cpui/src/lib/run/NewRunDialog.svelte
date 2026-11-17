@@ -7,8 +7,11 @@
 	import { errorMessage } from '$lib/core/errors';
 	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { api } from '$lib/api';
 	import { fleet } from '$lib/app/fleet.svelte';
+	import NewTicketLink from '$lib/tickets/NewTicketLink.svelte';
 	import { WORK_ITEMS, type WorkItemOption } from '$lib/app/workItems';
+	import type { Integration } from '$lib/domain';
 	import type { OperatesOn } from '$lib/domain/flowdoc';
 	import { t } from '$lib/i18n/index.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -34,16 +37,24 @@
 	const projectOptions = $derived<SelectOption[]>(
 		fleet.projects.map((p) => ({ value: p.id, label: p.name }))
 	);
+	// Where an empty workshop's next item is written (its ticket source);
+	// read once per opening.
+	let integrations = $state<Integration[] | null>(null);
 	$effect(() => {
 		if (!open) return;
 		const first = fleet.projects[0]?.id ?? '';
 		untrack(() => {
 			if (projectId) workshop = projectId;
 			else if (!workshop) workshop = first;
+			api.integrations
+				.list()
+				.then((l) => (integrations = l))
+				.catch(() => (integrations = []));
 		});
 	});
 	/** Where the current kind reads its items: '' = every workshop. */
 	const scope = $derived(projectId || (item.perWorkshop ? workshop : ''));
+	const scopeProject = $derived(fleet.projectById.get(scope));
 
 	let options = $state<WorkItemOption[] | null>(null);
 	let error = $state('');
@@ -108,8 +119,13 @@
 		<button type="button" class="btn-ghost" onclick={() => (open = false)}
 			>{t('common.cancel')}</button
 		>
-		{#if options?.length === 0 && item.create}
-			<a class="btn btn-primary" href={item.create.href(projectId)}>{item.create.label}</a>
+		{#if options?.length === 0 && item.create && scopeProject}
+			<NewTicketLink
+				project={scopeProject}
+				{integrations}
+				label={item.create.label}
+				cls="btn-primary"
+			/>
 		{:else}
 			<button class="btn-primary" disabled={!chosen} onclick={() => chosen && goto(chosen.href)}
 				>{t('page.runs.newContinue')}</button

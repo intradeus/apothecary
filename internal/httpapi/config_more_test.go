@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"apothecary/internal/account/providers"
 	"apothecary/internal/engine"
 	"apothecary/internal/flow/builtin"
+	"apothecary/internal/platform/livecache"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/confstore/conftest"
@@ -651,7 +653,7 @@ func (l listFails) ListProjects(context.Context, string) ([]confstore.Project, e
 func (l listFails) ListIntegrations(context.Context, string) ([]confstore.StoredIntegration, error) {
 	return nil, l.err
 }
-func (l listFails) ListTickets(context.Context, string) ([]confstore.Ticket, error) {
+func (l listFails) ListInternalTickets(context.Context, string, confstore.InternalTicketQuery) ([]confstore.Ticket, error) {
 	return nil, l.err
 }
 func (l listFails) ListFlows(context.Context, string) ([]confstore.FlowRow, error) {
@@ -680,8 +682,9 @@ func (l listFails) ListProjectSecrets(context.Context, string) ([]confstore.Stor
 func TestConfigStoreOutage(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	x.srv.Conf = confstore.New(listFails{x.srv.Conf.DB(), errors.New("db down")}, secretsKey(t))
+	x.srv.Live = tickets.NewLive(x.srv.Conf, nil)
 	for _, path := range []string{
-		"/api/projects", "/api/integrations", "/api/tickets", "/api/flows", "/api/credentials", "/api/settings",
+		"/api/projects", "/api/integrations", "/api/projects/" + testProject + "/tickets", "/api/flows", "/api/credentials", "/api/settings",
 		"/api/projects/" + testProject + "/flow-bindings", "/api/projects/" + testProject + "/automations",
 		"/api/projects/" + testProject + "/flows", "/api/projects/" + testProject + "/secrets",
 	} {
@@ -719,14 +722,10 @@ func TestFlowOverviewCannotListProjects(t *testing.T) {
 func TestAutomationEdges(t *testing.T) {
 	x := newConfEnv(t)
 	a, b := x.makeProject(t, "a", nil), x.makeProject(t, "b", nil)
-	res, data := x.do(t, "POST", "/api/tickets", map[string]any{"project_id": a, "title": "Nightly"}, nil)
-	if res.StatusCode != http.StatusCreated {
-		t.Fatalf("ticket = %d %s", res.StatusCode, data)
-	}
-	ticket := decode[confstore.Ticket](t, data).ID
+	ticket := x.newTicketOn(t, a, "Nightly", "")
 	base := "/api/projects/" + a + "/automations"
 	malformed(t, x.env, "POST", base)
-	res, data = x.do(t, "POST", base, AutomationRequest{Name: "n", Kind: "cron", Schedule: "0 3 * * *", TicketID: ticket, Flow: "builder"}, nil)
+	res, data := x.do(t, "POST", base, AutomationRequest{Name: "n", Kind: "cron", Schedule: "0 3 * * *", TicketID: ticket, Flow: "builder"}, nil)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("create = %d %s", res.StatusCode, data)
 	}
@@ -939,8 +938,8 @@ func TestMergeRequestStartEdges(t *testing.T) {
 type failingSource struct{ err error }
 
 func (f failingSource) Test(context.Context) error { return f.err }
-func (f failingSource) Search(context.Context, string, int) ([]trackerport.SourceTicket, error) {
-	return nil, f.err
+func (f failingSource) Search(context.Context, trackerport.SearchQuery) (trackerport.SearchPage, error) {
+	return trackerport.SearchPage{}, f.err
 }
 func (f failingSource) Fetch(context.Context, string) (trackerport.SourceTicket, error) {
 	return trackerport.SourceTicket{}, f.err
@@ -953,41 +952,40 @@ func TestTicketRoutes(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	id := x.newTicket(t, "first", "")
 	conftest.SeedProject(t, x.srv.Conf, confstore.Project{ID: "prj-2", UserID: testUser, Name: "second"})
-	res, data := x.do(t, "POST", "/api/tickets", map[string]any{"title": "second", "project_id": "prj-2"}, nil)
-	if res.StatusCode != http.StatusCreated {
-		t.Fatalf("second = %d %s", res.StatusCode, data)
-	}
 
-	// The filter.
-	res, data = x.do(t, "GET", "/api/tickets?project="+testProject, nil, nil)
-	rows := decode[[]confstore.Ticket](t, data)
-	if res.StatusCode != http.StatusOK || len(rows) != 1 || rows[0].ID != id {
-		t.Errorf("by project = %d %s", res.StatusCode, data)
+	// Two workshops on one internal tracker list the same tickets.
+	second := x.newTicketOn(t, "prj-2", "second", "")
+	res, data := x.do(t, "GET", "/api/projects/prj-2/tickets", nil, nil)
+	got := keys(decode[TicketPage](t, data))
+	slices.Sort(got)
+	want := []string{second, id}
+	slices.Sort(want)
+	if res.StatusCode != http.StatusOK || !slices.Equal(got, want) {
+		t.Errorf("list = %d %s", res.StatusCode, data)
 	}
-	if res, data := x.do(t, "GET", "/api/tickets?project=none", nil, nil); res.StatusCode != http.StatusOK || strings.TrimSpace(string(data)) != "[]" {
-		t.Errorf("by no project = %d %s", res.StatusCode, data)
+	if got := x.page(t, "?q=second"); !slices.Equal(keys(got), []string{second}) {
+		t.Errorf("search = %+v", got)
 	}
-	// With nothing at all it is still a list.
-	if res, data := x.do(t, "GET", "/api/tickets", nil, x.addUser(t, "fresh", false)); res.StatusCode != http.StatusOK || strings.TrimSpace(string(data)) != "[]" {
-		t.Errorf("empty = %d %s", res.StatusCode, data)
+	if res, data := x.do(t, "GET", "/api/projects/"+testProject+"/tickets?cursor=nonsense", nil, nil); res.StatusCode != http.StatusBadRequest {
+		t.Errorf("a cursor the list never gave = %d %s", res.StatusCode, data)
 	}
 
 	// Edit.
-	path := "/api/tickets/" + id
+	path := ticketPath(testProject, id)
 	malformed(t, x, "PUT", path)
-	malformed(t, x, "POST", "/api/tickets")
-	if res, data := x.do(t, "PUT", path, map[string]any{"title": "t", "project_id": testProject, "branch": "a..b"}, nil); res.StatusCode != http.StatusBadRequest {
+	malformed(t, x, "POST", "/api/projects/"+testProject+"/tickets")
+	if res, data := x.do(t, "PUT", path, map[string]any{"title": "t", "base_branch": "a..b"}, nil); res.StatusCode != http.StatusBadRequest {
 		t.Errorf("bad branch = %d %s", res.StatusCode, data)
 	}
-	if res, data := x.do(t, "PUT", path, map[string]any{"title": " ", "project_id": testProject}, nil); res.StatusCode != http.StatusBadRequest {
+	if res, data := x.do(t, "PUT", path, map[string]any{"title": " "}, nil); res.StatusCode != http.StatusBadRequest {
 		t.Errorf("blank title = %d %s", res.StatusCode, data)
 	}
-	if res, data := x.do(t, "PUT", path, map[string]any{"title": "t", "project_id": testProject, "change_type": "nonsense"}, nil); res.StatusCode != http.StatusBadRequest {
+	if res, data := x.do(t, "PUT", path, map[string]any{"title": "t", "change_type": "nonsense"}, nil); res.StatusCode != http.StatusBadRequest {
 		t.Errorf("bad change type = %d %s", res.StatusCode, data)
 	}
-	res, data = x.do(t, "PUT", path, map[string]any{"title": "renamed", "goal": "g2", "project_id": testProject, "branch": "fix/x", "change_type": "fix"}, nil)
-	got := decode[ticketResp](t, data)
-	if res.StatusCode != http.StatusOK || got.Title != "renamed" || got.BaseBranch != "fix/x" || got.ChangeType != "fix" {
+	res, data = x.do(t, "PUT", path, map[string]any{"title": "renamed", "goal": "g2", "base_branch": "fix/x", "change_type": "fix"}, nil)
+	edited := decode[TicketDetail](t, data)
+	if res.StatusCode != http.StatusOK || edited.Title != "renamed" || edited.BaseBranch != "fix/x" || edited.ChangeType != "fix" {
 		t.Errorf("edit = %d %s", res.StatusCode, data)
 	}
 
@@ -998,17 +996,19 @@ func TestTicketRoutes(t *testing.T) {
 	}
 
 	// Gone past the guard.
-	gone := map[string]string{"id": "gone"}
+	gone := map[string]string{"id": "gone", "key": id}
 	s := x.srv
 	for name, c := range map[string]struct {
 		h    http.HandlerFunc
 		body string
 	}{
-		"get":         {s.getTicket, ""},
-		"attachments": {s.getTicketAttachments, ""},
-		"delete":      {s.deleteTicket, ""},
-		"update":      {s.updateTicket, `{"title":"t","project_id":"` + testProject + `"}`},
-		"start":       {s.startTicketRun, ""},
+		"list":        {s.listWorkshopTickets, ""},
+		"get":         {s.getWorkshopTicket, ""},
+		"attachments": {s.getWorkshopTicketAttachments, ""},
+		"delete":      {s.deleteWorkshopTicket, ""},
+		"update":      {s.updateWorkshopTicket, `{"title":"t"}`},
+		"start":       {s.startWorkshopTicketRun, ""},
+		"record":      {s.getTicketRecord, ""},
 	} {
 		if w := call(c.h, "POST", "/", c.body, testUser, gone); w.Code != http.StatusNotFound {
 			t.Errorf("%s of nothing = %d %s", name, w.Code, w.Body)
@@ -1020,60 +1020,58 @@ func TestTicketRoutes(t *testing.T) {
 	if res, _ := x.do(t, "GET", path, nil, nil); res.StatusCode != http.StatusNotFound {
 		t.Errorf("after delete = %d", res.StatusCode)
 	}
+	if res, _ := x.do(t, "GET", "/api/tickets/"+id, nil, nil); res.StatusCode != http.StatusNotFound {
+		t.Errorf("record after delete = %d", res.StatusCode)
+	}
 }
 
-func TestTicketImportFailures(t *testing.T) {
+// A remote tracker failing is the tracker's fault, wherever it shows; what
+// it cannot resolve reads as config.
+func TestTicketSourceFailures(t *testing.T) {
 	x := newEnv(t, engine.Config{})
-	x.seedIntegration(t, "src", "ticketsource")
-	body := map[string]any{"project_id": testProject, "source_id": "src", "source_key": "K-1"}
-
-	// A half-named import, in either direction.
-	for _, half := range []map[string]any{
-		{"project_id": testProject, "source_id": "src"},
-		{"project_id": testProject, "source_key": "K-1"},
-	} {
-		if res, data := x.do(t, "POST", "/api/tickets", half, nil); res.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), "both") {
-			t.Errorf("%v = %d %s", half, res.StatusCode, data)
+	x.seedIntegration(t, "src", confstore.PortTicketSource)
+	x.useSource(t, "src")
+	x.srv.Live = tickets.NewLive(x.srv.Conf, stubSources{src: failingSource{errors.New("tracker down")}})
+	for _, path := range []string{"/api/projects/" + testProject + "/tickets", ticketPath(testProject, "K-1"), ticketPath(testProject, "K-1") + "/comments"} {
+		if res, data := x.do(t, "GET", path, nil, nil); res.StatusCode != http.StatusBadGateway {
+			t.Errorf("%s = %d %s", path, res.StatusCode, data)
 		}
 	}
-	// No trackers wired.
-	if res, data := x.do(t, "POST", "/api/tickets", body, nil); res.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("no sources = %d %s", res.StatusCode, data)
+	if res, data := x.do(t, "POST", ticketPath(testProject, "K-1")+"/runs", nil, nil); res.StatusCode != http.StatusBadGateway {
+		t.Errorf("a run = %d %s", res.StatusCode, data)
 	}
-
-	// The tracker failing is the tracker's fault, wherever it shows.
-	x.srv.Sources = stubSources{src: failingSource{errors.New("tracker down")}}
-	if res, data := x.do(t, "POST", "/api/tickets", body, nil); res.StatusCode != http.StatusBadGateway {
-		t.Errorf("import = %d %s", res.StatusCode, data)
-	}
-	if res, data := x.do(t, "GET", "/api/integrations/src/tickets?q=x", nil, nil); res.StatusCode != http.StatusBadGateway {
-		t.Errorf("search = %d %s", res.StatusCode, data)
-	}
-	if res, data := x.do(t, "GET", "/api/integrations/src/tickets/K-1", nil, nil); res.StatusCode != http.StatusBadGateway {
-		t.Errorf("preview = %d %s", res.StatusCode, data)
-	}
-	// What the tracker cannot resolve reads as config.
-	x.srv.Sources = stubSources{src: failingSource{confstore.ErrNotFound}}
-	if res, data := x.do(t, "GET", "/api/integrations/src/tickets/K-1", nil, nil); res.StatusCode != http.StatusNotFound {
+	x.srv.Live = tickets.NewLive(x.srv.Conf, stubSources{src: failingSource{confstore.ErrNotFound}})
+	if res, data := x.do(t, "GET", ticketPath(testProject, "K-1"), nil, nil); res.StatusCode != http.StatusNotFound {
 		t.Errorf("no such issue = %d %s", res.StatusCode, data)
-	}
-	if res, data := x.do(t, "POST", "/api/tickets", body, nil); res.StatusCode != http.StatusNotFound {
-		t.Errorf("import of no such issue = %d %s", res.StatusCode, data)
 	}
 }
 
-func TestSourceErrMapping(t *testing.T) {
+func TestLiveErrMapping(t *testing.T) {
 	for err, want := range map[error]int{
-		tickets.ErrNoSources:       http.StatusServiceUnavailable,
-		confstore.ErrNotFound:      http.StatusNotFound,
-		confstore.ErrInvalid:       http.StatusBadRequest,
-		resolution.ErrUnresolvable: http.StatusBadRequest,
-		errors.New("502"):          http.StatusBadGateway,
+		tickets.ErrNoSources:                http.StatusServiceUnavailable,
+		&trackerport.ErrRateLimited{}:       http.StatusServiceUnavailable,
+		trackerport.ErrTicketNotFound:       http.StatusNotFound,
+		confstore.ErrNotFound:               http.StatusNotFound,
+		confstore.ErrInvalid:                http.StatusBadRequest,
+		resolution.ErrUnresolvable:          http.StatusBadRequest,
+		errors.New("502"):                   http.StatusBadGateway,
+		&trackerport.ErrNotApplicable{}:     http.StatusBadRequest,
+		&trackerport.ErrStatusUnreachable{}: http.StatusBadRequest,
 	} {
 		w := httptest.NewRecorder()
-		sourceErr(w, err)
+		workshop{}.writeFail(w, err) // a remote tracker's
 		if w.Code != want {
 			t.Errorf("%v = %d, want %d", err, w.Code, want)
 		}
+	}
+	w := httptest.NewRecorder()
+	liveErr(w, &livecache.HeldError{Until: time.Now().Add(90 * time.Second), Err: &trackerport.ErrRateLimited{}})
+	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "90" {
+		t.Errorf("held = %d, Retry-After %q", w.Code, w.Header().Get("Retry-After"))
+	}
+	w = httptest.NewRecorder()
+	liveErr(w, &trackerport.ErrRateLimited{})
+	if w.Header().Get("Retry-After") != strconv.Itoa(int(tickets.RateLimitBackoff.Seconds())) {
+		t.Errorf("rate limited, no wait said: Retry-After %q", w.Header().Get("Retry-After"))
 	}
 }

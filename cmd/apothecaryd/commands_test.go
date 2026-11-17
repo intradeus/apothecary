@@ -526,19 +526,9 @@ func TestBackgroundPasses(t *testing.T) {
 	finished("hasty-run", "hasty")
 	finished("patient-run", "patient")
 
-	// An automation the watcher will poll.
-	all, err := a.conf.ListIntegrations(ctx, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tracker := ""
-	for _, in := range all {
-		if in.Port == confstore.PortTicketSource {
-			tracker = in.ID
-		}
-	}
+	// An automation the watcher will poll: the workshop's own ticket source.
 	auto, err := a.conf.CreateAutomation(ctx, confstore.Automation{
-		ProjectID: dev.ID, Name: "inbox", Kind: confstore.AutomationTrackerQuery, SourceID: tracker,
+		ProjectID: dev.ID, Name: "inbox", Kind: confstore.AutomationTrackerQuery,
 		Query: "matches-nothing-at-all", Flow: "dev", Enabled: true,
 	})
 	if err != nil {

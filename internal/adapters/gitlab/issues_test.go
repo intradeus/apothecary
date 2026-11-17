@@ -2,12 +2,15 @@ package gitlab
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -101,12 +104,12 @@ func TestGitLabIssuesSearchAndFetch(t *testing.T) {
 	if err := s.Test(ctx); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Search(ctx, "router ~bug is:open assignee:@me", 10)
+	got, err := s.Search(ctx, trackerport.SearchQuery{Text: "router ~bug is:open assignee:@me", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The same issue found through the project and its group is listed once.
-	if len(got) != 1 || got[0].Key != "lu/greeter#5" || got[0].Assignee != "lu" || got[0].Status != "opened" {
+	if len(got.Tickets) != 1 || got.Tickets[0].Key != "lu/greeter#5" || got.Tickets[0].Assignee != "lu" || got.Tickets[0].Status != "opened" || got.Tickets[0].Done {
 		t.Errorf("search = %+v", got)
 	}
 	if len(*queries) != 2 {
@@ -116,22 +119,26 @@ func TestGitLabIssuesSearchAndFetch(t *testing.T) {
 	if q.Get("search") != "router" || q.Get("labels") != "bug" || q.Get("state") != "opened" || q.Get("scope") != "assigned_to_me" {
 		t.Errorf("query = %v", q)
 	}
-	if _, err := s.Search(ctx, "", 10); err != nil {
+	if _, err := s.Search(ctx, trackerport.SearchQuery{Done: trackerport.DoneOpen, Limit: 10}); err != nil {
 		t.Fatal(err)
 	}
 	if q := (*queries)[2]; q.Get("scope") != "assigned_to_me" || q.Get("state") != "opened" || q.Has("search") {
 		t.Errorf("empty query = %v", q)
 	}
 	// A key looks the issue up directly; a bare number uses the one project.
-	byKey, err := s.Search(ctx, "#5", 10)
-	if err != nil || len(byKey) != 1 || byKey[0].Key != "lu/greeter#5" {
+	byKey, err := s.Search(ctx, trackerport.SearchQuery{Text: "#5", Limit: 10})
+	if err != nil || len(byKey.Tickets) != 1 || byKey.Tickets[0].Key != "lu/greeter#5" {
 		t.Errorf("search by key = %+v, %v", byKey, err)
+	}
+	// ...and the done filter holds for it: issue 5 is open.
+	if closed, err := s.Search(ctx, trackerport.SearchQuery{Text: "#5", Done: trackerport.DoneOnly}); err != nil || len(closed.Tickets) != 0 {
+		t.Errorf("closed by key = %+v, %v", closed, err)
 	}
 	if len(*queries) != 4 {
 		t.Errorf("a key search still hit the list endpoint: %v", *queries)
 	}
 	// No scope configured: the token's own issues list.
-	if _, err := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok"}).Search(ctx, "x", 10); err != nil {
+	if _, err := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok"}).Search(ctx, trackerport.SearchQuery{Text: "x", Limit: 10}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -169,6 +176,12 @@ func TestGitLabIssuesSearchAndFetch(t *testing.T) {
 	}
 	if _, err := NewIssues(IssuesConfig{BaseURL: srv.URL, Token: "tok"}).Fetch(ctx, "#5"); err == nil {
 		t.Error("a bare number with no configured project was accepted")
+	}
+	// A bare number is an issue IID here: a stable id (905, issue 5's)
+	// handed to Fetch would read an unrelated issue, so the adapter offers no
+	// fetch by it and a live read never retries a missing key that way.
+	if _, ok := any(s).(trackerport.TicketByRemoteID); ok {
+		t.Error("GitLab Issues claims a fetch by stable id")
 	}
 }
 
@@ -287,57 +300,97 @@ func TestGitLabIssuesMetadata(t *testing.T) {
 	}
 }
 
-// FetchMany asks each project once for its iids (a hundred at a time); a
-// project GitLab no longer has leaves its keys out, as does an iid the
-// answer lacks.
-func TestGitLabIssuesFetchMany(t *testing.T) {
-	var calls []string
+// Search pages a scope by page number while it serves full pages; the done
+// filter is the state, overriding one typed in the search box, and a closed
+// issue is Done.
+func TestGitLabIssuesSearchPagesAndFiltersDone(t *testing.T) {
+	var queries []url.Values
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v4/projects/{project}/issues", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		calls = append(calls, r.PathValue("project")+" "+strings.Join(q["iids[]"], ","))
-		if r.PathValue("project") == "gone/p" {
-			w.WriteHeader(404)
-			_, _ = w.Write([]byte(`{"message":"404 Project Not Found"}`))
+		queries = append(queries, r.URL.Query())
+		if r.URL.Query().Get("page") == "2" {
+			_, _ = w.Write([]byte(`[{"id":13,"iid":3,"state":"closed","references":{"full":"lu/greeter#3"}}]`))
 			return
 		}
-		if r.PathValue("project") == "broken/p" {
-			w.WriteHeader(500)
-			return
-		}
-		if q.Get("scope") != "all" || q.Get("state") != "all" {
-			t.Errorf("query = %v", q)
-		}
-		var rows []string
-		for _, iid := range q["iids[]"] {
-			if iid == "9" {
-				continue
-			}
-			rows = append(rows, `{"id":1`+iid+`,"iid":`+iid+`,"state":"closed","labels":["x"],"references":{"full":"`+r.PathValue("project")+`#`+iid+`"}}`)
-		}
-		_, _ = w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
+		_, _ = w.Write([]byte(`[{"id":11,"iid":1,"state":"closed","references":{"full":"lu/greeter#1"}},{"id":12,"iid":2,"state":"closed","references":{"full":"lu/greeter#2"}}]`))
 	})
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 	s := NewIssues(IssuesConfig{BaseURL: ts.URL, Token: "tok", Projects: []string{"lu/greeter"}})
-	keys := []string{"#1", "lu/other#2", "gone/p#3", "lu/greeter#9"}
-	for i := 10; i < 110; i++ {
-		keys = append(keys, "lu/greeter#"+strconv.Itoa(i))
+	ctx := context.Background()
+
+	q := trackerport.SearchQuery{Text: "router is:open", Done: trackerport.DoneOnly, Limit: 2}
+	first, err := s.Search(ctx, q)
+	if err != nil || len(first.Tickets) != 2 || !first.Tickets[0].Done || first.Next == "" {
+		t.Fatalf("first = %+v, %v", first, err)
 	}
-	got, err := s.FetchMany(context.Background(), keys)
-	if err != nil {
-		t.Fatal(err)
+	q.Cursor = first.Next
+	second, err := s.Search(ctx, q)
+	if err != nil || len(second.Tickets) != 1 || second.Tickets[0].Key != "lu/greeter#3" || second.Next != "" {
+		t.Fatalf("second = %+v, %v", second, err)
 	}
-	if len(got) != 102 || got[0].Key != "lu/greeter#1" || got[0].StatusID != "closed" {
-		t.Errorf("got %d: %+v", len(got), got[0])
+	for i, v := range queries {
+		if v.Get("state") != "closed" || v.Get("per_page") != "2" || v.Get("page") != strconv.Itoa(i+1) {
+			t.Errorf("query %d = %v", i, v)
+		}
 	}
-	if len(calls) != 4 || !strings.HasPrefix(calls[0], "lu/greeter 1,9,10,") || calls[2] != "lu/other 2" || calls[3] != "gone/p 3" {
-		t.Errorf("calls = %.60q", calls)
+	for _, bad := range []string{"-1", "e30", base64.RawURLEncoding.EncodeToString([]byte(`{"at":[0,0]}`))} {
+		if _, err := s.Search(ctx, trackerport.SearchQuery{Cursor: bad}); err == nil {
+			t.Errorf("cursor %q was accepted", bad)
+		}
 	}
-	if _, err := s.FetchMany(context.Background(), []string{"not a key"}); err == nil {
-		t.Error("a bad key is an error")
+}
+
+// Over a project and a group holding it, a page holds at most the limit and
+// an issue listed through one scope is not listed again through the other —
+// on the same page, or on a later one when its copy is on another page of
+// the other scope's list.
+func TestGitLabIssuesSearchMergesOverlappingScopes(t *testing.T) {
+	row := func(iid int, month int) string {
+		return fmt.Sprintf(`{"id":%d,"iid":%d,"updated_at":"2026-%02d-01T00:00:00Z","references":{"full":"g/p#%d"}}`, 100+iid, iid, month, iid)
 	}
-	if _, err := s.FetchMany(context.Background(), []string{"broken/p#1"}); err == nil {
-		t.Error("a failing project is an error")
+	lists := map[string][]string{
+		"/api/v4/projects/g%2Fp/issues": {row(4, 4), row(2, 2)},
+		"/api/v4/groups/g/issues":       {row(2, 2), row(1, 1)},
+	}
+	var calls []string
+	serve := func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		per, _ := strconv.Atoi(q.Get("per_page"))
+		page, _ := strconv.Atoi(q.Get("page"))
+		calls = append(calls, r.URL.EscapedPath()+" "+q.Get("page"))
+		all := lists[r.URL.EscapedPath()]
+		from, to := min((page-1)*per, len(all)), min(page*per, len(all))
+		_, _ = w.Write([]byte("[" + strings.Join(all[from:to], ",") + "]"))
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v4/projects/{project}/issues", serve)
+	mux.HandleFunc("GET /api/v4/groups/{group}/issues", serve)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	s := NewIssues(IssuesConfig{BaseURL: ts.URL, Token: "tok", Projects: []string{"g/p"}, Groups: []string{"g"}})
+	ctx := context.Background()
+
+	var pages [][]string
+	q := trackerport.SearchQuery{Text: "x", Limit: 2}
+	for range 4 {
+		got, err := s.Search(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var keys []string
+		for _, it := range got.Tickets {
+			keys = append(keys, it.Key)
+		}
+		pages = append(pages, keys)
+		if got.Next == "" {
+			break
+		}
+		q.Cursor = got.Next
+	}
+	// g/p#2 ends page 1 through the project; its copy heads the group's
+	// list, which page 2 reads from its start.
+	if want := [][]string{{"g/p#4", "g/p#2"}, {"g/p#1"}}; !reflect.DeepEqual(pages, want) {
+		t.Errorf("pages = %v, want %v (calls %v)", pages, want, calls)
 	}
 }

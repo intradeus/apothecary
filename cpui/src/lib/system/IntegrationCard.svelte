@@ -5,7 +5,7 @@
 	// nothing else — no credentials to test or edit, and it can't be deleted.
 	import { errorMessage } from '$lib/core/errors';
 	import { INTERNAL_TRACKER, type Integration, type KindDescriptor } from '$lib/domain';
-	import { api, linkedTicketsOf } from '$lib/api';
+	import { api, isInUse } from '$lib/api';
 	import { ago, fmtAbs } from '$lib/core/format';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
@@ -85,45 +85,27 @@
 		if (usedBy.length) {
 			error = t('system.int.inUse', {
 				workshops: usedBy.join(', '),
-				port: i.port,
+				port: t(`port.${i.port}`),
 				those: usedBy.length === 1 ? t('system.int.thatWorkshop') : t('system.int.thoseWorkshops')
 			});
 			return;
 		}
 		const ok = await confirmDialog({
 			title: t('system.int.deleteTitle', { name: i.name }),
-			body: th(
-				i.port === 'ticketsource' ? 'system.int.deleteBodyTickets' : 'system.int.deleteBodyUnused',
-				{ name: i.name }
-			),
+			body: th('system.int.deleteBodyUnused', { name: i.name }),
 			action: t('system.int.deleteAction')
 		});
 		if (!ok) return;
 		error = '';
 		removing = true;
 		try {
-			try {
-				await api.integrations.remove(i.id);
-			} catch (e) {
-				// Tickets still mirror its issues: they move to the internal
-				// tracker only when the user says so.
-				const linked = linkedTicketsOf(e);
-				if (!linked) throw e;
-				const unlink = await confirmDialog({
-					title: t('system.int.unlinkTitle', { count: linked.tickets }),
-					body: `${th('system.int.unlinkBody', { count: linked.tickets, name: i.name })}${
-						linked.activeRuns ? ` ${th('system.int.unlinkRuns', { count: linked.activeRuns })}` : ''
-					}`,
-					action: t('system.int.unlinkAction')
-				});
-				if (!unlink) return;
-				await api.integrations.remove(i.id, { unlinkTickets: true });
-			}
+			await api.integrations.remove(i.id);
 			writeTest(i.id, null);
 			toast(t('system.int.deleted', { name: i.name }));
 			onchanged();
 		} catch (e) {
-			error = errorMessage(e);
+			// A workshop took it since the page loaded: the refusal names it.
+			error = isInUse(e) ? t('system.int.inUseNow', { reason: errorMessage(e) }) : errorMessage(e);
 		} finally {
 			removing = false;
 		}

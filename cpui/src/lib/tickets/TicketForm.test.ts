@@ -1,59 +1,46 @@
-import { render, screen, waitFor, within } from '@testing-library/svelte';
+import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
-import type { SourceTicket, Ticket } from '$lib/domain';
+import type { TicketDetail, TrackerType } from '$lib/domain';
 import { toasts } from '$lib/ui/toast.svelte';
-import { aProject, aTicket } from '$test/fixtures';
-import { anIntegration, choose } from '$test/fixtures/app.svelte';
+import { aProject, aTicketDetail } from '$test/fixtures';
+import { choose } from '$test/fixtures/app.svelte';
 import { deferred } from '$test/helpers';
 import TicketForm from './TicketForm.svelte';
 
 vi.mock('$lib/api', () => ({
 	api: {
 		tickets: { create: vi.fn(), update: vi.fn(), attachments: vi.fn() },
-		integrations: { list: vi.fn(), sourceTickets: vi.fn(), sourceTicket: vi.fn() },
+		integrations: { types: vi.fn() },
 		files: { upload: vi.fn(), limits: vi.fn(), attachmentUrl: vi.fn() }
 	}
 }));
 
-const projects = [aProject({ id: 'p1', name: 'billing' }), aProject({ id: 'p2', name: 'web' })];
-/** billing names branches the default way; web by its own format. */
-const formatted = (branchFormat: string) => [
-	projects[0],
-	aProject({ id: 'p2', name: 'web', repo: { ...projects[1].repo, branchFormat } })
-];
+const project = aProject({ id: 'p1', ticketSourceId: 'own' });
 const title = () => screen.getByLabelText('Title');
 const goal = () => screen.getByLabelText('Goal');
-const branch = () => screen.getByLabelText('Base branch');
+const branch = () => screen.getByLabelText(/Base branch/);
 const create = () => screen.getByRole('button', { name: 'Create ticket' });
-const jira = anIntegration({ id: 'j1', name: 'Jira', port: 'ticketsource', kind: 'jira' });
-
-const issue = (over: Partial<SourceTicket> = {}): SourceTicket => ({
-	key: 'PROJ-7',
-	title: 'Bad invoice',
-	body: 'It rounds wrong.',
-	attachments: [],
-	changeType: 'fix',
-	...over
-});
+const type = (id: string, name: string, changeType: TrackerType['changeType'], position = 0) =>
+	({ id, integrationId: 'own', remoteId: '', name, changeType, position }) as TrackerType;
 
 function setup(over: Record<string, unknown> = {}) {
 	const onsaved = vi.fn();
-	render(TicketForm, { projects, onsaved, ...over });
-	return { onsaved };
+	const r = render(TicketForm, { project, onsaved, ...over });
+	return { onsaved, ...r };
 }
-const created = (over: Partial<Ticket> = {}) => {
-	const saved = aTicket(over);
+const created = (over: Partial<TicketDetail> = {}) => {
+	const saved = aTicketDetail({ internal: true, ...over });
 	vi.mocked(api.tickets.create).mockResolvedValue(saved);
 	return saved;
 };
-const lastBody = () => vi.mocked(api.tickets.create).mock.calls.at(-1)![0];
+const lastBody = () => vi.mocked(api.tickets.create).mock.calls.at(-1)![1];
 
 beforeEach(() => {
 	vi.resetAllMocks();
-	vi.mocked(api.integrations.list).mockResolvedValue([]);
-	vi.mocked(api.tickets.attachments).mockResolvedValue([]);
+	vi.mocked(api.integrations.types).mockResolvedValue([]);
+	vi.mocked(api.tickets.attachments).mockResolvedValue({ attachments: [], remote: [] });
 	vi.mocked(api.files.limits).mockResolvedValue(null as never);
 	toasts.list = [];
 });
@@ -75,62 +62,29 @@ describe('TicketForm, creating', () => {
 		expect(create()).toBeDisabled();
 	});
 
-	it('warns and stays disabled with no workshop at all', async () => {
-		setup({ projects: [] });
-		expect(screen.getByRole('link', { name: /workshop/i })).toHaveAttribute('href', '/w/new');
-		await userEvent.type(title(), 'Add keys');
-		await userEvent.type(goal(), 'Safe retries');
-		expect(create()).toBeDisabled();
-	});
-
-	it('creates the ticket, trimmed, and hands it to the page', async () => {
+	it("creates the ticket in the workshop's source, trimmed, and hands it to the page", async () => {
 		const saved = created();
 		const { onsaved } = setup();
 		await userEvent.type(title(), ' Add keys ');
 		await userEvent.type(goal(), ' Safe retries ');
 		await userEvent.click(create());
 
-		expect(lastBody()).toEqual({
+		expect(api.tickets.create).toHaveBeenCalledWith('p1', {
 			title: 'Add keys',
 			goal: 'Safe retries',
-			projectId: 'p2',
-			branch: 'feat/add-keys',
+			baseBranch: '',
 			changeType: 'feat',
+			typeId: undefined,
 			attachmentIds: []
 		});
 		expect(onsaved).toHaveBeenCalledWith(saved);
 		expect(toasts.list.at(-1)?.text).toBe('Ticket created');
 	});
 
-	it('defaults to the last workshop', () => {
-		setup();
-		expect(screen.getByRole('combobox', { name: 'Workshop' })).toHaveTextContent('web');
-	});
-
-	it('preselects initialProject when it exists', () => {
-		setup({ initialProject: 'p1' });
-		expect(screen.getByRole('combobox', { name: 'Workshop' })).toHaveTextContent('billing');
-	});
-
-	it('ignores an initialProject that does not exist', () => {
-		setup({ initialProject: 'nope' });
-		expect(screen.getByRole('combobox', { name: 'Workshop' })).toHaveTextContent('web');
-	});
-
-	it('sends the workshop picked', async () => {
-		created();
-		setup();
-		await choose('Workshop', 'billing');
-		await userEvent.type(title(), 'A');
-		await userEvent.type(goal(), 'B');
-		await userEvent.click(create());
-		expect(lastBody().projectId).toBe('p1');
-	});
-
 	it('uploads files first and attaches them', async () => {
 		created();
 		vi.mocked(api.files.upload).mockResolvedValue([{ id: 'f1' }] as never);
-		const { container } = render(TicketForm, { projects, onsaved: vi.fn() });
+		const { container } = setup();
 		await userEvent.type(title(), 'A');
 		await userEvent.type(goal(), 'B');
 		await userEvent.upload(
@@ -145,8 +99,7 @@ describe('TicketForm, creating', () => {
 
 	it('does not create when an upload fails', async () => {
 		vi.mocked(api.files.upload).mockRejectedValue(new Error('too big'));
-		const onsaved = vi.fn();
-		const { container } = render(TicketForm, { projects, onsaved });
+		const { container, onsaved } = setup();
 		await userEvent.type(title(), 'A');
 		await userEvent.type(goal(), 'B');
 		await userEvent.upload(
@@ -161,19 +114,19 @@ describe('TicketForm, creating', () => {
 	});
 
 	it('shows a refusal and keeps what was typed', async () => {
-		vi.mocked(api.tickets.create).mockRejectedValue(new Error('branch taken'));
+		vi.mocked(api.tickets.create).mockRejectedValue(new Error('remote source'));
 		const { onsaved } = setup();
 		await userEvent.type(title(), 'Add keys');
 		await userEvent.type(goal(), 'Safe retries');
 		await userEvent.click(create());
 
-		expect(await screen.findByText('branch taken')).toBeInTheDocument();
+		expect(await screen.findByText('remote source')).toBeInTheDocument();
 		expect(title()).toHaveValue('Add keys');
 		expect(onsaved).not.toHaveBeenCalled();
 	});
 
 	it('sends once on a double submit', async () => {
-		const save = deferred<Ticket>();
+		const save = deferred<TicketDetail>();
 		vi.mocked(api.tickets.create).mockReturnValue(save.promise);
 		setup();
 		await userEvent.type(title(), 'Add keys');
@@ -182,7 +135,7 @@ describe('TicketForm, creating', () => {
 		await userEvent.type(title(), '{Enter}');
 
 		expect(api.tickets.create).toHaveBeenCalledOnce();
-		save.resolve(aTicket());
+		save.resolve(aTicketDetail());
 	});
 
 	it('shows Cancel only when the page wants one', async () => {
@@ -193,312 +146,129 @@ describe('TicketForm, creating', () => {
 	});
 });
 
-describe('TicketForm, the branch', () => {
-	it('names the branch from the type and the whole title', async () => {
+describe('TicketForm, the type', () => {
+	it("offers the source's types, and a type picked brings its change type", async () => {
+		created();
+		vi.mocked(api.integrations.types).mockResolvedValue([
+			type('t2', 'Chore', 'chore', 1),
+			type('t1', 'Bug', 'fix', 0)
+		]);
 		setup();
-		await userEvent.type(title(), 'Add Idempotency  Keys!');
-		expect(branch()).toHaveValue('feat/add-idempotency-keys');
+		await waitFor(() => expect(api.integrations.types).toHaveBeenCalledWith('own'));
+		await choose('Type', 'Bug');
+		expect(screen.getByRole('combobox', { name: 'Change type' })).toHaveTextContent('fix');
+		await userEvent.type(title(), 'A');
+		await userEvent.type(goal(), 'B');
+		await userEvent.click(create());
+		expect(lastBody()).toMatchObject({ typeId: 't1', changeType: 'fix' });
 	});
 
-	it('leaves the branch empty while the title slugs to nothing', async () => {
+	it('keeps the change type when no type is picked', async () => {
+		vi.mocked(api.integrations.types).mockResolvedValue([type('t1', 'Bug', 'fix')]);
 		setup();
-		await userEvent.type(title(), '!!!');
+		await waitFor(() => expect(api.integrations.types).toHaveBeenCalled());
+		await choose('Type', 'No type');
+		expect(screen.getByRole('combobox', { name: 'Change type' })).toHaveTextContent('feat');
+	});
+
+	it('still works without the type list', async () => {
+		vi.mocked(api.integrations.types).mockRejectedValue(new Error('down'));
+		setup();
+		await waitFor(() => expect(api.integrations.types).toHaveBeenCalled());
+		expect(screen.getByRole('combobox', { name: 'Type' })).toHaveTextContent('No type');
+	});
+
+	it('takes a change type by hand', async () => {
+		created();
+		setup();
+		await choose('Change type', 'docs');
+		await userEvent.type(title(), 'A');
+		await userEvent.type(goal(), 'B');
+		await userEvent.click(create());
+		expect(lastBody().changeType).toBe('docs');
+	});
+});
+
+describe('TicketForm, the branch', () => {
+	it("is optional: the workshop's format only names its placeholder", async () => {
+		setup({
+			project: aProject({ repo: { ...project.repo, branchFormat: '{ticket_type}/{ticket_title}' } })
+		});
+		expect(branch()).toHaveValue('');
+		await userEvent.type(title(), 'Add Keys');
+		expect(branch()).toHaveAttribute('placeholder', 'feat/add-keys');
 		expect(branch()).toHaveValue('');
 	});
 
-	it('follows the change type', async () => {
-		setup();
-		await userEvent.type(title(), 'Add keys');
-		await choose('Change type', 'hotfix');
-		expect(branch()).toHaveValue('hotfix/add-keys');
-	});
-
-	it('stops following the title once edited, and says so', async () => {
-		setup();
-		await userEvent.type(title(), 'Add keys');
-		await userEvent.clear(branch());
-		await userEvent.type(branch(), 'feat/mine');
-		await userEvent.type(title(), ' more');
-
-		expect(branch()).toHaveValue('feat/mine');
-		expect(screen.getByText('edited')).toBeInTheDocument();
-	});
-
-	it('swaps only the leading type of an edited branch', async () => {
-		setup();
-		await userEvent.clear(branch());
-		await userEvent.type(branch(), 'feat/deep/mine');
-		await choose('Change type', 'fix');
-		expect(branch()).toHaveValue('fix/deep/mine');
-	});
-
-	it('leaves any other edited name alone on a type change', async () => {
-		setup();
-		await userEvent.type(branch(), 'release/1.2');
-		await choose('Change type', 'fix');
-		expect(branch()).toHaveValue('release/1.2');
-	});
-
-	it('goes back to the automatic name', async () => {
-		setup();
-		await userEvent.type(title(), 'Add keys');
-		await userEvent.type(branch(), 'x');
-		await userEvent.click(screen.getByRole('button', { name: /auto/ }));
-
-		expect(branch()).toHaveValue('feat/add-keys');
-		expect(screen.queryByText('edited')).not.toBeInTheDocument();
-	});
-
-	it('sends no branch when it is empty', async () => {
+	it('sends the branch typed', async () => {
 		created();
 		setup();
-		await userEvent.type(title(), '!!!');
+		await userEvent.type(title(), 'A');
 		await userEvent.type(goal(), 'B');
+		await userEvent.type(branch(), ' feat/mine ');
 		await userEvent.click(create());
-		expect(lastBody().branch).toBeUndefined();
-	});
-
-	it('follows the selected workshop’s format, and the workshop', async () => {
-		setup({ projects: formatted('team/{ticket_type}_{ticket_title}') });
-		await userEvent.type(title(), 'Add keys');
-		expect(branch()).toHaveValue('team/feat_add-keys');
-
-		await choose('Workshop', 'billing');
-		expect(branch()).toHaveValue('feat/add-keys');
-	});
-
-	it('shows a sample named by the workshop’s format while empty', async () => {
-		setup({ projects: formatted('{ticket_number}/{ticket_title}') });
-		expect(branch()).toHaveAttribute('placeholder', 'proj-123/short-description');
-		await choose('Workshop', 'billing');
-		expect(branch()).toHaveAttribute('placeholder', 'feat/proj-123-short-description');
+		expect(lastBody().baseBranch).toBe('feat/mine');
 	});
 });
 
 describe('TicketForm, editing', () => {
-	const existing = aTicket({
-		id: 't1',
-		projectId: 'p1',
+	const existing = aTicketDetail({
+		key: 't1',
+		internal: true,
 		title: 'Old title',
-		goal: 'Old goal',
+		body: 'Old goal',
 		baseBranch: 'feat/old',
 		changeType: 'fix',
+		typeId: 'ty',
 		attachmentIds: ['a1']
 	});
 
-	it('starts from the ticket, its workshop locked and its branch left alone', async () => {
+	it('starts from the ticket', () => {
 		setup({ existing });
 		expect(title()).toHaveValue('Old title');
 		expect(goal()).toHaveValue('Old goal');
 		expect(branch()).toHaveValue('feat/old');
-		expect(screen.getByRole('combobox', { name: 'Workshop' })).toBeDisabled();
-		expect(screen.getByText(/Locked/)).toBeInTheDocument();
-
-		await userEvent.type(title(), ' new');
-		expect(branch()).toHaveValue('feat/old');
-	});
-
-	it('does not offer the import', () => {
-		setup({ existing });
-		expect(screen.queryByRole('heading', { name: 'Import from tracker' })).not.toBeInTheDocument();
-		expect(api.integrations.list).not.toHaveBeenCalled();
-	});
-
-	it("leaves a sourced ticket's title, goal and type to its tracker", () => {
-		setup({
-			existing: { ...existing, source: { integrationId: 'j1', kind: 'jira', key: 'PROJ-7' } }
-		});
-		expect(title()).toBeDisabled();
-		expect(goal()).toBeDisabled();
-		expect(screen.getByRole('combobox', { name: 'Change type' })).toBeDisabled();
-		expect(screen.getByText(/follow the issue in jira/)).toBeInTheDocument();
-	});
-
-	it('lets a ticket written here be edited whole', () => {
-		setup({ existing });
-		expect(title()).toBeEnabled();
-		expect(goal()).toBeEnabled();
+		expect(screen.getByRole('combobox', { name: 'Change type' })).toHaveTextContent('fix');
 	});
 
 	it('shows what is already attached', async () => {
-		vi.mocked(api.tickets.attachments).mockResolvedValue([
-			{ id: 'a1', filename: 'spec.md' }
-		] as never);
+		vi.mocked(api.tickets.attachments).mockResolvedValue({
+			attachments: [{ id: 'a1', filename: 'spec.md' }] as never,
+			remote: []
+		});
 		setup({ existing });
+		expect(api.tickets.attachments).toHaveBeenCalledWith('p1', 't1');
 		expect(await screen.findByText(/spec\.md/)).toBeInTheDocument();
 	});
 
+	it('survives failing to list what is attached', async () => {
+		vi.mocked(api.tickets.attachments).mockRejectedValue(new Error('down'));
+		setup({ existing });
+		await waitFor(() => expect(api.tickets.attachments).toHaveBeenCalled());
+		expect(title()).toHaveValue('Old title');
+	});
+
 	it('saves over the ticket, keeping its attachments', async () => {
-		const saved = aTicket({ id: 't1' });
+		const saved = aTicketDetail({ key: 't1' });
 		vi.mocked(api.tickets.update).mockResolvedValue(saved);
 		vi.mocked(api.files.upload).mockResolvedValue([{ id: 'a2' }] as never);
-		const onsaved = vi.fn();
-		const { container } = render(TicketForm, { projects, existing, onsaved });
+		const { container, onsaved } = setup({ existing });
 		await userEvent.upload(
 			container.querySelector('input[type=file]') as HTMLInputElement,
 			new File(['x'], 'more.md')
 		);
 		await userEvent.click(screen.getByRole('button', { name: 'Save ticket' }));
 
-		expect(api.tickets.update).toHaveBeenCalledWith(
-			't1',
-			expect.objectContaining({ attachmentIds: ['a1', 'a2'], projectId: 'p1', branch: 'feat/old' })
-		);
+		expect(api.tickets.update).toHaveBeenCalledWith('p1', 't1', {
+			title: 'Old title',
+			goal: 'Old goal',
+			baseBranch: 'feat/old',
+			changeType: 'fix',
+			typeId: 'ty',
+			attachmentIds: ['a1', 'a2']
+		});
 		expect(api.tickets.create).not.toHaveBeenCalled();
 		expect(onsaved).toHaveBeenCalledWith(saved);
 		expect(toasts.list.at(-1)?.text).toBe('Ticket saved');
-	});
-});
-
-describe('TicketForm, importing', () => {
-	async function open(results: SourceTicket[] = [issue()], over: Record<string, unknown> = {}) {
-		vi.mocked(api.integrations.list).mockResolvedValue([
-			jira,
-			anIntegration({ id: 'other', port: 'repository' })
-		]);
-		vi.mocked(api.integrations.sourceTickets).mockResolvedValue(results);
-		vi.mocked(api.integrations.sourceTicket).mockResolvedValue(issue());
-		setup(over);
-		await screen.findByRole('combobox', { name: 'Tracker' });
-		await choose('Tracker', 'Jira (jira)');
-	}
-	const result = () => screen.findByRole('button', { name: /PROJ-7/ });
-
-	it('says how to connect a tracker when none is', async () => {
-		setup();
-		expect(await screen.findByText(/No ticket source connected/)).toBeInTheDocument();
-	});
-
-	it('survives failing to list trackers', async () => {
-		vi.mocked(api.integrations.list).mockRejectedValue(new Error('down'));
-		setup();
-		expect(await screen.findByText(/No ticket source connected/)).toBeInTheDocument();
-	});
-
-	it("asks the tracker for one's plate as soon as it is picked", async () => {
-		await open();
-		expect(api.integrations.sourceTickets).toHaveBeenCalledWith('j1', '');
-		expect(await result()).toBeInTheDocument();
-	});
-
-	it('searches on Enter, without submitting the ticket', async () => {
-		await open();
-		await userEvent.type(
-			screen.getByRole('searchbox', { name: 'Search the tracker' }),
-			' 2624 {Enter}'
-		);
-		expect(api.integrations.sourceTickets).toHaveBeenLastCalledWith('j1', '2624');
-		expect(api.tickets.create).not.toHaveBeenCalled();
-	});
-
-	it('says when nothing matched', async () => {
-		await open([]);
-		expect(await screen.findByText('No matching issues.')).toBeInTheDocument();
-	});
-
-	it('shows a failed search', async () => {
-		vi.mocked(api.integrations.list).mockResolvedValue([jira]);
-		vi.mocked(api.integrations.sourceTickets).mockRejectedValue(new Error('bad jql'));
-		setup();
-		await screen.findByRole('combobox', { name: 'Tracker' });
-		await choose('Tracker', 'Jira (jira)');
-		expect(await screen.findByText('bad jql')).toBeInTheDocument();
-	});
-
-	it('fills the form from the full issue', async () => {
-		await open();
-		await userEvent.click(await result());
-
-		await waitFor(() => expect(title()).toHaveValue('Bad invoice'));
-		expect(goal()).toHaveValue('It rounds wrong.');
-		expect(branch()).toHaveValue('fix/proj-7-bad-invoice');
-		expect(screen.getByRole('combobox', { name: 'Change type' })).toHaveTextContent('fix');
-		expect(screen.getByRole('button', { name: 'Create from PROJ-7' })).toBeInTheDocument();
-	});
-
-	it('records where the ticket came from', async () => {
-		created();
-		await open();
-		await userEvent.click(await result());
-		await userEvent.click(await screen.findByRole('button', { name: 'Create from PROJ-7' }));
-
-		expect(lastBody()).toMatchObject({ sourceIntegrationId: 'j1', sourceKey: 'PROJ-7' });
-	});
-
-	it('keeps the import branch through a type change', async () => {
-		await open();
-		await userEvent.click(await result());
-		await waitFor(() => expect(branch()).toHaveValue('fix/proj-7-bad-invoice'));
-
-		await choose('Change type', 'chore');
-		expect(branch()).toHaveValue('chore/proj-7-bad-invoice');
-	});
-
-	it('names the import branch by the workshop’s format', async () => {
-		await open([issue()], { projects: formatted('{ticket_title}-{ticket_number}') });
-		await userEvent.click(await result());
-		await waitFor(() => expect(branch()).toHaveValue('bad-invoice-proj-7'));
-	});
-
-	it('names the files that will be copied', async () => {
-		await open();
-		vi.mocked(api.integrations.sourceTicket).mockResolvedValue(
-			issue({ attachments: [{ filename: 'trace.log', size: 100 }] })
-		);
-		await userEvent.click(await result());
-
-		expect(await screen.findByText('1 file will be copied into the ticket:')).toBeInTheDocument();
-		expect(screen.getByText(/trace\.log/)).toBeInTheDocument();
-	});
-
-	it('says plainly when the issue has no files', async () => {
-		await open();
-		await userEvent.click(await result());
-		expect(await screen.findByText('This issue has no attachments.')).toBeInTheDocument();
-	});
-
-	it('stays put when the full issue cannot be read', async () => {
-		await open();
-		vi.mocked(api.integrations.sourceTicket).mockRejectedValue(new Error('gone'));
-		await userEvent.click(await result());
-
-		expect(await screen.findByText('gone')).toBeInTheDocument();
-		expect(title()).toHaveValue('');
-		expect(create()).toBeInTheDocument();
-	});
-
-	it('clears the import, keeping what the fields say', async () => {
-		created();
-		await open();
-		await userEvent.click(await result());
-		await userEvent.click(await screen.findByRole('button', { name: 'Clear' }));
-
-		expect(title()).toHaveValue('Bad invoice');
-		await userEvent.click(create());
-		expect(lastBody()).not.toHaveProperty('sourceKey');
-	});
-
-	it('goes back to writing by hand on the first choice', async () => {
-		await open();
-		await choose('Tracker', 'Choose a tracker…');
-		expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
-	});
-
-	it('stops at the warnings of an import that lost a file', async () => {
-		const saved = created({ warnings: ['trace.log was too large'] });
-		const onsaved = vi.fn();
-		vi.mocked(api.integrations.list).mockResolvedValue([]);
-		render(TicketForm, { projects, onsaved });
-		await userEvent.type(title(), 'A');
-		await userEvent.type(goal(), 'B');
-		await userEvent.click(create());
-
-		const warned = await screen.findByText('trace.log was too large');
-		expect(warned).toBeInTheDocument();
-		expect(onsaved).not.toHaveBeenCalled();
-		expect(within(document.body).queryByRole('button', { name: 'Create ticket' })).toBeNull();
-
-		await userEvent.click(screen.getByRole('button', { name: 'Continue to the ticket' }));
-		expect(onsaved).toHaveBeenCalledWith(saved);
 	});
 });

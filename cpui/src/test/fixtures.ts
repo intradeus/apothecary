@@ -1,7 +1,7 @@
 // Domain objects for tests: valid and boring, so a test states only what it
 // is about. `aRun({ state: 'failed' })` reads as the scenario.
 import { vi } from 'vitest';
-import type { Ping, Project, Run, Ticket } from '$lib/domain';
+import type { Ping, Project, Run, Ticket, TicketDetail, TicketRow } from '$lib/domain';
 import type { RunStore } from '$lib/run/store.svelte';
 
 const AT = '2026-10-31T12:00:00Z';
@@ -56,23 +56,56 @@ export const aProject = (over: Partial<Project> = {}): Project =>
 		repos: [],
 		commands: {},
 		defaultFlow: 'builder',
+		ticketSourceId: '01TESTSRC0000000000000ABCD',
 		createdAt: AT,
 		updatedAt: AT,
 		...over
 	}) as Project;
 
+/** One issue of a workshop's source as its list shows it, with a record. */
+export const aTicketRow = (over: Partial<TicketRow> = {}): TicketRow => ({
+	key: 'PROJ-7',
+	remoteId: '10007',
+	title: 'Add idempotency keys',
+	body: 'Make the webhook safe to retry.',
+	url: 'https://tracker.test/browse/PROJ-7',
+	status: 'To Do',
+	statusId: 's-todo',
+	done: false,
+	type: 'Story',
+	typeId: 't-story',
+	changeType: 'feat',
+	labels: [],
+	assignee: '',
+	updatedAt: AT,
+	ticketId: '01TESTTICK000000000000ABCD',
+	baseBranch: 'feat/idempotency',
+	activeRunId: '',
+	...over
+});
+
+/** One ticket as its page reads it: a remote issue unless told otherwise. */
+export const aTicketDetail = (over: Partial<TicketDetail> = {}): TicketDetail => ({
+	...aTicketRow(),
+	source: { id: '01TESTSRC0000000000000ABCD', kind: 'jira', name: 'Jira' },
+	internal: false,
+	attachmentIds: [],
+	links: [],
+	...over
+});
+
+/** A ticket's local record: what runs point at. */
 export const aTicket = (over: Partial<Ticket> = {}): Ticket => ({
 	id: '01TESTTICK000000000000ABCD',
-	projectId: '01TESTPROJ000000000000ABCD',
+	sourceId: '01TESTSRC0000000000000ABCD',
+	sourceKind: 'jira',
+	remoteId: '10007',
+	sourceKey: 'PROJ-7',
 	title: 'Add idempotency keys',
 	goal: 'Make the webhook safe to retry.',
 	baseBranch: 'feat/idempotency',
 	changeType: 'feat',
-	attachmentIds: [],
 	labels: [],
-	links: [],
-	syncState: '',
-	warnings: [],
 	createdAt: AT,
 	updatedAt: AT,
 	...over

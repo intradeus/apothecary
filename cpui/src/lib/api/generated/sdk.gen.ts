@@ -20,9 +20,9 @@ import type {
 	AddMySshKeyData,
 	AddMySshKeyErrors,
 	AddMySshKeyResponses,
-	AddTicketCommentData,
-	AddTicketCommentErrors,
-	AddTicketCommentResponses,
+	AddWorkshopTicketCommentData,
+	AddWorkshopTicketCommentErrors,
+	AddWorkshopTicketCommentResponses,
 	AllowEgressHostData,
 	AllowEgressHostErrors,
 	AllowEgressHostResponses,
@@ -98,12 +98,12 @@ import type {
 	CreateSkillsetData,
 	CreateSkillsetErrors,
 	CreateSkillsetResponses,
-	CreateTicketData,
-	CreateTicketErrors,
-	CreateTicketResponses,
 	CreateUserData,
 	CreateUserErrors,
 	CreateUserResponses,
+	CreateWorkshopTicketData,
+	CreateWorkshopTicketErrors,
+	CreateWorkshopTicketResponses,
 	DeleteAutomationData,
 	DeleteAutomationErrors,
 	DeleteAutomationResponses,
@@ -146,9 +146,9 @@ import type {
 	DeleteSkillsetData,
 	DeleteSkillsetErrors,
 	DeleteSkillsetResponses,
-	DeleteTicketData,
-	DeleteTicketErrors,
-	DeleteTicketResponses,
+	DeleteWorkshopTicketData,
+	DeleteWorkshopTicketErrors,
+	DeleteWorkshopTicketResponses,
 	DenyCliLoginData,
 	DenyCliLoginErrors,
 	DenyCliLoginResponses,
@@ -305,21 +305,21 @@ import type {
 	GetSkillsetVersionData,
 	GetSkillsetVersionErrors,
 	GetSkillsetVersionResponses,
-	GetSourceTicketData,
-	GetSourceTicketErrors,
-	GetSourceTicketResponses,
 	GetStageLogData,
 	GetStageLogErrors,
 	GetStageLogResponses,
 	GetSwarmData,
 	GetSwarmErrors,
 	GetSwarmResponses,
-	GetTicketAttachmentsData,
-	GetTicketAttachmentsErrors,
-	GetTicketAttachmentsResponses,
-	GetTicketData,
-	GetTicketErrors,
-	GetTicketResponses,
+	GetTicketRecordData,
+	GetTicketRecordErrors,
+	GetTicketRecordResponses,
+	GetWorkshopTicketAttachmentsData,
+	GetWorkshopTicketAttachmentsErrors,
+	GetWorkshopTicketAttachmentsResponses,
+	GetWorkshopTicketData,
+	GetWorkshopTicketErrors,
+	GetWorkshopTicketResponses,
 	GetWorkspaceChangesData,
 	GetWorkspaceChangesErrors,
 	GetWorkspaceChangesResponses,
@@ -437,12 +437,6 @@ import type {
 	ListSkillsetVersionsErrors,
 	ListSkillsetVersionsResponses,
 	ListSkillsResponses,
-	ListTicketCommentsData,
-	ListTicketCommentsErrors,
-	ListTicketCommentsResponses,
-	ListTicketsData,
-	ListTicketsErrors,
-	ListTicketsResponses,
 	ListTrackerStatusesData,
 	ListTrackerStatusesErrors,
 	ListTrackerStatusesResponses,
@@ -452,6 +446,12 @@ import type {
 	ListUsersData,
 	ListUsersErrors,
 	ListUsersResponses,
+	ListWorkshopTicketCommentsData,
+	ListWorkshopTicketCommentsErrors,
+	ListWorkshopTicketCommentsResponses,
+	ListWorkshopTicketsData,
+	ListWorkshopTicketsErrors,
+	ListWorkshopTicketsResponses,
 	LoginData,
 	LoginErrors,
 	LoginResponses,
@@ -530,9 +530,6 @@ import type {
 	RetryRunData,
 	RetryRunErrors,
 	RetryRunResponses,
-	SearchSourceTicketsData,
-	SearchSourceTicketsErrors,
-	SearchSourceTicketsResponses,
 	SendRunMessageData,
 	SendRunMessageErrors,
 	SendRunMessageResponses,
@@ -548,15 +545,15 @@ import type {
 	SetProjectSecretData,
 	SetProjectSecretErrors,
 	SetProjectSecretResponses,
-	SetTicketLabelsData,
-	SetTicketLabelsErrors,
-	SetTicketLabelsResponses,
-	SetTicketStatusData,
-	SetTicketStatusErrors,
-	SetTicketStatusResponses,
 	SetupInstanceData,
 	SetupInstanceErrors,
 	SetupInstanceResponses,
+	SetWorkshopTicketLabelsData,
+	SetWorkshopTicketLabelsErrors,
+	SetWorkshopTicketLabelsResponses,
+	SetWorkshopTicketStatusData,
+	SetWorkshopTicketStatusErrors,
+	SetWorkshopTicketStatusResponses,
 	StartCliLoginData,
 	StartCliLoginErrors,
 	StartCliLoginResponses,
@@ -575,9 +572,9 @@ import type {
 	StartSignInData,
 	StartSignInErrors,
 	StartSignInResponses,
-	StartTicketRunData,
-	StartTicketRunErrors,
-	StartTicketRunResponses,
+	StartWorkshopTicketRunData,
+	StartWorkshopTicketRunErrors,
+	StartWorkshopTicketRunResponses,
 	StopRunServiceData,
 	StopRunServiceErrors,
 	StopRunServiceResponses,
@@ -589,12 +586,6 @@ import type {
 	StreamRunEventsErrors,
 	StreamRunEventsResponse,
 	StreamRunEventsResponses,
-	SyncIntegrationData,
-	SyncIntegrationErrors,
-	SyncIntegrationResponses,
-	SyncTicketData,
-	SyncTicketErrors,
-	SyncTicketResponses,
 	TakeOverRunData,
 	TakeOverRunErrors,
 	TakeOverRunResponses,
@@ -634,12 +625,12 @@ import type {
 	UpdateSkillsetData,
 	UpdateSkillsetErrors,
 	UpdateSkillsetResponses,
-	UpdateTicketData,
-	UpdateTicketErrors,
-	UpdateTicketResponses,
 	UpdateUserData,
 	UpdateUserErrors,
 	UpdateUserResponses,
+	UpdateWorkshopTicketData,
+	UpdateWorkshopTicketErrors,
+	UpdateWorkshopTicketResponses,
 	UploadAttachmentsData,
 	UploadAttachmentsErrors,
 	UploadAttachmentsResponses,
@@ -1914,7 +1905,7 @@ export const createIntegration = <ThrowOnError extends boolean = false>(
 /**
  * Delete an integration
  *
- * A ticket source whose tickets still mirror its issues is refused with 409, the error's tickets and active_runs counting them and the runs still going on them; ?unlink_tickets=1 unlinks them onto the internal tracker (status by name, else its done or todo step; type by change type; comments kept) in the same transaction as the delete. The internal tracker cannot be deleted (400).
+ * One a workshop uses — its repository account, provisioner, harness or ticket source — is refused with 409 naming the workshops. A deleted ticket source's records stay, and their runs. The internal tracker cannot be deleted (400).
  */
 export const deleteIntegration = <ThrowOnError extends boolean = false>(
 	options: Options<DeleteIntegrationData, ThrowOnError>
@@ -2048,6 +2039,8 @@ export const listIntegrationRepos = <ThrowOnError extends boolean = false>(
 
 /**
  * A ticket source's statuses, in order
+ *
+ * The internal tracker's rows, edited here; a remote tracker's list read live from it, read_only (is_done: its done category). A tracker holding off for its rate limit with nothing cached is 503 with Retry-After.
  */
 export const listTrackerStatuses = <ThrowOnError extends boolean = false>(
 	options: Options<ListTrackerStatusesData, ThrowOnError>
@@ -2074,9 +2067,9 @@ export const listTrackerStatuses = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Save a ticket source's statuses
+ * Save the internal tracker's statuses
  *
- * A remote tracker's rows are the fetched ones: only is_done and flow_step are taken. The internal tracker's are the user's: a row with no id is new, a missing one is deleted, names are unique, the order given is kept. Each flow step is held at most once (400). Deleting a status tickets use needs replace_with[id] (409 without).
+ * A row with no id is new, a missing one is deleted, names are unique, the order given is kept. Deleting a status tickets use needs replace_with[id] (409 without). A remote tracker's statuses are its own (400).
  */
 export const putTrackerStatuses = <ThrowOnError extends boolean = false>(
 	options: Options<PutTrackerStatusesData, ThrowOnError>
@@ -2107,31 +2100,6 @@ export const putTrackerStatuses = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Re-read every ticket of a ticket source from its tracker, done ones included
- *
- * Refreshes the status and type lists first. Each ticket's outcome is also on it (sync_state, sync_error).
- */
-export const syncIntegration = <ThrowOnError extends boolean = false>(
-	options: Options<SyncIntegrationData, ThrowOnError>
-): RequestResult<SyncIntegrationResponses, SyncIntegrationErrors, ThrowOnError> =>
-	(options.client ?? client).post<SyncIntegrationResponses, SyncIntegrationErrors, ThrowOnError>({
-		security: [
-			{
-				in: 'cookie',
-				name: 'apothecary_session',
-				type: 'apiKey'
-			},
-			{
-				key: 'personalToken',
-				scheme: 'bearer',
-				type: 'http'
-			}
-		],
-		url: '/api/integrations/{id}/sync',
-		...options
-	});
-
-/**
  * Check an integration's credentials against the real service
  */
 export const testIntegration = <ThrowOnError extends boolean = false>(
@@ -2155,57 +2123,9 @@ export const testIntegration = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Search a tracker for tickets to import (read-only)
- */
-export const searchSourceTickets = <ThrowOnError extends boolean = false>(
-	options: Options<SearchSourceTicketsData, ThrowOnError>
-): RequestResult<SearchSourceTicketsResponses, SearchSourceTicketsErrors, ThrowOnError> =>
-	(options.client ?? client).get<
-		SearchSourceTicketsResponses,
-		SearchSourceTicketsErrors,
-		ThrowOnError
-	>({
-		security: [
-			{
-				in: 'cookie',
-				name: 'apothecary_session',
-				type: 'apiKey'
-			},
-			{
-				key: 'personalToken',
-				scheme: 'bearer',
-				type: 'http'
-			}
-		],
-		url: '/api/integrations/{id}/tickets',
-		...options
-	});
-
-/**
- * One tracker ticket by key
- */
-export const getSourceTicket = <ThrowOnError extends boolean = false>(
-	options: Options<GetSourceTicketData, ThrowOnError>
-): RequestResult<GetSourceTicketResponses, GetSourceTicketErrors, ThrowOnError> =>
-	(options.client ?? client).get<GetSourceTicketResponses, GetSourceTicketErrors, ThrowOnError>({
-		security: [
-			{
-				in: 'cookie',
-				name: 'apothecary_session',
-				type: 'apiKey'
-			},
-			{
-				key: 'personalToken',
-				scheme: 'bearer',
-				type: 'http'
-			}
-		],
-		url: '/api/integrations/{id}/tickets/{key}',
-		...options
-	});
-
-/**
  * A ticket source's issue types, in order
+ *
+ * A remote tracker's are read from it first, a type not listed yet added with its change type guessed from its name.
  */
 export const listTrackerTypes = <ThrowOnError extends boolean = false>(
 	options: Options<ListTrackerTypesData, ThrowOnError>
@@ -2230,7 +2150,7 @@ export const listTrackerTypes = <ThrowOnError extends boolean = false>(
 /**
  * Save a ticket source's issue types
  *
- * Like the statuses: a remote tracker's rows only take change_type; the internal tracker's are the user's. Every type needs a change type (400). Deleting a type tickets use needs replace_with[id] (409 without).
+ * A remote tracker's rows only take change_type; the internal tracker's are the user's. Every type needs a change type (400). Deleting a type tickets use needs replace_with[id] (409 without).
  */
 export const putTrackerTypes = <ThrowOnError extends boolean = false>(
 	options: Options<PutTrackerTypesData, ThrowOnError>
@@ -2953,7 +2873,7 @@ export const createAutomation = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Delete an automation (the tickets it imported stay)
+ * Delete an automation (the tickets it recorded and their runs stay)
  */
 export const deleteAutomation = <ThrowOnError extends boolean = false>(
 	options: Options<DeleteAutomationData, ThrowOnError>
@@ -3700,6 +3620,351 @@ export const setProjectSecret = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/projects/{id}/secrets/{name}',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * One page of a workshop's tickets, read live from its ticket source
+ *
+ * Each row carries its local record's id, base branch and active run (in any workshop) when the issue has a record. A tracker holding off for its rate limit with nothing cached is 503 with Retry-After.
+ */
+export const listWorkshopTickets = <ThrowOnError extends boolean = false>(
+	options: Options<ListWorkshopTicketsData, ThrowOnError>
+): RequestResult<ListWorkshopTicketsResponses, ListWorkshopTicketsErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		ListWorkshopTicketsResponses,
+		ListWorkshopTicketsErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/tickets',
+		...options
+	});
+
+/**
+ * Create a ticket on a workshop's internal tracker
+ *
+ * A workshop reading a remote tracker creates its tickets there (400).
+ */
+export const createWorkshopTicket = <ThrowOnError extends boolean = false>(
+	options: Options<CreateWorkshopTicketData, ThrowOnError>
+): RequestResult<CreateWorkshopTicketResponses, CreateWorkshopTicketErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		CreateWorkshopTicketResponses,
+		CreateWorkshopTicketErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/tickets',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Delete an internal ticket
+ *
+ * A remote issue is its tracker's (400).
+ */
+export const deleteWorkshopTicket = <ThrowOnError extends boolean = false>(
+	options: Options<DeleteWorkshopTicketData, ThrowOnError>
+): RequestResult<DeleteWorkshopTicketResponses, DeleteWorkshopTicketErrors, ThrowOnError> =>
+	(options.client ?? client).delete<
+		DeleteWorkshopTicketResponses,
+		DeleteWorkshopTicketErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/tickets/{key}',
+		...options
+	});
+
+/**
+ * One ticket of a workshop's source, by its key
+ *
+ * Read live; a record takes what the issue shows now. An issue the tracker does not have is 404.
+ */
+export const getWorkshopTicket = <ThrowOnError extends boolean = false>(
+	options: Options<GetWorkshopTicketData, ThrowOnError>
+): RequestResult<GetWorkshopTicketResponses, GetWorkshopTicketErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetWorkshopTicketResponses, GetWorkshopTicketErrors, ThrowOnError>(
+		{
+			security: [
+				{
+					in: 'cookie',
+					name: 'apothecary_session',
+					type: 'apiKey'
+				},
+				{
+					key: 'personalToken',
+					scheme: 'bearer',
+					type: 'http'
+				}
+			],
+			url: '/api/projects/{id}/tickets/{key}',
+			...options
+		}
+	);
+
+/**
+ * Edit a ticket
+ *
+ * An internal ticket takes title, goal, base_branch, change_type, type_id and attachment_ids. A remote issue takes base_branch only (the rest is its tracker's), its record made when it has none.
+ */
+export const updateWorkshopTicket = <ThrowOnError extends boolean = false>(
+	options: Options<UpdateWorkshopTicketData, ThrowOnError>
+): RequestResult<UpdateWorkshopTicketResponses, UpdateWorkshopTicketErrors, ThrowOnError> =>
+	(options.client ?? client).put<
+		UpdateWorkshopTicketResponses,
+		UpdateWorkshopTicketErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/tickets/{key}',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Files of a ticket: its record's, and the remote issue's
+ */
+export const getWorkshopTicketAttachments = <ThrowOnError extends boolean = false>(
+	options: Options<GetWorkshopTicketAttachmentsData, ThrowOnError>
+): RequestResult<
+	GetWorkshopTicketAttachmentsResponses,
+	GetWorkshopTicketAttachmentsErrors,
+	ThrowOnError
+> =>
+	(options.client ?? client).get<
+		GetWorkshopTicketAttachmentsResponses,
+		GetWorkshopTicketAttachmentsErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/tickets/{key}/attachments',
+		...options
+	});
+
+/**
+ * A ticket's comments, oldest first
+ *
+ * A remote issue's are read live.
+ */
+export const listWorkshopTicketComments = <ThrowOnError extends boolean = false>(
+	options: Options<ListWorkshopTicketCommentsData, ThrowOnError>
+): RequestResult<
+	ListWorkshopTicketCommentsResponses,
+	ListWorkshopTicketCommentsErrors,
+	ThrowOnError
+> =>
+	(options.client ?? client).get<
+		ListWorkshopTicketCommentsResponses,
+		ListWorkshopTicketCommentsErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/tickets/{key}/comments',
+		...options
+	});
+
+/**
+ * Comment on a ticket, on its tracker
+ *
+ * Answers with the ticket's comments.
+ */
+export const addWorkshopTicketComment = <ThrowOnError extends boolean = false>(
+	options: Options<AddWorkshopTicketCommentData, ThrowOnError>
+): RequestResult<AddWorkshopTicketCommentResponses, AddWorkshopTicketCommentErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		AddWorkshopTicketCommentResponses,
+		AddWorkshopTicketCommentErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/tickets/{key}/comments',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Replace a ticket's labels on its tracker
+ */
+export const setWorkshopTicketLabels = <ThrowOnError extends boolean = false>(
+	options: Options<SetWorkshopTicketLabelsData, ThrowOnError>
+): RequestResult<SetWorkshopTicketLabelsResponses, SetWorkshopTicketLabelsErrors, ThrowOnError> =>
+	(options.client ?? client).put<
+		SetWorkshopTicketLabelsResponses,
+		SetWorkshopTicketLabelsErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/tickets/{key}/labels',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Start one attempt on a ticket, in this workshop
+ *
+ * The issue's record is made first when it has none; an issue that has one starts from it even while its tracker cannot be read. A ticket has at most one active (non-terminal) run across workshops: while one is going the start is refused with 409, the error's run_id naming it.
+ */
+export const startWorkshopTicketRun = <ThrowOnError extends boolean = false>(
+	options: Options<StartWorkshopTicketRunData, ThrowOnError>
+): RequestResult<StartWorkshopTicketRunResponses, StartWorkshopTicketRunErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		StartWorkshopTicketRunResponses,
+		StartWorkshopTicketRunErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/tickets/{key}/runs',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Move a ticket to a status of its tracker, by name
+ *
+ * A status the issue cannot reach is 400, naming those it can; the remote tracker failing 502.
+ */
+export const setWorkshopTicketStatus = <ThrowOnError extends boolean = false>(
+	options: Options<SetWorkshopTicketStatusData, ThrowOnError>
+): RequestResult<SetWorkshopTicketStatusResponses, SetWorkshopTicketStatusErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		SetWorkshopTicketStatusResponses,
+		SetWorkshopTicketStatusErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/tickets/{key}/status',
 		...options,
 		headers: {
 			'Content-Type': 'application/json',
@@ -5511,62 +5776,14 @@ export const getSwarm = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * One's tickets
+ * A ticket record by id, for links from runs
+ *
+ * With the key it is opened by, its source (absent once the integration is deleted) and the workshops that read that source.
  */
-export const listTickets = <ThrowOnError extends boolean = false>(
-	options?: Options<ListTicketsData, ThrowOnError>
-): RequestResult<ListTicketsResponses, ListTicketsErrors, ThrowOnError> =>
-	(options?.client ?? client).get<ListTicketsResponses, ListTicketsErrors, ThrowOnError>({
-		security: [
-			{
-				in: 'cookie',
-				name: 'apothecary_session',
-				type: 'apiKey'
-			},
-			{
-				key: 'personalToken',
-				scheme: 'bearer',
-				type: 'http'
-			}
-		],
-		url: '/api/tickets',
-		...options
-	});
-
-/**
- * Create a ticket
- */
-export const createTicket = <ThrowOnError extends boolean = false>(
-	options: Options<CreateTicketData, ThrowOnError>
-): RequestResult<CreateTicketResponses, CreateTicketErrors, ThrowOnError> =>
-	(options.client ?? client).post<CreateTicketResponses, CreateTicketErrors, ThrowOnError>({
-		security: [
-			{
-				in: 'cookie',
-				name: 'apothecary_session',
-				type: 'apiKey'
-			},
-			{
-				key: 'personalToken',
-				scheme: 'bearer',
-				type: 'http'
-			}
-		],
-		url: '/api/tickets',
-		...options,
-		headers: {
-			'Content-Type': 'application/json',
-			...options.headers
-		}
-	});
-
-/**
- * Delete a ticket
- */
-export const deleteTicket = <ThrowOnError extends boolean = false>(
-	options: Options<DeleteTicketData, ThrowOnError>
-): RequestResult<DeleteTicketResponses, DeleteTicketErrors, ThrowOnError> =>
-	(options.client ?? client).delete<DeleteTicketResponses, DeleteTicketErrors, ThrowOnError>({
+export const getTicketRecord = <ThrowOnError extends boolean = false>(
+	options: Options<GetTicketRecordData, ThrowOnError>
+): RequestResult<GetTicketRecordResponses, GetTicketRecordErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetTicketRecordResponses, GetTicketRecordErrors, ThrowOnError>({
 		security: [
 			{
 				in: 'cookie',
@@ -5580,253 +5797,6 @@ export const deleteTicket = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/tickets/{id}',
-		...options
-	});
-
-/**
- * One ticket
- */
-export const getTicket = <ThrowOnError extends boolean = false>(
-	options: Options<GetTicketData, ThrowOnError>
-): RequestResult<GetTicketResponses, GetTicketErrors, ThrowOnError> =>
-	(options.client ?? client).get<GetTicketResponses, GetTicketErrors, ThrowOnError>({
-		security: [
-			{
-				in: 'cookie',
-				name: 'apothecary_session',
-				type: 'apiKey'
-			},
-			{
-				key: 'personalToken',
-				scheme: 'bearer',
-				type: 'http'
-			}
-		],
-		url: '/api/tickets/{id}',
-		...options
-	});
-
-/**
- * Replace a ticket
- *
- * On a ticket mirroring a remote issue, changing what its tracker owns (title, goal, change type) is refused with 409.
- */
-export const updateTicket = <ThrowOnError extends boolean = false>(
-	options: Options<UpdateTicketData, ThrowOnError>
-): RequestResult<UpdateTicketResponses, UpdateTicketErrors, ThrowOnError> =>
-	(options.client ?? client).put<UpdateTicketResponses, UpdateTicketErrors, ThrowOnError>({
-		security: [
-			{
-				in: 'cookie',
-				name: 'apothecary_session',
-				type: 'apiKey'
-			},
-			{
-				key: 'personalToken',
-				scheme: 'bearer',
-				type: 'http'
-			}
-		],
-		url: '/api/tickets/{id}',
-		...options,
-		headers: {
-			'Content-Type': 'application/json',
-			...options.headers
-		}
-	});
-
-/**
- * Files attached to a ticket
- */
-export const getTicketAttachments = <ThrowOnError extends boolean = false>(
-	options: Options<GetTicketAttachmentsData, ThrowOnError>
-): RequestResult<GetTicketAttachmentsResponses, GetTicketAttachmentsErrors, ThrowOnError> =>
-	(options.client ?? client).get<
-		GetTicketAttachmentsResponses,
-		GetTicketAttachmentsErrors,
-		ThrowOnError
-	>({
-		security: [
-			{
-				in: 'cookie',
-				name: 'apothecary_session',
-				type: 'apiKey'
-			},
-			{
-				key: 'personalToken',
-				scheme: 'bearer',
-				type: 'http'
-			}
-		],
-		url: '/api/tickets/{id}/attachments',
-		...options
-	});
-
-/**
- * A ticket's comments, oldest first
- */
-export const listTicketComments = <ThrowOnError extends boolean = false>(
-	options: Options<ListTicketCommentsData, ThrowOnError>
-): RequestResult<ListTicketCommentsResponses, ListTicketCommentsErrors, ThrowOnError> =>
-	(options.client ?? client).get<
-		ListTicketCommentsResponses,
-		ListTicketCommentsErrors,
-		ThrowOnError
-	>({
-		security: [
-			{
-				in: 'cookie',
-				name: 'apothecary_session',
-				type: 'apiKey'
-			},
-			{
-				key: 'personalToken',
-				scheme: 'bearer',
-				type: 'http'
-			}
-		],
-		url: '/api/tickets/{id}/comments',
-		...options
-	});
-
-/**
- * Comment on a ticket
- *
- * Through the ticket's tracker, like the status: on a remote issue the comment comes back with the refresh (origin remote), on the internal tracker it is the person's (origin user). Answers with the ticket's comments.
- */
-export const addTicketComment = <ThrowOnError extends boolean = false>(
-	options: Options<AddTicketCommentData, ThrowOnError>
-): RequestResult<AddTicketCommentResponses, AddTicketCommentErrors, ThrowOnError> =>
-	(options.client ?? client).post<AddTicketCommentResponses, AddTicketCommentErrors, ThrowOnError>({
-		security: [
-			{
-				in: 'cookie',
-				name: 'apothecary_session',
-				type: 'apiKey'
-			},
-			{
-				key: 'personalToken',
-				scheme: 'bearer',
-				type: 'http'
-			}
-		],
-		url: '/api/tickets/{id}/comments',
-		...options,
-		headers: {
-			'Content-Type': 'application/json',
-			...options.headers
-		}
-	});
-
-/**
- * Replace a ticket's labels
- *
- * Through the ticket's tracker, like the status.
- */
-export const setTicketLabels = <ThrowOnError extends boolean = false>(
-	options: Options<SetTicketLabelsData, ThrowOnError>
-): RequestResult<SetTicketLabelsResponses, SetTicketLabelsErrors, ThrowOnError> =>
-	(options.client ?? client).put<SetTicketLabelsResponses, SetTicketLabelsErrors, ThrowOnError>({
-		security: [
-			{
-				in: 'cookie',
-				name: 'apothecary_session',
-				type: 'apiKey'
-			},
-			{
-				key: 'personalToken',
-				scheme: 'bearer',
-				type: 'http'
-			}
-		],
-		url: '/api/tickets/{id}/labels',
-		...options,
-		headers: {
-			'Content-Type': 'application/json',
-			...options.headers
-		}
-	});
-
-/**
- * Start one attempt on a ticket
- *
- * A ticket has at most one active (non-terminal) run: while one is going the start is refused with 409, the error's run_id naming it.
- */
-export const startTicketRun = <ThrowOnError extends boolean = false>(
-	options: Options<StartTicketRunData, ThrowOnError>
-): RequestResult<StartTicketRunResponses, StartTicketRunErrors, ThrowOnError> =>
-	(options.client ?? client).post<StartTicketRunResponses, StartTicketRunErrors, ThrowOnError>({
-		security: [
-			{
-				in: 'cookie',
-				name: 'apothecary_session',
-				type: 'apiKey'
-			},
-			{
-				key: 'personalToken',
-				scheme: 'bearer',
-				type: 'http'
-			}
-		],
-		url: '/api/tickets/{id}/runs',
-		...options,
-		headers: {
-			'Content-Type': 'application/json',
-			...options.headers
-		}
-	});
-
-/**
- * Move a ticket to one of its tracker's statuses
- *
- * Through the ticket's tracker: the remote issue (then the mirror is refreshed), else the internal tracker. A status not in the tracker's list is 400; one the issue cannot reach from where it is 409; the remote failing 502.
- */
-export const setTicketStatus = <ThrowOnError extends boolean = false>(
-	options: Options<SetTicketStatusData, ThrowOnError>
-): RequestResult<SetTicketStatusResponses, SetTicketStatusErrors, ThrowOnError> =>
-	(options.client ?? client).post<SetTicketStatusResponses, SetTicketStatusErrors, ThrowOnError>({
-		security: [
-			{
-				in: 'cookie',
-				name: 'apothecary_session',
-				type: 'apiKey'
-			},
-			{
-				key: 'personalToken',
-				scheme: 'bearer',
-				type: 'http'
-			}
-		],
-		url: '/api/tickets/{id}/status',
-		...options,
-		headers: {
-			'Content-Type': 'application/json',
-			...options.headers
-		}
-	});
-
-/**
- * Re-read a ticket from its remote tracker
- *
- * Done or not. A tracker that cannot be read is recorded on the ticket (sync_state error, sync_error), which the answer carries; a ticket with no source is answered as it is.
- */
-export const syncTicket = <ThrowOnError extends boolean = false>(
-	options: Options<SyncTicketData, ThrowOnError>
-): RequestResult<SyncTicketResponses, SyncTicketErrors, ThrowOnError> =>
-	(options.client ?? client).post<SyncTicketResponses, SyncTicketErrors, ThrowOnError>({
-		security: [
-			{
-				in: 'cookie',
-				name: 'apothecary_session',
-				type: 'apiKey'
-			},
-			{
-				key: 'personalToken',
-				scheme: 'bearer',
-				type: 'http'
-			}
-		],
-		url: '/api/tickets/{id}/sync',
 		...options
 	});
 

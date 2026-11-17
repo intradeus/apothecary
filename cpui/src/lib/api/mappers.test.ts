@@ -794,128 +794,269 @@ describe('pings', () => {
 });
 
 describe('tickets', () => {
-	it('reads a summary with empty extras', () => {
-		expect(map.toTicket(wire<Wire.TicketView>({ id: 't', title: 'x' }))).toEqual({
-			id: 't',
-			projectId: '',
-			title: 'x',
-			goal: '',
-			baseBranch: '',
+	const row: Wire.TicketRow = {
+		key: 'PROJ-7',
+		remote_id: '10007',
+		title: 'Bad invoice',
+		body: 'It rounds wrong.',
+		url: 'https://jira.test/browse/PROJ-7',
+		status: 'In Review',
+		status_id: '3',
+		done: false,
+		type: 'Bug',
+		type_id: '1',
+		change_type: 'fix',
+		labels: ['ui'],
+		assignee: 'ann',
+		updated_at: AT,
+		ticket_id: 't1',
+		base_branch: 'fix/invoice',
+		active_run_id: 'r1'
+	};
+	const domainRow = {
+		key: 'PROJ-7',
+		remoteId: '10007',
+		title: 'Bad invoice',
+		body: 'It rounds wrong.',
+		url: 'https://jira.test/browse/PROJ-7',
+		status: 'In Review',
+		statusId: '3',
+		done: false,
+		type: 'Bug',
+		typeId: '1',
+		changeType: 'fix',
+		labels: ['ui'],
+		assignee: 'ann',
+		updatedAt: AT,
+		ticketId: 't1',
+		baseBranch: 'fix/invoice',
+		activeRunId: 'r1'
+	};
+
+	it('reads a live row in this app’s words', () => {
+		expect(map.toTicketRow(row)).toEqual(domainRow);
+	});
+
+	it('reads a sparse row, with no record, as empty fields', () => {
+		expect(map.toTicketRow(wire<Wire.TicketRow>({ key: 'K', labels: null }))).toEqual({
+			key: 'K',
+			remoteId: '',
+			title: '',
+			body: '',
+			url: '',
+			status: '',
+			statusId: '',
+			done: false,
+			type: '',
+			typeId: '',
 			changeType: 'feat',
-			attachmentIds: [],
-			source: undefined,
-			status: undefined,
-			type: undefined,
 			labels: [],
-			links: [],
-			syncState: '',
-			syncError: undefined,
-			syncedAt: undefined,
-			statusChangedAt: undefined,
-			statusChangedBy: undefined,
-			warnings: [],
-			createdAt: '',
-			updatedAt: ''
+			assignee: '',
+			updatedAt: undefined,
+			ticketId: '',
+			baseBranch: '',
+			activeRunId: ''
 		});
 	});
 
-	it('reads a detail: attachments, warnings and where it came from', () => {
-		const t = map.toTicket(
-			wire<Wire.TicketDetail>({
-				id: 't',
-				base_branch: 'fix/x',
-				change_type: 'fix',
+	it('reads a page, the last one with no next', () => {
+		expect(map.toTicketPage({ tickets: [row], next: 'c2' })).toEqual({
+			tickets: [domainRow],
+			next: 'c2'
+		});
+		expect(map.toTicketPage(wire<Wire.TicketPage>({ tickets: null }))).toEqual({
+			tickets: [],
+			next: ''
+		});
+	});
+
+	it('reads a detail: its source, files and links', () => {
+		expect(
+			map.toTicketDetail({
+				...row,
+				source: { id: 'jira', kind: 'jira', name: 'Jira' },
+				internal: false,
 				attachment_ids: ['a'],
-				warnings: ['w'],
-				source_id: 'jira',
-				source_kind: 'jira',
-				source_key: 'K-1',
-				source_url: 'u',
-				source_type: ''
+				links: [{ ticket_id: 't2', url: 'https://x', title: 'Spec' }]
 			})
-		);
-		expect(t).toMatchObject({
-			baseBranch: 'fix/x',
-			changeType: 'fix',
+		).toEqual({
+			...domainRow,
+			source: { id: 'jira', kind: 'jira', name: 'Jira' },
+			internal: false,
 			attachmentIds: ['a'],
-			warnings: ['w'],
-			source: { integrationId: 'jira', kind: 'jira', key: 'K-1', url: 'u', type: undefined }
+			links: [{ ticketId: 't2', url: 'https://x', title: 'Spec' }]
 		});
 	});
 
-	it('reads the tracker state: status, type, labels, links and sync', () => {
-		const t = map.toTicket(
-			wire<Wire.TicketDetail>({
-				id: 't',
-				status: { id: 's', name: 'In Review', is_done: false, flow_step: 'in_review' },
-				type: { id: 'y', name: 'Bug' },
+	it('reads a sparse detail without tripping', () => {
+		expect(
+			map.toTicketDetail(wire<Wire.TicketDetail>({ attachment_ids: null, links: null }))
+		).toMatchObject({
+			source: { id: '', kind: '', name: '' },
+			internal: false,
+			attachmentIds: [],
+			links: []
+		});
+	});
+
+	it('reads a record with its source and workshops', () => {
+		expect(
+			map.toTicketRecord({
+				ticket: {
+					id: 't1',
+					user_id: 'u',
+					source_id: 'jira',
+					source_kind: 'jira',
+					remote_id: '10007',
+					source_key: 'PROJ-7',
+					source_url: 'u',
+					source_type: 'Bug',
+					title: 'Bad invoice',
+					goal: 'g',
+					base_branch: 'fix/invoice',
+					change_type: 'fix',
+					status_id: '3',
+					type_id: '1',
+					labels: ['ui'],
+					automation_id: 'a',
+					status_changed_at: AT,
+					status_changed_by: 'ann',
+					created_at: AT,
+					updated_at: AT
+				},
+				key: 'PROJ-7',
+				source: { id: 'jira', kind: 'jira', name: 'Jira' },
+				workshops: [{ id: 'p', name: 'shop' }]
+			})
+		).toEqual({
+			ticket: {
+				id: 't1',
+				sourceId: 'jira',
+				sourceKind: 'jira',
+				remoteId: '10007',
+				sourceKey: 'PROJ-7',
+				sourceUrl: 'u',
+				sourceType: 'Bug',
+				title: 'Bad invoice',
+				goal: 'g',
+				baseBranch: 'fix/invoice',
+				changeType: 'fix',
+				statusId: '3',
+				typeId: '1',
 				labels: ['ui'],
-				links: [{ ticket_id: 't', url: 'https://x', title: 'Spec' }],
-				sync_state: 'error',
-				sync_error: 'timeout',
-				synced_at: '2026-01-01T00:00:00Z'
-			})
-		);
-		expect(t).toMatchObject({
-			status: { id: 's', name: 'In Review', isDone: false, flowStep: 'in_review' },
-			type: { id: 'y', name: 'Bug' },
-			labels: ['ui'],
-			links: [{ url: 'https://x', title: 'Spec' }],
-			syncState: 'error',
-			syncError: 'timeout',
-			syncedAt: '2026-01-01T00:00:00Z'
+				automationId: 'a',
+				statusChangedAt: AT,
+				statusChangedBy: 'ann',
+				createdAt: AT,
+				updatedAt: AT
+			},
+			key: 'PROJ-7',
+			source: { id: 'jira', kind: 'jira', name: 'Jira' },
+			workshops: [{ id: 'p', name: 'shop' }]
 		});
 	});
 
-	it('reads an unknown sync state and flow step as none', () => {
-		const t = map.toTicket(
-			wire<Wire.TicketView>({
-				sync_state: 'weird',
-				status: { id: 's', name: 'Odd', is_done: true, flow_step: 'none' }
-			})
-		);
-		expect(t.syncState).toBe('');
-		expect(t.status).toEqual({ id: 's', name: 'Odd', isDone: true, flowStep: undefined });
+	it('reads a sparse record: no source, no workshops, empty fields', () => {
+		expect(map.toTicketRecord(wire<Wire.TicketRecord>({ workshops: null }))).toEqual({
+			ticket: {
+				id: '',
+				sourceId: '',
+				sourceKind: '',
+				remoteId: '',
+				sourceKey: undefined,
+				sourceUrl: undefined,
+				sourceType: undefined,
+				title: '',
+				goal: '',
+				baseBranch: '',
+				changeType: 'feat',
+				statusId: undefined,
+				typeId: undefined,
+				labels: [],
+				automationId: undefined,
+				statusChangedAt: undefined,
+				statusChangedBy: undefined,
+				createdAt: '',
+				updatedAt: ''
+			},
+			key: '',
+			source: undefined,
+			workshops: []
+		});
 	});
 
-	it('reads a comment, an unknown origin as remote', () => {
-		const c = wire<Wire.TicketComment>({
+	it('reads a comment; a remote one says no origin and reads as remote', () => {
+		const c: Wire.TicketComment = {
 			id: 'c',
 			author: 'ann',
 			body_md: 'hi',
 			origin: 'apothecary',
 			run_id: 'r1',
-			stage_id: '',
 			created_at: 'a',
 			updated_at: 'b'
-		});
+		};
 		expect(map.toTicketComment(c)).toEqual({
 			id: 'c',
 			author: 'ann',
 			bodyMd: 'hi',
 			origin: 'apothecary',
 			runId: 'r1',
-			stageId: undefined,
 			createdAt: 'a',
 			updatedAt: 'b'
+		});
+		expect(map.toTicketComment({ ...c, origin: '', run_id: '' })).toMatchObject({
+			origin: 'remote',
+			runId: undefined
 		});
 		expect(map.toTicketComment({ ...c, origin: 'bot' }).origin).toBe('remote');
 	});
 
-	it('round-trips a tracker status, leaving no step off the wire', () => {
+	it('reads a ticket’s files: uploaded here and the remote issue’s own', () => {
+		expect(
+			map.toTicketAttachments(
+				wire<Wire.TicketAttachments>({
+					attachments: [{ id: 'a' }],
+					remote: [{ filename: 'a.txt', mime: 'text/plain', size: 3 }, {}]
+				})
+			)
+		).toMatchObject({
+			attachments: [{ id: 'a' }],
+			remote: [{ filename: 'a.txt', mime: 'text/plain', size: 3 }, { filename: '' }]
+		});
+		expect(
+			map.toTicketAttachments(wire<Wire.TicketAttachments>({ attachments: null, remote: null }))
+		).toEqual({ attachments: [], remote: [] });
+	});
+
+	it('round-trips a tracker status', () => {
 		const w: Wire.TrackerStatus = {
 			id: 's',
 			integration_id: 'i',
 			remote_id: '3',
 			name: 'Done',
-			remote_category: 'done',
 			position: 2,
-			is_done: true,
-			flow_step: 'done'
+			is_done: true
 		};
 		expect(map.fromTrackerStatus(map.toTrackerStatus(w))).toEqual(w);
-		const { flow_step: _, ...noStep } = w;
-		expect(map.fromTrackerStatus(map.toTrackerStatus(noStep))).toEqual(noStep);
+	});
+
+	it('reads a status list, a remote one read-only', () => {
+		const s: Wire.TrackerStatus = {
+			id: 's',
+			integration_id: 'i',
+			remote_id: '3',
+			name: 'Done',
+			position: 2,
+			is_done: true
+		};
+		expect(map.toTrackerStatusList({ statuses: [s], read_only: true })).toEqual({
+			statuses: [map.toTrackerStatus(s)],
+			readOnly: true
+		});
+		expect(map.toTrackerStatusList(wire<Wire.TrackerStatusList>({ statuses: null }))).toEqual({
+			statuses: [],
+			readOnly: false
+		});
 	});
 
 	it('round-trips a tracker type, an unknown change type as feat', () => {
@@ -929,23 +1070,6 @@ describe('tickets', () => {
 		};
 		expect(map.fromTrackerType(map.toTrackerType(w))).toEqual(w);
 		expect(map.toTrackerType({ ...w, change_type: '' }).changeType).toBe('feat');
-	});
-
-	it('reads a tracker’s ticket', () => {
-		expect(
-			map.toSourceTicket(
-				wire<Wire.SourceTicket>({
-					key: 'K-1',
-					change_type: 'chore',
-					attachments: [{ filename: 'a.txt' }, {}]
-				})
-			)
-		).toMatchObject({
-			key: 'K-1',
-			title: '',
-			changeType: 'chore',
-			attachments: [{ filename: 'a.txt' }, { filename: '' }]
-		});
 	});
 });
 
@@ -974,6 +1098,7 @@ describe('projects', () => {
 				editor: undefined
 			},
 			defaultFlow: '',
+			ticketSourceId: '',
 			createdAt: '',
 			updatedAt: ''
 		});
@@ -1324,7 +1449,7 @@ describe('flows', () => {
 		).toMatchObject({ kind: 'cron', schedule: '@daily', enabled: true, params: { a: '1' } });
 		expect(map.toAutomation(wire<Wire.Automation>({ kind: 'mystery' }))).toMatchObject({
 			kind: 'tracker_query',
-			sourceId: undefined,
+			query: undefined,
 			enabled: false,
 			params: {}
 		});
@@ -1340,7 +1465,8 @@ describe('flows', () => {
 				outputs: null,
 				settings: [
 					{ name: 's', kind: 'mystery', default: '' },
-					{ name: 't', kind: 'enum', values: ['a'], default: 'a', required: true }
+					{ name: 't', kind: 'enum', values: ['a'], default: 'a', required: true },
+					{ name: 'to', kind: 'text', required: true, unbound: true }
 				]
 			})
 		);
@@ -1352,8 +1478,9 @@ describe('flows', () => {
 			inputs: [{ name: 'i', required: false, defaultPath: 'p' }],
 			outputs: [],
 			settings: [
-				{ name: 's', kind: 'text', required: false, defaultValue: undefined },
-				{ name: 't', kind: 'enum', required: true, values: ['a'], defaultValue: 'a' }
+				{ name: 's', kind: 'text', required: false, defaultValue: undefined, unbound: undefined },
+				{ name: 't', kind: 'enum', required: true, values: ['a'], defaultValue: 'a' },
+				{ name: 'to', kind: 'text', required: true, unbound: true }
 			]
 		});
 		expect(map.toActionSpec(wire<Wire.Action>({ exactly_one: [] })).exactlyOne).toBeUndefined();

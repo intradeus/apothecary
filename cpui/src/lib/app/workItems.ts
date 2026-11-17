@@ -5,7 +5,6 @@
 // pages: nothing that lists, picks or starts runs names a kind.
 
 import { api } from '$lib/api';
-import { fleet } from '$lib/app/fleet.svelte';
 import { to } from '$lib/core/urls';
 import { I } from '$lib/design/icons';
 import type { OperatesOn } from '$lib/domain/flowdoc';
@@ -46,12 +45,15 @@ export interface WorkItemKind {
 	readonly intro: string;
 	readonly none: string;
 	readonly loadError: string;
-	/** Where to make one when there is none. */
-	create?: { readonly label: string; href: (projectId: string) => string };
-	/** The items to pick from, newest first: within projectId ('' = every
-	 *  workshop, for a kind that is not perWorkshop). */
+	/** One can be written here when there is none: the label of the link,
+	 *  shown only where the workshop's ticket source takes new ones. */
+	create?: { readonly label: string };
+	/** The workshop's items to pick from, in its source's order. */
 	options: (projectId: string) => Promise<WorkItemOption[]>;
 }
+
+/** How many of a workshop's tickets a picker offers: the first page. */
+const OPTIONS_LIMIT = 50;
 
 export const WORK_ITEMS: readonly WorkItemKind[] = [
 	{
@@ -68,7 +70,8 @@ export const WORK_ITEMS: readonly WorkItemKind[] = [
 		mobile: true,
 		list: () => to.tickets(),
 		match: (p) => p.startsWith('/tickets'),
-		perWorkshop: false,
+		// A workshop's tickets are its source's, read live: pick the workshop first.
+		perWorkshop: true,
 		get intro() {
 			return t('page.runs.newIntro');
 		},
@@ -81,19 +84,15 @@ export const WORK_ITEMS: readonly WorkItemKind[] = [
 		create: {
 			get label() {
 				return t('page.desk.newTicket');
-			},
-			href: (projectId) => to.newTicket(projectId ? { project: projectId } : undefined)
+			}
 		},
 		options: async (projectId) =>
-			(await api.tickets.list())
-				.filter((tk) => !projectId || tk.projectId === projectId)
-				.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-				.map((tk) => ({
-					value: tk.id,
-					label: tk.title,
-					detail: projectId ? undefined : fleet.projectName(tk.projectId),
-					href: to.ticket(tk.id)
-				}))
+			(await api.projects.tickets(projectId, { limit: OPTIONS_LIMIT })).tickets.map((tk) => ({
+				value: tk.key,
+				label: tk.title,
+				detail: tk.key,
+				href: to.workshopTicket(projectId, tk.key)
+			}))
 	},
 	{
 		kind: 'merge_request',

@@ -865,14 +865,12 @@ The same anatomy, scoped to one guild:
 
 ### 7.6 Tickets: `/g/:guild/tickets`, `/new`, `/:id`
 
-- **List:** search (title, key, goal) and filters (workshop, source, has-active-run).
-  - Columns: title, source key tag, workshop, base branch (mono), **derived status** (latest run state chip, or "no runs"), created.
-- **New ticket:** a two-column form:
-  - **Left:** Workshop (select, locked after create), Title, Goal (large textarea, markdown), Base branch (auto-slugged, mono, with "edited" when overridden), Attachments.
-  - **Right card "Import from tracker":** integration select, then search (key / words / `jql:`), then a result list (key, title, type, status, assignee). Picking one prefills the form and lists the attachments to copy, with "Open in tracker ↗" and "Clear". Skipped attachments show a warning list + Continue.
-- **Ticket detail:**
-  - Header: title + source tag + workshop link + branch; Edit / Delete… on the right.
-  - **Left:** the goal and attachments ("delivered into every run's workspace"), then the runs table for this ticket (polls every 4s).
+- **List:** one workshop's ticket source, read live (`docs/ticket-sources.md`): choosing a workshop is required. Search, a done filter (open by default) and **Refresh**.
+  - Columns: key tag, title, the tracker's status, type, labels, base branch (mono, when set), the active run (in any workshop), updated.
+- **New ticket:** only on a workshop whose source is the internal tracker. Workshop (select, locked after create), Title, Goal (large textarea, markdown), Base branch (optional, mono: empty follows the workshop's branch format), change type, Attachments. A workshop on a remote source shows "Open in <tracker> ↗" instead: its tickets are made there.
+- **Ticket detail** (`/w/:workshop/tickets/:key`):
+  - Header: title + key tag + source + workshop link + branch; on an internal ticket Edit / Delete… on the right, on a remote one "Open in tracker ↗" and the base branch as the one editable field.
+  - **Left:** the goal (a remote issue's description) and attachments ("delivered into every run's workspace"), the comments, then the runs table for this ticket (polls every 4s).
   - **Right:** a "Start a run" card: direction (textarea), run-only files, flow picker, source-branch picker (default marked ★), and a primary "Start run".
 
 ### 7.7 Workshop overview: `/g/:guild/w/:workshop`

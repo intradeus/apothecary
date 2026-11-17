@@ -1,5 +1,9 @@
 // A ticket: a unit of work that owns many runs. The flow is NOT here — it is
-// chosen per run.
+// chosen per run. Tickets live in the workshop's ticket source (a remote
+// tracker or the owner's internal one) and are read from it live; only a
+// small local record (the Ticket below) is kept, for runs to point at.
+
+import type { Attachment } from './files';
 
 /** What a ticket is (ports.ChangeType); its base branch is named after it,
  *  and a flow's `run_if: run.ticket.change_type == fix` reads it. */
@@ -8,72 +12,128 @@ export const CHANGE_TYPES: ChangeType[] = ['feat', 'fix', 'hotfix', 'perf', 'doc
 export const asChangeType = (s: string | undefined): ChangeType =>
 	CHANGE_TYPES.includes(s as ChangeType) ? (s as ChangeType) : 'feat';
 
-/** Where a tracker status sits in the work: the step a flow moves the ticket
- *  to. Each step is held by at most one status of a tracker. */
-export type FlowStep = 'todo' | 'in_progress' | 'in_review' | 'done' | 'blocked';
-export const FLOW_STEPS: FlowStep[] = ['todo', 'in_progress', 'in_review', 'done', 'blocked'];
-export const asFlowStep = (s: string | undefined): FlowStep | undefined =>
-	FLOW_STEPS.includes(s as FlowStep) ? (s as FlowStep) : undefined;
+/** The integration kind of the built-in tracker every user has one of. */
+export const INTERNAL_TRACKER = 'internal';
 
-/** How the last fetch from the tracker went: '' never synced (or not
- *  sourced), 'gone' the remote issue no longer exists. */
-export type SyncState = '' | 'ok' | 'error' | 'gone';
-
-/** What a manual sync of a tracker did. */
-export interface TrackerSyncCounts {
-	tickets: number;
-	synced: number;
-	gone: number;
-	failed: number;
-	busy: number;
-	/** Skipped because the tracker asked us to slow down. */
-	rateLimited: number;
-}
-
-export interface Ticket {
-	id: string;
-	projectId: string;
+/** One issue of a workshop's source as the tracker shows it now. On the
+ *  internal tracker the key is the ticket's own id. The record fields
+ *  (ticketId, baseBranch, activeRunId) are '' while the issue has no local
+ *  record — nothing has needed one yet. */
+export interface TicketRow {
+	/** What the ticket's address carries: the tracker's key ('PROJ-123'). */
+	key: string;
+	/** The tracker's stable id for the issue (a key can change). */
+	remoteId: string;
 	title: string;
-	goal: string;
+	body: string;
+	url: string;
+	/** The tracker's status name; '' when it has none. */
+	status: string;
+	statusId: string;
+	done: boolean;
+	/** The tracker's word for the issue's type ('Bug'). */
+	type: string;
+	typeId: string;
+	/** What the source's type list makes of the type. */
+	changeType: ChangeType;
+	labels: string[];
+	assignee: string;
+	updatedAt?: string;
+	/** The local record's id. */
+	ticketId: string;
 	/** Branch stem; each run gets baseBranch + a per-run suffix. */
 	baseBranch: string;
-	changeType: ChangeType;
-	attachmentIds: string[];
-	/** The remote issue this ticket mirrors (absent for a ticket on the
-	 *  user's internal tracker). Title, goal and type follow the remote. */
-	source?: TicketSource;
-	/** Missing on an imported ticket that has not synced yet. */
-	status?: TicketStatusRef;
-	type?: TicketTypeRef;
-	labels: string[];
-	links: TicketLink[];
-	syncState: SyncState;
-	syncError?: string;
-	syncedAt?: string;
-	statusChangedAt?: string;
-	statusChangedBy?: string;
-	/** What an import could not carry over (a skipped attachment).
-	 *  Create-time only, never stored. */
-	warnings: string[];
-	createdAt: string;
-	updatedAt: string;
+	/** The ticket's active run in any workshop: one at a time across them. */
+	activeRunId: string;
 }
 
-export interface TicketStatusRef {
+/** The integration a ticket comes from. */
+export interface TicketSourceRef {
 	id: string;
-	name: string;
-	isDone: boolean;
-	flowStep?: FlowStep;
-}
-
-export interface TicketTypeRef {
-	id: string;
+	kind: string;
 	name: string;
 }
 
 export interface TicketLink {
+	/** The linked ticket's record. */
+	ticketId: string;
 	url: string;
 	title: string;
+}
+
+/** One ticket, as its page shows it. */
+export interface TicketDetail extends TicketRow {
+	source: TicketSourceRef;
+	/** On the owner's internal tracker: everything is editable here. A
+	 *  remote issue takes only its base branch, status, labels and comments. */
+	internal: boolean;
+	attachmentIds: string[];
+	links: TicketLink[];
+}
+
+/** Which tickets a list shows, by whether the tracker counts them done. */
+export type TicketDoneFilter = 'open' | 'done' | 'any';
+
+/** One page of a workshop's list. next is the cursor of the page after it;
+ *  '' on the last. */
+export interface TicketPage {
+	tickets: TicketRow[];
+	next: string;
+}
+
+/** What a workshop's list asks its source for. refresh reads the tracker
+ *  now rather than the cached copy. */
+export interface TicketQuery {
+	q?: string;
+	done?: TicketDoneFilter;
+	cursor?: string;
+	limit?: number;
+	refresh?: boolean;
+}
+
+/** A ticket's local record: what runs, comments, attachments and links
+ *  point at. A remote issue gets one the first time something needs it (a
+ *  run starts, an automation fires, a base branch is set) and it is never
+ *  polled, so its title is the last one seen. */
+export interface Ticket {
+	id: string;
+	/** The ticket-source integration, and the issue's stable id there (the
+	 *  ticket's own id on the internal tracker). */
+	sourceId: string;
+	sourceKind: string;
+	remoteId: string;
+	/** The remote issue's key, URL and type word as last seen. */
+	sourceKey?: string;
+	sourceUrl?: string;
+	sourceType?: string;
+	title: string;
+	goal: string;
+	baseBranch: string;
+	changeType: ChangeType;
+	statusId?: string;
+	typeId?: string;
+	labels: string[];
+	/** The automation that made it, when one did. */
+	automationId?: string;
+	statusChangedAt?: string;
+	statusChangedBy?: string;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export interface WorkshopRef {
+	id: string;
+	name: string;
+}
+
+/** A record with where to show it: the ticket belongs to no workshop, so
+ *  its page is reached through any workshop on its source. */
+export interface TicketRecord {
+	ticket: Ticket;
+	key: string;
+	source?: TicketSourceRef;
+	/** The workshops whose source the ticket is on. */
+	workshops: WorkshopRef[];
 }
 
 /** Who wrote a comment: the remote tracker (anyone there, including you
@@ -85,24 +145,62 @@ export interface TicketComment {
 	author: string;
 	bodyMd: string;
 	origin: CommentOrigin;
+	/** The run that wrote it (internal tracker). */
 	runId?: string;
-	stageId?: string;
 	createdAt: string;
 	updatedAt: string;
 }
 
-/** One status of a tracker. On a remote tracker only isDone and flowStep are
- *  ours to set; on the internal tracker the whole list is. */
+/** A remote issue's own attachment: listed, copied into a run when it
+ *  starts. */
+export interface RemoteAttachment {
+	filename: string;
+	mime?: string;
+	size?: number;
+}
+
+/** A ticket's files: those uploaded here, and the remote issue's own. */
+export interface TicketAttachments {
+	attachments: Attachment[];
+	remote: RemoteAttachment[];
+}
+
+/** What creating or editing an internal ticket sends; a remote issue takes
+ *  only baseBranch. */
+export interface TicketDraft {
+	title: string;
+	goal: string;
+	baseBranch?: string;
+	changeType?: ChangeType;
+	/** Create only: the status and labels it starts with. */
+	statusId?: string;
+	labels?: string[];
+	typeId?: string;
+	attachmentIds?: string[];
+}
+
+/** A ticket's status as a picker offers it. A status is set by its name. */
+export interface TicketStatusRef {
+	name: string;
+	isDone: boolean;
+}
+
+/** One status of a tracker. A remote tracker's are read live and read-only;
+ *  the internal tracker's are the owner's to edit. */
 export interface TrackerStatus {
 	/** Empty on an internal row not saved yet. */
 	id: string;
 	integrationId: string;
 	remoteId: string;
 	name: string;
-	remoteCategory: string;
 	position: number;
 	isDone: boolean;
-	flowStep?: FlowStep;
+}
+
+export interface TrackerStatusList {
+	statuses: TrackerStatus[];
+	/** A remote tracker's: shown, not edited. */
+	readOnly: boolean;
 }
 
 export interface TrackerType {
@@ -114,98 +212,26 @@ export interface TrackerType {
 	position: number;
 }
 
-/** A ticket with no status (not synced yet) counts as not done. */
-export const isDone = (t: Pick<Ticket, 'status'>): boolean => t.status?.isDone ?? false;
-
-/** The steps more than one status claims — a tracker may give each only once. */
-export function duplicateSteps(statuses: Pick<TrackerStatus, 'flowStep'>[]): FlowStep[] {
-	const seen = new Set<FlowStep>();
-	const dup = new Set<FlowStep>();
-	for (const s of statuses) {
-		if (!s.flowStep) continue;
-		if (seen.has(s.flowStep)) dup.add(s.flowStep);
-		seen.add(s.flowStep);
-	}
-	return FLOW_STEPS.filter((s) => dup.has(s));
-}
-
-/** The integration whose statuses a ticket moves through: its source, else
- *  the user's internal tracker. */
-export function trackerIdOf(
-	ticket: Pick<Ticket, 'source'>,
-	trackers: { id: string; kind: string }[]
-): string | undefined {
-	if (ticket.source) return ticket.source.integrationId;
-	return trackers.find((i) => i.kind === INTERNAL_TRACKER)?.id;
-}
-
-/** The integration kind of the built-in tracker every user has one of. */
-export const INTERNAL_TRACKER = 'internal';
-
 /** The statuses a ticket can be set to, in tracker order. Its current status
  *  stays selectable even when the list no longer has it. */
 export function statusOptions(
 	statuses: TrackerStatus[],
-	current?: TicketStatusRef
+	current?: Pick<TicketRow, 'status' | 'done'>
 ): TicketStatusRef[] {
 	const opts: TicketStatusRef[] = [...statuses]
 		.sort((a, b) => a.position - b.position)
-		.map((s) => ({ id: s.id, name: s.name, isDone: s.isDone, flowStep: s.flowStep }));
-	if (current && !opts.some((o) => o.id === current.id)) opts.unshift(current);
+		.map((s) => ({ name: s.name, isDone: s.isDone }));
+	if (current?.status && !opts.some((o) => o.name === current.status))
+		opts.unshift({ name: current.status, isDone: current.done });
 	return opts;
 }
 
 /** The distinct status names across a list, for its filter, in first-seen order. */
-export function statusNames(tickets: Pick<Ticket, 'status'>[]): string[] {
-	return [...new Set(tickets.flatMap((t) => (t.status ? [t.status.name] : [])))];
+export function statusNames(tickets: Pick<TicketRow, 'status'>[]): string[] {
+	return [...new Set(tickets.flatMap((t) => (t.status ? [t.status] : [])))];
 }
 
 /** A ticket list narrowed to one status name; '' keeps all. */
-export function withStatus<T extends Pick<Ticket, 'status'>>(tickets: T[], name: string): T[] {
-	return name ? tickets.filter((t) => t.status?.name === name) : tickets;
-}
-
-export interface TicketSource {
-	integrationId: string;
-	kind: string; // 'jira'
-	key: string; // 'PROJ-123'
-	url?: string;
-	/** The tracker's own word for the issue's type ('Bug'). */
-	type?: string;
-}
-
-/** What creating or updating a ticket needs. Supplying source turns a create
- *  into an import: the tracker provides title, goal and attachments, and
- *  anything sent alongside overrides them. */
-export interface TicketDraft {
-	title: string;
-	goal: string;
-	projectId: string;
-	branch?: string;
-	changeType?: ChangeType;
-	attachmentIds?: string[];
-	sourceIntegrationId?: string;
-	sourceKey?: string;
-}
-
-/** One issue in an external tracker, as the import picker shows it. Search
- *  results carry no attachments — the single-issue fetch is authoritative. */
-export interface SourceTicket {
-	key: string;
-	title: string;
-	body?: string;
-	url?: string;
-	status?: string;
-	type?: string;
-	assignee?: string;
-	updated?: string;
-	attachments: SourceAttachment[];
-	/** What an import makes of the issue's type. */
-	changeType: ChangeType;
-}
-
-export interface SourceAttachment {
-	filename: string;
-	mime?: string;
-	size?: number;
+export function withStatus<T extends Pick<TicketRow, 'status'>>(tickets: T[], name: string): T[] {
+	return name ? tickets.filter((t) => t.status === name) : tickets;
 }

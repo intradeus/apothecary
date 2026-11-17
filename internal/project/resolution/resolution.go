@@ -150,11 +150,6 @@ type Resolution struct {
 	// source whose integration is gone or cannot write errors, naming it.
 	// nil = this build cannot write to a tracker (fakes that don't wire it).
 	TicketTracker func(ctx context.Context, ticketID string) (w trackerport.TicketWriter, key string, err error)
-	// TicketStep is the status name holding a flow step on the ticket's
-	// tracker (its integration's status list) — what `ticket_transition to:`
-	// moves to — or *trackerport.ErrStatusUnsupported naming the steps that
-	// have one. nil = steps cannot be resolved (fakes).
-	TicketStep func(ctx context.Context, ticketID string, step trackerport.FlowStep) (string, error)
 
 	// CredentialIDs are the provider credentials the project's harness
 	// integrations reference: a refresh of one of them is pushed into this

@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -47,7 +48,8 @@ func RunDBContract(t *testing.T, open func(t *testing.T) confstore.DB) {
 
 // SeedProject lands p for a test that only needs a project to exist, with what
 // no project exists without: a repository account and a provisioner of its
-// owner's, and a template to default to.
+// owner's, its owner's internal tracker as its ticket source, and a template
+// to default to.
 func SeedProject(t *testing.T, svc *confstore.Service, p confstore.Project) {
 	t.Helper()
 	for _, ref := range []struct {
@@ -60,6 +62,11 @@ func SeedProject(t *testing.T, svc *confstore.Service, p confstore.Project) {
 		in, err := svc.CreateIntegration(ctx, confstore.Integration{UserID: p.UserID, Port: ref.port, Kind: "fake", Name: ref.port + " of " + p.ID})
 		ok(t, err)
 		*ref.id = in.ID
+	}
+	if p.TicketSourceID == "" {
+		in, err := svc.InternalTracker(ctx, p.UserID)
+		ok(t, err)
+		p.TicketSourceID = in.ID
 	}
 	if p.DefaultFlow == "" {
 		p.DefaultFlow = template()
@@ -149,15 +156,16 @@ func fullIntegration() confstore.StoredIntegration {
 		Sealed: []byte{1, 2, 3}, CreatedAt: at(1), UpdatedAt: at(2)}
 }
 
-// plainProject references i1 and writes the slices and maps as they read back.
+// plainProject references i1 (its ticket source too: the store checks only
+// that the row exists) and writes the slices and maps as they read back.
 func plainProject(id, user, name string, n int) confstore.Project {
-	return confstore.Project{ID: id, UserID: user, Name: name, RepoAccountID: "i1", ProvisionerID: "i1",
+	return confstore.Project{ID: id, UserID: user, Name: name, RepoAccountID: "i1", ProvisionerID: "i1", TicketSourceID: "i1",
 		HarnessIDs: []string{}, Repos: []confstore.ExtraRepo{}, Commands: map[string]string{},
 		DefaultFlow: template(), CreatedAt: at(n), UpdatedAt: at(n)}
 }
 
 func fullProject() confstore.Project {
-	return confstore.Project{ID: "p1", UserID: "u1", Name: "web", RepoAccountID: "i1", ProvisionerID: "i2",
+	return confstore.Project{ID: "p1", UserID: "u1", Name: "web", RepoAccountID: "i1", ProvisionerID: "i2", TicketSourceID: "i2",
 		HarnessIDs: []string{"i3", "i2"},
 		Repo: confstore.RepoConfig{URL: "https://example.test/g/web.git", Locator: "42", DefaultBranch: "trunk", AgentsMDPath: "docs/AGENTS.md",
 			BranchFormat: "{ticket_number}/{ticket_title}"},
@@ -176,31 +184,33 @@ func fullProject() confstore.Project {
 		DefaultFlow: template(), CreatedAt: at(1), UpdatedAt: at(2)}
 }
 
-func ticket(id, projectID, user string, n int) confstore.Ticket {
-	return confstore.Ticket{ID: id, UserID: user, ProjectID: projectID, Title: "t", CreatedAt: at(n), UpdatedAt: at(n)}
+// ticket is an internal ticket of tracker sourceID: its remote id is its own.
+func ticket(id, sourceID, user string, n int) confstore.Ticket {
+	return confstore.Ticket{ID: id, UserID: user, Title: "t", SourceID: sourceID, SourceKind: confstore.KindInternal,
+		RemoteID: id, CreatedAt: at(n), UpdatedAt: at(n)}
 }
 
-// fullTicket mirrors an issue of tracker i9 (trackerLists), in its status st1
-// and type ty1.
+// fullTicket records issue 10001 of tracker i9 (trackerLists), in its status
+// st1 and type ty1 (the store holds a status of any tracker; that only the
+// internal one has them is the Service's).
 func fullTicket() confstore.Ticket {
-	remote, synced, moved := at(3), at(4), at(5)
-	return confstore.Ticket{ID: "k1", UserID: "u1", ProjectID: "p1", Title: "Title", Goal: "Goal", BaseBranch: "fix/one",
+	moved := at(5)
+	return confstore.Ticket{ID: "k1", UserID: "u1", Title: "Title", Goal: "Goal", BaseBranch: "fix/one",
 		ChangeType: trackerport.ChangeFix, StatusID: "st1", TypeID: "ty1", Labels: []string{"backend", "Urgent"},
 		SourceID: "i9", SourceKind: "jira", SourceKey: "PROJ-1", SourceURL: "https://example.test/1",
-		SourceType: "Bug", RemoteID: "10001", RemoteUpdatedAt: &remote, SyncedAt: &synced,
-		SyncState: confstore.SyncError, SyncError: "jira: 503", StatusChangedAt: &moved, StatusChangedBy: "run:r1/main-1/kick",
+		SourceType: "Bug", RemoteID: "10001", StatusChangedAt: &moved, StatusChangedBy: "run:r1/main-1/kick",
 		AutomationID: "a1", CreatedAt: at(1), UpdatedAt: at(2)}
 }
 
-// trackerLists stores tracker i9 (u1's Jira) with status st1 (To Do, the
-// todo step) and type ty1 (Bug, fix): what fullTicket points at.
+// trackerLists stores tracker i9 (u1's Jira) with statuses st1 (To Do) and
+// st2 (Done) and type ty1 (Bug, fix): what fullTicket points at.
 func trackerLists(t *testing.T, s store) {
 	t.Helper()
 	ok(t, s.UpsertIntegration(ctx, confstore.StoredIntegration{ID: "i9", UserID: "u1", Port: confstore.PortTicketSource,
 		Kind: "jira", Name: "jira", Config: map[string]any{}, Sealed: []byte{1}, CreatedAt: at(0), UpdatedAt: at(0)}))
 	ok(t, s.ReplaceTrackerStatuses(ctx, "i9", []confstore.TrackerStatus{
-		{ID: "st1", IntegrationID: "i9", RemoteID: "1", Name: "To Do", RemoteCategory: trackerport.CategoryNew, FlowStep: trackerport.StepTodo},
-		{ID: "st2", IntegrationID: "i9", RemoteID: "2", Name: "Done", RemoteCategory: trackerport.CategoryDone, Position: 1, IsDone: true, FlowStep: trackerport.StepDone},
+		{ID: "st1", IntegrationID: "i9", RemoteID: "1", Name: "To Do"},
+		{ID: "st2", IntegrationID: "i9", RemoteID: "2", Name: "Done", Position: 1, IsDone: true},
 	}, nil))
 	ok(t, s.ReplaceTrackerTypes(ctx, "i9", []confstore.TrackerType{
 		{ID: "ty1", IntegrationID: "i9", RemoteID: "10", Name: "Bug", ChangeType: trackerport.ChangeFix},
@@ -221,7 +231,7 @@ func automation(id, projectID string, n int) confstore.Automation {
 func fullAutomation() confstore.Automation {
 	polled, fired := at(3), at(4)
 	return confstore.Automation{ID: "a1", ProjectID: "p1", Name: "nightly", Kind: confstore.AutomationMergeRequest,
-		SourceID: "i9", Query: "q", Schedule: "0 3 * * *", TicketID: "k9", Repo: "api", Flow: "f",
+		Query: "q", Schedule: "0 3 * * *", TicketID: "k9", Repo: "api", Flow: "f",
 		Params: map[string]string{"gate": "false"}, Enabled: true, LastPolledAt: &polled, LastFiredAt: &fired, LastError: "boom",
 		CreatedAt: at(1), UpdatedAt: at(2)}
 }
@@ -363,13 +373,6 @@ func projectIDs(s store, user string) []string {
 	rows, err := s.ListProjects(ctx, user)
 	ok(s.t, err)
 	return ids(rows, func(r confstore.Project) string { return r.ID })
-}
-
-func ticketIDs(s store, user string) []string {
-	s.t.Helper()
-	rows, err := s.ListTickets(ctx, user)
-	ok(s.t, err)
-	return ids(rows, func(r confstore.Ticket) string { return r.ID })
 }
 
 func flowNames(s store, projectID string) []string {
@@ -537,14 +540,15 @@ func integrations(t *testing.T, open opener) {
 		ok(t, s.UpsertIntegration(ctx, repoAccount("i2", "u1", "prov", 0)))
 		ok(t, s.UpsertIntegration(ctx, repoAccount("i3", "u1", "harn", 0)))
 		ok(t, s.UpsertIntegration(ctx, repoAccount("i4", "u1", "free", 0)))
+		ok(t, s.UpsertIntegration(ctx, repoAccount("i5", "u1", "tracker", 0)))
 		a := plainProject("p1", "u1", "alpha", 1)
-		a.ProvisionerID, a.HarnessIDs = "i2", []string{"i3"}
+		a.ProvisionerID, a.HarnessIDs, a.TicketSourceID = "i2", []string{"i3"}, "i5"
 		b := plainProject("p2", "u1", "beta", 2)
 		b.ProvisionerID = "i2"
 		ok(t, s.UpsertProject(ctx, b)) // beta first: the message sorts, the insert order doesn't
 		ok(t, s.UpsertProject(ctx, a))
 
-		for _, tc := range []struct{ id, want string }{{"i1", "alpha, beta"}, {"i2", "alpha, beta"}, {"i3", "alpha"}} {
+		for _, tc := range []struct{ id, want string }{{"i1", "alpha, beta"}, {"i2", "alpha, beta"}, {"i3", "alpha"}, {"i5", "alpha"}} {
 			err := s.DeleteIntegration(ctx, tc.id)
 			is(t, tc.id, err, confstore.ErrReferenced)
 			names(t, tc.id, err, tc.want)
@@ -552,6 +556,31 @@ func integrations(t *testing.T, open opener) {
 		}
 		ok(t, s.DeleteIntegration(ctx, "i4"))
 		is(t, "second delete", s.DeleteIntegration(ctx, "i4"), confstore.ErrNotFound)
+	})
+
+	// tickets.source_id has no FK: a record outlives its tracker, and only
+	// the type it pointed at (the tracker's list goes with it) is let go.
+	t.Run("a ticket source no project uses deletes, its tickets stay", func(t *testing.T) {
+		s := seeded(t, open)
+		trackerLists(t, s)
+		k := fullTicket()
+		k.StatusID = ""
+		ok(t, s.UpsertTicket(ctx, k))
+		p := s.project("p1")
+		p.TicketSourceID = "i9"
+		ok(t, s.UpsertProject(ctx, p))
+		err := s.DeleteIntegration(ctx, "i9")
+		is(t, "in use", err, confstore.ErrReferenced)
+		names(t, "in use", err, "web")
+		p.TicketSourceID = "i1"
+		ok(t, s.UpsertProject(ctx, p))
+		ok(t, s.DeleteIntegration(ctx, "i9"))
+		want := k
+		want.TypeID = ""
+		same(t, "the record", s.ticket("k1"), want)
+		types, err := s.ListTrackerTypes(ctx, "i9")
+		ok(t, err)
+		same(t, "its types", len(types), 0)
 	})
 
 	// The harness set has no FK behind it: the scan is all there is, and it
@@ -649,13 +678,16 @@ func projects(t *testing.T, open opener) {
 		same(t, "after the refused update", s.project("p2"), p)
 	})
 
-	t.Run("repo account and provisioner must exist, the harness set need not", func(t *testing.T) {
+	t.Run("repo account, provisioner and ticket source must exist, the harness set need not", func(t *testing.T) {
 		s := seeded(t, open)
 		p := plainProject("p2", "u1", "api", 1)
 		p.RepoAccountID = "ghost"
 		is(t, "repo account", s.UpsertProject(ctx, p), confstore.ErrInvalid)
 		p.RepoAccountID, p.ProvisionerID = "i1", "ghost"
 		is(t, "provisioner", s.UpsertProject(ctx, p), confstore.ErrInvalid)
+		p.ProvisionerID, p.TicketSourceID = "i1", "ghost"
+		is(t, "ticket source", s.UpsertProject(ctx, p), confstore.ErrInvalid)
+		p.TicketSourceID = "i1"
 		if _, err := s.GetProject(ctx, "p2"); !errors.Is(err, confstore.ErrNotFound) {
 			t.Errorf("a refused insert landed: %v", err)
 		}
@@ -666,7 +698,7 @@ func projects(t *testing.T, open opener) {
 		is(t, "on update", s.UpsertProject(ctx, upd), confstore.ErrInvalid)
 		same(t, "after the refused update", s.project("p1"), before)
 
-		p.ProvisionerID, p.HarnessIDs = "i1", []string{"ghost"}
+		p.HarnessIDs = []string{"ghost"}
 		ok(t, s.UpsertProject(ctx, p))
 		same(t, "harness set", s.project("p2").HarnessIDs, []string{"ghost"})
 	})
@@ -763,7 +795,6 @@ func projectDeletion(t *testing.T, open opener) {
 			ok(t, s.UpsertFlow(ctx, flowRow(id, "main", "h"+id, 0)))
 			ok(t, s.PutFlowBinding(ctx, confstore.FlowBinding{ProjectID: id, FlowName: "main", Params: map[string]string{"a": "b"}, UpdatedAt: at(0)}))
 			ok(t, s.PutProjectSecret(ctx, id, confstore.StoredProjectSecret{Name: "token", Sealed: []byte{1}, UpdatedAt: at(0)}))
-			ok(t, s.UpsertTicket(ctx, ticket("k"+id, id, "u1", 0)))
 			ok(t, s.UpsertAutomation(ctx, automation("a"+id, id, 0)))
 		}
 		// A default_flow pointing at its own row doesn't hold the delete back.
@@ -782,8 +813,6 @@ func projectDeletion(t *testing.T, open opener) {
 		_, err = s.GetFlowBinding(ctx, "p1", "main")
 		is(t, "binding", err, confstore.ErrNotFound)
 		same(t, "secrets", secretNames(s, "p1"), []string{})
-		_, err = s.GetTicket(ctx, "kp1")
-		is(t, "ticket", err, confstore.ErrNotFound)
 		_, err = s.GetAutomation(ctx, "ap1")
 		is(t, "automation", err, confstore.ErrNotFound)
 
@@ -791,7 +820,6 @@ func projectDeletion(t *testing.T, open opener) {
 		same(t, "other project's versions", versionHashes(s, "p2", "main"), []string{"hp2"})
 		same(t, "other project's bindings", bindingNames(s, "p2"), []string{"main"})
 		same(t, "other project's secrets", secretNames(s, "p2"), []string{"token"})
-		same(t, "other project's tickets", ticketIDs(s, ""), []string{"kp2"})
 		same(t, "other project's automations", automationIDs(s, ""), []string{"ap2"})
 	})
 
@@ -813,16 +841,42 @@ func tickets(t *testing.T, open opener) {
 		allSet(t, k)
 		ok(t, s.UpsertTicket(ctx, k))
 		same(t, "get", s.ticket(k.ID), k)
-		list, err := s.ListTickets(ctx, k.UserID)
+		byRemote, err := s.GetTicketByRemote(ctx, "i9", "10001")
 		ok(t, err)
-		same(t, "list", list, []confstore.Ticket{k})
+		same(t, "by remote", byRemote, k)
+		list, err := s.ListTicketsByRemote(ctx, "i9", []string{"10001"})
+		ok(t, err)
+		same(t, "list by remote", list, []confstore.Ticket{k})
+	})
+
+	t.Run("by last-seen key: a real issue's record first, then the newest", func(t *testing.T) {
+		s := seeded(t, open)
+		trackerLists(t, s)
+		k := fullTicket()
+		ok(t, s.UpsertTicket(ctx, k))
+		dup := fullTicket()
+		dup.ID, dup.RemoteID, dup.CreatedAt, dup.UpdatedAt = "k2", "dup:k2", at(3), at(3)
+		ok(t, s.UpsertTicket(ctx, dup))
+		got, err := s.GetTicketBySourceKey(ctx, "i9", "PROJ-1")
+		ok(t, err)
+		same(t, "over a placeholder", got.ID, "k1")
+		newer := fullTicket()
+		newer.ID, newer.RemoteID, newer.CreatedAt, newer.UpdatedAt = "k3", "10002", at(4), at(4)
+		ok(t, s.UpsertTicket(ctx, newer))
+		got, err = s.GetTicketBySourceKey(ctx, "i9", "PROJ-1")
+		ok(t, err)
+		same(t, "newest", got.ID, "k3")
+		_, err = s.GetTicketBySourceKey(ctx, "i9", "proj-1")
+		is(t, "another case", err, confstore.ErrNotFound)
+		_, err = s.GetTicketBySourceKey(ctx, "i1", "PROJ-1")
+		is(t, "another source", err, confstore.ErrNotFound)
 	})
 
 	// The column default never applies: the write always names the column.
 	// feat for "" is the Service's.
 	t.Run("an empty change type stays empty", func(t *testing.T) {
 		s := seeded(t, open)
-		ok(t, s.UpsertTicket(ctx, ticket("k1", "p1", "u1", 0)))
+		ok(t, s.UpsertTicket(ctx, ticket("k1", "i1", "u1", 0)))
 		same(t, "change type", s.ticket("k1").ChangeType, "")
 	})
 
@@ -830,77 +884,150 @@ func tickets(t *testing.T, open opener) {
 		s := store{open(t), t}
 		_, err := s.GetTicket(ctx, "nope")
 		is(t, "get", err, confstore.ErrNotFound)
+		_, err = s.GetTicketByRemote(ctx, "i9", "nope")
+		is(t, "by remote", err, confstore.ErrNotFound)
 		is(t, "delete", s.DeleteTicket(ctx, "nope"), confstore.ErrNotFound)
+		is(t, "seen", s.SetTicketSeen(ctx, "nope", confstore.TicketSeen{Title: "t"}, "", trackerport.ChangeFeat, at(1)), confstore.ErrNotFound)
 	})
 
-	t.Run("its project must exist", func(t *testing.T) {
+	t.Run("its status and type must exist", func(t *testing.T) {
 		s := seeded(t, open)
-		is(t, "insert", s.UpsertTicket(ctx, ticket("k1", "ghost", "u1", 0)), confstore.ErrInvalid)
+		k := ticket("k1", "i1", "u1", 0)
+		k.StatusID = "ghost"
+		is(t, "status", s.UpsertTicket(ctx, k), confstore.ErrInvalid)
+		k.StatusID, k.TypeID = "", "ghost"
+		is(t, "type", s.UpsertTicket(ctx, k), confstore.ErrInvalid)
 		if _, err := s.GetTicket(ctx, "k1"); !errors.Is(err, confstore.ErrNotFound) {
 			t.Errorf("a refused insert landed: %v", err)
 		}
-		ok(t, s.UpsertTicket(ctx, ticket("k1", "p1", "u1", 0)))
-		is(t, "move", s.UpsertTicket(ctx, ticket("k1", "ghost", "u1", 1)), confstore.ErrInvalid)
-		same(t, "after the refused move", s.ticket("k1").ProjectID, "p1")
 	})
 
-	// The owner is whatever the caller wrote: it is the Service that copies
-	// the project's onto the row, not the store.
+	// The owner is whatever the caller wrote: it is the Service that picks
+	// it, not the store.
 	t.Run("the owner is stored as given, on insert and on update", func(t *testing.T) {
 		s := seeded(t, open)
-		ok(t, s.UpsertTicket(ctx, ticket("k1", "p1", "someone", 0)))
+		ok(t, s.UpsertTicket(ctx, ticket("k1", "i1", "someone", 0)))
 		same(t, "insert", s.ticket("k1").UserID, "someone")
-		ok(t, s.UpsertTicket(ctx, ticket("k1", "p1", "else", 1)))
+		ok(t, s.UpsertTicket(ctx, ticket("k1", "i1", "else", 1)))
 		same(t, "update", s.ticket("k1").UserID, "else")
-		same(t, "new owner's list", ticketIDs(s, "else"), []string{"k1"})
-		same(t, "project owner's list", ticketIDs(s, "u1"), []string{})
 	})
 
 	t.Run("an update replaces all but created_at", func(t *testing.T) {
 		s := seeded(t, open)
-		ok(t, s.UpsertProject(ctx, plainProject("p2", "u1", "api", 1)))
 		trackerLists(t, s)
 		in := fullTicket()
 		ok(t, s.UpsertTicket(ctx, in))
-		upd := ticket("k1", "p2", "u2", 70)
+		upd := ticket("k1", "i8", "u2", 70)
 		ok(t, s.UpsertTicket(ctx, upd))
 		want := upd
 		want.CreatedAt = in.CreatedAt
 		same(t, "after update", s.ticket("k1"), want)
 	})
 
-	// tickets_source_key_idx: one copy of an issue per owner and tracker,
-	// the key compared without case; another owner, or another tracker, may
-	// hold its own.
-	t.Run("an issue is one ticket per owner and tracker", func(t *testing.T) {
+	// tickets_source_remote_key: one record of an issue per tracker, whoever
+	// holds it; another tracker's issue of the same id is another record.
+	t.Run("an issue is one record per tracker, across owners", func(t *testing.T) {
 		s := seeded(t, open)
 		trackerLists(t, s)
 		a, b := fullTicket(), fullTicket()
-		b.ID, b.SourceKey = "k2", "proj-1"
 		ok(t, s.UpsertTicket(ctx, a))
-		is(t, "same owner and tracker", s.UpsertTicket(ctx, b), confstore.ErrConflict)
-		b.UserID = "u2"
-		ok(t, s.UpsertTicket(ctx, b))
-		c := fullTicket()
-		c.ID, c.SourceID, c.StatusID, c.TypeID = "k3", "i8", "", ""
+		b.ID, b.UserID, b.SourceKey = "k2", "u2", "OTHER-1"
+		is(t, "another owner", s.UpsertTicket(ctx, b), confstore.ErrConflict)
+		if _, err := s.GetTicket(ctx, "k2"); !errors.Is(err, confstore.ErrNotFound) {
+			t.Errorf("a refused insert landed: %v", err)
+		}
+		c := ticket("k3", "i1", "u1", 1)
 		ok(t, s.UpsertTicket(ctx, c))
+		c.RemoteID = "10001"
+		ok(t, s.UpsertTicket(ctx, c)) // the same id on another tracker
+		c.SourceID = "i9"
+		is(t, "an update onto a held issue", s.UpsertTicket(ctx, c), confstore.ErrConflict)
+		same(t, "after the refused update", s.ticket("k3").SourceID, "i1")
 	})
 
-	t.Run("lists newest first, one owner or everyone", func(t *testing.T) {
+	t.Run("listed by remote id, of one tracker", func(t *testing.T) {
 		s := seeded(t, open)
-		ok(t, s.UpsertTicket(ctx, ticket("k1", "p1", "u1", 1)))
-		ok(t, s.UpsertTicket(ctx, ticket("k2", "p1", "u2", 2)))
-		ok(t, s.UpsertTicket(ctx, ticket("k3", "p1", "u1", 3)))
-		same(t, "u1", ticketIDs(s, "u1"), []string{"k3", "k1"})
-		same(t, "everyone", ticketIDs(s, ""), []string{"k3", "k2", "k1"})
-		none, err := s.ListTickets(ctx, "nobody")
+		for i, id := range []string{"r1", "r2", "r3"} {
+			k := ticket("k"+id, "i9", "u1", i)
+			k.RemoteID = id
+			ok(t, s.UpsertTicket(ctx, k))
+		}
+		other := ticket("kx", "i8", "u1", 0)
+		other.RemoteID = "r1"
+		ok(t, s.UpsertTicket(ctx, other))
+		list, err := s.ListTicketsByRemote(ctx, "i9", []string{"r3", "r1", "nope"})
 		ok(t, err)
-		same(t, "nobody", none, nil)
+		got := ids(list, func(r confstore.Ticket) string { return r.ID })
+		sort.Strings(got)
+		same(t, "found", got, []string{"kr1", "kr3"})
+		none, err := s.ListTicketsByRemote(ctx, "i9", nil)
+		ok(t, err)
+		same(t, "none asked", len(none), 0)
+	})
+
+	t.Run("an internal tracker's list pages newest first, by done and text", func(t *testing.T) {
+		s := seeded(t, open)
+		ok(t, s.UpsertIntegration(ctx, confstore.StoredIntegration{ID: "i8", UserID: "u1", Port: confstore.PortTicketSource,
+			Kind: confstore.KindInternal, Name: "internal", Config: map[string]any{}, Sealed: []byte{1}, CreatedAt: at(0), UpdatedAt: at(0)}))
+		ok(t, s.ReplaceTrackerStatuses(ctx, "i8", []confstore.TrackerStatus{
+			{ID: "open", IntegrationID: "i8", RemoteID: "open", Name: "To do"},
+			{ID: "done", IntegrationID: "i8", RemoteID: "done", Name: "Done", Position: 1, IsDone: true},
+		}, nil))
+		add := func(id, status, title, goal string, n int) {
+			k := ticket(id, "i8", "u1", n)
+			k.StatusID, k.Title, k.Goal = status, title, goal
+			ok(t, s.UpsertTicket(ctx, k))
+		}
+		add("a1", "open", "Login page", "", 1)
+		add("a2", "done", "Logout", "", 2)
+		add("a3", "", "Search", "find the LOGIN form", 3)
+		add("a5", "open", "Billing", "", 4)
+		add("a4", "done", "Export", "", 4) // same created_at as a5: id breaks the tie
+		ok(t, s.UpsertTicket(ctx, ticket("b1", "i9", "u1", 5)))
+		list := func(q confstore.InternalTicketQuery) []string {
+			t.Helper()
+			rows, err := s.ListInternalTickets(ctx, "i8", q)
+			ok(t, err)
+			return ids(rows, func(r confstore.Ticket) string { return r.ID })
+		}
+		same(t, "all", list(confstore.InternalTicketQuery{}), []string{"a5", "a4", "a3", "a2", "a1"})
+		same(t, "open", list(confstore.InternalTicketQuery{Done: trackerport.DoneOpen}), []string{"a5", "a3", "a1"})
+		same(t, "done", list(confstore.InternalTicketQuery{Done: trackerport.DoneOnly}), []string{"a4", "a2"})
+		same(t, "text", list(confstore.InternalTicketQuery{Text: "login"}), []string{"a3", "a1"})
+		same(t, "text in the id", list(confstore.InternalTicketQuery{Text: "A4"}), []string{"a4"})
+		same(t, "first page", list(confstore.InternalTicketQuery{Limit: 2}), []string{"a5", "a4"})
+		same(t, "next page", list(confstore.InternalTicketQuery{Limit: 2, After: &confstore.TicketCursor{CreatedAt: at(4), ID: "a4"}}),
+			[]string{"a3", "a2"})
+		same(t, "inside a tie", list(confstore.InternalTicketQuery{After: &confstore.TicketCursor{CreatedAt: at(4), ID: "a5"}}),
+			[]string{"a4", "a3", "a2", "a1"})
+		same(t, "open after", list(confstore.InternalTicketQuery{Done: trackerport.DoneOpen, After: &confstore.TicketCursor{CreatedAt: at(3), ID: "a3"}}),
+			[]string{"a1"})
+		for i := range 55 {
+			ok(t, s.UpsertTicket(ctx, ticket(fmt.Sprintf("m%02d", i), "i8", "u1", 10)))
+		}
+		same(t, "default limit", len(list(confstore.InternalTicketQuery{})), 50)
+	})
+
+	t.Run("what was seen is written, the remote id kept", func(t *testing.T) {
+		s := seeded(t, open)
+		trackerLists(t, s)
+		k := fullTicket()
+		ok(t, s.UpsertTicket(ctx, k))
+		seen := confstore.TicketSeen{RemoteID: "ignored", Key: "NEW-7", URL: "https://example.test/7", Title: "Moved", Goal: "New goal",
+			Type: "Story", TypeRemoteID: "11", Labels: []string{"x"}}
+		ok(t, s.SetTicketSeen(ctx, "k1", seen, "", trackerport.ChangeChore, at(9)))
+		want := k
+		want.Title, want.Goal, want.SourceKey, want.SourceURL, want.SourceType = "Moved", "New goal", "NEW-7", "https://example.test/7", "Story"
+		want.TypeID, want.ChangeType, want.Labels, want.UpdatedAt = "", trackerport.ChangeChore, []string{"x"}, at(9)
+		same(t, "seen", s.ticket("k1"), want)
+		ok(t, s.SetTicketSeen(ctx, "k1", seen, "ty1", trackerport.ChangeFix, at(10)))
+		same(t, "type", s.ticket("k1").TypeID, "ty1")
+		is(t, "missing type", s.SetTicketSeen(ctx, "k1", seen, "ghost", trackerport.ChangeFix, at(11)), confstore.ErrInvalid)
 	})
 
 	t.Run("delete goes once", func(t *testing.T) {
 		s := seeded(t, open)
-		ok(t, s.UpsertTicket(ctx, ticket("k1", "p1", "u1", 0)))
+		ok(t, s.UpsertTicket(ctx, ticket("k1", "i1", "u1", 0)))
 		ok(t, s.DeleteTicket(ctx, "k1"))
 		is(t, "second delete", s.DeleteTicket(ctx, "k1"), confstore.ErrNotFound)
 	})
@@ -1324,9 +1451,9 @@ func automations(t *testing.T, open opener) {
 
 	t.Run("what it names need not exist", func(t *testing.T) {
 		s := seeded(t, open)
-		ok(t, s.UpsertTicket(ctx, ticket("k1", "p1", "u1", 0)))
+		ok(t, s.UpsertTicket(ctx, ticket("k1", "i1", "u1", 0)))
 		a := fullAutomation()
-		a.TicketID, a.SourceID, a.Flow = "k1", "ghost", "ghost"
+		a.TicketID, a.Flow = "k1", "ghost"
 		ok(t, s.UpsertAutomation(ctx, a))
 		ok(t, s.DeleteTicket(ctx, "k1"))
 		same(t, "ticket id", s.automation("a1").TicketID, "k1")
@@ -1524,7 +1651,7 @@ func timestamps(t *testing.T, open opener) {
 		check("project created_at", gp.CreatedAt)
 		check("project updated_at", gp.UpdatedAt)
 
-		k := ticket("k1", "p1", "u1", 0)
+		k := ticket("k1", "i1", "u1", 0)
 		k.CreatedAt, k.UpdatedAt = finer, finer
 		ok(t, s.UpsertTicket(ctx, k))
 		gk := s.ticket("k1")

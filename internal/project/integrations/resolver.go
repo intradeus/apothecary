@@ -53,6 +53,10 @@ type Resolver struct {
 	logins CredentialOpener
 	// notices hears k8s image drift; nil = log only.
 	notices ProvisionerNotices
+	// Live is the read cache of remote trackers: a write through a ticket's
+	// tracker drops what it holds of the issue. Set by the daemon after New;
+	// nil (tests) leaves writes unwrapped.
+	Live *tickets.Live
 }
 
 // CredentialOpener opens a provider credential with an access token that
@@ -377,7 +381,6 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 		// The tracker a ticket's tracker actions write to, from the ticket's
 		// current row (the ticket's, not the project's).
 		TicketTracker: r.TicketTracker,
-		TicketStep:    r.TicketStep,
 		// Seed and prepare EVERY harness in the set: a stage may run on any of
 		// them, so all their auth + native configs must be in the workspace.
 		SeedAuth: func(ctx context.Context, env envport.EnvID, register func(string)) error {
@@ -693,10 +696,10 @@ func (r *Resolver) ListBranches(ctx context.Context, projectID string) ([]kinds.
 	return acc.ListBranches(ctx, p.Repo.Locator)
 }
 
-// TicketSource constructs the ticket-tracker adapter for a ticketsource
-// integration (the ticket factory's import path). Unlike the ports a project
-// binds, this one is addressed directly by integration id: the tracker is
-// picked per import, not per project.
+// TicketSource constructs the ticket-tracker adapter for a remote ticketsource
+// integration (what tickets.Live reads). Unlike the ports a project binds,
+// this one is addressed directly by integration id: several workshops may
+// read one tracker.
 func (r *Resolver) TicketSource(ctx context.Context, id string) (trackerport.TicketSource, error) {
 	in, tk, err := r.ticketSourceKind(ctx, id)
 	if err != nil {
@@ -706,7 +709,7 @@ func (r *Resolver) TicketSource(ctx context.Context, id string) (trackerport.Tic
 }
 
 // TicketWriter constructs the write side of a remote ticketsource integration
-// — the same adapter the import uses, asserted for its optional
+// — the same adapter the reads use, asserted for its optional
 // trackerport.TicketWriter capability. An adapter without it is refused by
 // name, so run creation can say which integration cannot write back.
 func (r *Resolver) TicketWriter(ctx context.Context, id string) (trackerport.TicketWriter, error) {
@@ -726,11 +729,11 @@ func (r *Resolver) TicketWriter(ctx context.Context, id string) (trackerport.Tic
 }
 
 // TicketTracker is resolution.Resolution.TicketTracker: the tracker of the
-// ticket as its row stands NOW. With a source, the source integration's
-// writer and the issue's key — a source whose integration is gone is an
-// error naming it (the ticket must be unlinked to move to the internal
-// tracker); without one, the internal tracker and the ticket's id. A deleted
-// ticket is *trackerport.ErrNotApplicable.
+// ticket as its row stands NOW. A ticket of the internal tracker is written
+// in place under its id; a remote record through its source integration's
+// writer under the issue's last-seen key, wrapped so the write drops Live's
+// cached copy of the issue. A source whose integration no longer resolves is
+// an error naming it. A deleted ticket is *trackerport.ErrNotApplicable.
 func (r *Resolver) TicketTracker(ctx context.Context, ticketID string) (trackerport.TicketWriter, string, error) {
 	t, err := r.conf.GetTicket(ctx, ticketID)
 	if errors.Is(err, confstore.ErrNotFound) {
@@ -739,45 +742,25 @@ func (r *Resolver) TicketTracker(ctx context.Context, ticketID string) (trackerp
 	if err != nil {
 		return nil, "", err
 	}
-	if t.SourceID == "" {
-		return internaltracker.New(r.conf), t.ID, nil
+	if t.Internal() {
+		return internaltracker.New(r.conf), t.TrackerKey(), nil
 	}
 	w, err := r.TicketWriter(ctx, t.SourceID)
 	if errors.Is(err, confstore.ErrNotFound) || errors.Is(err, resolution.ErrUnresolvable) {
-		return nil, "", fmt.Errorf("ticket %s mirrors %s of %s integration %s, which no longer resolves (%w) — unlink the ticket to put it on the internal tracker",
+		return nil, "", fmt.Errorf("ticket %s is %s of %s integration %s, which no longer resolves (%w)",
 			t.ID, t.SourceKey, t.SourceKind, t.SourceID, err)
 	}
 	if err != nil {
 		return nil, "", err
 	}
-	return w, t.SourceKey, nil
-}
-
-// TicketStep is resolution.Resolution.TicketStep: the name of the status
-// holding the step on the ticket's tracker. A remote tracker whose lists were
-// never fetched is fetched first, so an issue imported before the lists
-// existed resolves too.
-func (r *Resolver) TicketStep(ctx context.Context, ticketID string, step trackerport.FlowStep) (string, error) {
-	st, err := r.conf.StepStatus(ctx, ticketID, step)
-	var unsupported *trackerport.ErrStatusUnsupported
-	if errors.As(err, &unsupported) && len(unsupported.Supported) == 0 {
-		if t, terr := r.conf.GetTicket(ctx, ticketID); terr == nil && t.SourceID != "" {
-			if src, serr := r.TicketSource(ctx, t.SourceID); serr == nil {
-				if _, lerr := tickets.SyncLists(ctx, r.conf, t.SourceID, src); lerr != nil {
-					return "", fmt.Errorf("fetching the statuses of ticket %s's tracker: %w", t.SourceKey, lerr)
-				}
-				st, err = r.conf.StepStatus(ctx, ticketID, step)
-			}
-		}
+	if r.Live != nil {
+		w = r.Live.Writer(t.SourceID, w)
 	}
-	if err != nil {
-		return "", err
-	}
-	return st.Name, nil
+	return w, t.TrackerKey(), nil
 }
 
 // TicketSourceKind names an integration's vendor ("jira") for the provenance
-// stamped on an imported ticket.
+// stamped on a ticket record.
 func (r *Resolver) TicketSourceKind(ctx context.Context, id string) (string, error) {
 	in, _, err := r.ticketSourceKind(ctx, id)
 	if err != nil {
@@ -792,7 +775,7 @@ func (r *Resolver) ticketSourceKind(ctx context.Context, id string) (confstore.I
 		return confstore.Integration{}, nil, err
 	}
 	if in.Kind == confstore.KindInternal {
-		return confstore.Integration{}, nil, fmt.Errorf("integration %s is the internal tracker: nothing is imported from it", in.Name)
+		return confstore.Integration{}, nil, fmt.Errorf("integration %s is the internal tracker: its tickets are rows, not an adapter's", in.Name)
 	}
 	tk, err := r.reg.TicketSource(in.Kind)
 	if err != nil {

@@ -120,8 +120,8 @@ workspaces:
   clusterDomain: cluster.local
 
 # The engine is one pod (strategy Recreate): it holds in-process state (runs'
-# loops, live tunnels, the SSH door) and owns the runs volume, so it never
-# runs twice.
+# loops, live tunnels, the SSH door, the cache of tracker reads) and owns the
+# runs volume, so it never runs twice.
 engine:
   runsDir:
     # -- The engine's runs volume: uploads, snapshots, exec logs, markers.

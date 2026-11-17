@@ -31,7 +31,7 @@ func TestProjectDefaultFlowBuiltin(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := confstore.Project{
-		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
+		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", TicketSourceID: "int1", HarnessIDs: []string{"int1"},
 		DefaultFlow: "builder", CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.UpsertProject(ctx, p); err != nil {
@@ -54,7 +54,8 @@ func openConf(t *testing.T) *Store {
 
 // An automation row round-trips with its nullable marks and jsonb params,
 // lists per project and overall, and dies with the project; a ticket keeps
-// the automation that imported it.
+// the automation that imported it, and outlives the project (it belongs to
+// its source).
 func TestAutomationRoundtripAndCascade(t *testing.T) {
 	s := openConf(t)
 	ctx := context.Background()
@@ -65,15 +66,15 @@ func TestAutomationRoundtripAndCascade(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := confstore.Project{
-		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
+		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", TicketSourceID: "int1", HarnessIDs: []string{"int1"},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42", DefaultBranch: "main", AgentsMDPath: "AGENTS.md"},
 		DefaultFlow: "builder", CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.UpsertProject(ctx, p); err != nil {
 		t.Fatal(err)
 	}
-	tk := confstore.Ticket{ID: "tk1", ProjectID: p.ID, Title: "T", AutomationID: "au1", CreatedAt: now, UpdatedAt: now,
-		ChangeType: trackerport.ChangeFix, SourceType: "Bug"}
+	tk := confstore.Ticket{ID: "tk1", Title: "T", AutomationID: "au1", CreatedAt: now, UpdatedAt: now,
+		ChangeType: trackerport.ChangeFix, SourceType: "Bug", SourceID: "int1", SourceKind: "jira", RemoteID: "10001"}
 	if err := s.UpsertTicket(ctx, tk); err != nil {
 		t.Fatal(err)
 	}
@@ -126,6 +127,9 @@ func TestAutomationRoundtripAndCascade(t *testing.T) {
 	if err := s.DeleteAutomation(ctx, "au1"); !errors.Is(err, confstore.ErrNotFound) {
 		t.Errorf("delete of nothing = %v", err)
 	}
+	if _, err := s.GetTicket(ctx, "tk1"); err != nil {
+		t.Errorf("ticket died with the project: %v", err)
+	}
 }
 
 // Bindings live beside the flow and die with the project: an upsert, the
@@ -143,7 +147,7 @@ func TestFlowBindingRoundtripAndCascade(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := confstore.Project{
-		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
+		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", TicketSourceID: "int1", HarnessIDs: []string{"int1"},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42", DefaultBranch: "main", AgentsMDPath: "AGENTS.md"},
 		Commands:    map[string]string{"verify": "make test"},
 		DefaultFlow: "builder", CreatedAt: now, UpdatedAt: now,
@@ -200,7 +204,7 @@ func TestProjectSecretsRoundtripAndCascade(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := confstore.Project{
-		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
+		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", TicketSourceID: "int1", HarnessIDs: []string{"int1"},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42"},
 		DefaultFlow: "builder", CreatedAt: now, UpdatedAt: now,
 	}
@@ -263,7 +267,7 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 	// on the built-in template, which is the only thing that can resolve
 	// before it has flows of its own.
 	p := confstore.Project{
-		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", HarnessIDs: []string{"int1"},
+		ID: "prj1", Name: "web", RepoAccountID: "int1", ProvisionerID: "int1", TicketSourceID: "int1", HarnessIDs: []string{"int1"},
 		Repo:        confstore.RepoConfig{URL: "https://gitlab.com/g/p.git", Locator: "42", DefaultBranch: "main", AgentsMDPath: "AGENTS.md"},
 		Commands:    map[string]string{"verify": "make test"},
 		Workspace:   confstore.WorkspaceConfig{ExtraDomains: []string{"pypi.org"}},
@@ -281,7 +285,7 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 	}
 	gp, err := s.GetProjectByName(ctx, "", "web")
 	if err != nil || gp.Repo.Locator != "42" || gp.Workspace.ExtraDomains[0] != "pypi.org" ||
-		len(gp.HarnessIDs) != 1 || gp.HarnessIDs[0] != "int1" {
+		len(gp.HarnessIDs) != 1 || gp.HarnessIDs[0] != "int1" || gp.TicketSourceID != "int1" {
 		t.Fatalf("project roundtrip = %+v, %v", gp, err)
 	}
 
@@ -347,6 +351,56 @@ func TestConfCRUDRoundtrip(t *testing.T) {
 	}
 	if _, err := s.GetFlowVersion(ctx, p.ID, "h2"); !errors.Is(err, confstore.ErrNotFound) {
 		t.Errorf("a deleted project's flow history = %v, want gone", err)
+	}
+}
+
+// A ticket source is refused while a workshop uses it, like any integration
+// a project names. One no workshop uses deletes with its lists; its tickets
+// stay (runs point at them) and lose only their type, so the type's FK
+// never blocks the delete.
+func TestDeleteTicketSource(t *testing.T) {
+	s := openConf(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	for _, in := range []confstore.StoredIntegration{
+		{ID: "repo1", Port: "repository", Kind: "gitlab", Name: "gl"},
+		{ID: "jira1", Port: confstore.PortTicketSource, Kind: "jira", Name: "jira"},
+	} {
+		in.Config, in.CreatedAt, in.UpdatedAt = map[string]any{}, now, now
+		if err := s.UpsertIntegration(ctx, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := confstore.Project{ID: "prj1", Name: "web", RepoAccountID: "repo1", ProvisionerID: "repo1", TicketSourceID: "jira1",
+		DefaultFlow: "builder", CreatedAt: now, UpdatedAt: now}
+	if err := s.UpsertProject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	ty, err := s.EnsureTrackerType(ctx, confstore.TrackerType{ID: "ty1", IntegrationID: "jira1", RemoteID: "1", Name: "Bug", ChangeType: trackerport.ChangeFix})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk := confstore.Ticket{ID: "tk1", Title: "T", SourceID: "jira1", SourceKind: "jira", RemoteID: "10001", SourceKey: "J-1",
+		TypeID: ty.ID, ChangeType: trackerport.ChangeFix, CreatedAt: now, UpdatedAt: now}
+	if err := s.UpsertTicket(ctx, tk); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteIntegration(ctx, "jira1"); !errors.Is(err, confstore.ErrReferenced) || !strings.Contains(err.Error(), "web") {
+		t.Fatalf("delete of a workshop's source = %v, want ErrReferenced naming it", err)
+	}
+	p.TicketSourceID = "repo1"
+	if err := s.UpsertProject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteIntegration(ctx, "jira1"); err != nil {
+		t.Fatalf("delete of an unused source = %v", err)
+	}
+	got, err := s.GetTicket(ctx, "tk1")
+	if err != nil || got.SourceID != "jira1" || got.TypeID != "" || got.ChangeType != trackerport.ChangeFix {
+		t.Errorf("ticket after its source went = %+v, %v", got, err)
+	}
+	if tys, _ := s.ListTrackerTypes(ctx, "jira1"); len(tys) != 0 {
+		t.Errorf("types outlived their integration: %+v", tys)
 	}
 }
 

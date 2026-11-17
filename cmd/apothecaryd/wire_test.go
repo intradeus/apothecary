@@ -154,7 +154,7 @@ func TestBuildAppBootsOnPostgres(t *testing.T) {
 	}
 	// Each of these answers only when its field of the server was wired.
 	for _, path := range []string{
-		"/api/projects", "/api/tickets", "/api/integrations", "/api/channels", "/api/pings", "/api/flows", "/api/skills",
+		"/api/projects", "/api/integrations", "/api/channels", "/api/pings", "/api/flows", "/api/skills",
 		"/api/skillsets", "/api/settings", "/api/credentials", "/api/runs", "/api/users", "/api/providers",
 	} {
 		if code, body := c.do("GET", path, nil); code != http.StatusOK {
@@ -215,8 +215,9 @@ func TestDevBootRunsAFlowAndRecoversIt(t *testing.T) {
 	if p.DefaultFlow != "dev" || len(p.HarnessIDs) != 1 {
 		t.Fatalf("seeded project = %+v", p)
 	}
+	// The four fakes, and the internal tracker the dev workshop reads.
 	all, err := a.conf.ListIntegrations(ctx, "")
-	if err != nil || len(all) != 4 {
+	if err != nil || len(all) != 5 {
 		t.Fatalf("seeded integrations = %d, %v", len(all), err)
 	}
 	// The seeded harness acts its turns out slowly for the war room; this
@@ -248,15 +249,15 @@ func TestDevBootRunsAFlowAndRecoversIt(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	code, body = c.do("POST", "/api/tickets", map[string]string{"title": "Add a thing", "project_id": p.ID})
+	code, body = c.do("POST", "/api/projects/"+p.ID+"/tickets", map[string]string{"title": "Add a thing"})
 	if code != http.StatusCreated {
 		t.Fatalf("ticket = %d %s", code, body)
 	}
 	var tk struct {
-		ID string `json:"id"`
+		ID string `json:"ticket_id"`
 	}
 	_ = json.Unmarshal([]byte(body), &tk)
-	code, body = c.do("POST", "/api/tickets/"+tk.ID+"/runs", nil)
+	code, body = c.do("POST", "/api/projects/"+p.ID+"/tickets/"+tk.ID+"/runs", nil)
 	if code != http.StatusCreated {
 		t.Fatalf("run = %d %s", code, body)
 	}

@@ -10,12 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"apothecary/internal/adapters/fake"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/ports/repoport"
-	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/run"
 	"apothecary/internal/run/runinput"
@@ -55,7 +53,9 @@ func (b brokenMRs) RepoHostUser(ctx context.Context, p, r string) (string, error
 // brokenDB is the config store with chosen calls failing.
 type brokenDB struct {
 	confstore.DB
-	listAutomations, findTicket, upsertAutomation error
+	listAutomations, upsertAutomation error
+	// findRemote fails looking up the record of these remote ids.
+	findRemote map[string]error
 	// kindOf reports rows under a kind the table's check would refuse: one a
 	// later migration added, seen by a binary that doesn't know it.
 	kindOf map[string]string
@@ -74,18 +74,11 @@ func (d *brokenDB) ListAutomations(ctx context.Context, p string) ([]confstore.A
 	return rows, err
 }
 
-func (d *brokenDB) GetTicketBySource(ctx context.Context, u, src, key string) (confstore.Ticket, error) {
-	if d.findTicket != nil {
-		return confstore.Ticket{}, d.findTicket
+func (d *brokenDB) GetTicketByRemote(ctx context.Context, src, remoteID string) (confstore.Ticket, error) {
+	if err := d.findRemote[remoteID]; err != nil {
+		return confstore.Ticket{}, err
 	}
-	return d.DB.GetTicketBySource(ctx, u, src, key)
-}
-
-func (d *brokenDB) GetTicketByProjectKey(ctx context.Context, p, key string) (confstore.Ticket, error) {
-	if d.findTicket != nil {
-		return confstore.Ticket{}, d.findTicket
-	}
-	return d.DB.GetTicketByProjectKey(ctx, p, key)
+	return d.DB.GetTicketByRemote(ctx, src, remoteID)
 }
 
 func (d *brokenDB) UpsertAutomation(ctx context.Context, a confstore.Automation) error {
@@ -124,7 +117,7 @@ func (h *harness) mrAutomation(t *testing.T) confstore.Automation {
 
 func TestRunOnceStopsOnACancelledContext(t *testing.T) {
 	h := newHarness(t)
-	h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: true})
+	h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, Enabled: true})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := h.w.RunOnce(ctx); !errors.Is(err, context.Canceled) {
@@ -147,9 +140,9 @@ func TestRunOnceReportsAListingFailure(t *testing.T) {
 // Whatever the failure, the pass records it and walks on to the next rule.
 func TestOneAutomationsFailureDoesNotStopThePass(t *testing.T) {
 	h := newHarness(t)
-	bad := h.automation(t, confstore.Automation{Name: "broken", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: true})
+	bad := h.automation(t, confstore.Automation{Name: "broken", Kind: confstore.AutomationTrackerQuery, Enabled: true})
 	h.breakDB(t).kindOf = map[string]string{bad.ID: "telepathy"}
-	good := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: true})
+	good := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, Enabled: true})
 	h.pass(t)
 	if got := h.get(t, bad.ID); !strings.Contains(got.LastError, `unknown automation kind "telepathy"`) || got.LastPolledAt == nil {
 		t.Errorf("broken rule = %+v", got)
@@ -185,7 +178,7 @@ func TestWatcherDefaults(t *testing.T) {
 func TestTrackerSearchFailureIsRecorded(t *testing.T) {
 	h := newHarness(t)
 	h.src.Err = errors.New("tracker down")
-	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: true})
+	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, Enabled: true})
 	h.pass(t)
 	got := h.get(t, a.ID)
 	if !strings.Contains(got.LastError, "search: tracker down") || got.LastFiredAt != nil {
@@ -193,48 +186,28 @@ func TestTrackerSearchFailureIsRecorded(t *testing.T) {
 	}
 }
 
-// missingOne is a tracker that lists an issue it then cannot serve.
-type missingOne struct {
-	*fake.TicketSource
-	key string
-}
-
-func (m missingOne) Fetch(ctx context.Context, key string) (trackerport.SourceTicket, error) {
-	if key == m.key {
-		return trackerport.SourceTicket{}, errors.New("issue vanished")
-	}
-	return m.TicketSource.Fetch(ctx, key)
-}
-
-// One issue that cannot be imported is named; the others still start, and the
-// pass counts as having fired.
-func TestAFailedImportDoesNotStopTheOthers(t *testing.T) {
+// One issue that cannot be recorded is named; the others still start, and
+// the pass counts as having fired.
+func TestAFailedRecordDoesNotStopTheOthers(t *testing.T) {
 	h := newHarness(t)
-	h.w.Tickets.Sources = fakeSources2{missingOne{h.src, "DEV-1"}}
-	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: true})
+	h.breakDB(t).findRemote = map[string]error{"1001": errors.New("record unreadable")}
+	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, Enabled: true})
 	h.pass(t)
 	if n := h.eng.count(); n != 1 || h.eng.calls[0].Ticket.SourceKey != "DEV-2" {
 		t.Fatalf("runs = %+v", h.eng.calls)
 	}
 	got := h.get(t, a.ID)
-	if !strings.Contains(got.LastError, "DEV-1: ") || !strings.Contains(got.LastError, "issue vanished") || got.LastFiredAt == nil {
+	if !strings.Contains(got.LastError, "DEV-1: ") || !strings.Contains(got.LastError, "record unreadable") || got.LastFiredAt == nil {
 		t.Errorf("marks = %+v", got)
 	}
 }
 
-type fakeSources2 struct{ src trackerport.TicketSource }
-
-func (s fakeSources2) TicketSource(context.Context, string) (trackerport.TicketSource, error) {
-	return s.src, nil
-}
-func (s fakeSources2) TicketSourceKind(context.Context, string) (string, error) { return "fake", nil }
-
-// A restart after importing and before starting: asked whether the ticket has
-// runs, a store that cannot say must not start a second one.
-func TestAdoptionNeedsToKnowTheRuns(t *testing.T) {
+// A restart after recording and before starting: asked whether the ticket
+// has runs, a store that cannot say must not start a second one.
+func TestRefiringNeedsToKnowTheRuns(t *testing.T) {
 	h := newHarness(t)
 	h.eng.Fail = errors.New("refused")
-	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: true})
+	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, Enabled: true})
 	h.pass(t)
 	h.eng.Fail = nil
 	h.w.Runs = brokenRuns{h.eng, errors.New("runs unreadable")}
@@ -247,15 +220,15 @@ func TestAdoptionNeedsToKnowTheRuns(t *testing.T) {
 	}
 }
 
-func TestAdoptionNeedsToFindTheTicket(t *testing.T) {
+func TestRefiringNeedsToFindTheRecord(t *testing.T) {
 	h := newHarness(t)
-	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: true})
+	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, Enabled: true})
 	h.pass(t)
 	if h.eng.count() != 2 {
 		t.Fatalf("setup: runs = %d", h.eng.count())
 	}
-	db := h.breakDB(t)
-	db.findTicket = errors.New("tickets unreadable")
+	unreadable := errors.New("tickets unreadable")
+	h.breakDB(t).findRemote = map[string]error{"1001": unreadable, "1002": unreadable}
 	h.pass(t)
 	if h.eng.count() != 2 {
 		t.Errorf("runs = %d", h.eng.count())
@@ -329,8 +302,8 @@ func TestMergeRequestRunIsRetriedOrLeftAlone(t *testing.T) {
 	h.eng.MRs = []repoport.MRInfo{mrOf(1, "alice")}
 	h.eng.Fail = errors.New("preflight: boom")
 	h.pass(t)
-	if all, _ := h.conf.ListTickets(ctx, ""); len(all) != 0 {
-		t.Fatalf("tickets = %+v", all)
+	if h.eng.count() != 0 {
+		t.Fatalf("runs = %d", h.eng.count())
 	}
 	if got := h.get(t, a.ID); !strings.Contains(got.LastError, "preflight: boom") || !strings.Contains(got.LastError, mrOf(1, "").Ref.URL) || got.LastFiredAt != nil {
 		t.Errorf("marks = %+v", got)
@@ -362,10 +335,7 @@ func TestMergeRequestRunIsRetriedOrLeftAlone(t *testing.T) {
 func TestCronFailures(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
-	tk, err := h.conf.CreateTicket(ctx, confstore.Ticket{ProjectID: h.project.ID, Title: "Nightly"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	tk := h.record(t, "DEV-1", "")
 	a := h.automation(t, confstore.Automation{Name: "nightly", Kind: confstore.AutomationCron, Schedule: "0 9 * * *", TicketID: tk.ID, Enabled: true})
 
 	// The rule's schedule went bad behind validation's back.
@@ -381,10 +351,7 @@ func TestCronFailures(t *testing.T) {
 
 	// The ticket is gone: the slot is spent, and said so.
 	h = newHarness(t)
-	tk, err = h.conf.CreateTicket(ctx, confstore.Ticket{ProjectID: h.project.ID, Title: "Nightly"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	tk = h.record(t, "DEV-1", "")
 	a = h.automation(t, confstore.Automation{Name: "nightly", Kind: confstore.AutomationCron, Schedule: "0 9 * * *", TicketID: tk.ID, Enabled: true})
 	if err := h.conf.DeleteTicket(ctx, tk.ID); err != nil {
 		t.Fatal(err)
@@ -402,12 +369,8 @@ func TestCronFailures(t *testing.T) {
 // The slot is spent before the run exists: if it cannot be recorded, there is
 // no run, or a crash could fire it twice.
 func TestCronFiresNothingWhenTheSlotCannotBeRecorded(t *testing.T) {
-	ctx := context.Background()
 	h := newHarness(t)
-	tk, err := h.conf.CreateTicket(ctx, confstore.Ticket{ProjectID: h.project.ID, Title: "Nightly"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	tk := h.record(t, "DEV-1", "")
 	h.automation(t, confstore.Automation{Name: "nightly", Kind: confstore.AutomationCron, Schedule: "0 9 * * *", TicketID: tk.ID, Enabled: true})
 	var logged bytes.Buffer
 	h.w.Log = slog.New(slog.NewTextHandler(&logged, nil))
@@ -428,10 +391,7 @@ func TestCronFiresNothingWhenTheSlotCannotBeRecorded(t *testing.T) {
 func TestCronCountsFromTheLastEdit(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
-	tk, err := h.conf.CreateTicket(ctx, confstore.Ticket{ProjectID: h.project.ID, Title: "Nightly"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	tk := h.record(t, "DEV-1", "")
 	a := h.automation(t, confstore.Automation{Name: "nightly", Kind: confstore.AutomationCron, Schedule: "0 9 * * *", TicketID: tk.ID, Enabled: true})
 	a.UpdatedAt = h.now.Add(2 * time.Hour) // 10:00, past the 09:00 slot
 	if err := h.conf.DB().UpsertAutomation(ctx, a); err != nil {
@@ -451,11 +411,21 @@ func TestStartCarriesTheTicketsAttachments(t *testing.T) {
 	h := newHarness(t)
 	att := filestore.NewAttachments(filestore.NewMem(), filestore.NewBlobs(t.TempDir()), 1<<20, []string{"text/*"})
 	h.w.Tickets.Attachments = att
-	up, err := att.Save(ctx, "", "spec.md", "text/markdown", strings.NewReader("# s"))
+	up, err := att.Save(ctx, owner, "spec.md", "text/markdown", strings.NewReader("# s"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	tk, err := h.w.Tickets.Create(ctx, confstore.Ticket{ProjectID: h.project.ID, Title: "Nightly", Goal: "g"}, []string{up.ID})
+	// An internal ticket: the workshop reads the owner's internal tracker.
+	internal, err := h.conf.InternalTracker(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := h.project
+	p.TicketSourceID = internal.ID
+	if _, err := h.conf.UpdateProject(ctx, p.ID, p); err != nil {
+		t.Fatal(err)
+	}
+	tk, err := h.w.Tickets.Create(ctx, confstore.Ticket{UserID: owner, Title: "Nightly", Goal: "g"}, []string{up.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +483,7 @@ func TestBlockerReachesTheOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.src.Err = errors.New("tracker down")
-	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: true})
+	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, Enabled: true})
 	h.pass(t)
 	if len(h.ch.sent) != 1 || h.ch.sent[0].UserID != "owner-1" || !strings.Contains(h.ch.sent[0].Body, "tracker down") {
 		t.Fatalf("notifications = %+v", h.ch.sent)
@@ -547,7 +517,7 @@ func TestBlockerReachesTheOwner(t *testing.T) {
 func TestRecoveryIsLogged(t *testing.T) {
 	h := newHarness(t)
 	h.src.Err = errors.New("tracker down")
-	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, SourceID: h.source.ID, Enabled: true})
+	a := h.automation(t, confstore.Automation{Name: "inbox", Kind: confstore.AutomationTrackerQuery, Enabled: true})
 	h.pass(t)
 	h.src.Err = nil
 	var logged bytes.Buffer

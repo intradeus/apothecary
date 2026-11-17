@@ -1,17 +1,50 @@
-<!-- New ticket (DESIGN 7.6): a two-column form — the ticket on the left,
-     "Import from tracker" on the right. ?project= preselects the workshop. -->
+<!-- New ticket (DESIGN 7.6), written on a workshop's internal tracker.
+     ?project= preselects the workshop; one on a remote tracker takes new
+     issues there, so the page links to it instead of a form. -->
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { api } from '$lib/api';
 	import { to } from '$lib/core/urls';
+	import { errorMessage } from '$lib/core/errors';
 	import { fleet } from '$lib/app/fleet.svelte';
-	import { t } from '$lib/i18n/index.svelte';
+	import { t, th } from '$lib/i18n/index.svelte';
+	import type { Integration } from '$lib/domain';
+	import { isInternal, sourceOf, trackerHome } from '$lib/tickets/tracker';
 	import TicketForm from '$lib/tickets/TicketForm.svelte';
+	import Callout from '$lib/ui/Callout.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
+	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
+	import { I } from '$lib/design/icons';
 
-	const initialProject = $derived(page.url.searchParams.get('project') ?? '');
+	let integrations = $state<Integration[] | null>(null);
+	let loadErr = $state('');
+	async function loadIntegrations() {
+		loadErr = '';
+		try {
+			integrations = await api.integrations.list();
+		} catch (e) {
+			loadErr = errorMessage(e);
+		}
+	}
+	onMount(() => void loadIntegrations());
+
+	const asked = $derived(page.url.searchParams.get('project') ?? '');
+	const project = $derived(fleet.projectById.get(asked) ?? fleet.projects[0]);
+	const source = $derived(project ? sourceOf(project, integrations) : undefined);
+	const home = $derived(trackerHome(source));
+	const options = $derived<SelectOption[]>(
+		fleet.projects.map((p) => ({ value: p.id, label: p.name }))
+	);
+	const setProject = (id: string) =>
+		void goto(to.newTicket({ project: id }), {
+			replaceState: true,
+			keepFocus: true,
+			noScroll: true
+		});
 </script>
 
 <svelte:head><title>{t('page.newTicket.title')}</title></svelte:head>
@@ -19,7 +52,10 @@
 <PageHeader
 	crumbs={[
 		{ label: t('nav.desk'), href: to.desk() },
-		{ label: t('page.tickets.title'), href: to.tickets() },
+		{
+			label: t('page.tickets.title'),
+			href: to.tickets(project ? { project: project.id } : undefined)
+		},
 		{ label: t('page.newTicket.crumb') }
 	]}
 	title={t('page.newTicket.crumb')}
@@ -31,20 +67,52 @@
 </PageHeader>
 
 <div class="page glass">
-	{#if !fleet.updatedAt && fleet.error}
+	{#if (fleet.updatedAt === null && fleet.error) || loadErr}
 		<ErrorCard
 			cause={t('page.newTicket.loadError')}
-			detail={fleet.error}
-			onretry={() => fleet.refresh()}
+			detail={loadErr || fleet.error}
+			onretry={() => {
+				void fleet.refresh();
+				void loadIntegrations();
+			}}
 		/>
-	{:else if !fleet.updatedAt}
+	{:else if fleet.updatedAt === null || integrations === null}
 		<Skeleton pane lines={8} />
+	{:else if !project}
+		<Callout hue="warning" glyph={I.warn}>
+			{@html th('page.newTicket.noWorkshops', {
+				integrationsHref: to.system('integrations'),
+				workshopHref: to.newWorkshop()
+			})}
+		</Callout>
 	{:else}
-		<TicketForm
-			projects={fleet.projects}
-			{initialProject}
-			onsaved={(tk) => goto(to.ticket(tk.id))}
-			oncancel={() => goto(to.tickets(initialProject ? { project: initialProject } : undefined))}
-		/>
+		<div class="field ws">
+			<label for="t-project">{t('page.newTicket.workshop')}</label>
+			<Select id="t-project" {options} value={project.id} onchange={setProject} />
+		</div>
+		{#if isInternal(source)}
+			{#key project.id}
+				<TicketForm
+					{project}
+					onsaved={(tk) => goto(to.workshopTicket(project.id, tk.key))}
+					oncancel={() => goto(to.tickets({ project: project.id }))}
+				/>
+			{/key}
+		{:else}
+			<Callout hue="accent" glyph={I.info}>
+				{t('page.newTicket.remote', { name: source?.name ?? '' })}
+				{#if source && home}
+					<a href={home} target="_blank" rel="noreferrer"
+						>{t('tickets.openIn', { name: source.name })} {I.external}</a
+					>
+				{/if}
+			</Callout>
+		{/if}
 	{/if}
 </div>
+
+<style>
+	.ws {
+		max-width: 320px;
+	}
+</style>
