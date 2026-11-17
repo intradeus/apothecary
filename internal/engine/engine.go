@@ -218,7 +218,9 @@ type runHandle struct {
 	// holds carries a take-over (or its release) to the running agent's
 	// invocation, unbuffered for the same reason.
 	holds chan holdReq
-	// agentLive is set while an agent invocation runs (messages can land).
+	// agentLive is set while an agent invocation runs (messages can land),
+	// and from a start hold's record on while its opening invocation is
+	// still on its way (admitOpening): a send then waits for it.
 	agentLive atomic.Bool
 	// parking is set while the loop goes from an invocation towards parked:
 	// from the decision until the next invocation, or until it is gone. It

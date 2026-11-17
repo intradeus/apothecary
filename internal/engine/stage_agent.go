@@ -107,6 +107,8 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	if err := x.takeStartHold(st, iter); err != nil {
 		return err
 	}
+	x.admitOpening(st)
+	defer x.h.agentLive.Store(false)
 
 	// ONE STAGE, ONE SESSION. A new stage opens a session of its own, and an
 	// attempt sent back to the stage continues it, so the agent remembers
@@ -134,6 +136,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	budget := st.Timeout
 	var inv invocation
 	for {
+		x.admitOpening(st) // each invocation's own clears it as it ends
 		if len(asks) > 0 {
 			if unanswered(asks) {
 				// Still nothing to do but wait. Park the run and give the

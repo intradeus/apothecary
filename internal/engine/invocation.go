@@ -350,7 +350,10 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		case req := <-x.h.holds:
 			var err error
 			held, releasing := hold != nil, hold != nil && hold.releasing
-			switch runcore.PlanHoldRequest(req.take, held, releasing, turnOpen || io.inbox.pending()) {
+			// A start hold's opening turn not started yet is owed all the
+			// same: a release follows it.
+			busy := turnOpen || io.inbox.pending() || (held && hold.opening)
+			switch runcore.PlanHoldRequest(req.take, held, releasing, busy) {
 			case runcore.HoldRefuseTaken:
 				err = ErrAlreadyHeld
 			case runcore.HoldTake:

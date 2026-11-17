@@ -44,6 +44,18 @@ What now:
   release, the handback prompt, the output contract, and outcomes waiting
   for the release. The timeline and the transcript show `hold_opened` as the
   agent having answered the stage prompt, the owner's turn next.
+- **The owner can act before the opening prompt.** From `hold_taken` on the
+  run shows in their hands, but the invocation that takes messages and
+  releases starts only after the stage prompt is written; in between,
+  `SendMessage` said "no agent is running" and `Release` "nobody holds"
+  (review). `admitOpening` sets the run's `agentLive` as soon as a hold
+  owed its opening turn is in force (and again before each invocation of
+  such an attempt), so a message or a release waits on the loop's channel
+  for that invocation instead of being refused. A message is pushed to its
+  inbox — delivered once, as the turn after the opening one, not appended to
+  the stage prompt the plan named, which may already be on the log by then.
+  A release while the opening turn is still owed (not started, or in
+  flight) waits for it: the handback follows the opening turn.
 - **The owner is told** when that opening turn ends with nothing queued and
   the session goes idle on them: one `Engine.notify` with `Type: "held"` to
   the run owner's channels, sent after `hold_opened` is recorded. A later
@@ -68,7 +80,10 @@ Tests: `internal/engine/hold_test.go` — `TestStartHeldOpensInTheOwnersHands`
 handback, the account excluding the opening turn),
 `TestStartHeldHoldsEveryAttempt` (an `output_contract` retry and an
 `on_reject` redo each take a hold before their prompt),
-`TestStartHeldParksOnAQuietOwner`, `TestRecoveredStartHoldSendsTheStagePrompt`
+`TestStartHeldParksOnAQuietOwner`,
+`TestStartHeldAdmitsTheOwnerBeforeItsPrompt` (a message and a release while
+the opening prompt's write is stalled, the hold already on the log),
+`TestRecoveredStartHoldSendsTheStagePrompt`
 (a crash before the prompt, and after it with no session: the prompt is
 sent, not parked on), `TestRecoveredStartHoldFollowsTheOpeningTurn` (a
 reattached opening turn, its start seen or not, notifies once and stays off

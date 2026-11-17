@@ -441,7 +441,13 @@ main:
 // (1-based, one invocation per attempt).
 func startHeldHarness(t *testing.T, skip func(attempt int) bool) (*harness, *heldRunner) {
 	t.Helper()
-	h := newHarness(t, mustFlow(t, startHeldDoc))
+	return startHeldHarnessOn(t, nil, skip)
+}
+
+// startHeldHarnessOn is startHeldHarness on the store store makes (newHarnessOn).
+func startHeldHarnessOn(t *testing.T, store func(*event.MemStore) event.Store, skip func(attempt int) bool) (*harness, *heldRunner) {
+	t.Helper()
+	h := newHarnessOn(t, store, mustFlow(t, startHeldDoc))
 	h.res.UserID = "owner"
 	r := &heldRunner{}
 	var calls sync.Mutex
@@ -550,6 +556,117 @@ func TestStartHeldOpensInTheOwnersHands(t *testing.T) {
 	if v := h.view(t, runID); v.State != run.Completed || v.Hold != nil {
 		t.Errorf("final view = %s hold=%+v", v.State, v.Hold)
 	}
+}
+
+// heldOrder is the hold's story on a start-held run's log, plan stage only.
+func heldOrder(evs []event.Event) string {
+	var kinds []string
+	for _, ev := range evs {
+		switch p := ev.Payload.(type) {
+		case *event.HoldTaken, *event.HoldOpened, *event.HoldReleased, *event.MessageDelivered:
+			kinds = append(kinds, string(ev.Type))
+		case *event.StageCompleted:
+			if p.StageID == "plan" {
+				kinds = append(kinds, string(ev.Type))
+			}
+		case *event.AgentPrompted:
+			kinds = append(kinds, "agent_prompted:"+p.Kind)
+		}
+	}
+	return strings.Join(kinds, " ")
+}
+
+// The run shows in the owner's hands from hold_taken on, while the opening
+// prompt is still being written: what they do then reaches the attempt. A
+// message is delivered once, as the turn after the opening one; a release
+// follows the opening turn.
+func TestStartHeldAdmitsTheOwnerBeforeItsPrompt(t *testing.T) {
+	finish := func(t *testing.T, h *harness, runID string) []event.Event {
+		t.Helper()
+		gate := h.waitPing(t, PingGate)
+		if err := h.e.AnswerPing(gate.ID, PingAnswer{Answer: "approve"}); err != nil {
+			t.Fatal(err)
+		}
+		h.e.Wait(runID)
+		if v := h.view(t, runID); v.State != run.Completed || v.Hold != nil {
+			t.Errorf("final view = %s hold=%+v", v.State, v.Hold)
+		}
+		return h.events(t, runID)
+	}
+	// inPromptWindow acts while the opening prompt's write is stalled, once
+	// the run shows the hold.
+	inPromptWindow := func(t *testing.T, h *harness, s *stallStore, runID string, act func() error) {
+		t.Helper()
+		err := inWindow(t, s, func() error {
+			if v, err := h.e.store.Events(context.Background(), runID, 0); err != nil {
+				return err
+			} else if hold := run.Reduce(v).Hold; hold == nil || hold.UserID != "owner" {
+				return fmt.Errorf("the run does not show the hold yet: %+v", hold)
+			}
+			return act()
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("message", func(t *testing.T) {
+		s, store := stallAt(event.TypeAgentPrompted)
+		h, r := startHeldHarnessOn(t, store, nil)
+		runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "held", testProject)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var id string
+		inPromptWindow(t, h, s, runID, func() (err error) {
+			id, err = h.e.SendMessage(runID, "smaller, please")
+			return err
+		})
+		waitUntil(t, "the owner's turn to end", func() bool {
+			return countType(h.events(t, runID), event.TypeAgentMessage) >= 2
+		})
+		if err := h.e.Release(runID, "owner"); err != nil {
+			t.Fatal(err)
+		}
+		evs := finish(t, h, runID)
+		want := "hold_taken agent_prompted:stage hold_opened message_delivered hold_released agent_prompted:handback stage_completed"
+		if got := heldOrder(evs); got != want {
+			t.Errorf("order = %s\nwant    %s", got, want)
+		}
+		if n := countType(evs, event.TypeMessageQueued); n != 1 {
+			t.Errorf("message_queued = %d, want one", n)
+		}
+		if d, ok := findPayload[*event.MessageDelivered](evs); !ok || len(d.MessageIDs) != 1 || d.MessageIDs[0] != id {
+			t.Errorf("message_delivered = %+v", d)
+		}
+		if b := r.delivered(); len(b) != 2 || len(b[0]) != 1 || b[0][0].Text != "smaller, please" || b[1][0].Text != handbackPrompt {
+			t.Errorf("delivered = %+v", b)
+		}
+		if rel, _ := findPayload[*event.HoldReleased](evs); rel == nil || rel.Turns != 1 || rel.Messages != 1 {
+			t.Errorf("hold_released = %+v, want the owner's turn alone", rel)
+		}
+	})
+
+	t.Run("release", func(t *testing.T) {
+		s, store := stallAt(event.TypeAgentPrompted)
+		h, r := startHeldHarnessOn(t, store, nil)
+		runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "held", testProject)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inPromptWindow(t, h, s, runID, func() error { return h.e.Release(runID, "owner") })
+		evs := finish(t, h, runID)
+		want := "hold_taken agent_prompted:stage hold_opened hold_released agent_prompted:handback stage_completed"
+		if got := heldOrder(evs); got != want {
+			t.Errorf("order = %s\nwant    %s", got, want)
+		}
+		if b := r.delivered(); len(b) != 1 || b[0][0].Text != handbackPrompt {
+			t.Errorf("delivered = %+v, want the handback alone after the opening turn", b)
+		}
+		if rel, _ := findPayload[*event.HoldReleased](evs); rel == nil || rel.Reason != event.HoldReleasedByUser || rel.Turns != 0 {
+			t.Errorf("hold_released = %+v", rel)
+		}
+	})
 }
 
 // Every attempt starts held: a retry after the output check failed on the

@@ -221,6 +221,18 @@ func (x *exec) takeStartHold(st *flow.Stage, iter int) error {
 	return x.append(&event.HoldTaken{StageID: st.ID, Attempt: iter, UserID: x.rs.View.UserID, Start: true})
 }
 
+// admitOpening lets the run's owner reach an attempt whose start hold is
+// still owed its opening turn before the invocation carrying it runs: the
+// hold is on the record — the run shows in their hands — while the prompt
+// is still being written. A message or a release then waits on the loop's
+// channel for that invocation, which takes it as it would mid-turn: the
+// message is the session's next turn, the release follows the opening one.
+func (x *exec) admitOpening(st *flow.Stage) {
+	if h := x.rs.Holds[st.ID]; h != nil && h.Opening {
+		x.h.agentLive.Store(true)
+	}
+}
+
 // releaseHold closes a take-over with its account: every leg's spend, the
 // time since it was taken, and why it ended. A release by the holder owes
 // the session the handback prompt.
