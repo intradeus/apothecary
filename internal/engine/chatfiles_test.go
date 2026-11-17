@@ -219,6 +219,11 @@ func TestAParkedTakeOverWakesWithFiles(t *testing.T) {
 		t.Errorf("resume prompt = %q", reply)
 	}
 	wantFile(t, h, runID, ".apothecary/attachments/takeover/image.png", pngBytes)
+	// The resumed invocation takes the hold back once its turn is under way;
+	// a release before then finds nobody holding the live session.
+	waitUntil(t, "the resumed turn to end", func() bool {
+		return countType(h.events(t, runID), event.TypeAgentMessage) >= 2
+	})
 	if err := h.e.Release(runID, "u1"); err != nil {
 		t.Fatal(err)
 	}
