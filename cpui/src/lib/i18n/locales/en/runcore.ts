@@ -256,7 +256,7 @@ export default {
 	'run.phases.endsDone': 'ends the run: done',
 	'run.phases.endsAbort': 'abandons the run',
 	'run.phases.outcomeTitle':
-		'An outcome fires by itself when its signal holds, and ends the run. To stop the run yourself, use Abort.',
+		'An outcome ends the run when it happens on the repository. To stop the run yourself, use Abort.',
 	'run.phases.repoError': 'The repository could not be read.',
 	'run.phases.phaseStarted': '{phase} started',
 	'run.phases.phaseFailed': '{phase} could not start.',
@@ -266,7 +266,7 @@ export default {
 	'run.phases.main': 'when the run starts',
 	'run.phases.byHand': 'only when you start it',
 	'run.phases.once': 'once',
-	'run.phases.quiet': ', quiet for {minutes}m',
+	'run.phases.quiet': ', quiet for {duration}',
 	'run.phases.start.auto': 'by itself',
 	'run.phases.start.confirm': 'after you confirm it in the inbox',
 	'run.phases.start.manual': 'when you click Run now',

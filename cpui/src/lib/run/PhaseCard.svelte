@@ -45,6 +45,18 @@
 	);
 	const waits = $derived(phase.holds.filter((h) => !h.seen));
 	const signal = $derived(titles[phase.signal] ?? phase.signal);
+	// The quiet time to the second, as the flow wrote it: 90 s is "1m 30s", not "2m".
+	function span(s: number): string {
+		const parts: [number, string][] = [
+			[Math.floor(s / 3600), 'h'],
+			[Math.floor((s % 3600) / 60), 'm'],
+			[s % 60, 's']
+		];
+		return parts
+			.filter(([n]) => n > 0)
+			.map(([n, u]) => `${n}${u}`)
+			.join(' ');
+	}
 	const byHand = $derived(phase.kind !== 'main' && phase.signal === 'manual');
 	const opens = $derived(
 		phase.kind === 'main'
@@ -52,7 +64,7 @@
 			: byHand
 				? t('run.phases.byHand')
 				: phase.quietForS
-					? signal + t('run.phases.quiet', { minutes: Math.round(phase.quietForS / 60) })
+					? signal + t('run.phases.quiet', { duration: span(phase.quietForS) })
 					: signal
 	);
 	const runs = $derived(

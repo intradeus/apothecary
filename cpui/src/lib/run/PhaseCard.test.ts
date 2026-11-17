@@ -66,6 +66,16 @@ describe('PhaseCard', () => {
 				{ opens: 'review_comment, quiet for 5m', starts: 'by itself', runs: '0/3 runs' }
 			],
 			[
+				'a watcher quiet for a part of a minute',
+				{ signal: 'review_comment', quietForS: 90, start: 'auto', total: 0, max: 3 },
+				{ opens: 'review_comment, quiet for 1m 30s', starts: 'by itself', runs: '0/3 runs' }
+			],
+			[
+				'a watcher quiet for hours and seconds',
+				{ signal: 'review_comment', quietForS: 3630, start: 'auto', total: 0, max: 3 },
+				{ opens: 'review_comment, quiet for 1h 30s', starts: 'by itself', runs: '0/3 runs' }
+			],
+			[
 				'an outcome',
 				{ kind: 'outcome', signal: 'mr_merged', then: 'done', start: 'auto' },
 				{ opens: 'mr_merged', starts: 'by itself', runs: 'once' }
@@ -74,6 +84,11 @@ describe('PhaseCard', () => {
 				'an abandoning outcome',
 				{ kind: 'outcome', signal: 'mr_closed', then: 'abort', start: 'manual' },
 				{ opens: 'mr_closed', starts: 'when you click Run now', runs: 'once' }
+			],
+			[
+				'an outcome you confirm',
+				{ kind: 'outcome', signal: 'mr_merged', then: 'done', start: 'confirm' },
+				{ opens: 'mr_merged', starts: 'after you confirm it in the inbox', runs: 'once' }
 			]
 		] as const)('words %s', (_, over, words) => {
 			show(over);
@@ -95,8 +110,16 @@ describe('PhaseCard', () => {
 			show({ kind: 'outcome', then });
 			expect(within(card()).getByText(words)).toHaveAttribute(
 				'title',
-				expect.stringMatching(/^An outcome fires by itself/)
+				expect.stringMatching(/^An outcome ends the run/)
 			);
+		});
+
+		it('does not say an outcome you confirm starts by itself', () => {
+			show({ kind: 'outcome', signal: 'mr_merged', then: 'done', start: 'confirm' });
+
+			expect(fact('Starts')).toBe('after you confirm it in the inbox');
+			for (const el of card().querySelectorAll('[title]'))
+				expect(el.getAttribute('title')).not.toMatch(/by itself/);
 		});
 	});
 
