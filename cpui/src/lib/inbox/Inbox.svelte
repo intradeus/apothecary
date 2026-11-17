@@ -230,7 +230,7 @@
 				<div class="caption" id="inbox-held">{t('inbox.held.title')}</div>
 				<div class="help">{t('inbox.held.help')}</div>
 				{#each fleet.held as r (r.id)}
-					<a class="hrow card" href={to.run(r.id)}>
+					<a class="hrow rowbtn" href={to.run(r.id)}>
 						<span class="mono st">{r.hold!.stageId}</span>
 						<span class="rt truncate">{r.title}</span>
 						{#if r.ticketKey}<span class="tag">{r.ticketKey}</span>{/if}
@@ -459,7 +459,7 @@
 	.scroll > :global(.ind) {
 		border-radius: var(--r-card);
 	}
-	.card {
+	.scroll > .card {
 		flex-direction: column;
 		align-items: stretch;
 		gap: 5px;

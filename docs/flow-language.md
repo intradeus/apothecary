@@ -364,6 +364,7 @@ server's `env` or `headers` (above) — at these sites only:
 | an agent stage's `harness_options` | a string — a model option a string that may wait for a value, like `model`; an enum option an enum parameter whose values all sit within the option's |
 | an action setting (`with:`) | a string — an enum setting needs an enum parameter whose values all sit within the setting's; a list setting (`create_mr`'s `labels`) a list of strings |
 | a watcher's or an outcome's `on.start`, a watcher's `on.quiet_for`, `on.max` | an enum within `auto \| confirm \| manual`; a duration; an int |
+| an agent stage's `start_held` | a bool |
 | a stage's `run_if` | a bool |
 | a source `run.service.$name` | a string |
 

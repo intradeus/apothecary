@@ -1113,7 +1113,7 @@ export default {
 		'It is read in {count} place(s): {where}. Those fields will no longer resolve.',
 	'flow.insp.addParam': '+ parameter',
 	'flow.insp.paramsReadHelp':
-		'Read a parameter where $name appears: a stage\u2019s model, harness, run_ref, max_turns or timeout, an action input, a service stage\u2019s service, a run.service.$name source, a watcher\u2019s start or max, a stage\u2019s condition.',
+		'Read a parameter where $name appears: a stage\u2019s model, harness, run_ref, max_turns, timeout or start_held, an action input, a service stage\u2019s service, a run.service.$name source, a watcher\u2019s start or max, a stage\u2019s condition.',
 	'flow.insp.addStageMain': 'Add a stage to the main chain',
 	'flow.insp.addStageTo': 'Add a stage to {id}',
 	'flow.insp.addToChain': 'Add a stage to this chain',
