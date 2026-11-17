@@ -1162,7 +1162,7 @@ func TestALongRun(t *testing.T) {
 	ctx := context.Background()
 	line := strings.Repeat("x", 79) + "\n"
 	big := strings.Repeat(line, 5<<20/len(line)) // 5 MiB
-	s, err := snaps.Capture(ctx, filestore.Snapshot{RunID: "r1", Kind: filestore.KindLog, StageID: "review", Attempt: 1, Filename: "review#1.log"},
+	s, err := snaps.Capture(ctx, filestore.Snapshot{RunID: "r1", Kind: filestore.KindLog, StageID: "review", Attempt: 1, Filename: "review.log"},
 		func(s string) string { return s }, []byte(big))
 	if err != nil {
 		t.Fatal(err)

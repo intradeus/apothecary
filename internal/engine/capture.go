@@ -20,7 +20,6 @@ import (
 	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/event"
-	"apothecary/internal/run/ref"
 )
 
 // capture is the one funnel: scrub → store → snapshot_captured. portType is
@@ -117,15 +116,16 @@ func (x *exec) publishDir(st *flow.Stage, iter int, b flow.Port) {
 // only on failure: a passing attempt's log is part of the record. The 8 KB
 // tails on stage_failed / edge_taken stay what they are — a replay-cheap
 // inline preview and the prompt feed — with the whole log one link away.
-// It is named after its attempt's reference (review#5.log; the provisioning
-// log _provision#1.log).
+// It is named after its stage alone (review.log; the provisioning log
+// _provision.log): like an output, the file keeps a name of its own, and its
+// attempt's reference stands beside it.
 func (x *exec) publishLog(stageID string, attempt int, output string) {
 	if x.e.snapshots == nil || output == "" {
 		return
 	}
 	x.capture(filestore.Snapshot{
 		Kind: filestore.KindLog, StageID: stageID, Attempt: attempt,
-		Filename: ref.Attempt(stageID, attempt) + ".log",
+		Filename: stageID + ".log",
 	}, "", []byte(output))
 }
 
