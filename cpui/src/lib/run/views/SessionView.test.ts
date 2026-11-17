@@ -315,6 +315,62 @@ describe('SessionView', () => {
 		});
 	});
 
+	describe('a long run', () => {
+		/** An attempt, then n messages: n + 1 items. */
+		const long = (n: number, from = 2) =>
+			Array.from({ length: n }, (_, i) => said(from + i, `line ${from + i}`));
+		const earlier = () => screen.queryByRole('button', { name: /Show earlier/ });
+
+		it('shows only its tail, and says how much is above', () => {
+			show({ events: [agentStage, ...long(250)] });
+			expect(screen.getByText('line 251')).toBeInTheDocument();
+			expect(screen.getByText('line 52')).toBeInTheDocument();
+			expect(screen.queryByText('line 51')).not.toBeInTheDocument();
+			expect(earlier()).toHaveTextContent('Show earlier · 51 more items');
+		});
+
+		it('starts at an attempt when one begins within reach', () => {
+			const second = anEvent(200, 'stage_started', { stage_id: 'build', attempt: 2, agent: 'dev' });
+			show({ events: [agentStage, ...long(198), second, ...long(60, 201)] });
+			expect(screen.queryByText('line 199')).not.toBeInTheDocument();
+			expect(screen.getByText('line 201')).toBeInTheDocument();
+			expect(earlier()).toHaveTextContent('Show earlier · 199 more items');
+		});
+
+		it('reaches back a window at a time, keeping the place', async () => {
+			const { container } = show({ events: [agentStage, ...long(450)] });
+			const el = container.querySelector<HTMLElement>('.scroll')!;
+			await userEvent.click(earlier()!);
+			expect(screen.getByText('line 52')).toBeInTheDocument();
+			expect(earlier()).toHaveTextContent('Show earlier · 51 more items');
+			await userEvent.click(earlier()!);
+			expect(screen.getByText('line 2')).toBeInTheDocument();
+			expect(earlier()).not.toBeInTheDocument();
+			expect(el).toBeInTheDocument();
+		});
+
+		it('holds still under a reader who scrolled up, and slides again at the bottom', async () => {
+			const { container, rs } = show({ events: [agentStage, ...long(250)] });
+			const el = container.querySelector<HTMLElement>('.scroll')!;
+			Object.defineProperty(el, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(el, 'clientHeight', { value: 200, configurable: true });
+			el.scrollTop = 800;
+			await fireEvent.scroll(el);
+			el.scrollTop = 300;
+			await fireEvent.scroll(el);
+
+			rs.events = [...rs.events, ...long(10, 252)];
+			await tick();
+			expect(screen.getByText('line 52')).toBeInTheDocument();
+
+			el.scrollTop = 800;
+			await fireEvent.scroll(el);
+			await tick();
+			expect(screen.queryByText('line 52')).not.toBeInTheDocument();
+			expect(screen.getByText('line 261')).toBeInTheDocument();
+		});
+	});
+
 	describe('following the bottom', () => {
 		const flush = async () => {
 			await tick();

@@ -86,6 +86,9 @@
 	// it, through the messages that keep arriving and the live thought giving
 	// way to the recorded one (the same segment, another key).
 	let toggled: Record<string, boolean> = $state({});
+	// A prompt's text (tens of kB each, one per turn) is built only once its
+	// fold is opened: a long run holds dozens of them.
+	let promptOpen: Record<string, boolean> = $state({});
 
 	function arrive(node: HTMLElement, on: boolean) {
 		if (!armed || !on) return;
@@ -131,12 +134,18 @@
 			/>
 		</div>
 	{:else if it.kind === 'prompt'}
-		<details class="card-in prompt" use:arrive={a}>
+		<details
+			class="card-in prompt"
+			use:arrive={a}
+			ontoggle={(e) => (promptOpen[it.key] = e.currentTarget.open)}
+		>
 			<summary class="disclosure">
 				<span class="b">{promptLabel(it.promptKind)}</span>
 				<span class="pv muted truncate">{it.text.split('\n').find((l) => l.trim()) ?? ''}</span>
 			</summary>
-			<pre>{it.text}{it.truncated ? `\n… [${t('run.transcript.truncated')}]` : ''}</pre>
+			{#if promptOpen[it.key]}
+				<pre>{it.text}{it.truncated ? `\n… [${t('run.transcript.truncated')}]` : ''}</pre>
+			{/if}
 		</details>
 	{:else if it.kind === 'message'}
 		{#if it.thought}
@@ -153,7 +162,7 @@
 					)}
 					{I.menu}</summary
 				>
-				<div class="tt">{it.text}</div>
+				{#if open}<div class="tt">{it.text}</div>{/if}
 			</details>
 		{:else}
 			<div class="agent" use:arrive={a}>

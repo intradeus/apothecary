@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fmtClock, fmtTime } from '$lib/core/format';
@@ -121,12 +121,20 @@ describe('Transcript', () => {
 			expect(container.querySelector('details')).not.toHaveAttribute('open');
 		});
 
-		it('carries the whole text, marked when cut', () => {
+		it('builds its text only once opened, the whole of it, marked when cut', async () => {
+			const open = async (c: HTMLElement) => {
+				const d = c.querySelector('details')!;
+				d.open = true;
+				await fireEvent(d, new Event('toggle'));
+			};
 			const { container, unmount } = show([prompt({ text: 'one\ntwo', truncated: true })]);
+			expect(container.querySelector('pre')).toBeNull();
+			await open(container);
 			expect(container.querySelector('pre')?.textContent).toBe('one\ntwo\n… [truncated]');
 			unmount();
 
 			const whole = show([prompt({ text: 'one\ntwo' })]);
+			await open(whole.container);
 			expect(whole.container.querySelector('pre')?.textContent).toBe('one\ntwo');
 		});
 	});
@@ -164,8 +172,13 @@ describe('Transcript', () => {
 		});
 
 		it('is plain text, not markdown', () => {
-			show([message('**raw**', { thought: true })]);
+			show([message('**raw**', { thought: true, live: true })]);
 			expect(screen.getByText('**raw**')).toBeInTheDocument();
+		});
+
+		it('builds no text while folded', () => {
+			const { container } = show([message('Hmm', { thought: true })]);
+			expect(container.querySelector('.tt')).toBeNull();
 		});
 
 		it('stays open once you open it, whatever arrives after', async () => {
@@ -203,7 +216,8 @@ describe('Transcript', () => {
 		});
 
 		it('reads in the body face, not the display one', () => {
-			const { container } = show([message('Hmm', { thought: true })]);
+			const { container } = show([message('Hmm', { thought: true, live: true })]);
+			expect(container.querySelector('.tt')).toBeInTheDocument();
 			expect(container.querySelector('.tt')).not.toHaveClass('display');
 		});
 	});
