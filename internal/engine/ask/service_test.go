@@ -35,6 +35,7 @@ type engine struct {
 
 	mu         sync.Mutex
 	deliveries []delivery
+	undone     [][]string // the ids of each delivery undone
 	deliverErr error
 }
 
@@ -47,21 +48,26 @@ type delivery struct {
 func (e *engine) RunFlow(context.Context, run.View) (*flow.Flow, error) { return e.fl, e.err }
 func (e *engine) RunToken(string) string                                { return token }
 
-func (e *engine) DeliverAskFiles(_ context.Context, _ envport.EnvProvisioner, envID, runID, userID string, ids []string) ([]string, error) {
+func (e *engine) DeliverAskFiles(_ context.Context, _ envport.EnvProvisioner, envID, runID, userID string, ids []string) ([]string, func(), error) {
 	if len(ids) == 0 {
-		return nil, nil
+		return nil, func() {}, nil
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.deliveries = append(e.deliveries, delivery{envID, runID, userID, ids})
 	if e.deliverErr != nil {
-		return nil, e.deliverErr
+		return nil, nil, e.deliverErr
 	}
 	paths := make([]string, len(ids))
 	for i, id := range ids {
 		paths[i] = ".apothecary/attachments/ask/" + id + ".png"
 	}
-	return paths, nil
+	undo := func() {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		e.undone = append(e.undone, ids)
+	}
+	return paths, undo, nil
 }
 
 // failingStore fails the named Store call; everything else reaches the MemStore.
@@ -124,6 +130,24 @@ func (s *failingStore) AppendAskMessage(ctx context.Context, m Message) (Message
 		return Message{}, err
 	}
 	return s.MemStore.AppendAskMessage(ctx, m)
+}
+
+// OpenAskThread fails as a save or an append would: either half refused.
+func (s *failingStore) OpenAskThread(ctx context.Context, t Thread, first Message) (Thread, Message, error) {
+	s.mu.Lock()
+	err := s.append
+	if s.appends > 0 {
+		s.appends--
+		err = nil
+	}
+	if s.save != nil {
+		err = s.save
+	}
+	s.mu.Unlock()
+	if err != nil {
+		return Thread{}, Message{}, err
+	}
+	return s.MemStore.OpenAskThread(ctx, t, first)
 }
 
 func (s *failingStore) AskMessages(ctx context.Context, id string, after int64) ([]Message, error) {
@@ -402,30 +426,55 @@ func TestAskRefusesAQuestionItWontPass(t *testing.T) {
 	r.answered(t, 2)
 }
 
-// A question that fails to record leaves the pane free: not stuck busy, and
-// the resolution released.
+// A question that fails to record leaves the pane free: not stuck busy, the
+// resolution released, no thread opened for it and no message — and the
+// files it delivered taken back, the asker's to send again.
 func TestAFailedAskReleasesThePane(t *testing.T) {
 	ctx := context.Background()
 	boom := errors.New("db down")
-	for name, arm := range map[string]func(s *failingStore){
-		"thread": func(s *failingStore) { s.thread = boom },
-		"open":   func(s *failingStore) { s.save = boom },
-		"append": func(s *failingStore) { s.append = boom },
+	for name, c := range map[string]struct {
+		arm       func(s *failingStore)
+		threads   int // the run has, before and after
+		delivered int // deliveries made, each to be undone
+	}{
+		"thread":            {func(s *failingStore) { s.thread = boom }, 0, 0},
+		"open":              {func(s *failingStore) { s.save = boom }, 0, 1},
+		"append, the first": {func(s *failingStore) { s.append = boom }, 0, 1},
+		"append, a thread":  {func(s *failingStore) { s.append = boom }, 1, 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newRig(t)
-			r.store.set(arm)
-			if _, err := r.svc.Ask(ctx, runID, "", "u", "q", nil); !errors.Is(err, boom) {
+			if c.threads > 0 {
+				r.seed(t, Thread{ID: "t1"})
+			}
+			r.store.set(c.arm)
+			files := []string{"a1", "a2"}
+			if _, err := r.svc.Ask(ctx, runID, "", "u", "q", files); !errors.Is(err, boom) {
 				t.Fatalf("ask = %v", err)
 			}
-			if o, c := r.res.opened.Load(), r.res.closed.Load(); o != c {
-				t.Errorf("resolved %d, released %d", o, c)
+			if opened, closed := r.res.opened.Load(), r.res.closed.Load(); opened != closed {
+				t.Errorf("resolved %d, released %d", opened, closed)
+			}
+			r.eng.mu.Lock()
+			delivered, undone := len(r.eng.deliveries), r.eng.undone
+			r.eng.mu.Unlock()
+			if delivered != c.delivered || len(undone) != c.delivered {
+				t.Errorf("delivered %d, undone %v; want %d of each", delivered, undone, c.delivered)
+			}
+			if ths := r.threads(t); len(ths) != c.threads {
+				t.Errorf("threads = %+v, want %d", ths, c.threads)
+			}
+			if msgs, _ := r.store.MemStore.AskMessages(ctx, runID, 0); len(msgs) != 0 {
+				t.Errorf("recorded %+v", msgs)
 			}
 			r.store.set(func(s *failingStore) { s.thread, s.save, s.append = nil, nil, nil })
-			if _, err := r.svc.Ask(ctx, runID, "", "u", "again", nil); err != nil {
+			if _, err := r.svc.Ask(ctx, runID, "", "u", "again", files); err != nil {
 				t.Fatalf("the pane stayed stuck: %v", err)
 			}
 			r.answered(t, 2)
+			if ths := r.threads(t); len(ths) != 1 {
+				t.Errorf("threads = %+v, want one", ths)
+			}
 		})
 	}
 }

@@ -753,6 +753,24 @@ describe('feeds', () => {
 		expect(rs.observed).toEqual(observed);
 	});
 
+	// The stream's message_queued, start() and the Ask pane each start a read.
+	it('keeps the newer files when an older read lands last', async () => {
+		const rs = store();
+		const older = deferred<unknown>();
+		const newer = deferred<unknown>();
+		vi.mocked(api.runs.files).mockReturnValueOnce(older.promise as never);
+		vi.mocked(api.runs.files).mockReturnValueOnce(newer.promise as never);
+
+		const first = rs.refreshFiles();
+		const second = rs.refreshFiles();
+		newer.resolve({ snapshots: [], attachments: [{ id: 'a1' }, { id: 'a2' }] } as never);
+		await second;
+		older.resolve({ snapshots: [], attachments: [{ id: 'a1' }] } as never);
+		await first;
+
+		expect(rs.attachments.map((a) => a.id)).toEqual(['a1', 'a2']);
+	});
+
 	it('shows a failed services read and clears it on the next good one', async () => {
 		const rs = store();
 		rs.services = noServices;

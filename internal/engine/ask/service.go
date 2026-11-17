@@ -35,11 +35,12 @@ const (
 // Engine is what the pane reads from the engine: the flow a run is pinned
 // to, and the run's bearer token (scrubbed from answers like any secret) —
 // and the one thing it has the engine write: a question's files, delivered
-// into the run's workspace (envp, envID) as the asker's, all or nothing.
+// into the run's workspace (envp, envID) as the asker's, all or nothing,
+// with undo to take them back from a question refused after all.
 type Engine interface {
 	RunFlow(ctx context.Context, v run.View) (*flow.Flow, error)
 	RunToken(runID string) string
-	DeliverAskFiles(ctx context.Context, envp envport.EnvProvisioner, envID, runID, userID string, ids []string) ([]string, error)
+	DeliverAskFiles(ctx context.Context, envp envport.EnvProvisioner, envID, runID, userID string, ids []string) (paths []string, undo func(), err error)
 }
 
 // Service runs the Ask panes of every run.
@@ -450,8 +451,8 @@ func (svc *Service) thread(ctx context.Context, s *askSetup, a *askRun, threadID
 // findThread is the run's thread the caller names, or — none named — its
 // latest. When the run has none yet, it is a new one, fresh: not stored, and
 // the run's creating lock left held, for the caller to store it
-// (openThread) or forget it, then unlock — so two first questions still
-// open one thread, not two.
+// (openThread, openThreadWith) or forget it, then unlock — so two first
+// questions still open one thread, not two.
 func (svc *Service) findThread(ctx context.Context, s *askSetup, a *askRun, threadID string) (Thread, bool, error) {
 	runID := s.v.RunID
 	if threadID != "" {
@@ -483,6 +484,21 @@ func (svc *Service) record(ctx context.Context, a *askRun, m Message) (Message, 
 	a.appends.Lock()
 	defer a.appends.Unlock()
 	return svc.Store.AppendAskMessage(ctx, m)
+}
+
+// openThreadWith stores a run's first thread with its first question, both
+// or neither, and tells the stream of the thread; the caller holds the
+// run's creating lock.
+func (svc *Service) openThreadWith(ctx context.Context, s *askSetup, a *askRun, th Thread, q Message) (Thread, Message, error) {
+	a.appends.Lock()
+	th, q, err := svc.Store.OpenAskThread(ctx, th, q)
+	a.appends.Unlock()
+	if err != nil {
+		return Thread{}, Message{}, err
+	}
+	ts := threadState(th, s, svc.models(ctx, s))
+	svc.hub.publish(th.RunID, AskFrame{Kind: "thread", ThreadID: th.ID, Thread: &ts})
+	return th, q, nil
 }
 
 // Ask records a question in a thread (threadID; empty: the run's latest,
@@ -537,19 +553,23 @@ func (svc *Service) Ask(ctx context.Context, runID, threadID, userID, text strin
 		s.release()
 	}
 	model := askModel(th, s.fl, svc.models(ctx, s))
-	paths, err := svc.Engine.DeliverAskFiles(ctx, s.res.Envp, s.v.EnvID, runID, userID, attachmentIDs)
+	paths, undo, err := svc.Engine.DeliverAskFiles(ctx, s.res.Envp, s.v.EnvID, runID, userID, attachmentIDs)
 	if err != nil {
 		free()
 		return Message{}, err
 	}
+	q := Message{RunID: runID, ThreadID: th.ID, ID: svc.newID(), Role: RoleQuestion, Text: event.CleanText(text), UserID: userID, AttachmentIDs: attachmentIDs}
 	if fresh {
-		if th, err = svc.openThread(ctx, s, th); err != nil {
-			free()
-			return Message{}, err
+		var opened Thread
+		if opened, q, err = svc.openThreadWith(ctx, s, a, th, q); err == nil {
+			th = opened
 		}
+	} else {
+		q, err = svc.record(ctx, a, q)
 	}
-	q, err := svc.record(ctx, a, Message{RunID: runID, ThreadID: th.ID, ID: svc.newID(), Role: RoleQuestion, Text: event.CleanText(text), UserID: userID, AttachmentIDs: attachmentIDs})
 	if err != nil {
+		// Not recorded: the files go back to the asker.
+		undo()
 		free()
 		return Message{}, err
 	}

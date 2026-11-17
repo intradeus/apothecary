@@ -45,9 +45,13 @@ What now:
   sweep. An Ask question is refused after its claim too, when its files
   cannot be written: `DeliverAskFiles` then removes what it wrote and gives
   the claim back (`UnclaimAttachmentsForChat`), so a retry can send them.
-  A run's first question opens its thread only once its files are in:
-  until then the thread is not stored, and the run's creating lock is
-  held so a second first question still finds one thread, not two.
+  It returns the same undo for the Ask service, which runs it when the
+  question then fails to record (a database error, a canceled request).
+  A run's first question opens its thread only once its files are in, and
+  with it: `Store.OpenAskThread` stores the thread and its first question
+  in one transaction, so a failed record leaves no empty thread. Until then
+  the thread is not stored, and the run's creating lock is held so a
+  second first question still finds one thread, not two.
 - **Files alone are a message**: text is required only with no files.
   `message_queued` and an Ask question record their `attachment_ids`, so
   the transcript and the Ask pane show the files as chips after a reload.
@@ -65,15 +69,16 @@ Tests: `filetest` (the chat claim all or nothing, its run and chat, its
 names past the chat's whatever the creation order, the unclaim of exactly
 that claim, the CHECKs and the unique name; Mem and Postgres),
 `filestore_more_test.go` (`TestClaimForChatLimits`), `asktest`
-(`attachment_ids` round trip), `deliver_test.go` (`TestAttachmentPaths`:
+(`attachment_ids` round trip, `OpenAskThread` both or neither), `deliver_test.go` (`TestAttachmentPaths`:
 chat folders by their stored names, `-2`, order), `chatfiles_test.go` in
 `engine` (live and parked take-over, `TestAChatFileKeepsItsPath`: two
 `image.png` sent against their creation order, in both chats, keep path
 and contents after the second claim and a re-delivery; the next stage's
-ATTACHED FILES, `DeliverAskFiles`, a failed write undone) and in
-`httpapi` (400 on a refused id, nothing
+ATTACHED FILES, `DeliverAskFiles`, a failed write undone, the returned
+undo) and in `httpapi` (400 on a refused id, nothing
 recorded, files alone), `ask/service_test.go` (delivery before recording,
-the prompt's note, a refusal frees the thread and opens none); in the UI
+the prompt's note, a refusal frees the thread and opens none, a failed
+record undoes the delivery and leaves no thread); in the UI
 `AttachFiles.test.ts` (`add()`, disabled), `Composer.test.ts` and
 `AskView.test.ts` (the upload lock, the load re-read), `SessionView.test.ts` (chips on a take-over message),
 `transcriptItems.test.ts`, `store.svelte.test.ts`, `RecordView.test.ts`,

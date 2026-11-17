@@ -265,13 +265,13 @@ func TestDeliverAskFiles(t *testing.T) {
 	envp := &modeEnvp{EnvProvisioner: h.envp}
 	shot := uploadAs(t, att, "u1", "image.png", pngBytes)
 	theirs := uploadAs(t, att, "u2", "image.png", pngBytes)
-	if _, err := h.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", []string{shot.ID, theirs.ID}); !errors.Is(err, filestore.ErrNotClaimable) || strings.Contains(err.Error(), "not found") {
+	if _, _, err := h.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", []string{shot.ID, theirs.ID}); !errors.Is(err, filestore.ErrNotClaimable) || strings.Contains(err.Error(), "not found") {
 		t.Fatalf("someone else's file = %v", err)
 	}
 	if got, _ := att.Get(ctx, shot.ID); !got.Unclaimed() {
 		t.Errorf("a refused question claimed %+v", got)
 	}
-	paths, err := h.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", []string{shot.ID})
+	paths, _, err := h.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", []string{shot.ID})
 	if err != nil || len(paths) != 1 || paths[0] != ".apothecary/attachments/ask/image.png" {
 		t.Fatalf("paths = %v, %v", paths, err)
 	}
@@ -284,13 +284,15 @@ func TestDeliverAskFiles(t *testing.T) {
 	if got, _ := att.Get(ctx, shot.ID); got.RunID != "r1" || got.Chat != filestore.ChatAsk {
 		t.Errorf("claimed = %+v", got)
 	}
-	if paths, err := h.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", nil); paths != nil || err != nil {
+	if paths, undo, err := h.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", nil); paths != nil || undo == nil || err != nil {
 		t.Errorf("no files = %v, %v", paths, err)
+	} else {
+		undo()
 	}
 	// A workspace that cannot take them refuses the question, and gives the
 	// files back.
 	again := uploadAs(t, att, "u1", "b.png", pngBytes)
-	if _, err := h.e.DeliverAskFiles(ctx, envp, "gone", "r1", "u1", []string{again.ID}); err == nil || !strings.Contains(err.Error(), "delivering the files") {
+	if _, _, err := h.e.DeliverAskFiles(ctx, envp, "gone", "r1", "u1", []string{again.ID}); err == nil || !strings.Contains(err.Error(), "delivering the files") {
 		t.Errorf("no workspace = %v", err)
 	}
 	if got, _ := att.Get(ctx, again.ID); !got.Unclaimed() || got.Chat != "" {
@@ -299,7 +301,7 @@ func TestDeliverAskFiles(t *testing.T) {
 	// One file written before the next failed is taken away again.
 	envp.failOn = ".apothecary/attachments/ask/c.png"
 	third := uploadAs(t, att, "u1", "c.png", pngBytes)
-	if _, err := h.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", []string{again.ID, third.ID}); err == nil || !strings.Contains(err.Error(), "disk full") {
+	if _, _, err := h.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", []string{again.ID, third.ID}); err == nil || !strings.Contains(err.Error(), "disk full") {
 		t.Fatalf("a failed write = %v", err)
 	}
 	if _, err := h.envp.ReadFile(ctx, env, ".apothecary/attachments/ask/b.png"); err == nil {
@@ -315,12 +317,28 @@ func TestDeliverAskFiles(t *testing.T) {
 	}
 	// Given back, they can be asked with again.
 	envp.failOn = ""
-	paths, err = h.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", []string{again.ID, third.ID})
+	paths, undo, err := h.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", []string{again.ID, third.ID})
 	if err != nil || !slices.Equal(paths, []string{".apothecary/attachments/ask/b.png", ".apothecary/attachments/ask/c.png"}) {
-		t.Errorf("asked again = %v, %v", paths, err)
+		t.Fatalf("asked again = %v, %v", paths, err)
+	}
+	// A question refused once its files were delivered — its record failed —
+	// takes them back: out of the workspace, the asker's again.
+	undo()
+	for _, p := range paths {
+		if _, err := h.envp.ReadFile(ctx, env, p); err == nil {
+			t.Errorf("undone, %s is still in the workspace", p)
+		}
+	}
+	for _, id := range []string{again.ID, third.ID} {
+		if got, _ := att.Get(ctx, id); !got.Unclaimed() || got.Chat != "" {
+			t.Errorf("undone, the run kept %+v", got)
+		}
+	}
+	if _, _, err := h.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", []string{again.ID}); err != nil {
+		t.Errorf("sent once more = %v", err)
 	}
 	off := newHarness(t, mustFlow(t, askFlowDoc))
-	if _, err := off.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", []string{"a"}); !errors.Is(err, errAttachmentsOff) {
+	if _, _, err := off.e.DeliverAskFiles(ctx, envp, string(env), "r1", "u1", []string{"a"}); !errors.Is(err, errAttachmentsOff) {
 		t.Errorf("attachments off = %v", err)
 	}
 }
@@ -347,7 +365,7 @@ func TestAChatFileKeepsItsPath(t *testing.T) {
 				if chat == filestore.ChatTakeOver {
 					paths, err = x.takeOverFiles("u1", []string{id})
 				} else {
-					paths, err = h.e.DeliverAskFiles(ctx, h.envp, string(env), x.rs.RunID, "u1", []string{id})
+					paths, _, err = h.e.DeliverAskFiles(ctx, h.envp, string(env), x.rs.RunID, "u1", []string{id})
 				}
 				if err != nil {
 					t.Fatal(err)

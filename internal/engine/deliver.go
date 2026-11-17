@@ -222,31 +222,34 @@ var errAttachmentsOff = errors.New("attachments are off on this server")
 
 // DeliverAskFiles claims a question's files into the run's Ask chat, all or
 // nothing, and writes them into its workspace (envp, envID: the run's, as
-// the Ask pane resolved them), returning the paths the question names. A
-// question whose files cannot be delivered is refused, and leaves nothing
-// behind: what was written is removed and the claim given back, so the
-// files are the asker's to send again.
-func (e *Engine) DeliverAskFiles(ctx context.Context, envp envport.EnvProvisioner, envID, runID, userID string, ids []string) ([]string, error) {
+// the Ask pane resolved them), returning the paths the question names, and
+// undo for a question refused after its files were delivered. A question
+// whose files cannot be delivered is refused, and leaves nothing behind:
+// what was written is removed and the claim given back, so the files are
+// the asker's to send again — and undo does the same.
+func (e *Engine) DeliverAskFiles(ctx context.Context, envp envport.EnvProvisioner, envID, runID, userID string, ids []string) ([]string, func(), error) {
 	if len(ids) == 0 {
-		return nil, nil
+		return nil, func() {}, nil
 	}
 	if e.attachments == nil {
-		return nil, errAttachmentsOff
+		return nil, nil, errAttachmentsOff
 	}
+	keep := context.WithoutCancel(ctx)
 	ctx, cancel := context.WithTimeout(ctx, attachmentDeliverTimeout)
 	defer cancel()
 	if err := e.attachments.ClaimForChat(ctx, userID, ids, runID, filestore.ChatAsk); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	atts, paths, err := chatFiles(ctx, e.attachments, runID, filestore.ChatAsk, ids)
 	if err == nil {
 		err = writeAttachmentFiles(ctx, envp, envport.EnvID(envID), e.attachments, atts, paths)
 	}
+	undo := func() { e.undeliverAskFiles(keep, envp, envport.EnvID(envID), runID, userID, ids, paths) }
 	if err != nil {
-		e.undeliverAskFiles(context.WithoutCancel(ctx), envp, envport.EnvID(envID), runID, userID, ids, paths)
-		return nil, fmt.Errorf("delivering the files: %w", err)
+		undo()
+		return nil, nil, fmt.Errorf("delivering the files: %w", err)
 	}
-	return paths, nil
+	return paths, undo, nil
 }
 
 // undeliverAskFiles undoes a refused question's delivery: its files leave

@@ -23,6 +23,7 @@ func RunContract(t *testing.T, open func(t *testing.T) ask.Store) {
 	t.Helper()
 	runThreads(t, open)
 	runMessages(t, open)
+	runOpen(t, open)
 	runRefusals(t, open)
 	runConcurrent(t, open)
 }
@@ -285,6 +286,72 @@ func runMessages(t *testing.T, open func(t *testing.T) ask.Store) {
 		s := open(t)
 		if got, err := s.AskMessages(context.Background(), "nope", 0); err != nil || got != nil {
 			t.Errorf("messages = %#v, %v", got, err)
+		}
+	})
+}
+
+func runOpen(t *testing.T, open func(t *testing.T) ask.Store) {
+	t.Run("a thread opens with its first message", func(t *testing.T) {
+		s := open(t)
+		ctx := context.Background()
+		appendMsg(t, s, ask.Message{RunID: "r1", ThreadID: "t0", ID: "m0", Role: ask.RoleQuestion})
+		before := time.Now()
+		at := time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
+		in := ask.Message{RunID: "r1", ThreadID: "t1", ID: "m1", Role: ask.RoleQuestion, Text: "q", UserID: "u1", At: at, AttachmentIDs: []string{"a1"}}
+		th, m, err := s.OpenAskThread(ctx, ask.Thread{RunID: "r1", ID: "t1", Model: "fake/one"}, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored, ok, err := s.AskThread(ctx, "r1", "t1")
+		if err != nil || !ok || th.ID != "t1" || th.Model != "fake/one" || !th.CreatedAt.Equal(stored.CreatedAt) ||
+			!th.UpdatedAt.Equal(stored.UpdatedAt) || th.CreatedAt.Before(before.Add(-time.Minute)) {
+			t.Errorf("opened %+v, stored %+v, %v, %v", th, stored, ok, err)
+		}
+		in.Seq = 2
+		if !same(m, in) {
+			t.Errorf("first = %+v, want %+v", m, in)
+		}
+		if got, err := s.AskMessages(ctx, "r1", 1); err != nil || len(got) != 1 || !same(got[0], in) {
+			t.Errorf("messages = %+v, %v", got, err)
+		}
+	})
+
+	t.Run("a refused first message opens no thread", func(t *testing.T) {
+		s := open(t)
+		ctx := context.Background()
+		save(t, s, ask.Thread{RunID: "r1", ID: "t1", SessionID: "s1"})
+		good := ask.Message{RunID: "r1", ThreadID: "t2", ID: "m1", Role: ask.RoleQuestion}
+		for name, c := range map[string]struct {
+			th ask.Thread
+			m  func(*ask.Message)
+		}{
+			"unknown role":         {ask.Thread{RunID: "r1", ID: "t2"}, func(m *ask.Message) { m.Role = "shout" }},
+			"NUL in the text":      {ask.Thread{RunID: "r1", ID: "t2"}, func(m *ask.Message) { m.Text = "a\x00b" }},
+			"another thread's":     {ask.Thread{RunID: "r1", ID: "t2"}, func(m *ask.Message) { m.ThreadID = "t3" }},
+			"another run's":        {ask.Thread{RunID: "r1", ID: "t2"}, func(m *ask.Message) { m.RunID = "r2" }},
+			"NUL in the model":     {ask.Thread{RunID: "r1", ID: "t2", Model: "a\x00b"}, func(*ask.Message) {}},
+			"a thread the run has": {ask.Thread{RunID: "r1", ID: "t1"}, func(m *ask.Message) { m.ThreadID = "t1" }},
+			"no id for the thread": {ask.Thread{RunID: "r1"}, func(m *ask.Message) { m.ThreadID = "" }},
+		} {
+			m := good
+			c.m(&m)
+			if _, _, err := s.OpenAskThread(ctx, c.th, m); err == nil {
+				t.Errorf("%s: stored", name)
+			}
+		}
+		if ths, err := s.AskThreads(ctx, "r1"); err != nil || len(ths) != 1 || ths[0].SessionID != "s1" {
+			t.Errorf("threads = %+v, %v", ths, err)
+		}
+		if got, err := s.AskMessages(ctx, "r1", 0); err != nil || got != nil {
+			t.Errorf("messages = %+v, %v", got, err)
+		}
+		dead, cancel := context.WithCancel(ctx)
+		cancel()
+		if _, _, err := s.OpenAskThread(dead, ask.Thread{RunID: "r1", ID: "t2"}, good); err == nil {
+			t.Error("opened on a dead context")
+		}
+		if th, m, err := s.OpenAskThread(ctx, ask.Thread{RunID: "r1", ID: "t2"}, good); err != nil || th.ID != "t2" || m.Seq != 1 {
+			t.Errorf("then = %+v, %+v, %v", th, m, err)
 		}
 	})
 }
