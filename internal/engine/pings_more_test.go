@@ -231,11 +231,14 @@ func (f fixedPings) ListPings(_ context.Context, _, status string, _ int) ([]run
 }
 
 // The inbox reads the projection when there is one, and never dies with it.
+// A parked impasse is only there: its choices come with it.
 func TestPendingPingsFromTheProjection(t *testing.T) {
 	h := newHarness(t, mustFlow(t, loopFlowDoc))
-	h.e.pingIndex = fixedPings{v: run.PingView{PingID: "p1", RunID: "r1", Status: "pending", Question: "still there?"}}
+	h.e.pingIndex = fixedPings{v: run.PingView{PingID: "p1", RunID: "r1", Status: "pending", Question: "still there?",
+		AnswerKind: event.AnswerChoice, Choices: event.ImpasseChoices()}}
 	got := h.e.PendingPings()
-	if len(got) != 1 || got[0].ID != "p1" || got[0].Question != "still there?" {
+	if len(got) != 1 || got[0].ID != "p1" || got[0].Question != "still there?" ||
+		strings.Join(event.ChoiceIDs(got[0].Choices), ",") != "keep_going,skip,give_up" {
 		t.Errorf("pending = %+v", got)
 	}
 	h.e.pingIndex = fixedPings{err: errors.New("db down")}
