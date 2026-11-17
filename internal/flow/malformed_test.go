@@ -680,3 +680,39 @@ func TestValidArtifactPathRefusesShellMeaningfulPaths(t *testing.T) {
 		}
 	}
 }
+
+// DocBool decodes what the editor sends the way the YAML side does.
+func TestDocBoolJSON(t *testing.T) {
+	var d DocBool
+	if err := json.Unmarshal([]byte(`true`), &d); err != nil || !d.Bool || d.Ref != "" {
+		t.Errorf("bool = %+v, %v", d, err)
+	}
+	if out, _ := json.Marshal(DocBool{Bool: true}); string(out) != "true" {
+		t.Errorf("marshal = %s", out)
+	}
+	var r DocBool
+	if err := json.Unmarshal([]byte(`"$collab"`), &r); err != nil || r.Ref != "$collab" {
+		t.Errorf("ref = %+v, %v", r, err)
+	}
+	if out, _ := json.Marshal(r); string(out) != `"$collab"` {
+		t.Errorf("marshal = %s", out)
+	}
+	for in, want := range map[string]string{
+		`"yes"`: `"yes" is not true, false or a $parameter`,
+		`1`:     "expected true, false or a $parameter",
+		`[`:     "unexpected",
+	} {
+		var d DocBool
+		if err := d.UnmarshalJSON([]byte(in)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", in, err, want)
+		}
+	}
+	var y struct {
+		V DocBool `yaml:"v"`
+	}
+	for in, want := range map[string]string{"v: [1]": "expected true, false or a $parameter", "v: 1": `"1" is not true`} {
+		if err := yaml.Unmarshal([]byte(in), &y); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", in, err, want)
+		}
+	}
+}

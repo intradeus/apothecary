@@ -576,6 +576,63 @@ func (d *DocInt) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// DocBool is a bool field that may read a parameter instead:
+// `start_held: true` or `start_held: $collab`.
+type DocBool struct {
+	Bool bool
+	Ref  string // "$name" when the field reads a parameter
+}
+
+func (d *DocBool) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind != yaml.ScalarNode {
+		return fmt.Errorf("line %d: expected true, false or a $parameter", n.Line)
+	}
+	switch n.ShortTag() {
+	case "!!bool":
+		b, err := strconv.ParseBool(n.Value)
+		if err != nil {
+			return fmt.Errorf("line %d: %q is not true or false", n.Line, n.Value)
+		}
+		d.Bool = b
+	case "!!str":
+		if !strings.HasPrefix(n.Value, "$") {
+			return fmt.Errorf("line %d: %q is not true, false or a $parameter", n.Line, n.Value)
+		}
+		d.Ref = n.Value
+	default:
+		return fmt.Errorf("line %d: %q is not true, false or a $parameter", n.Line, n.Value)
+	}
+	return nil
+}
+
+// MarshalJSON emits the bool, or the "$name" string when the field reads a
+// parameter.
+func (d DocBool) MarshalJSON() ([]byte, error) {
+	if d.Ref != "" {
+		return json.Marshal(d.Ref)
+	}
+	return json.Marshal(d.Bool)
+}
+
+func (d *DocBool) UnmarshalJSON(data []byte) error {
+	var x any
+	if err := json.Unmarshal(data, &x); err != nil {
+		return err
+	}
+	switch t := x.(type) {
+	case bool:
+		d.Bool = t
+	case string:
+		if !strings.HasPrefix(t, "$") {
+			return fmt.Errorf("%q is not true, false or a $parameter", t)
+		}
+		d.Ref = t
+	default:
+		return fmt.Errorf("expected true, false or a $parameter")
+	}
+	return nil
+}
+
 type DocStage struct {
 	ID string `yaml:"id" json:"id"`
 	// Sequence names a sequence this stage runs in its place (FLOWLANG §1
@@ -599,16 +656,19 @@ type DocStage struct {
 	RunRef         string                       `yaml:"run_ref" json:"run_ref,omitempty"`
 	EachRepo       bool                         `yaml:"each_repo" json:"each_repo,omitempty"`
 	// ReuseSession is a pointer because it is on unless a stage says false.
-	ReuseSession *bool    `yaml:"reuse_session" json:"reuse_session,omitempty"`
-	Question     string   `yaml:"question" json:"question,omitempty"`
-	Action       string   `yaml:"action" json:"action,omitempty"`
-	Service      string   `yaml:"service" json:"service,omitempty"`
-	Do           string   `yaml:"do" json:"do,omitempty"`
-	For          string   `yaml:"for" json:"for,omitempty"`
-	OnSuccess    string   `yaml:"on_success" json:"on_success,omitempty"`
-	OnFail       *DocEdge `yaml:"on_fail" json:"on_fail,omitempty"`
-	OnReject     *DocEdge `yaml:"on_reject" json:"on_reject,omitempty"`
-	OnTimeout    *DocEdge `yaml:"on_timeout" json:"on_timeout,omitempty"`
+	ReuseSession *bool `yaml:"reuse_session" json:"reuse_session,omitempty"`
+	// StartHeld opens every attempt in the run owner's hands (FLOWLANG §2
+	// agent).
+	StartHeld *DocBool `yaml:"start_held" json:"start_held,omitempty"`
+	Question  string   `yaml:"question" json:"question,omitempty"`
+	Action    string   `yaml:"action" json:"action,omitempty"`
+	Service   string   `yaml:"service" json:"service,omitempty"`
+	Do        string   `yaml:"do" json:"do,omitempty"`
+	For       string   `yaml:"for" json:"for,omitempty"`
+	OnSuccess string   `yaml:"on_success" json:"on_success,omitempty"`
+	OnFail    *DocEdge `yaml:"on_fail" json:"on_fail,omitempty"`
+	OnReject  *DocEdge `yaml:"on_reject" json:"on_reject,omitempty"`
+	OnTimeout *DocEdge `yaml:"on_timeout" json:"on_timeout,omitempty"`
 
 	// Retired fields, still decoded so the parser can answer with the
 	// upgrade (FLOWLANG §7) instead of the strict decoder's bare "field not
@@ -1728,6 +1788,19 @@ func (p *parser) lookupInt(raw *DocInt, site paramSite) (int, string, error) {
 	return n, via, nil
 }
 
+// lookupBool resolves a bool field: the literal, or a bool parameter.
+func (p *parser) lookupBool(raw *DocBool, site paramSite) (bool, error) {
+	if raw.Ref == "" {
+		return raw.Bool, nil
+	}
+	v, _, err := p.lookup(raw.Ref, site)
+	if err != nil {
+		return false, err
+	}
+	b, _ := strconv.ParseBool(v) // the parameter's type guarantees it parses
+	return b, nil
+}
+
 // lookupDuration resolves a duration field: the literal, or a duration
 // parameter; either must parse as a positive duration.
 func (p *parser) lookupDuration(raw string, site paramSite) (time.Duration, string, error) {
@@ -1951,6 +2024,7 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 		{"run_ref", raw.RunRef != "", []StageType{StageCommand}},
 		{"each_repo", raw.EachRepo, []StageType{StageCommand}},
 		{"reuse_session", raw.ReuseSession != nil, []StageType{StageAgent}},
+		{"start_held", raw.StartHeld != nil, []StageType{StageAgent}},
 		{"question", raw.Question != "", []StageType{StageHumanGate, StageManual}},
 		{"action", raw.Action != "", []StageType{StageAction}},
 		{"for", raw.For != "", []StageType{StageWait}},
@@ -2042,6 +2116,13 @@ func (p *parser) buildStage(raw *DocStage, idx int, d Defaults) (*Stage, error) 
 				return fail("max_turns must be > 0, got %d%s", n, via)
 			}
 			s.MaxTurns = n
+		}
+		if raw.StartHeld != nil {
+			b, err := p.lookupBool(raw.StartHeld, site("start_held", ParamBool, nil))
+			if err != nil {
+				return fail("start_held: %v", err)
+			}
+			s.StartHeld = b
 		}
 		if raw.Timeout != "" {
 			t, _, err := p.lookupDuration(raw.Timeout, site("timeout", ParamDuration, nil))

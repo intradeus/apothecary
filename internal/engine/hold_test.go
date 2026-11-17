@@ -11,6 +11,7 @@ import (
 
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/ports/agentport"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runinput"
@@ -413,5 +414,289 @@ func TestReleasingAParkedHoldResumesWithTheHandback(t *testing.T) {
 	}
 	if v := h.view(t, runID); v.State != run.Completed || v.Hold != nil {
 		t.Errorf("final view = %s hold=%+v", v.State, v.Hold)
+	}
+}
+
+// START HELD: a stage with start_held opens every attempt as a take-over by
+// the run's owner. The agent answers the stage prompt, then waits for them;
+// from there it is the take-over above.
+
+// startHeldDoc's plan stage starts held; it retries itself once on a
+// failure, and the gate sends it back once.
+const startHeldDoc = `name: held
+version: 5
+parameters: { harness: fake, model: fake/model }
+agents:
+  - name: planner
+    prompt: plan it with me
+    outputs:
+      - { name: plan, type: file }
+main:
+  - { id: plan, type: agent, harness: $harness, model: $model, agent: planner, start_held: true, output: { plan: { to: artifacts/plan.md, type: file } }, on_fail: { to: plan, max: 1 } }
+  - { id: gate, type: human_gate, question: "Good?", on_reject: { to: plan, max: 1 } }
+`
+
+// startHeldHarness serves startHeldDoc, its runs owned by "owner". The
+// runner writes the plan unless skip says not to for the attempt it is in
+// (1-based, one invocation per attempt).
+func startHeldHarness(t *testing.T, skip func(attempt int) bool) (*harness, *heldRunner) {
+	t.Helper()
+	h := newHarness(t, mustFlow(t, startHeldDoc))
+	h.res.UserID = "owner"
+	r := &heldRunner{}
+	var calls sync.Mutex
+	n := 0
+	work := func(ctx context.Context, env envport.EnvID, in agentport.AgentInput) (agentport.AgentResult, error) {
+		calls.Lock()
+		n++
+		attempt := n
+		calls.Unlock()
+		if skip == nil || !skip(attempt) {
+			_ = h.envp.WriteFile(ctx, env, "artifacts/plan.md", []byte("# plan"), 0o644)
+		}
+		r.turn(in, "a first draft", nil)
+		return r.drive(ctx, in)
+	}
+	h.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		return work(ctx, call.Env, call.In)
+	}
+	h.runner.ResumeFunc = func(ctx context.Context, call fake.ResumeCall) (agentport.AgentResult, error) {
+		return work(ctx, call.Env, call.In)
+	}
+	return h, r
+}
+
+// waitHeldNotices waits for the owner to have been told n times that a
+// stage waits for them: each time, the opening turn of an attempt is over.
+func waitHeldNotices(t *testing.T, h *harness, n int) {
+	t.Helper()
+	waitUntil(t, fmt.Sprintf("held notification %d", n), func() bool { return len(sentOfType(h, notifyHeld)) >= n })
+}
+
+func TestStartHeldOpensInTheOwnersHands(t *testing.T) {
+	h, r := startHeldHarness(t, nil)
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "held", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One turn on the stage prompt, then the session waits on the owner.
+	waitHeldNotices(t, h, 1)
+	if v := h.view(t, runID); v.State != run.Running || v.Hold == nil || v.Hold.UserID != "owner" || v.Hold.StageID != "plan" {
+		t.Fatalf("view = %s hold=%+v", v.State, v.Hold)
+	}
+	if n := sentOfType(h, notifyHeld)[0]; n.RunID != runID || n.UserID != "owner" || !strings.Contains(n.Title, "plan") {
+		t.Errorf("notification = %+v", n)
+	}
+	if _, ok := findPayload[*event.StageCompleted](h.events(t, runID)); ok {
+		t.Fatal("the stage ended after its opening turn")
+	}
+
+	// The owner's message is the next turn, in the same session.
+	id, err := h.e.SendMessage(runID, "smaller, please")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the owner's turn to end", func() bool {
+		return countType(h.events(t, runID), event.TypeAgentMessage) >= 2
+	})
+	if err := h.e.Release(runID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	gate := h.waitPing(t, PingGate)
+	if err := h.e.AnswerPing(gate.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+
+	evs := h.events(t, runID)
+	var kinds []string
+	for _, ev := range evs {
+		switch p := ev.Payload.(type) {
+		case *event.HoldTaken:
+			kinds = append(kinds, string(ev.Type))
+			if p.UserID != "owner" || p.Attempt != 1 {
+				t.Errorf("hold_taken = %+v", p)
+			}
+		case *event.HoldReleased, *event.MessageDelivered:
+			kinds = append(kinds, string(ev.Type))
+		case *event.StageCompleted:
+			if p.StageID == "plan" {
+				kinds = append(kinds, string(ev.Type))
+			}
+		case *event.AgentPrompted:
+			kinds = append(kinds, "agent_prompted:"+p.Kind)
+		}
+	}
+	want := "hold_taken agent_prompted:stage message_delivered hold_released agent_prompted:handback stage_completed"
+	if got := strings.Join(kinds, " "); got != want {
+		t.Errorf("order = %s\nwant    %s", got, want)
+	}
+	// The hold's account is the owner's turn alone: the opening one answered
+	// the stage prompt.
+	rel, _ := findPayload[*event.HoldReleased](evs)
+	if rel == nil || rel.Reason != event.HoldReleasedByUser || rel.Turns != 1 || rel.Messages != 1 ||
+		rel.Usage == nil || rel.Usage.CostUSD < turnCost-1e-9 || rel.Usage.CostUSD > turnCost+1e-9 {
+		t.Errorf("hold_released = %+v", rel)
+	}
+	if d, ok := findPayload[*event.MessageDelivered](evs); !ok || d.MessageIDs[0] != id {
+		t.Errorf("message_delivered = %+v", d)
+	}
+	if b := r.delivered(); len(b) != 2 || b[0][0].Text != "smaller, please" || b[1][0].Text != handbackPrompt {
+		t.Errorf("delivered = %+v", b)
+	}
+	if n := len(sentOfType(h, notifyHeld)); n != 1 {
+		t.Errorf("held notifications = %d, want one: later turns tell nobody", n)
+	}
+	if v := h.view(t, runID); v.State != run.Completed || v.Hold != nil {
+		t.Errorf("final view = %s hold=%+v", v.State, v.Hold)
+	}
+}
+
+// Every attempt starts held: a retry after the output check failed on the
+// release, and a redo the gate sent back.
+func TestStartHeldHoldsEveryAttempt(t *testing.T) {
+	h, _ := startHeldHarness(t, func(attempt int) bool { return attempt == 1 })
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "held", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rejected string
+	for n := 1; n <= 3; n++ {
+		waitHeldNotices(t, h, n)
+		if err := h.e.Release(runID, "owner"); err != nil {
+			t.Fatalf("release %d: %v", n, err)
+		}
+		if n == 2 {
+			gate := h.waitPing(t, PingGate)
+			if err := h.e.AnswerPing(gate.ID, PingAnswer{Answer: "reject", Feedback: "again"}); err != nil {
+				t.Fatal(err)
+			}
+			rejected = gate.ID
+		}
+	}
+	gate := h.waitPing(t, PingGate, rejected)
+	if err := h.e.AnswerPing(gate.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Fatalf("state = %s", v.State)
+	}
+	evs := h.events(t, runID)
+	if fs := failuresOf(evs, "plan"); len(fs) != 1 || fs[0].Reason != event.ReasonOutputContract {
+		t.Fatalf("plan failures = %+v", fs)
+	}
+	// Each attempt's hold is taken before its stage prompt.
+	var seq []string
+	for _, ev := range evs {
+		switch p := ev.Payload.(type) {
+		case *event.StageStarted:
+			if p.StageID == "plan" {
+				seq = append(seq, fmt.Sprintf("start:%d", p.Attempt))
+			}
+		case *event.HoldTaken:
+			seq = append(seq, fmt.Sprintf("held:%d:%s", p.Attempt, p.UserID))
+		case *event.AgentPrompted:
+			if p.Kind == event.PromptStage {
+				seq = append(seq, fmt.Sprintf("prompt:%d", p.Attempt))
+			}
+		}
+	}
+	want := "start:1 held:1:owner prompt:1 start:2 held:2:owner prompt:2 start:3 held:3:owner prompt:3"
+	if got := strings.Join(seq, " "); got != want {
+		t.Errorf("attempts = %s\nwant       %s", got, want)
+	}
+}
+
+// A start hold whose owner stays quiet parks after the opening turn (the
+// slot freed, the hold in force) and their next message wakes it.
+func TestStartHeldParksOnAQuietOwner(t *testing.T) {
+	h, _ := startHeldHarness(t, nil)
+	h.e.cfg.AskHumanHold = 30 * time.Millisecond
+	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "held", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused := waitEvent[*event.StagePaused](t, h, runID)
+	if paused.Reason != event.PauseHeld || paused.StageID != "plan" {
+		t.Fatalf("stage_paused = %+v", paused)
+	}
+	waitUntil(t, "the run to park", func() bool { return h.view(t, runID).Dormant })
+	h.e.Wait(runID)
+	h.e.cfg.AskHumanHold = time.Hour
+	if v := h.view(t, runID); v.State != run.WaitingOnHuman || v.Hold == nil || v.Hold.UserID != "owner" {
+		t.Fatalf("parked view = %s hold=%+v", v.State, v.Hold)
+	}
+	if n := len(sentOfType(h, notifyHeld)); n != 1 {
+		t.Errorf("held notifications = %d, want one", n)
+	}
+
+	if _, err := h.e.SendMessage(runID, "go on"); err != nil {
+		t.Fatalf("message to a parked start hold: %v", err)
+	}
+	if res := waitEvent[*event.StageResumed](t, h, runID); res.Reason != event.ResumeMessage {
+		t.Fatalf("stage_resumed = %+v", res)
+	}
+	waitUntil(t, "the owner's turn to end", func() bool {
+		return countType(h.events(t, runID), event.TypeAgentMessage) >= 2
+	})
+	if err := h.e.Release(runID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	gate := h.waitPing(t, PingGate)
+	if err := h.e.AnswerPing(gate.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	evs := h.events(t, runID)
+	if n := countType(evs, event.TypeHoldTaken); n != 1 {
+		t.Errorf("hold_taken = %d, want the one the attempt opened with", n)
+	}
+	if rel, _ := findPayload[*event.HoldReleased](evs); rel == nil || rel.Turns != 1 || rel.Messages != 1 {
+		t.Errorf("hold_released = %+v", rel)
+	}
+	if n := len(sentOfType(h, notifyHeld)); n != 1 {
+		t.Errorf("held notifications = %d, want one: a woken turn tells nobody", n)
+	}
+	if v := h.view(t, runID); v.State != run.Completed {
+		t.Errorf("state = %s", v.State)
+	}
+}
+
+// A crash between the start hold and the stage prompt: recovery finds the
+// hold in force and sends the prompt — it neither parks on the owner before
+// the agent has said anything nor takes the hold again.
+func TestRecoveredStartHoldSendsTheStagePrompt(t *testing.T) {
+	fl := mustFlow(t, startHeldDoc)
+	h, _ := startHeldHarness(t, nil)
+	seedRun(t, h, "r-sh", "held", fl.Hash,
+		&event.PhaseStarted{Phase: "main", By: "human"},
+		&event.StageStarted{StageID: "plan", Attempt: 1},
+		&event.HoldTaken{StageID: "plan", Attempt: 1, UserID: "owner"},
+	)
+	if err := h.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitHeldNotices(t, h, 1)
+	evs := h.events(t, "r-sh")
+	if n := countType(evs, event.TypeHoldTaken); n != 1 {
+		t.Errorf("hold_taken = %d, want the one before the crash", n)
+	}
+	if n := countType(evs, event.TypeStagePaused); n != 0 {
+		t.Errorf("parked before the stage prompt: %v", eventTypes(evs))
+	}
+	if p, ok := findPayload[*event.AgentPrompted](evs); !ok || p.Kind != event.PromptStage {
+		t.Errorf("agent_prompted = %+v", p)
+	}
+	if err := h.e.Release("r-sh", "owner"); err != nil {
+		t.Fatal(err)
+	}
+	gate := h.waitPing(t, PingGate)
+	if err := h.e.AnswerPing(gate.ID, PingAnswer{Answer: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait("r-sh")
+	if v := h.view(t, "r-sh"); v.State != run.Completed {
+		t.Errorf("state = %s: %v", v.State, eventTypes(h.events(t, "r-sh")))
 	}
 }

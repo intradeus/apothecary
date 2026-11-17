@@ -496,6 +496,13 @@ func customizeSchema(name string, t reflect.Type, tag reflect.StructTag, schema 
 		}, Properties: openapi3.Schemas{}}
 		return nil
 	}
+	if t == reflect.TypeOf(flow.DocBool{}) {
+		// A bool, or the "$name" of the parameter the field reads.
+		*schema = openapi3.Schema{OneOf: openapi3.SchemaRefs{
+			openapi3.NewBoolSchema().NewRef(), openapi3.NewStringSchema().NewRef(),
+		}, Properties: openapi3.Schemas{}}
+		return nil
+	}
 	return nil
 }
 

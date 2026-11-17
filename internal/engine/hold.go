@@ -169,24 +169,34 @@ func (e *Engine) wakeHeld(ctx context.Context, runID string, build func(run.View
 // liveHold is the engine's in-flight view of a take-over during one
 // invocation: what the holder's messages spent so far (leg), whether the agent sits idle waiting on the holder (the stage clock is
 // suspended then, as for a pending question), and a release waiting for the
-// turn in flight to end.
+// turn in flight to end. Under a start hold the invocation that sends the
+// stage prompt opens on the agent's own turn — not the holder's, so off
+// the hold's account — and the owner is told when it leaves the session
+// waiting on them.
 type liveHold struct {
 	st        *runcore.HeldState
 	leg       runcore.HoldLeg
 	idle      bool
 	releasing bool
 	releaseBy string
+	opening   bool
 }
 
 func (x *exec) liveHold(st *flow.Stage) *liveHold {
+	opening := x.openingTurn
+	x.openingTurn = false
 	h := x.rs.Holds[st.ID]
 	if h == nil {
 		return nil
 	}
-	l := &liveHold{st: h, leg: runcore.NewHoldLeg()}
+	l := &liveHold{st: h, leg: runcore.NewHoldLeg(), opening: opening}
 	l.leg.Spend.Messages, x.heldMessages = x.heldMessages, 0
 	return l
 }
+
+// notifyHeld is the Type of the notification telling a run's owner that a
+// stage which starts held (start_held) is waiting for them.
+const notifyHeld = "held"
 
 // holdReq is a take-over request on its way into the run loop: take, or
 // release (the handback follows).
@@ -200,6 +210,16 @@ type holdReq struct {
 func (x *exec) takeHold(st *flow.Stage, iter int, userID string) error {
 	taken := &event.HoldTaken{StageID: st.ID, Attempt: iter, UserID: userID}
 	return x.append(taken)
+}
+
+// takeStartHold opens an attempt of a stage that starts held (start_held)
+// in the run owner's hands, before its stage prompt goes out. A hold in
+// force already is this attempt's, taken before a crash: not taken twice.
+func (x *exec) takeStartHold(st *flow.Stage, iter int) error {
+	if !st.StartHeld || x.rs.AttemptBegun(st.ID) || x.rs.Holds[st.ID] != nil {
+		return nil
+	}
+	return x.takeHold(st, iter, x.rs.View.UserID)
 }
 
 // releaseHold closes a take-over with its account: every leg's spend, the
@@ -244,6 +264,10 @@ func (x *exec) holdReentry(st *flow.Stage, iter int, mayReattach bool, runner ag
 	case rs.HandbackOwed[st.ID]:
 		return holdReentry{reply: handbackPrompt, kind: event.PromptHandback, reason: event.ResumeReleased}, nil
 	case rs.Holds[st.ID] == nil:
+		return holdReentry{}, nil
+	case !rs.AttemptBegun(st.ID):
+		// A start hold taken before the stage prompt went out: the prompt
+		// is owed first, and messages queued meanwhile ride with it.
 		return holdReentry{}, nil
 	case len(rs.PendingMsgs) > 0:
 		n := len(rs.PendingMsgs)

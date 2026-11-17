@@ -129,6 +129,8 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		return event.HoldSpend{}
 	}
 	turnOpen := false
+	// opening: the turn in flight is a start hold's opening one.
+	opening := false
 	// record files one agent event: a new harness session is recorded the
 	// moment it exists, so a crash mid-invocation resumes (or reattaches
 	// to) it, not a new one — whichever path meets the event, the loop's
@@ -277,12 +279,20 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				turnOpen = true
 				if hold != nil {
 					// A turn starting under the hold is the holder's: it is
-					// what their message prompted.
+					// what their message prompted — but for a start hold's
+					// opening turn, which answers the stage prompt.
 					busyAgain()
-					hold.leg.TurnStarted(ev.Turn)
+					if hold.opening {
+						hold.opening = false
+						opening = true
+					} else {
+						hold.leg.TurnStarted(ev.Turn)
+					}
 				}
 			case agentport.AgentEvTurnEnd:
 				turnOpen = false
+				ended := opening
+				opening = false
 				if hold == nil {
 					break
 				}
@@ -305,6 +315,15 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 					}
 				} else if !io.inbox.pending() {
 					idleOnHolder()
+					if ended {
+						// A start hold's opening turn is over and the session
+						// waits for the run's owner: tell them, once.
+						x.e.notify(x.bg, notifyport.Notification{
+							RunID: x.rs.RunID, Type: notifyHeld,
+							Title: fmt.Sprintf("%s waits for you: %s", st.ID, x.rs.View.TicketTitle),
+							Body:  "The agent answered the stage prompt; your messages are its next turns, and releasing it ends the stage.",
+						})
+					}
 				}
 			}
 		case req := <-x.h.messages:

@@ -64,9 +64,12 @@ type exec struct {
 	materialised map[string]*event.ReviewCurated
 	// cutLeg is what the take-over in force spent in the invocation a cancel
 	// cut short; heldMessages are the holder's messages a re-entry delivered
-	// in the prompt of the invocation about to start.
+	// in the prompt of the invocation about to start; openingTurn says that
+	// invocation sends the stage prompt under a start hold (start_held): its
+	// first turn is the agent's own, and its end is what the owner hears of.
 	cutLeg       event.HoldSpend
 	heldMessages int
+	openingTurn  bool
 	// lastObs is the idle loop's latest poll of the run's merge requests:
 	// what a hand start picks its subject from. Nil before the first poll.
 	lastObs []runcore.MRObservation

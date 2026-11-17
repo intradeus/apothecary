@@ -424,6 +424,8 @@ export type DocAsk = {
 	harness: string;
 };
 
+export type DocBool = boolean | string;
+
 export type DocEdge = {
 	feed?: string;
 	max?: number | null;
@@ -531,6 +533,7 @@ export type DocStage = {
 	run_ref?: string;
 	sequence?: string;
 	service?: string;
+	start_held?: DocBool;
 	timeout?: string;
 	type?: string;
 	with?: DocIo;

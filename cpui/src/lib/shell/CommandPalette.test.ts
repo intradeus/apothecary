@@ -9,7 +9,7 @@ import { fleet } from '$lib/app/fleet.svelte';
 import { prefs } from '$lib/app/prefs.svelte';
 import { aPing, aProject, aRun, aTicketRow } from '$test/fixtures';
 import { anIntegration, bindable } from '$test/fixtures/app.svelte';
-import { anOpenMr } from '$test/fixtures/run-components';
+import { aHold, anOpenMr } from '$test/fixtures/run-components';
 import CommandPalette from './CommandPalette.svelte';
 
 vi.mock('$lib/api', () => ({
@@ -117,10 +117,11 @@ describe('CommandPalette, listing', () => {
 		expect(labels().join('|')).not.toContain('New ticket');
 	});
 
-	it('shows the pending count on the inbox and the chord on the others', () => {
+	it('shows the pending count, held runs included, on the inbox and the chord on the others', () => {
+		fleet.runs = [aRun({ id: 'h', hold: aHold({ stageId: 'plan' }) })];
 		fleet.pending = [aPing({ id: '1' }), aPing({ id: '2' })];
 		setup();
-		expect(screen.getByRole('option', { name: /Inbox/ })).toHaveTextContent('2 pending');
+		expect(screen.getByRole('option', { name: /Inbox/ })).toHaveTextContent('3 pending');
 		expect(screen.getByRole('option', { name: /Runs/ })).toHaveTextContent('G R');
 	});
 

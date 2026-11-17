@@ -101,6 +101,12 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 	x.e.crew.board(rs.RunID, Crew{StageID: st.ID, Attempt: iter, Harness: stationHarness(st, x.res),
 		Agent: st.Agent, Since: x.e.clock()})
 	defer x.e.crew.leave(rs.RunID)
+	// START HELD: the attempt opens in the run owner's hands, past every
+	// early way out above so none leaves a hold behind. The stage prompt
+	// still goes first; its turn ends on the owner, not the stage.
+	if err := x.takeStartHold(st, iter); err != nil {
+		return err
+	}
 
 	// ONE STAGE, ONE SESSION. A new stage opens a session of its own, and an
 	// attempt sent back to the stage continues it, so the agent remembers
@@ -249,6 +255,7 @@ func (x *exec) stageAgent(st *flow.Stage) error {
 		if err := x.prompted(st.ID, iter, kind, text); err != nil {
 			return err
 		}
+		x.openingTurn = kind == event.PromptStage && st.StartHeld && rs.Holds[st.ID] != nil
 		inv, err = x.invoke(st, budget, tr, nil, text,
 			func(ctx context.Context, in agentport.AgentInput) (agentport.AgentResult, error) {
 				in.MCPServers = mcp

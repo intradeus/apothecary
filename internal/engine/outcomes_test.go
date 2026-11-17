@@ -324,3 +324,47 @@ func TestThePassLeavesAnIdleRunToItsLoop(t *testing.T) {
 		t.Errorf("the pass appended %d events", after-before)
 	}
 }
+
+// A stage that starts held is a take-over from its opening turn: an outcome
+// waits for the release, through that turn and the wait for the owner.
+func TestAnOutcomeWaitsForAStartHold(t *testing.T) {
+	const agent = "{ id: agent_turn, type: agent, harness: $harness, model: $model, agent: builder }"
+	doc := strings.Replace(overrideDoc, agent, strings.Replace(agent, " }", ", start_held: true }", 1), 1)
+	ph := newPhasedHarness(t, doc)
+	runID := ph.start(t)
+	r := &heldRunner{firstEnd: make(chan struct{})}
+	ph.runner.RunFunc = func(ctx context.Context, call fake.RunCall) (agentport.AgentResult, error) {
+		r.turn(call.In, "working on it", r.firstEnd)
+		return r.drive(ctx, call.In)
+	}
+	if err := ph.e.StartPhase(runID, "think", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitEvent[*event.AgentSession](t, ph.harness, runID) // the opening turn is open
+	if _, ok := findPayload[*event.HoldTaken](ph.events(t, runID)); !ok {
+		t.Fatal("the stage did not start held")
+	}
+	ph.repoHost.SetMRState(1, repoport.MRMerged)
+	outcomeStarted := func() bool {
+		return logHas(ph.events(t, runID), func(p *event.PhaseStarted) bool { return p.Phase == "merged" })
+	}
+	if err := ph.e.OutcomesOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if outcomeStarted() {
+		t.Fatal("the outcome took the run during the opening turn")
+	}
+	close(r.firstEnd)
+	waitHeldNotices(t, ph.harness, 1)
+	if err := ph.e.OutcomesOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if outcomeStarted() {
+		t.Fatal("the outcome took the run waiting on its owner")
+	}
+	if err := ph.e.Release(runID, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	ph.e.Wait(runID)
+	ph.finishedByOutcome(t, runID)
+}

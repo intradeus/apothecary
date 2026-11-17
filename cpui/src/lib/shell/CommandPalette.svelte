@@ -138,7 +138,7 @@
 				glyph: n.icon,
 				sub:
 					n.id === 'inbox'
-						? t('shell.palette.pending', { count: fleet.pending.length })
+						? t('shell.palette.pending', { count: fleet.inboxCount })
 						: n.chord
 							? `G ${n.chord.toUpperCase()}`
 							: undefined,

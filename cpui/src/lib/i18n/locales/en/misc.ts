@@ -109,6 +109,12 @@ export default {
 	'inbox.pendingSummary_one': '{count} pending across {runs} run',
 	'inbox.pendingSummary_other': '{count} pending across {runs} runs',
 	'inbox.nothingPending': 'nothing pending',
+	'inbox.heldSummary_one': '{count} run in your hands',
+	'inbox.heldSummary_other': '{count} runs in your hands',
+	'inbox.held.title': 'In your hands',
+	'inbox.held.help':
+		'An agent waiting for you: your messages are its turns, and the stage ends when you release it.',
+	'inbox.held.since': 'held {ago}',
 	'inbox.tab.pending': 'Pending',
 	'inbox.tab.answered': 'Answered',
 	'inbox.loadErr': 'Could not load pings',
@@ -963,6 +969,11 @@ export default {
 	'flow.insp.reuseSession': 'Remember earlier attempts',
 	'flow.insp.reuseSessionTitle':
 		'An attempt sent back to this stage continues its session. Turn off for a stage that should look afresh each time, such as an adversarial review.',
+	'flow.insp.startHeld': 'Start in your hands',
+	'flow.insp.startHeldOff': 'No — the agent works alone',
+	'flow.insp.startHeldOn': 'Yes — every attempt',
+	'flow.insp.startHeldHelp':
+		'Every attempt, retries included, answers the stage prompt once, then waits for the run’s owner as a take-over: their messages are its turns, and releasing it ends the stage. Or a bool $parameter.',
 	'flow.insp.eachRepo': 'Run in each repository',
 	'flow.insp.eachRepoTitle':
 		'Multi-repo runs: run once per checkout instead of once in the primary (what git commit / push want)',

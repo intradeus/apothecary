@@ -6,6 +6,7 @@ import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
 import { aPing, aProject, aRun } from '$test/fixtures';
+import { aHold } from '$test/fixtures/run-components';
 import { deferred } from '$test/helpers';
 import Inbox from './Inbox.svelte';
 
@@ -421,5 +422,39 @@ describe('Inbox, the answered tab', () => {
 		expect(api.pings.list).toHaveBeenCalledTimes(2);
 		hidden.mockRestore();
 		vi.useRealTimers();
+	});
+});
+
+describe('Inbox, in your hands', () => {
+	const held = (id: string, title: string) =>
+		aRun({ id, title, state: 'running', hold: aHold({ stageId: 'plan', since: at(1) }) });
+
+	it('lists a held run with a link to it, and leaves a free one out', () => {
+		loaded([], [held('r1', 'Design the API'), aRun({ id: 'r2', title: 'Free run' })]);
+		render(Inbox);
+		const section = within(screen.getByRole('region', { name: 'In your hands' }));
+		const row = section.getByRole('link', { name: /Design the API/ });
+		expect(row).toHaveAttribute('href', '/runs/r1');
+		expect(row).toHaveTextContent('plan');
+		expect(section.queryByText('Free run')).not.toBeInTheDocument();
+	});
+
+	it('is not all quiet while a run waits in your hands', () => {
+		loaded([], [held('r1', 'Design the API')]);
+		render(Inbox);
+		expect(screen.queryByText('All quiet at the bench')).not.toBeInTheDocument();
+		expect(screen.getByText('1 run in your hands')).toBeInTheDocument();
+	});
+
+	it('names pings and held runs together in the summary', () => {
+		loaded([ping('a', 'r2', 1)], [held('r1', 'Design the API'), aRun({ id: 'r2' })]);
+		render(Inbox);
+		expect(screen.getByText('1 pending across 1 run · 1 run in your hands')).toBeInTheDocument();
+	});
+
+	it('shows no section when nothing is held', () => {
+		loaded([ping('a', 'r1', 1)]);
+		render(Inbox);
+		expect(screen.queryByRole('region', { name: 'In your hands' })).not.toBeInTheDocument();
 	});
 });

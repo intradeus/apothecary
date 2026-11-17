@@ -139,7 +139,7 @@
 		<nav class="mtabs island" aria-label={t('page.layout.primary')} use:indicator>
 			{#each tabs as tab (tab.id)}
 				{@const on = tab.match(page.url.pathname)}
-				{@const n = tab.id === 'inbox' ? fleet.pending.length : 0}
+				{@const n = tab.id === 'inbox' ? fleet.inboxCount : 0}
 				<a class:on href={tab.href()} aria-current={on ? 'page' : undefined}
 					><span class="ti">{tab.icon}</span>{tab.label}{#if tab.id === 'inbox'}<span
 							class="count hot sm"
