@@ -555,12 +555,13 @@ func dropPing(ps []*Ping, p *Ping) []*Ping {
 	return ps
 }
 
-// ownQuestion reports whether a question in ps was raised by turn: one of a
-// turn the runner began after it (asked before the loop read that turn's end)
-// is not. Where either turn is unknown, the question counts.
+// ownQuestion reports whether a question in ps was raised by turn. One the
+// runner raised in a turn it began after it (asked before the loop read that
+// turn's end) is not: reported in that later turn, or with no turn reported
+// open but after turn's end (Ping.after). Where nothing tells, it counts.
 func ownQuestion(ps []*Ping, turn string) bool {
 	for _, p := range ps {
-		if turn == "" || p.turn == "" || p.turn == turn {
+		if turn == "" || p.turn == turn || p.turn == "" && p.after != turn {
 			return true
 		}
 	}

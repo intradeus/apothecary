@@ -245,7 +245,12 @@ type runHandle struct {
 	// agentTurn (under Engine.mu) is the turn the runner last reported
 	// started and not yet ended, as it reports it (ahead of the loop, which
 	// may be behind on its events): the turn a question raised now is from.
+	// endedTurn is the turn it last reported ended. A runner reports a
+	// turn's end before it prompts the next, but may report the next one's
+	// start only after that prompt has run tools: a question raised with no
+	// turn reported open comes after endedTurn, and is not that turn's.
 	agentTurn string
+	endedTurn string
 	// idle is set while the run sits between phases with its merge requests
 	// open (PLAN6): the loop only polls the repository host, so it does not
 	// hold a concurrency slot.
@@ -303,6 +308,7 @@ type Ping struct {
 
 	key            string       // the raiser's idempotency key (RaisePing)
 	turn           string       // the agent's turn that raised it (runHandle.agentTurn); "" unknown
+	after          string       // with turn unknown, the turn reported ended before it was raised (runHandle.endedTurn): not its turn
 	answered       bool         // guarded by Engine.mu
 	queued         bool         // an answer is on its way to the loop; guarded by Engine.mu
 	answer         *PingAnswer  // set before done closes; read only after <-done
@@ -1930,7 +1936,7 @@ func (e *Engine) RaiseQuestion(runID string, q Question) (*Ping, error) {
 	h.stopAsked = ""
 	p := &Ping{
 		ID: e.newID(), RunID: runID, Type: ptype, Question: question, Context: context_,
-		Form: form, AnswerKind: event.AnswerForm, Files: refs, key: key, turn: h.agentTurn,
+		Form: form, AnswerKind: event.AnswerForm, Files: refs, key: key, turn: h.agentTurn, after: h.endedTurn,
 		RaisedAt: e.clock(), done: make(chan struct{}),
 	}
 	e.pings[p.ID] = p

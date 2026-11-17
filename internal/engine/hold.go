@@ -239,10 +239,10 @@ func (x *exec) acceptStop(turn string) bool {
 // turnStarted and turnEnded follow the agent's turns as its runner reports
 // them (Events), on the runner's goroutine and so ahead of the loop, which
 // may be behind on its events: a question raised meanwhile is the turn's
-// the runner is in (Ping.turn), and the holder's turn after a stopped one
-// may ask before the loop has read that the stopped turn ended. A turn's end
-// clears the stop asked of it, and only of it: a later stop is another
-// turn's.
+// the runner is in (Ping.turn), or one after the turn it last ended
+// (Ping.after), and the holder's turn after a stopped one may ask before
+// the loop has read that the stopped turn ended. A turn's end clears the
+// stop asked of it, and only of it: a later stop is another turn's.
 func (x *exec) turnStarted(turn string) {
 	x.e.mu.Lock()
 	x.h.agentTurn = turn
@@ -257,21 +257,37 @@ func (x *exec) turnEnded(turn string) {
 	if x.h.agentTurn == turn {
 		x.h.agentTurn = ""
 	}
+	x.h.endedTurn = turn
+	x.dropStopLocked(turn)
+	x.e.mu.Unlock()
+}
+
+// dropStop clears a stop asked of turn while the loop was behind the
+// runner's report of its end (turnEnded), as the loop reads that end.
+func (x *exec) dropStop(turn string) {
+	x.e.mu.Lock()
+	x.dropStopLocked(turn)
+	x.e.mu.Unlock()
+}
+
+func (x *exec) dropStopLocked(turn string) {
+	if turn == "" {
+		return
+	}
 	if x.h.stopAsked == turn {
 		x.h.stopAsked = ""
 	}
 	if x.h.stopping == turn {
 		x.h.stopping = ""
 	}
-	x.e.mu.Unlock()
 }
 
-// endTurns forgets the agent's turn and whatever stop a forced take-over
-// asked of it: the invocation has ended, and the agent's questions are for
+// endTurns forgets the agent's turns and whatever stop a forced take-over
+// asked of one: the invocation has ended, and the agent's questions are for
 // whoever runs next.
 func (x *exec) endTurns() {
 	x.e.mu.Lock()
-	x.h.agentTurn, x.h.stopAsked, x.h.stopping = "", "", ""
+	x.h.agentTurn, x.h.endedTurn, x.h.stopAsked, x.h.stopping = "", "", "", ""
 	x.e.mu.Unlock()
 }
 

@@ -374,7 +374,7 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				turnOpen, openTurn = false, ""
 				// The runner has cleared this turn's stop already (Events);
 				// this clears one asked while the loop was behind its end.
-				x.turnEnded(ev.Turn)
+				x.dropStop(ev.Turn)
 				if hold == nil {
 					if x.rs.HandbackOwed[st.ID] {
 						if err := owedHandback(); err != nil {

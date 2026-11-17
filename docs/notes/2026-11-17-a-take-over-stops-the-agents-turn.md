@@ -59,7 +59,12 @@ What now:
   while the runner has already started the holder's turn, which may ask.
   For the same reason a question carries the turn the runner was in when it
   was raised (`runHandle.agentTurn`), and a turn ends on a question (parking
-  the run) only if it is that turn's.
+  the run) only if it is that turn's. The holder's turn may also ask before
+  its runner has reported it started (the ACP sidecar records `turn_start`
+  ahead of the prompt, but the runner forwards it afterwards), so a question
+  raised with no turn reported open also carries the turn last reported
+  ended (`runHandle.endedTurn`, `Ping.after`): a runner reports a turn's end
+  before it prompts the next, so that question is not the ended turn's.
 - The dev fake harness fakes a take-over: its demo turn ends, cancelled, when
   stopped, and it serves a held session — each holder message and the
   release's handback get a short reply turn — so `task dev:up` can show a
@@ -104,6 +109,7 @@ Held by: `TestPlanHoldRequest`, `TestHoldLegWaitsUntilTheHoldersMessagesGetTheir
 `TestAForcedTakeOverBesideAQueuedQuestionLeavesTheTurn`,
 `TestAForcedTakeOverBesideARegisteredQuestionLeavesTheTurn`,
 `TestAQuestionFromAStoppingTurnIsRefused`, `TestTheHoldersTurnMayAskWhileTheLoopIsBehindTheStop`,
+`TestTheHoldersTurnMayAskBeforeItsStartIsReported`,
 `TestARunnerThatCannotStopKeepsItsQuestions`,
 `TestAQuestionBeforeTheStopIsTakenUpKeepsTheTurn`,
 `TestAReleaseBehindAQueuedMessageWaitsForItsTurn`,

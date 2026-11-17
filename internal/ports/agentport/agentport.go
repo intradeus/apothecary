@@ -30,7 +30,9 @@ type AgentInput struct {
 	// Events receives the invocation's transcript AS IT HAPPENS — message
 	// text, tool calls, plans, turn boundaries. nil = nobody is listening.
 	// Called from the runner's goroutine; implementations must not block for
-	// long (the engine buffers).
+	// long (the engine buffers). A turn's turn_end is reported before the
+	// runner prompts its next turn: the engine takes a question raised with
+	// no turn reported open for one after the turn last ended.
 	Events func(AgentEvent)
 	// MCPServers are the MCP servers the stage's agent may call (its `mcp:`
 	// list, FLOWLANG §1), resolved for this run: secrets filled, the builtin
