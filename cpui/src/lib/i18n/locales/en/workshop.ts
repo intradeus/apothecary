@@ -259,7 +259,6 @@ export default {
 	'workshop.overview.noExtraHosts': 'No extra hosts — only the derived allowlist applies.',
 	'workshop.overview.forceBlocked': 'Force-blocked · from the run’s Egress window',
 	'workshop.overview.workspace': 'Workspace',
-	'workshop.overview.provisioner': 'provisioner',
 	'workshop.overview.harnesses': 'harnesses',
 	'workshop.overview.docker': 'docker in workspaces',
 	'workshop.overview.on': 'on',

@@ -8,7 +8,7 @@ and the Ask composer, and the agent reads them from its workspace.
 What now:
 
 - **A chat file is the run's, with a `chat` on its row** (`takeover` or
-  `ask`, migration 0008). Without it, a run-owned file with no `ping_id`
+  `ask`, migration 0009). Without it, a run-owned file with no `ping_id`
   reads as a goal file: it would be listed under `# ATTACHED FILES` in
   every later stage's prompt and labelled "run goal" on the record. The
   CHECKs say a chat file has a run and no ping. `goalAttachments` leaves

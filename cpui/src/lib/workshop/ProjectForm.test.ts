@@ -350,12 +350,11 @@ describe('ProjectForm, every section reaches the draft', () => {
 		});
 	});
 
-	it('execution: provisioner and harnesses', async () => {
+	it('execution: the harnesses, keeping the provisioner it has', async () => {
 		edit();
-		await choose('Provisioner', 'K8s (kubernetes)');
 		await userEvent.click(screen.getByRole('checkbox', { name: /Codex/ }));
 
-		expect(await save()).toMatchObject({ provisionerId: 'prov-2', harnessIds: ['h-a', 'h-c'] });
+		expect(await save()).toMatchObject({ provisionerId: 'prov-1', harnessIds: ['h-a', 'h-c'] });
 	});
 
 	it('workspace: the egress policy, both lists kept', async () => {
@@ -590,7 +589,8 @@ describe('ProjectForm, creating', () => {
 		expect(created()).toMatchObject({
 			name: 'acme',
 			repoAccountId: 'repo-1',
-			provisionerId: 'prov-1',
+			// None: the engine builds it on the instance's provisioner.
+			provisionerId: '',
 			ticketSourceId: 'src-own',
 			harnessIds: ['h-a'],
 			defaultFlow: 'mine',

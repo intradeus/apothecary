@@ -79,9 +79,7 @@ export const I = {
 	skills: '✧',
 	channels: '✉' + T,
 	members: '☺' + T,
-	limits: '▤',
-	reaper: '⌛' + T,
-	storage: '⛁',
+	provisioner: '⛁',
 	// files
 	file: '▤',
 	image: '◩',

@@ -93,6 +93,14 @@
 			]}
 		/>
 		<span class="hint">{t('runview.record.kept')}</span>
+		{#if all.length && rs.run}
+			<a
+				class="btn btn-sm"
+				href={api.files.runZipUrl(rs.run.id)}
+				download
+				title={t('runview.record.downloadAllTitle')}>{I.follow} {t('runview.record.downloadAll')}</a
+			>
+		{/if}
 	</div>
 	{#if all.length === 0}
 		<div class="empty-line">
