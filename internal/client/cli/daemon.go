@@ -33,6 +33,10 @@ const daemonCommand = "__forward-daemon"
 // command that started it is about to ask for something.
 var daemonIdle = 30 * time.Second
 
+// daemonShutdownGrace bounds how long a daemon told to stop waits for the
+// requests in flight (the stop's own answer among them) before it closes.
+const daemonShutdownGrace = 5 * time.Second
+
 // listenLocal opens a port on this machine's loopback, never on its other
 // interfaces: what a run serves stays the person's. Port 0 is a free one;
 // a named port that something on this machine already answers on is
@@ -193,17 +197,30 @@ func runDaemon(ctx context.Context, env Env) error {
 	_ = os.Chmod(sock, 0o600)
 	d := newDaemon(ctx, env, logger, loadAssignments(filepath.Join(dir, "ports.json")))
 	srv := &http.Server{Handler: d.handler(), ReadHeaderTimeout: 10 * time.Second}
+	closed := make(chan struct{})
 	go func() {
+		defer close(closed)
 		select {
 		case <-d.quit:
+			// Told to stop by a request (the last forward stopped): let that
+			// request's answer out before the server goes.
+			sctx, cancel := context.WithTimeout(ctx, daemonShutdownGrace)
+			defer cancel()
+			_ = srv.Shutdown(sctx)
 		case <-ctx.Done():
 		}
 		_ = srv.Close()
 	}()
 	logger.Printf("forward daemon %s started (pid %d)", env.Version, os.Getpid())
 	err = srv.Serve(ln)
+	// Serve returns as soon as a shutdown begins, the socket already gone
+	// with its listener: wait for the answers still being written before
+	// the process can exit. Removing the socket path again here would
+	// remove the one a daemon started meanwhile listens on.
+	if errors.Is(err, http.ErrServerClosed) {
+		<-closed
+	}
 	d.closeAll()
-	_ = os.Remove(sock)
 	logger.Printf("forward daemon stopped")
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
