@@ -6,9 +6,12 @@ package httpapi
 // all bytes stream through ONE helper with the trust-class headers.
 
 import (
+	"archive/zip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"path/filepath"
@@ -169,31 +172,138 @@ func (s *Server) getSnapshot(w http.ResponseWriter, r *http.Request) {
 // answers, PingID says which) and its snapshots (outputs + logs; ping files
 // render on their ping).
 func (s *Server) getRunFiles(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	attachments := []filestore.Attachment{}
-	snapshots := []filestore.Snapshot{}
+	files, err := s.runFiles(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, files)
+}
+
+// runFiles is what a run's Record lists.
+func (s *Server) runFiles(ctx context.Context, runID string) (RunFiles, error) {
+	out := RunFiles{Attachments: []filestore.Attachment{}, Snapshots: []filestore.Snapshot{}}
 	if s.Attachments != nil {
-		atts, err := s.Attachments.ForRun(r.Context(), id)
+		atts, err := s.Attachments.ForRun(ctx, runID)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
+			return RunFiles{}, err
 		}
-		attachments = append(attachments, atts...)
+		out.Attachments = append(out.Attachments, atts...)
 	}
 	if s.Snapshots != nil {
-		snaps, err := s.Snapshots.ForRun(r.Context(), id)
+		snaps, err := s.Snapshots.ForRun(ctx, runID)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
+			return RunFiles{}, err
 		}
 		for _, sn := range snaps {
 			if sn.Kind == filestore.KindPingFile {
 				continue
 			}
-			snapshots = append(snapshots, sn)
+			out.Snapshots = append(out.Snapshots, sn)
 		}
 	}
-	writeJSON(w, http.StatusOK, RunFiles{Attachments: attachments, Snapshots: snapshots})
+	return out, nil
+}
+
+// getRunFilesZip is the Record's "Download all": every file the run's Record
+// lists, in one zip — outputs/<stage>-<attempt>/, logs/<stage>-<attempt>/
+// and attachments/. A file whose content is gone (expired, lost, failed its
+// integrity check) is left out and named in MISSING.txt, so the archive
+// still comes whole. The bytes go out as stored: a zip is never rendered.
+func (s *Server) getRunFilesZip(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("id")
+	files, err := s.runFiles(r.Context(), runID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+zipEntryName("record-"+runID)+`.zip"`)
+
+	zw := zip.NewWriter(w)
+	names := map[string]bool{}
+	var missing []string
+	add := func(dir, filename string, at time.Time, open func() (io.ReadCloser, error)) error {
+		name := uniqueZipPath(names, dir, zipEntryName(filename))
+		f, err := open()
+		if err != nil {
+			if errors.Is(err, filestore.ErrContentGone) || errors.Is(err, filestore.ErrContentCorrupt) || errors.Is(err, filestore.ErrNotFound) {
+				missing = append(missing, name+": "+err.Error())
+				return nil
+			}
+			return err
+		}
+		defer f.Close()
+		dst, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Deflate, Modified: at})
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(dst, f)
+		return err
+	}
+	for _, sn := range files.Snapshots {
+		dir := "outputs/"
+		if sn.Kind == filestore.KindLog {
+			dir = "logs/"
+		}
+		dir += zipEntryName(sn.StageID)
+		if sn.Attempt > 0 {
+			dir += fmt.Sprintf("-%d", sn.Attempt)
+		}
+		if err := add(dir+"/", sn.Filename, sn.CreatedAt, func() (io.ReadCloser, error) {
+			f, _, err := s.Snapshots.Open(r.Context(), sn.ID)
+			return f, err
+		}); err != nil {
+			slog.Warn("record zip: stopped", "run_id", runID, "err", err)
+			return // the headers are out: a cut-off archive is the signal
+		}
+	}
+	for _, a := range files.Attachments {
+		if err := add("attachments/", a.Filename, a.CreatedAt, func() (io.ReadCloser, error) {
+			f, _, err := s.Attachments.Open(r.Context(), a.ID)
+			return f, err
+		}); err != nil {
+			slog.Warn("record zip: stopped", "run_id", runID, "err", err)
+			return
+		}
+	}
+	if len(missing) > 0 {
+		if dst, err := zw.Create("MISSING.txt"); err == nil {
+			_, _ = io.WriteString(dst, "Listed on the run's Record, but their content is no longer stored:\n\n"+strings.Join(missing, "\n")+"\n")
+		}
+	}
+	if err := zw.Close(); err != nil {
+		slog.Warn("record zip: close", "run_id", runID, "err", err)
+	}
+}
+
+// zipEntryName makes one path segment safe inside an archive: no directory
+// parts, no "..", nothing a header or an unzip tool would trip on.
+func zipEntryName(s string) string {
+	s = strings.NewReplacer("/", "_", "\\", "_", "\"", "_").Replace(strings.TrimSpace(s))
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+	if s == "" || s == "." || s == ".." {
+		return "file"
+	}
+	return s
+}
+
+// uniqueZipPath is dir+name, or "name (2).ext" and on when that is taken.
+func uniqueZipPath(taken map[string]bool, dir, name string) string {
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	p := dir + name
+	for i := 2; taken[p]; i++ {
+		p = fmt.Sprintf("%s%s (%d)%s", dir, base, i, ext)
+	}
+	taken[p] = true
+	return p
 }
 
 // pingView resolves one ping from the durable projection (finished runs
@@ -344,5 +454,10 @@ func (s *Server) fileRoutes() []Route {
 		{Method: "GET", Path: "/api/runs/{id}/files", ID: "getRunFiles", Tag: tagFiles,
 			Summary: "Everything filed under a run: human uploads and engine captures",
 			Handler: s.getRunFiles, Returns: RunFiles{}, Scope: ScopeRun},
+		{Method: "GET", Path: "/api/runs/{id}/files.zip", ID: "downloadRunFiles", Tag: tagFiles,
+			Summary: "Everything on a run's Record, in one zip",
+			Doc: "outputs/<stage>-<attempt>/, logs/<stage>-<attempt>/ and attachments/. A file whose content is no longer stored is " +
+				"left out and named in MISSING.txt.",
+			Handler: s.getRunFilesZip, Produces: "application/zip", Scope: ScopeRun},
 	}
 }

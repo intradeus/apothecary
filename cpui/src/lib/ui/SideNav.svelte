@@ -11,6 +11,8 @@
 		done?: boolean;
 		count?: number;
 		hot?: boolean;
+		/** A second level, shown under the item while it or one of them is active. */
+		children?: SideNavItem[];
 	}
 </script>
 
@@ -18,7 +20,9 @@
 	import { t } from '$lib/i18n/index.svelte';
 	// A vertical section nav (System sections, a stepped form's steps). One
 	// bead springs between items as the selection moves (ui/motion
-	// `indicator`). Below 1000px it becomes a horizontal scroller.
+	// `indicator`). An item with children opens them under it while it or a
+	// child is active; they are rows of the same list, so the bead reaches
+	// them too. Below 1000px it becomes a horizontal scroller.
 	import { indicator } from './motion';
 	import { keepInView } from './inview';
 	import { I } from '$lib/design/icons';
@@ -42,37 +46,51 @@
 	} = $props();
 </script>
 
+{#snippet row(it: SideNavItem, child: boolean, open: boolean)}
+	{#snippet inner()}
+		{#if it.step !== undefined}
+			<span class="n" class:done={it.done}>{it.done ? I.ok : it.step}</span>
+		{:else if it.icon}
+			<span class="ic">{it.icon}</span>
+		{/if}
+		<span class="col">
+			<span class="truncate">{it.label}</span>
+			{#if it.sub}<span class="sub truncate">{it.sub}</span>{/if}
+		</span>
+		{#if it.count}<span class="count" class:hot={it.hot}>{it.count}</span>{/if}
+	{/snippet}
+	{#if it.href}
+		<a
+			class="rowbtn si"
+			class:on={it.id === active}
+			class:open
+			class:child
+			href={it.href}
+			aria-current={it.id === active ? 'page' : undefined}>{@render inner()}</a
+		>
+	{:else}
+		<button
+			type="button"
+			class="rowbtn si"
+			class:on={it.id === active}
+			class:open
+			class:child
+			aria-current={it.id === active ? 'step' : undefined}
+			onclick={() => onselect?.(it.id)}>{@render inner()}</button
+		>
+	{/if}
+{/snippet}
+
 <nav class="sn glass" class:fill aria-label={label ?? t('ui.sidenav.label')}>
 	{#if title}<div class="t">{title}</div>{/if}
 	<div class="list" use:indicator use:keepInView>
 		{#each items as it (it.id)}
-			{#snippet inner()}
-				{#if it.step !== undefined}
-					<span class="n" class:done={it.done}>{it.done ? I.ok : it.step}</span>
-				{:else if it.icon}
-					<span class="ic">{it.icon}</span>
-				{/if}
-				<span class="col">
-					<span class="truncate">{it.label}</span>
-					{#if it.sub}<span class="sub truncate">{it.sub}</span>{/if}
-				</span>
-				{#if it.count}<span class="count" class:hot={it.hot}>{it.count}</span>{/if}
-			{/snippet}
-			{#if it.href}
-				<a
-					class="rowbtn si"
-					class:on={it.id === active}
-					href={it.href}
-					aria-current={it.id === active ? 'page' : undefined}>{@render inner()}</a
-				>
-			{:else}
-				<button
-					type="button"
-					class="rowbtn si"
-					class:on={it.id === active}
-					aria-current={it.id === active ? 'step' : undefined}
-					onclick={() => onselect?.(it.id)}>{@render inner()}</button
-				>
+			{@const open = !!it.children?.some((c) => c.id === active)}
+			{@render row(it, false, open)}
+			{#if open || (it.id === active && it.children)}
+				{#each it.children ?? [] as c (c.id)}
+					{@render row(c, true, false)}
+				{/each}
 			{/if}
 		{/each}
 	</div>
@@ -117,7 +135,20 @@
 		font-size: var(--fs-ui);
 		font-weight: 500;
 	}
-	.si.on {
+	.si.on,
+	.si.open {
+		font-weight: 600;
+	}
+	/* A second-level row: under its parent's label, with a guide line. */
+	.si.child {
+		width: auto;
+		margin-left: 17px;
+		padding-left: 12px;
+		border-left: 1px solid var(--line);
+		border-radius: 0 var(--r-row) var(--r-row) 0;
+		font-weight: 500;
+	}
+	.si.child.on {
 		font-weight: 600;
 	}
 	.ic {
@@ -187,6 +218,10 @@
 		.si {
 			flex: none;
 			width: auto;
+		}
+		.si.child {
+			margin-left: 0;
+			border-left: 0;
 		}
 		.sub {
 			display: none;

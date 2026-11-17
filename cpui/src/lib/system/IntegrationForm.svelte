@@ -8,7 +8,7 @@
 	import { errorMessage } from '$lib/core/errors';
 	import { linkify } from '$lib/core/links';
 	import { onMount, untrack } from 'svelte';
-	import { api } from '$lib/api';
+	import { api, type IntegrationPatch } from '$lib/api';
 	import type { Credential, Integration, KindDescriptor, KindField } from '$lib/domain';
 	import Checkbox from '$lib/ui/Checkbox.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
@@ -19,12 +19,16 @@
 		descriptor,
 		existing = null,
 		onsaved,
-		oncancel
+		oncancel,
+		save
 	}: {
 		descriptor: KindDescriptor;
 		existing?: Integration | null;
 		onsaved: (saved: Integration) => void;
 		oncancel?: () => void;
+		/** Where an edit is saved, when not the person's integration routes
+		 *  (the instance's provisioner). */
+		save?: (patch: IntegrationPatch) => Promise<Integration>;
 	} = $props();
 
 	// Read once: the form mounts fresh per integration and kind.
@@ -111,8 +115,9 @@
 			for (const [k, v] of Object.entries(secretValues)) {
 				if (v.trim() !== '') secrets[k] = v;
 			}
+			const patch = { name: name.trim(), config, secrets };
 			const saved = existing
-				? await api.integrations.update(existing.id, { name: name.trim(), config, secrets })
+				? await (save ? save(patch) : api.integrations.update(existing.id, patch))
 				: await api.integrations.create({
 						port: descriptor.port,
 						kind: descriptor.kind,

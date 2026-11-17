@@ -1,7 +1,7 @@
 <script lang="ts">
-	// Limits (DESIGN 7.10): the instance's concurrency and environment caps.
-	// One setting for everyone — they protect the machine — stored by the
-	// engine and changed here by an admin; everyone else reads them.
+	// Limits (System → Provisioner): the instance's concurrency and environment
+	// caps. One setting for everyone — they protect the machine — stored by
+	// the engine and changed here by an admin; everyone else reads them.
 	import { errorMessage } from '$lib/core/errors';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { session } from '$lib/app/session.svelte';
@@ -94,7 +94,7 @@
 	{/if}
 {/snippet}
 
-<form class="lim" onsubmit={(e) => e.preventDefault()}>
+<form id="limits" class="lim" onsubmit={(e) => e.preventDefault()}>
 	<section class="glass pane">
 		<div class="pane-head">
 			<h2>{t('page.limits.head')}</h2>

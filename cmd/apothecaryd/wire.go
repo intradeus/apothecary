@@ -120,6 +120,21 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	conf := confstore.New(store, key)
 	conf.KindValid = reg.Valid
 
+	// The instance's one provisioner, every field empty: a deployment that
+	// knows its sandbox host (APOTHECARY_K8S_*) fills them, so a fresh
+	// install runs a workspace without a form; an admin tunes it in System →
+	// Provisioner. -dev without a cluster builds on the fake one.
+	switch {
+	case boot.K8s.Namespace != "":
+		if _, err := conf.EnsureProvisioner(ctx, "kubernetes", "Kubernetes"); err != nil {
+			return nil, nil, fmt.Errorf("instance provisioner: %w", err)
+		}
+	case dev:
+		if _, err := conf.EnsureProvisioner(ctx, "fake", "dev-workspaces"); err != nil {
+			return nil, nil, fmt.Errorf("instance provisioner: %w", err)
+		}
+	}
+
 	// No built-in flows: flows are user-defined, created in the UI (Lu,
 	// post-M8). Only -dev seeds one, for its fake sandbox.
 	if dev {
@@ -414,15 +429,6 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		log.Info("ssh door listening", "listen", boot.SSHListen, "advertise", advertise, "fingerprint", door.Fingerprint())
 	}
 	notes.SSHDoor(ctx, nil)
-	if boot.K8s.Namespace != "" {
-		// Every account gets a Kubernetes provisioner whose fields are all
-		// empty — the deployment's APOTHECARY_K8S_* settings fill them — so
-		// a fresh install runs a workspace without a form first.
-		api.NewAccount = func(ctx context.Context, userID string) error {
-			_, err := conf.EnsureProvisioner(ctx, userID, "kubernetes", "Kubernetes")
-			return err
-		}
-	}
 	api.Limits = limits
 	api.Conf = conf
 	api.Kinds = reg

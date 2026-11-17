@@ -28,7 +28,7 @@ func (x *confEnv) makeProject(t *testing.T, name string, hdr map[string]string) 
 		return decode[integrationJSON](t, data).ID
 	}
 	res, data := x.do(t, "POST", "/api/projects", projectBody{
-		Name: name, RepoAccountID: mk("repository"), ProvisionerID: mk("provisioner"), HarnessIDs: []string{mk("harness")},
+		Name: name, RepoAccountID: mk("repository"), HarnessIDs: []string{mk("harness")},
 		Repo:        confstore.RepoConfig{URL: "https://git.local/" + name + ".git", Locator: "1", DefaultBranch: "main"},
 		DefaultFlow: "builder",
 	}, hdr)
@@ -52,10 +52,17 @@ func TestProjectCannotBorrowAnIntegration(t *testing.T) {
 		_, data := x.do(t, "POST", "/api/integrations", map[string]any{"port": port, "kind": "fake", "name": "b-" + port}, bob)
 		return decode[integrationJSON](t, data).ID
 	}
-	repo, prov, harness := mk("repository"), mk("provisioner"), mk("harness")
+	repo, harness := mk("repository"), mk("harness")
+	// A provisioner of one's own is made by the engine only (the API takes
+	// the instance's), so the one bob may not borrow is planted.
+	mine, err := x.conf.CreateIntegration(t.Context(), confstore.Integration{UserID: p.UserID, Port: confstore.PortProvisioner, Kind: "fake", Name: "mine"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prov := p.ProvisionerID // the instance's: everyone builds on it
 	for name, body := range map[string]projectBody{
 		"repo_account_id": {RepoAccountID: p.RepoAccountID, ProvisionerID: prov, HarnessIDs: []string{harness}},
-		"provisioner_id":  {RepoAccountID: repo, ProvisionerID: p.ProvisionerID, HarnessIDs: []string{harness}},
+		"provisioner_id":  {RepoAccountID: repo, ProvisionerID: mine.ID, HarnessIDs: []string{harness}},
 		"harness_ids":     {RepoAccountID: repo, ProvisionerID: prov, HarnessIDs: p.HarnessIDs},
 	} {
 		body.Name, body.DefaultFlow = "bobs", "builder"

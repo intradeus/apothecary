@@ -27,11 +27,7 @@
 
 <div class="wh">
 	<span class="whl">{t('shell.sidebar.workshops')}</span>
-	<span class="legend">
-		<span title={t('shell.sidebar.liveRuns')}>{I.runs}</span>
-		<span title={t('shell.sidebar.pendingPings')}>{I.inbox}</span>
-		<a class="plus" href={to.newWorkshop()} title={t('shell.sidebar.newWorkshop')}>{I.add}</a>
-	</span>
+	<a class="plus" href={to.newWorkshop()} title={t('shell.sidebar.newWorkshop')}>{I.add}</a>
 </div>
 <div class="wl on-rail" use:indicator={{ selector: '.wi.on' }}>
 	{#each workshops as p (p.id)}
@@ -106,7 +102,7 @@
 		color: var(--text-faint);
 		display: flex;
 		justify-content: space-between;
-		align-items: baseline;
+		align-items: center;
 	}
 	.whl {
 		font-family: var(--font-display);
@@ -114,14 +110,9 @@
 		font-size: var(--fs-aside);
 		color: var(--text-muted);
 	}
-	.legend {
-		display: flex;
-		gap: 10px;
-		align-items: center;
-	}
 	.plus {
 		color: var(--text-muted);
-		font-size: var(--fs-aside);
+		font-size: var(--fs-section);
 		line-height: 1;
 	}
 	.plus:hover {

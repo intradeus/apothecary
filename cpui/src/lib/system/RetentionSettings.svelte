@@ -1,10 +1,12 @@
 <script lang="ts">
-	// Reaper (DESIGN 7.10): when finished runs give their workspaces back.
+	// Reaper and storage (System → Provisioner): when finished runs give their
+	// workspaces back, and how long uploads and snapshot content are kept.
+	// One's own settings, one draft, one save bar.
 	import { t } from '$lib/i18n/index.svelte';
-	import SettingsFrame from '$lib/system/SettingsFrame.svelte';
 	import SettingRow from '$lib/ui/SettingRow.svelte';
 	import DurationInput from '$lib/ui/DurationInput.svelte';
 	import { durWords } from '$lib/ui/duration';
+	import SettingsFrame from './SettingsFrame.svelte';
 </script>
 
 <SettingsFrame>
@@ -40,6 +42,39 @@
 					bind:value={s.destroyAbandoned}
 					allowNever
 					disabled
+				/>
+			</SettingRow>
+		</section>
+		<section class="glass pane">
+			<div class="pane-head">
+				<h2>{t('page.storage.head')}</h2>
+				<span class="muted small">{t('page.storage.headSub')}</span>
+			</div>
+			<SettingRow
+				label={t('page.storage.orphansLabel')}
+				forId="s-orphans"
+				help={t('page.storage.orphansHelp')}
+			>
+				{#snippet note()}{t('page.reaper.currently', {
+						dur: durWords(s.orphanUploadsAfter)
+					})}{/snippet}
+				<DurationInput
+					id="s-orphans"
+					label={t('page.storage.orphansLabel')}
+					bind:value={s.orphanUploadsAfter}
+				/>
+			</SettingRow>
+			<SettingRow
+				label={t('page.storage.snapsLabel')}
+				forId="s-snaps"
+				help={t('page.storage.snapsHelp')}
+			>
+				{#snippet note()}{t('page.reaper.currently', { dur: durWords(s.snapshotsAfter) })}{/snippet}
+				<DurationInput
+					id="s-snaps"
+					label={t('page.storage.snapsLabel')}
+					bind:value={s.snapshotsAfter}
+					allowNever
 				/>
 			</SettingRow>
 		</section>

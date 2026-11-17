@@ -267,14 +267,15 @@ describe('DocReview', () => {
 			await waitFor(() => expect(screen.getByRole('dialog')).toHaveTextContent('L3–3'));
 		});
 
-		it('stays open when the page is clicked', async () => {
+		it('closes at once when the page outside it is clicked', async () => {
 			await mount();
 			await drag(words(RETRY), 0, words(RETRY), 7);
-			await userEvent.type(await commentBox(), 'keep me');
+			await userEvent.type(await commentBox(), 'gone');
 
 			await userEvent.click(screen.getByText('Review'));
 
-			expect(await commentBox()).toHaveValue('keep me');
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+			expect(screen.queryByRole('listitem')).not.toBeInTheDocument();
 		});
 
 		it('closes on Esc and on Close, keeping nothing', async () => {
@@ -307,7 +308,9 @@ describe('DocReview', () => {
 			await drag(words(RETRY), 0, words(RETRY), 7);
 			await userEvent.type(await commentBox(), 'Still about the plan');
 
-			await userEvent.click(screen.getByRole('button', { name: /cfg\.yaml/ }));
+			// By keyboard: a click outside would close the composer.
+			screen.getByRole('button', { name: /cfg\.yaml/ }).focus();
+			await userEvent.keyboard('{Enter}');
 			await userEvent.click(button('Add'));
 			await userEvent.click(approve());
 
@@ -357,7 +360,9 @@ describe('DocReview', () => {
 			await drag(words(RETRY), 0, words(RETRY), 7);
 			await userEvent.type(await commentBox(), 'half a thought');
 
-			await userEvent.click(button(/Comment on this file/));
+			// By keyboard: a click outside would close the composer first.
+			button(/Comment on this file/).focus();
+			await userEvent.keyboard('{Enter}');
 
 			expect(await commentBox()).toHaveValue('half a thought');
 			expect(await commentBox()).toHaveFocus();

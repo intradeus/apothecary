@@ -1,16 +1,19 @@
 package httpapi
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -505,5 +508,108 @@ func TestTicketAttachmentListFailures(t *testing.T) {
 	res, body = x.do(t, "GET", ticketPath(testProject, ticket)+"/attachments", nil, nil)
 	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"attachments":[]`) {
 		t.Errorf("no store = %d %s", res.StatusCode, body)
+	}
+}
+
+// "Download all" on the Record: every file it lists, in one zip laid out by
+// kind and attempt, two of a name kept apart, a lost file named in
+// MISSING.txt rather than failing the archive.
+func TestRunFilesZip(t *testing.T) {
+	dir := t.TempDir()
+	mem := filestore.NewMem()
+	blobs := filestore.NewBlobs(dir)
+	files := &testFiles{att: filestore.NewAttachments(mem, blobs, 1<<20, []string{"text/*"}), snaps: filestore.NewSnapshots(mem, blobs, 1<<20), mem: mem}
+	x := newEnvWith(t, engine.Config{}, files.deps)
+	files.serve(x)
+	x.seedLiveRun(t, "r1")
+	ctx := context.Background()
+	id := func(s string) string { return s }
+	capture := func(sn filestore.Snapshot, data string) filestore.Snapshot {
+		t.Helper()
+		sn.RunID = "r1"
+		got, err := files.snaps.Capture(ctx, sn, id, []byte(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	capture(filestore.Snapshot{StageID: "build", Attempt: 1, Kind: filestore.KindLog, Filename: "build.log"}, "first try")
+	capture(filestore.Snapshot{StageID: "build", Attempt: 2, Kind: filestore.KindLog, Filename: "build.log"}, "second try")
+	capture(filestore.Snapshot{StageID: "plan", Attempt: 1, Kind: filestore.KindOutput, Name: "plan", Path: "docs/plan.md", Filename: "plan.md", Mime: "text/markdown"}, "# plan")
+	capture(filestore.Snapshot{StageID: "s", Kind: filestore.KindPingFile, PingID: "p", Path: "a.md"}, "on the ping only")
+	for _, body := range []string{"one", "two"} {
+		a, err := files.att.Save(ctx, testUser, "../notes.txt", "text/plain", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := files.att.ClaimForRun(ctx, testUser, []string{a.ID}, "r1", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lost, err := files.att.Save(ctx, testUser, "lost.txt", "text/plain", strings.NewReader("gone soon"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := files.att.ClaimForRun(ctx, testUser, []string{lost.ID}, "r1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "blobs", lost.SHA256[:2], lost.SHA256)); err != nil {
+		t.Fatal(err)
+	}
+
+	res, body := x.do(t, "GET", "/api/runs/r1/files.zip", nil, nil)
+	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "application/zip" ||
+		res.Header.Get("Content-Disposition") != `attachment; filename="record-r1.zip"` {
+		t.Fatalf("zip = %d %v", res.StatusCode, res.Header)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(rc)
+		rc.Close()
+		got[f.Name] = string(data)
+	}
+	// Each attempt's log apart, though they share a name.
+	if got["logs/build-1/build.log"] != "first try" || got["logs/build-2/build.log"] != "second try" {
+		t.Errorf("logs: entries %v", slices.Sorted(maps.Keys(got)))
+	}
+	if got["outputs/plan-1/plan.md"] != "# plan" {
+		t.Errorf("output = %q (all: %v)", got["outputs/plan-1/plan.md"], slices.Sorted(maps.Keys(got)))
+	}
+	// A second of a name is numbered, not overwritten.
+	if got["attachments/notes.txt"] != "one" || got["attachments/notes (2).txt"] != "two" {
+		t.Errorf("attachments = %v", slices.Sorted(maps.Keys(got)))
+	}
+	if _, ok := got["attachments/lost.txt"]; ok || !strings.Contains(got["MISSING.txt"], "attachments/lost.txt") {
+		t.Errorf("missing = %q, entries %v", got["MISSING.txt"], slices.Sorted(maps.Keys(got)))
+	}
+	for name := range got {
+		if strings.Contains(name, "a.md") {
+			t.Errorf("a ping's file is on the ping, not the record: %s", name)
+		}
+	}
+
+	// A listing outage is an error, before any byte of an archive.
+	x.srv.Snapshots = filestore.NewSnapshots(failingFileDB{files.mem, errors.New("db down")}, blobs, 64)
+	if res, body := x.do(t, "GET", "/api/runs/r1/files.zip", nil, nil); res.StatusCode != http.StatusInternalServerError {
+		t.Errorf("outage = %d %s", res.StatusCode, body)
+	}
+}
+
+func TestZipEntryName(t *testing.T) {
+	for in, want := range map[string]string{
+		"plan.md": "plan.md", "a/b.txt": "a_b.txt", `c:\x.txt`: "c:_x.txt", "..": "file", " ": "file",
+		"bad\"name": "bad_name", "tab\there": "tabhere",
+	} {
+		if got := zipEntryName(in); got != want {
+			t.Errorf("zipEntryName(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

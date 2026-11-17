@@ -1,22 +1,19 @@
 <script lang="ts">
 	// Workshop overview (DESIGN 7.7): the header, then a tab strip — Overview,
-	// Runs, Tickets, Flows, Health — driven by ?tab=.
+	// Runs, Tickets, Merge requests, Flows, Automations, Health, Settings —
+	// driven by ?tab=.
 	import { errorMessage } from '$lib/core/errors';
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api } from '$lib/api';
 	import type { Flow, Integration, Project } from '$lib/domain';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { to, type WorkshopTab } from '$lib/core/urls';
-	import { t, th } from '$lib/i18n/index.svelte';
+	import { t } from '$lib/i18n/index.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import { provideHeaderSlot } from '$lib/ui/headerSlot.svelte';
-	import Popover from '$lib/ui/Popover.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
-	import { confirmDialog } from '$lib/ui/confirm.svelte';
-	import { toast } from '$lib/ui/toast.svelte';
 	import { I } from '$lib/design/icons';
 	import Tabs from '$lib/ui/Tabs.svelte';
 	import WorkshopChips from '$lib/workshop/WorkshopChips.svelte';
@@ -28,6 +25,7 @@
 	import AutomationsTab from '$lib/workshop/AutomationsTab.svelte';
 	import MergeRequestsTab from '$lib/workshop/MergeRequestsTab.svelte';
 	import HealthTab from '$lib/workshop/HealthTab.svelte';
+	import SettingsTab from '$lib/workshop/SettingsTab.svelte';
 
 	const slot = provideHeaderSlot();
 	const projectId = $derived(page.params.workshop!);
@@ -38,7 +36,8 @@
 		'mrs',
 		'flows',
 		'automations',
-		'health'
+		'health',
+		'settings'
 	];
 	const tab = $derived.by<WorkshopTab>(() => {
 		const q = page.url.searchParams.get('tab') as WorkshopTab | null;
@@ -80,9 +79,6 @@
 	const runs = $derived(fleet.runs.filter((r) => r.projectId === projectId));
 	const live = $derived(fleet.liveByProject.get(projectId) ?? []);
 	const pings = $derived(fleet.pingsByProject.get(projectId) ?? 0);
-	/** Runs that still hold the workshop: it can only be deleted once every
-	 *  one of them is archived. */
-	const blocking = $derived(runs.filter((r) => !r.archivedAt));
 	const ownFlows = $derived((flows ?? []).filter((f) => !f.builtin));
 
 	const counts = $derived<Partial<Record<WorkshopTab, number | undefined>>>({
@@ -96,38 +92,9 @@
 		mrs: t('page.workshop.tabMrs'),
 		flows: t('page.workshops.flows'),
 		automations: t('page.workshop.tabAutomations'),
-		health: t('page.workshop.tabHealth')
+		health: t('page.workshop.tabHealth'),
+		settings: t('page.workshop.tabSettings')
 	});
-
-	let delBtn = $state<HTMLButtonElement | null>(null);
-	let blockedOpen = $state(false);
-	let deleting = $state(false);
-
-	async function remove() {
-		if (!project) return;
-		if (blocking.length) {
-			blockedOpen = true;
-			return;
-		}
-		const ok = await confirmDialog({
-			title: t('page.workshop.deleteTitle', { name: project.name }),
-			body: th('page.workshop.deleteBody', { name: project.name }),
-			action: t('page.workshop.deleteAction')
-		});
-		if (!ok) return;
-		deleting = true;
-		try {
-			const gone = project.name;
-			await api.projects.remove(project.id);
-			await fleet.refresh();
-			toast(t('page.workshop.deleted', { name: gone }));
-			await goto(to.workshops());
-		} catch (e) {
-			error = errorMessage(e);
-		} finally {
-			deleting = false;
-		}
-	}
 
 	const repoLabel = (url: string) => url.replace(/^https?:\/\//, '').replace(/\.git$/, '');
 	const repoHref = (url: string) => (/^https?:\/\//.test(url) ? url.replace(/\.git$/, '') : null);
@@ -172,36 +139,10 @@
 	{/snippet}
 	{#snippet actions()}
 		{#if project}
-			<div class="acts">
-				<a class="btn" href={to.workshopSettings(project.id)}>{t('page.workshop.editSetup')}</a>
-				<button
-					bind:this={delBtn}
-					class="btn-danger"
-					aria-busy={deleting}
-					onclick={remove}
-					title={blocking.length
-						? t('page.workshop.notArchived', { count: blocking.length })
-						: t('page.workshop.deleteThis')}>{t('page.ticket.delete')}</button
-				>
-				{@render slot.action?.()}
-			</div>
+			<div class="acts">{@render slot.action?.()}</div>
 		{/if}
 	{/snippet}
 </PageHeader>
-
-<Popover anchor={delBtn} bind:open={blockedOpen} placement="below-end" width={320}>
-	<div class="blocked">
-		<div class="bt">{t('page.workshop.archiveFirst')}</div>
-		<p>
-			{t('page.workshop.blockedText', { count: blocking.length })}
-		</p>
-		<a
-			class="btn btn-sm"
-			href={to.workshop(projectId, 'runs')}
-			onclick={() => (blockedOpen = false)}>{t('page.workshop.showRuns')} {I.forward}</a
-		>
-	</div>
-</Popover>
 
 <div class="wt glass">
 	<Tabs
@@ -238,6 +179,8 @@
 				<AutomationsTab {project} {integrations} />
 			{:else if tab === 'health'}
 				<HealthTab {project} />
+			{:else if tab === 'settings'}
+				<SettingsTab {project} {integrations} {flows} {runs} onsaved={(p) => (project = p)} />
 			{/if}
 		</div>
 	{/if}
@@ -274,22 +217,5 @@
 		display: flex;
 		flex-direction: column;
 		gap: 14px;
-	}
-	.blocked {
-		padding: 8px 10px 10px;
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		align-items: flex-start;
-	}
-	.bt {
-		font-family: var(--font-display);
-		font-size: var(--fs-section);
-	}
-	.blocked p {
-		margin: 0;
-		color: var(--text-muted);
-		font-size: var(--fs-ui);
-		text-wrap: pretty;
 	}
 </style>

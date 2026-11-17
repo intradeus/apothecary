@@ -95,9 +95,8 @@
 	// ---- the composer ---------------------------------------------------------
 
 	// The composer pops up where a selection was released (or by the "Comment
-	// on this file" button). It is deliberately sticky: only Add/Save or Close
-	// dismiss it — clicking away (to scroll, to re-read the file, to pick
-	// another) must never throw away what was typed.
+	// on this file" button) and closes on Add/Save, Close, Esc or a click
+	// outside it — at once, with no transition.
 	interface Composer {
 		path: string;
 		anchor: CommentAnchor | null;
@@ -112,13 +111,6 @@
 		y: number;
 	}
 	let composer = $state<Composer | null>(null);
-	// What the popover shows: the open composer, and the last one while the
-	// popover materialises away (so it never empties mid-exit). The same
-	// object while open, so typing here is typing into the composer.
-	let shownComposer = $state<Composer | null>(null);
-	$effect(() => {
-		if (composer) shownComposer = composer;
-	});
 	let composerEl = $state<HTMLTextAreaElement | null>(null);
 	const holdsWork = (c: Composer | null) =>
 		!!c && (!!c.text.trim() || c.files.length > 0 || c.editing !== null);
@@ -547,18 +539,16 @@
 	>
 {/snippet}
 
-<!-- The floating composer: sticky (only Add/Save, Close or Esc dismiss it, so
-     clicking away to re-read the file never throws away what was typed), and
-     it materialises where the selection was released. -->
+<!-- The floating composer: it appears where the selection was released, and
+     Add/Save, Close, Esc or a click outside it dismiss it, all instantly. -->
 <Popover
 	open={composer !== null}
-	sticky
+	instant
 	width={POPUP_W}
-	at={shownComposer ? { left: shownComposer.x, top: shownComposer.y } : undefined}
+	at={composer ? { left: composer.x, top: composer.y } : undefined}
 	onclose={closeComposer}
 >
-	{#if shownComposer}
-		{@const composer = shownComposer}
+	{#if composer}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="composer"

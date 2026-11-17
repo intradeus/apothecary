@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
 	import { portLabel } from '$lib/core/format';
-	// A workshop's repository / provisioner / harness chips (DESIGN 7.7).
+	// A workshop's repository / harness chips (DESIGN 7.7).
 	import type { Integration, Project } from '$lib/domain';
 
 	let { project, integrations }: { project: Project; integrations: Integration[] | null } =
@@ -14,7 +14,6 @@
 
 	const chips = $derived([
 		{ k: 'repository', ids: [project.repoAccountId] },
-		{ k: 'provisioner', ids: [project.provisionerId] },
 		{ k: 'harness', ids: project.harnessIds ?? [] }
 	]);
 </script>

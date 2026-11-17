@@ -7119,6 +7119,116 @@ export type ListProvidersResponses = {
 
 export type ListProvidersResponse = ListProvidersResponses[keyof ListProvidersResponses];
 
+export type GetProvisionerData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/provisioner';
+};
+
+export type GetProvisionerErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetProvisionerResponses = {
+	/**
+	 * OK
+	 */
+	200: Integration;
+};
+
+export type GetProvisionerResponse = GetProvisionerResponses[keyof GetProvisionerResponses];
+
+export type UpdateProvisionerData = {
+	body: IntegrationUpdate;
+	path?: never;
+	query?: never;
+	url: '/api/provisioner';
+};
+
+export type UpdateProvisionerErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type UpdateProvisionerResponses = {
+	/**
+	 * OK
+	 */
+	200: Integration;
+};
+
+export type UpdateProvisionerResponse =
+	UpdateProvisionerResponses[keyof UpdateProvisionerResponses];
+
+export type TestProvisionerData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/provisioner/test';
+};
+
+export type TestProvisionerErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type TestProvisionerResponses = {
+	/**
+	 * OK
+	 */
+	200: TestResult;
+};
+
+export type TestProvisionerResponse = TestProvisionerResponses[keyof TestProvisionerResponses];
+
 export type ListRunsData = {
 	body?: never;
 	path?: never;
@@ -7923,6 +8033,43 @@ export type GetRunFilesResponses = {
 };
 
 export type GetRunFilesResponse = GetRunFilesResponses[keyof GetRunFilesResponses];
+
+export type DownloadRunFilesData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/files.zip';
+};
+
+export type DownloadRunFilesErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DownloadRunFilesResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type DownloadRunFilesResponse = DownloadRunFilesResponses[keyof DownloadRunFilesResponses];
 
 export type ReleaseRunData = {
 	body?: never;
