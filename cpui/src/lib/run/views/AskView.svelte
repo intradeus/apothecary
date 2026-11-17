@@ -15,6 +15,8 @@
 	import Loading from '$lib/ui/Loading.svelte';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import Select from '$lib/ui/Select.svelte';
+	import AttachFiles from '$lib/artifacts/AttachFiles.svelte';
+	import FileChips, { type StoredFile } from '$lib/artifacts/FileChips.svelte';
 	import type { RunStore } from '../store.svelte';
 
 	let { rs, visible }: { rs: RunStore; visible: boolean } = $props();
@@ -33,6 +35,8 @@
 	let lives = $state<Record<string, { text: string; tool: string }>>({});
 	let scroller = $state<HTMLDivElement | null>(null);
 	let ta = $state<HTMLTextAreaElement | null>(null);
+	let files = $state<File[]>([]);
+	let picker = $state<ReturnType<typeof AttachFiles> | null>(null);
 
 	const sessions = $derived(pane?.sessions ?? []);
 	const current = $derived(sessions.find((s) => s.id === selected) ?? null);
@@ -130,15 +134,30 @@
 
 	async function send() {
 		const text = draft.trim();
-		if (!text || sending || busy || !enabled) return;
+		if ((!text && !files.length) || sending || busy || !enabled) return;
 		sending = true;
 		error = '';
+		// Files go up first; if they cannot, nothing is asked and the draft
+		// and its files stay put.
+		let ids: string[] = [];
+		if (files.length) {
+			try {
+				ids = (await api.files.upload(files)).map((a) => a.id);
+			} catch (e) {
+				error = errorMessage(e);
+				sending = false;
+				return;
+			}
+		}
 		draft = '';
 		try {
 			// No session yet: the first question opens one, and the pane
 			// follows it there.
 			const into = selected;
-			const q = await api.ask.send(rs.runId, text, into || undefined);
+			const q = await api.ask.send(rs.runId, text, into || undefined, ids);
+			files = [];
+			// The question's files join the run's record.
+			if (ids.length) void rs.refreshFiles();
 			if (!session(q.sessionId)) upsert({ id: q.sessionId, busy: true, createdAt: q.at });
 			if (!into) selected = q.sessionId;
 			const s = session(q.sessionId);
@@ -194,6 +213,24 @@
 			void send();
 		}
 	}
+
+	// A pasted screenshot (or copied files) joins the question; pasted text
+	// is left to the browser.
+	function onPaste(e: ClipboardEvent) {
+		const pasted = e.clipboardData?.files;
+		if (!pasted?.length) return;
+		e.preventDefault();
+		picker?.add(pasted);
+	}
+
+	/** A question's files, as far as the run's list knows them yet. */
+	const filesOf = (ids: string[]): StoredFile[] =>
+		ids.flatMap((id) => {
+			const a = rs.attachments.find((x) => x.id === id);
+			return a
+				? [{ id, filename: a.filename, mime: a.mime, size: a.size, kind: 'attachment' }]
+				: [];
+		});
 
 	$effect(() => {
 		void draft;
@@ -266,7 +303,8 @@
 			{#each messages as m (m.seq)}
 				{#if m.role === 'question'}
 					<div class="q">
-						<div class="bubble">{m.text}</div>
+						{#if m.text}<div class="bubble">{m.text}</div>{/if}
+						<FileChips items={filesOf(m.attachmentIds)} />
 						<div class="um">{asker(m)} · {fmtClock(m.at)}</div>
 					</div>
 				{:else}
@@ -302,9 +340,13 @@
 					rows="1"
 					placeholder={t('runview.ask.placeholder')}
 					onkeydown={onKey}
+					onpaste={onPaste}
 					disabled={busy}
 					aria-label={t('runview.ask.title')}></textarea>
 				<div class="foot">
+					<span class="files">
+						<AttachFiles bind:this={picker} bind:files compact label={t('runview.ask.attach')} />
+					</span>
 					<span class="keys"
 						><span><span class="k">↵</span> {t('runview.ask.keySend')}</span>
 						<span><span class="k">⇧↵</span> {t('runview.ask.keyNewline')}</span></span
@@ -315,7 +357,7 @@
 						class="btn-primary btn-md"
 						onclick={send}
 						aria-busy={sending}
-						disabled={sending || busy || !draft.trim()}
+						disabled={sending || busy || (!draft.trim() && !files.length)}
 						>{t(busy ? 'runview.ask.answering' : 'runview.ask.send')}</button
 					>
 				</div>
@@ -426,6 +468,10 @@
 		padding: 6px 6px 6px 14px;
 		font-size: var(--fs-meta);
 		color: var(--text-faint);
+		min-width: 0;
+	}
+	.files {
+		flex: 0 1 auto;
 		min-width: 0;
 	}
 	.keys {

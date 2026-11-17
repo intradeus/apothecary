@@ -1,14 +1,19 @@
 package engine
 
 // Delivery: attachments → workspace (DESIGN-FILES §5.2). The human's files
-// (ticket, run goal, ping answers) are materialized under the git-excluded
-// .apothecary/ tree — kept SEPARATE from the agent's own artifacts/ output so
-// a cleanup step can't delete human inputs. The other direction (workspace →
-// record) lives in capture.go; snapshots have no delivery path, so the old
-// "agent snapshot re-delivered as a human file" bug is untypeable.
+// (ticket, run goal, ping answers, the run's chats) are materialized under
+// the git-excluded .apothecary/ tree — kept SEPARATE from the agent's own
+// artifacts/ output so a cleanup step can't delete human inputs. The other
+// direction (workspace → record) lives in capture.go; snapshots have no
+// delivery path, so the old "agent snapshot re-delivered as a human file"
+// bug is untypeable.
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -30,11 +35,15 @@ const attachmentsDir = ".apothecary/attachments"
 const ticketFolder = "ticket"
 
 // attachmentFolder is the folder an attachment is delivered to, under
-// attachmentsDir: its ping's reference (build#3/decision#1 — an answer's
-// files, its review comments' among them), or ticketFolder for the task's.
-// A ping the run has no reference for keeps its id: never the case for a
-// ping the engine recorded.
+// attachmentsDir: its chat's (takeover/, ask/ — fixed words, no '#', so
+// never a ping's reference), its ping's reference (build#3/decision#1 — an
+// answer's files, its review comments' among them), or ticketFolder for the
+// task's. A ping the run has no reference for keeps its id: never the case
+// for a ping the engine recorded.
 func attachmentFolder(a filestore.Attachment, pingRef func(pingID string) string) string {
+	if a.Chat != "" {
+		return a.Chat
+	}
 	if a.PingID == "" {
 		return ticketFolder
 	}
@@ -49,8 +58,8 @@ func attachmentFolder(a filestore.Attachment, pingRef func(pingID string) string
 // file with the same name in one folder name-2.ext. Names are given in the
 // order the files were created (then by id), so a path never depends on the
 // order a caller passes them in, and a re-delivery after a restart gives the
-// same ones. Every caller passes each folder whole: a ping's files, or all
-// of the task's.
+// same ones. Every caller passes each folder whole: a ping's files, a chat's,
+// or all of the task's.
 func attachmentPaths(atts []filestore.Attachment, pingRef func(pingID string) string) []string {
 	order := make([]int, len(atts))
 	for i := range order {
@@ -90,16 +99,33 @@ func (x *exec) pingRef(pingID string) string {
 // deterministic from the log and the files (attachmentPaths), so they are
 // safe to reference even before the workspace exists (EnvID == ""):
 // ensureEnv re-delivers on the ready/recovery path.
+func (x *exec) deliverAttachments(atts []filestore.Attachment) []string {
+	paths := attachmentPaths(atts, x.pingRef)
+	x.writeAttachments(atts, paths)
+	return paths
+}
+
+// writeAttachments is writeAttachmentFiles into the run's workspace, logged
+// rather than failed: delivery is best-effort, and a restart re-delivers.
+func (x *exec) writeAttachments(atts []filestore.Attachment, paths []string) {
+	if x.e.attachments == nil || x.rs.EnvID == "" || len(atts) == 0 {
+		return
+	}
+	if err := writeAttachmentFiles(x.ctx, x.res.Envp, x.rs.EnvID, x.e.attachments, atts, paths); err != nil {
+		x.e.log.WarnContext(x.bg, "attachment delivery", logs.RunID, x.rs.RunID, "err", err)
+	}
+}
+
+// writeAttachmentFiles writes atts[i] at paths[i] in a workspace: any subset
+// of the run's files, at the paths attachmentPaths gave them over their
+// whole folders. One file that cannot be read or written does not stop the
+// others; the error names each.
 //
 // Files land 0444 read-only: the human's words must not be rewritten in
 // place by a prompt-injected agent that then "quotes" them. Re-delivery
 // removes the old copy first, since the workspace user cannot overwrite a
 // read-only file.
-func (x *exec) deliverAttachments(atts []filestore.Attachment) []string {
-	paths := attachmentPaths(atts, x.pingRef)
-	if x.e.attachments == nil || x.rs.EnvID == "" || len(atts) == 0 {
-		return paths
-	}
+func writeAttachmentFiles(ctx context.Context, envp envport.EnvProvisioner, envID envport.EnvID, store AttachmentStore, atts []filestore.Attachment, paths []string) error {
 	dirs := map[string]struct{}{}
 	for _, p := range paths {
 		dirs[path.Dir(p)] = struct{}{}
@@ -112,25 +138,115 @@ func (x *exec) deliverAttachments(atts []filestore.Attachment) []string {
 	for _, p := range paths {
 		rm = append(rm, shell.Quote(p))
 	}
-	if _, err := x.res.Envp.Exec(x.ctx, x.rs.EnvID, envport.Command{
+	if _, err := envp.Exec(ctx, envID, envport.Command{
 		Script:  "mkdir -p " + strings.Join(mk, " ") + " && rm -f -- " + strings.Join(rm, " "),
 		Dir:     "repo",
 		Timeout: attachmentDeliverTimeout,
 	}); err != nil {
-		x.e.log.WarnContext(x.bg, "attachment mkdir", logs.RunID, x.rs.RunID, "err", err)
-		return paths
+		return fmt.Errorf("attachment mkdir: %w", err)
 	}
+	var errs []error
 	for i, a := range atts {
-		data, _, err := x.e.attachments.Bytes(x.ctx, a.ID)
-		if err != nil {
-			x.e.log.WarnContext(x.bg, "attachment read", logs.RunID, x.rs.RunID, "attachment", a.ID, "err", err)
-			continue
+		data, _, err := store.Bytes(ctx, a.ID)
+		if err == nil {
+			err = envp.WriteFile(ctx, envID, paths[i], data, 0o444)
 		}
-		if err := x.res.Envp.WriteFile(x.ctx, x.rs.EnvID, paths[i], data, 0o444); err != nil {
-			x.e.log.WarnContext(x.bg, "attachment write", logs.RunID, x.rs.RunID, "attachment", a.ID, "err", err)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("attachment %s: %w", a.ID, err))
 		}
 	}
+	return errors.Join(errs...)
+}
+
+// chatFiles resolves ids among a run's files in one of its chats, with the
+// path each is delivered to — computed over the chat's whole folder, so a
+// file keeps the name it had when the agent was first told it. Ids the chat
+// does not hold are left out.
+func chatFiles(ctx context.Context, store AttachmentStore, runID, chat string, ids []string) ([]filestore.Attachment, []string, error) {
+	all, err := store.ForRun(ctx, runID)
+	if err != nil {
+		return nil, nil, err
+	}
+	var folder []filestore.Attachment
+	for _, a := range all {
+		if a.Chat == chat {
+			folder = append(folder, a)
+		}
+	}
+	paths := attachmentPaths(folder, func(string) string { return "" })
+	var atts []filestore.Attachment
+	var out []string
+	for _, id := range ids {
+		i := slices.IndexFunc(folder, func(a filestore.Attachment) bool { return a.ID == id })
+		if i >= 0 && !slices.Contains(out, paths[i]) {
+			atts, out = append(atts, folder[i]), append(out, paths[i])
+		}
+	}
+	return atts, out, nil
+}
+
+// takeOverFiles claims a holder's message's files into the run's take-over
+// chat, all or nothing, and delivers them: the paths the message names.
+// Only a refused claim fails it; delivery is the run loop's best-effort.
+func (x *exec) takeOverFiles(userID string, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if x.e.attachments == nil {
+		return nil, errAttachmentsOff
+	}
+	if err := x.e.attachments.ClaimForChat(x.ctx, userID, ids, x.rs.RunID, filestore.ChatTakeOver); err != nil {
+		return nil, err
+	}
+	atts, paths := x.takeOverAttachments(ids)
+	x.writeAttachments(atts, paths)
+	return paths, nil
+}
+
+// takeOverFilePaths is where a holder's message's files were delivered:
+// they reach the workspace with the run's others (deliverRunAttachments).
+func (x *exec) takeOverFilePaths(ids []string) []string {
+	if len(ids) == 0 || x.e.attachments == nil {
+		return nil
+	}
+	_, paths := x.takeOverAttachments(ids)
 	return paths
+}
+
+func (x *exec) takeOverAttachments(ids []string) ([]filestore.Attachment, []string) {
+	atts, paths, err := chatFiles(x.ctx, x.e.attachments, x.rs.RunID, filestore.ChatTakeOver, ids)
+	if err != nil {
+		x.e.log.WarnContext(x.bg, "take-over files", logs.RunID, x.rs.RunID, "err", err)
+	}
+	return atts, paths
+}
+
+// errAttachmentsOff refuses files where this engine keeps none.
+var errAttachmentsOff = errors.New("attachments are off on this server")
+
+// DeliverAskFiles claims a question's files into the run's Ask chat, all or
+// nothing, and writes them into its workspace (envp, envID: the run's, as
+// the Ask pane resolved them), returning the paths the question names.
+func (e *Engine) DeliverAskFiles(ctx context.Context, envp envport.EnvProvisioner, envID, runID, userID string, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if e.attachments == nil {
+		return nil, errAttachmentsOff
+	}
+	ctx, cancel := context.WithTimeout(ctx, attachmentDeliverTimeout)
+	defer cancel()
+	if err := e.attachments.ClaimForChat(ctx, userID, ids, runID, filestore.ChatAsk); err != nil {
+		return nil, err
+	}
+	atts, paths, err := chatFiles(ctx, e.attachments, runID, filestore.ChatAsk, ids)
+	if err == nil {
+		err = writeAttachmentFiles(ctx, envp, envport.EnvID(envID), e.attachments, atts, paths)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("delivering the files: %w", err)
+	}
+	return paths, nil
 }
 
 // ticketAttachments resolves the parent ticket's attachments by id. They are
@@ -189,11 +305,12 @@ func (x *exec) deliverRunAttachments() {
 
 // goalAttachments returns the files attached to the TASK — the run's own
 // goal files plus the ticket's — for the prompt's ATTACHED FILES section.
-// Answer files are excluded: they arrive with their ping's feedback instead.
+// Answer files are excluded: they arrive with their ping's feedback instead;
+// so are the chats', which arrive with their message.
 func (x *exec) goalAttachments() []filestore.Attachment {
 	var goals []filestore.Attachment
 	for _, a := range x.runAndTicketAttachments() {
-		if a.PingID == "" {
+		if a.PingID == "" && a.Chat == "" {
 			goals = append(goals, a)
 		}
 	}
@@ -247,4 +364,10 @@ func attachedFilesNote(paths []string) string {
 		b.WriteString("- " + p + "\n")
 	}
 	return b.String()
+}
+
+// withFilesNote is a human's words followed by the files they attached; a
+// message of files alone is the note alone.
+func withFilesNote(text string, paths []string) string {
+	return strings.TrimSpace(text + attachedFilesNote(paths))
 }

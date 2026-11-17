@@ -53,11 +53,28 @@ func ownerChecks(ticketID, runID, pingID string) error {
 	return nil
 }
 
+// chatChecks are the attachments table's CHECKs on chat.
+func chatChecks(chat, runID, pingID string) error {
+	if chat == "" {
+		return nil
+	}
+	if !ValidChat(chat) {
+		return fmt.Errorf("attachment: unknown chat %q", chat)
+	}
+	if runID == "" || pingID != "" {
+		return fmt.Errorf("attachment: a chat file is its run's, and no answer's")
+	}
+	return nil
+}
+
 func (m *Mem) InsertAttachment(_ context.Context, a Attachment) error {
-	if err := storable(a.ID, a.UserID, a.TicketID, a.RunID, a.PingID, a.Filename, a.Mime, a.SHA256, a.RemoteID); err != nil {
+	if err := storable(a.ID, a.UserID, a.TicketID, a.RunID, a.PingID, a.Filename, a.Mime, a.SHA256, a.RemoteID, a.Chat); err != nil {
 		return err
 	}
 	if err := ownerChecks(a.TicketID, a.RunID, a.PingID); err != nil {
+		return err
+	}
+	if err := chatChecks(a.Chat, a.RunID, a.PingID); err != nil {
 		return err
 	}
 	m.mu.Lock()
@@ -158,6 +175,30 @@ func (m *Mem) ClaimAttachments(_ context.Context, userID string, ids []string, t
 	for _, id := range matched {
 		a := m.attachments[id]
 		a.TicketID, a.RunID, a.PingID = ticketID, runID, pingID
+		m.attachments[id] = a
+	}
+	return nil
+}
+
+// ClaimAttachmentsForChat mirrors the SQL transaction: every distinct id must
+// be the user's unclaimed upload, or none is claimed.
+func (m *Mem) ClaimAttachmentsForChat(_ context.Context, userID string, ids []string, runID, chat string) error {
+	if runID == "" || !ValidChat(chat) {
+		return fmt.Errorf("claim: a chat file names its run and one of its chats, not %q", chat)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	distinct := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		a, ok := m.attachments[id]
+		if !ok || !a.Unclaimed() || a.UserID != userID {
+			return ErrNotClaimable
+		}
+		distinct[id] = true
+	}
+	for id := range distinct {
+		a := m.attachments[id]
+		a.RunID, a.Chat = runID, chat
 		m.attachments[id] = a
 	}
 	return nil

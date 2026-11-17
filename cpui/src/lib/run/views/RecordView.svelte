@@ -60,7 +60,13 @@
 				kind: 'attachment',
 				snapshot: false,
 				label: t('runview.record.lbl_attachment'),
-				source: a.pingId ? t('runview.record.src_ping_answer') : t('runview.record.src_goal'),
+				source: a.pingId
+					? t('runview.record.src_ping_answer')
+					: a.chat === 'takeover'
+						? t('runview.record.src_takeover')
+						: a.chat === 'ask'
+							? t('runview.record.src_ask')
+							: t('runview.record.src_goal'),
 				href: a.pingId ? to.ping(a.pingId) : undefined,
 				size: a.size,
 				at: a.createdAt

@@ -103,6 +103,12 @@
 		refused = no;
 	}
 
+	/** Offer files from elsewhere (a composer's paste): the same checks as a
+	 *  drop or a pick. */
+	export function add(list: File[] | FileList) {
+		take(list);
+	}
+
 	function onPick(e: Event) {
 		take((e.target as HTMLInputElement).files);
 		if (inputEl) inputEl.value = ''; // allow re-picking the same file

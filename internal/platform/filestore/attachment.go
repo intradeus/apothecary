@@ -2,6 +2,8 @@ package filestore
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"time"
@@ -29,7 +31,25 @@ type Attachment struct {
 	// upload): the ticket sync copies only ids its ticket does not hold yet.
 	// Unique per ticket once claimed.
 	RemoteID string `json:"remote_id,omitempty"`
+	// Chat is the run's chat a file came in on (ChatTakeOver, ChatAsk), ''
+	// for every other: a chat file is the run's, but neither a goal file nor
+	// an answer's.
+	Chat string `json:"chat,omitempty"`
 }
+
+// The run's chats a file can come in on.
+const (
+	ChatTakeOver = "takeover"
+	ChatAsk      = "ask"
+)
+
+// ErrNotClaimable refuses a chat claim naming an id that is not one of the
+// sender's own unclaimed uploads (someone else's, already claimed, or none).
+// Its words never say "not found": the API reads that as a missing run.
+var ErrNotClaimable = errors.New("an attachment is not one of your unsent uploads")
+
+// ValidChat reports a chat a file can come in on.
+func ValidChat(chat string) bool { return chat == ChatTakeOver || chat == ChatAsk }
 
 // Unclaimed reports a fresh upload no owner has claimed yet.
 func (a Attachment) Unclaimed() bool { return a.TicketID == "" && a.RunID == "" }
@@ -45,6 +65,11 @@ type AttachmentDB interface {
 	// rows. Exactly one of ticketID / runID must be non-empty (pingID rides
 	// runID).
 	ClaimAttachments(ctx context.Context, userID string, ids []string, ticketID, runID, pingID string) error
+	// ClaimAttachmentsForChat binds userID's uploads to a run's chat
+	// (ChatTakeOver, ChatAsk), all or nothing: when any id is not one of
+	// the user's unclaimed uploads, none is claimed (ErrNotClaimable). An
+	// unknown chat or no run is refused whatever the ids match.
+	ClaimAttachmentsForChat(ctx context.Context, userID string, ids []string, runID, chat string) error
 	AttachmentsForTicket(ctx context.Context, ticketID string) ([]Attachment, error)
 	// AdoptRemoteAttachment gives a ticket's attachment that has no remote
 	// id yet the tracker's id for it (a file imported before remote ids were
@@ -150,6 +175,19 @@ func (s *Attachments) ClaimForRun(ctx context.Context, userID string, ids []stri
 		return nil
 	}
 	return s.db.ClaimAttachments(ctx, userID, ids, "", runID, pingID)
+}
+
+// ClaimForChat binds userID's uploads to a run's chat, all or nothing: a
+// message refused here records nothing, and its files stay unclaimed (the
+// orphan sweep's). At most MaxUploadFiles, as one upload request.
+func (s *Attachments) ClaimForChat(ctx context.Context, userID string, ids []string, runID, chat string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if len(ids) > MaxUploadFiles {
+		return fmt.Errorf("a message carries at most %d files", MaxUploadFiles)
+	}
+	return s.db.ClaimAttachmentsForChat(ctx, userID, ids, runID, chat)
 }
 
 func (s *Attachments) Get(ctx context.Context, id string) (Attachment, error) {

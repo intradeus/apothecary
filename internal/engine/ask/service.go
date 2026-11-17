@@ -33,10 +33,13 @@ const (
 )
 
 // Engine is what the pane reads from the engine: the flow a run is pinned
-// to, and the run's bearer token (scrubbed from answers like any secret).
+// to, and the run's bearer token (scrubbed from answers like any secret) —
+// and the one thing it has the engine write: a question's files, delivered
+// into the run's workspace (envp, envID) as the asker's, all or nothing.
 type Engine interface {
 	RunFlow(ctx context.Context, v run.View) (*flow.Flow, error)
 	RunToken(runID string) string
+	DeliverAskFiles(ctx context.Context, envp envport.EnvProvisioner, envID, runID, userID string, ids []string) ([]string, error)
 }
 
 // Service runs the Ask panes of every run.
@@ -471,10 +474,12 @@ func (svc *Service) record(ctx context.Context, a *askRun, m Message) (Message, 
 // Ask records a question in a thread (threadID; empty: the run's latest,
 // opened when there is none) and starts its answer; the question is
 // returned at once and the answer arrives on the stream (and in the next
-// State).
-func (svc *Service) Ask(ctx context.Context, runID, threadID, userID, text string) (Message, error) {
+// State). attachmentIDs are the asker's uploads, delivered into the
+// workspace before anything is recorded: a question whose files cannot be
+// is refused. A question may be files alone.
+func (svc *Service) Ask(ctx context.Context, runID, threadID, userID, text string, attachmentIDs []string) (Message, error) {
 	text = strings.TrimSpace(text)
-	if text == "" {
+	if text == "" && len(attachmentIDs) == 0 {
 		return Message{}, errors.New("the question is empty")
 	}
 	if len(text) > maxMessageLen {
@@ -503,19 +508,42 @@ func (svc *Service) Ask(ctx context.Context, runID, threadID, userID, text strin
 	}
 	t.busy = true
 	svc.mu.Unlock()
-	model := askModel(th, s.fl, svc.models(ctx, s))
-	q, err := svc.record(ctx, a, Message{RunID: runID, ThreadID: th.ID, ID: svc.newID(), Role: RoleQuestion, Text: event.CleanText(text), UserID: userID})
-	if err != nil {
+	free := func() {
 		svc.mu.Lock()
 		t.busy = false
 		svc.mu.Unlock()
 		s.release()
+	}
+	model := askModel(th, s.fl, svc.models(ctx, s))
+	paths, err := svc.Engine.DeliverAskFiles(ctx, s.res.Envp, s.v.EnvID, runID, userID, attachmentIDs)
+	if err != nil {
+		free()
+		return Message{}, err
+	}
+	q, err := svc.record(ctx, a, Message{RunID: runID, ThreadID: th.ID, ID: svc.newID(), Role: RoleQuestion, Text: event.CleanText(text), UserID: userID, AttachmentIDs: attachmentIDs})
+	if err != nil {
+		free()
 		return Message{}, err
 	}
 	svc.hub.publish(runID, AskFrame{Kind: "message", ThreadID: th.ID, Message: &q})
 	svc.hub.publish(runID, AskFrame{Kind: "state", ThreadID: th.ID, Busy: true, Model: model})
-	go svc.answer(s, a, t, th, model, text)
+	go svc.answer(s, a, t, th, model, withFilesNote(text, paths))
 	return q, nil
+}
+
+// withFilesNote is the question as the session reads it: the asker's words,
+// then where their files are. Kept identical to the engine's note on a
+// take-over message's files.
+func withFilesNote(text string, paths []string) string {
+	if len(paths) == 0 {
+		return text
+	}
+	var b strings.Builder
+	b.WriteString(text + "\n\nThe human attached these files — read them with your tools:\n")
+	for _, p := range paths {
+		b.WriteString("- " + p + "\n")
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // answer runs one question through its thread's session — opened on the

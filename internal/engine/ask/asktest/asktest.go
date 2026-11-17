@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -148,7 +149,7 @@ func runMessages(t *testing.T, open func(t *testing.T) ask.Store) {
 		ctx := context.Background()
 		at := time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
 		in := ask.Message{RunID: "r1", ThreadID: "t1", ID: "m1", Role: ask.RoleAnswer, Text: "because é\n\"quoted\"", UserID: "u1",
-			Model: "fake/one", CostUSD: 0.25, Turns: 3, Error: "partial", At: at}
+			Model: "fake/one", CostUSD: 0.25, Turns: 3, Error: "partial", At: at, AttachmentIDs: []string{"a2", "a1"}}
 		out, err := s.AppendAskMessage(ctx, in)
 		if err != nil {
 			t.Fatal(err)
@@ -175,7 +176,7 @@ func runMessages(t *testing.T, open func(t *testing.T) ask.Store) {
 			t.Fatalf("messages = %+v, %v", got, err)
 		}
 		m := got[0]
-		if m.ID != "" || m.Text != "" || m.UserID != "" || m.Model != "" || m.CostUSD != 0 || m.Turns != 0 || m.Error != "" {
+		if m.ID != "" || m.Text != "" || m.UserID != "" || m.Model != "" || m.CostUSD != 0 || m.Turns != 0 || m.Error != "" || m.AttachmentIDs != nil {
 			t.Errorf("row = %+v", m)
 		}
 	})
@@ -305,6 +306,7 @@ func runRefusals(t *testing.T, open func(t *testing.T) ask.Store) {
 			"NUL in the id":        func(m *ask.Message) { m.ID = "a\x00b" },
 			"NUL in the user":      func(m *ask.Message) { m.UserID = "a\x00b" },
 			"NUL in the model":     func(m *ask.Message) { m.Model = "a\x00b" },
+			"NUL in a file":        func(m *ask.Message) { m.AttachmentIDs = []string{"a1", "a\x00b"} },
 			"invalid UTF-8 text":   func(m *ask.Message) { m.Text = "a\xffb" },
 			"invalid UTF-8 error":  func(m *ask.Message) { m.Error = "a\xffb" },
 			"too many turns":       func(m *ask.Message) { m.Turns = math.MaxInt32 + 1 },
@@ -496,8 +498,12 @@ func same(a, b ask.Message) bool {
 	if !a.At.Equal(b.At) {
 		return false
 	}
+	if !slices.Equal(a.AttachmentIDs, b.AttachmentIDs) {
+		return false
+	}
 	a.At, b.At = time.Time{}, time.Time{}
-	return a == b
+	a.AttachmentIDs, b.AttachmentIDs = nil, nil
+	return reflect.DeepEqual(a, b)
 }
 
 func ids(ms []ask.Message) []string {

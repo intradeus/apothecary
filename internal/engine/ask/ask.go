@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -50,6 +51,8 @@ type Message struct {
 	Turns   int       `json:"turns,omitempty"`
 	Error   string    `json:"error,omitempty"` // an answer that failed
 	At      time.Time `json:"at"`
+	// AttachmentIDs are the files a question carried (delivered under ask/).
+	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 }
 
 // Store keeps threads and messages.
@@ -135,7 +138,7 @@ func (s *MemStore) AppendAskMessage(ctx context.Context, m Message) (Message, er
 	if m.At.IsZero() {
 		m.At = time.Now().UTC()
 	}
-	if err := usable(ctx, m.RunID, m.ThreadID, m.ID, m.Role, m.Text, m.UserID, m.Model, m.Error); err != nil {
+	if err := usable(ctx, append([]string{m.RunID, m.ThreadID, m.ID, m.Role, m.Text, m.UserID, m.Model, m.Error}, m.AttachmentIDs...)...); err != nil {
 		return m, err
 	}
 	if m.ThreadID == "" {
@@ -152,6 +155,10 @@ func (s *MemStore) AppendAskMessage(ctx context.Context, m Message) (Message, er
 	m.Seq = int64(len(s.messages[m.RunID])) + 1
 	row := m
 	row.At = stored(m.At)
+	row.AttachmentIDs = nil // none reads back as none, like an empty array
+	if len(m.AttachmentIDs) > 0 {
+		row.AttachmentIDs = slices.Clone(m.AttachmentIDs)
+	}
 	s.messages[m.RunID] = append(s.messages[m.RunID], row)
 	return m, nil
 }

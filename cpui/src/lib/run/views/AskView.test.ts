@@ -1,11 +1,21 @@
-import { fireEvent, render, screen, within } from '@testing-library/svelte';
+import { createEvent, fireEvent, render, screen, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import type { AskFrame, AskMessage, AskState } from '$lib/domain';
 import { fmtClock } from '$lib/core/format';
-import { AT, anAskMessage, anAskSession, anAskState, aViewStore } from '$test/fixtures/run-views';
+import {
+	AT,
+	anAskMessage,
+	anAskSession,
+	anAskState,
+	anAttachment,
+	aViewStore
+} from '$test/fixtures/run-views';
+import { settled } from '$test/fixtures/run-components';
+import { aFile } from '$test/fixtures/run.svelte';
+import type { RunStore } from '$lib/run/store.svelte';
 import { deferred } from '$test/helpers';
 import AskView from './AskView.svelte';
 
@@ -17,7 +27,8 @@ vi.mock('$lib/api', () => ({
 			send: vi.fn(),
 			setModel: vi.fn(),
 			newSession: vi.fn()
-		}
+		},
+		files: { upload: vi.fn(), limits: vi.fn(), attachmentUrl: vi.fn() }
 	}
 }));
 
@@ -29,11 +40,11 @@ const newBtn = () => screen.getByRole('button', { name: 'New session' });
 const bubble = (text: string) => screen.queryByText(text, { selector: '.bubble' });
 
 /** Opens the pane on a state and hands back the stream's two callbacks. */
-async function open(state: Partial<AskState> = {}) {
+async function open(state: Partial<AskState> = {}, rs: RunStore = aViewStore()) {
 	const stop = vi.fn();
 	vi.mocked(api.ask.state).mockResolvedValue(anAskState(state));
 	vi.mocked(api.ask.stream).mockReturnValue(stop);
-	const view = render(AskView, { rs: aViewStore(), visible: true });
+	const view = render(AskView, { rs, visible: true });
 	await screen.findByText('Ask', { selector: '.ttl' });
 	const [, onFrame, onReconnect] = vi.mocked(api.ask.stream).mock.calls[0];
 	const frame = async (f: AskFrame) => {
@@ -64,6 +75,13 @@ const twoSessions = (): Partial<AskState> => ({
 describe('AskView', () => {
 	beforeEach(() => {
 		vi.resetAllMocks();
+		vi.mocked(api.files.limits).mockResolvedValue({
+			maxBytes: 1024,
+			maxFiles: 8,
+			mimeAllow: ['image/*', 'text/plain']
+		});
+		vi.mocked(api.files.attachmentUrl).mockImplementation((id: string) => `/a/${id}`);
+		URL.createObjectURL = vi.fn(() => 'blob:preview'); // jsdom has none
 	});
 
 	describe('states', () => {
@@ -428,7 +446,7 @@ describe('AskView', () => {
 
 			await userEvent.type(box(), '  Where is the retry?  {Enter}');
 
-			expect(api.ask.send).toHaveBeenCalledExactlyOnceWith(RUN, 'Where is the retry?', 's1');
+			expect(api.ask.send).toHaveBeenCalledExactlyOnceWith(RUN, 'Where is the retry?', 's1', []);
 			expect(box()).toHaveValue('');
 		});
 
@@ -438,7 +456,7 @@ describe('AskView', () => {
 			expect(screen.queryByRole('combobox', { name: 'Session' })).not.toBeInTheDocument();
 
 			await userEvent.type(box(), 'Why?{Enter}');
-			expect(api.ask.send).toHaveBeenCalledExactlyOnceWith(RUN, 'Why?', undefined);
+			expect(api.ask.send).toHaveBeenCalledExactlyOnceWith(RUN, 'Why?', undefined, []);
 			expect(await screen.findByText('thinking…')).toBeInTheDocument();
 			expect(box()).toBeDisabled();
 
@@ -653,6 +671,99 @@ describe('AskView', () => {
 			await screen.findByText('not available to harness');
 
 			expect(input).toHaveValue('acme/one');
+		});
+	});
+
+	describe('files', () => {
+		const shot = () => aFile('shot.png', 'image/png');
+		function paste(...files: File[]) {
+			const e = createEvent.paste(box(), { clipboardData: { files } });
+			fireEvent(box(), e);
+			return e;
+		}
+		const withSession = (): Partial<AskState> => ({ sessions: [anAskSession({ id: 's1' })] });
+		const asked = () =>
+			vi.mocked(api.ask.send).mockResolvedValue(anAskMessage({ seq: 9, sessionId: 's1' }));
+
+		it('takes a pasted image as a chip, not as text', async () => {
+			await open(withSession());
+			await settled();
+			expect(paste(shot()).defaultPrevented).toBe(true);
+			expect(await screen.findByText('shot.png')).toBeInTheDocument();
+			expect(box()).toHaveValue('');
+		});
+
+		it('leaves a paste without files to the browser', async () => {
+			await open(withSession());
+			await settled();
+			expect(paste().defaultPrevented).toBe(false);
+		});
+
+		it('uploads first, then asks with the ids, and re-reads the run’s files', async () => {
+			asked();
+			vi.mocked(api.files.upload).mockResolvedValue([anAttachment({ id: 'att-1' })]);
+			const rs = aViewStore();
+			const refresh = vi.spyOn(rs, 'refreshFiles').mockResolvedValue();
+			await open(withSession(), rs);
+			await settled();
+			paste(shot());
+			await userEvent.type(box(), 'what is this?{Enter}');
+			await vi.waitFor(() =>
+				expect(api.ask.send).toHaveBeenCalledExactlyOnceWith(RUN, 'what is this?', 's1', ['att-1'])
+			);
+			expect(api.files.upload).toHaveBeenCalledExactlyOnceWith([expect.any(File)]);
+			await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+			expect(screen.queryByText('shot.png')).not.toBeInTheDocument();
+		});
+
+		it('asks with files alone', async () => {
+			asked();
+			vi.mocked(api.files.upload).mockResolvedValue([anAttachment({ id: 'att-1' })]);
+			await open(withSession());
+			await settled();
+			paste(shot());
+			await vi.waitFor(() => expect(askBtn()).toBeEnabled());
+			await userEvent.click(askBtn());
+			await vi.waitFor(() =>
+				expect(api.ask.send).toHaveBeenCalledExactlyOnceWith(RUN, '', 's1', ['att-1'])
+			);
+		});
+
+		it('refuses an oversized paste, which never goes up', async () => {
+			await open(withSession());
+			await settled();
+			paste(aFile('big.png', 'image/png', 2048));
+			expect(await screen.findByText('over the 1 KB limit')).toBeInTheDocument();
+			expect(askBtn()).toBeDisabled();
+			await userEvent.type(box(), '{Enter}');
+			expect(api.files.upload).not.toHaveBeenCalled();
+		});
+
+		it('asks nothing when the upload fails, keeping draft and files', async () => {
+			vi.mocked(api.files.upload).mockRejectedValue(new Error('too big for the server'));
+			await open(withSession());
+			await settled();
+			paste(shot());
+			await userEvent.type(box(), 'what is this?{Enter}');
+			expect(await screen.findByText('too big for the server')).toBeInTheDocument();
+			expect(api.ask.send).not.toHaveBeenCalled();
+			expect(box()).toHaveValue('what is this?');
+			expect(screen.getByText('shot.png')).toBeInTheDocument();
+		});
+
+		it('shows a question’s files, named from the run’s files', async () => {
+			const rs = aViewStore(undefined, {
+				attachments: [anAttachment({ id: 'att-1', filename: 'shot.png', mime: 'image/png' })]
+			});
+			await open(
+				{
+					...withSession(),
+					messages: [anAskMessage({ text: '', attachmentIds: ['att-1', 'att-gone'] })]
+				},
+				rs
+			);
+			expect(screen.getByRole('link', { name: /shot\.png/ })).toHaveAttribute('href', '/a/att-1');
+			expect(screen.getAllByRole('link')).toHaveLength(1);
 		});
 	});
 });

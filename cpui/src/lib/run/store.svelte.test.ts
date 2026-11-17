@@ -221,12 +221,15 @@ describe('the event stream', () => {
 			stop();
 		});
 
-		it.each(['snapshot_captured', 'ping_answered'])('re-reads the record on %s', async (type) => {
-			const { stop, emit } = await live();
-			emit(anEvent(1, type));
-			expect(api.runs.files).toHaveBeenCalledOnce();
-			stop();
-		});
+		it.each(['snapshot_captured', 'ping_answered', 'message_queued'])(
+			're-reads the record on %s',
+			async (type) => {
+				const { stop, emit } = await live();
+				emit(anEvent(1, type));
+				expect(api.runs.files).toHaveBeenCalledOnce();
+				stop();
+			}
+		);
 
 		it('leaves the record alone otherwise', async () => {
 			const { stop, emit } = await live();

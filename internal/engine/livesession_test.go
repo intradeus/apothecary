@@ -135,7 +135,7 @@ func TestTranscriptIsRecordedCoalescedAndRedacted(t *testing.T) {
 func sendHeld(t *testing.T, h *harness, runID, text string) string {
 	t.Helper()
 	takeOverWhenLive(t, h, runID, "u1")
-	id, err := h.e.SendMessage(runID, text)
+	id, err := h.e.SendMessage(runID, "u1", text, nil)
 	if err != nil {
 		t.Fatalf("send message: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestAMessageWithoutATakeOverIsRefused(t *testing.T) {
 	}
 	waitFor(t, entered.Load)
 	waitEvent[*event.AgentSession](t, h, runID)
-	if _, err := h.e.SendMessage(runID, "use sqlite"); !errors.Is(err, ErrNotHeld) {
+	if _, err := h.e.SendMessage(runID, "u1", "use sqlite", nil); !errors.Is(err, ErrNotHeld) {
 		t.Errorf("send without a take-over = %v, want ErrNotHeld", err)
 	}
 	close(release)
@@ -207,7 +207,7 @@ func TestMessageIsDeliveredIntoTheRunningInvocation(t *testing.T) {
 		t.Errorf("message_delivered = %+v", d)
 	}
 	// Nothing to take a message any more.
-	if _, err := h.e.SendMessage(runID, "late"); err == nil {
+	if _, err := h.e.SendMessage(runID, "u1", "late", nil); err == nil {
 		t.Error("a finished run accepted a message")
 	}
 }

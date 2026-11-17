@@ -14,9 +14,11 @@ import (
 	"apothecary/internal/workspace/wsinfo"
 )
 
-// SendMessageRequest is a message to the agent you took over.
+// SendMessageRequest is a message to the agent you took over: words, files
+// you uploaded (POST /api/attachments), or both.
 type SendMessageRequest struct {
-	Text string `json:"text"`
+	Text          string   `json:"text"`
+	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 }
 
 type MessageAccepted struct {
@@ -28,7 +30,8 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	id, err := s.Runs.SendMessage(r.PathValue("id"), body.Text)
+	p, _ := auth.PrincipalFrom(r.Context())
+	id, err := s.Runs.SendMessage(r.PathValue("id"), p.User.ID, body.Text, body.AttachmentIDs)
 	switch {
 	case errors.Is(err, engine.ErrRunNotActive), errors.Is(err, engine.ErrNoAgentRunning), errors.Is(err, engine.ErrNotHeld):
 		writeErr(w, http.StatusConflict, err.Error())
@@ -207,7 +210,7 @@ func (s *Server) workspaceRoutes() []Route {
 			Handler: s.postOpenEditor, Returns: EditorURL{}, Scope: ScopeRun},
 		{Method: "POST", Path: "/api/runs/{id}/messages", ID: "sendRunMessage", Tag: tagRuns,
 			Summary: "Send a message to the agent you took over",
-			Doc:     "Delivered into the agent's live session when its turn ends. 409 without a take-over: nobody else talks to the agent. A run parked on the holder of a take-over is woken by it.",
+			Doc:     "Delivered into the agent's live session when its turn ends. 409 without a take-over: nobody else talks to the agent. A run parked on the holder of a take-over is woken by it. A message may carry files you uploaded (attachment_ids, at most 8; text is then optional): they are delivered read-only under .apothecary/attachments/takeover/ and the message names them. 400 when any of them is not one of your unsent uploads, and nothing is recorded.",
 			Handler: s.postMessage, Body: SendMessageRequest{}, Returns: MessageAccepted{}, Status: http.StatusAccepted, Scope: ScopeRun},
 		{Method: "POST", Path: "/api/runs/{id}/hold", ID: "takeOverRun", Tag: tagRuns,
 			Summary: "Take over the running agent's session",
@@ -223,7 +226,7 @@ func (s *Server) workspaceRoutes() []Route {
 			Handler: s.getAsk, Returns: ask.AskState{}, Scope: ScopeRun},
 		{Method: "POST", Path: "/api/runs/{id}/ask", ID: "askRun", Tag: tagRuns,
 			Summary: "Ask one of the run's read-only sessions a question",
-			Doc:     "The question is recorded in the thread named by thread_id (none: the run's latest, opened when the run has none) and returned at once; the answer arrives on the pane's stream. 404 for an unknown thread; 409 when the pane is off or an answer is being written in that thread.",
+			Doc:     "The question is recorded in the thread named by thread_id (none: the run's latest, opened when the run has none) and returned at once; the answer arrives on the pane's stream. A question may carry files you uploaded (attachment_ids, at most 8; text is then optional): they are delivered read-only under .apothecary/attachments/ask/ and the question names them. 400 when any of them is not one of your unsent uploads, and nothing is recorded. 404 for an unknown thread; 409 when the pane is off or an answer is being written in that thread.",
 			Handler: s.postAsk, Body: AskRequest{}, Returns: ask.Message{}, Status: http.StatusAccepted, Scope: ScopeRun},
 		{Method: "POST", Path: "/api/runs/{id}/ask/threads", ID: "newAskThread", Tag: tagRuns,
 			Summary: "Open a new Ask session in the run",

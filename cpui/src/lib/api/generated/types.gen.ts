@@ -136,6 +136,7 @@ export type AskModelRequest = {
 };
 
 export type AskRequest = {
+	attachment_ids?: Array<string>;
 	text: string;
 	thread_id?: string;
 };
@@ -150,6 +151,7 @@ export type AskState = {
 };
 
 export type Attachment = {
+	chat?: string;
 	created_at: string;
 	filename: string;
 	id: string;
@@ -999,6 +1001,7 @@ export type Me = {
 
 export type Message = {
 	at: string;
+	attachment_ids?: Array<string>;
 	cost_usd?: number;
 	error?: string;
 	id: string;
@@ -1604,6 +1607,7 @@ export type ScorecardTerm = {
 };
 
 export type SendMessageRequest = {
+	attachment_ids?: Array<string>;
 	text: string;
 };
 

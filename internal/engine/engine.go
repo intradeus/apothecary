@@ -627,6 +627,10 @@ type AttachmentStore interface {
 	// ClaimForRun binds still-unclaimed uploads to a run (goal files) or,
 	// with a pingID, to an answer within that run. One-shot per attachment.
 	ClaimForRun(ctx context.Context, userID string, ids []string, runID, pingID string) error
+	// ClaimForChat binds userID's uploads to one of the run's chats
+	// (filestore.ChatTakeOver, ChatAsk), all or nothing:
+	// filestore.ErrNotClaimable when any id is not theirs to send.
+	ClaimForChat(ctx context.Context, userID string, ids []string, runID, chat string) error
 	// Get resolves one attachment by id — ticket attachments belong to the
 	// ticket, not the run, so ForRun cannot find them; the ids ride on
 	// run_created.

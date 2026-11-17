@@ -109,6 +109,14 @@ describe('RecordView', () => {
 			expect(rowOf('brief.pdf').getByText('run goal')).toBeInTheDocument();
 		});
 
+		it.each([
+			['takeover', 'take-over message'],
+			['ask', 'Ask question']
+		] as const)('says a %s chat file came in on that chat', (chat, label) => {
+			show({ attachments: [anAttachment({ chat })] });
+			expect(rowOf('brief.pdf').getByText(label)).toBeInTheDocument();
+		});
+
 		it('links an attachment that came with an answer to its ping', () => {
 			show({ attachments: [anAttachment({ pingId: 'p1' })] });
 			expect(rowOf('brief.pdf').getByRole('link', { name: 'ping answer' })).toHaveAttribute(

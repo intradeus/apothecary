@@ -472,7 +472,8 @@ func (x *exec) liveAsks(st *flow.Stage) []*Ping {
 }
 
 // withPendingMessages appends the human messages nobody has delivered yet
-// (sent while no invocation could take them) to the next prompt.
+// (sent while no invocation could take them) to the next prompt, each with
+// the files it carried: ensureEnv delivered them with the run's others.
 func (x *exec) withPendingMessages(st *flow.Stage, iter int, text string) (string, error) {
 	if len(x.rs.PendingMsgs) == 0 {
 		return text, nil
@@ -480,7 +481,7 @@ func (x *exec) withPendingMessages(st *flow.Stage, iter int, text string) (strin
 	msgs := make([]agentport.UserMessage, 0, len(x.rs.PendingMsgs))
 	ids := make([]string, 0, len(x.rs.PendingMsgs))
 	for _, m := range x.rs.PendingMsgs {
-		msgs = append(msgs, agentport.UserMessage{ID: m.MessageID, Text: m.Text})
+		msgs = append(msgs, agentport.UserMessage{ID: m.MessageID, Text: withFilesNote(m.Text, x.takeOverFilePaths(m.AttachmentIDs))})
 		ids = append(ids, m.MessageID)
 	}
 	if err := x.append(&event.MessageDelivered{MessageIDs: ids, StageID: st.ID, Attempt: iter}); err != nil {

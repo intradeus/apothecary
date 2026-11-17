@@ -439,6 +439,14 @@ describe('what each call sends', () => {
 		await expect(runs.exposePort('r', 80)).resolves.toEqual({ port: 80, url: 'u' });
 		reply('sendRunMessage', answer({ message_id: 'm' }));
 		await expect(runs.sendMessage('r', 'hi')).resolves.toBe('m');
+		const send = reply('sendRunMessage', answer({ message_id: 'm' }));
+		await runs.sendMessage('r', 'hi', []);
+		expect(send).toHaveBeenLastCalledWith({ path: { id: 'r' }, body: { text: 'hi' } });
+		await runs.sendMessage('r', '', ['a1']);
+		expect(send).toHaveBeenLastCalledWith({
+			path: { id: 'r' },
+			body: { text: '', attachment_ids: ['a1'] }
+		});
 		reply('openEditor', answer({ url: 'e' }));
 		await expect(runs.openEditor('r')).resolves.toBe('e');
 	});
@@ -1788,6 +1796,20 @@ describe('the rest of the surface', () => {
 			'askRun',
 			answer({}),
 			{ path: { id: 'r' }, body: { text: 'why?', thread_id: 's1' } }
+		],
+		[
+			'ask.send with files',
+			() => ask.send('r', '', 's1', ['a1']),
+			'askRun',
+			answer({}),
+			{ path: { id: 'r' }, body: { text: '', thread_id: 's1', attachment_ids: ['a1'] } }
+		],
+		[
+			'ask.send with no files',
+			() => ask.send('r', 'why?', undefined, []),
+			'askRun',
+			answer({}),
+			{ path: { id: 'r' }, body: { text: 'why?' } }
 		],
 		[
 			'ask.newSession',

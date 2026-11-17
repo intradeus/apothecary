@@ -18,7 +18,7 @@ import (
 
 // --- attachments ------------------------------------------------------------
 
-const attachmentCols = `id, ticket_id, run_id, ping_id, filename, mime, size, sha256, created_at, user_id, remote_id`
+const attachmentCols = `id, ticket_id, run_id, ping_id, filename, mime, size, sha256, created_at, user_id, remote_id, chat`
 
 // nullStr maps Go's zero-string convention to the schema's NULLs: the CHECKs
 // reason about NULL, not ”.
@@ -31,12 +31,12 @@ func nullStr(s string) any {
 
 func scanAttachment(row pgx.Row) (filestore.Attachment, error) {
 	var a filestore.Attachment
-	var ticket, run, ping sql.NullString
-	err := row.Scan(&a.ID, &ticket, &run, &ping, &a.Filename, &a.Mime, &a.Size, &a.SHA256, &a.CreatedAt, &a.UserID, &a.RemoteID)
+	var ticket, run, ping, chat sql.NullString
+	err := row.Scan(&a.ID, &ticket, &run, &ping, &a.Filename, &a.Mime, &a.Size, &a.SHA256, &a.CreatedAt, &a.UserID, &a.RemoteID, &chat)
 	if err != nil {
 		return a, err
 	}
-	a.TicketID, a.RunID, a.PingID = ticket.String, run.String, ping.String
+	a.TicketID, a.RunID, a.PingID, a.Chat = ticket.String, run.String, ping.String, chat.String
 	return a, nil
 }
 
@@ -60,9 +60,9 @@ func (s *Store) queryAttachments(ctx context.Context, q string, args ...any) ([]
 func (s *Store) InsertAttachment(ctx context.Context, a filestore.Attachment) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO attachments (`+attachmentCols+`)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 		a.ID, nullStr(a.TicketID), nullStr(a.RunID), nullStr(a.PingID),
-		a.Filename, a.Mime, a.Size, a.SHA256, a.CreatedAt, a.UserID, a.RemoteID)
+		a.Filename, a.Mime, a.Size, a.SHA256, a.CreatedAt, a.UserID, a.RemoteID, nullStr(a.Chat))
 	return err
 }
 
@@ -87,6 +87,37 @@ func (s *Store) ClaimAttachments(ctx context.Context, userID string, ids []strin
 		WHERE id = ANY($4) AND user_id = $5 AND ticket_id IS NULL AND run_id IS NULL`,
 		nullStr(ticketID), nullStr(runID), nullStr(pingID), ids, userID)
 	return err
+}
+
+// ClaimAttachmentsForChat is all or nothing: one UPDATE of the user's
+// unclaimed rows among ids, rolled back unless it took every distinct one.
+func (s *Store) ClaimAttachmentsForChat(ctx context.Context, userID string, ids []string, runID, chat string) error {
+	if runID == "" || !filestore.ValidChat(chat) {
+		return fmt.Errorf("claim: a chat file names its run and one of its chats, not %q", chat)
+	}
+	distinct := map[string]bool{}
+	for _, id := range ids {
+		distinct[id] = true
+	}
+	if len(distinct) == 0 {
+		return nil
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `
+		UPDATE attachments SET run_id=$1, chat=$2
+		WHERE id = ANY($3) AND user_id = $4 AND ticket_id IS NULL AND run_id IS NULL`,
+		runID, chat, ids, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != int64(len(distinct)) {
+		return filestore.ErrNotClaimable
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) AttachmentsForTicket(ctx context.Context, ticketID string) ([]filestore.Attachment, error) {

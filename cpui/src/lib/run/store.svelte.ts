@@ -262,8 +262,14 @@ export class RunStore {
 				run = true;
 				if (ev.type.startsWith('run_') || ev.type.startsWith('ping_')) fleetToo = true;
 			}
-			// A capture (or an answer, which may carry files) adds a record row.
-			if (ev.type === 'snapshot_captured' || ev.type === 'ping_answered') files = true;
+			// A capture (or an answer or a take-over message, which may carry
+			// files) adds a record row.
+			if (
+				ev.type === 'snapshot_captured' ||
+				ev.type === 'ping_answered' ||
+				ev.type === 'message_queued'
+			)
+				files = true;
 			// A service started, came up, stopped or failed.
 			if (ev.type.startsWith('service_')) services = true;
 		}
