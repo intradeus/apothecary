@@ -253,6 +253,53 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 		}
 	}
 
+	// admit opens a question the agent raised: on the record, published,
+	// notified, and the stage clock stopped while it waits.
+	admit := func(req raiseReq) error {
+		x.e.mu.Lock()
+		req.p.StageID = st.ID // the stage whose agent asked (PLAN4 M15)
+		x.e.mu.Unlock()
+		raised := &event.PingRaised{PingID: req.p.ID, Type: req.p.Type,
+			Question: req.p.Question, Context: req.p.Context, Key: req.p.key,
+			Files: req.p.Files, Link: req.p.Link, StageID: st.ID, Form: req.p.Form, AnswerKind: req.p.AnswerKind}
+		if err := x.append(raised); err != nil {
+			close(req.ack)
+			return err
+		}
+		// Keep the working state a mirror of what replay would build, so
+		// a resume reads the same whether the answer arrived in this
+		// process or was found in the log after a restart.
+		// Snapshot the attached files as they are RIGHT NOW: the agent
+		// resumes the moment this ping is answered, and the record must
+		// keep what the human was actually shown.
+		x.publishPingFiles(req.p, st.ID)
+		x.e.notify(x.bg, notifyport.Notification{
+			RunID: x.rs.RunID, PingID: req.p.ID, Type: req.p.Type,
+			Title: fmt.Sprintf("%s: %s", req.p.Type, x.rs.View.TicketTitle),
+			Body:  req.p.Question,
+		})
+		if len(open) == 0 {
+			suspend()
+			armPark()
+		}
+		open = append(open, req.p)
+		close(req.ack)
+		return nil
+	}
+	// admitQueued admits every raise already waiting in the mailbox.
+	admitQueued := func() error {
+		for {
+			select {
+			case req := <-x.h.mailbox:
+				if err := admit(req); err != nil {
+					return err
+				}
+			default:
+				return nil
+			}
+		}
+	}
+
 	for {
 		select {
 		case res := <-resCh:
@@ -323,6 +370,13 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 			io.inbox.push(req.msg)
 			req.ack <- nil
 		case req := <-x.h.holds:
+			// A question the agent has already raised is open even while its
+			// raise waits in the mailbox: fold those in first, so a forced
+			// take-over never stops a turn that is waiting on its question.
+			if err := admitQueued(); err != nil {
+				req.ack <- err
+				return invocation{}, err
+			}
 			var err error
 			held, releasing := hold != nil, hold != nil && hold.releasing
 			move := runcore.PlanHoldRequest(runcore.HoldRequest{Take: req.take, Force: req.force,
@@ -355,34 +409,9 @@ func (x *exec) awaitAgent(st *flow.Stage, resCh <-chan agentRes, cancelRun conte
 				return invocation{}, err
 			}
 		case req := <-x.h.mailbox:
-			x.e.mu.Lock()
-			req.p.StageID = st.ID // the stage whose agent asked (PLAN4 M15)
-			x.e.mu.Unlock()
-			raised := &event.PingRaised{PingID: req.p.ID, Type: req.p.Type,
-				Question: req.p.Question, Context: req.p.Context, Key: req.p.key,
-				Files: req.p.Files, Link: req.p.Link, StageID: st.ID, Form: req.p.Form, AnswerKind: req.p.AnswerKind}
-			if err := x.append(raised); err != nil {
-				close(req.ack)
+			if err := admit(req); err != nil {
 				return invocation{}, err
 			}
-			// Keep the working state a mirror of what replay would build, so
-			// a resume reads the same whether the answer arrived in this
-			// process or was found in the log after a restart.
-			// Snapshot the attached files as they are RIGHT NOW: the agent
-			// resumes the moment this ping is answered, and the record must
-			// keep what the human was actually shown.
-			x.publishPingFiles(req.p, st.ID)
-			x.e.notify(x.bg, notifyport.Notification{
-				RunID: x.rs.RunID, PingID: req.p.ID, Type: req.p.Type,
-				Title: fmt.Sprintf("%s: %s", req.p.Type, x.rs.View.TicketTitle),
-				Body:  req.p.Question,
-			})
-			if len(open) == 0 {
-				suspend()
-				armPark()
-			}
-			open = append(open, req.p)
-			close(req.ack)
 		case ar := <-x.h.answers:
 			handled, err := x.processAnswer(ar)
 			if err != nil {
